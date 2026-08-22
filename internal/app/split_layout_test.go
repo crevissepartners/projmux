@@ -94,7 +94,7 @@ func TestResizePanesEvenlyDistributesDeterministicRemainder(t *testing.T) {
 	}
 }
 
-func TestApplyEvenSplitLayoutNoOpsOnUnreadableOrInvalidGeometry(t *testing.T) {
+func TestPlanEvenSplitLayoutNoOpsOnUnreadableOrInvalidGeometry(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -111,23 +111,20 @@ func TestApplyEvenSplitLayoutNoOpsOnUnreadableOrInvalidGeometry(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			var resizeCalls int
-			applyEvenSplitLayout("%1", "right",
-				func(args ...string) ([]byte, error) { return []byte(test.out), test.err },
-				func(args ...string) error { resizeCalls++; return nil })
-			if resizeCalls != 0 {
-				t.Fatalf("resize calls = %d, want 0", resizeCalls)
+			_, planned := planEvenSplitLayout("%1", "right",
+				func(args ...string) ([]byte, error) { return []byte(test.out), test.err })
+			if len(planned) != 0 {
+				t.Fatalf("resize plan = %#v, want empty", planned)
 			}
 		})
 	}
 }
 
-func TestApplyEvenSplitLayoutIgnoresResizeFailuresAndUnrelatedTopology(t *testing.T) {
+func TestPlanEvenSplitLayoutReturnsTypedOrderedOperandsAndIgnoresUnrelatedTopology(t *testing.T) {
 	t.Parallel()
 
 	var readArgs []string
-	var resizeArgs [][]string
-	applyEvenSplitLayout("%2", "right",
+	_, planned := planEvenSplitLayout("%2", "right",
 		func(args ...string) ([]byte, error) {
 			readArgs = append([]string(nil), args...)
 			return []byte(geometryRows(tmuxRowSepFormat,
@@ -136,20 +133,16 @@ func TestApplyEvenSplitLayoutIgnoresResizeFailuresAndUnrelatedTopology(t *testin
 				[]string{"%3", "32", "0", "10", "10"},
 				[]string{"%4", "0", "11", "42", "10"},
 			)), nil
-		},
-		func(args ...string) error {
-			resizeArgs = append(resizeArgs, append([]string(nil), args...))
-			return errors.New("best effort")
 		})
 	if want := []string{"list-panes", "-t", "%2", "-F", splitPaneGeometryFormat}; !reflect.DeepEqual(readArgs, want) {
 		t.Fatalf("read args = %v, want %v", readArgs, want)
 	}
-	want := [][]string{
-		{"resize-pane", "-t", "%1", "-x", "14"},
-		{"resize-pane", "-t", "%2", "-x", "13"},
-		{"resize-pane", "-t", "%3", "-x", "13"},
+	want := []plannedPaneResize{
+		{paneID: "%1", axis: "-x", size: 14},
+		{paneID: "%2", axis: "-x", size: 13},
+		{paneID: "%3", axis: "-x", size: 13},
 	}
-	if !reflect.DeepEqual(resizeArgs, want) {
-		t.Fatalf("resize args = %v, want %v", resizeArgs, want)
+	if !reflect.DeepEqual(planned, want) {
+		t.Fatalf("resize plan = %v, want %v", planned, want)
 	}
 }

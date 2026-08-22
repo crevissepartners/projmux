@@ -1639,6 +1639,43 @@ Explicit Registry topology materialization:
   Only the selected exact socket is claimed and mutated; sibling sockets are
   tested unchanged, and no global uniqueness across unknown sockets is claimed.
 
+Plan-only runtime mutation boundary:
+
+- Lifecycle and topology changes owned by the app materializer and Pane-delete
+  runtime are values before they are commands. The closed action inventory
+  records a stable target, a typed guard with the exact expected evidence, a
+  total order, expected effect, and typed executable operands; its JSON
+  projection is deterministic. The argv seam rejects an operand target that
+  does not match the printable stable target.
+  Session/Window/Pane creation, identity and create-operation lease writes,
+  layout writes, ownership-checked rollback, exact Pane kill, pre-commit
+  tombstone/restore, and post-result-flush self-kill queueing all enter the same
+  plan -> guard -> execute boundary. The executor validates the complete plan
+  and re-proves every guard before the first live write.
+- Materialization is a sequence of dynamically replanned stages because exact
+  Window and Pane handles do not exist until the preceding create effect is
+  reobserved. Each stage is nevertheless a complete printable plan with a
+  total order; the next stage is built only from the preceding stage's observed
+  exact effect. Every production row carries the immutable logical route as
+  `-L=<name>` or `-S=<absolute path>`. Before a stage writes, that same routed
+  runner reobserves `#{socket_path}` and refuses drift. Only a create-session
+  stage may accept the typed no-server observation, because its explicit route
+  and absent-session ownership preflight are the facts required to create the
+  first server.
+- A guard refusal writes nothing and asks the caller to observe and plan again.
+  Reobservation is explicit: known achieved effects remove their rows, so a
+  successful repeat is an empty plan; an unavailable observation is unknown and
+  can neither synthesize a Registry deletion nor authorize a runtime kill.
+  Partial execution rolls back only actions carrying an ownership-backed undo,
+  in reverse application order. Existing desired Registry state, foreign or
+  sibling objects, and other sockets have no rollback authority.
+- Pane deletion keeps the exact routed socket plus Session, Window, Pane, root
+  kind/root uid, and current Pane mirror in every executable guard. A
+  caller-containing delete still commits the Registry and flushes the complete
+  result before its self-target kill is queued. The AI picker/default/resume and
+  shell split producers remain canonical create-intent producers; they do not
+  gain a second tmux mutation path.
+
 Agent runtime linkage:
 
 - Once a live tmux pane has settled on a registry Pane, reconcile decides which
@@ -1973,6 +2010,28 @@ throttled collector and then reopens the same display-only usage popup from
 cache.
 
 ## Related design and inventory notes
+
+### Plan-only managed runtime mutation
+
+Managed lifecycle/topology changes are printable `runtimeMutationPlan` rows.
+Each row carries an exact logical route and immutable observed socket path, a
+stable tmux handle and Registry UID/owner chain, a closed guard, total order,
+expected effect, and printable typed operands bound to that handle. Execution
+validates every guard before the first write;
+owned rollback runs in reverse order. Materialization is intentionally staged:
+after each dynamic handle is returned, it is reobserved and the next stage is
+planned, so no later action guesses a Window or Pane handle. A successful
+reobserve/replan is empty; an unknown observation authorizes no delete or kill.
+
+The maintained product table in `internal/app/runtime_mutation_surface.go` maps
+generated catalog/menu producers, native provider/resume picker selections,
+sidebar/session-picker stops, and app lifecycle entrypoints in both directions
+to their handler and plan verb. It also records exact semantic exemptions for
+focus, labels, operator-requested layout, mouse forwarding, snapshot replay,
+ephemeral maintenance, app quit, and human runtime maintenance. Managed argv
+verbs are selected only by the typed executor seam; generated Window
+create/rename, Pane-menu create/delete, and automatic post-split layout writes
+reach typed intent/operand routes rather than embedding tmux lifecycle commands.
 
 Contributor-facing companions to this document. They are design records and
 inventories rather than user documentation, so they are linked from here rather

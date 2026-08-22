@@ -12,6 +12,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // canonicalIntentScope is the typed identity carried from one UI origin into
@@ -32,6 +33,140 @@ type canonicalIntentScope struct {
 	sessionID string
 	cwd       string
 	lookup    activeTargetLookup
+}
+
+// windowCreateIntent is the generated Window-create surface's complete input.
+// The exact anchor Pane supplies runtime containment; owner UID and root kind
+// are resolved from its mirrored Registry chain before allocation.
+type windowCreateIntent struct {
+	anchorPaneID string
+	targetClient string
+}
+
+type windowRenameIntent struct {
+	anchorPaneID string
+	targetClient string
+	displayName  string
+}
+
+func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout, stderr io.Writer) error {
+	anchor := strings.TrimSpace(intent.anchorPaneID)
+	if exactTmuxHandle(anchor, "%") == "" {
+		return usageError("canonical Window create intent requires an exact anchor Pane; nothing was created")
+	}
+	scope, err := c.resolveCanonicalIntentScope(agentPaneIntent{
+		producer: canonicalProducerWindowCreate, anchorPaneID: anchor, targetClient: intent.targetClient,
+	})
+	if err != nil {
+		return visibleCanonicalCreateError(err)
+	}
+	var result createResult
+	err = c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+		cwd := scope.cwd
+		if scope.rootKind == coremetadata.KindControlSession {
+			var cwdErr error
+			cwd, cwdErr = canonicalExistingDir(cwd)
+			if cwdErr != nil {
+				return usageError(fmt.Sprintf("canonical create: ControlSession Window cwd %q: %v", scope.cwd, cwdErr))
+			}
+		}
+		window, panes, addErr := mutator.AddWindowToManagedRoot(working, scope.rootKind, scope.rootUID,
+			coremetadata.BootstrapWindow{Panes: []coremetadata.BootstrapPane{{CWD: cwd}}}, c.shell, cwd, operationID)
+		if addErr != nil {
+			return MapMetadataError(addErr)
+		}
+		activation, activationErr := c.issuePaneActivation(working, mutator, panes[0].Metadata.UID, "", operationID)
+		if activationErr != nil {
+			return activationErr
+		}
+		if err := c.runtime.markCreateOperation(ctx, scope.sessionID, ledger); err != nil {
+			return err
+		}
+		created, createErr := c.runtime.newWindow(ctx, scope.sessionID, window.Metadata.Name, cwd,
+			c.runtime.supervisedLaunch(ctx, activation, nil))
+		if created.WindowID == "" {
+			return createErr
+		}
+		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, window.Metadata.UID, ledger); claimErr != nil {
+			return errors.Join(createErr, claimErr)
+		}
+		projected, projectErr := mutator.ObserveWindowDisplayName(working, window.Metadata.UID, window.Metadata.Name)
+		if projectErr != nil {
+			return errors.Join(createErr, projectErr)
+		}
+		window = projected
+		if mirrorErr := c.runtime.mirrorWindow(ctx, created.WindowID, window); mirrorErr != nil {
+			return errors.Join(createErr, mirrorErr)
+		}
+		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, panes[0].Metadata.UID, ledger); claimErr != nil {
+			return errors.Join(createErr, claimErr)
+		}
+		if mirrorErr := c.runtime.mirrorPane(ctx, created.PaneID, panes[0]); mirrorErr != nil {
+			return errors.Join(createErr, mirrorErr)
+		}
+		observeActivationRuntime(working, mutator, activation, created.PaneID, c.runtime.warn)
+		result = createResult{kind: coremetadata.KindWindow, uid: window.Metadata.UID, name: window.Metadata.Name,
+			paneID: created.PaneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}
+		return createErr
+	}, c.canonicalIntentGuards(scope)...)
+	if err != nil {
+		return visibleCanonicalCreateError(err)
+	}
+	return c.writeResults(stdout, canonicalCreateWindow, cli.OutputModeDefault, coremetadata.KindWindow, []createResult{result})
+}
+
+func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, stdout, stderr io.Writer) error {
+	anchor, displayName := exactTmuxHandle(strings.TrimSpace(intent.anchorPaneID), "%"), strings.TrimSpace(intent.displayName)
+	if anchor == "" || displayName == "" {
+		return usageError("canonical Window rename intent requires an exact anchor Pane and non-empty name; nothing was changed")
+	}
+	scope, err := c.resolveCanonicalIntentScope(agentPaneIntent{
+		producer: canonicalProducerWindowRename, anchorPaneID: anchor, targetClient: intent.targetClient,
+	})
+	if err != nil {
+		return visibleCanonicalCreateError(err)
+	}
+	err = c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, _ string, _ *runtimeLedger) error {
+		window, ok := working.Window(scope.windowUID)
+		if !ok {
+			return usageError("canonical rename: origin Window disappeared; nothing was changed")
+		}
+		row, readErr := c.runtime.read(ctx, "display-message", "-p", "-t", scope.anchorPaneID, "-F",
+			tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
+		if readErr != nil {
+			return readErr
+		}
+		rows := splitTmuxRows(row, 3)
+		if len(rows) != 1 || rows[0][0] != scope.sessionID || exactTmuxHandle(rows[0][1], "@") == "" || rows[0][2] != scope.windowUID {
+			return usageError("canonical rename: exact Window containment changed before planning; nothing was changed")
+		}
+		windowID := rows[0][1]
+		action := materializeMutationAction(mutationRenameWindow,
+			c.runtime.boundMutationTarget("window", windowID, scope.windowUID),
+			"exact root="+string(scope.rootKind)+"/"+scope.rootUID+";session="+scope.sessionID+";window="+windowID+"/"+scope.windowUID,
+			"exact owned Window display name="+displayName,
+			"-t", windowID, displayName)
+		if err := c.runtime.runMaterializeMutation(ctx, action, func() error {
+			observed, err := c.runtime.read(ctx, "display-message", "-p", "-t", scope.anchorPaneID, "-F",
+				tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
+			if err != nil || observed != row {
+				return errors.New("exact Window containment drifted before rename")
+			}
+			return nil
+		}, func() error {
+			_, err := runRuntimeMutationCommand(ctx, c.runtime.runner, action)
+			return err
+		}); err != nil {
+			return err
+		}
+		_, err := mutator.ObserveWindowDisplayName(working, window.Metadata.UID, displayName)
+		return err
+	}, c.canonicalIntentGuards(scope)...)
+	if err != nil {
+		return visibleCanonicalCreateError(err)
+	}
+	_, err = fmt.Fprintf(stdout, "renamed: window/%s -> %s\n", scope.windowUID, displayName)
+	return err
 }
 
 // resolveCanonicalIntentScope resolves the exact mirrored origin chain before
@@ -269,7 +404,7 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 			if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
 				return errors.Join(err, claimErr)
 			}
-			if mirrorErr := c.runtime.mirror.MirrorPane(ctx, paneID, pane); mirrorErr != nil {
+			if mirrorErr := c.runtime.mirrorPane(ctx, paneID, pane); mirrorErr != nil {
 				return errors.Join(err, mirrorErr)
 			}
 			observeActivationRuntime(working, mutator, activation, paneID, c.runtime.warn)
@@ -381,7 +516,7 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 			if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); claimErr != nil {
 				return errors.Join(err, claimErr)
 			}
-			if mirrorErr := c.runtime.mirror.MirrorPane(ctx, paneID, pane); mirrorErr != nil {
+			if mirrorErr := c.runtime.mirrorPane(ctx, paneID, pane); mirrorErr != nil {
 				return errors.Join(err, mirrorErr)
 			}
 			observeActivationRuntime(working, mutator, activation, paneID, c.runtime.warn)
@@ -395,10 +530,11 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		} else {
 			c.bindAgentPane(paneID, provider, workspace.CWD, title, bindFlags)
 		}
-		for _, option := range []string{aiPaneTopicOption, aiPaneTopicManualOption} {
-			if _, err := c.runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-u", "-t", paneID, option); err != nil {
-				return tmuxError("%s: clear compatibility topic projection %s on Pane %s: %v", canonicalCreateAgent, option, paneID, err)
-			}
+		if err := c.runtime.runIdentityWrites(ctx, "pane", paneID, pane.Metadata.UID, []identityPlanWrite{
+			{operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption}, effect: "legacy AI topic projection absent"},
+			{operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicManualOption}, effect: "legacy manual-topic projection absent"},
+		}); err != nil {
+			return tmuxError("%s: clear compatibility topic projections on Pane %s: %v", canonicalCreateAgent, paneID, err)
 		}
 		result = createResult{kind: coremetadata.KindAgent, uid: agent.Metadata.UID, name: agent.Metadata.Name,
 			paneID: paneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}

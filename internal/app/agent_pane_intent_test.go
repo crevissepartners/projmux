@@ -534,7 +534,7 @@ func TestOnlyTheMaterializerRunsSplitWindow(t *testing.T) {
 	// generated pane-context-menu entries, which are tmux's own menu items rather
 	// than a projmux-issued split. Snapshot replay lives in its own package and
 	// restores a recorded argv, which is outside this Phase.
-	allowed := map[string]bool{"materialize.go": true, "tmux.go": true}
+	allowed := map[string]bool{"materialize.go": true, "runtime_mutation_plan.go": true, "runtime_mutation_surface.go": true, "tmux.go": true}
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {

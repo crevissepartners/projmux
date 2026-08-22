@@ -11,6 +11,7 @@ import (
 	"time"
 
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -50,6 +51,7 @@ type sessionsCommand struct {
 	store                sessionsSelectionStore
 	opener               sessionsOpener
 	killer               sessionsKiller
+	mutationRunner       tmuxCommandRunner
 	runner               sessionsRunner
 	native               intpicker.Runner
 	executable           func() (string, error)
@@ -74,16 +76,17 @@ func newSessionsCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionsCo
 	}
 	client := inttmux.NewClient(inttmux.ExecRunner{}, opts...)
 	return &sessionsCommand{
-		diagnostics: recorderFrom(recorders),
-		recent:      client,
-		store:       newSessionPopupCommand().store,
-		opener:      client,
-		killer:      client,
-		native:      intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		executable:  resolveExecutablePath,
-		lookupEnv:   os.Getenv,
-		homeDir:     os.UserHomeDir,
-		stateStore:  sessionstate.NewDefaultStoreFromEnv,
+		diagnostics:    recorderFrom(recorders),
+		recent:         client,
+		store:          newSessionPopupCommand().store,
+		opener:         client,
+		killer:         client,
+		mutationRunner: inttmux.ExecRunner{},
+		native:         intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		executable:     resolveExecutablePath,
+		lookupEnv:      os.Getenv,
+		homeDir:        os.UserHomeDir,
+		stateStore:     sessionstate.NewDefaultStoreFromEnv,
 	}
 }
 
@@ -209,7 +212,7 @@ func (c *sessionsCommand) Run(args []string, stdout, stderr io.Writer) error {
 			continue
 		}
 		if pickerKeyMatchesAction(c.homeDir, c.lookupEnv, result.Key, "SessionPopup:KillSession", sessionsKillExpectKey) {
-			nextSummaries, err := c.killFocusedSession(context.Background(), summaries, result.Value)
+			nextSummaries, err := c.killFocusedSession(context.Background(), summaries, attribution, result.Value)
 			if err != nil {
 				return err
 			}
@@ -429,15 +432,11 @@ func (c *sessionsCommand) resolveSelection(sessionName string) (string, string, 
 	return strings.TrimSpace(selection.WindowIndex), strings.TrimSpace(selection.PaneIndex), nil
 }
 
-func (c *sessionsCommand) killFocusedSession(ctx context.Context, summaries []inttmux.RecentSessionSummary, sessionName string) ([]inttmux.RecentSessionSummary, error) {
+func (c *sessionsCommand) killFocusedSession(ctx context.Context, summaries []inttmux.RecentSessionSummary, attribution sessionsAttribution, sessionName string) ([]inttmux.RecentSessionSummary, error) {
 	sessionName = strings.TrimSpace(sessionName)
 	if sessionName == "" {
 		return summaries, nil
 	}
-	if c.killer == nil {
-		return nil, fmt.Errorf("sessions killer is not configured")
-	}
-
 	targetAttached := false
 	targetFound := false
 	fallbackSession := ""
@@ -460,6 +459,20 @@ func (c *sessionsCommand) killFocusedSession(ctx context.Context, summaries []in
 	if !targetFound {
 		return summaries, nil
 	}
+	var selectedSummary inttmux.RecentSessionSummary
+	for _, summary := range summaries {
+		if strings.TrimSpace(summary.Name) == sessionName {
+			selectedSummary = summary
+			break
+		}
+	}
+	managed, ok := attribution.byID[strings.TrimSpace(selectedSummary.ID)]
+	if !attribution.resolved || !ok || exactTmuxHandle(selectedSummary.ID, "$") == "" || strings.TrimSpace(managed.ResourceUID) == "" {
+		return nil, fmt.Errorf("kill tmux session %q: managed UID attribution is unknown; nothing was changed", sessionName)
+	}
+	if c.mutationRunner == nil {
+		return nil, fmt.Errorf("sessions managed mutation runner is not configured")
+	}
 	if targetAttached {
 		if fallbackSession == "" {
 			return summaries, nil
@@ -471,7 +484,17 @@ func (c *sessionsCommand) killFocusedSession(ctx context.Context, summaries []in
 			return nil, fmt.Errorf("open fallback tmux session %q before kill: %w", fallbackSession, err)
 		}
 	}
-	if err := c.killer.KillSession(ctx, sessionName); err != nil {
+	route, err := resolveInvocationRuntimeMutationRoute(ctx, c.mutationRunner, c.lookupEnv)
+	if err != nil {
+		return nil, err
+	}
+	target := managedRuntimeStopTarget{SessionID: selectedSummary.ID, SessionName: sessionName,
+		RootKind: coremetadata.Kind(managed.ResourceKind), RootUID: managed.ResourceUID, Route: route}
+	if c.navigation == nil || c.navigation.reader == nil {
+		return nil, errors.New("sessions managed runtime Registry reader is not configured")
+	}
+	authoritative := managedRuntimeStopRegistryAuthority(c.navigation.reader.loadRegistry)
+	if err := executeManagedRuntimeStop(ctx, c.mutationRunner, target, authoritative); err != nil {
 		return nil, fmt.Errorf("kill tmux session %q: %w", sessionName, err)
 	}
 	if c.cleanupKilledSession != nil {

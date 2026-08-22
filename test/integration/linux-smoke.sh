@@ -668,8 +668,8 @@ if tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t >/dev/null 2>&1; t
 fi
 
 # A current action may explicitly reclaim C-t. The retired cleanup must render
-# and execute first so the current new-window binding wins without retaining
-# the stale pane-label body.
+# and execute first so the current canonical Window-create binding wins without
+# retaining either the stale pane-label body or a raw tmux new-window bypass.
 install -m 0644 "$smoke_root/test/fixtures/keymaps/stale-pane-label-ct-reassigned.toml" "$keymap_path"
 cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.before"
 # Re-seeding a v0 file means the next apply migrates again, against a different
@@ -677,8 +677,8 @@ cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.before"
 reassign_apply_out="$("$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
 smoke_assert_output_contains "$reassign_apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
 ct_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t)"
-if [[ "$ct_binding" != *"new-window"* || "$ct_binding" == *"pane label:"* || "$ct_binding" == *"@projmux_pane_label"* ]]; then
-  echo "expected current C-t new-window binding without stale pane-label body, got: $ct_binding" >&2
+if [[ "$ct_binding" != *"internal tmux window-create"* || "$ct_binding" != *"--anchor #{pane_id}"* || "$ct_binding" == *" new-window "* || "$ct_binding" == *"pane label:"* || "$ct_binding" == *"@projmux_pane_label"* ]]; then
+  echo "expected current C-t canonical Window-create binding without raw new-window or stale pane-label body, got: $ct_binding" >&2
   exit 1
 fi
 if [[ "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-p)" != *"pane label:"* ]]; then
@@ -700,7 +700,7 @@ cmp "$PROJMUX_SMOKE_WORKDIR/tmux-ct-reassigned.first" "$XDG_CONFIG_HOME/projmux/
 cmp "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.migrated" "$keymap_path"
 smoke_assert_keymap_backup_count 2
 ct_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t)"
-if [[ "$ct_binding" != *"new-window"* || "$ct_binding" == *"pane label:"* ]]; then
+if [[ "$ct_binding" != *"internal tmux window-create"* || "$ct_binding" != *"--anchor #{pane_id}"* || "$ct_binding" == *" new-window "* || "$ct_binding" == *"pane label:"* ]]; then
   echo "repeated reassignment apply changed C-t ownership: $ct_binding" >&2
   exit 1
 fi
@@ -725,7 +725,7 @@ if [[ "$sequence_roots" != "C-k" || -z "$sequence_tables" || "$sequence_tables" 
 fi
 for contract in \
   "root C-k switch-client -T $sequence_tables" \
-  "$sequence_tables C-w new-window" \
+  "$sequence_tables C-w internal tmux window-create" \
   "$sequence_tables Enter set -g mouse" \
   "$sequence_tables Escape switch-client -T root" \
   "$sequence_tables Any switch-client -T root"; do
@@ -736,6 +736,11 @@ for contract in \
     exit 1
   fi
 done
+sequence_window_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T "$sequence_tables" C-w)"
+if [[ "$sequence_window_binding" == *" new-window "* || "$sequence_window_binding" != *"--anchor #{pane_id}"* ]]; then
+  echo "sequence Window-create binding bypassed canonical exact-anchor intent: $sequence_window_binding" >&2
+  exit 1
+fi
 if [[ "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-S-Right)" != *"next-window"* ]]; then
   echo "sequence apply changed existing single-chord behavior" >&2
   exit 1
@@ -2322,6 +2327,8 @@ PROJMUX_DISCOVERY_SESSION="app"
 PROJMUX_DISCOVERY_SOCKET="projmux-discovery-$$-$RANDOM"
 export PROJMUX_DISCOVERY_SESSION PROJMUX_DISCOVERY_SOCKET
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" new-session -d -s "$PROJMUX_DISCOVERY_SESSION" -c "$discovery_scan/app" sleep 300
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" set-option -gq @projmux_app 1
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" set-option -gq @projmux_socket_name "$PROJMUX_DISCOVERY_SOCKET"
 PROJMUX_DISCOVERY_STARTED=1
 PROJMUX_DISCOVERY_ACTUAL="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" display-message -p -t "=$PROJMUX_DISCOVERY_SESSION" '#{socket_path}')"
 export PROJMUX_DISCOVERY_ACTUAL
@@ -2519,6 +2526,8 @@ termination_tmux set-option -t "$termination_session" -q @projmux_project_path "
 # config the installed server uses onto this exact isolated server; without it
 # this fixture would exercise only the old direct-Registry transport.
 termination_tmux source-file "$PROJMUX_SMOKE_WORKDIR/projmux.conf"
+termination_tmux set-option -gq @projmux_app 1
+termination_tmux set-option -gq @projmux_socket_name "$termination_socket"
 (termination_tmux show-hooks -g; termination_tmux show-hooks -gw) >"$termination_root/pane-exited-hook.txt"
 smoke_assert_file_contains "$termination_root/pane-exited-hook.txt" "reason pane-exited"
 termination_sibling_tmux new-session -d -s sibling -n main sleep 600
@@ -2741,9 +2750,12 @@ termination_case() {
   echo ">> termination case $label uid=$pane_uid class=$got_class generation=$activation"
 }
 
-termination_case clean normal 0 "" sh -c 'exit 0'
-termination_case failure abnormal 7 "" sh -c 'exit 7'
-termination_case signal abnormal "" TERM sh -c 'kill -TERM $$; sleep 30'
+# Let the canonical create transaction finish its exact UID claim and mirrors
+# before the child supplies termination evidence. This block measures the
+# post-commit supervisor receipt, not a process that disappears mid-create.
+termination_case clean normal 0 "" sh -c 'sleep 0.5; exit 0'
+termination_case failure abnormal 7 "" sh -c 'sleep 0.5; exit 7'
+termination_case signal abnormal "" TERM sh -c 'sleep 0.5; kill -TERM $$; sleep 30'
 
 # The same evidence for the three managed providers. Each stub is a real
 # process that ends the way the case asks for; nothing about the provider's own
@@ -2999,6 +3011,8 @@ exitrec_tmux "$exitrec_socket" new-session -d -s "$exitrec_session" -n main \
   -c "$exitrec_root/work/evidence" sleep 600
 exitrec_tmux "$exitrec_socket" set-option -t "$exitrec_session" -q @projmux_project_path \
   "$exitrec_root/work/evidence"
+exitrec_tmux "$exitrec_socket" set-option -gq @projmux_app 1
+exitrec_tmux "$exitrec_socket" set-option -gq @projmux_socket_name "$exitrec_socket"
 exitrec_tmux "$exitrec_standalone_socket" new-session -d -s "$exitrec_standalone_session" -n main \
   -c "$exitrec_root/work/standalone" sleep 600
 exitrec_tmux "$exitrec_standalone_socket" set-option -t "$exitrec_standalone_session" -q @projmux_project_path \
@@ -3406,14 +3420,37 @@ echo ">> exit reconciliation read projection write-free"
 # and nothing is started to fill the gap.
 exitrec_restart_case() {
   local label="$1" socket="$2" socket_path="$3" server_pid="$4" project="$5"
-  local pane_uid
-  pane_uid="$(exitrec_pmx_inside "$socket_path" "$server_pid" \
-    create pane --project "$project" -o uid -- sleep 600)"
+  local pane_uid before_source before_observed
+  if [[ "$label" == "standalone" ]]; then
+    local registry="$exitrec_root/state/projmux/metadata/registry.json"
+    cp "$registry" "$exitrec_root/standalone-create-registry.before"
+    exitrec_tmux "$socket" list-panes -a -F '#{pane_id}\037#{@projmux_pane_uid}' >"$exitrec_root/standalone-create-tmux.before"
+    set +e
+    exitrec_pmx_inside "$socket_path" "$server_pid" create pane --project "$project" -o uid -- sleep 600 \
+      >"$exitrec_root/standalone-create.out" 2>"$exitrec_root/standalone-create.err"
+    local create_status=$?
+    set -e
+    if [[ "$create_status" == "0" ]]; then
+      echo "standalone restart fixture created managed topology without app ownership" >&2
+      exit 1
+    fi
+    smoke_assert_file_contains "$exitrec_root/standalone-create.err" 'not app-owned'
+    cmp "$exitrec_root/standalone-create-registry.before" "$registry"
+    exitrec_tmux "$socket" list-panes -a -F '#{pane_id}\037#{@projmux_pane_uid}' >"$exitrec_root/standalone-create-tmux.after"
+    cmp "$exitrec_root/standalone-create-tmux.before" "$exitrec_root/standalone-create-tmux.after"
+    pane_uid="$(exitrec_pmx get panes --project "$project" -o uid | head -n 1)"
+  else
+    pane_uid="$(exitrec_pmx_inside "$socket_path" "$server_pid" \
+      create pane --project "$project" -o uid -- sleep 600)"
+  fi
   if [[ -z "$pane_uid" ]]; then
     echo "restart case $label created no Pane" >&2
     exit 1
   fi
   exitrec_reconcile "$socket"
+  exitrec_doc pane "$pane_uid"
+  before_source="$(exitrec_termination_field source)"
+  before_observed="$(exitrec_termination_field observedAt)"
 
   env -u TMUX -u TMUX_PANE "$exitrec_real_tmux" -S "$socket_path" kill-server >/dev/null 2>&1 || true
   # The whole server is gone, so the mirrored-uid observation *fails* rather than
@@ -3434,9 +3471,11 @@ exitrec_restart_case() {
   fi
   exitrec_doc pane "$pane_uid"
   if [[ "$(exitrec_termination_field source)" == "reconcile" ]]; then
-    echo "restart case $label filed reconciler evidence against an unreadable server" >&2
-    cat "$exitrec_root/doc.json" >&2
-    exit 1
+    if [[ "$before_source" != "reconcile" || "$(exitrec_termination_field observedAt)" != "$before_observed" ]]; then
+      echo "restart case $label filed new reconciler evidence against an unreadable server" >&2
+      cat "$exitrec_root/doc.json" >&2
+      exit 1
+    fi
   fi
 
   # Restart the same socket. The observation is now readable and honestly empty.

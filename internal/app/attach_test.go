@@ -62,6 +62,9 @@ func TestAppRunAttachAutoPrunesAndEnsuresHome(t *testing.T) {
 			killer:     client,
 			homeDir:    func() (string, error) { return "/home/tester", nil },
 			workingDir: func() (string, error) { return "/tmp/current", nil },
+			ensureHomeSession: func(_ context.Context, name, cwd string) error {
+				return client.EnsureSession(context.Background(), name, cwd)
+			},
 		},
 	}
 

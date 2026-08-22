@@ -16,6 +16,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -40,6 +41,33 @@ type fakeSessionMaterializer struct {
 func (f *fakeSessionMaterializer) SessionExists(_ context.Context, name string) (bool, error) {
 	return f.tmux.session(name) != nil, nil
 }
+
+func (f *fakeSessionMaterializer) PreparePersistentSessionCreate(_ context.Context, name, runtimeCWD, projectCWD string, env map[string]string) (inttmux.PersistentSessionCreateRequest, bool, error) {
+	f.initialPaneCWD = runtimeCWD
+	if f.beforeEnsureResult != nil {
+		f.beforeEnsureResult()
+		f.beforeEnsureResult = nil
+	}
+	if f.tmux.session(name) != nil {
+		return inttmux.PersistentSessionCreateRequest{}, true, nil
+	}
+	if f.preCreateErr != nil {
+		return inttmux.PersistentSessionCreateRequest{}, false, f.preCreateErr
+	}
+	return inttmux.PersistentSessionCreateRequest{
+		SessionName: name, RuntimeCWD: runtimeCWD, ProjectCWD: projectCWD, Environment: maps.Clone(env),
+	}, false, nil
+}
+
+func (f *fakeSessionMaterializer) CompletePersistentSessionCreate(_ context.Context, request inttmux.PersistentSessionCreateRequest, _ intmux.NewSessionResult) error {
+	f.created = append(f.created, request.SessionName)
+	if f.postCreate != nil {
+		f.postCreate()
+	}
+	return f.createErr
+}
+
+func (f *fakeSessionMaterializer) AbortPersistentSessionCreate() {}
 
 func (f *fakeSessionMaterializer) EnsureSession(_ context.Context, name, _ string) error {
 	if f.tmux.session(name) != nil {
@@ -182,6 +210,7 @@ func newTestResourceCreateCommand(t *testing.T, store *fakeResourceStore, tmux *
 			runner:     tmux,
 			mirror:     mirror,
 			sessions:   sessions,
+			target:     explicitTmuxTarget{flag: "-S", value: tmux.socketPath},
 			warn:       testWarnWriter{t},
 			executable: func() (string, error) { return testSupervisorBinary, nil },
 			lookupEnv:  func(string) string { return "" },
@@ -1010,7 +1039,10 @@ func TestOperationRollbackRemovesOnlyWhatThisOperationCreated(t *testing.T) {
 		session := tmux.addSession("alpha")
 		window := seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
 		var warnings bytes.Buffer
-		runtime := &materializer{runner: tmux, mirror: intmetadata.NewMirror(tmux), warn: &warnings}
+		runtime := &materializer{
+			runner: tmux, mirror: intmetadata.NewMirror(tmux), warn: &warnings,
+			target: explicitTmuxTarget{flag: "-S", value: tmux.socketPath},
+		}
 
 		ledger := &runtimeLedger{}
 		ledger.record(runtimeWindow, window.id, "win-alpha-main")

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -75,6 +76,123 @@ func markPaneMissingRuntime(t *testing.T, registry *coremetadata.Registry, uid s
 		Reason: coremetadata.ReasonRuntimeUnbound, FirstObservedAt: resourceFixtureClock,
 		LastTransitionAt: resourceFixtureClock,
 	}}
+}
+
+func TestPaneDeleteDefaultRouteForgedServerRefusesBeforeFirstWrite(t *testing.T) {
+	path := "/tmp/projmux-route/cloned-delete.sock"
+	runner := &recordingTmuxRunner{outputs: map[string]string{
+		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"): path + "\n",
+		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", tmuxopts.AppGlobal):      "0\n",
+	}}
+	runtime := &tmuxPaneDeleteRuntime{
+		runner: runner, target: explicitTmuxTarget{flag: "-L", value: defaultAppSocket}, getenv: func(string) string { return "" },
+	}
+	registry := resourceFixtureRegistry(t)
+	_, err := runtime.preflight(context.Background(), registry, panePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log"))
+	if err == nil || !strings.Contains(err.Error(), "not app-owned") {
+		t.Fatalf("forged default delete error = %v", err)
+	}
+	for _, call := range runner.calls {
+		joined := strings.Join(call.args, " ")
+		if strings.Contains(joined, "kill-") || strings.Contains(joined, "set-option") {
+			t.Fatalf("forged default delete reached a write: %#v", runner.calls)
+		}
+	}
+}
+
+func TestPaneDeletePreExecuteNoServerRefusesInsteadOfCompletingAbsence(t *testing.T) {
+	runtime, runner, _ := newPaneRuntimeFixture(t, "")
+	runtime.expectedSocketPath = testDeleteTarget.value
+	runtime.expectedLogicalSocket = defaultAppSocket
+	key := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")
+	runner.errors = map[string]error{key: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running"}}}
+	target := paneLiveDeleteTarget{PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha"}
+	applied, err := runtime.killAll(context.Background(), []paneLiveDeleteTarget{target})
+	if err == nil || applied != 0 {
+		t.Fatalf("pre-execute no-server result = applied %d, err %v; want zero/refusal", applied, err)
+	}
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "kill-pane") {
+			t.Fatalf("pre-execute no-server reached kill: %#v", runner.calls)
+		}
+	}
+}
+
+type lastTargetDeleteRunner struct {
+	kind   string
+	killed bool
+	calls  []recordedTmuxCall
+}
+
+func (r *lastTargetDeleteRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, recordedTmuxCall{name: name, args: append([]string(nil), args...)})
+	if name != "tmux" || len(args) < 3 || args[0] != "-S" || args[1] != testDeleteTarget.value {
+		return nil, fmt.Errorf("last-target delete runner requires exact -S routing: %s %v", name, args)
+	}
+	command := args[2]
+	if r.killed && command == "display-message" && args[len(args)-1] == "#{socket_path}" {
+		return nil, appTypedCommandFailure{inttmux.CommandFailure{
+			Kind: inttmux.CommandFailureExit, Stderr: "no server running on " + testDeleteTarget.value,
+		}}
+	}
+	switch command {
+	case "display-message":
+		if args[len(args)-1] == "#{socket_path}" {
+			return []byte(testDeleteTarget.value + "\n"), nil
+		}
+		if r.kind == "pane" {
+			return []byte(livePaneInventoryRow("$1", "alpha", "@10", "%31", "prj-alpha", "win-alpha-main", "pan-alpha-log")), nil
+		}
+		return []byte(liveInventoryRow("$1", "alpha", "@10", "prj-alpha", "win-alpha-main")), nil
+	case "show-options":
+		switch args[len(args)-1] {
+		case tmuxopts.AppGlobal:
+			return []byte("1\n"), nil
+		case runtimeMutationSocketNameOption:
+			return []byte(defaultAppSocket + "\n"), nil
+		}
+	case "list-panes":
+		return []byte(livePaneInventoryRow("$1", "@10", "%31", "pan-alpha-log")), nil
+	case "list-windows":
+		return []byte(liveInventoryRow("$1", "@10", "win-alpha-main")), nil
+	case "kill-pane":
+		if r.kind != "pane" || flagValue(args[2:], "-t") != "%31" {
+			return nil, fmt.Errorf("unexpected last Pane kill: %v", args)
+		}
+		r.killed = true
+		return nil, nil
+	case "kill-window":
+		if r.kind != "window" || flagValue(args[2:], "-t") != "@10" {
+			return nil, fmt.Errorf("unexpected last Window kill: %v", args)
+		}
+		r.killed = true
+		return nil, nil
+	}
+	return nil, fmt.Errorf("unexpected last-target delete command: %v", args)
+}
+
+func TestPaneDeleteSuccessfulLastKillAcceptsPostApplyNoServerReceipt(t *testing.T) {
+	runner := &lastTargetDeleteRunner{kind: "pane"}
+	runtime := statefulPaneRuntime(t, runner)
+	runtime.expectedSocketPath = testDeleteTarget.value
+	runtime.expectedLogicalSocket = defaultAppSocket
+	target := paneLiveDeleteTarget{
+		PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10",
+		SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
+	}
+	applied, err := runtime.killAll(context.Background(), []paneLiveDeleteTarget{target})
+	if err != nil || applied != 1 || !runner.killed {
+		t.Fatalf("last-Pane kill result = applied %d, killed %t, err %v; want one successful kill", applied, runner.killed, err)
+	}
+	kills := 0
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "kill-pane") {
+			kills++
+		}
+	}
+	if kills != 1 {
+		t.Fatalf("last-Pane kill calls = %d, want 1: %#v", kills, runner.calls)
+	}
 }
 
 func TestPaneDeleteRuntimePreflightPinsSiblingAgentAndImplicitCascades(t *testing.T) {
@@ -400,16 +518,16 @@ func TestPaneDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndPane(t *test
 	runtime.getenv = func(name string) string {
 		switch name {
 		case "TMUX":
-			return "/tmp/exact.sock,123,0"
+			return testDeleteTarget.value + ",123,0"
 		case "TMUX_PANE":
 			return "%31"
 		}
 		return ""
 	}
-	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")] = "/tmp/exact.sock\n"
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")] = testDeleteTarget.value + "\n"
 	format := tmuxRowFormat("#{socket_path}", "#{pane_id}")
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-t", "%31", "-F", format)] =
-		livePaneInventoryRow("/tmp/exact.sock", "%31")
+		livePaneInventoryRow(testDeleteTarget.value, "%31")
 	plan := panePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
 	plan.Implicit = true
 
@@ -421,41 +539,30 @@ func TestPaneDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndPane(t *test
 		t.Fatalf("implicit plan = %#v", live)
 	}
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")] = "/tmp/foreign.sock\n"
-	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil || !strings.Contains(err.Error(), "not attached to the exact") {
+	if _, err := runtime.preflight(context.Background(), registry, plan); err == nil || !strings.Contains(err.Error(), "exact socket drifted") {
 		t.Fatalf("foreign socket error = %v", err)
 	}
 }
 
 func TestPaneDeleteRuntimeQueueRevalidatesTombstonesAndUsesExactSocket(t *testing.T) {
-	runtime, runner, _ := newPaneRuntimeFixture(t, "")
-	target := paneLiveDeleteTarget{PaneUID: "pan-alpha-log", PaneID: "%31", WindowID: "@10", SessionName: "alpha", SessionID: "$1"}
-	showKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "show-options", "-pqv", "-t", "%31", tmuxopts.PaneUID)
-	runner.outputs[showKey] = "pan-alpha-log\n"
-	if err := runtime.tombstoneSelfKill(context.Background(), []paneLiveDeleteTarget{target}); err != nil {
-		t.Fatalf("tombstone: %v", err)
+	runtime, _, _ := newPaneRuntimeFixture(t, "")
+	runtime.expectedSocketPath = testDeleteTarget.value
+	runtime.expectedLogicalSocket = defaultAppSocket
+	target := paneLiveDeleteTarget{PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha"}
+	action := runtime.mutationAction(mutationQueuePaneKill, target, "", "")
+	action.Target.UID = "deleted:" + target.PaneUID
+	action.Queue = &runtimeMutationQueuedKill{PhysicalSocket: testDeleteTarget.value, LogicalSocket: defaultAppSocket,
+		ExpectedUID: action.Target.UID, SessionID: target.SessionID, WindowID: target.WindowID}
+	action.Queue.Marker = runtimeMutationQueueMarker(action)
+	argv, err := runtimeMutationArgv(action)
+	if err != nil {
+		t.Fatal(err)
 	}
-	runner.outputs[showKey] = "deleted:pan-alpha-log\n"
-	if err := runtime.queueSelfKill(context.Background(), []paneLiveDeleteTarget{target}); err != nil {
-		t.Fatalf("queue: %v", err)
-	}
-	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-S", testDeleteTarget.value, "show-options", "-pqv", "-t", "%31", tmuxopts.PaneUID}},
-		{name: "tmux", args: []string{"-S", testDeleteTarget.value, "set-option", "-pq", "-t", "%31", tmuxopts.PaneUID, "deleted:pan-alpha-log"}},
-		{name: "tmux", args: []string{"-S", testDeleteTarget.value, "show-options", "-pqv", "-t", "%31", tmuxopts.PaneUID}},
-		{name: "tmux", args: []string{"-S", testDeleteTarget.value, "run-shell", "-b", "exec 'tmux' '-S' '" + testDeleteTarget.value + "' kill-pane -t '%31'"}},
-	}
-	if !reflect.DeepEqual(runner.calls, want) {
-		t.Fatalf("queue calls = %#v, want %#v", runner.calls, want)
-	}
-
-	runner.calls = nil
-	runner.outputs[showKey] = "pan-foreign\n"
-	err := runtime.queueSelfKill(context.Background(), []paneLiveDeleteTarget{target})
-	if err == nil || !strings.Contains(err.Error(), "pan-foreign") || !strings.Contains(err.Error(), `want="deleted:pan-alpha-log"`) {
-		t.Fatalf("foreign revalidation = %v", err)
-	}
-	if len(runner.calls) != 1 {
-		t.Fatalf("foreign revalidation made mutation calls: %#v", runner.calls)
+	joined := strings.Join(argv, " ")
+	for _, want := range []string{"set-environment -g", "run-shell -b", "-S '" + testDeleteTarget.value + "'", "kill-pane -t %31", tmuxopts.PaneUID} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("queued Pane argv = %q, want %q", joined, want)
+		}
 	}
 }
 
@@ -476,8 +583,25 @@ func (r *statefulPaneDeleteRunner) Run(_ context.Context, name string, args ...s
 	command := args[2]
 	paneID := flagValue(args[2:], "-t")
 	switch command {
+	case "display-message":
+		if len(args) > 0 && args[len(args)-1] == "#{socket_path}" {
+			return []byte(testDeleteTarget.value + "\n"), nil
+		}
+		return []byte(livePaneInventoryRow("$1", "alpha", "@10", paneID, "prj-alpha", "win-alpha-main", r.options[paneID])), nil
 	case "show-options":
+		if args[len(args)-1] == tmuxopts.AppGlobal {
+			return []byte("1\n"), nil
+		}
+		if args[len(args)-1] == runtimeMutationSocketNameOption {
+			return []byte(defaultAppSocket + "\n"), nil
+		}
 		return []byte(r.options[paneID] + "\n"), nil
+	case "list-panes":
+		var out strings.Builder
+		for id, uid := range r.options {
+			out.WriteString(livePaneInventoryRow("$1", "@10", id, uid))
+		}
+		return []byte(out.String()), nil
 	case "set-option":
 		value := args[len(args)-1]
 		if err := r.failSet[paneSetFailureKey(paneID, value)]; err != nil {
@@ -508,10 +632,49 @@ func statefulPaneRuntime(t *testing.T, runner tmuxCommandRunner) *tmuxPaneDelete
 
 func multiSelfDeleteTargets() []paneLiveDeleteTarget {
 	return []paneLiveDeleteTarget{
-		{PaneUID: "pan-alpha-zsh", PaneID: "%30", WindowID: "@10", SessionName: "alpha", SessionID: "$1", Self: true},
-		{PaneUID: "pan-alpha-log", PaneID: "%31", WindowID: "@10", SessionName: "alpha", SessionID: "$1"},
-		{PaneUID: "pan-alpha-codex", PaneID: "%32", WindowID: "@10", SessionName: "alpha", SessionID: "$1"},
+		{PaneUID: "pan-alpha-zsh", PaneID: "%30", WindowUID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha", Self: true},
+		{PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha"},
+		{PaneUID: "pan-alpha-codex", PaneID: "%32", WindowUID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha"},
 	}
+}
+
+func TestPaneDeleteTombstoneAndRestoreExecuteOnceThenReplanEmpty(t *testing.T) {
+	target := multiSelfDeleteTargets()[0]
+	runner := &statefulPaneDeleteRunner{options: map[string]string{target.PaneID: target.PaneUID}, failSet: map[string]error{}, failQueue: map[string]error{}}
+	runtime := statefulPaneRuntime(t, runner)
+	if err := runtime.tombstoneSelfKill(context.Background(), []paneLiveDeleteTarget{target}); err != nil {
+		t.Fatalf("first tombstone: %v", err)
+	}
+	if got := runner.options[target.PaneID]; got != deletedPaneMirrorPrefix+target.PaneUID {
+		t.Fatalf("tombstone mirror = %q", got)
+	}
+	firstWrites := len(slicesDeletePaneSetWrites(runner.calls))
+	if err := runtime.tombstoneSelfKill(context.Background(), []paneLiveDeleteTarget{target}); err != nil {
+		t.Fatalf("repeat tombstone: %v", err)
+	}
+	if got := len(slicesDeletePaneSetWrites(runner.calls)); got != firstWrites {
+		t.Fatalf("repeat tombstone writes = %d, want %d", got, firstWrites)
+	}
+	if err := runtime.restoreSelfKill(context.Background(), []paneLiveDeleteTarget{target}); err != nil {
+		t.Fatalf("first restore: %v", err)
+	}
+	restoredWrites := len(slicesDeletePaneSetWrites(runner.calls))
+	if err := runtime.restoreSelfKill(context.Background(), []paneLiveDeleteTarget{target}); err != nil {
+		t.Fatalf("repeat restore: %v", err)
+	}
+	if got := len(slicesDeletePaneSetWrites(runner.calls)); got != restoredWrites {
+		t.Fatalf("repeat restore writes = %d, want %d", got, restoredWrites)
+	}
+}
+
+func slicesDeletePaneSetWrites(calls []recordedTmuxCall) []recordedTmuxCall {
+	var writes []recordedTmuxCall
+	for _, call := range calls {
+		if slicesHas(call.args, "set-option") {
+			writes = append(writes, call)
+		}
+	}
+	return writes
 }
 
 func TestPaneDeleteRuntimeTombstoneFailureRollsBackBeforeRegistryCommit(t *testing.T) {

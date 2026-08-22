@@ -135,13 +135,17 @@ PROJMUX_SMOKE_TMUX_SOCKET="projmux-recorder-e2e"
 export PROJMUX_SMOKE_TMUX_SOCKET
 recorder_socket="$PROJMUX_SMOKE_TMUX_SOCKET"
 recorder_session="recorder-e2e"
+recorder_bootstrap_session="recorder-bootstrap-e2e"
+recorder_root="$PROJMUX_SMOKE_WORKDIR/recorder-e2e"
+recorder_bootstrap_root="$PROJMUX_SMOKE_WORKDIR/recorder-bootstrap"
 recorder_log="$PROJMUX_SMOKE_WORKDIR/recorder-client.log"
 recorder_input="$PROJMUX_SMOKE_WORKDIR/recorder-client.in"
+mkdir -p "$recorder_root" "$recorder_bootstrap_root"
 mkfifo "$recorder_input"
-tmux -L "$recorder_socket" new-session -d -s "$recorder_session" sleep 300
+tmux -L "$recorder_socket" new-session -d -s "$recorder_bootstrap_session" -c "$recorder_bootstrap_root" sleep 300
 exec 9<>"$recorder_input"
 TERM=xterm-256color script -qefc \
-  "TERM=xterm-256color tmux -L '$recorder_socket' attach-session -t '$recorder_session'" \
+  "TERM=xterm-256color tmux -L '$recorder_socket' attach-session -t '$recorder_bootstrap_session'" \
   "$recorder_log" <"$recorder_input" >/dev/null 2>&1 &
 recorder_client_pid=$!
 
@@ -606,7 +610,7 @@ for severity in info warn critical; do
   "$bin" create notification \
     --id "polish-$severity" \
     --text "polish $severity" \
-    --target "$recorder_session:0.0" \
+    --target "$recorder_bootstrap_session:0.0" \
     --socket "$recorder_socket" \
     --severity "$severity" \
     --source external >/dev/null
@@ -674,13 +678,29 @@ fi
 # pane proves Escape and unknown continuation are consumed (zero pane input),
 # while two shared-prefix actions prove one dispatch per completed sequence.
 sequence_capture="$PROJMUX_SMOKE_WORKDIR/sequence-pane-input.bin"
-sequence_window="$(tmux -L "$recorder_socket" new-window -d -t "$recorder_session:" -n sequence-input \
-  -P -F '#{window_id}' "/bin/sh -c 'stty raw -echo; cat >\"$sequence_capture\"'")"
-tmux -L "$recorder_socket" select-window -t "$sequence_window"
-smoke_wait_for "sequence capture pane" test -e "$sequence_capture"
 install -m 0644 "$smoke_root/test/fixtures/keymaps/sequences-v2.toml" "$XDG_CONFIG_HOME/projmux/keymap.toml"
 "$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$recorder_socket" \
   >"$PROJMUX_SMOKE_WORKDIR/sequence-e2e-apply.out"
+recorder_project_uid="$("$bin" create project --root "$recorder_root" --name "$recorder_session" -o uid)"
+"$bin" reconcile resources --socket "$recorder_socket" --materialize-project "uid:$recorder_project_uid" -o json \
+  >"$PROJMUX_SMOKE_WORKDIR/sequence-e2e-materialize.json"
+if ! tmux -L "$recorder_socket" has-session -t "=$recorder_session" 2>/dev/null; then
+  echo "canonical sequence Project materialization created no $recorder_session Session" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/sequence-e2e-materialize.json" >&2
+  tmux -L "$recorder_socket" list-sessions -F '#{session_id}|#{session_name}|#{@projmux_project_uid}|#{@projmux_project_path}' >&2
+  exit 1
+fi
+tmux -L "$recorder_socket" switch-client -c "$recorder_client" -t "=$recorder_session"
+recorder_pane="$(tmux -L "$recorder_socket" display-message -p -c "$recorder_client" '#{pane_id}')"
+if [[ -z "$(tmux -L "$recorder_socket" show-options -pqv -t "$recorder_pane" @projmux_pane_uid)" ]]; then
+  echo "sequence recorder Pane did not acquire a managed Registry identity" >&2
+  exit 1
+fi
+sequence_window="$(tmux -L "$recorder_socket" display-message -p -t "$recorder_pane" '#{window_id}')"
+tmux -L "$recorder_socket" respawn-pane -k -t "$recorder_pane" \
+  "/bin/sh -c 'stty raw -echo; cat >\"$sequence_capture\"'"
+tmux -L "$recorder_socket" select-window -t "$sequence_window"
+smoke_wait_for "sequence capture pane" test -e "$sequence_capture"
 
 sequence_client_is_root() {
   [[ "$(tmux -L "$recorder_socket" display-message -p -c "$recorder_client" '#{client_key_table}')" == "root" ]]
@@ -733,7 +753,7 @@ if [[ "$windows_after" -ne $((windows_before + 1)) ]]; then
 fi
 smoke_wait_for "completed sequence return to root" sequence_client_is_root
 
-tmux -L "$recorder_socket" kill-server
+smoke_cleanup_tmux_server "$recorder_socket"
 wait "$recorder_client_pid" || true
 exec 9>&-
 

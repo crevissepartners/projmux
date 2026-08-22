@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -20,7 +21,7 @@ type windowDeleteRuntime interface {
 	// server. It is called before the first inventory of an invocation.
 	useExactTarget(explicitTmuxTarget)
 	preflight(context.Context, coremetadata.Registry, deletePlan) (windowLiveDeletePlan, error)
-	kill(context.Context, windowLiveDeleteTarget) error
+	killAll(context.Context, []windowLiveDeleteTarget) (int, error)
 	queueSelfKill(context.Context, []windowLiveDeleteTarget) error
 }
 
@@ -68,9 +69,11 @@ func (p windowLiveDeletePlan) hasSelfTarget() bool {
 }
 
 type tmuxWindowDeleteRuntime struct {
-	runner tmuxCommandRunner
-	target explicitTmuxTarget
-	getenv func(string) string
+	runner                tmuxCommandRunner
+	target                explicitTmuxTarget
+	expectedSocketPath    string
+	expectedLogicalSocket string
+	getenv                func(string) string
 }
 
 // newTmuxWindowDeleteRuntime builds the live half with no server bound yet.
@@ -87,6 +90,8 @@ func (r *tmuxWindowDeleteRuntime) useExactTarget(target explicitTmuxTarget) {
 		return
 	}
 	r.target = target
+	r.expectedSocketPath = ""
+	r.expectedLogicalSocket = ""
 }
 
 type liveWindowRow struct {
@@ -98,6 +103,9 @@ type liveWindowRow struct {
 }
 
 func (r *tmuxWindowDeleteRuntime) routed() explicitTmuxRunner {
+	if r.expectedSocketPath != "" {
+		return explicitTmuxRunner{runner: r.runner, target: explicitTmuxTarget{flag: "-S", value: r.expectedSocketPath}}
+	}
 	return explicitTmuxRunner{runner: r.runner, target: r.target}
 }
 
@@ -107,6 +115,9 @@ func (r *tmuxWindowDeleteRuntime) inventory(ctx context.Context) ([]liveWindowRo
 	}
 	if r.target.flag == "" || r.target.value == "" {
 		return nil, false, errors.New("delete window: no exact tmux target is bound")
+	}
+	if err := r.guardSocketIdentity(ctx, true); err != nil {
+		return nil, false, err
 	}
 	format := tmuxRowFormat(
 		"#{session_id}",
@@ -275,41 +286,213 @@ func (r *tmuxWindowDeleteRuntime) currentInvocationWindow(ctx context.Context) (
 	return windowID, inheritedSocket, nil
 }
 
-func (r *tmuxWindowDeleteRuntime) kill(ctx context.Context, target windowLiveDeleteTarget) error {
-	_, err := r.routed().Run(ctx, "tmux", "kill-window", "-t", target.WindowID)
+func (r *tmuxWindowDeleteRuntime) killAll(ctx context.Context, targets []windowLiveDeleteTarget) (int, error) {
+	applied := 0
+	steps := make([]runtimeMutationStep, 0, len(targets))
+	for i, target := range targets {
+		attempted := false
+		action := r.mutationAction(mutationKillWindow, target, target.UID, "-t", target.WindowID)
+		action.Order = i + 1
+		steps = append(steps, runtimeMutationStep{
+			Action: action,
+			Reobserve: func(ctx context.Context) (bool, error) {
+				return r.observeWindowMutationEffect(ctx, target, target.UID, true, attempted)
+			},
+			Guard: func(ctx context.Context) error {
+				if filepath.Clean(action.Target.PhysicalSocket) != filepath.Clean(r.expectedSocketPath) {
+					return errors.New("delete window: printable physical socket disagrees with bound execution route")
+				}
+				return r.revalidateMutationTarget(ctx, target, target.UID)
+			},
+			Apply: func(ctx context.Context) error {
+				_, err := runRuntimeMutationCommand(ctx, r.routed(), action)
+				if err == nil {
+					attempted = true
+					applied++
+				}
+				return err
+			},
+		})
+	}
+	err := executeRuntimeMutationPlan(ctx, steps)
 	if err != nil {
-		return tmuxError("delete window: kill exact live Window %s in session %s (%s): %v",
-			target.WindowID, target.SessionName, target.SessionID, err)
+		return applied, tmuxError("delete window: kill exact live Window batch: %v", err)
+	}
+	return applied, nil
+}
+
+func (r *tmuxWindowDeleteRuntime) queueSelfKill(ctx context.Context, targets []windowLiveDeleteTarget) error {
+	steps := make([]runtimeMutationStep, 0, len(targets))
+	for i, target := range targets {
+		attempted := false
+		action := r.mutationAction(mutationQueueWindowKill, target, target.UID)
+		action.Queue = &runtimeMutationQueuedKill{PhysicalSocket: r.expectedSocketPath, LogicalSocket: r.expectedLogicalSocket,
+			ExpectedUID: target.UID, SessionID: target.SessionID, WindowID: target.WindowID}
+		action.Queue.Marker = runtimeMutationQueueMarker(action)
+		action.Order = i + 1
+		steps = append(steps, runtimeMutationStep{
+			Action: action,
+			Reobserve: func(ctx context.Context) (bool, error) {
+				absent, err := r.observeWindowMutationEffect(ctx, target, target.UID, true, attempted)
+				if err == nil && absent {
+					return true, nil
+				}
+				if err != nil {
+					return false, err
+				}
+				if err := r.guardSocketIdentity(ctx, false); err != nil {
+					return false, err
+				}
+				return observeRuntimeMutationQueueMarker(ctx, r.runner, action)
+			},
+			Guard: func(ctx context.Context) error {
+				if filepath.Clean(action.Target.PhysicalSocket) != filepath.Clean(r.expectedSocketPath) {
+					return errors.New("delete window: printable physical socket disagrees with bound execution route")
+				}
+				return r.revalidateQueuedWindow(ctx, target)
+			},
+			Apply: func(ctx context.Context) error {
+				_, err := runRuntimeMutationCommand(ctx, r.routed(), action)
+				if err != nil {
+					return tmuxError("queue exact live Window %s in session %s (%s) for self-target deletion: %v",
+						target.WindowID, target.SessionName, target.SessionID, err)
+				}
+				attempted = true
+				return nil
+			},
+		})
+		steps[len(steps)-1].Undo = func(ctx context.Context) error {
+			return clearRuntimeMutationQueueMarker(ctx, r.runner, action)
+		}
+	}
+	if err := executeRuntimeMutationPlan(ctx, steps); err != nil {
+		return tmuxError("queue exact self-target Window deletion: %v", err)
 	}
 	return nil
 }
 
-func (r *tmuxWindowDeleteRuntime) queueSelfKill(ctx context.Context, targets []windowLiveDeleteTarget) error {
-	// The Registry commit and user-visible result deliberately precede this
-	// delayed mutation. Re-prove every Window mirror at the queue boundary so a
-	// handle recycled during that interval cannot make the background command
-	// target a foreign Window. Validate the entire set before queueing any kill.
-	for _, target := range targets {
-		out, err := r.routed().Run(ctx, "tmux", "show-options", "-wqv", "-t", target.WindowID, tmuxopts.WindowUID)
-		if err != nil {
-			return tmuxError("revalidate exact live Window %s before self-target queue: %v", target.WindowID, err)
+func (r *tmuxWindowDeleteRuntime) observeWindowMutationEffect(ctx context.Context, target windowLiveDeleteTarget, wantUID string, absent, allowNoServerAbsent bool) (bool, error) {
+	if err := r.guardSocketIdentity(ctx, false); err != nil {
+		if absent && allowNoServerAbsent && inttmux.IsNoServerFailure(err) {
+			return true, nil
 		}
-		observed := strings.TrimSpace(string(out))
-		if observed != target.UID {
-			if observed == "" {
-				observed = "<missing>"
-			}
-			return fmt.Errorf("delete window: delayed live Window %s mirrors uid %q, want registry uid %q; no self-target kill was queued",
-				target.WindowID, observed, target.UID)
-		}
+		return false, err
 	}
-	for _, target := range targets {
-		command := "exec " + shellQuote("tmux") + " " + shellQuote(r.target.flag) + " " +
-			shellQuote(r.target.value) + " kill-window -t " + shellQuote(target.WindowID)
-		if _, err := r.routed().Run(ctx, "tmux", "run-shell", "-b", command); err != nil {
-			return tmuxError("queue exact live Window %s in session %s (%s) for self-target deletion: %v",
-				target.WindowID, target.SessionName, target.SessionID, err)
+	out, err := r.routed().Run(ctx, "tmux", "list-windows", "-a", "-F", tmuxRowFormat(
+		"#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
+	if err != nil {
+		return false, err
+	}
+	for _, row := range splitTmuxRows(string(out), 3) {
+		if row[1] != target.WindowID {
+			continue
 		}
+		if absent {
+			return false, nil
+		}
+		return row[0] == target.SessionID && row[2] == wantUID, nil
+	}
+	return absent, nil
+}
+
+func (r *tmuxWindowDeleteRuntime) revalidateQueuedWindow(ctx context.Context, target windowLiveDeleteTarget) error {
+	if err := r.guardSocketIdentity(ctx, false); err != nil {
+		return err
+	}
+	out, err := r.routed().Run(ctx, "tmux", "show-options", "-wqv", "-t", target.WindowID, tmuxopts.WindowUID)
+	if err != nil {
+		return tmuxError("revalidate exact live Window %s before self-target queue: %v", target.WindowID, err)
+	}
+	observed := strings.TrimSpace(string(out))
+	if observed != target.UID {
+		if observed == "" {
+			observed = "<missing>"
+		}
+		return fmt.Errorf("delete window: delayed live Window %s mirrors uid %q, want registry uid %q; no self-target kill was queued",
+			target.WindowID, observed, target.UID)
+	}
+	return nil
+}
+
+func (r *tmuxWindowDeleteRuntime) mutationAction(verb runtimeMutationVerb, target windowLiveDeleteTarget, mirror string, args ...string) plannedRuntimeMutation {
+	logicalRoute := r.target.flag + "=" + r.target.value
+	if r.expectedLogicalSocket != "" {
+		logicalRoute = "-L=" + r.expectedLogicalSocket
+	}
+	action := newRuntimeMutation(1, verb, runtimeMutationTarget{
+		Socket: logicalRoute, PhysicalSocket: printableRuntimeMutationSocket(r.expectedSocketPath),
+		Kind: "window", ID: target.WindowID, UID: target.UID,
+		Parent: target.SessionID + "/" + target.RootUID,
+	})
+	bindRuntimeMutationGuard(&action, "socket="+r.target.flag+"="+r.target.value+
+		";session="+target.SessionID+"/"+target.SessionName+
+		";window="+target.WindowID+"/"+mirror+
+		";root="+string(target.RootKind)+"/"+target.RootUID)
+	action.Operands = slices.Clone(args)
+	return action
+}
+
+func (r *tmuxWindowDeleteRuntime) revalidateMutationTarget(ctx context.Context, target windowLiveDeleteTarget, wantUID string) error {
+	if err := r.guardSocketIdentity(ctx, false); err != nil {
+		return err
+	}
+	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.WindowUID+"}")
+	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-t", target.WindowID, "-F", format)
+	if err != nil {
+		return tmuxError("revalidate exact live Window %s: %v", target.WindowID, err)
+	}
+	rows := splitTmuxRows(strings.ReplaceAll(string(out), tmuxRowSepFormat, tmuxRowSep), 5)
+	if len(rows) != 1 {
+		return fmt.Errorf("exact live Window %s returned malformed containment evidence", target.WindowID)
+	}
+	row := rows[0]
+	if row[0] != target.SessionID || row[1] != target.SessionName || row[2] != target.WindowID || row[4] != wantUID {
+		return fmt.Errorf("exact live Window %s drifted before mutation", target.WindowID)
+	}
+	root := deleteRootOwner{Kind: target.RootKind, UID: target.RootUID, Session: target.SessionName}
+	return root.validateLiveSession("delete window", "Window", target.WindowID, target.UID, row[3], row[1])
+}
+
+// guardSocketIdentity binds the first successful observation to one immutable
+// physical socket and rechecks it before every write. A logical -L name alone
+// is not a stable target: tmux may later resolve the same name to a different
+// server after restart or wrapper routing changes.
+func (r *tmuxWindowDeleteRuntime) guardSocketIdentity(ctx context.Context, allowAbsent bool) error {
+	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	if err != nil {
+		if allowAbsent && inttmux.IsNoServerFailure(err) {
+			return nil
+		}
+		// Preserve typed no-server evidence until the expected-absence observer
+		// has classified it. User-facing command boundaries still flatten the
+		// final error so subprocess exit-code behavior is unchanged.
+		return fmt.Errorf("delete window: reobserve exact socket identity: %w", err)
+	}
+	observed := strings.TrimSpace(string(out))
+	if observed == "" {
+		return errors.New("delete window: exact socket identity is empty")
+	}
+	if r.target.flag == "-S" && observed != r.target.value {
+		return fmt.Errorf("delete window: exact socket drifted: observed %q, planned %q", observed, r.target.value)
+	}
+	if r.expectedSocketPath == "" {
+		r.expectedSocketPath = observed
+	}
+	if observed != r.expectedSocketPath {
+		return fmt.Errorf("delete window: exact socket drifted: observed %q, planned %q", observed, r.expectedSocketPath)
+	}
+	if err := guardRuntimeMutationServerOwnership(ctx, r.routed(), r.target); err != nil {
+		return fmt.Errorf("delete window: %w", err)
+	}
+	logical, err := r.routed().Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
+	if err != nil || strings.TrimSpace(string(logical)) == "" {
+		return errors.New("delete window: exact app logical socket marker is unavailable")
+	}
+	if r.expectedLogicalSocket == "" {
+		r.expectedLogicalSocket = strings.TrimSpace(string(logical))
+	}
+	if strings.TrimSpace(string(logical)) != r.expectedLogicalSocket {
+		return errors.New("delete window: app logical socket marker drifted")
 	}
 	return nil
 }

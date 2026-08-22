@@ -251,6 +251,7 @@ func TestSwitchExecuteSidebarTrustDenyRefreshesWithoutSessionCreate(t *testing.T
 		tmuxRunner: tmuxRunner,
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	err := cmd.runSidebarOpen([]string{
 		"--path", target,
@@ -302,6 +303,7 @@ func TestSwitchSidebarOpenApproveContinuesSelectedEmptyOpen(t *testing.T) {
 		tmuxRunner: tmuxRunner,
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	err := cmd.runSidebarOpen([]string{
 		"--path", target,
@@ -352,6 +354,7 @@ func TestSwitchSidebarOpenTrustPopupUsesClientScope(t *testing.T) {
 			return ""
 		},
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	err := cmd.runSidebarOpen([]string{
 		"--path", target,
@@ -397,6 +400,7 @@ func TestSwitchExecutePopupProjectCreateUsesProjectOpenTrust(t *testing.T) {
 		homeDir:   func() (string, error) { return t.TempDir(), nil },
 		lookupEnv: func(string) string { return "" },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	reopen, err := cmd.execute(context.Background(), switchPlan{
 		UI:          switchUIPopup,
@@ -536,6 +540,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 		homeDir:      func() (string, error) { return "/home/tester", nil },
 		workingDir:   func() (string, error) { return "/tmp", nil },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -1082,6 +1087,7 @@ func TestSwitchProjectOpenStartupPickerHasExactlyTwoActions(t *testing.T) {
 		runner:       runner,
 		nativePicker: native,
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
@@ -1229,6 +1235,7 @@ func TestSwitchProjectOpenExistingSessionSkipsStartupPicker(t *testing.T) {
 		runner:       runner,
 		nativePicker: native,
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
@@ -1258,6 +1265,7 @@ func TestSwitchProjectOpenStartupPickerOffCreatesEmptyWithoutPicker(t *testing.T
 		runner:       runner,
 		nativePicker: native,
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
@@ -1322,6 +1330,7 @@ func TestSwitchProjectOpenStartupPickerOffStillChecksTrustBeforeCreate(t *testin
 		homeDir:   func() (string, error) { return t.TempDir(), nil },
 		lookupEnv: func(string) string { return "" },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
@@ -1654,6 +1663,9 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			if tt.name == "open session" {
+				wireFakeProjectSessionPlan(tt.cmd)
+			}
 
 			err := tt.cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{})
 			if err == nil {
@@ -2854,6 +2866,7 @@ func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 		homeDir:      func() (string, error) { return "/home/tester", nil },
 		workingDir:   func() (string, error) { return "/tmp", nil },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {

@@ -234,17 +234,17 @@ func TestSettingsKeybindingAnchorCopyMatchesTheShippedTransport(t *testing.T) {
 			t.Fatalf("navigation action %q anchor = %q, want the no-explicit-target anchor", id, semantics.Anchor)
 		}
 	}
-	// `new-window -c "#{pane_current_path}"` takes the cwd and nothing else.
+	// Window create carries the exact current Pane into the canonical handler.
 	newWindow, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "new-window")
 	if !ok {
 		t.Fatalf("catalog missing new-window")
 	}
-	if !strings.Contains(newWindow.TmuxBody, `-c "#{pane_current_path}"`) {
-		t.Fatalf("new-window body = %q, the cwd-seed anchor no longer matches the shipped command", newWindow.TmuxBody)
+	if !strings.Contains(newWindow.TmuxBody, `internal tmux window-create`) || !strings.Contains(newWindow.TmuxBody, `--anchor #{pane_id}`) {
+		t.Fatalf("new-window body = %q, want exact canonical Pane anchor", newWindow.TmuxBody)
 	}
 	newWindowSemantics, _ := keyBindingActionSemanticsFor(newWindow)
 	if newWindowSemantics.Anchor != keyBindingAnchorCurrentPaneCwdSeed {
-		t.Fatalf("new-window anchor = %q, want the cwd-seed anchor", newWindowSemantics.Anchor)
+		t.Fatalf("new-window semantic anchor = %q, want preserved cwd-seed meaning", newWindowSemantics.Anchor)
 	}
 }
 

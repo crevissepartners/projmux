@@ -20,10 +20,11 @@ const (
 type tmuxBindingKind string
 
 const (
-	tmuxBindingPopupToggle   tmuxBindingKind = "popup-toggle"
-	tmuxBindingRunProjmux    tmuxBindingKind = "run-projmux"
-	tmuxBindingCommand       tmuxBindingKind = "command"
-	tmuxBindingCommandPrompt tmuxBindingKind = "command-prompt"
+	tmuxBindingPopupToggle      tmuxBindingKind = "popup-toggle"
+	tmuxBindingRunProjmux       tmuxBindingKind = "run-projmux"
+	tmuxBindingCommand          tmuxBindingKind = "command"
+	tmuxBindingCommandPrompt    tmuxBindingKind = "command-prompt"
+	tmuxBindingPromptRunProjmux tmuxBindingKind = "prompt-run-projmux"
 )
 
 type keyBindingTier string
@@ -303,8 +304,8 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeStandalone,
 			PlainChord:     "",
-			TmuxKind:       tmuxBindingCommandPrompt,
-			TmuxBody:       "rename-window -- '%%'",
+			TmuxKind:       tmuxBindingPromptRunProjmux,
+			TmuxBody:       "internal tmux window-rename --client #{client_tty} --anchor #{pane_id} -- '%%'",
 			TmuxPromptArgs: "-I \"#{window_name}\"",
 			PlainBindOrder: 70,
 			ProbeOrder:     100,
@@ -444,8 +445,8 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			Tier:           keyBindingTierUserConfigurableDirect,
 			Scope:          keyBindingScopeApp,
 			PlainChord:     "",
-			TmuxKind:       tmuxBindingCommand,
-			TmuxBody:       "new-window -c \"#{pane_current_path}\"",
+			TmuxKind:       tmuxBindingRunProjmux,
+			TmuxBody:       "internal tmux window-create --client #{client_tty} --anchor #{pane_id}",
 			PlainBindOrder: 50,
 			WTID:           "User.projmuxNewWindow",
 			WTKeys:         "ctrl+n",
@@ -1077,6 +1078,9 @@ func keyBindingActionShippedInvocation(action keyBindingAction) (keyBindingActio
 		return keyBindingActionHandler{Invocation: "tmux " + condenseTmuxHandlerBody(action.TmuxBody)}, true
 	case tmuxBindingCommandPrompt:
 		return keyBindingActionHandler{Invocation: "tmux command-prompt then " + condenseTmuxHandlerBody(action.TmuxBody)}, true
+	case tmuxBindingPromptRunProjmux:
+		body := strings.TrimSpace(action.TmuxBody)
+		return keyBindingHandlerFromManifest(strings.Fields(body), "tmux command-prompt then projmux "+body), true
 	}
 	return keyBindingActionHandler{}, false
 }
@@ -1453,6 +1457,9 @@ func renderTmuxBindingBody(binaryPath string, action keyBindingAction) string {
 		return action.TmuxBody
 	case tmuxBindingCommandPrompt:
 		return strings.TrimSpace("command-prompt " + action.TmuxPromptArgs + " " + tmuxConfigQuote(action.TmuxBody))
+	case tmuxBindingPromptRunProjmux:
+		body := "run-shell " + tmuxConfigQuote(tmuxPaneEnvPrefix+bin+" "+action.TmuxBody)
+		return strings.TrimSpace("command-prompt " + action.TmuxPromptArgs + " " + tmuxConfigQuote(body))
 	default:
 		return action.TmuxBody
 	}

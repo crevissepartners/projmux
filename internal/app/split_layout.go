@@ -1,7 +1,6 @@
 package app
 
 import (
-	"fmt"
 	"sort"
 	"strings"
 )
@@ -27,22 +26,27 @@ type aiPaneGeometry struct {
 	height int
 }
 
-// applyEvenSplitLayout observes the anchor Window and equalizes only the peers
-// that share the split axis. Observation and resize failures are deliberately
-// silent: a successful split must never become a failed create or a rollback
-// merely because layout best-effort work was unavailable.
-func applyEvenSplitLayout(
+type plannedPaneResize struct {
+	paneID string
+	axis   string
+	size   int
+}
+
+// planEvenSplitLayout observes the anchor Window and returns only typed resize
+// operands for peers on the split axis. It never executes tmux: the materializer
+// adds stable targets and guards, then sends the complete ordered set through
+// the shared mutation executor.
+func planEvenSplitLayout(
 	targetPane, direction string,
 	read func(args ...string) ([]byte, error),
-	run func(args ...string) error,
-) {
+) (string, []plannedPaneResize) {
 	targetPane = strings.TrimSpace(targetPane)
-	if targetPane == "" || read == nil || run == nil {
-		return
+	if targetPane == "" || read == nil {
+		return "", nil
 	}
 	out, err := read("list-panes", "-t", targetPane, "-F", splitPaneGeometryFormat)
 	if err != nil {
-		return
+		return "", nil
 	}
 	panes := parseSplitPaneGeometry(string(out))
 	var target aiPaneGeometry
@@ -55,22 +59,24 @@ func applyEvenSplitLayout(
 		}
 	}
 	if !found {
-		return
+		return "", nil
 	}
 
 	peers := splitLayoutPeers(panes, target, direction)
 	if len(peers) < 2 {
-		return
+		return "", nil
 	}
+	var planned []plannedPaneResize
 	if direction == placementDown {
 		resizePanesEvenly(peers, func(p aiPaneGeometry, size int) {
-			_ = run("resize-pane", "-t", p.id, "-y", fmt.Sprintf("%d", size))
+			planned = append(planned, plannedPaneResize{paneID: p.id, axis: "-y", size: size})
 		}, func(p aiPaneGeometry) int { return p.height })
-		return
+		return strings.TrimSpace(string(out)), planned
 	}
 	resizePanesEvenly(peers, func(p aiPaneGeometry, size int) {
-		_ = run("resize-pane", "-t", p.id, "-x", fmt.Sprintf("%d", size))
+		planned = append(planned, plannedPaneResize{paneID: p.id, axis: "-x", size: size})
 	}, func(p aiPaneGeometry) int { return p.width })
+	return strings.TrimSpace(string(out)), planned
 }
 
 func parseSplitPaneGeometry(value string) []aiPaneGeometry {

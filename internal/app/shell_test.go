@@ -15,7 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -106,7 +108,7 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		}
 	}
 
-	wantArgs := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "home", "-c", home}
+	wantArgs := []string{"-L", "projmux", "-f", configPath, "attach-session", "-t", "=home", "-c", home}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
 	}
@@ -315,7 +317,7 @@ func TestShellSupportsRuntimeOverrides(t *testing.T) {
 	if _, err := os.Stat(configPath); !os.IsNotExist(err) {
 		t.Fatalf("config was written despite --no-install: %v", err)
 	}
-	wantArgs := []string{"-L", "pmx-dev", "-f", configPath, "new-session", "-A", "-s", "dev", "-c", home}
+	wantArgs := []string{"-L", "pmx-dev", "-f", configPath, "attach-session", "-t", "=dev", "-c", home}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
 	}
@@ -341,20 +343,21 @@ func TestShellDefaultSessionUsesProjectContextIdentity(t *testing.T) {
 		},
 	}
 	cmd := &shellCommand{
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv:  func(string) string { return "" },
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		tmuxRunner: tmux,
-		getwd:      func() (string, error) { return nested, nil },
+		executable:     func() (string, error) { return "/tmp/projmux", nil },
+		lookupEnv:      func(string) string { return "" },
+		homeDir:        func() (string, error) { return home, nil },
+		writeFile:      os.WriteFile,
+		runCommand:     recorder.run,
+		tmuxRunner:     tmux,
+		getwd:          func() (string, error) { return nested, nil },
+		projectSession: func(context.Context, string, shellTarget) error { return nil },
 	}
 
 	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	wantArgs := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "repos-projmux", "-c", project}
+	wantArgs := []string{"-L", "projmux", "-f", configPath, "attach-session", "-t", "=repos-projmux", "-c", project}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
 	}
@@ -387,18 +390,19 @@ func TestShellDefaultSessionUsesPROJMUXCWDProjectContext(t *testing.T) {
 			}
 			return ""
 		},
-		homeDir:    func() (string, error) { return home, nil },
-		writeFile:  os.WriteFile,
-		runCommand: recorder.run,
-		tmuxRunner: tmux,
-		getwd:      func() (string, error) { return wdProject, nil },
+		homeDir:        func() (string, error) { return home, nil },
+		writeFile:      os.WriteFile,
+		runCommand:     recorder.run,
+		tmuxRunner:     tmux,
+		getwd:          func() (string, error) { return wdProject, nil },
+		projectSession: func(context.Context, string, shellTarget) error { return nil },
 	}
 
 	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	wantArgs := []string{"-L", "projmux", "-f", configPath, "new-session", "-A", "-s", "repos-projmux", "-c", envProject}
+	wantArgs := []string{"-L", "projmux", "-f", configPath, "attach-session", "-t", "=repos-projmux", "-c", envProject}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
 	}
@@ -421,7 +425,7 @@ func TestShellDefaultSessionUsesHomeProjectIdentity(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "new-session", "-A", "-s", "home", "-c", home}
+	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "attach-session", "-t", "=home", "-c", home}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
 	}
@@ -461,7 +465,7 @@ func TestShellExplicitHomeSessionKeepsHomeTargetInsideProject(t *testing.T) {
 	if len(tmux.calls) != 0 {
 		t.Fatalf("tmux restore calls = %#v, want none for explicit home target", tmux.calls)
 	}
-	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "new-session", "-A", "-s", "home", "-c", home}
+	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "attach-session", "-t", "=home", "-c", home}
 	if foreground.name != "tmux" || !reflect.DeepEqual(foreground.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", foreground.name, foreground.args, wantArgs)
 	}
@@ -1354,10 +1358,21 @@ func (r *recordingShellRunner) run(_ context.Context, env []string, name string,
 }
 
 type scriptedShellTmuxRunner struct {
-	outputs map[string][]byte
-	errors  map[string]error
-	calls   []recordedTmuxCall
-	onRun   func(recordedTmuxCall)
+	outputs         map[string][]byte
+	errors          map[string]error
+	calls           []recordedTmuxCall
+	onRun           func(recordedTmuxCall)
+	operationMarker string
+	createOutput    []byte
+	createEffectErr error
+	leaseMatches    [][]string
+	socketReads     []scriptedSocketRead
+	socketReadIndex int
+}
+
+type scriptedSocketRead struct {
+	output []byte
+	err    error
 }
 
 func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -1366,12 +1381,77 @@ func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...st
 	if r.onRun != nil {
 		r.onRun(call)
 	}
+	legacyArgs := append([]string(nil), args...)
+	for i := 0; i+1 < len(legacyArgs); i++ {
+		if legacyArgs[i] == "-P" && legacyArgs[i+1] == "-F" && i+2 < len(legacyArgs) {
+			legacyArgs = append(legacyArgs[:i], legacyArgs[i+3:]...)
+			break
+		}
+	}
 	key := shellTmuxCallKey(name, args...)
 	if err, ok := r.errors[key]; ok {
 		return nil, err
 	}
+	for i := 0; i+1 < len(legacyArgs); i++ {
+		if legacyArgs[i] == "-e" && strings.HasPrefix(legacyArgs[i+1], createOperationEnvironment+"=") {
+			r.operationMarker = strings.TrimPrefix(legacyArgs[i+1], createOperationEnvironment+"=")
+			legacyArgs = append(legacyArgs[:i], legacyArgs[i+2:]...)
+			break
+		}
+	}
+	if err, ok := r.errors[shellTmuxCallKey(name, legacyArgs...)]; ok {
+		return nil, err
+	}
 	if output, ok := r.outputs[key]; ok {
 		return output, nil
+	}
+	if output, ok := r.outputs[shellTmuxCallKey(name, legacyArgs...)]; ok {
+		return output, nil
+	}
+	joined := strings.Join(args, " ")
+	if strings.Contains(joined, "display-message") && strings.Contains(joined, "#{socket_path}") {
+		if r.socketReadIndex < len(r.socketReads) {
+			read := r.socketReads[r.socketReadIndex]
+			r.socketReadIndex++
+			return read.output, read.err
+		}
+		return []byte("/tmp/tmux-1000/projmux\n"), nil
+	}
+	if strings.Contains(joined, "show-options") && strings.Contains(joined, tmuxopts.AppGlobal) {
+		return []byte("1\n"), nil
+	}
+	if strings.Contains(joined, "show-options") && strings.Contains(joined, runtimeMutationSocketNameOption) {
+		return []byte("projmux\n"), nil
+	}
+	if strings.Contains(joined, "new-session") && strings.Contains(joined, " -P ") {
+		if r.createEffectErr != nil {
+			return r.createOutput, r.createEffectErr
+		}
+		if r.createOutput != nil {
+			return r.createOutput, nil
+		}
+		return []byte(strings.Join([]string{"$1", "@1", "%1", "1"}, tmuxRowSep) + "\n"), nil
+	}
+	if strings.Contains(joined, "list-sessions") && strings.Contains(joined, createOperationEnvironment) {
+		var lines []string
+		for _, row := range r.leaseMatches {
+			if len(row) == 4 {
+				lines = append(lines, strings.Join(append(append([]string(nil), row...), r.operationMarker), tmuxRowSep))
+			}
+		}
+		if len(lines) == 0 {
+			return nil, nil
+		}
+		return []byte(strings.Join(lines, "\n") + "\n"), nil
+	}
+	if strings.Contains(joined, "display-message") && strings.Contains(joined, tmuxopts.AppGlobal) {
+		return []byte(strings.Join([]string{"$1", "@1", "%1", "1"}, tmuxRowSep) + "\n"), nil
+	}
+	if strings.Contains(joined, "display-message") && strings.Contains(joined, tmuxopts.SessionRole) {
+		return []byte(strings.Join([]string{"$1", resourcegraph.ControlSessionRole, "@1", "win-home", "%1", "pan-home"}, tmuxRowSep) + "\n"), nil
+	}
+	if strings.Contains(joined, "show-environment") && r.operationMarker != "" {
+		return []byte(createOperationEnvironment + "=" + r.operationMarker + "\n"), nil
 	}
 	return nil, nil
 }

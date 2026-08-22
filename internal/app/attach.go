@@ -39,6 +39,7 @@ type attachCommand struct {
 	workingDir           func() (string, error)
 	now                  func() time.Time
 	cleanupKilledSession func(string)
+	ensureHomeSession    func(context.Context, string, string) error
 	// lookupEnv answers the inside-tmux question for `attach project`.
 	lookupEnv func(string) string
 	// switcher owns the Project open path that `attach project` forwards to.
@@ -47,6 +48,7 @@ type attachCommand struct {
 
 func newAttachCommand(recorders ...*diagnostics.LifecycleRecorder) *attachCommand {
 	client := defaultTmuxClient(recorders...)
+	control := newShellCommand(nil, recorders...)
 	return &attachCommand{
 		diagnostics: recorderFrom(recorders),
 		inventory:   client,
@@ -56,6 +58,9 @@ func newAttachCommand(recorders ...*diagnostics.LifecycleRecorder) *attachComman
 		workingDir:  os.Getwd,
 		now:         time.Now,
 		lookupEnv:   os.Getenv,
+		ensureHomeSession: func(ctx context.Context, sessionName, cwd string) error {
+			return control.prepareControlSession(ctx, defaultAppSocket, control.defaultConfigPath(), shellTarget{SessionName: sessionName, CWD: cwd})
+		},
 	}
 }
 
@@ -200,7 +205,9 @@ func (c *attachCommand) executeAutoAttachPlan(ctx context.Context, plan lifecycl
 				return fmt.Errorf("create auto-attach ephemeral session %q: %w", sessionName, err)
 			}
 			plan.AttachTarget = sessionName
-		} else if err := c.sessions.EnsureSession(ctx, plan.AttachTarget, homeDir); err != nil {
+		} else if c.ensureHomeSession == nil {
+			return fmt.Errorf("ensure auto-attach home session: canonical ControlSession bootstrap is not configured")
+		} else if err := c.ensureHomeSession(ctx, plan.AttachTarget, homeDir); err != nil {
 			return fmt.Errorf("ensure auto-attach home session %q: %w", plan.AttachTarget, err)
 		}
 	}

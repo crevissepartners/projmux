@@ -9,7 +9,9 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // The control-session convergence pass: the writer half of the control marker
@@ -225,18 +227,11 @@ func (c *controlSessionConverger) convergeTargetWithEvidence(ctx context.Context
 		return controlSessionConvergence{}, err
 	}
 
-	writes := 0
-	if controlPlanHas(plan, controller.ControlEnsureRole) {
-		if err := mirror.MirrorControlSessionRole(ctx, sessionName); err != nil {
-			return controlSessionConvergence{}, err
-		}
-		writes++
-	}
-	mirrored, err := mirrorControlSessionIdentity(ctx, mirror, registry, binding, targets)
+	writes, err := executeControlSessionIdentityPlan(ctx, target, sessionName, mirror, registry, binding, targets,
+		controlPlanHas(plan, controller.ControlEnsureRole))
 	if err != nil {
 		return controlSessionConvergence{}, err
 	}
-	writes += mirrored
 	if changed {
 		writes++
 	}
@@ -378,14 +373,92 @@ func observeMirroredUIDs(ctx context.Context, mirror intmetadata.Mirror) (coreme
 // so a control-session Window gets the same `automatic-rename off` and the same
 // name projections a Project's Window does -- there is deliberately no second
 // writer with weaker guarantees.
-func mirrorControlSessionIdentity(
+func executeControlSessionIdentityPlan(
 	ctx context.Context,
+	target explicitTmuxTarget,
+	sessionName string,
 	mirror intmetadata.Mirror,
 	registry coremetadata.Registry,
 	binding coremetadata.ControlSessionBinding,
 	targets intmetadata.LegacyTargets,
+	ensureRole bool,
 ) (int, error) {
-	writes := 0
+	runner, ok := mirror.Runner.(tmuxCommandRunner)
+	if !ok || runner == nil {
+		return 0, errors.New("ControlSession identity plan requires a tmux runner")
+	}
+	routed := explicitTmuxRunner{runner: runner, target: target}
+	socketOut, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	if err != nil || strings.TrimSpace(string(socketOut)) == "" {
+		return 0, fmt.Errorf("ControlSession identity plan: observe exact socket: %w", err)
+	}
+	expectedSocket := strings.TrimSpace(string(socketOut))
+	if err := guardRuntimeMutationServerOwnership(ctx, routed, target); err != nil {
+		return 0, err
+	}
+	sessionOut, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", sessionName, "-F", "#{session_id}")
+	if err != nil || exactTmuxHandle(strings.TrimSpace(string(sessionOut)), "$") == "" {
+		return 0, errors.New("ControlSession identity plan: exact session handle is unavailable")
+	}
+	sessionID := strings.TrimSpace(string(sessionOut))
+	socket := target.flag + "=" + target.value
+	var steps []runtimeMutationStep
+	logicalWrites := 0
+	appendWrite := func(verb runtimeMutationVerb, stable runtimeMutationTarget, expect string, operands []string, guard func(context.Context) error) {
+		action := newRuntimeMutation(len(steps)+1, verb, stable)
+		bindRuntimeMutationGuard(&action, expect)
+		action.Operands = slices.Clone(operands)
+		steps = append(steps, runtimeMutationStep{
+			Action: action,
+			Reobserve: func(ctx context.Context) (bool, error) {
+				currentSocket, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+				if err != nil || strings.TrimSpace(string(currentSocket)) != action.Target.PhysicalSocket {
+					return false, errors.New("ControlSession identity plan socket drifted while reobserving effect")
+				}
+				if err := guardRuntimeMutationServerOwnership(ctx, routed, target); err != nil {
+					return false, err
+				}
+				if len(action.Operands) < 2 {
+					return false, errors.New("ControlSession identity effect operands are incomplete")
+				}
+				want := action.Operands[len(action.Operands)-1]
+				format := "#{" + action.Operands[len(action.Operands)-2] + "}"
+				if action.Verb == mutationRenameWindow {
+					format = "#{window_name}"
+				}
+				out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", action.Target.ID, "-F", format)
+				return err == nil && strings.TrimSpace(string(out)) == want, err
+			},
+			Guard: func(ctx context.Context) error {
+				currentSocket, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+				if err != nil || strings.TrimSpace(string(currentSocket)) != expectedSocket {
+					return errors.New("ControlSession identity plan socket drifted before write")
+				}
+				if err := guardRuntimeMutationServerOwnership(ctx, routed, target); err != nil {
+					return err
+				}
+				return guard(ctx)
+			},
+			Apply: func(ctx context.Context) error {
+				_, err := runRuntimeMutationCommand(ctx, routed, action)
+				return err
+			},
+		})
+	}
+	if ensureRole {
+		stable := runtimeMutationTarget{Socket: socket, PhysicalSocket: expectedSocket, Kind: "control-session", ID: sessionID, UID: binding.ControlSession.Metadata.UID}
+		appendWrite(mutationWriteIdentity, stable, "exact app-owned ControlSession role is blank and session containment is stable",
+			[]string{"-t", sessionID, "-q", tmuxopts.SessionRole, resourcegraph.ControlSessionRole}, func(ctx context.Context) error {
+				out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", sessionID, "-F",
+					tmuxRowFormat("#{session_id}", "#{"+tmuxopts.SessionRole+"}", "#{"+tmuxopts.ProjectUIDSession+"}"))
+				rows := splitTmuxRows(string(out), 3)
+				if err != nil || len(rows) != 1 || rows[0][0] != sessionID || (rows[0][1] != "" && rows[0][1] != resourcegraph.ControlSessionRole) || rows[0][2] != "" {
+					return errors.New("ControlSession role or mutually exclusive Project identity drifted")
+				}
+				return nil
+			})
+		logicalWrites++
+	}
 	for _, bound := range binding.Windows {
 		if bound.Origin == coremetadata.ImportRebound {
 			continue
@@ -397,10 +470,22 @@ func mirrorControlSessionIdentity(
 		if !ok {
 			continue
 		}
-		if err := mirror.MirrorWindow(ctx, targets.Windows[bound.SourceIndex], *window); err != nil {
-			return writes, err
+		windowID := targets.Windows[bound.SourceIndex]
+		stable := runtimeMutationTarget{Socket: socket, PhysicalSocket: expectedSocket, Kind: "window", ID: windowID, UID: window.Metadata.UID, Parent: sessionID}
+		guard := func(ctx context.Context) error {
+			out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", windowID, "-F",
+				tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
+			rows := splitTmuxRows(string(out), 3)
+			if err != nil || len(rows) != 1 || rows[0][0] != sessionID || rows[0][1] != windowID || (rows[0][2] != "" && rows[0][2] != window.Metadata.UID) {
+				return errors.New("ControlSession Window containment or UID drifted")
+			}
+			return nil
 		}
-		writes++
+		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before automatic-rename projection", []string{"-w", "-t", windowID, tmuxopts.AutomaticRenameWindow, "off"}, guard)
+		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before UID projection", []string{"-w", "-t", windowID, "-q", tmuxopts.WindowUID, window.Metadata.UID}, guard)
+		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before stable-name projection", []string{"-w", "-t", windowID, "-q", tmuxopts.WindowName, window.Metadata.Name}, guard)
+		appendWrite(mutationRenameWindow, stable, "exact ControlSession Window containment before display-name projection", []string{"-t", windowID, window.DisplayName()}, guard)
+		logicalWrites++
 	}
 	for _, bound := range binding.Panes {
 		if bound.Origin == coremetadata.ImportRebound {
@@ -417,12 +502,42 @@ func mirrorControlSessionIdentity(
 		if !ok {
 			continue
 		}
-		if err := mirror.MirrorPane(ctx, row[bound.PaneIndex], *pane); err != nil {
-			return writes, err
+		paneID := row[bound.PaneIndex]
+		windowUID, ok := paneWindowOwnerUID(registry, *pane)
+		if !ok {
+			continue
 		}
-		writes++
+		if _, ok := registry.Window(windowUID); !ok {
+			continue
+		}
+		windowID := ""
+		for _, candidate := range binding.Windows {
+			if candidate.UID == windowUID && candidate.SourceIndex >= 0 && candidate.SourceIndex < len(targets.Windows) {
+				windowID = targets.Windows[candidate.SourceIndex]
+				break
+			}
+		}
+		stable := runtimeMutationTarget{Socket: socket, PhysicalSocket: expectedSocket, Kind: "pane", ID: paneID, UID: pane.Metadata.UID, Parent: sessionID + "/" + windowID}
+		guard := func(ctx context.Context) error {
+			out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F",
+				tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{"+tmuxopts.PaneUID+"}"))
+			rows := splitTmuxRows(string(out), 4)
+			if err != nil || len(rows) != 1 || rows[0][0] != sessionID || rows[0][1] != windowID || rows[0][2] != paneID || (rows[0][3] != "" && rows[0][3] != pane.Metadata.UID) {
+				return errors.New("ControlSession Pane containment or UID drifted")
+			}
+			return nil
+		}
+		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Pane containment before UID projection", []string{"-p", "-t", paneID, "-q", tmuxopts.PaneUID, pane.Metadata.UID}, guard)
+		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Pane containment before stable-name projection", []string{"-p", "-t", paneID, "-q", tmuxopts.PaneName, pane.Metadata.Name}, guard)
+		logicalWrites++
 	}
-	return writes, nil
+	if len(steps) == 0 {
+		return 0, nil
+	}
+	if err := executeRuntimeMutationPlan(ctx, steps); err != nil {
+		return 0, err
+	}
+	return logicalWrites, nil
 }
 
 // controlSessionWarning renders the one-line diagnostic a failed convergence

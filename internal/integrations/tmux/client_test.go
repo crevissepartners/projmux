@@ -14,6 +14,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 )
 
@@ -70,40 +71,6 @@ func TestClientLifecycleRecorderCoalescesCommandOperations(t *testing.T) {
 		wantCode  diagnostics.Code
 		wantError bool
 	}{
-		{
-			name:  "create then attach success",
-			steps: []scriptedStep{{err: exitError(t, 1)}, {}, {}, {}},
-			run: func(client *Client) error {
-				if err := client.EnsureSession(context.Background(), "private-name", "/private/path"); err != nil {
-					return err
-				}
-				return client.OpenSession(context.Background(), "private-name")
-			},
-			want: diagnostics.OperationSessionCreate,
-		},
-		{
-			name:  "create then attach failure remains one outer create lifecycle",
-			steps: []scriptedStep{{err: exitError(t, 1)}, {}, {}, {err: errors.New("private attach detail")}},
-			run: func(client *Client) error {
-				if err := client.EnsureSession(context.Background(), "private-name", "/private/path"); err != nil {
-					return err
-				}
-				return client.OpenSession(context.Background(), "private-name")
-			},
-			want:      diagnostics.OperationSessionCreate,
-			wantCode:  diagnostics.CodeSessionAttachFailed,
-			wantError: true,
-		},
-		{
-			name:  "create failure",
-			steps: []scriptedStep{{err: exitError(t, 1)}, {err: errors.New("private create detail")}},
-			run: func(client *Client) error {
-				return client.EnsureSession(context.Background(), "private-name", "/private/path")
-			},
-			want:      diagnostics.OperationSessionCreate,
-			wantCode:  diagnostics.CodeSessionCreateFailed,
-			wantError: true,
-		},
 		{
 			name:  "attach success",
 			steps: []scriptedStep{{}},
@@ -1063,53 +1030,23 @@ func TestClientListWindowPanesRejectsInvalidPaneIndex(t *testing.T) {
 	}
 }
 
-func TestClientEnsureSessionCreatesMissingSession(t *testing.T) {
+func TestClientEnsureSessionRefusesMissingSessionWithoutTypedExecutor(t *testing.T) {
 	t.Parallel()
 
 	runner := &scriptedRunner{
-		t: t,
-		steps: []scriptedStep{
-			{err: exitError(t, 1)},
-			{},
-			{},
-		},
+		t:     t,
+		steps: []scriptedStep{{err: exitError(t, 1)}},
 	}
 	client := NewClient(runner)
 
-	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
-		t.Fatalf("EnsureSession returned error: %v", err)
+	err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux")
+	if err == nil || !strings.Contains(err.Error(), "private operation marker is required") {
+		t.Fatalf("EnsureSession fail-closed error = %v", err)
 	}
 
-	want := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
-		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux"}},
-		{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_project_path", "/tmp/projmux"}},
-	}
+	want := []commandCall{{name: "tmux", args: []string{"has-session", "-t", "=workspace"}}}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("unexpected calls %#v", runner.calls)
-	}
-}
-
-func TestClientEnsureSessionStoresProjectPathAnchor(t *testing.T) {
-	t.Parallel()
-
-	runner := &scriptedRunner{
-		t: t,
-		steps: []scriptedStep{
-			{err: exitError(t, 1)},
-			{},
-			{},
-		},
-	}
-	client := NewClient(runner)
-
-	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
-		t.Fatalf("EnsureSession returned error: %v", err)
-	}
-
-	want := commandCall{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", ProjectPathSessionOption, "/tmp/projmux"}}
-	if !containsCommandCall(runner.calls, want) {
-		t.Fatalf("EnsureSession did not store the project path anchor; calls = %#v", runner.calls)
 	}
 }
 
@@ -2026,90 +1963,6 @@ func TestBuildSwitchSidebarFocusCommandQuotesBinaryPath(t *testing.T) {
 	}
 }
 
-func TestClientEnsureSessionInvokesPostCreateRunnerOnNewSession(t *testing.T) {
-	t.Parallel()
-
-	runner := &scriptedRunner{
-		t: t,
-		steps: []scriptedStep{
-			{err: exitError(t, 1)},
-			{output: []byte("%11\n")},
-			{},
-		},
-	}
-	hook := &fakePostCreateRunner{}
-	client := NewClient(runner, withPostCreateRunnerInterface(hook), WithSocketName("projmux"))
-
-	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
-		t.Fatalf("EnsureSession returned error: %v", err)
-	}
-
-	if got := len(hook.calls); got != 1 {
-		t.Fatalf("post-create calls = %d, want 1", got)
-	}
-	want := hooks.PostCreateContext{
-		SessionName: "workspace",
-		CWD:         "/tmp/projmux",
-		Kind:        "persistent",
-		Socket:      "projmux",
-		PaneID:      "%11",
-	}
-	if got := hook.calls[0]; !reflect.DeepEqual(got, want) {
-		t.Fatalf("post-create call = %#v, want %#v", got, want)
-	}
-}
-
-func TestClientEnsureSessionRunsLifecycleHooksForNewSession(t *testing.T) {
-	t.Parallel()
-
-	runner := &scriptedRunner{
-		t: t,
-		steps: []scriptedStep{
-			{err: exitError(t, 1)},
-			{output: []byte("%7\n")},
-			{},
-			{output: []byte("zsh\n")},
-			{},
-			{},
-			{},
-		},
-	}
-	hook := &fakeLifecycleRunner{
-		startupCommand: "echo ready",
-		startupOK:      true,
-	}
-	client := NewClient(runner, withLifecycleHookRunnerInterface(hook), WithSocketName("projmux"))
-
-	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
-		t.Fatalf("EnsureSession returned error: %v", err)
-	}
-
-	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
-		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
-		{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_project_path", "/tmp/projmux"}},
-		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "-F", "#{pane_current_command}"}},
-		{name: "tmux", args: []string{"send-keys", "-t", "%7", "echo ready", "Enter"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", "@projmux_recipe_kind", "startup"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", "@projmux_startup_command", "echo ready"}},
-	}
-	if !reflect.DeepEqual(runner.calls, wantCalls) {
-		t.Fatalf("unexpected tmux calls %#v", runner.calls)
-	}
-
-	gotEvents := hook.events()
-	wantEvents := []hooks.Event{hooks.EventPreCreate, hooks.EventPostCreate}
-	if !reflect.DeepEqual(gotEvents, wantEvents) {
-		t.Fatalf("hook events = %#v, want pre-create and post-create", gotEvents)
-	}
-	if got := hook.calls[0].context.PaneID; got != "" {
-		t.Fatalf("pre-create PaneID = %q, want empty before pane creation", got)
-	}
-	if got := hook.calls[1].context.PaneID; got != "%7" {
-		t.Fatalf("post-create PaneID = %q, want exact created pane %%7", got)
-	}
-}
-
 func TestClientCreateEphemeralSessionPassesExactPaneToLifecyclePostCreate(t *testing.T) {
 	t.Parallel()
 
@@ -2139,208 +1992,6 @@ func TestClientCreateEphemeralSessionPassesExactPaneToLifecyclePostCreate(t *tes
 	}
 }
 
-func TestClientEnsureSessionSkipsStartupMarkersWhenNoStartupHook(t *testing.T) {
-	t.Parallel()
-
-	runner := &scriptedRunner{
-		t: t,
-		steps: []scriptedStep{
-			{err: exitError(t, 1)},
-			{output: []byte("%7\n")},
-			{},
-		},
-	}
-	hook := &fakeLifecycleInspectorRunner{hasHooks: false}
-	client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
-
-	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
-		t.Fatalf("EnsureSession returned error: %v", err)
-	}
-
-	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
-		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
-		{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_project_path", "/tmp/projmux"}},
-	}
-	if !reflect.DeepEqual(runner.calls, wantCalls) {
-		t.Fatalf("unexpected tmux calls %#v", runner.calls)
-	}
-	if gotEvents := hook.events(); !reflect.DeepEqual(gotEvents, []hooks.Event{hooks.EventPreCreate, hooks.EventPostCreate}) {
-		t.Fatalf("hook events = %#v, want pre-create and post-create only", gotEvents)
-	}
-}
-
-func TestClientEnsureSessionSkipsStartupMarkersWhenNoCommand(t *testing.T) {
-	t.Parallel()
-
-	tests := []string{"empty command", "missing command"}
-	for _, tc := range tests {
-		t.Run(tc, func(t *testing.T) {
-			t.Parallel()
-
-			runner := &scriptedRunner{
-				t: t,
-				steps: []scriptedStep{
-					{err: exitError(t, 1)},
-					{output: []byte("%7\n")},
-					{},
-				},
-			}
-			hook := &fakeLifecycleRunner{startupOK: tc == "empty command"}
-			client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
-
-			if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
-				t.Fatalf("EnsureSession returned error: %v", err)
-			}
-
-			wantCalls := []commandCall{
-				{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
-				{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
-				{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_project_path", "/tmp/projmux"}},
-			}
-			if !reflect.DeepEqual(runner.calls, wantCalls) {
-				t.Fatalf("unexpected tmux calls %#v", runner.calls)
-			}
-		})
-	}
-}
-
-func TestClientEnsureSessionSkipsStartupMarkersWhenSendKeysFails(t *testing.T) {
-	t.Parallel()
-
-	runner := &scriptedRunner{
-		t: t,
-		steps: []scriptedStep{
-			{err: exitError(t, 1)},
-			{output: []byte("%7\n")},
-			{},
-			{output: []byte("zsh\n")},
-			{err: errors.New("send failed")},
-		},
-	}
-	hook := &fakeLifecycleRunner{
-		startupCommand: "echo ready",
-		startupOK:      true,
-	}
-	client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
-
-	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
-		t.Fatalf("EnsureSession returned error: %v", err)
-	}
-
-	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
-		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-P", "-F", "#{pane_id}"}},
-		{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_project_path", "/tmp/projmux"}},
-		{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "-F", "#{pane_current_command}"}},
-		{name: "tmux", args: []string{"send-keys", "-t", "%7", "echo ready", "Enter"}},
-	}
-	if !reflect.DeepEqual(runner.calls, wantCalls) {
-		t.Fatalf("unexpected tmux calls %#v", runner.calls)
-	}
-}
-
-func TestClientEnsureSessionPreCreateAbortSkipsNewSession(t *testing.T) {
-	t.Parallel()
-
-	runner := &scriptedRunner{
-		t: t,
-		steps: []scriptedStep{
-			{err: exitError(t, 1)},
-		},
-	}
-	hook := &fakeLifecycleRunner{
-		errs: map[hooks.Event]error{
-			hooks.EventPreCreate: errors.New("blocked"),
-		},
-	}
-	client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
-
-	err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux")
-	if err == nil {
-		t.Fatal("expected pre-create error")
-	}
-	if !strings.Contains(err.Error(), "pre-create hook") || !strings.Contains(err.Error(), "blocked") {
-		t.Fatalf("EnsureSession error = %v, want pre-create blocked", err)
-	}
-	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
-	}
-	if !reflect.DeepEqual(runner.calls, wantCalls) {
-		t.Fatalf("unexpected tmux calls %#v", runner.calls)
-	}
-}
-
-func TestClientEnsureSessionAppliesProjectSessionEnvOnCreateAndAfterCreate(t *testing.T) {
-	t.Parallel()
-
-	runner := &scriptedRunner{
-		t: t,
-		steps: []scriptedStep{
-			{err: exitError(t, 1)},
-			{},
-			{},
-			{},
-			{},
-		},
-	}
-	hook := &fakeLifecycleRunner{
-		sessionEnv: map[string]string{
-			"ZED": "last",
-			"FOO": "bar",
-		},
-	}
-	client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
-
-	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err != nil {
-		t.Fatalf("EnsureSession returned error: %v", err)
-	}
-
-	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
-		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-e", "FOO=bar", "-e", "ZED=last", "-P", "-F", "#{pane_id}"}},
-		{name: "tmux", args: []string{"set-environment", "-t", "workspace", "FOO", "bar"}},
-		{name: "tmux", args: []string{"set-environment", "-t", "workspace", "ZED", "last"}},
-		{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_project_path", "/tmp/projmux"}},
-	}
-	if !reflect.DeepEqual(runner.calls, wantCalls) {
-		t.Fatalf("unexpected tmux calls %#v", runner.calls)
-	}
-}
-
-func TestClientEnsureSessionWithEnvironmentIncludesLeaseInNewSession(t *testing.T) {
-	t.Parallel()
-
-	runner := &scriptedRunner{
-		t: t,
-		steps: []scriptedStep{
-			{err: exitError(t, 1)},
-			{},
-			{},
-		},
-	}
-	client := NewClient(runner)
-	if err := client.EnsureSessionWithEnvironment(context.Background(), "workspace", "/tmp/projmux", map[string]string{
-		"__projmux_create_operation": "v1:7:8:op-test",
-	}); err != nil {
-		t.Fatalf("EnsureSessionWithEnvironment returned error: %v", err)
-	}
-
-	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"has-session", "-t", "=workspace"}},
-		{name: "tmux", args: []string{"new-session", "-d", "-s", "workspace", "-c", "/tmp/projmux", "-e", "__projmux_create_operation=v1:7:8:op-test"}},
-		{name: "tmux", args: []string{"set-option", "-t", "workspace", "-q", "@projmux_project_path", "/tmp/projmux"}},
-	}
-	if !reflect.DeepEqual(runner.calls, wantCalls) {
-		t.Fatalf("unexpected tmux calls %#v", runner.calls)
-	}
-	for _, call := range runner.calls {
-		if slices.Contains(call.args, "set-environment") && slices.Contains(call.args, createOperationEnvironment) {
-			t.Fatalf("private operation marker was reinstalled after new-session -e: %#v", runner.calls)
-		}
-	}
-}
-
 func TestClientEnsureSessionWithEnvironmentResultPreservesAtomicIdentityAndHookPane(t *testing.T) {
 	t.Parallel()
 	row := []byte("$7\\037@8\\037%9\n")
@@ -2353,7 +2004,7 @@ func TestClientEnsureSessionWithEnvironmentResultPreservesAtomicIdentityAndHookP
 		{output: ownershipRow},
 	}}
 	hook := &fakePostCreateRunner{}
-	client := NewClient(runner, withPostCreateRunnerInterface(hook))
+	client := NewClient(runner, withPostCreateRunnerInterface(hook), WithPersistentSessionCreator(testPersistentSessionCreator(runner)))
 	result, err := client.EnsureSessionWithEnvironmentResult(context.Background(), "workspace", "/tmp/projmux", map[string]string{
 		"__projmux_create_operation": "v1:7:8:op-test",
 	})
@@ -2391,7 +2042,7 @@ func TestClientEnsureSessionWithEnvironmentResultRevalidatesAfterArbitraryCallba
 			{err: exitError(t, 1)}, {output: row}, {output: row}, {},
 			{output: []byte("$70\\037@8\\037%9\\037v1:7:8:op-test\n")},
 		}}
-		client := NewClient(runner, withPostCreateRunnerInterface(&fakePostCreateRunner{}))
+		client := NewClient(runner, withPostCreateRunnerInterface(&fakePostCreateRunner{}), WithPersistentSessionCreator(testPersistentSessionCreator(runner)))
 		result, err := client.EnsureSessionWithEnvironmentResult(context.Background(), "workspace", "/tmp/projmux", map[string]string{
 			createOperationEnvironment: "v1:7:8:op-test",
 		})
@@ -2424,7 +2075,7 @@ func TestClientEnsureSessionWithEnvironmentResultRevalidatesAfterArbitraryCallba
 			{output: []byte("$7\\037@8\\037%90\\037v1:7:8:op-test\n")},
 		}}
 		hook := &fakeLifecycleRunner{startupCommand: "tmux tamper", startupOK: true}
-		client := NewClient(runner, withLifecycleHookRunnerInterface(hook))
+		client := NewClient(runner, withLifecycleHookRunnerInterface(hook), WithPersistentSessionCreator(testPersistentSessionCreator(runner)))
 		result, err := client.EnsureSessionWithEnvironmentResult(context.Background(), "workspace", "/tmp/projmux", map[string]string{
 			createOperationEnvironment: "v1:7:8:op-test",
 		})
@@ -2458,7 +2109,7 @@ func TestClientEnsureSessionWithEnvironmentResultAtSeparatesInitialPaneAndProjec
 		{output: ownershipRow},
 	}}
 	hook := &fakePostCreateRunner{}
-	client := NewClient(runner, withPostCreateRunnerInterface(hook))
+	client := NewClient(runner, withPostCreateRunnerInterface(hook), WithPersistentSessionCreator(testPersistentSessionCreator(runner)))
 	result, err := client.EnsureSessionWithEnvironmentResultAt(context.Background(), "workspace", "/srv/project/logs", "/srv/project", map[string]string{
 		createOperationEnvironment: "v1:7:8:op-test",
 	})
@@ -2487,6 +2138,140 @@ func TestClientEnsureSessionWithEnvironmentResultAtSeparatesInitialPaneAndProjec
 	}
 }
 
+func TestClientPersistentCreateLifecycleSeamPreservesHooksEnvironmentAndExactPane(t *testing.T) {
+	t.Parallel()
+	marker := "v1:7:8:op-test"
+	owned := []byte("$7\\037@8\\037%9\\037" + marker + "\n")
+	runner := &scriptedRunner{t: t, steps: []scriptedStep{
+		{err: exitError(t, 1)},
+		{output: owned},
+	}}
+	hook := &fakeLifecycleRunner{sessionEnv: map[string]string{"FOO": "bar", "ZED": "last"}}
+	client := NewClient(runner, withLifecycleHookRunnerInterface(hook), WithSocketName("projmux"))
+
+	request, exists, err := client.PreparePersistentSessionCreate(context.Background(), "workspace", "/srv/project/logs", "/srv/project", map[string]string{
+		createOperationEnvironment: marker,
+		"EXTRA":                    "value",
+	})
+	if err != nil || exists {
+		t.Fatalf("PreparePersistentSessionCreate() = exists %t, err %v", exists, err)
+	}
+	wantEnv := map[string]string{
+		"FOO": "bar", "ZED": "last", "EXTRA": "value", createOperationEnvironment: marker,
+	}
+	if request.SessionName != "workspace" || request.RuntimeCWD != "/srv/project/logs" || request.ProjectCWD != "/srv/project" ||
+		!reflect.DeepEqual(request.Environment, wantEnv) {
+		t.Fatalf("prepared request = %#v, want merged lease-bearing declaration %#v", request, wantEnv)
+	}
+	if got := hook.calls[0].context; got.PaneID != "" || got.CWD != "/srv/project" || got.Kind != "persistent" || got.Socket != "projmux" {
+		t.Fatalf("pre-create context = %#v", got)
+	}
+
+	result := intmux.NewSessionResult{Created: true, SessionID: "$7", WindowID: "@8", PaneID: "%9"}
+	if err := client.CompletePersistentSessionCreate(context.Background(), request, result); err != nil {
+		t.Fatalf("CompletePersistentSessionCreate() error = %v", err)
+	}
+	if gotEvents := hook.events(); !reflect.DeepEqual(gotEvents, []hooks.Event{hooks.EventPreCreate, hooks.EventPostCreate}) {
+		t.Fatalf("hook events = %#v", gotEvents)
+	}
+	if got := hook.calls[1].context; got.PaneID != "%9" || got.CWD != "/srv/project" || got.Kind != "persistent" || got.Socket != "projmux" {
+		t.Fatalf("post-create exact Pane context = %#v", got)
+	}
+	wantVerify := commandCall{name: "tmux", args: []string{"list-panes", "-s", "-t", "$7", "-F",
+		tmuxFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{E:"+createOperationEnvironment+"}")}}
+	if !reflect.DeepEqual(runner.calls[len(runner.calls)-1], wantVerify) {
+		t.Fatalf("post-create ownership verification = %#v, want %#v", runner.calls, wantVerify)
+	}
+}
+
+func TestClientPersistentCreatePreCreateAbortAndPlanAbortRecordDiagnosticFailure(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		hookErr error
+		abort   bool
+	}{
+		{name: "pre-create hook refusal", hookErr: errors.New("blocked")},
+		{name: "typed plan abort after prepare", abort: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			writer := &lifecycleEventWriter{}
+			recorder := diagnostics.NewLifecycleRecorder(writer, "persistent-create", "0.10.0", "tmux")
+			finish := recorder.BeginCommand()
+			runner := &scriptedRunner{t: t, steps: []scriptedStep{{err: exitError(t, 1)}}}
+			hook := &fakeLifecycleRunner{}
+			if test.hookErr != nil {
+				hook.errs = map[hooks.Event]error{hooks.EventPreCreate: test.hookErr}
+			}
+			client := NewClient(runner, withLifecycleHookRunnerInterface(hook), WithLifecycleDiagnostics(recorder))
+			_, _, err := client.PreparePersistentSessionCreate(context.Background(), "workspace", "/srv/project", "/srv/project", map[string]string{
+				createOperationEnvironment: "v1:7:8:op-test",
+			})
+			if test.abort {
+				if err != nil {
+					t.Fatalf("PreparePersistentSessionCreate() error = %v", err)
+				}
+				client.AbortPersistentSessionCreate()
+				err = errors.New("typed plan refused")
+			} else if err == nil || !strings.Contains(err.Error(), "pre-create hook") {
+				t.Fatalf("pre-create refusal error = %v", err)
+			}
+			finish(err)
+			if len(writer.events) != 2 || writer.events[0].Operation != string(diagnostics.OperationSessionCreate) ||
+				writer.events[1].Result != string(diagnostics.LifecycleError) || writer.events[1].Code != string(diagnostics.CodeSessionCreateFailed) {
+				t.Fatalf("persistent create diagnostic events = %#v", writer.events)
+			}
+			if len(runner.calls) != 1 || !reflect.DeepEqual(runner.calls[0].args, []string{"has-session", "-t", "=workspace"}) {
+				t.Fatalf("refused persistent create reached a raw create: %#v", runner.calls)
+			}
+		})
+	}
+}
+
+func TestClientFinalizePersistentStartupPreservesBestEffortCommandAndMarkers(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		hook       lifecycleHookRunner
+		steps      []scriptedStep
+		wantSend   bool
+		wantMarker bool
+	}{
+		{
+			name: "successful startup marks exact Pane",
+			hook: &fakeLifecycleRunner{startupCommand: "echo ready", startupOK: true},
+			steps: []scriptedStep{{output: []byte("$7\\037@8\\037%9\\037op-test\n")}, {output: []byte("zsh\n")}, {}, {}, {},
+				{output: []byte("$7\\037@8\\037%9\\037op-test\n")}},
+			wantSend: true, wantMarker: true,
+		},
+		{
+			name: "send failure remains best effort without markers",
+			hook: &fakeLifecycleRunner{startupCommand: "echo ready", startupOK: true},
+			steps: []scriptedStep{{output: []byte("$7\\037@8\\037%9\\037op-test\n")}, {output: []byte("zsh\n")}, {err: errors.New("send failed")},
+				{output: []byte("$7\\037@8\\037%9\\037op-test\n")}},
+			wantSend: true,
+		},
+		{
+			name: "missing startup hook writes no command or markers",
+			hook: &fakeLifecycleInspectorRunner{hasHooks: false},
+			steps: []scriptedStep{{output: []byte("$7\\037@8\\037%9\\037op-test\n")},
+				{output: []byte("$7\\037@8\\037%9\\037op-test\n")}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &scriptedRunner{t: t, steps: test.steps}
+			client := NewClient(runner, withLifecycleHookRunnerInterface(test.hook))
+			result := intmux.NewSessionResult{Created: true, SessionID: "$7", WindowID: "@8", PaneID: "%9"}
+			if err := client.FinalizeSessionStartup(context.Background(), result, "workspace", "/srv/project", "op-test"); err != nil {
+				t.Fatalf("FinalizeSessionStartup() error = %v", err)
+			}
+			sent := containsCommandCall(runner.calls, commandCall{name: "tmux", args: []string{"send-keys", "-t", "%9", "echo ready", "Enter"}})
+			marked := containsCommandCall(runner.calls, commandCall{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", "@projmux_recipe_kind", "startup"}})
+			if sent != test.wantSend || marked != test.wantMarker {
+				t.Fatalf("startup calls = %#v; send=%t/%t marker=%t/%t", runner.calls, sent, test.wantSend, marked, test.wantMarker)
+			}
+		})
+	}
+}
+
 func TestClientEnsureSessionSkipsPostCreateWhenSessionExists(t *testing.T) {
 	t.Parallel()
 
@@ -2501,27 +2286,6 @@ func TestClientEnsureSessionSkipsPostCreateWhenSessionExists(t *testing.T) {
 		t.Fatalf("EnsureSession returned error: %v", err)
 	}
 
-	if len(hook.calls) != 0 {
-		t.Fatalf("post-create calls = %#v, want none", hook.calls)
-	}
-}
-
-func TestClientEnsureSessionSkipsPostCreateWhenNewSessionFails(t *testing.T) {
-	t.Parallel()
-
-	runner := &scriptedRunner{
-		t: t,
-		steps: []scriptedStep{
-			{err: exitError(t, 1)},
-			{err: errors.New("new-session failed")},
-		},
-	}
-	hook := &fakePostCreateRunner{}
-	client := NewClient(runner, withPostCreateRunnerInterface(hook))
-
-	if err := client.EnsureSession(context.Background(), "workspace", "/tmp/projmux"); err == nil {
-		t.Fatal("expected error")
-	}
 	if len(hook.calls) != 0 {
 		t.Fatalf("post-create calls = %#v, want none", hook.calls)
 	}
@@ -2692,6 +2456,35 @@ type scriptedRunner struct {
 	t     *testing.T
 	steps []scriptedStep
 	calls []commandCall
+}
+
+// testPersistentSessionCreator preserves lifecycle/hook fixture coverage while
+// production Client construction remains incapable of assembling a managed
+// new-session command. Raw argv here is test-only transport evidence.
+func testPersistentSessionCreator(runner commandRunner) PersistentSessionCreator {
+	return func(ctx context.Context, request PersistentSessionCreateRequest) (intmux.NewSessionResult, error) {
+		format := strings.Join([]string{"#{session_id}", "#{window_id}", "#{pane_id}"}, tmuxEscapedFieldSep)
+		args := []string{"new-session", "-d", "-s", request.SessionName, "-c", request.RuntimeCWD}
+		for _, key := range sortedMapKeys(request.Environment) {
+			args = append(args, "-e", key+"="+request.Environment[key])
+		}
+		args = append(args, "-P", "-F", format)
+		out, err := runner.Run(ctx, "tmux", args...)
+		if err != nil {
+			return intmux.NewSessionResult{}, err
+		}
+		fields := strings.Split(strings.ReplaceAll(strings.TrimSpace(string(out)), tmuxEscapedFieldSep, tmuxFieldSep), tmuxFieldSep)
+		if len(fields) != 3 {
+			return intmux.NewSessionResult{}, errors.New("test persistent creator received malformed atomic result")
+		}
+		result := intmux.NewSessionResult{Created: true, SessionID: fields[0], WindowID: fields[1], PaneID: fields[2]}
+		verified, err := runner.Run(ctx, "tmux", "display-message", "-p", "-t", result.PaneID, "-F", format)
+		if err != nil || strings.TrimSpace(string(verified)) != strings.TrimSpace(string(out)) {
+			return result, errors.New("test persistent creator owner verification failed")
+		}
+		_, _ = runner.Run(ctx, "tmux", "set-option", "-t", result.SessionID, "-q", ProjectPathSessionOption, request.ProjectCWD)
+		return result, nil
+	}
 }
 
 func (r *scriptedRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {

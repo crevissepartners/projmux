@@ -227,9 +227,19 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 	if len(args) == 0 {
 		return nil, fmt.Errorf("fake tmux: empty argv")
 	}
+	// Explicit runtime mutation routes precede the command with -L/-S. Keep the
+	// recorded argv exact, then dispatch the same server model after the route.
+	if len(args) >= 3 && (args[0] == "-L" || args[0] == "-S") {
+		if args[0] == "-L" && len(args) >= 5 && args[2] == "show-options" && args[len(args)-1] == runtimeMutationSocketNameOption {
+			return []byte(args[1] + "\n"), nil
+		}
+		args = args[2:]
+	}
 	var out []byte
 	var err error
 	switch args[0] {
+	case "new-session":
+		out, err = f.runNewSession(args)
 	case "new-window":
 		out, err = f.runNewWindow(args)
 	case "split-window":
@@ -285,6 +295,28 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 			fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), &exec.ExitError{}, message)
 	}
 	return out, nil
+}
+
+func (f *fakeTmux) runNewSession(args []string) ([]byte, error) {
+	name := flagValue(args, "-s")
+	if strings.TrimSpace(name) == "" || f.session(name) != nil {
+		return nil, fmt.Errorf("fake tmux: new-session target %q is missing or already exists", name)
+	}
+	session := f.addSession(name)
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] != "-e" {
+			continue
+		}
+		key, value, ok := strings.Cut(args[i+1], "=")
+		if ok {
+			session.env[key] = value
+		}
+	}
+	format := flagValue(args, "-F")
+	if format == "" {
+		format = "#{session_id}"
+	}
+	return []byte(renderFormat(format, session, session.windows[0], session.windows[0].panes[0]) + "\n"), nil
 }
 
 func containsAll(args, want []string) bool {
@@ -471,11 +503,14 @@ func (f *fakeTmux) runListPanes(args []string) ([]byte, error) {
 // the @projmux_app marker is modeled; anything else reads as absent, exactly
 // like tmux's -v output for an unset user option.
 func (f *fakeTmux) runShowOptions(args []string) ([]byte, error) {
-	if !slices.Contains(args, "-gv") {
+	if !slices.Contains(args, "-gv") && !slices.Contains(args, "-gqv") {
 		return nil, fmt.Errorf("fake tmux: show-options: unsupported argv %v", args)
 	}
 	if args[len(args)-1] == tmuxopts.AppGlobal {
 		return []byte(f.appMarker + "\n"), nil
+	}
+	if args[len(args)-1] == runtimeMutationSocketNameOption {
+		return []byte(defaultAppSocket + "\n"), nil
 	}
 	return []byte("\n"), nil
 }

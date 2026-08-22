@@ -205,6 +205,75 @@ type Client struct {
 	lifecycle       lifecycleHookRunner
 	socket          string
 	diagnostics     *diagnostics.LifecycleRecorder
+	persistent      PersistentSessionCreator
+}
+
+// PersistentSessionCreateRequest carries the already-hooked persistent create
+// declaration to the app-owned typed mutation executor. The Client retains
+// public pre/post-create and startup orchestration; the callback alone owns the
+// managed new-session argv and exact post-create identity writes.
+type PersistentSessionCreateRequest struct {
+	SessionName string
+	RuntimeCWD  string
+	ProjectCWD  string
+	Environment map[string]string
+}
+
+type PersistentSessionCreator func(context.Context, PersistentSessionCreateRequest) (intmux.NewSessionResult, error)
+
+// PreparePersistentSessionCreate performs the public lifecycle preflight and
+// returns the complete atomic new-session declaration without executing tmux.
+// The app can therefore print and guard the exact plan before its typed seam
+// assembles the managed verb.
+func (c *Client) PreparePersistentSessionCreate(ctx context.Context, sessionName, runtimeCWD, projectCWD string, additionalEnv map[string]string) (PersistentSessionCreateRequest, bool, error) {
+	if strings.TrimSpace(sessionName) == "" {
+		return PersistentSessionCreateRequest{}, false, errSessionNameRequired
+	}
+	if strings.TrimSpace(runtimeCWD) == "" || strings.TrimSpace(projectCWD) == "" {
+		return PersistentSessionCreateRequest{}, false, errSessionCWDRequired
+	}
+	exists, err := c.sessionExists(ctx, sessionName)
+	if err != nil || exists {
+		return PersistentSessionCreateRequest{}, exists, err
+	}
+	operationMarker := strings.TrimSpace(additionalEnv[createOperationEnvironment])
+	if operationMarker == "" {
+		return PersistentSessionCreateRequest{}, false, errors.New("create tmux session with result: private operation marker is required")
+	}
+	c.markLifecycle(diagnostics.OperationSessionCreate)
+	if err := c.runPreCreate(ctx, sessionName, projectCWD, "persistent"); err != nil {
+		c.failLifecycle(diagnostics.OperationSessionCreate)
+		return PersistentSessionCreateRequest{}, false, err
+	}
+	sessionEnv := c.projectSessionEnv(projectCWD)
+	if len(additionalEnv) > 0 {
+		merged := make(map[string]string, len(sessionEnv)+len(additionalEnv))
+		maps.Copy(merged, sessionEnv)
+		maps.Copy(merged, additionalEnv)
+		sessionEnv = merged
+	}
+	return PersistentSessionCreateRequest{
+		SessionName: sessionName, RuntimeCWD: runtimeCWD, ProjectCWD: projectCWD, Environment: maps.Clone(sessionEnv),
+	}, false, nil
+}
+
+// CompletePersistentSessionCreate keeps post-create hook ordering and exact
+// returned-handle verification in the Client after the app's typed executor
+// applies the prepared request.
+func (c *Client) CompletePersistentSessionCreate(ctx context.Context, request PersistentSessionCreateRequest, result intmux.NewSessionResult) error {
+	operationMarker := strings.TrimSpace(request.Environment[createOperationEnvironment])
+	c.runPostCreate(ctx, request.SessionName, request.ProjectCWD, "persistent", result.PaneID)
+	if err := c.verifyCreatedSessionOwnership(ctx, result, operationMarker); err != nil {
+		c.failLifecycle(diagnostics.OperationSessionCreate)
+		return err
+	}
+	return nil
+}
+
+// AbortPersistentSessionCreate closes diagnostics after Prepare succeeded but
+// the app-owned plan failed before Complete could own the terminal result.
+func (c *Client) AbortPersistentSessionCreate() {
+	c.failLifecycle(diagnostics.OperationSessionCreate)
 }
 
 // WithLifecycleDiagnostics attaches the process-scoped, coalescing runtime
@@ -233,6 +302,10 @@ func WithLifecycleHookRunner(r *hooks.Runner) ClientOption {
 		}
 		c.lifecycle = r
 	}
+}
+
+func WithPersistentSessionCreator(creator PersistentSessionCreator) ClientOption {
+	return func(c *Client) { c.persistent = creator }
 }
 
 // WithSocketName records the tmux -L socket name (if any) the caller is using
@@ -568,55 +641,23 @@ func (c *Client) ListWindowPanes(ctx context.Context, sessionName string, window
 	return panes, nil
 }
 
-// EnsureSession creates the target session when it is missing.
+// EnsureSession is attach-safe only: an existing target is a no-op, while a
+// missing managed session fails closed because this shorthand carries neither
+// an operation lease nor an app-owned typed mutation executor.
 func (c *Client) EnsureSession(ctx context.Context, sessionName, cwd string) error {
 	return c.EnsureSessionWithEnvironment(ctx, sessionName, cwd, nil)
 }
 
-// EnsureSessionWithEnvironment is EnsureSession with additional session
-// environment installed atomically by new-session -e. Canonical create uses
-// this narrow extension so a synchronous after-new-window hook can recognize
-// the transaction that is already holding the metadata lock.
+// EnsureSessionWithEnvironment delegates a lease-bearing declaration to the
+// injected typed persistent-session executor. Client owns hook/startup
+// orchestration but never assembles managed new-session argv itself.
 func (c *Client) EnsureSessionWithEnvironment(ctx context.Context, sessionName, cwd string, additionalEnv map[string]string) error {
-	if strings.TrimSpace(sessionName) == "" {
-		return errSessionNameRequired
-	}
-	if strings.TrimSpace(cwd) == "" {
-		return errSessionCWDRequired
-	}
-
-	exists, err := c.sessionExists(ctx, sessionName)
+	result, err := c.EnsureSessionWithEnvironmentResult(ctx, sessionName, cwd, additionalEnv)
 	if err != nil {
 		return err
 	}
-	if exists {
-		return nil
-	}
-	c.markLifecycle(diagnostics.OperationSessionCreate)
-
-	if err := c.runPreCreate(ctx, sessionName, cwd, "persistent"); err != nil {
-		c.failLifecycle(diagnostics.OperationSessionCreate)
-		return err
-	}
-
-	sessionEnv := c.projectSessionEnv(cwd)
-	if len(additionalEnv) > 0 {
-		merged := make(map[string]string, len(sessionEnv)+len(additionalEnv))
-		maps.Copy(merged, sessionEnv)
-		maps.Copy(merged, additionalEnv)
-		sessionEnv = merged
-	}
-	paneID, err := c.createDetachedSession(ctx, sessionName, cwd, sessionEnv)
-	if err != nil {
-		c.failLifecycle(diagnostics.OperationSessionCreate)
-		return fmt.Errorf("create tmux session %q: %w", sessionName, err)
-	}
-
-	c.applyProjectSessionEnv(ctx, sessionName, sessionEnv)
-	c.setProjectPathAnchor(ctx, sessionName, cwd)
-	c.runPostCreate(ctx, sessionName, cwd, "persistent", paneID)
-	c.runStartupCommand(ctx, sessionName, cwd, "persistent", paneID)
-	return nil
+	operationMarker := strings.TrimSpace(additionalEnv[createOperationEnvironment])
+	return c.FinalizeSessionStartup(ctx, result, sessionName, cwd, operationMarker)
 }
 
 // EnsureSessionWithEnvironmentResult is the atomic identity-bearing variant
@@ -632,49 +673,24 @@ func (c *Client) EnsureSessionWithEnvironmentResult(ctx context.Context, session
 // PROJMUX_CWD, the pre/post-create hook contract, and the Project path anchor
 // must all stay on the canonical Project root.
 func (c *Client) EnsureSessionWithEnvironmentResultAt(ctx context.Context, sessionName, runtimeCWD, projectCWD string, additionalEnv map[string]string) (intmux.NewSessionResult, error) {
-	if strings.TrimSpace(sessionName) == "" {
-		return intmux.NewSessionResult{}, errSessionNameRequired
-	}
-	if strings.TrimSpace(runtimeCWD) == "" || strings.TrimSpace(projectCWD) == "" {
-		return intmux.NewSessionResult{}, errSessionCWDRequired
-	}
-
-	exists, err := c.sessionExists(ctx, sessionName)
+	request, exists, err := c.PreparePersistentSessionCreate(ctx, sessionName, runtimeCWD, projectCWD, additionalEnv)
 	if err != nil {
 		return intmux.NewSessionResult{}, err
 	}
 	if exists {
 		return intmux.NewSessionResult{Created: false}, nil
 	}
-	operationMarker := strings.TrimSpace(additionalEnv[createOperationEnvironment])
-	if operationMarker == "" {
-		return intmux.NewSessionResult{}, errors.New("create tmux session with result: private operation marker is required")
-	}
-	c.markLifecycle(diagnostics.OperationSessionCreate)
-
-	if err := c.runPreCreate(ctx, sessionName, projectCWD, "persistent"); err != nil {
+	if c.persistent == nil {
 		c.failLifecycle(diagnostics.OperationSessionCreate)
-		return intmux.NewSessionResult{}, err
+		return intmux.NewSessionResult{}, errors.New("create tmux persistent session: typed mutation executor is required")
 	}
-
-	sessionEnv := c.projectSessionEnv(projectCWD)
-	if len(additionalEnv) > 0 {
-		merged := make(map[string]string, len(sessionEnv)+len(additionalEnv))
-		maps.Copy(merged, sessionEnv)
-		maps.Copy(merged, additionalEnv)
-		sessionEnv = merged
-	}
-	result, err := c.createDetachedSessionResult(ctx, sessionName, runtimeCWD, sessionEnv)
+	result, err := c.persistent(ctx, request)
 	if err != nil {
 		c.failLifecycle(diagnostics.OperationSessionCreate)
 		return result, fmt.Errorf("create tmux session %q: %w", sessionName, err)
 	}
 
-	c.applyProjectSessionEnv(ctx, result.SessionID, sessionEnv)
-	c.setProjectPathAnchor(ctx, result.SessionID, projectCWD)
-	c.runPostCreate(ctx, sessionName, projectCWD, "persistent", result.PaneID)
-	if err := c.verifyCreatedSessionOwnership(ctx, result, operationMarker); err != nil {
-		c.failLifecycle(diagnostics.OperationSessionCreate)
+	if err := c.CompletePersistentSessionCreate(ctx, request, result); err != nil {
 		return result, err
 	}
 	return result, nil
@@ -763,21 +779,11 @@ func (c *Client) CreateEphemeralSession(ctx context.Context, sessionName, cwd st
 }
 
 func (c *Client) createDetachedSession(ctx context.Context, sessionName, cwd string, env map[string]string) (string, error) {
-	return intmux.NewRunner(c.runner).NewSession(ctx, intmux.NewSessionOptions{
-		Detached:     true,
+	return intmux.NewRunner(c.runner).NewEphemeralSession(ctx, intmux.EphemeralSessionOptions{
 		Session:      sessionName,
 		Cwd:          cwd,
 		Env:          env,
 		ReturnPaneID: c.lifecycle != nil || c.postCreate != nil,
-	})
-}
-
-func (c *Client) createDetachedSessionResult(ctx context.Context, sessionName, cwd string, env map[string]string) (intmux.NewSessionResult, error) {
-	return intmux.NewRunner(c.runner).NewSessionWithResult(ctx, intmux.NewSessionOptions{
-		Detached: true,
-		Session:  sessionName,
-		Cwd:      cwd,
-		Env:      env,
 	})
 }
 

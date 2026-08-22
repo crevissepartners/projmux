@@ -146,9 +146,17 @@ func TestFirstOpenMirrorsProjectIdentityOnlyWhenItMintedTheProject(t *testing.T)
 				projectRegistrar: registrar,
 				projectMirror:    mirror,
 			}
+			wireFakeProjectSessionPlan(cmd)
 
-			if err := cmd.openProjectTarget(context.Background(), target, sessionName); err != nil {
-				t.Fatalf("first openProjectTarget() error = %v", err)
+			firstErr := cmd.openProjectTarget(context.Background(), target, sessionName)
+			if test.home {
+				if firstErr == nil || !strings.Contains(firstErr.Error(), "exact Registry Project UID is unavailable") {
+					t.Fatalf("first openProjectTarget() error = %v, want fail-closed missing UID", firstErr)
+				}
+				return
+			}
+			if firstErr != nil {
+				t.Fatalf("first openProjectTarget() error = %v", firstErr)
 			}
 			if got, want := mirror.calls, test.wantFirstPassMirror; !equalStrings(got, want) {
 				t.Fatalf("first pass mirror writes = %q, want %q", got, want)
@@ -201,6 +209,7 @@ func TestAFailedFirstOpenMirrorNeverMovesTheClient(t *testing.T) {
 		projectRegistrar: registrar,
 		projectMirror:    mirror,
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	err := cmd.openProjectTarget(context.Background(), "/srv/work/workspace", "workspace")
 	if err == nil || !strings.Contains(err.Error(), "mirror Project identity onto tmux session \"workspace\"") {
@@ -226,6 +235,7 @@ func TestAnUnwiredFirstOpenMirrorIsANoOp(t *testing.T) {
 		lookupEnv:        func(string) string { return "" },
 		projectRegistrar: registrar,
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	if err := cmd.openProjectTarget(context.Background(), "/srv/work/workspace", "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
@@ -268,6 +278,7 @@ func TestFirstOpenOfAnUnregisteredDirectoryLetsCreateOwnItsOwnSession(t *testing
 		},
 		projectMirror: intmetadata.NewMirror(tmux),
 	}
+	wireFakeProjectSessionPlan(open)
 
 	// Step 1: the open is the gesture that makes the directory a Project.
 	if err := open.openProjectTarget(context.Background(), root, "gamma"); err != nil {

@@ -164,7 +164,7 @@ func TestKeySequenceAppRenderCombinesStandaloneAndAppSharedPrefix(t *testing.T) 
 	}
 	for _, want := range []string{
 		"bind-key -T " + table + " C-p run-shell",
-		"bind-key -T " + table + " C-w new-window",
+		"bind-key -T " + table + " C-w run-shell",
 	} {
 		if !strings.Contains(lines, want) {
 			t.Fatalf("combined render missing %q\n%s", want, lines)

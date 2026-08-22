@@ -379,7 +379,7 @@ func TestOperationRollbackRemovesOnlyTheResourcesThisOperationCreated(t *testing
 
 	project, _ := reg.ProjectByRoot("/src/projmux")
 	txn := m.Begin(&reg, "op-rollback")
-	window, panes, err := m.addWindowTx(txn, &reg, "test", project.Metadata.UID, BootstrapWindow{Command: "nvim"}, "/bin/zsh", "/src/projmux", fixedNow)
+	window, panes, err := m.addWindowTx(txn, &reg, "test", KindProject, project.Metadata.UID, BootstrapWindow{Command: "nvim"}, "/bin/zsh", "/src/projmux", fixedNow)
 	if err != nil {
 		t.Fatalf("create window: %v", err)
 	}

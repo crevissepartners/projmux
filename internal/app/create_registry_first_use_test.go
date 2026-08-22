@@ -82,6 +82,7 @@ func (f *onDiskFixture) command(observe func(context.Context, string) (coremetad
 			runner:   f.tmux,
 			mirror:   mirror,
 			sessions: &fakeSessionMaterializer{tmux: f.tmux},
+			target:   explicitTmuxTarget{flag: "-S", value: f.tmux.socketPath},
 			warn:     io.Discard,
 		},
 		shell:          "/bin/zsh",

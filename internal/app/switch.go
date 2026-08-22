@@ -16,12 +16,13 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/aibadge"
 	"github.com/crevissepartners/projmux/internal/core/candidates"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
 	"github.com/crevissepartners/projmux/internal/core/projectidentity"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 	coretags "github.com/crevissepartners/projmux/internal/core/tags"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
-	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -142,12 +143,16 @@ type switchCommand struct {
 	projectTopology      switchProjectTopologyMaterializer
 	// projectRegistrar performs the explicit Project bootstrap of one open.
 	projectRegistrar switchProjectRegistrar
-	// projectMirror finishes the identity of a session a first open minted. It
-	// is the shipped identity writer, not a startup-flavored copy, so there is
-	// exactly one place that assembles a Project identity set-option.
+	// projectMirror is retained only for legacy unit-fixture observation. The
+	// shipped graph leaves it nil and converges identity inside projectSessionPlan.
 	projectMirror switchProjectIdentityMirror
-	// projectFreshStart owns Continue-from-snapshot and Fresh replacement at the
-	// closed Project boundary.
+	// projectSessionPlan is the one canonical first-use Project materialization
+	// transaction. Production wires the typed materializer; tests must opt in to
+	// an explicit fake instead of falling through to a raw EnsureSession call.
+	projectSessionPlan func(context.Context, string, string, openedProjectBootstrap) error
+	// projectFreshStart is the `new` row's prune seam: it plans the exact
+	// Window/Pane/Agent cascade the confirmation states, and removes it through
+	// the canonical delete cascade.
 	projectFreshStart switchProjectFreshStarter
 	// startupNotices is the operator-facing report surface of the startup flow.
 	// It is the same stderr/display-message tee closed-Project topology
@@ -217,19 +222,14 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		// lazily so a project open never picks a socket from an inherited client.
 		projectTopology:  newRegistryProjectTopologyMaterializer(recorders...),
 		projectRegistrar: newDefaultSwitchProjectRegistrar(),
-		// The identity mirror of a first open rides the plain `tmux` transport
-		// on purpose. EnsureSession shells out with no `-L`, so a first open
-		// lands its session on whatever server the operator is actually in --
-		// inttmux.Client's socket name is metadata it never passes on the
-		// command line. Binding this writer to the app socket the way the
-		// topology engine does would write the identity onto a different
-		// server than the session it describes.
-		projectMirror: intmetadata.NewMirror(inttmux.ExecRunner{}),
 		// The fresh-start prune reads and writes the same Registry every other
 		// resource route uses; it owns no store of its own.
 		projectFreshStart: newRegistryProjectFreshStarter(),
 		startupNotices:    newProjectStartupNoticeSink(inttmux.ExecRunner{}),
 		navigation:        newRegistryNavigationCommand(inttmux.ExecRunner{}),
+	}
+	cmd.projectSessionPlan = func(ctx context.Context, sessionName, cwd string, opened openedProjectBootstrap) error {
+		return cmd.ensureBootstrappedProjectSessionPlanned(ctx, sessionName, cwd, opened.project)
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)
@@ -1565,8 +1565,11 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		if fallbackSession == "" {
 			return true, nil
 		}
-		if err := c.killFocusedSession(ctx, plan.SessionName, fallbackSession, nil); err != nil {
+		if err := c.stopManagedProjectSession(ctx, plan.Selection, plan.SessionName, fallbackSession); err != nil {
 			return false, err
+		}
+		if c.cleanupKilledSession != nil && switchRegistrySelectionUID(plan.Selection) != "" {
+			c.cleanupKilledSession(plan.SessionName)
 		}
 		c.focusSession = fallbackSession
 		return true, nil
@@ -2105,8 +2108,11 @@ func (c *switchCommand) mutateSwitchSidebarKill(ctx context.Context, action intp
 	if fallbackSession == "" {
 		return c.switchSidebarRefreshUpdate(ctx, action.Value)
 	}
-	if err := c.killFocusedSession(ctx, sessionName, fallbackSession, nil); err != nil {
+	if err := c.stopManagedProjectSession(ctx, target, sessionName, fallbackSession); err != nil {
 		return intpicker.DeferredUpdate{}, err
+	}
+	if c.cleanupKilledSession != nil && switchRegistrySelectionUID(target) != "" {
+		c.cleanupKilledSession(sessionName)
 	}
 	c.focusSession = fallbackSession
 	return c.switchSidebarRefreshUpdate(ctx, action.Value)
@@ -2535,18 +2541,18 @@ func (c *switchCommand) killFocusedSession(ctx context.Context, sessionName, fal
 		}
 	}
 
-	killer, ok := c.sessions.(switchSessionKiller)
-	if !ok || killer == nil {
-		return fmt.Errorf("switch session killer is not configured")
-	}
 	fallbackSession = strings.TrimSpace(fallbackSession)
 	if fallbackSession != "" && fallbackSession != sessionName {
 		if err := c.sessions.OpenSession(ctx, fallbackSession); err != nil {
 			return fmt.Errorf("open fallback tmux session %q before kill: %w", fallbackSession, err)
 		}
 	}
-	if err := killer.KillSession(ctx, sessionName); err != nil {
+	killed, err := executeUnmanagedRuntimeStop(ctx, c.tmuxRunner, c.lookupEnv, sessionName)
+	if err != nil {
 		return fmt.Errorf("kill tmux session %q: %w", sessionName, err)
+	}
+	if !killed {
+		return nil
 	}
 	if c.cleanupKilledSession != nil {
 		c.cleanupKilledSession(sessionName)
@@ -2556,6 +2562,65 @@ func (c *switchCommand) killFocusedSession(ctx context.Context, sessionName, fal
 		return err
 	}
 	return nil
+}
+
+func (c *switchCommand) stopManagedProjectSession(ctx context.Context, selection, sessionName, fallbackSession string) error {
+	if c == nil {
+		return errors.New("switch managed runtime mutation runner is not configured")
+	}
+	view, err := c.navigationView(ctx)
+	if err != nil {
+		return fmt.Errorf("resolve managed Project runtime stop: %w", err)
+	}
+	resolve := func(view registryview.View) (managedRuntimeStopTarget, bool) {
+		for _, row := range projectRowsOf(view) {
+			matches := row.UID == switchRegistrySelectionUID(selection) ||
+				(row.Root != "" && cleanOptionalPath(row.Root) == cleanOptionalPath(selection))
+			if !matches || row.Runtime == nil || exactTmuxHandle(row.Runtime.ID, "$") == "" || strings.TrimSpace(row.UID) == "" {
+				continue
+			}
+			observedName := strings.TrimSpace(row.SessionName)
+			if observedName == "" {
+				observedName = strings.TrimSpace(row.Runtime.Name)
+			}
+			if observedName != strings.TrimSpace(sessionName) {
+				return managedRuntimeStopTarget{}, false
+			}
+			return managedRuntimeStopTarget{SessionID: row.Runtime.ID, SessionName: observedName,
+				RootKind: coremetadata.KindProject, RootUID: row.UID}, true
+		}
+		return managedRuntimeStopTarget{}, false
+	}
+	// A discovered candidate is not a managed Project. Its historical sidebar
+	// kill remains human runtime maintenance and is classified separately from
+	// this managed plan; it may never be used for a Registry UID row.
+	if _, ok := resolve(view); !ok {
+		if switchRegistrySelectionUID(selection) != "" {
+			return fmt.Errorf("switch managed runtime stop: exact Project UID/session containment is unknown; nothing was changed")
+		}
+		return c.killFocusedSession(ctx, sessionName, fallbackSession, nil)
+	} else if c.tmuxRunner == nil {
+		return errors.New("switch managed runtime mutation runner is not configured")
+	}
+	route, err := resolveInvocationRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
+	if err != nil {
+		return err
+	}
+	target, ok := resolve(view)
+	if !ok {
+		return fmt.Errorf("switch managed runtime stop: exact Project UID/session containment is unknown; nothing was changed")
+	}
+	target.Route = route
+	if fallbackSession = strings.TrimSpace(fallbackSession); fallbackSession != "" && fallbackSession != sessionName {
+		if err := c.sessions.OpenSession(ctx, fallbackSession); err != nil {
+			return fmt.Errorf("open fallback tmux session %q before managed stop: %w", fallbackSession, err)
+		}
+	}
+	if c.navigation == nil || c.navigation.reader == nil || c.navigation.reader.reader == nil {
+		return errors.New("switch managed runtime Registry reader is not configured")
+	}
+	authoritative := managedRuntimeStopRegistryAuthority(c.navigation.reader.reader.loadRegistry)
+	return executeManagedRuntimeStop(ctx, c.tmuxRunner, target, authoritative)
 }
 
 func (c *switchCommand) toggleTag(target string, stdout io.Writer) error {

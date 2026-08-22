@@ -16,6 +16,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/terminaltext"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -242,38 +243,78 @@ func projectStartupCandidateFromValue(value string) (projectStartupCandidate, bo
 	}
 }
 
-// ensureProjectSession is the shipped first-session start without client
-// handoff: create the session if missing, then finish its Project identity.
+// ensureProjectSession is the shipped first-session plan transaction without
+// client handoff. It refuses reduced/unwired callers instead of retaining a raw
+// EnsureSession escape hatch outside the managed mutation executor.
 func (c *switchCommand) ensureProjectSession(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
-	if err := c.sessions.EnsureSession(ctx, sessionName, target); err != nil {
-		return fmt.Errorf("ensure tmux session %q: %w", sessionName, err)
+	if strings.TrimSpace(opened.project.Metadata.UID) == "" {
+		return errors.New("ensure Project session: exact Registry Project UID is unavailable; no runtime was created")
 	}
-	if err := c.mirrorBootstrappedProjectIdentity(ctx, sessionName, opened); err != nil {
-		return err
+	if c.tmuxRunner == nil {
+		return errors.New("ensure Project session: tmux mutation runner is not configured; no runtime was created")
 	}
-	return nil
+	if c.projectSessionPlan == nil {
+		return errors.New("ensure Project session: canonical materializer is not configured; no runtime was created")
+	}
+	return c.projectSessionPlan(ctx, sessionName, target, opened)
 }
 
-// mirrorBootstrappedProjectIdentity writes the minted Project identity onto the
-// session this open just created, and only then.
-//
-// The gate is `bootstrapped`, not "the mirror looks unset". An open of an
-// already-registered Project converges through the topology engine, which already
-// owns that session's identity, and a snapshot restore reaches a session the
-// Registry did not declare; writing here in either case would put this flow in the
-// business of repairing identity it did not mint. Repair has a route already --
-// `projmux reconcile resources` plans exactly these two set-options -- and keeping
-// it there is what makes a second pass of this flow write nothing at all.
-func (c *switchCommand) mirrorBootstrappedProjectIdentity(ctx context.Context, sessionName string, opened openedProjectBootstrap) error {
-	if !opened.bootstrapped || c.projectMirror == nil {
-		return nil
+func (c *switchCommand) ensureBootstrappedProjectSessionPlanned(ctx context.Context, sessionName, cwd string, project coremetadata.Project) error {
+	if c.tmuxRunner == nil {
+		return errors.New("ensure bootstrapped Project session: tmux mutation runner is not configured")
 	}
-	if strings.TrimSpace(opened.project.Metadata.UID) == "" {
-		return fmt.Errorf("mirror Project identity onto tmux session %q: the bootstrapped Project carries no uid", sessionName)
+	route, err := resolveInvocationRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
+	if err != nil {
+		return err
 	}
-	if err := c.projectMirror.MirrorProject(ctx, sessionName, opened.project); err != nil {
-		return fmt.Errorf("mirror Project identity onto tmux session %q: %w", sessionName, err)
+	return materializeProjectSessionCanonical(ctx, newResourceStore(), c.tmuxRunner, route, c.diagnostics, sessionName, cwd, project)
+}
+
+func materializeProjectSessionCanonical(ctx context.Context, store *resourceStore, runner tmuxCommandRunner, route runtimeMutationRoute, recorder *diagnostics.LifecycleRecorder, sessionName, cwd string, project coremetadata.Project) error {
+	if store == nil || runner == nil {
+		return errors.New("canonical Project session materializer is not configured")
 	}
+	if route.target.flag == "" || route.target.value == "" || strings.TrimSpace(route.socketName) == "" {
+		return errors.New("canonical Project session materializer has no exact app-owned route")
+	}
+	routed := explicitTmuxRunner{runner: runner, target: route.target}
+	client := defaultTmuxClientWithSocketRunner(routed, route.socketName, recorder)
+	runtime := &materializer{
+		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: client,
+		target: route.target, expectedSocketPath: route.expectedSocketPath, warn: io.Discard,
+		executable: os.Executable, lookupEnv: os.Getenv,
+	}
+	operationID, err := newCreateOperationID()
+	if err != nil {
+		return err
+	}
+	ledger := newRuntimeLedger(operationID)
+	helper := &createCommand{runtime: runtime}
+	_, err = store.update(func(working *coremetadata.Registry) error {
+		current, ok := working.Project(project.Metadata.UID)
+		if !ok || current.Spec.Root != project.Spec.Root {
+			return errors.New("bootstrapped Project declaration drifted before canonical materialization")
+		}
+		created, err := runtime.ensureSession(ctx, *current, sessionName, ledger)
+		if err != nil {
+			return err
+		}
+		if created.Created {
+			if err := helper.adoptInitialWindow(ctx, working, store.mutator(), *current, created, ledger); err != nil {
+				return err
+			}
+		}
+		if _, err := store.mutator().BindProjectSession(working, current.Metadata.UID, sessionName, true); err != nil {
+			return MapMetadataError(err)
+		}
+		return runtime.finalizeSessionStartup(ctx, created, sessionName, cwd, ledger)
+	})
+	if err != nil {
+		runtime.rollback(ctx, ledger)
+		runtime.clearCreateOperations(ctx, ledger)
+		return err
+	}
+	runtime.clearCreateOperations(ctx, ledger)
 	return nil
 }
 
@@ -421,10 +462,11 @@ func (r *defaultSwitchProjectRegistrar) RegisterProjectRoot(ctx context.Context,
 //
 // A `false, nil` result means the exact Project root declares no Registry
 // desired topology -- an unregistered directory, or a Project with no Registry
-// Window -- which is the ordinary case for a first open and keeps the historic
-// `EnsureSession` behavior. Everything else is an error: a refusal, a failed
-// preflight, and a rolled-back partial materialization all reach the caller as
-// one, so the client is never moved into a session the topology never reached.
+// Window. The caller then enters the same canonical typed first-session
+// transaction; it never falls back to Client.EnsureSession. Everything else is
+// an error: a refusal, a failed preflight, and a rolled-back partial
+// materialization all reach the caller as one, so the client is never moved
+// into a session the topology never reached.
 type switchProjectTopologyMaterializer interface {
 	MaterializeProjectTopology(ctx context.Context, root, sessionName string) (bool, error)
 }
@@ -433,18 +475,12 @@ type switchProjectTopologyMaterializer interface {
 // The client move is strictly last: materialization either converges the whole
 // declared shell topology or fails without an open.
 //
-// A bootstrapped open -- this open is what registered the Project -- takes the
-// shipped ensure path rather than the topology engine. The two would build the
-// same thing -- a Project registered a moment ago has exactly the one-Window,
-// one-shell-Pane bootstrap topology EnsureSession produces -- but they build it on
-// different servers: the topology engine binds to the app-owned socket by design,
-// while a first open of a directory has always started its session on the transport
-// the operator is actually in. Reusing the shipped path keeps a first open
-// unchanged; every later open of the now-registered Project converges through the
-// topology engine exactly as it already did.
-//
-// The Project itself travels with the flag because that ensure path is the only
-// route that has to finish the identity mirror itself; see
+// A bootstrapped open -- this open is what registered the Project -- already
+// declares the minimum one-Window, one-shell-Pane graph, so it enters the
+// canonical first-session transaction directly. Every later open first asks the
+// full topology engine to converge any richer stored graph; a false result still
+// returns to that same typed first-session transaction. The Project travels with
+// the flag because both paths require its exact UID/root declaration; see
 // ensureProjectSession.
 func (c *switchCommand) materializeAndOpenProjectTopology(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
 	if err := c.materializeProjectTopology(ctx, sessionName, target, opened); err != nil {
@@ -471,15 +507,17 @@ func (c *switchCommand) materializeProjectTopology(ctx context.Context, sessionN
 // the ownership, rollback, no-stored-command, and no-Agent-autostart contract has
 // one implementation rather than a startup-flavored copy.
 type registryProjectTopologyMaterializer struct {
-	resources       *resourceStore
-	runner          tmuxCommandRunner
-	target          explicitTmuxTarget
-	diagnostics     *diagnostics.LifecycleRecorder
-	newReconciler   func(tmuxCommandRunner, sessionLister) *registryReconciler
-	newOperationID  func() (string, error)
-	newGeneration   func() (string, error)
-	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
-	warn            io.Writer
+	resources          *resourceStore
+	runner             tmuxCommandRunner
+	target             explicitTmuxTarget
+	expectedSocketPath string
+	resolveRoute       func(context.Context) (runtimeMutationRoute, error)
+	diagnostics        *diagnostics.LifecycleRecorder
+	newReconciler      func(tmuxCommandRunner, sessionLister) *registryReconciler
+	newOperationID     func() (string, error)
+	newGeneration      func() (string, error)
+	newMaterializer    func(tmuxCommandRunner, io.Writer) *materializer
+	warn               io.Writer
 	// agents is the provider-launch seam replayed Agents are launched through.
 	// It is injected from the process wiring rather than constructed here so
 	// startup, `create agent`, and `agent resume` share one object.
@@ -500,13 +538,14 @@ type registryProjectTopologyMaterializer struct {
 // `-L projmux` socket. Startup never infers a socket from an inherited client,
 // which is the same exact-target rule the reconcile and delete routes follow.
 func newRegistryProjectTopologyMaterializer(recorders ...*diagnostics.LifecycleRecorder) *registryProjectTopologyMaterializer {
+	runner := inttmux.ExecRunner{}
 	target, err := tmuxSocketNameTarget(defaultAppSocket)
 	if err != nil {
 		panic(err)
 	}
-	return &registryProjectTopologyMaterializer{
+	materializer := &registryProjectTopologyMaterializer{
 		resources:   newResourceStore(),
-		runner:      inttmux.ExecRunner{},
+		runner:      runner,
 		target:      target,
 		diagnostics: recorderFrom(recorders),
 		warn:        io.Discard,
@@ -514,8 +553,12 @@ func newRegistryProjectTopologyMaterializer(recorders ...*diagnostics.LifecycleR
 		// Phase settled on for every closed-Project startup report. See
 		// projectStartupNoticeSink: a popup guarantees the emit and denies the
 		// read, so stderr alone was a disclosure nobody received.
-		notices: newProjectStartupNoticeSink(inttmux.ExecRunner{}),
+		notices: newProjectStartupNoticeSink(runner),
 	}
+	materializer.resolveRoute = func(ctx context.Context) (runtimeMutationRoute, error) {
+		return resolveInvocationRuntimeMutationRoute(ctx, runner, os.Getenv)
+	}
+	return materializer
 }
 
 func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx context.Context, root, sessionName string) (bool, error) {
@@ -526,6 +569,14 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 	projectRef, ok, err := m.desiredTopologyRef(root)
 	if err != nil || !ok {
 		return false, err
+	}
+	if m.resolveRoute != nil {
+		route, routeErr := m.resolveRoute(ctx)
+		if routeErr != nil {
+			return false, routeErr
+		}
+		m.target = route.target
+		m.expectedSocketPath = route.expectedSocketPath
 	}
 	if err := requireAutomaticRecoveryPaths("project-open-materialize", "project-open-skip-item"); err != nil {
 		return false, err
@@ -543,16 +594,17 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		agents:             m.agents,
 	}
 	run := topologyMaterializeRun{
-		resources:       m.resources,
-		runner:          m.runner,
-		target:          m.target,
-		diagnostics:     m.diagnostics,
-		newOperationID:  m.newOperationID,
-		newGeneration:   m.newGeneration,
-		newMaterializer: m.newMaterializer,
-		agents:          m.agents,
-		notices:         m.notices,
-		recoveryTrigger: controller.RecoveryProjectOpen,
+		resources:          m.resources,
+		runner:             m.runner,
+		target:             m.target,
+		expectedSocketPath: m.expectedSocketPath,
+		diagnostics:        m.diagnostics,
+		newOperationID:     m.newOperationID,
+		newGeneration:      m.newGeneration,
+		newMaterializer:    m.newMaterializer,
+		agents:             m.agents,
+		notices:            m.notices,
+		recoveryTrigger:    controller.RecoveryProjectOpen,
 	}
 	warn := m.warn
 	if warn == nil {

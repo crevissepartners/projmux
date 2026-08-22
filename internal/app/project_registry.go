@@ -59,6 +59,10 @@ type registryReconciler struct {
 	observeLegacy func(ctx context.Context, session string) (coremetadata.LegacySession, intmetadata.LegacyTargets, error)
 	// mirror writes allocated identity back onto live tmux objects.
 	mirror intmetadata.Mirror
+	// Runtime identity writes enter the shared printable mutation executor.
+	// The generic metadata adapter remains the read inventory only.
+	mirrorWindow func(context.Context, string, coremetadata.Window) error
+	mirrorPane   func(context.Context, string, string, coremetadata.Pane) error
 	// shell is the configured shell path; its basename seeds default Window and
 	// Pane names.
 	shell string
@@ -91,7 +95,7 @@ func newRegistryReconciler(runner tmuxCommandRunner, sessions sessionLister) *re
 	mirror := intmetadata.NewMirror(runner)
 	home, err := os.UserHomeDir()
 	namer := coresessions.NewNamer(home)
-	return &registryReconciler{
+	reconciler := &registryReconciler{
 		discoverRoots: func() ([]string, error) {
 			if err != nil {
 				return nil, err
@@ -110,6 +114,31 @@ func newRegistryReconciler(runner tmuxCommandRunner, sessions sessionLister) *re
 			return namer.SessionName(root)
 		},
 	}
+	if _, recording := runner.(*resourcePlanTmuxRunner); recording {
+		reconciler.mirrorWindow = mirror.MirrorWindow
+		reconciler.mirrorPane = func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
+			return mirror.MirrorPane(ctx, target, pane)
+		}
+	} else {
+		typed := runtimeMutationMetadataMirror{runner: runner}
+		reconciler.mirrorWindow = typed.MirrorWindow
+		reconciler.mirrorPane = typed.MirrorPane
+	}
+	return reconciler
+}
+
+func (r *registryReconciler) writeWindowMirror(ctx context.Context, target string, window coremetadata.Window) error {
+	if r.mirrorWindow == nil {
+		return errors.New("registry reconciler: typed Window mirror executor is required")
+	}
+	return r.mirrorWindow(ctx, target, window)
+}
+
+func (r *registryReconciler) writePaneMirror(ctx context.Context, target, windowUID string, pane coremetadata.Pane) error {
+	if r.mirrorPane == nil {
+		return errors.New("registry reconciler: typed Pane mirror executor is required")
+	}
+	return r.mirrorPane(ctx, target, windowUID, pane)
 }
 
 // sessionLister is the live tmux session inventory seam.
@@ -585,7 +614,7 @@ func (r *registryReconciler) reapplySessionBindings(
 		// rename) on every apply/lifecycle pass. Adoption is the missing-binding
 		// case and still takes the existing whole MirrorWindow path.
 		if match.Kind != coremetadata.AdoptionRebind {
-			if err := r.mirror.MirrorWindow(ctx, session.targets.Windows[wi], projected); err != nil {
+			if err := r.writeWindowMirror(ctx, session.targets.Windows[wi], projected); err != nil {
 				continue
 			}
 		}
@@ -616,7 +645,7 @@ func (r *registryReconciler) reapplySessionBindings(
 			// A write that fails is skipped, not retried and not escalated. The
 			// next pass observes the same drift and tries again.
 			if needsMirror {
-				_ = r.mirror.MirrorPane(ctx, row[pi], *pane)
+				_ = r.writePaneMirror(ctx, row[pi], match.UID, *pane)
 			}
 		}
 	}
@@ -723,7 +752,7 @@ func (r *registryReconciler) mirrorImported(
 		if !ok {
 			continue
 		}
-		if err := r.mirror.MirrorWindow(ctx, targets.Windows[imported.SourceIndex], *window); err != nil {
+		if err := r.writeWindowMirror(ctx, targets.Windows[imported.SourceIndex], *window); err != nil {
 			return err
 		}
 	}
@@ -742,7 +771,18 @@ func (r *registryReconciler) mirrorImported(
 		if !ok {
 			continue
 		}
-		if err := r.mirror.MirrorPane(ctx, row[imported.PaneIndex], *pane); err != nil {
+		windowUID := ""
+		if pane.Metadata.OwnerRef != nil {
+			switch pane.Metadata.OwnerRef.Kind {
+			case coremetadata.KindWindow:
+				windowUID = pane.Metadata.OwnerRef.UID
+			case coremetadata.KindAgent:
+				if agent, ok := registry.Agent(pane.Metadata.OwnerRef.UID); ok && agent.Metadata.OwnerRef != nil && agent.Metadata.OwnerRef.Kind == coremetadata.KindWindow {
+					windowUID = agent.Metadata.OwnerRef.UID
+				}
+			}
+		}
+		if err := r.writePaneMirror(ctx, row[imported.PaneIndex], windowUID, *pane); err != nil {
 			return err
 		}
 	}

@@ -110,6 +110,7 @@ func newProjectStartupTopologyFixture(t *testing.T) (*registryProjectTopologyMat
 		t.Fatal(err)
 	}
 	server := newFakeTmux()
+	server.socketPath = "/tmp/fake-tmux/projmux"
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00projmux": server}}
 	sessions := &fakeSessionMaterializer{tmux: server}
 	target, err := tmuxSocketNameTarget(defaultAppSocket)
@@ -293,7 +294,6 @@ func TestSwitchClosedProjectOpenPickerTopologyRowUsesTheSameEngine(t *testing.T)
 		nativePicker:    native,
 		projectTopology: topology,
 	}
-
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
 	}
@@ -354,6 +354,7 @@ func TestSwitchClosedProjectOpenWithoutDesiredTopologyKeepsEnsureSession(t *test
 		lookupEnv:       func(string) string { return "" },
 		projectTopology: topology,
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)

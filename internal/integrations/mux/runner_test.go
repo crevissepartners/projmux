@@ -482,14 +482,13 @@ func TestRunnerSelectWindowBuildsSocketScopedArgs(t *testing.T) {
 	}
 }
 
-func TestRunnerNewSessionBuildsDetachedSessionWithEnvAndPaneIDRead(t *testing.T) {
+func TestRunnerNewEphemeralSessionBuildsDetachedSessionWithEnvAndPaneIDRead(t *testing.T) {
 	backend := &recordingBackend{out: []byte(" %7 \n")}
 	runner := NewRunner(backend)
 
-	paneID, err := runner.NewSession(context.Background(), NewSessionOptions{
-		Detached: true,
-		Session:  " workspace ",
-		Cwd:      " /repo ",
+	paneID, err := runner.NewEphemeralSession(context.Background(), EphemeralSessionOptions{
+		Session: " workspace ",
+		Cwd:     " /repo ",
 		Env: map[string]string{
 			"ZED": "last",
 			"FOO": "bar",
@@ -497,7 +496,7 @@ func TestRunnerNewSessionBuildsDetachedSessionWithEnvAndPaneIDRead(t *testing.T)
 		ReturnPaneID: true,
 	})
 	if err != nil {
-		t.Fatalf("NewSession returned error: %v", err)
+		t.Fatalf("NewEphemeralSession returned error: %v", err)
 	}
 
 	wantArgs := []string{"new-session", "-d", "-s", "workspace", "-c", "/repo", "-e", "FOO=bar", "-e", "ZED=last", "-P", "-F", "#{pane_id}"}
@@ -505,99 +504,7 @@ func TestRunnerNewSessionBuildsDetachedSessionWithEnvAndPaneIDRead(t *testing.T)
 		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
 	}
 	if paneID != "%7" {
-		t.Fatalf("NewSession paneID = %q, want %%7", paneID)
-	}
-}
-
-func TestRunnerNewSessionWithResultReturnsAndVerifiesAtomicHandles(t *testing.T) {
-	row := []byte("$7\\037@8\\037%9\n")
-	backend := &sequenceBackend{outputs: [][]byte{row, row}}
-	result, err := NewRunner(backend).NewSessionWithResult(context.Background(), NewSessionOptions{
-		Detached: true,
-		Session:  "workspace",
-		Cwd:      "/repo",
-	})
-	if err != nil {
-		t.Fatalf("NewSessionWithResult error = %v", err)
-	}
-	if !result.Created || result.SessionID != "$7" || result.WindowID != "@8" || result.PaneID != "%9" {
-		t.Fatalf("result = %+v", result)
-	}
-	format := "#{session_id}\\037#{window_id}\\037#{pane_id}"
-	want := [][]string{
-		{"new-session", "-d", "-s", "workspace", "-c", "/repo", "-P", "-F", format},
-		{"display-message", "-p", "-t", "%9", "-F", format},
-	}
-	if !reflect.DeepEqual(backend.calls, want) {
-		t.Fatalf("calls = %#v, want %#v", backend.calls, want)
-	}
-}
-
-func TestParseNewSessionResultFailsClosed(t *testing.T) {
-	for _, output := range []string{"", "$1\\037@2", "$1\\037@2\\037%3\n$4\\037@5\\037%6", "name\\037@2\\037%3", "$1\\0370\\037%3"} {
-		if result, err := parseNewSessionResult(output); err == nil || result != (NewSessionResult{}) {
-			t.Fatalf("parseNewSessionResult(%q) = %+v, %v; want zero/error", output, result, err)
-		}
-	}
-}
-
-func TestRunnerNewSessionWithResultRejectsMismatchedOwner(t *testing.T) {
-	backend := &sequenceBackend{outputs: [][]byte{
-		[]byte("$7\\037@8\\037%9\n"),
-		[]byte("$70\\037@8\\037%9\n"),
-	}}
-	result, err := NewRunner(backend).NewSessionWithResult(context.Background(), NewSessionOptions{Detached: true, Session: "workspace", Cwd: "/repo"})
-	if err == nil || result.SessionID != "$7" || result.WindowID != "@8" || result.PaneID != "%9" || result.Created {
-		t.Fatalf("result/error = %+v / %v", result, err)
-	}
-}
-
-func TestRunnerNewSessionWithResultRejectsAttachOrCreate(t *testing.T) {
-	t.Parallel()
-	runner := NewRunner(&recordingBackend{})
-	if _, err := runner.NewSessionWithResult(context.Background(), NewSessionOptions{Attach: true, Session: "alpha"}); err == nil || !strings.Contains(err.Error(), "cannot prove Created attribution") {
-		t.Fatalf("attach-or-create error = %v", err)
-	}
-}
-
-func TestRunnerNewSessionBuildsAttachSessionWithSocketAndConfig(t *testing.T) {
-	backend := &recordingBackend{}
-	runner := NewRunner(backend)
-
-	_, err := runner.NewSession(context.Background(), NewSessionOptions{
-		Socket:     " pmx-dev ",
-		ConfigPath: " /tmp/tmux.conf ",
-		Attach:     true,
-		Session:    "dev",
-		Cwd:        "/repo",
-	})
-	if err != nil {
-		t.Fatalf("NewSession returned error: %v", err)
-	}
-
-	wantArgs := []string{"-S", "pmx-dev", "-f", "/tmp/tmux.conf", "new-session", "-A", "-s", "dev", "-c", "/repo"}
-	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
-		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
-	}
-}
-
-func TestRunnerNewWindowBuildsDetachedWindowWithNameAndCommand(t *testing.T) {
-	backend := &recordingBackend{}
-	runner := NewRunner(backend)
-
-	if err := runner.NewWindow(context.Background(), NewWindowOptions{
-		Detached: true,
-		Target:   " home:1 ",
-		Cwd:      "/repo",
-		Name:     "logs",
-		Command:  []string{"/bin/bash", "-l"},
-	}); err != nil {
-		t.Fatalf("NewWindow returned error: %v", err)
-	}
-
-	wantArgs := []string{"new-window", "-d", "-t", "home:1", "-c", "/repo", "-n", "logs", "/bin/bash", "-l"}
-	if backend.name != "tmux" || !reflect.DeepEqual(backend.args, wantArgs) {
-		t.Fatalf("backend call = %q %#v, want tmux %#v", backend.name, backend.args, wantArgs)
+		t.Fatalf("NewEphemeralSession paneID = %q, want %%7", paneID)
 	}
 }
 

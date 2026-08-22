@@ -388,11 +388,13 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 			// the result can be written. Its exact kill is queued only after the
 			// durable commit and flushed result below.
 			if !selfTarget {
-				for _, target := range currentLive.Targets {
-					if err := c.windows.kill(context.Background(), target); err != nil {
-						return err
-					}
-					killedLive = append(killedLive, target)
+				applied, err := c.windows.killAll(context.Background(), currentLive.Targets)
+				if applied > len(currentLive.Targets) {
+					applied = len(currentLive.Targets)
+				}
+				killedLive = append(killedLive, currentLive.Targets[:applied]...)
+				if err != nil {
+					return err
 				}
 			}
 		} else {
@@ -413,11 +415,21 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 				}
 				paneTombstoned = true
 			} else {
-				for _, target := range currentPanes.Targets {
-					if err := c.panes.kill(context.Background(), target); err != nil {
+				if batch, ok := c.panes.(interface {
+					killAll(context.Context, []paneLiveDeleteTarget) (int, error)
+				}); ok {
+					removed, err := batch.killAll(context.Background(), currentPanes.Targets)
+					killedPanes = append(killedPanes, currentPanes.Targets[:removed]...)
+					if err != nil {
 						return err
 					}
-					killedPanes = append(killedPanes, target)
+				} else {
+					for _, target := range currentPanes.Targets {
+						if err := c.panes.kill(context.Background(), target); err != nil {
+							return err
+						}
+						killedPanes = append(killedPanes, target)
+					}
 				}
 			}
 		}

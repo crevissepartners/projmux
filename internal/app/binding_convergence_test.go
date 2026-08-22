@@ -41,6 +41,9 @@ func (r *routedTmuxRunner) Run(ctx context.Context, name string, args ...string)
 		return nil, fmt.Errorf("no fake tmux server for %q", target)
 	}
 	r.calls = append(r.calls, routedTmuxCall{flag: args[0], value: args[1], args: slices.Clone(args[2:])})
+	if args[0] == "-L" && args[2] == "show-options" && args[len(args)-1] == runtimeMutationSocketNameOption {
+		return []byte(args[1] + "\n"), nil
+	}
 	return server.Run(ctx, name, args[2:]...)
 }
 
@@ -433,7 +436,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	sourceIdx := slices.IndexFunc(calls, func(call recordedTmuxCall) bool {
 		return slices.Contains(call.args, "source-file")
 	})
-	if len(calls) < 2 || !reflect.DeepEqual(calls[0].args[:2], []string{"-L", "isolated"}) || sourceIdx != len(calls)-1 {
+	if len(calls) < 3 || !reflect.DeepEqual(calls[0].args[:2], []string{"-L", "isolated"}) || sourceIdx != len(calls)-2 || !slices.Contains(calls[len(calls)-1].args, runtimeMutationSocketNameOption) {
 		t.Fatalf("reload did not precede same-socket convergence: %+v", calls)
 	}
 	if configWrites != 1 {
