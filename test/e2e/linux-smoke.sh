@@ -1521,14 +1521,36 @@ cat >"$agent_home/.local/bin/codex" <<AGENT_STUB
 # Model the public hook path itself so acknowledgement is committed through the
 # Agent Registry authority, without reading or synthesizing pane content.
 if [[ " \$* " == *" --topic release triage "* ]]; then
-  # The create route binds its initial idle projection immediately after the
-  # process starts; emit the provider acknowledgement after that binding.
-  sleep 0.2
+  # The provider can start before the create transaction commits its exact Pane
+  # binding. Wait for that durable identity instead of guessing how long the
+  # typed plan/guard transaction takes under concurrent-create load.
+  [[ "\${TMUX_PANE:-}" =~ ^%[0-9]+$ ]] || exit 1
+  [[ -n "\${PMX_INTERNAL_ACTIVATION_PANE_UID:-}" ]] || exit 1
+  [[ -n "\${PMX_INTERNAL_ACTIVATION_GENERATION:-}" ]] || exit 1
+  activation_ready=0
+  for _ in {1..200}; do
+    if HOME=$(printf %q "$agent_home") \
+      PATH=$(printf %q "$create_shim:$agent_home/.local/bin"):\$PATH \
+      TMUX_TMPDIR=$(printf %q "$create_root/tt") \
+      XDG_STATE_HOME=$(printf %q "$create_root/state") \
+      XDG_CONFIG_HOME=$(printf %q "$create_root/config") \
+      PROJMUX_MANAGED_ROOTS=$(printf %q "$create_root/legacy:$create_root/work") \
+      $(printf %q "$bin") describe pane "uid:\$PMX_INTERNAL_ACTIVATION_PANE_UID" -o uid \
+      >$(printf %q "$create_root/agent-activation-poll.out") 2>/dev/null &&
+      [[ "\$(tr -d '[:space:]' <$(printf %q "$create_root/agent-activation-poll.out"))" == "\$PMX_INTERNAL_ACTIVATION_PANE_UID" ]]; then
+      activation_ready=1
+      break
+    fi
+    sleep 0.05
+  done
+  [[ "\$activation_ready" == "1" ]] || exit 1
   printf '{"hook_event_name":"UserPromptSubmit","thread_id":"phase6-activation-thread","session_id":"phase6-activation-session","cwd":"%s"}' "\$PWD" |
     HOME=$(printf %q "$agent_home") \
+    PATH=$(printf %q "$create_shim:$agent_home/.local/bin"):\$PATH \
+    TMUX_TMPDIR=$(printf %q "$create_root/tt") \
     XDG_STATE_HOME=$(printf %q "$create_root/state") \
     XDG_CONFIG_HOME=$(printf %q "$create_root/config") \
-    PROJMUX_MANAGED_ROOTS=$(printf %q "$create_root/work") \
+    PROJMUX_MANAGED_ROOTS=$(printf %q "$create_root/legacy:$create_root/work") \
     $(printf %q "$bin") internal agent-hook ingest codex-hook
 fi
 # Stay alive so the pane survives long enough to be inspected.

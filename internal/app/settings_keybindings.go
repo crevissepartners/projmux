@@ -2632,12 +2632,14 @@ func (c *settingsCommand) regenerateAndReloadTmuxConfig() (prepared keymapApplyS
 	route, routeErr := resolveInvocationRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
 	if routeErr != nil || route.expectedSocketPath == "" {
 		if routeErr == nil {
+			//lint:ignore ST1005 Settings is the canonical product-surface name in this diagnostic.
 			routeErr = errors.New("Settings live reload has no exact physical socket")
 		}
 		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("exact live tmux route", routeErr)}
 		return prepared, live, routeErr
 	}
 	if route.authority != nil && route.authority.Class == runtimeMutationRouteStandalone {
+		//lint:ignore ST1005 Settings is the canonical product-surface name in this diagnostic.
 		routeErr = errors.New("Settings live reload refuses an operator-owned standalone tmux server")
 		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("exact live tmux route", routeErr)}
 		return prepared, live, routeErr

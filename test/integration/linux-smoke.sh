@@ -2814,7 +2814,9 @@ termination_await_receipt() {
 termination_case() {
   local label="$1" want_class="$2" want_code="$3" want_signal="$4"
   shift 4
-  local pane_uid runtime_id activation
+  local pane_uid runtime_id activation release_file
+  release_file="$termination_root/release-$label"
+  rm -f "$release_file"
   pane_uid="$(termination_pmx_inside create pane --project evidence -o uid -- "$@")"
   if [[ -z "$pane_uid" ]]; then
     echo "termination case $label created no Pane" >&2
@@ -2822,6 +2824,7 @@ termination_case() {
   fi
   runtime_id="$(termination_activation_runtime_id "$pane_uid")"
   activation="$(termination_activation_generation "$pane_uid")"
+  touch "$release_file"
   termination_replay_pane_exited_hook "$pane_uid" "$want_class" "$runtime_id" "$label"
   if [[ "$want_class" == "normal" ]]; then
     if termination_pmx describe pane "uid:$pane_uid" -o json >"$termination_root/clean-pane-present.json" 2>/dev/null; then
@@ -2863,11 +2866,12 @@ termination_case() {
 }
 
 # Let the canonical create transaction finish its exact UID claim and mirrors
-# before the child supplies termination evidence. This block measures the
-# post-commit supervisor receipt, not a process that disappears mid-create.
-termination_case clean normal 0 "" sh -c 'sleep 0.5; exit 0'
-termination_case failure abnormal 7 "" sh -c 'sleep 0.5; exit 7'
-termination_case signal abnormal "" TERM sh -c 'sleep 0.5; kill -TERM $$; sleep 30'
+# before the child supplies termination evidence. An exact per-case release
+# file closes the race without assuming a fixed plan/guard execution duration.
+# shellcheck disable=SC2016 # $1 and $$ expand inside the managed child shell.
+termination_case clean normal 0 "" sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; exit 0' sh "$termination_root/release-clean"
+termination_case failure abnormal 7 "" sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; exit 7' sh "$termination_root/release-failure"
+termination_case signal abnormal "" TERM sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; kill -TERM $$; sleep 30' sh "$termination_root/release-signal"
 
 # The same evidence for the three managed providers. Each stub is a real
 # process that ends the way the case asks for; nothing about the provider's own
@@ -3565,8 +3569,12 @@ echo ">> exit reconciliation supervisor SIGKILL agent=$exitrec_sigkill_agent cla
 # A shell Pane's runtime loss without the exact event keeps the logical Pane.
 # pane-exited remains isolated from the explicit-reconcile cases above; restore
 # the generated hook verbatim after this final absence assertion.
+exitrec_shell_release="$exitrec_root/release-shell-pane"
+rm -f "$exitrec_shell_release"
 exitrec_shell_pane="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
-  create pane --project "uid:$exitrec_app_project_uid" -o uid -- sh -c 'sleep 0.5; exit 0')"
+  create pane --project "uid:$exitrec_app_project_uid" -o uid -- \
+  sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; exit 0' sh "$exitrec_shell_release")"
+touch "$exitrec_shell_release"
 for _ in $(seq 1 100); do
   exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
     | grep -qx "$exitrec_shell_pane" || break

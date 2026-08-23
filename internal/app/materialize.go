@@ -2065,10 +2065,12 @@ func (m *materializer) splitPane(ctx context.Context, anchorPaneID, placement, c
 			return err
 		}
 		if len(before) != len(current) {
+			//lint:ignore ST1005 Pane is the canonical Registry resource kind in this diagnostic.
 			return errors.New("Pane inventory drifted before split")
 		}
 		for id := range before {
 			if !current[id] {
+				//lint:ignore ST1005 Pane is the canonical Registry resource kind in this diagnostic.
 				return errors.New("Pane inventory drifted before split")
 			}
 		}

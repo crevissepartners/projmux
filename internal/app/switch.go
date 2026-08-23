@@ -93,10 +93,6 @@ type switchBulkSessionInspector interface {
 	ExistingSessions(ctx context.Context) (map[string]bool, error)
 }
 
-type switchSessionKiller interface {
-	KillSession(ctx context.Context, sessionName string) error
-}
-
 type switchRecentSessionsResolver interface {
 	RecentSessions(ctx context.Context) ([]string, error)
 }

@@ -14,18 +14,6 @@ type recordingBackend struct {
 	err  error
 }
 
-type sequenceBackend struct {
-	outputs [][]byte
-	calls   [][]string
-}
-
-func (b *sequenceBackend) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
-	b.calls = append(b.calls, append([]string(nil), args...))
-	output := b.outputs[0]
-	b.outputs = b.outputs[1:]
-	return output, nil
-}
-
 func (b *recordingBackend) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	b.name = name
 	b.args = append([]string(nil), args...)
