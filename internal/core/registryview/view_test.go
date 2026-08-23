@@ -146,6 +146,36 @@ func TestBuildProjectsBoundedAgentProgressAndAggregatesWindowAtReadTime(t *testi
 	}
 }
 
+func TestWindowProgressCountsSaturateAboveUint8Capacity(t *testing.T) {
+	t.Parallel()
+	agents := make([]resourcegraph.AgentNode, 0, 600)
+	for i := 0; i < 300; i++ {
+		agents = append(agents, resourcegraph.AgentNode{
+			WindowUID: "win-many",
+			Agent: coremetadata.Agent{Status: coremetadata.AgentStatus{
+				Phase: coremetadata.PhaseRunning,
+				Progress: coremetadata.AgentProgress{
+					TurnRef: "turn", Source: coremetadata.AgentProgressSource,
+				},
+				Interaction: coremetadata.AgentInteraction{Kind: coremetadata.InteractionInProgress},
+			}},
+		})
+	}
+	for i := 0; i < 300; i++ {
+		agents = append(agents, resourcegraph.AgentNode{
+			WindowUID: "win-many",
+			Agent: coremetadata.Agent{Status: coremetadata.AgentStatus{
+				Phase:       coremetadata.PhaseRunning,
+				Interaction: coremetadata.AgentInteraction{Kind: coremetadata.InteractionApprovalRequired},
+			}},
+		})
+	}
+	counts := (&builder{graph: resourcegraph.Graph{Agents: agents}}).windowProgressCounts("win-many")
+	if counts.active != ^uint8(0) || counts.working != ^uint8(0) || counts.approval != ^uint8(0) {
+		t.Fatalf("saturated counts = active %d working %d approval %d", counts.active, counts.working, counts.approval)
+	}
+}
+
 // TestBuildOrdersProjectsThenWindowsThenPanesAndAgents pins the hierarchy and
 // the order. The order is the Registry's slice order at every level, so this is
 // the golden the identity-stability tests below compare against.

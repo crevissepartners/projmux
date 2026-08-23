@@ -27,6 +27,7 @@ const (
 // reasoning, step, command, tool, path, output, or diff content.
 type Event struct {
 	Kind             EventKind
+	ThreadRef        string
 	TurnRef          string
 	ItemRef          string
 	Activity         coremetadata.AgentProgressActivity
@@ -77,7 +78,7 @@ func (r *Reducer) Begin(turnRef string, startedAt, observedAt time.Time) {
 
 func (r *Reducer) Observe(event Event) bool {
 	if event.UnknownIncrement > 0 {
-		r.diagnostics.Unknown += event.UnknownIncrement
+		saturatingAdd(&r.diagnostics.Unknown, event.UnknownIncrement)
 	}
 	if event.TurnRef == "" {
 		return false
@@ -91,11 +92,7 @@ func (r *Reducer) Observe(event Event) bool {
 		return true
 	}
 	if event.TurnRef != r.progress.TurnRef || r.progress.TurnRef == "" {
-		r.diagnostics.Dropped++
-		return false
-	}
-	if !event.ObservedAt.IsZero() && !r.progress.ObservedAt.IsZero() && event.ObservedAt.Before(r.progress.ObservedAt) {
-		r.diagnostics.Dropped++
+		saturatingIncrement(&r.diagnostics.Dropped)
 		return false
 	}
 	if event.Kind == EventTurnTerminal {
@@ -104,6 +101,10 @@ func (r *Reducer) Observe(event Event) bool {
 		r.pending = false
 		r.clearPending = !r.lastEmitted.IsZero()
 		return r.clearPending
+	}
+	if !event.ObservedAt.IsZero() && !r.progress.ObservedAt.IsZero() && event.ObservedAt.Before(r.progress.ObservedAt) {
+		saturatingIncrement(&r.diagnostics.Dropped)
+		return false
 	}
 
 	before := r.progress
@@ -193,7 +194,7 @@ func (r *Reducer) resetTurn(turnRef string, startedAt, observedAt time.Time) {
 
 func (r *Reducer) observeItemStarted(event Event) {
 	if event.ItemRef == "" || !coremetadata.ValidAgentProgressActivity(event.Activity) || event.Activity == "" {
-		r.diagnostics.Dropped++
+		saturatingIncrement(&r.diagnostics.Dropped)
 		return
 	}
 	if _, seen := r.items[event.ItemRef]; seen {
@@ -201,8 +202,8 @@ func (r *Reducer) observeItemStarted(event Event) {
 	}
 	if len(r.items) >= coremetadata.AgentProgressItemsCap {
 		r.overflowed = true
-		r.diagnostics.Dropped++
-		r.diagnostics.Overflow++
+		saturatingIncrement(&r.diagnostics.Dropped)
+		saturatingIncrement(&r.diagnostics.Overflow)
 		r.progress.Activity = coremetadata.ProgressOther
 		return
 	}
@@ -213,15 +214,15 @@ func (r *Reducer) observeItemStarted(event Event) {
 
 func (r *Reducer) observeItemCompleted(event Event) {
 	if event.ItemRef == "" {
-		r.diagnostics.Dropped++
+		saturatingIncrement(&r.diagnostics.Dropped)
 		return
 	}
 	item, seen := r.items[event.ItemRef]
 	if !seen {
 		if len(r.items) >= coremetadata.AgentProgressItemsCap {
 			r.overflowed = true
-			r.diagnostics.Dropped++
-			r.diagnostics.Overflow++
+			saturatingIncrement(&r.diagnostics.Dropped)
+			saturatingIncrement(&r.diagnostics.Overflow)
 			r.progress.Activity = coremetadata.ProgressOther
 			return
 		}
@@ -260,4 +261,18 @@ func sameSemanticProgress(a, b coremetadata.AgentProgress) bool {
 	a.ObservedAt = time.Time{}
 	b.ObservedAt = time.Time{}
 	return a == b
+}
+
+func saturatingIncrement(value *uint32) {
+	if *value != ^uint32(0) {
+		*value++
+	}
+}
+
+func saturatingAdd(value *uint32, increment uint32) {
+	if increment > ^uint32(0)-*value {
+		*value = ^uint32(0)
+		return
+	}
+	*value += increment
 }

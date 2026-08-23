@@ -104,3 +104,40 @@ func TestReducerDisconnectInvalidationHasZeroHistoryAndRejectsLateEvent(t *testi
 		t.Fatal("invalidated reducer retained history")
 	}
 }
+
+func TestReducerMatchingTerminalClearsDespiteOlderObservedAt(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	var reducer Reducer
+	reducer.Begin("turn-1", base, base)
+	if _, changed := reducer.Flush(base); !changed {
+		t.Fatal("initial progress was not durable")
+	}
+	if !reducer.Observe(Event{Kind: EventPlanUpdated, TurnRef: "turn-1", PlanTotal: 2, ObservedAt: base.Add(time.Second)}) {
+		t.Fatal("newer progress event was not accepted")
+	}
+	if !reducer.Observe(Event{Kind: EventTurnTerminal, TurnRef: "turn-1", ObservedAt: base.Add(-time.Second)}) {
+		t.Fatal("older matching terminal did not schedule immediate clear")
+	}
+	if got, changed := reducer.Flush(base.Add(time.Millisecond)); !changed || !got.IsZero() {
+		t.Fatalf("terminal flush = %+v/%t, want immediate zero", got, changed)
+	}
+}
+
+func TestReducerDiagnosticsSaturateAtUint32Boundary(t *testing.T) {
+	t.Parallel()
+	base := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	var reducer Reducer
+	reducer.Begin("turn-1", base, base)
+	reducer.diagnostics = Diagnostics{Dropped: ^uint32(0) - 1, Unknown: ^uint32(0) - 1, Overflow: ^uint32(0) - 1}
+	reducer.Observe(Event{TurnRef: "turn-foreign", UnknownIncrement: 10})
+	reducer.items = make(map[string]itemState, coremetadata.AgentProgressItemsCap)
+	for i := 0; i < coremetadata.AgentProgressItemsCap; i++ {
+		reducer.items[string(rune(i+1))] = itemState{}
+	}
+	reducer.Observe(Event{Kind: EventItemStarted, TurnRef: "turn-1", ItemRef: "overflow", Activity: coremetadata.ProgressOther, ObservedAt: base.Add(time.Millisecond)})
+	reducer.Observe(Event{Kind: EventItemStarted, TurnRef: "turn-1", ItemRef: "overflow-again", Activity: coremetadata.ProgressOther, ObservedAt: base.Add(2 * time.Millisecond)})
+	if got := reducer.Diagnostics(); got != (Diagnostics{Dropped: ^uint32(0), Unknown: ^uint32(0), Overflow: ^uint32(0)}) {
+		t.Fatalf("saturated diagnostics = %+v", got)
+	}
+}

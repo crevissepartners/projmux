@@ -242,7 +242,9 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					if !progressRecognized {
 						continue
 					}
-					o.progress.Observe(progressEvent)
+					if !o.observeProgress(progressEvent) {
+						continue
+					}
 					if err := o.flushProgress(); err != nil {
 						if control != nil {
 							_ = control.Close()
@@ -293,7 +295,9 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					reconnectReason = "protocol-error"
 					break eventLoop
 				} else if progressRecognized {
-					o.progress.Observe(progressEvent)
+					if !o.observeProgress(progressEvent) {
+						continue
+					}
 					if progressEvent.Kind == agentprogress.EventTurnTerminal {
 						_, _ = o.progress.Flush(o.currentTime())
 						if err := o.clearProgress(); err != nil {
@@ -347,6 +351,15 @@ func (o *codexNativeObserver) currentTime() time.Time {
 		return time.Now().UTC()
 	}
 	return o.now().UTC()
+}
+
+func (o *codexNativeObserver) observeProgress(event agentprogress.Event) bool {
+	// ThreadRef is an opaque routing identity, not content. Refuse mismatches
+	// before the reducer can mutate either progress or diagnostic counters.
+	if event.ThreadRef == "" || event.ThreadRef != o.identity.ThreadID {
+		return false
+	}
+	return o.progress.Observe(event)
 }
 
 func (o *codexNativeObserver) flushProgress() error {

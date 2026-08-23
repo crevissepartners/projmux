@@ -339,7 +339,7 @@ func TestCodexNativeObserverDropsContentBeforeProgressSinkAndClearsTerminal(t *t
 	}
 	conn.events <- codexappserver.Notification{Method: "turn/plan/updated", Params: []byte(`{"threadId":"thread-1","turnId":"turn-1","explanation":"PRIVATE-EXPLANATION","plan":[{"status":"completed","step":"PRIVATE-STEP-A"},{"status":"inProgress","step":"PRIVATE-STEP-B"}]}`)}
 	conn.events <- codexappserver.Notification{Method: "turn/diff/updated", Params: []byte(`{"threadId":"thread-1","turnId":"turn-1","diff":"diff --git a/PRIVATE-PATH b/PRIVATE-PATH\n--- a/PRIVATE-PATH\n+++ b/PRIVATE-PATH\n"}`)}
-	conn.events <- codexappserver.Notification{Method: "item/started", Params: []byte(`{"threadId":"thread-1","turnId":"turn-1","startedAtMs":1700000000100,"item":{"id":"opaque-item-1","type":"commandExecution","command":"PRIVATE-COMMAND","cwd":"/PRIVATE/PATH","aggregatedOutput":"PRIVATE-OUTPUT"}}`)}
+	conn.events <- codexappserver.Notification{Method: "item/started", Params: []byte(`{"threadId":"thread-1","turnId":"turn-1","startedAtMs":1700000000100,"item":{"id":"opaque-item-1","type":"commandExecution","status":"inProgress","command":"PRIVATE-COMMAND","cwd":"/PRIVATE/PATH","aggregatedOutput":"PRIVATE-OUTPUT"}}`)}
 	conn.events <- codexappserver.Notification{Method: "turn/completed", Params: []byte(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[{"type":"agentMessage","text":"PRIVATE-MESSAGE"}],"error":{"message":"PRIVATE-ERROR"}}}`)}
 	close(conn.events)
 
@@ -400,6 +400,59 @@ func TestCodexNativeObserverDropsContentBeforeProgressSinkAndClearsTerminal(t *t
 		if strings.Contains(fmt.Sprintf("%#v", diagnostic), "PRIVATE-") {
 			t.Fatalf("content reached progress diagnostics: %#v", diagnostic)
 		}
+	}
+}
+
+func TestCodexNativeObserverForeignThreadSameTurnWritesNoRegistryProgressOrDiagnostics(t *testing.T) {
+	identity := testCodexLifecycleIdentity()
+	conn := &fakeCodexLifecycleConnection{
+		snapshot: codexappserver.LifecycleSnapshot{
+			ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateActive,
+			TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+		},
+		events: make(chan codexappserver.Notification, 2),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sink := &recordingCodexProgressSink{recordingCodexLifecycleSink: newRecordingCodexLifecycleSink()}
+	observer := codexNativeObserver{
+		identity: identity, delay: time.Millisecond, sink: sink,
+		open: func(context.Context) (codexLifecycleConnection, error) { return conn, nil },
+	}
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(ctx) }()
+	waitForCodexObserverEvents(t, sink.recordingCodexLifecycleSink, 2)
+	progressBefore, diagnosticsBefore := sink.progressSnapshot()
+
+	conn.events <- codexappserver.Notification{Method: "turn/plan/updated", Params: []byte(`{"threadId":"thread-foreign","turnId":"turn-1","plan":[{"status":"completed","step":"PRIVATE-FOREIGN"}]}`)}
+	// The accepted lifecycle marker is queued after the foreign progress event,
+	// so its sink write proves the observer consumed the earlier event.
+	conn.events <- codexappserver.Notification{Method: "thread/status/changed", Params: []byte(`{"threadId":"thread-1","status":{"type":"active","activeFlags":[]}}`)}
+	waitForCodexObserverEvents(t, sink.recordingCodexLifecycleSink, 3)
+
+	progress, diagnostics := sink.progressSnapshot()
+	if !reflect.DeepEqual(progress, progressBefore) {
+		t.Fatalf("foreign thread added Registry/progress sink writes: before=%#v after=%#v", progressBefore, progress)
+	}
+	if !reflect.DeepEqual(diagnostics, diagnosticsBefore) {
+		t.Fatalf("foreign thread added diagnostics writes: before=%#v after=%#v", diagnosticsBefore, diagnostics)
+	}
+	if len(progress) != 2 || !progress[0].IsZero() || progress[1].TurnRef != "turn-1" ||
+		len(diagnostics) != 2 || diagnostics[0] != (agentprogress.Diagnostics{}) || diagnostics[1] != (agentprogress.Diagnostics{}) {
+		t.Fatalf("unexpected baseline progress=%#v diagnostics=%#v", progress, diagnostics)
+	}
+	if got := observer.progress.Current(); got.PlanTotal != 0 || got.PlanCompleted != 0 {
+		t.Fatalf("foreign thread mutated reducer/Registry projection: %#v", got)
+	}
+
+	sink.setCurrent(false)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("observer did not exit after exact binding loss")
 	}
 }
 

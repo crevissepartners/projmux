@@ -67,9 +67,14 @@ func TestDecodeProgressItemUsesOnlyClosedDiscriminatorMapping(t *testing.T) {
 		"contextCompaction": coremetadata.ProgressCompaction, "futurePrivateThing": coremetadata.ProgressOther,
 	}
 	for itemType, want := range cases {
-		raw, _ := json.Marshal(map[string]any{"threadId": "thread-1", "turnId": "turn-1", "startedAtMs": 1, "item": map[string]any{
+		item := map[string]any{
 			"id": "item-1", "type": itemType, "command": "rm PRIVATE", "cwd": "/repo/private", "output": "SECRET",
-		}})
+		}
+		switch itemType {
+		case "commandExecution", "fileChange", "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "imageGeneration":
+			item["status"] = "inProgress"
+		}
+		raw, _ := json.Marshal(map[string]any{"threadId": "thread-1", "turnId": "turn-1", "startedAtMs": 1, "item": item})
 		event, recognized, err := DecodeProgressEvent(Notification{Method: "item/started", Params: raw}, time.Unix(1, 0))
 		if err != nil || !recognized || event.Activity != want {
 			t.Fatalf("%s = %+v/%t/%v, want %s", itemType, event, recognized, err, want)
@@ -81,11 +86,60 @@ func TestDecodeProgressItemUsesOnlyClosedDiscriminatorMapping(t *testing.T) {
 	}
 }
 
+func TestDecodeProgressItemRequiresSchemaAndLifecycleCompatibleStatus(t *testing.T) {
+	t.Parallel()
+	valid := []struct {
+		method, itemType, status string
+	}{
+		{method: "item/started", itemType: "commandExecution", status: "inProgress"},
+		{method: "item/completed", itemType: "commandExecution", status: "declined"},
+		{method: "item/completed", itemType: "mcpToolCall", status: "failed"},
+		{method: "item/completed", itemType: "imageGeneration", status: "completed"},
+		{method: "item/started", itemType: "webSearch"},
+	}
+	for _, test := range valid {
+		raw := progressItemFixture(test.method, test.itemType, test.status)
+		event, recognized, err := DecodeProgressEvent(Notification{Method: test.method, Params: raw}, time.Unix(1, 0))
+		if err != nil || !recognized || event.ThreadRef != "thread-1" {
+			t.Errorf("valid %s/%s/%s = %+v/%t/%v", test.method, test.itemType, test.status, event, recognized, err)
+		}
+	}
+	invalid := []struct {
+		method, itemType, status string
+	}{
+		{method: "item/started", itemType: "commandExecution"},
+		{method: "item/started", itemType: "commandExecution", status: "completed"},
+		{method: "item/completed", itemType: "mcpToolCall", status: "declined"},
+		{method: "item/completed", itemType: "imageGeneration", status: "futureState"},
+	}
+	for _, test := range invalid {
+		raw := progressItemFixture(test.method, test.itemType, test.status)
+		if event, recognized, err := DecodeProgressEvent(Notification{Method: test.method, Params: raw}, time.Unix(1, 0)); err == nil || !recognized || event != (agentprogress.Event{}) {
+			t.Errorf("invalid %s/%s/%s = %+v/%t/%v", test.method, test.itemType, test.status, event, recognized, err)
+		}
+	}
+}
+
+func progressItemFixture(method, itemType, status string) json.RawMessage {
+	item := map[string]any{"id": "item-1", "type": itemType}
+	if status != "" {
+		item["status"] = status
+	}
+	params := map[string]any{"threadId": "thread-1", "turnId": "turn-1", "item": item}
+	if method == "item/started" {
+		params["startedAtMs"] = 1
+	} else {
+		params["completedAtMs"] = 2
+	}
+	raw, _ := json.Marshal(params)
+	return raw
+}
+
 func TestDecodeProgressTurnUsesNestedTurnIDAndTerminalStatus(t *testing.T) {
 	t.Parallel()
 	raw := json.RawMessage(`{"threadId":"thread-1","turnId":"wrong","turn":{"id":"turn-1","status":"interrupted","startedAt":10.5,"items":[{"type":"reasoning","text":"PRIVATE"}],"error":{"message":"PRIVATE"}}}`)
 	event, recognized, err := DecodeProgressEvent(Notification{Method: "turn/completed", Params: raw}, time.Unix(20, 0))
-	if err != nil || !recognized || event.Kind != agentprogress.EventTurnTerminal || event.TurnRef != "turn-1" {
+	if err != nil || !recognized || event.Kind != agentprogress.EventTurnTerminal || event.ThreadRef != "thread-1" || event.TurnRef != "turn-1" {
 		t.Fatalf("turn projection = %+v/%t/%v", event, recognized, err)
 	}
 	assertBoundedProgressEventHasNoContentFields(t, event)

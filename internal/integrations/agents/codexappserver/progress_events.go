@@ -36,7 +36,7 @@ func DecodeProgressEvent(notification Notification, observedAt time.Time) (agent
 		if strings.TrimSpace(params.ThreadID) == "" || strings.TrimSpace(params.Turn.ID) == "" {
 			return agentprogress.Event{}, true, protocolProgressError()
 		}
-		event := agentprogress.Event{Kind: agentprogress.EventTurnStarted, TurnRef: strings.TrimSpace(params.Turn.ID), ObservedAt: observedAt.UTC()}
+		event := agentprogress.Event{Kind: agentprogress.EventTurnStarted, ThreadRef: strings.TrimSpace(params.ThreadID), TurnRef: strings.TrimSpace(params.Turn.ID), ObservedAt: observedAt.UTC()}
 		if params.Turn.StartedAt != nil {
 			event.StartedAt = unixSeconds(*params.Turn.StartedAt)
 		}
@@ -68,7 +68,7 @@ func DecodeProgressEvent(notification Notification, observedAt time.Time) (agent
 		if truncated {
 			limit = coremetadata.AgentProgressPlanCap
 		}
-		event := agentprogress.Event{Kind: agentprogress.EventPlanUpdated, TurnRef: strings.TrimSpace(params.TurnID), PlanTotal: uint8(limit), PlanTruncated: truncated, ObservedAt: observedAt.UTC()}
+		event := agentprogress.Event{Kind: agentprogress.EventPlanUpdated, ThreadRef: strings.TrimSpace(params.ThreadID), TurnRef: strings.TrimSpace(params.TurnID), PlanTotal: uint8(limit), PlanTruncated: truncated, ObservedAt: observedAt.UTC()}
 		for _, step := range params.Plan[:limit] {
 			switch strings.TrimSpace(step.Status) {
 			case "completed":
@@ -95,7 +95,7 @@ func DecodeProgressEvent(notification Notification, observedAt time.Time) (agent
 		}
 		count, truncated := countDiffHeaders(params.Diff)
 		params.Diff = ""
-		return agentprogress.Event{Kind: agentprogress.EventDiffUpdated, TurnRef: strings.TrimSpace(params.TurnID), ChangedFiles: count, FilesTruncated: truncated, ObservedAt: observedAt.UTC()}, true, nil
+		return agentprogress.Event{Kind: agentprogress.EventDiffUpdated, ThreadRef: strings.TrimSpace(params.ThreadID), TurnRef: strings.TrimSpace(params.TurnID), ChangedFiles: count, FilesTruncated: truncated, ObservedAt: observedAt.UTC()}, true, nil
 	case "item/started", "item/completed":
 		var params struct {
 			ThreadID string `json:"threadId"`
@@ -112,11 +112,13 @@ func DecodeProgressEvent(notification Notification, observedAt time.Time) (agent
 		if err := decodeLifecycleParams(notification.Params, &params); err != nil {
 			return agentprogress.Event{}, true, err
 		}
-		if strings.TrimSpace(params.ThreadID) == "" || strings.TrimSpace(params.TurnID) == "" || strings.TrimSpace(params.Item.ID) == "" {
+		if strings.TrimSpace(params.ThreadID) == "" || strings.TrimSpace(params.TurnID) == "" || strings.TrimSpace(params.Item.ID) == "" ||
+			(method == "item/started" && params.StartedAtMS == nil) || (method == "item/completed" && params.CompletedAtMS == nil) ||
+			!progressItemStatusCompatible(method, params.Item.Type, params.Item.Status) {
 			return agentprogress.Event{}, true, protocolProgressError()
 		}
 		activity, known := progressActivity(params.Item.Type)
-		event := agentprogress.Event{Kind: agentprogress.EventItemStarted, TurnRef: strings.TrimSpace(params.TurnID), ItemRef: strings.TrimSpace(params.Item.ID), Activity: activity, ObservedAt: observedAt.UTC()}
+		event := agentprogress.Event{Kind: agentprogress.EventItemStarted, ThreadRef: strings.TrimSpace(params.ThreadID), TurnRef: strings.TrimSpace(params.TurnID), ItemRef: strings.TrimSpace(params.Item.ID), Activity: activity, ObservedAt: observedAt.UTC()}
 		if !known {
 			event.UnknownIncrement = 1
 		}
@@ -127,6 +129,33 @@ func DecodeProgressEvent(notification Notification, observedAt time.Time) (agent
 	default:
 		return agentprogress.Event{}, false, nil
 	}
+}
+
+// progressItemStatusCompatible enforces the installed 0.149.0 ThreadItem
+// status enums against the lifecycle notification carrying them. Thread item
+// kinds whose schema has no status field remain content-free and need no
+// synthetic status. imageGeneration has a required but open schema string, so
+// the adapter deliberately narrows it to the lifecycle states it can safely
+// interpret.
+func progressItemStatusCompatible(method, itemType, status string) bool {
+	itemType = strings.TrimSpace(itemType)
+	status = strings.TrimSpace(status)
+	statusBearing := false
+	terminalDeclined := false
+	switch itemType {
+	case "commandExecution", "fileChange":
+		statusBearing = true
+		terminalDeclined = true
+	case "mcpToolCall", "dynamicToolCall", "collabAgentToolCall", "imageGeneration":
+		statusBearing = true
+	}
+	if !statusBearing {
+		return true
+	}
+	if method == "item/started" {
+		return status == "inProgress"
+	}
+	return status == "completed" || status == "failed" || (terminalDeclined && status == "declined")
 }
 
 func progressActivity(itemType string) (coremetadata.AgentProgressActivity, bool) {

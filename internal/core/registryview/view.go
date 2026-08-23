@@ -479,16 +479,22 @@ func (b *builder) windowProgressCounts(windowUID string) windowProgressCounts {
 			continue
 		}
 		if !agent.Agent.Status.Progress.IsZero() {
-			counts.active++
+			incrementUint8Saturating(&counts.active)
 		}
 		switch agent.Agent.Status.Interaction.Kind {
 		case coremetadata.InteractionApprovalRequired:
-			counts.approval++
+			incrementUint8Saturating(&counts.approval)
 		case coremetadata.InteractionInProgress:
-			counts.working++
+			incrementUint8Saturating(&counts.working)
 		}
 	}
 	return counts
+}
+
+func incrementUint8Saturating(value *uint8) {
+	if *value != ^uint8(0) {
+		*value++
+	}
 }
 
 func (b *builder) paneRow(pane resourcegraph.PaneNode, parentID string, depth int, root string) Row {
