@@ -361,7 +361,7 @@ func TestAppServerCatalogPickerPreservesListedThreadOnResumeIntent(t *testing.T)
 		}
 		response := map[string]any{"id": request.ID, "result": map[string]any{
 			"data": []map[string]any{{
-				"id": id, "cwd": work, "name": "Provider title", "createdAt": int64(10),
+				"id": id, "cwd": work, "name": "", "createdAt": int64(10),
 				"updatedAt": int64(20), "recencyAt": int64(30), "status": map[string]any{"type": "idle"},
 			}}, "nextCursor": nil,
 		}}
@@ -386,7 +386,19 @@ func TestAppServerCatalogPickerPreservesListedThreadOnResumeIntent(t *testing.T)
 	cmd.openCodexCatalog = func(context.Context) (aisessions.CodexCatalog, error) {
 		return &appServerPickerCatalog{client: codexappserver.NewClient(clientConn)}, nil
 	}
-	stubAIPickerSelection(cmd, aiResumePickerValue(aiModeCodex, id))
+	cmd.loadRegistry = func() (coremetadata.Registry, error) {
+		return coremetadata.Registry{Agents: []coremetadata.Agent{{
+			Spec: coremetadata.AgentSpec{Provider: aiModeCodex},
+			Metadata: coremetadata.ObjectMeta{UID: "agt-picker", Name: "picker-agent", Annotations: map[string]string{
+				coremetadata.AnnotationAgentTopic: "Exact registry topic",
+			}},
+			Status: coremetadata.AgentStatus{SessionRef: &coremetadata.AgentSessionRef{
+				Provider: aiModeCodex, Codex: &coremetadata.CodexSessionRef{ThreadID: id},
+			}},
+		}}}, nil
+	}
+	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "enter", Value: aiResumePickerValue(aiModeCodex, id)}}
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 	if err := cmd.runResumePicker("right"); err != nil {
 		t.Fatal(err)
 	}
@@ -399,6 +411,9 @@ func TestAppServerCatalogPickerPreservesListedThreadOnResumeIntent(t *testing.T)
 	}}
 	if !reflect.DeepEqual(creator.intents, want) {
 		t.Fatalf("intents=%+v want=%+v", creator.intents, want)
+	}
+	if len(runner.options.Entries) != 2 || !strings.Contains(runner.options.Entries[1].Label, "Exact registry topic") {
+		t.Fatalf("picker entries=%#v, want exact-bound Registry topic", runner.options.Entries)
 	}
 }
 
@@ -447,9 +462,9 @@ func TestCatalogOpenFailurePickerUsesOneVisibleRolloutRowAndIntent(t *testing.T)
 				t.Fatalf("catalog opens=%d entries=%#v, want one open and new+one rollout row", opens, runner.options.Entries)
 			}
 			row := runner.options.Entries[1]
-			visible := aisessions.SourceCodexRollout + "/" + aisessions.ConfidenceMedium + "/" + test.reason
-			if !strings.Contains(row.Label, visible) || !strings.Contains(row.SearchKey, test.reason) {
-				t.Fatalf("row=%#v, want visible/searchable %q", row, visible)
+			if !strings.Contains(row.Label, "[fallback]") || strings.Contains(row.Label, aisessions.SourceCodexRollout) ||
+				!strings.Contains(row.SearchKey, aisessions.SourceCodexRollout) || !strings.Contains(row.SearchKey, test.reason) {
+				t.Fatalf("row=%#v, want compact fallback and searchable raw provenance", row)
 			}
 			if len(creator.intents) != 1 || creator.intents[0].conversationID != id ||
 				creator.intents[0].resumeSource != aisessions.SourceCodexRollout {

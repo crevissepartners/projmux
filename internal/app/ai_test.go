@@ -280,7 +280,7 @@ func TestAIResumePickerRowsCapAndMetadata(t *testing.T) {
 		})
 	}
 
-	rows, visible, total := aiResumeSessionRows(sessions, aiResumePickerLimitDefault, time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC), i18n.FallbackLocale, "", 0)
+	rows, visible, total := aiResumeSessionRowsWithLabels(sessions, nil, aiResumePickerLimitDefault, time.Date(2026, 6, 25, 10, 0, 0, 0, time.UTC), i18n.FallbackLocale, "", 0)
 
 	if visible != aiResumePickerLimitDefault || total != aiResumePickerLimitDefault+2 {
 		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, aiResumePickerLimitDefault, aiResumePickerLimitDefault+2)
@@ -331,7 +331,7 @@ func TestAIResumeSessionRowColumnsAlign(t *testing.T) {
 		},
 	}
 
-	rows, visible, total := aiResumeSessionRows(sessions, aiResumePickerLimitDefault, now, i18n.FallbackLocale, "", 0)
+	rows, visible, total := aiResumeSessionRowsWithLabels(sessions, nil, aiResumePickerLimitDefault, now, i18n.FallbackLocale, "", 0)
 	if visible != len(sessions) || total != len(sessions) {
 		t.Fatalf("visible,total = %d,%d, want %d,%d", visible, total, len(sessions), len(sessions))
 	}
@@ -378,7 +378,7 @@ func TestAIResumeSessionRowsLimitBoundaries(t *testing.T) {
 		{name: "oversized clamps to max", limit: 500, wantVisible: maxLimit},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, visible, total := aiResumeSessionRows(sessions, tc.limit, now, i18n.FallbackLocale, "", 0)
+			_, visible, total := aiResumeSessionRowsWithLabels(sessions, nil, tc.limit, now, i18n.FallbackLocale, "", 0)
 			if visible != tc.wantVisible {
 				t.Fatalf("visible = %d, want %d", visible, tc.wantVisible)
 			}
@@ -393,12 +393,12 @@ func TestAIResumeSessionRowTitleEllipsis(t *testing.T) {
 	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
 	long := strings.Repeat("x", aiResumeTitleMaxCells+25)
 	const resumeID = "019f0000-0000-7000-8000-000000000009"
-	row := aiResumeSessionRow(aisessions.SessionMeta{
+	row := aiResumeSessionRowWithLabel(aisessions.SessionMeta{
 		Agent:        aiModeClaude,
 		ResumeID:     resumeID,
 		Title:        long,
 		LastModified: now.Add(-time.Hour),
-	}, now, i18n.FallbackLocale, "", 0)
+	}, "", now, i18n.FallbackLocale, "", 0)
 
 	if !strings.Contains(row.Label, "…") {
 		t.Fatalf("row label = %q, want ellipsis on overflow", row.Label)
@@ -465,12 +465,12 @@ func TestAIResumeSessionRowShowsCWDColumnOnlyAtDepth(t *testing.T) {
 		Context:      aisessions.SessionContext{CWD: "/workspace/app/web", Branch: "feat/web"},
 	}
 
-	depth0 := aiResumeSessionRow(session, now, i18n.FallbackLocale, "/workspace/app", 0)
+	depth0 := aiResumeSessionRowWithLabel(session, "", now, i18n.FallbackLocale, "/workspace/app", 0)
 	if strings.Contains(depth0.Label, "./web") {
 		t.Fatalf("depth 0 row should hide cwd column: %q", depth0.Label)
 	}
 
-	depth1 := aiResumeSessionRow(session, now, i18n.FallbackLocale, "/workspace/app", 1)
+	depth1 := aiResumeSessionRowWithLabel(session, "", now, i18n.FallbackLocale, "/workspace/app", 1)
 	if !strings.Contains(depth1.Label, "./web") {
 		t.Fatalf("depth 1 row should show cwd column: %q", depth1.Label)
 	}
@@ -578,13 +578,13 @@ func TestAIResumeAgentBadgeTightBracketsAndColor(t *testing.T) {
 
 func TestAIResumeSessionRowShowsTurns(t *testing.T) {
 	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
-	row := aiResumeSessionRow(aisessions.SessionMeta{
+	row := aiResumeSessionRowWithLabel(aisessions.SessionMeta{
 		Agent:        aiModeCodex,
 		ResumeID:     "019f0000-0000-7000-8000-000000000042",
 		Title:        "Optimize picker",
 		LastModified: now.Add(-time.Hour),
 		Turns:        31,
-	}, now, i18n.FallbackLocale, "", 0)
+	}, "", now, i18n.FallbackLocale, "", 0)
 	if !strings.Contains(row.Label, "31t") {
 		t.Fatalf("row label = %q, want turn count 31t", row.Label)
 	}
@@ -619,25 +619,29 @@ func TestAIResumePickerNoSessionsDelegatesToAgentPicker(t *testing.T) {
 	}
 }
 
-func TestAIResumeNativeAndFallbackProvenanceIsVisibleAndSearchable(t *testing.T) {
+func TestAIResumeNativeAndFallbackProvenanceIsCompactAndSearchable(t *testing.T) {
 	base := aisessions.SessionMeta{Agent: aisessions.AgentCodex, ResumeID: "thread-1", Title: "Provider title"}
 	native := base
 	native.Source, native.Confidence, native.RuntimeStatus = aisessions.SourceCodexAppServer, aisessions.ConfidenceHigh, "active"
 	fallback := base
 	fallback.Source, fallback.Confidence, fallback.Reason = aisessions.SourceCodexRollout, aisessions.ConfidenceMedium, aisessions.ReasonAppServerUnavailable
 	for _, test := range []struct {
-		name string
-		row  aisessions.SessionMeta
-		want []string
+		name        string
+		row         aisessions.SessionMeta
+		wantVisible string
+		hidden      []string
 	}{
-		{"native", native, []string{"codex-app-server/high/active"}},
-		{"fallback", fallback, []string{"codex-rollout/medium/app-server-unavailable"}},
+		{"native", native, "[active]", []string{"codex-app-server", "high"}},
+		{"fallback", fallback, "[fallback]", []string{"codex-rollout", "medium", "app-server-unavailable"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			row := aiResumeSessionRow(test.row, time.Time{}, i18n.FallbackLocale, "/work", 0)
-			for _, want := range test.want {
-				if !strings.Contains(row.Label, want) || !strings.Contains(row.SearchKey, strings.Split(want, "/")[0]) {
-					t.Fatalf("row=%#v want %q visible/searchable", row, want)
+			row := aiResumeSessionRowWithLabel(test.row, "", time.Time{}, i18n.FallbackLocale, "/work", 0)
+			if !strings.Contains(row.Label, test.wantVisible) {
+				t.Fatalf("row=%#v want compact qualifier/status %q", row, test.wantVisible)
+			}
+			for _, hidden := range test.hidden {
+				if strings.Contains(row.Label, hidden) || !strings.Contains(row.SearchKey, hidden) {
+					t.Fatalf("row=%#v want %q search-only", row, hidden)
 				}
 			}
 		})
