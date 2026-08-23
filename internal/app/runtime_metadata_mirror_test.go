@@ -35,6 +35,9 @@ func (r *metadataMirrorPlanRunner) Run(_ context.Context, name string, args ...s
 	if len(args) == 4 && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{socket_path}"}) {
 		return []byte(r.path + "\n"), nil
 	}
+	if len(args) == 4 && reflect.DeepEqual(args, []string{"display-message", "-p", "-F", "#{pid}"}) {
+		return []byte("4242\n"), nil
+	}
 	if len(args) >= 3 && args[0] == "show-options" && args[len(args)-1] == tmuxopts.AppGlobal {
 		return []byte("1\n"), nil
 	}

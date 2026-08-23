@@ -504,6 +504,11 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 			if err != nil {
 				return err
 			}
+			// Equalize before releasing the create transaction: the next serialized
+			// create may split the same primary Pane and needs the capacity restored
+			// first. equalizeSplitLayout keeps this lock-held work bounded by sharing
+			// one route/inventory guard and one effect receipt across the complete
+			// printable resize batch.
 			c.runtime.equalizeSplitLayout(ctx, anchorPaneID, flags.placement)
 			results = append(results, createResult{
 				kind:        coremetadata.KindPane,

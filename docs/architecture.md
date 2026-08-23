@@ -1650,15 +1650,27 @@ Plan-only runtime mutation boundary:
   Session/Window/Pane creation, identity and create-operation lease writes,
   layout writes, ownership-checked rollback, exact Pane kill, pre-commit
   tombstone/restore, and post-result-flush self-kill queueing all enter the same
-  plan -> guard -> execute boundary. The executor validates the complete plan
-  and re-proves every guard before the first live write.
+  plan -> printable target/route guard -> effect reobserve/replan -> semantic
+  guard -> execute -> effect reobserve/replan boundary. Before an already
+  satisfied row may disappear, the executor binds its printed logical/physical
+  socket and server-generation authority to the captured route; semantic
+  pre-write guards still run together before the first live write.
 - Materialization is a sequence of dynamically replanned stages because exact
   Window and Pane handles do not exist until the preceding create effect is
   reobserved. Each stage is nevertheless a complete printable plan with a
   total order; the next stage is built only from the preceding stage's observed
-  exact effect. Every production row carries the immutable logical route as
-  `-L=<name>` or `-S=<absolute path>`. Before a stage writes, that same routed
-  runner reobserves `#{socket_path}` and refuses drift. Only a create-session
+  exact effect. Every production row carries `-L=<name>` or the exact
+  `-S=<absolute path>`, the independently observed physical socket, and a
+  printable route receipt. App-owned receipts pin `#{pid}` plus ownership and
+  logical markers; inherited standalone receipts pin the exact server pid and
+  originating `$N`/`@N`/`%N` containment while requiring both app markers
+  blank. The public controller's explicit `--socket-path` grant is narrower:
+  it prints the operator-selected path/PID blank-marker class and relies on
+  each planned action's real UID plus session/window guards; it never infers an
+  arbitrary Pane as invocation evidence. Generated popup/menu producers pass an exact Pane anchor which is
+  reobserved on that same socket rather than trusting a targetless current
+  Pane. Before a stage writes, the same `-S` runner refuses path, generation,
+  class, or containment drift. Only a create-session
   stage may accept the typed no-server observation, because its explicit route
   and absent-session ownership preflight are the facts required to create the
   first server.
@@ -2014,14 +2026,25 @@ cache.
 ### Plan-only managed runtime mutation
 
 Managed lifecycle/topology changes are printable `runtimeMutationPlan` rows.
-Each row carries an exact logical route and immutable observed socket path, a
-stable tmux handle and Registry UID/owner chain, a closed guard, total order,
+Each row carries an exact invocation route, immutable observed socket path,
+printable server-generation authority, a stable tmux handle and Registry
+UID/owner chain, a closed guard, total order,
 expected effect, and printable typed operands bound to that handle. Execution
-validates every guard before the first write;
+validates printable target/route authority before pre-effect reobservation and
+every pending semantic guard before the first write;
 owned rollback runs in reverse order. Materialization is intentionally staged:
 after each dynamic handle is returned, it is reobserved and the next stage is
 planned, so no later action guesses a Window or Pane handle. A successful
 reobserve/replan is empty; an unknown observation authorizes no delete or kill.
+App-owned execution requires exact path/pid/app/logical evidence. An inherited
+standalone route is separately closed by exact `TMUX=path,pid,index` plus a
+producer-verified Pane receipt and prints/executes through `-S`; partial app
+markers never downgrade to standalone. Explicit controller reconciliation may
+instead use an operator-selected `--socket-path` plus PID/blank-marker receipt,
+but only action-specific UID and containment guards authorize its writes.
+Fresh app bootstrap is the only
+pre-server declaration without a generation receipt, and binds path/pid/$@%
+before its route marker and all later rows.
 
 The maintained product table in `internal/app/runtime_mutation_surface.go` maps
 generated catalog/menu producers, native provider/resume picker selections,

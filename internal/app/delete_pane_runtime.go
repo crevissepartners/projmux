@@ -116,7 +116,9 @@ type tmuxPaneDeleteRuntime struct {
 	target                explicitTmuxTarget
 	expectedSocketPath    string
 	expectedLogicalSocket string
+	routeAuthority        *runtimeMutationRouteAuthority
 	getenv                func(string) string
+	routeAnchor           string
 }
 
 // newTmuxPaneDeleteRuntime builds the live half with no server bound yet.
@@ -136,6 +138,11 @@ func (r *tmuxPaneDeleteRuntime) useExactTarget(target explicitTmuxTarget) {
 	r.target = target
 	r.expectedSocketPath = ""
 	r.expectedLogicalSocket = ""
+	r.routeAuthority = nil
+}
+
+func (r *tmuxPaneDeleteRuntime) useRouteAnchor(paneID string) {
+	r.routeAnchor = exactTmuxHandle(strings.TrimSpace(paneID), "%")
 }
 
 type livePaneDeleteRow struct {
@@ -157,19 +164,24 @@ func (r *tmuxPaneDeleteRuntime) routed() explicitTmuxRunner {
 
 func (r *tmuxPaneDeleteRuntime) mutationAction(kind runtimeMutationVerb, target paneLiveDeleteTarget, guard, _ string, args ...string) plannedRuntimeMutation {
 	logicalRoute := r.target.flag + "=" + r.target.value
-	if r.expectedLogicalSocket != "" {
-		logicalRoute = "-L=" + r.expectedLogicalSocket
-	}
 	action := newRuntimeMutation(1, kind, runtimeMutationTarget{
 		Socket: logicalRoute, PhysicalSocket: printableRuntimeMutationSocket(r.expectedSocketPath),
-		Kind:   "pane",
-		ID:     target.PaneID,
-		UID:    target.PaneUID,
-		Parent: target.SessionID + "/" + target.WindowID + "/" + target.RootUID,
+		RouteAuthority: r.routeAuthority.printable(),
+		Kind:           "pane",
+		ID:             target.PaneID,
+		UID:            target.PaneUID,
+		Parent:         target.SessionID + "/" + target.WindowID + "/" + target.RootUID,
 	})
 	bindRuntimeMutationGuard(&action, guard)
 	action.Operands = slices.Clone(args)
 	return action
+}
+
+func (r *tmuxPaneDeleteRuntime) guardPrintedMutationRoute(ctx context.Context, action plannedRuntimeMutation) error {
+	return guardPrintedRuntimeMutationRoute(ctx, r.runner, runtimeMutationRoute{
+		target: r.target, expectedSocketPath: r.expectedSocketPath,
+		socketName: r.expectedLogicalSocket, authority: r.routeAuthority,
+	}, action)
 }
 
 func (r *tmuxPaneDeleteRuntime) mutationSteps(
@@ -195,13 +207,17 @@ func (r *tmuxPaneDeleteRuntime) mutationSteps(
 		if verb == mutationQueuePaneKill {
 			action.Target.UID = effectUID
 			action.Queue = &runtimeMutationQueuedKill{PhysicalSocket: r.expectedSocketPath, LogicalSocket: r.expectedLogicalSocket,
-				ExpectedUID: effectUID, SessionID: target.SessionID, WindowID: target.WindowID}
+				RouteAuthority: action.Target.RouteAuthority,
+				ExpectedUID:    effectUID, SessionID: target.SessionID, WindowID: target.WindowID}
 			action.Queue.Marker = runtimeMutationQueueMarker(action)
 			bindRuntimeMutationGuard(&action, guardDetail)
 		}
 		action.Order = i + 1
 		steps = append(steps, runtimeMutationStep{
 			Action: action,
+			TargetRouteGuard: func(ctx context.Context) error {
+				return r.guardPrintedMutationRoute(ctx, action)
+			},
 			Reobserve: func(ctx context.Context) (bool, error) {
 				if verb == mutationQueuePaneKill {
 					return observeQueuedRuntimeMutationEffect(ctx,
@@ -344,9 +360,9 @@ func (r *tmuxPaneDeleteRuntime) inventory(ctx context.Context) ([]livePaneDelete
 func (r *tmuxPaneDeleteRuntime) exactSocketPath(ctx context.Context) (string, error) {
 	if err := r.observeSocketIdentity(ctx); err != nil {
 		if inttmux.IsNoServerFailure(err) {
-			return "", fmt.Errorf("delete pane: exact tmux socket is unavailable (no-server); absence is not Registry deletion authority and nothing was changed: %w", err)
+			return "", tmuxError("delete pane: exact tmux socket is unavailable (no-server); absence is not Registry deletion authority and nothing was changed: %v", err)
 		}
-		return "", err
+		return "", tmuxError("delete pane: exact tmux socket observation failed: %v", err)
 	}
 	if strings.TrimSpace(r.expectedSocketPath) == "" {
 		return "", errors.New("delete pane: exact tmux socket identity is empty; absence is not Registry deletion authority and nothing was changed")
@@ -391,6 +407,27 @@ func (r *tmuxPaneDeleteRuntime) observeSocketIdentity(ctx context.Context) error
 func (r *tmuxPaneDeleteRuntime) guardSocketIdentity(ctx context.Context) error {
 	if err := r.observeSocketIdentity(ctx); err != nil {
 		return err
+	}
+	if r.routeAuthority == nil {
+		route, err := resolveExistingRuntimeMutationRouteWithAnchor(ctx, r.runner, r.target, r.getenv, r.routeAnchor)
+		if err != nil {
+			return fmt.Errorf("delete pane: %w", err)
+		}
+		if route.expectedSocketPath != r.expectedSocketPath || route.authority == nil {
+			return errors.New("delete pane: invocation server-generation authority drifted")
+		}
+		r.target = route.target
+		r.routeAuthority = route.authority
+		r.expectedLogicalSocket = route.socketName
+		if route.authority.Class == runtimeMutationRouteStandalone {
+			r.expectedLogicalSocket = ""
+		}
+	}
+	if r.routeAuthority != nil {
+		return guardResolvedRuntimeMutationRoute(ctx, r.runner, runtimeMutationRoute{
+			target: r.target, expectedSocketPath: r.expectedSocketPath,
+			socketName: r.expectedLogicalSocket, authority: r.routeAuthority,
+		})
 	}
 	if err := guardRuntimeMutationServerOwnership(ctx, r.routed(), r.target); err != nil {
 		return fmt.Errorf("delete pane: %w", err)

@@ -321,10 +321,12 @@ func TestControllerConvergesOnAStandaloneHostTheOperatorNamed(t *testing.T) {
 	// object on it resolves foreign. Refusing there by default is right; refusing
 	// a repair the operator aimed at that exact socket is not, and this is the
 	// case a real `-L` smoke against a server projmux did not start exercises.
-	command, store, server, _, _ := newReconcileFixture(t, "-L", "guest")
+	socketPath := "/tmp/fake-tmux/guest"
+	command, store, server, _, _ := newReconcileFixture(t, "-S", socketPath)
 	server.appMarker = ""
+	server.socketName = ""
 
-	stdout, _, err := runReconcile(t, command, "resources", "--socket", "guest", "-o", "json")
+	stdout, _, err := runReconcile(t, command, "resources", "--socket-path", socketPath, "-o", "json")
 	if err != nil {
 		t.Fatalf("standalone execute: %v\n%s", err, stdout)
 	}
@@ -345,7 +347,7 @@ func TestControllerConvergesOnAStandaloneHostTheOperatorNamed(t *testing.T) {
 		t.Fatalf("standalone repair did not reobserve convergence: %+v", report.Reobserved)
 	}
 
-	repeat, _, err := runReconcile(t, command, "resources", "--socket", "guest", "-o", "json")
+	repeat, _, err := runReconcile(t, command, "resources", "--socket-path", socketPath, "-o", "json")
 	if err != nil || parseControllerReport(t, repeat).Outcome != "no-op" {
 		t.Fatalf("standalone repeat is not a no-op: err=%v\n%s", err, repeat)
 	}

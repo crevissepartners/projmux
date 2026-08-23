@@ -72,6 +72,7 @@ func TestWindowDeletePreExecuteNoServerRefusesInsteadOfCompletingAbsence(t *test
 	runtime, runner, _ := newWindowRuntimeFixture(t, "")
 	runtime.expectedSocketPath = testDeleteTarget.value
 	runtime.expectedLogicalSocket = defaultAppSocket
+	runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
 	key := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")
 	runner.errors = map[string]error{key: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running"}}}
 	target := windowLiveDeleteTarget{UID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha"}
@@ -95,6 +96,7 @@ func TestWindowDeleteSuccessfulLastKillAcceptsPostApplyNoServerReceipt(t *testin
 	runtime := &tmuxWindowDeleteRuntime{
 		runner: runner, target: target, getenv: func(string) string { return "" },
 		expectedSocketPath: testDeleteTarget.value, expectedLogicalSocket: defaultAppSocket,
+		routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
 	}
 	live := windowLiveDeleteTarget{
 		UID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1",
@@ -301,8 +303,12 @@ func TestWindowDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndWindow(t *
 	format := tmuxRowFormat("#{socket_path}", "#{window_id}")
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")] =
 		testDeleteTarget.value + "\n"
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{pid}")] = "123\n"
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-t", "%7", "-F", format)] =
 		liveInventoryRow(testDeleteTarget.value, "@10")
+	authorityFormat := tmuxRowFormat("#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}")
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-t", "%7", "-F", authorityFormat)] =
+		liveInventoryRow(testDeleteTarget.value, "123", "$1", "@10", "%7")
 	plan := deleteWindowRuntimePlan("win-alpha-main")
 	plan.Implicit = true
 
@@ -325,10 +331,12 @@ func TestWindowDeleteRuntimeQueueUsesQuotedExactSocketAndWindow(t *testing.T) {
 	runtime, _, _ := newWindowRuntimeFixture(t, "")
 	runtime.expectedSocketPath = testDeleteTarget.value
 	runtime.expectedLogicalSocket = defaultAppSocket
+	runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
 	target := windowLiveDeleteTarget{UID: "win-alpha-main", WindowID: "@12", SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha"}
 	action := runtime.mutationAction(mutationQueueWindowKill, target, target.UID)
 	action.Queue = &runtimeMutationQueuedKill{PhysicalSocket: testDeleteTarget.value, LogicalSocket: defaultAppSocket,
-		ExpectedUID: target.UID, SessionID: target.SessionID, WindowID: target.WindowID}
+		RouteAuthority: action.Target.RouteAuthority,
+		ExpectedUID:    target.UID, SessionID: target.SessionID, WindowID: target.WindowID}
 	action.Queue.Marker = runtimeMutationQueueMarker(action)
 	argv, err := runtimeMutationArgv(action)
 	if err != nil {
@@ -344,6 +352,7 @@ func TestWindowDeleteRuntimeQueueUsesQuotedExactSocketAndWindow(t *testing.T) {
 
 func TestWindowDeleteRuntimeQueueRevalidatesEveryMirrorBeforeQueueing(t *testing.T) {
 	runtime, runner, _ := newWindowRuntimeFixture(t, "")
+	runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
 	targets := []windowLiveDeleteTarget{
 		{UID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1"},
 		{UID: "win-alpha-review", WindowID: "@11", SessionName: "alpha", SessionID: "$1"},

@@ -144,6 +144,7 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 		return c.runMaterializeExecute(ctx, planner, target, reportTarget, opts, stdout, stderr)
 	}
 	kernel := newResourceControllerKernel(c.runner, c.resources, planner, target)
+	kernel.lookupEnv = c.lookupEnv
 	kernel.approvedOrphanImport = opts.importOrphanMirrors
 	if opts.dryRun {
 		return c.runControllerDryRun(ctx, kernel, reportTarget, opts, stdout)
@@ -330,32 +331,6 @@ func controllerReobserveStage(reobserved controllerReobservation) string {
 	default:
 		return fmt.Sprintf("reobserved: %d residual item(s)", len(reobserved.Residual))
 	}
-}
-
-// validateResourcePlanWrites proves every UID-bearing live target still has
-// the value the locked plan observed. Validation is all-or-nothing and runs
-// before the first mirror write, so a recycled tmux handle cannot redirect one
-// plan item onto an unrelated object after the Registry commit.
-//
-// It is the explicit-materialization engine's guard. The reconcile route uses
-// the controller kernel's graph-derived guards instead: materialization plans
-// against objects it is about to create, which the observation cannot have seen,
-// so the two cannot share one evidence source.
-func validateResourcePlanWrites(ctx context.Context, routed explicitTmuxRunner, writes []plannedTmuxWrite) error {
-	for _, write := range writes {
-		if write.guardField == "" {
-			continue
-		}
-		out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", write.target, "-F", "#{"+write.guardField+"}")
-		if err != nil {
-			return fmt.Errorf("revalidate exact tmux target %s: %w", write.target, err)
-		}
-		observed := strings.TrimSpace(string(out))
-		if observed != strings.TrimSpace(write.guardBefore) {
-			return fmt.Errorf("exact tmux target %s changed before repair: %s is %q, planned from %q", write.target, write.guardField, observed, write.guardBefore)
-		}
-	}
-	return nil
 }
 
 func (c *resourceReconcileCommand) replanAfterFailure(ctx context.Context, planner resourceReconcilePlanner) (resourceReconcilePlan, error) {

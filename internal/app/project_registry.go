@@ -93,6 +93,10 @@ type registryReconciler struct {
 }
 
 func newRegistryReconciler(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
+	return newRegistryReconcilerWithRoute(runner, sessions, runtimeMutationRoute{})
+}
+
+func newRegistryReconcilerWithRoute(runner tmuxCommandRunner, sessions sessionLister, route runtimeMutationRoute) *registryReconciler {
 	mirror := intmetadata.NewMirror(runner)
 	home, err := os.UserHomeDir()
 	namer := coresessions.NewNamer(home)
@@ -125,7 +129,7 @@ func newRegistryReconciler(runner tmuxCommandRunner, sessions sessionLister) *re
 			return mirror.MirrorPane(ctx, target, pane)
 		}
 	} else {
-		typed := runtimeMutationMetadataMirror{runner: runner}
+		typed := runtimeMutationMetadataMirror{runner: runner, route: route}
 		reconciler.mirrorProject = typed.MirrorProject
 		reconciler.mirrorWindow = typed.MirrorWindow
 		reconciler.mirrorPane = typed.MirrorPane

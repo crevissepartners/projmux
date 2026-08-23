@@ -78,6 +78,78 @@ func markPaneMissingRuntime(t *testing.T, registry *coremetadata.Registry, uid s
 	}}
 }
 
+type paneDeleteExitCommandFailure struct {
+	failure inttmux.CommandFailure
+}
+
+func (e paneDeleteExitCommandFailure) Error() string {
+	return "typed tmux command failure: " + e.failure.Stderr
+}
+
+func (e paneDeleteExitCommandFailure) CommandFailure() inttmux.CommandFailure {
+	return e.failure
+}
+
+func (e paneDeleteExitCommandFailure) ExitCode() int { return 1 }
+
+func TestPaneDeletePreflightFlattensExitCodeAfterTypedSocketClassification(t *testing.T) {
+	registry := resourceFixtureRegistry(t)
+	plan := exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
+	exitFailure := paneDeleteExitCommandFailure{failure: inttmux.CommandFailure{
+		Kind: inttmux.CommandFailureExit, Stderr: "no server running on " + testDeleteTarget.value,
+	}}
+	newRuntime := func() *tmuxPaneDeleteRuntime {
+		runtime, runner, _ := newPaneRuntimeFixture(t, "")
+		key := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value,
+			"display-message", "-p", "-F", "#{socket_path}")
+		runner.errors = map[string]error{key: exitFailure}
+		return runtime
+	}
+
+	observationErr := newRuntime().observeSocketIdentity(context.Background())
+	if !inttmux.IsNoServerFailure(observationErr) {
+		t.Fatalf("direct observation lost typed no-server evidence: %v", observationErr)
+	}
+	var observedExit interface{ ExitCode() int }
+	if !errors.As(observationErr, &observedExit) {
+		t.Fatalf("direct observation lost subprocess exit identity: %v", observationErr)
+	}
+
+	_, preflightErr := newRuntime().preflight(context.Background(), registry, plan)
+	if preflightErr == nil || !strings.Contains(preflightErr.Error(), "unavailable (no-server)") ||
+		!strings.Contains(preflightErr.Error(), "absence is not Registry deletion authority") {
+		t.Fatalf("preflight diagnostic = %v", preflightErr)
+	}
+	var escapedExit interface{ ExitCode() int }
+	if errors.As(preflightErr, &escapedExit) {
+		t.Fatalf("CLI-facing preflight leaked subprocess ExitCode identity: %T %v", escapedExit, preflightErr)
+	}
+	if inttmux.IsNoServerFailure(preflightErr) {
+		t.Fatalf("CLI-facing preflight leaked internal typed no-server carrier: %v", preflightErr)
+	}
+}
+
+func TestPaneDeletePreflightFlattensOtherSocketExitFailures(t *testing.T) {
+	registry := resourceFixtureRegistry(t)
+	plan := exactPanePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
+	runtime, runner, _ := newPaneRuntimeFixture(t, "")
+	key := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value,
+		"display-message", "-p", "-F", "#{socket_path}")
+	runner.errors = map[string]error{key: paneDeleteExitCommandFailure{failure: inttmux.CommandFailure{
+		Kind: inttmux.CommandFailureExit, Stderr: "failed to connect to server: permission denied",
+	}}}
+
+	_, err := runtime.preflight(context.Background(), registry, plan)
+	if err == nil || !strings.Contains(err.Error(), "exact tmux socket observation failed") ||
+		!strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("generic socket observation diagnostic = %v", err)
+	}
+	var escapedExit interface{ ExitCode() int }
+	if errors.As(err, &escapedExit) {
+		t.Fatalf("generic CLI-facing preflight leaked subprocess ExitCode identity: %T %v", escapedExit, err)
+	}
+}
+
 func TestPaneDeleteDefaultRouteForgedServerRefusesBeforeFirstWrite(t *testing.T) {
 	path := "/tmp/projmux-route/cloned-delete.sock"
 	runner := &recordingTmuxRunner{outputs: map[string]string{
@@ -105,6 +177,7 @@ func TestPaneDeletePreExecuteNoServerRefusesInsteadOfCompletingAbsence(t *testin
 	runtime, runner, _ := newPaneRuntimeFixture(t, "")
 	runtime.expectedSocketPath = testDeleteTarget.value
 	runtime.expectedLogicalSocket = defaultAppSocket
+	runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
 	key := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")
 	runner.errors = map[string]error{key: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running"}}}
 	target := paneLiveDeleteTarget{PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha"}
@@ -140,6 +213,9 @@ func (r *lastTargetDeleteRunner) Run(_ context.Context, name string, args ...str
 	case "display-message":
 		if args[len(args)-1] == "#{socket_path}" {
 			return []byte(testDeleteTarget.value + "\n"), nil
+		}
+		if args[len(args)-1] == "#{pid}" {
+			return []byte("4242\n"), nil
 		}
 		if r.kind == "pane" {
 			return []byte(livePaneInventoryRow("$1", "alpha", "@10", "%31", "prj-alpha", "win-alpha-main", "pan-alpha-log")), nil
@@ -599,9 +675,13 @@ func TestPaneDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndPane(t *test
 		return ""
 	}
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{socket_path}")] = testDeleteTarget.value + "\n"
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{pid}")] = "123\n"
 	format := tmuxRowFormat("#{socket_path}", "#{pane_id}")
 	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-t", "%31", "-F", format)] =
 		livePaneInventoryRow(testDeleteTarget.value, "%31")
+	authorityFormat := tmuxRowFormat("#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}")
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-t", "%31", "-F", authorityFormat)] =
+		livePaneInventoryRow(testDeleteTarget.value, "123", "$1", "@10", "%31")
 	plan := panePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
 	plan.Implicit = true
 
@@ -618,15 +698,43 @@ func TestPaneDeleteRuntimeImplicitTargetRequiresExactCallerSocketAndPane(t *test
 	}
 }
 
+func TestPaneDeleteRuntimeProducerAnchorBindsRouteWithoutInheritedPaneEnv(t *testing.T) {
+	runtime, runner, registry := newPaneRuntimeFixture(t, paneRuntimeInventory())
+	runtime.getenv = func(name string) string {
+		if name == "TMUX" {
+			return testDeleteTarget.value + ",123,0"
+		}
+		return ""
+	}
+	runtime.useRouteAnchor("%31")
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-F", "#{pid}")] = "123\n"
+	authorityFormat := tmuxRowFormat("#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}")
+	runner.outputs[recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "display-message", "-p", "-t", "%31", "-F", authorityFormat)] =
+		livePaneInventoryRow(testDeleteTarget.value, "123", "$1", "@10", "%31")
+
+	plan := panePlanFor(t, registry, coremetadata.KindPane, "pan-alpha-log")
+	if _, err := runtime.preflight(context.Background(), registry, plan); err != nil {
+		t.Fatalf("producer-anchored Pane preflight: %v", err)
+	}
+	if err := runtime.guardSocketIdentity(context.Background()); err != nil {
+		t.Fatalf("producer-anchored mutation authority: %v", err)
+	}
+	if runtime.routeAuthority == nil || runtime.routeAuthority.PaneID != "%31" || runtime.routeAuthority.ServerPID != "123" {
+		t.Fatalf("producer-anchored delete authority = %#v", runtime.routeAuthority)
+	}
+}
+
 func TestPaneDeleteRuntimeQueueRevalidatesTombstonesAndUsesExactSocket(t *testing.T) {
 	runtime, _, _ := newPaneRuntimeFixture(t, "")
 	runtime.expectedSocketPath = testDeleteTarget.value
 	runtime.expectedLogicalSocket = defaultAppSocket
+	runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
 	target := paneLiveDeleteTarget{PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10", SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha"}
 	action := runtime.mutationAction(mutationQueuePaneKill, target, "", "")
 	action.Target.UID = "deleted:" + target.PaneUID
 	action.Queue = &runtimeMutationQueuedKill{PhysicalSocket: testDeleteTarget.value, LogicalSocket: defaultAppSocket,
-		ExpectedUID: action.Target.UID, SessionID: target.SessionID, WindowID: target.WindowID}
+		RouteAuthority: action.Target.RouteAuthority,
+		ExpectedUID:    action.Target.UID, SessionID: target.SessionID, WindowID: target.WindowID}
 	action.Queue.Marker = runtimeMutationQueueMarker(action)
 	argv, err := runtimeMutationArgv(action)
 	if err != nil {
@@ -661,6 +769,9 @@ func (r *statefulPaneDeleteRunner) Run(_ context.Context, name string, args ...s
 	case "display-message":
 		if len(args) > 0 && args[len(args)-1] == "#{socket_path}" {
 			return []byte(testDeleteTarget.value + "\n"), nil
+		}
+		if len(args) > 0 && args[len(args)-1] == "#{pid}" {
+			return []byte("4242\n"), nil
 		}
 		return []byte(livePaneInventoryRow("$1", "alpha", "@10", paneID, "prj-alpha", "win-alpha-main", r.options[paneID])), nil
 	case "show-options":
@@ -723,6 +834,7 @@ func statefulPaneRuntime(t *testing.T, runner tmuxCommandRunner) *tmuxPaneDelete
 	return &tmuxPaneDeleteRuntime{
 		runner: runner, target: target, getenv: func(string) string { return "" },
 		expectedSocketPath: testDeleteTarget.value, expectedLogicalSocket: defaultAppSocket,
+		routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
 	}
 }
 

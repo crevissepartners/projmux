@@ -32,15 +32,19 @@ func executeManagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, ta
 		return errors.New("managed runtime stop requires exact session, root UID, route, and Registry authority")
 	}
 	routed := explicitTmuxRunner{runner: runner, target: target.Route.target}
-	action := newRuntimeMutation(1, mutationStopManagedSession, runtimeMutationTarget{
-		Socket: target.Route.target.flag + "=" + target.Route.target.value, PhysicalSocket: printableRuntimeMutationSocket(target.Route.expectedSocketPath),
+	mutationTarget := runtimeMutationTarget{
 		Kind: string(target.RootKind), ID: target.SessionID, UID: target.RootUID,
 		Parent: target.SessionName,
-	})
+	}
+	bindRuntimeMutationRouteTarget(&mutationTarget, target.Route)
+	action := newRuntimeMutation(1, mutationStopManagedSession, mutationTarget)
 	bindRuntimeMutationGuard(&action, "exact managed session="+target.SessionID+"/"+target.SessionName+";root="+string(target.RootKind)+"/"+target.RootUID)
 	action.Operands = []string{"-t", target.SessionID}
 	return executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
+		TargetRouteGuard: func(ctx context.Context) error {
+			return guardPrintedRuntimeMutationRoute(ctx, runner, target.Route, action)
+		},
 		Reobserve: func(ctx context.Context) (bool, error) {
 			if err := guardPrintedRuntimeMutationRoute(ctx, runner, target.Route, action); err != nil {
 				if inttmux.IsNoServerFailure(err) {
@@ -170,6 +174,27 @@ func guardResolvedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRu
 	if route.expectedSocketPath != "" && observed != filepath.Clean(route.expectedSocketPath) {
 		return fmt.Errorf("runtime socket drifted: observed %q, planned %q", observed, filepath.Clean(route.expectedSocketPath))
 	}
+	if route.authority != nil {
+		if (route.authority.Class == runtimeMutationRouteStandalone || route.authority.Class == runtimeMutationRouteStandaloneExplicit) &&
+			(route.target.flag != "-S" || route.target.value != route.expectedSocketPath) {
+			return errors.New("planned standalone runtime route is not exact physical authority")
+		}
+		pidOut, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pid}")
+		if err != nil || strings.TrimSpace(string(pidOut)) != route.authority.ServerPID {
+			return errors.New("planned runtime server generation drifted")
+		}
+		if route.authority.Class == runtimeMutationRouteStandalone || route.authority.Class == runtimeMutationRouteStandaloneExplicit {
+			appOwned, appErr := routed.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
+			logical, logicalErr := routed.Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
+			if appErr != nil || logicalErr != nil || strings.TrimSpace(string(appOwned)) != "" || strings.TrimSpace(string(logical)) != "" {
+				return errors.New("planned standalone runtime route class drifted")
+			}
+			return nil
+		}
+		if route.authority.Class != runtimeMutationRouteApp {
+			return errors.New("planned runtime route has an unknown authority class")
+		}
+	}
 	appOwned, err := routed.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
 	if err != nil || strings.TrimSpace(string(appOwned)) != "1" {
 		return errors.New("planned runtime socket is not app-owned")
@@ -187,8 +212,22 @@ func guardPrintedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRun
 		if route.expectedSocketPath != "" || (action.Verb != mutationCreateSession && action.Verb != mutationBootstrapControlSession) {
 			return errors.New("printed absent-before-create socket disagrees with execution route")
 		}
+		if action.Target.RouteAuthority != "" || route.authority != nil {
+			return errors.New("printed absent-before-create action unexpectedly claims a server generation")
+		}
 	} else if filepath.Clean(printed) != filepath.Clean(route.expectedSocketPath) {
 		return fmt.Errorf("printed physical socket %q disagrees with execution route %q", printed, route.expectedSocketPath)
+	} else {
+		if route.authority == nil || action.Target.RouteAuthority == "" || action.Target.RouteAuthority != route.authority.printable() {
+			return errors.New("printed runtime route authority disagrees with captured server generation")
+		}
+		printedRoute := route.target.flag + "=" + route.target.value
+		if action.Verb == mutationWriteRouteMarker {
+			printedRoute = "-S=" + route.expectedSocketPath
+		}
+		if action.Target.Socket != printedRoute {
+			return errors.New("printed runtime execution route disagrees with captured route")
+		}
 	}
 	return guardResolvedRuntimeMutationRoute(ctx, runner, route)
 }

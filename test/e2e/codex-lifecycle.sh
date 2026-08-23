@@ -33,7 +33,14 @@ export PROJMUX_FAKE_NOTIFY_LOG="$lifecycle_notify_log"
 go build -o "$lifecycle_shim/codex" ./test/e2e/fake_codex_appserver_fixture.go
 cat >"$lifecycle_shim/tmux" <<TMUX_SHIM
 #!/usr/bin/env bash
-exec env TMUX_TMPDIR=$(printf %q "$TMUX_TMPDIR") $(printf %q "$lifecycle_real_tmux") -L $(printf %q "$lifecycle_socket") "\$@"
+case "\${1:-}" in
+  -L|-S)
+    exec env TMUX_TMPDIR=$(printf %q "$TMUX_TMPDIR") $(printf %q "$lifecycle_real_tmux") "\$@"
+    ;;
+  *)
+    exec env TMUX_TMPDIR=$(printf %q "$TMUX_TMPDIR") $(printf %q "$lifecycle_real_tmux") -L $(printf %q "$lifecycle_socket") "\$@"
+    ;;
+esac
 TMUX_SHIM
 chmod 0755 "$lifecycle_shim/tmux"
 
@@ -43,6 +50,16 @@ lifecycle_tmux() {
 
 lifecycle_pmx() {
   env -u TMUX -u TMUX_PANE -u PMX_INTERNAL_ACTIVATION_PANE_UID -u PMX_INTERNAL_ACTIVATION_GENERATION \
+    PATH="$lifecycle_shim:$PATH" \
+    PROJMUX_FAKE_CODEX_STATE="$lifecycle_fixture_state" \
+    PROJMUX_MANAGED_ROOTS="$lifecycle_root/projects" \
+    "$bin" "$@"
+}
+
+lifecycle_pmx_at_anchor() {
+  env -u PMX_INTERNAL_ACTIVATION_PANE_UID -u PMX_INTERNAL_ACTIVATION_GENERATION \
+    TMUX="$lifecycle_socket_path,$lifecycle_server_pid,0" \
+    TMUX_PANE="$lifecycle_anchor_pane" \
     PATH="$lifecycle_shim:$PATH" \
     PROJMUX_FAKE_CODEX_STATE="$lifecycle_fixture_state" \
     PROJMUX_MANAGED_ROOTS="$lifecycle_root/projects" \
@@ -84,9 +101,16 @@ lifecycle_cleanup() {
 trap 'lifecycle_cleanup; smoke_cleanup_env' EXIT
 
 lifecycle_started=1
-lifecycle_tmux new-session -d -s "$lifecycle_session" -c "$lifecycle_project" sleep 600
+lifecycle_anchor_pane="$(lifecycle_tmux new-session -d -P -F '#{pane_id}' -s "$lifecycle_session" -c "$lifecycle_project" sleep 600)"
+if [[ ! "$lifecycle_anchor_pane" =~ ^%[0-9]+$ ]]; then
+  echo "Codex lifecycle standalone server returned no exact anchor Pane: $lifecycle_anchor_pane" >&2
+  exit 1
+fi
 lifecycle_tmux set-option -t "$lifecycle_session" -q @projmux_project_path "$lifecycle_project"
-lifecycle_socket_path="$(lifecycle_tmux display-message -p -t "$lifecycle_session" '#{socket_path}')"
+lifecycle_initial_receipt="$(lifecycle_tmux display-message -p -t "$lifecycle_anchor_pane" \
+  '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{@projmux_app}|#{@projmux_socket_name}')"
+IFS='|' read -r lifecycle_socket_path lifecycle_server_pid lifecycle_session_id lifecycle_window_id \
+  lifecycle_receipt_pane lifecycle_app_marker lifecycle_logical_marker <<<"$lifecycle_initial_receipt"
 case "$lifecycle_socket_path" in
   "$PROJMUX_SMOKE_TMUX_ROOT"/*) ;;
   *)
@@ -94,21 +118,68 @@ case "$lifecycle_socket_path" in
     exit 1
     ;;
 esac
-
-lifecycle_pmx create project --root "$lifecycle_project" --name lifecycle >/dev/null
-lifecycle_pmx reconcile resources --socket "$lifecycle_socket" >/dev/null
-lifecycle_window="$(lifecycle_pmx get windows --project lifecycle -o name)"
-if [[ -z "$lifecycle_window" || "$(printf '%s\n' "$lifecycle_window" | wc -l)" != "1" ]]; then
-  echo "Codex lifecycle fixture did not resolve one managed Window: $lifecycle_window" >&2
+if [[ ! "$lifecycle_server_pid" =~ ^[1-9][0-9]*$ ]] ||
+  [[ ! "$lifecycle_session_id" =~ ^\$[0-9]+$ ]] ||
+  [[ ! "$lifecycle_window_id" =~ ^@[0-9]+$ ]] ||
+  [[ "$lifecycle_receipt_pane" != "$lifecycle_anchor_pane" ]] ||
+  [[ -n "$lifecycle_app_marker" || -n "$lifecycle_logical_marker" ]]; then
+  echo "Codex lifecycle standalone authority receipt is incomplete or marked: $lifecycle_initial_receipt" >&2
   exit 1
 fi
 
-lifecycle_pane="$(lifecycle_pmx create agent --provider codex --project lifecycle --window "$lifecycle_window" -o pane-id -- "phase3 lifecycle smoke")"
+lifecycle_project_uid="$(lifecycle_pmx create project --root "$lifecycle_project" --name lifecycle -o uid)"
+if [[ -z "$lifecycle_project_uid" ]]; then
+  echo "Codex lifecycle fixture did not create an exact Registry Project" >&2
+  exit 1
+fi
+lifecycle_pmx reconcile resources --socket-path "$lifecycle_socket_path" >/dev/null
+lifecycle_managed_receipt="$(lifecycle_tmux display-message -p -t "$lifecycle_anchor_pane" \
+  '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{@projmux_project_uid}|#{@projmux_window_uid}|#{@projmux_pane_uid}|#{@projmux_app}|#{@projmux_socket_name}')"
+IFS='|' read -r lifecycle_managed_path lifecycle_managed_pid lifecycle_managed_session lifecycle_managed_window \
+  lifecycle_managed_pane lifecycle_runtime_project_uid lifecycle_window_uid lifecycle_anchor_uid \
+  lifecycle_managed_app lifecycle_managed_logical <<<"$lifecycle_managed_receipt"
+if [[ "$lifecycle_managed_path" != "$lifecycle_socket_path" ]] ||
+  [[ "$lifecycle_managed_pid" != "$lifecycle_server_pid" ]] ||
+  [[ "$lifecycle_managed_session" != "$lifecycle_session_id" ]] ||
+  [[ "$lifecycle_managed_window" != "$lifecycle_window_id" ]] ||
+  [[ "$lifecycle_managed_pane" != "$lifecycle_anchor_pane" ]] ||
+  [[ "$lifecycle_runtime_project_uid" != "$lifecycle_project_uid" ]] ||
+  [[ -z "$lifecycle_window_uid" || -z "$lifecycle_anchor_uid" ]] ||
+  [[ -n "$lifecycle_managed_app" || -n "$lifecycle_managed_logical" ]]; then
+  echo "Codex lifecycle reconcile did not preserve the exact standalone managed chain: $lifecycle_managed_receipt" >&2
+  exit 1
+fi
+lifecycle_registry_window_uid="$(lifecycle_pmx get windows --project "uid:$lifecycle_project_uid" -o uid)"
+lifecycle_registry_pane_uid="$(lifecycle_pmx get panes --project "uid:$lifecycle_project_uid" --window "uid:$lifecycle_window_uid" -o uid)"
+if [[ "$lifecycle_registry_window_uid" != "$lifecycle_window_uid" ]] ||
+  [[ "$lifecycle_registry_pane_uid" != "$lifecycle_anchor_uid" ]]; then
+  echo "Codex lifecycle exact runtime chain disagrees with Registry: window=$lifecycle_registry_window_uid pane=$lifecycle_registry_pane_uid" >&2
+  exit 1
+fi
+
+lifecycle_pane="$(lifecycle_pmx_at_anchor create agent --provider codex --project "uid:$lifecycle_project_uid" \
+  --window "uid:$lifecycle_window_uid" -o pane-id -- "phase3 lifecycle smoke")"
 if [[ ! "$lifecycle_pane" =~ ^%[0-9]+$ ]]; then
   echo "native lifecycle create returned invalid pane: $lifecycle_pane" >&2
   exit 1
 fi
 lifecycle_pane_uid="$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" @projmux_pane_uid)"
+lifecycle_agent_receipt="$(lifecycle_tmux display-message -p -t "$lifecycle_pane" \
+  '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{@projmux_project_uid}|#{@projmux_window_uid}|#{@projmux_pane_uid}')"
+IFS='|' read -r lifecycle_agent_path lifecycle_agent_pid lifecycle_agent_session lifecycle_agent_window \
+  lifecycle_agent_pane lifecycle_agent_project_uid lifecycle_agent_window_uid lifecycle_agent_pane_uid <<<"$lifecycle_agent_receipt"
+if [[ "$lifecycle_agent_path" != "$lifecycle_socket_path" ]] ||
+  [[ "$lifecycle_agent_pid" != "$lifecycle_server_pid" ]] ||
+  [[ "$lifecycle_agent_session" != "$lifecycle_session_id" ]] ||
+  [[ "$lifecycle_agent_window" != "$lifecycle_window_id" ]] ||
+  [[ "$lifecycle_agent_pane" != "$lifecycle_pane" ]] ||
+  [[ "$lifecycle_agent_project_uid" != "$lifecycle_project_uid" ]] ||
+  [[ "$lifecycle_agent_window_uid" != "$lifecycle_window_uid" ]] ||
+  [[ -z "$lifecycle_agent_pane_uid" || "$lifecycle_agent_pane_uid" != "$lifecycle_pane_uid" ]] ||
+  [[ "$(lifecycle_pmx get panes --project "uid:$lifecycle_project_uid" --window "uid:$lifecycle_window_uid" -o uid | grep -Fxc "$lifecycle_pane_uid")" != "1" ]]; then
+  echo "native lifecycle create escaped the exact standalone managed chain: $lifecycle_agent_receipt" >&2
+  exit 1
+fi
 lifecycle_generation="$(lifecycle_pmx describe pane "uid:$lifecycle_pane_uid" | awk '$1 == "BindingGeneration:" { print $2; exit }')"
 if [[ -z "$lifecycle_pane_uid" || -z "$lifecycle_generation" ]]; then
   echo "native lifecycle fixture could not resolve exact Pane/generation identity" >&2

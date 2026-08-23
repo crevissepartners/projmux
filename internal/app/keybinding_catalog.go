@@ -1440,7 +1440,7 @@ func renderTmuxBindingBody(binaryPath string, action keyBindingAction) string {
 	bin := tmuxShellQuote(binaryPath)
 	switch action.TmuxKind {
 	case tmuxBindingPopupToggle:
-		return "run-shell " + tmuxConfigQuote(bin+" internal tmux popup-toggle --client #{client_tty} "+action.TmuxBody)
+		return "run-shell " + tmuxConfigQuote(bin+" internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} "+action.TmuxBody)
 	case tmuxBindingRunProjmux:
 		// `run-shell` inherits $TMUX from the server but never exports
 		// $TMUX_PANE: tmux sets that variable only in the shell it spawns for a

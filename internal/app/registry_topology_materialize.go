@@ -498,6 +498,8 @@ type topologyMaterializeRun struct {
 	target             explicitTmuxTarget
 	expectedSocketPath string
 	diagnostics        *diagnostics.LifecycleRecorder
+	socketName         string
+	routeAuthority     *runtimeMutationRouteAuthority
 	newOperationID     func() (string, error)
 	newGeneration      func() (string, error)
 	newMaterializer    func(tmuxCommandRunner, io.Writer) *materializer
@@ -569,6 +571,14 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 	if runtime != nil && runtime.expectedSocketPath == "" {
 		runtime.expectedSocketPath = r.expectedSocketPath
 	}
+	if runtime != nil {
+		if runtime.socketName == "" {
+			runtime.socketName = r.socketName
+		}
+		if runtime.routeAuthority == nil {
+			runtime.routeAuthority = r.routeAuthority
+		}
+	}
 	_, registryChanged, updateErr := r.resources.updateConvergent(func(working *coremetadata.Registry) error {
 		current, buildErr := planner.build(ctx, working.Clone())
 		if buildErr != nil {
@@ -597,16 +607,25 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 		// materializes nothing, and "this Agent starts a new conversation" would
 		// be false about it.
 		current.materialization.writeNotices(r.notices)
-		if err := validateResourcePlanWrites(ctx, routed, current.writes); err != nil {
-			outcome.failedStage = "tmux prevalidation"
+		route := runtimeMutationRoute{
+			target: r.target, expectedSocketPath: r.expectedSocketPath,
+			socketName: r.socketName, authority: r.routeAuthority,
+		}
+		if len(current.writes) != 0 && (route.expectedSocketPath == "" || route.authority == nil) {
+			outcome.failedStage = "controller.identity"
+			return errors.New("materialized controller writes require exact runtime generation authority")
+		}
+		controllerWrites, err := controllerRuntimeActionsFromPlannedWrites(current.writes)
+		if err != nil {
+			outcome.failedStage = "controller.identity"
+			return err
+		}
+		if err := executeControllerRuntimeMutations(ctx, r.runner, route, controllerWrites); err != nil {
+			outcome.failedStage = "controller.identity"
 			return err
 		}
 		outcome.completed = append(outcome.completed, "tmux targets prevalidated")
 		for _, write := range current.writes {
-			if _, err := routed.Run(ctx, "tmux", write.args...); err != nil {
-				outcome.failedStage = write.itemKey()
-				return err
-			}
 			outcome.completed = append(outcome.completed, write.itemKey())
 		}
 		*working = current.registry.Clone()
@@ -706,7 +725,7 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	if c.resources == nil || c.resources.updateConvergent == nil {
 		return errors.New("resource topology materialization write store is not configured")
 	}
-	expectedSocketPath, err := bindExplicitMaterializeSocket(ctx, c.runner, target)
+	route, err := bindExplicitMaterializeSocket(ctx, c.runner, target, c.lookupEnv)
 	if err != nil {
 		return err
 	}
@@ -714,7 +733,9 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 		resources:          c.resources,
 		runner:             c.runner,
 		target:             target,
-		expectedSocketPath: expectedSocketPath,
+		expectedSocketPath: route.expectedSocketPath,
+		socketName:         route.socketName,
+		routeAuthority:     route.authority,
 		newOperationID:     c.newOperationID,
 		newGeneration:      c.newGeneration,
 		newMaterializer:    c.newMaterializer,
@@ -742,9 +763,9 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	return writeResourceReconcileReport(stdout, opts.output, report)
 }
 
-func bindExplicitMaterializeSocket(ctx context.Context, runner tmuxCommandRunner, target explicitTmuxTarget) (string, error) {
+func bindExplicitMaterializeSocket(ctx context.Context, runner tmuxCommandRunner, target explicitTmuxTarget, lookupEnv func(string) string) (runtimeMutationRoute, error) {
 	if runner == nil {
-		return "", errors.New("resource materialization requires a tmux runner")
+		return runtimeMutationRoute{}, errors.New("resource materialization requires a tmux runner")
 	}
 	routed := explicitTmuxRunner{runner: runner, target: target}
 	out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
@@ -754,28 +775,29 @@ func bindExplicitMaterializeSocket(ctx context.Context, runner tmuxCommandRunner
 			// returns and the materializer binds #{socket_path}. An explicit -S
 			// declaration already names the immutable path the create must use.
 			if target.flag == "-L" {
-				return "", nil
+				return runtimeMutationRoute{target: target, socketName: target.value}, nil
 			}
 			if target.flag == "-S" {
 				path := filepath.Clean(strings.TrimSpace(target.value))
 				if filepath.IsAbs(path) && path == target.value {
-					return path, nil
+					return runtimeMutationRoute{target: target, expectedSocketPath: path, socketName: defaultAppSocket}, nil
 				}
 			}
 		}
-		return "", fmt.Errorf("resource materialization bind exact socket: %w", err)
+		return runtimeMutationRoute{}, fmt.Errorf("resource materialization bind exact socket: %w", err)
 	}
 	path := filepath.Clean(strings.TrimSpace(string(out)))
 	if path == "." || !filepath.IsAbs(path) {
-		return "", errors.New("resource materialization observed no absolute socket identity")
+		return runtimeMutationRoute{}, errors.New("resource materialization observed no absolute socket identity")
 	}
 	if target.flag == "-S" && path != filepath.Clean(target.value) {
-		return "", errors.New("resource materialization physical socket drifted")
+		return runtimeMutationRoute{}, errors.New("resource materialization physical socket drifted")
 	}
-	if err := guardRuntimeMutationServerOwnership(ctx, routed, target); err != nil {
-		return "", err
+	route, err := resolveExistingRuntimeMutationRoute(ctx, runner, target, lookupEnv)
+	if err != nil {
+		return runtimeMutationRoute{}, err
 	}
-	return path, nil
+	return route, nil
 }
 
 // topologyOwnerGuard is one execute pass's exact parent and uid-claim proof.

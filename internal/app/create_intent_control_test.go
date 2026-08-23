@@ -45,6 +45,28 @@ type routeBindingAssertionRunner struct {
 	inner tmuxCommandRunner
 }
 
+type canonicalRenameRecycleRunner struct {
+	inner         *fakeTmux
+	anchorPaneID  string
+	identityReads int
+}
+
+func (r *canonicalRenameRecycleRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	argv := tmuxCommandArgv(args)
+	if len(argv) > 0 && argv[0] == "display-message" {
+		format := flagValue(argv, "-F")
+		if strings.Contains(format, tmuxopts.WindowUID) && strings.Contains(format, tmuxopts.ProjectUIDSession) &&
+			strings.Contains(format, tmuxopts.SessionRole) {
+			r.identityReads++
+			if r.identityReads == 2 {
+				session, _, _ := r.inner.pane(r.anchorPaneID)
+				session.opts[tmuxopts.ProjectUIDSession] = "prj-recycled-foreign"
+			}
+		}
+	}
+	return r.inner.Run(ctx, name, args...)
+}
+
 func (r routeBindingAssertionRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	r.t.Helper()
 	if !*r.bound {
@@ -204,6 +226,31 @@ func TestCanonicalWindowCreateBindsInvocationRouteBeforeRuntimeMutationObservati
 	}
 	if bindCalls != 1 {
 		t.Fatalf("runtime route bind calls = %d, want exactly one", bindCalls)
+	}
+}
+
+func TestCanonicalWindowRenameAlreadyMatchingRefusesRecycledParentBeforeWrite(t *testing.T) {
+	fx := canonicalFixture(t, false)
+	_, window, _ := fx.tmux.pane(fx.originID)
+	window.name = "renamed"
+	runner := &canonicalRenameRecycleRunner{inner: fx.tmux, anchorPaneID: fx.originID}
+	fx.create.runtime.runner = runner
+	fx.create.runtime.expectedSocketPath = fx.tmux.socketPath
+	fx.create.runtime.socketName = defaultAppSocket
+	fx.create.runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
+
+	err := fx.create.renameWindowFromIntent(windowRenameIntent{
+		anchorPaneID: fx.originID,
+		displayName:  "renamed",
+	}, ioDiscard{}, ioDiscard{})
+	if err == nil || !strings.Contains(err.Error(), "identity parent drifted") {
+		t.Fatalf("canonical rename recycled parent error = %v", err)
+	}
+	for _, call := range fx.tmux.calls {
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && argv[0] == "rename-window" {
+			t.Fatalf("canonical rename reached runtime write after parent recycle: %#v", fx.tmux.calls)
+		}
 	}
 }
 

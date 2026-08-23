@@ -154,6 +154,40 @@ func TestControlSessionConvergeBackfillsALiveHome(t *testing.T) {
 	}
 }
 
+func TestControlSessionIdentityPlanNormalizesAutomaticRenameFormatBoolean(t *testing.T) {
+	converger, _, server, runner := controlSessionFixture(t)
+	// Real tmux format expansion renders automatic-rename as 0/1 even though
+	// set-option and show-options use off/on. Exercise that exact observation
+	// boundary instead of letting the fake's stored spelling hide a residual.
+	converger.runner = controllerBooleanOptionRunner{base: runner}
+
+	result, err := converger.converge(context.Background(), controlFixtureSocket, "home")
+	if err != nil {
+		t.Fatalf("converge with canonical tmux boolean format: %v", err)
+	}
+	if !result.changed {
+		t.Fatal("first ControlSession convergence reported no change")
+	}
+	if got := server.session("home").windows[0].opts[tmuxopts.AutomaticRenameWindow]; got != "off" {
+		t.Fatalf("automatic-rename = %q, want off", got)
+	}
+
+	runner.calls = nil
+	repeat, err := converger.converge(context.Background(), controlFixtureSocket, "home")
+	if err != nil {
+		t.Fatalf("repeat converge with canonical tmux boolean format: %v", err)
+	}
+	if repeat.changed {
+		t.Fatal("repeat ControlSession convergence reported a change")
+	}
+	for _, call := range runner.calls {
+		argv := tmuxCommandArgv(call.args)
+		if len(argv) > 0 && (argv[0] == "set-option" || argv[0] == "rename-window") {
+			t.Fatalf("repeat ControlSession convergence executed a runtime write: %#v", call)
+		}
+	}
+}
+
 func TestControlSessionIdentityPlanFlattensEquivalentNestedRoutes(t *testing.T) {
 	converger, _, server, runner := controlSessionFixture(t)
 	converger.runner = explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: server.socketPath}}

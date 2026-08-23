@@ -282,6 +282,7 @@ func materializeProjectSessionCanonical(ctx context.Context, store *resourceStor
 	runtime := &materializer{
 		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: client,
 		target: route.target, expectedSocketPath: route.expectedSocketPath, warn: io.Discard,
+		socketName: route.socketName, routeAuthority: route.authority,
 		executable: os.Executable, lookupEnv: os.Getenv,
 	}
 	operationID, err := newCreateOperationID()
@@ -511,6 +512,8 @@ type registryProjectTopologyMaterializer struct {
 	runner             tmuxCommandRunner
 	target             explicitTmuxTarget
 	expectedSocketPath string
+	socketName         string
+	routeAuthority     *runtimeMutationRouteAuthority
 	resolveRoute       func(context.Context) (runtimeMutationRoute, error)
 	diagnostics        *diagnostics.LifecycleRecorder
 	newReconciler      func(tmuxCommandRunner, sessionLister) *registryReconciler
@@ -577,12 +580,24 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		}
 		m.target = route.target
 		m.expectedSocketPath = route.expectedSocketPath
+		m.socketName = route.socketName
+		m.routeAuthority = route.authority
 	}
 	if err := requireAutomaticRecoveryPaths("project-open-materialize", "project-open-skip-item"); err != nil {
 		return false, err
 	}
-	if _, err := runLockedAutomaticMirrorRecovery(ctx, m.resources, m.runner, m.target, controller.RecoveryProjectOpen); err != nil {
-		return false, err
+	route := runtimeMutationRoute{
+		target: m.target, expectedSocketPath: m.expectedSocketPath,
+		socketName: m.socketName, authority: m.routeAuthority,
+	}
+	var recoveryErr error
+	if route.expectedSocketPath != "" && route.authority != nil {
+		_, recoveryErr = runLockedAutomaticMirrorRecovery(ctx, m.resources, m.runner, m.target, controller.RecoveryProjectOpen, route)
+	} else {
+		_, recoveryErr = runLockedAutomaticMirrorRecovery(ctx, m.resources, m.runner, m.target, controller.RecoveryProjectOpen)
+	}
+	if recoveryErr != nil {
+		return false, recoveryErr
 	}
 	planner := resourceReconcilePlanner{
 		reader:             explicitTmuxRunner{runner: m.runner, target: m.target},
@@ -599,6 +614,8 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		target:             m.target,
 		expectedSocketPath: m.expectedSocketPath,
 		diagnostics:        m.diagnostics,
+		socketName:         m.socketName,
+		routeAuthority:     m.routeAuthority,
 		newOperationID:     m.newOperationID,
 		newGeneration:      m.newGeneration,
 		newMaterializer:    m.newMaterializer,

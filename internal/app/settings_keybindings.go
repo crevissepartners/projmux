@@ -2637,6 +2637,11 @@ func (c *settingsCommand) regenerateAndReloadTmuxConfig() (prepared keymapApplyS
 		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("exact live tmux route", routeErr)}
 		return prepared, live, routeErr
 	}
+	if route.authority != nil && route.authority.Class == runtimeMutationRouteStandalone {
+		routeErr = errors.New("Settings live reload refuses an operator-owned standalone tmux server")
+		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("exact live tmux route", routeErr)}
+		return prepared, live, routeErr
+	}
 	if retireErr := c.retireCurrentTmuxKeySequenceState(ctx, route); retireErr != nil {
 		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux sequence cleanup", retireErr)}
 		return prepared, live, retireErr

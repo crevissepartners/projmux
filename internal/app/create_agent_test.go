@@ -883,7 +883,7 @@ func TestCreateAgentAndProviderShortcutsShareScopedEqualization(t *testing.T) {
 				t.Fatalf("create %v error = %v", test.args, err)
 			}
 			splitIndex := firstTmuxCall(tmux.calls, 0, "split-window", "")
-			geometryIndex := firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitPaneGeometryFormat)
+			geometryIndex := firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitLayoutBatchFormat)
 			if splitIndex < 0 || geometryIndex < 0 {
 				t.Fatalf("agent route lacks split -> geometry observation ordering: %v", tmux.calls)
 			}
@@ -924,7 +924,7 @@ func TestCreateAgentFanOutEqualizesBeforeCrossingWindowBoundary(t *testing.T) {
 		}
 		anchor := flagValue(tmux.calls[splitIndex], "-t")
 		_, wantWindow, _ := tmux.pane(anchor)
-		geometryIndex := firstTmuxCall(tmux.calls[:end], splitIndex+1, "list-panes", splitPaneGeometryFormat)
+		geometryIndex := firstTmuxCall(tmux.calls[:end], splitIndex+1, "list-panes", splitLayoutBatchFormat)
 		if geometryIndex < 0 {
 			t.Fatalf("Agent split crossed the Window boundary before equalization: %v", tmux.calls[splitIndex:end])
 		}

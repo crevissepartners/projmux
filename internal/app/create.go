@@ -129,6 +129,7 @@ type createCommand struct {
 	// the first runtime action. Construction and help remain read/write free.
 	bindRuntime  func(context.Context) error
 	runtimeBound bool
+	routeAnchor  string
 }
 
 func newCreateCommand() *createCommand {
@@ -159,18 +160,20 @@ func newCreateCommand() *createCommand {
 		resolveWorkspace: resolveAgentWorkspace,
 	}
 	command.bindRuntime = func(ctx context.Context) error {
-		route, err := resolveInvocationRuntimeMutationRoute(ctx, runner, os.Getenv)
+		route, err := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, runner, os.Getenv, command.routeAnchor)
 		if err != nil {
 			return err
 		}
 		exact := explicitTmuxRunner{runner: runner, target: route.target}
 		client := defaultTmuxClientWithSocketRunner(exact, route.socketName)
-		command.reconciler = newRegistryReconciler(exact, client)
+		command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
 		command.runtime.runner = exact
 		command.runtime.mirror = intmetadata.NewMirror(exact)
 		command.runtime.sessions = client
 		command.runtime.target = route.target
 		command.runtime.expectedSocketPath = route.expectedSocketPath
+		command.runtime.socketName = route.socketName
+		command.runtime.routeAuthority = route.authority
 		return nil
 	}
 	return command

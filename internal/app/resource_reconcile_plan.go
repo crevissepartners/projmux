@@ -860,13 +860,15 @@ type observedPlanObject struct {
 }
 
 type plannedTmuxWrite struct {
-	args        []string
-	target      string
-	field       string
-	before      string
-	after       string
-	guardField  string
-	guardBefore string
+	args           []string
+	target         string
+	field          string
+	before         string
+	after          string
+	guardField     string
+	guardBefore    string
+	guardSessionID string
+	guardWindowID  string
 }
 
 func (w plannedTmuxWrite) itemKey() string {
@@ -897,15 +899,27 @@ type resourcePlanTmuxRunner struct {
 	seenObject        map[string]bool
 	sessionOpts       map[string]map[string]string
 	initialWindowUID  map[string]string
+	initialWindowName map[string]string
+	windowAutomatic   map[string]string
 	initialPaneUID    map[string]string
 	initialSessionUID map[string]string
+	sessionIDByName   map[string]string
+	windowIDByCoord   map[string]string
+	windowSessionID   map[string]string
+	paneWindowID      map[string]string
+	paneSessionID     map[string]string
+	optionValues      map[string]map[string]string
 }
 
 func newResourcePlanTmuxRunner(reader tmuxCommandRunner) *resourcePlanTmuxRunner {
 	return &resourcePlanTmuxRunner{
 		reader: reader, windowUID: map[string]string{}, paneUID: map[string]string{}, windowAlias: map[string]string{},
 		sessionRoots: map[string]string{}, seenObject: map[string]bool{}, sessionOpts: map[string]map[string]string{},
-		initialWindowUID: map[string]string{}, initialPaneUID: map[string]string{}, initialSessionUID: map[string]string{},
+		initialWindowUID: map[string]string{}, initialWindowName: map[string]string{}, windowAutomatic: map[string]string{},
+		initialPaneUID: map[string]string{}, initialSessionUID: map[string]string{},
+		sessionIDByName: map[string]string{}, windowIDByCoord: map[string]string{},
+		windowSessionID: map[string]string{}, paneWindowID: map[string]string{}, paneSessionID: map[string]string{},
+		optionValues: map[string]map[string]string{},
 	}
 }
 
@@ -914,7 +928,7 @@ func (r *resourcePlanTmuxRunner) Run(ctx context.Context, name string, args ...s
 		return nil, fmt.Errorf("resource reconciliation planner expected tmux command, got %s %v", name, args)
 	}
 	if args[0] == "set-option" || args[0] == "rename-window" {
-		return r.recordWrite(args)
+		return r.recordWrite(ctx, args)
 	}
 	out, err := r.reader.Run(ctx, name, args...)
 	if err != nil {
@@ -925,11 +939,12 @@ func (r *resourcePlanTmuxRunner) Run(ctx context.Context, name string, args ...s
 	return out, nil
 }
 
-func (r *resourcePlanTmuxRunner) recordWrite(args []string) ([]byte, error) {
+func (r *resourcePlanTmuxRunner) recordWrite(ctx context.Context, args []string) ([]byte, error) {
 	target := flagArg(args, "-t")
 	write := plannedTmuxWrite{args: slices.Clone(args), target: target}
 	if args[0] == "rename-window" {
 		write.field = "window_name"
+		write.before = r.initialWindowName[target]
 		if len(args) > 0 {
 			write.after = args[len(args)-1]
 		}
@@ -954,7 +969,28 @@ func (r *resourcePlanTmuxRunner) recordWrite(args []string) ([]byte, error) {
 			write.before = r.paneUID[target]
 			write.guardField, write.guardBefore = tmuxopts.PaneUID, r.initialPaneUID[target]
 			r.paneUID[target] = write.after
+		case tmuxopts.AutomaticRenameWindow:
+			before, observed := r.windowAutomatic[target]
+			if !observed {
+				return nil, fmt.Errorf("resource reconciliation planner has no exact automatic-rename receipt for %s", target)
+			}
+			write.before = before
+			write.guardField, write.guardBefore = tmuxopts.WindowUID, r.initialWindowUID[target]
+			r.windowAutomatic[target] = write.after
+			if alias := r.windowAlias[target]; alias != "" {
+				r.windowAutomatic[alias] = write.after
+			}
+			for index := range r.objects {
+				if r.objects[index].kind == coremetadata.KindWindow && (r.objects[index].target == target || r.windowAlias[r.objects[index].target] == target) {
+					r.objects[index].automatic = write.after
+				}
+			}
 		default:
+			before, err := r.observeOptionBefore(ctx, target, write.field)
+			if err != nil {
+				return nil, err
+			}
+			write.before = before
 			switch {
 			case slices.Contains(args, "-w"):
 				write.guardField, write.guardBefore = tmuxopts.WindowUID, r.initialWindowUID[target]
@@ -963,14 +999,43 @@ func (r *resourcePlanTmuxRunner) recordWrite(args []string) ([]byte, error) {
 			default:
 				write.guardField, write.guardBefore = tmuxopts.ProjectUIDSession, r.initialSessionUID[target]
 			}
+			r.optionValues[target][write.field] = write.after
 			if values := r.sessionOpts[target]; values != nil {
-				write.before = values[write.field]
 				values[write.field] = write.after
 			}
 		}
 	}
+	write.guardSessionID = r.windowSessionID[target]
+	write.guardWindowID = r.paneWindowID[target]
+	if write.guardSessionID == "" {
+		write.guardSessionID = r.paneSessionID[target]
+	}
 	r.writes = append(r.writes, write)
 	return nil, nil
+}
+
+// observeOptionBefore binds every ordinary planned set-option to the exact
+// value visible on its exact target before the first write. UID claims,
+// automatic-rename, and rename-window have dedicated inventory receipts above;
+// all other fields must be read here rather than inferred from the session-only
+// overlay. Later writes to the same target/field consume the shadowed value so
+// their Before remains the total-order predecessor without planning a mutation.
+func (r *resourcePlanTmuxRunner) observeOptionBefore(ctx context.Context, target, field string) (string, error) {
+	if values := r.optionValues[target]; values != nil {
+		if value, observed := values[field]; observed {
+			return value, nil
+		}
+	}
+	out, err := r.reader.Run(ctx, "tmux", "display-message", "-p", "-t", target, "-F", "#{"+field+"}")
+	if err != nil {
+		return "", fmt.Errorf("resource reconciliation planner cannot observe %s on exact target %s: %w", field, target, err)
+	}
+	if r.optionValues[target] == nil {
+		r.optionValues[target] = map[string]string{}
+	}
+	value := strings.TrimSpace(string(out))
+	r.optionValues[target][field] = value
+	return value, nil
 }
 
 func (r *resourcePlanTmuxRunner) setLastWriteBefore(value string) {
@@ -994,6 +1059,7 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 			r.sessionOpts[row[0]] = map[string]string{
 				tmuxopts.ProjectUIDSession: row[2], tmuxopts.ProjectNameSession: row[3], tmuxopts.ProjectPathSession: row[4],
 			}
+			r.sessionIDByName[row[1]] = row[0]
 			if _, observed := r.initialSessionUID[row[0]]; !observed {
 				r.initialSessionUID[row[0]] = strings.TrimSpace(row[2])
 			}
@@ -1035,13 +1101,31 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 			}
 			id, uid := row[idIndex], strings.TrimSpace(row[uidIndex])
 			coord := session + ":" + row[0]
+			sessionID := r.sessionIDByName[session]
+			if exactTmuxHandle(session, "$") != "" {
+				sessionID = session
+			}
 			r.windowAlias[id] = coord
+			r.windowIDByCoord[coord] = id
+			r.windowSessionID[id], r.windowSessionID[coord] = sessionID, sessionID
 			r.windowUID[id], r.windowUID[coord] = uid, uid
 			if _, observed := r.initialWindowUID[id]; !observed {
 				r.initialWindowUID[id] = uid
 			}
 			if _, observed := r.initialWindowUID[coord]; !observed {
 				r.initialWindowUID[coord] = uid
+			}
+			if _, observed := r.initialWindowName[id]; !observed {
+				r.initialWindowName[id] = row[1]
+			}
+			if _, observed := r.initialWindowName[coord]; !observed {
+				r.initialWindowName[coord] = row[1]
+			}
+			if _, observed := r.windowAutomatic[id]; !observed {
+				r.windowAutomatic[id] = row[2]
+			}
+			if _, observed := r.windowAutomatic[coord]; !observed {
+				r.windowAutomatic[coord] = row[2]
 			}
 			r.addObject(observedPlanObject{kind: coremetadata.KindWindow, target: id, uid: uid, session: session, windowIndex: row[0], automatic: row[2]})
 		}
@@ -1052,6 +1136,12 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 				continue
 			}
 			id, uid := row[7], strings.TrimSpace(row[8])
+			sessionID := r.sessionIDByName[session]
+			if exactTmuxHandle(session, "$") != "" {
+				sessionID = session
+			}
+			windowID := r.windowIDByCoord[session+":"+row[0]]
+			r.paneSessionID[id], r.paneWindowID[id] = sessionID, windowID
 			r.paneUID[id] = uid
 			if _, observed := r.initialPaneUID[id]; !observed {
 				r.initialPaneUID[id] = uid

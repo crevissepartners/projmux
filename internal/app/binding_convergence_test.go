@@ -59,7 +59,7 @@ func (r *routedTmuxRunner) Run(ctx context.Context, name string, args ...string)
 		return nil, fmt.Errorf("no fake tmux server for %q", target)
 	}
 	r.calls = append(r.calls, routedTmuxCall{flag: args[0], value: args[1], args: slices.Clone(args[2:])})
-	if logicalName != "" && args[2] == "show-options" && args[len(args)-1] == runtimeMutationSocketNameOption {
+	if logicalName != "" && server.appMarker == "1" && args[2] == "show-options" && args[len(args)-1] == runtimeMutationSocketNameOption {
 		return []byte(logicalName + "\n"), nil
 	}
 	return server.Run(ctx, name, args[2:]...)
@@ -165,6 +165,8 @@ func TestBindingConvergenceRepairsOnlyTheExplicitSocketAndThenBecomesANoop(t *te
 	root := t.TempDir()
 	primary := bindingFixtureServer()
 	secondary := bindingFixtureServer()
+	primary.socketPath = "/tmp/fake-tmux/primary"
+	secondary.socketPath = "/tmp/fake-tmux/second"
 	secondaryBefore := secondary.state()
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{
 		"-L\x00primary": primary,
@@ -209,8 +211,13 @@ func TestBindingConvergenceRepairsOnlyTheExplicitSocketAndThenBecomesANoop(t *te
 		t.Fatalf("secondary socket changed:\n--- got ---\n%s\n--- want ---\n%s", got, secondaryBefore)
 	}
 	for _, call := range runner.calls {
-		if call.flag != "-L" || call.value != "primary" {
+		logical := call.flag == "-L" && call.value == "primary"
+		physical := call.flag == "-S" && call.value == primary.socketPath
+		if !logical && !physical {
 			t.Fatalf("convergence escaped explicit socket: %+v", call)
+		}
+		if len(call.args) != 0 && slices.Contains([]string{"set-option", "rename-window"}, call.args[0]) && !physical {
+			t.Fatalf("controller mutation was not pinned to the physical generation: %+v", call)
 		}
 	}
 
@@ -279,7 +286,13 @@ func TestGeneratedLifecycleTriggersConvergeOnOneEntrypoint(t *testing.T) {
 			if line == "" {
 				t.Fatalf("%s config has no %s hook", name, hook)
 			}
-			wants := []string{"internal tmux converge", "--socket-path", "#{socket_path}", "--reason " + string(reason)}
+			wants := []string{
+				"env -u TMUX -u TMUX_PANE",
+				"internal tmux converge",
+				"--socket-path",
+				"#{socket_path}",
+				"--reason " + string(reason),
+			}
 			switch reason {
 			case controllerTriggerRuntimeCreated, controllerTriggerPaneKilled:
 				wants = append(wants, "--session", "#{session_id}")

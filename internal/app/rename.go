@@ -222,7 +222,7 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 		}
 		rootKind = coremetadata.KindControlSession
 	}
-	route, err := resolveInvocationRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
+	route, err := resolveExactObjectRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
 	if err != nil {
 		// Preserve the established metadata-authoritative behavior when no live
 		// runtime can be proven. A later controller pass projects the name.
@@ -269,15 +269,19 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 	if !found {
 		return nil
 	}
-	action := newRuntimeMutation(1, mutationWriteIdentity, runtimeMutationTarget{
-		Socket: route.target.flag + "=" + route.target.value, PhysicalSocket: printableRuntimeMutationSocket(route.expectedSocketPath),
+	mutationTarget := runtimeMutationTarget{
 		Kind: string(runtimeWindow), ID: observed.windowID, UID: uid,
 		Parent: string(rootKind) + "/" + rootUID + "/" + observed.sessionID,
-	})
+	}
+	bindRuntimeMutationRouteTarget(&mutationTarget, route)
+	action := newRuntimeMutation(1, mutationWriteStableName, mutationTarget)
 	bindRuntimeMutationGuard(&action, "exact Window="+observed.windowID+";root="+string(rootKind)+"/"+rootUID)
 	action.Operands = []string{"-w", "-t", observed.windowID, "-q", tmuxopts.WindowName, name}
 	err = executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
+		TargetRouteGuard: func(ctx context.Context) error {
+			return guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action)
+		},
 		Reobserve: func(ctx context.Context) (bool, error) {
 			if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action); err != nil {
 				return false, err
@@ -286,7 +290,8 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 			if err != nil {
 				return false, err
 			}
-			return ok && current.stableName == name && current.windowName == observed.windowName, nil
+			return ok && current.windowID == action.Target.ID && current.sessionID == observed.sessionID &&
+				current.stableName == name && current.windowName == observed.windowName, nil
 		},
 		Guard: func(ctx context.Context) error {
 			if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action); err != nil {

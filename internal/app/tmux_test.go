@@ -128,6 +128,28 @@ func TestTmuxApplyLifecycleOutcomeTable(t *testing.T) {
 	}
 }
 
+func TestConfigRouteMarkerMatchingEffectCannotSkipCapturedServerGeneration(t *testing.T) {
+	server := newFakeTmux()
+	server.socketName = "phase10-config"
+	route := runtimeMutationRoute{
+		target:             explicitTmuxTarget{flag: "-L", value: "phase10-config"},
+		expectedSocketPath: server.socketPath, socketName: "phase10-config",
+		authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID},
+	}
+	server.serverPID = "9999"
+	server.calls = nil
+	cmd := &tmuxCommand{runner: server}
+	err := cmd.writeRuntimeMutationRouteMarker(context.Background(), route)
+	if err == nil || !strings.Contains(err.Error(), "server generation drifted") {
+		t.Fatalf("config marker replacement error = %v", err)
+	}
+	for _, call := range server.calls {
+		if slices.Contains(tmuxCommandArgv(call), "set-option") {
+			t.Fatalf("matching config marker skipped captured generation guard and wrote: %#v", call)
+		}
+	}
+}
+
 func TestTmuxApplySkippedHintNormalizesWhenLaterOutputFails(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
@@ -1383,6 +1405,24 @@ func TestBuildPopupToggleSessionPopupPropagatesSwitchTargetClient(t *testing.T) 
 	}
 }
 
+func TestBuildPopupTogglePropagatesVerifiedRouteAnchorThroughPrivateChildEnv(t *testing.T) {
+	command, options, err := buildPopupToggleWithStyle(
+		tmuxPopupToggleMode{Raw: "session-popup", Canonical: "session-popup", AnchorPane: "%12"},
+		"/tmp/projmux", "/tmp/marker",
+		tmuxPopupContext{OriginPane: "%12", TargetClient: "/dev/pts/8"},
+		func(string) string { return "" }, "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := options.Env[runtimeMutationAnchorPaneEnv]; got != "%12" {
+		t.Fatalf("private route anchor env = %q, want %%12", got)
+	}
+	if !strings.Contains(command, runtimeMutationAnchorPaneEnv+"='%12'") {
+		t.Fatalf("popup child command omitted verified route anchor: %q", command)
+	}
+}
+
 func TestAppRunTmuxPopupTogglePropagatesLegacySessionizerRoots(t *testing.T) {
 	t.Parallel()
 
@@ -1435,11 +1475,11 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	output := stdout.String()
 	for _, want := range []string{
 		"bind-key -n M-1 run-shell",
-		"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} sessionizer-sidebar",
 		"bind-key -n M-2 run-shell",
-		"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} notify-sidebar",
+		"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} notify-sidebar",
 		"bind-key -n M-3 run-shell",
-		"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} recent-windows",
+		"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} recent-windows",
 		"unbind-key -q F",
 		"set-hook -g pane-focus-out",
 		"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane} >/dev/null 2>&1 || true",
@@ -1449,7 +1489,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"'/tmp/proj mux/bin/projmux' attention clear #{pane_id} >/dev/null 2>&1 || true",
 		"set-hook -g pane-exited",
 		"sleep 0.05; '/tmp/proj mux/bin/projmux' internal tmux rebalance-panes >/dev/null 2>&1 || true; " +
-			"'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' --reason pane-exited --hook-pane '#{hook_pane}' >/dev/null 2>&1 || true",
+			"env -u TMUX -u TMUX_PANE '/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' --reason pane-exited --hook-pane '#{hook_pane}' >/dev/null 2>&1 || true",
 		"set-hook -g after-kill-pane",
 		"--reason pane-killed",
 		"set-hook -g window-unlinked",
@@ -1498,7 +1538,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"tmux autosave-session-state --quiet",
 		"bind-key R command-prompt",
 		"'/tmp/proj mux/bin/projmux' window recent",
-		"bind-key -n M-3 run-shell \"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} session-popup\"",
+		"bind-key -n M-3 run-shell \"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} session-popup\"",
 		"set-hook -g session-window-changed",
 		"set -s user-keys",
 		"bind-key -n User",
@@ -1742,7 +1782,7 @@ func TestTmuxPrintConfigKeymapOverrideChangesBindAndUnbindsStaleDefault(t *testi
 		"unbind-key -q F",
 		"unbind-key -q A",
 		"bind-key -n M-a run-shell",
-		"'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} sessionizer-sidebar",
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("print-config output = %q, want substring %q", output, want)
@@ -2039,7 +2079,7 @@ func TestTmuxPrintConfigBindsPaneContextMenu(t *testing.T) {
 		// picker via the same popup-toggle entrypoint as the C-r keybinding
 		// (`ai picker` directly would fail: run-shell has no TMUX env, so the
 		// picker cannot resolve its context cwd).
-		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
+		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} ai-split-resume-right" }`,
 		// Stock names and shortcuts now state managed menu intents with the exact
 		// clicked pane instead of mutating tmux directly.
 		`"Horizontal Split" h { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-right #{pane_id}" }`,
@@ -2073,7 +2113,7 @@ func TestGeneratedPaneMenuGolden(t *testing.T) {
 
 	want := []string{
 		"unbind-key -q -n MouseDown3Pane",
-		`bind-key -n MouseDown3Pane if-shell -F -t = "#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}" { select-pane -t = ; send-keys -M } { display-menu -T "#[align=centre]#{pane_index} (#{pane_id})" -t = -x M -y M "AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} ai-split-resume-right" } '' "Horizontal Split" h { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-right #{pane_id}" } "Vertical Split" v { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-down #{pane_id}" } '' "#{?#{>:#{window_panes},1},,-}Swap Up" u { swap-pane -U } "#{?#{>:#{window_panes},1},,-}Swap Down" d { swap-pane -D } '' "Kill" X { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} kill #{pane_id}" } "#{?pane_marked,Unmark,Mark}" m { select-pane -m } "#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}" z { resize-pane -Z } }`,
+		`bind-key -n MouseDown3Pane if-shell -F -t = "#{||:#{mouse_any_flag},#{&&:#{pane_in_mode},#{?#{m/r:(copy|view)-mode,#{pane_mode}},0,1}}}" { select-pane -t = ; send-keys -M } { display-menu -T "#[align=centre]#{pane_index} (#{pane_id})" -t = -x M -y M "AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} ai-split-resume-right" } '' "Horizontal Split" h { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-right #{pane_id}" } "Vertical Split" v { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-down #{pane_id}" } '' "#{?#{>:#{window_panes},1},,-}Swap Up" u { swap-pane -U } "#{?#{>:#{window_panes},1},,-}Swap Down" d { swap-pane -D } '' "Kill" X { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} kill #{pane_id}" } "#{?pane_marked,Unmark,Mark}" m { select-pane -m } "#{?#{>:#{window_panes},1},,-}#{?window_zoomed_flag,Unzoom,Zoom}" z { resize-pane -Z } }`,
 	}
 	if got := tmuxPaneContextMenuBindings("/tmp/proj mux/bin/projmux"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("generated pane-menu config changed\n--- got ---\n%s\n--- want ---\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -2135,7 +2175,7 @@ func TestTmuxPrintAppConfigBindsPaneContextMenu(t *testing.T) {
 		"unbind-key -q -n MouseDown3Pane",
 		"bind-key -n MouseDown3Pane if-shell -F -t = ",
 		"display-menu -T \"#[align=centre]#{pane_index} (#{pane_id})\" -t = -x M -y M",
-		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} ai-split-resume-right" }`,
+		`"AI Resume Picker" a { select-pane -t = ; run-shell "'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} ai-split-resume-right" }`,
 		`"Horizontal Split" h { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-right #{pane_id}" }`,
 		`"Vertical Split" v { run-shell "'/tmp/proj mux/bin/projmux' internal tmux pane-menu --client #{client_tty} split-down #{pane_id}" }`,
 	} {
@@ -2370,7 +2410,7 @@ func TestTmuxPrintAppConfigUsesIsolatedAppSettings(t *testing.T) {
 		"#[fg=colour220] ",
 		"#[fg=colour220]📁 ",
 		"#[fg=colour245]#{=-28/...:pane_current_path}#[norange]",
-		"'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} sessionizer-sidebar",
 		"#[fg=colour245]   %Y-%m-%d %H:%M #[bold,fg=colour230,bg=colour29]#[range=user|settings]   #[norange]#[default]",
 		"set -g status 2",
 		"range=user|notify",
@@ -2950,7 +2990,7 @@ func TestTmuxPrintAppConfigKeepsStandaloneAndAppKeymapScopesSeparated(t *testing
 	output := stdout.String()
 	for _, want := range []string{
 		"bind-key -n M-a run-shell",
-		"'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} sessionizer-sidebar",
 		"bind-key -n C-t run-shell \"TMUX_PANE=#{pane_id}",
 		"internal tmux window-create --client #{client_tty} --anchor #{pane_id}",
 		"unbind-key -q -n C-t",
@@ -3148,7 +3188,7 @@ func TestTmuxInstallWritesSnippetAndIncludesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(snippet), "'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} sessionizer") {
+	if !strings.Contains(string(snippet), "'/tmp/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} sessionizer") {
 		t.Fatalf("snippet = %q, want projmux binding", string(snippet))
 	}
 	config, err := os.ReadFile(configPath)
@@ -3589,6 +3629,10 @@ func (r *recordingTmuxRunner) Run(_ context.Context, name string, args ...string
 				return []byte(args[i+1] + "\n"), nil
 			}
 		}
+	}
+	if name == "tmux" && len(args) >= 4 && args[len(args)-4] == "display-message" && args[len(args)-3] == "-p" &&
+		args[len(args)-2] == "-F" && args[len(args)-1] == "#{pid}" {
+		return []byte("4242\n"), nil
 	}
 	if name == "tmux" && len(args) >= 3 && args[len(args)-3] == "show-options" && args[len(args)-2] == "-gqv" {
 		switch args[len(args)-1] {

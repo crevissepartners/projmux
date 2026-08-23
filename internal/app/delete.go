@@ -59,6 +59,10 @@ type deleteCommand struct {
 	lookupEnv func(string) string
 	// newOperationID labels the pre-mutation intentional termination receipt.
 	newOperationID func() (string, error)
+	// routeAnchor is private producer evidence for generated pane-menu delete.
+	// It is reobserved with the inherited socket/pid instead of being written
+	// into the process-global TMUX_PANE environment.
+	routeAnchor string
 }
 
 func newDeleteCommand() *deleteCommand {
@@ -299,6 +303,9 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 			return fmt.Errorf("delete %s: live tmux deletion is not configured", token)
 		}
 		c.panes.useExactTarget(target)
+		if anchored, ok := c.panes.(interface{ useRouteAnchor(string) }); ok {
+			anchored.useRouteAnchor(c.routeAnchor)
+		}
 		panePlan, err = c.panes.preflight(context.Background(), registry, plan)
 		if err != nil {
 			return err

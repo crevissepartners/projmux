@@ -243,10 +243,43 @@ assert_recorder_identity_metadata
 "$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$recorder_socket" \
   >"$PROJMUX_SMOKE_WORKDIR/recorder-e2e-apply.out"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/recorder-e2e-apply.out" "reloaded tmux server -L $recorder_socket: 1 sessions"
+# Ctrl-N is the terminal-level window.create transport, so the tmux config
+# retires any stale raw C-n binding. The successful apply above plus this exact
+# retirement distinguishes an invalid source from a popup authority failure;
+# configured tmux chords reach the canonical exact-anchor handler in the
+# integration reassignment proof.
+smoke_assert_file_contains "$XDG_CONFIG_HOME/projmux/tmux.conf" "unbind-key -q -n C-n"
+
+# display-popup does not promise to synthesize TMUX_PANE for its child. Capture
+# the active client Pane from this fully marked app route, then reobserve the
+# complete $/@/% containment through the exact physical socket before passing
+# the product-private anchor to Settings. Nothing is exported to later commands.
+recorder_popup_receipt="$(tmux -L "$recorder_socket" display-message -p -c "$recorder_client" \
+  '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}')"
+IFS='|' read -r recorder_socket_path recorder_server_pid recorder_popup_session \
+  recorder_popup_window recorder_popup_anchor <<<"$recorder_popup_receipt"
+case "$recorder_socket_path" in
+  "$PROJMUX_SMOKE_TMUX_ROOT"/*) ;;
+  *)
+    echo "Settings recorder socket escaped its isolated root: $recorder_popup_receipt" >&2
+    exit 1
+    ;;
+esac
+if [[ ! "$recorder_server_pid" =~ ^[1-9][0-9]*$ ]] ||
+  [[ ! "$recorder_popup_session" =~ ^\$[0-9]+$ ]] ||
+  [[ ! "$recorder_popup_window" =~ ^@[0-9]+$ ]] ||
+  [[ ! "$recorder_popup_anchor" =~ ^%[0-9]+$ ]] ||
+  [[ "$(tmux -L "$recorder_socket" show-options -gqv @projmux_app)" != "1" ]] ||
+  [[ "$(tmux -L "$recorder_socket" show-options -gqv @projmux_socket_name)" != "$recorder_socket" ]] ||
+  [[ "$(env -u TMUX -u TMUX_PANE tmux -S "$recorder_socket_path" display-message -p \
+    -t "$recorder_popup_anchor" '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}')" != "$recorder_popup_receipt" ]]; then
+  echo "Settings recorder has no exact app-owned client Pane receipt: $recorder_popup_receipt" >&2
+  exit 1
+fi
 
 tmux -L "$recorder_socket" display-popup -c "$recorder_client" \
 	-T "Recorder E2E" -w 72 -h 20 -E \
-	"env PROJMUX_PICKER_BACKEND=retired-value '$bin' settings" &
+	"env __PROJMUX_RUNTIME_ANCHOR_PANE='$recorder_popup_anchor' PROJMUX_PICKER_BACKEND=retired-value '$bin' settings" &
 recorder_popup_pid=$!
 
 smoke_wait_for "Settings root" grep -aFq "Settings >" "$recorder_log"
@@ -863,6 +896,7 @@ cfx set-option -p -t "$foreign_agent_pane" @projmux_ai_state foreign-state
 foreign_agent_before="$(cfx display-message -p -t "$foreign_agent_pane" '#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}')"
 
 create_socket_path="$(ctx display-message -p -t legacy-alpha '#{socket_path}')"
+create_server_pid="$(ctx display-message -p -t legacy-alpha '#{pid}')"
 case "$create_socket_path" in
   "$create_root"/*) ;;
   *)
@@ -870,7 +904,11 @@ case "$create_socket_path" in
     exit 1
     ;;
 esac
-echo ">> create e2e socket=$create_socket path=$create_socket_path"
+if [[ ! "$create_server_pid" =~ ^[1-9][0-9]*$ ]]; then
+  echo "create e2e server has no exact positive pid: $create_server_pid" >&2
+  exit 1
+fi
+echo ">> create e2e socket=$create_socket path=$create_socket_path pid=$create_server_pid"
 create_foreign_socket_path="$(cfx display-message -p -t foreign-agent '#{socket_path}')"
 case "$create_foreign_socket_path" in
   "$create_root"/*) ;;
@@ -1513,7 +1551,7 @@ pmx_agent() {
 pmx_agent_live() {
   PATH="$agent_home/.local/bin:$PATH" \
     HOME="$agent_home" \
-    TMUX="$create_socket_path,1,0" \
+    TMUX="$create_socket_path,$create_server_pid,0" \
     TMUX_PANE="$agent_pane" \
     TMUX_TMPDIR="$create_root/tt" \
     XDG_STATE_HOME="$create_root/state" \
@@ -1528,7 +1566,7 @@ pmx_agent_hook_at() {
   shift
   PATH="$agent_home/.local/bin:$PATH" \
     HOME="$agent_home" \
-    TMUX="$create_socket_path,1,0" \
+    TMUX="$create_socket_path,$create_server_pid,0" \
     TMUX_PANE="$hook_pane" \
     TMUX_TMPDIR="$create_root/tt" \
     XDG_STATE_HOME="$create_root/state" \
@@ -1538,8 +1576,20 @@ pmx_agent_hook_at() {
     "$bin" "$@"
 }
 
+agent_session_before="$(ctx display-message -p -t legacy-alpha '#{session_id}')"
 agent_window_before="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
 agent_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
+agent_window_uid_before="$(ctx show-options -wqv -t "$agent_window_before" @projmux_window_uid)"
+agent_host_pane_uid_before="$(ctx show-options -pqv -t "$agent_pane_before" @projmux_pane_uid)"
+agent_primary_pane_uid="$(pmx_agent describe window "$alpha_window_name" -p alpha -o json | sed -n 's/.*"primaryPaneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
+if [[ ! "$agent_session_before" =~ ^\$[0-9]+$ ]] ||
+  [[ ! "$agent_window_before" =~ ^@[0-9]+$ ]] ||
+  [[ ! "$agent_pane_before" =~ ^%[0-9]+$ ]] ||
+  [[ -z "$agent_window_uid_before" || -z "$agent_host_pane_uid_before" ]] ||
+  [[ "$agent_host_pane_uid_before" != "$agent_primary_pane_uid" ]]; then
+  echo "Agent fixture has no exact managed primary host receipt: $agent_session_before/$agent_window_before/$agent_pane_before window_uid=$agent_window_uid_before pane_uid=$agent_host_pane_uid_before primary=$agent_primary_pane_uid" >&2
+  exit 1
+fi
 
 pmx_agent create agent --provider codex -p alpha -w "$alpha_window_name" -o pane-id \
   >"$create_root/agent.out" 2>"$create_root/agent.err"
@@ -1741,17 +1791,77 @@ fi
 # take the Agent offline, change its Registry-only topic, and resume it.
 printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"phase6-thread","session_id":"phase6-session","turn_id":"phase6-turn","cwd":"'"$create_root"'/legacy/alpha"}' |
   pmx_agent_live internal agent-hook ingest codex-hook
+agent_deleted_pane="$agent_pane"
+agent_target_receipt="$(ctx display-message -p -t "$agent_deleted_pane" '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}')"
+IFS='|' read -r agent_target_socket agent_target_pid agent_target_session agent_target_window agent_target_pane <<<"$agent_target_receipt"
+agent_target_pane_uid="$(ctx show-options -pqv -t "$agent_deleted_pane" @projmux_pane_uid)"
+if [[ "$agent_target_socket" != "$create_socket_path" ]] ||
+  [[ "$agent_target_pid" != "$create_server_pid" ]] ||
+  [[ "$agent_target_session" != "$agent_session_before" ]] ||
+  [[ "$agent_target_window" != "$agent_window_before" ]] ||
+  [[ "$agent_target_pane" != "$agent_deleted_pane" ]] ||
+  [[ "$agent_target_pane" == "$agent_pane_before" ]] ||
+  [[ "$agent_target_pane_uid" != "$agent_pane_uid" ]]; then
+  echo "Agent delete target is not the exact managed sibling: got=$agent_target_socket/$agent_target_pid/$agent_target_session/$agent_target_window/$agent_target_pane pane_uid=$agent_target_pane_uid" >&2
+  exit 1
+fi
+
+agent_host_receipt_is_exact() {
+  agent_host_receipt="$(ctx display-message -p -t "$agent_pane_before" '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}')"
+  IFS='|' read -r agent_host_socket agent_host_pid agent_host_session agent_host_window agent_host_pane <<<"$agent_host_receipt"
+  agent_host_window_uid="$(ctx show-options -wqv -t "$agent_window_before" @projmux_window_uid)"
+  agent_host_pane_uid="$(ctx show-options -pqv -t "$agent_pane_before" @projmux_pane_uid)"
+  [[ "$agent_host_socket" == "$create_socket_path" ]] &&
+    [[ "$agent_host_pid" == "$create_server_pid" ]] &&
+    [[ "$agent_host_session" == "$agent_session_before" ]] &&
+    [[ "$agent_host_window" == "$agent_window_before" ]] &&
+    [[ "$agent_host_pane" == "$agent_pane_before" ]] &&
+    [[ "$agent_host_window_uid" == "$agent_window_uid_before" ]] &&
+    [[ "$agent_host_pane_uid" == "$agent_host_pane_uid_before" ]]
+}
+if ! agent_host_receipt_is_exact; then
+  echo "Agent fixture host receipt drifted before delete: got=$agent_host_socket/$agent_host_pid/$agent_host_session/$agent_host_window/$agent_host_pane window_uid=$agent_host_window_uid pane_uid=$agent_host_pane_uid" >&2
+  exit 1
+fi
+# The external test shell is not the target Pane. Hand invocation authority to
+# the exact managed primary host before delete so this is the synchronous
+# non-self path; self-delete queue behavior is exercised by its own live block.
+agent_pane="$agent_pane_before"
 pmx_agent_live delete pane "uid:$agent_pane_uid" --yes
+agent_deleted_target_absent() {
+  local live_panes
+  live_panes="$(ctx list-panes -a -F '#{pane_id}')" || return 1
+  ! grep -Fxq -- "$agent_deleted_pane" <<<"$live_panes"
+}
+smoke_wait_for "exact Agent delete target $agent_deleted_pane to leave the runtime" agent_deleted_target_absent
+if ! agent_host_receipt_is_exact; then
+  echo "Agent fixture host receipt drifted after delete: got=$agent_host_socket/$agent_host_pid/$agent_host_session/$agent_host_window/$agent_host_pane window_uid=$agent_host_window_uid pane_uid=$agent_host_pane_uid" >&2
+  exit 1
+fi
 pmx_agent_live agent topic set "offline resume topic" "uid:$agent_uid"
 pmx_agent_live agent resume "uid:$agent_uid" >"$create_root/agent-resume.out"
 smoke_assert_file_contains "$create_root/agent-resume.out" "resumed"
-# This read runs from the pane the delete above just killed, so its Projmux
-# identity mirror is gone. An explicit --project is what keeps it resolvable:
-# a singular reference derives its Project namespace from the active Window,
-# and naming the Project skips that observation entirely.
+# This read runs from the revalidated managed host Pane rather than the killed
+# Agent Pane. The explicit Project keeps the singular Agent reference scoped to
+# the same durable Registry root while its replacement Pane is materialized.
 resumed_pane_uid="$(pmx_agent_live describe agent "uid:$agent_uid" -p alpha -o json | sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
-resumed_pane="$(ctx list-panes -a -F '#{@projmux_pane_uid} #{pane_id}' | awk -v uid="$resumed_pane_uid" '$1 == uid { print $2; exit }')"
-if [[ -z "$resumed_pane" ]] ||
+ctx list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_pane_uid}' |
+  awk -F '[|]' -v uid="$resumed_pane_uid" '$4 == uid { print }' >"$create_root/agent-resume.matches"
+if [[ -z "$resumed_pane_uid" ]] || [[ "$(wc -l <"$create_root/agent-resume.matches")" != "1" ]]; then
+  echo "Offline Agent resume Pane uid matched other than exactly one runtime Pane: uid=$resumed_pane_uid" >&2
+  cat "$create_root/agent-resume.matches" >&2 || true
+  exit 1
+fi
+IFS='|' read -r resumed_session resumed_window resumed_pane resumed_observed_uid <"$create_root/agent-resume.matches"
+if [[ ! "$resumed_pane" =~ ^%[0-9]+$ ]] ||
+  [[ "$resumed_session" != "$agent_session_before" ]] ||
+  [[ "$resumed_window" != "$agent_window_before" ]] ||
+  [[ "$resumed_observed_uid" != "$resumed_pane_uid" ]]; then
+  echo "Offline Agent resume Pane has wrong exact containment: $resumed_session/$resumed_window/$resumed_pane uid=$resumed_observed_uid" >&2
+  exit 1
+fi
+resumed_receipt="$(ctx display-message -p -t "$resumed_pane" '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{@projmux_pane_uid}')"
+if [[ "$resumed_receipt" != "$create_socket_path|$create_server_pid|$agent_session_before|$agent_window_before|$resumed_pane|$resumed_pane_uid" ]] ||
   [[ "$(ctx show-options -pqv -t "$resumed_pane" @projmux_ai_topic)" != "offline resume topic" ]]; then
   echo "Offline Agent topic did not mirror to resumed Pane" >&2
   exit 1
@@ -1997,9 +2107,15 @@ trap smoke_cleanup_env EXIT
 echo ">> create e2e passed: socket=$create_socket path=$create_socket_path"
 
 # Explicit Registry authority converges Project -> Window -> Pane. Every
-# fixture below keeps each public report and must reach a no-op within that
-# three-level walk plus one confirming pass.
+# fixture below keeps each public report and must reach an empty no-op within
+# that three-level walk plus one confirming pass. Raw imports require initial
+# progress; post-apply callers opt into accepting an already-converged pass.
 e2e_bounded_reconcile_to_noop() {
+  local allow_initial_noop=0
+  if [[ "${1:-}" == "--allow-initial-noop" ]]; then
+    allow_initial_noop=1
+    shift
+  fi
   local report_prefix="$1"
   shift
   local pass report
@@ -2010,11 +2126,16 @@ e2e_bounded_reconcile_to_noop() {
       continue
     fi
     if grep -Fq '"outcome": "no-op"' "$report"; then
-      if [[ "$pass" == "1" ]]; then
-        echo "explicit authority made no initial progress: $report" >&2
+      if ! grep -Fq '"items": []' "$report"; then
+        echo "resource reconcile no-op retained nonempty items: $report" >&2
+        cat "$report" >&2
         return 1
       fi
-      smoke_assert_file_contains "$report" '"items": []'
+      if [[ "$pass" == "1" && "$allow_initial_noop" != "1" ]]; then
+        echo "explicit authority made no initial progress: $report" >&2
+        cat "$report" >&2
+        return 1
+      fi
       return 0
     fi
     echo "resource reconcile reported neither changed nor no-op: $report" >&2
@@ -2022,6 +2143,7 @@ e2e_bounded_reconcile_to_noop() {
     return 1
   done
   echo "resource reconcile did not converge within four passes: $report_prefix" >&2
+  cat "$report" >&2
   return 1
 }
 
@@ -2665,9 +2787,10 @@ echo ">> managed binding e2e passed: socket=$binding_socket path=$binding_socket
 # ---------------------------------------------------------------------------
 # Window resource + exact live-binding deletion.
 #
-# This block owns a fresh smoke root. The public command routes every live read
-# and mutation through `-L projmux`; TMUX_TMPDIR makes that named socket unique
-# to this run, and cleanup verifies the actual socket path before using -S.
+# This block owns a fresh smoke root. The public command discovers the explicit
+# run-unique `-L` route, binds its observed physical socket, then pins live
+# inventory and every mutation to that exact `-S` path. TMUX_TMPDIR keeps the
+# discovery name unique, and cleanup independently verifies the physical path.
 # External calls strip inherited TMUX/TMUX_PANE. The self-target call runs in
 # its own exact managed Window and proves its stdout/Registry result survives
 # the Window disappearing.
@@ -3217,11 +3340,14 @@ if delete_pmx_delete agent "uid:$delete_offline_agent_uid" --yes >"$delete_root/
 fi
 smoke_assert_file_contains "$delete_root/offline-agent-repeat.err" "matched no agents"
 delete_tmux set-option -gq @projmux_app 1
-if grep -Fq -- "-L $delete_socket kill-pane -t $delete_offline_pane" "$delete_shim_log" || \
-  grep -Fq -- "-L $delete_socket kill-pane -t $delete_offline_agent_pane" "$delete_shim_log"; then
-  echo "offline Pane/Agent canonical delete issued raw tmux cleanup" >&2
-  exit 1
-fi
+for delete_offline_target in "$delete_offline_pane" "$delete_offline_agent_pane"; do
+  for delete_forbidden_route in "-L $delete_socket" "-L $delete_product_socket" "-S $delete_socket_path"; do
+    if grep -Fq -- "$delete_forbidden_route kill-pane -t $delete_offline_target" "$delete_shim_log"; then
+      echo "offline Pane/Agent canonical delete issued raw tmux cleanup: $delete_forbidden_route target=$delete_offline_target" >&2
+      exit 1
+    fi
+  done
+done
 
 # Raw runtime loss leaves desired topology in the Registry. Canonical Window
 # delete must retire that graph without issuing a tmux kill. Include a shell
@@ -3287,10 +3413,12 @@ if ! grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-offline" || \
   echo "offline Window delete changed its live sibling" >&2
   exit 1
 fi
-if grep -Fq -- "-L $delete_product_socket kill-window -t $delete_offline_window" "$delete_shim_log"; then
-  echo "offline Window canonical delete issued a tmux kill" >&2
-  exit 1
-fi
+for delete_forbidden_route in "-L $delete_socket" "-L $delete_product_socket" "-S $delete_socket_path"; do
+  if grep -Fq -- "$delete_forbidden_route kill-window -t $delete_offline_window" "$delete_shim_log"; then
+    echo "offline Window canonical delete issued a tmux kill: $delete_forbidden_route target=$delete_offline_window" >&2
+    exit 1
+  fi
+done
 
 cp "$delete_registry" "$delete_root/registry.before-offline-repeat"
 if delete_pmx_delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --yes \
@@ -3328,11 +3456,129 @@ fi
 mkdir -p "$delete_root/work/gamma"
 delete_tmux new-session -d -s work-gamma -n only -c "$delete_root/work/gamma" sleep 600
 delete_tmux set-option -t work-gamma -q @projmux_project_path "$delete_root/work/gamma"
-delete_pmx create project --root "$delete_root/work/gamma" --name gamma >"$delete_root/register-gamma.out"
-delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" >"$delete_root/apply-gamma.out"
-delete_pmx reconcile resources --socket "$delete_socket" -o json >"$delete_root/reconcile-gamma-1.json"
-smoke_assert_file_contains "$delete_root/reconcile-gamma-1.json" '"outcome": "no-op"'
-smoke_assert_file_contains "$delete_root/reconcile-gamma-1.json" '"items": []'
+delete_gamma_project_uid="$(
+  delete_pmx create project --root "$delete_root/work/gamma" --name gamma -o uid
+)"
+printf '%s\n' "$delete_gamma_project_uid" >"$delete_root/register-gamma.out"
+if [[ -z "$delete_gamma_project_uid" ]]; then
+  echo "gamma registration returned no exact Registry Project UID" >&2
+  exit 1
+fi
+# The preceding last-Pane deletion emits an asynchronous pane-exit controller
+# pass. It can legitimately claim the freshly registered gamma Project UID
+# after apply's pre-observation but before its first write. That exact guard
+# refusal is expected safety, so rebuild the apply plan within a strict bound;
+# another target, field, or failure remains fatal. Each attempt is retained as
+# evidence, and no blind delay substitutes for a fresh observation.
+mapfile -t delete_gamma_session_matches < <(
+  delete_tmux list-sessions -F '#{session_id}|#{session_name}' |
+    awk -F '|' '$2 == "work-gamma" { print $1 }'
+)
+if [[ "${#delete_gamma_session_matches[@]}" != "1" ]] || \
+  [[ ! "${delete_gamma_session_matches[0]}" =~ ^\$[0-9]+$ ]]; then
+  echo "gamma apply requires exactly one work-gamma session receipt" >&2
+  printf '%s\n' "${delete_gamma_session_matches[@]}" >&2
+  exit 1
+fi
+delete_gamma_session_id="${delete_gamma_session_matches[0]}"
+mapfile -t delete_gamma_pane_matches < <(
+  delete_tmux list-panes -s -t "$delete_gamma_session_id" -F '#{pane_id}'
+)
+if [[ "${#delete_gamma_pane_matches[@]}" != "1" ]] || \
+  [[ ! "${delete_gamma_pane_matches[0]}" =~ ^%[0-9]+$ ]]; then
+  echo "gamma apply requires exactly one Pane in $delete_gamma_session_id" >&2
+  printf '%s\n' "${delete_gamma_pane_matches[@]}" >&2
+  exit 1
+fi
+delete_gamma_receipt_pane="${delete_gamma_pane_matches[0]}"
+delete_gamma_receipt="$(
+  delete_tmux display-message -p -t "$delete_gamma_receipt_pane" \
+    '#{socket_path}|#{pid}|#{session_id}|#{session_name}|#{@projmux_project_path}|#{@projmux_project_uid}|receipt-end'
+)"
+IFS='|' read -r delete_gamma_socket_path delete_gamma_server_pid delete_gamma_observed_session_id \
+  delete_gamma_session_name delete_gamma_project_path delete_gamma_observed_uid delete_gamma_receipt_end \
+  <<<"$delete_gamma_receipt"
+if [[ "$delete_gamma_socket_path" != "$delete_socket_path" ]] || \
+  [[ "$delete_gamma_server_pid" != "$delete_server_pid" ]] || \
+  [[ "$delete_gamma_observed_session_id" != "$delete_gamma_session_id" ]] || \
+  [[ "$delete_gamma_session_name" != "work-gamma" ]] || \
+  [[ "$delete_gamma_project_path" != "$delete_root/work/gamma" ]] || \
+  [[ -n "$delete_gamma_observed_uid" && "$delete_gamma_observed_uid" != "$delete_gamma_project_uid" ]] || \
+  [[ "$delete_gamma_receipt_end" != "receipt-end" ]]; then
+  echo "gamma apply lacks an exact session receipt: $delete_gamma_receipt" >&2
+  exit 1
+fi
+delete_gamma_apply_succeeded=0
+delete_gamma_expected_drift="runtime mutation plan: guard refused action \"write-identity\" before first write: controller target $delete_gamma_session_id guard @projmux_project_uid drifted"
+for delete_gamma_apply_attempt in 1 2 3 4; do
+  delete_gamma_apply_out="$delete_root/apply-gamma-$delete_gamma_apply_attempt.out"
+  delete_gamma_apply_err="$delete_root/apply-gamma-$delete_gamma_apply_attempt.err"
+  if delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" \
+    >"$delete_gamma_apply_out" 2>"$delete_gamma_apply_err"; then
+    cp "$delete_gamma_apply_out" "$delete_root/apply-gamma.out"
+    delete_gamma_apply_succeeded=1
+    break
+  fi
+  if [[ "$(grep -Fc "$delete_gamma_expected_drift" "$delete_gamma_apply_err")" != "1" ]] || \
+    [[ "$(tail -n 1 "$delete_gamma_apply_err")" != *"$delete_gamma_expected_drift"* ]] || \
+    grep -F 'runtime mutation plan:' "$delete_gamma_apply_err" |
+      grep -Fv "$delete_gamma_expected_drift" >/dev/null; then
+    echo "gamma apply failed for a reason other than its exact asynchronous Project UID claim" >&2
+    cat "$delete_gamma_apply_err" >&2
+    exit 1
+  fi
+  delete_gamma_retry_receipt="$(
+    delete_tmux display-message -p -t "$delete_gamma_receipt_pane" \
+      '#{socket_path}|#{pid}|#{session_id}|#{session_name}|#{@projmux_project_path}|#{@projmux_project_uid}|receipt-end'
+  )"
+  IFS='|' read -r delete_gamma_retry_socket_path delete_gamma_retry_server_pid delete_gamma_retry_session_id \
+    delete_gamma_retry_session_name delete_gamma_retry_project_path delete_gamma_retry_project_uid \
+    delete_gamma_retry_receipt_end <<<"$delete_gamma_retry_receipt"
+  if [[ "$delete_gamma_retry_socket_path" != "$delete_gamma_socket_path" ]] || \
+    [[ "$delete_gamma_retry_server_pid" != "$delete_gamma_server_pid" ]] || \
+    [[ "$delete_gamma_retry_session_id" != "$delete_gamma_session_id" ]] || \
+    [[ "$delete_gamma_retry_session_name" != "$delete_gamma_session_name" ]] || \
+    [[ "$delete_gamma_retry_project_path" != "$delete_gamma_project_path" ]] || \
+    [[ "$delete_gamma_retry_project_uid" != "$delete_gamma_project_uid" ]] || \
+    [[ "$delete_gamma_retry_receipt_end" != "receipt-end" ]]; then
+    echo "gamma apply drift was not followed by its exact Registry UID claim on the original route: $delete_gamma_retry_receipt" >&2
+    cat "$delete_gamma_apply_err" >&2
+    exit 1
+  fi
+done
+if [[ "$delete_gamma_apply_succeeded" != "1" ]]; then
+  echo "gamma apply did not converge after four exact Project UID drift replans" >&2
+  for delete_gamma_apply_attempt in 1 2 3 4; do
+    cat "$delete_root/apply-gamma-$delete_gamma_apply_attempt.err" >&2
+  done
+  exit 1
+fi
+smoke_assert_file_contains "$delete_root/apply-gamma.out" "reloaded tmux server -L $delete_socket"
+# The same asynchronous pass can also complete before the first explicit
+# reconcile, so that call is not itself a stable repeat boundary. Preserve
+# every report and require the bounded sequence to finish with an empty no-op;
+# the earlier initial apply/reconcile assertions remain strict where no
+# lifecycle event precedes them.
+delete_gamma_converged=0
+for delete_gamma_pass in 1 2 3 4; do
+  delete_gamma_report="$delete_root/reconcile-gamma-$delete_gamma_pass.json"
+  delete_pmx reconcile resources --socket "$delete_socket" -o json >"$delete_gamma_report"
+  if grep -Fq '"outcome": "changed"' "$delete_gamma_report"; then
+    continue
+  fi
+  if grep -Fq '"outcome": "no-op"' "$delete_gamma_report"; then
+    smoke_assert_file_contains "$delete_gamma_report" '"items": []'
+    delete_gamma_converged=1
+    break
+  fi
+  echo "gamma reconcile reported neither changed nor no-op: $delete_gamma_report" >&2
+  cat "$delete_gamma_report" >&2
+  exit 1
+done
+if [[ "$delete_gamma_converged" != "1" ]]; then
+  echo "gamma reconcile did not converge to an empty no-op within four passes" >&2
+  exit 1
+fi
 delete_gamma_pane="$(delete_tmux display-message -p -t work-gamma:only '#{pane_id}')"
 delete_gamma_pane_uid="$(delete_tmux show-options -pqv -t "$delete_gamma_pane" @projmux_pane_uid)"
 delete_gamma_window="$(delete_tmux display-message -p -t "$delete_gamma_pane" '#{window_id}')"
@@ -3399,8 +3645,15 @@ if delete_pmx_delete pane "uid:$delete_sibling_shell_uid" --dry-run \
   exit 1
 fi
 cmp "$delete_root/registry.before-no-server-dry-run" "$delete_registry"
-smoke_assert_file_contains "$delete_root/no-server-pane.err" "unavailable (no-server)"
-smoke_assert_file_contains "$delete_root/no-server-pane.err" "absence is not Registry deletion authority"
+if ! grep -Fq "unavailable (no-server)" "$delete_root/no-server-pane.err" ||
+  ! grep -Fq "absence is not Registry deletion authority" "$delete_root/no-server-pane.err"; then
+  echo "absent-server Pane refusal lacked the required authority diagnostics:" >&2
+  echo "--- no-server-pane.err ---" >&2
+  cat "$delete_root/no-server-pane.err" >&2
+  echo "--- no-server-pane.out ---" >&2
+  cat "$delete_root/no-server-pane.out" >&2
+  exit 1
+fi
 delete_pmx_delete window "uid:$delete_sibling_uid" --project "uid:$delete_alpha_project_uid" --dry-run >"$delete_root/no-server-dry-run.out"
 cmp "$delete_root/registry.before-no-server-dry-run" "$delete_registry"
 smoke_assert_file_contains "$delete_root/no-server-dry-run.out" "registry-only would delete this Window; no tmux Window would be killed"
@@ -3421,27 +3674,53 @@ if [[ "$delete_other_after" != "$delete_other_before" ]]; then
   exit 1
 fi
 
-# Every live half of every delete above ran on the socket the invocation named.
-for canonical_call in \
-  "-L $delete_socket list-windows -a" \
-  "-L $delete_socket kill-window -t $delete_primary" \
-  "-L $delete_socket run-shell -b" \
-  "-L $delete_socket list-panes -a" \
-  "-L $delete_socket kill-pane -t $delete_split" \
-  "-L $delete_socket kill-pane -t $delete_agent_two_pane"; do
-  if ! grep -Fq -- "$canonical_call" "$delete_shim_log"; then
-    echo "delete Window e2e did not observe canonical exact routing: $canonical_call" >&2
+# Each invocation may use its explicit logical name only to discover the
+# physical socket. Inventory and every write are then pinned to that printable
+# exact `-S` authority; the queued self-delete embeds run-shell later on the
+# same routed tmux argv after its durable lease write.
+if ! grep -Fq -- "-L $delete_socket display-message -p -F #{socket_path}" "$delete_shim_log"; then
+  echo "delete Window e2e did not observe logical route discovery for -L $delete_socket" >&2
+  cat "$delete_shim_log" >&2
+  exit 1
+fi
+for canonical_read in \
+  "-S $delete_socket_path list-windows -a" \
+  "-S $delete_socket_path list-panes -a"; do
+  if ! grep -Fq -- "$canonical_read" "$delete_shim_log"; then
+    echo "delete Window e2e did not observe physically pinned inventory: $canonical_read" >&2
     cat "$delete_shim_log" >&2
     exit 1
   fi
 done
-# And nothing reached the app socket by its default name. The shim would have
-# mapped `-L projmux` onto this very server, so the fallback the route used to
-# perform is only detectable here, in the calls it made rather than in what they
-# did.
-if grep -Fq -- "-L $delete_product_socket " "$delete_shim_log"; then
-  echo "a delete fell back to the default app socket -L $delete_product_socket" >&2
-  grep -F -- "-L $delete_product_socket " "$delete_shim_log" >&2
+for canonical_mutation in \
+  "kill-window -t $delete_primary" \
+  "run-shell -b" \
+  "kill-pane -t $delete_split" \
+  "kill-pane -t $delete_agent_two_pane"; do
+  if ! awk -v route="-S $delete_socket_path " -v mutation="$canonical_mutation" \
+    'index($0, route) == 1 && index($0, mutation) > 0 { found = 1 } END { exit !found }' "$delete_shim_log"; then
+    echo "delete Window e2e did not observe exact physical mutation routing: -S $delete_socket_path ... $canonical_mutation" >&2
+    cat "$delete_shim_log" >&2
+    exit 1
+  fi
+done
+# The product socket may be queried only for closed read-only route discovery
+# and ownership-marker observations. Any mutation or new/unknown command on
+# that default logical route is still a forbidden fallback; all writes above
+# must remain pinned to the exact physical socket.
+if ! awk -v route="-L $delete_product_socket " '
+  index($0, route) == 1 {
+    command = substr($0, length(route) + 1)
+    if (command != "display-message -p -F #{socket_path}" &&
+        command != "show-options -gqv @projmux_app" &&
+        command != "show-options -gqv @projmux_socket_name") {
+      print "forbidden default-route delete call: " $0 > "/dev/stderr"
+      rejected = 1
+    }
+  }
+  END { exit rejected }
+' "$delete_shim_log"; then
+  echo "delete used an unclassified command on default app socket -L $delete_product_socket" >&2
   exit 1
 fi
 
@@ -3551,7 +3830,7 @@ if [[ -e "$rename_root/state/projmux/metadata/registry.json" ]]; then
 fi
 rename_base_pmx create project --root "$rename_root/work/alpha" --name alpha >"$rename_root/register-alpha.out"
 rename_base_pmx internal tmux apply --bin "$bin" --config "$rename_config" --socket "$rename_socket" >"$rename_root/apply.out"
-e2e_bounded_reconcile_to_noop "$rename_root/initial-reconcile" \
+e2e_bounded_reconcile_to_noop --allow-initial-noop "$rename_root/initial-reconcile" \
   rename_base_pmx reconcile resources --socket "$rename_socket" -o json
 rename_project_uid="$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_uid)"
 rename_window="$(rename_tmux display-message -p -t "$rename_session:0" '#{window_id}')"
@@ -3579,6 +3858,22 @@ rename_pmx() {
     "$bin" "$@"
 }
 
+rename_pmx_at_pane() {
+  local anchor_pane="$1"
+  shift
+  env \
+    HOME="$rename_root/home" \
+    XDG_CONFIG_HOME="$rename_root/config" \
+    XDG_STATE_HOME="$rename_root/state" \
+    XDG_RUNTIME_DIR="$rename_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$rename_root/work" \
+    TMUX_TMPDIR="$rename_root/tmux" \
+    TMUX="$rename_socket_path,$rename_socket_pid,0" \
+    TMUX_PANE="$anchor_pane" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
+
 rename_pmx rename project "uid:$rename_project_uid" --name stable-project >"$rename_root/rename-project.out"
 rename_pmx rename window "uid:$rename_window_uid" --name stable-window >"$rename_root/rename-window.out"
 rename_pmx rename pane "uid:$rename_pane_uid" --name stable-pane >"$rename_root/rename-pane.out"
@@ -3592,7 +3887,31 @@ cat >"$rename_root/shim/codex" <<'RENAME_CODEX_STUB'
 exec sleep 600
 RENAME_CODEX_STUB
 chmod 0755 "$rename_root/shim/codex"
-rename_agent_pane="$(PATH="$rename_root/shim:$PATH" rename_pmx create agent --provider codex --project "uid:$rename_project_uid" --window "uid:$rename_window_uid" -o pane-id)"
+rename_agent_anchor_receipt="$(
+  rename_tmux display-message -p -t "$rename_pane" \
+    '#{socket_path}|#{pid}|#{session_id}|#{session_name}|#{window_id}|#{pane_id}|#{@projmux_project_uid}|#{@projmux_window_uid}|#{@projmux_pane_uid}|receipt-end'
+)"
+IFS='|' read -r rename_agent_anchor_socket rename_agent_anchor_pid rename_agent_anchor_session_id \
+  rename_agent_anchor_session_name rename_agent_anchor_window rename_agent_anchor_pane \
+  rename_agent_anchor_project_uid rename_agent_anchor_window_uid rename_agent_anchor_pane_uid \
+  rename_agent_anchor_end <<<"$rename_agent_anchor_receipt"
+if [[ "$rename_agent_anchor_socket" != "$rename_socket_path" ]] || \
+  [[ "$rename_agent_anchor_pid" != "$rename_socket_pid" ]] || \
+  [[ ! "$rename_agent_anchor_session_id" =~ ^\$[0-9]+$ ]] || \
+  [[ "$rename_agent_anchor_session_name" != "$rename_session" ]] || \
+  [[ "$rename_agent_anchor_window" != "$rename_window" ]] || \
+  [[ "$rename_agent_anchor_pane" != "$rename_pane" ]] || \
+  [[ "$rename_agent_anchor_project_uid" != "$rename_project_uid" ]] || \
+  [[ "$rename_agent_anchor_window_uid" != "$rename_window_uid" ]] || \
+  [[ "$rename_agent_anchor_pane_uid" != "$rename_pane_uid" ]] || \
+  [[ "$rename_agent_anchor_end" != "receipt-end" ]]; then
+  echo "rename Agent create lacks an exact managed placement receipt: $rename_agent_anchor_receipt" >&2
+  exit 1
+fi
+rename_agent_pane="$(
+  PATH="$rename_root/shim:$PATH" rename_pmx_at_pane "$rename_pane" create agent \
+    --provider codex --project "uid:$rename_project_uid" --window "uid:$rename_window_uid" -o pane-id
+)"
 rename_agent_uid="$(rename_base_pmx get agents --project "uid:$rename_project_uid" --window "uid:$rename_window_uid" -o uid | tail -n 1)"
 rename_agent_pane_label_before="$(rename_tmux show-options -pqv -t "$rename_agent_pane" @projmux_pane_label)"
 rename_agent_pane_title_before="$(rename_tmux display-message -p -t "$rename_agent_pane" '#{pane_title}')"
@@ -3630,7 +3949,37 @@ rename_tmux set-option -t "$rename_session" -q @projmux_project_name stable-proj
 rename_tmux set-option -t "$rename_session" -q @projmux_project_path "$rename_root/work/alpha"
 rename_socket_path="$(rename_tmux display-message -p -t "$rename_session" '#{socket_path}')"
 rename_socket_pid="$(rename_tmux display-message -p -t "$rename_session" '#{pid}')"
-rename_base_pmx reconcile resources --socket "$rename_socket" >"$rename_root/offline-reconcile.out"
+# Killing the sole session ended the app-configured server. This replacement
+# is intentionally a standalone exact-socket runtime: controller writes may
+# use only its operator-selected physical path, never infer authority from the
+# old logical name. The Project name/path assertions below and final foreign
+# snapshot retain the desired-state and sibling-containment evidence.
+rename_replacement_pane="$(rename_tmux list-panes -s -t "$rename_session" -F '#{pane_id}')"
+if [[ ! "$rename_replacement_pane" =~ ^%[0-9]+$ ]]; then
+  echo "offline rename replacement lacks exactly one Pane: $rename_replacement_pane" >&2
+  exit 1
+fi
+rename_replacement_receipt="$(
+  rename_tmux display-message -p -t "$rename_replacement_pane" \
+    '#{socket_path}|#{pid}|#{session_id}|#{session_name}|#{@projmux_project_uid}|#{@projmux_project_path}|#{@projmux_app}|#{@projmux_socket_name}|receipt-end'
+)"
+IFS='|' read -r rename_replacement_socket rename_replacement_pid rename_replacement_session_id \
+  rename_replacement_session_name rename_replacement_project_uid rename_replacement_project_path \
+  rename_replacement_app_marker rename_replacement_logical_marker rename_replacement_end \
+  <<<"$rename_replacement_receipt"
+if [[ "$rename_replacement_socket" != "$rename_socket_path" ]] || \
+  [[ "$rename_replacement_pid" != "$rename_socket_pid" ]] || \
+  [[ ! "$rename_replacement_session_id" =~ ^\$[0-9]+$ ]] || \
+  [[ "$rename_replacement_session_name" != "$rename_session" ]] || \
+  [[ "$rename_replacement_project_uid" != "$rename_project_uid" ]] || \
+  [[ "$rename_replacement_project_path" != "$rename_root/work/alpha" ]] || \
+  [[ -n "$rename_replacement_app_marker" ]] || \
+  [[ -n "$rename_replacement_logical_marker" ]] || \
+  [[ "$rename_replacement_end" != "receipt-end" ]]; then
+  echo "offline rename replacement lacks exact standalone authority: $rename_replacement_receipt" >&2
+  exit 1
+fi
+rename_base_pmx reconcile resources --socket-path "$rename_socket_path" >"$rename_root/offline-reconcile.out"
 if [[ "$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_name)" != offline-project ]] || \
   [[ "$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_path)" != "$rename_root/work/moved" ]]; then
   echo "offline rename/rebind drift did not converge through public reconcile" >&2
@@ -3677,12 +4026,12 @@ if [[ "$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_name
   echo "injected live mirror failure unexpectedly changed the option" >&2
   exit 1
 fi
-rename_base_pmx reconcile resources --socket "$rename_socket" >"$rename_root/failure-retry.out"
+rename_base_pmx reconcile resources --socket-path "$rename_socket_path" >"$rename_root/failure-retry.out"
 if [[ "$(rename_tmux show-options -qv -t "$rename_session" @projmux_project_name)" != retry-project ]]; then
   echo "public retry did not repair failed live Project name mirror" >&2
   exit 1
 fi
-rename_base_pmx reconcile resources --socket "$rename_socket" -o json >"$rename_root/repeat.json"
+rename_base_pmx reconcile resources --socket-path "$rename_socket_path" -o json >"$rename_root/repeat.json"
 smoke_assert_file_contains "$rename_root/repeat.json" '"outcome": "no-op"'
 
 rename_other_after="$(rename_other_tmux show-options -gqv @projmux_rename_sentinel):$(rename_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
@@ -3778,6 +4127,20 @@ topology_live_pmx() {
     "$bin" "$@"
 }
 
+topology_create_pmx() {
+  env \
+    HOME="$topology_root/home" \
+    XDG_CONFIG_HOME="$topology_root/config" \
+    XDG_STATE_HOME="$topology_root/state" \
+    XDG_RUNTIME_DIR="$topology_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$topology_root/work" \
+    TMUX_TMPDIR="$topology_root/tmux" \
+    TMUX="$topology_socket_path,$topology_socket_pid,0" \
+    TMUX_PANE="$topology_create_anchor_pane" \
+    SHELL="$topology_shell" \
+    "$bin" "$@"
+}
+
 # Every projmux tmux call in this block is explicit -L/-S and passes through
 # untouched; the shim's remaining job is to route a bare `tmux` onto the exact
 # smoke socket. The `-L projmux` branch is kept as a tripwire: nothing should
@@ -3852,7 +4215,7 @@ if [[ -e "$topology_root/state/projmux/metadata/registry.json" ]]; then
 fi
 topology_pmx create project --root "$topology_root/work/alpha" --name alpha >"$topology_root/register-alpha.out"
 topology_pmx internal tmux apply --bin "$bin" --config "$topology_root/config/projmux/tmux.conf" --socket "$topology_socket" >"$topology_root/apply.out"
-e2e_bounded_reconcile_to_noop "$topology_root/import" \
+e2e_bounded_reconcile_to_noop --allow-initial-noop "$topology_root/import" \
   topology_pmx reconcile resources --socket "$topology_socket" -o json
 
 topology_project_uid="$(topology_tmux show-options -qv -t "$topology_session" @projmux_project_uid)"
@@ -3860,12 +4223,35 @@ if [[ -z "$topology_project_uid" ]]; then
   echo "topology e2e explicit authority left the Project uid empty" >&2
   exit 1
 fi
-topology_live_pmx create window --project "uid:$topology_project_uid" --name review >"$topology_root/create-window.out"
+topology_create_anchor_pane="$(topology_tmux list-panes -s -t "$topology_session" -F '#{pane_id}')"
+if [[ ! "$topology_create_anchor_pane" =~ ^%[0-9]+$ ]]; then
+  echo "topology create requires exactly one initial managed Pane: $topology_create_anchor_pane" >&2
+  exit 1
+fi
+topology_create_anchor_receipt="$(
+  topology_tmux display-message -p -t "$topology_create_anchor_pane" \
+    '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{@projmux_project_uid}|#{@projmux_window_uid}|#{@projmux_pane_uid}|receipt-end'
+)"
+IFS='|' read -r topology_anchor_socket topology_anchor_pid topology_anchor_session topology_anchor_window \
+  topology_anchor_pane topology_anchor_project_uid topology_anchor_window_uid topology_anchor_pane_uid \
+  topology_anchor_end <<<"$topology_create_anchor_receipt"
+if [[ "$topology_anchor_socket" != "$topology_socket_path" ]] || \
+  [[ "$topology_anchor_pid" != "$topology_socket_pid" ]] || \
+  [[ ! "$topology_anchor_session" =~ ^\$[0-9]+$ ]] || \
+  [[ ! "$topology_anchor_window" =~ ^@[0-9]+$ ]] || \
+  [[ "$topology_anchor_pane" != "$topology_create_anchor_pane" ]] || \
+  [[ "$topology_anchor_project_uid" != "$topology_project_uid" ]] || \
+  [[ -z "$topology_anchor_window_uid" ]] || [[ -z "$topology_anchor_pane_uid" ]] || \
+  [[ "$topology_anchor_end" != "receipt-end" ]]; then
+  echo "topology create lacks exact managed anchor containment: $topology_create_anchor_receipt" >&2
+  exit 1
+fi
+topology_create_pmx create window --project "uid:$topology_project_uid" --name review >"$topology_root/create-window.out"
 # The stored command is recorded as a one-time name seed. Materialization must
 # never execute it, which the recreated Pane's start command proves below: it
 # names the managed process supervisor over the default shell, never this.
 topology_stored_command=(sleep 600)
-topology_live_pmx create pane --project "uid:$topology_project_uid" --window review --placement right -o pane-id -- "${topology_stored_command[@]}" >"$topology_root/create-pane.out"
+topology_create_pmx create pane --project "uid:$topology_project_uid" --window review --placement right -o pane-id -- "${topology_stored_command[@]}" >"$topology_root/create-pane.out"
 
 # A stored Agent with a recorded conversation. The guard at the end of this
 # block used to assert that materialization started no Agent; against a fixture
@@ -3889,7 +4275,7 @@ printf '%s\n' "\$*" >>$(printf %q "$topology_agent_argv")
 exec sleep 600
 TOPOLOGY_CODEX_STUB
 chmod 0755 "$topology_root/shim/codex"
-topology_agent_pane="$(PATH="$topology_root/shim:$PATH" topology_live_pmx create agent --provider codex \
+topology_agent_pane="$(PATH="$topology_root/shim:$PATH" topology_create_pmx create agent --provider codex \
   --project "uid:$topology_project_uid" --window review -o pane-id)"
 # Agent reads run through the client-socket helper. A read with no inherited
 # $TMUX and no -L would observe live Agent state against the *default* socket,
@@ -4067,6 +4453,43 @@ if [[ "$(topology_tmux show-options -qv -t "$topology_session" @projmux_project_
 fi
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/offline-repeat.json"
 smoke_assert_file_contains "$topology_root/offline-repeat.json" '"outcome": "no-op"'
+
+# Offline materialization started a new server generation. Resolve the durable
+# primary Pane UID back to one exact live handle before any inherited-route
+# read; retaining the old PID or guessing the first Pane would be false client
+# authority even though these calls are observational.
+mapfile -t topology_recreated_anchor_matches < <(
+  topology_tmux list-panes -s -t "$topology_session" -F '#{pane_id}|#{@projmux_pane_uid}' |
+    awk -F '|' -v uid="$topology_anchor_pane_uid" '$2 == uid { print $1 }'
+)
+if [[ "${#topology_recreated_anchor_matches[@]}" != "1" ]] || \
+  [[ ! "${topology_recreated_anchor_matches[0]}" =~ ^%[0-9]+$ ]]; then
+  echo "offline topology replay did not restore one durable anchor for $topology_anchor_pane_uid" >&2
+  printf '%s\n' "${topology_recreated_anchor_matches[@]}" >&2
+  exit 1
+fi
+topology_recreated_anchor="${topology_recreated_anchor_matches[0]}"
+topology_recreated_receipt="$(
+  topology_tmux display-message -p -t "$topology_recreated_anchor" \
+    '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{@projmux_project_uid}|#{@projmux_window_uid}|#{@projmux_pane_uid}|receipt-end'
+)"
+IFS='|' read -r topology_recreated_socket topology_recreated_pid topology_recreated_session \
+  topology_recreated_window topology_recreated_pane topology_recreated_project_uid \
+  topology_recreated_window_uid topology_recreated_pane_uid topology_recreated_end \
+  <<<"$topology_recreated_receipt"
+if [[ "$topology_recreated_socket" != "$topology_socket_path" ]] || \
+  [[ ! "$topology_recreated_pid" =~ ^[1-9][0-9]*$ ]] || \
+  [[ ! "$topology_recreated_session" =~ ^\$[0-9]+$ ]] || \
+  [[ ! "$topology_recreated_window" =~ ^@[0-9]+$ ]] || \
+  [[ "$topology_recreated_pane" != "$topology_recreated_anchor" ]] || \
+  [[ "$topology_recreated_project_uid" != "$topology_project_uid" ]] || \
+  [[ "$topology_recreated_window_uid" != "$topology_anchor_window_uid" ]] || \
+  [[ "$topology_recreated_pane_uid" != "$topology_anchor_pane_uid" ]] || \
+  [[ "$topology_recreated_end" != "receipt-end" ]]; then
+  echo "offline topology replay anchor containment drifted: $topology_recreated_receipt" >&2
+  exit 1
+fi
+topology_socket_pid="$topology_recreated_pid"
 
 # 5. The stored Agent is replayed, and the conversation its `status.sessionRef`
 # names is resumed rather than silently replaced by a new one. The stored Pane
@@ -4287,6 +4710,20 @@ startup_live_pmx() {
     "$bin" "$@"
 }
 
+startup_create_pmx() {
+  env \
+    HOME="$startup_root/home" \
+    XDG_CONFIG_HOME="$startup_root/config" \
+    XDG_STATE_HOME="$startup_root/state" \
+    XDG_RUNTIME_DIR="$startup_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$startup_root/work" \
+    TMUX_TMPDIR="$startup_root/tmux" \
+    TMUX="$startup_socket_path,$startup_socket_pid,0" \
+    TMUX_PANE="$startup_create_anchor_pane" \
+    SHELL="$startup_shell" \
+    "$bin" "$@"
+}
+
 startup_cleanup() {
   local socket actual
   for socket in "$startup_socket" "$startup_other_socket"; do
@@ -4310,7 +4747,7 @@ if [[ -e "$startup_root/state/projmux/metadata/registry.json" ]]; then
 fi
 startup_pmx create project --root "$startup_root/work/alpha" --name alpha >"$startup_root/register-alpha.out"
 startup_pmx internal tmux apply --bin "$bin" --config "$startup_root/config/projmux/tmux.conf" --socket "$startup_socket" >"$startup_root/apply.out"
-e2e_bounded_reconcile_to_noop "$startup_root/import" \
+e2e_bounded_reconcile_to_noop --allow-initial-noop "$startup_root/import" \
   startup_pmx reconcile resources --socket "$startup_socket" -o json
 
 startup_project_uid="$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)"
@@ -4318,12 +4755,35 @@ if [[ -z "$startup_project_uid" ]]; then
   echo "startup e2e explicit authority left the Project uid empty" >&2
   exit 1
 fi
+startup_create_anchor_pane="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}')"
+if [[ ! "$startup_create_anchor_pane" =~ ^%[0-9]+$ ]]; then
+  echo "startup create requires exactly one initial managed Pane: $startup_create_anchor_pane" >&2
+  exit 1
+fi
+startup_create_anchor_receipt="$(
+  startup_tmux display-message -p -t "$startup_create_anchor_pane" \
+    '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{@projmux_project_uid}|#{@projmux_window_uid}|#{@projmux_pane_uid}|receipt-end'
+)"
+IFS='|' read -r startup_anchor_socket startup_anchor_pid startup_anchor_session startup_anchor_window \
+  startup_anchor_pane startup_anchor_project_uid startup_anchor_window_uid startup_anchor_pane_uid \
+  startup_anchor_end <<<"$startup_create_anchor_receipt"
+if [[ "$startup_anchor_socket" != "$startup_socket_path" ]] || \
+  [[ "$startup_anchor_pid" != "$startup_socket_pid" ]] || \
+  [[ ! "$startup_anchor_session" =~ ^\$[0-9]+$ ]] || \
+  [[ ! "$startup_anchor_window" =~ ^@[0-9]+$ ]] || \
+  [[ "$startup_anchor_pane" != "$startup_create_anchor_pane" ]] || \
+  [[ "$startup_anchor_project_uid" != "$startup_project_uid" ]] || \
+  [[ -z "$startup_anchor_window_uid" ]] || [[ -z "$startup_anchor_pane_uid" ]] || \
+  [[ "$startup_anchor_end" != "receipt-end" ]]; then
+  echo "startup create lacks exact managed anchor containment: $startup_create_anchor_receipt" >&2
+  exit 1
+fi
 # The stored command is a one-time name seed. A startup that executed it would
 # show up inside the recreated Pane's start command below, which must name only
 # the managed process supervisor over the default shell.
 startup_stored_command=(sleep 600)
-startup_live_pmx create window --project "uid:$startup_project_uid" --name review >"$startup_root/create-window.out"
-startup_live_pmx create pane --project "uid:$startup_project_uid" --window review --placement right -o pane-id -- "${startup_stored_command[@]}" >"$startup_root/create-pane.out"
+startup_create_pmx create window --project "uid:$startup_project_uid" --name review >"$startup_root/create-window.out"
+startup_create_pmx create pane --project "uid:$startup_project_uid" --window review --placement right -o pane-id -- "${startup_stored_command[@]}" >"$startup_root/create-pane.out"
 
 # A stored Agent with a recorded conversation.
 #
@@ -4346,7 +4806,7 @@ printf '%s\n' "\$*" >>$(printf %q "$startup_agent_argv")
 exec sleep 600
 STARTUP_CODEX_STUB
 chmod 0755 "$startup_root/shim/codex"
-startup_agent_pane="$(PATH="$startup_root/shim:$PATH" startup_live_pmx create agent --provider codex \
+startup_agent_pane="$(PATH="$startup_root/shim:$PATH" startup_create_pmx create agent --provider codex \
   --project "uid:$startup_project_uid" --window review -o pane-id)"
 # Agent reads run through the client-socket helper, so live Agent state is never
 # observed against the default socket this smoke never created.
@@ -4498,9 +4958,44 @@ if [[ -z "$startup_agent_pane_uid" ]] ||
   exit 1
 fi
 
+# The original anchor handle died with the closed Project session. Rebind the
+# producer helper only through the durable primary Pane UID and revalidate its
+# exact recreated $/@/% containment on the same physical server generation.
+mapfile -t startup_recreated_anchor_matches < <(
+  startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}|#{@projmux_pane_uid}' |
+    awk -F '|' -v uid="$startup_anchor_pane_uid" '$2 == uid { print $1 }'
+)
+if [[ "${#startup_recreated_anchor_matches[@]}" != "1" ]] || \
+  [[ ! "${startup_recreated_anchor_matches[0]}" =~ ^%[0-9]+$ ]]; then
+  echo "startup replay did not restore one exact durable producer anchor for $startup_anchor_pane_uid" >&2
+  printf '%s\n' "${startup_recreated_anchor_matches[@]}" >&2
+  exit 1
+fi
+startup_create_anchor_pane="${startup_recreated_anchor_matches[0]}"
+startup_recreated_anchor_receipt="$(
+  startup_tmux display-message -p -t "$startup_create_anchor_pane" \
+    '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{@projmux_project_uid}|#{@projmux_window_uid}|#{@projmux_pane_uid}|receipt-end'
+)"
+IFS='|' read -r startup_recreated_socket startup_recreated_pid startup_recreated_session \
+  startup_recreated_window startup_recreated_pane startup_recreated_project_uid \
+  startup_recreated_window_uid startup_recreated_pane_uid startup_recreated_end \
+  <<<"$startup_recreated_anchor_receipt"
+if [[ "$startup_recreated_socket" != "$startup_socket_path" ]] || \
+  [[ "$startup_recreated_pid" != "$startup_socket_pid" ]] || \
+  [[ ! "$startup_recreated_session" =~ ^\$[0-9]+$ ]] || \
+  [[ ! "$startup_recreated_window" =~ ^@[0-9]+$ ]] || \
+  [[ "$startup_recreated_pane" != "$startup_create_anchor_pane" ]] || \
+  [[ "$startup_recreated_project_uid" != "$startup_project_uid" ]] || \
+  [[ "$startup_recreated_window_uid" != "$startup_anchor_window_uid" ]] || \
+  [[ "$startup_recreated_pane_uid" != "$startup_anchor_pane_uid" ]] || \
+  [[ "$startup_recreated_end" != "receipt-end" ]]; then
+  echo "startup replay producer anchor containment drifted: $startup_recreated_anchor_receipt" >&2
+  exit 1
+fi
+
 # Seed a real latest snapshot while the Project session is current. The
 # fail-closed `new` attempt below must retain these exact source bytes.
-startup_live_pmx create snapshot >"$startup_root/create-latest-snapshot.out"
+startup_create_pmx create snapshot >"$startup_root/create-latest-snapshot.out"
 smoke_assert_file_contains "$startup_root/create-latest-snapshot.out" "saved session snapshot: $startup_session"
 startup_latest_snapshot="$startup_root/state/projmux/sessions/$startup_session.json"
 if [[ ! -s "$startup_latest_snapshot" ]]; then
@@ -4512,7 +5007,7 @@ cp "$startup_latest_snapshot" "$startup_root/latest-snapshot.saved.json"
 # Mutate desired state after the save. The later projection must replace only
 # this Project subtree with the saved desired state and leave the source bytes
 # untouched.
-startup_live_pmx create window --project "uid:$startup_project_uid" --name after-save >"$startup_root/create-after-save.out"
+startup_create_pmx create window --project "uid:$startup_project_uid" --name after-save >"$startup_root/create-after-save.out"
 startup_windows_after_mutate="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | grep -c .)"
 if [[ "$startup_windows_after_mutate" != "3" ]]; then
   echo "snapshot projection fixture did not add the post-save Window" >&2
@@ -4735,9 +5230,11 @@ fopen_pmx() {
 }
 
 # A first open shells out to a bare `tmux` on purpose -- the session lands on the
-# transport the operator is actually in, and so must its identity mirror. The shim
-# maps that bare route and the default `-L projmux` app socket onto this smoke
-# socket; every other explicit -L/-S call passes through untouched.
+# app-owned transport the operator is actually in, and so must its identity
+# mirror. The paired markers below preserve the logical name needed by
+# PROJMUX_SOCKET hook re-entry; the shim maps the default `-L projmux` metadata
+# route onto this smoke socket while every other explicit -L/-S call passes
+# through untouched.
 fopen_real_tmux="$(command -v tmux)"
 cat >"$fopen_root/bin/tmux" <<FOPEN_TMUX_SHIM
 #!/usr/bin/env bash
@@ -4770,6 +5267,13 @@ FOPEN_OPEN_SCRIPT
 chmod 0755 "$fopen_root/open-project.sh"
 
 fopen_tmux new-session -d -s "$fopen_driver" -c "$fopen_root" bash --noprofile --norc
+fopen_tmux set-option -gq @projmux_app 1
+fopen_tmux set-option -gq @projmux_socket_name "$fopen_socket"
+if [[ "$(fopen_tmux show-options -gqv @projmux_app)" != "1" ]] || \
+  [[ "$(fopen_tmux show-options -gqv @projmux_socket_name)" != "$fopen_socket" ]]; then
+  echo "first-open fixture lacks a complete app-owned logical route" >&2
+  exit 1
+fi
 fopen_other_tmux new-session -d -s untouched -c "$fopen_root" sleep 600
 fopen_other_tmux set-option -gq @projmux_firstopen_sentinel unchanged
 fopen_other_before="$(fopen_other_tmux show-options -gqv @projmux_firstopen_sentinel):$(fopen_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
@@ -4840,6 +5344,25 @@ fopen_wait_for "attached first-open tmux client" sh -c \
   "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$fopen_root/tmux' tmux -L '$fopen_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
 fopen_client="$(fopen_tmux list-clients -F '#{client_name}' | head -n 1)"
 fopen_driver_pane="$(fopen_tmux display-message -p -c "$fopen_client" '#{pane_id}')"
+fopen_driver_receipt="$(
+  fopen_tmux display-message -p -t "$fopen_driver_pane" \
+    '#{socket_path}|#{pid}|#{session_id}|#{session_name}|#{window_id}|#{pane_id}|#{@projmux_app}|#{@projmux_socket_name}|receipt-end'
+)"
+IFS='|' read -r fopen_driver_socket fopen_driver_pid fopen_driver_session_id fopen_driver_session_name \
+  fopen_driver_window fopen_driver_observed_pane fopen_driver_app_marker fopen_driver_logical_marker \
+  fopen_driver_receipt_end <<<"$fopen_driver_receipt"
+if [[ "$fopen_driver_socket" != "$fopen_socket_path" ]] || \
+  [[ "$fopen_driver_pid" != "$fopen_socket_pid" ]] || \
+  [[ ! "$fopen_driver_session_id" =~ ^\$[0-9]+$ ]] || \
+  [[ "$fopen_driver_session_name" != "$fopen_driver" ]] || \
+  [[ ! "$fopen_driver_window" =~ ^@[0-9]+$ ]] || \
+  [[ "$fopen_driver_observed_pane" != "$fopen_driver_pane" ]] || \
+  [[ "$fopen_driver_app_marker" != "1" ]] || \
+  [[ "$fopen_driver_logical_marker" != "$fopen_socket" ]] || \
+  [[ "$fopen_driver_receipt_end" != "receipt-end" ]]; then
+  echo "first-open fixture lacks exact app-owned client authority: $fopen_driver_receipt" >&2
+  exit 1
+fi
 
 # 1. The first open of an unregistered directory.
 fopen_tmux send-keys -t "$fopen_driver_pane" "bash '$fopen_root/open-project.sh' '$fopen_project' first" Enter
@@ -4947,29 +5470,47 @@ if ! cmp -s "$fopen_registry" "$fopen_root/registry.before-repeat"; then
   exit 1
 fi
 
-# 5. Opening Home still mints no managed identity. Home is chrome: it opens a
-# session and nothing else.
+# 5. Home is chrome, not a path-declared ControlSession. This fixture has no
+# exact ControlSession declaration, so `switch open` must refuse rather than
+# fall back to a UID-less raw session. The dedicated `projmux shell` surface
+# owns ControlSession bootstrap; this Project-path surface stays write-free.
 fopen_projects_before="$(fopen_pmx get projects -o uid | sort)"
+cp "$fopen_registry" "$fopen_root/registry.before-home"
+fopen_runtime_before="$(
+  fopen_tmux list-sessions -F '#{session_id}|#{session_name}|#{@projmux_project_uid}|#{@projmux_session_role}'
+  fopen_tmux list-windows -a -F '#{session_id}|#{window_id}|#{@projmux_window_uid}'
+  fopen_tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_pane_uid}'
+)"
 fopen_tmux send-keys -t "$fopen_driver_pane" "bash '$fopen_root/open-project.sh' '$fopen_root/home' home" Enter
 fopen_wait_for "open of Home" test -s "$fopen_root/open-home.rc"
-if [[ "$(tr -d '[:space:]' <"$fopen_root/open-home.rc")" != "0" ]]; then
-  echo "opening Home failed" >&2
+if [[ "$(tr -d '[:space:]' <"$fopen_root/open-home.rc")" == "0" ]]; then
+  echo "opening undeclared Home unexpectedly succeeded" >&2
+  exit 1
+fi
+if ! grep -Fq "exact Registry Project UID is unavailable; no runtime was created" "$fopen_root/open-home.err"; then
+  echo "opening undeclared Home lacked the exact fail-closed diagnostic" >&2
   cat "$fopen_root/open-home.err" >&2 || true
   exit 1
 fi
+cmp "$fopen_root/registry.before-home" "$fopen_registry"
 if [[ "$(fopen_pmx get projects -o uid | sort)" != "$fopen_projects_before" ]]; then
   echo "opening Home minted a Project" >&2
+  exit 1
+fi
+fopen_runtime_after="$(
+  fopen_tmux list-sessions -F '#{session_id}|#{session_name}|#{@projmux_project_uid}|#{@projmux_session_role}'
+  fopen_tmux list-windows -a -F '#{session_id}|#{window_id}|#{@projmux_window_uid}'
+  fopen_tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_pane_uid}'
+)"
+if [[ "$fopen_runtime_after" != "$fopen_runtime_before" ]]; then
+  echo "opening undeclared Home changed runtime inventory" >&2
+  diff <(printf '%s\n' "$fopen_runtime_before") <(printf '%s\n' "$fopen_runtime_after") >&2 || true
   exit 1
 fi
 fopen_managed_sessions="$(fopen_tmux list-sessions -F '#{session_name} #{@projmux_project_uid}' | awk 'NF == 2 && $2 != "" {print $1}')"
 if [[ "$fopen_managed_sessions" != "$fopen_session" ]]; then
   echo "sessions carrying a managed Project uid = '$fopen_managed_sessions', want only '$fopen_session'" >&2
   fopen_tmux list-sessions -F '#{session_name} #{@projmux_project_uid} #{@projmux_project_name}' >&2 || true
-  exit 1
-fi
-if [[ "$(fopen_tmux list-sessions -F '#{session_name}' | wc -l)" -lt 3 ]]; then
-  echo "opening Home minted no session at all" >&2
-  fopen_tmux list-sessions -F '#{session_name}' >&2 || true
   exit 1
 fi
 
@@ -5064,6 +5605,12 @@ trap 'rtd_cleanup; smoke_cleanup_env' EXIT
 # This is a server projmux started, so unmarked objects on it are projmux's own
 # world rather than the operator's.
 rtd_tmux set-option -g -q @projmux_app 1
+rtd_tmux set-option -g -q @projmux_socket_name "$rtd_socket"
+if [[ "$(rtd_tmux show-options -gqv @projmux_app)" != "1" ]] || \
+  [[ "$(rtd_tmux show-options -gqv @projmux_socket_name)" != "$rtd_socket" ]]; then
+  echo "runtime diagnostics fixture lacks a complete app-owned route marker pair" >&2
+  exit 1
+fi
 # tmux renames a window to its foreground command on its own. That is tmux
 # writing, not projmux, and leaving it on would make the zero-write comparison
 # below fail the moment a client attaches and a shell starts.
@@ -5335,6 +5882,12 @@ nav_cleanup() {
 trap 'nav_cleanup; smoke_cleanup_env' EXIT
 
 nav_tmux set-option -g -q @projmux_app 1
+nav_tmux set-option -g -q @projmux_socket_name "$nav_socket"
+if [[ "$(nav_tmux show-options -gqv @projmux_app)" != "1" ]] || \
+  [[ "$(nav_tmux show-options -gqv @projmux_socket_name)" != "$nav_socket" ]]; then
+  echo "registry navigation fixture lacks a complete app-owned route marker pair" >&2
+  exit 1
+fi
 # tmux renames a window to its foreground command on its own. That is tmux
 # writing, not projmux, and it would break the zero-write comparison below.
 nav_tmux set-option -g -q automatic-rename off
@@ -5804,6 +6357,12 @@ rtv_cleanup() {
 trap 'rtv_cleanup; smoke_cleanup_env' EXIT
 
 rtv_tmux set-option -g -q @projmux_app 1
+rtv_tmux set-option -g -q @projmux_socket_name "$rtv_socket"
+if [[ "$(rtv_tmux show-options -gqv @projmux_app)" != "1" ]] || \
+  [[ "$(rtv_tmux show-options -gqv @projmux_socket_name)" != "$rtv_socket" ]]; then
+  echo "Alt-1 Runtime visibility fixture lacks a complete app-owned route marker pair" >&2
+  exit 1
+fi
 rtv_tmux set-option -g -q automatic-rename off
 for rtv_project in alpha driver list; do
   rtv_pmx create project --root "$rtv_root/p/$rtv_project" --name "rtv-$rtv_project" >"$rtv_root/register-$rtv_project.out"
@@ -6098,6 +6657,12 @@ chmod 0755 "$disc_root/open-candidate.sh"
 
 disc_tmux new-session -d -s "$disc_driver" -c "$disc_root" bash --noprofile --norc
 disc_tmux set-option -g -q @projmux_app 1
+disc_tmux set-option -g -q @projmux_socket_name "$disc_socket"
+if [[ "$(disc_tmux show-options -gqv @projmux_app)" != "1" ]] || \
+  [[ "$(disc_tmux show-options -gqv @projmux_socket_name)" != "$disc_socket" ]]; then
+  echo "discovery authority fixture lacks a complete app-owned route marker pair" >&2
+  exit 1
+fi
 disc_tmux set-option -g -q automatic-rename off
 disc_other_tmux new-session -d -s untouched -c "$disc_root" sleep 600
 disc_other_tmux set-option -gq @projmux_disc_sentinel unchanged
@@ -6208,15 +6773,27 @@ if [[ "$(tr -d '[:space:]' <"$disc_root/open-repeat.rc")" != "0" ]]; then
 fi
 cmp "$disc_root/registry.after-bootstrap" "$disc_registry"
 
-# 3b. Home is chrome. Opening it opens a session and registers nothing, because
-# `$HOME` alone has never been evidence of a Project.
+# 3b. Home is chrome. This Project-path surface has neither a Registry Project
+# UID nor a declared ControlSession, so it records the exact refusal and writes
+# nothing. ControlSession creation belongs to the dedicated shell bootstrap.
+cp "$disc_registry" "$disc_root/registry.before-home"
+disc_runtime_before="$(
+  disc_tmux list-sessions -F '#{session_id}|#{session_name}|#{@projmux_project_uid}|#{@projmux_session_role}'
+  disc_tmux list-windows -a -F '#{session_id}|#{window_id}|#{@projmux_window_uid}'
+  disc_tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_pane_uid}'
+)"
 disc_tmux send-keys -t "$disc_driver_pane" "bash '$disc_root/open-candidate.sh' '$disc_root/home' home" Enter
 disc_wait_for "Home open" test -s "$disc_root/open-home.rc"
-if [[ "$(tr -d '[:space:]' <"$disc_root/open-home.rc")" != "0" ]]; then
-  echo "opening Home failed" >&2
+if [[ "$(tr -d '[:space:]' <"$disc_root/open-home.rc")" == "0" ]]; then
+  echo "opening undeclared Home unexpectedly succeeded" >&2
+  exit 1
+fi
+if ! grep -Fq "exact Registry Project UID is unavailable; no runtime was created" "$disc_root/open-home.err"; then
+  echo "opening undeclared Home lacked the exact fail-closed diagnostic" >&2
   cat "$disc_root/open-home.err" >&2 || true
   exit 1
 fi
+cmp "$disc_root/registry.before-home" "$disc_registry"
 disc_pmx get projects -o uid >"$disc_root/projects-after-home.uid"
 if [[ "$(wc -l <"$disc_root/projects-after-home.uid")" != "1" ]]; then
   echo "opening Home registered a Project:" >&2
@@ -6225,6 +6802,16 @@ if [[ "$(wc -l <"$disc_root/projects-after-home.uid")" != "1" ]]; then
 fi
 if grep -Fq "$disc_root/home" "$disc_root/projects-after-home.uid"; then
   echo "the home directory became a Project" >&2
+  exit 1
+fi
+disc_runtime_after="$(
+  disc_tmux list-sessions -F '#{session_id}|#{session_name}|#{@projmux_project_uid}|#{@projmux_session_role}'
+  disc_tmux list-windows -a -F '#{session_id}|#{window_id}|#{@projmux_window_uid}'
+  disc_tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_pane_uid}'
+)"
+if [[ "$disc_runtime_after" != "$disc_runtime_before" ]]; then
+  echo "opening undeclared Home changed discovery runtime inventory" >&2
+  diff <(printf '%s\n' "$disc_runtime_before") <(printf '%s\n' "$disc_runtime_after") >&2 || true
   exit 1
 fi
 
@@ -6349,7 +6936,7 @@ exitrec_pmx() {
 # flag, so the live half names the exact synthetic client socket instead of
 # falling back to the default app socket.
 exitrec_live_pmx() {
-  env -u TMUX_PANE \
+  env \
     HOME="$exitrec_root/home" \
     XDG_CONFIG_HOME="$exitrec_root/config" \
     XDG_STATE_HOME="$exitrec_root/state" \
@@ -6357,6 +6944,7 @@ exitrec_live_pmx() {
     PROJMUX_MANAGED_ROOTS="$exitrec_root/work" \
     TMUX_TMPDIR="$exitrec_root/tmux" \
     TMUX="$exitrec_socket_path,$exitrec_socket_pid,0" \
+    TMUX_PANE="$exitrec_create_anchor_pane" \
     PATH="$exitrec_root/bin:$PATH" \
     SHELL="$exitrec_shell" \
     "$bin" "$@"
@@ -6410,7 +6998,7 @@ exitrec_pmx create project --root "$exitrec_root/work/alpha" --name alpha >"$exi
 exitrec_pmx internal tmux apply --bin "$bin" \
   --config "$exitrec_root/config/projmux/tmux.conf" --socket "$exitrec_socket" \
   >"$exitrec_root/apply.out"
-e2e_bounded_reconcile_to_noop "$exitrec_root/import" \
+e2e_bounded_reconcile_to_noop --allow-initial-noop "$exitrec_root/import" \
   exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json
 exitrec_project_uid="$(exitrec_tmux show-options -qv -t "$exitrec_session" @projmux_project_uid)"
 if [[ -z "$exitrec_project_uid" ]]; then
@@ -6418,9 +7006,34 @@ if [[ -z "$exitrec_project_uid" ]]; then
   exit 1
 fi
 exitrec_window_uid="$(exitrec_tmux show-options -wqv -t "$exitrec_session" @projmux_window_uid)"
-exitrec_shell_pane="$(exitrec_tmux list-panes -t "$exitrec_session" -F '#{@projmux_pane_uid}' | head -n 1)"
-if [[ -z "$exitrec_window_uid" || -z "$exitrec_shell_pane" ]]; then
+exitrec_anchor_rows="$(exitrec_tmux list-panes -s -t "$exitrec_session" -F '#{pane_id}|#{@projmux_pane_uid}')"
+if [[ "$(printf '%s\n' "$exitrec_anchor_rows" | grep -c .)" != "1" ]]; then
+  echo "exit reconciliation requires exactly one initial managed anchor: $exitrec_anchor_rows" >&2
+  exit 1
+fi
+IFS='|' read -r exitrec_create_anchor_pane exitrec_shell_pane <<<"$exitrec_anchor_rows"
+if [[ ! "$exitrec_create_anchor_pane" =~ ^%[0-9]+$ ]] || \
+  [[ -z "$exitrec_window_uid" ]] || [[ -z "$exitrec_shell_pane" ]]; then
   echo "exit reconciliation e2e canonical Window/shell has no exact Registry identity" >&2
+  exit 1
+fi
+exitrec_anchor_receipt="$(
+  exitrec_tmux display-message -p -t "$exitrec_create_anchor_pane" \
+    '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}|#{@projmux_project_uid}|#{@projmux_window_uid}|#{@projmux_pane_uid}|receipt-end'
+)"
+IFS='|' read -r exitrec_anchor_socket exitrec_anchor_pid exitrec_anchor_session exitrec_anchor_window \
+  exitrec_anchor_pane exitrec_anchor_project_uid exitrec_anchor_window_uid exitrec_anchor_pane_uid \
+  exitrec_anchor_end <<<"$exitrec_anchor_receipt"
+if [[ "$exitrec_anchor_socket" != "$exitrec_socket_path" ]] || \
+  [[ "$exitrec_anchor_pid" != "$exitrec_socket_pid" ]] || \
+  [[ ! "$exitrec_anchor_session" =~ ^\$[0-9]+$ ]] || \
+  [[ ! "$exitrec_anchor_window" =~ ^@[0-9]+$ ]] || \
+  [[ "$exitrec_anchor_pane" != "$exitrec_create_anchor_pane" ]] || \
+  [[ "$exitrec_anchor_project_uid" != "$exitrec_project_uid" ]] || \
+  [[ "$exitrec_anchor_window_uid" != "$exitrec_window_uid" ]] || \
+  [[ "$exitrec_anchor_pane_uid" != "$exitrec_shell_pane" ]] || \
+  [[ "$exitrec_anchor_end" != "receipt-end" ]]; then
+  echo "exit reconciliation create lacks exact managed anchor containment: $exitrec_anchor_receipt" >&2
   exit 1
 fi
 if ! exitrec_tmux show-hooks -g | grep -q "internal tmux converge --socket-path"; then
@@ -6654,7 +7267,35 @@ if [[ "$(exitrec_termination_field source)" == "reconcile" ]]; then
   exit 1
 fi
 exitrec_tmux new-session -d -s exitrec-restarted -n main sleep 600
-exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json >"$exitrec_root/after-restart.json"
+exitrec_restarted_socket_path="$(exitrec_tmux display-message -p -t exitrec-restarted '#{socket_path}')"
+exitrec_restarted_socket_pid="$(exitrec_tmux display-message -p -t exitrec-restarted '#{pid}')"
+exitrec_restarted_pane="$(exitrec_tmux list-panes -s -t exitrec-restarted -F '#{pane_id}')"
+if [[ ! "$exitrec_restarted_pane" =~ ^%[0-9]+$ ]]; then
+  echo "exit reconciliation restart lacks exactly one raw Pane: $exitrec_restarted_pane" >&2
+  exit 1
+fi
+exitrec_restarted_receipt="$(
+  exitrec_tmux display-message -p -t "$exitrec_restarted_pane" \
+    '#{socket_path}|#{pid}|#{session_id}|#{session_name}|#{window_id}|#{pane_id}|#{@projmux_app}|#{@projmux_socket_name}|receipt-end'
+)"
+IFS='|' read -r exitrec_restarted_socket exitrec_restarted_pid exitrec_restarted_session \
+  exitrec_restarted_session_name exitrec_restarted_window exitrec_restarted_observed_pane \
+  exitrec_restarted_app_marker exitrec_restarted_logical_marker exitrec_restarted_end \
+  <<<"$exitrec_restarted_receipt"
+if [[ "$exitrec_restarted_socket_path" != "$exitrec_socket_path" ]] || \
+  [[ "$exitrec_restarted_socket" != "$exitrec_restarted_socket_path" ]] || \
+  [[ "$exitrec_restarted_pid" != "$exitrec_restarted_socket_pid" ]] || \
+  [[ ! "$exitrec_restarted_session" =~ ^\$[0-9]+$ ]] || \
+  [[ "$exitrec_restarted_session_name" != "exitrec-restarted" ]] || \
+  [[ ! "$exitrec_restarted_window" =~ ^@[0-9]+$ ]] || \
+  [[ "$exitrec_restarted_observed_pane" != "$exitrec_restarted_pane" ]] || \
+  [[ -n "$exitrec_restarted_app_marker" ]] || \
+  [[ -n "$exitrec_restarted_logical_marker" ]] || \
+  [[ "$exitrec_restarted_end" != "receipt-end" ]]; then
+  echo "exit reconciliation restart lacks exact standalone authority: $exitrec_restarted_receipt" >&2
+  exit 1
+fi
+exitrec_pmx reconcile resources --socket-path "$exitrec_restarted_socket_path" -o json >"$exitrec_root/after-restart.json"
 exitrec_doc pane "$exitrec_shell_pane"
 if [[ -z "$(cat "$exitrec_root/doc.json")" ]]; then
   echo "the restart deleted the logical shell Pane $exitrec_shell_pane" >&2
@@ -6759,7 +7400,7 @@ if [[ -e "$menu_root/state/projmux/metadata/registry.json" ]]; then
 fi
 menu_project_uid="$(menu_pmx create project --root "$menu_root/work/alpha" -o uid)"
 menu_pmx config apply --bin "$bin" --config "$menu_config" --socket "$menu_socket" >"$menu_root/apply.out"
-e2e_bounded_reconcile_to_noop "$menu_root/reconcile" \
+e2e_bounded_reconcile_to_noop --allow-initial-noop "$menu_root/reconcile" \
   menu_pmx reconcile resources --socket "$menu_socket" -o json
 if [[ -z "$(menu_tmux show-options -pqv -t "$menu_origin_pane" @projmux_pane_uid)" ]]; then
   echo "pane-menu fixture origin was not reconciled as a managed Pane" >&2

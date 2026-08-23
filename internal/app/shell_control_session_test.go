@@ -443,7 +443,8 @@ func TestControlBootstrapErrorAfterEffectRefusesPhysicalRouteDrift(t *testing.T)
 	tmux.leaseMatches = [][]string{{"$9", "@12", "%15", "1"}}
 
 	_, err := cmd.provisionAppSession(context.Background(), "projmux", filepath.Join(home, "tmux.conf"), shellTarget{SessionName: "home", CWD: home})
-	if err == nil || !strings.Contains(err.Error(), "physical route is unknown") || !strings.Contains(err.Error(), "socket drifted") {
+	if err == nil || (!strings.Contains(err.Error(), "physical route is unknown") &&
+		!strings.Contains(err.Error(), "logical alias no longer names the exact server")) {
 		t.Fatalf("provisionAppSession() error = %v, want physical drift residual", err)
 	}
 	for _, call := range tmux.calls {
@@ -462,6 +463,7 @@ func TestControlBootstrapNoServerBindsFirstCreatedPhysicalRoute(t *testing.T) {
 	tmux.socketReads = []scriptedSocketRead{
 		{err: noServer},
 		{err: noServer},
+		{err: noServer},
 		{output: []byte("/tmp/tmux-1000/projmux-created\n")},
 		{output: []byte("/tmp/tmux-1000/projmux-created\n")},
 		{output: []byte("/tmp/tmux-1000/projmux-created\n")},
@@ -476,6 +478,32 @@ func TestControlBootstrapNoServerBindsFirstCreatedPhysicalRoute(t *testing.T) {
 	}
 	if got, want := receipt.route.expectedSocketPath, "/tmp/tmux-1000/projmux-created"; got != want {
 		t.Fatalf("bound route = %q, want %q", got, want)
+	}
+}
+
+func TestControlBootstrapAbsentDeclarationRefusesServerAppearingBeforeWrite(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	cmd, _, tmux := shellControlFixture(t, home, &recordedControlPass{})
+	noServer := errors.New("no server running on /tmp/tmux-1000/projmux")
+	tmux.socketReads = []scriptedSocketRead{
+		{err: noServer},
+		{err: noServer},
+		{output: []byte("/tmp/tmux-1000/projmux-appeared\n")},
+	}
+	tmux.errors = map[string]error{
+		shellTmuxCallKey("tmux", "-L", "projmux", "-f", filepath.Join(home, "tmux.conf"), "has-session", "-t", "home"): errors.New("can't find session: home"),
+	}
+
+	_, err := cmd.provisionAppSession(context.Background(), "projmux", filepath.Join(home, "tmux.conf"), shellTarget{SessionName: "home", CWD: home})
+	if err == nil || !strings.Contains(err.Error(), "absent server appeared after planning") {
+		t.Fatalf("provisionAppSession() error = %v, want pre-write appeared-server refusal", err)
+	}
+	for _, call := range tmux.calls {
+		if slicesHas(call.args, "new-session") || slicesHas(call.args, "set-option") || slicesHas(call.args, "set-environment") {
+			t.Fatalf("appeared server reached a bootstrap write: %#v", tmux.calls)
+		}
 	}
 }
 
@@ -586,6 +614,7 @@ func TestControlBootstrapLeaseClearRefusesPhysicalRouteDriftBeforeWrite(t *testi
 		route: runtimeMutationRoute{
 			target: explicitTmuxTarget{flag: "-L", value: "projmux"}, socketName: "projmux",
 			expectedSocketPath: "/tmp/tmux-1000/original",
+			authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242", SessionID: "$9", WindowID: "@12", PaneID: "%15"},
 		},
 	}
 

@@ -19,6 +19,8 @@ func (r *unmanagedStopRunner) Run(_ context.Context, _ string, args ...string) (
 	r.calls = append(r.calls, append([]string(nil), args...))
 	joined := strings.Join(args, " ")
 	switch {
+	case strings.Contains(joined, "display-message") && strings.HasSuffix(joined, "#{pid}"):
+		return []byte("4242\n"), nil
 	case strings.Contains(joined, "display-message"):
 		return []byte(r.socketPath + "\n"), nil
 	case strings.Contains(joined, "show-options -gqv @projmux_app"):

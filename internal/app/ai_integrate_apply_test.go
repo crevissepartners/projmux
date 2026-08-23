@@ -237,7 +237,7 @@ func TestTmuxApplyBellFailureRollsBackEarlierProviderFilesAndLiveState(t *testin
 	cmd := managedIngestApplyFixture(home, runner)
 	err := cmd.runApply([]string{"--config", filepath.Join(home, "tmux.conf"), "--socket", runner.socket}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "injected fifth bell mutation") {
-		t.Fatalf("apply error = %v", err)
+		t.Fatalf("apply error = %v (bell mutations=%d)", err, runner.mutations)
 	}
 	if got := readCodexTestFile(t, codexPath); got != originalCodex {
 		t.Fatalf("provider file was not rolled back after bell failure:\n%s", got)
@@ -310,6 +310,9 @@ func (r *failingBellApplyRunner) Run(_ context.Context, name string, args ...str
 	args = args[2:]
 	switch args[0] {
 	case "display-message":
+		if args[len(args)-1] == "#{pid}" {
+			return []byte("4242\n"), nil
+		}
 		return []byte(physical + "\n"), nil
 	case "list-sessions":
 		return []byte("$1\n"), nil

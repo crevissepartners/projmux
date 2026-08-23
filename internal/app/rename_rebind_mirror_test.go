@@ -29,10 +29,13 @@ func (mutationExitError) Error() string { return "tmux exited 77" }
 func (mutationExitError) ExitCode() int { return 77 }
 
 type mutationRoutingRunner struct {
-	calls       [][]string
-	stableName  string
-	windowName  string
-	logicalPath string
+	calls                               [][]string
+	stableName, windowName, logicalPath string
+	appMarker, logicalName              string
+	windowUID, projectUID, sessionRole  string
+	windowID, sessionID                 string
+	listWindowReads, driftAt            int
+	driftWindowID, driftSessionID       string
 }
 
 func (r *mutationRoutingRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -46,7 +49,21 @@ func (r *mutationRoutingRunner) Run(_ context.Context, name string, args ...stri
 	if r.stableName == "" {
 		r.stableName = "review"
 	}
+	if r.windowID == "" {
+		r.windowID = "@7"
+	}
+	if r.sessionID == "" {
+		r.sessionID = "$1"
+	}
+	if r.windowUID == "" {
+		r.windowUID = "win-alpha-review"
+	}
+	if r.projectUID == "" {
+		r.projectUID = "prj-alpha"
+	}
 	switch {
+	case strings.Contains(joined, "#{socket_path}") && strings.Contains(joined, "#{pid}") && strings.Contains(joined, "#{session_id}"):
+		return []byte(strings.Join([]string{r.logicalPath, "4242", "$1", "@7", "%7"}, tmuxRowSep) + "\n"), nil
 	case strings.Contains(joined, "display-message -p -F #{socket_path}"):
 		for i := 0; i+1 < len(args); i++ {
 			if args[i] == "-S" {
@@ -61,11 +78,25 @@ func (r *mutationRoutingRunner) Run(_ context.Context, name string, args ...stri
 			}
 		}
 	case strings.Contains(joined, "show-options -gqv "+tmuxopts.AppGlobal):
-		return []byte("1\n"), nil
+		marker := r.appMarker
+		if marker == "" {
+			marker = "1"
+		}
+		return []byte(marker + "\n"), nil
 	case strings.Contains(joined, "show-options -gqv "+runtimeMutationSocketNameOption):
-		return []byte(defaultAppSocket + "\n"), nil
+		logical := r.logicalName
+		if logical == "" {
+			logical = defaultAppSocket
+		}
+		return []byte(logical + "\n"), nil
+	case strings.Contains(joined, "display-message -p -F #{pid}"):
+		return []byte("4242\n"), nil
 	case strings.Contains(joined, "list-windows") && strings.Contains(joined, tmuxopts.ProjectUIDSession):
-		return []byte(strings.Join([]string{"@7", "win-alpha-review", "$1", "prj-alpha", "", r.stableName, r.windowName}, tmuxRowSep) + "\n"), nil
+		r.listWindowReads++
+		if r.driftAt > 0 && r.listWindowReads == r.driftAt {
+			r.windowID, r.sessionID = r.driftWindowID, r.driftSessionID
+		}
+		return []byte(strings.Join([]string{r.windowID, r.windowUID, r.sessionID, r.projectUID, r.sessionRole, r.stableName, r.windowName}, tmuxRowSep) + "\n"), nil
 	case len(argv) > 0 && argv[0] == "set-option" && slices.Contains(argv, tmuxopts.WindowName):
 		r.stableName = argv[len(argv)-1]
 		return nil, nil
@@ -140,12 +171,7 @@ func TestRenameImmediatelyConvergesOnlyTheStableNameMirror(t *testing.T) {
 			if test.name == "window" {
 				typedRunner = &mutationRoutingRunner{}
 				cmd.tmuxRunner = typedRunner
-				cmd.lookupEnv = func(name string) string {
-					if name == "TMUX" {
-						return "/tmp/projmux.sock,1,0"
-					}
-					return ""
-				}
+				cmd.lookupEnv = func(string) string { return "" }
 			}
 			if _, stderr, err := runRoute(t, cmd, test.args...); err != nil {
 				t.Fatalf("rename error = %v (stderr=%s)", err, stderr)
@@ -155,6 +181,131 @@ func TestRenameImmediatelyConvergesOnlyTheStableNameMirror(t *testing.T) {
 			}
 			if typedRunner != nil && (typedRunner.stableName != "renamed" || typedRunner.windowName != "Runtime Review") {
 				t.Fatalf("typed Window rename stable/display effects = %q/%q, want renamed/Runtime Review", typedRunner.stableName, typedRunner.windowName)
+			}
+		})
+	}
+}
+
+func TestWindowRenameAlreadyMatchingEffectStillRefusesRecycledRuntimeHandle(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runner := &mutationRoutingRunner{
+		stableName: "renamed", windowID: "@7", sessionID: "$1",
+		driftAt: 2, driftWindowID: "@8", driftSessionID: "$2",
+	}
+	cmd := newTestRenameCommand(store)
+	cmd.mirror = &fakeMutationMirror{windowTarget: "@7"}
+	cmd.tmuxRunner = runner
+	cmd.lookupEnv = func(string) string { return "" }
+
+	_, _, err := runRoute(t, cmd, "window", "review", "--project", "alpha", "--name", "renamed")
+	if err == nil || !strings.Contains(err.Error(), "Window runtime identity drifted before rename") {
+		t.Fatalf("recycled already-matching Window rename = %v", err)
+	}
+	for _, call := range runner.calls {
+		if slices.Contains(tmuxCommandArgv(call[1:]), "set-option") {
+			t.Fatalf("recycled already-matching Window reached a write: %#v", runner.calls)
+		}
+	}
+}
+
+func TestWindowRenameUsesInheritedAppPIDAuthorityWithoutPaneReceipt(t *testing.T) {
+	store := newFakeResourceStore(t)
+	path := filepath.Join(t.TempDir(), "nondefault-app.sock")
+	runner := &mutationRoutingRunner{logicalPath: path, logicalName: "rename-it"}
+	cmd := newTestRenameCommand(store)
+	cmd.mirror = &fakeMutationMirror{windowTarget: "@7"}
+	cmd.tmuxRunner = runner
+	cmd.lookupEnv = func(key string) string {
+		if key == "TMUX" {
+			return path + ",4242,0"
+		}
+		return ""
+	}
+
+	if _, stderr, err := runRoute(t, cmd, "window", "review", "--project", "alpha", "--name", "stable-window"); err != nil {
+		t.Fatalf("PID-authorized Window rename: %v stderr=%s", err, stderr)
+	}
+	if runner.stableName != "stable-window" || runner.windowName != "Runtime Review" {
+		t.Fatalf("stable/display names = %q/%q", runner.stableName, runner.windowName)
+	}
+	for _, call := range runner.calls {
+		argv := tmuxCommandArgv(call[1:])
+		if slices.Contains(argv, "set-option") && (len(call) < 3 || call[1] != "-S" || call[2] != path) {
+			t.Fatalf("Window rename write escaped inherited physical route: %#v", call)
+		}
+	}
+
+	for _, tc := range []struct {
+		name   string
+		tmux   string
+		mutate func(*mutationRoutingRunner)
+	}{
+		{"PID mismatch", path + ",9999,0", func(*mutationRoutingRunner) {}},
+		{"path mismatch", filepath.Join(t.TempDir(), "foreign.sock") + ",4242,0", func(*mutationRoutingRunner) {}},
+		{"partial marker", path + ",4242,0", func(r *mutationRoutingRunner) { r.appMarker = "foreign" }},
+		{"logical alias mismatch", path + ",4242,0", func(r *mutationRoutingRunner) { r.logicalPath = filepath.Join(t.TempDir(), "replacement.sock") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			candidate := &mutationRoutingRunner{logicalPath: path, logicalName: "rename-it"}
+			tc.mutate(candidate)
+			_, err := resolveExactObjectRuntimeMutationRoute(context.Background(), candidate, func(key string) string {
+				if key == "TMUX" {
+					return tc.tmux
+				}
+				return ""
+			})
+			if err == nil {
+				t.Fatal("drifted app invocation acquired PID-only authority")
+			}
+			for _, call := range candidate.calls {
+				if slices.Contains(tmuxCommandArgv(call[1:]), "set-option") {
+					t.Fatalf("drifted route received a write: %#v", candidate.calls)
+				}
+			}
+		})
+	}
+}
+
+func TestWindowRenamePIDAuthorityStillRequiresExactUIDAndContainment(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "nondefault-app.sock")
+	for _, tc := range []struct {
+		name   string
+		mutate func(*mutationRoutingRunner)
+		want   string
+	}{
+		{"foreign Window UID", func(r *mutationRoutingRunner) { r.windowUID = "win-foreign" }, ""},
+		{"foreign Project containment", func(r *mutationRoutingRunner) { r.projectUID = "prj-foreign" }, "Window Project containment drifted"},
+		{"ControlSession role on Project Window", func(r *mutationRoutingRunner) { r.sessionRole = "control" }, "Window Project containment drifted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			runner := &mutationRoutingRunner{logicalPath: path, logicalName: "rename-it"}
+			tc.mutate(runner)
+			cmd := newTestRenameCommand(store)
+			cmd.mirror = &fakeMutationMirror{windowTarget: "@7"}
+			cmd.tmuxRunner = runner
+			cmd.lookupEnv = func(key string) string {
+				if key == "TMUX" {
+					return path + ",4242,0"
+				}
+				return ""
+			}
+
+			_, _, err := runRoute(t, cmd, "window", "review", "--project", "alpha", "--name", "stable-window")
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("metadata-authoritative missing exact UID: %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("containment error = %v, want %q", err, tc.want)
+			}
+			if runner.stableName == "stable-window" {
+				t.Fatal("unattributed Window received the stable-name projection")
+			}
+			for _, call := range runner.calls {
+				if slices.Contains(tmuxCommandArgv(call[1:]), "set-option") {
+					t.Fatalf("unattributed Window reached a write: %#v", runner.calls)
+				}
 			}
 		})
 	}
@@ -306,8 +457,11 @@ func TestImmediateMutationMirrorsUseOnlyTheInheritedAbsoluteSocketAndStableHandl
 
 	socket := filepath.Join(t.TempDir(), "tmux.sock")
 	lookupEnv := func(key string) string {
-		if key == "TMUX" {
+		switch key {
+		case "TMUX":
 			return socket + ",4242,0"
+		case "TMUX_PANE":
+			return "%7"
 		}
 		return ""
 	}

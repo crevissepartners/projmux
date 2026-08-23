@@ -77,15 +77,19 @@ func executeUnmanagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, 
 	if err != nil || !found {
 		return false, err
 	}
-	action := newRuntimeMutation(1, mutationStopUnmanagedSession, runtimeMutationTarget{
-		Socket: route.target.flag + "=" + route.target.value, PhysicalSocket: printableRuntimeMutationSocket(route.expectedSocketPath),
+	mutationTarget := runtimeMutationTarget{
 		Kind: "unmanaged-session", ID: observed.sessionID,
 		UID: "unowned", Parent: observed.sessionName,
-	})
+	}
+	bindRuntimeMutationRouteTarget(&mutationTarget, route)
+	action := newRuntimeMutation(1, mutationStopUnmanagedSession, mutationTarget)
 	bindRuntimeMutationGuard(&action, "exact unowned/ephemeral session="+observed.sessionID+"/"+observed.sessionName)
 	action.Operands = []string{"-t", observed.sessionID}
 	if err := executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
+		TargetRouteGuard: func(ctx context.Context) error {
+			return guardPrintedRuntimeMutationRoute(ctx, runner, route, action)
+		},
 		Reobserve: func(ctx context.Context) (bool, error) {
 			if err := guardPrintedRuntimeMutationRoute(ctx, runner, route, action); err != nil {
 				if inttmux.IsNoServerFailure(err) {

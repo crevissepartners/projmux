@@ -23,6 +23,9 @@ const (
 	mutationCreateWindow            runtimeMutationVerb = "create-window"
 	mutationCreatePane              runtimeMutationVerb = "create-pane"
 	mutationWriteIdentity           runtimeMutationVerb = "write-identity"
+	mutationWriteOption             runtimeMutationVerb = "write-option"
+	mutationWritePresentationOption runtimeMutationVerb = "write-presentation-option"
+	mutationWriteStableName         runtimeMutationVerb = "write-stable-name"
 	mutationWriteLease              runtimeMutationVerb = "write-lease"
 	mutationClearLease              runtimeMutationVerb = "clear-lease"
 	mutationWriteLayout             runtimeMutationVerb = "write-layout"
@@ -63,6 +66,9 @@ var runtimeMutationInventory = map[runtimeMutationVerb]runtimeMutationContract{
 	mutationCreateWindow:            {GuardKind: "session-containment-and-owner-inventory", Effect: "one detached owned window and primary pane exist"},
 	mutationCreatePane:              {GuardKind: "anchor-containment-and-pane-inventory", Effect: "one detached owned pane exists"},
 	mutationWriteIdentity:           {GuardKind: "exact-handle-owner-chain", Effect: "exact uid identity mirror equals desired value"},
+	mutationWriteOption:             {GuardKind: "exact-handle-owner-chain", Effect: "exact typed tmux option equals desired value"},
+	mutationWritePresentationOption: {GuardKind: "exact-handle-owner-chain", Effect: "exact exempt presentation option equals desired value"},
+	mutationWriteStableName:         {GuardKind: "exact-window-evidence", Effect: "exact Window stable-name option equals desired value"},
 	mutationWriteLease:              {GuardKind: "exact-owned-session", Effect: "create-operation lease equals marker"},
 	mutationClearLease:              {GuardKind: "create-operation-lease", Effect: "create-operation lease is absent"},
 	mutationWriteLayout:             {GuardKind: "exact-anchor-containment", Effect: "best-effort even split layout is selected"},
@@ -88,6 +94,7 @@ var runtimeMutationInventory = map[runtimeMutationVerb]runtimeMutationContract{
 type runtimeMutationTarget struct {
 	Socket         string `json:"socket"`
 	PhysicalSocket string `json:"physicalSocket"`
+	RouteAuthority string `json:"routeAuthority,omitempty"`
 	Kind           string `json:"kind"`
 	ID             string `json:"id"`
 	UID            string `json:"uid"`
@@ -116,11 +123,26 @@ type plannedRuntimeMutation struct {
 	Operands []string                   `json:"operands,omitempty"`
 	Command  []string                   `json:"command,omitempty"`
 	Queue    *runtimeMutationQueuedKill `json:"queue,omitempty"`
+	// Controller is an app-internal, printable binding between a controller
+	// declaration and its executable tmux argv. It is deliberately absent from
+	// the public controller.Plan JSON; only the Phase 10 execution plan carries
+	// this closed effect grammar.
+	Controller *runtimeMutationControllerEffect `json:"controller,omitempty"`
+}
+
+type runtimeMutationControllerEffect struct {
+	Class  string `json:"class"`
+	Mode   string `json:"mode"`
+	Scope  string `json:"scope"`
+	Field  string `json:"field"`
+	Before string `json:"before"`
+	After  string `json:"after"`
 }
 
 type runtimeMutationQueuedKill struct {
 	PhysicalSocket string `json:"physicalSocket"`
 	LogicalSocket  string `json:"logicalSocket"`
+	RouteAuthority string `json:"routeAuthority,omitempty"`
 	ExpectedUID    string `json:"expectedUid"`
 	SessionID      string `json:"sessionId"`
 	WindowID       string `json:"windowId"`
@@ -145,8 +167,6 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 	}
 	var verb string
 	switch action.Verb {
-	case mutationCreateSession:
-		verb = "new-session"
 	case mutationCreateWindow:
 		verb = "new-window"
 	case mutationCreatePane:
@@ -172,11 +192,11 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 		default:
 			return nil, fmt.Errorf("runtime mutation plan: kill-owned target kind %q has no typed executor", action.Target.Kind)
 		}
-	case mutationTombstonePane, mutationRestorePane, mutationWriteIdentity, mutationWriteProjectAnchor:
+	case mutationTombstonePane, mutationRestorePane, mutationWriteIdentity, mutationWriteOption, mutationWritePresentationOption, mutationWriteStableName, mutationWriteProjectAnchor:
 		verb = "set-option"
 	case mutationQueuePaneKill, mutationQueueWindowKill:
 		if action.Queue == nil || !filepath.IsAbs(action.Queue.PhysicalSocket) || filepath.Clean(action.Queue.PhysicalSocket) != action.Queue.PhysicalSocket ||
-			action.Queue.PhysicalSocket != action.Target.PhysicalSocket || strings.TrimSpace(action.Queue.LogicalSocket) == "" ||
+			action.Queue.PhysicalSocket != action.Target.PhysicalSocket ||
 			strings.TrimSpace(action.Queue.ExpectedUID) == "" || action.Queue.ExpectedUID != action.Target.UID ||
 			strings.TrimSpace(action.Target.ID) == "" || exactTmuxHandle(action.Queue.SessionID, "$") == "" {
 			return nil, errors.New("runtime mutation plan: queued kill route or exact target is incomplete")
@@ -184,12 +204,25 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 		if action.Queue.Marker == "" || action.Queue.Marker != runtimeMutationQueueMarker(action) {
 			return nil, errors.New("runtime mutation plan: queued kill durable marker disagrees with printable target")
 		}
-		logical, ok := strings.CutPrefix(action.Target.Socket, "-L=")
-		if !ok || logical != action.Queue.LogicalSocket {
-			return nil, errors.New("runtime mutation plan: queued kill logical route disagrees with printable target")
+		authority, authorityErr := parseRuntimeMutationRouteAuthority(action.Target.RouteAuthority)
+		if authorityErr != nil || action.Queue.RouteAuthority != action.Target.RouteAuthority {
+			return nil, errors.New("runtime mutation plan: queued kill route authority disagrees with printable target")
 		}
-		if _, err := tmuxSocketNameTarget(action.Queue.LogicalSocket); err != nil {
-			return nil, errors.New("runtime mutation plan: queued kill logical route is invalid")
+		isStandalone := authority.Class == runtimeMutationRouteStandalone
+		if isStandalone {
+			if action.Queue.LogicalSocket != "" || action.Target.Socket != "-S="+action.Queue.PhysicalSocket {
+				return nil, errors.New("runtime mutation plan: queued kill standalone authority disagrees with printable target")
+			}
+		} else {
+			logical, logicalRoute := strings.CutPrefix(action.Target.Socket, "-L=")
+			physical, physicalRoute := strings.CutPrefix(action.Target.Socket, "-S=")
+			if (!logicalRoute || logical != action.Queue.LogicalSocket) &&
+				(!physicalRoute || physical != action.Queue.PhysicalSocket) {
+				return nil, errors.New("runtime mutation plan: queued kill logical route disagrees with printable target")
+			}
+			if _, err := tmuxSocketNameTarget(action.Queue.LogicalSocket); err != nil {
+				return nil, errors.New("runtime mutation plan: queued kill logical route is invalid")
+			}
 		}
 		killVerb := "kill-pane"
 		uidOption := tmuxopts.PaneUID
@@ -205,7 +238,10 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 			(action.Verb == mutationQueuePaneKill && !strings.HasPrefix(action.Target.Parent, action.Queue.SessionID+"/"+action.Queue.WindowID+"/")) {
 			return nil, errors.New("runtime mutation plan: queued kill containment disagrees with printable target")
 		}
-		routeCondition := "#{&&:#{==:#{" + tmuxopts.AppGlobal + "},1},#{==:#{" + runtimeMutationSocketNameOption + "}," + action.Queue.LogicalSocket + "}}"
+		routeCondition := "#{&&:#{==:#{pid}," + authority.ServerPID + "},#{&&:#{==:#{" + tmuxopts.AppGlobal + "},1},#{==:#{" + runtimeMutationSocketNameOption + "}," + action.Queue.LogicalSocket + "}}}"
+		if isStandalone {
+			routeCondition = "#{&&:#{==:#{pid}," + authority.ServerPID + "},#{&&:#{==:#{" + tmuxopts.AppGlobal + "},},#{==:#{" + runtimeMutationSocketNameOption + "},}}}"
+		}
 		leaseCondition := "#{==:#{E:" + action.Queue.Marker + "}," + action.Queue.ExpectedUID + "}"
 		condition := "#{&&:" + routeCondition + ",#{&&:" + leaseCondition + ",#{&&:" + identity + ",#{==:#{" + uidOption + "}," + action.Queue.ExpectedUID + "}}}}"
 		clearCondition := "#{&&:" + routeCondition + "," + leaseCondition + "}"
@@ -226,6 +262,14 @@ func runtimeMutationArgv(action plannedRuntimeMutation) ([]string, error) {
 		verb = "set-environment"
 	case mutationRenameWindow:
 		verb = "rename-window"
+	case mutationCreateSession:
+		// A fresh managed Project server must load the generated app config
+		// before new-session creates its first object. Keep the global tmux
+		// option in printable typed data and assemble it before the verb.
+		if len(action.Operands) >= 2 && action.Operands[0] == "-f" {
+			return append(append([]string(nil), action.Operands[:2]...), append([]string{"new-session"}, action.Operands[2:]...)...), nil
+		}
+		verb = "new-session"
 	case mutationBootstrapControlSession:
 		// Bootstrap needs global route/config flags before the managed verb.
 		if len(action.Operands) < 4 {
@@ -320,6 +364,14 @@ func guardRuntimeMutationQueueRoute(ctx context.Context, runner tmuxCommandRunne
 		expectedSocketPath: action.Queue.PhysicalSocket,
 		socketName:         action.Queue.LogicalSocket,
 	}
+	if action.Queue.RouteAuthority == "" {
+		return errors.New("runtime mutation queue route has no server-generation authority")
+	}
+	authority, err := parseRuntimeMutationRouteAuthority(action.Queue.RouteAuthority)
+	if err != nil {
+		return err
+	}
+	route.authority = &authority
 	return guardResolvedRuntimeMutationRoute(ctx, runner, route)
 }
 
@@ -372,13 +424,41 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 			return fmt.Errorf("runtime mutation plan: action %q has %d executable routes, want exactly one", action.Verb, matches)
 		}
 		if action.Verb == mutationWriteRouteMarker {
+			if len(action.Operands) < 2 || action.Operands[0] != flag || action.Operands[1] != value {
+				return errors.New("runtime mutation plan: route-marker executable route must be the leading exact operand pair")
+			}
 			logical, ok := strings.CutPrefix(action.Target.UID, "logical:")
-			if !ok || logical != value || len(action.Operands) < 2 || action.Operands[len(action.Operands)-2] != runtimeMutationSocketNameOption || action.Operands[len(action.Operands)-1] != logical {
+			if !ok || len(action.Operands) < 2 || action.Operands[len(action.Operands)-2] != runtimeMutationSocketNameOption || action.Operands[len(action.Operands)-1] != logical {
 				return errors.New("runtime mutation plan: route-marker operands do not match printable logical identity")
 			}
 		}
 	}
 	if action.Verb == mutationCreateSession || action.Verb == mutationBootstrapControlSession {
+		if action.Verb == mutationCreateSession {
+			configFlags := 0
+			for i := 0; i < len(action.Operands); i++ {
+				if action.Operands[i] != "-f" {
+					continue
+				}
+				configFlags++
+				if i+1 >= len(action.Operands) {
+					return errors.New("runtime mutation plan: create-session config flag has no path")
+				}
+				configPath := action.Operands[i+1]
+				if !filepath.IsAbs(configPath) || filepath.Clean(configPath) != configPath {
+					return errors.New("runtime mutation plan: create-session config path is not absolute and clean")
+				}
+				if i != 0 {
+					return errors.New("runtime mutation plan: create-session config must precede the managed verb")
+				}
+			}
+			if action.Target.PhysicalSocket == runtimeMutationSocketAbsentBeforeCreate && configFlags != 1 {
+				return fmt.Errorf("runtime mutation plan: absent-server create-session has %d generated configs, want exactly one", configFlags)
+			}
+			if action.Target.PhysicalSocket != runtimeMutationSocketAbsentBeforeCreate && configFlags != 0 {
+				return errors.New("runtime mutation plan: existing-server create-session unexpectedly carries a startup config")
+			}
+		}
 		want := action.Target.ID
 		if action.Verb == mutationBootstrapControlSession {
 			var ok bool
@@ -408,13 +488,13 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 		want = action.Target.ID + ":"
 		exactPrefix = "$"
 	case mutationCreatePane, mutationWriteLayout, mutationKillPane, mutationKillWindow, mutationStopManagedSession, mutationStopUnmanagedSession,
-		mutationKillOwned, mutationTombstonePane, mutationRestorePane, mutationWriteIdentity,
+		mutationKillOwned, mutationTombstonePane, mutationRestorePane, mutationWriteIdentity, mutationWriteOption, mutationWritePresentationOption, mutationWriteStableName,
 		mutationWriteLease, mutationClearLease, mutationRenameWindow, mutationWriteProjectAnchor, mutationFinalizeSession:
 		want = action.Target.ID
 		switch action.Verb {
 		case mutationCreatePane, mutationWriteLayout, mutationKillPane, mutationTombstonePane, mutationRestorePane:
 			exactPrefix = "%"
-		case mutationKillWindow, mutationRenameWindow:
+		case mutationKillWindow, mutationRenameWindow, mutationWriteStableName:
 			exactPrefix = "@"
 		case mutationStopManagedSession, mutationStopUnmanagedSession, mutationWriteLease, mutationClearLease, mutationWriteProjectAnchor, mutationFinalizeSession:
 			exactPrefix = "$"
@@ -429,7 +509,7 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 			default:
 				return fmt.Errorf("runtime mutation plan: kill-owned has unknown target kind %q", action.Target.Kind)
 			}
-		case mutationWriteIdentity:
+		case mutationWriteIdentity, mutationWriteOption, mutationWritePresentationOption:
 			switch action.Target.Kind {
 			case "session", "control-session":
 				exactPrefix = "$"
@@ -438,7 +518,7 @@ func validateRuntimeMutationOperandTarget(action plannedRuntimeMutation) error {
 			case "pane":
 				exactPrefix = "%"
 			default:
-				return fmt.Errorf("runtime mutation plan: identity write has unknown target kind %q", action.Target.Kind)
+				return fmt.Errorf("runtime mutation plan: identity/option write has unknown target kind %q", action.Target.Kind)
 			}
 		}
 	case mutationQueuePaneKill, mutationQueueWindowKill:
@@ -579,6 +659,28 @@ func (p runtimeMutationPlan) validate() error {
 		default:
 			return fmt.Errorf("runtime mutation plan: action %q has unsupported printable route %q", action.Verb, action.Target.Socket)
 		}
+		if printableAuthority := strings.TrimSpace(action.Target.RouteAuthority); printableAuthority != "" {
+			authority, err := parseRuntimeMutationRouteAuthority(printableAuthority)
+			if err != nil {
+				return fmt.Errorf("runtime mutation plan: action %q has invalid route authority: %w", action.Verb, err)
+			}
+			if physical == runtimeMutationSocketAbsentBeforeCreate {
+				return fmt.Errorf("runtime mutation plan: action %q authority has no physical server generation", action.Verb)
+			}
+			if (authority.Class == runtimeMutationRouteStandalone || authority.Class == runtimeMutationRouteStandaloneExplicit) && (routeFlag != "-S" || routeValue != physical) {
+				return fmt.Errorf("runtime mutation plan: action %q standalone authority is not bound to its exact physical route", action.Verb)
+			}
+			if authority.Class == runtimeMutationRouteStandaloneExplicit &&
+				((action.Verb != mutationWriteIdentity && action.Verb != mutationWriteOption && action.Verb != mutationWritePresentationOption && action.Verb != mutationRenameWindow) ||
+					!strings.HasPrefix(action.Target.Parent, "controller.identity/") || action.Controller == nil) {
+				return fmt.Errorf("runtime mutation plan: action %q cannot use controller-only explicit standalone authority", action.Verb)
+			}
+			if authority.Class == runtimeMutationRouteApp && routeFlag != "-L" && !(routeFlag == "-S" && routeValue == physical) {
+				return fmt.Errorf("runtime mutation plan: action %q app authority is not bound to its logical route", action.Verb)
+			}
+		} else if physical != runtimeMutationSocketAbsentBeforeCreate {
+			return fmt.Errorf("runtime mutation plan: action %q has no printable server-generation authority", action.Verb)
+		}
 		if action.Guard.Kind != contract.GuardKind || strings.TrimSpace(action.Guard.Expect) == "" {
 			return fmt.Errorf("runtime mutation plan: action %q has a non-canonical guard", action.Verb)
 		}
@@ -596,6 +698,30 @@ func (p runtimeMutationPlan) validate() error {
 }
 
 func validateRuntimeMutationActionShape(action plannedRuntimeMutation) error {
+	requiresController := action.Verb == mutationWriteOption || action.Verb == mutationWritePresentationOption
+	if requiresController && action.Controller == nil {
+		return fmt.Errorf("runtime mutation plan: action %q requires a typed controller declaration", action.Verb)
+	}
+	if action.Controller != nil {
+		if action.Verb != mutationWriteIdentity && action.Verb != mutationWriteOption &&
+			action.Verb != mutationWritePresentationOption && action.Verb != mutationRenameWindow {
+			return fmt.Errorf("runtime mutation plan: action %q cannot carry a controller declaration", action.Verb)
+		}
+		if !strings.HasPrefix(action.Target.Parent, "controller.identity/") {
+			return fmt.Errorf("runtime mutation plan: controller action %q has no controller target namespace", action.Verb)
+		}
+		if err := validateControllerRuntimeMutationPlanAction(action); err != nil {
+			return err
+		}
+	} else if strings.HasPrefix(action.Target.Parent, "controller.identity/") {
+		return fmt.Errorf("runtime mutation plan: controller target %q has no typed declared effect", action.Target.ID)
+	}
+	if action.Verb == mutationWriteStableName {
+		want := []string{"-w", "-t", action.Target.ID, "-q", tmuxopts.WindowName}
+		if len(action.Operands) != len(want)+1 || !slices.Equal(action.Operands[:len(want)], want) || strings.TrimSpace(action.Operands[len(want)]) == "" {
+			return errors.New("runtime mutation plan: Window stable-name declaration disagrees with executable argv")
+		}
+	}
 	if action.Verb == mutationConvergeControlIdentity {
 		if len(action.Operands) != 0 || len(action.Command) != 0 || action.Queue != nil {
 			return errors.New("runtime mutation plan: ControlSession identity convergence carries hidden argv")
@@ -643,18 +769,28 @@ func (p runtimeMutationPlan) withoutEffects(observed map[string]bool) (runtimeMu
 }
 
 func runtimeMutationEffectKey(action plannedRuntimeMutation) string {
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s", action.Verb, action.Target.Socket, action.Target.PhysicalSocket,
-		action.Target.Kind, action.Target.ID, action.Target.UID, action.Target.Parent, strings.Join(action.Operands, "\x1f"), strings.Join(action.Command, "\x1f"))
+	controller := ""
+	if action.Controller != nil {
+		controller = action.Controller.Class + "\x1f" + action.Controller.Mode + "\x1f" + action.Controller.Scope + "\x1f" + action.Controller.Field + "\x1f" + action.Controller.Before + "\x1f" + action.Controller.After
+	}
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s", action.Verb, action.Target.Socket, action.Target.PhysicalSocket,
+		action.Target.RouteAuthority, action.Target.Kind, action.Target.ID, action.Target.UID, action.Target.Parent, strings.Join(action.Operands, "\x1f"), strings.Join(action.Command, "\x1f"), controller)
 }
 
 func runtimeMutationTargetKey(target runtimeMutationTarget) string {
-	return fmt.Sprintf("%s|%s|%s|%s|%s|%s", target.Socket, target.PhysicalSocket, target.Kind, target.ID, target.UID, target.Parent)
+	return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s", target.Socket, target.PhysicalSocket, target.RouteAuthority, target.Kind, target.ID, target.UID, target.Parent)
 }
 
 type runtimeMutationStep struct {
 	Action plannedRuntimeMutation
-	Guard  func(context.Context) error
-	Apply  func(context.Context) error
+	// TargetRouteGuard binds the printable Socket/PhysicalSocket/RouteAuthority
+	// tuple to the captured live server before pre-effect reobservation can
+	// declare a repeat empty. It is distinct from the semantic Guard because
+	// an already-satisfied effect may legitimately no longer have its pre-write
+	// state, while it must still be observed on the same server generation.
+	TargetRouteGuard func(context.Context) error
+	Guard            func(context.Context) error
+	Apply            func(context.Context) error
 	// Reobserve reports whether this exact action's expected effect is present.
 	// It runs once before guards (repeat-empty/replan) and once after execution.
 	// An observation error is unknown authority and therefore permits no write.
@@ -665,7 +801,8 @@ type runtimeMutationStep struct {
 }
 
 // executeRuntimeMutationPlan is the sole
-// plan -> reobserve/replan -> guard -> execute -> reobserve/replan boundary.
+// plan -> target/route guard -> reobserve/replan -> semantic guard -> execute
+// -> reobserve/replan boundary.
 // It validates every printable action, refuses unknown pre-write observation,
 // runs all guards before the first write, and returns only after every expected
 // effect replans to empty. A partial failure unwinds only steps with explicit
@@ -686,6 +823,18 @@ func executeRuntimeMutationPlan(ctx context.Context, steps []runtimeMutationStep
 	}
 	pending := make([]runtimeMutationStep, 0, len(steps))
 	for i := range steps {
+		if steps[i].Action.Target.PhysicalSocket != runtimeMutationSocketAbsentBeforeCreate {
+			if steps[i].TargetRouteGuard == nil {
+				return fmt.Errorf("runtime mutation plan: action %q has no printable target/route guard", steps[i].Action.Verb)
+			}
+			if err := steps[i].TargetRouteGuard(ctx); err != nil {
+				return fmt.Errorf("runtime mutation plan: target/route authority refused action %q before effect observation: %w", steps[i].Action.Verb, err)
+			}
+		} else if steps[i].TargetRouteGuard != nil {
+			if err := steps[i].TargetRouteGuard(ctx); err != nil {
+				return fmt.Errorf("runtime mutation plan: absence authority refused action %q before effect observation: %w", steps[i].Action.Verb, err)
+			}
+		}
 		if steps[i].Reobserve == nil {
 			return fmt.Errorf("runtime mutation plan: action %q has no effect observer", steps[i].Action.Verb)
 		}

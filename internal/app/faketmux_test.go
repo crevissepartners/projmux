@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -48,10 +50,13 @@ type fakeTmux struct {
 	// appMarker is the server-global @projmux_app value. It defaults to the
 	// app-owned marker because every fixture in this package models a server
 	// projmux started; a standalone fixture clears it.
-	appMarker string
+	appMarker    string
+	socketName   string
+	serverAbsent bool
 	// socketPath is what `display-message -p '#{socket_path}'` answers, which
 	// is the controller kernel's socket guard.
 	socketPath string
+	serverPID  string
 	// failAlways keeps the trigger armed. A one-shot trigger cannot model a
 	// query that is simply unavailable -- reconcile reads some inventories more
 	// than once per pass, and the second read would then succeed and hide the
@@ -89,7 +94,7 @@ func newFakeTmuxPane(id string) *fakeTmuxPane {
 }
 
 func newFakeTmux() *fakeTmux {
-	return &fakeTmux{appMarker: "1", socketPath: "/tmp/fake-tmux/default"}
+	return &fakeTmux{appMarker: "1", socketName: defaultAppSocket, socketPath: "/tmp/fake-tmux/default", serverPID: "4242"}
 }
 
 func (f *fakeTmux) mint(prefix string) string {
@@ -229,8 +234,12 @@ func (r *settingsLiveTestRunner) Run(_ context.Context, name string, args ...str
 	}
 	joined := strings.Join(argv, " ")
 	switch {
+	case strings.Contains(joined, "#{socket_path}") && strings.Contains(joined, "#{pid}") && strings.Contains(joined, "#{session_id}"):
+		return []byte(strings.Join([]string{r.socketPath, "4242", "$1", "@1", "%1"}, tmuxRowSep) + "\n"), nil
 	case strings.Contains(joined, "display-message -p -F #{socket_path}"):
 		return []byte(r.socketPath + "\n"), nil
+	case strings.Contains(joined, "display-message -p -F #{pid}"):
+		return []byte("4242\n"), nil
 	case strings.Contains(joined, "show-options -gqv "+tmuxopts.AppGlobal):
 		return []byte("1\n"), nil
 	case strings.Contains(joined, "show-options -gqv "+runtimeMutationSocketNameOption):
@@ -249,7 +258,26 @@ func (r *settingsLiveTestRunner) Run(_ context.Context, name string, args ...str
 }
 
 func wireSettingsLiveTestRunner(cmd *settingsCommand) {
-	cmd.tmuxRunner = &settingsLiveTestRunner{run: cmd.runCommand, output: cmd.runOutput}
+	originalLookup := cmd.lookupEnv
+	path := "/tmp/tmux-test/projmux"
+	if originalLookup != nil {
+		if inherited := strings.TrimSpace(originalLookup("TMUX")); inherited != "" {
+			candidate := strings.Split(inherited, ",")[0]
+			if filepath.IsAbs(candidate) && filepath.Clean(candidate) == candidate {
+				path = candidate
+			}
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case "TMUX":
+					return path + ",4242,0"
+				case runtimeMutationAnchorPaneEnv:
+					return "%1"
+				}
+				return originalLookup(name)
+			}
+		}
+	}
+	cmd.tmuxRunner = &settingsLiveTestRunner{run: cmd.runCommand, output: cmd.runOutput, socketPath: path}
 }
 
 func flagValue(args []string, flag string) string {
@@ -286,10 +314,18 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 	// Explicit runtime mutation routes precede the command with -L/-S. Keep the
 	// recorded argv exact, then dispatch the same server model after the route.
 	if len(args) >= 3 && (args[0] == "-L" || args[0] == "-S") {
-		if args[0] == "-L" && len(args) >= 5 && args[2] == "show-options" && args[len(args)-1] == runtimeMutationSocketNameOption {
-			return []byte(args[1] + "\n"), nil
-		}
 		args = args[2:]
+	}
+	if len(args) >= 3 && args[0] == "-f" {
+		args = args[2:]
+	}
+	if f.serverAbsent && (len(args) == 0 || args[0] != "new-session") {
+		return nil, appTypedCommandFailure{failure: inttmux.CommandFailure{
+			Kind: inttmux.CommandFailureExit, Stderr: "no server running on " + f.socketPath,
+		}}
+	}
+	if len(args) > 0 && args[0] == "new-session" {
+		f.serverAbsent = false
 	}
 	var out []byte
 	var err error
@@ -327,7 +363,15 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 			format = "#{session_name}"
 		}
 		for _, s := range f.sessions {
-			fmt.Fprintf(&b, "%s\n", renderFormat(format, s, nil, nil))
+			var window *fakeTmuxWindow
+			var pane *fakeTmuxPane
+			if len(s.windows) > 0 {
+				window = s.windows[0]
+				if len(window.panes) > 0 {
+					pane = window.panes[0]
+				}
+			}
+			fmt.Fprintf(&b, "%s\n", renderFormat(format, s, window, pane))
 		}
 		if f.afterListSessions != nil {
 			callback := f.afterListSessions
@@ -588,7 +632,7 @@ func (f *fakeTmux) runShowOptions(args []string) ([]byte, error) {
 		return []byte(f.appMarker + "\n"), nil
 	}
 	if option == runtimeMutationSocketNameOption {
-		return []byte(defaultAppSocket + "\n"), nil
+		return []byte(f.socketName + "\n"), nil
 	}
 	return []byte("\n"), nil
 }
@@ -602,10 +646,13 @@ func (f *fakeTmux) runDisplayMessage(args []string) ([]byte, error) {
 		if len(args) > 0 && args[len(args)-1] == "#{socket_path}" {
 			return []byte(f.socketPath + "\n"), nil
 		}
+		if len(args) > 0 && args[len(args)-1] == "#{pid}" {
+			return []byte(f.serverPID + "\n"), nil
+		}
 		return nil, fmt.Errorf("fake tmux: display-message: no target %q", target)
 	}
 	if session, window, pane := f.pane(target); pane != nil {
-		return []byte(renderFormat(format, session, window, pane) + "\n"), nil
+		return []byte(f.renderFormat(format, session, window, pane) + "\n"), nil
 	}
 	if session, window := f.window(target); window != nil {
 		return []byte(renderFormat(format, session, window, nil) + "\n"), nil
@@ -614,6 +661,21 @@ func (f *fakeTmux) runDisplayMessage(args []string) ([]byte, error) {
 		return []byte(renderFormat(format, session, nil, nil) + "\n"), nil
 	}
 	return nil, fmt.Errorf("fake tmux: display-message: no target %q", target)
+}
+
+func (f *fakeTmux) renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindow, pane *fakeTmuxPane) string {
+	fields := strings.Split(format, tmuxRowSepFormat)
+	for index, field := range fields {
+		switch field {
+		case "#{socket_path}":
+			fields[index] = f.socketPath
+		case "#{pid}":
+			fields[index] = f.serverPID
+		default:
+			fields[index] = renderFormat(field, session, window, pane)
+		}
+	}
+	return strings.Join(fields, tmuxRowSepFormat)
 }
 
 func (f *fakeTmux) runSetOption(args []string) ([]byte, error) {
@@ -628,6 +690,23 @@ func (f *fakeTmux) runSetOption(args []string) ([]byte, error) {
 		value = rest[1]
 	}
 	switch {
+	case slices.Contains(args, "-g") || slices.Contains(args, "-gq"):
+		if unset {
+			switch rest[0] {
+			case tmuxopts.AppGlobal:
+				f.appMarker = ""
+			case runtimeMutationSocketNameOption:
+				f.socketName = ""
+			}
+		} else {
+			switch rest[0] {
+			case tmuxopts.AppGlobal:
+				f.appMarker = value
+			case runtimeMutationSocketNameOption:
+				f.socketName = value
+			}
+		}
+		return nil, nil
 	case slices.Contains(args, "-p"):
 		if _, _, pane := f.pane(target); pane != nil {
 			if unset {

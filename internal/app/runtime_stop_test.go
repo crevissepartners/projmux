@@ -31,6 +31,9 @@ func (r *exactManagedStopRunner) Run(_ context.Context, name string, args ...str
 	}
 	switch args[2] {
 	case "display-message":
+		if args[len(args)-1] == "#{pid}" {
+			return []byte("4242\n"), nil
+		}
 		return []byte(r.physical + "\n"), nil
 	case "show-options":
 		switch args[len(args)-1] {
@@ -58,6 +61,7 @@ func TestManagedRuntimeStopUsesOnePrintedPhysicalObservationAndRegistryAuthority
 		Route: runtimeMutationRoute{
 			target: explicitTmuxTarget{flag: "-L", value: defaultAppSocket}, socketName: defaultAppSocket,
 			expectedSocketPath: runner.physical,
+			authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
 		},
 	}
 	authorityReads := 0
@@ -85,6 +89,7 @@ func TestManagedRuntimeStopRegistryAuthorityDriftRefusesBeforeWrite(t *testing.T
 		Route: runtimeMutationRoute{
 			target: explicitTmuxTarget{flag: "-L", value: defaultAppSocket}, socketName: defaultAppSocket,
 			expectedSocketPath: runner.physical,
+			authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
 		},
 	}
 	err := executeManagedRuntimeStop(context.Background(), runner, target,

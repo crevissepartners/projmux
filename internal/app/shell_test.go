@@ -74,7 +74,7 @@ func TestShellWritesAppConfigAndRunsIsolatedTmux(t *testing.T) {
 		"#[bold,fg=colour254,bg=colour60] #('/tmp/proj mux/bin/projmux' internal status project) #[default]",
 		"#{n:window_name}",
 		"#{=/7/...:window_name}",
-		"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} sessionizer-sidebar",
+		"'/tmp/proj mux/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} sessionizer-sidebar",
 		"set -g status 2",
 		"range=user|settings",
 		"range=user|notify",
@@ -1415,6 +1415,20 @@ func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...st
 	}
 	if output, ok := r.outputs[shellTmuxCallKey(name, legacyArgs...)]; ok {
 		return output, nil
+	}
+	if strings.Contains(joined, "display-message") && strings.Contains(joined, "#{socket_path}") && strings.Contains(joined, "#{pid}") {
+		socket := r.observedSocket
+		if socket == "" {
+			socket = "/tmp/tmux-1000/projmux"
+		}
+		sessionID, windowID, paneID := "$1", "@1", "%1"
+		if len(r.leaseMatches) == 1 && len(r.leaseMatches[0]) == 4 {
+			sessionID, windowID, paneID = r.leaseMatches[0][0], r.leaseMatches[0][1], r.leaseMatches[0][2]
+		}
+		return []byte(strings.Join([]string{socket, "4242", sessionID, windowID, paneID, r.operationMarker}, tmuxRowSep) + "\n"), nil
+	}
+	if strings.Contains(joined, "display-message") && strings.Contains(joined, "#{pid}") {
+		return []byte("4242\n"), nil
 	}
 	if strings.Contains(joined, "display-message") && strings.Contains(joined, "#{socket_path}") {
 		if r.socketReadIndex < len(r.socketReads) {

@@ -635,6 +635,7 @@ func (c *tmuxCommand) finishWindowIntent(client, label, output, detail string, a
 
 func deletePaneThroughCanonicalRoute(anchorPaneID string, stdout, stderr io.Writer) error {
 	command := newDeleteCommand()
+	command.routeAnchor = exactTmuxHandle(strings.TrimSpace(anchorPaneID), "%")
 	registry, err := command.store.load()
 	if err != nil {
 		return MapMetadataError(err)
@@ -747,6 +748,22 @@ func (c *tmuxCommand) runPopupToggle(args []string, stderr io.Writer) error {
 
 	ctx := context.Background()
 	popupCtx := c.popupContext(ctx)
+	if mode.AnchorPane != "" {
+		route, routeErr := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, c.runner, c.lookupEnv, mode.AnchorPane)
+		if routeErr != nil {
+			return fmt.Errorf("tmux popup-toggle exact anchor authority: %w", routeErr)
+		}
+		if route.authority == nil || route.authority.PaneID != mode.AnchorPane {
+			return errors.New("tmux popup-toggle exact anchor authority has no matching invocation receipt")
+		}
+		out, observeErr := c.runner.Run(ctx, "tmux", "-S", route.expectedSocketPath, "display-message", "-p", "-t", mode.AnchorPane,
+			"-F", tmuxRowFormat("#{pane_id}", "#S", "#{pane_current_path}"))
+		rows := splitTmuxRows(string(out), 3)
+		if observeErr != nil || len(rows) != 1 || rows[0][0] != mode.AnchorPane {
+			return errors.New("tmux popup-toggle exact anchor containment drifted")
+		}
+		popupCtx.OriginPane, popupCtx.OriginSession, popupCtx.ContextDir = rows[0][0], rows[0][1], rows[0][2]
+	}
 	if mode.ClientKey != "" {
 		popupCtx.ClientKey = sanitizePopupKey(mode.ClientKey)
 		popupCtx.TargetClient = strings.TrimSpace(mode.ClientKey)
@@ -807,6 +824,7 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 	fs := flag.NewFlagSet("tmux popup-toggle", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	clientKey := fs.String("client", "", "tmux client key used to scope the popup marker")
+	anchorPane := fs.String("anchor", "", "exact tmux Pane that originated the popup")
 	if err := fs.Parse(args); err != nil {
 		return tmuxPopupToggleMode{}, err
 	}
@@ -817,21 +835,25 @@ func parseTmuxPopupToggleArgs(args []string, stderr io.Writer) (tmuxPopupToggleM
 
 	raw := strings.TrimSpace(fs.Arg(0))
 	client := strings.TrimSpace(*clientKey)
+	anchor := strings.TrimSpace(*anchorPane)
+	if anchor != "" && exactTmuxHandle(anchor, "%") == "" {
+		return tmuxPopupToggleMode{}, errors.New("tmux popup-toggle --anchor requires an exact %N Pane handle")
+	}
 	if _, ok := popupToggleActionIDForMode(raw); !ok {
 		printTmuxUsage(stderr)
 		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
 	}
 	switch raw {
 	case "session-popup", "sessionizer", "sessionizer-sidebar", "notify-sidebar", "recent-windows", "ai-split-settings", resourceInspectorPopupMode:
-		return tmuxPopupToggleMode{Raw: raw, Canonical: raw, ClientKey: client}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: raw, ClientKey: client, AnchorPane: anchor}, nil
 	case "ai-split-picker-right":
-		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right", ClientKey: client}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "right", ClientKey: client, AnchorPane: anchor}, nil
 	case "ai-split-picker-down":
-		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "down", ClientKey: client}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-picker", Direction: "down", ClientKey: client, AnchorPane: anchor}, nil
 	case "ai-split-resume-right":
-		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "right", ClientKey: client}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "right", ClientKey: client, AnchorPane: anchor}, nil
 	case "ai-split-resume-down":
-		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "down", ClientKey: client}, nil
+		return tmuxPopupToggleMode{Raw: raw, Canonical: "ai-split-resume", Direction: "down", ClientKey: client, AnchorPane: anchor}, nil
 	default:
 		return tmuxPopupToggleMode{}, fmt.Errorf("unknown tmux popup-toggle mode: %s", raw)
 	}
@@ -1346,14 +1368,26 @@ func (c *tmuxCommand) writeRuntimeMutationRouteMarker(ctx context.Context, route
 	socketName := route.socketName
 	expectedPath := route.expectedSocketPath
 	action := newRuntimeMutation(1, mutationWriteRouteMarker, runtimeMutationTarget{
-		Socket: "-L=" + socketName, PhysicalSocket: expectedPath,
-		Kind: "app-server", ID: "socket:" + expectedPath, UID: "logical:" + socketName,
+		Socket: "-S=" + expectedPath, PhysicalSocket: expectedPath,
+		RouteAuthority: route.authority.printable(),
+		Kind:           "app-server", ID: "socket:" + expectedPath, UID: "logical:" + socketName,
 	})
 	bindRuntimeMutationGuard(&action, "source-file succeeded; exact app-owned socket_path="+expectedPath)
-	action.Operands = []string{"-L", socketName, "-gq", runtimeMutationSocketNameOption, socketName}
+	action.Operands = []string{"-S", expectedPath, "-gq", runtimeMutationSocketNameOption, socketName}
 	return executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
+		TargetRouteGuard: func(ctx context.Context) error {
+			if action.Target.Socket != "-S="+route.expectedSocketPath ||
+				action.Target.PhysicalSocket != route.expectedSocketPath || route.authority == nil ||
+				action.Target.RouteAuthority != route.authority.printable() {
+				return errors.New("config route-marker printable authority disagrees with captured route")
+			}
+			return guardConfigApplyRuntimeRoute(ctx, c.runner, route, true, false)
+		},
 		Reobserve: func(ctx context.Context) (bool, error) {
+			if err := guardConfigApplyRuntimeRoute(ctx, c.runner, route, true, false); err != nil {
+				return false, err
+			}
 			current, err := c.runner.Run(ctx, "tmux", "-S", action.Target.PhysicalSocket, "show-options", "-gqv", runtimeMutationSocketNameOption)
 			if err != nil {
 				return false, err
@@ -1385,11 +1419,20 @@ func bindConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner, 
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return runtimeMutationRoute{}, nil, errors.New("config apply route requires one absolute clean physical socket")
 	}
-	route := runtimeMutationRoute{target: target, expectedSocketPath: path, socketName: socketName}
+	exact := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: path}}
+	pidOut, err := exact.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pid}")
+	pid := strings.TrimSpace(string(pidOut))
+	parsedPID, pidErr := strconv.Atoi(pid)
+	if err != nil || pidErr != nil || parsedPID <= 0 {
+		return runtimeMutationRoute{}, nil, errors.New("config apply route requires one exact server generation")
+	}
+	route := runtimeMutationRoute{
+		target: target, expectedSocketPath: path, socketName: socketName,
+		authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: pid},
+	}
 	if err := guardConfigApplyRuntimeRoute(ctx, runner, route, false, false); err != nil {
 		return runtimeMutationRoute{}, nil, err
 	}
-	exact := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: path}}
 	sessions, err := exact.Run(ctx, "tmux", "list-sessions", "-F", "#{session_id}")
 	if err != nil {
 		return runtimeMutationRoute{}, nil, err
@@ -1406,6 +1449,13 @@ func guardConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner,
 	pathOut, err := exact.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 	if err != nil || strings.TrimSpace(string(pathOut)) != route.expectedSocketPath {
 		return errors.New("config apply physical socket drifted")
+	}
+	if route.authority == nil || route.authority.Class != runtimeMutationRouteApp {
+		return errors.New("config apply route has no app server-generation authority")
+	}
+	pidOut, err := exact.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pid}")
+	if err != nil || strings.TrimSpace(string(pidOut)) != route.authority.ServerPID {
+		return errors.New("config apply server generation drifted")
 	}
 	if requireOwned {
 		owned, err := exact.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
@@ -1534,10 +1584,11 @@ func printTmuxUsage(w io.Writer) {
 }
 
 type tmuxPopupToggleMode struct {
-	Raw       string
-	Canonical string
-	Direction string
-	ClientKey string
+	Raw        string
+	Canonical  string
+	Direction  string
+	ClientKey  string
+	AnchorPane string
 }
 
 type tmuxPopupContext struct {
@@ -1702,6 +1753,9 @@ func buildPopupToggleWithStyle(mode tmuxPopupToggleMode, binaryPath, marker stri
 	}
 	commandArgs := []string{}
 	env := map[string]string{}
+	if mode.AnchorPane != "" {
+		env[runtimeMutationAnchorPaneEnv] = mode.AnchorPane
+	}
 	cwd := ""
 
 	switch mode.Raw {
@@ -2418,7 +2472,11 @@ func tmuxWindowUnlinkedHookBody(bin string) string {
 // `#{hook_pane}`; window-unlinked uses exact `#{hook_session}` and
 // `#{hook_window}` for the object being removed.
 func controllerTriggerHookCommand(bin string, reason controllerTriggerReason) string {
-	command := bin + " internal tmux converge --socket-path '#{socket_path}'"
+	// Hook children inherit TMUX from tmux itself, but not a stable TMUX_PANE.
+	// This route already carries tmux-expanded physical socket and event handles;
+	// strip the ambient client variables so the controller cannot mistake an
+	// incomplete inherited receipt for authority or fall back to another Pane.
+	command := "env -u TMUX -u TMUX_PANE " + bin + " internal tmux converge --socket-path '#{socket_path}'"
 	switch reason {
 	case controllerTriggerPaneExited:
 		command += " --reason " + string(reason) + " --hook-pane '#{hook_pane}'"

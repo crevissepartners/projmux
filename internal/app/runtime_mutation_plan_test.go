@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -18,7 +20,9 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -36,22 +40,26 @@ func printableRuntimeMutationInventory() runtimeMutationPlan {
 	verbs := closedRuntimeMutationVerbs()
 	actions := make([]plannedRuntimeMutation, 0, len(verbs))
 	for i, verb := range verbs {
+		authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
 		target := runtimeMutationTarget{
 			Socket: "-L=phase10-inventory", PhysicalSocket: "/tmp/phase10-inventory",
-			Kind: "session", ID: "$1", Parent: "$1/@1/root",
+			RouteAuthority: authority,
+			Kind:           "session", ID: "$1", Parent: "$1/@1/root",
 			UID: "uid:" + string(verb),
 		}
 		action := newRuntimeMutation(i+1, verb, target)
 		switch verb {
 		case mutationCreateSession:
 			action.Target.PhysicalSocket, action.Target.Kind, action.Target.ID = runtimeMutationSocketAbsentBeforeCreate, "project-declaration", "inventory"
-			action.Operands = []string{"-d", "-s", "inventory"}
+			action.Target.RouteAuthority = ""
+			action.Operands = []string{"-f", "/tmp/projmux-inventory.conf", "-d", "-s", "inventory"}
 		case mutationBootstrapControlSession:
 			action.Target.PhysicalSocket, action.Target.Kind, action.Target.ID = runtimeMutationSocketAbsentBeforeCreate, "control-session-declaration", "declaration:-L=phase10-inventory/session=home"
+			action.Target.RouteAuthority = ""
 			action.Operands = []string{"-L", "phase10-inventory", "-f", "/tmp/config", "-d", "-s", "home"}
 		case mutationWriteRouteMarker:
-			action.Target.Kind, action.Target.ID, action.Target.UID = "app-server", "socket:/tmp/phase10-inventory", "logical:phase10-inventory"
-			action.Operands = []string{"-L", "phase10-inventory", "-gq", runtimeMutationSocketNameOption, "phase10-inventory"}
+			action.Target.Socket, action.Target.Kind, action.Target.ID, action.Target.UID = "-S=/tmp/phase10-inventory", "app-server", "socket:/tmp/phase10-inventory", "logical:phase10-inventory"
+			action.Operands = []string{"-S", "/tmp/phase10-inventory", "-gq", runtimeMutationSocketNameOption, "phase10-inventory"}
 		case mutationCreateWindow:
 			action.Operands = []string{"-d", "-t", "$1:"}
 		case mutationCreatePane:
@@ -60,11 +68,25 @@ func printableRuntimeMutationInventory() runtimeMutationPlan {
 		case mutationWriteLayout:
 			action.Target.Kind, action.Target.ID = "pane", "%1"
 			action.Operands = []string{"-t", "%1", "-x", "40"}
-		case mutationKillPane, mutationTombstonePane, mutationRestorePane, mutationWriteIdentity:
+		case mutationKillPane, mutationTombstonePane, mutationRestorePane, mutationWriteIdentity, mutationWriteOption, mutationWritePresentationOption:
 			action.Target.Kind, action.Target.ID = "pane", "%1"
 			action.Operands = []string{"-t", "%1"}
-			if verb == mutationTombstonePane || verb == mutationRestorePane || verb == mutationWriteIdentity {
+			if verb == mutationTombstonePane || verb == mutationRestorePane {
 				action.Operands = append(action.Operands, tmuxopts.PaneUID, action.Target.UID)
+			} else if verb == mutationWriteIdentity || verb == mutationWriteOption || verb == mutationWritePresentationOption {
+				field, class := tmuxopts.PaneUID, controllerRuntimeMutationManaged
+				if verb == mutationWriteOption {
+					field = tmuxopts.PaneName
+				}
+				if verb == mutationWritePresentationOption {
+					field, class = aiPaneStateOption, controllerRuntimeMutationPresentation
+				}
+				action.Operands = []string{"-p", "-t", "%1", "-q", field, action.Target.UID}
+				if verb == mutationWritePresentationOption {
+					action.Operands = []string{"-p", "-t", "%1", field, action.Target.UID}
+				}
+				action.Target.Parent = "controller.identity/window_id=@1"
+				action.Controller = &runtimeMutationControllerEffect{Class: string(class), Mode: controllerRuntimeMutationForward, Scope: string(resourcegraph.ObjectPane), Field: field, After: action.Target.UID}
 			}
 		case mutationKillWindow, mutationRenameWindow:
 			action.Target.Kind, action.Target.ID = "window", "@1"
@@ -72,13 +94,16 @@ func printableRuntimeMutationInventory() runtimeMutationPlan {
 			if verb == mutationRenameWindow {
 				action.Operands = append(action.Operands, "inventory")
 			}
+		case mutationWriteStableName:
+			action.Target.Kind, action.Target.ID = "window", "@1"
+			action.Operands = []string{"-w", "-t", "@1", "-q", tmuxopts.WindowName, "inventory"}
 		case mutationQueuePaneKill:
 			action.Target.Kind, action.Target.ID, action.Target.UID, action.Target.Parent = "pane", "%1", "deleted:pan-1", "$1/@1/root"
-			action.Queue = &runtimeMutationQueuedKill{PhysicalSocket: action.Target.PhysicalSocket, LogicalSocket: "phase10-inventory", ExpectedUID: action.Target.UID, SessionID: "$1", WindowID: "@1"}
+			action.Queue = &runtimeMutationQueuedKill{PhysicalSocket: action.Target.PhysicalSocket, LogicalSocket: "phase10-inventory", RouteAuthority: authority, ExpectedUID: action.Target.UID, SessionID: "$1", WindowID: "@1"}
 			action.Queue.Marker = runtimeMutationQueueMarker(action)
 		case mutationQueueWindowKill:
 			action.Target.Kind, action.Target.ID, action.Target.UID, action.Target.Parent = "window", "@1", "deleted:win-1", "$1/root"
-			action.Queue = &runtimeMutationQueuedKill{PhysicalSocket: action.Target.PhysicalSocket, LogicalSocket: "phase10-inventory", ExpectedUID: action.Target.UID, SessionID: "$1"}
+			action.Queue = &runtimeMutationQueuedKill{PhysicalSocket: action.Target.PhysicalSocket, LogicalSocket: "phase10-inventory", RouteAuthority: authority, ExpectedUID: action.Target.UID, SessionID: "$1"}
 			action.Queue.Marker = runtimeMutationQueueMarker(action)
 		case mutationFinalizeSession:
 			action.Operands = []string{"-t", "$1", finalizeOperationEnvironment, "op"}
@@ -117,10 +142,13 @@ func TestPlanOnlyMutationInventoryIsClosedAndPrintable(t *testing.T) {
 		mutationStopManagedSession,
 		mutationStopUnmanagedSession,
 		mutationWriteIdentity,
+		mutationWriteOption,
+		mutationWritePresentationOption,
 		mutationWriteLayout,
 		mutationWriteLease,
 		mutationWriteProjectAnchor,
 		mutationWriteRouteMarker,
+		mutationWriteStableName,
 	}
 	slices.Sort(want)
 	if got := closedRuntimeMutationVerbs(); !reflect.DeepEqual(got, want) {
@@ -151,6 +179,7 @@ func TestPlanOnlyMutationInventoryIsClosedAndPrintable(t *testing.T) {
 
 func TestPlanOnlyMutationProductSurfaceInventoryIsBidirectionalAndClosed(t *testing.T) {
 	seen := map[string]bool{}
+	byID := map[string]runtimeMutationSurface{}
 	for _, row := range runtimeMutationSurfaces {
 		if row.ID == "" || row.Producer == "" || row.Handler == "" || row.SemanticClass == "" ||
 			row.RootKinds == "" || row.OwnerRoute == "" || row.PlanVerb == "" || row.Guard == "" || row.Effect == "" {
@@ -160,12 +189,13 @@ func TestPlanOnlyMutationProductSurfaceInventoryIsBidirectionalAndClosed(t *test
 			t.Fatalf("duplicate product mutation surface %q", row.ID)
 		}
 		seen[row.ID] = true
+		byID[row.ID] = row
 		if row.Disposition != runtimeMutationSurfacePlanned && row.Disposition != runtimeMutationSurfaceExempt {
 			t.Fatalf("surface %q has open disposition %q", row.ID, row.Disposition)
 		}
 	}
 	for _, required := range []string{
-		"project.materialize", "control.bootstrap", "controller.identity", "pane.canonical-delete", "window.canonical-delete",
+		"project.materialize", "project.bootstrap-route-marker", "control.bootstrap", "controller.identity", "controller.option", "agent.presentation", "codex.native-lifecycle-authority", "pane.canonical-delete", "window.canonical-delete",
 		"public.create-window", "public.create-pane", "project.delete-cascade-pane", "project.delete-cascade-window", "layout.auto-even-split",
 		"startup.shell-project", "startup.sidebar-project", "startup.current-project", "startup.attach-project", "startup.session-picker-project",
 		"pane-menu.split-right", "pane-menu.split-down", "pane-menu.kill", "pane-menu.resume", "pane-menu.swap-up",
@@ -181,6 +211,134 @@ func TestPlanOnlyMutationProductSurfaceInventoryIsBidirectionalAndClosed(t *test
 		if !seen[required] {
 			t.Errorf("closed product inventory is missing %q", required)
 		}
+	}
+	marker := byID["project.bootstrap-route-marker"]
+	if marker.Handler != "materializer.writeCreatedProjectRouteMarker" || marker.PlanVerb != string(mutationWriteRouteMarker) {
+		t.Fatalf("fresh Project route-marker surface does not map bidirectionally to its typed producer: %#v", marker)
+	}
+	presentation := byID["agent.presentation"]
+	if presentation.Disposition != runtimeMutationSurfaceExempt || presentation.PlanVerb != string(mutationWritePresentationOption) ||
+		!strings.Contains(presentation.Guard, "closed topic/manual-topic/state/badge/attention") {
+		t.Fatalf("Agent presentation writes are not exactly classified as a typed exemption: %#v", presentation)
+	}
+	codexAuthority := byID["codex.native-lifecycle-authority"]
+	if codexAuthority.Disposition != runtimeMutationSurfaceExempt ||
+		!strings.Contains(codexAuthority.Guard, "authority, epoch, and bounded reason options only") ||
+		!strings.Contains(codexAuthority.OwnerRoute, "exact Registry Agent/Pane activation") {
+		t.Fatalf("Codex lifecycle authority metadata is not exactly classified: %#v", codexAuthority)
+	}
+	managedOptions := byID["controller.option"]
+	if managedOptions.Disposition != runtimeMutationSurfacePlanned || managedOptions.PlanVerb != string(mutationWriteOption) ||
+		strings.Contains(managedOptions.Effect, "topic") || strings.Contains(managedOptions.Effect, "badge") {
+		t.Fatalf("managed controller option surface absorbed presentation fields: %#v", managedOptions)
+	}
+}
+
+func TestControllerAdapterFieldInventoryIsSourceDerivedAndBidirectional(t *testing.T) {
+	targets := map[string]map[string]bool{
+		"../integrations/metadata/tmuxmirror.go": {
+			"MirrorProject": false, "RebindProject": false, "MirrorWindow": false,
+			"disableAutomaticRename": false, "writeWindowIdentityName": false, "writeWindowDisplayName": false,
+			"MirrorPane": false, "writePaneName": false,
+		},
+		"resource_reconcile_plan.go": {"planResourceAgentProjections": false, "recordWrite": false},
+		"resource_controller.go":     {"controllerRecoveryCandidates": false},
+	}
+	selectorFields := map[string]string{
+		"ProjectUIDSession": tmuxopts.ProjectUIDSession, "ProjectNameSession": tmuxopts.ProjectNameSession,
+		"ProjectPathSession": tmuxopts.ProjectPathSession, "WindowUID": tmuxopts.WindowUID,
+		"AutomaticRenameWindow": tmuxopts.AutomaticRenameWindow, "WindowName": tmuxopts.WindowName,
+		"PaneUID": tmuxopts.PaneUID, "PaneName": tmuxopts.PaneName,
+		"AgentSessionIDPane": tmuxopts.AgentSessionIDPane, "AgentThreadIDPane": tmuxopts.AgentThreadIDPane,
+	}
+	identFields := map[string]string{
+		"aiPaneTopicOption": aiPaneTopicOption, "aiPaneTopicManualOption": aiPaneTopicManualOption,
+		"aiPaneStateOption": aiPaneStateOption, "aiPaneBadgeKindOption": aiPaneBadgeKindOption,
+		"attentionStateOption": attentionStateOption,
+	}
+	discovered := map[string]bool{}
+	for path, functions := range targets {
+		fset := token.NewFileSet()
+		parsed, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse controller producer %s: %v", path, err)
+		}
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			if _, tracked := functions[function.Name.Name]; !tracked {
+				continue
+			}
+			functions[function.Name.Name] = true
+			ast.Inspect(function.Body, func(node ast.Node) bool {
+				switch value := node.(type) {
+				case *ast.SelectorExpr:
+					if pkg, ok := value.X.(*ast.Ident); ok && pkg.Name == "tmuxopts" {
+						if field := selectorFields[value.Sel.Name]; field != "" {
+							discovered[field] = true
+						}
+					}
+				case *ast.Ident:
+					if field := identFields[value.Name]; field != "" {
+						discovered[field] = true
+					}
+				case *ast.BasicLit:
+					if value.Kind == token.STRING {
+						literal, _ := strconv.Unquote(value.Value)
+						if literal == "window_name" {
+							discovered[literal] = true
+						}
+					}
+				}
+				return true
+			})
+		}
+		for function, found := range functions {
+			if !found {
+				t.Errorf("controller producer %s:%s is absent", path, function)
+			}
+		}
+	}
+	wantManaged := map[string]bool{}
+	for _, fields := range controllerRuntimeMutationManagedFields {
+		for _, field := range fields {
+			wantManaged[field] = true
+		}
+	}
+	wantPresentation := map[string]bool{}
+	for _, field := range controllerRuntimeMutationPresentationFields {
+		wantPresentation[field] = true
+	}
+	if len(wantPresentation) != 5 {
+		t.Fatalf("presentation field inventory = %v, want exactly five", controllerRuntimeMutationPresentationFields)
+	}
+	if wantManaged[tmuxopts.SessionRole] || discovered[tmuxopts.SessionRole] {
+		t.Fatal("ControlSession role leaked into the controller adapter; converge-control-identity owns it")
+	}
+	if len(discovered) != len(wantManaged)+len(wantPresentation) {
+		t.Fatalf("source-derived controller fields = %v, managed=%v presentation=%v", discovered, wantManaged, wantPresentation)
+	}
+	for field := range discovered {
+		class, ok := controllerRuntimeMutationFieldClassFor(func() string {
+			switch {
+			case slices.Contains(controllerRuntimeMutationManagedFields["session"], field):
+				return "session"
+			case slices.Contains(controllerRuntimeMutationManagedFields["window"], field):
+				return "window"
+			default:
+				return "pane"
+			}
+		}(), field)
+		if !ok || (wantManaged[field] && class != controllerRuntimeMutationManaged) || (wantPresentation[field] && class != controllerRuntimeMutationPresentation) {
+			t.Errorf("source field %s has class=%q ok=%v", field, class, ok)
+		}
+		delete(wantManaged, field)
+		delete(wantPresentation, field)
+	}
+	if len(wantManaged) != 0 || len(wantPresentation) != 0 {
+		t.Fatalf("synthetic controller grants without a producer: managed=%v presentation=%v", wantManaged, wantPresentation)
 	}
 }
 
@@ -222,6 +380,279 @@ func TestGeneratedCatalogMutationAndNavigationArtifactsHaveOneSurfaceRow(t *test
 	}
 	for id, unmatched := range rows {
 		t.Errorf("surface row catalog.%s x%d has no generated catalog artifact", id, len(unmatched))
+	}
+}
+
+func resolveNativeProjectionString(expr ast.Expr, constants map[string]string) (string, bool) {
+	switch value := expr.(type) {
+	case *ast.BasicLit:
+		if value.Kind != token.STRING {
+			return "", false
+		}
+		resolved, err := strconv.Unquote(value.Value)
+		return resolved, err == nil
+	case *ast.Ident:
+		resolved, ok := constants[value.Name]
+		return resolved, ok
+	case *ast.BinaryExpr:
+		if value.Op != token.ADD {
+			return "", false
+		}
+		left, leftOK := resolveNativeProjectionString(value.X, constants)
+		right, rightOK := resolveNativeProjectionString(value.Y, constants)
+		return left + right, leftOK && rightOK
+	default:
+		return "", false
+	}
+}
+
+func nativeProjectionStringConstants(t *testing.T) map[string]string {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := map[string]ast.Expr{}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+			continue
+		}
+		parsed, err := parser.ParseFile(token.NewFileSet(), entry.Name(), nil, 0)
+		if err != nil {
+			t.Fatalf("parse native projection constant source %s: %v", entry.Name(), err)
+		}
+		for _, declaration := range parsed.Decls {
+			general, ok := declaration.(*ast.GenDecl)
+			if !ok || general.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range general.Specs {
+				values := spec.(*ast.ValueSpec)
+				for index, name := range values.Names {
+					if index < len(values.Values) {
+						pending[name.Name] = values.Values[index]
+					}
+				}
+			}
+		}
+	}
+	constants := map[string]string{}
+	for changed := true; changed; {
+		changed = false
+		for name, expr := range pending {
+			if value, ok := resolveNativeProjectionString(expr, constants); ok {
+				constants[name] = value
+				delete(pending, name)
+				changed = true
+			}
+		}
+	}
+	return constants
+}
+
+func nativeProjectionOptionOperand(args []ast.Expr, constants map[string]string) (ast.Expr, error) {
+	for index := 0; index < len(args); index++ {
+		value, resolved := resolveNativeProjectionString(args[index], constants)
+		if resolved && strings.HasPrefix(value, "-") {
+			if value == "-t" {
+				index++
+				if index >= len(args) {
+					return nil, errors.New("set-option target flag has no target")
+				}
+			}
+			continue
+		}
+		return args[index], nil
+	}
+	return nil, errors.New("set-option argv has no option operand")
+}
+
+func nativeProjectionStructOptionIndex(structure *ast.StructType) (int, bool) {
+	index := 0
+	for _, field := range structure.Fields.List {
+		if len(field.Names) == 0 {
+			index++
+			continue
+		}
+		for _, name := range field.Names {
+			if name.Name == "option" {
+				return index, true
+			}
+			index++
+		}
+	}
+	return 0, false
+}
+
+func extractNativeAgentProjectionOptions(function *ast.FuncDecl, constants map[string]string) (map[string]bool, error) {
+	options := map[string]bool{}
+	var failures []error
+	rowOptionReference := false
+	rowInventory := false
+	addOperand := func(expr ast.Expr) {
+		if selector, ok := expr.(*ast.SelectorExpr); ok && selector.Sel.Name == "option" {
+			rowOptionReference = true
+			return
+		}
+		value, ok := resolveNativeProjectionString(expr, constants)
+		if !ok || !strings.HasPrefix(value, "@") {
+			failures = append(failures, fmt.Errorf("unresolved or non-option set-option operand %T", expr))
+			return
+		}
+		options[value] = true
+	}
+	ast.Inspect(function.Body, func(node ast.Node) bool {
+		switch value := node.(type) {
+		case *ast.CompositeLit:
+			array, ok := value.Type.(*ast.ArrayType)
+			if !ok {
+				return true
+			}
+			if structure, ok := array.Elt.(*ast.StructType); ok {
+				optionIndex, hasOption := nativeProjectionStructOptionIndex(structure)
+				if !hasOption {
+					return true
+				}
+				rowInventory = true
+				for _, element := range value.Elts {
+					row, ok := element.(*ast.CompositeLit)
+					if !ok {
+						failures = append(failures, errors.New("option row is not a closed composite literal"))
+						continue
+					}
+					var operand ast.Expr
+					for index, field := range row.Elts {
+						if keyed, ok := field.(*ast.KeyValueExpr); ok {
+							if key, ok := keyed.Key.(*ast.Ident); ok && key.Name == "option" {
+								operand = keyed.Value
+							}
+						} else if index == optionIndex {
+							operand = field
+						}
+					}
+					if operand == nil {
+						failures = append(failures, errors.New("option row has no option operand"))
+						continue
+					}
+					addOperand(operand)
+				}
+				return true
+			}
+			if identifier, ok := array.Elt.(*ast.Ident); ok && identifier.Name == "string" && len(value.Elts) > 0 {
+				if first, ok := resolveNativeProjectionString(value.Elts[0], constants); ok && first == "set-option" {
+					operand, err := nativeProjectionOptionOperand(value.Elts[1:], constants)
+					if err != nil {
+						failures = append(failures, err)
+					} else {
+						addOperand(operand)
+					}
+				}
+			}
+		case *ast.CallExpr:
+			for index := 0; index+1 < len(value.Args); index++ {
+				first, firstOK := resolveNativeProjectionString(value.Args[index], constants)
+				second, secondOK := resolveNativeProjectionString(value.Args[index+1], constants)
+				if !firstOK || !secondOK || first != "tmux" || second != "set-option" {
+					continue
+				}
+				operand, err := nativeProjectionOptionOperand(value.Args[index+2:], constants)
+				if err != nil {
+					failures = append(failures, err)
+				} else {
+					addOperand(operand)
+				}
+				break
+			}
+		}
+		return true
+	})
+	if rowOptionReference && !rowInventory {
+		failures = append(failures, errors.New("dynamic field.option operand has no closed option row inventory"))
+	}
+	return options, errors.Join(failures...)
+}
+
+func TestNativeAgentProjectionWriterFieldInventoryIsClosed(t *testing.T) {
+	targets := map[string]map[string][]string{
+		"agent_interaction.go": {
+			"WriteTopic":       {aiPaneTopicOption, aiPaneTopicManualOption},
+			"WriteInteraction": {aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption},
+		},
+		"ai_ingest_codex.go": {
+			"applyCodexHookSemanticDelivery": {aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption},
+		},
+		"ai_ingest_codex_native.go": {
+			"SetAuthority":                      {aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption},
+			"Apply":                             {aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption},
+			"startNativeCodexLifecycleObserver": {aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption},
+		},
+	}
+	constants := nativeProjectionStringConstants(t)
+	for path, functions := range targets {
+		parsed, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse native Agent projection producer %s: %v", path, err)
+		}
+		found := map[string]bool{}
+		for _, declaration := range parsed.Decls {
+			function, ok := declaration.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			want, tracked := functions[function.Name.Name]
+			if !tracked {
+				continue
+			}
+			found[function.Name.Name] = true
+			got, err := extractNativeAgentProjectionOptions(function, constants)
+			if err != nil {
+				t.Errorf("native Agent projection %s:%s is not closed: %v", path, function.Name.Name, err)
+				continue
+			}
+			slices.Sort(want)
+			gotFields := make([]string, 0, len(got))
+			for option := range got {
+				gotFields = append(gotFields, option)
+			}
+			slices.Sort(gotFields)
+			if !slices.Equal(gotFields, want) {
+				t.Errorf("native Agent projection %s:%s fields=%v, want %v", path, function.Name.Name, gotFields, want)
+			}
+		}
+		for function := range functions {
+			if !found[function] {
+				t.Errorf("native Agent projection producer %s:%s is absent", path, function)
+			}
+		}
+	}
+}
+
+func TestNativeAgentProjectionOptionExtractorRejectsInventoryExpansionAndDynamicOperands(t *testing.T) {
+	constants := map[string]string{"knownOption": "@known", "extraOption": "@extra"}
+	for _, test := range []struct {
+		name      string
+		source    string
+		wantExtra bool
+		wantError bool
+	}{
+		{"extra identifier", `package app; func mutate() { for _, field := range []struct{ option, value string }{{knownOption, "x"}, {extraOption, "y"}} { _ = []string{"set-option", "-p", "-t", "%1", field.option, field.value} } }`, true, false},
+		{"extra literal", `package app; func mutate() { run("tmux", "set-option", "-p", "-t", "%1", "@extra", "x") }`, true, false},
+		{"dynamic operand", `package app; func mutate(option string) { run("tmux", "set-option", "-p", "-t", "%1", option, "x") }`, false, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			parsed, err := parser.ParseFile(token.NewFileSet(), "mutation.go", test.source, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			function := parsed.Decls[0].(*ast.FuncDecl)
+			got, err := extractNativeAgentProjectionOptions(function, constants)
+			if (err != nil) != test.wantError {
+				t.Fatalf("extract error = %v, want error=%v", err, test.wantError)
+			}
+			if got["@extra"] != test.wantExtra {
+				t.Fatalf("extra option detected=%v, want %v (fields=%v)", got["@extra"], test.wantExtra, got)
+			}
+		})
 	}
 }
 
@@ -421,6 +852,15 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 		},
 	}
 	for kind, rendered := range configs {
+		wantConverge := 3
+		if strings.HasPrefix(kind, "app") {
+			wantConverge = 5
+		}
+		convergeCount := strings.Count(rendered, "internal tmux converge")
+		unsetCount := strings.Count(rendered, "env -u TMUX -u TMUX_PANE '/usr/local/bin/projmux' internal tmux converge")
+		if convergeCount != wantConverge || unsetCount != convergeCount {
+			t.Errorf("%s generated config has converge=%d direct-env-unset=%d, want every one of %d controller hooks to discard incomplete ambient authority", kind, convergeCount, unsetCount, wantConverge)
+		}
 		for id, signature := range requiredArtifacts {
 			want := expectedArtifactCounts[kind][id]
 			if got := strings.Count(rendered, signature); got != want {
@@ -603,10 +1043,11 @@ func TestAIBellIntegrationOwnsRunnerLifecycleTransport(t *testing.T) {
 }
 
 func TestPropertyPlannedRuntimeMutationIsGuardedOrderedAndIdempotent(t *testing.T) {
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
 	actions := []plannedRuntimeMutation{
-		newRuntimeMutation(3, mutationWriteLayout, runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", Kind: "pane", ID: "%3", UID: "pan-3"}),
-		newRuntimeMutation(1, mutationWriteLease, runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", Kind: "session", ID: "$1", UID: "prj-1"}),
-		newRuntimeMutation(2, mutationCreatePane, runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", Kind: "pane", ID: "%2", UID: "pan-2"}),
+		newRuntimeMutation(3, mutationWriteLayout, runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "pane", ID: "%3", UID: "pan-3"}),
+		newRuntimeMutation(1, mutationWriteLease, runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "session", ID: "$1", UID: "prj-1"}),
+		newRuntimeMutation(2, mutationCreatePane, runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "pane", ID: "%2", UID: "pan-2"}),
 	}
 	actions[0].Operands = []string{"-t", "%3", "-x", "40"}
 	actions[1].Operands = []string{"-t", "$1", createOperationEnvironment, "op-property"}
@@ -625,9 +1066,9 @@ func TestPropertyPlannedRuntimeMutationIsGuardedOrderedAndIdempotent(t *testing.
 
 	writes := 0
 	guardFailure := []runtimeMutationStep{
-		{Action: actions[2], Reobserve: func(context.Context) (bool, error) { return false, nil }, Guard: func(context.Context) error { return errPropertyDrift }, Apply: func(context.Context) error { writes++; return nil }},
-		{Action: actions[0], Reobserve: func(context.Context) (bool, error) { return false, nil }, Guard: func(context.Context) error { return nil }, Apply: func(context.Context) error { writes++; return nil }},
-		{Action: actions[1], Reobserve: func(context.Context) (bool, error) { return false, nil }, Guard: func(context.Context) error { return nil }, Apply: func(context.Context) error { writes++; return nil }},
+		{Action: actions[2], TargetRouteGuard: func(context.Context) error { return nil }, Reobserve: func(context.Context) (bool, error) { return false, nil }, Guard: func(context.Context) error { return errPropertyDrift }, Apply: func(context.Context) error { writes++; return nil }},
+		{Action: actions[0], TargetRouteGuard: func(context.Context) error { return nil }, Reobserve: func(context.Context) (bool, error) { return false, nil }, Guard: func(context.Context) error { return nil }, Apply: func(context.Context) error { writes++; return nil }},
+		{Action: actions[1], TargetRouteGuard: func(context.Context) error { return nil }, Reobserve: func(context.Context) (bool, error) { return false, nil }, Guard: func(context.Context) error { return nil }, Apply: func(context.Context) error { writes++; return nil }},
 	}
 	if err := executeRuntimeMutationPlan(context.Background(), guardFailure); err == nil || !strings.Contains(err.Error(), "before first write") {
 		t.Fatalf("guard drift error = %v", err)
@@ -641,9 +1082,10 @@ func TestPropertyPlannedRuntimeMutationIsGuardedOrderedAndIdempotent(t *testing.
 	for _, action := range actions {
 		order := action.Order
 		step := runtimeMutationStep{
-			Action:    action,
-			Reobserve: func(context.Context) (bool, error) { return false, nil },
-			Guard:     func(context.Context) error { return nil },
+			Action:           action,
+			TargetRouteGuard: func(context.Context) error { return nil },
+			Reobserve:        func(context.Context) (bool, error) { return false, nil },
+			Guard:            func(context.Context) error { return nil },
 			Apply: func(context.Context) error {
 				applied = append(applied, order)
 				if order == 3 {
@@ -672,7 +1114,8 @@ func TestPropertyPlannedRuntimeMutationIsGuardedOrderedAndIdempotent(t *testing.
 	success := make([]runtimeMutationStep, 0, len(actions))
 	for _, action := range actions {
 		success = append(success, runtimeMutationStep{
-			Action: action,
+			Action:           action,
+			TargetRouteGuard: func(context.Context) error { return nil },
 			Reobserve: func(context.Context) (bool, error) {
 				return observed[runtimeMutationEffectKey(action)], nil
 			},
@@ -736,7 +1179,7 @@ func TestMaterializerOptionEffectUsesTmuxCanonicalBooleanWithoutAcceptingUnknown
 
 func TestRuntimeMutationArgvBindsPrintableTargetToExecutableOperand(t *testing.T) {
 	action := newRuntimeMutation(1, mutationKillPane, runtimeMutationTarget{
-		Socket: "-L=property", PhysicalSocket: "/tmp/property", Kind: "pane", ID: "%1", UID: "pan-1", Parent: "$1/@1",
+		Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: "app:pid=4242/session=/window=/pane=", Kind: "pane", ID: "%1", UID: "pan-1", Parent: "$1/@1",
 	})
 	action.Operands = []string{"-t", "%2"}
 	if _, err := newRuntimeMutationPlan(action).printableBytes(); err == nil || !strings.Contains(err.Error(), "does not match printable target") {
@@ -747,7 +1190,7 @@ func TestRuntimeMutationArgvBindsPrintableTargetToExecutableOperand(t *testing.T
 	}
 
 	layout := newRuntimeMutation(1, mutationWriteLayout, runtimeMutationTarget{
-		Socket: "-L=property", PhysicalSocket: "/tmp/property", Kind: "pane", ID: "%3", UID: "layout:%3", Parent: "@1",
+		Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: "app:pid=4242/session=/window=/pane=", Kind: "pane", ID: "%3", UID: "layout:%3", Parent: "@1",
 	})
 	layout.Operands = []string{"-t", "%3", "-x", "40"}
 	argv, err := runtimeMutationArgv(layout)
@@ -800,21 +1243,23 @@ func TestRuntimeMutationArgvRejectsDuplicateTargetRouteAndSeparatorOperands(t *t
 }
 
 func TestRuntimeMutationPlanRejectsMalformedLaterActionBeforeFirstWrite(t *testing.T) {
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
 	first := newRuntimeMutation(1, mutationKillPane, runtimeMutationTarget{
-		Socket: "-L=property", PhysicalSocket: "/tmp/property", Kind: "pane", ID: "%7", UID: "pan-7",
+		Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "pane", ID: "%7", UID: "pan-7",
 	})
 	first.Operands = []string{"-t", "%7"}
 	malformed := newRuntimeMutation(2, mutationKillWindow, runtimeMutationTarget{
-		Socket: "-L=property", PhysicalSocket: "/tmp/property", Kind: "window", ID: "@8", UID: "win-8",
+		Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority, Kind: "window", ID: "@8", UID: "win-8",
 	})
 	malformed.Operands = []string{"-t", "@8", "-t", "@9"}
 	writes := 0
 	step := func(action plannedRuntimeMutation) runtimeMutationStep {
 		return runtimeMutationStep{
-			Action:    action,
-			Reobserve: func(context.Context) (bool, error) { return false, nil },
-			Guard:     func(context.Context) error { return nil },
-			Apply:     func(context.Context) error { writes++; return nil },
+			Action:           action,
+			TargetRouteGuard: func(context.Context) error { return nil },
+			Reobserve:        func(context.Context) (bool, error) { return false, nil },
+			Guard:            func(context.Context) error { return nil },
+			Apply:            func(context.Context) error { writes++; return nil },
 		}
 	}
 	if err := executeRuntimeMutationPlan(context.Background(), []runtimeMutationStep{step(first), step(malformed)}); err == nil {
@@ -825,13 +1270,39 @@ func TestRuntimeMutationPlanRejectsMalformedLaterActionBeforeFirstWrite(t *testi
 	}
 }
 
+func TestRuntimeMutationPlanGuardsPrintableRouteBeforeRepeatEmptyObservation(t *testing.T) {
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
+	action := newRuntimeMutation(1, mutationKillPane, runtimeMutationTarget{
+		Socket: "-L=property", PhysicalSocket: "/tmp/property", RouteAuthority: authority,
+		Kind: "pane", ID: "%7", UID: "pan-7",
+	})
+	action.Operands = []string{"-t", "%7"}
+	observations, writes := 0, 0
+	err := executeRuntimeMutationPlan(context.Background(), []runtimeMutationStep{{
+		Action: action,
+		TargetRouteGuard: func(context.Context) error {
+			return errors.New("printed server generation drifted")
+		},
+		Reobserve: func(context.Context) (bool, error) { observations++; return true, nil },
+		Guard:     func(context.Context) error { return nil },
+		Apply:     func(context.Context) error { writes++; return nil },
+	}})
+	if err == nil || !strings.Contains(err.Error(), "before effect observation") {
+		t.Fatalf("printable route refusal = %v", err)
+	}
+	if observations != 0 || writes != 0 {
+		t.Fatalf("authority refusal observations/writes = %d/%d, want 0/0", observations, writes)
+	}
+}
+
 func TestQueuedMutationBindsPrintableRouteContainmentAndConditionalCleanup(t *testing.T) {
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}).printable()
 	action := newRuntimeMutation(1, mutationQueuePaneKill, runtimeMutationTarget{
-		Socket: "-L=property", PhysicalSocket: "/tmp/property.sock", Kind: "pane",
+		Socket: "-L=property", PhysicalSocket: "/tmp/property.sock", RouteAuthority: authority, Kind: "pane",
 		ID: "%7", UID: "deleted:pan-7", Parent: "$1/@2/prj-1",
 	})
 	action.Queue = &runtimeMutationQueuedKill{
-		PhysicalSocket: "/tmp/property.sock", LogicalSocket: "property", ExpectedUID: "deleted:pan-7",
+		PhysicalSocket: "/tmp/property.sock", LogicalSocket: "property", RouteAuthority: authority, ExpectedUID: "deleted:pan-7",
 		SessionID: "$1", WindowID: "@2",
 	}
 	action.Queue.Marker = runtimeMutationQueueMarker(action)
@@ -840,7 +1311,7 @@ func TestQueuedMutationBindsPrintableRouteContainmentAndConditionalCleanup(t *te
 		t.Fatal(err)
 	}
 	joined := strings.Join(argv, " ")
-	for _, want := range []string{"set-environment -g", "run-shell -b", "tmux' -S '/tmp/property.sock'", tmuxopts.AppGlobal, runtimeMutationSocketNameOption, "if-shell -F", "#{E:" + action.Queue.Marker + "}", action.Queue.ExpectedUID, "set-environment -gu"} {
+	for _, want := range []string{"set-environment -g", "run-shell -b", "tmux' -S '/tmp/property.sock'", "#{pid}", "4242", tmuxopts.AppGlobal, runtimeMutationSocketNameOption, "if-shell -F", "#{E:" + action.Queue.Marker + "}", action.Queue.ExpectedUID, "set-environment -gu"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("queued typed argv = %q, want conditional exact-route fragment %q", joined, want)
 		}
@@ -884,6 +1355,48 @@ func TestQueuedMutationBindsPrintableRouteContainmentAndConditionalCleanup(t *te
 	}
 }
 
+func TestQueuedStandaloneMutationPinsPrintableServerPIDAndBlankRouteClass(t *testing.T) {
+	authority := (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteStandalone, ServerPID: "4242", SessionID: "$1", WindowID: "@2", PaneID: "%8"}).printable()
+	action := newRuntimeMutation(1, mutationQueuePaneKill, runtimeMutationTarget{
+		Socket: "-S=/tmp/standalone.sock", PhysicalSocket: "/tmp/standalone.sock", RouteAuthority: authority,
+		Kind: "pane", ID: "%8", UID: "deleted:pan-8", Parent: "$1/@2/prj-1",
+	})
+	action.Queue = &runtimeMutationQueuedKill{
+		PhysicalSocket: "/tmp/standalone.sock", RouteAuthority: authority, ExpectedUID: action.Target.UID,
+		SessionID: "$1", WindowID: "@2",
+	}
+	action.Queue.Marker = runtimeMutationQueueMarker(action)
+	argv, err := runtimeMutationArgv(action)
+	if err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(argv, " ")
+	for _, want := range []string{"tmux' -S '/tmp/standalone.sock'", "#{pid}", "4242", tmuxopts.AppGlobal, runtimeMutationSocketNameOption} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("standalone queued argv = %q, want %q", joined, want)
+		}
+	}
+	if strings.Contains(joined, tmuxopts.AppGlobal+"},1") || strings.Contains(joined, runtimeMutationSocketNameOption+"},"+defaultAppSocket) {
+		t.Fatalf("standalone queued argv smuggled app-owned route authority: %q", joined)
+	}
+
+	for _, mutate := range []func(*plannedRuntimeMutation){
+		func(candidate *plannedRuntimeMutation) { candidate.Queue.RouteAuthority = "" },
+		func(candidate *plannedRuntimeMutation) { candidate.Target.Socket = "-L=projmux" },
+		func(candidate *plannedRuntimeMutation) {
+			candidate.Queue.RouteAuthority = (&runtimeMutationRouteAuthority{Class: runtimeMutationRouteStandalone, ServerPID: "9999", SessionID: "$1", WindowID: "@2", PaneID: "%8"}).printable()
+		},
+	} {
+		candidate := action
+		queue := *action.Queue
+		candidate.Queue = &queue
+		mutate(&candidate)
+		if _, err := runtimeMutationArgv(candidate); err == nil {
+			t.Fatalf("standalone queued mutation accepted authority mismatch: %#v", candidate)
+		}
+	}
+}
+
 func TestRuntimeMutationArgvBindsCreateSessionDeclaration(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -893,10 +1406,10 @@ func TestRuntimeMutationArgvBindsCreateSessionDeclaration(t *testing.T) {
 	}{
 		{name: "project mismatch", verb: mutationCreateSession,
 			target: runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: runtimeMutationSocketAbsentBeforeCreate, Kind: "project-declaration", ID: "project-a", UID: "prj-a"},
-			args:   []string{"-d", "-s", "project-b"}},
+			args:   []string{"-f", "/tmp/project-a.conf", "-d", "-s", "project-b"}},
 		{name: "project duplicate", verb: mutationCreateSession,
 			target: runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: runtimeMutationSocketAbsentBeforeCreate, Kind: "project-declaration", ID: "project-a", UID: "prj-a"},
-			args:   []string{"-d", "-s", "project-a", "-s", "project-a"}},
+			args:   []string{"-f", "/tmp/project-a.conf", "-d", "-s", "project-a", "-s", "project-a"}},
 		{name: "control mismatch", verb: mutationBootstrapControlSession,
 			target: runtimeMutationTarget{Socket: "-L=property", PhysicalSocket: runtimeMutationSocketAbsentBeforeCreate, Kind: "control-session-declaration", ID: "declaration:-L=property/session=home"},
 			args:   []string{"-L", "property", "-f", "/tmp/config", "-d", "-s", "foreign"}},
@@ -912,13 +1425,24 @@ func TestRuntimeMutationArgvBindsCreateSessionDeclaration(t *testing.T) {
 	action := newRuntimeMutation(1, mutationCreateSession, runtimeMutationTarget{
 		Socket: "-L=property", PhysicalSocket: runtimeMutationSocketAbsentBeforeCreate, Kind: "project-declaration", ID: "project-a", UID: "prj-a",
 	})
-	action.Operands = []string{"-d", "-s", "project-a"}
+	action.Operands = []string{"-f", "/tmp/project-a.conf", "-d", "-s", "project-a"}
 	argv, err := runtimeMutationArgv(action)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"new-session", "-d", "-s", "project-a"}; !reflect.DeepEqual(argv, want) {
+	if want := []string{"-f", "/tmp/project-a.conf", "new-session", "-d", "-s", "project-a"}; !reflect.DeepEqual(argv, want) {
 		t.Fatalf("typed create argv = %v, want %v", argv, want)
+	}
+
+	for _, malformed := range [][]string{
+		{"-d", "-s", "project-a", "-f"},
+		{"-f", "/tmp/project-a.conf", "-f", "/tmp/other.conf", "-d", "-s", "project-a"},
+		{"-d", "-f", "/tmp/project-a.conf", "-s", "project-a"},
+	} {
+		action.Operands = malformed
+		if _, err := runtimeMutationArgv(action); err == nil {
+			t.Fatalf("typed create accepted malformed config operands: %#v", malformed)
+		}
 	}
 }
 
@@ -942,6 +1466,11 @@ func TestRuntimeMutationArgvBindsBootstrapAndRouteMarkerToPrintableRoute(t *test
 	if _, err := runtimeMutationArgv(marker); err == nil || !strings.Contains(err.Error(), "logical identity") {
 		t.Fatalf("route-marker logical mismatch error = %v", err)
 	}
+	marker.Operands = []string{"-gq", "-L", "app", runtimeMutationSocketNameOption, "app"}
+	if _, err := runtimeMutationArgv(marker); err == nil || !strings.Contains(err.Error(), "leading exact operand pair") {
+		t.Fatalf("misplaced route-marker pair error = %v", err)
+	}
+	marker.Operands = []string{"-L", "app", "-gq", runtimeMutationSocketNameOption, "other"}
 	marker.Operands[len(marker.Operands)-1] = "app"
 	argv, err := runtimeMutationArgv(marker)
 	if err != nil {
@@ -1016,7 +1545,10 @@ func TestMaterializerSocketDriftRefusesBeforeFirstWrite(t *testing.T) {
 	session := server.addSession("drift")
 	runtime := &materializer{
 		runner: server, mirror: intmetadata.NewMirror(server), sessions: sessions,
-		target: explicitTmuxTarget{flag: "-S", value: server.socketPath},
+		target:             explicitTmuxTarget{flag: "-S", value: server.socketPath},
+		expectedSocketPath: server.socketPath,
+		socketName:         defaultAppSocket,
+		routeAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
 	}
 	server.calls = nil
 	server.socketPath = "/tmp/fake-tmux/foreign"
@@ -1029,6 +1561,175 @@ func TestMaterializerSocketDriftRefusesBeforeFirstWrite(t *testing.T) {
 			t.Fatalf("socket drift reached runtime write: %#v", server.calls)
 		}
 	}
+}
+
+func TestMaterializerAbsentDeclarationRefusesServerAppearingBeforeWrite(t *testing.T) {
+	server := newFakeTmux()
+	server.addSession("appeared")
+	runtime := &materializer{
+		runner: server,
+		target: explicitTmuxTarget{flag: "-L", value: defaultAppSocket},
+	}
+	action := materializeMutationAction(mutationCreateSession, runtime.boundMutationTarget(
+		"project-declaration", "appeared", "prj-appeared",
+	), "unique Project declaration", "exact atomic create result",
+		"-f", "/tmp/projmux-generated.conf", "-d", "-s", "appeared")
+	writes := 0
+	err := executeRuntimeMutationPlan(context.Background(), []runtimeMutationStep{{
+		Action:           action,
+		TargetRouteGuard: runtime.targetRouteGuard(action),
+		Reobserve:        func(context.Context) (bool, error) { return false, nil },
+		Guard:            func(context.Context) error { return nil },
+		Apply:            func(context.Context) error { writes++; return nil },
+	}})
+	if err == nil || !strings.Contains(err.Error(), "absent-before-create server appeared after planning") {
+		t.Fatalf("appeared-server plan error = %v", err)
+	}
+	if writes != 0 {
+		t.Fatalf("appeared-server plan writes = %d, want 0", writes)
+	}
+}
+
+func TestMaterializerUnsetIdentityRequiresReadableOwnedTargetBeforeReplan(t *testing.T) {
+	newFixture := func(t *testing.T, ownerUID string) (*materializer, *fakeTmux, string) {
+		t.Helper()
+		server := newFakeTmux()
+		session := server.addSession("identity-unset")
+		session.opts[tmuxopts.ProjectUIDSession] = "prj-identity"
+		session.windows[0].opts[tmuxopts.WindowUID] = "win-identity"
+		pane := session.windows[0].panes[0]
+		pane.opts[tmuxopts.PaneUID] = ownerUID
+		target := explicitTmuxTarget{flag: "-S", value: server.socketPath}
+		return &materializer{
+			runner: explicitTmuxRunner{runner: server, target: target},
+			target: target, expectedSocketPath: server.socketPath,
+			socketName:     defaultAppSocket,
+			routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
+		}, server, pane.id
+	}
+	assertZeroWrites := func(t *testing.T, server *fakeTmux) {
+		t.Helper()
+		for _, call := range server.calls {
+			if slices.Contains(call, "set-option") || slices.Contains(call, "rename-window") {
+				t.Fatalf("unset identity refusal reached a write: %#v", server.calls)
+			}
+		}
+	}
+
+	t.Run("unreadable option is unknown", func(t *testing.T) {
+		const uid = "pan-identity"
+		runtime, server, paneID := newFixture(t, uid)
+		server.fail = []string{"display-message", "-t", paneID, "#{" + aiPaneTopicOption + "}"}
+		server.failMessage = "identity option observation unavailable"
+		err := runtime.runIdentityWrites(context.Background(), "pane", paneID, uid, []identityPlanWrite{{
+			operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption},
+			effect:   "legacy AI topic projection absent",
+		}})
+		if err == nil || !strings.Contains(err.Error(), "observation unknown before first write") ||
+			!strings.Contains(err.Error(), "identity option observation unavailable") {
+			t.Fatalf("unreadable unset observation = %v", err)
+		}
+		assertZeroWrites(t, server)
+	})
+
+	t.Run("absent option on recycled foreign uid refuses", func(t *testing.T) {
+		runtime, server, paneID := newFixture(t, "pan-recycled-foreign")
+		err := runtime.runIdentityWrites(context.Background(), "pane", paneID, "pan-identity", []identityPlanWrite{{
+			operands: []string{"-p", "-u", "-t", paneID, aiPaneTopicOption},
+			effect:   "legacy AI topic projection absent",
+		}})
+		if err == nil || !strings.Contains(err.Error(), "foreign uid \"pan-recycled-foreign\", want \"pan-identity\"") {
+			t.Fatalf("recycled foreign unset observation = %v", err)
+		}
+		assertZeroWrites(t, server)
+	})
+}
+
+func TestMaterializerReceiptBearingMatchingEffectsStillRequireExactInvariant(t *testing.T) {
+	newFixture := func() (*materializer, *fakeTmux, *fakeSessionMaterializer, intmux.NewSessionResult) {
+		server := newFakeTmux()
+		session := server.addSession("receipt")
+		result := intmux.NewSessionResult{
+			Created: true, SessionID: session.id,
+			WindowID: session.windows[0].id, PaneID: session.windows[0].panes[0].id,
+		}
+		target := explicitTmuxTarget{flag: "-S", value: server.socketPath}
+		sessions := &fakeSessionMaterializer{tmux: server}
+		return &materializer{
+			runner: explicitTmuxRunner{runner: server, target: target}, sessions: sessions,
+			target: target, expectedSocketPath: server.socketPath,
+			socketName:     defaultAppSocket,
+			routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
+		}, server, sessions, result
+	}
+	assertNoWrite := func(t *testing.T, server *fakeTmux) {
+		t.Helper()
+		for _, call := range server.calls {
+			if slices.Contains(call, "set-option") || slices.Contains(call, "set-environment") || slices.Contains(call, "rename-window") {
+				t.Fatalf("receipt refusal reached a write: %#v", server.calls)
+			}
+		}
+	}
+
+	t.Run("matching Project path cannot skip mismatched create receipt", func(t *testing.T) {
+		runtime, server, _, result := newFixture()
+		session := server.session(result.SessionID)
+		session.opts[inttmux.ProjectPathSessionOption] = "/work/receipt"
+		session.env[createOperationEnvironment] = "newer-operation"
+		server.calls = nil
+		project := coremetadata.Project{
+			Metadata: coremetadata.ObjectMeta{UID: "prj-receipt", Name: "receipt"},
+			Spec:     coremetadata.ProjectSpec{Root: "/work/receipt"},
+		}
+		err := runtime.writeCreatedProjectAnchor(context.Background(), result, project, "op-receipt")
+		if err == nil || !strings.Contains(err.Error(), "created Project tuple or operation lease drifted") {
+			t.Fatalf("matching path with wrong receipt = %v", err)
+		}
+		assertNoWrite(t, server)
+	})
+
+	t.Run("matching finalize marker cannot skip mismatched create receipt", func(t *testing.T) {
+		runtime, server, sessions, result := newFixture()
+		session := server.session(result.SessionID)
+		session.env[createOperationEnvironment] = "newer-operation"
+		session.env[finalizeOperationEnvironment] = "op-receipt"
+		startupCalls := 0
+		sessions.startup = func() { startupCalls++ }
+		server.calls = nil
+		err := runtime.finalizeSessionStartup(context.Background(), result, "receipt", "/work/receipt", newRuntimeLedger("op-receipt"))
+		if err == nil || !strings.Contains(err.Error(), "create-operation lease changed") {
+			t.Fatalf("matching finalize marker with wrong receipt = %v", err)
+		}
+		if startupCalls != 0 {
+			t.Fatalf("mismatched finalize receipt ran startup %d times", startupCalls)
+		}
+		assertNoWrite(t, server)
+	})
+
+	t.Run("matching create marker without atomic result cannot replan empty", func(t *testing.T) {
+		runtime, server, _, result := newFixture()
+		server.session(result.SessionID).env[createOperationEnvironment] = "op-receipt"
+		action := materializeMutationAction(mutationCreateSession,
+			runtime.boundMutationTarget("project-declaration", "receipt", "prj-receipt"),
+			"unique Project declaration", "exact atomic create result",
+			"-d", "-P", "-F", tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}"),
+			"-s", "receipt", "-e", createOperationEnvironment+"=op-receipt")
+		guardCalls, applyCalls := 0, 0
+		err := runtime.runMaterializeMutation(context.Background(), action, func() error {
+			guardCalls++
+			return errors.New("existing declaration refuses create")
+		}, func() error {
+			applyCalls++
+			return nil
+		}, func(context.Context) (bool, error) { return false, nil })
+		if err == nil || !strings.Contains(err.Error(), "existing declaration refuses create") {
+			t.Fatalf("matching marker without receipt = %v", err)
+		}
+		if guardCalls != 1 || applyCalls != 0 {
+			t.Fatalf("create without receipt guard/apply = %d/%d, want 1/0", guardCalls, applyCalls)
+		}
+		assertNoWrite(t, server)
+	})
 }
 
 func TestMaterializerFirstSessionBindsPhysicalRouteBeforeFollowUpWrites(t *testing.T) {
@@ -1065,6 +1766,251 @@ func TestMaterializerFirstSessionBindsPhysicalRouteBeforeFollowUpWrites(t *testi
 	}
 }
 
+func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
+	newFixture := func(t *testing.T, appMarker, logicalMarker string) (*materializer, *fakeTmux, coremetadata.Project, string) {
+		t.Helper()
+		configPath := filepath.Join(t.TempDir(), "projmux", "tmux.conf")
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(configPath, []byte("set-option -g @projmux_app 1\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		server := newFakeTmux()
+		server.serverAbsent = true
+		server.appMarker = appMarker
+		server.socketName = logicalMarker
+		target := explicitTmuxTarget{flag: "-L", value: "phase10-fresh"}
+		routed := explicitTmuxRunner{runner: server, target: target}
+		runtime := &materializer{
+			runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
+			target: target, configPath: configPath,
+		}
+		project := coremetadata.Project{
+			Metadata: coremetadata.ObjectMeta{UID: "prj-fresh", Name: "fresh"},
+			Spec:     coremetadata.ProjectSpec{Root: "/work/fresh"},
+		}
+		return runtime, server, project, configPath
+	}
+
+	t.Run("config precedes create and marker precedes managed identity", func(t *testing.T) {
+		runtime, server, project, configPath := newFixture(t, "1", "")
+		ledger := newRuntimeLedger("op-fresh")
+		result, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, ledger)
+		if err != nil {
+			t.Fatalf("fresh Project materialize: %v", err)
+		}
+		if server.socketName != "phase10-fresh" || runtime.expectedSocketPath != server.socketPath {
+			t.Fatalf("fresh route binding = marker %q physical %q", server.socketName, runtime.expectedSocketPath)
+		}
+		createIndex, markerIndex, identityIndex := -1, -1, -1
+		for index, call := range server.calls {
+			argv := tmuxCommandArgv(call)
+			if slices.Contains(argv, "new-session") {
+				createIndex = index
+				if !reflect.DeepEqual(argv[:3], []string{"-f", configPath, "new-session"}) {
+					t.Fatalf("fresh create global argv = %#v, want -f config before new-session", argv)
+				}
+			}
+			if slices.Contains(argv, runtimeMutationSocketNameOption) && slices.Contains(argv, "set-option") {
+				markerIndex = index
+				if len(call) < 2 || call[0] != "-S" || call[1] != server.socketPath {
+					t.Fatalf("route marker escaped exact physical socket: %#v", call)
+				}
+			}
+			if slices.Contains(argv, tmuxopts.ProjectUIDSession) && slices.Contains(argv, "set-option") {
+				identityIndex = index
+			}
+			if slices.Contains(argv, "show-options") && slices.Contains(argv, tmuxopts.AppGlobal) &&
+				(len(call) < 2 || call[0] != "-S" || call[1] != server.socketPath) {
+				t.Fatalf("post-bind app ownership read escaped exact physical socket: %#v", call)
+			}
+		}
+		if createIndex < 0 || markerIndex <= createIndex || identityIndex <= markerIndex {
+			t.Fatalf("fresh mutation order create=%d marker=%d identity=%d calls=%#v", createIndex, markerIndex, identityIndex, server.calls)
+		}
+
+		server.calls = nil
+		if err := runtime.writeCreatedProjectRouteMarker(context.Background(), result, ledger.operationMarker); err != nil {
+			t.Fatalf("repeat route marker: %v", err)
+		}
+		for _, call := range server.calls {
+			if slices.Contains(call, "set-option") {
+				t.Fatalf("repeat route marker was not empty: %#v", server.calls)
+			}
+		}
+	})
+
+	t.Run("create error after effect rebinds logical route and rolls back exact lease", func(t *testing.T) {
+		runtime, server, project, _ := newFixture(t, "", "")
+		server.fail = []string{"new-session"}
+		server.failAfterMutation = true
+		server.failMessage = "synchronous hook failed after create"
+		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, newRuntimeLedger("op-after-effect"))
+		if err == nil || !strings.Contains(err.Error(), "synchronous hook failed after create") {
+			t.Fatalf("fresh create after-effect error = %v", err)
+		}
+		if runtime.expectedSocketPath != server.socketPath {
+			t.Fatalf("recovery physical route = %q, want %q", runtime.expectedSocketPath, server.socketPath)
+		}
+		if server.session("fresh") != nil {
+			t.Fatal("after-effect create failure leaked its uniquely leased session")
+		}
+		foundLogicalProbe, foundExactKill := false, false
+		for _, call := range server.calls {
+			argv := tmuxCommandArgv(call)
+			if len(call) >= 2 && call[0] == "-L" && call[1] == "phase10-fresh" && slices.Contains(argv, "display-message") {
+				foundLogicalProbe = true
+			}
+			if len(call) >= 2 && call[0] == "-S" && call[1] == server.socketPath && slices.Contains(argv, "kill-session") {
+				foundExactKill = true
+			}
+		}
+		if !foundLogicalProbe || !foundExactKill {
+			t.Fatalf("after-effect recovery did not rebind -L then kill exact -S: %#v", server.calls)
+		}
+	})
+
+	t.Run("partial receipt uses one unique exact lease tuple", func(t *testing.T) {
+		runtime, server, _, _ := newFixture(t, "", "")
+		server.serverAbsent = false
+		created := server.addSession("partial")
+		marker := "op-partial-receipt"
+		created.env[createOperationEnvironment] = marker
+		if err := runtime.recoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{Created: true, SessionID: created.id}, marker); err != nil {
+			t.Fatalf("recover partial result from unique lease: %v", err)
+		}
+		if server.session("partial") != nil {
+			t.Fatal("partial result prevented unique lease-owned rollback")
+		}
+	})
+
+	t.Run("no server is already absent and performs no write", func(t *testing.T) {
+		runtime, server, _, _ := newFixture(t, "", "")
+		if err := runtime.recoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{}, "op-no-server"); err != nil {
+			t.Fatalf("recover absent server: %v", err)
+		}
+		for _, call := range server.calls {
+			argv := tmuxCommandArgv(call)
+			if slices.Contains(argv, "kill-session") || slices.Contains(argv, "set-option") || slices.Contains(argv, "set-environment") {
+				t.Fatalf("no-server recovery reached a write: %#v", call)
+			}
+		}
+	})
+
+	t.Run("full receipt mismatch refuses without a kill", func(t *testing.T) {
+		runtime, server, _, _ := newFixture(t, "", "")
+		server.serverAbsent = false
+		created := server.addSession("mismatch")
+		marker := "op-full-mismatch"
+		created.env[createOperationEnvironment] = marker
+		err := runtime.recoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{
+			Created: true, SessionID: "$900", WindowID: "@901", PaneID: "%902",
+		}, marker)
+		if err == nil || !strings.Contains(err.Error(), "disagrees with unique lease tuple") {
+			t.Fatalf("full receipt mismatch error = %v", err)
+		}
+		if server.session("mismatch") == nil {
+			t.Fatal("full receipt mismatch killed the unique lease tuple")
+		}
+		for _, call := range server.calls {
+			if slices.Contains(tmuxCommandArgv(call), "kill-session") {
+				t.Fatalf("full receipt mismatch reached a kill: %#v", call)
+			}
+		}
+	})
+
+	t.Run("ambiguous lease refuses without a kill", func(t *testing.T) {
+		runtime, server, _, _ := newFixture(t, "", "")
+		server.serverAbsent = false
+		marker := "op-ambiguous-receipt"
+		first := server.addSession("ambiguous-a")
+		second := server.addSession("ambiguous-b")
+		first.env[createOperationEnvironment] = marker
+		second.env[createOperationEnvironment] = marker
+		err := runtime.recoverCreatedProjectByLease(context.Background(), intmux.NewSessionResult{}, marker)
+		if err == nil || !strings.Contains(err.Error(), "matched 2 exact containments") {
+			t.Fatalf("ambiguous lease recovery error = %v", err)
+		}
+		if server.session("ambiguous-a") == nil || server.session("ambiguous-b") == nil {
+			t.Fatal("ambiguous lease recovery killed a session")
+		}
+		for _, call := range server.calls {
+			if slices.Contains(tmuxCommandArgv(call), "kill-session") {
+				t.Fatalf("ambiguous lease recovery reached a kill: %#v", call)
+			}
+		}
+	})
+
+	t.Run("existing app server omits startup config and route-marker write", func(t *testing.T) {
+		runtime, server, project, configPath := newFixture(t, "1", "phase10-fresh")
+		server.serverAbsent = false
+		server.addSession("existing")
+		if err := os.Remove(configPath); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, newRuntimeLedger("op-existing")); err != nil {
+			t.Fatalf("materialize on existing app server: %v", err)
+		}
+		foundCreate := false
+		for _, call := range server.calls {
+			argv := tmuxCommandArgv(call)
+			if slices.Contains(argv, "new-session") {
+				foundCreate = true
+				if slices.Contains(argv, "-f") {
+					t.Fatalf("existing-server create carried a startup config: %#v", call)
+				}
+			}
+			if slices.Contains(argv, "set-option") && slices.Contains(argv, runtimeMutationSocketNameOption) {
+				t.Fatalf("existing-server create rewrote the logical route marker: %#v", call)
+			}
+		}
+		if !foundCreate {
+			t.Fatalf("existing-server materialization issued no create: %#v", server.calls)
+		}
+	})
+
+	for _, test := range []struct {
+		name, appMarker, logicalMarker, want string
+	}{
+		{name: "generated config lacks app ownership", appMarker: "", want: "not app-owned"},
+		{name: "generated config carries forged logical marker", appMarker: "1", logicalMarker: "foreign", want: "logical route marker"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime, server, project, _ := newFixture(t, test.appMarker, test.logicalMarker)
+			_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, newRuntimeLedger("op-refuse"))
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("fresh forged config error = %v, want %q", err, test.want)
+			}
+			if server.session("fresh") != nil {
+				t.Fatal("fresh forged config left its lease-owned session behind")
+			}
+			for _, call := range server.calls {
+				argv := tmuxCommandArgv(call)
+				if len(argv) > 0 && argv[0] == "kill-session" && (len(call) < 2 || call[0] != "-S" || call[1] != server.socketPath) {
+					t.Fatalf("owned rollback escaped exact physical socket: %#v", call)
+				}
+			}
+		})
+	}
+
+	t.Run("missing generated config refuses before create", func(t *testing.T) {
+		runtime, server, project, configPath := newFixture(t, "1", "")
+		if err := os.Remove(configPath); err != nil {
+			t.Fatal(err)
+		}
+		_, err := runtime.ensureSessionAt(context.Background(), project, "fresh", project.Spec.Root, newRuntimeLedger("op-missing-config"))
+		if err == nil || !strings.Contains(err.Error(), "is unavailable") {
+			t.Fatalf("missing generated config error = %v", err)
+		}
+		for _, call := range server.calls {
+			if slices.Contains(call, "new-session") || slices.Contains(call, "set-option") || slices.Contains(call, "kill-session") {
+				t.Fatalf("missing config reached a write: %#v", server.calls)
+			}
+		}
+	})
+}
+
 func TestMaterializerDefaultRouteForgedServerRefusesBeforeFirstWrite(t *testing.T) {
 	path := "/tmp/projmux-route/cloned-default.sock"
 	base := &recordingTmuxRunner{outputs: map[string]string{
@@ -1095,21 +2041,215 @@ func TestInvocationRoutePreservesNonDefaultLogicalSocketWithoutBasenameInference
 		recordedTmuxCallKey("tmux", "-S", path, "show-options", "-gqv", tmuxopts.AppGlobal):              "1\n",
 		recordedTmuxCallKey("tmux", "-S", path, "show-options", "-gqv", runtimeMutationSocketNameOption): name + "\n",
 		recordedTmuxCallKey("tmux", "-L", name, "display-message", "-p", "-F", "#{socket_path}"):         path + "\n",
+		recordedTmuxCallKey("tmux", "-S", path, "display-message", "-p", "-t", "%8", "-F", tmuxRowFormat(
+			"#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}")): strings.Join([]string{path, "123", "$1", "@2", "%8"}, tmuxRowSepFormat) + "\n",
 	}}
-	route, err := resolveInvocationRuntimeMutationRoute(context.Background(), runner, func(key string) string {
+	// Direct resource CLI producers call the anchor-aware resolver with no
+	// producer override. The resolver must retain the exact inherited pane.
+	route, err := resolveInvocationRuntimeMutationRouteWithAnchor(context.Background(), runner, func(key string) string {
 		if key == "TMUX" {
 			return path + ",123,0"
 		}
+		if key == "TMUX_PANE" {
+			return "%8"
+		}
 		return ""
-	})
+	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.target.flag != "-L" || route.target.value != name || route.expectedSocketPath != path || route.socketName != name {
+	if route.target.flag != "-L" || route.target.value != name || route.expectedSocketPath != path || route.socketName != name ||
+		route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != "123" || route.authority.PaneID != "%8" {
 		t.Fatalf("resolved route = %#v, want logical -L %s over exact path %s", route, name, path)
 	}
 	if filepath.Base(path) == name {
 		t.Fatal("fixture accidentally permits basename inference")
+	}
+}
+
+func TestStandaloneInheritedRouteMaterializesWithPrintablePIDAndPaneAuthority(t *testing.T) {
+	server := newFakeTmux()
+	server.appMarker = ""
+	server.socketName = ""
+	driver := server.addSession("driver")
+	driverWindow := driver.windows[0]
+	driverPane := driverWindow.panes[0]
+	lookup := func(key string) string {
+		switch key {
+		case "TMUX":
+			return server.socketPath + "," + server.serverPID + ",0"
+		case "TMUX_PANE":
+			return driverPane.id
+		default:
+			return ""
+		}
+	}
+	route, err := resolveInvocationRuntimeMutationRoute(context.Background(), server, lookup)
+	if err != nil {
+		t.Fatalf("resolve inherited standalone route: %v", err)
+	}
+	if route.target.flag != "-S" || route.target.value != server.socketPath || route.expectedSocketPath != server.socketPath ||
+		route.socketName != defaultAppSocket || route.authority == nil {
+		t.Fatalf("standalone route = %#v", route)
+	}
+	wantAuthority := "standalone:pid=" + server.serverPID + "/session=" + driver.id + "/window=" + driverWindow.id + "/pane=" + driverPane.id
+	if route.authority.printable() != wantAuthority {
+		t.Fatalf("standalone printable authority = %q, want %q", route.authority.printable(), wantAuthority)
+	}
+
+	routed := explicitTmuxRunner{runner: server, target: route.target}
+	runtime := &materializer{
+		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
+		target: route.target, expectedSocketPath: route.expectedSocketPath, routeAuthority: route.authority,
+	}
+	project := coremetadata.Project{
+		Metadata: coremetadata.ObjectMeta{UID: "prj-standalone", Name: "standalone"},
+		Spec:     coremetadata.ProjectSpec{Root: t.TempDir()},
+	}
+	result, err := runtime.ensureSessionAt(context.Background(), project, "standalone-project", project.Spec.Root, newRuntimeLedger("op-standalone"))
+	if err != nil {
+		t.Fatalf("materialize on inherited standalone route: %v", err)
+	}
+	if exactTmuxHandle(result.SessionID, "$") == "" || server.session("standalone-project") == nil || server.session("driver") == nil {
+		t.Fatalf("standalone materialization result=%#v sessions=%#v", result, server.sessionNames())
+	}
+	printable := runtime.boundMutationTarget("session", result.SessionID, project.Metadata.UID)
+	if printable.Socket != "-S="+server.socketPath || printable.PhysicalSocket != server.socketPath || printable.RouteAuthority != wantAuthority {
+		t.Fatalf("standalone printable target = %#v", printable)
+	}
+	for _, call := range server.calls {
+		argv := tmuxCommandArgv(call)
+		if (slices.Contains(argv, "new-session") || slices.Contains(argv, "set-option") || slices.Contains(argv, "set-environment")) &&
+			(len(call) < 2 || call[0] != "-S" || call[1] != server.socketPath) {
+			t.Fatalf("standalone mutation escaped exact physical route: %#v", call)
+		}
+		if slices.Contains(argv, runtimeMutationSocketNameOption) && slices.Contains(argv, "set-option") {
+			t.Fatalf("standalone materialization wrote an app logical marker: %#v", call)
+		}
+	}
+}
+
+func TestStandaloneProducerAnchorSuppliesExactInvocationAuthorityWithoutInheritedPaneEnv(t *testing.T) {
+	server := newFakeTmux()
+	server.appMarker = ""
+	server.socketName = ""
+	driver := server.addSession("driver")
+	pane := driver.windows[0].panes[0]
+	lookup := func(key string) string {
+		switch key {
+		case "TMUX":
+			return server.socketPath + "," + server.serverPID + ",0"
+		case runtimeMutationAnchorPaneEnv:
+			return pane.id
+		default:
+			return ""
+		}
+	}
+	route, err := resolveInvocationRuntimeMutationRoute(context.Background(), server, lookup)
+	if err != nil {
+		t.Fatalf("resolve producer-anchored standalone route: %v", err)
+	}
+	if route.authority == nil || route.authority.Class != runtimeMutationRouteStandalone ||
+		route.authority.PaneID != pane.id || route.authority.WindowID != driver.windows[0].id ||
+		route.authority.SessionID != driver.id {
+		t.Fatalf("producer-anchored authority = %#v", route.authority)
+	}
+
+	if _, err := resolveInvocationRuntimeMutationRouteWithAnchor(context.Background(), server, lookup, "%999"); err == nil {
+		t.Fatalf("foreign producer anchor error = %v", err)
+	}
+}
+
+func TestRuntimeMutationAnchorSourcesRefuseMalformedHigherPrecedenceEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		explicit string
+		private  string
+		ambient  string
+		want     string
+		existing bool
+	}{
+		{name: "invocation explicit cannot fall back", explicit: "pane-seven", want: "explicit anchor"},
+		{name: "invocation private cannot fall back", private: "pane-seven", want: "private producer anchor"},
+		{name: "invocation inherited malformed", ambient: "pane-seven", want: "inherited TMUX_PANE"},
+		{name: "existing explicit cannot fall back", explicit: "pane-seven", want: "explicit anchor", existing: true},
+		{name: "existing private cannot fall back", private: "pane-seven", want: "private producer anchor", existing: true},
+		{name: "existing inherited malformed", ambient: "pane-seven", want: "inherited TMUX_PANE", existing: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := newFakeTmux()
+			driver := server.addSession("driver")
+			ambientPane := driver.windows[0].panes[0].id
+			if test.ambient != "" {
+				ambientPane = test.ambient
+			}
+			lookup := func(key string) string {
+				switch key {
+				case "TMUX":
+					return server.socketPath + "," + server.serverPID + ",0"
+				case "TMUX_PANE":
+					return ambientPane
+				case runtimeMutationAnchorPaneEnv:
+					return test.private
+				default:
+					return ""
+				}
+			}
+			var err error
+			if test.existing {
+				_, err = resolveExistingRuntimeMutationRouteWithAnchor(
+					context.Background(), server,
+					explicitTmuxTarget{flag: "-S", value: server.socketPath}, lookup, test.explicit,
+				)
+			} else {
+				_, err = resolveInvocationRuntimeMutationRouteWithAnchor(context.Background(), server, lookup, test.explicit)
+			}
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("malformed higher-precedence anchor error = %v, want %q", err, test.want)
+			}
+			if len(server.calls) != 0 {
+				t.Fatalf("malformed higher-precedence anchor reached tmux before refusal: %#v", server.calls)
+			}
+		})
+	}
+}
+
+func TestStandaloneRouteRequiresBlankClassAndExactInheritedPaneReceipt(t *testing.T) {
+	for _, test := range []struct {
+		name, appMarker, logicalMarker, pane string
+		want                                 string
+	}{
+		{name: "partial app marker", appMarker: "1", want: "not app-owned"},
+		{name: "partial logical marker", logicalMarker: "forged", want: "not app-owned"},
+		{name: "missing pane receipt", want: "TMUX_PANE"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := newFakeTmux()
+			server.appMarker, server.socketName = test.appMarker, test.logicalMarker
+			driver := server.addSession("driver")
+			pane := test.pane
+			if test.name != "missing pane receipt" {
+				pane = driver.windows[0].panes[0].id
+			}
+			_, err := resolveInvocationRuntimeMutationRoute(context.Background(), server, func(key string) string {
+				if key == "TMUX" {
+					return server.socketPath + "," + server.serverPID + ",0"
+				}
+				if key == "TMUX_PANE" {
+					return pane
+				}
+				return ""
+			})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("standalone classification error = %v, want %q", err, test.want)
+			}
+			for _, call := range server.calls {
+				argv := tmuxCommandArgv(call)
+				if slices.Contains(argv, "new-session") || slices.Contains(argv, "set-option") || slices.Contains(argv, "set-environment") || slices.Contains(argv, "kill-session") {
+					t.Fatalf("standalone classification refusal reached a write: %#v", call)
+				}
+			}
+		})
 	}
 }
 
@@ -1125,8 +2265,24 @@ func TestDefaultInvocationAliasRecoversCanonicalAppRouteBidirectionally(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.target.flag != "-L" || route.target.value != name || route.socketName != name || route.expectedSocketPath != path {
+	if route.target.flag != "-L" || route.target.value != name || route.socketName != name || route.expectedSocketPath != path ||
+		route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != "4242" || route.authority.PaneID != "" {
 		t.Fatalf("canonical alias route = %#v", route)
+	}
+}
+
+func TestInheritedRuntimeMutationReceiptParserIsClosed(t *testing.T) {
+	for _, value := range []string{
+		"/tmp/socket,1", "/tmp/socket,1,0,extra", "relative,1,0", "/tmp/../tmp/socket,1,0",
+		"/tmp/socket,0,0", "/tmp/socket,-1,0", "/tmp/socket,1,-1", "/tmp/socket,1,client",
+	} {
+		if _, err := parseInheritedTmuxReceipt(value); err == nil {
+			t.Errorf("parseInheritedTmuxReceipt(%q) succeeded", value)
+		}
+	}
+	got, err := parseInheritedTmuxReceipt("/tmp/socket,42,0")
+	if err != nil || got.SocketPath != "/tmp/socket" || got.ServerPID != "42" || got.ClientID != "0" {
+		t.Fatalf("exact inherited receipt = %#v / %v", got, err)
 	}
 }
 
@@ -1136,7 +2292,12 @@ func TestForgedLogicalRouteMarkerOnForeignServerRefuses(t *testing.T) {
 		recordedTmuxCallKey("tmux", "-S", path, "display-message", "-p", "-F", "#{socket_path}"): path + "\n",
 		recordedTmuxCallKey("tmux", "-S", path, "show-options", "-gqv", tmuxopts.AppGlobal):      "0\n",
 	}}
-	_, err := resolveInvocationRuntimeMutationRoute(context.Background(), runner, func(string) string { return path + ",1,0" })
+	_, err := resolveInvocationRuntimeMutationRoute(context.Background(), runner, func(key string) string {
+		if key == "TMUX" {
+			return path + ",1,0"
+		}
+		return ""
+	})
 	if err == nil || !strings.Contains(err.Error(), "not app-owned") {
 		t.Fatalf("foreign route error = %v", err)
 	}
@@ -1276,36 +2437,42 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"SetOption": true, "SetHook": true,
 	}
 	requiredPlanSites := map[string]bool{
-		"materialize.go:finalizeSessionStartup":                 true,
-		"materialize.go:rollback":                               true,
-		"materialize.go:ensureSessionAt":                        true,
-		"materialize.go:claimRuntimeUID":                        true,
-		"materialize.go:mirrorWindow":                           true,
-		"materialize.go:mirrorPane":                             true,
-		"materialize.go:recordErrorCreatedSession":              true,
-		"materialize.go:markCreateOperation":                    true,
-		"materialize.go:clearCreateOperations":                  true,
-		"materialize.go:newWindow":                              true,
-		"materialize.go:splitPane":                              true,
-		"materialize.go:equalizeSplitLayout":                    true,
-		"delete_pane_runtime.go:killAll":                        true,
-		"delete_pane_runtime.go:tombstoneSelfKill":              true,
-		"delete_pane_runtime.go:restoreSelfKill":                true,
-		"delete_pane_runtime.go:queueSelfKill":                  true,
-		"delete_window_runtime.go:killAll":                      true,
-		"delete_window_runtime.go:queueSelfKill":                true,
-		"runtime_stop.go:executeManagedRuntimeStop":             true,
-		"shell.go:provisionAppSession":                          true,
-		"shell.go:prepareControlSession":                        true,
-		"shell.go:rollbackControlBootstrap":                     true,
-		"create_intent.go:renameWindowFromIntent":               true,
-		"rename.go:renameRuntimeWindow":                         true,
-		"unmanaged_runtime_stop.go:executeUnmanagedRuntimeStop": true,
-		"tmux.go:writeRuntimeMutationRouteMarker":               true,
-		"control_session.go:executeControlSessionIdentityPlan":  true,
-		"runtime_metadata_mirror.go:MirrorWindow":               true,
-		"runtime_metadata_mirror.go:MirrorPane":                 true,
-		"runtime_metadata_mirror.go:MirrorProject":              true,
+		"materialize.go:finalizeSessionStartup":                            true,
+		"materialize.go:rollback":                                          true,
+		"materialize.go:ensureSessionAt":                                   true,
+		"materialize.go:writeCreatedProjectRouteMarker":                    true,
+		"materialize.go:recoverCreatedProjectByLease":                      true,
+		"materialize.go:claimRuntimeUID":                                   true,
+		"materialize.go:mirrorWindow":                                      true,
+		"materialize.go:mirrorPane":                                        true,
+		"materialize.go:recordErrorCreatedSession":                         true,
+		"materialize.go:markCreateOperation":                               true,
+		"materialize.go:clearCreateOperations":                             true,
+		"materialize.go:newWindow":                                         true,
+		"materialize.go:splitPane":                                         true,
+		"materialize.go:equalizeSplitLayout":                               true,
+		"delete_pane_runtime.go:killAll":                                   true,
+		"delete_pane_runtime.go:tombstoneSelfKill":                         true,
+		"delete_pane_runtime.go:restoreSelfKill":                           true,
+		"delete_pane_runtime.go:queueSelfKill":                             true,
+		"delete_window_runtime.go:killAll":                                 true,
+		"delete_window_runtime.go:queueSelfKill":                           true,
+		"runtime_stop.go:executeManagedRuntimeStop":                        true,
+		"shell.go:provisionAppSession":                                     true,
+		"shell.go:prepareControlSession":                                   true,
+		"shell.go:rollbackControlBootstrap":                                true,
+		"create_intent.go:renameWindowFromIntent":                          true,
+		"rename.go:renameRuntimeWindow":                                    true,
+		"unmanaged_runtime_stop.go:executeUnmanagedRuntimeStop":            true,
+		"tmux.go:writeRuntimeMutationRouteMarker":                          true,
+		"control_session.go:executeControlSessionIdentityPlan":             true,
+		"runtime_metadata_mirror.go:MirrorWindow":                          true,
+		"runtime_metadata_mirror.go:MirrorPane":                            true,
+		"runtime_metadata_mirror.go:MirrorProject":                         true,
+		"controller_runtime_mutation.go:executeControllerRuntimeMutations": true,
+		"resource_controller.go:converge":                                  true,
+		"controller_trigger.go:runAutomaticMirrorRecovery":                 true,
+		"registry_topology_materialize.go:execute":                         true,
 	}
 	// These are semantic exemptions, keyed to one exact source function and
 	// verb. They are intentionally not a broad verb allowlist.
@@ -1324,7 +2491,6 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"attach.go:executeAutoAttachPlan:helper:KillSession":                              "attach.ephemeral-prune",
 		"prune.go:runEphemeral:helper:KillSession":                                        "standalone.prune",
 		"materialize.go:read:variable-argv":                                               "runtime.observation",
-		"materialize.go:equalizeSplitLayout:variable-argv":                                "runtime.observation",
 		"tmux.go:managedIngestMigrationAIForRoute:variable-argv":                          "config.migration",
 		"tmux.go:runApply:source-file":                                                    "config.apply-source",
 		"tmux.go:retireGeneratedKeySequenceState:variable-argv":                           "key-sequence.retirement",
@@ -1353,6 +2519,10 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"../integrations/tmux/sessionstate.go:setSessionStateAIResumeMetadata:set-option": "sessionstate.replay-metadata",
 		"agent_interaction.go:WriteTopic:set-option":                                      "agent.presentation",
 		"agent_interaction.go:WriteInteraction:set-option":                                "agent.presentation",
+		"ai_ingest_codex.go:applyCodexHookSemanticDelivery:variable-argv":                 "agent.presentation",
+		"ai_ingest_codex_native.go:Apply:variable-argv":                                   "agent.presentation",
+		"ai_ingest_codex_native.go:SetAuthority:variable-argv":                            "codex.native-lifecycle-authority",
+		"ai_ingest_codex_native.go:startNativeCodexLifecycleObserver:set-option":          "codex.native-lifecycle-authority",
 		"attention.go:run:variable-argv":                                                  "agent.presentation",
 		"binding_convergence.go:Run:variable-argv":                                        "binding.convergence",
 		"create_reentrancy.go:deferBindingConvergence:set-environment":                    "create.reentrancy",
@@ -1405,17 +2575,14 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 	// their cited surface must remain planned and their source key is audited
 	// bidirectionally just like the app-owned runtimeMutationArgv seam.
 	plannedTypedSites := map[string]string{
-		"controller_trigger.go:runAutomaticMirrorRecovery:variable-argv":                        "controller.identity",
 		"kill.go:KillSession:helper:KillSession":                                                "manual.tagged-kill",
 		"resource_reconcile_plan.go:planResourceProjectMirrors:helper:MirrorProject":            "controller.identity",
 		"resource_reconcile_plan.go:planResourceProjectMirrors:helper:RebindProject":            "controller.identity",
 		"resource_reconcile_plan.go:planResourceBoundMirrorDrift:helper:DisableAutomaticRename": "controller.identity",
 		"resource_reconcile_plan.go:planResourceBoundMirrorDrift:set-option":                    "controller.identity",
-		"resource_controller.go:converge:variable-argv":                                         "controller.identity",
 		"resource_reconcile_plan.go:planExactPaneOption:variable-argv":                          "controller.identity",
 		"resource_reconcile_plan.go:Run:variable-argv":                                          "controller.identity",
-		"registry_topology_materialize.go:execute:variable-argv":                                "project.materialize",
-		"project_registry.go:newRegistryReconciler:helper:MirrorPane":                           "controller.identity",
+		"project_registry.go:newRegistryReconcilerWithRoute:helper:MirrorPane":                  "controller.identity",
 		"../integrations/metadata/tmuxmirror.go:MirrorProject:set-option":                       "controller.identity",
 		"../integrations/metadata/tmuxmirror.go:MirrorControlSessionRole:set-option":            "controller.identity",
 		"../integrations/metadata/tmuxmirror.go:MirrorWindow:set-option":                        "controller.identity",
@@ -1482,7 +2649,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 				}
 				if ident, ok := call.Fun.(*ast.Ident); ok {
 					switch ident.Name {
-					case "executeRuntimeMutationPlan", "runMaterializeMutation":
+					case "executeRuntimeMutationPlan", "runMaterializeMutation", "executeControllerRuntimeMutations":
 						usesPlanSeam = true
 					}
 					if argvCallbacks[ident.Name] {
@@ -1648,7 +2815,7 @@ func TestGenericWindowPaneMirrorIsRecorderOnlyOutsideNativePhase2(t *testing.T) 
 	}
 	root := filepath.Dir(thisFile)
 	allowedCalls := map[string]bool{
-		"project_registry.go:newRegistryReconciler:MirrorPane": true,
+		"project_registry.go:newRegistryReconcilerWithRoute:MirrorPane": true,
 	}
 	seen := map[string]bool{}
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {

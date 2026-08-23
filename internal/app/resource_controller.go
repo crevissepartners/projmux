@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -70,6 +71,10 @@ type resourceControllerKernel struct {
 	// socketPath reads the server's own `#{socket_path}`, which is the socket
 	// guard. A server that is not running has no path and no writes to guard.
 	socketPath func(ctx context.Context) (string, bool)
+	// route is internal execution authority. It is deliberately absent from
+	// controller.Plan so public reconcile JSON remains byte-compatible.
+	route     *runtimeMutationRoute
+	lookupEnv func(string) string
 }
 
 // controllerGuardFields binds the pure kernel's guard vocabulary to the option
@@ -84,16 +89,30 @@ var controllerGuardFields = controller.GuardFields{
 }
 
 func newResourceControllerKernel(runner tmuxCommandRunner, store *resourceStore, planner resourceReconcilePlanner, target explicitTmuxTarget) *resourceControllerKernel {
-	kernel := &resourceControllerKernel{target: target, runner: runner, store: store, planner: planner, trigger: controller.RecoveryExplicit}
-	routed := explicitTmuxRunner{runner: runner, target: target}
-	transport := controllerTransport(target)
+	kernel := &resourceControllerKernel{
+		target: target, runner: runner, store: store, planner: planner,
+		trigger: controller.RecoveryExplicit, lookupEnv: os.Getenv,
+	}
 	kernel.observe = func(ctx context.Context) resourcegraph.Inventory {
 		// A fresh observer per call is deliberate. The memoization inside one
 		// observer is what keeps a single stage consistent; carrying it across
 		// stages would make the reobservation report the pre-execute machine.
-		return intmetadata.NewInventoryObserver(runner, transport).Observe(ctx)
+		readTarget := kernel.target
+		if kernel.route != nil && kernel.route.expectedSocketPath != "" {
+			readTarget = explicitTmuxTarget{flag: "-S", value: kernel.route.expectedSocketPath}
+		}
+		inventory := intmetadata.NewInventoryObserver(runner, controllerTransport(readTarget)).Observe(ctx)
+		// The public plan continues to describe the operator's requested route;
+		// the internal typed plan separately prints the physical generation.
+		inventory.Transport = controllerTransport(kernel.target)
+		return inventory
 	}
 	kernel.socketPath = func(ctx context.Context) (string, bool) {
+		readTarget := kernel.target
+		if kernel.route != nil && kernel.route.expectedSocketPath != "" {
+			readTarget = explicitTmuxTarget{flag: "-S", value: kernel.route.expectedSocketPath}
+		}
+		routed := explicitTmuxRunner{runner: runner, target: readTarget}
 		out, err := routed.Run(ctx, "tmux", "display-message", "-p", "#{socket_path}")
 		if err != nil {
 			return "", false
@@ -101,6 +120,22 @@ func newResourceControllerKernel(runner tmuxCommandRunner, store *resourceStore,
 		return strings.TrimSpace(string(out)), true
 	}
 	return kernel
+}
+
+func (k *resourceControllerKernel) bindRuntimeRoute(ctx context.Context) error {
+	if k.route != nil {
+		return guardResolvedRuntimeMutationRoute(ctx, k.runner, *k.route)
+	}
+	lookup := k.lookupEnv
+	if lookup == nil {
+		lookup = func(string) string { return "" }
+	}
+	route, err := resolveControllerRuntimeMutationRoute(ctx, k.runner, k.target, lookup)
+	if err != nil {
+		return err
+	}
+	k.route = &route
+	return nil
 }
 
 // controllerTransport turns the command's exact routing into the typed
@@ -470,7 +505,13 @@ func (k *resourceControllerKernel) guardPlan(ctx context.Context, socket string,
 	if len(writes) == 0 {
 		return nil
 	}
-	routed := explicitTmuxRunner{runner: k.runner, target: k.target}
+	if k.route == nil {
+		return errors.New("controller runtime route authority is not bound")
+	}
+	if err := guardResolvedRuntimeMutationRoute(ctx, k.runner, *k.route); err != nil {
+		return fmt.Errorf("exact tmux socket changed before repair: %w", err)
+	}
+	routed := explicitTmuxRunner{runner: k.runner, target: explicitTmuxTarget{flag: "-S", value: k.route.expectedSocketPath}}
 	if socket != "" {
 		current, ok := k.socketPath(ctx)
 		if !ok {
@@ -604,6 +645,9 @@ func (k *resourceControllerKernel) converge(ctx context.Context) (controllerRun,
 		return controllerRun{}, errors.New("resource controller write store is not configured")
 	}
 	var run controllerRun
+	if err := k.bindRuntimeRoute(ctx); err != nil {
+		return run, &controllerRunError{stage: "runtime authority", err: err, run: run}
+	}
 	snapshot, err := k.loadRegistry()
 	if err != nil {
 		return run, &controllerRunError{stage: "registry read", err: MapMetadataError(err), run: run}
@@ -663,11 +707,10 @@ func (k *resourceControllerKernel) converge(ctx context.Context) (controllerRun,
 		return run, &controllerRunError{stage: "tmux prevalidation", err: err, run: run}
 	}
 	run.completed = append(run.completed, "tmux targets prevalidated")
-	routed := explicitTmuxRunner{runner: k.runner, target: k.target}
+	if err := executeControllerRuntimeMutations(ctx, k.runner, *k.route, writes); err != nil {
+		return run, &controllerRunError{stage: "controller.identity", err: err, run: run}
+	}
 	for _, write := range writes {
-		if _, err := routed.Run(ctx, "tmux", write.Args...); err != nil {
-			return run, &controllerRunError{stage: write.Key, err: err, run: run}
-		}
 		run.executed++
 		run.completed = append(run.completed, write.Key)
 	}

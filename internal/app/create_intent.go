@@ -141,22 +141,33 @@ func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, stdout
 			return usageError("canonical rename: exact Window containment changed before planning; nothing was changed")
 		}
 		windowID := rows[0][1]
+		stableTarget, bindErr := c.runtime.bindMaterializeIdentityTarget(ctx, "window", windowID, scope.windowUID)
+		if bindErr != nil {
+			return bindErr
+		}
 		action := materializeMutationAction(mutationRenameWindow,
-			c.runtime.boundMutationTarget("window", windowID, scope.windowUID),
+			stableTarget,
 			"exact root="+string(scope.rootKind)+"/"+scope.rootUID+";session="+scope.sessionID+";window="+windowID+"/"+scope.windowUID,
 			"exact owned Window display name="+displayName,
 			"-t", windowID, displayName)
-		if err := c.runtime.runMaterializeMutation(ctx, action, func() error {
+		observeContainment := func(ctx context.Context) (bool, error) {
 			observed, err := c.runtime.read(ctx, "display-message", "-p", "-t", scope.anchorPaneID, "-F",
 				tmuxRowFormat("#{session_id}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
-			if err != nil || observed != row {
+			if err != nil {
+				return false, err
+			}
+			return observed == row, nil
+		}
+		if err := c.runtime.runMaterializeMutation(ctx, action, func() error {
+			observed, err := observeContainment(ctx)
+			if err != nil || !observed {
 				return errors.New("exact Window containment drifted before rename")
 			}
 			return nil
 		}, func() error {
 			_, err := runRuntimeMutationCommand(ctx, c.runtime.runner, action)
 			return err
-		}); err != nil {
+		}, observeContainment); err != nil {
 			return err
 		}
 		_, err := mutator.ObserveWindowDisplayName(working, window.Metadata.UID, displayName)
@@ -206,6 +217,7 @@ func (c *createCommand) resolveCanonicalIntentScope(intent agentPaneIntent) (can
 		}
 		scope.sessionName = c.sessionNameFor(scope.cwd)
 	}
+	c.routeAnchor = scope.anchorPaneID
 	if err := c.ensureRuntimeRoute(context.Background()); err != nil {
 		return canonicalIntentScope{}, fmt.Errorf("canonical create: bind exact runtime route: %w", err)
 	}

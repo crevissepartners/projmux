@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -266,13 +267,20 @@ func (c *shellCommand) prepareControlSession(ctx context.Context, socketName, co
 	}
 	action := newRuntimeMutation(1, mutationConvergeControlIdentity, runtimeMutationTarget{
 		Socket: "-L=" + socketName, PhysicalSocket: printableRuntimeMutationSocket(receipt.route.expectedSocketPath),
-		Kind: "control-session", ID: before[0], Parent: before[2] + "/" + before[4],
+		RouteAuthority: receipt.route.authority.printable(),
+		Kind:           "control-session", ID: before[0], Parent: before[2] + "/" + before[4],
 	})
 	bindRuntimeMutationGuard(&action, "exact bootstrap containment="+strings.Join(before, "/"))
 	var result controlSessionConvergence
 	err = executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
+		TargetRouteGuard: func(ctx context.Context) error {
+			return guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, receipt.route, action)
+		},
 		Reobserve: func(ctx context.Context) (bool, error) {
+			if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, receipt.route, action); err != nil {
+				return false, err
+			}
 			current, err := c.observeControlBootstrapAtRoute(ctx, receipt.route, target.SessionName)
 			if err != nil {
 				return false, err
@@ -280,6 +288,9 @@ func (c *shellCommand) prepareControlSession(ctx context.Context, socketName, co
 			return current[1] == resourcegraph.ControlSessionRole && current[3] != "" && current[5] != "", nil
 		},
 		Guard: func(ctx context.Context) error {
+			if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, receipt.route, action); err != nil {
+				return err
+			}
 			current, err := c.observeControlBootstrapAtRoute(ctx, receipt.route, target.SessionName)
 			if err != nil || !slices.Equal(current, before) {
 				return errors.New("ControlSession bootstrap containment drifted before identity convergence")
@@ -388,6 +399,7 @@ func (c *shellCommand) provisionAppSession(ctx context.Context, socketName, conf
 	action := newRuntimeMutation(1, mutationBootstrapControlSession, runtimeMutationTarget{
 		Socket:         "-L=" + socketName,
 		PhysicalSocket: printableRuntimeMutationSocket(route.expectedSocketPath),
+		RouteAuthority: route.authority.printable(),
 		Kind:           "control-session-declaration",
 		ID:             "declaration:-L=" + socketName + "/session=" + target.SessionName,
 	})
@@ -396,6 +408,16 @@ func (c *shellCommand) provisionAppSession(ctx context.Context, socketName, conf
 	var createdOutput []byte
 	err = executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
+		TargetRouteGuard: func(ctx context.Context) error {
+			if action.Target.PhysicalSocket == runtimeMutationSocketAbsentBeforeCreate {
+				if route.expectedSocketPath != "" || route.authority != nil || action.Target.RouteAuthority != "" ||
+					action.Target.Socket != route.target.flag+"="+route.target.value {
+					return errors.New("ControlSession bootstrap absent authority disagrees with printable declaration")
+				}
+				return c.guardControlBootstrapAbsentBeforeCreate(ctx, route)
+			}
+			return guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action)
+		},
 		Reobserve: func(ctx context.Context) (bool, error) {
 			exists, err := c.appSessionExists(ctx, socketName, configPath, target.SessionName)
 			if err != nil || !exists {
@@ -408,7 +430,11 @@ func (c *shellCommand) provisionAppSession(ctx context.Context, socketName, conf
 			return err == nil && len(rows) == 1, err
 		},
 		Guard: func(ctx context.Context) error {
-			if err := c.guardControlBootstrapRoute(ctx, &route, true, true); err != nil {
+			if action.Target.PhysicalSocket == runtimeMutationSocketAbsentBeforeCreate {
+				if err := c.guardControlBootstrapAbsentBeforeCreate(ctx, route); err != nil {
+					return err
+				}
+			} else if err := c.guardControlBootstrapRoute(ctx, &route, false, true); err != nil {
 				return err
 			}
 			exists, err := c.appSessionExists(ctx, socketName, configPath, target.SessionName)
@@ -440,6 +466,13 @@ func (c *shellCommand) provisionAppSession(ctx context.Context, socketName, conf
 			return controlBootstrapReceipt{}, errors.New("ControlSession bootstrap did not produce one exact app-owned session/window/pane containment")
 		}
 	}
+	if err := c.bindControlBootstrapRouteAuthority(ctx, &route, rows[0][0], rows[0][1], rows[0][2], operationMarker); err != nil {
+		receipt := controlBootstrapReceipt{created: true, sessionID: rows[0][0], windowID: rows[0][1], paneID: rows[0][2], operationMarker: operationMarker, route: route}
+		if rollbackErr := c.rollbackControlBootstrap(ctx, socketName, receipt); rollbackErr != nil {
+			return receipt, errors.Join(err, fmt.Errorf("ControlSession bootstrap owned rollback incomplete: %w", rollbackErr))
+		}
+		return receipt, err
+	}
 	receipt := controlBootstrapReceipt{created: true, sessionID: rows[0][0], windowID: rows[0][1], paneID: rows[0][2], operationMarker: operationMarker, route: route}
 	if err := c.guardControlBootstrapRoute(ctx, &route, false, false); err != nil {
 		receipt.route = route
@@ -458,13 +491,17 @@ func (c *shellCommand) provisionAppSession(ctx context.Context, socketName, conf
 	}
 	row := []byte(strings.Join(rows[0], tmuxRowSep) + "\n")
 	marker := newRuntimeMutation(1, mutationWriteRouteMarker, runtimeMutationTarget{
-		Socket: "-L=" + socketName, PhysicalSocket: printableRuntimeMutationSocket(route.expectedSocketPath),
-		Kind: "session", ID: rows[0][0], UID: "logical:" + socketName, Parent: rows[0][1] + "/" + rows[0][2],
+		Socket: "-S=" + route.expectedSocketPath, PhysicalSocket: printableRuntimeMutationSocket(route.expectedSocketPath),
+		RouteAuthority: route.authority.printable(),
+		Kind:           "session", ID: rows[0][0], UID: "logical:" + socketName, Parent: rows[0][1] + "/" + rows[0][2],
 	})
 	bindRuntimeMutationGuard(&marker, "exact app-owned bootstrap="+strings.Join(rows[0], "/"))
-	marker.Operands = []string{"-L", socketName, "-gq", runtimeMutationSocketNameOption, socketName}
+	marker.Operands = []string{"-S", route.expectedSocketPath, "-gq", runtimeMutationSocketNameOption, socketName}
 	if err := executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: marker,
+		TargetRouteGuard: func(ctx context.Context) error {
+			return guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, marker)
+		},
 		Reobserve: func(ctx context.Context) (bool, error) {
 			if err := c.guardControlBootstrapRoute(ctx, &route, false, false); err != nil {
 				return false, err
@@ -554,6 +591,9 @@ func (c *shellCommand) recoverControlBootstrapCreateError(ctx context.Context, s
 	case 0:
 		return createErr
 	case 1:
+		if bindErr := c.bindControlBootstrapRouteAuthority(ctx, &route, rows[0][0], rows[0][1], rows[0][2], marker); bindErr != nil {
+			return errors.Join(createErr, fmt.Errorf("ControlSession bootstrap error-after-effect generation is unknown; no rollback attempted: %w", bindErr))
+		}
 		receipt := controlBootstrapReceipt{
 			created: true, sessionID: rows[0][0], windowID: rows[0][1], paneID: rows[0][2], operationMarker: marker,
 			route: route,
@@ -576,7 +616,57 @@ func (c *shellCommand) resolveControlBootstrapRoute(ctx context.Context, socketN
 	if err := c.guardControlBootstrapRoute(ctx, &route, true, true); err != nil {
 		return runtimeMutationRoute{}, err
 	}
+	if route.expectedSocketPath != "" {
+		bound, err := resolveExistingRuntimeMutationRoute(ctx, c.tmuxRunner, target, nil)
+		if err != nil {
+			return runtimeMutationRoute{}, err
+		}
+		route = bound
+	}
 	return route, nil
+}
+
+func (c *shellCommand) bindControlBootstrapRouteAuthority(
+	ctx context.Context,
+	route *runtimeMutationRoute,
+	sessionID, windowID, paneID, marker string,
+) error {
+	if route == nil || !filepath.IsAbs(route.expectedSocketPath) || filepath.Clean(route.expectedSocketPath) != route.expectedSocketPath {
+		return errors.New("ControlSession bootstrap route authority has no exact physical socket")
+	}
+	routed := c.controlBootstrapRunner(*route)
+	out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", tmuxRowFormat(
+		"#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}", "#{E:"+createOperationEnvironment+"}"))
+	if err != nil {
+		return fmt.Errorf("ControlSession bootstrap: observe exact route authority: %w", err)
+	}
+	rows := splitTmuxRows(string(out), 6)
+	if len(rows) != 1 || rows[0][0] != route.expectedSocketPath || rows[0][2] != sessionID || rows[0][3] != windowID ||
+		rows[0][4] != paneID || rows[0][5] != marker {
+		return errors.New("ControlSession bootstrap route authority socket/$/@/%/lease receipt drifted")
+	}
+	pid, pidErr := strconv.Atoi(strings.TrimSpace(rows[0][1]))
+	if pidErr != nil || pid <= 0 {
+		return errors.New("ControlSession bootstrap route authority server pid is invalid")
+	}
+	route.authority = &runtimeMutationRouteAuthority{
+		Class: runtimeMutationRouteApp, ServerPID: rows[0][1], SessionID: sessionID, WindowID: windowID, PaneID: paneID,
+	}
+	return nil
+}
+
+func (c *shellCommand) guardControlBootstrapAbsentBeforeCreate(ctx context.Context, route runtimeMutationRoute) error {
+	if route.target.flag != "-L" || route.target.value == "" || route.expectedSocketPath != "" || route.authority != nil {
+		return errors.New("ControlSession bootstrap absent authority is not an exact logical declaration")
+	}
+	probe := explicitTmuxRunner{runner: c.tmuxRunner, target: route.target}
+	if _, err := probe.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}"); err != nil {
+		if tmuxSessionAbsent(err) || tmuxServerUnreachable(err) {
+			return nil
+		}
+		return fmt.Errorf("ControlSession bootstrap absent authority is unknown: %w", err)
+	}
+	return errors.New("ControlSession bootstrap absent server appeared after planning")
 }
 
 // guardControlBootstrapRoute binds one physical socket_path for the whole
@@ -593,6 +683,12 @@ func (c *shellCommand) guardControlBootstrapRoute(ctx context.Context, route *ru
 		return nil
 	}
 	routed := c.controlBootstrapRunner(*route)
+	if route.authority != nil {
+		pidOut, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pid}")
+		if err != nil || strings.TrimSpace(string(pidOut)) != route.authority.ServerPID {
+			return errors.New("ControlSession bootstrap server generation drifted")
+		}
+	}
 	owned, err := routed.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
 	if err != nil || strings.TrimSpace(string(owned)) != "1" {
 		return errors.New("ControlSession bootstrap: exact server is not app-owned")
@@ -648,7 +744,7 @@ func (c *shellCommand) guardControlBootstrapRollbackRoute(ctx context.Context, r
 }
 
 func (c *shellCommand) guardControlBootstrapOwnedLease(ctx context.Context, receipt controlBootstrapReceipt) error {
-	if err := guardResolvedRuntimeMutationRoute(ctx, c.tmuxRunner, receipt.route); err != nil {
+	if err := c.guardControlBootstrapRecoveryRoute(ctx, receipt); err != nil {
 		return err
 	}
 	if err := c.guardControlBootstrapRollbackRoute(ctx, receipt); err != nil {
@@ -661,19 +757,46 @@ func (c *shellCommand) guardControlBootstrapOwnedLease(ctx context.Context, rece
 	return nil
 }
 
-func (c *shellCommand) rollbackControlBootstrap(ctx context.Context, socketName string, receipt controlBootstrapReceipt) error {
+func (c *shellCommand) guardControlBootstrapRecoveryRoute(ctx context.Context, receipt controlBootstrapReceipt) error {
+	route := receipt.route
+	if !filepath.IsAbs(route.expectedSocketPath) || filepath.Clean(route.expectedSocketPath) != route.expectedSocketPath ||
+		route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID == "" {
+		return errors.New("ControlSession bootstrap recovery route has no exact physical server generation")
+	}
+	exact := explicitTmuxRunner{runner: c.tmuxRunner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
+	pathOut, err := exact.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	if err != nil || strings.TrimSpace(string(pathOut)) != route.expectedSocketPath {
+		return errors.New("ControlSession bootstrap rollback socket drifted")
+	}
+	pidOut, err := exact.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pid}")
+	if err != nil || strings.TrimSpace(string(pidOut)) != route.authority.ServerPID {
+		return errors.New("ControlSession bootstrap rollback server generation drifted")
+	}
+	return nil
+}
+
+func (c *shellCommand) rollbackControlBootstrap(ctx context.Context, _ string, receipt controlBootstrapReceipt) error {
 	if !receipt.created || exactTmuxHandle(receipt.sessionID, "$") == "" {
 		return nil
 	}
 	action := newRuntimeMutation(1, mutationKillOwned, runtimeMutationTarget{
-		Socket: "-L=" + socketName, PhysicalSocket: printableRuntimeMutationSocket(receipt.route.expectedSocketPath),
-		Kind: "session", ID: receipt.sessionID, UID: receipt.operationMarker,
+		Socket: "-S=" + receipt.route.expectedSocketPath, PhysicalSocket: printableRuntimeMutationSocket(receipt.route.expectedSocketPath),
+		RouteAuthority: receipt.route.authority.printable(),
+		Kind:           "session", ID: receipt.sessionID, UID: receipt.operationMarker,
 		Parent: receipt.windowID + "/" + receipt.paneID,
 	})
 	bindRuntimeMutationGuard(&action, "same exact bootstrap lease="+receipt.operationMarker)
 	action.Operands = []string{"-t", receipt.sessionID}
 	return executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
+		TargetRouteGuard: func(ctx context.Context) error {
+			if action.Target.Socket != "-S="+receipt.route.expectedSocketPath ||
+				action.Target.PhysicalSocket != receipt.route.expectedSocketPath || receipt.route.authority == nil ||
+				action.Target.RouteAuthority != receipt.route.authority.printable() {
+				return errors.New("ControlSession bootstrap rollback printable route disagrees with exact recovery authority")
+			}
+			return c.guardControlBootstrapRecoveryRoute(ctx, receipt)
+		},
 		Reobserve: func(ctx context.Context) (bool, error) {
 			out, err := c.tmuxRunner.Run(ctx, "tmux", "-S", action.Target.PhysicalSocket, "list-sessions", "-F", "#{session_id}")
 			if err != nil {
@@ -693,7 +816,7 @@ func (c *shellCommand) rollbackControlBootstrap(ctx context.Context, socketName 
 			return c.guardControlBootstrapOwnedLease(ctx, receipt)
 		},
 		Apply: func(ctx context.Context) error {
-			_, err := runRuntimeMutationCommand(ctx, explicitTmuxRunner{runner: c.tmuxRunner, target: explicitTmuxTarget{flag: "-L", value: socketName}}, action)
+			_, err := runRuntimeMutationCommand(ctx, explicitTmuxRunner{runner: c.tmuxRunner, target: explicitTmuxTarget{flag: "-S", value: receipt.route.expectedSocketPath}}, action)
 			return err
 		},
 	}})
@@ -702,12 +825,16 @@ func (c *shellCommand) rollbackControlBootstrap(ctx context.Context, socketName 
 func (c *shellCommand) clearControlBootstrapLease(ctx context.Context, socketName string, receipt controlBootstrapReceipt) error {
 	action := newRuntimeMutation(1, mutationClearLease, runtimeMutationTarget{
 		Socket: "-L=" + socketName, PhysicalSocket: printableRuntimeMutationSocket(receipt.route.expectedSocketPath),
-		Kind: "session", ID: receipt.sessionID, Parent: receipt.windowID + "/" + receipt.paneID,
+		RouteAuthority: receipt.route.authority.printable(),
+		Kind:           "session", ID: receipt.sessionID, Parent: receipt.windowID + "/" + receipt.paneID,
 	})
 	bindRuntimeMutationGuard(&action, "same bootstrap operation lease="+receipt.operationMarker)
 	action.Operands = []string{"-u", "-t", receipt.sessionID, createOperationEnvironment}
 	return executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: action,
+		TargetRouteGuard: func(ctx context.Context) error {
+			return guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, receipt.route, action)
+		},
 		Reobserve: func(ctx context.Context) (bool, error) {
 			if err := c.guardControlBootstrapOwnedLease(ctx, receipt); err != nil {
 				out, readErr := c.tmuxRunner.Run(ctx, "tmux", "-S", action.Target.PhysicalSocket, "show-environment", "-t", receipt.sessionID)
@@ -719,10 +846,13 @@ func (c *shellCommand) clearControlBootstrapLease(ctx context.Context, socketNam
 			return false, nil
 		},
 		Guard: func(ctx context.Context) error {
+			if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, receipt.route, action); err != nil {
+				return err
+			}
 			return c.guardControlBootstrapOwnedLease(ctx, receipt)
 		},
 		Apply: func(ctx context.Context) error {
-			_, err := runRuntimeMutationCommand(ctx, explicitTmuxRunner{runner: c.tmuxRunner, target: explicitTmuxTarget{flag: "-L", value: socketName}}, action)
+			_, err := runRuntimeMutationCommand(ctx, explicitTmuxRunner{runner: c.tmuxRunner, target: explicitTmuxTarget{flag: "-S", value: receipt.route.expectedSocketPath}}, action)
 			return err
 		},
 	}})
