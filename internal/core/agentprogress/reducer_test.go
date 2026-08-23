@@ -34,14 +34,14 @@ func TestReducerOrdersDedupesSaturatesAndClearsImmediately(t *testing.T) {
 	if reducer.Observe(Event{Kind: EventItemStarted, TurnRef: "turn-1", ItemRef: "item-closed", Activity: coremetadata.ProgressCommand, ObservedAt: base.Add(5 * time.Millisecond)}) {
 		t.Fatal("completed item was restarted")
 	}
-	for i := 0; i < coremetadata.AgentProgressItemsCap-1; i++ {
+	for i := range coremetadata.AgentProgressItemsCap - 1 {
 		reducer.Observe(Event{Kind: EventItemStarted, TurnRef: "turn-1", ItemRef: string(rune('a' + i)), Activity: coremetadata.ProgressTool, ObservedAt: base.Add(time.Duration(10+i) * time.Millisecond)})
 	}
-	if got := reducer.Current().ActiveItemCount; got != coremetadata.AgentProgressItemsCap-1 {
+	if got := reducer.progress.ActiveItemCount; got != coremetadata.AgentProgressItemsCap-1 {
 		t.Fatalf("active item count = %d", got)
 	}
 	reducer.Observe(Event{Kind: EventItemStarted, TurnRef: "turn-1", ItemRef: "overflow", Activity: coremetadata.ProgressWebSearch, ObservedAt: base.Add(50 * time.Millisecond)})
-	if got := reducer.Current(); got.Activity != coremetadata.ProgressOther || got.ActiveItemCount != coremetadata.AgentProgressItemsCap-1 {
+	if got := reducer.progress; got.Activity != coremetadata.ProgressOther || got.ActiveItemCount != coremetadata.AgentProgressItemsCap-1 {
 		t.Fatalf("overflow projection = %+v", got)
 	}
 	if got := reducer.Diagnostics(); got.Overflow != 1 || got.Dropped < 3 {
@@ -54,7 +54,7 @@ func TestReducerOrdersDedupesSaturatesAndClearsImmediately(t *testing.T) {
 	if got, changed := reducer.Flush(base.Add(51 * time.Millisecond)); !changed || !got.IsZero() {
 		t.Fatalf("terminal flush = %+v/%t, want immediate zero", got, changed)
 	}
-	if !reducer.Current().IsZero() {
+	if !reducer.progress.IsZero() {
 		t.Fatal("terminal retained current history")
 	}
 }
@@ -78,7 +78,7 @@ func TestReducerFakeClockNeverExceedsFourWritesPerSecond(t *testing.T) {
 	if writes != 4 {
 		t.Fatalf("writes in [0,1s) = %d, want 4", writes)
 	}
-	if at := reducer.NextFlushAt(); at.Before(base.Add(time.Second)) {
+	if at := reducer.lastWriteAt.Add(MinWriteInterval); !reducer.pending || at.Before(base.Add(time.Second)) {
 		t.Fatalf("next flush = %s, want >= one second", at)
 	}
 }
@@ -132,7 +132,7 @@ func TestReducerDiagnosticsSaturateAtUint32Boundary(t *testing.T) {
 	reducer.diagnostics = Diagnostics{Dropped: ^uint32(0) - 1, Unknown: ^uint32(0) - 1, Overflow: ^uint32(0) - 1}
 	reducer.Observe(Event{TurnRef: "turn-foreign", UnknownIncrement: 10})
 	reducer.items = make(map[string]itemState, coremetadata.AgentProgressItemsCap)
-	for i := 0; i < coremetadata.AgentProgressItemsCap; i++ {
+	for i := range coremetadata.AgentProgressItemsCap {
 		reducer.items[string(rune(i+1))] = itemState{}
 	}
 	reducer.Observe(Event{Kind: EventItemStarted, TurnRef: "turn-1", ItemRef: "overflow", Activity: coremetadata.ProgressOther, ObservedAt: base.Add(time.Millisecond)})

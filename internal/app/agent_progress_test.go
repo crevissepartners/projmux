@@ -104,16 +104,16 @@ func TestDescribeAndResourceProjectionContainOnlyBoundedProgress(t *testing.T) {
 	rows := describeSpecRows(coremetadata.Agent{Spec: coremetadata.AgentSpec{Provider: "codex"}, Status: coremetadata.AgentStatus{
 		Phase: coremetadata.PhaseRunning, PaneRef: "pane-1", Progress: progress,
 	}})
-	joined := ""
+	var joined strings.Builder
 	for _, row := range rows {
-		joined += row[0] + "=" + row[1] + "\n"
+		joined.WriteString(row[0] + "=" + row[1] + "\n")
 	}
-	if !strings.Contains(joined, "Progress=Working · plan 2/4 · files 3 · tool") {
-		t.Fatalf("describe rows = %q", joined)
+	if !strings.Contains(joined.String(), "Progress=Working · plan 2/4 · files 3 · tool") {
+		t.Fatalf("describe rows = %q", joined.String())
 	}
 	for _, forbidden := range []string{"prompt", "reasoning", "/repo/private", "command output", "diff --git"} {
-		if strings.Contains(strings.ToLower(joined), forbidden) {
-			t.Fatalf("describe leaked %q: %s", forbidden, joined)
+		if strings.Contains(strings.ToLower(joined.String()), forbidden) {
+			t.Fatalf("describe leaked %q: %s", forbidden, joined.String())
 		}
 	}
 	row := registryview.Row{Kind: registryview.RowKindAgent, Progress: progress}

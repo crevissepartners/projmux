@@ -36,10 +36,7 @@ func renderAgentProgress(progress coremetadata.AgentProgress, now time.Time, loc
 		parts = append(parts, string(progress.Activity))
 	}
 	if !progress.StartedAt.IsZero() && !now.IsZero() {
-		elapsed := now.Sub(progress.StartedAt)
-		if elapsed < 0 {
-			elapsed = 0
-		}
+		elapsed := max(now.Sub(progress.StartedAt), 0)
 		parts = append(parts, formatProgressElapsed(elapsed))
 	}
 	line := strings.Join(parts, " · ")

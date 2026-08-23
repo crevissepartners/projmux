@@ -41,7 +41,7 @@ func TestDecodeProgressPlanDropsStepAndExplanationWithNinetyNineCap(t *testing.T
 func TestDecodeProgressDiffScansAtMostBudgetAndSaturatesHeaders(t *testing.T) {
 	t.Parallel()
 	var diff strings.Builder
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		fmt.Fprintf(&diff, "diff --git a/PRIVATE-%d b/PRIVATE-%d\n", i, i)
 	}
 	raw, _ := json.Marshal(map[string]any{"threadId": "thread-1", "turnId": "turn-1", "diff": diff.String()})
@@ -147,7 +147,7 @@ func TestDecodeProgressTurnUsesNestedTurnIDAndTerminalStatus(t *testing.T) {
 
 func assertBoundedProgressEventHasNoContentFields(t *testing.T, event agentprogress.Event) {
 	t.Helper()
-	typ := reflect.TypeOf(event)
+	typ := reflect.TypeFor[agentprogress.Event]()
 	for i := 0; i < typ.NumField(); i++ {
 		name := strings.ToLower(typ.Field(i).Name)
 		for _, forbidden := range []string{"prompt", "reason", "step", "path", "command", "tool", "output", "diff", "model", "effort", "name", "content"} {

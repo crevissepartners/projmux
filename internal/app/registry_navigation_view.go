@@ -32,10 +32,6 @@ func registryNavigationRowValue(row registryview.Row) string { return row.ID }
 
 var registryNavigationColumns = []string{"KIND", "NAME", "STATUS", "PROGRESS", "TERMINATION", "ACTIONS", "RUNTIME", "UID"}
 
-func registryNavigationRow(row registryview.Row) []string {
-	return registryNavigationRowAt(row, i18n.FallbackLocale, time.Time{})
-}
-
 func registryNavigationRowAt(row registryview.Row, locale i18n.Locale, now time.Time) []string {
 	return []string{
 		runtimeCell(registryNavigationIndent(row) + string(row.Kind)),

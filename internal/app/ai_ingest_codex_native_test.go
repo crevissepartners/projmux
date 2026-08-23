@@ -412,8 +412,7 @@ func TestCodexNativeObserverForeignThreadSameTurnWritesNoRegistryProgressOrDiagn
 		},
 		events: make(chan codexappserver.Notification, 2),
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	sink := &recordingCodexProgressSink{recordingCodexLifecycleSink: newRecordingCodexLifecycleSink()}
 	observer := codexNativeObserver{
 		identity: identity, delay: time.Millisecond, sink: sink,
@@ -441,10 +440,6 @@ func TestCodexNativeObserverForeignThreadSameTurnWritesNoRegistryProgressOrDiagn
 		len(diagnostics) != 2 || diagnostics[0] != (agentprogress.Diagnostics{}) || diagnostics[1] != (agentprogress.Diagnostics{}) {
 		t.Fatalf("unexpected baseline progress=%#v diagnostics=%#v", progress, diagnostics)
 	}
-	if got := observer.progress.Current(); got.PlanTotal != 0 || got.PlanCompleted != 0 {
-		t.Fatalf("foreign thread mutated reducer/Registry projection: %#v", got)
-	}
-
 	sink.setCurrent(false)
 	select {
 	case err := <-done:

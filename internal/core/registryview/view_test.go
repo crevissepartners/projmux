@@ -149,7 +149,7 @@ func TestBuildProjectsBoundedAgentProgressAndAggregatesWindowAtReadTime(t *testi
 func TestWindowProgressCountsSaturateAboveUint8Capacity(t *testing.T) {
 	t.Parallel()
 	agents := make([]resourcegraph.AgentNode, 0, 600)
-	for i := 0; i < 300; i++ {
+	for range 300 {
 		agents = append(agents, resourcegraph.AgentNode{
 			WindowUID: "win-many",
 			Agent: coremetadata.Agent{Status: coremetadata.AgentStatus{
@@ -161,7 +161,7 @@ func TestWindowProgressCountsSaturateAboveUint8Capacity(t *testing.T) {
 			}},
 		})
 	}
-	for i := 0; i < 300; i++ {
+	for range 300 {
 		agents = append(agents, resourcegraph.AgentNode{
 			WindowUID: "win-many",
 			Agent: coremetadata.Agent{Status: coremetadata.AgentStatus{

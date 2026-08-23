@@ -163,22 +163,7 @@ func (r *Reducer) Flush(now time.Time) (coremetadata.AgentProgress, bool) {
 	return r.progress, true
 }
 
-func (r *Reducer) NextFlushAt() time.Time {
-	if r.clearPending {
-		return time.Time{}
-	}
-	if !r.pending {
-		return time.Time{}
-	}
-	if r.lastWriteAt.IsZero() {
-		return time.Time{}
-	}
-	return r.lastWriteAt.Add(MinWriteInterval)
-}
-
 func (r *Reducer) Diagnostics() Diagnostics { return r.diagnostics }
-
-func (r *Reducer) Current() coremetadata.AgentProgress { return r.progress }
 
 func (r *Reducer) resetTurn(turnRef string, startedAt, observedAt time.Time) {
 	r.progress = coremetadata.AgentProgress{
