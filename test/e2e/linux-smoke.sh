@@ -2522,7 +2522,11 @@ if [[ "$binding_repeat_converged" != "1" ]]; then
   exit 1
 fi
 smoke_assert_file_contains "$binding_root/converge-repeat.err" "converged=true"
-cmp "$binding_root/registry.before-repeat-hook" "$binding_registry"
+if ! cmp -s "$binding_root/registry.before-repeat-hook" "$binding_registry"; then
+  echo "repeat lifecycle convergence changed Registry content" >&2
+  diff -u "$binding_root/registry.before-repeat-hook" "$binding_registry" >&2 || true
+  exit 1
+fi
 if [[ "$(stat -c '%i:%s:%y' "$binding_registry")" != "$binding_registry_stat" ]]; then
   echo "repeat lifecycle convergence rewrote byte-identical registry content" >&2
   exit 1
@@ -4155,11 +4159,9 @@ echo \$? >"$startup_root/open-\$2.rc"
 STARTUP_OPEN_SCRIPT
 chmod 0755 "$startup_root/open-project.sh"
 
-# The `new` row's execution half is the same re-exec the sidebar launches once
-# the operator has approved the confirmation, so it is driven through that exact
-# transport. The confirmation itself is a native picker this harness cannot type
-# into; its approve/cancel branches and its verbatim text are pinned by the unit
-# tables instead.
+# The `Open fresh` row is a one-step neutral action. Drive the same detached
+# continuation that the sidebar launches so no confirmation or destructive
+# workflow can be hidden behind the picker transport.
 cat >"$startup_root/open-fresh.sh" <<STARTUP_FRESH_SCRIPT
 #!/usr/bin/env bash
 export HOME="$startup_root/home"
@@ -4530,8 +4532,9 @@ startup_wait_for "Continue project client handoff" startup_client_is_on "$startu
 cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 
 # 5. Open fresh from a detached continuation with TMUX unset and explicit
-# client authority. Only the canonical Project Window and its primary shell Pane
-# identities survive; snapshots and Project identity remain untouched.
+# client authority. The old same-root graph is removed atomically and a new
+# Project identity with one canonical shell is handed off. The filesystem root
+# and snapshot source bytes remain untouched.
 startup_pmx describe project "uid:$startup_project_uid" -o json >"$startup_root/project.before-fresh.json"
 startup_primary_window_before="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$startup_root/project.before-fresh.json" | head -n 1)"
 startup_pmx describe window "uid:$startup_primary_window_before" --project "uid:$startup_project_uid" -o json >"$startup_root/window.before-fresh.json"
@@ -4550,23 +4553,40 @@ if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
   exit 1
 fi
 startup_wait_for "Open fresh explicit client handoff" startup_client_is_on "$startup_session"
-startup_pmx describe project "uid:$startup_project_uid" -o json >"$startup_root/project.after-fresh.json"
+if startup_pmx describe project "uid:$startup_project_uid" -o json >"$startup_root/project.old-after-fresh.json" 2>/dev/null; then
+  echo "Open fresh retained the old Project identity" >&2
+  exit 1
+fi
+startup_project_uid_after="$(startup_pmx get projects -o uid)"
+if [[ -z "$startup_project_uid_after" ]] || [[ "$startup_project_uid_after" == "$startup_project_uid" ]] ||
+  [[ "$(printf '%s\n' "$startup_project_uid_after" | grep -c .)" != "1" ]]; then
+  echo "Open fresh did not create exactly one new Project identity" >&2
+  startup_pmx get projects -o uid >&2 || true
+  exit 1
+fi
+startup_pmx describe project "uid:$startup_project_uid_after" -o json >"$startup_root/project.after-fresh.json"
 startup_primary_window_after="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$startup_root/project.after-fresh.json" | head -n 1)"
-startup_pmx describe window "uid:$startup_primary_window_after" --project "uid:$startup_project_uid" -o json >"$startup_root/window.after-fresh.json"
+startup_pmx describe window "uid:$startup_primary_window_after" --project "uid:$startup_project_uid_after" -o json >"$startup_root/window.after-fresh.json"
 startup_primary_pane_after="$(sed -n 's/.*"primaryPaneRef": "\([^"]*\)".*/\1/p' "$startup_root/window.after-fresh.json" | head -n 1)"
-if [[ "$startup_primary_window_after" != "$startup_primary_window_before" ]] || [[ "$startup_primary_pane_after" != "$startup_primary_pane_before" ]]; then
-  echo "Open fresh changed canonical Project shell identity" >&2
+if [[ -z "$startup_primary_window_after" ]] || [[ -z "$startup_primary_pane_after" ]] ||
+  [[ "$startup_primary_window_after" == "$startup_primary_window_before" ]] ||
+  [[ "$startup_primary_pane_after" == "$startup_primary_pane_before" ]]; then
+  echo "Open fresh did not replace the old canonical shell identity" >&2
   exit 1
 fi
-if [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | grep -c .)" != "1" ]] ||
-  [[ "$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | grep -c .)" != "1" ]] ||
-  [[ "$(startup_pmx get agents --project "uid:$startup_project_uid" -o uid 2>/dev/null | grep -c . || true)" != "0" ]]; then
-  echo "Open fresh retained non-canonical descendants" >&2
+if [[ "$(startup_pmx get windows --project "uid:$startup_project_uid_after" -o uid | grep -c .)" != "1" ]] ||
+  [[ "$(startup_pmx get panes --project "uid:$startup_project_uid_after" -o uid | grep -c .)" != "1" ]] ||
+  [[ "$(startup_pmx get agents --project "uid:$startup_project_uid_after" -o uid 2>/dev/null | grep -c . || true)" != "0" ]]; then
+  echo "Open fresh did not create exactly one canonical shell" >&2
   exit 1
 fi
-if [[ "$(startup_tmux list-windows -t "$startup_session" -F '#{@projmux_window_uid}')" != "$startup_primary_window_before" ]] ||
-  [[ "$(startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}')" != "$startup_primary_pane_before" ]]; then
-  echo "Open fresh runtime identity does not match the canonical Registry shell" >&2
+startup_runtime_project_uid="$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)"
+startup_runtime_window_uid="$(startup_tmux list-windows -t "$startup_session" -F '#{@projmux_window_uid}')"
+startup_runtime_pane_uid="$(startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}')"
+if [[ "$startup_runtime_project_uid" != "$startup_project_uid_after" ]] ||
+  [[ "$startup_runtime_window_uid" != "$startup_primary_window_after" ]] ||
+  [[ "$startup_runtime_pane_uid" != "$startup_primary_pane_after" ]]; then
+  echo "Open fresh runtime identity does not match the new canonical Registry shell: project=$startup_runtime_project_uid/$startup_project_uid_after window=$startup_runtime_window_uid/$startup_primary_window_after pane=$startup_runtime_pane_uid/$startup_primary_pane_after" >&2
   exit 1
 fi
 cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
@@ -6494,7 +6514,52 @@ if ! exitrec_pmx describe pane "uid:$exitrec_shell_pane" -o json >"$exitrec_root
 fi
 echo ">> exit reconciliation e2e hook-driven clean exit agent=$exitrec_clean_agent pane=$exitrec_clean_pane registry=deleted journal=preserved siblings=preserved"
 
-# 3. The read surfaces project what the hook stored, and write nothing.
+# 3. A second Project on the same exact server reaches its root boundary. Its
+# initial shell is replaced by one managed clean-exit Pane; pane-exited records
+# the exact last-positive $N/@N owner binding and window-unlinked consumes that
+# evidence. The whole beta graph disappears, its managed pin becomes a
+# same-slot candidate, and the alpha Project/runtime plus root directory remain.
+mkdir -p "$exitrec_root/work/beta"
+exitrec_tmux new-session -d -s work-beta -n main -c "$exitrec_root/work/beta" sleep 600
+exitrec_tmux set-option -t work-beta -q @projmux_project_path "$exitrec_root/work/beta"
+exitrec_beta_project_uid="$(exitrec_pmx create project --root "$exitrec_root/work/beta" --name beta -o uid)"
+e2e_bounded_reconcile_to_noop "$exitrec_root/import-beta" \
+  exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json
+exitrec_pmx pin project add "uid:$exitrec_beta_project_uid" >"$exitrec_root/pin-beta.out"
+exitrec_beta_initial_runtime="$(exitrec_tmux display-message -p -t work-beta '#{pane_id}')"
+exitrec_beta_pane_uid="$(exitrec_live_pmx create pane --project "uid:$exitrec_beta_project_uid" -o uid -- sh -c 'sleep 3; exit 0')"
+for _ in $(seq 1 100); do
+  if [[ "$(exitrec_tmux list-panes -t work-beta -F '#{pane_id}' | grep -c . || true)" == "2" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$(exitrec_tmux list-panes -t work-beta -F '#{pane_id}' | grep -c . || true)" != "2" ]]; then
+  echo "Phase 3 e2e managed last Pane never materialized" >&2
+  exit 1
+fi
+exitrec_tmux kill-pane -t "$exitrec_beta_initial_runtime"
+exitrec_await_absent project "$exitrec_beta_project_uid"
+exitrec_pmx pin project list >"$exitrec_root/pins-after-beta.out"
+if ! grep -Fq "$exitrec_root/work/beta" "$exitrec_root/pins-after-beta.out" ||
+  grep -Fq "$exitrec_beta_project_uid" "$exitrec_root/config/projmux/pins"; then
+  echo "Phase 3 e2e did not convert the deleted Project pin to its root candidate" >&2
+  cat "$exitrec_root/pins-after-beta.out" >&2
+  exit 1
+fi
+if [[ ! -d "$exitrec_root/work/beta" ]]; then
+  echo "Phase 3 e2e deleted the Project root directory" >&2
+  exit 1
+fi
+if ! exitrec_pmx describe project "uid:$exitrec_project_uid" -o json >"$exitrec_root/alpha-after-beta.json" ||
+  ! exitrec_pmx describe window "uid:$exitrec_window_uid" -o json >"$exitrec_root/alpha-window-after-beta.json" ||
+  ! exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}' | grep -qx "$exitrec_shell_pane"; then
+  echo "Phase 3 e2e root cascade changed its same-socket sibling Project" >&2
+  exit 1
+fi
+echo ">> exit reconciliation e2e last-Pane Project cascade project=$exitrec_beta_project_uid pane=$exitrec_beta_pane_uid pin=candidate root=preserved same-socket-sibling=preserved"
+
+# 4. The read surfaces project what the hook stored, and write nothing.
 exitrec_registry="$exitrec_root/state/projmux/metadata/registry.json"
 exitrec_settle_registry() {
   local previous="" current stable_samples=0
@@ -6529,7 +6594,7 @@ if [[ "$(sha256sum "$exitrec_registry" | cut -d' ' -f1)" != "$exitrec_read_befor
 fi
 echo ">> exit reconciliation e2e read projection write-free"
 
-# 4. Whole-server loss, then restart on the same socket. Receipt-free recovery
+# 5. Whole-server loss, then restart on the same socket. Receipt-free recovery
 # ordering is explicitly outside this slice; the stable contract here is that no
 # evidence invents normal/intentional, the Pane row survives, and reconciliation
 # starts nothing because observation is not activation authority.
@@ -6565,7 +6630,7 @@ if [[ "$(exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}' | grep -c . || tru
 fi
 echo ">> exit reconciliation e2e restart converged pane=$exitrec_shell_pane class=$(exitrec_termination_field classification) no-autostart"
 
-# 5. The sibling socket was never read or written.
+# 6. The sibling socket was never read or written.
 exitrec_other_after="$(exitrec_other_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
 if [[ "$exitrec_other_after" != "$exitrec_other_before" ]]; then
   echo "exit reconciliation e2e touched the sibling socket: $exitrec_other_after" >&2

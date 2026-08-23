@@ -1027,10 +1027,13 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 	case args[0] == "list-windows" && flagArg(args, "-t") != "":
 		session := flagArg(args, "-t")
 		for _, row := range rows {
-			if len(row) != 5 {
+			idIndex, uidIndex := 3, 4
+			if len(row) == 6 {
+				idIndex, uidIndex = 4, 5
+			} else if len(row) != 5 {
 				continue
 			}
-			id, uid := row[3], strings.TrimSpace(row[4])
+			id, uid := row[idIndex], strings.TrimSpace(row[uidIndex])
 			coord := session + ":" + row[0]
 			r.windowAlias[id] = coord
 			r.windowUID[id], r.windowUID[coord] = uid, uid

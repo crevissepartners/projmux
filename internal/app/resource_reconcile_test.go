@@ -400,7 +400,7 @@ func TestResourceReconcileExecuteConvergesOneSocketAndRepeatsNoop(t *testing.T) 
 	if err != nil || stderr != "" {
 		t.Fatalf("execute error=%v stderr=%q\n%s", err, stderr, first)
 	}
-	if !strings.Contains(first, `"outcome": "changed"`) || store.writes != 0 {
+	if !strings.Contains(first, `"outcome": "changed"`) || store.writes != 1 {
 		t.Fatalf("execute result/writes mismatch: writes=%d\n%s", store.writes, first)
 	}
 	session := primary.session("alpha")
@@ -425,7 +425,7 @@ func TestResourceReconcileExecuteConvergesOneSocketAndRepeatsNoop(t *testing.T) 
 	if !strings.Contains(second, `"outcome": "no-op"`) || !strings.Contains(second, `"noOp": 1`) {
 		t.Fatalf("repeat was not a no-op:\n%s", second)
 	}
-	if store.writes != 0 || tmuxMutationCallCount(primary) != 0 {
+	if store.writes != 1 || tmuxMutationCallCount(primary) != 0 {
 		t.Fatalf("repeat mutated state: Registry writes=%d tmux mutations=%d", store.writes, tmuxMutationCallCount(primary))
 	}
 }
@@ -458,8 +458,8 @@ func TestResourceReconcileBlankD2PaneRemainsUnattributed(t *testing.T) {
 	if err != nil || stderr != "" || !strings.Contains(repeat, `"outcome": "no-op"`) || tmuxMutationCallCount(primary) != 0 {
 		t.Fatalf("blank orphan repeat error=%v stderr=%q mutations=%d\n%s", err, stderr, tmuxMutationCallCount(primary), repeat)
 	}
-	if store.writes != 0 {
-		t.Fatalf("Registry writes = %d, want no D2 import", store.writes)
+	if store.writes != 1 {
+		t.Fatalf("Registry writes = %d, want only the initial live Window handle observation and no D2 import", store.writes)
 	}
 }
 
@@ -749,7 +749,7 @@ func TestResourceReconcileTmuxFailureLeavesRetryableRegistryAuthority(t *testing
 	if err == nil {
 		t.Fatal("injected tmux failure unexpectedly succeeded")
 	}
-	if store.writes != 0 || len(store.registry.Projects) != 1 || len(store.registry.Windows) != 1 || len(store.registry.Panes) != 1 {
+	if store.writes != 1 || len(store.registry.Projects) != 1 || len(store.registry.Windows) != 1 || len(store.registry.Panes) != 1 {
 		t.Fatalf("Registry authority was not committed before tmux failure: writes=%d snapshot=%s", store.writes, store.snapshot())
 	}
 	for _, want := range []string{`"outcome": "failed"`, `"completedStages"`, `"remainingDrift"`, `"retry": "projmux reconcile resources --socket 'primary'"`} {

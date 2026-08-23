@@ -65,6 +65,13 @@ func (s *stubPaneInventory) LivePaneUIDs(context.Context) (map[string]bool, erro
 	return s.uids, nil
 }
 
+func (s *stubPaneInventory) LivePaneCount(context.Context) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	return len(s.uids), nil
+}
+
 type sequencedPaneInventory struct {
 	uids  []map[string]bool
 	errs  []error
@@ -718,10 +725,11 @@ func TestBothPaneExitHooksRebalanceThenConverge(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	for hook, reason := range map[string]string{"pane-exited": "pane-exited --hook-pane '#{hook_pane}' --hook-window '#{window_id}'", "after-kill-pane": "pane-killed"} {
-		body := "sleep 0.05; '/tmp/proj mux/bin/projmux' internal tmux rebalance-panes >/dev/null 2>&1 || true; " +
-			"'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' " +
-			"--session '#{session_id}' --reason " + reason + " >/dev/null 2>&1 || true"
+	for hook, body := range map[string]string{
+		"pane-exited":     "'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' --reason pane-exited --hook-pane '#{hook_pane}' >/dev/null 2>&1 || true",
+		"after-kill-pane": "'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' --session '#{session_id}' --reason pane-killed >/dev/null 2>&1 || true",
+	} {
+		body = "sleep 0.05; '/tmp/proj mux/bin/projmux' internal tmux rebalance-panes >/dev/null 2>&1 || true; " + body
 		line := hookLine(t, stdout.String(), hook)
 		if !strings.Contains(line, body) {
 			t.Fatalf("%s hook = %q, want it to run %q", hook, line, body)

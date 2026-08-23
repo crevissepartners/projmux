@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
-	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 const (
@@ -27,22 +29,8 @@ const (
 	// projectStartupNewLabel is the exact user-facing row name.
 	projectStartupNewLabel = "Open fresh"
 
-	// projectStartupNewDescription is the row description. The destructive-action
-	// contract requires the row itself to say what it discards, before the
-	// operator has committed to anything.
-	projectStartupNewDescription = "keep the canonical Project shell and remove every other saved Window, Pane, and Agent"
-
-	projectStartupNewConfirmTitle  = "Open fresh: prune saved topology?"
-	projectStartupNewConfirmPrompt = "Open fresh > "
-	projectStartupNewConfirmFooter = "Enter: discard and start  |  Esc: cancel"
-	projectStartupNewConfirmRow    = "Yes, prune and open fresh"
-	projectStartupNewCancelRow     = "Cancel"
-	projectStartupNewCancelHelp    = "keep the saved state; nothing is deleted"
-
-	projectStartupNewConfirmValue = "project-startup-new:confirm"
-	projectStartupNewCancelValue  = "project-startup-new:cancel"
-
-	projectStartupNewCanceledMessage = "projmux: Open fresh canceled; nothing was changed"
+	// projectStartupNewDescription presents Fresh as an ordinary one-step open.
+	projectStartupNewDescription = "open a new Project identity with one canonical shell"
 )
 
 // newProjectStartupCandidate is the fresh-start row.
@@ -58,12 +46,11 @@ func newProjectStartupCandidate(locales ...i18n.Locale) projectStartupCandidate 
 	}
 }
 
-// projectFreshStartPlan is the preflighted prune for Open fresh.
+// projectFreshStartPlan is the preflighted same-root replacement for Open fresh.
 //
-// It is a plan rather than a direct mutation for the same reason `delete` has
-// one: the counts the operator approves and the records the transaction removes
-// have to be the same set, and the only way to say that is to name the set once
-// and re-derive it under the store lock.
+// It is a plan rather than a direct mutation because picker selection and the
+// detached continuation run in different processes. The mutation re-derives
+// the target under the store lock and refuses a changed Project identity.
 type projectFreshStartPlan struct {
 	// ProjectUID is empty when the exact root declares no Registry Project. That
 	// is the ordinary first-open case, not a failure: there is nothing to prune.
@@ -71,11 +58,11 @@ type projectFreshStartPlan struct {
 	Windows    int
 	Panes      int
 	Agents     int
-	// AgentSessionRefs counts the Agents whose Registry record carries the
-	// durable conversation pointer status.sessionRef. Deleting the Agent is what
-	// destroys that pointer, so the confirmation names the number explicitly.
+	// AgentSessionRefs remains diagnostic plan evidence; it is never rendered as
+	// a danger count or confirmation in the neutral Fresh flow.
 	AgentSessionRefs int
-	// signature pins the exact cascade the operator approved.
+	SessionName      string
+	// signature summarizes the exact preflighted graph for tests and diagnostics.
 	signature string
 }
 
@@ -84,39 +71,10 @@ func (p projectFreshStartPlan) Empty() bool {
 	return p.Windows == 0 && p.Panes == 0 && p.Agents == 0
 }
 
-// Counts renders the exact per-kind deletion counts. Nothing here is rounded or
-// lumped: the destructive-action contract is that the operator sees the three
-// numbers that will actually be removed.
+// Counts renders exact per-kind plan diagnostics. It is not user-facing Fresh
+// picker or confirmation text.
 func (p projectFreshStartPlan) Counts() string {
 	return fmt.Sprintf("Window %d / Pane %d / Agent %d", p.Windows, p.Panes, p.Agents)
-}
-
-// ConfirmHeader is the always-visible line of the confirmation step. It states
-// both the exact prune and the identities and snapshot storage that survive.
-func (p projectFreshStartPlan) ConfirmHeader() string {
-	return p.ConfirmHeaderLocale(i18n.FallbackLocale)
-}
-
-func (p projectFreshStartPlan) ConfirmHeaderLocale(locale i18n.Locale) string {
-	format := localizeUIText(locale, "deletes %s; the canonical Project Window and shell Pane, snapshots, Project registration, managed root, and trust decision are kept")
-	return fmt.Sprintf(format, p.Counts())
-}
-
-// ConfirmRowHelp is the description of the row that performs the deletion. It
-// repeats the counts so the numbers are attached to the action itself, and names
-// the conversation pointer the Agent records take with them.
-func (p projectFreshStartPlan) ConfirmRowHelp() string {
-	return p.ConfirmRowHelpLocale(i18n.FallbackLocale)
-}
-
-func (p projectFreshStartPlan) ConfirmRowHelpLocale(locale i18n.Locale) string {
-	if p.Agents == 0 {
-		format := localizeUIText(locale, "deletes %s; no Agent record remains, so no Agent conversation pointer status.sessionRef is lost")
-		return fmt.Sprintf(format, p.Counts())
-	}
-	format := localizeUIText(locale, "deletes %s; the Agents' conversation pointer status.sessionRef (%d recorded) is deleted with them and cannot be recovered")
-	return fmt.Sprintf(format,
-		p.Counts(), p.AgentSessionRefs)
 }
 
 // ResultMessage is emitted after materialization and before the final client
@@ -126,18 +84,14 @@ func (p projectFreshStartPlan) ResultMessage(sessionName string) string {
 }
 
 func (p projectFreshStartPlan) ResultMessageLocale(locale i18n.Locale, sessionName string) string {
-	format := localizeUIText(locale, "projmux: opened %s fresh: deleted %s; the canonical Project shell identity was preserved")
-	return fmt.Sprintf(format,
-		sessionName, p.Counts())
+	format := localizeUIText(locale, "projmux: opened %s fresh with a new Project identity and canonical shell")
+	return fmt.Sprintf(format, sessionName)
 }
 
 // switchProjectFreshStarter is the Open fresh projection seam.
 //
-// Planning and pruning are separate calls because they happen at different
-// moments and, on the sidebar route, in different processes: the confirmation
-// runs in the picker popup, and the start runs in the re-exec that popup
-// launches. Handing the second half a plan it re-derives and compares is what
-// keeps the approved counts and the deleted records the same set.
+// Planning and replacement are separate calls because the sidebar picker and
+// its detached continuation run in different processes.
 type switchProjectFreshStarter interface {
 	PlanProjectFreshStart(root string) (projectFreshStartPlan, error)
 	PruneProjectFreshStart(ctx context.Context, root string, plan projectFreshStartPlan) error
@@ -148,9 +102,11 @@ type switchProjectFreshStarter interface {
 // store lock and committed atomically; snapshot storage is never consulted or
 // changed by this seam.
 type registryProjectFreshStarter struct {
-	resources *resourceStore
-	runner    tmuxRunner
-	target    explicitTmuxTarget
+	resources    *resourceStore
+	runner       tmuxRunner
+	target       explicitTmuxTarget
+	shell        string
+	loadSnapshot func(string) (sessionstate.Snapshot, error)
 }
 
 func newRegistryProjectFreshStarter() *registryProjectFreshStarter {
@@ -158,7 +114,98 @@ func newRegistryProjectFreshStarter() *registryProjectFreshStarter {
 	if err != nil {
 		panic(err)
 	}
-	return &registryProjectFreshStarter{resources: newResourceStore(), runner: inttmux.ExecRunner{}, target: target}
+	return &registryProjectFreshStarter{
+		resources: newResourceStore(), runner: inttmux.ExecRunner{}, target: target,
+		shell: configuredShell(os.Getenv),
+		loadSnapshot: func(session string) (sessionstate.Snapshot, error) {
+			store, err := sessionstate.NewDefaultStoreFromEnv()
+			if err != nil {
+				return sessionstate.Snapshot{}, err
+			}
+			return store.LoadReadOnly(session)
+		},
+	}
+}
+
+func (s *registryProjectFreshStarter) ProjectRegistered(root string) (bool, error) {
+	if s == nil || s.resources == nil || s.resources.snapshot == nil {
+		return false, errors.New("project startup: read-only Registry is not configured")
+	}
+	registry, err := s.resources.snapshot()
+	if err != nil {
+		return false, MapMetadataError(err)
+	}
+	_, ok := registry.ProjectByRoot(cleanOptionalPath(root))
+	return ok, nil
+}
+
+// ContinueProject refuses to invent desired topology. An existing Project is
+// reused; a deleted Project can only be recreated from its exact usable
+// snapshot, projected under freshly minted resource identities in one commit.
+func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, sessionName string) (openedProjectBootstrap, error) {
+	if s == nil || s.resources == nil {
+		return openedProjectBootstrap{}, errors.New("continue project: resource registry store is not configured")
+	}
+	root = cleanOptionalPath(root)
+	registry, err := s.resources.snapshot()
+	if err != nil {
+		return openedProjectBootstrap{}, MapMetadataError(err)
+	}
+	if project, ok := registry.ProjectByRoot(root); ok {
+		return openedProjectBootstrap{project: project.Clone()}, nil
+	}
+	if s.loadSnapshot == nil {
+		return openedProjectBootstrap{}, errors.New("continue project unavailable: no read-only snapshot source is configured; choose Open fresh")
+	}
+	snap, err := s.loadSnapshot(sessionName)
+	if err != nil {
+		return openedProjectBootstrap{}, fmt.Errorf("continue project unavailable: no usable snapshot for %q; choose Open fresh: %w", sessionName, err)
+	}
+	if candidates.MatchKey(snap.DefaultCWD) != candidates.MatchKey(root) {
+		return openedProjectBootstrap{}, fmt.Errorf("continue project unavailable: snapshot root %q does not match %q; choose Open fresh", snap.DefaultCWD, root)
+	}
+	stripSnapshotResourceMetadata(&snap)
+	var opened coremetadata.Project
+	_, err = s.resources.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if _, exists := working.ProjectByRoot(root); exists {
+			return errors.New("continue project: the root was registered after snapshot preflight; retry")
+		}
+		registered, err := mutator.RegisterProject(working, coremetadata.RegisterProjectOptions{
+			Root: root, SessionName: sessionName, DefaultShell: s.shell,
+		})
+		if err != nil {
+			return err
+		}
+		newUID := mutator.NewUID
+		if newUID == nil {
+			newUID = coremetadata.NewUID
+		}
+		projection, err := coremetadata.PlanSnapshotProjection(*working, registered.Project.Metadata.UID, snap, time.Now().UTC(), newUID)
+		if err != nil {
+			return err
+		}
+		*working = projection.Desired
+		stored, _ := working.Project(registered.Project.Metadata.UID)
+		opened = stored.Clone()
+		return nil
+	})
+	if err != nil {
+		return openedProjectBootstrap{}, MapMetadataError(err)
+	}
+	return openedProjectBootstrap{project: opened, bootstrapped: true, materializeTopology: true}, nil
+}
+
+func stripSnapshotResourceMetadata(snap *sessionstate.Snapshot) {
+	if snap == nil {
+		return
+	}
+	snap.Metadata = nil
+	for wi := range snap.Windows {
+		snap.Windows[wi].Metadata = nil
+		for pi := range snap.Windows[wi].Panes {
+			snap.Windows[wi].Panes[pi].Metadata = nil
+		}
+	}
 }
 
 // PlanProjectFreshStart resolves the exact prune for one Project root.
@@ -233,35 +280,33 @@ func projectFreshStartPlanFor(registry coremetadata.Registry, projectUID string)
 	return plan
 }
 
-// PruneProjectFreshStart commits the canonical fresh projection. An empty plan
-// opens no transaction, which guarantees a second Open fresh is a Registry
-// zero-diff and keeps first-use bootstrap free of an unnecessary Registry write.
+// PruneProjectFreshStart atomically replaces any exact same-root graph with a
+// newly minted Project and one canonical shell.
 func (s *registryProjectFreshStarter) PruneProjectFreshStart(ctx context.Context, root string, plan projectFreshStartPlan) error {
-	if plan.Empty() {
-		return nil
-	}
 	if s == nil || s.resources == nil {
 		return errors.New("project fresh start: resource registry store is not configured")
 	}
 	root = strings.TrimSpace(root)
-	if err := s.requireClosedProject(ctx, root, plan.ProjectUID); err != nil {
-		return err
-	}
-	_, err := s.resources.converge(func(working *coremetadata.Registry, _ coremetadata.Mutator) error {
-		project, ok := working.ProjectByRoot(root)
-		if !ok || project.Metadata.UID != plan.ProjectUID {
-			return fmt.Errorf("project fresh start: %q no longer declares Project %s; nothing was deleted", root, plan.ProjectUID)
-		}
-		current := projectFreshStartPlanFor(*working, plan.ProjectUID)
-		if current.signature != plan.signature {
-			return errors.New("project fresh start: the cascade plan changed between the confirmation and execution; nothing was deleted")
-		}
-		fresh, err := coremetadata.PlanOpenFresh(*working, plan.ProjectUID, time.Now())
-		if err != nil {
+	if plan.ProjectUID != "" {
+		if err := s.requireClosedProject(ctx, root, plan.ProjectUID); err != nil {
 			return err
 		}
-		*working = fresh.Desired
-		return nil
+	}
+	_, err := s.resources.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if current, ok := working.ProjectByRoot(root); ok {
+			if current.Metadata.UID != plan.ProjectUID {
+				return fmt.Errorf("project fresh start: %q now declares a different Project; retry", root)
+			}
+			if err := mutator.DeleteProject(working, current.Metadata.UID); err != nil {
+				return err
+			}
+		} else if plan.ProjectUID != "" {
+			return fmt.Errorf("project fresh start: %q no longer declares Project %s", root, plan.ProjectUID)
+		}
+		_, err := mutator.RegisterProject(working, coremetadata.RegisterProjectOptions{
+			Root: root, SessionName: plan.SessionName, DefaultShell: s.shell,
+		})
+		return err
 	})
 	return err
 }
@@ -287,7 +332,7 @@ func (s *registryProjectFreshStarter) requireClosedProject(ctx context.Context, 
 		sessionName = strings.TrimSpace(project.Status.Session.Name)
 	}
 	if sessionName == "" {
-		return errors.New("project fresh start: target Project has no declared session projection; nothing was deleted")
+		return nil
 	}
 	target := s.target
 	if target.flag == "" || target.value == "" {
@@ -305,52 +350,7 @@ func (s *registryProjectFreshStarter) requireClosedProject(ctx context.Context, 
 	return nil
 }
 
-// confirmProjectFreshStart is the destructive-action gate for Open fresh.
-//
-// It is a second native picker rather than a yes/no line for the same reason
-// confirmNotifySidebarClearAll is: the operator is already inside a popup picker,
-// and a confirmation that renders somewhere else is a confirmation they can miss.
-// Approval requires BOTH the Enter key and the exact confirm value, so a stray
-// key or a picker that closes without a selection is a cancel.
-//
-// It runs at pick time, in the picker's own process, on purpose. The sidebar open
-// finishes in a detached `run-shell -b` re-exec that has no controlling terminal,
-// so a native picker there would have nowhere to draw.
-func (c *switchCommand) confirmProjectFreshStart(plan projectFreshStartPlan) (bool, error) {
-	locale := appLocale(c.homeDir, c.lookupEnv)
-	options := intpickercompat.Options{
-		UI:            "project-startup-new-confirm",
-		Locale:        locale,
-		Title:         localizeUIText(locale, projectStartupNewConfirmTitle),
-		Prompt:        localizeUIText(locale, projectStartupNewConfirmPrompt),
-		Header:        plan.ConfirmHeaderLocale(locale),
-		Footer:        localizeUIText(locale, projectStartupNewConfirmFooter),
-		Bindings:      settingsCloseBindings(),
-		DisableSearch: true,
-		Entries: []intpickercompat.Entry{
-			{
-				Label:     settingsLabel(settingsGlyphBack, settingsColorBack, localizeUIText(locale, projectStartupNewCancelRow), localizeUIText(locale, projectStartupNewCancelHelp)),
-				Value:     projectStartupNewCancelValue,
-				SearchKey: projectStartupNewCancelRow,
-			},
-			{
-				Label:     settingsLabel(settingsGlyphRemove, settingsColorRemove, localizeUIText(locale, projectStartupNewConfirmRow), plan.ConfirmRowHelpLocale(locale)),
-				Value:     projectStartupNewConfirmValue,
-				SearchKey: projectStartupNewConfirmRow,
-			},
-		},
-	}
-	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, options)
-	if err != nil {
-		return false, fmt.Errorf("run project fresh start confirmation: %w", err)
-	}
-	if result.Key != "enter" || strings.TrimSpace(result.Value) != projectStartupNewConfirmValue {
-		return false, nil
-	}
-	return true, nil
-}
-
-// planProjectFreshStart resolves the confirmation's counts.
+// planProjectFreshStart resolves the exact same-root replacement scope.
 //
 // A missing seam answers with an empty plan rather than failing: the row is a
 // start action first, and a Registry that cannot be read is a reason to prune
@@ -364,19 +364,17 @@ func (c *switchCommand) planProjectFreshStart(sessionName, target string) (proje
 			return projectFreshStartPlan{}, err
 		}
 	}
+	plan.SessionName = sessionName
 	return plan, nil
 }
 
 // startProjectFresh executes Open fresh: commit the canonical projection,
 // verify it, materialize through the ordinary path, report, then switch client.
 //
-// Registry authority goes first. A rejected prune must retain snapshots as
+// Registry authority goes first. A rejected replacement must retain snapshots as
 // well as the Registry and tmux runtime; Open fresh never writes snapshot
 // storage.
-// The bootstrap value travels through untouched. Open fresh prunes a Project
-// the Registry already declares topology for, so in practice it is never the open
-// that minted the Project -- but the mirror decision stays in the one place that
-// owns it rather than being re-decided here.
+// The mirror decision stays in the one place that owns Project registration.
 func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
 	plan, err := c.planProjectFreshStart(sessionName, target)
 	if err != nil {
@@ -387,6 +385,19 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 			return err
 		}
 	}
+	registered, err := c.registerOpenedProjectRoot(ctx, target)
+	if err != nil {
+		return err
+	}
+	if registered.project.Metadata.UID != "" && registered.project.Metadata.UID != plan.ProjectUID {
+		registered.bootstrapped = true
+		opened = registered
+	}
+	// Fresh always owns a newly minted canonical Registry graph. Unlike an
+	// ordinary first open, merely ensuring a tmux session and mirroring the
+	// Project would leave its new Window and Pane uids blank. Force the exact
+	// topology engine so all three identities are live before client handoff.
+	opened.materializeTopology = true
 	if err := c.verifyProjectFreshStartPruned(target); err != nil {
 		return err
 	}

@@ -346,25 +346,30 @@ in resource metadata.
 A clean managed process exit is topology authority only through the exact
 generated `pane-exited` hook. The supervisor must have durably journaled a
 same-generation `normal` receipt, the hook must name the exact `%N` Pane and
-`@N` Window on one socket, and fresh preflight plus locked observations must
-still resolve the same Registry owner chain. Then the Pane and its current
-directly owning Agent are removed together. Shell and Claude/Codex clean exit
-have the same result; `/exit`, pane content, prompt, history, and transcript are
-never parsed. The owning Window and all siblings remain. `abnormal`, `killed`,
-`unknown`, stale/resumed bindings, empty or unavailable inventory, permission
-failure, and foreign-host/window observations keep their diagnostic rows and
-produce no automatic delete plan.
+the owner Window must carry its exact last-positive `$N/@N` binding on the same
+socket, and fresh preflight plus locked observations must still resolve the
+same Registry owner chain. A non-last Pane and its current directly owning
+Agent are removed together. For a last Pane, that evidence is retained until a
+matching `window-unlinked` hook removes the Window; a final Project Window also
+removes the Project graph while preserving its root, snapshots, and external
+assets. Shell and Claude/Codex clean exit have the same result; `/exit`, pane
+content, prompt, history, and transcript are never parsed. `abnormal`,
+`killed`, `unknown`, stale/resumed bindings, empty or unavailable inventory,
+permission failure, and foreign-host/window observations keep their diagnostic
+rows and produce no automatic delete plan.
 
-For `pane-exited`, tmux supplies that `%N` as `#{hook_pane}` and the event's
-window-scoped `@N` as `#{window_id}`; `#{hook_window}` is empty there and remains
-the separate `window-unlinked` format. This distinction provides event scope
-only and does not authorize last-Pane Window deletion.
+For `pane-exited`, tmux supplies `%N` as `#{hook_pane}`. Its current-context
+session/window formats may already name a surviving client Window, so the owner
+pair comes from the Window's last live Registry observation. The separate
+`window-unlinked` hook supplies exact `#{hook_session}` and `#{hook_window}`;
+only a matching causal pair authorizes last-Pane Window deletion.
 
 This intentionally removes `agent resume uid:<deleted-agent>` identity after a
 qualifying clean provider exit; use the provider-native conversation catalog to
-find a prior conversation. Last-Pane Window/Project cleanup and Project reopen
-semantics are not part of this boundary. Pane/Agent and the later parent/root
-cascade are released together at the planned minor lifecycle boundary.
+find a prior conversation. Reopening a deleted Project is explicit: Continue
+requires a usable snapshot and restores under fresh resource UIDs, while Open
+fresh atomically creates one new canonical Project graph without a confirmation
+screen or fallback from failed Continue.
 
 Resource-backed Agent create accepts provider-neutral `--cwd <absolute>` and
 repeatable `--add-dir <absolute>`. Explicit paths must exist, resolve without a
@@ -502,13 +507,15 @@ partial leaves the client where it was and reports the exact stage. The
 activation is pinned to the session the open targets, so a Project whose
 Registry projects a different session name is refused instead of populating a
 session the open never reaches. The closed-Project startup screen has exactly
-two actions. `Continue project` materializes the current Registry desired state.
-`Open fresh` confirms the exact prune counts, then keeps the canonical Project
-Window and Window-owned shell Pane identities while removing every other target
-Window, Pane, Agent, reservation, and conversation pointer. Snapshots remain
-byte-identical inputs and are never deleted by either action. Reading whether a
-Project declares topology is a zero-write snapshot read, so opening a directory
-that was never registered still creates no Registry state.
+two neutral actions. `Continue project` materializes current Registry desired
+state; after a final-root exit it is available only when the exact saved
+snapshot is usable, and then recreates that topology under a new Project uid
+without rewriting the snapshot. An unavailable or unusable snapshot is an
+explicit zero-write refusal with no fresh fallback. `Open fresh` is one step
+with no danger styling, confirmation, or delete counts: it atomically removes
+any same-root Project graph, creates a new Project uid plus one canonical shell,
+and hands off to it. The root, git/worktrees, trust decision, and snapshot bytes
+remain unchanged by both actions.
 
 Materialization launches or resumes declared Agents through the canonical
 provider/trust path and creates their managed Agent-owned Panes. An individual
@@ -1824,12 +1831,12 @@ human configuration work should prefer `config render` and `config apply`.
   startup directory. Alt-1 sidebar project open defaults to `Continue project`,
   which materializes the Project's Registry Windows, shell Panes, and Agents
   before the client moves. When the startup picker is enabled it contains exactly
-  `Continue project` and `Open fresh`; Esc returns to Projects. `Open fresh`
-  confirms the exact `Window n / Pane n / Agent n` prune and conversation-pointer
-  loss, preserves the canonical Project Window and shell Pane identity, and does
-  not modify snapshots. A directory with no
-  Registry Project, and a Project with no Registry Window, still start as a
-  single default session.
+  `Continue project` and `Open fresh`; Esc returns to Projects. `Continue
+  project` restores a deleted Project only from its usable exact snapshot and
+  otherwise refuses with zero Registry writes. `Open fresh` is a neutral,
+  confirmation-free one-step action that replaces any same-root graph with a
+  new Project uid and one canonical shell. Neither action modifies snapshot
+  bytes, the project directory, git/worktrees, or trust state.
 - `quit` — open an action picker with `Quit projmux` and `Cancel`. Selecting
   `Quit projmux` terminates only a `tmux -L projmux` runtime whose global
   `@projmux_app` option is set by the generated app config. Missing servers,

@@ -146,9 +146,8 @@ type switchCommand struct {
 	// is the shipped identity writer, not a startup-flavored copy, so there is
 	// exactly one place that assembles a Project identity set-option.
 	projectMirror switchProjectIdentityMirror
-	// projectFreshStart is the `new` row's prune seam: it plans the exact
-	// Window/Pane/Agent cascade the confirmation states, and removes it through
-	// the canonical delete cascade.
+	// projectFreshStart owns Continue-from-snapshot and Fresh replacement at the
+	// closed Project boundary.
 	projectFreshStart switchProjectFreshStarter
 	// startupNotices is the operator-facing report surface of the startup flow.
 	// It is the same stderr/display-message tee closed-Project topology
@@ -216,7 +215,7 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		// Closed-Project activation reuses the explicit Registry topology engine
 		// on the app's own exact socket. It is wired here rather than resolved
 		// lazily so a project open never picks a socket from an inherited client.
-		projectTopology:  newRegistryProjectTopologyMaterializer(),
+		projectTopology:  newRegistryProjectTopologyMaterializer(recorders...),
 		projectRegistrar: newDefaultSwitchProjectRegistrar(),
 		// The identity mirror of a first open rides the plain `tmux` transport
 		// on purpose. EnsureSession shells out with no `-L`, so a first open

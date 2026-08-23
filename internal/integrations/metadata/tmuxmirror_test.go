@@ -229,8 +229,8 @@ func TestObserveLegacySessionCollectsTheMigrationSeedsWithoutWriting(t *testing.
 		"@projmux_project_path": "/src/projmux\n",
 		// The last window field and the last pane field are the uid each live
 		// object already carries: window 0 is still bound, window 1 is blank.
-		"list-windows": "0" + sep + "editor" + sep + "off" + sep + "@4" + sep + "win-editor\n" +
-			"1" + sep + "zsh" + sep + "on" + sep + "@5" + sep + "\n",
+		"list-windows": "0" + sep + "editor" + sep + "off" + sep + "$1" + sep + "@4" + sep + "win-editor\n" +
+			"1" + sep + "zsh" + sep + "on" + sep + "$1" + sep + "@5" + sep + "\n",
 		// The last two pane fields are the provider conversation ids the AI
 		// routes wrote onto the live pane; only the agent pane carries them.
 		"list-panes": strings.Join([]string{
@@ -276,6 +276,10 @@ func TestObserveLegacySessionCollectsTheMigrationSeedsWithoutWriting(t *testing.
 	// can tell "still ours" from "blank" without a second query.
 	if legacy.Windows[0].UID != "win-editor" || legacy.Windows[1].UID != "" {
 		t.Fatalf("observed window uids = %q/%q, want win-editor and blank", legacy.Windows[0].UID, legacy.Windows[1].UID)
+	}
+	if legacy.Windows[0].RuntimeSessionID != "$1" || legacy.Windows[0].RuntimeID != "@4" ||
+		legacy.Windows[1].RuntimeSessionID != "$1" || legacy.Windows[1].RuntimeID != "@5" {
+		t.Fatalf("observed Window runtime bindings = %+v", legacy.Windows)
 	}
 	if legacy.Windows[0].Panes[0].UID != "pan-nvim" || legacy.Windows[0].Panes[1].UID != "" {
 		t.Fatalf("observed pane uids = %q/%q, want pan-nvim and blank", legacy.Windows[0].Panes[0].UID, legacy.Windows[0].Panes[1].UID)
@@ -381,5 +385,17 @@ func TestLiveUIDInventoriesPropagateAQueryFailure(t *testing.T) {
 	}
 	if _, err := m.LiveWindowUIDs(ctx); err == nil {
 		t.Fatal("LiveWindowUIDs swallowed a query failure")
+	}
+}
+
+func TestLiveWindowSessionCountsIncludesUnmirroredWindows(t *testing.T) {
+	t.Parallel()
+	runner := &fakeRunner{outputs: map[string]string{"#{session_id}": "$1\n$1\n$2\n"}}
+	counts, err := NewMirror(runner).LiveWindowSessionCounts(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]int{"$1": 2, "$2": 1}; !reflect.DeepEqual(counts, want) {
+		t.Fatalf("LiveWindowSessionCounts = %v, want %v", counts, want)
 	}
 }

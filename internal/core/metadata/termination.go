@@ -257,6 +257,31 @@ type TerminationEvidence struct {
 	OperationID string `json:"operationID,omitempty"`
 }
 
+// PaneTeardownEvidence pairs one exact pane-exited event with a later exact
+// window-unlinked event without parsing Pane content or treating absence as
+// authority. Every identity is current-generation and socket scoped.
+type PaneTeardownEvidence struct {
+	SocketIdentity   string                    `json:"socketIdentity"`
+	RuntimeSessionID string                    `json:"runtimeSessionID"`
+	RuntimePaneID    string                    `json:"runtimePaneID"`
+	RuntimeWindowID  string                    `json:"runtimeWindowID"`
+	WindowUID        string                    `json:"windowUID"`
+	RootKind         Kind                      `json:"rootKind"`
+	RootUID          string                    `json:"rootUID"`
+	Generation       string                    `json:"generation"`
+	Classification   TerminationClassification `json:"classification"`
+	ObservedAt       time.Time                 `json:"observedAt"`
+}
+
+// Clone returns an independent teardown record.
+func (e *PaneTeardownEvidence) Clone() *PaneTeardownEvidence {
+	if e == nil {
+		return nil
+	}
+	out := *e
+	return &out
+}
+
 // IsZero reports an entirely empty receipt.
 func (t TerminationEvidence) IsZero() bool {
 	return t.Source == "" && t.Classification == "" && t.ObservedAt.IsZero() &&
@@ -344,6 +369,7 @@ func (m Mutator) RecordPaneActivation(reg *Registry, paneUID string, opts PaneAc
 		StartedAt:   now,
 	}
 	pane.Status.LastTermination = nil
+	pane.Status.Teardown = nil
 	if agentUID := strings.TrimSpace(opts.AgentUID); agentUID != "" {
 		if agent, ok := reg.Agent(agentUID); ok {
 			agent.Status.LastTermination = nil

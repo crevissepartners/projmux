@@ -570,6 +570,12 @@ func (r *registryReconciler) reapplySessionBindings(
 		if !ok {
 			continue
 		}
+		if strings.TrimSpace(legacyWindow.RuntimeSessionID) != "" || strings.TrimSpace(legacyWindow.RuntimeID) != "" {
+			if _, err := mutator.ObserveWindowRuntimeBinding(registry, window.Metadata.UID,
+				legacyWindow.RuntimeSessionID, legacyWindow.RuntimeID); err != nil {
+				continue
+			}
+		}
 		projected, err := mutator.ObserveWindowDisplayName(registry, window.Metadata.UID, legacyWindow.Name)
 		if err != nil {
 			continue

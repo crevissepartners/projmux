@@ -14,6 +14,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -495,6 +496,7 @@ type topologyMaterializeRun struct {
 	resources       *resourceStore
 	runner          tmuxCommandRunner
 	target          explicitTmuxTarget
+	diagnostics     *diagnostics.LifecycleRecorder
 	newOperationID  func() (string, error)
 	newGeneration   func() (string, error)
 	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
@@ -527,11 +529,14 @@ type topologyMaterializeOutcome struct {
 // defaultTopologyMaterializer builds the runtime for one exact target. The tmux
 // client is the existing one, so the public pre/post-create and startup hook
 // contract has exactly one implementation.
-func defaultTopologyMaterializer(target explicitTmuxTarget) func(tmuxCommandRunner, io.Writer) *materializer {
+func defaultTopologyMaterializer(target explicitTmuxTarget, recorder *diagnostics.LifecycleRecorder) func(tmuxCommandRunner, io.Writer) *materializer {
 	return func(runner tmuxCommandRunner, warn io.Writer) *materializer {
 		opts := []inttmux.ClientOption{}
 		if target.flag == "-L" {
 			opts = append(opts, inttmux.WithSocketName(target.value))
+		}
+		if recorder != nil {
+			opts = append(opts, inttmux.WithLifecycleDiagnostics(recorder))
 		}
 		if hooks := defaultLifecycleHookRunner(); hooks != nil {
 			opts = append(opts, inttmux.WithLifecycleHookRunner(hooks))
@@ -557,7 +562,7 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 	routed := explicitTmuxRunner{runner: r.runner, target: r.target}
 	newRuntime := r.newMaterializer
 	if newRuntime == nil {
-		newRuntime = defaultTopologyMaterializer(r.target)
+		newRuntime = defaultTopologyMaterializer(r.target, r.diagnostics)
 	}
 	runtime := newRuntime(routed, warn)
 	_, registryChanged, updateErr := r.resources.updateConvergent(func(working *coremetadata.Registry) error {

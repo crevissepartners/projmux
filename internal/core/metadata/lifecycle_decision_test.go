@@ -16,7 +16,7 @@ func decisionEvent() TeardownEvent {
 		Generation:     TeardownGenerationCurrent,
 		Observation:    TeardownObservationExactSocket,
 		Chain: TeardownOwnerChain{
-			SocketIdentity: "/tmp/tmux-app/projmux", PaneHandle: "%7", WindowHandle: "@4",
+			SocketIdentity: "/tmp/tmux-app/projmux", SessionHandle: "$1", PaneHandle: "%7", WindowHandle: "@4",
 			PaneUID: "pane-1", WindowUID: "window-1", RootKind: KindProject,
 			RootUID: "project-1", Generation: "gen-1",
 		},
@@ -211,6 +211,59 @@ func TestWindowUnlinkAloneAndAdversarialObservationsDeleteNothing(t *testing.T) 
 	stale.Generation = TeardownGenerationStale
 	if got := AggregateTeardownEvents([]TeardownEvent{stale}); got.Action != TeardownRefuse {
 		t.Fatalf("stale generation = %+v, want refuse", got)
+	}
+}
+
+func TestControlSessionLastWindowCascadeKeepsRootIdentity(t *testing.T) {
+	t.Parallel()
+	mutator := testMutator(dirSet{})
+	registry := NewRegistry()
+	_, err := mutator.BindControlSession(&registry, ControlSessionObservation{
+		Session: "home", Windows: []ControlSessionWindow{{DisplayName: "shell", RuntimeSessionID: "$1", RuntimeID: "@2", Panes: []ControlSessionPane{{Command: "zsh", CWD: "/tmp"}}}},
+	}, "/bin/zsh", "bind-control", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controlUID := registry.ControlSessions[0].Metadata.UID
+	windowUID := registry.Windows[0].Metadata.UID
+	paneUID := registry.Panes[0].Metadata.UID
+	if _, err := mutator.RecordPaneActivation(&registry, paneUID, PaneActivationOptions{Generation: "gen-control", RuntimeID: "%7"}); err != nil {
+		t.Fatal(err)
+	}
+	zero := 0
+	if _, err := mutator.RecordTermination(&registry, TerminationEvidence{
+		Source: TerminationSourceSupervisor, Classification: TerminationNormal,
+		PaneUID: paneUID, Generation: "gen-control", ExitCode: &zero,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	paneEvent := TeardownEvent{
+		Kind: TeardownEventPaneExited, Classification: TerminationNormal,
+		Generation: TeardownGenerationCurrent, Observation: TeardownObservationExactSocket,
+		Chain: TeardownOwnerChain{SocketIdentity: "/tmp/control.sock", SessionHandle: "$1", PaneHandle: "%7", WindowHandle: "@2",
+			PaneUID: paneUID, WindowUID: windowUID, RootKind: KindControlSession, RootUID: controlUID, Generation: "gen-control"},
+	}
+	pending, err := PlanPaneTeardownEvidence(registry, paneEvent, fixedNow.Add(time.Minute))
+	if err != nil || !pending.Changed {
+		t.Fatalf("pending control evidence = %+v, %v", pending, err)
+	}
+	unlinked := paneEvent
+	unlinked.Kind = TeardownEventWindowUnlinked
+	plan, err := PlanWindowRootCascadeDelete(pending.Desired, paneEvent, unlinked, fixedNow.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Changed || plan.Decision.RootAction != RootTeardownRetainControlSession {
+		t.Fatalf("control root plan = %+v", plan)
+	}
+	if _, ok := plan.Desired.ControlSession(controlUID); !ok {
+		t.Fatal("ControlSession identity was deleted")
+	}
+	if _, ok := plan.Desired.Window(windowUID); ok {
+		t.Fatal("unlinked control Window survived")
+	}
+	if err := plan.Desired.Validate(); err != nil {
+		t.Fatalf("desired control Registry: %v", err)
 	}
 }
 

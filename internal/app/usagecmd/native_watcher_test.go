@@ -64,8 +64,13 @@ func TestUsageStatusSuccessfulEventBatchSkipsCollectorForSourceDecision(t *testi
 		return []config.AIAgentProvider{config.AIAgentCodex}, nil
 	}
 	command.lookupEnv = func(name string) string {
-		if name == StateDirEnvVar {
+		switch name {
+		case StateDirEnvVar:
 			return stateDir
+		case "HOME":
+			return stateDir
+		case "XDG_CONFIG_HOME":
+			return filepath.Join(stateDir, "config")
 		}
 		return ""
 	}

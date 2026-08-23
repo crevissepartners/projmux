@@ -1195,7 +1195,7 @@ func TestProjectStartupPickerLabelStateColors(t *testing.T) {
 		wantColor string
 	}{
 		{name: "continue", candidate: topologyProjectStartupCandidate(), wantColor: settingsColorType},
-		{name: "fresh", candidate: newProjectStartupCandidate(), wantColor: settingsColorRemove},
+		{name: "fresh", candidate: newProjectStartupCandidate(), wantColor: settingsColorType},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

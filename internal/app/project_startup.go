@@ -71,6 +71,19 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 	mode := projectStartupCandidate{Kind: projectStartupKindTopology}
 	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
 		mode = c.pickProjectStartupMode(sessionName, target)
+	} else if cleanOptionalPath(target) != switchSettingsSentinel && cleanOptionalPath(target) != switchRuntimeSentinel &&
+		!c.openedRootIsHome(target) {
+		if starter, ok := c.projectFreshStart.(interface {
+			ProjectRegistered(string) (bool, error)
+		}); ok {
+			registered, readErr := starter.ProjectRegistered(target)
+			if readErr != nil {
+				return readErr
+			}
+			if !registered {
+				mode = projectStartupCandidate{Kind: projectStartupKindNew}
+			}
+		}
 	}
 	if mode.Kind == projectStartupKindBack {
 		return errProjectStartupBack
@@ -86,12 +99,29 @@ func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, tar
 	if !trusted {
 		return errProjectTrustDenied
 	}
-	opened, err := c.registerOpenedProjectRoot(ctx, target)
+	if mode.Kind == projectStartupKindNew && !c.openedRootIsHome(target) {
+		_, err = c.continueProjectOpen(ctx, target, sessionName, mode, openedProjectBootstrap{})
+		return err
+	}
+	opened, err := c.prepareProjectContinue(ctx, target, sessionName)
 	if err != nil {
 		return err
 	}
 	_, err = c.continueProjectOpen(ctx, target, sessionName, mode, opened)
 	return err
+}
+
+func (c *switchCommand) prepareProjectContinue(ctx context.Context, target, sessionName string) (openedProjectBootstrap, error) {
+	cleaned := cleanOptionalPath(target)
+	if cleaned == "" || cleaned == switchSettingsSentinel || cleaned == switchRuntimeSentinel || c.openedRootIsHome(cleaned) {
+		return c.registerOpenedProjectRoot(ctx, target)
+	}
+	if starter, ok := c.projectFreshStart.(interface {
+		ContinueProject(context.Context, string, string) (openedProjectBootstrap, error)
+	}); ok {
+		return starter.ContinueProject(ctx, target, sessionName)
+	}
+	return c.registerOpenedProjectRoot(ctx, target)
 }
 
 func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate, opened openedProjectBootstrap) (diagnostics.SessionStateCounts, error) {
@@ -116,62 +146,26 @@ func (c *switchCommand) authorizeProjectOpen(ctx context.Context, target string)
 }
 
 // pickProjectStartupMode runs the startup screen and returns the approved start.
-//
-// The loop exists for exactly one row: a cancelled `new` confirmation returns the
-// operator to the rows they came from rather than to the Projects list, because
-// declining to destroy saved state is not the same gesture as declining to open
-// the Project. Every other row leaves on its first pass, and a picker that stops
-// answering resolves to the topology start, so the loop cannot spin.
 func (c *switchCommand) pickProjectStartupMode(sessionName, target string) projectStartupCandidate {
-	for {
-		candidates := c.projectStartupCandidates(sessionName, target)
-		if len(candidates) == 0 {
-			return projectStartupCandidate{Kind: projectStartupKindTopology}
-		}
-		result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, projectStartupPickerOptions(candidates))
-		if err != nil {
-			if isNoSelectionExit(err) {
-				return projectStartupCandidate{Kind: projectStartupKindBack}
-			}
-			return projectStartupCandidate{Kind: projectStartupKindTopology}
-		}
-		if strings.TrimSpace(result.Value) == "" {
+	candidates := c.projectStartupCandidates(sessionName, target)
+	if len(candidates) == 0 {
+		return projectStartupCandidate{Kind: projectStartupKindTopology}
+	}
+	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, projectStartupPickerOptions(candidates))
+	if err != nil {
+		if isNoSelectionExit(err) {
 			return projectStartupCandidate{Kind: projectStartupKindBack}
 		}
-		candidate, ok := projectStartupCandidateFromValue(result.Value)
-		if !ok {
-			return projectStartupCandidate{Kind: projectStartupKindTopology}
-		}
-		if candidate.Kind != projectStartupKindNew {
-			return candidate
-		}
-		approved, err := c.approveProjectFreshStart(sessionName, target)
-		if err != nil {
-			// A confirmation that could not be shown is not an approval. Falling
-			// back to the non-destructive topology start is the only outcome that
-			// cannot delete something nobody agreed to.
-			format := localizeUIText(appLocale(c.homeDir, c.lookupEnv), "projmux: fresh start confirmation could not be shown: %s")
-			c.reportProjectStartup(fmt.Sprintf(format, err.Error()))
-			return projectStartupCandidate{Kind: projectStartupKindTopology}
-		}
-		if approved {
-			return candidate
-		}
-		c.reportProjectStartup(localizeUIText(appLocale(c.homeDir, c.lookupEnv), projectStartupNewCanceledMessage))
+		return projectStartupCandidate{Kind: projectStartupKindTopology}
 	}
-}
-
-// approveProjectFreshStart plans the prune and asks for approval.
-//
-// Cancel is zero writes by construction: planning is the read-only snapshot read,
-// the confirmation is a picker, and neither one reaches resourceStore.mutate,
-// snapshot storage, or any tmux command that changes tmux state.
-func (c *switchCommand) approveProjectFreshStart(sessionName, target string) (bool, error) {
-	plan, err := c.planProjectFreshStart(sessionName, target)
-	if err != nil {
-		return false, err
+	if strings.TrimSpace(result.Value) == "" {
+		return projectStartupCandidate{Kind: projectStartupKindBack}
 	}
-	return c.confirmProjectFreshStart(plan)
+	candidate, ok := projectStartupCandidateFromValue(result.Value)
+	if !ok {
+		return projectStartupCandidate{Kind: projectStartupKindTopology}
+	}
+	return candidate
 }
 
 func (c *switchCommand) projectStartupCandidates(sessionName, target string) []projectStartupCandidate {
@@ -219,11 +213,7 @@ func projectStartupPickerLabel(candidate projectStartupCandidate) string {
 	case projectStartupKindTopology:
 		return settingsLabel(settingsGlyphOpen, settingsColorType, candidate.Label, candidate.Description)
 	case projectStartupKindNew:
-		// The destructive glyph and color are the same pair the notify clear-all
-		// confirmation uses. This row starts a Project like the rows above it, but
-		// it is the only one that deletes anything, and it has to read that way
-		// before it is selected rather than only in the confirmation.
-		return settingsLabel(settingsGlyphRemove, settingsColorRemove, candidate.Label, candidate.Description)
+		return settingsLabel(settingsGlyphOpen, settingsColorType, candidate.Label, candidate.Description)
 	default:
 		return settingsLabel(settingsGlyphInfo, settingsColorInfo, candidate.Label, candidate.Description)
 	}
@@ -349,8 +339,9 @@ type switchProjectIdentityMirror interface {
 // target, Home -- so nothing downstream can mistake a withheld registration for a
 // half-filled one.
 type openedProjectBootstrap struct {
-	project      coremetadata.Project
-	bootstrapped bool
+	project             coremetadata.Project
+	bootstrapped        bool
+	materializeTopology bool
 }
 
 // registerOpenedProjectRoot is the bootstrap step of one explicit open.
@@ -463,7 +454,7 @@ func (c *switchCommand) materializeAndOpenProjectTopology(ctx context.Context, s
 }
 
 func (c *switchCommand) materializeProjectTopology(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
-	if c.projectTopology != nil && !opened.bootstrapped {
+	if c.projectTopology != nil && (!opened.bootstrapped || opened.materializeTopology) {
 		materialized, err := c.projectTopology.MaterializeProjectTopology(ctx, target, sessionName)
 		if err != nil {
 			return fmt.Errorf("materialize Registry topology for session %q: %w", sessionName, err)
@@ -483,6 +474,7 @@ type registryProjectTopologyMaterializer struct {
 	resources       *resourceStore
 	runner          tmuxCommandRunner
 	target          explicitTmuxTarget
+	diagnostics     *diagnostics.LifecycleRecorder
 	newReconciler   func(tmuxCommandRunner, sessionLister) *registryReconciler
 	newOperationID  func() (string, error)
 	newGeneration   func() (string, error)
@@ -507,16 +499,17 @@ type registryProjectTopologyMaterializer struct {
 // newRegistryProjectTopologyMaterializer binds activation to the app's own
 // `-L projmux` socket. Startup never infers a socket from an inherited client,
 // which is the same exact-target rule the reconcile and delete routes follow.
-func newRegistryProjectTopologyMaterializer() *registryProjectTopologyMaterializer {
+func newRegistryProjectTopologyMaterializer(recorders ...*diagnostics.LifecycleRecorder) *registryProjectTopologyMaterializer {
 	target, err := tmuxSocketNameTarget(defaultAppSocket)
 	if err != nil {
 		panic(err)
 	}
 	return &registryProjectTopologyMaterializer{
-		resources: newResourceStore(),
-		runner:    inttmux.ExecRunner{},
-		target:    target,
-		warn:      io.Discard,
+		resources:   newResourceStore(),
+		runner:      inttmux.ExecRunner{},
+		target:      target,
+		diagnostics: recorderFrom(recorders),
+		warn:        io.Discard,
 		// The disclosure surface is the shared stderr/display-message tee this
 		// Phase settled on for every closed-Project startup report. See
 		// projectStartupNoticeSink: a popup guarantees the emit and denies the
@@ -553,6 +546,7 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		resources:       m.resources,
 		runner:          m.runner,
 		target:          m.target,
+		diagnostics:     m.diagnostics,
 		newOperationID:  m.newOperationID,
 		newGeneration:   m.newGeneration,
 		newMaterializer: m.newMaterializer,

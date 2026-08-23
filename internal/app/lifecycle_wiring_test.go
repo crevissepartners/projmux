@@ -67,6 +67,7 @@ func TestLifecycleMutationSurfaceInventoryUsesSharedRecorder(t *testing.T) {
 		"prune ephemeral":    application.prune.diagnostics,
 		"focus switch":       application.focus.diagnostics,
 		"shell new-session":  application.shell.diagnostics,
+		"project topology":   application.switcher.projectTopology.(*registryProjectTopologyMaterializer).diagnostics,
 	}
 	for name, got := range surfaces {
 		if got != recorder {

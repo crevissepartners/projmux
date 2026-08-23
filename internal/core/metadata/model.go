@@ -301,7 +301,9 @@ type WindowSpec struct {
 // build reading a newer file simply ignores a key it does not know, and a
 // newer build reading an older file decodes the absent key to the zero value.
 type WindowStatus struct {
-	Conditions []Condition `json:"conditions,omitempty"`
+	Conditions       []Condition `json:"conditions,omitempty"`
+	RuntimeSessionID string      `json:"runtimeSessionID,omitempty"`
+	RuntimeID        string      `json:"runtimeID,omitempty"`
 }
 
 // Clone returns a deep copy of the Window.
@@ -354,6 +356,11 @@ type PaneStatus struct {
 	// LastTermination is the durable receipt of why the *current* generation's
 	// managed process stopped. Issuing a new generation clears it.
 	LastTermination *TerminationEvidence `json:"lastTermination,omitempty"`
+	// Teardown records the bounded exact-socket topology evidence supplied by a
+	// qualifying pane-exited hook. It is not inferred from liveness or content.
+	// A matching window-unlinked hook consumes it by deleting this Pane's owner
+	// chain; issuing a new activation clears it as stale generation state.
+	Teardown *PaneTeardownEvidence `json:"teardown,omitempty"`
 }
 
 // Clone returns a deep copy of the Pane.
@@ -363,6 +370,7 @@ func (p Pane) Clone() Pane {
 	out.Status.Conditions = slices.Clone(p.Status.Conditions)
 	out.Status.Activation = p.Status.Activation.Clone()
 	out.Status.LastTermination = p.Status.LastTermination.Clone()
+	out.Status.Teardown = p.Status.Teardown.Clone()
 	return out
 }
 
