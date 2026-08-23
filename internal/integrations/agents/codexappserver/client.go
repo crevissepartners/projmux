@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -241,7 +242,10 @@ func (c *Client) routeFrame(frame []byte) error {
 		if err != nil {
 			return err
 		}
-		event := Notification{Method: envelope.Method, Params: append(json.RawMessage(nil), envelope.Params...), RequestID: requestID}
+		event := Notification{
+			Method: envelope.Method, Params: append(json.RawMessage(nil), envelope.Params...), RequestID: requestID,
+			RawRequestID: append(json.RawMessage(nil), envelope.ID...),
+		}
 		c.mu.Lock()
 		if c.err != nil {
 			err := c.err
@@ -285,6 +289,20 @@ func (c *Client) routeFrame(frame []byte) error {
 	return nil
 }
 
+// RespondServerRequest writes one response using the exact scalar request id
+// received from the server. The caller owns response-once state; this method
+// deliberately refuses reconstructed, object, array, null, fractional, and
+// out-of-range ids before touching the wire.
+func (c *Client) RespondServerRequest(ctx context.Context, rawID json.RawMessage, result any) error {
+	if _, err := normalizeServerRequestID(rawID); err != nil || len(rawID) == 0 {
+		if err == nil {
+			err = fmt.Errorf("%w: missing server request id", ErrProtocol)
+		}
+		return err
+	}
+	return c.writeJSONContext(ctx, wireServerResponse{ID: append(json.RawMessage(nil), rawID...), Result: result})
+}
+
 func normalizeServerRequestID(raw json.RawMessage) (string, error) {
 	if len(raw) == 0 {
 		return "", nil
@@ -302,6 +320,13 @@ func normalizeServerRequestID(raw json.RawMessage) (string, error) {
 	decoder.UseNumber()
 	if err := decoder.Decode(&number); err != nil || strings.TrimSpace(number.String()) == "" {
 		return "", fmt.Errorf("%w: invalid server request id", ErrProtocol)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return "", fmt.Errorf("%w: server request id has trailing data", ErrProtocol)
+	}
+	if _, err := strconv.ParseInt(number.String(), 10, 64); err != nil {
+		return "", fmt.Errorf("%w: server request id is not an int64", ErrProtocol)
 	}
 	return number.String(), nil
 }

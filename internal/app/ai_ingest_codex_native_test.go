@@ -639,12 +639,15 @@ func TestCodexLifecycleSinkIntegratesExactRegistryTmuxAndQuietPolicy(t *testing.
 	cmdRecorder(cmd).commands = nil
 	if err := (aiCodexLifecycleSink{command: cmd}).Apply(identity, codexLifecycleProjection{
 		Accepted: true, Interaction: coremetadata.InteractionApprovalRequired,
-		Notices: []codexLifecycleNotice{{Category: "approval_required", ID: "notice-2", Severity: "critical", ThreadID: "thread-1", TurnID: "turn-1", ItemID: "item-1", RequestID: "request-2"}},
+		Notices: []codexLifecycleNotice{{Category: "approval_required", ID: "notice-2", Severity: "critical", ThreadID: "thread-1", TurnID: "turn-1", ItemID: "item-1", RequestID: "request-2", ResponderAvailable: true}},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if len(notifyStore.pushed) != 1 || notifyStore.pushed[0].ID != "notice-2" {
 		t.Fatalf("Notify queue writes = %#v", notifyStore.pushed)
+	}
+	if got := notifyStore.pushed[0].Metadata["action_label"]; got != agentActionReviewApproval || notifyStore.pushed[0].Metadata["focus_available"] != "true" {
+		t.Fatalf("pending approval availability = %#v", notifyStore.pushed[0].Metadata)
 	}
 	for key := range notifyStore.pushed[0].Metadata {
 		lower := strings.ToLower(key)
@@ -662,6 +665,24 @@ func TestCodexLifecycleSinkIntegratesExactRegistryTmuxAndQuietPolicy(t *testing.
 	}
 	if desktopWrites != 1 {
 		t.Fatalf("Notify desktop writes = %d; commands=%#v", desktopWrites, cmdRecorder(cmd).commands)
+	}
+	if err := (aiCodexLifecycleSink{command: cmd}).Apply(identity, codexLifecycleProjection{
+		Accepted: true, Interaction: coremetadata.InteractionInProgress, ClearNoticeIDs: []string{"notice-2"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if notifyStore.ackedID != "notice-2" {
+		t.Fatalf("resolved approval did not clean queue row: acked=%q", notifyStore.ackedID)
+	}
+	notifyStore.pushed = nil
+	if err := (aiCodexLifecycleSink{command: cmd}).Apply(identity, codexLifecycleProjection{
+		Accepted: true, Interaction: coremetadata.InteractionApprovalRequired,
+		Notices: []codexLifecycleNotice{{Category: "approval_required", ID: "notice-focus", Severity: "critical", ThreadID: "thread-1", TurnID: "turn-1", ItemID: "item-1", RequestID: "request-focus"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(notifyStore.pushed) != 1 || notifyStore.pushed[0].Metadata["action_label"] != agentActionOpenCodex || notifyStore.pushed[0].Metadata["focus_available"] != "true" {
+		t.Fatalf("focus-only approval availability = %#v", notifyStore.pushed)
 	}
 
 	cmdRecorder(cmd).commands = nil

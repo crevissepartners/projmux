@@ -3,15 +3,17 @@ package codexappserver
 import "encoding/json"
 
 const (
-	methodInitialize   = "initialize"
-	methodInitialized  = "initialized"
-	methodModelList    = "model/list"
-	methodReviewStart  = "review/start"
-	methodThreadList   = "thread/list"
-	methodThreadRead   = "thread/read"
-	methodThreadStart  = "thread/start"
-	methodThreadResume = "thread/resume"
-	methodTurnStart    = "turn/start"
+	methodInitialize    = "initialize"
+	methodInitialized   = "initialized"
+	methodModelList     = "model/list"
+	methodReviewStart   = "review/start"
+	methodThreadList    = "thread/list"
+	methodThreadRead    = "thread/read"
+	methodThreadStart   = "thread/start"
+	methodThreadResume  = "thread/resume"
+	methodTurnStart     = "turn/start"
+	methodTurnSteer     = "turn/steer"
+	methodTurnInterrupt = "turn/interrupt"
 )
 
 type wireRequest struct {
@@ -23,6 +25,11 @@ type wireRequest struct {
 type wireNotification struct {
 	Method string `json:"method"`
 	Params any    `json:"params,omitempty"`
+}
+
+type wireServerResponse struct {
+	ID     json.RawMessage `json:"id"`
+	Result any             `json:"result"`
 }
 
 type wireEnvelope struct {
@@ -173,6 +180,22 @@ type wireUserInput struct {
 
 type turnStartResult struct {
 	Turn wireTurn `json:"turn"`
+}
+
+type exactTurnStartParams struct {
+	ThreadID string          `json:"threadId"`
+	Input    []wireUserInput `json:"input"`
+}
+
+type turnSteerParams struct {
+	ThreadID       string          `json:"threadId"`
+	ExpectedTurnID string          `json:"expectedTurnId"`
+	Input          []wireUserInput `json:"input"`
+}
+
+type turnInterruptParams struct {
+	ThreadID string `json:"threadId"`
+	TurnID   string `json:"turnId"`
 }
 
 type response struct {

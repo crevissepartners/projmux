@@ -264,6 +264,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// keeps the two verbs one implementation of "make a managed pane" and two
 	// implementations of "which conversation does it join".
 	agentCmd.rebind = newAgentRebinder(createCmd, ai)
+	agentCmd.focus = focusCmd
 	runtimeDiagnosticsCmd := newRuntimeDiagnosticsCommand(tmuxCmd.runner)
 	runtimeDiagnosticsCmd.focus = focusCmd
 	runtimeDiagnosticsCmd.attach = attach

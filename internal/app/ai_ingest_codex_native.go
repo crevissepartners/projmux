@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -61,6 +62,7 @@ type codexNativeObserver struct {
 	bindingTimeout time.Duration
 	sequence       uint64
 	reducer        codexLifecycleReducer
+	startControl   func(*codexControlEpoch) (*codexControlServer, error)
 }
 
 func (o *codexNativeObserver) Run(ctx context.Context) error {
@@ -138,7 +140,19 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			_ = client.Close()
 			return errors.Join(err, cleanupErr)
 		}
+		var control *codexControlServer
+		if wire, ok := client.(agentControlWire); ok && o.startControl != nil {
+			controlEpoch := newCodexControlEpoch(wire, o.identity, epochLabel, snapshot, o.sink.BindingCurrent)
+			control, err = o.startControl(controlEpoch)
+			if err != nil {
+				controlEpoch.Revoke()
+				control = nil
+			}
+		}
 		if err := o.sink.SetAuthority(o.identity, codexAuthorityControlPlane, epochLabel, "ready"); err != nil {
+			if control != nil {
+				_ = control.Close()
+			}
 			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "sink-error")
 			_ = client.Close()
 			return errors.Join(err, cleanupErr)
@@ -158,12 +172,21 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			case <-bindingTicker.C:
 				if !o.sink.BindingCurrent(o.identity) {
 					bindingTicker.Stop()
+					if control != nil {
+						_ = control.Close()
+					}
 					_ = client.Close()
 					return nil
 				}
 			case notification, open := <-notifications:
 				if !open {
 					break eventLoop
+				}
+				if control != nil {
+					if controlErr := control.epoch.ApplyNotification(notification); controlErr != nil {
+						reconnectReason = "protocol-error"
+						break eventLoop
+					}
 				}
 				event, recognized, decodeErr := codexappserver.DecodeLifecycleEvent(notification)
 				if decodeErr != nil {
@@ -177,8 +200,17 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				if !projection.Accepted {
 					continue
 				}
+				responderAvailable := false
+				if control != nil {
+					responderAvailable = control.epoch.HasActionableRequest(event.RequestID)
+				}
+				markCodexApprovalAvailability(&projection, responderAvailable)
 				if projection.Invalidated {
 					reconnectReason = "thread-unloaded"
+					if control != nil {
+						_ = control.Close()
+						control = nil
+					}
 					if err := o.applyInvalidationAndFallback(epochLabel, reconnectReason, projection); err != nil {
 						bindingTicker.Stop()
 						_ = client.Close()
@@ -188,6 +220,10 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					break eventLoop
 				}
 				if err := o.sink.Apply(o.identity, projection); err != nil {
+					if control != nil {
+						_ = control.Close()
+						control = nil
+					}
 					cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "sink-error")
 					bindingTicker.Stop()
 					_ = client.Close()
@@ -196,6 +232,9 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			}
 		}
 		bindingTicker.Stop()
+		if control != nil {
+			_ = control.Close()
+		}
 		_ = client.Close()
 		if !invalidated {
 			if err := o.invalidateAndFallback(epoch, epochLabel, reconnectReason); err != nil {
@@ -404,7 +443,16 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 		}
 		text := "Ready"
 		if notice.Category == "approval_required" {
-			text = "Approval required"
+			approvalRequired := localizeText(c.locale(), i18n.KeyNotifyAIApprovalRequired, "Approval required")
+			openCodex := localizeText(c.locale(), i18n.KeyAgentControlOpenCodex, agentActionOpenCodex)
+			reviewApproval := localizeText(c.locale(), i18n.KeyAgentControlReviewApproval, agentActionReviewApproval)
+			metadata["focus_available"] = "true"
+			metadata["action_label"] = openCodex
+			text = approvalRequired + " — " + openCodex
+			if notice.ResponderAvailable {
+				metadata["action_label"] = reviewApproval
+				text = approvalRequired + " — " + reviewApproval
+			}
 		}
 		input := attentionNotifyInput{
 			PaneID: identity.RuntimeID, Lookup: c.notifyLookup(), ID: notice.ID, Text: text,
@@ -414,6 +462,17 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 		c.notifyProducer().PushReplyReady(input)
 	}
 	return nil
+}
+
+func markCodexApprovalAvailability(projection *codexLifecycleProjection, responderAvailable bool) {
+	if projection == nil {
+		return
+	}
+	for i := range projection.Notices {
+		if projection.Notices[i].Category == "approval_required" {
+			projection.Notices[i].ResponderAvailable = responderAvailable
+		}
+	}
 }
 
 type codexSemanticDelivery struct {
@@ -547,6 +606,11 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(identity codexLifecycleIdent
 			return codexappserver.OpenDefaultProxy(ctx, codexappserver.DefaultProbeTimeout, version.String())
 		},
 		sink: aiCodexLifecycleSink{command: c},
+	}
+	if paths, err := config.DefaultPathsFromEnv(); err == nil {
+		observer.startControl = func(epoch *codexControlEpoch) (*codexControlServer, error) {
+			return startCodexControlServer(paths.StateDir, epoch)
+		}
 	}
 	return observer.Run(ctx)
 }

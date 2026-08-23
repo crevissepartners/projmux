@@ -78,6 +78,15 @@ const (
 	KeyUpdateStatusAvailable         Key = "update.status.available"
 	KeyHelpUsageCommand              Key = "help.usage.command"
 	KeyNativeKeysConsentHint         Key = "native_keys.consent_hint"
+	KeyAgentControlSendTurn          Key = "agent.control.action.send_new_turn"
+	KeyAgentControlSteerTurn         Key = "agent.control.action.steer_current_turn"
+	KeyAgentControlInterruptTurn     Key = "agent.control.action.interrupt_current_turn"
+	KeyAgentControlReviewApproval    Key = "agent.control.action.review_pending_approval"
+	KeyAgentControlOpenCodex         Key = "agent.control.action.open_codex"
+	KeyAgentControlDecisionAccept    Key = "agent.control.decision.accept"
+	KeyAgentControlDecisionDecline   Key = "agent.control.decision.decline"
+	KeyAgentControlDecisionCancel    Key = "agent.control.decision.cancel"
+	KeyAgentControlDecisionGrant     Key = "agent.control.decision.grant_turn"
 )
 
 var foundationKeys = []Key{
@@ -90,6 +99,15 @@ var foundationKeys = []Key{
 	KeyNotifyAISubagentStopped,
 	KeyNotifyAITeammateWaiting,
 	KeyNotifyAIReviewPending,
+	KeyAgentControlSendTurn,
+	KeyAgentControlSteerTurn,
+	KeyAgentControlInterruptTurn,
+	KeyAgentControlReviewApproval,
+	KeyAgentControlOpenCodex,
+	KeyAgentControlDecisionAccept,
+	KeyAgentControlDecisionDecline,
+	KeyAgentControlDecisionCancel,
+	KeyAgentControlDecisionGrant,
 	KeyNotifyLiveUnavailable,
 	KeyNotifyLiveTitleAttention,
 	KeyNotifyLiveManualReply,

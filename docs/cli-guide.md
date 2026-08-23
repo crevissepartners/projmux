@@ -316,6 +316,26 @@ duplicate UID claims remain fail-closed.
 
 ### Agent topic, interaction, activation, and workspace
 
+`agent turn start`, `agent turn steer`, `agent turn interrupt`, and
+`agent approval review` use the live Codex app-server connection only when the
+selected Agent, its owned Pane, activation generation, thread, current turn,
+and connection epoch still match exactly. `start` sends only the exact thread
+id and one text input; `steer` supplies the current expected turn id; and
+`interrupt` supplies that exact turn id. These commands never install sticky
+model, effort, cwd, sandbox, permission, or collaboration overrides.
+
+Approval review shows only the safe one-shot intersection supplied by the
+exact pending request. Command, file, and network requests are limited to
+`accept`, `decline`, and `cancel`; permission grants echo the received supported
+profile with `scope=turn` and `strictAutoReview=null`. Session grants, policy or
+network amendments, unstable root grants, legacy approval mutations, and
+automatic approval are unavailable. The request envelope and raw JSON-RPC id
+remain only in connection memory; reconnect, resolution, ambiguity, or any
+identity mismatch produces no provider write. Approval queue rows advertise
+`Review pending approval` only while that responder exists, otherwise they
+advertise the exact-Agent `Open Codex` focus fallback; resolution removes the
+row. Neither route stores prompt, command, path, permission, or request content.
+
 `agent topic get|set|clear` and `agent status get|set` resolve exactly one
 Agent, either from an explicit Agent reference or from the Agent-owned active
 managed Pane. Topic is a non-identifying Registry annotation. Interaction is a
