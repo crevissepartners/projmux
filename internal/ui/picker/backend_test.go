@@ -1134,6 +1134,79 @@ func TestNativeInteractiveRendersAndStartsInputBeforeBlockedProviderCompletes(t 
 	close(providerRelease)
 }
 
+func TestNativeLineModeAppliesProviderUpdateWhileInputPending(t *testing.T) {
+	reader, writer := io.Pipe()
+	t.Cleanup(func() {
+		_ = reader.Close()
+		_ = writer.Close()
+	})
+	var out lockedBuffer
+	trigger := make(chan struct{}, 1)
+	var deferredCalls atomic.Int32
+	resultCh := make(chan struct {
+		result Result
+		err    error
+	}, 1)
+
+	go func() {
+		result, err := runNativeLineMode(reader, &out, Options{
+			UI: "ai-resume-picker",
+			Items: []Item{
+				{Title: "[+ New Session]", Value: "new"},
+				{Title: "[codex] loading…", Value: "status\tcodex", SearchText: "codex loading"},
+			},
+			DeferredUpdate: func() (DeferredUpdate, error) {
+				if deferredCalls.Add(1) == 1 {
+					return DeferredUpdate{Items: []Item{
+						{Title: "[+ New Session]", Value: "new"},
+						{Title: "[codex] available snapshot", Value: "status\tcodex", SearchText: "codex available"},
+					}}, nil
+				}
+				return DeferredUpdate{Items: []Item{
+					{Title: "[+ New Session]", Value: "new"},
+					{Title: "exact conversation", Value: "resume\tcodex\texact-id", SearchText: "codex exact conversation"},
+				}}, nil
+			},
+			DeferredUpdateTrigger: trigger,
+		})
+		resultCh <- struct {
+			result Result
+			err    error
+		}{result: result, err: err}
+	}()
+
+	waitForNativeOutput(t, &out, "[codex] loading…")
+	if deferredCalls.Load() != 0 {
+		t.Fatalf("deferred update ran before initial frame: calls=%d", deferredCalls.Load())
+	}
+	if _, err := writer.Write([]byte("codex\n")); err != nil {
+		t.Fatalf("write query: %v", err)
+	}
+	waitForNativeOutput(t, &out, "query: codex")
+	trigger <- struct{}{}
+	waitForNativeOutput(t, &out, "[codex] available snapshot")
+	trigger <- struct{}{}
+	waitForNativeOutput(t, &out, "exact conversation")
+	if _, err := writer.Write([]byte("1\n")); err != nil {
+		t.Fatalf("write selection: %v", err)
+	}
+
+	select {
+	case got := <-resultCh:
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		if got.result.Value != "resume\tcodex\texact-id" || got.result.Query != "codex" {
+			t.Fatalf("result = %#v, want refreshed exact value with retained query", got.result)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("line mode did not select refreshed provider row")
+	}
+	if deferredCalls.Load() != 2 {
+		t.Fatalf("deferred calls = %d, want 2 repeated trigger updates", deferredCalls.Load())
+	}
+}
+
 func TestNativeInteractiveDeferredUpdateTriggerRefreshesRepeatedly(t *testing.T) {
 	t.Parallel()
 

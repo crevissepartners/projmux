@@ -364,22 +364,70 @@ func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, er
 	if options.Recorder != nil && options.Recorder.State.Phase == "" {
 		options.Recorder.State = newRecorderState()
 	}
-	deferredApplied := false
+	var deferredCh <-chan nativeDeferredRead
+	var stopDeferred chan struct{}
+	deferredStarted := false
+	defer func() {
+		if stopDeferred != nil {
+			close(stopDeferred)
+		}
+	}()
 	for {
 		items := nativeFilteredItems(options, query)
 		renderNative(out, options, items, query)
-		if !deferredApplied && options.DeferredUpdate != nil {
-			deferredApplied = true
-			if update, err := options.DeferredUpdate(); err == nil {
-				options = applyNativeDeferredUpdate(options, update)
-				items = nativeFilteredItems(options, query)
-				renderNative(out, options, items, query)
-			} else {
-				nativeDebugLogf("line ui=%q deferred_update_error=%q", options.UI, err.Error())
-			}
+		if !deferredStarted && options.DeferredUpdate != nil {
+			deferredStarted = true
+			stopDeferred = make(chan struct{})
+			deferredCh = startNativeDeferredUpdate(options.DeferredUpdate, options.DeferredUpdateTrigger, stopDeferred)
 		}
 
-		line, err := readNativeLine(in)
+		lineCh := make(chan nativeLineRead, 1)
+		go func() {
+			line, err := readNativeLine(in)
+			lineCh <- nativeLineRead{line: line, err: err}
+		}()
+		var read nativeLineRead
+	readLoop:
+		for {
+			select {
+			case deferred, ok := <-deferredCh:
+				if !ok {
+					deferredCh = nil
+					continue
+				}
+				if deferred.err != nil {
+					nativeDebugLogf("line ui=%q deferred_update_error=%q", options.UI, deferred.err.Error())
+					continue
+				}
+				options = applyNativeDeferredUpdate(options, deferred.update)
+				items = nativeFilteredItems(options, query)
+				renderNative(out, options, items, query)
+			case read = <-lineCh:
+				// Prefer every update already published by the time the line was
+				// received. This keeps scripted numeric selection on the latest
+				// exact value without ever waiting for a blocked provider.
+				for deferredCh != nil {
+					select {
+					case deferred, ok := <-deferredCh:
+						if !ok {
+							deferredCh = nil
+							continue
+						}
+						if deferred.err != nil {
+							nativeDebugLogf("line ui=%q deferred_update_error=%q", options.UI, deferred.err.Error())
+							continue
+						}
+						options = applyNativeDeferredUpdate(options, deferred.update)
+						items = nativeFilteredItems(options, query)
+						renderNative(out, options, items, query)
+					default:
+						break readLoop
+					}
+				}
+				break readLoop
+			}
+		}
+		line, err := read.line, read.err
 		if err != nil && !strings.HasSuffix(line, "\n") {
 			if err == io.EOF && strings.TrimSpace(line) == "" {
 				nativeDebugLogf("line ui=%q result=closed reason=eof_empty query=%q", options.UI, query)
@@ -503,6 +551,11 @@ type nativeMouseEvent struct {
 type nativeKeyRead struct {
 	key nativeKey
 	err error
+}
+
+type nativeLineRead struct {
+	line string
+	err  error
 }
 
 var errNativeKeyReaderStopped = errors.New("native key reader stopped")
