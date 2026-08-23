@@ -47,15 +47,10 @@ type CodexCatalogOutcome struct {
 	Reason     CatalogReason
 }
 
-type Discovery struct {
-	Sessions []SessionMeta
-	Codex    CodexCatalogOutcome
-}
-
 var errMalformedCatalogPagination = errors.New("codex catalog malformed pagination")
 
-// CodexCatalog is one initialized native catalog connection. One Discover
-// invocation opens at most one connection and either consumes all of its pages
+// CodexCatalog is one initialized native catalog connection. One Codex provider
+// discovery opens at most one connection and either consumes its bounded pages
 // or discards the native result before one rollout fallback.
 type CodexCatalog interface {
 	List(context.Context, codexappserver.CatalogQuery) (codexappserver.CatalogPage, error)
@@ -104,10 +99,6 @@ func NewDefaultCodexCatalogOpener(projmuxVersion string) OpenCodexCatalog {
 type catalogHealthError struct{ availability codexappserver.Availability }
 
 func (e catalogHealthError) Error() string { return "Codex catalog " + string(e.availability) }
-
-func discoverCodexNative(ctx context.Context, cwd string, depth int, open OpenCodexCatalog) ([]SessionMeta, error) {
-	return discoverCodexNativeBounded(ctx, cwd, depth, open, codexCatalogMaxPages, 0)
-}
 
 // discoverCodexNativeBounded is the interactive catalog path. pageBudget is a
 // hard call budget and rowBudget stops pagination once enough in-tree rows are

@@ -106,7 +106,7 @@ type aiCommand struct {
 	operationalDiagnostics     *diagnostics.AIRecorder
 	openCodexCapabilitySession func(context.Context) (codexCapabilitySession, error)
 	openCodexCatalog           aisessions.OpenCodexCatalog
-	discoverResumeProvider     func(context.Context, string, string, aisessions.DiscoverOptions, int) ([]aisessions.SessionMeta, error)
+	discoverResumeProvider     func(context.Context, string, string, aisessions.DiscoverOptions, int) (aisessions.ProviderDiscovery, error)
 	readResumePreview          func(context.Context, aisessions.SessionMeta, aisessions.OpenCodexCatalog) (aisessions.Preview, error)
 	enrichResumeTurns          func([]aisessions.SessionMeta) []aisessions.SessionMeta
 	codexCapabilityCache       *corecap.Cache

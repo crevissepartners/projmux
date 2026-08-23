@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"sync"
@@ -86,7 +87,6 @@ func (c *aiResumeLiveController) signal() {
 func (c *aiResumeLiveController) start() {
 	c.startOnce.Do(func() {
 		for _, provider := range []string{aiModeCodex, aiModeClaude, aiModeAntigravity} {
-			provider := provider
 			go c.discover(provider)
 		}
 	})
@@ -97,9 +97,10 @@ func (c *aiResumeLiveController) discover(provider string) {
 	if discover == nil {
 		discover = aisessions.DiscoverProviderContext
 	}
-	sessions, err := discover(c.ctx, provider, c.cwd, aisessions.DiscoverOptions{
+	discovery, err := discover(c.ctx, provider, c.cwd, aisessions.DiscoverOptions{
 		HomeDir: c.home, Depth: c.depth, DeferTurns: true, OpenCodexCatalog: c.cmd.openCodexCatalog,
 	}, c.limit)
+	sessions := discovery.Sessions
 	c.mu.Lock()
 	if c.ctx.Err() == nil {
 		c.providerDone[provider] = true
@@ -187,9 +188,7 @@ func (c *aiResumeLiveController) update() (intpicker.DeferredUpdate, error) {
 	done := cloneBoolMap(c.providerDone)
 	failed := cloneBoolMap(c.providerFailed)
 	preview := make(map[string]string, len(c.previewText))
-	for key, value := range c.previewText {
-		preview[key] = value
-	}
+	maps.Copy(preview, c.previewText)
 	toEnrich := make(map[string][]aisessions.SessionMeta)
 	for provider, candidates := range c.pendingEnrich {
 		if !c.enrichStarted[provider] {
@@ -242,9 +241,7 @@ func (c *aiResumeLiveController) enrichTurns(_ string, sessions []aisessions.Ses
 
 func cloneBoolMap(source map[string]bool) map[string]bool {
 	result := make(map[string]bool, len(source))
-	for key, value := range source {
-		result[key] = value
-	}
+	maps.Copy(result, source)
 	return result
 }
 

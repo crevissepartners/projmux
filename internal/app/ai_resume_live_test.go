@@ -19,17 +19,17 @@ func TestResumeLiveDiscoveryStartsProvidersTogetherAndIsolatesFailure(t *testing
 	started := make(chan string, 3)
 	release := make(chan struct{})
 	cmd := testAICommand(t.TempDir())
-	cmd.discoverResumeProvider = func(ctx context.Context, provider, cwd string, _ aisessions.DiscoverOptions, _ int) ([]aisessions.SessionMeta, error) {
+	cmd.discoverResumeProvider = func(ctx context.Context, provider, cwd string, _ aisessions.DiscoverOptions, _ int) (aisessions.ProviderDiscovery, error) {
 		started <- provider
 		select {
 		case <-release:
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return aisessions.ProviderDiscovery{}, ctx.Err()
 		}
 		if provider == aiModeClaude {
-			return nil, errors.New("claude failed")
+			return aisessions.ProviderDiscovery{}, errors.New("claude failed")
 		}
-		return []aisessions.SessionMeta{{Agent: provider, ResumeID: provider + "-exact", LastModified: time.Now()}}, nil
+		return aisessions.ProviderDiscovery{Sessions: []aisessions.SessionMeta{{Agent: provider, ResumeID: provider + "-exact", LastModified: time.Now()}}}, nil
 	}
 	controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
 	defer controller.close()
@@ -66,10 +66,10 @@ func TestResumeLivePublishesRowsBeforeBoundedTurnEnrichment(t *testing.T) {
 	cmd := testAICommand(t.TempDir())
 	enrichStarted := make(chan struct{})
 	releaseEnrich := make(chan struct{})
-	cmd.discoverResumeProvider = func(context.Context, string, string, aisessions.DiscoverOptions, int) ([]aisessions.SessionMeta, error) {
-		return []aisessions.SessionMeta{{
+	cmd.discoverResumeProvider = func(context.Context, string, string, aisessions.DiscoverOptions, int) (aisessions.ProviderDiscovery, error) {
+		return aisessions.ProviderDiscovery{Sessions: []aisessions.SessionMeta{{
 			Agent: aiModeClaude, ResumeID: "exact-turn-id", Title: "turn session", LastModified: time.Unix(5, 0),
-		}}, nil
+		}}}, nil
 	}
 	cmd.enrichResumeTurns = func(sessions []aisessions.SessionMeta) []aisessions.SessionMeta {
 		close(enrichStarted)

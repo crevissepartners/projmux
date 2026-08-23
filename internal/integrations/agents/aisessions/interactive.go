@@ -21,26 +21,36 @@ const (
 	previewExcerptBytes          = 4000
 )
 
+// ProviderDiscovery is one provider's bounded row set plus the typed Codex
+// source decision. Codex is zero-valued for the other providers.
+type ProviderDiscovery struct {
+	Sessions []SessionMeta
+	Codex    CodexCatalogOutcome
+}
+
 // DiscoverProviderContext is the provider-isolated interactive discovery
 // adapter. It lets the picker launch all providers concurrently and publish a
 // failure or row set independently. limit is both the visible result budget and
 // the native early-stop budget.
-func DiscoverProviderContext(ctx context.Context, provider, cwd string, opts DiscoverOptions, limit int) ([]SessionMeta, error) {
+func DiscoverProviderContext(ctx context.Context, provider, cwd string, opts DiscoverOptions, limit int) (ProviderDiscovery, error) {
 	cwd = cleanCWD(cwd)
 	if cwd == "" {
-		return nil, errors.New("discover ai sessions: cwd is empty")
+		return ProviderDiscovery{}, errors.New("discover ai sessions: cwd is empty")
 	}
 	opts = opts.withDefaults()
 	depth := max(opts.Depth, 0)
 	var sessions []SessionMeta
+	var codexOutcome CodexCatalogOutcome
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case AgentClaude:
 		sessions = discoverClaude(cwd, opts.ClaudeProjectsDir, depth)
 	case AgentCodex:
+		codexOutcome = CodexCatalogOutcome{Source: CatalogSourceFallback, Confidence: CatalogConfidenceMedium}
 		if opts.OpenCodexCatalog == nil {
 			sessions = discoverCodex(cwd, opts.CodexSessionsDir, depth)
 		} else if native, err := discoverCodexNativeBounded(ctx, cwd, depth, opts.OpenCodexCatalog, InteractiveCatalogPageBudget, limit); err == nil {
 			sessions = native
+			codexOutcome = CodexCatalogOutcome{Source: CatalogSourceNative, Confidence: CatalogConfidenceHigh}
 		} else {
 			sessions = discoverCodex(cwd, opts.CodexSessionsDir, depth)
 			reason := codexCatalogFallbackReason(err)
@@ -48,12 +58,13 @@ func DiscoverProviderContext(ctx context.Context, provider, cwd string, opts Dis
 				sessions[i].Confidence = ConfidenceMedium
 				sessions[i].Reason = string(reason)
 			}
+			codexOutcome.Reason = reason
 		}
 	case AgentAntigravity:
 		sessions = append(sessions, discoverAntigravityCurrentStorage(cwd, opts.AntigravityCacheDir, opts.AntigravityConversationsDir, depth)...)
 		sessions = append(sessions, discoverAntigravityHistory(cwd, opts.AntigravityHistoryPath, depth)...)
 	default:
-		return nil, fmt.Errorf("unsupported session provider %q", provider)
+		return ProviderDiscovery{}, fmt.Errorf("unsupported session provider %q", provider)
 	}
 	sessions = dedupeByResumeID(sessions)
 	sort.SliceStable(sessions, func(i, j int) bool {
@@ -65,7 +76,10 @@ func DiscoverProviderContext(ctx context.Context, provider, cwd string, opts Dis
 	if limit > 0 && len(sessions) > limit {
 		sessions = sessions[:limit]
 	}
-	return sessions, nil
+	if !opts.DeferTurns {
+		enrichTurns(sessions)
+	}
+	return ProviderDiscovery{Sessions: sessions, Codex: codexOutcome}, nil
 }
 
 type catalogPreviewReader interface {
@@ -121,10 +135,7 @@ func readLocalPreview(ctx context.Context, session SessionMeta) (Preview, error)
 	if err != nil {
 		return Preview{}, err
 	}
-	start := info.Size() - previewReadBytes
-	if start < 0 {
-		start = 0
-	}
+	start := max(info.Size()-previewReadBytes, 0)
 	if _, err := f.Seek(start, io.SeekStart); err != nil {
 		return Preview{}, err
 	}
