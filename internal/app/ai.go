@@ -1334,7 +1334,8 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	}
 
 	limit := resolveAIResumePickerLimit(c.homeDir, c.lookupEnv, contextDir).Limit
-	result, err := c.runResumeSessionPicker(direction, sessions, limit, contextDir, depth)
+	labels := c.resolveAIResumeConversationLabels(sessions)
+	result, err := c.runResumeSessionPicker(direction, sessions, labels, limit, contextDir, depth)
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return nil
@@ -1355,7 +1356,7 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	return c.runSelectedResumeSession(selection, direction)
 }
 
-func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessions.SessionMeta, limit int, baseCWD string, depth int) (intpickercompat.Result, error) {
+func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessions.SessionMeta, conversationLabels map[string]string, limit int, baseCWD string, depth int) (intpickercompat.Result, error) {
 	if c.nativePicker == nil {
 		return intpickercompat.Result{}, errors.New("native picker is not configured")
 	}
@@ -1364,7 +1365,7 @@ func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessio
 	if c.now != nil {
 		now = c.now()
 	}
-	entries, visible, total := aiResumeSessionRows(sessions, limit, now, locale, baseCWD, depth)
+	entries, visible, total := aiResumeSessionRowsWithLabels(sessions, conversationLabels, limit, now, locale, baseCWD, depth)
 	footer := fmt.Sprintf(localizeUIText(locale, "Showing latest %d resume sessions."), visible)
 	if total > visible {
 		footer = fmt.Sprintf(localizeUIText(locale, "Showing latest %d of %d resume sessions."), visible, total)
@@ -1380,7 +1381,7 @@ func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessio
 	}
 	deferredUpdate := func() (intpicker.DeferredUpdate, error) {
 		aisessions.EnrichTurns(displayed)
-		enriched, _, _ := aiResumeSessionRows(sessions, limit, now, locale, baseCWD, depth)
+		enriched, _, _ := aiResumeSessionRowsWithLabels(sessions, conversationLabels, limit, now, locale, baseCWD, depth)
 		return intpicker.DeferredUpdate{Items: intpickercompat.PickerItemsFromEntries(enriched)}, nil
 	}
 	return runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, c.themedPickerOptions(intpickercompat.Options{
@@ -1433,10 +1434,11 @@ const (
 	aiResumeCWDCellWidth    = 14
 	aiResumeTurnsCellWidth  = 5
 	aiResumeTitleMaxCells   = 90
+	aiResumeLabelMaxCells   = 44
 	aiResumeEmptyCell       = "-"
 )
 
-func aiResumeSessionRows(sessions []aisessions.SessionMeta, limit int, now time.Time, locale i18n.Locale, baseCWD string, depth int) ([]intpickercompat.Entry, int, int) {
+func aiResumeSessionRowsWithLabels(sessions []aisessions.SessionMeta, conversationLabels map[string]string, limit int, now time.Time, locale i18n.Locale, baseCWD string, depth int) ([]intpickercompat.Entry, int, int) {
 	limit = normalizeResumePickerLimit(limit)
 	total := len(sessions)
 	if len(sessions) > limit {
@@ -1449,12 +1451,23 @@ func aiResumeSessionRows(sessions []aisessions.SessionMeta, limit int, now time.
 		SearchKey: "new session fresh agent picker",
 	})
 	for _, session := range sessions {
-		rows = append(rows, aiResumeSessionRow(session, now, locale, baseCWD, depth))
+		rows = append(rows, aiResumeSessionRowWithLabel(session, conversationLabels[strings.TrimSpace(session.ResumeID)], now, locale, baseCWD, depth))
 	}
 	return rows, len(sessions), total
 }
 
-func aiResumeSessionRow(session aisessions.SessionMeta, now time.Time, locale i18n.Locale, baseCWD string, depth int) intpickercompat.Entry {
+func aiResumeSessionRowWithLabel(session aisessions.SessionMeta, boundLabel string, now time.Time, locale i18n.Locale, baseCWD string, depth int) intpickercompat.Entry {
+	if strings.EqualFold(strings.TrimSpace(session.Agent), aiModeCodex) &&
+		(session.Source == aisessions.SourceCodexAppServer || session.Source == aisessions.SourceCodexRollout) {
+		return aiResumeCodexSessionRow(session, boundLabel, now, locale, baseCWD, depth)
+	}
+	return aiResumeLegacySessionRow(session, now, locale, baseCWD, depth)
+}
+
+// aiResumeLegacySessionRow is intentionally unchanged for Claude and
+// Antigravity. Phase 10 is a Codex catalog presentation slice, not a provider
+// neutral resume-picker redesign.
+func aiResumeLegacySessionRow(session aisessions.SessionMeta, now time.Time, locale i18n.Locale, baseCWD string, depth int) intpickercompat.Entry {
 	agent := strings.TrimSpace(session.Agent)
 	resumeID := strings.TrimSpace(session.ResumeID)
 	branch := strings.TrimSpace(session.Context.Branch)
@@ -1490,6 +1503,154 @@ func aiResumeSessionRow(session aisessions.SessionMeta, now time.Time, locale i1
 		Value:     aiResumePickerValue(agent, resumeID),
 		SearchKey: strings.TrimSpace(strings.Join([]string{agent, title, resumeID, branch, relCWD, session.Source, session.Confidence, session.Reason, session.RuntimeStatus}, " ")),
 	}
+}
+
+// aiResumeCodexSessionRow gives the conversation identity the first flexible
+// width budget after age/provider. The exact id and raw catalog provenance stay
+// searchable, while only the degraded rollout lane is visible as [fallback].
+func aiResumeCodexSessionRow(session aisessions.SessionMeta, boundLabel string, now time.Time, locale i18n.Locale, baseCWD string, depth int) intpickercompat.Entry {
+	agent := strings.TrimSpace(session.Agent)
+	resumeID := strings.TrimSpace(session.ResumeID)
+	branch := strings.TrimSpace(session.Context.Branch)
+	if branch == "" {
+		branch = aiResumeEmptyCell
+	}
+	conversation := aiResumeCodexConversationLabel(session, boundLabel)
+	relCWD := aiResumeExtraMetaCell(session, baseCWD, depth)
+
+	parts := []string{
+		ansiDim(aiResumeFitCell(aiResumeRelativeAge(now, session.LastModified, locale), aiResumeRelCellWidth)),
+		aiResumeAgentBadge(agent),
+	}
+	if session.Source == aisessions.SourceCodexRollout {
+		parts = append(parts, ansiDim("[fallback]"))
+	}
+	parts = append(parts, conversation)
+	if status := aiResumeHumanStatus(session.RuntimeStatus, locale); status != "" {
+		parts = append(parts, ansiDim("["+status+"]"))
+	}
+	parts = append(parts, ansiDim(aiResumeFitCell(branch, aiResumeBranchCellWidth)))
+	if relCWD != "" {
+		parts = append(parts, ansiDim(aiResumeFitCell(relCWD, aiResumeCWDCellWidth)))
+	}
+	if session.Turns > 0 {
+		parts = append(parts, ansiDim(aiResumeTurnsCell(session.Turns)))
+	}
+
+	return intpickercompat.Entry{
+		Label: strings.Join(parts, " "),
+		Value: aiResumePickerValue(agent, resumeID),
+		SearchKey: strings.TrimSpace(strings.Join([]string{
+			agent, conversation, strings.TrimSpace(session.Title), resumeID, branch, relCWD,
+			session.Source, session.Confidence, session.Reason, session.RuntimeStatus,
+		}, " ")),
+	}
+}
+
+func aiResumeCodexConversationLabel(session aisessions.SessionMeta, boundLabel string) string {
+	resumeID := strings.TrimSpace(session.ResumeID)
+	shortID := aiResumeShortID(resumeID)
+	title := strings.Join(strings.Fields(session.Title), " ")
+	if session.Source == aisessions.SourceCodexAppServer && title != "" && title != shortID {
+		return truncateAIResumeCells(title, aiResumeLabelMaxCells)
+	}
+	if boundLabel = strings.Join(strings.Fields(boundLabel), " "); boundLabel != "" {
+		return truncateAIResumeCells(boundLabel, aiResumeLabelMaxCells)
+	}
+	if session.Source == aisessions.SourceCodexAppServer || session.Source == aisessions.SourceCodexRollout {
+		if shortID != "" {
+			return shortID
+		}
+		return "(untitled)"
+	}
+	return truncateAIResumeCells(cleanAIResumeTitle(title, resumeID), aiResumeLabelMaxCells)
+}
+
+func aiResumeShortID(id string) string {
+	id = strings.TrimSpace(id)
+	if len(id) <= 12 {
+		return id
+	}
+	return id[:12]
+}
+
+func aiResumeHumanStatus(status string, locale i18n.Locale) string {
+	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(status), " ", "")) {
+	case "active":
+		return i18n.FormatStatusToken(i18n.StatusTokenActive, locale, i18n.FormatFull)
+	case "idle":
+		return localizeText(locale, i18n.KeyPickerAIResumeStatusIdle, "idle")
+	case "notloaded":
+		return localizeText(locale, i18n.KeyPickerAIResumeStatusNotLoaded, "not loaded")
+	case "systemerror":
+		return i18n.FormatStatusToken(i18n.StatusTokenError, locale, i18n.FormatFull)
+	default:
+		return ""
+	}
+}
+
+// resolveAIResumeConversationLabels reads the Registry at most once per picker
+// invocation. A label is admitted only through an exact Codex thread binding;
+// cwd, title, pane ordering, prompt, and transcript content are never consulted.
+func (c *aiCommand) resolveAIResumeConversationLabels(sessions []aisessions.SessionMeta) map[string]string {
+	if c == nil || c.loadRegistry == nil {
+		return nil
+	}
+	wantsCodex := false
+	for _, session := range sessions {
+		if strings.EqualFold(strings.TrimSpace(session.Agent), aiModeCodex) {
+			wantsCodex = true
+			break
+		}
+	}
+	if !wantsCodex {
+		return nil
+	}
+	registry, err := c.loadRegistry()
+	if err != nil {
+		return nil
+	}
+	return aiResumeExactAgentLabels(registry)
+}
+
+func aiResumeExactAgentLabels(registry coremetadata.Registry) map[string]string {
+	type resolved struct {
+		uid   string
+		label string
+		rank  int
+	}
+	byThread := make(map[string]resolved)
+	for _, agent := range registry.Agents {
+		if !strings.EqualFold(strings.TrimSpace(agent.Spec.Provider), aiModeCodex) ||
+			agent.Status.SessionRef == nil ||
+			!strings.EqualFold(strings.TrimSpace(agent.Status.SessionRef.Provider), aiModeCodex) ||
+			agent.Status.SessionRef.Codex == nil {
+			continue
+		}
+		threadID := strings.TrimSpace(agent.Status.SessionRef.Codex.ThreadID)
+		if threadID == "" {
+			continue
+		}
+		label := strings.TrimSpace(agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic])
+		rank := 0
+		if label == "" {
+			label = strings.TrimSpace(agent.Metadata.Name)
+			rank = 1
+		}
+		if label == "" {
+			continue
+		}
+		candidate := resolved{uid: agent.Metadata.UID, label: label, rank: rank}
+		if current, ok := byThread[threadID]; !ok || candidate.rank < current.rank ||
+			(candidate.rank == current.rank && candidate.uid < current.uid) {
+			byThread[threadID] = candidate
+		}
+	}
+	labels := make(map[string]string, len(byThread))
+	for threadID, candidate := range byThread {
+		labels[threadID] = candidate.label
+	}
+	return labels
 }
 
 func aiResumeProvenance(session aisessions.SessionMeta) string {
