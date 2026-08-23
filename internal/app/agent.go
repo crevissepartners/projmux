@@ -5,16 +5,19 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
 // agentSubcommands lists the Agent domain routes, in help order.
-var agentSubcommands = []string{"status", "topic", "resume", "review", "integrate", "usage"}
+var agentSubcommands = []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage"}
 
 // resumableAgentPhases is the closed set of phases `agent resume` accepts.
 var resumableAgentPhases = []coremetadata.AgentPhase{
@@ -49,10 +52,16 @@ type agentCommand struct {
 	// only part of this namespace that mutates the registry, and it is held as
 	// its own seam so the read-only resolution and phase gate above it stay
 	// testable without a runtime.
-	rebind        *agentRebinder
-	reviews       agentReviewStarter
-	reviewBinding agentReviewBindingLookup
-	reviewTimeout time.Duration
+	rebind         *agentRebinder
+	reviews        agentReviewStarter
+	reviewBinding  agentReviewBindingLookup
+	reviewTimeout  time.Duration
+	controlBinding agentControlBindingLookup
+	controlCall    agentControlCaller
+	controlPaths   agentControlPathResolver
+	controlPicker  agentControlPicker
+	controlTimeout time.Duration
+	focus          rawArgvCommand
 }
 
 func newAgentCommand() *agentCommand {
@@ -66,6 +75,11 @@ func newAgentCommand() *agentCommand {
 		reviews:          defaultCodexReviewStarter{},
 		reviewBinding:    defaultAgentReviewBindingLookup(),
 		reviewTimeout:    25 * time.Second,
+		controlBinding:   defaultAgentControlBindingLookup(),
+		controlCall:      callCodexControl,
+		controlPaths:     config.DefaultPathsFromEnv,
+		controlPicker:    intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		controlTimeout:   10 * time.Second,
 	}
 }
 
@@ -96,6 +110,10 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.usage, "agent usage", "usage", nil, rest, stdout, stderr)
 	case "resume":
 		return c.runResume(rest, stdout, stderr)
+	case "turn":
+		return c.runTurn(rest, stdout, stderr)
+	case "approval":
+		return c.runApproval(rest, stdout, stderr)
 	case "review":
 		return c.runReview(rest, stdout, stderr)
 	default:

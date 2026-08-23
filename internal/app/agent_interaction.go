@@ -42,14 +42,15 @@ type codexPendingApproval struct {
 }
 
 type codexLifecycleNotice struct {
-	Category  string
-	ID        string
-	Severity  string
-	ThreadID  string
-	TurnID    string
-	ItemID    string
-	RequestID string
-	Kind      codexappserver.ApprovalKind
+	Category           string
+	ID                 string
+	Severity           string
+	ThreadID           string
+	TurnID             string
+	ItemID             string
+	RequestID          string
+	Kind               codexappserver.ApprovalKind
+	ResponderAvailable bool
 }
 
 type codexLifecycleProjection struct {

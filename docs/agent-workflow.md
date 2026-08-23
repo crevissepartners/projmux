@@ -268,6 +268,24 @@
 
 - `make test` / `make test-integration` / `make test-e2e`: Runtime topology exit cascade Phase 3 pairs only an exact clean last-Pane `pane-exited` receipt with its matching `window-unlinked` using socket, `$N` session, `@N` Window, `%N` Pane, Registry owner chain, and activation generation. `TestLastPaneThenWindowUnlinkedDeletesLastProjectGraphAndConvertsPin`, `TestLastPaneOfNonLastProjectWindowDeletesOnlyThatWindow`, `TestControlSessionLastWindowCascadeKeepsRootIdentity`, and the unpaired/negative tables require sibling preservation, final Project graph/reservation deletion, same-slot managed-to-candidate pin conversion, ControlSession root retention, duplicate idempotence, and delete-plan zero for stale/foreign/unavailable/abnormal/killed/unknown evidence. The exact-session inventory counts unmirrored sibling Windows before authorizing a root delete. Reopen tests require a new Project uid: usable-snapshot `Continue project` projects the unchanged snapshot under fresh identities, while unavailable/mismatched snapshots refuse before a Registry transaction and never fall back to Fresh. `Open fresh` is one neutral, confirmation-free action that atomically replaces any same-root graph with a new Project uid and one canonical shell. Both startup paths preserve root, git/worktrees, trust, and snapshot bytes, and no path parses `/exit`, pane content, command, prompt, history, or transcript.
 
+- `make test`: Codex native control plane Phase 6 pins exact Agent turn control
+  and approvals. Adapter fake-server tests freeze `turn/start` with only
+  `threadId` plus one byte-faithful text input, `turn/steer` with the current
+  `expectedTurnId`, `turn/interrupt` with the exact turn id, raw numeric and
+  string JSON-RPC request-id preservation, optional approval ids, and the
+  command/file/network one-shot and permission turn-only response shapes.
+  App property and adversarial tables cross action, request kind, available
+  decision, binding generation, connection epoch, resolution, and concurrent
+  response attempts; stale, lost, ambiguous, resolved, reconnected, or repeated
+  identities require zero writes. Private bounded local-socket tests cover
+  ownership, modes, collision refusal, deterministic overlong-path refusal,
+  epoch teardown, and frame limits. Picker tests require bounded terminal-safe
+  request targets and effects on every actionable decision row, with detail and
+  focus-only rows writing nothing. Notify tests require responder-vs-focus-only
+  availability and resolved queue cleanup, while privacy audits keep prompt,
+  command, path, permission, and request content out of Registry, tmux, notify,
+  diagnostics, support, and Archive sinks.
+
 ## When To Update This List
 
 - A feature moves between unit, integration, and e2e coverage levels.

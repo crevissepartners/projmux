@@ -65,6 +65,9 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
+projmux agent turn start|steer <agent-ref> -- <text>
+projmux agent turn interrupt <agent-ref>
+projmux agent approval review <agent-ref> [--request <normalized-id>]
 projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
 projmux agent integrate <provider> [--dry-run]
 projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
@@ -77,11 +80,13 @@ Subcommands:
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
 | [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent to a new managed Pane |
+| [`projmux agent turn`](#projmux-agent-turn) | Send, steer, or interrupt one exact native Codex turn |
+| [`projmux agent approval`](#projmux-agent-approval) | Review one exact pending native Codex approval |
 | [`projmux agent review`](#projmux-agent-review) | Start a native review on an exact-bound Codex Agent |
 | [`projmux agent integrate`](#projmux-agent-integrate) | Install or remove provider hook integrations |
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`
 
 ### `projmux agent status`
 
@@ -106,6 +111,73 @@ Rebind an Offline or Failed Agent to a new managed Pane
 
 ```
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
+```
+
+### `projmux agent turn`
+
+Send, steer, or interrupt one exact native Codex turn
+
+```
+projmux agent turn start|steer <agent-ref> -- <text>
+projmux agent turn interrupt <agent-ref>
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux agent turn start`](#projmux-agent-turn-start) | Send a new turn to one exact idle Codex thread |
+| [`projmux agent turn steer`](#projmux-agent-turn-steer) | Steer one exact current Codex turn |
+| [`projmux agent turn interrupt`](#projmux-agent-turn-interrupt) | Interrupt one exact current Codex turn |
+
+Canonical spelling: `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`
+
+#### `projmux agent turn start`
+
+Send a new turn to one exact idle Codex thread
+
+```
+projmux agent turn start <agent-ref> -- <text>
+```
+
+#### `projmux agent turn steer`
+
+Steer one exact current Codex turn
+
+```
+projmux agent turn steer <agent-ref> -- <text>
+```
+
+#### `projmux agent turn interrupt`
+
+Interrupt one exact current Codex turn
+
+```
+projmux agent turn interrupt <agent-ref>
+```
+
+### `projmux agent approval`
+
+Review one exact pending native Codex approval
+
+```
+projmux agent approval review <agent-ref> [--request <normalized-id>]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux agent approval review`](#projmux-agent-approval-review) | Review one exact pending native Codex approval |
+
+Canonical spelling: `projmux agent approval review`
+
+#### `projmux agent approval review`
+
+Review one exact pending native Codex approval
+
+```
+projmux agent approval review <agent-ref> [--request <normalized-id>]
 ```
 
 ### `projmux agent review`
