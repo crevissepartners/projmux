@@ -536,6 +536,7 @@ func TestIngestCodexHookRuntimeQuietAppliesToKnownNotifyEvent(t *testing.T) {
 	store := &stubNotifyStore{}
 	cmd := testAICommand(home)
 	cmd.readFile = os.ReadFile
+	cmd.notifyStore = store
 	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
 	cmd.stdin = strings.NewReader(`{
 		"hook_event_name": "Stop",
@@ -556,7 +557,7 @@ func TestIngestCodexHookRuntimeQuietAppliesToKnownNotifyEvent(t *testing.T) {
 		t.Fatalf("Run ingest log --json error = %v", err)
 	}
 	got := out.String()
-	if !strings.Contains(got, `"event":"Stop"`) || !strings.Contains(got, `"result":"quiet"`) || !strings.Contains(got, `"reason":"runtime quiet event"`) {
+	if !strings.Contains(got, `"event":"Stop"`) || !strings.Contains(got, `"result":"quiet"`) || !strings.Contains(got, `"reason":"runtime fallback override quiet"`) {
 		t.Fatalf("log output = %q", got)
 	}
 }

@@ -32,13 +32,17 @@ type describeCommand struct {
 	runtime runtimeLookup
 	// activeTarget is the empty-selector fallback seam; see active_target.go.
 	activeTarget activeTargetLookup
+	// codexAuthority is a bounded, content-free runtime observation for the
+	// exact managed Pane. It never persists provider payload fields.
+	codexAuthority codexLifecycleAuthorityLookup
 }
 
 func newDescribeCommand() *describeCommand {
 	return &describeCommand{
-		loadRegistry: loadResourceRegistry,
-		runtime:      defaultRuntimeLookup(),
-		activeTarget: defaultActiveTargetLookup(),
+		loadRegistry:   loadResourceRegistry,
+		runtime:        defaultRuntimeLookup(),
+		activeTarget:   defaultActiveTargetLookup(),
+		codexAuthority: defaultCodexLifecycleAuthorityLookup(),
 	}
 }
 
@@ -106,11 +110,22 @@ func (c *describeCommand) runKind(token string, kind coremetadata.Kind, args []s
 		// A singular read renders no elapsed time, so it passes no clock.
 		return writeResourceProjection(stdout, spelling, mode, kind, resolution.Matches, registry, false, time.Time{})
 	}
-	return writeResourceDescription(stdout, spelling, kind, match, registry)
+	var runtimeRows [][2]string
+	if kind == coremetadata.KindAgent {
+		if agent, ok := registry.Agent(match.UID); ok && agent.Spec.Provider == aiModeCodex && agent.Status.PaneRef != "" && c.codexAuthority != nil {
+			diagnostic := c.codexAuthority(agent.Status.PaneRef)
+			runtimeRows = append(runtimeRows,
+				[2]string{"LifecycleSource", diagnostic.Source},
+				[2]string{"LifecycleReason", diagnostic.Reason},
+				[2]string{"LifecycleEpoch", diagnostic.EpochStatus},
+			)
+		}
+	}
+	return writeResourceDescription(stdout, spelling, kind, match, registry, runtimeRows...)
 }
 
 // writeResourceDescription renders the human description block of one resource.
-func writeResourceDescription(stdout io.Writer, spelling string, kind coremetadata.Kind, match selector.Match, registry coremetadata.Registry) error {
+func writeResourceDescription(stdout io.Writer, spelling string, kind coremetadata.Kind, match selector.Match, registry coremetadata.Registry, runtimeRows ...[2]string) error {
 	resource, meta, ok := resourceFor(registry, kind, match.UID)
 	if !ok {
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, match.UID)
@@ -139,6 +154,7 @@ func writeResourceDescription(stdout io.Writer, spelling string, kind coremetada
 	}
 	rows = append(rows, [2]string{"Status", string(match.Status)})
 	rows = append(rows, describeSpecRows(resource)...)
+	rows = append(rows, runtimeRows...)
 	rows = append(rows, describeMapRows("Labels", meta.Labels)...)
 	rows = append(rows, describeMapRows("Annotations", meta.Annotations)...)
 

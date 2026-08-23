@@ -114,7 +114,9 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 
 	var results []createResult
 	var activationTargets []agentActivationTarget
+	var nativeLifecycleTargets []codexLifecycleIdentity
 	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
+	nativeLifecycle, nativeLifecycleCapable := c.resumes.(codexNativeLifecycleStarter)
 	prompt, nativePromptExact := nativePrompt(flags.payload)
 	nativeCandidate := provider == aiModeCodex && c.codexNative != nil && nativeLaunchCapable &&
 		flags.codexCapability == nil && nativePromptExact
@@ -268,6 +270,12 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			// result is reported.
 			if usedNative {
 				nativeLauncher.BindNativeCodexPane(paneID, workspace.CWD, workTitle, nativeBinding.ThreadID)
+				if nativeLifecycleCapable {
+					nativeLifecycleTargets = append(nativeLifecycleTargets, codexLifecycleIdentity{
+						AgentUID: work.agent.Metadata.UID, PaneUID: work.pane.Metadata.UID, RuntimeID: paneID,
+						Generation: work.activation.Generation, ThreadID: nativeBinding.ThreadID,
+					})
+				}
 			} else {
 				c.bindAgentPane(paneID, provider, workspace.CWD, workTitle, flags)
 			}
@@ -304,6 +312,12 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		return nil
 	}, c.projectOwnershipGuard(scope)); err != nil {
 		return err
+	}
+	// The exact Registry binding becomes observable only after the transaction
+	// commits. Starting inside the callback would correctly fail the startup
+	// guard against the pre-transaction snapshot and strand no observer.
+	for _, identity := range nativeLifecycleTargets {
+		nativeLifecycle.startNativeCodexLifecycleObserver(identity)
 	}
 	if err := c.confirmAgentActivations(activationTargets); err != nil {
 		return err

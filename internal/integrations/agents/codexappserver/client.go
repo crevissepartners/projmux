@@ -2,11 +2,13 @@ package codexappserver
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 	"sync"
 	"time"
 )
@@ -46,6 +48,7 @@ type Client struct {
 	events  chan Notification
 	done    chan struct{}
 	err     error
+	version string
 	once    sync.Once
 }
 
@@ -81,7 +84,11 @@ func (c *Client) Initialize(ctx context.Context, version string) (string, error)
 	if err := c.notify(ctx, methodInitialized, struct{}{}); err != nil {
 		return "", err
 	}
-	return safeVersion(result.UserAgent), nil
+	negotiatedVersion := safeVersion(result.UserAgent)
+	c.mu.Lock()
+	c.version = negotiatedVersion
+	c.mu.Unlock()
+	return negotiatedVersion, nil
 }
 
 // Request sends one request and waits until its matching response, local
@@ -226,8 +233,15 @@ func (c *Client) routeFrame(frame []byte) error {
 	if len(frame) == 0 || json.Unmarshal(frame, &envelope) != nil {
 		return fmt.Errorf("%w: malformed JSON", ErrProtocol)
 	}
-	if envelope.Method != "" && len(envelope.ID) == 0 {
-		event := Notification{Method: envelope.Method, Params: append(json.RawMessage(nil), envelope.Params...)}
+	if envelope.Method != "" {
+		if len(envelope.Result) != 0 || envelope.Error != nil {
+			return fmt.Errorf("%w: invalid server message shape", ErrProtocol)
+		}
+		requestID, err := normalizeServerRequestID(envelope.ID)
+		if err != nil {
+			return err
+		}
+		event := Notification{Method: envelope.Method, Params: append(json.RawMessage(nil), envelope.Params...), RequestID: requestID}
 		c.mu.Lock()
 		if c.err != nil {
 			err := c.err
@@ -269,6 +283,27 @@ func (c *Client) routeFrame(frame []byte) error {
 	}
 	wait <- response{result: append(json.RawMessage(nil), envelope.Result...)}
 	return nil
+}
+
+func normalizeServerRequestID(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "", nil
+	}
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return "", fmt.Errorf("%w: empty server request id", ErrProtocol)
+		}
+		return text, nil
+	}
+	var number json.Number
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := decoder.Decode(&number); err != nil || strings.TrimSpace(number.String()) == "" {
+		return "", fmt.Errorf("%w: invalid server request id", ErrProtocol)
+	}
+	return number.String(), nil
 }
 
 func (c *Client) cancelPending(id int64) {

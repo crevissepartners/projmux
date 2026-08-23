@@ -75,7 +75,7 @@ readarray -d '' shell_files < <(git ls-files -z -- '*.sh' '*.bash')
 regular_shell_files=()
 for file in "${shell_files[@]}"; do
 	case "$file" in
-		test/lib/smoke.sh | test/e2e/linux-smoke.sh | test/e2e/npm-staging-path.sh | test/install/smoke.sh | test/integration/linux-smoke.sh) ;;
+		test/lib/smoke.sh | test/e2e/codex-lifecycle.sh | test/e2e/linux-smoke.sh | test/e2e/npm-staging-path.sh | test/install/smoke.sh | test/integration/linux-smoke.sh) ;;
 		*) regular_shell_files+=("$file") ;;
 	esac
 done
@@ -87,6 +87,7 @@ fi
 # These entrypoints dynamically source the shared library, which shellcheck
 # cannot resolve statically. Keep the suppressions scoped to those files.
 shellcheck --exclude=SC1091,SC2154 \
+	test/e2e/codex-lifecycle.sh \
 	test/e2e/linux-smoke.sh \
 	test/e2e/npm-staging-path.sh \
 	test/install/smoke.sh \

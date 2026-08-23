@@ -16,6 +16,10 @@ docker_context="${PROJMUX_TEST_DOCKER_CONTEXT:-$root/test/docker}"
 # Suites are network-isolated by default. Suites that must reach a real
 # registry (e.g. the npm update-flow e2e) override this to "bridge".
 docker_network="${PROJMUX_TEST_DOCKER_NETWORK:-none}"
+# Keep suite builds bounded. The default intentionally contains only the
+# build-safe package limit; smoke suites call go build as well as test binaries.
+suite_gomaxprocs="${GOMAXPROCS:-2}"
+suite_goflags="${GOFLAGS:--p=1}"
 
 if ! command -v docker >/dev/null 2>&1; then
   echo "docker is required for this test target" >&2
@@ -66,6 +70,8 @@ docker run --rm \
   -e GOCACHE=/tmp/projmux-gocache \
   -e GOMODCACHE=/gomodcache \
   -e GOTOOLCHAIN=local \
+  -e GOMAXPROCS="$suite_gomaxprocs" \
+  -e GOFLAGS="$suite_goflags" \
   -v "$root:/workspace:rw" \
   -v "$modcache:/gomodcache:rw" \
   -w /workspace \

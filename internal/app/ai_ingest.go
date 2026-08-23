@@ -83,6 +83,12 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		return errors.New("internal agent-hook ingest requires <agent-kind>")
 	}
 	switch args[0] {
+	case "codex-appserver-watch":
+		identity, err := parseCodexNativeLifecycleIdentity(args[1:])
+		if err != nil {
+			return err
+		}
+		return c.runCodexNativeLifecycleObserver(identity)
 	case "codex-hook":
 		if len(args) != 1 {
 			printAIUsage(stderr)

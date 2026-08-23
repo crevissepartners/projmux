@@ -239,6 +239,17 @@ notify, including unmanaged hooks/conflict details and the relevant
 hooks-engine events. It reads a single JSON payload from stdin. The embedded
 default install catalog is based on Codex CLI 0.130.0:
 
+For an exact native app-server Agent, this raw hook path is fallback-only. The
+pane is marked `pending` before its lifecycle observer starts; `pending`,
+`provider-control-plane`, and `invalidating` authority suppress every Codex hook
+event before any badge, queue, desktop, or Registry interaction write. Only
+after the native epoch is invalidated may `provider-hook` become current and the
+table below apply. Existing hook installation and runtime overrides are kept
+byte-for-byte. `PermissionRequest` and `Stop` use the same semantic policy as
+native lifecycle events unless an explicit raw runtime override exists; that
+override regains its existing meaning only in fallback. Catalog defaults are
+not semantic overrides.
+
 | Event | Behavior |
 | --- | --- |
 | `PreToolUse` | marks the matched pane hook-active and writes a quiet ingest diagnostic; no notify queue entry is pushed |
@@ -366,7 +377,10 @@ runtime file only changes ingest behavior (`notify`, `state`, or `quiet`);
 `projmux agent integrate codex` still uses the catalog `install` field to decide
 which hooks to write. Runtime overrides also apply to known specialized
 events, so `Stop` or `PermissionRequest` can be made state-only or quiet
-without changing which hook commands are installed. When a known Codex event
+without changing which hook commands are installed while hook fallback is
+current. Without such an explicit override, app-server and hook-fallback
+approval/completion use the same semantic policy described in
+[Configuration](configuration.md#notifications). When a known Codex event
 without a specialized handler, such as `PreToolUse` or `PostToolUse`, is set to
 runtime `notify`, projmux pushes a generic in-app notify row such as
 `PreToolUse · Bash` with agent/category metadata. That generic path is

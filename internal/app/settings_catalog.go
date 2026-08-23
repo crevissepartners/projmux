@@ -189,6 +189,8 @@ var settingsEntryPrefixCatalog = []struct {
 	{settingsActionPrefixAIHookProvider, settingsNavigationMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixAIHookEvent, settingsNavigationMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixAIHookSet, settingsActionMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAISemanticEvent, settingsNavigationMeta("Native semantic policy", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAISemanticSet, settingsActionMeta("Native semantic policy", settingsAxisGlobal, settingsOwnerNotifications)},
 	{settingsActionPrefixHooks, settingsActionMeta("Project automation policy", settingsAxisGlobal, settingsOwnerAutomation)},
 	{settingsActionPrefixLiveResources, settingsActionMeta("Resources", settingsAxisGlobal, settingsOwnerAppearance)},
 	{settingsActionPrefixHUDVisibility, settingsActionMeta("Status Bar visibility", settingsAxisGlobal, settingsOwnerAppearance)},
@@ -296,7 +298,9 @@ func settingsEntryOwnerHandles(owner settingsEntryOwner, value string) bool {
 			strings.HasPrefix(value, settingsActionPrefixAINotifyDedupe) ||
 			strings.HasPrefix(value, settingsActionPrefixAIHookProvider) ||
 			strings.HasPrefix(value, settingsActionPrefixAIHookEvent) ||
-			strings.HasPrefix(value, settingsActionPrefixAIHookSet)
+			strings.HasPrefix(value, settingsActionPrefixAIHookSet) ||
+			strings.HasPrefix(value, settingsActionPrefixAISemanticEvent) ||
+			strings.HasPrefix(value, settingsActionPrefixAISemanticSet)
 	case settingsOwnerAppearance:
 		return value == settingsAppearanceLanguage || value == settingsAppearanceTheme ||
 			value == settingsAppearanceStatusBar ||
@@ -378,6 +382,8 @@ const (
 	settingsActionPrefixAIHookProvider     = "ai-hook-provider:"
 	settingsActionPrefixAIHookEvent        = "ai-hook-event:"
 	settingsActionPrefixAIHookSet          = "ai-hook-set:"
+	settingsActionPrefixAISemanticEvent    = "ai-semantic-event:"
+	settingsActionPrefixAISemanticSet      = "ai-semantic-set:"
 	settingsActionPrefixDesktopNotifyMode  = "desktop-notify-mode:"
 	settingsActionPrefixHooks              = "project-hooks:"
 	settingsActionPrefixLiveResources      = "live-resources:"
