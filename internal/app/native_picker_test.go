@@ -29,12 +29,18 @@ func nativePickerFromCompatRunner(r intpickercompat.Runner) intpicker.Runner {
 			}
 			if update, err := options.DeferredUpdate(); err == nil && update.Items != nil {
 				options.Items = update.Items
+				if update.AfterApply != nil {
+					update.AfterApply()
+				}
 			}
 			for range 3 {
 				select {
 				case <-options.DeferredUpdateTrigger:
 					if update, err := options.DeferredUpdate(); err == nil && update.Items != nil {
 						options.Items = update.Items
+						if update.AfterApply != nil {
+							update.AfterApply()
+						}
 					}
 				case <-time.After(3 * time.Second):
 				}

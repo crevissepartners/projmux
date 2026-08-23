@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
@@ -60,6 +62,25 @@ type CodexCatalog interface {
 
 type OpenCodexCatalog func(context.Context) (CodexCatalog, error)
 
+// CodexCatalogContinuation owns the exact native catalog connection and
+// cursor left by the interactive initial page budget. Continue consumes one
+// page at a time so the picker can publish every incremental row set and stop
+// immediately when its own visible-row or time budget is reached.
+type CodexCatalogContinuation interface {
+	Continue(context.Context) (CodexContinuationResult, error)
+	Close() error
+}
+
+// CodexContinuationResult is cumulative metadata from the one native
+// invocation. HasMore reports only cursor presence; Reason classifies a
+// terminal continuation fault without changing the already-selected native
+// authority or starting rollout fallback.
+type CodexContinuationResult struct {
+	Sessions []SessionMeta
+	HasMore  bool
+	Reason   CatalogReason
+}
+
 type defaultCodexCatalog struct{ client *codexappserver.Client }
 
 func (c *defaultCodexCatalog) List(ctx context.Context, query codexappserver.CatalogQuery) (codexappserver.CatalogPage, error) {
@@ -100,80 +121,92 @@ type catalogHealthError struct{ availability codexappserver.Availability }
 
 func (e catalogHealthError) Error() string { return "Codex catalog " + string(e.availability) }
 
-// discoverCodexNativeBounded is the interactive catalog path. pageBudget is a
-// hard call budget and rowBudget stops pagination once enough in-tree rows are
-// available for the picker. A zero row budget retains the complete catalog
-// behavior used by non-interactive callers.
-func discoverCodexNativeBounded(ctx context.Context, cwd string, depth int, open OpenCodexCatalog, pageBudget, rowBudget int) ([]SessionMeta, error) {
+type codexNativeCatalogState struct {
+	catalog     CodexCatalog
+	query       codexappserver.CatalogQuery
+	seenCursors map[string]struct{}
+	byID        map[string]SessionMeta
+	closeOnce   sync.Once
+	closeErr    error
+}
+
+func openCodexNativeCatalogState(ctx context.Context, cwd string, depth int, open OpenCodexCatalog) (*codexNativeCatalogState, error) {
 	catalog, err := open(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer catalog.Close()
-
-	query := codexappserver.CatalogQuery{}
+	state := &codexNativeCatalogState{
+		catalog: catalog, seenCursors: make(map[string]struct{}), byID: make(map[string]SessionMeta),
+	}
 	if depth <= 0 {
-		query.CWD = cwd
+		state.query.CWD = cwd
 	}
-	seenCursors := make(map[string]struct{})
-	byID := make(map[string]SessionMeta)
-	if pageBudget <= 0 || pageBudget > codexCatalogMaxPages {
-		pageBudget = codexCatalogMaxPages
+	return state, nil
+}
+
+func (s *codexNativeCatalogState) close() error {
+	if s == nil {
+		return nil
 	}
-	for pageNo := range pageBudget {
-		page, err := catalog.List(ctx, query)
+	s.closeOnce.Do(func() { s.closeErr = s.catalog.Close() })
+	return s.closeErr
+}
+
+// readPage validates a page transactionally: no rows from a malformed page
+// are admitted into the cumulative native result.
+func (s *codexNativeCatalogState) readPage(ctx context.Context, cwd string, depth int) (bool, error) {
+	page, err := s.catalog.List(ctx, s.query)
+	if err != nil {
+		return false, err
+	}
+	candidates := make(map[string]SessionMeta)
+	for _, thread := range page.Threads {
+		if !withinTree(thread.CWD, cwd, depth) {
+			continue
+		}
+		id, err := codex.NormalizeResumeID(thread.ID)
 		if err != nil {
-			return nil, err
+			return false, fmt.Errorf("%w: invalid native thread id", codexappserver.ErrProtocol)
 		}
-		for _, thread := range page.Threads {
-			if !withinTree(thread.CWD, cwd, depth) {
-				continue
-			}
-			id, err := codex.NormalizeResumeID(thread.ID)
-			if err != nil {
-				return nil, fmt.Errorf("%w: invalid native thread id", codexappserver.ErrProtocol)
-			}
-			title := strings.TrimSpace(thread.Name)
-			if title == "" {
-				title = shortResumeID(id)
-			}
-			candidate := SessionMeta{
-				Agent: AgentCodex, ResumeID: id, Title: title,
-				LastModified: thread.RecencyAt,
-				UpdatedAt:    thread.UpdatedAt,
-				Context:      SessionContext{CWD: cleanCWD(thread.CWD), Branch: thread.Branch},
-				Source:       SourceCodexAppServer, Confidence: ConfidenceHigh,
-				RuntimeStatus: thread.RuntimeStatus,
-			}
-			if current, ok := byID[id]; !ok || candidate.LastModified.After(current.LastModified) {
-				byID[id] = candidate
-			}
+		title := strings.TrimSpace(thread.Name)
+		if title == "" {
+			title = shortResumeID(id)
 		}
-		if rowBudget > 0 && len(byID) >= rowBudget {
-			break
+		candidate := SessionMeta{
+			Agent: AgentCodex, ResumeID: id, Title: title,
+			LastModified: thread.RecencyAt,
+			UpdatedAt:    thread.UpdatedAt,
+			Context:      SessionContext{CWD: cleanCWD(thread.CWD), Branch: thread.Branch},
+			Source:       SourceCodexAppServer, Confidence: ConfidenceHigh,
+			RuntimeStatus: thread.RuntimeStatus,
 		}
-		if page.NextCursor == nil {
-			break
+		if current, ok := candidates[id]; !ok || candidate.LastModified.After(current.LastModified) {
+			candidates[id] = candidate
 		}
+	}
+	hasMore := page.NextCursor != nil
+	if hasMore {
 		next := *page.NextCursor
 		if strings.TrimSpace(next) == "" || len(page.Threads) == 0 {
-			return nil, errMalformedCatalogPagination
+			return false, errMalformedCatalogPagination
 		}
-		if _, repeated := seenCursors[next]; repeated {
-			return nil, errMalformedCatalogPagination
+		if _, repeated := s.seenCursors[next]; repeated {
+			return false, errMalformedCatalogPagination
 		}
-		seenCursors[next] = struct{}{}
-		query.Cursor = &next
-		if pageNo == pageBudget-1 {
-			if rowBudget > 0 {
-				break
-			}
-			return nil, errMalformedCatalogPagination
+		s.seenCursors[next] = struct{}{}
+		s.query.Cursor = &next
+	}
+	for id, candidate := range candidates {
+		if current, ok := s.byID[id]; !ok || candidate.LastModified.After(current.LastModified) {
+			s.byID[id] = candidate
 		}
 	}
+	return hasMore, nil
+}
 
-	sessions := make([]SessionMeta, 0, len(byID))
-	for _, session := range byID {
+func (s *codexNativeCatalogState) sessions() []SessionMeta {
+	sessions := make([]SessionMeta, 0, len(s.byID))
+	for _, session := range s.byID {
 		sessions = append(sessions, session)
 	}
 	sort.SliceStable(sessions, func(i, j int) bool {
@@ -182,7 +215,103 @@ func discoverCodexNativeBounded(ctx context.Context, cwd string, depth int, open
 		}
 		return sessions[i].LastModified.After(sessions[j].LastModified)
 	})
-	return sessions, nil
+	return sessions
+}
+
+type codexCatalogContinuation struct {
+	state  *codexNativeCatalogState
+	cwd    string
+	depth  int
+	closed atomic.Bool
+}
+
+func (c *codexCatalogContinuation) Continue(ctx context.Context) (CodexContinuationResult, error) {
+	if c.closed.Load() {
+		return CodexContinuationResult{}, errors.New("codex catalog continuation is closed")
+	}
+	hasMore, err := c.state.readPage(ctx, c.cwd, c.depth)
+	result := CodexContinuationResult{Sessions: c.state.sessions(), HasMore: hasMore}
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			result.Reason = codexCatalogFallbackReason(err)
+		}
+		c.closed.Store(true)
+		_ = c.state.close()
+		return result, err
+	}
+	if !hasMore {
+		c.closed.Store(true)
+		_ = c.state.close()
+	}
+	return result, nil
+}
+
+func (c *codexCatalogContinuation) Close() error {
+	c.closed.Store(true)
+	return c.state.close()
+}
+
+func discoverCodexNativeInteractive(ctx context.Context, cwd string, depth int, open OpenCodexCatalog, rowBudget int) ([]SessionMeta, CodexCatalogContinuation, bool, error) {
+	state, err := openCodexNativeCatalogState(ctx, cwd, depth, open)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	hasMore := false
+	for range InteractiveCatalogPageBudget {
+		hasMore, err = state.readPage(ctx, cwd, depth)
+		if err != nil {
+			_ = state.close()
+			return nil, nil, false, err
+		}
+		if !hasMore || rowBudget > 0 && len(state.byID) >= rowBudget {
+			break
+		}
+	}
+	sessions := state.sessions()
+	if !hasMore {
+		_ = state.close()
+		return sessions, nil, false, nil
+	}
+	if rowBudget > 0 && len(sessions) >= rowBudget {
+		_ = state.close()
+		return sessions, nil, true, nil
+	}
+	return sessions, &codexCatalogContinuation{state: state, cwd: cwd, depth: depth}, false, nil
+}
+
+// discoverCodexNativeBounded is the interactive catalog path. pageBudget is a
+// hard call budget and rowBudget stops pagination once enough in-tree rows are
+// available for the picker. A zero row budget retains the complete catalog
+// behavior used by non-interactive callers.
+func discoverCodexNativeBounded(ctx context.Context, cwd string, depth int, open OpenCodexCatalog, pageBudget, rowBudget int) ([]SessionMeta, error) {
+	state, err := openCodexNativeCatalogState(ctx, cwd, depth, open)
+	if err != nil {
+		return nil, err
+	}
+	defer state.close()
+	if pageBudget <= 0 || pageBudget > codexCatalogMaxPages {
+		pageBudget = codexCatalogMaxPages
+	}
+	for pageNo := range pageBudget {
+		hasMore, err := state.readPage(ctx, cwd, depth)
+		if err != nil {
+			return nil, err
+		}
+		if rowBudget > 0 && len(state.byID) >= rowBudget {
+			break
+		}
+		if !hasMore {
+			break
+		}
+		if pageNo == pageBudget-1 {
+			if rowBudget > 0 {
+				break
+			}
+			return nil, errMalformedCatalogPagination
+		}
+	}
+
+	return state.sessions(), nil
 }
 
 func codexCatalogFallbackReason(err error) CatalogReason {

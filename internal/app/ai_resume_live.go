@@ -15,7 +15,10 @@ import (
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
-const aiResumePreviewTimeout = 2 * time.Second
+const (
+	aiResumePreviewTimeout      = 2 * time.Second
+	aiResumeContinuationTimeout = 2 * time.Second
+)
 
 type aiResumePreviewKey struct {
 	provider  string
@@ -24,32 +27,38 @@ type aiResumePreviewKey struct {
 }
 
 type aiResumeLiveController struct {
-	cmd            *aiCommand
-	ctx            context.Context
-	cancel         context.CancelFunc
-	cwd            string
-	depth          int
-	limit          int
-	home           string
-	locale         i18n.Locale
-	now            time.Time
-	previewTimeout time.Duration
-	events         chan struct{}
-	startOnce      sync.Once
-	labelsOnce     sync.Once
-	labels         map[string]string
+	cmd                 *aiCommand
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	cwd                 string
+	depth               int
+	limit               int
+	home                string
+	locale              i18n.Locale
+	now                 time.Time
+	previewTimeout      time.Duration
+	continuationTimeout time.Duration
+	continuationContext func(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	events              chan struct{}
+	startOnce           sync.Once
+	labelsOnce          sync.Once
+	labels              map[string]string
 
-	mu             sync.Mutex
-	sessions       []aisessions.SessionMeta
-	providerDone   map[string]bool
-	providerFailed map[string]bool
-	pendingEnrich  map[string][]aisessions.SessionMeta
-	enrichStarted  map[string]bool
-	previewText    map[string]string
-	previewCache   map[aiResumePreviewKey]string
-	previewCancel  context.CancelFunc
-	previewSerial  uint64
-	focusedValue   string
+	mu                  sync.Mutex
+	sessions            []aisessions.SessionMeta
+	providerDone        map[string]bool
+	providerFailed      map[string]bool
+	pendingEnrich       map[string][]aisessions.SessionMeta
+	previewText         map[string]string
+	previewCache        map[aiResumePreviewKey]string
+	previewCancel       context.CancelFunc
+	previewSerial       uint64
+	focusedValue        string
+	codexContinuation   aisessions.CodexCatalogContinuation
+	continuationCancel  context.CancelFunc
+	continuationStarted bool
+	continuationDone    bool
+	moreNotLoaded       bool
 }
 
 func newAIResumeLiveController(cmd *aiCommand, cwd, home string, depth, limit int) *aiResumeLiveController {
@@ -61,23 +70,35 @@ func newAIResumeLiveController(cmd *aiCommand, cwd, home string, depth, limit in
 	return &aiResumeLiveController{
 		cmd: cmd, ctx: ctx, cancel: cancel, cwd: cwd, home: home, depth: depth,
 		limit: normalizeResumePickerLimit(limit), locale: appLocale(cmd.homeDir, cmd.lookupEnv), now: now,
-		previewTimeout: aiResumePreviewTimeout,
-		events:         make(chan struct{}, 16), providerDone: map[string]bool{}, providerFailed: map[string]bool{},
-		pendingEnrich: map[string][]aisessions.SessionMeta{}, enrichStarted: map[string]bool{},
-		previewText: map[string]string{}, previewCache: map[aiResumePreviewKey]string{},
+		previewTimeout: aiResumePreviewTimeout, continuationTimeout: aiResumeContinuationTimeout,
+		continuationContext: context.WithTimeout,
+		events:              make(chan struct{}, 16), providerDone: map[string]bool{}, providerFailed: map[string]bool{},
+		pendingEnrich: map[string][]aisessions.SessionMeta{},
+		previewText:   map[string]string{}, previewCache: map[aiResumePreviewKey]string{},
 	}
 }
 
 func (c *aiResumeLiveController) close() {
 	c.cancel()
 	c.mu.Lock()
+	continuationCancel := c.continuationCancel
+	continuation := c.codexContinuation
 	if c.previewCancel != nil {
 		c.previewCancel()
 	}
 	c.mu.Unlock()
+	if continuationCancel != nil {
+		continuationCancel()
+	}
+	if continuation != nil {
+		_ = continuation.Close()
+	}
 }
 
 func (c *aiResumeLiveController) signal() {
+	if c.ctx.Err() != nil {
+		return
+	}
 	select {
 	case c.events <- struct{}{}:
 	default:
@@ -101,6 +122,8 @@ func (c *aiResumeLiveController) discover(provider string) {
 		HomeDir: c.home, Depth: c.depth, DeferTurns: true, OpenCodexCatalog: c.cmd.openCodexCatalog,
 	}, c.limit)
 	sessions := discovery.Sessions
+	var cancelContinuation context.CancelFunc
+	var closeContinuation aisessions.CodexCatalogContinuation
 	c.mu.Lock()
 	if c.ctx.Err() == nil {
 		c.providerDone[provider] = true
@@ -108,12 +131,30 @@ func (c *aiResumeLiveController) discover(provider string) {
 		if err == nil {
 			c.sessions = append(c.sessions, sessions...)
 			c.sessions = dedupeAIResumeSessions(c.sessions)
+			if provider == aiModeCodex {
+				c.codexContinuation = discovery.Continuation
+				c.moreNotLoaded = c.moreNotLoaded || discovery.MoreNotLoaded
+			}
 			if len(sessions) > 0 {
 				c.pendingEnrich[provider] = append([]aisessions.SessionMeta(nil), sessions...)
 			}
+			if len(c.sessions) >= c.limit && c.codexContinuation != nil && !c.continuationDone {
+				c.moreNotLoaded = true
+				c.continuationDone = true
+				cancelContinuation = c.continuationCancel
+				closeContinuation = c.codexContinuation
+			}
 		}
+	} else if discovery.Continuation != nil {
+		closeContinuation = discovery.Continuation
 	}
 	c.mu.Unlock()
+	if cancelContinuation != nil {
+		cancelContinuation()
+	}
+	if closeContinuation != nil {
+		_ = closeContinuation.Close()
+	}
 	c.signal()
 }
 
@@ -183,18 +224,30 @@ func (c *aiResumeLiveController) entries(sessions []aisessions.SessionMeta, done
 
 func (c *aiResumeLiveController) update() (intpicker.DeferredUpdate, error) {
 	c.start()
+	var startContinuation aisessions.CodexCatalogContinuation
+	var closeContinuation aisessions.CodexCatalogContinuation
 	c.mu.Lock()
 	sessions := append([]aisessions.SessionMeta(nil), c.sessions...)
 	done := cloneBoolMap(c.providerDone)
 	failed := cloneBoolMap(c.providerFailed)
 	preview := make(map[string]string, len(c.previewText))
 	maps.Copy(preview, c.previewText)
+	moreNotLoaded := c.moreNotLoaded
+	if c.codexContinuation != nil && !c.continuationStarted && !c.continuationDone {
+		if len(c.sessions) >= c.limit {
+			c.moreNotLoaded = true
+			moreNotLoaded = true
+			c.continuationDone = true
+			closeContinuation = c.codexContinuation
+		} else {
+			c.continuationStarted = true
+			startContinuation = c.codexContinuation
+		}
+	}
 	toEnrich := make(map[string][]aisessions.SessionMeta)
 	for provider, candidates := range c.pendingEnrich {
-		if !c.enrichStarted[provider] {
-			c.enrichStarted[provider] = true
-			toEnrich[provider] = append([]aisessions.SessionMeta(nil), candidates...)
-		}
+		toEnrich[provider] = append([]aisessions.SessionMeta(nil), candidates...)
+		delete(c.pendingEnrich, provider)
 	}
 	c.mu.Unlock()
 	entries := c.entries(sessions, done, failed)
@@ -204,11 +257,114 @@ func (c *aiResumeLiveController) update() (intpicker.DeferredUpdate, error) {
 		Items:   intpickercompat.PickerItemsFromEntries(entries),
 		Preview: intpicker.Preview{Window: "down,35%,border-top", TextByValue: preview},
 		Footer:  projmuxFooter(footer), SetFooter: true,
+		MoreNotLoaded: moreNotLoaded, SetMoreNotLoaded: true,
 	}
-	for provider, candidates := range toEnrich {
-		go c.enrichTurns(provider, candidates)
+	if startContinuation != nil || len(toEnrich) > 0 {
+		var applyOnce sync.Once
+		update.AfterApply = func() {
+			applyOnce.Do(func() {
+				for provider, candidates := range toEnrich {
+					go c.enrichTurns(provider, candidates)
+				}
+				if startContinuation != nil {
+					go c.continueCodex(startContinuation)
+				}
+			})
+		}
+	}
+	if closeContinuation != nil {
+		_ = closeContinuation.Close()
 	}
 	return update, nil
+}
+
+func (c *aiResumeLiveController) continueCodex(continuation aisessions.CodexCatalogContinuation) {
+	timeout := c.continuationTimeout
+	if timeout <= 0 {
+		timeout = aiResumeContinuationTimeout
+	}
+	withTimeout := c.continuationContext
+	if withTimeout == nil {
+		withTimeout = context.WithTimeout
+	}
+	ctx, cancel := withTimeout(c.ctx, timeout)
+	c.mu.Lock()
+	if c.ctx.Err() != nil || c.continuationDone {
+		c.mu.Unlock()
+		cancel()
+		_ = continuation.Close()
+		return
+	}
+	c.continuationCancel = cancel
+	c.mu.Unlock()
+	stopCloseOnCancel := context.AfterFunc(ctx, func() { _ = continuation.Close() })
+	defer stopCloseOnCancel()
+	defer cancel()
+	defer continuation.Close()
+
+	remainingPages := aisessions.InteractiveCatalogTotalPages - aisessions.InteractiveCatalogPageBudget
+	for pageNo := range remainingPages {
+		if ctx.Err() != nil {
+			c.finishCodexContinuation(true)
+			return
+		}
+		result, err := continuation.Continue(ctx)
+		if ctx.Err() != nil {
+			c.finishCodexContinuation(true)
+			return
+		}
+		c.mu.Lock()
+		if c.ctx.Err() != nil || c.continuationDone {
+			c.mu.Unlock()
+			return
+		}
+		if err == nil {
+			known := make(map[string]struct{}, len(c.sessions))
+			for _, session := range c.sessions {
+				known[normalizeAIMode(session.Agent)+"\x00"+strings.TrimSpace(session.ResumeID)] = struct{}{}
+			}
+			var newlyDiscovered []aisessions.SessionMeta
+			for _, session := range result.Sessions {
+				key := normalizeAIMode(session.Agent) + "\x00" + strings.TrimSpace(session.ResumeID)
+				if _, ok := known[key]; !ok {
+					newlyDiscovered = append(newlyDiscovered, session)
+				}
+			}
+			c.sessions = append(c.sessions, result.Sessions...)
+			c.sessions = dedupeAIResumeSessions(c.sessions)
+			if len(newlyDiscovered) > 0 {
+				c.pendingEnrich[aiModeCodex] = append(c.pendingEnrich[aiModeCodex], newlyDiscovered...)
+			}
+		}
+		hasMore := result.HasMore
+		if err != nil {
+			c.moreNotLoaded = true
+			c.continuationDone = true
+		} else if !hasMore {
+			c.continuationDone = true
+		} else if len(c.sessions) >= c.limit || pageNo == remainingPages-1 {
+			c.moreNotLoaded = true
+			c.continuationDone = true
+		}
+		done := c.continuationDone
+		c.mu.Unlock()
+		c.signal()
+		if done {
+			return
+		}
+	}
+}
+
+func (c *aiResumeLiveController) finishCodexContinuation(moreNotLoaded bool) {
+	c.mu.Lock()
+	if c.ctx.Err() != nil || c.continuationDone {
+		c.mu.Unlock()
+		return
+	}
+	c.moreNotLoaded = c.moreNotLoaded || moreNotLoaded
+	c.continuationDone = true
+	c.mu.Unlock()
+	c.signal()
 }
 
 func (c *aiResumeLiveController) enrichTurns(_ string, sessions []aisessions.SessionMeta) {
