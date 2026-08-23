@@ -13,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/i18n"
 )
 
 // describeKinds lists the kind spellings `describe` implements, in help order,
@@ -119,6 +120,15 @@ func (c *describeCommand) runKind(token string, kind coremetadata.Kind, args []s
 				[2]string{"LifecycleReason", diagnostic.Reason},
 				[2]string{"LifecycleEpoch", diagnostic.EpochStatus},
 			)
+			if diagnostic.Dropped > 0 {
+				runtimeRows = append(runtimeRows, [2]string{"ProgressDropped", strconv.FormatUint(uint64(diagnostic.Dropped), 10)})
+			}
+			if diagnostic.Unknown > 0 {
+				runtimeRows = append(runtimeRows, [2]string{"ProgressUnknown", strconv.FormatUint(uint64(diagnostic.Unknown), 10)})
+			}
+			if diagnostic.Overflow > 0 {
+				runtimeRows = append(runtimeRows, [2]string{"ProgressOverflow", strconv.FormatUint(uint64(diagnostic.Overflow), 10)})
+			}
 		}
 	}
 	return writeResourceDescription(stdout, spelling, kind, match, registry, runtimeRows...)
@@ -216,6 +226,9 @@ func describeSpecRows(resource any) [][2]string {
 		}
 		if interaction.Source != "" {
 			rows = append(rows, [2]string{"InteractionSource", interaction.Source})
+		}
+		if progress := renderAgentProgress(typed.Status.Progress, time.Now().UTC(), i18n.FallbackLocale, 120); progress != "" {
+			rows = append(rows, [2]string{"Progress", progress})
 		}
 		rows = append(rows, [2]string{"Activation", string(typed.Status.Activation.State)})
 		if typed.Status.Activation.Reason != "" {

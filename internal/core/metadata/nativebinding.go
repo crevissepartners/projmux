@@ -43,6 +43,7 @@ func (m Mutator) BindCodexActivation(reg *Registry, obs CodexActivationObservati
 		pane.Status.Activation.Codex.ThreadID == obs.ThreadID && pane.Status.Activation.Codex.TurnID == obs.TurnID {
 		return false, nil
 	}
+	agent.Status.Progress = AgentProgress{}
 	pane.Status.Activation.Codex = &CodexActivationBinding{ThreadID: obs.ThreadID, TurnID: obs.TurnID}
 	if obs.TurnID != "" {
 		if _, err := m.SetAgentActivation(reg, obs.AgentUID, ActivationAcknowledged, string(InteractionSourceProviderControl), ""); err != nil {
@@ -67,6 +68,10 @@ func (m Mutator) RefineCodexActivation(reg *Registry, obs CodexActivationObserva
 		return false, nil
 	}
 	pane.Status.Activation.Codex.TurnID = obs.TurnID
+	agent, _ := reg.Agent(obs.AgentUID)
+	if agent != nil {
+		agent.Status.Progress = AgentProgress{}
+	}
 	reg.UpdatedAt = m.clock()().UTC()
 	return true, nil
 }

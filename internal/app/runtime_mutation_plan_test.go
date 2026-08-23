@@ -584,6 +584,7 @@ func TestNativeAgentProjectionWriterFieldInventoryIsClosed(t *testing.T) {
 		"ai_ingest_codex_native.go": {
 			"SetAuthority":                      {aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption},
 			"Apply":                             {aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption},
+			"ApplyProgress":                     {aiPaneCodexDroppedOption, aiPaneCodexUnknownOption, aiPaneCodexOverflowOption},
 			"startNativeCodexLifecycleObserver": {aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption},
 		},
 	}
@@ -2521,6 +2522,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"agent_interaction.go:WriteInteraction:set-option":                                "agent.presentation",
 		"ai_ingest_codex.go:applyCodexHookSemanticDelivery:variable-argv":                 "agent.presentation",
 		"ai_ingest_codex_native.go:Apply:variable-argv":                                   "agent.presentation",
+		"ai_ingest_codex_native.go:ApplyProgress:variable-argv":                           "agent.presentation",
 		"ai_ingest_codex_native.go:SetAuthority:variable-argv":                            "codex.native-lifecycle-authority",
 		"ai_ingest_codex_native.go:startNativeCodexLifecycleObserver:set-option":          "codex.native-lifecycle-authority",
 		"attention.go:run:variable-argv":                                                  "agent.presentation",

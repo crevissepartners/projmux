@@ -1,6 +1,7 @@
 package registryview
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -116,6 +117,33 @@ func rowByID(t *testing.T, view View, id string) Row {
 		t.Fatalf("row %q is absent from %v", id, rowIDs(view))
 	}
 	return row
+}
+
+func TestBuildProjectsBoundedAgentProgressAndAggregatesWindowAtReadTime(t *testing.T) {
+	t.Parallel()
+	registry := registryFixture()
+	progress := coremetadata.AgentProgress{
+		TurnRef: "turn-1", Activity: coremetadata.ProgressCommand,
+		PlanCompleted: 2, PlanTotal: 4, ChangedFiles: 3,
+		ObservedAt: time.Unix(1, 0), Source: coremetadata.AgentProgressSource,
+	}
+	registry.Agents[0].Status.Progress = progress
+	registry.Agents[0].Status.Interaction = coremetadata.AgentInteraction{
+		Kind: coremetadata.InteractionInProgress, ObservedAt: time.Unix(1, 0), Source: coremetadata.AgentProgressSource,
+	}
+	view := Build(Input{Graph: resourcegraph.Resolve(registry, liveInventory())})
+	if got := rowByID(t, view, "uid:agent-one").Progress; got != progress {
+		t.Fatalf("agent progress = %+v, want %+v", got, progress)
+	}
+	window := rowByID(t, view, "uid:win-main")
+	if window.ActiveAgents != 1 || window.WorkingAgents != 1 || window.ApprovalAgents != 0 {
+		t.Fatalf("window read projection = active %d working %d approval %d", window.ActiveAgents, window.WorkingAgents, window.ApprovalAgents)
+	}
+	if stored, _ := registry.Window("win-main"); stored == nil {
+		t.Fatal("fixture window missing")
+	} else if raw := strings.ToLower(fmt.Sprintf("%+v", stored.Status)); strings.Contains(raw, "working") || strings.Contains(raw, "progress") {
+		t.Fatalf("window stored an aggregate: %+v", stored.Status)
+	}
 }
 
 // TestBuildOrdersProjectsThenWindowsThenPanesAndAgents pins the hierarchy and

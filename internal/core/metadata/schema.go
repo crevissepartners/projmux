@@ -443,6 +443,8 @@ func (r Registry) normalized() Registry {
 		r.Agents[i].Status.LastTransitionAt = r.Agents[i].Status.LastTransitionAt.UTC()
 		r.Agents[i].Status.Interaction.ObservedAt = r.Agents[i].Status.Interaction.ObservedAt.UTC()
 		r.Agents[i].Status.Activation.ObservedAt = r.Agents[i].Status.Activation.ObservedAt.UTC()
+		r.Agents[i].Status.Progress.StartedAt = r.Agents[i].Status.Progress.StartedAt.UTC()
+		r.Agents[i].Status.Progress.ObservedAt = r.Agents[i].Status.Progress.ObservedAt.UTC()
 		normalizeTermination(r.Agents[i].Status.LastTermination)
 	}
 	return r

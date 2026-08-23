@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"golang.org/x/mod/semver"
 )
@@ -23,8 +24,9 @@ type lifecycleThreadStatus struct {
 }
 
 type lifecycleTurn struct {
-	ID     string `json:"id"`
-	Status string `json:"status"`
+	ID        string   `json:"id"`
+	Status    string   `json:"status"`
+	StartedAt *float64 `json:"startedAt"`
 }
 
 type lifecycleThread struct {
@@ -99,6 +101,7 @@ type LifecycleSnapshot struct {
 	ThreadState ThreadState
 	TurnID      string
 	TurnState   TurnState
+	StartedAt   time.Time
 }
 
 // LifecycleEventsAvailable closes the event-capability decision on the
@@ -136,6 +139,9 @@ func (c *Client) ReadLifecycleSnapshot(ctx context.Context, threadID string) (Li
 		turn := result.Thread.Turns[len(result.Thread.Turns)-1]
 		snapshot.TurnID = strings.TrimSpace(turn.ID)
 		snapshot.TurnState = normalizeTurnState(turn.Status)
+		if turn.StartedAt != nil {
+			snapshot.StartedAt = unixSeconds(*turn.StartedAt)
+		}
 		if snapshot.TurnID == "" || snapshot.TurnState == TurnStateUnknown {
 			return LifecycleSnapshot{}, fmt.Errorf("%w: lifecycle snapshot returned an incompatible latest turn", ErrProtocol)
 		}

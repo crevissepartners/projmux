@@ -486,6 +486,61 @@ func (i AgentInteraction) IsZero() bool {
 	return (i.Kind == "" || i.Kind == InteractionUnknown) && i.ObservedAt.IsZero() && i.Source == ""
 }
 
+// AgentProgressActivity is the provider-neutral, content-free activity
+// vocabulary for one active Agent turn. Providers may only select one of these
+// values from a wire discriminator; names, commands, paths, and payload text
+// never participate in the selection.
+type AgentProgressActivity string
+
+const (
+	ProgressPlanning   AgentProgressActivity = "planning"
+	ProgressCommand    AgentProgressActivity = "command"
+	ProgressFileChange AgentProgressActivity = "file-change"
+	ProgressTool       AgentProgressActivity = "tool"
+	ProgressWebSearch  AgentProgressActivity = "web-search"
+	ProgressDelegation AgentProgressActivity = "delegation"
+	ProgressImage      AgentProgressActivity = "image"
+	ProgressReview     AgentProgressActivity = "review"
+	ProgressCompaction AgentProgressActivity = "compaction"
+	ProgressOther      AgentProgressActivity = "other"
+)
+
+// AgentProgressActivities returns the closed activity set in presentation
+// order. Empty is reserved for a progress value with no current safe item.
+func AgentProgressActivities() []AgentProgressActivity {
+	return []AgentProgressActivity{
+		ProgressPlanning, ProgressCommand, ProgressFileChange, ProgressTool,
+		ProgressWebSearch, ProgressDelegation, ProgressImage, ProgressReview,
+		ProgressCompaction, ProgressOther,
+	}
+}
+
+// AgentProgress is the current exact-turn projection. It intentionally has no
+// history and no fields capable of retaining provider content. TurnRef is not
+// an independent identity: write sites must prove it is the exact turn in the
+// current Pane activation binding before committing this value.
+type AgentProgress struct {
+	TurnRef         string                `json:"turnRef"`
+	Activity        AgentProgressActivity `json:"activity,omitempty"`
+	PlanCompleted   uint8                 `json:"planCompleted,omitempty"`
+	PlanInProgress  uint8                 `json:"planInProgress,omitempty"`
+	PlanTotal       uint8                 `json:"planTotal,omitempty"`
+	PlanTruncated   bool                  `json:"planTruncated,omitempty"`
+	ChangedFiles    uint16                `json:"changedFiles,omitempty"`
+	FilesTruncated  bool                  `json:"filesTruncated,omitempty"`
+	ActiveItemCount uint8                 `json:"activeItemCount,omitempty"`
+	StartedAt       time.Time             `json:"startedAt,omitzero"`
+	ObservedAt      time.Time             `json:"observedAt,omitzero"`
+	Source          string                `json:"source"`
+}
+
+func (p AgentProgress) IsZero() bool {
+	return p.TurnRef == "" && p.Activity == "" && p.PlanCompleted == 0 &&
+		p.PlanInProgress == 0 && p.PlanTotal == 0 && !p.PlanTruncated &&
+		p.ChangedFiles == 0 && !p.FilesTruncated && p.ActiveItemCount == 0 &&
+		p.StartedAt.IsZero() && p.ObservedAt.IsZero() && p.Source == ""
+}
+
 // AgentActivationState separates Pane creation from initial-task activation.
 type AgentActivationState string
 
@@ -547,6 +602,7 @@ type AgentStatus struct {
 	SessionRef  *AgentSessionRef `json:"sessionRef,omitempty"`
 	Interaction AgentInteraction `json:"interaction,omitzero"`
 	Activation  AgentActivation  `json:"activation,omitzero"`
+	Progress    AgentProgress    `json:"progress,omitzero"`
 	Reason      string           `json:"reason,omitempty"`
 	// LastTermination mirrors the receipt recorded against the Agent's current
 	// managed Pane, so the evidence survives the Pane resource a canonical

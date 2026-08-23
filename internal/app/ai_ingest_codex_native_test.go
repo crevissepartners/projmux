@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/agentprogress"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -228,6 +229,33 @@ type recordingCodexLifecycleSink struct {
 	failApplyFrom int
 }
 
+type recordingCodexProgressSink struct {
+	*recordingCodexLifecycleSink
+	progress    []coremetadata.AgentProgress
+	diagnostics []agentprogress.Diagnostics
+	cancel      context.CancelFunc
+	sawProgress bool
+}
+
+func (s *recordingCodexProgressSink) ApplyProgress(_ codexLifecycleIdentity, progress coremetadata.AgentProgress, diagnostics agentprogress.Diagnostics) error {
+	s.mu.Lock()
+	s.progress = append(s.progress, progress)
+	s.diagnostics = append(s.diagnostics, diagnostics)
+	if progress.TurnRef != "" {
+		s.sawProgress = true
+	} else if s.sawProgress && s.cancel != nil {
+		s.cancel()
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *recordingCodexProgressSink) progressSnapshot() ([]coremetadata.AgentProgress, []agentprogress.Diagnostics) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]coremetadata.AgentProgress(nil), s.progress...), append([]agentprogress.Diagnostics(nil), s.diagnostics...)
+}
+
 type timeoutCodexLifecycleSink struct {
 	allowAuthority bool
 	authorities    []string
@@ -297,6 +325,82 @@ func (s *recordingCodexLifecycleSink) authoritySnapshot() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.authorities...)
+}
+
+func TestCodexNativeObserverDropsContentBeforeProgressSinkAndClearsTerminal(t *testing.T) {
+	identity := testCodexLifecycleIdentity()
+	conn := &fakeCodexLifecycleConnection{
+		snapshot: codexappserver.LifecycleSnapshot{
+			ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateActive,
+			TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+			StartedAt: time.Unix(1_700_000_000, 0).UTC(),
+		},
+		events: make(chan codexappserver.Notification, 4),
+	}
+	conn.events <- codexappserver.Notification{Method: "turn/plan/updated", Params: []byte(`{"threadId":"thread-1","turnId":"turn-1","explanation":"PRIVATE-EXPLANATION","plan":[{"status":"completed","step":"PRIVATE-STEP-A"},{"status":"inProgress","step":"PRIVATE-STEP-B"}]}`)}
+	conn.events <- codexappserver.Notification{Method: "turn/diff/updated", Params: []byte(`{"threadId":"thread-1","turnId":"turn-1","diff":"diff --git a/PRIVATE-PATH b/PRIVATE-PATH\n--- a/PRIVATE-PATH\n+++ b/PRIVATE-PATH\n"}`)}
+	conn.events <- codexappserver.Notification{Method: "item/started", Params: []byte(`{"threadId":"thread-1","turnId":"turn-1","startedAtMs":1700000000100,"item":{"id":"opaque-item-1","type":"commandExecution","command":"PRIVATE-COMMAND","cwd":"/PRIVATE/PATH","aggregatedOutput":"PRIVATE-OUTPUT"}}`)}
+	conn.events <- codexappserver.Notification{Method: "turn/completed", Params: []byte(`{"threadId":"thread-1","turn":{"id":"turn-1","status":"completed","items":[{"type":"agentMessage","text":"PRIVATE-MESSAGE"}],"error":{"message":"PRIVATE-ERROR"}}}`)}
+	close(conn.events)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	sink := &recordingCodexProgressSink{recordingCodexLifecycleSink: newRecordingCodexLifecycleSink(), cancel: cancel}
+	var clockMu sync.Mutex
+	now := time.Unix(1_700_000_000, 0).UTC()
+	clock := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		now = now.Add(300 * time.Millisecond)
+		return now
+	}
+	opened := false
+	observer := codexNativeObserver{
+		identity: identity, delay: time.Millisecond, sink: sink, now: clock,
+		open: func(ctx context.Context) (codexLifecycleConnection, error) {
+			if !opened {
+				opened = true
+				return conn, nil
+			}
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(ctx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("observer did not clear terminal progress")
+	}
+
+	progress, diagnostics := sink.progressSnapshot()
+	if len(progress) < 5 {
+		t.Fatalf("progress writes = %#v, want startup clear, bounded updates, and terminal clear", progress)
+	}
+	var sawPlan, sawFiles, sawCommand bool
+	for _, projection := range progress {
+		sawPlan = sawPlan || (projection.PlanCompleted == 1 && projection.PlanInProgress == 1 && projection.PlanTotal == 2)
+		sawFiles = sawFiles || projection.ChangedFiles == 1
+		sawCommand = sawCommand || projection.Activity == coremetadata.ProgressCommand
+		if strings.Contains(fmt.Sprintf("%#v", projection), "PRIVATE-") {
+			t.Fatalf("content reached progress sink: %#v", projection)
+		}
+	}
+	if !sawPlan || !sawFiles || !sawCommand {
+		t.Fatalf("bounded projections plan=%t files=%t command=%t: %#v", sawPlan, sawFiles, sawCommand, progress)
+	}
+	if last := progress[len(progress)-1]; last != (coremetadata.AgentProgress{}) {
+		t.Fatalf("terminal progress = %#v, want immediate clear", last)
+	}
+	for _, diagnostic := range diagnostics {
+		if strings.Contains(fmt.Sprintf("%#v", diagnostic), "PRIVATE-") {
+			t.Fatalf("content reached progress diagnostics: %#v", diagnostic)
+		}
+	}
 }
 
 func TestCodexNativeObserverInvalidatesBeforeHookFallback(t *testing.T) {
@@ -1239,18 +1343,18 @@ func TestDescribeCodexAgentShowsContentFreeLifecycleAuthority(t *testing.T) {
 		if paneUID != "pan-alpha-codex" {
 			t.Fatalf("pane UID = %q", paneUID)
 		}
-		return codexLifecycleAuthorityDiagnostic{Source: codexAuthorityControlPlane, Reason: "ready", EpochStatus: "active"}
+		return codexLifecycleAuthorityDiagnostic{Source: codexAuthorityControlPlane, Reason: "ready", EpochStatus: "active", Dropped: 2, Unknown: 3, Overflow: 1}
 	}
 	stdout, stderr, err := runRoute(t, cmd, "agent", "uid:agt-alpha-codex")
 	if err != nil {
 		t.Fatalf("describe: %v (%s)", err, stderr)
 	}
-	for _, want := range []string{"LifecycleSource:", codexAuthorityControlPlane, "LifecycleReason:", "ready", "LifecycleEpoch:", "active"} {
+	for _, want := range []string{"LifecycleSource:", codexAuthorityControlPlane, "LifecycleReason:", "ready", "LifecycleEpoch:", "active", "ProgressDropped:", "2", "ProgressUnknown:", "3", "ProgressOverflow:", "1"} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("describe missing %q:\n%s", want, stdout)
 		}
 	}
-	for _, forbidden := range []string{"prompt", "reasoning", "output", "full diff"} {
+	for _, forbidden := range []string{"prompt", "reasoning", "output", "full diff", "path", "command", "tool name", "model", "effort"} {
 		if strings.Contains(strings.ToLower(stdout), forbidden) {
 			t.Fatalf("describe leaked forbidden field %q:\n%s", forbidden, stdout)
 		}
@@ -1261,6 +1365,17 @@ func TestCodexLifecycleAuthorityRejectsUnboundedRuntimeReason(t *testing.T) {
 	diagnostic := observeCodexLifecycleAuthority(context.Background(), phase3StaticTmuxRunner{output: "pan-alpha-codex\x1fprovider-control-plane\x1fepoch-1\x1fprompt=private"}, "pan-alpha-codex")
 	if diagnostic.Source != codexAuthorityControlPlane || diagnostic.EpochStatus != "active" || diagnostic.Reason != "bounded reason unavailable" {
 		t.Fatalf("sanitized diagnostic = %#v", diagnostic)
+	}
+}
+
+func TestCodexProgressDiagnosticsAcceptOnlyBoundedNumericCounters(t *testing.T) {
+	diagnostic := observeCodexLifecycleAuthority(context.Background(), phase3StaticTmuxRunner{output: "pan-alpha-codex\x1fprovider-control-plane\x1fepoch-1\x1fready\x1f2\x1f3\x1f1"}, "pan-alpha-codex")
+	if diagnostic.Dropped != 2 || diagnostic.Unknown != 3 || diagnostic.Overflow != 1 {
+		t.Fatalf("progress counters = %#v", diagnostic)
+	}
+	malformed := observeCodexLifecycleAuthority(context.Background(), phase3StaticTmuxRunner{output: "pan-alpha-codex\x1fprovider-control-plane\x1fepoch-1\x1fready\x1fprompt=private\x1f-1\x1f4294967296"}, "pan-alpha-codex")
+	if malformed.Dropped != 0 || malformed.Unknown != 0 || malformed.Overflow != 0 {
+		t.Fatalf("malformed progress counters crossed diagnostics: %#v", malformed)
 	}
 }
 
