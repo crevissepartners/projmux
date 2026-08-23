@@ -66,6 +66,11 @@ type DeferredUpdate struct {
 	Footer    string
 	SetHeader bool
 	SetFooter bool
+	// MoreNotLoaded is a semantic, content-free continuation notice. The
+	// renderer owns its localized text, so callers cannot attach catalog,
+	// prompt, title, or preview bytes to this state transition.
+	MoreNotLoaded    bool
+	SetMoreNotLoaded bool
 	// ChromeBands are structured header rows rendered above the search/list
 	// surface. Callers provide semantic content while the native renderer owns
 	// theme tokens and width clipping.
@@ -94,6 +99,10 @@ type DeferredUpdate struct {
 	// preserved as before. Falls back safely (0/clamp) if the value is not
 	// present in the new item list.
 	FocusValue string
+	// AfterApply is a one-shot commit notification for producers whose next
+	// asynchronous phase must not begin until this update is accepted by the
+	// picker. It carries no UI content and is not retained in Options.
+	AfterApply func()
 }
 
 // ChromeBand is one structured visual band in native picker chrome. Label uses
@@ -114,6 +123,7 @@ type Options struct {
 	ChromeBands         []ChromeBand
 	ResourceSummaryDock []ChromeBand
 	Footer              string
+	MoreNotLoaded       bool
 	Locale              i18n.Locale
 	Actions             []Action
 	Preview             Preview
@@ -402,6 +412,7 @@ func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, er
 				options = applyNativeDeferredUpdate(options, deferred.update)
 				items = nativeFilteredItems(options, query)
 				renderNative(out, options, items, query)
+				runNativeDeferredAfterApply(deferred.update)
 			case read = <-lineCh:
 				// Prefer every update already published by the time the line was
 				// received. This keeps scripted numeric selection on the latest
@@ -420,6 +431,7 @@ func runNativeLineMode(in io.Reader, out io.Writer, options Options) (Result, er
 						options = applyNativeDeferredUpdate(options, deferred.update)
 						items = nativeFilteredItems(options, query)
 						renderNative(out, options, items, query)
+						runNativeDeferredAfterApply(deferred.update)
 					default:
 						break readLoop
 					}
@@ -599,6 +611,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 	var deferredCh <-chan nativeDeferredRead
 	var stopKeyReader chan struct{}
 	var stopDeferred chan struct{}
+	var pendingAfterApply func()
 	nativeDebugLogf("interactive ui=%q start items=%d launch_key=%q layout=%dx%d", options.UI, len(options.Items), launchKey, layout.Cols, layout.Rows)
 	fmt.Fprint(out, nativeScreenEnter)
 	defer leaveNativeInteractiveScreen(out)
@@ -628,6 +641,10 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			previewOffset = 0
 		}
 		renderer.Render(out, nativeInteractiveFrame(options, items, query, queryCursor, selected, previewOffset, layout))
+		if pendingAfterApply != nil {
+			pendingAfterApply()
+			pendingAfterApply = nil
+		}
 		if focusChanged {
 			runNativeFocusAction(options.Actions, focusValue)
 			if options.FocusChanged != nil {
@@ -647,6 +664,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 			nextItems := nativeFilteredItems(options, query)
 			selected = nativeSelectedIndexForValue(nextItems, nativeDeferredFocusValue(update, focusValue), selected)
 			previewOffset = 0
+			pendingAfterApply = update.AfterApply
 		}, options.UI)
 		if key.Name == "" && key.Text == "" && err == nil {
 			continue
@@ -756,6 +774,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 				nextItems := nativeFilteredItems(options, query)
 				selected = nativeSelectedIndexForValue(nextItems, nativeDeferredFocusValue(update, selectedNativeValue(items, selected)), selected)
 				previewOffset = 0
+				pendingAfterApply = update.AfterApply
 			}
 			nativeDebugLogf("interactive ui=%q action key=%q intent=%q refresh=%t result_key=%q closed=%t value=%q query=%q", options.UI, action.Key, action.Intent, refresh, result.Key, result.Closed, result.Value, result.Query)
 			if refresh {
@@ -774,6 +793,7 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 					nextItems := nativeFilteredItems(options, query)
 					selected = nativeSelectedIndexForValue(nextItems, nativeDeferredFocusValue(update, selectedNativeValue(items, selected)), selected)
 					previewOffset = 0
+					pendingAfterApply = update.AfterApply
 				}
 				nativeDebugLogf("interactive ui=%q text_action key=%q intent=%q refresh=%t result_key=%q closed=%t value=%q query=%q", options.UI, action.Key, action.Intent, refresh, result.Key, result.Closed, result.Value, result.Query)
 				if refresh {
@@ -1048,6 +1068,9 @@ func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
 	if update.SetFooter {
 		options.Footer = update.Footer
 	}
+	if update.SetMoreNotLoaded {
+		options.MoreNotLoaded = update.MoreNotLoaded
+	}
 	if update.SetChromeBands {
 		options.ChromeBands = append([]ChromeBand(nil), update.ChromeBands...)
 	}
@@ -1065,6 +1088,12 @@ func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
 		options.Title = update.Title
 	}
 	return options
+}
+
+func runNativeDeferredAfterApply(update DeferredUpdate) {
+	if update.AfterApply != nil {
+		update.AfterApply()
+	}
 }
 
 // nativeDeferredFocusValue resolves which item value the cursor should track
@@ -1899,6 +1928,7 @@ func nativeContentLayoutForOptions(layout nativeLayout, options Options) nativeL
 func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, query string, queryCursor, selected, previewOffset int, layout nativeLayout) {
 	var screen strings.Builder
 	pickerTheme := nativeTheme(options)
+	footer := nativeEffectiveFooter(options)
 	if header := strings.TrimSpace(options.Header); header != "" {
 		fmt.Fprintln(&screen, nativeHeaderLineWithTheme(pickerTheme, header, layout.Cols))
 	}
@@ -1951,7 +1981,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	var main strings.Builder
 	if len(items) == 0 {
 		fmt.Fprintln(&main, "  "+nativeLocalizedTextForOptions(options, i18n.KeyPickerEmptyNoMatches, "no matches"))
-		writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, options.Footer, layout)
+		writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, footer, layout)
 		return
 	}
 	if len(previewLines) > 0 && placement == "right" && layout.Cols >= 88 {
@@ -1962,7 +1992,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 			scrollEnd = min(scrollStart+len(listLines), scrollTotal)
 		}
 		renderNativeSplitPreview(&main, listLines, previewLines, layout, options.Preview.Window, scrollTotal, scrollStart, scrollEnd, listLimit)
-		writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, options.Footer, layout)
+		writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, footer, layout)
 		return
 	}
 	scrollRows := listLimit
@@ -1980,13 +2010,13 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	}
 	if len(previewLines) > 0 && placement == "down" {
 		renderNativeDownPreview(&main, previewLines, layout)
-		writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, options.Footer, layout)
+		writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, footer, layout)
 		return
 	}
 	if len(previewLines) > 0 {
 		renderNativeInlinePreview(&main, previewLines, layout)
 	}
-	writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, options.Footer, layout)
+	writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, footer, layout)
 }
 
 func renderNativeRecorderContent(w io.Writer, pickerTheme projmuxpicker.Theme, top string, options Options, layout nativeLayout) {
@@ -2003,7 +2033,7 @@ func renderNativeRecorderContent(w io.Writer, pickerTheme projmuxpicker.Theme, t
 			fmt.Fprintln(&main)
 			fmt.Fprintln(&main, "  "+state.Message)
 		}
-		writeNativeContentWithFooterWithTheme(w, pickerTheme, top, main.String(), options.Footer, layout)
+		writeNativeContentWithFooterWithTheme(w, pickerTheme, top, main.String(), nativeEffectiveFooter(options), layout)
 		return
 	}
 	switch state.Phase {
@@ -2022,7 +2052,7 @@ func renderNativeRecorderContent(w io.Writer, pickerTheme projmuxpicker.Theme, t
 		fmt.Fprintln(&main)
 		fmt.Fprintln(&main, "  "+state.Message)
 	}
-	writeNativeContentWithFooterWithTheme(w, pickerTheme, top, main.String(), options.Footer, layout)
+	writeNativeContentWithFooterWithTheme(w, pickerTheme, top, main.String(), nativeEffectiveFooter(options), layout)
 }
 
 func nativeListLimit(options Options, layout nativeLayout, previewPlacement string, previewHeight int, hasPreview bool) int {
@@ -2137,10 +2167,22 @@ func nativeChromeLineCount(options Options) int {
 	if len(options.ResourceSummaryDock) > 0 {
 		lines += 1 + len(options.ResourceSummaryDock)
 	}
-	if footer := strings.TrimSpace(options.Footer); footer != "" {
+	if footer := strings.TrimSpace(nativeEffectiveFooter(options)); footer != "" {
 		lines += 1 + nativeTextLineCount(footer) // footer separator + footer text
 	}
 	return lines
+}
+
+func nativeEffectiveFooter(options Options) string {
+	footer := strings.TrimSpace(options.Footer)
+	if !options.MoreNotLoaded {
+		return footer
+	}
+	notice := nativeLocalizedTextForOptions(options, i18n.Key("picker.ai.resume_more_not_loaded"), "More conversations not loaded.")
+	if footer == "" {
+		return notice
+	}
+	return footer + "\n" + notice
 }
 
 func nativeTextLineCount(value string) int {
@@ -2700,7 +2742,7 @@ func renderNative(w io.Writer, options Options, items []Item, query string) {
 	for _, line := range nativeResourceSummaryDockLines(nativeTheme(options), options.ResourceSummaryDock, defaultNativeCols) {
 		fmt.Fprintln(w, line)
 	}
-	if footer := strings.TrimSpace(options.Footer); footer != "" {
+	if footer := strings.TrimSpace(nativeEffectiveFooter(options)); footer != "" {
 		fmt.Fprintln(w, footer)
 	}
 	if options.ReadOnly {

@@ -17,6 +17,7 @@ import (
 
 const (
 	InteractiveCatalogPageBudget = 3
+	InteractiveCatalogTotalPages = 12
 	previewReadBytes             = 256 * 1024
 	previewExcerptBytes          = 4000
 )
@@ -24,8 +25,10 @@ const (
 // ProviderDiscovery is one provider's bounded row set plus the typed Codex
 // source decision. Codex is zero-valued for the other providers.
 type ProviderDiscovery struct {
-	Sessions []SessionMeta
-	Codex    CodexCatalogOutcome
+	Sessions      []SessionMeta
+	Codex         CodexCatalogOutcome
+	Continuation  CodexCatalogContinuation
+	MoreNotLoaded bool
 }
 
 // DiscoverProviderContext is the provider-isolated interactive discovery
@@ -48,10 +51,22 @@ func DiscoverProviderContext(ctx context.Context, provider, cwd string, opts Dis
 		codexOutcome = CodexCatalogOutcome{Source: CatalogSourceFallback, Confidence: CatalogConfidenceMedium}
 		if opts.OpenCodexCatalog == nil {
 			sessions = discoverCodex(cwd, opts.CodexSessionsDir, depth)
-		} else if native, err := discoverCodexNativeBounded(ctx, cwd, depth, opts.OpenCodexCatalog, InteractiveCatalogPageBudget, limit); err == nil {
-			sessions = native
-			codexOutcome = CodexCatalogOutcome{Source: CatalogSourceNative, Confidence: CatalogConfidenceHigh}
 		} else {
+			var native []SessionMeta
+			var continuation CodexCatalogContinuation
+			var moreNotLoaded bool
+			var err error
+			if limit <= 0 {
+				native, err = discoverCodexNativeBounded(ctx, cwd, depth, opts.OpenCodexCatalog, InteractiveCatalogPageBudget, 0)
+			} else {
+				native, continuation, moreNotLoaded, err = discoverCodexNativeInteractive(ctx, cwd, depth, opts.OpenCodexCatalog, limit)
+			}
+			if err == nil {
+				sessions = native
+				codexOutcome = CodexCatalogOutcome{Source: CatalogSourceNative, Confidence: CatalogConfidenceHigh}
+				result := ProviderDiscovery{Sessions: finalizeProviderSessions(sessions, limit, opts.DeferTurns), Codex: codexOutcome, Continuation: continuation, MoreNotLoaded: moreNotLoaded}
+				return result, nil
+			}
 			sessions = discoverCodex(cwd, opts.CodexSessionsDir, depth)
 			reason := codexCatalogFallbackReason(err)
 			for i := range sessions {
@@ -66,6 +81,11 @@ func DiscoverProviderContext(ctx context.Context, provider, cwd string, opts Dis
 	default:
 		return ProviderDiscovery{}, fmt.Errorf("unsupported session provider %q", provider)
 	}
+	sessions = finalizeProviderSessions(sessions, limit, opts.DeferTurns)
+	return ProviderDiscovery{Sessions: sessions, Codex: codexOutcome}, nil
+}
+
+func finalizeProviderSessions(sessions []SessionMeta, limit int, deferTurns bool) []SessionMeta {
 	sessions = dedupeByResumeID(sessions)
 	sort.SliceStable(sessions, func(i, j int) bool {
 		if sessions[i].LastModified.Equal(sessions[j].LastModified) {
@@ -76,10 +96,10 @@ func DiscoverProviderContext(ctx context.Context, provider, cwd string, opts Dis
 	if limit > 0 && len(sessions) > limit {
 		sessions = sessions[:limit]
 	}
-	if !opts.DeferTurns {
+	if !deferTurns {
 		enrichTurns(sessions)
 	}
-	return ProviderDiscovery{Sessions: sessions, Codex: codexOutcome}, nil
+	return sessions
 }
 
 type catalogPreviewReader interface {

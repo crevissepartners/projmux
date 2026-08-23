@@ -3682,6 +3682,85 @@ func TestApplyNativeDeferredUpdateRefreshesResourceChrome(t *testing.T) {
 	}
 }
 
+func TestMoreNotLoadedDeferredSeamPreservesFooterQueryAndExactFocusWithoutContent(t *testing.T) {
+	const private = "PRIVATE-PROMPT-PREVIEW-BYTES"
+	query := "exact"
+	focused := "resume\tcodex\texact-id"
+	base := Options{
+		Footer: "Showing latest 2 resume sessions.",
+		Items:  []Item{{Title: "older", Value: focused, SearchText: "codex exact-id"}},
+	}
+	update := DeferredUpdate{
+		Items: []Item{
+			{Title: "newer", Value: "resume\tcodex\tnewer", SearchText: "codex newer"},
+			{Title: "page four", Value: focused, SearchText: "codex exact-id"},
+		},
+		MoreNotLoaded: true, SetMoreNotLoaded: true,
+	}
+	applied := applyNativeDeferredUpdate(base, update)
+	filtered := nativeFilteredItems(applied, query)
+	selected := nativeSelectedIndexForValue(filtered, nativeDeferredFocusValue(update, focused), 0)
+	if applied.Footer != base.Footer || !applied.MoreNotLoaded || len(filtered) != 1 || selectedNativeValue(filtered, selected) != focused {
+		t.Fatalf("applied=%#v filtered=%#v selected=%d", applied, filtered, selected)
+	}
+	footer := nativeEffectiveFooter(applied)
+	if !strings.Contains(footer, "More conversations not loaded.") || strings.Contains(footer, private) {
+		t.Fatalf("semantic footer=%q", footer)
+	}
+	if strings.Contains(fmt.Sprintf("%#v", update), private) {
+		t.Fatalf("content-free update seam carried private bytes: %#v", update)
+	}
+	cleared := applyNativeDeferredUpdate(applied, DeferredUpdate{MoreNotLoaded: false, SetMoreNotLoaded: true})
+	if cleared.MoreNotLoaded || nativeEffectiveFooter(cleared) != base.Footer {
+		t.Fatalf("notice clear changed base footer: %#v", cleared)
+	}
+}
+
+type barrierLineReader struct {
+	release <-chan struct{}
+}
+
+func (r *barrierLineReader) Read([]byte) (int, error) {
+	<-r.release
+	return 0, io.EOF
+}
+
+func TestDeferredAfterApplyRunsAfterLineModeRender(t *testing.T) {
+	trigger := make(chan struct{}, 1)
+	trigger <- struct{}{}
+	var out bytes.Buffer
+	applied := make(chan string, 1)
+	inputRead := make(chan struct{})
+	in := &barrierLineReader{release: inputRead}
+	done := make(chan error, 1)
+	go func() {
+		_, err := runNativeLineMode(in, &out, Options{
+			UI:                    "ai-resume-picker",
+			Items:                 []Item{{Title: "initial", Value: "initial"}},
+			DeferredUpdateTrigger: trigger,
+			DeferredUpdate: func() (DeferredUpdate, error) {
+				return DeferredUpdate{
+					Items:      []Item{{Title: "page four exact", Value: "page-four"}},
+					AfterApply: func() { applied <- out.String() },
+				}, nil
+			},
+		})
+		done <- err
+	}()
+	select {
+	case rendered := <-applied:
+		if !strings.Contains(rendered, "page four exact") {
+			t.Fatalf("AfterApply ran before updated rows rendered: %q", rendered)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("AfterApply callback missing")
+	}
+	close(inputRead)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestResourceRefreshStableSelectionQueryAndVanishedNeighbor(t *testing.T) {
 	t.Parallel()
 	query := "svc"
