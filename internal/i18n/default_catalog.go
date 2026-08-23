@@ -2,6 +2,10 @@ package i18n
 
 var defaultCatalogData = map[Locale]map[Key]Entry{
 	FallbackLocale: {
+		Key("agent.progress.working"):                                        textEntry("Working"),
+		Key("agent.progress.plan"):                                           textEntry("plan"),
+		Key("agent.progress.files"):                                          textEntry("files"),
+		Key("agent.progress.items"):                                          textEntry("items"),
 		Key("settings.text.open_resource_inspector"):                         textEntry("Open Resource Inspector"),
 		Key("settings.text.resources_off_state"):                             textEntry("segment and host sampling stopped"),
 		Key("settings.text.resources_on_state"):                              textEntry("live CPU and memory"),
@@ -1001,6 +1005,10 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("settings.keybinding.resources.description"):                     textEntry("Open the read-only Project, Window, and Pane resource inspector"),
 	},
 	Locale("ko-KR"): {
+		Key("agent.progress.working"):                                        textEntry("작업 중"),
+		Key("agent.progress.plan"):                                           textEntry("계획"),
+		Key("agent.progress.files"):                                          textEntry("파일"),
+		Key("agent.progress.items"):                                          textEntry("항목"),
 		Key("settings.text.open_resource_inspector"):                         textEntry("리소스 인스펙터 열기"),
 		Key("settings.text.resources_off_state"):                             textEntry("구획과 호스트 샘플링 중지"),
 		Key("settings.text.resources_on_state"):                              textEntry("실시간 CPU와 메모리"),

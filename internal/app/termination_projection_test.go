@@ -9,6 +9,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -260,7 +261,7 @@ func TestTheRegistryFirstViewCarriesTerminationEvidence(t *testing.T) {
 		t.Fatal("the row aliases the Registry's own receipt")
 	}
 
-	cells := registryNavigationRow(*paneRow)
+	cells := registryNavigationRowAt(*paneRow, i18n.FallbackLocale, time.Time{})
 	index := -1
 	for i, column := range registryNavigationColumns {
 		if column == "TERMINATION" {

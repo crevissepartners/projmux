@@ -189,6 +189,7 @@ func (m Mutator) AttachAgentPane(reg *Registry, agentUID string, declared Bootst
 	agent = mustAgent(reg, agentUID)
 	agent.Status.Phase = PhaseRunning
 	agent.Status.PaneRef = pane.Metadata.UID
+	agent.Status.Progress = AgentProgress{}
 	agent.Status.Reason = ""
 	agent.Status.LastTransitionAt = now
 	reg.UpdatedAt = now
@@ -220,6 +221,7 @@ func (m Mutator) ReleaseAgentPane(reg *Registry, agentUID string, exit AgentExit
 	agent.Status.Phase = phase
 	agent.Status.PaneRef = ""
 	agent.Status.Interaction = AgentInteraction{Kind: InteractionUnknown, ObservedAt: now, Source: "lifecycle"}
+	agent.Status.Progress = AgentProgress{}
 	agent.Status.Reason = strings.TrimSpace(reason)
 	agent.Status.LastTransitionAt = now
 	reg.UpdatedAt = now
@@ -247,6 +249,7 @@ func (m Mutator) TransitionAgent(reg *Registry, agentUID string, phase AgentPhas
 	if phase != PhaseRunning {
 		agent.Status.PaneRef = ""
 		agent.Status.Interaction = AgentInteraction{Kind: InteractionUnknown, ObservedAt: now, Source: "lifecycle"}
+		agent.Status.Progress = AgentProgress{}
 	}
 	reg.UpdatedAt = now
 	return agent.Clone(), nil
@@ -288,6 +291,7 @@ func (r *Registry) deletePane(uid string) bool {
 		for j := range r.Agents {
 			if r.Agents[j].Status.PaneRef == uid {
 				r.Agents[j].Status.PaneRef = ""
+				r.Agents[j].Status.Progress = AgentProgress{}
 			}
 		}
 		return true

@@ -59,6 +59,7 @@ type codexLifecycleProjection struct {
 	Interaction    coremetadata.AgentInteractionKind
 	Notices        []codexLifecycleNotice
 	ClearNoticeIDs []string
+	ClearProgress  bool
 }
 
 // codexLifecycleReducer owns one exact source epoch. An event can mutate state
@@ -98,14 +99,15 @@ func (r *codexLifecycleReducer) begin(epoch uint64, identity codexLifecycleIdent
 		r.terminalTurns[r.currentTurnID] = snapshot.TurnState
 	}
 	r.interaction = r.snapshotInteraction()
-	return codexLifecycleProjection{Accepted: true, Interaction: r.interaction}
+	terminal := snapshot.TurnState == codexappserver.TurnStateCompleted || snapshot.TurnState == codexappserver.TurnStateFailed || snapshot.TurnState == codexappserver.TurnStateInterrupted
+	return codexLifecycleProjection{Accepted: true, Interaction: r.interaction, ClearProgress: terminal}
 }
 
 func (r *codexLifecycleReducer) invalidate(epoch uint64) codexLifecycleProjection {
 	if !r.active || epoch != r.epoch {
 		return codexLifecycleProjection{}
 	}
-	projection := codexLifecycleProjection{Accepted: true, Invalidated: true, Interaction: coremetadata.InteractionUnknown}
+	projection := codexLifecycleProjection{Accepted: true, Invalidated: true, Interaction: coremetadata.InteractionUnknown, ClearProgress: true}
 	projection.ClearNoticeIDs = r.pendingNoticeIDs()
 	r.active = false
 	r.pending = nil
@@ -132,6 +134,7 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 		r.currentTurnState = codexappserver.TurnStateInProgress
 		r.threadState = codexappserver.ThreadStateActive
 		r.interaction = coremetadata.InteractionInProgress
+		projection.ClearProgress = true
 	case codexappserver.LifecycleThreadStatus:
 		if event.ThreadState == codexappserver.ThreadStateNotLoaded {
 			return r.invalidate(epoch)
@@ -190,6 +193,7 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 		projection.ClearNoticeIDs = r.pendingNoticeIDs()
 		r.pending = map[string]codexPendingApproval{}
 		r.currentTurnState = event.TurnState
+		projection.ClearProgress = true
 		r.terminalTurns[event.TurnID] = event.TurnState
 		if event.TurnState == codexappserver.TurnStateCompleted {
 			r.interaction = coremetadata.InteractionResponseComplete

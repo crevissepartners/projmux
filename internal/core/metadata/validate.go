@@ -203,6 +203,15 @@ func (r Registry) Validate() error {
 		if agent.Status.Phase == PhaseRunning && agent.Status.PaneRef == "" {
 			return stateErr(op, ErrInvalidRegistry, "agent %q is Running without a managed pane", agent.Metadata.Name)
 		}
+		if err := validateAgentProgress(op, agent); err != nil {
+			return err
+		}
+		if !agent.Status.Progress.IsZero() {
+			pane, ok := r.Pane(agent.Status.PaneRef)
+			if !ok || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.TurnID != agent.Status.Progress.TurnRef {
+				return stateErr(op, ErrInvalidRegistry, "agent %q progress turn is not its current exact activation", agent.Metadata.Name)
+			}
+		}
 		if err := validateSessionRef(op, agent); err != nil {
 			return err
 		}

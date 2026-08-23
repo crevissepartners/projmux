@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strconv"
 	"strings"
 
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
@@ -13,6 +14,9 @@ type codexLifecycleAuthorityDiagnostic struct {
 	Source      string
 	Reason      string
 	EpochStatus string
+	Dropped     uint32
+	Unknown     uint32
+	Overflow    uint32
 }
 
 type codexLifecycleAuthorityLookup func(string) codexLifecycleAuthorityDiagnostic
@@ -34,6 +38,9 @@ func observeCodexLifecycleAuthority(ctx context.Context, runner tmuxRunner, pane
 		intmux.PaneOptionFormat(aiPaneCodexAuthorityOption),
 		intmux.PaneOptionFormat(aiPaneCodexEpochOption),
 		intmux.PaneOptionFormat(aiPaneCodexReasonOption),
+		intmux.PaneOptionFormat(aiPaneCodexDroppedOption),
+		intmux.PaneOptionFormat(aiPaneCodexUnknownOption),
+		intmux.PaneOptionFormat(aiPaneCodexOverflowOption),
 	}...)
 	out, err := runner.Run(ctx, "tmux", "list-panes", "-a", "-F", format)
 	if err != nil {
@@ -41,7 +48,7 @@ func observeCodexLifecycleAuthority(ctx context.Context, runner tmuxRunner, pane
 	}
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		parts := strings.Split(line, intmux.FieldDelimiter)
-		if len(parts) != 4 || strings.TrimSpace(parts[0]) != strings.TrimSpace(paneUID) {
+		if len(parts) < 4 || strings.TrimSpace(parts[0]) != strings.TrimSpace(paneUID) {
 			continue
 		}
 		source := safeCodexAuthorityValue(parts[1])
@@ -55,7 +62,21 @@ func observeCodexLifecycleAuthority(ctx context.Context, runner tmuxRunner, pane
 		} else if source == codexAuthorityPending {
 			epochStatus = "pending"
 		}
-		return codexLifecycleAuthorityDiagnostic{Source: source, Reason: reason, EpochStatus: epochStatus}
+		diagnostic := codexLifecycleAuthorityDiagnostic{Source: source, Reason: reason, EpochStatus: epochStatus}
+		if len(parts) >= 7 {
+			diagnostic.Dropped = safeProgressCounter(parts[4])
+			diagnostic.Unknown = safeProgressCounter(parts[5])
+			diagnostic.Overflow = safeProgressCounter(parts[6])
+		}
+		return diagnostic
 	}
 	return fallback
+}
+
+func safeProgressCounter(value string) uint32 {
+	parsed, err := strconv.ParseUint(strings.TrimSpace(value), 10, 32)
+	if err != nil {
+		return 0
+	}
+	return uint32(parsed)
 }

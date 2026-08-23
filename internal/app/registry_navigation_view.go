@@ -3,6 +3,7 @@ package app
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -18,6 +19,7 @@ type registryNavigationView struct {
 	locale i18n.Locale
 	view   registryview.View
 	rows   []registryview.Row
+	now    time.Time
 }
 
 // registryNavigationRowValue is the selection token of one navigation row.
@@ -28,18 +30,39 @@ type registryNavigationView struct {
 // appearing or disappearing underneath it.
 func registryNavigationRowValue(row registryview.Row) string { return row.ID }
 
-var registryNavigationColumns = []string{"KIND", "NAME", "STATUS", "TERMINATION", "ACTIONS", "RUNTIME", "UID"}
+var registryNavigationColumns = []string{"KIND", "NAME", "STATUS", "PROGRESS", "TERMINATION", "ACTIONS", "RUNTIME", "UID"}
 
-func registryNavigationRow(row registryview.Row) []string {
+func registryNavigationRowAt(row registryview.Row, locale i18n.Locale, now time.Time) []string {
 	return []string{
 		runtimeCell(registryNavigationIndent(row) + string(row.Kind)),
 		runtimeCell(registryNavigationName(row)),
 		runtimeCell(string(row.Status)),
+		runtimeCell(registryNavigationProgress(row, locale, now)),
 		runtimeCell(row.Termination.Summary()),
 		runtimeCell(registryNavigationActionList(row)),
 		runtimeCell(registryNavigationRuntimeCell(row)),
 		runtimeCell(row.UID),
 	}
+}
+
+func registryNavigationProgress(row registryview.Row, locale i18n.Locale, now time.Time) string {
+	if row.Kind == registryview.RowKindAgent {
+		return renderAgentProgress(row.Progress, now, locale, 120)
+	}
+	if row.Kind != registryview.RowKindWindow || row.ActiveAgents+row.ApprovalAgents+row.WorkingAgents == 0 {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	if row.ActiveAgents > 0 {
+		parts = append(parts, "active "+strconv.Itoa(int(row.ActiveAgents)))
+	}
+	if row.ApprovalAgents > 0 {
+		parts = append(parts, "approval "+strconv.Itoa(int(row.ApprovalAgents)))
+	}
+	if row.WorkingAgents > 0 {
+		parts = append(parts, "working "+strconv.Itoa(int(row.WorkingAgents)))
+	}
+	return strings.Join(parts, " · ")
 }
 
 // The TERMINATION column sits immediately right of STATUS because it is the
@@ -125,7 +148,7 @@ func (v registryNavigationView) entries() []intpickercompat.Entry {
 	table := make([][]string, 0, len(v.rows)+1)
 	table = append(table, registryNavigationColumns)
 	for _, row := range v.rows {
-		table = append(table, registryNavigationRow(row))
+		table = append(table, registryNavigationRowAt(row, v.locale, v.now))
 	}
 	widths := make([]int, len(registryNavigationColumns))
 	for _, row := range table {

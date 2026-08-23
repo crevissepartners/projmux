@@ -8,11 +8,13 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/agentprogress"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -26,6 +28,9 @@ const (
 	aiPaneCodexAuthorityOption = "@projmux_codex_authority"
 	aiPaneCodexEpochOption     = "@projmux_codex_authority_epoch"
 	aiPaneCodexReasonOption    = "@projmux_codex_authority_reason"
+	aiPaneCodexDroppedOption   = "@projmux_codex_progress_dropped"
+	aiPaneCodexUnknownOption   = "@projmux_codex_progress_unknown"
+	aiPaneCodexOverflowOption  = "@projmux_codex_progress_overflow"
 
 	codexAuthorityPending      = "pending"
 	codexAuthorityControlPlane = "provider-control-plane"
@@ -50,6 +55,10 @@ type codexLifecycleSink interface {
 	Apply(codexLifecycleIdentity, codexLifecycleProjection) error
 }
 
+type codexProgressSink interface {
+	ApplyProgress(codexLifecycleIdentity, coremetadata.AgentProgress, agentprogress.Diagnostics) error
+}
+
 type codexNativeLifecycleStarter interface {
 	startNativeCodexLifecycleObserver(codexLifecycleIdentity)
 }
@@ -63,6 +72,8 @@ type codexNativeObserver struct {
 	sequence       uint64
 	reducer        codexLifecycleReducer
 	startControl   func(*codexControlEpoch) (*codexControlServer, error)
+	progress       agentprogress.Reducer
+	now            func() time.Time
 }
 
 func (o *codexNativeObserver) Run(ctx context.Context) error {
@@ -85,6 +96,10 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				_ = o.sink.SetAuthority(o.identity, codexAuthorityHook, "", "observer-unavailable")
 			}
 			return nil
+		}
+		if err := o.clearProgress(); err != nil {
+			_ = o.sink.SetAuthority(o.identity, codexAuthorityHook, "", "sink-error")
+			return err
 		}
 		client, err := o.open(ctx)
 		if err != nil {
@@ -135,6 +150,9 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			}
 			continue
 		}
+		if snapshot.TurnID != "" && snapshot.TurnState == codexappserver.TurnStateInProgress {
+			o.progress.Begin(snapshot.TurnID, snapshot.StartedAt, o.currentTime())
+		}
 		if err := o.sink.Apply(o.identity, projection); err != nil {
 			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "sink-error")
 			_ = client.Close()
@@ -157,11 +175,21 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			_ = client.Close()
 			return errors.Join(err, cleanupErr)
 		}
+		if err := o.flushProgress(); err != nil {
+			if control != nil {
+				_ = control.Close()
+				control = nil
+			}
+			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "sink-error")
+			_ = client.Close()
+			return errors.Join(err, cleanupErr)
+		}
 
 		reconnectReason := "disconnected"
 		invalidated := false
 		stopAfterTransition := false
 		bindingTicker := time.NewTicker(codexObserverBindingDelay)
+		progressTicker := time.NewTicker(25 * time.Millisecond)
 		notifications := client.Notifications()
 	eventLoop:
 		for {
@@ -177,6 +205,18 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					}
 					_ = client.Close()
 					return nil
+				}
+			case <-progressTicker.C:
+				if err := o.flushProgress(); err != nil {
+					if control != nil {
+						_ = control.Close()
+						control = nil
+					}
+					cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "sink-error")
+					bindingTicker.Stop()
+					progressTicker.Stop()
+					_ = client.Close()
+					return errors.Join(err, cleanupErr)
 				}
 			case notification, open := <-notifications:
 				if !open {
@@ -194,6 +234,28 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					break eventLoop
 				}
 				if !recognized {
+					progressEvent, progressRecognized, progressErr := codexappserver.DecodeProgressEvent(notification, o.currentTime())
+					if progressErr != nil {
+						reconnectReason = "protocol-error"
+						break eventLoop
+					}
+					if !progressRecognized {
+						continue
+					}
+					if !o.observeProgress(progressEvent) {
+						continue
+					}
+					if err := o.flushProgress(); err != nil {
+						if control != nil {
+							_ = control.Close()
+							control = nil
+						}
+						cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "sink-error")
+						bindingTicker.Stop()
+						progressTicker.Stop()
+						_ = client.Close()
+						return errors.Join(err, cleanupErr)
+					}
 					continue
 				}
 				projection = o.reducer.apply(epoch, event)
@@ -229,9 +291,42 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					_ = client.Close()
 					return errors.Join(err, cleanupErr)
 				}
+				if progressEvent, progressRecognized, progressErr := codexappserver.DecodeProgressEvent(notification, o.currentTime()); progressErr != nil {
+					reconnectReason = "protocol-error"
+					break eventLoop
+				} else if progressRecognized {
+					if !o.observeProgress(progressEvent) {
+						continue
+					}
+					if progressEvent.Kind == agentprogress.EventTurnTerminal {
+						_, _ = o.progress.Flush(o.currentTime())
+						if err := o.clearProgress(); err != nil {
+							if control != nil {
+								_ = control.Close()
+								control = nil
+							}
+							cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "sink-error")
+							bindingTicker.Stop()
+							progressTicker.Stop()
+							_ = client.Close()
+							return errors.Join(err, cleanupErr)
+						}
+					} else if err := o.flushProgress(); err != nil {
+						if control != nil {
+							_ = control.Close()
+							control = nil
+						}
+						cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "sink-error")
+						bindingTicker.Stop()
+						progressTicker.Stop()
+						_ = client.Close()
+						return errors.Join(err, cleanupErr)
+					}
+				}
 			}
 		}
 		bindingTicker.Stop()
+		progressTicker.Stop()
 		if control != nil {
 			_ = control.Close()
 		}
@@ -249,6 +344,42 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (o *codexNativeObserver) currentTime() time.Time {
+	if o.now == nil {
+		return time.Now().UTC()
+	}
+	return o.now().UTC()
+}
+
+func (o *codexNativeObserver) observeProgress(event agentprogress.Event) bool {
+	// ThreadRef is an opaque routing identity, not content. Refuse mismatches
+	// before the reducer can mutate either progress or diagnostic counters.
+	if event.ThreadRef == "" || event.ThreadRef != o.identity.ThreadID {
+		return false
+	}
+	return o.progress.Observe(event)
+}
+
+func (o *codexNativeObserver) flushProgress() error {
+	sink, ok := o.sink.(codexProgressSink)
+	if !ok {
+		return nil
+	}
+	progress, changed := o.progress.Flush(o.currentTime())
+	if !changed {
+		return nil
+	}
+	return sink.ApplyProgress(o.identity, progress, o.progress.Diagnostics())
+}
+
+func (o *codexNativeObserver) clearProgress() error {
+	sink, ok := o.sink.(codexProgressSink)
+	if !ok {
+		return nil
+	}
+	return sink.ApplyProgress(o.identity, coremetadata.AgentProgress{}, agentprogress.Diagnostics{})
 }
 
 // invalidateAndFallback is the only active-epoch cleanup path. Fallback is
@@ -275,6 +406,11 @@ func (o *codexNativeObserver) applyInvalidationAndFallback(epochLabel, reason st
 		// suppressed and make the bounded diagnostic truthful; never expose
 		// provider-hook while stale state may remain.
 		_ = o.sink.SetAuthority(o.identity, codexAuthorityInvalidating, epochLabel, "sink-error")
+		return err
+	}
+	o.progress.Invalidate()
+	_, _ = o.progress.Flush(o.currentTime())
+	if err := o.clearProgress(); err != nil {
 		return err
 	}
 	return o.sink.SetAuthority(o.identity, codexAuthorityHook, "", reason)
@@ -379,8 +515,14 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 		if !exactCodexLifecycleBinding(*registry, identity) {
 			return errManagedAgentObservationIgnored
 		}
-		_, err := mutator.SetAgentInteraction(registry, identity.AgentUID, delivery.RegistryInteraction, string(coremetadata.InteractionSourceProviderControl))
-		return err
+		if _, err := mutator.SetAgentInteraction(registry, identity.AgentUID, delivery.RegistryInteraction, string(coremetadata.InteractionSourceProviderControl)); err != nil {
+			return err
+		}
+		if projection.ClearProgress {
+			_, _, err := mutator.SetAgentProgress(registry, identity.AgentUID, "", coremetadata.AgentProgress{})
+			return err
+		}
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -473,6 +615,72 @@ func markCodexApprovalAvailability(projection *codexLifecycleProjection, respond
 			projection.Notices[i].ResponderAvailable = responderAvailable
 		}
 	}
+}
+
+func (s aiCodexLifecycleSink) ApplyProgress(identity codexLifecycleIdentity, progress coremetadata.AgentProgress, diagnostic agentprogress.Diagnostics) error {
+	c := s.command
+	if !s.BindingCurrent(identity) || c.updateRegistry == nil {
+		return errManagedAgentObservationIgnored
+	}
+	writeRegistry := true
+	if progress.IsZero() {
+		registry, err := c.loadRegistry()
+		if err != nil {
+			return err
+		}
+		agent, ok := registry.Agent(identity.AgentUID)
+		if !ok || agent.Status.Progress.IsZero() {
+			writeRegistry = false
+		}
+	}
+	mutator := intmetadata.DefaultMutator()
+	mutator.Now = c.sessionRefClock()
+	if writeRegistry {
+		if _, err := c.updateRegistry(func(registry *coremetadata.Registry) error {
+			if !exactCodexLifecycleBinding(*registry, identity) {
+				return errManagedAgentObservationIgnored
+			}
+			if progress.IsZero() {
+				_, _, err := mutator.SetAgentProgress(registry, identity.AgentUID, "", progress)
+				return err
+			}
+			agent, _ := registry.Agent(identity.AgentUID)
+			pane, _ := registry.Pane(agent.Status.PaneRef)
+			if pane == nil || pane.Status.Activation.Codex == nil {
+				return errManagedAgentObservationIgnored
+			}
+			if pane.Status.Activation.Codex.TurnID != progress.TurnRef {
+				changed, refineErr := mutator.RefineCodexActivation(registry, coremetadata.CodexActivationObservation{
+					AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, Generation: identity.Generation,
+					ThreadID: identity.ThreadID, TurnID: progress.TurnRef,
+				})
+				if refineErr != nil || !changed {
+					return refineErr
+				}
+			}
+			_, _, err := mutator.SetAgentProgress(registry, identity.AgentUID, progress.TurnRef, progress)
+			return err
+		}); err != nil {
+			return err
+		}
+	}
+	for _, field := range []struct {
+		option string
+		value  uint32
+	}{
+		{aiPaneCodexDroppedOption, diagnostic.Dropped},
+		{aiPaneCodexUnknownOption, diagnostic.Unknown},
+		{aiPaneCodexOverflowOption, diagnostic.Overflow},
+	} {
+		args := []string{"set-option", "-p", "-u", "-t", identity.RuntimeID, field.option}
+		if field.value > 0 {
+			args = []string{"set-option", "-p", "-t", identity.RuntimeID, field.option, strconv.FormatUint(uint64(field.value), 10)}
+		}
+		if err := c.run("tmux", args...); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type codexSemanticDelivery struct {

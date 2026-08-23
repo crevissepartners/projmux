@@ -110,6 +110,13 @@ type Row struct {
 	// Phase is the Agent lifecycle phase, reported verbatim from the Registry.
 	// Nothing in this package transitions it.
 	Phase string `json:"phase,omitempty"`
+	// Progress is the Agent's current exact-turn bounded projection. Window rows
+	// carry only read-time child counts; no sentence or provider content is
+	// copied into the Window resource.
+	Progress       coremetadata.AgentProgress `json:"progress,omitzero"`
+	ActiveAgents   uint8                      `json:"activeAgents,omitempty"`
+	ApprovalAgents uint8                      `json:"approvalAgents,omitempty"`
+	WorkingAgents  uint8                      `json:"workingAgents,omitempty"`
 	// Role is the Pane role, shell or agent.
 	Role string `json:"role,omitempty"`
 	// Status is the runtime overlay of this row on the exact observed host.
@@ -335,11 +342,13 @@ func (b *builder) controlWindows(controlUID, controlID string) {
 			continue
 		}
 		windowID := rowID(window.Window.Metadata.UID)
+		counts := b.windowProgressCounts(window.Window.Metadata.UID)
 		b.rows = append(b.rows, Row{
 			Section: SectionControl, Kind: RowKindWindow, ID: windowID, UID: window.Window.Metadata.UID,
 			ParentID: controlID, Depth: 1, Name: window.Window.Metadata.Name,
 			DisplayName: window.Window.DisplayName(), Status: window.Status, Runtime: window.Runtime,
-			Reason: statusReason(window.Status, false),
+			Reason: statusReason(window.Status, false), ActiveAgents: counts.active,
+			ApprovalAgents: counts.approval, WorkingAgents: counts.working,
 		})
 		b.controlWindowPanes(window.Window.Metadata.UID, windowID)
 	}
@@ -364,7 +373,7 @@ func (b *builder) controlWindowPanes(windowUID, windowID string) {
 			Section: SectionControl, Kind: RowKindAgent, ID: agentID, UID: agent.Agent.Metadata.UID,
 			ParentID: windowID, Depth: 2, Name: agent.Agent.Metadata.Name,
 			DisplayName: displayName(agent.Agent.Metadata), Provider: agent.Agent.Spec.Provider,
-			Phase: string(agent.Agent.Status.Phase), Status: agent.Status, Runtime: agent.Runtime,
+			Phase: string(agent.Agent.Status.Phase), Progress: agent.Agent.Status.Progress, Status: agent.Status, Runtime: agent.Runtime,
 			Reason: statusReason(agent.Status, false), Termination: agent.Agent.Status.LastTermination.Clone(),
 		})
 		for _, pane := range b.graph.Panes {
@@ -387,21 +396,23 @@ func (b *builder) windows(project resourcegraph.ProjectNode, projectID string) {
 			continue
 		}
 		windowID := rowID(window.Window.Metadata.UID)
+		counts := b.windowProgressCounts(window.Window.Metadata.UID)
 		b.rows = append(b.rows, Row{
-			Section:     SectionProjects,
-			Kind:        RowKindWindow,
-			ID:          windowID,
-			UID:         window.Window.Metadata.UID,
-			ParentID:    projectID,
-			Depth:       1,
-			Name:        window.Window.Metadata.Name,
-			DisplayName: window.Window.DisplayName(),
-			Root:        root,
-			Status:      window.Status,
-			MissingRoot: window.MissingRoot,
-			Runtime:     window.Runtime,
-			Actions:     resourceActions(RowKindWindow, window.Status, window.MissingRoot),
-			Reason:      statusReason(window.Status, window.MissingRoot),
+			Section:      SectionProjects,
+			Kind:         RowKindWindow,
+			ID:           windowID,
+			UID:          window.Window.Metadata.UID,
+			ParentID:     projectID,
+			Depth:        1,
+			Name:         window.Window.Metadata.Name,
+			DisplayName:  window.Window.DisplayName(),
+			Root:         root,
+			Status:       window.Status,
+			MissingRoot:  window.MissingRoot,
+			Runtime:      window.Runtime,
+			Actions:      resourceActions(RowKindWindow, window.Status, window.MissingRoot),
+			Reason:       statusReason(window.Status, window.MissingRoot),
+			ActiveAgents: counts.active, ApprovalAgents: counts.approval, WorkingAgents: counts.working,
 		})
 		b.windowPanes(window.Window.Metadata.UID, windowID, root)
 		b.agents(window.Window.Metadata.UID, windowID, root)
@@ -442,6 +453,7 @@ func (b *builder) agents(windowUID, windowID, root string) {
 			Root:        root,
 			Provider:    agent.Agent.Spec.Provider,
 			Phase:       string(agent.Agent.Status.Phase),
+			Progress:    agent.Agent.Status.Progress,
 			Status:      agent.Status,
 			MissingRoot: agent.MissingRoot,
 			Runtime:     agent.Runtime,
@@ -455,6 +467,33 @@ func (b *builder) agents(windowUID, windowID, root string) {
 			}
 			b.rows = append(b.rows, b.paneRow(pane, agentID, 3, root))
 		}
+	}
+}
+
+type windowProgressCounts struct{ active, approval, working uint8 }
+
+func (b *builder) windowProgressCounts(windowUID string) windowProgressCounts {
+	var counts windowProgressCounts
+	for _, agent := range b.graph.Agents {
+		if agent.WindowUID != windowUID || agent.Agent.Status.Phase != coremetadata.PhaseRunning {
+			continue
+		}
+		if !agent.Agent.Status.Progress.IsZero() {
+			incrementUint8Saturating(&counts.active)
+		}
+		switch agent.Agent.Status.Interaction.Kind {
+		case coremetadata.InteractionApprovalRequired:
+			incrementUint8Saturating(&counts.approval)
+		case coremetadata.InteractionInProgress:
+			incrementUint8Saturating(&counts.working)
+		}
+	}
+	return counts
+}
+
+func incrementUint8Saturating(value *uint8) {
+	if *value != ^uint8(0) {
+		*value++
 	}
 }
 

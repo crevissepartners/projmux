@@ -233,6 +233,7 @@ func (m Mutator) bindAgentToPane(agent *Agent, paneUID string, now time.Time) {
 	}
 	agent.Status.Phase = PhaseRunning
 	agent.Status.PaneRef = paneUID
+	agent.Status.Progress = AgentProgress{}
 	agent.Status.Reason = ""
 	agent.Status.LastTransitionAt = now
 }

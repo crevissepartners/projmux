@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -176,7 +177,7 @@ func (c *registryNavigationCommand) runProject(ctx context.Context, ui, projectU
 		if len(rows) == 0 {
 			return fmt.Errorf("registry navigation: no Registry Project carries uid %q", projectUID)
 		}
-		nav := registryNavigationView{locale: locale, view: view, rows: rows}
+		nav := registryNavigationView{locale: locale, view: view, rows: rows, now: time.Now().UTC()}
 		result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.native, intpickercompat.Options{
 			UI:            ui,
 			Entries:       nav.entries(),
