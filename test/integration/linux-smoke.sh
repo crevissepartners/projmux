@@ -2870,7 +2870,9 @@ termination_case() {
 # file closes the race without assuming a fixed plan/guard execution duration.
 # shellcheck disable=SC2016 # $1 and $$ expand inside the managed child shell.
 termination_case clean normal 0 "" sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; exit 0' sh "$termination_root/release-clean"
+# shellcheck disable=SC2016 # $1 expands inside the managed child shell.
 termination_case failure abnormal 7 "" sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; exit 7' sh "$termination_root/release-failure"
+# shellcheck disable=SC2016 # $1 and $$ expand inside the managed child shell.
 termination_case signal abnormal "" TERM sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; kill -TERM $$; sleep 30' sh "$termination_root/release-signal"
 
 # The same evidence for the three managed providers. Each stub is a real
@@ -3571,6 +3573,7 @@ echo ">> exit reconciliation supervisor SIGKILL agent=$exitrec_sigkill_agent cla
 # the generated hook verbatim after this final absence assertion.
 exitrec_shell_release="$exitrec_root/release-shell-pane"
 rm -f "$exitrec_shell_release"
+# shellcheck disable=SC2016 # $1 expands inside the managed child shell.
 exitrec_shell_pane="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
   create pane --project "uid:$exitrec_app_project_uid" -o uid -- \
   sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; exit 0' sh "$exitrec_shell_release")"
