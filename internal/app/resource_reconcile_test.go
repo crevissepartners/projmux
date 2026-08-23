@@ -60,6 +60,9 @@ func TestResourceReconcileProjectsAllAgentFieldsFromRegistryAuthority(t *testing
 		if want[write.field] != write.after {
 			t.Fatalf("write %s = %q, want %q", write.field, write.after, want[write.field])
 		}
+		if class, ok := controllerRuntimeMutationFieldClassFor("pane", write.field); !ok || class != controllerRuntimeMutationPresentation {
+			t.Fatalf("Agent projection field %s is not bound to the typed presentation exemption: class=%q ok=%v", write.field, class, ok)
+		}
 		if _, err := server.Run(context.Background(), "tmux", write.args...); err != nil {
 			t.Fatalf("execute %v: %v", write.args, err)
 		}
@@ -119,7 +122,7 @@ func TestPublicResourceReconcileRetriesExactAgentProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	liveWindow := server.sessions[0].windows[0]
-	livePane := newFakeTmuxPane("%agent")
+	livePane := newFakeTmuxPane("%99")
 	livePane.opts[tmuxopts.PaneUID] = managed.Metadata.UID
 	livePane.opts[aiPaneTopicOption] = "stale"
 	livePane.opts[aiPaneStateOption] = "idle"
@@ -162,7 +165,12 @@ func reconcileFixtureReconciler(root, sessionName string) func(tmuxCommandRunner
 			liveSessions:  sessions.ExistingSessions,
 			observeLegacy: mirror.ObserveLegacySessionTargets,
 			mirror:        mirror,
-			shell:         "/bin/zsh",
+			mirrorProject: func(context.Context, string, coremetadata.Project) error { return nil },
+			mirrorWindow:  mirror.MirrorWindow,
+			mirrorPane: func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
+				return mirror.MirrorPane(ctx, target, pane)
+			},
+			shell: "/bin/zsh",
 			sessionNameFor: func(string) string {
 				return sessionName
 			},
@@ -174,6 +182,10 @@ func newReconcileFixture(t *testing.T, socketFlag, socketValue string) (*resourc
 	t.Helper()
 	root := t.TempDir()
 	server := newFakeTmux()
+	server.socketPath = filepath.Join("/tmp/fake-tmux", socketValue)
+	if socketFlag == "-S" {
+		server.socketPath = socketValue
+	}
 	session := server.addSession("alpha")
 	session.opts[inttmux.ProjectPathSessionOption] = root
 	store := &fakeResourceStore{registry: coremetadata.NewRegistry(), dirs: map[string]bool{root: true}, now: resourceFixtureClock}
@@ -330,6 +342,92 @@ func TestResourceReconcileRepairsStaleMirrorsForExactBindings(t *testing.T) {
 	}
 }
 
+func TestResourceReconcileInitialPaneMirrorCarriesExactObservedLabelBefore(t *testing.T) {
+	t.Parallel()
+
+	command, store, server, _, _ := newReconcileFixture(t, "-L", "primary")
+	pane := server.session("alpha").windows[0].panes[0]
+	pane.opts[tmuxopts.PaneName] = "buildlog"
+	want := store.registry.Panes[0].Metadata.Name
+	mutationsBefore := tmuxMutationCallCount(server)
+
+	preview, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("preview initial Pane label mirror: %v\n%s", err, preview)
+	}
+	report := parseControllerReport(t, preview)
+	found := false
+	for _, item := range report.Items {
+		if item["field"] != tmuxopts.PaneName || item["target"] != pane.id {
+			continue
+		}
+		found = true
+		if item["before"] != "buildlog" || item["after"] != want {
+			t.Fatalf("Pane label receipt = before:%v after:%v, want buildlog -> %q\n%s",
+				item["before"], item["after"], want, preview)
+		}
+	}
+	if !found {
+		t.Fatalf("preview omitted the exact Pane label mirror receipt:\n%s", preview)
+	}
+	if got := tmuxMutationCallCount(server); got != mutationsBefore {
+		t.Fatalf("planning the Pane label executed %d mutation(s)", got-mutationsBefore)
+	}
+
+	executed, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("execute initial Pane label mirror: %v\n%s", err, executed)
+	}
+	if got := pane.opts[tmuxopts.PaneName]; got != want {
+		t.Fatalf("Pane label = %q, want %q", got, want)
+	}
+}
+
+func TestResourceReconcilePaneLabelDriftAfterPlanningRefusesBeforeFirstWrite(t *testing.T) {
+	t.Parallel()
+
+	command, _, server, _, _ := newReconcileFixture(t, "-L", "primary")
+	pane := server.session("alpha").windows[0].panes[0]
+	pane.opts[tmuxopts.PaneName] = "buildlog"
+	base := command.resources
+	command.resources = &resourceStore{
+		load: base.load, snapshot: base.snapshot, mutator: base.mutator,
+		updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+			registry, changed, err := base.updateConvergent(fn)
+			pane.opts[tmuxopts.PaneName] = "operator-drift"
+			return registry, changed, err
+		},
+	}
+	mutationsBefore := tmuxMutationCallCount(server)
+
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil || !strings.Contains(err.Error(), "option "+tmuxopts.PaneName+" drifted before write") {
+		t.Fatalf("Pane label drift was not refused by its exact Before guard: err=%v\n%s", err, stdout)
+	}
+	if got := tmuxMutationCallCount(server); got != mutationsBefore {
+		t.Fatalf("Pane label drift executed %d mutation(s) before refusal", got-mutationsBefore)
+	}
+	if got := pane.opts[tmuxopts.PaneName]; got != "operator-drift" {
+		t.Fatalf("refusal overwrote the concurrently changed Pane label: %q", got)
+	}
+}
+
+func TestResourcePlanRecorderRefusesUnreadableOrdinaryOptionBefore(t *testing.T) {
+	t.Parallel()
+
+	server := newFakeTmux()
+	pane := server.addSession("alpha").windows[0].panes[0]
+	server.fail = []string{"display-message", "#{" + tmuxopts.PaneName + "}"}
+	recorder := newResourcePlanTmuxRunner(server)
+	_, err := recorder.Run(context.Background(), "tmux", "set-option", "-p", "-t", pane.id, "-q", tmuxopts.PaneName, "desired")
+	if err == nil || !strings.Contains(err.Error(), "cannot observe "+tmuxopts.PaneName+" on exact target "+pane.id) {
+		t.Fatalf("unreadable Pane label Before error = %v", err)
+	}
+	if len(recorder.writes) != 0 || tmuxMutationCallCount(server) != 0 {
+		t.Fatalf("unreadable Before recorded/executed a write: recorded=%d mutations=%d", len(recorder.writes), tmuxMutationCallCount(server))
+	}
+}
+
 func TestResourceReconcileRepairsRebindPathFromAuthoritativeProjectUID(t *testing.T) {
 	t.Parallel()
 
@@ -392,6 +490,7 @@ func TestResourceReconcileExecuteConvergesOneSocketAndRepeatsNoop(t *testing.T) 
 
 	command, store, primary, runner, _ := newReconcileFixture(t, "-L", "primary")
 	secondary := newFakeTmux()
+	secondary.socketPath = "/tmp/fake-tmux/secondary"
 	secondary.addSession("other")
 	secondaryBefore := secondary.state()
 	runner.servers["-L\x00secondary"] = secondary
@@ -515,6 +614,7 @@ func TestResourceReconcilePreservesRegistryGraphOwnedByAnotherSocket(t *testing.
 	window := store.registry.Windows[len(store.registry.Windows)-1]
 	pane := store.registry.Panes[len(store.registry.Panes)-1]
 	secondary := newFakeTmux()
+	secondary.socketPath = "/tmp/fake-tmux/secondary"
 	secondarySession := secondary.addSession("secondary")
 	secondarySession.opts[inttmux.ProjectPathSessionOption] = otherRoot
 	secondarySession.opts[tmuxopts.ProjectUIDSession] = project.Project.Metadata.UID
@@ -771,6 +871,55 @@ func TestResourceReconcileTmuxFailureLeavesRetryableRegistryAuthority(t *testing
 	third, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
 	if err != nil || !strings.Contains(third, `"outcome": "no-op"`) {
 		t.Fatalf("post-retry repeat is not no-op: err=%v\n%s", err, third)
+	}
+}
+
+func TestFreshResourceReconcileCapturesAutomaticRenameBeforeAndRepeatsEmpty(t *testing.T) {
+	command, _, server, _, _ := newReconcileFixture(t, "-L", "primary")
+	window := server.sessions[0].windows[0]
+	window.opts[tmuxopts.AutomaticRenameWindow] = "on"
+
+	first, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("fresh reconcile with live automatic-rename=on: %v\n%s", err, first)
+	}
+	for _, want := range []string{`"field": "automatic-rename"`, `"before": "on"`, `"after": "off"`} {
+		if !strings.Contains(first, want) {
+			t.Fatalf("fresh plan omitted exact automatic-rename receipt %s:\n%s", want, first)
+		}
+	}
+	if got := window.opts[tmuxopts.AutomaticRenameWindow]; got != "off" {
+		t.Fatalf("automatic-rename = %q, want converged off", got)
+	}
+	automaticWrites, uidWriteIndex, automaticObserveIndex, automaticWriteIndex := 0, -1, -1, -1
+	for index, call := range server.calls {
+		if slices.Contains(call, "set-option") && slices.Contains(call, tmuxopts.WindowUID) && uidWriteIndex < 0 {
+			uidWriteIndex = index
+		}
+		if slices.Contains(call, "display-message") && slices.Contains(call, "#{"+tmuxopts.AutomaticRenameWindow+"}") && automaticObserveIndex < 0 {
+			automaticObserveIndex = index
+		}
+		if slices.Contains(call, "set-option") && slices.Contains(call, tmuxopts.AutomaticRenameWindow) {
+			automaticWrites++
+			if automaticWriteIndex < 0 {
+				automaticWriteIndex = index
+			}
+		}
+	}
+	if automaticWrites != 1 {
+		t.Fatalf("automatic-rename writes = %d, want one exact planned transition", automaticWrites)
+	}
+	if uidWriteIndex < 0 || automaticObserveIndex < 0 || automaticWriteIndex < 0 || automaticObserveIndex >= automaticWriteIndex || uidWriteIndex >= automaticWriteIndex {
+		t.Fatalf("fresh sibling order uid-write=%d automatic-observe=%d automatic-write=%d calls=%#v", uidWriteIndex, automaticObserveIndex, automaticWriteIndex, server.calls)
+	}
+
+	writesBefore := tmuxMutationCallCount(server)
+	repeat, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil || !strings.Contains(repeat, `"outcome": "no-op"`) {
+		t.Fatalf("repeat reconcile = err %v\n%s", err, repeat)
+	}
+	if got := tmuxMutationCallCount(server); got != writesBefore {
+		t.Fatalf("repeat executed %d unsafe tmux write(s)", got-writesBefore)
 	}
 }
 

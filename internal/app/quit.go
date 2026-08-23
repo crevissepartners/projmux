@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -109,30 +110,39 @@ func (c *quitCommand) shutdownAppRuntime(ctx context.Context, socketName string)
 		return errors.New("quit mux runner is not configured")
 	}
 	command := "tmux"
-	appOwned, err := c.appRuntimeOwned(ctx, socketName)
+	target, err := tmuxSocketNameTarget(socketName)
 	if err != nil {
 		return err
 	}
-	if !appOwned {
+	routed := explicitTmuxRunner{runner: c.runner, target: target}
+	pathOut, err := routed.Run(ctx, command, "display-message", "-p", "-F", "#{socket_path}")
+	if err != nil {
+		if tmuxServerMissing(err) {
+			return nil
+		}
+		return fmt.Errorf("resolve app %s runtime: %w", command, err)
+	}
+	path := strings.TrimSpace(string(pathOut))
+	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return errors.New("quit app runtime: requested socket has no exact absolute physical identity")
+	}
+	owned, err := routed.Run(ctx, command, "show-options", "-gqv", "@projmux_app")
+	if err != nil {
+		return fmt.Errorf("check app %s runtime ownership: %w", command, err)
+	}
+	if strings.TrimSpace(string(owned)) != "1" {
 		return nil
 	}
-	_, err = c.runner.Run(ctx, command, "-L", socketName, "kill-server")
+	logical, err := routed.Run(ctx, command, "show-options", "-gqv", runtimeMutationSocketNameOption)
+	if err != nil || strings.TrimSpace(string(logical)) != socketName {
+		return errors.New("quit app runtime: requested server has no matching logical route marker")
+	}
+	condition := "#{&&:#{==:#{@projmux_app},1},#{==:#{" + runtimeMutationSocketNameOption + "}," + socketName + "}}"
+	_, err = c.runner.Run(ctx, command, "-S", path, "if-shell", "-F", condition, "kill-server", "run-shell 'exit 73'")
 	if err != nil {
 		return fmt.Errorf("quit app %s runtime: %w", command, err)
 	}
 	return nil
-}
-
-func (c *quitCommand) appRuntimeOwned(ctx context.Context, socketName string) (bool, error) {
-	command := "tmux"
-	output, err := c.runner.Run(ctx, command, "-L", socketName, "show-options", "-gv", "@projmux_app")
-	if err != nil {
-		if tmuxServerMissing(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("check app %s runtime: %w", command, err)
-	}
-	return strings.TrimSpace(string(output)) == "1", nil
 }
 
 func tmuxServerMissing(err error) bool {

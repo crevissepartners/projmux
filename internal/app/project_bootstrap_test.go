@@ -3,8 +3,10 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,6 +23,31 @@ type fakeProjectRegistrar struct {
 	// bootstrap.
 	reused bool
 	err    error
+}
+
+// wireFakeProjectSessionPlan makes a unit fixture declare the same authority
+// production requires: an exact Project UID, a tmux mutation runner, and one
+// canonical transaction seam. The callback preserves the fixture's compact
+// Ensure/Mirror recorder without reopening a production bypass.
+func wireFakeProjectSessionPlan(cmd *switchCommand) {
+	if cmd.projectRegistrar == nil {
+		cmd.projectRegistrar = &fakeProjectRegistrar{uid: "proj-test", name: "workspace"}
+	}
+	if cmd.tmuxRunner == nil {
+		cmd.tmuxRunner = &recordingTmuxRunner{}
+	}
+	cmd.projectSessionPlan = func(ctx context.Context, sessionName, cwd string, opened openedProjectBootstrap) error {
+		if err := cmd.sessions.EnsureSession(ctx, sessionName, cwd); err != nil {
+			return err
+		}
+		if !opened.bootstrapped || cmd.projectMirror == nil {
+			return nil
+		}
+		if err := cmd.projectMirror.MirrorProject(ctx, sessionName, opened.project); err != nil {
+			return fmt.Errorf("mirror Project identity onto tmux session %q: %w", sessionName, err)
+		}
+		return nil
+	}
 }
 
 func (f *fakeProjectRegistrar) RegisterProjectRoot(_ context.Context, root string) (coremetadata.Project, bool, error) {
@@ -63,6 +90,7 @@ func TestOpeningACandidateRegistersExactlyThatPath(t *testing.T) {
 		projectTopology:  topology,
 		projectRegistrar: registrar,
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	if err := cmd.openProjectTarget(context.Background(), "/srv/work/workspace", "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
@@ -157,14 +185,15 @@ func TestOpeningHomeRegistersNothing(t *testing.T) {
 		projectRegistrar: registrar,
 	}
 
-	if err := cmd.openProjectTarget(context.Background(), home, "home"); err != nil {
-		t.Fatalf("openProjectTarget() error = %v", err)
+	err := cmd.openProjectTarget(context.Background(), home, "home")
+	if err == nil || !strings.Contains(err.Error(), "exact Registry Project UID is unavailable") {
+		t.Fatalf("openProjectTarget() error = %v, want fail-closed missing UID", err)
 	}
 	if len(registrar.calls) != 0 {
 		t.Fatalf("opening Home registered %q", registrar.calls)
 	}
-	// The open itself still happened; only the registration was withheld.
-	if got, want := executor.calls, []string{"authorize:" + home, "ensure:home", "open:home"}; !equalStrings(got, want) {
+	// No managed mutation is authorized without an exact Registry identity.
+	if got, want := executor.calls, []string{"authorize:" + home}; !equalStrings(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
 }

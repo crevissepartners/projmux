@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -65,9 +66,12 @@ func TestQuitCommandDestructiveRowKeepsDangerColorWhenSelected(t *testing.T) {
 func TestQuitCommandSelectionKillsOnlyAppOwnedRuntime(t *testing.T) {
 	t.Parallel()
 
+	path := "/tmp/projmux-quit.sock"
 	runner := &recordingTmuxRunner{
 		outputs: map[string]string{
-			strings.Join([]string{"tmux", "-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}, "\x00"): "1\n",
+			recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"):         path + "\n",
+			recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", "@projmux_app"):                  "1\n",
+			recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", runtimeMutationSocketNameOption): defaultAppSocket + "\n",
 		},
 	}
 	cmd := &quitCommand{
@@ -80,12 +84,9 @@ func TestQuitCommandSelectionKillsOnlyAppOwnedRuntime(t *testing.T) {
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}},
-		{name: "tmux", args: []string{"-L", defaultAppSocket, "kill-server"}},
-	}
-	if !reflect.DeepEqual(runner.calls, want) {
-		t.Fatalf("tmux calls = %#v, want %#v", runner.calls, want)
+	last := runner.calls[len(runner.calls)-1]
+	if len(last.args) < 7 || !reflect.DeepEqual(last.args[:4], []string{"-S", path, "if-shell", "-F"}) || last.args[5] != "kill-server" {
+		t.Fatalf("quit terminal call = %#v, want one exact guarded kill", last)
 	}
 }
 
@@ -126,7 +127,8 @@ func TestQuitCommandNonAppRuntimeIsNoop(t *testing.T) {
 
 	runner := &recordingTmuxRunner{
 		outputs: map[string]string{
-			strings.Join([]string{"tmux", "-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}, "\x00"): "0\n",
+			recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"): "/tmp/projmux.sock\n",
+			recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", "@projmux_app"):          "0\n",
 		},
 	}
 	cmd := &quitCommand{runner: runner}
@@ -135,7 +137,8 @@ func TestQuitCommandNonAppRuntimeIsNoop(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}},
+		{name: "tmux", args: []string{"-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"}},
+		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-options", "-gqv", "@projmux_app"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("tmux calls = %#v, want only ownership check", runner.calls)
@@ -145,17 +148,49 @@ func TestQuitCommandNonAppRuntimeIsNoop(t *testing.T) {
 func TestQuitCommandMissingRuntimeIsNoop(t *testing.T) {
 	t.Parallel()
 
-	runner := &recordingTmuxRunner{err: errors.New("no server running on /tmp/tmux-1000/projmux")}
+	runner := &recordingTmuxRunner{errors: map[string]error{
+		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"): errors.New("no server running on /tmp/tmux-1000/projmux"),
+	}}
 	cmd := &quitCommand{runner: runner}
 
 	if err := cmd.Run([]string{"--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []recordedTmuxCall{
-		{name: "tmux", args: []string{"-L", defaultAppSocket, "show-options", "-gv", "@projmux_app"}},
+		{name: "tmux", args: []string{"-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"}},
 	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("tmux calls = %#v, want only ownership check", runner.calls)
+	}
+}
+
+func TestQuitRequestedAppRouteIgnoresForeignInheritedTmux(t *testing.T) {
+	path := "/tmp/projmux.sock"
+	runner := &recordingTmuxRunner{outputs: map[string]string{
+		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"):         path + "\n",
+		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", "@projmux_app"):                  "1\n",
+		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", runtimeMutationSocketNameOption): defaultAppSocket + "\n",
+		recordedTmuxCallKey("tmux", "-S", path, "display-message", "-p", "-F", "#{socket_path}"):                     path + "\n",
+		recordedTmuxCallKey("tmux", "-S", path, "show-options", "-gqv", "@projmux_app"):                              "1\n",
+		recordedTmuxCallKey("tmux", "-S", path, "show-options", "-gqv", runtimeMutationSocketNameOption):             defaultAppSocket + "\n",
+	}}
+	cmd := &quitCommand{runner: runner, lookupEnv: func(key string) string {
+		if key == "TMUX" {
+			return "/tmp/foreign.sock,1,0"
+		}
+		return ""
+	}}
+	if err := cmd.Run([]string{"--yes"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "/tmp/foreign.sock") {
+			t.Fatalf("quit followed inherited foreign TMUX: %#v", runner.calls)
+		}
+	}
+	last := runner.calls[len(runner.calls)-1]
+	if len(last.args) < 7 || !reflect.DeepEqual(last.args[:4], []string{"-S", path, "if-shell", "-F"}) || last.args[5] != "kill-server" {
+		t.Fatalf("quit terminal write = %#v, want exact requested physical route", last)
 	}
 }
 

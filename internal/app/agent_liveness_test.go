@@ -623,10 +623,11 @@ func TestTheReconcilerSweepsAfterImportingLiveSessions(t *testing.T) {
 	// uid this pass allocated has been written onto a live pane.
 	lastMirror, lastInventory := -1, -1
 	for i, call := range tmux.calls {
+		argv := tmuxCommandArgv(call)
 		switch {
-		case call[0] == "set-option" && slices.Contains(call, tmuxopts.PaneUID):
+		case len(argv) > 0 && argv[0] == "set-option" && slices.Contains(argv, tmuxopts.PaneUID):
 			lastMirror = i
-		case call[0] == "list-panes" && slices.Contains(call, "-a"):
+		case len(argv) > 0 && argv[0] == "list-panes" && slices.Contains(argv, "-a"):
 			lastInventory = i
 		}
 	}
@@ -726,8 +727,8 @@ func TestBothPaneExitHooksRebalanceThenConverge(t *testing.T) {
 	}
 
 	for hook, body := range map[string]string{
-		"pane-exited":     "'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' --reason pane-exited --hook-pane '#{hook_pane}' >/dev/null 2>&1 || true",
-		"after-kill-pane": "'/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' --session '#{session_id}' --reason pane-killed >/dev/null 2>&1 || true",
+		"pane-exited":     "env -u TMUX -u TMUX_PANE '/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' --reason pane-exited --hook-pane '#{hook_pane}' >/dev/null 2>&1 || true",
+		"after-kill-pane": "env -u TMUX -u TMUX_PANE '/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' --session '#{session_id}' --reason pane-killed >/dev/null 2>&1 || true",
 	} {
 		body = "sleep 0.05; '/tmp/proj mux/bin/projmux' internal tmux rebalance-panes >/dev/null 2>&1 || true; " + body
 		line := hookLine(t, stdout.String(), hook)

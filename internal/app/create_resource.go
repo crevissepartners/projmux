@@ -496,7 +496,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, work.pane.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(err, claimErr)
 				}
-				if mirrorErr := c.runtime.mirror.MirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
+				if mirrorErr := c.runtime.mirrorPane(ctx, paneID, work.pane); mirrorErr != nil {
 					return errors.Join(err, mirrorErr)
 				}
 				observeActivationRuntime(working, mutator, work.activation, paneID, c.runtime.warn)
@@ -504,6 +504,11 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 			if err != nil {
 				return err
 			}
+			// Equalize before releasing the create transaction: the next serialized
+			// create may split the same primary Pane and needs the capacity restored
+			// first. equalizeSplitLayout keeps this lock-held work bounded by sharing
+			// one route/inventory guard and one effect receipt across the complete
+			// printable resize batch.
 			c.runtime.equalizeSplitLayout(ctx, anchorPaneID, flags.placement)
 			results = append(results, createResult{
 				kind:        coremetadata.KindPane,
@@ -845,7 +850,7 @@ func (c *createCommand) materializeWindow(
 		return errors.Join(err, projectErr)
 	}
 	work.window = projected
-	if mirrorErr := c.runtime.mirror.MirrorWindow(ctx, created.WindowID, work.window); mirrorErr != nil {
+	if mirrorErr := c.runtime.mirrorWindow(ctx, created.WindowID, work.window); mirrorErr != nil {
 		return errors.Join(err, mirrorErr)
 	}
 	if strings.TrimSpace(sessionName) != "" || strings.TrimSpace(created.WindowID) != "" {
@@ -861,7 +866,7 @@ func (c *createCommand) materializeWindow(
 		return errors.Join(err, claimErr)
 	}
 	work.initialPaneID = created.PaneID
-	if mirrorErr := c.runtime.mirror.MirrorPane(ctx, work.initialPaneID, work.initial); mirrorErr != nil {
+	if mirrorErr := c.runtime.mirrorPane(ctx, work.initialPaneID, work.initial); mirrorErr != nil {
 		return errors.Join(err, mirrorErr)
 	}
 	observeActivationRuntime(working, mutator, work.activation, work.initialPaneID, c.runtime.warn)
@@ -912,7 +917,7 @@ func (c *createCommand) ensureAnchorPane(
 			if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, windowID, window.Metadata.UID, ledger); claimErr != nil {
 				return "", errors.Join(err, claimErr)
 			}
-			if mirrorErr := c.runtime.mirror.MirrorWindow(ctx, windowID, *window); mirrorErr != nil {
+			if mirrorErr := c.runtime.mirrorWindow(ctx, windowID, *window); mirrorErr != nil {
 				return "", errors.Join(err, mirrorErr)
 			}
 			if strings.TrimSpace(sessionName) != "" || strings.TrimSpace(windowID) != "" {
@@ -926,7 +931,7 @@ func (c *createCommand) ensureAnchorPane(
 				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, anchor.Metadata.UID, ledger); claimErr != nil {
 					return "", errors.Join(err, claimErr)
 				}
-				if mirrorErr := c.runtime.mirror.MirrorPane(ctx, created.PaneID, *anchor); mirrorErr != nil {
+				if mirrorErr := c.runtime.mirrorPane(ctx, created.PaneID, *anchor); mirrorErr != nil {
 					return "", errors.Join(err, mirrorErr)
 				}
 				observeActivationRuntime(working, mutator, anchorActivation, created.PaneID, c.runtime.warn)
@@ -958,7 +963,7 @@ func (c *createCommand) ensureAnchorPane(
 			}
 		}
 		if len(unclaimed) == 1 {
-			if err := c.runtime.mirror.MirrorPane(ctx, unclaimed[0], *anchor); err != nil {
+			if err := c.runtime.mirrorPane(ctx, unclaimed[0], *anchor); err != nil {
 				return "", err
 			}
 			return unclaimed[0], nil
@@ -982,6 +987,9 @@ func (c *createCommand) ensureProjectRuntime(
 	project coremetadata.Project,
 	ledger *runtimeLedger,
 ) (string, error) {
+	if err := c.ensureRuntimeRoute(ctx); err != nil {
+		return "", err
+	}
 	sessionName := c.sessionNameFor(project.Spec.Root)
 	if project.Status.Session != nil && strings.TrimSpace(project.Status.Session.Name) != "" {
 		sessionName = project.Status.Session.Name
@@ -1030,7 +1038,7 @@ func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coreme
 		return err
 	}
 	first = projected
-	if err := c.runtime.mirror.MirrorWindow(ctx, created.WindowID, first); err != nil {
+	if err := c.runtime.mirrorWindow(ctx, created.WindowID, first); err != nil {
 		return err
 	}
 	if strings.TrimSpace(created.SessionID) != "" || strings.TrimSpace(created.WindowID) != "" {
@@ -1049,7 +1057,7 @@ func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coreme
 	if err := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, primary.Metadata.UID, ledger); err != nil {
 		return err
 	}
-	return c.runtime.mirror.MirrorPane(ctx, created.PaneID, *primary)
+	return c.runtime.mirrorPane(ctx, created.PaneID, *primary)
 }
 
 // createOperation is one create body, run inside the registry transaction.
@@ -1182,6 +1190,13 @@ func (c *createCommand) transact(op createOperation, guards ...createPreReconcil
 		return errors.New("create: the resource-backed create routes are not configured")
 	}
 	ctx := context.Background()
+	// Parsing and scope resolution have already succeeded before a resource
+	// handler reaches the transaction. Bind the exact app-owned route here so
+	// malformed argv keeps its stable usage failure and no environment probe can
+	// preempt it, while reconciliation and every later write share one route.
+	if err := c.ensureRuntimeRoute(ctx); err != nil {
+		return err
+	}
 	operationID, err := c.newOperationID()
 	if err != nil {
 		return err

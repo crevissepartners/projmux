@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -312,10 +311,10 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 		},
 	}
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "managed UID attribution is unknown") {
+		t.Fatalf("Run() error = %v, want unknown-attribution refusal", err)
 	}
-	if got, want := len(gotOptions), 2; got != want {
+	if got, want := len(gotOptions), 1; got != want {
 		t.Fatalf("runner calls = %d, want %d", got, want)
 	}
 	for i, options := range gotOptions {
@@ -323,11 +322,11 @@ func TestSessionsCommandCtrlXKillsSelectedSessionAndReopensPicker(t *testing.T) 
 			t.Fatalf("runner expect keys call %d = %q, want %q", i, got, want)
 		}
 	}
-	if got, want := killer.killSessionName, "repo-b"; got != want {
-		t.Fatalf("kill session = %q, want %q", got, want)
+	if got := killer.killSessionName; got != "" {
+		t.Fatalf("unknown attribution killed session %q", got)
 	}
-	if got, want := cleaned, []string{"repo-b"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("cleaned sessions = %q, want %q", got, want)
+	if len(cleaned) != 0 {
+		t.Fatalf("unknown attribution cleaned sessions %q", cleaned)
 	}
 	if got := opener.openSessionName; got != "" {
 		t.Fatalf("open session called unexpectedly: %q", got)
@@ -371,14 +370,14 @@ func TestSessionsCommandCtrlXSwitchesToFallbackBeforeKillingAttachedSession(t *t
 		killer:     killer,
 	}
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "managed UID attribution is unknown") {
+		t.Fatalf("Run() error = %v, want unknown-attribution refusal", err)
 	}
-	if got, want := opener.openSessionName, "home"; got != want {
-		t.Fatalf("fallback open session = %q, want %q", got, want)
+	if got := opener.openSessionName; got != "" {
+		t.Fatalf("unknown attribution opened fallback %q", got)
 	}
-	if got, want := killer.killSessionName, "repo-b"; got != want {
-		t.Fatalf("kill session = %q, want %q", got, want)
+	if got := killer.killSessionName; got != "" {
+		t.Fatalf("unknown attribution killed session %q", got)
 	}
 }
 
@@ -411,8 +410,8 @@ func TestSessionsCommandCtrlXBlocksAttachedSessionKillWithoutFallback(t *testing
 		killer:     killer,
 	}
 
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "managed UID attribution is unknown") {
+		t.Fatalf("Run() error = %v, want unknown-attribution refusal", err)
 	}
 	if got := killer.killSessionName; got != "" {
 		t.Fatalf("kill session called unexpectedly: %q", got)
@@ -420,7 +419,7 @@ func TestSessionsCommandCtrlXBlocksAttachedSessionKillWithoutFallback(t *testing
 	if got := opener.openSessionName; got != "" {
 		t.Fatalf("open session called unexpectedly: %q", got)
 	}
-	if got, want := runnerCalls, 2; got != want {
+	if got, want := runnerCalls, 1; got != want {
 		t.Fatalf("runner calls = %d, want %d", got, want)
 	}
 }

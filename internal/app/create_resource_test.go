@@ -16,6 +16,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -40,6 +41,33 @@ type fakeSessionMaterializer struct {
 func (f *fakeSessionMaterializer) SessionExists(_ context.Context, name string) (bool, error) {
 	return f.tmux.session(name) != nil, nil
 }
+
+func (f *fakeSessionMaterializer) PreparePersistentSessionCreate(_ context.Context, name, runtimeCWD, projectCWD string, env map[string]string) (inttmux.PersistentSessionCreateRequest, bool, error) {
+	f.initialPaneCWD = runtimeCWD
+	if f.beforeEnsureResult != nil {
+		f.beforeEnsureResult()
+		f.beforeEnsureResult = nil
+	}
+	if f.tmux.session(name) != nil {
+		return inttmux.PersistentSessionCreateRequest{}, true, nil
+	}
+	if f.preCreateErr != nil {
+		return inttmux.PersistentSessionCreateRequest{}, false, f.preCreateErr
+	}
+	return inttmux.PersistentSessionCreateRequest{
+		SessionName: name, RuntimeCWD: runtimeCWD, ProjectCWD: projectCWD, Environment: maps.Clone(env),
+	}, false, nil
+}
+
+func (f *fakeSessionMaterializer) CompletePersistentSessionCreate(_ context.Context, request inttmux.PersistentSessionCreateRequest, _ intmux.NewSessionResult) error {
+	f.created = append(f.created, request.SessionName)
+	if f.postCreate != nil {
+		f.postCreate()
+	}
+	return f.createErr
+}
+
+func (f *fakeSessionMaterializer) AbortPersistentSessionCreate() {}
 
 func (f *fakeSessionMaterializer) EnsureSession(_ context.Context, name, _ string) error {
 	if f.tmux.session(name) != nil {
@@ -182,6 +210,8 @@ func newTestResourceCreateCommand(t *testing.T, store *fakeResourceStore, tmux *
 			runner:     tmux,
 			mirror:     mirror,
 			sessions:   sessions,
+			target:     explicitTmuxTarget{flag: "-S", value: tmux.socketPath},
+			socketName: defaultAppSocket,
 			warn:       testWarnWriter{t},
 			executable: func() (string, error) { return testSupervisorBinary, nil },
 			lookupEnv:  func(string) string { return "" },
@@ -247,17 +277,18 @@ var focusMovingCommands = []string{"switch-client", "select-window", "select-pan
 func assertNoClientMovement(t *testing.T, tmux *fakeTmux) {
 	t.Helper()
 	for _, call := range tmux.calls {
-		if len(call) == 0 {
+		argv := tmuxCommandArgv(call)
+		if len(argv) == 0 {
 			continue
 		}
 		for _, verb := range focusMovingCommands {
-			if call[0] == verb {
+			if argv[0] == verb {
 				t.Fatalf("create issued a client-moving command: %v", call)
 			}
 		}
-		if call[0] == "new-window" || call[0] == "split-window" {
-			if !containsAll(call, []string{"-d"}) {
-				t.Fatalf("%s must be detached: %v", call[0], call)
+		if argv[0] == "new-window" || argv[0] == "split-window" {
+			if !containsAll(argv, []string{"-d"}) {
+				t.Fatalf("%s must be detached: %v", argv[0], call)
 			}
 		}
 	}
@@ -544,8 +575,9 @@ func TestEveryTargetWindowAnchorsOnExactlyOnePane(t *testing.T) {
 		}
 		anchors := map[string]int{}
 		for _, call := range tmux.calls {
-			if len(call) > 0 && call[0] == "split-window" {
-				anchors[flagValue(call, "-t")]++
+			argv := tmuxCommandArgv(call)
+			if len(argv) > 0 && argv[0] == "split-window" {
+				anchors[flagValue(argv, "-t")]++
 			}
 		}
 		if len(anchors) != 2 {
@@ -571,8 +603,9 @@ func TestEveryTargetWindowAnchorsOnExactlyOnePane(t *testing.T) {
 		}
 		var split []string
 		for _, call := range tmux.calls {
-			if len(call) > 0 && call[0] == "split-window" {
-				split = append(split, flagValue(call, "-t"))
+			argv := tmuxCommandArgv(call)
+			if len(argv) > 0 && argv[0] == "split-window" {
+				split = append(split, flagValue(argv, "-t"))
 			}
 		}
 		if len(split) != 2 {
@@ -781,9 +814,10 @@ func TestCreatePlacementMapsOntoTheClosedSplitAxis(t *testing.T) {
 			}
 			var found bool
 			for _, call := range tmux.calls {
-				if len(call) > 0 && call[0] == "split-window" {
+				argv := tmuxCommandArgv(call)
+				if len(argv) > 0 && argv[0] == "split-window" {
 					found = true
-					if !containsAll(call, []string{test.wantFlag}) {
+					if !containsAll(argv, []string{test.wantFlag}) {
 						t.Fatalf("split argv = %v, want %s", call, test.wantFlag)
 					}
 				}
@@ -830,10 +864,9 @@ func TestCanonicalCreatePaneSplitIsImmediatelyEqualized(t *testing.T) {
 				t.Fatal("split-window was not called")
 			}
 			anchor := flagValue(tmux.calls[splitIndex], "-t")
-			geometryIndex := firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitPaneGeometryFormat)
-			resizeIndex := firstTmuxCall(tmux.calls, geometryIndex+1, "resize-pane", test.wantAxis)
-			if geometryIndex < 0 || resizeIndex < 0 {
-				t.Fatalf("calls after split lack geometry/read resize ordering: %v", tmux.calls[splitIndex:])
+			geometryIndex := firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitLayoutBatchFormat)
+			if geometryIndex < 0 {
+				t.Fatalf("calls after split lack geometry observation: %v", tmux.calls[splitIndex:])
 			}
 			if got := flagValue(tmux.calls[geometryIndex], "-t"); got != anchor {
 				t.Fatalf("geometry target = %q, want split anchor %q", got, anchor)
@@ -843,11 +876,290 @@ func TestCanonicalCreatePaneSplitIsImmediatelyEqualized(t *testing.T) {
 				wrongAxis = "-x"
 			}
 			for _, call := range tmux.calls[geometryIndex+1:] {
-				if len(call) > 0 && call[0] == "resize-pane" && slices.Contains(call, wrongAxis) {
+				argv := tmuxCommandArgv(call)
+				if len(argv) > 0 && argv[0] == "resize-pane" && slices.Contains(argv, wrongAxis) {
 					t.Fatalf("%s create resized the cross axis: %v", test.placement, call)
 				}
 			}
 		})
+	}
+}
+
+type layoutLockProbeRunner struct {
+	base             tmuxCommandRunner
+	inRegistryUpdate *bool
+	layoutCalls      int
+	underLock        int
+	receiptCalls     int
+	resizeCalls      int
+	authorityCalls   int
+	batchActive      bool
+	driftPID         bool
+	beforeReceipt    func(int)
+	mutateReceipt    func(int, []byte) []byte
+}
+
+func (r *layoutLockProbeRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	argv := tmuxCommandArgv(args)
+	layout := len(argv) > 0 && (argv[0] == "resize-pane" ||
+		(argv[0] == "list-panes" && flagValue(argv, "-F") == splitLayoutBatchFormat))
+	if layout {
+		r.layoutCalls++
+		if argv[0] == "resize-pane" {
+			r.resizeCalls++
+		} else {
+			r.receiptCalls++
+			if r.receiptCalls == 1 {
+				r.batchActive = true
+			}
+			if r.beforeReceipt != nil {
+				r.beforeReceipt(r.receiptCalls)
+			}
+		}
+		if r.inRegistryUpdate != nil && *r.inRegistryUpdate {
+			r.underLock++
+		}
+	}
+	authority := r.batchActive && len(argv) > 0 && ((argv[0] == "display-message" &&
+		(flagValue(argv, "-F") == "#{socket_path}" || flagValue(argv, "-F") == "#{pid}")) ||
+		(argv[0] == "show-options" && (slices.Contains(argv, tmuxopts.AppGlobal) || slices.Contains(argv, runtimeMutationSocketNameOption))))
+	if authority {
+		r.authorityCalls++
+		if r.driftPID && argv[0] == "display-message" && flagValue(argv, "-F") == "#{pid}" {
+			r.driftPID = false
+			return []byte("999999\n"), nil
+		}
+	}
+	out, err := r.base.Run(ctx, name, args...)
+	if layout && len(argv) > 0 && argv[0] == "list-panes" && r.mutateReceipt != nil {
+		out = r.mutateReceipt(r.receiptCalls, out)
+	}
+	if r.receiptCalls == 4 && len(argv) > 0 && argv[0] == "list-panes" && flagValue(argv, "-F") == splitLayoutBatchFormat {
+		r.batchActive = false
+	}
+	return out, err
+}
+
+func TestCanonicalCreatePaneAmbiguousLayoutReceiptWritesZeroResizes(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		want   string
+		mutate func([]byte) []byte
+	}{
+		{
+			name: "malformed field-count sibling",
+			want: "row has 3 fields, want 8",
+			mutate: func(out []byte) []byte {
+				return append(out, []byte("$999"+tmuxRowSepFormat+"@999"+tmuxRowSepFormat+"%999\n")...)
+			},
+		},
+		{
+			name: "duplicate nonblank Pane uid",
+			want: "repeats Pane uid",
+			mutate: func(out []byte) []byte {
+				rows, err := strictTmuxRows(string(out), 8)
+				if err != nil || len(rows) < 2 {
+					return out
+				}
+				rows[1][3] = rows[0][3]
+				var rewritten strings.Builder
+				for _, row := range rows {
+					rewritten.WriteString(strings.Join(row, tmuxRowSepFormat))
+					rewritten.WriteByte('\n')
+				}
+				return []byte(rewritten.String())
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			create, _ := newTestResourceCreateCommand(t, store, tmux)
+			// Leave three valid peers before the tested split. The malformed or
+			// ambiguous sibling must invalidate the whole receipt, not allow the
+			// otherwise sufficient valid subset to be resized.
+			for range 2 {
+				if _, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id"); err != nil {
+					t.Fatalf("prepare ambiguous receipt fixture: %v", err)
+				}
+			}
+			probe := &layoutLockProbeRunner{base: tmux}
+			probe.mutateReceipt = func(call int, out []byte) []byte {
+				if call == 1 {
+					return test.mutate(out)
+				}
+				return out
+			}
+			create.runtime.runner = probe
+			if _, err := create.runtime.observeSplitLayoutBatch(context.Background(), tmux.sessions[0].windows[0].panes[0].id); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("strict layout receipt error = %v, want %q", err, test.want)
+			}
+			probe.layoutCalls, probe.receiptCalls = 0, 0
+			probe.batchActive = false
+
+			stdout, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id")
+			if err != nil {
+				t.Fatalf("best-effort invalid receipt escaped create: %v", err)
+			}
+			if !strings.HasPrefix(strings.TrimSpace(stdout), "%") || store.writes != 3 {
+				t.Fatalf("topology create did not commit across receipt refusal: stdout=%q writes=%d", stdout, store.writes)
+			}
+			if probe.receiptCalls != 1 || probe.resizeCalls != 0 {
+				t.Fatalf("invalid batch receipt calls: receipts=%d resizes=%d, want fail-closed zero-write", probe.receiptCalls, probe.resizeCalls)
+			}
+		})
+	}
+}
+
+func TestCanonicalCreatePaneLayoutInventoryDriftWritesZeroResizes(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+	// Two successful creates leave three peers, ensuring the next layout has a
+	// non-empty resize plan before the injected all-before-write receipt drift.
+	for range 2 {
+		if _, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id"); err != nil {
+			t.Fatalf("prepare drift fixture: %v", err)
+		}
+	}
+	inRegistryUpdate := false
+	probe := &layoutLockProbeRunner{base: tmux, inRegistryUpdate: &inRegistryUpdate}
+	probe.beforeReceipt = func(call int) {
+		if call != 3 {
+			return
+		}
+		for _, session := range tmux.sessions {
+			for _, window := range session.windows {
+				if len(window.panes) > 0 {
+					window.panes[0].width++
+					return
+				}
+			}
+		}
+	}
+	create.runtime.runner = probe
+	baseUpdate := create.store.update
+	create.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		inRegistryUpdate = true
+		defer func() { inRegistryUpdate = false }()
+		return baseUpdate(fn)
+	}
+
+	stdout, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id")
+	if err != nil {
+		t.Fatalf("best-effort layout drift escaped create: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(stdout), "%") || store.writes != 3 {
+		t.Fatalf("topology create did not commit across layout refusal: stdout=%q writes=%d", stdout, store.writes)
+	}
+	if probe.receiptCalls != 3 || probe.resizeCalls != 0 {
+		t.Fatalf("drifted batch calls: receipts=%d resizes=%d, want all-before-write refusal", probe.receiptCalls, probe.resizeCalls)
+	}
+}
+
+func TestCanonicalCreatePaneLayoutServerGenerationDriftWritesZeroResizes(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+	if _, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id"); err != nil {
+		t.Fatalf("prepare generation-drift fixture: %v", err)
+	}
+	probe := &layoutLockProbeRunner{base: tmux, driftPID: true}
+	create.runtime.runner = probe
+	stdout, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id")
+	if err != nil {
+		t.Fatalf("best-effort route drift escaped create: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(stdout), "%") || store.writes != 2 {
+		t.Fatalf("topology create did not commit across route refusal: stdout=%q writes=%d", stdout, store.writes)
+	}
+	if probe.receiptCalls != 1 || probe.resizeCalls != 0 {
+		t.Fatalf("generation-drifted batch calls: receipts=%d resizes=%d, want pre-effect refusal", probe.receiptCalls, probe.resizeCalls)
+	}
+}
+
+func TestCanonicalCreatePaneNinePaneLayoutUsesBoundedBatchInsideRegistryUpdate(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, _ := newTestResourceCreateCommand(t, store, tmux)
+	inRegistryUpdate := false
+	probe := &layoutLockProbeRunner{base: tmux, inRegistryUpdate: &inRegistryUpdate}
+	create.runtime.runner = probe
+	baseUpdate := create.store.update
+	create.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		inRegistryUpdate = true
+		defer func() { inRegistryUpdate = false }()
+		return baseUpdate(fn)
+	}
+
+	// The Registry's primary Pane plus seven preparatory splits produces the
+	// eight-Pane state the unchanged E2E racers reach before the final split.
+	for range 7 {
+		if _, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id"); err != nil {
+			t.Fatalf("prepare nine-Pane layout: %v", err)
+		}
+	}
+	probe.layoutCalls, probe.underLock, probe.receiptCalls, probe.resizeCalls, probe.authorityCalls = 0, 0, 0, 0, 0
+	probe.batchActive = false
+	finalCallStart := len(tmux.calls)
+
+	stdout, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id")
+	if err != nil {
+		t.Fatalf("create Pane: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(stdout), "%") || store.writes != 8 {
+		t.Fatalf("create did not commit its ninth Pane: stdout=%q writes=%d", stdout, store.writes)
+	}
+	if probe.receiptCalls != 4 {
+		t.Fatalf("nine-Pane layout receipt calls = %d, want constant four-phase planning/pre-effect/guard/post-effect", probe.receiptCalls)
+	}
+	if probe.resizeCalls != 9 {
+		t.Fatalf("nine-Pane typed resize calls = %d, want one ordered action per Pane", probe.resizeCalls)
+	}
+	if probe.authorityCalls != 8 {
+		t.Fatalf("nine-Pane route/PID/app/logical authority calls = %d, want constant two four-read guards", probe.authorityCalls)
+	}
+	var resized []string
+	for _, call := range tmux.calls[finalCallStart:] {
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && argv[0] == "resize-pane" {
+			resized = append(resized, flagValue(argv, "-t"))
+		}
+	}
+	anchor := ""
+	for _, call := range tmux.calls[finalCallStart:] {
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && argv[0] == "split-window" {
+			anchor = flagValue(argv, "-t")
+			break
+		}
+	}
+	_, window, target := tmux.pane(anchor)
+	if window == nil || target == nil {
+		t.Fatalf("final split anchor %q has no exact Window/Pane receipt", anchor)
+	}
+	geometry := make([]aiPaneGeometry, 0, len(window.panes))
+	for _, pane := range window.panes {
+		geometry = append(geometry, aiPaneGeometry{id: pane.id, left: pane.left, top: pane.top, width: pane.width, height: pane.height})
+	}
+	wantOrder := make([]string, 0, len(window.panes))
+	for _, pane := range splitLayoutPeers(geometry, aiPaneGeometry{id: target.id, left: target.left, top: target.top, width: target.width, height: target.height}, "right") {
+		wantOrder = append(wantOrder, pane.id)
+	}
+	if !slices.Equal(resized, wantOrder) {
+		t.Fatalf("nine-Pane typed resize order = %v, want receipt order %v", resized, wantOrder)
+	}
+	if probe.underLock != probe.layoutCalls {
+		t.Fatalf("layout escaped serialized create: under-lock=%d total=%d", probe.underLock, probe.layoutCalls)
 	}
 }
 
@@ -861,35 +1173,55 @@ func TestCanonicalCreatePaneEqualizationIsWindowLocalInFanOut(t *testing.T) {
 		t.Fatalf("fan-out create error = %v", err)
 	}
 
-	var splitIndexes []int
+	var splitIndexes, geometryIndexes []int
+	splitAnchors := map[string]bool{}
 	for i, call := range tmux.calls {
-		if len(call) > 0 && call[0] == "split-window" {
+		argv := tmuxCommandArgv(call)
+		if len(argv) == 0 {
+			continue
+		}
+		if argv[0] == "split-window" {
 			splitIndexes = append(splitIndexes, i)
+			splitAnchors[flagValue(argv, "-t")] = true
+		}
+		if argv[0] == "list-panes" && flagValue(argv, "-F") == splitLayoutBatchFormat {
+			geometryIndexes = append(geometryIndexes, i)
 		}
 	}
 	if len(splitIndexes) != 2 {
 		t.Fatalf("split indexes = %v, want two Window-local splits", splitIndexes)
 	}
-	for n, splitIndex := range splitIndexes {
+	if len(geometryIndexes) != 2*len(splitIndexes) {
+		t.Fatalf("repeat-empty geometry observations = %v, want two bounded receipts for each split %v", geometryIndexes, splitIndexes)
+	}
+	seenAnchors := map[string]bool{}
+	for n, geometryIndex := range geometryIndexes {
 		end := len(tmux.calls)
-		if n+1 < len(splitIndexes) {
-			end = splitIndexes[n+1]
+		if n+1 < len(geometryIndexes) {
+			end = geometryIndexes[n+1]
 		}
-		anchor := flagValue(tmux.calls[splitIndex], "-t")
+		anchor := flagValue(tmux.calls[geometryIndex], "-t")
+		if !splitAnchors[anchor] {
+			t.Fatalf("layout observation %d used unknown split anchor %q", n, anchor)
+		}
+		seenAnchors[anchor] = true
 		_, anchorWindow, _ := tmux.pane(anchor)
-		geometryIndex := firstTmuxCall(tmux.calls[:end], splitIndex+1, "list-panes", splitPaneGeometryFormat)
-		if geometryIndex < 0 || flagValue(tmux.calls[geometryIndex], "-t") != anchor {
-			t.Fatalf("split %d did not observe its own anchor before the next split: %v", n, tmux.calls[splitIndex:end])
-		}
 		for _, call := range tmux.calls[geometryIndex+1 : end] {
-			if len(call) == 0 || call[0] != "resize-pane" {
+			argv := tmuxCommandArgv(call)
+			if len(argv) == 0 || argv[0] != "resize-pane" {
 				continue
 			}
-			_, resizedWindow, _ := tmux.pane(flagValue(call, "-t"))
+			_, resizedWindow, _ := tmux.pane(flagValue(argv, "-t"))
 			if resizedWindow != anchorWindow {
 				t.Fatalf("fan-out resized across Windows: anchor %s call %v", anchor, call)
 			}
 		}
+	}
+	if len(seenAnchors) != len(splitAnchors) {
+		t.Fatalf("layout anchors = %v, want every split anchor %v", seenAnchors, splitAnchors)
+	}
+	if tmux.argvContains("resize-pane") {
+		t.Fatalf("already-even fan-out did not replan empty: %v", tmux.calls)
 	}
 }
 
@@ -897,27 +1229,45 @@ func TestCanonicalCreateLayoutFailuresNeverRollbackSuccessfulSplit(t *testing.T)
 	t.Parallel()
 
 	for _, test := range []struct {
-		name string
-		fail []string
+		name            string
+		fail            []string
+		prepare         int
+		wantResizeCalls int
 	}{
-		{name: "geometry observation", fail: []string{"list-panes", splitPaneGeometryFormat}},
-		{name: "individual resize", fail: []string{"resize-pane"}},
+		{name: "geometry observation", fail: []string{"list-panes", splitLayoutBatchFormat}},
+		{name: "individual resize", fail: []string{"resize-pane"}, prepare: 1, wantResizeCalls: 3},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			store := newFakeResourceStore(t)
 			tmux := newFakeTmux()
-			tmux.fail, tmux.failAlways = test.fail, true
 			create, _ := newTestResourceCreateCommand(t, store, tmux)
+			for range test.prepare {
+				if _, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id"); err != nil {
+					t.Fatalf("prepare failure fixture: %v", err)
+				}
+			}
+			callStart := len(tmux.calls)
+			tmux.fail, tmux.failAlways = test.fail, true
 			stdout, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id")
 			if err != nil {
 				t.Fatalf("layout failure escaped create: %v", err)
 			}
-			if store.writes != 1 || !strings.HasPrefix(strings.TrimSpace(stdout), "%") {
+			if store.writes != test.prepare+1 || !strings.HasPrefix(strings.TrimSpace(stdout), "%") {
 				t.Fatalf("successful create was not committed: writes=%d stdout=%q", store.writes, stdout)
 			}
 			if tmux.argvContains("kill-pane") || tmux.argvContains("kill-window") || tmux.argvContains("kill-session") {
 				t.Fatalf("layout failure triggered rollback: %v", tmux.calls)
+			}
+			resizeCalls := 0
+			for _, call := range tmux.calls[callStart:] {
+				argv := tmuxCommandArgv(call)
+				if len(argv) > 0 && argv[0] == "resize-pane" {
+					resizeCalls++
+				}
+			}
+			if resizeCalls != test.wantResizeCalls {
+				t.Fatalf("typed resize attempts after failure = %d, want %d", resizeCalls, test.wantResizeCalls)
 			}
 		})
 	}
@@ -932,7 +1282,7 @@ func TestCreateWindowIsOnePaneLayoutNoOpAndEnsuredWindowSplitEqualizes(t *testin
 	if _, _, err := runRoute(t, create, "window", "--project", "beta"); err != nil {
 		t.Fatalf("create window error = %v", err)
 	}
-	if firstTmuxCall(tmux.calls, 0, "list-panes", splitPaneGeometryFormat) >= 0 || tmux.argvContains("resize-pane") {
+	if firstTmuxCall(tmux.calls, 0, "list-panes", splitLayoutBatchFormat) >= 0 || tmux.argvContains("resize-pane") {
 		t.Fatalf("one-pane create window attempted equalization: %v", tmux.calls)
 	}
 
@@ -943,7 +1293,10 @@ func TestCreateWindowIsOnePaneLayoutNoOpAndEnsuredWindowSplitEqualizes(t *testin
 		t.Fatalf("ensured Window split error = %v", err)
 	}
 	splitIndex := firstTmuxCall(tmux.calls, 0, "split-window", "")
-	if splitIndex < 0 || firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitPaneGeometryFormat) < 0 || firstTmuxCall(tmux.calls, splitIndex+1, "resize-pane", "-x") < 0 {
+	// tmux's own split can already produce the exact even target sizes. The
+	// plan must still observe the scoped geometry, but repeat-empty semantics
+	// intentionally omit resize writes when that expected effect is present.
+	if splitIndex < 0 || firstTmuxCall(tmux.calls, splitIndex+1, "list-panes", splitLayoutBatchFormat) < 0 {
 		t.Fatalf("ensured Window split was not equalized: %v", tmux.calls)
 	}
 }
@@ -953,10 +1306,11 @@ func firstTmuxCall(calls [][]string, start int, command, token string) int {
 		return -1
 	}
 	for i := start; i < len(calls); i++ {
-		if len(calls[i]) == 0 || calls[i][0] != command {
+		argv := tmuxCommandArgv(calls[i])
+		if len(argv) == 0 || argv[0] != command {
 			continue
 		}
-		if token == "" || slices.Contains(calls[i], token) {
+		if token == "" || slices.Contains(argv, token) {
 			return i
 		}
 	}
@@ -1010,7 +1364,12 @@ func TestOperationRollbackRemovesOnlyWhatThisOperationCreated(t *testing.T) {
 		session := tmux.addSession("alpha")
 		window := seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
 		var warnings bytes.Buffer
-		runtime := &materializer{runner: tmux, mirror: intmetadata.NewMirror(tmux), warn: &warnings}
+		runtime := &materializer{
+			runner: tmux, mirror: intmetadata.NewMirror(tmux), warn: &warnings,
+			target: explicitTmuxTarget{flag: "-S", value: tmux.socketPath}, expectedSocketPath: tmux.socketPath,
+			socketName:     defaultAppSocket,
+			routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: tmux.serverPID},
+		}
 
 		ledger := &runtimeLedger{}
 		ledger.record(runtimeWindow, window.id, "win-alpha-main")
@@ -1784,8 +2143,9 @@ func TestCreatePayloadReachesTheRuntimeUnreinterpreted(t *testing.T) {
 	}
 	var command []string
 	for _, call := range tmux.calls {
-		if len(call) > 0 && call[0] == "new-window" {
-			command = trailingCommand(call)
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && argv[0] == "new-window" {
+			command = trailingCommand(argv)
 		}
 	}
 	// The managed process supervisor prefixes the launch, and everything after

@@ -430,7 +430,7 @@ func TestStatusbarClickResourcesUsesCanonicalClientScopedPopup(t *testing.T) {
 	if !ok || action.TmuxBody != resourceInspectorPopupMode || action.PlainChord != "" || len(action.PlainChords) != 0 {
 		t.Fatalf("Resources:Open = %#v, want same canonical mode and no default shortcut", action)
 	}
-	if got := renderTmuxBindingBody("/usr/local/bin/projmux", action); got != "run-shell \"'/usr/local/bin/projmux' internal tmux popup-toggle --client #{client_tty} resource-inspector\"" {
+	if got := renderTmuxBindingBody("/usr/local/bin/projmux", action); got != "run-shell \"'/usr/local/bin/projmux' internal tmux popup-toggle --client #{client_tty} --anchor #{pane_id} resource-inspector\"" {
 		t.Fatalf("action body = %q, want byte-equivalent canonical popup path", got)
 	}
 }

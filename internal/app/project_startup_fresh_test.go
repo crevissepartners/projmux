@@ -876,8 +876,10 @@ func TestProjectFreshStartKeepsEverySnapshot(t *testing.T) {
 		},
 		projectTopology: &fakeProjectTopologyMaterializer{},
 	}
+	wireFakeProjectSessionPlan(cmd)
 
-	if err := cmd.startProjectFresh(context.Background(), "workspace", project, openedProjectBootstrap{}); err != nil {
+	opened := openedProjectBootstrap{project: coremetadata.Project{Metadata: coremetadata.ObjectMeta{UID: "proj-workspace", Name: "workspace"}, Spec: coremetadata.ProjectSpec{Root: project}}}
+	if err := cmd.startProjectFresh(context.Background(), "workspace", project, opened); err != nil {
 		t.Fatalf("startProjectFresh() error = %v", err)
 	}
 	if _, err := os.Stat(named); err != nil {

@@ -6,13 +6,17 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 // renameKinds lists the kind spellings `rename` implements, in help order, each
@@ -33,6 +37,8 @@ type renameCommand struct {
 	runtime runtimeLookup
 	// activeTarget is the empty-selector fallback seam; see active_target.go.
 	activeTarget activeTargetLookup
+	tmuxRunner   tmuxCommandRunner
+	lookupEnv    func(string) string
 }
 
 func newRenameCommand() *renameCommand {
@@ -41,6 +47,8 @@ func newRenameCommand() *renameCommand {
 		mirror:       defaultResourceMutationMirror(),
 		runtime:      defaultRuntimeLookup(),
 		activeTarget: defaultActiveTargetLookup(),
+		tmuxRunner:   inttmux.ExecRunner{},
+		lookupEnv:    os.Getenv,
 	}
 }
 
@@ -148,6 +156,9 @@ func (c *renameCommand) mirrorRenamed(ctx context.Context, kind coremetadata.Kin
 	if c.mirror == nil || kind == coremetadata.KindAgent {
 		return nil
 	}
+	if kind == coremetadata.KindWindow {
+		return c.renameRuntimeWindow(ctx, uid, name)
+	}
 	var (
 		target string
 		found  bool
@@ -156,8 +167,6 @@ func (c *renameCommand) mirrorRenamed(ctx context.Context, kind coremetadata.Kin
 	switch kind {
 	case coremetadata.KindProject:
 		target, found, err = c.mirror.FindSessionForProjectUID(ctx, uid)
-	case coremetadata.KindWindow:
-		target, found, err = c.mirror.FindWindowTargetForUID(ctx, uid)
 	case coremetadata.KindPane:
 		target, found, err = c.mirror.FindPaneTargetForUID(ctx, uid)
 	}
@@ -175,13 +184,140 @@ func (c *renameCommand) mirrorRenamed(ctx context.Context, kind coremetadata.Kin
 	switch kind {
 	case coremetadata.KindProject:
 		err = c.mirror.RenameProject(ctx, target, name)
-	case coremetadata.KindWindow:
-		err = c.mirror.RenameWindow(ctx, target, name)
 	case coremetadata.KindPane:
 		err = c.mirror.RenamePane(ctx, target, name)
 	}
 	if err != nil {
 		return committedMirrorError("rename", kind, uid, err)
+	}
+	return nil
+}
+
+type runtimeWindowRenameObservation struct {
+	windowID   string
+	sessionID  string
+	projectUID string
+	role       string
+	stableName string
+	windowName string
+}
+
+func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name string) error {
+	if c.tmuxRunner == nil {
+		return committedMirrorError("rename", coremetadata.KindWindow, uid, errors.New("typed runtime mutation runner is not configured"))
+	}
+	registry, err := c.store.load()
+	if err != nil {
+		return MapMetadataError(err)
+	}
+	window, ok := registry.Window(uid)
+	if !ok {
+		return committedMirrorError("rename", coremetadata.KindWindow, uid, errors.New("renamed Window disappeared from Registry"))
+	}
+	rootUID := window.Metadata.OwnerUID()
+	rootKind := coremetadata.KindProject
+	if _, ok := registry.Project(rootUID); !ok {
+		if _, ok := registry.ControlSession(rootUID); !ok {
+			//lint:ignore ST1005 Window is the canonical Registry resource kind in this diagnostic.
+			return committedMirrorError("rename", coremetadata.KindWindow, uid, errors.New("Window owner root disappeared from Registry"))
+		}
+		rootKind = coremetadata.KindControlSession
+	}
+	route, err := resolveExactObjectRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
+	if err != nil {
+		// Preserve the established metadata-authoritative behavior when no live
+		// runtime can be proven. A later controller pass projects the name.
+		return nil
+	}
+	if route.expectedSocketPath == "" {
+		return nil
+	}
+	routed := explicitTmuxRunner{runner: c.tmuxRunner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
+	observe := func(ctx context.Context) (runtimeWindowRenameObservation, bool, error) {
+		out, err := routed.Run(ctx, "tmux", "list-windows", "-a", "-F", tmuxRowFormat(
+			"#{window_id}", "#{"+tmuxopts.WindowUID+"}", "#{session_id}",
+			"#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}",
+			"#{"+tmuxopts.WindowName+"}", "#{window_name}"))
+		if err != nil {
+			return runtimeWindowRenameObservation{}, false, err
+		}
+		var found []runtimeWindowRenameObservation
+		for _, row := range splitTmuxRows(string(out), 7) {
+			if row[1] != uid {
+				continue
+			}
+			found = append(found, runtimeWindowRenameObservation{windowID: row[0], sessionID: row[2], projectUID: row[3], role: row[4], stableName: row[5], windowName: row[6]})
+		}
+		if len(found) == 0 {
+			return runtimeWindowRenameObservation{}, false, nil
+		}
+		if len(found) != 1 || exactTmuxHandle(found[0].windowID, "@") == "" || exactTmuxHandle(found[0].sessionID, "$") == "" {
+			//lint:ignore ST1005 Window is the canonical Registry resource kind in this diagnostic.
+			return runtimeWindowRenameObservation{}, false, errors.New("Window runtime identity is ambiguous")
+		}
+		if rootKind == coremetadata.KindProject {
+			if found[0].projectUID != rootUID || found[0].role != "" {
+				//lint:ignore ST1005 Window and Project are canonical Registry resource kinds in this diagnostic.
+				return runtimeWindowRenameObservation{}, false, errors.New("Window Project containment drifted")
+			}
+		} else if found[0].projectUID != "" || found[0].role != resourcegraph.ControlSessionRole {
+			//lint:ignore ST1005 Window and ControlSession are canonical Registry resource kinds in this diagnostic.
+			return runtimeWindowRenameObservation{}, false, errors.New("Window ControlSession containment drifted")
+		}
+		return found[0], true, nil
+	}
+	observed, found, err := observe(ctx)
+	if err != nil {
+		return committedMirrorError("rename", coremetadata.KindWindow, uid, err)
+	}
+	if !found {
+		return nil
+	}
+	mutationTarget := runtimeMutationTarget{
+		Kind: string(runtimeWindow), ID: observed.windowID, UID: uid,
+		Parent: string(rootKind) + "/" + rootUID + "/" + observed.sessionID,
+	}
+	bindRuntimeMutationRouteTarget(&mutationTarget, route)
+	action := newRuntimeMutation(1, mutationWriteStableName, mutationTarget)
+	bindRuntimeMutationGuard(&action, "exact Window="+observed.windowID+";root="+string(rootKind)+"/"+rootUID)
+	action.Operands = []string{"-w", "-t", observed.windowID, "-q", tmuxopts.WindowName, name}
+	err = executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
+		Action: action,
+		TargetRouteGuard: func(ctx context.Context) error {
+			return guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action)
+		},
+		Reobserve: func(ctx context.Context) (bool, error) {
+			if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action); err != nil {
+				return false, err
+			}
+			current, ok, err := observe(ctx)
+			if err != nil {
+				return false, err
+			}
+			return ok && current.windowID == action.Target.ID && current.sessionID == observed.sessionID &&
+				current.stableName == name && current.windowName == observed.windowName, nil
+		},
+		Guard: func(ctx context.Context) error {
+			if err := guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, action); err != nil {
+				return err
+			}
+			current, ok, err := observe(ctx)
+			if err != nil {
+				return err
+			}
+			if !ok || current != observed {
+				//lint:ignore ST1005 Window is the canonical Registry resource kind in this diagnostic.
+				return errors.New("Window runtime identity drifted before rename")
+			}
+			return nil
+		},
+		Apply: func(ctx context.Context) error {
+			_, err := runRuntimeMutationCommand(ctx, routed, action)
+			return err
+		},
+	}})
+	if err != nil {
+		return committedMirrorError("rename", coremetadata.KindWindow, uid, err)
 	}
 	return nil
 }

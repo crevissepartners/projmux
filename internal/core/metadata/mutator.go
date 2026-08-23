@@ -211,7 +211,7 @@ func (m Mutator) registerProjectTx(txn *Transaction, reg *Registry, root string,
 
 	result := RegisterProjectResult{}
 	for _, declared := range topology {
-		window, panes, err := m.addWindowTx(txn, reg, op, projectUID, declared, opts.DefaultShell, root, now)
+		window, panes, err := m.addWindowTx(txn, reg, op, KindProject, projectUID, declared, opts.DefaultShell, root, now)
 		if err != nil {
 			return RegisterProjectResult{}, err
 		}
@@ -239,7 +239,7 @@ func (m Mutator) AddWindow(reg *Registry, projectUID string, declared BootstrapW
 	}
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
-	window, panes, err := m.addWindowTx(txn, reg, op, projectUID, declared, defaultShell, project.Spec.Root, now)
+	window, panes, err := m.addWindowTx(txn, reg, op, KindProject, projectUID, declared, defaultShell, project.Spec.Root, now)
 	if err != nil {
 		txn.Rollback()
 		return Window{}, nil, err
@@ -249,7 +249,39 @@ func (m Mutator) AddWindow(reg *Registry, projectUID string, declared BootstrapW
 	return window, panes, nil
 }
 
-func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op, projectUID string, declared BootstrapWindow, defaultShell, defaultCWD string, now time.Time) (Window, []Pane, error) {
+// AddWindowToManagedRoot creates one offline Window plus its initial Pane
+// below an exact Project or ControlSession owner. Generated Window intents use
+// this owner-explicit entrypoint; the public AddWindow contract remains
+// Project-only.
+func (m Mutator) AddWindowToManagedRoot(reg *Registry, ownerKind Kind, ownerUID string, declared BootstrapWindow, defaultShell, defaultCWD, operationID string) (Window, []Pane, error) {
+	const op = "create window"
+	switch ownerKind {
+	case KindProject:
+		if project, ok := reg.Project(ownerUID); !ok {
+			return Window{}, nil, stateErr(op, ErrNotFound, "project %q does not exist", ownerUID)
+		} else if strings.TrimSpace(defaultCWD) == "" {
+			defaultCWD = project.Spec.Root
+		}
+	case KindControlSession:
+		if _, ok := reg.ControlSession(ownerUID); !ok {
+			return Window{}, nil, stateErr(op, ErrNotFound, "control session %q does not exist", ownerUID)
+		}
+	default:
+		return Window{}, nil, inputErr(op, ErrInvalidRegistry, "owner kind %q is not Project or ControlSession", ownerKind)
+	}
+	now := m.clock()().UTC()
+	txn := m.Begin(reg, operationID)
+	window, panes, err := m.addWindowTx(txn, reg, op, ownerKind, ownerUID, declared, defaultShell, defaultCWD, now)
+	if err != nil {
+		txn.Rollback()
+		return Window{}, nil, err
+	}
+	txn.Commit()
+	reg.UpdatedAt = now
+	return window, panes, nil
+}
+
+func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op string, ownerKind Kind, ownerUID string, declared BootstrapWindow, defaultShell, defaultCWD string, now time.Time) (Window, []Pane, error) {
 	windowUID, err := m.mintUID(KindWindow)
 	if err != nil {
 		return Window{}, nil, err
@@ -257,12 +289,12 @@ func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op, projectUID str
 
 	var name string
 	if explicit := strings.TrimSpace(declared.Name); explicit != "" {
-		if err := reg.reserveExplicitName(op, projectUID, KindWindow, explicit, windowUID); err != nil {
+		if err := reg.reserveExplicitName(op, ownerUID, KindWindow, explicit, windowUID); err != nil {
 			return Window{}, nil, err
 		}
 		name = explicit
 	} else {
-		name, err = reg.allocateName(op, projectUID, KindWindow, WindowNameBase("", declared.Command, defaultShell), windowUID)
+		name, err = reg.allocateName(op, ownerUID, KindWindow, WindowNameBase("", declared.Command, defaultShell), windowUID)
 		if err != nil {
 			return Window{}, nil, err
 		}
@@ -275,7 +307,7 @@ func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op, projectUID str
 			UID:       windowUID,
 			Name:      name,
 			Labels:    cloneStringMap(declared.Labels),
-			OwnerRef:  &OwnerRef{Kind: KindProject, UID: projectUID},
+			OwnerRef:  &OwnerRef{Kind: ownerKind, UID: ownerUID},
 			CreatedAt: now,
 		},
 	}

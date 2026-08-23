@@ -141,13 +141,14 @@ func TestEveryManagedLaunchCarriesItsOwnGeneration(t *testing.T) {
 			}
 			launched := map[string]string{}
 			for _, call := range tmux.calls {
-				if len(call) == 0 || (call[0] != "split-window" && call[0] != "new-window") {
+				argv := tmuxCommandArgv(call)
+				if len(argv) == 0 || (argv[0] != "split-window" && argv[0] != "new-window") {
 					continue
 				}
-				argv := trailingCommand(call)
-				paneUID, generation := supervisedIdentity(argv)
+				launch := trailingCommand(argv)
+				paneUID, generation := supervisedIdentity(launch)
 				if paneUID == "" {
-					t.Fatalf("%s launched an unsupervised pane: %v", test.name, argv)
+					t.Fatalf("%s launched an unsupervised pane: %v", test.name, launch)
 				}
 				launched[paneUID] = generation
 			}

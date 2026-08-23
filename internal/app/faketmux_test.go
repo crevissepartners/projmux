@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
 
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -48,10 +50,13 @@ type fakeTmux struct {
 	// appMarker is the server-global @projmux_app value. It defaults to the
 	// app-owned marker because every fixture in this package models a server
 	// projmux started; a standalone fixture clears it.
-	appMarker string
+	appMarker    string
+	socketName   string
+	serverAbsent bool
 	// socketPath is what `display-message -p '#{socket_path}'` answers, which
 	// is the controller kernel's socket guard.
 	socketPath string
+	serverPID  string
 	// failAlways keeps the trigger armed. A one-shot trigger cannot model a
 	// query that is simply unavailable -- reconcile reads some inventories more
 	// than once per pass, and the second read would then succeed and hide the
@@ -89,7 +94,7 @@ func newFakeTmuxPane(id string) *fakeTmuxPane {
 }
 
 func newFakeTmux() *fakeTmux {
-	return &fakeTmux{appMarker: "1", socketPath: "/tmp/fake-tmux/default"}
+	return &fakeTmux{appMarker: "1", socketName: defaultAppSocket, socketPath: "/tmp/fake-tmux/default", serverPID: "4242"}
 }
 
 func (f *fakeTmux) mint(prefix string) string {
@@ -196,6 +201,85 @@ func (f *fakeTmux) argvContains(token string) bool {
 	})
 }
 
+// tmuxCommandArgv returns the command portion while preserving fakeTmux.calls'
+// exact route evidence. Legacy behavior tests generally care about the tmux
+// verb; Phase 10 route tests inspect the original call directly.
+func tmuxCommandArgv(call []string) []string {
+	if len(call) >= 3 && (call[0] == "-L" || call[0] == "-S") {
+		return call[2:]
+	}
+	return call
+}
+
+// settingsLiveTestRunner supplies the exact route observations required by the
+// production Settings reload boundary while preserving the narrow historical
+// test seam that records only the eventual tmux mutation.
+type settingsLiveTestRunner struct {
+	run        func(string, ...string) error
+	output     func(string, ...string) ([]byte, error)
+	socketPath string
+}
+
+func (r *settingsLiveTestRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	argv := tmuxCommandArgv(args)
+	if r.socketPath == "" {
+		switch {
+		case len(args) >= 2 && args[0] == "-S":
+			r.socketPath = args[1]
+		case len(args) >= 2 && args[0] == "-L":
+			r.socketPath = "/tmp/tmux-test/" + args[1]
+		default:
+			r.socketPath = "/tmp/tmux-test/projmux"
+		}
+	}
+	joined := strings.Join(argv, " ")
+	switch {
+	case strings.Contains(joined, "#{socket_path}") && strings.Contains(joined, "#{pid}") && strings.Contains(joined, "#{session_id}"):
+		return []byte(strings.Join([]string{r.socketPath, "4242", "$1", "@1", "%1"}, tmuxRowSep) + "\n"), nil
+	case strings.Contains(joined, "display-message -p -F #{socket_path}"):
+		return []byte(r.socketPath + "\n"), nil
+	case strings.Contains(joined, "display-message -p -F #{pid}"):
+		return []byte("4242\n"), nil
+	case strings.Contains(joined, "show-options -gqv "+tmuxopts.AppGlobal):
+		return []byte("1\n"), nil
+	case strings.Contains(joined, "show-options -gqv "+runtimeMutationSocketNameOption):
+		return []byte(defaultAppSocket + "\n"), nil
+	case strings.Contains(joined, "show-options -gqv "+tmuxSequenceRootsOption),
+		strings.Contains(joined, "show-options -gqv "+tmuxSequenceTablesOption):
+		if r.output != nil {
+			return r.output(name, argv...)
+		}
+		return nil, nil
+	}
+	if r.run != nil {
+		return nil, r.run(name, argv...)
+	}
+	return nil, nil
+}
+
+func wireSettingsLiveTestRunner(cmd *settingsCommand) {
+	originalLookup := cmd.lookupEnv
+	path := "/tmp/tmux-test/projmux"
+	if originalLookup != nil {
+		if inherited := strings.TrimSpace(originalLookup("TMUX")); inherited != "" {
+			candidate := strings.Split(inherited, ",")[0]
+			if filepath.IsAbs(candidate) && filepath.Clean(candidate) == candidate {
+				path = candidate
+			}
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case "TMUX":
+					return path + ",4242,0"
+				case runtimeMutationAnchorPaneEnv:
+					return "%1"
+				}
+				return originalLookup(name)
+			}
+		}
+	}
+	cmd.tmuxRunner = &settingsLiveTestRunner{run: cmd.runCommand, output: cmd.runOutput, socketPath: path}
+}
+
 func flagValue(args []string, flag string) string {
 	for i, arg := range args {
 		if arg == flag && i+1 < len(args) {
@@ -227,9 +311,27 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 	if len(args) == 0 {
 		return nil, fmt.Errorf("fake tmux: empty argv")
 	}
+	// Explicit runtime mutation routes precede the command with -L/-S. Keep the
+	// recorded argv exact, then dispatch the same server model after the route.
+	if len(args) >= 3 && (args[0] == "-L" || args[0] == "-S") {
+		args = args[2:]
+	}
+	if len(args) >= 3 && args[0] == "-f" {
+		args = args[2:]
+	}
+	if f.serverAbsent && (len(args) == 0 || args[0] != "new-session") {
+		return nil, appTypedCommandFailure{failure: inttmux.CommandFailure{
+			Kind: inttmux.CommandFailureExit, Stderr: "no server running on " + f.socketPath,
+		}}
+	}
+	if len(args) > 0 && args[0] == "new-session" {
+		f.serverAbsent = false
+	}
 	var out []byte
 	var err error
 	switch args[0] {
+	case "new-session":
+		out, err = f.runNewSession(args)
 	case "new-window":
 		out, err = f.runNewWindow(args)
 	case "split-window":
@@ -261,7 +363,15 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 			format = "#{session_name}"
 		}
 		for _, s := range f.sessions {
-			fmt.Fprintf(&b, "%s\n", renderFormat(format, s, nil, nil))
+			var window *fakeTmuxWindow
+			var pane *fakeTmuxPane
+			if len(s.windows) > 0 {
+				window = s.windows[0]
+				if len(window.panes) > 0 {
+					pane = window.panes[0]
+				}
+			}
+			fmt.Fprintf(&b, "%s\n", renderFormat(format, s, window, pane))
 		}
 		if f.afterListSessions != nil {
 			callback := f.afterListSessions
@@ -285,6 +395,28 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 			fmt.Errorf("tmux %s: %w: %s", strings.Join(args, " "), &exec.ExitError{}, message)
 	}
 	return out, nil
+}
+
+func (f *fakeTmux) runNewSession(args []string) ([]byte, error) {
+	name := flagValue(args, "-s")
+	if strings.TrimSpace(name) == "" || f.session(name) != nil {
+		return nil, fmt.Errorf("fake tmux: new-session target %q is missing or already exists", name)
+	}
+	session := f.addSession(name)
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] != "-e" {
+			continue
+		}
+		key, value, ok := strings.Cut(args[i+1], "=")
+		if ok {
+			session.env[key] = value
+		}
+	}
+	format := flagValue(args, "-F")
+	if format == "" {
+		format = "#{session_id}"
+	}
+	return []byte(renderFormat(format, session, session.windows[0], session.windows[0].panes[0]) + "\n"), nil
 }
 
 func containsAll(args, want []string) bool {
@@ -471,11 +603,36 @@ func (f *fakeTmux) runListPanes(args []string) ([]byte, error) {
 // the @projmux_app marker is modeled; anything else reads as absent, exactly
 // like tmux's -v output for an unset user option.
 func (f *fakeTmux) runShowOptions(args []string) ([]byte, error) {
-	if !slices.Contains(args, "-gv") {
+	option := args[len(args)-1]
+	if slices.Contains(args, "-wqv") {
+		_, window := f.window(flagValue(args, "-t"))
+		if window == nil {
+			return nil, fmt.Errorf("fake tmux: show-options: no window %q", flagValue(args, "-t"))
+		}
+		return []byte(window.opts[option] + "\n"), nil
+	}
+	if slices.Contains(args, "-pqv") {
+		_, _, pane := f.pane(flagValue(args, "-t"))
+		if pane == nil {
+			return nil, fmt.Errorf("fake tmux: show-options: no pane %q", flagValue(args, "-t"))
+		}
+		return []byte(pane.opts[option] + "\n"), nil
+	}
+	if slices.Contains(args, "-qv") {
+		session := f.session(flagValue(args, "-t"))
+		if session == nil {
+			return nil, fmt.Errorf("fake tmux: show-options: no session %q", flagValue(args, "-t"))
+		}
+		return []byte(session.opts[option] + "\n"), nil
+	}
+	if !slices.Contains(args, "-gv") && !slices.Contains(args, "-gqv") {
 		return nil, fmt.Errorf("fake tmux: show-options: unsupported argv %v", args)
 	}
-	if args[len(args)-1] == tmuxopts.AppGlobal {
+	if option == tmuxopts.AppGlobal {
 		return []byte(f.appMarker + "\n"), nil
+	}
+	if option == runtimeMutationSocketNameOption {
+		return []byte(f.socketName + "\n"), nil
 	}
 	return []byte("\n"), nil
 }
@@ -489,10 +646,13 @@ func (f *fakeTmux) runDisplayMessage(args []string) ([]byte, error) {
 		if len(args) > 0 && args[len(args)-1] == "#{socket_path}" {
 			return []byte(f.socketPath + "\n"), nil
 		}
+		if len(args) > 0 && args[len(args)-1] == "#{pid}" {
+			return []byte(f.serverPID + "\n"), nil
+		}
 		return nil, fmt.Errorf("fake tmux: display-message: no target %q", target)
 	}
 	if session, window, pane := f.pane(target); pane != nil {
-		return []byte(renderFormat(format, session, window, pane) + "\n"), nil
+		return []byte(f.renderFormat(format, session, window, pane) + "\n"), nil
 	}
 	if session, window := f.window(target); window != nil {
 		return []byte(renderFormat(format, session, window, nil) + "\n"), nil
@@ -501,6 +661,21 @@ func (f *fakeTmux) runDisplayMessage(args []string) ([]byte, error) {
 		return []byte(renderFormat(format, session, nil, nil) + "\n"), nil
 	}
 	return nil, fmt.Errorf("fake tmux: display-message: no target %q", target)
+}
+
+func (f *fakeTmux) renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindow, pane *fakeTmuxPane) string {
+	fields := strings.Split(format, tmuxRowSepFormat)
+	for index, field := range fields {
+		switch field {
+		case "#{socket_path}":
+			fields[index] = f.socketPath
+		case "#{pid}":
+			fields[index] = f.serverPID
+		default:
+			fields[index] = renderFormat(field, session, window, pane)
+		}
+	}
+	return strings.Join(fields, tmuxRowSepFormat)
 }
 
 func (f *fakeTmux) runSetOption(args []string) ([]byte, error) {
@@ -515,6 +690,23 @@ func (f *fakeTmux) runSetOption(args []string) ([]byte, error) {
 		value = rest[1]
 	}
 	switch {
+	case slices.Contains(args, "-g") || slices.Contains(args, "-gq"):
+		if unset {
+			switch rest[0] {
+			case tmuxopts.AppGlobal:
+				f.appMarker = ""
+			case runtimeMutationSocketNameOption:
+				f.socketName = ""
+			}
+		} else {
+			switch rest[0] {
+			case tmuxopts.AppGlobal:
+				f.appMarker = value
+			case runtimeMutationSocketNameOption:
+				f.socketName = value
+			}
+		}
+		return nil, nil
 	case slices.Contains(args, "-p"):
 		if _, _, pane := f.pane(target); pane != nil {
 			if unset {
@@ -674,6 +866,8 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, fmt.Sprintf("%d", pane.height))
 		case strings.HasPrefix(token, "@"):
 			out = append(out, scopedOption(token, session, window, pane))
+		case strings.HasPrefix(token, "E:") && session != nil:
+			out = append(out, session.env[strings.TrimPrefix(token, "E:")])
 		default:
 			out = append(out, "")
 		}

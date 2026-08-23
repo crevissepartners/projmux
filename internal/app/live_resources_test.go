@@ -193,6 +193,7 @@ func TestSettingsLiveResourcesTogglePersistsAndUpdatesTmux(t *testing.T) {
 			return nil
 		},
 	}
+	wireSettingsLiveTestRunner(cmd)
 	if mode, source, supported := cmd.currentLiveResourcesMode(); mode != config.LiveResourcesOff || source != "default" || !supported {
 		t.Fatalf("default currentLiveResourcesMode() = %q, %q, %v", mode, source, supported)
 	}

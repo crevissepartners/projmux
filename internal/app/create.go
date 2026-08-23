@@ -125,20 +125,28 @@ type createCommand struct {
 	// Pane's supervisor quotes back when its child stops.
 	newGeneration    func() (string, error)
 	resolveWorkspace func(coremetadata.Registry, coremetadata.Project, string, string, []string) (coremetadata.AgentWorkspace, error)
+	// bindRuntime resolves the invocation's app-owned logical route lazily at
+	// the first runtime action. Construction and help remain read/write free.
+	bindRuntime  func(context.Context) error
+	runtimeBound bool
+	routeAnchor  string
 }
 
 func newCreateCommand() *createCommand {
 	runner := inttmux.ExecRunner{}
-	client := defaultTmuxClient()
+	target := explicitTmuxTarget{flag: "-L", value: defaultAppSocket}
+	routed := explicitTmuxRunner{runner: runner, target: target}
+	client := defaultTmuxClientWithRunner(routed)
 	home, _ := os.UserHomeDir()
 	namer := coresessions.NewNamer(home)
-	return &createCommand{
+	command := &createCommand{
 		store:      newResourceStore(),
-		reconciler: newRegistryReconciler(runner, client),
+		reconciler: newRegistryReconciler(routed, client),
 		runtime: &materializer{
-			runner:     runner,
-			mirror:     intmetadata.NewMirror(runner),
+			runner:     routed,
+			mirror:     intmetadata.NewMirror(routed),
 			sessions:   client,
+			target:     target,
 			warn:       os.Stderr,
 			executable: os.Executable,
 			lookupEnv:  os.Getenv,
@@ -151,6 +159,35 @@ func newCreateCommand() *createCommand {
 		newGeneration:    coremetadata.NewGeneration,
 		resolveWorkspace: resolveAgentWorkspace,
 	}
+	command.bindRuntime = func(ctx context.Context) error {
+		route, err := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, runner, os.Getenv, command.routeAnchor)
+		if err != nil {
+			return err
+		}
+		exact := explicitTmuxRunner{runner: runner, target: route.target}
+		client := defaultTmuxClientWithSocketRunner(exact, route.socketName)
+		command.reconciler = newRegistryReconcilerWithRoute(exact, client, route)
+		command.runtime.runner = exact
+		command.runtime.mirror = intmetadata.NewMirror(exact)
+		command.runtime.sessions = client
+		command.runtime.target = route.target
+		command.runtime.expectedSocketPath = route.expectedSocketPath
+		command.runtime.socketName = route.socketName
+		command.runtime.routeAuthority = route.authority
+		return nil
+	}
+	return command
+}
+
+func (c *createCommand) ensureRuntimeRoute(ctx context.Context) error {
+	if c == nil || c.runtimeBound || c.bindRuntime == nil {
+		return nil
+	}
+	if err := c.bindRuntime(ctx); err != nil {
+		return err
+	}
+	c.runtimeBound = true
+	return nil
 }
 
 // newCreateOperationID mints the id that labels one create transaction and its
@@ -282,6 +319,11 @@ const (
 	canonicalProducerResumePicker   canonicalCreateProducer = "resume-picker"
 	canonicalProducerDirectProvider canonicalCreateProducer = "direct-provider"
 	canonicalProducerDirectShell    canonicalCreateProducer = "direct-shell"
+	// Window lifecycle producers are separate from the Pane menu producer even
+	// though they share the exact-origin resolver. Keeping their intent labels
+	// distinct makes the generated artifact -> handler inventory bijective.
+	canonicalProducerWindowCreate canonicalCreateProducer = "window-create"
+	canonicalProducerWindowRename canonicalCreateProducer = "window-rename"
 )
 
 var canonicalCreateProducers = []canonicalCreateProducer{
@@ -293,8 +335,13 @@ var canonicalCreateProducers = []canonicalCreateProducer{
 	canonicalProducerDirectShell,
 }
 
+var canonicalWindowMutationProducers = []canonicalCreateProducer{
+	canonicalProducerWindowCreate,
+	canonicalProducerWindowRename,
+}
+
 func (p canonicalCreateProducer) valid() bool {
-	return slices.Contains(canonicalCreateProducers, p)
+	return slices.Contains(canonicalCreateProducers, p) || slices.Contains(canonicalWindowMutationProducers, p)
 }
 
 // canonicalPaneCreator is the seam the split UI hands its intents to.

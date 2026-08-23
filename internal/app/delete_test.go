@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
 // deleteCommitCount is how many Registry transactions one successful delete
@@ -676,18 +677,20 @@ func TestDeletePaneAndAgentLockedRevalidationRaceTable(t *testing.T) {
 	}
 }
 
-func (r *fakeWindowDeleteRuntime) kill(_ context.Context, target windowLiveDeleteTarget) error {
-	if r.killHook != nil {
-		r.killHook(target)
+func (r *fakeWindowDeleteRuntime) killAll(_ context.Context, targets []windowLiveDeleteTarget) (int, error) {
+	for i, target := range targets {
+		if r.killHook != nil {
+			r.killHook(target)
+		}
+		if err := r.killErrs[target.WindowID]; err != nil {
+			return i, err
+		}
+		if r.killErr != nil {
+			return i, r.killErr
+		}
+		r.killed = append(r.killed, target)
 	}
-	if err := r.killErrs[target.WindowID]; err != nil {
-		return err
-	}
-	if r.killErr != nil {
-		return r.killErr
-	}
-	r.killed = append(r.killed, target)
-	return nil
+	return len(targets), nil
 }
 
 func (r *fakeWindowDeleteRuntime) queueSelfKill(_ context.Context, targets []windowLiveDeleteTarget) error {
@@ -1731,6 +1734,51 @@ func TestDeleteWindowTmuxFailureCommitsZeroRegistryWrites(t *testing.T) {
 	if stdout != "" || store.snapshot() != before || len(runtime.queued) != 0 {
 		t.Fatalf("tmux failure changed state: stdout=%q snapshot-changed=%t queued=%v",
 			stdout, store.snapshot() != before, runtime.queued)
+	}
+}
+
+func TestDeletePreWriteObservationFailureCommitsZeroRegistryDeletion(t *testing.T) {
+	noServer := appTypedCommandFailure{inttmux.CommandFailure{
+		Kind: inttmux.CommandFailureExit, Stderr: "no server running on /tmp/projmux-phase10-prewrite",
+	}}
+	for _, test := range []struct {
+		name string
+		kind string
+		uid  string
+		wire func(*deleteCommand)
+	}{
+		{
+			name: "Window", kind: "window", uid: "win-alpha-main",
+			wire: func(cmd *deleteCommand) {
+				runtime := newFixtureWindowDeleteRuntime()
+				runtime.killErr = noServer
+				cmd.windows = runtime
+			},
+		},
+		{
+			name: "Pane", kind: "pane", uid: "pan-alpha-log",
+			wire: func(cmd *deleteCommand) {
+				runtime := newFixturePaneDeleteRuntime()
+				runtime.killErr = noServer
+				cmd.panes = runtime
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			cmd := newTestDeleteCommand(store, false, false, nil)
+			test.wire(cmd)
+			before := store.snapshot()
+
+			stdout, _, err := runRoute(t, cmd, test.kind, "uid:"+test.uid, "--yes")
+			if err == nil || !inttmux.IsNoServerFailure(err) {
+				t.Fatalf("pre-write observation failure = %v, want typed no-server refusal", err)
+			}
+			if stdout != "" || store.snapshot() != before || !registryUIDs(store.registry)[test.uid] {
+				t.Fatalf("pre-write observation failure changed Registry: stdout=%q snapshot-changed=%t uid-present=%t",
+					stdout, store.snapshot() != before, registryUIDs(store.registry)[test.uid])
+			}
+		})
 	}
 }
 

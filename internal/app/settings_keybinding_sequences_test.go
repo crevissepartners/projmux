@@ -165,6 +165,7 @@ func TestSettingsSequenceCaptureAndTypedProduceSameV2BytesAndBinding(t *testing.
 		capturedCalls = append(capturedCalls, append([]string{name}, args...))
 		return nil
 	}
+	wireSettingsLiveTestRunner(captured)
 	if err := captured.runKeybindingRecorder("ProjectSidebarToggle", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("capture recorder error = %v", err)
 	}
@@ -182,6 +183,7 @@ func TestSettingsSequenceCaptureAndTypedProduceSameV2BytesAndBinding(t *testing.
 		typedCalls = append(typedCalls, append([]string{name}, args...))
 		return nil
 	}
+	wireSettingsLiveTestRunner(typed)
 	if err := typed.runKeybindingTyped("ProjectSidebarToggle", false, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("typed sequence error = %v", err)
 	}
@@ -320,6 +322,7 @@ func TestSettingsSequenceRemovalRetiresLiveTrieBeforeReload(t *testing.T) {
 		calls = append(calls, append([]string{name}, args...))
 		return nil
 	}
+	wireSettingsLiveTestRunner(cmd)
 	if err := cmd.removeKeymapSequenceAndApply("ProjectSidebarToggle", "C-k C-p", &bytes.Buffer{}); err != nil {
 		t.Fatalf("remove sequence error = %v", err)
 	}

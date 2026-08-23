@@ -396,9 +396,10 @@ func TestRoadmapWorkerLaunchUsesExactOwnerPane(t *testing.T) {
 	}
 	found := false
 	for _, call := range tmux.calls {
-		if len(call) > 0 && call[0] == "split-window" {
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && argv[0] == "split-window" {
 			found = true
-			if got := flagValue(call, "-t"); got != owner.id {
+			if got := flagValue(argv, "-t"); got != owner.id {
 				t.Fatalf("split anchor = %q, want current owner Pane %q", got, owner.id)
 			}
 		}

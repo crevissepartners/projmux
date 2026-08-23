@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
@@ -43,6 +44,40 @@ func newTestCreateCommand(t *testing.T, active *recordedActiveTarget) (*createCo
 	t.Helper()
 	store := newFakeResourceStore(t)
 	return &createCommand{store: store.store(), activeTarget: active.lookup, agents: stubAgentLauncher{t: t}}, store
+}
+
+func TestCreateNoScopeRefusesBeforeRuntimeRouteBinding(t *testing.T) {
+	command, _ := newTestCreateCommand(t, &recordedActiveTarget{})
+	bindCalls := 0
+	command.bindRuntime = func(context.Context) error {
+		bindCalls++
+		return errors.New("runtime route must not preempt usage validation")
+	}
+	var stdout, stderr bytes.Buffer
+	err := command.Run([]string{"pane", "-o", "pane-id", "--placement", "right"}, &stdout, &stderr)
+	if err == nil || !IsUsageError(err) {
+		t.Fatalf("no-scope create error = %v, want usage error", err)
+	}
+	if bindCalls != 0 || stdout.Len() != 0 {
+		t.Fatalf("no-scope create bound runtime %d times or wrote stdout %q", bindCalls, stdout.String())
+	}
+}
+
+func TestCanonicalCreateIntentRefusesSemanticErrorBeforeRuntimeRouteBinding(t *testing.T) {
+	command := &createCommand{}
+	bindCalls := 0
+	command.bindRuntime = func(context.Context) error {
+		bindCalls++
+		return errors.New("runtime route must not preempt intent validation")
+	}
+	var stdout, stderr bytes.Buffer
+	err := command.createFromIntent(agentPaneIntent{placement: "diagonal"}, &stdout, &stderr)
+	if err == nil || !IsUsageError(err) {
+		t.Fatalf("invalid canonical intent error = %v, want usage error", err)
+	}
+	if bindCalls != 0 || stdout.Len() != 0 {
+		t.Fatalf("invalid canonical intent bound runtime %d times or wrote stdout %q", bindCalls, stdout.String())
+	}
 }
 
 // createRouteSpellings is the closed set of resource-backed create spellings

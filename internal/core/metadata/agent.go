@@ -411,7 +411,7 @@ func (m Mutator) deleteWindow(reg *Registry, windowUID string, preserveProjectAn
 			}
 			if project.Spec.PrimaryWindowRef == "" {
 				txn := m.Begin(reg, "replace-deleted-primary-window")
-				replacement, _, err := m.addWindowTx(txn, reg, op, project.Metadata.UID, BootstrapWindow{}, "", project.Spec.Root, now)
+				replacement, _, err := m.addWindowTx(txn, reg, op, KindProject, project.Metadata.UID, BootstrapWindow{}, "", project.Spec.Root, now)
 				if err != nil {
 					txn.Rollback()
 					*reg = before

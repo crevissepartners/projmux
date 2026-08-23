@@ -43,6 +43,8 @@ type killCommand struct {
 	tagStore             killTagStore
 	storeErr             error
 	cleanupKilledSession func(string)
+	tmuxRunner           tmuxCommandRunner
+	lookupEnv            func(string) string
 }
 
 func newKillCommand(recorders ...*diagnostics.LifecycleRecorder) *killCommand {
@@ -50,16 +52,19 @@ func newKillCommand(recorders ...*diagnostics.LifecycleRecorder) *killCommand {
 	if len(recorders) > 0 && recorders[0] != nil {
 		opts = append(opts, inttmux.WithLifecycleDiagnostics(recorders[0]))
 	}
-	client := inttmux.NewClient(inttmux.ExecRunner{}, opts...)
+	runner := inttmux.ExecRunner{}
+	client := inttmux.NewClient(runner, opts...)
 
 	cmd := &killCommand{
 		diagnostics: recorderFrom(recorders),
 		current:     client,
 		recent:      client,
 		homeDir:     os.UserHomeDir,
+		tmuxRunner:  runner,
+		lookupEnv:   os.Getenv,
 	}
 	cmd.exec = lifecycle.NewTaggedKiller(client, cleanupKillSessionExecutor{
-		delegate: client,
+		delegate: unmanagedSessionKiller{runner: runner, lookupEnv: os.Getenv},
 		cleanup: func(sessionName string) {
 			if cmd.cleanupKilledSession != nil {
 				cmd.cleanupKilledSession(sessionName)
@@ -75,6 +80,16 @@ func newKillCommand(recorders ...*diagnostics.LifecycleRecorder) *killCommand {
 
 	cmd.tagStore = tags.NewDefaultStore(paths)
 	return cmd
+}
+
+type unmanagedSessionKiller struct {
+	runner    tmuxCommandRunner
+	lookupEnv func(string) string
+}
+
+func (k unmanagedSessionKiller) KillSession(ctx context.Context, sessionName string) error {
+	_, err := executeUnmanagedRuntimeStop(ctx, k.runner, k.lookupEnv, sessionName)
+	return err
 }
 
 // Run manages kill subcommands.

@@ -668,8 +668,8 @@ if tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t >/dev/null 2>&1; t
 fi
 
 # A current action may explicitly reclaim C-t. The retired cleanup must render
-# and execute first so the current new-window binding wins without retaining
-# the stale pane-label body.
+# and execute first so the current canonical Window-create binding wins without
+# retaining either the stale pane-label body or a raw tmux new-window bypass.
 install -m 0644 "$smoke_root/test/fixtures/keymaps/stale-pane-label-ct-reassigned.toml" "$keymap_path"
 cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.before"
 # Re-seeding a v0 file means the next apply migrates again, against a different
@@ -677,8 +677,8 @@ cp "$keymap_path" "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.before"
 reassign_apply_out="$("$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
 smoke_assert_output_contains "$reassign_apply_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
 ct_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t)"
-if [[ "$ct_binding" != *"new-window"* || "$ct_binding" == *"pane label:"* || "$ct_binding" == *"@projmux_pane_label"* ]]; then
-  echo "expected current C-t new-window binding without stale pane-label body, got: $ct_binding" >&2
+if [[ "$ct_binding" != *"internal tmux window-create"* || "$ct_binding" != *"--anchor #{pane_id}"* || "$ct_binding" == *" new-window "* || "$ct_binding" == *"pane label:"* || "$ct_binding" == *"@projmux_pane_label"* ]]; then
+  echo "expected current C-t canonical Window-create binding without raw new-window or stale pane-label body, got: $ct_binding" >&2
   exit 1
 fi
 if [[ "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-p)" != *"pane label:"* ]]; then
@@ -700,7 +700,7 @@ cmp "$PROJMUX_SMOKE_WORKDIR/tmux-ct-reassigned.first" "$XDG_CONFIG_HOME/projmux/
 cmp "$PROJMUX_SMOKE_WORKDIR/keymap-ct-reassigned.migrated" "$keymap_path"
 smoke_assert_keymap_backup_count 2
 ct_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root C-t)"
-if [[ "$ct_binding" != *"new-window"* || "$ct_binding" == *"pane label:"* ]]; then
+if [[ "$ct_binding" != *"internal tmux window-create"* || "$ct_binding" != *"--anchor #{pane_id}"* || "$ct_binding" == *" new-window "* || "$ct_binding" == *"pane label:"* ]]; then
   echo "repeated reassignment apply changed C-t ownership: $ct_binding" >&2
   exit 1
 fi
@@ -725,7 +725,7 @@ if [[ "$sequence_roots" != "C-k" || -z "$sequence_tables" || "$sequence_tables" 
 fi
 for contract in \
   "root C-k switch-client -T $sequence_tables" \
-  "$sequence_tables C-w new-window" \
+  "$sequence_tables C-w internal tmux window-create" \
   "$sequence_tables Enter set -g mouse" \
   "$sequence_tables Escape switch-client -T root" \
   "$sequence_tables Any switch-client -T root"; do
@@ -736,6 +736,11 @@ for contract in \
     exit 1
   fi
 done
+sequence_window_binding="$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T "$sequence_tables" C-w)"
+if [[ "$sequence_window_binding" == *" new-window "* || "$sequence_window_binding" != *"--anchor #{pane_id}"* ]]; then
+  echo "sequence Window-create binding bypassed canonical exact-anchor intent: $sequence_window_binding" >&2
+  exit 1
+fi
 if [[ "$(tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-keys -T root M-S-Right)" != *"next-window"* ]]; then
   echo "sequence apply changed existing single-chord behavior" >&2
   exit 1
@@ -1104,8 +1109,29 @@ if [[ -z "$session_state_name" ]]; then
   exit 1
 fi
 run_inside_lifecycle switch open "$session_state_root" >"$PROJMUX_SMOKE_WORKDIR/session-state-open.out"
-session_state_pane="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t "=$session_state_name" '#{pane_id}')"
+# Bind the follow-up mutations to the exact handoff receipt rather than
+# rediscovering a Pane from a session name after the asynchronous clean-exit
+# controller has started observing the host. The control client is the stable
+# output of switch open; query it through the already verified physical socket
+# with no inherited tmux context, then require its declared Session and exact
+# Pane before constructing the private TMUX/TMUX_PANE invocation evidence.
+session_state_handoff="$(env -u TMUX -u TMUX_PANE tmux -S "$PROJMUX_SMOKE_TMUX_ACTUAL" \
+  display-message -p -c "$control_client" -F '#{session_name}|#{pane_id}')"
+IFS='|' read -r session_state_handoff_session session_state_pane <<<"$session_state_handoff"
+if [[ "$session_state_handoff_session" != "$session_state_name" || ! "$session_state_pane" =~ ^%[0-9]+$ ]]; then
+  echo "Session State handoff lost its exact Session/Pane receipt: got=$session_state_handoff want=$session_state_name/%N" >&2
+  exit 1
+fi
 session_state_tmux_env="$PROJMUX_SMOKE_TMUX_ACTUAL,$server_pid,0"
+session_state_create_hooks="$(
+  env -u TMUX -u TMUX_PANE tmux -S "$PROJMUX_SMOKE_TMUX_ACTUAL" show-hooks -g after-new-window
+  env -u TMUX -u TMUX_PANE tmux -S "$PROJMUX_SMOKE_TMUX_ACTUAL" show-hooks -g after-split-window
+)"
+if [[ "$(grep -Fc "env -u TMUX -u TMUX_PANE '$bin' internal tmux converge --socket-path" <<<"$session_state_create_hooks")" != "2" ]]; then
+  echo "generated create hooks did not strip incomplete inherited tmux authority:" >&2
+  printf '%s\n' "$session_state_create_hooks" >&2
+  exit 1
+fi
 
 env PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
   TMUX="$session_state_tmux_env" TMUX_PANE="$session_state_pane" \
@@ -1512,6 +1538,8 @@ PROJMUX_RECONCILE_SECONDARY_SOCKET="projmux-reconcile-secondary-$$-$RANDOM"
 export PROJMUX_RECONCILE_SESSION PROJMUX_RECONCILE_PRIMARY_SOCKET PROJMUX_RECONCILE_SECONDARY_SOCKET
 for reconcile_socket in "$PROJMUX_RECONCILE_PRIMARY_SOCKET" "$PROJMUX_RECONCILE_SECONDARY_SOCKET"; do
   env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" new-session -d -s "$PROJMUX_RECONCILE_SESSION" -c "$reconcile_root" sleep 300
+  env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" set-option -gq @projmux_app 1
+  env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" set-option -gq @projmux_socket_name "$reconcile_socket"
   env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" set-option -t "$PROJMUX_RECONCILE_SESSION" -q @projmux_project_path "$reconcile_root"
   if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$reconcile_socket" show-options -t "$PROJMUX_RECONCILE_SESSION" -qv @projmux_project_path)" != "$reconcile_root" ]]; then
     echo "failed to seed reconcile session project path" >&2
@@ -1647,15 +1675,24 @@ PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$prima
   "$bin" rename project "uid:$primary_project_uid" --name stable-project >"$PROJMUX_SMOKE_WORKDIR/reconcile-rename-project.out"
 PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$primary_tmux_env" \
   "$bin" rename window "uid:$primary_window_uid" --name stable-window >"$PROJMUX_SMOKE_WORKDIR/reconcile-rename-window.out"
+rename_window_immediate="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -wqv -t "=$PROJMUX_RECONCILE_SESSION:0" @projmux_window_name)"
+if [[ "$rename_window_immediate" != stable-window ]]; then
+  echo "Window stable-name mirror did not converge immediately: got=$rename_window_immediate want=stable-window" >&2
+  exit 1
+fi
 PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$primary_tmux_env" \
   "$bin" rename pane "uid:$primary_pane_uid" --name stable-pane >"$PROJMUX_SMOKE_WORKDIR/reconcile-rename-pane.out"
 PROJMUX_PROJDIR="$reconcile_root" XDG_STATE_HOME="$reconcile_state" TMUX="$primary_tmux_env" \
   "$bin" rebind project "uid:$primary_project_uid" --root "$PROJMUX_SMOKE_WORKDIR/reconcile-root-moved" >"$PROJMUX_SMOKE_WORKDIR/reconcile-rebind-project.out"
-if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -qv -t "$PROJMUX_RECONCILE_SESSION" @projmux_project_name)" != stable-project ]] || \
-  [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -wqv -t "=$PROJMUX_RECONCILE_SESSION:0" @projmux_window_name)" != stable-window ]] || \
-  [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -pqv -t "=$PROJMUX_RECONCILE_SESSION:0.0" @projmux_pane_label)" != stable-pane ]] || \
-  [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -qv -t "$PROJMUX_RECONCILE_SESSION" @projmux_project_path)" != "$PROJMUX_SMOKE_WORKDIR/reconcile-root-moved" ]]; then
-  echo "rename/rebind integration mirrors did not converge" >&2
+rename_project_mirror="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -qv -t "$PROJMUX_RECONCILE_SESSION" @projmux_project_name)"
+rename_window_mirror="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -wqv -t "=$PROJMUX_RECONCILE_SESSION:0" @projmux_window_name)"
+rename_pane_mirror="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -pqv -t "=$PROJMUX_RECONCILE_SESSION:0.0" @projmux_pane_label)"
+rebind_project_mirror="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" show-options -qv -t "$PROJMUX_RECONCILE_SESSION" @projmux_project_path)"
+if [[ "$rename_project_mirror" != stable-project ]] || \
+  [[ "$rename_window_mirror" != stable-window ]] || \
+  [[ "$rename_pane_mirror" != stable-pane ]] || \
+  [[ "$rebind_project_mirror" != "$PROJMUX_SMOKE_WORKDIR/reconcile-root-moved" ]]; then
+  echo "rename/rebind integration mirrors did not converge: project=$rename_project_mirror window=$rename_window_mirror pane=$rename_pane_mirror root=$rebind_project_mirror" >&2
   exit 1
 fi
 if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_RECONCILE_PRIMARY_SOCKET" display-message -p -t "=$PROJMUX_RECONCILE_SESSION" '#{session_name}')" != "$primary_session_name_before" ]] || \
@@ -1754,10 +1791,20 @@ for runtime_actual in "$PROJMUX_RUNTIME_APP_ACTUAL" "$PROJMUX_RUNTIME_GUEST_ACTU
   esac
 done
 
-# Only the app socket carries the ownership marker. The guest socket is the
-# operator's own tmux that projmux is a guest on, and the third is a sibling
-# that must never be read.
+# Only the app socket carries the complete ownership declaration. The guest
+# socket is the operator's own tmux that projmux is a guest on, and the third
+# is a sibling that must never be read. A lone @projmux_app marker is
+# intentionally not authority: the logical route marker closes the exact -L
+# identity used by the controller.
 runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" set-option -g -q @projmux_app 1
+runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" set-option -g -q @projmux_socket_name "$PROJMUX_RUNTIME_APP_SOCKET"
+if [[ "$(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" show-options -gqv @projmux_app)" != "1" ]] ||
+  [[ "$(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" show-options -gqv @projmux_socket_name)" != "$PROJMUX_RUNTIME_APP_SOCKET" ]] ||
+  [[ -n "$(runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" show-options -gqv @projmux_app)$(runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" show-options -gqv @projmux_socket_name)" ]] ||
+  [[ -n "$(runtime_tmux "$PROJMUX_RUNTIME_SIBLING_SOCKET" show-options -gqv @projmux_app)$(runtime_tmux "$PROJMUX_RUNTIME_SIBLING_SOCKET" show-options -gqv @projmux_socket_name)" ]]; then
+  echo "runtime diagnostics ownership fixture is not app/standalone/sibling isolated" >&2
+  exit 1
+fi
 
 # Register the Project explicitly; the anchored live D2 topology is not an
 # automatic import source under the Phase 8 authority table.
@@ -2322,15 +2369,62 @@ PROJMUX_DISCOVERY_SESSION="app"
 PROJMUX_DISCOVERY_SOCKET="projmux-discovery-$$-$RANDOM"
 export PROJMUX_DISCOVERY_SESSION PROJMUX_DISCOVERY_SOCKET
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" new-session -d -s "$PROJMUX_DISCOVERY_SESSION" -c "$discovery_scan/app" sleep 300
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" set-option -gq @projmux_app 1
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" set-option -gq @projmux_socket_name "$PROJMUX_DISCOVERY_SOCKET"
 PROJMUX_DISCOVERY_STARTED=1
 PROJMUX_DISCOVERY_ACTUAL="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" display-message -p -t "=$PROJMUX_DISCOVERY_SESSION" '#{socket_path}')"
 export PROJMUX_DISCOVERY_ACTUAL
 discovery_pid="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" display-message -p -t "=$PROJMUX_DISCOVERY_SESSION" '#{pid}')"
 discovery_tmux_env="$PROJMUX_DISCOVERY_ACTUAL,$discovery_pid,0"
+discovery_anchor_receipt="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" display-message -p -t "=$PROJMUX_DISCOVERY_SESSION:0.0" '#{window_id}|#{pane_id}')"
+IFS='|' read -r discovery_primary_window discovery_anchor_pane <<<"$discovery_anchor_receipt"
+if [[ ! "$discovery_primary_window" =~ ^@[0-9]+$ ]] || [[ ! "$discovery_anchor_pane" =~ ^%[0-9]+$ ]]; then
+  echo "discovery mutation fixture has no exact Window/Pane anchor: $discovery_anchor_receipt" >&2
+  exit 1
+fi
 env -u TMUX -u TMUX_PANE -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u PROJMUX_PROJDIR -u PROJMUX_MANAGED_ROOTS \
-  HOME="$discovery_home" TMUX="$discovery_tmux_env" \
+  HOME="$discovery_home" TMUX="$discovery_tmux_env" TMUX_PANE="$discovery_anchor_pane" \
   "$bin" create window --project app >"$PROJMUX_SMOKE_WORKDIR/discovery-create-window.out"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-create-window.out" 'window/'
+pmx_discovery describe project "uid:$discovery_project_uid" -o json >"$PROJMUX_SMOKE_WORKDIR/discovery-project-after-window.json"
+discovery_primary_window_uid="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$PROJMUX_SMOKE_WORKDIR/discovery-project-after-window.json" | head -n 1)"
+pmx_discovery get windows --project "uid:$discovery_project_uid" -o uid >"$PROJMUX_SMOKE_WORKDIR/discovery-windows-after-create.uid"
+if [[ -z "$discovery_primary_window_uid" ]] ||
+  ! grep -Fxq "$discovery_primary_window_uid" "$PROJMUX_SMOKE_WORKDIR/discovery-windows-after-create.uid" ||
+  [[ "$(grep -c . "$PROJMUX_SMOKE_WORKDIR/discovery-windows-after-create.uid")" != "2" ]]; then
+  echo "discovery mutation did not materialize one primary plus one requested Window" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/discovery-project-after-window.json" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/discovery-windows-after-create.uid" >&2
+  exit 1
+fi
+discovery_created_window_uid="$(grep -Fxv "$discovery_primary_window_uid" "$PROJMUX_SMOKE_WORKDIR/discovery-windows-after-create.uid")"
+if [[ -z "$discovery_created_window_uid" ]] || [[ "$(printf '%s\n' "$discovery_created_window_uid" | grep -c .)" != "1" ]]; then
+  echo "discovery mutation did not produce exactly one non-primary Window UID: $discovery_created_window_uid" >&2
+  exit 1
+fi
+pmx_discovery get panes --project "uid:$discovery_project_uid" --window "uid:$discovery_created_window_uid" -o uid >"$PROJMUX_SMOKE_WORKDIR/discovery-created-panes.uid"
+discovery_created_pane_uid="$(cat "$PROJMUX_SMOKE_WORKDIR/discovery-created-panes.uid")"
+if [[ -z "$discovery_created_pane_uid" ]] || [[ "$(grep -c . "$PROJMUX_SMOKE_WORKDIR/discovery-created-panes.uid")" != "1" ]]; then
+  echo "discovery mutation did not produce exactly one Pane below the requested Window" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/discovery-created-panes.uid" >&2
+  exit 1
+fi
+discovery_created_window_receipt="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" list-windows -a -F '#{session_id}|#{@projmux_project_uid}|#{window_id}|#{@projmux_window_uid}' | awk -F '[|]' -v project="$discovery_project_uid" -v window="$discovery_created_window_uid" '$2 == project && $4 == window { print }')"
+IFS='|' read -r discovery_created_session _ discovery_created_window discovery_runtime_window_uid <<<"$discovery_created_window_receipt"
+if [[ ! "$discovery_created_session" =~ ^\$[0-9]+$ ]] || [[ ! "$discovery_created_window" =~ ^@[0-9]+$ ]] ||
+  [[ "$discovery_runtime_window_uid" != "$discovery_created_window_uid" ]] ||
+  [[ "$(printf '%s\n' "$discovery_created_window_receipt" | grep -c .)" != "1" ]]; then
+  echo "discovery mutation Window is not uniquely owned by the exact Registry Project: $discovery_created_window_receipt" >&2
+  exit 1
+fi
+discovery_created_pane_receipt="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_DISCOVERY_SOCKET" list-panes -a -F '#{session_id}|#{@projmux_project_uid}|#{window_id}|#{@projmux_window_uid}|#{pane_id}|#{@projmux_pane_uid}' | awk -F '[|]' -v project="$discovery_project_uid" -v window="$discovery_created_window_uid" -v pane="$discovery_created_pane_uid" '$2 == project && $4 == window && $6 == pane { print }')"
+IFS='|' read -r discovery_pane_session _ discovery_pane_window _ discovery_created_pane discovery_runtime_pane_uid <<<"$discovery_created_pane_receipt"
+if [[ "$discovery_pane_session" != "$discovery_created_session" ]] || [[ "$discovery_pane_window" != "$discovery_created_window" ]] ||
+  [[ ! "$discovery_created_pane" =~ ^%[0-9]+$ ]] || [[ "$discovery_runtime_pane_uid" != "$discovery_created_pane_uid" ]] ||
+  [[ "$(printf '%s\n' "$discovery_created_pane_receipt" | grep -c .)" != "1" ]]; then
+  echo "discovery mutation Pane is not uniquely contained by the exact Registry Window: $discovery_created_pane_receipt" >&2
+  exit 1
+fi
 pmx_discovery get projects -o uid >"$PROJMUX_SMOKE_WORKDIR/discovery-projects-after-mutation.uid"
 if [[ "$(wc -l <"$PROJMUX_SMOKE_WORKDIR/discovery-projects-after-mutation.uid")" != "1" ]]; then
   echo "a generic mutation registered extra Projects from the scan root:" >&2
@@ -2519,6 +2613,8 @@ termination_tmux set-option -t "$termination_session" -q @projmux_project_path "
 # config the installed server uses onto this exact isolated server; without it
 # this fixture would exercise only the old direct-Registry transport.
 termination_tmux source-file "$PROJMUX_SMOKE_WORKDIR/projmux.conf"
+termination_tmux set-option -gq @projmux_app 1
+termination_tmux set-option -gq @projmux_socket_name "$termination_socket"
 (termination_tmux show-hooks -g; termination_tmux show-hooks -gw) >"$termination_root/pane-exited-hook.txt"
 smoke_assert_file_contains "$termination_root/pane-exited-hook.txt" "reason pane-exited"
 termination_sibling_tmux new-session -d -s sibling -n main sleep 600
@@ -2537,7 +2633,7 @@ for termination_candidate in "$termination_socket_path" "$termination_sibling_pa
 done
 termination_server_pid="$(termination_tmux display-message -p -t "$termination_session" '#{pid}')"
 termination_session_id="$(termination_tmux display-message -p -t "$termination_session" '#{session_id}')"
-if [[ "$termination_session_id" != \$* ]]; then
+if [[ ! "$termination_session_id" =~ ^\$[0-9]+$ ]]; then
   echo "termination fixture has invalid exact tmux session id: $termination_session_id" >&2
   exit 1
 fi
@@ -2567,11 +2663,13 @@ termination_pmx() {
     "$bin" "$@"
 }
 
-# Inside a client the create routes address the inherited exact server, which is
-# the same server the explicit --socket calls above name.
+# Inside a client the create routes address the inherited exact server and the
+# reconciled exact Pane anchor proven below; this is the same server the
+# explicit --socket calls above name.
 termination_pmx_inside() {
-  env -u TMUX_PANE \
+  env \
     TMUX="$termination_socket_path,$termination_server_pid,0" \
+    TMUX_PANE="$termination_anchor_pane_id" \
     XDG_STATE_HOME="$termination_root/state" \
     XDG_CONFIG_HOME="$termination_root/config" \
     TMUX_TMPDIR="$termination_root/tmux" \
@@ -2585,10 +2683,33 @@ termination_pmx create project --root "$termination_root/work/evidence" --name e
 bounded_resource_reconcile_to_noop "$termination_root/reconcile" \
   termination_pmx reconcile resources --socket "$termination_socket" -o json
 smoke_assert_file_contains "$termination_root/reconcile.json" '"outcome": "changed"'
-termination_main_window_id="$(termination_tmux list-windows -t "$termination_session" -F '#{window_id} #{@projmux_window_uid}' \
-  | awk '$2 != "" { print $1; exit }')"
-if [[ "$termination_main_window_id" != @* ]]; then
-  echo "termination fixture has no exact managed Window handle: $termination_main_window_id" >&2
+termination_project_uid="$(termination_pmx get projects -o uid)"
+if [[ -z "$termination_project_uid" ]] || [[ "$(printf '%s\n' "$termination_project_uid" | grep -c .)" != "1" ]]; then
+  echo "termination fixture has no unique Registry Project UID: $termination_project_uid" >&2
+  exit 1
+fi
+termination_main_window_receipt="$(termination_tmux list-windows -t "$termination_session_id" -F '#{session_id}|#{@projmux_project_uid}|#{window_id}|#{@projmux_window_uid}' \
+  | awk -F '[|]' -v session="$termination_session_id" -v project="$termination_project_uid" '$1 == session && $2 == project && $4 != "" { print }')"
+IFS='|' read -r termination_window_session termination_window_project termination_main_window_id termination_main_window_uid <<<"$termination_main_window_receipt"
+if [[ "$termination_window_session" != "$termination_session_id" ]] || [[ "$termination_window_project" != "$termination_project_uid" ]] ||
+  [[ ! "$termination_main_window_id" =~ ^@[0-9]+$ ]] || [[ -z "$termination_main_window_uid" ]] ||
+  [[ "$(printf '%s\n' "$termination_main_window_receipt" | grep -c .)" != "1" ]]; then
+  echo "termination fixture has no uniquely attributed managed Window: $termination_main_window_receipt" >&2
+  exit 1
+fi
+termination_anchor_receipt="$(termination_tmux list-panes -t "$termination_main_window_id" -F '#{session_id}|#{@projmux_project_uid}|#{window_id}|#{@projmux_window_uid}|#{pane_id}|#{@projmux_pane_uid}' \
+  | awk -F '[|]' -v session="$termination_session_id" -v project="$termination_project_uid" -v window="$termination_main_window_id" -v window_uid="$termination_main_window_uid" '$1 == session && $2 == project && $3 == window && $4 == window_uid && $6 != "" { print }')"
+IFS='|' read -r termination_pane_session termination_pane_project termination_pane_window termination_pane_window_uid termination_anchor_pane_id termination_anchor_pane_uid <<<"$termination_anchor_receipt"
+if [[ "$termination_pane_session" != "$termination_session_id" ]] || [[ "$termination_pane_project" != "$termination_project_uid" ]] ||
+  [[ "$termination_pane_window" != "$termination_main_window_id" ]] || [[ "$termination_pane_window_uid" != "$termination_main_window_uid" ]] ||
+  [[ ! "$termination_anchor_pane_id" =~ ^%[0-9]+$ ]] || [[ -z "$termination_anchor_pane_uid" ]] ||
+  [[ "$(printf '%s\n' "$termination_anchor_receipt" | grep -c .)" != "1" ]]; then
+  echo "termination fixture has no exact managed Pane anchor: $termination_anchor_receipt" >&2
+  exit 1
+fi
+if ! termination_pmx get windows --project "uid:$termination_project_uid" -o uid | grep -Fxq "$termination_main_window_uid" ||
+  ! termination_pmx get panes --project "uid:$termination_project_uid" --window "uid:$termination_main_window_uid" -o uid | grep -Fxq "$termination_anchor_pane_uid"; then
+  echo "termination fixture tmux anchor is not the exact Registry Window/Pane identity" >&2
   exit 1
 fi
 
@@ -2693,7 +2814,9 @@ termination_await_receipt() {
 termination_case() {
   local label="$1" want_class="$2" want_code="$3" want_signal="$4"
   shift 4
-  local pane_uid runtime_id activation
+  local pane_uid runtime_id activation release_file
+  release_file="$termination_root/release-$label"
+  rm -f "$release_file"
   pane_uid="$(termination_pmx_inside create pane --project evidence -o uid -- "$@")"
   if [[ -z "$pane_uid" ]]; then
     echo "termination case $label created no Pane" >&2
@@ -2701,6 +2824,7 @@ termination_case() {
   fi
   runtime_id="$(termination_activation_runtime_id "$pane_uid")"
   activation="$(termination_activation_generation "$pane_uid")"
+  touch "$release_file"
   termination_replay_pane_exited_hook "$pane_uid" "$want_class" "$runtime_id" "$label"
   if [[ "$want_class" == "normal" ]]; then
     if termination_pmx describe pane "uid:$pane_uid" -o json >"$termination_root/clean-pane-present.json" 2>/dev/null; then
@@ -2741,9 +2865,15 @@ termination_case() {
   echo ">> termination case $label uid=$pane_uid class=$got_class generation=$activation"
 }
 
-termination_case clean normal 0 "" sh -c 'exit 0'
-termination_case failure abnormal 7 "" sh -c 'exit 7'
-termination_case signal abnormal "" TERM sh -c 'kill -TERM $$; sleep 30'
+# Let the canonical create transaction finish its exact UID claim and mirrors
+# before the child supplies termination evidence. An exact per-case release
+# file closes the race without assuming a fixed plan/guard execution duration.
+# shellcheck disable=SC2016 # $1 and $$ expand inside the managed child shell.
+termination_case clean normal 0 "" sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; exit 0' sh "$termination_root/release-clean"
+# shellcheck disable=SC2016 # $1 expands inside the managed child shell.
+termination_case failure abnormal 7 "" sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; exit 7' sh "$termination_root/release-failure"
+# shellcheck disable=SC2016 # $1 and $$ expand inside the managed child shell.
+termination_case signal abnormal "" TERM sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; kill -TERM $$; sleep 30' sh "$termination_root/release-signal"
 
 # The same evidence for the three managed providers. Each stub is a real
 # process that ends the way the case asks for; nothing about the provider's own
@@ -2761,8 +2891,9 @@ PROVIDER_STUB
 done
 
 termination_pmx_provider() {
-  env -u TMUX_PANE \
+  env \
     TMUX="$termination_socket_path,$termination_server_pid,0" \
+    TMUX_PANE="$termination_anchor_pane_id" \
     PATH="$termination_root/bin:$PATH" \
     XDG_STATE_HOME="$termination_root/state" \
     XDG_CONFIG_HOME="$termination_root/config" \
@@ -2983,6 +3114,26 @@ exitrec_sibling_tmux() {
     "$exitrec_real_tmux" -L "$exitrec_sibling_socket" "$@"
 }
 
+exitrec_exact_tmux() {
+  local socket_path="$1"
+  shift
+  case "$socket_path" in
+    "$exitrec_root"/*) ;;
+    *)
+      echo "refusing exit reconciliation exact route outside smoke root: $socket_path" >&2
+      return 1
+      ;;
+  esac
+  env -u TMUX -u TMUX_PANE \
+    TMUX_TMPDIR="$exitrec_root/tmux" \
+    XDG_STATE_HOME="$exitrec_root/state" \
+    XDG_CONFIG_HOME="$exitrec_root/config" \
+    PROJMUX_MANAGED_ROOTS="$exitrec_root/work" \
+    PATH="$exitrec_root/bin:$PATH" \
+    SHELL=/bin/bash \
+    "$exitrec_real_tmux" -S "$socket_path" "$@"
+}
+
 # The three provider stubs are real processes that end the way each case asks
 # for. Nothing about a provider's own protocol participates: the classification
 # comes from the wait status, never from what the provider said before it
@@ -2999,6 +3150,8 @@ exitrec_tmux "$exitrec_socket" new-session -d -s "$exitrec_session" -n main \
   -c "$exitrec_root/work/evidence" sleep 600
 exitrec_tmux "$exitrec_socket" set-option -t "$exitrec_session" -q @projmux_project_path \
   "$exitrec_root/work/evidence"
+exitrec_tmux "$exitrec_socket" set-option -gq @projmux_app 1
+exitrec_tmux "$exitrec_socket" set-option -gq @projmux_socket_name "$exitrec_socket"
 exitrec_tmux "$exitrec_standalone_socket" new-session -d -s "$exitrec_standalone_session" -n main \
   -c "$exitrec_root/work/standalone" sleep 600
 exitrec_tmux "$exitrec_standalone_socket" set-option -t "$exitrec_standalone_session" -q @projmux_project_path \
@@ -3044,7 +3197,7 @@ exitrec_cleanup() {
 trap 'exitrec_cleanup; integration_cleanup' EXIT
 
 exitrec_pmx() {
-  env -u TMUX -u TMUX_PANE \
+  env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE \
     XDG_STATE_HOME="$exitrec_root/state" \
     XDG_CONFIG_HOME="$exitrec_root/config" \
     TMUX_TMPDIR="$exitrec_root/tmux" \
@@ -3054,15 +3207,15 @@ exitrec_pmx() {
     "$bin" "$@"
 }
 
-# The in-tmux caller. $TMUX is the inherited absolute socket path, which is the
-# exact-host rule both host modes share -- an app-owned server and a standalone
-# one are addressed identically, because the address is the inherited socket and
-# not a name projmux knows.
+# The in-tmux caller. $TMUX is the inherited absolute socket path and TMUX_PANE
+# is the host-specific exact managed anchor captured below. App-owned and
+# standalone creates share this receipt shape without sharing authority.
 exitrec_pmx_inside() {
-  local socket_path="$1" server_pid="$2"
-  shift 2
-  env -u TMUX_PANE \
+  local socket_path="$1" server_pid="$2" anchor_pane="$3"
+  shift 3
+  env -u __PROJMUX_RUNTIME_ANCHOR_PANE \
     TMUX="$socket_path,$server_pid,0" \
+    TMUX_PANE="$anchor_pane" \
     XDG_STATE_HOME="$exitrec_root/state" \
     XDG_CONFIG_HOME="$exitrec_root/config" \
     TMUX_TMPDIR="$exitrec_root/tmux" \
@@ -3072,16 +3225,69 @@ exitrec_pmx_inside() {
     "$bin" "$@"
 }
 
-exitrec_pmx create project --root "$exitrec_root/work/evidence" --name evidence \
+exitrec_pmx create project --root "$exitrec_root/work/evidence" --name evidence -o uid \
   >"$exitrec_root/register-evidence.out"
+exitrec_app_project_uid="$(cat "$exitrec_root/register-evidence.out")"
+if [[ -z "$exitrec_app_project_uid" ]] ||
+  [[ "$(exitrec_pmx get projects -o uid | grep -Fxc "$exitrec_app_project_uid")" != "1" ]]; then
+  echo "exit reconciliation app registration has no unique exact Project UID: $exitrec_app_project_uid" >&2
+  exit 1
+fi
 bounded_resource_reconcile_to_noop "$exitrec_root/reconcile" \
   exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json
 smoke_assert_file_contains "$exitrec_root/reconcile.json" '"outcome": "changed"'
-exitrec_pmx create project --root "$exitrec_root/work/standalone" --name standalone \
+exitrec_pmx create project --root "$exitrec_root/work/standalone" --name standalone -o uid \
   >"$exitrec_root/register-standalone.out"
+exitrec_standalone_project_uid="$(cat "$exitrec_root/register-standalone.out")"
+if [[ -z "$exitrec_standalone_project_uid" ]] ||
+  [[ "$(exitrec_pmx get projects -o uid | grep -Fxc "$exitrec_standalone_project_uid")" != "1" ]]; then
+  echo "exit reconciliation standalone registration has no unique exact Project UID: $exitrec_standalone_project_uid" >&2
+  exit 1
+fi
 bounded_resource_reconcile_to_noop "$exitrec_root/reconcile-standalone" \
-  exitrec_pmx reconcile resources --socket "$exitrec_standalone_socket" -o json
+  exitrec_pmx reconcile resources --socket-path "$exitrec_standalone_path" -o json
 smoke_assert_file_contains "$exitrec_root/reconcile-standalone.json" '"outcome": "changed"'
+
+exitrec_capture_anchor() {
+  local label="$1" socket_path="$2" project_uid="$3"
+  local session_receipt session_id window_receipt window_id window_uid pane_receipt pane_id pane_uid
+  session_receipt="$(exitrec_exact_tmux "$socket_path" list-sessions -F '#{session_id}|#{@projmux_project_uid}' \
+    | awk -F '[|]' -v project="$project_uid" '$2 == project { print }')"
+  IFS='|' read -r session_id _ <<<"$session_receipt"
+  if [[ ! "$session_id" =~ ^\$[0-9]+$ ]] || [[ "$(printf '%s\n' "$session_receipt" | grep -c .)" != "1" ]]; then
+    echo "exit reconciliation $label host has no unique Project session receipt: $session_receipt" >&2
+    exit 1
+  fi
+  window_receipt="$(exitrec_exact_tmux "$socket_path" list-windows -a -F '#{session_id}|#{@projmux_project_uid}|#{window_id}|#{@projmux_window_uid}' \
+    | awk -F '[|]' -v session="$session_id" -v project="$project_uid" '$1 == session && $2 == project && $4 != "" { print }')"
+  IFS='|' read -r _ _ window_id window_uid <<<"$window_receipt"
+  if [[ ! "$window_id" =~ ^@[0-9]+$ ]] || [[ -z "$window_uid" ]] ||
+    [[ "$(printf '%s\n' "$window_receipt" | grep -c .)" != "1" ]]; then
+    echo "exit reconciliation $label host has no unique managed Window receipt: $window_receipt" >&2
+    exit 1
+  fi
+  pane_receipt="$(exitrec_exact_tmux "$socket_path" list-panes -a -F '#{session_id}|#{@projmux_project_uid}|#{window_id}|#{@projmux_window_uid}|#{pane_id}|#{@projmux_pane_uid}' \
+    | awk -F '[|]' -v session="$session_id" -v project="$project_uid" -v window="$window_id" -v window_uid="$window_uid" '$1 == session && $2 == project && $3 == window && $4 == window_uid && $6 != "" { print }')"
+  IFS='|' read -r _ _ _ _ pane_id pane_uid <<<"$pane_receipt"
+  if [[ ! "$pane_id" =~ ^%[0-9]+$ ]] || [[ -z "$pane_uid" ]] ||
+    [[ "$(printf '%s\n' "$pane_receipt" | grep -c .)" != "1" ]]; then
+    echo "exit reconciliation $label host has no unique managed Pane receipt: $pane_receipt" >&2
+    exit 1
+  fi
+  if ! exitrec_pmx get windows --project "uid:$project_uid" -o uid | grep -Fxq "$window_uid" ||
+    ! exitrec_pmx get panes --project "uid:$project_uid" --window "uid:$window_uid" -o uid | grep -Fxq "$pane_uid"; then
+    echo "exit reconciliation $label tmux receipt is outside its exact Registry owner graph" >&2
+    exit 1
+  fi
+  printf -v "exitrec_${label}_session_id" '%s' "$session_id"
+  printf -v "exitrec_${label}_window_id" '%s' "$window_id"
+  printf -v "exitrec_${label}_window_uid" '%s' "$window_uid"
+  printf -v "exitrec_${label}_anchor_pane_id" '%s' "$pane_id"
+  printf -v "exitrec_${label}_anchor_pane_uid" '%s' "$pane_uid"
+}
+
+exitrec_capture_anchor app "$exitrec_socket_path" "$exitrec_app_project_uid"
+exitrec_capture_anchor standalone "$exitrec_standalone_path" "$exitrec_standalone_project_uid"
 
 # One document per observation, parsed out of a file, so a failed read is a
 # visible empty document rather than a pipeline whose exit status the last stage
@@ -3108,11 +3314,24 @@ exitrec_doc_exists() {
   [[ -s "$exitrec_root/doc.json" ]]
 }
 
-# The reconciliation is driven through the installed public mutation route on the
-# exact socket. Reading is a separate call so the read/write split stays visible:
-# nothing below reconciles as a side effect of asking a question.
+# Reconciliation preserves each host's declared authority: the app server uses
+# its verified logical marker route, while standalone always uses the queried,
+# root-contained physical socket. Reading is a separate call so the read/write
+# split stays visible.
 exitrec_reconcile() {
-  exitrec_pmx reconcile resources --socket "$1" -o json >"$exitrec_root/reconcile-run.json"
+  local host="$1"
+  case "$host" in
+    app-owned)
+      exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json >"$exitrec_root/reconcile-run.json"
+      ;;
+    standalone)
+      exitrec_pmx reconcile resources --socket-path "$exitrec_standalone_path" -o json >"$exitrec_root/reconcile-run.json"
+      ;;
+    *)
+      echo "unknown exit reconciliation host class: $host" >&2
+      return 2
+      ;;
+  esac
 }
 
 exitrec_await_journal_receipt() {
@@ -3165,8 +3384,8 @@ exitrec_agent_case() {
   local label="$1" provider="$2" want_phase="$3" want_class="$4" script="$5"
   local agent_uid pane_ref got_phase got_class got_source got_reason
   printf 'sleep 0.5\n%s\n' "$script" >"$exitrec_root/stub-script"
-  agent_uid="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
-    create agent --provider "$provider" --project evidence -o uid)"
+  agent_uid="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
+    create agent --provider "$provider" --project "uid:$exitrec_app_project_uid" -o uid)"
   if [[ -z "$agent_uid" ]]; then
     echo "exit reconciliation case $label created no Agent" >&2
     exit 1
@@ -3198,7 +3417,7 @@ exitrec_agent_case() {
   exitrec_await_journal_receipt "$pane_ref" "$want_class"
   exitrec_absorb_receipts
   for _ in $(seq 1 100); do
-    exitrec_reconcile "$exitrec_socket"
+    exitrec_reconcile app-owned
     exitrec_doc agent "$agent_uid"
     if [[ "$(exitrec_termination_field classification)" == "$want_class" ]]; then
       break
@@ -3241,7 +3460,7 @@ exitrec_agent_case() {
   # A repeat reconciliation of the same disappearance must change nothing.
   local before after
   before="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
-  exitrec_reconcile "$exitrec_socket"
+  exitrec_reconcile app-owned
   after="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
   if [[ "$before" != "$after" ]]; then
     echo "exit reconciliation case $label rewrote the registry on a repeat pass" >&2
@@ -3258,8 +3477,8 @@ exitrec_agent_case signal-death antigravity Failed abnormal 'kill -TERM $$; slee
 # supervisor reaps SIGHUP and the append journal converges to killed/supervisor;
 # the Agent releases its binding while the logical Pane row remains queryable.
 printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
-exitrec_external_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
-  create agent --provider claude --project evidence -o uid)"
+exitrec_external_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
+  create agent --provider claude --project "uid:$exitrec_app_project_uid" -o uid)"
 exitrec_doc agent "$exitrec_external_agent"
 exitrec_external_pane="$(exitrec_field paneRef)"
 exitrec_external_pane_id="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid} #{pane_id}' \
@@ -3272,7 +3491,7 @@ exitrec_tmux "$exitrec_socket" kill-pane -t "$exitrec_external_pane_id"
 exitrec_await_journal_receipt "$exitrec_external_pane" killed
 exitrec_absorb_receipts
 for _ in $(seq 1 100); do
-  exitrec_reconcile "$exitrec_socket"
+  exitrec_reconcile app-owned
   exitrec_doc agent "$exitrec_external_agent"
   if [[ "$(exitrec_termination_field classification)" == "killed" &&
         "$(exitrec_termination_field source)" == "supervisor" ]]; then
@@ -3302,7 +3521,7 @@ if [[ "$(exitrec_termination_field classification)" != "killed" ||
   exit 1
 fi
 exitrec_external_before="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
-exitrec_reconcile "$exitrec_socket"
+exitrec_reconcile app-owned
 exitrec_external_after="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
 if [[ "$exitrec_external_before" != "$exitrec_external_after" ]]; then
   echo "an external kill rewrote the registry on a repeat pass" >&2
@@ -3315,8 +3534,8 @@ echo ">> exit reconciliation external kill agent=$exitrec_external_agent phase=$
 # converge on `unknown` -- never on `normal`, which would claim a clean exit
 # nobody observed -- and the Agent must stay resumable.
 printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
-exitrec_sigkill_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
-  create agent --provider claude --project evidence -o uid)"
+exitrec_sigkill_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
+  create agent --provider claude --project "uid:$exitrec_app_project_uid" -o uid)"
 exitrec_doc agent "$exitrec_sigkill_agent"
 exitrec_sigkill_pane="$(exitrec_field paneRef)"
 exitrec_sigkill_pid="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid} #{pane_pid}' \
@@ -3331,7 +3550,7 @@ for _ in $(seq 1 100); do
     | grep -qx "$exitrec_sigkill_pane" || break
   sleep 0.1
 done
-exitrec_reconcile "$exitrec_socket"
+exitrec_reconcile app-owned
 exitrec_doc agent "$exitrec_sigkill_agent"
 if [[ "$(exitrec_field phase)" != "Offline" ]]; then
   echo "a SIGKILLed supervisor left phase=$(exitrec_field phase), want Offline" >&2
@@ -3352,8 +3571,13 @@ echo ">> exit reconciliation supervisor SIGKILL agent=$exitrec_sigkill_agent cla
 # A shell Pane's runtime loss without the exact event keeps the logical Pane.
 # pane-exited remains isolated from the explicit-reconcile cases above; restore
 # the generated hook verbatim after this final absence assertion.
-exitrec_shell_pane="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" \
-  create pane --project evidence -o uid -- sh -c 'sleep 0.5; exit 0')"
+exitrec_shell_release="$exitrec_root/release-shell-pane"
+rm -f "$exitrec_shell_release"
+# shellcheck disable=SC2016 # $1 expands inside the managed child shell.
+exitrec_shell_pane="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
+  create pane --project "uid:$exitrec_app_project_uid" -o uid -- \
+  sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; exit 0' sh "$exitrec_shell_release")"
+touch "$exitrec_shell_release"
 for _ in $(seq 1 100); do
   exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
     | grep -qx "$exitrec_shell_pane" || break
@@ -3361,7 +3585,7 @@ for _ in $(seq 1 100); do
 done
 exitrec_await_journal_receipt "$exitrec_shell_pane" normal
 exitrec_absorb_receipts
-exitrec_reconcile "$exitrec_socket"
+exitrec_reconcile app-owned
 if ! exitrec_doc_exists pane "$exitrec_shell_pane"; then
   echo "a shell Pane's runtime loss deleted the logical Pane $exitrec_shell_pane" >&2
   exit 1
@@ -3405,15 +3629,18 @@ echo ">> exit reconciliation read projection write-free"
 # server then answers honestly-empty, every managed Pane converges on `unknown`,
 # and nothing is started to fill the gap.
 exitrec_restart_case() {
-  local label="$1" socket="$2" socket_path="$3" server_pid="$4" project="$5"
-  local pane_uid
-  pane_uid="$(exitrec_pmx_inside "$socket_path" "$server_pid" \
-    create pane --project "$project" -o uid -- sleep 600)"
+  local label="$1" socket="$2" socket_path="$3" server_pid="$4" anchor_pane="$5" project_uid="$6"
+  local pane_uid before_source before_observed
+  pane_uid="$(exitrec_pmx_inside "$socket_path" "$server_pid" "$anchor_pane" \
+    create pane --project "uid:$project_uid" -o uid -- sleep 600)"
   if [[ -z "$pane_uid" ]]; then
     echo "restart case $label created no Pane" >&2
     exit 1
   fi
-  exitrec_reconcile "$socket"
+  exitrec_reconcile "$label"
+  exitrec_doc pane "$pane_uid"
+  before_source="$(exitrec_termination_field source)"
+  before_observed="$(exitrec_termination_field observedAt)"
 
   env -u TMUX -u TMUX_PANE "$exitrec_real_tmux" -S "$socket_path" kill-server >/dev/null 2>&1 || true
   # The whole server is gone, so the mirrored-uid observation *fails* rather than
@@ -3426,22 +3653,40 @@ exitrec_restart_case() {
   # real `killed signal=HUP` receipt -- which is the transport working, not the
   # reconciliation guessing. The precise fail-closed property is that nothing with
   # `source: reconcile` was filed against an unreadable host.
-  exitrec_pmx reconcile resources --socket "$socket" -o json \
-    >"$exitrec_root/reconcile-lost-$label.json" 2>"$exitrec_root/reconcile-lost-$label.err" || true
+  case "$label" in
+    app-owned)
+      exitrec_pmx reconcile resources --socket "$socket" -o json \
+        >"$exitrec_root/reconcile-lost-$label.json" 2>"$exitrec_root/reconcile-lost-$label.err" || true
+      ;;
+    standalone)
+      exitrec_pmx reconcile resources --socket-path "$socket_path" -o json \
+        >"$exitrec_root/reconcile-lost-$label.json" 2>"$exitrec_root/reconcile-lost-$label.err" || true
+      ;;
+  esac
   if ! exitrec_doc_exists pane "$pane_uid"; then
     echo "restart case $label deleted $pane_uid against an unreadable server" >&2
     exit 1
   fi
   exitrec_doc pane "$pane_uid"
   if [[ "$(exitrec_termination_field source)" == "reconcile" ]]; then
-    echo "restart case $label filed reconciler evidence against an unreadable server" >&2
-    cat "$exitrec_root/doc.json" >&2
-    exit 1
+    if [[ "$before_source" != "reconcile" || "$(exitrec_termination_field observedAt)" != "$before_observed" ]]; then
+      echo "restart case $label filed new reconciler evidence against an unreadable server" >&2
+      cat "$exitrec_root/doc.json" >&2
+      exit 1
+    fi
   fi
 
   # Restart the same socket. The observation is now readable and honestly empty.
   exitrec_tmux "$socket" new-session -d -s "restarted-$label" -n main sleep 600
-  exitrec_reconcile "$socket"
+  if [[ "$(exitrec_tmux "$socket" display-message -p -F '#{socket_path}')" != "$socket_path" ]]; then
+    echo "restart case $label did not recreate the exact socket path $socket_path" >&2
+    exit 1
+  fi
+  if [[ "$label" == "app-owned" ]]; then
+    exitrec_exact_tmux "$socket_path" set-option -gq @projmux_app 1
+    exitrec_exact_tmux "$socket_path" set-option -gq @projmux_socket_name "$socket"
+  fi
+  exitrec_reconcile "$label"
   if ! exitrec_doc_exists pane "$pane_uid"; then
     echo "restart case $label deleted the logical Pane $pane_uid" >&2
     exit 1
@@ -3464,9 +3709,9 @@ exitrec_restart_case() {
   # made, whose pane carries no mirrored uid. The reconciliation observed a
   # registry full of offline Panes and materialized not one of them -- an
   # observation is not an activation authority.
-  if [[ "$(exitrec_tmux "$socket" list-panes -a -F '#{@projmux_pane_uid}' | grep -c . || true)" != "0" ]]; then
+  if [[ "$(exitrec_exact_tmux "$socket_path" list-panes -a -F '#{@projmux_pane_uid}' | grep -c . || true)" != "0" ]]; then
     echo "restart case $label materialized panes on the restarted server:" >&2
-    exitrec_tmux "$socket" list-panes -a -F '#{pane_id} #{@projmux_pane_uid}' >&2
+    exitrec_exact_tmux "$socket_path" list-panes -a -F '#{pane_id} #{@projmux_pane_uid}' >&2
     exit 1
   fi
   echo ">> exit reconciliation restart $label pane=$pane_uid class=$(exitrec_termination_field classification) no-autostart"
@@ -3474,9 +3719,9 @@ exitrec_restart_case() {
 
 # Final arguments remain Registry Project selectors, not tmux session names.
 exitrec_restart_case app-owned "$exitrec_socket" "$exitrec_socket_path" \
-  "$exitrec_server_pid" evidence
+  "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" "$exitrec_app_project_uid"
 exitrec_restart_case standalone "$exitrec_standalone_socket" "$exitrec_standalone_path" \
-  "$exitrec_standalone_pid" standalone
+  "$exitrec_standalone_pid" "$exitrec_standalone_anchor_pane_id" "$exitrec_standalone_project_uid"
 
 # Sibling containment. The sibling server carries a pane whose mirrored uid is one
 # this Registry owns, and reuses the same `%N` handle space. It must be neither
@@ -3486,7 +3731,7 @@ exitrec_sibling_tmux set-option -t sibling -q @projmux_project_path "$exitrec_ro
 exitrec_sibling_pane_id="$(exitrec_sibling_tmux list-panes -a -F '#{pane_id}' | head -n 1)"
 exitrec_sibling_tmux set-option -p -t "$exitrec_sibling_pane_id" -q @projmux_pane_uid "$exitrec_shell_pane"
 exitrec_sibling_before="$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_sibling_tmux list-panes -a -F '#{pane_id} #{@projmux_pane_uid}')"
-exitrec_reconcile "$exitrec_socket"
+exitrec_reconcile app-owned
 if [[ "$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_sibling_tmux list-panes -a -F '#{pane_id} #{@projmux_pane_uid}')" != "$exitrec_sibling_before" ]]; then
   echo "the sibling server changed during exit reconciliation" >&2
   exit 1

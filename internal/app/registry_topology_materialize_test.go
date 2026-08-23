@@ -50,6 +50,7 @@ func newTopologyMaterializeFixtureWithSessions(t *testing.T) (*resourceReconcile
 		t.Fatal(err)
 	}
 	server := newFakeTmux()
+	server.socketPath = "/tmp/fake-tmux/topology"
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00topology": server}}
 	sessions := &fakeSessionMaterializer{tmux: server}
 	command := &resourceReconcileCommand{
@@ -199,6 +200,7 @@ func TestRegistryTopologyMaterializationRejectsBlankSelectorValue(t *testing.T) 
 func TestRegistryTopologyMaterializationSocketPathOfflineIsHookSafetyRefusal(t *testing.T) {
 	command, store, server, runner, _, _ := newTopologyMaterializeFixture(t)
 	socketPath := t.TempDir() + "/exact.sock"
+	server.socketPath = socketPath
 	runner.servers["-S\x00"+socketPath] = server
 	preview, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket-path", socketPath, "--materialize-project", "beta", "-o", "json")
 	if err != nil {
@@ -237,6 +239,7 @@ func TestRegistryTopologyMaterializationSocketPathRepairsLiveSubsetAndIsolatesSi
 	runner.servers["-L\x00sibling"] = sibling
 	socketPath := t.TempDir() + "/live.sock"
 	runner.servers["-S\x00"+socketPath] = server
+	server.socketPath = socketPath
 	main := server.session("beta").windows[0]
 	if len(main.panes) != 2 {
 		t.Fatalf("seed panes=%d", len(main.panes))

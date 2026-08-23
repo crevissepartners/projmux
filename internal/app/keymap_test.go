@@ -459,7 +459,7 @@ keys = ["M-g"]
 		"M-f": "sessionizer",
 		"M-g": "session-popup",
 	} {
-		for _, want := range []string{"bind-key -n " + chord + " run-shell", "tmux popup-toggle --client #{client_tty} " + mode} {
+		for _, want := range []string{"bind-key -n " + chord + " run-shell", "tmux popup-toggle --client #{client_tty} --anchor #{pane_id} " + mode} {
 			if !strings.Contains(lines, want) {
 				t.Fatalf("tmux bind lines =\n%s\nwant %q", lines, want)
 			}

@@ -187,7 +187,7 @@ func TestAgentUsageLeafPersistenceLiveApplyAndParentPreservation(t *testing.T) {
 				return stateHome
 			}
 			if name == "TMUX" {
-				return "isolated-client"
+				return "/tmp/tmux-test/projmux,1,0"
 			}
 			return ""
 		},
@@ -196,6 +196,7 @@ func TestAgentUsageLeafPersistenceLiveApplyAndParentPreservation(t *testing.T) {
 			return nil
 		},
 	}
+	wireSettingsLiveTestRunner(cmd)
 	paths, err := config.Homes{HomeDir: home, ConfigHome: configHome, StateHome: stateHome}.Paths()
 	if err != nil {
 		t.Fatal(err)
@@ -447,7 +448,7 @@ func TestStatusbarHUDSettingsPersistenceLiveApplyAndProducerIsolation(t *testing
 			case "XDG_STATE_HOME":
 				return stateHome
 			case "TMUX":
-				return "isolated-client"
+				return "/tmp/tmux-test/projmux,1,0"
 			default:
 				return ""
 			}
@@ -457,6 +458,7 @@ func TestStatusbarHUDSettingsPersistenceLiveApplyAndProducerIsolation(t *testing
 			return nil
 		},
 	}
+	wireSettingsLiveTestRunner(cmd)
 
 	if err := cmd.setStatusbarHUDVisibility(statusbarHUDNotifications, config.StatusbarVisibilityOff); err != nil {
 		t.Fatalf("hide Notifications HUD: %v", err)

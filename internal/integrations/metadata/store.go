@@ -62,10 +62,14 @@ const (
 )
 
 var (
-	defaultLockMaxAttempts = 200
-	defaultLockBaseDelay   = 2 * time.Millisecond
-	defaultLockMaxDelay    = 50 * time.Millisecond
-	defaultLockStaleAfter  = 30 * time.Second
+	// Runtime mutation plans deliberately keep exact guard, execute, and
+	// reobserve work inside one Registry transaction. Allow an eight-writer
+	// create burst to serialize without crossing the 30s stale-break boundary.
+	defaultLockMaxAttempts         = 400
+	defaultRecoveryLockMaxAttempts = 200
+	defaultLockBaseDelay           = 2 * time.Millisecond
+	defaultLockMaxDelay            = 50 * time.Millisecond
+	defaultLockStaleAfter          = 30 * time.Second
 	// defaultRecoveryRetention is how many recovery copies survive a write.
 	// The copies exist to undo the most recent damaging commits, not to be an
 	// archive, so the bound is small and enforced on every semantic write.
@@ -1190,7 +1194,7 @@ func (s *Store) withRecoveryLock(fn func() error) error {
 
 func (s *Store) acquireRecoveryLock() error {
 	delay := defaultLockBaseDelay
-	for range defaultLockMaxAttempts {
+	for range defaultRecoveryLockMaxAttempts {
 		f, err := os.OpenFile(s.repairLockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, localstate.PrivateFileMode)
 		if err == nil {
 			_, _ = fmt.Fprintf(f, "pid=%d\n", os.Getpid())
@@ -1211,7 +1215,7 @@ func (s *Store) acquireRecoveryLock() error {
 			}
 		}
 	}
-	return fmt.Errorf("metadata: acquire recovery lock: exhausted %d attempts on %s", defaultLockMaxAttempts, s.repairLockPath)
+	return fmt.Errorf("metadata: acquire recovery lock: exhausted %d attempts on %s", defaultRecoveryLockMaxAttempts, s.repairLockPath)
 }
 
 func (s *Store) tryBreakStaleRecoveryLock() bool {

@@ -566,17 +566,22 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 		pass.awaitingPaneExit = exits.awaitingPaneExit
 		return pass, nil
 	}
-	routed := explicitTmuxRunner{runner: r.runner, target: target}
+	route, err := resolveControllerRuntimeMutationRoute(ctx, r.runner, target, func(string) string { return "" })
+	if err != nil {
+		return pass, err
+	}
+	routed := explicitTmuxRunner{runner: r.runner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
 	newReconciler := r.newReconciler
 	if newReconciler == nil {
-		newReconciler = newRegistryReconciler
+		reconciler := newRegistryReconcilerWithRoute(routed, inttmux.NewClient(routed), route)
+		newReconciler = func(tmuxCommandRunner, sessionLister) *registryReconciler { return reconciler }
 	}
 	reconciler := newReconciler(routed, inttmux.NewClient(routed))
 	// Hook convergence is an automatic recovery trigger. Clear exact D3
 	// orphan mirrors through the same closed L8 authority cell used by public
 	// reconcile before the legacy binding walk sees them; then keep D2/D3
 	// import disabled in that walk.
-	recovered, err := runLockedAutomaticMirrorRecovery(ctx, r.store, r.runner, target, controller.RecoveryHookConverge)
+	recovered, err := runLockedAutomaticMirrorRecovery(ctx, r.store, r.runner, target, controller.RecoveryHookConverge, route)
 	if err != nil {
 		return pass, err
 	}
@@ -691,7 +696,7 @@ func (r *controllerTriggerRunner) convergeControlTargets(ctx context.Context, ta
 // bytes used by the classifier. The callback never changes those bytes, so the
 // convergent store remains a Registry-write no-op.
 func runLockedAutomaticMirrorRecovery(ctx context.Context, store *resourceStore, runner tmuxCommandRunner,
-	target explicitTmuxTarget, trigger controller.RecoveryTrigger) (int, error) {
+	target explicitTmuxTarget, trigger controller.RecoveryTrigger, routeHint ...runtimeMutationRoute) (int, error) {
 	if store == nil || store.updateConvergent == nil {
 		return 0, errors.New("automatic recovery write store is not configured")
 	}
@@ -699,7 +704,7 @@ func runLockedAutomaticMirrorRecovery(ctx context.Context, store *resourceStore,
 	_, _, err := store.updateConvergent(func(working *coremetadata.Registry) error {
 		before := working.Clone()
 		var recoveryErr error
-		recovered, recoveryErr = runAutomaticMirrorRecovery(ctx, runner, target, working.Clone(), trigger)
+		recovered, recoveryErr = runAutomaticMirrorRecovery(ctx, runner, target, working.Clone(), trigger, routeHint...)
 		if recoveryErr != nil {
 			return recoveryErr
 		}
@@ -719,7 +724,7 @@ func verifyAutomaticRecoveryRegistryUnchanged(before, after coremetadata.Registr
 }
 
 func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, target explicitTmuxTarget,
-	registry coremetadata.Registry, trigger controller.RecoveryTrigger) (int, error) {
+	registry coremetadata.Registry, trigger controller.RecoveryTrigger, routeHint ...runtimeMutationRoute) (int, error) {
 	if !trigger.Valid() {
 		return 0, fmt.Errorf("automatic recovery trigger %q is outside the closed authority table", trigger)
 	}
@@ -731,8 +736,22 @@ func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, t
 	if err := requireAutomaticRecoveryPaths(pathName); err != nil {
 		return 0, err
 	}
-	transport := controllerTransport(target)
-	inventory := intmetadata.NewInventoryObserver(runner, transport).Observe(ctx)
+	var route runtimeMutationRoute
+	if len(routeHint) > 0 {
+		route = routeHint[0]
+		if err := guardResolvedRuntimeMutationRoute(ctx, runner, route); err != nil {
+			return 0, err
+		}
+	} else {
+		var err error
+		route, err = resolveControllerRuntimeMutationRoute(ctx, runner, target, func(string) string { return "" })
+		if err != nil {
+			return 0, err
+		}
+	}
+	exactTarget := explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}
+	inventory := intmetadata.NewInventoryObserver(runner, controllerTransport(exactTarget)).Observe(ctx)
+	inventory.Transport = controllerTransport(target)
 	graph := resourcegraph.Resolve(registry, inventory)
 	candidates := controllerRecoveryCandidates(graph, trigger)
 	if len(candidates) == 0 {
@@ -744,15 +763,12 @@ func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, t
 	for _, action := range plan.Refusals() {
 		return 0, fmt.Errorf("automatic recovery refused %s: %s", action.Key, action.Reason)
 	}
-	kernel := &resourceControllerKernel{target: target, runner: runner}
+	kernel := &resourceControllerKernel{target: target, runner: runner, route: &route}
 	if err := kernel.guardPlan(ctx, "", plan.Writes()); err != nil {
 		return 0, err
 	}
-	routed := explicitTmuxRunner{runner: runner, target: target}
-	for _, action := range plan.Writes() {
-		if _, err := routed.Run(ctx, "tmux", action.Args...); err != nil {
-			return 0, fmt.Errorf("execute automatic recovery %s: %w", action.Key, err)
-		}
+	if err := executeControllerRuntimeMutations(ctx, runner, route, plan.Writes()); err != nil {
+		return 0, fmt.Errorf("execute automatic recovery: %w", err)
 	}
 	return len(graph.RuntimeOfClass(resourcegraph.ClassRecoverable)), nil
 }

@@ -45,14 +45,15 @@ func TestV0101NormalUpdaterHandoffConvergesThroughCandidateApply(t *testing.T) {
 	t.Setenv("PROJMUX_CWD", "")
 	paths := writeV0101ManagedFileFixture(t, home)
 	socket := "projmux"
+	physical := "/tmp/tmux-1000/" + socket
 	runner := &recordingTmuxRunner{outputs: map[string]string{
-		recordedTmuxCallKey("tmux", "-L", socket, "list-sessions", "-F", "#{session_id}"):           "$1\n",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-hooks", "-g", tmuxBellHookName):             "alert-bell[0] " + legacyTmuxBellHookCommand + "\n",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", "allow-passthrough"):      "off\n",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", "monitor-bell"):           "off\n",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", "bell-action"):            "none\n",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", tmuxSequenceRootsOption):  "",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", tmuxSequenceTablesOption): "",
+		recordedTmuxCallKey("tmux", "-S", physical, "list-sessions", "-F", "#{session_id}"):           "$1\n",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-hooks", "-g", tmuxBellHookName):             "alert-bell[0] " + legacyTmuxBellHookCommand + "\n",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-options", "-gqv", "allow-passthrough"):      "off\n",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-options", "-gqv", "monitor-bell"):           "off\n",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-options", "-gqv", "bell-action"):            "none\n",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-options", "-gqv", tmuxSequenceRootsOption):  "",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-options", "-gqv", tmuxSequenceTablesOption): "",
 	}}
 	cmd := managedIngestApplyFixture(home, runner)
 	cmd.triggerRunner = &recordingTriggering{}
@@ -193,14 +194,15 @@ func TestTmuxApplyNoReloadMigratesManagedFilesWithoutLiveCalls(t *testing.T) {
 func TestTmuxApplyMigratesBellOnlyThroughExactSocket(t *testing.T) {
 	home := t.TempDir()
 	socket := "phase0-exact-socket"
+	physical := "/tmp/tmux-1000/" + socket
 	runner := &recordingTmuxRunner{outputs: map[string]string{
-		recordedTmuxCallKey("tmux", "-L", socket, "list-sessions", "-F", "#{session_id}"):           "$1\n",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-hooks", "-g", tmuxBellHookName):             "alert-bell[0] run-shell -b 'echo unmanaged'\nalert-bell[1] " + legacyTmuxBellHookCommand + "\n",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", "allow-passthrough"):      "on\n",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", "monitor-bell"):           "on\n",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", "bell-action"):            "other\n",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", tmuxSequenceRootsOption):  "",
-		recordedTmuxCallKey("tmux", "-L", socket, "show-options", "-gqv", tmuxSequenceTablesOption): "",
+		recordedTmuxCallKey("tmux", "-S", physical, "list-sessions", "-F", "#{session_id}"):           "$1\n",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-hooks", "-g", tmuxBellHookName):             "alert-bell[0] run-shell -b 'echo unmanaged'\nalert-bell[1] " + legacyTmuxBellHookCommand + "\n",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-options", "-gqv", "allow-passthrough"):      "on\n",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-options", "-gqv", "monitor-bell"):           "on\n",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-options", "-gqv", "bell-action"):            "other\n",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-options", "-gqv", tmuxSequenceRootsOption):  "",
+		recordedTmuxCallKey("tmux", "-S", physical, "show-options", "-gqv", tmuxSequenceTablesOption): "",
 	}}
 	cmd := managedIngestApplyFixture(home, runner)
 	cmd.triggerRunner = &recordingTriggering{}
@@ -211,7 +213,7 @@ func TestTmuxApplyMigratesBellOnlyThroughExactSocket(t *testing.T) {
 	for _, call := range runner.calls {
 		if slices.Contains(call.args, "set-hook") {
 			bellWrites = append(bellWrites, call)
-			if len(call.args) < 3 || !reflect.DeepEqual(call.args[:2], []string{"-L", socket}) {
+			if len(call.args) < 3 || !reflect.DeepEqual(call.args[:2], []string{"-S", physical}) {
 				t.Fatalf("bell mutation escaped exact socket: %#v", call)
 			}
 		}
@@ -235,7 +237,7 @@ func TestTmuxApplyBellFailureRollsBackEarlierProviderFilesAndLiveState(t *testin
 	cmd := managedIngestApplyFixture(home, runner)
 	err := cmd.runApply([]string{"--config", filepath.Join(home, "tmux.conf"), "--socket", runner.socket}, &bytes.Buffer{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "injected fifth bell mutation") {
-		t.Fatalf("apply error = %v", err)
+		t.Fatalf("apply error = %v (bell mutations=%d)", err, runner.mutations)
 	}
 	if got := readCodexTestFile(t, codexPath); got != originalCodex {
 		t.Fatalf("provider file was not rolled back after bell failure:\n%s", got)
@@ -295,11 +297,23 @@ type failingBellApplyRunner struct {
 }
 
 func (r *failingBellApplyRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
-	if name != "tmux" || len(args) < 3 || !reflect.DeepEqual(args[:2], []string{"-L", r.socket}) {
+	if name != "tmux" || len(args) < 3 {
+		return nil, fmt.Errorf("command escaped exact socket: %s %v", name, args)
+	}
+	physical := "/tmp/tmux-1000/" + r.socket
+	if reflect.DeepEqual(args[:2], []string{"-L", r.socket}) && len(args) == 6 && args[2] == "display-message" && args[5] == "#{socket_path}" {
+		return []byte(physical + "\n"), nil
+	}
+	if !reflect.DeepEqual(args[:2], []string{"-S", physical}) {
 		return nil, fmt.Errorf("command escaped exact socket: %s %v", name, args)
 	}
 	args = args[2:]
 	switch args[0] {
+	case "display-message":
+		if args[len(args)-1] == "#{pid}" {
+			return []byte("4242\n"), nil
+		}
+		return []byte(physical + "\n"), nil
 	case "list-sessions":
 		return []byte("$1\n"), nil
 	case "show-options":

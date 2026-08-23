@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -110,9 +112,13 @@ func (p paneLiveDeletePlan) hasSelfTarget() bool {
 }
 
 type tmuxPaneDeleteRuntime struct {
-	runner tmuxCommandRunner
-	target explicitTmuxTarget
-	getenv func(string) string
+	runner                tmuxCommandRunner
+	target                explicitTmuxTarget
+	expectedSocketPath    string
+	expectedLogicalSocket string
+	routeAuthority        *runtimeMutationRouteAuthority
+	getenv                func(string) string
+	routeAnchor           string
 }
 
 // newTmuxPaneDeleteRuntime builds the live half with no server bound yet.
@@ -130,6 +136,13 @@ func (r *tmuxPaneDeleteRuntime) useExactTarget(target explicitTmuxTarget) {
 		return
 	}
 	r.target = target
+	r.expectedSocketPath = ""
+	r.expectedLogicalSocket = ""
+	r.routeAuthority = nil
+}
+
+func (r *tmuxPaneDeleteRuntime) useRouteAnchor(paneID string) {
+	r.routeAnchor = exactTmuxHandle(strings.TrimSpace(paneID), "%")
 }
 
 type livePaneDeleteRow struct {
@@ -143,7 +156,161 @@ type livePaneDeleteRow struct {
 }
 
 func (r *tmuxPaneDeleteRuntime) routed() explicitTmuxRunner {
+	if r.expectedSocketPath != "" {
+		return explicitTmuxRunner{runner: r.runner, target: explicitTmuxTarget{flag: "-S", value: r.expectedSocketPath}}
+	}
 	return explicitTmuxRunner{runner: r.runner, target: r.target}
+}
+
+func (r *tmuxPaneDeleteRuntime) mutationAction(kind runtimeMutationVerb, target paneLiveDeleteTarget, guard, _ string, args ...string) plannedRuntimeMutation {
+	logicalRoute := r.target.flag + "=" + r.target.value
+	action := newRuntimeMutation(1, kind, runtimeMutationTarget{
+		Socket: logicalRoute, PhysicalSocket: printableRuntimeMutationSocket(r.expectedSocketPath),
+		RouteAuthority: r.routeAuthority.printable(),
+		Kind:           "pane",
+		ID:             target.PaneID,
+		UID:            target.PaneUID,
+		Parent:         target.SessionID + "/" + target.WindowID + "/" + target.RootUID,
+	})
+	bindRuntimeMutationGuard(&action, guard)
+	action.Operands = slices.Clone(args)
+	return action
+}
+
+func (r *tmuxPaneDeleteRuntime) guardPrintedMutationRoute(ctx context.Context, action plannedRuntimeMutation) error {
+	return guardPrintedRuntimeMutationRoute(ctx, r.runner, runtimeMutationRoute{
+		target: r.target, expectedSocketPath: r.expectedSocketPath,
+		socketName: r.expectedLogicalSocket, authority: r.routeAuthority,
+	}, action)
+}
+
+func (r *tmuxPaneDeleteRuntime) mutationSteps(
+	targets []paneLiveDeleteTarget,
+	verb runtimeMutationVerb,
+	guardMirror func(paneLiveDeleteTarget) string,
+	effectMirror func(paneLiveDeleteTarget) string,
+	args func(paneLiveDeleteTarget) []string,
+	undo func(context.Context, paneLiveDeleteTarget) error,
+	applied *int,
+) []runtimeMutationStep {
+	steps := make([]runtimeMutationStep, 0, len(targets))
+	for i, target := range targets {
+		attempted := false
+		guardUID := guardMirror(target)
+		effectUID := effectMirror(target)
+		guardDetail := "socket=" + r.target.flag + "=" + r.target.value +
+			";session=" + target.SessionID + "/" + target.SessionName +
+			";window=" + target.WindowID + "/" + target.WindowUID +
+			";pane=" + target.PaneID + "/" + guardUID +
+			";root=" + string(target.RootKind) + "/" + target.RootUID
+		action := r.mutationAction(verb, target, guardDetail, "", args(target)...)
+		if verb == mutationQueuePaneKill {
+			action.Target.UID = effectUID
+			action.Queue = &runtimeMutationQueuedKill{PhysicalSocket: r.expectedSocketPath, LogicalSocket: r.expectedLogicalSocket,
+				RouteAuthority: action.Target.RouteAuthority,
+				ExpectedUID:    effectUID, SessionID: target.SessionID, WindowID: target.WindowID}
+			action.Queue.Marker = runtimeMutationQueueMarker(action)
+			bindRuntimeMutationGuard(&action, guardDetail)
+		}
+		action.Order = i + 1
+		steps = append(steps, runtimeMutationStep{
+			Action: action,
+			TargetRouteGuard: func(ctx context.Context) error {
+				return r.guardPrintedMutationRoute(ctx, action)
+			},
+			Reobserve: func(ctx context.Context) (bool, error) {
+				if verb == mutationQueuePaneKill {
+					return observeQueuedRuntimeMutationEffect(ctx,
+						func(ctx context.Context) (bool, error) {
+							return r.observeMutationEffect(ctx, target, effectUID, true, attempted)
+						},
+						func(ctx context.Context) (bool, error) {
+							return observeRuntimeMutationQueueMarker(ctx, r.runner, action)
+						})
+				}
+				return r.observeMutationEffect(ctx, target, effectUID, verb == mutationKillPane, attempted)
+			},
+			Guard: func(ctx context.Context) error {
+				if filepath.Clean(action.Target.PhysicalSocket) != filepath.Clean(r.expectedSocketPath) {
+					return errors.New("delete pane: printable physical socket disagrees with bound execution route")
+				}
+				return r.revalidateMutationTarget(ctx, target, guardUID)
+			},
+			Apply: func(ctx context.Context) error {
+				if _, err := runRuntimeMutationCommand(ctx, r.routed(), action); err != nil {
+					return err
+				}
+				attempted = true
+				if applied != nil {
+					*applied++
+				}
+				return nil
+			},
+		})
+		if verb == mutationQueuePaneKill {
+			steps[len(steps)-1].Undo = func(ctx context.Context) error {
+				return clearRuntimeMutationQueueMarker(ctx, r.runner, action)
+			}
+		}
+		if undo != nil {
+			steps[len(steps)-1].Undo = func(ctx context.Context) error { return undo(ctx, target) }
+		}
+	}
+	return steps
+}
+
+func (r *tmuxPaneDeleteRuntime) observeMutationEffect(ctx context.Context, target paneLiveDeleteTarget, wantMirror string, absent, allowNoServerAbsent bool) (bool, error) {
+	if err := r.guardSocketIdentity(ctx); err != nil {
+		if absent && allowNoServerAbsent && inttmux.IsNoServerFailure(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	out, err := r.routed().Run(ctx, "tmux", "list-panes", "-a", "-F", tmuxRowFormat(
+		"#{session_id}", "#{window_id}", "#{pane_id}", "#{"+tmuxopts.PaneUID+"}"))
+	if err != nil {
+		return false, err
+	}
+	for _, row := range splitTmuxRows(string(out), 4) {
+		if row[2] != target.PaneID {
+			continue
+		}
+		if absent {
+			return false, nil
+		}
+		return row[0] == target.SessionID && row[1] == target.WindowID && row[3] == wantMirror, nil
+	}
+	return absent, nil
+}
+
+func (r *tmuxPaneDeleteRuntime) revalidateMutationTarget(ctx context.Context, target paneLiveDeleteTarget, wantMirror string) error {
+	if err := r.guardSocketIdentity(ctx); err != nil {
+		return err
+	}
+	format := tmuxRowFormat(
+		"#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
+		"#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.WindowUID+"}", "#{"+tmuxopts.PaneUID+"}",
+	)
+	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-t", target.PaneID, "-F", format)
+	if err != nil {
+		return tmuxError("revalidate exact live Pane %s on %s %s: %v", target.PaneID, r.target.flag, r.target.value, err)
+	}
+	rows := splitTmuxRows(strings.ReplaceAll(string(out), tmuxRowSepFormat, tmuxRowSep), 7)
+	if len(rows) != 1 {
+		return fmt.Errorf("exact live Pane %s returned malformed containment evidence", target.PaneID)
+	}
+	row := rows[0]
+	if row[0] != target.SessionID || row[1] != target.SessionName || row[2] != target.WindowID ||
+		row[3] != target.PaneID || row[5] != target.WindowUID || row[6] != wantMirror {
+		return fmt.Errorf("exact live Pane %s drifted: got session=%s/%q window=%s/%q pane=%s uid=%q, want session=%s/%q window=%s/%q pane=%s uid=%q",
+			target.PaneID, row[0], row[1], row[2], row[5], row[3], row[6],
+			target.SessionID, target.SessionName, target.WindowID, target.WindowUID, target.PaneID, wantMirror)
+	}
+	root := deleteRootOwner{Kind: target.RootKind, UID: target.RootUID, Session: target.SessionName}
+	if err := root.validateLiveSession("delete pane", "Pane", target.PaneID, target.PaneUID, row[4], row[1]); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (r *tmuxPaneDeleteRuntime) inventory(ctx context.Context) ([]livePaneDeleteRow, error) {
@@ -152,6 +319,9 @@ func (r *tmuxPaneDeleteRuntime) inventory(ctx context.Context) ([]livePaneDelete
 	}
 	if r.target.flag == "" || r.target.value == "" {
 		return nil, errors.New("delete pane: no exact tmux target is bound")
+	}
+	if err := r.observeSocketIdentity(ctx); err != nil {
+		return nil, err
 	}
 	format := tmuxRowFormat(
 		"#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
@@ -188,18 +358,91 @@ func (r *tmuxPaneDeleteRuntime) inventory(ctx context.Context) ([]livePaneDelete
 }
 
 func (r *tmuxPaneDeleteRuntime) exactSocketPath(ctx context.Context) (string, error) {
-	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
-	if err != nil {
+	if err := r.observeSocketIdentity(ctx); err != nil {
 		if inttmux.IsNoServerFailure(err) {
-			return "", fmt.Errorf("delete pane: exact tmux socket is unavailable (no-server); absence is not Registry deletion authority and nothing was changed")
+			return "", tmuxError("delete pane: exact tmux socket is unavailable (no-server); absence is not Registry deletion authority and nothing was changed: %v", err)
 		}
-		return "", tmuxError("delete pane: inspect exact tmux socket identity: %v", err)
+		return "", tmuxError("delete pane: exact tmux socket observation failed: %v", err)
 	}
-	path := strings.TrimSpace(string(out))
-	if path == "" {
+	if strings.TrimSpace(r.expectedSocketPath) == "" {
 		return "", errors.New("delete pane: exact tmux socket identity is empty; absence is not Registry deletion authority and nothing was changed")
 	}
-	return path, nil
+	return r.expectedSocketPath, nil
+}
+
+// observeSocketIdentity binds every read in this invocation to one immutable
+// physical socket without claiming mutation authority. Registry-only cleanup
+// of an exact durable Offline/MissingRuntime target is intentionally available
+// on a standalone tmux server, but it still requires a positive inventory from
+// this same physical socket and a second byte-identical preflight under lock.
+func (r *tmuxPaneDeleteRuntime) observeSocketIdentity(ctx context.Context) error {
+	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	if err != nil {
+		// Preserve the typed no-server carrier for the expected-absence effect
+		// observer. The command boundary flattens the eventual diagnostic; this
+		// internal guard must not erase evidence that the last Pane ended the
+		// server before post-effect reobservation.
+		return fmt.Errorf("delete pane: reobserve exact socket identity: %w", err)
+	}
+	observed := strings.TrimSpace(string(out))
+	if observed == "" {
+		return errors.New("delete pane: exact socket identity is empty")
+	}
+	if r.target.flag == "-S" && observed != r.target.value {
+		return fmt.Errorf("delete pane: exact socket drifted: observed %q, planned %q", observed, r.target.value)
+	}
+	if r.expectedSocketPath == "" {
+		r.expectedSocketPath = observed
+	}
+	if observed != r.expectedSocketPath {
+		return fmt.Errorf("delete pane: exact socket drifted: observed %q, planned %q", observed, r.expectedSocketPath)
+	}
+	return nil
+}
+
+// guardSocketIdentity upgrades the immutable observation route to live tmux
+// mutation authority. Every kill, tombstone, restore, and deferred queue step
+// calls this immediately before its write; a standalone/foreign server can
+// therefore authorize only the zero-tmux-write Registry cleanup above.
+func (r *tmuxPaneDeleteRuntime) guardSocketIdentity(ctx context.Context) error {
+	if err := r.observeSocketIdentity(ctx); err != nil {
+		return err
+	}
+	if r.routeAuthority == nil {
+		route, err := resolveExistingRuntimeMutationRouteWithAnchor(ctx, r.runner, r.target, r.getenv, r.routeAnchor)
+		if err != nil {
+			return fmt.Errorf("delete pane: %w", err)
+		}
+		if route.expectedSocketPath != r.expectedSocketPath || route.authority == nil {
+			return errors.New("delete pane: invocation server-generation authority drifted")
+		}
+		r.target = route.target
+		r.routeAuthority = route.authority
+		r.expectedLogicalSocket = route.socketName
+		if route.authority.Class == runtimeMutationRouteStandalone {
+			r.expectedLogicalSocket = ""
+		}
+	}
+	if r.routeAuthority != nil {
+		return guardResolvedRuntimeMutationRoute(ctx, r.runner, runtimeMutationRoute{
+			target: r.target, expectedSocketPath: r.expectedSocketPath,
+			socketName: r.expectedLogicalSocket, authority: r.routeAuthority,
+		})
+	}
+	if err := guardRuntimeMutationServerOwnership(ctx, r.routed(), r.target); err != nil {
+		return fmt.Errorf("delete pane: %w", err)
+	}
+	logical, err := r.routed().Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
+	if err != nil || strings.TrimSpace(string(logical)) == "" {
+		return errors.New("delete pane: exact app logical socket marker is unavailable")
+	}
+	if r.expectedLogicalSocket == "" {
+		r.expectedLogicalSocket = strings.TrimSpace(string(logical))
+	}
+	if strings.TrimSpace(string(logical)) != r.expectedLogicalSocket {
+		return errors.New("delete pane: app logical socket marker drifted")
+	}
+	return nil
 }
 
 type plannedPaneDelete struct {
@@ -383,6 +626,19 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 	if err != nil {
 		return paneLiveDeletePlan{}, err
 	}
+	standaloneEligible := plan.ExactUID && len(plan.Targets) > 0
+	for _, target := range plan.Targets {
+		_, eligible, targetErr := registryOnlyPaneTarget(registry, plan, target)
+		if targetErr != nil {
+			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: %w", strings.ToLower(string(plan.Kind)), targetErr)
+		}
+		standaloneEligible = standaloneEligible && eligible
+	}
+	if !standaloneEligible {
+		if err := r.guardSocketIdentity(ctx); err != nil {
+			return paneLiveDeletePlan{}, err
+		}
+	}
 	rows, err := r.inventory(ctx)
 	if err != nil {
 		return paneLiveDeletePlan{}, err
@@ -537,6 +793,11 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 			markedSession[target.SessionID] = true
 		}
 	}
+	if len(live.Targets) > 0 {
+		if err := r.guardSocketIdentity(ctx); err != nil {
+			return paneLiveDeletePlan{}, err
+		}
+	}
 	return live, nil
 }
 
@@ -569,7 +830,7 @@ func (r *tmuxPaneDeleteRuntime) currentInvocationPane(ctx context.Context) (stri
 }
 
 func (r *tmuxPaneDeleteRuntime) kill(ctx context.Context, target paneLiveDeleteTarget) error {
-	_, err := r.routed().Run(ctx, "tmux", "kill-pane", "-t", target.PaneID)
+	_, err := r.killAll(ctx, []paneLiveDeleteTarget{target})
 	if err != nil {
 		return tmuxError("delete pane: kill exact live Pane %s in Window %s session %s (%s): %v",
 			target.PaneID, target.WindowID, target.SessionName, target.SessionID, err)
@@ -577,65 +838,69 @@ func (r *tmuxPaneDeleteRuntime) kill(ctx context.Context, target paneLiveDeleteT
 	return nil
 }
 
-func (r *tmuxPaneDeleteRuntime) tombstoneSelfKill(ctx context.Context, targets []paneLiveDeleteTarget) error {
-	// Validate the entire set before changing any mirror. This runs under the
-	// Registry transaction lock and before its delete is committed, so failure
-	// can restore every earlier marker while all resource identities still exist.
-	for _, target := range targets {
-		out, err := r.routed().Run(ctx, "tmux", "show-options", "-pqv", "-t", target.PaneID, tmuxopts.PaneUID)
-		if err != nil {
-			return tmuxError("revalidate exact live Pane %s before self-target tombstone: %v", target.PaneID, err)
-		}
-		observed := strings.TrimSpace(string(out))
-		if observed != target.PaneUID {
-			if observed == "" {
-				observed = "<missing>"
-			}
-			return fmt.Errorf("delete pane: live Pane %s mirrors uid %q, want registry uid %q; no self-target tombstone was written and the Registry remains unchanged",
-				target.PaneID, observed, target.PaneUID)
-		}
+// killAll guards the complete exact target set before killing the first Pane.
+// The returned count lets the Registry transaction preserve evidence for the
+// exact prefix that was already removed if tmux fails part-way through.
+func (r *tmuxPaneDeleteRuntime) killAll(ctx context.Context, targets []paneLiveDeleteTarget) (int, error) {
+	applied := 0
+	steps := r.mutationSteps(targets, mutationKillPane,
+		func(target paneLiveDeleteTarget) string { return target.PaneUID },
+		func(target paneLiveDeleteTarget) string { return target.PaneUID },
+		func(target paneLiveDeleteTarget) []string { return []string{"-t", target.PaneID} },
+		nil, &applied)
+	if err := executeRuntimeMutationPlan(ctx, steps); err != nil {
+		return applied, err
 	}
-	for i, target := range targets {
-		if _, err := r.routed().Run(ctx, "tmux", "set-option", "-pq", "-t", target.PaneID,
-			tmuxopts.PaneUID, deletedPaneMirrorPrefix+target.PaneUID); err != nil {
-			marked := targets[:i]
-			if restoreErr := r.restoreSelfKill(ctx, marked); restoreErr != nil {
-				return fmt.Errorf("%w; rollback of earlier exact Pane tombstone(s) %s was incomplete: %v; Registry resources remain authoritative and the reported tombstone drift cannot be orphan-imported",
-					tmuxError("tombstone exact live Pane %s before Registry commit: %v", target.PaneID, err),
-					paneDeleteIDs(marked), restoreErr)
+	return applied, nil
+}
+
+func (r *tmuxPaneDeleteRuntime) tombstoneSelfKill(ctx context.Context, targets []paneLiveDeleteTarget) error {
+	applied := 0
+	undo := func(ctx context.Context, target paneLiveDeleteTarget) error {
+		want := deletedPaneMirrorPrefix + target.PaneUID
+		if err := r.revalidateMutationTarget(ctx, target, want); err != nil {
+			// A tmux command may fail either before or after applying its effect.
+			// If the original exact evidence still holds, there is no current-step
+			// effect to undo. Any third state is real drift and must fail closed.
+			if originalErr := r.revalidateMutationTarget(ctx, target, target.PaneUID); originalErr == nil {
+				return nil
+			} else {
+				return errors.Join(err, originalErr)
 			}
-			return fmt.Errorf("%w; earlier exact Pane tombstone(s) %s were restored and Registry resources remain unchanged",
-				tmuxError("tombstone exact live Pane %s before Registry commit: %v", target.PaneID, err),
-				paneDeleteIDs(marked))
 		}
+		action := r.mutationAction(mutationRestorePane, target,
+			"exact tombstoned Pane remains operation-owned", "Pane UID mirror restored",
+			"-pq", "-t", target.PaneID, tmuxopts.PaneUID, target.PaneUID)
+		_, err := runRuntimeMutationCommand(ctx, r.routed(), action)
+		return err
+	}
+	steps := r.mutationSteps(targets, mutationTombstonePane,
+		func(target paneLiveDeleteTarget) string { return target.PaneUID },
+		func(target paneLiveDeleteTarget) string { return deletedPaneMirrorPrefix + target.PaneUID },
+		func(target paneLiveDeleteTarget) []string {
+			return []string{"-pq", "-t", target.PaneID, tmuxopts.PaneUID, deletedPaneMirrorPrefix + target.PaneUID}
+		}, undo, &applied)
+	if err := executeRuntimeMutationPlan(ctx, steps); err != nil {
+		marked := targets[:applied]
+		if strings.Contains(err.Error(), "owned reverse rollback incomplete") {
+			return fmt.Errorf("%w; rollback of earlier exact Pane tombstone(s) %s was incomplete; Registry resources remain authoritative and the reported tombstone drift cannot be orphan-imported",
+				tmuxError("tombstone exact live Pane before Registry commit: %v", err), paneDeleteIDs(marked))
+		}
+		return fmt.Errorf("%w; earlier exact Pane tombstone(s) %s were restored and Registry resources remain unchanged",
+			tmuxError("tombstone exact live Pane before Registry commit: %v", err), paneDeleteIDs(marked))
 	}
 	return nil
 }
 
 func (r *tmuxPaneDeleteRuntime) restoreSelfKill(ctx context.Context, targets []paneLiveDeleteTarget) error {
-	var failures []string
-	for _, target := range targets {
-		out, err := r.routed().Run(ctx, "tmux", "show-options", "-pqv", "-t", target.PaneID, tmuxopts.PaneUID)
-		if err != nil {
-			failures = append(failures, fmt.Sprintf("%s inspect: %v", target.PaneID, err))
-			continue
-		}
-		observed := strings.TrimSpace(string(out))
-		want := deletedPaneMirrorPrefix + target.PaneUID
-		if observed != want {
-			if observed == "" {
-				observed = "<missing>"
-			}
-			failures = append(failures, fmt.Sprintf("%s mirrors %q, want tombstone %q", target.PaneID, observed, want))
-			continue
-		}
-		if _, err := r.routed().Run(ctx, "tmux", "set-option", "-pq", "-t", target.PaneID,
-			tmuxopts.PaneUID, target.PaneUID); err != nil {
-			failures = append(failures, fmt.Sprintf("%s restore: %v", target.PaneID, err))
-		}
-	}
-	if len(failures) > 0 {
-		return fmt.Errorf("restore exact Pane tombstone(s): %s", strings.Join(failures, "; "))
+	steps := r.mutationSteps(targets, mutationRestorePane,
+		func(target paneLiveDeleteTarget) string { return deletedPaneMirrorPrefix + target.PaneUID },
+		func(target paneLiveDeleteTarget) string { return target.PaneUID },
+		func(target paneLiveDeleteTarget) []string {
+			return []string{"-pq", "-t", target.PaneID, tmuxopts.PaneUID, target.PaneUID}
+		}, nil, nil)
+	if err := executeRuntimeMutationPlan(ctx, steps); err != nil {
+		return fmt.Errorf("restore exact Pane tombstone(s): %w", err)
 	}
 	return nil
 }
@@ -652,43 +917,18 @@ func paneDeleteIDs(targets []paneLiveDeleteTarget) string {
 }
 
 func (r *tmuxPaneDeleteRuntime) queueSelfKill(ctx context.Context, targets []paneLiveDeleteTarget) error {
-	// Every target was tombstoned before the Registry commit. Revalidate the
-	// whole set before queueing so a recycled %N is never mutated.
-	var verified []paneLiveDeleteTarget
-	var drift []string
-	for _, target := range targets {
-		out, err := r.routed().Run(ctx, "tmux", "show-options", "-pqv", "-t", target.PaneID, tmuxopts.PaneUID)
-		if err != nil {
-			drift = append(drift, fmt.Sprintf("%s/pane-uid=%s inspect-error=%v", target.PaneID, target.PaneUID, err))
-			continue
-		}
-		observed := strings.TrimSpace(string(out))
-		want := deletedPaneMirrorPrefix + target.PaneUID
-		if observed != want {
-			if observed == "" {
-				observed = "<missing>"
-			}
-			drift = append(drift, fmt.Sprintf("%s/pane-uid=%s observed=%q want=%q", target.PaneID, target.PaneUID, observed, want))
-			continue
-		}
-		verified = append(verified, target)
-	}
-	if len(drift) > 0 {
-		return fmt.Errorf("delete pane: post-commit exact Pane tombstone revalidation failed; no self-target kill was queued; unverified drift: %s; verified tombstone(s) %s remain retryable and cannot be orphan-imported",
-			strings.Join(drift, "; "), paneDeleteIDs(verified))
-	}
 	ordered := selfLastPaneDeleteTargets(targets)
-	for _, target := range ordered {
-		command := "exec " + shellQuote("tmux") + " " + shellQuote(r.target.flag) + " " +
-			shellQuote(r.target.value) + " kill-pane -t " + shellQuote(target.PaneID)
-		if _, err := r.routed().Run(ctx, "tmux", "run-shell", "-b", command); err != nil {
-			queued := ordered[:indexPaneDeleteTarget(ordered, target.PaneID)]
-			remaining := ordered[len(queued):]
-			return fmt.Errorf("%w; queued exact Pane(s) %s may complete, while tombstoned unqueued Pane(s) %s remain as retryable drift and cannot be orphan-imported",
-				tmuxError("queue exact live Pane %s in Window %s session %s (%s) for self-target deletion: %v",
-					target.PaneID, target.WindowID, target.SessionName, target.SessionID, err),
-				paneDeleteIDs(queued), paneDeleteIDs(remaining))
-		}
+	queuedCount := 0
+	steps := r.mutationSteps(ordered, mutationQueuePaneKill,
+		func(target paneLiveDeleteTarget) string { return deletedPaneMirrorPrefix + target.PaneUID },
+		func(target paneLiveDeleteTarget) string { return deletedPaneMirrorPrefix + target.PaneUID },
+		func(paneLiveDeleteTarget) []string { return nil }, nil, &queuedCount)
+	if err := executeRuntimeMutationPlan(ctx, steps); err != nil {
+		queued := ordered[:queuedCount]
+		remaining := ordered[queuedCount:]
+		return fmt.Errorf("%w; queued exact Pane(s) %s may complete, while tombstoned unqueued Pane(s) %s remain as retryable drift and cannot be orphan-imported",
+			tmuxError("queue exact live Pane plan for self-target deletion: %v", err),
+			paneDeleteIDs(queued), paneDeleteIDs(remaining))
 	}
 	return nil
 }
@@ -706,13 +946,4 @@ func selfLastPaneDeleteTargets(targets []paneLiveDeleteTarget) []paneLiveDeleteT
 		}
 	}
 	return ordered
-}
-
-func indexPaneDeleteTarget(targets []paneLiveDeleteTarget, paneID string) int {
-	for i, target := range targets {
-		if target.PaneID == paneID {
-			return i
-		}
-	}
-	return 0
 }

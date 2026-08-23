@@ -153,8 +153,12 @@ func testAgentWorkspaceResolver(spelling string, registry coremetadata.Registry,
 func splitWindowCalls(tmux *fakeTmux) [][]string {
 	var out [][]string
 	for _, call := range tmux.calls {
-		if len(call) > 0 && call[0] == "split-window" {
-			out = append(out, call)
+		command := call
+		if len(command) >= 3 && (command[0] == "-L" || command[0] == "-S") {
+			command = command[2:]
+		}
+		if len(command) > 0 && command[0] == "split-window" {
+			out = append(out, command)
 		}
 	}
 	return out

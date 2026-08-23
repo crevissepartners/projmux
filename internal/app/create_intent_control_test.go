@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -36,6 +37,42 @@ type canonicalRootFixture struct {
 	windowUID string
 	rootKind  coremetadata.Kind
 	rootUID   string
+}
+
+type routeBindingAssertionRunner struct {
+	t     *testing.T
+	bound *bool
+	inner tmuxCommandRunner
+}
+
+type canonicalRenameRecycleRunner struct {
+	inner         *fakeTmux
+	anchorPaneID  string
+	identityReads int
+}
+
+func (r *canonicalRenameRecycleRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	argv := tmuxCommandArgv(args)
+	if len(argv) > 0 && argv[0] == "display-message" {
+		format := flagValue(argv, "-F")
+		if strings.Contains(format, tmuxopts.WindowUID) && strings.Contains(format, tmuxopts.ProjectUIDSession) &&
+			strings.Contains(format, tmuxopts.SessionRole) {
+			r.identityReads++
+			if r.identityReads == 2 {
+				session, _, _ := r.inner.pane(r.anchorPaneID)
+				session.opts[tmuxopts.ProjectUIDSession] = "prj-recycled-foreign"
+			}
+		}
+	}
+	return r.inner.Run(ctx, name, args...)
+}
+
+func (r routeBindingAssertionRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	r.t.Helper()
+	if !*r.bound {
+		r.t.Fatal("canonical Window producer used its materializer before binding the exact invocation route")
+	}
+	return r.inner.Run(ctx, name, args...)
 }
 
 func canonicalFixture(t *testing.T, control bool) canonicalRootFixture {
@@ -132,18 +169,19 @@ func assertCanonicalCreateLeaseBracketsSplit(t *testing.T, calls [][]string) {
 	leaseSet, split, leaseClear := -1, -1, -1
 	leaseTarget := ""
 	for i, call := range calls {
-		if len(call) == 0 {
+		argv := tmuxCommandArgv(call)
+		if len(argv) == 0 {
 			continue
 		}
-		switch call[0] {
+		switch argv[0] {
 		case "split-window":
 			split = i
 		case "set-environment":
-			if call[len(call)-1] == createOperationEnvironment && slices.Contains(call, "-u") {
+			if argv[len(argv)-1] == createOperationEnvironment && slices.Contains(argv, "-u") {
 				leaseClear = i
-			} else if len(call) >= 2 && call[len(call)-2] == createOperationEnvironment {
+			} else if len(argv) >= 2 && argv[len(argv)-2] == createOperationEnvironment {
 				leaseSet = i
-				leaseTarget = flagValue(call, "-t")
+				leaseTarget = flagValue(argv, "-t")
 			}
 		}
 	}
@@ -170,6 +208,50 @@ func TestCanonicalProjectIntentDerivesLiveSessionWhenStatusSessionIsNil(t *testi
 		t.Fatalf("canonical Project create with nil status.session: %v", err)
 	}
 	assertCanonicalCreateLeaseBracketsSplit(t, fx.tmux.calls)
+}
+
+func TestCanonicalWindowCreateBindsInvocationRouteBeforeRuntimeMutationObservation(t *testing.T) {
+	fx := canonicalFixture(t, false)
+	bound := false
+	bindCalls := 0
+	fx.create.runtimeBound = false
+	fx.create.runtime.runner = routeBindingAssertionRunner{t: t, bound: &bound, inner: fx.tmux}
+	fx.create.bindRuntime = func(context.Context) error {
+		bindCalls++
+		bound = true
+		return nil
+	}
+	if err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
+		t.Fatalf("canonical Window create: %v", err)
+	}
+	if bindCalls != 1 {
+		t.Fatalf("runtime route bind calls = %d, want exactly one", bindCalls)
+	}
+}
+
+func TestCanonicalWindowRenameAlreadyMatchingRefusesRecycledParentBeforeWrite(t *testing.T) {
+	fx := canonicalFixture(t, false)
+	_, window, _ := fx.tmux.pane(fx.originID)
+	window.name = "renamed"
+	runner := &canonicalRenameRecycleRunner{inner: fx.tmux, anchorPaneID: fx.originID}
+	fx.create.runtime.runner = runner
+	fx.create.runtime.expectedSocketPath = fx.tmux.socketPath
+	fx.create.runtime.socketName = defaultAppSocket
+	fx.create.runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
+
+	err := fx.create.renameWindowFromIntent(windowRenameIntent{
+		anchorPaneID: fx.originID,
+		displayName:  "renamed",
+	}, ioDiscard{}, ioDiscard{})
+	if err == nil || !strings.Contains(err.Error(), "identity parent drifted") {
+		t.Fatalf("canonical rename recycled parent error = %v", err)
+	}
+	for _, call := range fx.tmux.calls {
+		argv := tmuxCommandArgv(call)
+		if len(argv) > 0 && argv[0] == "rename-window" {
+			t.Fatalf("canonical rename reached runtime write after parent recycle: %#v", fx.tmux.calls)
+		}
+	}
 }
 
 func TestCanonicalCreateRefusesSameNameRuntimeSessionReplacementBeforeLeaseWrite(t *testing.T) {

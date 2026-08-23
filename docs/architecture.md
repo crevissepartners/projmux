@@ -1639,6 +1639,55 @@ Explicit Registry topology materialization:
   Only the selected exact socket is claimed and mutated; sibling sockets are
   tested unchanged, and no global uniqueness across unknown sockets is claimed.
 
+Plan-only runtime mutation boundary:
+
+- Lifecycle and topology changes owned by the app materializer and Pane-delete
+  runtime are values before they are commands. The closed action inventory
+  records a stable target, a typed guard with the exact expected evidence, a
+  total order, expected effect, and typed executable operands; its JSON
+  projection is deterministic. The argv seam rejects an operand target that
+  does not match the printable stable target.
+  Session/Window/Pane creation, identity and create-operation lease writes,
+  layout writes, ownership-checked rollback, exact Pane kill, pre-commit
+  tombstone/restore, and post-result-flush self-kill queueing all enter the same
+  plan -> printable target/route guard -> effect reobserve/replan -> semantic
+  guard -> execute -> effect reobserve/replan boundary. Before an already
+  satisfied row may disappear, the executor binds its printed logical/physical
+  socket and server-generation authority to the captured route; semantic
+  pre-write guards still run together before the first live write.
+- Materialization is a sequence of dynamically replanned stages because exact
+  Window and Pane handles do not exist until the preceding create effect is
+  reobserved. Each stage is nevertheless a complete printable plan with a
+  total order; the next stage is built only from the preceding stage's observed
+  exact effect. Every production row carries `-L=<name>` or the exact
+  `-S=<absolute path>`, the independently observed physical socket, and a
+  printable route receipt. App-owned receipts pin `#{pid}` plus ownership and
+  logical markers; inherited standalone receipts pin the exact server pid and
+  originating `$N`/`@N`/`%N` containment while requiring both app markers
+  blank. The public controller's explicit `--socket-path` grant is narrower:
+  it prints the operator-selected path/PID blank-marker class and relies on
+  each planned action's real UID plus session/window guards; it never infers an
+  arbitrary Pane as invocation evidence. Generated popup/menu producers pass an exact Pane anchor which is
+  reobserved on that same socket rather than trusting a targetless current
+  Pane. Before a stage writes, the same `-S` runner refuses path, generation,
+  class, or containment drift. Only a create-session
+  stage may accept the typed no-server observation, because its explicit route
+  and absent-session ownership preflight are the facts required to create the
+  first server.
+- A guard refusal writes nothing and asks the caller to observe and plan again.
+  Reobservation is explicit: known achieved effects remove their rows, so a
+  successful repeat is an empty plan; an unavailable observation is unknown and
+  can neither synthesize a Registry deletion nor authorize a runtime kill.
+  Partial execution rolls back only actions carrying an ownership-backed undo,
+  in reverse application order. Existing desired Registry state, foreign or
+  sibling objects, and other sockets have no rollback authority.
+- Pane deletion keeps the exact routed socket plus Session, Window, Pane, root
+  kind/root uid, and current Pane mirror in every executable guard. A
+  caller-containing delete still commits the Registry and flushes the complete
+  result before its self-target kill is queued. The AI picker/default/resume and
+  shell split producers remain canonical create-intent producers; they do not
+  gain a second tmux mutation path.
+
 Agent runtime linkage:
 
 - Once a live tmux pane has settled on a registry Pane, reconcile decides which
@@ -1973,6 +2022,39 @@ throttled collector and then reopens the same display-only usage popup from
 cache.
 
 ## Related design and inventory notes
+
+### Plan-only managed runtime mutation
+
+Managed lifecycle/topology changes are printable `runtimeMutationPlan` rows.
+Each row carries an exact invocation route, immutable observed socket path,
+printable server-generation authority, a stable tmux handle and Registry
+UID/owner chain, a closed guard, total order,
+expected effect, and printable typed operands bound to that handle. Execution
+validates printable target/route authority before pre-effect reobservation and
+every pending semantic guard before the first write;
+owned rollback runs in reverse order. Materialization is intentionally staged:
+after each dynamic handle is returned, it is reobserved and the next stage is
+planned, so no later action guesses a Window or Pane handle. A successful
+reobserve/replan is empty; an unknown observation authorizes no delete or kill.
+App-owned execution requires exact path/pid/app/logical evidence. An inherited
+standalone route is separately closed by exact `TMUX=path,pid,index` plus a
+producer-verified Pane receipt and prints/executes through `-S`; partial app
+markers never downgrade to standalone. Explicit controller reconciliation may
+instead use an operator-selected `--socket-path` plus PID/blank-marker receipt,
+but only action-specific UID and containment guards authorize its writes.
+Fresh app bootstrap is the only
+pre-server declaration without a generation receipt, and binds path/pid/$@%
+before its route marker and all later rows.
+
+The maintained product table in `internal/app/runtime_mutation_surface.go` maps
+generated catalog/menu producers, native provider/resume picker selections,
+sidebar/session-picker stops, and app lifecycle entrypoints in both directions
+to their handler and plan verb. It also records exact semantic exemptions for
+focus, labels, operator-requested layout, mouse forwarding, snapshot replay,
+ephemeral maintenance, app quit, and human runtime maintenance. Managed argv
+verbs are selected only by the typed executor seam; generated Window
+create/rename, Pane-menu create/delete, and automatic post-split layout writes
+reach typed intent/operand routes rather than embedding tmux lifecycle commands.
 
 Contributor-facing companions to this document. They are design records and
 inventories rather than user documentation, so they are linked from here rather

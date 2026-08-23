@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -2623,15 +2624,35 @@ func (c *settingsCommand) regenerateAndReloadTmuxConfig() (prepared keymapApplyS
 		live = keymapApplyStage{Status: keymapApplySkipped, Detail: "Settings is not running inside tmux"}
 		return prepared, live, nil
 	}
-	if c.runCommand == nil {
-		live = keymapApplyStage{Status: keymapApplySkipped, Detail: "tmux command runner is not configured"}
+	if c.tmuxRunner == nil {
+		live = keymapApplyStage{Status: keymapApplySkipped, Detail: "exact tmux command runner is not configured"}
 		return prepared, live, nil
 	}
-	if retireErr := c.retireCurrentTmuxKeySequenceState(); retireErr != nil {
+	ctx := context.Background()
+	route, routeErr := resolveInvocationRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
+	if routeErr != nil || route.expectedSocketPath == "" {
+		if routeErr == nil {
+			//lint:ignore ST1005 Settings is the canonical product-surface name in this diagnostic.
+			routeErr = errors.New("Settings live reload has no exact physical socket")
+		}
+		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("exact live tmux route", routeErr)}
+		return prepared, live, routeErr
+	}
+	if route.authority != nil && route.authority.Class == runtimeMutationRouteStandalone {
+		//lint:ignore ST1005 Settings is the canonical product-surface name in this diagnostic.
+		routeErr = errors.New("Settings live reload refuses an operator-owned standalone tmux server")
+		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("exact live tmux route", routeErr)}
+		return prepared, live, routeErr
+	}
+	if retireErr := c.retireCurrentTmuxKeySequenceState(ctx, route); retireErr != nil {
 		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux sequence cleanup", retireErr)}
 		return prepared, live, retireErr
 	}
-	if reloadErr := c.runCommand("tmux", "source-file", configPath); reloadErr != nil {
+	if guardErr := guardResolvedRuntimeMutationRoute(ctx, c.tmuxRunner, route); guardErr != nil {
+		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux reload guard", guardErr)}
+		return prepared, live, guardErr
+	}
+	if _, reloadErr := c.tmuxRunner.Run(ctx, "tmux", "-S", route.expectedSocketPath, "source-file", configPath); reloadErr != nil {
 		live = keymapApplyStage{Status: keymapApplyFailed, Detail: keymapApplyDiagnostic("live tmux reload", reloadErr)}
 		return prepared, live, reloadErr
 	}
@@ -2645,12 +2666,12 @@ func (c *settingsCommand) regenerateAndReloadTmuxConfig() (prepared keymapApplyS
 // let the caller source the newly generated config. Production Settings always
 // has runOutput; nil remains a compatibility seam for narrow unit commands
 // that only record the historical source-file call.
-func (c *settingsCommand) retireCurrentTmuxKeySequenceState() error {
-	if c.runOutput == nil {
-		return nil
-	}
+func (c *settingsCommand) retireCurrentTmuxKeySequenceState(ctx context.Context, route runtimeMutationRoute) error {
 	read := func(option string) (string, error) {
-		out, err := c.runOutput("tmux", "show-options", "-gqv", option)
+		if err := guardResolvedRuntimeMutationRoute(ctx, c.tmuxRunner, route); err != nil {
+			return "", err
+		}
+		out, err := c.tmuxRunner.Run(ctx, "tmux", "-S", route.expectedSocketPath, "show-options", "-gqv", option)
 		if err != nil {
 			return "", fmt.Errorf("read %s: %w", option, err)
 		}
@@ -2665,7 +2686,10 @@ func (c *settingsCommand) retireCurrentTmuxKeySequenceState() error {
 		return err
 	}
 	for _, command := range keySequenceRetireCommandsWithPrefix([]string{"tmux"}, roots, tables) {
-		if err := c.runCommand(command[0], command[1:]...); err != nil {
+		if err := guardResolvedRuntimeMutationRoute(ctx, c.tmuxRunner, route); err != nil {
+			return err
+		}
+		if _, err := c.tmuxRunner.Run(ctx, "tmux", append([]string{"-S", route.expectedSocketPath}, command[1:]...)...); err != nil {
 			return fmt.Errorf("%s: %w", strings.Join(command[1:], " "), err)
 		}
 	}

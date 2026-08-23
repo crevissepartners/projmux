@@ -54,6 +54,13 @@ projectPreservedAssets
 DecideProjectOpen
 EqualTeardownPlans
 PlanProjectDeletion
+# Phase 10 plan-only mutation keeps reobservation/replanning pure and directly
+# exercised by its maintained property and failure tests. Runtime execution
+# reaches the same plan's printable validation; these two helpers deliberately
+# remain a zero-I/O proof surface rather than acquiring a fake production
+# caller that would confuse observation with execution success.
+runtimeMutationPlan.withoutEffects
+runtimeMutationEffectKey
 # `projmux://focus?...` encoder. Desktop notification delivery became a
 # two-state model in 0.11.0 (off / notify): Toasts carry no click URI and no
 # protocol handler is registered, so nothing in production emits this URI any

@@ -46,9 +46,9 @@ type sessionsAttribution struct {
 	byID map[string]managedSessionAttribution
 	// withheld counts the observed sessions that are not managed rows, by class.
 	withheld registryview.RuntimeCounts
-	// resolved reports whether a graph was available at all. When it is false
-	// the surface has nothing to attribute with and lists what it observed,
-	// because a failed read is not a reason to show an operator an empty list.
+	// resolved reports whether a graph was available at all. Unknown graph
+	// observation authorizes no managed action; raw sessions remain reachable
+	// only through Runtime diagnostics.
 	resolved bool
 }
 
@@ -95,9 +95,9 @@ func attributeSessionSummaries(graph resourcegraph.Graph, summaries []inttmux.Re
 		id := strings.TrimSpace(summary.ID)
 		node, ok := class[id]
 		if id == "" || !ok {
-			// Either the observation could not name this session or this build
-			// read no id for it. Refusing to classify is not a reason to hide a
-			// row an operator can see on their own screen.
+			// Preserve non-destructive open/navigation parity. No byID authority
+			// is recorded, so a destructive picker action refuses even though the
+			// operator can still see and open the raw runtime row.
 			out.managed = append(out.managed, summary)
 			continue
 		}

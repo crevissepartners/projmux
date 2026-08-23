@@ -251,6 +251,7 @@ func TestSwitchExecuteSidebarTrustDenyRefreshesWithoutSessionCreate(t *testing.T
 		tmuxRunner: tmuxRunner,
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	err := cmd.runSidebarOpen([]string{
 		"--path", target,
@@ -302,6 +303,7 @@ func TestSwitchSidebarOpenApproveContinuesSelectedEmptyOpen(t *testing.T) {
 		tmuxRunner: tmuxRunner,
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	err := cmd.runSidebarOpen([]string{
 		"--path", target,
@@ -352,6 +354,7 @@ func TestSwitchSidebarOpenTrustPopupUsesClientScope(t *testing.T) {
 			return ""
 		},
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	err := cmd.runSidebarOpen([]string{
 		"--path", target,
@@ -397,6 +400,7 @@ func TestSwitchExecutePopupProjectCreateUsesProjectOpenTrust(t *testing.T) {
 		homeDir:   func() (string, error) { return t.TempDir(), nil },
 		lookupEnv: func(string) string { return "" },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	reopen, err := cmd.execute(context.Background(), switchPlan{
 		UI:          switchUIPopup,
@@ -536,6 +540,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 		homeDir:      func() (string, error) { return "/home/tester", nil },
 		workingDir:   func() (string, error) { return "/tmp", nil },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run([]string{"--ui=sidebar"}, &stdout, &bytes.Buffer{}); err != nil {
@@ -1082,6 +1087,7 @@ func TestSwitchProjectOpenStartupPickerHasExactlyTwoActions(t *testing.T) {
 		runner:       runner,
 		nativePicker: native,
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	if err := cmd.openProjectTarget(context.Background(), project, "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
@@ -1229,6 +1235,7 @@ func TestSwitchProjectOpenExistingSessionSkipsStartupPicker(t *testing.T) {
 		runner:       runner,
 		nativePicker: native,
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
@@ -1258,6 +1265,7 @@ func TestSwitchProjectOpenStartupPickerOffCreatesEmptyWithoutPicker(t *testing.T
 		runner:       runner,
 		nativePicker: native,
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
@@ -1322,6 +1330,7 @@ func TestSwitchProjectOpenStartupPickerOffStillChecksTrustBeforeCreate(t *testin
 		homeDir:   func() (string, error) { return t.TempDir(), nil },
 		lookupEnv: func(string) string { return "" },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	if err := cmd.openProjectTarget(context.Background(), "/tmp/workspace", "workspace"); err != nil {
 		t.Fatalf("openProjectTarget() error = %v", err)
@@ -1654,6 +1663,9 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			if tt.name == "open session" {
+				wireFakeProjectSessionPlan(tt.cmd)
+			}
 
 			err := tt.cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{})
 			if err == nil {
@@ -2463,6 +2475,8 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 		recentSessions: []string{"tmp-app", "tmp-previous"},
 	}
 	var cleaned []string
+	stopRow := strings.Join([]string{"$7", "tmp-app", "", "", ""}, tmuxRowSep) + "\n"
+	stopRunner := &unmanagedStopRunner{appMarker: "1", logical: defaultAppSocket, socketPath: "/tmp/tmux/projmux", listRows: []string{stopRow, stopRow, stopRow}}
 
 	observe := func(o intpickercompat.Options) { gotRunnerOptions = append(gotRunnerOptions, o) }
 	runner, native := scriptedPicker(t, []pickerStep{
@@ -2477,6 +2491,8 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 		runner:       runner,
 		nativePicker: native,
 		sessions:     executor,
+		tmuxRunner:   stopRunner,
+		lookupEnv:    func(string) string { return "" },
 		executable:   func() (string, error) { return "/tmp/projmux", nil },
 		identity: switchIdentityResolverFunc(func(path string) (string, error) {
 			switch path {
@@ -2514,8 +2530,8 @@ func TestSwitchCommandPickerCtrlXSwitchesToPreviousActiveSessionBeforeKill(t *te
 	if !containsString(gotRunnerOptions[1].Bindings, "start:pos(2)") {
 		t.Fatalf("second runner bindings = %q, want fallback focus start:pos(2)", gotRunnerOptions[1].Bindings)
 	}
-	if got, want := executor.killSessionName, "tmp-app"; got != want {
-		t.Fatalf("kill session = %q, want %q", got, want)
+	if got := stopRunner.topologyWrites(); got != 1 {
+		t.Fatalf("typed unmanaged stop writes = %d, want 1", got)
 	}
 	if got, want := cleaned, []string{"tmp-app"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("cleaned sessions = %q, want %q", got, want)
@@ -2611,6 +2627,8 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 	executor.killHook = func(sessionName string) {
 		executor.exists[sessionName] = false
 	}
+	stopRow := strings.Join([]string{"$7", "tmp-app", "", "", ""}, tmuxRowSep) + "\n"
+	stopRunner := &unmanagedStopRunner{appMarker: "1", logical: defaultAppSocket, socketPath: "/tmp/tmux/projmux", listRows: []string{stopRow, stopRow, stopRow}}
 
 	var nativeCalls int
 	var mutateCalls int
@@ -2659,6 +2677,8 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 			return intpicker.Result{Closed: true}, nil
 		}),
 		sessions:   executor,
+		tmuxRunner: stopRunner,
+		lookupEnv:  func(string) string { return "" },
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		identity: switchIdentityResolverFunc(func(path string) (string, error) {
 			switch path {
@@ -2686,8 +2706,11 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 	if mutateCalls != 1 {
 		t.Fatalf("mutate calls = %d, want 1", mutateCalls)
 	}
-	if got, want := executor.calls, []string{"open:tmp-previous", "kill:tmp-app"}; !equalStrings(got, want) {
+	if got, want := executor.calls, []string{"open:tmp-previous"}; !equalStrings(got, want) {
 		t.Fatalf("session calls = %q, want %q", got, want)
+	}
+	if got := stopRunner.topologyWrites(); got != 1 {
+		t.Fatalf("typed unmanaged stop writes = %d, want 1", got)
 	}
 	if got, want := cmd.focusSession, "tmp-previous"; got != want {
 		t.Fatalf("focus session = %q, want %q", got, want)
@@ -2708,6 +2731,8 @@ func TestSwitchCommandPickerSidebarKillRefreshFocusesActiveSession(t *testing.T)
 	executor.killHook = func(sessionName string) {
 		executor.exists[sessionName] = false
 	}
+	stopRow := strings.Join([]string{"$7", "tmp-app", "", "", ""}, tmuxRowSep) + "\n"
+	stopRunner := &unmanagedStopRunner{appMarker: "1", logical: defaultAppSocket, socketPath: "/tmp/tmux/projmux", listRows: []string{stopRow, stopRow, stopRow}}
 
 	var focusValue string
 	cmd := &switchCommand{
@@ -2738,6 +2763,8 @@ func TestSwitchCommandPickerSidebarKillRefreshFocusesActiveSession(t *testing.T)
 			return intpicker.Result{Closed: true}, nil
 		}),
 		sessions:   executor,
+		tmuxRunner: stopRunner,
+		lookupEnv:  func(string) string { return "" },
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		identity: switchIdentityResolverFunc(func(path string) (string, error) {
 			switch path {
@@ -2854,6 +2881,7 @@ func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 		homeDir:      func() (string, error) { return "/home/tester", nil },
 		workingDir:   func() (string, error) { return "/tmp", nil },
 	}
+	wireFakeProjectSessionPlan(cmd)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {

@@ -493,13 +493,16 @@ func isMissingTmuxServer(err error) bool {
 // tmux write pass, and the ownership-checked rollback here is what stops the
 // startup path from growing a second, weaker copy of that contract.
 type topologyMaterializeRun struct {
-	resources       *resourceStore
-	runner          tmuxCommandRunner
-	target          explicitTmuxTarget
-	diagnostics     *diagnostics.LifecycleRecorder
-	newOperationID  func() (string, error)
-	newGeneration   func() (string, error)
-	newMaterializer func(tmuxCommandRunner, io.Writer) *materializer
+	resources          *resourceStore
+	runner             tmuxCommandRunner
+	target             explicitTmuxTarget
+	expectedSocketPath string
+	diagnostics        *diagnostics.LifecycleRecorder
+	socketName         string
+	routeAuthority     *runtimeMutationRouteAuthority
+	newOperationID     func() (string, error)
+	newGeneration      func() (string, error)
+	newMaterializer    func(tmuxCommandRunner, io.Writer) *materializer
 	// agents is the provider-launch seam of the Agent half. It is the exact
 	// object `create agent` and `agent resume` consume, so a replayed Agent's
 	// argv is built by the shipped launch builders rather than a second copy.
@@ -541,7 +544,7 @@ func defaultTopologyMaterializer(target explicitTmuxTarget, recorder *diagnostic
 		if hooks := defaultLifecycleHookRunner(); hooks != nil {
 			opts = append(opts, inttmux.WithLifecycleHookRunner(hooks))
 		}
-		return &materializer{runner: runner, mirror: intmetadata.NewMirror(runner), sessions: inttmux.NewClient(runner, opts...), warn: warn}
+		return &materializer{runner: runner, mirror: intmetadata.NewMirror(runner), sessions: inttmux.NewClient(runner, opts...), target: target, warn: warn}
 	}
 }
 
@@ -565,6 +568,17 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 		newRuntime = defaultTopologyMaterializer(r.target, r.diagnostics)
 	}
 	runtime := newRuntime(routed, warn)
+	if runtime != nil && runtime.expectedSocketPath == "" {
+		runtime.expectedSocketPath = r.expectedSocketPath
+	}
+	if runtime != nil {
+		if runtime.socketName == "" {
+			runtime.socketName = r.socketName
+		}
+		if runtime.routeAuthority == nil {
+			runtime.routeAuthority = r.routeAuthority
+		}
+	}
 	_, registryChanged, updateErr := r.resources.updateConvergent(func(working *coremetadata.Registry) error {
 		current, buildErr := planner.build(ctx, working.Clone())
 		if buildErr != nil {
@@ -593,16 +607,25 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 		// materializes nothing, and "this Agent starts a new conversation" would
 		// be false about it.
 		current.materialization.writeNotices(r.notices)
-		if err := validateResourcePlanWrites(ctx, routed, current.writes); err != nil {
-			outcome.failedStage = "tmux prevalidation"
+		route := runtimeMutationRoute{
+			target: r.target, expectedSocketPath: r.expectedSocketPath,
+			socketName: r.socketName, authority: r.routeAuthority,
+		}
+		if len(current.writes) != 0 && (route.expectedSocketPath == "" || route.authority == nil) {
+			outcome.failedStage = "controller.identity"
+			return errors.New("materialized controller writes require exact runtime generation authority")
+		}
+		controllerWrites, err := controllerRuntimeActionsFromPlannedWrites(current.writes)
+		if err != nil {
+			outcome.failedStage = "controller.identity"
+			return err
+		}
+		if err := executeControllerRuntimeMutations(ctx, r.runner, route, controllerWrites); err != nil {
+			outcome.failedStage = "controller.identity"
 			return err
 		}
 		outcome.completed = append(outcome.completed, "tmux targets prevalidated")
 		for _, write := range current.writes {
-			if _, err := routed.Run(ctx, "tmux", write.args...); err != nil {
-				outcome.failedStage = write.itemKey()
-				return err
-			}
 			outcome.completed = append(outcome.completed, write.itemKey())
 		}
 		*working = current.registry.Clone()
@@ -702,17 +725,24 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	if c.resources == nil || c.resources.updateConvergent == nil {
 		return errors.New("resource topology materialization write store is not configured")
 	}
+	route, err := bindExplicitMaterializeSocket(ctx, c.runner, target, c.lookupEnv)
+	if err != nil {
+		return err
+	}
 	run := topologyMaterializeRun{
-		resources:        c.resources,
-		runner:           c.runner,
-		target:           target,
-		newOperationID:   c.newOperationID,
-		newGeneration:    c.newGeneration,
-		newMaterializer:  c.newMaterializer,
-		agents:           c.agents,
-		notices:          stderr,
-		recoveryTrigger:  controller.RecoveryExplicit,
-		recoveryApproved: true,
+		resources:          c.resources,
+		runner:             c.runner,
+		target:             target,
+		expectedSocketPath: route.expectedSocketPath,
+		socketName:         route.socketName,
+		routeAuthority:     route.authority,
+		newOperationID:     c.newOperationID,
+		newGeneration:      c.newGeneration,
+		newMaterializer:    c.newMaterializer,
+		agents:             c.agents,
+		notices:            stderr,
+		recoveryTrigger:    controller.RecoveryExplicit,
+		recoveryApproved:   true,
 	}
 	retry := retryResourceReconcileProject(reportTarget, planner.materializeProject)
 	outcome, runErr := run.execute(ctx, planner, stderr)
@@ -731,6 +761,43 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	completed := append(outcome.completed, stage)
 	report := reportForExecute(outcome.plan, reportTarget, completed, retry)
 	return writeResourceReconcileReport(stdout, opts.output, report)
+}
+
+func bindExplicitMaterializeSocket(ctx context.Context, runner tmuxCommandRunner, target explicitTmuxTarget, lookupEnv func(string) string) (runtimeMutationRoute, error) {
+	if runner == nil {
+		return runtimeMutationRoute{}, errors.New("resource materialization requires a tmux runner")
+	}
+	routed := explicitTmuxRunner{runner: runner, target: target}
+	out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	if err != nil {
+		if inttmux.IsNoServerFailure(err) {
+			// A fresh logical route has no physical identity until new-session
+			// returns and the materializer binds #{socket_path}. An explicit -S
+			// declaration already names the immutable path the create must use.
+			if target.flag == "-L" {
+				return runtimeMutationRoute{target: target, socketName: target.value}, nil
+			}
+			if target.flag == "-S" {
+				path := filepath.Clean(strings.TrimSpace(target.value))
+				if filepath.IsAbs(path) && path == target.value {
+					return runtimeMutationRoute{target: target, expectedSocketPath: path, socketName: defaultAppSocket}, nil
+				}
+			}
+		}
+		return runtimeMutationRoute{}, fmt.Errorf("resource materialization bind exact socket: %w", err)
+	}
+	path := filepath.Clean(strings.TrimSpace(string(out)))
+	if path == "." || !filepath.IsAbs(path) {
+		return runtimeMutationRoute{}, errors.New("resource materialization observed no absolute socket identity")
+	}
+	if target.flag == "-S" && path != filepath.Clean(target.value) {
+		return runtimeMutationRoute{}, errors.New("resource materialization physical socket drifted")
+	}
+	route, err := resolveExistingRuntimeMutationRoute(ctx, runner, target, lookupEnv)
+	if err != nil {
+		return runtimeMutationRoute{}, err
+	}
+	return route, nil
 }
 
 // topologyOwnerGuard is one execute pass's exact parent and uid-claim proof.
@@ -983,7 +1050,7 @@ func adoptCreatedPane(
 	if err := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, paneID, pane.Metadata.UID, ledger); err != nil {
 		return err
 	}
-	return runtime.mirror.MirrorPane(ctx, paneID, pane)
+	return runtime.mirrorPane(ctx, paneID, pane)
 }
 
 func executeRegistryTopology(
@@ -1041,13 +1108,13 @@ func executeRegistryTopology(
 		if err := runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, first.window.Metadata.UID, ledger); err != nil {
 			return err
 		}
-		if err := runtime.mirror.MirrorWindow(ctx, created.WindowID, first.window); err != nil {
+		if err := runtime.mirrorWindow(ctx, created.WindowID, first.window); err != nil {
 			return err
 		}
 		if err := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, first.primary.Metadata.UID, ledger); err != nil {
 			return err
 		}
-		if err := runtime.mirror.MirrorPane(ctx, created.PaneID, first.primary); err != nil {
+		if err := runtime.mirrorPane(ctx, created.PaneID, first.primary); err != nil {
 			return err
 		}
 		first.liveID, first.create = created.WindowID, false
@@ -1089,7 +1156,7 @@ func executeRegistryTopology(
 				if claimErr := runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, result.WindowID, work.window.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(createErr, claimErr)
 				}
-				if mirrorErr := runtime.mirror.MirrorWindow(ctx, result.WindowID, work.window); mirrorErr != nil {
+				if mirrorErr := runtime.mirrorWindow(ctx, result.WindowID, work.window); mirrorErr != nil {
 					return errors.Join(createErr, mirrorErr)
 				}
 				if result.PaneID != "" {
@@ -1098,7 +1165,7 @@ func executeRegistryTopology(
 					if claimErr := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, result.PaneID, work.primary.Metadata.UID, ledger); claimErr != nil {
 						return errors.Join(createErr, claimErr)
 					}
-					if mirrorErr := runtime.mirror.MirrorPane(ctx, result.PaneID, work.primary); mirrorErr != nil {
+					if mirrorErr := runtime.mirrorPane(ctx, result.PaneID, work.primary); mirrorErr != nil {
 						return errors.Join(createErr, mirrorErr)
 					}
 					observeActivationRuntime(registry, mutator, primaryActivation, result.PaneID, runtime.warn)

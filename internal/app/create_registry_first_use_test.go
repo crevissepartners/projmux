@@ -55,6 +55,9 @@ func (f *onDiskFixture) command(observe func(context.Context, string) (coremetad
 		}
 	}
 	roots := slices.Clone(f.roots)
+	typedMirror := runtimeMutationMetadataMirror{runner: explicitTmuxRunner{
+		runner: f.tmux, target: explicitTmuxTarget{flag: "-S", value: f.tmux.socketPath},
+	}}
 	return &createCommand{
 		store: &resourceStore{
 			load:             store.LoadReadOnly,
@@ -75,6 +78,9 @@ func (f *onDiskFixture) command(observe func(context.Context, string) (coremetad
 			},
 			observeLegacy:  observe,
 			mirror:         mirror,
+			mirrorProject:  typedMirror.MirrorProject,
+			mirrorWindow:   typedMirror.MirrorWindow,
+			mirrorPane:     typedMirror.MirrorPane,
 			shell:          "/bin/zsh",
 			sessionNameFor: filepath.Base,
 		},
@@ -82,6 +88,7 @@ func (f *onDiskFixture) command(observe func(context.Context, string) (coremetad
 			runner:   f.tmux,
 			mirror:   mirror,
 			sessions: &fakeSessionMaterializer{tmux: f.tmux},
+			target:   explicitTmuxTarget{flag: "-S", value: f.tmux.socketPath},
 			warn:     io.Discard,
 		},
 		shell:          "/bin/zsh",
