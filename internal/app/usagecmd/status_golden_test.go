@@ -29,7 +29,7 @@ func statusGoldenSnapshots(age time.Duration) []usage.Snapshot {
 	return []usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: updated},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: updated},
-		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
 	}
 }
 
@@ -77,6 +77,33 @@ func TestStatusUsageGoldensDifferByStalenessTier(t *testing.T) {
 	}
 }
 
+// TestCodexIdentityNarrowStatusbarLocaleFixture pins the provider identity at
+// the narrow text tier used by both supported locales. The statusbar provider
+// identity is deliberately not localized: locale may change surrounding UI
+// chrome, but it cannot change the cells consumed by the degraded qualifier.
+func TestCodexIdentityNarrowStatusbarLocaleFixture(t *testing.T) {
+	t.Parallel()
+
+	fallback := usage.Snapshot{
+		Model: "codex", Window: usage.Window5h, Pct: 17,
+		ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow,
+		Source: usage.SourceRollout, FallbackReason: usage.ReasonAppServerUnsupported,
+	}
+	const width = 23
+	const want = "Codex [fallback] 5h:17%"
+	for _, locale := range []string{"en-US", "ko-KR"} {
+		t.Run(locale, func(t *testing.T) {
+			got := intrender.StripTmuxEscapes(formatStatusUsage([]usage.Snapshot{fallback}, width, statusGoldenNow))
+			if got != want {
+				t.Fatalf("%s narrow statusbar = %q, want %q", locale, got, want)
+			}
+			if intrender.VisualLen(got) != width {
+				t.Fatalf("%s narrow statusbar width = %d, want %d", locale, intrender.VisualLen(got), width)
+			}
+		})
+	}
+}
+
 // statusbarUsageBudgets are the cell budgets the generated tmux statusbar can
 // hand this renderer. There is no single product width any more:
 // internal/app/tmux.go emits `--max-width #{e|-:#{client_width},<notify>}`, so
@@ -117,7 +144,7 @@ func statusbarGoldenSnapshots(antigravityAge time.Duration) []usage.Snapshot {
 	return []usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: claude},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: claude},
-		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow.Add(-antigravityAge)},
 	}
 }
@@ -199,7 +226,7 @@ func statusbarInstalledShapeSnapshots(antigravityAge time.Duration) []usage.Snap
 	return []usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: claude},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: claude},
-		{Model: "codex", Window: usage.WindowWeekly, Pct: 20, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 20, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
 		{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow.Add(-antigravityAge)},
 	}
 }
@@ -474,8 +501,8 @@ func usageSweepFixtures() []usageSweepFixture {
 			snaps: []usage.Snapshot{
 				{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: cosmetic},
 				{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: cosmetic},
-				{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow},
-				{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow},
+				{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
+				{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
 				{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: cosmetic2},
 			},
 			ageProviders: []string{"Claude", "Antigravity"},
@@ -485,8 +512,8 @@ func usageSweepFixtures() []usageSweepFixture {
 			snaps: []usage.Snapshot{
 				{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: cosmetic},
 				{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: cosmetic},
-				{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow},
-				{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow},
+				{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: statusGoldenNow.Add(time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
+				{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: statusGoldenNow, Source: usage.SourceAppServer},
 				{Model: "antigravity", Window: usage.WindowQuota, Bucket: "gemini-weekly", Pct: 38, ResetsAt: statusGoldenNow.Add(7 * 24 * time.Hour), UpdatedAt: veryStale},
 			},
 			ageProviders: []string{"Claude", "Antigravity"},

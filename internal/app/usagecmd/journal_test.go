@@ -172,6 +172,9 @@ func TestCodexFallbackAndLastKnownGoodDiagnosticsExposeClosedSourceReason(t *tes
 		Model: "codex", Window: usage.Window5h, Pct: 19, UpdatedAt: now,
 		Source: usage.SourceRollout, FallbackReason: usage.ReasonAppServerUnsupported,
 	}
+	if label, _ := compactModelDisplayLabels(fallback); label != "Codex [fallback]" {
+		t.Fatalf("fallback compact identity = %q", label)
+	}
 	h := newJournalHarness(t, &stubAdapter{name: "codex", snaps: []usage.Snapshot{fallback}})
 	h.run("--model", "codex")
 	rows := h.tail(10)
@@ -182,6 +185,9 @@ func TestCodexFallbackAndLastKnownGoodDiagnosticsExposeClosedSourceReason(t *tes
 
 	stale := fallback
 	stale.StaleReason = usage.ReasonAppServerDisconnected
+	if label, _ := compactModelDisplayLabels(stale); label != "Codex [stale]" {
+		t.Fatalf("last-known-good compact identity = %q", label)
+	}
 	h.cmd.recordCollectDiagnostics(
 		&usage.AdapterError{Model: "codex", Err: &usage.StaleReasonError{
 			Reason: usage.ReasonAppServerDisconnected,
