@@ -825,12 +825,11 @@ const (
 // Staleness is surfaced via lastSync (the most recent UpdatedAt across
 // the model's rows) — the long HUD tier renders an age indicator
 // (`(3m)`, `(1h)`, `(8h)`) for adapters whose data may be throttled or
-// in backoff (currently Claude). Adapters whose data is always
-// near-current (Codex reads from the latest rollout file every call)
-// have showAge=false so the indicator is suppressed.
+// in backoff (currently Claude). Fresh Codex native/fallback rows do not need
+// a cosmetic age; retained last-known-good rows opt in through StaleReason.
 type modelDisplay struct {
 	model      string // canonical lowercase key.
-	label      string // user-facing label (Claude / Codex / ...).
+	label      string // user-facing compact identity (Claude / Codex [fallback] / ...).
 	shortLabel string // legacy single-letter (C / X / ...).
 	hasFive    bool
 	fivePct    float64
@@ -843,9 +842,6 @@ type modelDisplay struct {
 	// showAge gates the age-indicator render path. False for
 	// adapters whose data is always near-current (Codex).
 	showAge bool
-	// provenance is the exact bounded source plus optional fallback/stale
-	// reason selected for the same rows whose values this HUD renders.
-	provenance string
 }
 
 // formatStatusUsage produces the HUD-style tmux status segment.
@@ -1102,9 +1098,6 @@ func renderUsageHUD(models []modelDisplay, now time.Time, plan usageSegmentPlan)
 		var b strings.Builder
 		b.WriteString("#[fg=" + statusRoles.AccentAIFg + ",bold]")
 		b.WriteString(m.label)
-		if m.provenance != "" {
-			b.WriteString("[" + m.provenance + "]")
-		}
 		b.WriteString(statusDefaultReset)
 		b.WriteString(renderHUDAgeSuffix(m, now, plan.ageMode(i)))
 		first := true
@@ -1145,9 +1138,6 @@ func renderUsageText(models []modelDisplay, now time.Time, plan usageSegmentPlan
 		label := m.shortLabel
 		if plan.longLabels {
 			label = m.label
-		}
-		if m.provenance != "" {
-			label += "[" + m.provenance + "]"
 		}
 		text := renderTextPair(m, label, staleMarkerText(modelStaleLevel(m, now)))
 		if text != "" {
@@ -1221,7 +1211,7 @@ func formatLastSyncAge(d time.Duration) string {
 
 // renderAgeIndicator returns the colored `(<age>)` block injected
 // between the model label and the 5h bar. Returns "" when the age is
-// fresh (<1m), the model opted out (Codex), or the now/lastSync clock
+// fresh (<1m), the model opted out (including fresh Codex), or the now/lastSync clock
 // is missing.
 //
 // The indicator's tier is driven by the package's staleness thresholds
@@ -1254,8 +1244,8 @@ func renderAgeIndicator(m modelDisplay, now time.Time) string {
 
 // modelStaleLevel is the model-level view of the package's single staleness
 // ladder: 0 fresh, 1 stale (>staleAfter), 2 very stale (>veryStaleAfter). It
-// returns 0 for models that opted out of the age signal (Codex, whose data is
-// re-read from the latest rollout on every call) and for missing clocks, which
+// returns 0 for models that opted out of the age signal (including fresh
+// Codex native/fallback rows) and for missing clocks, which
 // keeps the marker and the indicator agreeing on exactly one definition of
 // "stale" rather than each carrying its own gate.
 func modelStaleLevel(m modelDisplay, now time.Time) int {
@@ -1361,6 +1351,50 @@ func snapshotProvenanceLabel(snapshot usage.Snapshot) string {
 		return label + "/fallback:" + string(snapshot.FallbackReason)
 	}
 	return label
+}
+
+// compactModelDisplayLabels maps one snapshot's typed provenance onto the
+// compact HUD/statusbar identity. Healthy authoritative Codex is the default
+// product identity; every other non-stale lane is conservatively presented as
+// fallback. The full table, JSON, and operations journal continue to read the
+// Snapshot source/reason fields directly and therefore remain lossless.
+//
+// Non-Codex providers deliberately retain their existing compact provenance
+// spelling so this Codex-only presentation change cannot move Claude or
+// Antigravity semantics.
+func compactModelDisplayLabels(snapshot usage.Snapshot) (string, string) {
+	longLabel := ModelDisplayLabel(snapshot.Model)
+	shortLabel := modelShortLabel(snapshot.Model)
+	if !strings.EqualFold(strings.TrimSpace(snapshot.Model), "codex") {
+		if provenance := snapshotProvenanceLabel(snapshot); provenance != "" {
+			qualifier := "[" + provenance + "]"
+			return longLabel + qualifier, shortLabel + qualifier
+		}
+		return longLabel, shortLabel
+	}
+
+	qualifier := codexCompactQualifier(snapshot)
+	if qualifier == "" {
+		return longLabel, shortLabel
+	}
+	suffix := " [" + qualifier + "]"
+	return longLabel + suffix, shortLabel + suffix
+}
+
+// codexCompactQualifier is a closed presentation mapping. StaleReason wins
+// because it describes the current freshness of a retained row. A rollout is
+// called fallback when its closed fallback reason is present. Malformed,
+// legacy, or future combinations use that same conservative fallback identity
+// rather than masquerading as native or expanding the closed compact
+// vocabulary; full surfaces retain the exact typed provenance.
+func codexCompactQualifier(snapshot usage.Snapshot) string {
+	if snapshot.StaleReason != "" {
+		return "stale"
+	}
+	if snapshot.Source == usage.SourceAppServer && snapshot.FallbackReason == "" {
+		return ""
+	}
+	return "fallback"
 }
 
 func boundedOpaqueDisplayID(id string, maxRunes int) string {
@@ -1595,11 +1629,11 @@ func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
 		}
 		row, ok := byModel[s.Model]
 		if !ok {
+			label, shortLabel := compactModelDisplayLabels(s)
 			row = &modelDisplay{
 				model:      s.Model,
-				label:      ModelDisplayLabel(s.Model),
-				shortLabel: modelShortLabel(s.Model),
-				provenance: snapshotProvenanceLabel(s),
+				label:      label,
+				shortLabel: shortLabel,
 			}
 			byModel[s.Model] = row
 			order = append(order, s.Model)
@@ -1617,19 +1651,15 @@ func buildModelDisplays(snaps []usage.Snapshot) []modelDisplay {
 		}
 		// lastSync tracks the most recent successful refresh
 		// across the model's rows; the long HUD tier renders its
-		// age relative to `now`. Codex reads from the latest
-		// rollout file every call so its age is always near "now"
-		// — uninteresting for the HUD, so showAge stays false.
+		// age relative to `now`. Fresh Codex native/fallback rows are
+		// uninteresting for the HUD, so showAge stays false.
 		if !s.UpdatedAt.IsZero() && s.UpdatedAt.After(row.lastSync) {
 			row.lastSync = s.UpdatedAt
-		}
-		if row.provenance == "" {
-			row.provenance = snapshotProvenanceLabel(s)
 		}
 		// Claude data is throttled/backoff-gated and Antigravity data is
 		// hook-driven (only refreshed when agy emits a statusline), so both
 		// can go stale — surface the age indicator. Codex reads the latest
-		// rollout every call so its age is always ~now (showAge stays false).
+		// native/fallback rows do not need cosmetic age (showAge stays false).
 		if strings.EqualFold(s.Model, "claude") || strings.EqualFold(s.Model, "antigravity") {
 			row.showAge = true
 		}

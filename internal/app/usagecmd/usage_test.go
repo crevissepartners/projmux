@@ -31,7 +31,7 @@ func installedCacheFixture(now time.Time) []usage.Snapshot {
 		{Model: "claude", Window: usage.Window5h, Pct: 18, ResetsAt: now.Add(3 * time.Hour), UpdatedAt: now},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 42, ResetsAt: now.Add(6 * 24 * time.Hour), UpdatedAt: now},
 		{Model: "claude", Window: usage.WindowQuota, Bucket: "group-redacted-model", Pct: 73, ResetsAt: now.Add(2 * 24 * time.Hour), UpdatedAt: now, NamedQuota: &usage.NamedQuota{Kind: "kind-redacted", Group: "group-redacted-model", Severity: "severity-redacted", IsActive: true, Scope: &usage.NamedQuotaScope{Model: &usage.NamedQuotaModel{ID: &modelID, DisplayName: "Model Redacted Alpha"}}}},
-		{Model: "codex", Window: usage.WindowWeekly, Pct: 12, ResetsAt: now.Add(6 * 24 * time.Hour), UpdatedAt: now},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 12, ResetsAt: now.Add(6 * 24 * time.Hour), UpdatedAt: now, Source: usage.SourceAppServer},
 	}
 }
 
@@ -89,33 +89,113 @@ func TestCodexNativeUsageJSONTableAndHUDShareValueSourceAndReasons(t *testing.T)
 	}
 
 	hud := formatStatusUsage(rows, 0, now)
-	for _, want := range []string{"Codex[app-server]", "12%"} {
+	for _, want := range []string{"Codex", "12%"} {
 		if !strings.Contains(hud, want) {
 			t.Fatalf("HUD missing %q: %q", want, hud)
 		}
+	}
+	plainHUD := intrender.StripTmuxEscapes(hud)
+	if strings.Contains(plainHUD, "app-server") || strings.Contains(plainHUD, "Codex [") {
+		t.Fatalf("healthy native HUD qualified the default Codex identity: %q", hud)
 	}
 	if strings.Contains(hud, "88%") {
 		t.Fatalf("HUD selected non-canonical bucket: %q", hud)
 	}
 }
 
-func TestCodexFallbackAndLastKnownGoodReasonsRemainVisible(t *testing.T) {
+func TestCodexCompactIdentityLabelGolden(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
-	fallback := usage.Snapshot{
-		Model: "codex", Window: usage.Window5h, Pct: 17,
-		UpdatedAt: now, Source: usage.SourceRollout,
-		FallbackReason: usage.ReasonAppServerUnsupported,
+	tests := []struct {
+		name     string
+		snapshot usage.Snapshot
+		want     string
+	}{
+		{
+			name:     "native",
+			snapshot: usage.Snapshot{Source: usage.SourceAppServer},
+			want:     "Codex",
+		},
+		{
+			name: "fallback",
+			snapshot: usage.Snapshot{
+				Source: usage.SourceRollout, FallbackReason: usage.ReasonAppServerUnsupported,
+			},
+			want: "Codex [fallback]",
+		},
+		{
+			name: "stale",
+			snapshot: usage.Snapshot{
+				Source: usage.SourceAppServer, StaleReason: usage.ReasonAppServerDisconnected,
+			},
+			want: "Codex [stale]",
+		},
+		{
+			name:     "unknown",
+			snapshot: usage.Snapshot{Source: usage.SnapshotSource("future-source")},
+			want:     "Codex [fallback]",
+		},
 	}
-	if got := formatStatusUsage([]usage.Snapshot{fallback}, 0, now); !strings.Contains(got, "rollout/fallback:app-server-unsupported") {
-		t.Fatalf("fallback HUD = %q", got)
-	}
-	stale := fallback
-	stale.StaleReason = usage.ReasonAppServerDisconnected
-	if got := formatStatusUsage([]usage.Snapshot{stale}, 0, now); !strings.Contains(got, "rollout/stale:app-server-disconnected") {
-		t.Fatalf("last-known-good HUD = %q", got)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			resetIn := int64(900)
+			snapshot := test.snapshot
+			snapshot.Model = "codex"
+			snapshot.Window = usage.Window5h
+			snapshot.Pct = 17
+			snapshot.ResetsAt = now.Add(2 * time.Hour)
+			snapshot.ResetInSeconds = &resetIn
+			snapshot.UpdatedAt = now
+			longLabel, shortLabel := compactModelDisplayLabels(snapshot)
+			if longLabel != test.want {
+				t.Fatalf("compact label = %q, want %q", longLabel, test.want)
+			}
+			if want := "X" + strings.TrimPrefix(test.want, "Codex"); shortLabel != want {
+				t.Fatalf("compact short label = %q, want %q", shortLabel, want)
+			}
+			got := intrender.StripTmuxEscapes(formatStatusUsage([]usage.Snapshot{snapshot}, 0, now))
+			if !strings.HasPrefix(got, test.want+" ") {
+				t.Fatalf("HUD identity = %q, want prefix %q", got, test.want+" ")
+			}
+			for _, technical := range []string{"app-server", "rollout", string(snapshot.FallbackReason), string(snapshot.StaleReason)} {
+				if technical != "" && strings.Contains(got, technical) {
+					t.Fatalf("compact HUD leaked technical provenance %q: %q", technical, got)
+				}
+			}
+
+			var table bytes.Buffer
+			if err := writeUsageTable(&table, []usage.Snapshot{snapshot}, now); err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range []string{"17%", "900s", string(snapshot.Source), string(SnapshotReasonLabel(snapshot))} {
+				if want != "" && !strings.Contains(table.String(), want) {
+					t.Fatalf("full table lost %q for %s:\n%s", want, test.name, table.String())
+				}
+			}
+
+			var jsonOut bytes.Buffer
+			if err := writeUsageJSON(&jsonOut, []usage.Snapshot{snapshot}, usage.State{}, now); err != nil {
+				t.Fatal(err)
+			}
+			var decoded []jsonSnapshot
+			if err := json.Unmarshal(jsonOut.Bytes(), &decoded); err != nil {
+				t.Fatalf("decode JSON projection: %v\n%s", err, jsonOut.String())
+			}
+			if len(decoded) != 1 || decoded[0].Source != snapshot.Source ||
+				decoded[0].FallbackReason != snapshot.FallbackReason ||
+				decoded[0].StaleReason != snapshot.StaleReason ||
+				decoded[0].Pct != snapshot.Pct || decoded[0].ResetInSeconds == nil ||
+				*decoded[0].ResetInSeconds != resetIn || !decoded[0].ResetsAt.Equal(snapshot.ResetsAt) {
+				t.Fatalf("JSON projection drift for %s: %#v", test.name, decoded)
+			}
+		})
 	}
 
+	stale := tests[2].snapshot
+	stale.Model = "codex"
+	stale.Window = usage.Window5h
+	stale.Pct = 17
+	stale.UpdatedAt = now
 	var table bytes.Buffer
 	if err := writeUsageTable(&table, []usage.Snapshot{stale}, now); err != nil {
 		t.Fatal(err)
@@ -185,7 +265,7 @@ func TestCommandCodexJSONAndStatusHUDSelectSameCanonicalNativeRow(t *testing.T) 
 	if err := command.RunStatus(nil, &hudOut, &hudErr); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(hudOut.String(), "Codex[app-server]") || !strings.Contains(hudOut.String(), "12%") {
+	if !strings.Contains(hudOut.String(), "Codex") || strings.Contains(hudOut.String(), "app-server") || !strings.Contains(hudOut.String(), "12%") {
 		t.Fatalf("status HUD disagrees with CLI canonical row: %q", hudOut.String())
 	}
 	if strings.Contains(hudOut.String(), "88%") {
@@ -520,8 +600,8 @@ func TestFormatStatusUsageWidthTiers(t *testing.T) {
 	snaps := []usage.Snapshot{
 		{Model: "claude", Window: usage.Window5h, Pct: 42, ResetsAt: now.Add(time.Hour)},
 		{Model: "claude", Window: usage.WindowWeekly, Pct: 18, ResetsAt: now.Add(7 * 24 * time.Hour)},
-		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour)},
-		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: now.Add(7 * 24 * time.Hour)},
+		{Model: "codex", Window: usage.Window5h, Pct: 71, ResetsAt: now.Add(time.Hour), Source: usage.SourceAppServer},
+		{Model: "codex", Window: usage.WindowWeekly, Pct: 55, ResetsAt: now.Add(7 * 24 * time.Hour), Source: usage.SourceAppServer},
 	}
 
 	// Widest tier: long HUD with both bars per model.

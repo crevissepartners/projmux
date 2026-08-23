@@ -252,6 +252,13 @@ bind-key -n MouseDown1Status if-shell -F "#{==:#{mouse_status_range},window}" \
 
 ## Usage element drop order
 
+The compact Codex provider identity is native-first. An authoritative healthy
+app-server snapshot renders as `Codex`; only degraded lanes are qualified as
+`Codex [fallback]` or `Codex [stale]`. Unknown non-stale provenance uses the
+conservative fallback label. These labels are locale-invariant, including on
+en-US and ko-KR narrow rows. The full Usage table, JSON, and diagnostics retain
+the raw source and closed reason; the statusbar label is presentation only.
+
 The usage segment does not pick a whole-segment tier. It starts from its
 richest render and sheds **one optional element at a time** until the result
 fits its budget. The order below is the drop order; index 1 goes first.

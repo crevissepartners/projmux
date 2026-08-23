@@ -247,8 +247,15 @@ window toggle exists only when this same projection seam declares it. A future
 provider or an opaque bucket cannot manufacture a window row.
 For native Codex multi-bucket rows, the exact `codex` bucket wins the HUD
 projection, then the legacy empty bucket, then lexical bucket order. The HUD
-source/reason annotation is copied from that same row, so its percent and
-source always match an explicit `agent usage --model codex` JSON/table row.
+compact identity is derived from that same row: a healthy authoritative
+`app-server` row is simply `Codex`, a fresh rollout row is
+`Codex [fallback]`, and a retained last-known-good row is `Codex [stale]`.
+Blank, malformed, or future non-stale provenance also fails conservatively to
+the existing `[fallback]` identity rather than looking native or expanding the
+compact vocabulary. The exact raw source and closed fallback/stale reason stay
+in `agent usage --model codex` table/JSON output and in
+`projmux diagnostics log --component usage`; compact labels never replace
+those fields.
 
 Settings > Appearance > Status Bar > Agent Usage HUD can hide the whole HUD,
 a provider, or one supported window. Parent off states preserve child saved
@@ -285,8 +292,9 @@ indicator while the age text is still rendered and glued to the label once the
 drop order has shed it. Staleness stays muted however far the segment has
 degraded: warning and critical colors are reserved for usage thresholds, not
 cache age. A healthy Codex row does not need a cosmetic age indicator, while a
-retained Codex last-known-good row opts in and also carries its exact closed
-stale reason in the HUD provenance annotation.
+retained Codex last-known-good row opts in and carries the compact `[stale]`
+identity. Its exact closed stale reason remains available on the full table,
+JSON, and diagnostics surfaces.
 
 The statusbar usage **popup**'s sync line is a different surface with a
 different meaning (last successful collect, 60s amber threshold) and is
