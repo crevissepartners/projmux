@@ -65,10 +65,13 @@ type SessionContext struct {
 
 // SessionMeta is the Phase 1 picker input contract for a resumable AI session.
 type SessionMeta struct {
-	Agent         string
-	ResumeID      string
-	Title         string
-	LastModified  time.Time
+	Agent        string
+	ResumeID     string
+	Title        string
+	LastModified time.Time
+	// UpdatedAt is the provider's exact content revision used only to scope an
+	// invocation-local preview cache. It is never inferred from preview bytes.
+	UpdatedAt     time.Time
 	Context       SessionContext
 	Source        string
 	Confidence    string
@@ -691,7 +694,8 @@ func discoverAntigravityHistory(cwd, historyPath string, depth int) []SessionMet
 			Context: SessionContext{
 				CWD: recordedCWD,
 			},
-			Source: SourceAntigravityHistory,
+			Source:     SourceAntigravityHistory,
+			sourcePath: historyPath,
 			// history.jsonl carries no per-turn data; Antigravity turn count is
 			// unknown (0) and renders as a blank cell.
 			Turns: 0,

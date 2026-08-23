@@ -1066,6 +1066,74 @@ func TestNativeInteractiveDeferredUpdatePreservesMutatedFilterAndSelection(t *te
 	}
 }
 
+type blockedProviderInput struct {
+	started   chan struct{}
+	release   chan struct{}
+	once      sync.Once
+	delivered atomic.Bool
+}
+
+func (r *blockedProviderInput) nativeKeyReaderStarted() { r.once.Do(func() { close(r.started) }) }
+func (r *blockedProviderInput) nativeKeyReaderStopped() {}
+func (r *blockedProviderInput) Read(p []byte) (int, error) {
+	<-r.release
+	if !r.delivered.CompareAndSwap(false, true) {
+		return 0, io.EOF
+	}
+	p[0] = 0x1b
+	return 1, nil
+}
+
+func TestNativeInteractiveRendersAndStartsInputBeforeBlockedProviderCompletes(t *testing.T) {
+	var out lockedBuffer
+	input := &blockedProviderInput{started: make(chan struct{}), release: make(chan struct{})}
+	providerStarted := make(chan struct{})
+	providerRelease := make(chan struct{})
+	result := make(chan error, 1)
+	startedAt := time.Now()
+	go func() {
+		_, err := runNativeInteractive(input, &out, Options{
+			UI: "ai-resume-picker",
+			Items: []Item{
+				{Title: "[+ New Session]", Value: "new"},
+				{Title: "[codex] loading…", Value: "status\tcodex"},
+			},
+			DeferredUpdate: func() (DeferredUpdate, error) {
+				close(providerStarted)
+				<-providerRelease
+				return DeferredUpdate{}, nil
+			},
+		})
+		result <- err
+	}()
+	select {
+	case <-providerStarted:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("blocked provider did not start after first frame")
+	}
+	if elapsed := time.Since(startedAt); elapsed >= 500*time.Millisecond {
+		t.Fatalf("first frame/provider handoff took %s, want <500ms", elapsed)
+	}
+	if snapshot := out.String(); !strings.Contains(snapshot, "[+ New Session]") || !strings.Contains(snapshot, "[codex] loading…") {
+		t.Fatalf("initial frame missing before blocked provider: %q", snapshot)
+	}
+	select {
+	case <-input.started:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("input reader did not start while provider remained blocked")
+	}
+	close(input.release)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("picker did not remain closable while provider was blocked")
+	}
+	close(providerRelease)
+}
+
 func TestNativeInteractiveDeferredUpdateTriggerRefreshesRepeatedly(t *testing.T) {
 	t.Parallel()
 
@@ -2815,6 +2883,39 @@ func TestLimitedNativePreviewLinesKeepsLimitWithOverflowNotice(t *testing.T) {
 	}
 	if got, want := lines[2], "... 2 more lines"; got != want {
 		t.Fatalf("overflow notice = %q, want %q", got, want)
+	}
+}
+
+func TestNativePreviewLinesRendersEphemeralTextWithoutShellCommand(t *testing.T) {
+	items := []Item{{Title: "conversation", Value: "resume\tcodex\texact"}}
+	lines := nativePreviewLines(Options{Preview: Preview{TextByValue: map[string]string{
+		items[0].Value: "User\n질문\n\nAssistant\nanswer",
+	}}}, items, 0, 0, 8)
+	want := []string{"User", "질문", "", "Assistant", "answer"}
+	if !slices.Equal(lines, want) {
+		t.Fatalf("preview lines = %#v, want %#v", lines, want)
+	}
+}
+
+func TestResumePreviewExcerptWidthAndLocaleGolden(t *testing.T) {
+	cases := []struct{ locale, text string }{
+		{"en-US", "User: " + strings.Repeat("fast preview conversation ", 8)},
+		{"ko-KR", "사용자: " + strings.Repeat("빠른 미리보기 대화 내용 ", 8)},
+	}
+	var got strings.Builder
+	for _, tc := range cases {
+		fmt.Fprintln(&got, tc.locale)
+		for _, width := range []int{80, 100, 120} {
+			line := strings.TrimRight(nativeTruncateANSI(tc.text, width-4), " ")
+			fmt.Fprintf(&got, "%d|%s\n", width, line)
+		}
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "ai-resume-preview-width.golden"))
+	if err != nil {
+		t.Fatalf("read golden: %v\ngot:\n%s", err, got.String())
+	}
+	if got.String() != string(want) {
+		t.Fatalf("preview golden mismatch:\ngot:\n%swant:\n%s", got.String(), want)
 	}
 }
 

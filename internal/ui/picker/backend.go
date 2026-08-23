@@ -52,6 +52,9 @@ type ActionContext struct {
 type Preview struct {
 	Command string
 	Window  string
+	// TextByValue is invocation-local preview content keyed by an exact picker
+	// value. The native renderer consumes it directly without a shell command.
+	TextByValue map[string]string
 }
 
 type DeferredUpdate struct {
@@ -134,6 +137,9 @@ type Options struct {
 	Theme                 *theme.EffectiveTheme
 	DeferredUpdate        func() (DeferredUpdate, error)
 	DeferredUpdateTrigger <-chan struct{}
+	// FocusChanged runs after the newly focused row has rendered. It must return
+	// quickly and hand expensive work to a cancellable goroutine.
+	FocusChanged func(string)
 }
 
 type Result struct {
@@ -571,6 +577,9 @@ func runNativeInteractive(in io.Reader, out io.Writer, options Options) (Result,
 		renderer.Render(out, nativeInteractiveFrame(options, items, query, queryCursor, selected, previewOffset, layout))
 		if focusChanged {
 			runNativeFocusAction(options.Actions, focusValue)
+			if options.FocusChanged != nil {
+				options.FocusChanged(focusValue)
+			}
 		}
 		if !deferredStarted && options.DeferredUpdate != nil {
 			deferredStarted = true
@@ -977,7 +986,7 @@ func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
 	if update.Items != nil {
 		options.Items = append([]Item(nil), update.Items...)
 	}
-	if strings.TrimSpace(update.Preview.Command) != "" || strings.TrimSpace(update.Preview.Window) != "" {
+	if strings.TrimSpace(update.Preview.Command) != "" || strings.TrimSpace(update.Preview.Window) != "" || update.Preview.TextByValue != nil {
 		options.Preview = update.Preview
 	}
 	if update.SetHeader {
@@ -2478,6 +2487,11 @@ func nativeANSIReset(seq string) bool {
 }
 
 func nativePreviewLines(options Options, items []Item, selected, offset, limit int) []string {
+	if selected >= 0 && selected < len(items) && options.Preview.TextByValue != nil {
+		if output, ok := options.Preview.TextByValue[items[selected].Value]; ok {
+			return limitedNativePreviewLines(output, offset, limit)
+		}
+	}
 	command := strings.TrimSpace(options.Preview.Command)
 	if command == "" || selected < 0 || selected >= len(items) {
 		return nil

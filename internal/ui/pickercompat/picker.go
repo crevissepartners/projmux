@@ -31,6 +31,7 @@ func PickerOptions(options Options) picker.Options {
 		MultiLine:             options.Read0,
 		DeferredUpdate:        options.DeferredUpdate,
 		DeferredUpdateTrigger: options.DeferredUpdateTrigger,
+		FocusChanged:          options.FocusChanged,
 	}
 }
 

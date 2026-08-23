@@ -590,7 +590,7 @@ func TestAIResumeSessionRowShowsTurns(t *testing.T) {
 	}
 }
 
-func TestAIResumePickerNoSessionsDelegatesToAgentPicker(t *testing.T) {
+func TestAIResumePickerNoSessionsKeepsInteractiveNewSessionSnapshot(t *testing.T) {
 	home := t.TempDir()
 	work := filepath.Join(home, "repo")
 	if err := os.MkdirAll(work, 0o755); err != nil {
@@ -614,8 +614,11 @@ func TestAIResumePickerNoSessionsDelegatesToAgentPicker(t *testing.T) {
 	if err := cmd.runResumePicker("right"); err != nil {
 		t.Fatalf("runResumePicker() error = %v", err)
 	}
-	if got, want := runner.options.UI, "ai-picker"; got != want {
+	if got, want := runner.options.UI, "ai-resume-picker"; got != want {
 		t.Fatalf("picker UI = %q, want %q", got, want)
+	}
+	if len(runner.options.Entries) != 4 || runner.options.Entries[0].Value != aiResumeNewValue {
+		t.Fatalf("entries = %#v, want New session plus three provider snapshots", runner.options.Entries)
 	}
 }
 

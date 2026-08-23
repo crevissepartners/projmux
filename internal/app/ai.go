@@ -106,6 +106,9 @@ type aiCommand struct {
 	operationalDiagnostics     *diagnostics.AIRecorder
 	openCodexCapabilitySession func(context.Context) (codexCapabilitySession, error)
 	openCodexCatalog           aisessions.OpenCodexCatalog
+	discoverResumeProvider     func(context.Context, string, string, aisessions.DiscoverOptions, int) ([]aisessions.SessionMeta, error)
+	readResumePreview          func(context.Context, aisessions.SessionMeta, aisessions.OpenCodexCatalog) (aisessions.Preview, error)
+	enrichResumeTurns          func([]aisessions.SessionMeta) []aisessions.SessionMeta
 	codexCapabilityCache       *corecap.Cache
 	codexCapabilitySessionMu   sync.Mutex
 	codexCapabilitySession     codexCapabilitySession
@@ -131,20 +134,23 @@ type aiCommand struct {
 
 func newAICommand() *aiCommand {
 	return &aiCommand{
-		nativePicker:     intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		executable:       resolveExecutablePath,
-		lookupEnv:        os.Getenv,
-		homeDir:          os.UserHomeDir,
-		stdin:            os.Stdin,
-		readFile:         os.ReadFile,
-		writeFile:        os.WriteFile,
-		mkdirAll:         os.MkdirAll,
-		runCommand:       runExternalCommand,
-		readCommand:      readExternalCommand,
-		openCodexCatalog: aisessions.NewDefaultCodexCatalogOpener(version.String()),
-		now:              time.Now,
-		sleep:            time.Sleep,
-		producer:         newAttentionNotifyProducer(),
+		nativePicker:           intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		executable:             resolveExecutablePath,
+		lookupEnv:              os.Getenv,
+		homeDir:                os.UserHomeDir,
+		stdin:                  os.Stdin,
+		readFile:               os.ReadFile,
+		writeFile:              os.WriteFile,
+		mkdirAll:               os.MkdirAll,
+		runCommand:             runExternalCommand,
+		readCommand:            readExternalCommand,
+		openCodexCatalog:       aisessions.NewDefaultCodexCatalogOpener(version.String()),
+		discoverResumeProvider: aisessions.DiscoverProviderContext,
+		readResumePreview:      aisessions.ReadPreview,
+		enrichResumeTurns:      aisessions.EnrichTurns,
+		now:                    time.Now,
+		sleep:                  time.Sleep,
+		producer:               newAttentionNotifyProducer(),
 		openCodexCapabilitySession: func(ctx context.Context) (codexCapabilitySession, error) {
 			return codexappserver.OpenDefaultCapabilitySession(ctx, version.String())
 		},
@@ -1315,27 +1321,26 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	contextDir := c.resolveContextDir()
 	homeDir, _ := c.home()
 	depth := resolveAIResumeScanDepth(c.homeDir, c.lookupEnv, contextDir).Depth
-	// Defer the turn count: discovery returns candidates fast (early-exit, no
-	// per-turn scan) so the picker renders immediately, and the turn column is
-	// filled for the displayed rows by a background pass (see runResumeSessionPicker).
-	discoverCtx, cancel := context.WithTimeout(context.Background(), codexNativeThreadTimeout)
-	defer cancel()
-	sessions, err := aisessions.DiscoverContext(discoverCtx, contextDir, aisessions.DiscoverOptions{
-		HomeDir:          homeDir,
-		Depth:            depth,
-		DeferTurns:       true,
-		OpenCodexCatalog: c.openCodexCatalog,
-	})
-	if err != nil {
-		return err
-	}
-	if len(sessions) == 0 {
-		return c.runAgentPickerSelection(direction)
-	}
-
 	limit := resolveAIResumePickerLimit(c.homeDir, c.lookupEnv, contextDir).Limit
-	labels := c.resolveAIResumeConversationLabels(sessions)
-	result, err := c.runResumeSessionPicker(direction, sessions, labels, limit, contextDir, depth)
+	controller := newAIResumeLiveController(c, contextDir, homeDir, depth, limit)
+	defer controller.close()
+	// The seed is consumed only after NativeRunner has rendered its initial
+	// New+loading snapshot and started the deferred worker. Discovery therefore
+	// cannot delay terminal setup, renderer entry, or input readiness.
+	controller.signal()
+	locale := appLocale(c.homeDir, c.lookupEnv)
+	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, c.themedPickerOptions(intpickercompat.Options{
+		UI:                    "ai-resume-picker",
+		Entries:               controller.initialEntries(),
+		Title:                 localizeUIText(locale, "AI Resume - Split direction: ") + direction,
+		Prompt:                "AI Resume > ",
+		Footer:                projmuxFooter(localizeUIText(locale, "Loading resume sessions…")),
+		ExpectKeys:            []string{"enter"},
+		Bindings:              pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, aiResumePickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s"),
+		DeferredUpdate:        controller.update,
+		DeferredUpdateTrigger: controller.events,
+		FocusChanged:          controller.focus,
+	}))
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return nil
@@ -1352,48 +1357,8 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	if !ok {
 		return nil
 	}
-	selection = enrichAIResumeSelection(selection, sessions)
+	selection = enrichAIResumeSelection(selection, controller.snapshotSessions())
 	return c.runSelectedResumeSession(selection, direction)
-}
-
-func (c *aiCommand) runResumeSessionPicker(direction string, sessions []aisessions.SessionMeta, conversationLabels map[string]string, limit int, baseCWD string, depth int) (intpickercompat.Result, error) {
-	if c.nativePicker == nil {
-		return intpickercompat.Result{}, errors.New("native picker is not configured")
-	}
-	locale := appLocale(c.homeDir, c.lookupEnv)
-	var now time.Time
-	if c.now != nil {
-		now = c.now()
-	}
-	entries, visible, total := aiResumeSessionRowsWithLabels(sessions, conversationLabels, limit, now, locale, baseCWD, depth)
-	footer := fmt.Sprintf(localizeUIText(locale, "Showing latest %d resume sessions."), visible)
-	if total > visible {
-		footer = fmt.Sprintf(localizeUIText(locale, "Showing latest %d of %d resume sessions."), visible, total)
-	}
-	// The rows above render immediately with a blank turn column (discovery
-	// deferred the expensive per-turn scan). Fill it in a background pass over
-	// just the displayed sessions and hand the picker rebuilt rows; the turn
-	// count pops in without blocking the initial list. Values/search keys are
-	// unchanged by the turn count, so focus and filtering are preserved.
-	displayed := sessions
-	if n := normalizeResumePickerLimit(limit); len(displayed) > n {
-		displayed = displayed[:n]
-	}
-	deferredUpdate := func() (intpicker.DeferredUpdate, error) {
-		aisessions.EnrichTurns(displayed)
-		enriched, _, _ := aiResumeSessionRowsWithLabels(sessions, conversationLabels, limit, now, locale, baseCWD, depth)
-		return intpicker.DeferredUpdate{Items: intpickercompat.PickerItemsFromEntries(enriched)}, nil
-	}
-	return runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, c.themedPickerOptions(intpickercompat.Options{
-		UI:             "ai-resume-picker",
-		Entries:        entries,
-		Title:          localizeUIText(locale, "AI Resume - Split direction: ") + direction,
-		Prompt:         "AI Resume > ",
-		Footer:         projmuxFooter(footer),
-		ExpectKeys:     []string{"enter"},
-		Bindings:       pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, aiResumePickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s"),
-		DeferredUpdate: deferredUpdate,
-	}))
 }
 
 type aiResumeSelection struct {

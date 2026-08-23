@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -15,6 +16,30 @@ import (
 
 func nativePickerFromCompatRunner(r intpickercompat.Runner) intpicker.Runner {
 	return pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+		// Compatibility fixtures do not run the native event loop. For the live
+		// resume picker, emulate its post-first-frame deferred phase so historical
+		// intent tests can still choose discovered rows; production never takes
+		// this adapter path.
+		if options.UI == "ai-resume-picker" && options.DeferredUpdate != nil {
+			if options.DeferredUpdateTrigger != nil {
+				select {
+				case <-options.DeferredUpdateTrigger:
+				default:
+				}
+			}
+			if update, err := options.DeferredUpdate(); err == nil && update.Items != nil {
+				options.Items = update.Items
+			}
+			for range 3 {
+				select {
+				case <-options.DeferredUpdateTrigger:
+					if update, err := options.DeferredUpdate(); err == nil && update.Items != nil {
+						options.Items = update.Items
+					}
+				case <-time.After(3 * time.Second):
+				}
+			}
+		}
 		result, err := r.Run(compatOptionsFromNativePickerForTest(options))
 		if err != nil {
 			return intpicker.Result{}, err

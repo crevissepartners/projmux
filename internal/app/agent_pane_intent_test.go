@@ -412,7 +412,7 @@ func TestAppServerCatalogPickerPreservesListedThreadOnResumeIntent(t *testing.T)
 	if !reflect.DeepEqual(creator.intents, want) {
 		t.Fatalf("intents=%+v want=%+v", creator.intents, want)
 	}
-	if len(runner.options.Entries) != 2 || !strings.Contains(runner.options.Entries[1].Label, "Exact registry topic") {
+	if len(runner.options.Entries) < 2 || !strings.Contains(runner.options.Entries[1].Label, "Exact registry topic") {
 		t.Fatalf("picker entries=%#v, want exact-bound Registry topic", runner.options.Entries)
 	}
 }
@@ -458,8 +458,8 @@ func TestCatalogOpenFailurePickerUsesOneVisibleRolloutRowAndIntent(t *testing.T)
 			if err := cmd.runResumePicker("right"); err != nil {
 				t.Fatal(err)
 			}
-			if opens != 1 || len(runner.options.Entries) != 2 {
-				t.Fatalf("catalog opens=%d entries=%#v, want one open and new+one rollout row", opens, runner.options.Entries)
+			if opens != 1 || len(runner.options.Entries) < 2 {
+				t.Fatalf("catalog opens=%d entries=%#v, want one open and a rollout row plus provider status rows", opens, runner.options.Entries)
 			}
 			row := runner.options.Entries[1]
 			if !strings.Contains(row.Label, "[fallback]") || strings.Contains(row.Label, aisessions.SourceCodexRollout) ||
