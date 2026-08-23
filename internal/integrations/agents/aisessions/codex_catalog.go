@@ -47,15 +47,10 @@ type CodexCatalogOutcome struct {
 	Reason     CatalogReason
 }
 
-type Discovery struct {
-	Sessions []SessionMeta
-	Codex    CodexCatalogOutcome
-}
-
 var errMalformedCatalogPagination = errors.New("codex catalog malformed pagination")
 
-// CodexCatalog is one initialized native catalog connection. One Discover
-// invocation opens at most one connection and either consumes all of its pages
+// CodexCatalog is one initialized native catalog connection. One Codex provider
+// discovery opens at most one connection and either consumes its bounded pages
 // or discards the native result before one rollout fallback.
 type CodexCatalog interface {
 	List(context.Context, codexappserver.CatalogQuery) (codexappserver.CatalogPage, error)
@@ -73,6 +68,10 @@ func (c *defaultCodexCatalog) List(ctx context.Context, query codexappserver.Cat
 
 func (c *defaultCodexCatalog) Read(ctx context.Context, threadID string) (codexappserver.CatalogThread, error) {
 	return c.client.ReadCatalogThread(ctx, threadID)
+}
+
+func (c *defaultCodexCatalog) ReadPreview(ctx context.Context, threadID string) (codexappserver.CatalogPreview, error) {
+	return c.client.ReadCatalogPreview(ctx, threadID)
 }
 
 func (c *defaultCodexCatalog) Close() error { return c.client.Close() }
@@ -101,7 +100,11 @@ type catalogHealthError struct{ availability codexappserver.Availability }
 
 func (e catalogHealthError) Error() string { return "Codex catalog " + string(e.availability) }
 
-func discoverCodexNative(ctx context.Context, cwd string, depth int, open OpenCodexCatalog) ([]SessionMeta, error) {
+// discoverCodexNativeBounded is the interactive catalog path. pageBudget is a
+// hard call budget and rowBudget stops pagination once enough in-tree rows are
+// available for the picker. A zero row budget retains the complete catalog
+// behavior used by non-interactive callers.
+func discoverCodexNativeBounded(ctx context.Context, cwd string, depth int, open OpenCodexCatalog, pageBudget, rowBudget int) ([]SessionMeta, error) {
 	catalog, err := open(ctx)
 	if err != nil {
 		return nil, err
@@ -114,7 +117,10 @@ func discoverCodexNative(ctx context.Context, cwd string, depth int, open OpenCo
 	}
 	seenCursors := make(map[string]struct{})
 	byID := make(map[string]SessionMeta)
-	for pageNo := range codexCatalogMaxPages {
+	if pageBudget <= 0 || pageBudget > codexCatalogMaxPages {
+		pageBudget = codexCatalogMaxPages
+	}
+	for pageNo := range pageBudget {
 		page, err := catalog.List(ctx, query)
 		if err != nil {
 			return nil, err
@@ -134,6 +140,7 @@ func discoverCodexNative(ctx context.Context, cwd string, depth int, open OpenCo
 			candidate := SessionMeta{
 				Agent: AgentCodex, ResumeID: id, Title: title,
 				LastModified: thread.RecencyAt,
+				UpdatedAt:    thread.UpdatedAt,
 				Context:      SessionContext{CWD: cleanCWD(thread.CWD), Branch: thread.Branch},
 				Source:       SourceCodexAppServer, Confidence: ConfidenceHigh,
 				RuntimeStatus: thread.RuntimeStatus,
@@ -141,6 +148,9 @@ func discoverCodexNative(ctx context.Context, cwd string, depth int, open OpenCo
 			if current, ok := byID[id]; !ok || candidate.LastModified.After(current.LastModified) {
 				byID[id] = candidate
 			}
+		}
+		if rowBudget > 0 && len(byID) >= rowBudget {
+			break
 		}
 		if page.NextCursor == nil {
 			break
@@ -154,7 +164,10 @@ func discoverCodexNative(ctx context.Context, cwd string, depth int, open OpenCo
 		}
 		seenCursors[next] = struct{}{}
 		query.Cursor = &next
-		if pageNo == codexCatalogMaxPages-1 {
+		if pageNo == pageBudget-1 {
+			if rowBudget > 0 {
+				break
+			}
 			return nil, errMalformedCatalogPagination
 		}
 	}

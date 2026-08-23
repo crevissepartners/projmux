@@ -50,10 +50,10 @@ func TestNativeCatalogPaginationDepthNameStatusOrderAndNoPromptTitleInference(t 
 			{ID: "019f0000-0000-7000-8000-000000000043", CWD: "/work/sibling", Name: "excluded", RecencyAt: time.Unix(40, 0), RuntimeStatus: "notLoaded"},
 		}},
 	}}
-	discovery, err := DiscoverWithOutcomeContext(context.Background(), "/work/app", DiscoverOptions{
+	discovery, err := DiscoverProviderContext(context.Background(), AgentCodex, "/work/app", DiscoverOptions{
 		Depth: 1, ClaudeProjectsDir: t.TempDir(), CodexSessionsDir: t.TempDir(),
 		AntigravityHistoryPath: filepath.Join(t.TempDir(), "missing"), OpenCodexCatalog: openFakeCodexCatalog(fake),
-	})
+	}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,10 +79,10 @@ func TestNativeCatalogDedupesByExactIDAndOrdersRecencyDeterministically(t *testi
 		{ID: id1, CWD: "/work/app", Name: "same recency lower id", RecencyAt: time.Unix(30, 0), RuntimeStatus: "idle"},
 		{ID: id2, CWD: "/work/app", Name: "newer duplicate", RecencyAt: time.Unix(30, 0), RuntimeStatus: "active"},
 	}}}}
-	discovery, err := DiscoverWithOutcomeContext(context.Background(), "/work/app", DiscoverOptions{
+	discovery, err := DiscoverProviderContext(context.Background(), AgentCodex, "/work/app", DiscoverOptions{
 		ClaudeProjectsDir: t.TempDir(), CodexSessionsDir: t.TempDir(),
 		AntigravityHistoryPath: filepath.Join(t.TempDir(), "missing"), OpenCodexCatalog: openFakeCodexCatalog(fake),
-	})
+	}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,10 +108,10 @@ func TestMalformedPaginationDiscardsNativeAndRunsOneAnnotatedRolloutFallback(t *
 		{Threads: []codexappserver.CatalogThread{{ID: "019f0000-0000-7000-8000-000000000088", CWD: "/work/app", Name: "discard me", RecencyAt: time.Unix(40, 0), RuntimeStatus: "idle"}}, NextCursor: &next},
 		{Threads: []codexappserver.CatalogThread{{ID: "019f0000-0000-7000-8000-000000000089", CWD: "/work/app", Name: "discard too", RecencyAt: time.Unix(30, 0), RuntimeStatus: "idle"}}, NextCursor: &next},
 	}}
-	discovery, err := DiscoverWithOutcomeContext(context.Background(), "/work/app", DiscoverOptions{
+	discovery, err := DiscoverProviderContext(context.Background(), AgentCodex, "/work/app", DiscoverOptions{
 		ClaudeProjectsDir: t.TempDir(), CodexSessionsDir: root,
 		AntigravityHistoryPath: filepath.Join(t.TempDir(), "missing"), OpenCodexCatalog: openFakeCodexCatalog(fake),
-	})
+	}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +125,7 @@ func TestMalformedPaginationDiscardsNativeAndRunsOneAnnotatedRolloutFallback(t *
 	}
 }
 
-func TestEmptyAndExhaustedCatalogPaginationFallBackAsMalformed(t *testing.T) {
+func TestEmptyCatalogPaginationFallsBackAsMalformed(t *testing.T) {
 	thread := func(index int) codexappserver.CatalogThread {
 		return codexappserver.CatalogThread{
 			ID: fmt.Sprintf("019f0000-0000-7000-8000-%012d", index), CWD: "/work/app",
@@ -133,42 +133,41 @@ func TestEmptyAndExhaustedCatalogPaginationFallBackAsMalformed(t *testing.T) {
 		}
 	}
 	empty := ""
-	pagesAtBudget := make([]codexappserver.CatalogPage, codexCatalogMaxPages)
-	for i := range pagesAtBudget {
-		next := fmt.Sprintf("opaque:%d", i+1)
-		pagesAtBudget[i] = codexappserver.CatalogPage{Threads: []codexappserver.CatalogThread{thread(i + 1)}, NextCursor: &next}
+	fake := &fakeCodexCatalog{pages: []codexappserver.CatalogPage{{Threads: []codexappserver.CatalogThread{thread(1)}, NextCursor: &empty}}}
+	discovery, err := DiscoverProviderContext(context.Background(), AgentCodex, "/work/app", DiscoverOptions{
+		ClaudeProjectsDir: t.TempDir(), CodexSessionsDir: t.TempDir(),
+		AntigravityHistoryPath: filepath.Join(t.TempDir(), "missing"), OpenCodexCatalog: openFakeCodexCatalog(fake),
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, test := range []struct {
-		name      string
-		pages     []codexappserver.CatalogPage
-		wantCalls int
-	}{
-		{name: "empty cursor", pages: []codexappserver.CatalogPage{{Threads: []codexappserver.CatalogThread{thread(1)}, NextCursor: &empty}}, wantCalls: 1},
-		{name: "page budget exhausted", pages: pagesAtBudget, wantCalls: codexCatalogMaxPages},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			fake := &fakeCodexCatalog{pages: test.pages}
-			discovery, err := DiscoverWithOutcomeContext(context.Background(), "/work/app", DiscoverOptions{
-				ClaudeProjectsDir: t.TempDir(), CodexSessionsDir: t.TempDir(),
-				AntigravityHistoryPath: filepath.Join(t.TempDir(), "missing"), OpenCodexCatalog: openFakeCodexCatalog(fake),
-			})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if len(fake.calls) != test.wantCalls || len(discovery.Sessions) != 0 ||
-				discovery.Codex.Reason != CatalogReason(ReasonMalformedPagination) {
-				t.Fatalf("calls=%d discovery=%#v", len(fake.calls), discovery)
-			}
-		})
+	if len(fake.calls) != 1 || len(discovery.Sessions) != 0 || discovery.Codex.Reason != CatalogReason(ReasonMalformedPagination) {
+		t.Fatalf("calls=%d discovery=%#v", len(fake.calls), discovery)
+	}
+}
+
+func TestCompleteCatalogPathRejectsExhaustedPagination(t *testing.T) {
+	pages := make([]codexappserver.CatalogPage, codexCatalogMaxPages)
+	for i := range pages {
+		next := fmt.Sprintf("opaque:%d", i+1)
+		pages[i] = codexappserver.CatalogPage{Threads: []codexappserver.CatalogThread{{
+			ID: fmt.Sprintf("019f0000-0000-7000-8000-%012d", i+1), CWD: "/work/app",
+			Name: "native", RecencyAt: time.Unix(int64(i+1), 0), RuntimeStatus: "idle",
+		}}, NextCursor: &next}
+	}
+	fake := &fakeCodexCatalog{pages: pages}
+	_, err := discoverCodexNativeBounded(context.Background(), "/work/app", 0, openFakeCodexCatalog(fake), codexCatalogMaxPages, 0)
+	if !errors.Is(err, errMalformedCatalogPagination) || len(fake.calls) != codexCatalogMaxPages || fake.closed != 1 {
+		t.Fatalf("err=%v calls=%d closed=%d", err, len(fake.calls), fake.closed)
 	}
 }
 
 func TestEmptyNativeCatalogDoesNotMergeExistingRollout(t *testing.T) {
 	fake := &fakeCodexCatalog{pages: []codexappserver.CatalogPage{{}}}
-	discovery, err := DiscoverWithOutcomeContext(context.Background(), "/work/app", DiscoverOptions{
+	discovery, err := DiscoverProviderContext(context.Background(), AgentCodex, "/work/app", DiscoverOptions{
 		ClaudeProjectsDir: t.TempDir(), CodexSessionsDir: filepath.Join("testdata", "discover", "codex", "sessions"),
 		AntigravityHistoryPath: filepath.Join(t.TempDir(), "missing"), OpenCodexCatalog: openFakeCodexCatalog(fake),
-	})
+	}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

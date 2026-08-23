@@ -7695,7 +7695,7 @@ printf '%s\n' \
   >"$p12_root/home/.codex/sessions/2026/08/21/rollout-phase12.jsonl"
 p12_before_panes="$(p12_pane_count)"
 p12_before_agents="$(p12_agent_count)"
-printf '2\n' | p12_popup internal agent-pane picker --inside --resume down >"$p12_root/resume-picker.out"
+{ sleep 1; printf '2\n'; } | p12_popup internal agent-pane picker --inside --resume down >"$p12_root/resume-picker.out"
 p12_assert_managed_create "Home resume picker" "$p12_before_panes" "$p12_before_agents" 1
 p12_resume_uid="$p12_last_pane_uid"
 smoke_assert_file_contains "$p12_agent_argv" "resume $p12_resume_id"

@@ -2,10 +2,12 @@ package codexappserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const DefaultCatalogPageSize uint32 = 100
@@ -35,6 +37,32 @@ type CatalogThread struct {
 type CatalogPage struct {
 	Threads    []CatalogThread
 	NextCursor *string
+}
+
+// CatalogPreview is the bounded content projection for one exact thread. It is
+// separate from CatalogThread so content cannot enter discovery metadata.
+type CatalogPreview struct {
+	ThreadID  string
+	UpdatedAt time.Time
+	User      string
+	Assistant string
+}
+
+type wirePreviewThreadReadResult struct {
+	Thread wirePreviewThread `json:"thread"`
+}
+type wirePreviewThread struct {
+	ID        string            `json:"id"`
+	UpdatedAt int64             `json:"updatedAt"`
+	Turns     []wirePreviewTurn `json:"turns"`
+}
+type wirePreviewTurn struct {
+	Items []wirePreviewItem `json:"items"`
+}
+type wirePreviewItem struct {
+	Type    string          `json:"type"`
+	Text    string          `json:"text"`
+	Content json.RawMessage `json:"content"`
 }
 
 // ListCatalogThreads requests one exact opaque-cursor page. The filter is
@@ -100,6 +128,78 @@ func (c *Client) ReadCatalogThread(ctx context.Context, threadID string) (Catalo
 		return CatalogThread{}, fmt.Errorf("%w: thread/read returned a different thread", ErrProtocol)
 	}
 	return thread, nil
+}
+
+// ReadCatalogPreview reads turns for one exact focused thread only and retains
+// at most the latest user and assistant text. All other content is discarded.
+func (c *Client) ReadCatalogPreview(ctx context.Context, threadID string) (CatalogPreview, error) {
+	threadID = strings.TrimSpace(threadID)
+	if threadID == "" {
+		return CatalogPreview{}, fmt.Errorf("%w: preview requires thread id", ErrProtocol)
+	}
+	var result wirePreviewThreadReadResult
+	if err := c.Request(ctx, methodThreadRead, threadReadParams{ThreadID: threadID, IncludeTurns: true}, &result); err != nil {
+		return CatalogPreview{}, err
+	}
+	if strings.TrimSpace(result.Thread.ID) != threadID {
+		return CatalogPreview{}, fmt.Errorf("%w: preview returned a different thread", ErrProtocol)
+	}
+	preview := CatalogPreview{ThreadID: threadID}
+	if result.Thread.UpdatedAt > 0 {
+		preview.UpdatedAt = time.Unix(result.Thread.UpdatedAt, 0)
+	}
+	for _, turn := range result.Thread.Turns {
+		for _, item := range turn.Items {
+			text := boundedPreviewText(previewItemText(item), 4000)
+			switch strings.ToLower(strings.TrimSpace(item.Type)) {
+			case "usermessage", "user_message", "user":
+				if text != "" {
+					preview.User = text
+				}
+			case "agentmessage", "assistantmessage", "agent_message", "assistant":
+				if text != "" {
+					preview.Assistant = text
+				}
+			}
+		}
+	}
+	return preview, nil
+}
+
+func previewItemText(item wirePreviewItem) string {
+	if strings.TrimSpace(item.Text) != "" {
+		return item.Text
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if len(item.Content) != 0 && json.Unmarshal(item.Content, &blocks) == nil {
+		var parts []string
+		for _, block := range blocks {
+			if strings.EqualFold(block.Type, "text") && strings.TrimSpace(block.Text) != "" {
+				parts = append(parts, block.Text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	}
+	var text string
+	if json.Unmarshal(item.Content, &text) == nil {
+		return text
+	}
+	return ""
+}
+
+func boundedPreviewText(value string, max int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if len(value) <= max {
+		return value
+	}
+	cut := max
+	for cut > 0 && !utf8.ValidString(value[:cut]) {
+		cut--
+	}
+	return value[:cut] + "…"
 }
 
 func normalizeCatalogThread(raw wireCatalogThread) (CatalogThread, error) {

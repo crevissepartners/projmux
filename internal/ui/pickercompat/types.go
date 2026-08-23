@@ -41,6 +41,7 @@ type Options struct {
 	// through to the native picker Options.
 	DeferredUpdate        func() (picker.DeferredUpdate, error)
 	DeferredUpdateTrigger <-chan struct{}
+	FocusChanged          func(string)
 }
 
 type Entry struct {
