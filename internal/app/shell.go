@@ -489,7 +489,6 @@ func (c *shellCommand) provisionAppSession(ctx context.Context, socketName, conf
 		}
 		return receipt, original
 	}
-	row := []byte(strings.Join(rows[0], tmuxRowSep) + "\n")
 	marker := newRuntimeMutation(1, mutationWriteRouteMarker, runtimeMutationTarget{
 		Socket: "-S=" + route.expectedSocketPath, PhysicalSocket: printableRuntimeMutationSocket(route.expectedSocketPath),
 		RouteAuthority: route.authority.printable(),
@@ -500,7 +499,7 @@ func (c *shellCommand) provisionAppSession(ctx context.Context, socketName, conf
 	if err := executeRuntimeMutationPlan(ctx, []runtimeMutationStep{{
 		Action: marker,
 		TargetRouteGuard: func(ctx context.Context) error {
-			return guardPrintedRuntimeMutationRoute(ctx, c.tmuxRunner, route, marker)
+			return guardPrintedRuntimeMutationRouteBeforeMarkerWrite(ctx, c.tmuxRunner, route, marker)
 		},
 		Reobserve: func(ctx context.Context) (bool, error) {
 			if err := c.guardControlBootstrapRoute(ctx, &route, false, false); err != nil {
@@ -515,7 +514,8 @@ func (c *shellCommand) provisionAppSession(ctx context.Context, socketName, conf
 			}
 			current, err := c.controlBootstrapRunner(route).Run(ctx, "tmux", "display-message", "-p", "-t", rows[0][0],
 				"-F", tmuxRowFormat("#{session_id}", "#{window_id}", "#{pane_id}", "#{"+tmuxopts.AppGlobal+"}"))
-			if err != nil || strings.TrimSpace(string(current)) != strings.TrimSpace(string(row)) {
+			currentRows := splitTmuxRows(string(current), 4)
+			if err != nil || len(currentRows) != 1 || !slices.Equal(currentRows[0], rows[0]) {
 				return errors.New("ControlSession bootstrap containment drifted before route marker")
 			}
 			return nil
@@ -934,7 +934,7 @@ func (c *shellCommand) resolveShellTarget(rawSession string, sessionExplicit boo
 		return shellTarget{SessionName: sessionName, CWD: home}, nil
 	}
 
-	projectRoot, err := c.resolveShellProjectContext()
+	projectRoot, err := c.resolveShellProjectContext(home)
 	if err != nil {
 		return shellTarget{}, fmt.Errorf("resolve shell project context: %w", err)
 	}
@@ -959,7 +959,8 @@ func flagSetExplicitly(fs *flag.FlagSet, name string) bool {
 	return explicit
 }
 
-func (c *shellCommand) resolveShellProjectContext() (string, error) {
+func (c *shellCommand) resolveShellProjectContext(home string) (string, error) {
+	home = filepath.Clean(strings.TrimSpace(home))
 	if c.lookupEnv != nil {
 		if raw := strings.TrimSpace(c.lookupEnv("PROJMUX_CWD")); raw != "" {
 			return filepath.Clean(raw), nil
@@ -973,7 +974,7 @@ func (c *shellCommand) resolveShellProjectContext() (string, error) {
 		return "", err
 	}
 	wd = filepath.Clean(wd)
-	if root := nearestProjectMarker(wd, os.TempDir()); root != "" {
+	if root := nearestProjectMarker(wd, os.TempDir(), home); root != "" {
 		return root, nil
 	}
 	return "", nil

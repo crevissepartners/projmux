@@ -408,10 +408,13 @@ func TestShellDefaultSessionUsesPROJMUXCWDProjectContext(t *testing.T) {
 	}
 }
 
-func TestShellDefaultSessionUsesHomeProjectIdentity(t *testing.T) {
+func TestShellDefaultSessionKeepsExactHomeAsControlSessionWithGitMarker(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	recorder := &recordingShellRunner{}
 	cmd := &shellCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -419,6 +422,7 @@ func TestShellDefaultSessionUsesHomeProjectIdentity(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
+		getwd:      func() (string, error) { return home, nil },
 	}
 
 	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -428,6 +432,31 @@ func TestShellDefaultSessionUsesHomeProjectIdentity(t *testing.T) {
 	wantArgs := []string{"-L", "projmux", "-f", filepath.Join(home, ".config", "projmux", "tmux.conf"), "attach-session", "-t", "=home", "-c", home}
 	if recorder.name != "tmux" || !reflect.DeepEqual(recorder.args, wantArgs) {
 		t.Fatalf("command = %s %#v, want tmux %#v", recorder.name, recorder.args, wantArgs)
+	}
+}
+
+func TestShellProjectContextPreservesTempBoundary(t *testing.T) {
+	tempRoot := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("TMPDIR", tempRoot)
+	if err := os.MkdirAll(filepath.Join(tempRoot, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wd := filepath.Join(tempRoot, "scratch", "leaf")
+	if err := os.MkdirAll(wd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &shellCommand{
+		lookupEnv: func(string) string { return "" },
+		getwd:     func() (string, error) { return wd, nil },
+	}
+
+	got, err := cmd.resolveShellProjectContext(home)
+	if err != nil {
+		t.Fatalf("resolveShellProjectContext() error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("resolveShellProjectContext() = %q, want no project from temp-root marker", got)
 	}
 }
 
@@ -1371,6 +1400,8 @@ type scriptedShellTmuxRunner struct {
 	socketReadIndex   int
 	observedSocket    string
 	logicalSocket     string
+	routeMarkerAbsent bool
+	escapedDisplayRow bool
 	identityConverged bool
 }
 
@@ -1448,6 +1479,9 @@ func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...st
 		return []byte("1\n"), nil
 	}
 	if strings.Contains(joined, "show-options") && strings.Contains(joined, runtimeMutationSocketNameOption) {
+		if r.routeMarkerAbsent {
+			return nil, nil
+		}
 		logical := r.logicalSocket
 		if logical == "" {
 			logical = "projmux"
@@ -1495,7 +1529,11 @@ func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...st
 		return []byte(strings.Join(sessions, "\n") + "\n"), nil
 	}
 	if strings.Contains(joined, "display-message") && strings.Contains(joined, tmuxopts.AppGlobal) {
-		return []byte(strings.Join([]string{"$1", "@1", "%1", "1"}, tmuxRowSep) + "\n"), nil
+		separator := tmuxRowSep
+		if r.escapedDisplayRow {
+			separator = tmuxRowSepFormat
+		}
+		return []byte(strings.Join([]string{"$1", "@1", "%1", "1"}, separator) + "\n"), nil
 	}
 	if strings.Contains(joined, "display-message") && strings.Contains(joined, tmuxopts.SessionRole) {
 		if r.identityConverged {
@@ -1504,6 +1542,13 @@ func (r *scriptedShellTmuxRunner) Run(_ context.Context, name string, args ...st
 		return []byte(strings.Join([]string{"$1", "", "@1", "", "%1", ""}, tmuxRowSep) + "\n"), nil
 	}
 	argv := tmuxCommandArgv(args)
+	if len(args) >= 6 && args[0] == "-S" && len(argv) == 4 && reflect.DeepEqual(argv[:3], []string{
+		"set-option", "-gq", runtimeMutationSocketNameOption,
+	}) {
+		r.logicalSocket = argv[3]
+		r.routeMarkerAbsent = false
+		return nil, nil
+	}
 	if len(args) >= 2 && args[0] == "-S" && len(argv) == 5 && reflect.DeepEqual(argv, []string{
 		"set-environment", "-u", "-t", "$1", createOperationEnvironment,
 	}) {
