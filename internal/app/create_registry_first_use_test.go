@@ -173,8 +173,8 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 		if len(windows) == 0 {
 			t.Fatalf("project %s registered with no bootstrap Window", project.Metadata.Name)
 		}
-		if _, ok := registry.Pane(windows[0].Spec.PrimaryPaneRef); !ok {
-			t.Fatalf("project %s bootstrap Window has no resolvable primaryPaneRef", project.Metadata.Name)
+		if _, ok := registry.Pane(windows[0].Spec.AnchorPaneRef); !ok {
+			t.Fatalf("project %s bootstrap Window has no resolvable default shell ref", project.Metadata.Name)
 		}
 	}
 	if !slices.Equal(names, []string{"alpha"}) {

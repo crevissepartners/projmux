@@ -48,7 +48,7 @@ func registryFixture() coremetadata.Registry {
 			{
 				APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 				Metadata: meta("win-main", "main", "proj-bravo", coremetadata.KindProject),
-				Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pane-shell"},
+				Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pane-shell"},
 			},
 		},
 		Panes: []coremetadata.Pane{

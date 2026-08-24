@@ -552,8 +552,8 @@ func TestCreateAgentWindowEnsureIsOptIn(t *testing.T) {
 		if fresh == nil {
 			t.Fatalf("--create-window did not create the Window:\n%s", store.snapshot())
 		}
-		if fresh.Spec.PrimaryPaneRef == "" {
-			t.Fatal("the ensured Window has no primaryPaneRef to anchor on")
+		if fresh.Spec.AnchorPaneRef == "" {
+			t.Fatal("the ensured Window has no compatibility shell ref to anchor on")
 		}
 		agent := agentNamed(t, store, fresh.Metadata.UID, "claude")
 		if agent.Status.Phase != coremetadata.PhaseRunning {
@@ -836,7 +836,7 @@ func TestCreateAgentFansOutOverEveryWindowAnchorExactlyOnce(t *testing.T) {
 		t.Fatalf("both Windows reported the same pane %q", ids[0])
 	}
 
-	// Exactly two splits, each anchored on its own Window's primaryPaneRef.
+	// Exactly two splits, each anchored on its own Window's compatibility shell ref.
 	var anchors []string
 	for _, call := range tmux.calls {
 		argv := tmuxCommandArgv(call)
@@ -961,7 +961,7 @@ func TestAFailureAnywhereInAnAgentFanOutLeavesZeroMutations(t *testing.T) {
 			setup: func(store *fakeResourceStore, _ *fakeTmux, _ *fakeAgentLauncher) {
 				for i := range store.registry.Windows {
 					if store.registry.Windows[i].Metadata.UID == "win-alpha-review" {
-						store.registry.Windows[i].Spec.PrimaryPaneRef = "pan-gone"
+						store.registry.Windows[i].Spec.AnchorPaneRef = "pan-gone"
 					}
 				}
 			},

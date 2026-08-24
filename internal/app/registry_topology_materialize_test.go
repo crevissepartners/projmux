@@ -137,7 +137,7 @@ func TestRegistryTopologyMaterializationDryRunExecuteAndRepeatNoop(t *testing.T)
 func TestRegistryTopologyMaterializationRefusesBeforeFirstCreate(t *testing.T) {
 	command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
 	main, _ := store.registry.Window("win-beta-main")
-	main.Spec.PrimaryPaneRef = ""
+	main.Spec.AnchorPaneRef = ""
 	before := store.snapshot()
 	out, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
 	if err == nil || !strings.Contains(out, `"action": "refuse"`) {
@@ -300,7 +300,7 @@ func TestRegistryTopologyMaterializationRecreatesMissingPrimaryFromBoundShellAnc
 	window, _ := store.registry.Window("win-beta-main")
 	main := server.session("beta").windows[0]
 	primaryIndex := slices.IndexFunc(main.panes, func(pane *fakeTmuxPane) bool {
-		return pane.opts[tmuxopts.PaneUID] == window.Spec.PrimaryPaneRef
+		return pane.opts[tmuxopts.PaneUID] == window.Spec.AnchorPaneRef
 	})
 	if primaryIndex < 0 || len(main.panes) < 2 {
 		t.Fatalf("fixture has no primary plus bound shell anchor: %s", server.state())
@@ -311,7 +311,7 @@ func TestRegistryTopologyMaterializationRecreatesMissingPrimaryFromBoundShellAnc
 		t.Fatalf("recreate primary from bound shell anchor: %v\n%s", err, result)
 	}
 	if !slices.ContainsFunc(main.panes, func(pane *fakeTmuxPane) bool {
-		return pane.opts[tmuxopts.PaneUID] == window.Spec.PrimaryPaneRef
+		return pane.opts[tmuxopts.PaneUID] == window.Spec.AnchorPaneRef
 	}) {
 		t.Fatalf("primary Pane was not recreated: %s", server.state())
 	}
@@ -643,7 +643,7 @@ func TestRegistryTopologyMaterializationRefusesAgentPrimaryAndZeroWindows(t *tes
 			t.Fatal(err)
 		}
 		window, _ := store.registry.Window("win-beta-main")
-		window.Spec.PrimaryPaneRef = managed.Metadata.UID
+		window.Spec.AnchorPaneRef = managed.Metadata.UID
 		out, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
 		if err == nil || !strings.Contains(out, "Window-owned shell Pane") || len(server.sessions) != 0 {
 			t.Fatalf("Agent-owned primary was not refused before create: err=%v\n%s", err, out)

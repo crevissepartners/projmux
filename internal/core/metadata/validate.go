@@ -8,7 +8,7 @@ import (
 
 // Validate checks every structural invariant of the registry: envelope
 // spelling, uid uniqueness, in-scope name uniqueness, ownerRef integrity,
-// primaryPaneRef validity, Agent phase membership, and reservation
+// anchor/default-shell validity, Agent phase membership, and reservation
 // consistency.
 func (r Registry) Validate() error {
 	const op = "validate registry"
@@ -221,16 +221,37 @@ func (r Registry) Validate() error {
 	}
 
 	for _, window := range r.Windows {
-		if strings.TrimSpace(window.Spec.PrimaryPaneRef) == "" {
-			return stateErr(op, ErrInvalidRegistry, "window %q has no primaryPaneRef", window.Metadata.Name)
+		if window.Spec.sourceShape == windowSpecSourceLegacy || window.Spec.sourceShape == windowSpecSourceMixed ||
+			window.Spec.sourceShape == windowSpecSourceUnknown || strings.TrimSpace(window.Spec.legacyPrimaryPaneRef) != "" {
+			return stateErr(op, ErrInvalidRegistry, "window %q is not normalized to final-v2 anchor authority", window.Metadata.Name)
 		}
-		primary, ok := r.Pane(window.Spec.PrimaryPaneRef)
+		if strings.TrimSpace(window.Spec.AnchorPaneRef) == "" {
+			return stateErr(op, ErrInvalidRegistry, "window %q has no anchorPaneRef", window.Metadata.Name)
+		}
+		anchor, ok := r.Pane(window.Spec.AnchorPaneRef)
 		if !ok {
-			return stateErr(op, ErrInvalidRegistry, "window %q primaryPaneRef %q does not exist", window.Metadata.Name, window.Spec.PrimaryPaneRef)
+			return stateErr(op, ErrInvalidRegistry, "window %q anchorPaneRef %q does not exist", window.Metadata.Name, window.Spec.AnchorPaneRef)
 		}
-		if primary.Metadata.OwnerRef == nil || primary.Metadata.OwnerRef.Kind != KindWindow ||
-			primary.Metadata.OwnerRef.UID != window.Metadata.UID || primary.Spec.Role != PaneRoleShell {
-			return stateErr(op, ErrInvalidRegistry, "window %q primaryPaneRef %q is not a Window-owned shell Pane", window.Metadata.Name, window.Spec.PrimaryPaneRef)
+		anchorWindowUID, owned := paneWindowOwnerUID(r, *anchor)
+		if !owned || anchorWindowUID != window.Metadata.UID ||
+			(anchor.Spec.Role != PaneRoleShell && anchor.Spec.Role != PaneRoleAgent) {
+			return stateErr(op, ErrInvalidRegistry, "window %q anchorPaneRef %q is not a same-Window shell or Agent Pane", window.Metadata.Name, window.Spec.AnchorPaneRef)
+		}
+		if anchor.Spec.Role == PaneRoleAgent {
+			agent, _ := r.Agent(anchor.Metadata.OwnerUID())
+			if agent == nil || agent.Status.PaneRef != anchor.Metadata.UID {
+				return stateErr(op, ErrInvalidRegistry, "window %q anchorPaneRef %q is not its Agent owner's managed Pane", window.Metadata.Name, window.Spec.AnchorPaneRef)
+			}
+		}
+		if shellRef := strings.TrimSpace(window.Spec.DefaultShellPaneRef); shellRef != "" {
+			shell, ok := r.Pane(shellRef)
+			if !ok {
+				return stateErr(op, ErrInvalidRegistry, "window %q defaultShellPaneRef %q does not exist", window.Metadata.Name, window.Spec.DefaultShellPaneRef)
+			}
+			if shell.Metadata.OwnerRef == nil || shell.Metadata.OwnerRef.Kind != KindWindow ||
+				shell.Metadata.OwnerRef.UID != window.Metadata.UID || shell.Spec.Role != PaneRoleShell {
+				return stateErr(op, ErrInvalidRegistry, "window %q defaultShellPaneRef %q is not a direct Window-owned shell Pane", window.Metadata.Name, window.Spec.DefaultShellPaneRef)
+			}
 		}
 	}
 

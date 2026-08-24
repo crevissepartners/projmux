@@ -33,7 +33,8 @@
         "createdAt": "2026-08-14T00:00:00Z"
       },
       "spec": {
-        "primaryPaneRef": "pane-01"
+        "anchorPaneRef": "pane-01",
+        "defaultShellPaneRef": "pane-01"
       }
     }
   ],

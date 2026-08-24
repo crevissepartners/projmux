@@ -1522,15 +1522,15 @@ if [[ "$(ctx list-windows -t legacy-alpha -F '#{window_name}' | grep -cx review)
   exit 1
 fi
 
-# 6. A stale primaryPaneRef puts the persisted Registry in degraded mode: the
+# 6. A stale anchorPaneRef puts the persisted Registry in degraded mode: the
 #    ordinary create is exit 1 with exact repair guidance, zero mutations, and
 #    zero stdout.
 cp "$create_registry" "$create_root/registry.intact"
-# The registry is written with MarshalIndent, so every primaryPaneRef sits alone
+# The registry is written with MarshalIndent, so every anchorPaneRef sits alone
 # on its own line and the substitution cannot reach any other field.
-sed -i 's/"primaryPaneRef": "pane-[a-z0-9]*"/"primaryPaneRef": "pane-doesnotexist"/' "$create_registry"
-if ! grep -Fq '"primaryPaneRef": "pane-doesnotexist"' "$create_registry"; then
-  echo "the stale primaryPaneRef fixture did not apply" >&2
+sed -i 's/"anchorPaneRef": "pane-[a-z0-9]*"/"anchorPaneRef": "pane-doesnotexist"/' "$create_registry"
+if ! grep -Fq '"anchorPaneRef": "pane-doesnotexist"' "$create_registry"; then
+  echo "the stale anchorPaneRef fixture did not apply" >&2
   exit 1
 fi
 stale_before="$(md5sum "$create_registry" | cut -d' ' -f1)"
@@ -1540,23 +1540,23 @@ pmx create pane --project alpha --window review >"$create_root/stale.out" 2>"$cr
 stale_status=$?
 set -e
 if [[ "$stale_status" != "1" ]]; then
-  echo "stale primaryPaneRef exit = $stale_status, want degraded-mode exit 1" >&2
+  echo "stale anchorPaneRef exit = $stale_status, want degraded-mode exit 1" >&2
   cat "$create_root/stale.err" >&2 || true
   exit 1
 fi
 if [[ -s "$create_root/stale.out" ]]; then
-  echo "stale primaryPaneRef wrote to stdout" >&2
+  echo "stale anchorPaneRef wrote to stdout" >&2
   exit 1
 fi
 if [[ "$(md5sum "$create_registry" | cut -d' ' -f1)" != "$stale_before" ]]; then
-  echo "stale primaryPaneRef mutated the registry" >&2
+  echo "stale anchorPaneRef mutated the registry" >&2
   exit 1
 fi
 if [[ "$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)" != "$stale_panes_before" ]]; then
-  echo "stale primaryPaneRef fell back to a live pane" >&2
+  echo "stale anchorPaneRef fell back to a live pane" >&2
   exit 1
 fi
-smoke_assert_file_contains "$create_root/stale.err" "primaryPaneRef"
+smoke_assert_file_contains "$create_root/stale.err" "anchorPaneRef"
 smoke_assert_file_contains "$create_root/stale.err" "resource registry is in degraded mode"
 smoke_assert_file_contains "$create_root/stale.err" "run exactly: projmux reconcile registry --dry-run"
 cp "$create_root/registry.intact" "$create_registry"
@@ -1698,7 +1698,7 @@ agent_window_before="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
 agent_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
 agent_window_uid_before="$(ctx show-options -wqv -t "$agent_window_before" @projmux_window_uid)"
 agent_host_pane_uid_before="$(ctx show-options -pqv -t "$agent_pane_before" @projmux_pane_uid)"
-agent_primary_pane_uid="$(pmx_agent describe window "$alpha_window_name" -p alpha -o json | sed -n 's/.*"primaryPaneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
+agent_primary_pane_uid="$(pmx_agent describe window "$alpha_window_name" -p alpha -o json | sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
 if [[ ! "$agent_session_before" =~ ^\$[0-9]+$ ]] ||
   [[ ! "$agent_window_before" =~ ^@[0-9]+$ ]] ||
   [[ ! "$agent_pane_before" =~ ^%[0-9]+$ ]] ||
@@ -3213,7 +3213,8 @@ fi
 delete_pmx describe pane "uid:$delete_beta_replacement_pane_uid" --project "uid:$delete_beta_project_uid" \
   --window "uid:$delete_beta_replacement_uid" -o json >"$delete_root/beta-pane.after-last-delete.json"
 smoke_assert_file_contains "$delete_root/beta-project.after-last-delete.json" "\"primaryWindowRef\": \"$delete_beta_replacement_uid\""
-smoke_assert_file_contains "$delete_root/beta-window.after-last-delete.json" "\"primaryPaneRef\": \"$delete_beta_replacement_pane_uid\""
+smoke_assert_file_contains "$delete_root/beta-window.after-last-delete.json" "\"anchorPaneRef\": \"$delete_beta_replacement_pane_uid\""
+smoke_assert_file_contains "$delete_root/beta-window.after-last-delete.json" "\"defaultShellPaneRef\": \"$delete_beta_replacement_pane_uid\""
 smoke_assert_file_contains "$delete_root/beta-pane.after-last-delete.json" '"role": "shell"'
 if grep -Fqx "$delete_beta_uid" "$delete_root/beta-windows.after-last-delete"; then
   echo "last-Window replacement retained requested Registry uid $delete_beta_uid" >&2
@@ -5195,7 +5196,7 @@ cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 startup_pmx describe project "uid:$startup_project_uid" -o json >"$startup_root/project.before-fresh.json"
 startup_primary_window_before="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$startup_root/project.before-fresh.json" | head -n 1)"
 startup_pmx describe window "uid:$startup_primary_window_before" --project "uid:$startup_project_uid" -o json >"$startup_root/window.before-fresh.json"
-startup_primary_pane_before="$(sed -n 's/.*"primaryPaneRef": "\([^"]*\)".*/\1/p' "$startup_root/window.before-fresh.json" | head -n 1)"
+startup_primary_pane_before="$(sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' "$startup_root/window.before-fresh.json" | head -n 1)"
 if [[ -z "$startup_primary_window_before" || -z "$startup_primary_pane_before" ]]; then
   echo "Open fresh fixture has no canonical shell identity" >&2
   exit 1
@@ -5224,7 +5225,7 @@ fi
 startup_pmx describe project "uid:$startup_project_uid_after" -o json >"$startup_root/project.after-fresh.json"
 startup_primary_window_after="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$startup_root/project.after-fresh.json" | head -n 1)"
 startup_pmx describe window "uid:$startup_primary_window_after" --project "uid:$startup_project_uid_after" -o json >"$startup_root/window.after-fresh.json"
-startup_primary_pane_after="$(sed -n 's/.*"primaryPaneRef": "\([^"]*\)".*/\1/p' "$startup_root/window.after-fresh.json" | head -n 1)"
+startup_primary_pane_after="$(sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' "$startup_root/window.after-fresh.json" | head -n 1)"
 if [[ -z "$startup_primary_window_after" ]] || [[ -z "$startup_primary_pane_after" ]] ||
   [[ "$startup_primary_window_after" == "$startup_primary_window_before" ]] ||
   [[ "$startup_primary_pane_after" == "$startup_primary_pane_before" ]]; then

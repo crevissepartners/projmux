@@ -230,8 +230,9 @@ an explicit `TMUX_SPLIT_TARGET_PANE` or from `#{pane_id}` — and not as a
 `metadata.uid`, because no keybinding handler reads a uid mirror and a raw pane
 id is never a canonical uid. The two properties the row does assert are the ones
 that hold: the target is explicit and pinned at press time, and it is never the
-Window's persisted `spec.primaryPaneRef`. Automation that omits an anchor uses
-`spec.primaryPaneRef` and never silently recovers a stale reference from the
+Window's persisted compatibility shell ref. Automation that omits an anchor
+uses `spec.defaultShellPaneRef` when present and otherwise
+`spec.anchorPaneRef`; it never silently recovers a stale reference from the
 focused Pane. `Create <Provider> Agent` always creates a new
 Agent and `Open Agent Resume Picker` only resumes an existing Offline or Failed
 Agent; the two are separate actions with separate result kinds and are never

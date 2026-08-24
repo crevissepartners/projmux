@@ -34,7 +34,7 @@ func addFixtureCanonicalShell(registry *coremetadata.Registry, projectUID, windo
 	registry.Windows = append(registry.Windows, coremetadata.Window{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 		Metadata: coremetadata.ObjectMeta{UID: windowUID, Name: "main", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: projectUID}, CreatedAt: resourceFixtureClock},
-		Spec:     coremetadata.WindowSpec{PrimaryPaneRef: paneUID},
+		Spec:     coremetadata.WindowSpec{AnchorPaneRef: paneUID},
 	})
 	registry.Panes = append(registry.Panes, coremetadata.Pane{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
@@ -109,22 +109,22 @@ func resourceFixtureRegistry(t *testing.T) coremetadata.Registry {
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-alpha-main", "main", "", ownedBy(coremetadata.KindProject, "prj-alpha"), map[string]string{"role": "shell"}),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-alpha-zsh"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-alpha-zsh"},
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-alpha-review", "review", "", ownedBy(coremetadata.KindProject, "prj-alpha"), nil),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-alpha-review"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-alpha-review"},
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-beta-main", "main", "", ownedBy(coremetadata.KindProject, "prj-beta"), nil),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-beta-zsh"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-beta-zsh"},
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-gone-main", "main", "", ownedBy(coremetadata.KindProject, "prj-gone"), nil),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-gone-zsh"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-gone-zsh"},
 		},
 	}
 	reserve("prj-alpha", coremetadata.KindWindow, "main", "win-alpha-main")
@@ -291,7 +291,7 @@ func (s *fakeResourceStore) snapshot() string {
 		b.WriteString("project " + project.Metadata.UID + " " + project.Metadata.Name + " " + project.Spec.Root + "\n")
 	}
 	for _, window := range s.registry.Windows {
-		b.WriteString("window " + window.Metadata.UID + " " + window.Metadata.Name + " " + window.Spec.PrimaryPaneRef + "\n")
+		b.WriteString("window " + window.Metadata.UID + " " + window.Metadata.Name + " " + window.Spec.AnchorPaneRef + "\n")
 	}
 	for _, pane := range s.registry.Panes {
 		b.WriteString("pane " + pane.Metadata.UID + " " + pane.Metadata.Name +
@@ -526,7 +526,7 @@ func TestDescribeResolvesExactlyOneResourcePerKind(t *testing.T) {
 			args: []string{"window", "review", "--project", "alpha"},
 			want: map[string]string{
 				"Kind": "Window", "Name": "review", "UID": "win-alpha-review",
-				"Owner": "project/alpha", "PrimaryPaneRef": "pan-alpha-review", "Status": "live",
+				"Owner": "project/alpha", "AnchorPaneRef": "pan-alpha-review", "Status": "live",
 			},
 		},
 		{

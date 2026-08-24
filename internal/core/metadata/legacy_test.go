@@ -513,8 +513,8 @@ func TestAnAdoptedWindowStillImportsAPaneItHasNoCandidateFor(t *testing.T) {
 	}
 	// The adopted Window keeps the primary Pane it already named.
 	window, _ := reg.Window(first.Windows[0].UID)
-	if window.Spec.PrimaryPaneRef != first.Panes[0].UID {
-		t.Fatalf("primaryPaneRef = %q, want the original %q", window.Spec.PrimaryPaneRef, first.Panes[0].UID)
+	if window.Spec.AnchorPaneRef != first.Panes[0].UID {
+		t.Fatalf("anchorPaneRef = %q, want the original %q", window.Spec.AnchorPaneRef, first.Panes[0].UID)
 	}
 	if err := reg.Validate(); err != nil {
 		t.Fatalf("registry invalid: %v", err)

@@ -473,7 +473,7 @@ func TestIngestNegativesOpenNoRegistryTransaction(t *testing.T) {
 				if !ok {
 					t.Fatalf("pane %s missing", h.paneUID)
 				}
-				h.paneUID = h.registry.Windows[0].Spec.PrimaryPaneRef
+				h.paneUID = h.registry.Windows[0].Spec.AnchorPaneRef
 				_ = pane
 			},
 			payload: `{"hook_event_name":"UserPromptSubmit","thread_id":"codex-thread-1","cwd":"/src/app"}`,

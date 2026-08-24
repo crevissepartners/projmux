@@ -31,7 +31,7 @@ func TestV012MigrationLeavesNoMaterializeRefusals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ran || len(report.Repairs) != 3 || report.InformationLossCount() != 1 {
+	if !ran || len(report.Repairs) != 4 || report.InformationLossCount() != 1 {
 		t.Fatalf("migration report = %s", report.String())
 	}
 	if err := migrated.Validate(); err != nil {
@@ -42,7 +42,7 @@ func TestV012MigrationLeavesNoMaterializeRefusals(t *testing.T) {
 		if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != coremetadata.KindProject || window.Metadata.OwnerRef.UID != project.Metadata.UID {
 			t.Fatalf("Project %q has invalid primary Window chain", project.Metadata.Name)
 		}
-		pane, ok := migrated.Pane(window.Spec.PrimaryPaneRef)
+		pane, ok := migrated.Pane(window.Spec.AnchorPaneRef)
 		if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindWindow || pane.Metadata.OwnerRef.UID != window.Metadata.UID || pane.Spec.Role != coremetadata.PaneRoleShell {
 			t.Fatalf("Project %q has invalid primary shell chain", project.Metadata.Name)
 		}

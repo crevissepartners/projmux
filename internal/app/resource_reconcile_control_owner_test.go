@@ -47,7 +47,7 @@ func controlOwnerFixtureRegistry(control bool) coremetadata.Registry {
 	registry.Windows = []coremetadata.Window{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 		Metadata: meta("win-alpha-main", "main", ownedBy(coremetadata.KindProject, "prj-alpha")),
-		Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-alpha-zsh"},
+		Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-alpha-zsh"},
 	}}
 	reserve("prj-alpha", coremetadata.KindWindow, "main", "win-alpha-main")
 
@@ -69,7 +69,7 @@ func controlOwnerFixtureRegistry(control bool) coremetadata.Registry {
 		registry.Windows = append(registry.Windows, coremetadata.Window{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-home", "window", ownedBy(coremetadata.KindControlSession, "ctl-home")),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-home"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-home"},
 		})
 		reserve("ctl-home", coremetadata.KindWindow, "window", "win-home")
 

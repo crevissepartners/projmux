@@ -333,15 +333,16 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 
 	stored, _ := reg.Window(windowUID)
 	if !validWindowPrimary(reg, *stored) {
-		primaryPaneRef := firstWindowOwnedShellUID(reg, windowUID)
-		if primaryPaneRef == "" {
+		shellPaneRef := firstWindowOwnedShellUID(reg, windowUID)
+		if shellPaneRef == "" {
 			pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", FallbackPaneNameBase, "", root, nil, now)
 			if err != nil {
 				return err
 			}
-			primaryPaneRef = pane.Metadata.UID
+			shellPaneRef = pane.Metadata.UID
 		}
-		stored.Spec.PrimaryPaneRef = primaryPaneRef
+		stored.Spec.AnchorPaneRef = shellPaneRef
+		stored.Spec.DefaultShellPaneRef = shellPaneRef
 	}
 	// Existing identity is deliberately untouched. The runtime-owned spelling
 	// has a separate duplicate-allowed projection, so an adopted or rebound

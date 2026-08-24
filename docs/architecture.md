@@ -220,12 +220,18 @@ Resources and ownership:
   `status` block holds observed conditions only; live/offline is derived from a
   live tmux observation at read time. See *Runtime observation and resource
   status* below.
-- Every Project stores one exact canonical shell anchor:
-  `Project.spec.primaryWindowRef` resolves to a Project-owned Window whose
-  `Window.spec.primaryPaneRef` resolves to a directly Window-owned
-  `Pane.spec.role=shell`. Project registration creates this topology
-  **offline**, with no tmux involvement, so Project and Window metadata stays
-  queryable while tmux is down. An Agent-owned Pane is never a shell anchor.
+- Every Project stores one exact canonical Window and every Window stores a
+  role-independent Pane anchor. `Project.spec.primaryWindowRef` resolves to a
+  Project-owned Window. Final schema v2 requires
+  `Window.spec.anchorPaneRef`; it may resolve through the same Window ancestry
+  to either a direct `role=shell` Pane or an Agent-owned `role=agent` Pane.
+  `Window.spec.defaultShellPaneRef` is optional; when present it resolves only
+  to a directly Window-owned `role=shell` Pane. Project registration creates
+  both refs on the same initial shell **offline**, with no tmux involvement,
+  so Project and Window metadata stays queryable while tmux is down.
+  Phase-0 consumers preserve the pre-cutover shell result through one pure
+  resolver: default shell when present, otherwise anchor. They never write the
+  removed intermediate `primaryPaneRef` field.
   Canonical deletion preserves the same invariant: deleting the primary Window
   reanchors to the first existing valid sibling, while deleting the last valid
   Window mints one minimum offline Window/shell chain with new opaque uids. The
@@ -591,8 +597,9 @@ Agent launch argv (workspace / task boundary):
 Agent resume:
 
 - `agent resume <ref>` rebinds an existing Agent: it builds the provider's
-  **resume** argv from `status.sessionRef`, splits a new managed Pane detached on
-  the target Window's `spec.primaryPaneRef`, and attaches it to that Agent. The
+  **resume** argv from `status.sessionRef`, resolves the target Window's
+  compatibility shell ref (optional `defaultShellPaneRef`, otherwise
+  `anchorPaneRef`), splits a new managed Pane detached, and attaches it to that Agent. The
   `metadata.uid` and `metadata.name` do not change, `status.phase` becomes
   `Running`, and `status.paneRef` points at the new Pane. `status.sessionRef`
   itself is read and never rewritten by resume.
@@ -685,9 +692,15 @@ Registry file and schema:
   This fail-closed ordering is not Phase 3 authority to redesign Project start.
 - Downgrade writes remain unsupported. Unversioned, malformed, and future
   envelopes still fail closed before backup, staging, or replace.
+- **Final schema-v2 Window shape:** the first public v2 contract has required
+  `anchorPaneRef` and optional `defaultShellPaneRef`. Unpublished v2 files with
+  `primaryPaneRef` are normalized under the Registry lock after an exact backup
+  and durable checksum report. A v1 file migrates directly to this final shape.
+  Mixed legacy/final authority is refused; the final writer emits no
+  `primaryPaneRef`; and a second final-v2 pass writes zero bytes.
 - **Field spelling:** the registry file intentionally uses the resource-model
   camelCase spelling (`apiVersion`, `schemaVersion`, `metadata`, `displayName`,
-  `ownerRef`, `primaryPaneRef`, `spec`, `status`) rather than the snake_case
+  `ownerRef`, `anchorPaneRef`, `defaultShellPaneRef`, `spec`, `status`) rather than the snake_case
   used by the older projmux on-disk JSON. The two spellings coexist on purpose:
   existing snake_case files are **not** retro-changed, and the resource registry
   follows the resource-model contract.
@@ -828,7 +841,7 @@ Registry recovery boundary (`projmux reconcile registry`):
   resolved from stable tmux ids — beside a fixed statement of what no mirror can
   return: offline resources, every Agent (no tmux option carries an Agent uid),
   an Agent-owned Pane's `ownerRef`, the name reservation table,
-  `spec.primaryPaneRef`, and labels/annotations/timestamps/status. A pane carrying
+  `spec.anchorPaneRef`, `spec.defaultShellPaneRef`, and labels/annotations/timestamps/status. A pane carrying
   a provider option is counted as proof that an Agent existed whose own uid is
   nowhere on the server. Nothing is imported and no registry is generated:
   rebuilding from fragments would convert a visible loss into an invisible one.
@@ -1770,7 +1783,8 @@ Resource-first create:
   generated keybinding body -- a split of the Window the operator is looking at,
   instead of a fan-out over every Window of the Project, while one explicit
   occurrence still fixes the whole target set. With a scope and no `--pane`, the
-  anchor stays the target Window's stored `spec.primaryPaneRef`, and a missing
+  anchor stays the target Window's pure compatibility shell ref
+  (`spec.defaultShellPaneRef` when present, otherwise `spec.anchorPaneRef`), and a missing
   or stale ref is a refusal rather than a silent repair.
 - **Refusals cost nothing.** Home, control, unattributed, foreign, a mirrored
   uid the Registry does not hold, a Window whose Project is gone, and every

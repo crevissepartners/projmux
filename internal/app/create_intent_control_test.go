@@ -97,7 +97,7 @@ func canonicalFixture(t *testing.T, control bool) canonicalRootFixture {
 	create.resumes = newFakeResumeLauncher()
 	originUID := "pan-alpha-zsh"
 	if control {
-		originUID = store.registry.WindowsOf(rootUID)[0].Spec.PrimaryPaneRef
+		originUID = store.registry.WindowsOf(rootUID)[0].Spec.AnchorPaneRef
 	}
 	originID := livePaneWithUID(t, tmux, originUID)
 	withPopupOrigin(create, tmux, popupEnv(originID))

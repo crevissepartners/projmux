@@ -217,8 +217,8 @@ func TestSettingsKeybindingAnchorCopyMatchesTheShippedTransport(t *testing.T) {
 
 	// The interactive splits keep the two properties the anchor contract does
 	// need: an explicit target pinned at press time, and never the Window's
-	// persisted primaryPaneRef.
-	for _, want := range []string{"%N", "explicit split target", "not the Window primaryPaneRef"} {
+	// persisted compatibility shell ref.
+	for _, want := range []string{"%N", "explicit split target", "not the Window compatibility shell ref"} {
 		if !strings.Contains(keyBindingAnchorCurrentPaneSplitTarget, want) {
 			t.Fatalf("split anchor %q missing %q", keyBindingAnchorCurrentPaneSplitTarget, want)
 		}

@@ -37,8 +37,7 @@
         "createdAt": "2026-05-10T00:00:00Z"
       },
       "spec": {
-        "anchorPaneRef": "pane-v010",
-        "defaultShellPaneRef": "pane-v010"
+        "primaryPaneRef": "pane-v010"
       }
     }
   ],
@@ -63,22 +62,8 @@
     }
   ],
   "nameReservations": [
-    {
-      "kind": "Project",
-      "name": "v010",
-      "uid": "proj-v010"
-    },
-    {
-      "scope": "proj-v010",
-      "kind": "Window",
-      "name": "shell",
-      "uid": "win-v010"
-    },
-    {
-      "scope": "win-v010",
-      "kind": "Pane",
-      "name": "shell",
-      "uid": "pane-v010"
-    }
+    {"kind": "Project", "name": "v010", "uid": "proj-v010"},
+    {"scope": "proj-v010", "kind": "Window", "name": "shell", "uid": "win-v010"},
+    {"scope": "win-v010", "kind": "Pane", "name": "shell", "uid": "pane-v010"}
   ]
 }

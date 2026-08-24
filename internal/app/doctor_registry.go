@@ -16,10 +16,10 @@ import (
 //
 // `Registry.Validate` is the one gate every write passes and
 // `planRegistryTopology` is what turns a stored Project back into a running one.
-// The two do not share a precondition: Validate accepts a Window that owns no
-// shell Pane and therefore carries an empty `spec.primaryPaneRef`, and the
-// planner cannot build a Window from it. That difference set is reachable
-// through ordinary use, and until now nothing reported it: a Registry whose
+// The two do not share a precondition: final-v2 validation permits a
+// same-Window managed Agent anchor without a default shell, while the current
+// planner cannot build a Window from that compatibility result. That difference
+// set is reachable through ordinary use, and until now nothing reported it: a Registry whose
 // stored topology can no longer be materialized passed both validation and
 // diagnostics as healthy.
 //

@@ -174,7 +174,7 @@ func (c *createCommand) resolveCreateScope(spelling string, flags resourceCreate
 	scope.window = &window
 	// The active Pane is the anchor when it carries a managed identity. When it
 	// does not -- an unmirrored pane inside a managed Window -- the Window's
-	// own spec.primaryPaneRef is the anchor, which is the same structural point
+	// own compatibility shell ref is the anchor, which is the same structural point
 	// an explicit --window resolves.
 	if paneUID, _ := observer.uidFor(coremetadata.KindPane, registry); paneUID != "" {
 		pane := uidRef(coremetadata.KindPane, paneUID)
@@ -555,7 +555,7 @@ type panePlan struct {
 // It fixes every target Window and every anchor Pane, then promotes the missing
 // exact-name --window occurrences into real Window allocations when
 // --create-window asked for it. Both halves finish before the caller performs a
-// single tmux call, so a stale primaryPaneRef, an unsatisfiable cardinality, or
+// single tmux call, so a stale compatibility shell ref, an unsatisfiable cardinality, or
 // an explicit --name collision leaves zero metadata writes and zero tmux objects
 // behind.
 //
@@ -586,7 +586,7 @@ func (c *createCommand) resolveSplitTargets(
 		}
 		windows = append(windows, work)
 		// The Window this operation created owns a brand new initial Pane,
-		// which is both its primaryPaneRef and this operation's anchor.
+		// which is both its default shell ref and this operation's anchor.
 		plan.targets = append(plan.targets, paneTarget{
 			windowUID: work.window.Metadata.UID,
 			anchorUID: work.initial.Metadata.UID,
@@ -678,7 +678,7 @@ func unresolvedWindowNames(registry coremetadata.Registry, project coremetadata.
 // resolveAnchor fixes the split anchor of one target Window.
 //
 // An explicit --pane is resolved inside that Window's own owner scope and must
-// be exactly one. With no --pane the persisted spec.primaryPaneRef is the
+// be exactly one. With no --pane the persisted compatibility shell ref is the
 // anchor: an explicitly scoped create has deliberately no fallback to the
 // focused or last-used Pane, and a missing or stale ref is a usage error rather
 // than a silent repair.
@@ -721,15 +721,15 @@ func (c *createCommand) resolveAnchor(registry coremetadata.Registry, project co
 		return resolution.Matches[0].UID, nil
 	}
 
-	anchor := strings.TrimSpace(window.Spec.PrimaryPaneRef)
+	anchor := strings.TrimSpace(window.Spec.CompatibilityShellPaneRef())
 	if anchor == "" {
 		return "", usageError(fmt.Sprintf(
-			"%s: window/%s (project/%s) has no spec.primaryPaneRef; pass an explicit --pane <ref>",
+			"%s: window/%s (project/%s) has no compatibility shell ref; pass an explicit --pane <ref>",
 			spelling, window.Metadata.Name, project.Metadata.Name))
 	}
 	if _, ok := registry.Pane(anchor); !ok {
 		return "", usageError(fmt.Sprintf(
-			"%s: window/%s (project/%s) spec.primaryPaneRef %q resolves to no Pane; pass an explicit --pane <ref>",
+			"%s: window/%s (project/%s) compatibility shell ref %q resolves to no Pane; pass an explicit --pane <ref>",
 			spelling, window.Metadata.Name, project.Metadata.Name, anchor))
 	}
 	return anchor, nil
@@ -904,7 +904,7 @@ func (c *createCommand) ensureAnchorPane(
 		// The Window's stored primary Pane is what this new-window materializes,
 		// so it is a launch this operation owns and gets its own generation.
 		var anchorActivation superviseSpec
-		if strings.TrimSpace(window.Spec.PrimaryPaneRef) == target.anchorUID {
+		if strings.TrimSpace(window.Spec.CompatibilityShellPaneRef()) == target.anchorUID {
 			anchorActivation, err = c.issuePaneActivation(working, mutator, target.anchorUID, "", operationID)
 			if err != nil {
 				return "", err
@@ -927,7 +927,7 @@ func (c *createCommand) ensureAnchorPane(
 					return "", errors.Join(err, bindingErr)
 				}
 			}
-			if strings.TrimSpace(window.Spec.PrimaryPaneRef) == target.anchorUID {
+			if strings.TrimSpace(window.Spec.CompatibilityShellPaneRef()) == target.anchorUID {
 				if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, anchor.Metadata.UID, ledger); claimErr != nil {
 					return "", errors.Join(err, claimErr)
 				}
@@ -955,7 +955,7 @@ func (c *createCommand) ensureAnchorPane(
 	// The anchor is the Window's primary Pane and the Window holds exactly one
 	// pane that no Projmux uid claims: that pane is the primary Pane's transport
 	// binding, so bind it rather than inventing a second one.
-	if strings.TrimSpace(window.Spec.PrimaryPaneRef) == target.anchorUID {
+	if strings.TrimSpace(window.Spec.CompatibilityShellPaneRef()) == target.anchorUID {
 		var unclaimed []string
 		for _, row := range panes {
 			if strings.TrimSpace(row[0]) == "" {
@@ -1017,7 +1017,7 @@ func (c *createCommand) ensureProjectRuntime(
 }
 
 // adoptInitialWindow binds the window and pane a freshly created session came
-// with to the Project's first stored Window and that Window's primaryPaneRef.
+// with to the Project's first stored Window and that Window's compatibility shell ref.
 //
 // Adoption is deliberately narrow: it only ever runs for a session this
 // operation just created, so it can never claim a window that belonged to
@@ -1050,7 +1050,7 @@ func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coreme
 		}
 		first = projected
 	}
-	primary, ok := registry.Pane(strings.TrimSpace(first.Spec.PrimaryPaneRef))
+	primary, ok := registry.Pane(strings.TrimSpace(first.Spec.CompatibilityShellPaneRef()))
 	if !ok {
 		return nil
 	}

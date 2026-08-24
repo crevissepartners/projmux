@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"slices"
 	"strings"
@@ -34,9 +35,9 @@ func TestRegistryV2GenerationMigrationGoldens(t *testing.T) {
 		wantRepairs  int
 		wantLosses   int
 	}{
-		{generation: "v010", sourceSHA256: "04a5d550f60df7d6b45e5ae80ac54667d91edd7506773f4a38653b54247b765b", goldenSHA256: "130a2cb9e1969870f9ee797f33d936b16f0f68c778787aae69bef5acb80ea3cf", wantRepairs: 1},
-		{generation: "v011", sourceSHA256: "d31bbeee815af32d8bc940d99c1bf8daa17f84b63844c524b6ccd0cdd32893d1", goldenSHA256: "727f99e4ebafcf6032bc532626a46c45ede993af8435527df835b0ab2279f650", wantRepairs: 3, wantLosses: 1},
-		{generation: "v012", sourceSHA256: "9424984258a3977999cf8b58ee32e69f69606162c32780fbb41d6776712bbb4b", goldenSHA256: "dbfc43cd5eb8322cd0a35574a24996a5a75c848fc901f3c76c3e65d2e2ed7370", wantRepairs: 3, wantLosses: 1},
+		{generation: "v010", sourceSHA256: "04a5d550f60df7d6b45e5ae80ac54667d91edd7506773f4a38653b54247b765b", goldenSHA256: "155a612242459c33ad83d9a5973f853715397b6cb3582556c9cba70e65e2f182", wantRepairs: 2},
+		{generation: "v011", sourceSHA256: "d31bbeee815af32d8bc940d99c1bf8daa17f84b63844c524b6ccd0cdd32893d1", goldenSHA256: "f601d61a599e89fbfd4a1698c1d1c2f2471994635efd8262d02b1670e035517a", wantRepairs: 3, wantLosses: 1},
+		{generation: "v012", sourceSHA256: "9424984258a3977999cf8b58ee32e69f69606162c32780fbb41d6776712bbb4b", goldenSHA256: "ea3a8f3aaf26e257849162e2195e2d84e006c3b23fa785a1a0432722eafa2535", wantRepairs: 4, wantLosses: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.generation, func(t *testing.T) {
@@ -180,6 +181,177 @@ func TestValidV2CanonicalAnchorRoundTripsWithZeroDiff(t *testing.T) {
 	}
 	if after := mustJSON(t, migrated); after != before {
 		t.Fatalf("valid anchor round-trip changed bytes:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	}
+}
+
+func TestIntermediateV2NormalizesDirectlyToFinalV2GoldenAndSecondPassIsZeroByte(t *testing.T) {
+	t.Parallel()
+	sourceBytes, err := os.ReadFile("testdata/registry-v010-intermediate-v2-source.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var source Registry
+	if err := json.Unmarshal(sourceBytes, &source); err != nil {
+		t.Fatal(err)
+	}
+	before := source.Clone()
+	normalized, ran, report, err := MigrateRegistryWithEnvironment(nil, source, migrationGoldenEnvironment())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ran || report.FromVersion != 2 || report.ToVersion != 2 || len(report.Repairs) != 1 {
+		t.Fatalf("same-version normalization = ran:%t report:%s", ran, report.String())
+	}
+	if err := normalized.Validate(); err != nil {
+		t.Fatalf("normalized Registry: %v", err)
+	}
+	assertExistingIdentityAndAgentPointersPreserved(t, before, normalized)
+	want, err := os.ReadFile("testdata/registry-v010-v2-bytes.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := []byte(mustJSON(t, normalized) + "\n")
+	if !bytes.Equal(got, want) {
+		t.Fatalf("intermediate-v2 golden mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+	if bytes.Contains(got, []byte(`"primaryPaneRef"`)) {
+		t.Fatal("final-v2 writer emitted legacy primaryPaneRef")
+	}
+	again, ranAgain, secondReport, err := MigrateRegistryWithEnvironment(nil, normalized, migrationGoldenEnvironment())
+	if err != nil || ranAgain || len(secondReport.Repairs) != 0 {
+		t.Fatalf("second pass = ran:%t report:%s err:%v", ranAgain, secondReport.String(), err)
+	}
+	if second := []byte(mustJSON(t, again) + "\n"); !bytes.Equal(second, got) {
+		t.Fatal("final-v2 second pass changed bytes")
+	}
+}
+
+func TestWindowAnchorAndDefaultShellValidationClosedTable(t *testing.T) {
+	t.Parallel()
+	registry, project, mutator := pbtRegistryOver(t, t.TempDir())
+	window := registry.WindowsOf(project.Metadata.UID)[0]
+	shell := registry.PanesOf(window.Metadata.UID)[0]
+	agent, err := mutator.CreateAgent(registry, window.Metadata.UID, CreateAgentOptions{Provider: "codex", OperationID: "anchor-table-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentPane, err := mutator.AttachAgentPane(registry, agent.Metadata.UID, BootstrapPane{}, "anchor-table-pane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, siblingPanes, err := mutator.AddWindow(registry, project.Metadata.UID, BootstrapWindow{}, "sh", "anchor-table-sibling")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = sibling
+
+	tests := []struct {
+		name         string
+		anchor       string
+		defaultShell string
+		wantErr      string
+	}{
+		{name: "shell anchor with default", anchor: shell.Metadata.UID, defaultShell: shell.Metadata.UID},
+		{name: "shell anchor without default", anchor: shell.Metadata.UID},
+		{name: "Agent anchor with default", anchor: agentPane.Metadata.UID, defaultShell: shell.Metadata.UID},
+		{name: "Agent anchor without default", anchor: agentPane.Metadata.UID},
+		{name: "dangling anchor", anchor: "pane-missing", wantErr: "anchorPaneRef"},
+		{name: "cross-Window anchor", anchor: siblingPanes[0].Metadata.UID, wantErr: "same-Window"},
+		{name: "dangling default", anchor: shell.Metadata.UID, defaultShell: "pane-missing", wantErr: "defaultShellPaneRef"},
+		{name: "Agent default", anchor: agentPane.Metadata.UID, defaultShell: agentPane.Metadata.UID, wantErr: "direct Window-owned shell"},
+		{name: "cross-Window default", anchor: shell.Metadata.UID, defaultShell: siblingPanes[0].Metadata.UID, wantErr: "direct Window-owned shell"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			candidate := registry.Clone()
+			stored, _ := candidate.Window(window.Metadata.UID)
+			stored.Spec.AnchorPaneRef = tt.anchor
+			stored.Spec.DefaultShellPaneRef = tt.defaultShell
+			err := candidate.Validate()
+			if tt.wantErr == "" && err != nil {
+				t.Fatalf("Validate: %v", err)
+			}
+			if tt.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tt.wantErr)) {
+				t.Fatalf("Validate = %v, want error containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestMixedLegacyAndFinalWindowAuthorityFailsClosedWithoutMutatingInput(t *testing.T) {
+	t.Parallel()
+	tests := map[string]string{
+		"one Window carries both authorities": `{
+  "apiVersion":"projmux.io/v1alpha1","schemaVersion":2,
+  "windows":[{"apiVersion":"projmux.io/v1alpha1","kind":"Window","metadata":{"uid":"win","name":"main"},"spec":{"primaryPaneRef":"pane","anchorPaneRef":"pane"}}]
+}`,
+		"different Windows carry different authorities": `{
+  "apiVersion":"projmux.io/v1alpha1","schemaVersion":2,
+  "windows":[
+    {"apiVersion":"projmux.io/v1alpha1","kind":"Window","metadata":{"uid":"win-a","name":"a"},"spec":{"primaryPaneRef":"pane-a"}},
+    {"apiVersion":"projmux.io/v1alpha1","kind":"Window","metadata":{"uid":"win-b","name":"b"},"spec":{"anchorPaneRef":"pane-b"}}
+  ]
+}`,
+	}
+	for name, document := range tests {
+		t.Run(name, func(t *testing.T) {
+			var source Registry
+			if err := json.Unmarshal([]byte(document), &source); err != nil {
+				t.Fatal(err)
+			}
+			before := source.Clone()
+			if _, ran, _, err := MigrateRegistryWithEnvironment(nil, source, migrationGoldenEnvironment()); !errors.Is(err, ErrInvalidRegistry) || ran {
+				t.Fatalf("normalize = ran:%t err:%v, want zero-write ErrInvalidRegistry", ran, err)
+			}
+			if !bytes.Equal([]byte(mustJSON(t, source)), []byte(mustJSON(t, before))) {
+				t.Fatal("mixed-shape refusal mutated its input")
+			}
+		})
+	}
+}
+
+func TestRandomValidFinalV2GraphsAreDeterministicAndIdempotent(t *testing.T) {
+	seed := int64(20260824)
+	random := rand.New(rand.NewSource(seed)) // #nosec G404 -- deterministic property fixture
+	for iteration := range 64 {
+		registry, project, mutator := pbtRegistryOver(t, t.TempDir())
+		for extra := 0; extra < random.Intn(4); extra++ {
+			if _, _, err := mutator.AddWindow(registry, project.Metadata.UID, BootstrapWindow{}, "sh", fmt.Sprintf("property-window-%d-%d", iteration, extra)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, window := range registry.WindowsOf(project.Metadata.UID) {
+			stored, _ := registry.Window(window.Metadata.UID)
+			if random.Intn(2) == 0 {
+				agent, err := mutator.CreateAgent(registry, window.Metadata.UID, CreateAgentOptions{Provider: "codex", OperationID: fmt.Sprintf("property-agent-%d", iteration)})
+				if err != nil {
+					t.Fatal(err)
+				}
+				pane, err := mutator.AttachAgentPane(registry, agent.Metadata.UID, BootstrapPane{}, fmt.Sprintf("property-pane-%d", iteration))
+				if err != nil {
+					t.Fatal(err)
+				}
+				stored.Spec.AnchorPaneRef = pane.Metadata.UID
+			}
+			if random.Intn(2) == 0 {
+				stored.Spec.DefaultShellPaneRef = ""
+			}
+		}
+		if err := registry.Validate(); err != nil {
+			t.Fatalf("seed=%d iteration=%d invalid generated graph: %v", seed, iteration, err)
+		}
+		first := mustJSON(t, registry.Normalize())
+		var decoded Registry
+		if err := json.Unmarshal([]byte(first), &decoded); err != nil {
+			t.Fatal(err)
+		}
+		normalized, ran, report, err := MigrateRegistryWithEnvironment(nil, decoded, migrationGoldenEnvironment())
+		if err != nil || ran || len(report.Repairs) != 0 {
+			t.Fatalf("seed=%d iteration=%d normalize = ran:%t report:%s err:%v", seed, iteration, ran, report.String(), err)
+		}
+		if second := mustJSON(t, normalized); second != first {
+			t.Fatalf("seed=%d iteration=%d final-v2 round trip changed bytes", seed, iteration)
+		}
 	}
 }
 
@@ -438,7 +610,7 @@ func TestRegistryValidateRejectsStructuralViolations(t *testing.T) {
 			r.Projects[0].Metadata.OwnerRef = &OwnerRef{Kind: KindProject, UID: "x"}
 		}, wantErr: ErrInvalidRegistry},
 		{name: "relative root", mutate: func(r *Registry) { r.Projects[0].Spec.Root = "relative" }, wantErr: ErrInvalidRegistry},
-		{name: "dangling primary pane", mutate: func(r *Registry) { r.Windows[0].Spec.PrimaryPaneRef = "missing" }, wantErr: ErrInvalidRegistry},
+		{name: "dangling primary pane", mutate: func(r *Registry) { r.Windows[0].Spec.AnchorPaneRef = "missing" }, wantErr: ErrInvalidRegistry},
 		{name: "missing name reservation", mutate: func(r *Registry) { r.NameReservations = nil }, wantErr: ErrInvalidRegistry},
 		{name: "reservation for an unknown uid", mutate: func(r *Registry) {
 			r.NameReservations = append(r.NameReservations, NameReservation{Kind: KindProject, Name: "ghost", UID: "nobody"})

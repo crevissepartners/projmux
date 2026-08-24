@@ -361,7 +361,7 @@ func TestOrphanPaneRegistrationNeverCrossesAProjectBoundary(t *testing.T) {
 			UID: "win-beta", Name: "zsh", CreatedAt: resourceFixtureClock,
 			OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-beta"},
 		},
-		Spec: coremetadata.WindowSpec{PrimaryPaneRef: "pan-beta"},
+		Spec: coremetadata.WindowSpec{AnchorPaneRef: "pan-beta"},
 	})
 	registry.Panes = append(registry.Panes, coremetadata.Pane{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,

@@ -119,7 +119,7 @@ func TestCreatePaneWithNoScopeAtAllSplitsTheActiveWindow(t *testing.T) {
 // above: one explicit scope occurrence turns the whole scope explicit.
 //
 // The invocation runs inside window `main` but addresses `review`. The anchor
-// must be `review`'s own primaryPaneRef, never the pane the operator happens to
+// must be `review`'s own compatibility shell ref, never the pane the operator happens to
 // be sitting in, because splitting somewhere the invocation never addressed is
 // the failure mode the anchor contract exists to prevent.
 func TestExplicitScopeSuppressesTheImplicitAnchor(t *testing.T) {

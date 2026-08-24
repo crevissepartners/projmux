@@ -242,7 +242,7 @@ func ownershipFixture(t *testing.T, ownerKind Kind) Registry {
 			UID: "win-01", Name: "window", CreatedAt: fixedNow,
 			OwnerRef: &OwnerRef{Kind: ownerKind, UID: ownerUID},
 		},
-		Spec: WindowSpec{PrimaryPaneRef: "pane-01"},
+		Spec: WindowSpec{AnchorPaneRef: "pane-01"},
 	}}
 	reg.Panes = []Pane{{
 		APIVersion: APIVersion,
@@ -303,8 +303,8 @@ func TestBindControlSessionMintsAndConverges(t *testing.T) {
 	if got, want := len(reg.Panes), 1; got != want {
 		t.Fatalf("len(Panes) = %d, want %d", got, want)
 	}
-	if got := reg.Windows[0].Spec.PrimaryPaneRef; got != reg.Panes[0].Metadata.UID {
-		t.Fatalf("primaryPaneRef = %q, want %q", got, reg.Panes[0].Metadata.UID)
+	if got := reg.Windows[0].Spec.AnchorPaneRef; got != reg.Panes[0].Metadata.UID {
+		t.Fatalf("anchorPaneRef = %q, want %q", got, reg.Panes[0].Metadata.UID)
 	}
 	// No Agent is ever minted below a control session. See controlsession.go.
 	if len(reg.Agents) != 0 {

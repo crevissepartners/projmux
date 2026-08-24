@@ -429,12 +429,12 @@ func runtimeBindingRegistry(t *testing.T, root string) coremetadata.Registry {
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-alpha", "alpha", owner(coremetadata.KindProject, "prj-alpha")),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-alpha"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-alpha"},
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-beta", "beta", owner(coremetadata.KindProject, "prj-alpha")),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-beta"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-beta"},
 		},
 	}
 	reserve("prj-alpha", coremetadata.KindWindow, "alpha", "win-alpha")

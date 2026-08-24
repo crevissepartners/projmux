@@ -32,7 +32,7 @@ func multiClassRegistry() coremetadata.Registry {
 	registry.Windows = []coremetadata.Window{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 		Metadata: meta("win-alpha-1", "editor", own(coremetadata.KindProject, "project-alpha")),
-		Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pane-alpha-1"},
+		Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pane-alpha-1"},
 	}}
 	registry.Panes = []coremetadata.Pane{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,

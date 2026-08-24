@@ -88,10 +88,10 @@ func auditDecayedWindow(t *testing.T, registry *coremetadata.Registry, mutator c
 	if !ok {
 		t.Fatalf("decayed Window disappeared")
 	}
-	if strings.TrimSpace(stored.Spec.PrimaryPaneRef) == "" {
-		t.Fatal("last-shell deletion left primaryPaneRef empty")
+	if strings.TrimSpace(stored.Spec.AnchorPaneRef) == "" {
+		t.Fatal("last-shell deletion left the replacement anchor empty")
 	}
-	if panes := registry.PanesOf(window.Metadata.UID); len(panes) != 1 || panes[0].Metadata.UID != stored.Spec.PrimaryPaneRef || panes[0].Spec.Role != coremetadata.PaneRoleShell {
+	if panes := registry.PanesOf(window.Metadata.UID); len(panes) != 1 || panes[0].Metadata.UID != stored.Spec.AnchorPaneRef || panes[0].Spec.Role != coremetadata.PaneRoleShell {
 		t.Fatalf("replacement shell chain = %+v", panes)
 	}
 	return *stored
@@ -477,7 +477,7 @@ func TestSupportReportCarriesRegistryInvariantCountsWithoutReasonsOrPaths(t *tes
 			t.Fatalf("archive row %d carried operator-only detail: %#v", i, got)
 		}
 	}
-	for _, reason := range []string{"primaryPaneRef", "is not an existing directory", goneRoot} {
+	for _, reason := range []string{"compatibility shell", "is not an existing directory", goneRoot} {
 		if bytes.Contains(archiveText, []byte(reason)) {
 			t.Fatalf("support archive leaked refusal detail %q:\n%s", reason, entries["doctor.json"])
 		}

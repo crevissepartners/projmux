@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-func TestProjectBootstrapCreatesTheOfflineTopologyWithAValidPrimaryPaneRef(t *testing.T) {
+func TestProjectBootstrapCreatesTheOfflineTopologyWithValidAnchorAndDefaultShellRefs(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name            string
@@ -68,15 +68,15 @@ func TestProjectBootstrapCreatesTheOfflineTopologyWithAValidPrimaryPaneRef(t *te
 			var gotWindows []string
 			for _, window := range reg.WindowsOf(result.Project.Metadata.UID) {
 				gotWindows = append(gotWindows, window.Metadata.Name)
-				if window.Spec.PrimaryPaneRef == "" {
-					t.Fatalf("window %q has no primaryPaneRef", window.Metadata.Name)
+				if window.Spec.AnchorPaneRef == "" {
+					t.Fatalf("window %q has no anchorPaneRef", window.Metadata.Name)
 				}
-				pane, ok := reg.Pane(window.Spec.PrimaryPaneRef)
+				pane, ok := reg.Pane(window.Spec.AnchorPaneRef)
 				if !ok {
-					t.Fatalf("window %q primaryPaneRef %q does not resolve", window.Metadata.Name, window.Spec.PrimaryPaneRef)
+					t.Fatalf("window %q anchorPaneRef %q does not resolve", window.Metadata.Name, window.Spec.AnchorPaneRef)
 				}
 				if pane.Metadata.OwnerUID() != window.Metadata.UID {
-					t.Fatalf("window %q primaryPaneRef is owned by %q", window.Metadata.Name, pane.Metadata.OwnerUID())
+					t.Fatalf("window %q anchorPaneRef is owned by %q", window.Metadata.Name, pane.Metadata.OwnerUID())
 				}
 			}
 			var gotPanes []string
@@ -613,7 +613,7 @@ func TestWindowStatusRoundTripsWithoutChangingAPreObservationRegistry(t *testing
 	window := Window{
 		APIVersion: APIVersion, Kind: KindWindow,
 		Metadata: ObjectMeta{UID: "window-01", Name: "zsh", CreatedAt: fixedNow},
-		Spec:     WindowSpec{PrimaryPaneRef: "pane-01"},
+		Spec:     WindowSpec{AnchorPaneRef: "pane-01"},
 	}
 	data, err := json.Marshal(window)
 	if err != nil {

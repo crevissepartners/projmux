@@ -169,11 +169,15 @@ func MigrateRegistryWithEnvironment(set MigrationSet, reg Registry, env Migratio
 	if err != nil {
 		return Registry{}, false, report, err
 	}
+	working := reg.Clone()
+	shapeNormalized, err := normalizeWindowSpecShapes(&working, &report)
+	if err != nil {
+		return Registry{}, false, report, err
+	}
 	if action == SchemaCurrent {
-		return reg.Clone().normalized(), false, report, nil
+		return working.normalized(), shapeNormalized, report, nil
 	}
 
-	working := reg.Clone()
 	for working.SchemaVersion < SchemaVersion {
 		step, ok := set[working.SchemaVersion]
 		if !ok {
@@ -186,6 +190,75 @@ func MigrateRegistryWithEnvironment(set MigrationSet, reg Registry, env Migratio
 	}
 	report.ToVersion = working.SchemaVersion
 	return working.normalized(), true, report, nil
+}
+
+// normalizeWindowSpecShapes performs the same-version prerelease cutover by
+// raw field presence. A document has exactly one authority: every decoded
+// Window is either intermediate primaryPaneRef or final anchorPaneRef. Mixing
+// those authorities, including within one Window, is refused rather than
+// dual-read or guessed from Pane role.
+func normalizeWindowSpecShapes(reg *Registry, report *MigrationReport) (bool, error) {
+	legacyCount := 0
+	finalCount := 0
+	for _, window := range reg.Windows {
+		switch window.Spec.sourceShape {
+		case windowSpecSourceLegacy:
+			if reg.SchemaVersion == SchemaVersion {
+				legacyCount++
+			}
+		case windowSpecSourceFinal:
+			finalCount++
+		case windowSpecSourceMixed:
+			return false, stateErr("normalize registry window schema", ErrInvalidRegistry,
+				"window %q mixes legacy primaryPaneRef with final anchorPaneRef/defaultShellPaneRef authority", window.Metadata.Name)
+		case windowSpecSourceUnknown:
+			if reg.SchemaVersion == SchemaVersion {
+				return false, stateErr("normalize registry window schema", ErrInvalidRegistry,
+					"window %q has neither legacy primaryPaneRef nor required final anchorPaneRef", window.Metadata.Name)
+			}
+		case windowSpecSourceTyped:
+			if strings.TrimSpace(window.Spec.AnchorPaneRef) != "" {
+				finalCount++
+			} else if reg.SchemaVersion == SchemaVersion {
+				return false, stateErr("normalize registry window schema", ErrInvalidRegistry,
+					"window %q has no required anchorPaneRef", window.Metadata.Name)
+			}
+		}
+	}
+	if reg.SchemaVersion == SchemaVersion && legacyCount != 0 && finalCount != 0 {
+		return false, stateErr("normalize registry window schema", ErrInvalidRegistry,
+			"registry mixes legacy primaryPaneRef Windows with final anchorPaneRef Windows")
+	}
+	if reg.SchemaVersion == 1 && finalCount != 0 {
+		// Programmatically constructed v1 fixtures use typed fields and carry no
+		// raw source marker. Only a decoded final-v2 field in a v1 envelope is a
+		// cross-version mixed authority.
+		for _, window := range reg.Windows {
+			if window.Spec.sourceShape == windowSpecSourceFinal {
+				return false, stateErr("normalize registry window schema", ErrInvalidRegistry,
+					"schemaVersion 1 window %q uses final-v2 anchorPaneRef authority", window.Metadata.Name)
+			}
+		}
+	}
+	if legacyCount == 0 {
+		return false, nil
+	}
+	for i := range reg.Windows {
+		window := &reg.Windows[i]
+		if window.Spec.sourceShape != windowSpecSourceLegacy {
+			continue
+		}
+		legacy := window.Spec.legacyPrimaryPaneRef
+		window.Spec.AnchorPaneRef = legacy
+		window.Spec.DefaultShellPaneRef = legacy
+		window.Spec.legacyPrimaryPaneRef = ""
+		window.Spec.sourceShape = windowSpecSourceFinal
+		report.Repairs = append(report.Repairs, MigrationRepair{
+			Action: "normalize-window-anchor-schema", Kind: KindWindow, UID: window.Metadata.UID,
+			Field: "spec.primaryPaneRef->spec.anchorPaneRef+spec.defaultShellPaneRef", From: legacy, To: legacy,
+		})
+	}
+	return true, nil
 }
 
 func migrateV1ToV2(reg *Registry, env MigrationEnvironment, report *MigrationReport) error {
@@ -248,9 +321,18 @@ func migrateV1ToV2(reg *Registry, env MigrationEnvironment, report *MigrationRep
 		}
 
 		if validWindowPrimary(reg, *window) {
+			primaryUID := window.Spec.migrationShellPaneRef()
+			window.Spec.AnchorPaneRef = primaryUID
+			window.Spec.DefaultShellPaneRef = primaryUID
+			window.Spec.legacyPrimaryPaneRef = ""
+			window.Spec.sourceShape = windowSpecSourceTyped
+			report.Repairs = append(report.Repairs, MigrationRepair{
+				Action: "migrate-window-anchor", Kind: KindWindow, UID: window.Metadata.UID,
+				Field: "spec.primaryPaneRef->spec.anchorPaneRef+spec.defaultShellPaneRef", From: primaryUID, To: primaryUID,
+			})
 			continue
 		}
-		from := window.Spec.PrimaryPaneRef
+		from := window.Spec.migrationShellPaneRef()
 		primaryUID := firstWindowOwnedShellUID(reg, window.Metadata.UID)
 		if primaryUID == "" {
 			uid, err := migrationUID(reg, env, KindPane)
@@ -279,10 +361,13 @@ func migrateV1ToV2(reg *Registry, env MigrationEnvironment, report *MigrationRep
 			primaryUID = uid
 			report.Repairs = append(report.Repairs, MigrationRepair{Action: "create-bare-shell", Kind: KindPane, UID: uid, Field: "resource", To: name})
 		}
-		window.Spec.PrimaryPaneRef = primaryUID
+		window.Spec.AnchorPaneRef = primaryUID
+		window.Spec.DefaultShellPaneRef = primaryUID
+		window.Spec.legacyPrimaryPaneRef = ""
+		window.Spec.sourceShape = windowSpecSourceTyped
 		report.Repairs = append(report.Repairs, MigrationRepair{
-			Action: "repair-primary-pane", Kind: KindWindow, UID: window.Metadata.UID,
-			Field: "spec.primaryPaneRef", From: from, To: primaryUID, InformationLoss: strings.TrimSpace(from) != "",
+			Action: "repair-window-anchor", Kind: KindWindow, UID: window.Metadata.UID,
+			Field: "spec.anchorPaneRef+spec.defaultShellPaneRef", From: from, To: primaryUID, InformationLoss: strings.TrimSpace(from) != "",
 		})
 	}
 
@@ -365,7 +450,7 @@ func firstWindowOwnedShellUID(reg *Registry, windowUID string) string {
 }
 
 func validWindowPrimary(reg *Registry, window Window) bool {
-	primary, ok := reg.Pane(strings.TrimSpace(window.Spec.PrimaryPaneRef))
+	primary, ok := reg.Pane(strings.TrimSpace(window.Spec.migrationShellPaneRef()))
 	return ok && primary.Spec.Role == PaneRoleShell && primary.Metadata.OwnerRef != nil &&
 		primary.Metadata.OwnerRef.Kind == KindWindow && primary.Metadata.OwnerRef.UID == window.Metadata.UID
 }
@@ -428,6 +513,10 @@ func (r Registry) normalized() Registry {
 		r.Windows[i].APIVersion = APIVersion
 		r.Windows[i].Kind = KindWindow
 		r.Windows[i].Metadata.CreatedAt = r.Windows[i].Metadata.CreatedAt.UTC()
+		if r.Windows[i].Spec.sourceShape == windowSpecSourceFinal {
+			r.Windows[i].Spec.sourceShape = windowSpecSourceTyped
+			r.Windows[i].Spec.legacyPrimaryPaneRef = ""
+		}
 	}
 	for i := range r.Panes {
 		r.Panes[i].APIVersion = APIVersion

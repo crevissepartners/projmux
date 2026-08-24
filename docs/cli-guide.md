@@ -232,8 +232,9 @@ projmux create pane -p alpha                # every Window of alpha; a deliberat
 One explicit scope occurrence (`--project`, `--window`, `--pane`, or
 `--selector`) makes the whole scope explicit, so naming a Window never picks up
 an anchor from somewhere you did not address. With a scope but no `--pane`, the
-anchor is the target Window's stored `spec.primaryPaneRef`, and a missing or
-stale ref is exit `2` rather than a silent repair.
+anchor is the target Window's compatibility shell ref
+(`spec.defaultShellPaneRef` when set, otherwise `spec.anchorPaneRef`), and a
+missing or stale ref is exit `2` rather than a silent repair.
 
 Refusals are exit `2` with zero Registry writes and zero tmux mutations, and
 they name `--project` as the fix:
@@ -731,7 +732,7 @@ one exact tmux server still carries (Project/Window/Pane uids, mirrored names,
 the Project root, and containment resolved from stable tmux ids) beside a fixed
 statement of what no mirror can return: offline resources, every Agent (no tmux
 option carries an Agent uid), an Agent-owned Pane's `ownerRef`, the name
-reservation table, `spec.primaryPaneRef`, and labels/annotations/timestamps/
+reservation table, `spec.anchorPaneRef`, `spec.defaultShellPaneRef`, and labels/annotations/timestamps/
 status. Panes carrying a provider option are counted as proof that Agents existed
 whose uids are nowhere on the server. Nothing is imported and no Registry is
 generated from fragments. Socket selection follows the same `--socket` /

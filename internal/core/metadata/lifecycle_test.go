@@ -45,7 +45,7 @@ func lifecycleFixture(t *testing.T) *Registry {
 			UID: "win-main", Name: "main", CreatedAt: lifecycleClock,
 			OwnerRef: &OwnerRef{Kind: KindProject, UID: "prj-alpha"},
 		},
-		Spec: WindowSpec{PrimaryPaneRef: lifecycleShellUID},
+		Spec: WindowSpec{AnchorPaneRef: lifecycleShellUID},
 	}}
 	registry.Panes = []Pane{
 		{

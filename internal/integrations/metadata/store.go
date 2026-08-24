@@ -251,7 +251,7 @@ func (s *Store) load(validate bool) (coremetadata.Registry, MigrationResult, err
 				return err
 			}
 		}
-		if existed && onDiskVersion != coremetadata.SchemaVersion {
+		if existed && requiresDurableMigration(onDiskVersion, report) {
 			backup, reportPath, err := s.writeMigratedRegistry(registry, onDiskVersion, report)
 			if err != nil {
 				return err
@@ -378,7 +378,7 @@ func (s *Store) Update(fn func(*coremetadata.Registry) error) (coremetadata.Regi
 		if err := working.Validate(); err != nil {
 			return err
 		}
-		migrating := existed && onDiskVersion != coremetadata.SchemaVersion
+		migrating := existed && requiresDurableMigration(onDiskVersion, report)
 		if err := s.write(working, migrating, onDiskVersion, report); err != nil {
 			return err
 		}
@@ -426,11 +426,11 @@ func (s *Store) UpdateConvergent(fn func(*coremetadata.Registry) error) (coremet
 		if err := working.Validate(); err != nil {
 			return err
 		}
-		if existed && onDiskVersion == coremetadata.SchemaVersion && reflect.DeepEqual(working, registry.Normalize()) {
+		if existed && !requiresDurableMigration(onDiskVersion, report) && reflect.DeepEqual(working, registry.Normalize()) {
 			out = working
 			return nil
 		}
-		migrating := existed && onDiskVersion != coremetadata.SchemaVersion
+		migrating := existed && requiresDurableMigration(onDiskVersion, report)
 		if err := s.write(working, migrating, onDiskVersion, report); err != nil {
 			return err
 		}
@@ -460,10 +460,10 @@ type MigrationResult struct {
 	Report coremetadata.MigrationReport
 }
 
-// Migrate performs the durable schema migration: backup, temp write, validate,
-// atomic replace. It is a no-op when the file is missing or already current,
-// and it fails closed without writing when the envelope is newer than this
-// build supports.
+// Migrate performs the durable schema migration or same-version prerelease
+// normalization: backup, durable report, temp write, validate, atomic replace.
+// It is a no-op when the file is missing or already final-v2, and it fails
+// closed without writing when the envelope or raw Window authority is unknown.
 func (s *Store) Migrate() (MigrationResult, error) {
 	if s == nil {
 		return MigrationResult{}, errors.New("metadata: nil registry store")
@@ -481,7 +481,7 @@ func (s *Store) Migrate() (MigrationResult, error) {
 				return err
 			}
 		}
-		if !existed || onDiskVersion == coremetadata.SchemaVersion {
+		if !existed || !requiresDurableMigration(onDiskVersion, report) {
 			return nil
 		}
 		backup, reportPath, err := s.writeMigratedRegistry(registry, onDiskVersion, report)
@@ -497,6 +497,11 @@ func (s *Store) Migrate() (MigrationResult, error) {
 		return MigrationResult{}, err
 	}
 	return out, nil
+}
+
+func requiresDurableMigration(onDiskVersion int, report coremetadata.MigrationReport) bool {
+	return onDiskVersion != coremetadata.SchemaVersion ||
+		(report.FromVersion == coremetadata.SchemaVersion && report.ToVersion == coremetadata.SchemaVersion && len(report.Repairs) != 0)
 }
 
 func (s *Store) readWithReport() (coremetadata.Registry, int, bool, coremetadata.MigrationReport, error) {
@@ -634,7 +639,7 @@ func (s *Store) write(registry coremetadata.Registry, migrating bool, onDiskVers
 		_, _, err := s.writeMigratedRegistry(registry, onDiskVersion, report)
 		return err
 	}
-	return s.writeAfterBackup(registry, true)
+	return s.writeAfterBackup(registry, true, false)
 }
 
 const migrationReportSuffix = ".migration-report.json"
@@ -658,17 +663,34 @@ func (s *Store) writeMigratedRegistry(registry coremetadata.Registry, onDiskVers
 	if err != nil {
 		return "", "", err
 	}
-	reportPath, err := s.writeMigrationEvidence(backupPath, report)
+	pairPublished := false
+	reportPath := ""
+	defer func() {
+		if pairPublished {
+			return
+		}
+		if reportPath != "" {
+			_ = os.Remove(reportPath)
+		}
+		if backupPath != "" {
+			_ = os.Remove(backupPath)
+		}
+		_ = s.syncDir(filepath.Dir(s.path))
+	}()
+	if s.hooks.afterBackup != nil {
+		if err := s.hooks.afterBackup(); err != nil {
+			return "", "", err
+		}
+	}
+	reportPath, err = s.writeMigrationEvidence(backupPath, report)
 	if err != nil {
 		return "", "", err
 	}
-	removeReport := true
-	defer func() {
-		if removeReport {
-			_ = os.Remove(reportPath)
-			_ = s.syncDir(filepath.Dir(reportPath))
-		}
-	}()
+	// The exact backup and its checksum-bearing report are one durable evidence
+	// pair. Before this point a failure removes both; after it, any replace
+	// failure leaves both available for audit and rollback while registry.json
+	// remains byte-identical.
+	pairPublished = true
 	if s.hooks.afterMigrationReport != nil {
 		if err := s.hooks.afterMigrationReport(); err != nil {
 			return "", "", err
@@ -676,10 +698,9 @@ func (s *Store) writeMigratedRegistry(registry coremetadata.Registry, onDiskVers
 	}
 	// The versioned backup already preserves the prior bytes, so a migration
 	// does not also take a same-version rolling recovery copy.
-	if err := s.writeAfterBackup(registry, false); err != nil {
+	if err := s.writeAfterBackup(registry, false, true); err != nil {
 		return "", "", err
 	}
-	removeReport = false
 	return backupPath, reportPath, nil
 }
 
@@ -728,8 +749,8 @@ func (s *Store) writeMigrationEvidence(backupPath string, report coremetadata.Mi
 // leaves a marker with no registry, which reads as state loss instead of first
 // use. That direction is deliberate -- it asks the operator instead of silently
 // starting over -- and the message names the marker so it can be removed.
-func (s *Store) writeAfterBackup(registry coremetadata.Registry, keepRecoveryCopy bool) error {
-	if s.hooks.afterBackup != nil {
+func (s *Store) writeAfterBackup(registry coremetadata.Registry, keepRecoveryCopy, afterBackupAlreadyRan bool) error {
+	if !afterBackupAlreadyRan && s.hooks.afterBackup != nil {
 		if err := s.hooks.afterBackup(); err != nil {
 			return err
 		}
@@ -1071,9 +1092,10 @@ func (s *Store) recoveryCopyNames() []string {
 }
 
 // writePrivateFile publishes data at path through a staged temp file, an fsync,
-// an atomic rename, and a directory sync. os.CreateTemp already creates the
-// staged file at 0600, and the containing directory is created 0700 by
-// EnsurePrivateDir, so the published file inherits both.
+// an exclusive atomic link, and a directory sync. The link is rename-equivalent
+// publication without replacement: an unexpected existing evidence name is an
+// error, never authority to overwrite it. os.CreateTemp creates the staged file
+// at 0600, so the published hard link carries the same private mode and bytes.
 func (s *Store) writePrivateFile(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
@@ -1098,11 +1120,20 @@ func (s *Store) writePrivateFile(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp: %w", err)
 	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("rename temp: %w", err)
+	if err := os.Link(tmpName, path); err != nil {
+		return fmt.Errorf("publish temp exclusively: %w", err)
+	}
+	if err := os.Remove(tmpName); err != nil {
+		_ = os.Remove(path)
+		_ = s.syncDir(dir)
+		return fmt.Errorf("remove published temp name: %w", err)
 	}
 	cleanup = false
-	_ = s.syncDir(dir)
+	if err := s.syncDir(dir); err != nil {
+		_ = os.Remove(path)
+		_ = s.syncDir(dir)
+		return fmt.Errorf("sync published file directory: %w", err)
+	}
 	return nil
 }
 
@@ -1153,9 +1184,11 @@ func (s *Store) backup(fromVersion int) (string, error) {
 		}
 		break
 	}
-	// #nosec G703 -- path is the store's own registry path plus a generated
-	// version/timestamp suffix; no caller-supplied value reaches it.
-	if err := os.WriteFile(path, data, localstate.PrivateFileMode); err != nil {
+	// The backup is itself durable evidence, so publish it through the same
+	// staged 0600 write, file fsync, atomic rename, and directory fsync used by
+	// the checksum report. The Registry replace is unreachable until both have
+	// completed.
+	if err := s.writePrivateFile(path, data); err != nil {
 		return "", fmt.Errorf("metadata: write registry backup %s: %w", path, err)
 	}
 	return path, nil

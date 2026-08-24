@@ -920,8 +920,8 @@ const (
 	// mixing the resource contract forbids. What the row does assert is the
 	// part that is true and load bearing: the target is explicit and pinned at
 	// press time, so it is neither "whatever Pane is focused when the split
-	// lands" nor the Window's persisted `spec.primaryPaneRef`.
-	keyBindingAnchorCurrentPaneSplitTarget = "current Pane %N transport id (explicit split target; not the Window primaryPaneRef)"
+	// lands" nor the Window's persisted compatibility shell ref.
+	keyBindingAnchorCurrentPaneSplitTarget = "current Pane %N transport id (explicit split target; not the Window compatibility shell ref)"
 	// keyBindingAnchorActiveTmuxPane is the anchor of the direct tmux
 	// navigation commands. They carry no `-t`, so tmux itself resolves the
 	// active Pane of the key-press context; nothing is passed and nothing is

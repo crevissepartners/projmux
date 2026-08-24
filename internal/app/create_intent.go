@@ -184,7 +184,7 @@ func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, stdout
 // the Registry transaction opens. Unlike public create's omitted scope, this
 // intent-only resolver accepts both Registry root kinds. It requires the Pane
 // mirror as well as the Window mirror: a UI origin is an exact Pane, so falling
-// back to spec.primaryPaneRef would silently move the requested split.
+// back to the stored compatibility shell ref would silently move the requested split.
 func (c *createCommand) resolveCanonicalIntentScope(intent agentPaneIntent) (canonicalIntentScope, error) {
 	if c == nil || c.store == nil || c.store.load == nil {
 		return canonicalIntentScope{}, errors.New("canonical create: the resource-backed create route is not configured")

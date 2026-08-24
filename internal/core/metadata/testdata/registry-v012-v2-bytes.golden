@@ -37,7 +37,8 @@
         "createdAt": "2026-07-12T00:00:00Z"
       },
       "spec": {
-        "primaryPaneRef": "pane-v012-main"
+        "anchorPaneRef": "pane-v012-main",
+        "defaultShellPaneRef": "pane-v012-main"
       }
     },
     {
@@ -53,7 +54,8 @@
         "createdAt": "2026-07-12T00:00:00Z"
       },
       "spec": {
-        "primaryPaneRef": "pane-migration-01"
+        "anchorPaneRef": "pane-migration-01",
+        "defaultShellPaneRef": "pane-migration-01"
       }
     }
   ],

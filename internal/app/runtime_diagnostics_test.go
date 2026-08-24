@@ -46,7 +46,7 @@ func runtimeFixtureRegistry() coremetadata.Registry {
 	registry.Windows = []coremetadata.Window{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 		Metadata: meta(runtimeFixtureWindow, "editor", own(coremetadata.KindProject, runtimeFixtureProject)),
-		Spec:     coremetadata.WindowSpec{PrimaryPaneRef: runtimeFixturePane},
+		Spec:     coremetadata.WindowSpec{AnchorPaneRef: runtimeFixturePane},
 	}}
 	registry.Panes = []coremetadata.Pane{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
