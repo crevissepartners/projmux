@@ -176,6 +176,7 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		newReconciler = newRegistryReconciler
 	}
 	reconciler := newReconciler(recorder, sessions)
+	reconciler.initializeRefusalBookkeeping()
 	reconciler.refuseForeign = true
 	reconciler.targetLiveOnly = true
 	reconciler.approvedOrphanImport = p.approvedOrphanImport
@@ -494,6 +495,13 @@ func observeResourceProjectSessions(ctx context.Context, runner tmuxCommandRunne
 }
 
 func resourceProjectForSession(registry coremetadata.Registry, session observedResourceProjectSession, reconciler *registryReconciler) (*coremetadata.Project, bool) {
+	// An exact ControlSession declaration owns this physical session before any
+	// Project evidence is interpreted. A Project uid/root observed on the same
+	// session is D4 contamination and is classified by the refusal planner; it
+	// is never allowed to override the root kind here.
+	if _, ok := registry.ControlSessionBySession(session.name); ok {
+		return nil, false
+	}
 	// A known mirrored UID is the authoritative identity edge. In particular,
 	// rebind intentionally makes the old path anchor stale while preserving this
 	// UID, so preferring the anchor would make the public retry route refuse the
@@ -519,6 +527,7 @@ func resourceProjectForSession(registry coremetadata.Registry, session observedR
 }
 
 func refusedResourceProjectSessions(registry coremetadata.Registry, sessions []observedResourceProjectSession, reconciler *registryReconciler) map[string]bool {
+	reconciler.initializeRefusalBookkeeping()
 	counts := map[string]int{}
 	claims := map[string]int{}
 	for _, session := range sessions {
@@ -531,19 +540,38 @@ func refusedResourceProjectSessions(registry coremetadata.Registry, sessions []o
 	}
 	refused := map[string]bool{}
 	for _, session := range sessions {
+		claim := reconciler.resolveRegistrySessionClaim(registry, session.name)
+		if claim.Kind == registrySessionClaimControl {
+			if session.uid != "" || session.root != "" {
+				refused[session.name] = true
+				reconciler.refuseSession(session.name, resourcegraph.DivergenceContaminated,
+					"exact ControlSession carries a foreign Project identity claim")
+			}
+			continue
+		}
 		if claim := resourceProjectSessionClaim(registry, session, reconciler); claim != "" && claims[claim] > 1 {
 			refused[session.name] = true
+			reconciler.refuseSession(session.name, resourcegraph.DivergenceContaminated,
+				"multiple live sessions resolve to the same exact Registry Project")
 			continue
 		}
 		if session.uid == "" {
-			if session.root == "" && len(resourceSessionProjectClaims(registry, session.name, reconciler)) > 1 {
+			if session.root == "" && claim.Kind == registrySessionClaimRefused {
 				refused[session.name] = true
+				reconciler.refuseSession(session.name, claim.Divergence, claim.Reason)
 			}
 			continue
 		}
 		expected, ok := resourceProjectForSession(registry, session, reconciler)
 		if !ok || session.uid != expected.Metadata.UID || counts[session.uid] > 1 {
 			refused[session.name] = true
+			if _, known := registry.Project(session.uid); !known {
+				reconciler.refuseSession(session.name, resourcegraph.DivergenceOrphanMirror,
+					"live session carries a Project uid absent from the authoritative Registry")
+			} else {
+				reconciler.refuseSession(session.name, resourcegraph.DivergenceContaminated,
+					"live session carries a Project uid outside its exact Registry identity")
+			}
 		}
 	}
 	return refused
@@ -678,26 +706,37 @@ func resourceProjectForeignItems(registry coremetadata.Registry, sessions []obse
 		if reconciler.refusedSessionDivergence[session.name] == resourcegraph.DivergenceOrphanMirror {
 			continue
 		}
-		reason := "live session carries a Project uid outside its exact Registry identity"
-		if session.uid == "" && session.root == "" && len(resourceSessionProjectClaims(registry, session.name, reconciler)) > 1 {
+		reason := strings.TrimSpace(reconciler.refusedSessionReasons[session.name])
+		if reason == "" {
+			reason = "live session carries a Project uid outside its exact Registry identity"
+		}
+		if reason == "live session carries a Project uid outside its exact Registry identity" && session.uid == "" && session.root == "" && len(resourceSessionProjectClaims(registry, session.name, reconciler)) > 1 {
 			reason = "multiple Registry Projects claim the live session-name edge"
-		} else if claim := resourceProjectSessionClaim(registry, session, reconciler); claim != "" && claims[claim] > 1 {
+		} else if reason == "live session carries a Project uid outside its exact Registry identity" && func() bool {
+			claim := resourceProjectSessionClaim(registry, session, reconciler)
+			return claim != "" && claims[claim] > 1
+		}() {
 			reason = "multiple live sessions resolve to the same exact Registry Project"
-		} else if counts[session.uid] > 1 {
+		} else if reason == "live session carries a Project uid outside its exact Registry identity" && counts[session.uid] > 1 {
 			reason = "multiple live sessions claim the same Registry Project uid"
-		} else if _, ok := registry.Project(session.uid); !ok {
-			reason = "live session carries a Project uid absent from the authoritative Registry"
+		} else if reason == "live session carries a Project uid outside its exact Registry identity" {
+			if _, ok := registry.Project(session.uid); !ok {
+				reason = "live session carries a Project uid absent from the authoritative Registry"
+			}
+		}
+		divergence := reconciler.refusedSessionDivergence[session.name]
+		if !divergence.Valid() {
+			if _, ok := registry.Project(session.uid); !ok && session.uid != "" {
+				divergence = resourcegraph.DivergenceOrphanMirror
+			} else {
+				divergence = resourcegraph.DivergenceContaminated
+			}
 		}
 		items = append(items, resourceReconcileItem{
 			Key: "tmux:refuse:project:" + session.id, Drift: resourceDriftForeign, Surface: "tmux", Action: "refuse",
 			Kind: string(coremetadata.KindProject), Target: session.id, Field: tmuxopts.ProjectUIDSession,
 			Before: session.uid, Outcome: "refused", Reason: reason, refused: true,
-			Divergence: func() resourcegraph.Divergence {
-				if _, ok := registry.Project(session.uid); !ok && session.uid != "" {
-					return resourcegraph.DivergenceOrphanMirror
-				}
-				return resourcegraph.DivergenceContaminated
-			}(),
+			Divergence: divergence,
 		})
 	}
 	return items

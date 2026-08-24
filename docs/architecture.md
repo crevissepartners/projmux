@@ -265,6 +265,17 @@ different things and they are not interchangeable.
   while the Home session row itself stays classified `control` with no
   `resourceRef`. See *Registry-first primary navigation* below for the row-level detail.
 
+The root kinds may retain the same preferred tmux session name in stored state,
+but that does not make the name an identity edge. An exact
+`ControlSession.spec.session` claim wins before any Project session-name
+fallback. If an explicitly opened Project would otherwise project onto that
+physical session, its stable runtime name is `<preferred>--<full Project uid>`;
+the Registry Project uid, root, and owner chain remain unchanged. A Project
+uid/root observed on the exact control-owned session is D4 contamination, not
+permission to adopt or rewrite the control-owned descendants. Observation
+failures are quarantined as reason-bearing D6 items so an unrelated session can
+still reconcile; only exact socket evidence authorizes runtime writes.
+
 The consequence for every consumer is one rule: **the Registry has two root
 kinds and a projection that walks roots has to walk both.** A traversal that
 reads `registry.Projects` as if it were the whole root set will drop, refuse,

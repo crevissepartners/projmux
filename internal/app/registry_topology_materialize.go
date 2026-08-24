@@ -83,7 +83,7 @@ func planRegistryTopology(
 		return nil, err
 	}
 	plan := &registryTopologyPlan{project: project}
-	plan.sessionName = materializeSessionName(project, reconciler)
+	plan.sessionName = materializeSessionName(registry, project, reconciler)
 	if plan.sessionName == "" {
 		plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindProject, project.Metadata.Name, "status.session.name and the configured persistent session name are both empty")
 		return plan, nil
@@ -326,14 +326,11 @@ func resolveMaterializeProject(registry coremetadata.Registry, raw string) (core
 	return *project, nil
 }
 
-func materializeSessionName(project coremetadata.Project, reconciler *registryReconciler) string {
-	if project.Status.Session != nil && strings.TrimSpace(project.Status.Session.Name) != "" {
-		return strings.TrimSpace(project.Status.Session.Name)
+func materializeSessionName(registry coremetadata.Registry, project coremetadata.Project, reconciler *registryReconciler) string {
+	if reconciler == nil {
+		reconciler = &registryReconciler{}
 	}
-	if reconciler != nil && reconciler.sessionNameFor != nil {
-		return strings.TrimSpace(reconciler.sessionNameFor(project.Spec.Root))
-	}
-	return ""
+	return reconciler.projectPhysicalSessionName(registry, project)
 }
 
 func materializePaneCWD(project coremetadata.Project, pane coremetadata.Pane) string {
