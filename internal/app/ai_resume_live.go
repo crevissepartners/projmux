@@ -19,6 +19,10 @@ import (
 const (
 	aiResumePreviewTimeout          = 2 * time.Second
 	aiResumeSummaryPopulationBudget = 450 * time.Millisecond
+	// This is wider than aisessions' 25ms scanner handoff so the provider
+	// result has 10ms to cross the outer channel, while the whole first frame
+	// remains bounded to 450ms + 35ms.
+	aiResumeSummaryCancellationSettlementBudget = 35 * time.Millisecond
 )
 
 type aiResumePreviewKey struct {
@@ -145,18 +149,25 @@ func (c *aiResumeLiveController) populateOnce() {
 			}
 			settled[result.provider] = result
 		case <-ctx.Done():
-			// A result that completed at the deadline may already be queued. Keep
-			// it before settling the still-missing providers as available-empty.
-			// The population envelope is a latency boundary, not evidence that a
-			// provider itself is unavailable.
-		drainResults:
-			for {
+			// Provider cancellation and its buffered result send are separate
+			// scheduler events. Reserve a bounded handoff window after the 450ms
+			// discovery envelope so a cancellation-settled partial is not replaced
+			// by available-empty solely because its send lost the select race.
+			settlementTimer := time.NewTimer(aiResumeSummaryCancellationSettlementBudget)
+		settleResults:
+			for len(settled) < len(providers) {
 				select {
 				case result := <-results:
 					result.envelopeExpired = errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)
 					settled[result.provider] = result
+				case <-settlementTimer.C:
+					break settleResults
+				}
+			}
+			if !settlementTimer.Stop() {
+				select {
+				case <-settlementTimer.C:
 				default:
-					break drainResults
 				}
 			}
 			for _, provider := range providers {

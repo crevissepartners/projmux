@@ -149,6 +149,57 @@ func TestResumeSummaryEmptyCodexIsAvailableAndEnvelopeExpiryIsNotFailure(t *test
 	})
 }
 
+func TestResumeSummaryPopulationEnvelopeKeepsCancellationSettledCodexPartial(t *testing.T) {
+	const exactID = "01a032ae-129b-7b73-95f9-e15300f130e7"
+	cmd := testAICommand(t.TempDir())
+	lateReturned := make(chan struct{})
+	cmd.discoverResumeSummaryProvider = func(ctx context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+		if provider != aiModeCodex {
+			return aisessions.ResumeSummaryDiscovery{}, nil
+		}
+		<-ctx.Done()
+		time.Sleep(20 * time.Millisecond) // make the result-send lose to ctx.Done
+		close(lateReturned)
+		return summaryDiscovery(provider, exactID, aisessions.SourceCodexRollout, time.Unix(30, 0)), nil
+	}
+	controller := newAIResumeLiveController(cmd, "/work/app", t.TempDir(), 0, 20)
+	controller.populationTimeout = 10 * time.Millisecond
+	defer controller.close()
+	startedAt := time.Now()
+	entries := controller.initialEntries()
+	if elapsed := time.Since(startedAt); elapsed >= 500*time.Millisecond {
+		t.Fatalf("settled first frame took %s, want <500ms", elapsed)
+	}
+	select {
+	case <-lateReturned:
+	default:
+		t.Fatal("Codex cancellation-settled result was not collected")
+	}
+	wantValue := aiResumePickerValue(aiModeCodex, exactID)
+	entry, ok := resumeSummaryEntryWithValue(entries, wantValue)
+	if !ok {
+		t.Fatalf("settled frame lost matching Codex partial: %#v", entries)
+	}
+	selection, ok := parseAIResumePickerValue(entry.Value)
+	if !ok {
+		t.Fatalf("parse exact picker value %q", entry.Value)
+	}
+	selection = enrichAIResumeSelectionFromSummaries(selection, controller.snapshotSummaries())
+	if selection.resumeID != exactID || selection.source != aisessions.SourceCodexRollout {
+		t.Fatalf("settled selection intent = %#v", selection)
+	}
+	frameHash := pickerEntryHash(entries)
+	for range 3 {
+		if got := pickerEntryHash(controller.initialEntries()); got != frameHash {
+			t.Fatalf("settled frame changed: got=%x want=%x", got, frameHash)
+		}
+		update, err := controller.update()
+		if err != nil || update.Items != nil {
+			t.Fatalf("post-frame update mutated items: update=%#v err=%v", update, err)
+		}
+	}
+}
+
 func pickerEntryHash(entries []intpickercompat.Entry) [32]byte {
 	var stable strings.Builder
 	for _, entry := range entries {
