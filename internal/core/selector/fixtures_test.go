@@ -12,7 +12,7 @@ var fixtureClock = time.Date(2026, 8, 15, 9, 0, 0, 0, time.UTC)
 // builder assembles a structurally legal registry for selector tests.
 //
 // It records the name reservations the resource model requires and derives each
-// Window's primaryPaneRef, then runs the real Registry.Validate. That keeps the
+// Window's anchor/default shell refs, then runs the real Registry.Validate. That keeps the
 // fixtures honest: a selector test can never pass against a registry shape the
 // production model would reject.
 type builder struct {
@@ -134,14 +134,14 @@ func (b *builder) build() metadata.Registry {
 		for _, pane := range b.registry.Panes {
 			if pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == metadata.KindWindow &&
 				pane.Metadata.OwnerRef.UID == window.Metadata.UID && pane.Spec.Role == metadata.PaneRoleShell {
-				window.Spec.PrimaryPaneRef = pane.Metadata.UID
+				window.Spec.AnchorPaneRef = pane.Metadata.UID
 				break
 			}
 		}
-		if window.Spec.PrimaryPaneRef == "" {
+		if window.Spec.AnchorPaneRef == "" {
 			uid := "pan-anchor-" + window.Metadata.UID
 			b.shellPane(uid, "shell-anchor", "", window.Metadata.UID, "", nil)
-			window.Spec.PrimaryPaneRef = uid
+			window.Spec.AnchorPaneRef = uid
 		}
 	}
 	for i := range b.registry.Projects {
@@ -159,7 +159,7 @@ func (b *builder) build() metadata.Registry {
 			b.shellPane(paneUID, "shell-anchor", "", windowUID, project.Spec.Root, nil)
 			project.Spec.PrimaryWindowRef = windowUID
 			window, _ := b.registry.Window(windowUID)
-			window.Spec.PrimaryPaneRef = paneUID
+			window.Spec.AnchorPaneRef = paneUID
 		}
 	}
 	if err := b.registry.Validate(); err != nil {

@@ -229,7 +229,7 @@ func TestPruneProjectCandidateListingIsBounded(t *testing.T) {
 		store.registry.Windows = append(store.registry.Windows, coremetadata.Window{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: coremetadata.ObjectMeta{UID: windowUID, Name: "main", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: uid}, CreatedAt: resourceFixtureClock},
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: paneUID},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: paneUID},
 		})
 		store.registry.Panes = append(store.registry.Panes, coremetadata.Pane{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,

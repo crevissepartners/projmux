@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -326,21 +327,22 @@ func TestSchemaMigrationIsAtomicAndAFailedStepLeavesTheOriginalState(t *testing.
 
 	boom := errors.New("injected migration failure")
 	tests := []struct {
-		name  string
-		hooks func(*Store)
+		name         string
+		hooks        func(*Store)
+		wantEvidence bool
 	}{
 		{name: "failure right after the backup", hooks: func(s *Store) {
 			s.hooks.afterBackup = func() error { return boom }
 		}},
 		{name: "failure after the migration report", hooks: func(s *Store) {
 			s.hooks.afterMigrationReport = func() error { return boom }
-		}},
+		}, wantEvidence: true},
 		{name: "failure after the staged temp write", hooks: func(s *Store) {
 			s.hooks.afterTempWrite = func() error { return boom }
-		}},
+		}, wantEvidence: true},
 		{name: "failure just before the atomic replace", hooks: func(s *Store) {
 			s.hooks.beforeRename = func() error { return boom }
-		}},
+		}, wantEvidence: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -359,12 +361,31 @@ func TestSchemaMigrationIsAtomicAndAFailedStepLeavesTheOriginalState(t *testing.
 			if got := readFile(t, store.Path()); got != before {
 				t.Fatalf("a failed migration left partially applied state:\n--- got ---\n%s\n--- want ---\n%s", got, before)
 			}
+			var reports, backups []string
 			for _, name := range dirListing(t, dir) {
 				if strings.Contains(name, ".tmp-") {
 					t.Fatalf("a failed migration leaked a staged temp file: %q", name)
 				}
 				if strings.HasSuffix(name, migrationReportSuffix) {
-					t.Fatalf("a failed migration published operator evidence: %q", name)
+					reports = append(reports, filepath.Join(dir, name))
+				} else if strings.Contains(name, ".bak") {
+					backups = append(backups, filepath.Join(dir, name))
+				}
+			}
+			if !tt.wantEvidence && (len(reports) != 0 || len(backups) != 0) {
+				t.Fatalf("a pre-publication failure published operator evidence: reports=%v backups=%v", reports, backups)
+			}
+			if tt.wantEvidence {
+				if len(reports) != 1 {
+					t.Fatalf("post-publication evidence reports = %v, want one", reports)
+				}
+				var evidence migrationEvidence
+				if err := json.Unmarshal([]byte(readFile(t, reports[0])), &evidence); err != nil {
+					t.Fatal(err)
+				}
+				digest := sha256.Sum256([]byte(before))
+				if readFile(t, evidence.BackupPath) != before || evidence.BackupSHA256 != fmt.Sprintf("%x", digest) {
+					t.Fatalf("durable evidence does not preserve the exact source: %+v", evidence)
 				}
 			}
 			// The original file must still be readable at its older envelope,
@@ -429,6 +450,168 @@ func TestSuccessfulSchemaMigrationBacksUpTheOriginalAndReplacesItAtomically(t *t
 	}
 	if second.Migrated || second.BackupPath != "" {
 		t.Fatalf("re-migration = %+v, want a no-op", second)
+	}
+}
+
+func TestIntermediateV2NormalizationPublishesExactEvidenceAndSecondPassIsZeroByte(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("../../core/metadata/testdata/registry-v010-intermediate-v2-source.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFinal, err := os.ReadFile("../../core/metadata/testdata/registry-v010-v2-bytes.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := testStore(t)
+	writeRegistryFile(t, store, string(source))
+	sourceInfo, err := os.Stat(store.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := store.Migrate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Migrated || result.FromVersion != coremetadata.SchemaVersion ||
+		result.Report.FromVersion != coremetadata.SchemaVersion || result.Report.ToVersion != coremetadata.SchemaVersion ||
+		len(result.Report.Repairs) != 1 {
+		t.Fatalf("normalization result = %+v", result)
+	}
+	if got := []byte(readFile(t, result.BackupPath)); !bytes.Equal(got, source) {
+		t.Fatal("same-version backup did not preserve exact source bytes")
+	}
+	backupInfo, err := os.Stat(result.BackupPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if backupInfo.Mode().Perm() != sourceInfo.Mode().Perm() || backupInfo.Mode().Perm() != 0o600 {
+		t.Fatalf("source/backup mode = %v/%v, want exact 0600", sourceInfo.Mode().Perm(), backupInfo.Mode().Perm())
+	}
+	var evidence migrationEvidence
+	if err := json.Unmarshal([]byte(readFile(t, result.ReportPath)), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	digest := sha256.Sum256(source)
+	if evidence.FromVersion != coremetadata.SchemaVersion || evidence.ToVersion != coremetadata.SchemaVersion ||
+		evidence.BackupPath != result.BackupPath || evidence.BackupSHA256 != fmt.Sprintf("%x", digest) {
+		t.Fatalf("same-version evidence = %+v", evidence)
+	}
+	if got := []byte(readFile(t, store.Path())); !bytes.Equal(got, wantFinal) || bytes.Contains(got, []byte(`"primaryPaneRef"`)) {
+		t.Fatalf("final-v2 bytes differ or retain legacy authority:\n%s", got)
+	}
+
+	registryBefore := fileFingerprint(t, store.Path())
+	backupBefore := fileFingerprint(t, result.BackupPath)
+	reportBefore := fileFingerprint(t, result.ReportPath)
+	listingBefore := dirListing(t, filepath.Dir(store.Path()))
+	second, err := store.Migrate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Migrated || second.BackupPath != "" || second.ReportPath != "" || len(second.Report.Repairs) != 0 {
+		t.Fatalf("second pass = %+v, want no-op", second)
+	}
+	if fileFingerprint(t, store.Path()) != registryBefore || fileFingerprint(t, result.BackupPath) != backupBefore ||
+		fileFingerprint(t, result.ReportPath) != reportBefore ||
+		!reflect.DeepEqual(dirListing(t, filepath.Dir(store.Path())), listingBefore) {
+		t.Fatal("second pass changed final-v2 bytes, evidence, or directory entries")
+	}
+}
+
+func TestIntermediateV2NormalizationFailureHonorsEvidencePublicationBoundary(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("../../core/metadata/testdata/registry-v010-intermediate-v2-source.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	boom := errors.New("normalization cut point")
+	tests := []struct {
+		name         string
+		hook         func(*Store)
+		wantEvidence bool
+	}{
+		{name: "backup fsync before evidence pair", hook: func(store *Store) {
+			store.hooks.syncFile = func(*os.File) error { return boom }
+		}},
+		{name: "backup directory publish before evidence pair", hook: func(store *Store) {
+			store.hooks.syncDir = func(string) error { return boom }
+		}},
+		{name: "report fsync before evidence pair", hook: func(store *Store) {
+			calls := 0
+			store.hooks.syncFile = func(*os.File) error {
+				calls++
+				if calls == 2 {
+					return boom
+				}
+				return nil
+			}
+		}},
+		{name: "before evidence pair", hook: func(store *Store) {
+			store.hooks.afterBackup = func() error { return boom }
+		}},
+		{name: "after evidence pair before replace", wantEvidence: true, hook: func(store *Store) {
+			store.hooks.beforeRename = func() error { return boom }
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			store := testStore(t)
+			writeRegistryFile(t, store, string(source))
+			tt.hook(store)
+			if _, err := store.Migrate(); !errors.Is(err, boom) {
+				t.Fatalf("Migrate error = %v", err)
+			}
+			if got := []byte(readFile(t, store.Path())); !bytes.Equal(got, source) {
+				t.Fatal("failed normalization changed source Registry bytes")
+			}
+			var reportPaths, backupPaths []string
+			for _, name := range dirListing(t, filepath.Dir(store.Path())) {
+				if strings.Contains(name, ".tmp-") {
+					t.Fatalf("failed normalization leaked staged file %q", name)
+				}
+				if strings.HasSuffix(name, migrationReportSuffix) {
+					reportPaths = append(reportPaths, filepath.Join(filepath.Dir(store.Path()), name))
+				} else if strings.Contains(name, ".bak") {
+					backupPaths = append(backupPaths, filepath.Join(filepath.Dir(store.Path()), name))
+				}
+			}
+			if !tt.wantEvidence && (len(reportPaths) != 0 || len(backupPaths) != 0) {
+				t.Fatalf("pre-publication failure left evidence reports=%v backups=%v", reportPaths, backupPaths)
+			}
+			if tt.wantEvidence {
+				if len(reportPaths) != 1 {
+					t.Fatalf("reports = %v, want one durable pair", reportPaths)
+				}
+				var evidence migrationEvidence
+				if err := json.Unmarshal([]byte(readFile(t, reportPaths[0])), &evidence); err != nil {
+					t.Fatal(err)
+				}
+				if got := []byte(readFile(t, evidence.BackupPath)); !bytes.Equal(got, source) {
+					t.Fatal("durable rollback backup changed source bytes")
+				}
+			}
+		})
+	}
+}
+
+func TestPrivateEvidencePublicationIsExclusive(t *testing.T) {
+	t.Parallel()
+	store := testStore(t)
+	path := filepath.Join(filepath.Dir(store.Path()), "evidence.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("operator-owned\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.writePrivateFile(path, []byte("replacement\n")); err == nil {
+		t.Fatal("exclusive evidence publication overwrote an existing path")
+	}
+	if got := readFile(t, path); got != "operator-owned\n" {
+		t.Fatalf("existing evidence bytes = %q", got)
 	}
 }
 
@@ -519,12 +702,12 @@ func requireSingleMigrationEvidence(t *testing.T, store *Store, source []byte) (
 	}
 	digest := sha256.Sum256(source)
 	if evidence.EvidenceVersion != 1 || evidence.FromVersion != 1 || evidence.ToVersion != 2 ||
-		evidence.RepairCount != 3 || evidence.InformationLossCount != 1 ||
+		evidence.RepairCount != 4 || evidence.InformationLossCount != 1 ||
 		evidence.BackupSHA256 != fmt.Sprintf("%x", digest) || readFile(t, evidence.BackupPath) != string(source) {
 		t.Fatalf("migration evidence = %+v", evidence)
 	}
 	encoded := readFile(t, reportPaths[0])
-	for _, detail := range []string{"downgrade-missing-cwd", "create-bare-shell", `"informationLoss": true`} {
+	for _, detail := range []string{"downgrade-missing-cwd", "migrate-window-anchor", "create-bare-shell", `"informationLoss": true`} {
 		if !strings.Contains(encoded, detail) {
 			t.Fatalf("migration evidence omitted %q:\n%s", detail, encoded)
 		}
@@ -598,7 +781,7 @@ func TestUpdateWritesNothingWhenTheOperationFails(t *testing.T) {
 	}
 }
 
-func TestRegisteredProjectPersistsTheOfflineTopologyAndPrimaryPaneRef(t *testing.T) {
+func TestRegisteredProjectPersistsTheOfflineTopologyAndFinalWindowRefs(t *testing.T) {
 	t.Parallel()
 
 	roots := map[string]bool{"/src/projmux": true}
@@ -641,12 +824,12 @@ func TestRegisteredProjectPersistsTheOfflineTopologyAndPrimaryPaneRef(t *testing
 		t.Fatal("project did not survive the round trip")
 	}
 	for _, window := range reloaded.WindowsOf(project.Metadata.UID) {
-		pane, ok := reloaded.Pane(window.Spec.PrimaryPaneRef)
+		pane, ok := reloaded.Pane(window.Spec.AnchorPaneRef)
 		if !ok {
-			t.Fatalf("window %q primaryPaneRef %q does not resolve after reload", window.Metadata.Name, window.Spec.PrimaryPaneRef)
+			t.Fatalf("window %q anchorPaneRef %q does not resolve after reload", window.Metadata.Name, window.Spec.AnchorPaneRef)
 		}
 		if pane.Metadata.OwnerUID() != window.Metadata.UID {
-			t.Fatalf("window %q primaryPaneRef is owned by %q", window.Metadata.Name, pane.Metadata.OwnerUID())
+			t.Fatalf("window %q anchorPaneRef is owned by %q", window.Metadata.Name, pane.Metadata.OwnerUID())
 		}
 	}
 

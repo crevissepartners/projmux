@@ -69,12 +69,12 @@ func driftedRegistry(t *testing.T, root string) coremetadata.Registry {
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-first", "lead-roadmap", owner(coremetadata.KindProject, "prj-alpha")),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-first"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-first"},
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-second", "zsh", owner(coremetadata.KindProject, "prj-alpha")),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-second"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-second"},
 		},
 	}
 	reserve("prj-alpha", coremetadata.KindWindow, "lead-roadmap", "win-first")
@@ -370,7 +370,7 @@ func TestBindingReapplyNeverMovesAnObjectBetweenProjects(t *testing.T) {
 			UID: "win-beta", Name: "zsh", CreatedAt: resourceFixtureClock,
 			OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-beta"},
 		},
-		Spec: coremetadata.WindowSpec{PrimaryPaneRef: "pan-beta"},
+		Spec: coremetadata.WindowSpec{AnchorPaneRef: "pan-beta"},
 	})
 	registry.Panes = append(registry.Panes, coremetadata.Pane{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,

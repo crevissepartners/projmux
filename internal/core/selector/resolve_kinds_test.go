@@ -130,7 +130,7 @@ func registryWithControlReadRoot(t *testing.T) metadata.Registry {
 		APIVersion: metadata.APIVersion,
 		Kind:       metadata.KindWindow,
 		Metadata:   metadata.ObjectMeta{UID: "win-home", Name: "home", OwnerRef: owner(metadata.KindControlSession, "ctl-home"), CreatedAt: fixtureClock},
-		Spec:       metadata.WindowSpec{PrimaryPaneRef: "pan-home-shell"},
+		Spec:       metadata.WindowSpec{AnchorPaneRef: "pan-home-shell"},
 	})
 	registry.Panes = append(registry.Panes,
 		metadata.Pane{

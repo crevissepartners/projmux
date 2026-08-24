@@ -545,7 +545,7 @@ func addFreshStartControlSession(t *testing.T, store *fakeResourceStore) {
 			UID: "win-ctl-home", Name: "home", CreatedAt: resourceFixtureClock,
 			OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindControlSession, UID: "ctl-home"},
 		},
-		Spec: coremetadata.WindowSpec{PrimaryPaneRef: "pan-ctl-home"},
+		Spec: coremetadata.WindowSpec{AnchorPaneRef: "pan-ctl-home"},
 	})
 	registry.Panes = append(registry.Panes, coremetadata.Pane{
 		APIVersion: coremetadata.APIVersion,

@@ -48,7 +48,7 @@ func testRegistry(t *testing.T) coremetadata.Registry {
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-alpha-1", "editor", own(coremetadata.KindProject, "project-alpha")),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pane-alpha-1"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pane-alpha-1"},
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,

@@ -250,7 +250,7 @@ func projectFreshStartPlanFor(registry coremetadata.Registry, projectUID string)
 	if !ok {
 		return projectFreshStartPlan{ProjectUID: projectUID, signature: "invalid-anchor"}
 	}
-	anchorPane := anchorWindow.Spec.PrimaryPaneRef
+	anchorPane := anchorWindow.Spec.CompatibilityShellPaneRef()
 	plan := projectFreshStartPlan{
 		ProjectUID: projectUID,
 		signature:  "keep:" + anchorWindow.Metadata.UID + "," + anchorPane + ";",

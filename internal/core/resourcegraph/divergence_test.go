@@ -101,7 +101,7 @@ func TestControlSessionRootPreservesRuntimeAndDescendantAttribution(t *testing.T
 	registry.Windows = []coremetadata.Window{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 		Metadata: coremetadata.ObjectMeta{UID: "win-home", Name: "window", OwnerRef: owner(coremetadata.KindControlSession, "ctl-home"), CreatedAt: now},
-		Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pane-home"},
+		Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pane-home"},
 	}}
 	registry.Panes = []coremetadata.Pane{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,

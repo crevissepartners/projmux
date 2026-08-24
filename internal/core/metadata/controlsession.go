@@ -262,23 +262,24 @@ func (m Mutator) bindControlWindowTx(txn *Transaction, reg *Registry, op, contro
 		Origin:                  origin,
 	})
 
-	primaryPaneRef := ""
+	shellPaneRef := ""
 	for paneIndex, observedPane := range panes {
 		paneUID, err := m.bindControlPaneTx(txn, reg, op, windowUID, defaultShell, index, paneIndex, observedPane, now, result, binder)
 		if err != nil {
 			return err
 		}
-		if paneUID != "" && primaryPaneRef == "" {
-			primaryPaneRef = paneUID
+		if paneUID != "" && shellPaneRef == "" {
+			shellPaneRef = paneUID
 		}
 	}
 
-	// Only ever fills a gap. An adopted Window already names its primary Pane,
+	// Only ever fills a gap. An adopted Window already names its shell anchor,
 	// and overwriting that from a tmux pane order the operator may have
 	// rearranged would be a rename by another route.
 	stored, _ := reg.Window(windowUID)
-	if strings.TrimSpace(stored.Spec.PrimaryPaneRef) == "" {
-		stored.Spec.PrimaryPaneRef = primaryPaneRef
+	if strings.TrimSpace(stored.Spec.AnchorPaneRef) == "" {
+		stored.Spec.AnchorPaneRef = shellPaneRef
+		stored.Spec.DefaultShellPaneRef = shellPaneRef
 	}
 	if _, err := m.ObserveWindowDisplayName(reg, windowUID, observed.DisplayName); err != nil {
 		return err

@@ -245,17 +245,17 @@ func planAgentResume(spelling string, registry coremetadata.Registry, agent *cor
 			"%s: project/%s carries a MissingRoot condition for %q; rebind it before resuming an Agent under it",
 			spelling, project.Metadata.Name, project.Spec.Root))
 	}
-	// The split anchor is the Window's persisted primary Pane, exactly as on the
-	// create routes. There is no fallback to the active or last-used Pane.
-	anchorUID := strings.TrimSpace(window.Spec.PrimaryPaneRef)
+	// Phase 0 keeps the split result on the legacy shell-compatible target.
+	// There is no fallback to the active or last-used Pane.
+	anchorUID := strings.TrimSpace(window.Spec.CompatibilityShellPaneRef())
 	if anchorUID == "" {
 		return agentResumePlan{}, usageError(fmt.Sprintf(
-			"%s: window/%s (project/%s) has no spec.primaryPaneRef, so there is no anchor to split",
+			"%s: window/%s (project/%s) has no compatibility shell ref, so there is no anchor to split",
 			spelling, window.Metadata.Name, project.Metadata.Name))
 	}
 	if _, ok := registry.Pane(anchorUID); !ok {
 		return agentResumePlan{}, usageError(fmt.Sprintf(
-			"%s: window/%s (project/%s) spec.primaryPaneRef %q resolves to no Pane",
+			"%s: window/%s (project/%s) compatibility shell ref %q resolves to no Pane",
 			spelling, window.Metadata.Name, project.Metadata.Name, anchorUID))
 	}
 

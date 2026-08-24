@@ -44,6 +44,33 @@ still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 ## Behavior Changes
 
+### Registry schema v2 final Window anchors
+
+The unreleased intermediate schema-v2 Window field `primaryPaneRef` has been
+replaced by the final v2 shape:
+
+- `anchorPaneRef` is required and names a same-Window shell or managed Agent
+  Pane.
+- `defaultShellPaneRef` is optional; when present it names a direct
+  Window-owned shell Pane.
+
+The on-disk `schemaVersion` remains `2` because the intermediate shape was not
+published. A schema-v1 Registry migrates directly to these fields. An
+intermediate-v2 Registry is identified by raw field presence and normalized
+under the Registry lock. The migration publishes an exact mode-0600 backup and
+a checksum/repair report before staging and atomically replacing the Registry.
+Mixed legacy/final fields, mixed Window authorities, dangling or cross-Window
+anchors, and invalid default shells fail closed without changing the source.
+Repeating migration on final-v2 is a byte-level no-op.
+
+The final writer never emits `primaryPaneRef`. A matching intermediate
+pre-release binary therefore sees final-v2 as invalid (its required legacy
+field is absent) and must not write. To roll back during the prerelease window,
+stop the final writer, restore the exact pre-normalization Registry backup, and
+restore the matching intermediate binary as a pair. A binary-only downgrade is
+unsupported. Snapshots are not migration or rollback inputs and are never
+rewritten by this normalization.
+
 ### `create` is resource-backed on every spelling
 
 **Breaking.** `create pane`, `create agent`, and the `create

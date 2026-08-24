@@ -110,7 +110,7 @@ func pbtPlannedWindows(plan *registryTopologyPlan) []string {
 func pbtRegistryShape(registry coremetadata.Registry, project coremetadata.Project) string {
 	var b strings.Builder
 	for _, window := range registry.WindowsOf(project.Metadata.UID) {
-		fmt.Fprintf(&b, "\n  window %s primaryPaneRef=%q", window.Metadata.Name, window.Spec.PrimaryPaneRef)
+		fmt.Fprintf(&b, "\n  window %s anchorPaneRef=%q defaultShellPaneRef=%q", window.Metadata.Name, window.Spec.AnchorPaneRef, window.Spec.DefaultShellPaneRef)
 		for _, pane := range registry.PanesOf(window.Metadata.UID) {
 			fmt.Fprintf(&b, "\n    pane %s role=%s owner=window", pane.Metadata.Name, pane.Spec.Role)
 		}
@@ -127,7 +127,7 @@ func pbtRegistryShape(registry coremetadata.Registry, project coremetadata.Proje
 // TestTopologyPlanKeepsProjectOpenableWithAgentOnlyWindow pins the state an
 // operator reaches by running an Agent in a Window and closing that Window's
 // shell. The shell Pane is gone, deletePane promotes the Agent's managed Pane to
-// primaryPaneRef, Validate accepts the result, and the planner cannot build a
+// default shell ref, Validate accepts the Agent anchor, and the planner cannot build a
 // Window from an Agent-owned Pane. The Project still has to open, and the Window
 // it could not build has to be disclosed rather than dropped.
 func TestTopologyPlanKeepsProjectOpenableWithAgentOnlyWindow(t *testing.T) {
@@ -204,10 +204,10 @@ func TestTopologyPlanKeepsProjectOpenableWithoutPanes(t *testing.T) {
 		t.Fatalf("registry the product wrote is invalid: %v", err)
 	}
 	stored, _ := registry.Window(window.Metadata.UID)
-	if strings.TrimSpace(stored.Spec.PrimaryPaneRef) == "" {
-		t.Fatal("last-shell repair left primaryPaneRef empty")
+	if strings.TrimSpace(stored.Spec.AnchorPaneRef) == "" {
+		t.Fatal("last-shell repair left anchorPaneRef empty")
 	}
-	if panes := registry.PanesOf(window.Metadata.UID); len(panes) != 1 || panes[0].Metadata.UID != stored.Spec.PrimaryPaneRef || panes[0].Spec.Role != coremetadata.PaneRoleShell {
+	if panes := registry.PanesOf(window.Metadata.UID); len(panes) != 1 || panes[0].Metadata.UID != stored.Spec.AnchorPaneRef || panes[0].Spec.Role != coremetadata.PaneRoleShell {
 		t.Fatalf("replacement shell chain = %+v", panes)
 	}
 

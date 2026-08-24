@@ -15,6 +15,6 @@
 //
 // Field spelling in the on-disk registry follows the resource-model contract
 // (`apiVersion`, `schemaVersion`, `metadata`, `displayName`, `ownerRef`,
-// `primaryPaneRef`, `spec`, `status`) rather than the snake_case spelling used
+// `anchorPaneRef`, `defaultShellPaneRef`, `spec`, `status`) rather than the snake_case spelling used
 // by the older projmux state files. See docs/architecture.md.
 package metadata

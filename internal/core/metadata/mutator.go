@@ -333,7 +333,8 @@ func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op string, ownerKi
 	}
 
 	stored, _ := reg.Window(windowUID)
-	stored.Spec.PrimaryPaneRef = panes[0].Metadata.UID
+	stored.Spec.AnchorPaneRef = panes[0].Metadata.UID
+	stored.Spec.DefaultShellPaneRef = panes[0].Metadata.UID
 	return stored.Clone(), panes, nil
 }
 
@@ -370,15 +371,15 @@ func (m Mutator) addPaneTx(txn *Transaction, reg *Registry, op, ownerUID string,
 	}
 	reg.Panes = append(reg.Panes, pane)
 	txn.record(KindPane, paneUID)
-	reg.adoptPrimaryPaneRef(ownerUID, ownerKind, paneUID)
+	reg.adoptWindowAnchor(ownerUID, ownerKind, paneUID)
 	return pane, nil
 }
 
-// adoptPrimaryPaneRef gives a Window its primaryPaneRef back when this Pane is
-// the first one it owns again.
+// adoptWindowAnchor gives a Window its anchor and compatibility default shell
+// when this Pane is the first direct shell it owns again.
 //
-// Validate states the rule as a pair: a Window with no owned Pane carries an
-// empty primaryPaneRef, and a Window that owns one carries a resolvable ref.
+// Validate states the rule as a pair: a Window has a required anchor, while a
+// direct Window-owned shell also becomes its compatibility default shell.
 // Deleting a Window's last Pane empties the ref by design, so the very next Pane
 // added under that Window has to reclaim it or the registry the caller just wrote
 // is one Validate rejects -- and it is rejected on the *next* write, not this one,
@@ -388,7 +389,7 @@ func (m Mutator) addPaneTx(txn *Transaction, reg *Registry, op, ownerUID string,
 // Agent-owned Panes never count: the primary anchor is exactly a Window-owned
 // role=shell Pane. Adoption is strictly a repair of the empty case and never
 // re-points a Window that already has a resolvable primary.
-func (r *Registry) adoptPrimaryPaneRef(ownerUID string, ownerKind Kind, paneUID string) {
+func (r *Registry) adoptWindowAnchor(ownerUID string, ownerKind Kind, paneUID string) {
 	if ownerKind != KindWindow {
 		return
 	}
@@ -396,10 +397,11 @@ func (r *Registry) adoptPrimaryPaneRef(ownerUID string, ownerKind Kind, paneUID 
 		if r.Windows[i].Metadata.UID != ownerUID {
 			continue
 		}
-		if strings.TrimSpace(r.Windows[i].Spec.PrimaryPaneRef) != "" {
+		if strings.TrimSpace(r.Windows[i].Spec.AnchorPaneRef) != "" {
 			return
 		}
-		r.Windows[i].Spec.PrimaryPaneRef = paneUID
+		r.Windows[i].Spec.AnchorPaneRef = paneUID
+		r.Windows[i].Spec.DefaultShellPaneRef = paneUID
 		return
 	}
 }

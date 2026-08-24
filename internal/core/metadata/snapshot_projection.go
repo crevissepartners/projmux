@@ -308,7 +308,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 			var oldPane *Pane
 			preferred := ""
 			if oldWindow != nil {
-				if candidate, ok := oldPaneByUID[oldWindow.Spec.PrimaryPaneRef]; ok {
+				if candidate, ok := oldPaneByUID[oldWindow.Spec.CompatibilityShellPaneRef()]; ok {
 					copy := candidate
 					oldPane = &copy
 					preferred = copy.Metadata.UID
@@ -331,7 +331,8 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 			}
 		}
 		stored, _ := desired.Window(uid)
-		stored.Spec.PrimaryPaneRef = firstShell
+		stored.Spec.AnchorPaneRef = firstShell
+		stored.Spec.DefaultShellPaneRef = firstShell
 	}
 	if len(snap.Windows) == 0 {
 		anchorWindow, anchorPane, err := canonicalProjectShell(registry, target.Metadata.UID)
@@ -448,7 +449,7 @@ func canonicalProjectShell(r Registry, projectUID string) (Window, Pane, error) 
 	if !ok || w.Metadata.OwnerRef == nil || w.Metadata.OwnerRef.Kind != KindProject || w.Metadata.OwnerUID() != projectUID {
 		return Window{}, Pane{}, inputErr("open fresh", ErrInvalidRegistry, "Project %q canonical Window anchor is invalid; run Phase 3 registry repair", p.Metadata.Name)
 	}
-	pane, ok := r.Pane(w.Spec.PrimaryPaneRef)
+	pane, ok := r.Pane(w.Spec.CompatibilityShellPaneRef())
 	if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindWindow || pane.Metadata.OwnerUID() != w.Metadata.UID || pane.Spec.Role != PaneRoleShell {
 		return Window{}, Pane{}, inputErr("open fresh", ErrInvalidRegistry, "Project %q canonical shell Pane anchor is invalid; run Phase 3 registry repair", p.Metadata.Name)
 	}

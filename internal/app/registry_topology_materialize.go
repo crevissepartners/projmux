@@ -188,9 +188,9 @@ func planRegistryTopology(
 				break
 			}
 		}
-		primary, ok := registry.Pane(strings.TrimSpace(window.Spec.PrimaryPaneRef))
+		primary, ok := registry.Pane(strings.TrimSpace(window.Spec.CompatibilityShellPaneRef()))
 		if !ok || primary.Spec.Role != coremetadata.PaneRoleShell || primary.Metadata.OwnerUID() != window.Metadata.UID {
-			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "spec.primaryPaneRef must resolve to a Window-owned shell Pane")
+			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "Window compatibility shell ref must resolve to a Window-owned shell Pane")
 			continue
 		}
 		work.primary = *primary

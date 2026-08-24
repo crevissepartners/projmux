@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"encoding/json"
 	"maps"
 	"slices"
 	"strings"
@@ -283,9 +284,87 @@ func (w Window) DisplayName() string {
 	return w.Metadata.Name
 }
 
-// WindowSpec records the uid of the Pane created together with the Window.
+// WindowSpec separates the stable role-agnostic Window anchor from the
+// optional direct shell used by shell-requiring compatibility consumers.
 type WindowSpec struct {
-	PrimaryPaneRef string `json:"primaryPaneRef"`
+	AnchorPaneRef       string `json:"anchorPaneRef"`
+	DefaultShellPaneRef string `json:"defaultShellPaneRef,omitempty"`
+
+	// sourceShape and legacyPrimaryPaneRef exist only while decoding an
+	// intermediate pre-release schemaVersion 2 document. They are deliberately
+	// unexported, never marshal, and are cleared by schema normalization before
+	// a Registry can validate or be written.
+	sourceShape          windowSpecSourceShape
+	legacyPrimaryPaneRef string
+}
+
+type windowSpecSourceShape uint8
+
+const (
+	windowSpecSourceTyped windowSpecSourceShape = iota
+	windowSpecSourceLegacy
+	windowSpecSourceFinal
+	windowSpecSourceMixed
+	windowSpecSourceUnknown
+)
+
+// UnmarshalJSON records raw field presence so schemaVersion 2 can distinguish
+// the unpublished primaryPaneRef shape from final-v2 without guessing from
+// values. Mixed authorities remain representable only long enough for the
+// schema normalizer to reject the whole document fail-closed.
+func (s *WindowSpec) UnmarshalJSON(data []byte) error {
+	type wireWindowSpec struct {
+		AnchorPaneRef       string `json:"anchorPaneRef"`
+		DefaultShellPaneRef string `json:"defaultShellPaneRef"`
+		PrimaryPaneRef      string `json:"primaryPaneRef"`
+	}
+	var wire wireWindowSpec
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	_, hasLegacy := fields["primaryPaneRef"]
+	_, hasAnchor := fields["anchorPaneRef"]
+	_, hasDefault := fields["defaultShellPaneRef"]
+	*s = WindowSpec{
+		AnchorPaneRef:        wire.AnchorPaneRef,
+		DefaultShellPaneRef:  wire.DefaultShellPaneRef,
+		legacyPrimaryPaneRef: wire.PrimaryPaneRef,
+	}
+	switch {
+	case hasLegacy && (hasAnchor || hasDefault):
+		s.sourceShape = windowSpecSourceMixed
+	case hasLegacy:
+		s.sourceShape = windowSpecSourceLegacy
+	case hasAnchor:
+		s.sourceShape = windowSpecSourceFinal
+	default:
+		s.sourceShape = windowSpecSourceUnknown
+	}
+	return nil
+}
+
+// CompatibilityShellPaneRef preserves the pre-Phase-1 shell consumer result:
+// prefer the explicit default shell and otherwise fall back to the anchor.
+// It is pure and never changes role, ownership, or Registry bytes.
+func (s WindowSpec) CompatibilityShellPaneRef() string {
+	if strings.TrimSpace(s.DefaultShellPaneRef) != "" {
+		return s.DefaultShellPaneRef
+	}
+	return s.AnchorPaneRef
+}
+
+// migrationShellPaneRef is the only legacy read seam. It is package-private,
+// used only after whole-document shape classification has ruled out mixed
+// authority, and therefore cannot become a consumer dual-read path.
+func (s WindowSpec) migrationShellPaneRef() string {
+	if s.sourceShape == windowSpecSourceLegacy {
+		return s.legacyPrimaryPaneRef
+	}
+	return s.CompatibilityShellPaneRef()
 }
 
 // WindowStatus carries the observed conditions of one Window.

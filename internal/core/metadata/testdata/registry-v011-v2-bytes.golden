@@ -37,7 +37,8 @@
         "createdAt": "2026-06-11T00:00:00Z"
       },
       "spec": {
-        "primaryPaneRef": "pane-migration-01"
+        "anchorPaneRef": "pane-migration-01",
+        "defaultShellPaneRef": "pane-migration-01"
       }
     }
   ],

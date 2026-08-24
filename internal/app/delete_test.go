@@ -842,7 +842,7 @@ func TestDeleteCascadeRemovesExactlyTheDescendantPlan(t *testing.T) {
 			}
 			// The result the registry is left in must still validate, which is
 			// what proves the cascade did not leave a dangling ownerRef,
-			// primaryPaneRef, paneRef, or name reservation.
+			// anchor/default shell ref, paneRef, or name reservation.
 			if err := store.registry.Validate(); err != nil {
 				t.Fatalf("delete %v left an invalid registry: %v", test.args, err)
 			}
@@ -1678,7 +1678,7 @@ func TestDeleteLastProjectWindowKillsExactTargetAndMintsAValidOfflineReplacement
 	if len(windows) != 1 || windows[0].Metadata.UID == "win-beta-main" || beta.Spec.PrimaryWindowRef != windows[0].Metadata.UID {
 		t.Fatalf("replacement chain root = project:%+v windows:%+v", beta, windows)
 	}
-	primary, ok := store.registry.Pane(windows[0].Spec.PrimaryPaneRef)
+	primary, ok := store.registry.Pane(windows[0].Spec.AnchorPaneRef)
 	if !ok || primary.Metadata.OwnerUID() != windows[0].Metadata.UID || primary.Spec.Role != coremetadata.PaneRoleShell {
 		t.Fatalf("replacement shell = %+v under window %+v", primary, windows[0])
 	}

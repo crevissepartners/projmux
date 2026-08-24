@@ -281,12 +281,14 @@ func (r *Registry) deletePane(uid string) bool {
 		r.Panes = slices.Delete(r.Panes, i, i+1)
 		r.releaseNames(uid)
 		for j := range r.Windows {
-			if r.Windows[j].Spec.PrimaryPaneRef != uid {
-				continue
+			if r.Windows[j].Spec.AnchorPaneRef == uid {
+				// Preserve the pre-cutover lifecycle result until Phase 3 owns
+				// role-aware re-anchoring and replacement-shell transactions.
+				r.Windows[j].Spec.AnchorPaneRef = r.firstWindowPaneUID(r.Windows[j].Metadata.UID)
 			}
-			// Promote the next surviving pane so the Window keeps a valid
-			// primaryPaneRef instead of dangling at a deleted uid.
-			r.Windows[j].Spec.PrimaryPaneRef = r.firstWindowPaneUID(r.Windows[j].Metadata.UID)
+			if r.Windows[j].Spec.DefaultShellPaneRef == uid {
+				r.Windows[j].Spec.DefaultShellPaneRef = r.firstWindowPaneUID(r.Windows[j].Metadata.UID)
+			}
 		}
 		for j := range r.Agents {
 			if r.Agents[j].Status.PaneRef == uid {

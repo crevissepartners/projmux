@@ -67,12 +67,12 @@ func getFixtureRegistry(t *testing.T) coremetadata.Registry {
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-alpha-main", "main", "", &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-alpha"}, nil),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-alpha-zsh"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-alpha-zsh"},
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: meta("win-beta-main", "main", "", &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-beta"}, nil),
-			Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-beta-zsh"},
+			Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-beta-zsh"},
 		},
 	}
 	reserve("prj-alpha", coremetadata.KindWindow, "main", "win-alpha-main")

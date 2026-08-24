@@ -62,8 +62,8 @@ func TestDeletedLastPaneThenCreateKeepsRegistryValid(t *testing.T) {
 		t.Fatalf("delete last pane: %v", err)
 	}
 	stored, _ := registry.Window(window.Metadata.UID)
-	if stored.Spec.PrimaryPaneRef == "" || stored.Spec.PrimaryPaneRef == first.Metadata.UID {
-		t.Fatalf("primaryPaneRef = %q, want a new bare-shell replacement", stored.Spec.PrimaryPaneRef)
+	if stored.Spec.AnchorPaneRef == "" || stored.Spec.AnchorPaneRef == first.Metadata.UID {
+		t.Fatalf("anchorPaneRef = %q, want a new bare-shell replacement", stored.Spec.AnchorPaneRef)
 	}
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("the replacement bare shell must stay valid: %v", err)
@@ -77,14 +77,14 @@ func TestDeletedLastPaneThenCreateKeepsRegistryValid(t *testing.T) {
 		t.Fatalf("AddPane committed a registry Validate rejects: %v", err)
 	}
 	stored, _ = registry.Window(window.Metadata.UID)
-	if stored.Spec.PrimaryPaneRef == added.Metadata.UID {
-		t.Fatalf("primaryPaneRef moved to later Pane %q; the replacement anchor must remain stable", added.Metadata.UID)
+	if stored.Spec.AnchorPaneRef == added.Metadata.UID {
+		t.Fatalf("anchorPaneRef moved to later Pane %q; the replacement anchor must remain stable", added.Metadata.UID)
 	}
 }
 
-// TestAgentPaneNeverReclaimsPrimaryPaneRef pins the owner/role boundary: an
+// TestAgentPaneNeverReclaimsDefaultShellRef pins the owner/role boundary: an
 // Agent Pane cannot replace the Window-owned shell anchor.
-func TestAgentPaneNeverReclaimsPrimaryPaneRef(t *testing.T) {
+func TestAgentPaneNeverReclaimsDefaultShellRef(t *testing.T) {
 	root := t.TempDir()
 	registry, project, mutator := pbtRegistryOver(t, root)
 
@@ -105,12 +105,12 @@ func TestAgentPaneNeverReclaimsPrimaryPaneRef(t *testing.T) {
 		t.Fatalf("AttachAgentPane committed a registry Validate rejects: %v", err)
 	}
 	stored, _ := registry.Window(window.Metadata.UID)
-	if stored.Spec.PrimaryPaneRef == pane.Metadata.UID {
-		t.Fatalf("primaryPaneRef moved to Agent Pane %q", pane.Metadata.UID)
+	if stored.Spec.AnchorPaneRef == pane.Metadata.UID {
+		t.Fatalf("defaultShellPaneRef moved to Agent Pane %q", pane.Metadata.UID)
 	}
-	primary, ok := registry.Pane(stored.Spec.PrimaryPaneRef)
+	primary, ok := registry.Pane(stored.Spec.AnchorPaneRef)
 	if !ok || primary.Spec.Role != PaneRoleShell || primary.Metadata.OwnerUID() != window.Metadata.UID {
-		t.Fatalf("primaryPaneRef = %q, want the replacement Window-owned shell", stored.Spec.PrimaryPaneRef)
+		t.Fatalf("anchorPaneRef = %q, want the replacement Window-owned shell", stored.Spec.AnchorPaneRef)
 	}
 }
 
@@ -137,7 +137,7 @@ func TestDeletedLastWindowGetsAMinimumReplacementChainAtomically(t *testing.T) {
 	if storedProject.Spec.PrimaryWindowRef != windows[0].Metadata.UID {
 		t.Fatalf("primaryWindowRef = %q, want replacement %q", storedProject.Spec.PrimaryWindowRef, windows[0].Metadata.UID)
 	}
-	primary, ok := registry.Pane(windows[0].Spec.PrimaryPaneRef)
+	primary, ok := registry.Pane(windows[0].Spec.AnchorPaneRef)
 	if !ok || primary.Metadata.OwnerUID() != windows[0].Metadata.UID || primary.Spec.Role != PaneRoleShell || primary.Spec.CWD != root {
 		t.Fatalf("replacement shell chain = window:%+v pane:%+v", windows[0], primary)
 	}
@@ -154,7 +154,7 @@ func TestDeletePrimaryWindowReanchorsToAValidSiblingWithoutCreatingAnother(t *te
 	if err != nil {
 		t.Fatalf("add sibling: %v", err)
 	}
-	siblingPrimary := sibling.Spec.PrimaryPaneRef
+	siblingPrimary := sibling.Spec.AnchorPaneRef
 
 	if err := mutator.DeleteWindow(registry, deleted.Metadata.UID); err != nil {
 		t.Fatalf("delete primary Window: %v", err)
@@ -164,7 +164,7 @@ func TestDeletePrimaryWindowReanchorsToAValidSiblingWithoutCreatingAnother(t *te
 		t.Fatalf("Windows after reanchor = %+v, want only existing sibling", windows)
 	}
 	storedProject, _ := registry.Project(project.Metadata.UID)
-	if storedProject.Spec.PrimaryWindowRef != sibling.Metadata.UID || windows[0].Spec.PrimaryPaneRef != siblingPrimary {
+	if storedProject.Spec.PrimaryWindowRef != sibling.Metadata.UID || windows[0].Spec.AnchorPaneRef != siblingPrimary {
 		t.Fatalf("existing sibling chain was not preserved: project=%+v window=%+v", storedProject, windows[0])
 	}
 	if err := registry.Validate(); err != nil {

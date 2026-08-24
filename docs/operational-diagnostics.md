@@ -203,10 +203,12 @@ result, and Doctor does not modify ACLs.
 `projmux doctor --section registry` reports the admission difference between
 what the Registry writer accepts and what activation can rebuild.
 `Registry.Validate` and the materialization planner do not share a
-precondition: a Window that owns no shell Pane carries an empty
-`spec.primaryPaneRef`, which validation accepts explicitly and which activation
-cannot build a Window from. That difference set is reachable through ordinary
-use, so it needs a detection surface of its own.
+precondition during the Phase-0 compatibility interval: final-v2 validation
+allows a same-Window managed Agent `spec.anchorPaneRef` with an empty optional
+`spec.defaultShellPaneRef`, while the current materializer still requires its
+pure compatibility result to resolve to a direct shell. That difference set is
+intentional until the anchor-aware materializer cutover and needs a detection
+surface of its own.
 
 The verdict is the consumer predicate itself, not a maintained list of suspect
 shapes. Every Registry Project is planned through the shipped topology planner

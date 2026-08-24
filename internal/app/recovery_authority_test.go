@@ -96,7 +96,7 @@ func TestLockedAutomaticRecoveryReclassifiesConcurrentRegistryClaimBeforeL8(t *t
 	snapshot := full.Clone()
 	snapshot.Panes = nil
 	snapshot.Agents = nil
-	snapshot.Windows[0].Spec.PrimaryPaneRef = ""
+	snapshot.Windows[0].Spec.AnchorPaneRef = ""
 	known := map[string]bool{snapshot.Projects[0].Metadata.UID: true, snapshot.Windows[0].Metadata.UID: true}
 	snapshot.NameReservations = slicesDeleteReservations(snapshot.NameReservations, known)
 	snapshot = snapshot.Normalize()

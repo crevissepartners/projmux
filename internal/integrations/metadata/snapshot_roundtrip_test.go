@@ -114,15 +114,15 @@ func TestOfflineSnapshotRoundTripsThroughBothStoresAndKeepsTheSameLogicalResourc
 		}
 	}
 
-	// primaryPaneRef still resolves to a live registry pane after the whole
+	// anchorPaneRef still resolves to a live registry pane after the whole
 	// offline round trip.
 	for _, window := range reloadedRegistry.WindowsOf(projectUID) {
-		pane, ok := reloadedRegistry.Pane(window.Spec.PrimaryPaneRef)
+		pane, ok := reloadedRegistry.Pane(window.Spec.AnchorPaneRef)
 		if !ok {
-			t.Fatalf("window %q primaryPaneRef %q does not resolve", window.Metadata.Name, window.Spec.PrimaryPaneRef)
+			t.Fatalf("window %q anchorPaneRef %q does not resolve", window.Metadata.Name, window.Spec.AnchorPaneRef)
 		}
 		if pane.Metadata.OwnerUID() != window.Metadata.UID {
-			t.Fatalf("window %q primaryPaneRef is owned by %q", window.Metadata.Name, pane.Metadata.OwnerUID())
+			t.Fatalf("window %q anchorPaneRef is owned by %q", window.Metadata.Name, pane.Metadata.OwnerUID())
 		}
 	}
 }

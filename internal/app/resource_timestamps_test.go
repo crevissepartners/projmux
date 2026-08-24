@@ -105,7 +105,7 @@ func ageFixtureRegistry(t *testing.T, created time.Time) coremetadata.Registry {
 	registry.Windows = []coremetadata.Window{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 		Metadata: coremetadata.ObjectMeta{UID: "win-alpha", Name: "main", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-alpha"}, CreatedAt: created},
-		Spec:     coremetadata.WindowSpec{PrimaryPaneRef: "pan-alpha"},
+		Spec:     coremetadata.WindowSpec{AnchorPaneRef: "pan-alpha"},
 	}}
 	registry.Panes = []coremetadata.Pane{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
@@ -438,7 +438,7 @@ func TestMachineOutputModesAreUnchangedByTheTimestampColumns(t *testing.T) {
         "createdAt": "2026-08-15T09:00:00Z"
       },
       "spec": {
-        "primaryPaneRef": "pan-beta-zsh"
+        "anchorPaneRef": "pan-beta-zsh"
       }
     }
   ]

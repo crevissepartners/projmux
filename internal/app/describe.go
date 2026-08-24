@@ -192,7 +192,10 @@ func describeSpecRows(resource any) [][2]string {
 		}
 		return append(rows, describeConditionRows(typed.Status.Conditions)...)
 	case coremetadata.Window:
-		rows := [][2]string{{"PrimaryPaneRef", typed.Spec.PrimaryPaneRef}}
+		rows := [][2]string{{"AnchorPaneRef", typed.Spec.AnchorPaneRef}}
+		if typed.Spec.DefaultShellPaneRef != "" {
+			rows = append(rows, [2]string{"DefaultShellPaneRef", typed.Spec.DefaultShellPaneRef})
+		}
 		return append(rows, describeConditionRows(typed.Status.Conditions)...)
 	case coremetadata.Pane:
 		rows := [][2]string{{"Role", string(typed.Spec.Role)}}

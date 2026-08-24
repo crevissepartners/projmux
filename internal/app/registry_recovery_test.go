@@ -465,7 +465,7 @@ func TestReconcileRegistryDiagnosesPartialMirrorEvidenceWithoutRebuilding(t *tes
 			t.Fatalf("gap %q has no reason", gap.Scope)
 		}
 	}
-	for _, want := range []string{"offline-resources", "agent-resources", "pane-owner-relation", "name-reservations", "window-primary-pane", "labels-annotations-status"} {
+	for _, want := range []string{"offline-resources", "agent-resources", "pane-owner-relation", "name-reservations", "window-anchor-refs", "labels-annotations-status"} {
 		if !scopes[want] {
 			t.Fatalf("the diagnostic does not state the %s gap: %v", want, scopes)
 		}

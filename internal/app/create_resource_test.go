@@ -521,11 +521,11 @@ func TestMissingWindowEnsureIsOptInAndAtomic(t *testing.T) {
 		if review == nil {
 			t.Fatal("--create-window did not create the named Window")
 		}
-		if review.Spec.PrimaryPaneRef == "" {
-			t.Fatal("an ensured Window must own an initial Pane recorded as its primaryPaneRef")
+		if review.Spec.AnchorPaneRef == "" {
+			t.Fatal("an ensured Window must own an initial Pane recorded as its anchor/default shell")
 		}
-		if _, ok := store.registry.Pane(review.Spec.PrimaryPaneRef); !ok {
-			t.Fatalf("primaryPaneRef %q does not resolve", review.Spec.PrimaryPaneRef)
+		if _, ok := store.registry.Pane(review.Spec.AnchorPaneRef); !ok {
+			t.Fatalf("anchorPaneRef %q does not resolve", review.Spec.AnchorPaneRef)
 		}
 		// The requested child is a second Pane, split off the ensured Window's
 		// initial Pane.
@@ -558,13 +558,13 @@ func TestMissingWindowEnsureIsOptInAndAtomic(t *testing.T) {
 func TestEveryTargetWindowAnchorsOnExactlyOnePane(t *testing.T) {
 	t.Parallel()
 
-	t.Run("each fan-out target splits its own primaryPaneRef", func(t *testing.T) {
+	t.Run("each fan-out target splits its own compatibility shell ref", func(t *testing.T) {
 		t.Parallel()
 		store := newFakeResourceStore(t)
 		tmux := newFakeTmux()
 		create, _ := newTestResourceCreateCommand(t, store, tmux)
 
-		// alpha owns two Windows, each with its own primaryPaneRef.
+		// alpha owns two Windows, each with its own compatibility shell ref.
 		if _, _, err := runRoute(t, create, "pane", "--project", "alpha"); err != nil {
 			t.Fatalf("fan-out error = %v", err)
 		}
@@ -634,8 +634,8 @@ func TestEveryTargetWindowAnchorsOnExactlyOnePane(t *testing.T) {
 	})
 }
 
-// TestAStalePrimaryPaneRefIsExitTwoWithNoFocusFallback is acceptance criterion 5.
-func TestAStalePrimaryPaneRefIsExitTwoWithNoFocusFallback(t *testing.T) {
+// TestAStaleCompatibilityShellRefIsExitTwoWithNoFocusFallback is acceptance criterion 5.
+func TestAStaleCompatibilityShellRefIsExitTwoWithNoFocusFallback(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
@@ -644,14 +644,14 @@ func TestAStalePrimaryPaneRefIsExitTwoWithNoFocusFallback(t *testing.T) {
 		want string
 	}{
 		{name: "stale ref", ref: "pane-vanished", want: "resolves to no Pane"},
-		{name: "missing ref", ref: "", want: "has no spec.primaryPaneRef"},
+		{name: "missing ref", ref: "", want: "has no compatibility shell ref"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			store := newFakeResourceStore(t)
 			for i := range store.registry.Windows {
 				if store.registry.Windows[i].Metadata.UID == "win-beta-main" {
-					store.registry.Windows[i].Spec.PrimaryPaneRef = test.ref
+					store.registry.Windows[i].Spec.AnchorPaneRef = test.ref
 				}
 			}
 			before := store.snapshot()
@@ -666,7 +666,7 @@ func TestAStalePrimaryPaneRefIsExitTwoWithNoFocusFallback(t *testing.T) {
 
 			stdout, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main")
 			if err == nil {
-				t.Fatal("a stale primaryPaneRef silently resolved")
+				t.Fatal("a stale compatibility shell ref silently resolved")
 			}
 			if !IsUsageError(err) {
 				t.Fatalf("stale anchor error is not a usage error (exit 2): %v", err)

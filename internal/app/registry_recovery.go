@@ -397,7 +397,7 @@ func registryRecoveryGaps() []registryRecoveryGap {
 		{Scope: "agent-resources", Reason: "no tmux option carries an Agent uid; every Agent, its provider sessionRef, and its phase are unrecoverable from the mirror"},
 		{Scope: "pane-owner-relation", Reason: "a mirrored Pane shows the Window that contains it, not its registry owner; an Agent-owned Pane's ownerRef cannot be rebuilt"},
 		{Scope: "name-reservations", Reason: "the reservation table holds names for resources that are not live, and no live object testifies to a reservation"},
-		{Scope: "window-primary-pane", Reason: "Window spec.primaryPaneRef is not mirrored onto tmux"},
+		{Scope: "window-anchor-refs", Reason: "Window spec.anchorPaneRef and spec.defaultShellPaneRef are not mirrored onto tmux"},
 		{Scope: "labels-annotations-status", Reason: "metadata.labels, metadata.annotations, createdAt/updatedAt, and status are not mirrored onto tmux"},
 	}
 }

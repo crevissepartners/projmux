@@ -179,7 +179,7 @@ func TestSelectorCardinalityFailureReachesExitCodeTwoWithNoStdout(t *testing.T) 
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: coremetadata.ObjectMeta{UID: window.uid, Name: window.name,
 				OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-1"}},
-			Spec: coremetadata.WindowSpec{PrimaryPaneRef: window.pane},
+			Spec: coremetadata.WindowSpec{AnchorPaneRef: window.pane},
 		})
 		registry.Panes = append(registry.Panes, coremetadata.Pane{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,

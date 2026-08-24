@@ -383,7 +383,7 @@ var routes = []Route{
 			{
 				// A Window is always created together with the initial Pane it
 				// owns, and that Pane's uid is stored as the Window's
-				// spec.primaryPaneRef -- the anchor a later `create pane` splits
+				// compatibility shell ref -- the anchor a later `create pane` splits
 				// when no explicit --pane is given.
 				Name:    "window",
 				Summary: "Create a Window and its initial Pane below one Project; the runtime is materialized detached",
@@ -395,7 +395,7 @@ var routes = []Route{
 			},
 			{
 				// One resource-backed spelling. It resolves Windows from the
-				// registry, anchors on each Window's primaryPaneRef, splits
+				// registry, anchors on each Window's compatibility shell ref, splits
 				// detached, and never moves the client. With no scope flag at
 				// all the Project, the Window, and the anchor come from the
 				// active managed runtime, so the split lands where the operator

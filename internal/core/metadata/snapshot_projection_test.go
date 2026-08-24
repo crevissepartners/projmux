@@ -48,7 +48,7 @@ func projectionFixture(t *testing.T) (Registry, string, string, sessionstate.Sna
 		t.Fatal(err)
 	}
 	reg.ControlSessions = append(reg.ControlSessions, ControlSession{APIVersion: APIVersion, Kind: KindControlSession, Metadata: ObjectMeta{UID: "ctl-home", Name: "home", CreatedAt: fixedNow}, Spec: ControlSessionSpec{Session: "home"}})
-	reg.Windows = append(reg.Windows, Window{APIVersion: APIVersion, Kind: KindWindow, Metadata: ObjectMeta{UID: "win-ctl-home", Name: "home", CreatedAt: fixedNow, OwnerRef: &OwnerRef{Kind: KindControlSession, UID: "ctl-home"}}, Spec: WindowSpec{PrimaryPaneRef: "pan-ctl-home"}})
+	reg.Windows = append(reg.Windows, Window{APIVersion: APIVersion, Kind: KindWindow, Metadata: ObjectMeta{UID: "win-ctl-home", Name: "home", CreatedAt: fixedNow, OwnerRef: &OwnerRef{Kind: KindControlSession, UID: "ctl-home"}}, Spec: WindowSpec{AnchorPaneRef: "pan-ctl-home"}})
 	reg.Panes = append(reg.Panes, Pane{APIVersion: APIVersion, Kind: KindPane, Metadata: ObjectMeta{UID: "pan-ctl-home", Name: "shell", CreatedAt: fixedNow, OwnerRef: &OwnerRef{Kind: KindWindow, UID: "win-ctl-home"}}, Spec: PaneSpec{Role: PaneRoleShell, CWD: "/home/test", Command: "/bin/zsh"}})
 	reg.NameReservations = append(reg.NameReservations,
 		NameReservation{Kind: KindControlSession, Name: "home", UID: "ctl-home"},
@@ -151,7 +151,7 @@ func FuzzOpenFreshKeepsOnlyCanonicalProjectShell(f *testing.F) {
 		project, _ := reg.Project(targetUID)
 		anchorWindow := project.Spec.PrimaryWindowRef
 		window, _ := reg.Window(anchorWindow)
-		anchorPane := window.Spec.PrimaryPaneRef
+		anchorPane := window.Spec.AnchorPaneRef
 		pane, _ := reg.Pane(anchorPane)
 		pane.Spec.Command = fmt.Sprintf("printf fresh-shape-%d", shape)
 		counts := map[Kind]int{}

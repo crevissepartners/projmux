@@ -95,7 +95,7 @@ func addControlReadRoot(t *testing.T, store *fakeResourceStore) {
 		APIVersion: coremetadata.APIVersion,
 		Kind:       coremetadata.KindWindow,
 		Metadata:   coremetadata.ObjectMeta{UID: "win-home", Name: "home", OwnerRef: owner(coremetadata.KindControlSession, "ctl-home"), CreatedAt: resourceFixtureClock},
-		Spec:       coremetadata.WindowSpec{PrimaryPaneRef: "pan-home-shell"},
+		Spec:       coremetadata.WindowSpec{AnchorPaneRef: "pan-home-shell"},
 	})
 	store.registry.Panes = append(store.registry.Panes,
 		coremetadata.Pane{
