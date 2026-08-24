@@ -62,6 +62,10 @@ const (
 	KeyPickerResourcesStatusReady    Key = "picker.resources.status.ready"
 	KeyPickerResourcesStatusPartial  Key = "picker.resources.status.partial"
 	KeyPickerResourcesUnavailable    Key = "picker.resources.status.unavailable"
+	KeyPickerResumeDetailHelp        Key = "picker.ai.resume_detail.help"
+	KeyPickerResumeDetailTurns       Key = "picker.ai.resume_detail.turns"
+	KeyPickerResumeDetailConfidence  Key = "picker.ai.resume_detail.confidence"
+	KeyPickerResumeDetailReason      Key = "picker.ai.resume_detail.reason"
 	KeyPickerAIResumeStatusIdle      Key = "picker.ai_resume.status.idle"
 	KeyPickerAIResumeStatusNotLoaded Key = "picker.ai_resume.status.not_loaded"
 	KeyWelcomeShellTitle             Key = "welcome.shell.title"
@@ -145,6 +149,10 @@ var foundationKeys = []Key{
 	KeyPickerRecorderPending,
 	KeyPickerRecorderCancelPending,
 	KeyPickerRecorderBackspace,
+	KeyPickerResumeDetailHelp,
+	KeyPickerResumeDetailTurns,
+	KeyPickerResumeDetailConfidence,
+	KeyPickerResumeDetailReason,
 	KeyPickerAIResumeStatusIdle,
 	KeyPickerAIResumeStatusNotLoaded,
 	KeyWelcomeShellTitle,

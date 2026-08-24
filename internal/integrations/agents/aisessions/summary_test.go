@@ -30,8 +30,31 @@ func TestResumeSummaryProjectionContainsOnlyListFieldsAndSeparateDetailRef(t *te
 			t.Fatalf("ResumeSummary gained detail/transcript field %q", forbidden)
 		}
 	}
-	if detailRef.transcriptPath != session.sourcePath || detailRef.ResumeID != summary.ResumeID || detailRef.Source != summary.Source {
+	if detailRef.transcriptPath != session.sourcePath || detailRef.ResumeID != summary.ResumeID || detailRef.Source != summary.Source ||
+		detailRef.Turns != 99 || detailRef.RuntimeStatus != "active" || detailRef.Confidence != ConfidenceMedium || detailRef.Reason != "private reason" {
 		t.Fatalf("separate detail ref = %#v", detailRef)
+	}
+}
+
+func TestReadResumeDetailCountsTurnsAndKeepsMetadataWithBoundedPreview(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "conversation.jsonl")
+	writeFile(t, path, `{"type":"event_msg","payload":{"type":"user_message","message":"first question"}}
+{"type":"event_msg","payload":{"type":"agent_message","message":"first answer"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"second question"}}
+`)
+	ref := ResumeDetailRef{
+		Provider: AgentClaude, ResumeID: "exact", Source: SourceClaudeTranscript,
+		Confidence: ConfidenceMedium, Reason: "filesystem fallback", RuntimeStatus: "idle", transcriptPath: path,
+	}
+	detail, err := ReadResumeDetail(context.Background(), ref, nil)
+	if err != nil {
+		t.Fatalf("ReadResumeDetail() error = %v", err)
+	}
+	if detail.Turns != 2 || detail.Source != ref.Source || detail.Confidence != ref.Confidence || detail.Reason != ref.Reason || detail.RuntimeStatus != ref.RuntimeStatus {
+		t.Fatalf("detail metadata = %#v", detail)
+	}
+	if detail.Preview.User != "second question" || detail.Preview.Assistant != "first answer" {
+		t.Fatalf("detail preview = %#v", detail.Preview)
 	}
 }
 

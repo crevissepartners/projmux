@@ -1,0 +1,3 @@
+claude|2h     [claude] feature/provider-n ./internal/app Shared conversation title
+codex|2h     [codex]  feature/provider-n ./internal/app Codex bound conversation
+antigravity|2h     [antigr] feature/provider-n ./internal/app Shared conversation title

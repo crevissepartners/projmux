@@ -462,9 +462,9 @@ func TestCatalogOpenFailurePickerUsesOneVisibleRolloutRowAndIntent(t *testing.T)
 				t.Fatalf("catalog opens=%d entries=%#v, want one open and a rollout row plus provider status rows", opens, runner.options.Entries)
 			}
 			row := runner.options.Entries[1]
-			if !strings.Contains(row.Label, "[fallback]") || strings.Contains(row.Label, aisessions.SourceCodexRollout) ||
+			if strings.Contains(row.Label, "[fallback]") || strings.Contains(row.Label, aisessions.SourceCodexRollout) ||
 				!strings.Contains(row.SearchKey, aisessions.SourceCodexRollout) || strings.Contains(row.SearchKey, test.reason) {
-				t.Fatalf("row=%#v, want compact source reference without detail reason", row)
+				t.Fatalf("row=%#v, want hidden visible source with frozen searchable routing source", row)
 			}
 			if len(creator.intents) != 1 || creator.intents[0].conversationID != id ||
 				creator.intents[0].resumeSource != aisessions.SourceCodexRollout {

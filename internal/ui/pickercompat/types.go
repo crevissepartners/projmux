@@ -22,9 +22,11 @@ type Options struct {
 	ExpectKeys     []string
 	PreviewCommand string
 	PreviewWindow  string
-	Theme          *theme.EffectiveTheme
-	Bindings       []string
-	InitialQuery   string
+	// SelectionDetail enables the native renderer-owned fixed detail dock.
+	SelectionDetail *picker.SelectionDetail
+	Theme           *theme.EffectiveTheme
+	Bindings        []string
+	InitialQuery    string
 	// DisableSearch makes the legacy option shape a navigation-only list.
 	DisableSearch bool
 	// AcceptQuery surfaces the user-typed query alongside any selection.

@@ -107,11 +107,14 @@ type aiCommand struct {
 	openCodexCapabilitySession    func(context.Context) (codexCapabilitySession, error)
 	openCodexCatalog              aisessions.OpenCodexCatalog
 	discoverResumeSummaryProvider func(context.Context, string, string, aisessions.ResumeSummaryOptions, int) (aisessions.ResumeSummaryDiscovery, error)
-	readResumePreview             func(context.Context, aisessions.ResumeDetailRef, aisessions.OpenCodexCatalog) (aisessions.Preview, error)
-	codexCapabilityCache          *corecap.Cache
-	codexCapabilitySessionMu      sync.Mutex
-	codexCapabilitySession        codexCapabilitySession
-	notifyDeliveryOwnsTopLevel    bool
+	readResumeDetail              func(context.Context, aisessions.ResumeDetailRef, aisessions.OpenCodexCatalog) (aisessions.ResumeDetail, error)
+	// readResumePreview is retained as a narrow test seam for fixtures that
+	// exercise preview timing without the metadata projection.
+	readResumePreview          func(context.Context, aisessions.ResumeDetailRef, aisessions.OpenCodexCatalog) (aisessions.Preview, error)
+	codexCapabilityCache       *corecap.Cache
+	codexCapabilitySessionMu   sync.Mutex
+	codexCapabilitySession     codexCapabilitySession
+	notifyDeliveryOwnsTopLevel bool
 	// loadRegistry and updateRegistry are the resource registry seam the hook
 	// ingest path uses to persist the provider session ref onto the Agent. Both
 	// are nil unless explicitly wired, and a nil seam disables the write
@@ -145,7 +148,7 @@ func newAICommand() *aiCommand {
 		readCommand:                   readExternalCommand,
 		openCodexCatalog:              aisessions.NewDefaultCodexCatalogOpener(version.String()),
 		discoverResumeSummaryProvider: aisessions.DiscoverResumeSummariesContext,
-		readResumePreview:             aisessions.ReadResumeDetailPreview,
+		readResumeDetail:              aisessions.ReadResumeDetail,
 		now:                           time.Now,
 		sleep:                         time.Sleep,
 		producer:                      newAttentionNotifyProducer(),
@@ -1331,6 +1334,7 @@ func (c *aiCommand) runResumePicker(direction string) error {
 		Prompt:                "AI Resume > ",
 		Footer:                footer,
 		MoreNotLoaded:         moreNotLoaded,
+		SelectionDetail:       controller.initialDetail(),
 		ExpectKeys:            []string{"enter"},
 		Bindings:              pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, aiResumePickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s"),
 		DeferredUpdate:        controller.update,
@@ -1364,15 +1368,15 @@ type aiResumeSelection struct {
 	updatedAt time.Time
 }
 
-// Resume picker row column schema (Phase 0 — row enrichment slice).
+// Resume picker row column schema.
 //
 // Every row lays out the same fixed-width columns so they align in the popup
 // regardless of locale or CJK content, with the title as the trailing
 // variable-width column. The recency anchor leads (it matches the newest-first
 // sort axis), followed by a per-agent colour badge:
 //
-//	<rel>  [agent]   <branch>            [<cwd>] <turns> <title…>
-//	 6      (tight)+pad→8   18                  (14)     5       rest
+//	<rel>  [agent]   <branch>            [<cwd>] <title…>
+//	 6      (tight)+pad→8   18                  (14)       rest
 //
 // Column order / cell width (visible cells, fixed columns left-aligned):
 //   - relative age: aiResumeRelCellWidth (compact, locale-aware, dim) — leads.
@@ -1381,7 +1385,6 @@ type aiResumeSelection struct {
 //   - branch: aiResumeBranchCellWidth (dim, cut).
 //   - extra-meta slot: the depth>0 relative-cwd column (aiResumeCWDCellWidth,
 //     dim); empty at depth 0 so the layout collapses to the base view.
-//   - turns: aiResumeTurnsCellWidth ("8t"/"31t", dim), blank when unknown.
 //   - title: trailing variable width, cut with an ellipsis past
 //     aiResumeTitleMaxCells.
 //
@@ -1393,9 +1396,7 @@ const (
 	aiResumeRelCellWidth    = 6
 	aiResumeBranchCellWidth = 18
 	aiResumeCWDCellWidth    = 14
-	aiResumeTurnsCellWidth  = 5
 	aiResumeTitleMaxCells   = 90
-	aiResumeLabelMaxCells   = 44
 	aiResumeEmptyCell       = "-"
 )
 
@@ -1432,93 +1433,33 @@ func aiResumeSessionMetaFromSummary(summary aisessions.ResumeSummary, baseCWD st
 }
 
 func aiResumeSessionRowWithLabel(session aisessions.SessionMeta, boundLabel string, now time.Time, locale i18n.Locale, baseCWD string, depth int) intpickercompat.Entry {
-	if strings.EqualFold(strings.TrimSpace(session.Agent), aiModeCodex) &&
+	agent := strings.TrimSpace(session.Agent)
+	resumeID := strings.TrimSpace(session.ResumeID)
+	branch := strings.TrimSpace(session.Context.Branch)
+	if branch == "" {
+		branch = aiResumeEmptyCell
+	}
+	conversation := cleanAIResumeTitle(session.Title, resumeID)
+	if strings.EqualFold(agent, aiModeCodex) &&
 		(session.Source == aisessions.SourceCodexAppServer || session.Source == aisessions.SourceCodexRollout) {
-		return aiResumeCodexSessionRow(session, boundLabel, now, locale, baseCWD, depth)
+		conversation = aiResumeCodexConversationLabel(session, boundLabel)
 	}
-	return aiResumeLegacySessionRow(session, now, locale, baseCWD, depth)
-}
-
-// aiResumeLegacySessionRow is intentionally unchanged for Claude and
-// Antigravity. Phase 10 is a Codex catalog presentation slice, not a provider
-// neutral resume-picker redesign.
-func aiResumeLegacySessionRow(session aisessions.SessionMeta, now time.Time, locale i18n.Locale, baseCWD string, depth int) intpickercompat.Entry {
-	agent := strings.TrimSpace(session.Agent)
-	resumeID := strings.TrimSpace(session.ResumeID)
-	branch := strings.TrimSpace(session.Context.Branch)
-	if branch == "" {
-		branch = aiResumeEmptyCell
-	}
-	title := cleanAIResumeTitle(session.Title, resumeID)
-
-	// Recency anchor leads (matches the newest-first sort axis), then the
-	// per-agent colour badge, branch (+cwd at depth>0), turn count, and the
-	// flexible title. Fixed columns pad/truncate to a stable cell width.
-	relTime := ansiDim(aiResumeFitCell(aiResumeRelativeAge(now, session.LastModified, locale), aiResumeRelCellWidth))
-	badge := aiResumeAgentBadge(agent)
-	branchCell := ansiDim(aiResumeFitCell(branch, aiResumeBranchCellWidth))
-
-	// Extra-meta slot (depth>0 cwd column). Empty at depth 0, so the column
-	// contributes nothing and the layout collapses to the base view. At depth>0
-	// every row carries a fixed-width relative-cwd cell (exact matches render
-	// "./") so the title column stays aligned, plus a trailing gap.
+	conversation = truncateAIResumeCells(conversation, aiResumeTitleMaxCells)
 	relCWD := aiResumeExtraMetaCell(session, baseCWD, depth)
-	extra := ""
-	if relCWD != "" {
-		extra = ansiDim(aiResumeFitCell(relCWD, aiResumeCWDCellWidth)) + " "
-	}
-	turnsCell := ansiDim(aiResumeTurnsCell(session.Turns))
-	provenance := aiResumeProvenance(session)
-
-	label := fmt.Sprintf("%s %s %s %s%s %s%s",
-		relTime, badge, branchCell, extra, turnsCell, title, provenance)
-
-	return intpickercompat.Entry{
-		Label:     label,
-		Value:     aiResumePickerValue(agent, resumeID),
-		SearchKey: strings.TrimSpace(strings.Join([]string{agent, title, resumeID, branch, relCWD, session.Source, session.Confidence, session.Reason, session.RuntimeStatus}, " ")),
-	}
-}
-
-// aiResumeCodexSessionRow gives the conversation identity the first flexible
-// width budget after age/provider. The exact id and raw catalog provenance stay
-// searchable, while only the degraded rollout lane is visible as [fallback].
-func aiResumeCodexSessionRow(session aisessions.SessionMeta, boundLabel string, now time.Time, locale i18n.Locale, baseCWD string, depth int) intpickercompat.Entry {
-	agent := strings.TrimSpace(session.Agent)
-	resumeID := strings.TrimSpace(session.ResumeID)
-	branch := strings.TrimSpace(session.Context.Branch)
-	if branch == "" {
-		branch = aiResumeEmptyCell
-	}
-	conversation := aiResumeCodexConversationLabel(session, boundLabel)
-	relCWD := aiResumeExtraMetaCell(session, baseCWD, depth)
-
 	parts := []string{
 		ansiDim(aiResumeFitCell(aiResumeRelativeAge(now, session.LastModified, locale), aiResumeRelCellWidth)),
 		aiResumeAgentBadge(agent),
+		ansiDim(aiResumeFitCell(branch, aiResumeBranchCellWidth)),
 	}
-	if session.Source == aisessions.SourceCodexRollout {
-		parts = append(parts, ansiDim("[fallback]"))
-	}
-	parts = append(parts, conversation)
-	if status := aiResumeHumanStatus(session.RuntimeStatus, locale); status != "" {
-		parts = append(parts, ansiDim("["+status+"]"))
-	}
-	parts = append(parts, ansiDim(aiResumeFitCell(branch, aiResumeBranchCellWidth)))
 	if relCWD != "" {
 		parts = append(parts, ansiDim(aiResumeFitCell(relCWD, aiResumeCWDCellWidth)))
 	}
-	if session.Turns > 0 {
-		parts = append(parts, ansiDim(aiResumeTurnsCell(session.Turns)))
-	}
+	parts = append(parts, conversation)
 
 	return intpickercompat.Entry{
-		Label: strings.Join(parts, " "),
-		Value: aiResumePickerValue(agent, resumeID),
-		SearchKey: strings.TrimSpace(strings.Join([]string{
-			agent, conversation, strings.TrimSpace(session.Title), resumeID, branch, relCWD,
-			session.Source, session.Confidence, session.Reason, session.RuntimeStatus,
-		}, " ")),
+		Label:     strings.Join(parts, " "),
+		Value:     aiResumePickerValue(agent, resumeID),
+		SearchKey: strings.TrimSpace(strings.Join([]string{agent, conversation, strings.TrimSpace(session.Title), resumeID, branch, relCWD, session.Source}, " ")),
 	}
 }
 
@@ -1527,10 +1468,10 @@ func aiResumeCodexConversationLabel(session aisessions.SessionMeta, boundLabel s
 	shortID := aiResumeShortID(resumeID)
 	title := strings.Join(strings.Fields(session.Title), " ")
 	if session.Source == aisessions.SourceCodexAppServer && title != "" && title != shortID {
-		return truncateAIResumeCells(title, aiResumeLabelMaxCells)
+		return title
 	}
 	if boundLabel = strings.Join(strings.Fields(boundLabel), " "); boundLabel != "" {
-		return truncateAIResumeCells(boundLabel, aiResumeLabelMaxCells)
+		return boundLabel
 	}
 	if session.Source == aisessions.SourceCodexAppServer || session.Source == aisessions.SourceCodexRollout {
 		if shortID != "" {
@@ -1538,7 +1479,7 @@ func aiResumeCodexConversationLabel(session aisessions.SessionMeta, boundLabel s
 		}
 		return "(untitled)"
 	}
-	return truncateAIResumeCells(cleanAIResumeTitle(title, resumeID), aiResumeLabelMaxCells)
+	return cleanAIResumeTitle(title, resumeID)
 }
 
 func aiResumeShortID(id string) string {
@@ -1547,21 +1488,6 @@ func aiResumeShortID(id string) string {
 		return id
 	}
 	return id[:12]
-}
-
-func aiResumeHumanStatus(status string, locale i18n.Locale) string {
-	switch strings.ToLower(strings.ReplaceAll(strings.TrimSpace(status), " ", "")) {
-	case "active":
-		return i18n.FormatStatusToken(i18n.StatusTokenActive, locale, i18n.FormatFull)
-	case "idle":
-		return localizeText(locale, i18n.KeyPickerAIResumeStatusIdle, "idle")
-	case "notloaded":
-		return localizeText(locale, i18n.KeyPickerAIResumeStatusNotLoaded, "not loaded")
-	case "systemerror":
-		return i18n.FormatStatusToken(i18n.StatusTokenError, locale, i18n.FormatFull)
-	default:
-		return ""
-	}
 }
 
 // resolveAIResumeConversationLabels reads the Registry at most once per picker
@@ -1636,21 +1562,6 @@ func aiResumeExactAgentLabels(registry coremetadata.Registry) map[string]string 
 	return labels
 }
 
-func aiResumeProvenance(session aisessions.SessionMeta) string {
-	confidence := strings.TrimSpace(session.Confidence)
-	if confidence == "" {
-		return ""
-	}
-	parts := []string{strings.TrimSpace(session.Source), confidence}
-	if status := strings.TrimSpace(session.RuntimeStatus); status != "" {
-		parts = append(parts, status)
-	}
-	if reason := strings.TrimSpace(session.Reason); reason != "" {
-		parts = append(parts, reason)
-	}
-	return ansiDim("  [" + strings.Join(parts, "/") + "]")
-}
-
 // aiResumeAgentBadge renders the agent tag as a tight, per-agent-coloured
 // "[name]" token padded to a fixed column width. The brackets hug the name
 // ("[codex]", never "[codex ]") and only the tight token is coloured; the
@@ -1680,16 +1591,6 @@ func aiResumeAgentColor(agent string) string {
 	default:
 		return "\x1b[37m"
 	}
-}
-
-// aiResumeTurnsCell renders the user-turn count ("8t", "31t") in a fixed-width
-// dim column, or a blank (padded) cell when the count is unknown (zero).
-func aiResumeTurnsCell(turns int) string {
-	label := ""
-	if turns > 0 {
-		label = strconv.Itoa(turns) + "t"
-	}
-	return aiResumeFitCell(label, aiResumeTurnsCellWidth)
 }
 
 // aiResumeRelativeAge renders a compact, locale-aware relative age ("2h", "3d",

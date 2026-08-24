@@ -161,19 +161,28 @@ func enrichTurns(sessions []SessionMeta) {
 // pass for displayed rows, never during discovery. ok is false only when the
 // file cannot be opened; an empty or all-malformed log yields (0, true).
 func countUserTurns(path string) (int, bool) {
+	return countUserTurnsContext(context.Background(), path)
+}
+
+func countUserTurnsContext(ctx context.Context, path string) (int, bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return 0, false
 	}
 	defer f.Close()
-	return countUserTurnsReader(f)
+	return countUserTurnsReaderContext(ctx, f)
 }
 
-func countUserTurnsReader(r io.Reader) (int, bool) {
+func countUserTurnsReaderContext(ctx context.Context, r io.Reader) (int, bool) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	turns := 0
 	for lineNo := 0; scanner.Scan(); lineNo++ {
+		select {
+		case <-ctx.Done():
+			return 0, false
+		default:
+		}
 		if lineNo >= turnCountLineLimit {
 			break
 		}

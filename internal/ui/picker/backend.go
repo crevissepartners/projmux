@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"os/exec"
 	"sort"
@@ -57,9 +58,20 @@ type Preview struct {
 	TextByValue map[string]string
 }
 
+// SelectionDetail is invocation-local text for the currently selected item.
+// Unlike Preview it has no command or placement: picker renderers that support
+// it own a fixed dock geometry from the first frame. Deferred producers replace
+// only this value-keyed projection, never list or chrome state.
+type SelectionDetail struct {
+	TextByValue map[string]string
+}
+
 type DeferredUpdate struct {
 	Items   []Item
 	Preview Preview
+	// SelectionDetail replaces only the invocation-local fixed detail
+	// projection. A nil pointer means no detail update.
+	SelectionDetail *SelectionDetail
 	// Header and Footer replace live chrome when their corresponding Set flag
 	// is true. The explicit flags allow a refresh to intentionally clear text.
 	Header    string
@@ -127,6 +139,7 @@ type Options struct {
 	Locale              i18n.Locale
 	Actions             []Action
 	Preview             Preview
+	SelectionDetail     *SelectionDetail
 	InitialQuery        string
 	InitialIndex        int
 	InitialIndexSet     bool
@@ -1062,6 +1075,9 @@ func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
 	if strings.TrimSpace(update.Preview.Command) != "" || strings.TrimSpace(update.Preview.Window) != "" || update.Preview.TextByValue != nil {
 		options.Preview = update.Preview
 	}
+	if update.SelectionDetail != nil && options.SelectionDetail != nil {
+		options.SelectionDetail = &SelectionDetail{TextByValue: cloneNativeTextByValue(update.SelectionDetail.TextByValue)}
+	}
 	if update.SetHeader {
 		options.Header = update.Header
 	}
@@ -1088,6 +1104,15 @@ func applyNativeDeferredUpdate(options Options, update DeferredUpdate) Options {
 		options.Title = update.Title
 	}
 	return options
+}
+
+func cloneNativeTextByValue(source map[string]string) map[string]string {
+	if source == nil {
+		return nil
+	}
+	cloned := make(map[string]string, len(source))
+	maps.Copy(cloned, source)
+	return cloned
 }
 
 func runNativeDeferredAfterApply(update DeferredUpdate) {
@@ -1308,17 +1333,19 @@ func nativeMouseItemIndex(options Options, items []Item, selected int, layout na
 		return selected, false
 	}
 
-	placement := nativePreviewPlacement(options.Preview.Window)
-	hasPreview := strings.TrimSpace(options.Preview.Command) != "" && selected >= 0 && selected < len(items)
+	previewWindow := nativePreviewWindow(options)
+	placement := nativePreviewPlacement(previewWindow)
+	hasPreview := nativeReservePreviewFrame(options, placement) ||
+		(strings.TrimSpace(options.Preview.Command) != "" && selected >= 0 && selected < len(items))
 	if hasPreview && placement == "right" && contentLayout.Cols >= 88 {
-		previewWidth := nativePreviewWidth(contentLayout.Cols, options.Preview.Window)
+		previewWidth := nativePreviewWidth(contentLayout.Cols, previewWindow)
 		listWidth := max(contentLayout.Cols-previewWidth-1, 32)
 		if contentX >= listWidth {
 			return selected, false
 		}
 	}
 
-	previewHeight := nativePreviewHeight(contentLayout.Rows, options.Preview.Window)
+	previewHeight := nativePreviewHeight(contentLayout.Rows, previewWindow)
 	listLimit := nativeListLimit(options, contentLayout, placement, previewHeight, hasPreview)
 	start, end := nativeVisibleRange(len(items), selected, listLimit)
 	if options.MultiLine {
@@ -1948,16 +1975,17 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 		fmt.Fprintln(&screen, nativeSearchSeparatorLineWithTheme(pickerTheme, layout.Cols))
 	}
 
-	placement := nativePreviewPlacement(options.Preview.Window)
-	previewHeight := nativePreviewHeight(layout.Rows, options.Preview.Window)
+	previewWindow := nativePreviewWindow(options)
+	placement := nativePreviewPlacement(previewWindow)
+	previewHeight := nativePreviewHeight(layout.Rows, previewWindow)
 	previewLimit := maxInt(1, layout.Rows-nativeChromeLineCount(options))
 	if placement == "down" {
 		previewLimit = previewHeight
 	}
 	previewLines := nativePreviewLines(options, items, selected, previewOffset, previewLimit)
 	reservePreview := nativeReservePreviewFrame(options, placement)
-	if reservePreview && len(previewLines) == 0 {
-		previewLines = nativeBlankPreviewLines(previewHeight)
+	if reservePreview {
+		previewLines = nativeFixedPreviewLines(previewLines, previewHeight)
 	}
 	listLimit := nativeListLimit(options, layout, placement, previewHeight, len(previewLines) > 0)
 	start, end := nativeVisibleRange(len(items), selected, listLimit)
@@ -1980,7 +2008,14 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 	}
 	var main strings.Builder
 	if len(items) == 0 {
-		fmt.Fprintln(&main, "  "+nativeLocalizedTextForOptions(options, i18n.KeyPickerEmptyNoMatches, "no matches"))
+		emptyLines := []string{"  " + nativeLocalizedTextForOptions(options, i18n.KeyPickerEmptyNoMatches, "no matches")}
+		emptyLines = nativeListLinesWithScrollbarRowsWithTheme(pickerTheme, emptyLines, 1, 0, 1, layout.Cols, listLimit)
+		for _, line := range emptyLines {
+			fmt.Fprintln(&main, line)
+		}
+		if len(previewLines) > 0 && placement == "down" {
+			renderNativeDownPreview(&main, previewLines, layout)
+		}
 		writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, footer, layout)
 		return
 	}
@@ -1991,7 +2026,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 			scrollStart = max(scrollStart-prependedRows, 0)
 			scrollEnd = min(scrollStart+len(listLines), scrollTotal)
 		}
-		renderNativeSplitPreview(&main, listLines, previewLines, layout, options.Preview.Window, scrollTotal, scrollStart, scrollEnd, listLimit)
+		renderNativeSplitPreview(&main, listLines, previewLines, layout, previewWindow, scrollTotal, scrollStart, scrollEnd, listLimit)
 		writeNativeContentWithResourceDockAndFooter(w, pickerTheme, screen.String(), main.String(), options.ResourceSummaryDock, footer, layout)
 		return
 	}
@@ -2067,14 +2102,37 @@ func nativeListLimit(options Options, layout nativeLayout, previewPlacement stri
 }
 
 func nativeReservePreviewFrame(options Options, placement string) bool {
+	if nativeSelectionDetailEnabled(options) {
+		return placement == "down"
+	}
 	return strings.TrimSpace(options.UI) == "sidebar" && placement == "down" && strings.TrimSpace(options.Preview.Window) != ""
 }
 
-func nativeBlankPreviewLines(height int) []string {
+const nativeAIResumeDetailWindow = "down,35%,border-top"
+
+func nativeSelectionDetailEnabled(options Options) bool {
+	return strings.TrimSpace(options.UI) == "ai-resume-picker" && options.SelectionDetail != nil
+}
+
+func nativePreviewWindow(options Options) string {
+	if nativeSelectionDetailEnabled(options) {
+		return nativeAIResumeDetailWindow
+	}
+	return options.Preview.Window
+}
+
+func nativeFixedPreviewLines(lines []string, height int) []string {
 	if height <= 0 {
 		return nil
 	}
-	return make([]string, height)
+	if len(lines) > height {
+		lines = lines[:height]
+	}
+	fixed := append([]string(nil), lines...)
+	for len(fixed) < height {
+		fixed = append(fixed, "")
+	}
+	return fixed
 }
 
 func nativeAppendPartialNextItemLines(items []Item, lines []string, next, selected, limit int) []string {
@@ -2582,6 +2640,12 @@ func nativeANSIReset(seq string) bool {
 }
 
 func nativePreviewLines(options Options, items []Item, selected, offset, limit int) []string {
+	if nativeSelectionDetailEnabled(options) && selected >= 0 && selected < len(items) {
+		if output, ok := options.SelectionDetail.TextByValue[items[selected].Value]; ok {
+			return limitedNativePreviewLines(output, offset, limit)
+		}
+		return nil
+	}
 	if selected >= 0 && selected < len(items) && options.Preview.TextByValue != nil {
 		if output, ok := options.Preview.TextByValue[items[selected].Value]; ok {
 			return limitedNativePreviewLines(output, offset, limit)

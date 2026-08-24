@@ -53,10 +53,10 @@ type aiResumeLiveController struct {
 	summaries      []aisessions.ResumeSummary
 	detailRefs     map[string]aisessions.ResumeDetailRef
 	providerStates map[string]aiResumeProviderState
-	previewText    map[string]string
-	previewCache   map[aiResumePreviewKey]string
+	detailText     map[string]string
+	detailCache    map[aiResumePreviewKey]string
+	detailReads    map[aiResumePreviewKey]bool
 	previewCancel  context.CancelFunc
-	previewSerial  uint64
 	focusedValue   string
 	moreNotLoaded  bool
 }
@@ -73,7 +73,8 @@ func newAIResumeLiveController(cmd *aiCommand, cwd, home string, depth, limit in
 		previewTimeout: aiResumePreviewTimeout, populationTimeout: aiResumeSummaryPopulationBudget,
 		populationContext: context.WithTimeout,
 		events:            make(chan struct{}, 16), providerStates: map[string]aiResumeProviderState{},
-		detailRefs: map[string]aisessions.ResumeDetailRef{}, previewText: map[string]string{}, previewCache: map[aiResumePreviewKey]string{},
+		detailRefs: map[string]aisessions.ResumeDetailRef{}, detailText: map[string]string{},
+		detailCache: map[aiResumePreviewKey]string{}, detailReads: map[aiResumePreviewKey]bool{},
 	}
 }
 
@@ -338,16 +339,18 @@ func resumeProviderStateText(locale i18n.Locale, state aiResumeProviderState) st
 
 func (c *aiResumeLiveController) update() (intpicker.DeferredUpdate, error) {
 	c.mu.Lock()
-	preview := make(map[string]string, len(c.previewText))
-	maps.Copy(preview, c.previewText)
-	moreNotLoaded := c.moreNotLoaded
-	footer := resumePickerFooter(c.providerStates, len(c.summaries), c.locale)
+	detail := make(map[string]string, len(c.detailText))
+	maps.Copy(detail, c.detailText)
 	c.mu.Unlock()
 	return intpicker.DeferredUpdate{
-		Preview: intpicker.Preview{Window: "down,35%,border-top", TextByValue: preview},
-		Footer:  footer, SetFooter: true,
-		MoreNotLoaded: moreNotLoaded, SetMoreNotLoaded: true,
+		SelectionDetail: &intpicker.SelectionDetail{TextByValue: detail},
 	}, nil
+}
+
+func (c *aiResumeLiveController) initialDetail() *intpicker.SelectionDetail {
+	return &intpicker.SelectionDetail{TextByValue: map[string]string{
+		aiResumeNewValue: localizeText(c.locale, i18n.KeyPickerResumeDetailHelp, "Select a resume session to see details."),
+	}}
 }
 
 func (c *aiResumeLiveController) focus(value string) {
@@ -357,15 +360,16 @@ func (c *aiResumeLiveController) focus(value string) {
 		return
 	}
 	c.focusedValue = value
-	c.previewSerial++
-	serial := c.previewSerial
 	if c.previewCancel != nil {
 		c.previewCancel()
 		c.previewCancel = nil
 	}
-	c.previewText = map[string]string{}
+	c.detailText = map[string]string{}
 	selection, ok := parseAIResumePickerValue(value)
 	if !ok {
+		if value == aiResumeNewValue {
+			c.detailText[value] = localizeText(c.locale, i18n.KeyPickerResumeDetailHelp, "Select a resume session to see details.")
+		}
 		c.mu.Unlock()
 		c.signal()
 		return
@@ -386,41 +390,131 @@ func (c *aiResumeLiveController) focus(value string) {
 		return
 	}
 	cacheKey := aiResumePreviewCacheKey(summary)
-	if cached, hit := c.previewCache[cacheKey]; hit {
-		c.previewText[value] = cached
+	if cached, hit := c.detailCache[cacheKey]; hit {
+		c.detailText[value] = cached
 		c.mu.Unlock()
 		c.signal()
 		return
 	}
+	loading := aiResumeDetailProjection(c.locale, summary, detailRef, aisessions.ResumeDetail{}, localizeUIText(c.locale, "Loading preview…"))
+	c.detailText[value] = loading
+	if c.detailReads[cacheKey] {
+		c.mu.Unlock()
+		c.signal()
+		return
+	}
+	c.detailReads[cacheKey] = true
 	timeout := c.previewTimeout
 	if timeout <= 0 {
 		timeout = aiResumePreviewTimeout
 	}
 	previewCtx, cancel := context.WithTimeout(c.ctx, timeout)
 	c.previewCancel = cancel
-	c.previewText[value] = localizeUIText(c.locale, "Loading preview…")
 	c.mu.Unlock()
 	c.signal()
 	go func() {
 		defer cancel()
-		readPreview := c.cmd.readResumePreview
-		if readPreview == nil {
-			readPreview = aisessions.ReadResumeDetailPreview
+		var detail aisessions.ResumeDetail
+		var err error
+		if c.cmd.readResumePreview != nil {
+			detail.Preview, err = c.cmd.readResumePreview(previewCtx, detailRef, c.cmd.openCodexCatalog)
+			detail.Source = detailRef.Source
+			detail.Turns = detailRef.Turns
+			detail.Confidence = detailRef.Confidence
+			detail.Reason = detailRef.Reason
+			detail.RuntimeStatus = detailRef.RuntimeStatus
+		} else {
+			readDetail := c.cmd.readResumeDetail
+			if readDetail == nil {
+				readDetail = aisessions.ReadResumeDetail
+			}
+			detail, err = readDetail(previewCtx, detailRef, c.cmd.openCodexCatalog)
 		}
-		preview, err := readPreview(previewCtx, detailRef, c.cmd.openCodexCatalog)
-		text := aisessions.FormatPreview(preview)
-		if err != nil || strings.TrimSpace(text) == "" {
-			text = localizeUIText(c.locale, "preview unavailable")
+		previewText := aisessions.FormatPreview(detail.Preview)
+		if err != nil || strings.TrimSpace(previewText) == "" {
+			previewText = localizeUIText(c.locale, "preview unavailable")
 		}
+		text := aiResumeDetailProjection(c.locale, summary, detailRef, detail, previewText)
 		c.mu.Lock()
 		defer c.mu.Unlock()
-		if serial != c.previewSerial || value != c.focusedValue || c.ctx.Err() != nil {
+		c.detailCache[cacheKey] = text
+		if c.ctx.Err() != nil {
 			return
 		}
-		c.previewText = map[string]string{value: text}
-		c.previewCache[cacheKey] = text
+		focusedSelection, focused := parseAIResumePickerValue(c.focusedValue)
+		if !focused || normalizeAIMode(focusedSelection.agent) != cacheKey.provider || strings.TrimSpace(focusedSelection.resumeID) != cacheKey.id {
+			return
+		}
+		var focusedKey aiResumePreviewKey
+		for _, candidate := range c.summaries {
+			if normalizeAIMode(candidate.Provider) == cacheKey.provider && strings.TrimSpace(candidate.ResumeID) == cacheKey.id {
+				focusedKey = aiResumePreviewCacheKey(candidate)
+				break
+			}
+		}
+		if focusedKey != cacheKey {
+			return
+		}
+		c.detailText = map[string]string{c.focusedValue: text}
 		c.signal()
 	}()
+}
+
+func aiResumeDetailProjection(locale i18n.Locale, summary aisessions.ResumeSummary, ref aisessions.ResumeDetailRef, detail aisessions.ResumeDetail, previewText string) string {
+	sourceLabel := localizeUIText(locale, "Source")
+	turnsLabel := localizeText(locale, i18n.KeyPickerResumeDetailTurns, "Turns")
+	runtimeLabel := localizeUIText(locale, "Runtime")
+	confidenceLabel := localizeText(locale, i18n.KeyPickerResumeDetailConfidence, "Confidence")
+	reasonLabel := localizeText(locale, i18n.KeyPickerResumeDetailReason, "Reason")
+	unavailable := localizeUIText(locale, "unavailable")
+	provider := strings.TrimSpace(summary.Provider)
+	title := cleanAIResumeTitle(summary.Label, summary.ResumeID)
+	lines := []string{provider + " · " + title}
+	source := strings.TrimSpace(detail.Source)
+	if source == "" {
+		source = strings.TrimSpace(ref.Source)
+	}
+	if source == "" {
+		source = unavailable
+	}
+	turns := detail.Turns
+	if turns == 0 {
+		turns = ref.Turns
+	}
+	metadata := []string{sourceLabel + ": " + source}
+	if turns > 0 {
+		metadata = append(metadata, fmt.Sprintf("%s: %d", turnsLabel, turns))
+	} else {
+		metadata = append(metadata, turnsLabel+": "+unavailable)
+	}
+	runtimeStatus := strings.TrimSpace(detail.RuntimeStatus)
+	if runtimeStatus == "" {
+		runtimeStatus = strings.TrimSpace(ref.RuntimeStatus)
+	}
+	if runtimeStatus != "" {
+		metadata = append(metadata, runtimeLabel+": "+runtimeStatus)
+	}
+	lines = append(lines, strings.Join(metadata, " · "))
+	confidence := strings.TrimSpace(detail.Confidence)
+	if confidence == "" {
+		confidence = strings.TrimSpace(ref.Confidence)
+	}
+	reason := strings.TrimSpace(detail.Reason)
+	if reason == "" {
+		reason = strings.TrimSpace(ref.Reason)
+	}
+	explanation := make([]string, 0, 2)
+	if confidence != "" {
+		explanation = append(explanation, confidenceLabel+": "+confidence)
+	}
+	if reason != "" {
+		explanation = append(explanation, reasonLabel+": "+reason)
+	}
+	if len(explanation) > 0 {
+		lines = append(lines, strings.Join(explanation, " · "))
+	}
+	lines = append(lines, "", localizeUIText(locale, "Preview"), previewText)
+	return strings.Join(lines, "\n")
 }
 
 func aiResumePreviewCacheKey(summary aisessions.ResumeSummary) aiResumePreviewKey {

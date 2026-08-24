@@ -72,6 +72,32 @@ func TestDefaultCatalogKoKRCompletesRequiredMigratedSurfaces(t *testing.T) {
 	}
 }
 
+func TestDefaultCatalogAIResumeDetailLabels(t *testing.T) {
+	tests := []struct {
+		locale Locale
+		key    Key
+		want   string
+	}{
+		{FallbackLocale, KeyPickerResumeDetailHelp, "Select a resume session to see details."},
+		{FallbackLocale, KeyPickerResumeDetailTurns, "Turns"},
+		{FallbackLocale, KeyPickerResumeDetailConfidence, "Confidence"},
+		{FallbackLocale, KeyPickerResumeDetailReason, "Reason"},
+		{Locale("ko-KR"), KeyPickerResumeDetailHelp, "재개 세션을 선택하면 상세 정보를 볼 수 있습니다."},
+		{Locale("ko-KR"), KeyPickerResumeDetailTurns, "턴"},
+		{Locale("ko-KR"), KeyPickerResumeDetailConfidence, "신뢰도"},
+		{Locale("ko-KR"), KeyPickerResumeDetailReason, "사유"},
+	}
+	for _, test := range tests {
+		text, err := NewLocalizer(test.locale).Text(test.key)
+		if err != nil {
+			t.Fatalf("Text(%q, %q) error = %v", test.locale, test.key, err)
+		}
+		if got := text.String(); got != test.want {
+			t.Fatalf("Text(%q, %q) = %q, want %q", test.locale, test.key, got, test.want)
+		}
+	}
+}
+
 func TestTextRejectsStyledFragment(t *testing.T) {
 	key := Key("test.styled")
 	catalog := NewCatalog(map[Locale]map[Key]Entry{
