@@ -296,15 +296,19 @@ func (c *aiResumeLiveController) entries(summaries []aisessions.ResumeSummary) [
 	return aiResumeSummaryRowsWithLabels(summaries, labels, c.now, c.locale, c.cwd, c.depth)
 }
 
-func (c *aiResumeLiveController) chrome() ([]intpicker.ChromeBand, bool) {
+func (c *aiResumeLiveController) footer() (string, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	states := make(map[string]aiResumeProviderState, len(c.providerStates))
-	maps.Copy(states, c.providerStates)
-	return resumeProviderChromeBands(states, c.locale), c.moreNotLoaded
+	return resumePickerFooter(c.providerStates, len(c.summaries), c.locale), c.moreNotLoaded
 }
 
-func resumeProviderChromeBands(states map[string]aiResumeProviderState, locale i18n.Locale) []intpicker.ChromeBand {
+func resumePickerFooter(states map[string]aiResumeProviderState, visible int, locale i18n.Locale) string {
+	providerLine := resumeProviderFooterLine(states, locale)
+	shownCount := fmt.Sprintf(localizeUIText(locale, "Showing latest %d resume sessions."), visible)
+	return projmuxFooter(providerLine + "\n" + shownCount)
+}
+
+func resumeProviderFooterLine(states map[string]aiResumeProviderState, locale i18n.Locale) string {
 	providers := []struct {
 		id    string
 		label string
@@ -321,10 +325,7 @@ func resumeProviderChromeBands(states map[string]aiResumeProviderState, locale i
 		}
 		parts = append(parts, provider.label+" "+resumeProviderStateText(locale, state))
 	}
-	return []intpicker.ChromeBand{{
-		Label: localizeUIText(locale, "Providers"),
-		Value: strings.Join(parts, " · "),
-	}}
+	return localizeUIText(locale, "Providers") + " " + strings.Join(parts, " · ")
 }
 
 func resumeProviderStateText(locale i18n.Locale, state aiResumeProviderState) string {
@@ -340,12 +341,11 @@ func (c *aiResumeLiveController) update() (intpicker.DeferredUpdate, error) {
 	preview := make(map[string]string, len(c.previewText))
 	maps.Copy(preview, c.previewText)
 	moreNotLoaded := c.moreNotLoaded
-	visible := len(c.summaries)
+	footer := resumePickerFooter(c.providerStates, len(c.summaries), c.locale)
 	c.mu.Unlock()
-	footer := fmt.Sprintf(localizeUIText(c.locale, "Showing latest %d resume sessions."), visible)
 	return intpicker.DeferredUpdate{
 		Preview: intpicker.Preview{Window: "down,35%,border-top", TextByValue: preview},
-		Footer:  projmuxFooter(footer), SetFooter: true,
+		Footer:  footer, SetFooter: true,
 		MoreNotLoaded: moreNotLoaded, SetMoreNotLoaded: true,
 	}, nil
 }

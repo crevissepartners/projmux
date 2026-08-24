@@ -8,18 +8,14 @@ import (
 )
 
 type Options struct {
-	UI         string
-	Candidates []string
-	Entries    []Entry
-	Read0      bool
-	Title      string
-	TitleChips []projmuxpicker.Chip
-	Prompt     string
-	Header     string
-	// ChromeBands are renderer-owned fixed chrome above the search/list. They
-	// are never converted into picker entries and therefore cannot participate
-	// in filtering, cursor movement, or acceptance.
-	ChromeBands    []picker.ChromeBand
+	UI             string
+	Candidates     []string
+	Entries        []Entry
+	Read0          bool
+	Title          string
+	TitleChips     []projmuxpicker.Chip
+	Prompt         string
+	Header         string
 	Footer         string
 	MoreNotLoaded  bool
 	Locale         i18n.Locale

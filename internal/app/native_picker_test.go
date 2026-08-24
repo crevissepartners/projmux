@@ -60,7 +60,6 @@ func compatOptionsFromNativePickerForTest(options intpicker.Options) intpickerco
 		TitleChips:     options.TitleChips,
 		Prompt:         options.Prompt,
 		Header:         options.Header,
-		ChromeBands:    append([]intpicker.ChromeBand(nil), options.ChromeBands...),
 		Footer:         options.Footer,
 		MoreNotLoaded:  options.MoreNotLoaded,
 		Locale:         options.Locale,

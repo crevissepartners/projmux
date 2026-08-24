@@ -16,7 +16,6 @@ func PickerOptions(options Options) picker.Options {
 		TitleChips:            options.TitleChips,
 		Prompt:                options.Prompt,
 		Header:                options.Header,
-		ChromeBands:           append([]picker.ChromeBand(nil), options.ChromeBands...),
 		Footer:                options.Footer,
 		MoreNotLoaded:         options.MoreNotLoaded,
 		Locale:                options.Locale,
