@@ -50,7 +50,7 @@ func DiscoverProviderContext(ctx context.Context, provider, cwd string, opts Dis
 	case AgentCodex:
 		codexOutcome = CodexCatalogOutcome{Source: CatalogSourceFallback, Confidence: CatalogConfidenceMedium}
 		if opts.OpenCodexCatalog == nil {
-			sessions = discoverCodex(cwd, opts.CodexSessionsDir, depth)
+			sessions = discoverCodexContext(ctx, cwd, opts.CodexSessionsDir, depth)
 		} else {
 			var native []SessionMeta
 			var continuation CodexCatalogContinuation
@@ -67,7 +67,7 @@ func DiscoverProviderContext(ctx context.Context, provider, cwd string, opts Dis
 				result := ProviderDiscovery{Sessions: finalizeProviderSessions(sessions, limit, opts.DeferTurns), Codex: codexOutcome, Continuation: continuation, MoreNotLoaded: moreNotLoaded}
 				return result, nil
 			}
-			sessions = discoverCodex(cwd, opts.CodexSessionsDir, depth)
+			sessions = discoverCodexContext(ctx, cwd, opts.CodexSessionsDir, depth)
 			reason := codexCatalogFallbackReason(err)
 			for i := range sessions {
 				sessions[i].Confidence = ConfidenceMedium

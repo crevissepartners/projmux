@@ -4,6 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -12,6 +16,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -24,6 +29,124 @@ func summaryDiscovery(provider, id, source string, modified time.Time) aisession
 		Summaries:  []aisessions.ResumeSummary{summary},
 		DetailRefs: []aisessions.ResumeDetailRef{{Provider: provider, ResumeID: id, LastModified: modified, Source: source}},
 	}
+}
+
+type blockingResumeSummaryCatalog struct {
+	closeOnce sync.Once
+	closed    chan struct{}
+}
+
+func (c *blockingResumeSummaryCatalog) List(context.Context, codexappserver.CatalogQuery) (codexappserver.CatalogPage, error) {
+	<-c.closed
+	return codexappserver.CatalogPage{}, context.Canceled
+}
+
+func (*blockingResumeSummaryCatalog) Read(context.Context, string) (codexappserver.CatalogThread, error) {
+	return codexappserver.CatalogThread{}, nil
+}
+
+func (c *blockingResumeSummaryCatalog) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
+}
+
+func resumeSummaryProviderStatus(entries []intpickercompat.Entry, provider string) string {
+	for _, entry := range entries {
+		if entry.Value == "status\t"+provider {
+			return entry.SearchKey
+		}
+	}
+	return ""
+}
+
+func TestResumeSummaryHundredsOfCodexRolloutsSettleBeforeBlockedNativeBudget(t *testing.T) {
+	home := t.TempDir()
+	rollouts := filepath.Join(home, ".codex", "sessions", "2026", "08", "24")
+	if err := os.MkdirAll(rollouts, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 600 {
+		id := fmt.Sprintf("019f0000-0000-7000-8000-%012d", i)
+		body := fmt.Sprintf("{\"type\":\"session_meta\",\"payload\":{\"id\":%q,\"cwd\":\"/work/app\"}}\n{\"type\":\"event_msg\",\"payload\":{\"type\":\"user_message\",\"message\":%q}}\n", id, fmt.Sprintf("rollout %03d", i))
+		if err := os.WriteFile(filepath.Join(rollouts, fmt.Sprintf("rollout-%03d.jsonl", i)), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	catalog := &blockingResumeSummaryCatalog{closed: make(chan struct{})}
+	cmd := testAICommand(home)
+	cmd.openCodexCatalog = func(context.Context) (aisessions.CodexCatalog, error) { return catalog, nil }
+	controller := newAIResumeLiveController(cmd, "/work/app", home, 0, 20)
+	defer controller.close()
+	started := time.Now()
+	entries := controller.initialEntries()
+	elapsed := time.Since(started)
+	if elapsed >= 500*time.Millisecond {
+		t.Fatalf("settled first frame took %s, want <500ms", elapsed)
+	}
+	status := resumeSummaryProviderStatus(entries, aiModeCodex)
+	if status != "codex available" {
+		t.Fatalf("Codex status = %q, want available; entries=%#v", status, entries)
+	}
+	var codexRows int
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Value, "resume\t"+aiModeCodex+"\t") {
+			codexRows++
+		}
+	}
+	if codexRows == 0 {
+		t.Fatalf("settled frame has no Codex rollout rows: %#v", entries)
+	}
+}
+
+func TestResumeSummaryEmptyCodexIsAvailableAndEnvelopeExpiryIsNotFailure(t *testing.T) {
+	t.Run("empty rollout store", func(t *testing.T) {
+		home := t.TempDir()
+		cmd := testAICommand(home)
+		cmd.openCodexCatalog = func(context.Context) (aisessions.CodexCatalog, error) {
+			return nil, errors.New("native unavailable")
+		}
+		controller := newAIResumeLiveController(cmd, "/work/app", home, 0, 20)
+		defer controller.close()
+		status := resumeSummaryProviderStatus(controller.initialEntries(), aiModeCodex)
+		if status != "codex available · no conversations" {
+			t.Fatalf("empty Codex status = %q, want available empty", status)
+		}
+	})
+
+	t.Run("population envelope", func(t *testing.T) {
+		cmd := testAICommand(t.TempDir())
+		cmd.discoverResumeSummaryProvider = func(ctx context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+			if provider != aiModeCodex {
+				return aisessions.ResumeSummaryDiscovery{}, nil
+			}
+			<-ctx.Done()
+			return aisessions.ResumeSummaryDiscovery{}, ctx.Err()
+		}
+		controller := newAIResumeLiveController(cmd, "/work/app", t.TempDir(), 0, 20)
+		controller.populationTimeout = 10 * time.Millisecond
+		defer controller.close()
+		status := resumeSummaryProviderStatus(controller.initialEntries(), aiModeCodex)
+		if status != "codex available · no conversations" {
+			t.Fatalf("envelope-expired Codex status = %q, want available empty", status)
+		}
+	})
+
+	t.Run("genuine provider failure", func(t *testing.T) {
+		cmd := testAICommand(t.TempDir())
+		cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+			if provider == aiModeCodex {
+				return aisessions.ResumeSummaryDiscovery{}, errors.New("broken provider")
+			}
+			return aisessions.ResumeSummaryDiscovery{}, nil
+		}
+		controller := newAIResumeLiveController(cmd, "/work/app", t.TempDir(), 0, 20)
+		defer controller.close()
+		status := resumeSummaryProviderStatus(controller.initialEntries(), aiModeCodex)
+		if status != "codex unavailable" {
+			t.Fatalf("failed Codex status = %q, want unavailable", status)
+		}
+	})
 }
 
 func pickerEntryHash(entries []intpickercompat.Entry) [32]byte {

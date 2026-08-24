@@ -1,6 +1,7 @@
 package aisessions
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sort"
@@ -163,7 +164,7 @@ func TestDiscoverCodexDepthFiltersByTreeAndWidensBudget(t *testing.T) {
 	// it never steals a budget slot from the exact-cwd files at depth 0.
 	writeNumberedCodexSession(t, sessionsDir, 999, base.Add(-1000*time.Minute), "/workspace/app-other")
 
-	depth0 := discoverCodex("/workspace/app", sessionsDir, 0)
+	depth0 := discoverCodexContext(context.Background(), "/workspace/app", sessionsDir, 0)
 	if len(depth0) != codexScanFileLimit {
 		t.Fatalf("depth 0 len = %d, want %d (exact cwd only)", len(depth0), codexScanFileLimit)
 	}
@@ -173,7 +174,7 @@ func TestDiscoverCodexDepthFiltersByTreeAndWidensBudget(t *testing.T) {
 		}
 	}
 
-	depth1 := discoverCodex("/workspace/app", sessionsDir, 1)
+	depth1 := discoverCodexContext(context.Background(), "/workspace/app", sessionsDir, 1)
 	if len(depth1) != codexScanFileLimit+20 {
 		t.Fatalf("depth 1 len = %d, want %d (exact + child, budget widened)", len(depth1), codexScanFileLimit+20)
 	}

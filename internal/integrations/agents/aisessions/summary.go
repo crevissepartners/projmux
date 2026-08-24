@@ -44,6 +44,10 @@ type ResumeDetailRef struct {
 type ResumeSummaryOptions struct {
 	DiscoverOptions
 	NativeBudget time.Duration
+
+	// discoverCodexFallback is a package-private test seam for coordinating the
+	// native/fallback race without weakening the production filesystem path.
+	discoverCodexFallback func(context.Context, string, string, int) []SessionMeta
 }
 
 // ResumeSummaryDiscovery is one provider's settled list projection. Codex is
@@ -57,8 +61,10 @@ type ResumeSummaryDiscovery struct {
 
 // DiscoverResumeSummariesContext returns one settled provider result without
 // turn enrichment, preview reads, or Codex continuation. Codex native summary
-// population reads at most one page inside NativeBudget. Any native failure or
-// budget overrun discards the complete native attempt before one rollout scan.
+// population reads at most one page inside NativeBudget while the bounded,
+// cancellation-aware rollout fallback scans concurrently. Native success,
+// including native-empty, keeps authority. A native failure or budget overrun
+// selects the already-running fallback and discards every late native result.
 func DiscoverResumeSummariesContext(ctx context.Context, provider, cwd string, opts ResumeSummaryOptions, limit int) (ResumeSummaryDiscovery, error) {
 	cwd = cleanCWD(cwd)
 	if cwd == "" {
@@ -81,6 +87,17 @@ func DiscoverResumeSummariesContext(ctx context.Context, provider, cwd string, o
 		sessions = discovery.Sessions
 	case AgentCodex:
 		codexOutcome = CodexCatalogOutcome{Source: CatalogSourceFallback, Confidence: CatalogConfidenceMedium}
+		fallbackCtx, cancelFallback := context.WithCancel(ctx)
+		defer cancelFallback()
+		fallback := make(chan []SessionMeta, 1)
+		discoverFallback := opts.discoverCodexFallback
+		if discoverFallback == nil {
+			discoverFallback = discoverCodexContext
+		}
+		go func() {
+			fallbackSessions := discoverFallback(fallbackCtx, cwd, discoverOpts.CodexSessionsDir, depth)
+			fallback <- finalizeProviderSessions(fallbackSessions, 0, true)
+		}()
 		if discoverOpts.OpenCodexCatalog != nil {
 			budget := opts.NativeBudget
 			if budget <= 0 {
@@ -88,6 +105,7 @@ func DiscoverResumeSummariesContext(ctx context.Context, provider, cwd string, o
 			}
 			native, hasMore, err := discoverCodexResumeSummaryBounded(ctx, cwd, depth, discoverOpts.OpenCodexCatalog, limit, budget)
 			if err == nil {
+				cancelFallback()
 				sessions = native
 				moreNotLoaded = hasMore
 				codexOutcome = CodexCatalogOutcome{Source: CatalogSourceNative, Confidence: CatalogConfidenceHigh}
@@ -96,13 +114,19 @@ func DiscoverResumeSummariesContext(ctx context.Context, provider, cwd string, o
 			codexOutcome.Reason = codexCatalogFallbackReason(err)
 		}
 		if sessions == nil {
-			fallbackOpts := discoverOpts
-			fallbackOpts.OpenCodexCatalog = nil
-			discovery, err := DiscoverProviderContext(ctx, provider, cwd, fallbackOpts, 0)
-			if err != nil {
-				return ResumeSummaryDiscovery{}, err
+			select {
+			case sessions = <-fallback:
+			case <-ctx.Done():
+				cancelFallback()
+				// Prefer a cancellation-settled partial result when it is already
+				// available, otherwise settle as available-empty. The invocation
+				// envelope is not a provider failure.
+				select {
+				case sessions = <-fallback:
+				default:
+					sessions = []SessionMeta{}
+				}
 			}
-			sessions = discovery.Sessions
 			for i := range sessions {
 				sessions[i].Confidence = ConfidenceMedium
 				sessions[i].Reason = string(codexOutcome.Reason)

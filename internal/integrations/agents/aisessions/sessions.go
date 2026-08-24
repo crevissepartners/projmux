@@ -13,6 +13,7 @@ package aisessions
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"io/fs"
@@ -341,8 +342,13 @@ func discoverClaudeDir(dir, cwd string, depth int) []SessionMeta {
 	return sessions
 }
 
-func discoverCodex(cwd, sessionsDir string, depth int) []SessionMeta {
-	return discoverCodexWithFileLimit(cwd, sessionsDir, codexScanBudget(depth), depth)
+// discoverCodexContext is the cancellation-aware rollout discovery path used
+// by bounded interactive callers. A canceled scan returns the candidates that
+// were completely parsed before cancellation; callers can therefore settle an
+// available empty or partial fallback without waiting for the remainder of a
+// large rollout tree.
+func discoverCodexContext(ctx context.Context, cwd, sessionsDir string, depth int) []SessionMeta {
+	return discoverCodexWithFileLimitContext(ctx, cwd, sessionsDir, codexScanBudget(depth), depth)
 }
 
 // codexScanBudget returns the codex file-scan budget for a discovery depth. The
@@ -360,7 +366,7 @@ func codexScanBudget(depth int) int {
 	return budget
 }
 
-func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit, depth int) []SessionMeta {
+func discoverCodexWithFileLimitContext(ctx context.Context, cwd, sessionsDir string, scanFileLimit, depth int) []SessionMeta {
 	sessionsDir = strings.TrimSpace(sessionsDir)
 	if sessionsDir == "" {
 		return nil
@@ -368,7 +374,7 @@ func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit, depth in
 	treeFilter := depth > 0
 
 	var candidates []sessionFileCandidate
-	walkCodexSessionFiles(sessionsDir, newPathGuard(), func(path string, modTime time.Time) {
+	walkCodexSessionFilesContext(ctx, sessionsDir, newPathGuard(), func(path string, modTime time.Time) {
 		candidates = append(candidates, sessionFileCandidate{
 			path:    path,
 			modTime: modTime,
@@ -386,12 +392,15 @@ func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit, depth in
 
 	sessions := make([]SessionMeta, 0, len(candidates))
 	for _, candidate := range candidates {
+		if ctx.Err() != nil {
+			break
+		}
 		scanOpts := sessionScanOptions{targetCWD: cwd, requireCWD: true}
 		if treeFilter {
 			// Keep non-exact matches; judge them by withinTree below.
 			scanOpts = sessionScanOptions{requireCWD: true}
 		}
-		details, ok := scanSessionJSONL(candidate.path, scanOpts)
+		details, ok := scanSessionJSONLContext(ctx, candidate.path, scanOpts)
 		if !ok || details.id == "" || !withinTree(details.cwd, cwd, depth) {
 			continue
 		}
@@ -430,7 +439,10 @@ func discoverCodexWithFileLimit(cwd, sessionsDir string, scanFileLimit, depth in
 // symlink cycle (a directory linking to an ancestor) or two symlink paths
 // aliasing the same real directory resolve to an already-visited location and
 // are skipped. The walk is therefore always bounded regardless of symlinks.
-func walkCodexSessionFiles(dir string, guard *pathGuard, visit func(path string, modTime time.Time)) {
+func walkCodexSessionFilesContext(ctx context.Context, dir string, guard *pathGuard, visit func(path string, modTime time.Time)) {
+	if ctx.Err() != nil {
+		return
+	}
 	// A directory whose real path was already walked is a cycle or alias; stop.
 	if !guard.visit(dir) {
 		return
@@ -440,12 +452,15 @@ func walkCodexSessionFiles(dir string, guard *pathGuard, visit func(path string,
 		return
 	}
 	for _, entry := range entries {
+		if ctx.Err() != nil {
+			return
+		}
 		if entry == nil {
 			continue
 		}
 		full := filepath.Join(dir, entry.Name())
 		if entryIsDir(dir, entry) {
-			walkCodexSessionFiles(full, guard, visit)
+			walkCodexSessionFilesContext(ctx, full, guard, visit)
 			continue
 		}
 		if matched, matchErr := filepath.Match("rollout-*.jsonl", entry.Name()); matchErr != nil || !matched {
@@ -902,22 +917,35 @@ func (details sessionDetails) ready(requireCWD bool, targetCWD string) bool {
 }
 
 func scanSessionJSONL(path string, opts sessionScanOptions) (sessionDetails, bool) {
+	return scanSessionJSONLContext(context.Background(), path, opts)
+}
+
+func scanSessionJSONLContext(ctx context.Context, path string, opts sessionScanOptions) (sessionDetails, bool) {
 	f, err := os.Open(path)
 	if err != nil {
 		return sessionDetails{}, false
 	}
 	defer f.Close()
 
-	return scanSessionJSONLReader(f, opts)
+	return scanSessionJSONLReaderContext(ctx, f, opts)
 }
 
-func scanSessionJSONLReader(r io.Reader, opts sessionScanOptions) (sessionDetails, bool) {
+func scanSessionJSONLReaderContext(ctx context.Context, r io.Reader, opts sessionScanOptions) (sessionDetails, bool) {
 	var details sessionDetails
 	targetCWD := cleanCWD(opts.targetCWD)
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
 	lineNo := 0
-	for scanner.Scan() {
+	for {
+		if ctx.Err() != nil {
+			return sessionDetails{}, false
+		}
+		if !scanner.Scan() {
+			break
+		}
+		if ctx.Err() != nil {
+			return sessionDetails{}, false
+		}
 		lineNo++
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {

@@ -1,6 +1,7 @@
 package aisessions
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,54 @@ import (
 	"testing"
 	"time"
 )
+
+type cancelingChunkReader struct {
+	cancel context.CancelFunc
+	chunks []string
+	reads  int
+}
+
+func (r *cancelingChunkReader) Read(p []byte) (int, error) {
+	if r.reads >= len(r.chunks) {
+		return 0, io.EOF
+	}
+	if r.reads == 1 {
+		r.cancel()
+	}
+	n := copy(p, r.chunks[r.reads])
+	r.reads++
+	return n, nil
+}
+
+func TestCodexRolloutWalkAndParseObserveCanceledContext(t *testing.T) {
+	root := t.TempDir()
+	day := filepath.Join(root, "2026", "08", "24")
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(day, "rollout-one.jsonl"), `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000001","cwd":"/workspace/app"}}
+`)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := discoverCodexWithFileLimitContext(ctx, "/workspace/app", root, codexScanFileLimit, 0); len(got) != 0 {
+		t.Fatalf("canceled rollout walk returned sessions: %#v", got)
+	}
+	if details, ok := scanSessionJSONLReaderContext(ctx, strings.NewReader(`{"id":"019f0000-0000-7000-8000-000000000001","cwd":"/workspace/app"}`), sessionScanOptions{targetCWD: "/workspace/app", requireCWD: true}); ok || details != (sessionDetails{}) {
+		t.Fatalf("canceled rollout parse = (%#v, %v), want empty/false", details, ok)
+	}
+
+	parseCtx, cancelParse := context.WithCancel(context.Background())
+	reader := &cancelingChunkReader{cancel: cancelParse, chunks: []string{
+		`{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000001"}}` + "\n",
+		`{"type":"session_meta","payload":{"cwd":"/workspace/app"}}` + "\n",
+	}}
+	if details, ok := scanSessionJSONLReaderContext(parseCtx, reader, sessionScanOptions{targetCWD: "/workspace/app", requireCWD: true}); ok || details != (sessionDetails{}) {
+		t.Fatalf("mid-scan canceled rollout parse = (%#v, %v), want empty/false", details, ok)
+	}
+	if reader.reads != 2 {
+		t.Fatalf("mid-scan cancellation read %d chunks, want exactly 2", reader.reads)
+	}
+}
 
 func TestDiscoverMergesClaudeAndCodexSessionsForCWD(t *testing.T) {
 	t.Parallel()
@@ -125,7 +174,7 @@ func TestDiscoverCodexScansNewestFilesFirstByModTime(t *testing.T) {
 	setModTime(t, olderPath, time.Date(2026, 6, 25, 8, 0, 0, 0, time.UTC))
 	setModTime(t, newerPath, time.Date(2026, 6, 25, 9, 0, 0, 0, time.UTC))
 
-	got := discoverCodex("/workspace/app", filepath.Join(root, "codex", "sessions"), 0)
+	got := discoverCodexContext(context.Background(), "/workspace/app", filepath.Join(root, "codex", "sessions"), 0)
 	if len(got) != 2 {
 		t.Fatalf("discoverCodex() len = %d, want 2: %#v", len(got), got)
 	}
@@ -144,7 +193,7 @@ func TestDiscoverCodexLimitsScanToMostRecentFiles(t *testing.T) {
 		writeNumberedCodexSession(t, sessionsDir, i, base.Add(-time.Duration(i)*time.Minute), "/workspace/app")
 	}
 
-	got := discoverCodex("/workspace/app", sessionsDir, 0)
+	got := discoverCodexContext(context.Background(), "/workspace/app", sessionsDir, 0)
 	if len(got) != codexScanFileLimit {
 		t.Fatalf("discoverCodex() len = %d, want %d", len(got), codexScanFileLimit)
 	}
@@ -168,8 +217,8 @@ func TestDiscoverCodexLimitedScanPreservesRecentPickerResults(t *testing.T) {
 		writeNumberedCodexSession(t, sessionsDir, i, base.Add(-time.Duration(i)*time.Minute), "/workspace/app")
 	}
 
-	limited := discoverCodexWithFileLimit("/workspace/app", sessionsDir, codexScanFileLimit, 0)
-	unbounded := discoverCodexWithFileLimit("/workspace/app", sessionsDir, 0, 0)
+	limited := discoverCodexWithFileLimitContext(context.Background(), "/workspace/app", sessionsDir, codexScanFileLimit, 0)
+	unbounded := discoverCodexWithFileLimitContext(context.Background(), "/workspace/app", sessionsDir, 0, 0)
 	if len(limited) < pickerVisibleLimit || len(unbounded) < pickerVisibleLimit {
 		t.Fatalf("not enough sessions to compare picker rows: limited=%d unbounded=%d", len(limited), len(unbounded))
 	}
@@ -376,7 +425,7 @@ func TestScanSessionJSONLStopsAfterCwdMismatch(t *testing.T) {
 	firstLine := `{"type":"session_meta","payload":{"id":"019f0000-0000-7000-8000-000000000077","cwd":"/workspace/other","git_branch":"feat/other"}}` + "\n"
 	reader := newFailAfterReader(firstLine+`{"type":"event_msg","payload":{"message":"must not be read"}}`+"\n", len(firstLine))
 
-	details, ok := scanSessionJSONLReader(reader, sessionScanOptions{
+	details, ok := scanSessionJSONLReaderContext(context.Background(), reader, sessionScanOptions{
 		targetCWD:  "/workspace/app",
 		requireCWD: true,
 	})
@@ -420,7 +469,7 @@ func TestScanSessionJSONLCandidatePassEarlyExitsBeforeCountingTurns(t *testing.T
 	tail := `{"type":"event_msg","payload":{"type":"user_message","message":"must not be read"}}` + "\n"
 	reader := newFailAfterReader(metaAndFirstTurn+tail, len(metaAndFirstTurn))
 
-	details, ok := scanSessionJSONLReader(reader, sessionScanOptions{
+	details, ok := scanSessionJSONLReaderContext(context.Background(), reader, sessionScanOptions{
 		targetCWD:  "/workspace/app",
 		requireCWD: true,
 	})
