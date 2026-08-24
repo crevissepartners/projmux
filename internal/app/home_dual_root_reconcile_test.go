@@ -19,11 +19,10 @@ import (
 const (
 	correctiveAControlUID     = "ctl-fberkuk3qs7vemdgmflduipcua"
 	correctiveAProjectUID     = "proj-ej7scn4oskbt445d5hfna66omi"
-	correctiveAProjectRoot    = "/home/es5h"
 	correctiveAProjectSession = "home--" + correctiveAProjectUID
 )
 
-func addCorrectiveAIncidentRegistry(t *testing.T, registry *coremetadata.Registry) {
+func addCorrectiveAIncidentRegistry(t *testing.T, registry *coremetadata.Registry, projectRoot string) {
 	t.Helper()
 	owner := func(kind coremetadata.Kind, uid string) *coremetadata.OwnerRef {
 		return &coremetadata.OwnerRef{Kind: kind, UID: uid}
@@ -50,14 +49,14 @@ func addCorrectiveAIncidentRegistry(t *testing.T, registry *coremetadata.Registr
 	registry.Panes = append(registry.Panes, coremetadata.Pane{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
 		Metadata: meta("pane-home-control", "zsh", owner(coremetadata.KindWindow, "win-home-control")),
-		Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: correctiveAProjectRoot},
+		Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: projectRoot},
 	})
 	reserve("win-home-control", coremetadata.KindPane, "zsh", "pane-home-control")
 
 	registry.Projects = append(registry.Projects, coremetadata.Project{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 		Metadata: meta(correctiveAProjectUID, "home-project", nil),
-		Spec:     coremetadata.ProjectSpec{Root: correctiveAProjectRoot, PrimaryWindowRef: "win-home-project"},
+		Spec:     coremetadata.ProjectSpec{Root: projectRoot, PrimaryWindowRef: "win-home-project"},
 		Status:   coremetadata.ProjectStatus{Session: &coremetadata.SessionProjection{Name: "home", Live: false}},
 	})
 	reserve("", coremetadata.KindProject, "home-project", correctiveAProjectUID)
@@ -70,7 +69,7 @@ func addCorrectiveAIncidentRegistry(t *testing.T, registry *coremetadata.Registr
 	registry.Panes = append(registry.Panes, coremetadata.Pane{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
 		Metadata: meta("pane-home-project", "zsh", owner(coremetadata.KindWindow, "win-home-project")),
-		Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: correctiveAProjectRoot},
+		Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: projectRoot},
 	})
 	reserve("win-home-project", coremetadata.KindPane, "zsh", "pane-home-project")
 	*registry = registry.Normalize()
@@ -87,24 +86,26 @@ func seedCorrectiveAHomeRuntime(t *testing.T, tmux *fakeTmux) *fakeTmuxSession {
 	return home
 }
 
-func correctiveAReconciler(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
-	mirror := intmetadata.NewMirror(runner)
-	return &registryReconciler{
-		liveSessions:  sessions.ExistingSessions,
-		observeLegacy: mirror.ObserveLegacySessionTargets,
-		mirror:        mirror,
-		mirrorProject: func(context.Context, string, coremetadata.Project) error { return nil },
-		mirrorWindow:  mirror.MirrorWindow,
-		mirrorPane: func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
-			return mirror.MirrorPane(ctx, target, pane)
-		},
-		shell: "/bin/zsh",
-		sessionNameFor: func(root string) string {
-			if root == correctiveAProjectRoot {
-				return "home"
-			}
-			return strings.TrimPrefix(root, "/srv/")
-		},
+func correctiveAReconciler(projectRoot string) func(tmuxCommandRunner, sessionLister) *registryReconciler {
+	return func(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
+		mirror := intmetadata.NewMirror(runner)
+		return &registryReconciler{
+			liveSessions:  sessions.ExistingSessions,
+			observeLegacy: mirror.ObserveLegacySessionTargets,
+			mirror:        mirror,
+			mirrorProject: func(context.Context, string, coremetadata.Project) error { return nil },
+			mirrorWindow:  mirror.MirrorWindow,
+			mirrorPane: func(ctx context.Context, target, _ string, pane coremetadata.Pane) error {
+				return mirror.MirrorPane(ctx, target, pane)
+			},
+			shell: "/bin/zsh",
+			sessionNameFor: func(root string) string {
+				if root == projectRoot {
+					return "home"
+				}
+				return strings.TrimPrefix(root, "/srv/")
+			},
+		}
 	}
 }
 
@@ -126,7 +127,8 @@ func TestRegistryReconcilerConstructorAlwaysInitializesRefusalBookkeeping(t *tes
 
 func TestHomeDualRootClaimantPrecedenceAndPhysicalAllocation(t *testing.T) {
 	registry := coremetadata.NewRegistry()
-	addCorrectiveAIncidentRegistry(t, &registry)
+	projectRoot := t.TempDir()
+	addCorrectiveAIncidentRegistry(t, &registry, projectRoot)
 	r := &registryReconciler{sessionNameFor: func(string) string { return "home" }}
 
 	claim := r.resolveRegistrySessionClaim(registry, "home")
@@ -148,7 +150,7 @@ func TestHomeDualRootClaimantPrecedenceAndPhysicalAllocation(t *testing.T) {
 		t.Fatalf("repeat allocation churned %q to %q", correctiveAProjectSession, got)
 	}
 
-	contaminated := []observedResourceProjectSession{{id: "$1", name: "home", uid: correctiveAProjectUID, root: correctiveAProjectRoot}}
+	contaminated := []observedResourceProjectSession{{id: "$1", name: "home", uid: correctiveAProjectUID, root: projectRoot}}
 	refused := refusedResourceProjectSessions(registry, contaminated, r)
 	if !refused["home"] || r.refusedSessionDivergence["home"] != resourcegraph.DivergenceContaminated || !strings.Contains(r.refusedSessionReasons["home"], "ControlSession") {
 		t.Fatalf("contaminated control observation was not a typed D4 refusal: refused=%v divergence=%q reason=%q", refused, r.refusedSessionDivergence["home"], r.refusedSessionReasons["home"])
@@ -157,7 +159,7 @@ func TestHomeDualRootClaimantPrecedenceAndPhysicalAllocation(t *testing.T) {
 
 func TestHomeDualRootClaimResolutionIsRegistryOrderIndependent(t *testing.T) {
 	registry := coremetadata.NewRegistry()
-	addCorrectiveAIncidentRegistry(t, &registry)
+	addCorrectiveAIncidentRegistry(t, &registry, t.TempDir())
 	project, _ := registry.Project(correctiveAProjectUID)
 
 	orders := []coremetadata.Registry{registry.Clone(), registry.Clone()}
@@ -182,7 +184,8 @@ func TestHomeDualRootClaimResolutionIsRegistryOrderIndependent(t *testing.T) {
 
 func TestHomeDualRootIncidentDoesNotBlockUnrelatedCreateAgent(t *testing.T) {
 	store := newFakeResourceStore(t)
-	addCorrectiveAIncidentRegistry(t, &store.registry)
+	projectRoot := t.TempDir()
+	addCorrectiveAIncidentRegistry(t, &store.registry, projectRoot)
 	tmux := newFakeTmux()
 	home := seedCorrectiveAHomeRuntime(t, tmux)
 	homeWindow, homePane := home.windows[0], home.windows[0].panes[0]
@@ -192,7 +195,7 @@ func TestHomeDualRootIncidentDoesNotBlockUnrelatedCreateAgent(t *testing.T) {
 	}()
 
 	create, launcher := newTestAgentCreateCommand(t, store, tmux)
-	create.reconciler = correctiveAReconciler(tmux, inttmux.NewClient(tmux))
+	create.reconciler = correctiveAReconciler(projectRoot)(tmux, inttmux.NewClient(tmux))
 	create.runtime.sessions = &fakeSessionMaterializer{tmux: tmux}
 	stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main")
 	if err != nil || !strings.Contains(stdout, "agent/") {
@@ -219,7 +222,8 @@ func TestHomeDualRootIncidentDoesNotBlockUnrelatedCreateAgent(t *testing.T) {
 
 func TestHomeProjectExplicitMaterializationUsesCollisionSafeSessionAndRepeatsNoop(t *testing.T) {
 	store := newFakeResourceStore(t)
-	addCorrectiveAIncidentRegistry(t, &store.registry)
+	projectRoot := t.TempDir()
+	addCorrectiveAIncidentRegistry(t, &store.registry, projectRoot)
 	server := newFakeTmux()
 	server.socketPath = "/tmp/fake-tmux/corrective-a"
 	home := seedCorrectiveAHomeRuntime(t, server)
@@ -228,7 +232,7 @@ func TestHomeProjectExplicitMaterializationUsesCollisionSafeSessionAndRepeatsNoo
 	sessions := &fakeSessionMaterializer{tmux: server}
 	command := &resourceReconcileCommand{
 		runner: runner, resources: store.store(), lookupEnv: func(string) string { return "" },
-		newReconciler:  correctiveAReconciler,
+		newReconciler:  correctiveAReconciler(projectRoot),
 		newOperationID: func() (string, error) { return "op-corrective-a", nil },
 		newMaterializer: func(exact tmuxCommandRunner, warn io.Writer) *materializer {
 			return &materializer{runner: exact, mirror: intmetadata.NewMirror(exact), sessions: sessions, warn: warn}
@@ -255,7 +259,7 @@ func TestHomeProjectExplicitMaterializationUsesCollisionSafeSessionAndRepeatsNoo
 
 func TestUnrelatedObservationFailureBecomesTypedD6AndDoesNotStopReconcile(t *testing.T) {
 	registry := coremetadata.NewRegistry()
-	addCorrectiveAIncidentRegistry(t, &registry)
+	addCorrectiveAIncidentRegistry(t, &registry, t.TempDir())
 	r := &registryReconciler{
 		liveSessions: func(context.Context) (map[string]bool, error) {
 			return map[string]bool{"broken": true, "home": true}, nil
