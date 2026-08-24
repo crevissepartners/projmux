@@ -35,14 +35,6 @@ func PickerOptions(options Options) picker.Options {
 	}
 }
 
-// PickerItemsFromEntries converts compat entries to native picker items. It lets
-// a caller build a picker.DeferredUpdate (whose Items are native) from the same
-// Entry rows it renders initially, without duplicating the label/value/search
-// mapping.
-func PickerItemsFromEntries(entries []Entry) []picker.Item {
-	return pickerItemsFromEntries(entries)
-}
-
 func ResultFromPicker(result picker.Result) Result {
 	return Result{
 		Key:   result.Key,

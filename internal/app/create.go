@@ -288,8 +288,9 @@ type agentPaneIntent struct {
 	// conversationID joins a provider conversation the machine already has
 	// instead of starting a new one. It requires a provider.
 	conversationID string
-	// resumeSource is private picker provenance. A native Codex row keeps the
-	// app-server resume lane; a rollout row keeps the current CLI lane.
+	// resumeSource is the private exact picker source reference. Codex uses it
+	// to retain native-vs-rollout authority; other providers carry it unchanged
+	// through the intent without changing their existing launch lane.
 	resumeSource string
 	// codexCapability is a connection/version-bound picker selection. It is a
 	// private UI intent field, not a public create flag or persisted config.

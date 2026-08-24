@@ -311,7 +311,7 @@ func TestNativeResumeSelectionPreservesCatalogSourceOnIntent(t *testing.T) {
 	}
 }
 
-func TestNonCodexResumeSelectionDoesNotChangeIntentProvenance(t *testing.T) {
+func TestNonCodexResumeSelectionPreservesExactSourceReference(t *testing.T) {
 	for _, provider := range []string{aiModeClaude, aiModeAntigravity} {
 		t.Run(provider, func(t *testing.T) {
 			home := t.TempDir()
@@ -322,8 +322,8 @@ func TestNonCodexResumeSelectionDoesNotChangeIntentProvenance(t *testing.T) {
 			}, "down"); err != nil {
 				t.Fatal(err)
 			}
-			if len(creator.intents) != 1 || creator.intents[0].resumeSource != "" {
-				t.Fatalf("intent=%+v, non-Codex provenance must remain unchanged", creator.intents)
+			if len(creator.intents) != 1 || creator.intents[0].resumeSource != "provider-existing-source" || creator.intents[0].conversationID != id {
+				t.Fatalf("intent=%+v, exact id/source reference must survive selection", creator.intents)
 			}
 		})
 	}
@@ -463,8 +463,8 @@ func TestCatalogOpenFailurePickerUsesOneVisibleRolloutRowAndIntent(t *testing.T)
 			}
 			row := runner.options.Entries[1]
 			if !strings.Contains(row.Label, "[fallback]") || strings.Contains(row.Label, aisessions.SourceCodexRollout) ||
-				!strings.Contains(row.SearchKey, aisessions.SourceCodexRollout) || !strings.Contains(row.SearchKey, test.reason) {
-				t.Fatalf("row=%#v, want compact fallback and searchable raw provenance", row)
+				!strings.Contains(row.SearchKey, aisessions.SourceCodexRollout) || strings.Contains(row.SearchKey, test.reason) {
+				t.Fatalf("row=%#v, want compact source reference without detail reason", row)
 			}
 			if len(creator.intents) != 1 || creator.intents[0].conversationID != id ||
 				creator.intents[0].resumeSource != aisessions.SourceCodexRollout {

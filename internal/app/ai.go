@@ -86,33 +86,32 @@ type codexCapabilitySession interface {
 }
 
 type aiCommand struct {
-	runner                     aiCommandRunner
-	nativePicker               intpicker.Runner
-	executable                 func() (string, error)
-	lookupEnv                  func(string) string
-	homeDir                    func() (string, error)
-	stdin                      io.Reader
-	readFile                   func(string) ([]byte, error)
-	writeFile                  func(string, []byte, os.FileMode) error
-	mkdirAll                   func(string, os.FileMode) error
-	runCommand                 func(ctx context.Context, name string, args ...string) error
-	readCommand                func(ctx context.Context, name string, args ...string) ([]byte, error)
-	now                        func() time.Time
-	sleep                      func(time.Duration)
-	producer                   attentionNotifyProducer
-	notifyStore                notifyStore
-	events                     notifyQueueRefreshEvents
-	notifyDiagnostics          *diagnostics.NotifyFocusRecorder
-	operationalDiagnostics     *diagnostics.AIRecorder
-	openCodexCapabilitySession func(context.Context) (codexCapabilitySession, error)
-	openCodexCatalog           aisessions.OpenCodexCatalog
-	discoverResumeProvider     func(context.Context, string, string, aisessions.DiscoverOptions, int) (aisessions.ProviderDiscovery, error)
-	readResumePreview          func(context.Context, aisessions.SessionMeta, aisessions.OpenCodexCatalog) (aisessions.Preview, error)
-	enrichResumeTurns          func([]aisessions.SessionMeta) []aisessions.SessionMeta
-	codexCapabilityCache       *corecap.Cache
-	codexCapabilitySessionMu   sync.Mutex
-	codexCapabilitySession     codexCapabilitySession
-	notifyDeliveryOwnsTopLevel bool
+	runner                        aiCommandRunner
+	nativePicker                  intpicker.Runner
+	executable                    func() (string, error)
+	lookupEnv                     func(string) string
+	homeDir                       func() (string, error)
+	stdin                         io.Reader
+	readFile                      func(string) ([]byte, error)
+	writeFile                     func(string, []byte, os.FileMode) error
+	mkdirAll                      func(string, os.FileMode) error
+	runCommand                    func(ctx context.Context, name string, args ...string) error
+	readCommand                   func(ctx context.Context, name string, args ...string) ([]byte, error)
+	now                           func() time.Time
+	sleep                         func(time.Duration)
+	producer                      attentionNotifyProducer
+	notifyStore                   notifyStore
+	events                        notifyQueueRefreshEvents
+	notifyDiagnostics             *diagnostics.NotifyFocusRecorder
+	operationalDiagnostics        *diagnostics.AIRecorder
+	openCodexCapabilitySession    func(context.Context) (codexCapabilitySession, error)
+	openCodexCatalog              aisessions.OpenCodexCatalog
+	discoverResumeSummaryProvider func(context.Context, string, string, aisessions.ResumeSummaryOptions, int) (aisessions.ResumeSummaryDiscovery, error)
+	readResumePreview             func(context.Context, aisessions.ResumeDetailRef, aisessions.OpenCodexCatalog) (aisessions.Preview, error)
+	codexCapabilityCache          *corecap.Cache
+	codexCapabilitySessionMu      sync.Mutex
+	codexCapabilitySession        codexCapabilitySession
+	notifyDeliveryOwnsTopLevel    bool
 	// loadRegistry and updateRegistry are the resource registry seam the hook
 	// ingest path uses to persist the provider session ref onto the Agent. Both
 	// are nil unless explicitly wired, and a nil seam disables the write
@@ -134,23 +133,22 @@ type aiCommand struct {
 
 func newAICommand() *aiCommand {
 	return &aiCommand{
-		nativePicker:           intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		executable:             resolveExecutablePath,
-		lookupEnv:              os.Getenv,
-		homeDir:                os.UserHomeDir,
-		stdin:                  os.Stdin,
-		readFile:               os.ReadFile,
-		writeFile:              os.WriteFile,
-		mkdirAll:               os.MkdirAll,
-		runCommand:             runExternalCommand,
-		readCommand:            readExternalCommand,
-		openCodexCatalog:       aisessions.NewDefaultCodexCatalogOpener(version.String()),
-		discoverResumeProvider: aisessions.DiscoverProviderContext,
-		readResumePreview:      aisessions.ReadPreview,
-		enrichResumeTurns:      aisessions.EnrichTurns,
-		now:                    time.Now,
-		sleep:                  time.Sleep,
-		producer:               newAttentionNotifyProducer(),
+		nativePicker:                  intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		executable:                    resolveExecutablePath,
+		lookupEnv:                     os.Getenv,
+		homeDir:                       os.UserHomeDir,
+		stdin:                         os.Stdin,
+		readFile:                      os.ReadFile,
+		writeFile:                     os.WriteFile,
+		mkdirAll:                      os.MkdirAll,
+		runCommand:                    runExternalCommand,
+		readCommand:                   readExternalCommand,
+		openCodexCatalog:              aisessions.NewDefaultCodexCatalogOpener(version.String()),
+		discoverResumeSummaryProvider: aisessions.DiscoverResumeSummariesContext,
+		readResumePreview:             aisessions.ReadResumeDetailPreview,
+		now:                           time.Now,
+		sleep:                         time.Sleep,
+		producer:                      newAttentionNotifyProducer(),
 		openCodexCapabilitySession: func(ctx context.Context) (codexCapabilitySession, error) {
 			return codexappserver.OpenDefaultCapabilitySession(ctx, version.String())
 		},
@@ -1202,8 +1200,7 @@ func (c *aiCommand) createShellPane(producer canonicalCreateProducer, direction 
 	return c.createPaneFromIntent(agentPaneIntent{producer: producer, placement: direction})
 }
 
-// createResumedAgentPane opens a provider Agent that joins an existing
-// conversation instead of starting a new one.
+// createResumedAgentPane keeps source-free callers on the historical intent.
 func (c *aiCommand) createResumedAgentPane(producer canonicalCreateProducer, mode, direction, conversationID string) error {
 	return c.createResumedAgentPaneWithSource(producer, mode, direction, conversationID, "")
 }
@@ -1324,17 +1321,15 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	limit := resolveAIResumePickerLimit(c.homeDir, c.lookupEnv, contextDir).Limit
 	controller := newAIResumeLiveController(c, contextDir, homeDir, depth, limit)
 	defer controller.close()
-	// The seed is consumed only after NativeRunner has rendered its initial
-	// New+loading snapshot and started the deferred worker. Discovery therefore
-	// cannot delay terminal setup, renderer entry, or input readiness.
-	controller.signal()
 	locale := appLocale(c.homeDir, c.lookupEnv)
+	entries := controller.initialEntries()
+	footer := fmt.Sprintf(localizeUIText(locale, "Showing latest %d resume sessions."), len(controller.snapshotSummaries()))
 	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, c.themedPickerOptions(intpickercompat.Options{
 		UI:                    "ai-resume-picker",
-		Entries:               controller.initialEntries(),
+		Entries:               entries,
 		Title:                 localizeUIText(locale, "AI Resume - Split direction: ") + direction,
 		Prompt:                "AI Resume > ",
-		Footer:                projmuxFooter(localizeUIText(locale, "Loading resume sessions…")),
+		Footer:                projmuxFooter(footer),
 		ExpectKeys:            []string{"enter"},
 		Bindings:              pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, aiResumePickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s"),
 		DeferredUpdate:        controller.update,
@@ -1357,7 +1352,7 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	if !ok {
 		return nil
 	}
-	selection = enrichAIResumeSelection(selection, controller.snapshotSessions())
+	selection = enrichAIResumeSelectionFromSummaries(selection, controller.snapshotSummaries())
 	return c.runSelectedResumeSession(selection, direction)
 }
 
@@ -1403,22 +1398,36 @@ const (
 	aiResumeEmptyCell       = "-"
 )
 
-func aiResumeSessionRowsWithLabels(sessions []aisessions.SessionMeta, conversationLabels map[string]string, limit int, now time.Time, locale i18n.Locale, baseCWD string, depth int) ([]intpickercompat.Entry, int, int) {
-	limit = normalizeResumePickerLimit(limit)
-	total := len(sessions)
-	if len(sessions) > limit {
-		sessions = sessions[:limit]
-	}
-	rows := make([]intpickercompat.Entry, 0, len(sessions)+1)
+// aiResumeSummaryRowsWithLabels renders the frozen Phase-0 list projection.
+// Only ResumeSummary fields participate in labels/search/value; detail fields
+// such as turns, runtime status, fallback reason, and preview bytes cannot
+// mutate the list because they are absent from this input type.
+func aiResumeSummaryRowsWithLabels(summaries []aisessions.ResumeSummary, conversationLabels map[string]string, now time.Time, locale i18n.Locale, baseCWD string, depth int) []intpickercompat.Entry {
+	rows := make([]intpickercompat.Entry, 0, len(summaries)+1)
 	rows = append(rows, intpickercompat.Entry{
 		Label:     "\x1b[32m[+ New Session]\x1b[0m",
 		Value:     aiResumeNewValue,
 		SearchKey: "new session fresh agent picker",
 	})
-	for _, session := range sessions {
-		rows = append(rows, aiResumeSessionRowWithLabel(session, conversationLabels[strings.TrimSpace(session.ResumeID)], now, locale, baseCWD, depth))
+	for _, summary := range summaries {
+		session := aiResumeSessionMetaFromSummary(summary, baseCWD)
+		rows = append(rows, aiResumeSessionRowWithLabel(session, conversationLabels[strings.TrimSpace(summary.ResumeID)], now, locale, baseCWD, depth))
 	}
-	return rows, len(sessions), total
+	return rows
+}
+
+func aiResumeSessionMetaFromSummary(summary aisessions.ResumeSummary, baseCWD string) aisessions.SessionMeta {
+	cwd := ""
+	if relative := strings.TrimSpace(summary.RelativeCWD); relative == "./" {
+		cwd = baseCWD
+	} else if after, ok := strings.CutPrefix(relative, "./"); ok {
+		cwd = filepath.Join(baseCWD, after)
+	}
+	return aisessions.SessionMeta{
+		Agent: summary.Provider, ResumeID: summary.ResumeID, Title: summary.Label,
+		LastModified: summary.LastModified, UpdatedAt: summary.UpdatedAt,
+		Context: aisessions.SessionContext{CWD: cwd, Branch: summary.Branch}, Source: summary.Source,
+	}
 }
 
 func aiResumeSessionRowWithLabel(session aisessions.SessionMeta, boundLabel string, now time.Time, locale i18n.Locale, baseCWD string, depth int) intpickercompat.Entry {
@@ -1576,6 +1585,14 @@ func (c *aiCommand) resolveAIResumeConversationLabels(sessions []aisessions.Sess
 		return nil
 	}
 	return aiResumeExactAgentLabels(registry)
+}
+
+func (c *aiCommand) resolveAIResumeSummaryLabels(summaries []aisessions.ResumeSummary) map[string]string {
+	sessions := make([]aisessions.SessionMeta, 0, len(summaries))
+	for _, summary := range summaries {
+		sessions = append(sessions, aiResumeSessionMetaFromSummary(summary, ""))
+	}
+	return c.resolveAIResumeConversationLabels(sessions)
 }
 
 func aiResumeExactAgentLabels(registry coremetadata.Registry) map[string]string {
@@ -1782,6 +1799,14 @@ func enrichAIResumeSelection(selection aiResumeSelection, sessions []aisessions.
 	return selection
 }
 
+func enrichAIResumeSelectionFromSummaries(selection aiResumeSelection, summaries []aisessions.ResumeSummary) aiResumeSelection {
+	sessions := make([]aisessions.SessionMeta, 0, len(summaries))
+	for _, summary := range summaries {
+		sessions = append(sessions, aiResumeSessionMetaFromSummary(summary, ""))
+	}
+	return enrichAIResumeSelection(selection, sessions)
+}
+
 func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direction string) error {
 	mode := normalizeAIMode(selection.agent)
 	if mode != aiModeClaude && mode != aiModeCodex && mode != aiModeAntigravity {
@@ -1801,10 +1826,10 @@ func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direct
 		_ = c.displayMessage(fmt.Sprintf("Could not resume %s session: %v; launching new session", mode, err))
 		return c.createAgentPane(canonicalProducerResumePicker, mode, direction)
 	}
-	if mode == aiModeCodex {
-		return c.createResumedAgentPaneWithSource(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1], selection.source)
+	if strings.TrimSpace(selection.source) == "" {
+		return c.createResumedAgentPane(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1])
 	}
-	return c.createResumedAgentPane(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1])
+	return c.createResumedAgentPaneWithSource(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1], selection.source)
 }
 
 func resumeArgsForAgent(mode, resumeID string) ([]string, error) {

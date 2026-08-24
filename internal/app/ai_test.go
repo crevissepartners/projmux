@@ -25,6 +25,20 @@ import (
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
+func aiResumeSessionRowsWithLabels(sessions []aisessions.SessionMeta, conversationLabels map[string]string, limit int, now time.Time, locale i18n.Locale, baseCWD string, depth int) ([]intpickercompat.Entry, int, int) {
+	limit = normalizeResumePickerLimit(limit)
+	total := len(sessions)
+	if len(sessions) > limit {
+		sessions = sessions[:limit]
+	}
+	rows := make([]intpickercompat.Entry, 0, len(sessions)+1)
+	rows = append(rows, intpickercompat.Entry{Label: "\x1b[32m[+ New Session]\x1b[0m", Value: aiResumeNewValue, SearchKey: "new session fresh agent picker"})
+	for _, session := range sessions {
+		rows = append(rows, aiResumeSessionRowWithLabel(session, conversationLabels[strings.TrimSpace(session.ResumeID)], now, locale, baseCWD, depth))
+	}
+	return rows, len(sessions), total
+}
+
 func TestAISettingsGetAndSetMode(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
