@@ -990,9 +990,9 @@ func (c *createCommand) ensureProjectRuntime(
 	if err := c.ensureRuntimeRoute(ctx); err != nil {
 		return "", err
 	}
-	sessionName := c.sessionNameFor(project.Spec.Root)
-	if project.Status.Session != nil && strings.TrimSpace(project.Status.Session.Name) != "" {
-		sessionName = project.Status.Session.Name
+	sessionName := c.reconciler.projectPhysicalSessionName(*working, project)
+	if sessionName == "" {
+		return "", fmt.Errorf("create: Project %q has no valid collision-safe physical session name", project.Metadata.UID)
 	}
 	created, err := c.runtime.ensureSession(ctx, project, sessionName, ledger)
 	if err != nil {
@@ -1086,9 +1086,9 @@ func (c *createCommand) projectOwnershipGuard(scope createScope) createPreReconc
 	return func(ctx context.Context, working coremetadata.Registry, mutator coremetadata.Mutator, operationID string) (liveSessionIdentity, error) {
 		project, err := c.resolveProject(working, scope)
 		if err == nil {
-			sessionName := c.sessionNameFor(project.Spec.Root)
-			if project.Status.Session != nil && strings.TrimSpace(project.Status.Session.Name) != "" {
-				sessionName = project.Status.Session.Name
+			sessionName := c.reconciler.projectPhysicalSessionName(working, project)
+			if sessionName == "" {
+				return liveSessionIdentity{}, fmt.Errorf("create: Project %q has no valid collision-safe physical session name", project.Metadata.UID)
 			}
 			identity, _, err := c.runtime.preflightSessionOwnership(ctx, project, sessionName)
 			if identity.Name == "" {
@@ -1163,9 +1163,9 @@ func (c *createCommand) exactProjectOwnershipGuard(projectUID string) createPreR
 		if !ok {
 			return liveSessionIdentity{}, fmt.Errorf("create: project %q disappeared before ownership preflight", projectUID)
 		}
-		sessionName := c.sessionNameFor(project.Spec.Root)
-		if project.Status.Session != nil && strings.TrimSpace(project.Status.Session.Name) != "" {
-			sessionName = project.Status.Session.Name
+		sessionName := c.reconciler.projectPhysicalSessionName(working, *project)
+		if sessionName == "" {
+			return liveSessionIdentity{}, fmt.Errorf("create: Project %q has no valid collision-safe physical session name", project.Metadata.UID)
 		}
 		identity, _, err := c.runtime.preflightSessionOwnership(ctx, *project, sessionName)
 		if identity.Name == "" {

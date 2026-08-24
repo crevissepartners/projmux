@@ -3,10 +3,12 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -15,6 +17,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/pins"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -73,14 +76,19 @@ type registryReconciler struct {
 	// unknown live uid observable and untouched; lifecycle convergence retains
 	// the historical mint-and-rebind behavior.
 	refuseForeign bool
-	// refusedSessions is populated only by the public repair planner after it
-	// observes a foreign or ambiguous Project binding. Lifecycle reconciliation
-	// leaves it nil and retains its existing behavior.
+	// refusedSessions is always writable. The public repair planner pre-populates
+	// it from the server-wide Project inventory; lifecycle/create reconciliation
+	// can then quarantine a per-session observation without turning one unrelated
+	// refusal into a panic or a transaction-wide failure.
 	refusedSessions map[string]bool
 	// refusedSessionDivergence carries the classifier result that caused the
 	// quarantine. Reporting reads this value instead of inferring a second D4
 	// wrapper from a string key.
 	refusedSessionDivergence map[string]resourcegraph.Divergence
+	// refusedSessionReasons is the operator-facing half of the typed refusal.
+	// Keeping it beside the divergence prevents report construction from trying
+	// to reconstruct authority from a session name after the fact.
+	refusedSessionReasons map[string]string
 	// exactProjects is populated only by the public repair planner. It carries
 	// a known Registry Project UID already mirrored on a live session so a
 	// stale project-path anchor after rebind can be repaired without treating
@@ -114,7 +122,11 @@ func newRegistryReconcilerWithRoute(runner tmuxCommandRunner, sessions sessionLi
 		// Every production caller is an automatic/default recovery path unless
 		// it explicitly opts into the approved D3 matcher. D2 import therefore
 		// starts closed even for create-time convergence.
-		refuseForeign: true,
+		refuseForeign:            true,
+		refusedSessions:          map[string]bool{},
+		refusedSessionDivergence: map[string]resourcegraph.Divergence{},
+		refusedSessionReasons:    map[string]string{},
+		exactProjects:            map[string]string{},
 		sessionNameFor: func(root string) string {
 			return namer.SessionName(root)
 		},
@@ -135,6 +147,40 @@ func newRegistryReconcilerWithRoute(runner tmuxCommandRunner, sessions sessionLi
 		reconciler.mirrorPane = typed.MirrorPane
 	}
 	return reconciler
+}
+
+// initializeRefusalBookkeeping preserves the constructor invariant for test and
+// planner factories that inject a reconciler literal. Production constructors
+// already initialize every map, but the planner is a public fault-containment
+// boundary and must not trust an injected factory to do so.
+func (r *registryReconciler) initializeRefusalBookkeeping() {
+	if r.refusedSessions == nil {
+		r.refusedSessions = map[string]bool{}
+	}
+	if r.refusedSessionDivergence == nil {
+		r.refusedSessionDivergence = map[string]resourcegraph.Divergence{}
+	}
+	if r.refusedSessionReasons == nil {
+		r.refusedSessionReasons = map[string]string{}
+	}
+	if r.exactProjects == nil {
+		r.exactProjects = map[string]string{}
+	}
+}
+
+func (r *registryReconciler) refuseSession(name string, divergence resourcegraph.Divergence, reason string) {
+	r.initializeRefusalBookkeeping()
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	r.refusedSessions[name] = true
+	if divergence.Valid() {
+		r.refusedSessionDivergence[name] = divergence
+	}
+	if reason = strings.TrimSpace(reason); reason != "" {
+		r.refusedSessionReasons[name] = reason
+	}
 }
 
 func (r *registryReconciler) writeProjectMirror(ctx context.Context, sessionName string, project coremetadata.Project) error {
@@ -236,6 +282,7 @@ func (r *registryReconciler) reconcileGuarded(
 	operationID string,
 	guard createPreReconcile,
 ) error {
+	r.initializeRefusalBookkeeping()
 	live, err := r.liveSessions(ctx)
 	if err != nil {
 		return err
@@ -365,14 +412,25 @@ func (r *registryReconciler) importLiveSessions(
 			// the whole create because one unrelated session is in a strange
 			// state would be worse than skipping it. There is nothing to repair
 			// with either, so it is not handed on.
+			r.refuseSession(name, resourcegraph.DivergenceUnknown, "live session observation failed: "+err.Error())
 			continue
 		}
 		if r.refusedSessions[name] {
 			continue
 		}
+		if _, control := working.ControlSessionBySession(name); control {
+			// An exact ControlSession declaration is root-kind authority. A Project
+			// path on that same physical session is contamination, not permission
+			// to reinterpret the control-owned Window/Pane chain as a Project.
+			if strings.TrimSpace(legacy.Root) != "" {
+				r.refuseSession(name, resourcegraph.DivergenceContaminated,
+					"exact ControlSession carries a foreign Project root claim")
+			}
+			continue
+		}
 		if projectUID := r.exactProjects[name]; projectUID != "" {
 			if r.sessionBindingRefused(*working, projectUID, legacy) {
-				r.refusedSessions[name] = true
+				r.refuseSession(name, r.refusedSessionDivergence[name], "live session binding is outside the exact Project owner scope")
 				continue
 			}
 			unresolved = append(unresolved, observedSession{name: name, projectUID: projectUID, legacy: legacy, targets: targets})
@@ -384,7 +442,7 @@ func (r *registryReconciler) importLiveSessions(
 				projectUID = project.Metadata.UID
 			}
 			if r.sessionBindingRefused(*working, projectUID, legacy) {
-				r.refusedSessions[name] = true
+				r.refuseSession(name, r.refusedSessionDivergence[name], "live session binding is outside the exact Project owner scope")
 				continue
 			}
 		}
@@ -482,7 +540,7 @@ func (r *registryReconciler) reapplyUnresolvedBindings(
 			continue
 		}
 		if r.refuseForeign && r.sessionBindingRefused(*working, projectUID, session.legacy) {
-			r.refusedSessions[session.name] = true
+			r.refuseSession(session.name, r.refusedSessionDivergence[session.name], "live session binding is outside the exact Project owner scope")
 			continue
 		}
 		r.reapplySessionBindings(ctx, working, mutator, operationID, projectUID, session, binder)
@@ -492,9 +550,7 @@ func (r *registryReconciler) reapplyUnresolvedBindings(
 func (r *registryReconciler) sessionBindingRefused(registry coremetadata.Registry, projectUID string, legacy coremetadata.LegacySession) bool {
 	divergence := resourceSessionBindingDivergence(registry, projectUID, legacy)
 	if divergence != "" {
-		if r.refusedSessionDivergence == nil {
-			r.refusedSessionDivergence = map[string]resourcegraph.Divergence{}
-		}
+		r.initializeRefusalBookkeeping()
 		r.refusedSessionDivergence[legacy.Session] = divergence
 	}
 	return divergence != "" && !(r.approvedOrphanImport && divergence == resourcegraph.DivergenceOrphanMirror)
@@ -547,6 +603,50 @@ func resourceSessionBindingDivergence(registry coremetadata.Registry, projectUID
 	return ""
 }
 
+type registrySessionClaimKind string
+
+const (
+	registrySessionClaimNone    registrySessionClaimKind = "none"
+	registrySessionClaimProject registrySessionClaimKind = "project"
+	registrySessionClaimControl registrySessionClaimKind = "control-session"
+	registrySessionClaimRefused registrySessionClaimKind = "refused"
+)
+
+// registrySessionClaim is the typed Registry answer for one physical tmux
+// session name. It deliberately distinguishes the two root kinds instead of
+// returning a bare uid that a caller could silently reinterpret.
+type registrySessionClaim struct {
+	Kind       registrySessionClaimKind
+	UID        string
+	Divergence resourcegraph.Divergence
+	Reason     string
+}
+
+func (r *registryReconciler) resolveRegistrySessionClaim(registry coremetadata.Registry, sessionName string) registrySessionClaim {
+	sessionName = strings.TrimSpace(sessionName)
+	if sessionName == "" {
+		return registrySessionClaim{Kind: registrySessionClaimNone}
+	}
+	// ControlSession.spec.session is an exact identity edge. It wins before a
+	// Project's remembered/fallback physical name is considered; otherwise a
+	// stale Project projection can cross-adopt the control-owned descendants.
+	if control, ok := registry.ControlSessionBySession(sessionName); ok {
+		return registrySessionClaim{Kind: registrySessionClaimControl, UID: control.Metadata.UID}
+	}
+	claims := resourceSessionProjectClaims(registry, sessionName, r)
+	switch len(claims) {
+	case 0:
+		return registrySessionClaim{Kind: registrySessionClaimNone}
+	case 1:
+		return registrySessionClaim{Kind: registrySessionClaimProject, UID: claims[0]}
+	default:
+		return registrySessionClaim{
+			Kind: registrySessionClaimRefused, Divergence: resourcegraph.DivergenceContaminated,
+			Reason: "multiple Registry Projects claim the live session-name edge",
+		}
+	}
+}
+
 // projectsBySessionName maps a live tmux session name onto the one Project that
 // claims it.
 //
@@ -560,7 +660,6 @@ func resourceSessionBindingDivergence(registry coremetadata.Registry, projectUID
 // liveness is already established by construction.
 func (r *registryReconciler) projectsBySessionName(registry coremetadata.Registry) map[string]string {
 	byName := map[string]string{}
-	ambiguous := map[string]bool{}
 	for _, project := range registry.Projects {
 		name := strings.TrimSpace(r.sessionNameFor(project.Spec.Root))
 		if project.Status.Session != nil && strings.TrimSpace(project.Status.Session.Name) != "" {
@@ -569,16 +668,55 @@ func (r *registryReconciler) projectsBySessionName(registry coremetadata.Registr
 		if name == "" {
 			continue
 		}
-		if _, seen := byName[name]; seen {
-			ambiguous[name] = true
-			continue
+		claim := r.resolveRegistrySessionClaim(registry, name)
+		if claim.Kind == registrySessionClaimProject {
+			byName[name] = claim.UID
 		}
-		byName[name] = project.Metadata.UID
-	}
-	for name := range ambiguous {
-		delete(byName, name)
 	}
 	return byName
+}
+
+// projectPhysicalSessionName chooses the persistent runtime projection for one
+// Project without changing its Registry identity. Existing non-colliding
+// projections are preserved. When another Registry root owns that exact
+// physical name, the Project receives a deterministic full-UID suffix; the
+// suffix is stable across order, restart, and repeat reconcile, and is valid
+// under the existing session-state/tmux name rules.
+func (r *registryReconciler) projectPhysicalSessionName(registry coremetadata.Registry, project coremetadata.Project) string {
+	preferred := ""
+	if project.Status.Session != nil {
+		preferred = strings.TrimSpace(project.Status.Session.Name)
+	}
+	if preferred == "" && r != nil && r.sessionNameFor != nil {
+		preferred = strings.TrimSpace(r.sessionNameFor(project.Spec.Root))
+	}
+	if preferred == "" {
+		return ""
+	}
+	if !projectSessionNameClaimedByOtherRoot(registry, preferred) {
+		return preferred
+	}
+	base := preferred + "--" + project.Metadata.UID
+	for suffix := range 100000 {
+		candidate := base
+		if suffix > 0 {
+			candidate += "-" + strconv.Itoa(suffix+1)
+		}
+		if sessionstate.ValidateSessionName(candidate) != nil {
+			return ""
+		}
+		if !projectSessionNameClaimedByOtherRoot(registry, candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func projectSessionNameClaimedByOtherRoot(registry coremetadata.Registry, sessionName string) bool {
+	if _, ok := registry.ControlSessionBySession(sessionName); ok {
+		return true
+	}
+	return false
 }
 
 // reapplySessionBindings walks one resolved session and writes the binding of
@@ -823,9 +961,9 @@ func (r *registryReconciler) mirrorImported(
 func (r *registryReconciler) refreshSessionProjections(working *coremetadata.Registry, mutator coremetadata.Mutator, live map[string]bool) error {
 	for i := range working.Projects {
 		project := working.Projects[i]
-		name := r.sessionNameFor(project.Spec.Root)
-		if project.Status.Session != nil && strings.TrimSpace(project.Status.Session.Name) != "" {
-			name = project.Status.Session.Name
+		name := r.projectPhysicalSessionName(*working, project)
+		if name == "" {
+			return fmt.Errorf("reconcile Project %q: no valid collision-safe physical session name", project.Metadata.UID)
 		}
 		if _, err := mutator.BindProjectSession(working, project.Metadata.UID, name, live[name]); err != nil {
 			return err
