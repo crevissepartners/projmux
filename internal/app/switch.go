@@ -1733,6 +1733,10 @@ func (c *switchCommand) launchSidebarOpenContinuation(ctx context.Context, plan 
 		env[inttmux.SwitchTargetClientEnv] = strings.TrimSpace(client)
 	}
 	command := buildShellCommand(binaryPath, args, env)
+	// sidebar-open reports operational failures through its own journal entry and
+	// reopens the picker with the actionable error. Keep the detached tmux job
+	// successful so run-shell does not replace that UI with its raw shell command.
+	command += " || :"
 	if _, err := c.tmuxRunner.Run(ctx, "tmux", "run-shell", "-b", command); err != nil {
 		return fmt.Errorf("launch sidebar open continuation: %w", err)
 	}

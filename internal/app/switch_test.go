@@ -235,6 +235,9 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 			t.Fatalf("continuation command = %q, want substring %q", command, want)
 		}
 	}
+	if !strings.HasSuffix(command, " || :") {
+		t.Fatalf("continuation command = %q, want detached failure suppression", command)
+	}
 	if strings.Contains(command, "display-popup -C") {
 		t.Fatalf("continuation command = %q, should not self-close before launching", command)
 	}
