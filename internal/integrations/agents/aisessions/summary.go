@@ -8,7 +8,15 @@ import (
 	"time"
 )
 
-const DefaultResumeSummaryNativeBudget = 300 * time.Millisecond
+const (
+	DefaultResumeSummaryNativeBudget = 300 * time.Millisecond
+
+	// resumeSummaryCancellationSettlementBudget is not additional discovery
+	// time. It is a bounded handoff window for a cancellation-aware fallback
+	// that has already stopped scanning to publish its empty or partial result.
+	// The app keeps this inside the <500ms first-frame contract.
+	resumeSummaryCancellationSettlementBudget = 25 * time.Millisecond
+)
 
 // ResumeSummary is the list-only projection used by the Resume Picker. It
 // deliberately excludes turns, runtime state, provenance explanations, and
@@ -118,14 +126,11 @@ func DiscoverResumeSummariesContext(ctx context.Context, provider, cwd string, o
 			case sessions = <-fallback:
 			case <-ctx.Done():
 				cancelFallback()
-				// Prefer a cancellation-settled partial result when it is already
-				// available, otherwise settle as available-empty. The invocation
-				// envelope is not a provider failure.
-				select {
-				case sessions = <-fallback:
-				default:
-					sessions = []SessionMeta{}
-				}
+				// Cancellation asks the bounded scanner to stop, but its result send
+				// races with ctx.Done. Give only that handoff a short bounded window
+				// so a matching partial cannot become empty merely because the send
+				// had not reached the buffered channel yet.
+				sessions = settleCanceledCodexFallback(fallback)
 			}
 			for i := range sessions {
 				sessions[i].Confidence = ConfidenceMedium
@@ -150,6 +155,17 @@ func DiscoverResumeSummariesContext(ctx context.Context, provider, cwd string, o
 		detailRefs = append(detailRefs, detailRef)
 	}
 	return ResumeSummaryDiscovery{Summaries: summaries, DetailRefs: detailRefs, Codex: codexOutcome, MoreNotLoaded: moreNotLoaded}, nil
+}
+
+func settleCanceledCodexFallback(fallback <-chan []SessionMeta) []SessionMeta {
+	timer := time.NewTimer(resumeSummaryCancellationSettlementBudget)
+	defer timer.Stop()
+	select {
+	case sessions := <-fallback:
+		return sessions
+	case <-timer.C:
+		return []SessionMeta{}
+	}
 }
 
 type resumeSummaryNativeResult struct {

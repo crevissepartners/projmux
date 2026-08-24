@@ -233,6 +233,52 @@ func TestResumeSummaryHundredsOfRolloutsStartConcurrentlyWithNative(t *testing.T
 	}
 }
 
+func TestResumeSummaryLargeRolloutPartialSettlesAtEnvelopeCutoff(t *testing.T) {
+	root := t.TempDir()
+	day := filepath.Join(root, "2026", "08", "24")
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const currentOwnerID = "01a032ae-129b-7b73-95f9-e15300f130e7"
+	for i := 1; i < 600; i++ {
+		id := fmt.Sprintf("019f0000-0000-7000-8000-%012d", i)
+		writeFile(t, filepath.Join(day, fmt.Sprintf("rollout-%03d.jsonl", i)), fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"cwd":"/other/repo"}}
+`, id))
+	}
+	writeFile(t, filepath.Join(day, "rollout-000-current.jsonl"), `{"type":"session_meta","payload":{"id":"`+currentOwnerID+`","cwd":"/work/app"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"current owner"}}
+`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	catalog := &blockingSummaryCatalog{closed: make(chan struct{}), returned: make(chan struct{})}
+	startedAt := time.Now()
+	discovery, err := DiscoverResumeSummariesContext(ctx, AgentCodex, "/work/app", ResumeSummaryOptions{
+		DiscoverOptions: DiscoverOptions{CodexSessionsDir: root, OpenCodexCatalog: func(context.Context) (CodexCatalog, error) { return catalog, nil }},
+		NativeBudget:    10 * time.Millisecond,
+		discoverCodexFallback: func(ctx context.Context, cwd, sessionsDir string, depth int) []SessionMeta {
+			// Finish a real large-store scan, then force the matching partial to
+			// cross the exact ctx.Done/result-send edge that used to settle empty.
+			sessions := discoverCodexContext(context.Background(), cwd, sessionsDir, depth)
+			<-ctx.Done()
+			time.Sleep(2 * time.Millisecond)
+			return sessions
+		},
+	}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(startedAt); elapsed >= 500*time.Millisecond {
+		t.Fatalf("envelope-edge fallback settled in %s, want <500ms", elapsed)
+	}
+	if discovery.Codex.Source != CatalogSourceFallback || len(discovery.Summaries) != 1 {
+		t.Fatalf("envelope-edge fallback decision = %#v", discovery)
+	}
+	if got := discovery.Summaries[0]; got.ResumeID != currentOwnerID || got.Source != SourceCodexRollout {
+		t.Fatalf("envelope-edge exact id/source = %#v", got)
+	}
+}
+
 func TestResumeSummaryNativeEmptyCancelsConcurrentFallbackWithoutMerge(t *testing.T) {
 	canceled := make(chan struct{})
 	lateID := "019f0000-0000-7000-8000-000000000077"
