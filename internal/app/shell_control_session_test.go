@@ -162,9 +162,7 @@ func TestShellDoesNotMarkAProjectDefaultSession(t *testing.T) {
 
 	home := t.TempDir()
 	project := filepath.Join(home, "source", "repos", "projmux")
-	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	writeCredibleGitMarker(t, project)
 	pass := &recordedControlPass{}
 	cmd, foreground, tmux := shellControlFixture(t, home, pass)
 	cmd.getwd = func() (string, error) { return project, nil }
@@ -459,6 +457,12 @@ func TestControlBootstrapNoServerBindsFirstCreatedPhysicalRoute(t *testing.T) {
 
 	home := t.TempDir()
 	cmd, _, tmux := shellControlFixture(t, home, &recordedControlPass{})
+	// A new server has the app marker from its generated config, but its logical
+	// route marker is absent until the planned write-route-marker action runs.
+	tmux.routeMarkerAbsent = true
+	// tmux 3.5a renders display-message's separator as its escaped spelling;
+	// bootstrap must compare parsed identity fields, not raw transport bytes.
+	tmux.escapedDisplayRow = true
 	noServer := errors.New("no server running on /tmp/tmux-1000/projmux")
 	tmux.socketReads = []scriptedSocketRead{
 		{err: noServer},
@@ -478,6 +482,9 @@ func TestControlBootstrapNoServerBindsFirstCreatedPhysicalRoute(t *testing.T) {
 	}
 	if got, want := receipt.route.expectedSocketPath, "/tmp/tmux-1000/projmux-created"; got != want {
 		t.Fatalf("bound route = %q, want %q", got, want)
+	}
+	if tmux.routeMarkerAbsent || tmux.logicalSocket != "projmux" {
+		t.Fatalf("logical marker after bootstrap = absent:%v value:%q, want projmux", tmux.routeMarkerAbsent, tmux.logicalSocket)
 	}
 }
 

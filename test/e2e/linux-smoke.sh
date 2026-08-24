@@ -10,6 +10,100 @@ cd "$smoke_root"
 smoke_build_binary
 bin="$PROJMUX_SMOKE_BIN"
 
+# A genuinely absent app socket must survive the complete ControlSession
+# bootstrap before the foreground attach. Run the user-facing, selector-free
+# command from HOME with an empty placeholder .git directory: it is neither a
+# Project marker nor permission to register HOME as a Project. This invocation
+# has no terminal, so the final attach is expected to fail after preparation;
+# the exact real-tmux server/session/route marker and ControlSession mirrors
+# must remain inspectable. This closes both ordering hazards that scripted
+# runners previously hid: the logical marker is absent before its own planned
+# write, and tmux may render the containment row separator as literal \037.
+fresh_shell_root="$PROJMUX_SMOKE_WORKDIR/fresh-shell"
+fresh_shell_socket="projmux-shell-fresh-e2e"
+fresh_shell_home="$fresh_shell_root/home"
+fresh_shell_config="$fresh_shell_root/config"
+fresh_shell_state="$fresh_shell_root/state"
+fresh_shell_runtime="$fresh_shell_root/runtime"
+fresh_shell_cache="$fresh_shell_root/cache"
+fresh_shell_usage="$fresh_shell_root/usage"
+fresh_shell_stub="$fresh_shell_root/persistent-shell"
+mkdir -p "$fresh_shell_home/.git" "$fresh_shell_config" "$fresh_shell_state" \
+  "$fresh_shell_runtime" "$fresh_shell_cache" "$fresh_shell_usage"
+chmod 0700 "$fresh_shell_runtime"
+cat >"$fresh_shell_stub" <<'FRESH_SHELL_STUB'
+#!/bin/sh
+while :; do sleep 60; done
+FRESH_SHELL_STUB
+chmod 0755 "$fresh_shell_stub"
+PROJMUX_SMOKE_TMUX_SOCKET="$fresh_shell_socket"
+export PROJMUX_SMOKE_TMUX_SOCKET
+set +e
+(
+  cd "$fresh_shell_home"
+  printf '\n' | env -u TMUX -u TMUX_PANE \
+    HOME="$fresh_shell_home" \
+    XDG_CACHE_HOME="$fresh_shell_cache" \
+    XDG_CONFIG_HOME="$fresh_shell_config" \
+    XDG_RUNTIME_DIR="$fresh_shell_runtime" \
+    XDG_STATE_HOME="$fresh_shell_state" \
+    TMUX_TMPDIR="$PROJMUX_SMOKE_TMUX_ROOT" \
+    PROJMUX_USAGE_STATE_DIR="$fresh_shell_usage" \
+    PROJMUX_SHELL_UPDATE_CHECK_TIMEOUT_MS=1 \
+    SHELL="$fresh_shell_stub" \
+    "$bin" shell --socket "$fresh_shell_socket" --bin "$bin" \
+    >"$fresh_shell_root/shell.out" 2>"$fresh_shell_root/shell.err"
+)
+fresh_shell_status=$?
+set -e
+if [[ "$fresh_shell_status" != "1" ]]; then
+  echo "non-terminal fresh projmux shell exited $fresh_shell_status, want attach failure 1 after bootstrap" >&2
+  cat "$fresh_shell_root/shell.err" >&2 || true
+  exit 1
+fi
+fresh_shell_tmux() {
+  env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$PROJMUX_SMOKE_TMUX_ROOT" tmux -L "$fresh_shell_socket" "$@"
+}
+fresh_shell_actual="$(fresh_shell_tmux display-message -p -t '=home' '#{socket_path}')"
+case "$fresh_shell_actual" in
+  "$PROJMUX_SMOKE_TMUX_ROOT"/*) ;;
+  *)
+    echo "fresh shell socket escaped smoke root: $fresh_shell_actual" >&2
+    exit 1
+    ;;
+esac
+fresh_shell_control="$(fresh_shell_tmux list-sessions -F '#{session_name}|#{@projmux_session_role}')"
+if [[ "$fresh_shell_control" != "home|control" ]]; then
+  echo "fresh shell did not preserve the exact Home ControlSession: $fresh_shell_control" >&2
+  exit 1
+fi
+if [[ "$(fresh_shell_tmux show-options -gqv @projmux_socket_name)" != "$fresh_shell_socket" ]]; then
+  echo "fresh shell logical route marker is absent or drifted" >&2
+  exit 1
+fi
+fresh_shell_identity="$(fresh_shell_tmux list-panes -t '=home' -F '#{@projmux_window_uid}|#{@projmux_pane_uid}')"
+if [[ "$fresh_shell_identity" != *"|"* ]] || [[ "$fresh_shell_identity" == "|" ]] || \
+  [[ -z "${fresh_shell_identity%%|*}" ]] || [[ -z "${fresh_shell_identity#*|}" ]]; then
+  echo "fresh shell ControlSession has incomplete Window/Pane identity: $fresh_shell_identity" >&2
+  exit 1
+fi
+fresh_shell_projects="$(
+  env -u TMUX -u TMUX_PANE \
+    HOME="$fresh_shell_home" \
+    XDG_CONFIG_HOME="$fresh_shell_config" \
+    XDG_RUNTIME_DIR="$fresh_shell_runtime" \
+    XDG_STATE_HOME="$fresh_shell_state" \
+    PROJMUX_USAGE_STATE_DIR="$fresh_shell_usage" \
+    "$bin" get projects -o uid
+)"
+if [[ -n "$fresh_shell_projects" ]]; then
+  echo "empty HOME/.git registered HOME as a Project: $fresh_shell_projects" >&2
+  exit 1
+fi
+smoke_cleanup_tmux_server "$fresh_shell_socket"
+unset PROJMUX_SMOKE_TMUX_SOCKET
+echo ">> fresh projmux shell e2e bootstrapped Home on $fresh_shell_actual"
+
 # An unattributed pane is not a Projmux scope. `create` used to fall back to a
 # runtime-only split here; it now refuses and names --project, and it must leave
 # the server exactly as it found it. The positive implicit-scope path is

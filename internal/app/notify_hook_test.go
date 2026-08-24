@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -33,9 +32,7 @@ func TestSendNotiHookDispatcherDispatchesPayloadAndEnv(t *testing.T) {
 	t.Parallel()
 
 	repo := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(repo, ".git"), 0o755); err != nil {
-		t.Fatalf("mkdir .git: %v", err)
-	}
+	writeCredibleGitMarker(t, repo)
 	runner := &recordingNotifyHookRunner{}
 	dispatcher := &sendNotiHookDispatcher{
 		runner:    runner,

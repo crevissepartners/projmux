@@ -626,7 +626,7 @@ func TestHookResolveProjectContextAllowsRepoUnderTempRoot(t *testing.T) {
 	t.Setenv("TMPDIR", tempRoot)
 	repo := filepath.Join(tempRoot, "repo")
 	wd := filepath.Join(repo, "nested")
-	mustMkdirAll(t, filepath.Join(repo, ".git"))
+	writeCredibleGitMarker(t, repo)
 	mustMkdirAll(t, wd)
 
 	cmd := &hookCommand{
@@ -641,6 +641,54 @@ func TestHookResolveProjectContextAllowsRepoUnderTempRoot(t *testing.T) {
 	if got != repo {
 		t.Fatalf("resolveProjectContext() = %q, want %q", got, repo)
 	}
+}
+
+func TestNearestProjectMarkerRequiresCredibleGitWorktreeEvidence(t *testing.T) {
+	t.Parallel()
+
+	t.Run("empty directory is not a repository", func(t *testing.T) {
+		root := t.TempDir()
+		mustMkdirAll(t, filepath.Join(root, ".git"))
+		leaf := filepath.Join(root, "nested")
+		mustMkdirAll(t, leaf)
+		if got := nearestProjectMarker(leaf, filepath.Dir(root)); got != "" {
+			t.Fatalf("nearestProjectMarker() = %q, want no marker for empty .git", got)
+		}
+	})
+
+	t.Run("normal git directory", func(t *testing.T) {
+		root := t.TempDir()
+		writeCredibleGitMarker(t, root)
+		leaf := filepath.Join(root, "nested")
+		mustMkdirAll(t, leaf)
+		if got := nearestProjectMarker(leaf, filepath.Dir(root)); got != root {
+			t.Fatalf("nearestProjectMarker() = %q, want %q", got, root)
+		}
+	})
+
+	t.Run("linked worktree gitfile", func(t *testing.T) {
+		root := t.TempDir()
+		admin := filepath.Join(root, ".git-admin")
+		writeCredibleGitAdminDir(t, admin)
+		if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: .git-admin\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		leaf := filepath.Join(root, "nested")
+		mustMkdirAll(t, leaf)
+		if got := nearestProjectMarker(leaf, filepath.Dir(root)); got != root {
+			t.Fatalf("nearestProjectMarker() = %q, want linked worktree %q", got, root)
+		}
+	})
+
+	t.Run("gitfile with missing admin directory", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.WriteFile(filepath.Join(root, ".git"), []byte("gitdir: missing\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if got := nearestProjectMarker(root, filepath.Dir(root)); got != "" {
+			t.Fatalf("nearestProjectMarker() = %q, want no marker for missing gitdir", got)
+		}
+	})
 }
 
 func TestHookResolveProjectContextExplicitEnvWinsUnderTempRoot(t *testing.T) {
@@ -674,6 +722,23 @@ func TestHookResolveProjectContextExplicitEnvWinsUnderTempRoot(t *testing.T) {
 func mustMkdirAll(t *testing.T, path string) {
 	t.Helper()
 	if err := os.MkdirAll(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func writeCredibleGitMarker(t *testing.T, root string) {
+	t.Helper()
+	writeCredibleGitAdminDir(t, filepath.Join(root, ".git"))
+}
+
+func writeCredibleGitAdminDir(t *testing.T, gitDir string) {
+	t.Helper()
+	mustMkdirAll(t, filepath.Join(gitDir, "objects"))
+	mustMkdirAll(t, filepath.Join(gitDir, "refs", "heads"))
+	if err := os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n\trepositoryformatversion = 0\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }

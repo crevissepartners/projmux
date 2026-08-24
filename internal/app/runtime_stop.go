@@ -155,6 +155,19 @@ func observeExactManagedRuntimeStopTarget(ctx context.Context, runner tmuxComman
 }
 
 func guardResolvedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute) error {
+	return guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, false)
+}
+
+// guardResolvedRuntimeMutationRouteBeforeMarkerWrite preserves the physical
+// socket, server-generation, and app-ownership authority of the normal route
+// guard while allowing the logical marker to be absent for the one action that
+// creates it. An already-present foreign marker is still drift. Callers must
+// use guardResolvedRuntimeMutationRoute after the write to prove the effect.
+func guardResolvedRuntimeMutationRouteBeforeMarkerWrite(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute) error {
+	return guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, true)
+}
+
+func guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, allowMissingLogicalMarker bool) error {
 	if runner == nil || route.target.flag == "" || route.target.value == "" {
 		return errors.New("runtime mutation route is not exact")
 	}
@@ -200,13 +213,29 @@ func guardResolvedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRu
 		return errors.New("planned runtime socket is not app-owned")
 	}
 	logical, err := routed.Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
-	if err != nil || strings.TrimSpace(string(logical)) != route.socketName {
+	logicalName := strings.TrimSpace(string(logical))
+	if err != nil || (logicalName != route.socketName && !(allowMissingLogicalMarker && logicalName == "")) {
 		return errors.New("planned runtime socket logical route marker drifted")
 	}
 	return nil
 }
 
 func guardPrintedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, action plannedRuntimeMutation) error {
+	return guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, action, false)
+}
+
+// guardPrintedRuntimeMutationRouteBeforeMarkerWrite is deliberately limited to
+// the route-marker verb. It keeps the printable/execution tuple checks exact,
+// then applies the only valid phase exception: the desired logical marker may
+// not exist until this action executes.
+func guardPrintedRuntimeMutationRouteBeforeMarkerWrite(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, action plannedRuntimeMutation) error {
+	if action.Verb != mutationWriteRouteMarker {
+		return errors.New("pre-marker route guard requires a write-route-marker action")
+	}
+	return guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx, runner, route, action, true)
+}
+
+func guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, action plannedRuntimeMutation, allowMissingLogicalMarker bool) error {
 	printed := strings.TrimSpace(action.Target.PhysicalSocket)
 	if printed == runtimeMutationSocketAbsentBeforeCreate {
 		if route.expectedSocketPath != "" || (action.Verb != mutationCreateSession && action.Verb != mutationBootstrapControlSession) {
@@ -228,6 +257,9 @@ func guardPrintedRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRun
 		if action.Target.Socket != printedRoute {
 			return errors.New("printed runtime execution route disagrees with captured route")
 		}
+	}
+	if allowMissingLogicalMarker {
+		return guardResolvedRuntimeMutationRouteBeforeMarkerWrite(ctx, runner, route)
 	}
 	return guardResolvedRuntimeMutationRoute(ctx, runner, route)
 }

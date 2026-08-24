@@ -8,6 +8,7 @@ import (
 	"go/parser"
 	"go/token"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1507,6 +1508,60 @@ func TestPrintedPhysicalSocketIsExecutionAuthority(t *testing.T) {
 	}
 	if len(runner.calls) != 0 {
 		t.Fatalf("print/execution mismatch reached tmux: %#v", runner.calls)
+	}
+}
+
+func TestPreMarkerRouteGuardAllowsOnlyTheMissingLogicalEffect(t *testing.T) {
+	t.Parallel()
+
+	logical, err := tmuxSocketNameTarget("app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := runtimeMutationRoute{
+		target:             logical,
+		expectedSocketPath: "/tmp/tmux-1000/app",
+		socketName:         "app",
+		authority: &runtimeMutationRouteAuthority{
+			Class: runtimeMutationRouteApp, ServerPID: "4242", SessionID: "$1", WindowID: "@1", PaneID: "%1",
+		},
+	}
+	action := newRuntimeMutation(1, mutationWriteRouteMarker, runtimeMutationTarget{
+		Socket: "-S=/tmp/tmux-1000/app", PhysicalSocket: "/tmp/tmux-1000/app", RouteAuthority: route.authority.printable(),
+		Kind: "session", ID: "$1", UID: "logical:app", Parent: "@1/%1",
+	})
+	action.Operands = []string{"-S", "/tmp/tmux-1000/app", "-gq", runtimeMutationSocketNameOption, "app"}
+
+	baseOutputs := map[string]string{
+		recordedTmuxCallKey("tmux", "-S", route.expectedSocketPath, "display-message", "-p", "-F", "#{socket_path}"): route.expectedSocketPath + "\n",
+		recordedTmuxCallKey("tmux", "-S", route.expectedSocketPath, "display-message", "-p", "-F", "#{pid}"):         "4242\n",
+		recordedTmuxCallKey("tmux", "-S", route.expectedSocketPath, "show-options", "-gqv", tmuxopts.AppGlobal):      "1\n",
+	}
+	for _, tc := range []struct {
+		name, marker, wantErr string
+	}{
+		{name: "missing before write"},
+		{name: "idempotent exact marker", marker: "app\n"},
+		{name: "foreign marker", marker: "foreign\n", wantErr: "logical route marker drifted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			outputs := maps.Clone(baseOutputs)
+			outputs[recordedTmuxCallKey("tmux", "-S", route.expectedSocketPath, "show-options", "-gqv", runtimeMutationSocketNameOption)] = tc.marker
+			runner := &recordingTmuxRunner{outputs: outputs}
+			err := guardPrintedRuntimeMutationRouteBeforeMarkerWrite(context.Background(), runner, route, action)
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("pre-marker guard error = %v", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("pre-marker guard error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+
+	outputs := maps.Clone(baseOutputs)
+	outputs[recordedTmuxCallKey("tmux", "-S", route.expectedSocketPath, "show-options", "-gqv", runtimeMutationSocketNameOption)] = ""
+	if err := guardPrintedRuntimeMutationRoute(context.Background(), &recordingTmuxRunner{outputs: outputs}, route, action); err == nil || !strings.Contains(err.Error(), "logical route marker drifted") {
+		t.Fatalf("normal route guard accepted missing post-write marker: %v", err)
 	}
 }
 
