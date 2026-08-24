@@ -1728,6 +1728,9 @@ func (c *switchCommand) launchSidebarOpenContinuation(ctx context.Context, plan 
 		args = append(args, "--client", strings.TrimSpace(client))
 	}
 	env := map[string]string{}
+	if anchorPane := c.lookupEnvValue(runtimeMutationAnchorPaneEnv); anchorPane != "" {
+		env[runtimeMutationAnchorPaneEnv] = anchorPane
+	}
 	if strings.TrimSpace(client) != "" {
 		env[hookTrustPopupTargetClientEnv] = strings.TrimSpace(client)
 		env[inttmux.SwitchTargetClientEnv] = strings.TrimSpace(client)

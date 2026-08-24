@@ -196,8 +196,11 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		identity:   stubSwitchIdentityResolver{name: "target"},
 		lookupEnv: func(name string) string {
-			if name == hookTrustPopupTargetClientEnv {
+			switch name {
+			case hookTrustPopupTargetClientEnv:
 				return "/dev/pts/9"
+			case runtimeMutationAnchorPaneEnv:
+				return "%12"
 			}
 			return ""
 		},
@@ -223,6 +226,7 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 	}
 	command := call.args[2]
 	for _, want := range []string{
+		runtimeMutationAnchorPaneEnv + "='%12'",
 		"PROJMUX_HOOK_TRUST_TARGET_CLIENT='/dev/pts/9'",
 		"PROJMUX_SWITCH_TARGET_CLIENT='/dev/pts/9'",
 		"'/tmp/projmux' 'switch' 'sidebar-open'",
