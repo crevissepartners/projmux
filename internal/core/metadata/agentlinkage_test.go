@@ -100,6 +100,58 @@ func TestLinkAgentPaneMintsAnAgentAndPromotesThePaneWhenNoneExists(t *testing.T)
 	}
 }
 
+func TestLinkAgentPaneRefusesCanonicalShellMarkerWithZeroWrites(t *testing.T) {
+	t.Parallel()
+
+	mutator, registry, windowUID := agentLinkageFixture(t)
+	window, _ := registry.Window(windowUID)
+	pane, _ := registry.Pane(window.Spec.DefaultShellPaneRef)
+	before := registry.Clone()
+	observed := LegacyPane{Provider: "codex", Command: "codex"}
+
+	reason := AgentPanePromotionRefusal(registry, windowUID, pane.Metadata.UID, observed)
+	if reason != "runtime Agent marker cannot reparent the canonical Window default shell Pane" {
+		t.Fatalf("canonical shell refusal = %q", reason)
+	}
+	linkage, err := mutator.LinkAgentPane(registry, windowUID, pane.Metadata.UID, observed, NewBindingMatcher(RuntimeObservation{}), "op-refuse")
+	if err != nil {
+		t.Fatalf("link canonical shell marker: %v", err)
+	}
+	if linkage.Kind != AgentLinkNone || linkage.Linked() || linkage.Promoted {
+		t.Fatalf("canonical shell linkage = %+v, want zero-write refusal", linkage)
+	}
+	if !reflect.DeepEqual(before, *registry) {
+		t.Fatalf("canonical shell refusal changed Registry:\nbefore=%+v\nafter=%+v", before, *registry)
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("canonical shell refusal left invalid Registry: %v", err)
+	}
+}
+
+func TestLinkAgentPanePreservesAnchorOnlyPromotionBehavior(t *testing.T) {
+	t.Parallel()
+
+	mutator, registry, windowUID := agentLinkageFixture(t)
+	window, _ := registry.Window(windowUID)
+	pane, _ := registry.Pane(window.Spec.AnchorPaneRef)
+	window.Spec.DefaultShellPaneRef = ""
+	observed := claudePane("sess-anchor-only")
+
+	if reason := AgentPanePromotionRefusal(registry, windowUID, pane.Metadata.UID, observed); reason != "" {
+		t.Fatalf("anchor-only Pane was refused by Corrective A: %q", reason)
+	}
+	linkage, err := mutator.LinkAgentPane(registry, windowUID, pane.Metadata.UID, observed, NewBindingMatcher(RuntimeObservation{}), "op-anchor-only")
+	if err != nil {
+		t.Fatalf("link anchor-only Pane: %v", err)
+	}
+	if !linkage.Linked() || !linkage.Promoted {
+		t.Fatalf("anchor-only linkage = %+v, want preserved promotion", linkage)
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("anchor-only linkage left invalid Registry: %v", err)
+	}
+}
+
 // TestLinkAgentPaneNeverActsOnAPaneWithNoAuthorshipMarker is Phase 1's refuse
 // rule applied to this layer: `pane_current_command` is not evidence, and a
 // pane the operator started an agent in by hand carries no projmux marker.

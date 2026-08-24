@@ -2219,6 +2219,59 @@ if [[ "$foreign_agent_after" != "$foreign_agent_before" ]]; then
   exit 1
 fi
 
+# A generic runtime provider marker is not authority to promote the canonical
+# default shell Pane into an Agent-owned Pane. Run this install-acceptance
+# follow-up after the create matrix because config apply installs asynchronous
+# hooks that the transaction-boundary fixtures above deliberately omit.
+canonical_shell_uid="$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)"
+canonical_default_shell_uid="$(pmx describe window "$alpha_window_name" -p alpha -o json | sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
+if [[ -z "$canonical_shell_uid" || "$canonical_default_shell_uid" != "$canonical_shell_uid" ]]; then
+  echo "canonical shell marker fixture is not the exact default shell: pane=$canonical_shell_uid default=$canonical_default_shell_uid" >&2
+  exit 1
+fi
+# Settle unrelated status projection before taking the protected preimage.
+pmx config apply >"$create_root/canonical-shell-config-baseline.out"
+canonical_agents_before="$(pmx get agents -p alpha -o uid | sort)"
+ctx set-option -p -t "$legacy_pane" @projmux_ai_agent codex
+canonical_registry_before="$(sha256sum "$create_registry" | awk '{print $1}')"
+cp "$create_registry" "$create_root/canonical-shell-registry-before.json"
+canonical_live_before="$(ctx display-message -p -t "$legacy_pane" '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_window_uid}|#{@projmux_pane_uid}|#{@projmux_ai_agent}')"
+pmx config apply >"$create_root/canonical-shell-config-apply.out"
+canonical_registry_after_apply="$(sha256sum "$create_registry" | awk '{print $1}')"
+canonical_live_after_apply="$(ctx display-message -p -t "$legacy_pane" '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_window_uid}|#{@projmux_pane_uid}|#{@projmux_ai_agent}')"
+if [[ "$canonical_registry_after_apply" != "$canonical_registry_before" ]] ||
+  [[ "$canonical_live_after_apply" != "$canonical_live_before" ]] ||
+  [[ "$(pmx get agents -p alpha -o uid | sort)" != "$canonical_agents_before" ]]; then
+  echo "config apply changed canonical shell Registry bytes, Agent set, or live handles/options: registry=$canonical_registry_before/$canonical_registry_after_apply live=$canonical_live_before/$canonical_live_after_apply" >&2
+  diff -u "$create_root/canonical-shell-registry-before.json" "$create_registry" >&2 || true
+  exit 1
+fi
+pmx reconcile resources --socket "$create_socket" --dry-run -o json >"$create_root/canonical-shell-d2-1.json"
+pmx reconcile resources --socket "$create_socket" --dry-run -o json >"$create_root/canonical-shell-d2-2.json"
+smoke_assert_file_contains "$create_root/canonical-shell-d2-1.json" '"divergence": "D2-unattributed"'
+smoke_assert_file_contains "$create_root/canonical-shell-d2-1.json" 'runtime Agent marker cannot reparent the canonical Window default shell Pane'
+smoke_assert_file_contains "$create_root/canonical-shell-d2-1.json" "\"target\": \"$legacy_pane\""
+if grep -Fq 'registry:create:agent' "$create_root/canonical-shell-d2-1.json" ||
+  grep -Fq 'registry:update:pane' "$create_root/canonical-shell-d2-1.json" ||
+  ! cmp -s "$create_root/canonical-shell-d2-1.json" "$create_root/canonical-shell-d2-2.json"; then
+  echo "canonical shell dry-run planned promotion or produced unstable refusal output" >&2
+  exit 1
+fi
+set +e
+pmx reconcile resources --socket "$create_socket" -o json >"$create_root/canonical-shell-execute.json" 2>"$create_root/canonical-shell-execute.err"
+canonical_execute_status=$?
+set -e
+if [[ "$canonical_execute_status" == "0" ]] ||
+  ! grep -Fq '"outcome": "refused"' "$create_root/canonical-shell-execute.json" ||
+  [[ "$(sha256sum "$create_registry" | awk '{print $1}')" != "$canonical_registry_before" ]] ||
+  [[ "$(pmx get agents -p alpha -o uid | sort)" != "$canonical_agents_before" ]] ||
+  [[ "$(ctx display-message -p -t "$legacy_pane" '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_window_uid}|#{@projmux_pane_uid}|#{@projmux_ai_agent}')" != "$canonical_live_before" ]]; then
+  echo "canonical shell execute did not remain a zero-write typed refusal" >&2
+  cat "$create_root/canonical-shell-execute.err" >&2 || true
+  exit 1
+fi
+ctx set-option -p -u -t "$legacy_pane" @projmux_ai_agent
+
 create_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> create e2e passed: socket=$create_socket path=$create_socket_path"

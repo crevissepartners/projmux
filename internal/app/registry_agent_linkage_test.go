@@ -8,6 +8,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -135,6 +136,47 @@ func TestReconcileGivesEveryLiveAgentPaneAnAgentAndAnAgentColumn(t *testing.T) {
 	}
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("registry does not validate after linkage: %v", err)
+	}
+}
+
+func TestAutomaticReconcilePreservesCanonicalShellWithGenericAgentMarker(t *testing.T) {
+	t.Parallel()
+
+	_, store, tmux, _, root := newReconcileFixture(t, "-L", "primary")
+	project, _ := store.registry.ProjectByRoot(root)
+	window := store.registry.WindowsOf(project.Metadata.UID)[0]
+	pane := store.registry.PanesOf(window.Metadata.UID)[0]
+	session := tmux.session("alpha")
+	liveWindow, livePane := session.windows[0], session.windows[0].panes[0]
+	session.opts[tmuxopts.ProjectUIDSession] = project.Metadata.UID
+	session.opts[tmuxopts.ProjectNameSession] = project.Metadata.Name
+	liveWindow.opts[tmuxopts.WindowUID] = window.Metadata.UID
+	liveWindow.opts[tmuxopts.WindowName] = window.Metadata.Name
+	liveWindow.opts[tmuxopts.AutomaticRenameWindow] = "off"
+	livePane.opts[tmuxopts.PaneUID] = pane.Metadata.UID
+	livePane.opts[tmuxopts.PaneName] = pane.Metadata.Name
+	livePane.opts[tmuxopts.AgentProviderPane] = "codex"
+	livePane.command = "codex"
+	if _, err := store.mutator().ObserveWindowRuntimeBinding(&store.registry, window.Metadata.UID, session.id, liveWindow.id); err != nil {
+		t.Fatalf("seed exact Window runtime binding: %v", err)
+	}
+
+	registryBefore, tmuxBefore := store.registry.Clone(), tmux.state()
+	reconciler := reconcileFixtureReconciler(root, "alpha")(tmux, inttmux.NewClient(tmux))
+	reconciler.refuseForeign = true
+	for pass := 1; pass <= 2; pass++ {
+		if err := reconciler.reconcile(context.Background(), &store.registry, store.mutator(), "op-canonical-shell"); err != nil {
+			t.Fatalf("automatic reconcile pass %d: %v", pass, err)
+		}
+		if !reflect.DeepEqual(registryBefore, store.registry) || tmux.state() != tmuxBefore || tmuxMutationCallCount(tmux) != 0 {
+			t.Fatalf("automatic reconcile pass %d changed Registry or tmux\nbefore=%+v\nafter=%+v\ntmux=%s", pass, registryBefore, store.registry, tmux.state())
+		}
+	}
+	protected, _ := store.registry.Pane(pane.Metadata.UID)
+	storedWindow, _ := store.registry.Window(window.Metadata.UID)
+	if len(store.registry.Agents) != 0 || protected.Metadata.OwnerUID() != window.Metadata.UID || protected.Spec.Role != coremetadata.PaneRoleShell ||
+		storedWindow.Spec.AnchorPaneRef != pane.Metadata.UID || storedWindow.Spec.DefaultShellPaneRef != pane.Metadata.UID {
+		t.Fatalf("canonical shell was promoted or refs changed: agents=%d pane=%+v window=%+v", len(store.registry.Agents), protected, storedWindow.Spec)
 	}
 }
 
