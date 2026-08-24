@@ -1789,19 +1789,23 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	if exists {
 		return c.openProjectSession(context.Background(), openSession)
 	}
-	err = c.authorizeAndContinueProjectOpen(context.Background(), openTarget, openSession, openMode)
-	if err == nil {
+	openErr := c.authorizeAndContinueProjectOpen(context.Background(), openTarget, openSession, openMode)
+	if openErr == nil {
 		return nil
 	}
 	resume := switchSidebarResume{
 		Query:     strings.TrimSpace(*query),
 		Selection: openTarget,
-		Message:   sidebarTrustStatusMessage(err),
+		Message:   sidebarTrustStatusMessage(openErr),
 	}
-	if reopenErr := c.reopenSidebarAfterTrust(context.Background(), targetClient, resume); reopenErr != nil {
+	reopenErr := c.reopenSidebarAfterTrust(context.Background(), targetClient, resume)
+	if errors.Is(openErr, errProjectTrustDenied) {
 		return reopenErr
 	}
-	return nil
+	if reopenErr != nil {
+		return errors.Join(openErr, reopenErr)
+	}
+	return fmt.Errorf("open selected project: %w", openErr)
 }
 
 func (c *switchCommand) withSidebarOpenClientEnv(client string) func() {

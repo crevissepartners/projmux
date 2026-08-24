@@ -329,6 +329,56 @@ func TestSwitchSidebarOpenApproveContinuesSelectedEmptyOpen(t *testing.T) {
 	}
 }
 
+func TestSwitchSidebarOpenPropagatesProjectOpenFailureAfterReopen(t *testing.T) {
+	t.Parallel()
+
+	target := t.TempDir()
+	openErr := errors.New("injected topology failure")
+	sessions := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
+	tmuxRunner := &recordingTmuxRunner{}
+	topology := &fakeProjectTopologyMaterializer{err: openErr}
+	cmd := &switchCommand{
+		sessions:         sessions,
+		tmuxRunner:       tmuxRunner,
+		executable:       func() (string, error) { return "/tmp/projmux", nil },
+		projectRegistrar: &fakeProjectRegistrar{uid: "proj-target", name: "target", reused: true},
+		projectTopology:  topology,
+	}
+	wireFakeProjectSessionPlan(cmd)
+
+	err := cmd.runSidebarOpen([]string{
+		"--path", target,
+		"--session", "target",
+		"--mode", projectStartupKindTopology,
+		"--query", "tar",
+		"--client", "/dev/pts/9",
+	}, &bytes.Buffer{})
+	if !errors.Is(err, openErr) {
+		t.Fatalf("runSidebarOpen() error = %v, want injected topology failure", err)
+	}
+	if got, want := sessions.calls, []string{"authorize:" + target}; !equalStrings(got, want) {
+		t.Fatalf("calls = %q, want %q", got, want)
+	}
+	if len(tmuxRunner.calls) != 2 {
+		t.Fatalf("tmux calls = %#v, want close then reopen", tmuxRunner.calls)
+	}
+	reopen := tmuxRunner.calls[1]
+	if reopen.name != "tmux" || len(reopen.args) != 3 || !reflect.DeepEqual(reopen.args[:2], []string{"run-shell", "-b"}) {
+		t.Fatalf("reopen call = %#v, want detached popup-toggle", reopen)
+	}
+	command := reopen.args[2]
+	for _, want := range []string{
+		switchInitialQueryEnv + "='tar'",
+		switchInitialSelectionEnv + "=" + tmuxShellQuote(target),
+		"Project open error:",
+		openErr.Error(),
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("reopen command = %q, want substring %q", command, want)
+		}
+	}
+}
+
 func TestSwitchSidebarOpenTrustPopupUsesClientScope(t *testing.T) {
 	t.Parallel()
 
