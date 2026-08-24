@@ -934,7 +934,7 @@ func (c *shellCommand) resolveShellTarget(rawSession string, sessionExplicit boo
 		return shellTarget{SessionName: sessionName, CWD: home}, nil
 	}
 
-	projectRoot, err := c.resolveShellProjectContext()
+	projectRoot, err := c.resolveShellProjectContext(home)
 	if err != nil {
 		return shellTarget{}, fmt.Errorf("resolve shell project context: %w", err)
 	}
@@ -959,7 +959,8 @@ func flagSetExplicitly(fs *flag.FlagSet, name string) bool {
 	return explicit
 }
 
-func (c *shellCommand) resolveShellProjectContext() (string, error) {
+func (c *shellCommand) resolveShellProjectContext(home string) (string, error) {
+	home = filepath.Clean(strings.TrimSpace(home))
 	if c.lookupEnv != nil {
 		if raw := strings.TrimSpace(c.lookupEnv("PROJMUX_CWD")); raw != "" {
 			return filepath.Clean(raw), nil
@@ -973,7 +974,7 @@ func (c *shellCommand) resolveShellProjectContext() (string, error) {
 		return "", err
 	}
 	wd = filepath.Clean(wd)
-	if root := nearestProjectMarker(wd, os.TempDir()); root != "" {
+	if root := nearestProjectMarker(wd, os.TempDir(), home); root != "" {
 		return root, nil
 	}
 	return "", nil

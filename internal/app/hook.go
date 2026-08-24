@@ -713,7 +713,7 @@ func nearestProjectMarker(path string, boundaries ...string) string {
 				return ""
 			}
 		}
-		if hookMarkerExists(filepath.Join(path, ".projmux")) || gitWorktreeMarkerExists(filepath.Join(path, ".git")) {
+		if hookMarkerExists(filepath.Join(path, ".projmux")) || hookMarkerExists(filepath.Join(path, ".git")) {
 			return path
 		}
 		parent := filepath.Dir(path)
@@ -730,90 +730,6 @@ func hookMarkerExists(path string) bool {
 	}
 	_, err := os.Stat(path)
 	return err == nil
-}
-
-// gitWorktreeMarkerExists rejects placeholder .git paths while preserving both
-// normal repositories (.git directory) and linked/separate worktrees (.git
-// file containing "gitdir: ..."). A credible admin directory needs a valid
-// HEAD plus the common repository's config, object store, and refs inventory;
-// mere filesystem existence is not project identity.
-func gitWorktreeMarkerExists(path string) bool {
-	if strings.TrimSpace(path) == "" {
-		return false
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return false
-	}
-	if info.IsDir() {
-		return gitAdminDirCredible(path)
-	}
-	if !info.Mode().IsRegular() {
-		return false
-	}
-	data, err := os.ReadFile(path)
-	if err != nil || len(data) > 4096 {
-		return false
-	}
-	line := strings.TrimSpace(string(data))
-	gitDir, ok := strings.CutPrefix(line, "gitdir:")
-	gitDir = strings.TrimSpace(gitDir)
-	if !ok || gitDir == "" || strings.ContainsAny(gitDir, "\r\n") {
-		return false
-	}
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(filepath.Dir(path), gitDir)
-	}
-	return gitAdminDirCredible(filepath.Clean(gitDir))
-}
-
-func gitAdminDirCredible(path string) bool {
-	head, err := os.ReadFile(filepath.Join(path, "HEAD"))
-	if err != nil || len(head) > 4096 || !validGitHEAD(strings.TrimSpace(string(head))) {
-		return false
-	}
-	commonDir := path
-	if data, err := os.ReadFile(filepath.Join(path, "commondir")); err == nil {
-		if len(data) > 4096 {
-			return false
-		}
-		common := strings.TrimSpace(string(data))
-		if common == "" || strings.ContainsAny(common, "\r\n") {
-			return false
-		}
-		if !filepath.IsAbs(common) {
-			common = filepath.Join(path, common)
-		}
-		commonDir = filepath.Clean(common)
-	}
-	return regularFileExists(filepath.Join(commonDir, "config")) &&
-		directoryExists(filepath.Join(commonDir, "objects")) &&
-		(directoryExists(filepath.Join(commonDir, "refs")) || regularFileExists(filepath.Join(commonDir, "packed-refs")))
-}
-
-func validGitHEAD(value string) bool {
-	if ref, ok := strings.CutPrefix(value, "ref: "); ok {
-		return strings.HasPrefix(ref, "refs/") && !strings.ContainsAny(ref, " \t\r\n")
-	}
-	if len(value) != 40 && len(value) != 64 {
-		return false
-	}
-	for _, char := range value {
-		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F')) {
-			return false
-		}
-	}
-	return true
-}
-
-func regularFileExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.Mode().IsRegular()
-}
-
-func directoryExists(path string) bool {
-	info, err := os.Stat(path)
-	return err == nil && info.IsDir()
 }
 
 func isSupportedHookEvent(event string) bool {

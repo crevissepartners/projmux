@@ -329,7 +329,9 @@ func TestShellDefaultSessionUsesProjectContextIdentity(t *testing.T) {
 	home := t.TempDir()
 	project := filepath.Join(home, "source", "repos", "projmux")
 	nested := filepath.Join(project, "internal", "app")
-	writeCredibleGitMarker(t, project)
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +372,9 @@ func TestShellDefaultSessionUsesPROJMUXCWDProjectContext(t *testing.T) {
 	if err := os.MkdirAll(envProject, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	writeCredibleGitMarker(t, wdProject)
+	if err := os.MkdirAll(filepath.Join(wdProject, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	recorder := &recordingShellRunner{}
 	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
 	tmux := &scriptedShellTmuxRunner{
@@ -404,10 +408,13 @@ func TestShellDefaultSessionUsesPROJMUXCWDProjectContext(t *testing.T) {
 	}
 }
 
-func TestShellDefaultSessionUsesHomeProjectIdentity(t *testing.T) {
+func TestShellDefaultSessionKeepsExactHomeAsControlSessionWithGitMarker(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	recorder := &recordingShellRunner{}
 	cmd := &shellCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
@@ -415,6 +422,7 @@ func TestShellDefaultSessionUsesHomeProjectIdentity(t *testing.T) {
 		homeDir:    func() (string, error) { return home, nil },
 		writeFile:  os.WriteFile,
 		runCommand: recorder.run,
+		getwd:      func() (string, error) { return home, nil },
 	}
 
 	if err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -427,12 +435,39 @@ func TestShellDefaultSessionUsesHomeProjectIdentity(t *testing.T) {
 	}
 }
 
+func TestShellProjectContextPreservesTempBoundary(t *testing.T) {
+	tempRoot := t.TempDir()
+	home := t.TempDir()
+	t.Setenv("TMPDIR", tempRoot)
+	if err := os.MkdirAll(filepath.Join(tempRoot, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	wd := filepath.Join(tempRoot, "scratch", "leaf")
+	if err := os.MkdirAll(wd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cmd := &shellCommand{
+		lookupEnv: func(string) string { return "" },
+		getwd:     func() (string, error) { return wd, nil },
+	}
+
+	got, err := cmd.resolveShellProjectContext(home)
+	if err != nil {
+		t.Fatalf("resolveShellProjectContext() error = %v", err)
+	}
+	if got != "" {
+		t.Fatalf("resolveShellProjectContext() = %q, want no project from temp-root marker", got)
+	}
+}
+
 func TestShellExplicitHomeSessionKeepsHomeTargetInsideProject(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
 	project := filepath.Join(home, "source", "repos", "projmux")
-	writeCredibleGitMarker(t, project)
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	store := sessionstate.NewStore(t.TempDir())
 	saveShellSnapshot(t, store, "repos-projmux", project)
 	foreground := &recordingShellRunner{}

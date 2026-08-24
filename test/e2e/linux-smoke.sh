@@ -12,8 +12,9 @@ bin="$PROJMUX_SMOKE_BIN"
 
 # A genuinely absent app socket must survive the complete ControlSession
 # bootstrap before the foreground attach. Run the user-facing, selector-free
-# command from HOME with an empty placeholder .git directory: it is neither a
-# Project marker nor permission to register HOME as a Project. This invocation
+# command from exact HOME with an empty .git directory: HOME is the upward-walk
+# boundary for this shell surface, so its own marker cannot register HOME as a
+# Project. Nested project markers below HOME remain eligible. This invocation
 # has no terminal, so the final attach is expected to fail after preparation;
 # the exact real-tmux server/session/route marker and ControlSession mirrors
 # must remain inspectable. This closes both ordering hazards that scripted
@@ -97,7 +98,7 @@ fresh_shell_projects="$(
     "$bin" get projects -o uid
 )"
 if [[ -n "$fresh_shell_projects" ]]; then
-  echo "empty HOME/.git registered HOME as a Project: $fresh_shell_projects" >&2
+  echo "HOME boundary registered HOME/.git as a Project: $fresh_shell_projects" >&2
   exit 1
 fi
 smoke_cleanup_tmux_server "$fresh_shell_socket"

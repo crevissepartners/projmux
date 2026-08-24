@@ -162,7 +162,9 @@ func TestShellDoesNotMarkAProjectDefaultSession(t *testing.T) {
 
 	home := t.TempDir()
 	project := filepath.Join(home, "source", "repos", "projmux")
-	writeCredibleGitMarker(t, project)
+	if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	pass := &recordedControlPass{}
 	cmd, foreground, tmux := shellControlFixture(t, home, pass)
 	cmd.getwd = func() (string, error) { return project, nil }
