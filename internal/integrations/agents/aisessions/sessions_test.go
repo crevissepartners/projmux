@@ -585,7 +585,8 @@ func TestDiscoverDeferTurnsLeavesCountZeroUntilEnriched(t *testing.T) {
 	}
 
 	// The background enrich pass fills the same count the blocking path produces.
-	enriched := EnrichTurns(got)
+	enriched := got
+	enrichTurns(enriched)
 	if enriched[0].Turns != 3 {
 		t.Fatalf("Turns after EnrichTurns = %d, want 3", enriched[0].Turns)
 	}
@@ -600,7 +601,8 @@ func TestEnrichTurnsIgnoresSessionsWithoutLog(t *testing.T) {
 	// Antigravity rows carry no per-turn log (empty sourcePath); enrichment must
 	// leave them at 0 rather than panic or read a bogus path.
 	sessions := []SessionMeta{{Agent: AgentAntigravity, ResumeID: "abc", Turns: 0}}
-	got := EnrichTurns(sessions)
+	got := sessions
+	enrichTurns(got)
 	if got[0].Turns != 0 {
 		t.Fatalf("Turns = %d, want 0 (no per-turn log)", got[0].Turns)
 	}

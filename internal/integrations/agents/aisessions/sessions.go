@@ -128,28 +128,17 @@ type DiscoverOptions struct {
 	// is the one expensive field (it reads the whole bounded scan window instead
 	// of early-exiting the cheap id/cwd/title/branch pass), so a picker that
 	// wants to render immediately sets this to get a fast candidate list and then
-	// fills the turn column for the rows it displays with a background EnrichTurns
-	// pass. The default (false) counts turns inline for every session, preserving
+	// crosses into a separate detail boundary if it needs that field. The
+	// default (false) counts turns inline for every session, preserving
 	// the historical fully-counted result for callers that block on Discover.
 	DeferTurns bool
-}
-
-// EnrichTurns fills SessionMeta.Turns for the given sessions by scanning each
-// session's log for user turns, returning the same slice for convenience. A
-// picker that discovered candidates with DiscoverOptions.DeferTurns calls this
-// on just the rows it displays (a bounded set) from a background goroutine, so
-// the expensive turn-count scan never blocks the initial render. It is a no-op
-// on sessions with no per-turn log (empty sourcePath, e.g. Antigravity).
-func EnrichTurns(sessions []SessionMeta) []SessionMeta {
-	enrichTurns(sessions)
-	return sessions
 }
 
 // enrichTurns re-scans each session's whole log for user turns and records the
 // count. Turn counting is the one field that defeats the candidate early-exit
 // (it must read the whole file, not just the fast candidate window), so paying
 // it only for displayed rows — inline for blocking callers, or in the background
-// via EnrichTurns — is what keeps discovery fast. Sessions with no per-turn log
+// via a detail-only caller — is what keeps summary discovery fast. Sessions with no per-turn log
 // (empty sourcePath) and unreadable logs are left at Turns 0 (rendered blank).
 func enrichTurns(sessions []SessionMeta) {
 	for i := range sessions {

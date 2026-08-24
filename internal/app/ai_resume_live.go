@@ -16,8 +16,8 @@ import (
 )
 
 const (
-	aiResumePreviewTimeout      = 2 * time.Second
-	aiResumeContinuationTimeout = 2 * time.Second
+	aiResumePreviewTimeout          = 2 * time.Second
+	aiResumeSummaryPopulationBudget = 450 * time.Millisecond
 )
 
 type aiResumePreviewKey struct {
@@ -27,38 +27,34 @@ type aiResumePreviewKey struct {
 }
 
 type aiResumeLiveController struct {
-	cmd                 *aiCommand
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	cwd                 string
-	depth               int
-	limit               int
-	home                string
-	locale              i18n.Locale
-	now                 time.Time
-	previewTimeout      time.Duration
-	continuationTimeout time.Duration
-	continuationContext func(context.Context, time.Duration) (context.Context, context.CancelFunc)
-	events              chan struct{}
-	startOnce           sync.Once
-	labelsOnce          sync.Once
-	labels              map[string]string
+	cmd               *aiCommand
+	ctx               context.Context
+	cancel            context.CancelFunc
+	cwd               string
+	depth             int
+	limit             int
+	home              string
+	locale            i18n.Locale
+	now               time.Time
+	previewTimeout    time.Duration
+	populationTimeout time.Duration
+	populationContext func(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	events            chan struct{}
+	startOnce         sync.Once
+	labelsOnce        sync.Once
+	labels            map[string]string
 
-	mu                  sync.Mutex
-	sessions            []aisessions.SessionMeta
-	providerDone        map[string]bool
-	providerFailed      map[string]bool
-	pendingEnrich       map[string][]aisessions.SessionMeta
-	previewText         map[string]string
-	previewCache        map[aiResumePreviewKey]string
-	previewCancel       context.CancelFunc
-	previewSerial       uint64
-	focusedValue        string
-	codexContinuation   aisessions.CodexCatalogContinuation
-	continuationCancel  context.CancelFunc
-	continuationStarted bool
-	continuationDone    bool
-	moreNotLoaded       bool
+	mu             sync.Mutex
+	summaries      []aisessions.ResumeSummary
+	detailRefs     map[string]aisessions.ResumeDetailRef
+	providerDone   map[string]bool
+	providerFailed map[string]bool
+	previewText    map[string]string
+	previewCache   map[aiResumePreviewKey]string
+	previewCancel  context.CancelFunc
+	previewSerial  uint64
+	focusedValue   string
+	moreNotLoaded  bool
 }
 
 func newAIResumeLiveController(cmd *aiCommand, cwd, home string, depth, limit int) *aiResumeLiveController {
@@ -70,29 +66,20 @@ func newAIResumeLiveController(cmd *aiCommand, cwd, home string, depth, limit in
 	return &aiResumeLiveController{
 		cmd: cmd, ctx: ctx, cancel: cancel, cwd: cwd, home: home, depth: depth,
 		limit: normalizeResumePickerLimit(limit), locale: appLocale(cmd.homeDir, cmd.lookupEnv), now: now,
-		previewTimeout: aiResumePreviewTimeout, continuationTimeout: aiResumeContinuationTimeout,
-		continuationContext: context.WithTimeout,
-		events:              make(chan struct{}, 16), providerDone: map[string]bool{}, providerFailed: map[string]bool{},
-		pendingEnrich: map[string][]aisessions.SessionMeta{},
-		previewText:   map[string]string{}, previewCache: map[aiResumePreviewKey]string{},
+		previewTimeout: aiResumePreviewTimeout, populationTimeout: aiResumeSummaryPopulationBudget,
+		populationContext: context.WithTimeout,
+		events:            make(chan struct{}, 16), providerDone: map[string]bool{}, providerFailed: map[string]bool{},
+		detailRefs: map[string]aisessions.ResumeDetailRef{}, previewText: map[string]string{}, previewCache: map[aiResumePreviewKey]string{},
 	}
 }
 
 func (c *aiResumeLiveController) close() {
 	c.cancel()
 	c.mu.Lock()
-	continuationCancel := c.continuationCancel
-	continuation := c.codexContinuation
 	if c.previewCancel != nil {
 		c.previewCancel()
 	}
 	c.mu.Unlock()
-	if continuationCancel != nil {
-		continuationCancel()
-	}
-	if continuation != nil {
-		_ = continuation.Close()
-	}
 }
 
 func (c *aiResumeLiveController) signal() {
@@ -105,100 +92,151 @@ func (c *aiResumeLiveController) signal() {
 	}
 }
 
-func (c *aiResumeLiveController) start() {
-	c.startOnce.Do(func() {
-		for _, provider := range []string{aiModeCodex, aiModeClaude, aiModeAntigravity} {
-			go c.discover(provider)
-		}
-	})
+type aiResumeProviderResult struct {
+	provider  string
+	discovery aisessions.ResumeSummaryDiscovery
+	err       error
 }
 
-func (c *aiResumeLiveController) discover(provider string) {
-	discover := c.cmd.discoverResumeProvider
-	if discover == nil {
-		discover = aisessions.DiscoverProviderContext
+// populate settles all provider summaries before the picker is opened. The
+// caller sees one final row set: provider completion order and late returns can
+// never append, reorder, or replace Items in the current invocation.
+func (c *aiResumeLiveController) populate() {
+	c.startOnce.Do(c.populateOnce)
+}
+
+func (c *aiResumeLiveController) populateOnce() {
+	timeout := c.populationTimeout
+	if timeout <= 0 {
+		timeout = aiResumeSummaryPopulationBudget
 	}
-	discovery, err := discover(c.ctx, provider, c.cwd, aisessions.DiscoverOptions{
-		HomeDir: c.home, Depth: c.depth, DeferTurns: true, OpenCodexCatalog: c.cmd.openCodexCatalog,
-	}, c.limit)
-	sessions := discovery.Sessions
-	var cancelContinuation context.CancelFunc
-	var closeContinuation aisessions.CodexCatalogContinuation
+	withTimeout := c.populationContext
+	if withTimeout == nil {
+		withTimeout = context.WithTimeout
+	}
+	ctx, cancel := withTimeout(c.ctx, timeout)
+	defer cancel()
+
+	discover := c.cmd.discoverResumeSummaryProvider
+	if discover == nil {
+		discover = aisessions.DiscoverResumeSummariesContext
+	}
+	providers := []string{aiModeCodex, aiModeClaude, aiModeAntigravity}
+	results := make(chan aiResumeProviderResult, len(providers))
+	for _, provider := range providers {
+		go func() {
+			discovery, err := discover(ctx, provider, c.cwd, aisessions.ResumeSummaryOptions{
+				DiscoverOptions: aisessions.DiscoverOptions{
+					HomeDir: c.home, Depth: c.depth, DeferTurns: true, OpenCodexCatalog: c.cmd.openCodexCatalog,
+				},
+			}, c.limit)
+			results <- aiResumeProviderResult{provider: provider, discovery: discovery, err: err}
+		}()
+	}
+
+	settled := make(map[string]aiResumeProviderResult, len(providers))
+	for len(settled) < len(providers) {
+		select {
+		case result := <-results:
+			settled[result.provider] = result
+		case <-ctx.Done():
+			for _, provider := range providers {
+				if _, ok := settled[provider]; !ok {
+					settled[provider] = aiResumeProviderResult{provider: provider, err: ctx.Err()}
+				}
+			}
+		}
+	}
+
+	var summaries []aisessions.ResumeSummary
+	allDetailRefs := make(map[string]aisessions.ResumeDetailRef)
+	done := make(map[string]bool, len(providers))
+	failed := make(map[string]bool, len(providers))
+	moreNotLoaded := false
+	for _, provider := range providers {
+		result := settled[provider]
+		done[provider] = true
+		failed[provider] = result.err != nil
+		if result.err == nil {
+			summaries = append(summaries, result.discovery.Summaries...)
+			for _, ref := range result.discovery.DetailRefs {
+				key := normalizeAIMode(ref.Provider) + "\x00" + strings.TrimSpace(ref.ResumeID)
+				if old, ok := allDetailRefs[key]; !ok || ref.LastModified.After(old.LastModified) {
+					allDetailRefs[key] = ref
+				}
+			}
+			moreNotLoaded = moreNotLoaded || result.discovery.MoreNotLoaded
+		}
+	}
+	summaries, capped := settleAIResumeSummaries(summaries, c.limit)
+	moreNotLoaded = moreNotLoaded || capped
 	c.mu.Lock()
 	if c.ctx.Err() == nil {
-		c.providerDone[provider] = true
-		c.providerFailed[provider] = err != nil
-		if err == nil {
-			c.sessions = append(c.sessions, sessions...)
-			c.sessions = dedupeAIResumeSessions(c.sessions)
-			if provider == aiModeCodex {
-				c.codexContinuation = discovery.Continuation
-				c.moreNotLoaded = c.moreNotLoaded || discovery.MoreNotLoaded
-			}
-			if len(sessions) > 0 {
-				c.pendingEnrich[provider] = append([]aisessions.SessionMeta(nil), sessions...)
-			}
-			if len(c.sessions) >= c.limit && c.codexContinuation != nil && !c.continuationDone {
-				c.moreNotLoaded = true
-				c.continuationDone = true
-				cancelContinuation = c.continuationCancel
-				closeContinuation = c.codexContinuation
+		c.summaries = summaries
+		c.detailRefs = make(map[string]aisessions.ResumeDetailRef, len(summaries))
+		for _, summary := range summaries {
+			key := normalizeAIMode(summary.Provider) + "\x00" + strings.TrimSpace(summary.ResumeID)
+			if ref, ok := allDetailRefs[key]; ok {
+				c.detailRefs[key] = ref
 			}
 		}
-	} else if discovery.Continuation != nil {
-		closeContinuation = discovery.Continuation
+		c.providerDone = done
+		c.providerFailed = failed
+		c.moreNotLoaded = moreNotLoaded
 	}
 	c.mu.Unlock()
-	if cancelContinuation != nil {
-		cancelContinuation()
-	}
-	if closeContinuation != nil {
-		_ = closeContinuation.Close()
-	}
-	c.signal()
 }
 
-func dedupeAIResumeSessions(sessions []aisessions.SessionMeta) []aisessions.SessionMeta {
-	byKey := make(map[string]aisessions.SessionMeta, len(sessions))
-	for _, session := range sessions {
-		key := normalizeAIMode(session.Agent) + "\x00" + strings.TrimSpace(session.ResumeID)
-		if old, ok := byKey[key]; !ok || session.LastModified.After(old.LastModified) {
-			byKey[key] = session
+// settleAIResumeSummaries is the sole global dedupe/sort/cap pass.
+func settleAIResumeSummaries(summaries []aisessions.ResumeSummary, limit int) ([]aisessions.ResumeSummary, bool) {
+	byKey := make(map[string]aisessions.ResumeSummary, len(summaries))
+	for _, summary := range summaries {
+		key := normalizeAIMode(summary.Provider) + "\x00" + strings.TrimSpace(summary.ResumeID)
+		if old, ok := byKey[key]; !ok || summary.LastModified.After(old.LastModified) {
+			byKey[key] = summary
 		}
 	}
-	result := make([]aisessions.SessionMeta, 0, len(byKey))
-	for _, session := range byKey {
-		result = append(result, session)
+	result := make([]aisessions.ResumeSummary, 0, len(byKey))
+	for _, summary := range byKey {
+		result = append(result, summary)
 	}
 	sort.SliceStable(result, func(i, j int) bool {
 		if result[i].LastModified.Equal(result[j].LastModified) {
-			if result[i].Agent == result[j].Agent {
+			if result[i].Provider == result[j].Provider {
 				return result[i].ResumeID < result[j].ResumeID
 			}
-			return result[i].Agent < result[j].Agent
+			return result[i].Provider < result[j].Provider
 		}
 		return result[i].LastModified.After(result[j].LastModified)
 	})
-	return result
+	limit = normalizeResumePickerLimit(limit)
+	capped := len(result) > limit
+	if capped {
+		result = result[:limit]
+	}
+	return result, capped
 }
 
 func (c *aiResumeLiveController) initialEntries() []intpickercompat.Entry {
-	return c.entries(nil, map[string]bool{}, map[string]bool{})
+	c.populate()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.entries(c.summaries, c.providerDone, c.providerFailed)
 }
 
-func (c *aiResumeLiveController) entries(sessions []aisessions.SessionMeta, done, failed map[string]bool) []intpickercompat.Entry {
+func (c *aiResumeLiveController) entries(summaries []aisessions.ResumeSummary, done, failed map[string]bool) []intpickercompat.Entry {
 	var hasCodex bool
-	for _, session := range sessions {
-		if normalizeAIMode(session.Agent) == aiModeCodex {
+	for _, summary := range summaries {
+		if normalizeAIMode(summary.Provider) == aiModeCodex {
 			hasCodex = true
 			break
 		}
 	}
 	if hasCodex {
-		c.labelsOnce.Do(func() { c.labels = c.cmd.resolveAIResumeConversationLabels(sessions) })
+		c.labelsOnce.Do(func() { c.labels = c.cmd.resolveAIResumeSummaryLabels(summaries) })
 	}
 	labels := c.labels
-	rows, _, _ := aiResumeSessionRowsWithLabels(sessions, labels, c.limit, c.now, c.locale, c.cwd, c.depth)
+	rows := aiResumeSummaryRowsWithLabels(summaries, labels, c.now, c.locale, c.cwd, c.depth)
 	for _, provider := range []string{aiModeCodex, aiModeClaude, aiModeAntigravity} {
 		status := "loading…"
 		if done[provider] {
@@ -206,8 +244,8 @@ func (c *aiResumeLiveController) entries(sessions []aisessions.SessionMeta, done
 			if failed[provider] {
 				status = "unavailable"
 			}
-			for _, session := range sessions {
-				if normalizeAIMode(session.Agent) == provider {
+			for _, summary := range summaries {
+				if normalizeAIMode(summary.Provider) == provider {
 					status = "available"
 					break
 				}
@@ -223,182 +261,18 @@ func (c *aiResumeLiveController) entries(sessions []aisessions.SessionMeta, done
 }
 
 func (c *aiResumeLiveController) update() (intpicker.DeferredUpdate, error) {
-	c.start()
-	var startContinuation aisessions.CodexCatalogContinuation
-	var closeContinuation aisessions.CodexCatalogContinuation
 	c.mu.Lock()
-	sessions := append([]aisessions.SessionMeta(nil), c.sessions...)
-	done := cloneBoolMap(c.providerDone)
-	failed := cloneBoolMap(c.providerFailed)
 	preview := make(map[string]string, len(c.previewText))
 	maps.Copy(preview, c.previewText)
 	moreNotLoaded := c.moreNotLoaded
-	if c.codexContinuation != nil && !c.continuationStarted && !c.continuationDone {
-		if len(c.sessions) >= c.limit {
-			c.moreNotLoaded = true
-			moreNotLoaded = true
-			c.continuationDone = true
-			closeContinuation = c.codexContinuation
-		} else {
-			c.continuationStarted = true
-			startContinuation = c.codexContinuation
-		}
-	}
-	toEnrich := make(map[string][]aisessions.SessionMeta)
-	for provider, candidates := range c.pendingEnrich {
-		toEnrich[provider] = append([]aisessions.SessionMeta(nil), candidates...)
-		delete(c.pendingEnrich, provider)
-	}
+	visible := len(c.summaries)
 	c.mu.Unlock()
-	entries := c.entries(sessions, done, failed)
-	visible := min(len(sessions), c.limit)
 	footer := fmt.Sprintf(localizeUIText(c.locale, "Showing latest %d resume sessions."), visible)
-	update := intpicker.DeferredUpdate{
-		Items:   intpickercompat.PickerItemsFromEntries(entries),
+	return intpicker.DeferredUpdate{
 		Preview: intpicker.Preview{Window: "down,35%,border-top", TextByValue: preview},
 		Footer:  projmuxFooter(footer), SetFooter: true,
 		MoreNotLoaded: moreNotLoaded, SetMoreNotLoaded: true,
-	}
-	if startContinuation != nil || len(toEnrich) > 0 {
-		var applyOnce sync.Once
-		update.AfterApply = func() {
-			applyOnce.Do(func() {
-				for provider, candidates := range toEnrich {
-					go c.enrichTurns(provider, candidates)
-				}
-				if startContinuation != nil {
-					go c.continueCodex(startContinuation)
-				}
-			})
-		}
-	}
-	if closeContinuation != nil {
-		_ = closeContinuation.Close()
-	}
-	return update, nil
-}
-
-func (c *aiResumeLiveController) continueCodex(continuation aisessions.CodexCatalogContinuation) {
-	timeout := c.continuationTimeout
-	if timeout <= 0 {
-		timeout = aiResumeContinuationTimeout
-	}
-	withTimeout := c.continuationContext
-	if withTimeout == nil {
-		withTimeout = context.WithTimeout
-	}
-	ctx, cancel := withTimeout(c.ctx, timeout)
-	c.mu.Lock()
-	if c.ctx.Err() != nil || c.continuationDone {
-		c.mu.Unlock()
-		cancel()
-		_ = continuation.Close()
-		return
-	}
-	c.continuationCancel = cancel
-	c.mu.Unlock()
-	stopCloseOnCancel := context.AfterFunc(ctx, func() { _ = continuation.Close() })
-	defer stopCloseOnCancel()
-	defer cancel()
-	defer continuation.Close()
-
-	remainingPages := aisessions.InteractiveCatalogTotalPages - aisessions.InteractiveCatalogPageBudget
-	for pageNo := range remainingPages {
-		if ctx.Err() != nil {
-			c.finishCodexContinuation(true)
-			return
-		}
-		result, err := continuation.Continue(ctx)
-		if ctx.Err() != nil {
-			c.finishCodexContinuation(true)
-			return
-		}
-		c.mu.Lock()
-		if c.ctx.Err() != nil || c.continuationDone {
-			c.mu.Unlock()
-			return
-		}
-		if err == nil {
-			known := make(map[string]struct{}, len(c.sessions))
-			for _, session := range c.sessions {
-				known[normalizeAIMode(session.Agent)+"\x00"+strings.TrimSpace(session.ResumeID)] = struct{}{}
-			}
-			var newlyDiscovered []aisessions.SessionMeta
-			for _, session := range result.Sessions {
-				key := normalizeAIMode(session.Agent) + "\x00" + strings.TrimSpace(session.ResumeID)
-				if _, ok := known[key]; !ok {
-					newlyDiscovered = append(newlyDiscovered, session)
-				}
-			}
-			c.sessions = append(c.sessions, result.Sessions...)
-			c.sessions = dedupeAIResumeSessions(c.sessions)
-			if len(newlyDiscovered) > 0 {
-				c.pendingEnrich[aiModeCodex] = append(c.pendingEnrich[aiModeCodex], newlyDiscovered...)
-			}
-		}
-		hasMore := result.HasMore
-		if err != nil {
-			c.moreNotLoaded = true
-			c.continuationDone = true
-		} else if !hasMore {
-			c.continuationDone = true
-		} else if len(c.sessions) >= c.limit || pageNo == remainingPages-1 {
-			c.moreNotLoaded = true
-			c.continuationDone = true
-		}
-		done := c.continuationDone
-		c.mu.Unlock()
-		c.signal()
-		if done {
-			return
-		}
-	}
-}
-
-func (c *aiResumeLiveController) finishCodexContinuation(moreNotLoaded bool) {
-	c.mu.Lock()
-	if c.ctx.Err() != nil || c.continuationDone {
-		c.mu.Unlock()
-		return
-	}
-	c.moreNotLoaded = c.moreNotLoaded || moreNotLoaded
-	c.continuationDone = true
-	c.mu.Unlock()
-	c.signal()
-}
-
-func (c *aiResumeLiveController) enrichTurns(_ string, sessions []aisessions.SessionMeta) {
-	enrich := c.cmd.enrichResumeTurns
-	if enrich == nil {
-		enrich = aisessions.EnrichTurns
-	}
-	enriched := enrich(sessions)
-	c.mu.Lock()
-	changed := false
-	if c.ctx.Err() == nil {
-		for _, candidate := range enriched {
-			if candidate.Turns <= 0 {
-				continue
-			}
-			for i := range c.sessions {
-				if normalizeAIMode(c.sessions[i].Agent) == normalizeAIMode(candidate.Agent) && strings.TrimSpace(c.sessions[i].ResumeID) == strings.TrimSpace(candidate.ResumeID) && c.sessions[i].Turns != candidate.Turns {
-					c.sessions[i].Turns = candidate.Turns
-					changed = true
-					break
-				}
-			}
-		}
-	}
-	c.mu.Unlock()
-	if changed {
-		c.signal()
-	}
-}
-
-func cloneBoolMap(source map[string]bool) map[string]bool {
-	result := make(map[string]bool, len(source))
-	maps.Copy(result, source)
-	return result
+	}, nil
 }
 
 func (c *aiResumeLiveController) focus(value string) {
@@ -421,11 +295,13 @@ func (c *aiResumeLiveController) focus(value string) {
 		c.signal()
 		return
 	}
-	var session aisessions.SessionMeta
+	var summary aisessions.ResumeSummary
+	var detailRef aisessions.ResumeDetailRef
 	found := false
-	for _, candidate := range c.sessions {
-		if normalizeAIMode(candidate.Agent) == normalizeAIMode(selection.agent) && strings.TrimSpace(candidate.ResumeID) == selection.resumeID {
-			session, found = candidate, true
+	for _, candidate := range c.summaries {
+		if normalizeAIMode(candidate.Provider) == normalizeAIMode(selection.agent) && strings.TrimSpace(candidate.ResumeID) == selection.resumeID {
+			summary, found = candidate, true
+			detailRef = c.detailRefs[normalizeAIMode(candidate.Provider)+"\x00"+strings.TrimSpace(candidate.ResumeID)]
 			break
 		}
 	}
@@ -434,7 +310,7 @@ func (c *aiResumeLiveController) focus(value string) {
 		c.signal()
 		return
 	}
-	cacheKey := aiResumePreviewCacheKey(session)
+	cacheKey := aiResumePreviewCacheKey(summary)
 	if cached, hit := c.previewCache[cacheKey]; hit {
 		c.previewText[value] = cached
 		c.mu.Unlock()
@@ -454,9 +330,9 @@ func (c *aiResumeLiveController) focus(value string) {
 		defer cancel()
 		readPreview := c.cmd.readResumePreview
 		if readPreview == nil {
-			readPreview = aisessions.ReadPreview
+			readPreview = aisessions.ReadResumeDetailPreview
 		}
-		preview, err := readPreview(previewCtx, session, c.cmd.openCodexCatalog)
+		preview, err := readPreview(previewCtx, detailRef, c.cmd.openCodexCatalog)
 		text := aisessions.FormatPreview(preview)
 		if err != nil || strings.TrimSpace(text) == "" {
 			text = localizeUIText(c.locale, "preview unavailable")
@@ -472,16 +348,16 @@ func (c *aiResumeLiveController) focus(value string) {
 	}()
 }
 
-func aiResumePreviewCacheKey(session aisessions.SessionMeta) aiResumePreviewKey {
-	updatedAt := session.UpdatedAt
+func aiResumePreviewCacheKey(summary aisessions.ResumeSummary) aiResumePreviewKey {
+	updatedAt := summary.UpdatedAt
 	if updatedAt.IsZero() {
-		updatedAt = session.LastModified
+		updatedAt = summary.LastModified
 	}
-	return aiResumePreviewKey{provider: normalizeAIMode(strings.ToLower(strings.TrimSpace(session.Agent))), id: strings.TrimSpace(session.ResumeID), updatedAt: updatedAt}
+	return aiResumePreviewKey{provider: normalizeAIMode(strings.ToLower(strings.TrimSpace(summary.Provider))), id: strings.TrimSpace(summary.ResumeID), updatedAt: updatedAt}
 }
 
-func (c *aiResumeLiveController) snapshotSessions() []aisessions.SessionMeta {
+func (c *aiResumeLiveController) snapshotSummaries() []aisessions.ResumeSummary {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return append([]aisessions.SessionMeta(nil), c.sessions...)
+	return append([]aisessions.ResumeSummary(nil), c.summaries...)
 }

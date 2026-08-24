@@ -1,0 +1,223 @@
+package aisessions
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+const DefaultResumeSummaryNativeBudget = 300 * time.Millisecond
+
+// ResumeSummary is the list-only projection used by the Resume Picker. It
+// deliberately excludes turns, runtime state, provenance explanations, and
+// transcript/preview bytes. Invocation-local detail references are kept
+// separately; they are never rendered, searched, or persisted.
+type ResumeSummary struct {
+	Provider     string
+	ResumeID     string
+	LastModified time.Time
+	UpdatedAt    time.Time
+	Label        string
+	Branch       string
+	RelativeCWD  string
+	Source       string
+}
+
+// ResumeDetailRef is kept separately from ResumeSummary and crosses into the
+// invocation-local preview boundary only after focus. It contains no preview
+// or transcript bytes. transcriptPath is opaque outside aisessions.
+type ResumeDetailRef struct {
+	Provider     string
+	ResumeID     string
+	LastModified time.Time
+	UpdatedAt    time.Time
+	Source       string
+
+	transcriptPath string
+}
+
+// ResumeSummaryOptions controls the provider-local bounded population seam.
+// NativeBudget applies only to the Codex native attempt; a timeout selects the
+// rollout summary for this invocation and any late native return is discarded.
+type ResumeSummaryOptions struct {
+	DiscoverOptions
+	NativeBudget time.Duration
+}
+
+// ResumeSummaryDiscovery is one provider's settled list projection. Codex is
+// zero-valued for other providers. MoreNotLoaded is content-free chrome state.
+type ResumeSummaryDiscovery struct {
+	Summaries     []ResumeSummary
+	DetailRefs    []ResumeDetailRef
+	Codex         CodexCatalogOutcome
+	MoreNotLoaded bool
+}
+
+// DiscoverResumeSummariesContext returns one settled provider result without
+// turn enrichment, preview reads, or Codex continuation. Codex native summary
+// population reads at most one page inside NativeBudget. Any native failure or
+// budget overrun discards the complete native attempt before one rollout scan.
+func DiscoverResumeSummariesContext(ctx context.Context, provider, cwd string, opts ResumeSummaryOptions, limit int) (ResumeSummaryDiscovery, error) {
+	cwd = cleanCWD(cwd)
+	if cwd == "" {
+		return ResumeSummaryDiscovery{}, errors.New("discover ai resume summaries: cwd is empty")
+	}
+	discoverOpts := opts.DiscoverOptions.withDefaults()
+	discoverOpts.DeferTurns = true
+	depth := max(discoverOpts.Depth, 0)
+	provider = strings.ToLower(strings.TrimSpace(provider))
+
+	var sessions []SessionMeta
+	var codexOutcome CodexCatalogOutcome
+	var moreNotLoaded bool
+	switch provider {
+	case AgentClaude:
+		discovery, err := DiscoverProviderContext(ctx, provider, cwd, discoverOpts, 0)
+		if err != nil {
+			return ResumeSummaryDiscovery{}, err
+		}
+		sessions = discovery.Sessions
+	case AgentCodex:
+		codexOutcome = CodexCatalogOutcome{Source: CatalogSourceFallback, Confidence: CatalogConfidenceMedium}
+		if discoverOpts.OpenCodexCatalog != nil {
+			budget := opts.NativeBudget
+			if budget <= 0 {
+				budget = DefaultResumeSummaryNativeBudget
+			}
+			native, hasMore, err := discoverCodexResumeSummaryBounded(ctx, cwd, depth, discoverOpts.OpenCodexCatalog, limit, budget)
+			if err == nil {
+				sessions = native
+				moreNotLoaded = hasMore
+				codexOutcome = CodexCatalogOutcome{Source: CatalogSourceNative, Confidence: CatalogConfidenceHigh}
+				break
+			}
+			codexOutcome.Reason = codexCatalogFallbackReason(err)
+		}
+		if sessions == nil {
+			fallbackOpts := discoverOpts
+			fallbackOpts.OpenCodexCatalog = nil
+			discovery, err := DiscoverProviderContext(ctx, provider, cwd, fallbackOpts, 0)
+			if err != nil {
+				return ResumeSummaryDiscovery{}, err
+			}
+			sessions = discovery.Sessions
+			for i := range sessions {
+				sessions[i].Confidence = ConfidenceMedium
+				sessions[i].Reason = string(codexOutcome.Reason)
+			}
+		}
+	case AgentAntigravity:
+		discovery, err := DiscoverProviderContext(ctx, provider, cwd, discoverOpts, 0)
+		if err != nil {
+			return ResumeSummaryDiscovery{}, err
+		}
+		sessions = discovery.Sessions
+	default:
+		return ResumeSummaryDiscovery{}, errors.New("unsupported resume summary provider " + provider)
+	}
+
+	summaries := make([]ResumeSummary, 0, len(sessions))
+	detailRefs := make([]ResumeDetailRef, 0, len(sessions))
+	for _, session := range sessions {
+		summary, detailRef := projectResumeSummary(session, cwd, depth)
+		summaries = append(summaries, summary)
+		detailRefs = append(detailRefs, detailRef)
+	}
+	return ResumeSummaryDiscovery{Summaries: summaries, DetailRefs: detailRefs, Codex: codexOutcome, MoreNotLoaded: moreNotLoaded}, nil
+}
+
+type resumeSummaryNativeResult struct {
+	sessions []SessionMeta
+	hasMore  bool
+	err      error
+}
+
+func discoverCodexResumeSummaryBounded(parent context.Context, cwd string, depth int, open OpenCodexCatalog, rowBudget int, budget time.Duration) ([]SessionMeta, bool, error) {
+	ctx, cancel := context.WithCancel(parent)
+	defer cancel()
+	result := make(chan resumeSummaryNativeResult, 1)
+	opened := make(chan *codexNativeCatalogState, 1)
+	go func() {
+		state, err := openCodexNativeCatalogState(ctx, cwd, depth, open)
+		if err != nil {
+			result <- resumeSummaryNativeResult{err: err}
+			return
+		}
+		opened <- state
+		if err := ctx.Err(); err != nil {
+			_ = state.close()
+			result <- resumeSummaryNativeResult{err: err}
+			return
+		}
+		hasMore, err := state.readPage(ctx, cwd, depth)
+		sessions := state.sessions()
+		if rowBudget > 0 && len(sessions) > rowBudget {
+			sessions = sessions[:rowBudget]
+			hasMore = true
+		}
+		_ = state.close()
+		result <- resumeSummaryNativeResult{sessions: sessions, hasMore: hasMore, err: err}
+	}()
+
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
+	var state *codexNativeCatalogState
+	for {
+		select {
+		case state = <-opened:
+			opened = nil
+		case native := <-result:
+			return native.sessions, native.hasMore, native.err
+		case <-timer.C:
+			cancel()
+			if state != nil {
+				_ = state.close()
+			}
+			return nil, false, context.DeadlineExceeded
+		case <-parent.Done():
+			cancel()
+			if state != nil {
+				_ = state.close()
+			}
+			return nil, false, parent.Err()
+		}
+	}
+}
+
+func projectResumeSummary(session SessionMeta, baseCWD string, depth int) (ResumeSummary, ResumeDetailRef) {
+	relativeCWD := ""
+	if depth > 0 {
+		if rel, err := filepath.Rel(baseCWD, cleanCWD(session.Context.CWD)); err == nil {
+			rel = filepath.ToSlash(rel)
+			if rel == "." {
+				relativeCWD = "./"
+			} else if rel != ".." && !strings.HasPrefix(rel, "../") {
+				relativeCWD = "./" + rel
+			}
+		}
+	}
+	summary := ResumeSummary{
+		Provider: strings.TrimSpace(session.Agent), ResumeID: strings.TrimSpace(session.ResumeID),
+		LastModified: session.LastModified, UpdatedAt: session.UpdatedAt,
+		Label: strings.Join(strings.Fields(session.Title), " "), Branch: strings.TrimSpace(session.Context.Branch),
+		RelativeCWD: relativeCWD, Source: strings.TrimSpace(session.Source),
+	}
+	ref := ResumeDetailRef{
+		Provider: summary.Provider, ResumeID: summary.ResumeID, LastModified: summary.LastModified,
+		UpdatedAt: summary.UpdatedAt, Source: summary.Source, transcriptPath: session.sourcePath,
+	}
+	return summary, ref
+}
+
+// ReadResumeDetailPreview crosses from the list-only projection into the
+// existing invocation-local detail read. The summary itself never gains the
+// resulting transcript bytes.
+func ReadResumeDetailPreview(ctx context.Context, ref ResumeDetailRef, open OpenCodexCatalog) (Preview, error) {
+	session := SessionMeta{
+		Agent: ref.Provider, ResumeID: ref.ResumeID, LastModified: ref.LastModified,
+		UpdatedAt: ref.UpdatedAt, Source: ref.Source, sourcePath: ref.transcriptPath,
+	}
+	return ReadPreview(ctx, session, open)
+}
