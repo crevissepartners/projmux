@@ -1084,7 +1084,7 @@ func (r *blockedProviderInput) Read(p []byte) (int, error) {
 	return 1, nil
 }
 
-func TestNativeInteractiveRendersAndStartsInputBeforeBlockedProviderCompletes(t *testing.T) {
+func TestNativeInteractiveRendersFixedProviderChromeBeforeBlockedDetailCompletes(t *testing.T) {
 	var out lockedBuffer
 	input := &blockedProviderInput{started: make(chan struct{}), release: make(chan struct{})}
 	providerStarted := make(chan struct{})
@@ -1096,8 +1096,9 @@ func TestNativeInteractiveRendersAndStartsInputBeforeBlockedProviderCompletes(t 
 			UI: "ai-resume-picker",
 			Items: []Item{
 				{Title: "[+ New Session]", Value: "new"},
-				{Title: "[codex] loading…", Value: "status\tcodex"},
+				{Title: "exact conversation", Value: "resume\tcodex\texact-id"},
 			},
+			ChromeBands: []ChromeBand{{Label: "Providers", Value: "Codex available · Claude empty · Antigravity unavailable"}},
 			DeferredUpdate: func() (DeferredUpdate, error) {
 				close(providerStarted)
 				<-providerRelease
@@ -1114,8 +1115,8 @@ func TestNativeInteractiveRendersAndStartsInputBeforeBlockedProviderCompletes(t 
 	if elapsed := time.Since(startedAt); elapsed >= 500*time.Millisecond {
 		t.Fatalf("first frame/provider handoff took %s, want <500ms", elapsed)
 	}
-	if snapshot := out.String(); !strings.Contains(snapshot, "[+ New Session]") || !strings.Contains(snapshot, "[codex] loading…") {
-		t.Fatalf("initial frame missing before blocked provider: %q", snapshot)
+	if snapshot := out.String(); !strings.Contains(snapshot, "[+ New Session]") || !strings.Contains(snapshot, "Codex") || !strings.Contains(snapshot, "Antigravity") || strings.Contains(snapshot, "status\tcodex") {
+		t.Fatalf("initial row/chrome frame missing before blocked detail: %q", snapshot)
 	}
 	select {
 	case <-input.started:
@@ -1134,7 +1135,7 @@ func TestNativeInteractiveRendersAndStartsInputBeforeBlockedProviderCompletes(t 
 	close(providerRelease)
 }
 
-func TestNativeLineModeAppliesProviderUpdateWhileInputPending(t *testing.T) {
+func TestNativeLineModeProviderChromeDoesNotChangeQueryCursorOrEnterCardinality(t *testing.T) {
 	reader, writer := io.Pipe()
 	t.Cleanup(func() {
 		_ = reader.Close()
@@ -1153,19 +1154,14 @@ func TestNativeLineModeAppliesProviderUpdateWhileInputPending(t *testing.T) {
 			UI: "ai-resume-picker",
 			Items: []Item{
 				{Title: "[+ New Session]", Value: "new"},
-				{Title: "[codex] loading…", Value: "status\tcodex", SearchText: "codex loading"},
+				{Title: "exact conversation", Value: "resume\tcodex\texact-id", SearchText: "codex exact conversation"},
 			},
+			ChromeBands: []ChromeBand{{Label: "Providers", Value: "Codex empty · Claude available · Antigravity unavailable"}},
 			DeferredUpdate: func() (DeferredUpdate, error) {
 				if deferredCalls.Add(1) == 1 {
-					return DeferredUpdate{Items: []Item{
-						{Title: "[+ New Session]", Value: "new"},
-						{Title: "[codex] available snapshot", Value: "status\tcodex", SearchText: "codex available"},
-					}}, nil
+					return DeferredUpdate{ChromeBands: []ChromeBand{{Label: "Providers", Value: "Codex fallback · Claude available · Antigravity unavailable"}}, SetChromeBands: true}, nil
 				}
-				return DeferredUpdate{Items: []Item{
-					{Title: "[+ New Session]", Value: "new"},
-					{Title: "exact conversation", Value: "resume\tcodex\texact-id", SearchText: "codex exact conversation"},
-				}}, nil
+				return DeferredUpdate{ChromeBands: []ChromeBand{{Label: "Providers", Value: "Codex available · Claude empty · Antigravity unavailable"}}, SetChromeBands: true}, nil
 			},
 			DeferredUpdateTrigger: trigger,
 		})
@@ -1175,7 +1171,7 @@ func TestNativeLineModeAppliesProviderUpdateWhileInputPending(t *testing.T) {
 		}{result: result, err: err}
 	}()
 
-	waitForNativeOutput(t, &out, "[codex] loading…")
+	waitForNativeOutput(t, &out, "Providers Codex empty")
 	if deferredCalls.Load() != 0 {
 		t.Fatalf("deferred update ran before initial frame: calls=%d", deferredCalls.Load())
 	}
@@ -1184,9 +1180,9 @@ func TestNativeLineModeAppliesProviderUpdateWhileInputPending(t *testing.T) {
 	}
 	waitForNativeOutput(t, &out, "query: codex")
 	trigger <- struct{}{}
-	waitForNativeOutput(t, &out, "[codex] available snapshot")
+	waitForNativeOutput(t, &out, "Providers Codex fallback")
 	trigger <- struct{}{}
-	waitForNativeOutput(t, &out, "exact conversation")
+	waitForNativeOutput(t, &out, "Providers Codex available")
 	if _, err := writer.Write([]byte("1\n")); err != nil {
 		t.Fatalf("write selection: %v", err)
 	}
@@ -1200,7 +1196,7 @@ func TestNativeLineModeAppliesProviderUpdateWhileInputPending(t *testing.T) {
 			t.Fatalf("result = %#v, want refreshed exact value with retained query", got.result)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("line mode did not select refreshed provider row")
+		t.Fatal("line mode did not select the unchanged exact resume row")
 	}
 	if deferredCalls.Load() != 2 {
 		t.Fatalf("deferred calls = %d, want 2 repeated trigger updates", deferredCalls.Load())
@@ -3713,6 +3709,69 @@ func TestMoreNotLoadedDeferredSeamPreservesFooterQueryAndExactFocusWithoutConten
 	cleared := applyNativeDeferredUpdate(applied, DeferredUpdate{MoreNotLoaded: false, SetMoreNotLoaded: true})
 	if cleared.MoreNotLoaded || nativeEffectiveFooter(cleared) != base.Footer {
 		t.Fatalf("notice clear changed base footer: %#v", cleared)
+	}
+}
+
+func TestAIResumeProviderChromeLocalized80ColumnGoldenClipsAndPreservesFooter(t *testing.T) {
+	tests := []struct {
+		name     string
+		locale   i18n.Locale
+		bands    []ChromeBand
+		footer   string
+		moreText string
+	}{
+		{
+			name: "en-US", locale: i18n.FallbackLocale,
+			bands:  []ChromeBand{{Label: "Providers", Value: "Codex fallback · Claude empty · Antigravity unavailable"}},
+			footer: "Showing latest 1 resume sessions.", moreText: "More conversations not loaded.",
+		},
+		{
+			name: "ko-KR", locale: i18n.Locale("ko-KR"),
+			bands:  []ChromeBand{{Label: "제공자", Value: "Codex 대체 · Claude 없음 · Antigravity 사용 불가"}},
+			footer: "최근 1건 표시.", moreText: "더 많은 대화를 불러오지 않았습니다.",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			options := Options{
+				UI: "ai-resume-picker", Title: "AI Resume", Prompt: "AI Resume > ", Locale: test.locale,
+				Items: []Item{
+					{Label: "[+ New Session]", Value: "new", SearchText: "new session"},
+					{Label: "exact Codex conversation", Value: "resume\tcodex\texact-id", SearchText: "codex exact conversation"},
+				},
+				ChromeBands: test.bands, Footer: test.footer, MoreNotLoaded: true,
+			}
+			if got := nativeFilteredItems(options, "unavailable"); len(got) != 0 {
+				t.Fatalf("provider chrome became searchable: %#v", got)
+			}
+			filtered := nativeFilteredItems(options, "codex")
+			if len(filtered) != 1 || filtered[0].Value != "resume\tcodex\texact-id" {
+				t.Fatalf("query cardinality = %#v", filtered)
+			}
+			layout := nativeLayout{Rows: 24, Cols: 80}
+			base := nativePlainFrameLines(nativeInteractiveFrame(options, options.Items, "", 0, 1, 0, layout))
+			queried := nativePlainFrameLines(nativeInteractiveFrame(options, filtered, "codex", len("codex"), 0, 0, layout))
+			for frameName, lines := range map[string][]string{"base": base, "queried": queried} {
+				if len(lines) != layout.Rows {
+					t.Fatalf("%s rows = %d, want %d", frameName, len(lines), layout.Rows)
+				}
+				for index, line := range lines {
+					if got := projmuxpicker.VisibleLen(line); got != layout.Cols {
+						t.Fatalf("%s line %d width=%d, want %d: %q", frameName, index, got, layout.Cols, line)
+					}
+				}
+				for _, want := range []string{test.bands[0].Label, test.bands[0].Value, test.footer, test.moreText} {
+					if nativeFrameLineContaining(lines, want) < 0 {
+						t.Fatalf("%s frame missing %q: %#v", frameName, want, lines)
+					}
+				}
+			}
+			for _, provider := range []string{"Codex", "Claude", "Antigravity"} {
+				if nativeFrameLineContaining(base, provider) != nativeFrameLineContaining(queried, provider) {
+					t.Fatalf("%s provider chrome moved under query", provider)
+				}
+			}
+		})
 	}
 }
 

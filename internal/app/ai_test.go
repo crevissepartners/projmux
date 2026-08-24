@@ -631,8 +631,11 @@ func TestAIResumePickerNoSessionsKeepsInteractiveNewSessionSnapshot(t *testing.T
 	if got, want := runner.options.UI, "ai-resume-picker"; got != want {
 		t.Fatalf("picker UI = %q, want %q", got, want)
 	}
-	if len(runner.options.Entries) != 4 || runner.options.Entries[0].Value != aiResumeNewValue {
-		t.Fatalf("entries = %#v, want New session plus three provider snapshots", runner.options.Entries)
+	if len(runner.options.Entries) != 1 || runner.options.Entries[0].Value != aiResumeNewValue {
+		t.Fatalf("entries = %#v, want only the New Session action", runner.options.Entries)
+	}
+	if len(runner.options.ChromeBands) != 1 {
+		t.Fatalf("provider chrome = %#v, want one fixed provider band", runner.options.ChromeBands)
 	}
 }
 

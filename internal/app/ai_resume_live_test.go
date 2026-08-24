@@ -17,6 +17,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -50,10 +51,13 @@ func (c *blockingResumeSummaryCatalog) Close() error {
 	return nil
 }
 
-func resumeSummaryProviderStatus(entries []intpickercompat.Entry, provider string) string {
-	for _, entry := range entries {
-		if entry.Value == "status\t"+provider {
-			return entry.SearchKey
+func resumeSummaryProviderStatus(bands []intpicker.ChromeBand, provider string) string {
+	display := map[string]string{aiModeCodex: "Codex", aiModeClaude: "Claude", aiModeAntigravity: "Antigravity"}[provider]
+	for _, band := range bands {
+		for part := range strings.SplitSeq(band.Value, " · ") {
+			if strings.HasPrefix(part, display+" ") {
+				return strings.TrimSpace(strings.TrimPrefix(part, display))
+			}
 		}
 	}
 	return ""
@@ -84,9 +88,10 @@ func TestResumeSummaryHundredsOfCodexRolloutsSettleBeforeBlockedNativeBudget(t *
 	if elapsed >= 500*time.Millisecond {
 		t.Fatalf("settled first frame took %s, want <500ms", elapsed)
 	}
-	status := resumeSummaryProviderStatus(entries, aiModeCodex)
-	if status != "codex available" {
-		t.Fatalf("Codex status = %q, want available; entries=%#v", status, entries)
+	bands, _ := controller.chrome()
+	status := resumeSummaryProviderStatus(bands, aiModeCodex)
+	if status != "fallback" {
+		t.Fatalf("Codex status = %q, want fallback; bands=%#v", status, bands)
 	}
 	var codexRows int
 	for _, entry := range entries {
@@ -99,7 +104,7 @@ func TestResumeSummaryHundredsOfCodexRolloutsSettleBeforeBlockedNativeBudget(t *
 	}
 }
 
-func TestResumeSummaryEmptyCodexIsAvailableAndEnvelopeExpiryIsNotFailure(t *testing.T) {
+func TestResumeSummaryProviderChromeDistinguishesFallbackEmptyAndUnavailable(t *testing.T) {
 	t.Run("empty rollout store", func(t *testing.T) {
 		home := t.TempDir()
 		cmd := testAICommand(home)
@@ -108,9 +113,11 @@ func TestResumeSummaryEmptyCodexIsAvailableAndEnvelopeExpiryIsNotFailure(t *test
 		}
 		controller := newAIResumeLiveController(cmd, "/work/app", home, 0, 20)
 		defer controller.close()
-		status := resumeSummaryProviderStatus(controller.initialEntries(), aiModeCodex)
-		if status != "codex available · no conversations" {
-			t.Fatalf("empty Codex status = %q, want available empty", status)
+		entries := controller.initialEntries()
+		bands, _ := controller.chrome()
+		status := resumeSummaryProviderStatus(bands, aiModeCodex)
+		if status != "fallback" {
+			t.Fatalf("empty fallback Codex status = %q, want fallback; entries=%#v", status, entries)
 		}
 	})
 
@@ -126,9 +133,11 @@ func TestResumeSummaryEmptyCodexIsAvailableAndEnvelopeExpiryIsNotFailure(t *test
 		controller := newAIResumeLiveController(cmd, "/work/app", t.TempDir(), 0, 20)
 		controller.populationTimeout = 10 * time.Millisecond
 		defer controller.close()
-		status := resumeSummaryProviderStatus(controller.initialEntries(), aiModeCodex)
-		if status != "codex available · no conversations" {
-			t.Fatalf("envelope-expired Codex status = %q, want available empty", status)
+		entries := controller.initialEntries()
+		bands, _ := controller.chrome()
+		status := resumeSummaryProviderStatus(bands, aiModeCodex)
+		if status != "empty" {
+			t.Fatalf("envelope-expired Codex status = %q, want empty; entries=%#v", status, entries)
 		}
 	})
 
@@ -142,11 +151,120 @@ func TestResumeSummaryEmptyCodexIsAvailableAndEnvelopeExpiryIsNotFailure(t *test
 		}
 		controller := newAIResumeLiveController(cmd, "/work/app", t.TempDir(), 0, 20)
 		defer controller.close()
-		status := resumeSummaryProviderStatus(controller.initialEntries(), aiModeCodex)
-		if status != "codex unavailable" {
+		entries := controller.initialEntries()
+		bands, _ := controller.chrome()
+		status := resumeSummaryProviderStatus(bands, aiModeCodex)
+		if status != "unavailable" {
 			t.Fatalf("failed Codex status = %q, want unavailable", status)
 		}
+		if len(entries) != 1 || entries[0].Value != aiResumeNewValue {
+			t.Fatalf("unavailable provider entered list: %#v", entries)
+		}
 	})
+}
+
+func TestResumeProviderStateTableProjectsChromeWithoutInformationalItems(t *testing.T) {
+	tests := []struct {
+		name   string
+		states map[string]aiResumeProviderState
+		want   map[string]string
+	}{
+		{
+			name: "available empty fallback",
+			states: map[string]aiResumeProviderState{
+				aiModeCodex: aiResumeProviderFallback, aiModeClaude: aiResumeProviderAvailable, aiModeAntigravity: aiResumeProviderEmpty,
+			},
+			want: map[string]string{aiModeCodex: "fallback", aiModeClaude: "available", aiModeAntigravity: "empty"},
+		},
+		{
+			name: "unavailable remains provider-specific",
+			states: map[string]aiResumeProviderState{
+				aiModeCodex: aiResumeProviderAvailable, aiModeClaude: aiResumeProviderUnavailable, aiModeAntigravity: aiResumeProviderAvailable,
+			},
+			want: map[string]string{aiModeCodex: "available", aiModeClaude: "unavailable", aiModeAntigravity: "available"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := testAICommand(t.TempDir())
+			controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
+			controller.startOnce.Do(func() {})
+			controller.providerStates = test.states
+			controller.summaries = []aisessions.ResumeSummary{
+				{Provider: aiModeCodex, ResumeID: "codex-exact", Source: aisessions.SourceCodexAppServer},
+				{Provider: aiModeClaude, ResumeID: "claude-exact", Source: aisessions.SourceClaudeTranscript},
+				{Provider: aiModeAntigravity, ResumeID: "antigravity-exact", Source: aisessions.SourceAntigravityMetadata},
+			}
+			entries := controller.initialEntries()
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Value, "status\t") {
+					t.Fatalf("provider state leaked into item value: %#v", entry)
+				}
+				if entry.Value == aiResumeNewValue {
+					continue
+				}
+				if _, ok := parseAIResumePickerValue(entry.Value); !ok {
+					t.Fatalf("non-actionable item value = %q", entry.Value)
+				}
+			}
+			bands, _ := controller.chrome()
+			if len(bands) != 1 {
+				t.Fatalf("provider chrome bands = %#v", bands)
+			}
+			for provider, want := range test.want {
+				if got := resumeSummaryProviderStatus(bands, provider); got != want {
+					t.Fatalf("%s chrome = %q, want %q; bands=%#v", provider, got, want, bands)
+				}
+			}
+			controller.close()
+		})
+	}
+}
+
+func TestResumeProviderStateUsesSettledAuthorityBeforeGlobalCap(t *testing.T) {
+	tests := []struct {
+		name   string
+		result aiResumeProviderResult
+		want   aiResumeProviderState
+	}{
+		{name: "native available", result: aiResumeProviderResult{provider: aiModeCodex, discovery: summaryDiscovery(aiModeCodex, "native", aisessions.SourceCodexAppServer, time.Time{})}, want: aiResumeProviderAvailable},
+		{name: "native empty", result: aiResumeProviderResult{provider: aiModeCodex, discovery: aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceNative}}}, want: aiResumeProviderEmpty},
+		{name: "fallback authority", result: aiResumeProviderResult{provider: aiModeCodex, discovery: aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceFallback}}}, want: aiResumeProviderFallback},
+		{name: "provider failure", result: aiResumeProviderResult{provider: aiModeClaude, err: errors.New("failed")}, want: aiResumeProviderUnavailable},
+		{name: "envelope expiry", result: aiResumeProviderResult{provider: aiModeAntigravity, err: context.DeadlineExceeded, envelopeExpired: true}, want: aiResumeProviderEmpty},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := resumeProviderState(test.result); got != test.want {
+				t.Fatalf("state = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestResumeProviderChromePreservesShownCountAndContentFreeContinuation(t *testing.T) {
+	controller := newAIResumeLiveController(testAICommand(t.TempDir()), "/work", t.TempDir(), 0, 20)
+	controller.startOnce.Do(func() {})
+	controller.summaries = []aisessions.ResumeSummary{
+		{Provider: aiModeCodex, ResumeID: "one", Source: aisessions.SourceCodexAppServer},
+		{Provider: aiModeClaude, ResumeID: "two", Source: aisessions.SourceClaudeTranscript},
+	}
+	controller.providerStates = map[string]aiResumeProviderState{
+		aiModeCodex: aiResumeProviderAvailable, aiModeClaude: aiResumeProviderAvailable, aiModeAntigravity: aiResumeProviderEmpty,
+	}
+	controller.moreNotLoaded = true
+	bands, moreNotLoaded := controller.chrome()
+	update, err := controller.update()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bands) != 1 || !moreNotLoaded || !update.MoreNotLoaded || !update.SetMoreNotLoaded {
+		t.Fatalf("chrome/continuation = bands=%#v initial=%t update=%#v", bands, moreNotLoaded, update)
+	}
+	if update.Items != nil || update.SetChromeBands || !strings.Contains(update.Footer, "Showing latest 2 resume sessions.") {
+		t.Fatalf("shown-count/footer update changed row or chrome membership: %#v", update)
+	}
+	controller.close()
 }
 
 func TestResumeSummaryPopulationEnvelopeKeepsCancellationSettledCodexPartial(t *testing.T) {
@@ -638,7 +756,7 @@ func TestResumeSummaryPreviewBytesStayOutOfRowsRegistryAndCommands(t *testing.T)
 	summary := aisessions.ResumeSummary{Provider: aiModeClaude, ResumeID: "exact-private-id", Label: "public title", Source: aisessions.SourceClaudeTranscript}
 	controller.summaries = []aisessions.ResumeSummary{summary}
 	controller.detailRefs[aiModeClaude+"\x00exact-private-id"] = aisessions.ResumeDetailRef{Provider: aiModeClaude, ResumeID: "exact-private-id", Source: aisessions.SourceClaudeTranscript}
-	entries := controller.entries(controller.summaries, map[string]bool{aiModeClaude: true}, map[string]bool{})
+	entries := controller.entries(controller.summaries)
 	value := aiResumePickerValue(aiModeClaude, "exact-private-id")
 	controller.focus(value)
 	deadline := time.Now().Add(time.Second)

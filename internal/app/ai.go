@@ -1323,13 +1323,16 @@ func (c *aiCommand) runResumePicker(direction string) error {
 	defer controller.close()
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	entries := controller.initialEntries()
+	chromeBands, moreNotLoaded := controller.chrome()
 	footer := fmt.Sprintf(localizeUIText(locale, "Showing latest %d resume sessions."), len(controller.snapshotSummaries()))
 	result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.nativePicker, c.themedPickerOptions(intpickercompat.Options{
 		UI:                    "ai-resume-picker",
 		Entries:               entries,
 		Title:                 localizeUIText(locale, "AI Resume - Split direction: ") + direction,
 		Prompt:                "AI Resume > ",
+		ChromeBands:           chromeBands,
 		Footer:                projmuxFooter(footer),
+		MoreNotLoaded:         moreNotLoaded,
 		ExpectKeys:            []string{"enter"},
 		Bindings:              pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, aiResumePickerPopupMode(direction), "esc", "ctrl-c", "ctrl-alt-s"),
 		DeferredUpdate:        controller.update,
