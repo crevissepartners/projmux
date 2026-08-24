@@ -211,6 +211,113 @@ func newReconcileFixture(t *testing.T, socketFlag, socketValue string) (*resourc
 	return command, store, server, runner, root
 }
 
+func TestResourceReconcileRefusesCanonicalShellAgentMarkerAndContinuesUnrelatedDrift(t *testing.T) {
+	t.Parallel()
+
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	alphaProject, _ := store.registry.ProjectByRoot(root)
+	alphaWindow := store.registry.WindowsOf(alphaProject.Metadata.UID)[0]
+	alphaPane := store.registry.PanesOf(alphaWindow.Metadata.UID)[0]
+	alphaSession := server.session("alpha")
+	alphaLiveWindow, alphaLivePane := alphaSession.windows[0], alphaSession.windows[0].panes[0]
+	alphaSession.opts[tmuxopts.ProjectUIDSession] = alphaProject.Metadata.UID
+	alphaSession.opts[tmuxopts.ProjectNameSession] = alphaProject.Metadata.Name
+	alphaLiveWindow.opts[tmuxopts.WindowUID] = alphaWindow.Metadata.UID
+	alphaLiveWindow.opts[tmuxopts.WindowName] = alphaWindow.Metadata.Name
+	alphaLiveWindow.opts[tmuxopts.AutomaticRenameWindow] = "off"
+	alphaLivePane.opts[tmuxopts.PaneUID] = alphaPane.Metadata.UID
+	alphaLivePane.opts[tmuxopts.PaneName] = alphaPane.Metadata.Name
+	alphaLivePane.opts[tmuxopts.AgentProviderPane] = "codex"
+	alphaLivePane.command = "codex"
+
+	betaRoot := t.TempDir()
+	store.dirs[betaRoot] = true
+	betaResult, err := store.mutator().RegisterProject(&store.registry, coremetadata.RegisterProjectOptions{
+		Root: betaRoot, DefaultShell: "/bin/zsh", OperationID: "op-canonical-shell-beta",
+	})
+	if err != nil {
+		t.Fatalf("register unrelated beta Project: %v", err)
+	}
+	if _, err := store.mutator().BindProjectSession(&store.registry, betaResult.Project.Metadata.UID, "beta", true); err != nil {
+		t.Fatalf("bind unrelated beta session: %v", err)
+	}
+	betaProject, _ := store.registry.Project(betaResult.Project.Metadata.UID)
+	betaWindow := store.registry.WindowsOf(betaProject.Metadata.UID)[0]
+	betaPane := store.registry.PanesOf(betaWindow.Metadata.UID)[0]
+	betaSession := server.addSession("beta")
+	betaSession.opts[inttmux.ProjectPathSessionOption] = betaRoot
+	betaSession.opts[tmuxopts.ProjectUIDSession] = betaProject.Metadata.UID
+	betaSession.opts[tmuxopts.ProjectNameSession] = betaProject.Metadata.Name
+	betaSession.windows[0].opts[tmuxopts.WindowUID] = betaWindow.Metadata.UID
+	betaSession.windows[0].opts[tmuxopts.WindowName] = betaWindow.Metadata.Name
+	betaSession.windows[0].opts[tmuxopts.AutomaticRenameWindow] = "off"
+	for index := range store.registry.Windows {
+		if store.registry.Windows[index].Metadata.UID == betaWindow.Metadata.UID {
+			store.registry.Windows[index].Metadata.DisplayName = betaSession.windows[0].name
+		}
+	}
+	betaSession.windows[0].panes[0].opts[tmuxopts.PaneUID] = betaPane.Metadata.UID
+	betaSession.windows[0].panes[0].opts[tmuxopts.PaneName] = "stale-beta-pane"
+	if _, err := store.mutator().ObserveWindowRuntimeBinding(&store.registry, alphaWindow.Metadata.UID, alphaSession.id, alphaLiveWindow.id); err != nil {
+		t.Fatalf("seed exact alpha Window runtime binding: %v", err)
+	}
+	if _, err := store.mutator().ObserveWindowRuntimeBinding(&store.registry, betaWindow.Metadata.UID, betaSession.id, betaSession.windows[0].id); err != nil {
+		t.Fatalf("seed exact beta Window runtime binding: %v", err)
+	}
+
+	alphaState := func() string {
+		return fmt.Sprintf("%s|%s|%s|%v|%v|%v|%s", alphaSession.id, alphaLiveWindow.id, alphaLivePane.id,
+			alphaSession.opts, alphaLiveWindow.opts, alphaLivePane.opts, alphaLivePane.command)
+	}
+	alphaBefore, registryBefore, writesBefore := alphaState(), store.snapshot(), store.writes
+	preview, stderr, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "primary", "-o", "json")
+	if err != nil || stderr != "" {
+		t.Fatalf("canonical shell preview: err=%v stderr=%q\n%s", err, stderr, preview)
+	}
+	for _, want := range []string{
+		`"key": "tmux:refuse:agent-marker:` + alphaLivePane.id + `"`,
+		`"field": "` + tmuxopts.AgentProviderPane + `"`,
+		`"before": "codex"`,
+		`"divergence": "D2-unattributed"`,
+		`"reason": "runtime Agent marker cannot reparent the canonical Window default shell Pane"`,
+		`"target": "` + betaSession.windows[0].panes[0].id + `"`,
+		`"after": "` + betaPane.Metadata.Name + `"`,
+	} {
+		if !strings.Contains(preview, want) {
+			t.Fatalf("canonical shell preview missing %q:\n%s", want, preview)
+		}
+	}
+	for _, forbidden := range []string{"registry:create:agent", "registry:update:pane"} {
+		if strings.Contains(preview, forbidden) {
+			t.Fatalf("canonical shell preview planned forbidden %q:\n%s", forbidden, preview)
+		}
+	}
+	if store.snapshot() != registryBefore || store.writes != writesBefore || alphaState() != alphaBefore || tmuxMutationCallCount(server) != 0 {
+		t.Fatal("canonical shell dry-run changed Registry or live tmux state")
+	}
+
+	executed, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil || !strings.Contains(executed, `"outcome": "refused"`) {
+		t.Fatalf("canonical shell execute did not retain typed refusal: err=%v\n%s", err, executed)
+	}
+	if got := betaSession.windows[0].panes[0].opts[tmuxopts.PaneName]; got != betaPane.Metadata.Name {
+		t.Fatalf("unrelated beta Pane name = %q, want %q", got, betaPane.Metadata.Name)
+	}
+	if store.snapshot() != registryBefore || store.writes != writesBefore || alphaState() != alphaBefore {
+		t.Fatalf("canonical shell refusal changed Registry bytes or protected live options/handles: registryChanged=%t writes=%d->%d alphaChanged=%t",
+			store.snapshot() != registryBefore, writesBefore, store.writes, alphaState() != alphaBefore)
+	}
+
+	mutationsBefore := tmuxMutationCallCount(server)
+	firstRepeat, _, firstErr := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	secondRepeat, _, secondErr := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if firstErr == nil || secondErr == nil || firstRepeat != secondRepeat || tmuxMutationCallCount(server) != mutationsBefore ||
+		store.snapshot() != registryBefore || store.writes != writesBefore || alphaState() != alphaBefore {
+		t.Fatalf("stable refusal repeat drifted: firstErr=%v secondErr=%v mutations=%d->%d\nfirst=%s\nsecond=%s",
+			firstErr, secondErr, mutationsBefore, tmuxMutationCallCount(server), firstRepeat, secondRepeat)
+	}
+}
+
 func runReconcile(t *testing.T, command *resourceReconcileCommand, args ...string) (string, string, error) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer

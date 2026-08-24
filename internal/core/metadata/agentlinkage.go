@@ -178,6 +178,9 @@ func (m Mutator) linkAgentPaneTx(txn *Transaction, reg *Registry, op, windowUID,
 	if pane.Metadata.OwnerUID() != windowUID {
 		return AgentLinkage{Kind: AgentLinkNone}, nil
 	}
+	if AgentPanePromotionRefusal(reg, windowUID, paneUID, observed) != "" {
+		return AgentLinkage{Kind: AgentLinkNone}, nil
+	}
 
 	// The candidate is settled before anything is written, so a mint can never
 	// be left behind by a promotion that then refused. An existing Agent that
@@ -209,6 +212,31 @@ func (m Mutator) linkAgentPaneTx(txn *Transaction, reg *Registry, op, windowUID,
 	}
 	m.bindAgentToPane(agent, paneUID, now)
 	return AgentLinkage{Kind: kind, AgentUID: agentUID, Promoted: true}, nil
+}
+
+// AgentPanePromotionRefusal returns the reason a runtime Agent marker cannot
+// change one direct Window-owned shell Pane into an Agent-owned managed Pane.
+//
+// defaultShellPaneRef is Registry ownership authority, not a runtime hint. A
+// marker can link an additional Pane that projmux previously launched, but it
+// cannot re-parent the canonical default shell that ref preserves. Anchor-only
+// promotion semantics belong to a separate contract and remain unchanged.
+// Refusing here is deliberately zero-write: no Agent is minted, no reservation
+// changes scope, and the Pane uid, owner, role, and Window refs remain exact.
+func AgentPanePromotionRefusal(reg *Registry, windowUID, paneUID string, observed LegacyPane) string {
+	if reg == nil || agentNameBaseFor(observed) == "" {
+		return ""
+	}
+	window, windowOK := reg.Window(windowUID)
+	pane, paneOK := reg.Pane(paneUID)
+	if !windowOK || !paneOK || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindWindow ||
+		pane.Metadata.OwnerUID() != windowUID || pane.Spec.Role != PaneRoleShell {
+		return ""
+	}
+	if paneUID != strings.TrimSpace(window.Spec.DefaultShellPaneRef) {
+		return ""
+	}
+	return "runtime Agent marker cannot reparent the canonical Window default shell Pane"
 }
 
 // bindAgentToPane points an Agent at its managed Pane.

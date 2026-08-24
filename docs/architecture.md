@@ -1727,6 +1727,14 @@ Agent runtime linkage:
   Agent — Phase 1's refuse rule, unchanged. The legacy import path already
   trusted exactly this option to mint an Agent on its create path; linkage makes
   the adopt and rebind paths agree with it.
+- **The canonical default shell remains Registry-owned.** A generic
+  `@projmux_ai_agent` marker on the direct Window-owned `role=shell` Pane named
+  by `Window.spec.defaultShellPaneRef` is reported as reason-bearing D2 and
+  performs no Agent mint, Pane reparent, or reservation move. Runtime metadata
+  cannot invalidate the Registry's canonical shell chain. This exception is
+  deliberately exact: an anchor-only shell that is not the default shell keeps
+  the existing linkage behavior, whose promotion semantics belong to the
+  separate anchor/primary-shell track.
 - **Which Agent, in order.** (1) The Pane is already Agent-owned: that Agent is
   the answer and only `status.paneRef` is repaired. (2) An Agent in the same
   Window already records the same provider conversation in `status.sessionRef`

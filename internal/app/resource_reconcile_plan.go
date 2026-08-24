@@ -889,13 +889,17 @@ func hasRuntimeCondition(conditions []coremetadata.Condition) bool {
 }
 
 type observedPlanObject struct {
-	kind        coremetadata.Kind
-	target      string
-	uid         string
-	session     string
-	windowIndex string
-	nameMirror  string
-	automatic   string
+	kind           coremetadata.Kind
+	target         string
+	uid            string
+	session        string
+	windowIndex    string
+	nameMirror     string
+	automatic      string
+	agentProvider  string
+	agentTopic     string
+	agentSessionID string
+	agentThreadID  string
 }
 
 type plannedTmuxWrite struct {
@@ -1185,7 +1189,10 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 			if _, observed := r.initialPaneUID[id]; !observed {
 				r.initialPaneUID[id] = uid
 			}
-			r.addObject(observedPlanObject{kind: coremetadata.KindPane, target: id, uid: uid, session: session, windowIndex: row[0], nameMirror: row[1]})
+			r.addObject(observedPlanObject{
+				kind: coremetadata.KindPane, target: id, uid: uid, session: session, windowIndex: row[0], nameMirror: row[1],
+				agentProvider: row[2], agentTopic: row[3], agentSessionID: strings.TrimSpace(row[9]), agentThreadID: strings.TrimSpace(row[10]),
+			})
 		}
 	}
 }
@@ -1306,6 +1313,21 @@ func (r *resourcePlanTmuxRunner) foreignItems(registry coremetadata.Registry, re
 		if uid == "" || strings.HasPrefix(uid, coremetadata.DeletedPaneMirrorPrefix) {
 			continue
 		}
+		if object.kind == coremetadata.KindPane && known[uid] && counts[strings.ToLower(string(object.kind))+"\x00"+uid] == 1 {
+			windowUID := observedWindowUIDForPane(object, r.objects)
+			refusal := coremetadata.AgentPanePromotionRefusal(&registry, windowUID, uid, coremetadata.LegacyPane{
+				Provider: object.agentProvider, Topic: object.agentTopic, SessionID: object.agentSessionID, ThreadID: object.agentThreadID,
+			})
+			if refusal != "" {
+				items = append(items, resourceReconcileItem{
+					Key: "tmux:refuse:agent-marker:" + object.target, Drift: resourceDriftForeign, Surface: "tmux", Action: "refuse",
+					Kind: string(coremetadata.KindAgent), Target: object.target, Field: tmuxopts.AgentProviderPane,
+					Before: object.agentProvider, Outcome: "refused", Reason: refusal,
+					Divergence: resourcegraph.DivergenceUnattributed, refused: true,
+				})
+				continue
+			}
+		}
 		reason := ""
 		if !known[uid] {
 			reason = "live object carries a uid absent from the authoritative Registry"
@@ -1362,13 +1384,7 @@ func paneOwnedByObservedWindow(registry coremetadata.Registry, pane observedPlan
 	if !ok {
 		return false
 	}
-	windowUID := ""
-	for _, object := range objects {
-		if object.kind == coremetadata.KindWindow && object.session == pane.session && object.windowIndex == pane.windowIndex {
-			windowUID = object.uid
-			break
-		}
-	}
+	windowUID := observedWindowUIDForPane(pane, objects)
 	if windowUID == "" {
 		return false
 	}
@@ -1378,6 +1394,15 @@ func paneOwnedByObservedWindow(registry coremetadata.Registry, pane observedPlan
 	}
 	agent, ok := registry.Agent(owner)
 	return ok && agent.Metadata.OwnerUID() == windowUID
+}
+
+func observedWindowUIDForPane(pane observedPlanObject, objects []observedPlanObject) string {
+	for _, object := range objects {
+		if object.kind == coremetadata.KindWindow && object.session == pane.session && object.windowIndex == pane.windowIndex {
+			return strings.TrimSpace(object.uid)
+		}
+	}
+	return ""
 }
 
 func flagArg(args []string, name string) string {
