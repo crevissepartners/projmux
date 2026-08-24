@@ -2,6 +2,8 @@ package aisessions
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -161,6 +163,102 @@ type blockingSummaryCatalog struct {
 
 	mu         sync.Mutex
 	closeCalls int
+}
+
+type fallbackOrderCatalog struct {
+	fallbackStarted <-chan struct{}
+	observed        chan<- struct{}
+	closed          chan struct{}
+	closeOnce       sync.Once
+}
+
+func (c *fallbackOrderCatalog) List(context.Context, codexappserver.CatalogQuery) (codexappserver.CatalogPage, error) {
+	select {
+	case <-c.fallbackStarted:
+		close(c.observed)
+	case <-time.After(20 * time.Millisecond):
+		return codexappserver.CatalogPage{}, errors.New("fallback did not start with native")
+	}
+	<-c.closed
+	return codexappserver.CatalogPage{}, context.Canceled
+}
+
+func (*fallbackOrderCatalog) Read(context.Context, string) (codexappserver.CatalogThread, error) {
+	return codexappserver.CatalogThread{}, nil
+}
+
+func (c *fallbackOrderCatalog) Close() error {
+	c.closeOnce.Do(func() { close(c.closed) })
+	return nil
+}
+
+func TestResumeSummaryHundredsOfRolloutsStartConcurrentlyWithNative(t *testing.T) {
+	root := t.TempDir()
+	day := filepath.Join(root, "2026", "08", "24")
+	if err := os.MkdirAll(day, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := range 600 {
+		id := fmt.Sprintf("019f0000-0000-7000-8000-%012d", i)
+		writeFile(t, filepath.Join(day, fmt.Sprintf("rollout-%03d.jsonl", i)), fmt.Sprintf(`{"type":"session_meta","payload":{"id":%q,"cwd":"/work/app"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"fallback"}}
+`, id))
+	}
+
+	fallbackStarted := make(chan struct{})
+	fallbackObserved := make(chan struct{})
+	catalog := &fallbackOrderCatalog{fallbackStarted: fallbackStarted, observed: fallbackObserved, closed: make(chan struct{})}
+	startedAt := time.Now()
+	discovery, err := DiscoverResumeSummariesContext(context.Background(), AgentCodex, "/work/app", ResumeSummaryOptions{
+		DiscoverOptions: DiscoverOptions{CodexSessionsDir: root, OpenCodexCatalog: func(context.Context) (CodexCatalog, error) { return catalog, nil }},
+		NativeBudget:    30 * time.Millisecond,
+		discoverCodexFallback: func(ctx context.Context, cwd, sessionsDir string, depth int) []SessionMeta {
+			close(fallbackStarted)
+			return discoverCodexContext(ctx, cwd, sessionsDir, depth)
+		},
+	}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-fallbackObserved:
+	default:
+		t.Fatal("native attempt did not observe rollout fallback running concurrently")
+	}
+	if elapsed := time.Since(startedAt); elapsed >= 500*time.Millisecond {
+		t.Fatalf("concurrent fallback settled in %s, want <500ms", elapsed)
+	}
+	if discovery.Codex.Source != CatalogSourceFallback || len(discovery.Summaries) == 0 {
+		t.Fatalf("large rollout fallback did not settle: %#v", discovery)
+	}
+}
+
+func TestResumeSummaryNativeEmptyCancelsConcurrentFallbackWithoutMerge(t *testing.T) {
+	canceled := make(chan struct{})
+	lateID := "019f0000-0000-7000-8000-000000000077"
+	discovery, err := DiscoverResumeSummariesContext(context.Background(), AgentCodex, "/work/app", ResumeSummaryOptions{
+		DiscoverOptions: DiscoverOptions{
+			CodexSessionsDir: t.TempDir(),
+			OpenCodexCatalog: openFakeCodexCatalog(&fakeCodexCatalog{pages: []codexappserver.CatalogPage{{}}}),
+		},
+		NativeBudget: time.Second,
+		discoverCodexFallback: func(ctx context.Context, _, _ string, _ int) []SessionMeta {
+			<-ctx.Done()
+			close(canceled)
+			return []SessionMeta{{Agent: AgentCodex, ResumeID: lateID, Source: SourceCodexRollout}}
+		},
+	}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-canceled:
+	case <-time.After(time.Second):
+		t.Fatal("native-empty did not cancel concurrent rollout fallback")
+	}
+	if discovery.Codex.Source != CatalogSourceNative || len(discovery.Summaries) != 0 {
+		t.Fatalf("native-empty merged late fallback: %#v", discovery)
+	}
 }
 
 func (c *blockingSummaryCatalog) List(context.Context, codexappserver.CatalogQuery) (codexappserver.CatalogPage, error) {

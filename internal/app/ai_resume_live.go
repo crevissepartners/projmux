@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"sort"
@@ -93,9 +94,10 @@ func (c *aiResumeLiveController) signal() {
 }
 
 type aiResumeProviderResult struct {
-	provider  string
-	discovery aisessions.ResumeSummaryDiscovery
-	err       error
+	provider        string
+	discovery       aisessions.ResumeSummaryDiscovery
+	err             error
+	envelopeExpired bool
 }
 
 // populate settles all provider summaries before the picker is opened. The
@@ -138,11 +140,28 @@ func (c *aiResumeLiveController) populateOnce() {
 	for len(settled) < len(providers) {
 		select {
 		case result := <-results:
+			if ctx.Err() != nil {
+				result.envelopeExpired = errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)
+			}
 			settled[result.provider] = result
 		case <-ctx.Done():
+			// A result that completed at the deadline may already be queued. Keep
+			// it before settling the still-missing providers as available-empty.
+			// The population envelope is a latency boundary, not evidence that a
+			// provider itself is unavailable.
+		drainResults:
+			for {
+				select {
+				case result := <-results:
+					result.envelopeExpired = errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)
+					settled[result.provider] = result
+				default:
+					break drainResults
+				}
+			}
 			for _, provider := range providers {
 				if _, ok := settled[provider]; !ok {
-					settled[provider] = aiResumeProviderResult{provider: provider, err: ctx.Err()}
+					settled[provider] = aiResumeProviderResult{provider: provider, envelopeExpired: true}
 				}
 			}
 		}
@@ -156,7 +175,7 @@ func (c *aiResumeLiveController) populateOnce() {
 	for _, provider := range providers {
 		result := settled[provider]
 		done[provider] = true
-		failed[provider] = result.err != nil
+		failed[provider] = result.err != nil && !result.envelopeExpired
 		if result.err == nil {
 			summaries = append(summaries, result.discovery.Summaries...)
 			for _, ref := range result.discovery.DetailRefs {
