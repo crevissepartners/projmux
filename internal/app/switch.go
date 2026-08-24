@@ -1728,11 +1728,18 @@ func (c *switchCommand) launchSidebarOpenContinuation(ctx context.Context, plan 
 		args = append(args, "--client", strings.TrimSpace(client))
 	}
 	env := map[string]string{}
+	if anchorPane := c.lookupEnvValue(runtimeMutationAnchorPaneEnv); anchorPane != "" {
+		env[runtimeMutationAnchorPaneEnv] = anchorPane
+	}
 	if strings.TrimSpace(client) != "" {
 		env[hookTrustPopupTargetClientEnv] = strings.TrimSpace(client)
 		env[inttmux.SwitchTargetClientEnv] = strings.TrimSpace(client)
 	}
 	command := buildShellCommand(binaryPath, args, env)
+	// sidebar-open reports operational failures through its own journal entry and
+	// reopens the picker with the actionable error. Keep the detached tmux job
+	// successful so run-shell does not replace that UI with its raw shell command.
+	command += " || :"
 	if _, err := c.tmuxRunner.Run(ctx, "tmux", "run-shell", "-b", command); err != nil {
 		return fmt.Errorf("launch sidebar open continuation: %w", err)
 	}
@@ -1789,19 +1796,23 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	if exists {
 		return c.openProjectSession(context.Background(), openSession)
 	}
-	err = c.authorizeAndContinueProjectOpen(context.Background(), openTarget, openSession, openMode)
-	if err == nil {
+	openErr := c.authorizeAndContinueProjectOpen(context.Background(), openTarget, openSession, openMode)
+	if openErr == nil {
 		return nil
 	}
 	resume := switchSidebarResume{
 		Query:     strings.TrimSpace(*query),
 		Selection: openTarget,
-		Message:   sidebarTrustStatusMessage(err),
+		Message:   sidebarTrustStatusMessage(openErr),
 	}
-	if reopenErr := c.reopenSidebarAfterTrust(context.Background(), targetClient, resume); reopenErr != nil {
+	reopenErr := c.reopenSidebarAfterTrust(context.Background(), targetClient, resume)
+	if errors.Is(openErr, errProjectTrustDenied) {
 		return reopenErr
 	}
-	return nil
+	if reopenErr != nil {
+		return errors.Join(openErr, reopenErr)
+	}
+	return fmt.Errorf("open selected project: %w", openErr)
 }
 
 func (c *switchCommand) withSidebarOpenClientEnv(client string) func() {
