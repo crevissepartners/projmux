@@ -53,11 +53,6 @@ func localizePickerOptions(homeDir func() (string, error), lookupEnv func(string
 	options.Prompt = localizeUIText(locale, options.Prompt)
 	options.Header = localizeUIText(locale, options.Header)
 	options.Footer = localizeUIText(locale, options.Footer)
-	for i := range options.ChromeBands {
-		options.ChromeBands[i].Label = localizeUIText(locale, options.ChromeBands[i].Label)
-		options.ChromeBands[i].Value = localizeUIText(locale, options.ChromeBands[i].Value)
-		options.ChromeBands[i].Secondary = localizeUIText(locale, options.ChromeBands[i].Secondary)
-	}
 	for i := range options.TitleChips {
 		options.TitleChips[i].Label = localizeUIText(locale, options.TitleChips[i].Label)
 	}

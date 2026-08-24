@@ -22,6 +22,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/theme"
+	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -188,7 +189,7 @@ func TestAISettingsAppliesGlobalThemeSurface(t *testing.T) {
 background = "#0000ff"
 surface = "#112233"
 `)
-	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "esc"}}
+	runner := &capturingAIRunner{}
 	cmd := testAICommand(home)
 	cmd.runner = runner
 	cmd.nativePicker = nativePickerFromCompatRunner(runner)
@@ -610,10 +611,12 @@ func TestAIResumePickerNoSessionsKeepsInteractiveNewSessionSnapshot(t *testing.T
 	if err := os.MkdirAll(work, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	runner := &capturingAIRunner{result: intpickercompat.Result{Key: "esc"}}
+	var options intpicker.Options
 	cmd := testAICommand(home)
-	cmd.runner = runner
-	cmd.nativePicker = nativePickerFromCompatRunner(runner)
+	cmd.nativePicker = pickerRunnerFunc(func(got intpicker.Options) (intpicker.Result, error) {
+		options = got
+		return intpicker.Result{Key: "esc", Closed: true}, nil
+	})
 	cmd.lookupEnv = func(name string) string {
 		switch name {
 		case "HOME":
@@ -628,14 +631,18 @@ func TestAIResumePickerNoSessionsKeepsInteractiveNewSessionSnapshot(t *testing.T
 	if err := cmd.runResumePicker("right"); err != nil {
 		t.Fatalf("runResumePicker() error = %v", err)
 	}
-	if got, want := runner.options.UI, "ai-resume-picker"; got != want {
+	if got, want := options.UI, "ai-resume-picker"; got != want {
 		t.Fatalf("picker UI = %q, want %q", got, want)
 	}
-	if len(runner.options.Entries) != 1 || runner.options.Entries[0].Value != aiResumeNewValue {
-		t.Fatalf("entries = %#v, want only the New Session action", runner.options.Entries)
+	if len(options.Items) != 1 || options.Items[0].Value != aiResumeNewValue {
+		t.Fatalf("items = %#v, want only the New Session action", options.Items)
 	}
-	if len(runner.options.ChromeBands) != 1 {
-		t.Fatalf("provider chrome = %#v, want one fixed provider band", runner.options.ChromeBands)
+	if len(options.ChromeBands) != 0 {
+		t.Fatalf("upper provider chrome = %#v, want zero bands", options.ChromeBands)
+	}
+	lines := strings.Split(options.Footer, "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "Providers Codex ") || lines[1] != "Showing latest 0 resume sessions." {
+		t.Fatalf("footer = %#v, want provider line then shown count", lines)
 	}
 }
 

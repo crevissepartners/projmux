@@ -13,7 +13,7 @@ func TestPickerOptionsMapsCompatBindingsToContractActions(t *testing.T) {
 		UI:            "switch",
 		Entries:       []Entry{{Label: "api", Value: "/repo/api", SearchKey: "api service"}},
 		Title:         "Projects",
-		ChromeBands:   []picker.ChromeBand{{Label: "Codex", Value: "fallback"}},
+		Footer:        "Showing latest 1 resume sessions.",
 		MoreNotLoaded: true,
 		Read0:         true,
 		DisableSearch: true,
@@ -36,8 +36,8 @@ func TestPickerOptionsMapsCompatBindingsToContractActions(t *testing.T) {
 	if len(options.Items) != 1 || options.Items[0].SearchText != "api service" {
 		t.Fatalf("Items = %#v, want compat entry mapped to picker item", options.Items)
 	}
-	if len(options.ChromeBands) != 1 || options.ChromeBands[0].Value != "fallback" || !options.MoreNotLoaded {
-		t.Fatalf("fixed chrome = %#v more=%t", options.ChromeBands, options.MoreNotLoaded)
+	if options.Footer != "Showing latest 1 resume sessions." || !options.MoreNotLoaded {
+		t.Fatalf("footer = %q more=%t", options.Footer, options.MoreNotLoaded)
 	}
 	if len(options.Actions) != 2 {
 		t.Fatalf("Actions = %#v, want close and command actions", options.Actions)

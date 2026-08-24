@@ -1084,7 +1084,7 @@ func (r *blockedProviderInput) Read(p []byte) (int, error) {
 	return 1, nil
 }
 
-func TestNativeInteractiveRendersFixedProviderChromeBeforeBlockedDetailCompletes(t *testing.T) {
+func TestNativeInteractiveRendersFixedProviderFooterBeforeBlockedDetailCompletes(t *testing.T) {
 	var out lockedBuffer
 	input := &blockedProviderInput{started: make(chan struct{}), release: make(chan struct{})}
 	providerStarted := make(chan struct{})
@@ -1098,7 +1098,8 @@ func TestNativeInteractiveRendersFixedProviderChromeBeforeBlockedDetailCompletes
 				{Title: "[+ New Session]", Value: "new"},
 				{Title: "exact conversation", Value: "resume\tcodex\texact-id"},
 			},
-			ChromeBands: []ChromeBand{{Label: "Providers", Value: "Codex available · Claude empty · Antigravity unavailable"}},
+			Footer: "Providers Codex available · Claude empty · Antigravity unavailable\n" +
+				"Showing latest 1 resume sessions.",
 			DeferredUpdate: func() (DeferredUpdate, error) {
 				close(providerStarted)
 				<-providerRelease
@@ -1135,15 +1136,13 @@ func TestNativeInteractiveRendersFixedProviderChromeBeforeBlockedDetailCompletes
 	close(providerRelease)
 }
 
-func TestNativeLineModeProviderChromeDoesNotChangeQueryCursorOrEnterCardinality(t *testing.T) {
+func TestNativeLineModeProviderFooterDoesNotChangeQueryCursorOrEnterCardinality(t *testing.T) {
 	reader, writer := io.Pipe()
 	t.Cleanup(func() {
 		_ = reader.Close()
 		_ = writer.Close()
 	})
 	var out lockedBuffer
-	trigger := make(chan struct{}, 1)
-	var deferredCalls atomic.Int32
 	resultCh := make(chan struct {
 		result Result
 		err    error
@@ -1156,14 +1155,8 @@ func TestNativeLineModeProviderChromeDoesNotChangeQueryCursorOrEnterCardinality(
 				{Title: "[+ New Session]", Value: "new"},
 				{Title: "exact conversation", Value: "resume\tcodex\texact-id", SearchText: "codex exact conversation"},
 			},
-			ChromeBands: []ChromeBand{{Label: "Providers", Value: "Codex empty · Claude available · Antigravity unavailable"}},
-			DeferredUpdate: func() (DeferredUpdate, error) {
-				if deferredCalls.Add(1) == 1 {
-					return DeferredUpdate{ChromeBands: []ChromeBand{{Label: "Providers", Value: "Codex fallback · Claude available · Antigravity unavailable"}}, SetChromeBands: true}, nil
-				}
-				return DeferredUpdate{ChromeBands: []ChromeBand{{Label: "Providers", Value: "Codex available · Claude empty · Antigravity unavailable"}}, SetChromeBands: true}, nil
-			},
-			DeferredUpdateTrigger: trigger,
+			Footer: "Providers Codex fallback · Claude available · Antigravity unavailable\n" +
+				"Showing latest 1 resume sessions.",
 		})
 		resultCh <- struct {
 			result Result
@@ -1171,18 +1164,11 @@ func TestNativeLineModeProviderChromeDoesNotChangeQueryCursorOrEnterCardinality(
 		}{result: result, err: err}
 	}()
 
-	waitForNativeOutput(t, &out, "Providers Codex empty")
-	if deferredCalls.Load() != 0 {
-		t.Fatalf("deferred update ran before initial frame: calls=%d", deferredCalls.Load())
-	}
+	waitForNativeOutput(t, &out, "Providers Codex fallback")
 	if _, err := writer.Write([]byte("codex\n")); err != nil {
 		t.Fatalf("write query: %v", err)
 	}
 	waitForNativeOutput(t, &out, "query: codex")
-	trigger <- struct{}{}
-	waitForNativeOutput(t, &out, "Providers Codex fallback")
-	trigger <- struct{}{}
-	waitForNativeOutput(t, &out, "Providers Codex available")
 	if _, err := writer.Write([]byte("1\n")); err != nil {
 		t.Fatalf("write selection: %v", err)
 	}
@@ -1197,9 +1183,6 @@ func TestNativeLineModeProviderChromeDoesNotChangeQueryCursorOrEnterCardinality(
 		}
 	case <-time.After(time.Second):
 		t.Fatal("line mode did not select the unchanged exact resume row")
-	}
-	if deferredCalls.Load() != 2 {
-		t.Fatalf("deferred calls = %d, want 2 repeated trigger updates", deferredCalls.Load())
 	}
 }
 
@@ -3712,37 +3695,44 @@ func TestMoreNotLoadedDeferredSeamPreservesFooterQueryAndExactFocusWithoutConten
 	}
 }
 
-func TestAIResumeProviderChromeLocalized80ColumnGoldenClipsAndPreservesFooter(t *testing.T) {
+func TestAIResumeProviderFooterLocalized80ColumnGoldenClipsAndPreservesOrder(t *testing.T) {
 	tests := []struct {
-		name     string
-		locale   i18n.Locale
-		bands    []ChromeBand
-		footer   string
-		moreText string
+		name           string
+		locale         i18n.Locale
+		providerPrefix string
+		shownCount     string
+		moreText       string
 	}{
 		{
 			name: "en-US", locale: i18n.FallbackLocale,
-			bands:  []ChromeBand{{Label: "Providers", Value: "Codex fallback · Claude empty · Antigravity unavailable"}},
-			footer: "Showing latest 1 resume sessions.", moreText: "More conversations not loaded.",
+			providerPrefix: "Providers Codex fallback · Claude empty · Antigravity unavailable",
+			shownCount:     "Showing latest 1 resume sessions.", moreText: "More conversations not loaded.",
 		},
 		{
 			name: "ko-KR", locale: i18n.Locale("ko-KR"),
-			bands:  []ChromeBand{{Label: "제공자", Value: "Codex 대체 · Claude 없음 · Antigravity 사용 불가"}},
-			footer: "최근 1건 표시.", moreText: "더 많은 대화를 불러오지 않았습니다.",
+			providerPrefix: "제공자 Codex 대체 · Claude 없음 · Antigravity 사용 불가",
+			shownCount:     "최근 1건 표시.", moreText: "더 많은 대화를 불러오지 않았습니다.",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			// Extend the real provider projection past the 80-column frame so this
+			// golden proves that clipping one footer line cannot consume either of
+			// the following semantic footer rows.
+			const clippedSuffix = " · this provider-state suffix must be clipped"
 			options := Options{
 				UI: "ai-resume-picker", Title: "AI Resume", Prompt: "AI Resume > ", Locale: test.locale,
 				Items: []Item{
 					{Label: "[+ New Session]", Value: "new", SearchText: "new session"},
 					{Label: "exact Codex conversation", Value: "resume\tcodex\texact-id", SearchText: "codex exact conversation"},
 				},
-				ChromeBands: test.bands, Footer: test.footer, MoreNotLoaded: true,
+				Footer: test.providerPrefix + clippedSuffix + "\n" + test.shownCount, MoreNotLoaded: true,
+			}
+			if len(options.ChromeBands) != 0 {
+				t.Fatalf("upper provider chrome = %#v, want zero bands", options.ChromeBands)
 			}
 			if got := nativeFilteredItems(options, "unavailable"); len(got) != 0 {
-				t.Fatalf("provider chrome became searchable: %#v", got)
+				t.Fatalf("provider footer became searchable: %#v", got)
 			}
 			filtered := nativeFilteredItems(options, "codex")
 			if len(filtered) != 1 || filtered[0].Value != "resume\tcodex\texact-id" {
@@ -3760,16 +3750,23 @@ func TestAIResumeProviderChromeLocalized80ColumnGoldenClipsAndPreservesFooter(t 
 						t.Fatalf("%s line %d width=%d, want %d: %q", frameName, index, got, layout.Cols, line)
 					}
 				}
-				for _, want := range []string{test.bands[0].Label, test.bands[0].Value, test.footer, test.moreText} {
+				for _, want := range []string{test.providerPrefix, test.shownCount, test.moreText} {
 					if nativeFrameLineContaining(lines, want) < 0 {
 						t.Fatalf("%s frame missing %q: %#v", frameName, want, lines)
 					}
 				}
-			}
-			for _, provider := range []string{"Codex", "Claude", "Antigravity"} {
-				if nativeFrameLineContaining(base, provider) != nativeFrameLineContaining(queried, provider) {
-					t.Fatalf("%s provider chrome moved under query", provider)
+				providerLine := nativeFrameLineContaining(lines, test.providerPrefix)
+				shownLine := nativeFrameLineContaining(lines, test.shownCount)
+				moreLine := nativeFrameLineContaining(lines, test.moreText)
+				if shownLine != providerLine+1 || moreLine != shownLine+1 {
+					t.Fatalf("%s footer order = provider:%d shown:%d more:%d", frameName, providerLine, shownLine, moreLine)
 				}
+				if strings.Contains(lines[providerLine], "suffix") {
+					t.Fatalf("%s provider footer did not clip at 80 columns: %q", frameName, lines[providerLine])
+				}
+			}
+			if baseLine, queriedLine := nativeFrameLineContaining(base, test.providerPrefix), nativeFrameLineContaining(queried, test.providerPrefix); baseLine != queriedLine {
+				t.Fatalf("provider footer moved under query: base=%d queried=%d", baseLine, queriedLine)
 			}
 		})
 	}

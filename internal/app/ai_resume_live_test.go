@@ -17,7 +17,6 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -51,13 +50,12 @@ func (c *blockingResumeSummaryCatalog) Close() error {
 	return nil
 }
 
-func resumeSummaryProviderStatus(bands []intpicker.ChromeBand, provider string) string {
+func resumeSummaryProviderStatus(footer, provider string) string {
 	display := map[string]string{aiModeCodex: "Codex", aiModeClaude: "Claude", aiModeAntigravity: "Antigravity"}[provider]
-	for _, band := range bands {
-		for part := range strings.SplitSeq(band.Value, " · ") {
-			if strings.HasPrefix(part, display+" ") {
-				return strings.TrimSpace(strings.TrimPrefix(part, display))
-			}
+	providerLine, _, _ := strings.Cut(footer, "\n")
+	for part := range strings.SplitSeq(providerLine, " · ") {
+		if index := strings.Index(part, display+" "); index >= 0 {
+			return strings.TrimSpace(part[index+len(display):])
 		}
 	}
 	return ""
@@ -88,10 +86,10 @@ func TestResumeSummaryHundredsOfCodexRolloutsSettleBeforeBlockedNativeBudget(t *
 	if elapsed >= 500*time.Millisecond {
 		t.Fatalf("settled first frame took %s, want <500ms", elapsed)
 	}
-	bands, _ := controller.chrome()
-	status := resumeSummaryProviderStatus(bands, aiModeCodex)
+	footer, _ := controller.footer()
+	status := resumeSummaryProviderStatus(footer, aiModeCodex)
 	if status != "fallback" {
-		t.Fatalf("Codex status = %q, want fallback; bands=%#v", status, bands)
+		t.Fatalf("Codex status = %q, want fallback; footer=%q", status, footer)
 	}
 	var codexRows int
 	for _, entry := range entries {
@@ -104,7 +102,7 @@ func TestResumeSummaryHundredsOfCodexRolloutsSettleBeforeBlockedNativeBudget(t *
 	}
 }
 
-func TestResumeSummaryProviderChromeDistinguishesFallbackEmptyAndUnavailable(t *testing.T) {
+func TestResumeSummaryProviderFooterDistinguishesFallbackEmptyAndUnavailable(t *testing.T) {
 	t.Run("empty rollout store", func(t *testing.T) {
 		home := t.TempDir()
 		cmd := testAICommand(home)
@@ -114,8 +112,8 @@ func TestResumeSummaryProviderChromeDistinguishesFallbackEmptyAndUnavailable(t *
 		controller := newAIResumeLiveController(cmd, "/work/app", home, 0, 20)
 		defer controller.close()
 		entries := controller.initialEntries()
-		bands, _ := controller.chrome()
-		status := resumeSummaryProviderStatus(bands, aiModeCodex)
+		footer, _ := controller.footer()
+		status := resumeSummaryProviderStatus(footer, aiModeCodex)
 		if status != "fallback" {
 			t.Fatalf("empty fallback Codex status = %q, want fallback; entries=%#v", status, entries)
 		}
@@ -134,8 +132,8 @@ func TestResumeSummaryProviderChromeDistinguishesFallbackEmptyAndUnavailable(t *
 		controller.populationTimeout = 10 * time.Millisecond
 		defer controller.close()
 		entries := controller.initialEntries()
-		bands, _ := controller.chrome()
-		status := resumeSummaryProviderStatus(bands, aiModeCodex)
+		footer, _ := controller.footer()
+		status := resumeSummaryProviderStatus(footer, aiModeCodex)
 		if status != "empty" {
 			t.Fatalf("envelope-expired Codex status = %q, want empty; entries=%#v", status, entries)
 		}
@@ -152,8 +150,8 @@ func TestResumeSummaryProviderChromeDistinguishesFallbackEmptyAndUnavailable(t *
 		controller := newAIResumeLiveController(cmd, "/work/app", t.TempDir(), 0, 20)
 		defer controller.close()
 		entries := controller.initialEntries()
-		bands, _ := controller.chrome()
-		status := resumeSummaryProviderStatus(bands, aiModeCodex)
+		footer, _ := controller.footer()
+		status := resumeSummaryProviderStatus(footer, aiModeCodex)
 		if status != "unavailable" {
 			t.Fatalf("failed Codex status = %q, want unavailable", status)
 		}
@@ -163,7 +161,7 @@ func TestResumeSummaryProviderChromeDistinguishesFallbackEmptyAndUnavailable(t *
 	})
 }
 
-func TestResumeProviderStateTableProjectsChromeWithoutInformationalItems(t *testing.T) {
+func TestResumeProviderStateTableProjectsFooterWithoutInformationalItems(t *testing.T) {
 	tests := []struct {
 		name   string
 		states map[string]aiResumeProviderState
@@ -207,13 +205,13 @@ func TestResumeProviderStateTableProjectsChromeWithoutInformationalItems(t *test
 					t.Fatalf("non-actionable item value = %q", entry.Value)
 				}
 			}
-			bands, _ := controller.chrome()
-			if len(bands) != 1 {
-				t.Fatalf("provider chrome bands = %#v", bands)
+			footer, _ := controller.footer()
+			if lines := strings.Split(footer, "\n"); len(lines) != 2 {
+				t.Fatalf("provider footer lines = %#v, want provider then shown count", lines)
 			}
 			for provider, want := range test.want {
-				if got := resumeSummaryProviderStatus(bands, provider); got != want {
-					t.Fatalf("%s chrome = %q, want %q; bands=%#v", provider, got, want, bands)
+				if got := resumeSummaryProviderStatus(footer, provider); got != want {
+					t.Fatalf("%s footer = %q, want %q; footer=%q", provider, got, want, footer)
 				}
 			}
 			controller.close()
@@ -242,7 +240,7 @@ func TestResumeProviderStateUsesSettledAuthorityBeforeGlobalCap(t *testing.T) {
 	}
 }
 
-func TestResumeProviderChromePreservesShownCountAndContentFreeContinuation(t *testing.T) {
+func TestResumeProviderFooterPrecedesShownCountAndContentFreeContinuation(t *testing.T) {
 	controller := newAIResumeLiveController(testAICommand(t.TempDir()), "/work", t.TempDir(), 0, 20)
 	controller.startOnce.Do(func() {})
 	controller.summaries = []aisessions.ResumeSummary{
@@ -253,16 +251,20 @@ func TestResumeProviderChromePreservesShownCountAndContentFreeContinuation(t *te
 		aiModeCodex: aiResumeProviderAvailable, aiModeClaude: aiResumeProviderAvailable, aiModeAntigravity: aiResumeProviderEmpty,
 	}
 	controller.moreNotLoaded = true
-	bands, moreNotLoaded := controller.chrome()
+	footer, moreNotLoaded := controller.footer()
 	update, err := controller.update()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(bands) != 1 || !moreNotLoaded || !update.MoreNotLoaded || !update.SetMoreNotLoaded {
-		t.Fatalf("chrome/continuation = bands=%#v initial=%t update=%#v", bands, moreNotLoaded, update)
+	if !moreNotLoaded || !update.MoreNotLoaded || !update.SetMoreNotLoaded {
+		t.Fatalf("footer/continuation = footer=%q initial=%t update=%#v", footer, moreNotLoaded, update)
 	}
-	if update.Items != nil || update.SetChromeBands || !strings.Contains(update.Footer, "Showing latest 2 resume sessions.") {
-		t.Fatalf("shown-count/footer update changed row or chrome membership: %#v", update)
+	if update.Items != nil || update.SetChromeBands || update.Footer != footer {
+		t.Fatalf("footer update changed rows, upper chrome, or footer content: %#v", update)
+	}
+	lines := strings.Split(footer, "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "Providers Codex available") || lines[1] != "Showing latest 2 resume sessions." {
+		t.Fatalf("footer order = %#v, want provider line then shown count", lines)
 	}
 	controller.close()
 }
