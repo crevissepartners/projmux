@@ -807,8 +807,7 @@ func TestControllerRetriesTypedDeadPaneCleanupReasonAndConvergesNextPass(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	var runner *controllerTriggerRunner
-	runner = &controllerTriggerRunner{
+	runner := &controllerTriggerRunner{
 		runner: &routedTmuxRunner{}, store: store.store(), events: controllerEventLog{dir: t.TempDir()},
 		pass: func(ctx context.Context, trigger controllerTrigger) (controllerPassResult, error) {
 			if trigger.fullReobserve {
