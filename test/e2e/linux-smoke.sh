@@ -302,6 +302,7 @@ TERM=xterm-256color script -qefc \
   "TERM=xterm-256color tmux -L '$recorder_socket' attach-session -t '$recorder_bootstrap_session'" \
   "$recorder_log" <"$recorder_input" >/dev/null 2>&1 &
 recorder_client_pid=$!
+# shellcheck disable=SC2034 # Consumed by smoke_wait_for in the sourced shared harness.
 SMOKE_WAIT_DIAGNOSTIC_LOG="$recorder_log"
 
 recorder_client=""

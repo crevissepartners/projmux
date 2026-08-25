@@ -171,25 +171,33 @@ scan_shellcheck() {
 	readarray -d '' shell_files < <(git ls-files -z -- '*.sh' '*.bash')
 	for file in "${shell_files[@]}"; do
 		case "$file" in
-			test/lib/smoke.sh | test/e2e/codex-lifecycle.sh | test/e2e/linux-smoke.sh | test/e2e/npm-staging-path.sh | test/install/smoke.sh | test/integration/linux-smoke.sh) ;;
+			test/lib/smoke.sh | test/e2e/codex-lifecycle.sh | test/e2e/evidence-contract.sh | test/e2e/linux-smoke.sh | test/e2e/npm-staging-path.sh | test/e2e/reliability-contract.sh | test/install/smoke.sh | test/integration/linux-smoke.sh) ;;
 			*) regular_shell_files+=("$file") ;;
 		esac
 	done
 	if ((${#regular_shell_files[@]} > 0)); then
-		shellcheck "${regular_shell_files[@]}"
+		if ! shellcheck "${regular_shell_files[@]}"; then
+			return 1
+		fi
 	else
 		echo ">> shellcheck: no tracked shell files"
 	fi
 	# These entrypoints dynamically source the shared library, which shellcheck
 	# cannot resolve statically. Keep the suppressions scoped to those files.
-	shellcheck --exclude=SC1091,SC2154 \
+	if ! shellcheck --exclude=SC1091,SC2154 \
 		test/e2e/codex-lifecycle.sh \
+		test/e2e/evidence-contract.sh \
 		test/e2e/linux-smoke.sh \
 		test/e2e/npm-staging-path.sh \
+		test/e2e/reliability-contract.sh \
 		test/install/smoke.sh \
-		test/integration/linux-smoke.sh
+		test/integration/linux-smoke.sh; then
+		return 1
+	fi
 	# The shared variable is consumed by the entrypoints after they source it.
-	shellcheck --exclude=SC2034 test/lib/smoke.sh
+	if ! shellcheck --exclude=SC2034 test/lib/smoke.sh; then
+		return 1
+	fi
 }
 
 run_go_security() {

@@ -15,9 +15,12 @@ mkdir -p "$evidence_dir"
 synthetic_repo="$(mktemp -d)"
 fake_bin="$(mktemp -d)"
 failure_evidence="$(mktemp -d)"
+shellcheck_failure_bin="$(mktemp -d)"
+shellcheck_failure_evidence="$(mktemp -d)"
 cache_bin="$(mktemp -d)"
 cleanup() {
-	rm -rf -- "$synthetic_repo" "$fake_bin" "$failure_evidence" "$cache_bin"
+	rm -rf -- "$synthetic_repo" "$fake_bin" "$failure_evidence" \
+		"$shellcheck_failure_bin" "$shellcheck_failure_evidence" "$cache_bin"
 	if [[ "$ephemeral_evidence" == "1" ]]; then
 		rm -rf -- "$evidence_dir"
 	fi
@@ -229,6 +232,44 @@ fi
 expected_failure=$'{"schema":"projmux.security.scanner.v1","group":"go-security","scanner":"govulncheck","phase":"begin","status":"running"}\n{"schema":"projmux.security.scanner.v1","group":"go-security","scanner":"govulncheck","phase":"terminal","status":"fail"}'
 if [[ "$(cat "$failure_evidence/events.jsonl")" != "$expected_failure" ]]; then
 	echo "security contract: intentional scanner failure evidence is incomplete" >&2
+	exit 1
+fi
+
+# scan_shellcheck has multiple sub-invocations. A failure in the first one must
+# remain red even though later invocations would pass when the scanner function
+# itself is called from run_scanner's conditional capture boundary.
+printf '#!/usr/bin/env bash\nexit 0\n' >"$shellcheck_failure_bin/gitleaks"
+printf '#!/usr/bin/env bash\nexit 0\n' >"$shellcheck_failure_bin/actionlint"
+cat >"$shellcheck_failure_bin/shellcheck" <<'EOF'
+#!/usr/bin/env bash
+count=0
+if [[ -f "$SECURITY_CONTRACT_SHELLCHECK_STATE" ]]; then
+	read -r count <"$SECURITY_CONTRACT_SHELLCHECK_STATE"
+fi
+count=$((count + 1))
+printf '%s\n' "$count" >"$SECURITY_CONTRACT_SHELLCHECK_STATE"
+if [[ "$count" == "1" ]]; then
+	exit 7
+fi
+exit 0
+EOF
+chmod +x "$shellcheck_failure_bin/gitleaks" "$shellcheck_failure_bin/actionlint" \
+	"$shellcheck_failure_bin/shellcheck"
+set +e
+SECURITY_BIN_DIR="$shellcheck_failure_bin" \
+	SECURITY_EVIDENCE_DIR="$shellcheck_failure_evidence" \
+	SECURITY_CONTRACT_SHELLCHECK_STATE="$shellcheck_failure_evidence/calls" \
+	scripts/security.sh repository-policy >/dev/null 2>&1
+shellcheck_failure_status=$?
+set -e
+if [[ "$shellcheck_failure_status" != "1" ]] ||
+	! grep -Fq '"scanner":"shellcheck","phase":"terminal","status":"fail"' \
+		"$shellcheck_failure_evidence/events.jsonl"; then
+	echo "security contract: early shellcheck failure was masked by a later sub-invocation" >&2
+	exit 1
+fi
+if [[ "$(cat "$shellcheck_failure_evidence/calls")" != "1" ]]; then
+	echo "security contract: shellcheck continued after a failed sub-invocation" >&2
 	exit 1
 fi
 
