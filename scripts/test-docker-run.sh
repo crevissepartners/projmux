@@ -56,22 +56,32 @@ modcache="${PROJMUX_TEST_GOMODCACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/projmux/tes
 buildcache="${PROJMUX_TEST_GOCACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/projmux/test-gocache}"
 mkdir -p "$modcache" "$buildcache"
 stamp="$modcache/.projmux-go-sum"
-if ! cmp -s "$root/go.sum" "$stamp"; then
-  echo ">> prefetching Go modules into $modcache"
-  docker run --rm \
-    --network bridge \
-    --user "$(id -u):$(id -g)" \
-    -e HOME=/tmp/projmux-home \
-    -e GOCACHE=/gocache \
-    -e GOMODCACHE=/gomodcache \
-    -e GOTOOLCHAIN=local \
-    -v "$root:/workspace:ro" \
-    -v "$modcache:/gomodcache:rw" \
-    -v "$buildcache:/gocache:rw" \
-    -w /workspace \
-    "$image" \
-    go mod download
-  cp "$root/go.sum" "$stamp"
+if [[ "${PROJMUX_TEST_SKIP_PREFETCH:-}" == "1" ]]; then
+  if ! cmp -s "$root/go.sum" "$stamp"; then
+    echo "suite consumer module cache is not prepared for the checked-in graph" >&2
+    exit 2
+  fi
+else
+  exec 7>"$modcache/.prefetch.lock"
+  flock 7
+  if ! cmp -s "$root/go.sum" "$stamp"; then
+    echo ">> prefetching Go modules into $modcache"
+    docker run --rm \
+      --network bridge \
+      --user "$(id -u):$(id -g)" \
+      -e HOME=/tmp/projmux-home \
+      -e GOCACHE=/gocache \
+      -e GOMODCACHE=/gomodcache \
+      -e GOTOOLCHAIN=local \
+      -v "$root:/workspace:ro" \
+      -v "$modcache:/gomodcache:rw" \
+      -v "$buildcache:/gocache:rw" \
+      -w /workspace \
+      "$image" \
+      go mod download
+    cp "$root/go.sum" "$stamp"
+  fi
+  flock -u 7
 fi
 
 if [[ "$mode" == "build" ]]; then
@@ -86,7 +96,7 @@ if [[ "$mode" == "build" ]]; then
     -e GOMAXPROCS="$suite_gomaxprocs" \
     -e GOFLAGS="$suite_goflags" \
     -v "$root:/workspace:ro" \
-    -v "$modcache:/gomodcache:rw" \
+    -v "$modcache:/gomodcache:ro" \
     -v "$buildcache:/gocache:rw" \
     -v "$build_output:/artifact:rw" \
     -w /workspace \
@@ -108,6 +118,10 @@ if [[ "$(sha256sum "$prebuilt" | awk '{print $1}')" != "$expected_sha" ]]; then
 fi
 evidence="${PROJMUX_E2E_ARTIFACTS:-$root/.bin/e2e-evidence}"
 mkdir -p "$evidence"
+suite_shell=(bash)
+if [[ "${PROJMUX_TEST_BASH_TRACE:-}" == "1" ]]; then
+  suite_shell+=(-x)
+fi
 
 docker run --rm \
   --network "$docker_network" \
@@ -126,10 +140,12 @@ docker run --rm \
   -e PROJMUX_SMOKE_EXPECTED_BIN_SHA256="$expected_sha" \
   -e PROJMUX_E2E_ARTIFACTS=/evidence \
   -e PROJMUX_E2E_ATTEMPT="${PROJMUX_E2E_ATTEMPT:-1}" \
+  -e PROJMUX_E2E_LINUX_SHARD="${PROJMUX_E2E_LINUX_SHARD:-}" \
+  -e E2E_SCENARIO="${E2E_SCENARIO:-}" \
   -v "$root:/workspace:ro" \
-  -v "$modcache:/gomodcache:rw" \
+  -v "$modcache:/gomodcache:ro" \
   -v "$(dirname "$prebuilt"):/projmux-artifact:ro" \
   -v "$evidence:/evidence:rw" \
   -w /workspace \
   "$image" \
-  bash "$suite" "$@"
+  "${suite_shell[@]}" "$suite" "$@"

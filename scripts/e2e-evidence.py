@@ -175,6 +175,51 @@ def validate_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def result_hash_command(args: argparse.Namespace) -> int:
+    import hashlib
+
+    rows: list[str] = []
+    expected = set(args.expected.split(",")) if args.expected else set()
+    for path in sorted(Path(args.directory).rglob("summary.jsonl")):
+        with path.open(encoding="utf-8") as stream:
+            for line in stream:
+                record = json.loads(line)
+                validate(record)
+                if record["outcome"] in {"pass", "fail", "cancel"}:
+                    rows.append("|".join(str(record[field]) for field in (
+                        "scenario_id", "outcome", "class", "phase", "owner", "binary_sha256"
+                    )))
+    ids = [row.split("|", 1)[0] for row in rows]
+    if len(ids) != len(set(ids)):
+        raise ValueError("duplicate terminal scenario evidence")
+    if expected and set(ids) != expected:
+        raise ValueError(f"terminal inventory mismatch missing={sorted(expected - set(ids))} extra={sorted(set(ids) - expected)}")
+    digest = hashlib.sha256(("\n".join(sorted(rows)) + "\n").encode()).hexdigest()
+    print(digest)
+    return 0
+
+
+def route_command(args: argparse.Namespace) -> int:
+    scenario = args.scenario_id
+    if scenario == "C01":
+        print("codex-lifecycle:C01")
+        return 0
+    if scenario == "N01":
+        print("npm-staging:N01")
+        return 0
+    with Path(args.manifest).open(encoding="utf-8") as stream:
+        for line in stream:
+            shard, ids_text = line.rstrip("\n").split("\t", 1)
+            ids = ids_text.split()
+            if scenario in ids:
+                # The shard is only the isolated fixture route. Replay remains
+                # one contract body and its accepted terminal inventory is the
+                # requested stable ID, never every contract sharing the shard.
+                print(f"linux-{shard}:{scenario}")
+                return 0
+    raise ValueError(f"unknown required E2E scenario: {scenario}")
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser()
     subparsers = result.add_subparsers(dest="command", required=True)
@@ -196,6 +241,14 @@ def parser() -> argparse.ArgumentParser:
     validate_parser.add_argument("--terminal", action="store_true")
     validate_parser.add_argument("path")
     validate_parser.set_defaults(function=validate_command)
+    hash_parser = subparsers.add_parser("result-hash")
+    hash_parser.add_argument("--expected", default="")
+    hash_parser.add_argument("directory")
+    hash_parser.set_defaults(function=result_hash_command)
+    route_parser = subparsers.add_parser("route")
+    route_parser.add_argument("--manifest", required=True)
+    route_parser.add_argument("scenario_id")
+    route_parser.set_defaults(function=route_command)
     return result
 
 

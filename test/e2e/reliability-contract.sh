@@ -13,11 +13,25 @@ smoke_setup_env
 owned_root="$PROJMUX_SMOKE_WORKDIR"
 (cd "$owned_root" && exec sleep 30) &
 owned_pid=$!
+secret_argv="github_pat_FAKE_SECRET_SHAPED_ARG_1234567890"
+(cd "$owned_root" && exec -a "$secret_argv" sleep 30) &
+secret_pid=$!
 sleep 30 &
 sibling_pid=$!
+smoke_owned_process_inventory >"$artifacts/f01-residual-redacted"
+if grep -Fq "$secret_argv" "$artifacts/f01-residual-redacted"; then
+  echo "F01 residual process evidence leaked raw argv" >&2
+  exit 1
+fi
+grep -Eq $'^[0-9]+\towned_by=cwd([+]argv)?\texecutable=sleep\tcmdline_sha256=[a-f0-9]{64}$' \
+  "$artifacts/f01-residual-redacted"
 smoke_cleanup_env
 if kill -0 "$owned_pid" 2>/dev/null; then
   echo "F01 owned process survived quiescent cleanup" >&2
+  exit 1
+fi
+if kill -0 "$secret_pid" 2>/dev/null; then
+  echo "F01 secret-argv owned process survived quiescent cleanup" >&2
   exit 1
 fi
 if ! kill -0 "$sibling_pid" 2>/dev/null; then

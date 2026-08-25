@@ -67,14 +67,25 @@ smoke_contract_pass() {
 smoke_contract_err() {
   local status="$1"
   local line="$2"
+  local had_errexit=0
+  case "$-" in
+    *e*) had_errexit=1 ;;
+  esac
   set +e
-  if [[ -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
+  # ERR traps also run for deliberately observed non-zero commands while the
+  # caller has `set +e`.  Those commands are part of the assertion protocol,
+  # not terminal failures.  In particular, never re-enable errexit behind the
+  # caller's back: doing so turns the expected status capture itself into a
+  # false deterministic regression.
+  if [[ "$had_errexit" == "1" && -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
     smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-deterministic-regression}" >&2
     SMOKE_CONTRACT_TERMINAL=1
-  else
+  elif [[ "$had_errexit" == "1" ]]; then
     echo "E2E_CONTRACT unattributed=1 status=$status line=$line" >&2
   fi
-  set -e
+  if [[ "$had_errexit" == "1" ]]; then
+    set -e
+  fi
   return "$status"
 }
 
@@ -87,7 +98,10 @@ smoke_setup_env() {
   if [[ ! -d "$smoke_parent" ]]; then
     smoke_parent=/tmp
   fi
-  PROJMUX_SMOKE_WORKDIR="$(mktemp -d "$smoke_parent/projmux-smoke.XXXXXX")"
+  # Keep the owned root short enough that the diagnostics transport remains
+  # fully observable in the fixed 80-column real-tmux fixture. Ownership is
+  # established by the receipt below, never by trusting this name prefix.
+  PROJMUX_SMOKE_WORKDIR="$(mktemp -d "$smoke_parent/pmx.XXXXXX")"
   export PROJMUX_SMOKE_WORKDIR
   PROJMUX_SMOKE_OWNER="$$-$RANDOM-$(smoke_now_ms)"
   export PROJMUX_SMOKE_OWNER
@@ -165,23 +179,56 @@ smoke_cleanup_tmux_server() {
 }
 
 smoke_owned_process_inventory() {
-  local proc pid cwd command
-  for proc in /proc/[0-9]*; do
+  local proc pid cwd command executable reason cmdline_hash
+  local -a argv=()
+  local -A candidates=()
+
+  # Resolve candidates in two native passes. Forking readlink+tr for every
+  # process on a developer workstation made exact cleanup scale with unrelated
+  # system process count (and could take minutes). `find -lname` covers owned
+  # cwd roots; one fixed-string cmdline scan covers processes that carry the
+  # owned root as an argument. Detailed reads remain restricted to that union.
+  while IFS= read -r proc; do
     pid="${proc##*/}"
+    candidates["$pid"]=1
+  done < <(
+    find /proc -mindepth 2 -maxdepth 2 -type l -name cwd \
+      \( -lname "$PROJMUX_SMOKE_WORKDIR" -o -lname "$PROJMUX_SMOKE_WORKDIR/*" \) \
+      -printf '%h\n' 2>/dev/null
+  )
+  while IFS= read -r proc; do
+    pid="${proc%/cmdline}"
+    candidates["${pid##*/}"]=1
+  done < <(grep -aFl -- "$PROJMUX_SMOKE_WORKDIR" /proc/[0-9]*/cmdline 2>/dev/null || true)
+
+  for pid in "${!candidates[@]}"; do
     if [[ "$pid" == "$$" || "$pid" == "${BASHPID:-$$}" || "$pid" == "$PPID" ]]; then
       continue
     fi
+    proc="/proc/$pid"
     cwd="$(readlink "$proc/cwd" 2>/dev/null || true)"
-    command="$({ tr '\0' ' ' <"$proc/cmdline"; } 2>/dev/null || true)"
+    argv=()
+    mapfile -d '' -t argv <"$proc/cmdline" 2>/dev/null || true
+    command="${argv[*]}"
+    reason=""
     case "$cwd" in
       "$PROJMUX_SMOKE_WORKDIR" | "$PROJMUX_SMOKE_WORKDIR"/*)
-        printf '%s\t%s\n' "$pid" "$command"
-        continue
+        reason="cwd"
         ;;
     esac
     if [[ -n "$command" && "$command" == *"$PROJMUX_SMOKE_WORKDIR"* ]]; then
-      printf '%s\t%s\n' "$pid" "$command"
+      reason="${reason:+$reason+}argv"
     fi
+    [[ -n "$reason" ]] || continue
+    executable="$(readlink "$proc/exe" 2>/dev/null || true)"
+    executable="${executable##*/}"
+    executable="${executable:-unknown}"
+    cmdline_hash="$(printf '%s' "$command" | sha256sum | awk '{print $1}')"
+    # Cleanup failure inventories are persisted artifacts. Raw argv/cwd may
+    # contain provider tokens, prompts, and private paths; expose only typed
+    # ownership, the kernel executable basename, and an equality-safe digest.
+    printf '%s\towned_by=%s\texecutable=%s\tcmdline_sha256=%s\n' \
+      "$pid" "$reason" "$executable" "$cmdline_hash"
   done
 }
 
@@ -236,6 +283,12 @@ smoke_validate_owned_root() {
 
 smoke_cleanup_env() {
   local cleanup_status=0
+  if [[ -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
+    set +e
+    smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-deterministic-regression}" >&2
+    SMOKE_CONTRACT_TERMINAL=1
+    set -e
+  fi
   if [[ -n "${PROJMUX_SMOKE_TMUX_SOCKET:-}" ]]; then
     smoke_cleanup_tmux_server "$PROJMUX_SMOKE_TMUX_SOCKET" || cleanup_status=$?
   fi
@@ -277,6 +330,22 @@ smoke_wait_for_current_frame() {
   done
   echo "timed out waiting for current-frame $description offset=$offset" >&2
   tail -c "+$((offset + 1))" "$path" >&2 || true
+  return 1
+}
+
+smoke_wait_for() {
+  local description="$1"
+  shift
+  for _ in {1..100}; do
+    if "$@"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "timed out waiting for $description" >&2
+  if [[ -n "${SMOKE_WAIT_DIAGNOSTIC_LOG:-}" ]]; then
+    tail -c 12000 "$SMOKE_WAIT_DIAGNOSTIC_LOG" >&2 || true
+  fi
   return 1
 }
 
