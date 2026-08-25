@@ -98,6 +98,13 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 		if mirrorErr := c.runtime.mirrorWindow(ctx, created.WindowID, window); mirrorErr != nil {
 			return errors.Join(createErr, mirrorErr)
 		}
+		projected, bindingErr := c.observeWindowRuntimeBinding(
+			mutator, working, window.Metadata.UID, scope.sessionID, created.WindowID,
+		)
+		if bindingErr != nil {
+			return errors.Join(createErr, bindingErr)
+		}
+		window = projected
 		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, panes[0].Metadata.UID, ledger); claimErr != nil {
 			return errors.Join(createErr, claimErr)
 		}

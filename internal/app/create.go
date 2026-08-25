@@ -125,11 +125,27 @@ type createCommand struct {
 	// Pane's supervisor quotes back when its child stops.
 	newGeneration    func() (string, error)
 	resolveWorkspace func(coremetadata.Registry, coremetadata.Project, string, string, []string) (coremetadata.AgentWorkspace, error)
+	// bindWindowRuntime records the exact last-positive tmux owner pair for a
+	// canonical Window create. Nil selects Mutator.ObserveWindowRuntimeBinding;
+	// the seam exists so transaction/ledger rollback can be exercised at this
+	// otherwise infallible exact-handle boundary.
+	bindWindowRuntime func(coremetadata.Mutator, *coremetadata.Registry, string, string, string) (coremetadata.Window, error)
 	// bindRuntime resolves the invocation's app-owned logical route lazily at
 	// the first runtime action. Construction and help remain read/write free.
 	bindRuntime  func(context.Context) error
 	runtimeBound bool
 	routeAnchor  string
+}
+
+func (c *createCommand) observeWindowRuntimeBinding(
+	mutator coremetadata.Mutator,
+	registry *coremetadata.Registry,
+	windowUID, sessionID, windowID string,
+) (coremetadata.Window, error) {
+	if c.bindWindowRuntime != nil {
+		return c.bindWindowRuntime(mutator, registry, windowUID, sessionID, windowID)
+	}
+	return mutator.ObserveWindowRuntimeBinding(registry, windowUID, sessionID, windowID)
 }
 
 func newCreateCommand() *createCommand {

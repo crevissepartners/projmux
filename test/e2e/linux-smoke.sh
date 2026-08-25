@@ -8172,6 +8172,7 @@ smoke_contract_begin L18 pane-menu pane-menu-ui
 # path is inside this smoke root.
 menu_root="$PROJMUX_SMOKE_WORKDIR/pane-menu"
 menu_socket="pane-menu-e2e-$$-$RANDOM"
+menu_sibling_socket="pane-menu-sibling-e2e-$$-$RANDOM"
 menu_session="work-alpha"
 menu_config="$menu_root/config/projmux/tmux.conf"
 menu_client_log="$menu_root/client.log"
@@ -8192,26 +8193,32 @@ menu_env=(
   PATH="$PATH"
 )
 menu_tmux() { "${menu_env[@]}" tmux -L "$menu_socket" "$@"; }
+menu_sibling_tmux() { "${menu_env[@]}" tmux -L "$menu_sibling_socket" "$@"; }
 menu_pmx() { "${menu_env[@]}" "$bin" "$@"; }
 
 menu_client_pid=""
 menu_socket_path=""
+menu_sibling_socket_path=""
 menu_cleanup_done=0
 menu_cleanup() {
   if [[ "$menu_cleanup_done" == "1" ]]; then
     return
   fi
   menu_cleanup_done=1
-  if [[ -n "$menu_socket_path" ]]; then
-    case "$menu_socket_path" in
+  local cleanup_path
+  for cleanup_path in "$menu_socket_path" "$menu_sibling_socket_path"; do
+    if [[ -z "$cleanup_path" ]]; then
+      continue
+    fi
+    case "$cleanup_path" in
       "$menu_root"/tmux/*) ;;
       *)
-        echo "refusing pane-menu cleanup outside smoke root: $menu_socket_path" >&2
+        echo "refusing pane-menu cleanup outside smoke root: $cleanup_path" >&2
         return 1
         ;;
     esac
-    "${menu_env[@]}" tmux -S "$menu_socket_path" kill-server >/dev/null 2>&1 || true
-  fi
+    "${menu_env[@]}" tmux -S "$cleanup_path" kill-server >/dev/null 2>&1 || true
+  done
   if [[ -n "$menu_client_pid" ]]; then
     wait "$menu_client_pid" 2>/dev/null || true
   fi
@@ -8225,6 +8232,16 @@ case "$menu_socket_path" in
   "$menu_root"/tmux/*) ;;
   *)
     echo "pane-menu socket escaped smoke root: $menu_socket_path" >&2
+    exit 1
+    ;;
+esac
+menu_sibling_tmux new-session -d -s menu-sibling -n sentinel sleep 600
+menu_sibling_tmux set-option -gq @projmux_phase0_sibling unchanged
+menu_sibling_socket_path="$(menu_sibling_tmux display-message -p -t menu-sibling:sentinel '#{socket_path}')"
+case "$menu_sibling_socket_path" in
+  "$menu_root"/tmux/*) ;;
+  *)
+    echo "pane-menu sibling socket escaped smoke root: $menu_sibling_socket_path" >&2
     exit 1
     ;;
 esac
@@ -8456,6 +8473,26 @@ if [[ "$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}' | wc -l)" -
   echo "Window create produced no Window" >&2
   exit 1
 fi
+menu_created_window_uid="$(menu_tmux show-options -wqv -t "$menu_created_window" @projmux_window_uid)"
+menu_created_pane="$(menu_tmux display-message -p -t "$menu_created_window" '#{pane_id}')"
+menu_created_pane_uid="$(menu_tmux show-options -pqv -t "$menu_created_pane" @projmux_pane_uid)"
+menu_created_live_binding="$(menu_tmux display-message -p -t "$menu_created_pane" '#{session_id}|#{window_id}|#{pane_id}')"
+menu_created_window_json="$(menu_pmx describe window "uid:$menu_created_window_uid" -o json)"
+menu_created_pane_json="$(menu_pmx describe pane "uid:$menu_created_pane_uid" -o json)"
+menu_created_registry_binding="$(
+  printf '%s\n%s\n' "$menu_created_window_json" "$menu_created_pane_json" |
+    sed -n 's/.*"runtimeSessionID": "\([^"]*\)".*/\1/p; s/.*"runtimeID": "\([^"]*\)".*/\1/p'
+  )"
+menu_created_session_id="$(printf '%s' "$menu_created_live_binding" | cut -d'|' -f1)"
+menu_created_window_id="$(printf '%s' "$menu_created_live_binding" | cut -d'|' -f2)"
+menu_created_pane_id="$(printf '%s' "$menu_created_live_binding" | cut -d'|' -f3)"
+if [[ "$menu_created_registry_binding" != "$menu_created_session_id"$'\n'"$menu_created_window_id"$'\n'"$menu_created_pane_id" ]] ||
+  [[ ! "$menu_created_session_id" =~ ^\$[0-9]+$ ]] ||
+  [[ ! "$menu_created_window_id" =~ ^@[0-9]+$ ]] ||
+  [[ ! "$menu_created_pane_id" =~ ^%[0-9]+$ ]]; then
+  echo "canonical Window create did not atomically commit its exact owner pair and initial Pane activation: live=$menu_created_live_binding registry=$menu_created_registry_binding" >&2
+  exit 1
+fi
 
 menu_overlay_offset="$(stat -c %s "$menu_client_log")"
 menu_run_producer "$menu_origin_pane" internal tmux window-rename --client "$menu_client" --anchor "$menu_origin_pane" -- overlay-audit
@@ -8515,7 +8552,8 @@ fi
 # The origin Window is back to the one managed Pane it started with, and that
 # Pane is still the Registry row it always was. The Window `window-create`
 # produced keeps its own Pane -- that is the resource the action was asked to
-# make -- so it is removed through the canonical route rather than asserted away.
+# make -- so a normal shell exit must consume the exact pane-exited plus
+# window-unlinked owner pair and remove only that Window subtree.
 if [[ "$(menu_tmux list-panes -t "$menu_origin_pane" -F '#{pane_id}' | wc -l)" != "1" ]]; then
   echo "the interactive matrix left panes in the origin Window" >&2
   menu_tmux list-panes -t "$menu_origin_pane" -F '#{pane_id} #{pane_current_command}' >&2
@@ -8526,22 +8564,44 @@ if [[ -z "$menu_origin_uid" ]] || ! menu_pmx get panes -o uid | grep -Fxq "$menu
   echo "the interactive matrix cost the origin Pane its Registry identity" >&2
   exit 1
 fi
-menu_created_window_uid="$(menu_tmux show-options -wqv -t "$menu_created_window" @projmux_window_uid)"
-if [[ -n "$menu_created_window_uid" ]]; then
-  menu_pmx delete window "uid:$menu_created_window_uid" --yes --socket "$menu_socket" \
-    >"$menu_root/overlay-window-delete.out"
-else
-  menu_tmux kill-window -t "$menu_created_window"
+menu_created_window_absent() {
+  ! menu_pmx describe window "uid:$menu_created_window_uid" -o json >/dev/null 2>&1 &&
+    ! menu_pmx describe pane "uid:$menu_created_pane_uid" -o json >/dev/null 2>&1
+}
+menu_sibling_before="$(menu_sibling_tmux show-options -gqv @projmux_phase0_sibling):$(
+  menu_sibling_tmux list-sessions -F '#{session_id}|#{session_name}'
+):$(menu_sibling_tmux list-windows -a -F '#{window_id}|#{window_name}'):$(
+  menu_sibling_tmux list-panes -a -F '#{pane_id}|#{pane_current_command}'
+)"
+menu_tmux send-keys -t "$menu_created_pane" exit Enter
+smoke_wait_for "canonical Window normal clean-exit closure" menu_created_window_absent
+if ! menu_pmx describe project "uid:$menu_project_uid" -o json >/dev/null ||
+  ! menu_pmx describe pane "uid:$menu_origin_uid" -o json >/dev/null ||
+  ! menu_tmux has-session -t "$menu_session" 2>/dev/null; then
+  echo "canonical Window clean-exit changed its owning Project or sibling Window/Pane" >&2
+  exit 1
+fi
+menu_sibling_after="$(menu_sibling_tmux show-options -gqv @projmux_phase0_sibling):$(
+  menu_sibling_tmux list-sessions -F '#{session_id}|#{session_name}'
+):$(menu_sibling_tmux list-windows -a -F '#{window_id}|#{window_name}'):$(
+  menu_sibling_tmux list-panes -a -F '#{pane_id}|#{pane_current_command}'
+)"
+if [[ "$menu_sibling_after" != "$menu_sibling_before" ]]; then
+  echo "canonical Window clean-exit changed the unrelated sibling socket: before=$menu_sibling_before after=$menu_sibling_after" >&2
+  exit 1
 fi
 
 menu_cleanup_target="$menu_socket_path"
+menu_sibling_cleanup_target="$menu_sibling_socket_path"
 menu_cleanup
-if "${menu_env[@]}" tmux -S "$menu_cleanup_target" list-sessions >/dev/null 2>&1; then
-  echo "pane-menu exact socket cleanup left a live server at $menu_cleanup_target" >&2
-  exit 1
-fi
+for menu_cleanup_check in "$menu_cleanup_target" "$menu_sibling_cleanup_target"; do
+  if "${menu_env[@]}" tmux -S "$menu_cleanup_check" list-sessions >/dev/null 2>&1; then
+    echo "pane-menu exact socket cleanup left a live server at $menu_cleanup_check" >&2
+    exit 1
+  fi
+done
 trap smoke_cleanup_env EXIT
-echo ">> managed pane-menu and interactive run-shell output e2e passed: pane=$menu_origin_pane project=$menu_project_uid overlay-matrix=none socket=$menu_socket path=$menu_socket_path cleanup=$menu_cleanup_target inherited=unset"
+echo ">> managed pane-menu and interactive run-shell output e2e passed: pane=$menu_origin_pane project=$menu_project_uid canonical-window=$menu_created_window_uid owner-pair=$menu_created_live_binding clean-exit=target-only sibling-socket=byte-identical overlay-matrix=none socket=$menu_socket path=$menu_socket_path sibling-path=$menu_sibling_socket_path cleanup=$menu_cleanup_target,$menu_sibling_cleanup_target inherited=unset"
 
 smoke_contract_pass
 fi

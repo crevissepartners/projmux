@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -226,6 +227,303 @@ func TestCanonicalWindowCreateBindsInvocationRouteBeforeRuntimeMutationObservati
 	}
 	if bindCalls != 1 {
 		t.Fatalf("runtime route bind calls = %d, want exactly one", bindCalls)
+	}
+}
+
+func TestCanonicalWindowCreateCommitsExactOwnerPairAndInitialActivationForManagedRoots(t *testing.T) {
+	for _, control := range []bool{false, true} {
+		rootName := "Project"
+		if control {
+			rootName = "ControlSession"
+		}
+		t.Run(rootName, func(t *testing.T) {
+			fx := canonicalFixture(t, control)
+			before := map[string]bool{}
+			for _, window := range fx.store.registry.Windows {
+				before[window.Metadata.UID] = true
+			}
+			bindingCalls := 0
+			fx.create.bindWindowRuntime = func(mutator coremetadata.Mutator, registry *coremetadata.Registry,
+				windowUID, sessionID, windowID string,
+			) (coremetadata.Window, error) {
+				bindingCalls++
+				return mutator.ObserveWindowRuntimeBinding(registry, windowUID, sessionID, windowID)
+			}
+
+			if err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
+				t.Fatalf("canonical %s Window create: %v", rootName, err)
+			}
+			if bindingCalls != 1 {
+				t.Fatalf("producer owner-pair binding calls = %d, want exactly 1", bindingCalls)
+			}
+
+			var created coremetadata.Window
+			for _, window := range fx.store.registry.Windows {
+				if !before[window.Metadata.UID] {
+					created = window
+				}
+			}
+			if created.Metadata.UID == "" || created.Metadata.OwnerRef == nil ||
+				created.Metadata.OwnerRef.Kind != fx.rootKind || created.Metadata.OwnerRef.UID != fx.rootUID {
+				t.Fatalf("created Window owner = %+v, want %s/%s", created.Metadata.OwnerRef, fx.rootKind, fx.rootUID)
+			}
+			session, liveWindow := fx.tmux.window(created.Status.RuntimeID)
+			if session == nil || liveWindow == nil || created.Status.RuntimeSessionID != session.id ||
+				exactTmuxHandle(created.Status.RuntimeSessionID, "$") == "" || exactTmuxHandle(created.Status.RuntimeID, "@") == "" ||
+				liveWindow.opts[tmuxopts.WindowUID] != created.Metadata.UID {
+				t.Fatalf("created Window binding = %q/%q live=%+v/%+v", created.Status.RuntimeSessionID, created.Status.RuntimeID, session, liveWindow)
+			}
+			panes := fx.store.registry.PanesOf(created.Metadata.UID)
+			if len(panes) != 1 || panes[0].Status.Activation.Generation == "" ||
+				exactTmuxHandle(panes[0].Status.Activation.RuntimeID, "%") == "" {
+				t.Fatalf("initial Pane activation = %+v, want one exact generated %%N activation", panes)
+			}
+			if got := livePaneWithUID(t, fx.tmux, panes[0].Metadata.UID); got != panes[0].Status.Activation.RuntimeID {
+				t.Fatalf("initial Pane runtime = %q, activation = %q", got, panes[0].Status.Activation.RuntimeID)
+			}
+		})
+	}
+}
+
+func TestCanonicalWindowOwnerPairBindingFailureRollsBackRegistryAndRuntime(t *testing.T) {
+	for _, control := range []bool{false, true} {
+		rootName := "Project"
+		if control {
+			rootName = "ControlSession"
+		}
+		t.Run(rootName, func(t *testing.T) {
+			fx := canonicalFixture(t, control)
+			registryBefore, runtimeBefore := fx.store.snapshot(), fx.tmux.state()
+			bindingCalls := 0
+			fx.create.bindWindowRuntime = func(_ coremetadata.Mutator, _ *coremetadata.Registry,
+				windowUID, sessionID, windowID string,
+			) (coremetadata.Window, error) {
+				bindingCalls++
+				if windowUID == "" || exactTmuxHandle(sessionID, "$") == "" || exactTmuxHandle(windowID, "@") == "" {
+					t.Fatalf("binding failure seam received incomplete identity %q/%q/%q", windowUID, sessionID, windowID)
+				}
+				return coremetadata.Window{}, errors.New("injected canonical owner-pair binding failure")
+			}
+
+			var stdout bytes.Buffer
+			err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, &stdout, ioDiscard{})
+			if err == nil || !strings.Contains(err.Error(), "injected canonical owner-pair binding failure") {
+				t.Fatalf("binding failure = %v", err)
+			}
+			if bindingCalls != 1 || stdout.Len() != 0 {
+				t.Fatalf("binding calls=%d stdout=%q, want 1/empty", bindingCalls, stdout.String())
+			}
+			if fx.store.writes != 0 || fx.store.snapshot() != registryBefore {
+				t.Fatalf("binding failure committed a Registry claimant: writes=%d", fx.store.writes)
+			}
+			if got := fx.tmux.state(); got != runtimeBefore {
+				t.Fatalf("binding failure retained a runtime claimant:\n--- got ---\n%s\n--- want ---\n%s", got, runtimeBefore)
+			}
+		})
+	}
+}
+
+func TestCanonicalWindowCreateFeedsExactLastPaneCausalCleanupForManagedRoots(t *testing.T) {
+	for _, control := range []bool{false, true} {
+		rootName := "Project"
+		if control {
+			rootName = "ControlSession"
+		}
+		t.Run(rootName, func(t *testing.T) {
+			fx := canonicalFixture(t, control)
+			before := map[string]bool{}
+			for _, window := range fx.store.registry.Windows {
+				before[window.Metadata.UID] = true
+			}
+			if err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
+				t.Fatalf("canonical %s Window create: %v", rootName, err)
+			}
+
+			var target coremetadata.Window
+			for _, window := range fx.store.registry.Windows {
+				if !before[window.Metadata.UID] {
+					target = window
+				}
+			}
+			panes := fx.store.registry.PanesOf(target.Metadata.UID)
+			if target.Metadata.UID == "" || len(panes) != 1 {
+				t.Fatalf("canonical target = %+v panes=%+v", target, panes)
+			}
+			pane := panes[0]
+			receipt := phase2NormalReceipt(pane.Metadata.UID, "", pane.Status.Activation.Generation)
+			livePanes, deadPanes := map[string]bool{}, map[string]bool{pane.Metadata.UID: true}
+			for _, candidate := range fx.store.registry.Panes {
+				if candidate.Metadata.UID != pane.Metadata.UID {
+					livePanes[candidate.Metadata.UID] = true
+				}
+			}
+			liveWindows := map[string]bool{}
+			windowSessions := map[string]int{}
+			for _, session := range fx.tmux.sessions {
+				for _, window := range session.windows {
+					if uid := window.opts[tmuxopts.WindowUID]; uid != "" {
+						liveWindows[uid] = true
+						windowSessions[session.id]++
+					}
+				}
+			}
+			inventory := &exactPaneExitInventory{
+				uids: livePanes, dead: deadPanes, windowUID: target.Metadata.UID,
+				windows: liveWindows, windowSessions: windowSessions,
+			}
+			event := lifecycleDirtyEvent{
+				target:        explicitTmuxTarget{flag: "-S", value: fx.tmux.socketPath},
+				runtimePaneID: pane.Status.Activation.RuntimeID,
+				teardownKind:  coremetadata.TeardownEventPaneExited,
+				receipts:      []coremetadata.TerminationEvidence{receipt},
+			}
+			pending, err := reconcileLifecycle(context.Background(), event, inventory, fx.store.store())
+			if err != nil || len(pending.pending) != 1 || inventory.cleanups != 1 {
+				t.Fatalf("canonical pane-exited result=%+v cleanups=%d err=%v", pending, inventory.cleanups, err)
+			}
+
+			unlinked := event
+			unlinked.teardownKind = coremetadata.TeardownEventWindowUnlinked
+			unlinked.runtimePaneID = ""
+			unlinked.runtimeSessionID = target.Status.RuntimeSessionID
+			unlinked.runtimeWindowID = target.Status.RuntimeID
+			closed, err := reconcileLifecycle(context.Background(), unlinked, inventory, fx.store.store())
+			if err != nil || len(closed.rootCascaded) != 1 || closed.rootCascaded[0].WindowUID != target.Metadata.UID {
+				t.Fatalf("canonical window-unlinked result=%+v err=%v", closed, err)
+			}
+			if _, ok := fx.store.registry.Window(target.Metadata.UID); ok {
+				t.Fatalf("canonical target Window %s survived", target.Metadata.UID)
+			}
+			if _, ok := fx.store.registry.Pane(pane.Metadata.UID); ok {
+				t.Fatalf("canonical target Pane %s survived", pane.Metadata.UID)
+			}
+			if _, ok := fx.store.registry.Window(fx.windowUID); !ok {
+				t.Fatalf("sibling Window %s disappeared", fx.windowUID)
+			}
+			switch fx.rootKind {
+			case coremetadata.KindProject:
+				if _, ok := fx.store.registry.Project(fx.rootUID); !ok {
+					t.Fatalf("owning Project %s disappeared", fx.rootUID)
+				}
+			case coremetadata.KindControlSession:
+				if _, ok := fx.store.registry.ControlSession(fx.rootUID); !ok {
+					t.Fatalf("owning ControlSession %s disappeared", fx.rootUID)
+				}
+			}
+		})
+	}
+}
+
+func TestCanonicalWindowCreateLifecycleAuthorityMatrixIsClosed(t *testing.T) {
+	for _, control := range []bool{false, true} {
+		rootName := "Project"
+		if control {
+			rootName = "ControlSession"
+		}
+		t.Run(rootName, func(t *testing.T) {
+			fx := canonicalFixture(t, control)
+			before := map[string]bool{}
+			for _, window := range fx.store.registry.Windows {
+				before[window.Metadata.UID] = true
+			}
+			if err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
+				t.Fatal(err)
+			}
+			var window coremetadata.Window
+			for _, candidate := range fx.store.registry.Windows {
+				if !before[candidate.Metadata.UID] {
+					window = candidate
+				}
+			}
+			panes := fx.store.registry.PanesOf(window.Metadata.UID)
+			if window.Metadata.UID == "" || len(panes) != 1 {
+				t.Fatalf("canonical lifecycle fixture Window=%+v Panes=%+v", window, panes)
+			}
+			pane := panes[0]
+			baseEvent := coremetadata.TeardownEvent{
+				Kind: coremetadata.TeardownEventPaneExited, Classification: coremetadata.TerminationNormal,
+				Generation: coremetadata.TeardownGenerationCurrent, Observation: coremetadata.TeardownObservationExactSocket,
+				Chain: coremetadata.TeardownOwnerChain{
+					SocketIdentity: fx.tmux.socketPath, SessionHandle: window.Status.RuntimeSessionID,
+					WindowHandle: window.Status.RuntimeID, PaneHandle: pane.Status.Activation.RuntimeID,
+					PaneUID: pane.Metadata.UID, WindowUID: window.Metadata.UID,
+					RootKind: fx.rootKind, RootUID: fx.rootUID, Generation: pane.Status.Activation.Generation,
+				},
+				LiveSiblingRootWindow: true,
+			}
+			for _, test := range []struct {
+				name       string
+				prepare    func(*coremetadata.Registry, *coremetadata.TeardownEvent, *coremetadata.TeardownEvent)
+				wantDelete bool
+			}{
+				{name: "normal exact causal pair", wantDelete: true},
+				{name: "missing binding", prepare: func(registry *coremetadata.Registry, _, _ *coremetadata.TeardownEvent) {
+					stored, _ := registry.Window(window.Metadata.UID)
+					stored.Status.RuntimeSessionID, stored.Status.RuntimeID = "", ""
+				}},
+				{name: "abnormal", prepare: func(_ *coremetadata.Registry, paneEvent, unlinkEvent *coremetadata.TeardownEvent) {
+					paneEvent.Classification, unlinkEvent.Classification = coremetadata.TerminationAbnormal, coremetadata.TerminationAbnormal
+				}},
+				{name: "killed", prepare: func(_ *coremetadata.Registry, paneEvent, unlinkEvent *coremetadata.TeardownEvent) {
+					paneEvent.Classification, unlinkEvent.Classification = coremetadata.TerminationKilled, coremetadata.TerminationKilled
+				}},
+				{name: "unknown", prepare: func(_ *coremetadata.Registry, paneEvent, unlinkEvent *coremetadata.TeardownEvent) {
+					paneEvent.Classification, unlinkEvent.Classification = coremetadata.TerminationUnknown, coremetadata.TerminationUnknown
+				}},
+				{name: "stale generation", prepare: func(_ *coremetadata.Registry, paneEvent, unlinkEvent *coremetadata.TeardownEvent) {
+					paneEvent.Chain.Generation, unlinkEvent.Chain.Generation = "gen-stale", "gen-stale"
+				}},
+				{name: "foreign socket", prepare: func(_ *coremetadata.Registry, _ *coremetadata.TeardownEvent, unlinkEvent *coremetadata.TeardownEvent) {
+					unlinkEvent.Chain.SocketIdentity = "/tmp/foreign.sock"
+				}},
+				{name: "mismatched owner pair", prepare: func(_ *coremetadata.Registry, paneEvent, unlinkEvent *coremetadata.TeardownEvent) {
+					paneEvent.Chain.WindowHandle, unlinkEvent.Chain.WindowHandle = "@999", "@999"
+				}},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					registry := fx.store.registry.Clone()
+					paneEvent, unlinkEvent := baseEvent, baseEvent
+					unlinkEvent.Kind = coremetadata.TeardownEventWindowUnlinked
+					if test.prepare != nil {
+						test.prepare(&registry, &paneEvent, &unlinkEvent)
+					}
+					receipt := phase2NormalReceipt(pane.Metadata.UID, "", pane.Status.Activation.Generation)
+					receipt.Classification = paneEvent.Classification
+					switch receipt.Classification {
+					case coremetadata.TerminationAbnormal:
+						code := 42
+						receipt.ExitCode = &code
+					case coremetadata.TerminationKilled:
+						receipt.ExitCode, receipt.Signal = nil, "HUP"
+					case coremetadata.TerminationUnknown:
+						receipt.ExitCode, receipt.Source = nil, coremetadata.TerminationSourceReconcile
+					}
+					if _, err := fx.store.mutator().RecordTermination(&registry, receipt); err != nil {
+						t.Fatalf("record matrix receipt: %v", err)
+					}
+					pending, err := coremetadata.PlanPaneTeardownEvidence(registry, paneEvent, resourceFixtureClock.Add(time.Minute))
+					if err != nil {
+						t.Fatalf("plan pane evidence: %v", err)
+					}
+					candidate := registry
+					if pending.Changed {
+						candidate = pending.Desired
+					}
+					plan, err := coremetadata.PlanWindowRootCascadeDelete(candidate, paneEvent, unlinkEvent, resourceFixtureClock.Add(2*time.Minute))
+					if err != nil {
+						t.Fatalf("plan Window cascade: %v", err)
+					}
+					if plan.Changed != test.wantDelete {
+						t.Fatalf("delete changed=%t decision=%+v, want changed=%t", plan.Changed, plan.Decision, test.wantDelete)
+					}
+					if !test.wantDelete {
+						if _, ok := candidate.Window(window.Metadata.UID); !ok {
+							t.Fatal("negative authority removed the canonical Window")
+						}
+					}
+				})
+			}
+		})
 	}
 }
 
