@@ -125,6 +125,11 @@ var (
 		string(CodeSessionAttachFailed),
 		string(CodeSessionSwitchFailed),
 		string(CodeSessionKillFailed),
+		string(CodeSessionTmuxSocketUnreachable),
+		string(CodeSessionTmuxExit),
+		string(CodeSessionTmuxPermission),
+		string(CodeSessionTmuxNotFound),
+		string(CodeSessionTmuxRunner),
 		string(CodeTmuxApplyFailed),
 		string(CodeTmuxApplySocketUnreachable),
 		string(CodeTmuxApplyReloadFailed),
@@ -538,10 +543,10 @@ func operationAcceptsCode(operation Operation, code Code) bool {
 	switch operation {
 	case OperationSessionCreate:
 		// Ensure/restore may create and then activate the session.
-		return code == CodeSessionCreateFailed || code == CodeSessionAttachFailed || code == CodeSessionSwitchFailed
+		return code == CodeSessionCreateFailed || code == CodeSessionAttachFailed || code == CodeSessionSwitchFailed || sessionTmuxFailureCode(code)
 	case OperationSessionAttach:
 		// Attached-session kill flows first move to a fallback, then kill.
-		return code == CodeSessionAttachFailed || code == CodeSessionKillFailed
+		return code == CodeSessionAttachFailed || code == CodeSessionKillFailed || sessionTmuxFailureCode(code)
 	case OperationSessionSwitch:
 		// In-tmux kill flows first move to a fallback, then kill.
 		return code == CodeSessionSwitchFailed || code == CodeSessionKillFailed
@@ -550,6 +555,15 @@ func operationAcceptsCode(operation Operation, code Code) bool {
 		return code == CodeSessionKillFailed || code == CodeSessionCreateFailed || code == CodeSessionAttachFailed || code == CodeSessionSwitchFailed
 	case OperationTmuxApply:
 		return code == CodeTmuxApplyFailed || code == CodeTmuxApplySocketUnreachable || code == CodeTmuxApplyReloadFailed || code == CodeTmuxApplyReloadSkipped
+	default:
+		return false
+	}
+}
+
+func sessionTmuxFailureCode(code Code) bool {
+	switch code {
+	case CodeSessionTmuxSocketUnreachable, CodeSessionTmuxExit, CodeSessionTmuxPermission, CodeSessionTmuxNotFound, CodeSessionTmuxRunner:
+		return true
 	default:
 		return false
 	}

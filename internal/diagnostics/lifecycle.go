@@ -22,7 +22,9 @@ const (
 func AllowedCodes() []Code {
 	return []Code{
 		CodeSessionCreateFailed, CodeSessionAttachFailed, CodeSessionSwitchFailed,
-		CodeSessionKillFailed, CodeTmuxApplyFailed, CodeTmuxApplySocketUnreachable,
+		CodeSessionKillFailed, CodeSessionTmuxSocketUnreachable, CodeSessionTmuxExit,
+		CodeSessionTmuxPermission, CodeSessionTmuxNotFound, CodeSessionTmuxRunner,
+		CodeTmuxApplyFailed, CodeTmuxApplySocketUnreachable,
 		CodeTmuxApplyReloadFailed, CodeTmuxApplyReloadSkipped,
 	}
 }
@@ -33,14 +35,19 @@ func AllowedCodes() []Code {
 type Code string
 
 const (
-	CodeSessionCreateFailed        Code = "session.create.failed"
-	CodeSessionAttachFailed        Code = "session.attach.failed"
-	CodeSessionSwitchFailed        Code = "session.switch.failed"
-	CodeSessionKillFailed          Code = "session.kill.failed"
-	CodeTmuxApplyFailed            Code = "tmux.apply.failed"
-	CodeTmuxApplySocketUnreachable Code = "tmux.apply.socket-unreachable"
-	CodeTmuxApplyReloadFailed      Code = "tmux.apply.reload-failed"
-	CodeTmuxApplyReloadSkipped     Code = "tmux.apply.reload-skipped"
+	CodeSessionCreateFailed          Code = "session.create.failed"
+	CodeSessionAttachFailed          Code = "session.attach.failed"
+	CodeSessionSwitchFailed          Code = "session.switch.failed"
+	CodeSessionKillFailed            Code = "session.kill.failed"
+	CodeSessionTmuxSocketUnreachable Code = "session.tmux.socket-unreachable"
+	CodeSessionTmuxExit              Code = "session.tmux.exit"
+	CodeSessionTmuxPermission        Code = "session.tmux.permission"
+	CodeSessionTmuxNotFound          Code = "session.tmux.not-found"
+	CodeSessionTmuxRunner            Code = "session.tmux.runner"
+	CodeTmuxApplyFailed              Code = "tmux.apply.failed"
+	CodeTmuxApplySocketUnreachable   Code = "tmux.apply.socket-unreachable"
+	CodeTmuxApplyReloadFailed        Code = "tmux.apply.reload-failed"
+	CodeTmuxApplyReloadSkipped       Code = "tmux.apply.reload-skipped"
 )
 
 // LifecycleResult selects the terminal state for one started lifecycle.

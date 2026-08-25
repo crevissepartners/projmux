@@ -16,7 +16,9 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/theme"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -519,12 +521,158 @@ func TestShellTmuxExecRunnerStripsNestedTmuxEnv(t *testing.T) {
 		return []string{
 			"PATH=" + os.Getenv("PATH"),
 			"TMUX=/tmp/nested-tmux,123,0",
+			"TMUX_PANE=%77",
 		}
 	}}
 
-	_, err := runner.Run(context.Background(), "/bin/sh", "-c", `if [ "${TMUX+x}" = x ]; then echo "inherited TMUX=$TMUX"; exit 7; fi`)
+	_, err := runner.Run(context.Background(), "/bin/sh", "-c", `if [ "${TMUX+x}" = x ] || [ "${TMUX_PANE+x}" = x ]; then env | sed -n '/^TMUX/p'; exit 7; fi`)
 	if err != nil {
-		t.Fatalf("Run() error = %v, want TMUX stripped", err)
+		t.Fatalf("Run() error = %v, want TMUX and TMUX_PANE stripped", err)
+	}
+}
+
+func TestShellTmuxExecRunnerReturnsClosedTypedFailures(t *testing.T) {
+	t.Parallel()
+
+	permissionDenied := filepath.Join(t.TempDir(), "not-executable")
+	if err := os.WriteFile(permissionDenied, []byte("#!/bin/sh\nexit 0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name         string
+		command      string
+		args         []string
+		wantKind     inttmux.CommandFailureKind
+		wantNoServer bool
+		wantCause    string
+	}{
+		{
+			name: "genuine absent socket", command: "/bin/sh",
+			args:     []string{"-c", `printf '%s\n' 'no server running on /private/cold-start.sock' >&2; exit 1`},
+			wantKind: inttmux.CommandFailureExit, wantNoServer: true, wantCause: "exit status 1",
+		},
+		{
+			name: "generic nonzero", command: "/bin/sh",
+			args:     []string{"-c", `printf '%s\n' 'generic tmux refusal' >&2; exit 9`},
+			wantKind: inttmux.CommandFailureExit, wantCause: "exit status 9",
+		},
+		{
+			name: "permission failure", command: permissionDenied,
+			wantKind: inttmux.CommandFailurePermission, wantCause: "permission denied",
+		},
+		{
+			name: "missing executable", command: "projmux-corrective-b-definitely-missing",
+			wantKind: inttmux.CommandFailureNotFound, wantCause: "executable file not found",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output, err := (shellTmuxExecRunner{}).Run(context.Background(), tt.command, tt.args...)
+			if err == nil {
+				t.Fatal("Run() error = nil, want typed failure")
+			}
+			var carrier interface{ CommandFailure() inttmux.CommandFailure }
+			if !errors.As(err, &carrier) {
+				t.Fatalf("Run() error type = %T, want CommandFailure carrier", err)
+			}
+			failure := carrier.CommandFailure()
+			if failure.Kind != tt.wantKind {
+				t.Fatalf("CommandFailure kind = %q, want %q (error %v)", failure.Kind, tt.wantKind, err)
+			}
+			if got := inttmux.IsNoServerFailure(err); got != tt.wantNoServer {
+				t.Fatalf("IsNoServerFailure() = %v, want %v (failure %#v)", got, tt.wantNoServer, failure)
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), tt.wantCause) {
+				t.Fatalf("error = %q, want cause %q", err, tt.wantCause)
+			}
+			if len(output) > 0 && strings.TrimSpace(string(output)) != failure.Stderr {
+				t.Fatalf("output = %q, typed stderr = %q", output, failure.Stderr)
+			}
+			var exitCoder interface{ ExitCode() int }
+			if errors.As(err, &exitCoder) {
+				t.Fatalf("typed shell failure exposed ExitCode %d and would suppress CLI stderr", exitCoder.ExitCode())
+			}
+		})
+	}
+}
+
+func TestShellTypedPrepareFailuresReachCLIAndClosedJournal(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		failure   inttmux.CommandFailure
+		wantCode  diagnostics.Code
+		wantCause string
+	}{
+		{
+			name: "absent socket", failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running on /private/cold-start.sock"},
+			wantCode: diagnostics.CodeSessionTmuxSocketUnreachable, wantCause: "no server running",
+		},
+		{
+			name: "generic exit", failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "generic tmux refusal"},
+			wantCode: diagnostics.CodeSessionTmuxExit, wantCause: "generic tmux refusal",
+		},
+		{
+			name: "permission", failure: inttmux.CommandFailure{Kind: inttmux.CommandFailurePermission, Stderr: "permission denied"},
+			wantCode: diagnostics.CodeSessionTmuxPermission, wantCause: "permission denied",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			home := t.TempDir()
+			project := filepath.Join(home, "source", "repos", "project")
+			if err := os.MkdirAll(filepath.Join(project, ".git"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			prepareErr := &shellTmuxCommandError{
+				name: "tmux", args: []string{"-L", "projmux", "display-message"},
+				cause: errors.New("injected command failure"), failure: tt.failure,
+			}
+			configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+			probeErr := &shellTmuxCommandError{
+				name: "tmux", args: []string{"-L", "projmux", "has-session"}, cause: errors.New("exit status 1"),
+				failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running on /private/cold-start.sock"},
+			}
+			tmux := &scriptedShellTmuxRunner{errors: map[string]error{
+				shellTmuxCallKey("tmux", "-L", "projmux", "-f", configPath, "has-session", "-t", "repos-project"): probeErr,
+			}}
+			writer := &appLifecycleWriter{}
+			recorder := diagnostics.NewLifecycleRecorder(writer, "shell-typed-failure", "0.13.0", "tmux")
+			finish := recorder.BeginCommand()
+			cmd := &shellCommand{
+				diagnostics: recorder,
+				executable:  func() (string, error) { return "/tmp/projmux", nil },
+				lookupEnv:   func(string) string { return "" },
+				homeDir:     func() (string, error) { return home, nil },
+				writeFile:   os.WriteFile,
+				runCommand: func(context.Context, []string, string, ...string) error {
+					t.Fatal("failed prepare reached foreground attach")
+					return nil
+				},
+				tmuxRunner:     tmux,
+				getwd:          func() (string, error) { return project, nil },
+				projectSession: func(context.Context, string, shellTarget) error { return prepareErr },
+			}
+			err := cmd.Run([]string{"--no-install"}, &bytes.Buffer{}, &bytes.Buffer{})
+			finish(err)
+			if err == nil || !strings.Contains(strings.ToLower(err.Error()), tt.wantCause) {
+				t.Fatalf("Run() error = %v, want cause %q", err, tt.wantCause)
+			}
+			var exitCoder interface{ ExitCode() int }
+			if errors.As(err, &exitCoder) {
+				t.Fatalf("Run() exposed ExitCode %d and would suppress CLI stderr", exitCoder.ExitCode())
+			}
+			if len(writer.events) != 2 {
+				t.Fatalf("journal events = %#v, want one lifecycle pair", writer.events)
+			}
+			outcome := writer.events[1]
+			if outcome.Operation != string(diagnostics.OperationSessionAttach) || outcome.Code != string(tt.wantCode) || outcome.Result != "error" {
+				t.Fatalf("journal outcome = %#v, want session.attach/%s/error", outcome, tt.wantCode)
+			}
+			if outcome.Message != "" || strings.Contains(fmt.Sprint(outcome), tt.failure.Stderr) {
+				t.Fatalf("journal leaked raw stderr: %#v", outcome)
+			}
+		})
 	}
 }
 

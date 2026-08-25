@@ -24,6 +24,7 @@ func TestDefaultTmuxClientPropagatesAppSocketMetadata(t *testing.T) {
 	tmuxPath := filepath.Join(binDir, "tmux")
 	if err := os.WriteFile(tmuxPath, []byte(`#!/bin/sh
 if [ "$1" = "has-session" ]; then
+  printf '%s\n' "can't find session: workspace" >&2
   exit 1
 fi
 if [ "$1" = "list-panes" ]; then
