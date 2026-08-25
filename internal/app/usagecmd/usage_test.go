@@ -1410,6 +1410,9 @@ func TestUsageStatusEchoesAdapterErrorWithDebugEnv(t *testing.T) {
 		}
 		return ""
 	}
+	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
+		return []config.AIAgentProvider{config.AIAgentClaude}, nil
+	}
 	dir := t.TempDir()
 	registry := usage.NewRegistry()
 	_ = registry.Replace(&stubAdapter{
