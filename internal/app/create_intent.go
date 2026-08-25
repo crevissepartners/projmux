@@ -427,6 +427,9 @@ func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, in
 		if err != nil {
 			return err
 		}
+		if _, _, err := mutator.AdoptWindowDefaultShell(working, scope.windowUID, pane.Metadata.UID); err != nil {
+			return MapMetadataError(err)
+		}
 		c.runtime.equalizeSplitLayout(ctx, scope.anchorPaneID, intent.placement)
 		result = createResult{kind: coremetadata.KindPane, uid: pane.Metadata.UID, name: pane.Metadata.Name,
 			paneID: paneID, projectName: scope.rootName, windowName: window.Metadata.Name, windowUID: window.Metadata.UID}

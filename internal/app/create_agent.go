@@ -206,7 +206,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		}
 
 		// Runtime phase.
-		sessionName, err := c.ensureProjectRuntime(ctx, working, mutator, project, ledger)
+		sessionName, err := c.ensureProjectRuntime(ctx, working, mutator, project, operationID, ledger)
 		if err != nil {
 			return err
 		}

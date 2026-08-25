@@ -357,6 +357,71 @@ func (s WindowSpec) CompatibilityShellPaneRef() string {
 	return s.AnchorPaneRef
 }
 
+// WindowAnchor resolves the required role-agnostic anchor of windowUID.
+//
+// It is deliberately stricter than a bare Pane lookup: a direct shell must be
+// owned by the Window, while an Agent Pane must be owned by an Agent of that
+// Window and remain that Agent's managed Pane. Consumers use this helper before
+// selecting a runtime target so a dangling or cross-Window ref can never turn
+// into an inferred sibling Pane.
+func (r Registry) WindowAnchor(windowUID string) (*Pane, bool) {
+	window, ok := r.Window(strings.TrimSpace(windowUID))
+	if !ok {
+		return nil, false
+	}
+	pane, ok := r.Pane(strings.TrimSpace(window.Spec.AnchorPaneRef))
+	if !ok || (pane.Spec.Role != PaneRoleShell && pane.Spec.Role != PaneRoleAgent) {
+		return nil, false
+	}
+	if pane.Spec.Role == PaneRoleShell {
+		if pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindWindow ||
+			pane.Metadata.OwnerRef.UID != window.Metadata.UID {
+			return nil, false
+		}
+	} else {
+		ownerWindowUID, ok := paneWindowOwnerUID(r, *pane)
+		if !ok || ownerWindowUID != window.Metadata.UID {
+			return nil, false
+		}
+		agent, ok := r.Agent(pane.Metadata.OwnerUID())
+		if !ok || agent.Status.PaneRef != pane.Metadata.UID {
+			return nil, false
+		}
+	}
+	return pane, true
+}
+
+// WindowDefaultShell resolves the optional direct Window-owned shell. Empty is
+// a valid absence and is therefore reported as (nil, false).
+func (r Registry) WindowDefaultShell(windowUID string) (*Pane, bool) {
+	window, ok := r.Window(strings.TrimSpace(windowUID))
+	if !ok || strings.TrimSpace(window.Spec.DefaultShellPaneRef) == "" {
+		return nil, false
+	}
+	pane, ok := r.Pane(strings.TrimSpace(window.Spec.DefaultShellPaneRef))
+	if !ok || pane.Spec.Role != PaneRoleShell || pane.Metadata.OwnerRef == nil ||
+		pane.Metadata.OwnerRef.Kind != KindWindow || pane.Metadata.OwnerRef.UID != window.Metadata.UID {
+		return nil, false
+	}
+	return pane, true
+}
+
+// PaneInWindow reports whether paneUID belongs to windowUID through the exact
+// Registry owner chain. It does not consult names, cwd, command, or runtime
+// order, and it does not require an Agent Pane to be the Agent's current pane;
+// callers that need the stricter anchor invariant use WindowAnchor.
+func (r Registry) PaneInWindow(windowUID, paneUID string) (*Pane, bool) {
+	pane, ok := r.Pane(strings.TrimSpace(paneUID))
+	if !ok {
+		return nil, false
+	}
+	ownerWindowUID, ok := paneWindowOwnerUID(r, *pane)
+	if !ok || ownerWindowUID != strings.TrimSpace(windowUID) {
+		return nil, false
+	}
+	return pane, true
+}
+
 // migrationShellPaneRef is the only legacy read seam. It is package-private,
 // used only after whole-document shape classification has ruled out mixed
 // authority, and therefore cannot become a consumer dual-read path.

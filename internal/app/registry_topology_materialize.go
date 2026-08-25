@@ -43,12 +43,15 @@ type registryTopologyPlan struct {
 }
 
 type registryTopologyWindowPlan struct {
-	window  coremetadata.Window
-	liveID  string
-	create  bool
-	primary coremetadata.Pane
-	panes   []registryTopologyPanePlan
-	agents  []registryTopologyAgentPlan
+	window               coremetadata.Window
+	liveID               string
+	create               bool
+	anchor               coremetadata.Pane
+	anchorLiveID         string
+	bootstrap            coremetadata.Pane
+	allocateDefaultShell bool
+	panes                []registryTopologyPanePlan
+	agents               []registryTopologyAgentPlan
 }
 
 type registryTopologyPanePlan struct {
@@ -188,18 +191,28 @@ func planRegistryTopology(
 				break
 			}
 		}
-		primary, ok := registry.Pane(strings.TrimSpace(window.Spec.CompatibilityShellPaneRef()))
-		if !ok || primary.Spec.Role != coremetadata.PaneRoleShell || primary.Metadata.OwnerUID() != window.Metadata.UID {
-			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "Window compatibility shell ref must resolve to a Window-owned shell Pane")
+		anchor, ok := registry.WindowAnchor(window.Metadata.UID)
+		if !ok {
+			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "Window anchorPaneRef must resolve to an exact same-Window shell or managed Agent Pane")
 			continue
 		}
-		work.primary = *primary
+		work.anchor = *anchor
+		defaultShell, hasDefaultShell := registry.WindowDefaultShell(window.Metadata.UID)
+		if strings.TrimSpace(window.Spec.DefaultShellPaneRef) != "" && !hasDefaultShell {
+			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "Window defaultShellPaneRef must resolve to a direct Window-owned shell Pane")
+			continue
+		}
+		if anchor.Spec.Role == coremetadata.PaneRoleShell && anchor.Metadata.OwnerUID() == window.Metadata.UID {
+			work.bootstrap = *anchor
+		} else if hasDefaultShell {
+			work.bootstrap = *defaultShell
+		}
 		eligible := registry.PanesOf(window.Metadata.UID)
 		// A stored Pane whose cwd is gone is one item of the desired topology, not
 		// a verdict on the Project. It is refused here and left out of the plan, so
 		// the tmux pass never tries to open a directory that does not exist and the
 		// Window still comes back with the Panes that can be built. A refused
-		// *primary* is different: the Window is created from its primary Pane's
+		// *bootstrap* is different: the Window is created from that Pane's
 		// cwd, so that one takes the Window with it.
 		refusedPanes := map[string]bool{}
 		for _, pane := range eligible {
@@ -211,12 +224,16 @@ func planRegistryTopology(
 				refusedPanes[pane.Metadata.UID] = true
 			}
 		}
-		if refusedPanes[work.primary.Metadata.UID] {
+		if work.bootstrap.Metadata.UID != "" && refusedPanes[work.bootstrap.Metadata.UID] {
 			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
-				"the Window's primary Pane cwd cannot be materialized, so the Window has no cwd to be created from")
+				"the Window's default bootstrap shell cwd cannot be materialized, so the Window has no cwd to be created from")
 			continue
 		}
 		if work.liveID == "" {
+			if work.bootstrap.Metadata.UID == "" {
+				work.allocateDefaultShell = true
+				plan.addDefaultShellAllocation(wi+1, window)
+			}
 			work.create = true
 			plan.addItem(wi+1, coremetadata.KindWindow, window.Metadata.Name, window.Metadata.UID, "materialize")
 			for pi, pane := range eligible {
@@ -226,7 +243,13 @@ func planRegistryTopology(
 				work.panes = append(work.panes, registryTopologyPanePlan{pane: pane, create: true})
 				plan.addItem((wi+1)*1000+pi, coremetadata.KindPane, window.Metadata.Name+"/"+pane.Metadata.Name, pane.Metadata.UID, "materialize")
 			}
-			work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, nil, launcher)
+			work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, nil, launcher, work.anchor.Metadata.UID)
+			if work.anchor.Spec.Role == coremetadata.PaneRoleAgent && !slices.ContainsFunc(work.agents, func(agent registryTopologyAgentPlan) bool {
+				return agent.reusePaneUID == work.anchor.Metadata.UID
+			}) {
+				plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
+					"offline Agent anchor cannot be materialized by its exact owning Agent")
+			}
 			plan.windows = append(plan.windows, work)
 			continue
 		}
@@ -287,21 +310,17 @@ func planRegistryTopology(
 		if len(unclaimed) != 0 {
 			plan.refuse(resourcegraph.DivergenceUnattributed, coremetadata.KindPane, work.liveID, "pre-existing uid-less live Pane cannot be heuristically adopted")
 		}
-		primaryLive := false
-		shellAnchorLive := false
-		for _, paneWork := range work.panes {
-			if paneWork.liveID == "" {
-				continue
-			}
-			shellAnchorLive = true
-			if paneWork.pane.Metadata.UID == work.primary.Metadata.UID {
-				primaryLive = true
+		for _, live := range livePanes {
+			if live.uid == work.anchor.Metadata.UID {
+				work.anchorLiveID = live.id
+				break
 			}
 		}
-		if !primaryLive && !shellAnchorLive {
-			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name, "missing primary Pane has no exact-bound Window-owned shell anchor")
+		if work.anchorLiveID == "" {
+			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
+				"stored anchor Pane has no exact live binding; refusing alternate live Pane inference")
 		}
-		work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, livePanes, launcher)
+		work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, livePanes, launcher, work.anchor.Metadata.UID)
 		plan.windows = append(plan.windows, work)
 	}
 	return plan, nil
@@ -370,6 +389,16 @@ func (p *registryTopologyPlan) addItem(order int, kind coremetadata.Kind, target
 		Drift: resourceDriftMissing, Surface: "tmux", Action: action, Kind: string(kind), Target: target,
 		After: "uid:" + uid, Outcome: "planned",
 		Reason:     "Registry resource has no materialized runtime object",
+		Divergence: resourcegraph.DivergenceUnrealized,
+	})
+}
+
+func (p *registryTopologyPlan) addDefaultShellAllocation(windowOrder int, window coremetadata.Window) {
+	p.items = append(p.items, resourceReconcileItem{
+		Key:   fmt.Sprintf("registry:materialize:%06d:pane:default-shell:%s", windowOrder*1000-1, window.Metadata.UID),
+		Drift: resourceDriftMissing, Surface: "registry", Action: "allocate default shell", Kind: string(coremetadata.KindPane),
+		Target: window.Metadata.Name + "/default-shell", After: "slot:default-shell:" + window.Metadata.UID, Outcome: "planned",
+		Reason:     "offline Agent-anchored Window needs a lazy shell bootstrap before Agent materialization",
 		Divergence: resourcegraph.DivergenceUnrealized,
 	})
 }
@@ -897,12 +926,12 @@ func (g *topologyOwnerGuard) requireSoleUIDClaims(plan *registryTopologyPlan) er
 		if err := g.requireSoleWindowUID(work.window.Metadata.UID, work.liveID, windowLabel); err != nil {
 			return err
 		}
-		if err := g.requireSolePaneUID(work.primary.Metadata.UID, primaryPaneHandle(work), windowLabel+"/"+work.primary.Metadata.Name); err != nil {
+		if err := g.requireSolePaneUID(work.anchor.Metadata.UID, work.anchorLiveID, windowLabel+"/"+work.anchor.Metadata.Name); err != nil {
 			return err
 		}
 		for pi := range work.panes {
 			paneWork := &work.panes[pi]
-			if paneWork.pane.Metadata.UID == work.primary.Metadata.UID {
+			if paneWork.pane.Metadata.UID == work.anchor.Metadata.UID {
 				continue
 			}
 			if err := g.requireSolePaneUID(paneWork.pane.Metadata.UID, paneWork.liveID, windowLabel+"/"+paneWork.pane.Metadata.Name); err != nil {
@@ -915,6 +944,11 @@ func (g *topologyOwnerGuard) requireSoleUIDClaims(plan *registryTopologyPlan) er
 		// row is not stale and the pass refuses instead of orphaning a pane.
 		for ai := range work.agents {
 			replay := &work.agents[ai]
+			if replay.reusePaneUID != "" && replay.reusePaneUID != work.anchor.Metadata.UID {
+				if err := g.requireSolePaneUID(replay.reusePaneUID, "", windowLabel+"/"+replay.agent.Metadata.Name); err != nil {
+					return err
+				}
+			}
 			for _, paneUID := range replay.releaseUIDs {
 				if err := g.requireSolePaneUID(paneUID, "", windowLabel+"/"+replay.agent.Metadata.Name); err != nil {
 					return err
@@ -939,6 +973,14 @@ func (g *topologyOwnerGuard) requirePlannedParents(ctx context.Context, runtime 
 				return err
 			}
 		}
+		if work.anchorLiveID != "" {
+			if runtime.option(ctx, work.anchorLiveID, "#{"+tmuxopts.PaneUID+"}") != work.anchor.Metadata.UID {
+				return fmt.Errorf("window %s anchor Pane uid changed after planning", windowLabel)
+			}
+			if err := g.requirePaneOf(sessionID, work.liveID, work.anchorLiveID, windowLabel+"/"+work.anchor.Metadata.Name); err != nil {
+				return err
+			}
+		}
 		for pi := range work.panes {
 			paneWork := &work.panes[pi]
 			if paneWork.liveID == "" {
@@ -950,18 +992,6 @@ func (g *topologyOwnerGuard) requirePlannedParents(ctx context.Context, runtime 
 		}
 	}
 	return nil
-}
-
-// primaryPaneHandle returns the planned live handle of a Window's primary Pane.
-// The primary is tracked in the pane plan, so a Window whose plan predates its
-// own creation reports the empty handle.
-func primaryPaneHandle(work *registryTopologyWindowPlan) string {
-	for pi := range work.panes {
-		if work.panes[pi].pane.Metadata.UID == work.primary.Metadata.UID {
-			return work.panes[pi].liveID
-		}
-	}
-	return ""
 }
 
 // requireWindowOf proves windowID is present and owned by exactly sessionID.
@@ -1073,6 +1103,28 @@ func executeRegistryTopology(
 	if plan.hasRefusal() {
 		return fmt.Errorf("refused desired topology")
 	}
+	// Bind every plan-visible lazy default-shell slot under the Registry lock,
+	// before the first runtime observation or mutation. The outer convergent
+	// transaction validates and either commits all allocated rows/refs with their
+	// runtime projection or restores the exact preimage.
+	for wi := range plan.windows {
+		work := &plan.windows[wi]
+		if !work.allocateDefaultShell {
+			continue
+		}
+		shell, _, err := mutator.EnsureWindowDefaultShell(registry, work.window.Metadata.UID, "", operationID)
+		if err != nil {
+			return MapMetadataError(err)
+		}
+		work.bootstrap = shell
+		work.allocateDefaultShell = false
+		work.panes = append(work.panes, registryTopologyPanePlan{pane: shell, create: true})
+		window, _ := registry.Window(work.window.Metadata.UID)
+		work.window = window.Clone()
+	}
+	if err := registry.Validate(); err != nil {
+		return MapMetadataError(err)
+	}
 	exists, err := runtime.sessions.SessionExists(ctx, plan.sessionName)
 	if err != nil {
 		return fmt.Errorf("revalidate selected Project session: %w", err)
@@ -1094,32 +1146,42 @@ func executeRegistryTopology(
 		return err
 	}
 	first := &plan.windows[0]
+	firstCWD := plan.project.Spec.Root
+	if first.bootstrap.Metadata.UID != "" {
+		firstCWD = materializePaneCWD(plan.project, first.bootstrap)
+	}
 	// The session's own first Window and Pane arrive with the atomic
 	// new-session result. Adopting those exact ids, rather than re-listing the
 	// session, is what keeps a concurrently created sibling from being claimed.
-	created, err := runtime.ensureSessionAt(ctx, plan.project, plan.sessionName, materializePaneCWD(plan.project, first.primary), ledger)
+	created, err := runtime.ensureSessionAt(ctx, plan.project, plan.sessionName, firstCWD, ledger)
 	if err != nil {
 		return err
 	}
 	if created.Created {
+		if first.bootstrap.Metadata.UID == "" {
+			return fmt.Errorf("window %s has no default shell bootstrap", first.window.Metadata.Name)
+		}
 		if err := runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, first.window.Metadata.UID, ledger); err != nil {
 			return err
 		}
 		if err := runtime.mirrorWindow(ctx, created.WindowID, first.window); err != nil {
 			return err
 		}
-		if err := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, first.primary.Metadata.UID, ledger); err != nil {
+		if err := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, first.bootstrap.Metadata.UID, ledger); err != nil {
 			return err
 		}
-		if err := runtime.mirrorPane(ctx, created.PaneID, first.primary); err != nil {
+		if err := runtime.mirrorPane(ctx, created.PaneID, first.bootstrap); err != nil {
 			return err
 		}
 		first.liveID, first.create = created.WindowID, false
 		for pi := range first.panes {
 			paneWork := &first.panes[pi]
-			if paneWork.pane.Metadata.UID == first.primary.Metadata.UID {
+			if paneWork.pane.Metadata.UID == first.bootstrap.Metadata.UID {
 				paneWork.liveID, paneWork.create = created.PaneID, false
 			}
+		}
+		if first.anchor.Metadata.UID == first.bootstrap.Metadata.UID {
+			first.anchorLiveID = created.PaneID
 		}
 	}
 	// The inventory is refreshed after the session exists so the new tuple is
@@ -1137,18 +1199,21 @@ func executeRegistryTopology(
 	}
 	for wi := range plan.windows {
 		work := &plan.windows[wi]
+		if work.liveID == "" && work.bootstrap.Metadata.UID == "" {
+			return fmt.Errorf("window %s has no default shell bootstrap", work.window.Metadata.Name)
+		}
 		if work.liveID == "" {
 			// newWindow can report a synchronous post-mutation hook failure while
 			// still returning the exact attributed @N/%N pair. Claiming and
 			// ledgering that pair before surfacing the original error is what lets
 			// the ownership-checked rollback remove it.
-			primaryActivation, activationErr := activate(work.primary.Metadata.UID)
+			bootstrapActivation, activationErr := activate(work.bootstrap.Metadata.UID)
 			if activationErr != nil {
 				return activationErr
 			}
 			result, createErr := runtime.newWindow(ctx, created.SessionID, work.window.Metadata.Name,
-				materializePaneCWD(plan.project, work.primary),
-				runtime.supervisedLaunch(ctx, primaryActivation, nil))
+				materializePaneCWD(plan.project, work.bootstrap),
+				runtime.supervisedLaunch(ctx, bootstrapActivation, nil))
 			if result.WindowID != "" {
 				if claimErr := runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, result.WindowID, work.window.Metadata.UID, ledger); claimErr != nil {
 					return errors.Join(createErr, claimErr)
@@ -1159,13 +1224,13 @@ func executeRegistryTopology(
 				if result.PaneID != "" {
 					// Attribution already proved this Pane belongs to the exact new
 					// Window under the selected Session.
-					if claimErr := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, result.PaneID, work.primary.Metadata.UID, ledger); claimErr != nil {
+					if claimErr := runtime.claimRuntimeUIDForRollback(ctx, runtimePane, result.PaneID, work.bootstrap.Metadata.UID, ledger); claimErr != nil {
 						return errors.Join(createErr, claimErr)
 					}
-					if mirrorErr := runtime.mirrorPane(ctx, result.PaneID, work.primary); mirrorErr != nil {
+					if mirrorErr := runtime.mirrorPane(ctx, result.PaneID, work.bootstrap); mirrorErr != nil {
 						return errors.Join(createErr, mirrorErr)
 					}
-					observeActivationRuntime(registry, mutator, primaryActivation, result.PaneID, runtime.warn)
+					observeActivationRuntime(registry, mutator, bootstrapActivation, result.PaneID, runtime.warn)
 				}
 			}
 			if createErr != nil {
@@ -1174,71 +1239,37 @@ func executeRegistryTopology(
 			work.liveID = result.WindowID
 			for pi := range work.panes {
 				paneWork := &work.panes[pi]
-				if paneWork.pane.Metadata.UID == work.primary.Metadata.UID {
+				if paneWork.pane.Metadata.UID == work.bootstrap.Metadata.UID {
 					paneWork.liveID, paneWork.create = result.PaneID, false
 				}
 			}
+			if work.anchor.Metadata.UID == work.bootstrap.Metadata.UID {
+				work.anchorLiveID = result.PaneID
+			}
 		}
 		windowID := work.liveID
-		anchorID := ""
-		for pi := range work.panes {
-			paneWork := &work.panes[pi]
-			if paneWork.pane.Metadata.UID == work.primary.Metadata.UID && paneWork.liveID != "" {
-				anchorID = paneWork.liveID
-			}
-		}
-		if anchorID == "" {
-			// The Window is live but its stored primary Pane is not. Split it
-			// back in from an exact-bound sibling shell Pane of the same Window;
-			// planning already refused a Window with no such anchor.
-			var primaryWork *registryTopologyPanePlan
-			fallbackID := ""
+		splitAnchorID := work.anchorLiveID
+		if splitAnchorID == "" {
 			for pi := range work.panes {
-				paneWork := &work.panes[pi]
-				if paneWork.pane.Metadata.UID == work.primary.Metadata.UID {
-					primaryWork = paneWork
-					continue
-				}
-				if fallbackID == "" && paneWork.liveID != "" {
-					fallbackID = paneWork.liveID
+				if work.panes[pi].pane.Metadata.UID == work.bootstrap.Metadata.UID {
+					splitAnchorID = work.panes[pi].liveID
+					break
 				}
 			}
-			if primaryWork == nil || !primaryWork.create || fallbackID == "" {
-				return fmt.Errorf("window %s has no exact primary Pane binding", work.window.Metadata.Name)
-			}
-			primaryActivation, activationErr := activate(primaryWork.pane.Metadata.UID)
-			if activationErr != nil {
-				return activationErr
-			}
-			paneID, splitErr := runtime.splitPane(ctx, fallbackID, defaultPlacement,
-				materializePaneCWD(plan.project, primaryWork.pane),
-				runtime.supervisedLaunch(ctx, primaryActivation, nil))
-			if paneID != "" {
-				if adoptErr := adoptCreatedPane(ctx, runtime, paneID, created.SessionID, windowID, primaryWork.pane, ledger); adoptErr != nil {
-					return errors.Join(splitErr, adoptErr)
-				}
-				observeActivationRuntime(registry, mutator, primaryActivation, paneID, runtime.warn)
-			}
-			if splitErr != nil {
-				return splitErr
-			}
-			primaryWork.create, primaryWork.liveID = false, paneID
-			anchorID = paneID
-			runtime.equalizeSplitLayout(ctx, fallbackID, defaultPlacement)
 		}
-		if runtime.option(ctx, anchorID, "#{"+tmuxopts.PaneUID+"}") != work.primary.Metadata.UID {
-			return fmt.Errorf("window %s primary Pane uid changed after planning", work.window.Metadata.Name)
+		if splitAnchorID == "" {
+			return fmt.Errorf("window %s has no exact anchor or lazy default-shell bootstrap binding", work.window.Metadata.Name)
 		}
 		for pi := range work.panes {
 			paneWork := &work.panes[pi]
-			if !paneWork.create || paneWork.pane.Metadata.UID == work.primary.Metadata.UID {
+			if !paneWork.create || paneWork.pane.Metadata.UID == work.bootstrap.Metadata.UID {
 				continue
 			}
 			paneActivation, activationErr := activate(paneWork.pane.Metadata.UID)
 			if activationErr != nil {
 				return activationErr
 			}
-			paneID, splitErr := runtime.splitPane(ctx, anchorID, defaultPlacement,
+			paneID, splitErr := runtime.splitPane(ctx, splitAnchorID, defaultPlacement,
 				materializePaneCWD(plan.project, paneWork.pane),
 				runtime.supervisedLaunch(ctx, paneActivation, nil))
 			if paneID != "" {
@@ -1251,14 +1282,21 @@ func executeRegistryTopology(
 				return splitErr
 			}
 			paneWork.create, paneWork.liveID = false, paneID
-			runtime.equalizeSplitLayout(ctx, anchorID, defaultPlacement)
+			runtime.equalizeSplitLayout(ctx, splitAnchorID, defaultPlacement)
 		}
 		// Agents come last inside their Window, on the very anchor the shell
 		// half just proved. Their launch argv was fixed at plan time, so the
 		// only work left here is the ordinary managed-Pane materialization.
-		if err := replayTopologyWindowAgents(ctx, runtime, registry, mutator, launcher, work,
-			anchorID, created.SessionID, windowID, ledger, newGeneration, operationID); err != nil {
+		agentBindings, err := replayTopologyWindowAgents(ctx, runtime, registry, mutator, launcher, work,
+			splitAnchorID, created.SessionID, windowID, ledger, newGeneration, operationID)
+		if err != nil {
 			return err
+		}
+		if paneID := agentBindings[work.anchor.Metadata.UID]; paneID != "" {
+			work.anchorLiveID = paneID
+		}
+		if work.anchorLiveID == "" || runtime.option(ctx, work.anchorLiveID, "#{"+tmuxopts.PaneUID+"}") != work.anchor.Metadata.UID {
+			return fmt.Errorf("window %s role-agnostic anchor Pane is not live after materialization", work.window.Metadata.Name)
 		}
 	}
 	if _, err := mutator.BindProjectSession(registry, plan.project.Metadata.UID, plan.sessionName, true); err != nil {

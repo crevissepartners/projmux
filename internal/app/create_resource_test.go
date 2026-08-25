@@ -634,8 +634,8 @@ func TestEveryTargetWindowAnchorsOnExactlyOnePane(t *testing.T) {
 	})
 }
 
-// TestAStaleCompatibilityShellRefIsExitTwoWithNoFocusFallback is acceptance criterion 5.
-func TestAStaleCompatibilityShellRefIsExitTwoWithNoFocusFallback(t *testing.T) {
+// TestAStaleWindowAnchorIsExitTwoWithNoFocusFallback is acceptance criterion 5.
+func TestAStaleWindowAnchorIsExitTwoWithNoFocusFallback(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
@@ -643,8 +643,8 @@ func TestAStaleCompatibilityShellRefIsExitTwoWithNoFocusFallback(t *testing.T) {
 		ref  string
 		want string
 	}{
-		{name: "stale ref", ref: "pane-vanished", want: "resolves to no Pane"},
-		{name: "missing ref", ref: "", want: "has no compatibility shell ref"},
+		{name: "stale ref", ref: "pane-vanished", want: "dangling or cross-Window"},
+		{name: "missing ref", ref: "", want: "has no anchorPaneRef"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -666,7 +666,7 @@ func TestAStaleCompatibilityShellRefIsExitTwoWithNoFocusFallback(t *testing.T) {
 
 			stdout, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main")
 			if err == nil {
-				t.Fatal("a stale compatibility shell ref silently resolved")
+				t.Fatal("a stale Window anchor silently resolved")
 			}
 			if !IsUsageError(err) {
 				t.Fatalf("stale anchor error is not a usage error (exit 2): %v", err)

@@ -79,7 +79,7 @@ Subcommands:
 | --- | --- |
 | [`projmux agent status`](#projmux-agent-status) | Read or set semantic Agent interaction independently of lifecycle |
 | [`projmux agent topic`](#projmux-agent-topic) | Read, set, or clear one exact Agent topic annotation |
-| [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent to a new managed Pane |
+| [`projmux agent resume`](#projmux-agent-resume) | Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor |
 | [`projmux agent turn`](#projmux-agent-turn) | Send, steer, or interrupt one exact native Codex turn |
 | [`projmux agent approval`](#projmux-agent-approval) | Review one exact pending native Codex approval |
 | [`projmux agent review`](#projmux-agent-review) | Start a native review on an exact-bound Codex Agent |
@@ -107,7 +107,7 @@ projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 
 ### `projmux agent resume`
 
-Rebind an Offline or Failed Agent to a new managed Pane
+Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor
 
 ```
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
@@ -380,8 +380,8 @@ Subcommands:
 | --- | --- |
 | [`projmux create project`](#projmux-create-project) | Register one exact filesystem path as a Registry Project; no runtime is materialized |
 | [`projmux create window`](#projmux-create-window) | Create a Window and its initial Pane below one Project; the runtime is materialized detached |
-| [`projmux create pane`](#projmux-create-pane) | Create a shell Pane below a Window; the scope defaults to the active managed runtime |
-| [`projmux create agent`](#projmux-create-agent) | Create an Agent and its managed Pane; --provider is required and the scope defaults to the active managed runtime |
+| [`projmux create pane`](#projmux-create-pane) | Create a shell Pane detached on an explicit Pane or the Window's exact shell or Agent anchor |
+| [`projmux create agent`](#projmux-create-agent) | Create an Agent detached on an explicit Pane or the Window's exact shell or Agent anchor; --provider is required |
 | [`projmux create notification`](#projmux-create-notification) | Create a pending notification row |
 | [`projmux create snapshot`](#projmux-create-snapshot) | Create a session snapshot |
 
@@ -417,7 +417,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 
 ### `projmux create pane`
 
-Create a shell Pane below a Window; the scope defaults to the active managed runtime
+Create a shell Pane detached on an explicit Pane or the Window's exact shell or Agent anchor
 
 ```
 projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
@@ -427,7 +427,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 
 ### `projmux create agent`
 
-Create an Agent and its managed Pane; --provider is required and the scope defaults to the active managed runtime
+Create an Agent detached on an explicit Pane or the Window's exact shell or Agent anchor; --provider is required
 
 ```
 projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
@@ -1052,14 +1052,14 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux reconcile resources`](#projmux-reconcile-resources) | Preview or repair safe Registry and tmux UID, owner, and runtime drift on one exact socket |
+| [`projmux reconcile resources`](#projmux-reconcile-resources) | Preview or repair exact anchor-aware Registry and tmux topology on one exact socket |
 | [`projmux reconcile registry`](#projmux-reconcile-registry) | Plan Registry state-loss recovery with zero writes, then restore one explicitly named verified source |
 
 Canonical spelling: `projmux reconcile resources`, `projmux reconcile registry`
 
 ### `projmux reconcile resources`
 
-Preview or repair safe Registry and tmux UID, owner, and runtime drift on one exact socket
+Preview or repair exact anchor-aware Registry and tmux topology on one exact socket
 
 ```
 projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]

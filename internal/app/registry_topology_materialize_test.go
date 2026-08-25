@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -292,7 +293,7 @@ func TestRegistryTopologyMaterializationRawLossVersusCanonicalDelete(t *testing.
 	}
 }
 
-func TestRegistryTopologyMaterializationRecreatesMissingPrimaryFromBoundShellAnchor(t *testing.T) {
+func TestRegistryTopologyMaterializationRefusesDeadAnchorWithoutAlternateLivePaneInference(t *testing.T) {
 	command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
 	if _, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json"); err != nil {
 		t.Fatal(err)
@@ -303,17 +304,17 @@ func TestRegistryTopologyMaterializationRecreatesMissingPrimaryFromBoundShellAnc
 		return pane.opts[tmuxopts.PaneUID] == window.Spec.AnchorPaneRef
 	})
 	if primaryIndex < 0 || len(main.panes) < 2 {
-		t.Fatalf("fixture has no primary plus bound shell anchor: %s", server.state())
+		t.Fatalf("fixture has no anchor plus alternate live Pane: %s", server.state())
 	}
 	main.panes = slices.Delete(main.panes, primaryIndex, primaryIndex+1)
+	registryBefore, runtimeBefore := store.registry.Clone(), server.state()
+	writesBefore := store.writes
 	result, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
-	if err != nil {
-		t.Fatalf("recreate primary from bound shell anchor: %v\n%s", err, result)
+	if err == nil || !strings.Contains(result, "stored anchor Pane has no exact live binding") {
+		t.Fatalf("dead anchor was not refused exactly: err=%v\n%s", err, result)
 	}
-	if !slices.ContainsFunc(main.panes, func(pane *fakeTmuxPane) bool {
-		return pane.opts[tmuxopts.PaneUID] == window.Spec.AnchorPaneRef
-	}) {
-		t.Fatalf("primary Pane was not recreated: %s", server.state())
+	if store.writes != writesBefore || server.state() != runtimeBefore || !reflect.DeepEqual(store.registry, registryBefore) {
+		t.Fatalf("dead-anchor refusal mutated Registry or tmux: writes=%d->%d\n%s", writesBefore, store.writes, server.state())
 	}
 }
 
@@ -632,23 +633,93 @@ func TestRegistryTopologyMaterializationInvalidCWDAndForeignSessionRefuse(t *tes
 	})
 }
 
-func TestRegistryTopologyMaterializationRefusesAgentPrimaryAndZeroWindows(t *testing.T) {
-	t.Run("Agent-owned primary", func(t *testing.T) {
-		command, store, server, _, root, _ := newTopologyMaterializeFixture(t)
-		agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "codex", provider: "codex", cwd: root})
-		managed, err := store.mutator().AttachAgentPane(&store.registry, agent.Metadata.UID, coremetadata.BootstrapPane{
-			Name: "managed", CWD: root,
-		}, "op-agent-primary")
-		if err != nil {
-			t.Fatal(err)
+func TestRegistryTopologyMaterializationAgentAnchorLazyDefaultShellAndRepeatNoop(t *testing.T) {
+	command, store, server, _, root, _ := newTopologyMaterializeFixture(t)
+	agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "anchor-agent", provider: "codex", cwd: root})
+	managed, err := store.mutator().AttachAgentPane(&store.registry, agent.Metadata.UID, coremetadata.BootstrapPane{
+		Name: "managed", CWD: root,
+	}, "op-agent-anchor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed := map[string]bool{}
+	for _, pane := range store.registry.PanesOf("win-beta-main") {
+		if pane.Spec.Role == coremetadata.PaneRoleShell {
+			removed[pane.Metadata.UID] = true
 		}
-		window, _ := store.registry.Window("win-beta-main")
-		window.Spec.AnchorPaneRef = managed.Metadata.UID
-		out, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
-		if err == nil || !strings.Contains(out, "Window-owned shell Pane") || len(server.sessions) != 0 {
-			t.Fatalf("Agent-owned primary was not refused before create: err=%v\n%s", err, out)
-		}
+	}
+	store.registry.Panes = slices.DeleteFunc(store.registry.Panes, func(pane coremetadata.Pane) bool {
+		return removed[pane.Metadata.UID]
 	})
+	store.registry.NameReservations = slices.DeleteFunc(store.registry.NameReservations, func(reservation coremetadata.NameReservation) bool {
+		return removed[reservation.UID]
+	})
+	window, _ := store.registry.Window("win-beta-main")
+	window.Spec.AnchorPaneRef = managed.Metadata.UID
+	window.Spec.DefaultShellPaneRef = ""
+	if err := store.registry.Validate(); err != nil {
+		t.Fatalf("Agent-only Window fixture is invalid: %v", err)
+	}
+
+	registryBefore, runtimeBefore := store.snapshot(), server.state()
+	preview, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+	if err != nil || !strings.Contains(preview, `"action": "allocate default shell"`) ||
+		!strings.Contains(preview, `"kind": "Agent"`) {
+		t.Fatalf("Agent-only Window plan does not expose lazy shell then Agent materialization: err=%v\n%s", err, preview)
+	}
+	if store.snapshot() != registryBefore || server.state() != runtimeBefore || store.writes != 0 {
+		t.Fatalf("Agent-only dry-run mutated state: writes=%d\n%s", store.writes, server.state())
+	}
+
+	result, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+	if err != nil {
+		t.Fatalf("Agent-only Window materialization: %v\n%s", err, result)
+	}
+	window, _ = store.registry.Window("win-beta-main")
+	if window.Spec.AnchorPaneRef != managed.Metadata.UID || window.Spec.DefaultShellPaneRef == "" ||
+		window.Spec.DefaultShellPaneRef == managed.Metadata.UID {
+		t.Fatalf("post materialization refs = anchor %q default %q", window.Spec.AnchorPaneRef, window.Spec.DefaultShellPaneRef)
+	}
+	defaultShell, ok := store.registry.WindowDefaultShell(window.Metadata.UID)
+	if !ok || defaultShell.Spec.Role != coremetadata.PaneRoleShell {
+		t.Fatalf("lazy default shell does not resolve: %+v, ok=%t", defaultShell, ok)
+	}
+	anchor, ok := store.registry.WindowAnchor(window.Metadata.UID)
+	if !ok || anchor.Metadata.UID != managed.Metadata.UID || anchor.Spec.Role != coremetadata.PaneRoleAgent {
+		t.Fatalf("Agent anchor changed or stopped resolving: %+v, ok=%t", anchor, ok)
+	}
+	storedAgent, _ := store.registry.Agent(agent.Metadata.UID)
+	if storedAgent.Status.Phase != coremetadata.PhaseRunning || storedAgent.Status.PaneRef != managed.Metadata.UID {
+		t.Fatalf("Agent identity was replaced: %+v", storedAgent.Status)
+	}
+	if err := store.registry.Validate(); err != nil {
+		t.Fatalf("materialized Agent-only graph is invalid: %v", err)
+	}
+	main := slices.IndexFunc(server.session("beta").windows, func(live *fakeTmuxWindow) bool {
+		return live.opts[tmuxopts.WindowUID] == window.Metadata.UID
+	})
+	if main < 0 || !slices.ContainsFunc(server.session("beta").windows[main].panes, func(pane *fakeTmuxPane) bool {
+		return pane.opts[tmuxopts.PaneUID] == managed.Metadata.UID
+	}) || !slices.ContainsFunc(server.session("beta").windows[main].panes, func(pane *fakeTmuxPane) bool {
+		return pane.opts[tmuxopts.PaneUID] == defaultShell.Metadata.UID
+	}) {
+		t.Fatalf("exact Agent/default-shell UID bindings missing: %s", server.state())
+	}
+
+	server.calls = nil
+	writesBefore := store.writes
+	repeat, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+	if err != nil || !strings.Contains(repeat, `"outcome": "no-op"`) || store.writes != writesBefore {
+		t.Fatalf("repeat is not a write-free no-op: err=%v writes=%d->%d\n%s", err, writesBefore, store.writes, repeat)
+	}
+	for _, call := range server.calls {
+		if len(call) > 0 && slices.Contains([]string{"new-session", "new-window", "split-window", "set-environment"}, call[0]) {
+			t.Fatalf("repeat no-op mutated runtime with %v", call)
+		}
+	}
+}
+
+func TestRegistryTopologyMaterializationRefusesZeroWindows(t *testing.T) {
 	t.Run("zero Windows", func(t *testing.T) {
 		command, store, server, _, _, _ := newTopologyMaterializeFixture(t)
 		// This is deliberately an invalid-v2 diagnostic fixture. Canonical

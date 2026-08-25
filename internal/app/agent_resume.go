@@ -245,17 +245,17 @@ func planAgentResume(spelling string, registry coremetadata.Registry, agent *cor
 			"%s: project/%s carries a MissingRoot condition for %q; rebind it before resuming an Agent under it",
 			spelling, project.Metadata.Name, project.Spec.Root))
 	}
-	// Phase 0 keeps the split result on the legacy shell-compatible target.
-	// There is no fallback to the active or last-used Pane.
-	anchorUID := strings.TrimSpace(window.Spec.CompatibilityShellPaneRef())
+	// Resume uses the stable role-agnostic Window anchor. There is no fallback to
+	// the active, last-used, or an alternate live Pane.
+	anchorUID := strings.TrimSpace(window.Spec.AnchorPaneRef)
 	if anchorUID == "" {
 		return agentResumePlan{}, usageError(fmt.Sprintf(
-			"%s: window/%s (project/%s) has no compatibility shell ref, so there is no anchor to split",
+			"%s: window/%s (project/%s) has no anchorPaneRef, so there is no anchor to split",
 			spelling, window.Metadata.Name, project.Metadata.Name))
 	}
-	if _, ok := registry.Pane(anchorUID); !ok {
+	if anchor, ok := registry.WindowAnchor(window.Metadata.UID); !ok || anchor.Metadata.UID != anchorUID {
 		return agentResumePlan{}, usageError(fmt.Sprintf(
-			"%s: window/%s (project/%s) compatibility shell ref %q resolves to no Pane",
+			"%s: window/%s (project/%s) anchorPaneRef %q is dangling or cross-Window",
 			spelling, window.Metadata.Name, project.Metadata.Name, anchorUID))
 	}
 
@@ -418,13 +418,14 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		}
 
 		// Runtime phase, on the create routes' own materializer.
-		sessionName, err := r.create.ensureProjectRuntime(ctx, working, mutator, *project, ledger)
+		sessionName, err := r.create.ensureProjectRuntime(ctx, working, mutator, *project, operationID, ledger)
 		if err != nil {
 			return err
 		}
 		anchorPaneID, err := r.create.ensureAnchorPane(ctx, working, mutator, ledger, *project, sessionName, operationID, paneTarget{
-			windowUID: plan.windowUID,
-			anchorUID: plan.anchorUID,
+			windowUID:    plan.windowUID,
+			anchorUID:    plan.anchorUID,
+			storedAnchor: true,
 		})
 		if err != nil {
 			return err

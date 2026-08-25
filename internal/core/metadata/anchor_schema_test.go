@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -127,6 +128,71 @@ func TestFinalV2AnchorAndDefaultShellValidationMatrix(t *testing.T) {
 				t.Fatalf("Validate error = %q, want %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestEnsureWindowDefaultShellAdoptsOrAllocatesWithoutReplacingAgentAnchor(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		removeShell bool
+		wantCreated bool
+	}{
+		{name: "adopt existing direct shell"},
+		{name: "allocate for Agent-only Window", removeShell: true, wantCreated: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newAnchorSchemaFixture(t)
+			reg := fixture.registry.Clone()
+			window, _ := reg.Window(fixture.windowUID)
+			window.Spec.AnchorPaneRef = fixture.agentPaneUID
+			window.Spec.DefaultShellPaneRef = ""
+			if test.removeShell {
+				reg.Panes = slices.DeleteFunc(reg.Panes, func(pane Pane) bool { return pane.Metadata.UID == fixture.shellUID })
+				reg.NameReservations = slices.DeleteFunc(reg.NameReservations, func(reservation NameReservation) bool {
+					return reservation.UID == fixture.shellUID
+				})
+			}
+
+			pane, created, err := testMutator(dirSet{"/src/projmux": true}).EnsureWindowDefaultShell(&reg, fixture.windowUID, "/bin/zsh", "op-default")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if created != test.wantCreated || pane.Spec.Role != PaneRoleShell || pane.Metadata.OwnerUID() != fixture.windowUID {
+				t.Fatalf("default shell = %+v, created=%t", pane, created)
+			}
+			window, _ = reg.Window(fixture.windowUID)
+			if window.Spec.AnchorPaneRef != fixture.agentPaneUID || window.Spec.DefaultShellPaneRef != pane.Metadata.UID {
+				t.Fatalf("Window refs = anchor %q default %q", window.Spec.AnchorPaneRef, window.Spec.DefaultShellPaneRef)
+			}
+			if err := reg.Validate(); err != nil {
+				t.Fatalf("post default-shell graph: %v", err)
+			}
+		})
+	}
+}
+
+func TestRebindAgentPanePreservesWindowAnchorAndPaneIdentity(t *testing.T) {
+	fixture := newAnchorSchemaFixture(t)
+	reg := fixture.registry.Clone()
+	window, _ := reg.Window(fixture.windowUID)
+	window.Spec.AnchorPaneRef = fixture.agentPaneUID
+	window.Spec.DefaultShellPaneRef = ""
+	agent, _ := reg.Agent(fixture.agentUID)
+	agent.Status.Phase = PhaseOffline
+	agent.Status.PaneRef = ""
+
+	pane, err := testMutator(dirSet{"/src/projmux": true}).RebindAgentPane(&reg, fixture.agentUID, fixture.agentPaneUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, _ = reg.Agent(fixture.agentUID)
+	window, _ = reg.Window(fixture.windowUID)
+	if pane.Metadata.UID != fixture.agentPaneUID || agent.Status.PaneRef != fixture.agentPaneUID ||
+		agent.Status.Phase != PhaseRunning || window.Spec.AnchorPaneRef != fixture.agentPaneUID {
+		t.Fatalf("rebind changed identity: pane=%s agent=%+v window=%+v", pane.Metadata.UID, agent.Status, window.Spec)
+	}
+	if err := reg.Validate(); err != nil {
+		t.Fatalf("post rebind graph: %v", err)
 	}
 }
 
