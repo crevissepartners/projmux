@@ -5,6 +5,7 @@ package app
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -44,11 +45,20 @@ func runSupervisedChild(argv []string, argv0 string) (processOutcome, error) {
 }
 
 func runSupervisedChildWithActivation(argv []string, argv0 string, spec superviseSpec) (processOutcome, error) {
-	env := []string{
-		internalActivationPaneUIDEnv + "=" + spec.PaneUID,
-		internalActivationGenerationEnv + "=" + spec.Generation,
+	if spec.AgentUID == "" {
+		return runSupervisedChildWithEnvironment(argv, argv0, activationEnvironment(spec), nil)
 	}
-	return runSupervisedChildWithEnvironment(argv, argv0, env, nil)
+	if spec.OperationID == "" {
+		return processOutcome{}, errors.New("agent activation requires an operation id")
+	}
+	if err := exactActivationRegistryPath(spec.RegistryPath); err != nil {
+		return processOutcome{}, err
+	}
+	binary, err := os.Executable()
+	if err != nil {
+		return processOutcome{}, fmt.Errorf("resolve activation gate executable: %w", err)
+	}
+	return runSupervisedActivationGate(activationExecArgv(binary, spec, argv0, 3, argv))
 }
 
 // runSupervisedChildWithSignalSource is the test seam for signals delivered to
@@ -68,13 +78,52 @@ func runSupervisedChildWithEnvironment(argv []string, argv0 string, environment 
 	// ioctl, and asking the kernel by doing the thing is both cheaper and more
 	// honest than a probe that could disagree with the real attempt. A failed
 	// start forks no surviving child: the runtime reaps it before returning.
-	cmd, err := startSupervisedChild(argv, argv0, environment, true)
+	cmd, err := startSupervisedChild(argv, argv0, environment, nil, true)
 	if err != nil {
-		cmd, err = startSupervisedChild(argv, argv0, environment, false)
+		cmd, err = startSupervisedChild(argv, argv0, environment, nil, false)
 	}
 	if err != nil {
 		return processOutcome{}, err
 	}
+	return waitSupervisedChild(cmd, suppliedSignals)
+}
+
+// runSupervisedActivationGate starts the commit gate as the immediately
+// supervised child. fd 3 is a private, CLOEXEC failure channel: admission or
+// provider-exec failure writes a constant marker, while successful exec closes
+// it. A signal-killed gate writes no marker and remains exact killed evidence;
+// crucially, the provider was never started in that case.
+func runSupervisedActivationGate(argv []string) (processOutcome, error) {
+	return runSupervisedActivationGateWithSignalSource(argv, nil)
+}
+
+func runSupervisedActivationGateWithSignalSource(argv []string, suppliedSignals <-chan os.Signal) (processOutcome, error) {
+	readFailure, writeFailure, err := os.Pipe()
+	if err != nil {
+		return processOutcome{}, fmt.Errorf("create activation failure channel: %w", err)
+	}
+	defer readFailure.Close()
+
+	cmd, err := startSupervisedChild(argv, "", nil, []*os.File{writeFailure}, true)
+	if err != nil {
+		cmd, err = startSupervisedChild(argv, "", nil, []*os.File{writeFailure}, false)
+	}
+	_ = writeFailure.Close()
+	if err != nil {
+		return processOutcome{}, err
+	}
+	outcome, waitErr := waitSupervisedChild(cmd, suppliedSignals)
+	failure, readErr := io.ReadAll(io.LimitReader(readFailure, 64))
+	if readErr != nil {
+		return processOutcome{}, fmt.Errorf("read activation failure channel: %w", readErr)
+	}
+	if len(failure) != 0 {
+		return processOutcome{}, errors.New("activation gate refused provider launch")
+	}
+	return outcome, waitErr
+}
+
+func waitSupervisedChild(cmd *exec.Cmd, suppliedSignals <-chan os.Signal) (processOutcome, error) {
 
 	signals := suppliedSignals
 	var ownedSignals chan os.Signal
@@ -123,7 +172,7 @@ func runSupervisedChildWithEnvironment(argv []string, argv0 string, environment 
 		}
 	}
 	if cmd.ProcessState == nil {
-		return processOutcome{}, fmt.Errorf("supervised process %s produced no wait status", argv[0])
+		return processOutcome{}, fmt.Errorf("supervised process %s produced no wait status", cmd.Args[0])
 	}
 	// Some interactive providers catch the relayed HUP and translate it into a
 	// conventional 128+SIGHUP exit code. The wait status alone then looks like
@@ -137,7 +186,7 @@ func runSupervisedChildWithEnvironment(argv []string, argv0 string, environment 
 
 // startSupervisedChild builds and starts one child, optionally handing it the
 // terminal's foreground process group.
-func startSupervisedChild(argv []string, argv0 string, environment []string, foreground bool) (*exec.Cmd, error) {
+func startSupervisedChild(argv []string, argv0 string, environment []string, extraFiles []*os.File, foreground bool) (*exec.Cmd, error) {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	if argv0 != "" {
 		cmd.Args[0] = argv0
@@ -148,6 +197,7 @@ func startSupervisedChild(argv []string, argv0 string, environment []string, for
 	if len(environment) > 0 {
 		cmd.Env = append(os.Environ(), environment...)
 	}
+	cmd.ExtraFiles = extraFiles
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if foreground {
 		// Ctty is a descriptor number in the *child*, and the child's fd 0 is

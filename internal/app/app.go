@@ -320,6 +320,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	keyBrokerCmd := newKeyBrokerCommand()
 	popupWaitKeyCmd := newPopupWaitKeyCommand()
 	superviseCmd := newSuperviseCommand()
+	activationExecCmd := newActivationExecCommand()
 	previewCmd := newPreviewCommand()
 	sessionPopupCmd := newSessionPopupCommand(recorder)
 	statusCmd := newStatusCommand()
@@ -335,6 +336,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	internalCmd.keyBroker = keyBrokerCmd
 	internalCmd.popupWaitKey = popupWaitKeyCmd
 	internalCmd.supervise = superviseCmd
+	internalCmd.activationExec = activationExecCmd
 	diagnosticsCmd := newDiagnosticsCommand()
 	diagnosticsCmd.ai = ai
 	return &App{
@@ -423,7 +425,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 			tmux: a.tmux, status: a.status, statusbar: a.statusbar,
 			preview: a.preview, sessionPopup: a.sessionPopup, ai: a.ai,
 			focus: a.focus, keyBroker: a.keyBroker, popupWaitKey: a.popupWaitKey,
-			supervise: a.supervise,
+			supervise: a.supervise, activationExec: newActivationExecCommand(),
 		}
 	}
 	runtime := a.runtime

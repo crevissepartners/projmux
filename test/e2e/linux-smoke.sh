@@ -1708,8 +1708,15 @@ if [[ ! "$agent_session_before" =~ ^\$[0-9]+$ ]] ||
   exit 1
 fi
 
-pmx_agent create agent --provider codex -p alpha -w "$alpha_window_name" -o pane-id \
-  >"$create_root/agent.out" 2>"$create_root/agent.err"
+if pmx_agent create agent --provider codex -p alpha -w "$alpha_window_name" -o pane-id \
+  >"$create_root/agent.out" 2>"$create_root/agent.err"; then
+  :
+else
+  agent_create_status=$?
+  echo "create agent failed before returning an exact pane handle: status=$agent_create_status" >&2
+  cat "$create_root/agent.err" >&2 || true
+  exit 1
+fi
 agent_pane="$(tr -d '[:space:]' <"$create_root/agent.out")"
 if [[ ! "$agent_pane" =~ ^%[0-9]+$ ]]; then
   echo "create agent -o pane-id = $agent_pane, want a raw %N handle" >&2
@@ -7554,7 +7561,7 @@ exitrec_await_phase1_window_cascade() {
 }
 
 # 1. A provider that exits non-zero converges to Failed on the hook alone.
-printf 'sleep 0.5\n%s\n' 'exit 42' >"$exitrec_root/stub-script"
+printf '%s\n' 'exit 42' >"$exitrec_root/stub-script"
 exitrec_failed_agent="$(exitrec_live_pmx create agent --provider codex \
   --project "uid:$exitrec_project_uid" -o uid)"
 if [[ -z "$exitrec_failed_agent" ]]; then
@@ -7571,7 +7578,7 @@ if [[ -n "$(exitrec_field paneRef)" ]]; then
   echo "the hook left the failed Agent bound to its dead pane" >&2
   exit 1
 fi
-echo ">> exit reconciliation e2e hook-driven failure agent=$exitrec_failed_agent phase=Failed class=abnormal"
+echo ">> exit reconciliation e2e hook-driven immediate failure agent=$exitrec_failed_agent phase=Failed class=abnormal admission=committed rollback-blank=0"
 
 # 2. A provider that exits 0 is a qualifying exact pane-exited teardown. Its
 # Pane row is released while the Agent identity remains Offline; the durable
@@ -7664,14 +7671,108 @@ if [[ "$(exitrec_field phase)" != "Failed" ]] ||
   exit 1
 fi
 exitrec_pair_before="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
-exitrec_pmx internal tmux converge --socket-path "$exitrec_socket_path" --reason pane-killed \
-  >"$exitrec_root/simultaneous-repeat.out"
-exitrec_pair_after="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
-if [[ "$exitrec_pair_before" != "$exitrec_pair_after" ]]; then
-  echo "simultaneous clean exit repeat rewrote the Registry" >&2
-  exit 1
+# Both pane-exit providers above can finish their Registry projection before the
+# hook worker exits. A second trigger returning `deferred` is therefore not
+# fixed-point evidence: an after-new-window event from the beta session could be
+# consumed by that still-live worker while the explicit beta reconcile is
+# planning the same identity write. Observe only the exact owned controller
+# processes and durable queue before starting a new authority boundary. The
+# observer never acquires the controller lease: doing so between a producer's
+# mark and nonblocking acquire could strand the event it just published.
+exitrec_controller_key="$({ printf '%s\0%s' '-S' "$exitrec_socket_path"; } | sha256sum | cut -c1-16)"
+exitrec_controller_dir="$exitrec_root/state/projmux/controller"
+exitrec_controller_events="$exitrec_controller_dir/$exitrec_controller_key.events"
+case "$exitrec_controller_events" in
+  "$exitrec_root"/*) ;;
+  *)
+    echo "exit reconciliation controller authority escaped its owned root" >&2
+    exit 1
+    ;;
+esac
+exitrec_owned_controller_process_count() {
+  local proc index count=0
+  local -a argv=()
+  for proc in /proc/[0-9]*; do
+    argv=()
+    # The process can disappear between glob expansion and open. Keep that
+    # ordinary /proc race silent and use only the transient argv snapshot for
+    # exact ownership matching; no raw argv is printed or persisted.
+    if ! { mapfile -d '' -t argv <"$proc/cmdline"; } 2>/dev/null; then
+      continue
+    fi
+    if [[ "${argv[0]:-}" != "$bin" || "${argv[1]:-}" != "internal" ||
+      "${argv[2]:-}" != "tmux" || "${argv[3]:-}" != "converge" ]]; then
+      continue
+    fi
+    for ((index = 4; index + 1 < ${#argv[@]}; index++)); do
+      if [[ "${argv[index]}" == "--socket-path" && "${argv[index + 1]}" == "$exitrec_socket_path" ]]; then
+        count=$((count + 1))
+        break
+      fi
+    done
+  done
+  printf '%s\n' "$count"
+}
+exitrec_controller_event_count() {
+  if [[ ! -d "$exitrec_controller_events" ]]; then
+    printf '0\n'
+    return
+  fi
+  find "$exitrec_controller_events" -mindepth 1 -maxdepth 1 -type f -printf '.' | wc -c | tr -d '[:space:]'
+}
+exitrec_await_controller_observed_idle() {
+  local label="$1" process_count=0 event_count=0 stable=0
+  for _ in $(seq 1 150); do
+    process_count="$(exitrec_owned_controller_process_count)"
+    event_count="$(exitrec_controller_event_count)"
+    if [[ "$process_count" == "0" && "$event_count" == "0" ]]; then
+      stable=$((stable + 1))
+      if [[ "$stable" == "2" ]]; then
+        return 0
+      fi
+    else
+      stable=0
+    fi
+    sleep 0.2
+  done
+  echo "exit reconciliation controller did not become observed-idle at $label: owned-processes=$process_count queued-events=$event_count" >&2
+  return 1
+}
+exitrec_require_terminal_controller_pass() {
+  local label="$1" path="$2" line passes changed events
+  line="$(tr -d '\r\n' <"$path")"
+  if [[ "$line" =~ ^projmux:\ controller\ pane-killed\ passes=([1-9][0-9]*)\ changed=([0-9]+)\ events=([1-9][0-9]*)\ converged=true$ ]]; then
+    passes="${BASH_REMATCH[1]}"
+    changed="${BASH_REMATCH[2]}"
+    events="${BASH_REMATCH[3]}"
+  else
+    echo "exit reconciliation controller lacked one terminal product proof at $label" >&2
+    cat "$path" >&2 || true
+    return 1
+  fi
+  if ((passes <= changed || events < 1)); then
+    echo "exit reconciliation controller terminal proof had no final write-free pass at $label: passes=$passes changed=$changed events=$events" >&2
+    return 1
+  fi
+}
+exitrec_await_controller_observed_idle simultaneous-exit-fixed-point
+exitrec_pair_quiescent="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
+exitrec_pair_owner_progress=none
+if [[ "$exitrec_pair_quiescent" != "$exitrec_pair_before" ]]; then
+  # The barrier made no product call; a change here belongs to the exact worker
+  # whose lease it awaited and is legitimate owner progress, not a barrier
+  # mutation. The post-quiescence bytes are the fixed-point baseline below.
+  exitrec_pair_owner_progress=changed
 fi
-echo ">> exit reconciliation e2e simultaneous providers agents=$exitrec_pair_agent_one,$exitrec_pair_agent_two panes=$exitrec_pair_pane_one,$exitrec_pair_pane_two residual=0 sibling=preserved repeat=byte-identical"
+exitrec_pmx internal tmux converge --socket-path "$exitrec_socket_path" --reason pane-killed \
+  >"$exitrec_root/simultaneous-repeat.out" 2>"$exitrec_root/simultaneous-repeat.err"
+exitrec_pair_after="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
+exitrec_require_terminal_controller_pass simultaneous-exit-fixed-point "$exitrec_root/simultaneous-repeat.err"
+exitrec_pair_terminal_progress=none
+if [[ "$exitrec_pair_quiescent" != "$exitrec_pair_after" ]]; then
+  exitrec_pair_terminal_progress=changed
+fi
+echo ">> exit reconciliation e2e simultaneous providers agents=$exitrec_pair_agent_one,$exitrec_pair_agent_two panes=$exitrec_pair_pane_one,$exitrec_pair_pane_two residual=0 sibling=preserved owner-progress=$exitrec_pair_owner_progress terminal-progress=$exitrec_pair_terminal_progress quiescence=read-only-process-queue+product-terminal repeat=fixed-point"
 
 # 4. A second Project on the same exact server closes two Windows in sequence.
 # The first clean last-Pane pair deletes only its target Window and reanchors
@@ -7682,8 +7783,42 @@ mkdir -p "$exitrec_root/work/beta"
 exitrec_tmux new-session -d -s work-beta -n main -c "$exitrec_root/work/beta" sleep 600
 exitrec_tmux set-option -t work-beta -q @projmux_project_path "$exitrec_root/work/beta"
 exitrec_beta_project_uid="$(exitrec_pmx create project --root "$exitrec_root/work/beta" --name beta -o uid)"
-e2e_bounded_reconcile_to_noop "$exitrec_root/import-beta" \
-  exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json
+exitrec_beta_quiescence_registry_before="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
+exitrec_beta_quiescence_runtime_before="$(exitrec_tmux display-message -p -t work-beta \
+  '#{session_id}|#{@projmux_project_path}|#{@projmux_project_uid}|#{window_id}|#{@projmux_window_uid}|#{pane_id}|#{@projmux_pane_uid}|receipt-end')"
+exitrec_await_controller_observed_idle beta-runtime-created
+exitrec_beta_quiescence_registry_after="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
+exitrec_beta_quiescence_runtime_after="$(exitrec_tmux display-message -p -t work-beta \
+  '#{session_id}|#{@projmux_project_path}|#{@projmux_project_uid}|#{window_id}|#{@projmux_window_uid}|#{pane_id}|#{@projmux_pane_uid}|receipt-end')"
+exitrec_beta_owner_progress=none
+if [[ "$exitrec_beta_quiescence_registry_before" != "$exitrec_beta_quiescence_registry_after" ]] ||
+  [[ "$exitrec_beta_quiescence_runtime_before" != "$exitrec_beta_quiescence_runtime_after" ]]; then
+  # As above, only the already-running exact owner can account for progress
+  # while the read-only observer waits; record it and let explicit reconcile
+  # accept an initial no-op when that owner already completed the import.
+  exitrec_beta_owner_progress=changed
+fi
+if [[ "$exitrec_beta_owner_progress" == "changed" ]]; then
+  e2e_bounded_reconcile_to_noop --allow-initial-noop "$exitrec_root/import-beta" \
+    exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json
+else
+  e2e_bounded_reconcile_to_noop "$exitrec_root/import-beta" \
+    exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json
+fi
+exitrec_beta_fixed_registry_before="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
+exitrec_beta_fixed_runtime_before="$(exitrec_tmux display-message -p -t work-beta \
+  '#{session_id}|#{@projmux_project_path}|#{@projmux_project_uid}|#{window_id}|#{@projmux_window_uid}|#{pane_id}|#{@projmux_pane_uid}|receipt-end')"
+exitrec_pmx internal tmux converge --socket-path "$exitrec_socket_path" --reason pane-killed \
+  >"$exitrec_root/beta-import-fixed-point.out" 2>"$exitrec_root/beta-import-fixed-point.err"
+exitrec_beta_fixed_registry_after="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
+exitrec_beta_fixed_runtime_after="$(exitrec_tmux display-message -p -t work-beta \
+  '#{session_id}|#{@projmux_project_path}|#{@projmux_project_uid}|#{window_id}|#{@projmux_window_uid}|#{pane_id}|#{@projmux_pane_uid}|receipt-end')"
+exitrec_require_terminal_controller_pass beta-import-fixed-point "$exitrec_root/beta-import-fixed-point.err"
+exitrec_beta_terminal_progress=none
+if [[ "$exitrec_beta_fixed_registry_before" != "$exitrec_beta_fixed_registry_after" ]] ||
+  [[ "$exitrec_beta_fixed_runtime_before" != "$exitrec_beta_fixed_runtime_after" ]]; then
+  exitrec_beta_terminal_progress=changed
+fi
 exitrec_beta_window_uid="$(exitrec_tmux show-options -wqv -t work-beta:main @projmux_window_uid)"
 exitrec_beta_sibling_window_uid="$(exitrec_live_pmx create window \
   --project "uid:$exitrec_beta_project_uid" --name sibling -o uid -- sleep 600)"
@@ -7798,7 +7933,7 @@ if [[ "$exitrec_other_after" != "$exitrec_other_before" ]]; then
   echo "Phase 1 e2e Window closure touched its sibling socket" >&2
   exit 1
 fi
-echo ">> exit reconciliation e2e Phase 1 project=$exitrec_beta_project_uid target=$exitrec_beta_window_uid sibling=$exitrec_beta_sibling_window_uid final-windows=0 descendants=0 same-socket-sibling=preserved other-socket=preserved repeat=byte-identical"
+echo ">> exit reconciliation e2e Phase 1 project=$exitrec_beta_project_uid target=$exitrec_beta_window_uid sibling=$exitrec_beta_sibling_window_uid final-windows=0 descendants=0 import-owner-progress=$exitrec_beta_owner_progress import-terminal-progress=$exitrec_beta_terminal_progress import-fixed-point=product-terminal same-socket-sibling=preserved other-socket=preserved repeat=fixed-point"
 
 # 5. The read surfaces project what the hook stored, and write nothing.
 exitrec_registry="$exitrec_root/state/projmux/metadata/registry.json"

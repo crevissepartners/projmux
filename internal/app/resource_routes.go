@@ -53,6 +53,17 @@ func newResourceStore() *resourceStore {
 	}
 }
 
+// resourceStoreAtPath is the activation gate's exact creator-selected Registry
+// authority. Unlike newResourceStore it never consults the child process's
+// inherited environment, which may belong to a tmux server started under a
+// different XDG state root.
+func resourceStoreAtPath(path string) *resourceStore {
+	store := intmetadata.NewStore(path)
+	return &resourceStore{
+		updateConvergent: store.UpdateConvergent,
+	}
+}
+
 // converge runs the registry half of runtime binding convergence.
 //
 // Some existing mutators conservatively refresh Registry.UpdatedAt even when

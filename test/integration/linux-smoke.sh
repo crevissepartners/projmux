@@ -3862,6 +3862,102 @@ smoke_assert_file_contains "$exitrec_root/shell-pane.txt" "Termination:"
 exitrec_tmux "$exitrec_socket" set-hook -g pane-exited "$exitrec_pane_exited_hook"
 echo ">> exit reconciliation shell pane preserved uid=$exitrec_shell_pane"
 
+# Keep the real generated pane-exited hook installed for the failure signature
+# that originally escaped L17: a provider exits 42 immediately after tmux
+# starts it, while create is still between runtime claim and Registry commit.
+# The supervisor's Registry admission must hold the provider behind that commit
+# without a sleep/retry. The hook can then consume exact generation evidence;
+# it must never make rollback observe a blank Pane ownership uid.
+printf '%s\n' 'exit 42' >"$exitrec_root/stub-script"
+exitrec_early_sibling_before="$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel)"
+set +e
+exitrec_early_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
+  create agent --provider codex --project "uid:$exitrec_app_project_uid" -o uid \
+  2>"$exitrec_root/early-exit-create.err")"
+exitrec_early_status=$?
+set -e
+if [[ "$exitrec_early_status" != "0" || -z "$exitrec_early_agent" ]]; then
+  echo "immediate exit 42 create failed status=$exitrec_early_status agent=$exitrec_early_agent" >&2
+  cat "$exitrec_root/early-exit-create.err" >&2
+  exit 1
+fi
+if grep -Fq 'rollback preserved pane' "$exitrec_root/early-exit-create.err"; then
+  echo "immediate provider exit reproduced the blank/mismatched rollback authority failure" >&2
+  cat "$exitrec_root/early-exit-create.err" >&2
+  exit 1
+fi
+
+exitrec_early_journal="$exitrec_root/state/projmux/termination-receipts.jsonl"
+exitrec_early_receipt=""
+for _ in $(seq 1 200); do
+  if [[ -s "$exitrec_early_journal" ]]; then
+    exitrec_early_receipt="$(awk \
+      -v agent="\"agentUID\":\"$exitrec_early_agent\"" \
+      -v classification='"classification":"abnormal"' \
+      -v source='"source":"supervisor"' \
+      'index($0, agent) && index($0, classification) && index($0, source) { print; exit }' \
+      "$exitrec_early_journal")"
+  fi
+  [[ -n "$exitrec_early_receipt" ]] && break
+  sleep 0.05
+done
+exitrec_early_pane="$(printf '%s\n' "$exitrec_early_receipt" | sed -n 's/.*"paneUID":"\([^"]*\)".*/\1/p')"
+exitrec_early_generation="$(printf '%s\n' "$exitrec_early_receipt" | sed -n 's/.*"generation":"\([^"]*\)".*/\1/p')"
+exitrec_early_operation="$(printf '%s\n' "$exitrec_early_receipt" | sed -n 's/.*"operationID":"\([^"]*\)".*/\1/p')"
+if [[ -z "$exitrec_early_pane" || -z "$exitrec_early_generation" || -z "$exitrec_early_operation" ]]; then
+  echo "immediate exit 42 produced no exact Pane/generation/operation supervisor receipt" >&2
+  tail -n 20 "$exitrec_early_journal" >&2 || true
+  exit 1
+fi
+for _ in $(seq 1 100); do
+  exitrec_doc agent "$exitrec_early_agent"
+  if [[ "$(exitrec_field phase)" == "Failed" && -z "$(exitrec_field paneRef)" &&
+        "$(exitrec_termination_field classification)" == "abnormal" &&
+        "$(exitrec_termination_field source)" == "supervisor" ]]; then
+    break
+  fi
+  sleep 0.05
+done
+if [[ "$(exitrec_field phase)" != "Failed" || -n "$(exitrec_field paneRef)" ||
+      "$(exitrec_termination_field classification)" != "abnormal" ||
+      "$(exitrec_termination_field source)" != "supervisor" ]]; then
+  echo "immediate exit 42 did not converge the exact committed Agent activation" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+if ! exitrec_doc_exists pane "$exitrec_early_pane" ||
+  ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
+    | grep -Fqx "$exitrec_early_pane|1"; then
+  echo "immediate exit 42 lost its exact retained abnormal Pane $exitrec_early_pane" >&2
+  exit 1
+fi
+exitrec_early_stable=0
+for _ in $(seq 1 4); do
+  exitrec_reconcile app-owned
+  if grep -Fq '"outcome": "no-op"' "$exitrec_root/reconcile-run.json"; then
+    exitrec_early_stable=1
+    break
+  fi
+done
+if [[ "$exitrec_early_stable" != "1" ]]; then
+  echo "immediate exit 42 did not reach bounded Registry/runtime fixed point" >&2
+  cat "$exitrec_root/reconcile-run.json" >&2
+  exit 1
+fi
+exitrec_early_before="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
+exitrec_reconcile app-owned
+exitrec_early_after="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
+if [[ "$exitrec_early_before" != "$exitrec_early_after" ]]; then
+  echo "immediate exit 42 fixed-point reconciliation rewrote Registry" >&2
+  exit 1
+fi
+if [[ "$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel)" != "$exitrec_early_sibling_before" ]] ||
+  ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' | grep -Fqx "$exitrec_app_anchor_pane_uid"; then
+  echo "immediate exit 42 changed a sibling server or the owner Window anchor" >&2
+  exit 1
+fi
+echo ">> exit reconciliation immediate provider exit42 agent=$exitrec_early_agent pane=$exitrec_early_pane generation=$exitrec_early_generation operation=$exitrec_early_operation rollback-blank=0 sibling=byte-identical repeat=fixed-point"
+
 # The read surfaces project the stored evidence and write nothing. A read that
 # advanced a lifecycle would make asking about the state change it.
 exitrec_read_before="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"

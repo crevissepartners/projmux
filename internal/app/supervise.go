@@ -5,10 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 // These process-private variables bind provider hooks to the materialization
@@ -32,11 +34,29 @@ type superviseSpec struct {
 	AgentUID    string
 	Generation  string
 	OperationID string
+	// RegistryPath is the creator-resolved private authority for Agent
+	// admission. It is carried only between internal routes and is never
+	// exported to providers or public PROJMUX_* hooks.
+	RegistryPath string
 }
 
 // valid reports whether the spec can identify a receipt at all.
 func (s superviseSpec) valid() bool {
 	return strings.TrimSpace(s.PaneUID) != "" && strings.TrimSpace(s.Generation) != ""
+}
+
+func exactActivationRegistryPath(path string) error {
+	if path == "" || !filepath.IsAbs(path) {
+		return errors.New("agent activation requires an absolute Registry path")
+	}
+	if filepath.Clean(path) != path {
+		return errors.New("agent activation requires a clean Registry path")
+	}
+	stateDir := filepath.Dir(filepath.Dir(path))
+	if intmetadata.PathFor(stateDir) != path {
+		return errors.New("agent activation Registry path has an unexpected shape")
+	}
+	return nil
 }
 
 // superviseCommand implements the hidden `internal supervise` route: the
@@ -48,9 +68,10 @@ func (s superviseSpec) valid() bool {
 // the registry guard would refuse anyway.
 type superviseCommand struct {
 	store *resourceStore
-	// journal is the lock-free prewrite transport. The Registry store remains
-	// on the command only as a compatibility test seam; a dying supervisor must
-	// never enter it.
+	// store is a poison seam used to prove that post-exit receipt recording
+	// never enters the Registry. Pre-launch ownership admission belongs to the
+	// activation-exec child, while journal remains the supervisor's lock-free
+	// transport after that child exits.
 	journal terminationJournal
 	// run executes the child and returns its reaped outcome. Production wires
 	// the platform implementation; tests replace it.
@@ -64,8 +85,11 @@ type superviseCommand struct {
 }
 
 func newSuperviseCommand() *superviseCommand {
-	journal, _ := newTerminationJournal(nil, nil)
-	return &superviseCommand{store: newResourceStore(), journal: journal, run: runSupervisedChild, runActivation: runSupervisedChildWithActivation, now: time.Now}
+	return &superviseCommand{
+		store: newResourceStore(),
+		run:   runSupervisedChild, runActivation: runSupervisedChildWithActivation,
+		now: time.Now,
+	}
 }
 
 // processOutcome is one reaped child's wait status.
@@ -109,6 +133,7 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 	agentUID := fs.String("agent-uid", "", "Agent resource uid owning the Pane, for an Agent-managed launch")
 	generation := fs.String("generation", "", "activation generation this launch was issued")
 	operationID := fs.String("operation-id", "", "create/resume operation that issued the generation")
+	registryPath := fs.String("registry-path", "", "private creator-resolved Registry authority for an Agent launch")
 	argv0 := fs.String("argv0", "", "argv[0] the child is exec'd with; a leading '-' requests a login shell")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -121,10 +146,11 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return usageError("internal supervise requires a command after --")
 	}
 	spec := superviseSpec{
-		PaneUID:     strings.TrimSpace(*paneUID),
-		AgentUID:    strings.TrimSpace(*agentUID),
-		Generation:  strings.TrimSpace(*generation),
-		OperationID: strings.TrimSpace(*operationID),
+		PaneUID:      strings.TrimSpace(*paneUID),
+		AgentUID:     strings.TrimSpace(*agentUID),
+		Generation:   strings.TrimSpace(*generation),
+		OperationID:  strings.TrimSpace(*operationID),
+		RegistryPath: *registryPath,
 	}
 	if !spec.valid() {
 		return usageError("internal supervise requires --pane-uid and --generation")
@@ -180,7 +206,11 @@ func (c *superviseCommand) recordOutcome(spec superviseSpec, outcome processOutc
 	journal := c.journal
 	if strings.TrimSpace(journal.path) == "" {
 		var err error
-		journal, err = newTerminationJournal(nil, nil)
+		if spec.AgentUID != "" {
+			journal, err = terminationJournalForRegistryPath(spec.RegistryPath)
+		} else {
+			journal, err = newTerminationJournal(nil, nil)
+		}
 		if err != nil {
 			c.diagnose(stderr, "resolve termination journal: %v", err)
 			return

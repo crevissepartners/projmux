@@ -268,6 +268,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "internal key-broker", Summary: "Darwin physical key transport", Sources: []string{"internal"}},
 	{Spelling: "internal popup-wait-key", Summary: "Display-only popup single-key reader", Sources: []string{"internal"}},
 	{Spelling: "internal supervise", Summary: "Managed Pane process supervisor and termination receipt writer", Sources: []string{"internal"}},
+	{Spelling: "internal activation-exec", Summary: "Exact committed Agent activation admission", Sources: []string{"internal"}},
 }
 
 // CanonicalRoutes returns the canonical route manifest in contract order.
