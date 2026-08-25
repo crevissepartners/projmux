@@ -30,7 +30,7 @@ const (
 	projectStartupNewLabel = "Open fresh"
 
 	// projectStartupNewDescription presents Fresh as an ordinary one-step open.
-	projectStartupNewDescription = "reuse the canonical Project Window with one shell"
+	projectStartupNewDescription = "replace this Project identity with a new Project, Window, and shell"
 )
 
 // newProjectStartupCandidate is the fresh-start row.
@@ -55,9 +55,13 @@ type projectFreshStartPlan struct {
 	// ProjectUID is empty when the exact root declares no Registry Project. That
 	// is the ordinary first-open case, not a failure: there is nothing to prune.
 	ProjectUID string
-	Windows    int
-	Panes      int
-	Agents     int
+	// NewProjectUID is populated after the atomic replacement commits. It is
+	// empty during picker preflight because UIDs are allocated under the lock.
+	NewProjectUID string
+	State         coremetadata.ProjectLifecycleState
+	Windows       int
+	Panes         int
+	Agents        int
 	// AgentSessionRefs remains diagnostic plan evidence; it is never rendered as
 	// a danger count or confirmation in the neutral Fresh flow.
 	AgentSessionRefs int
@@ -66,9 +70,11 @@ type projectFreshStartPlan struct {
 	signature string
 }
 
-// Empty reports that the plan removes no Registry record at all.
+// Empty reports that the current graph is already the minimum canonical
+// topology. Fresh still replaces its identity; this predicate only verifies
+// the post-commit topology shape.
 func (p projectFreshStartPlan) Empty() bool {
-	return p.Windows == 0 && p.Panes == 0 && p.Agents == 0
+	return p.ProjectUID != "" && p.Windows == 1 && p.Panes == 1 && p.Agents == 0
 }
 
 // Counts renders exact per-kind plan diagnostics. It is not user-facing Fresh
@@ -84,8 +90,16 @@ func (p projectFreshStartPlan) ResultMessage(sessionName string) string {
 }
 
 func (p projectFreshStartPlan) ResultMessageLocale(locale i18n.Locale, sessionName string) string {
-	format := localizeUIText(locale, "projmux: opened %s fresh with its canonical Project Window and shell")
-	return fmt.Sprintf(format, sessionName)
+	oldUID := p.ProjectUID
+	if strings.TrimSpace(oldUID) == "" {
+		oldUID = absentProjectLifecycleUID
+	}
+	newUID := p.NewProjectUID
+	if strings.TrimSpace(newUID) == "" {
+		newUID = absentProjectLifecycleUID
+	}
+	format := localizeUIText(locale, "projmux: opened %s fresh; old Project UID %s -> new Project UID %s; stage=materialized")
+	return fmt.Sprintf(format, sessionName, oldUID, newUID)
 }
 
 // switchProjectFreshStarter is the Open fresh projection seam.
@@ -94,7 +108,15 @@ func (p projectFreshStartPlan) ResultMessageLocale(locale i18n.Locale, sessionNa
 // its detached continuation run in different processes.
 type switchProjectFreshStarter interface {
 	PlanProjectFreshStart(root string) (projectFreshStartPlan, error)
-	PruneProjectFreshStart(ctx context.Context, root string, plan projectFreshStartPlan) error
+	PruneProjectFreshStart(ctx context.Context, root string, plan projectFreshStartPlan) (projectFreshStartCommit, error)
+}
+
+// projectFreshStartCommit reports the identity allocated while building the
+// atomic desired Registry. It is returned even when the store commit fails so
+// the failure can name both the retained old preimage and the attempted new
+// Project UID.
+type projectFreshStartCommit struct {
+	NewProjectUID string
 }
 
 // registryProjectFreshStarter projects one closed Project to its canonical
@@ -139,50 +161,130 @@ func (s *registryProjectFreshStarter) ProjectRegistered(root string) (bool, erro
 	return ok, nil
 }
 
-// ContinueProject refuses to invent desired topology. An existing Project is
-// reused; a deleted Project can only be recreated from its exact usable
-// snapshot, projected under freshly minted resource identities in one commit.
+// ContinueProject preserves an existing Project identity. Retained topology is
+// reused exactly; a zero-Window Project receives one new canonical Window and
+// shell atomically before runtime materialization. A deleted Project can only be
+// recreated from its exact usable snapshot, projected under freshly minted
+// resource identities in one commit.
 func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, sessionName string) (openedProjectBootstrap, error) {
 	if s == nil || s.resources == nil {
-		return openedProjectBootstrap{}, errors.New("continue project: resource registry store is not configured")
+		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "registry-read", "", "",
+			errors.New("continue project: resource registry store is not configured"))
 	}
 	root = cleanOptionalPath(root)
 	registry, err := s.resources.snapshot()
 	if err != nil {
-		return openedProjectBootstrap{}, MapMetadataError(err)
+		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "registry-read", "", "", MapMetadataError(err))
 	}
+	decision, uid := projectLifecycleDecisionFor(registry, root, coremetadata.ProjectLifecycleContinue, coremetadata.ProjectLifecyclePreconditions{})
 	if project, ok := registry.ProjectByRoot(root); ok {
+		state := decision.State
+		var decisionErr error
+		switch state {
+		case coremetadata.ProjectLifecycleRetainedWindows:
+			decisionErr = requireProjectLifecyclePlan(decision, coremetadata.ProjectLifecycleOperationContinue,
+				coremetadata.ProjectUIDPreserved, coremetadata.ProjectDescendantUIDsPreserved,
+				coremetadata.ProjectStartupWriteMaterializeRegistry)
+		case coremetadata.ProjectLifecycleZeroWindows:
+			decisionErr = requireProjectLifecyclePlan(decision, coremetadata.ProjectLifecycleOperationContinue,
+				coremetadata.ProjectUIDPreserved, coremetadata.ProjectDescendantUIDsCreated,
+				coremetadata.ProjectStartupWriteCreateCanonicalWindow, coremetadata.ProjectStartupWriteCreateCanonicalShell)
+		default:
+			decisionErr = fmt.Errorf("Continue classified registered Project as %q", state)
+		}
+		if decisionErr != nil || uid != project.Metadata.UID {
+			if decisionErr == nil {
+				decisionErr = errors.New("Continue state-table Project UID disagrees with Registry")
+			}
+			return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "state-table", project.Metadata.UID, project.Metadata.UID,
+				decisionErr)
+		}
+		if state == coremetadata.ProjectLifecycleZeroWindows {
+			var continued coremetadata.Project
+			_, err := s.resources.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+				current, currentUID := projectLifecycleDecisionFor(*working, root, coremetadata.ProjectLifecycleContinue, coremetadata.ProjectLifecyclePreconditions{})
+				if currentUID != project.Metadata.UID {
+					return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "canonical-allocation", project.Metadata.UID, project.Metadata.UID,
+						errors.New("Project topology changed after Continue preflight; retry"))
+				}
+				if err := requireProjectLifecyclePlan(current, coremetadata.ProjectLifecycleOperationContinue,
+					coremetadata.ProjectUIDPreserved, coremetadata.ProjectDescendantUIDsCreated,
+					coremetadata.ProjectStartupWriteCreateCanonicalWindow, coremetadata.ProjectStartupWriteCreateCanonicalShell); err != nil {
+					return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "canonical-allocation", project.Metadata.UID, project.Metadata.UID, err)
+				}
+				window, _, err := mutator.AddWindow(working, currentUID, coremetadata.BootstrapWindow{}, s.shell, "")
+				if err != nil {
+					return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "canonical-allocation", project.Metadata.UID, project.Metadata.UID, err)
+				}
+				stored, _ := working.Project(currentUID)
+				stored.Spec.PrimaryWindowRef = window.Metadata.UID
+				continued = stored.Clone()
+				return nil
+			})
+			if err != nil {
+				return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "registry-commit",
+					project.Metadata.UID, project.Metadata.UID, MapMetadataError(err))
+			}
+			return openedProjectBootstrap{project: continued, bootstrapped: true}, nil
+		}
 		return openedProjectBootstrap{project: project.Clone()}, nil
 	}
+	if decision.State != coremetadata.ProjectLifecycleDeleted || decision.Available || decision.Reason != "no-usable-snapshot" {
+		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "state-table", "", "",
+			fmt.Errorf("deleted Continue did not fail closed before snapshot evidence: %+v", decision))
+	}
 	if s.loadSnapshot == nil {
-		return openedProjectBootstrap{}, errors.New("continue project unavailable: no read-only snapshot source is configured; choose Open fresh")
+		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-preflight", "", "",
+			errors.New("continue project unavailable: no read-only snapshot source is configured; choose Open fresh"))
 	}
 	snap, err := s.loadSnapshot(sessionName)
 	if err != nil {
-		return openedProjectBootstrap{}, fmt.Errorf("continue project unavailable: no usable snapshot for %q; choose Open fresh: %w", sessionName, err)
+		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-preflight", "", "",
+			fmt.Errorf("continue project unavailable: no usable snapshot for %q; choose Open fresh: %w", sessionName, err))
 	}
 	if candidates.MatchKey(snap.DefaultCWD) != candidates.MatchKey(root) {
-		return openedProjectBootstrap{}, fmt.Errorf("continue project unavailable: snapshot root %q does not match %q; choose Open fresh", snap.DefaultCWD, root)
+		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-preflight", "", "",
+			fmt.Errorf("continue project unavailable: snapshot root %q does not match %q; choose Open fresh", snap.DefaultCWD, root))
+	}
+	decision, uid = projectLifecycleDecisionFor(registry, root, coremetadata.ProjectLifecycleContinue,
+		coremetadata.ProjectLifecyclePreconditions{UsableSnapshot: true})
+	if uid != "" {
+		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "state-table", uid, uid,
+			errors.New("deleted Continue unexpectedly resolved a registered Project UID"))
+	}
+	if err := requireProjectLifecyclePlan(decision, coremetadata.ProjectLifecycleOperationContinue,
+		coremetadata.ProjectUIDCreated, coremetadata.ProjectDescendantUIDsCreated,
+		coremetadata.ProjectStartupWriteCreateProject, coremetadata.ProjectStartupWriteRestoreSnapshotGraph); err != nil {
+		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "state-table", "", "", err)
 	}
 	stripSnapshotResourceMetadata(&snap)
 	var opened coremetadata.Project
 	_, err = s.resources.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
-		if _, exists := working.ProjectByRoot(root); exists {
-			return errors.New("continue project: the root was registered after snapshot preflight; retry")
+		current, currentUID := projectLifecycleDecisionFor(*working, root, coremetadata.ProjectLifecycleContinue,
+			coremetadata.ProjectLifecyclePreconditions{UsableSnapshot: true})
+		if currentUID != "" {
+			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-commit", currentUID, currentUID,
+				errors.New("continue project: the root was registered after snapshot preflight; retry"))
+		}
+		if err := requireProjectLifecyclePlan(current, coremetadata.ProjectLifecycleOperationContinue,
+			coremetadata.ProjectUIDCreated, coremetadata.ProjectDescendantUIDsCreated,
+			coremetadata.ProjectStartupWriteCreateProject, coremetadata.ProjectStartupWriteRestoreSnapshotGraph); err != nil {
+			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-commit", "", "", err)
 		}
 		registered, err := mutator.RegisterProject(working, coremetadata.RegisterProjectOptions{
 			Root: root, SessionName: sessionName, DefaultShell: s.shell,
 		})
 		if err != nil {
-			return err
+			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-commit", "", "", err)
 		}
+		opened = registered.Project.Clone()
 		newUID := mutator.NewUID
 		if newUID == nil {
 			newUID = coremetadata.NewUID
 		}
 		projection, err := coremetadata.PlanSnapshotProjection(*working, registered.Project.Metadata.UID, snap, time.Now().UTC(), newUID)
 		if err != nil {
-			return err
+			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-projection", "", registered.Project.Metadata.UID, err)
 		}
 		*working = projection.Desired
 		stored, _ := working.Project(registered.Project.Metadata.UID)
@@ -190,7 +292,7 @@ func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, s
 		return nil
 	})
 	if err != nil {
-		return openedProjectBootstrap{}, MapMetadataError(err)
+		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "registry-commit", "", opened.Metadata.UID, MapMetadataError(err))
 	}
 	return openedProjectBootstrap{project: opened, bootstrapped: true, materializeTopology: true}, nil
 }
@@ -231,52 +333,49 @@ func (s *registryProjectFreshStarter) PlanProjectFreshStart(root string) (projec
 	}
 	project, ok := registry.ProjectByRoot(root)
 	if !ok {
-		return projectFreshStartPlan{}, nil
+		decision, _ := projectLifecycleDecisionFor(registry, root, coremetadata.ProjectLifecycleFresh, coremetadata.ProjectLifecyclePreconditions{})
+		if err := requireProjectLifecyclePlan(decision, coremetadata.ProjectLifecycleOperationFresh,
+			coremetadata.ProjectUIDCreated, coremetadata.ProjectDescendantUIDsCreated,
+			coremetadata.ProjectStartupWriteCreateProject, coremetadata.ProjectStartupWriteCreateCanonicalWindow,
+			coremetadata.ProjectStartupWriteCreateCanonicalShell); err != nil {
+			return projectFreshStartPlan{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "state-table", "", "", err)
+		}
+		return projectFreshStartPlan{State: decision.State}, nil
 	}
-	if _, err := coremetadata.PlanOpenFresh(registry, project.Metadata.UID, time.Now()); err != nil {
-		return projectFreshStartPlan{}, MapMetadataError(err)
+	decision, _ := projectLifecycleDecisionFor(registry, root, coremetadata.ProjectLifecycleFresh, coremetadata.ProjectLifecyclePreconditions{})
+	state := decision.State
+	descendants := coremetadata.ProjectDescendantUIDsReplaced
+	if state == coremetadata.ProjectLifecycleZeroWindows {
+		descendants = coremetadata.ProjectDescendantUIDsCreated
 	}
-	return projectFreshStartPlanFor(registry, project.Metadata.UID), nil
+	if err := requireProjectLifecyclePlan(decision, coremetadata.ProjectLifecycleOperationFresh,
+		coremetadata.ProjectUIDReplaced, descendants,
+		coremetadata.ProjectStartupWriteDeleteProjectGraph, coremetadata.ProjectStartupWriteCreateProject,
+		coremetadata.ProjectStartupWriteCreateCanonicalWindow, coremetadata.ProjectStartupWriteCreateCanonicalShell); err != nil {
+		return projectFreshStartPlan{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "state-table", project.Metadata.UID, "", err)
+	}
+	plan := projectFreshStartPlanFor(registry, project.Metadata.UID)
+	plan.State = state
+	return plan, nil
 }
 
 // projectFreshStartPlanFor expands one Project's Windows into the canonical
 // cascade plan and counts it per kind.
 func projectFreshStartPlanFor(registry coremetadata.Registry, projectUID string) projectFreshStartPlan {
-	project, ok := registry.Project(projectUID)
+	_, ok := registry.Project(projectUID)
 	if !ok {
 		return projectFreshStartPlan{}
 	}
-	anchorWindow, ok := registry.Window(project.Spec.PrimaryWindowRef)
-	if !ok {
-		return projectFreshStartPlan{ProjectUID: projectUID, signature: "invalid-anchor"}
-	}
-	anchorPane := ""
-	if shell, ok := registry.WindowDefaultShell(anchorWindow.Metadata.UID); ok {
-		anchorPane = shell.Metadata.UID
-	} else if anchor, ok := registry.WindowAnchor(anchorWindow.Metadata.UID); ok &&
-		anchor.Spec.Role == coremetadata.PaneRoleShell && anchor.Metadata.OwnerUID() == anchorWindow.Metadata.UID {
-		anchorPane = anchor.Metadata.UID
-	} else {
-		for _, pane := range registry.PanesOf(anchorWindow.Metadata.UID) {
-			if pane.Spec.Role == coremetadata.PaneRoleShell {
-				anchorPane = pane.Metadata.UID
-				break
-			}
-		}
-	}
 	plan := projectFreshStartPlan{
 		ProjectUID: projectUID,
-		signature:  "keep:" + anchorWindow.Metadata.UID + "," + anchorPane + ";",
+		signature:  "project:" + projectUID + ";",
 	}
 	for _, window := range registry.WindowsOf(projectUID) {
-		if window.Metadata.UID != anchorWindow.Metadata.UID {
-			plan.Windows++
-		}
+		plan.Windows++
+		plan.signature += "window:" + window.Metadata.UID + ";"
 		for _, pane := range registry.PanesOf(window.Metadata.UID) {
-			if pane.Metadata.UID != anchorPane {
-				plan.Panes++
-				plan.signature += "pane:" + pane.Metadata.UID + ";"
-			}
+			plan.Panes++
+			plan.signature += "pane:" + pane.Metadata.UID + ";"
 		}
 		for _, agent := range registry.AgentsOf(window.Metadata.UID) {
 			plan.Agents++
@@ -293,46 +392,66 @@ func projectFreshStartPlanFor(registry coremetadata.Registry, projectUID string)
 	return plan
 }
 
-// PruneProjectFreshStart atomically projects any exact same-root graph onto its
-// canonical Project Window and one minimum direct shell.
-func (s *registryProjectFreshStarter) PruneProjectFreshStart(ctx context.Context, root string, plan projectFreshStartPlan) error {
+// PruneProjectFreshStart atomically replaces any exact same-root Project graph
+// with a new Project UID and a new canonical Window/shell graph.
+func (s *registryProjectFreshStarter) PruneProjectFreshStart(ctx context.Context, root string, plan projectFreshStartPlan) (result projectFreshStartCommit, err error) {
 	if s == nil || s.resources == nil {
-		return errors.New("project fresh start: resource registry store is not configured")
+		return result, wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "registry-commit", plan.ProjectUID, "",
+			errors.New("project fresh start: resource registry store is not configured"))
 	}
 	root = strings.TrimSpace(root)
 	if plan.ProjectUID != "" {
 		if err := s.requireClosedProject(ctx, root, plan.ProjectUID); err != nil {
-			return err
+			return result, wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "closed-precondition", plan.ProjectUID, "", err)
 		}
 	}
-	_, err := s.resources.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+	_, err = s.resources.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
 		if current, ok := working.ProjectByRoot(root); ok {
 			if current.Metadata.UID != plan.ProjectUID {
 				return fmt.Errorf("project fresh start: %q now declares a different Project; retry", root)
 			}
-			uidSource := mutator.NewUID
-			if uidSource == nil {
-				uidSource = coremetadata.NewUID
+			if currentPlan := projectFreshStartPlanFor(*working, current.Metadata.UID); currentPlan.signature != plan.signature {
+				return fmt.Errorf("project fresh start: graph drifted after preflight; old_uid=%s; retry", plan.ProjectUID)
 			}
-			now := time.Now
-			if mutator.Now != nil {
-				now = mutator.Now
+			decision, _ := projectLifecycleDecisionFor(*working, root, coremetadata.ProjectLifecycleFresh, coremetadata.ProjectLifecyclePreconditions{})
+			descendants := coremetadata.ProjectDescendantUIDsReplaced
+			if decision.State == coremetadata.ProjectLifecycleZeroWindows {
+				descendants = coremetadata.ProjectDescendantUIDsCreated
 			}
-			projection, err := coremetadata.PlanOpenFresh(*working, current.Metadata.UID, now().UTC(), uidSource)
+			if err := requireProjectLifecyclePlan(decision, coremetadata.ProjectLifecycleOperationFresh,
+				coremetadata.ProjectUIDReplaced, descendants,
+				coremetadata.ProjectStartupWriteDeleteProjectGraph, coremetadata.ProjectStartupWriteCreateProject,
+				coremetadata.ProjectStartupWriteCreateCanonicalWindow, coremetadata.ProjectStartupWriteCreateCanonicalShell); err != nil {
+				return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "state-table", current.Metadata.UID, "", err)
+			}
+			replacement, err := coremetadata.PlanProjectFreshReplacement(*working, current.Metadata.UID,
+				coremetadata.RegisterProjectOptions{SessionName: plan.SessionName, DefaultShell: s.shell}, mutator)
+			result.NewProjectUID = replacement.NewProjectUID
 			if err != nil {
-				return err
+				return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "registry-replacement", current.Metadata.UID, replacement.NewProjectUID, err)
 			}
-			*working = projection.Desired
+			*working = replacement.Desired
 			return nil
 		} else if plan.ProjectUID != "" {
 			return fmt.Errorf("project fresh start: %q no longer declares Project %s", root, plan.ProjectUID)
 		}
-		_, err := mutator.RegisterProject(working, coremetadata.RegisterProjectOptions{
+		decision, _ := projectLifecycleDecisionFor(*working, root, coremetadata.ProjectLifecycleFresh, coremetadata.ProjectLifecyclePreconditions{})
+		if err := requireProjectLifecyclePlan(decision, coremetadata.ProjectLifecycleOperationFresh,
+			coremetadata.ProjectUIDCreated, coremetadata.ProjectDescendantUIDsCreated,
+			coremetadata.ProjectStartupWriteCreateProject, coremetadata.ProjectStartupWriteCreateCanonicalWindow,
+			coremetadata.ProjectStartupWriteCreateCanonicalShell); err != nil {
+			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "state-table", "", "", err)
+		}
+		registered, err := mutator.RegisterProject(working, coremetadata.RegisterProjectOptions{
 			Root: root, SessionName: plan.SessionName, DefaultShell: s.shell,
 		})
+		result.NewProjectUID = registered.Project.Metadata.UID
 		return err
 	})
-	return err
+	if err != nil {
+		return result, wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "registry-commit", plan.ProjectUID, result.NewProjectUID, err)
+	}
+	return result, nil
 }
 
 // requireClosedProject re-observes the exact app socket immediately before the
@@ -402,21 +521,26 @@ func (c *switchCommand) planProjectFreshStart(sessionName, target string) (proje
 func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
 	plan, err := c.planProjectFreshStart(sessionName, target)
 	if err != nil {
-		return err
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "preflight", plan.ProjectUID, "", err)
 	}
 	if c.projectFreshStart != nil {
-		if err := c.projectFreshStart.PruneProjectFreshStart(ctx, target, plan); err != nil {
-			return err
+		commit, err := c.projectFreshStart.PruneProjectFreshStart(ctx, target, plan)
+		plan.NewProjectUID = commit.NewProjectUID
+		if err != nil {
+			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "registry-replacement", plan.ProjectUID, plan.NewProjectUID, err)
 		}
 	}
 	registered, err := c.registerOpenedProjectRoot(ctx, target)
 	if err != nil {
-		return err
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "replacement-readback", plan.ProjectUID, plan.NewProjectUID, err)
 	}
 	if registered.project.Metadata.UID != "" {
-		if plan.ProjectUID == "" || registered.project.Metadata.UID != plan.ProjectUID {
-			registered.bootstrapped = true
+		plan.NewProjectUID = registered.project.Metadata.UID
+		if plan.ProjectUID != "" && registered.project.Metadata.UID == plan.ProjectUID {
+			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "replacement-readback", plan.ProjectUID, registered.project.Metadata.UID,
+				errors.New("Fresh reused the old Project UID"))
 		}
+		registered.bootstrapped = true
 		opened = registered
 	}
 	// Fresh always owns one exact canonical Registry graph. Force the topology
@@ -424,13 +548,16 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 	// handoff.
 	opened.materializeTopology = true
 	if err := c.verifyProjectFreshStartPruned(target); err != nil {
-		return err
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "replacement-verification", plan.ProjectUID, plan.NewProjectUID, err)
 	}
 	if err := c.materializeProjectTopology(ctx, sessionName, target, opened); err != nil {
-		return err
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "topology-materialization", plan.ProjectUID, plan.NewProjectUID, err)
 	}
 	c.reportProjectStartup(plan.ResultMessageLocale(appLocale(c.homeDir, c.lookupEnv), sessionName))
-	return c.openProjectSession(ctx, sessionName)
+	if err := c.openProjectSession(ctx, sessionName); err != nil {
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "client-handoff", plan.ProjectUID, plan.NewProjectUID, err)
+	}
+	return nil
 }
 
 // verifyProjectFreshStartPruned re-reads the Registry and refuses to continue
@@ -442,6 +569,11 @@ func (c *switchCommand) verifyProjectFreshStartPruned(target string) error {
 	plan, err := c.projectFreshStart.PlanProjectFreshStart(target)
 	if err != nil {
 		return err
+	}
+	// Test and alternate startup seams may not expose a Registry UID. Production
+	// replacements do, and validate their canonical shape below.
+	if plan.ProjectUID == "" {
+		return nil
 	}
 	if !plan.Empty() {
 		return fmt.Errorf("project fresh start: %q still declares %s after the prune; the Project was not started fresh",

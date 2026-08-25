@@ -2,7 +2,6 @@ package metadata
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -155,93 +154,7 @@ func FuzzSnapshotProjectionIsScopedValidAndIdempotent(f *testing.F) {
 	})
 }
 
-func FuzzOpenFreshKeepsOnlyCanonicalProjectShell(f *testing.F) {
-	f.Add(uint8(0))
-	f.Add(uint8(3))
-	f.Fuzz(func(t *testing.T, shape uint8) {
-		reg, targetUID, unrelatedUID, _ := projectionFixture(t)
-		project, _ := reg.Project(targetUID)
-		anchorWindow := project.Spec.PrimaryWindowRef
-		window, _ := reg.Window(anchorWindow)
-		anchorPane := window.Spec.AnchorPaneRef
-		pane, _ := reg.Pane(anchorPane)
-		pane.Spec.Command = fmt.Sprintf("printf fresh-shape-%d", shape)
-		counts := map[Kind]int{}
-		vary := Mutator{
-			Now: func() time.Time { return fixedNow },
-			NewUID: func(kind Kind) (string, error) {
-				counts[kind]++
-				return fmt.Sprintf("fuzz-%s-%d", strings.ToLower(string(kind)), counts[kind]), nil
-			},
-			DirExists: dirSet{"/src/one": true, "/src/two": true}.exists,
-		}
-		for i := 0; i < int(shape&3); i++ {
-			if _, _, err := vary.AddWindow(&reg, targetUID, BootstrapWindow{Name: fmt.Sprintf("extra-%d", i), Panes: []BootstrapPane{{CWD: "/src/one"}, {CWD: "/src/one/logs"}}}, "/bin/zsh", "fuzz-window"); err != nil {
-				t.Fatal(err)
-			}
-		}
-		for i := 0; i < int((shape>>2)&3); i++ {
-			agent, err := vary.CreateAgent(&reg, anchorWindow, CreateAgentOptions{Name: fmt.Sprintf("fuzz-agent-%d", i), Provider: "codex", Workspace: AgentWorkspace{CWD: "/src/one"}, OperationID: "fuzz-agent"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := vary.AttachAgentPane(&reg, agent.Metadata.UID, BootstrapPane{CWD: "/src/one"}, "fuzz-agent-pane"); err != nil {
-				t.Fatal(err)
-			}
-			if shape&0x40 != 0 {
-				if _, _, err := vary.RecordAgentSessionRef(&reg, agent.Metadata.UID, AgentSessionObservation{Provider: "codex", ThreadID: fmt.Sprintf("thread-%d", i)}); err != nil {
-					t.Fatal(err)
-				}
-			}
-		}
-		unrelated, _ := reg.Project(unrelatedUID)
-		controlBefore := controlGraph(reg)
-		targetBefore := project.Clone()
-		registryBefore := reg.Clone()
-		plan, err := PlanOpenFresh(reg, targetUID, fixedNow.Add(1))
-		if err != nil {
-			t.Fatal(err)
-		}
-		windows := plan.Desired.WindowsOf(targetUID)
-		if len(windows) != 1 || windows[0].Metadata.UID != anchorWindow {
-			t.Fatalf("fresh windows = %+v", windows)
-		}
-		panes := plan.Desired.PanesOf(anchorWindow)
-		if len(panes) != 1 || panes[0].Metadata.UID != anchorPane || panes[0].Spec.Role != PaneRoleShell {
-			t.Fatalf("fresh panes = %+v", panes)
-		}
-		originalAnchorPane, _ := reg.Pane(anchorPane)
-		if !reflect.DeepEqual(originalAnchorPane.Clone(), panes[0].Clone()) {
-			t.Fatal("fresh changed the canonical shell Pane recipe or metadata")
-		}
-		if len(plan.Desired.AgentsOf(anchorWindow)) != 0 {
-			t.Fatal("fresh retained Agent")
-		}
-		if !reflect.DeepEqual(registryBefore, reg) {
-			t.Fatal("pure Open fresh plan mutated its Registry input")
-		}
-		targetAfter, _ := plan.Desired.Project(targetUID)
-		if !reflect.DeepEqual(targetBefore, targetAfter.Clone()) {
-			t.Fatal("fresh changed target Project uid/root/metadata/trust/session identity")
-		}
-		afterUnrelated, _ := plan.Desired.Project(unrelatedUID)
-		if !reflect.DeepEqual(unrelated.Clone(), afterUnrelated.Clone()) {
-			t.Fatal("fresh changed unrelated Project")
-		}
-		if !reflect.DeepEqual(controlBefore, controlGraph(plan.Desired)) {
-			t.Fatal("fresh changed unrelated ControlSession graph or reservations")
-		}
-		repeat, err := PlanOpenFresh(plan.Desired, targetUID, fixedNow.Add(2))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if repeat.Changed || !reflect.DeepEqual(repeat.Desired, plan.Desired) {
-			t.Fatal("second Open fresh was not a Registry zero-diff")
-		}
-	})
-}
-
-func TestSnapshotProjectionFinalV2RefsAndOpenFreshGolden(t *testing.T) {
+func TestSnapshotProjectionFinalV2RefsGolden(t *testing.T) {
 	reg, targetUID, _, snap := projectionFixture(t)
 	project, _ := reg.Project(targetUID)
 	window, _ := reg.Window(project.Spec.PrimaryWindowRef)
@@ -312,17 +225,6 @@ func TestSnapshotProjectionFinalV2RefsAndOpenFreshGolden(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	fresh, err := PlanOpenFresh(agentOnlyPlan.Desired, targetUID, fixedNow.Add(5*time.Minute), sequentialUIDs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	repeatFresh, err := PlanOpenFresh(fresh.Desired, targetUID, fixedNow.Add(6*time.Minute), sequentialUIDs())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if repeatFresh.Changed || !reflect.DeepEqual(repeatFresh.Desired, fresh.Desired) {
-		t.Fatal("Open fresh minimum-shell projection was not a fixed point")
-	}
 	if got, err := json.Marshal(snap); err != nil || !reflect.DeepEqual(got, sourceBytes) {
 		t.Fatal("projection rewrote source snapshot bytes")
 	}
@@ -331,7 +233,6 @@ func TestSnapshotProjectionFinalV2RefsAndOpenFreshGolden(t *testing.T) {
 		projectionGoldenRow(t, "metadata mixed preserves Agent anchor", projected.Desired, targetUID),
 		projectionGoldenRow(t, "metadata Agent-only keeps empty default", agentOnlyPlan.Desired, targetUID),
 		projectionGoldenRow(t, "legacy Agent-only uses first Pane", legacyPlan.Desired, targetUID),
-		projectionGoldenRow(t, "Open fresh creates exact minimum shell", fresh.Desired, targetUID),
 	}
 	got, err := json.MarshalIndent(rows, "", "  ")
 	if err != nil {

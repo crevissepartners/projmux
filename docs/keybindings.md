@@ -239,9 +239,9 @@ by different picker surfaces, while conflicts inside one surface are rejected.
 
 | Surface action | Meaning |
 | --- | --- |
-| `Sidebar:KillSession` | Kill the focused existing session |
+| `Sidebar:KillSession` | Stop only the focused Project runtime; preserve its Project UID and desired Window/Pane topology |
 | `Sidebar:PinProject` | Pin or unpin the focused directory |
-| `SessionPopup:KillSession` | Kill the focused session |
+| `SessionPopup:KillSession` | Stop only the focused runtime Session; preserve managed Registry identity and desired topology |
 | `SessionPopup:CyclePreviewWindowPrev` / `SessionPopup:CyclePreviewWindowNext` | Preview windows |
 | `SessionPopup:CyclePreviewPanePrev` / `SessionPopup:CyclePreviewPaneNext` | Preview panes |
 | `NotifySidebar:Ack` / `NotifySidebar:AckGroup` / `NotifySidebar:ClearNonCritical` / `NotifySidebar:ClearAll` | Manage notifications |

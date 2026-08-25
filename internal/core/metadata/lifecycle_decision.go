@@ -398,6 +398,7 @@ type PaneTeardownEvidencePlan struct {
 // WindowRootCascadeDeletePlan is the schema-valid desired Registry produced by
 // one exact pane-exited/window-unlinked pair.
 type WindowRootCascadeDeletePlan struct {
+	Operation           ProjectLifecycleOperation
 	Decision            TeardownDecision
 	Desired             Registry
 	Changed             bool
@@ -744,7 +745,8 @@ func PlanWindowRootCascadeDelete(registry Registry, paneEvent, unlinkEvent Teard
 		return WindowRootCascadeDeletePlan{}, fmt.Errorf("%s desired Registry: %w", op, err)
 	}
 	return WindowRootCascadeDeletePlan{
-		Decision: decision, Desired: desired, Changed: true, PaneUID: pane.Metadata.UID,
+		Operation: ProjectLifecycleOperationCloseWindow,
+		Decision:  decision, Desired: desired, Changed: true, PaneUID: pane.Metadata.UID,
 		WindowUID: window.Metadata.UID, RootKind: paneEvent.Chain.RootKind, RootUID: paneEvent.Chain.RootUID,
 		DeletedWindows: 1, DeletedPanes: deletedPanes, DeletedAgents: deletedAgents,
 		DeletedReservations: reservationsBefore - len(desired.NameReservations),
@@ -829,6 +831,7 @@ type ProjectStartupWrite string
 
 const (
 	ProjectStartupWriteNone                  ProjectStartupWrite = "no-write"
+	ProjectStartupWriteStopRuntime           ProjectStartupWrite = "stop-managed-runtime"
 	ProjectStartupWriteMaterializeRegistry   ProjectStartupWrite = "materialize-registry-topology"
 	ProjectStartupWriteDeleteProjectGraph    ProjectStartupWrite = "delete-existing-project-graph"
 	ProjectStartupWriteCreateProject         ProjectStartupWrite = "create-project-with-new-uid"
@@ -836,6 +839,277 @@ const (
 	ProjectStartupWriteCreateCanonicalShell  ProjectStartupWrite = "create-canonical-shell"
 	ProjectStartupWriteRestoreSnapshotGraph  ProjectStartupWrite = "restore-snapshot-topology"
 )
+
+// ProjectLifecycleState is the desired Project shape at the lifecycle/startup
+// boundary. Runtime liveness is deliberately absent: a missing tmux server is
+// observation, never Project-delete authority.
+type ProjectLifecycleState string
+
+const (
+	ProjectLifecycleRetainedWindows ProjectLifecycleState = "retained-window"
+	ProjectLifecycleZeroWindows     ProjectLifecycleState = "zero-window"
+	ProjectLifecycleDeleted         ProjectLifecycleState = "deleted"
+)
+
+// ProjectLifecycleAction is the complete user-intent vocabulary at this
+// boundary. Keeping one action on one plan makes stop, ordinary Window close,
+// Project unregister, and Fresh replacement impossible to conflate.
+type ProjectLifecycleAction string
+
+const (
+	ProjectLifecycleStop          ProjectLifecycleAction = "stop"
+	ProjectLifecycleContinue      ProjectLifecycleAction = "continue"
+	ProjectLifecycleFresh         ProjectLifecycleAction = "fresh"
+	ProjectLifecycleDeleteProject ProjectLifecycleAction = "delete-project"
+)
+
+// ProjectLifecycleOperation is the single mutation class carried by an
+// executable plan. close-window is produced only by the causal Window plan;
+// the four Project actions can therefore be compared without sharing effects.
+type ProjectLifecycleOperation string
+
+const (
+	ProjectLifecycleOperationNone          ProjectLifecycleOperation = "none"
+	ProjectLifecycleOperationStop          ProjectLifecycleOperation = "stop"
+	ProjectLifecycleOperationContinue      ProjectLifecycleOperation = "continue"
+	ProjectLifecycleOperationFresh         ProjectLifecycleOperation = "fresh"
+	ProjectLifecycleOperationDeleteProject ProjectLifecycleOperation = "delete-project"
+	ProjectLifecycleOperationCloseWindow   ProjectLifecycleOperation = "close-window"
+)
+
+type ProjectUIDOutcome string
+
+const (
+	ProjectUIDPreserved ProjectUIDOutcome = "preserved"
+	ProjectUIDReplaced  ProjectUIDOutcome = "replaced"
+	ProjectUIDCreated   ProjectUIDOutcome = "created"
+	ProjectUIDRemoved   ProjectUIDOutcome = "removed"
+	ProjectUIDAbsent    ProjectUIDOutcome = "absent"
+)
+
+type ProjectDescendantUIDOutcome string
+
+const (
+	ProjectDescendantUIDsPreserved ProjectDescendantUIDOutcome = "preserved"
+	ProjectDescendantUIDsCreated   ProjectDescendantUIDOutcome = "created"
+	ProjectDescendantUIDsReplaced  ProjectDescendantUIDOutcome = "replaced"
+	ProjectDescendantUIDsRemoved   ProjectDescendantUIDOutcome = "removed"
+	ProjectDescendantUIDsAbsent    ProjectDescendantUIDOutcome = "absent"
+)
+
+// ProjectLifecyclePlan is one cell of the retained/zero/deleted ×
+// Stop/Continue/Fresh/delete table. AtomicWriteSet names Registry/runtime
+// effects; a no-op is explicit rather than represented by a blank cell.
+type ProjectLifecyclePlan struct {
+	State          ProjectLifecycleState
+	Action         ProjectLifecycleAction
+	Operation      ProjectLifecycleOperation
+	Available      bool
+	ProjectUID     ProjectUIDOutcome
+	DescendantUIDs ProjectDescendantUIDOutcome
+	AtomicWriteSet []ProjectStartupWrite
+	ExternalAssets ExternalAssetOutcome
+	Reason         string
+}
+
+// ProjectLifecyclePreconditions carries external evidence required by one
+// cell without widening the closed three-state table. A usable snapshot is
+// relevant only to deleted+Continue; runtime absence is deliberately not a
+// precondition because it never grants Project identity authority.
+type ProjectLifecyclePreconditions struct {
+	UsableSnapshot bool
+}
+
+// DecideProjectLifecycle returns the single lifecycle/startup state table.
+// Ordinary clean Window close is intentionally not an action in this table: it
+// is owned by the causal Window-close plan and never appears in these write
+// sets.
+func DecideProjectLifecycle(state ProjectLifecycleState, action ProjectLifecycleAction, preconditions ProjectLifecyclePreconditions) ProjectLifecyclePlan {
+	plan := ProjectLifecyclePlan{
+		State: state, Action: action, Available: true,
+		Operation:      lifecycleOperationForAction(action),
+		ExternalAssets: projectPreservedAssets(),
+	}
+	switch state {
+	case ProjectLifecycleRetainedWindows:
+		switch action {
+		case ProjectLifecycleStop:
+			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDPreserved, ProjectDescendantUIDsPreserved
+			plan.AtomicWriteSet, plan.Reason = []ProjectStartupWrite{ProjectStartupWriteStopRuntime}, "stop-runtime-preserve-desired-graph"
+		case ProjectLifecycleContinue:
+			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDPreserved, ProjectDescendantUIDsPreserved
+			plan.AtomicWriteSet, plan.Reason = []ProjectStartupWrite{ProjectStartupWriteMaterializeRegistry}, "materialize-same-desired-graph"
+		case ProjectLifecycleFresh:
+			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDReplaced, ProjectDescendantUIDsReplaced
+			plan.AtomicWriteSet, plan.Reason = freshReplacementWriteSet(), "atomically-replace-project-identity"
+		case ProjectLifecycleDeleteProject:
+			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDRemoved, ProjectDescendantUIDsRemoved
+			plan.AtomicWriteSet, plan.Reason = []ProjectStartupWrite{ProjectStartupWriteDeleteProjectGraph}, "explicitly-unregister-project"
+		default:
+			return unavailableProjectLifecyclePlan(state, action, "invalid-action")
+		}
+	case ProjectLifecycleZeroWindows:
+		switch action {
+		case ProjectLifecycleStop:
+			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDPreserved, ProjectDescendantUIDsAbsent
+			plan.AtomicWriteSet, plan.Reason = []ProjectStartupWrite{ProjectStartupWriteNone}, "runtime-already-absent"
+		case ProjectLifecycleContinue:
+			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDPreserved, ProjectDescendantUIDsCreated
+			plan.AtomicWriteSet = []ProjectStartupWrite{ProjectStartupWriteCreateCanonicalWindow, ProjectStartupWriteCreateCanonicalShell}
+			plan.Reason = "bootstrap-new-canonical-descendants"
+		case ProjectLifecycleFresh:
+			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDReplaced, ProjectDescendantUIDsCreated
+			plan.AtomicWriteSet, plan.Reason = freshReplacementWriteSet(), "atomically-replace-zero-window-project"
+		case ProjectLifecycleDeleteProject:
+			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDRemoved, ProjectDescendantUIDsAbsent
+			plan.AtomicWriteSet, plan.Reason = []ProjectStartupWrite{ProjectStartupWriteDeleteProjectGraph}, "explicitly-unregister-zero-window-project"
+		default:
+			return unavailableProjectLifecyclePlan(state, action, "invalid-action")
+		}
+	case ProjectLifecycleDeleted:
+		switch action {
+		case ProjectLifecycleContinue:
+			if !preconditions.UsableSnapshot {
+				return unavailableProjectLifecyclePlan(state, action, "no-usable-snapshot")
+			}
+			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDCreated, ProjectDescendantUIDsCreated
+			plan.AtomicWriteSet = []ProjectStartupWrite{ProjectStartupWriteCreateProject, ProjectStartupWriteRestoreSnapshotGraph}
+			plan.Reason = "restore-usable-snapshot-under-new-identity"
+		case ProjectLifecycleFresh:
+			plan.ProjectUID, plan.DescendantUIDs = ProjectUIDCreated, ProjectDescendantUIDsCreated
+			plan.AtomicWriteSet = []ProjectStartupWrite{ProjectStartupWriteCreateProject, ProjectStartupWriteCreateCanonicalWindow, ProjectStartupWriteCreateCanonicalShell}
+			plan.Reason = "create-fresh-project"
+		case ProjectLifecycleStop, ProjectLifecycleDeleteProject:
+			return unavailableProjectLifecyclePlan(state, action, "project-is-not-registered")
+		default:
+			return unavailableProjectLifecyclePlan(state, action, "invalid-action")
+		}
+	default:
+		return unavailableProjectLifecyclePlan(state, action, "invalid-state")
+	}
+	return plan
+}
+
+func freshReplacementWriteSet() []ProjectStartupWrite {
+	return []ProjectStartupWrite{
+		ProjectStartupWriteDeleteProjectGraph,
+		ProjectStartupWriteCreateProject,
+		ProjectStartupWriteCreateCanonicalWindow,
+		ProjectStartupWriteCreateCanonicalShell,
+	}
+}
+
+func lifecycleOperationForAction(action ProjectLifecycleAction) ProjectLifecycleOperation {
+	switch action {
+	case ProjectLifecycleStop:
+		return ProjectLifecycleOperationStop
+	case ProjectLifecycleContinue:
+		return ProjectLifecycleOperationContinue
+	case ProjectLifecycleFresh:
+		return ProjectLifecycleOperationFresh
+	case ProjectLifecycleDeleteProject:
+		return ProjectLifecycleOperationDeleteProject
+	default:
+		return ProjectLifecycleOperationNone
+	}
+}
+
+func unavailableProjectLifecyclePlan(state ProjectLifecycleState, action ProjectLifecycleAction, reason string) ProjectLifecyclePlan {
+	return ProjectLifecyclePlan{
+		State: state, Action: action, Available: false,
+		Operation:  lifecycleOperationForAction(action),
+		ProjectUID: ProjectUIDAbsent, DescendantUIDs: ProjectDescendantUIDsAbsent,
+		AtomicWriteSet: []ProjectStartupWrite{ProjectStartupWriteNone},
+		ExternalAssets: projectPreservedAssets(), Reason: reason,
+	}
+}
+
+// ProjectFreshReplacementPlan is the complete Registry preimage and desired
+// result for one Fresh commit. The caller commits Desired atomically; any plan
+// or store failure retains Preimage byte-for-byte.
+type ProjectFreshReplacementPlan struct {
+	Operation     ProjectLifecycleOperation
+	OldProjectUID string
+	NewProjectUID string
+	Preimage      Registry
+	Desired       Registry
+	WriteSet      []ProjectStartupWrite
+}
+
+// PlanProjectFreshReplacement removes one exact Project graph from a clone and
+// registers a new canonical Project/Window/shell graph for the same root. It
+// never mutates registry, filesystem, Git/worktree state, or snapshots.
+func PlanProjectFreshReplacement(registry Registry, projectUID string, opts RegisterProjectOptions, mutator Mutator) (ProjectFreshReplacementPlan, error) {
+	project, ok := registry.Project(strings.TrimSpace(projectUID))
+	if !ok {
+		return ProjectFreshReplacementPlan{}, stateErr("fresh project", ErrNotFound, "Project %q does not exist", projectUID)
+	}
+	state := ProjectLifecycleZeroWindows
+	if len(registry.WindowsOf(project.Metadata.UID)) != 0 {
+		state = ProjectLifecycleRetainedWindows
+	}
+	cell := DecideProjectLifecycle(state, ProjectLifecycleFresh, ProjectLifecyclePreconditions{})
+	if !cell.Available {
+		return ProjectFreshReplacementPlan{}, stateErr("fresh project", ErrInvalidRegistry, "Fresh is unavailable for state %q", state)
+	}
+	plan := ProjectFreshReplacementPlan{
+		Operation:     ProjectLifecycleOperationFresh,
+		OldProjectUID: project.Metadata.UID,
+		Preimage:      registry.Clone(),
+		WriteSet:      slices.Clone(cell.AtomicWriteSet),
+	}
+
+	desired := registry.Clone()
+	if err := mutator.DeleteProject(&desired, project.Metadata.UID); err != nil {
+		return plan, err
+	}
+	opts.Root = project.Spec.Root
+	if strings.TrimSpace(opts.Name) == "" {
+		opts.Name = project.Metadata.Name
+	}
+	if strings.TrimSpace(opts.DisplayName) == "" {
+		opts.DisplayName = project.Metadata.DisplayName
+	}
+	if opts.Labels == nil {
+		opts.Labels = cloneStringMap(project.Metadata.Labels)
+	}
+	if opts.Annotations == nil {
+		opts.Annotations = cloneStringMap(project.Metadata.Annotations)
+	}
+	uidSource := mutator.NewUID
+	if uidSource == nil {
+		uidSource = NewUID
+	}
+	mutator.NewUID = func(kind Kind) (string, error) {
+		uid, err := uidSource(kind)
+		if err == nil && kind == KindProject && plan.NewProjectUID == "" {
+			plan.NewProjectUID = strings.TrimSpace(uid)
+		}
+		return uid, err
+	}
+	registered, err := mutator.RegisterProject(&desired, opts)
+	if err != nil {
+		return plan, err
+	}
+	plan.NewProjectUID = registered.Project.Metadata.UID
+	if registered.Project.Metadata.UID == project.Metadata.UID {
+		return plan, stateErr("fresh project", ErrInvalidRegistry, "Fresh reused old Project uid %q", project.Metadata.UID)
+	}
+	claimants := 0
+	for _, candidate := range desired.Projects {
+		if candidate.Spec.Root == project.Spec.Root {
+			claimants++
+		}
+	}
+	if claimants != 1 {
+		return plan, stateErr("fresh project", ErrInvalidRegistry, "root %q has %d Project claimants after replacement", project.Spec.Root, claimants)
+	}
+	if err := desired.Validate(); err != nil {
+		return plan, err
+	}
+	plan.Desired = desired
+	return plan, nil
+}
 
 // ProjectOpenReason makes unavailable and invalid cells non-ambiguous.
 type ProjectOpenReason string
@@ -866,30 +1140,31 @@ func projectPreservedAssets() ExternalAssetOutcome {
 		Worktrees: AssetPreserve, SnapshotBytes: AssetPreserve}
 }
 
-// DecideProjectOpen returns the closed live/closed/deleted startup table. Fresh
-// never reads or modifies a snapshot, and unavailable Continue never silently
-// falls back to Fresh.
+// DecideProjectOpen is the compatibility projection used by the older
+// live/closed/deleted-with-snapshot UI classifier. It adds runtime/source labels
+// only; Fresh and Continue identity outcomes and write sets always come from
+// DecideProjectLifecycle. Unavailable Continue never silently falls back to
+// Fresh.
 func DecideProjectOpen(state ProjectReopenState, action ProjectOpenAction) ProjectOpenPlan {
 	assets := projectPreservedAssets()
 	invalid := ProjectOpenPlan{Available: false, Source: ProjectOpenSourceNone,
 		AtomicWriteSet: []ProjectStartupWrite{ProjectStartupWriteNone},
 		Reason:         ProjectOpenReasonInvalid, ExternalAssets: assets}
 	if action == ProjectOpenFresh {
-		switch state {
-		case ProjectReopenLive, ProjectReopenClosed:
-			return ProjectOpenPlan{Available: true, Source: ProjectOpenSourceRoot,
-				AtomicWriteSet: []ProjectStartupWrite{ProjectStartupWriteDeleteProjectGraph,
-					ProjectStartupWriteCreateProject, ProjectStartupWriteCreateCanonicalWindow,
-					ProjectStartupWriteCreateCanonicalShell},
-				Reason: ProjectOpenReasonFreshReplace, NewProjectUID: true, ExternalAssets: assets}
-		case ProjectReopenDeletedWithSnapshot, ProjectReopenDeletedWithoutSnapshot:
-			return ProjectOpenPlan{Available: true, Source: ProjectOpenSourceRoot,
-				AtomicWriteSet: []ProjectStartupWrite{ProjectStartupWriteCreateProject,
-					ProjectStartupWriteCreateCanonicalWindow, ProjectStartupWriteCreateCanonicalShell},
-				Reason: ProjectOpenReasonFreshCreate, NewProjectUID: true, ExternalAssets: assets}
-		default:
+		lifecycleState := ProjectLifecycleDeleted
+		if state == ProjectReopenLive || state == ProjectReopenClosed {
+			lifecycleState = ProjectLifecycleRetainedWindows
+		} else if state != ProjectReopenDeletedWithSnapshot && state != ProjectReopenDeletedWithoutSnapshot {
 			return invalid
 		}
+		cell := DecideProjectLifecycle(lifecycleState, ProjectLifecycleFresh, ProjectLifecyclePreconditions{})
+		reason := ProjectOpenReasonFreshCreate
+		if lifecycleState != ProjectLifecycleDeleted {
+			reason = ProjectOpenReasonFreshReplace
+		}
+		return ProjectOpenPlan{Available: cell.Available, Source: ProjectOpenSourceRoot,
+			AtomicWriteSet: slices.Clone(cell.AtomicWriteSet), Reason: reason,
+			NewProjectUID: cell.ProjectUID == ProjectUIDReplaced || cell.ProjectUID == ProjectUIDCreated, ExternalAssets: cell.ExternalAssets}
 	}
 	if action != ProjectOpenContinue {
 		return invalid
@@ -900,18 +1175,20 @@ func DecideProjectOpen(state ProjectReopenState, action ProjectOpenAction) Proje
 			AtomicWriteSet: []ProjectStartupWrite{ProjectStartupWriteNone},
 			Reason:         ProjectOpenReasonAttachLive, ExternalAssets: assets}
 	case ProjectReopenClosed:
-		return ProjectOpenPlan{Available: true, Source: ProjectOpenSourceRegistryTopology,
-			AtomicWriteSet: []ProjectStartupWrite{ProjectStartupWriteMaterializeRegistry},
-			Reason:         ProjectOpenReasonMaterializeClosed, ExternalAssets: assets}
+		cell := DecideProjectLifecycle(ProjectLifecycleRetainedWindows, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
+		return ProjectOpenPlan{Available: cell.Available, Source: ProjectOpenSourceRegistryTopology,
+			AtomicWriteSet: slices.Clone(cell.AtomicWriteSet),
+			Reason:         ProjectOpenReasonMaterializeClosed, ExternalAssets: cell.ExternalAssets}
 	case ProjectReopenDeletedWithSnapshot:
-		return ProjectOpenPlan{Available: true, Source: ProjectOpenSourceSnapshot,
-			AtomicWriteSet: []ProjectStartupWrite{ProjectStartupWriteCreateProject,
-				ProjectStartupWriteRestoreSnapshotGraph},
-			Reason: ProjectOpenReasonRestoreSnapshot, NewProjectUID: true, ExternalAssets: assets}
+		cell := DecideProjectLifecycle(ProjectLifecycleDeleted, ProjectLifecycleContinue, ProjectLifecyclePreconditions{UsableSnapshot: true})
+		return ProjectOpenPlan{Available: cell.Available, Source: ProjectOpenSourceSnapshot,
+			AtomicWriteSet: slices.Clone(cell.AtomicWriteSet), Reason: ProjectOpenReasonRestoreSnapshot,
+			NewProjectUID: cell.ProjectUID == ProjectUIDCreated, ExternalAssets: cell.ExternalAssets}
 	case ProjectReopenDeletedWithoutSnapshot:
-		return ProjectOpenPlan{Available: false, Source: ProjectOpenSourceNone,
-			AtomicWriteSet: []ProjectStartupWrite{ProjectStartupWriteNone},
-			Reason:         ProjectOpenReasonNoSnapshot, ExternalAssets: assets}
+		cell := DecideProjectLifecycle(ProjectLifecycleDeleted, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
+		return ProjectOpenPlan{Available: cell.Available, Source: ProjectOpenSourceNone,
+			AtomicWriteSet: slices.Clone(cell.AtomicWriteSet), Reason: ProjectOpenReasonNoSnapshot,
+			NewProjectUID: false, ExternalAssets: cell.ExternalAssets}
 	default:
 		return invalid
 	}

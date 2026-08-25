@@ -2376,7 +2376,7 @@ func switchPickerFooter(ui, status string, homeDir func() (string, error), looku
 	if ui == switchUISidebar {
 		footer := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
 			{ActionID: "Sidebar:PinProject", Label: "pin project"},
-			{ActionID: "Sidebar:KillSession", Label: "kill session"},
+			{ActionID: "Sidebar:KillSession", Label: "stop runtime; keep Project UID/topology"},
 		})
 		if status != "" {
 			footer += " | " + status
@@ -3162,7 +3162,7 @@ func printSwitchUsage(w io.Writer) {
 	fmt.Fprintln(w, "  --ui string   Candidate surface to prepare (popup or sidebar) (default \"popup\")")
 	fmt.Fprintln(w, "")
 	fmt.Fprintln(w, "Picker Actions:")
-	fmt.Fprintln(w, "  ctrl-x        Kill the focused existing session and reopen the picker")
+	fmt.Fprintln(w, "  ctrl-x        Stop only the focused Project runtime, preserve its Project UID and desired Window/Pane topology, and reopen the picker")
 	fmt.Fprintln(w, "  alt-p         Toggle a pin on the focused candidate and reopen the picker")
 }
 

@@ -27,7 +27,12 @@ type managedRuntimeStopTarget struct {
 // servers if a logical alias were retargeted between reads.
 type managedRuntimeStopAuthority func(context.Context, coremetadata.Kind, string, string) (bool, error)
 
-func executeManagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, target managedRuntimeStopTarget, authoritative managedRuntimeStopAuthority) error {
+func executeManagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, target managedRuntimeStopTarget, authoritative managedRuntimeStopAuthority) (err error) {
+	defer func() {
+		if err != nil {
+			err = wrapProjectLifecycleError(coremetadata.ProjectLifecycleStop, "runtime-stop", target.RootUID, target.RootUID, err)
+		}
+	}()
 	if runner == nil || authoritative == nil || exactTmuxHandle(target.SessionID, "$") == "" || strings.TrimSpace(target.RootUID) == "" {
 		return errors.New("managed runtime stop requires exact session, root UID, route, and Registry authority")
 	}
@@ -109,8 +114,21 @@ func managedRuntimeStopRegistryAuthority(load func() (coremetadata.Registry, err
 		}
 		switch kind {
 		case coremetadata.KindProject:
-			_, ok := registry.Project(uid)
-			return ok, nil
+			project, ok := registry.Project(uid)
+			if !ok {
+				return false, nil
+			}
+			state := coremetadata.ProjectLifecycleRetainedWindows
+			if len(registry.WindowsOf(project.Metadata.UID)) == 0 {
+				state = coremetadata.ProjectLifecycleZeroWindows
+			}
+			decision := coremetadata.DecideProjectLifecycle(state, coremetadata.ProjectLifecycleStop, coremetadata.ProjectLifecyclePreconditions{})
+			if err := requireProjectLifecyclePlan(decision, coremetadata.ProjectLifecycleOperationStop,
+				coremetadata.ProjectUIDPreserved, coremetadata.ProjectDescendantUIDsPreserved,
+				coremetadata.ProjectStartupWriteStopRuntime); err != nil {
+				return false, nil
+			}
+			return true, nil
 		case coremetadata.KindControlSession:
 			control, ok := registry.ControlSession(uid)
 			return ok && control.Spec.Session == sessionName, nil

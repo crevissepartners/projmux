@@ -489,12 +489,20 @@ var routes = []Route{
 		// destructive verb. Naming the scope in the string it prints is what
 		// makes the drift loud instead.
 		Usage: []string{
+			"projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]",
 			"projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 			"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 			"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 		},
-		Canonical: []string{"delete window", "delete pane", "delete agent", "delete notification", "delete snapshot"},
+		Canonical: []string{"delete project", "delete window", "delete pane", "delete agent", "delete notification", "delete snapshot"},
 		Children: []Route{
+			{
+				Name:      "project",
+				Summary:   "Explicitly unregister Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime",
+				Aliases:   []string{"projects"},
+				Usage:     []string{"projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]"},
+				Canonical: []string{"delete project"},
+			},
 			{
 				Name:      "window",
 				Summary:   "Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry",

@@ -71,10 +71,11 @@ step, never a silent no-op.
     `Closed Project startup` optionally shows exactly two actions.
     `Continue project` materializes the Project's current Registry desired state
     and then moves the client. `Open fresh` confirms exact counts,
-    preserves the canonical Project Window and shell Pane UID/recipe, and removes
-    every other target descendant, reservation, and conversation pointer before
-    ordinary materialization. Esc returns to Projects. Neither action deletes or
-    rewrites snapshots. The saved file keeps its `sidebar-startup-picker` spelling.
+    atomically replaces the old Project graph with a new Project UID and a new
+    canonical Window/shell UID pair, and leaves exactly one same-root claimant
+    before ordinary materialization. Esc returns to Projects. Neither action
+    deletes or rewrites snapshots, root, Git, or worktree data. The saved file
+    keeps its `sidebar-startup-picker` spelling.
 - **AI** — `AI` is a product category, never an addressable resource.
   - `Default launch target [Choice]` — an Agent Provider, a Shell Pane, or
     choose-at-launch. It is a keybinding/picker preference and does not weaken

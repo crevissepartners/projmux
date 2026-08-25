@@ -612,7 +612,7 @@ func TestSwitchCommandSupportsSidebarUI(t *testing.T) {
 	if got, want := gotRunnerOptions.Prompt, "› "; got != want {
 		t.Fatalf("runner prompt = %q, want %q", got, want)
 	}
-	if got, want := gotRunnerOptions.Footer, "Alt-P: pin project  |  Ctrl-X: kill session"; got != want {
+	if got, want := gotRunnerOptions.Footer, "Alt-P: pin project  |  Ctrl-X: stop runtime; keep Project UID/topology"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got, want := gotRunnerOptions.PreviewCommand, ""; got != want {
@@ -654,9 +654,17 @@ keys = ["K"]
 	}
 
 	got := switchPickerFooter(switchUISidebar, "", func() (string, error) { return home, nil }, func(string) string { return "" })
-	want := "Alt-P: pin project  |  K: kill session"
+	want := "Alt-P: pin project  |  K: stop runtime; keep Project UID/topology"
 	if got != want {
 		t.Fatalf("switchPickerFooter() = %q, want %q", got, want)
+	}
+	configPath := filepath.Join(home, ".config", "projmux", "config.toml")
+	if err := os.WriteFile(configPath, []byte("[ui]\nlocale = \"ko-KR\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wantKorean := "Alt-P: 프로젝트 고정  |  K: 런타임만 중지; Project UID/토폴로지 유지"
+	if got := switchPickerFooter(switchUISidebar, "", func() (string, error) { return home, nil }, func(string) string { return "" }); got != wantKorean {
+		t.Fatalf("Korean switchPickerFooter() = %q, want %q", got, wantKorean)
 	}
 }
 
@@ -1525,7 +1533,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	if got, want := fakeRunner.last.UI, switchUISidebar; got != want {
 		t.Fatalf("runner UI = %q, want %q", got, want)
 	}
-	if got, want := fakeRunner.last.Footer, "Alt-P: pin project  |  Ctrl-X: kill session"; got != want {
+	if got, want := fakeRunner.last.Footer, "Alt-P: pin project  |  Ctrl-X: stop runtime; keep Project UID/topology"; got != want {
 		t.Fatalf("runner footer = %q, want %q", got, want)
 	}
 	if got := fakeExecutor.ensureSessionName; got != "" {

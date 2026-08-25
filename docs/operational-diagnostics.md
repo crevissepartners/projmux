@@ -36,6 +36,14 @@ operation instead of recording nested outcomes. Lifecycle ownership replaces
 the generic top-level `command.outcome`; it never duplicates it. Start/outcome
 append failures are ignored and do not change the command result.
 
+Project lifecycle operator diagnostics also keep plans mutually exclusive:
+`stop`, `close-window`, `delete-project`, and `fresh` are distinct operation
+classes. Startup and unregister failures print the closed action, failing
+stage, old Project UID, and new Project UID (or `-` when absent). These opaque
+UIDs and stage labels are bounded control data; root paths, pane content,
+history, prompts, transcripts, and snapshot contents are never identity or
+intent authority.
+
 Session State mutations use one outcome-only `session-state.outcome` record
 per selected attempt. The closed operations are `session-state.save`,
 `session-state.autosave`, `session-state.restore`, and `session-state.delete`;

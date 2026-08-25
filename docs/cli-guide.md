@@ -375,7 +375,9 @@ Agent is retained Offline with its conversation identity. For a last Pane, that 
 matching `window-unlinked` hook removes the Window; a final Project Window also
 removes its Window descendants while retaining the exact Project uid, root,
 reservation, pins, snapshots, and external assets as a valid zero-Window
-Project. Shell and Claude/Codex clean exit have the same result; `/exit`, pane
+Project. Managed runtime Stop is different: it stops only the exact runtime and
+keeps the complete desired Project/Window/Pane graph closed for a same-UID
+Continue. Shell and Claude/Codex clean exit have the same result; `/exit`, pane
 content, prompt, history, and transcript are never parsed. `abnormal`,
 `killed`, `unknown`, stale/resumed bindings, empty or unavailable inventory,
 permission failure, and foreign-host/window observations keep their diagnostic
@@ -392,7 +394,10 @@ absence-only migration authority and is never auto-deleted. Recover it with the
 canonical exact route, `projmux delete window uid:<window-uid> --socket <name>
 --yes` (or the corresponding `--socket-path`/inherited absolute `$TMUX` route).
 Deleting a Project's last exact Window retains the Project with zero Windows;
-explicit `delete project` remains the unregister operation.
+within the runtime/startup lifecycle table, explicit `delete project --yes` is
+the unregister operation. Runtime absence, managed Stop, ordinary Window close,
+and Fresh never invoke the separately scoped filesystem-missing `prune project`
+administrative policy.
 
 Resource-backed Agent create accepts provider-neutral `--cwd <absolute>` and
 repeatable `--add-dir <absolute>`. Explicit paths must exist, resolve without a
@@ -531,16 +536,15 @@ activation is pinned to the session the open targets, so a Project whose
 Registry projects a different session name is refused instead of populating a
 session the open never reaches. The closed-Project startup screen has exactly
 two neutral actions. `Continue project` materializes current Registry desired
-state; after a final-root exit it is available only when the exact saved
-snapshot is usable, and then recreates that topology under a new Project uid
-without rewriting the snapshot. An unavailable or unusable snapshot is an
-explicit zero-write refusal with no fresh fallback. `Open fresh` is one step
-with no danger styling, confirmation, or delete counts: it atomically retains
-the same Project and canonical Window UID, removes Agent and extra descendants,
-reuses an exact direct shell or creates the minimum one, and hands off only
-after ordinary materialization. A second pass is a Registry byte-level no-op.
-The root, git/worktrees, trust decision, unrelated roots, and snapshot bytes
-remain unchanged by both actions.
+state with the same Project UID. A retained graph keeps descendant UIDs; a
+zero-Window Project atomically receives a new canonical Window/shell UID chain.
+A deleted Project may use only the exact usable snapshot compatibility path;
+an unavailable Continue is an explicit zero-write refusal with no Fresh
+fallback. `Open fresh` is one step with no danger styling, confirmation, or
+delete counts: it atomically replaces the same-root graph with a new Project
+UID and new canonical Window/shell UIDs, then hands off only after ordinary
+materialization. A repeat replaces identity again. The root, git/worktrees,
+trust decision, unrelated roots, and snapshot bytes remain unchanged.
 
 Materialization launches or resumes declared Agents through the canonical
 provider/trust path and creates their managed Agent-owned Panes. An individual
@@ -1859,9 +1863,9 @@ human configuration work should prefer `config render` and `config apply`.
   `Continue project` and `Open fresh`; Esc returns to Projects. `Continue
   project` restores a deleted Project only from its usable exact snapshot and
   otherwise refuses with zero Registry writes. `Open fresh` is a neutral,
-  confirmation-free one-step action that retains the canonical Project/Window
-  identity, removes extra/Agent descendants, and converges to one exact shell.
-  Repeating it changes no Registry bytes. Neither action modifies snapshot
+  confirmation-free one-step action that atomically replaces the Project with
+  a new Project/Window/shell UID chain and one same-root claimant. Repeating it
+  allocates another new identity. Neither action modifies snapshot
   bytes, the project directory, git/worktrees, unrelated roots, or trust state.
 - `quit` — open an action picker with `Quit projmux` and `Cancel`. Selecting
   `Quit projmux` terminates only a `tmux -L projmux` runtime whose global

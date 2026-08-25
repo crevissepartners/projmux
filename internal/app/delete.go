@@ -23,9 +23,10 @@ var deleteKinds = cli.ChildSpellings("delete")
 // registry. `notification` and `snapshot` are parity aliases over the existing
 // queue and snapshot handlers instead.
 var deleteRegistryKinds = map[string]coremetadata.Kind{
-	"window": coremetadata.KindWindow,
-	"pane":   coremetadata.KindPane,
-	"agent":  coremetadata.KindAgent,
+	"project": coremetadata.KindProject,
+	"window":  coremetadata.KindWindow,
+	"pane":    coremetadata.KindPane,
+	"agent":   coremetadata.KindAgent,
 }
 
 // deleteCommand implements the canonical `delete` verb.
@@ -282,6 +283,9 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	plan.Unnamed = implicit
 	plan.Implicit = implicit && !*all
 	plan.ExactUID = explicitUIDTargetRefs(flags.targetRefs())
+	if kind == coremetadata.KindProject {
+		return c.runProjectDelete(spelling, plan, resolution, *dryRun, *yes, stdout)
+	}
 
 	target, err := resolveDeleteTarget(spelling, deleteSocketFlags{socket: *socket, socketPath: *socketPath}, c.lookupEnv)
 	if err != nil {
@@ -535,6 +539,67 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	return nil
 }
 
+// runProjectDelete is the explicit unregister cell of the Project lifecycle
+// table. It performs one Registry-only cascade and deliberately does not stop a
+// runtime, close a Window, or touch the root, Git/worktree, or snapshot stores.
+func (c *deleteCommand) runProjectDelete(spelling string, plan deletePlan, resolution selector.Resolution, dryRun, yes bool, stdout io.Writer) error {
+	if dryRun {
+		return writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, explicitTmuxTarget{}, true, false)
+	}
+	prompt := fmt.Sprintf("%s will unregister %d Project%s and %d descendant Registry resources; runtime and external assets are preserved",
+		spelling, len(plan.Targets), plural(len(plan.Targets)), plan.Cascades())
+	refusal := fmt.Sprintf("%s needs confirmation. Re-run with --yes, or with --dry-run to review the Registry-only plan first.", spelling)
+	if err := c.confirm.confirm(yes, prompt, refusal, stdout); err != nil {
+		return err
+	}
+	oldUIDs := resolution.UIDs()
+	if err := c.store.mutate(coremetadata.KindProject, oldUIDs, func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		if current := buildDeletePlan(*working, coremetadata.KindProject, resolution).signature(); current != plan.signature() {
+			return errors.New("delete project: the unregister plan changed between preflight and execution; nothing was deleted")
+		}
+		candidate := working.Clone()
+		for _, uid := range oldUIDs {
+			project, ok := working.Project(uid)
+			if !ok {
+				return fmt.Errorf("delete project: Project uid %q disappeared before state-table validation", uid)
+			}
+			state := coremetadata.ProjectLifecycleRetainedWindows
+			descendants := coremetadata.ProjectDescendantUIDsRemoved
+			if len(working.WindowsOf(project.Metadata.UID)) == 0 {
+				state = coremetadata.ProjectLifecycleZeroWindows
+				descendants = coremetadata.ProjectDescendantUIDsAbsent
+			}
+			decision := coremetadata.DecideProjectLifecycle(state, coremetadata.ProjectLifecycleDeleteProject, coremetadata.ProjectLifecyclePreconditions{})
+			if err := requireProjectLifecyclePlan(decision, coremetadata.ProjectLifecycleOperationDeleteProject,
+				coremetadata.ProjectUIDRemoved, descendants, coremetadata.ProjectStartupWriteDeleteProjectGraph); err != nil {
+				return err
+			}
+			if err := mutator.DeleteProject(&candidate, uid); err != nil {
+				return err
+			}
+		}
+		if err := candidate.Validate(); err != nil {
+			return err
+		}
+		*working = candidate
+		return nil
+	}); err != nil {
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "registry-unregister", strings.Join(oldUIDs, ","), "", err)
+	}
+	if err := writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, explicitTmuxTarget{}, false, false); err != nil {
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "result-write", strings.Join(oldUIDs, ","), "", err)
+	}
+	_, err := fmt.Fprintf(stdout, "operation=delete-project stage=registry-unregister old_uid=%s new_uid=%s runtime=preserved external-assets=preserved\n",
+		strings.Join(oldUIDs, ","), absentProjectLifecycleUID)
+	if err != nil {
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "result-write", strings.Join(oldUIDs, ","), "", err)
+	}
+	if err := flushDeleteResult(stdout); err != nil {
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "result-flush", strings.Join(oldUIDs, ","), "", err)
+	}
+	return nil
+}
+
 // explicitUIDTargetRefs reports whether the operator named the complete target
 // set with opaque uid references. Enclosing scope flags may still be present;
 // they only constrain an already exact identity and cannot widen it.
@@ -570,6 +635,8 @@ func plural(n int) string {
 // deleteResource routes one uid onto the mutator that owns its cascade.
 func deleteResource(registry *coremetadata.Registry, mutator coremetadata.Mutator, kind coremetadata.Kind, uid string) error {
 	switch kind {
+	case coremetadata.KindProject:
+		return mutator.DeleteProject(registry, uid)
 	case coremetadata.KindWindow:
 		return mutator.DeleteWindow(registry, uid)
 	case coremetadata.KindAgent:
@@ -637,6 +704,11 @@ func buildDeletePlan(registry coremetadata.Registry, kind coremetadata.Kind, res
 func cascadeOf(registry coremetadata.Registry, kind coremetadata.Kind, uid string) []deleteDescendant {
 	var out []deleteDescendant
 	switch kind {
+	case coremetadata.KindProject:
+		for _, window := range registry.WindowsOf(uid) {
+			out = append(out, deleteDescendant{Kind: coremetadata.KindWindow, UID: window.Metadata.UID, Name: window.Metadata.Name})
+			out = append(out, cascadeOf(registry, coremetadata.KindWindow, window.Metadata.UID)...)
+		}
 	case coremetadata.KindWindow:
 		for _, agent := range registry.AgentsOf(uid) {
 			out = append(out, deleteDescendant{Kind: coremetadata.KindAgent, UID: agent.Metadata.UID, Name: agent.Metadata.Name})

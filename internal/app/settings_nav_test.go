@@ -1027,7 +1027,8 @@ func TestSettingsActionDetailProjectsAgentAndAnchorSemantics(t *testing.T) {
 		{"ai-split-right", []string{"default launch target", "current Pane %N transport id (explicit split target"}},
 		{"AIResumePickerToggle", []string{"Agent", "resume one existing Offline or Failed Agent", "never creates an Agent"}},
 		{"new-window", []string{"Window", "new Window with its initial Pane"}},
-		{"Sidebar:KillSession", []string{"Project", "Project metadata is kept"}},
+		{"Sidebar:KillSession", []string{"Project", "stop only the Project runtime", "Project UID", "desired Window/Pane topology"}},
+		{"SessionPopup:KillSession", []string{"Session", "stop only the runtime Session", "managed Registry identity", "desired topology"}},
 	} {
 		action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), tc.id)
 		if !ok {

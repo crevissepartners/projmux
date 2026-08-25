@@ -142,6 +142,7 @@ var canonicalRoutes = []CanonicalRoute{
 	{Spelling: "reconcile registry", Summary: "Plan Registry state-loss recovery with zero writes, then restore one explicitly named verified source", Sources: []string{"reconcile"}},
 
 	// delete / restore
+	{Spelling: "delete project", Summary: "Unregister a Project and its Registry graph while preserving runtime and external assets", Sources: []string{"delete"}},
 	{Spelling: "delete window", Summary: "Delete a Window and its descendants", Sources: []string{"delete"}},
 	// The live binding half is a feature the runtime materialization track owns:
 	// the handler is registry-only today and makes zero tmux calls, so the live

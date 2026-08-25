@@ -212,6 +212,45 @@ func TestClosedProjectStartupWithoutDesiredTopologyStaysOnEnsureSession(t *testi
 	}
 }
 
+func TestZeroWindowContinuePreservesProjectAndAllocatesCanonicalWindowShellUIDs(t *testing.T) {
+	_, store, _, root, _ := newProjectStartupTopologyFixture(t)
+	mutator := store.mutator()
+	for _, window := range store.registry.WindowsOf("prj-beta") {
+		if err := mutator.DeleteWindow(&store.registry, window.Metadata.UID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	projectBefore, ok := store.registry.Project("prj-beta")
+	if !ok || len(store.registry.WindowsOf(projectBefore.Metadata.UID)) != 0 {
+		t.Fatalf("zero-Window fixture = %+v", store.registry)
+	}
+
+	starter := &registryProjectFreshStarter{resources: store.store()}
+	opened, err := starter.ContinueProject(context.Background(), root, "beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened.project.Metadata.UID != projectBefore.Metadata.UID || !opened.bootstrapped || opened.materializeTopology {
+		t.Fatalf("zero-Window Continue = %+v, want same Project with canonical first-session bootstrap", opened)
+	}
+	projectAfter, ok := store.registry.Project("prj-beta")
+	if !ok || projectAfter.Metadata.UID != projectBefore.Metadata.UID {
+		t.Fatalf("Project identity after Continue = %+v", projectAfter)
+	}
+	windows := store.registry.WindowsOf(projectAfter.Metadata.UID)
+	if len(windows) != 1 || windows[0].Metadata.UID == "" {
+		t.Fatalf("canonical Window after Continue = %+v", windows)
+	}
+	panes := store.registry.PanesOf(windows[0].Metadata.UID)
+	if len(panes) != 1 || panes[0].Metadata.UID == "" || panes[0].Spec.Role != coremetadata.PaneRoleShell {
+		t.Fatalf("canonical shell after Continue = %+v", panes)
+	}
+	if windows[0].Spec.AnchorPaneRef != panes[0].Metadata.UID || windows[0].Spec.DefaultShellPaneRef != panes[0].Metadata.UID ||
+		projectAfter.Spec.PrimaryWindowRef != windows[0].Metadata.UID {
+		t.Fatalf("canonical refs Project=%+v Window=%+v Pane=%+v", projectAfter, windows[0], panes[0])
+	}
+}
+
 // TestClosedProjectStartupRefusesForeignSessionProjection is acceptance 3 at the
 // preflight: when the Registry projects a different session name than the one the
 // open targets, materializing it would populate a session the client never moves

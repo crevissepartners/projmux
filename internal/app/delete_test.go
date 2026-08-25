@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,6 +44,139 @@ func newTestDeleteCommand(store *fakeResourceStore, interactive bool, answer boo
 		// developer happens to be attached to.
 		lookupEnv:      func(name string) string { return testDeleteEnvironment[name] },
 		newOperationID: func() (string, error) { return "op-delete", nil },
+	}
+}
+
+func TestDeleteProjectIsTheOnlyRegistryUnregisterAndPreservesExternalAssets(t *testing.T) {
+	root := t.TempDir()
+	assets := map[string][]byte{
+		filepath.Join(root, ".git", "HEAD"):                           []byte("ref: refs/heads/main\n"),
+		filepath.Join(root, ".git", "worktrees", "feature", "gitdir"): []byte("/tmp/feature/.git\n"),
+		filepath.Join(root, ".projmux", "layouts", "saved.toml"):      []byte("schemaVersion = 1\n"),
+	}
+	for path, contents := range assets {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, contents, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	store := freshStartFixtureStore(t)
+	project, _ := store.registry.Project("prj-alpha")
+	project.Spec.Root = root
+	store.dirs[root] = true
+	windows := newFixtureWindowDeleteRuntime()
+	panes := newFixturePaneDeleteRuntime()
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.windows, cmd.panes = windows, panes
+
+	stdout, stderr, err := runRoute(t, cmd, "project", "uid:prj-alpha", "--yes")
+	if err != nil {
+		t.Fatalf("delete project: %v (stderr %q)", err, stderr)
+	}
+	if _, ok := store.registry.Project("prj-alpha"); ok {
+		t.Fatal("explicit delete project retained the Project")
+	}
+	for _, uid := range []string{"win-alpha-main", "win-alpha-review", "pan-alpha-zsh", "pan-alpha-log", "pan-alpha-codex", "pan-alpha-review", "agt-alpha-codex"} {
+		if freshStartRegistryHasUID(store.registry, uid) {
+			t.Fatalf("explicit delete project retained descendant %s", uid)
+		}
+	}
+	if sibling, ok := store.registry.Project("prj-beta"); !ok || sibling.Metadata.UID != "prj-beta" {
+		t.Fatalf("unrelated graph changed: %+v", sibling)
+	}
+	if windows.preflights != 0 || panes.preflights != 0 || len(windows.killed) != 0 || len(panes.killed) != 0 {
+		t.Fatalf("delete project touched runtime: windows=%+v panes=%+v", windows, panes)
+	}
+	if !strings.Contains(stdout, "operation=delete-project stage=registry-unregister old_uid=prj-alpha new_uid=-") {
+		t.Fatalf("delete project result = %q", stdout)
+	}
+	for path, want := range assets {
+		got, readErr := os.ReadFile(path)
+		if readErr != nil || !bytes.Equal(got, want) {
+			t.Fatalf("external asset %s changed: bytes=%q err=%v", path, got, readErr)
+		}
+	}
+	if info, statErr := os.Stat(root); statErr != nil || !info.IsDir() {
+		t.Fatalf("Project root changed: info=%v err=%v", info, statErr)
+	}
+}
+
+func TestDeleteProjectDryRunHasZeroWritesAndKeepsGraph(t *testing.T) {
+	store := freshStartFixtureStore(t)
+	before := store.snapshot()
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	stdout, _, err := runRoute(t, cmd, "project", "alpha", "--dry-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.writes != 0 || store.snapshot() != before {
+		t.Fatalf("delete project dry-run changed Registry: writes=%d", store.writes)
+	}
+	if !strings.Contains(stdout, "dry-run") || !strings.Contains(stdout, "project/alpha uid=prj-alpha") {
+		t.Fatalf("delete project dry-run output=%q", stdout)
+	}
+}
+
+func TestDeleteZeroWindowProjectConsumesExplicitUnregisterCell(t *testing.T) {
+	store := freshStartFixtureStore(t)
+	mutator := store.mutator()
+	for _, window := range store.registry.WindowsOf("prj-gone") {
+		if err := mutator.DeleteWindow(&store.registry, window.Metadata.UID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	stdout, _, err := runRoute(t, cmd, "project", "uid:prj-gone", "--yes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.registry.Project("prj-gone"); ok {
+		t.Fatal("explicit zero-Window Project unregister retained the Project")
+	}
+	if !strings.Contains(stdout, "operation=delete-project stage=registry-unregister old_uid=prj-gone new_uid=-") {
+		t.Fatalf("zero-Window delete result=%q", stdout)
+	}
+}
+
+func TestDeleteProjectPostCommitWriteFailureReportsActionStageAndUIDs(t *testing.T) {
+	store := freshStartFixtureStore(t)
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	err := cmd.Run([]string{"project", "uid:prj-alpha", "--yes"}, failingWriter{}, io.Discard)
+	if err == nil {
+		t.Fatal("delete project with failing output = nil, want a diagnostic error")
+	}
+	for _, want := range []string{
+		"action=delete-project", "stage=result-write", "old_uid=prj-alpha", "new_uid=-", "preview rejected",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("delete project output failure = %q, want %q", err, want)
+		}
+	}
+	if _, ok := store.registry.Project("prj-alpha"); ok || store.writes != 1 {
+		t.Fatalf("post-commit output failure changed commit ownership: project exists=%t writes=%d", ok, store.writes)
+	}
+}
+
+func TestDeleteProjectPostCommitFlushFailureReportsActionStageAndUIDs(t *testing.T) {
+	store := freshStartFixtureStore(t)
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	stdout := &deleteFlushBuffer{err: errors.New("injected project flush failure")}
+	err := cmd.Run([]string{"project", "uid:prj-alpha", "--yes"}, stdout, io.Discard)
+	if err == nil {
+		t.Fatal("delete project with failing flush = nil, want a diagnostic error")
+	}
+	for _, want := range []string{
+		"action=delete-project", "stage=result-flush", "old_uid=prj-alpha", "new_uid=-", "injected project flush failure",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("delete project flush failure = %q, want %q", err, want)
+		}
+	}
+	if _, ok := store.registry.Project("prj-alpha"); ok || store.writes != 1 || !stdout.flushed {
+		t.Fatalf("post-commit flush failure changed commit ownership: project exists=%t writes=%d flushed=%t", ok, store.writes, stdout.flushed)
 	}
 }
 
@@ -1201,7 +1336,7 @@ func TestDeleteValidationFailuresLeaveZeroMutations(t *testing.T) {
 		{name: "label filter empties the set", args: []string{"pane", "zsh", "--project", "alpha", "--window", "main", "--selector", "role=nosuch", "--yes"}, want: "matched no panes"},
 		{name: "unknown project scope", args: []string{"pane", "zsh", "--project", "nosuch", "--yes"}, want: "--project nosuch"},
 		{name: "comma is never split", args: []string{"pane", "zsh,log", "--project", "alpha", "--window", "main", "--yes"}, want: "matched no panes"},
-		{name: "unknown kind", args: []string{"project", "alpha", "--yes"}, want: "not available"},
+		{name: "unknown kind", args: []string{"widget", "alpha", "--yes"}, want: "not available"},
 		{name: "no kind", args: nil, want: "delete requires a resource kind"},
 		{name: "unknown flag", args: []string{"pane", "--bogus"}, want: "flag provided but not defined"},
 	} {
@@ -2075,11 +2210,12 @@ func TestDeleteWindowStoreFailureReportsExactRetainedDrift(t *testing.T) {
 type deleteFlushBuffer struct {
 	bytes.Buffer
 	flushed bool
+	err     error
 }
 
 func (b *deleteFlushBuffer) Flush() error {
 	b.flushed = true
-	return nil
+	return b.err
 }
 
 func TestDeleteWindowSelfTargetCommitsAndFlushesBeforeQueue(t *testing.T) {

@@ -1253,6 +1253,23 @@ Lifecycle trigger convergence:
   receipt is never deleted from absence alone; its fixed diagnostic recovery is
   an exact canonical `delete window uid:<window-uid>` on the named socket. No
   pane content, command, prompt, history, or transcript is an authority input.
+- Phase 2 gives Project startup and stop one closed lifecycle table. The input
+  states are retained-window, zero-window, and deleted; the actions are Stop,
+  Continue, Fresh, and explicit Project delete. Stop writes only the exact
+  managed runtime and preserves every desired UID. Continue on retained-window
+  writes only runtime and materializes the same descendant UIDs; Continue on
+  zero-window atomically allocates one canonical Window/shell below the same
+  Project UID before runtime materialization. The deleted+Continue cell accepts
+  only a usable-snapshot precondition, then atomically creates a new Project UID
+  and restores new descendant UIDs from that snapshot; without the precondition
+  the same cell is an unavailable zero-write refusal and never falls back to
+  Fresh. Fresh atomically replaces either
+  registered state with a new Project/Window/shell UID chain and exactly one
+  same-root claimant. Within this runtime/startup lifecycle table, canonical
+  `delete project --yes` alone unregisters the Project graph; the separately
+  scoped filesystem-missing `prune project` administrative policy is unchanged.
+  Ordinary close-window is a separate operation class, so no one plan can also
+  be stop, Fresh, or Project delete.
 - The creation hooks stay synchronous so a newly bindable Window or Pane has a
   registry binding before the creating tmux command returns and before the next
   implicit read can run; the exit hooks stay backgrounded so closing a pane never
@@ -1654,11 +1671,11 @@ Explicit Registry topology materialization:
   desired Windows remain Agent-anchored and acquire a shell only through the
   ordinary materializer. Source snapshot bytes and unrelated roots are never
   rewritten, and a second projection is byte-stable.
-- `Open fresh` keeps the Project and canonical Window identity, deletes Agent
-  and extra descendants, and converges that Window to one direct shell used as
-  both anchor and default. It reuses a valid direct shell or allocates exactly
-  one when the Window is Agent-only. The second pass preserves the exact
-  Project/Window/shell UID chain and writes zero Registry bytes.
+- `Open fresh` replaces the exact same-root Project graph in one Registry
+  commit. It always allocates a new Project UID plus one new canonical Window
+  and direct shell UID, whether the old Project retained Windows or had zero.
+  The preimage remains the durable recovery state when the replacement commit
+  fails, and successful validation requires exactly one same-root claimant.
 - Exact-socket reconciliation merges scoped results by UID at their existing
   global Registry positions. Positive mirrored evidence may change only the
   selected socket's owned rows; sibling sockets and other-host-only desired
