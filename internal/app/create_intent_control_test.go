@@ -497,9 +497,11 @@ func TestPopupCanonicalFailureIsProjectedToExactOriginatingClient(t *testing.T) 
 	}
 	cmd.panes = diagnosticPaneCreator{err: errors.New("generic create refusal"), detail: "exact owner-chain conflict"}
 	cmdRecorder(cmd).commands = nil
-	err := cmd.createShellPane(canonicalProducerProviderPicker, "right")
-	if err == nil || err.Error() != "generic create refusal" {
-		t.Fatalf("returned error = %v, want original refusal", err)
+	// The refusal reaches the operator as a client message and the process
+	// exits zero: a foreground `run-shell` producer that exits non-zero makes
+	// tmux paint "returned 1" over the pane the split was launched from.
+	if err := cmd.createShellPane(canonicalProducerProviderPicker, "right"); err != nil {
+		t.Fatalf("displayed refusal escaped as an exit code: %v", err)
 	}
 	want := recordedAICommand{name: "tmux", args: []string{
 		"display-message", "-c", "/dev/pts/exact-origin", "-d", "10000",

@@ -12,6 +12,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -141,6 +142,26 @@ type App struct {
 	usage              *usagecmd.Command
 	welcome            *welcomeCommand
 	window             *windowCommand
+	// lookupEnv and interactiveRunner are the two seams the generated
+	// interactive `run-shell` guard needs: the binding's exact-client env and
+	// the tmux command that carries a converged failure back to that client.
+	// Production leaves them nil and the accessors below install the real ones.
+	lookupEnv         func(string) string
+	interactiveRunner tmuxRunner
+}
+
+func (a *App) envLookup() func(string) string {
+	if a.lookupEnv != nil {
+		return a.lookupEnv
+	}
+	return os.Getenv
+}
+
+func (a *App) interactiveFeedbackRunner() tmuxRunner {
+	if a.interactiveRunner != nil {
+		return a.interactiveRunner
+	}
+	return inttmux.ExecRunner{}
 }
 
 // New builds the default application graph.
@@ -470,8 +491,30 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 	return handlers
 }
 
-// Run dispatches the configured application commands through the Cobra root.
-func (a *App) Run(args []string, stdout, stderr io.Writer) (err error) {
+// Run dispatches one CLI invocation.
+//
+// A generated interactive `run-shell` producer is dispatched through the
+// output-channel guard instead: tmux paints a foreground job's stdout, stderr,
+// and non-zero exit as a view-mode screen over the pane the operator is working
+// in, so those three channels are consumed here and the result converges on the
+// exact client. Every other invocation -- the public CLI included -- keeps its
+// writers, its exit code, and its output byte for byte.
+//
+// The guard wraps dispatch rather than replacing its error: execute still
+// records the real outcome on the lifecycle recorder, and only what reaches
+// tmux changes.
+func (a *App) Run(args []string, stdout, stderr io.Writer) error {
+	route, client, guarded := matchInteractiveRunShellRoute(args, a.envLookup())
+	if !guarded {
+		return a.execute(args, stdout, stderr)
+	}
+	return runGuardedInteractiveRoute(a.interactiveFeedbackRunner(), route, client, func(stdout, stderr io.Writer) error {
+		return a.execute(args, stdout, stderr)
+	})
+}
+
+// execute dispatches the configured application commands through the Cobra root.
+func (a *App) execute(args []string, stdout, stderr io.Writer) (err error) {
 	if a.lifecycle != nil {
 		finish := a.lifecycle.BeginCommand()
 		defer func() { finish(err) }()

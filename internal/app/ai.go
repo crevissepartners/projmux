@@ -1235,9 +1235,11 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 	var diagnostics bytes.Buffer
 	err := c.panes.createFromIntent(intent, io.Discard, &diagnostics)
 	if err == nil {
-		if diagnostics.Len() != 0 {
-			_, _ = diagnostics.WriteTo(os.Stderr)
-		}
+		// A successful split writes nothing. The producer on the other end of
+		// this call is a foreground tmux `run-shell` job, and tmux paints
+		// whatever such a job writes -- diagnostics included -- as a view-mode
+		// screen over the pane the operator was working in. The new Pane is the
+		// feedback a successful create owes them.
 		return nil
 	}
 	reason := canonicalCreateFailureReason(err, diagnostics.String())
@@ -1245,6 +1247,11 @@ func (c *aiCommand) createPaneFromIntent(intent agentPaneIntent) error {
 		if displayErr := c.run("tmux", "display-message", "-c", intent.targetClient, "-d", "10000", reason); displayErr != nil {
 			return fmt.Errorf("%s; display canonical create failure to client %q: %v", reason, intent.targetClient, displayErr)
 		}
+		// The refusal reached the operator on the exact client that asked for
+		// the Pane. Returning it as well would exit non-zero, and tmux shows a
+		// foreground job's "returned N" in the same overlay this contract
+		// removes -- the same refusal twice, one of them on top of their work.
+		return nil
 	}
 	return err
 }

@@ -103,11 +103,16 @@ func (c *statusbarCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "click":
 		return c.runClick(args[1:], stdout, stderr)
 	case "usage-refresh":
-		if len(args) != 1 {
+		// `--client` is the only argument, and it is optional: the generated
+		// status-key binding passes the exact client so a refusal reaches the
+		// operator who pressed the key rather than whichever client tmux
+		// considers current.
+		opts, err := parseStatusbarUsageRefreshArgs(args[1:])
+		if err != nil {
 			printStatusbarUsage(stderr)
-			return usageError("statusbar usage-refresh does not accept arguments")
+			return err
 		}
-		return c.handleUsage(true, statusbarClickOptions{}, stdout, stderr)
+		return c.handleUsage(true, opts, stdout, stderr)
 	case "help", "--help", "-h":
 		printStatusbarUsage(stdout)
 		return nil
@@ -251,6 +256,20 @@ func parseStatusbarClickArgs(args []string) (string, statusbarClickOptions, erro
 	return raw, opts, nil
 }
 
+// parseStatusbarUsageRefreshArgs accepts the one optional flag the refresh key
+// carries. It reuses the click parser so both status-bar entry points read
+// `--client` identically, and refuses a positional: refresh has no range.
+func parseStatusbarUsageRefreshArgs(args []string) (statusbarClickOptions, error) {
+	raw, opts, err := parseStatusbarClickArgs(args)
+	if err != nil {
+		return statusbarClickOptions{}, err
+	}
+	if raw != "" {
+		return statusbarClickOptions{}, usageError("statusbar usage-refresh does not accept positional arguments")
+	}
+	return opts, nil
+}
+
 func (c *statusbarCommand) runClick(args []string, stdout, stderr io.Writer) error {
 	raw, opts, err := parseStatusbarClickArgs(args)
 	if err != nil {
@@ -376,25 +395,25 @@ func (c *statusbarCommand) dispatchTable() map[statusbarRangeID]func(statusbarCl
 // popup-toggle surface as the keyboard bindings so a second click/chord closes
 // the scoped popup instead of stacking another one.
 func (c *statusbarCommand) handleSession(opts statusbarClickOptions, _, stderr io.Writer) error {
-	return c.handlePopupToggleWithClient(stderr, "session", "sessionizer-sidebar", opts.ClientTTY)
+	return c.handlePopupToggleWithClient(opts, stderr, "session", "sessionizer-sidebar")
 }
 
 // handlePwd shows the current pane's path in a small popup. A plain
 // display-message toast is too easy to miss and reads like a failure because
 // tmux styles messages with the warning palette.
-func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Writer) error {
+func (c *statusbarCommand) handlePwd(opts statusbarClickOptions, _, stderr io.Writer) error {
 	if c.runner == nil {
-		return c.runTmux(stderr, "display-message", "statusbar pwd: runner unavailable")
+		return c.displayStatusbarMessage(opts, stderr, "statusbar pwd: runner unavailable")
 	}
 	ctx := context.Background()
 	out, err := c.runner.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pane_current_path}")
 	if err != nil {
 		fmt.Fprintf(stderr, "statusbar pwd: read pane path: %v\n", err)
-		return c.runTmux(stderr, "display-message", "statusbar pwd: path unavailable")
+		return c.displayStatusbarMessage(opts, stderr, "statusbar pwd: path unavailable")
 	}
 	path := strings.TrimSpace(string(out))
 	if path == "" {
-		return c.runTmux(stderr, "display-message", "statusbar pwd: path unavailable")
+		return c.displayStatusbarMessage(opts, stderr, "statusbar pwd: path unavailable")
 	}
 
 	metadata := c.statusbarPathMetadata(ctx, path)
@@ -421,40 +440,41 @@ func (c *statusbarCommand) handlePwd(_ statusbarClickOptions, _, stderr io.Write
 		return nil
 	}
 
-	return c.runTmux(stderr, "display-message", "path: "+shortenStatusbarToast(path, 180))
+	return c.displayStatusbarMessage(opts, stderr, "path: "+shortenStatusbarToast(path, 180))
 }
 
 // handleGit opens the project switcher. There is no git-specific filter
 // surface yet; the switch picker is the existing navigation surface that
 // already renders git metadata for candidates.
 func (c *statusbarCommand) handleGit(opts statusbarClickOptions, _, stderr io.Writer) error {
-	return c.handlePopupToggleWithClient(stderr, "git", "sessionizer", opts.ClientTTY)
+	return c.handlePopupToggleWithClient(opts, stderr, "git", "sessionizer")
 }
 
 func (c *statusbarCommand) handleSettings(opts statusbarClickOptions, _, stderr io.Writer) error {
-	return c.handlePopupToggleWithClient(stderr, "settings", "ai-split-settings", opts.ClientTTY)
+	return c.handlePopupToggleWithClient(opts, stderr, "settings", "ai-split-settings")
 }
 
 func (c *statusbarCommand) handleResources(opts statusbarClickOptions, _, stderr io.Writer) error {
-	return c.handlePopupToggleWithClient(stderr, "resources", resourceInspectorPopupMode, opts.ClientTTY)
+	return c.handlePopupToggleWithClient(opts, stderr, "resources", resourceInspectorPopupMode)
 }
 
-func (c *statusbarCommand) handlePopupToggleWithClient(stderr io.Writer, label, mode, clientTTY string) error {
+func (c *statusbarCommand) handlePopupToggleWithClient(opts statusbarClickOptions, stderr io.Writer, label, mode string) error {
+	clientTTY := strings.TrimSpace(opts.ClientTTY)
 	binaryPath, err := c.resolveBinary()
 	if err != nil {
-		return c.runTmux(stderr, "display-message", fmt.Sprintf("statusbar %s: cannot resolve projmux binary", label))
+		return c.displayStatusbarMessage(opts, stderr, fmt.Sprintf("statusbar %s: cannot resolve projmux binary", label))
 	}
 	if c.runner == nil {
-		return c.runTmux(stderr, "display-message", fmt.Sprintf("statusbar %s: runner unavailable", label))
+		return c.displayStatusbarMessage(opts, stderr, fmt.Sprintf("statusbar %s: runner unavailable", label))
 	}
 	args := []string{"internal", "tmux", "popup-toggle"}
-	if strings.TrimSpace(clientTTY) != "" {
-		args = append(args, "--client", strings.TrimSpace(clientTTY))
+	if clientTTY != "" {
+		args = append(args, "--client", clientTTY)
 	}
 	args = append(args, mode)
 	if _, err := c.runner.Run(context.Background(), binaryPath, args...); err != nil {
 		fmt.Fprintf(stderr, "statusbar %s: popup-toggle %s: %v\n", label, mode, err)
-		return c.runTmux(stderr, "display-message", fmt.Sprintf("statusbar %s: popup failed", label))
+		return c.displayStatusbarMessage(opts, stderr, fmt.Sprintf("statusbar %s: popup failed", label))
 	}
 	return nil
 }
@@ -463,7 +483,7 @@ func (c *statusbarCommand) handlePopupToggleWithClient(stderr io.Writer, label, 
 // per-window detail without leaving tmux. It stays a direct display-popup
 // action, not a popup-toggle mode, so the existing status key behaviour does
 // not introduce a new stacking popup surface.
-func (c *statusbarCommand) handleUsage(refresh bool, _ statusbarClickOptions, _, stderr io.Writer) error {
+func (c *statusbarCommand) handleUsage(refresh bool, opts statusbarClickOptions, _, stderr io.Writer) error {
 	ctx := context.Background()
 	if refresh {
 		if _, err := c.maybeRefreshUsage(ctx); err != nil {
@@ -497,7 +517,7 @@ func (c *statusbarCommand) handleUsage(refresh bool, _ statusbarClickOptions, _,
 	}); err == nil {
 		return nil
 	}
-	return c.runTmux(stderr, "display-message", popup.Toast)
+	return c.displayStatusbarMessage(opts, stderr, popup.Toast)
 }
 
 func (c *statusbarCommand) maybeRefreshUsage(ctx context.Context) (bool, error) {
@@ -563,15 +583,15 @@ func latestUsageCollect(values map[string]time.Time) time.Time {
 // the failure is a packaging bug, not a runtime UX glitch.
 func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io.Writer) error {
 	if c.notifyStoreFn == nil {
-		return c.runTmux(stderr, "display-message", "no notifications")
+		return c.displayStatusbarMessage(opts, stderr, "no notifications")
 	}
 	store, err := c.notifyStoreFn()
 	if err != nil {
-		return c.runTmux(stderr, "display-message", "no notifications")
+		return c.displayStatusbarMessage(opts, stderr, "no notifications")
 	}
 	entries, err := store.List()
 	if err != nil || len(entries) == 0 {
-		return c.runTmux(stderr, "display-message", "no notifications")
+		return c.displayStatusbarMessage(opts, stderr, "no notifications")
 	}
 
 	head := entries[0]
@@ -593,9 +613,9 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 	// remains as a UX signal that the focus side of the click was skipped.
 	if display := c.classifyHeadDisplayBestEffort(head); display == notifyDisplayGone || strings.TrimSpace(target) == "" {
 		if ackErr := ackFocusedNotification(store, head, entries); ackErr != nil {
-			return c.runTmux(stderr, "display-message", fmt.Sprintf("%s; ack failed: %s", notifyAckOnlyToast(notifyDisplayGone), focusFailureSummary(ackErr)))
+			return c.displayStatusbarMessage(opts, stderr, fmt.Sprintf("%s; ack failed: %s", notifyAckOnlyToast(notifyDisplayGone), focusFailureSummary(ackErr)))
 		}
-		return c.runTmux(stderr, "display-message", notifyAckOnlyToast(notifyDisplayGone))
+		return c.displayStatusbarMessage(opts, stderr, notifyAckOnlyToast(notifyDisplayGone))
 	}
 
 	binaryPath, err := c.resolveBinary()
@@ -626,14 +646,14 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 		// of a tmux error popup.
 		if isFocusTargetUnresolved(runErr) {
 			if err := ackFocusedNotification(store, head, entries); err != nil {
-				return c.runTmux(stderr, "display-message", fmt.Sprintf("notify target gone; ack failed: %s", focusFailureSummary(err)))
+				return c.displayStatusbarMessage(opts, stderr, fmt.Sprintf("notify target gone; ack failed: %s", focusFailureSummary(err)))
 			}
-			return c.runTmux(stderr, "display-message", "notify target gone; cleared")
+			return c.displayStatusbarMessage(opts, stderr, "notify target gone; cleared")
 		}
-		return c.runTmux(stderr, "display-message", fmt.Sprintf("focus failed: %s", focusFailureSummary(runErr)))
+		return c.displayStatusbarMessage(opts, stderr, fmt.Sprintf("focus failed: %s", focusFailureSummary(runErr)))
 	}
 	if err := ackFocusedNotification(store, head, entries); err != nil {
-		return c.runTmux(stderr, "display-message", fmt.Sprintf("focused; ack failed: %s", focusFailureSummary(err)))
+		return c.displayStatusbarMessage(opts, stderr, fmt.Sprintf("focused; ack failed: %s", focusFailureSummary(err)))
 	}
 	return nil
 }
@@ -1413,6 +1433,19 @@ func (c *statusbarCommand) nowTime() time.Time {
 // runTmux invokes tmux with the supplied args and swallows any error after
 // reporting it on stderr. We do not fail the whole click handler if tmux
 // declines (e.g. no client attached) — the click is best-effort UX.
+// displayStatusbarMessage shows one status action result on the exact client
+// that ran it. tmux's default target for `display-message` is whichever client
+// it considers current, which is only the invoking one while a single client is
+// attached; the status bindings carry `#{client_tty}` so a second attached
+// client never receives another operator's action result.
+func (c *statusbarCommand) displayStatusbarMessage(opts statusbarClickOptions, stderr io.Writer, message string) error {
+	args := []string{"display-message"}
+	if client := strings.TrimSpace(opts.ClientTTY); client != "" {
+		args = append(args, "-c", client)
+	}
+	return c.runTmux(stderr, append(args, message)...)
+}
+
 func (c *statusbarCommand) runTmux(stderr io.Writer, args ...string) error {
 	if err := c.runTmuxNoFallback(stderr, args...); err != nil {
 		fmt.Fprintf(stderr, "statusbar: tmux %s: %v\n", strings.Join(args, " "), err)

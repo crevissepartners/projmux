@@ -7863,9 +7863,72 @@ menu_delete_converged() {
   [[ "$pane_count" == "$expected_pane_count" ]]
 }
 
+menu_origin_pid_before="$(menu_tmux display-message -p -t "$menu_origin_pane" '#{pane_pid}')"
+menu_origin_command_before="$(menu_tmux display-message -p -t "$menu_origin_pane" '#{pane_current_command}')"
+menu_client_pane_before="$(menu_tmux display-message -p -c "$menu_client" '#{pane_id}')"
+
+# menu_assert_no_overlay is the whole C-1 assertion in one place: the origin
+# pane is not in any mode, is certainly not in view-mode, still runs the same
+# process, and the client is still looking at it.
+menu_assert_no_overlay() {
+  local label="$1"
+  local in_mode mode pid client_pane
+  in_mode="$(menu_tmux display-message -p -t "$menu_origin_pane" '#{pane_in_mode}')"
+  mode="$(menu_tmux display-message -p -t "$menu_origin_pane" '#{pane_mode}')"
+  pid="$(menu_tmux display-message -p -t "$menu_origin_pane" '#{pane_pid}')"
+  client_pane="$(menu_tmux display-message -p -c "$menu_client" '#{pane_id}')"
+  if [[ "$in_mode" != "0" ]] || [[ "$mode" == *view-mode* ]]; then
+    echo "$label put the origin pane in a mode: pane_in_mode=$in_mode pane_mode=$mode" >&2
+    menu_tmux capture-pane -p -t "$menu_origin_pane" | tail -n 20 >&2 || true
+    exit 1
+  fi
+  if [[ "$pid" != "$menu_origin_pid_before" ]]; then
+    echo "$label replaced the origin pane process: $menu_origin_pid_before -> $pid" >&2
+    exit 1
+  fi
+  if [[ "$client_pane" != "$menu_client_pane_before" ]]; then
+    echo "$label moved the client: $menu_client_pane_before -> $client_pane" >&2
+    exit 1
+  fi
+}
+
+# menu_run_producer drives one generated producer over the exact foreground
+# transport, carrying the same env prefix the keybinding renderer emits.
+menu_run_producer() {
+  local pane="$1"
+  shift
+  local command
+  command="TMUX_PANE='$pane' PROJMUX_POPUP_TARGET_CLIENT='$menu_client' '$bin'"
+  local argument
+  for argument in "$@"; do
+    command+=" '$argument'"
+  done
+  menu_tmux run-shell -t "$pane" "$command"
+}
+
+menu_client_saw() {
+  local offset="$1"
+  local text="$2"
+  tail -c "+$((offset + 1))" "$menu_client_log" | grep -aFq "$text"
+}
+
+# A menu selection is driven by the client's own key press, so the run-shell job
+# finishes a moment after the route's client message lands -- and tmux paints a
+# foreground job when it *finishes*. A negative assertion has nothing to wait
+# for, so the menu-item legs settle for a bounded moment first. The producers
+# driven through `run-shell` directly below need no settle: that command blocks
+# the invoking client until the job is done and its output displayed.
+menu_settle_run_shell() {
+  sleep 0.3
+}
+
 # Horizontal Split: a real right-click menu selection reaches managed create.
+menu_split_log_offset="$(stat -c %s "$menu_client_log")"
 menu_select_item "$menu_origin_pane" h
 smoke_wait_for "managed Horizontal Split" menu_wait_for_pane_count 2
+smoke_wait_for "Horizontal Split client message" menu_client_saw "$menu_split_log_offset" "Created Pane"
+menu_settle_run_shell
+menu_assert_no_overlay "Horizontal Split menu item"
 menu_horizontal_pane="$(menu_new_pane_except "$menu_origin_pane")"
 smoke_wait_for "Horizontal Split Registry identity" menu_pane_is_managed "$menu_horizontal_pane"
 menu_horizontal_uid="$(menu_tmux show-options -pqv -t "$menu_horizontal_pane" @projmux_pane_uid)"
@@ -7879,10 +7942,16 @@ menu_kill_log_offset="$(stat -c %s "$menu_client_log")"
 menu_select_item "$menu_horizontal_pane" X
 smoke_wait_for "canonical Horizontal Kill completion and Registry convergence" \
   menu_delete_converged "$menu_horizontal_uid" "$menu_kill_log_offset" 1
+menu_settle_run_shell
+menu_assert_no_overlay "Horizontal Kill menu item"
 
 # Vertical Split reaches the other placement through the same exact anchor.
+menu_vertical_log_offset="$(stat -c %s "$menu_client_log")"
 menu_select_item "$menu_origin_pane" v
 smoke_wait_for "managed Vertical Split" menu_wait_for_pane_count 2
+smoke_wait_for "Vertical Split client message" menu_client_saw "$menu_vertical_log_offset" "Created Pane"
+menu_settle_run_shell
+menu_assert_no_overlay "Vertical Split menu item"
 menu_vertical_pane="$(menu_new_pane_except "$menu_origin_pane")"
 smoke_wait_for "Vertical Split Registry identity" menu_pane_is_managed "$menu_vertical_pane"
 menu_vertical_uid="$(menu_tmux show-options -pqv -t "$menu_vertical_pane" @projmux_pane_uid)"
@@ -7897,6 +7966,117 @@ menu_kill_log_offset="$(stat -c %s "$menu_client_log")"
 menu_select_item "$menu_vertical_pane" X
 smoke_wait_for "canonical Vertical Kill completion and Registry convergence" \
   menu_delete_converged "$menu_vertical_uid" "$menu_kill_log_offset" 1
+menu_settle_run_shell
+menu_assert_no_overlay "Vertical Kill menu item"
+
+# ---------------------------------------------------------------------------
+# Interactive run-shell output channels: no action opens a view-mode overlay.
+#
+# tmux draws a foreground `run-shell` job's stdout, its stderr, and its
+# "'<command>' returned <n>" line in a temporary view-mode screen over the pane
+# the action ran in. A successful managed split and a successful Window
+# create/rename used to copy their canonical projection to that stdout, so the
+# operator's Codex/TUI pane was replaced by a black result screen with a
+# `[0/1452]` indicator until they closed it -- the pane and its process were
+# intact underneath, but the action read as if it had replaced them.
+#
+# This leg drives the interactive matrix against the same attached client and
+# the same managed Pane the menu selections above used, with a real long-running
+# foreground process (`sleep 600`) in the origin pane, and measures the three
+# things that would have moved: the origin pane's mode, its process, and the
+# client's focus. Every generated producer is driven through the exact transport
+# the generated config uses -- a foreground `run-shell` targeting that pane --
+# because the transport is what this contract is about.
+# ---------------------------------------------------------------------------
+
+# 1. The two confirmed producers this track was opened for. Both mutate, both
+#    report one bounded line to the exact client, and neither paints the pane.
+menu_overlay_offset="$(stat -c %s "$menu_client_log")"
+menu_run_producer "$menu_origin_pane" internal tmux window-create --client "$menu_client" --anchor "$menu_origin_pane"
+menu_assert_no_overlay "Window create"
+smoke_wait_for "Create Window client message" menu_client_saw "$menu_overlay_offset" "Created Window"
+menu_created_window="$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}' | tail -n 1)"
+if [[ "$(menu_tmux list-windows -t "$menu_session" -F '#{window_id}' | wc -l)" -lt 2 ]]; then
+  echo "Window create produced no Window" >&2
+  exit 1
+fi
+
+menu_overlay_offset="$(stat -c %s "$menu_client_log")"
+menu_run_producer "$menu_origin_pane" internal tmux window-rename --client "$menu_client" --anchor "$menu_origin_pane" -- overlay-audit
+menu_assert_no_overlay "Window rename"
+smoke_wait_for "Rename Window client message" menu_client_saw "$menu_overlay_offset" "Renamed Window: overlay-audit"
+if [[ "$(menu_tmux display-message -p -t "$menu_origin_pane" '#{window_name}')" != "overlay-audit" ]]; then
+  echo "Window rename reported success without renaming the Window" >&2
+  exit 1
+fi
+
+# 2. A confirmed pane-menu split, through the same route the right-click menu
+#    reaches, and its canonical Kill.
+menu_overlay_offset="$(stat -c %s "$menu_client_log")"
+menu_run_producer "$menu_origin_pane" internal tmux pane-menu --client "$menu_client" split-right "$menu_origin_pane"
+menu_assert_no_overlay "pane-menu split"
+smoke_wait_for "Created Pane client message" menu_client_saw "$menu_overlay_offset" "Created Pane"
+smoke_wait_for "pane-menu split pane" menu_wait_for_pane_count 2
+menu_overlay_pane="$(menu_new_pane_except "$menu_origin_pane")"
+smoke_wait_for "pane-menu split Registry identity" menu_pane_is_managed "$menu_overlay_pane"
+menu_overlay_uid="$(menu_tmux show-options -pqv -t "$menu_overlay_pane" @projmux_pane_uid)"
+menu_overlay_offset="$(stat -c %s "$menu_client_log")"
+menu_run_producer "$menu_origin_pane" internal tmux pane-menu --client "$menu_client" kill "$menu_overlay_pane"
+menu_assert_no_overlay "pane-menu kill"
+smoke_wait_for "canonical Kill convergence" menu_delete_converged "$menu_overlay_uid" "$menu_overlay_offset" 1
+
+# 3. A direct split hotkey and a status-bar action. Neither reports success in
+#    words; the proof is that the pane is untouched and the resource appeared.
+menu_run_producer "$menu_origin_pane" internal agent-pane launch-shell right
+menu_assert_no_overlay "direct shell split"
+smoke_wait_for "direct split pane" menu_wait_for_pane_count 2
+menu_direct_pane="$(menu_new_pane_except "$menu_origin_pane")"
+smoke_wait_for "direct split Registry identity" menu_pane_is_managed "$menu_direct_pane"
+menu_direct_uid="$(menu_tmux show-options -pqv -t "$menu_direct_pane" @projmux_pane_uid)"
+menu_pmx delete pane "uid:$menu_direct_uid" --yes --socket "$menu_socket" >"$menu_root/direct-delete.out"
+smoke_wait_for "direct split cleanup" menu_wait_for_pane_count 1
+
+menu_run_producer "$menu_origin_pane" internal statusbar click notify --client "$menu_client"
+menu_assert_no_overlay "status bar notify click"
+
+# 4. The failure half of the matrix. A refused action is exactly where the raw
+#    "returned N" overlay used to come from, so each of these is driven with an
+#    anchor that cannot resolve and each must still leave the pane alone.
+for menu_refusal in \
+  "internal tmux pane-menu --client $menu_client split-right %999" \
+  "internal tmux window-create --client $menu_client --anchor %999" \
+  "internal tmux popup-toggle --client $menu_client --anchor %999 sessionizer-sidebar" \
+  "internal statusbar click no-such-range --client $menu_client"; do
+  # shellcheck disable=SC2086 # the matrix rows are argv, not one word.
+  menu_run_producer "$menu_origin_pane" $menu_refusal
+  menu_assert_no_overlay "refused: $menu_refusal"
+done
+
+if [[ "$(menu_tmux display-message -p -t "$menu_origin_pane" '#{pane_current_command}')" != "$menu_origin_command_before" ]]; then
+  echo "the interactive matrix replaced the origin pane's foreground process" >&2
+  exit 1
+fi
+# The origin Window is back to the one managed Pane it started with, and that
+# Pane is still the Registry row it always was. The Window `window-create`
+# produced keeps its own Pane -- that is the resource the action was asked to
+# make -- so it is removed through the canonical route rather than asserted away.
+if [[ "$(menu_tmux list-panes -t "$menu_origin_pane" -F '#{pane_id}' | wc -l)" != "1" ]]; then
+  echo "the interactive matrix left panes in the origin Window" >&2
+  menu_tmux list-panes -t "$menu_origin_pane" -F '#{pane_id} #{pane_current_command}' >&2
+  exit 1
+fi
+menu_origin_uid="$(menu_tmux show-options -pqv -t "$menu_origin_pane" @projmux_pane_uid)"
+if [[ -z "$menu_origin_uid" ]] || ! menu_pmx get panes -o uid | grep -Fxq "$menu_origin_uid"; then
+  echo "the interactive matrix cost the origin Pane its Registry identity" >&2
+  exit 1
+fi
+menu_created_window_uid="$(menu_tmux show-options -wqv -t "$menu_created_window" @projmux_window_uid)"
+if [[ -n "$menu_created_window_uid" ]]; then
+  menu_pmx delete window "uid:$menu_created_window_uid" --yes --socket "$menu_socket" \
+    >"$menu_root/overlay-window-delete.out"
+else
+  menu_tmux kill-window -t "$menu_created_window"
+fi
 
 menu_cleanup_target="$menu_socket_path"
 menu_cleanup
@@ -7905,7 +8085,7 @@ if "${menu_env[@]}" tmux -S "$menu_cleanup_target" list-sessions >/dev/null 2>&1
   exit 1
 fi
 trap smoke_cleanup_env EXIT
-echo ">> managed pane-menu e2e passed: pane=$menu_origin_pane project=$menu_project_uid socket=$menu_socket path=$menu_socket_path cleanup=$menu_cleanup_target inherited=unset"
+echo ">> managed pane-menu and interactive run-shell output e2e passed: pane=$menu_origin_pane project=$menu_project_uid overlay-matrix=none socket=$menu_socket path=$menu_socket_path cleanup=$menu_cleanup_target inherited=unset"
 
 # Declarative contract stabilization Phase 12: drive the four Home popup
 # terminal paths through the built binary on an exact, config-apply-declared
