@@ -56,6 +56,12 @@ func (i *exactPaneExitInventory) CleanupLifecycleDeadPane(_ context.Context, tar
 	}
 	delete(i.uids, target.PaneUID)
 	delete(i.dead, target.PaneUID)
+	if target.EndsWindow {
+		delete(i.windows, target.WindowUID)
+		if i.windowSessions[target.SessionID] > 0 {
+			i.windowSessions[target.SessionID]--
+		}
+	}
 	return nil
 }
 
@@ -209,12 +215,13 @@ func prepareLastBetaProjectCascade(t *testing.T) (*fakeResourceStore, *exactPane
 	}
 	inventory := &exactPaneExitInventory{
 		uids: live, dead: map[string]bool{pane.Metadata.UID: true}, windowUID: "win-beta-main",
+		windows: map[string]bool{"win-beta-main": true}, windowSessions: map[string]int{"$1": 1},
 	}
 	event := exactPaneExitDirty(receipt)
 	return store, inventory, event
 }
 
-func TestLastPaneExitRetainsProjectWindowAndCreatesLiveReplacementBeforeCommit(t *testing.T) {
+func TestLastPaneExitAndMatchingWindowUnlinkDeleteWindowAndRetainProject(t *testing.T) {
 	t.Parallel()
 	store, inventory, event := prepareLastBetaProjectCascade(t)
 	alphaBefore, _ := store.registry.Project("prj-alpha")
@@ -227,37 +234,44 @@ func TestLastPaneExitRetainsProjectWindowAndCreatesLiveReplacementBeforeCommit(t
 	managed, _ := pins.ProjectPin("proj-beta")
 	other, _ := pins.CandidatePin("/srv/other")
 	pinStore := &lifecyclePinStore{set: pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{other, managed}}}
-	inventory.prepareHook = func(replacements []paneReplacementShell) {
-		if _, ok := store.registry.Pane(replacements[0].Pane.Metadata.UID); ok {
-			t.Fatal("replacement Registry row committed before its live shell was prepared")
-		}
-		if _, ok := store.registry.Pane(deadPaneUID); !ok {
-			t.Fatal("exited Pane Registry row disappeared before its live replacement was prepared")
-		}
-	}
 	event.pinStore = pinStore
 	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
 	if err != nil {
-		t.Fatalf("retain last-Pane Window: %v", err)
+		t.Fatalf("record last-Pane receipt: %v", err)
 	}
-	if len(result.cascaded) != 1 || !result.cascaded[0].Changed || len(result.rootCascaded) != 0 || result.transactions != 1 {
-		t.Fatalf("retained Window lifecycle result = %+v", result)
+	if len(result.pending) != 1 || !result.pending[0].Changed || len(result.rootCascaded) != 0 || result.transactions != 1 {
+		t.Fatalf("pending Window lifecycle result = %+v", result)
 	}
-	if inventory.prepares != 1 || inventory.cleanups != 1 {
-		t.Fatalf("live replacement prepares=%d cleanups=%d, want 1/1", inventory.prepares, inventory.cleanups)
+	if inventory.prepares != 0 || inventory.cleanups != 1 {
+		t.Fatalf("replacement prepares=%d cleanups=%d, want 0/1", inventory.prepares, inventory.cleanups)
 	}
 	for _, uid := range []string{"proj-beta", "win-beta-main"} {
 		if _, ok := registryUIDs(store.registry)[uid]; !ok {
 			t.Fatalf("retained identity %s disappeared", uid)
 		}
 	}
-	if _, ok := store.registry.Pane(deadPaneUID); ok {
-		t.Fatal("exited Pane row survived")
+	if pane, ok := store.registry.Pane(deadPaneUID); !ok || pane.Status.Teardown == nil {
+		t.Fatal("causal Pane receipt or retained subtree disappeared before unlink")
 	}
-	retained, _ := store.registry.Window("win-beta-main")
-	replacement, ok := store.registry.Pane(retained.Spec.AnchorPaneRef)
-	if !ok || replacement.Spec.Role != coremetadata.PaneRoleShell || replacement.Metadata.OwnerUID() != retained.Metadata.UID {
-		t.Fatalf("replacement shell = %+v", replacement)
+	unlinked := event
+	unlinked.teardownKind = coremetadata.TeardownEventWindowUnlinked
+	unlinked.runtimePaneID = ""
+	unlinked.runtimeSessionID = "$1"
+	unlinked.runtimeWindowID = "@4"
+	closed, err := reconcileLifecycle(context.Background(), unlinked, inventory, store.store())
+	if err != nil || len(closed.rootCascaded) != 1 || closed.rootCascaded[0].DeletedWindows != 1 ||
+		closed.rootCascaded[0].DeletedAgents != 1 {
+		t.Fatalf("matching Window close = %+v, %v", closed, err)
+	}
+	project, ok := store.registry.Project("proj-beta")
+	if !ok || project.Spec.Root != "/srv/beta" || project.Spec.PrimaryWindowRef != "" ||
+		project.Status.Session == nil || project.Status.Session.Live || len(store.registry.WindowsOf("proj-beta")) != 0 {
+		t.Fatalf("retained zero-Window Project = %+v", project)
+	}
+	for _, uid := range []string{"win-beta-main", deadPaneUID, "agt-beta-codex"} {
+		if _, ok := registryUIDs(store.registry)[uid]; ok {
+			t.Fatalf("target Window subtree residual %s survived", uid)
+		}
 	}
 	for _, uid := range []string{"prj-alpha", "win-alpha-main", "pan-alpha-zsh"} {
 		if _, ok := registryUIDs(store.registry)[uid]; !ok {
@@ -276,12 +290,13 @@ func TestLastPaneExitRetainsProjectWindowAndCreatesLiveReplacementBeforeCommit(t
 	if pinStore.saves != 0 || !reflect.DeepEqual(pinStore.set, pins.Set{Format: pins.FormatTyped, Pins: []pins.Pin{other, managed}}) {
 		t.Fatalf("automatic retention touched pins = %+v, saves=%d", pinStore.set, pinStore.saves)
 	}
-	if repeat, err := reconcileLifecycle(context.Background(), event, inventory, store.store()); err != nil || repeat.transactions != 0 || inventory.prepares != 1 || inventory.cleanups != 1 {
-		t.Fatalf("duplicate pane-exit = %+v, prepares=%d, %v", repeat, inventory.prepares, err)
+	settled := store.snapshot()
+	if repeat, err := reconcileLifecycle(context.Background(), unlinked, inventory, store.store()); err != nil || repeat.transactions != 0 || store.snapshot() != settled {
+		t.Fatalf("duplicate unlink = %+v, %v", repeat, err)
 	}
 }
 
-func TestAutomaticWindowRetentionNeverUsesProjectPinAuthority(t *testing.T) {
+func TestAutomaticWindowClosureNeverUsesProjectPinAuthority(t *testing.T) {
 	t.Parallel()
 	managed, _ := pins.ProjectPin("proj-beta")
 	other, _ := pins.CandidatePin("/srv/other")
@@ -290,8 +305,8 @@ func TestAutomaticWindowRetentionNeverUsesProjectPinAuthority(t *testing.T) {
 	pinStore := &lifecyclePinStore{set: initial, loadErr: errors.New("must not load"), saveErr: errors.New("must not save")}
 	event.pinStore = pinStore
 	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
-	if err != nil || len(result.cascaded) != 1 {
-		t.Fatalf("retained Window lifecycle = %+v, %v", result, err)
+	if err != nil || len(result.pending) != 1 {
+		t.Fatalf("pending Window lifecycle = %+v, %v", result, err)
 	}
 	if !reflect.DeepEqual(pinStore.set, initial) || pinStore.saves != 0 {
 		t.Fatalf("automatic retention touched pins: %+v saves=%d", pinStore.set, pinStore.saves)
@@ -321,7 +336,7 @@ func TestWindowUnlinkedWithoutExactPendingEvidenceWritesNothing(t *testing.T) {
 	}
 }
 
-func TestWindowUnlinkedWithLegacyExactTeardownEvidenceHasZeroLifecycleAuthority(t *testing.T) {
+func TestWindowUnlinkedConsumesStoredExactTeardownEvidenceOnlyForTargetWindow(t *testing.T) {
 	t.Parallel()
 	store := newFakeResourceStore(t)
 	activateExactPane(t, store, "pan-alpha-review", "", "gen-legacy-unlink", "%9")
@@ -344,7 +359,6 @@ func TestWindowUnlinkedWithLegacyExactTeardownEvidenceHasZeroLifecycleAuthority(
 	if err := store.registry.Validate(); err != nil {
 		t.Fatalf("legacy teardown fixture: %v", err)
 	}
-	before := store.snapshot()
 	allocationsBefore := len(store.newUIDs)
 	inventory := &exactPaneExitInventory{
 		uids: map[string]bool{}, windows: map[string]bool{}, windowSessions: map[string]int{},
@@ -353,11 +367,21 @@ func TestWindowUnlinkedWithLegacyExactTeardownEvidenceHasZeroLifecycleAuthority(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if store.snapshot() != before || len(store.newUIDs) != allocationsBefore || result.transactions != 0 ||
-		len(result.cascaded) != 0 || len(result.rootCascaded) != 0 || len(result.pending) != 0 ||
-		inventory.prepares != 0 || inventory.cleanups != 0 || inventory.rollbacks != 0 || inventory.calls != 0 {
-		t.Fatalf("legacy window-unlinked gained lifecycle authority: result=%+v allocations=%d->%d inventory=%+v",
+	if len(store.newUIDs) != allocationsBefore || result.transactions != 1 ||
+		len(result.cascaded) != 0 || len(result.rootCascaded) != 1 || len(result.pending) != 0 ||
+		inventory.prepares != 0 || inventory.cleanups != 0 || inventory.rollbacks != 0 || inventory.calls != 2 {
+		t.Fatalf("exact window-unlinked result=%+v allocations=%d->%d inventory=%+v",
 			result, allocationsBefore, len(store.newUIDs), inventory)
+	}
+	if _, ok := store.registry.Window("win-alpha-review"); ok {
+		t.Fatal("exact target Window survived")
+	}
+	project, ok := store.registry.Project("prj-alpha")
+	if !ok || project.Spec.PrimaryWindowRef != "win-alpha-main" {
+		t.Fatalf("target closure changed Project/sibling primary = %+v", project)
+	}
+	if _, ok := store.registry.Window("win-alpha-main"); !ok {
+		t.Fatal("sibling Window disappeared")
 	}
 }
 
@@ -391,7 +415,7 @@ func TestLifecycleDeadPaneCleanupUsesExactRootSessionName(t *testing.T) {
 	}
 }
 
-func TestUnprotectedLastShellExitHasZeroReplacementAuthority(t *testing.T) {
+func TestLastShellExitStoresPendingEvidenceWithoutReplacementAuthority(t *testing.T) {
 	t.Parallel()
 	store := newFakeResourceStore(t)
 	activateExactPane(t, store, "pan-alpha-review", "", "gen-review", "%9")
@@ -403,8 +427,8 @@ func TestUnprotectedLastShellExitHasZeroReplacementAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.cascaded) != 0 || len(result.rootCascaded) != 0 || inventory.prepares != 0 || inventory.cleanups != 0 {
-		t.Fatalf("unprotected shell gained replacement authority: result=%+v prepares=%d cleanups=%d", result, inventory.prepares, inventory.cleanups)
+	if len(result.pending) != 1 || len(result.cascaded) != 0 || len(result.rootCascaded) != 0 || inventory.prepares != 0 || inventory.cleanups != 0 {
+		t.Fatalf("last shell pending result=%+v prepares=%d cleanups=%d", result, inventory.prepares, inventory.cleanups)
 	}
 	window, ok := store.registry.Window("win-alpha-review")
 	if !ok || window.Metadata.Name != "review" {
@@ -414,25 +438,28 @@ func TestUnprotectedLastShellExitHasZeroReplacementAuthority(t *testing.T) {
 		t.Fatalf("Project root/sibling changed: %+v", project)
 	}
 	if window.Spec.AnchorPaneRef != "pan-alpha-review" {
-		t.Fatalf("unprotected shell changed anchor: %+v", window)
+		t.Fatalf("pending shell changed anchor: %+v", window)
+	}
+	pane, _ := store.registry.Pane("pan-alpha-review")
+	if pane.Status.Teardown == nil {
+		t.Fatal("last shell did not retain exact pending teardown evidence")
 	}
 }
 
-func TestLastPaneReplacementFailureRestoresExactRegistry(t *testing.T) {
+func TestLastPaneClosureDoesNotInvokeReplacementPreparation(t *testing.T) {
 	t.Parallel()
 	store, inventory, event := prepareLastBetaProjectCascade(t)
-	before := store.snapshot()
 	inventory.replacementErr = errors.New("injected live replacement failure")
 	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
-	if err == nil || !strings.Contains(err.Error(), "injected live replacement failure") {
-		t.Fatalf("replacement failure = %v", err)
+	if err != nil {
+		t.Fatalf("replacement seam affected closure: %v", err)
 	}
-	if store.snapshot() != before || inventory.prepares != 1 || inventory.rollbacks != 1 || inventory.cleanups != 0 || !inventory.dead[event.receipts[0].PaneUID] {
-		t.Fatalf("replacement failure result=%+v prepares=%d rollbacks=%d cleanups=%d changed Registry or dead Pane", result, inventory.prepares, inventory.rollbacks, inventory.cleanups)
+	if len(result.pending) != 1 || inventory.prepares != 0 || inventory.rollbacks != 0 || inventory.cleanups != 1 || inventory.dead[event.receipts[0].PaneUID] {
+		t.Fatalf("closure result=%+v prepares=%d rollbacks=%d cleanups=%d", result, inventory.prepares, inventory.rollbacks, inventory.cleanups)
 	}
 }
 
-func TestLastPaneRegistryCommitFailureRollsBackExactLiveReplacement(t *testing.T) {
+func TestLastPaneRegistryCommitFailureLeavesReceiptUncommittedAfterExactCleanup(t *testing.T) {
 	t.Parallel()
 	fixture, inventory, event := prepareLastBetaProjectCascade(t)
 	before := fixture.snapshot()
@@ -452,7 +479,7 @@ func TestLastPaneRegistryCommitFailureRollsBackExactLiveReplacement(t *testing.T
 	if err == nil || !strings.Contains(err.Error(), "injected Registry commit failure") {
 		t.Fatalf("commit failure = %v", err)
 	}
-	if fixture.snapshot() != before || inventory.prepares != 1 || inventory.rollbacks != 1 || inventory.cleanups != 1 || inventory.dead[event.receipts[0].PaneUID] {
+	if fixture.snapshot() != before || inventory.prepares != 0 || inventory.rollbacks != 0 || inventory.cleanups != 1 || inventory.dead[event.receipts[0].PaneUID] {
 		t.Fatalf("commit failure result=%+v prepares=%d rollbacks=%d cleanups=%d changed Registry or dead Pane", result, inventory.prepares, inventory.rollbacks, inventory.cleanups)
 	}
 }
@@ -472,7 +499,7 @@ func TestDeadPaneCleanupFailureExposesTypedRetryAndNextPassConverges(t *testing.
 		!strings.Contains(err.Error(), "injected exact dead Pane cleanup failure") {
 		t.Fatalf("cleanup failure = %v", err)
 	}
-	if len(result.cascaded) != 0 || inventory.prepares != 1 || inventory.cleanups != 1 || inventory.rollbacks != 1 {
+	if len(result.cascaded) != 0 || len(result.pending) != 0 || inventory.prepares != 0 || inventory.cleanups != 1 || inventory.rollbacks != 0 {
 		t.Fatalf("cleanup failure result=%+v prepares=%d cleanups=%d rollbacks=%d", result, inventory.prepares, inventory.cleanups, inventory.rollbacks)
 	}
 	if store.snapshot() != before {
@@ -487,26 +514,33 @@ func TestDeadPaneCleanupFailureExposesTypedRetryAndNextPassConverges(t *testing.
 	if err != nil {
 		t.Fatalf("strict cleanup retry: %v", err)
 	}
-	if len(second.cascaded) != 1 || inventory.prepares != 2 || inventory.cleanups != 2 || inventory.rollbacks != 1 {
+	if len(second.pending) != 1 || len(second.cascaded) != 0 || inventory.prepares != 0 || inventory.cleanups != 2 || inventory.rollbacks != 0 {
 		t.Fatalf("retry result=%+v prepares=%d cleanups=%d rollbacks=%d", second, inventory.prepares, inventory.cleanups, inventory.rollbacks)
 	}
-	if _, ok := store.registry.Pane(deadPaneUID); ok || inventory.dead[deadPaneUID] || inventory.uids[deadPaneUID] {
-		t.Fatal("successful retry left a Registry or tmux dead Pane residual")
+	if pane, ok := store.registry.Pane(deadPaneUID); !ok || pane.Status.Teardown == nil || inventory.dead[deadPaneUID] || inventory.uids[deadPaneUID] {
+		t.Fatal("successful retry did not retain only the Registry receipt while removing the dead runtime Pane")
 	}
-	window, ok := store.registry.Window("win-beta-main")
-	if !ok {
-		t.Fatal("retained Window disappeared")
+	if inventory.windows["win-beta-main"] || inventory.windowSessions["$1"] != 0 {
+		t.Fatalf("exact cleanup did not observe Window unlink: windows=%v sessions=%v", inventory.windows, inventory.windowSessions)
 	}
-	anchor, ok := store.registry.Pane(window.Spec.AnchorPaneRef)
-	if !ok || anchor.Spec.Role != coremetadata.PaneRoleShell {
-		t.Fatalf("replacement anchor after retry = %+v", anchor)
+	unlinked := event
+	unlinked.teardownKind = coremetadata.TeardownEventWindowUnlinked
+	unlinked.runtimePaneID = ""
+	unlinked.runtimeSessionID = "$1"
+	unlinked.runtimeWindowID = "@4"
+	closed, err := reconcileLifecycle(context.Background(), unlinked, inventory, store.store())
+	if err != nil || len(closed.rootCascaded) != 1 {
+		t.Fatalf("matching unlink after cleanup retry = %+v, %v", closed, err)
 	}
-	agent, ok := store.registry.Agent("agt-beta-codex")
-	if !ok || agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
-		t.Fatalf("retained Agent = %+v", agent)
+	if _, ok := store.registry.Window("win-beta-main"); ok {
+		t.Fatal("matching unlink left target Window")
+	}
+	project, ok := store.registry.Project("proj-beta")
+	if !ok || project.Spec.PrimaryWindowRef != "" {
+		t.Fatalf("matching unlink changed retained Project = %+v", project)
 	}
 	settled := store.snapshot()
-	repeat, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+	repeat, err := reconcileLifecycle(context.Background(), unlinked, inventory, store.store())
 	if err != nil || repeat.transactions != 0 || store.snapshot() != settled {
 		t.Fatalf("retry repeat = %+v, %v", repeat, err)
 	}

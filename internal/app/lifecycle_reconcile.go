@@ -8,7 +8,6 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
-	"github.com/crevissepartners/projmux/internal/core/pins"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -206,14 +205,13 @@ func equalOptionalInt(left, right *int) bool {
 // are deleted that bounded receipt is the durable diagnostic evidence of the
 // clean outcome.
 type exactLifecycleCascadePlan struct {
-	Desired      coremetadata.Registry
-	Changed      bool
-	awaiting     bool
-	paneAgent    coremetadata.PaneAgentCascadeDeletePlan
-	pending      coremetadata.PaneTeardownEvidencePlan
-	root         coremetadata.WindowRootCascadeDeletePlan
-	replacements []paneReplacementShell
-	deadCleanup  *paneLiveDeleteTarget
+	Desired     coremetadata.Registry
+	Changed     bool
+	awaiting    bool
+	paneAgent   coremetadata.PaneAgentCascadeDeletePlan
+	pending     coremetadata.PaneTeardownEvidencePlan
+	root        coremetadata.WindowRootCascadeDeletePlan
+	deadCleanup *paneLiveDeleteTarget
 }
 
 func planExactLifecycleCascade(
@@ -221,8 +219,8 @@ func planExactLifecycleCascade(
 	live map[string]bool,
 	dead map[string]bool,
 	liveHostPanes int,
-	_ map[string]bool,
-	_ map[string]int,
+	liveWindows map[string]bool,
+	liveWindowSessions map[string]int,
 	event lifecycleDirtyEvent,
 	mutator coremetadata.Mutator,
 ) (exactLifecycleCascadePlan, error) {
@@ -232,12 +230,10 @@ func planExactLifecycleCascade(
 		return exactLifecycleCascadePlan{}, nil
 	}
 	if event.teardownKind == coremetadata.TeardownEventWindowUnlinked {
-		// Runtime Window absence is never positive lifecycle authority. Older
-		// registries may still carry the Phase-2 Pane.status.teardown pairing row,
-		// but consuming it here could allocate a replacement Registry Pane after
-		// the live Window has already disappeared. Only an exact retained
-		// pane-died observation can authorize Phase-3 replacement/cleanup.
-		return exactLifecycleCascadePlan{awaiting: true}, nil
+		if strings.TrimSpace(event.runtimeWindowID) == "" || strings.TrimSpace(event.runtimeSessionID) == "" {
+			return exactLifecycleCascadePlan{}, nil
+		}
+		return planExactWindowUnlinkCascade(registry, live, liveWindows, liveWindowSessions, event, mutator)
 	}
 	if strings.TrimSpace(event.runtimePaneID) == "" {
 		return exactLifecycleCascadePlan{}, nil
@@ -345,32 +341,99 @@ func planExactLifecycleCascade(
 	if liveSiblingPane {
 		plan, err := coremetadata.PlanPaneAgentCascadeDelete(registry, teardown, now().UTC())
 		cascade := exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, paneAgent: plan}
-		if err == nil && plan.Changed && dead[pane.Metadata.UID] && pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
+		if err == nil && plan.Changed && dead[pane.Metadata.UID] {
 			target := lifecycleDeadPaneTarget(teardown, sessionName)
 			cascade.deadCleanup = &target
 		}
 		return cascade, err
 	}
-	if !dead[pane.Metadata.UID] || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent {
-		return exactLifecycleCascadePlan{paneAgent: coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
-			Action: coremetadata.TeardownRetain, Reason: coremetadata.TeardownReasonUnavailable,
+	pending, err := coremetadata.PlanPaneTeardownEvidence(registry, teardown, now().UTC())
+	cascade := exactLifecycleCascadePlan{Desired: pending.Desired, Changed: pending.Changed, pending: pending}
+	if err == nil && pending.Changed && dead[pane.Metadata.UID] {
+		target := lifecycleDeadPaneTarget(teardown, sessionName)
+		cascade.deadCleanup = &target
+	}
+	return cascade, err
+}
+
+func planExactWindowUnlinkCascade(
+	registry coremetadata.Registry,
+	live, liveWindows map[string]bool,
+	liveWindowSessions map[string]int,
+	event lifecycleDirtyEvent,
+	mutator coremetadata.Mutator,
+) (exactLifecycleCascadePlan, error) {
+	if liveWindows == nil || liveWindowSessions == nil {
+		return exactLifecycleCascadePlan{}, nil
+	}
+	var pane *coremetadata.Pane
+	for i := range registry.Panes {
+		candidate := &registry.Panes[i]
+		evidence := candidate.Status.Teardown
+		if evidence == nil || evidence.SocketIdentity != event.target.label() ||
+			evidence.RuntimeSessionID != strings.TrimSpace(event.runtimeSessionID) ||
+			evidence.RuntimeWindowID != strings.TrimSpace(event.runtimeWindowID) {
+			continue
+		}
+		if pane != nil {
+			return exactLifecycleCascadePlan{root: coremetadata.WindowRootCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
+				Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonConflictingOwnerFacts,
+			}}}, nil
+		}
+		pane = candidate
+	}
+	if pane == nil || pane.Status.Teardown == nil {
+		return exactLifecycleCascadePlan{awaiting: true}, nil
+	}
+	evidence := pane.Status.Teardown
+	if live[pane.Metadata.UID] || liveWindows[evidence.WindowUID] {
+		return exactLifecycleCascadePlan{root: coremetadata.WindowRootCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
+			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonConflictingOwnerFacts,
 		}}}, nil
 	}
-	plan, err := coremetadata.PlanPaneAgentCascadeDelete(registry, teardown, now().UTC())
-	if err != nil || !plan.Changed {
-		return exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, paneAgent: plan}, err
+	for i := range registry.Panes {
+		candidate := registry.Panes[i]
+		if candidate.Metadata.UID == pane.Metadata.UID || !live[candidate.Metadata.UID] {
+			continue
+		}
+		if windowUID, ok := paneWindowUID(registry, candidate); ok && windowUID == evidence.WindowUID {
+			return exactLifecycleCascadePlan{root: coremetadata.WindowRootCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
+				Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonLiveSiblingPane,
+			}}}, nil
+		}
 	}
-	replacements := lifecycleReplacementShells(registry, plan.Desired, teardown, sessionName)
-	if len(replacements) == 0 {
-		return exactLifecycleCascadePlan{}, errors.New("last-Pane lifecycle plan has no replacement shell")
+	liveSiblingRootWindows := 0
+	for _, sibling := range registry.WindowsOf(evidence.RootUID) {
+		if sibling.Metadata.UID != evidence.WindowUID && liveWindows[sibling.Metadata.UID] {
+			liveSiblingRootWindows++
+		}
 	}
-	return exactLifecycleCascadePlan{
-		Desired: plan.Desired, Changed: true, paneAgent: plan, replacements: replacements,
-		deadCleanup: func() *paneLiveDeleteTarget {
-			target := lifecycleDeadPaneTarget(teardown, sessionName)
-			return &target
-		}(),
-	}, nil
+	// Every remaining runtime Window in the exact event session must be an exact
+	// sibling Registry Window. Unmirrored or cross-session rows make the pair
+	// foreign rather than broadening deletion authority.
+	if liveWindowSessions[evidence.RuntimeSessionID] != liveSiblingRootWindows {
+		return exactLifecycleCascadePlan{root: coremetadata.WindowRootCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
+			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonForeignHost,
+		}}}, nil
+	}
+	chain := coremetadata.TeardownOwnerChain{
+		SocketIdentity: evidence.SocketIdentity, SessionHandle: evidence.RuntimeSessionID, PaneHandle: evidence.RuntimePaneID,
+		WindowHandle: evidence.RuntimeWindowID, PaneUID: pane.Metadata.UID, WindowUID: evidence.WindowUID,
+		RootKind: evidence.RootKind, RootUID: evidence.RootUID, Generation: evidence.Generation,
+	}
+	paneEvent := coremetadata.TeardownEvent{
+		Kind: coremetadata.TeardownEventPaneExited, Classification: evidence.Classification,
+		Generation: coremetadata.TeardownGenerationCurrent, Observation: coremetadata.TeardownObservationExactSocket,
+		Chain: chain, LiveSiblingRootWindow: liveSiblingRootWindows > 0,
+	}
+	unlinked := paneEvent
+	unlinked.Kind = coremetadata.TeardownEventWindowUnlinked
+	now := time.Now
+	if mutator.Now != nil {
+		now = mutator.Now
+	}
+	plan, err := coremetadata.PlanWindowRootCascadeDelete(registry, paneEvent, unlinked, now().UTC())
+	return exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, root: plan}, err
 }
 
 func lifecycleRootSessionName(registry coremetadata.Registry, root coremetadata.OwnerRef) string {
@@ -399,28 +462,6 @@ func lifecycleDeadPaneTarget(event coremetadata.TeardownEvent, sessionName strin
 	}
 }
 
-// lifecycleReplacementShells binds only a newly allocated direct shell to the
-// exact Pane that still exists for the duration of pane-exited. Creating the
-// split before committing the desired graph prevents tmux from unlinking the
-// retained Window when its prior last process exits.
-func lifecycleReplacementShells(before, desired coremetadata.Registry, event coremetadata.TeardownEvent, sessionName string) []paneReplacementShell {
-	beforeUIDs := make(map[string]bool, len(before.Panes))
-	for _, pane := range before.Panes {
-		beforeUIDs[pane.Metadata.UID] = true
-	}
-	anchor := lifecycleDeadPaneTarget(event, sessionName)
-	var out []paneReplacementShell
-	for _, pane := range desired.Panes {
-		if beforeUIDs[pane.Metadata.UID] || pane.Metadata.OwnerRef == nil ||
-			pane.Metadata.OwnerRef.Kind != coremetadata.KindWindow ||
-			pane.Metadata.OwnerRef.UID != event.Chain.WindowUID || pane.Spec.Role != coremetadata.PaneRoleShell {
-			continue
-		}
-		out = append(out, paneReplacementShell{Pane: pane.Clone(), Anchor: anchor})
-	}
-	return out
-}
-
 type lifecycleLiveWindowInventory interface {
 	LiveWindowUIDs(context.Context) (map[string]bool, error)
 }
@@ -444,14 +485,11 @@ type lifecycleLiveWindowSessionInventory interface {
 	LiveWindowSessionCounts(context.Context) (map[string]int, error)
 }
 
-// lifecycleReplacementInventory is implemented only by the exact production
-// inventory and focused lifecycle fixtures. It keeps replacement creation and
-// exact owned rollback inside the Registry convergence operation instead of
-// turning a later generic materialization pass into lifecycle authority.
-type lifecycleReplacementInventory interface {
-	PrepareLifecycleReplacements(context.Context, []paneReplacementShell) (paneReplacementReceipt, error)
+// lifecycleDeadPaneCleanupInventory is implemented only by the exact
+// production inventory and focused lifecycle fixtures. It removes the exact
+// remain-on-exit dead Pane before the pending receipt is committed.
+type lifecycleDeadPaneCleanupInventory interface {
 	CleanupLifecycleDeadPane(context.Context, paneLiveDeleteTarget) error
-	RollbackLifecycleReplacements(context.Context, paneReplacementReceipt) error
 }
 
 type lifecycleDeadPaneInventory interface {
@@ -460,39 +498,20 @@ type lifecycleDeadPaneInventory interface {
 
 type exactLifecycleInventory struct {
 	intmetadata.Mirror
-	replacements *tmuxPaneDeleteRuntime
-}
-
-func (i *exactLifecycleInventory) PrepareLifecycleReplacements(ctx context.Context, replacements []paneReplacementShell) (paneReplacementReceipt, error) {
-	if i == nil || i.replacements == nil {
-		return paneReplacementReceipt{}, errors.New("lifecycle replacement runtime is not configured")
-	}
-	if len(replacements) > 0 {
-		i.replacements.useRouteAnchor(replacements[0].Anchor.PaneID)
-	}
-	return i.replacements.prepareReplacements(ctx, replacements)
-}
-
-func (i *exactLifecycleInventory) RollbackLifecycleReplacements(ctx context.Context, receipt paneReplacementReceipt) error {
-	if i == nil || i.replacements == nil {
-		return errors.New("lifecycle replacement runtime is not configured")
-	}
-	return i.replacements.rollbackReplacements(ctx, receipt)
+	runtime *tmuxPaneDeleteRuntime
 }
 
 func (i *exactLifecycleInventory) CleanupLifecycleDeadPane(ctx context.Context, target paneLiveDeleteTarget) error {
-	if i == nil || i.replacements == nil {
-		return errors.New("lifecycle replacement runtime is not configured")
+	if i == nil || i.runtime == nil {
+		return errors.New("lifecycle dead Pane cleanup runtime is not configured")
 	}
-	// A sibling-path cleanup prepares no replacement, so no earlier live effect
-	// has bound the runtime mutation route. Bind it from the exact retained dead
-	// Pane before building the kill plan; an absent-before-create route can never
-	// authorize a lifecycle cleanup.
-	i.replacements.useRouteAnchor(target.PaneID)
-	if err := i.replacements.guardSocketIdentity(ctx); err != nil {
+	// Bind the runtime mutation route from the exact retained dead Pane before
+	// building the kill plan; an absent route can never authorize cleanup.
+	i.runtime.useRouteAnchor(target.PaneID)
+	if err := i.runtime.guardSocketIdentity(ctx); err != nil {
 		return fmt.Errorf("bind exact dead Agent Pane cleanup route: %w", err)
 	}
-	return i.replacements.kill(ctx, target)
+	return i.runtime.kill(ctx, target)
 }
 
 func lifecycleObservedDeadPanes(ctx context.Context, inventory livePaneInventory, event lifecycleDirtyEvent) (map[string]bool, error) {
@@ -502,7 +521,7 @@ func lifecycleObservedDeadPanes(ctx context.Context, inventory livePaneInventory
 	dead, ok := inventory.(lifecycleDeadPaneInventory)
 	if !ok {
 		// Older/non-authoritative inventory implementations may still project
-		// absence, but they can never grant dead-anchor replacement authority.
+		// absence, but they can never grant exact dead-Pane cleanup authority.
 		return nil, nil
 	}
 	return dead.DeadPaneUIDs(ctx)
@@ -542,10 +561,10 @@ func lifecycleInventory(runner tmuxCommandRunner, target explicitTmuxTarget) liv
 	if target.flag != "" && target.value != "" {
 		routed = explicitTmuxRunner{runner: runner, target: target}
 	}
-	replacement := newTmuxPaneDeleteRuntime()
-	replacement.runner = runner
-	replacement.useExactTarget(target)
-	return &exactLifecycleInventory{Mirror: intmetadata.NewMirror(routed), replacements: replacement}
+	runtime := newTmuxPaneDeleteRuntime()
+	runtime.runner = runner
+	runtime.useExactTarget(target)
+	return &exactLifecycleInventory{Mirror: intmetadata.NewMirror(routed), runtime: runtime}
 }
 
 // lifecycleProjectionTargets is the pure decision half: which Panes in registry
@@ -574,6 +593,12 @@ func lifecycleProjectionTargets(registry coremetadata.Registry, live map[string]
 	var out []coremetadata.TerminationProjectionInput
 	for i := range registry.Panes {
 		paneUID := registry.Panes[i].Metadata.UID
+		// A clean last-Pane receipt retains the complete subtree until its exact
+		// window-unlinked half arrives. A generic absence projection must not
+		// release the Agent binding or invalidate the Window anchor in between.
+		if registry.Panes[i].Status.Teardown != nil {
+			continue
+		}
 		if narrowed != "" && paneUID != narrowed {
 			continue
 		}
@@ -663,10 +688,9 @@ func projectTerminations(
 //     snapshot" the transition is actually derived from; the pre-lock read is
 //     only a cost filter.
 //
-// It resumes no Agent. On an authorized exact retained pane-died event it may
-// create one replacement shell in the same live Window before committing the
-// Registry graph, then clean only the exact owned dead Pane. All other events
-// remain observation-only.
+// It resumes no Agent. On an authorized exact retained pane-exited event it
+// cleans only the exact owned dead Pane before committing its bounded pending
+// evidence. All other events remain observation-only.
 func reconcileLifecycle(
 	ctx context.Context,
 	event lifecycleDirtyEvent,
@@ -679,11 +703,6 @@ func reconcileLifecycle(
 	}
 	if store == nil || store.load == nil || store.mutator == nil {
 		return result, errors.New("reconcile lifecycle: the resource registry store is not configured")
-	}
-	if event.teardownKind == coremetadata.TeardownEventWindowUnlinked {
-		result.awaitingPaneExit = true
-		result.skipped = "window-unlinked is retention-only and carries zero replacement or delete authority: " + event.describe()
-		return result, nil
 	}
 	live, err := inventory.LivePaneUIDs(ctx)
 	if err != nil {
@@ -728,11 +747,6 @@ func reconcileLifecycle(
 		return result, nil
 	}
 	var observationFailed bool
-	var pinBefore pins.Set
-	var pinSaved bool
-	var replacementReceipt paneReplacementReceipt
-	var replacementRuntime lifecycleReplacementInventory
-	var replacementPrepared bool
 	_, err = store.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
 		fresh, observeErr := inventory.LivePaneUIDs(ctx)
 		if observeErr != nil {
@@ -772,27 +786,12 @@ func reconcileLifecycle(
 		}
 		result.awaitingPaneExit = cascade.awaiting
 		if cascade.Changed {
-			var runtime lifecycleReplacementInventory
+			var runtime lifecycleDeadPaneCleanupInventory
 			if cascade.deadCleanup != nil {
 				var ok bool
-				runtime, ok = inventory.(lifecycleReplacementInventory)
+				runtime, ok = inventory.(lifecycleDeadPaneCleanupInventory)
 				if !ok {
 					return errors.New("exact dead Agent Pane cleanup runtime is unavailable; Registry was retained")
-				}
-				replacementRuntime = runtime
-			}
-			if len(cascade.replacements) > 0 {
-				var ok bool
-				runtime, ok = inventory.(lifecycleReplacementInventory)
-				if !ok {
-					return errors.New("last-Pane lifecycle replacement runtime is unavailable; Registry was retained")
-				}
-				prepared, prepareErr := runtime.PrepareLifecycleReplacements(ctx, cascade.replacements)
-				replacementRuntime = runtime
-				replacementReceipt = prepared
-				replacementPrepared = true
-				if prepareErr != nil {
-					return fmt.Errorf("create exact lifecycle replacement before retaining Window: %w", prepareErr)
 				}
 			}
 			// Remove the exact retained dead tmux Pane before publishing the
@@ -809,26 +808,6 @@ func reconcileLifecycle(
 					}
 				}
 			}
-			if cascade.root.Changed && cascade.root.Decision.RootAction == coremetadata.RootTeardownDeleteProject {
-				if event.pinStore == nil {
-					return errors.New("project lifecycle cascade: pin store is not configured; Registry was retained")
-				}
-				stored, loadErr := event.pinStore.Load()
-				if loadErr != nil {
-					return fmt.Errorf("project lifecycle cascade: load managed pins: %w", loadErr)
-				}
-				pinPlan, planErr := pins.PlanProjectDeletion(stored, cascade.root.RootUID, cascade.root.ProjectRoot)
-				if planErr != nil {
-					return fmt.Errorf("project lifecycle cascade: plan managed pin: %w", planErr)
-				}
-				if pinPlan.Changed {
-					if saveErr := event.pinStore.Save(pinPlan.Desired); saveErr != nil {
-						return fmt.Errorf("project lifecycle cascade: save managed pin: %w", saveErr)
-					}
-					pinBefore = stored
-					pinSaved = true
-				}
-			}
 			*working = cascade.Desired
 			switch {
 			case cascade.root.Changed:
@@ -842,16 +821,6 @@ func reconcileLifecycle(
 		result.projected = projectTerminations(working, mutator, lifecycleProjectionTargets(*working, lifecycleEffectiveLivePanes(fresh, freshDead), event))
 		return nil
 	})
-	if err != nil && replacementRuntime != nil && replacementPrepared {
-		if rollbackErr := replacementRuntime.RollbackLifecycleReplacements(ctx, replacementReceipt); rollbackErr != nil {
-			return result, fmt.Errorf("%w; rollback exact lifecycle replacement: %v", err, rollbackErr)
-		}
-	}
-	if err != nil && pinSaved {
-		if rollbackErr := event.pinStore.Save(pinBefore); rollbackErr != nil {
-			return result, fmt.Errorf("%w; rollback managed pin: %v", err, rollbackErr)
-		}
-	}
 	result.transactions = 1
 	if observationFailed {
 		result.projected = nil

@@ -379,7 +379,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 				return fmt.Errorf("%s: the exact live cascade changed between preflight and execution; nothing was deleted", spelling)
 			}
 			// Prepare and validate the complete Registry result before touching
-			// tmux. Explicit Window deletion preserves the existing root cascade
+			// tmux. Explicit Window deletion preserves the owning root identity
 			// and allocates no replacement Window; validation must finish while
 			// every exact live target is still intact, never after its kill.
 			candidate := working.Clone()
@@ -644,12 +644,6 @@ func cascadeOf(registry coremetadata.Registry, kind coremetadata.Kind, uid strin
 		}
 		for _, pane := range registry.PanesOf(uid) {
 			out = append(out, deleteDescendant{Kind: coremetadata.KindPane, UID: pane.Metadata.UID, Name: pane.Metadata.Name})
-		}
-		if window, ok := registry.Window(uid); ok && window.Metadata.OwnerRef != nil &&
-			window.Metadata.OwnerRef.Kind == coremetadata.KindProject && len(registry.WindowsOf(window.Metadata.OwnerRef.UID)) == 1 {
-			if project, ok := registry.Project(window.Metadata.OwnerRef.UID); ok {
-				out = append(out, deleteDescendant{Kind: coremetadata.KindProject, UID: project.Metadata.UID, Name: project.Metadata.Name})
-			}
 		}
 	case coremetadata.KindAgent:
 		for _, pane := range registry.PanesOf(uid) {

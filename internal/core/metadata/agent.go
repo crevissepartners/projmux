@@ -452,10 +452,10 @@ func (m Mutator) DeleteAgent(reg *Registry, agentUID string) error {
 	return nil
 }
 
-// DeleteWindow is the explicit canonical root delete. It removes a Window and
-// every descendant Pane and Agent; deleting a Project's last Window also
-// removes that now-empty Project identity. It never creates lifecycle
-// replacement topology for the Window the operator explicitly deleted.
+// DeleteWindow is the explicit canonical Window delete. It removes a Window
+// and every descendant Pane and Agent while preserving its Project or
+// ControlSession root. A Project with no remaining Window keeps its uid, root,
+// session name, pin, and snapshot ownership as a valid closed identity.
 func (m Mutator) DeleteWindow(reg *Registry, windowUID string) error {
 	return m.deleteWindow(reg, windowUID, true)
 }
@@ -501,13 +501,8 @@ func (m Mutator) deleteWindow(reg *Registry, windowUID string, preserveProjectAn
 					break
 				}
 			}
-			if project.Spec.PrimaryWindowRef == "" {
-				if i := slices.IndexFunc(reg.Projects, func(candidate Project) bool {
-					return candidate.Metadata.UID == projectUID
-				}); i >= 0 {
-					reg.Projects = slices.Delete(reg.Projects, i, i+1)
-				}
-				reg.releaseNames(projectUID)
+			if project.Spec.PrimaryWindowRef == "" && project.Status.Session != nil {
+				project.Status.Session.Live = false
 			}
 		}
 	}

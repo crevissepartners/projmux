@@ -370,11 +370,12 @@ generated `pane-exited` hook. The supervisor must have durably journaled a
 same-generation `normal` receipt, the hook must name the exact `%N` Pane and
 the owner Window must carry its exact last-positive `$N/@N` binding on the same
 socket, and fresh preflight plus locked observations must still resolve the
-same Registry owner chain. A non-last Pane and its current directly owning
-Agent are removed together. For a last Pane, that evidence is retained until a
+same Registry owner chain. A non-last Pane is removed while its directly owning
+Agent is retained Offline with its conversation identity. For a last Pane, that evidence is retained until a
 matching `window-unlinked` hook removes the Window; a final Project Window also
-removes the Project graph while preserving its root, snapshots, and external
-assets. Shell and Claude/Codex clean exit have the same result; `/exit`, pane
+removes its Window descendants while retaining the exact Project uid, root,
+reservation, pins, snapshots, and external assets as a valid zero-Window
+Project. Shell and Claude/Codex clean exit have the same result; `/exit`, pane
 content, prompt, history, and transcript are never parsed. `abnormal`,
 `killed`, `unknown`, stale/resumed bindings, empty or unavailable inventory,
 permission failure, and foreign-host/window observations keep their diagnostic
@@ -386,12 +387,12 @@ pair comes from the Window's last live Registry observation. The separate
 `window-unlinked` hook supplies exact `#{hook_session}` and `#{hook_window}`;
 only a matching causal pair authorizes last-Pane Window deletion.
 
-This intentionally removes `agent resume uid:<deleted-agent>` identity after a
-qualifying clean provider exit; use the provider-native conversation catalog to
-find a prior conversation. Reopening a deleted Project is explicit: Continue
-requires a usable snapshot and restores under fresh resource UIDs, while Open
-fresh atomically creates one new canonical Project graph without a confirmation
-screen or fallback from failed Continue.
+An offline historical Window with no stored causal last-Pane receipt is not
+absence-only migration authority and is never auto-deleted. Recover it with the
+canonical exact route, `projmux delete window uid:<window-uid> --socket <name>
+--yes` (or the corresponding `--socket-path`/inherited absolute `$TMUX` route).
+Deleting a Project's last exact Window retains the Project with zero Windows;
+explicit `delete project` remains the unregister operation.
 
 Resource-backed Agent create accepts provider-neutral `--cwd <absolute>` and
 repeatable `--add-dir <absolute>`. Explicit paths must exist, resolve without a

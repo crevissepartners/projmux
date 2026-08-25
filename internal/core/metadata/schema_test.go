@@ -610,6 +610,7 @@ func TestRegistryValidateRejectsStructuralViolations(t *testing.T) {
 			r.Projects[0].Metadata.OwnerRef = &OwnerRef{Kind: KindProject, UID: "x"}
 		}, wantErr: ErrInvalidRegistry},
 		{name: "relative root", mutate: func(r *Registry) { r.Projects[0].Spec.Root = "relative" }, wantErr: ErrInvalidRegistry},
+		{name: "non-empty project without primary window", mutate: func(r *Registry) { r.Projects[0].Spec.PrimaryWindowRef = "" }, wantErr: ErrInvalidRegistry},
 		{name: "dangling primary pane", mutate: func(r *Registry) { r.Windows[0].Spec.AnchorPaneRef = "missing" }, wantErr: ErrInvalidRegistry},
 		{name: "missing name reservation", mutate: func(r *Registry) { r.NameReservations = nil }, wantErr: ErrInvalidRegistry},
 		{name: "reservation for an unknown uid", mutate: func(r *Registry) {

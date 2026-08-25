@@ -256,8 +256,12 @@ func (r Registry) Validate() error {
 	}
 
 	for _, project := range r.Projects {
+		windows := r.WindowsOf(project.Metadata.UID)
 		if strings.TrimSpace(project.Spec.PrimaryWindowRef) == "" {
-			return stateErr(op, ErrInvalidRegistry, "project %q has no primaryWindowRef", project.Metadata.Name)
+			if len(windows) == 0 {
+				continue
+			}
+			return stateErr(op, ErrInvalidRegistry, "project %q has %d Windows but no primaryWindowRef", project.Metadata.Name, len(windows))
 		}
 		window, ok := r.Window(project.Spec.PrimaryWindowRef)
 		if !ok {

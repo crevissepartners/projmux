@@ -220,9 +220,10 @@ Resources and ownership:
   `status` block holds observed conditions only; live/offline is derived from a
   live tmux observation at read time. See *Runtime observation and resource
   status* below.
-- Every Project stores one exact canonical Window and every Window stores a
-  role-independent Pane anchor. `Project.spec.primaryWindowRef` resolves to a
-  Project-owned Window. Final schema v2 requires
+- Every non-empty Project stores one exact canonical Window and every Window
+  stores a role-independent Pane anchor. `Project.spec.primaryWindowRef`
+  resolves to a Project-owned Window whenever the Project owns any Windows;
+  it is empty only for the valid closed zero-Window state. Final schema v2 requires
   `Window.spec.anchorPaneRef`; it may resolve through the same Window ancestry
   to either a direct `role=shell` Pane or an Agent-owned `role=agent` Pane.
   `Window.spec.defaultShellPaneRef` is optional; when present it resolves only
@@ -236,10 +237,11 @@ Resources and ownership:
   default shell without replacing an Agent anchor. Consumers never write the
   removed intermediate `primaryPaneRef` field.
   Canonical deletion preserves the same invariant: deleting the primary Window
-  reanchors to the first existing valid sibling, while deleting the last valid
-  Window mints one minimum offline Window/shell chain with new opaque uids. The
-  requested Window and all descendants are still removed exactly; Project
-  deletion bypasses replacement because it removes the owning root itself.
+  reanchors to the first existing valid sibling, while deleting the last Window
+  leaves the existing Project with an empty `primaryWindowRef`, a non-live
+  session observation, and no replacement allocation. The requested Window and
+  all descendants are removed exactly; only explicit Project deletion removes
+  the owning root itself.
 
 Home and root kinds:
 
@@ -353,8 +355,9 @@ Agent lifecycle:
   abnormal exit resolves to `Failed`, while killed or unexplained disappearance
   resolves to `Offline` and retains the Agent/Pane rows for diagnosis and
   explicit recovery. A same-generation supervisor exit 0 paired with exact
-  `pane-exited` evidence is different: the Pane and its current directly owning
-  Agent are removed together from desired Registry topology.
+  `pane-exited` evidence is different: a non-last Pane is removed while its
+  Agent is retained Offline. For a last Pane, the complete Window subtree stays
+  pending until the exact causal `window-unlinked` half arrives.
 - `Offline` for an unexplained disappearance rather than `Failed` is a deliberate
   asymmetry. The phase is what an operator reads to decide whether to resume, and
   an unproven `Failed` is worse for that decision than an honest `Offline`; the
@@ -485,12 +488,11 @@ Exit reconciliation and lifecycle projection:
   Unknown is a statement that nothing was observed, and letting a supervisor that
   read a wait status or a control action that stated its intent file one would let
   either of them erase evidence with it.
-- A qualifying exact clean exit removes the Pane and, when it is the current
-  Agent-owned Pane, the directly owning Agent in the same locked Registry
-  transaction. The owning Window, Project/ControlSession, sibling Panes and
-  sibling Agents are unchanged. A shell and a provider are intentionally
-  indistinguishable here: both are supervised wait-status 0; no command or
-  `/exit` text participates.
+- A qualifying exact clean non-last exit removes only the Pane and leaves its
+  Agent Offline in the same locked Registry transaction. The owning Window,
+  Project/ControlSession, sibling Panes and sibling Agents are unchanged. A
+  shell and a provider are intentionally indistinguishable here: both are
+  supervised wait-status 0; no command or `/exit` text participates.
 - Abnormal, killed, unknown, whole-host absence, missing/empty server inventory,
   permission failure, foreign Window observation, stale generation, and an
   Agent that now binds a resumed Pane all produce delete-plan zero. They keep the
@@ -1234,19 +1236,23 @@ Lifecycle trigger convergence:
   report claiming success must not hide. The loop is bounded; stopping early is
   safe in a way a lost event is not, because convergence is derived from the
   machine rather than from the event log.
-- Phase 3 pairs a qualifying last-Pane `pane-exited` with the exact later
-  `window-unlinked` by socket, `$N` session, `@N` Window, `%N` Pane, Registry
+- Project runtime stop and fresh identity separation Phase 1 pairs a qualifying
+  last-Pane `pane-exited` with the exact matching `window-unlinked` by socket,
+  `$N` session, `@N` Window, `%N` Pane, Registry
   owner chain, and activation generation. The first event stores only bounded
   teardown evidence; the second re-observes every Window in that exact session,
-  including unmirrored siblings, before deleting anything. A non-last Project
-  Window loses only its Window subtree. The last Project Window deletes the
-  Project and all descendants/reservations, converts an exact managed pin to a
-  same-slot candidate path, and preserves the root, git/worktrees, trust, and
-  snapshot bytes. A ControlSession loses only the Window and keeps its root uid.
+  including unmirrored siblings, before deleting anything. The guarded
+  transaction deletes exactly that Window, its Panes, its owned Agents, and
+  their reservations. A non-last Project Window reanchors to its existing
+  sibling. The last Project Window leaves the exact Project uid, root,
+  reservation, pins, and snapshot bytes in the valid zero-Window state. A
+  ControlSession likewise loses only the Window and keeps its root uid.
   Abnormal/killed/unknown exits, stale generations, unpaired or foreign handles,
   unavailable/empty observations, and missing-server or permission failures
-  retain the graph. No pane content, command, prompt, history, or transcript is
-  an authority input.
+  retain the graph. A historical offline Window without the stored causal Pane
+  receipt is never deleted from absence alone; its fixed diagnostic recovery is
+  an exact canonical `delete window uid:<window-uid>` on the named socket. No
+  pane content, command, prompt, history, or transcript is an authority input.
 - The creation hooks stay synchronous so a newly bindable Window or Pane has a
   registry binding before the creating tmux command returns and before the next
   implicit read can run; the exit hooks stay backgrounded so closing a pane never

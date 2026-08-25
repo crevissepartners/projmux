@@ -3233,8 +3233,9 @@ smoke_assert_file_contains "$delete_root/projects.after-external" "$delete_alpha
 smoke_assert_file_contains "$delete_root/external.out" "live killed tmux window $delete_primary"
 
 # The only beta Window explicitly predicts and then causes the canonical
-# Project root cascade. Explicit Window deletion allocates no replacement
-# Window/shell; alpha and the foreign socket remain byte-semantically untouched.
+# Window-root cascade. Explicit Window deletion ends the live session but
+# retains the zero-Window Project reservation and allocates no replacement;
+# alpha and the foreign socket remain byte-semantically untouched.
 {
   delete_pmx get windows --project "uid:$delete_alpha_project_uid" -o uid
   delete_pmx get panes --project "uid:$delete_alpha_project_uid" -o uid
@@ -3255,14 +3256,16 @@ if grep -Fq "retryable drift" "$delete_root/last.out"; then
 fi
 delete_pmx get projects -o uid >"$delete_root/projects.after-last-delete"
 delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-last-delete"
-if grep -Fqx "$delete_beta_project_uid" "$delete_root/projects.after-last-delete" ||
-  grep -Fqx "$delete_beta_uid" "$delete_root/windows.after-last-delete"; then
-  echo "last-Window canonical root cascade retained beta identity" >&2
+if ! grep -Fqx "$delete_beta_project_uid" "$delete_root/projects.after-last-delete" ||
+  grep -Fqx "$delete_beta_uid" "$delete_root/windows.after-last-delete" ||
+  ! delete_pmx describe project "uid:$delete_beta_project_uid" -o json >"$delete_root/beta-after-last-delete.json" ||
+  ! grep -Fq '"primaryWindowRef": ""' "$delete_root/beta-after-last-delete.json"; then
+  echo "last-Window canonical cascade did not retain an exact zero-Window beta Project" >&2
   exit 1
 fi
 if [[ "$(wc -l <"$delete_root/windows.after-last-delete" | tr -d '[:space:]')" != "1" ]] ||
   ! grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-last-delete"; then
-  echo "last-Window root cascade allocated a replacement Window or changed alpha: $(cat "$delete_root/windows.after-last-delete")" >&2
+  echo "last-Window cascade allocated a replacement Window or changed alpha: $(cat "$delete_root/windows.after-last-delete")" >&2
   exit 1
 fi
 {
@@ -3273,7 +3276,7 @@ fi
 cmp "$delete_root/alpha-graph.before-beta-delete" "$delete_root/alpha-graph.after-beta-delete"
 delete_other_after_last_window="$(delete_other_tmux show-options -gqv @projmux_delete_sentinel):$(delete_other_tmux list-windows -a -F '#{session_name}:#{window_id}')"
 if [[ "$delete_other_after_last_window" != "$delete_other_before_last_window" ]]; then
-  echo "explicit last-Window root cascade touched the foreign socket" >&2
+  echo "explicit last-Window cascade touched the foreign socket" >&2
   exit 1
 fi
 
@@ -7388,13 +7391,62 @@ exitrec_await_absent() {
   local kind="$1" uid="$2"
   for _ in $(seq 1 150); do
     exitrec_doc "$kind" "$uid"
-    if [[ ! -s "$exitrec_root/doc.json" ]]; then
+    if [[ ! -s "$exitrec_root/doc.json" ]] &&
+      grep -Eq 'matched no (agents|panes|windows)' "$exitrec_root/doc.err"; then
       return 0
     fi
     sleep 0.2
   done
   echo "$kind $uid survived the exact clean pane-exit cascade" >&2
   cat "$exitrec_root/doc.json" >&2
+  exit 1
+}
+
+exitrec_await_phase1_window_cascade() {
+  local label="$1" project_uid="$2" window_uid="$3" pane_uid="$4" agent_uid="$5"
+  local registry="$exitrec_root/state/projmux/metadata/registry.json"
+  local kind uid queue_file kind_uid stable=0
+  for _ in $(seq 1 150); do
+    for kind_uid in "agent:$agent_uid" "pane:$pane_uid" "window:$window_uid"; do
+      kind="${kind_uid%%:*}"
+      uid="${kind_uid#*:}"
+      set +e
+      exitrec_pmx describe "$kind" "uid:$uid" -o json \
+        >"$exitrec_root/phase1-$label-$kind.out" \
+        2>"$exitrec_root/phase1-$label-$kind.err"
+      set -e
+    done
+    if ! grep -Fq '"uid": "'"$window_uid"'"' "$registry" &&
+      ! grep -Fq '"uid": "'"$pane_uid"'"' "$registry" &&
+      ! grep -Fq '"uid": "'"$agent_uid"'"' "$registry" &&
+      grep -Eq 'matched no windows' "$exitrec_root/phase1-$label-window.err" &&
+      grep -Eq 'matched no panes' "$exitrec_root/phase1-$label-pane.err" &&
+      grep -Eq 'matched no agents' "$exitrec_root/phase1-$label-agent.err"; then
+      stable=$((stable + 1))
+      if [[ "$stable" == "10" ]]; then
+        return 0
+      fi
+    else
+      stable=0
+    fi
+    sleep 0.2
+  done
+  echo "Phase 1 $label cascade did not remove the exact Window subtree" >&2
+  sha256sum "$registry" >&2 || true
+  grep -nE 'primaryWindowRef|teardown|lastTermination|runtime(Session)?ID|"uid": "('"$project_uid"'|'"$window_uid"'|'"$pane_uid"'|'"$agent_uid"')"' \
+    "$registry" >&2 || true
+  exitrec_tmux list-windows -a -F '#{session_id}|#{window_id}|#{@projmux_window_uid}|#{window_name}' >&2 || true
+  exitrec_tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{pane_dead}|#{@projmux_pane_uid}' >&2 || true
+  while IFS= read -r queue_file; do
+    echo "controller queue: $queue_file" >&2
+    sed -n '1,40p' "$queue_file" >&2 || true
+  done < <(find "$exitrec_root/state/projmux/controller" -maxdepth 2 -type f 2>/dev/null | sort)
+  for kind in agent pane window; do
+    echo "describe $kind stdout/stderr:" >&2
+    sed -n '1,120p' "$exitrec_root/phase1-$label-$kind.out" >&2 || true
+    sed -n '1,120p' "$exitrec_root/phase1-$label-$kind.err" >&2 || true
+  done
+  cat "$registry" >&2 || true
   exit 1
 }
 
@@ -7518,85 +7570,132 @@ if [[ "$exitrec_pair_before" != "$exitrec_pair_after" ]]; then
 fi
 echo ">> exit reconciliation e2e simultaneous providers agents=$exitrec_pair_agent_one,$exitrec_pair_agent_two panes=$exitrec_pair_pane_one,$exitrec_pair_pane_two residual=0 sibling=preserved repeat=byte-identical"
 
-# 4. A second Project on the same exact server reaches its last-descendant
-# boundary. Canonical Pane delete first leaves one Agent as the Window anchor.
-# When that owner exits cleanly, pane-exited creates and mirrors a replacement
-# shell before committing the Pane release. The Project and exact Window
-# uid/name survive, and a new worker can be created in that same Window.
+# 4. A second Project on the same exact server closes two Windows in sequence.
+# The first clean last-Pane pair deletes only its target Window and reanchors
+# the Project to the existing sibling. The second pair deletes the last Window
+# subtree while retaining the exact Project uid/root as a valid zero-Window
+# resource. Neither boundary allocates a replacement.
 mkdir -p "$exitrec_root/work/beta"
 exitrec_tmux new-session -d -s work-beta -n main -c "$exitrec_root/work/beta" sleep 600
 exitrec_tmux set-option -t work-beta -q @projmux_project_path "$exitrec_root/work/beta"
 exitrec_beta_project_uid="$(exitrec_pmx create project --root "$exitrec_root/work/beta" --name beta -o uid)"
 e2e_bounded_reconcile_to_noop "$exitrec_root/import-beta" \
   exitrec_pmx reconcile resources --socket "$exitrec_socket" -o json
-exitrec_beta_window_uid="$(exitrec_tmux show-options -wqv -t work-beta @projmux_window_uid)"
-exitrec_beta_window_name="$(exitrec_tmux display-message -p -t work-beta '#{window_name}')"
-exitrec_beta_initial_runtime="$(exitrec_tmux display-message -p -t work-beta '#{pane_id}')"
+exitrec_beta_window_uid="$(exitrec_tmux show-options -wqv -t work-beta:main @projmux_window_uid)"
+exitrec_beta_sibling_window_uid="$(exitrec_live_pmx create window \
+  --project "uid:$exitrec_beta_project_uid" --name sibling -o uid -- sleep 600)"
+exitrec_beta_window_runtime="$(exitrec_tmux list-windows -a -F '#{@projmux_window_uid} #{window_id}' |
+  awk -v uid="$exitrec_beta_window_uid" '$1 == uid { print $2; exit }')"
+exitrec_beta_sibling_window_runtime="$(exitrec_tmux list-windows -a -F '#{@projmux_window_uid} #{window_id}' |
+  awk -v uid="$exitrec_beta_sibling_window_uid" '$1 == uid { print $2; exit }')"
+exitrec_beta_initial_runtime="$(exitrec_tmux list-panes -a -F '#{@projmux_window_uid} #{pane_id}' |
+  awk -v uid="$exitrec_beta_window_uid" '$1 == uid { print $2; exit }')"
 exitrec_beta_initial_pane_uid="$(exitrec_tmux show-options -pqv -t "$exitrec_beta_initial_runtime" @projmux_pane_uid)"
+exitrec_beta_sibling_runtime="$(exitrec_tmux list-panes -a -F '#{@projmux_window_uid} #{pane_id}' |
+  awk -v uid="$exitrec_beta_sibling_window_uid" '$1 == uid { print $2; exit }')"
+exitrec_beta_sibling_pane_uid="$(exitrec_tmux show-options -pqv -t "$exitrec_beta_sibling_runtime" @projmux_pane_uid)"
+exitrec_beta_session="$(exitrec_tmux display-message -p -t "$exitrec_beta_initial_runtime" '#{session_name}')"
+if [[ -z "$exitrec_beta_window_uid" || -z "$exitrec_beta_sibling_window_uid" ||
+  "$exitrec_beta_window_uid" == "$exitrec_beta_sibling_window_uid" ||
+  ! "$exitrec_beta_window_runtime" =~ ^@[0-9]+$ ||
+  ! "$exitrec_beta_sibling_window_runtime" =~ ^@[0-9]+$ ||
+  -z "$exitrec_beta_initial_pane_uid" || -z "$exitrec_beta_sibling_pane_uid" ||
+  -z "$exitrec_beta_session" ]]; then
+  echo "Phase 1 e2e could not resolve the exact two-Window beta graph" >&2
+  exit 1
+fi
 printf 'sleep 3\n%s\n' 'exit 0' >"$exitrec_root/stub-script"
 exitrec_beta_agent_uid="$(exitrec_live_pmx create agent --provider antigravity \
   --project "uid:$exitrec_beta_project_uid" --window "uid:$exitrec_beta_window_uid" -o uid)"
 exitrec_doc agent "$exitrec_beta_agent_uid"
 exitrec_beta_agent_pane_uid="$(exitrec_field paneRef)"
 for _ in $(seq 1 100); do
-  if [[ "$(exitrec_tmux list-panes -t work-beta -F '#{pane_id}' | grep -c . || true)" == "2" ]]; then
+  if [[ "$(exitrec_tmux list-panes -t "$exitrec_beta_window_runtime" -F '#{pane_id}' | grep -c . || true)" == "2" ]]; then
     break
   fi
   sleep 0.05
 done
-if [[ "$(exitrec_tmux list-panes -t work-beta -F '#{pane_id}' | grep -c . || true)" != "2" ]]; then
-  echo "Phase 3 e2e managed last Pane never materialized" >&2
+if [[ "$(exitrec_tmux list-panes -t "$exitrec_beta_window_runtime" -F '#{pane_id}' | grep -c . || true)" != "2" ]]; then
+  echo "Phase 1 e2e managed target Pane never materialized" >&2
   exit 1
 fi
 exitrec_live_pmx delete pane "uid:$exitrec_beta_initial_pane_uid" --yes >"$exitrec_root/delete-beta-shell.out"
-if [[ "$(exitrec_tmux list-panes -t work-beta -F '#{@projmux_pane_uid}' | grep -c . || true)" != "1" ]] ||
-  ! exitrec_tmux list-panes -t work-beta -F '#{@projmux_pane_uid}' | grep -Fxq "$exitrec_beta_agent_pane_uid"; then
-  echo "Phase 3 e2e canonical shell delete did not leave the Agent as sole Window descendant" >&2
+if [[ "$(exitrec_tmux list-panes -t "$exitrec_beta_window_runtime" -F '#{@projmux_pane_uid}' | grep -c . || true)" != "1" ]] ||
+  ! exitrec_tmux list-panes -t "$exitrec_beta_window_runtime" -F '#{@projmux_pane_uid}' | grep -Fxq "$exitrec_beta_agent_pane_uid"; then
+  echo "Phase 1 e2e canonical shell delete did not leave the Agent as target Window's sole descendant" >&2
   exit 1
 fi
-exitrec_await_phase agent "$exitrec_beta_agent_uid" Offline
-exitrec_await_absent pane "$exitrec_beta_agent_pane_uid"
-for _ in $(seq 1 150); do
-  exitrec_beta_live_rows="$(exitrec_tmux list-panes -t work-beta -F '#{@projmux_window_uid}|#{window_name}|#{@projmux_pane_uid}' 2>/dev/null || true)"
-  if [[ "$(printf '%s\n' "$exitrec_beta_live_rows" | grep -c . || true)" == "1" ]] &&
-    [[ "$exitrec_beta_live_rows" == "$exitrec_beta_window_uid|$exitrec_beta_window_name|"* ]]; then
-    break
-  fi
-  sleep 0.2
-done
-exitrec_beta_replacement_uid="${exitrec_beta_live_rows##*|}"
-if [[ -z "$exitrec_beta_replacement_uid" ]] || [[ "$exitrec_beta_replacement_uid" == "$exitrec_beta_agent_pane_uid" ]]; then
-  echo "Phase 3 e2e produced no distinct live replacement shell: $exitrec_beta_live_rows" >&2
+exitrec_await_phase1_window_cascade target "$exitrec_beta_project_uid" \
+  "$exitrec_beta_window_uid" "$exitrec_beta_agent_pane_uid" "$exitrec_beta_agent_uid"
+if ! exitrec_pmx describe project "uid:$exitrec_beta_project_uid" -o json >"$exitrec_root/beta-after-target-close.json" ||
+  ! exitrec_pmx describe window "uid:$exitrec_beta_sibling_window_uid" -o json >"$exitrec_root/beta-sibling-after-target-close.json" ||
+  ! exitrec_pmx describe pane "uid:$exitrec_beta_sibling_pane_uid" -o json >"$exitrec_root/beta-sibling-pane-after-target-close.json"; then
+  echo "Phase 1 e2e non-last close changed the beta sibling Window" >&2
   exit 1
 fi
-if ! exitrec_pmx describe project "uid:$exitrec_beta_project_uid" -o json >"$exitrec_root/beta-after-owner-exit.json" ||
-  ! exitrec_pmx describe window "uid:$exitrec_beta_window_uid" -o json >"$exitrec_root/beta-window-after-owner-exit.json" ||
-  ! exitrec_pmx describe pane "uid:$exitrec_beta_replacement_uid" -o json >"$exitrec_root/beta-replacement.json"; then
-  echo "Phase 3 e2e Registry did not retain the beta Project/Window/replacement shell" >&2
+exitrec_beta_windows_after_target="$(exitrec_pmx get windows --project "uid:$exitrec_beta_project_uid" -o uid \
+  2>"$exitrec_root/beta-windows-after-target.err")"
+exitrec_beta_primary_after_target="$(sed -n \
+  's/^[[:space:]]*"primaryWindowRef": "\([^"]*\)".*/\1/p' \
+  "$exitrec_root/beta-after-target-close.json" | head -n 1)"
+exitrec_beta_sibling_runtime_uid="$(exitrec_tmux show-options -wqv \
+  -t "$exitrec_beta_sibling_runtime" @projmux_window_uid 2>"$exitrec_root/beta-sibling-runtime.err" || true)"
+if [[ "$exitrec_beta_windows_after_target" != "$exitrec_beta_sibling_window_uid" ||
+  "$exitrec_beta_primary_after_target" != "$exitrec_beta_sibling_window_uid" ||
+  "$exitrec_beta_sibling_runtime_uid" != "$exitrec_beta_sibling_window_uid" ]]; then
+  echo "Phase 1 e2e non-last close did not preserve and reanchor the exact sibling" >&2
+  echo "expected sibling: [$exitrec_beta_sibling_window_uid]" >&2
+  echo "project windows: [$exitrec_beta_windows_after_target]" >&2
+  echo "primaryWindowRef: [$exitrec_beta_primary_after_target]" >&2
+  echo "runtime sibling uid: [$exitrec_beta_sibling_runtime_uid]" >&2
+  cat "$exitrec_root/beta-after-target-close.json" >&2
+  cat "$exitrec_root/beta-windows-after-target.err" >&2 || true
+  cat "$exitrec_root/beta-sibling-runtime.err" >&2 || true
   exit 1
 fi
-printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
-exitrec_beta_new_worker="$(exitrec_live_pmx create agent --provider claude \
-  --project "uid:$exitrec_beta_project_uid" --window "uid:$exitrec_beta_window_uid" -o uid)"
-exitrec_doc agent "$exitrec_beta_new_worker"
-exitrec_beta_new_worker_pane="$(exitrec_field paneRef)"
-if [[ -z "$exitrec_beta_new_worker_pane" ]] ||
-  ! exitrec_tmux list-panes -t work-beta -F '#{@projmux_pane_uid}' | grep -Fxq "$exitrec_beta_new_worker_pane"; then
-  echo "Phase 3 e2e could not create a new worker in retained Window $exitrec_beta_window_uid" >&2
+
+printf 'sleep 3\n%s\n' 'exit 0' >"$exitrec_root/stub-script"
+exitrec_beta_last_agent_uid="$(exitrec_live_pmx create agent --provider claude \
+  --project "uid:$exitrec_beta_project_uid" --window "uid:$exitrec_beta_sibling_window_uid" -o uid)"
+exitrec_doc agent "$exitrec_beta_last_agent_uid"
+exitrec_beta_last_agent_pane_uid="$(exitrec_field paneRef)"
+if [[ -z "$exitrec_beta_last_agent_pane_uid" ]]; then
+  echo "Phase 1 e2e final beta Agent exposed no managed Pane" >&2
+  exit 1
+fi
+exitrec_live_pmx delete pane "uid:$exitrec_beta_sibling_pane_uid" --yes >"$exitrec_root/delete-beta-sibling-shell.out"
+exitrec_await_phase1_window_cascade final "$exitrec_beta_project_uid" \
+  "$exitrec_beta_sibling_window_uid" "$exitrec_beta_last_agent_pane_uid" "$exitrec_beta_last_agent_uid"
+if ! exitrec_pmx describe project "uid:$exitrec_beta_project_uid" -o json >"$exitrec_root/beta-after-last-close.json" ||
+  ! grep -Fq '"primaryWindowRef": ""' "$exitrec_root/beta-after-last-close.json" ||
+  [[ -n "$(exitrec_pmx get windows --project "uid:$exitrec_beta_project_uid" -o uid 2>/dev/null || true)" ]] ||
+  [[ -n "$(exitrec_pmx get panes --project "uid:$exitrec_beta_project_uid" -o uid 2>/dev/null || true)" ]] ||
+  [[ -n "$(exitrec_pmx get agents --project "uid:$exitrec_beta_project_uid" -o uid 2>/dev/null || true)" ]] ||
+  exitrec_tmux has-session -t "$exitrec_beta_session" 2>/dev/null; then
+  echo "Phase 1 e2e last Window did not converge to the exact zero-Window Project row set" >&2
+  cat "$exitrec_root/beta-after-last-close.json" >&2 || true
+  exit 1
+fi
+exitrec_beta_closed_before="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
+exitrec_pmx internal tmux converge --socket-path "$exitrec_socket_path" --reason pane-killed \
+  >"$exitrec_root/beta-closed-repeat.out"
+exitrec_beta_closed_after="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
+if [[ "$exitrec_beta_closed_before" != "$exitrec_beta_closed_after" ]]; then
+  echo "Phase 1 e2e zero-Window Project repeat rewrote the Registry" >&2
   exit 1
 fi
 if ! exitrec_pmx describe project "uid:$exitrec_project_uid" -o json >"$exitrec_root/alpha-after-beta.json" ||
   ! exitrec_pmx describe window "uid:$exitrec_window_uid" -o json >"$exitrec_root/alpha-window-after-beta.json" ||
   ! exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}' | grep -qx "$exitrec_shell_pane"; then
-  echo "Phase 3 e2e owner-exit retention changed its same-socket sibling Project" >&2
+  echo "Phase 1 e2e Window closure changed its same-socket sibling Project" >&2
   exit 1
 fi
 exitrec_other_after="$(exitrec_other_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
 if [[ "$exitrec_other_after" != "$exitrec_other_before" ]]; then
-  echo "Phase 3 e2e owner-exit retention touched its sibling socket" >&2
+  echo "Phase 1 e2e Window closure touched its sibling socket" >&2
   exit 1
 fi
-echo ">> exit reconciliation e2e owner-exit retained project=$exitrec_beta_project_uid window=$exitrec_beta_window_uid name=$exitrec_beta_window_name old-agent=$exitrec_beta_agent_uid replacement=$exitrec_beta_replacement_uid new-worker=$exitrec_beta_new_worker pane=$exitrec_beta_new_worker_pane siblings=preserved"
+echo ">> exit reconciliation e2e Phase 1 project=$exitrec_beta_project_uid target=$exitrec_beta_window_uid sibling=$exitrec_beta_sibling_window_uid final-windows=0 descendants=0 same-socket-sibling=preserved other-socket=preserved repeat=byte-identical"
 
 # 5. The read surfaces project what the hook stored, and write nothing.
 exitrec_registry="$exitrec_root/state/projmux/metadata/registry.json"
@@ -8423,6 +8522,54 @@ for p13_kind in windows panes agents; do
   done
 done
 
+# Phase 1 closes this exact ControlSession Window through the non-picker shell
+# producer exercised above. Canonical deletes reduce the Window to that one
+# supervised Pane; its clean `exit` supplies the receipt while tmux supplies the
+# matching window-unlinked event. The ControlSession root and the same-socket
+# Project/foreign siblings must survive the Window-root descendant cascade.
+p12_control_agent_uids="$(p12_pmx get agents --all-projects --window "uid:$p12_window_uid" -o uid)"
+for p12_control_delete_uid in \
+  "$p12_origin_uid" "$p12_provider_uid" "$p12_resume_uid" "$p12_default_uid"; do
+  p12_pmx delete pane "uid:$p12_control_delete_uid" --socket "$p12_socket" --yes \
+    >"$p12_root/delete-$p12_control_delete_uid.out"
+done
+p12_shell_pane="$({
+  p12_tmux list-panes -t "$p12_session:0" -F '#{pane_id} #{@projmux_pane_uid}' || true
+} | awk -v uid="$p12_shell_uid" '$2 == uid { print $1 }')"
+if [[ ! "$p12_shell_pane" =~ ^%[0-9]+$ ]] || [[ "$(p12_pane_count)" != "1" ]]; then
+  echo "Phase 1 ControlSession setup did not leave the managed shell as exact last Pane" >&2
+  exit 1
+fi
+p12_tmux send-keys -t "$p12_shell_pane" exit Enter
+p12_control_window_absent() {
+  ! p12_pmx describe window "uid:$p12_window_uid" -o json >/dev/null 2>&1 &&
+    ! p12_pmx describe pane "uid:$p12_shell_uid" -o json >/dev/null 2>&1
+}
+smoke_wait_for "Phase 1 ControlSession Window descendant cascade" p12_control_window_absent
+p12_control_after_uid="$(sed -n '/"controlSessions"/,/"windows"/ s/.*"uid": "\([^"]*\)".*/\1/p' \
+  "$p12_registry" | head -n 1)"
+for p12_control_agent_uid in $p12_control_agent_uids; do
+  if p12_pmx describe agent "uid:$p12_control_agent_uid" -o json >/dev/null 2>&1; then
+    echo "Phase 1 ControlSession Window retained owned Agent $p12_control_agent_uid" >&2
+    exit 1
+  fi
+done
+if [[ "$p12_control_after_uid" != "$p12_control_uid" ]] ||
+  p12_tmux has-session -t "$p12_session" 2>/dev/null ||
+  ! p12_pmx describe project "uid:$p12_project_uid" -o json >/dev/null ||
+  ! p12_tmux has-session -t phase13-foreign 2>/dev/null; then
+  echo "Phase 1 ControlSession closure changed its root or same-socket siblings" >&2
+  exit 1
+fi
+p12_control_closed_before="$(sha256sum "$p12_registry" | cut -d' ' -f1)"
+p12_pmx internal tmux converge --socket-path "$p12_socket_path" --reason pane-killed \
+  >"$p12_root/control-closed-repeat.out"
+p12_control_closed_after="$(sha256sum "$p12_registry" | cut -d' ' -f1)"
+if [[ "$p12_control_closed_before" != "$p12_control_closed_after" ]]; then
+  echo "Phase 1 ControlSession repeat rewrote the Registry" >&2
+  exit 1
+fi
+
 if [[ ! -s "$p12_registry" ]]; then
   echo "Phase 12 Home producers left no Registry" >&2
   exit 1
@@ -8433,4 +8580,4 @@ if "${p12_env[@]}" tmux -S "$p12_cleanup_target" list-sessions >/dev/null 2>&1; 
   exit 1
 fi
 trap smoke_cleanup_env EXIT
-echo ">> ControlSession create/read-scope e2e passed: control=$p12_control_uid window=$p12_window_uid origin=$p12_origin_uid provider=$p12_provider_uid resume=$p12_resume_uid default=$p12_default_uid shell=$p12_shell_uid project=$p12_project_uid project-window=$p12_project_window_uid foreign=$p12_foreign_pane matrix=$p13_case socket=$p12_socket path=$p12_socket_path cleanup=$p12_cleanup_target inherited=unset"
+echo ">> ControlSession create/read-scope + Phase 1 closure e2e passed: control=$p12_control_uid window=$p12_window_uid descendants=0 root=retained project=$p12_project_uid project-window=$p12_project_window_uid foreign=$p12_foreign_pane repeat=byte-identical matrix=$p13_case socket=$p12_socket path=$p12_socket_path cleanup=$p12_cleanup_target inherited=unset"

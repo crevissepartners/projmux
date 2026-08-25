@@ -762,7 +762,7 @@ func TestLifecycleSiblingCleanupBindsExistingExactSocketBeforeKillPlan(t *testin
 	}
 	runner := &lifecycleSiblingCleanupRunner{}
 	runtime := &tmuxPaneDeleteRuntime{runner: runner, target: target, getenv: func(string) string { return "" }}
-	inventory := &exactLifecycleInventory{replacements: runtime}
+	inventory := &exactLifecycleInventory{runtime: runtime}
 	cleanup := paneLiveDeleteTarget{
 		PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10",
 		SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
