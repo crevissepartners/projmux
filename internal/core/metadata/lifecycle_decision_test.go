@@ -142,8 +142,8 @@ func TestTeardownAggregationIsOrderIndependentAndRootBounded(t *testing.T) {
 	if !EqualTeardownPlans(forward, reverse) {
 		t.Fatalf("event order changed plan: forward=%+v reverse=%+v", forward, reverse)
 	}
-	if forward.Action != TeardownDeleteWindow || forward.RootAction != RootTeardownDeleteProject ||
-		forward.ReopenIdentity != ReopenIdentityNewProjectUID {
+	if forward.Action != TeardownDeletePaneAgent || forward.RootAction != RootTeardownRetainProject ||
+		forward.ReopenIdentity != ReopenIdentitySameProjectUID {
 		t.Fatalf("last Project Window plan = %+v", forward)
 	}
 	duplicates := AggregateTeardownEvents([]TeardownEvent{window, pane, window, pane})
@@ -166,7 +166,7 @@ func TestTeardownAggregationIsOrderIndependentAndRootBounded(t *testing.T) {
 	projectSiblingWindow := window
 	projectSiblingWindow.LiveSiblingRootWindow = true
 	got = AggregateTeardownEvents([]TeardownEvent{projectSiblingWindow, projectSibling})
-	if got.Action != TeardownDeleteWindow || got.RootAction != RootTeardownRetainProject ||
+	if got.Action != TeardownDeletePaneAgent || got.RootAction != RootTeardownRetainProject ||
 		got.ReopenIdentity != ReopenIdentitySameProjectUID {
 		t.Fatalf("non-last Project Window plan = %+v", got)
 	}
@@ -177,7 +177,7 @@ func TestTeardownAggregationIsOrderIndependentAndRootBounded(t *testing.T) {
 	controlWindow := controlPane
 	controlWindow.Kind = TeardownEventWindowUnlinked
 	got = AggregateTeardownEvents([]TeardownEvent{controlPane, controlWindow})
-	if got.Action != TeardownDeleteWindow || got.RootAction != RootTeardownRetainControlSession ||
+	if got.Action != TeardownDeletePaneAgent || got.RootAction != RootTeardownRetainControlSession ||
 		got.ReopenIdentity != ReopenIdentityNotApplicable {
 		t.Fatalf("ControlSession last-Window plan = %+v", got)
 	}
@@ -214,7 +214,7 @@ func TestWindowUnlinkAloneAndAdversarialObservationsDeleteNothing(t *testing.T) 
 	}
 }
 
-func TestControlSessionLastWindowCascadeKeepsRootIdentity(t *testing.T) {
+func TestControlSessionLastWindowAutomaticExitRetainsWindowAndRootIdentity(t *testing.T) {
 	t.Parallel()
 	mutator := testMutator(dirSet{})
 	registry := NewRegistry()
@@ -243,13 +243,7 @@ func TestControlSessionLastWindowCascadeKeepsRootIdentity(t *testing.T) {
 		Chain: TeardownOwnerChain{SocketIdentity: "/tmp/control.sock", SessionHandle: "$1", PaneHandle: "%7", WindowHandle: "@2",
 			PaneUID: paneUID, WindowUID: windowUID, RootKind: KindControlSession, RootUID: controlUID, Generation: "gen-control"},
 	}
-	pending, err := PlanPaneTeardownEvidence(registry, paneEvent, fixedNow.Add(time.Minute))
-	if err != nil || !pending.Changed {
-		t.Fatalf("pending control evidence = %+v, %v", pending, err)
-	}
-	unlinked := paneEvent
-	unlinked.Kind = TeardownEventWindowUnlinked
-	plan, err := PlanWindowRootCascadeDelete(pending.Desired, paneEvent, unlinked, fixedNow.Add(2*time.Minute))
+	plan, err := PlanPaneAgentCascadeDelete(registry, paneEvent, fixedNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,8 +253,15 @@ func TestControlSessionLastWindowCascadeKeepsRootIdentity(t *testing.T) {
 	if _, ok := plan.Desired.ControlSession(controlUID); !ok {
 		t.Fatal("ControlSession identity was deleted")
 	}
-	if _, ok := plan.Desired.Window(windowUID); ok {
-		t.Fatal("unlinked control Window survived")
+	window, ok := plan.Desired.Window(windowUID)
+	if !ok {
+		t.Fatal("automatic exit deleted the ControlSession Window")
+	}
+	if _, ok := plan.Desired.Pane(paneUID); ok {
+		t.Fatal("exited ControlSession Pane survived")
+	}
+	if replacement, ok := plan.Desired.Pane(window.Spec.AnchorPaneRef); !ok || replacement.Spec.Role != PaneRoleShell {
+		t.Fatalf("replacement ControlSession shell = %+v", replacement)
 	}
 	if err := plan.Desired.Validate(); err != nil {
 		t.Fatalf("desired control Registry: %v", err)
@@ -428,7 +429,7 @@ func TestProjectCascadeDeletePlanPreservesExternalAssetsAndReopensWithNewUID(t *
 	}
 }
 
-func TestPaneAgentCascadeDeletePlanRemovesOnlyTheCurrentDirectOwnerChain(t *testing.T) {
+func TestPaneAgentCascadeDeletePlanReleasesPaneAndRetainsAgentWindow(t *testing.T) {
 	t.Parallel()
 
 	mutator := testMutator(dirSet{"/srv/alpha": true})
@@ -476,15 +477,15 @@ func TestPaneAgentCascadeDeletePlanRemovesOnlyTheCurrentDirectOwnerChain(t *test
 		t.Fatal("pure Pane/Agent planning mutated its source Registry")
 	}
 	if !plan.Changed || plan.PaneUID != pane.Metadata.UID || plan.AgentUID != agent.Metadata.UID ||
-		plan.DeletedPanes != 1 || plan.DeletedAgents != 1 || plan.Evidence == nil ||
+		plan.DeletedPanes != 1 || plan.DeletedAgents != 0 || plan.Evidence == nil ||
 		plan.Evidence.Classification != TerminationNormal {
 		t.Fatalf("Pane/Agent plan = %+v", plan)
 	}
 	if _, ok := plan.Desired.Pane(pane.Metadata.UID); ok {
 		t.Fatal("qualifying Pane remains in desired Registry")
 	}
-	if _, ok := plan.Desired.Agent(agent.Metadata.UID); ok {
-		t.Fatal("current directly owning Agent remains in desired Registry")
+	if retained, ok := plan.Desired.Agent(agent.Metadata.UID); !ok || retained.Status.Phase != PhaseOffline || retained.Status.PaneRef != "" {
+		t.Fatalf("current Agent was not retained offline: %+v", retained)
 	}
 	if _, ok := plan.Desired.Window(window.Metadata.UID); !ok {
 		t.Fatal("Phase 2 plan deleted the owning Window")
@@ -515,7 +516,7 @@ func TestPaneAgentCascadeDeletePlanRemovesOnlyTheCurrentDirectOwnerChain(t *test
 	}
 }
 
-func TestPaneAgentCascadeDeletePlanRetainsLastWindowShellWithoutReplacement(t *testing.T) {
+func TestPaneAgentCascadeDeletePlanReplacesLastWindowShell(t *testing.T) {
 	t.Parallel()
 
 	mutator := testMutator(dirSet{"/srv/alpha": true})
@@ -554,15 +555,20 @@ func TestPaneAgentCascadeDeletePlanRetainsLastWindowShellWithoutReplacement(t *t
 	if err != nil {
 		t.Fatalf("PlanPaneAgentCascadeDelete: %v", err)
 	}
-	if plan.Changed || plan.Decision.Action != TeardownRetain ||
+	if !plan.Changed || plan.Decision.Action != TeardownDeletePaneAgent ||
 		plan.Decision.Reason != TeardownReasonAwaitingWindowUnlink {
-		t.Fatalf("last-Pane Phase 2 plan = %+v, want awaiting-window-unlink retain", plan)
+		t.Fatalf("last-Pane lifecycle plan = %+v, want retained Window replacement", plan)
 	}
 	if !reflect.DeepEqual(registry, before) {
 		t.Fatal("last-Pane Phase 2 planning mutated its source Registry")
 	}
-	if len(registry.Panes) != 1 || registry.Panes[0].Metadata.UID != pane.Metadata.UID {
-		t.Fatalf("last-Pane Phase 2 plan created replacement topology: %+v", registry.Panes)
+	windowAfter, ok := plan.Desired.Window(window.Metadata.UID)
+	if !ok || windowAfter.Metadata.Name != window.Metadata.Name || windowAfter.Spec.AnchorPaneRef == pane.Metadata.UID {
+		t.Fatalf("retained Window identity/anchor = %+v", windowAfter)
+	}
+	replacement, ok := plan.Desired.Pane(windowAfter.Spec.AnchorPaneRef)
+	if !ok || replacement.Spec.Role != PaneRoleShell || replacement.Metadata.OwnerUID() != window.Metadata.UID {
+		t.Fatalf("replacement shell = %+v", replacement)
 	}
 }
 

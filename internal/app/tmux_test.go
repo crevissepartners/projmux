@@ -1490,6 +1490,7 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 		"set-hook -g pane-exited",
 		"sleep 0.05; '/tmp/proj mux/bin/projmux' internal tmux rebalance-panes >/dev/null 2>&1 || true; " +
 			"env -u TMUX -u TMUX_PANE '/tmp/proj mux/bin/projmux' internal tmux converge --socket-path '#{socket_path}' --reason pane-exited --hook-pane '#{hook_pane}' >/dev/null 2>&1 || true",
+		"set-hook -g pane-died",
 		"set-hook -g after-kill-pane",
 		"--reason pane-killed",
 		"set-hook -g window-unlinked",

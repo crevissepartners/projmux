@@ -2767,18 +2767,27 @@ termination_await_journal_receipt() {
 
 termination_replay_pane_exited_hook() {
   local pane_uid="$1" want_class="$2" runtime_id="$3" report_label="$4"
+  local converge_status
   if [[ "$runtime_id" != %* ]]; then
     echo "Pane $pane_uid has invalid activation runtimeID '$runtime_id'" >&2
     exit 1
   fi
   termination_await_journal_receipt "$pane_uid" "$want_class"
   for _ in $(seq 1 100); do
+    set +e
     termination_pmx internal tmux converge \
       --socket-path "$termination_socket_path" \
       --reason pane-exited \
       --hook-pane "$runtime_id" \
       >"$termination_root/receipt-converge-$report_label.out" \
       2>"$termination_root/receipt-converge-$report_label.err"
+    converge_status=$?
+    set -e
+    if [[ "$converge_status" != "0" ]]; then
+      echo "pane-exited replay for $pane_uid exited $converge_status" >&2
+      cat "$termination_root/receipt-converge-$report_label.err" >&2
+      exit 1
+    fi
     if ! grep -q "deferred: another controller worker holds" \
       "$termination_root/receipt-converge-$report_label.err"; then
       return
@@ -2922,44 +2931,125 @@ termination_agent_pane_ref() {
     | head -n 1
 }
 
+termination_agent_phase() {
+  sed -n 's/^[[:space:]]*"phase": "\([^"]*\)".*/\1/p' "$termination_root/agent.json" \
+    | head -n 1
+}
+
 termination_provider_case() {
   local provider="$1" want_class="$2" want_code="$3" want_signal="$4" script="$5"
-  # The stub outlives the create transaction on purpose. A provider that ends
-  # before its own create commits is a different case -- the shipped
-  # dead-managed-Pane sweep can retire the Pane inside that same transaction --
-  # and this block is about the receipt, not about that race.
-  printf 'sleep 0.5\n%s\n' "$script" >"$termination_root/stub-script"
-  local agent_uid pane_ref got_class got_code got_signal got_source got_generation activation runtime_id
-  agent_uid="$(termination_pmx_provider create agent --project evidence --provider "$provider" -o uid)"
-  if [[ -z "$agent_uid" ]]; then
-    echo "termination provider case $provider created no Agent" >&2
+  # An exact release file makes the stub outlive the create transaction. A
+  # provider that ends before its own create commits is a different case, and a
+  # fixed delay cannot preserve that boundary as the mutation plan grows.
+  local release_file="$termination_root/provider-release-$provider"
+  rm -f "$release_file"
+  printf 'while [ ! -e %q ]; do sleep 0.05; done\n%s\n' "$release_file" "$script" \
+    >"$termination_root/stub-script"
+  local agent_uid create_status pane_ref got_class got_code got_signal got_source got_generation activation runtime_id
+  local pane_set_before pane_set_after sibling_before sibling_after window_name window_name_before anchor_ref
+  local runtime_window_name runtime_window_name_before
+  set +e
+  agent_uid="$(termination_pmx_provider create agent --project evidence --provider "$provider" -o uid \
+    2>"$termination_root/provider-$provider-create.err")"
+  create_status=$?
+  set -e
+  if [[ "$create_status" != "0" || -z "$agent_uid" ]]; then
+    echo "termination provider case $provider create exited $create_status with Agent '$agent_uid'" >&2
+    cat "$termination_root/provider-$provider-create.err" >&2
     exit 1
   fi
   # The managed Pane's generation is read while the provider is still running,
   # so the comparison below is against the value the launch was issued with.
-  termination_agent_json "$agent_uid"
+  if ! termination_agent_json "$agent_uid"; then
+    echo "termination provider case $provider cannot read created Agent $agent_uid" >&2
+    cat "$termination_root/agent.json" >&2 || true
+    exit 1
+  fi
   pane_ref="$(termination_agent_pane_ref)"
   if [[ -z "$pane_ref" ]]; then
     echo "termination provider case $provider Agent carries no managed Pane binding" >&2
     cat "$termination_root/agent.json" >&2
     exit 1
   fi
-  activation="$(termination_activation_generation "$pane_ref")"
+  if ! activation="$(termination_activation_generation "$pane_ref")"; then
+    echo "termination provider case $provider cannot read managed Pane $pane_ref" >&2
+    termination_pmx describe pane "uid:$pane_ref" -o json >&2 || true
+    exit 1
+  fi
   if [[ -z "$activation" ]]; then
     echo "termination provider case $provider managed Pane $pane_ref carries no activation generation" >&2
     termination_pmx describe pane "uid:$pane_ref" -o json >&2 || true
     exit 1
   fi
-  runtime_id="$(termination_activation_runtime_id "$pane_ref")"
+  if ! runtime_id="$(termination_activation_runtime_id "$pane_ref")"; then
+    echo "termination provider case $provider cannot read runtime binding for Pane $pane_ref" >&2
+    termination_pmx describe pane "uid:$pane_ref" -o json >&2 || true
+    exit 1
+  fi
+  termination_pmx describe window "uid:$termination_main_window_uid" -o json \
+    >"$termination_root/provider-$provider-window.before.json"
+  window_name_before="$(sed -n 's/^[[:space:]]*"name": "\([^"]*\)".*/\1/p' "$termination_root/provider-$provider-window.before.json" | head -n 1)"
+  runtime_window_name_before="$(termination_tmux display-message -p -t "$termination_anchor_pane_id" '#{window_name}')"
+  pane_set_before="$termination_root/provider-$provider-panes.before"
+  pane_set_after="$termination_root/provider-$provider-panes.after"
+  termination_pmx get panes --project "uid:$termination_project_uid" \
+    --window "uid:$termination_main_window_uid" -o uid \
+    | grep -Fvx "$pane_ref" | sort >"$pane_set_before"
+  sibling_before="$(termination_sibling_tmux show-options -gqv @projmux_termination_sentinel):$(termination_sibling_tmux list-panes -a -F '#{pane_id}')"
+  touch "$release_file"
   termination_replay_pane_exited_hook "$pane_ref" "$want_class" "$runtime_id" "provider-$provider"
   if [[ "$want_class" == "normal" ]]; then
-    if termination_pmx describe agent "uid:$agent_uid" -o json >"$termination_root/clean-agent-present.json" 2>/dev/null ||
-       termination_pmx describe pane "uid:$pane_ref" -o json >"$termination_root/clean-provider-pane-present.json" 2>/dev/null; then
-      echo "clean provider $provider left Agent/Pane Registry rows agent=$agent_uid pane=$pane_ref" >&2
+    termination_agent_json "$agent_uid"
+    got_class="$(termination_agent_field classification)"
+    got_code="$(termination_agent_field exitCode)"
+    got_signal="$(termination_agent_field signal)"
+    got_source="$(termination_agent_field source)"
+    got_generation="$(termination_agent_field generation)"
+    if [[ "$(termination_agent_phase)" != "Offline" ]] || [[ -n "$(termination_agent_pane_ref)" ]] ||
+      [[ "$got_class" != "$want_class" || "$got_code" != "$want_code" || "$got_signal" != "$want_signal" ]] ||
+      [[ "$got_source" != "supervisor" || "$got_generation" != "$activation" ]]; then
+      echo "clean provider $provider did not retain an exact Offline Agent: agent=$agent_uid pane=$pane_ref" >&2
+      cat "$termination_root/agent.json" >&2
+      exit 1
+    fi
+    if termination_pmx describe pane "uid:$pane_ref" -o json >"$termination_root/clean-provider-pane-present.json" 2>/dev/null; then
+      echo "clean provider $provider retained released Pane row $pane_ref" >&2
+      cat "$termination_root/clean-provider-pane-present.json" >&2
+      exit 1
+    fi
+    if termination_tmux list-panes -t "$termination_main_window_id" -F '#{@projmux_pane_uid}' | grep -Fxq "$pane_ref"; then
+      echo "clean provider $provider left exact dead runtime Pane $pane_ref" >&2
+      exit 1
+    fi
+    termination_pmx get panes --project "uid:$termination_project_uid" \
+      --window "uid:$termination_main_window_uid" -o uid | sort >"$pane_set_after"
+    if ! cmp "$pane_set_before" "$pane_set_after"; then
+      echo "clean provider $provider minted a replacement despite the valid sibling anchor" >&2
+      exit 1
+    fi
+    termination_pmx describe window "uid:$termination_main_window_uid" -o json \
+      >"$termination_root/provider-$provider-window.json"
+    window_name="$(sed -n 's/^[[:space:]]*"name": "\([^"]*\)".*/\1/p' "$termination_root/provider-$provider-window.json" | head -n 1)"
+    anchor_ref="$(sed -n 's/^[[:space:]]*"anchorPaneRef": "\([^"]*\)".*/\1/p' "$termination_root/provider-$provider-window.json" | head -n 1)"
+    runtime_window_name="$(termination_tmux display-message -p -t "$termination_anchor_pane_id" '#{window_name}')"
+    if [[ "$window_name" != "$window_name_before" || "$runtime_window_name" != "$runtime_window_name_before" ||
+      "$anchor_ref" != "$termination_anchor_pane_uid" ]] ||
+      ! termination_pmx describe project "uid:$termination_project_uid" -o json >/dev/null ||
+      ! termination_pmx describe pane "uid:$anchor_ref" -o json >"$termination_root/provider-$provider-anchor.json" ||
+      ! termination_pmx get agents --project "uid:$termination_project_uid" \
+        --window "uid:$termination_main_window_uid" -o uid | grep -Fxq "$agent_uid" ||
+      [[ "$(termination_tmux display-message -p -t "$termination_anchor_pane_id" '#{window_id}|#{@projmux_pane_uid}')" != "$termination_main_window_id|$termination_anchor_pane_uid" ]]; then
+      echo "clean provider $provider did not preserve the exact Project/Window/sibling-anchor chain" >&2
+      cat "$termination_root/provider-$provider-window.json" >&2
+      exit 1
+    fi
+    sibling_after="$(termination_sibling_tmux show-options -gqv @projmux_termination_sentinel):$(termination_sibling_tmux list-panes -a -F '#{pane_id}')"
+    if [[ "$sibling_after" != "$sibling_before" ]]; then
+      echo "clean provider $provider touched the sibling socket" >&2
       exit 1
     fi
     termination_await_journal_receipt "$pane_ref" normal
-    echo ">> termination provider case $provider agent=$agent_uid pane=$pane_ref class=normal registry=deleted journal=preserved"
+    echo ">> termination provider case $provider agent=$agent_uid pane=$pane_ref class=normal phase=Offline registry-pane=released window=$termination_main_window_uid anchor=$anchor_ref replacement=zero journal=preserved"
     return
   fi
   for _ in $(seq 1 200); do
@@ -2989,8 +3079,12 @@ termination_provider_case() {
     cat "$termination_root/agent.json" >&2
     exit 1
   fi
-  # The Agent keeps the evidence even though nothing here consumed it: turning a
-  # receipt into a phase belongs to a later Phase.
+  if ! termination_pmx describe pane "uid:$pane_ref" -o json >/dev/null; then
+    echo "abnormal provider $provider lost retained Pane row $pane_ref" >&2
+    exit 1
+  fi
+  # Abnormal evidence retains the Agent/Pane identities and grants no
+  # replacement or cleanup authority.
   echo ">> termination provider case $provider agent=$agent_uid pane=$pane_ref class=$got_class generation=$activation"
 }
 
@@ -3354,9 +3448,10 @@ exitrec_await_journal_receipt() {
 }
 
 # Reobserve the exact host through the non-causal controller route so the
-# supervisor journal is absorbed without supplying pane-exited deletion
-# authority. The public reconcile call that follows remains the explicit
-# projection/no-op surface this block measures.
+# supervisor journal is absorbed without adding authority. For a normal Agent,
+# the retained-pane `pane-died` hook separately owns the Phase-3 release; the
+# public reconcile call that follows remains the explicit projection/no-op
+# surface this block measures.
 exitrec_absorb_receipts() {
   exitrec_pmx internal tmux converge \
     --socket-path "$exitrec_socket_path" \
@@ -3364,10 +3459,10 @@ exitrec_absorb_receipts() {
     >"$exitrec_root/absorb-receipts.out"
 }
 
-# This block tests explicit receipt projection through `reconcile resources`,
-# not hook-driven deletion (covered above and in e2e). Remove only the generated
-# pane-exited hook for the contained server before any short-lived fixture can
-# race the explicit read/write assertions, then restore it verbatim below.
+# This block tests explicit receipt projection through `reconcile resources`
+# while retaining the Phase-3 `pane-died` lifecycle path. Remove only the
+# legacy pane-exited trigger before any short-lived fixture can race the
+# explicit read/write assertions, then restore it verbatim below.
 exitrec_pane_exited_hook="$(exitrec_tmux "$exitrec_socket" show-hooks -g pane-exited \
   | sed -n 's/^pane-exited\[[0-9][0-9]*\] //p')"
 if [[ -z "$exitrec_pane_exited_hook" ]]; then
@@ -3398,19 +3493,31 @@ exitrec_agent_case() {
     exit 1
   fi
 
-  # Wait for the runtime object to actually be gone, which is the input the
-  # reconciliation consumes. Polling the live server rather than sleeping is what
-  # keeps this from being timing-dependent.
+  # A normal retained dead Agent Pane is cleaned after the Window graph commit.
+  # Abnormal evidence has zero cleanup authority and remains as exact pane_dead
+  # runtime evidence. Poll those distinct outcomes instead of treating both as
+  # ordinary runtime absence.
   for _ in $(seq 1 100); do
-    if ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
-      | grep -qx "$pane_ref"; then
+    if [[ "$want_class" == "normal" ]]; then
+      if ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
+        | grep -qx "$pane_ref"; then
+        break
+      fi
+    elif exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
+      | grep -Fqx "$pane_ref|1"; then
       break
     fi
     sleep 0.1
   done
-  if exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
-    | grep -qx "$pane_ref"; then
-    echo "exit reconciliation case $label still has a live pane for $pane_ref" >&2
+  if [[ "$want_class" == "normal" ]]; then
+    if exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}' 2>/dev/null \
+      | grep -qx "$pane_ref"; then
+      echo "exit reconciliation case $label did not clean normal dead pane $pane_ref" >&2
+      exit 1
+    fi
+  elif ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
+    | grep -Fqx "$pane_ref|1"; then
+    echo "exit reconciliation case $label lost abnormal retained dead pane $pane_ref" >&2
     exit 1
   fi
 
@@ -3442,15 +3549,22 @@ exitrec_agent_case() {
     echo "exit reconciliation case $label left paneRef=$(exitrec_field paneRef) bound to a dead pane" >&2
     exit 1
   fi
-  if ! exitrec_doc_exists pane "$pane_ref"; then
-    echo "exit reconciliation case $label deleted the managed Pane resource $pane_ref" >&2
-    exit 1
-  fi
-  if [[ "$(exitrec_termination_field classification)" != "$want_class" ||
-        "$(exitrec_termination_field source)" != "supervisor" ]]; then
-    echo "exit reconciliation case $label Pane evidence did not preserve $want_class/supervisor" >&2
-    cat "$exitrec_root/doc.json" >&2
-    exit 1
+  if [[ "$want_class" == "normal" ]]; then
+    if exitrec_doc_exists pane "$pane_ref"; then
+      echo "exit reconciliation case $label retained released normal Pane resource $pane_ref" >&2
+      exit 1
+    fi
+  else
+    if ! exitrec_doc_exists pane "$pane_ref"; then
+      echo "exit reconciliation case $label deleted retained abnormal Pane resource $pane_ref" >&2
+      exit 1
+    fi
+    if [[ "$(exitrec_termination_field classification)" != "$want_class" ||
+          "$(exitrec_termination_field source)" != "supervisor" ]]; then
+      echo "exit reconciliation case $label Pane evidence did not preserve $want_class/supervisor" >&2
+      cat "$exitrec_root/doc.json" >&2
+      exit 1
+    fi
   fi
   if [[ -z "$got_reason" ]]; then
     echo "exit reconciliation case $label recorded no status.reason" >&2
@@ -3466,7 +3580,7 @@ exitrec_agent_case() {
     echo "exit reconciliation case $label rewrote the registry on a repeat pass" >&2
     exit 1
   fi
-  echo ">> exit reconciliation case $label agent=$agent_uid phase=$got_phase class=$got_class source=$got_source"
+  echo ">> exit reconciliation case $label agent=$agent_uid phase=$got_phase class=$got_class source=$got_source pane=$([[ "$want_class" == "normal" ]] && echo released || echo retained-dead)"
 }
 
 exitrec_agent_case clean-exit claude Offline normal 'exit 0'

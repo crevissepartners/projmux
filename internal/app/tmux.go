@@ -2408,6 +2408,7 @@ func tmuxStandaloneConfigWithKeymapThemeAIBadgeStyleDesktopNotifyModeLiveResourc
 		"set-hook -g pane-focus-in "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{hook_pane} >/dev/null 2>&1 || true")),
 		"set-hook -g after-select-pane "+tmuxConfigQuote("run-shell -b "+tmuxConfigQuote(bin+" attention clear #{pane_id} >/dev/null 2>&1 || true")),
 		"set-hook -g pane-exited "+tmuxConfigQuote(tmuxPaneExitHookBody(bin, controllerTriggerPaneExited)),
+		"set-hook -g pane-died "+tmuxConfigQuote(tmuxPaneExitHookBody(bin, controllerTriggerPaneExited)),
 		"set-hook -g after-kill-pane "+tmuxConfigQuote(tmuxPaneExitHookBody(bin, controllerTriggerPaneKilled)),
 		"set-hook -g window-unlinked "+tmuxConfigQuote(tmuxWindowUnlinkedHookBody(bin)),
 	)

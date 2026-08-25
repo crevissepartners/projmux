@@ -864,6 +864,14 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, fmt.Sprintf("%d", pane.width))
 		case token == "pane_height" && pane != nil:
 			out = append(out, fmt.Sprintf("%d", pane.height))
+		case token == tmuxopts.RemainOnExitPane && pane != nil:
+			if enabled, ok := exactTmuxBoolean(pane.opts[token]); ok && enabled {
+				out = append(out, "1")
+			} else {
+				out = append(out, "0")
+			}
+		case token == "pane_dead" && pane != nil:
+			out = append(out, "0")
 		case strings.HasPrefix(token, "@"):
 			out = append(out, scopedOption(token, session, window, pane))
 		case strings.HasPrefix(token, "E:") && session != nil:

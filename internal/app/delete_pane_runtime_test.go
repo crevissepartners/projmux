@@ -301,7 +301,7 @@ func TestPaneDeleteRuntimePreflightPinsSiblingAgentAndImplicitCascades(t *testin
 		t.Fatalf("last Pane preflight: %v", err)
 	}
 	if len(lastPlan.Targets) != 1 || !lastPlan.Targets[0].EndsWindow || !lastPlan.Targets[0].EndsSession ||
-		lastPlan.endsWindows() != 1 || lastPlan.endsSessions() != 1 {
+		lastPlan.endsWindows() != 0 || lastPlan.endsSessions() != 0 {
 		t.Fatalf("last Pane plan = %#v", lastPlan)
 	}
 }
@@ -632,34 +632,19 @@ func TestPaneDeleteAuthorityUsesActivationGenerationNotTerminationReceipt(t *tes
 	}
 }
 
-func TestNamedLastPaneRuntimeCascadeForcesConfirmation(t *testing.T) {
+func TestNamedLastPaneCreatesReplacementWithoutRootCascadeConfirmation(t *testing.T) {
 	store := newFakeResourceStore(t)
 	runtime := newFixturePaneDeleteRuntime()
 	var prompts []string
 	cmd := newTestDeleteCommand(store, false, false, &prompts)
 	cmd.panes = runtime
-	before := store.snapshot()
 	out, _, err := runRoute(t, cmd, "pane", "uid:pan-beta-zsh")
-	if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("named last-Pane refusal = %v", err)
+	if err != nil {
+		t.Fatalf("named last-Pane replacement = %v", err)
 	}
-	if out != "" || store.snapshot() != before || store.transactions != 0 || len(runtime.killed) != 0 {
-		t.Fatal("named last-Pane refusal mutated Registry/tmux or wrote stdout")
-	}
-
-	store = newFakeResourceStore(t)
-	runtime = newFixturePaneDeleteRuntime()
-	prompts = nil
-	cmd = newTestDeleteCommand(store, true, false, &prompts)
-	cmd.panes = runtime
-	_, _, err = runRoute(t, cmd, "pane", "uid:pan-beta-zsh")
-	if err == nil || len(prompts) != 1 {
-		t.Fatalf("interactive named last-Pane refusal err=%v prompts=%v", err, prompts)
-	}
-	for _, want := range []string{"kill 1 exact live tmux Pane", "end 1 Window", "end 1 managed root session"} {
-		if !strings.Contains(prompts[0], want) {
-			t.Fatalf("last-Pane prompt = %q, want %q", prompts[0], want)
-		}
+	if len(runtime.killed) != 1 || len(runtime.replacements) != 1 || len(prompts) != 0 ||
+		!strings.Contains(out, "replacement shell") {
+		t.Fatalf("named last-Pane outcome killed=%+v replacements=%+v prompts=%v out=%q", runtime.killed, runtime.replacements, prompts, out)
 	}
 }
 
@@ -721,6 +706,84 @@ func TestPaneDeleteRuntimeProducerAnchorBindsRouteWithoutInheritedPaneEnv(t *tes
 	}
 	if runtime.routeAuthority == nil || runtime.routeAuthority.PaneID != "%31" || runtime.routeAuthority.ServerPID != "123" {
 		t.Fatalf("producer-anchored delete authority = %#v", runtime.routeAuthority)
+	}
+}
+
+type lifecycleSiblingCleanupRunner struct {
+	killed bool
+	calls  []recordedTmuxCall
+}
+
+func (r *lifecycleSiblingCleanupRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, recordedTmuxCall{name: name, args: slices.Clone(args)})
+	if name != "tmux" || len(args) < 3 || args[0] != "-S" || args[1] != testDeleteTarget.value {
+		return nil, fmt.Errorf("lifecycle cleanup requires exact -S routing: %s %v", name, args)
+	}
+	switch args[2] {
+	case "display-message":
+		switch args[len(args)-1] {
+		case "#{socket_path}":
+			return []byte(testDeleteTarget.value + "\n"), nil
+		case "#{pid}":
+			return []byte("4242\n"), nil
+		case tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
+			"#{@projmux_project_uid}", "#{@projmux_window_uid}", "#{@projmux_pane_uid}"):
+			return []byte(livePaneInventoryRow("$1", "alpha", "@10", "%31", "prj-alpha", "win-alpha-main", "pan-alpha-log")), nil
+		}
+	case "show-options":
+		switch args[len(args)-1] {
+		case tmuxopts.AppGlobal:
+			return []byte("1\n"), nil
+		case runtimeMutationSocketNameOption:
+			return []byte(defaultAppSocket + "\n"), nil
+		}
+	case "list-panes":
+		if r.killed {
+			return []byte(livePaneInventoryRow("$1", "@10", "%30", "pan-alpha-zsh")), nil
+		}
+		return []byte(
+			livePaneInventoryRow("$1", "@10", "%30", "pan-alpha-zsh") +
+				livePaneInventoryRow("$1", "@10", "%31", "pan-alpha-log"),
+		), nil
+	case "kill-pane":
+		if flagValue(args[3:], "-t") != "%31" {
+			return nil, fmt.Errorf("unexpected lifecycle cleanup target: %v", args)
+		}
+		r.killed = true
+		return nil, nil
+	}
+	return nil, fmt.Errorf("unexpected lifecycle cleanup command: %v", args)
+}
+
+func TestLifecycleSiblingCleanupBindsExistingExactSocketBeforeKillPlan(t *testing.T) {
+	target, err := tmuxSocketPathTarget(testDeleteTarget.value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &lifecycleSiblingCleanupRunner{}
+	runtime := &tmuxPaneDeleteRuntime{runner: runner, target: target, getenv: func(string) string { return "" }}
+	inventory := &exactLifecycleInventory{replacements: runtime}
+	cleanup := paneLiveDeleteTarget{
+		PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10",
+		SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
+	}
+
+	if err := inventory.CleanupLifecycleDeadPane(context.Background(), cleanup); err != nil {
+		t.Fatalf("lifecycle sibling cleanup: %v", err)
+	}
+	if !runner.killed || runtime.routeAnchor != "%31" || runtime.expectedSocketPath != testDeleteTarget.value || runtime.routeAuthority == nil ||
+		runtime.routeAuthority.ServerPID != "4242" {
+		t.Fatalf("cleanup route killed=%t anchor=%q path=%q authority=%+v",
+			runner.killed, runtime.routeAnchor, runtime.expectedSocketPath, runtime.routeAuthority)
+	}
+	kills := 0
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "kill-pane") {
+			kills++
+		}
+	}
+	if kills != 1 {
+		t.Fatalf("exact lifecycle cleanup kill calls = %d, want 1: %#v", kills, runner.calls)
 	}
 }
 
@@ -976,7 +1039,7 @@ func TestPaneDeleteRouteDryRunExecutionPartialFailureAndAgentOffline(t *testing.
 	if err != nil {
 		t.Fatalf("dry-run: %v", err)
 	}
-	for _, want := range []string{"live would kill tmux pane %34", "would end Window @12", "would end Project session beta"} {
+	for _, want := range []string{"live would kill tmux pane %34", "would create a replacement shell in Window @12", "Window uid=win-beta-main and name are preserved"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("dry-run missing %q:\n%s", want, out)
 		}

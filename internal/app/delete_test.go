@@ -54,22 +54,27 @@ var testDeleteEnvironment = map[string]string{"TMUX": "/tmp/projmux-test/isolate
 var testDeleteTarget = explicitTmuxTarget{flag: "-S", value: "/tmp/projmux-test/isolated"}
 
 type fakePaneDeleteRuntime struct {
-	preflights    int
-	killed        []paneLiveDeleteTarget
-	tombstoned    []paneLiveDeleteTarget
-	restored      []paneLiveDeleteTarget
-	queued        []paneLiveDeleteTarget
-	selfUID       string
-	preflightErr  error
-	killErr       error
-	killErrs      map[string]error
-	tombstoneErr  error
-	restoreErr    error
-	queueErr      error
-	killHook      func(paneLiveDeleteTarget)
-	queueHook     func([]paneLiveDeleteTarget)
-	offlineUIDs   map[string]bool
-	preflightHook func(int, *coremetadata.Registry)
+	preflights             int
+	killed                 []paneLiveDeleteTarget
+	tombstoned             []paneLiveDeleteTarget
+	restored               []paneLiveDeleteTarget
+	queued                 []paneLiveDeleteTarget
+	replacements           []paneReplacementShell
+	rolledBackReplacements int
+	selfUID                string
+	preflightErr           error
+	killErr                error
+	killErrs               map[string]error
+	tombstoneErr           error
+	restoreErr             error
+	queueErr               error
+	replacementErr         error
+	replacementRollbackErr error
+	replacementHook        func([]paneReplacementShell)
+	killHook               func(paneLiveDeleteTarget)
+	queueHook              func([]paneLiveDeleteTarget)
+	offlineUIDs            map[string]bool
+	preflightHook          func(int, *coremetadata.Registry)
 	// boundTarget records the exact server the route installed, so a test can
 	// prove the live half never routes anywhere the invocation did not name.
 	boundTarget explicitTmuxTarget
@@ -78,6 +83,26 @@ type fakePaneDeleteRuntime struct {
 func (r *fakePaneDeleteRuntime) useExactTarget(target explicitTmuxTarget) { r.boundTarget = target }
 
 func newFixturePaneDeleteRuntime() *fakePaneDeleteRuntime { return &fakePaneDeleteRuntime{} }
+
+func (r *fakePaneDeleteRuntime) prepareReplacements(_ context.Context, replacements []paneReplacementShell) (paneReplacementReceipt, error) {
+	if r.replacementErr != nil {
+		return paneReplacementReceipt{}, r.replacementErr
+	}
+	if r.replacementHook != nil {
+		r.replacementHook(replacements)
+	}
+	r.replacements = append(r.replacements, replacements...)
+	created := make([]runtimeObject, 0, len(replacements))
+	for i, replacement := range replacements {
+		created = append(created, runtimeObject{Kind: runtimePane, ID: fmt.Sprintf("%%replacement-%d", i+1), UID: replacement.Pane.Metadata.UID})
+	}
+	return paneReplacementReceipt{created: created}, nil
+}
+
+func (r *fakePaneDeleteRuntime) rollbackReplacements(_ context.Context, receipt paneReplacementReceipt) error {
+	r.rolledBackReplacements += len(receipt.created)
+	return r.replacementRollbackErr
+}
 
 func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetadata.Registry, plan deletePlan) (paneLiveDeletePlan, error) {
 	r.preflights++
@@ -875,6 +900,121 @@ func TestDeletePaneLeavesAnAgentOwnedCurrentPaneAgentAliveAsOffline(t *testing.T
 	}
 }
 
+func TestDeleteLastWindowDescendantsCreatesLiveReplacementBeforeKill(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixturePaneDeleteRuntime()
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.panes = runtime
+	if _, _, err := runRoute(t, cmd, "pane", "zsh", "log", "codex-pane", "--project", "alpha", "--window", "main", "--yes"); err != nil {
+		t.Fatal(err)
+	}
+	if len(runtime.replacements) != 1 || len(runtime.killed) != 3 {
+		t.Fatalf("replacement/kill plan = replacements:%+v killed:%+v", runtime.replacements, runtime.killed)
+	}
+	window, ok := store.registry.Window("win-alpha-main")
+	if !ok || window.Metadata.Name != "main" {
+		t.Fatalf("same Window identity/name did not survive: %+v", window)
+	}
+	anchor, ok := store.registry.Pane(window.Spec.AnchorPaneRef)
+	if !ok || anchor.Metadata.UID != runtime.replacements[0].Pane.Metadata.UID || anchor.Spec.Role != coremetadata.PaneRoleShell {
+		t.Fatalf("replacement anchor = %+v", anchor)
+	}
+	if agent, ok := store.registry.Agent("agt-alpha-codex"); !ok || agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
+		t.Fatalf("Agent after managed Pane delete = %+v", agent)
+	}
+}
+
+func TestDeleteReplacementFailureRestoresExactRegistryAndKillsNothing(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixturePaneDeleteRuntime()
+	runtime.replacementErr = errors.New("injected split failure")
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.panes = runtime
+	before := store.snapshot()
+	if _, _, err := runRoute(t, cmd, "pane", "zsh", "log", "codex-pane", "--project", "alpha", "--window", "main", "--yes"); err == nil || !strings.Contains(err.Error(), "replacement shell") {
+		t.Fatalf("replacement failure = %v", err)
+	}
+	if store.snapshot() != before || len(runtime.killed) != 0 || len(runtime.replacements) != 0 {
+		t.Fatalf("replacement failure changed state: registry=%t killed=%+v replacements=%+v", store.snapshot() != before, runtime.killed, runtime.replacements)
+	}
+}
+
+func TestDeletePaneSecondRegistryCommitFailureReportsEveryRetainedReplacementAndExactPreimage(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixturePaneDeleteRuntime()
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.panes = runtime
+	var events []string
+	runtime.replacementHook = func(replacements []paneReplacementShell) {
+		events = append(events, fmt.Sprintf("prepare %d", len(replacements)))
+	}
+	runtime.killHook = func(target paneLiveDeleteTarget) {
+		events = append(events, "kill "+target.PaneID)
+	}
+	commit := cmd.store.update
+	commits := 0
+	var exactPreimage []byte
+	cmd.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		commits++
+		if commits == 1 {
+			return commit(fn)
+		}
+		var marshalErr error
+		exactPreimage, marshalErr = json.Marshal(store.registry)
+		if marshalErr != nil {
+			return coremetadata.Registry{}, marshalErr
+		}
+		working := store.registry.Clone()
+		if err := fn(&working); err != nil {
+			return coremetadata.Registry{}, err
+		}
+		events = append(events, "store failed")
+		return coremetadata.Registry{}, errors.New("injected second Registry commit failure")
+	}
+
+	stdout, _, err := runRoute(t, cmd, "pane",
+		"uid:pan-alpha-zsh", "uid:pan-alpha-log", "uid:pan-alpha-codex", "uid:pan-alpha-review",
+		"--project", "uid:prj-alpha", "--yes")
+	if err == nil {
+		t.Fatal("second Registry commit failure succeeded")
+	}
+	for _, want := range []string{
+		"injected second Registry commit failure",
+		"%replacement-1/pane-uid=pane-test-1",
+		"%replacement-2/pane-uid=pane-test-2",
+		"exact Registry preimage remains unchanged for retry",
+		"no unplanned Pane was targeted",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("post-kill store failure error = %q, want %q", err, want)
+		}
+	}
+	if got, want := strings.Join(events, ","), "prepare 2,kill %30,kill %31,kill %32,kill %33,store failed"; got != want {
+		t.Fatalf("replacement/kill/store ordering = %q, want %q", got, want)
+	}
+	after, marshalErr := json.Marshal(store.registry)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	if !bytes.Equal(after, exactPreimage) {
+		t.Fatalf("failed second commit changed exact Registry preimage:\nbefore=%s\nafter=%s", exactPreimage, after)
+	}
+	if runtime.rolledBackReplacements != 0 || len(runtime.replacements) != 2 {
+		t.Fatalf("retained replacements rolled-back=%d prepared=%+v", runtime.rolledBackReplacements, runtime.replacements)
+	}
+	if len(runtime.killed) != 4 {
+		t.Fatalf("exact killed Pane set = %+v", runtime.killed)
+	}
+	for _, target := range runtime.killed {
+		if target.RootUID != "prj-alpha" || target.PaneID == "%34" || target.PaneUID == "pan-beta-zsh" {
+			t.Fatalf("post-kill store failure reached unplanned sibling: %+v", target)
+		}
+	}
+	if stdout != "" {
+		t.Fatalf("post-kill store failure wrote stdout: %q", stdout)
+	}
+}
+
 func TestDeleteOfflineAgentAlreadyUsesRegistryOnlyPath(t *testing.T) {
 	store := newFakeResourceStore(t)
 	cmd := newTestDeleteCommand(store, false, false, nil)
@@ -1656,12 +1796,23 @@ func TestDeleteWindowKillsExactLiveTargetBeforeStoreCommitAndPreservesSibling(t 
 	}
 }
 
-func TestDeleteLastProjectWindowKillsExactTargetAndMintsAValidOfflineReplacement(t *testing.T) {
+func TestDeleteLastProjectWindowRootCascadeAllocatesZeroReplacementWindows(t *testing.T) {
 	store := newFakeResourceStore(t)
 	runtime := newFixtureWindowDeleteRuntime()
 	cmd := newTestDeleteCommand(store, false, false, nil)
 	cmd.windows = runtime
 	alphaBefore := projectGraphSnapshot(t, store.registry, "prj-alpha")
+	beforeWindowUIDs := make(map[string]struct{}, len(store.registry.Windows))
+	for _, window := range store.registry.Windows {
+		beforeWindowUIDs[window.Metadata.UID] = struct{}{}
+	}
+	allocations := 0
+	mutator := store.mutator()
+	mutator.NewUID = func(coremetadata.Kind) (string, error) {
+		allocations++
+		return "", errors.New("explicit Window delete must not allocate")
+	}
+	cmd.store.mutator = func() coremetadata.Mutator { return mutator }
 
 	stdout, _, err := runRoute(t, cmd, "window", "uid:win-beta-main", "--yes")
 	if err != nil {
@@ -1673,14 +1824,19 @@ func TestDeleteLastProjectWindowKillsExactTargetAndMintsAValidOfflineReplacement
 	if _, ok := store.registry.Window("win-beta-main"); ok {
 		t.Fatal("requested Window survived")
 	}
-	beta, _ := store.registry.Project("prj-beta")
-	windows := store.registry.WindowsOf("prj-beta")
-	if len(windows) != 1 || windows[0].Metadata.UID == "win-beta-main" || beta.Spec.PrimaryWindowRef != windows[0].Metadata.UID {
-		t.Fatalf("replacement chain root = project:%+v windows:%+v", beta, windows)
+	if _, ok := store.registry.Project("prj-beta"); ok {
+		t.Fatal("last-Window owning Project survived the explicit root cascade")
 	}
-	primary, ok := store.registry.Pane(windows[0].Spec.AnchorPaneRef)
-	if !ok || primary.Metadata.OwnerUID() != windows[0].Metadata.UID || primary.Spec.Role != coremetadata.PaneRoleShell {
-		t.Fatalf("replacement shell = %+v under window %+v", primary, windows[0])
+	if got := len(store.registry.WindowsOf("prj-beta")); got != 0 {
+		t.Fatalf("explicit root cascade retained %d Project Window rows", got)
+	}
+	if allocations != 0 {
+		t.Fatalf("explicit Window delete called UID allocator %d times", allocations)
+	}
+	for _, window := range store.registry.Windows {
+		if _, existed := beforeWindowUIDs[window.Metadata.UID]; !existed {
+			t.Fatalf("explicit Window delete allocated replacement Window %q", window.Metadata.UID)
+		}
 	}
 	if err := store.registry.Validate(); err != nil {
 		t.Fatalf("post-delete Registry invalid: %v", err)
@@ -1693,27 +1849,56 @@ func TestDeleteLastProjectWindowKillsExactTargetAndMintsAValidOfflineReplacement
 	}
 }
 
-func TestDeleteLastProjectWindowPrevalidatesReplacementBeforeLiveKill(t *testing.T) {
+func TestDeleteNonLastWindowAllocatesZeroReplacementAndPreservesSiblingRoot(t *testing.T) {
 	store := newFakeResourceStore(t)
 	runtime := newFixtureWindowDeleteRuntime()
 	cmd := newTestDeleteCommand(store, false, false, nil)
 	cmd.windows = runtime
-	before := store.snapshot()
+	beforeWindowUIDs := make(map[string]struct{}, len(store.registry.Windows))
+	for _, window := range store.registry.Windows {
+		beforeWindowUIDs[window.Metadata.UID] = struct{}{}
+	}
+	alphaBefore, _ := store.registry.Project("prj-alpha")
+	reviewBefore, _ := store.registry.Window("win-alpha-review")
+	allocations := 0
 	mutator := store.mutator()
 	mutator.NewUID = func(coremetadata.Kind) (string, error) {
-		return "", errors.New("injected replacement uid failure")
+		allocations++
+		return "", errors.New("explicit Window delete must not allocate")
 	}
 	cmd.store.mutator = func() coremetadata.Mutator { return mutator }
 
-	stdout, _, err := runRoute(t, cmd, "window", "uid:win-beta-main", "--yes")
-	if err == nil || !strings.Contains(err.Error(), "injected replacement uid failure") {
-		t.Fatalf("prevalidation error = %v", err)
+	stdout, _, err := runRoute(t, cmd, "window", "uid:win-alpha-main", "--yes")
+	if err != nil {
+		t.Fatalf("delete non-last Project Window: %v", err)
 	}
-	if stdout != "" || len(runtime.killed) != 0 || len(runtime.queued) != 0 {
-		t.Fatalf("failed replacement touched live state: stdout=%q killed=%+v queued=%+v", stdout, runtime.killed, runtime.queued)
+	if len(runtime.killed) != 1 || runtime.killed[0].UID != "win-alpha-main" {
+		t.Fatalf("exact live kills = %+v", runtime.killed)
 	}
-	if after := store.snapshot(); after != before {
-		t.Fatalf("failed replacement changed Registry:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	if allocations != 0 {
+		t.Fatalf("explicit Window delete called UID allocator %d times", allocations)
+	}
+	if _, ok := store.registry.Window("win-alpha-main"); ok {
+		t.Fatal("requested Window survived")
+	}
+	alphaAfter, ok := store.registry.Project("prj-alpha")
+	if !ok || alphaAfter.Metadata.UID != alphaBefore.Metadata.UID {
+		t.Fatalf("owning Project changed: before=%+v after=%+v", alphaBefore, alphaAfter)
+	}
+	reviewAfter, ok := store.registry.Window("win-alpha-review")
+	if !ok || reviewAfter.Metadata.UID != reviewBefore.Metadata.UID {
+		t.Fatalf("sibling Window changed: before=%+v after=%+v", reviewBefore, reviewAfter)
+	}
+	for _, window := range store.registry.Windows {
+		if _, existed := beforeWindowUIDs[window.Metadata.UID]; !existed {
+			t.Fatalf("explicit Window delete allocated replacement Window %q", window.Metadata.UID)
+		}
+	}
+	if err := store.registry.Validate(); err != nil {
+		t.Fatalf("post-delete Registry invalid: %v", err)
+	}
+	if !strings.Contains(stdout, "live killed tmux window @10 session=alpha") || strings.Contains(stdout, "ended Project session") {
+		t.Fatalf("non-last Window result = %q", stdout)
 	}
 }
 

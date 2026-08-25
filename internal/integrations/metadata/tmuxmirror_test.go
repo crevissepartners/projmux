@@ -90,7 +90,21 @@ func TestMirrorWritesResourceIdentityIntoScopedTmuxOptionsAndTurnsOffAutomaticRe
 				"tmux set-option -p -t %7 -q @projmux_pane_uid pane-1",
 				"tmux set-option -p -t %7 -q @projmux_pane_label logs",
 			},
-			never: []string{"pane_title", "select-pane -T", "rename-window"},
+			never: []string{"pane_title", "select-pane -T", "rename-window", "remain-on-exit"},
+		},
+		{
+			name: "Agent pane is protected until exact dead-anchor reconciliation",
+			run: func(m Mirror) error {
+				return m.MirrorPane(context.Background(), "%8", coremetadata.Pane{
+					Metadata: coremetadata.ObjectMeta{UID: "pane-agent", Name: "worker"},
+					Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleAgent},
+				})
+			},
+			want: []string{
+				"tmux set-option -p -t %8 -q @projmux_pane_uid pane-agent",
+				"tmux set-option -p -t %8 -q @projmux_pane_label worker",
+				"tmux set-option -p -t %8 remain-on-exit on",
+			},
 		},
 		{
 			name: "rename project touches only the stable project name mirror",
@@ -386,6 +400,27 @@ func TestLiveUIDInventoriesPropagateAQueryFailure(t *testing.T) {
 	}
 	if _, err := m.LiveWindowUIDs(ctx); err == nil {
 		t.Fatal("LiveWindowUIDs swallowed a query failure")
+	}
+	if _, err := m.DeadPaneUIDs(ctx); err == nil {
+		t.Fatal("DeadPaneUIDs swallowed a query failure")
+	}
+}
+
+func TestDeadPaneUIDsRequiresExactMirroredDeadEvidence(t *testing.T) {
+	t.Parallel()
+	sep := escapedFieldSep
+	runner := &fakeRunner{outputs: map[string]string{
+		"#{pane_dead}": "pane-dead" + sep + "1\n" + "pane-live" + sep + "0\n" + sep + "1\n",
+	}}
+	dead, err := NewMirror(runner).DeadPaneUIDs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]bool{"pane-dead": true}; !reflect.DeepEqual(dead, want) {
+		t.Fatalf("DeadPaneUIDs = %v, want %v", dead, want)
+	}
+	if len(runner.calls) != 1 || !strings.HasPrefix(runner.calls[0], "tmux list-panes -a") || strings.Contains(runner.calls[0], "set-option") {
+		t.Fatalf("dead inventory commands = %v", runner.calls)
 	}
 }
 

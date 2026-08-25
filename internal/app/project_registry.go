@@ -806,6 +806,14 @@ func (r *registryReconciler) reapplySessionBindings(
 			if !ok {
 				continue
 			}
+			if pane, exists := registry.Pane(paneUID); exists && releasedTerminatedAgentPane(registry, *pane) {
+				// A remain-on-exit Pane remains in topology after its process ends.
+				// Exact pane_dead plus the canonical current-generation receipt
+				// already projected and released this Agent binding; ordinary
+				// binding repair must not turn that retained dead row back into a
+				// Running Agent while lifecycle decides retain/cleanup authority.
+				continue
+			}
 			// Agent runtime linkage rides on the Pane the walk just settled on,
 			// because an Agent's runtime object *is* that Pane. The error is
 			// discarded rather than escalated *or* used to skip the binding
@@ -829,6 +837,18 @@ func (r *registryReconciler) reapplySessionBindings(
 			}
 		}
 	}
+}
+
+func releasedTerminatedAgentPane(registry *coremetadata.Registry, pane coremetadata.Pane) bool {
+	owner := pane.Metadata.OwnerRef
+	evidence := pane.Status.LastTermination
+	if owner == nil || owner.Kind != coremetadata.KindAgent || evidence == nil ||
+		evidence.Generation != pane.Status.Activation.Generation ||
+		!coremetadata.ValidTerminationClassification(evidence.Classification) {
+		return false
+	}
+	agent, ok := registry.Agent(owner.UID)
+	return ok && agent.Status.PaneRef == ""
 }
 
 // paneBindingFor resolves the registry Pane one live tmux pane is the runtime

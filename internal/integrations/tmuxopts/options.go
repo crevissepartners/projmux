@@ -83,4 +83,8 @@ const (
 	// `automatic-rename on` default is deliberately left alone: unmanaged
 	// windows keep the existing visible-pane-label rename behavior.
 	AutomaticRenameWindow = "automatic-rename"
+	// RemainOnExitPane retains an Agent's exact tmux Pane after its process
+	// exits, allowing lifecycle reconciliation to prove pane_dead on the same
+	// socket before replacing the Window anchor.
+	RemainOnExitPane = "remain-on-exit"
 )
