@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 // superviseArgv wraps one child argv in the managed process supervisor.
@@ -24,6 +26,9 @@ func superviseArgv(binary string, spec superviseSpec, argv0 string, child []stri
 	}
 	if spec.OperationID != "" {
 		argv = append(argv, "--operation-id", spec.OperationID)
+	}
+	if spec.RegistryPath != "" {
+		argv = append(argv, "--registry-path", spec.RegistryPath)
 	}
 	if argv0 != "" {
 		argv = append(argv, "--argv0", argv0)
@@ -97,12 +102,12 @@ func (m *materializer) defaultPaneCommand(ctx context.Context) (resolvedPaneComm
 
 // supervisedLaunch returns the argv a managed pane should be created with.
 //
-// Failing to supervise is not a failure to create. Every fallback below
-// returns the caller's original command, so a pane whose supervisor could not
-// be constructed still starts exactly as it did before this route existed. The
-// only thing lost is the receipt, and a missing receipt is the input a later
-// consumer resolves as `unknown` -- it is never read as a normal exit, so an
-// unsupervised pane cannot be mistaken for a cleanly terminated one.
+// Shell Pane compatibility keeps the historical fallback: if its supervisor
+// cannot be constructed, the caller's original command is returned and a later
+// consumer resolves the missing receipt as `unknown`. Agent launches have one
+// stricter boundary. Once the supervisor binary is available, failure to
+// resolve the creator's Registry authority keeps that supervisor in the argv
+// with an empty authority so admission fails closed before provider start.
 func (m *materializer) supervisedLaunch(ctx context.Context, spec superviseSpec, command []string) []string {
 	if m == nil || !spec.valid() {
 		return command
@@ -111,6 +116,19 @@ func (m *materializer) supervisedLaunch(ctx context.Context, spec superviseSpec,
 	if err != nil {
 		m.warnUnsupervised(spec, fmt.Sprintf("resolve the projmux binary: %v", err))
 		return command
+	}
+	if spec.AgentUID != "" {
+		registryPath, pathErr := creatorRegistryPath()
+		if pathErr != nil {
+			// Keep the internal supervisor in place with an empty authority. Its
+			// Agent admission fails closed before provider start; silently falling
+			// back to an ungated provider here would reopen the ownership race.
+			if m.warn != nil {
+				fmt.Fprintf(m.warn, "projmux: pane %s Agent activation will fail closed because the creator Registry authority cannot be resolved: %v\n", spec.PaneUID, pathErr)
+			}
+		} else {
+			spec.RegistryPath = registryPath
+		}
 	}
 	child := command
 	argv0 := ""
@@ -123,6 +141,18 @@ func (m *materializer) supervisedLaunch(ctx context.Context, spec superviseSpec,
 		child, argv0 = resolved.argv, resolved.argv0
 	}
 	return superviseArgv(binary, spec, argv0, child)
+}
+
+func creatorRegistryPath() (string, error) {
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil {
+		return "", err
+	}
+	path, err := filepath.Abs(intmetadata.PathFor(paths.StateDir))
+	if err != nil {
+		return "", fmt.Errorf("resolve absolute Registry path: %w", err)
+	}
+	return filepath.Clean(path), nil
 }
 
 func (m *materializer) warnUnsupervised(spec superviseSpec, reason string) {

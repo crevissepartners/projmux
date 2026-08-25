@@ -998,7 +998,8 @@ var routes = []Route{
 			"projmux internal focus --target <target> ...",
 			"projmux internal key-broker [--once]",
 			"projmux internal popup-wait-key",
-			"projmux internal supervise --pane-uid <uid> --generation <gen> -- <command> ...",
+			"projmux internal supervise --pane-uid <uid> --generation <gen> [--agent-uid <uid> --operation-id <id> --registry-path <absolute>] -- <command> ...",
+			"projmux internal activation-exec --pane-uid <uid> --agent-uid <uid> --generation <gen> --operation-id <id> --registry-path <absolute> -- <command> ...",
 		},
 		Canonical: []string{
 			"internal tmux",
@@ -1012,6 +1013,7 @@ var routes = []Route{
 			"internal key-broker",
 			"internal popup-wait-key",
 			"internal supervise",
+			"internal activation-exec",
 		},
 		Children: []Route{
 			{
@@ -1126,8 +1128,14 @@ var routes = []Route{
 			{
 				Name:      "supervise",
 				Summary:   "Supervise one managed Pane process and record its exit evidence",
-				Usage:     []string{"projmux internal supervise --pane-uid <uid> --generation <gen> [--agent-uid <uid>] [--operation-id <id>] [--argv0 <name>] -- <command> ..."},
+				Usage:     []string{"projmux internal supervise --pane-uid <uid> --generation <gen> [--agent-uid <uid> --operation-id <id> --registry-path <absolute>] [--argv0 <name>] -- <command> ..."},
 				Canonical: []string{"internal supervise"},
+			},
+			{
+				Name:      "activation-exec",
+				Summary:   "Admit one exact committed Agent activation before provider exec",
+				Usage:     []string{"projmux internal activation-exec --pane-uid <uid> --agent-uid <uid> --generation <gen> --operation-id <id> --registry-path <absolute> [--failure-fd <fd>] [--argv0 <name>] -- <command> ..."},
+				Canonical: []string{"internal activation-exec"},
 			},
 		},
 	},

@@ -3,10 +3,12 @@ package app
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 // stubDefaultsRunner answers the two global option reads the shell-pane launch
@@ -16,6 +18,33 @@ type stubDefaultsRunner struct {
 	command string
 	err     error
 	calls   [][]string
+}
+
+func TestAgentLaunchCarriesTheCreatorResolvedAbsoluteRegistryPath(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("HOME", filepath.Join(root, "home"))
+	t.Setenv("XDG_STATE_HOME", "relative state with spaces")
+
+	spec := superviseSpec{
+		PaneUID: "pan-alpha-codex", AgentUID: "agt-alpha-codex",
+		Generation: "gen-exact", OperationID: "op-exact",
+	}
+	launch := newLaunchMaterializer(&stubDefaultsRunner{shell: "/bin/sh"}, &strings.Builder{}).
+		supervisedLaunch(context.Background(), spec, []string{"provider"})
+	stateDir, err := filepath.Abs(filepath.Join("relative state with spaces", "projmux"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantPath := intmetadata.PathFor(stateDir)
+	var gotPath string
+	for i := range launch {
+		if launch[i] == "--registry-path" && i+1 < len(launch) {
+			gotPath = launch[i+1]
+		}
+	}
+	if gotPath != wantPath || !filepath.IsAbs(gotPath) || filepath.Clean(gotPath) != gotPath {
+		t.Fatalf("creator Registry path = %q, want exact clean absolute %q; launch=%v", gotPath, wantPath, launch)
+	}
 }
 
 func (r *stubDefaultsRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {

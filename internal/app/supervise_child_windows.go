@@ -22,10 +22,24 @@ func runSupervisedChild(argv []string, argv0 string) (processOutcome, error) {
 }
 
 func runSupervisedChildWithActivation(argv []string, argv0 string, spec superviseSpec) (processOutcome, error) {
-	return runSupervisedChildWithEnvironment(argv, argv0, []string{
-		internalActivationPaneUIDEnv + "=" + spec.PaneUID,
-		internalActivationGenerationEnv + "=" + spec.Generation,
-	})
+	if spec.AgentUID == "" {
+		return runSupervisedChildWithEnvironment(argv, argv0, activationEnvironment(spec))
+	}
+	if spec.OperationID == "" {
+		return processOutcome{}, errors.New("agent activation requires an operation id")
+	}
+	if err := exactActivationRegistryPath(spec.RegistryPath); err != nil {
+		return processOutcome{}, err
+	}
+	// Native Windows has no tmux Pane process group or POSIX HUP boundary. Run
+	// the same exact zero-write admission before starting the provider; a refusal
+	// is returned as a launch failure and therefore cannot fabricate a receipt.
+	// WSL uses the Unix build and its CLOEXEC handshake.
+	gate := newActivationExecCommand()
+	if err := gate.awaitCommittedActivation(spec); err != nil {
+		return processOutcome{}, fmt.Errorf("activation admission: %w", err)
+	}
+	return runSupervisedChildWithEnvironment(argv, argv0, activationEnvironment(spec))
 }
 
 func runSupervisedChildWithEnvironment(argv []string, argv0 string, environment []string) (processOutcome, error) {

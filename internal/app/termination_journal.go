@@ -11,6 +11,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
@@ -55,6 +56,20 @@ func newTerminationJournal(homeDir func() (string, error), lookupEnv func(string
 		return terminationJournal{}, fmt.Errorf("resolve projmux state paths: %w", err)
 	}
 	return terminationJournal{path: filepath.Join(paths.StateDir, terminationJournalFile)}, nil
+}
+
+// terminationJournalForRegistryPath binds post-exit evidence to the same
+// creator-selected state root as Agent admission. The accepted shape is
+// exactly metadata.PathFor(stateDir); arbitrary sibling paths are refused.
+func terminationJournalForRegistryPath(registryPath string) (terminationJournal, error) {
+	if err := exactActivationRegistryPath(registryPath); err != nil {
+		return terminationJournal{}, err
+	}
+	stateDir := filepath.Dir(filepath.Dir(registryPath))
+	if intmetadata.PathFor(stateDir) != registryPath {
+		return terminationJournal{}, errors.New("agent activation Registry path has an unexpected shape")
+	}
+	return terminationJournal{path: filepath.Join(stateDir, terminationJournalFile)}, nil
 }
 
 func (j terminationJournal) append(receipt coremetadata.TerminationEvidence) error {

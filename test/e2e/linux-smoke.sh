@@ -1708,8 +1708,15 @@ if [[ ! "$agent_session_before" =~ ^\$[0-9]+$ ]] ||
   exit 1
 fi
 
-pmx_agent create agent --provider codex -p alpha -w "$alpha_window_name" -o pane-id \
-  >"$create_root/agent.out" 2>"$create_root/agent.err"
+if pmx_agent create agent --provider codex -p alpha -w "$alpha_window_name" -o pane-id \
+  >"$create_root/agent.out" 2>"$create_root/agent.err"; then
+  :
+else
+  agent_create_status=$?
+  echo "create agent failed before returning an exact pane handle: status=$agent_create_status" >&2
+  cat "$create_root/agent.err" >&2 || true
+  exit 1
+fi
 agent_pane="$(tr -d '[:space:]' <"$create_root/agent.out")"
 if [[ ! "$agent_pane" =~ ^%[0-9]+$ ]]; then
   echo "create agent -o pane-id = $agent_pane, want a raw %N handle" >&2
@@ -7554,7 +7561,7 @@ exitrec_await_phase1_window_cascade() {
 }
 
 # 1. A provider that exits non-zero converges to Failed on the hook alone.
-printf 'sleep 0.5\n%s\n' 'exit 42' >"$exitrec_root/stub-script"
+printf '%s\n' 'exit 42' >"$exitrec_root/stub-script"
 exitrec_failed_agent="$(exitrec_live_pmx create agent --provider codex \
   --project "uid:$exitrec_project_uid" -o uid)"
 if [[ -z "$exitrec_failed_agent" ]]; then
@@ -7571,7 +7578,7 @@ if [[ -n "$(exitrec_field paneRef)" ]]; then
   echo "the hook left the failed Agent bound to its dead pane" >&2
   exit 1
 fi
-echo ">> exit reconciliation e2e hook-driven failure agent=$exitrec_failed_agent phase=Failed class=abnormal"
+echo ">> exit reconciliation e2e hook-driven immediate failure agent=$exitrec_failed_agent phase=Failed class=abnormal admission=committed rollback-blank=0"
 
 # 2. A provider that exits 0 is a qualifying exact pane-exited teardown. Its
 # Pane row is released while the Agent identity remains Offline; the durable
