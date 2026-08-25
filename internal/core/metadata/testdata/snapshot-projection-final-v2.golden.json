@@ -1,0 +1,36 @@
+[
+  {
+    "case": "metadata mixed preserves Agent anchor",
+    "window_uid": "window-01",
+    "anchor_uid": "pane-05",
+    "anchor_role": "agent",
+    "default_shell_uid": "pane-01",
+    "direct_shells": 2,
+    "agents": 1
+  },
+  {
+    "case": "metadata Agent-only keeps empty default",
+    "window_uid": "window-01",
+    "anchor_uid": "pane-05",
+    "anchor_role": "agent",
+    "direct_shells": 0,
+    "agents": 1
+  },
+  {
+    "case": "legacy Agent-only uses first Pane",
+    "window_uid": "window-01",
+    "anchor_uid": "pane-05",
+    "anchor_role": "agent",
+    "direct_shells": 0,
+    "agents": 1
+  },
+  {
+    "case": "Open fresh creates exact minimum shell",
+    "window_uid": "window-01",
+    "anchor_uid": "pane-01",
+    "anchor_role": "shell",
+    "default_shell_uid": "pane-01",
+    "direct_shells": 1,
+    "agents": 0
+  }
+]

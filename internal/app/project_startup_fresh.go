@@ -30,7 +30,7 @@ const (
 	projectStartupNewLabel = "Open fresh"
 
 	// projectStartupNewDescription presents Fresh as an ordinary one-step open.
-	projectStartupNewDescription = "open a new Project identity with one canonical shell"
+	projectStartupNewDescription = "reuse the canonical Project Window with one shell"
 )
 
 // newProjectStartupCandidate is the fresh-start row.
@@ -84,7 +84,7 @@ func (p projectFreshStartPlan) ResultMessage(sessionName string) string {
 }
 
 func (p projectFreshStartPlan) ResultMessageLocale(locale i18n.Locale, sessionName string) string {
-	format := localizeUIText(locale, "projmux: opened %s fresh with a new Project identity and canonical shell")
+	format := localizeUIText(locale, "projmux: opened %s fresh with its canonical Project Window and shell")
 	return fmt.Sprintf(format, sessionName)
 }
 
@@ -250,7 +250,20 @@ func projectFreshStartPlanFor(registry coremetadata.Registry, projectUID string)
 	if !ok {
 		return projectFreshStartPlan{ProjectUID: projectUID, signature: "invalid-anchor"}
 	}
-	anchorPane := anchorWindow.Spec.CompatibilityShellPaneRef()
+	anchorPane := ""
+	if shell, ok := registry.WindowDefaultShell(anchorWindow.Metadata.UID); ok {
+		anchorPane = shell.Metadata.UID
+	} else if anchor, ok := registry.WindowAnchor(anchorWindow.Metadata.UID); ok &&
+		anchor.Spec.Role == coremetadata.PaneRoleShell && anchor.Metadata.OwnerUID() == anchorWindow.Metadata.UID {
+		anchorPane = anchor.Metadata.UID
+	} else {
+		for _, pane := range registry.PanesOf(anchorWindow.Metadata.UID) {
+			if pane.Spec.Role == coremetadata.PaneRoleShell {
+				anchorPane = pane.Metadata.UID
+				break
+			}
+		}
+	}
 	plan := projectFreshStartPlan{
 		ProjectUID: projectUID,
 		signature:  "keep:" + anchorWindow.Metadata.UID + "," + anchorPane + ";",
@@ -280,8 +293,8 @@ func projectFreshStartPlanFor(registry coremetadata.Registry, projectUID string)
 	return plan
 }
 
-// PruneProjectFreshStart atomically replaces any exact same-root graph with a
-// newly minted Project and one canonical shell.
+// PruneProjectFreshStart atomically projects any exact same-root graph onto its
+// canonical Project Window and one minimum direct shell.
 func (s *registryProjectFreshStarter) PruneProjectFreshStart(ctx context.Context, root string, plan projectFreshStartPlan) error {
 	if s == nil || s.resources == nil {
 		return errors.New("project fresh start: resource registry store is not configured")
@@ -297,9 +310,20 @@ func (s *registryProjectFreshStarter) PruneProjectFreshStart(ctx context.Context
 			if current.Metadata.UID != plan.ProjectUID {
 				return fmt.Errorf("project fresh start: %q now declares a different Project; retry", root)
 			}
-			if err := mutator.DeleteProject(working, current.Metadata.UID); err != nil {
+			uidSource := mutator.NewUID
+			if uidSource == nil {
+				uidSource = coremetadata.NewUID
+			}
+			now := time.Now
+			if mutator.Now != nil {
+				now = mutator.Now
+			}
+			projection, err := coremetadata.PlanOpenFresh(*working, current.Metadata.UID, now().UTC(), uidSource)
+			if err != nil {
 				return err
 			}
+			*working = projection.Desired
+			return nil
 		} else if plan.ProjectUID != "" {
 			return fmt.Errorf("project fresh start: %q no longer declares Project %s", root, plan.ProjectUID)
 		}
@@ -389,14 +413,15 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 	if err != nil {
 		return err
 	}
-	if registered.project.Metadata.UID != "" && registered.project.Metadata.UID != plan.ProjectUID {
-		registered.bootstrapped = true
+	if registered.project.Metadata.UID != "" {
+		if plan.ProjectUID == "" || registered.project.Metadata.UID != plan.ProjectUID {
+			registered.bootstrapped = true
+		}
 		opened = registered
 	}
-	// Fresh always owns a newly minted canonical Registry graph. Unlike an
-	// ordinary first open, merely ensuring a tmux session and mirroring the
-	// Project would leave its new Window and Pane uids blank. Force the exact
-	// topology engine so all three identities are live before client handoff.
+	// Fresh always owns one exact canonical Registry graph. Force the topology
+	// engine so a reused or newly allocated minimum shell is live before client
+	// handoff.
 	opened.materializeTopology = true
 	if err := c.verifyProjectFreshStartPruned(target); err != nil {
 		return err

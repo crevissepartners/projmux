@@ -476,15 +476,58 @@ func mergeScopedResourceRegistry(before, scopedBefore, scopedAfter coremetadata.
 
 	out := before.Clone()
 	retained := resourceRegistryWithoutProjectGraphs(before, removeProjects)
-	out.Projects, out.Windows, out.Panes, out.Agents = retained.Projects, retained.Windows, retained.Panes, retained.Agents
 	changed := resourceRegistryProjectGraph(scopedAfter, activeAfter)
-	out.Projects = append(out.Projects, changed.Projects...)
-	out.Windows = append(out.Windows, changed.Windows...)
-	out.Panes = append(out.Panes, changed.Panes...)
-	out.Agents = append(out.Agents, changed.Agents...)
+	// Replace scoped resources at their existing global positions. Building the
+	// result as `retained + changed` made a no-op pass rotate every selected
+	// Project behind unrelated/other-host roots, producing a Registry byte diff
+	// even though the exact-socket plan had zero actions. UID replacement keeps
+	// source ordering fixed and appends only genuinely new scoped resources.
+	out.Projects = mergeScopedResources(before.Projects, retained.Projects, changed.Projects, func(value coremetadata.Project) string { return value.Metadata.UID })
+	out.Windows = mergeScopedResources(before.Windows, retained.Windows, changed.Windows, func(value coremetadata.Window) string { return value.Metadata.UID })
+	out.Panes = mergeScopedResources(before.Panes, retained.Panes, changed.Panes, func(value coremetadata.Pane) string { return value.Metadata.UID })
+	out.Agents = mergeScopedResources(before.Agents, retained.Agents, changed.Agents, func(value coremetadata.Agent) string { return value.Metadata.UID })
 	out.NameReservations = slices.Clone(scopedAfter.NameReservations)
 	out.UpdatedAt = scopedAfter.UpdatedAt
 	return retainReservedResourceNames(out.Normalize())
+}
+
+func mergeScopedResources[T any](before, retained, changed []T, uid func(T) string) []T {
+	retainedByUID := make(map[string]T, len(retained))
+	changedByUID := make(map[string]T, len(changed))
+	for _, value := range retained {
+		retainedByUID[uid(value)] = value
+	}
+	for _, value := range changed {
+		changedByUID[uid(value)] = value
+	}
+	out := make([]T, 0, len(retained)+len(changed))
+	seen := make(map[string]bool, cap(out))
+	for _, value := range before {
+		key := uid(value)
+		if replacement, ok := changedByUID[key]; ok {
+			out = append(out, replacement)
+			seen[key] = true
+			continue
+		}
+		if replacement, ok := retainedByUID[key]; ok {
+			out = append(out, replacement)
+			seen[key] = true
+		}
+	}
+	for _, values := range [][]T{retained, changed} {
+		for _, value := range values {
+			key := uid(value)
+			if seen[key] {
+				continue
+			}
+			out = append(out, value)
+			seen[key] = true
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // resourceRegistryWithoutProjectGraphs removes the whole graphs of the named

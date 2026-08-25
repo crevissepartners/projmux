@@ -1641,6 +1641,23 @@ Explicit Registry topology materialization:
   the Window from it, and then replays the anchor Agent while preserving the
   Agent Pane uid. The default shell is bootstrap, not a replacement anchor. A
   successful repeat is a Registry-write-free and topology-write-free no-op.
+- Snapshot restore is a target-Project subtree projection, never a Registry
+  restore. Metadata-bearing v1 snapshots preserve surviving final-v2
+  anchor/default refs; metadata-free snapshots choose the first Window-local
+  Pane as anchor and the first direct shell as optional default. Agent-only
+  desired Windows remain Agent-anchored and acquire a shell only through the
+  ordinary materializer. Source snapshot bytes and unrelated roots are never
+  rewritten, and a second projection is byte-stable.
+- `Open fresh` keeps the Project and canonical Window identity, deletes Agent
+  and extra descendants, and converges that Window to one direct shell used as
+  both anchor and default. It reuses a valid direct shell or allocates exactly
+  one when the Window is Agent-only. The second pass preserves the exact
+  Project/Window/shell UID chain and writes zero Registry bytes.
+- Exact-socket reconciliation merges scoped results by UID at their existing
+  global Registry positions. Positive mirrored evidence may change only the
+  selected socket's owned rows; sibling sockets and other-host-only desired
+  refs/status retain both values and byte order. Absence on the selected host
+  is never re-anchor, status-clear, or delete authority.
 - Preflight rejects a missing/invalid root or Pane CWD, a zero-Window Project,
   an anchor ref that is neither an exact same-Window shell nor the owning
   Agent's current managed Pane, a live Window whose exact anchor is dead, and foreign,

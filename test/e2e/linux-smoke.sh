@@ -5340,9 +5340,11 @@ startup_wait_for "Continue project client handoff" startup_client_is_on "$startu
 cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 
 # 5. Open fresh from a detached continuation with TMUX unset and explicit
-# client authority. The old same-root graph is removed atomically and a new
-# Project identity with one canonical shell is handed off. The filesystem root
-# and snapshot source bytes remain untouched.
+# client authority. Agent/extra descendants are removed atomically while the
+# canonical Project/Window/minimum-shell UID chain is retained. A closed repeat
+# retains the exact UID chain; the planner/transaction suites separately pin
+# its Registry byte-level zero diff. The filesystem root and snapshot source
+# bytes remain untouched.
 startup_pmx describe project "uid:$startup_project_uid" -o json >"$startup_root/project.before-fresh.json"
 startup_primary_window_before="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$startup_root/project.before-fresh.json" | head -n 1)"
 startup_pmx describe window "uid:$startup_primary_window_before" --project "uid:$startup_project_uid" -o json >"$startup_root/window.before-fresh.json"
@@ -5361,14 +5363,10 @@ if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
   exit 1
 fi
 startup_wait_for "Open fresh explicit client handoff" startup_client_is_on "$startup_session"
-if startup_pmx describe project "uid:$startup_project_uid" -o json >"$startup_root/project.old-after-fresh.json" 2>/dev/null; then
-  echo "Open fresh retained the old Project identity" >&2
-  exit 1
-fi
 startup_project_uid_after="$(startup_pmx get projects -o uid)"
-if [[ -z "$startup_project_uid_after" ]] || [[ "$startup_project_uid_after" == "$startup_project_uid" ]] ||
+if [[ -z "$startup_project_uid_after" ]] || [[ "$startup_project_uid_after" != "$startup_project_uid" ]] ||
   [[ "$(printf '%s\n' "$startup_project_uid_after" | grep -c .)" != "1" ]]; then
-  echo "Open fresh did not create exactly one new Project identity" >&2
+  echo "Open fresh did not preserve exactly one canonical Project identity" >&2
   startup_pmx get projects -o uid >&2 || true
   exit 1
 fi
@@ -5377,9 +5375,9 @@ startup_primary_window_after="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1
 startup_pmx describe window "uid:$startup_primary_window_after" --project "uid:$startup_project_uid_after" -o json >"$startup_root/window.after-fresh.json"
 startup_primary_pane_after="$(sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' "$startup_root/window.after-fresh.json" | head -n 1)"
 if [[ -z "$startup_primary_window_after" ]] || [[ -z "$startup_primary_pane_after" ]] ||
-  [[ "$startup_primary_window_after" == "$startup_primary_window_before" ]] ||
-  [[ "$startup_primary_pane_after" == "$startup_primary_pane_before" ]]; then
-  echo "Open fresh did not replace the old canonical shell identity" >&2
+  [[ "$startup_primary_window_after" != "$startup_primary_window_before" ]] ||
+  [[ "$startup_primary_pane_after" != "$startup_primary_pane_before" ]]; then
+  echo "Open fresh changed the canonical Window/shell identity" >&2
   exit 1
 fi
 if [[ "$(startup_pmx get windows --project "uid:$startup_project_uid_after" -o uid | grep -c .)" != "1" ]] ||
@@ -5403,6 +5401,24 @@ if [[ -s "$startup_agent_argv" ]]; then
   cat "$startup_agent_argv" >&2 || true
   exit 1
 fi
+
+startup_tmux switch-client -c "$startup_client" -t "$startup_driver"
+startup_tmux kill-session -t "$startup_session"
+rm -f "$startup_root/open-new.rc"
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session' '$startup_client'" Enter
+startup_wait_for "repeat Open fresh continuation" test -s "$startup_root/open-new.rc"
+if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
+  cat "$startup_root/open-new.err" >&2 || true
+  exit 1
+fi
+startup_wait_for "repeat Open fresh explicit client handoff" startup_client_is_on "$startup_session"
+if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
+  [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid)" != "$startup_primary_window_before" ]] ||
+  [[ "$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid)" != "$startup_primary_pane_before" ]]; then
+  echo "repeat Open fresh changed the canonical UID chain" >&2
+  exit 1
+fi
+cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 
 startup_other_after="$(startup_other_tmux show-options -gqv @projmux_startup_sentinel):$(startup_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
 if [[ "$startup_other_after" != "$startup_other_before" ]]; then
