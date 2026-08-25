@@ -2925,6 +2925,158 @@ func TestNativeSidebarReservesBlankDownPreviewFrame(t *testing.T) {
 	}
 }
 
+func TestNativeAIResumeSelectionDetailKeepsFixedGeometry(t *testing.T) {
+	t.Parallel()
+
+	items := make([]Item, 20)
+	for i := range items {
+		items[i] = Item{Title: fmt.Sprintf("resume item %02d", i), Value: fmt.Sprintf("resume\tcodex\t%02d", i)}
+	}
+	selected := 10
+	states := []struct{ name, detail string }{
+		{"empty", ""},
+		{"loading", "Loading preview…"},
+		{"ready", strings.Repeat("detail line\n", 20)},
+		{"unavailable", "preview unavailable"},
+	}
+	var golden strings.Builder
+	for _, layout := range []nativeLayout{{Rows: 24, Cols: 80}, {Rows: 40, Cols: 120}} {
+		var fingerprint string
+		for _, state := range states {
+			options := Options{
+				UI: "ai-resume-picker", Items: items, Prompt: "AI Resume >",
+				Footer:          "Providers Codex available · Claude available · Antigravity empty\nShowing latest 20 resume sessions.",
+				SelectionDetail: &SelectionDetail{TextByValue: map[string]string{items[selected].Value: state.detail}},
+			}
+			window := nativePreviewWindow(options)
+			height := nativePreviewHeight(layout.Rows, window)
+			limit := nativeListLimit(options, layout, nativePreviewPlacement(window), height, true)
+			if layout.Rows == 24 && limit < 6 {
+				t.Fatalf("%dx%d list limit = %d, want at least 6", layout.Cols, layout.Rows, limit)
+			}
+
+			var out bytes.Buffer
+			renderNativeInteractiveContent(&out, options, items, "stable-query", len("stable-query"), selected, 0, layout)
+			plain := stripANSISequences(out.String())
+			lines := strings.Split(strings.TrimRight(plain, "\n"), "\n")
+			selectedLine := -1
+			footerLine := -1
+			var separators []int
+			for i, line := range lines {
+				if strings.Contains(line, "resume item 10") {
+					selectedLine = i
+				}
+				if strings.Contains(line, "Providers Codex available") {
+					footerLine = i
+				}
+				if strings.TrimSpace(line) == strings.Repeat("─", layout.Cols) {
+					separators = append(separators, i)
+				}
+			}
+			got := fmt.Sprintf("lines=%d selected=%d footer=%d limit=%d separators=%v", len(lines), selectedLine, footerLine, limit, separators)
+			fmt.Fprintf(&golden, "%dx%d %s|%s\n", layout.Cols, layout.Rows, state.name, got)
+			if fingerprint == "" {
+				fingerprint = got
+			} else if got != fingerprint {
+				t.Fatalf("%dx%d %s geometry = %s, want %s", layout.Cols, layout.Rows, state.name, got, fingerprint)
+			}
+			if !strings.Contains(plain, "stable-query") {
+				t.Fatalf("%dx%d %s frame lost query bytes", layout.Cols, layout.Rows, state.name)
+			}
+		}
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "ai-resume-detail-geometry.golden"))
+	if err != nil {
+		t.Fatalf("read geometry golden: %v\ngot:\n%s", err, golden.String())
+	}
+	if golden.String() != string(want) {
+		t.Fatalf("detail geometry golden mismatch:\ngot:\n%swant:\n%s", golden.String(), want)
+	}
+}
+
+func TestNativeSelectionDetailUpdateMutatesOnlyDetail(t *testing.T) {
+	t.Parallel()
+
+	items := []Item{{Title: "one", Value: "resume\tclaude\tone"}, {Title: "two", Value: "resume\tcodex\ttwo"}}
+	options := Options{
+		UI: "ai-resume-picker", Items: items, Header: "stable header", Footer: "stable footer", MoreNotLoaded: true,
+		SelectionDetail: &SelectionDetail{TextByValue: map[string]string{items[0].Value: "loading"}},
+	}
+	update := DeferredUpdate{SelectionDetail: &SelectionDetail{TextByValue: map[string]string{items[1].Value: "ready"}}}
+	if update.Items != nil || update.SetHeader || update.SetFooter || update.SetMoreNotLoaded {
+		t.Fatalf("detail payload carries catalog/chrome mutation: %#v", update)
+	}
+	got := applyNativeDeferredUpdate(options, update)
+	if len(got.Items) != len(items) || got.Items[0].Value != items[0].Value || got.Items[1].Value != items[1].Value ||
+		got.Header != options.Header || got.Footer != options.Footer || got.MoreNotLoaded != options.MoreNotLoaded {
+		t.Fatalf("detail update changed catalog/chrome: got=%#v want=%#v", got, options)
+	}
+	if got.SelectionDetail == nil || got.SelectionDetail.TextByValue[items[1].Value] != "ready" {
+		t.Fatalf("detail update not applied: %#v", got.SelectionDetail)
+	}
+}
+
+func TestNativeAIResumeTwentyRowCursorSweepPreservesFrameAndCatalog(t *testing.T) {
+	t.Parallel()
+
+	items := make([]Item, 20)
+	detail := make(map[string]string, len(items))
+	values := make([]string, len(items))
+	for i := range items {
+		value := fmt.Sprintf("resume\tclaude\texact-%02d", i)
+		items[i] = Item{Title: fmt.Sprintf("conversation %02d", i), Value: value, SearchText: "stable search " + value}
+		detail[value] = fmt.Sprintf("detail %02d\n%s", i, strings.Repeat("bounded preview ", i%5))
+		values[i] = value
+	}
+	query := "stable-query"
+	sequence := make([]int, 0, 39)
+	for i := range items {
+		sequence = append(sequence, i)
+	}
+	for i := len(items) - 2; i >= 0; i-- {
+		sequence = append(sequence, i)
+	}
+	for _, layout := range []nativeLayout{{Rows: 24, Cols: 80}, {Rows: 40, Cols: 120}} {
+		options := Options{
+			UI: "ai-resume-picker", Items: items, Prompt: "AI Resume >", Footer: "provider state\nshown count",
+			SelectionDetail: &SelectionDetail{TextByValue: detail},
+		}
+		var footerLine, detailDivider int
+		for step, selected := range sequence {
+			var out bytes.Buffer
+			renderNativeInteractiveContent(&out, options, items, query, len(query), selected, 0, layout)
+			plain := stripANSISequences(out.String())
+			lines := strings.Split(strings.TrimRight(plain, "\n"), "\n")
+			if len(lines) != layout.Rows || !strings.Contains(plain, query) {
+				t.Fatalf("%dx%d step %d frame/query drift: lines=%d", layout.Cols, layout.Rows, step, len(lines))
+			}
+			separators := make([]int, 0, 3)
+			currentFooter := -1
+			for i, line := range lines {
+				if strings.TrimSpace(line) == strings.Repeat("─", layout.Cols) {
+					separators = append(separators, i)
+				}
+				if strings.Contains(line, "provider state") {
+					currentFooter = i
+				}
+			}
+			if len(separators) != 3 {
+				t.Fatalf("%dx%d step %d separators = %v, want search/detail/footer", layout.Cols, layout.Rows, step, separators)
+			}
+			if step == 0 {
+				footerLine, detailDivider = currentFooter, separators[1]
+			} else if currentFooter != footerLine || separators[1] != detailDivider {
+				t.Fatalf("%dx%d step %d geometry moved: footer=%d/%d detail=%d/%d", layout.Cols, layout.Rows, step, currentFooter, footerLine, separators[1], detailDivider)
+			}
+			for i, item := range options.Items {
+				if item.Value != values[i] {
+					t.Fatalf("%dx%d step %d item %d value = %q, want %q", layout.Cols, layout.Rows, step, i, item.Value, values[i])
+				}
+			}
+		}
+	}
+}
+
 func TestLimitedNativePreviewLinesKeepsLimitWithOverflowNotice(t *testing.T) {
 	t.Parallel()
 

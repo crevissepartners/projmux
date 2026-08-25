@@ -11,10 +11,12 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -256,10 +258,10 @@ func TestResumeProviderFooterPrecedesShownCountAndContentFreeContinuation(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !moreNotLoaded || !update.MoreNotLoaded || !update.SetMoreNotLoaded {
+	if !moreNotLoaded || update.MoreNotLoaded || update.SetMoreNotLoaded {
 		t.Fatalf("footer/continuation = footer=%q initial=%t update=%#v", footer, moreNotLoaded, update)
 	}
-	if update.Items != nil || update.SetChromeBands || update.Footer != footer {
+	if update.Items != nil || update.SetChromeBands || update.SetFooter || update.Footer != "" || update.SelectionDetail == nil {
 		t.Fatalf("footer update changed rows, upper chrome, or footer content: %#v", update)
 	}
 	lines := strings.Split(footer, "\n")
@@ -551,14 +553,14 @@ func TestResumeSummaryFocusPreviewUpdatesDetailOnly(t *testing.T) {
 	deadline := time.Now().Add(time.Second)
 	for {
 		update, err := controller.update()
-		if err != nil || update.Items != nil {
+		if err != nil || update.Items != nil || update.SetHeader || update.SetFooter || update.SetMoreNotLoaded {
 			t.Fatalf("focus/detail update mutated list: update=%#v err=%v", update, err)
 		}
-		if update.Preview.TextByValue[value] == "User\nquestion\n\nAssistant\nanswer" {
+		if update.SelectionDetail != nil && strings.Contains(update.SelectionDetail.TextByValue[value], "User\nquestion\n\nAssistant\nanswer") {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("preview not published: %#v", update.Preview.TextByValue)
+			t.Fatalf("detail not published: %#v", update.SelectionDetail)
 		}
 	}
 	controller.close()
@@ -608,6 +610,98 @@ func TestResumeSummaryPreviewCacheKeyUsesProviderExactIDAndUpdatedAtFallback(t *
 	if got := aiResumePreviewCacheKey(base); !got.updatedAt.Equal(updated) {
 		t.Fatalf("provider UpdatedAt key = %#v", got)
 	}
+}
+
+func TestResumeDetailProjectionOwnsTurnsRuntimeSourceAndPreview(t *testing.T) {
+	summary := aisessions.ResumeSummary{Provider: aiModeCodex, ResumeID: "exact", Label: "Conversation"}
+	ref := aisessions.ResumeDetailRef{
+		Provider: aiModeCodex, ResumeID: "exact", Source: aisessions.SourceCodexRollout,
+		Confidence: aisessions.ConfidenceMedium, Reason: aisessions.ReasonAppServerUnavailable, RuntimeStatus: "idle",
+	}
+	detail := aisessions.ResumeDetail{
+		Turns: 31, Source: ref.Source, Confidence: ref.Confidence, Reason: ref.Reason, RuntimeStatus: ref.RuntimeStatus,
+	}
+	for _, test := range []struct {
+		name   string
+		locale i18n.Locale
+		wants  []string
+	}{
+		{name: "en-US", locale: i18n.FallbackLocale, wants: []string{"Source: codex-rollout", "Turns: 31", "Runtime: idle", "Confidence: medium", "Reason: app-server-unavailable", "Preview", "User\nquestion"}},
+		{name: "ko-KR", locale: i18n.Locale("ko-KR"), wants: []string{"소스: codex-rollout", "턴: 31", "런타임: idle", "신뢰도: medium", "사유: app-server-unavailable", "미리 보기", "User\nquestion"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			text := aiResumeDetailProjection(test.locale, summary, ref, detail, "User\nquestion")
+			for _, want := range test.wants {
+				if !strings.Contains(text, want) {
+					t.Fatalf("detail projection = %q, want %q", text, want)
+				}
+			}
+		})
+	}
+}
+
+func TestResumeDetailHelpAndUnavailableTurnsAreLocalized(t *testing.T) {
+	for _, test := range []struct {
+		name            string
+		locale          i18n.Locale
+		wantHelp        string
+		wantUnavailable string
+	}{
+		{name: "en-US", locale: i18n.FallbackLocale, wantHelp: "Select a resume session to see details.", wantUnavailable: "Turns: unavailable"},
+		{name: "ko-KR", locale: i18n.Locale("ko-KR"), wantHelp: "재개 세션을 선택하면 상세 정보를 볼 수 있습니다.", wantUnavailable: "턴: 사용할 수 없음"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			controller := &aiResumeLiveController{locale: test.locale}
+			if got := controller.initialDetail().TextByValue[aiResumeNewValue]; got != test.wantHelp {
+				t.Fatalf("help = %q, want %q", got, test.wantHelp)
+			}
+			text := aiResumeDetailProjection(test.locale, aisessions.ResumeSummary{Provider: aiModeClaude, Label: "Conversation"}, aisessions.ResumeDetailRef{}, aisessions.ResumeDetail{}, "preview unavailable")
+			if !strings.Contains(text, test.wantUnavailable) {
+				t.Fatalf("detail projection = %q, want %q", text, test.wantUnavailable)
+			}
+		})
+	}
+}
+
+func TestResumeSummaryExactDetailKeyStartsOneReadWhileRefocused(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	cmd.readResumePreview = func(context.Context, aisessions.ResumeDetailRef, aisessions.OpenCodexCatalog) (aisessions.Preview, error) {
+		calls.Add(1)
+		started <- struct{}{}
+		<-release
+		return aisessions.Preview{User: "stable", Assistant: "detail"}, nil
+	}
+	controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
+	controller.startOnce.Do(func() {})
+	controller.summaries = []aisessions.ResumeSummary{{Provider: aiModeClaude, ResumeID: "exact", Source: aisessions.SourceClaudeTranscript, UpdatedAt: time.Unix(4, 0)}}
+	controller.detailRefs[aiModeClaude+"\x00exact"] = aisessions.ResumeDetailRef{Provider: aiModeClaude, ResumeID: "exact", Source: aisessions.SourceClaudeTranscript}
+	value := aiResumePickerValue(aiModeClaude, "exact")
+	controller.focus(value)
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("exact detail read did not start")
+	}
+	controller.focus(aiResumeNewValue)
+	controller.focus(value)
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("exact detail reads = %d, want 1 while in flight", got)
+	}
+	close(release)
+	deadline := time.Now().Add(time.Second)
+	for {
+		update, _ := controller.update()
+		if update.SelectionDetail != nil && strings.Contains(update.SelectionDetail.TextByValue[value], "User\nstable") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("refocused exact detail did not publish: %#v", update.SelectionDetail)
+		}
+	}
+	controller.close()
 }
 
 func TestResumeSummaryConcurrentFocusAndUpdatesRaceSafe(t *testing.T) {
@@ -684,18 +778,18 @@ func TestResumeSummaryPreviewCancellationLatestWinsAndCache(t *testing.T) {
 		if update.Items != nil {
 			t.Fatalf("preview update mutated list: %#v", update.Items)
 		}
-		if update.Preview.TextByValue[two] == "User\nlatest\n\nAssistant\nanswer" {
+		if update.SelectionDetail != nil && strings.Contains(update.SelectionDetail.TextByValue[two], "User\nlatest\n\nAssistant\nanswer") {
 			break
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("latest preview not published: %#v", update.Preview.TextByValue)
+			t.Fatalf("latest preview not published: %#v", update.SelectionDetail)
 		}
 	}
 	close(releaseFirst)
 	time.Sleep(10 * time.Millisecond)
 	stale, _ := controller.update()
-	if strings.Contains(stale.Preview.TextByValue[two], "stale first") {
-		t.Fatalf("stale preview overwrote latest: %#v", stale.Preview.TextByValue)
+	if stale.SelectionDetail != nil && strings.Contains(stale.SelectionDetail.TextByValue[two], "stale first") {
+		t.Fatalf("stale preview overwrote latest: %#v", stale.SelectionDetail)
 	}
 	controller.focus(aiResumeNewValue)
 	controller.focus(two)
@@ -728,7 +822,7 @@ func TestResumeSummaryPreviewTimeoutIsDetailOnly(t *testing.T) {
 		if update.Items != nil {
 			t.Fatalf("timeout update mutated list: %#v", update.Items)
 		}
-		if update.Preview.TextByValue[value] == "preview unavailable" {
+		if update.SelectionDetail != nil && strings.Contains(update.SelectionDetail.TextByValue[value], "preview unavailable") {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -764,8 +858,8 @@ func TestResumeSummaryPreviewBytesStayOutOfRowsRegistryAndCommands(t *testing.T)
 	deadline := time.Now().Add(time.Second)
 	for {
 		update, _ := controller.update()
-		if update.Preview.TextByValue[value] != "" {
-			if update.Items != nil || update.Preview.Command != "" {
+		if update.SelectionDetail != nil && update.SelectionDetail.TextByValue[value] != "" {
+			if update.Items != nil || update.Preview.Command != "" || update.SetHeader || update.SetFooter || update.SetMoreNotLoaded {
 				t.Fatalf("preview escaped detail-only seam: %#v", update)
 			}
 			for _, entry := range entries {

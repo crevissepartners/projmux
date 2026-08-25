@@ -316,9 +316,9 @@ func TestAIResumePickerRowsCapAndMetadata(t *testing.T) {
 
 // aiResumeRowPrefixWidth is the fixed-column prefix width that every session
 // row shares before the trailing title: rel[6] + " " + badge[8] + " " +
-// branch[18] + " " + turns[5] + " " (separator before title).
+// branch[18] + " " (separator before title).
 const aiResumeRowPrefixWidth = aiResumeRelCellWidth + 1 + aiResumeBadgeCellWidth + 1 +
-	aiResumeBranchCellWidth + 1 + aiResumeTurnsCellWidth + 1
+	aiResumeBranchCellWidth + 1
 
 func TestAIResumeSessionRowColumnsAlign(t *testing.T) {
 	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
@@ -364,6 +364,70 @@ func TestAIResumeSessionRowColumnsAlign(t *testing.T) {
 	// Empty branch renders the placeholder, not a collapsed column.
 	if !strings.Contains(rows[3].Label, aiResumeEmptyCell) {
 		t.Fatalf("empty-branch row = %q, want %q placeholder", rows[3].Label, aiResumeEmptyCell)
+	}
+}
+
+func TestAIResumeProviderNeutralRowSchema80ColumnGolden(t *testing.T) {
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	providers := []struct {
+		name   string
+		source string
+	}{
+		{aiModeClaude, aisessions.SourceClaudeTranscript},
+		{aiModeCodex, aisessions.SourceCodexRollout},
+		{aiModeAntigravity, aisessions.SourceAntigravityMetadata},
+	}
+	var got strings.Builder
+	for _, provider := range providers {
+		row := aiResumeSessionRowWithLabel(aisessions.SessionMeta{
+			Agent: provider.name, ResumeID: provider.name + "-exact-id", Title: "Shared conversation title",
+			LastModified: now.Add(-2 * time.Hour), Source: provider.source, Turns: 42,
+			Confidence: "private-confidence", Reason: "private-reason", RuntimeStatus: "active",
+			Context: aisessions.SessionContext{Branch: "feature/provider-neutral", CWD: "/workspace/projmux/internal/app"},
+		}, "Codex bound conversation", now, i18n.FallbackLocale, "/workspace/projmux", 1)
+		plain := stripANSI(row.Label)
+		for _, forbidden := range []string{"[fallback]", "42t", "active", "private-confidence", "private-reason", provider.source} {
+			if strings.Contains(plain, forbidden) {
+				t.Fatalf("%s visible row leaked %q: %q", provider.name, forbidden, plain)
+			}
+		}
+		if !strings.Contains(row.SearchKey, provider.source) {
+			t.Fatalf("%s SearchKey = %q, want exact source %q", provider.name, row.SearchKey, provider.source)
+		}
+		fmt.Fprintf(&got, "%s|%s\n", provider.name, strings.TrimRight(i18n.TruncateTerminalCells(plain, 80), " "))
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "ai-resume-provider-neutral-80.golden"))
+	if err != nil {
+		t.Fatalf("read golden: %v\ngot:\n%s", err, got.String())
+	}
+	if got.String() != string(want) {
+		t.Fatalf("provider-neutral golden mismatch:\ngot:\n%swant:\n%s", got.String(), want)
+	}
+}
+
+func TestAIResumeProvidersShareConversationWidthPolicy(t *testing.T) {
+	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	title := strings.Repeat("provider neutral conversation ", 8)
+	providers := []struct{ name, source string }{
+		{aiModeClaude, aisessions.SourceClaudeTranscript},
+		{aiModeCodex, aisessions.SourceCodexAppServer},
+		{aiModeAntigravity, aisessions.SourceAntigravityMetadata},
+	}
+	wantWidth := 0
+	for _, provider := range providers {
+		row := aiResumeSessionRowWithLabel(aisessions.SessionMeta{
+			Agent: provider.name, ResumeID: provider.name + "-id", Title: title, Source: provider.source,
+			LastModified: now.Add(-time.Hour), Context: aisessions.SessionContext{Branch: "main"},
+		}, "", now, i18n.FallbackLocale, "/work", 0)
+		width := i18n.TerminalCellWidth(row.Label)
+		if wantWidth == 0 {
+			wantWidth = width
+		} else if width != wantWidth {
+			t.Fatalf("%s row width = %d, want common width %d", provider.name, width, wantWidth)
+		}
+		if !strings.HasSuffix(stripANSI(row.Label), "…") {
+			t.Fatalf("%s conversation did not use common ellipsis cap: %q", provider.name, stripANSI(row.Label))
+		}
 	}
 }
 
@@ -546,27 +610,6 @@ func TestAIResumeRelativeAge(t *testing.T) {
 	}
 }
 
-func TestAIResumeTurnsCell(t *testing.T) {
-	// Known counts render as "<n>t" left-aligned in a fixed-width cell.
-	if got := aiResumeTurnsCell(8); strings.TrimRight(got, " ") != "8t" {
-		t.Fatalf("turns cell = %q, want %q", got, "8t")
-	}
-	if got := aiResumeTurnsCell(120); strings.TrimRight(got, " ") != "120t" {
-		t.Fatalf("turns cell = %q, want %q", got, "120t")
-	}
-	if w := i18n.TerminalCellWidth(aiResumeTurnsCell(31)); w != aiResumeTurnsCellWidth {
-		t.Fatalf("turns cell width = %d, want %d", w, aiResumeTurnsCellWidth)
-	}
-	// Unknown (zero) turns render as a blank padded cell, not "0t".
-	blank := aiResumeTurnsCell(0)
-	if strings.TrimSpace(blank) != "" {
-		t.Fatalf("zero turns cell = %q, want blank", blank)
-	}
-	if w := i18n.TerminalCellWidth(blank); w != aiResumeTurnsCellWidth {
-		t.Fatalf("blank turns cell width = %d, want %d", w, aiResumeTurnsCellWidth)
-	}
-}
-
 func TestAIResumeAgentBadgeTightBracketsAndColor(t *testing.T) {
 	// Padding sits outside the brackets: "[codex]", never "[codex ]".
 	badge := aiResumeAgentBadge(aiModeCodex)
@@ -591,7 +634,7 @@ func TestAIResumeAgentBadgeTightBracketsAndColor(t *testing.T) {
 	}
 }
 
-func TestAIResumeSessionRowShowsTurns(t *testing.T) {
+func TestAIResumeSessionRowHidesTurns(t *testing.T) {
 	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
 	row := aiResumeSessionRowWithLabel(aisessions.SessionMeta{
 		Agent:        aiModeCodex,
@@ -600,8 +643,8 @@ func TestAIResumeSessionRowShowsTurns(t *testing.T) {
 		LastModified: now.Add(-time.Hour),
 		Turns:        31,
 	}, "", now, i18n.FallbackLocale, "", 0)
-	if !strings.Contains(row.Label, "31t") {
-		t.Fatalf("row label = %q, want turn count 31t", row.Label)
+	if strings.Contains(row.Label, "31t") {
+		t.Fatalf("row label = %q, turn count belongs in detail", row.Label)
 	}
 }
 
@@ -640,36 +683,38 @@ func TestAIResumePickerNoSessionsKeepsInteractiveNewSessionSnapshot(t *testing.T
 	if len(options.ChromeBands) != 0 {
 		t.Fatalf("upper provider chrome = %#v, want zero bands", options.ChromeBands)
 	}
+	if options.SelectionDetail == nil || !strings.Contains(options.SelectionDetail.TextByValue[aiResumeNewValue], "Select a resume session") {
+		t.Fatalf("initial selection detail = %#v, want renderer-owned dock enabled from first frame", options.SelectionDetail)
+	}
 	lines := strings.Split(options.Footer, "\n")
 	if len(lines) != 2 || !strings.HasPrefix(lines[0], "Providers Codex ") || lines[1] != "Showing latest 0 resume sessions." {
 		t.Fatalf("footer = %#v, want provider line then shown count", lines)
 	}
 }
 
-func TestAIResumeNativeAndFallbackProvenanceIsCompactAndSearchable(t *testing.T) {
+func TestAIResumeNativeAndFallbackProvenanceIsAbsentFromRows(t *testing.T) {
 	base := aisessions.SessionMeta{Agent: aisessions.AgentCodex, ResumeID: "thread-1", Title: "Provider title"}
 	native := base
 	native.Source, native.Confidence, native.RuntimeStatus = aisessions.SourceCodexAppServer, aisessions.ConfidenceHigh, "active"
 	fallback := base
 	fallback.Source, fallback.Confidence, fallback.Reason = aisessions.SourceCodexRollout, aisessions.ConfidenceMedium, aisessions.ReasonAppServerUnavailable
 	for _, test := range []struct {
-		name        string
-		row         aisessions.SessionMeta
-		wantVisible string
-		hidden      []string
+		name   string
+		row    aisessions.SessionMeta
+		hidden []string
 	}{
-		{"native", native, "[active]", []string{"codex-app-server", "high"}},
-		{"fallback", fallback, "[fallback]", []string{"codex-rollout", "medium", "app-server-unavailable"}},
+		{"native", native, []string{"[active]", "codex-app-server", "high"}},
+		{"fallback", fallback, []string{"[fallback]", "codex-rollout", "medium", "app-server-unavailable"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			row := aiResumeSessionRowWithLabel(test.row, "", time.Time{}, i18n.FallbackLocale, "/work", 0)
-			if !strings.Contains(row.Label, test.wantVisible) {
-				t.Fatalf("row=%#v want compact qualifier/status %q", row, test.wantVisible)
-			}
 			for _, hidden := range test.hidden {
-				if strings.Contains(row.Label, hidden) || !strings.Contains(row.SearchKey, hidden) {
-					t.Fatalf("row=%#v want %q search-only", row, hidden)
+				if strings.Contains(row.Label, hidden) {
+					t.Fatalf("row=%#v must keep %q out of visible label", row, hidden)
 				}
+			}
+			if !strings.Contains(row.SearchKey, test.row.Source) {
+				t.Fatalf("row=%#v must preserve exact source in SearchKey", row)
 			}
 		})
 	}

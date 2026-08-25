@@ -37,13 +37,29 @@ type ResumeSummary struct {
 // invocation-local preview boundary only after focus. It contains no preview
 // or transcript bytes. transcriptPath is opaque outside aisessions.
 type ResumeDetailRef struct {
-	Provider     string
-	ResumeID     string
-	LastModified time.Time
-	UpdatedAt    time.Time
-	Source       string
+	Provider      string
+	ResumeID      string
+	LastModified  time.Time
+	UpdatedAt     time.Time
+	Source        string
+	Turns         int
+	Confidence    string
+	Reason        string
+	RuntimeStatus string
 
 	transcriptPath string
+}
+
+// ResumeDetail is the invocation-local projection loaded for one exact
+// selection. Preview bytes and deferred turn counts never cross back into the
+// summary/list projection.
+type ResumeDetail struct {
+	Turns         int
+	Source        string
+	Confidence    string
+	Reason        string
+	RuntimeStatus string
+	Preview       Preview
 }
 
 // ResumeSummaryOptions controls the provider-local bounded population seam.
@@ -246,18 +262,33 @@ func projectResumeSummary(session SessionMeta, baseCWD string, depth int) (Resum
 	}
 	ref := ResumeDetailRef{
 		Provider: summary.Provider, ResumeID: summary.ResumeID, LastModified: summary.LastModified,
-		UpdatedAt: summary.UpdatedAt, Source: summary.Source, transcriptPath: session.sourcePath,
+		UpdatedAt: summary.UpdatedAt, Source: summary.Source, Turns: session.Turns,
+		Confidence: session.Confidence, Reason: session.Reason, RuntimeStatus: session.RuntimeStatus,
+		transcriptPath: session.sourcePath,
 	}
 	return summary, ref
 }
 
-// ReadResumeDetailPreview crosses from the list-only projection into the
-// existing invocation-local detail read. The summary itself never gains the
-// resulting transcript bytes.
-func ReadResumeDetailPreview(ctx context.Context, ref ResumeDetailRef, open OpenCodexCatalog) (Preview, error) {
+// ReadResumeDetail crosses the exact selection boundary once. It combines
+// non-summary metadata, a deferred turn count when a local transcript exists,
+// and the existing bounded preview projection without persisting any result.
+func ReadResumeDetail(ctx context.Context, ref ResumeDetailRef, open OpenCodexCatalog) (ResumeDetail, error) {
 	session := SessionMeta{
 		Agent: ref.Provider, ResumeID: ref.ResumeID, LastModified: ref.LastModified,
-		UpdatedAt: ref.UpdatedAt, Source: ref.Source, sourcePath: ref.transcriptPath,
+		UpdatedAt: ref.UpdatedAt, Source: ref.Source, Turns: ref.Turns,
+		Confidence: ref.Confidence, Reason: ref.Reason, RuntimeStatus: ref.RuntimeStatus,
+		sourcePath: ref.transcriptPath,
 	}
-	return ReadPreview(ctx, session, open)
+	detail := ResumeDetail{
+		Turns: session.Turns, Source: session.Source, Confidence: session.Confidence,
+		Reason: session.Reason, RuntimeStatus: session.RuntimeStatus,
+	}
+	if session.sourcePath != "" {
+		if turns, ok := countUserTurnsContext(ctx, session.sourcePath); ok {
+			detail.Turns = turns
+		}
+	}
+	preview, err := ReadPreview(ctx, session, open)
+	detail.Preview = preview
+	return detail, err
 }

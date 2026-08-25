@@ -21,6 +21,7 @@ func PickerOptions(options Options) picker.Options {
 		Locale:                options.Locale,
 		Actions:               pickerActions(options),
 		Preview:               picker.Preview{Command: options.PreviewCommand, Window: options.PreviewWindow},
+		SelectionDetail:       options.SelectionDetail,
 		Theme:                 options.Theme,
 		InitialQuery:          options.InitialQuery,
 		InitialIndex:          initialIndex,

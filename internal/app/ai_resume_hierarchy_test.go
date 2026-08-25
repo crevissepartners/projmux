@@ -87,7 +87,7 @@ func TestAIResumeExactAgentLabelResolverUsesOnlyExactThreadBinding(t *testing.T)
 	}
 }
 
-func TestAIResumeCodexStatusQualifierSearchAndSelectionParity(t *testing.T) {
+func TestAIResumeCodexRuntimeAndFallbackStayOutOfVisibleRow(t *testing.T) {
 	const id = "019f0000-0000-7000-8000-000000000099"
 	for _, test := range []struct {
 		name         string
@@ -114,20 +114,20 @@ func TestAIResumeCodexStatusQualifierSearchAndSelectionParity(t *testing.T) {
 			}
 			row := aiResumeSessionRowWithLabel(session, "Bound topic", time.Time{}, test.locale, "/work", 0)
 			visible := stripANSI(row.Label)
-			if test.wantStatus != "" && !strings.Contains(visible, test.wantStatus) {
-				t.Fatalf("visible row = %q, want status %q", visible, test.wantStatus)
+			if test.wantStatus != "" && strings.Contains(visible, test.wantStatus) {
+				t.Fatalf("visible row = %q, must hide status %q", visible, test.wantStatus)
 			}
-			if got := strings.Contains(visible, "[fallback]"); got != test.wantFallback {
-				t.Fatalf("visible row = %q, fallback=%v want %v", visible, got, test.wantFallback)
+			if strings.Contains(visible, "[fallback]") {
+				t.Fatalf("visible row = %q, must hide fallback qualifier", visible)
 			}
 			for _, hidden := range []string{aisessions.SourceCodexAppServer, test.confidence, test.reason} {
 				if hidden != "" && strings.Contains(visible, hidden) {
 					t.Fatalf("visible row leaks raw provenance %q: %q", hidden, visible)
 				}
 			}
-			for _, searchable := range []string{id, test.source, test.confidence, test.reason, test.status} {
-				if searchable != "" && !strings.Contains(row.SearchKey, searchable) {
-					t.Fatalf("SearchKey = %q, want %q", row.SearchKey, searchable)
+			for _, searchable := range []string{id, test.source} {
+				if !strings.Contains(row.SearchKey, searchable) {
+					t.Fatalf("SearchKey = %q, want frozen field %q", row.SearchKey, searchable)
 				}
 			}
 			if got := row.Value; got != aiResumePickerValue(aiModeCodex, id) {
@@ -182,7 +182,7 @@ func TestAIResumeConversationHierarchyWidthAndLocaleGolden(t *testing.T) {
 	}
 }
 
-func TestAIResumeClaudeAndAntigravityRowsKeepLegacyProjection(t *testing.T) {
+func TestAIResumeClaudeAndAntigravityRowsUseCommonProjection(t *testing.T) {
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
 	for _, provider := range []string{aiModeClaude, aiModeAntigravity} {
 		session := aisessions.SessionMeta{
@@ -190,9 +190,10 @@ func TestAIResumeClaudeAndAntigravityRowsKeepLegacyProjection(t *testing.T) {
 			LastModified: now.Add(-time.Hour), Context: aisessions.SessionContext{Branch: "main"},
 		}
 		got := aiResumeSessionRowWithLabel(session, "must be ignored", now, i18n.FallbackLocale, "/work", 0)
-		want := aiResumeLegacySessionRow(session, now, i18n.FallbackLocale, "/work", 0)
-		if got != want {
-			t.Fatalf("%s row drifted: got=%#v want=%#v", provider, got, want)
+		visible := stripANSI(got.Label)
+		if !strings.HasPrefix(visible, "1h") || !strings.Contains(visible, "["+provider[:min(len(provider), aiResumeAgentCellWidth)]+"]") ||
+			!strings.Contains(visible, "main") || !strings.HasSuffix(visible, provider+" title") {
+			t.Fatalf("%s common row grammar drifted: %q", provider, visible)
 		}
 	}
 }

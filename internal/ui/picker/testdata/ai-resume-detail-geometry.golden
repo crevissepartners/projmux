@@ -1,0 +1,8 @@
+80x24 empty|lines=24 selected=7 footer=22 limit=11 separators=[1 13 21]
+80x24 loading|lines=24 selected=7 footer=22 limit=11 separators=[1 13 21]
+80x24 ready|lines=24 selected=7 footer=22 limit=11 separators=[1 13 21]
+80x24 unavailable|lines=24 selected=7 footer=22 limit=11 separators=[1 13 21]
+120x40 empty|lines=40 selected=12 footer=38 limit=21 separators=[1 23 37]
+120x40 loading|lines=40 selected=12 footer=38 limit=21 separators=[1 23 37]
+120x40 ready|lines=40 selected=12 footer=38 limit=21 separators=[1 23 37]
+120x40 unavailable|lines=40 selected=12 footer=38 limit=21 separators=[1 23 37]

@@ -448,9 +448,9 @@ func TestCountUserTurnsExcludesAgentMessages(t *testing.T) {
 		`{"type":"event_msg","payload":{"type":"agent_message","message":"On it"}}` + "\n" +
 		`{"type":"event_msg","payload":{"type":"user_message","message":"Also add turn counts"}}` + "\n"
 
-	turns, ok := countUserTurnsReader(strings.NewReader(log))
+	turns, ok := countUserTurnsReaderContext(context.Background(), strings.NewReader(log))
 	if !ok {
-		t.Fatal("countUserTurnsReader() ok = false")
+		t.Fatal("countUserTurnsReaderContext() ok = false")
 	}
 	if turns != 2 {
 		t.Fatalf("turns = %d, want 2 (two user_message records, agent_message excluded)", turns)
@@ -496,9 +496,9 @@ func TestScanSessionJSONLCountsClaudeUserTurnsExcludingToolResults(t *testing.T)
 		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"output"}]}}` + "\n" +
 		`{"type":"user","message":{"role":"user","content":[{"type":"text","text":"second prompt"}]}}` + "\n"
 
-	turns, ok := countUserTurnsReader(strings.NewReader(log))
+	turns, ok := countUserTurnsReaderContext(context.Background(), strings.NewReader(log))
 	if !ok {
-		t.Fatal("countUserTurnsReader() ok = false")
+		t.Fatal("countUserTurnsReaderContext() ok = false")
 	}
 	if turns != 2 {
 		t.Fatalf("turns = %d, want 2 (tool_result carrier excluded)", turns)
@@ -551,9 +551,9 @@ func TestCountUserTurnsCountsBeyondCandidateScanLimit(t *testing.T) {
 		b.WriteString(`{"type":"event_msg","payload":{"type":"agent_message","message":"reply"}}` + "\n")
 	}
 
-	turns, ok := countUserTurnsReader(strings.NewReader(b.String()))
+	turns, ok := countUserTurnsReaderContext(context.Background(), strings.NewReader(b.String()))
 	if !ok {
-		t.Fatal("countUserTurnsReader() ok = false")
+		t.Fatal("countUserTurnsReaderContext() ok = false")
 	}
 	if turns != userTurns {
 		t.Fatalf("turns = %d, want %d (must count past the %d-line candidate limit)", turns, userTurns, sessionScanLineLimit)
