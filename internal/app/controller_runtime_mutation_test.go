@@ -119,6 +119,68 @@ func TestControllerRuntimeMutationExecuteThenRepeatIsEmpty(t *testing.T) {
 	}
 }
 
+func TestControllerRuntimeMutationAcceptsExactSiblingUIDEffectBetweenPlanAndGuard(t *testing.T) {
+	newFixture := func() (*fakeTmux, *routedTmuxRunner, runtimeMutationRoute, []controller.Action) {
+		server := newFakeTmux()
+		server.socketPath = "/tmp/fake-tmux/controller-sibling-uid-race"
+		session := server.addSession("work-gamma")
+		session.opts[tmuxopts.ProjectNameSession] = "before"
+		session.opts[tmuxopts.ProjectPathSession] = "/before"
+		runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
+		route := runtimeMutationRoute{
+			target: explicitTmuxTarget{flag: "-L", value: "primary"}, expectedSocketPath: server.socketPath,
+			socketName: "primary", authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID},
+		}
+		guard := []controller.Guard{{Field: tmuxopts.ProjectUIDSession, Expect: ""}}
+		write := func(key, field, before, after string) controller.Action {
+			return controller.Action{
+				Key: key, Surface: controller.SurfaceTmux, Intent: controller.IntentRepairMirror,
+				Authority: controller.AuthorityAllow, Scope: resourcegraph.ObjectSession,
+				Target: session.id, Field: field, Before: before, After: after, Guards: slices.Clone(guard),
+				Args: []string{"set-option", "-t", session.id, "-q", field, after},
+			}
+		}
+		return server, runner, route, []controller.Action{
+			write("uid", tmuxopts.ProjectUIDSession, "", "project-gamma"),
+			write("name", tmuxopts.ProjectNameSession, "before", "gamma"),
+			write("path", tmuxopts.ProjectPathSession, "/before", "/work/gamma"),
+		}
+	}
+
+	server, runner, route, writes := newFixture()
+	// A coalesced controller pass claimed the exact UID after this plan recorded
+	// its blank preimage. The UID action replans away; its exact declared final
+	// value remains valid containment for the pending name/path actions.
+	server.sessions[0].opts[tmuxopts.ProjectUIDSession] = "project-gamma"
+	beforeWrites := tmuxMutationCallCount(server)
+	if err := executeControllerRuntimeMutations(context.Background(), runner, route, writes); err != nil {
+		t.Fatalf("exact sibling UID convergence was refused: %v", err)
+	}
+	if got := tmuxMutationCallCount(server) - beforeWrites; got != 2 {
+		t.Fatalf("runtime mutations = %d, want name/path only", got)
+	}
+	if got := server.sessions[0].opts[tmuxopts.ProjectUIDSession]; got != "project-gamma" {
+		t.Fatalf("exact asynchronous UID = %q", got)
+	}
+	if got := server.sessions[0].opts[tmuxopts.ProjectNameSession]; got != "gamma" {
+		t.Fatalf("project name = %q", got)
+	}
+	if got := server.sessions[0].opts[tmuxopts.ProjectPathSession]; got != "/work/gamma" {
+		t.Fatalf("project path = %q", got)
+	}
+
+	server, runner, route, writes = newFixture()
+	server.sessions[0].opts[tmuxopts.ProjectUIDSession] = "project-foreign"
+	beforeWrites = tmuxMutationCallCount(server)
+	err := executeControllerRuntimeMutations(context.Background(), runner, route, writes)
+	if err == nil || !strings.Contains(err.Error(), "guard @projmux_project_uid drifted") {
+		t.Fatalf("foreign sibling UID drift = %v", err)
+	}
+	if got := tmuxMutationCallCount(server) - beforeWrites; got != 0 {
+		t.Fatalf("foreign sibling UID received %d write(s)", got)
+	}
+}
+
 func TestAuthorshipPromotionRuntimeRollbackIsIndependentOfActionOrder(t *testing.T) {
 	fields := []string{tmuxopts.AgentUIDPane, tmuxopts.PaneOwnerKind, tmuxopts.PaneOwnerUID, tmuxopts.PaneRole}
 	for _, order := range [][]int{{0, 1, 2, 3}, {3, 1, 0, 2}, {2, 0, 3, 1}} {
