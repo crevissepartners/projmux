@@ -35,6 +35,23 @@ func installedCacheFixture(now time.Time) []usage.Snapshot {
 	}
 }
 
+func isolateUsageCommandEnv(t *testing.T, command *Command) {
+	t.Helper()
+	root := t.TempDir()
+	command.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return root
+		case "XDG_CONFIG_HOME":
+			return filepath.Join(root, "config")
+		case "XDG_STATE_HOME":
+			return filepath.Join(root, "state")
+		default:
+			return ""
+		}
+	}
+}
+
 func TestCodexNativeUsageJSONTableAndHUDShareValueSourceAndReasons(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
@@ -865,6 +882,7 @@ func TestUsageStatusScopesToEnabledCodexOnly(t *testing.T) {
 	}}
 
 	c := New(func() time.Time { return now })
+	isolateUsageCommandEnv(t, c)
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentCodex}, nil
 	}
@@ -905,6 +923,7 @@ func TestUsageStatusProjectsAntigravityGeminiWeekly(t *testing.T) {
 	}}
 
 	c := New(func() time.Time { return now })
+	isolateUsageCommandEnv(t, c)
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentAntigravity}, nil
 	}
@@ -1238,6 +1257,7 @@ func TestUsageStatusEmitsFormattedSegment(t *testing.T) {
 
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	c := New(nil)
+	isolateUsageCommandEnv(t, c)
 	mgr := newStubManager(t, []*stubAdapter{
 		{name: "claude", snaps: []usage.Snapshot{
 			{Model: "claude", Window: usage.Window5h, Pct: 30, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
