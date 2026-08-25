@@ -88,6 +88,9 @@ type Pane struct {
 	// launched as an agent pane; it is not an Agent uid, because no tmux option
 	// carries one.
 	AgentProvider string `json:"agentProvider,omitempty"`
+	// AgentLaunchAuthorship is the raw canonical launch receipt. Provider and
+	// managed presentation options are intentionally not authority.
+	AgentLaunchAuthorship string `json:"agentLaunchAuthorship,omitempty"`
 	// AgentSessionID and AgentThreadID are live routing indexes. They are
 	// observed only so L8 can guard their exact removal; neither is resource
 	// identity or a Registry conversation pointer.

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -41,9 +42,37 @@ type resourceReconcileItem struct {
 	ApprovalCommand string                   `json:"approvalCommand,omitempty"`
 	LossKind        string                   `json:"lossKind,omitempty"`
 	LossCount       int                      `json:"lossCount,omitempty"`
+	Authority       string                   `json:"authority,omitempty"`
+	PromotionKind   string                   `json:"promotionKind,omitempty"`
+	AllocationSlot  string                   `json:"allocationSlot,omitempty"`
+	Transitions     []resourceRefTransition  `json:"transitions,omitempty"`
+	Guards          []controller.Guard       `json:"guards,omitempty"`
 	tmuxArgs        []string
 	refused         bool
 	registry        bool
+}
+
+type resourceRefTransition struct {
+	Field  string `json:"field"`
+	Before string `json:"before,omitempty"`
+	After  string `json:"after,omitempty"`
+}
+
+type resourceAllocationSlot struct {
+	Slot          string `json:"slot"`
+	Kind          string `json:"kind"`
+	Name          string `json:"name"`
+	PromotionKind string `json:"promotionKind,omitempty"`
+}
+
+type resourceAuthorshipPromotion struct {
+	PaneUID, PaneTarget, WindowUID, ProjectUID string
+	SessionID, WindowID                        string
+	ObservedProvider, AgentProvider            string
+	AgentUID, AgentName                        string
+	LinkKind                                   coremetadata.AgentLinkKind
+	AnchorBefore, AnchorAfter                  string
+	DefaultBefore, DefaultAfter                string
 }
 
 // planResourceAgentProjections compares Registry Agent authority with the exact
@@ -122,6 +151,8 @@ type resourceReconcilePlan struct {
 	registry        coremetadata.Registry
 	items           []resourceReconcileItem
 	writes          []plannedTmuxWrite
+	allocations     []resourceAllocationSlot
+	promotions      []resourceAuthorshipPromotion
 	materialization *registryTopologyPlan
 }
 
@@ -163,6 +194,10 @@ type resourceReconcilePlanner struct {
 	// the Settings gate, and creates nothing.
 	agents               topologyAgentLauncher
 	approvedOrphanImport bool
+	// symbolicAllocations makes a preview use stable typed slots without
+	// invoking the opaque UID allocator. Execute leaves it false and binds the
+	// same slots under the Registry lock.
+	symbolicAllocations bool
 }
 
 func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata.Registry) (resourceReconcilePlan, error) {
@@ -214,19 +249,62 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 	}
 	scopedBefore := scopeResourceRegistry(before, projectSessions, reconciler)
 	scopedAfter := scopedBefore.Clone()
-	if err := reconciler.reconcile(ctx, &scopedAfter, p.store.mutator(), "reconcile-resources"); err != nil {
+	mutator := p.store.mutator()
+	allocateUID := mutator.NewUID
+	if allocateUID == nil {
+		allocateUID = coremetadata.NewUID
+	}
+	if p.symbolicAllocations {
+		counts := map[coremetadata.Kind]int{}
+		allocateUID = func(kind coremetadata.Kind) (string, error) {
+			counts[kind]++
+			return fmt.Sprintf("%s-plan-slot-%d", strings.ToLower(string(kind)), counts[kind]), nil
+		}
+	}
+	var allocationOrder []resourcePlanUIDAllocation
+	mutator.NewUID = func(kind coremetadata.Kind) (string, error) {
+		uid, err := allocateUID(kind)
+		if err == nil {
+			allocationOrder = append(allocationOrder, resourcePlanUIDAllocation{kind: kind, uid: uid})
+		}
+		return uid, err
+	}
+	if err := reconciler.reconcile(ctx, &scopedAfter, mutator, "reconcile-resources"); err != nil {
 		return resourceReconcilePlan{}, err
 	}
 	after := mergeScopedResourceRegistry(before, scopedBefore, scopedAfter, projectSessions, reconciler)
-	if err := planResourceBoundMirrorDrift(ctx, recorder, after, reconciler); err != nil {
-		return resourceReconcilePlan{}, err
+	promotions := detectAuthorshipPromotions(before, after, recorder.objects)
+	if len(promotions) != 0 {
+		targetWindows := map[string]bool{}
+		for _, promotion := range promotions {
+			targetWindows[promotion.WindowUID] = true
+		}
+		// Promotion is a Window-local composite transaction. Sibling Project D5
+		// remains visible to a later ordinary pass and is never absorbed into the
+		// promotion's commit/rollback domain.
+		after = mergeExactWindowGraphs(before, after, targetWindows)
+		recorder.writes = nil
+		if err := planAuthorshipPromotionOptions(ctx, recorder, after, promotions); err != nil {
+			return resourceReconcilePlan{}, err
+		}
+	} else {
+		if err := planResourceBoundMirrorDrift(ctx, recorder, after, reconciler); err != nil {
+			return resourceReconcilePlan{}, err
+		}
+		if err := planResourceAgentProjections(ctx, recorder, after, time.Now()); err != nil {
+			return resourceReconcilePlan{}, err
+		}
+		if err := planResourceProjectMirrors(ctx, recorder, after, projectSessions, reconciler); err != nil {
+			return resourceReconcilePlan{}, err
+		}
 	}
-	if err := planResourceAgentProjections(ctx, recorder, after, time.Now()); err != nil {
-		return resourceReconcilePlan{}, err
-	}
-	if err := planResourceProjectMirrors(ctx, recorder, after, projectSessions, reconciler); err != nil {
-		return resourceReconcilePlan{}, err
-	}
+	// A malformed or conflicting authorship receipt freezes the exact Pane
+	// target for this pass. This suppresses both identity and presentation
+	// writes to that target without consuming unrelated-target #759 repairs.
+	refusedTargets := refusedAuthorshipTargets(before, recorder.objects)
+	recorder.writes = slices.DeleteFunc(recorder.writes, func(write plannedTmuxWrite) bool {
+		return refusedTargets[write.target] != ""
+	})
 	// Mutators may refresh UpdatedAt while finding no durable resource change.
 	// Match resourceStore.converge so repeat plans remain byte-stable.
 	updatedAt := after.UpdatedAt
@@ -235,16 +313,46 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 		after.UpdatedAt = updatedAt
 	}
 
-	normalize := newPlanUIDNormalizer(before, after)
+	normalize := newPlanUIDNormalizerWithAllocations(before, after, allocationOrder)
 	items := registryReconcileItems(before, after, normalize)
 	items = append(items, recorder.planItems(before, normalize)...)
+	items = append(items, promotionPlanItems(promotions, normalize)...)
 	items = append(items, resourceProjectForeignItems(before, projectSessions, reconciler)...)
 	items = append(items, recorder.foreignItems(before, reconciler)...)
 	sort.SliceStable(items, func(i, j int) bool { return items[i].Key < items[j].Key })
 	if err := validateResourcePlanItems(items); err != nil {
 		return resourceReconcilePlan{}, err
 	}
-	return resourceReconcilePlan{registry: after, items: items, writes: slices.Clone(recorder.writes)}, nil
+	return resourceReconcilePlan{
+		registry: after, items: items, writes: slices.Clone(recorder.writes),
+		allocations: normalize.slots(after, promotions), promotions: promotions,
+	}, nil
+}
+
+func refusedAuthorshipTargets(registry coremetadata.Registry, objects []observedPlanObject) map[string]string {
+	refused := map[string]string{}
+	known := registryUIDSet(registry)
+	counts := map[string]int{}
+	for _, object := range objects {
+		if object.kind == coremetadata.KindPane && strings.TrimSpace(object.uid) != "" {
+			counts[object.uid]++
+		}
+	}
+	for _, object := range objects {
+		uid := strings.TrimSpace(object.uid)
+		if object.kind != coremetadata.KindPane || !known[uid] || counts[uid] != 1 {
+			continue
+		}
+		windowUID := observedWindowUIDForPane(object, objects)
+		reason := coremetadata.AgentPanePromotionRefusal(&registry, windowUID, uid, coremetadata.LegacyPane{
+			Provider: object.agentProvider, LaunchAuthorship: object.agentLaunchAuthorship,
+			Topic: object.agentTopic, SessionID: object.agentSessionID, ThreadID: object.agentThreadID,
+		})
+		if reason != "" {
+			refused[object.target] = reason
+		}
+	}
+	return refused
 }
 
 func validateResourcePlanItems(items []resourceReconcileItem) error {
@@ -744,20 +852,40 @@ func resourceProjectForeignItems(registry coremetadata.Registry, sessions []obse
 
 type resourcePlanUIDNormalizer struct {
 	created map[string]string
+	ordered []resourcePlanUIDAllocation
+}
+
+type resourcePlanUIDAllocation struct {
+	kind coremetadata.Kind
+	uid  string
 }
 
 func newPlanUIDNormalizer(before, after coremetadata.Registry) resourcePlanUIDNormalizer {
+	return newPlanUIDNormalizerWithAllocations(before, after, nil)
+}
+
+func newPlanUIDNormalizerWithAllocations(before, after coremetadata.Registry, allocations []resourcePlanUIDAllocation) resourcePlanUIDNormalizer {
 	known := registryUIDSet(before)
 	created := map[string]string{}
 	counts := map[coremetadata.Kind]int{}
+	ordered := make([]resourcePlanUIDAllocation, 0, len(allocations))
+	for _, allocation := range allocations {
+		if known[allocation.uid] || created[allocation.uid] != "" {
+			continue
+		}
+		counts[allocation.kind]++
+		created[allocation.uid] = fmt.Sprintf("<allocated-%s-%d>", strings.ToLower(string(allocation.kind)), counts[allocation.kind])
+		ordered = append(ordered, allocation)
+	}
 	for _, record := range registryResourceRecords(after) {
-		if known[record.uid] {
+		if known[record.uid] || created[record.uid] != "" {
 			continue
 		}
 		counts[record.kind]++
 		created[record.uid] = fmt.Sprintf("<allocated-%s-%d>", strings.ToLower(string(record.kind)), counts[record.kind])
+		ordered = append(ordered, resourcePlanUIDAllocation{kind: record.kind, uid: record.uid})
 	}
-	return resourcePlanUIDNormalizer{created: created}
+	return resourcePlanUIDNormalizer{created: created, ordered: ordered}
 }
 
 func (n resourcePlanUIDNormalizer) value(value string) string {
@@ -765,6 +893,253 @@ func (n resourcePlanUIDNormalizer) value(value string) string {
 		return normalized
 	}
 	return value
+}
+
+func (n resourcePlanUIDNormalizer) slots(registry coremetadata.Registry, promotions []resourceAuthorshipPromotion) []resourceAllocationSlot {
+	var slots []resourceAllocationSlot
+	byUID := map[string]registryResourceRecord{}
+	for _, record := range registryResourceRecords(registry) {
+		byUID[record.uid] = record
+	}
+	promotionKind := map[string]string{}
+	for _, promotion := range promotions {
+		promotionKind[promotion.AgentUID] = string(promotion.LinkKind)
+	}
+	for _, allocation := range n.ordered {
+		record, ok := byUID[allocation.uid]
+		slot := n.created[allocation.uid]
+		if !ok || slot == "" {
+			continue
+		}
+		slots = append(slots, resourceAllocationSlot{
+			Slot:          slot,
+			Kind:          string(record.kind),
+			Name:          record.name,
+			PromotionKind: promotionKind[record.uid],
+		})
+	}
+	return slots
+}
+
+func detectAuthorshipPromotions(before, after coremetadata.Registry, objects []observedPlanObject) []resourceAuthorshipPromotion {
+	byPane := map[string]observedPlanObject{}
+	for _, object := range objects {
+		if object.kind != coremetadata.KindPane || strings.TrimSpace(object.uid) == "" {
+			continue
+		}
+		byPane[object.uid] = object
+	}
+	var promotions []resourceAuthorshipPromotion
+	for _, paneAfter := range after.Panes {
+		paneBefore, ok := before.Pane(paneAfter.Metadata.UID)
+		if !ok || paneBefore.Metadata.OwnerRef == nil || paneAfter.Metadata.OwnerRef == nil ||
+			paneBefore.Metadata.OwnerRef.Kind != coremetadata.KindWindow || paneAfter.Metadata.OwnerRef.Kind != coremetadata.KindAgent ||
+			paneBefore.Spec.Role != coremetadata.PaneRoleShell || paneAfter.Spec.Role != coremetadata.PaneRoleAgent {
+			continue
+		}
+		windowUID := paneBefore.Metadata.OwnerUID()
+		agent, ok := after.Agent(paneAfter.Metadata.OwnerUID())
+		if !ok || agent.Metadata.OwnerUID() != windowUID || agent.Status.PaneRef != paneAfter.Metadata.UID {
+			continue
+		}
+		windowBefore, beforeOK := before.Window(windowUID)
+		windowAfter, afterOK := after.Window(windowUID)
+		projectUID, projectOK := projectUIDForWindow(after, windowUID)
+		object, liveOK := byPane[paneAfter.Metadata.UID]
+		if !beforeOK || !afterOK || !projectOK || !liveOK ||
+			coremetadata.ResolveAgentPaneAuthority(coremetadata.LegacyPane{
+				Provider: object.agentProvider, LaunchAuthorship: object.agentLaunchAuthorship,
+			}) != coremetadata.AgentPaneAuthorityLaunch {
+			continue
+		}
+		linkKind := coremetadata.AgentLinkAttached
+		if _, existed := before.Agent(agent.Metadata.UID); !existed {
+			linkKind = coremetadata.AgentLinkMinted
+		}
+		promotions = append(promotions, resourceAuthorshipPromotion{
+			PaneUID: paneAfter.Metadata.UID, PaneTarget: object.target,
+			WindowUID: windowUID, ProjectUID: projectUID,
+			SessionID: object.sessionID, WindowID: object.windowID,
+			ObservedProvider: object.agentProvider, AgentProvider: agent.Spec.Provider,
+			AgentUID: agent.Metadata.UID, AgentName: agent.Metadata.Name, LinkKind: linkKind,
+			AnchorBefore: windowBefore.Spec.AnchorPaneRef, AnchorAfter: windowAfter.Spec.AnchorPaneRef,
+			DefaultBefore: windowBefore.Spec.DefaultShellPaneRef, DefaultAfter: windowAfter.Spec.DefaultShellPaneRef,
+		})
+	}
+	sort.Slice(promotions, func(i, j int) bool { return promotions[i].PaneUID < promotions[j].PaneUID })
+	return promotions
+}
+
+func projectUIDForWindow(registry coremetadata.Registry, windowUID string) (string, bool) {
+	window, ok := registry.Window(windowUID)
+	if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != coremetadata.KindProject {
+		return "", false
+	}
+	_, ok = registry.Project(window.Metadata.OwnerUID())
+	return window.Metadata.OwnerUID(), ok
+}
+
+func exactWindowGraphUIDSet(registry coremetadata.Registry, windows map[string]bool) map[string]bool {
+	uids := map[string]bool{}
+	for _, window := range registry.Windows {
+		if windows[window.Metadata.UID] {
+			uids[window.Metadata.UID] = true
+		}
+	}
+	for _, agent := range registry.Agents {
+		if agent.Metadata.OwnerRef != nil && agent.Metadata.OwnerRef.Kind == coremetadata.KindWindow && windows[agent.Metadata.OwnerUID()] {
+			uids[agent.Metadata.UID] = true
+		}
+	}
+	for _, pane := range registry.Panes {
+		if pane.Metadata.OwnerRef == nil {
+			continue
+		}
+		if pane.Metadata.OwnerRef.Kind == coremetadata.KindWindow && windows[pane.Metadata.OwnerUID()] ||
+			pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent && uids[pane.Metadata.OwnerUID()] {
+			uids[pane.Metadata.UID] = true
+		}
+	}
+	return uids
+}
+
+// mergeExactWindowGraphs keeps the composite promotion's durable write-set at
+// the promoted Window ancestry. A second Window in the same Project is no more
+// part of this transaction than a Window on another socket.
+func mergeExactWindowGraphs(before, after coremetadata.Registry, windows map[string]bool) coremetadata.Registry {
+	oldUIDs := exactWindowGraphUIDSet(before, windows)
+	newUIDs := exactWindowGraphUIDSet(after, windows)
+	out := before.Clone()
+	out.Windows = slices.DeleteFunc(out.Windows, func(value coremetadata.Window) bool { return oldUIDs[value.Metadata.UID] })
+	out.Panes = slices.DeleteFunc(out.Panes, func(value coremetadata.Pane) bool { return oldUIDs[value.Metadata.UID] })
+	out.Agents = slices.DeleteFunc(out.Agents, func(value coremetadata.Agent) bool { return oldUIDs[value.Metadata.UID] })
+	out.NameReservations = slices.DeleteFunc(out.NameReservations, func(value coremetadata.NameReservation) bool { return oldUIDs[value.UID] })
+	for _, window := range after.Windows {
+		if newUIDs[window.Metadata.UID] {
+			out.Windows = append(out.Windows, window.Clone())
+		}
+	}
+	for _, pane := range after.Panes {
+		if newUIDs[pane.Metadata.UID] {
+			out.Panes = append(out.Panes, pane.Clone())
+		}
+	}
+	for _, agent := range after.Agents {
+		if newUIDs[agent.Metadata.UID] {
+			out.Agents = append(out.Agents, agent.Clone())
+		}
+	}
+	for _, reservation := range after.NameReservations {
+		if newUIDs[reservation.UID] {
+			out.NameReservations = append(out.NameReservations, reservation)
+		}
+	}
+	out.UpdatedAt = after.UpdatedAt
+	return out.Normalize()
+}
+
+func planAuthorshipPromotionOptions(ctx context.Context, recorder *resourcePlanTmuxRunner, registry coremetadata.Registry, promotions []resourceAuthorshipPromotion) error {
+	for _, promotion := range promotions {
+		pane, ok := registry.Pane(promotion.PaneUID)
+		if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent || pane.Spec.Role != coremetadata.PaneRoleAgent {
+			return fmt.Errorf("authorship promotion %s has no valid Registry Pane post-state", promotion.PaneUID)
+		}
+		agent, ok := registry.Agent(pane.Metadata.OwnerUID())
+		if !ok || agent.Metadata.UID != promotion.AgentUID || agent.Status.PaneRef != promotion.PaneUID {
+			return fmt.Errorf("authorship promotion %s has no exact Agent reverse reference", promotion.PaneUID)
+		}
+		firstWrite := len(recorder.writes)
+		for _, desired := range []struct{ field, value string }{
+			{tmuxopts.PaneOwnerKind, string(coremetadata.KindAgent)},
+			{tmuxopts.PaneOwnerUID, promotion.AgentUID},
+			{tmuxopts.PaneRole, string(coremetadata.PaneRoleAgent)},
+			{tmuxopts.AgentUIDPane, promotion.AgentUID},
+			{tmuxopts.AgentProviderPane, promotion.ObservedProvider},
+		} {
+			if err := planExactManagedPaneOption(ctx, recorder, promotion.PaneTarget, desired.field, desired.value); err != nil {
+				return err
+			}
+		}
+		for index := firstWrite; index < len(recorder.writes); index++ {
+			recorder.writes[index].semanticGuards = []controller.Guard{
+				{Field: tmuxopts.AgentLaunchAuthorshipPane, Expect: "1"},
+				{Field: tmuxopts.AgentProviderPane, Expect: promotion.ObservedProvider},
+			}
+		}
+	}
+	return nil
+}
+
+func planExactManagedPaneOption(ctx context.Context, recorder *resourcePlanTmuxRunner, target, field, desired string) error {
+	out, err := recorder.Run(ctx, "tmux", "display-message", "-p", "-t", target, "-F", "#{"+field+"}")
+	if err != nil {
+		return fmt.Errorf("inspect promotion option %s on %s: %w", field, target, err)
+	}
+	before := strings.TrimSpace(string(out))
+	if before == desired {
+		return nil
+	}
+	if _, err := recorder.Run(ctx, "tmux", "set-option", "-p", "-t", target, "-q", field, desired); err != nil {
+		return err
+	}
+	recorder.setLastWriteBefore(before)
+	return nil
+}
+
+func promotionPlanItems(promotions []resourceAuthorshipPromotion, normalize resourcePlanUIDNormalizer) []resourceReconcileItem {
+	items := make([]resourceReconcileItem, 0, len(promotions))
+	for _, promotion := range promotions {
+		agentUID := normalize.value(promotion.AgentUID)
+		allocationSlot := ""
+		agentBefore := promotion.AgentName + " (" + agentUID + ")"
+		if promotion.LinkKind == coremetadata.AgentLinkMinted {
+			allocationSlot = agentUID
+			agentBefore = "<none>"
+		}
+		defaultBefore, defaultAfter := promotion.DefaultBefore, promotion.DefaultAfter
+		if defaultBefore == "" {
+			defaultBefore = "<none>"
+		}
+		if defaultAfter == "" {
+			defaultAfter = "<none>"
+		}
+		guards := []controller.Guard{
+			{Field: tmuxopts.PaneUID, Expect: promotion.PaneUID},
+			{Field: tmuxopts.AgentLaunchAuthorshipPane, Expect: "1"},
+			{Field: tmuxopts.AgentProviderPane, Expect: promotion.ObservedProvider},
+		}
+		if promotion.SessionID != "" {
+			guards = append(guards, controller.Guard{Field: "session_id", Expect: promotion.SessionID})
+		}
+		if promotion.WindowID != "" {
+			guards = append(guards, controller.Guard{Field: "window_id", Expect: promotion.WindowID})
+		}
+		items = append(items, resourceReconcileItem{
+			Key:   "registry:promote-authorship:pane:" + promotion.PaneUID,
+			Drift: resourceDriftStale, Surface: "registry", Action: "promote-authorship", Kind: string(coremetadata.KindPane),
+			Target: promotion.PaneUID, After: "agent:" + agentUID, Outcome: "planned",
+			Reason:     "canonical Projmux launch authorship atomically promotes the exact Pane and its Window refs",
+			Divergence: resourcegraph.DivergenceDrifted, Authority: string(coremetadata.AgentPaneAuthorityLaunch),
+			PromotionKind: string(promotion.LinkKind), AllocationSlot: allocationSlot,
+			Transitions: []resourceRefTransition{
+				{Field: "Agent", Before: agentBefore, After: promotion.AgentName + " (" + agentUID + ")"},
+				{Field: "Pane.metadata.ownerRef", Before: "Window/" + promotion.WindowUID, After: "Agent/" + agentUID},
+				{Field: "Pane.spec.role", Before: string(coremetadata.PaneRoleShell), After: string(coremetadata.PaneRoleAgent)},
+				{Field: "Agent.status.paneRef", Before: "<none>", After: promotion.PaneUID},
+				{Field: "Window.spec.anchorPaneRef", Before: promotion.AnchorBefore, After: promotion.AnchorAfter},
+				{Field: "Window.spec.defaultShellPaneRef", Before: defaultBefore, After: defaultAfter},
+				{Field: "tmux." + tmuxopts.PaneUID, Before: promotion.PaneUID, After: promotion.PaneUID},
+				{Field: "tmux." + tmuxopts.PaneOwnerKind, Before: "<unset>", After: string(coremetadata.KindAgent)},
+				{Field: "tmux." + tmuxopts.PaneOwnerUID, Before: "<unset>", After: agentUID},
+				{Field: "tmux." + tmuxopts.PaneRole, Before: "<unset>", After: string(coremetadata.PaneRoleAgent)},
+				{Field: "tmux." + tmuxopts.AgentUIDPane, Before: "<unset>", After: agentUID},
+				{Field: "Agent.spec.provider", Before: promotion.AgentProvider, After: promotion.AgentProvider},
+				{Field: "tmux." + tmuxopts.AgentProviderPane, Before: promotion.ObservedProvider, After: promotion.ObservedProvider},
+			},
+			Guards: guards, registry: true,
+		})
+	}
+	return items
 }
 
 type registryResourceRecord struct {
@@ -889,17 +1264,20 @@ func hasRuntimeCondition(conditions []coremetadata.Condition) bool {
 }
 
 type observedPlanObject struct {
-	kind           coremetadata.Kind
-	target         string
-	uid            string
-	session        string
-	windowIndex    string
-	nameMirror     string
-	automatic      string
-	agentProvider  string
-	agentTopic     string
-	agentSessionID string
-	agentThreadID  string
+	kind                  coremetadata.Kind
+	target                string
+	uid                   string
+	session               string
+	sessionID             string
+	windowID              string
+	windowIndex           string
+	nameMirror            string
+	automatic             string
+	agentProvider         string
+	agentLaunchAuthorship string
+	agentTopic            string
+	agentSessionID        string
+	agentThreadID         string
 }
 
 type plannedTmuxWrite struct {
@@ -912,6 +1290,7 @@ type plannedTmuxWrite struct {
 	guardBefore    string
 	guardSessionID string
 	guardWindowID  string
+	semanticGuards []controller.Guard
 }
 
 func (w plannedTmuxWrite) itemKey() string {
@@ -1170,15 +1549,15 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 			if _, observed := r.windowAutomatic[coord]; !observed {
 				r.windowAutomatic[coord] = row[2]
 			}
-			r.addObject(observedPlanObject{kind: coremetadata.KindWindow, target: id, uid: uid, session: session, windowIndex: row[0], automatic: row[2]})
+			r.addObject(observedPlanObject{kind: coremetadata.KindWindow, target: id, uid: uid, session: session, sessionID: sessionID, windowIndex: row[0], automatic: row[2]})
 		}
 	case args[0] == "list-panes" && slices.Contains(args, "-s"):
 		session := flagArg(args, "-t")
 		for _, row := range rows {
-			if len(row) != 11 {
+			if len(row) != 12 {
 				continue
 			}
-			id, uid := row[7], strings.TrimSpace(row[8])
+			id, uid := row[8], strings.TrimSpace(row[9])
 			sessionID := r.sessionIDByName[session]
 			if exactTmuxHandle(session, "$") != "" {
 				sessionID = session
@@ -1190,8 +1569,10 @@ func (r *resourcePlanTmuxRunner) observeRead(args []string, out []byte) {
 				r.initialPaneUID[id] = uid
 			}
 			r.addObject(observedPlanObject{
-				kind: coremetadata.KindPane, target: id, uid: uid, session: session, windowIndex: row[0], nameMirror: row[1],
-				agentProvider: row[2], agentTopic: row[3], agentSessionID: strings.TrimSpace(row[9]), agentThreadID: strings.TrimSpace(row[10]),
+				kind: coremetadata.KindPane, target: id, uid: uid, session: session, sessionID: sessionID, windowID: windowID,
+				windowIndex: row[0], nameMirror: row[1],
+				agentProvider: row[2], agentLaunchAuthorship: strings.TrimSpace(row[3]), agentTopic: row[4],
+				agentSessionID: strings.TrimSpace(row[10]), agentThreadID: strings.TrimSpace(row[11]),
 			})
 		}
 	}
@@ -1316,7 +1697,8 @@ func (r *resourcePlanTmuxRunner) foreignItems(registry coremetadata.Registry, re
 		if object.kind == coremetadata.KindPane && known[uid] && counts[strings.ToLower(string(object.kind))+"\x00"+uid] == 1 {
 			windowUID := observedWindowUIDForPane(object, r.objects)
 			refusal := coremetadata.AgentPanePromotionRefusal(&registry, windowUID, uid, coremetadata.LegacyPane{
-				Provider: object.agentProvider, Topic: object.agentTopic, SessionID: object.agentSessionID, ThreadID: object.agentThreadID,
+				Provider: object.agentProvider, LaunchAuthorship: object.agentLaunchAuthorship,
+				Topic: object.agentTopic, SessionID: object.agentSessionID, ThreadID: object.agentThreadID,
 			})
 			if refusal != "" {
 				items = append(items, resourceReconcileItem{

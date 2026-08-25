@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -12,11 +13,317 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
+
+func seedAuthorshipPromotionIncident(t *testing.T, store *fakeResourceStore, server *fakeTmux, root string) (*fakeTmuxPane, coremetadata.Window, coremetadata.Pane) {
+	t.Helper()
+	project, _ := store.registry.ProjectByRoot(root)
+	window := store.registry.WindowsOf(project.Metadata.UID)[0]
+	pane := store.registry.PanesOf(window.Metadata.UID)[0]
+	if _, err := store.mutator().CreateAgent(&store.registry, window.Metadata.UID, coremetadata.CreateAgentOptions{
+		Provider: "codex", OperationID: "op-existing-codex",
+	}); err != nil {
+		t.Fatalf("seed existing codex Agent: %v", err)
+	}
+	session := server.session("alpha")
+	liveWindow, livePane := session.windows[0], session.windows[0].panes[0]
+	session.opts[tmuxopts.ProjectUIDSession] = project.Metadata.UID
+	session.opts[tmuxopts.ProjectNameSession] = project.Metadata.Name
+	liveWindow.opts[tmuxopts.WindowUID] = window.Metadata.UID
+	liveWindow.opts[tmuxopts.WindowName] = window.Metadata.Name
+	liveWindow.opts[tmuxopts.AutomaticRenameWindow] = "off"
+	livePane.opts[tmuxopts.PaneUID] = pane.Metadata.UID
+	livePane.opts[tmuxopts.PaneName] = pane.Metadata.Name
+	livePane.opts[tmuxopts.AgentProviderPane] = "codex"
+	livePane.opts[tmuxopts.AgentLaunchAuthorshipPane] = "1"
+	livePane.opts[aiPaneManagedOption] = "1"
+	livePane.command = "codex"
+	if _, err := store.mutator().ObserveWindowRuntimeBinding(&store.registry, window.Metadata.UID, session.id, liveWindow.id); err != nil {
+		t.Fatalf("seed exact Window runtime binding: %v", err)
+	}
+	return livePane, window, pane
+}
+
+type promotionPlanStructure struct {
+	Allocations []resourceAllocationSlot
+	Items       []struct {
+		Key, Action, Field, Authority, AllocationSlot string
+		Transitions                                   []resourceRefTransition
+		Guards                                        []controller.Guard
+	}
+}
+
+func promotionStructure(report resourceReconcileReport) promotionPlanStructure {
+	out := promotionPlanStructure{Allocations: report.Allocations}
+	for _, item := range report.Items {
+		out.Items = append(out.Items, struct {
+			Key, Action, Field, Authority, AllocationSlot string
+			Transitions                                   []resourceRefTransition
+			Guards                                        []controller.Guard
+		}{item.Key, item.Action, item.Field, item.Authority, item.AllocationSlot, item.Transitions, item.Guards})
+	}
+	return out
+}
+
+func TestAuthorshipPromotionPreservesSiblingProjectAndSocket(t *testing.T) {
+	t.Parallel()
+	command, store, primary, routed, root := newReconcileFixture(t, "-L", "primary")
+	_, _, _ = seedAuthorshipPromotionIncident(t, store, primary, root)
+
+	siblingRoot := t.TempDir()
+	store.dirs[siblingRoot] = true
+	siblingProject, err := store.mutator().RegisterProject(&store.registry, coremetadata.RegisterProjectOptions{
+		Root: siblingRoot, DefaultShell: "/bin/zsh", OperationID: "op-sibling-project",
+	})
+	if err != nil {
+		t.Fatalf("seed sibling Project: %v", err)
+	}
+	if _, err := store.mutator().BindProjectSession(&store.registry, siblingProject.Project.Metadata.UID, "donus", true); err != nil {
+		t.Fatalf("bind donus D5 session: %v", err)
+	}
+	siblingProjectRow, _ := store.registry.Project(siblingProject.Project.Metadata.UID)
+	siblingWindow := store.registry.WindowsOf(siblingProjectRow.Metadata.UID)[0]
+	siblingPane := store.registry.PanesOf(siblingWindow.Metadata.UID)[0]
+	siblingProjectBefore := resourceRegistryProjectGraph(store.registry, map[string]bool{siblingProject.Project.Metadata.UID: true})
+	donusSession := primary.addSession("donus")
+	donusSession.opts[inttmux.ProjectPathSessionOption] = siblingRoot
+	donusSession.opts[tmuxopts.ProjectUIDSession] = siblingProjectRow.Metadata.UID
+	donusSession.opts[tmuxopts.ProjectNameSession] = siblingProjectRow.Metadata.Name
+	donusSession.windows[0].opts[tmuxopts.WindowUID] = siblingWindow.Metadata.UID
+	donusSession.windows[0].opts[tmuxopts.WindowName] = siblingWindow.Metadata.Name
+	donusSession.windows[0].opts[tmuxopts.AutomaticRenameWindow] = "off"
+	donusSession.windows[0].panes[0].opts[tmuxopts.PaneUID] = siblingPane.Metadata.UID
+	donusSession.windows[0].panes[0].opts[tmuxopts.PaneName] = "drifted-d5"
+	donusD5State := func() string {
+		return fmt.Sprintf("%s|%s|%s|%v|%v|%v", donusSession.id, donusSession.windows[0].id,
+			donusSession.windows[0].panes[0].id, donusSession.opts, donusSession.windows[0].opts,
+			donusSession.windows[0].panes[0].opts)
+	}
+	donusD5Before := donusD5State()
+
+	siblingSocket := newFakeTmux()
+	siblingSocket.socketPath = filepath.Join("/tmp/fake-tmux", "sibling")
+	siblingSession := siblingSocket.addSession("donus")
+	siblingSession.opts[tmuxopts.ProjectUIDSession] = "donus-d5"
+	siblingSession.windows[0].opts[tmuxopts.WindowUID] = "donus-window"
+	siblingSession.windows[0].panes[0].opts[tmuxopts.PaneUID] = "donus-pane"
+	siblingSession.windows[0].panes[0].opts[tmuxopts.PaneName] = "drifted-d5"
+	routed.servers["-L\x00sibling"] = siblingSocket
+	siblingSocketBefore := siblingSocket.state()
+
+	if stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json"); err != nil {
+		t.Fatalf("promotion with sibling Project/socket: %v\n%s", err, stdout)
+	}
+	if got := resourceRegistryProjectGraph(store.registry, map[string]bool{siblingProject.Project.Metadata.UID: true}); !reflect.DeepEqual(got, siblingProjectBefore) {
+		t.Fatalf("sibling Project bytes changed:\nbefore=%+v\nafter=%+v", siblingProjectBefore, got)
+	}
+	if got := donusD5State(); got != donusD5Before {
+		t.Fatalf("donus D5 handles/options changed:\nbefore=%s\nafter=%s", donusD5Before, got)
+	}
+	if siblingSocket.state() != siblingSocketBefore || tmuxMutationCallCount(siblingSocket) != 0 {
+		t.Fatalf("sibling socket handles/options changed:\nbefore=%s\nafter=%s", siblingSocketBefore, siblingSocket.state())
+	}
+	// This assertion is scoped to the composite promotion pass. Once that
+	// transaction is complete, a later ordinary reconcile remains free to own
+	// the unrelated donus D5 repair; Phase 1 does not redesign that behavior.
+}
+
+func TestAuthorshipPromotionExactOptionAndContainmentGuardsRefuseBeforeFirstWrite(t *testing.T) {
+	t.Parallel()
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	livePane, _, _ := seedAuthorshipPromotionIncident(t, store, server, root)
+	registryBefore := store.snapshot()
+	runtimeBefore := server.state()
+	mutationsBefore := tmuxMutationCallCount(server)
+	base := command.resources
+	commitCalls := 0
+	command.resources = &resourceStore{
+		load: base.load, snapshot: base.snapshot, mutator: base.mutator,
+		updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+			commitCalls++
+			registry, changed, err := base.updateConvergent(fn)
+			if commitCalls == 1 && err == nil {
+				livePane.opts[tmuxopts.AgentLaunchAuthorshipPane] = "0"
+			}
+			return registry, changed, err
+		},
+	}
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil || !strings.Contains(err.Error(), tmuxopts.AgentLaunchAuthorshipPane) || !strings.Contains(stdout, `"outcome": "failed"`) {
+		t.Fatalf("semantic launch guard did not refuse: err=%v\n%s", err, stdout)
+	}
+	if store.snapshot() != registryBefore || tmuxMutationCallCount(server) != mutationsBefore {
+		t.Fatalf("guard refusal changed Registry or executed a tmux write: registryChanged=%t mutations=%d->%d",
+			store.snapshot() != registryBefore, mutationsBefore, tmuxMutationCallCount(server))
+	}
+	livePane.opts[tmuxopts.AgentLaunchAuthorshipPane] = "1"
+	if server.state() != runtimeBefore {
+		t.Fatalf("guard refusal left mixed runtime options:\nbefore=%s\nafter=%s", runtimeBefore, server.state())
+	}
+}
+
+func TestPublicResourceReconcilePromotesCanonicalLaunchAuthorshipAtomicallyAndRepeatsEmpty(t *testing.T) {
+	t.Parallel()
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	livePane, windowBefore, paneBefore := seedAuthorshipPromotionIncident(t, store, server, root)
+	registryBefore, runtimeBefore := store.snapshot(), server.state()
+	writesBefore, allocationsBefore := store.writes, len(store.newUIDs)
+	mutationsBefore := tmuxMutationCallCount(server)
+
+	previewJSON, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("promotion dry-run: %v\n%s", err, previewJSON)
+	}
+	var preview resourceReconcileReport
+	if err := json.Unmarshal([]byte(previewJSON), &preview); err != nil {
+		t.Fatalf("decode promotion preview: %v\n%s", err, previewJSON)
+	}
+	if len(preview.Allocations) != 1 || preview.Allocations[0].Slot != "<allocated-agent-1>" || preview.Allocations[0].Name != "codex-1" {
+		t.Fatalf("promotion allocation slots = %+v, want one symbolic codex-1 Agent", preview.Allocations)
+	}
+	if store.snapshot() != registryBefore || server.state() != runtimeBefore || store.writes != writesBefore ||
+		len(store.newUIDs) != allocationsBefore || tmuxMutationCallCount(server) != mutationsBefore {
+		t.Fatal("promotion dry-run allocated a UID or wrote Registry/tmux state")
+	}
+	human, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "primary")
+	if err != nil {
+		t.Fatalf("print promotion dry-run: %v\n%s", err, human)
+	}
+	for _, want := range []string{
+		"allocation slots:", "<allocated-agent-1> Agent codex-1",
+		"authority=launch-authorship allocation-slot=<allocated-agent-1>",
+		"ref Pane.metadata.ownerRef:", "ref Window.spec.defaultShellPaneRef:",
+		"guard " + tmuxopts.PaneUID + "=" + paneBefore.Metadata.UID,
+		"guard session_id=" + server.session("alpha").id,
+		"guard window_id=" + server.session("alpha").windows[0].id,
+	} {
+		if !strings.Contains(human, want) {
+			t.Fatalf("printable promotion table missing %q:\n%s", want, human)
+		}
+	}
+
+	executeJSON, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("promotion execute: %v\n%s", err, executeJSON)
+	}
+	var executed resourceReconcileReport
+	if err := json.Unmarshal([]byte(executeJSON), &executed); err != nil {
+		t.Fatalf("decode promotion execute: %v\n%s", err, executeJSON)
+	}
+	if executed.Counts.Changed == 0 || !reflect.DeepEqual(promotionStructure(preview), promotionStructure(executed)) {
+		t.Fatalf("dry-run/execute promotion structure drifted:\npreview=%+v\nexecute=%+v", promotionStructure(preview), promotionStructure(executed))
+	}
+	agents := store.registry.AgentsOf(windowBefore.Metadata.UID)
+	if len(agents) != 2 || agents[1].Metadata.Name != "codex-1" {
+		t.Fatalf("promoted Agents = %+v, want existing codex plus codex-1", agents)
+	}
+	paneAfter, _ := store.registry.Pane(paneBefore.Metadata.UID)
+	windowAfter, _ := store.registry.Window(windowBefore.Metadata.UID)
+	if paneAfter.Metadata.OwnerRef == nil || paneAfter.Metadata.OwnerRef.Kind != coremetadata.KindAgent || paneAfter.Spec.Role != coremetadata.PaneRoleAgent ||
+		agents[1].Status.PaneRef != paneBefore.Metadata.UID || windowAfter.Spec.AnchorPaneRef != paneBefore.Metadata.UID || windowAfter.Spec.DefaultShellPaneRef != "" {
+		t.Fatalf("invalid promotion post-state: pane=%+v agent=%+v window=%+v", paneAfter, agents[1], windowAfter.Spec)
+	}
+	for field, want := range map[string]string{
+		tmuxopts.PaneOwnerKind: string(coremetadata.KindAgent), tmuxopts.PaneOwnerUID: agents[1].Metadata.UID,
+		tmuxopts.PaneRole: string(coremetadata.PaneRoleAgent), tmuxopts.AgentUIDPane: agents[1].Metadata.UID,
+		tmuxopts.AgentProviderPane: "codex",
+	} {
+		if got := livePane.opts[field]; got != want {
+			t.Fatalf("promoted runtime option %s = %q, want %q", field, got, want)
+		}
+	}
+	wantWriteOrder := []string{tmuxopts.AgentUIDPane, tmuxopts.PaneOwnerKind, tmuxopts.PaneOwnerUID, tmuxopts.PaneRole}
+	var writeOrder []string
+	for _, call := range server.calls {
+		if !slices.Contains(call, "set-option") {
+			continue
+		}
+		for _, field := range wantWriteOrder {
+			if slices.Contains(call, field) {
+				writeOrder = append(writeOrder, field)
+			}
+		}
+	}
+	if !slices.Equal(writeOrder, wantWriteOrder) {
+		t.Fatalf("promotion option action order = %v, want %v; calls=%#v", writeOrder, wantWriteOrder, server.calls)
+	}
+
+	writesAfter, allocationsAfter, mutationsAfter := store.writes, len(store.newUIDs), tmuxMutationCallCount(server)
+	repeatJSON, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil || !strings.Contains(repeatJSON, `"outcome": "no-op"`) || store.writes != writesAfter ||
+		len(store.newUIDs) != allocationsAfter || tmuxMutationCallCount(server) != mutationsAfter {
+		t.Fatalf("promotion repeat was not zero-write: err=%v writes=%d->%d allocations=%d->%d mutations=%d->%d\n%s",
+			err, writesAfter, store.writes, allocationsAfter, len(store.newUIDs), mutationsAfter, tmuxMutationCallCount(server), repeatJSON)
+	}
+}
+
+func TestPublicResourceReconcilePromotionOptionFailuresRollbackRegistryAndRuntime(t *testing.T) {
+	t.Parallel()
+	for cut, field := range []string{tmuxopts.AgentUIDPane, tmuxopts.PaneOwnerKind, tmuxopts.PaneOwnerUID, tmuxopts.PaneRole} {
+		for _, afterEffect := range []bool{false, true} {
+			mode := "before-effect"
+			if afterEffect {
+				mode = "after-effect"
+			}
+			t.Run(fmt.Sprintf("cut-%d-%s-%s", cut+1, field, mode), func(t *testing.T) {
+				t.Parallel()
+				command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+				_, _, _ = seedAuthorshipPromotionIncident(t, store, server, root)
+				registryBefore, runtimeBefore := store.snapshot(), server.state()
+				server.fail = []string{"set-option", field}
+				server.failAfterMutation = afterEffect
+				stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+				if err == nil || !strings.Contains(stdout, `"outcome": "failed"`) {
+					t.Fatalf("injected %s %s failure was not reported: err=%v\n%s", field, mode, err, stdout)
+				}
+				if store.snapshot() != registryBefore || server.state() != runtimeBefore {
+					t.Fatalf("injected %s %s failure left mixed Registry/runtime state\nregistry before=%s\nafter=%s\nruntime before=%s\nafter=%s",
+						field, mode, registryBefore, store.snapshot(), runtimeBefore, server.state())
+				}
+			})
+		}
+	}
+}
+
+func TestPublicResourceReconcileRecordsAmbiguousLaunchRefusalWithZeroWrites(t *testing.T) {
+	t.Parallel()
+
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	project, _ := store.registry.ProjectByRoot(root)
+	window := store.registry.WindowsOf(project.Metadata.UID)[0]
+	pane := store.registry.PanesOf(window.Metadata.UID)[0]
+	session := server.session("alpha")
+	liveWindow, livePane := session.windows[0], session.windows[0].panes[0]
+	session.opts[tmuxopts.ProjectUIDSession] = project.Metadata.UID
+	session.opts[tmuxopts.ProjectNameSession] = project.Metadata.Name
+	liveWindow.opts[tmuxopts.WindowUID] = window.Metadata.UID
+	liveWindow.opts[tmuxopts.WindowName] = window.Metadata.Name
+	liveWindow.opts[tmuxopts.AutomaticRenameWindow] = "off"
+	livePane.opts[tmuxopts.PaneUID] = pane.Metadata.UID
+	livePane.opts[tmuxopts.PaneName] = pane.Metadata.Name
+	livePane.opts[tmuxopts.AgentProviderPane] = "codex"
+	livePane.opts[tmuxopts.AgentLaunchAuthorshipPane] = "yes"
+	if _, err := store.mutator().ObserveWindowRuntimeBinding(&store.registry, window.Metadata.UID, session.id, liveWindow.id); err != nil {
+		t.Fatalf("seed exact ambiguous Window binding: %v", err)
+	}
+	registryBefore, runtimeBefore := store.snapshot(), server.state()
+	writesBefore, allocationsBefore := store.writes, len(store.newUIDs)
+
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil || !strings.Contains(stdout, `"outcome": "refused"`) ||
+		!strings.Contains(stdout, "launch authorship marker and provider do not form one canonical receipt") {
+		t.Fatalf("ambiguous launch was not a recorded refusal: err=%v\n%s", err, stdout)
+	}
+	if store.snapshot() != registryBefore || server.state() != runtimeBefore || store.writes != writesBefore ||
+		len(store.newUIDs) != allocationsBefore {
+		t.Fatal("ambiguous launch refusal wrote Registry, allocated Agent UID, or changed tmux")
+	}
+}
 
 func TestResourceReconcileProjectsAllAgentFieldsFromRegistryAuthority(t *testing.T) {
 	t.Parallel()

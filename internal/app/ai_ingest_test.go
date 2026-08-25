@@ -14,10 +14,84 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	antigravityadapter "github.com/crevissepartners/projmux/internal/core/usage/adapters/antigravity"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
+
+func TestMarkAIHookPaneSeparatesTransientShellObservationFromOwnedAgentStatus(t *testing.T) {
+	t.Parallel()
+
+	unbound := testAICommand(t.TempDir())
+	unbound.markAIHookPane("%7", "codex", "/repo", "thread-shell", "session-shell", "")
+	commands := cmdRecorder(unbound).commands
+	if !hasRecordedAISetOption(commands, aiPaneHookActiveOption) {
+		t.Fatalf("unbound hook commands = %#v, want transient hook observation", commands)
+	}
+	for _, forbidden := range []string{aiPaneManagedOption, aiPaneAgentOption, aiPaneLaunchAuthorshipOption} {
+		if hasRecordedAISetOption(commands, forbidden) {
+			t.Fatalf("unbound hook commands = %#v, must not synthesize %s", commands, forbidden)
+		}
+	}
+
+	registry := resourceFixtureRegistry(t)
+	owned := testAICommand(t.TempDir())
+	owned.loadRegistry = func() (coremetadata.Registry, error) { return registry.Clone(), nil }
+	owned.updateRegistry = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		working := registry.Clone()
+		if err := fn(&working); err != nil {
+			return coremetadata.Registry{}, err
+		}
+		registry = working.Normalize()
+		return registry.Clone(), nil
+	}
+	owned.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && len(args) >= 5 && args[0] == "display-message" && args[4] == "#{"+tmuxopts.PaneUID+"}" {
+			return []byte("pan-alpha-codex\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	owned.markAIHookPane("%9", "codex", "/srv/alpha", "thread-owned", "session-owned", "")
+	owned.flushPendingAgentSessionRef("%9")
+	commands = cmdRecorder(owned).commands
+	for _, want := range []string{aiPaneHookActiveOption, aiPaneManagedOption, aiPaneAgentOption} {
+		if !hasRecordedAISetOption(commands, want) {
+			t.Fatalf("owned hook commands = %#v, missing %s", commands, want)
+		}
+	}
+	if hasRecordedAISetOption(commands, aiPaneLaunchAuthorshipOption) {
+		t.Fatalf("owned hook commands = %#v, hook must not write launch receipt", commands)
+	}
+	agent, _ := registry.Agent("agt-alpha-codex")
+	if agent.Status.SessionRef == nil || agent.Status.SessionRef.Provider != "codex" || agent.Status.SessionRef.Codex == nil ||
+		agent.Status.SessionRef.Codex.ThreadID != "thread-owned" {
+		t.Fatalf("owned Agent sessionRef = %+v, want exact durable hook observation", agent.Status.SessionRef)
+	}
+
+	beforeConflict := len(cmdRecorder(owned).commands)
+	registryBeforeConflict := registry.Clone()
+	owned.markAIHookPane("%9", "claude", "/srv/alpha", "thread-conflict", "session-conflict", "")
+	owned.flushPendingAgentSessionRef("%9")
+	commands = cmdRecorder(owned).commands[beforeConflict:]
+	if !hasRecordedAISetOption(commands, aiPaneHookActiveOption) {
+		t.Fatalf("provider-conflict hook commands = %#v, want transient observation", commands)
+	}
+	for _, forbidden := range []string{aiPaneManagedOption, aiPaneAgentOption, aiPaneLaunchAuthorshipOption} {
+		if hasRecordedAISetOption(commands, forbidden) {
+			t.Fatalf("provider-conflict hook commands = %#v, must not synthesize %s", commands, forbidden)
+		}
+	}
+	for _, transient := range []string{aiPaneHookActiveOption, aiPaneContextOption, aiPaneThreadIDOption, aiPaneSessionIDOption} {
+		if !hasRecordedAISetOption(commands, transient) {
+			t.Fatalf("provider-conflict hook commands = %#v, missing allowed transient field %s", commands, transient)
+		}
+	}
+	if !reflect.DeepEqual(registry, registryBeforeConflict) {
+		t.Fatalf("provider-conflict hook changed durable Agent state:\nbefore=%+v\nafter=%+v", registryBeforeConflict, registry)
+	}
+}
 
 func TestPersistAntigravityContextUsage(t *testing.T) {
 	home := t.TempDir()
@@ -209,7 +283,6 @@ func TestIngestCodexHookPermissionPushesCriticalQueueEntryAndMetadata(t *testing
 	}
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeCodex}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneSessionIDOption, "codex-session"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneThreadIDOption, "codex-session"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeIDOption, "codex-session"}},
@@ -290,7 +363,6 @@ func TestIngestCodexHookUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 	}
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeCodex}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "thinking"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindInProgress}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", attentionStateOption, attentionStateBusy}},
@@ -326,7 +398,6 @@ func TestIngestCodexHookQuietEventsMarkPaneAndLogWithoutNotify(t *testing.T) {
 	}
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeCodex}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
@@ -1122,7 +1193,6 @@ func TestIngestClaudeUserPromptSetsThinkingWithoutQueue(t *testing.T) {
 	}
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneHookActiveOption, "1"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneAgentOption, aiModeClaude}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneStateOption, "thinking"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneBadgeKindOption, aiBadgeKindInProgress}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", attentionStateOption, attentionStateBusy}},
@@ -1448,7 +1518,6 @@ func TestIngestClaudeQuietEventsMarkPaneAndLogWithoutNotify(t *testing.T) {
 	}
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeClaude}},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
@@ -2032,7 +2101,6 @@ func TestIngestAntigravityStopPushesCompletionMetadataAndResumeState(t *testing.
 	}
 	for _, want := range []recordedAICommand{
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneHookActiveOption, "1"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneAgentOption, aiModeAntigravity}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneThreadIDOption, conversationID}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneSessionIDOption, conversationID}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeIDOption, conversationID}},

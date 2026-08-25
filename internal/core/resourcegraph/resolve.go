@@ -457,6 +457,7 @@ func (r *resolver) buildRuntimeNodes() {
 			Ref: r.paneRef(pane), Class: class, UID: pane.UID,
 			ResourceUID: r.runtimeResource[pane.ID], ContainerID: pane.WindowID, Reason: reason,
 			AgentSessionID: pane.AgentSessionID, AgentThreadID: pane.AgentThreadID,
+			AgentLaunchAuthorship: pane.AgentLaunchAuthorship,
 		})
 	}
 }

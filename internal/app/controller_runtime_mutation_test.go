@@ -370,7 +370,7 @@ func TestControllerRuntimeMutationClosedProductionFieldAndArgvGrammar(t *testing
 			}
 		})
 	}
-	for _, field := range []string{tmuxopts.AppGlobal, tmuxopts.EphemeralSession, tmuxopts.AgentProviderPane, runtimeMutationSocketNameOption, "@global"} {
+	for _, field := range []string{tmuxopts.AppGlobal, tmuxopts.EphemeralSession, tmuxopts.AgentLaunchAuthorshipPane, runtimeMutationSocketNameOption, "@global"} {
 		write := controllerClosedWrite(resourcegraph.ObjectPane, "%1", "pane-1", field, "", "x")
 		if _, err := controllerRuntimeMutationAction(1, route, write, nil); err == nil {
 			t.Fatalf("unclassified field %q acquired controller execution", field)

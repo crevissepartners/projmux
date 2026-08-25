@@ -156,7 +156,11 @@ const (
 var controllerRuntimeMutationManagedFields = map[string][]string{
 	"session": {tmuxopts.ProjectUIDSession, tmuxopts.ProjectNameSession, tmuxopts.ProjectPathSession},
 	"window":  {tmuxopts.WindowUID, tmuxopts.AutomaticRenameWindow, tmuxopts.WindowName, "window_name"},
-	"pane":    {tmuxopts.PaneUID, tmuxopts.PaneName, tmuxopts.AgentSessionIDPane, tmuxopts.AgentThreadIDPane},
+	"pane": {
+		tmuxopts.PaneUID, tmuxopts.PaneName, tmuxopts.AgentSessionIDPane, tmuxopts.AgentThreadIDPane,
+		tmuxopts.PaneOwnerKind, tmuxopts.PaneOwnerUID, tmuxopts.PaneRole, tmuxopts.AgentUIDPane,
+		tmuxopts.AgentProviderPane,
+	},
 }
 
 var controllerRuntimeMutationPresentationFields = []string{

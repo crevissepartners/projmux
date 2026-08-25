@@ -1881,16 +1881,18 @@ if [[ "$(ctx show-options -pqv -t "$agent_pane" @projmux_ai_topic)" != "canonica
   exit 1
 fi
 
-# Drive each provider through the sole canonical ingress on the exact inherited
-# pane. The live projections prove the provider-specific event paths still
-# share their pre-retirement payload/state behavior.
+# Drive each provider through the sole canonical ingress on an unbound shell.
+# State remains a transient hook observation, while the managed/provider and
+# launch-authorship options stay absent so the hook cannot mint topology.
 claude_hook_pane="$(ctx split-window -d -P -F '#{pane_id}' -t legacy-alpha -c "$create_root/legacy/alpha" sleep 600)"
 printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"phase6-claude","cwd":"'"$create_root"'/legacy/alpha"}' |
   pmx_agent_hook_at "$claude_hook_pane" internal agent-hook ingest claude-hook >"$create_root/agent-claude-ingest.out"
 if [[ -s "$create_root/agent-claude-ingest.out" ]] ||
-  [[ "$(ctx show-options -pqv -t "$claude_hook_pane" @projmux_ai_agent)" != claude ]] ||
+  [[ -n "$(ctx show-options -pqv -t "$claude_hook_pane" @projmux_ai_agent)" ]] ||
+  [[ -n "$(ctx show-options -pqv -t "$claude_hook_pane" @projmux_ai_managed)" ]] ||
+  [[ -n "$(ctx show-options -pqv -t "$claude_hook_pane" @projmux_ai_launch_authorship)" ]] ||
   [[ "$(ctx show-options -pqv -t "$claude_hook_pane" @projmux_ai_state)" != thinking ]]; then
-  echo "canonical Claude hook ingest lost its state projection parity" >&2
+  echo "canonical Claude hook ingest crossed the hook-only authority boundary" >&2
   exit 1
 fi
 antigravity_hook_pane="$(ctx split-window -d -P -F '#{pane_id}' -t legacy-alpha -c "$create_root/legacy/alpha" sleep 600)"
@@ -1898,9 +1900,11 @@ printf '%s' '{"conversationId":"phase6-antigravity","workspacePaths":["'"$create
   pmx_agent_hook_at "$antigravity_hook_pane" internal agent-hook ingest antigravity-hook --event PreInvocation \
     >"$create_root/agent-antigravity-ingest.out"
 smoke_assert_file_contains "$create_root/agent-antigravity-ingest.out" '{}'
-if [[ "$(ctx show-options -pqv -t "$antigravity_hook_pane" @projmux_ai_agent)" != antigravity ]] ||
+if [[ -n "$(ctx show-options -pqv -t "$antigravity_hook_pane" @projmux_ai_agent)" ]] ||
+  [[ -n "$(ctx show-options -pqv -t "$antigravity_hook_pane" @projmux_ai_managed)" ]] ||
+  [[ -n "$(ctx show-options -pqv -t "$antigravity_hook_pane" @projmux_ai_launch_authorship)" ]] ||
   [[ "$(ctx show-options -pqv -t "$antigravity_hook_pane" @projmux_ai_state)" != thinking ]]; then
-  echo "canonical Antigravity hook ingest lost its state projection parity" >&2
+  echo "canonical Antigravity hook ingest crossed the hook-only authority boundary" >&2
   exit 1
 fi
 

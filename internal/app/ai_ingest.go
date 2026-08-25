@@ -507,9 +507,17 @@ func formatAIIngestLogEntry(entry aiIngestLogEntry) string {
 
 func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, transcriptPath string) {
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneHookActiveOption, "1")
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneManagedOption, "1")
-	if agent != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneAgentOption, agent)
+	// A hook is observation, not launch authorship. Only an exact current
+	// Agent->Pane Registry binding may receive the managed/provider projection;
+	// an unbound Window shell remains a transient hook observation and can never
+	// become a later topology-promotion input.
+	binding, owned, bindingErr := c.managedAgentBindingForPane(paneID)
+	exactOwnedProvider := bindingErr == nil && owned && coremetadata.NormalizeProvider(agent) == binding.agent.Spec.Provider
+	if exactOwnedProvider {
+		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneManagedOption, "1")
+		if agent != "" {
+			_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneAgentOption, agent)
+		}
 	}
 	if cwd != "" {
 		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneContextOption, cwd)
@@ -528,12 +536,14 @@ func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, tran
 	// they were. This is the second, additive home: the durable conversation
 	// pointer on the Agent resource, which survives the Pane the options die
 	// with.
-	c.stageAgentSessionRef(paneID, coremetadata.AgentSessionObservation{
-		Provider:       agent,
-		SessionID:      sessionID,
-		ThreadID:       threadID,
-		TranscriptPath: transcriptPath,
-	})
+	if exactOwnedProvider {
+		c.stageAgentSessionRef(paneID, coremetadata.AgentSessionObservation{
+			Provider:       agent,
+			SessionID:      sessionID,
+			ThreadID:       threadID,
+			TranscriptPath: transcriptPath,
+		})
+	}
 }
 
 func (c *aiCommand) writeAIHookResumeMetadata(paneID, resumeID string) {

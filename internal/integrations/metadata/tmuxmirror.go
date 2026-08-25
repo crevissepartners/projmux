@@ -658,6 +658,7 @@ func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName str
 		"#{window_index}",
 		"#{"+tmuxopts.PaneName+"}",
 		"#{"+tmuxopts.AgentProviderPane+"}",
+		"#{"+tmuxopts.AgentLaunchAuthorshipPane+"}",
 		"#{"+tmuxopts.AgentTopicPane+"}",
 		"#{pane_current_command}",
 		"#{pane_title}",
@@ -670,23 +671,24 @@ func (m Mirror) ObserveLegacySessionTargets(ctx context.Context, sessionName str
 	if err != nil {
 		return coremetadata.LegacySession{}, LegacyTargets{}, fmt.Errorf("metadata: list session panes: %w", err)
 	}
-	for _, fields := range parseRows(string(panesOut), 11) {
+	for _, fields := range parseRows(string(panesOut), 12) {
 		position, ok := indexOrder[fields[0]]
 		if !ok {
 			continue
 		}
 		legacy.Windows[position].Panes = append(legacy.Windows[position].Panes, coremetadata.LegacyPane{
-			Label:     fields[1],
-			Provider:  fields[2],
-			Topic:     fields[3],
-			Command:   fields[4],
-			Title:     fields[5],
-			CWD:       fields[6],
-			UID:       strings.TrimSpace(fields[8]),
-			SessionID: strings.TrimSpace(fields[9]),
-			ThreadID:  strings.TrimSpace(fields[10]),
+			Label:            fields[1],
+			Provider:         fields[2],
+			LaunchAuthorship: strings.TrimSpace(fields[3]),
+			Topic:            fields[4],
+			Command:          fields[5],
+			Title:            fields[6],
+			CWD:              fields[7],
+			UID:              strings.TrimSpace(fields[9]),
+			SessionID:        strings.TrimSpace(fields[10]),
+			ThreadID:         strings.TrimSpace(fields[11]),
 		})
-		targets.Panes[position] = append(targets.Panes[position], fields[7])
+		targets.Panes[position] = append(targets.Panes[position], fields[8])
 	}
 	return legacy, targets, nil
 }
