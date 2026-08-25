@@ -38,6 +38,7 @@ smoke_contract_record() {
     --class "$typed_class" \
     --outcome "$outcome" \
     --elapsed-ms "$elapsed" \
+    --binary-sha256 "${PROJMUX_SMOKE_BIN_SHA256:-${PROJMUX_SMOKE_EXPECTED_BIN_SHA256:-}}" \
     --route-socket "$route_socket" \
     --state-sha256 "$state_hash"
 }
@@ -174,9 +175,25 @@ smoke_cleanup_env() {
 }
 
 smoke_build_binary() {
+  if [[ -n "${PROJMUX_SMOKE_PREBUILT_BIN:-}" ]]; then
+    if [[ ! -f "$PROJMUX_SMOKE_PREBUILT_BIN" || -L "$PROJMUX_SMOKE_PREBUILT_BIN" || ! -x "$PROJMUX_SMOKE_PREBUILT_BIN" ]]; then
+      echo "prebuilt smoke binary must be a regular executable: $PROJMUX_SMOKE_PREBUILT_BIN" >&2
+      return 1
+    fi
+    PROJMUX_SMOKE_BIN_SHA256="$(sha256sum "$PROJMUX_SMOKE_PREBUILT_BIN" | awk '{print $1}')"
+    if [[ -z "${PROJMUX_SMOKE_EXPECTED_BIN_SHA256:-}" || "$PROJMUX_SMOKE_BIN_SHA256" != "$PROJMUX_SMOKE_EXPECTED_BIN_SHA256" ]]; then
+      echo "prebuilt smoke binary hash mismatch: got=$PROJMUX_SMOKE_BIN_SHA256 expected=${PROJMUX_SMOKE_EXPECTED_BIN_SHA256:-missing}" >&2
+      return 1
+    fi
+    PROJMUX_SMOKE_BIN="$PROJMUX_SMOKE_PREBUILT_BIN"
+    export PROJMUX_SMOKE_BIN PROJMUX_SMOKE_BIN_SHA256
+    echo ">> using immutable prebuilt $PROJMUX_SMOKE_BIN sha256=$PROJMUX_SMOKE_BIN_SHA256"
+    return
+  fi
   make build BUILD_DIR="$PROJMUX_SMOKE_WORKDIR/build" PROJMUX_BIN="$PROJMUX_SMOKE_WORKDIR/build/projmux"
   PROJMUX_SMOKE_BIN="$PROJMUX_SMOKE_WORKDIR/build/projmux"
-  export PROJMUX_SMOKE_BIN
+  PROJMUX_SMOKE_BIN_SHA256="$(sha256sum "$PROJMUX_SMOKE_BIN" | awk '{print $1}')"
+  export PROJMUX_SMOKE_BIN PROJMUX_SMOKE_BIN_SHA256
 }
 
 smoke_assert_file_contains() {

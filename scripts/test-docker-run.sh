@@ -2,13 +2,24 @@
 set -euo pipefail
 
 if [[ $# -lt 1 ]]; then
-  echo "usage: scripts/test-docker-run.sh <suite-script> [args...]" >&2
+  echo "usage: scripts/test-docker-run.sh <suite-script> [args...] | --build-binary <directory>" >&2
   exit 2
 fi
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+mode="suite"
 suite="$1"
 shift
+build_output=""
+if [[ "$suite" == "--build-binary" ]]; then
+  if [[ $# != 1 ]]; then
+    echo "usage: scripts/test-docker-run.sh --build-binary <directory>" >&2
+    exit 2
+  fi
+  mode="build"
+  build_output="$1"
+  shift
+fi
 
 image="${PROJMUX_TEST_IMAGE:-projmux:test-linux}"
 dockerfile="${PROJMUX_TEST_DOCKERFILE:-$root/test/docker/Dockerfile}"
@@ -26,11 +37,13 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 127
 fi
 
-docker build \
-  --pull=false \
-  -f "$dockerfile" \
-  -t "$image" \
-  "$docker_context"
+if [[ "${PROJMUX_TEST_SKIP_IMAGE_BUILD:-}" != "1" ]]; then
+  docker build \
+    --pull=false \
+    -f "$dockerfile" \
+    -t "$image" \
+    "$docker_context"
+fi
 
 # Suite containers stay network-isolated, so the Go module cache they build
 # against must be populated beforehand. The prefetch runs in the same pinned
@@ -40,7 +53,8 @@ docker build \
 # Keep the cache outside the repository so repository-wide file scans (gofmt,
 # gitleaks working tree) never walk third-party module sources.
 modcache="${PROJMUX_TEST_GOMODCACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/projmux/test-gomodcache}"
-mkdir -p "$modcache"
+buildcache="${PROJMUX_TEST_GOCACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/projmux/test-gocache}"
+mkdir -p "$modcache" "$buildcache"
 stamp="$modcache/.projmux-go-sum"
 if ! cmp -s "$root/go.sum" "$stamp"; then
   echo ">> prefetching Go modules into $modcache"
@@ -48,16 +62,52 @@ if ! cmp -s "$root/go.sum" "$stamp"; then
     --network bridge \
     --user "$(id -u):$(id -g)" \
     -e HOME=/tmp/projmux-home \
-    -e GOCACHE=/tmp/projmux-gocache \
+    -e GOCACHE=/gocache \
     -e GOMODCACHE=/gomodcache \
     -e GOTOOLCHAIN=local \
     -v "$root:/workspace:ro" \
     -v "$modcache:/gomodcache:rw" \
+    -v "$buildcache:/gocache:rw" \
     -w /workspace \
     "$image" \
     go mod download
   cp "$root/go.sum" "$stamp"
 fi
+
+if [[ "$mode" == "build" ]]; then
+  mkdir -p "$build_output"
+  docker run --rm \
+    --network "$docker_network" \
+    --user "$(id -u):$(id -g)" \
+    -e HOME=/tmp/projmux-home \
+    -e GOCACHE=/gocache \
+    -e GOMODCACHE=/gomodcache \
+    -e GOTOOLCHAIN=local \
+    -e GOMAXPROCS="$suite_gomaxprocs" \
+    -e GOFLAGS="$suite_goflags" \
+    -v "$root:/workspace:ro" \
+    -v "$modcache:/gomodcache:rw" \
+    -v "$buildcache:/gocache:rw" \
+    -v "$build_output:/artifact:rw" \
+    -w /workspace \
+    "$image" \
+    bash -ceu 'go build -trimpath -o /artifact/projmux ./cmd/projmux; printf "1\n" > /artifact/build-count'
+  chmod 0555 "$build_output/projmux"
+  exit
+fi
+
+prebuilt="${PROJMUX_TEST_PREBUILT_BIN:-}"
+expected_sha="${PROJMUX_TEST_PREBUILT_SHA256:-}"
+if [[ -z "$prebuilt" || ! -f "$prebuilt" || -L "$prebuilt" || ! -x "$prebuilt" || -z "$expected_sha" ]]; then
+  echo "suite run requires PROJMUX_TEST_PREBUILT_BIN regular executable and expected SHA" >&2
+  exit 2
+fi
+if [[ "$(sha256sum "$prebuilt" | awk '{print $1}')" != "$expected_sha" ]]; then
+  echo "host prebuilt binary hash mismatch" >&2
+  exit 2
+fi
+evidence="${PROJMUX_E2E_ARTIFACTS:-$root/.bin/e2e-evidence}"
+mkdir -p "$evidence"
 
 docker run --rm \
   --network "$docker_network" \
@@ -72,8 +122,14 @@ docker run --rm \
   -e GOTOOLCHAIN=local \
   -e GOMAXPROCS="$suite_gomaxprocs" \
   -e GOFLAGS="$suite_goflags" \
-  -v "$root:/workspace:rw" \
+  -e PROJMUX_SMOKE_PREBUILT_BIN=/projmux-artifact/projmux \
+  -e PROJMUX_SMOKE_EXPECTED_BIN_SHA256="$expected_sha" \
+  -e PROJMUX_E2E_ARTIFACTS=/evidence \
+  -e PROJMUX_E2E_ATTEMPT="${PROJMUX_E2E_ATTEMPT:-1}" \
+  -v "$root:/workspace:ro" \
   -v "$modcache:/gomodcache:rw" \
+  -v "$(dirname "$prebuilt"):/projmux-artifact:ro" \
+  -v "$evidence:/evidence:rw" \
   -w /workspace \
   "$image" \
   bash "$suite" "$@"

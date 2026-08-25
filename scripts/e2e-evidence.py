@@ -34,6 +34,7 @@ FIELDS = {
     "class",
     "outcome",
     "elapsed_ms",
+    "binary_sha256",
     "route_socket",
     "state_sha256",
     "artifact",
@@ -63,6 +64,9 @@ def validate(record: dict[str, object]) -> None:
         raise ValueError("attempt must be a positive integer")
     if not isinstance(record["elapsed_ms"], int) or record["elapsed_ms"] < 0:
         raise ValueError("elapsed_ms must be a non-negative integer")
+    binary_sha256 = record["binary_sha256"]
+    if not isinstance(binary_sha256, str) or not re.fullmatch(r"(?:[0-9a-f]{64})?", binary_sha256):
+        raise ValueError("invalid binary_sha256")
     suite = record["suite"]
     if not isinstance(suite, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,47}", suite):
         raise ValueError("invalid suite")
@@ -122,6 +126,7 @@ def record_command(args: argparse.Namespace) -> int:
         "class": args.typed_class,
         "outcome": args.outcome,
         "elapsed_ms": args.elapsed_ms,
+        "binary_sha256": args.binary_sha256,
         "route_socket": args.route_socket,
         "state_sha256": args.state_sha256,
         "artifact": f"{args.scenario_id}-attempt-{args.attempt}.json",
@@ -183,6 +188,7 @@ def parser() -> argparse.ArgumentParser:
     record_parser.add_argument("--class", dest="typed_class", required=True, choices=sorted(CLASS_NAMES))
     record_parser.add_argument("--outcome", required=True, choices=sorted(OUTCOMES))
     record_parser.add_argument("--elapsed-ms", required=True, type=int)
+    record_parser.add_argument("--binary-sha256", default="")
     record_parser.add_argument("--route-socket", default="")
     record_parser.add_argument("--state-sha256", default="")
     record_parser.set_defaults(function=record_command)

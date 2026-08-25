@@ -23,7 +23,7 @@ record=(python3 "$root/scripts/e2e-evidence.py" record --directory "$tmp/golden"
 "${record[@]}" --class environment --outcome fail --elapsed-ms 17 >"$tmp/fail.out"
 python3 "$root/scripts/e2e-evidence.py" validate --terminal "$tmp/golden/summary.jsonl"
 
-golden='{"artifact":"L01-attempt-1.json","attempt":1,"class":"unattributed","elapsed_ms":0,"outcome":"begin","owner":"harness","phase":"bootstrap","replay":"make test-e2e E2E_SCENARIO=L01","route_socket":"","scenario_id":"L01","schema":"projmux.e2e-attempt/v1","state_sha256":"","suite":"linux-bootstrap"}'
+golden='{"artifact":"L01-attempt-1.json","attempt":1,"binary_sha256":"","class":"unattributed","elapsed_ms":0,"outcome":"begin","owner":"harness","phase":"bootstrap","replay":"make test-e2e E2E_SCENARIO=L01","route_socket":"","scenario_id":"L01","schema":"projmux.e2e-attempt/v1","state_sha256":"","suite":"linux-bootstrap"}'
 if [[ "$(head -n 1 "$tmp/golden/summary.jsonl")" != "$golden" ]]; then
   echo "evidence JSONL golden mismatch" >&2
   diff -u <(printf '%s\n' "$golden") <(head -n 1 "$tmp/golden/summary.jsonl") >&2 || true
