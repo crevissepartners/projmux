@@ -184,6 +184,11 @@ type controllerTriggerOutcome struct {
 	// refused is an exact declarative-plan reason. A refusal performs zero
 	// writes and is neither convergence nor an execution error.
 	refused string
+	// retryReason records the exact typed lifecycle reason that forced a
+	// bounded in-worker retry before convergence. It survives the successful
+	// final pass so a manual invocation can distinguish clean first-attempt
+	// convergence from recovery of a transient runtime cleanup failure.
+	retryReason coremetadata.TeardownReason
 }
 
 func (o controllerTriggerOutcome) describe() string {
@@ -197,6 +202,9 @@ func (o controllerTriggerOutcome) describe() string {
 	}
 	if o.refused != "" {
 		out += " refused: " + o.refused
+	}
+	if o.retryReason != "" {
+		out += " retry: " + string(o.retryReason)
 	}
 	return out
 }
@@ -368,10 +376,20 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 			} else {
 				pass, err = body(ctx, passTrigger)
 			}
+			outcome.passes++
 			if err != nil {
+				var cleanupRetry *lifecycleCleanupRetryError
+				if errors.As(err, &cleanupRetry) && passTrigger.reason == controllerTriggerPaneExited &&
+					!passTrigger.fullReobserve && passTrigger.retry < 3 {
+					passTrigger.retry++
+					if markErr := r.events.mark(passTrigger); markErr != nil {
+						return outcome, fmt.Errorf("%w; requeue %s: %v", err, cleanupRetry.Reason, markErr)
+					}
+					outcome.retryReason = cleanupRetry.Reason
+					continue
+				}
 				return outcome, err
 			}
-			outcome.passes++
 			if pass.refused != "" {
 				outcome.refused = pass.refused
 				return outcome, nil
@@ -788,12 +806,24 @@ func (r *controllerTriggerRunner) awaitRuntimeExitTerminationReceipts(ctx contex
 			return lifecycleInventory(r.runner, target)
 		}
 	}
-	live, err := observe(trigger.target).LivePaneUIDs(ctx)
+	inventory := observe(trigger.target)
+	live, err := inventory.LivePaneUIDs(ctx)
 	if err != nil {
 		// The ordinary convergence pass owns fail-closed reporting. An unreadable
 		// host is not evidence of an absent activation and therefore never waits.
 		return receipts, nil
 	}
+	dead := map[string]bool{}
+	if retained, ok := inventory.(lifecycleDeadPaneInventory); ok {
+		dead, err = retained.DeadPaneUIDs(ctx)
+		if err != nil {
+			// As with an unreadable live inventory, a failed dead-state query is
+			// not evidence that a mirrored Pane is still executing. The ordinary
+			// convergence pass owns the fail-closed diagnostic.
+			return receipts, nil
+		}
+	}
+	effectiveLive := lifecycleEffectiveLivePanes(live, dead)
 	registry, err := r.store.load()
 	if err != nil {
 		return nil, MapMetadataError(err)
@@ -807,7 +837,7 @@ func (r *controllerTriggerRunner) awaitRuntimeExitTerminationReceipts(ctx contex
 				pane.Status.Activation.RuntimeID != strings.TrimSpace(trigger.hookPane) {
 				continue
 			}
-			if live[pane.Metadata.UID] || strings.TrimSpace(pane.Status.Activation.Generation) == "" {
+			if effectiveLive[pane.Metadata.UID] || strings.TrimSpace(pane.Status.Activation.Generation) == "" {
 				continue
 			}
 			stored := pane.Status.LastTermination

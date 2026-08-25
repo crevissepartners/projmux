@@ -456,3 +456,42 @@ func TestExactPaneExitedReceiptWaitIsBoundedBeforeUnknownProjection(t *testing.T
 		t.Fatalf("exact pane-exited pass = %+v, want bounded exact unknown projection", pass)
 	}
 }
+
+func TestExactDeadPaneReceiptWaitUsesLiveMinusDeadObservation(t *testing.T) {
+	store := newFakeResourceStore(t)
+	activateExactPane(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-dead-wait", "%9")
+	journal := terminationJournal{path: filepath.Join(t.TempDir(), terminationJournalFile)}
+	waiting := make(chan struct{})
+	appendDone := make(chan error, 1)
+	runner := &controllerTriggerRunner{
+		store: store.store(), receipts: journal,
+		observe: func(explicitTmuxTarget) livePaneInventory {
+			return &exactPaneExitInventory{
+				uids: map[string]bool{"pan-alpha-codex": true},
+				dead: map[string]bool{"pan-alpha-codex": true},
+			}
+		},
+		receiptWaitTimeout: 300 * time.Millisecond,
+		receiptPoll:        10 * time.Millisecond,
+		beforeReceiptWait:  func() { close(waiting) },
+	}
+	go func() {
+		<-waiting
+		time.Sleep(40 * time.Millisecond)
+		appendDone <- journal.append(phase2NormalReceipt("pan-alpha-codex", "agt-alpha-codex", "gen-dead-wait"))
+	}()
+	receipts, err := runner.awaitRuntimeExitTerminationReceipts(context.Background(), controllerTrigger{
+		reason: controllerTriggerPaneExited, hookPane: "%9",
+		target: explicitTmuxTarget{flag: "-S", value: "/tmp/phase0-dead-wait.sock"},
+	}, nil)
+	if err != nil {
+		t.Fatalf("wait for dead mirrored Pane receipt: %v", err)
+	}
+	if err := <-appendDone; err != nil {
+		t.Fatalf("append dead mirrored Pane receipt: %v", err)
+	}
+	if len(receipts) != 1 || receipts[0].Classification != coremetadata.TerminationNormal ||
+		receipts[0].Source != coremetadata.TerminationSourceSupervisor {
+		t.Fatalf("dead mirrored Pane receipts = %+v", receipts)
+	}
+}

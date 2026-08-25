@@ -124,6 +124,12 @@ const (
 	TeardownReasonMixedOwnerChain       TeardownReason = "mixed-owner-chain"
 	TeardownReasonConflictingOwnerFacts TeardownReason = "conflicting-owner-facts"
 	TeardownReasonStaleOwnerBinding     TeardownReason = "stale-owner-binding"
+	// TeardownReasonDeadPaneCleanupRetry is the exact retryable boundary after
+	// a clean current-generation decision but before the dead tmux Pane and its
+	// managed Pane resource have converged. It never grants authority by itself;
+	// the next pass must re-prove the same supervisor evidence, generation,
+	// owner chain, socket, and dead mirror.
+	TeardownReasonDeadPaneCleanupRetry TeardownReason = "exact-dead-pane-cleanup-retry"
 )
 
 // TeardownOwnerChain is the exact Registry chain an event claims.
@@ -438,10 +444,35 @@ func PlanPaneAgentCascadeDelete(registry Registry, event TeardownEvent, now time
 
 	windowUID := ""
 	agentUID := ""
+	releasedSameGeneration := false
 	if owner := pane.Metadata.OwnerRef; owner != nil && owner.Kind == KindAgent {
 		agent, exists := registry.Agent(owner.UID)
-		if !exists || agent.Status.PaneRef != pane.Metadata.UID || agent.Metadata.OwnerRef == nil ||
-			agent.Metadata.OwnerRef.Kind != KindWindow {
+		if !exists || agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != KindWindow {
+			out.Decision.Action = TeardownRefuse
+			out.Decision.Reason = TeardownReasonStaleOwnerBinding
+			return out, nil
+		}
+		switch agent.Status.PaneRef {
+		case pane.Metadata.UID:
+			// The normal ordering: the exact dead observation reached the
+			// lifecycle transaction before a generic absence projection released
+			// the Agent binding.
+		case "":
+			// The fast ordering: a generic projection already released this
+			// generation. Accept only the exact terminal half it left behind. A
+			// resumed Agent always has a non-empty new binding and cannot enter
+			// this exception.
+			paneEvidence := pane.Status.LastTermination
+			agentEvidence := agent.Status.LastTermination
+			if agent.Status.Phase != PhaseOffline || paneEvidence == nil || agentEvidence == nil ||
+				paneEvidence.Source != TerminationSourceSupervisor || paneEvidence.Classification != TerminationNormal ||
+				paneEvidence.Generation != pane.Status.Activation.Generation || !sameEvidence(paneEvidence, agentEvidence) {
+				out.Decision.Action = TeardownRefuse
+				out.Decision.Reason = TeardownReasonStaleOwnerBinding
+				return out, nil
+			}
+			releasedSameGeneration = true
+		default:
 			out.Decision.Action = TeardownRefuse
 			out.Decision.Reason = TeardownReasonStaleOwnerBinding
 			return out, nil
@@ -464,7 +495,8 @@ func PlanPaneAgentCascadeDelete(registry Registry, event TeardownEvent, now time
 	}
 	evidence := pane.Status.LastTermination
 	if evidence == nil || evidence.Generation != pane.Status.Activation.Generation ||
-		evidence.Classification != event.Classification {
+		evidence.Classification != event.Classification || evidence.Source != TerminationSourceSupervisor ||
+		evidence.Classification != TerminationNormal {
 		out.Decision.Action = TeardownRefuse
 		out.Decision.Reason = TeardownReasonStaleGeneration
 		return out, nil
@@ -474,14 +506,16 @@ func PlanPaneAgentCascadeDelete(registry Registry, event TeardownEvent, now time
 	mutator := Mutator{Now: func() time.Time { return now.UTC() }}
 	deletedPanes := 1
 	retainedPhase := AgentPhase("")
-	if agentUID != "" {
+	if agentUID != "" && !releasedSameGeneration {
 		deletedPanes = 1
 		exit := AgentExitNormal
-		if event.Classification == TerminationIntentional {
-			exit = AgentExitDeleted
-		}
 		retainedPhase, _ = exit.Phase()
 		if _, err := mutator.ReleaseAgentPane(&desired, agentUID, exit, string(event.Classification)); err != nil {
+			return PaneAgentCascadeDeletePlan{}, err
+		}
+	} else if agentUID != "" {
+		retainedPhase = PhaseOffline
+		if err := mutator.DeletePane(&desired, pane.Metadata.UID); err != nil {
 			return PaneAgentCascadeDeletePlan{}, err
 		}
 	} else if err := mutator.DeletePane(&desired, pane.Metadata.UID); err != nil {

@@ -3587,6 +3587,59 @@ exitrec_agent_case clean-exit claude Offline normal 'exit 0'
 exitrec_agent_case failed-exit codex Failed abnormal 'exit 42'
 exitrec_agent_case signal-death antigravity Failed abnormal 'kill -TERM $$; sleep 30'
 
+# Two supervised providers reach status 0 from the same release edge. Their
+# retained-pane hooks may coalesce behind one controller lease, but both exact
+# current generations must reach the same fixed point: Offline Agents, no
+# paneRef, no managed Pane row, and no mirrored/dead tmux Pane. The long-lived
+# sibling shell proves the convergence stays inside the two owner chains.
+exitrec_pair_release="$exitrec_root/release-clean-pair"
+rm -f "$exitrec_pair_release"
+printf 'while [ ! -e %s ]; do sleep 0.02; done\nexit 0\n' "$exitrec_pair_release" >"$exitrec_root/stub-script"
+exitrec_pair_agent_one="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
+  create agent --provider claude --project "uid:$exitrec_app_project_uid" -o uid)"
+exitrec_doc agent "$exitrec_pair_agent_one"
+exitrec_pair_pane_one="$(exitrec_field paneRef)"
+exitrec_pair_agent_two="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
+  create agent --provider codex --project "uid:$exitrec_app_project_uid" -o uid)"
+exitrec_doc agent "$exitrec_pair_agent_two"
+exitrec_pair_pane_two="$(exitrec_field paneRef)"
+if [[ -z "$exitrec_pair_pane_one" || -z "$exitrec_pair_pane_two" || "$exitrec_pair_pane_one" == "$exitrec_pair_pane_two" ]]; then
+  echo "simultaneous clean providers did not expose two exact managed Panes" >&2
+  exit 1
+fi
+touch "$exitrec_pair_release"
+for exitrec_pair in \
+  "$exitrec_pair_agent_one:$exitrec_pair_pane_one" \
+  "$exitrec_pair_agent_two:$exitrec_pair_pane_two"; do
+  exitrec_pair_agent="${exitrec_pair%%:*}"
+  exitrec_pair_pane="${exitrec_pair#*:}"
+  for _ in $(seq 1 200); do
+    exitrec_doc agent "$exitrec_pair_agent"
+    if [[ "$(exitrec_field phase)" == "Offline" && -z "$(exitrec_field paneRef)" ]] &&
+      ! exitrec_doc_exists pane "$exitrec_pair_pane"; then
+      break
+    fi
+    sleep 0.05
+  done
+  exitrec_doc agent "$exitrec_pair_agent"
+  if [[ "$(exitrec_field phase)" != "Offline" || -n "$(exitrec_field paneRef)" ]] ||
+    exitrec_doc_exists pane "$exitrec_pair_pane"; then
+    echo "simultaneous clean provider did not converge agent=$exitrec_pair_agent pane=$exitrec_pair_pane" >&2
+    exit 1
+  fi
+  if exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
+    | grep -Eq "^${exitrec_pair_pane}\\|(0|1)$"; then
+    echo "simultaneous clean provider left mirrored/dead Pane $exitrec_pair_pane" >&2
+    exit 1
+  fi
+done
+if ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
+  | grep -Eq "^${exitrec_app_anchor_pane_uid}\\|0$"; then
+  echo "simultaneous clean providers changed the sibling shell $exitrec_app_anchor_pane_uid" >&2
+  exit 1
+fi
+echo ">> exit reconciliation simultaneous clean providers agents=$exitrec_pair_agent_one,$exitrec_pair_agent_two panes=$exitrec_pair_pane_one,$exitrec_pair_pane_two residual=0 sibling=preserved"
+
 # Direct `tmux kill-pane` is external kill evidence, never control intent. The
 # supervisor reaps SIGHUP and the append journal converges to killed/supervisor;
 # the Agent releases its binding while the logical Pane row remains queryable.
