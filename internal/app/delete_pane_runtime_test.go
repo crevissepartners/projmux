@@ -709,6 +709,84 @@ func TestPaneDeleteRuntimeProducerAnchorBindsRouteWithoutInheritedPaneEnv(t *tes
 	}
 }
 
+type lifecycleSiblingCleanupRunner struct {
+	killed bool
+	calls  []recordedTmuxCall
+}
+
+func (r *lifecycleSiblingCleanupRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, recordedTmuxCall{name: name, args: slices.Clone(args)})
+	if name != "tmux" || len(args) < 3 || args[0] != "-S" || args[1] != testDeleteTarget.value {
+		return nil, fmt.Errorf("lifecycle cleanup requires exact -S routing: %s %v", name, args)
+	}
+	switch args[2] {
+	case "display-message":
+		switch args[len(args)-1] {
+		case "#{socket_path}":
+			return []byte(testDeleteTarget.value + "\n"), nil
+		case "#{pid}":
+			return []byte("4242\n"), nil
+		case tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
+			"#{@projmux_project_uid}", "#{@projmux_window_uid}", "#{@projmux_pane_uid}"):
+			return []byte(livePaneInventoryRow("$1", "alpha", "@10", "%31", "prj-alpha", "win-alpha-main", "pan-alpha-log")), nil
+		}
+	case "show-options":
+		switch args[len(args)-1] {
+		case tmuxopts.AppGlobal:
+			return []byte("1\n"), nil
+		case runtimeMutationSocketNameOption:
+			return []byte(defaultAppSocket + "\n"), nil
+		}
+	case "list-panes":
+		if r.killed {
+			return []byte(livePaneInventoryRow("$1", "@10", "%30", "pan-alpha-zsh")), nil
+		}
+		return []byte(
+			livePaneInventoryRow("$1", "@10", "%30", "pan-alpha-zsh") +
+				livePaneInventoryRow("$1", "@10", "%31", "pan-alpha-log"),
+		), nil
+	case "kill-pane":
+		if flagValue(args[3:], "-t") != "%31" {
+			return nil, fmt.Errorf("unexpected lifecycle cleanup target: %v", args)
+		}
+		r.killed = true
+		return nil, nil
+	}
+	return nil, fmt.Errorf("unexpected lifecycle cleanup command: %v", args)
+}
+
+func TestLifecycleSiblingCleanupBindsExistingExactSocketBeforeKillPlan(t *testing.T) {
+	target, err := tmuxSocketPathTarget(testDeleteTarget.value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &lifecycleSiblingCleanupRunner{}
+	runtime := &tmuxPaneDeleteRuntime{runner: runner, target: target, getenv: func(string) string { return "" }}
+	inventory := &exactLifecycleInventory{replacements: runtime}
+	cleanup := paneLiveDeleteTarget{
+		PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10",
+		SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
+	}
+
+	if err := inventory.CleanupLifecycleDeadPane(context.Background(), cleanup); err != nil {
+		t.Fatalf("lifecycle sibling cleanup: %v", err)
+	}
+	if !runner.killed || runtime.routeAnchor != "%31" || runtime.expectedSocketPath != testDeleteTarget.value || runtime.routeAuthority == nil ||
+		runtime.routeAuthority.ServerPID != "4242" {
+		t.Fatalf("cleanup route killed=%t anchor=%q path=%q authority=%+v",
+			runner.killed, runtime.routeAnchor, runtime.expectedSocketPath, runtime.routeAuthority)
+	}
+	kills := 0
+	for _, call := range runner.calls {
+		if slices.Contains(call.args, "kill-pane") {
+			kills++
+		}
+	}
+	if kills != 1 {
+		t.Fatalf("exact lifecycle cleanup kill calls = %d, want 1: %#v", kills, runner.calls)
+	}
+}
+
 func TestPaneDeleteRuntimeQueueRevalidatesTombstonesAndUsesExactSocket(t *testing.T) {
 	runtime, _, _ := newPaneRuntimeFixture(t, "")
 	runtime.expectedSocketPath = testDeleteTarget.value

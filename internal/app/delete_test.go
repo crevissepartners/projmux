@@ -70,6 +70,7 @@ type fakePaneDeleteRuntime struct {
 	queueErr               error
 	replacementErr         error
 	replacementRollbackErr error
+	replacementHook        func([]paneReplacementShell)
 	killHook               func(paneLiveDeleteTarget)
 	queueHook              func([]paneLiveDeleteTarget)
 	offlineUIDs            map[string]bool
@@ -86,6 +87,9 @@ func newFixturePaneDeleteRuntime() *fakePaneDeleteRuntime { return &fakePaneDele
 func (r *fakePaneDeleteRuntime) prepareReplacements(_ context.Context, replacements []paneReplacementShell) (paneReplacementReceipt, error) {
 	if r.replacementErr != nil {
 		return paneReplacementReceipt{}, r.replacementErr
+	}
+	if r.replacementHook != nil {
+		r.replacementHook(replacements)
 	}
 	r.replacements = append(r.replacements, replacements...)
 	created := make([]runtimeObject, 0, len(replacements))
@@ -932,6 +936,82 @@ func TestDeleteReplacementFailureRestoresExactRegistryAndKillsNothing(t *testing
 	}
 	if store.snapshot() != before || len(runtime.killed) != 0 || len(runtime.replacements) != 0 {
 		t.Fatalf("replacement failure changed state: registry=%t killed=%+v replacements=%+v", store.snapshot() != before, runtime.killed, runtime.replacements)
+	}
+}
+
+func TestDeletePaneSecondRegistryCommitFailureReportsEveryRetainedReplacementAndExactPreimage(t *testing.T) {
+	store := newFakeResourceStore(t)
+	runtime := newFixturePaneDeleteRuntime()
+	cmd := newTestDeleteCommand(store, false, false, nil)
+	cmd.panes = runtime
+	var events []string
+	runtime.replacementHook = func(replacements []paneReplacementShell) {
+		events = append(events, fmt.Sprintf("prepare %d", len(replacements)))
+	}
+	runtime.killHook = func(target paneLiveDeleteTarget) {
+		events = append(events, "kill "+target.PaneID)
+	}
+	commit := cmd.store.update
+	commits := 0
+	var exactPreimage []byte
+	cmd.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+		commits++
+		if commits == 1 {
+			return commit(fn)
+		}
+		var marshalErr error
+		exactPreimage, marshalErr = json.Marshal(store.registry)
+		if marshalErr != nil {
+			return coremetadata.Registry{}, marshalErr
+		}
+		working := store.registry.Clone()
+		if err := fn(&working); err != nil {
+			return coremetadata.Registry{}, err
+		}
+		events = append(events, "store failed")
+		return coremetadata.Registry{}, errors.New("injected second Registry commit failure")
+	}
+
+	stdout, _, err := runRoute(t, cmd, "pane",
+		"uid:pan-alpha-zsh", "uid:pan-alpha-log", "uid:pan-alpha-codex", "uid:pan-alpha-review",
+		"--project", "uid:prj-alpha", "--yes")
+	if err == nil {
+		t.Fatal("second Registry commit failure succeeded")
+	}
+	for _, want := range []string{
+		"injected second Registry commit failure",
+		"%replacement-1/pane-uid=pane-test-1",
+		"%replacement-2/pane-uid=pane-test-2",
+		"exact Registry preimage remains unchanged for retry",
+		"no unplanned Pane was targeted",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("post-kill store failure error = %q, want %q", err, want)
+		}
+	}
+	if got, want := strings.Join(events, ","), "prepare 2,kill %30,kill %31,kill %32,kill %33,store failed"; got != want {
+		t.Fatalf("replacement/kill/store ordering = %q, want %q", got, want)
+	}
+	after, marshalErr := json.Marshal(store.registry)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	if !bytes.Equal(after, exactPreimage) {
+		t.Fatalf("failed second commit changed exact Registry preimage:\nbefore=%s\nafter=%s", exactPreimage, after)
+	}
+	if runtime.rolledBackReplacements != 0 || len(runtime.replacements) != 2 {
+		t.Fatalf("retained replacements rolled-back=%d prepared=%+v", runtime.rolledBackReplacements, runtime.replacements)
+	}
+	if len(runtime.killed) != 4 {
+		t.Fatalf("exact killed Pane set = %+v", runtime.killed)
+	}
+	for _, target := range runtime.killed {
+		if target.RootUID != "prj-alpha" || target.PaneID == "%34" || target.PaneUID == "pan-beta-zsh" {
+			t.Fatalf("post-kill store failure reached unplanned sibling: %+v", target)
+		}
+	}
+	if stdout != "" {
+		t.Fatalf("post-kill store failure wrote stdout: %q", stdout)
 	}
 }
 

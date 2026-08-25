@@ -258,6 +258,12 @@ func planExactLifecycleCascade(
 			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonStaleOwnerBinding,
 		}}}, nil
 	}
+	sessionName := lifecycleRootSessionName(registry, *root)
+	if sessionName == "" {
+		return exactLifecycleCascadePlan{paneAgent: coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
+			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonUnavailable,
+		}}}, nil
+	}
 
 	classification := coremetadata.TerminationUnknown
 	if stored := pane.Status.LastTermination; stored != nil &&
@@ -322,7 +328,7 @@ func planExactLifecycleCascade(
 		plan, err := coremetadata.PlanPaneAgentCascadeDelete(registry, teardown, now().UTC())
 		cascade := exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, paneAgent: plan}
 		if err == nil && plan.Changed && dead[pane.Metadata.UID] && pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
-			target := lifecycleDeadPaneTarget(teardown)
+			target := lifecycleDeadPaneTarget(teardown, sessionName)
 			cascade.deadCleanup = &target
 		}
 		return cascade, err
@@ -336,24 +342,41 @@ func planExactLifecycleCascade(
 	if err != nil || !plan.Changed {
 		return exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, paneAgent: plan}, err
 	}
-	replacements := lifecycleReplacementShells(registry, plan.Desired, teardown)
+	replacements := lifecycleReplacementShells(registry, plan.Desired, teardown, sessionName)
 	if len(replacements) == 0 {
 		return exactLifecycleCascadePlan{}, errors.New("last-Pane lifecycle plan has no replacement shell")
 	}
 	return exactLifecycleCascadePlan{
 		Desired: plan.Desired, Changed: true, paneAgent: plan, replacements: replacements,
 		deadCleanup: func() *paneLiveDeleteTarget {
-			target := lifecycleDeadPaneTarget(teardown)
+			target := lifecycleDeadPaneTarget(teardown, sessionName)
 			return &target
 		}(),
 	}, nil
 }
 
-func lifecycleDeadPaneTarget(event coremetadata.TeardownEvent) paneLiveDeleteTarget {
+func lifecycleRootSessionName(registry coremetadata.Registry, root coremetadata.OwnerRef) string {
+	switch root.Kind {
+	case coremetadata.KindProject:
+		project, ok := registry.Project(root.UID)
+		if ok && project.Status.Session != nil {
+			return strings.TrimSpace(project.Status.Session.Name)
+		}
+	case coremetadata.KindControlSession:
+		control, ok := registry.ControlSession(root.UID)
+		if ok {
+			return strings.TrimSpace(control.Spec.Session)
+		}
+	}
+	return ""
+}
+
+func lifecycleDeadPaneTarget(event coremetadata.TeardownEvent, sessionName string) paneLiveDeleteTarget {
 	return paneLiveDeleteTarget{
 		PaneUID: event.Chain.PaneUID, PaneID: event.Chain.PaneHandle,
 		WindowUID: event.Chain.WindowUID, WindowID: event.Chain.WindowHandle,
-		SessionID: event.Chain.SessionHandle, RootKind: event.Chain.RootKind, RootUID: event.Chain.RootUID,
+		SessionID: event.Chain.SessionHandle, SessionName: strings.TrimSpace(sessionName),
+		RootKind: event.Chain.RootKind, RootUID: event.Chain.RootUID,
 		EndsWindow: !event.LiveSiblingPane,
 	}
 }
@@ -362,12 +385,12 @@ func lifecycleDeadPaneTarget(event coremetadata.TeardownEvent) paneLiveDeleteTar
 // exact Pane that still exists for the duration of pane-exited. Creating the
 // split before committing the desired graph prevents tmux from unlinking the
 // retained Window when its prior last process exits.
-func lifecycleReplacementShells(before, desired coremetadata.Registry, event coremetadata.TeardownEvent) []paneReplacementShell {
+func lifecycleReplacementShells(before, desired coremetadata.Registry, event coremetadata.TeardownEvent, sessionName string) []paneReplacementShell {
 	beforeUIDs := make(map[string]bool, len(before.Panes))
 	for _, pane := range before.Panes {
 		beforeUIDs[pane.Metadata.UID] = true
 	}
-	anchor := lifecycleDeadPaneTarget(event)
+	anchor := lifecycleDeadPaneTarget(event, sessionName)
 	var out []paneReplacementShell
 	for _, pane := range desired.Panes {
 		if beforeUIDs[pane.Metadata.UID] || pane.Metadata.OwnerRef == nil ||
@@ -442,6 +465,14 @@ func (i *exactLifecycleInventory) RollbackLifecycleReplacements(ctx context.Cont
 func (i *exactLifecycleInventory) CleanupLifecycleDeadPane(ctx context.Context, target paneLiveDeleteTarget) error {
 	if i == nil || i.replacements == nil {
 		return errors.New("lifecycle replacement runtime is not configured")
+	}
+	// A sibling-path cleanup prepares no replacement, so no earlier live effect
+	// has bound the runtime mutation route. Bind it from the exact retained dead
+	// Pane before building the kill plan; an absent-before-create route can never
+	// authorize a lifecycle cleanup.
+	i.replacements.useRouteAnchor(target.PaneID)
+	if err := i.replacements.guardSocketIdentity(ctx); err != nil {
+		return fmt.Errorf("bind exact dead Agent Pane cleanup route: %w", err)
 	}
 	return i.replacements.kill(ctx, target)
 }

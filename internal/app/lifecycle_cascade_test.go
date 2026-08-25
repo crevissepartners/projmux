@@ -361,6 +361,36 @@ func TestWindowUnlinkedWithLegacyExactTeardownEvidenceHasZeroLifecycleAuthority(
 	}
 }
 
+func TestLifecycleDeadPaneCleanupUsesExactRootSessionName(t *testing.T) {
+	t.Parallel()
+	registry := resourceFixtureRegistry(t)
+	registry.ControlSessions = append(registry.ControlSessions, coremetadata.ControlSession{
+		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindControlSession,
+		Metadata: coremetadata.ObjectMeta{UID: "ctl-home", Name: "home", CreatedAt: resourceFixtureClock},
+		Spec:     coremetadata.ControlSessionSpec{Session: "projmux-home"},
+	})
+	for _, tc := range []struct {
+		name string
+		root coremetadata.OwnerRef
+		want string
+	}{
+		{name: "Project projection", root: coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-alpha"}, want: "alpha"},
+		{name: "ControlSession spec", root: coremetadata.OwnerRef{Kind: coremetadata.KindControlSession, UID: "ctl-home"}, want: "projmux-home"},
+		{name: "missing root", root: coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-missing"}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			event := coremetadata.TeardownEvent{Chain: coremetadata.TeardownOwnerChain{
+				PaneUID: "pane-dead", PaneHandle: "%9", WindowUID: "window-owner", WindowHandle: "@3",
+				SessionHandle: "$1", RootKind: tc.root.Kind, RootUID: tc.root.UID,
+			}}
+			target := lifecycleDeadPaneTarget(event, lifecycleRootSessionName(registry, tc.root))
+			if target.SessionName != tc.want || target.SessionID != "$1" || target.PaneID != "%9" {
+				t.Fatalf("cleanup target = %+v, want session name %q with exact handles", target, tc.want)
+			}
+		})
+	}
+}
+
 func TestUnprotectedLastShellExitHasZeroReplacementAuthority(t *testing.T) {
 	t.Parallel()
 	store := newFakeResourceStore(t)

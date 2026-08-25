@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/cli"
@@ -499,9 +500,11 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 				removed = append(removed, fmt.Sprintf("%s/window=%s/session=%s(%s)/pane-uid=%s",
 					target.PaneID, target.WindowID, target.SessionName, target.SessionID, target.PaneUID))
 			}
-			// As above: those Panes really were terminated on purpose.
-			return fmt.Errorf("%w; exact live target(s) %s were removed before the store failure, while registry uid(s) %s remain as retryable drift; no unplanned Pane was targeted",
-				err, strings.Join(removed, ","), strings.Join(resolution.UIDs(), ","))
+			// As above: those Panes really were terminated on purpose. A created
+			// replacement cannot be rolled back after that point without destroying
+			// the only remaining runtime descendant of the retained Window.
+			return fmt.Errorf("%w; exact live target(s) %s were removed before the store failure, while registry uid(s) %s remain as retryable drift%s; exact Registry preimage remains unchanged for retry; no unplanned Pane was targeted",
+				err, strings.Join(removed, ","), strings.Join(resolution.UIDs(), ","), retainedPaneReplacementDrift(replacementReceipt))
 		}
 		return withdrawIntent(err)
 	}
@@ -760,6 +763,18 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 	}
 	_, err := io.WriteString(stdout, b.String())
 	return err
+}
+
+func retainedPaneReplacementDrift(receipt paneReplacementReceipt) string {
+	if len(receipt.created) == 0 {
+		return ""
+	}
+	retained := make([]string, 0, len(receipt.created))
+	for _, created := range receipt.created {
+		retained = append(retained, fmt.Sprintf("%s/pane-uid=%s", created.ID, created.UID))
+	}
+	slices.Sort(retained)
+	return "; retained replacement runtime Pane(s) " + strings.Join(retained, ",") + " were not rolled back after exact target removal"
 }
 
 func flushDeleteResult(stdout io.Writer) error {
