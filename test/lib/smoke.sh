@@ -83,8 +83,16 @@ smoke_contract_install_trap() {
 }
 
 smoke_setup_env() {
-  PROJMUX_SMOKE_WORKDIR="$(mktemp -d)"
+  local smoke_parent="${TMPDIR:-/tmp}"
+  if [[ ! -d "$smoke_parent" ]]; then
+    smoke_parent=/tmp
+  fi
+  PROJMUX_SMOKE_WORKDIR="$(mktemp -d "$smoke_parent/projmux-smoke.XXXXXX")"
   export PROJMUX_SMOKE_WORKDIR
+  PROJMUX_SMOKE_OWNER="$$-$RANDOM-$(smoke_now_ms)"
+  export PROJMUX_SMOKE_OWNER
+  printf '%s\n' "$PROJMUX_SMOKE_OWNER" >"$PROJMUX_SMOKE_WORKDIR/.projmux-smoke-owner"
+  chmod 0600 "$PROJMUX_SMOKE_WORKDIR/.projmux-smoke-owner"
   PROJMUX_E2E_SUITE="${PROJMUX_E2E_SUITE:-e2e}"
   export PROJMUX_E2E_SUITE
   PROJMUX_E2E_ARTIFACTS="${PROJMUX_E2E_ARTIFACTS:-$PROJMUX_SMOKE_WORKDIR/evidence}"
@@ -156,6 +164,76 @@ smoke_cleanup_tmux_server() {
   "${tmux_command[@]}" -S "$actual" kill-server >/dev/null 2>&1 || true
 }
 
+smoke_owned_process_inventory() {
+  local proc pid cwd command
+  for proc in /proc/[0-9]*; do
+    pid="${proc##*/}"
+    if [[ "$pid" == "$$" || "$pid" == "${BASHPID:-$$}" || "$pid" == "$PPID" ]]; then
+      continue
+    fi
+    cwd="$(readlink "$proc/cwd" 2>/dev/null || true)"
+    command="$({ tr '\0' ' ' <"$proc/cmdline"; } 2>/dev/null || true)"
+    case "$cwd" in
+      "$PROJMUX_SMOKE_WORKDIR" | "$PROJMUX_SMOKE_WORKDIR"/*)
+        printf '%s\t%s\n' "$pid" "$command"
+        continue
+        ;;
+    esac
+    if [[ -n "$command" && "$command" == *"$PROJMUX_SMOKE_WORKDIR"* ]]; then
+      printf '%s\t%s\n' "$pid" "$command"
+    fi
+  done
+}
+
+smoke_wait_owned_quiet() {
+  local stable=0 inventory
+  for _ in {1..10}; do
+    inventory="$(smoke_owned_process_inventory)"
+    if [[ -z "$inventory" ]]; then
+      stable=$((stable + 1))
+      if [[ "$stable" == "3" ]]; then
+        return 0
+      fi
+    else
+      stable=0
+    fi
+    sleep 0.05
+  done
+  return 1
+}
+
+smoke_reap_owned_processes() {
+  local inventory
+  local -a pids=()
+  inventory="$(smoke_owned_process_inventory)"
+  while IFS=$'\t' read -r pid _; do
+    [[ -n "$pid" ]] && pids+=("$pid")
+  done <<<"$inventory"
+  if ((${#pids[@]} == 0)); then
+    return 0
+  fi
+  printf '%s\n' "$inventory" >"$PROJMUX_SMOKE_WORKDIR/residual-processes.before-term"
+  kill -TERM "${pids[@]}" 2>/dev/null || true
+  if smoke_wait_owned_quiet; then
+    return 0
+  fi
+  pids=()
+  while IFS=$'\t' read -r pid _; do
+    [[ -n "$pid" ]] && pids+=("$pid")
+  done < <(smoke_owned_process_inventory)
+  if ((${#pids[@]} > 0)); then
+    kill -KILL "${pids[@]}" 2>/dev/null || true
+  fi
+  smoke_wait_owned_quiet
+}
+
+smoke_validate_owned_root() {
+  [[ -n "${PROJMUX_SMOKE_WORKDIR:-}" ]] || return 1
+  [[ -d "$PROJMUX_SMOKE_WORKDIR" && ! -L "$PROJMUX_SMOKE_WORKDIR" ]] || return 1
+  [[ -f "$PROJMUX_SMOKE_WORKDIR/.projmux-smoke-owner" && ! -L "$PROJMUX_SMOKE_WORKDIR/.projmux-smoke-owner" ]] || return 1
+  [[ "$(cat "$PROJMUX_SMOKE_WORKDIR/.projmux-smoke-owner")" == "${PROJMUX_SMOKE_OWNER:-}" ]]
+}
+
 smoke_cleanup_env() {
   local cleanup_status=0
   if [[ -n "${PROJMUX_SMOKE_TMUX_SOCKET:-}" ]]; then
@@ -167,11 +245,85 @@ smoke_cleanup_env() {
     return "$cleanup_status"
   fi
   if [[ -n "${PROJMUX_SMOKE_WORKDIR:-}" ]]; then
+    if ! smoke_validate_owned_root; then
+      echo "refusing smoke cleanup without exact owner receipt: $PROJMUX_SMOKE_WORKDIR" >&2
+      return 1
+    fi
+    if ! smoke_wait_owned_quiet; then
+      smoke_reap_owned_processes || cleanup_status=$?
+    fi
+    if [[ "$cleanup_status" != "0" ]] || ! smoke_wait_owned_quiet; then
+      smoke_owned_process_inventory >"$PROJMUX_SMOKE_WORKDIR/residual-processes.final" || true
+      echo "preserving non-quiescent owned smoke root: $PROJMUX_SMOKE_WORKDIR" >&2
+      return 1
+    fi
     # Go module downloads are intentionally read-only. Make only this validated
     # run-local tree writable again so direct/local smoke cleanup can remove it.
     chmod -R u+w "$PROJMUX_SMOKE_WORKDIR" 2>/dev/null || true
     rm -rf "$PROJMUX_SMOKE_WORKDIR"
   fi
+}
+
+smoke_wait_for_current_frame() {
+  local description="$1"
+  local path="$2"
+  local offset="$3"
+  local needle="$4"
+  for _ in {1..100}; do
+    if tail -c "+$((offset + 1))" "$path" 2>/dev/null | grep -aFq "$needle"; then
+      return 0
+    fi
+    sleep 0.05
+  done
+  echo "timed out waiting for current-frame $description offset=$offset" >&2
+  tail -c "+$((offset + 1))" "$path" >&2 || true
+  return 1
+}
+
+smoke_require_uid() {
+  local label="$1"
+  local kind="$2"
+  local value="$3"
+  local prefix
+  case "$kind" in
+    project) prefix=proj ;;
+    window) prefix=win ;;
+    pane) prefix=pane ;;
+    agent) prefix=agent ;;
+    control-session) prefix=ctl ;;
+    *) echo "unknown identity receipt kind: $kind" >&2; return 2 ;;
+  esac
+  if [[ ! "$value" =~ ^${prefix}-[a-z2-7]{26}$ ]]; then
+    echo "$label returned an invalid identity receipt: [$value]" >&2
+    return 1
+  fi
+}
+
+smoke_bounded_fixed_point() {
+  local report_prefix="$1"
+  shift
+  local pass report outcome hash
+  local -A seen=()
+  for pass in 1 2 3 4; do
+    report="$report_prefix-$pass.json"
+    "$@" >"$report"
+    hash="$(sha256sum "$report" | awk '{print $1}')"
+    if grep -Fq '"outcome":"no-op"' "$report" || grep -Fq '"outcome": "no-op"' "$report"; then
+      grep -Eq '"items":[[:space:]]*\[\]|"items": \[\]' "$report" || return 1
+      return 0
+    fi
+    if ! grep -Fq '"outcome":"changed"' "$report" && ! grep -Fq '"outcome": "changed"' "$report"; then
+      echo "fixed-point report has no typed outcome: $report" >&2
+      return 1
+    fi
+    if [[ -n "${seen[$hash]:-}" ]]; then
+      echo "fixed-point oscillation/cycle detected: pass=$pass prior=${seen[$hash]} hash=$hash" >&2
+      return 1
+    fi
+    seen[$hash]="$pass"
+  done
+  echo "fixed-point did not converge within 4 passes" >&2
+  return 1
 }
 
 smoke_build_binary() {

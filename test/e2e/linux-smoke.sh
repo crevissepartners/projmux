@@ -2319,40 +2319,12 @@ smoke_contract_begin L07 binding-convergence reconciler
 # that three-level walk plus one confirming pass. Raw imports require initial
 # progress; post-apply callers opt into accepting an already-converged pass.
 e2e_bounded_reconcile_to_noop() {
-  local allow_initial_noop=0
   if [[ "${1:-}" == "--allow-initial-noop" ]]; then
-    allow_initial_noop=1
     shift
   fi
   local report_prefix="$1"
   shift
-  local pass report
-  for pass in 1 2 3 4; do
-    report="$report_prefix-$pass.json"
-    "$@" >"$report"
-    if grep -Fq '"outcome": "changed"' "$report"; then
-      continue
-    fi
-    if grep -Fq '"outcome": "no-op"' "$report"; then
-      if ! grep -Fq '"items": []' "$report"; then
-        echo "resource reconcile no-op retained nonempty items: $report" >&2
-        cat "$report" >&2
-        return 1
-      fi
-      if [[ "$pass" == "1" && "$allow_initial_noop" != "1" ]]; then
-        echo "explicit authority made no initial progress: $report" >&2
-        cat "$report" >&2
-        return 1
-      fi
-      return 0
-    fi
-    echo "resource reconcile reported neither changed nor no-op: $report" >&2
-    cat "$report" >&2
-    return 1
-  done
-  echo "resource reconcile did not converge within four passes: $report_prefix" >&2
-  cat "$report" >&2
-  return 1
+  smoke_bounded_fixed_point "$report_prefix" "$@"
 }
 
 # Managed runtime binding convergence runs on its own two exact sockets. Every
@@ -2615,6 +2587,7 @@ binding_inside_pmx() {
 
 binding_inside_pmx create window --project alpha --name lifecycle >"$binding_root/create-lifecycle-window.out"
 lifecycle_window_uid="$(binding_inside_pmx describe window lifecycle -p alpha -o uid | tr -d '[:space:]')"
+smoke_require_uid "canonical lifecycle Window" window "$lifecycle_window_uid"
 lifecycle_window="$(
   binding_tmux list-windows -a -F '#{window_id}|#{@projmux_window_uid}' |
     awk -F '|' -v uid="$lifecycle_window_uid" '$2 == uid { print $1 }'
@@ -5812,6 +5785,7 @@ if [[ ! -f "$fopen_registry" ]]; then
   exit 1
 fi
 fopen_project_uid="$(fopen_pmx get projects -o uid)"
+smoke_require_uid "first-open Project" project "$fopen_project_uid"
 if [[ "$(printf '%s\n' "$fopen_project_uid" | wc -l)" != "1" ]] || [[ -z "$fopen_project_uid" ]]; then
   echo "the first open registered something other than exactly the opened path: $fopen_project_uid" >&2
   exit 1
@@ -6620,15 +6594,19 @@ printf 'alpha' >&8
 nav_offline_filter_has() {
   tail -c +$((nav_offline_filter_offset + 1)) "$nav_client_log" | grep -aFq "$1"
 }
-nav_wait_for "offline Project row" nav_offline_filter_has "nav/alpha"
+smoke_wait_for_current_frame "offline Project row" \
+  "$nav_client_log" "$nav_offline_filter_offset" "nav/alpha"
 nav_offline_offset="$(stat -c %s "$nav_client_log")"
 printf '\022' >&8
 nav_offline_has() {
   tail -c +$((nav_offline_offset + 1)) "$nav_client_log" | grep -aFq "$1"
 }
-nav_wait_for "offline hierarchy" nav_offline_has "Projects > Resources"
-nav_wait_for "offline hierarchy row" nav_offline_has "offline"
-nav_wait_for "offline start action" nav_offline_has "start"
+smoke_wait_for_current_frame "offline hierarchy" \
+  "$nav_client_log" "$nav_offline_offset" "Projects > Resources"
+smoke_wait_for_current_frame "offline hierarchy row" \
+  "$nav_client_log" "$nav_offline_offset" "offline"
+smoke_wait_for_current_frame "offline start action" \
+  "$nav_client_log" "$nav_offline_offset" "start"
 nav_offline_root_return_offset="$(stat -c %s "$nav_client_log")"
 printf '\003' >&8
 nav_offline_root_return_has() {
@@ -6655,6 +6633,10 @@ nav_offline_home_return_has() {
 }
 nav_wait_for "Home root selection after clearing the offline Projects filter" \
   nav_offline_home_return_has
+smoke_wait_for_current_frame "offline Home root row" \
+  "$nav_client_log" "$nav_offline_home_return_offset" "home"
+smoke_wait_for_current_frame "offline Home root path" \
+  "$nav_client_log" "$nav_offline_home_return_offset" "~"
 nav_wait_for "offline Home preview return to the driver session" nav_client_is_on_driver
 printf '\003' >&8
 nav_wait_for "offline Projects popup exit" sh -c "! kill -0 '$nav_popup_pid' 2>/dev/null"
