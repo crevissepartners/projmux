@@ -229,8 +229,11 @@ Resources and ownership:
   to a directly Window-owned `role=shell` Pane. Project registration creates
   both refs on the same initial shell **offline**, with no tmux involvement,
   so Project and Window metadata stays queryable while tmux is down.
-  Phase-0 consumers preserve the pre-cutover shell result through one pure
-  resolver: default shell when present, otherwise anchor. They never write the
+  Phase-2 consumers resolve `anchorPaneRef` as the stable role-agnostic split
+  target. An explicit Pane selector or popup origin wins over that stored ref;
+  the stored anchor is consulted only when the invocation scopes no Pane.
+  Shell-required offline creation may adopt or lazily allocate the optional
+  default shell without replacing an Agent anchor. Consumers never write the
   removed intermediate `primaryPaneRef` field.
   Canonical deletion preserves the same invariant: deleting the primary Window
   reanchors to the first existing valid sibling, while deleting the last valid
@@ -609,8 +612,8 @@ Agent resume:
 
 - `agent resume <ref>` rebinds an existing Agent: it builds the provider's
   **resume** argv from `status.sessionRef`, resolves the target Window's
-  compatibility shell ref (optional `defaultShellPaneRef`, otherwise
-  `anchorPaneRef`), splits a new managed Pane detached, and attaches it to that Agent. The
+  exact role-agnostic `anchorPaneRef`, splits a new managed Pane detached, and
+  attaches it to that Agent. The
   `metadata.uid` and `metadata.name` do not change, `status.phase` becomes
   `Running`, and `status.paneRef` points at the new Pane. `status.sessionRef`
   itself is read and never rewritten by resume.
@@ -1609,7 +1612,8 @@ Explicit Registry topology materialization:
   blank adoption, orphan minting, or Agent phase observation. Registry insertion
   order determines session/Window/Window-owned shell Pane/Agent creation order;
   report keys provide a separately stable rendering order. Agents are created
-  last inside their Window, after that Window's shell anchor is proven.
+  last inside their Window. A shell or managed-Agent `anchorPaneRef` must be
+  proven on the exact Window; no alternate live Pane is inferred.
 - Registry presence is desired topology. Missing runtime sessions, Windows,
   Window-owned `role=shell` Panes, and Agents are drift; canonical Registry
   deletion removes that desire. Exact uid/name/owner mirrors are retained. Stored
@@ -1632,8 +1636,14 @@ Explicit Registry topology materialization:
   Neither aborts the materialization, and neither is ever silent. A stale managed
   Pane row is released only after the server-wide uid preflight proves its uid is
   live nowhere on the exact socket.
+- An offline Agent-only Window plans a visible `allocate default shell` Registry
+  item, authors that direct shell under the same convergent transaction, creates
+  the Window from it, and then replays the anchor Agent while preserving the
+  Agent Pane uid. The default shell is bootstrap, not a replacement anchor. A
+  successful repeat is a Registry-write-free and topology-write-free no-op.
 - Preflight rejects a missing/invalid root or Pane CWD, a zero-Window Project,
-  a primary ref that is not a direct Window-owned shell Pane, and foreign,
+  an anchor ref that is neither an exact same-Window shell nor the owning
+  Agent's current managed Pane, a live Window whose exact anchor is dead, and foreign,
   duplicate, wrong-owner, or ambiguous live claims before the first create.
   Execute rechecks the same plan under the Registry lock. A server-wide uid
   preflight runs first, *before* the selected Project session is created,
@@ -1801,10 +1811,10 @@ Resource-first create:
   `--selector` at all. That keeps a bare `create pane --placement right` -- the
   generated keybinding body -- a split of the Window the operator is looking at,
   instead of a fan-out over every Window of the Project, while one explicit
-  occurrence still fixes the whole target set. With a scope and no `--pane`, the
-  anchor stays the target Window's pure compatibility shell ref
-  (`spec.defaultShellPaneRef` when present, otherwise `spec.anchorPaneRef`), and a missing
-  or stale ref is a refusal rather than a silent repair.
+  occurrence still fixes the whole target set. An explicit `--pane` or popup
+  origin is the exact split anchor. Only a scope with no Pane consumes the
+  target Window's role-agnostic `spec.anchorPaneRef`; a missing, stale, dead, or
+  cross-Window ref refuses with no alternate-live-Pane inference.
 - **Refusals cost nothing.** Home, control, unattributed, foreign, a mirrored
   uid the Registry does not hold, a Window whose Project is gone, and every
   outside-tmux invocation with no `--project` are usage errors naming
@@ -1820,6 +1830,10 @@ Resource-first create:
 - **Everything is detached.** No create path issues `switch-client`,
   `select-window`, `select-pane`, or `attach-session`. `focus pane` and
   `-o pane-id` are how a caller ends up in the new pane.
+- **Focus is navigation-only.** `focus project|window|pane` reads live tmux
+  inventory and may move an existing client, but has no Registry store and
+  issues no session/Window/Pane creation, identity-marker, rename, respawn, or
+  deletion write. An offline target remains offline and exits unresolved.
 
 Selector and the implicit active target:
 

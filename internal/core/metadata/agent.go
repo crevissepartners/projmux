@@ -176,7 +176,6 @@ func (m Mutator) AttachAgentPane(reg *Registry, agentUID string, declared Bootst
 	if !CanTransitionAgent(agent.Status.Phase, PhaseRunning) {
 		return Pane{}, stateErr(op, ErrInvalidPhase, "agent %s cannot move from %s to %s", agent.Metadata.Name, agent.Status.Phase, PhaseRunning)
 	}
-
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
 	pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, declared.Name, ManagedPaneNameBase(agent.Metadata.Name), declared.Command, declared.CWD, declared.Labels, now)
@@ -194,6 +193,40 @@ func (m Mutator) AttachAgentPane(reg *Registry, agentUID string, declared Bootst
 	agent.Status.LastTransitionAt = now
 	reg.UpdatedAt = now
 	return pane, nil
+}
+
+// RebindAgentPane makes a retained Agent-owned Pane the Agent's current managed
+// Pane again without changing either UID. Runtime disappearance retains Pane
+// rows as evidence; materialization may therefore reuse the exact row instead
+// of deleting the Window anchor and allocating a replacement identity.
+func (m Mutator) RebindAgentPane(reg *Registry, agentUID, paneUID string) (Pane, error) {
+	const op = "rebind agent pane"
+	agent, ok := reg.Agent(strings.TrimSpace(agentUID))
+	if !ok {
+		return Pane{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	if !CanTransitionAgent(agent.Status.Phase, PhaseRunning) {
+		return Pane{}, stateErr(op, ErrInvalidPhase, "agent %s cannot move from %s to %s", agent.Metadata.Name, agent.Status.Phase, PhaseRunning)
+	}
+	if current := strings.TrimSpace(agent.Status.PaneRef); current != "" && current != strings.TrimSpace(paneUID) {
+		return Pane{}, stateErr(op, ErrInvalidRegistry, "agent %s is already bound to pane %q", agent.Metadata.Name, current)
+	}
+	pane, ok := reg.Pane(strings.TrimSpace(paneUID))
+	if !ok {
+		return Pane{}, stateErr(op, ErrNotFound, "pane %q does not exist", paneUID)
+	}
+	if pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindAgent ||
+		pane.Metadata.OwnerRef.UID != agent.Metadata.UID || pane.Spec.Role != PaneRoleAgent {
+		return Pane{}, stateErr(op, ErrInvalidRegistry, "pane %q is not an Agent-owned managed Pane of agent %s", paneUID, agent.Metadata.Name)
+	}
+	now := m.clock()().UTC()
+	agent.Status.Phase = PhaseRunning
+	agent.Status.PaneRef = pane.Metadata.UID
+	agent.Status.Progress = AgentProgress{}
+	agent.Status.Reason = ""
+	agent.Status.LastTransitionAt = now
+	reg.UpdatedAt = now
+	return pane.Clone(), nil
 }
 
 // ReleaseAgentPane removes the managed Pane and moves the Agent to the phase

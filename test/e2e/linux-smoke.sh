@@ -4690,6 +4690,103 @@ if [[ "$topology_resume_seen" != "1" ]]; then
   exit 1
 fi
 
+# 6. The final-v2 Agent-only Window shape is now exercised against the same
+# installed binary and real tmux server, not only the fake runtime. Save the
+# live graph while its Agent still owns one exact managed Pane, stop the exact
+# smoke socket, then use the test-only fixture utility to remove this Window's
+# direct shells and make that retained Agent Pane its required anchor. No
+# product lifecycle/delete route is used to manufacture the offline fixture.
+topology_settle_registry
+topology_agent_only_source="$topology_root/agent-only-source.json"
+cp "$topology_registry" "$topology_agent_only_source"
+IFS=$'\t' read -r _ _ topology_agent_anchor_uid _ _ _ < <(
+  go run ./test/e2e/anchorfixture inspect "$topology_root" "agent-only-source.json" "$topology_review_window_uid" "$topology_agent_uid"
+)
+if [[ -z "$topology_agent_anchor_uid" ]]; then
+  echo "Agent-only materialization fixture has no retained Agent Pane uid" >&2
+  exit 1
+fi
+topology_tmux kill-server >/dev/null 2>&1 || true
+topology_settle_registry
+topology_rewritten_anchor_uid="$(
+  go run ./test/e2e/anchorfixture rewrite \
+    "$topology_root" "agent-only-source.json" "state/projmux/metadata/registry.json" \
+    "$topology_review_window_uid" "$topology_agent_uid"
+)"
+if [[ "$topology_rewritten_anchor_uid" != "$topology_agent_anchor_uid" ]]; then
+  echo "Agent-only fixture changed exact Agent anchor uid: $topology_agent_anchor_uid -> $topology_rewritten_anchor_uid" >&2
+  exit 1
+fi
+
+topology_registry_before="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
+topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" --dry-run -o json >"$topology_root/agent-only-dry-run.json"
+smoke_assert_file_contains "$topology_root/agent-only-dry-run.json" '"action": "allocate default shell"'
+smoke_assert_file_contains "$topology_root/agent-only-dry-run.json" '"kind": "Agent"'
+if [[ "$(sha256sum "$topology_registry" | cut -d' ' -f1)" != "$topology_registry_before" ]]; then
+  echo "Agent-only dry-run wrote to the Registry" >&2
+  exit 1
+fi
+if topology_tmux list-sessions >"$topology_root/agent-only-dry-run-sessions.out" 2>&1; then
+  echo "Agent-only dry-run materialized an offline tmux server/session" >&2
+  exit 1
+fi
+
+topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/agent-only-execute.json"
+IFS=$'\t' read -r topology_post_anchor_uid topology_post_default_uid topology_post_agent_pane_uid \
+  topology_post_default_owner_kind topology_post_default_owner_uid topology_post_default_role < <(
+    go run ./test/e2e/anchorfixture inspect "$topology_root" "state/projmux/metadata/registry.json" \
+      "$topology_review_window_uid" "$topology_agent_uid"
+  )
+if [[ "$topology_post_anchor_uid" != "$topology_agent_anchor_uid" ]] || \
+  [[ "$topology_post_agent_pane_uid" != "$topology_agent_anchor_uid" ]] || \
+  [[ -z "$topology_post_default_uid" ]] || \
+  [[ "$topology_post_default_uid" == "$topology_agent_anchor_uid" ]] || \
+  [[ "$topology_post_default_owner_kind" != "Window" ]] || \
+  [[ "$topology_post_default_owner_uid" != "$topology_review_window_uid" ]] || \
+  [[ "$topology_post_default_role" != "shell" ]]; then
+  echo "Agent-only execute did not produce the exact valid anchor/default graph" >&2
+  printf 'anchor=%s agent-pane=%s default=%s owner=%s/%s role=%s\n' \
+    "$topology_post_anchor_uid" "$topology_post_agent_pane_uid" "$topology_post_default_uid" \
+    "$topology_post_default_owner_kind" "$topology_post_default_owner_uid" "$topology_post_default_role" >&2
+  exit 1
+fi
+topology_review_window="$(topology_tmux list-windows -t "$topology_session" -F '#{window_id} #{@projmux_window_uid}' | awk -v uid="$topology_review_window_uid" '$2 == uid {print $1}')"
+mapfile -t topology_live_agent_anchor_matches < <(
+  topology_tmux list-panes -t "$topology_review_window" -F '#{@projmux_pane_uid}' | grep -Fx "$topology_agent_anchor_uid"
+)
+mapfile -t topology_live_default_matches < <(
+  topology_tmux list-panes -t "$topology_review_window" -F '#{@projmux_pane_uid}' | grep -Fx "$topology_post_default_uid"
+)
+if [[ "${#topology_live_agent_anchor_matches[@]}" != "1" ]] || \
+  [[ "${#topology_live_default_matches[@]}" != "1" ]]; then
+  echo "Agent-only execute lacks exact live Agent/default Pane uid bindings" >&2
+  topology_tmux list-panes -t "$topology_review_window" -F '#{pane_id}|#{@projmux_pane_uid}' >&2
+  exit 1
+fi
+topology_agent_only_socket_path="$(topology_tmux display-message -p -t "$topology_session" '#{socket_path}')"
+if [[ "$topology_agent_only_socket_path" != "$topology_socket_path" ]]; then
+  echo "Agent-only execute changed socket authority: $topology_socket_path -> $topology_agent_only_socket_path" >&2
+  exit 1
+fi
+case "$topology_agent_only_socket_path" in
+  "$topology_root"/*) ;;
+  *)
+    echo "Agent-only execute socket escaped smoke root: $topology_agent_only_socket_path" >&2
+    exit 1
+    ;;
+esac
+
+topology_settle_registry
+topology_registry_before="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
+topology_runtime_before="$(topology_tmux list-panes -s -t "$topology_session" -F '#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort)"
+topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/agent-only-repeat.json"
+smoke_assert_file_contains "$topology_root/agent-only-repeat.json" '"outcome": "no-op"'
+if [[ "$(sha256sum "$topology_registry" | cut -d' ' -f1)" != "$topology_registry_before" ]] || \
+  [[ "$(topology_tmux list-panes -s -t "$topology_session" -F '#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort)" != "$topology_runtime_before" ]]; then
+  echo "Agent-only repeat was not a Registry/runtime no-op" >&2
+  exit 1
+fi
+
 topology_other_after="$(topology_other_tmux show-options -gqv @projmux_topology_sentinel):$(topology_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
 if [[ "$topology_other_after" != "$topology_other_before" ]]; then
   echo "topology materialization touched the foreign socket" >&2

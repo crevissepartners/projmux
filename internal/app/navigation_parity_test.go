@@ -9,11 +9,13 @@ import (
 	"testing"
 )
 
-// materializingTmuxVerbs are the tmux verbs that bring a session, window, or
-// pane into existence, plus the client-entry verb. A navigation route that never
-// materializes must never emit any of them.
-var materializingTmuxVerbs = []string{
-	"new-session", "new-window", "split-window", "attach-session", "respawn-pane", "respawn-window",
+// canonicalFocusAllowedTmuxVerbs is the complete runtime surface canonical
+// Project/Window/Pane focus may reach: inventory reads and client navigation.
+// An allowlist closes zero-topology-write coverage over future tmux mutation
+// verbs without relying on an inevitably incomplete mutation inventory.
+var canonicalFocusAllowedTmuxVerbs = []string{
+	"display-message", "list-sessions", "list-windows", "list-panes", "list-clients",
+	"switch-client", "select-window", "select-pane",
 }
 
 func focusCallsContain(calls []focusFakeCall, verb string) bool {
@@ -23,6 +25,16 @@ func focusCallsContain(calls []focusFakeCall, verb string) bool {
 		}
 	}
 	return false
+}
+
+func assertCanonicalFocusCallsAreReadOrNavigationOnly(t *testing.T, calls []focusFakeCall) {
+	t.Helper()
+	for _, call := range calls {
+		argv := tmuxCommandArgv(call.args)
+		if len(argv) == 0 || !slices.Contains(canonicalFocusAllowedTmuxVerbs, argv[0]) {
+			t.Fatalf("canonical focus reached non-read/non-navigation tmux call: name=%q args=%v calls=%#v", call.name, call.args, calls)
+		}
+	}
 }
 
 // liveTmuxInventory describes the live sessions, windows, and panes a focus test
@@ -162,11 +174,7 @@ func TestFocusKindOnAnOfflineTargetExitsTwoAndMaterializesNothing(t *testing.T) 
 			if stdout.Len() != 0 {
 				t.Fatalf("focus %v wrote %q to stdout, want 0 bytes", test.args, stdout.String())
 			}
-			for _, verb := range materializingTmuxVerbs {
-				if focusCallsContain(runner.calls, verb) {
-					t.Fatalf("focus %v materialized with %q: %#v", test.args, verb, runner.calls)
-				}
-			}
+			assertCanonicalFocusCallsAreReadOrNavigationOnly(t, runner.calls)
 			if focusCallsContain(runner.calls, "switch-client") {
 				t.Fatalf("focus %v moved the client to an unresolved target: %#v", test.args, runner.calls)
 			}
@@ -197,6 +205,7 @@ func TestFocusKindRefusesAnAmbiguousLiveTarget(t *testing.T) {
 	if focusCallsContain(runner.calls, "switch-client") {
 		t.Fatalf("an ambiguous focus still moved the client: %#v", runner.calls)
 	}
+	assertCanonicalFocusCallsAreReadOrNavigationOnly(t, runner.calls)
 }
 
 // TestFocusKindMovesTheClientToAnAlreadyLiveTarget is the positive half: the
@@ -234,11 +243,7 @@ func TestFocusKindMovesTheClientToAnAlreadyLiveTarget(t *testing.T) {
 			if !focusCallsContain(runner.calls, "switch-client") {
 				t.Fatalf("focus %v never moved the client: %#v", test.args, runner.calls)
 			}
-			for _, verb := range materializingTmuxVerbs {
-				if focusCallsContain(runner.calls, verb) {
-					t.Fatalf("focus %v materialized with %q", test.args, verb)
-				}
-			}
+			assertCanonicalFocusCallsAreReadOrNavigationOnly(t, runner.calls)
 		})
 	}
 }

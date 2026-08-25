@@ -375,20 +375,21 @@ func (m Mutator) addPaneTx(txn *Transaction, reg *Registry, op, ownerUID string,
 	return pane, nil
 }
 
-// adoptWindowAnchor gives a Window its anchor and compatibility default shell
-// when this Pane is the first direct shell it owns again.
+// adoptWindowAnchor gives a Window its missing anchor and optional default
+// shell when its first direct shell Pane is added.
 //
-// Validate states the rule as a pair: a Window has a required anchor, while a
-// direct Window-owned shell also becomes its compatibility default shell.
+// Validate states the rule as a pair: a Window has a required role-agnostic
+// anchor, while the optional default shell remains a direct
+// Window-owned shell.
 // Deleting a Window's last Pane empties the ref by design, so the very next Pane
 // added under that Window has to reclaim it or the registry the caller just wrote
 // is one Validate rejects -- and it is rejected on the *next* write, not this one,
 // which turns a legal `delete pane` followed by a legal `create pane` into a
 // registry nothing can mutate any more.
 //
-// Agent-owned Panes never count: the primary anchor is exactly a Window-owned
-// role=shell Pane. Adoption is strictly a repair of the empty case and never
-// re-points a Window that already has a resolvable primary.
+// Adoption is strictly a repair of an empty anchor and never re-points a Window
+// that already has a resolvable anchor. Consumer routes that intentionally
+// create a later default shell use AdoptWindowDefaultShell after allocation.
 func (r *Registry) adoptWindowAnchor(ownerUID string, ownerKind Kind, paneUID string) {
 	if ownerKind != KindWindow {
 		return
@@ -397,13 +398,86 @@ func (r *Registry) adoptWindowAnchor(ownerUID string, ownerKind Kind, paneUID st
 		if r.Windows[i].Metadata.UID != ownerUID {
 			continue
 		}
-		if strings.TrimSpace(r.Windows[i].Spec.AnchorPaneRef) != "" {
-			return
+		if strings.TrimSpace(r.Windows[i].Spec.AnchorPaneRef) == "" {
+			r.Windows[i].Spec.AnchorPaneRef = paneUID
+			r.Windows[i].Spec.DefaultShellPaneRef = paneUID
 		}
-		r.Windows[i].Spec.AnchorPaneRef = paneUID
-		r.Windows[i].Spec.DefaultShellPaneRef = paneUID
 		return
 	}
+}
+
+// AdoptWindowDefaultShell installs paneUID as a Window's optional default shell
+// only when the ref is empty. The candidate must be a direct Window-owned shell
+// Pane; the role-agnostic anchor is never inferred or changed.
+func (m Mutator) AdoptWindowDefaultShell(reg *Registry, windowUID, paneUID string) (Pane, bool, error) {
+	const op = "adopt window default shell"
+	window, ok := reg.Window(strings.TrimSpace(windowUID))
+	if !ok {
+		return Pane{}, false, stateErr(op, ErrNotFound, "window %q does not exist", windowUID)
+	}
+	if current, ok := reg.WindowDefaultShell(window.Metadata.UID); ok {
+		return current.Clone(), false, nil
+	}
+	if strings.TrimSpace(window.Spec.DefaultShellPaneRef) != "" {
+		return Pane{}, false, stateErr(op, ErrInvalidRegistry,
+			"window %q defaultShellPaneRef %q is not a direct Window-owned shell Pane",
+			window.Metadata.Name, window.Spec.DefaultShellPaneRef)
+	}
+	pane, ok := reg.Pane(strings.TrimSpace(paneUID))
+	if !ok || pane.Spec.Role != PaneRoleShell || pane.Metadata.OwnerRef == nil ||
+		pane.Metadata.OwnerRef.Kind != KindWindow || pane.Metadata.OwnerRef.UID != window.Metadata.UID {
+		return Pane{}, false, stateErr(op, ErrInvalidRegistry,
+			"pane %q is not a direct Window-owned shell Pane of window %q", paneUID, window.Metadata.Name)
+	}
+	window.Spec.DefaultShellPaneRef = pane.Metadata.UID
+	reg.UpdatedAt = m.clock()().UTC()
+	return pane.Clone(), true, nil
+}
+
+// EnsureWindowDefaultShell returns the Window's existing optional default shell
+// or allocates one direct Window-owned shell without changing a valid anchor.
+// The allocation is intended for a shell-required transaction that already
+// owns its Registry working copy; callers remain responsible for runtime
+// creation and outer rollback.
+func (m Mutator) EnsureWindowDefaultShell(reg *Registry, windowUID, defaultShell, operationID string) (Pane, bool, error) {
+	const op = "ensure window default shell"
+	window, ok := reg.Window(strings.TrimSpace(windowUID))
+	if !ok {
+		return Pane{}, false, stateErr(op, ErrNotFound, "window %q does not exist", windowUID)
+	}
+	if pane, ok := reg.WindowDefaultShell(window.Metadata.UID); ok {
+		return pane.Clone(), false, nil
+	}
+	if strings.TrimSpace(window.Spec.DefaultShellPaneRef) != "" {
+		return Pane{}, false, stateErr(op, ErrInvalidRegistry,
+			"window %q defaultShellPaneRef %q is not a direct Window-owned shell Pane",
+			window.Metadata.Name, window.Spec.DefaultShellPaneRef)
+	}
+	if anchor, ok := reg.WindowAnchor(window.Metadata.UID); ok && anchor.Spec.Role == PaneRoleShell &&
+		anchor.Metadata.OwnerRef != nil && anchor.Metadata.OwnerRef.Kind == KindWindow && anchor.Metadata.OwnerRef.UID == window.Metadata.UID {
+		window.Spec.DefaultShellPaneRef = anchor.Metadata.UID
+		reg.UpdatedAt = m.clock()().UTC()
+		return anchor.Clone(), false, nil
+	}
+	// An existing direct shell is a valid lazy default. Adopting it is stable
+	// metadata authorship; it does not infer or replace the Window anchor.
+	for _, pane := range reg.PanesOf(window.Metadata.UID) {
+		if pane.Spec.Role != PaneRoleShell || pane.Metadata.OwnerRef == nil ||
+			pane.Metadata.OwnerRef.Kind != KindWindow || pane.Metadata.OwnerRef.UID != window.Metadata.UID {
+			continue
+		}
+		window.Spec.DefaultShellPaneRef = pane.Metadata.UID
+		reg.UpdatedAt = m.clock()().UTC()
+		return pane.Clone(), false, nil
+	}
+	pane, err := m.AddPane(reg, window.Metadata.UID, BootstrapPane{}, defaultShell, operationID)
+	if err != nil {
+		return Pane{}, false, err
+	}
+	if _, _, err := m.AdoptWindowDefaultShell(reg, window.Metadata.UID, pane.Metadata.UID); err != nil {
+		return Pane{}, false, err
+	}
+	return pane, true, nil
 }
 
 // AddPane creates one offline shell Pane inside an existing Window.

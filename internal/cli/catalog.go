@@ -201,7 +201,7 @@ var routes = []Route{
 				// the same sentence, because the route does what the contract
 				// asked for.
 				Name:      "resume",
-				Summary:   "Rebind an Offline or Failed Agent to a new managed Pane",
+				Summary:   "Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor",
 				Usage:     []string{"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."},
 				Canonical: []string{"agent resume"},
 			},
@@ -395,13 +395,14 @@ var routes = []Route{
 			},
 			{
 				// One resource-backed spelling. It resolves Windows from the
-				// registry, anchors on each Window's compatibility shell ref, splits
+				// registry, anchors on an explicit Pane or each Window's exact
+				// role-agnostic anchorPaneRef, splits
 				// detached, and never moves the client. With no scope flag at
 				// all the Project, the Window, and the anchor come from the
 				// active managed runtime, so the split lands where the operator
 				// is looking.
 				Name:    "pane",
-				Summary: "Create a shell Pane below a Window; the scope defaults to the active managed runtime",
+				Summary: "Create a shell Pane detached on an explicit Pane or the Window's exact shell or Agent anchor",
 				Usage: []string{
 					"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
@@ -414,7 +415,7 @@ var routes = []Route{
 				// splits the resolved Windows detached, and never moves the
 				// client.
 				Name:    "agent",
-				Summary: "Create an Agent and its managed Pane; --provider is required and the scope defaults to the active managed runtime",
+				Summary: "Create an Agent detached on an explicit Pane or the Window's exact shell or Agent anchor; --provider is required",
 				Usage: []string{
 					"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
@@ -778,7 +779,7 @@ var routes = []Route{
 		Children: []Route{
 			{
 				Name:      "resources",
-				Summary:   "Preview or repair safe Registry and tmux UID, owner, and runtime drift on one exact socket",
+				Summary:   "Preview or repair exact anchor-aware Registry and tmux topology on one exact socket",
 				Usage:     []string{"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]"},
 				Canonical: []string{"reconcile resources"},
 			},

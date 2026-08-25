@@ -61,6 +61,10 @@ type registryTopologyAgentPlan struct {
 	// server-wide by the owner guard and released before the new Pane is
 	// attached, so a stale registry row cannot orphan a Pane.
 	releaseUIDs []string
+	// reusePaneUID is the retained managed Pane identity this replay binds again.
+	// It is used for an Agent Window anchor so materialization never deletes the
+	// required anchor and mints a replacement UID.
+	reusePaneUID string
 }
 
 // topologyAgentResumeDecision is the pure verdict about one stored Agent: which
@@ -134,6 +138,7 @@ func planTopologyWindowAgents(
 	windowOrder int,
 	live []observedTopologyPane,
 	launcher topologyAgentLauncher,
+	anchorPaneUID string,
 ) []registryTopologyAgentPlan {
 	liveUIDs := map[string]bool{}
 	for _, pane := range live {
@@ -146,10 +151,15 @@ func planTopologyWindowAgents(
 		label := window.Metadata.Name + "/" + agent.Metadata.Name
 		materialized := false
 		var release []string
+		reusePaneUID := ""
 		for _, pane := range registry.PanesOf(agent.Metadata.UID) {
 			if liveUIDs[pane.Metadata.UID] {
 				materialized = true
 				break
+			}
+			if pane.Metadata.UID == anchorPaneUID && agent.Status.PaneRef == pane.Metadata.UID {
+				reusePaneUID = pane.Metadata.UID
+				continue
 			}
 			release = append(release, pane.Metadata.UID)
 		}
@@ -165,6 +175,7 @@ func planTopologyWindowAgents(
 			continue
 		}
 		work.releaseUIDs = release
+		work.reusePaneUID = reusePaneUID
 		plan.addItem(windowOrder*1000+500+order, coremetadata.KindAgent, label, agent.Metadata.UID, "materialize")
 		out = append(out, work)
 	}
@@ -254,11 +265,12 @@ func replayTopologyWindowAgents(
 	ledger *runtimeLedger,
 	newGeneration func() (string, error),
 	operationID string,
-) error {
+) (map[string]string, error) {
+	bindings := map[string]string{}
 	for ai := range work.agents {
 		replay := &work.agents[ai]
 		if launcher == nil {
-			return errors.New("topology Agent replay launcher is not configured")
+			return nil, errors.New("topology Agent replay launcher is not configured")
 		}
 		// A stale managed Pane row is released before the new one is attached.
 		// The owner guard has already proven none of these uids is live anywhere
@@ -271,30 +283,37 @@ func replayTopologyWindowAgents(
 				continue
 			}
 			if err := mutator.DeletePane(registry, paneUID); err != nil {
-				return MapMetadataError(err)
+				return nil, MapMetadataError(err)
 			}
 		}
-		pane, err := mutator.AttachAgentPane(registry, replay.agent.Metadata.UID, coremetadata.BootstrapPane{
-			CWD: replay.cwd,
-		}, operationID)
+		var pane coremetadata.Pane
+		var err error
+		if replay.reusePaneUID != "" {
+			pane, err = mutator.RebindAgentPane(registry, replay.agent.Metadata.UID, replay.reusePaneUID)
+		} else {
+			pane, err = mutator.AttachAgentPane(registry, replay.agent.Metadata.UID, coremetadata.BootstrapPane{
+				CWD: replay.cwd,
+			}, operationID)
+		}
 		if err != nil {
-			return MapMetadataError(err)
+			return nil, MapMetadataError(err)
 		}
 		activation, err := issuePaneActivation(newGeneration, registry, mutator, pane.Metadata.UID, replay.agent.Metadata.UID, operationID)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		paneID, splitErr := runtime.splitPane(ctx, anchorID, defaultPlacement, replay.cwd,
 			runtime.supervisedLaunch(ctx, activation, replay.argv))
 		if paneID != "" {
 			if adoptErr := adoptCreatedPane(ctx, runtime, paneID, sessionID, windowID, pane, ledger); adoptErr != nil {
-				return errors.Join(splitErr, adoptErr)
+				return nil, errors.Join(splitErr, adoptErr)
 			}
 			observeActivationRuntime(registry, mutator, activation, paneID, runtime.warn)
 		}
 		if splitErr != nil {
-			return splitErr
+			return nil, splitErr
 		}
+		bindings[pane.Metadata.UID] = paneID
 		runtime.equalizeSplitLayout(ctx, anchorID, defaultPlacement)
 		if replay.conversationID != "" {
 			launcher.BindResumedAgentPane(paneID, replay.provider, replay.cwd, replay.title, replay.conversationID)
@@ -302,10 +321,10 @@ func replayTopologyWindowAgents(
 			launcher.BindManagedAgentPane(paneID, replay.provider, replay.cwd, replay.title)
 		}
 		if err := mirrorTopologyAgentTopic(ctx, runtime, replay, paneID); err != nil {
-			return err
+			return nil, err
 		}
 	}
-	return nil
+	return bindings, nil
 }
 
 // mirrorTopologyAgentTopic projects the stored Agent topic onto the replayed
