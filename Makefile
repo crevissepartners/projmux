@@ -21,7 +21,7 @@ SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
 DOCS_REFERENCE ?= docs/cli.md
 
-.PHONY: fmt fmt-check fix build install npm-pack docs test test-integration test-install-smoke test-e2e test-e2e-update e2e verify deadcode security security-tools
+.PHONY: fmt fmt-check fix build install npm-pack docs test test-integration test-install-smoke test-e2e test-e2e-contract test-e2e-reliability test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -112,8 +112,24 @@ test-integration:
 test-install-smoke:
 	scripts/test-install-smoke.sh
 
-test-e2e:
+test-e2e: test-e2e-manifest
 	scripts/test-e2e-docker.sh
+
+test-e2e-contract:
+	test/e2e/evidence-contract.sh
+
+test-e2e-reliability:
+	test/e2e/reliability-contract.sh
+
+test-e2e-shards:
+	test/e2e/shard-contract.sh
+	test/e2e/shard-isolation-stress.sh
+
+test-e2e-manifest:
+	E2E_COVERAGE_SKIP_GO=1 test/e2e/coverage-contract.sh
+
+test-e2e-coverage:
+	test/e2e/coverage-contract.sh
 
 # Opt-in / local: depends on the public npm registry and published projmux
 # package, so it is not part of `verify`.
@@ -128,61 +144,25 @@ verify: fmt-check test test-integration test-install-smoke test-e2e
 # checked-in baselines. shellcheck, python3, and git are host dependencies;
 # scripts/security.sh reports actionable installation guidance when missing.
 security-tools:
-	@set -eu; \
-	manifest="$(abspath $(SECURITY_TOOL_MANIFEST))"; \
-	bin_dir="$(abspath $(SECURITY_BIN_DIR))"; \
-	if [ ! -f "$$manifest" ] || [ -L "$$manifest" ]; then \
-		echo "security-tools: canonical manifest is missing or not a regular file: $$manifest" >&2; \
-		exit 2; \
-	fi; \
-	if ! awk -F= 'BEGIN { expected[1]="govulncheck"; expected[2]="gosec"; expected[3]="staticcheck"; expected[4]="gitleaks"; expected[5]="actionlint" } NF != 2 || $$1 != expected[NR] || $$2 !~ /^v[0-9][^[:space:]=]*$$/ { exit 1 } END { if (NR != 5) exit 1 }' "$$manifest"; then \
-		echo "security-tools: invalid canonical manifest (expected exactly five ordered tool=vVERSION entries): $$manifest" >&2; \
-		exit 2; \
-	fi; \
-	mkdir -p "$$bin_dir"; \
-	goos="$$( $(GO) env GOOS )"; \
-	goarch="$$( $(GO) env GOARCH )"; \
-	tools_ok=1; \
-	while IFS='=' read -r tool version; do \
-		case "$$tool" in \
-			govulncheck) package="golang.org/x/vuln/cmd/govulncheck"; module="golang.org/x/vuln" ;; \
-			gosec) package="github.com/securego/gosec/v2/cmd/gosec"; module="github.com/securego/gosec/v2" ;; \
-			staticcheck) package="honnef.co/go/tools/cmd/staticcheck"; module="honnef.co/go/tools" ;; \
-			gitleaks) package="github.com/zricethezav/gitleaks/v8"; module="github.com/zricethezav/gitleaks/v8" ;; \
-			actionlint) package="github.com/rhysd/actionlint/cmd/actionlint"; module="github.com/rhysd/actionlint" ;; \
-		esac; \
-		if [ ! -f "$$bin_dir/$$tool" ] || [ -L "$$bin_dir/$$tool" ] || [ ! -x "$$bin_dir/$$tool" ] || \
-		   ! $(GO) version -m "$$bin_dir/$$tool" 2>/dev/null | awk -v want_package="$$package" -v want_module="$$module" -v want_version="$$version" -v want_goos="GOOS=$$goos" -v want_goarch="GOARCH=$$goarch" '$$1 == "path" && $$2 == want_package { package_ok=1 } $$1 == "mod" && $$2 == want_module && $$3 == want_version { module_ok=1 } $$1 == "build" && $$2 == want_goos { goos_ok=1 } $$1 == "build" && $$2 == want_goarch { goarch_ok=1 } END { exit(package_ok && module_ok && goos_ok && goarch_ok ? 0 : 1) }'; then \
-			tools_ok=0; \
-		fi; \
-	done < "$$manifest"; \
-	if [ ! -f "$$bin_dir/.versions" ] || [ -L "$$bin_dir/.versions" ] || ! cmp -s "$$manifest" "$$bin_dir/.versions"; then \
-		tools_ok=0; \
-	fi; \
-	if [ "$$tools_ok" = "1" ]; then \
-		echo ">> pinned security tools already installed in $$bin_dir"; \
-		exit 0; \
-	fi; \
-	echo ">> installing pinned security tools into $$bin_dir"; \
-	stage="$$(mktemp -d "$$(dirname "$$bin_dir")/.security-tools.XXXXXX")"; \
-	trap 'rm -rf "$$stage"' EXIT HUP INT TERM; \
-	while IFS='=' read -r tool version; do \
-		case "$$tool" in \
-			govulncheck) package="golang.org/x/vuln/cmd/govulncheck" ;; \
-			gosec) package="github.com/securego/gosec/v2/cmd/gosec" ;; \
-			staticcheck) package="honnef.co/go/tools/cmd/staticcheck" ;; \
-			gitleaks) package="github.com/zricethezav/gitleaks/v8" ;; \
-			actionlint) package="github.com/rhysd/actionlint/cmd/actionlint" ;; \
-		esac; \
-		GOBIN="$$stage" $(GO) install "$$package@$$version"; \
-	done < "$$manifest"; \
-	cp "$$manifest" "$$stage/.versions"; \
-	for tool in govulncheck gosec staticcheck gitleaks actionlint; do \
-		mv "$$stage/$$tool" "$$bin_dir/$$tool"; \
-	done; \
-	mv "$$stage/.versions" "$$bin_dir/.versions"; \
-	rmdir "$$stage"; \
-	trap - EXIT HUP INT TERM
+	@GO="$(GO)" \
+		SECURITY_TOOL_MANIFEST="$(abspath $(SECURITY_TOOL_MANIFEST))" \
+		SECURITY_BIN_DIR="$(abspath $(SECURITY_BIN_DIR))" \
+		scripts/security-tools.sh
 
 security: security-tools
-	@SECURITY_BIN_DIR="$(abspath $(SECURITY_BIN_DIR))" scripts/security.sh
+	@SECURITY_BIN_DIR="$(abspath $(SECURITY_BIN_DIR))" scripts/security-aggregate.sh
+
+security-serial: security-tools
+	@SECURITY_AGGREGATE_MODE=serial SECURITY_BIN_DIR="$(abspath $(SECURITY_BIN_DIR))" scripts/security-aggregate.sh
+
+security-go: security-tools
+	@SECURITY_BIN_DIR="$(abspath $(SECURITY_BIN_DIR))" scripts/security.sh go-security
+
+security-static: security-tools
+	@SECURITY_BIN_DIR="$(abspath $(SECURITY_BIN_DIR))" scripts/security.sh go-static
+
+security-policy: security-tools
+	@SECURITY_BIN_DIR="$(abspath $(SECURITY_BIN_DIR))" scripts/security.sh repository-policy
+
+security-contract: security-tools
+	@SECURITY_BIN_DIR="$(abspath $(SECURITY_BIN_DIR))" test/security-contract.sh

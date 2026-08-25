@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -343,17 +344,21 @@ func TestStatusbarClickPwdOpensPathPopupWithoutCopy(t *testing.T) {
 func TestStatusbarPathMetadataPreservesGitRootWithSpaces(t *testing.T) {
 	t.Parallel()
 
+	path := filepath.Join(t.TempDir(), "work tree", "proj")
+	if err := os.MkdirAll(filepath.Join(path, ".git"), 0o755); err != nil {
+		t.Fatalf("create isolated git root: %v", err)
+	}
 	runner := &statusbarFakeRunner{
 		respond: func(name string, args []string) ([]byte, error) {
-			if name == "git" && equalStringSlices(args, []string{"-C", "/tmp/work tree/proj", "rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"}) {
-				return []byte("/tmp/work tree/proj\nfeature/cwd-popup\n"), nil
+			if name == "git" && equalStringSlices(args, []string{"-C", path, "rev-parse", "--show-toplevel", "--abbrev-ref", "HEAD"}) {
+				return []byte(path + "\nfeature/cwd-popup\n"), nil
 			}
 			return nil, nil
 		},
 	}
 	cmd := newStatusbarTestCommand(runner, &stubNotifyStore{})
 
-	metadata := cmd.statusbarPathMetadata(context.Background(), "/tmp/work tree/proj")
+	metadata := cmd.statusbarPathMetadata(context.Background(), path)
 	if metadata.Project != "proj" {
 		t.Fatalf("Project = %q, want proj", metadata.Project)
 	}

@@ -5,6 +5,10 @@ unset TMUX TMUX_PANE
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/test/lib/smoke.sh"
 
 smoke_setup_env
+PROJMUX_E2E_SUITE="codex-lifecycle"
+export PROJMUX_E2E_SUITE
+smoke_contract_install_trap
+smoke_contract_begin C01 native-lifecycle codex-appserver-adapter
 cd "$smoke_root"
 smoke_build_binary
 bin="$PROJMUX_SMOKE_BIN"
@@ -388,3 +392,4 @@ fi
 lifecycle_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Codex native lifecycle E2E passed: socket=$lifecycle_socket path=$lifecycle_socket_path epochs=$epoch_one,$epoch_two"
+smoke_contract_pass

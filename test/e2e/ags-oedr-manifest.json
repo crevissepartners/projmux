@@ -1,0 +1,209 @@
+{
+  "schema": "projmux.e2e.ags-oedr.v1",
+  "stable_inventory": ["L01", "L02", "L03", "L04", "L05", "L06", "L07", "L08", "L09", "L10", "L11", "L12", "L13", "L14", "L15", "L16", "L17", "L18", "L19", "C01", "N01"],
+  "scenarios": [
+    {"id":"L01","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-1","axis":"Lifecycle","layer":"Runtime","A":"No app socket or Registry exists in isolated HOME.","G":"Shell bootstrap completes exact Home identities before attach failure.","S":"First projmux shell bootstrap.","O":"harness","E":"HOME boundary, bootstrap ordering, exact socket marker.","D":"Session role, socket path, UID mirrors, empty Project list.","R":"Preserve prepared control plane and clean only the queried socket.","e2e_boundary":"Absent-server real tmux bootstrap and exact socket containment."},
+    {"id":"L02","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-1","axis":"Authority","layer":"Controller","A":"Calling Pane has no managed identity.","G":"Implicit Project scope is refused with zero writes.","S":"create pane implicit scope.","O":"create-controller","E":"Managed Pane identity and explicit Project selector.","D":"Exit/output and pane-count pre/post comparison.","R":"Usage refusal with --project guidance.","e2e_boundary":"Built CLI refusal before any real tmux probe."},
+    {"id":"L03","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-1","axis":"Observation","layer":"Runtime","A":"Isolated real tmux contains session, Pane, and attention state.","G":"Config, notify, focus, and status remain consistent.","S":"Core Linux tmux flow.","O":"tmux-adapter","E":"Independent options, queue transitions, notify dispatch.","D":"Option, JSON state, hook log, and status output parity.","R":"Queue ack and no-client passive fallback.","e2e_boundary":"Real tmux option and no-client behavior."},
+    {"id":"L04","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-1","axis":"Presentation","layer":"UI","A":"Pseudo-TTY can drive an attached client and popup input.","G":"Settings and key sequences mutate only the exact client.","S":"Settings and terminal interaction.","O":"settings-ui","E":"Exact client, native picker, generated/live config.","D":"Invocation-scoped frames, bytes, bindings, and queue marker.","R":"Cancel is zero-write; defaults and clear restore state.","e2e_boundary":"Actual attached-client frame and key delivery."},
+    {"id":"L05","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-3","axis":"Persistence","layer":"Runtime","A":"Saved pane fields replay under a different pane-base-index.","G":"Returned Pane IDs preserve shell/startup/Agent fields.","S":"Real-tmux snapshot save, destroy, replay.","O":"tmux-adapter","E":"Returned Pane targeting and serialized field matrix.","D":"Real-tmux Go replay assertion.","R":"Replay fails closed and keeps the source snapshot.","e2e_boundary":"Disposable real tmux replay adapter."},
+    {"id":"L06","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-2","axis":"Mutation","layer":"Controller","A":"Explicit Registry authority and exact socket exist.","G":"Detached Project resources are contained and transactional.","S":"Project, Window, Pane, and Agent create.","O":"resource-controller","E":"Hooks, UID/generation/anchor guards, Registry lock.","D":"Registry/runtime inventory, geometry, hashes, receipts.","R":"Refusal or owned-only rollback with failure log.","e2e_boundary":"Built CLI materialization across real tmux and hooks."},
+    {"id":"L07","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-4","axis":"Convergence","layer":"Controller","A":"Registry authority, two sockets, and runtime drift exist.","G":"Bindings reach a bounded fixed point without sibling writes.","S":"Binding, namespace, and trigger burst.","O":"reconciler","E":"Explicit authority, lock serialization, bounded four-pass plan.","D":"Pass outcome, empty plan, Registry bytes, mirrors, sentinel.","R":"Reobserve to no-op; ambiguity refuses.","e2e_boundary":"Concurrent real controller trigger convergence."},
+    {"id":"L08","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-1","axis":"Lifecycle","layer":"Controller","A":"Exact target, inventory, and physical socket are observable.","G":"Canonical cascade preserves foreign and sibling resources.","S":"Live and Registry-only delete.","O":"delete-controller","E":"UID/owner/generation guards and replacement ordering.","D":"Dry/apply parity, hashes, exact socket calls, inventories.","R":"Refusal, owned rollback, replacement, repeat no-match.","e2e_boundary":"Irreversible real tmux deletion and replacement."},
+    {"id":"L09","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-2","axis":"Identity","layer":"Registry","A":"Stable Registry identity differs from runtime display identity.","G":"Rename/rebind changes desired mirrors only and repeats no-op.","S":"Project/Window/Pane/Agent rename and root rebind.","O":"registry-owner","E":"Stable-name separation and committed desired state.","D":"Runtime names, Registry description, sentinel, repeat report.","R":"Expose retry command and reconcile repair.","e2e_boundary":"Real tmux mirror convergence after desired rename."},
+    {"id":"L10","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-4","axis":"Topology","layer":"Controller","A":"Desired topology has missing live Window/Pane state.","G":"Exact graph materializes and repeat is byte/no-create no-op.","S":"Topology repair and snapshot materialization.","O":"topology-controller","E":"Owner graph and anchor/default-shell validation.","D":"UID graph, runtime counts, repeated plan/Registry bytes.","R":"Invalid anchors refuse; valid drift is recreated.","e2e_boundary":"Real missing-runtime allocation and repeat no-op."},
+    {"id":"L11","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-3","axis":"Lifecycle","layer":"Controller","A":"Registry contains a retained or zero-Window closed Project and an exact attached client; Fresh may replace either retained form.","G":"Managed stop keeps durable identity for Continue, zero-Window Continue preserves only the Project while minting canonical descendants, and every Fresh atomically replaces the complete same-root UID chain without reviving removed Agents.","S":"Closed Project activation, managed runtime stop, retained/zero-Window Continue, and retained/zero-Window Fresh.","O":"startup-controller","E":"Closed lifecycle state table, exact client handoff, one same-root claimant, canonical descendant allocation, fresh identity replacement, and private anchor removal.","D":"Old/new Project, Window, Pane and Agent UID sets; client focus; snapshot bytes; runtime mirrors; sibling-socket receipt; failure stage.","R":"Refuse drift or commit failure with old graph intact; Continue restores retained intent, Fresh publishes one new graph, and sibling socket remains unchanged.","e2e_boundary":"Attached-client managed stop followed by retained and zero-Window Continue/Fresh across real tmux with exact socket containment."},
+    {"id":"L12","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-3","axis":"Identity","layer":"Controller","A":"An unregistered directory is discoverable.","G":"First open mints and publishes a complete identity in one flow.","S":"Unregistered Project first open.","O":"first-open-controller","E":"Candidate/authority split and canonical transaction.","D":"UID receipts, Registry hash, HOME negative assertion.","R":"Repeat no-op; HOME and sibling remain unregistered.","e2e_boundary":"Real client first-open identity publication."},
+    {"id":"L13","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-3","axis":"Observation","layer":"Runtime","A":"Managed and unmanaged objects share an exact server.","G":"CLI and popup expose identical typed attribution with zero writes.","S":"Runtime diagnostics.","O":"diagnostics-owner","E":"Read-only exact-socket inventory.","D":"CLI/popup rows and state/tmux preimage hashes.","R":"Surface diagnostics without mutation.","e2e_boundary":"Real runtime inventory and popup parity."},
+    {"id":"L14","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-3","axis":"Authority","layer":"UI","A":"Registry and live/closed/control runtime coexist.","G":"Projects UI stays Registry-owned and read-only.","S":"Projects sidebar and Runtime link.","O":"projects-ui","E":"Registry projection and immutable read model.","D":"Row order, invocation-scoped frames, state hashes.","R":"Keep closed rows and isolate unmanaged runtime diagnostics.","e2e_boundary":"Attached-client Registry-first navigation."},
+    {"id":"L15","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-3","axis":"Presentation","layer":"UI","A":"Healthy and anomalous hosts are separately observable.","G":"Runtime visibility policy changes rows, not diagnostics.","S":"Sidebar visibility policy.","O":"sidebar-policy","E":"Read-time classification and saved preference.","D":"Row presence, route parity, write sentinels.","R":"Restore default while diagnostics remains available.","e2e_boundary":"Real viewport visibility under host state."},
+    {"id":"L16","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-3","axis":"Authority","layer":"Adapter","A":"Managed roots contain candidates across two sockets.","G":"Discovery suggests only; explicit open alone mints authority.","S":"Discovery, pin, and open.","O":"discovery-adapter","E":"Candidate-only discovery and explicit transition.","D":"Registry membership, repeat hashes, sibling sentinel.","R":"Unopened siblings remain candidates and repeat is no-op.","e2e_boundary":"Filesystem discovery to real Project activation."},
+    {"id":"L17","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-4","axis":"Convergence","layer":"Controller","A":"A supervised provider can exit at the creator claim-to-commit boundary, and current-generation exits may then arrive simultaneously or coalesced before an exact last-Pane/Window pair.","G":"Provider start is admitted only against the creator's committed Agent-Pane-generation-operation authority; exact exits produce no blank-UID rollback or fabricated receipt, every controller owner handoff reaches a write-free terminal pass, and causal last-Pane cleanup retains the zero-Window Project root and siblings.","S":"Create-Agent admission and termination journal authority, hook-driven provider termination, read-only owner/queue quiescence, bounded cleanup retry, non-last primary reanchor, and final Project Window stop.","O":"exit-reconciler","E":"Creator-resolved Registry/journal path, private CLOEXEC handshake, exact generation and operation, live-minus-dead observation, product-owned mark/acquire/drain/release protocol, stored causal receipt, cleanup-before-commit, stale-resume refusal, and zero replacement authority.","D":"Admission result, rollback UID, exact receipt, Agent/Panes, owner process/queue and terminal passes, Window descendants, Offline/paneRef/sessionRef projection, Project primaryWindowRef, sibling identities, and repeat SHA.","R":"Refuse partial/foreign/uncommitted activation before provider start, distinguish gate/exec failure from provider exit, consume every coalesced event through a terminal product pass, preserve/reanchor siblings, and converge write-free.","e2e_boundary":"Real immediate exit-42 admission, simultaneous provider hooks, controller-owner handoff, non-last Window, and final Project Window closure below exact owned sockets."},
+    {"id":"L18","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-2","axis":"Mutation","layer":"UI","A":"An attached exact client invokes the closed generated foreground run-shell producer matrix from one managed origin Pane.","G":"Success is silent on the foreground job or delivered as one bounded exact-client message, no producer opens a view-mode overlay, and origin PID/focus/Registry identity remain unchanged.","S":"Pane menu, Window intent, direct Agent Pane, popup, and statusbar foreground run-shell routes plus refusal/failure legs.","O":"pane-menu-ui","E":"Closed producer ledger, guarded internal routes, zero foreground stdout/stderr, exact-client display-message, and bounded undeliverable failure.","D":"pane_in_mode/pane_mode, origin PID/current command, exact client Pane, Registry UID, bounded message, and created/deleted resource receipts.","R":"Refusal and delivery failure remain bounded and visible without raw transport output; canonical cleanup removes created resources and exact socket only.","e2e_boundary":"Real foreground run-shell transport on an attached client proves no overlay and preserves origin process/focus/Registry identity."},
+    {"id":"L19","suite":"linux","source":"test/e2e/linux-smoke.sh","shard":"fixture-1","axis":"Authority","layer":"Controller","A":"Config apply declares Home ControlSession and popup origin; its exact Window can reach one clean last Pane while Project and foreign siblings coexist.","G":"Home producers and plural reads remain root-scoped, then the causal last-Pane/Window-unlinked pair removes only owned descendants while retaining the exact ControlSession root and siblings at a byte-identical fixed point.","S":"Home popup create, representative read routes, and final ControlSession Window stop.","O":"control-session-controller","E":"Owner graph, explicit origin, typed selector precedence, exact causal receipt, root-kind retention, and zero replacement allocation.","D":"OwnerRefs, provider fields, Window/Pane/Agent absence, retained ControlSession uid, Project/foreign sentinels, read sets, and Registry repeat SHA.","R":"Cross-root refusal, exact ControlSession materialization, target-only descendant cleanup, root retention, and write-free repeat.","e2e_boundary":"Four real popup producers, five real-tmux read sentinels, and one exact ControlSession last-Window closure below the owned socket root."},
+    {"id":"C01","suite":"codex","source":"test/e2e/codex-lifecycle.sh","shard":"codex-lifecycle","axis":"Lifecycle","layer":"Adapter","A":"Fake app-server binds exact Pane UID and generation in real tmux.","G":"Native epoch uniquely owns attention and completion across reconnect.","S":"Codex app-server lifecycle.","O":"codex-appserver-adapter","E":"Pane/generation/thread/turn/request identity and epoch precedence.","D":"Options, queue, desktop count, milestone and process inventory.","R":"Clear, fallback after disconnect, reconnect replacement.","e2e_boundary":"Real tmux with fake native protocol lifecycle."},
+    {"id":"N01","suite":"npm","source":"test/e2e/npm-staging-path.sh","shard":"npm-staging","axis":"Persistence","layer":"Installer","A":"Canonical and npm retire trees coexist temporarily.","G":"Generated/live hooks retain canonical executable after retire deletion.","S":"Offline npm staging/retire path.","O":"executable-canonicalizer","E":"Retire-segment removal and canonical path persistence.","D":"Generated config, baked executable, and hook inventory.","R":"Never store doomed retire path.","e2e_boundary":"Execution from and after deleting an npm-shaped retire tree."}
+  ],
+  "moved_matrices": [
+    {
+      "id": "L19.plural-read-context-selector-matrix",
+      "scenario_id": "L19",
+      "former_e2e_cells": 60,
+      "e2e_sentinel_cells": 5,
+      "source_marker": "MOVED_MATRIX id=L19.plural-read-context-selector-matrix lower=internal/app/TestPluralReadContextSelectorMatrix cells=60",
+      "lower_layer": {
+        "layer": "unit",
+        "path": "internal/app/active_target_test.go",
+        "symbol": "TestPluralReadContextSelectorMatrix",
+        "cell_count_symbol": "pluralReadContextSelectorMatrixCells",
+        "selector": "go test ./internal/app -run ^TestPluralReadContextSelectorMatrix$ -count=1",
+        "positive": "Every Window/Pane/Agent Project, ControlSession, outside, explicit Project, all-projects, -A, and UID cell asserts an exact set.",
+        "negative": "Every foreign-root omitted cell refuses as usage with zero stdout and the undecidable-scope reason.",
+        "fixed_point": "Every one of 60 cells executes twice with identical output/error/active-observation count and zero Registry transaction, write, or byte-level model change."
+      },
+      "e2e_sentinel": "L19 keeps ControlSession omitted positive, foreign omitted refusal, outside explicit Project, ControlSession global escape, and repeated omitted-read zero-write checks on the queried exact socket below the owned smoke root."
+    }
+  ],
+  "merged_evidence": [
+    {
+      "id": "L17.merged-766",
+      "scenario_id": "L17",
+      "source_commit": "fc04577e7b5908ecb3d73f3694d32d174c519ac3",
+      "guarantees": {
+        "simultaneous_or_coalesced_exit": "Two current-generation provider exits converge in either event order and when one controller lease coalesces both events.",
+        "exact_generation_cleanup": "Every exact generation loses both its Registry Pane and retained pane_dead/mirrored runtime Pane.",
+        "offline_resumable_refs": "Each Agent is Offline with paneRef cleared while its conversation sessionRef remains resumable.",
+        "sibling_preservation": "The live sibling shell and unrelated failed Agent remain byte/identity stable.",
+        "fixed_point": "Repeating the same exits and convergence writes zero transactions and leaves Registry bytes identical."
+      },
+      "lower_layer": [
+        {"path":"internal/app/lifecycle_cascade_test.go","symbol":"TestReleasedSameGenerationDeadPaneRetryConvergesAndPreservesSessionRef","selector":"go test ./internal/app -run ^TestReleasedSameGenerationDeadPaneRetryConvergesAndPreservesSessionRef$ -count=1"},
+        {"path":"internal/app/lifecycle_cascade_test.go","symbol":"TestSimultaneousCleanAgentExitsConvergeWithoutDeadOrMirroredResiduals","selector":"go test ./internal/app -run ^TestSimultaneousCleanAgentExitsConvergeWithoutDeadOrMirroredResiduals$ -count=1"},
+        {"path":"internal/app/lifecycle_cascade_test.go","symbol":"TestCoalescedCleanAgentExitEventsConvergeBothExactDeadPanes","selector":"go test ./internal/app -run ^TestCoalescedCleanAgentExitEventsConvergeBothExactDeadPanes$ -count=1"},
+        {"path":"internal/app/lifecycle_cascade_test.go","symbol":"TestControllerRetriesTypedDeadPaneCleanupReasonAndConvergesNextPass","selector":"go test ./internal/app -run ^TestControllerRetriesTypedDeadPaneCleanupReasonAndConvergesNextPass$ -count=1"},
+        {"path":"internal/app/termination_evidence_contract_test.go","symbol":"TestExactDeadPaneReceiptWaitUsesLiveMinusDeadObservation","selector":"go test ./internal/app -run ^TestExactDeadPaneReceiptWaitUsesLiveMinusDeadObservation$ -count=1"}
+      ],
+      "integration": {"path":"test/integration/linux-smoke.sh","marker":">> exit reconciliation simultaneous clean providers"},
+      "e2e": {"path":"test/e2e/linux-smoke.sh","marker":">> exit reconciliation e2e simultaneous providers"}
+    },
+    {
+      "id": "L18.merged-767",
+      "scenario_id": "L18",
+      "source_commit": "217bdc32f51f36914625df92bfb17de7abe1e03d",
+      "guarantees": {
+        "foreground_producer_matrix": "The closed generated pane-menu, Window, direct Agent Pane, popup, statusbar, hook, and runtime producer catalog has no unclassified foreground route.",
+        "exact_client_delivery": "Mutation success and refusal/failure feedback reaches only one bounded display-message on the exact invoking client.",
+        "success_silent_no_overlay": "Successful silent routes emit zero foreground bytes and every route leaves pane_in_mode=0 with no view-mode overlay.",
+        "origin_identity_preservation": "The origin Pane PID/current command, exact client focus, and Registry Pane UID survive the entire matrix.",
+        "bounded_refusal_failure": "Refused and undeliverable routes remain bounded, typed, visible, and never leak raw stdout/stderr or a returned-N overlay."
+      },
+      "lower_layer": [
+        {"path":"internal/app/interactive_run_shell_test.go","symbol":"TestInteractiveRunShellGuardCoversEveryLedgeredRouteAndNothingElse","selector":"go test ./internal/app -run ^TestInteractiveRunShellGuardCoversEveryLedgeredRouteAndNothingElse$ -count=1"},
+        {"path":"internal/app/interactive_run_shell_test.go","symbol":"TestInteractiveRunShellGuardKeepsSuccessSilent","selector":"go test ./internal/app -run ^TestInteractiveRunShellGuardKeepsSuccessSilent$ -count=1"},
+        {"path":"internal/app/interactive_run_shell_test.go","symbol":"TestInteractiveRunShellGuardConvergesFailureOnTheExactClient","selector":"go test ./internal/app -run ^TestInteractiveRunShellGuardConvergesFailureOnTheExactClient$ -count=1"},
+        {"path":"internal/app/interactive_run_shell_test.go","symbol":"TestInteractiveRunShellGuardKeepsAnUndeliverableFailureVisible","selector":"go test ./internal/app -run ^TestInteractiveRunShellGuardKeepsAnUndeliverableFailureVisible$ -count=1"},
+        {"path":"internal/app/interactive_run_shell_test.go","symbol":"TestInteractiveRunShellMessageStaysOneBoundedLine","selector":"go test ./internal/app -run ^TestInteractiveRunShellMessageStaysOneBoundedLine$ -count=1"},
+        {"path":"internal/app/interactive_run_shell_test.go","symbol":"TestWindowIntentsReportOneBoundedLineToTheExactClient","selector":"go test ./internal/app -run ^TestWindowIntentsReportOneBoundedLineToTheExactClient$ -count=1"},
+        {"path":"internal/app/interactive_run_shell_test.go","symbol":"TestWindowIntentFailureKeepsTheMutationStoryStraight","selector":"go test ./internal/app -run ^TestWindowIntentFailureKeepsTheMutationStoryStraight$ -count=1"},
+        {"path":"internal/app/run_shell_output_ledger_test.go","symbol":"TestRunShellOutputLedgerClassifiesEveryGeneratedProducer","selector":"go test ./internal/app -run ^TestRunShellOutputLedgerClassifiesEveryGeneratedProducer$ -count=1"},
+        {"path":"internal/app/run_shell_output_ledger_test.go","symbol":"TestRunShellOutputLedgerHoldsTheNoOverlayContract","selector":"go test ./internal/app -run ^TestRunShellOutputLedgerHoldsTheNoOverlayContract$ -count=1"},
+        {"path":"internal/app/run_shell_output_ledger_test.go","symbol":"TestRunShellSourceSitesAreClosed","selector":"go test ./internal/app -run ^TestRunShellSourceSitesAreClosed$ -count=1"},
+        {"path":"internal/app/run_shell_output_ledger_test.go","symbol":"TestGeneratedInteractiveProducersInvokeGuardedRoutes","selector":"go test ./internal/app -run ^TestGeneratedInteractiveProducersInvokeGuardedRoutes$ -count=1"}
+      ],
+      "integration": {"path":"test/integration/linux-smoke.sh","marker":"generated hook leaves output on an interactive pane"},
+      "e2e": {"path":"test/e2e/linux-smoke.sh","marker":">> managed pane-menu and interactive run-shell output e2e passed"}
+    },
+    {
+      "id": "L17.merged-768-project-stop",
+      "scenario_id": "L17",
+      "source_commit": "3322b5f7b0c247c9ad206807d7a1ec817b07836e",
+      "guarantees": {
+        "causal_last_pane_window_unlink": "Only an exact clean last-Pane receipt paired with its matching Window-unlinked observation authorizes target Window descendant deletion.",
+        "zero_window_project_retention": "The final Window closure retains the exact Project uid, root reservation, and valid empty primaryWindowRef without allocating a replacement.",
+        "stale_resume_refusal": "A receipt whose Agent resumed on a different Pane or generation is stale and produces zero Window or Registry writes.",
+        "sibling_reanchor_and_containment": "A non-last primary reanchors to the existing sibling, while same-socket Project and sibling-socket state remain identity and byte stable.",
+        "fixed_point": "Event carry across the worker lease converges, and replay after closure leaves Registry bytes and the zero-Window root unchanged."
+      },
+      "lower_layer": [
+        {"path":"internal/app/controller_trigger_test.go","symbol":"TestEventMarkedAfterFinalPendingCheckIsConsumedAcrossLeaseRelease","selector":"go test ./internal/app -run ^TestEventMarkedAfterFinalPendingCheckIsConsumedAcrossLeaseRelease$ -count=1"},
+        {"path":"internal/app/delete_pane_runtime_test.go","symbol":"TestLifecycleSiblingCleanupBindsExistingExactSocketBeforeKillPlan","selector":"go test ./internal/app -run ^TestLifecycleSiblingCleanupBindsExistingExactSocketBeforeKillPlan$ -count=1"},
+        {"path":"internal/app/delete_test.go","symbol":"TestDeleteLastProjectWindowRetainsZeroWindowProjectWithoutReplacement","selector":"go test ./internal/app -run ^TestDeleteLastProjectWindowRetainsZeroWindowProjectWithoutReplacement$ -count=1"},
+        {"path":"internal/app/lifecycle_cascade_test.go","symbol":"TestLastPaneExitAndMatchingWindowUnlinkDeleteWindowAndRetainProject","selector":"go test ./internal/app -run ^TestLastPaneExitAndMatchingWindowUnlinkDeleteWindowAndRetainProject$ -count=1"},
+        {"path":"internal/app/lifecycle_cascade_test.go","symbol":"TestAutomaticWindowClosureNeverUsesProjectPinAuthority","selector":"go test ./internal/app -run ^TestAutomaticWindowClosureNeverUsesProjectPinAuthority$ -count=1"},
+        {"path":"internal/app/lifecycle_cascade_test.go","symbol":"TestWindowUnlinkedConsumesStoredExactTeardownEvidenceOnlyForTargetWindow","selector":"go test ./internal/app -run ^TestWindowUnlinkedConsumesStoredExactTeardownEvidenceOnlyForTargetWindow$ -count=1"},
+        {"path":"internal/app/lifecycle_cascade_test.go","symbol":"TestLastShellExitStoresPendingEvidenceWithoutReplacementAuthority","selector":"go test ./internal/app -run ^TestLastShellExitStoresPendingEvidenceWithoutReplacementAuthority$ -count=1"},
+        {"path":"internal/app/lifecycle_cascade_test.go","symbol":"TestLastPaneClosureDoesNotInvokeReplacementPreparation","selector":"go test ./internal/app -run ^TestLastPaneClosureDoesNotInvokeReplacementPreparation$ -count=1"},
+        {"path":"internal/app/lifecycle_cascade_test.go","symbol":"TestLastPaneRegistryCommitFailureLeavesReceiptUncommittedAfterExactCleanup","selector":"go test ./internal/app -run ^TestLastPaneRegistryCommitFailureLeavesReceiptUncommittedAfterExactCleanup$ -count=1"},
+        {"path":"internal/app/lifecycle_cascade_test.go","symbol":"TestDeadPaneCleanupFailureExposesTypedRetryAndNextPassConverges","selector":"go test ./internal/app -run ^TestDeadPaneCleanupFailureExposesTypedRetryAndNextPassConverges$ -count=1"},
+        {"path":"internal/core/metadata/invariant_pbt_test.go","symbol":"TestExplicitDeleteLastProjectWindowRetainsZeroWindowRootWithZeroReplacementAllocation","selector":"go test ./internal/core/metadata -run ^TestExplicitDeleteLastProjectWindowRetainsZeroWindowRootWithZeroReplacementAllocation$ -count=1"},
+        {"path":"internal/core/metadata/invariant_pbt_test.go","symbol":"TestExplicitLastWindowDeleteDoesNotCallAnyUIDAllocator","selector":"go test ./internal/core/metadata -run ^TestExplicitLastWindowDeleteDoesNotCallAnyUIDAllocator$ -count=1"},
+        {"path":"internal/core/metadata/lifecycle_decision_test.go","symbol":"TestTeardownAggregationIsOrderIndependentAndRootBounded","selector":"go test ./internal/core/metadata -run ^TestTeardownAggregationIsOrderIndependentAndRootBounded$ -count=1"},
+        {"path":"internal/core/metadata/lifecycle_decision_test.go","symbol":"TestLastPaneCausalPairDeletesWindowAndPreservesZeroWindowProject","selector":"go test ./internal/core/metadata -run ^TestLastPaneCausalPairDeletesWindowAndPreservesZeroWindowProject$ -count=1"},
+        {"path":"internal/core/metadata/lifecycle_decision_test.go","symbol":"TestCausalPrimaryWindowClosureReanchorsToExistingSibling","selector":"go test ./internal/core/metadata -run ^TestCausalPrimaryWindowClosureReanchorsToExistingSibling$ -count=1"},
+        {"path":"internal/core/metadata/lifecycle_decision_test.go","symbol":"TestWindowCascadeRefusesReceiptAfterAgentResumedOnDifferentPane","selector":"go test ./internal/core/metadata -run ^TestWindowCascadeRefusesReceiptAfterAgentResumedOnDifferentPane$ -count=1"},
+        {"path":"internal/core/metadata/schema_test.go","symbol":"TestRegistryValidateRejectsStructuralViolations","selector":"go test ./internal/core/metadata -run ^TestRegistryValidateRejectsStructuralViolations$ -count=1"}
+      ],
+      "integration": {"path":"test/integration/linux-smoke.sh","marker":">> termination Phase 1 last-Pane"},
+      "e2e": {"path":"test/e2e/linux-smoke.sh","marker":">> exit reconciliation e2e Phase 1"}
+    },
+    {
+      "id": "L19.merged-768-control-stop",
+      "scenario_id": "L19",
+      "source_commit": "3322b5f7b0c247c9ad206807d7a1ec817b07836e",
+      "guarantees": {
+        "control_session_causal_closure": "The exact ControlSession last Pane and matching Window-unlinked observation delete the owned Window descendant graph.",
+        "control_root_retention": "The exact ControlSession uid/root remains registered after its final Window disappears.",
+        "zero_replacement_allocation": "Automatic closure allocates no replacement Window, Pane, Agent, or uid and does not borrow Project pin authority.",
+        "sibling_containment": "The same-socket Project and foreign runtime sibling survive with the queried socket contained below the owned smoke root.",
+        "fixed_point": "A repeated controller convergence writes no Registry bytes after the ControlSession Window reaches zero descendants."
+      },
+      "lower_layer": [
+        {"path":"internal/core/metadata/lifecycle_decision_test.go","symbol":"TestControlSessionLastWindowCausalPairDeletesWindowAndRetainsRootIdentity","selector":"go test ./internal/core/metadata -run ^TestControlSessionLastWindowCausalPairDeletesWindowAndRetainsRootIdentity$ -count=1"}
+      ],
+      "integration": {"path":"test/integration/linux-smoke.sh","marker":">> termination Phase 1 last-Pane"},
+      "e2e": {"path":"test/e2e/linux-smoke.sh","marker":">> ControlSession create/read-scope + Phase 1 closure e2e passed"}
+    },
+    {
+      "id": "L11.merged-770-runtime-fresh",
+      "scenario_id": "L11",
+      "source_commit": "dcffa5daa6108bfdf2d437e9c1ab8097b3bd8454",
+      "guarantees": {
+        "managed_stop_retains_identity": "Managed Project stop closes only runtime state and leaves the exact durable Project, Window, Pane, Agent, snapshot, and conversation identity available to Continue.",
+        "zero_window_continue": "Continue from a valid zero-Window Project preserves the Project uid while allocating exactly one new canonical Window and shell Pane.",
+        "fresh_replaces_complete_identity": "Fresh from retained or zero-Window state publishes one new same-root Project, Window, and shell Pane chain and never reuses the prior claimant.",
+        "commit_failure_preserves_preimage": "Planning, commit, or readback failure leaves the previous durable graph and snapshot bytes intact and reports old/new identity evidence.",
+        "agent_and_sibling_containment": "Fresh removes stale Agent descendants without launching them, strips inherited private anchors, keeps exact client focus, and leaves the sibling socket unchanged."
+      },
+      "lower_layer": [
+        {"path":"internal/app/project_lifecycle_test.go","symbol":"TestProjectLifecycleAppClassifiesAllThreeDesiredStatesWithoutRuntimeEvidence","selector":"go test ./internal/app -run ^TestProjectLifecycleAppClassifiesAllThreeDesiredStatesWithoutRuntimeEvidence$ -count=1"},
+        {"path":"internal/app/project_lifecycle_test.go","symbol":"TestProjectLifecycleFailuresExposeActionStageAndOldNewUIDs","selector":"go test ./internal/app -run ^TestProjectLifecycleFailuresExposeActionStageAndOldNewUIDs$ -count=1"},
+        {"path":"internal/app/runtime_stop_test.go","symbol":"TestManagedRuntimeStopAuthorityRejectsZeroWindowNoWriteCell","selector":"go test ./internal/app -run ^TestManagedRuntimeStopAuthorityRejectsZeroWindowNoWriteCell$ -count=1"},
+        {"path":"internal/app/runtime_stop_test.go","symbol":"TestProjectStopSurfaceExecutorMatchesLifecycleTableAndGenericCopyStaysGeneric","selector":"go test ./internal/app -run ^TestProjectStopSurfaceExecutorMatchesLifecycleTableAndGenericCopyStaysGeneric$ -count=1"},
+        {"path":"internal/app/project_startup_topology_test.go","symbol":"TestZeroWindowContinuePreservesProjectAndAllocatesCanonicalWindowShellUIDs","selector":"go test ./internal/app -run ^TestZeroWindowContinuePreservesProjectAndAllocatesCanonicalWindowShellUIDs$ -count=1"},
+        {"path":"internal/app/project_startup_fresh_test.go","symbol":"TestProjectFreshStartAgentAnchorCreatesNewMinimumIdentityOnEveryFresh","selector":"go test ./internal/app -run ^TestProjectFreshStartAgentAnchorCreatesNewMinimumIdentityOnEveryFresh$ -count=1"},
+        {"path":"internal/app/project_startup_fresh_test.go","symbol":"TestProjectFreshStartCommitFailureRetainsExactOldGraphPreimage","selector":"go test ./internal/app -run ^TestProjectFreshStartCommitFailureRetainsExactOldGraphPreimage$ -count=1"},
+        {"path":"internal/core/metadata/lifecycle_decision_test.go","symbol":"TestProjectLifecycleStateTableHasTwelveClosedExclusiveCells","selector":"go test ./internal/core/metadata -run ^TestProjectLifecycleStateTableHasTwelveClosedExclusiveCells$ -count=1"},
+        {"path":"internal/core/metadata/lifecycle_decision_test.go","symbol":"TestPlanProjectFreshReplacementCreatesOneNewClaimantAndPreservesPreimage","selector":"go test ./internal/core/metadata -run ^TestPlanProjectFreshReplacementCreatesOneNewClaimantAndPreservesPreimage$ -count=1"},
+        {"path":"internal/core/metadata/lifecycle_decision_test.go","symbol":"TestPlanProjectFreshReplacementSupportsZeroWindowAndFailureRetainsOldGraph","selector":"go test ./internal/core/metadata -run ^TestPlanProjectFreshReplacementSupportsZeroWindowAndFailureRetainsOldGraph$ -count=1"}
+      ],
+      "integration": {"path":"test/integration/linux-smoke.sh","marker":">> lifecycle smoke root="},
+      "e2e": {"path":"test/e2e/linux-smoke.sh","marker":">> Closed Project managed startup e2e passed"}
+    },
+    {
+      "id": "L17.merged-771-create-authority",
+      "scenario_id": "L17",
+      "source_commit": "de52d15dc8d57ce08f6c55bdf66a702028d8e274",
+      "guarantees": {
+        "commit_before_provider_start": "A managed Agent provider starts only after the creator Registry has committed the exact Agent-Pane-generation-operation binding.",
+        "creator_registry_and_journal_authority": "Admission reads and termination receipt writes use one cleaned absolute creator state root even when the tmux server inherited a different XDG environment.",
+        "gate_exec_exit_disambiguation": "Admission or provider exec failure produces no fabricated termination receipt, while the same numeric provider exit produces one exact receipt and HUP during admission has provider side-effect zero.",
+        "exact_abort_and_containment": "Partial, blank, malformed, foreign, or uncommitted identity refuses before provider start; owned abort leaves runtime and Registry residual zero and siblings byte-identical.",
+        "immediate_exit_fixed_point": "The real immediate exit-42 signature has committed admission, blank-UID rollback zero, exact generation/operation receipt, and a write-free repeat.",
+        "controller_owner_handoff": "Read-only exact owner/queue observation followed by one product-owned terminal pass closes late marks before the next beta authority boundary without touching the lease or weakening controller.identity."
+      },
+      "lower_layer": [
+        {"path":"internal/app/supervise_test.go","symbol":"TestSuperviseWaitsForTheCommittedActivationBeforeStartingTheChild","selector":"go test ./internal/app -run ^TestSuperviseWaitsForTheCommittedActivationBeforeStartingTheChild$ -count=1"},
+        {"path":"internal/app/supervise_test.go","symbol":"TestSuperviseRefusesTheChildWhenCreateAbortsBeforeActivationCommit","selector":"go test ./internal/app -run ^TestSuperviseRefusesTheChildWhenCreateAbortsBeforeActivationCommit$ -count=1"},
+        {"path":"internal/app/supervise_test.go","symbol":"TestSuperviseActivationAdmissionIsExactAndZeroWrite","selector":"go test ./internal/app -run ^TestSuperviseActivationAdmissionIsExactAndZeroWrite$ -count=1"},
+        {"path":"internal/app/supervise_test.go","symbol":"TestActivationAuthorityRejectsNonExactRegistryPathsBeforeProviderStart","selector":"go test ./internal/app -run ^TestActivationAuthorityRejectsNonExactRegistryPathsBeforeProviderStart$ -count=1"},
+        {"path":"internal/app/supervise_test.go","symbol":"TestAgentAdmissionAndReceiptUseCreatorRegistryAuthorityNotAmbientXDG","selector":"go test ./internal/app -run ^TestAgentAdmissionAndReceiptUseCreatorRegistryAuthorityNotAmbientXDG$ -count=1"},
+        {"path":"internal/app/supervise_test.go","symbol":"TestActivationExecFailureHandshakeIsTyped","selector":"go test ./internal/app -run ^TestActivationExecFailureHandshakeIsTyped$ -count=1"},
+        {"path":"internal/app/supervise_launch_test.go","symbol":"TestAgentLaunchCarriesTheCreatorResolvedAbsoluteRegistryPath","selector":"go test ./internal/app -run ^TestAgentLaunchCarriesTheCreatorResolvedAbsoluteRegistryPath$ -count=1"},
+        {"path":"internal/app/supervise_child_unix_test.go","symbol":"TestSupervisedActivationRefusesPartialAgentIdentityBeforeProviderStart","selector":"go test ./internal/app -run ^TestSupervisedActivationRefusesPartialAgentIdentityBeforeProviderStart$ -count=1"},
+        {"path":"internal/app/supervise_child_unix_test.go","symbol":"TestSupervisedActivationRefusesUnexpectedRegistryShapeBeforeProviderStart","selector":"go test ./internal/app -run ^TestSupervisedActivationRefusesUnexpectedRegistryShapeBeforeProviderStart$ -count=1"},
+        {"path":"internal/app/supervise_child_unix_test.go","symbol":"TestSupervisedShellBypassesAgentAdmissionWithOrWithoutOperationID","selector":"go test ./internal/app -run ^TestSupervisedShellBypassesAgentAdmissionWithOrWithoutOperationID$ -count=1"},
+        {"path":"internal/app/supervise_child_unix_test.go","symbol":"TestSuperviseActivationHandshakeDistinguishesGateFailureFromProviderExit","selector":"go test ./internal/app -run ^TestSuperviseActivationHandshakeDistinguishesGateFailureFromProviderExit$ -count=1"},
+        {"path":"internal/app/supervise_child_unix_test.go","symbol":"TestActivationExecCloseOnExecDoesNotWaitForProviderDescendants","selector":"go test ./internal/app -run ^TestActivationExecCloseOnExecDoesNotWaitForProviderDescendants$ -count=1"},
+        {"path":"internal/app/controller_trigger_test.go","symbol":"TestOneProducerConvergesOnceAndProvesIt","selector":"go test ./internal/app -run ^TestOneProducerConvergesOnceAndProvesIt$ -count=1"},
+        {"path":"internal/app/controller_trigger_test.go","symbol":"TestAPassThatWroteIsRepeatedUntilOneWritesNothing","selector":"go test ./internal/app -run ^TestAPassThatWroteIsRepeatedUntilOneWritesNothing$ -count=1"},
+        {"path":"internal/app/controller_trigger_test.go","symbol":"TestTheWorkerLeaseIsExclusiveAndSurvivesNoCrash","selector":"go test ./internal/app -run ^TestTheWorkerLeaseIsExclusiveAndSurvivesNoCrash$ -count=1"}
+      ],
+      "integration": {"path":"test/integration/linux-smoke.sh","marker":">> exit reconciliation immediate provider exit42"},
+      "e2e": {"path":"test/e2e/linux-smoke.sh","marker":">> exit reconciliation e2e hook-driven immediate failure"},
+      "supporting": [
+        {"layer":"integration-harness","path":"test/integration/create-agent-early-exit-repeat.sh","marker":">> create authority isolated summary runs=$repeats recurrence=0"},
+        {"layer":"e2e","path":"test/e2e/linux-smoke.sh","marker":">> exit reconciliation e2e simultaneous providers agents="}
+      ]
+    }
+  ]
+}

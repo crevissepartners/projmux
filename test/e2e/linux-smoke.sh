@@ -4,11 +4,55 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/test/lib/smoke.sh"
 
 smoke_setup_env
+PROJMUX_E2E_SUITE="linux"
+export PROJMUX_E2E_SUITE
+smoke_contract_install_trap
 trap smoke_cleanup_env EXIT
 cd "$smoke_root"
 
 smoke_build_binary
 bin="$PROJMUX_SMOKE_BIN"
+
+linux_shard="${PROJMUX_E2E_LINUX_SHARD:-all}"
+linux_scenario="${E2E_SCENARIO:-all}"
+declare -A linux_scenario_shards=()
+while IFS=$'\t' read -r manifest_shard manifest_ids; do
+  read -r -a manifest_scenarios <<<"$manifest_ids"
+  for manifest_scenario in "${manifest_scenarios[@]}"; do
+    linux_scenario_shards["$manifest_scenario"]="$manifest_shard"
+  done
+done <"$smoke_root/test/e2e/linux-shards.tsv"
+smoke_linux_shard_enabled() {
+  # The four outer sections retain readable source locality. Actual shard
+  # assignment is contract-ID based below so expensive fixtures can be balanced
+  # without copying setup or sharing mutable state between containers.
+  case "$linux_shard" in
+    all | fixture-1 | fixture-2 | fixture-3 | fixture-4) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+smoke_linux_scenario_enabled() {
+  local scenario_id="$1"
+  if [[ "$linux_scenario" != "all" ]]; then
+    [[ "$linux_scenario" == "$scenario_id" ]]
+    return
+  fi
+  [[ "$linux_shard" == "all" ]] && return 0
+  [[ "${linux_scenario_shards[$scenario_id]:-}" == "$linux_shard" ]]
+}
+
+e2e_bounded_reconcile_to_noop() {
+  if [[ "${1:-}" == "--allow-initial-noop" ]]; then
+    shift
+  fi
+  local report_prefix="$1"
+  shift
+  smoke_bounded_fixed_point "$report_prefix" "$@"
+}
+
+if smoke_linux_shard_enabled bootstrap-interactive; then
+if smoke_linux_scenario_enabled L01; then
+smoke_contract_begin L01 bootstrap harness
 
 # A genuinely absent app socket must survive the complete ControlSession
 # bootstrap before the foreground attach. Run the user-facing, selector-free
@@ -105,6 +149,11 @@ smoke_cleanup_tmux_server "$fresh_shell_socket"
 unset PROJMUX_SMOKE_TMUX_SOCKET
 echo ">> fresh projmux shell e2e bootstrapped Home on $fresh_shell_actual"
 
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L02; then
+smoke_contract_begin L02 unattributed-create create-controller
+
 # An unattributed pane is not a Projmux scope. `create` used to fall back to a
 # runtime-only split here; it now refuses and names --project, and it must leave
 # the server exactly as it found it. The positive implicit-scope path is
@@ -144,6 +193,11 @@ if [[ "$(tmux -L "$pane_id_socket" list-panes -a -F '#{pane_id}' | wc -l)" != "$
   exit 1
 fi
 tmux -L "$pane_id_socket" kill-server
+
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L03; then
+smoke_contract_begin L03 core-runtime tmux-adapter
 
 project_a="$PROJMUX_SMOKE_WORKDIR/projects/alpha"
 project_b="$PROJMUX_SMOKE_WORKDIR/projects/beta"
@@ -223,6 +277,11 @@ if grep -Fq "docker e2e" "$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json"; th
   exit 1
 fi
 
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L04; then
+smoke_contract_begin L04 settings-interactive settings-ui
+
 # Exercise the Settings key recorder through a real attached tmux client and
 # display-popup. The pseudo-terminal feeds the popup's existing native-picker
 # reader; no user HOME, keymap, or tmux socket is reused.
@@ -243,20 +302,8 @@ TERM=xterm-256color script -qefc \
   "TERM=xterm-256color tmux -L '$recorder_socket' attach-session -t '$recorder_bootstrap_session'" \
   "$recorder_log" <"$recorder_input" >/dev/null 2>&1 &
 recorder_client_pid=$!
-
-smoke_wait_for() {
-  local description="$1"
-  shift
-  for _ in {1..100}; do
-    if "$@"; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "timed out waiting for $description" >&2
-  tail -c 12000 "$recorder_log" >&2 || true
-  return 1
-}
+# shellcheck disable=SC2034 # Consumed by smoke_wait_for in the sourced shared harness.
+SMOKE_WAIT_DIAGNOSTIC_LOG="$recorder_log"
 
 recorder_client=""
 smoke_wait_for "attached recorder tmux client" sh -c \
@@ -895,11 +942,24 @@ smoke_cleanup_tmux_server "$recorder_socket"
 wait "$recorder_client_pid" || true
 exec 9>&-
 
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L05; then
+smoke_contract_begin L05 session-replay tmux-adapter
+
 # Save, destroy, and replay a shell/startup/agent field matrix through a
 # disposable exact tmux server. The Go harness also changes pane-base-index
 # between save and restore to prove replay uses returned %pane_id targets.
 PROJMUX_REAL_TMUX_TEST=1 go test ./internal/integrations/tmux \
   -run '^TestRealTmuxSessionStateSaveDestroyReplayFieldFidelity$' -count=1
+
+smoke_contract_pass
+fi
+fi
+
+if smoke_linux_shard_enabled mutation-convergence; then
+if smoke_linux_scenario_enabled L06; then
+smoke_contract_begin L06 create-materialize resource-controller
 
 # ---------------------------------------------------------------------------
 # Detached Project runtime materialization and Window/Pane create.
@@ -2291,46 +2351,15 @@ create_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> create e2e passed: socket=$create_socket path=$create_socket_path"
 
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L07; then
+smoke_contract_begin L07 binding-convergence reconciler
+
 # Explicit Registry authority converges Project -> Window -> Pane. Every
 # fixture below keeps each public report and must reach an empty no-op within
-# that three-level walk plus one confirming pass. Raw imports require initial
-# progress; post-apply callers opt into accepting an already-converged pass.
-e2e_bounded_reconcile_to_noop() {
-  local allow_initial_noop=0
-  if [[ "${1:-}" == "--allow-initial-noop" ]]; then
-    allow_initial_noop=1
-    shift
-  fi
-  local report_prefix="$1"
-  shift
-  local pass report
-  for pass in 1 2 3 4; do
-    report="$report_prefix-$pass.json"
-    "$@" >"$report"
-    if grep -Fq '"outcome": "changed"' "$report"; then
-      continue
-    fi
-    if grep -Fq '"outcome": "no-op"' "$report"; then
-      if ! grep -Fq '"items": []' "$report"; then
-        echo "resource reconcile no-op retained nonempty items: $report" >&2
-        cat "$report" >&2
-        return 1
-      fi
-      if [[ "$pass" == "1" && "$allow_initial_noop" != "1" ]]; then
-        echo "explicit authority made no initial progress: $report" >&2
-        cat "$report" >&2
-        return 1
-      fi
-      return 0
-    fi
-    echo "resource reconcile reported neither changed nor no-op: $report" >&2
-    cat "$report" >&2
-    return 1
-  done
-  echo "resource reconcile did not converge within four passes: $report_prefix" >&2
-  cat "$report" >&2
-  return 1
-}
+# that three-level walk plus one confirming pass. Initial no-op is valid when a
+# competing authorized worker already reached the same fixed point.
 
 # Managed runtime binding convergence runs on its own two exact sockets. Every
 # client call strips inherited TMUX/TMUX_PANE; only the implicit reads below
@@ -2592,6 +2621,7 @@ binding_inside_pmx() {
 
 binding_inside_pmx create window --project alpha --name lifecycle >"$binding_root/create-lifecycle-window.out"
 lifecycle_window_uid="$(binding_inside_pmx describe window lifecycle -p alpha -o uid | tr -d '[:space:]')"
+smoke_require_uid "canonical lifecycle Window" window "$lifecycle_window_uid"
 lifecycle_window="$(
   binding_tmux list-windows -a -F '#{window_id}|#{@projmux_window_uid}' |
     awk -F '|' -v uid="$lifecycle_window_uid" '$2 == uid { print $1 }'
@@ -2968,6 +2998,11 @@ fi
 binding_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> managed binding e2e passed: socket=$binding_socket path=$binding_socket_path"
+
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L08; then
+smoke_contract_begin L08 canonical-delete delete-controller
 
 # ---------------------------------------------------------------------------
 # Window resource + exact live-binding deletion.
@@ -3909,6 +3944,11 @@ delete_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> delete Window/Pane/Agent e2e passed: socket=$delete_socket path=$delete_socket_path other-socket=$delete_other_socket other-path=$delete_other_socket_path cleanup=validated-exact-sockets"
 
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L09; then
+smoke_contract_begin L09 rename-rebind registry-owner
+
 # Rename/rebind convergence uses its own exact two-socket environment. The app
 # receives an explicit synthetic client socket path for immediate mirror lookup;
 # every setup/read/repair command strips inherited client state and names -L.
@@ -4224,6 +4264,11 @@ fi
 rename_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> rename/rebind e2e passed: socket=$rename_socket path=$rename_socket_path other-socket=$rename_other_socket other-path=$rename_other_socket_path cleanup=validated-exact-sockets"
+
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L10; then
+smoke_contract_begin L10 topology-materialize topology-controller
 
 # Explicit Registry desired-topology materialization uses its own exact
 # two-socket environment. Every setup/read/repair command strips inherited
@@ -4799,6 +4844,14 @@ topology_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Registry topology materialization e2e passed: socket=$topology_socket path=$topology_socket_path other-socket=$topology_other_socket other-path=$topology_other_socket_path cleanup=validated-exact-sockets"
 
+smoke_contract_pass
+fi
+fi
+
+if smoke_linux_shard_enabled startup-navigation; then
+if smoke_linux_scenario_enabled L11; then
+smoke_contract_begin L11 closed-startup startup-controller
+
 # Closed Project managed startup parity gets its own exact two-socket
 # environment and its own real attached tmux client. Opening a closed Project is
 # an explicit activation, so this section drives the installed `switch open`
@@ -5324,8 +5377,22 @@ mv "$startup_project-withdrawn" "$startup_project"
 # snapshot stays byte-identical, the post-save Window disappears, ordinary
 # materialization runs, and the explicit-client switch is the final handoff even
 # though the continuation has no inherited TMUX.
-startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/restore-project.sh' '$startup_session' 'uid:$startup_project_uid' '$startup_client'" Enter
-startup_wait_for "snapshot Registry projection" test -s "$startup_root/restore-project.rc"
+# Own the detached continuation by its exact invocation PID and require both
+# process termination and its status receipt within the existing bounded
+# startup oracle. This is a semantic boundary: it neither retries the operation
+# nor weakens or stretches the timing guard.
+bash "$startup_root/restore-project.sh" "$startup_session" "uid:$startup_project_uid" "$startup_client" &
+startup_restore_pid=$!
+printf '%s\n' "$startup_restore_pid" >"$startup_root/restore-project.pid"
+startup_restore_terminal() {
+  ! kill -0 "$startup_restore_pid" 2>/dev/null && [[ -s "$startup_root/restore-project.rc" ]]
+}
+startup_wait_for "snapshot Registry projection terminal receipt" startup_restore_terminal
+wait "$startup_restore_pid" || true
+if kill -0 "$startup_restore_pid" 2>/dev/null || [[ ! -s "$startup_root/restore-project.rc" ]]; then
+  echo "snapshot Registry projection did not produce a terminal receipt for pid $startup_restore_pid" >&2
+  exit 1
+fi
 if [[ "$(tr -d '[:space:]' <"$startup_root/restore-project.rc")" != "0" ]]; then
   echo "snapshot Registry projection failed" >&2
   cat "$startup_root/restore-project.err" >&2 || true
@@ -5545,6 +5612,11 @@ wait "$startup_client_pid" 2>/dev/null || true
 startup_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Closed Project managed startup e2e passed: socket=$startup_socket path=$startup_socket_path other-socket=$startup_other_socket other-path=$startup_other_socket_path client=$startup_client cleanup=validated-exact-sockets"
+
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L12; then
+smoke_contract_begin L12 first-open first-open-controller
 
 # ---------------------------------------------------------------------------
 # First-open Project identity mirror.
@@ -5774,6 +5846,7 @@ if [[ ! -f "$fopen_registry" ]]; then
   exit 1
 fi
 fopen_project_uid="$(fopen_pmx get projects -o uid)"
+smoke_require_uid "first-open Project" project "$fopen_project_uid"
 if [[ "$(printf '%s\n' "$fopen_project_uid" | wc -l)" != "1" ]] || [[ -z "$fopen_project_uid" ]]; then
   echo "the first open registered something other than exactly the opened path: $fopen_project_uid" >&2
   exit 1
@@ -5924,6 +5997,11 @@ wait "$fopen_client_pid" 2>/dev/null || true
 fopen_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> First-open Project identity mirror e2e passed: socket=$fopen_socket path=$fopen_socket_path other-socket=$fopen_other_socket other-path=$fopen_other_socket_path client=$fopen_client project=$fopen_project_uid session=$fopen_session cleanup=validated-exact-sockets"
+
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L13; then
+smoke_contract_begin L13 runtime-diagnostics diagnostics-owner
 
 # ---------------------------------------------------------------------------
 # Runtime diagnostics escape hatch.
@@ -6194,6 +6272,11 @@ rtd_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Runtime diagnostics e2e passed: socket=$rtd_socket path=$rtd_socket_path other-socket=$rtd_other_socket other-path=$rtd_other_socket_path client=$rtd_client writes=0 cleanup=validated-exact-sockets"
 
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L14; then
+smoke_contract_begin L14 registry-navigation projects-ui
+
 # ---------------------------------------------------------------------------
 # Registry-first primary navigation.
 #
@@ -6374,6 +6457,7 @@ nav_open_projects() {
   nav_popup_pid=$!
 }
 
+nav_popup_offset=0
 nav_open_projects nav_popup_offset
 nav_screen_has() {
   tail -c +$((nav_popup_offset + 1)) "$nav_client_log" | grep -aFq "$1"
@@ -6576,15 +6660,19 @@ printf 'alpha' >&8
 nav_offline_filter_has() {
   tail -c +$((nav_offline_filter_offset + 1)) "$nav_client_log" | grep -aFq "$1"
 }
-nav_wait_for "offline Project row" nav_offline_filter_has "nav/alpha"
+smoke_wait_for_current_frame "offline Project row" \
+  "$nav_client_log" "$nav_offline_filter_offset" "nav/alpha"
 nav_offline_offset="$(stat -c %s "$nav_client_log")"
 printf '\022' >&8
 nav_offline_has() {
   tail -c +$((nav_offline_offset + 1)) "$nav_client_log" | grep -aFq "$1"
 }
-nav_wait_for "offline hierarchy" nav_offline_has "Projects > Resources"
-nav_wait_for "offline hierarchy row" nav_offline_has "offline"
-nav_wait_for "offline start action" nav_offline_has "start"
+smoke_wait_for_current_frame "offline hierarchy" \
+  "$nav_client_log" "$nav_offline_offset" "Projects > Resources"
+smoke_wait_for_current_frame "offline hierarchy row" \
+  "$nav_client_log" "$nav_offline_offset" "offline"
+smoke_wait_for_current_frame "offline start action" \
+  "$nav_client_log" "$nav_offline_offset" "start"
 nav_offline_root_return_offset="$(stat -c %s "$nav_client_log")"
 printf '\003' >&8
 nav_offline_root_return_has() {
@@ -6611,6 +6699,10 @@ nav_offline_home_return_has() {
 }
 nav_wait_for "Home root selection after clearing the offline Projects filter" \
   nav_offline_home_return_has
+smoke_wait_for_current_frame "offline Home root row" \
+  "$nav_client_log" "$nav_offline_home_return_offset" "home"
+smoke_wait_for_current_frame "offline Home root path" \
+  "$nav_client_log" "$nav_offline_home_return_offset" "~"
 nav_wait_for "offline Home preview return to the driver session" nav_client_is_on_driver
 printf '\003' >&8
 nav_wait_for "offline Projects popup exit" sh -c "! kill -0 '$nav_popup_pid' 2>/dev/null"
@@ -6659,6 +6751,11 @@ wait "$nav_client_pid" 2>/dev/null || true
 nav_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Registry-first navigation e2e passed: socket=$nav_socket path=$nav_socket_path other-socket=$nav_other_socket other-path=$nav_other_socket_path client=$nav_client project=$nav_project_uid beta=$nav_beta_uid offline-row=preserved registry-order=\"$nav_registry_order\" live-order=\"$nav_live_order\" closed-order=\"$nav_closed_order\" writes=0 cleanup=validated-exact-sockets"
+
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L15; then
+smoke_contract_begin L15 runtime-visibility sidebar-policy
 
 # ---------------------------------------------------------------------------
 # Alt-1 contextual Runtime row.
@@ -6897,6 +6994,7 @@ rtv_open_projects() {
     "env -u TMUX_PANE HOME='$rtv_root/home' XDG_CONFIG_HOME='$rtv_root/config' XDG_STATE_HOME='$rtv_root/state' XDG_RUNTIME_DIR='$rtv_root/runtime' PROJMUX_MANAGED_ROOTS='$rtv_root/p' TMUX_TMPDIR='$rtv_root/t' TMUX='$rtv_socket_path,$rtv_socket_pid,0' SHELL=/bin/sh '$bin' switch --ui=sidebar" &
   rtv_popup_pid=$!
 }
+rtv_popup_offset=0
 rtv_screen_has() {
   tail -c +$((rtv_popup_offset + 1)) "$rtv_client_log" | grep -aFq "$1"
 }
@@ -6962,6 +7060,11 @@ wait "$rtv_client_pid" 2>/dev/null || true
 rtv_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Alt-1 Runtime visibility e2e passed: socket=$rtv_socket path=$rtv_socket_path other-socket=$rtv_other_socket other-path=$rtv_other_socket_path client=$rtv_client list-pane=$rtv_list_pane default=withheld always=offered direct-routes=identical writes=0 cleanup=validated-exact-sockets"
+
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L16; then
+smoke_contract_begin L16 discovery-pin discovery-adapter
 
 # ---------------------------------------------------------------------------
 # Project discovery and pin authority split.
@@ -7253,6 +7356,16 @@ wait "$disc_client_pid" 2>/dev/null || true
 disc_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> discovery/pin authority e2e passed: socket=$disc_socket path=$disc_socket_path other-socket=$disc_other_socket other-path=$disc_other_socket_path client=$disc_client project=$disc_project_uid siblings=unregistered cleanup=validated-exact-sockets"
+
+smoke_contract_pass
+fi
+fi
+
+if smoke_linux_shard_enabled lifecycle-control; then
+if smoke_linux_scenario_enabled L17; then
+PROJMUX_E2E_FAILURE_CLASS=product-authority-race
+export PROJMUX_E2E_FAILURE_CLASS
+smoke_contract_begin L17 exit-reconcile exit-reconciler
 
 # --- exit reconciliation end to end -----------------------------------------
 #
@@ -8045,6 +8158,12 @@ exitrec_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> exit reconciliation e2e passed: socket=$exitrec_socket path=$exitrec_socket_path other-path=$exitrec_other_socket_path project=$exitrec_project_uid cleanup=validated-exact-sockets"
 
+smoke_contract_pass
+unset PROJMUX_E2E_FAILURE_CLASS
+fi
+if smoke_linux_scenario_enabled L18; then
+smoke_contract_begin L18 pane-menu pane-menu-ui
+
 # Declarative contract stabilization Phase 5: audit the generated
 # MouseDown3Pane binding, then select the same managed actions through a real
 # tmux display-menu on an attached client. Every command in this block strips
@@ -8424,6 +8543,11 @@ fi
 trap smoke_cleanup_env EXIT
 echo ">> managed pane-menu and interactive run-shell output e2e passed: pane=$menu_origin_pane project=$menu_project_uid overlay-matrix=none socket=$menu_socket path=$menu_socket_path cleanup=$menu_cleanup_target inherited=unset"
 
+smoke_contract_pass
+fi
+if smoke_linux_scenario_enabled L19; then
+smoke_contract_begin L19 control-root control-session-controller
+
 # Declarative contract stabilization Phase 12: drive the four Home popup
 # terminal paths through the built binary on an exact, config-apply-declared
 # ControlSession. The scripted native picker is still the production picker;
@@ -8699,66 +8823,40 @@ p13_assert_refusal() {
   smoke_assert_file_contains "$err" "all-projects"
 }
 
-for p13_kind in windows panes agents; do
-  case "$p13_kind" in
-    windows)
-      p13_control_want="$(p12_pmx get windows --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
-      p13_project_want="$(p12_pmx get windows --project "uid:$p12_project_uid" -o uid | sort)"
-      p13_uid_args=(--window "uid:$p12_project_window_uid")
-      p13_uid_want="$p12_project_window_uid"
-      p13_control_count=1
-      p13_project_count=2
-      ;;
-    panes)
-      p13_control_want="$(p12_pmx get panes --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
-      p13_project_want="$(p12_pmx get panes --project "uid:$p12_project_uid" -o uid | sort)"
-      p13_uid_args=(--pane "uid:$p12_project_origin_uid")
-      p13_uid_want="$p12_project_origin_uid"
-      p13_control_count=5
-      p13_project_count=3
-      ;;
-    agents)
-      p13_control_want="$(p12_pmx get agents --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
-      p13_project_want="$(p12_pmx get agents --project "uid:$p12_project_uid" -o uid | sort)"
-      p13_uid_args=(--window "uid:$p12_project_window_uid")
-      p13_uid_want="$p12_project_agent_uid"
-      p13_control_count=3
-      p13_project_count=1
-      ;;
-  esac
-  if [[ "$(printf '%s\n' "$p13_control_want" | grep -c .)" != "$p13_control_count" ]] ||
-    [[ "$(printf '%s\n' "$p13_project_want" | grep -c .)" != "$p13_project_count" ]]; then
-    echo "Phase 13 $p13_kind root fixtures do not have the expected exact cardinalities" >&2
-    exit 1
-  fi
-  p13_global_want="$(printf '%s\n%s\n' "$p13_control_want" "$p13_project_want" | sort)"
+# The exhaustive 3 kind x 4 context x 5 selector matrix executes at the app
+# layer in TestPluralReadContextSelectorMatrix. That lower-layer test runs each
+# of its 60 cells twice and proves positive/refusal results plus zero-write
+# fixed-point parity. Keep only representative real-tmux sentinels here: the
+# exact ControlSession default, the foreign-root refusal, a Project selector
+# from outside tmux, the global escape, and a repeat of the default read.
+echo "MOVED_MATRIX id=L19.plural-read-context-selector-matrix lower=internal/app/TestPluralReadContextSelectorMatrix cells=60"
+p13_control_panes="$(p12_pmx get panes --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
+p13_project_agents="$(p12_pmx get agents --project "uid:$p12_project_uid" -o uid | sort)"
+p13_project_windows="$(p12_pmx get windows --project "uid:$p12_project_uid" -o uid | sort)"
+p13_control_windows="$(p12_pmx get windows --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
+p13_global_windows="$(printf '%s\n%s\n' "$p13_control_windows" "$p13_project_windows" | sort)"
+if [[ "$(printf '%s\n' "$p13_control_panes" | grep -c .)" != "5" ]] ||
+  [[ "$p13_project_agents" != "$p12_project_agent_uid" ]] ||
+  [[ "$(printf '%s\n' "$p13_global_windows" | grep -c .)" != "3" ]]; then
+  echo "Phase 13 representative fixtures do not have the expected exact cardinalities" >&2
+  exit 1
+fi
 
-  for p13_context in project control foreign outside; do
-    case "$p13_context" in
-      project) p13_omitted_want="$p13_project_want" ;;
-      control) p13_omitted_want="$p13_control_want" ;;
-      foreign)
-        p13_assert_refusal "$p13_kind foreign omitted" "$p13_context" \
-          get "$p13_kind" -o uid
-        ;;
-      outside) p13_omitted_want="$p13_global_want" ;;
-    esac
-    if [[ "$p13_context" != "foreign" ]]; then
-      p13_assert_success "$p13_kind $p13_context omitted" "$p13_omitted_want" "$p13_context" \
-        get "$p13_kind" -o uid
-    fi
-
-    p13_assert_success "$p13_kind $p13_context explicit Project" "$p13_project_want" "$p13_context" \
-      get "$p13_kind" --project "uid:$p12_project_uid" -o uid
-    p13_assert_success "$p13_kind $p13_context --all-projects" "$p13_global_want" "$p13_context" \
-      get "$p13_kind" --all-projects -o uid
-    p13_assert_success "$p13_kind $p13_context -A" "$p13_global_want" "$p13_context" \
-      get "$p13_kind" -A -o uid
-
-    p13_assert_success "$p13_kind $p13_context global uid selector" "$p13_uid_want" "$p13_context" \
-      get "$p13_kind" "${p13_uid_args[@]}" -o uid
-  done
-done
+p13_registry_before="$(sha256sum "$p12_registry" | cut -d' ' -f1)"
+p13_assert_success "panes ControlSession omitted positive" "$p13_control_panes" control \
+  get panes -o uid
+p13_assert_refusal "panes foreign omitted negative" foreign \
+  get panes -o uid
+p13_assert_success "agents outside explicit Project" "$p13_project_agents" outside \
+  get agents --project "uid:$p12_project_uid" -o uid
+p13_assert_success "windows ControlSession global escape" "$p13_global_windows" control \
+  get windows --all-projects -o uid
+p13_assert_success "panes ControlSession omitted fixed-point repeat" "$p13_control_panes" control \
+  get panes -o uid
+if [[ "$(sha256sum "$p12_registry" | cut -d' ' -f1)" != "$p13_registry_before" ]]; then
+  echo "Phase 13 representative read sentinels mutated Registry bytes" >&2
+  exit 1
+fi
 
 # Phase 1 closes this exact ControlSession Window through the non-picker shell
 # producer exercised above. Canonical deletes reduce the Window to that one
@@ -8819,3 +8917,6 @@ if "${p12_env[@]}" tmux -S "$p12_cleanup_target" list-sessions >/dev/null 2>&1; 
 fi
 trap smoke_cleanup_env EXIT
 echo ">> ControlSession create/read-scope + Phase 1 closure e2e passed: control=$p12_control_uid window=$p12_window_uid descendants=0 root=retained project=$p12_project_uid project-window=$p12_project_window_uid foreign=$p12_foreign_pane repeat=byte-identical matrix=$p13_case socket=$p12_socket path=$p12_socket_path cleanup=$p12_cleanup_target inherited=unset"
+smoke_contract_pass
+fi
+fi

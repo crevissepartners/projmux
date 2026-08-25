@@ -17,10 +17,30 @@ and humans run the same entrypoints.
   `test/install/smoke.sh`. It validates `make install`, atomic binary
   replacement into an isolated install dir, `tmux apply`, and post-install
   `notify reconcile` initialization with a fresh HOME/XDG state tree.
-- `make test-e2e` builds the same Docker image and runs
-  `test/e2e/linux-smoke.sh`. It validates a minimal real-tmux workflow:
-  sessions, panes, config sourcing, reply-state notify reconciliation, focus
-  notify fallback, and status notify rendering.
+- `make test-e2e` prepares one attempt-local immutable product binary, then
+  runs four isolated Linux real-tmux fixtures plus the Codex lifecycle and npm
+  staging fixtures. The required inventory is `L01`-`L19`, `C01`, and `N01`;
+  every fixture has its own HOME/XDG/tmux/socket/evidence roots and every
+  consumer records the same binary SHA. `E2E_SCENARIO=<ID>` selects one exact
+  stable scenario for replay.
+- `make test-e2e-contract`, `make test-e2e-reliability`, and
+  `make test-e2e-shards` validate typed attempt evidence, bounded semantic
+  waits/owned cleanup, and exhaustive four-shard isolation without rerunning
+  the full product matrix.
+- `make test-e2e-coverage` validates
+  `test/e2e/ags-oedr-manifest.json`: executable scenario markers and shard
+  assignments must match all 21 rows with orphan count zero. A matrix may move
+  out of real-tmux E2E only when its checked-in entry names executable lower
+  positive, negative, and fixed-point evidence and retains a real-boundary
+  sentinel. The manifest/orphan half is a prerequisite of `make test-e2e`,
+  while the referenced lower test runs in both this coverage target and the
+  required unit-test job.
+- `make security` runs the exact three Security groups in parallel locally:
+  Go vulnerability/security, Go static quality, and repository policy.
+  `make security-serial` is the parity control and `make security-contract`
+  checks scanner/rule/baseline identity, PR-range/full-history secret scans,
+  cache miss-to-hit convergence, privacy-safe artifacts, and the fail-closed
+  aggregate. CI exposes their stable aggregate as `Test`.
 - `make deadcode` runs `go tool deadcode` (pinned via the go.mod tool
   directive) over the module and reports unreachable functions, filtering out
   the intentional/MUST-KEEP baseline in `.deadcode-allowlist.txt`; it fails
@@ -42,6 +62,62 @@ made deterministic in a container:
 The test container disables networking during `docker run`. The image build may
 use the network to fetch the pinned base image and apt packages, but suite
 execution should not need network access after the image is built.
+
+## Layered E2E Evidence
+
+The AGS-OEDR manifest is the source of truth for which layer owns each
+guarantee. Its `A/G/S` fields describe the scenario contract and `O/E/D/R`
+identify the owner, enforcement, detection, and recovery boundary. The
+coverage audit reads the actual `smoke_contract_begin` markers and
+`linux-shards.tsv`; documentation-only rows cannot satisfy it.
+
+L19's plural-read context/selector table is the first evidence-backed move.
+`TestPluralReadContextSelectorMatrix` executes all 60 cells twice at the app
+layer, covering exact positive sets, foreign-scope refusal, and read-only
+fixed-point behavior with zero Registry transaction/write/model change. L19
+still drives five representative sentinels through the built binary on the
+queried exact real-tmux socket below its owned smoke root. Lower-layer parity
+therefore owns the combinatorial table; E2E still owns transport, origin, and
+socket/root containment.
+
+Merged main evidence is closed by the same manifest without adding stable IDs.
+L17 links the simultaneous/coalesced exact-generation exit unit tests and the
+integration marker to its real-hook replay: both dead/mirrored Panes disappear,
+Agents become resumable Offline with cleared pane refs, siblings survive, and
+the repeat is Registry-byte-identical. L18 links the closed foreground
+`run-shell` producer ledger and integration transport marker to its attached
+client replay: success is silent or one bounded exact-client message, no
+view-mode overlay appears, and origin PID, focus, and Registry identity remain.
+The two lifecycle boundaries merged at `3322b5f7` stay on existing IDs rather
+than expanding the inventory. L17 links exact clean last-Pane plus
+Window-unlinked causality, zero-Window Project retention, stale-resume refusal,
+sibling reanchor/containment, and byte-identical replay to the Project-stop
+marker. L19 separately links ControlSession last-Window descendant cleanup,
+root retention, zero replacement allocation, sibling containment, and
+fixed-point replay to its own marker. The shared integration marker closes the
+real last-Pane transport boundary. The audit fails when any linked guarantee,
+exact lower test inventory/symbol/selector, or executable integration/E2E
+marker is missing, misspelled, or duplicated.
+
+Lifecycle commit `dcffa5da` remains inside L11. Its closed evidence row links
+the retained/zero-Window lifecycle table, managed runtime stop, Continue, and
+always-new Fresh lower tests to the existing lifecycle integration completion
+and the L11 attached-client marker before pass. Authority commit `de52d15d`
+remains inside L17. Its row links creator-Registry admission, journal-path and
+CLOEXEC handshake tests to the immediate-exit integration/E2E markers, and
+also closes the focused fresh-root repeat harness plus the read-only
+owner/queue observation and product-terminal controller marker. These rows add
+no scenario ID: the audit still requires exactly 21 stable scenarios and fails
+closed if either source commit, guarantee set, lower selector, supporting
+marker, or marker-before-pass edge drifts.
+
+The required result hash accepts exactly one `begin` followed by one typed
+`pass` for every expected stable ID. A terminal `fail`, `cancel`, or
+`unattributed` class, a terminal without its begin row, and an interrupted
+unterminated attempt all keep the aggregate red. `cancel` remains a schema
+value for an explicitly observed cancellation; the shell harness does not
+invent cancellation evidence from a signal whose semantic cause it cannot
+attribute.
 
 ## Host-Only Checks
 

@@ -31,6 +31,10 @@ cleanup() {
 }
 
 smoke_setup_env
+PROJMUX_E2E_SUITE="npm-staging"
+export PROJMUX_E2E_SUITE
+smoke_contract_install_trap
+smoke_contract_begin N01 staging-retire executable-canonicalizer
 trap cleanup EXIT
 cd "$smoke_root"
 
@@ -106,3 +110,4 @@ fi
 echo ">> PASS: live tmux hooks reference the canonical path, not the retire segment"
 
 echo ">> npm staging-path e2e complete"
+smoke_contract_pass

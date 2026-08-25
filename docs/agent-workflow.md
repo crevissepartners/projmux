@@ -316,6 +316,51 @@
 
 - `make test` / `make test-integration` / `make test-e2e`: Create Agent early-exit authority keeps the provider behind the creator's exact Registry commit without weakening rollback identity. The supervised activation child enters the existing cross-process Registry lock and admits only the committed Agent-owned Pane whose generation, operation, `%N` runtime, and Running `paneRef` all match; the read-only callback writes zero Registry bytes. The creator carries one private cleaned absolute Registry path through the supervisor, so admission reads and termination-receipt writes stay on the creator's state root even when the tmux server inherited another XDG environment; this path is not exported to the provider or public hooks. On POSIX, a private CLOEXEC failure channel distinguishes admission/provider-exec failure (no termination receipt) from the same numeric provider exit (exact supervisor receipt), while HUP during admission kills the supervised gate before provider side effects and remains exact killed evidence. `TestSuperviseWaitsForTheCommittedActivationBeforeStartingTheChild`, `TestSuperviseRefusesTheChildWhenCreateAbortsBeforeActivationCommit`, `TestSuperviseActivationAdmissionIsExactAndZeroWrite`, `TestActivationAuthorityRejectsNonExactRegistryPathsBeforeProviderStart`, `TestAgentAdmissionAndReceiptUseCreatorRegistryAuthorityNotAmbientXDG`, `TestActivationExecFailureHandshakeIsTyped`, `TestSuperviseActivationHandshakeDistinguishesGateFailureFromProviderExit`, and `TestActivationExecCloseOnExecDoesNotWaitForProviderDescendants` pin commit/abort, blank/malformed/foreign identity refusal, split XDG authority, sibling byte preservation, exit 1/42 disambiguation, HUP side-effect zero, and descendant fd containment. The real-tmux integration and L17 e2e run an immediate exit-42 provider with the generated `pane-exited` hook live and require no blank-UID rollback, exact generation/operation evidence, sibling preservation, and fixed-point repeat. `PMX_TEST_EARLY_EXIT_REPEATS=30 test/integration/create-agent-early-exit-repeat.sh` is the only repeat interface: it builds one immutable attempt binary, then gives every sample a fresh HOME/XDG/Registry/root and unique app/sibling sockets before exact-owned cleanup. Shell Pane supervision and the public `PROJMUX_*` hook contract are unchanged.
 
+## E2E Required-Gate Evidence
+
+- `make test-e2e-coverage` is the maintained AGS-OEDR inventory gate. It
+  requires exact `L01`-`L19`/`C01`/`N01` executable marker parity, four Linux
+  shard assignments, valid referenced lower-layer test symbols/selectors, and
+  orphan count zero. A moved matrix is invalid unless positive, negative, and
+  fixed-point evidence are all non-empty and executable while E2E retains a
+  real-boundary sentinel. `make test-e2e` always runs the manifest/orphan half;
+  the referenced lower test is also exercised by the required unit-test job.
+- L19's former 60-cell plural-read matrix now runs in
+  `TestPluralReadContextSelectorMatrix`: each Project/ControlSession/foreign/
+  outside x omitted/Project/global-short/global-long/UID cell runs twice with
+  identical output/error/observation count and zero Registry transaction,
+  write, or model change. The L19 real-tmux fixture retains five sentinels and
+  owns exact popup origin, queried socket containment, and owned-root cleanup.
+- The same manifest absorbs merged-main evidence without expanding the stable
+  inventory. L17 closes simultaneous/coalesced provider exits through exact
+  generation dead/mirrored cleanup, resumable Offline Agent refs, sibling
+  preservation, and byte-identical repeat. L18 closes the generated foreground
+  `run-shell` matrix through exact-client bounded delivery, success silence,
+  no view-mode overlay, and origin PID/focus/Registry identity preservation.
+  Merged lifecycle commit `3322b5f7` adds no stable ID: L17 separately owns the
+  causal clean last-Pane/Window-unlinked Project-stop path, zero-Window root,
+  stale-resume refusal, sibling reanchor/containment, and fixed point; L19 owns
+  the ControlSession last-Window descendant cleanup, root retention, zero
+  replacement allocation, sibling containment, and fixed point. Their exact
+  lower test sets share the existing real last-Pane integration marker but use
+  distinct E2E markers before each scenario's pass. Every referenced guarantee,
+  unit symbol/selector, and integration/E2E marker is fail-closed by the
+  coverage audit.
+- Merged lifecycle commit `dcffa5da` stays on L11: its closed row links managed
+  runtime stop, retained/zero-Window Continue, always-new Fresh, exact client
+  handoff, and sibling containment to lower tests plus the existing lifecycle
+  integration completion and L11 pass boundary. Merged authority commit
+  `de52d15d` stays on L17: its row links creator-root activation admission,
+  exact receipt/exec disambiguation, immediate exit-42, the fresh-root focused
+  repeat harness, and the read-only owner/queue + product-terminal handoff.
+  Stable inventory remains exact `L01`-`L19`/`C01`/`N01`; source commit,
+  guarantee, lower selector, supporting marker, and marker-before-pass drift
+  all fail closed.
+- `make test-e2e` uses one attempt-local binary across isolated four-way Linux,
+  Codex, and npm consumers. Local Security is the exact three-way
+  `make security` topology; CI's required branch-protection context is the
+  fail-closed aggregate named `Test`.
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.

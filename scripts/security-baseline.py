@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import json
 import pathlib
 import sys
@@ -18,6 +19,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--report", required=True)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--scanner-status", type=int, default=0)
+    parser.add_argument("--evidence")
+    parser.add_argument("--expected-parity")
     parser.add_argument("--write", action="store_true")
     return parser.parse_args()
 
@@ -186,6 +189,34 @@ def main() -> int:
         return 1
 
     total = sum(item["max_count"] for item in generated)
+    identity_bytes = json.dumps(
+        generated, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+    evidence = {
+        "schema": "projmux.security.finding-parity.v1",
+        "tool": args.tool,
+        "finding_count": total,
+        "fingerprint_count": len(generated),
+        "finding_identity_sha256": hashlib.sha256(identity_bytes).hexdigest(),
+        "baseline_sha256": hashlib.sha256(baseline_path.read_bytes()).hexdigest(),
+    }
+    if args.expected_parity:
+        parity = json.loads(pathlib.Path(args.expected_parity).read_text(encoding="utf-8"))
+        expected = parity["scanners"][args.tool]
+        actual = {key: evidence[key] for key in expected}
+        if actual != expected:
+            raise ValueError(
+                f"{args.tool} current finding identity differs from controlled parity: "
+                f"expected={expected}, actual={actual}"
+            )
+    if args.evidence:
+        evidence_path = pathlib.Path(args.evidence)
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_text(
+            json.dumps(evidence, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+            + "\n",
+            encoding="utf-8",
+        )
     print(f">> {args.tool}: clean ({total} findings covered by reviewed baseline)")
     return 0
 
