@@ -69,6 +69,16 @@ runtimeMutationEffectKey
 # round-trip counterpart that keeps the retained parser honest. Do not remove
 # it while the parser is supported.
 buildFocusURI
+# Interactive `run-shell` output ledger. The classification of every generated
+# producer and the registry of source sites that may emit one are declarations,
+# not behavior: they exist so `run_shell_output_ledger_test.go` can prove the
+# set is closed against the generated config and against the package source. A
+# production caller would be a fake -- the enforcement that keeps a producer
+# silent at runtime is the guard in interactive_run_shell.go, which App.Run
+# reaches on every invocation. Removing either function removes the proof that
+# a new producer cannot ship unclassified.
+runShellOutputLedger
+runShellSourceSites
 # "last-pane" action handler: audit shows it as dead but it is a PLANNED
 # consumer and must stay (it is a keybinding catalog string ID, not a func,
 # so deadcode does not flag it by name -- recorded here for intent).

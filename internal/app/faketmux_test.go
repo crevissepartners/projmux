@@ -27,6 +27,9 @@ type fakeTmux struct {
 	sessions []*fakeTmuxSession
 	calls    [][]string
 	nextID   int
+	// clientMessages records the exact-client status messages interactive tmux
+	// actions converge on, in order.
+	clientMessages []fakeTmuxClientMessage
 	// fail injects a failure for the first command whose argv contains every
 	// token of the trigger. It fires once unless failAlways is set.
 	fail        []string
@@ -637,9 +640,21 @@ func (f *fakeTmux) runShowOptions(args []string) ([]byte, error) {
 	return []byte("\n"), nil
 }
 
+// fakeTmuxClientMessage is one `display-message -c <client> ... <text>` write.
+type fakeTmuxClientMessage struct {
+	client string
+	text   string
+}
+
 func (f *fakeTmux) runDisplayMessage(args []string) ([]byte, error) {
 	target := flagValue(args, "-t")
 	format := flagValue(args, "-F")
+	// A client-scoped message with no format is a status write, not a read:
+	// this is where every interactive action's bounded result lands.
+	if client := flagValue(args, "-c"); client != "" && format == "" && len(args) > 0 {
+		f.clientMessages = append(f.clientMessages, fakeTmuxClientMessage{client: client, text: args[len(args)-1]})
+		return nil, nil
+	}
 	// A targetless display-message is a server-scope read. `#{socket_path}` is
 	// the only one the app takes, and it is the controller's socket guard.
 	if target == "" {

@@ -547,6 +547,29 @@ for relocated in status statusbar preview session-popup tmux key-broker popup-wa
   smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "'$bin' $relocated"
 done
 
+# Interactive `run-shell` output channels. tmux paints a foreground job's
+# output, and its "returned N", over the pane the action ran in, so the shape of
+# these producers in the installed config is the contract: every status-bar
+# action names the exact client that pressed the key, and the one foreground
+# lifecycle hook is redirected *and* exit-guarded because it fires on the pane
+# that just appeared.
+for status_action in "click usage" "usage-refresh" "click notify" "click git" "click pwd" "click session"; do
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux.conf" \
+    "internal statusbar $status_action --client \\\"#{client_tty}\\\""
+done
+"$bin" internal tmux print-app-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux-app.conf"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/projmux-app.conf" \
+  "reason runtime-created >/dev/null 2>&1 || true"
+while IFS= read -r hook_line; do
+  case "$hook_line" in
+    *">/dev/null 2>&1"*) ;;
+    *)
+      echo "generated hook leaves output on an interactive pane: $hook_line" >&2
+      exit 1
+      ;;
+  esac
+done < <(grep -h 'set-hook' "$PROJMUX_SMOKE_WORKDIR/projmux.conf" "$PROJMUX_SMOKE_WORKDIR/projmux-app.conf" | grep 'run-shell')
+
 mkdir -p "$XDG_CONFIG_HOME/projmux"
 printf 'on\n' >"$XDG_CONFIG_HOME/projmux/live-resources"
 "$bin" internal tmux print-config --bin "$bin" >"$PROJMUX_SMOKE_WORKDIR/projmux-resources.conf"

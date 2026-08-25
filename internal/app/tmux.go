@@ -514,6 +514,15 @@ func (c *tmuxCommand) runRenamePane(args []string, stderr io.Writer) error {
 	return nil
 }
 
+// The bounded success copy for the three interactive create/rename producers.
+// A status message names what happened; the uid and the full projection stay in
+// the public CLI, which is the surface a script reads.
+const (
+	paneMenuCreatedMessage = "Created Pane"
+	windowCreatedMessage   = "Created Window"
+	windowRenamedMessage   = "Renamed Window: "
+)
+
 // runPaneMenuAction is the managed boundary behind MouseDown3Pane. The menu
 // states only an action, the exact pane the click targeted, and the client that
 // must see a result. Creation delegates to createFromIntent so the #700 popup
@@ -567,10 +576,13 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 		}
 		return c.displayPaneMenuMessage(strings.TrimSpace(*client), "projmux "+paneMenuActionLabel(action)+" failed: "+reason)
 	}
+	// The canonical route's projection is consumed here rather than copied to
+	// stdout. tmux would paint a foreground `run-shell` job's stdout as a
+	// view-mode screen over the pane that was right-clicked, which is how a
+	// successful split came to hide the Codex process the operator was reading.
+	// The projection itself is not lost: `projmux create pane` still prints it
+	// for scripting.
 	result := actionOut.String()
-	if _, copyErr := io.WriteString(stdout, result); copyErr != nil {
-		return copyErr
-	}
 	// A canonical delete has a durable, human-readable result. Preserve its
 	// first summary line on the client before the clicked pane disappears.
 	if action == "kill" {
@@ -580,7 +592,7 @@ func (c *tmuxCommand) runPaneMenuAction(args []string, stdout, stderr io.Writer)
 		}
 		return c.displayPaneMenuMessage(strings.TrimSpace(*client), "projmux "+summary)
 	}
-	return nil
+	return c.displayPaneMenuMessage(strings.TrimSpace(*client), paneMenuCreatedMessage)
 }
 
 func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Writer) error {
@@ -599,7 +611,7 @@ func (c *tmuxCommand) runWindowCreateIntent(args []string, stdout, stderr io.Wri
 	}
 	var actionOut, actionErr bytes.Buffer
 	err := c.windowCreate(windowCreateIntent{anchorPaneID: *anchor, targetClient: *client}, &actionOut, &actionErr)
-	return c.finishWindowIntent(*client, "Create Window", actionOut.String(), actionErr.String(), err, stdout)
+	return c.finishWindowIntent(*client, "Create Window", windowCreatedMessage, actionErr.String(), err)
 }
 
 func (c *tmuxCommand) runWindowRenameIntent(args []string, stdout, stderr io.Writer) error {
@@ -617,11 +629,17 @@ func (c *tmuxCommand) runWindowRenameIntent(args []string, stdout, stderr io.Wri
 		return errors.New("canonical Window rename route is not configured")
 	}
 	var actionOut, actionErr bytes.Buffer
+	name := strings.TrimSpace(fs.Arg(0))
 	err := c.windowRename(windowRenameIntent{anchorPaneID: *anchor, targetClient: *client, displayName: fs.Arg(0)}, &actionOut, &actionErr)
-	return c.finishWindowIntent(*client, "Rename Window", actionOut.String(), actionErr.String(), err, stdout)
+	return c.finishWindowIntent(*client, "Rename Window", windowRenamedMessage+name, actionErr.String(), err)
 }
 
-func (c *tmuxCommand) finishWindowIntent(client, label, output, detail string, actionErr error, stdout io.Writer) error {
+// finishWindowIntent converges one Window intent onto the exact client that ran
+// it. Both halves are bounded single lines: the canonical projection stays in
+// the buffer the caller owns, because writing it to the foreground `run-shell`
+// job is what put `renamed: window/win-... -> zsh` in a view-mode screen over
+// the operator's pane.
+func (c *tmuxCommand) finishWindowIntent(client, label, success, detail string, actionErr error) error {
 	if actionErr != nil {
 		reason := strings.TrimSpace(actionErr.Error())
 		if detail = strings.TrimSpace(detail); detail != "" && !strings.Contains(reason, detail) {
@@ -629,8 +647,7 @@ func (c *tmuxCommand) finishWindowIntent(client, label, output, detail string, a
 		}
 		return c.displayPaneMenuMessage(strings.TrimSpace(client), "projmux "+label+" failed: "+reason)
 	}
-	_, err := io.WriteString(stdout, output)
-	return err
+	return c.displayPaneMenuMessage(strings.TrimSpace(client), success)
 }
 
 func deletePaneThroughCanonicalRoute(anchorPaneID string, stdout, stderr io.Writer) error {
@@ -2499,9 +2516,14 @@ func controllerTriggerHookCommand(bin string, reason controllerTriggerReason) st
 // at-most-one lease: the first hook converges and every hook that arrives during
 // that pass records its event and returns immediately instead of queuing behind
 // the registry lock.
+// The `|| true` is not cosmetic. This is the one lifecycle hook that runs in
+// the foreground, and it fires on after-new-window/after-split-window -- the
+// moment a pane appears in front of the operator. tmux paints a foreground
+// job's "returned N" line in a view-mode screen over that pane, so without the
+// guard a refused convergence would present itself as a broken new pane.
 func tmuxRuntimeCreatedHookBody(bin string) string {
 	return "run-shell " + tmuxConfigQuote(
-		controllerTriggerHookCommand(bin, controllerTriggerRuntimeCreated)+" >/dev/null 2>&1")
+		controllerTriggerHookCommand(bin, controllerTriggerRuntimeCreated)+" >/dev/null 2>&1 || true")
 }
 
 func tmuxRecentWindowRecordHookLines(bin string) []string {
@@ -2714,16 +2736,24 @@ func tmuxStatusbarKeyBindings(binaryPath string) []string {
 		tmuxConfigQuote("#{==:#{mouse_status_range},window}") + " " +
 		"{ select-window -t = } " +
 		"{ run-shell " + tmuxConfigQuote(clickCmd) + " }"
+	// The keyboard table carries `#{client_tty}` for the same reason the mouse
+	// binding does: a status action's popup and its refusal both belong to the
+	// client that pressed the key, and on a session with two clients attached
+	// the invoking client is the only handle that stays correct.
+	statusKey := func(key, action string) string {
+		return "bind-key -T projmux-status " + key + " run-shell " +
+			tmuxConfigQuote(bin+" internal statusbar "+action+" --client \"#{client_tty}\"")
+	}
 	return []string{
 		"unbind-key -q -n MouseDown1Status",
 		mouseDownBind,
 		"bind-key s switch-client -T projmux-status",
-		"bind-key -T projmux-status u run-shell " + tmuxConfigQuote(bin+" internal statusbar click usage"),
-		"bind-key -T projmux-status r run-shell " + tmuxConfigQuote(bin+" internal statusbar usage-refresh"),
-		"bind-key -T projmux-status n run-shell " + tmuxConfigQuote(bin+" internal statusbar click notify"),
-		"bind-key -T projmux-status g run-shell " + tmuxConfigQuote(bin+" internal statusbar click git"),
-		"bind-key -T projmux-status p run-shell " + tmuxConfigQuote(bin+" internal statusbar click pwd"),
-		"bind-key -T projmux-status s run-shell " + tmuxConfigQuote(bin+" internal statusbar click session"),
+		statusKey("u", "click usage"),
+		statusKey("r", "usage-refresh"),
+		statusKey("n", "click notify"),
+		statusKey("g", "click git"),
+		statusKey("p", "click pwd"),
+		statusKey("s", "click session"),
 	}
 }
 

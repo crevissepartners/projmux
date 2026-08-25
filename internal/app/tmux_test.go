@@ -2053,7 +2053,7 @@ func TestTmuxPrintConfigBindsHardcodedStatusbarUsageRefresh(t *testing.T) {
 		t.Fatalf("Run() error = %v", err)
 	}
 
-	want := `bind-key -T projmux-status r run-shell "'/tmp/proj mux/bin/projmux' internal statusbar usage-refresh"`
+	want := `bind-key -T projmux-status r run-shell "'/tmp/proj mux/bin/projmux' internal statusbar usage-refresh --client \"#{client_tty}\""`
 	if !strings.Contains(stdout.String(), want) {
 		t.Fatalf("print-config output = %q, want substring %q", stdout.String(), want)
 	}
@@ -2199,12 +2199,23 @@ func TestTmuxPaneMenuRoutesSplitAndKillThroughCanonicalIntents(t *testing.T) {
 	} {
 		t.Run(test.action, func(t *testing.T) {
 			creator.intents = nil
-			cmd := &tmuxCommand{runner: &recordingTmuxRunner{}, paneMenuCreate: creator.createFromIntent}
-			if err := cmd.Run([]string{"pane-menu", "--client", "/dev/pts/7", test.action, "%17"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+			runner := &recordingTmuxRunner{}
+			cmd := &tmuxCommand{runner: runner, paneMenuCreate: creator.createFromIntent}
+			var stdout, stderr bytes.Buffer
+			if err := cmd.Run([]string{"pane-menu", "--client", "/dev/pts/7", test.action, "%17"}, &stdout, &stderr); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
 			if got := creator.intents; !reflect.DeepEqual(got, []agentPaneIntent{test.want}) {
 				t.Fatalf("intents = %#v, want %#v", got, []agentPaneIntent{test.want})
+			}
+			if stdout.Len() != 0 || stderr.Len() != 0 {
+				t.Fatalf("pane-menu split wrote to the foreground job: stdout=%q stderr=%q", stdout.String(), stderr.String())
+			}
+			wantMessage := recordedTmuxCall{name: "tmux", args: []string{
+				"display-message", "-c", "/dev/pts/7", "-d", "10000", paneMenuCreatedMessage,
+			}}
+			if !reflect.DeepEqual(runner.calls, []recordedTmuxCall{wantMessage}) {
+				t.Fatalf("tmux calls = %#v, want one bounded success message %#v", runner.calls, wantMessage)
 			}
 		})
 	}
@@ -2219,15 +2230,17 @@ func TestTmuxPaneMenuRoutesSplitAndKillThroughCanonicalIntents(t *testing.T) {
 			return nil
 		},
 	}
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"pane-menu", "--client", "/dev/pts/7", "kill", "%19"}, &stdout, &bytes.Buffer{}); err != nil {
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"pane-menu", "--client", "/dev/pts/7", "kill", "%19"}, &stdout, &stderr); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if !reflect.DeepEqual(deleted, []string{"%19"}) {
 		t.Fatalf("delete anchors = %v, want [%%19]", deleted)
 	}
-	if !strings.Contains(stdout.String(), "pane/log uid=pan-log") {
-		t.Fatalf("canonical delete result was not preserved: %q", stdout.String())
+	// The canonical projection is consumed, not printed: tmux would draw a
+	// foreground run-shell job's stdout over the pane the menu was opened from.
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("pane-menu wrote to the foreground job: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
 	wantDisplay := recordedTmuxCall{name: "tmux", args: []string{
 		"display-message", "-c", "/dev/pts/7", "-d", "10000",
