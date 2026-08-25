@@ -8822,66 +8822,40 @@ p13_assert_refusal() {
   smoke_assert_file_contains "$err" "all-projects"
 }
 
-for p13_kind in windows panes agents; do
-  case "$p13_kind" in
-    windows)
-      p13_control_want="$(p12_pmx get windows --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
-      p13_project_want="$(p12_pmx get windows --project "uid:$p12_project_uid" -o uid | sort)"
-      p13_uid_args=(--window "uid:$p12_project_window_uid")
-      p13_uid_want="$p12_project_window_uid"
-      p13_control_count=1
-      p13_project_count=2
-      ;;
-    panes)
-      p13_control_want="$(p12_pmx get panes --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
-      p13_project_want="$(p12_pmx get panes --project "uid:$p12_project_uid" -o uid | sort)"
-      p13_uid_args=(--pane "uid:$p12_project_origin_uid")
-      p13_uid_want="$p12_project_origin_uid"
-      p13_control_count=5
-      p13_project_count=3
-      ;;
-    agents)
-      p13_control_want="$(p12_pmx get agents --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
-      p13_project_want="$(p12_pmx get agents --project "uid:$p12_project_uid" -o uid | sort)"
-      p13_uid_args=(--window "uid:$p12_project_window_uid")
-      p13_uid_want="$p12_project_agent_uid"
-      p13_control_count=3
-      p13_project_count=1
-      ;;
-  esac
-  if [[ "$(printf '%s\n' "$p13_control_want" | grep -c .)" != "$p13_control_count" ]] ||
-    [[ "$(printf '%s\n' "$p13_project_want" | grep -c .)" != "$p13_project_count" ]]; then
-    echo "Phase 13 $p13_kind root fixtures do not have the expected exact cardinalities" >&2
-    exit 1
-  fi
-  p13_global_want="$(printf '%s\n%s\n' "$p13_control_want" "$p13_project_want" | sort)"
+# The exhaustive 3 kind x 4 context x 5 selector matrix executes at the app
+# layer in TestPluralReadContextSelectorMatrix. That lower-layer test runs each
+# of its 60 cells twice and proves positive/refusal results plus zero-write
+# fixed-point parity. Keep only representative real-tmux sentinels here: the
+# exact ControlSession default, the foreign-root refusal, a Project selector
+# from outside tmux, the global escape, and a repeat of the default read.
+echo "MOVED_MATRIX id=L19.plural-read-context-selector-matrix lower=internal/app/TestPluralReadContextSelectorMatrix cells=60"
+p13_control_panes="$(p12_pmx get panes --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
+p13_project_agents="$(p12_pmx get agents --project "uid:$p12_project_uid" -o uid | sort)"
+p13_project_windows="$(p12_pmx get windows --project "uid:$p12_project_uid" -o uid | sort)"
+p13_control_windows="$(p12_pmx get windows --all-projects --window "uid:$p12_window_uid" -o uid | sort)"
+p13_global_windows="$(printf '%s\n%s\n' "$p13_control_windows" "$p13_project_windows" | sort)"
+if [[ "$(printf '%s\n' "$p13_control_panes" | grep -c .)" != "5" ]] ||
+  [[ "$p13_project_agents" != "$p12_project_agent_uid" ]] ||
+  [[ "$(printf '%s\n' "$p13_global_windows" | grep -c .)" != "3" ]]; then
+  echo "Phase 13 representative fixtures do not have the expected exact cardinalities" >&2
+  exit 1
+fi
 
-  for p13_context in project control foreign outside; do
-    case "$p13_context" in
-      project) p13_omitted_want="$p13_project_want" ;;
-      control) p13_omitted_want="$p13_control_want" ;;
-      foreign)
-        p13_assert_refusal "$p13_kind foreign omitted" "$p13_context" \
-          get "$p13_kind" -o uid
-        ;;
-      outside) p13_omitted_want="$p13_global_want" ;;
-    esac
-    if [[ "$p13_context" != "foreign" ]]; then
-      p13_assert_success "$p13_kind $p13_context omitted" "$p13_omitted_want" "$p13_context" \
-        get "$p13_kind" -o uid
-    fi
-
-    p13_assert_success "$p13_kind $p13_context explicit Project" "$p13_project_want" "$p13_context" \
-      get "$p13_kind" --project "uid:$p12_project_uid" -o uid
-    p13_assert_success "$p13_kind $p13_context --all-projects" "$p13_global_want" "$p13_context" \
-      get "$p13_kind" --all-projects -o uid
-    p13_assert_success "$p13_kind $p13_context -A" "$p13_global_want" "$p13_context" \
-      get "$p13_kind" -A -o uid
-
-    p13_assert_success "$p13_kind $p13_context global uid selector" "$p13_uid_want" "$p13_context" \
-      get "$p13_kind" "${p13_uid_args[@]}" -o uid
-  done
-done
+p13_registry_before="$(sha256sum "$p12_registry" | cut -d' ' -f1)"
+p13_assert_success "panes ControlSession omitted positive" "$p13_control_panes" control \
+  get panes -o uid
+p13_assert_refusal "panes foreign omitted negative" foreign \
+  get panes -o uid
+p13_assert_success "agents outside explicit Project" "$p13_project_agents" outside \
+  get agents --project "uid:$p12_project_uid" -o uid
+p13_assert_success "windows ControlSession global escape" "$p13_global_windows" control \
+  get windows --all-projects -o uid
+p13_assert_success "panes ControlSession omitted fixed-point repeat" "$p13_control_panes" control \
+  get panes -o uid
+if [[ "$(sha256sum "$p12_registry" | cut -d' ' -f1)" != "$p13_registry_before" ]]; then
+  echo "Phase 13 representative read sentinels mutated Registry bytes" >&2
+  exit 1
+fi
 
 # Phase 1 closes this exact ControlSession Window through the non-picker shell
 # producer exercised above. Canonical deletes reduce the Window to that one

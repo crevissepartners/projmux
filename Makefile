@@ -21,7 +21,7 @@ SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
 DOCS_REFERENCE ?= docs/cli.md
 
-.PHONY: fmt fmt-check fix build install npm-pack docs test test-integration test-install-smoke test-e2e test-e2e-contract test-e2e-reliability test-e2e-shards test-e2e-update e2e verify deadcode security security-serial security-go security-static security-policy security-contract security-tools
+.PHONY: fmt fmt-check fix build install npm-pack docs test test-integration test-install-smoke test-e2e test-e2e-contract test-e2e-reliability test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -112,7 +112,7 @@ test-integration:
 test-install-smoke:
 	scripts/test-install-smoke.sh
 
-test-e2e:
+test-e2e: test-e2e-manifest
 	scripts/test-e2e-docker.sh
 
 test-e2e-contract:
@@ -124,6 +124,12 @@ test-e2e-reliability:
 test-e2e-shards:
 	test/e2e/shard-contract.sh
 	test/e2e/shard-isolation-stress.sh
+
+test-e2e-manifest:
+	E2E_COVERAGE_SKIP_GO=1 test/e2e/coverage-contract.sh
+
+test-e2e-coverage:
+	test/e2e/coverage-contract.sh
 
 # Opt-in / local: depends on the public npm registry and published projmux
 # package, so it is not part of `verify`.

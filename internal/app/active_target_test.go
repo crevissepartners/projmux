@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -198,6 +199,8 @@ func TestPluralReadsUseTheActiveProjectDefault(t *testing.T) {
 // foreign/outside x selector contract for all three plural Registry reads.
 // Exact sets are asserted rather than membership so an implicit global fallback
 // cannot hide behind the expected descendant rows.
+const pluralReadContextSelectorMatrixCells = 60
+
 func TestPluralReadContextSelectorMatrix(t *testing.T) {
 	t.Parallel()
 
@@ -238,21 +241,36 @@ func TestPluralReadContextSelectorMatrix(t *testing.T) {
 		{name: "foreign", active: func() *recordedActiveTarget { return insideTmux("", "win-foreign") }},
 		{name: "outside", active: outsideTmux},
 	}
+	cells := 0
 
 	for _, kind := range kinds {
 		t.Run(kind.kind, func(t *testing.T) {
-			t.Parallel()
 			for _, context := range contexts {
 				t.Run(context.name, func(t *testing.T) {
-					t.Parallel()
-
 					run := func(args ...string) (string, string, int, error) {
+						cells++
 						store := newFakeResourceStore(t)
 						addControlReadRoot(t, store)
 						active := context.active()
-						stdout, stderr, err := runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active),
-							append([]string{kind.kind}, args...)...)
-						return stdout, stderr, active.calls, err
+						before := store.registry.Clone()
+						invoke := func() (string, string, error) {
+							return runRoute(t, newTestListGetCommandWithActiveTarget(t, store, active),
+								append([]string{kind.kind}, args...)...)
+						}
+						stdout, stderr, err := invoke()
+						firstCalls := active.calls
+						if store.transactions != 0 || store.writes != 0 || !reflect.DeepEqual(store.registry, before) {
+							t.Fatalf("plural read %s %s mutated Registry: transactions=%d writes=%d", kind.kind, context.name, store.transactions, store.writes)
+						}
+						repeatStdout, repeatStderr, repeatErr := invoke()
+						repeatCalls := active.calls - firstCalls
+						if repeatStdout != stdout || repeatStderr != stderr || repeatCalls != firstCalls ||
+							(repeatErr == nil) != (err == nil) || (repeatErr != nil && repeatErr.Error() != err.Error()) ||
+							store.transactions != 0 || store.writes != 0 || !reflect.DeepEqual(store.registry, before) {
+							t.Fatalf("plural read %s %s did not reach a read-only fixed point: first=(%q,%q,%v,%d) repeat=(%q,%q,%v,%d)",
+								kind.kind, context.name, stdout, stderr, err, firstCalls, repeatStdout, repeatStderr, repeatErr, repeatCalls)
+						}
+						return stdout, stderr, firstCalls, err
 					}
 
 					stdout, stderr, calls, err := run("-o", "uid")
@@ -283,6 +301,9 @@ func TestPluralReadContextSelectorMatrix(t *testing.T) {
 				})
 			}
 		})
+	}
+	if cells != pluralReadContextSelectorMatrixCells {
+		t.Fatalf("plural read matrix executed %d cells, want %d", cells, pluralReadContextSelectorMatrixCells)
 	}
 }
 

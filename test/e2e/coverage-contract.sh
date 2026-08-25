@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+cd "$root"
+
+mkdir -p "$root/.bin"
+tmpdir="$(mktemp -d "$root/.bin/e2e-coverage.XXXXXX")"
+cleanup() {
+	rm -rf -- "$tmpdir"
+}
+trap cleanup EXIT HUP INT TERM
+
+manifest="test/e2e/ags-oedr-manifest.json"
+python3 scripts/e2e-coverage.py --manifest "$manifest" --output "$tmpdir/first.json" >"$tmpdir/first.stdout"
+python3 scripts/e2e-coverage.py --manifest "$manifest" --output "$tmpdir/repeat.json" >"$tmpdir/repeat.stdout"
+cmp "$tmpdir/first.json" "$tmpdir/repeat.json"
+grep -Fq '"orphan_count":0' "$tmpdir/first.json"
+grep -Fq '"scenario_count":21' "$tmpdir/first.json"
+grep -Fq '"moved_former_cells":60' "$tmpdir/first.json"
+grep -Fq '"moved_e2e_sentinel_cells":5' "$tmpdir/first.json"
+
+if [[ "${E2E_COVERAGE_SKIP_GO:-0}" != "1" ]]; then
+	mkdir -p "$root/.bin/e2e-coverage-go-cache"
+	GOCACHE="$root/.bin/e2e-coverage-go-cache" \
+		go test ./internal/app -run '^TestPluralReadContextSelectorMatrix$' -count=1
+fi
+
+python3 - "$manifest" "$tmpdir/orphan.json" "$tmpdir/evidence.json" "$tmpdir/symbol.json" <<'PY'
+import copy
+import json
+import pathlib
+import sys
+
+source = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+orphan = copy.deepcopy(source)
+orphan["scenarios"] = [row for row in orphan["scenarios"] if row["id"] != "L19"]
+pathlib.Path(sys.argv[2]).write_text(json.dumps(orphan) + "\n", encoding="utf-8")
+evidence = copy.deepcopy(source)
+evidence["moved_matrices"][0]["lower_layer"]["negative"] = ""
+pathlib.Path(sys.argv[3]).write_text(json.dumps(evidence) + "\n", encoding="utf-8")
+symbol = copy.deepcopy(source)
+symbol["moved_matrices"][0]["lower_layer"]["symbol"] = "TestMissingLowerEvidence"
+symbol["moved_matrices"][0]["lower_layer"]["selector"] = "go test ./internal/app -run ^TestMissingLowerEvidence$ -count=1"
+pathlib.Path(sys.argv[4]).write_text(json.dumps(symbol) + "\n", encoding="utf-8")
+PY
+
+for invalid in "$tmpdir/orphan.json" "$tmpdir/evidence.json" "$tmpdir/symbol.json"; do
+	set +e
+	python3 scripts/e2e-coverage.py --manifest "${invalid#"$root"/}" >"$invalid.out" 2>"$invalid.err"
+	status=$?
+	set -e
+	if [[ "$status" != "1" ]]; then
+		printf 'coverage contract: invalid manifest passed: %s (status %s)\n' "$invalid" "$status" >&2
+		exit 1
+	fi
+done
+
+if grep -Eq '/home/|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|github_pat_|ghp_' "$manifest"; then
+	echo "coverage contract: manifest contains a machine path or secret-shaped value" >&2
+	exit 1
+fi
+
+echo ">> E2E coverage contract: 21 scenarios, four shards, moved matrix parity, orphan 0"

@@ -17,10 +17,30 @@ and humans run the same entrypoints.
   `test/install/smoke.sh`. It validates `make install`, atomic binary
   replacement into an isolated install dir, `tmux apply`, and post-install
   `notify reconcile` initialization with a fresh HOME/XDG state tree.
-- `make test-e2e` builds the same Docker image and runs
-  `test/e2e/linux-smoke.sh`. It validates a minimal real-tmux workflow:
-  sessions, panes, config sourcing, reply-state notify reconciliation, focus
-  notify fallback, and status notify rendering.
+- `make test-e2e` prepares one attempt-local immutable product binary, then
+  runs four isolated Linux real-tmux fixtures plus the Codex lifecycle and npm
+  staging fixtures. The required inventory is `L01`-`L19`, `C01`, and `N01`;
+  every fixture has its own HOME/XDG/tmux/socket/evidence roots and every
+  consumer records the same binary SHA. `E2E_SCENARIO=<ID>` selects one exact
+  stable scenario for replay.
+- `make test-e2e-contract`, `make test-e2e-reliability`, and
+  `make test-e2e-shards` validate typed attempt evidence, bounded semantic
+  waits/owned cleanup, and exhaustive four-shard isolation without rerunning
+  the full product matrix.
+- `make test-e2e-coverage` validates
+  `test/e2e/ags-oedr-manifest.json`: executable scenario markers and shard
+  assignments must match all 21 rows with orphan count zero. A matrix may move
+  out of real-tmux E2E only when its checked-in entry names executable lower
+  positive, negative, and fixed-point evidence and retains a real-boundary
+  sentinel. The manifest/orphan half is a prerequisite of `make test-e2e`,
+  while the referenced lower test runs in both this coverage target and the
+  required unit-test job.
+- `make security` runs the exact three Security groups in parallel locally:
+  Go vulnerability/security, Go static quality, and repository policy.
+  `make security-serial` is the parity control and `make security-contract`
+  checks scanner/rule/baseline identity, PR-range/full-history secret scans,
+  cache miss-to-hit convergence, privacy-safe artifacts, and the fail-closed
+  aggregate. CI exposes their stable aggregate as `Test`.
 - `make deadcode` runs `go tool deadcode` (pinned via the go.mod tool
   directive) over the module and reports unreachable functions, filtering out
   the intentional/MUST-KEEP baseline in `.deadcode-allowlist.txt`; it fails
@@ -42,6 +62,23 @@ made deterministic in a container:
 The test container disables networking during `docker run`. The image build may
 use the network to fetch the pinned base image and apt packages, but suite
 execution should not need network access after the image is built.
+
+## Layered E2E Evidence
+
+The AGS-OEDR manifest is the source of truth for which layer owns each
+guarantee. Its `A/G/S` fields describe the scenario contract and `O/E/D/R`
+identify the owner, enforcement, detection, and recovery boundary. The
+coverage audit reads the actual `smoke_contract_begin` markers and
+`linux-shards.tsv`; documentation-only rows cannot satisfy it.
+
+L19's plural-read context/selector table is the first evidence-backed move.
+`TestPluralReadContextSelectorMatrix` executes all 60 cells twice at the app
+layer, covering exact positive sets, foreign-scope refusal, and read-only
+fixed-point behavior with zero Registry transaction/write/model change. L19
+still drives five representative sentinels through the built binary on the
+queried exact real-tmux socket below its owned smoke root. Lower-layer parity
+therefore owns the combinatorial table; E2E still owns transport, origin, and
+socket/root containment.
 
 ## Host-Only Checks
 
