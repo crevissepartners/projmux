@@ -4826,7 +4826,7 @@ STARTUP_SHELL_STUB
 chmod 0755 "$startup_shell"
 
 startup_tmux() {
-  env -u TMUX -u TMUX_PANE \
+  env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
     HOME="$startup_root/home" \
     XDG_CONFIG_HOME="$startup_root/config" \
     XDG_STATE_HOME="$startup_root/state" \
@@ -4838,7 +4838,7 @@ startup_tmux() {
 }
 
 startup_other_tmux() {
-  env -u TMUX -u TMUX_PANE \
+  env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
     HOME="$startup_root/home" \
     XDG_CONFIG_HOME="$startup_root/config" \
     XDG_STATE_HOME="$startup_root/state" \
@@ -4849,7 +4849,7 @@ startup_other_tmux() {
 }
 
 startup_pmx() {
-  env -u TMUX -u TMUX_PANE \
+  env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
     HOME="$startup_root/home" \
     XDG_CONFIG_HOME="$startup_root/config" \
     XDG_STATE_HOME="$startup_root/state" \
@@ -4893,6 +4893,7 @@ export PROJMUX_MANAGED_ROOTS="$startup_root/work"
 export TMUX_TMPDIR="$startup_root/tmux"
 export SHELL="$startup_shell"
 export PATH="$startup_root/bin:$startup_root/shim:\$PATH"
+unset __PROJMUX_RUNTIME_ANCHOR_PANE TMUX_SPLIT_TARGET_PANE
 $(printf %q "$bin") switch open "\$1" >"$startup_root/open-\$2.out" 2>"$startup_root/open-\$2.err"
 echo \$? >"$startup_root/open-\$2.rc"
 STARTUP_OPEN_SCRIPT
@@ -4911,7 +4912,8 @@ export PROJMUX_MANAGED_ROOTS="$startup_root/work"
 export TMUX_TMPDIR="$startup_root/tmux"
 export SHELL="$startup_shell"
 export PATH="$startup_root/bin:$startup_root/shim:\$PATH"
-env -u TMUX -u TMUX_PANE $(printf %q "$bin") switch sidebar-open --path "\$1" --session "\$2" --mode fresh --client "\$3" \
+env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
+  $(printf %q "$bin") switch sidebar-open --path "\$1" --session "\$2" --mode fresh --client "\$3" \
   >"$startup_root/open-new.out" 2>"$startup_root/open-new.err"
 echo \$? >"$startup_root/open-new.rc"
 STARTUP_FRESH_SCRIPT
@@ -4927,7 +4929,8 @@ export PROJMUX_MANAGED_ROOTS="$startup_root/work"
 export TMUX_TMPDIR="$startup_root/tmux"
 export SHELL="$startup_shell"
 export PATH="$startup_root/bin:$startup_root/shim:\$PATH"
-env -u TMUX -u TMUX_PANE $(printf %q "$bin") switch sidebar-open --path "\$1" --session "\$2" --mode continue --client "\$3" \
+env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
+  $(printf %q "$bin") switch sidebar-open --path "\$1" --session "\$2" --mode continue --client "\$3" \
   >"$startup_root/open-continue.out" 2>"$startup_root/open-continue.err"
 echo \$? >"$startup_root/open-continue.rc"
 STARTUP_CONTINUE_SCRIPT
@@ -4943,7 +4946,8 @@ export PROJMUX_MANAGED_ROOTS="$startup_root/work"
 export TMUX_TMPDIR="$startup_root/tmux"
 export SHELL="$startup_shell"
 export PATH="$startup_root/bin:$startup_root/shim:\$PATH"
-env -u TMUX -u TMUX_PANE $(printf %q "$bin") restore snapshot --session "\$1" --project "\$2" --yes --client "\$3" \
+env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
+  $(printf %q "$bin") restore snapshot --session "\$1" --project "\$2" --yes --client "\$3" \
   >"$startup_root/restore-project.out" 2>"$startup_root/restore-project.err"
 echo \$? >"$startup_root/restore-project.rc"
 STARTUP_RESTORE_SCRIPT
@@ -4969,7 +4973,7 @@ for actual in "$startup_socket_path" "$startup_other_socket_path"; do
 done
 
 startup_live_pmx() {
-  env -u TMUX_PANE \
+  env -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
     HOME="$startup_root/home" \
     XDG_CONFIG_HOME="$startup_root/config" \
     XDG_STATE_HOME="$startup_root/state" \
@@ -4982,7 +4986,7 @@ startup_live_pmx() {
 }
 
 startup_create_pmx() {
-  env \
+  env -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
     HOME="$startup_root/home" \
     XDG_CONFIG_HOME="$startup_root/config" \
     XDG_STATE_HOME="$startup_root/state" \
@@ -4998,12 +5002,12 @@ startup_create_pmx() {
 startup_cleanup() {
   local socket actual
   for socket in "$startup_socket" "$startup_other_socket"; do
-    actual="$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR="$startup_root/tmux" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+    actual="$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR="$startup_root/tmux" tmux -L "$socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
     if [[ -z "$actual" ]]; then
       continue
     fi
     case "$actual" in
-      "$startup_root"/*) env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true ;;
+      "$startup_root"/*) env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true ;;
       *) echo "refusing startup cleanup outside smoke root: $actual" >&2 ;;
     esac
   done
@@ -5090,7 +5094,7 @@ fi
 # Seed the durable conversation pointer through the canonical hook ingress, the
 # only route that writes Agent.status.sessionRef.
 startup_hook_pmx() {
-  env -u TMUX -u TMUX_PANE \
+  env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
     HOME="$startup_root/home" \
     XDG_CONFIG_HOME="$startup_root/config" \
     XDG_STATE_HOME="$startup_root/state" \
@@ -5123,7 +5127,7 @@ startup_client_input="$startup_root/driver-client.in"
 mkfifo "$startup_client_input"
 exec 8<>"$startup_client_input"
 TERM=xterm-256color script -qefc \
-  "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' attach-session -t '$startup_driver'" \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' attach-session -t '$startup_driver'" \
   "$startup_client_log" <"$startup_client_input" >/dev/null 2>&1 &
 startup_client_pid=$!
 
@@ -5147,7 +5151,7 @@ startup_client_is_on() {
 }
 
 startup_wait_for "attached startup tmux client" sh -c \
-  "test -n \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
+  "test -n \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
 startup_client="$(startup_tmux list-clients -F '#{client_name}' | head -n 1)"
 startup_driver_pane="$(startup_tmux display-message -p -c "$startup_client" '#{pane_id}')"
 
@@ -5192,7 +5196,7 @@ if [[ "$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_ui
   exit 1
 fi
 startup_wait_for "client moved to the opened Project session" sh -c \
-  "test \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -c '$startup_client' '#{session_name}' 2>/dev/null)\" = '$startup_session'"
+  "test \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -c '$startup_client' '#{session_name}' 2>/dev/null)\" = '$startup_session'"
 
 # Every materialized Pane runs the default shell under the managed process
 # supervisor, never a stored command. A pane the session brought with it is
@@ -5289,7 +5293,7 @@ fi
 # so the plan is refused before the first create and the client stays put.
 startup_tmux switch-client -c "$startup_client" -t "$startup_driver"
 startup_wait_for "client back on the driver session" sh -c \
-  "test \"\$(env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -c '$startup_client' '#{session_name}' 2>/dev/null)\" = '$startup_driver'"
+  "test \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -c '$startup_client' '#{session_name}' 2>/dev/null)\" = '$startup_driver'"
 startup_tmux kill-session -t "$startup_session"
 mv "$startup_project" "$startup_project-withdrawn"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-project.sh' '$startup_project' refused" Enter
@@ -5327,11 +5331,48 @@ if [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | g
   exit 1
 fi
 
-# 4. Close the just-materialized runtime and use Continue project. This proves
-# the committed desired state is consumed only through the ordinary startup
-# materializer and remains convergent.
-startup_tmux switch-client -c "$startup_client" -t "$startup_driver"
-startup_tmux kill-session -t "$startup_session"
+# Drive the shipped sidebar Ctrl-X action against the Project selected by exact
+# context-session identity. The first frame starts on that row, Ctrl-X performs
+# the managed stop, and Esc closes the refreshed picker. Completion evidence is
+# the exact session query plus Registry identity checks, never picker output or
+# pane contents.
+startup_managed_stop() {
+  local label="$1"
+  local result="$startup_root/managed-stop-$label.rc"
+  rm -f "$result"
+  startup_tmux send-keys -t "$startup_driver_pane" \
+    "env -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_SESSIONIZER_CONTEXT_SESSION='$startup_session' '$bin' switch --ui sidebar >'$startup_root/managed-stop-$label.out' 2>'$startup_root/managed-stop-$label.err'; echo \$? >'$result'" Enter
+  startup_wait_for "managed stop picker process for $label" sh -c \
+    "test \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -t '$startup_driver_pane' '#{pane_current_command}' 2>/dev/null)\" = projmux"
+  startup_tmux send-keys -t "$startup_driver_pane" C-x
+  startup_wait_for "managed stop session removal for $label" sh -c \
+    "! env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' has-session -t '$startup_session' 2>/dev/null"
+  startup_wait_for "managed stop fallback client handoff for $label" startup_client_is_on "$startup_driver"
+  startup_tmux send-keys -t "$startup_driver_pane" Escape
+  startup_wait_for "managed stop picker close for $label" test -s "$result"
+  if [[ "$(tr -d '[:space:]' <"$result")" != "0" ]]; then
+    echo "managed Project stop failed for $label" >&2
+    cat "$startup_root/managed-stop-$label.err" >&2 || true
+    exit 1
+  fi
+  if startup_tmux has-session -t "$startup_session" 2>/dev/null; then
+    echo "managed Project stop left $startup_session live for $label" >&2
+    exit 1
+  fi
+}
+
+# 4. Stop the just-materialized runtime through the managed Ctrl-X route, then
+# Continue it. The Project/Window/Pane UID sets must survive the stop and the
+# ordinary startup materializer must consume that same retained graph.
+startup_retained_window_uids="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)"
+startup_retained_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
+startup_managed_stop retained-continue
+if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
+  [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)" != "$startup_retained_window_uids" ]] ||
+  [[ "$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)" != "$startup_retained_pane_uids" ]]; then
+  echo "managed Project stop changed the retained desired UID graph" >&2
+  exit 1
+fi
 rm -f "$startup_root/open-continue.rc"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client'" Enter
 startup_wait_for "Continue project after projection" test -s "$startup_root/open-continue.rc"
@@ -5340,25 +5381,70 @@ if [[ "$(tr -d '[:space:]' <"$startup_root/open-continue.rc")" != "0" ]]; then
   exit 1
 fi
 startup_wait_for "Continue project client handoff" startup_client_is_on "$startup_session"
-cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
-
-# 5. Open fresh from a detached continuation with TMUX unset and explicit
-# client authority. Agent/extra descendants are removed atomically while the
-# canonical Project/Window/minimum-shell UID chain is retained. A closed repeat
-# retains the exact UID chain; the planner/transaction suites separately pin
-# its Registry byte-level zero diff. The filesystem root and snapshot source
-# bytes remain untouched.
-startup_pmx describe project "uid:$startup_project_uid" -o json >"$startup_root/project.before-fresh.json"
-startup_primary_window_before="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$startup_root/project.before-fresh.json" | head -n 1)"
-startup_pmx describe window "uid:$startup_primary_window_before" --project "uid:$startup_project_uid" -o json >"$startup_root/window.before-fresh.json"
-startup_primary_pane_before="$(sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' "$startup_root/window.before-fresh.json" | head -n 1)"
-if [[ -z "$startup_primary_window_before" || -z "$startup_primary_pane_before" ]]; then
-  echo "Open fresh fixture has no canonical shell identity" >&2
+startup_retained_continue_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
+startup_missing_retained_shell_panes="$(comm -23 <(printf '%s\n' "$startup_shell_pane_uids") <(printf '%s\n' "$startup_retained_continue_pane_uids"))"
+startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-retained-continue.json"
+startup_retained_agent_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/agent-after-retained-continue.json" | head -n 1)"
+if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
+  [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)" != "$startup_retained_window_uids" ]] ||
+  [[ -n "$startup_missing_retained_shell_panes" ]] || [[ -z "$startup_retained_agent_pane_uid" ]] ||
+  ! grep -Fqx "$startup_retained_agent_pane_uid" <<<"$startup_retained_continue_pane_uids" ||
+  ! grep -Fq '"phase": "Running"' "$startup_root/agent-after-retained-continue.json" ||
+  ! grep -Fq 'startup-thread' "$startup_root/agent-after-retained-continue.json"; then
+  echo "retained Project Continue changed durable topology or lost the resumed Agent conversation" >&2
   exit 1
 fi
+cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
+
+# 5. Stop again, explicitly remove every retained Window while the runtime is
+# absent, and Continue the resulting valid zero-Window Project. Continue keeps
+# the Project uid but allocates a new canonical Window/shell uid pair; no old
+# descendant identity may be resurrected.
+startup_managed_stop zero-window-continue
+startup_zero_window_old_windows="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)"
+startup_zero_window_old_panes="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
+while IFS= read -r startup_delete_window_uid; do
+  [[ -n "$startup_delete_window_uid" ]] || continue
+  startup_pmx delete window --socket "$startup_socket" "uid:$startup_delete_window_uid" --project "uid:$startup_project_uid" --yes \
+    >"$startup_root/delete-zero-window-$startup_delete_window_uid.out"
+done <<<"$startup_zero_window_old_windows"
+if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
+  [[ -n "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid)" ]] ||
+  [[ -n "$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid)" ]] ||
+  [[ -n "$(startup_pmx get agents --project "uid:$startup_project_uid" -o uid 2>/dev/null || true)" ]]; then
+  echo "canonical Window deletion did not leave one exact zero-Window Project" >&2
+  exit 1
+fi
+rm -f "$startup_root/open-continue.rc"
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client'" Enter
+startup_wait_for "zero-Window Continue" test -s "$startup_root/open-continue.rc"
+if [[ "$(tr -d '[:space:]' <"$startup_root/open-continue.rc")" != "0" ]]; then
+  cat "$startup_root/open-continue.err" >&2 || true
+  exit 1
+fi
+startup_wait_for "zero-Window Continue client handoff" startup_client_is_on "$startup_session"
+startup_zero_window_continue_project_uid="$(startup_pmx get projects -o uid)"
+startup_zero_window_continue_window_uid="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid)"
+startup_zero_window_continue_pane_uid="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid)"
+if [[ "$startup_zero_window_continue_project_uid" != "$startup_project_uid" ]] ||
+  [[ -z "$startup_zero_window_continue_window_uid" ]] || [[ "$(printf '%s\n' "$startup_zero_window_continue_window_uid" | grep -c .)" != "1" ]] ||
+  [[ -z "$startup_zero_window_continue_pane_uid" ]] || [[ "$(printf '%s\n' "$startup_zero_window_continue_pane_uid" | grep -c .)" != "1" ]] ||
+  grep -Fqx "$startup_zero_window_continue_window_uid" <<<"$startup_zero_window_old_windows" ||
+  grep -Fqx "$startup_zero_window_continue_pane_uid" <<<"$startup_zero_window_old_panes"; then
+  echo "zero-Window Continue did not preserve Project identity while minting canonical descendants" >&2
+  exit 1
+fi
+cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
+
+# 6. Fresh from the retained one-Window state runs from a detached continuation
+# with explicit client authority. It must atomically replace the complete uid
+# chain, leave exactly one same-root claimant, and preserve the filesystem root
+# and snapshot source bytes.
+startup_project_uid_before_fresh="$startup_project_uid"
+startup_primary_window_before="$startup_zero_window_continue_window_uid"
+startup_primary_pane_before="$startup_zero_window_continue_pane_uid"
 : >"$startup_agent_argv"
-startup_tmux switch-client -c "$startup_client" -t "$startup_driver"
-startup_tmux kill-session -t "$startup_session"
+startup_managed_stop retained-fresh
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session' '$startup_client'" Enter
 startup_wait_for "Open fresh continuation" test -s "$startup_root/open-new.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
@@ -5367,9 +5453,9 @@ if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
 fi
 startup_wait_for "Open fresh explicit client handoff" startup_client_is_on "$startup_session"
 startup_project_uid_after="$(startup_pmx get projects -o uid)"
-if [[ -z "$startup_project_uid_after" ]] || [[ "$startup_project_uid_after" != "$startup_project_uid" ]] ||
+if [[ -z "$startup_project_uid_after" ]] || [[ "$startup_project_uid_after" == "$startup_project_uid_before_fresh" ]] ||
   [[ "$(printf '%s\n' "$startup_project_uid_after" | grep -c .)" != "1" ]]; then
-  echo "Open fresh did not preserve exactly one canonical Project identity" >&2
+  echo "Open fresh did not mint exactly one same-root Project identity" >&2
   startup_pmx get projects -o uid >&2 || true
   exit 1
 fi
@@ -5378,9 +5464,9 @@ startup_primary_window_after="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1
 startup_pmx describe window "uid:$startup_primary_window_after" --project "uid:$startup_project_uid_after" -o json >"$startup_root/window.after-fresh.json"
 startup_primary_pane_after="$(sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' "$startup_root/window.after-fresh.json" | head -n 1)"
 if [[ -z "$startup_primary_window_after" ]] || [[ -z "$startup_primary_pane_after" ]] ||
-  [[ "$startup_primary_window_after" != "$startup_primary_window_before" ]] ||
-  [[ "$startup_primary_pane_after" != "$startup_primary_pane_before" ]]; then
-  echo "Open fresh changed the canonical Window/shell identity" >&2
+  [[ "$startup_primary_window_after" == "$startup_primary_window_before" ]] ||
+  [[ "$startup_primary_pane_after" == "$startup_primary_pane_before" ]]; then
+  echo "Open fresh did not mint a new canonical Window/shell identity" >&2
   exit 1
 fi
 if [[ "$(startup_pmx get windows --project "uid:$startup_project_uid_after" -o uid | grep -c .)" != "1" ]] ||
@@ -5405,8 +5491,19 @@ if [[ -s "$startup_agent_argv" ]]; then
   exit 1
 fi
 
-startup_tmux switch-client -c "$startup_client" -t "$startup_driver"
-startup_tmux kill-session -t "$startup_session"
+# 7. Make the fresh Project zero-Window, then Fresh once more. This second
+# replacement proves the zero-Window input has the same always-new Project,
+# Window, and Pane identity contract as the retained input.
+startup_project_uid_before_repeat_fresh="$startup_project_uid_after"
+startup_window_uid_before_repeat_fresh="$startup_primary_window_after"
+startup_pane_uid_before_repeat_fresh="$startup_primary_pane_after"
+startup_managed_stop zero-window-fresh
+startup_pmx delete window --socket "$startup_socket" "uid:$startup_window_uid_before_repeat_fresh" \
+  --project "uid:$startup_project_uid_before_repeat_fresh" --yes >"$startup_root/delete-before-repeat-fresh.out"
+if [[ -n "$(startup_pmx get windows --project "uid:$startup_project_uid_before_repeat_fresh" -o uid)" ]]; then
+  echo "repeat Fresh fixture did not reach zero Windows" >&2
+  exit 1
+fi
 rm -f "$startup_root/open-new.rc"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session' '$startup_client'" Enter
 startup_wait_for "repeat Open fresh continuation" test -s "$startup_root/open-new.rc"
@@ -5415,10 +5512,16 @@ if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
   exit 1
 fi
 startup_wait_for "repeat Open fresh explicit client handoff" startup_client_is_on "$startup_session"
-if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
-  [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid)" != "$startup_primary_window_before" ]] ||
-  [[ "$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid)" != "$startup_primary_pane_before" ]]; then
-  echo "repeat Open fresh changed the canonical UID chain" >&2
+startup_repeat_fresh_project_uid="$(startup_pmx get projects -o uid)"
+startup_repeat_fresh_window_uid="$(startup_pmx get windows --project "uid:$startup_repeat_fresh_project_uid" -o uid)"
+startup_repeat_fresh_pane_uid="$(startup_pmx get panes --project "uid:$startup_repeat_fresh_project_uid" -o uid)"
+if [[ -z "$startup_repeat_fresh_project_uid" ]] || [[ "$(printf '%s\n' "$startup_repeat_fresh_project_uid" | grep -c .)" != "1" ]] ||
+  [[ "$startup_repeat_fresh_project_uid" == "$startup_project_uid_before_repeat_fresh" ]] ||
+  [[ -z "$startup_repeat_fresh_window_uid" ]] || [[ "$(printf '%s\n' "$startup_repeat_fresh_window_uid" | grep -c .)" != "1" ]] ||
+  [[ "$startup_repeat_fresh_window_uid" == "$startup_window_uid_before_repeat_fresh" ]] ||
+  [[ -z "$startup_repeat_fresh_pane_uid" ]] || [[ "$(printf '%s\n' "$startup_repeat_fresh_pane_uid" | grep -c .)" != "1" ]] ||
+  [[ "$startup_repeat_fresh_pane_uid" == "$startup_pane_uid_before_repeat_fresh" ]]; then
+  echo "repeat Open fresh did not replace the zero-Window Project with one new canonical UID chain" >&2
   exit 1
 fi
 cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
