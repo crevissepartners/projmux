@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -26,10 +27,25 @@ type paneDeleteRuntime interface {
 	// server. It is called before the first inventory of an invocation.
 	useExactTarget(explicitTmuxTarget)
 	preflight(context.Context, coremetadata.Registry, deletePlan) (paneLiveDeletePlan, error)
+	prepareReplacements(context.Context, []paneReplacementShell) (paneReplacementReceipt, error)
+	rollbackReplacements(context.Context, paneReplacementReceipt) error
 	kill(context.Context, paneLiveDeleteTarget) error
 	tombstoneSelfKill(context.Context, []paneLiveDeleteTarget) error
 	restoreSelfKill(context.Context, []paneLiveDeleteTarget) error
 	queueSelfKill(context.Context, []paneLiveDeleteTarget) error
+}
+
+// paneReplacementShell binds one desired replacement row to the exact live
+// Pane that still anchors its Window immediately before deletion.
+type paneReplacementShell struct {
+	Pane   coremetadata.Pane
+	Anchor paneLiveDeleteTarget
+}
+
+// paneReplacementReceipt contains only runtime objects this delete created.
+// Rollback is therefore exact and never targets a pre-existing sibling.
+type paneReplacementReceipt struct {
+	created []runtimeObject
 }
 
 type paneLiveDeleteTarget struct {
@@ -83,23 +99,14 @@ func (p paneLiveDeletePlan) signature() string {
 }
 
 func (p paneLiveDeletePlan) endsWindows() int {
-	total := 0
-	for _, target := range p.Targets {
-		if target.EndsWindow {
-			total++
-		}
-	}
-	return total
+	// Canonical Pane/Agent delete always preserves its owning Window. The
+	// EndsWindow bit means a replacement must be created before the kill, not
+	// that the final plan ends the Window.
+	return 0
 }
 
 func (p paneLiveDeletePlan) endsSessions() int {
-	total := 0
-	for _, target := range p.Targets {
-		if target.EndsSession {
-			total++
-		}
-	}
-	return total
+	return 0
 }
 
 func (p paneLiveDeletePlan) hasSelfTarget() bool {
@@ -827,6 +834,84 @@ func (r *tmuxPaneDeleteRuntime) currentInvocationPane(ctx context.Context) (stri
 		return "", "", errors.New("delete pane: exact caller tmux Pane handle is malformed")
 	}
 	return paneID, inheritedSocket, nil
+}
+
+func (r *tmuxPaneDeleteRuntime) replacementMaterializer() *materializer {
+	routed := r.routed()
+	return &materializer{
+		runner: routed, mirror: intmetadata.NewMirror(routed), sessions: inttmux.NewClient(routed),
+		target: r.target, expectedSocketPath: r.expectedSocketPath,
+		socketName: r.expectedLogicalSocket, routeAuthority: r.routeAuthority,
+	}
+}
+
+// prepareReplacements creates and fully mirrors every last-descendant shell
+// before any target Pane is killed. A partial create is ownership-ledgered and
+// rolled back here, so callers either receive a complete receipt or the exact
+// live/Registry preimage remains.
+func (r *tmuxPaneDeleteRuntime) prepareReplacements(ctx context.Context, replacements []paneReplacementShell) (paneReplacementReceipt, error) {
+	var receipt paneReplacementReceipt
+	if len(replacements) == 0 {
+		return receipt, nil
+	}
+	if err := r.guardSocketIdentity(ctx); err != nil {
+		return receipt, err
+	}
+	runtime := r.replacementMaterializer()
+	ledger := newRuntimeLedger("delete-pane-replacement")
+	fail := func(cause error) (paneReplacementReceipt, error) {
+		runtime.rollback(ctx, ledger)
+		runtime.clearCreateOperations(ctx, ledger)
+		return paneReplacementReceipt{}, cause
+	}
+	markedSessions := map[string]bool{}
+	for _, replacement := range replacements {
+		if markedSessions[replacement.Anchor.SessionID] {
+			continue
+		}
+		if err := runtime.markCreateOperation(ctx, replacement.Anchor.SessionID, ledger); err != nil {
+			return fail(err)
+		}
+		markedSessions[replacement.Anchor.SessionID] = true
+	}
+	for _, replacement := range replacements {
+		paneID, err := runtime.splitPane(ctx, replacement.Anchor.PaneID, defaultPlacement,
+			replacement.Pane.Spec.CWD, nil)
+		if paneID != "" {
+			if claimErr := adoptCreatedPane(ctx, runtime, paneID, replacement.Anchor.SessionID,
+				replacement.Anchor.WindowID, replacement.Pane, ledger); claimErr != nil {
+				return fail(errors.Join(err, claimErr))
+			}
+			if mirrorErr := runtime.runIdentityWrites(ctx, "pane", paneID, replacement.Pane.Metadata.UID, []identityPlanWrite{
+				{operands: []string{"-p", "-t", paneID, "-q", tmuxopts.PaneOwnerKind, string(coremetadata.KindWindow)}, effect: "replacement Pane owner kind equals Window"},
+				{operands: []string{"-p", "-t", paneID, "-q", tmuxopts.PaneOwnerUID, replacement.Anchor.WindowUID}, effect: "replacement Pane owner uid equals Window"},
+				{operands: []string{"-p", "-t", paneID, "-q", tmuxopts.PaneRole, string(coremetadata.PaneRoleShell)}, effect: "replacement Pane role equals shell"},
+			}); mirrorErr != nil {
+				return fail(errors.Join(err, mirrorErr))
+			}
+		}
+		if err != nil {
+			return fail(err)
+		}
+	}
+	receipt.created = slices.Clone(ledger.created)
+	runtime.clearCreateOperations(ctx, ledger)
+	return receipt, nil
+}
+
+func (r *tmuxPaneDeleteRuntime) rollbackReplacements(ctx context.Context, receipt paneReplacementReceipt) error {
+	if len(receipt.created) == 0 {
+		return nil
+	}
+	runtime := r.replacementMaterializer()
+	ledger := &runtimeLedger{created: slices.Clone(receipt.created)}
+	runtime.rollback(ctx, ledger)
+	for _, created := range receipt.created {
+		if got := runtime.option(ctx, created.ID, "#{"+created.ownershipOption()+"}"); got == created.UID {
+			return fmt.Errorf("delete pane: replacement rollback left owned %s %s uid=%s", created.Kind, created.ID, created.UID)
+		}
+	}
+	return nil
 }
 
 func (r *tmuxPaneDeleteRuntime) kill(ctx context.Context, target paneLiveDeleteTarget) error {

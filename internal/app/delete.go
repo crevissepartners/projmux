@@ -363,6 +363,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	var killedLive []windowLiveDeleteTarget
 	var killedPanes []paneLiveDeleteTarget
 	paneTombstoned := false
+	var replacementReceipt paneReplacementReceipt
 	if err := c.store.mutate(kind, resolution.UIDs(), func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
 		if current := buildDeletePlan(*working, kind, resolution).signature(); current != approved {
 			return fmt.Errorf("%s: the cascade plan changed between preflight and execution; nothing was deleted", spelling)
@@ -412,6 +413,21 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 			if currentPanes.signature() != approvedPanes {
 				return fmt.Errorf("%s: the exact live cascade changed between preflight and execution; nothing was deleted", spelling)
 			}
+			candidate := working.Clone()
+			for _, uid := range resolution.UIDs() {
+				if err := deleteResource(&candidate, mutator, kind, uid); err != nil {
+					return err
+				}
+			}
+			if err := candidate.Validate(); err != nil {
+				return err
+			}
+			replacements := paneDeleteReplacementShells(*working, candidate, currentPanes)
+			replacementReceipt, err = c.panes.prepareReplacements(context.Background(), replacements)
+			if err != nil {
+				return fmt.Errorf("%s: create exact replacement shell before deleting the last Window descendant: %w", spelling, err)
+			}
+			preparedWindowDelete = &candidate
 			// A caller-containing plan marks the complete exact live set before
 			// deleting Registry resources. A partial mark is rolled back while the
 			// Registry still owns every uid; after commit, every queued or unqueued
@@ -456,8 +472,16 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 				return withdrawIntent(fmt.Errorf("%w; Registry uid(s) %s remain, but rollback of pre-commit exact Pane tombstones was incomplete: %v; reported tombstoned drift cannot be orphan-imported",
 					err, strings.Join(resolution.UIDs(), ","), restoreErr))
 			}
+			if rollbackErr := c.panes.rollbackReplacements(context.Background(), replacementReceipt); rollbackErr != nil {
+				return withdrawIntent(fmt.Errorf("%w; exact Pane tombstones were restored but replacement rollback failed: %v", err, rollbackErr))
+			}
 			return withdrawIntent(fmt.Errorf("%w; pre-commit exact Pane tombstones %s were restored and Registry uid(s) %s remain unchanged for retry",
 				err, paneDeleteIDs(panePlan.Targets), strings.Join(resolution.UIDs(), ",")))
+		}
+		if len(killedPanes) == 0 {
+			if rollbackErr := c.panes.rollbackReplacements(context.Background(), replacementReceipt); rollbackErr != nil {
+				return withdrawIntent(fmt.Errorf("%w; exact owned replacement rollback failed: %v", err, rollbackErr))
+			}
 		}
 		if len(killedLive) > 0 {
 			var removed []string
@@ -562,6 +586,38 @@ func deleteResource(registry *coremetadata.Registry, mutator coremetadata.Mutato
 	}
 }
 
+// paneDeleteReplacementShells finds only newly allocated desired shell rows for
+// live Windows whose complete target Pane set would otherwise end the Window.
+// One stable target in that Window is used as the pre-kill split anchor.
+func paneDeleteReplacementShells(before, desired coremetadata.Registry, live paneLiveDeletePlan) []paneReplacementShell {
+	beforeUIDs := make(map[string]bool, len(before.Panes))
+	for _, pane := range before.Panes {
+		beforeUIDs[pane.Metadata.UID] = true
+	}
+	anchorByWindow := map[string]paneLiveDeleteTarget{}
+	for _, target := range live.Targets {
+		if !target.EndsWindow {
+			continue
+		}
+		if _, exists := anchorByWindow[target.WindowUID]; !exists {
+			anchorByWindow[target.WindowUID] = target
+		}
+	}
+	var replacements []paneReplacementShell
+	for _, pane := range desired.Panes {
+		if beforeUIDs[pane.Metadata.UID] || pane.Metadata.OwnerRef == nil ||
+			pane.Metadata.OwnerRef.Kind != coremetadata.KindWindow || pane.Spec.Role != coremetadata.PaneRoleShell {
+			continue
+		}
+		anchor, ok := anchorByWindow[pane.Metadata.OwnerRef.UID]
+		if !ok {
+			continue
+		}
+		replacements = append(replacements, paneReplacementShell{Pane: pane.Clone(), Anchor: anchor})
+	}
+	return replacements
+}
+
 // buildDeletePlan expands every resolved target into its cascade plan.
 func buildDeletePlan(registry coremetadata.Registry, kind coremetadata.Kind, resolution selector.Resolution) deletePlan {
 	plan := deletePlan{Kind: kind}
@@ -593,6 +649,12 @@ func cascadeOf(registry coremetadata.Registry, kind coremetadata.Kind, uid strin
 		}
 		for _, pane := range registry.PanesOf(uid) {
 			out = append(out, deleteDescendant{Kind: coremetadata.KindPane, UID: pane.Metadata.UID, Name: pane.Metadata.Name})
+		}
+		if window, ok := registry.Window(uid); ok && window.Metadata.OwnerRef != nil &&
+			window.Metadata.OwnerRef.Kind == coremetadata.KindProject && len(registry.WindowsOf(window.Metadata.OwnerRef.UID)) == 1 {
+			if project, ok := registry.Project(window.Metadata.OwnerRef.UID); ok {
+				out = append(out, deleteDescendant{Kind: coremetadata.KindProject, UID: project.Metadata.UID, Name: project.Metadata.Name})
+			}
 		}
 	case coremetadata.KindAgent:
 		for _, pane := range registry.PanesOf(uid) {
@@ -668,23 +730,14 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 				action, liveTarget.PaneID, liveTarget.PaneUID, liveTarget.WindowID,
 				liveTarget.SessionName, liveTarget.SessionID, socket.label())
 			if liveTarget.EndsWindow {
-				impact := "ended"
+				impact := "created"
 				if dryRun {
-					impact = "would end"
+					impact = "would create"
 				} else if selfQueued {
-					impact = "will end after this result is flushed"
+					impact = "was created before this result and the exact target kill will be queued after flush"
 				}
-				fmt.Fprintf(&b, "  live cascade %s Window %s because its last live Pane is deleted\n", impact, liveTarget.WindowID)
-			}
-			if liveTarget.EndsSession {
-				impact := "ended"
-				if dryRun {
-					impact = "would end"
-				} else if selfQueued {
-					impact = "will end after this result is flushed"
-				}
-				fmt.Fprintf(&b, "  live cascade %s %s session %s because its last live Window is deleted\n",
-					impact, liveTarget.RootKind, liveTarget.SessionName)
+				fmt.Fprintf(&b, "  live lifecycle %s a replacement shell in Window %s before its last prior Pane is deleted; Window uid=%s and name are preserved\n",
+					impact, liveTarget.WindowID, liveTarget.WindowUID)
 			}
 		}
 		for _, registryTarget := range panes.RegistryOnly {

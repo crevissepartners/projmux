@@ -114,7 +114,7 @@ func TestAgentPaneNeverReclaimsDefaultShellRef(t *testing.T) {
 	}
 }
 
-func TestDeletedLastWindowGetsAMinimumReplacementChainAtomically(t *testing.T) {
+func TestExplicitDeleteLastProjectWindowCascadesRootWithZeroReplacementAllocation(t *testing.T) {
 	root := t.TempDir()
 	registry, project, mutator := pbtRegistryOver(t, root)
 	deleted := registry.WindowsOf(project.Metadata.UID)[0]
@@ -129,20 +129,11 @@ func TestDeletedLastWindowGetsAMinimumReplacementChainAtomically(t *testing.T) {
 	if _, ok := registry.Pane(deletedPane.Metadata.UID); ok {
 		t.Fatalf("requested Window descendant %q survived", deletedPane.Metadata.UID)
 	}
-	windows := registry.WindowsOf(project.Metadata.UID)
-	if len(windows) != 1 || windows[0].Metadata.UID == deleted.Metadata.UID {
-		t.Fatalf("replacement Windows = %+v", windows)
-	}
-	storedProject, _ := registry.Project(project.Metadata.UID)
-	if storedProject.Spec.PrimaryWindowRef != windows[0].Metadata.UID {
-		t.Fatalf("primaryWindowRef = %q, want replacement %q", storedProject.Spec.PrimaryWindowRef, windows[0].Metadata.UID)
-	}
-	primary, ok := registry.Pane(windows[0].Spec.AnchorPaneRef)
-	if !ok || primary.Metadata.OwnerUID() != windows[0].Metadata.UID || primary.Spec.Role != PaneRoleShell || primary.Spec.CWD != root {
-		t.Fatalf("replacement shell chain = window:%+v pane:%+v", windows[0], primary)
+	if _, ok := registry.Project(project.Metadata.UID); ok || len(registry.WindowsOf(project.Metadata.UID)) != 0 {
+		t.Fatalf("last-Window explicit delete retained Project graph: %+v", registry)
 	}
 	if err := registry.Validate(); err != nil {
-		t.Fatalf("replacement chain invalid: %v", err)
+		t.Fatalf("root cascade invalid: %v", err)
 	}
 }
 
@@ -172,18 +163,21 @@ func TestDeletePrimaryWindowReanchorsToAValidSiblingWithoutCreatingAnother(t *te
 	}
 }
 
-func TestLastWindowReplacementFailureRollsBackTheExactRegistry(t *testing.T) {
+func TestExplicitLastWindowDeleteDoesNotCallAnyUIDAllocator(t *testing.T) {
 	root := t.TempDir()
 	registry, project, mutator := pbtRegistryOver(t, root)
 	window := registry.WindowsOf(project.Metadata.UID)[0]
-	before := mustJSON(t, *registry)
-	mutator.NewUID = func(Kind) (string, error) { return "", errors.New("injected uid failure") }
-
-	if err := mutator.DeleteWindow(registry, window.Metadata.UID); err == nil || err.Error() != "injected uid failure" {
-		t.Fatalf("DeleteWindow = %v, want injected uid failure", err)
+	allocations := 0
+	mutator.NewUID = func(Kind) (string, error) {
+		allocations++
+		return "", errors.New("allocator must not be called")
 	}
-	if after := mustJSON(t, *registry); after != before {
-		t.Fatalf("failed replacement changed Registry:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+
+	if err := mutator.DeleteWindow(registry, window.Metadata.UID); err != nil {
+		t.Fatalf("DeleteWindow = %v", err)
+	}
+	if allocations != 0 || len(registry.Windows) != 0 || len(registry.Panes) != 0 || len(registry.Projects) != 0 {
+		t.Fatalf("explicit root cascade allocations=%d graph=%+v", allocations, registry)
 	}
 }
 

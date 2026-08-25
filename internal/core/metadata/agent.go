@@ -3,6 +3,7 @@ package metadata
 import (
 	"slices"
 	"strings"
+	"time"
 )
 
 // AgentExit classifies why an Agent stopped owning its managed Pane.
@@ -247,6 +248,8 @@ func (m Mutator) ReleaseAgentPane(reg *Registry, agentUID string, exit AgentExit
 	}
 
 	now := m.clock()().UTC()
+	before := reg.Clone()
+	windowUID := agent.Metadata.OwnerUID()
 	if paneUID := agent.Status.PaneRef; paneUID != "" {
 		reg.deletePane(paneUID)
 	}
@@ -257,6 +260,10 @@ func (m Mutator) ReleaseAgentPane(reg *Registry, agentUID string, exit AgentExit
 	agent.Status.Progress = AgentProgress{}
 	agent.Status.Reason = strings.TrimSpace(reason)
 	agent.Status.LastTransitionAt = now
+	if err := m.repairRetainedWindow(reg, windowUID, "replace-released-agent-anchor", now); err != nil {
+		*reg = before
+		return Agent{}, err
+	}
 	reg.UpdatedAt = now
 	return agent.Clone(), nil
 }
@@ -288,12 +295,25 @@ func (m Mutator) TransitionAgent(reg *Registry, agentUID string, phase AgentPhas
 	return agent.Clone(), nil
 }
 
-// firstWindowPaneUID returns the first surviving Window-owned shell Pane in
-// registry insertion order, or "" when the Window has no shell anchor left.
-func (r *Registry) firstWindowPaneUID(windowUID string) string {
+// firstWindowShellPaneUID returns the first surviving direct Window-owned shell
+// Pane in Registry insertion order. Registry order is the stable tie-breaker
+// used by every lifecycle transition; runtime pane order is never authority.
+func (r *Registry) firstWindowShellPaneUID(windowUID string) string {
 	for _, pane := range r.Panes {
 		if pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == KindWindow &&
 			pane.Metadata.OwnerRef.UID == windowUID && pane.Spec.Role == PaneRoleShell {
+			return pane.Metadata.UID
+		}
+	}
+	return ""
+}
+
+// firstWindowAnchorPaneUID returns the first Pane whose exact Registry ancestry
+// reaches windowUID. Both direct shell Panes and managed Agent Panes are valid
+// final-v2 anchors.
+func (r *Registry) firstWindowAnchorPaneUID(windowUID string) string {
+	for _, pane := range r.Panes {
+		if owner, ok := paneWindowOwnerUID(*r, pane); ok && owner == windowUID {
 			return pane.Metadata.UID
 		}
 	}
@@ -315,12 +335,10 @@ func (r *Registry) deletePane(uid string) bool {
 		r.releaseNames(uid)
 		for j := range r.Windows {
 			if r.Windows[j].Spec.AnchorPaneRef == uid {
-				// Preserve the pre-cutover lifecycle result until Phase 3 owns
-				// role-aware re-anchoring and replacement-shell transactions.
-				r.Windows[j].Spec.AnchorPaneRef = r.firstWindowPaneUID(r.Windows[j].Metadata.UID)
+				r.Windows[j].Spec.AnchorPaneRef = r.firstWindowAnchorPaneUID(r.Windows[j].Metadata.UID)
 			}
 			if r.Windows[j].Spec.DefaultShellPaneRef == uid {
-				r.Windows[j].Spec.DefaultShellPaneRef = r.firstWindowPaneUID(r.Windows[j].Metadata.UID)
+				r.Windows[j].Spec.DefaultShellPaneRef = r.firstWindowShellPaneUID(r.Windows[j].Metadata.UID)
 			}
 		}
 		for j := range r.Agents {
@@ -334,6 +352,36 @@ func (r *Registry) deletePane(uid string) bool {
 	return false
 }
 
+// repairRetainedWindow closes the final-v2 lifecycle invariant after one or
+// more descendants have been removed. It preserves an existing valid sibling
+// in deterministic Registry order and allocates a shell only when the retained
+// Window would otherwise have no descendant Pane at all.
+func (m Mutator) repairRetainedWindow(reg *Registry, windowUID, operationID string, now time.Time) error {
+	window, ok := reg.Window(windowUID)
+	if !ok {
+		return nil
+	}
+	if anchor := reg.firstWindowAnchorPaneUID(windowUID); anchor != "" {
+		window.Spec.AnchorPaneRef = anchor
+		if shell := reg.firstWindowShellPaneUID(windowUID); shell != "" {
+			window.Spec.DefaultShellPaneRef = shell
+		} else {
+			window.Spec.DefaultShellPaneRef = ""
+		}
+		return nil
+	}
+	if _, _, err := m.EnsureWindowDefaultShell(reg, windowUID, "", operationID); err != nil {
+		return err
+	}
+	window, _ = reg.Window(windowUID)
+	if window.Spec.AnchorPaneRef == "" || reg.firstWindowAnchorPaneUID(windowUID) == "" {
+		return stateErr("repair retained window", ErrInvalidRegistry,
+			"window %q has no descendant after replacement", windowUID)
+	}
+	reg.UpdatedAt = now
+	return nil
+}
+
 // DeletePane removes one Pane resource. Deleting the managed Pane of a running
 // Agent moves that Agent to Offline; the Agent resource survives.
 func (m Mutator) DeletePane(reg *Registry, paneUID string) error {
@@ -343,13 +391,13 @@ func (m Mutator) DeletePane(reg *Registry, paneUID string) error {
 	if !ok {
 		return stateErr(op, ErrNotFound, "pane %q does not exist", paneUID)
 	}
-	ownerUID := pane.Metadata.OwnerUID()
-	ownerKind := KindWindow
-	if pane.Metadata.OwnerRef != nil {
-		ownerKind = pane.Metadata.OwnerRef.Kind
+	windowUID, ok := paneWindowOwnerUID(*reg, *pane)
+	if !ok {
+		return stateErr(op, ErrInvalidRegistry, "pane %q has no exact owning Window", paneUID)
 	}
+	ownerUID := pane.Metadata.OwnerUID()
+	ownerKind := pane.Metadata.OwnerRef.Kind
 	now := m.clock()().UTC()
-	replaceShell := ownerKind == KindWindow && pane.Spec.Role == PaneRoleShell && reg.firstWindowPaneUID(ownerUID) == paneUID
 	offlineCurrentAgent := false
 	if ownerKind == KindAgent {
 		agent, ok := reg.Agent(ownerUID)
@@ -357,20 +405,6 @@ func (m Mutator) DeletePane(reg *Registry, paneUID string) error {
 	}
 	before := reg.Clone()
 	reg.deletePane(paneUID)
-	if replaceShell && reg.firstWindowPaneUID(ownerUID) == "" {
-		cwd := ""
-		if window, ok := reg.Window(ownerUID); ok {
-			if project, ok := reg.Project(window.Metadata.OwnerUID()); ok {
-				cwd = project.Spec.Root
-			}
-		}
-		txn := m.Begin(reg, "replace-deleted-primary-shell")
-		if _, err := m.addPaneTx(txn, reg, op, ownerUID, KindWindow, PaneRoleShell, "", FallbackPaneNameBase, "", cwd, nil, now); err != nil {
-			*reg = before
-			return err
-		}
-		txn.Commit()
-	}
 	if ownerKind == KindAgent {
 		// An Agent may own retained Panes from earlier materializations. Removing
 		// one of those MissingRuntime rows must not offline the Agent's current,
@@ -381,6 +415,10 @@ func (m Mutator) DeletePane(reg *Registry, paneUID string) error {
 			agent.Status.LastTransitionAt = now
 		}
 	}
+	if err := m.repairRetainedWindow(reg, windowUID, "replace-deleted-window-anchor", now); err != nil {
+		*reg = before
+		return err
+	}
 	reg.UpdatedAt = now
 	return nil
 }
@@ -389,9 +427,13 @@ func (m Mutator) DeletePane(reg *Registry, paneUID string) error {
 func (m Mutator) DeleteAgent(reg *Registry, agentUID string) error {
 	const op = "delete agent"
 
-	if _, ok := reg.Agent(agentUID); !ok {
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
 		return stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
 	}
+	windowUID := agent.Metadata.OwnerUID()
+	before := reg.Clone()
+	now := m.clock()().UTC()
 	for _, pane := range reg.PanesOf(agentUID) {
 		reg.deletePane(pane.Metadata.UID)
 	}
@@ -402,13 +444,18 @@ func (m Mutator) DeleteAgent(reg *Registry, agentUID string) error {
 		}
 	}
 	reg.releaseNames(agentUID)
-	reg.UpdatedAt = m.clock()().UTC()
+	if err := m.repairRetainedWindow(reg, windowUID, "replace-deleted-agent-anchor", now); err != nil {
+		*reg = before
+		return err
+	}
+	reg.UpdatedAt = now
 	return nil
 }
 
-// DeleteWindow removes a Window and every descendant Pane and Agent. When it
-// removes a Project's last valid Window, it creates the minimum replacement
-// Window/shell chain so the Project remains a valid schema-v2 resource.
+// DeleteWindow is the explicit canonical root delete. It removes a Window and
+// every descendant Pane and Agent; deleting a Project's last Window also
+// removes that now-empty Project identity. It never creates lifecycle
+// replacement topology for the Window the operator explicitly deleted.
 func (m Mutator) DeleteWindow(reg *Registry, windowUID string) error {
 	return m.deleteWindow(reg, windowUID, true)
 }
@@ -421,13 +468,18 @@ func (m Mutator) deleteWindow(reg *Registry, windowUID string, preserveProjectAn
 		return stateErr(op, ErrNotFound, "window %q does not exist", windowUID)
 	}
 	target := window.Clone()
-	before := reg.Clone()
 	now := m.clock()().UTC()
 	for _, agent := range reg.AgentsOf(windowUID) {
-		if err := m.DeleteAgent(reg, agent.Metadata.UID); err != nil {
-			*reg = before
-			return err
+		for _, pane := range reg.PanesOf(agent.Metadata.UID) {
+			reg.deletePane(pane.Metadata.UID)
 		}
+		for i := range reg.Agents {
+			if reg.Agents[i].Metadata.UID == agent.Metadata.UID {
+				reg.Agents = slices.Delete(reg.Agents, i, i+1)
+				break
+			}
+		}
+		reg.releaseNames(agent.Metadata.UID)
 	}
 	for _, pane := range reg.PanesOf(windowUID) {
 		reg.deletePane(pane.Metadata.UID)
@@ -441,24 +493,21 @@ func (m Mutator) deleteWindow(reg *Registry, windowUID string, preserveProjectAn
 	reg.releaseNames(windowUID)
 	if preserveProjectAnchor && target.Metadata.OwnerRef != nil && target.Metadata.OwnerRef.Kind == KindProject {
 		if project, ok := reg.Project(target.Metadata.OwnerRef.UID); ok && project.Spec.PrimaryWindowRef == windowUID {
+			projectUID := project.Metadata.UID
 			project.Spec.PrimaryWindowRef = ""
-			for _, candidate := range reg.WindowsOf(project.Metadata.UID) {
+			for _, candidate := range reg.WindowsOf(projectUID) {
 				if validWindowPrimary(reg, candidate) {
 					project.Spec.PrimaryWindowRef = candidate.Metadata.UID
 					break
 				}
 			}
 			if project.Spec.PrimaryWindowRef == "" {
-				txn := m.Begin(reg, "replace-deleted-primary-window")
-				replacement, _, err := m.addWindowTx(txn, reg, op, KindProject, project.Metadata.UID, BootstrapWindow{}, "", project.Spec.Root, now)
-				if err != nil {
-					txn.Rollback()
-					*reg = before
-					return err
+				if i := slices.IndexFunc(reg.Projects, func(candidate Project) bool {
+					return candidate.Metadata.UID == projectUID
+				}); i >= 0 {
+					reg.Projects = slices.Delete(reg.Projects, i, i+1)
 				}
-				project, _ = reg.Project(project.Metadata.UID)
-				project.Spec.PrimaryWindowRef = replacement.Metadata.UID
-				txn.Commit()
+				reg.releaseNames(projectUID)
 			}
 		}
 	}

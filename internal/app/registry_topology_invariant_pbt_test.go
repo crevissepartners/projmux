@@ -126,8 +126,8 @@ func pbtRegistryShape(registry coremetadata.Registry, project coremetadata.Proje
 
 // TestTopologyPlanKeepsProjectOpenableWithAgentOnlyWindow pins the state an
 // operator reaches by running an Agent in a Window and closing that Window's
-// shell. The shell Pane is gone, deletePane promotes the Agent's managed Pane to
-// default shell ref, Validate accepts the Agent anchor, and the planner cannot build a
+// shell. The shell Pane is gone, defaultShellPaneRef becomes optional-empty,
+// Validate accepts the Agent anchor, and the planner cannot build a
 // Window from an Agent-owned Pane. The Project still has to open, and the Window
 // it could not build has to be disclosed rather than dropped.
 func TestTopologyPlanKeepsProjectOpenableWithAgentOnlyWindow(t *testing.T) {
@@ -165,11 +165,11 @@ func TestTopologyPlanKeepsProjectOpenableWithAgentOnlyWindow(t *testing.T) {
 	if planned := pbtPlannedWindows(plan); !slices.Contains(planned, healthy.Metadata.Name) {
 		t.Fatalf("planned windows = %v, want the healthy Window %q to still be built", planned, healthy.Metadata.Name)
 	}
-	if len(skipped) != 0 {
-		t.Fatalf("last-shell repair left materialize skips: %v", pbtRender(skipped))
+	if len(skipped) != 1 || skipped[0].Target != window.Metadata.Name {
+		t.Fatalf("Agent-only Window disclosure = %v", pbtRender(skipped))
 	}
-	if notices := plan.skipNotices(); len(notices) != 0 {
-		t.Fatalf("last-shell repair left skip notices: %v", notices)
+	if notices := plan.skipNotices(); len(notices) != 1 || !strings.Contains(notices[0], "offline Agent anchor") {
+		t.Fatalf("Agent-only Window skip notices: %v", notices)
 	}
 }
 

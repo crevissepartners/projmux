@@ -301,7 +301,7 @@ func TestPaneDeleteRuntimePreflightPinsSiblingAgentAndImplicitCascades(t *testin
 		t.Fatalf("last Pane preflight: %v", err)
 	}
 	if len(lastPlan.Targets) != 1 || !lastPlan.Targets[0].EndsWindow || !lastPlan.Targets[0].EndsSession ||
-		lastPlan.endsWindows() != 1 || lastPlan.endsSessions() != 1 {
+		lastPlan.endsWindows() != 0 || lastPlan.endsSessions() != 0 {
 		t.Fatalf("last Pane plan = %#v", lastPlan)
 	}
 }
@@ -632,34 +632,19 @@ func TestPaneDeleteAuthorityUsesActivationGenerationNotTerminationReceipt(t *tes
 	}
 }
 
-func TestNamedLastPaneRuntimeCascadeForcesConfirmation(t *testing.T) {
+func TestNamedLastPaneCreatesReplacementWithoutRootCascadeConfirmation(t *testing.T) {
 	store := newFakeResourceStore(t)
 	runtime := newFixturePaneDeleteRuntime()
 	var prompts []string
 	cmd := newTestDeleteCommand(store, false, false, &prompts)
 	cmd.panes = runtime
-	before := store.snapshot()
 	out, _, err := runRoute(t, cmd, "pane", "uid:pan-beta-zsh")
-	if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "--yes") {
-		t.Fatalf("named last-Pane refusal = %v", err)
+	if err != nil {
+		t.Fatalf("named last-Pane replacement = %v", err)
 	}
-	if out != "" || store.snapshot() != before || store.transactions != 0 || len(runtime.killed) != 0 {
-		t.Fatal("named last-Pane refusal mutated Registry/tmux or wrote stdout")
-	}
-
-	store = newFakeResourceStore(t)
-	runtime = newFixturePaneDeleteRuntime()
-	prompts = nil
-	cmd = newTestDeleteCommand(store, true, false, &prompts)
-	cmd.panes = runtime
-	_, _, err = runRoute(t, cmd, "pane", "uid:pan-beta-zsh")
-	if err == nil || len(prompts) != 1 {
-		t.Fatalf("interactive named last-Pane refusal err=%v prompts=%v", err, prompts)
-	}
-	for _, want := range []string{"kill 1 exact live tmux Pane", "end 1 Window", "end 1 managed root session"} {
-		if !strings.Contains(prompts[0], want) {
-			t.Fatalf("last-Pane prompt = %q, want %q", prompts[0], want)
-		}
+	if len(runtime.killed) != 1 || len(runtime.replacements) != 1 || len(prompts) != 0 ||
+		!strings.Contains(out, "replacement shell") {
+		t.Fatalf("named last-Pane outcome killed=%+v replacements=%+v prompts=%v out=%q", runtime.killed, runtime.replacements, prompts, out)
 	}
 }
 
@@ -976,7 +961,7 @@ func TestPaneDeleteRouteDryRunExecutionPartialFailureAndAgentOffline(t *testing.
 	if err != nil {
 		t.Fatalf("dry-run: %v", err)
 	}
-	for _, want := range []string{"live would kill tmux pane %34", "would end Window @12", "would end Project session beta"} {
+	for _, want := range []string{"live would kill tmux pane %34", "would create a replacement shell in Window @12", "Window uid=win-beta-main and name are preserved"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("dry-run missing %q:\n%s", want, out)
 		}
