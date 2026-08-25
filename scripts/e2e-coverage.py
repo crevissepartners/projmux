@@ -42,6 +42,50 @@ EXPECTED_MERGED_EVIDENCE = {
             "bounded_refusal_failure",
         },
     },
+    "L17.merged-768-project-stop": {
+        "scenario_id": "L17",
+        "source_commit": "3322b5f7b0c247c9ad206807d7a1ec817b07836e",
+        "guarantees": {
+            "causal_last_pane_window_unlink",
+            "zero_window_project_retention",
+            "stale_resume_refusal",
+            "sibling_reanchor_and_containment",
+            "fixed_point",
+        },
+        "lower_tests": {
+            ("internal/app/controller_trigger_test.go", "TestEventMarkedAfterFinalPendingCheckIsConsumedAcrossLeaseRelease"),
+            ("internal/app/delete_pane_runtime_test.go", "TestLifecycleSiblingCleanupBindsExistingExactSocketBeforeKillPlan"),
+            ("internal/app/delete_test.go", "TestDeleteLastProjectWindowRetainsZeroWindowProjectWithoutReplacement"),
+            ("internal/app/lifecycle_cascade_test.go", "TestLastPaneExitAndMatchingWindowUnlinkDeleteWindowAndRetainProject"),
+            ("internal/app/lifecycle_cascade_test.go", "TestAutomaticWindowClosureNeverUsesProjectPinAuthority"),
+            ("internal/app/lifecycle_cascade_test.go", "TestWindowUnlinkedConsumesStoredExactTeardownEvidenceOnlyForTargetWindow"),
+            ("internal/app/lifecycle_cascade_test.go", "TestLastShellExitStoresPendingEvidenceWithoutReplacementAuthority"),
+            ("internal/app/lifecycle_cascade_test.go", "TestLastPaneClosureDoesNotInvokeReplacementPreparation"),
+            ("internal/app/lifecycle_cascade_test.go", "TestLastPaneRegistryCommitFailureLeavesReceiptUncommittedAfterExactCleanup"),
+            ("internal/app/lifecycle_cascade_test.go", "TestDeadPaneCleanupFailureExposesTypedRetryAndNextPassConverges"),
+            ("internal/core/metadata/invariant_pbt_test.go", "TestExplicitDeleteLastProjectWindowRetainsZeroWindowRootWithZeroReplacementAllocation"),
+            ("internal/core/metadata/invariant_pbt_test.go", "TestExplicitLastWindowDeleteDoesNotCallAnyUIDAllocator"),
+            ("internal/core/metadata/lifecycle_decision_test.go", "TestTeardownAggregationIsOrderIndependentAndRootBounded"),
+            ("internal/core/metadata/lifecycle_decision_test.go", "TestLastPaneCausalPairDeletesWindowAndPreservesZeroWindowProject"),
+            ("internal/core/metadata/lifecycle_decision_test.go", "TestCausalPrimaryWindowClosureReanchorsToExistingSibling"),
+            ("internal/core/metadata/lifecycle_decision_test.go", "TestWindowCascadeRefusesReceiptAfterAgentResumedOnDifferentPane"),
+            ("internal/core/metadata/schema_test.go", "TestRegistryValidateRejectsStructuralViolations"),
+        },
+    },
+    "L19.merged-768-control-stop": {
+        "scenario_id": "L19",
+        "source_commit": "3322b5f7b0c247c9ad206807d7a1ec817b07836e",
+        "guarantees": {
+            "control_session_causal_closure",
+            "control_root_retention",
+            "zero_replacement_allocation",
+            "sibling_containment",
+            "fixed_point",
+        },
+        "lower_tests": {
+            ("internal/core/metadata/lifecycle_decision_test.go", "TestControlSessionLastWindowCausalPairDeletesWindowAndRetainsRootIdentity"),
+        },
+    },
 }
 BEGIN_RE = re.compile(
     r"^smoke_contract_begin\s+(?P<id>[LCN]\d{2})\s+(?P<scenario>[a-z0-9-]+)\s+(?P<owner>[a-z0-9-]+)\s*$",
@@ -284,6 +328,12 @@ def validate(root: pathlib.Path, manifest: dict[str, Any]) -> dict[str, Any]:
             local_refs.add(ref)
             merged_lower_refs.add(ref)
             merged_lower_count += 1
+        expected_lower_tests = expected_merged.get("lower_tests")
+        if expected_lower_tests is not None and local_refs != expected_lower_tests:
+            fail(
+                f"{evidence_id} lower-layer inventory differs: "
+                f"actual={sorted(local_refs)} expected={sorted(expected_lower_tests)}"
+            )
 
         for layer in ("integration", "e2e"):
             boundary = item.get(layer)

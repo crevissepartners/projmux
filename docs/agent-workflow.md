@@ -337,8 +337,15 @@
   preservation, and byte-identical repeat. L18 closes the generated foreground
   `run-shell` matrix through exact-client bounded delivery, success silence,
   no view-mode overlay, and origin PID/focus/Registry identity preservation.
-  Every referenced unit symbol/selector and integration/E2E pass marker is
-  fail-closed by the coverage audit.
+  Merged lifecycle commit `3322b5f7` adds no stable ID: L17 separately owns the
+  causal clean last-Pane/Window-unlinked Project-stop path, zero-Window root,
+  stale-resume refusal, sibling reanchor/containment, and fixed point; L19 owns
+  the ControlSession last-Window descendant cleanup, root retention, zero
+  replacement allocation, sibling containment, and fixed point. Their exact
+  lower test sets share the existing real last-Pane integration marker but use
+  distinct E2E markers before each scenario's pass. Every referenced guarantee,
+  unit symbol/selector, and integration/E2E marker is fail-closed by the
+  coverage audit.
 - `make test-e2e` uses one attempt-local binary across isolated four-way Linux,
   Codex, and npm consumers. Local Security is the exact three-way
   `make security` topology; CI's required branch-protection context is the

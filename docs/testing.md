@@ -88,8 +88,16 @@ the repeat is Registry-byte-identical. L18 links the closed foreground
 `run-shell` producer ledger and integration transport marker to its attached
 client replay: success is silent or one bounded exact-client message, no
 view-mode overlay appears, and origin PID, focus, and Registry identity remain.
-The audit fails when any linked guarantee, test symbol/selector, or executable
-integration/E2E marker is missing, misspelled, or duplicated.
+The two lifecycle boundaries merged at `3322b5f7` stay on existing IDs rather
+than expanding the inventory. L17 links exact clean last-Pane plus
+Window-unlinked causality, zero-Window Project retention, stale-resume refusal,
+sibling reanchor/containment, and byte-identical replay to the Project-stop
+marker. L19 separately links ControlSession last-Window descendant cleanup,
+root retention, zero replacement allocation, sibling containment, and
+fixed-point replay to its own marker. The shared integration marker closes the
+real last-Pane transport boundary. The audit fails when any linked guarantee,
+exact lower test inventory/symbol/selector, or executable integration/E2E
+marker is missing, misspelled, or duplicated.
 
 The required result hash accepts exactly one `begin` followed by one typed
 `pass` for every expected stable ID. A terminal `fail`, `cancel`, or
