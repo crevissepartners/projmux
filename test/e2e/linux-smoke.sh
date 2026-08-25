@@ -5014,7 +5014,6 @@ if [[ -e "$startup_root/state/projmux/metadata/registry.json" ]]; then
   exit 1
 fi
 startup_pmx create project --root "$startup_root/work/alpha" --name alpha >"$startup_root/register-alpha.out"
-startup_registry="$startup_root/state/projmux/metadata/registry.json"
 startup_pmx internal tmux apply --bin "$bin" --config "$startup_root/config/projmux/tmux.conf" --socket "$startup_socket" >"$startup_root/apply.out"
 e2e_bounded_reconcile_to_noop --allow-initial-noop "$startup_root/import" \
   startup_pmx reconcile resources --socket "$startup_socket" -o json
