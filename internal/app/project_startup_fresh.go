@@ -190,11 +190,11 @@ func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, s
 				coremetadata.ProjectUIDPreserved, coremetadata.ProjectDescendantUIDsCreated,
 				coremetadata.ProjectStartupWriteCreateCanonicalWindow, coremetadata.ProjectStartupWriteCreateCanonicalShell)
 		default:
-			decisionErr = fmt.Errorf("Continue classified registered Project as %q", state)
+			decisionErr = fmt.Errorf("continue classified registered Project as %q", state)
 		}
 		if decisionErr != nil || uid != project.Metadata.UID {
 			if decisionErr == nil {
-				decisionErr = errors.New("Continue state-table Project UID disagrees with Registry")
+				decisionErr = errors.New("continue state-table Project UID disagrees with Registry")
 			}
 			return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "state-table", project.Metadata.UID, project.Metadata.UID,
 				decisionErr)
@@ -205,7 +205,7 @@ func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, s
 				current, currentUID := projectLifecycleDecisionFor(*working, root, coremetadata.ProjectLifecycleContinue, coremetadata.ProjectLifecyclePreconditions{})
 				if currentUID != project.Metadata.UID {
 					return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "canonical-allocation", project.Metadata.UID, project.Metadata.UID,
-						errors.New("Project topology changed after Continue preflight; retry"))
+						errors.New("project topology changed after Continue preflight; retry"))
 				}
 				if err := requireProjectLifecyclePlan(current, coremetadata.ProjectLifecycleOperationContinue,
 					coremetadata.ProjectUIDPreserved, coremetadata.ProjectDescendantUIDsCreated,
@@ -538,7 +538,7 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 		plan.NewProjectUID = registered.project.Metadata.UID
 		if plan.ProjectUID != "" && registered.project.Metadata.UID == plan.ProjectUID {
 			return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "replacement-readback", plan.ProjectUID, registered.project.Metadata.UID,
-				errors.New("Fresh reused the old Project UID"))
+				errors.New("fresh reused the old Project UID"))
 		}
 		registered.bootstrapped = true
 		opened = registered
