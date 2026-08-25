@@ -369,7 +369,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 		if current := buildDeletePlan(*working, kind, resolution).signature(); current != approved {
 			return fmt.Errorf("%s: the cascade plan changed between preflight and execution; nothing was deleted", spelling)
 		}
-		var preparedWindowDelete *coremetadata.Registry
+		var preparedDelete coremetadata.Registry
 		if kind == coremetadata.KindWindow {
 			currentLive, err := c.windows.preflight(context.Background(), *working, plan)
 			if err != nil {
@@ -391,7 +391,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 			if err := candidate.Validate(); err != nil {
 				return err
 			}
-			preparedWindowDelete = &candidate
+			preparedDelete = candidate
 			// A self-target cannot synchronously kill its own Window: tmux tears
 			// down the caller's pty before the registry transaction can commit or
 			// the result can be written. Its exact kill is queued only after the
@@ -428,7 +428,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 			if err != nil {
 				return fmt.Errorf("%s: create exact replacement shell before deleting the last Window descendant: %w", spelling, err)
 			}
-			preparedWindowDelete = &candidate
+			preparedDelete = candidate
 			// A caller-containing plan marks the complete exact live set before
 			// deleting Registry resources. A partial mark is rolled back while the
 			// Registry still owns every uid; after commit, every queued or unqueued
@@ -457,15 +457,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 				}
 			}
 		}
-		if preparedWindowDelete != nil {
-			*working = *preparedWindowDelete
-		} else {
-			for _, uid := range resolution.UIDs() {
-				if err := deleteResource(working, mutator, kind, uid); err != nil {
-					return err
-				}
-			}
-		}
+		*working = preparedDelete
 		return nil
 	}); err != nil {
 		if paneTombstoned {
