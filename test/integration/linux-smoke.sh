@@ -3115,6 +3115,76 @@ termination_provider_case claude normal 0 "" 'exit 0'
 termination_provider_case codex normal 0 "" 'exit 0'
 termination_provider_case antigravity abnormal "" TERM 'kill -TERM $$; sleep 30'
 
+# A distinct one-Window Project reaches the true last-Pane boundary on this
+# exact server. The normal supervisor receipt and generated pane-exited hook
+# remove the remain-on-exit dead Pane, whose matching window-unlinked hook then
+# deletes the complete Window subtree. The Project uid/root and both sibling
+# containment boundaries survive, and a repeat is byte-identical.
+mkdir -p "$termination_root/work/closed"
+termination_tmux new-session -d -s work-closed -n main -c "$termination_root/work/closed" sleep 600
+termination_tmux set-option -t work-closed -q @projmux_project_path "$termination_root/work/closed"
+termination_closed_project_uid="$(termination_pmx create project --root "$termination_root/work/closed" --name closed -o uid)"
+bounded_resource_reconcile_to_noop "$termination_root/reconcile-closed" \
+  termination_pmx reconcile resources --socket "$termination_socket" -o json
+termination_closed_window_uid="$(termination_tmux show-options -wqv -t work-closed @projmux_window_uid)"
+termination_closed_shell_runtime="$(termination_tmux display-message -p -t work-closed '#{pane_id}')"
+termination_closed_shell_uid="$(termination_tmux show-options -pqv -t "$termination_closed_shell_runtime" @projmux_pane_uid)"
+termination_closed_release="$termination_root/provider-release-closed"
+rm -f "$termination_closed_release"
+printf 'while [ ! -e %q ]; do sleep 0.05; done\nexit 0\n' "$termination_closed_release" >"$termination_root/stub-script"
+termination_closed_agent_uid="$(termination_pmx_provider create agent --provider codex \
+  --project "uid:$termination_closed_project_uid" --window "uid:$termination_closed_window_uid" -o uid)"
+termination_agent_json "$termination_closed_agent_uid"
+termination_closed_agent_pane_uid="$(termination_agent_pane_ref)"
+termination_closed_runtime_id="$(termination_activation_runtime_id "$termination_closed_agent_pane_uid")"
+if [[ -z "$termination_closed_project_uid" || -z "$termination_closed_window_uid" ||
+  -z "$termination_closed_shell_uid" || -z "$termination_closed_agent_uid" ||
+  -z "$termination_closed_agent_pane_uid" || ! "$termination_closed_runtime_id" =~ ^%[0-9]+$ ]]; then
+  echo "Phase 1 integration could not resolve the exact one-Window owner chain" >&2
+  exit 1
+fi
+termination_pmx delete pane "uid:$termination_closed_shell_uid" --socket "$termination_socket" --yes \
+  >"$termination_root/delete-closed-shell.out"
+if [[ "$(termination_tmux list-panes -t work-closed -F '#{@projmux_pane_uid}' | grep -c . || true)" != "1" ]] ||
+  ! termination_tmux list-panes -t work-closed -F '#{@projmux_pane_uid}' | grep -Fxq "$termination_closed_agent_pane_uid"; then
+  echo "Phase 1 integration did not leave the managed Agent as exact last Pane" >&2
+  exit 1
+fi
+termination_sibling_closed_before="$(termination_sibling_tmux show-options -gqv @projmux_termination_sentinel):$(termination_sibling_tmux list-panes -a -F '#{pane_id}')"
+touch "$termination_closed_release"
+termination_replay_pane_exited_hook "$termination_closed_agent_pane_uid" normal "$termination_closed_runtime_id" closed-last-pane
+for _ in $(seq 1 200); do
+  if ! termination_pmx describe window "uid:$termination_closed_window_uid" -o json >/dev/null 2>&1 &&
+    ! termination_pmx describe pane "uid:$termination_closed_agent_pane_uid" -o json >/dev/null 2>&1 &&
+    ! termination_pmx describe agent "uid:$termination_closed_agent_uid" -o json >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.05
+done
+if termination_pmx describe window "uid:$termination_closed_window_uid" -o json >/dev/null 2>&1 ||
+  termination_pmx describe pane "uid:$termination_closed_agent_pane_uid" -o json >/dev/null 2>&1 ||
+  termination_pmx describe agent "uid:$termination_closed_agent_uid" -o json >/dev/null 2>&1 ||
+  ! termination_pmx describe project "uid:$termination_closed_project_uid" -o json >"$termination_root/closed-project.json" ||
+  ! grep -Fq '"primaryWindowRef": ""' "$termination_root/closed-project.json" ||
+  [[ -n "$(termination_pmx get windows --project "uid:$termination_closed_project_uid" -o uid 2>/dev/null || true)" ]] ||
+  termination_tmux has-session -t work-closed 2>/dev/null; then
+  echo "Phase 1 integration did not converge to an exact zero-Window Project" >&2
+  cat "$termination_root/closed-project.json" >&2 || true
+  exit 1
+fi
+termination_closed_registry="$termination_root/state/projmux/metadata/registry.json"
+termination_closed_before="$(sha256sum "$termination_closed_registry" | cut -d' ' -f1)"
+termination_pmx internal tmux converge --socket-path "$termination_socket_path" --reason pane-killed \
+  >"$termination_root/closed-repeat.out"
+termination_closed_after="$(sha256sum "$termination_closed_registry" | cut -d' ' -f1)"
+if [[ "$termination_closed_before" != "$termination_closed_after" ]] ||
+  ! termination_pmx describe project "uid:$termination_project_uid" -o json >/dev/null ||
+  [[ "$(termination_sibling_tmux show-options -gqv @projmux_termination_sentinel):$(termination_sibling_tmux list-panes -a -F '#{pane_id}')" != "$termination_sibling_closed_before" ]]; then
+  echo "Phase 1 integration repeat or sibling containment failed" >&2
+  exit 1
+fi
+echo ">> termination Phase 1 last-Pane project=$termination_closed_project_uid window=$termination_closed_window_uid descendants=0 project=retained sibling-project=preserved sibling-socket=preserved repeat=byte-identical"
+
 # A long-lived Pane proves the supervisor really is the pane's own process and
 # that the Registry recorded the exact live handle it landed on.
 termination_pane_uid="$(termination_pmx_inside create pane --project evidence -o uid -- sleep 600)"

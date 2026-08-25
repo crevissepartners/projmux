@@ -1796,7 +1796,7 @@ func TestDeleteWindowKillsExactLiveTargetBeforeStoreCommitAndPreservesSibling(t 
 	}
 }
 
-func TestDeleteLastProjectWindowRootCascadeAllocatesZeroReplacementWindows(t *testing.T) {
+func TestDeleteLastProjectWindowRetainsZeroWindowProjectWithoutReplacement(t *testing.T) {
 	store := newFakeResourceStore(t)
 	runtime := newFixtureWindowDeleteRuntime()
 	cmd := newTestDeleteCommand(store, false, false, nil)
@@ -1824,11 +1824,13 @@ func TestDeleteLastProjectWindowRootCascadeAllocatesZeroReplacementWindows(t *te
 	if _, ok := store.registry.Window("win-beta-main"); ok {
 		t.Fatal("requested Window survived")
 	}
-	if _, ok := store.registry.Project("prj-beta"); ok {
-		t.Fatal("last-Window owning Project survived the explicit root cascade")
+	project, ok := store.registry.Project("prj-beta")
+	if !ok || project.Spec.Root != "/srv/beta" || project.Spec.PrimaryWindowRef != "" ||
+		project.Status.Session == nil || project.Status.Session.Live {
+		t.Fatalf("last-Window delete did not retain the closed Project identity: %+v", project)
 	}
 	if got := len(store.registry.WindowsOf("prj-beta")); got != 0 {
-		t.Fatalf("explicit root cascade retained %d Project Window rows", got)
+		t.Fatalf("explicit Window cascade retained %d target Project Window rows", got)
 	}
 	if allocations != 0 {
 		t.Fatalf("explicit Window delete called UID allocator %d times", allocations)

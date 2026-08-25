@@ -114,7 +114,7 @@ func TestAgentPaneNeverReclaimsDefaultShellRef(t *testing.T) {
 	}
 }
 
-func TestExplicitDeleteLastProjectWindowCascadesRootWithZeroReplacementAllocation(t *testing.T) {
+func TestExplicitDeleteLastProjectWindowRetainsZeroWindowRootWithZeroReplacementAllocation(t *testing.T) {
 	root := t.TempDir()
 	registry, project, mutator := pbtRegistryOver(t, root)
 	deleted := registry.WindowsOf(project.Metadata.UID)[0]
@@ -129,8 +129,8 @@ func TestExplicitDeleteLastProjectWindowCascadesRootWithZeroReplacementAllocatio
 	if _, ok := registry.Pane(deletedPane.Metadata.UID); ok {
 		t.Fatalf("requested Window descendant %q survived", deletedPane.Metadata.UID)
 	}
-	if _, ok := registry.Project(project.Metadata.UID); ok || len(registry.WindowsOf(project.Metadata.UID)) != 0 {
-		t.Fatalf("last-Window explicit delete retained Project graph: %+v", registry)
+	if retained, ok := registry.Project(project.Metadata.UID); !ok || retained.Spec.PrimaryWindowRef != "" || len(registry.WindowsOf(project.Metadata.UID)) != 0 {
+		t.Fatalf("last-Window explicit delete did not retain a zero-Window Project: %+v", registry)
 	}
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("root cascade invalid: %v", err)
@@ -176,8 +176,8 @@ func TestExplicitLastWindowDeleteDoesNotCallAnyUIDAllocator(t *testing.T) {
 	if err := mutator.DeleteWindow(registry, window.Metadata.UID); err != nil {
 		t.Fatalf("DeleteWindow = %v", err)
 	}
-	if allocations != 0 || len(registry.Windows) != 0 || len(registry.Panes) != 0 || len(registry.Projects) != 0 {
-		t.Fatalf("explicit root cascade allocations=%d graph=%+v", allocations, registry)
+	if allocations != 0 || len(registry.Windows) != 0 || len(registry.Panes) != 0 || len(registry.Projects) != 1 || registry.Projects[0].Spec.PrimaryWindowRef != "" {
+		t.Fatalf("explicit zero-Window root allocations=%d graph=%+v", allocations, registry)
 	}
 }
 

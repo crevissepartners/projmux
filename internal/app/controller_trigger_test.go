@@ -101,6 +101,34 @@ func TestOneProducerConvergesOnceAndProvesIt(t *testing.T) {
 	}
 }
 
+func TestEventMarkedAfterFinalPendingCheckIsConsumedAcrossLeaseRelease(t *testing.T) {
+	t.Parallel()
+
+	fixture := newTriggerFixture(t)
+	injected := false
+	fixture.runner.beforeLeaseRelease = func() {
+		if injected {
+			return
+		}
+		injected = true
+		if err := fixture.runner.events.mark(controllerTrigger{
+			reason: controllerTriggerWindowUnlinked, target: fixture.target,
+			session: "$1", hookWindow: "@4",
+		}); err != nil {
+			t.Fatalf("mark release-race event: %v", err)
+		}
+	}
+	outcome := fixture.run(t, controllerTriggerPaneExited)
+
+	if outcome.passes != 2 || outcome.events != 2 || !outcome.converged || outcome.deferred != "" {
+		t.Fatalf("outcome = %s, want pane/unlink handoff consumed and converged", outcome.describe())
+	}
+	if len(fixture.triggers) != 2 || fixture.triggers[0].reason != controllerTriggerPaneExited ||
+		fixture.triggers[1].reason != controllerTriggerWindowUnlinked {
+		t.Fatalf("handoff triggers = %+v, want pane-exited then window-unlinked", fixture.triggers)
+	}
+}
+
 // TestAPassThatWroteIsRepeatedUntilOneWritesNothing pins the reobservation.
 //
 // A pass that changed the registry has not yet proved the change landed and

@@ -267,6 +267,10 @@ type controllerTriggerRunner struct {
 	receiptWaitTimeout time.Duration
 	receiptPoll        time.Duration
 	beforeReceiptWait  func()
+	// beforeLeaseRelease is a focused handoff-race seam. Production leaves it
+	// nil; tests mark an event after the holder's final pending check but before
+	// unlock to prove that producer cannot be stranded behind the old lease.
+	beforeLeaseRelease func()
 }
 
 var _ controllerTriggering = (*controllerTriggerRunner)(nil)
@@ -350,7 +354,11 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 		outcome.deferred = "another controller worker holds this server's lease: " + trigger.describe()
 		return outcome, nil
 	}
-	defer release()
+	defer func() {
+		if release != nil {
+			release()
+		}
+	}()
 
 	maxPasses := r.maxPasses
 	if maxPasses <= 0 {
@@ -437,8 +445,35 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 		// pending event has not seen what that event is about, and a pass that
 		// wrote has not yet proved the write landed.
 		if !batchChanged && !pending {
-			outcome.converged = true
-			return outcome, nil
+			// Close the only lost-wakeup gap in mark-before-acquire coalescing:
+			// a producer may publish after the pending check above, then lose its
+			// non-blocking acquire while this holder still owns the lease. Release
+			// first and check the durable queue again. A later producer observes no
+			// holder and becomes the worker; an earlier loser is visible here.
+			if r.beforeLeaseRelease != nil {
+				r.beforeLeaseRelease()
+			}
+			release()
+			release = nil
+			pending, err = r.events.pending(trigger.target)
+			if err != nil {
+				return outcome, err
+			}
+			if !pending {
+				outcome.converged = true
+				return outcome, nil
+			}
+			var reacquired bool
+			release, reacquired, err = r.events.acquire(trigger.target)
+			if err != nil {
+				return outcome, err
+			}
+			if !reacquired {
+				// Another producer won the handoff and owns the queued event.
+				outcome.deferred = "another controller worker acquired the release handoff: " + trigger.describe()
+				return outcome, nil
+			}
+			continue
 		}
 	}
 	return outcome, nil

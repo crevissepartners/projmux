@@ -142,7 +142,7 @@ func TestTeardownAggregationIsOrderIndependentAndRootBounded(t *testing.T) {
 	if !EqualTeardownPlans(forward, reverse) {
 		t.Fatalf("event order changed plan: forward=%+v reverse=%+v", forward, reverse)
 	}
-	if forward.Action != TeardownDeletePaneAgent || forward.RootAction != RootTeardownRetainProject ||
+	if forward.Action != TeardownDeleteWindow || forward.RootAction != RootTeardownRetainProject ||
 		forward.ReopenIdentity != ReopenIdentitySameProjectUID {
 		t.Fatalf("last Project Window plan = %+v", forward)
 	}
@@ -166,7 +166,7 @@ func TestTeardownAggregationIsOrderIndependentAndRootBounded(t *testing.T) {
 	projectSiblingWindow := window
 	projectSiblingWindow.LiveSiblingRootWindow = true
 	got = AggregateTeardownEvents([]TeardownEvent{projectSiblingWindow, projectSibling})
-	if got.Action != TeardownDeletePaneAgent || got.RootAction != RootTeardownRetainProject ||
+	if got.Action != TeardownDeleteWindow || got.RootAction != RootTeardownRetainProject ||
 		got.ReopenIdentity != ReopenIdentitySameProjectUID {
 		t.Fatalf("non-last Project Window plan = %+v", got)
 	}
@@ -177,7 +177,7 @@ func TestTeardownAggregationIsOrderIndependentAndRootBounded(t *testing.T) {
 	controlWindow := controlPane
 	controlWindow.Kind = TeardownEventWindowUnlinked
 	got = AggregateTeardownEvents([]TeardownEvent{controlPane, controlWindow})
-	if got.Action != TeardownDeletePaneAgent || got.RootAction != RootTeardownRetainControlSession ||
+	if got.Action != TeardownDeleteWindow || got.RootAction != RootTeardownRetainControlSession ||
 		got.ReopenIdentity != ReopenIdentityNotApplicable {
 		t.Fatalf("ControlSession last-Window plan = %+v", got)
 	}
@@ -214,7 +214,7 @@ func TestWindowUnlinkAloneAndAdversarialObservationsDeleteNothing(t *testing.T) 
 	}
 }
 
-func TestControlSessionLastWindowAutomaticExitRetainsWindowAndRootIdentity(t *testing.T) {
+func TestControlSessionLastWindowCausalPairDeletesWindowAndRetainsRootIdentity(t *testing.T) {
 	t.Parallel()
 	mutator := testMutator(dirSet{})
 	registry := NewRegistry()
@@ -243,25 +243,27 @@ func TestControlSessionLastWindowAutomaticExitRetainsWindowAndRootIdentity(t *te
 		Chain: TeardownOwnerChain{SocketIdentity: "/tmp/control.sock", SessionHandle: "$1", PaneHandle: "%7", WindowHandle: "@2",
 			PaneUID: paneUID, WindowUID: windowUID, RootKind: KindControlSession, RootUID: controlUID, Generation: "gen-control"},
 	}
-	plan, err := PlanPaneAgentCascadeDelete(registry, paneEvent, fixedNow.Add(time.Minute))
+	pending, err := PlanPaneTeardownEvidence(registry, paneEvent, fixedNow.Add(time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !plan.Changed || plan.Decision.RootAction != RootTeardownRetainControlSession {
-		t.Fatalf("control root plan = %+v", plan)
+	if !pending.Changed || pending.Decision.RootAction != RootTeardownRetainControlSession {
+		t.Fatalf("control pending plan = %+v", pending)
+	}
+	unlinked := paneEvent
+	unlinked.Kind = TeardownEventWindowUnlinked
+	plan, err := PlanWindowRootCascadeDelete(pending.Desired, paneEvent, unlinked, fixedNow.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
 	}
 	if _, ok := plan.Desired.ControlSession(controlUID); !ok {
 		t.Fatal("ControlSession identity was deleted")
 	}
-	window, ok := plan.Desired.Window(windowUID)
-	if !ok {
-		t.Fatal("automatic exit deleted the ControlSession Window")
+	if _, ok := plan.Desired.Window(windowUID); ok {
+		t.Fatal("causal pair retained the ControlSession Window")
 	}
-	if _, ok := plan.Desired.Pane(paneUID); ok {
-		t.Fatal("exited ControlSession Pane survived")
-	}
-	if replacement, ok := plan.Desired.Pane(window.Spec.AnchorPaneRef); !ok || replacement.Spec.Role != PaneRoleShell {
-		t.Fatalf("replacement ControlSession shell = %+v", replacement)
+	if _, ok := plan.Desired.Pane(paneUID); ok || plan.DeletedWindows != 1 || plan.DeletedPanes != 1 {
+		t.Fatalf("control cascade = %+v", plan)
 	}
 	if err := plan.Desired.Validate(); err != nil {
 		t.Fatalf("desired control Registry: %v", err)
@@ -551,7 +553,7 @@ func TestPaneAgentCascadeDeletePlanReleasesPaneAndRetainsAgentWindow(t *testing.
 	}
 }
 
-func TestPaneAgentCascadeDeletePlanReplacesLastWindowShell(t *testing.T) {
+func TestLastPaneCausalPairDeletesWindowAndPreservesZeroWindowProject(t *testing.T) {
 	t.Parallel()
 
 	mutator := testMutator(dirSet{"/srv/alpha": true})
@@ -565,6 +567,12 @@ func TestPaneAgentCascadeDeletePlanReplacesLastWindowShell(t *testing.T) {
 	}
 	window := registered.Windows[0]
 	pane := registered.Panes[0]
+	for i := range registry.Windows {
+		if registry.Windows[i].Metadata.UID == window.Metadata.UID {
+			registry.Windows[i].Status.RuntimeSessionID = "$1"
+			registry.Windows[i].Status.RuntimeID = "@4"
+		}
+	}
 	if _, err := mutator.RecordPaneActivation(&registry, pane.Metadata.UID, PaneActivationOptions{
 		Generation: "gen-last-shell", RuntimeID: "%9",
 	}); err != nil {
@@ -586,25 +594,195 @@ func TestPaneAgentCascadeDeletePlanReplacesLastWindowShell(t *testing.T) {
 	event.LiveSiblingPane = false
 	before := registry.Clone()
 
-	plan, err := PlanPaneAgentCascadeDelete(registry, event, fixedNow.Add(time.Minute))
+	paneOnly, err := PlanPaneAgentCascadeDelete(registry, event, fixedNow.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("PlanPaneAgentCascadeDelete: %v", err)
 	}
-	if !plan.Changed || plan.Decision.Action != TeardownDeletePaneAgent ||
-		plan.Decision.Reason != TeardownReasonAwaitingWindowUnlink {
-		t.Fatalf("last-Pane lifecycle plan = %+v, want retained Window replacement", plan)
+	if paneOnly.Changed || paneOnly.Decision.Action != TeardownRetain ||
+		paneOnly.Decision.Reason != TeardownReasonAwaitingWindowUnlink {
+		t.Fatalf("last-Pane pane-only plan = %+v, want pending receipt", paneOnly)
 	}
 	if !reflect.DeepEqual(registry, before) {
-		t.Fatal("last-Pane Phase 2 planning mutated its source Registry")
+		t.Fatal("last-Pane pane-only planning mutated its source Registry")
 	}
-	windowAfter, ok := plan.Desired.Window(window.Metadata.UID)
-	if !ok || windowAfter.Metadata.Name != window.Metadata.Name || windowAfter.Spec.AnchorPaneRef == pane.Metadata.UID {
-		t.Fatalf("retained Window identity/anchor = %+v", windowAfter)
+	pending, err := PlanPaneTeardownEvidence(registry, event, fixedNow.Add(2*time.Minute))
+	if err != nil || !pending.Changed {
+		t.Fatalf("PlanPaneTeardownEvidence = %+v, %v", pending, err)
 	}
-	replacement, ok := plan.Desired.Pane(windowAfter.Spec.AnchorPaneRef)
-	if !ok || replacement.Spec.Role != PaneRoleShell || replacement.Metadata.OwnerUID() != window.Metadata.UID {
-		t.Fatalf("replacement shell = %+v", replacement)
+	pendingBytes := mustJSON(t, pending.Desired)
+	repeat, err := PlanPaneTeardownEvidence(pending.Desired, event, fixedNow.Add(3*time.Minute))
+	if err != nil || repeat.Changed || !reflect.DeepEqual(pending.Desired, repeat.Desired) ||
+		mustJSON(t, repeat.Desired) != pendingBytes || repeat.Evidence.ObservedAt != pending.Evidence.ObservedAt {
+		t.Fatalf("later-clock pending repeat = %+v, %v", repeat, err)
 	}
+	unlinked := event
+	unlinked.Kind = TeardownEventWindowUnlinked
+	plan, err := PlanWindowRootCascadeDelete(pending.Desired, event, unlinked, fixedNow.Add(4*time.Minute))
+	if err != nil || !plan.Changed {
+		t.Fatalf("PlanWindowRootCascadeDelete = %+v, %v", plan, err)
+	}
+	project, ok := plan.Desired.Project(registered.Project.Metadata.UID)
+	if !ok || project.Spec.PrimaryWindowRef != "" || len(plan.Desired.WindowsOf(project.Metadata.UID)) != 0 {
+		t.Fatalf("zero-Window Project = %+v windows=%v", project, plan.Desired.WindowsOf(registered.Project.Metadata.UID))
+	}
+	if _, ok := plan.Desired.Window(window.Metadata.UID); ok {
+		t.Fatal("causal pair retained target Window")
+	}
+	if err := plan.Desired.Validate(); err != nil {
+		t.Fatalf("zero-Window desired Registry: %v", err)
+	}
+}
+
+func TestCausalPrimaryWindowClosureReanchorsToExistingSibling(t *testing.T) {
+	t.Parallel()
+
+	mutator := testMutator(dirSet{"/srv/alpha": true})
+	registry := NewRegistry()
+	registered, err := registerFixture(mutator, &registry, "/srv/alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := registered.Windows[0]
+	targetPane := registered.Panes[0]
+	sibling, _, err := mutator.AddWindow(&registry, registered.Project.Metadata.UID,
+		BootstrapWindow{Name: "sibling"}, "sh", "add-sibling")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range registry.Windows {
+		if registry.Windows[i].Metadata.UID == target.Metadata.UID {
+			registry.Windows[i].Status.RuntimeSessionID = "$1"
+			registry.Windows[i].Status.RuntimeID = "@4"
+		}
+	}
+	if _, err := mutator.RecordPaneActivation(&registry, targetPane.Metadata.UID,
+		PaneActivationOptions{Generation: "gen-primary-close", RuntimeID: "%9"}); err != nil {
+		t.Fatal(err)
+	}
+	zero := 0
+	if _, err := mutator.RecordTermination(&registry, TerminationEvidence{
+		Source: TerminationSourceSupervisor, Classification: TerminationNormal,
+		PaneUID: targetPane.Metadata.UID, Generation: "gen-primary-close", ExitCode: &zero,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	siblingBefore, _ := registry.Window(sibling.Metadata.UID)
+	siblingPanesBefore := registry.PanesOf(sibling.Metadata.UID)
+	event := TeardownEvent{
+		Kind: TeardownEventPaneExited, Classification: TerminationNormal,
+		Generation: TeardownGenerationCurrent, Observation: TeardownObservationExactSocket,
+		Chain: TeardownOwnerChain{
+			SocketIdentity: "/tmp/primary.sock", SessionHandle: "$1", PaneHandle: "%9", WindowHandle: "@4",
+			PaneUID: targetPane.Metadata.UID, WindowUID: target.Metadata.UID, RootKind: KindProject,
+			RootUID: registered.Project.Metadata.UID, Generation: "gen-primary-close",
+		},
+		LiveSiblingRootWindow: true,
+	}
+	pending, err := PlanPaneTeardownEvidence(registry, event, fixedNow.Add(time.Minute))
+	if err != nil || !pending.Changed {
+		t.Fatalf("pending = %+v, %v", pending, err)
+	}
+	unlinked := event
+	unlinked.Kind = TeardownEventWindowUnlinked
+	plan, err := PlanWindowRootCascadeDelete(pending.Desired, event, unlinked, fixedNow.Add(2*time.Minute))
+	if err != nil || !plan.Changed {
+		t.Fatalf("Window cascade = %+v, %v", plan, err)
+	}
+	project, _ := plan.Desired.Project(registered.Project.Metadata.UID)
+	siblingAfter, ok := plan.Desired.Window(sibling.Metadata.UID)
+	if !ok || project.Spec.PrimaryWindowRef != sibling.Metadata.UID ||
+		!reflect.DeepEqual(siblingBefore, siblingAfter) ||
+		!reflect.DeepEqual(siblingPanesBefore, plan.Desired.PanesOf(sibling.Metadata.UID)) {
+		t.Fatalf("primary reanchor changed sibling: project=%+v before=%+v after=%+v", project, siblingBefore, siblingAfter)
+	}
+	if _, ok := plan.Desired.Window(target.Metadata.UID); ok {
+		t.Fatal("causal primary target survived")
+	}
+}
+
+func TestWindowCascadeRefusesReceiptAfterAgentResumedOnDifferentPane(t *testing.T) {
+	t.Parallel()
+
+	registry, event, paneUID, agentUID := exactAgentCascadeFixture(t)
+	pending, err := PlanPaneTeardownEvidence(registry, event, fixedNow.Add(time.Minute))
+	if err != nil || !pending.Changed {
+		t.Fatalf("PlanPaneTeardownEvidence = %+v, %v", pending, err)
+	}
+	mutator := testMutator(dirSet{"/srv/alpha": true})
+	resumed := pending.Desired.Clone()
+	newPane, err := mutator.AttachAgentPane(&resumed, agentUID, BootstrapPane{CWD: "/srv/alpha"}, "resume-after-receipt")
+	if err != nil {
+		t.Fatalf("AttachAgentPane: %v", err)
+	}
+	window, _ := resumed.Window(event.Chain.WindowUID)
+	window.Spec.AnchorPaneRef = newPane.Metadata.UID
+	agent, _ := resumed.Agent(agentUID)
+	if agent.Status.PaneRef == "" || agent.Status.PaneRef == paneUID {
+		t.Fatalf("resumed binding = %q, want a distinct current Pane", agent.Status.PaneRef)
+	}
+	before := resumed.Clone()
+	unlinked := event
+	unlinked.Kind = TeardownEventWindowUnlinked
+	plan, err := PlanWindowRootCascadeDelete(resumed, event, unlinked, fixedNow.Add(2*time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Changed || plan.Decision.Action != TeardownRefuse || plan.Decision.Reason != TeardownReasonStaleOwnerBinding ||
+		!reflect.DeepEqual(resumed, before) {
+		t.Fatalf("resumed stale cascade = %+v, want zero-write refusal", plan)
+	}
+}
+
+func exactAgentCascadeFixture(t *testing.T) (Registry, TeardownEvent, string, string) {
+	t.Helper()
+	mutator := testMutator(dirSet{"/srv/alpha": true})
+	registry := NewRegistry()
+	registered, err := registerFixture(mutator, &registry, "/srv/alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowUID := registered.Windows[0].Metadata.UID
+	agent, err := mutator.CreateAgent(&registry, windowUID, CreateAgentOptions{Provider: "codex", OperationID: "create-cascade-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, err := mutator.AttachAgentPane(&registry, agent.Metadata.UID, BootstrapPane{CWD: "/srv/alpha"}, "attach-cascade-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !registry.deletePane(registered.Panes[0].Metadata.UID) {
+		t.Fatal("delete fixture shell")
+	}
+	window, _ := registry.Window(windowUID)
+	window.Spec.AnchorPaneRef = pane.Metadata.UID
+	window.Spec.DefaultShellPaneRef = ""
+	window.Status.RuntimeSessionID = "$1"
+	window.Status.RuntimeID = "@4"
+	if _, err := mutator.RecordPaneActivation(&registry, pane.Metadata.UID, PaneActivationOptions{
+		Generation: "gen-agent-last", RuntimeID: "%9", AgentUID: agent.Metadata.UID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	zero := 0
+	if _, err := mutator.RecordTermination(&registry, TerminationEvidence{
+		Source: TerminationSourceSupervisor, Classification: TerminationNormal,
+		PaneUID: pane.Metadata.UID, AgentUID: agent.Metadata.UID, Generation: "gen-agent-last", ExitCode: &zero,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("agent cascade fixture: %v", err)
+	}
+	event := TeardownEvent{
+		Kind: TeardownEventPaneExited, Classification: TerminationNormal,
+		Generation: TeardownGenerationCurrent, Observation: TeardownObservationExactSocket,
+		Chain: TeardownOwnerChain{
+			SocketIdentity: "/tmp/agent.sock", SessionHandle: "$1", PaneHandle: "%9", WindowHandle: "@4",
+			PaneUID: pane.Metadata.UID, WindowUID: windowUID, RootKind: KindProject,
+			RootUID: registered.Project.Metadata.UID, Generation: "gen-agent-last",
+		},
+	}
+	return registry, event, pane.Metadata.UID, agent.Metadata.UID
 }
 
 func TestProjectOpenStateTableHasNoBlankCells(t *testing.T) {
