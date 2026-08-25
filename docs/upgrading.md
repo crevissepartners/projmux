@@ -64,12 +64,22 @@ anchors, and invalid default shells fail closed without changing the source.
 Repeating migration on final-v2 is a byte-level no-op.
 
 The final writer never emits `primaryPaneRef`. A matching intermediate
-pre-release binary therefore sees final-v2 as invalid (its required legacy
-field is absent) and must not write. To roll back during the prerelease window,
-stop the final writer, restore the exact pre-normalization Registry backup, and
-restore the matching intermediate binary as a pair. A binary-only downgrade is
-unsupported. Snapshots are not migration or rollback inputs and are never
-rewritten by this normalization.
+pre-release validator therefore sees final-v2 as invalid because its required
+legacy authority is absent. Not every old read surface necessarily runs that
+validator: an old command may ignore the new fields and return a partial view.
+That is evidence of incompatibility, not permission to proceed. Operators must
+refuse a binary-only downgrade before installation and must not permit the old
+binary to write final-v2 bytes. To roll back during the prerelease window, stop
+the final writer, restore the exact pre-normalization Registry backup, and
+restore the matching intermediate binary as a pair. Snapshots are not migration
+or rollback inputs and are never rewritten by this normalization.
+
+Rollback rehearsal is byte-oriented: record the backup path, mode, SHA-256,
+and matching pre-release binary revision; stop every final-v2 writer; atomically
+restore those exact intermediate-v2 bytes; verify their checksum; install the
+recorded matching binary; then run its read-only validation before permitting a
+write. Installing only the intermediate binary while leaving final-v2 Registry
+bytes in place is deliberately rejected and is not a rollback procedure.
 
 ### `create` is resource-backed on every spelling
 

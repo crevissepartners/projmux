@@ -7,8 +7,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	coresessionstate "github.com/crevissepartners/projmux/internal/core/sessionstate"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
@@ -715,6 +717,78 @@ func TestRegistryTopologyMaterializationAgentAnchorLazyDefaultShellAndRepeatNoop
 	for _, call := range server.calls {
 		if len(call) > 0 && slices.Contains([]string{"new-session", "new-window", "split-window", "set-environment"}, call[0]) {
 			t.Fatalf("repeat no-op mutated runtime with %v", call)
+		}
+	}
+}
+
+func TestRestoredOfflineAgentAnchorContinueConvergesLazyShellAgentAndRepeatNoop(t *testing.T) {
+	command, store, server, _, root, _ := newTopologyMaterializeFixture(t)
+	agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "restored-agent", provider: "codex", cwd: root})
+	managed, err := store.mutator().AttachAgentPane(&store.registry, agent.Metadata.UID, coremetadata.BootstrapPane{
+		Name: "restored-agent-pane", CWD: root,
+	}, "op-restored-agent-anchor")
+	if err != nil {
+		t.Fatal(err)
+	}
+	project, _ := store.registry.Project("prj-beta")
+	window, _ := store.registry.Window("win-beta-main")
+	window.Spec.AnchorPaneRef = managed.Metadata.UID
+	snapshot := coresessionstate.Snapshot{
+		Version: coresessionstate.Version, Session: "beta", DefaultCWD: root,
+		SavedAt:  time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC),
+		Metadata: &coresessionstate.ResourceMetadata{UID: project.Metadata.UID, Name: project.Metadata.Name},
+		Windows: []coresessionstate.Window{{
+			Index: 0, Name: window.Metadata.Name, ActivePaneIndex: 0,
+			Metadata: &coresessionstate.ResourceMetadata{UID: window.Metadata.UID, Name: window.Metadata.Name, OwnerKind: string(coremetadata.KindProject), OwnerUID: project.Metadata.UID},
+			Panes: []coresessionstate.Pane{{
+				Index: 0, CWD: root,
+				Metadata: &coresessionstate.ResourceMetadata{UID: managed.Metadata.UID, Name: managed.Metadata.Name, OwnerKind: string(coremetadata.KindAgent), OwnerUID: agent.Metadata.UID},
+				Recipe:   coresessionstate.AgentRecipe("codex", "restored-thread", "restored topic"),
+			}},
+		}},
+	}
+	projection, err := coremetadata.PlanSnapshotProjection(store.registry, project.Metadata.UID, snapshot, time.Date(2026, 8, 25, 1, 0, 0, 0, time.UTC), coremetadata.NewUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.registry = projection.Desired
+	window, _ = store.registry.Window("win-beta-main")
+	if window.Spec.AnchorPaneRef != managed.Metadata.UID || window.Spec.DefaultShellPaneRef != "" {
+		t.Fatalf("restored refs = anchor %q default %q", window.Spec.AnchorPaneRef, window.Spec.DefaultShellPaneRef)
+	}
+
+	beforeRegistry, beforeRuntime := store.snapshot(), server.state()
+	preview, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+	if err != nil || !strings.Contains(preview, `"action": "allocate default shell"`) || !strings.Contains(preview, `"kind": "Agent"`) {
+		t.Fatalf("restored Agent-anchor Continue plan: err=%v\n%s", err, preview)
+	}
+	if store.snapshot() != beforeRegistry || server.state() != beforeRuntime || store.writes != 0 {
+		t.Fatalf("restored Continue dry-run mutated state: writes=%d", store.writes)
+	}
+
+	result, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+	if err != nil {
+		t.Fatalf("restored Agent-anchor Continue: %v\n%s", err, result)
+	}
+	window, _ = store.registry.Window("win-beta-main")
+	anchor, anchorOK := store.registry.WindowAnchor(window.Metadata.UID)
+	defaultShell, shellOK := store.registry.WindowDefaultShell(window.Metadata.UID)
+	storedAgent, _ := store.registry.Agent(agent.Metadata.UID)
+	if !anchorOK || anchor.Metadata.UID != managed.Metadata.UID || anchor.Spec.Role != coremetadata.PaneRoleAgent ||
+		!shellOK || defaultShell.Spec.Role != coremetadata.PaneRoleShell ||
+		storedAgent.Status.Phase != coremetadata.PhaseRunning || storedAgent.Status.PaneRef != managed.Metadata.UID {
+		t.Fatalf("restored Continue result anchor=%+v default=%+v Agent=%+v", anchor, defaultShell, storedAgent.Status)
+	}
+
+	server.calls = nil
+	writesBefore := store.writes
+	repeat, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+	if err != nil || !strings.Contains(repeat, `"outcome": "no-op"`) || store.writes != writesBefore {
+		t.Fatalf("restored Continue repeat: err=%v writes=%d->%d\n%s", err, writesBefore, store.writes, repeat)
+	}
+	for _, call := range server.calls {
+		if len(call) > 0 && slices.Contains([]string{"new-session", "new-window", "split-window", "set-environment"}, call[0]) {
+			t.Fatalf("restored Continue repeat mutated runtime with %v", call)
 		}
 	}
 }

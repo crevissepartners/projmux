@@ -232,9 +232,10 @@ projmux create pane -p alpha                # every Window of alpha; a deliberat
 One explicit scope occurrence (`--project`, `--window`, `--pane`, or
 `--selector`) makes the whole scope explicit, so naming a Window never picks up
 an anchor from somewhere you did not address. With a scope but no `--pane`, the
-anchor is the target Window's compatibility shell ref
-(`spec.defaultShellPaneRef` when set, otherwise `spec.anchorPaneRef`), and a
-missing or stale ref is exit `2` rather than a silent repair.
+split anchor is the target Window's role-agnostic `spec.anchorPaneRef`. A
+shell-required offline operation may plan a lazy direct
+`spec.defaultShellPaneRef` without replacing an Agent anchor. A missing or stale
+anchor is exit `2` rather than a silent alternate-Pane repair.
 
 Refusals are exit `2` with zero Registry writes and zero tmux mutations, and
 they name `--project` as the fix:
@@ -533,9 +534,11 @@ state; after a final-root exit it is available only when the exact saved
 snapshot is usable, and then recreates that topology under a new Project uid
 without rewriting the snapshot. An unavailable or unusable snapshot is an
 explicit zero-write refusal with no fresh fallback. `Open fresh` is one step
-with no danger styling, confirmation, or delete counts: it atomically removes
-any same-root Project graph, creates a new Project uid plus one canonical shell,
-and hands off to it. The root, git/worktrees, trust decision, and snapshot bytes
+with no danger styling, confirmation, or delete counts: it atomically retains
+the same Project and canonical Window UID, removes Agent and extra descendants,
+reuses an exact direct shell or creates the minimum one, and hands off only
+after ordinary materialization. A second pass is a Registry byte-level no-op.
+The root, git/worktrees, trust decision, unrelated roots, and snapshot bytes
 remain unchanged by both actions.
 
 Materialization launches or resumes declared Agents through the canonical
@@ -1855,9 +1858,10 @@ human configuration work should prefer `config render` and `config apply`.
   `Continue project` and `Open fresh`; Esc returns to Projects. `Continue
   project` restores a deleted Project only from its usable exact snapshot and
   otherwise refuses with zero Registry writes. `Open fresh` is a neutral,
-  confirmation-free one-step action that replaces any same-root graph with a
-  new Project uid and one canonical shell. Neither action modifies snapshot
-  bytes, the project directory, git/worktrees, or trust state.
+  confirmation-free one-step action that retains the canonical Project/Window
+  identity, removes extra/Agent descendants, and converges to one exact shell.
+  Repeating it changes no Registry bytes. Neither action modifies snapshot
+  bytes, the project directory, git/worktrees, unrelated roots, or trust state.
 - `quit` — open an action picker with `Quit projmux` and `Cancel`. Selecting
   `Quit projmux` terminates only a `tmux -L projmux` runtime whose global
   `@projmux_app` option is set by the generated app config. Missing servers,

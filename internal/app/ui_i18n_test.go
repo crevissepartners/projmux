@@ -102,8 +102,8 @@ func TestPhase15StartupFreshAndProjectionStringsHaveKoreanCatalogEntries(t *test
 	fallbacks := []string{
 		"Continue project",
 		"Open fresh",
-		"open a new Project identity with one canonical shell",
-		"projmux: opened %s fresh with a new Project identity and canonical shell",
+		"reuse the canonical Project Window with one shell",
+		"projmux: opened %s fresh with its canonical Project Window and shell",
 		"Continue project / Open fresh",
 		"open every saved Window, shell Pane, and Agent",
 		"Enter: open  |  Esc: projects",

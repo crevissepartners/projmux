@@ -154,7 +154,7 @@ func TestProjectStartupRowTable(t *testing.T) {
 			name:            "open fresh",
 			candidate:       newProjectStartupCandidate(),
 			wantName:        "Open fresh",
-			wantDescription: "open a new Project identity with one canonical shell",
+			wantDescription: "reuse the canonical Project Window with one shell",
 			wantValue:       "fresh",
 		},
 	}
@@ -205,7 +205,7 @@ func TestProjectStartupKoreanLocaleRendersExactTwoRowsAndFreshConfirmation(t *te
 	}
 
 	plan := projectFreshStartPlan{}
-	if got := plan.ResultMessageLocale(locale, "alpha"); !strings.Contains(got, "alpha") || !strings.Contains(got, "새 Project identity") {
+	if got := plan.ResultMessageLocale(locale, "alpha"); !strings.Contains(got, "alpha") || !strings.Contains(got, "canonical Project Window") {
 		t.Fatalf("Korean fresh result = %q", got)
 	}
 }
@@ -444,6 +444,18 @@ func TestProjectFreshStartPruneScope(t *testing.T) {
 			store := freshStartFixtureStore(t)
 			store.dirs[tc.root] = true
 			starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
+			var canonicalWindowUID, canonicalShellUID string
+			if beforeProject, ok := store.registry.ProjectByRoot(tc.root); ok {
+				canonicalWindowUID = beforeProject.Spec.PrimaryWindowRef
+				if beforeWindow, ok := store.registry.Window(canonicalWindowUID); ok {
+					canonicalShellUID = beforeWindow.Spec.DefaultShellPaneRef
+					if canonicalShellUID == "" {
+						if anchor, ok := store.registry.WindowAnchor(beforeWindow.Metadata.UID); ok && anchor.Spec.Role == coremetadata.PaneRoleShell {
+							canonicalShellUID = anchor.Metadata.UID
+						}
+					}
+				}
+			}
 
 			plan, err := starter.PlanProjectFreshStart(tc.root)
 			if err != nil {
@@ -468,13 +480,19 @@ func TestProjectFreshStartPruneScope(t *testing.T) {
 				t.Fatal(err)
 			}
 			fresh, ok := store.registry.ProjectByRoot(tc.root)
-			if !ok || fresh.Metadata.UID == plan.ProjectUID {
-				t.Fatalf("Open fresh Project = %+v, previous uid=%q", fresh, plan.ProjectUID)
+			if !ok || (plan.ProjectUID != "" && fresh.Metadata.UID != plan.ProjectUID) {
+				t.Fatalf("Open fresh Project = %+v, want preserved uid=%q", fresh, plan.ProjectUID)
 			}
 			windows := store.registry.WindowsOf(fresh.Metadata.UID)
 			if len(windows) != 1 || len(store.registry.PanesOf(windows[0].Metadata.UID)) != 1 || len(store.registry.AgentsOf(windows[0].Metadata.UID)) != 0 {
 				t.Fatalf("Open fresh topology = windows=%+v panes=%+v agents=%+v", windows,
 					store.registry.PanesOf(windows[0].Metadata.UID), store.registry.AgentsOf(windows[0].Metadata.UID))
+			}
+			if plan.ProjectUID != "" && (windows[0].Metadata.UID != canonicalWindowUID ||
+				store.registry.PanesOf(windows[0].Metadata.UID)[0].Metadata.UID != canonicalShellUID) {
+				t.Fatalf("Open fresh canonical chain changed: Window %q/%q shell %q/%q",
+					windows[0].Metadata.UID, canonicalWindowUID,
+					store.registry.PanesOf(windows[0].Metadata.UID)[0].Metadata.UID, canonicalShellUID)
 			}
 			repeat, err := starter.PlanProjectFreshStart(tc.root)
 			if err != nil {
@@ -483,7 +501,96 @@ func TestProjectFreshStartPruneScope(t *testing.T) {
 			if !repeat.Empty() {
 				t.Fatalf("repeat plan=%+v", repeat)
 			}
+			afterFirst, writesAfterFirst := store.snapshot(), store.writes
+			repeat.SessionName = "fresh"
+			if err := starter.PruneProjectFreshStart(context.Background(), tc.root, repeat); err != nil {
+				t.Fatal(err)
+			}
+			if store.snapshot() != afterFirst || store.writes != writesAfterFirst {
+				t.Fatalf("repeat Open fresh was not Registry zero-diff: writes=%d->%d", writesAfterFirst, store.writes)
+			}
 		})
+	}
+}
+
+func TestProjectFreshStartAgentAnchorCreatesExactMinimumShellAndRepeatsNoop(t *testing.T) {
+	t.Parallel()
+
+	store := freshStartFixtureStore(t)
+	window, ok := store.registry.Window("win-beta-main")
+	if !ok {
+		t.Fatal("fixture lost beta Window")
+	}
+	agent, ok := store.registry.Agent("agt-beta-codex")
+	if !ok {
+		t.Fatal("fixture lost beta Agent")
+	}
+	store.registry.Panes = slices.DeleteFunc(store.registry.Panes, func(pane coremetadata.Pane) bool {
+		return pane.Metadata.UID == "pan-beta-zsh"
+	})
+	store.registry.NameReservations = slices.DeleteFunc(store.registry.NameReservations, func(reservation coremetadata.NameReservation) bool {
+		return reservation.UID == "pan-beta-zsh"
+	})
+	agentPane := coremetadata.Pane{
+		APIVersion: coremetadata.APIVersion,
+		Kind:       coremetadata.KindPane,
+		Metadata: coremetadata.ObjectMeta{
+			UID:       "pan-beta-agent",
+			Name:      "codex-pane",
+			OwnerRef:  &coremetadata.OwnerRef{Kind: coremetadata.KindAgent, UID: agent.Metadata.UID},
+			CreatedAt: resourceFixtureClock,
+		},
+		Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleAgent, CWD: "/srv/beta"},
+	}
+	store.registry.Panes = append(store.registry.Panes, agentPane)
+	store.registry.NameReservations = append(store.registry.NameReservations, coremetadata.NameReservation{
+		Scope: agent.Metadata.UID, Kind: coremetadata.KindPane, Name: agentPane.Metadata.Name, UID: agentPane.Metadata.UID,
+	})
+	agent.Status.PaneRef = agentPane.Metadata.UID
+	window.Spec.AnchorPaneRef = agentPane.Metadata.UID
+	window.Spec.DefaultShellPaneRef = ""
+	if err := store.registry.Validate(); err != nil {
+		t.Fatalf("Agent-anchor fixture: %v", err)
+	}
+
+	starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
+	plan, err := starter.PlanProjectFreshStart("/srv/beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.ProjectUID != "prj-beta" || plan.Windows != 0 || plan.Panes != 1 || plan.Agents != 1 {
+		t.Fatalf("Agent-anchor Fresh plan = %+v", plan)
+	}
+	if err := starter.PruneProjectFreshStart(context.Background(), "/srv/beta", plan); err != nil {
+		t.Fatal(err)
+	}
+	project, _ := store.registry.Project("prj-beta")
+	windows := store.registry.WindowsOf(project.Metadata.UID)
+	if len(windows) != 1 || windows[0].Metadata.UID != "win-beta-main" {
+		t.Fatalf("canonical Window changed: %+v", windows)
+	}
+	panes := store.registry.PanesOf(windows[0].Metadata.UID)
+	if len(panes) != 1 || panes[0].Spec.Role != coremetadata.PaneRoleShell ||
+		windows[0].Spec.AnchorPaneRef != panes[0].Metadata.UID || windows[0].Spec.DefaultShellPaneRef != panes[0].Metadata.UID {
+		t.Fatalf("minimum shell projection = Window %+v Panes %+v", windows[0], panes)
+	}
+	if len(store.registry.AgentsOf(windows[0].Metadata.UID)) != 0 {
+		t.Fatal("Open fresh retained Agent descendants")
+	}
+	afterFirst := store.registry.Clone()
+	writesAfterFirst := store.writes
+	repeat, err := starter.PlanProjectFreshStart("/srv/beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !repeat.Empty() {
+		t.Fatalf("repeat plan = %+v", repeat)
+	}
+	if err := starter.PruneProjectFreshStart(context.Background(), "/srv/beta", repeat); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(afterFirst, store.registry) || store.writes != writesAfterFirst {
+		t.Fatalf("repeat changed Registry: writes %d -> %d", writesAfterFirst, store.writes)
 	}
 }
 
@@ -593,7 +700,7 @@ func TestProjectFreshStartHasNoConfirmationSurface(t *testing.T) {
 	if strings.Contains(label, settingsColorRemove) || strings.Contains(label, "confirm") || strings.Contains(label, "delete") {
 		t.Fatalf("Fresh row is destructive or confirmatory: %q", label)
 	}
-	if got := (projectFreshStartPlan{}).ResultMessage("alpha"); !strings.Contains(got, "new Project identity") {
+	if got := (projectFreshStartPlan{}).ResultMessage("alpha"); !strings.Contains(got, "canonical Project Window") {
 		t.Fatalf("Fresh result = %q", got)
 	}
 }
@@ -840,8 +947,8 @@ func TestProjectFreshStartRefusesADriftedPlan(t *testing.T) {
 	if store.writes != writesBefore+1 || store.snapshot() == before {
 		t.Fatalf("Fresh replacement writes=%d before=%d", store.writes, writesBefore)
 	}
-	if fresh, ok := store.registry.ProjectByRoot("/srv/alpha"); !ok || fresh.Metadata.UID == plan.ProjectUID {
-		t.Fatalf("Fresh did not mint a new Project: %+v", fresh)
+	if fresh, ok := store.registry.ProjectByRoot("/srv/alpha"); !ok || fresh.Metadata.UID != plan.ProjectUID {
+		t.Fatalf("Fresh did not preserve the canonical Project: %+v", fresh)
 	}
 }
 

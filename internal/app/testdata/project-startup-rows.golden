@@ -2,4 +2,4 @@ ui=project-startup
 header=Start project
 footer=Enter: open  |  Esc: projects
 row[0]=continue|continue|Continue project|open every saved Window, shell Pane, and Agent
-row[1]=fresh|fresh|Open fresh|open a new Project identity with one canonical shell
+row[1]=fresh|fresh|Open fresh|reuse the canonical Project Window with one shell

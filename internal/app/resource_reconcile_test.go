@@ -250,7 +250,7 @@ func TestPublicAuthorshipPromotionPreservesUnknownRawProviderReceipt(t *testing.
 	}
 }
 
-func TestAuthorshipPromotionPreservesSiblingProjectAndSocket(t *testing.T) {
+func TestAuthorshipPromotionPreservesSiblingProjectSocketAndOtherHostDesiredState(t *testing.T) {
 	t.Parallel()
 	command, store, primary, routed, root := newReconcileFixture(t, "-L", "primary")
 	_, _, _ = seedAuthorshipPromotionIncident(t, store, primary, root)
@@ -300,6 +300,38 @@ func TestAuthorshipPromotionPreservesSiblingProjectAndSocket(t *testing.T) {
 	siblingSession.windows[0].opts[tmuxopts.WindowUID] = "donus-window"
 	siblingSession.windows[0].panes[0].opts[tmuxopts.PaneUID] = "donus-pane"
 	siblingSession.windows[0].panes[0].opts[tmuxopts.PaneName] = "drifted-d5"
+
+	// The same shared Registry also carries a Project whose only positive live
+	// evidence belongs to the sibling socket/host. Its desired anchor/default
+	// refs and runtime status are global bytes, but absence from the selected
+	// primary socket is explicitly not authority to clear or re-anchor them.
+	otherHostRoot := t.TempDir()
+	store.dirs[otherHostRoot] = true
+	otherHostProject, err := store.mutator().RegisterProject(&store.registry, coremetadata.RegisterProjectOptions{
+		Root: otherHostRoot, DefaultShell: "/bin/zsh", OperationID: "op-other-host-project",
+	})
+	if err != nil {
+		t.Fatalf("seed other-host Project: %v", err)
+	}
+	if _, err := store.mutator().BindProjectSession(&store.registry, otherHostProject.Project.Metadata.UID, "other-host", true); err != nil {
+		t.Fatalf("bind other-host Project: %v", err)
+	}
+	otherHostWindow := store.registry.WindowsOf(otherHostProject.Project.Metadata.UID)[0]
+	otherHostPane := store.registry.PanesOf(otherHostWindow.Metadata.UID)[0]
+	otherHostSession := siblingSocket.addSession("other-host")
+	otherHostSession.opts[tmuxopts.ProjectUIDSession] = otherHostProject.Project.Metadata.UID
+	otherHostSession.windows[0].opts[tmuxopts.WindowUID] = otherHostWindow.Metadata.UID
+	otherHostSession.windows[0].panes[0].opts[tmuxopts.PaneUID] = otherHostPane.Metadata.UID
+	if _, err := store.mutator().ObserveWindowRuntimeBinding(&store.registry, otherHostWindow.Metadata.UID,
+		otherHostSession.id, otherHostSession.windows[0].id); err != nil {
+		t.Fatalf("observe other-host Window: %v", err)
+	}
+	if _, err := store.mutator().RecordPaneActivation(&store.registry, otherHostPane.Metadata.UID, coremetadata.PaneActivationOptions{
+		Generation: "gen-other-host", RuntimeID: otherHostSession.windows[0].panes[0].id, OperationID: "op-other-host",
+	}); err != nil {
+		t.Fatalf("record other-host Pane activation: %v", err)
+	}
+	otherHostBefore := resourceRegistryProjectGraph(store.registry, map[string]bool{otherHostProject.Project.Metadata.UID: true})
 	routed.servers["-L\x00sibling"] = siblingSocket
 	siblingSocketBefore := siblingSocket.state()
 
@@ -309,6 +341,9 @@ func TestAuthorshipPromotionPreservesSiblingProjectAndSocket(t *testing.T) {
 	if got := resourceRegistryProjectGraph(store.registry, map[string]bool{siblingProject.Project.Metadata.UID: true}); !reflect.DeepEqual(got, siblingProjectBefore) {
 		t.Fatalf("sibling Project bytes changed:\nbefore=%+v\nafter=%+v", siblingProjectBefore, got)
 	}
+	if got := resourceRegistryProjectGraph(store.registry, map[string]bool{otherHostProject.Project.Metadata.UID: true}); !reflect.DeepEqual(got, otherHostBefore) {
+		t.Fatalf("other-host-only desired refs/status changed:\nbefore=%+v\nafter=%+v", otherHostBefore, got)
+	}
 	if got := donusD5State(); got != donusD5Before {
 		t.Fatalf("donus D5 handles/options changed:\nbefore=%s\nafter=%s", donusD5Before, got)
 	}
@@ -316,14 +351,17 @@ func TestAuthorshipPromotionPreservesSiblingProjectAndSocket(t *testing.T) {
 		t.Fatalf("sibling socket handles/options changed:\nbefore=%s\nafter=%s", siblingSocketBefore, siblingSocket.state())
 	}
 	writesAfter, allocationsAfter, mutationsAfter := store.writes, len(store.newUIDs), tmuxMutationCallCount(primary)
+	registryAfterFirst := store.snapshot()
 	repeat, _, repeatErr := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
 	if repeatErr != nil || !strings.Contains(repeat, `"outcome": "no-op"`) || store.writes != writesAfter ||
 		len(store.newUIDs) != allocationsAfter || tmuxMutationCallCount(primary) != mutationsAfter {
-		t.Fatalf("successful incident repeat was not zero-write: err=%v writes=%d->%d allocations=%d->%d mutations=%d->%d\n%s",
-			repeatErr, writesAfter, store.writes, allocationsAfter, len(store.newUIDs), mutationsAfter, tmuxMutationCallCount(primary), repeat)
+		t.Fatalf("successful incident repeat was not zero-write: err=%v writes=%d->%d allocations=%d->%d mutations=%d->%d registryChanged=%t\n%s\nbefore=%s\nafter=%s",
+			repeatErr, writesAfter, store.writes, allocationsAfter, len(store.newUIDs), mutationsAfter, tmuxMutationCallCount(primary),
+			store.snapshot() != registryAfterFirst, repeat, registryAfterFirst, store.snapshot())
 	}
-	if got := donusD5State(); got != donusD5Before || siblingSocket.state() != siblingSocketBefore {
-		t.Fatalf("repeat absorbed sibling D5/socket state: donus=%s want=%s siblingChanged=%t", got, donusD5Before, siblingSocket.state() != siblingSocketBefore)
+	if got := donusD5State(); got != donusD5Before || siblingSocket.state() != siblingSocketBefore ||
+		!reflect.DeepEqual(resourceRegistryProjectGraph(store.registry, map[string]bool{otherHostProject.Project.Metadata.UID: true}), otherHostBefore) {
+		t.Fatalf("repeat absorbed sibling D5/socket/other-host state: donus=%s want=%s siblingChanged=%t", got, donusD5Before, siblingSocket.state() != siblingSocketBefore)
 	}
 }
 

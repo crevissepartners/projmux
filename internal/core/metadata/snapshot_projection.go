@@ -179,6 +179,9 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 
 		oldShells, oldAgents := projectionCandidates(registry, oldWindow)
 		shellPos, agentPos := 0, 0
+		projectedPanes := make(map[string]bool)
+		directShells := make(map[string]bool)
+		var firstPane string
 		var firstShell string
 		for _, sp := range sw.Panes {
 			switch sp.Recipe.Kind {
@@ -217,6 +220,11 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 				}
 				pane := Pane{APIVersion: APIVersion, Kind: KindPane, Metadata: paneMeta, Spec: PaneSpec{Role: PaneRoleShell, CWD: sp.CWD, Command: command}}
 				desired.Panes = append(desired.Panes, pane)
+				projectedPanes[paneUID] = true
+				directShells[paneUID] = true
+				if firstPane == "" {
+					firstPane = paneUID
+				}
 				if firstShell == "" {
 					firstShell = paneUID
 				}
@@ -291,6 +299,10 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 				agent.Status.PaneRef = paneUID
 				desired.Agents = append(desired.Agents, agent)
 				desired.Panes = append(desired.Panes, pane)
+				projectedPanes[paneUID] = true
+				if firstPane == "" {
+					firstPane = paneUID
+				}
 				if oldAgent != nil {
 					plan.PreservedUIDs++
 					preservedAgents++
@@ -304,11 +316,12 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 				}
 			}
 		}
-		if firstShell == "" {
+		if firstPane == "" {
 			var oldPane *Pane
 			preferred := ""
 			if oldWindow != nil {
-				if candidate, ok := oldPaneByUID[oldWindow.Spec.CompatibilityShellPaneRef()]; ok {
+				if candidate, ok := oldPaneByUID[oldWindow.Spec.DefaultShellPaneRef]; ok &&
+					candidate.Metadata.OwnerUID() == oldWindow.Metadata.UID && candidate.Spec.Role == PaneRoleShell {
 					copy := candidate
 					oldPane = &copy
 					preferred = copy.Metadata.UID
@@ -324,6 +337,9 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 			}
 			pane := Pane{APIVersion: APIVersion, Kind: KindPane, Metadata: paneMeta, Spec: PaneSpec{Role: PaneRoleShell, CWD: target.Spec.Root}}
 			desired.Panes = append(desired.Panes, pane)
+			projectedPanes[paneUID] = true
+			directShells[paneUID] = true
+			firstPane = paneUID
 			firstShell = paneUID
 			if oldPane != nil {
 				plan.PreservedUIDs++
@@ -331,11 +347,25 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 			}
 		}
 		stored, _ := desired.Window(uid)
-		stored.Spec.AnchorPaneRef = firstShell
+		stored.Spec.AnchorPaneRef = firstPane
 		stored.Spec.DefaultShellPaneRef = firstShell
+		// Metadata-bearing snapshots preserve final-v2 Window ref authority when
+		// the referenced Pane is present in the projected subtree. Snapshot v1
+		// deliberately carries no Window-spec fields, so a new/unmatched Window
+		// and a legacy snapshot fall back to snapshot order: first valid Pane is
+		// the role-agnostic anchor and the first direct shell is the optional
+		// default. Missing referenced descendants are never invented.
+		if sw.Metadata != nil && oldWindow != nil {
+			if projectedPanes[oldWindow.Spec.AnchorPaneRef] {
+				stored.Spec.AnchorPaneRef = oldWindow.Spec.AnchorPaneRef
+			}
+			if directShells[oldWindow.Spec.DefaultShellPaneRef] {
+				stored.Spec.DefaultShellPaneRef = oldWindow.Spec.DefaultShellPaneRef
+			}
+		}
 	}
 	if len(snap.Windows) == 0 {
-		anchorWindow, anchorPane, err := canonicalProjectShell(registry, target.Metadata.UID)
+		anchorWindow, anchorPane, reusedPane, err := canonicalProjectShell(registry, target.Metadata.UID, stamp, newUID)
 		if err != nil {
 			return SnapshotProjectionPlan{}, err
 		}
@@ -344,9 +374,14 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 		desired.putReservation(target.Metadata.UID, KindWindow, anchorWindow.Metadata.Name, anchorWindow.Metadata.UID)
 		desired.putReservation(anchorWindow.Metadata.UID, KindPane, anchorPane.Metadata.Name, anchorPane.Metadata.UID)
 		primaryWindowUID = anchorWindow.Metadata.UID
-		plan.PreservedUIDs += 2
+		plan.PreservedUIDs++
+		if reusedPane {
+			plan.PreservedUIDs++
+		}
 		preservedWindows++
-		preservedPanes++
+		if reusedPane {
+			preservedPanes++
+		}
 	}
 	if primaryWindowUID == "" {
 		primaryWindowUID = desired.WindowsOf(target.Metadata.UID)[0].Metadata.UID
@@ -372,8 +407,10 @@ func sameProjectedConversation(old, projected *AgentSessionRef) bool {
 	return old != nil && projected != nil && old.Provider == projected.Provider && old.ConversationID() != "" && old.ConversationID() == projected.ConversationID()
 }
 
-// PlanOpenFresh keeps only the schema-v2 canonical Project shell chain.
-func PlanOpenFresh(registry Registry, targetProjectUID string, now time.Time) (SnapshotProjectionPlan, error) {
+// PlanOpenFresh keeps only the schema-v2 canonical Project Window and its
+// exact minimum direct shell. An optional uid source makes shell allocation
+// deterministic in tests; production uses NewUID.
+func PlanOpenFresh(registry Registry, targetProjectUID string, now time.Time, uidSources ...func(Kind) (string, error)) (SnapshotProjectionPlan, error) {
 	if now.IsZero() {
 		return SnapshotProjectionPlan{}, inputErr("open fresh", ErrInvalidRegistry, "projection timestamp is required")
 	}
@@ -381,7 +418,14 @@ func PlanOpenFresh(registry Registry, targetProjectUID string, now time.Time) (S
 	if !ok {
 		return SnapshotProjectionPlan{}, stateErr("open fresh", ErrNotFound, "target Project %q does not exist", targetProjectUID)
 	}
-	window, pane, err := canonicalProjectShell(registry, target.Metadata.UID)
+	if len(uidSources) > 1 {
+		return SnapshotProjectionPlan{}, inputErr("open fresh", ErrInvalidRegistry, "accepts at most one uid source")
+	}
+	uidSource := NewUID
+	if len(uidSources) == 1 && uidSources[0] != nil {
+		uidSource = uidSources[0]
+	}
+	window, pane, reusedPane, err := canonicalProjectShell(registry, target.Metadata.UID, now.UTC(), uidSource)
 	if err != nil {
 		return SnapshotProjectionPlan{}, err
 	}
@@ -399,7 +443,17 @@ func PlanOpenFresh(registry Registry, targetProjectUID string, now time.Time) (S
 	if changed {
 		desired.UpdatedAt = now.UTC()
 	}
-	return SnapshotProjectionPlan{ProjectUID: target.Metadata.UID, Desired: desired, Changed: changed, ReplacedWindows: len(owned.windows) - 1, ReplacedPanes: len(owned.panes) - 1, ReplacedAgents: len(owned.agents)}, nil
+	preserved := 1
+	deletedPanes := len(owned.panes)
+	if reusedPane {
+		preserved++
+		deletedPanes--
+	}
+	return SnapshotProjectionPlan{
+		ProjectUID: target.Metadata.UID, Desired: desired, Changed: changed,
+		ReplacedWindows: len(owned.windows), ReplacedPanes: len(owned.panes), ReplacedAgents: len(owned.agents),
+		PreservedUIDs: preserved, DeletedWindows: len(owned.windows) - 1, DeletedPanes: deletedPanes, DeletedAgents: len(owned.agents),
+	}, nil
 }
 
 type descendantSet struct{ windows, panes, agents map[string]bool }
@@ -440,23 +494,87 @@ func filter[T any](in []T, keep func(T) bool) []T {
 	}
 	return out
 }
-func canonicalProjectShell(r Registry, projectUID string) (Window, Pane, error) {
+func canonicalProjectShell(r Registry, projectUID string, createdAt time.Time, newUID func(Kind) (string, error)) (Window, Pane, bool, error) {
 	p, ok := r.Project(projectUID)
 	if !ok {
-		return Window{}, Pane{}, stateErr("open fresh", ErrNotFound, "Project %q does not exist", projectUID)
+		return Window{}, Pane{}, false, stateErr("open fresh", ErrNotFound, "Project %q does not exist", projectUID)
 	}
 	w, ok := r.Window(p.Spec.PrimaryWindowRef)
 	if !ok || w.Metadata.OwnerRef == nil || w.Metadata.OwnerRef.Kind != KindProject || w.Metadata.OwnerUID() != projectUID {
-		return Window{}, Pane{}, inputErr("open fresh", ErrInvalidRegistry, "Project %q canonical Window anchor is invalid; run Phase 3 registry repair", p.Metadata.Name)
+		return Window{}, Pane{}, false, inputErr("open fresh", ErrInvalidRegistry, "Project %q canonical Window anchor is invalid; run Phase 3 registry repair", p.Metadata.Name)
 	}
-	pane, ok := r.Pane(w.Spec.CompatibilityShellPaneRef())
-	if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindWindow || pane.Metadata.OwnerUID() != w.Metadata.UID || pane.Spec.Role != PaneRoleShell {
-		return Window{}, Pane{}, inputErr("open fresh", ErrInvalidRegistry, "Project %q canonical shell Pane anchor is invalid; run Phase 3 registry repair", p.Metadata.Name)
+	var pane *Pane
+	if candidate, found := r.WindowDefaultShell(w.Metadata.UID); found {
+		pane = candidate
+	} else if candidate, found := r.WindowAnchor(w.Metadata.UID); found && candidate.Spec.Role == PaneRoleShell && candidate.Metadata.OwnerUID() == w.Metadata.UID {
+		pane = candidate
+	} else {
+		for _, candidate := range r.PanesOf(w.Metadata.UID) {
+			if candidate.Spec.Role == PaneRoleShell && candidate.Metadata.OwnerUID() == w.Metadata.UID {
+				copy := candidate
+				pane = &copy
+				break
+			}
+		}
 	}
-	wc, pc := w.Clone(), pane.Clone()
+	wc := w.Clone()
 	wc.Status = WindowStatus{}
+	if pane == nil {
+		if newUID == nil {
+			return Window{}, Pane{}, false, fmt.Errorf("open fresh: uid source is not configured")
+		}
+		used := make(map[string]bool)
+		for _, project := range r.Projects {
+			used[project.Metadata.UID] = true
+		}
+		for _, control := range r.ControlSessions {
+			used[control.Metadata.UID] = true
+		}
+		for _, window := range r.Windows {
+			used[window.Metadata.UID] = true
+		}
+		for _, existingPane := range r.Panes {
+			used[existingPane.Metadata.UID] = true
+		}
+		for _, agent := range r.Agents {
+			used[agent.Metadata.UID] = true
+		}
+		paneUID := ""
+		for range maxSnapshotUIDAllocationAttempts {
+			candidate, err := newUID(KindPane)
+			if err != nil {
+				return Window{}, Pane{}, false, err
+			}
+			candidate = strings.TrimSpace(candidate)
+			if candidate == "" || used[candidate] {
+				continue
+			}
+			paneUID = candidate
+			break
+		}
+		if paneUID == "" {
+			return Window{}, Pane{}, false, stateErr("open fresh", ErrInvalidRegistry, "could not allocate a unique Pane uid after %d attempts", maxSnapshotUIDAllocationAttempts)
+		}
+		nameRegistry := r.Clone()
+		name, err := nameRegistry.allocateName("open fresh", w.Metadata.UID, KindPane, "shell", paneUID)
+		if err != nil {
+			return Window{}, Pane{}, false, err
+		}
+		created := Pane{
+			APIVersion: APIVersion, Kind: KindPane,
+			Metadata: ObjectMeta{UID: paneUID, Name: name, OwnerRef: &OwnerRef{Kind: KindWindow, UID: w.Metadata.UID}, CreatedAt: createdAt.UTC()},
+			Spec:     PaneSpec{Role: PaneRoleShell, CWD: p.Spec.Root},
+		}
+		pane = &created
+		wc.Spec.AnchorPaneRef = paneUID
+		wc.Spec.DefaultShellPaneRef = paneUID
+		return wc, created, false, nil
+	}
+	pc := pane.Clone()
 	pc.Status = PaneStatus{}
-	return wc, pc, nil
+	wc.Spec.AnchorPaneRef = pc.Metadata.UID
+	wc.Spec.DefaultShellPaneRef = pc.Metadata.UID
+	return wc, pc, true, nil
 }
 func projectionCandidates(r Registry, w *Window) ([]Pane, []Agent) {
 	if w == nil {
