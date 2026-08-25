@@ -143,6 +143,55 @@ func TestLinkAgentPaneExistingOwnerAndProviderConflictsAreZeroWrite(t *testing.T
 	})
 }
 
+func TestLinkAgentPaneMalformedAuthorityRefusesBeforeAlreadyOwnedRebind(t *testing.T) {
+	t.Parallel()
+	mutator, registry, windowUID := agentLinkageFixture(t)
+	window, _ := registry.Window(windowUID)
+	paneUID := window.Spec.AnchorPaneRef
+	window.Spec.DefaultShellPaneRef = ""
+	seeded, err := mutator.LinkAgentPane(registry, windowUID, paneUID, LegacyPane{
+		Provider: "codex", LaunchAuthorship: "1",
+	}, nil, "op-seed-malformed-owned")
+	if err != nil || !seeded.Linked() {
+		t.Fatalf("seed exact owner: linkage=%+v err=%v", seeded, err)
+	}
+	agent, _ := registry.Agent(seeded.AgentUID)
+	agent.Status.PaneRef = ""
+	before := registry.Clone()
+	linkage, err := mutator.LinkAgentPane(registry, windowUID, paneUID, LegacyPane{
+		Provider: "codex", LaunchAuthorship: "yes",
+	}, NewBindingMatcher(RuntimeObservation{}), "op-malformed-owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkage.Linked() || !reflect.DeepEqual(*registry, before) {
+		t.Fatalf("malformed already-owned receipt rebound topology: linkage=%+v\nbefore=%+v\nafter=%+v", linkage, before, *registry)
+	}
+}
+
+func TestLinkAgentPanePostStateValidationFailureRestoresExactPreimage(t *testing.T) {
+	t.Parallel()
+	mutator, registry, windowUID := agentLinkageFixture(t)
+	window, _ := registry.Window(windowUID)
+	paneUID := window.Spec.AnchorPaneRef
+	window.Spec.DefaultShellPaneRef = ""
+	mutator.NewUID = func(kind Kind) (string, error) {
+		if kind == KindAgent {
+			return paneUID, nil // deliberately violates global UID uniqueness after mint
+		}
+		return NewUID(kind)
+	}
+	before := registry.Clone()
+	if _, err := mutator.LinkAgentPane(registry, windowUID, paneUID, LegacyPane{
+		Provider: "codex", LaunchAuthorship: "1",
+	}, nil, "op-invalid-post-state"); err == nil {
+		t.Fatal("invalid composite post-state succeeded")
+	}
+	if !reflect.DeepEqual(*registry, before) {
+		t.Fatalf("post-state validation failure leaked partial promotion:\nbefore=%+v\nafter=%+v", before, *registry)
+	}
+}
+
 func TestLinkAgentPaneCanonicalLaunchClearsDefaultAndRetainsAnchor(t *testing.T) {
 	t.Parallel()
 

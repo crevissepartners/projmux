@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -115,6 +116,51 @@ func TestControllerRuntimeMutationExecuteThenRepeatIsEmpty(t *testing.T) {
 	}
 	if got := tmuxMutationCallCount(server); got != firstWrites {
 		t.Fatalf("repeat executed %d additional write(s)", got-firstWrites)
+	}
+}
+
+func TestAuthorshipPromotionRuntimeRollbackIsIndependentOfActionOrder(t *testing.T) {
+	fields := []string{tmuxopts.AgentUIDPane, tmuxopts.PaneOwnerKind, tmuxopts.PaneOwnerUID, tmuxopts.PaneRole}
+	for _, order := range [][]int{{0, 1, 2, 3}, {3, 1, 0, 2}, {2, 0, 3, 1}} {
+		name := strings.Trim(strings.ReplaceAll(strings.Trim(fmt.Sprint(order), "[]"), " ", "-"), "-")
+		t.Run(name, func(t *testing.T) {
+			server := newFakeTmux()
+			server.socketPath = "/tmp/fake-tmux/promotion-shuffle"
+			session := server.addSession("alpha")
+			window, pane := session.windows[0], session.windows[0].panes[0]
+			pane.opts[tmuxopts.PaneUID] = "pane-promotion"
+			pane.opts[tmuxopts.AgentProviderPane] = "codex"
+			pane.opts[tmuxopts.AgentLaunchAuthorshipPane] = "1"
+			runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
+			route := runtimeMutationRoute{target: explicitTmuxTarget{flag: "-L", value: "primary"}, expectedSocketPath: server.socketPath,
+				socketName: "primary", authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID}}
+			values := map[string]string{
+				tmuxopts.AgentUIDPane: "agent-promotion", tmuxopts.PaneOwnerKind: "Agent",
+				tmuxopts.PaneOwnerUID: "agent-promotion", tmuxopts.PaneRole: "agent",
+			}
+			var writes []controller.Action
+			for index, fieldIndex := range order {
+				field := fields[fieldIndex]
+				writes = append(writes, controller.Action{
+					Key: fmt.Sprintf("promotion-%d-%s", index, field), Surface: controller.SurfaceTmux, Intent: controller.IntentRepairMirror,
+					Authority: controller.AuthorityAllow, Scope: resourcegraph.ObjectPane, Target: pane.id, Field: field, Before: "", After: values[field],
+					Guards: []controller.Guard{{Field: tmuxopts.PaneUID, Expect: "pane-promotion"}, {Field: "session_id", Expect: session.id},
+						{Field: "window_id", Expect: window.id}, {Field: tmuxopts.AgentLaunchAuthorshipPane, Expect: "1"},
+						{Field: tmuxopts.AgentProviderPane, Expect: "codex"}},
+					Args: []string{"set-option", "-p", "-t", pane.id, "-q", field, values[field]},
+				})
+			}
+			server.fail = []string{"set-option", fields[order[len(order)-1]]}
+			server.failAfterMutation = true
+			if err := executeControllerRuntimeMutations(context.Background(), runner, route, writes); err == nil || strings.Contains(err.Error(), "owned reverse rollback incomplete") {
+				t.Fatalf("shuffled injected failure = %v", err)
+			}
+			for _, field := range fields {
+				if pane.opts[field] != "" {
+					t.Fatalf("shuffled rollback left %s=%q; order=%v", field, pane.opts[field], order)
+				}
+			}
+		})
 	}
 }
 

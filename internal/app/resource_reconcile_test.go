@@ -52,9 +52,9 @@ func seedAuthorshipPromotionIncident(t *testing.T, store *fakeResourceStore, ser
 type promotionPlanStructure struct {
 	Allocations []resourceAllocationSlot
 	Items       []struct {
-		Key, Action, Field, Authority, AllocationSlot string
-		Transitions                                   []resourceRefTransition
-		Guards                                        []controller.Guard
+		Key, Action, Field, Authority, PromotionKind, AllocationSlot string
+		Transitions                                                  []resourceRefTransition
+		Guards                                                       []controller.Guard
 	}
 }
 
@@ -62,12 +62,192 @@ func promotionStructure(report resourceReconcileReport) promotionPlanStructure {
 	out := promotionPlanStructure{Allocations: report.Allocations}
 	for _, item := range report.Items {
 		out.Items = append(out.Items, struct {
-			Key, Action, Field, Authority, AllocationSlot string
-			Transitions                                   []resourceRefTransition
-			Guards                                        []controller.Guard
-		}{item.Key, item.Action, item.Field, item.Authority, item.AllocationSlot, item.Transitions, item.Guards})
+			Key, Action, Field, Authority, PromotionKind, AllocationSlot string
+			Transitions                                                  []resourceRefTransition
+			Guards                                                       []controller.Guard
+		}{item.Key, item.Action, item.Field, item.Authority, item.PromotionKind, item.AllocationSlot, item.Transitions, item.Guards})
 	}
 	return out
+}
+
+func seedLiveWindowPromotion(t *testing.T, store *fakeResourceStore, session *fakeTmuxSession, liveWindow *fakeTmuxWindow, window coremetadata.Window, pane coremetadata.Pane, provider string) *fakeTmuxPane {
+	t.Helper()
+	livePane := liveWindow.panes[0]
+	liveWindow.name = window.Metadata.Name
+	liveWindow.opts[tmuxopts.WindowUID] = window.Metadata.UID
+	liveWindow.opts[tmuxopts.WindowName] = window.Metadata.Name
+	liveWindow.opts[tmuxopts.AutomaticRenameWindow] = "off"
+	livePane.opts[tmuxopts.PaneUID] = pane.Metadata.UID
+	livePane.opts[tmuxopts.PaneName] = pane.Metadata.Name
+	livePane.opts[tmuxopts.AgentProviderPane] = provider
+	livePane.opts[tmuxopts.AgentLaunchAuthorshipPane] = "1"
+	livePane.opts[aiPaneManagedOption] = "1"
+	if _, err := store.mutator().ObserveWindowRuntimeBinding(&store.registry, window.Metadata.UID, session.id, liveWindow.id); err != nil {
+		t.Fatalf("seed exact Window runtime binding: %v", err)
+	}
+	return livePane
+}
+
+func TestAuthorshipPromotionRollbackUsesLockedPreimageAndPreservesConcurrentUnrelatedState(t *testing.T) {
+	t.Parallel()
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	livePane, _, _ := seedAuthorshipPromotionIncident(t, store, server, root)
+	registryBefore := store.registry.Clone()
+	base := command.resources
+	commitCalls := 0
+	command.resources = &resourceStore{
+		load: base.load, snapshot: base.snapshot, mutator: base.mutator,
+		updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+			commitCalls++
+			registry, changed, err := base.updateConvergent(fn)
+			if commitCalls == 1 && err == nil {
+				project := &store.registry.Projects[0]
+				if project.Metadata.Annotations == nil {
+					project.Metadata.Annotations = map[string]string{}
+				}
+				project.Metadata.Annotations["concurrent-review"] = "preserved"
+				livePane.opts[tmuxopts.AgentLaunchAuthorshipPane] = "0"
+			}
+			return registry, changed, err
+		},
+	}
+	if _, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json"); err == nil {
+		t.Fatal("semantic guard failure was not surfaced")
+	}
+	project := store.registry.Projects[0]
+	if project.Metadata.Annotations["concurrent-review"] != "preserved" {
+		t.Fatalf("concurrent unrelated Project state was lost: %+v", project.Metadata.Annotations)
+	}
+	afterWithoutConcurrent := store.registry.Clone()
+	afterWithoutConcurrent.Projects[0].Metadata.Annotations = registryBefore.Projects[0].Metadata.Annotations
+	livePane.opts[tmuxopts.AgentLaunchAuthorshipPane] = "1"
+	if !reflect.DeepEqual(afterWithoutConcurrent.Normalize(), registryBefore.Normalize()) {
+		t.Fatalf("exact promotion scope did not return to locked preimage:\nbefore=%+v\nafter=%+v", registryBefore, store.registry)
+	}
+}
+
+func TestAuthorshipPromotionPreservesSameProjectSiblingWindowGraph(t *testing.T) {
+	t.Parallel()
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	_, _, _ = seedAuthorshipPromotionIncident(t, store, server, root)
+	project, _ := store.registry.ProjectByRoot(root)
+	sibling, _, err := store.mutator().AddWindow(&store.registry, project.Metadata.UID,
+		coremetadata.BootstrapWindow{Name: "same-project-sibling", Panes: []coremetadata.BootstrapPane{{CWD: root}}}, "/bin/zsh", "op-same-project-sibling")
+	if err != nil {
+		t.Fatal(err)
+	}
+	siblingBefore := mergeExactWindowGraphs(coremetadata.NewRegistry(), store.registry, map[string]bool{sibling.Metadata.UID: true})
+	if stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json"); err != nil {
+		t.Fatalf("promotion: %v\n%s", err, stdout)
+	}
+	siblingAfter := mergeExactWindowGraphs(coremetadata.NewRegistry(), store.registry, map[string]bool{sibling.Metadata.UID: true})
+	if !reflect.DeepEqual(siblingBefore, siblingAfter) {
+		t.Fatalf("same-Project sibling Window ancestry changed:\nbefore=%+v\nafter=%+v", siblingBefore, siblingAfter)
+	}
+}
+
+func TestPublicAuthorshipPromotionMultiAllocationOrderParity(t *testing.T) {
+	t.Parallel()
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	_, firstWindow, _ := seedAuthorshipPromotionIncident(t, store, server, root)
+	project, _ := store.registry.ProjectByRoot(root)
+	secondWindow, secondPanes, err := store.mutator().AddWindow(&store.registry, project.Metadata.UID,
+		coremetadata.BootstrapWindow{Name: "second", Panes: []coremetadata.BootstrapPane{{CWD: root}}}, "/bin/zsh", "op-second-promotion")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session := server.session("alpha")
+	liveSecond := &fakeTmuxWindow{id: server.mint("@"), name: "second", opts: map[string]string{}, panes: []*fakeTmuxPane{newFakeTmuxPane(server.mint("%"))}}
+	session.windows = append(session.windows, liveSecond)
+	seedLiveWindowPromotion(t, store, session, liveSecond, secondWindow, secondPanes[0], "claude")
+
+	previewJSON, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var preview resourceReconcileReport
+	if err := json.Unmarshal([]byte(previewJSON), &preview); err != nil {
+		t.Fatal(err)
+	}
+	if len(preview.Allocations) != 2 || preview.Allocations[0].Slot != "<allocated-agent-1>" || preview.Allocations[1].Slot != "<allocated-agent-2>" ||
+		preview.Allocations[0].PromotionKind != string(coremetadata.AgentLinkMinted) || preview.Allocations[1].PromotionKind != string(coremetadata.AgentLinkMinted) {
+		t.Fatalf("multi allocation invocation order = %+v", preview.Allocations)
+	}
+	executeJSON, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("multi execute: %v\n%s", err, executeJSON)
+	}
+	var execute resourceReconcileReport
+	if err := json.Unmarshal([]byte(executeJSON), &execute); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(promotionStructure(preview), promotionStructure(execute)) {
+		t.Fatalf("multi promotion structure drifted:\npreview=%+v\nexecute=%+v", promotionStructure(preview), promotionStructure(execute))
+	}
+	if len(store.registry.AgentsOf(firstWindow.Metadata.UID)) != 2 || len(store.registry.AgentsOf(secondWindow.Metadata.UID)) != 1 {
+		t.Fatalf("multi promotion Agent ownership drifted: first=%+v second=%+v", store.registry.AgentsOf(firstWindow.Metadata.UID), store.registry.AgentsOf(secondWindow.Metadata.UID))
+	}
+}
+
+func TestPublicAuthorshipPromotionAttachesExistingAgentWithoutAllocation(t *testing.T) {
+	t.Parallel()
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	project, _ := store.registry.ProjectByRoot(root)
+	window := store.registry.WindowsOf(project.Metadata.UID)[0]
+	pane := store.registry.PanesOf(window.Metadata.UID)[0]
+	agent, err := store.mutator().CreateAgent(&store.registry, window.Metadata.UID, coremetadata.CreateAgentOptions{Provider: "codex", OperationID: "op-attach-existing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedAgent, _ := store.registry.Agent(agent.Metadata.UID)
+	storedAgent.Status.SessionRef = codexConversationRef("attach-thread")
+	livePane := seedLiveWindowPromotion(t, store, server.session("alpha"), server.session("alpha").windows[0], window, pane, "codex")
+	livePane.opts[tmuxopts.AgentThreadIDPane] = "attach-thread"
+	allocationsBefore := len(store.newUIDs)
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("attach promotion: %v\n%s", err, stdout)
+	}
+	var report resourceReconcileReport
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatal(err)
+	}
+	if len(report.Allocations) != 0 || len(store.newUIDs) != allocationsBefore {
+		t.Fatalf("attach allocated Agent: report=%+v allocations=%d->%d", report.Allocations, allocationsBefore, len(store.newUIDs))
+	}
+	found := false
+	for _, item := range report.Items {
+		if item.Action == "promote-authorship" {
+			found = item.PromotionKind == string(coremetadata.AgentLinkAttached) && item.AllocationSlot == ""
+		}
+	}
+	if !found {
+		t.Fatalf("attach promotion was not distinguished in report: %+v", report.Items)
+	}
+	stored, _ := store.registry.Agent(agent.Metadata.UID)
+	if stored.Status.PaneRef != pane.Metadata.UID {
+		t.Fatalf("existing Agent paneRef = %q", stored.Status.PaneRef)
+	}
+}
+
+func TestPublicAuthorshipPromotionPreservesUnknownRawProviderReceipt(t *testing.T) {
+	t.Parallel()
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	project, _ := store.registry.ProjectByRoot(root)
+	window := store.registry.WindowsOf(project.Metadata.UID)[0]
+	pane := store.registry.PanesOf(window.Metadata.UID)[0]
+	livePane := seedLiveWindowPromotion(t, store, server.session("alpha"), server.session("alpha").windows[0], window, pane, "Vendor-X")
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err != nil {
+		t.Fatalf("unknown provider promotion: %v\n%s", err, stdout)
+	}
+	agents := store.registry.AgentsOf(window.Metadata.UID)
+	if len(agents) != 1 || agents[0].Spec.Provider != "" {
+		t.Fatalf("unknown provider Agent spec = %+v, want canonical empty provider", agents)
+	}
+	if livePane.opts[tmuxopts.AgentProviderPane] != "Vendor-X" || !strings.Contains(stdout, `"expect": "Vendor-X"`) {
+		t.Fatalf("raw provider receipt was not preserved: opts=%v\n%s", livePane.opts, stdout)
+	}
 }
 
 func TestAuthorshipPromotionPreservesSiblingProjectAndSocket(t *testing.T) {
@@ -89,7 +269,6 @@ func TestAuthorshipPromotionPreservesSiblingProjectAndSocket(t *testing.T) {
 	siblingProjectRow, _ := store.registry.Project(siblingProject.Project.Metadata.UID)
 	siblingWindow := store.registry.WindowsOf(siblingProjectRow.Metadata.UID)[0]
 	siblingPane := store.registry.PanesOf(siblingWindow.Metadata.UID)[0]
-	siblingProjectBefore := resourceRegistryProjectGraph(store.registry, map[string]bool{siblingProject.Project.Metadata.UID: true})
 	donusSession := primary.addSession("donus")
 	donusSession.opts[inttmux.ProjectPathSessionOption] = siblingRoot
 	donusSession.opts[tmuxopts.ProjectUIDSession] = siblingProjectRow.Metadata.UID
@@ -97,8 +276,16 @@ func TestAuthorshipPromotionPreservesSiblingProjectAndSocket(t *testing.T) {
 	donusSession.windows[0].opts[tmuxopts.WindowUID] = siblingWindow.Metadata.UID
 	donusSession.windows[0].opts[tmuxopts.WindowName] = siblingWindow.Metadata.Name
 	donusSession.windows[0].opts[tmuxopts.AutomaticRenameWindow] = "off"
+	if storedSiblingWindow, ok := store.registry.Window(siblingWindow.Metadata.UID); ok {
+		storedSiblingWindow.Metadata.DisplayName = donusSession.windows[0].name
+	}
 	donusSession.windows[0].panes[0].opts[tmuxopts.PaneUID] = siblingPane.Metadata.UID
-	donusSession.windows[0].panes[0].opts[tmuxopts.PaneName] = "drifted-d5"
+	donusSession.windows[0].panes[0].opts[tmuxopts.PaneName] = siblingPane.Metadata.Name
+	if _, err := store.mutator().ObserveWindowRuntimeBinding(&store.registry, siblingWindow.Metadata.UID,
+		donusSession.id, donusSession.windows[0].id); err != nil {
+		t.Fatalf("seed sibling Window runtime binding: %v", err)
+	}
+	siblingProjectBefore := resourceRegistryProjectGraph(store.registry, map[string]bool{siblingProject.Project.Metadata.UID: true})
 	donusD5State := func() string {
 		return fmt.Sprintf("%s|%s|%s|%v|%v|%v", donusSession.id, donusSession.windows[0].id,
 			donusSession.windows[0].panes[0].id, donusSession.opts, donusSession.windows[0].opts,
@@ -128,9 +315,16 @@ func TestAuthorshipPromotionPreservesSiblingProjectAndSocket(t *testing.T) {
 	if siblingSocket.state() != siblingSocketBefore || tmuxMutationCallCount(siblingSocket) != 0 {
 		t.Fatalf("sibling socket handles/options changed:\nbefore=%s\nafter=%s", siblingSocketBefore, siblingSocket.state())
 	}
-	// This assertion is scoped to the composite promotion pass. Once that
-	// transaction is complete, a later ordinary reconcile remains free to own
-	// the unrelated donus D5 repair; Phase 1 does not redesign that behavior.
+	writesAfter, allocationsAfter, mutationsAfter := store.writes, len(store.newUIDs), tmuxMutationCallCount(primary)
+	repeat, _, repeatErr := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if repeatErr != nil || !strings.Contains(repeat, `"outcome": "no-op"`) || store.writes != writesAfter ||
+		len(store.newUIDs) != allocationsAfter || tmuxMutationCallCount(primary) != mutationsAfter {
+		t.Fatalf("successful incident repeat was not zero-write: err=%v writes=%d->%d allocations=%d->%d mutations=%d->%d\n%s",
+			repeatErr, writesAfter, store.writes, allocationsAfter, len(store.newUIDs), mutationsAfter, tmuxMutationCallCount(primary), repeat)
+	}
+	if got := donusD5State(); got != donusD5Before || siblingSocket.state() != siblingSocketBefore {
+		t.Fatalf("repeat absorbed sibling D5/socket state: donus=%s want=%s siblingChanged=%t", got, donusD5Before, siblingSocket.state() != siblingSocketBefore)
+	}
 }
 
 func TestAuthorshipPromotionExactOptionAndContainmentGuardsRefuseBeforeFirstWrite(t *testing.T) {
@@ -290,6 +484,83 @@ func TestPublicResourceReconcilePromotionOptionFailuresRollbackRegistryAndRuntim
 	}
 }
 
+func TestPublicAuthorshipPromotionPrecommitAndGuardFaultMatrixLeavesNoMixedState(t *testing.T) {
+	for _, testCase := range []struct {
+		name   string
+		inject func(*resourceReconcileCommand, *fakeResourceStore, *fakeTmux, *fakeTmuxPane)
+	}{
+		{
+			name: "uid-allocation",
+			inject: func(command *resourceReconcileCommand, _ *fakeResourceStore, _ *fakeTmux, _ *fakeTmuxPane) {
+				base := command.resources
+				command.resources = &resourceStore{load: base.load, snapshot: base.snapshot, updateConvergent: base.updateConvergent,
+					mutator: func() coremetadata.Mutator {
+						mutator := base.mutator()
+						mutator.NewUID = func(kind coremetadata.Kind) (string, error) {
+							if kind == coremetadata.KindAgent {
+								return "", errors.New("injected Agent UID allocation failure")
+							}
+							return coremetadata.NewUID(kind)
+						}
+						return mutator
+					},
+				}
+			},
+		},
+		{
+			name: "registry-commit",
+			inject: func(command *resourceReconcileCommand, _ *fakeResourceStore, _ *fakeTmux, _ *fakeTmuxPane) {
+				base := command.resources
+				command.resources = &resourceStore{load: base.load, snapshot: base.snapshot, mutator: base.mutator,
+					updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+						working, err := base.load()
+						if err == nil {
+							err = fn(&working)
+						}
+						if err != nil {
+							return coremetadata.Registry{}, false, err
+						}
+						return coremetadata.Registry{}, false, errors.New("injected promotion Registry commit failure")
+					},
+				}
+			},
+		},
+		{
+			name: "pane-containment-guard",
+			inject: func(command *resourceReconcileCommand, _ *fakeResourceStore, _ *fakeTmux, livePane *fakeTmuxPane) {
+				base := command.resources
+				calls := 0
+				command.resources = &resourceStore{load: base.load, snapshot: base.snapshot, mutator: base.mutator,
+					updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+						calls++
+						registry, changed, err := base.updateConvergent(fn)
+						if calls == 1 && err == nil {
+							livePane.opts[tmuxopts.PaneUID] = "pane-recycled"
+						}
+						return registry, changed, err
+					},
+				}
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+			livePane, _, _ := seedAuthorshipPromotionIncident(t, store, server, root)
+			registryBefore, runtimeBefore := store.registry.Clone(), server.state()
+			originalPaneUID := livePane.opts[tmuxopts.PaneUID]
+			testCase.inject(command, store, server, livePane)
+			stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+			if err == nil || !strings.Contains(stdout, `"outcome": "failed"`) {
+				t.Fatalf("injected cut was not reported: err=%v\n%s", err, stdout)
+			}
+			livePane.opts[tmuxopts.PaneUID] = originalPaneUID
+			if !reflect.DeepEqual(store.registry.Normalize(), registryBefore.Normalize()) || server.state() != runtimeBefore {
+				t.Fatalf("injected cut left mixed state:\nregistry before=%+v\nafter=%+v\nruntime before=%s\nafter=%s", registryBefore, store.registry, runtimeBefore, server.state())
+			}
+		})
+	}
+}
+
 func TestPublicResourceReconcileRecordsAmbiguousLaunchRefusalWithZeroWrites(t *testing.T) {
 	t.Parallel()
 
@@ -322,6 +593,46 @@ func TestPublicResourceReconcileRecordsAmbiguousLaunchRefusalWithZeroWrites(t *t
 	if store.snapshot() != registryBefore || server.state() != runtimeBefore || store.writes != writesBefore ||
 		len(store.newUIDs) != allocationsBefore {
 		t.Fatal("ambiguous launch refusal wrote Registry, allocated Agent UID, or changed tmux")
+	}
+}
+
+func TestPublicLaunchProviderConflictFreezesExactTargetAndConvergesUnrelatedTarget(t *testing.T) {
+	t.Parallel()
+	command, store, server, _, root := newReconcileFixture(t, "-L", "primary")
+	livePane, window, _ := seedAuthorshipPromotionIncident(t, store, server, root)
+	if stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json"); err != nil {
+		t.Fatalf("seed promotion: %v\n%s", err, stdout)
+	}
+	siblingPane, err := store.mutator().AddPane(&store.registry, window.Metadata.UID,
+		coremetadata.BootstrapPane{CWD: root, Command: "zsh"}, "/bin/zsh", "op-conflict-sibling-pane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveWindow := server.session("alpha").windows[0]
+	liveSibling := newFakeTmuxPane(server.mint("%"))
+	liveSibling.opts[tmuxopts.PaneUID] = siblingPane.Metadata.UID
+	liveSibling.opts[tmuxopts.PaneName] = "stale-unrelated"
+	liveWindow.panes = append(liveWindow.panes, liveSibling)
+
+	livePane.opts[tmuxopts.AgentProviderPane] = "claude"
+	livePane.opts[tmuxopts.PaneName] = "protected-topology-drift"
+	livePane.opts[aiPaneStateOption] = "thinking"
+	protectedBefore := fmt.Sprintf("%v", livePane.opts)
+	callsBefore := len(server.calls)
+	stdout, _, err := runReconcile(t, command, "resources", "--socket", "primary", "-o", "json")
+	if err == nil || !strings.Contains(stdout, "launch provider conflicts with the exact Agent owner provider") {
+		t.Fatalf("launch/provider conflict was not refused: err=%v\n%s", err, stdout)
+	}
+	if fmt.Sprintf("%v", livePane.opts) != protectedBefore {
+		t.Fatalf("conflict target received topology/presentation writes:\nbefore=%s\nafter=%v", protectedBefore, livePane.opts)
+	}
+	for _, call := range server.calls[callsBefore:] {
+		if slices.Contains(call, "set-option") && slices.Contains(call, livePane.id) {
+			t.Fatalf("conflict target received mutation argv: %v", call)
+		}
+	}
+	if got := liveSibling.opts[tmuxopts.PaneName]; got != siblingPane.Metadata.Name {
+		t.Fatalf("unrelated #759 Pane convergence was suppressed: got=%q want=%q", got, siblingPane.Metadata.Name)
 	}
 }
 

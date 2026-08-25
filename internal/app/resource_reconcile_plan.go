@@ -215,6 +215,7 @@ func (p resourceReconcilePlanner) build(ctx context.Context, before coremetadata
 	reconciler.refuseForeign = true
 	reconciler.targetLiveOnly = true
 	reconciler.approvedOrphanImport = p.approvedOrphanImport
+	reconciler.atomicAuthorshipPromotion = true
 	projectSessions, err := observeResourceProjectSessions(ctx, recorder)
 	if err != nil {
 		if p.materializeProject == "" || !isMissingTmuxServer(err) {
@@ -858,10 +859,6 @@ type resourcePlanUIDNormalizer struct {
 type resourcePlanUIDAllocation struct {
 	kind coremetadata.Kind
 	uid  string
-}
-
-func newPlanUIDNormalizer(before, after coremetadata.Registry) resourcePlanUIDNormalizer {
-	return newPlanUIDNormalizerWithAllocations(before, after, nil)
 }
 
 func newPlanUIDNormalizerWithAllocations(before, after coremetadata.Registry, allocations []resourcePlanUIDAllocation) resourcePlanUIDNormalizer {

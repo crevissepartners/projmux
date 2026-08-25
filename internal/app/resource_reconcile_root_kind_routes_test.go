@@ -299,7 +299,7 @@ func TestRegistryResourceRecordsCarryBothRootKinds(t *testing.T) {
 		}
 	}
 
-	items := registryReconcileItems(without, with, newPlanUIDNormalizer(without, with))
+	items := registryReconcileItems(without, with, newPlanUIDNormalizerWithAllocations(without, with, nil))
 	var control []resourceReconcileItem
 	for _, item := range items {
 		if item.Kind == string(coremetadata.KindControlSession) {
@@ -318,7 +318,7 @@ func TestRegistryResourceRecordsCarryBothRootKinds(t *testing.T) {
 
 	// The converse: an unchanged control root is not churn. A projection that
 	// reported one every pass would be as wrong as one that reported none.
-	if got := registryReconcileItems(with, with, newPlanUIDNormalizer(with, with)); len(got) != 0 {
+	if got := registryReconcileItems(with, with, newPlanUIDNormalizerWithAllocations(with, with, nil)); len(got) != 0 {
 		t.Errorf("an unchanged Registry produced %d plan item(s): %+v", len(got), got)
 	}
 }

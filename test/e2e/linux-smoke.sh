@@ -2271,7 +2271,11 @@ if [[ "$canonical_execute_status" == "0" ]] ||
   [[ "$(pmx get agents -p alpha -o uid | sort)" != "$canonical_agents_before" ]] ||
   [[ "$(ctx display-message -p -t "$legacy_pane" '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_window_uid}|#{@projmux_pane_uid}|#{@projmux_ai_agent}')" != "$canonical_live_before" ]]; then
   echo "canonical shell execute did not remain a zero-write typed refusal" >&2
+  cat "$create_root/canonical-shell-execute.json" >&2 || true
   cat "$create_root/canonical-shell-execute.err" >&2 || true
+  diff -u "$create_root/canonical-shell-registry-before.json" "$create_registry" >&2 || true
+  echo "canonical live before=$canonical_live_before" >&2
+  echo "canonical live after=$(ctx display-message -p -t "$legacy_pane" '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_window_uid}|#{@projmux_pane_uid}|#{@projmux_ai_agent}')" >&2
   exit 1
 fi
 ctx set-option -p -u -t "$legacy_pane" @projmux_ai_agent

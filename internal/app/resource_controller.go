@@ -856,9 +856,6 @@ func rollbackPromotionScope(current *coremetadata.Registry, receipt promotionReg
 			})
 		}
 	}
-	currentReservations := slices.DeleteFunc(slices.Clone(current.NameReservations), func(value coremetadata.NameReservation) bool {
-		return affectedReservations[value.UID]
-	})
 	committedAffected := slices.DeleteFunc(slices.Clone(receipt.committed.NameReservations), func(value coremetadata.NameReservation) bool {
 		return !affectedReservations[value.UID]
 	})
@@ -868,13 +865,33 @@ func rollbackPromotionScope(current *coremetadata.Registry, receipt promotionReg
 	if !reflect.DeepEqual(currentAffected, committedAffected) {
 		return errors.New("promotion rollback reservation CAS changed inside exact scope")
 	}
-	for _, reservation := range receipt.before.NameReservations {
-		if affectedReservations[reservation.UID] {
-			currentReservations = append(currentReservations, reservation)
+	// Restore affected reservations in the locked preimage order while keeping
+	// every unrelated current reservation/value, including concurrent inserts.
+	currentByUID := map[string]coremetadata.NameReservation{}
+	for _, reservation := range current.NameReservations {
+		if !affectedReservations[reservation.UID] {
+			currentByUID[reservation.UID] = reservation
 		}
 	}
-	current.NameReservations = currentReservations
-	*current = current.Normalize()
+	var restored []coremetadata.NameReservation
+	used := map[string]bool{}
+	for _, reservation := range receipt.before.NameReservations {
+		if affectedReservations[reservation.UID] {
+			restored = append(restored, reservation)
+			continue
+		}
+		if currentReservation, ok := currentByUID[reservation.UID]; ok {
+			restored = append(restored, currentReservation)
+			used[reservation.UID] = true
+		}
+	}
+	for _, reservation := range current.NameReservations {
+		if !affectedReservations[reservation.UID] && !used[reservation.UID] {
+			restored = append(restored, reservation)
+			used[reservation.UID] = true
+		}
+	}
+	current.NameReservations = restored
 	if err := current.Validate(); err != nil {
 		return fmt.Errorf("promotion rollback post-state is invalid: %w", err)
 	}
