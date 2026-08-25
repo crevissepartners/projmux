@@ -454,6 +454,11 @@ func TestPaneAgentCascadeDeletePlanReleasesPaneAndRetainsAgentWindow(t *testing.
 	}); err != nil {
 		t.Fatalf("RecordPaneActivation: %v", err)
 	}
+	if _, _, err := mutator.RecordAgentSessionRef(&registry, agent.Metadata.UID, AgentSessionObservation{
+		Provider: "codex", ThreadID: "thread-clean",
+	}); err != nil {
+		t.Fatalf("RecordAgentSessionRef: %v", err)
+	}
 	zero := 0
 	if _, err := mutator.RecordTermination(&registry, TerminationEvidence{
 		Source: TerminationSourceSupervisor, Classification: TerminationNormal,
@@ -502,7 +507,37 @@ func TestPaneAgentCascadeDeletePlanReleasesPaneAndRetainsAgentWindow(t *testing.
 		t.Fatalf("desired Registry invalid: %v", err)
 	}
 
-	resumed := before.Clone()
+	// The generic absence projection may win the lock before the exact dead
+	// observation. It releases the binding but deliberately retains the Pane
+	// row. The same clean generation must still be eligible for Pane-only retry.
+	released := before.Clone()
+	projection, err := mutator.ProjectTermination(&released, TerminationProjectionInput{
+		PaneUID: pane.Metadata.UID, Generation: "gen-clean", ObservedAt: fixedNow.Add(30 * time.Second),
+	})
+	if err != nil {
+		t.Fatalf("release before exact cleanup: %v", err)
+	}
+	if !projection.Changed || projection.Phase != PhaseOffline {
+		t.Fatalf("released projection = %+v", projection)
+	}
+	beforeReleased := released.Clone()
+	retry, err := PlanPaneAgentCascadeDelete(released, event, fixedNow.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("released same-generation retry: %v", err)
+	}
+	if !reflect.DeepEqual(released, beforeReleased) || !retry.Changed || retry.DeletedPanes != 1 || retry.DeletedAgents != 0 {
+		t.Fatalf("released same-generation retry = %+v", retry)
+	}
+	releasedAgent, _ := beforeReleased.Agent(agent.Metadata.UID)
+	if retained, ok := retry.Desired.Agent(agent.Metadata.UID); !ok || retained.Status.Phase != PhaseOffline ||
+		retained.Status.PaneRef != "" || !retained.Status.SessionRef.SameConversation(releasedAgent.Status.SessionRef) {
+		t.Fatalf("released retry changed retained Agent = %+v", retained)
+	}
+	if _, ok := retry.Desired.Pane(pane.Metadata.UID); ok {
+		t.Fatal("released same-generation retry retained the Pane residual")
+	}
+
+	resumed := beforeReleased.Clone()
 	if _, err := mutator.AttachAgentPane(&resumed, agent.Metadata.UID,
 		BootstrapPane{CWD: "/srv/alpha"}, "resume-agent"); err != nil {
 		t.Fatalf("attach resumed Pane: %v", err)

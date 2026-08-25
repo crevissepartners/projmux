@@ -452,28 +452,46 @@ func TestLastPaneRegistryCommitFailureRollsBackExactLiveReplacement(t *testing.T
 	if err == nil || !strings.Contains(err.Error(), "injected Registry commit failure") {
 		t.Fatalf("commit failure = %v", err)
 	}
-	if fixture.snapshot() != before || inventory.prepares != 1 || inventory.rollbacks != 1 || inventory.cleanups != 0 || !inventory.dead[event.receipts[0].PaneUID] {
+	if fixture.snapshot() != before || inventory.prepares != 1 || inventory.rollbacks != 1 || inventory.cleanups != 1 || inventory.dead[event.receipts[0].PaneUID] {
 		t.Fatalf("commit failure result=%+v prepares=%d rollbacks=%d cleanups=%d changed Registry or dead Pane", result, inventory.prepares, inventory.rollbacks, inventory.cleanups)
 	}
 }
 
-func TestDeadPaneCleanupFailureKeepsCommittedReplacementGraph(t *testing.T) {
+func TestDeadPaneCleanupFailureExposesTypedRetryAndNextPassConverges(t *testing.T) {
 	t.Parallel()
 	store, inventory, event := prepareLastBetaProjectCascade(t)
 	deadPaneUID := event.receipts[0].PaneUID
+	before := store.snapshot()
 	inventory.cleanupErr = errors.New("injected exact dead Pane cleanup failure")
 	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
-	if err == nil || !strings.Contains(err.Error(), "exact dead Agent Pane cleanup remains") ||
-		!strings.Contains(err.Error(), event.runtimePaneID) || !strings.Contains(err.Error(), deadPaneUID) ||
-		!strings.Contains(err.Error(), "repeated lifecycle pass cannot infer ownership") ||
+	var retryErr *lifecycleCleanupRetryError
+	if err == nil || !errors.As(err, &retryErr) ||
+		retryErr.Reason != coremetadata.TeardownReasonDeadPaneCleanupRetry ||
+		retryErr.Target.PaneID != event.runtimePaneID || retryErr.Target.PaneUID != deadPaneUID ||
+		!strings.Contains(err.Error(), string(coremetadata.TeardownReasonDeadPaneCleanupRetry)) ||
 		!strings.Contains(err.Error(), "injected exact dead Pane cleanup failure") {
 		t.Fatalf("cleanup failure = %v", err)
 	}
-	if len(result.cascaded) != 1 || inventory.prepares != 1 || inventory.cleanups != 1 || inventory.rollbacks != 0 {
+	if len(result.cascaded) != 0 || inventory.prepares != 1 || inventory.cleanups != 1 || inventory.rollbacks != 1 {
 		t.Fatalf("cleanup failure result=%+v prepares=%d cleanups=%d rollbacks=%d", result, inventory.prepares, inventory.cleanups, inventory.rollbacks)
 	}
-	if _, ok := store.registry.Pane(deadPaneUID); ok {
-		t.Fatal("committed graph retained dead Agent Pane row")
+	if store.snapshot() != before {
+		t.Fatal("cleanup failure committed the desired Registry before exact dead runtime cleanup")
+	}
+	if !inventory.dead[deadPaneUID] || !inventory.uids[deadPaneUID] {
+		t.Fatal("failed exact cleanup did not leave the owned dead runtime Pane for retry")
+	}
+
+	inventory.cleanupErr = nil
+	second, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+	if err != nil {
+		t.Fatalf("strict cleanup retry: %v", err)
+	}
+	if len(second.cascaded) != 1 || inventory.prepares != 2 || inventory.cleanups != 2 || inventory.rollbacks != 1 {
+		t.Fatalf("retry result=%+v prepares=%d cleanups=%d rollbacks=%d", second, inventory.prepares, inventory.cleanups, inventory.rollbacks)
+	}
+	if _, ok := store.registry.Pane(deadPaneUID); ok || inventory.dead[deadPaneUID] || inventory.uids[deadPaneUID] {
+		t.Fatal("successful retry left a Registry or tmux dead Pane residual")
 	}
 	window, ok := store.registry.Window("win-beta-main")
 	if !ok {
@@ -481,14 +499,16 @@ func TestDeadPaneCleanupFailureKeepsCommittedReplacementGraph(t *testing.T) {
 	}
 	anchor, ok := store.registry.Pane(window.Spec.AnchorPaneRef)
 	if !ok || anchor.Spec.Role != coremetadata.PaneRoleShell {
-		t.Fatalf("committed replacement anchor = %+v", anchor)
+		t.Fatalf("replacement anchor after retry = %+v", anchor)
 	}
 	agent, ok := store.registry.Agent("agt-beta-codex")
 	if !ok || agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
 		t.Fatalf("retained Agent = %+v", agent)
 	}
-	if !inventory.dead[deadPaneUID] || !inventory.uids[deadPaneUID] {
-		t.Fatal("failed exact cleanup did not leave the owned dead runtime Pane for retry")
+	settled := store.snapshot()
+	repeat, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+	if err != nil || repeat.transactions != 0 || store.snapshot() != settled {
+		t.Fatalf("retry repeat = %+v, %v", repeat, err)
 	}
 }
 
@@ -558,6 +578,276 @@ func TestExactCleanShellAndProviderExitCascadeRowsAfterJournalEvidence(t *testin
 				t.Fatalf("duplicate receipt result=%+v cleanups=%d err=%v", repeat, inventory.cleanups, err)
 			}
 		})
+	}
+}
+
+func TestReleasedSameGenerationDeadPaneRetryConvergesAndPreservesSessionRef(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	activateExactPane(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-released", "%9")
+	wantSession := resumeFixtureRef(resourceFixtureClock)
+	setFixtureSessionRef(t, store, "agt-alpha-codex", wantSession)
+	receipt := phase2NormalReceipt("pan-alpha-codex", "agt-alpha-codex", "gen-released")
+	if _, err := store.mutator().RecordTermination(&store.registry, receipt); err != nil {
+		t.Fatalf("RecordTermination: %v", err)
+	}
+	projection, err := store.mutator().ProjectTermination(&store.registry, coremetadata.TerminationProjectionInput{
+		PaneUID: "pan-alpha-codex", Generation: "gen-released", ObservedAt: resourceFixtureClock.Add(time.Minute),
+	})
+	if err != nil || !projection.Changed {
+		t.Fatalf("release-first projection = %+v, %v", projection, err)
+	}
+	released, _ := store.registry.Agent("agt-alpha-codex")
+	if released.Status.Phase != coremetadata.PhaseOffline || released.Status.PaneRef != "" ||
+		!released.Status.SessionRef.SameConversation(wantSession) {
+		t.Fatalf("released Agent = %+v", released.Status)
+	}
+
+	live := exitReconcileFixtureLiveExcept("pan-alpha-codex")
+	live["pan-alpha-codex"] = true
+	inventory := &exactPaneExitInventory{
+		uids: live, dead: map[string]bool{"pan-alpha-codex": true}, windowUID: "win-alpha-main",
+	}
+	result, err := reconcileLifecycle(context.Background(), exactPaneExitDirty(receipt), inventory, store.store())
+	if err != nil {
+		t.Fatalf("released same-generation retry: %v", err)
+	}
+	if len(result.cascaded) != 1 || inventory.cleanups != 1 || inventory.prepares != 0 {
+		t.Fatalf("released retry result=%+v inventory=%+v", result, inventory)
+	}
+	if _, ok := store.registry.Pane("pan-alpha-codex"); ok || inventory.dead["pan-alpha-codex"] || inventory.uids["pan-alpha-codex"] {
+		t.Fatal("released retry left a Registry or tmux dead Pane residual")
+	}
+	retained, ok := store.registry.Agent("agt-alpha-codex")
+	if !ok || retained.Status.Phase != coremetadata.PhaseOffline || retained.Status.PaneRef != "" ||
+		!retained.Status.SessionRef.SameConversation(wantSession) {
+		t.Fatalf("retained Agent after retry = %+v", retained)
+	}
+}
+
+func TestSimultaneousCleanAgentExitsConvergeWithoutDeadOrMirroredResiduals(t *testing.T) {
+	t.Parallel()
+
+	orders := [][]string{{"%9", "%10"}, {"%10", "%9"}}
+	var want string
+	for orderIndex, order := range orders {
+		store := newFakeResourceStore(t)
+		activateExactPane(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-one", "%9")
+		secondAgent, err := store.mutator().CreateAgent(&store.registry, "win-alpha-main",
+			coremetadata.CreateAgentOptions{Provider: "claude", OperationID: "simultaneous-agent"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		secondPane, err := store.mutator().AttachAgentPane(&store.registry, secondAgent.Metadata.UID,
+			coremetadata.BootstrapPane{CWD: "/srv/alpha"}, "simultaneous-pane")
+		if err != nil {
+			t.Fatal(err)
+		}
+		activateExactPane(t, store, secondPane.Metadata.UID, secondAgent.Metadata.UID, "gen-two", "%10")
+
+		receipts := map[string]coremetadata.TerminationEvidence{
+			"%9":  phase2NormalReceipt("pan-alpha-codex", "agt-alpha-codex", "gen-one"),
+			"%10": phase2NormalReceipt(secondPane.Metadata.UID, secondAgent.Metadata.UID, "gen-two"),
+		}
+		live := make(map[string]bool, len(store.registry.Panes))
+		for _, pane := range store.registry.Panes {
+			live[pane.Metadata.UID] = true
+		}
+		inventory := &exactPaneExitInventory{uids: live, dead: map[string]bool{
+			"pan-alpha-codex": true, secondPane.Metadata.UID: true,
+		}, windowUID: "win-alpha-main"}
+		for _, runtimeID := range order {
+			event := exactPaneExitDirty(receipts[runtimeID])
+			event.runtimePaneID = runtimeID
+			result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+			if err != nil || len(result.cascaded) != 1 {
+				t.Fatalf("order %d runtime %s result=%+v err=%v", orderIndex, runtimeID, result, err)
+			}
+		}
+		for runtimeID, receipt := range receipts {
+			if inventory.dead[receipt.PaneUID] || inventory.uids[receipt.PaneUID] {
+				t.Fatalf("order %d runtime %s left dead/mirrored residual", orderIndex, runtimeID)
+			}
+			if _, ok := store.registry.Pane(receipt.PaneUID); ok {
+				t.Fatalf("order %d Pane %s survived", orderIndex, receipt.PaneUID)
+			}
+			agent, ok := store.registry.Agent(receipt.AgentUID)
+			if !ok || agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
+				t.Fatalf("order %d Agent %s = %+v", orderIndex, receipt.AgentUID, agent)
+			}
+		}
+		if _, ok := store.registry.Pane("pan-alpha-zsh"); !ok {
+			t.Fatal("simultaneous exits changed the sibling shell")
+		}
+		if inventory.cleanups != 2 || inventory.prepares != 0 {
+			t.Fatalf("order %d cleanups=%d prepares=%d", orderIndex, inventory.cleanups, inventory.prepares)
+		}
+		if orderIndex == 0 {
+			want = store.snapshot()
+		} else if got := store.snapshot(); got != want {
+			t.Fatalf("simultaneous event order changed final Registry:\nwant:\n%s\ngot:\n%s", want, got)
+		}
+		settled := store.snapshot()
+		for runtimeID, receipt := range receipts {
+			event := exactPaneExitDirty(receipt)
+			event.runtimePaneID = runtimeID
+			result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+			if err != nil || result.transactions != 0 || store.snapshot() != settled {
+				t.Fatalf("order %d repeat %s = %+v, %v", orderIndex, runtimeID, result, err)
+			}
+		}
+	}
+}
+
+func TestCoalescedCleanAgentExitEventsConvergeBothExactDeadPanes(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	activateExactPane(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-coalesced-one", "%9")
+	secondAgent, err := store.mutator().CreateAgent(&store.registry, "win-alpha-main",
+		coremetadata.CreateAgentOptions{Provider: "claude", OperationID: "coalesced-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondPane, err := store.mutator().AttachAgentPane(&store.registry, secondAgent.Metadata.UID,
+		coremetadata.BootstrapPane{CWD: "/srv/alpha"}, "coalesced-pane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	activateExactPane(t, store, secondPane.Metadata.UID, secondAgent.Metadata.UID, "gen-coalesced-two", "%10")
+	receipts := map[string]coremetadata.TerminationEvidence{
+		"%9":  phase2NormalReceipt("pan-alpha-codex", "agt-alpha-codex", "gen-coalesced-one"),
+		"%10": phase2NormalReceipt(secondPane.Metadata.UID, secondAgent.Metadata.UID, "gen-coalesced-two"),
+	}
+	live := make(map[string]bool, len(store.registry.Panes))
+	for _, pane := range store.registry.Panes {
+		live[pane.Metadata.UID] = true
+	}
+	inventory := &exactPaneExitInventory{uids: live, dead: map[string]bool{
+		"pan-alpha-codex": true, secondPane.Metadata.UID: true,
+	}, windowUID: "win-alpha-main"}
+	target, err := tmuxSocketPathTarget(filepath.Join(t.TempDir(), "coalesced.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	events := controllerEventLog{dir: t.TempDir()}
+	var runner *controllerTriggerRunner
+	passNumber := 0
+	var losing controllerTriggerOutcome
+	runner = &controllerTriggerRunner{
+		runner: &routedTmuxRunner{}, store: store.store(), events: events,
+		pass: func(ctx context.Context, trigger controllerTrigger) (controllerPassResult, error) {
+			passNumber++
+			if passNumber == 1 {
+				var nestedErr error
+				losing, nestedErr = runner.run(ctx, controllerTrigger{
+					reason: controllerTriggerPaneExited, target: target, hookPane: "%10", hookWindow: "@4",
+				})
+				if nestedErr != nil {
+					return controllerPassResult{}, nestedErr
+				}
+			}
+			if trigger.fullReobserve {
+				return controllerPassResult{}, nil
+			}
+			receipt, ok := receipts[trigger.hookPane]
+			if !ok {
+				return controllerPassResult{}, errors.New("coalesced pass lost exact hook Pane")
+			}
+			dirty := exactPaneExitDirty(receipt)
+			dirty.target = trigger.target
+			dirty.runtimePaneID = trigger.hookPane
+			result, reconcileErr := reconcileLifecycle(ctx, dirty, inventory, store.store())
+			if reconcileErr != nil {
+				return controllerPassResult{}, reconcileErr
+			}
+			return controllerPassResult{residualExits: result.changed()}, nil
+		},
+	}
+	outcome, err := runner.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerPaneExited, target: target, hookPane: "%9", hookWindow: "@4",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if losing.passes != 0 || !strings.Contains(losing.deferred, "another controller worker holds") {
+		t.Fatalf("coalesced loser = %s", losing.describe())
+	}
+	if outcome.events != 2 || outcome.passes != 3 || outcome.changed != 2 || !outcome.converged {
+		t.Fatalf("coalesced exact exits = %s", outcome.describe())
+	}
+	for _, receipt := range receipts {
+		if _, ok := store.registry.Pane(receipt.PaneUID); ok || inventory.dead[receipt.PaneUID] || inventory.uids[receipt.PaneUID] {
+			t.Fatalf("coalesced Pane %s left a residual", receipt.PaneUID)
+		}
+		agent, ok := store.registry.Agent(receipt.AgentUID)
+		if !ok || agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
+			t.Fatalf("coalesced Agent %s = %+v", receipt.AgentUID, agent)
+		}
+	}
+	if _, ok := store.registry.Pane("pan-alpha-zsh"); !ok || inventory.cleanups != 2 {
+		t.Fatalf("coalesced exits changed sibling or cleanup count: inventory=%+v", inventory)
+	}
+}
+
+func TestControllerRetriesTypedDeadPaneCleanupReasonAndConvergesNextPass(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	activateExactPane(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-controller-retry", "%9")
+	receipt := phase2NormalReceipt("pan-alpha-codex", "agt-alpha-codex", "gen-controller-retry")
+	live := exitReconcileFixtureLiveExcept("pan-alpha-codex")
+	live["pan-alpha-codex"] = true
+	inventory := &exactPaneExitInventory{
+		uids: live, dead: map[string]bool{"pan-alpha-codex": true}, windowUID: "win-alpha-main",
+		cleanupErr: errors.New("injected first cleanup failure"),
+	}
+	target, err := tmuxSocketPathTarget(filepath.Join(t.TempDir(), "retry.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var runner *controllerTriggerRunner
+	runner = &controllerTriggerRunner{
+		runner: &routedTmuxRunner{}, store: store.store(), events: controllerEventLog{dir: t.TempDir()},
+		pass: func(ctx context.Context, trigger controllerTrigger) (controllerPassResult, error) {
+			if trigger.fullReobserve {
+				return controllerPassResult{}, nil
+			}
+			dirty := exactPaneExitDirty(receipt)
+			dirty.target = trigger.target
+			dirty.runtimePaneID = trigger.hookPane
+			result, reconcileErr := reconcileLifecycle(ctx, dirty, inventory, store.store())
+			if reconcileErr != nil {
+				var retryErr *lifecycleCleanupRetryError
+				if errors.As(reconcileErr, &retryErr) {
+					inventory.cleanupErr = nil
+				}
+				return controllerPassResult{}, reconcileErr
+			}
+			return controllerPassResult{residualExits: result.changed()}, nil
+		},
+	}
+	outcome, err := runner.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerPaneExited, target: target, hookPane: "%9",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.retryReason != coremetadata.TeardownReasonDeadPaneCleanupRetry ||
+		!strings.Contains(outcome.describe(), "retry: "+string(coremetadata.TeardownReasonDeadPaneCleanupRetry)) ||
+		outcome.events != 2 || outcome.passes != 3 || outcome.changed != 1 || !outcome.converged {
+		t.Fatalf("typed cleanup retry outcome = %s", outcome.describe())
+	}
+	if inventory.cleanups != 2 || inventory.dead["pan-alpha-codex"] || inventory.uids["pan-alpha-codex"] {
+		t.Fatalf("typed cleanup retry inventory = %+v", inventory)
+	}
+	if _, ok := store.registry.Pane("pan-alpha-codex"); ok {
+		t.Fatal("typed cleanup retry left the managed Pane row")
+	}
+	agent, ok := store.registry.Agent("agt-alpha-codex")
+	if !ok || agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
+		t.Fatalf("typed cleanup retry Agent = %+v", agent)
 	}
 }
 

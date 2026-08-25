@@ -7463,7 +7463,62 @@ if ! exitrec_pmx describe pane "uid:$exitrec_shell_pane" -o json >"$exitrec_root
 fi
 echo ">> exit reconciliation e2e hook-driven clean exit agent=$exitrec_clean_agent phase=Offline pane=$exitrec_clean_pane registry=released journal=preserved siblings=preserved"
 
-# 3. A second Project on the same exact server reaches its last-descendant
+# 3. Two supervised provider Panes exit from one release edge. The two
+# pane-died producers may be coalesced onto one controller worker, but each
+# exact generation must lose both its Registry Pane row and retained dead tmux
+# Pane while its Agent remains resumable Offline. The sibling shell and failed
+# Agent remain unchanged.
+exitrec_pair_release="$exitrec_root/release-clean-pair"
+rm -f "$exitrec_pair_release"
+printf 'while [ ! -e %s ]; do sleep 0.02; done\nexit 0\n' "$exitrec_pair_release" >"$exitrec_root/stub-script"
+exitrec_pair_agent_one="$(exitrec_live_pmx create agent --provider claude \
+  --project "uid:$exitrec_project_uid" -o uid)"
+exitrec_doc agent "$exitrec_pair_agent_one"
+exitrec_pair_pane_one="$(exitrec_field paneRef)"
+exitrec_pair_agent_two="$(exitrec_live_pmx create agent --provider codex \
+  --project "uid:$exitrec_project_uid" -o uid)"
+exitrec_doc agent "$exitrec_pair_agent_two"
+exitrec_pair_pane_two="$(exitrec_field paneRef)"
+if [[ -z "$exitrec_pair_pane_one" || -z "$exitrec_pair_pane_two" || "$exitrec_pair_pane_one" == "$exitrec_pair_pane_two" ]]; then
+  echo "exit reconciliation e2e did not create two exact simultaneous provider Panes" >&2
+  exit 1
+fi
+touch "$exitrec_pair_release"
+for exitrec_pair in \
+  "$exitrec_pair_agent_one:$exitrec_pair_pane_one" \
+  "$exitrec_pair_agent_two:$exitrec_pair_pane_two"; do
+  exitrec_pair_agent="${exitrec_pair%%:*}"
+  exitrec_pair_pane="${exitrec_pair#*:}"
+  exitrec_await_phase agent "$exitrec_pair_agent" Offline
+  exitrec_await_absent pane "$exitrec_pair_pane"
+  exitrec_doc agent "$exitrec_pair_agent"
+  if [[ -n "$(exitrec_field paneRef)" ]]; then
+    echo "simultaneous Agent $exitrec_pair_agent kept paneRef=$(exitrec_field paneRef)" >&2
+    exit 1
+  fi
+  if exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
+    | grep -Eq "^${exitrec_pair_pane}\\|(0|1)$"; then
+    echo "simultaneous Agent $exitrec_pair_agent left mirrored/dead Pane $exitrec_pair_pane" >&2
+    exit 1
+  fi
+done
+exitrec_doc agent "$exitrec_failed_agent"
+if [[ "$(exitrec_field phase)" != "Failed" ]] ||
+  ! exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' | grep -Eq "^${exitrec_shell_pane}\\|0$"; then
+  echo "simultaneous clean exits changed the failed Agent or sibling shell" >&2
+  exit 1
+fi
+exitrec_pair_before="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
+exitrec_pmx internal tmux converge --socket-path "$exitrec_socket_path" --reason pane-killed \
+  >"$exitrec_root/simultaneous-repeat.out"
+exitrec_pair_after="$(sha256sum "$exitrec_root/state/projmux/metadata/registry.json" | cut -d' ' -f1)"
+if [[ "$exitrec_pair_before" != "$exitrec_pair_after" ]]; then
+  echo "simultaneous clean exit repeat rewrote the Registry" >&2
+  exit 1
+fi
+echo ">> exit reconciliation e2e simultaneous providers agents=$exitrec_pair_agent_one,$exitrec_pair_agent_two panes=$exitrec_pair_pane_one,$exitrec_pair_pane_two residual=0 sibling=preserved repeat=byte-identical"
+
+# 4. A second Project on the same exact server reaches its last-descendant
 # boundary. Canonical Pane delete first leaves one Agent as the Window anchor.
 # When that owner exits cleanly, pane-exited creates and mirrors a replacement
 # shell before committing the Pane release. The Project and exact Window
@@ -7543,7 +7598,7 @@ if [[ "$exitrec_other_after" != "$exitrec_other_before" ]]; then
 fi
 echo ">> exit reconciliation e2e owner-exit retained project=$exitrec_beta_project_uid window=$exitrec_beta_window_uid name=$exitrec_beta_window_name old-agent=$exitrec_beta_agent_uid replacement=$exitrec_beta_replacement_uid new-worker=$exitrec_beta_new_worker pane=$exitrec_beta_new_worker_pane siblings=preserved"
 
-# 4. The read surfaces project what the hook stored, and write nothing.
+# 5. The read surfaces project what the hook stored, and write nothing.
 exitrec_registry="$exitrec_root/state/projmux/metadata/registry.json"
 exitrec_settle_registry() {
   local previous="" current stable_samples=0
@@ -7578,7 +7633,7 @@ if [[ "$(sha256sum "$exitrec_registry" | cut -d' ' -f1)" != "$exitrec_read_befor
 fi
 echo ">> exit reconciliation e2e read projection write-free"
 
-# 5. Whole-server loss, then restart on the same socket. Receipt-free recovery
+# 6. Whole-server loss, then restart on the same socket. Receipt-free recovery
 # ordering is explicitly outside this slice; the stable contract here is that no
 # evidence invents normal/intentional, the Pane row survives, and reconciliation
 # starts nothing because observation is not activation authority.

@@ -120,6 +120,24 @@ type lifecycleReconcileResult struct {
 	unobserved bool
 }
 
+// lifecycleCleanupRetryError is the typed failure surface for an exact clean
+// Agent exit whose dead tmux Pane could not be removed. The Registry transaction
+// is aborted, so the same-generation Pane/evidence owner chain remains available
+// for a strict retry; the reason is stable and machine-checkable even though the
+// underlying tmux error is not.
+type lifecycleCleanupRetryError struct {
+	Reason coremetadata.TeardownReason
+	Target paneLiveDeleteTarget
+	Err    error
+}
+
+func (e *lifecycleCleanupRetryError) Error() string {
+	return fmt.Sprintf("%s: socket-scoped dead Pane cleanup target %s uid %s: %v",
+		e.Reason, e.Target.PaneID, e.Target.PaneUID, e.Err)
+}
+
+func (e *lifecycleCleanupRetryError) Unwrap() error { return e.Err }
+
 // changed counts the projections that altered the registry.
 func (r lifecycleReconcileResult) changed() int {
 	count := 0
@@ -714,7 +732,7 @@ func reconcileLifecycle(
 	var pinSaved bool
 	var replacementReceipt paneReplacementReceipt
 	var replacementRuntime lifecycleReplacementInventory
-	var deadPaneCleanup *paneLiveDeleteTarget
+	var replacementPrepared bool
 	_, err = store.converge(func(working *coremetadata.Registry, mutator coremetadata.Mutator) error {
 		fresh, observeErr := inventory.LivePaneUIDs(ctx)
 		if observeErr != nil {
@@ -754,25 +772,42 @@ func reconcileLifecycle(
 		}
 		result.awaitingPaneExit = cascade.awaiting
 		if cascade.Changed {
+			var runtime lifecycleReplacementInventory
 			if cascade.deadCleanup != nil {
-				runtime, ok := inventory.(lifecycleReplacementInventory)
+				var ok bool
+				runtime, ok = inventory.(lifecycleReplacementInventory)
 				if !ok {
 					return errors.New("exact dead Agent Pane cleanup runtime is unavailable; Registry was retained")
 				}
 				replacementRuntime = runtime
-				deadPaneCleanup = cascade.deadCleanup
 			}
 			if len(cascade.replacements) > 0 {
-				runtime, ok := inventory.(lifecycleReplacementInventory)
+				var ok bool
+				runtime, ok = inventory.(lifecycleReplacementInventory)
 				if !ok {
 					return errors.New("last-Pane lifecycle replacement runtime is unavailable; Registry was retained")
 				}
 				prepared, prepareErr := runtime.PrepareLifecycleReplacements(ctx, cascade.replacements)
+				replacementRuntime = runtime
+				replacementReceipt = prepared
+				replacementPrepared = true
 				if prepareErr != nil {
 					return fmt.Errorf("create exact lifecycle replacement before retaining Window: %w", prepareErr)
 				}
-				replacementRuntime = runtime
-				replacementReceipt = prepared
+			}
+			// Remove the exact retained dead tmux Pane before publishing the
+			// desired Registry graph. If cleanup fails, converge aborts with the
+			// old Pane row and same-generation evidence intact, so the next event
+			// can prove the same authority and retry instead of falling through to
+			// stale-owner-binding.
+			if cascade.deadCleanup != nil {
+				if cleanupErr := runtime.CleanupLifecycleDeadPane(ctx, *cascade.deadCleanup); cleanupErr != nil {
+					return &lifecycleCleanupRetryError{
+						Reason: coremetadata.TeardownReasonDeadPaneCleanupRetry,
+						Target: *cascade.deadCleanup,
+						Err:    cleanupErr,
+					}
+				}
 			}
 			if cascade.root.Changed && cascade.root.Decision.RootAction == coremetadata.RootTeardownDeleteProject {
 				if event.pinStore == nil {
@@ -807,7 +842,7 @@ func reconcileLifecycle(
 		result.projected = projectTerminations(working, mutator, lifecycleProjectionTargets(*working, lifecycleEffectiveLivePanes(fresh, freshDead), event))
 		return nil
 	})
-	if err != nil && replacementRuntime != nil {
+	if err != nil && replacementRuntime != nil && replacementPrepared {
 		if rollbackErr := replacementRuntime.RollbackLifecycleReplacements(ctx, replacementReceipt); rollbackErr != nil {
 			return result, fmt.Errorf("%w; rollback exact lifecycle replacement: %v", err, rollbackErr)
 		}
@@ -827,12 +862,6 @@ func reconcileLifecycle(
 	}
 	if err != nil {
 		return result, err
-	}
-	if deadPaneCleanup != nil {
-		if cleanupErr := replacementRuntime.CleanupLifecycleDeadPane(ctx, *deadPaneCleanup); cleanupErr != nil {
-			return result, fmt.Errorf("retained Window graph committed; exact dead Agent Pane cleanup remains for socket %s target %s uid %s (the Registry row is committed absent, so a repeated lifecycle pass cannot infer ownership; manually retry only this exact target): %w",
-				event.target.label(), deadPaneCleanup.PaneID, deadPaneCleanup.PaneUID, cleanupErr)
-		}
 	}
 	if result.changed() == 0 {
 		// The locked re-observation found every candidate live again, or every
