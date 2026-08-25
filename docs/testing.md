@@ -99,6 +99,18 @@ real last-Pane transport boundary. The audit fails when any linked guarantee,
 exact lower test inventory/symbol/selector, or executable integration/E2E
 marker is missing, misspelled, or duplicated.
 
+Lifecycle commit `dcffa5da` remains inside L11. Its closed evidence row links
+the retained/zero-Window lifecycle table, managed runtime stop, Continue, and
+always-new Fresh lower tests to the existing lifecycle integration completion
+and the L11 attached-client marker before pass. Authority commit `de52d15d`
+remains inside L17. Its row links creator-Registry admission, journal-path and
+CLOEXEC handshake tests to the immediate-exit integration/E2E markers, and
+also closes the focused fresh-root repeat harness plus the read-only
+owner/queue observation and product-terminal controller marker. These rows add
+no scenario ID: the audit still requires exactly 21 stable scenarios and fails
+closed if either source commit, guarantee set, lower selector, supporting
+marker, or marker-before-pass edge drifts.
+
 The required result hash accepts exactly one `begin` followed by one typed
 `pass` for every expected stable ID. A terminal `fail`, `cancel`, or
 `unattributed` class, a terminal without its begin row, and an interrupted

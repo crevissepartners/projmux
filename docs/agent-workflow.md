@@ -346,6 +346,16 @@
   distinct E2E markers before each scenario's pass. Every referenced guarantee,
   unit symbol/selector, and integration/E2E marker is fail-closed by the
   coverage audit.
+- Merged lifecycle commit `dcffa5da` stays on L11: its closed row links managed
+  runtime stop, retained/zero-Window Continue, always-new Fresh, exact client
+  handoff, and sibling containment to lower tests plus the existing lifecycle
+  integration completion and L11 pass boundary. Merged authority commit
+  `de52d15d` stays on L17: its row links creator-root activation admission,
+  exact receipt/exec disambiguation, immediate exit-42, the fresh-root focused
+  repeat harness, and the read-only owner/queue + product-terminal handoff.
+  Stable inventory remains exact `L01`-`L19`/`C01`/`N01`; source commit,
+  guarantee, lower selector, supporting marker, and marker-before-pass drift
+  all fail closed.
 - `make test-e2e` uses one attempt-local binary across isolated four-way Linux,
   Codex, and npm consumers. Local Security is the exact three-way
   `make security` topology; CI's required branch-protection context is the

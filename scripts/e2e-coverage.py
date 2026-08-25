@@ -86,6 +86,62 @@ EXPECTED_MERGED_EVIDENCE = {
             ("internal/core/metadata/lifecycle_decision_test.go", "TestControlSessionLastWindowCausalPairDeletesWindowAndRetainsRootIdentity"),
         },
     },
+    "L11.merged-770-runtime-fresh": {
+        "scenario_id": "L11",
+        "source_commit": "dcffa5daa6108bfdf2d437e9c1ab8097b3bd8454",
+        "guarantees": {
+            "managed_stop_retains_identity",
+            "zero_window_continue",
+            "fresh_replaces_complete_identity",
+            "commit_failure_preserves_preimage",
+            "agent_and_sibling_containment",
+        },
+        "lower_tests": {
+            ("internal/app/project_lifecycle_test.go", "TestProjectLifecycleAppClassifiesAllThreeDesiredStatesWithoutRuntimeEvidence"),
+            ("internal/app/project_lifecycle_test.go", "TestProjectLifecycleFailuresExposeActionStageAndOldNewUIDs"),
+            ("internal/app/runtime_stop_test.go", "TestManagedRuntimeStopAuthorityRejectsZeroWindowNoWriteCell"),
+            ("internal/app/runtime_stop_test.go", "TestProjectStopSurfaceExecutorMatchesLifecycleTableAndGenericCopyStaysGeneric"),
+            ("internal/app/project_startup_topology_test.go", "TestZeroWindowContinuePreservesProjectAndAllocatesCanonicalWindowShellUIDs"),
+            ("internal/app/project_startup_fresh_test.go", "TestProjectFreshStartAgentAnchorCreatesNewMinimumIdentityOnEveryFresh"),
+            ("internal/app/project_startup_fresh_test.go", "TestProjectFreshStartCommitFailureRetainsExactOldGraphPreimage"),
+            ("internal/core/metadata/lifecycle_decision_test.go", "TestProjectLifecycleStateTableHasTwelveClosedExclusiveCells"),
+            ("internal/core/metadata/lifecycle_decision_test.go", "TestPlanProjectFreshReplacementCreatesOneNewClaimantAndPreservesPreimage"),
+            ("internal/core/metadata/lifecycle_decision_test.go", "TestPlanProjectFreshReplacementSupportsZeroWindowAndFailureRetainsOldGraph"),
+        },
+    },
+    "L17.merged-771-create-authority": {
+        "scenario_id": "L17",
+        "source_commit": "de52d15dc8d57ce08f6c55bdf66a702028d8e274",
+        "guarantees": {
+            "commit_before_provider_start",
+            "creator_registry_and_journal_authority",
+            "gate_exec_exit_disambiguation",
+            "exact_abort_and_containment",
+            "immediate_exit_fixed_point",
+            "controller_owner_handoff",
+        },
+        "lower_tests": {
+            ("internal/app/supervise_test.go", "TestSuperviseWaitsForTheCommittedActivationBeforeStartingTheChild"),
+            ("internal/app/supervise_test.go", "TestSuperviseRefusesTheChildWhenCreateAbortsBeforeActivationCommit"),
+            ("internal/app/supervise_test.go", "TestSuperviseActivationAdmissionIsExactAndZeroWrite"),
+            ("internal/app/supervise_test.go", "TestActivationAuthorityRejectsNonExactRegistryPathsBeforeProviderStart"),
+            ("internal/app/supervise_test.go", "TestAgentAdmissionAndReceiptUseCreatorRegistryAuthorityNotAmbientXDG"),
+            ("internal/app/supervise_test.go", "TestActivationExecFailureHandshakeIsTyped"),
+            ("internal/app/supervise_launch_test.go", "TestAgentLaunchCarriesTheCreatorResolvedAbsoluteRegistryPath"),
+            ("internal/app/supervise_child_unix_test.go", "TestSupervisedActivationRefusesPartialAgentIdentityBeforeProviderStart"),
+            ("internal/app/supervise_child_unix_test.go", "TestSupervisedActivationRefusesUnexpectedRegistryShapeBeforeProviderStart"),
+            ("internal/app/supervise_child_unix_test.go", "TestSupervisedShellBypassesAgentAdmissionWithOrWithoutOperationID"),
+            ("internal/app/supervise_child_unix_test.go", "TestSuperviseActivationHandshakeDistinguishesGateFailureFromProviderExit"),
+            ("internal/app/supervise_child_unix_test.go", "TestActivationExecCloseOnExecDoesNotWaitForProviderDescendants"),
+            ("internal/app/controller_trigger_test.go", "TestOneProducerConvergesOnceAndProvesIt"),
+            ("internal/app/controller_trigger_test.go", "TestAPassThatWroteIsRepeatedUntilOneWritesNothing"),
+            ("internal/app/controller_trigger_test.go", "TestTheWorkerLeaseIsExclusiveAndSurvivesNoCrash"),
+        },
+        "supporting": {
+            ("integration-harness", "test/integration/create-agent-early-exit-repeat.sh", ">> create authority isolated summary runs=$repeats recurrence=0"),
+            ("e2e", "test/e2e/linux-smoke.sh", ">> exit reconciliation e2e simultaneous providers agents="),
+        },
+    },
 }
 BEGIN_RE = re.compile(
     r"^smoke_contract_begin\s+(?P<id>[LCN]\d{2})\s+(?P<scenario>[a-z0-9-]+)\s+(?P<owner>[a-z0-9-]+)\s*$",
@@ -300,12 +356,19 @@ def validate(root: pathlib.Path, manifest: dict[str, Any]) -> dict[str, Any]:
     merged_lower_refs: set[tuple[str, str]] = set()
     merged_lower_count = 0
     for item in merged:
-        if not isinstance(item, dict) or set(item) != {
+        if not isinstance(item, dict):
+            fail("merged_evidence row must be an object")
+        evidence_id = str(item.get("id"))
+        expected_merged = EXPECTED_MERGED_EVIDENCE.get(evidence_id)
+        expected_fields = {
             "id", "scenario_id", "source_commit", "guarantees", "lower_layer", "integration", "e2e"
-        }:
+        }
+        if expected_merged is not None and "supporting" in expected_merged:
+            expected_fields.add("supporting")
+        if set(item) != expected_fields:
             fail("merged_evidence row has an open or incomplete field set")
-        evidence_id = str(item["id"])
-        expected_merged = EXPECTED_MERGED_EVIDENCE[evidence_id]
+        if expected_merged is None:
+            fail(f"unknown merged_evidence row: {evidence_id}")
         scenario_id = nonempty_string(item.get("scenario_id"), f"{evidence_id}.scenario_id")
         if scenario_id != expected_merged["scenario_id"] or scenario_id not in manifest_ids:
             fail(f"{evidence_id} scenario_id differs from its closed merged source")
@@ -358,6 +421,56 @@ def validate(root: pathlib.Path, manifest: dict[str, Any]) -> dict[str, Any]:
                 pass_offset = scenario_body.find("smoke_contract_pass", marker_offset + len(marker))
                 if marker_offset < 0 or pass_offset < 0:
                     fail(f"{evidence_id} marker is not enforced before its E2E pass")
+
+        expected_supporting = expected_merged.get("supporting")
+        if expected_supporting is not None:
+            supporting = item.get("supporting")
+            if not isinstance(supporting, list) or not supporting:
+                fail(f"{evidence_id}.supporting must contain closed executable evidence")
+            observed_supporting: set[tuple[str, str, str]] = set()
+            for support_index, support in enumerate(supporting):
+                label = f"{evidence_id}.supporting[{support_index}]"
+                if not isinstance(support, dict) or set(support) != {"layer", "path", "marker"}:
+                    fail(f"{label} must contain exact layer/path/marker fields")
+                layer = nonempty_string(support.get("layer"), f"{label}.layer")
+                if layer not in ("integration-harness", "e2e"):
+                    fail(f"{label}.layer is not a closed supporting layer")
+                relative = nonempty_string(support.get("path"), f"{label}.path")
+                support_path = closed_relative_path(root, relative, f"{label}.path")
+                marker = nonempty_string(support.get("marker"), f"{label}.marker")
+                ref = (layer, relative, marker)
+                if ref in observed_supporting:
+                    fail(f"duplicate supporting evidence reference: {ref}")
+                observed_supporting.add(ref)
+                support_text = support_path.read_text(encoding="utf-8")
+                if support_text.count(marker) != 1:
+                    fail(f"{label} marker is missing or duplicated")
+                if layer == "e2e":
+                    begin = re.search(
+                        rf"^smoke_contract_begin\s+{scenario_id}\s+",
+                        support_text,
+                        re.MULTILINE,
+                    )
+                    if begin is None:
+                        fail(f"{label} has no executable E2E begin marker")
+                    next_begin = re.search(
+                        r"^smoke_contract_begin\s+",
+                        support_text[begin.end():],
+                        re.MULTILINE,
+                    )
+                    end = begin.end() + next_begin.start() if next_begin else len(support_text)
+                    scenario_body = support_text[begin.start():end]
+                    marker_offset = scenario_body.find(marker)
+                    pass_offset = scenario_body.find(
+                        "smoke_contract_pass", marker_offset + len(marker)
+                    )
+                    if marker_offset < 0 or pass_offset < 0:
+                        fail(f"{label} marker is not enforced before its E2E pass")
+            if observed_supporting != expected_supporting:
+                fail(
+                    f"{evidence_id} supporting inventory differs: "
+                    f"actual={sorted(observed_supporting)} expected={sorted(expected_supporting)}"
+                )
 
     manifest_bytes = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
     return {
