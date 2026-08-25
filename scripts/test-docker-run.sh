@@ -108,13 +108,21 @@ fi
 
 prebuilt="${PROJMUX_TEST_PREBUILT_BIN:-}"
 expected_sha="${PROJMUX_TEST_PREBUILT_SHA256:-}"
-if [[ -z "$prebuilt" || ! -f "$prebuilt" || -L "$prebuilt" || ! -x "$prebuilt" || -z "$expected_sha" ]]; then
-  echo "suite run requires PROJMUX_TEST_PREBUILT_BIN regular executable and expected SHA" >&2
-  exit 2
-fi
-if [[ "$(sha256sum "$prebuilt" | awk '{print $1}')" != "$expected_sha" ]]; then
-  echo "host prebuilt binary hash mismatch" >&2
-  exit 2
+prebuilt_docker_args=()
+if [[ -n "$prebuilt" || -n "$expected_sha" ]]; then
+  if [[ -z "$prebuilt" || ! -f "$prebuilt" || -L "$prebuilt" || ! -x "$prebuilt" || -z "$expected_sha" ]]; then
+    echo "prebuilt suite run requires PROJMUX_TEST_PREBUILT_BIN regular executable and expected SHA" >&2
+    exit 2
+  fi
+  if [[ "$(sha256sum "$prebuilt" | awk '{print $1}')" != "$expected_sha" ]]; then
+    echo "host prebuilt binary hash mismatch" >&2
+    exit 2
+  fi
+  prebuilt_docker_args+=(
+    -e PROJMUX_SMOKE_PREBUILT_BIN=/projmux-artifact/projmux
+    -e PROJMUX_SMOKE_EXPECTED_BIN_SHA256="$expected_sha"
+    -v "$(dirname "$prebuilt"):/projmux-artifact:ro"
+  )
 fi
 evidence="${PROJMUX_E2E_ARTIFACTS:-$root/.bin/e2e-evidence}"
 mkdir -p "$evidence"
@@ -136,16 +144,14 @@ docker run --rm \
   -e GOTOOLCHAIN=local \
   -e GOMAXPROCS="$suite_gomaxprocs" \
   -e GOFLAGS="$suite_goflags" \
-  -e PROJMUX_SMOKE_PREBUILT_BIN=/projmux-artifact/projmux \
-  -e PROJMUX_SMOKE_EXPECTED_BIN_SHA256="$expected_sha" \
   -e PROJMUX_E2E_ARTIFACTS=/evidence \
   -e PROJMUX_E2E_ATTEMPT="${PROJMUX_E2E_ATTEMPT:-1}" \
   -e PROJMUX_E2E_LINUX_SHARD="${PROJMUX_E2E_LINUX_SHARD:-}" \
   -e E2E_SCENARIO="${E2E_SCENARIO:-}" \
   -v "$root:/workspace:ro" \
   -v "$modcache:/gomodcache:ro" \
-  -v "$(dirname "$prebuilt"):/projmux-artifact:ro" \
   -v "$evidence:/evidence:rw" \
+  "${prebuilt_docker_args[@]}" \
   -w /workspace \
   "$image" \
   "${suite_shell[@]}" "$suite" "$@"
