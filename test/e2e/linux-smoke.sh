@@ -4,11 +4,16 @@ set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/test/lib/smoke.sh"
 
 smoke_setup_env
+PROJMUX_E2E_SUITE="linux"
+export PROJMUX_E2E_SUITE
+smoke_contract_install_trap
 trap smoke_cleanup_env EXIT
 cd "$smoke_root"
 
 smoke_build_binary
 bin="$PROJMUX_SMOKE_BIN"
+
+smoke_contract_begin L01 bootstrap harness
 
 # A genuinely absent app socket must survive the complete ControlSession
 # bootstrap before the foreground attach. Run the user-facing, selector-free
@@ -105,6 +110,9 @@ smoke_cleanup_tmux_server "$fresh_shell_socket"
 unset PROJMUX_SMOKE_TMUX_SOCKET
 echo ">> fresh projmux shell e2e bootstrapped Home on $fresh_shell_actual"
 
+smoke_contract_pass
+smoke_contract_begin L02 unattributed-create create-controller
+
 # An unattributed pane is not a Projmux scope. `create` used to fall back to a
 # runtime-only split here; it now refuses and names --project, and it must leave
 # the server exactly as it found it. The positive implicit-scope path is
@@ -144,6 +152,9 @@ if [[ "$(tmux -L "$pane_id_socket" list-panes -a -F '#{pane_id}' | wc -l)" != "$
   exit 1
 fi
 tmux -L "$pane_id_socket" kill-server
+
+smoke_contract_pass
+smoke_contract_begin L03 core-runtime tmux-adapter
 
 project_a="$PROJMUX_SMOKE_WORKDIR/projects/alpha"
 project_b="$PROJMUX_SMOKE_WORKDIR/projects/beta"
@@ -222,6 +233,9 @@ if grep -Fq "docker e2e" "$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json"; th
   cat "$PROJMUX_SMOKE_WORKDIR/after-statusbar-click.json" >&2
   exit 1
 fi
+
+smoke_contract_pass
+smoke_contract_begin L04 settings-interactive settings-ui
 
 # Exercise the Settings key recorder through a real attached tmux client and
 # display-popup. The pseudo-terminal feeds the popup's existing native-picker
@@ -895,11 +909,17 @@ smoke_cleanup_tmux_server "$recorder_socket"
 wait "$recorder_client_pid" || true
 exec 9>&-
 
+smoke_contract_pass
+smoke_contract_begin L05 session-replay tmux-adapter
+
 # Save, destroy, and replay a shell/startup/agent field matrix through a
 # disposable exact tmux server. The Go harness also changes pane-base-index
 # between save and restore to prove replay uses returned %pane_id targets.
 PROJMUX_REAL_TMUX_TEST=1 go test ./internal/integrations/tmux \
   -run '^TestRealTmuxSessionStateSaveDestroyReplayFieldFidelity$' -count=1
+
+smoke_contract_pass
+smoke_contract_begin L06 create-materialize resource-controller
 
 # ---------------------------------------------------------------------------
 # Detached Project runtime materialization and Window/Pane create.
@@ -2291,6 +2311,9 @@ create_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> create e2e passed: socket=$create_socket path=$create_socket_path"
 
+smoke_contract_pass
+smoke_contract_begin L07 binding-convergence reconciler
+
 # Explicit Registry authority converges Project -> Window -> Pane. Every
 # fixture below keeps each public report and must reach an empty no-op within
 # that three-level walk plus one confirming pass. Raw imports require initial
@@ -2968,6 +2991,9 @@ fi
 binding_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> managed binding e2e passed: socket=$binding_socket path=$binding_socket_path"
+
+smoke_contract_pass
+smoke_contract_begin L08 canonical-delete delete-controller
 
 # ---------------------------------------------------------------------------
 # Window resource + exact live-binding deletion.
@@ -3909,6 +3935,9 @@ delete_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> delete Window/Pane/Agent e2e passed: socket=$delete_socket path=$delete_socket_path other-socket=$delete_other_socket other-path=$delete_other_socket_path cleanup=validated-exact-sockets"
 
+smoke_contract_pass
+smoke_contract_begin L09 rename-rebind registry-owner
+
 # Rename/rebind convergence uses its own exact two-socket environment. The app
 # receives an explicit synthetic client socket path for immediate mirror lookup;
 # every setup/read/repair command strips inherited client state and names -L.
@@ -4224,6 +4253,9 @@ fi
 rename_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> rename/rebind e2e passed: socket=$rename_socket path=$rename_socket_path other-socket=$rename_other_socket other-path=$rename_other_socket_path cleanup=validated-exact-sockets"
+
+smoke_contract_pass
+smoke_contract_begin L10 topology-materialize topology-controller
 
 # Explicit Registry desired-topology materialization uses its own exact
 # two-socket environment. Every setup/read/repair command strips inherited
@@ -4798,6 +4830,9 @@ fi
 topology_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Registry topology materialization e2e passed: socket=$topology_socket path=$topology_socket_path other-socket=$topology_other_socket other-path=$topology_other_socket_path cleanup=validated-exact-sockets"
+
+smoke_contract_pass
+smoke_contract_begin L11 closed-startup startup-controller
 
 # Closed Project managed startup parity gets its own exact two-socket
 # environment and its own real attached tmux client. Opening a closed Project is
@@ -5546,6 +5581,9 @@ startup_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Closed Project managed startup e2e passed: socket=$startup_socket path=$startup_socket_path other-socket=$startup_other_socket other-path=$startup_other_socket_path client=$startup_client cleanup=validated-exact-sockets"
 
+smoke_contract_pass
+smoke_contract_begin L12 first-open first-open-controller
+
 # ---------------------------------------------------------------------------
 # First-open Project identity mirror.
 #
@@ -5925,6 +5963,9 @@ fopen_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> First-open Project identity mirror e2e passed: socket=$fopen_socket path=$fopen_socket_path other-socket=$fopen_other_socket other-path=$fopen_other_socket_path client=$fopen_client project=$fopen_project_uid session=$fopen_session cleanup=validated-exact-sockets"
 
+smoke_contract_pass
+smoke_contract_begin L13 runtime-diagnostics diagnostics-owner
+
 # ---------------------------------------------------------------------------
 # Runtime diagnostics escape hatch.
 #
@@ -6193,6 +6234,9 @@ wait "$rtd_client_pid" 2>/dev/null || true
 rtd_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Runtime diagnostics e2e passed: socket=$rtd_socket path=$rtd_socket_path other-socket=$rtd_other_socket other-path=$rtd_other_socket_path client=$rtd_client writes=0 cleanup=validated-exact-sockets"
+
+smoke_contract_pass
+smoke_contract_begin L14 registry-navigation projects-ui
 
 # ---------------------------------------------------------------------------
 # Registry-first primary navigation.
@@ -6660,6 +6704,9 @@ nav_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Registry-first navigation e2e passed: socket=$nav_socket path=$nav_socket_path other-socket=$nav_other_socket other-path=$nav_other_socket_path client=$nav_client project=$nav_project_uid beta=$nav_beta_uid offline-row=preserved registry-order=\"$nav_registry_order\" live-order=\"$nav_live_order\" closed-order=\"$nav_closed_order\" writes=0 cleanup=validated-exact-sockets"
 
+smoke_contract_pass
+smoke_contract_begin L15 runtime-visibility sidebar-policy
+
 # ---------------------------------------------------------------------------
 # Alt-1 contextual Runtime row.
 #
@@ -6963,6 +7010,9 @@ rtv_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> Alt-1 Runtime visibility e2e passed: socket=$rtv_socket path=$rtv_socket_path other-socket=$rtv_other_socket other-path=$rtv_other_socket_path client=$rtv_client list-pane=$rtv_list_pane default=withheld always=offered direct-routes=identical writes=0 cleanup=validated-exact-sockets"
 
+smoke_contract_pass
+smoke_contract_begin L16 discovery-pin discovery-adapter
+
 # ---------------------------------------------------------------------------
 # Project discovery and pin authority split.
 #
@@ -7253,6 +7303,9 @@ wait "$disc_client_pid" 2>/dev/null || true
 disc_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> discovery/pin authority e2e passed: socket=$disc_socket path=$disc_socket_path other-socket=$disc_other_socket other-path=$disc_other_socket_path client=$disc_client project=$disc_project_uid siblings=unregistered cleanup=validated-exact-sockets"
+
+smoke_contract_pass
+smoke_contract_begin L17 exit-reconcile exit-reconciler
 
 # --- exit reconciliation end to end -----------------------------------------
 #
@@ -8045,6 +8098,9 @@ exitrec_cleanup
 trap smoke_cleanup_env EXIT
 echo ">> exit reconciliation e2e passed: socket=$exitrec_socket path=$exitrec_socket_path other-path=$exitrec_other_socket_path project=$exitrec_project_uid cleanup=validated-exact-sockets"
 
+smoke_contract_pass
+smoke_contract_begin L18 pane-menu pane-menu-ui
+
 # Declarative contract stabilization Phase 5: audit the generated
 # MouseDown3Pane binding, then select the same managed actions through a real
 # tmux display-menu on an attached client. Every command in this block strips
@@ -8423,6 +8479,9 @@ if "${menu_env[@]}" tmux -S "$menu_cleanup_target" list-sessions >/dev/null 2>&1
 fi
 trap smoke_cleanup_env EXIT
 echo ">> managed pane-menu and interactive run-shell output e2e passed: pane=$menu_origin_pane project=$menu_project_uid overlay-matrix=none socket=$menu_socket path=$menu_socket_path cleanup=$menu_cleanup_target inherited=unset"
+
+smoke_contract_pass
+smoke_contract_begin L19 control-root control-session-controller
 
 # Declarative contract stabilization Phase 12: drive the four Home popup
 # terminal paths through the built binary on an exact, config-apply-declared
@@ -8819,3 +8878,4 @@ if "${p12_env[@]}" tmux -S "$p12_cleanup_target" list-sessions >/dev/null 2>&1; 
 fi
 trap smoke_cleanup_env EXIT
 echo ">> ControlSession create/read-scope + Phase 1 closure e2e passed: control=$p12_control_uid window=$p12_window_uid descendants=0 root=retained project=$p12_project_uid project-window=$p12_project_window_uid foreign=$p12_foreign_pane repeat=byte-identical matrix=$p13_case socket=$p12_socket path=$p12_socket_path cleanup=$p12_cleanup_target inherited=unset"
+smoke_contract_pass

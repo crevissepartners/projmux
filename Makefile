@@ -21,7 +21,7 @@ SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
 DOCS_REFERENCE ?= docs/cli.md
 
-.PHONY: fmt fmt-check fix build install npm-pack docs test test-integration test-install-smoke test-e2e test-e2e-update e2e verify deadcode security security-tools
+.PHONY: fmt fmt-check fix build install npm-pack docs test test-integration test-install-smoke test-e2e test-e2e-contract test-e2e-update e2e verify deadcode security security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -114,6 +114,9 @@ test-install-smoke:
 
 test-e2e:
 	scripts/test-e2e-docker.sh
+
+test-e2e-contract:
+	test/e2e/evidence-contract.sh
 
 # Opt-in / local: depends on the public npm registry and published projmux
 # package, so it is not part of `verify`.
