@@ -39,6 +39,7 @@ func TestIsNoServerFailureUsesTypedIsolatedStderr(t *testing.T) {
 		{name: "no server", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "no server running on /private/socket"}}, want: true},
 		{name: "missing socket", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "error connecting to /private/socket (No such file or directory)"}}, want: true},
 		{name: "refused", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "failed to connect to server: Connection refused"}}, want: true},
+		{name: "missing server", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "can't find server"}}, want: true},
 		{name: "permission stderr", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "failed to connect to server: Permission denied"}}},
 		{name: "malformed stderr", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "failed to connect to server private"}}},
 		{name: "not found executable", err: typedCommandFailure{CommandFailure{Kind: CommandFailureNotFound, Stderr: "no server running on /private/socket"}}},
@@ -50,6 +51,27 @@ func TestIsNoServerFailureUsesTypedIsolatedStderr(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := IsNoServerFailure(tt.err); got != tt.want {
 				t.Fatalf("IsNoServerFailure() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsSessionNotFoundFailureUsesTypedIsolatedStderr(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "missing session", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "can't find session: workspace"}}, want: true},
+		{name: "generic exit one", err: typedCommandFailure{CommandFailure{Kind: CommandFailureExit, Stderr: "generic failure"}}},
+		{name: "permission", err: typedCommandFailure{CommandFailure{Kind: CommandFailurePermission, Stderr: "can't find session: workspace"}}},
+		{name: "plain text spoof", err: errors.New("can't find session: workspace")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := IsSessionNotFoundFailure(tt.err); got != tt.want {
+				t.Fatalf("IsSessionNotFoundFailure() = %v, want %v", got, tt.want)
 			}
 		})
 	}
@@ -1174,6 +1196,29 @@ func TestClientSessionExistsReturnsFalseWhenSessionIsMissing(t *testing.T) {
 	}
 	if exists {
 		t.Fatal("SessionExists = true, want false")
+	}
+}
+
+func TestClientSessionExistsClassifiesTypedFailures(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		failure CommandFailure
+		wantErr bool
+	}{
+		{name: "absent socket", failure: CommandFailure{Kind: CommandFailureExit, Stderr: "no server running on /private/socket"}},
+		{name: "absent session", failure: CommandFailure{Kind: CommandFailureExit, Stderr: "can't find session: workspace"}},
+		{name: "generic exit", failure: CommandFailure{Kind: CommandFailureExit, Stderr: "generic failure"}, wantErr: true},
+		{name: "permission", failure: CommandFailure{Kind: CommandFailurePermission, Stderr: "permission denied"}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			runner := &scriptedRunner{t: t, steps: []scriptedStep{{err: typedCommandFailure{failure: tt.failure}}}}
+			exists, err := NewClient(runner).SessionExists(context.Background(), "workspace")
+			if exists || (err != nil) != tt.wantErr {
+				t.Fatalf("SessionExists() = (%v, %v), want exists=false err=%v", exists, err, tt.wantErr)
+			}
+		})
 	}
 }
 

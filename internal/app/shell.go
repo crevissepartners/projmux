@@ -170,6 +170,7 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		// not turn a refused plan into an unplanned create.
 		exists, observeErr := c.appSessionExists(context.Background(), socketName, config, target.SessionName)
 		if observeErr != nil || !exists {
+			c.recordPrepareFailure(prepareErr)
 			return fmt.Errorf("prepare declared session %q before attach: %w", target.SessionName, prepareErr)
 		}
 		_, _ = fmt.Fprint(stderr, controlSessionWarning(target.SessionName, prepareErr))
@@ -180,6 +181,39 @@ func (c *shellCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 	}
 	return c.executeShellSession(context.Background(), socketName, target.SessionName, command, runArgs...)
+}
+
+// recordPrepareFailure gives pre-mutation shell failures the same closed,
+// content-free journal projection as failures discovered after a lifecycle
+// operation starts. The raw tmux stderr remains only on the returned error for
+// the operator; the journal receives a stable code derived from the typed
+// CommandFailure carrier.
+func (c *shellCommand) recordPrepareFailure(err error) {
+	if c.diagnostics == nil || err == nil {
+		return
+	}
+	c.diagnostics.Mark(diagnostics.OperationSessionAttach)
+	c.diagnostics.Hint(diagnostics.LifecycleError, shellTmuxFailureDiagnosticCode(err))
+}
+
+func shellTmuxFailureDiagnosticCode(err error) diagnostics.Code {
+	var carrier interface{ CommandFailure() inttmux.CommandFailure }
+	if !errors.As(err, &carrier) {
+		return diagnostics.CodeSessionAttachFailed
+	}
+	failure := carrier.CommandFailure()
+	switch {
+	case inttmux.IsNoServerFailure(err):
+		return diagnostics.CodeSessionTmuxSocketUnreachable
+	case failure.Kind == inttmux.CommandFailureExit:
+		return diagnostics.CodeSessionTmuxExit
+	case failure.Kind == inttmux.CommandFailurePermission:
+		return diagnostics.CodeSessionTmuxPermission
+	case failure.Kind == inttmux.CommandFailureNotFound:
+		return diagnostics.CodeSessionTmuxNotFound
+	default:
+		return diagnostics.CodeSessionTmuxRunner
+	}
 }
 
 func (c *shellCommand) materializeProjectDefaultSession(ctx context.Context, socketName string, target shellTarget) error {
@@ -998,16 +1032,52 @@ type shellTmuxExecRunner struct {
 	env func() []string
 }
 
+// shellTmuxCommandError keeps the subprocess cause visible to the operator and
+// exposes only the integrations/tmux failure projection to classifiers. It
+// deliberately does not unwrap the raw *exec.ExitError: cmd/projmux treats an
+// error with ExitCode() as a command-owned diagnostic and suppresses its own
+// stderr print. The shell runner has not printed that diagnostic, so exposing
+// the subprocess exit coder here would turn an ordinary failure into a silent
+// exit 1.
+type shellTmuxCommandError struct {
+	name    string
+	args    []string
+	cause   error
+	failure inttmux.CommandFailure
+}
+
+func (e *shellTmuxCommandError) Error() string {
+	base := fmt.Sprintf("%s %s: %v", e.name, strings.Join(e.args, " "), e.cause)
+	if stderr := strings.TrimSpace(e.failure.Stderr); stderr != "" {
+		return base + ": " + stderr
+	}
+	return base
+}
+
+func (e *shellTmuxCommandError) CommandFailure() inttmux.CommandFailure { return e.failure }
+
 func (r shellTmuxExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = withoutEnv(r.environ(), "TMUX")
+	cmd.Env = shellDetachedEnvironment(r.environ())
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		trimmed := strings.TrimSpace(string(output))
-		if trimmed != "" {
-			return nil, fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, trimmed)
+		kind := inttmux.CommandFailureRunner
+		var exitErr *exec.ExitError
+		var execErr *exec.Error
+		switch {
+		case errors.Is(err, os.ErrPermission):
+			kind = inttmux.CommandFailurePermission
+		case errors.Is(err, os.ErrNotExist):
+			kind = inttmux.CommandFailureNotFound
+		case errors.As(err, &exitErr):
+			kind = inttmux.CommandFailureExit
+		case errors.As(err, &execErr):
+			kind = inttmux.CommandFailureNotFound
 		}
-		return nil, fmt.Errorf("%s %s: %w", name, strings.Join(args, " "), err)
+		return output, &shellTmuxCommandError{
+			name: name, args: append([]string(nil), args...), cause: err,
+			failure: inttmux.CommandFailure{Kind: kind, Stderr: strings.TrimSpace(string(output))},
+		}
 	}
 	return output, nil
 }
@@ -1017,6 +1087,10 @@ func (r shellTmuxExecRunner) environ() []string {
 		return r.env()
 	}
 	return os.Environ()
+}
+
+func shellDetachedEnvironment(env []string) []string {
+	return withoutEnv(withoutEnv(env, "TMUX"), "TMUX_PANE")
 }
 
 func shouldPromptShellUpdate(status updateStatus) bool {
@@ -1206,14 +1280,14 @@ func (c *shellCommand) run(ctx context.Context, name string, args ...string) err
 	if c.runCommand == nil {
 		return errors.New("shell command runner is not configured")
 	}
-	return c.runCommand(ctx, withoutEnv(os.Environ(), "TMUX"), name, args...)
+	return c.runCommand(ctx, shellDetachedEnvironment(os.Environ()), name, args...)
 }
 
 func (c *shellCommand) start(ctx context.Context, name string, args ...string) error {
 	if c.startCommand == nil {
 		return errors.New("shell background command runner is not configured")
 	}
-	return c.startCommand(ctx, withoutEnv(os.Environ(), "TMUX"), name, args...)
+	return c.startCommand(ctx, shellDetachedEnvironment(os.Environ()), name, args...)
 }
 
 func (c *shellCommand) shouldStartNativeKeyBroker() bool {

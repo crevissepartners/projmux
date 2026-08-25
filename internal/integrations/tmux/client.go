@@ -167,7 +167,24 @@ func IsNoServerFailure(err error) bool {
 	message := strings.ToLower(strings.TrimSpace(failure.Stderr))
 	return strings.HasPrefix(message, "no server running on ") && len(message) > len("no server running on ") ||
 		message == "failed to connect to server: connection refused" ||
-		strings.HasPrefix(message, "error connecting to ") && strings.HasSuffix(message, " (no such file or directory)")
+		strings.HasPrefix(message, "error connecting to ") && strings.HasSuffix(message, " (no such file or directory)") ||
+		strings.HasPrefix(message, "can't find server")
+}
+
+// IsSessionNotFoundFailure reports only a typed tmux exit whose isolated
+// stderr is tmux's missing-session response. It keeps generic exit 1 failures
+// from being treated as absence while retaining compatibility for callers that
+// supply the typed CommandFailure carrier.
+func IsSessionNotFoundFailure(err error) bool {
+	var carrier commandFailureCarrier
+	if !errors.As(err, &carrier) {
+		return false
+	}
+	failure := carrier.CommandFailure()
+	if failure.Kind != CommandFailureExit {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(failure.Stderr)), "can't find session")
 }
 
 // postCreateRunner is the narrow post-create hook surface that the tmux
@@ -1147,6 +1164,13 @@ func (c *Client) InsideSession() bool {
 
 func (c *Client) sessionExists(ctx context.Context, sessionName string) (bool, error) {
 	if _, err := c.runner.Run(ctx, "tmux", "has-session", "-t", exactSessionTarget(sessionName)); err != nil {
+		var typed commandFailureCarrier
+		if errors.As(err, &typed) {
+			if IsNoServerFailure(err) || IsSessionNotFoundFailure(err) {
+				return false, nil
+			}
+			return false, fmt.Errorf("check tmux session %q: %w", sessionName, err)
+		}
 		if isExitCode(err, 1) {
 			return false, nil
 		}
