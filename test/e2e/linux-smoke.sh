@@ -3234,12 +3234,13 @@ smoke_assert_file_contains "$delete_root/external.out" "live killed tmux window 
 
 # The only beta Window explicitly predicts and then causes the canonical
 # Project root cascade. Explicit Window deletion allocates no replacement
-# Window/shell; alpha remains byte-semantically untouched.
+# Window/shell; alpha and the foreign socket remain byte-semantically untouched.
 {
   delete_pmx get windows --project "uid:$delete_alpha_project_uid" -o uid
   delete_pmx get panes --project "uid:$delete_alpha_project_uid" -o uid
   delete_pmx get agents --project "uid:$delete_alpha_project_uid" -o uid
 } | sort >"$delete_root/alpha-graph.before-beta-delete"
+delete_other_before_last_window="$(delete_other_tmux show-options -gqv @projmux_delete_sentinel):$(delete_other_tmux list-windows -a -F '#{session_name}:#{window_id}')"
 delete_pmx_delete window "uid:$delete_beta_uid" --dry-run >"$delete_root/last-dry-run.out"
 smoke_assert_file_contains "$delete_root/last-dry-run.out" "live cascade would end Project session work-beta"
 delete_pmx_delete window "uid:$delete_beta_uid" --yes >"$delete_root/last.out"
@@ -3270,6 +3271,11 @@ fi
   delete_pmx get agents --project "uid:$delete_alpha_project_uid" -o uid
 } | sort >"$delete_root/alpha-graph.after-beta-delete"
 cmp "$delete_root/alpha-graph.before-beta-delete" "$delete_root/alpha-graph.after-beta-delete"
+delete_other_after_last_window="$(delete_other_tmux show-options -gqv @projmux_delete_sentinel):$(delete_other_tmux list-windows -a -F '#{session_name}:#{window_id}')"
+if [[ "$delete_other_after_last_window" != "$delete_other_before_last_window" ]]; then
+  echo "explicit last-Window root cascade touched the foreign socket" >&2
+  exit 1
+fi
 
 # A managed runner Window invokes implicit delete from inside itself. There is
 # intentionally no post-command marker: a correct implementation flushes the
@@ -3610,8 +3616,8 @@ if [[ "$(delete_tmux display-message -p -t "$delete_last_window" '#{window_id}' 
   echo "last-Pane delete did not preserve Window $delete_last_window" >&2
   exit 1
 fi
-delete_last_replacement_uid="$(delete_tmux list-panes -t "$delete_last_window" -F '#{@projmux_pane_uid}')"
-if [[ -z "$delete_last_replacement_uid" || "$delete_last_replacement_uid" == "$delete_last_pane_uid" ]]; then
+delete_last_pane_replacement_uid="$(delete_tmux list-panes -t "$delete_last_window" -F '#{@projmux_pane_uid}')"
+if [[ -z "$delete_last_pane_replacement_uid" || "$delete_last_pane_replacement_uid" == "$delete_last_pane_uid" ]]; then
   echo "last-Pane delete did not install a distinct replacement shell" >&2
   exit 1
 fi

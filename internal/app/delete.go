@@ -378,9 +378,9 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 				return fmt.Errorf("%s: the exact live cascade changed between preflight and execution; nothing was deleted", spelling)
 			}
 			// Prepare and validate the complete Registry result before touching
-			// tmux. Deleting a Project's last Window may mint its replacement
-			// anchor; a uid/name failure must therefore happen while every exact
-			// live target is still intact, never after its kill.
+			// tmux. Explicit Window deletion preserves the existing root cascade
+			// and allocates no replacement Window; validation must finish while
+			// every exact live target is still intact, never after its kill.
 			candidate := working.Clone()
 			for _, uid := range resolution.UIDs() {
 				if err := deleteResource(&candidate, mutator, kind, uid); err != nil {
