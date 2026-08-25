@@ -39,6 +39,18 @@ const (
 	// AgentProviderPane is the pane-scoped provider option read during legacy
 	// naming migration.
 	AgentProviderPane = "@projmux_ai_agent"
+	// AgentLaunchAuthorshipPane is the canonical launch receipt written only by
+	// a Projmux provider launch. Provider hooks and title/content inference must
+	// never synthesize it: reconciliation treats the exact value "1" as the
+	// authority to promote a Window-owned shell Pane into an Agent Pane.
+	AgentLaunchAuthorshipPane = "@projmux_ai_launch_authorship"
+	// AgentUIDPane, PaneOwnerKind, PaneOwnerUID, and PaneRole project the exact
+	// Registry tuple of an authorship promotion onto its live Pane. They are
+	// mirrors, never identity or adoption inputs.
+	AgentUIDPane  = "@projmux_agent_uid"
+	PaneOwnerKind = "@projmux_pane_owner_kind"
+	PaneOwnerUID  = "@projmux_pane_owner_uid"
+	PaneRole      = "@projmux_pane_role"
 	// AgentTopicPane is the pane-scoped topic option. The topic is a derived
 	// display source only and is never a name seed.
 	AgentTopicPane = "@projmux_ai_topic"

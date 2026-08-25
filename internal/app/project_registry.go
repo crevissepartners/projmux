@@ -96,8 +96,14 @@ type registryReconciler struct {
 	exactProjects map[string]string
 	// targetLiveOnly keeps the public exact-socket repair scoped to resources
 	// observed on that server.
-	targetLiveOnly       bool
-	approvedOrphanImport bool
+	targetLiveOnly            bool
+	approvedOrphanImport      bool
+	atomicAuthorshipPromotion bool
+	// linkError carries a canonical launch promotion failure out of the
+	// per-Pane walk. Hook-only/legacy best-effort linkage remains non-fatal, but
+	// a composite authorship transaction cannot turn allocator or validation
+	// failure into a successful no-op.
+	linkError error
 }
 
 func newRegistryReconciler(runner tmuxCommandRunner, sessions sessionLister) *registryReconciler {
@@ -170,6 +176,7 @@ func (r *registryReconciler) initializeRefusalBookkeeping() {
 
 func (r *registryReconciler) refuseSession(name string, divergence resourcegraph.Divergence, reason string) {
 	r.initializeRefusalBookkeeping()
+	r.linkError = nil
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return
@@ -324,6 +331,9 @@ func (r *registryReconciler) reconcileGuarded(
 		return err
 	}
 	r.reapplyUnresolvedBindings(ctx, working, mutator, operationID, unresolved, binder)
+	if r.linkError != nil {
+		return r.linkError
+	}
 	// Last on purpose. The two binding steps are what mirror a Window's and a
 	// Pane's uid onto their tmux objects, so observing before they ran would
 	// diff the registry against an inventory that does not yet carry the uids
@@ -803,7 +813,11 @@ func (r *registryReconciler) reapplySessionBindings(
 			// all, so a link that could not be made must not cost the pane the
 			// work that already succeeded. LinkAgentPane writes nothing when it
 			// fails, and the next pass sees the same pane and tries again.
-			_, _ = mutator.LinkAgentPane(registry, match.UID, paneUID, legacyPane, binder, operationID)
+			_, linkErr := mutator.LinkAgentPane(registry, match.UID, paneUID, legacyPane, binder, operationID)
+			if linkErr != nil && r.atomicAuthorshipPromotion && coremetadata.ResolveAgentPaneAuthority(legacyPane) == coremetadata.AgentPaneAuthorityLaunch {
+				r.linkError = linkErr
+				return
+			}
 			pane, ok := registry.Pane(paneUID)
 			if !ok {
 				continue

@@ -1840,6 +1840,27 @@ func TestAIWatchTitleBootstrapsMetadataForExistingCodexPane(t *testing.T) {
 			t.Fatalf("commands = %#v, want bootstrapped metadata %v", commands, want)
 		}
 	}
+	if containsAICommandArgs(commands, "tmux", []string{"set-option", "-p", "-t", "%11", aiPaneLaunchAuthorshipOption}) {
+		t.Fatalf("commands = %#v, title/bootstrap inference must not synthesize launch authorship", commands)
+	}
+}
+
+func TestConfigureAIPaneWritesCanonicalLaunchReceipt(t *testing.T) {
+	t.Parallel()
+
+	cmd := testAICommand(t.TempDir())
+	cmd.configureAIPane("%21", aiModeCodex, "/repo", "phase one", aiPaneResumeMetadata{})
+	commands := cmdRecorder(cmd).commands
+	want := recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", aiPaneLaunchAuthorshipOption, "1"}}
+	count := 0
+	for _, command := range commands {
+		if reflect.DeepEqual(command, want) {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("launch receipt writes = %d, want one canonical configureAIPane write; commands=%#v", count, commands)
+	}
 }
 
 func TestAIWatchTitleKeepsWaitingUntilFocusAck(t *testing.T) {

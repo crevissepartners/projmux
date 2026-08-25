@@ -52,20 +52,21 @@ const (
 
 	aiResumeNewValue = "new"
 
-	aiPaneManagedOption         = "@projmux_ai_managed"
-	aiPaneAgentOption           = "@projmux_ai_agent"
-	aiPaneContextOption         = "@projmux_ai_context"
-	aiPaneStateOption           = "@projmux_ai_state"
-	aiPaneBadgeKindOption       = "@projmux_ai_badge_kind"
-	aiPaneTopicOption           = "@projmux_ai_topic"
-	aiPaneTopicManualOption     = "@projmux_ai_topic_manual"
-	aiPaneHookActiveOption      = "@projmux_ai_hook_active"
-	aiPaneThreadIDOption        = "@projmux_ai_thread_id"
-	aiPaneSessionIDOption       = "@projmux_ai_session_id"
-	aiPaneResumeIDOption        = "@projmux_ai_resume_id"
-	aiPaneResumeSourceOption    = "@projmux_ai_resume_source"
-	aiPaneTranscriptPathOption  = "@projmux_ai_transcript_path"
-	aiPaneResumeUpdatedAtOption = "@projmux_ai_resume_updated_at"
+	aiPaneManagedOption          = "@projmux_ai_managed"
+	aiPaneAgentOption            = "@projmux_ai_agent"
+	aiPaneLaunchAuthorshipOption = tmuxopts.AgentLaunchAuthorshipPane
+	aiPaneContextOption          = "@projmux_ai_context"
+	aiPaneStateOption            = "@projmux_ai_state"
+	aiPaneBadgeKindOption        = "@projmux_ai_badge_kind"
+	aiPaneTopicOption            = "@projmux_ai_topic"
+	aiPaneTopicManualOption      = "@projmux_ai_topic_manual"
+	aiPaneHookActiveOption       = "@projmux_ai_hook_active"
+	aiPaneThreadIDOption         = "@projmux_ai_thread_id"
+	aiPaneSessionIDOption        = "@projmux_ai_session_id"
+	aiPaneResumeIDOption         = "@projmux_ai_resume_id"
+	aiPaneResumeSourceOption     = "@projmux_ai_resume_source"
+	aiPaneTranscriptPathOption   = "@projmux_ai_transcript_path"
+	aiPaneResumeUpdatedAtOption  = "@projmux_ai_resume_updated_at"
 
 	canonicalCreateTargetClientEnv = "PROJMUX_POPUP_TARGET_CLIENT"
 
@@ -2531,6 +2532,7 @@ func (c *aiCommand) configureAIPane(paneID, mode, contextDir, title string, resu
 	}
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneManagedOption, "1")
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneAgentOption, normalizeAIMode(mode))
+	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneLaunchAuthorshipOption, "1")
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneContextOption, strings.TrimSpace(contextDir))
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, displayAITopic(title))
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "idle")

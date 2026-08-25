@@ -156,7 +156,11 @@ const (
 var controllerRuntimeMutationManagedFields = map[string][]string{
 	"session": {tmuxopts.ProjectUIDSession, tmuxopts.ProjectNameSession, tmuxopts.ProjectPathSession},
 	"window":  {tmuxopts.WindowUID, tmuxopts.AutomaticRenameWindow, tmuxopts.WindowName, "window_name"},
-	"pane":    {tmuxopts.PaneUID, tmuxopts.PaneName, tmuxopts.AgentSessionIDPane, tmuxopts.AgentThreadIDPane},
+	"pane": {
+		tmuxopts.PaneUID, tmuxopts.PaneName, tmuxopts.AgentSessionIDPane, tmuxopts.AgentThreadIDPane,
+		tmuxopts.PaneOwnerKind, tmuxopts.PaneOwnerUID, tmuxopts.PaneRole, tmuxopts.AgentUIDPane,
+		tmuxopts.AgentProviderPane,
+	},
 }
 
 var controllerRuntimeMutationPresentationFields = []string{
@@ -389,7 +393,7 @@ func guardControllerRuntimeMutationFinal(ctx context.Context, runner tmuxCommand
 	return nil
 }
 
-func guardControllerRuntimeMutation(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, action plannedRuntimeMutation, write controller.Action) error {
+func guardControllerRuntimeMutation(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, action plannedRuntimeMutation, write controller.Action, final map[string]string) error {
 	if err := guardPrintedRuntimeMutationRoute(ctx, runner, route, action); err != nil {
 		return err
 	}
@@ -399,7 +403,8 @@ func guardControllerRuntimeMutation(ctx context.Context, runner tmuxCommandRunne
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(string(out)) != strings.TrimSpace(guard.Expect) {
+		observed := strings.TrimSpace(string(out))
+		if observed != strings.TrimSpace(guard.Expect) && observed != controllerFinalGuardValue(final, write, guard) {
 			return fmt.Errorf("controller target %s guard %s drifted", write.Target, guard.Field)
 		}
 	}
@@ -520,7 +525,7 @@ func executeControllerRuntimeMutations(ctx context.Context, runner tmuxCommandRu
 				return observeControllerRuntimeMutation(ctx, runner, route, action, write, final)
 			},
 			Guard: func(ctx context.Context) error {
-				return guardControllerRuntimeMutation(ctx, runner, route, action, write)
+				return guardControllerRuntimeMutation(ctx, runner, route, action, write, final)
 			},
 			Apply: func(ctx context.Context) error {
 				_, err := runRuntimeMutationCommand(ctx, runner, action)

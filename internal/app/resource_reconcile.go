@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/core/controller"
@@ -82,6 +83,7 @@ type resourceReconcileReport struct {
 	Counts           resourceReconcileCounts         `json:"counts"`
 	DivergenceCounts []resourcegraph.DivergenceCount `json:"divergenceCounts"`
 	Items            []resourceReconcileItem         `json:"items"`
+	Allocations      []resourceAllocationSlot        `json:"allocations,omitempty"`
 	CompletedStages  []string                        `json:"completedStages"`
 	RemainingDrift   []resourceReconcileItem         `json:"remainingDrift"`
 	// Policy is the subset of the controller's authority table this run
@@ -259,6 +261,7 @@ func (c *resourceReconcileCommand) runDryRun(ctx context.Context, planner resour
 // half deliberately absent. It reads the Registry, resolves one graph, plans,
 // applies the policy, and returns the same projection an execute produces.
 func (c *resourceReconcileCommand) runControllerDryRun(ctx context.Context, kernel *resourceControllerKernel, target resourceReconcileTarget, opts resourceReconcileOptions, stdout io.Writer) error {
+	kernel.planner.symbolicAllocations = true
 	registry, err := kernel.loadRegistry()
 	if err != nil {
 		return MapMetadataError(err)
@@ -349,7 +352,10 @@ func (c *resourceReconcileCommand) replanAfterFailure(ctx context.Context, plann
 }
 
 func reportForDryRun(plan resourceReconcilePlan, target resourceReconcileTarget, retry string) resourceReconcileReport {
-	report := resourceReconcileReport{Target: target, DryRun: true, Outcome: "planned", Items: clonePlanItems(plan.items), Retry: retry}
+	report := resourceReconcileReport{
+		Target: target, DryRun: true, Outcome: "planned", Items: clonePlanItems(plan.items),
+		Allocations: slices.Clone(plan.allocations), Retry: retry,
+	}
 	report.DivergenceCounts = resourcePlanDivergenceCounts(plan.items)
 	report.Counts.Changed = plan.safeItems()
 	report.Counts.Failed = plan.refusedItems()
@@ -390,7 +396,8 @@ func reportForExecute(plan resourceReconcilePlan, target resourceReconcileTarget
 	}
 	return resourceReconcileReport{
 		Target: target, Outcome: outcome, Counts: resourceReconcileCounts{Changed: changed, NoOp: noOp, Failed: failed},
-		DivergenceCounts: resourcePlanDivergenceCounts(items), Items: items, CompletedStages: completed, RemainingDrift: remaining, Retry: retry,
+		DivergenceCounts: resourcePlanDivergenceCounts(items), Items: items, Allocations: slices.Clone(plan.allocations),
+		CompletedStages: completed, RemainingDrift: remaining, Retry: retry,
 	}
 }
 
@@ -422,7 +429,8 @@ func reportForFailure(plan, remaining resourceReconcilePlan, target resourceReco
 	}
 	return resourceReconcileReport{
 		Target: target, Outcome: "failed", Counts: resourceReconcileCounts{Changed: changed, Failed: 1}, Items: items,
-		DivergenceCounts: resourcePlanDivergenceCounts(items), CompletedStages: completed, RemainingDrift: remainingItems, Retry: retry, Error: errorText,
+		Allocations: slices.Clone(plan.allocations), DivergenceCounts: resourcePlanDivergenceCounts(items),
+		CompletedStages: completed, RemainingDrift: remainingItems, Retry: retry, Error: errorText,
 	}
 }
 
@@ -476,6 +484,16 @@ func writeResourceReconcileReport(w io.Writer, output string, report resourceRec
 			return err
 		}
 	}
+	if len(report.Allocations) > 0 {
+		if _, err := fmt.Fprintln(w, "allocation slots:"); err != nil {
+			return err
+		}
+		for _, allocation := range report.Allocations {
+			if _, err := fmt.Fprintf(w, "- %s %s %s\n", allocation.Slot, allocation.Kind, allocation.Name); err != nil {
+				return err
+			}
+		}
+	}
 	if len(report.Items) > 0 {
 		if _, err := fmt.Fprintln(w, "items:"); err != nil {
 			return err
@@ -483,6 +501,21 @@ func writeResourceReconcileReport(w io.Writer, output string, report resourceRec
 		for _, item := range report.Items {
 			if _, err := fmt.Fprintln(w, formatResourceReconcileItem(item)); err != nil {
 				return err
+			}
+			if item.Authority != "" || item.AllocationSlot != "" {
+				if _, err := fmt.Fprintf(w, "  authority=%s allocation-slot=%s\n", displayPlanValue(item.Authority), displayPlanValue(item.AllocationSlot)); err != nil {
+					return err
+				}
+			}
+			for _, transition := range item.Transitions {
+				if _, err := fmt.Fprintf(w, "  ref %s: %s -> %s\n", transition.Field, displayPlanValue(transition.Before), displayPlanValue(transition.After)); err != nil {
+					return err
+				}
+			}
+			for _, guard := range item.Guards {
+				if _, err := fmt.Fprintf(w, "  guard %s=%s\n", guard.Field, displayPlanValue(guard.Expect)); err != nil {
+					return err
+				}
 			}
 		}
 	}

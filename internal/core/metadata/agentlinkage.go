@@ -1,6 +1,7 @@
 package metadata
 
 import (
+	"errors"
 	"strings"
 	"time"
 )
@@ -99,6 +100,34 @@ type AgentLinkage struct {
 	Promoted bool
 }
 
+// AgentPaneAuthority is the closed authorship table for one observed Pane.
+// Presentation/provider markers are observations; only the distinct canonical
+// launch receipt authorizes a Window-shell promotion.
+type AgentPaneAuthority string
+
+const (
+	AgentPaneAuthorityNoMarker  AgentPaneAuthority = "no-marker"
+	AgentPaneAuthorityHookOnly  AgentPaneAuthority = "hook-only"
+	AgentPaneAuthorityLaunch    AgentPaneAuthority = "launch-authorship"
+	AgentPaneAuthorityAmbiguous AgentPaneAuthority = "ambiguous"
+)
+
+// ResolveAgentPaneAuthority classifies the complete launch/provider marker
+// pair without consulting command, title, cwd, or names.
+func ResolveAgentPaneAuthority(observed LegacyPane) AgentPaneAuthority {
+	launch, provider := strings.TrimSpace(observed.LaunchAuthorship), strings.TrimSpace(observed.Provider)
+	switch {
+	case launch == "" && provider == "":
+		return AgentPaneAuthorityNoMarker
+	case launch == "" && provider != "":
+		return AgentPaneAuthorityHookOnly
+	case launch == "1" && provider != "":
+		return AgentPaneAuthorityLaunch
+	default:
+		return AgentPaneAuthorityAmbiguous
+	}
+}
+
 // Linked reports whether the decision named an Agent.
 func (l AgentLinkage) Linked() bool { return l.Kind != AgentLinkNone && l.AgentUID != "" }
 
@@ -127,16 +156,34 @@ func (m Mutator) LinkAgentPane(reg *Registry, windowUID, paneUID string, observe
 	if _, ok := reg.Pane(paneUID); !ok {
 		return AgentLinkage{}, stateErr(op, ErrNotFound, "pane %q does not exist", paneUID)
 	}
-	if agentNameBaseFor(observed) == "" {
-		return AgentLinkage{Kind: AgentLinkNone}, nil
+	if binder == nil {
+		binder = NewBindingMatcher(RuntimeObservation{})
 	}
-
 	now := m.clock()().UTC()
+	before := reg.Clone()
+	// Reconciliation may deliberately hand this transaction a Project-scoped
+	// projection that carries global allocator reservations. Such a projection
+	// is not a standalone Registry, so full validation is only meaningful when
+	// the caller's preimage was itself standalone-valid. The composite tuple is
+	// validated in either case before commit.
+	beforeValid := before.Validate() == nil
 	txn := m.Begin(reg, operationID)
 	linkage, err := m.linkAgentPaneTx(txn, reg, op, windowUID, paneUID, observed, binder, now)
 	if err != nil {
-		txn.Rollback()
+		*reg = before
 		return AgentLinkage{}, err
+	}
+	if linkage.Linked() {
+		if err := validateAgentPaneLinkPostState(reg, windowUID, paneUID, linkage.AgentUID); err != nil {
+			*reg = before
+			return AgentLinkage{}, stateErr(op, ErrInvalidRegistry, "composite promotion post-state is invalid: %v", err)
+		}
+		if beforeValid {
+			if err := reg.Validate(); err != nil {
+				*reg = before
+				return AgentLinkage{}, stateErr(op, ErrInvalidRegistry, "composite promotion Registry is invalid: %v", err)
+			}
+		}
 	}
 	txn.Commit()
 	if linkage.Linked() {
@@ -145,14 +192,28 @@ func (m Mutator) LinkAgentPane(reg *Registry, windowUID, paneUID string, observe
 	return linkage, nil
 }
 
+func validateAgentPaneLinkPostState(reg *Registry, windowUID, paneUID, agentUID string) error {
+	window, windowOK := reg.Window(windowUID)
+	pane, paneOK := reg.Pane(paneUID)
+	agent, agentOK := reg.Agent(agentUID)
+	if !windowOK || !paneOK || !agentOK || pane.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef == nil {
+		return errors.New("Window, Pane, and Agent must all exist")
+	}
+	if agent.Metadata.OwnerRef.Kind != KindWindow || agent.Metadata.OwnerUID() != windowUID ||
+		pane.Metadata.OwnerRef.Kind != KindAgent || pane.Metadata.OwnerUID() != agentUID ||
+		pane.Spec.Role != PaneRoleAgent || agent.Status.PaneRef != paneUID {
+		return errors.New("Agent owner, Pane owner/role, and Agent paneRef must form one exact tuple")
+	}
+	if window.Spec.AnchorPaneRef == paneUID && window.Spec.DefaultShellPaneRef == paneUID {
+		return errors.New("an Agent Pane cannot remain the Window default shell")
+	}
+	return nil
+}
+
 // linkAgentPaneTx is the transaction-scoped body both write paths share: the
 // legacy import walk, which already holds a transaction, and the binding-repair
 // walk, which opens one per pane exactly as ImportOrphanPane does.
 func (m Mutator) linkAgentPaneTx(txn *Transaction, reg *Registry, op, windowUID, paneUID string, observed LegacyPane, binder *BindingMatcher, now time.Time) (AgentLinkage, error) {
-	nameBase := agentNameBaseFor(observed)
-	if nameBase == "" {
-		return AgentLinkage{Kind: AgentLinkNone}, nil
-	}
 	pane, ok := reg.Pane(paneUID)
 	if !ok {
 		return AgentLinkage{Kind: AgentLinkNone}, nil
@@ -162,9 +223,15 @@ func (m Mutator) linkAgentPaneTx(txn *Transaction, reg *Registry, op, windowUID,
 	// can have drifted. Repairing it is what makes `describe agent` agree with
 	// `get panes` for a Pane that was linked by an earlier pass.
 	if pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == KindAgent {
+		if AgentPanePromotionRefusal(reg, windowUID, paneUID, observed) != "" {
+			return AgentLinkage{Kind: AgentLinkNone}, nil
+		}
 		agentUID := pane.Metadata.OwnerRef.UID
 		agent, ok := reg.Agent(agentUID)
 		if !ok {
+			return AgentLinkage{Kind: AgentLinkNone}, nil
+		}
+		if provider := NormalizeProvider(observed.Provider); provider != "" && provider != agent.Spec.Provider {
 			return AgentLinkage{Kind: AgentLinkNone}, nil
 		}
 		binder.Claim(agentUID)
@@ -176,6 +243,10 @@ func (m Mutator) linkAgentPaneTx(txn *Transaction, reg *Registry, op, windowUID,
 	// The caller cannot reach that state, but the guard keeps the invariant
 	// local to the function that depends on it.
 	if pane.Metadata.OwnerUID() != windowUID {
+		return AgentLinkage{Kind: AgentLinkNone}, nil
+	}
+	nameBase := agentNameBaseFor(observed)
+	if nameBase == "" {
 		return AgentLinkage{Kind: AgentLinkNone}, nil
 	}
 	if AgentPanePromotionRefusal(reg, windowUID, paneUID, observed) != "" {
@@ -224,19 +295,45 @@ func (m Mutator) linkAgentPaneTx(txn *Transaction, reg *Registry, op, windowUID,
 // Refusing here is deliberately zero-write: no Agent is minted, no reservation
 // changes scope, and the Pane uid, owner, role, and Window refs remain exact.
 func AgentPanePromotionRefusal(reg *Registry, windowUID, paneUID string, observed LegacyPane) string {
-	if reg == nil || agentNameBaseFor(observed) == "" {
+	if reg == nil {
 		return ""
 	}
 	window, windowOK := reg.Window(windowUID)
 	pane, paneOK := reg.Pane(paneUID)
-	if !windowOK || !paneOK || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindWindow ||
-		pane.Metadata.OwnerUID() != windowUID || pane.Spec.Role != PaneRoleShell {
+	if !windowOK || !paneOK || pane.Metadata.OwnerRef == nil {
 		return ""
 	}
-	if paneUID != strings.TrimSpace(window.Spec.DefaultShellPaneRef) {
+	// A malformed receipt is a refusal before any owner-state shortcut. An
+	// already Agent-owned Pane is not allowed to turn an ambiguous launch
+	// marker into successful reverse-link repair.
+	if ResolveAgentPaneAuthority(observed) == AgentPaneAuthorityAmbiguous {
+		return "launch authorship marker and provider do not form one canonical receipt"
+	}
+	if pane.Metadata.OwnerRef.Kind == KindAgent {
+		agent, ok := reg.Agent(pane.Metadata.OwnerUID())
+		if !ok || agent.Metadata.OwnerUID() != windowUID || agent.Status.PaneRef != "" && agent.Status.PaneRef != paneUID {
+			return "launch authorship conflicts with the exact Agent/Pane owner chain"
+		}
+		if provider := NormalizeProvider(observed.Provider); provider != "" && provider != agent.Spec.Provider {
+			return "launch provider conflicts with the exact Agent owner provider"
+		}
 		return ""
 	}
-	return "runtime Agent marker cannot reparent the canonical Window default shell Pane"
+	if pane.Metadata.OwnerRef.Kind != KindWindow || pane.Metadata.OwnerUID() != windowUID || pane.Spec.Role != PaneRoleShell {
+		if strings.TrimSpace(observed.LaunchAuthorship) != "" {
+			return "launch authorship conflicts with the exact Window/Pane owner chain"
+		}
+		return ""
+	}
+	switch ResolveAgentPaneAuthority(observed) {
+	case AgentPaneAuthorityLaunch:
+		return ""
+	case AgentPaneAuthorityHookOnly:
+		if paneUID == strings.TrimSpace(window.Spec.DefaultShellPaneRef) {
+			return "runtime Agent marker cannot reparent the canonical Window default shell Pane"
+		}
+	}
+	return ""
 }
 
 // bindAgentToPane points an Agent at its managed Pane.
@@ -330,6 +427,11 @@ func (r *Registry) promotePaneToAgent(paneUID, windowUID, agentUID string) bool 
 	}
 	pane.Metadata.OwnerRef = &OwnerRef{Kind: KindAgent, UID: agentUID}
 	pane.Spec.Role = PaneRoleAgent
+	// The Pane identity remains the Window anchor, which is role-agnostic in
+	// final-v2. It can no longer be the optional direct Window-owned shell.
+	if window, ok := r.Window(windowUID); ok && window.Spec.DefaultShellPaneRef == paneUID {
+		window.Spec.DefaultShellPaneRef = ""
+	}
 	return true
 }
 
@@ -396,7 +498,7 @@ func (r *Registry) agentForConversation(windowUID string, observed LegacyPane, b
 // agent pane, so it gets the generic "agent" name base rather than being
 // silently demoted to a shell.
 func agentNameBaseFor(observed LegacyPane) string {
-	if strings.TrimSpace(observed.Provider) == "" {
+	if ResolveAgentPaneAuthority(observed) != AgentPaneAuthorityLaunch {
 		return ""
 	}
 	if provider := NormalizeProvider(observed.Provider); provider != "" {

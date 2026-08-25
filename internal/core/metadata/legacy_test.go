@@ -87,7 +87,7 @@ func TestLegacyImportBuildsResourcesAndMarksManagedWindowsForAutomaticRenameOff(
 				AutomaticRename: false,
 				Panes: []LegacyPane{
 					{Label: "nvim", Command: "nvim", CWD: "/src/projmux"},
-					{Provider: "codex", Topic: "refactor naming", Command: "codex", CWD: "/src/projmux"},
+					{Provider: "codex", LaunchAuthorship: "1", Topic: "refactor naming", Command: "codex", CWD: "/src/projmux"},
 				},
 			},
 			{
@@ -219,10 +219,10 @@ func TestDuplicateLegacyProjectAndAgentImportsGetTheLowestFreeSuffix(t *testing.
 		Name:            "agents",
 		AutomaticRename: false,
 		Panes: []LegacyPane{
-			{Provider: "codex", Command: "codex"},
-			{Provider: "codex", Command: "codex"},
-			{Provider: "claude", Command: "claude"},
-			{Provider: "mystery", Command: "mystery"},
+			{Provider: "codex", LaunchAuthorship: "1", Command: "codex"},
+			{Provider: "codex", LaunchAuthorship: "1", Command: "codex"},
+			{Provider: "claude", LaunchAuthorship: "1", Command: "claude"},
+			{Provider: "mystery", LaunchAuthorship: "1", Command: "mystery"},
 		},
 	}
 

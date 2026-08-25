@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -115,6 +116,113 @@ func TestControllerRuntimeMutationExecuteThenRepeatIsEmpty(t *testing.T) {
 	}
 	if got := tmuxMutationCallCount(server); got != firstWrites {
 		t.Fatalf("repeat executed %d additional write(s)", got-firstWrites)
+	}
+}
+
+func TestControllerRuntimeMutationAcceptsExactSiblingUIDEffectBetweenPlanAndGuard(t *testing.T) {
+	newFixture := func() (*fakeTmux, *routedTmuxRunner, runtimeMutationRoute, []controller.Action) {
+		server := newFakeTmux()
+		server.socketPath = "/tmp/fake-tmux/controller-sibling-uid-race"
+		session := server.addSession("work-gamma")
+		session.opts[tmuxopts.ProjectNameSession] = "before"
+		session.opts[tmuxopts.ProjectPathSession] = "/before"
+		runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
+		route := runtimeMutationRoute{
+			target: explicitTmuxTarget{flag: "-L", value: "primary"}, expectedSocketPath: server.socketPath,
+			socketName: "primary", authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID},
+		}
+		guard := []controller.Guard{{Field: tmuxopts.ProjectUIDSession, Expect: ""}}
+		write := func(key, field, before, after string) controller.Action {
+			return controller.Action{
+				Key: key, Surface: controller.SurfaceTmux, Intent: controller.IntentRepairMirror,
+				Authority: controller.AuthorityAllow, Scope: resourcegraph.ObjectSession,
+				Target: session.id, Field: field, Before: before, After: after, Guards: slices.Clone(guard),
+				Args: []string{"set-option", "-t", session.id, "-q", field, after},
+			}
+		}
+		return server, runner, route, []controller.Action{
+			write("uid", tmuxopts.ProjectUIDSession, "", "project-gamma"),
+			write("name", tmuxopts.ProjectNameSession, "before", "gamma"),
+			write("path", tmuxopts.ProjectPathSession, "/before", "/work/gamma"),
+		}
+	}
+
+	server, runner, route, writes := newFixture()
+	// A coalesced controller pass claimed the exact UID after this plan recorded
+	// its blank preimage. The UID action replans away; its exact declared final
+	// value remains valid containment for the pending name/path actions.
+	server.sessions[0].opts[tmuxopts.ProjectUIDSession] = "project-gamma"
+	beforeWrites := tmuxMutationCallCount(server)
+	if err := executeControllerRuntimeMutations(context.Background(), runner, route, writes); err != nil {
+		t.Fatalf("exact sibling UID convergence was refused: %v", err)
+	}
+	if got := tmuxMutationCallCount(server) - beforeWrites; got != 2 {
+		t.Fatalf("runtime mutations = %d, want name/path only", got)
+	}
+	if got := server.sessions[0].opts[tmuxopts.ProjectUIDSession]; got != "project-gamma" {
+		t.Fatalf("exact asynchronous UID = %q", got)
+	}
+	if got := server.sessions[0].opts[tmuxopts.ProjectNameSession]; got != "gamma" {
+		t.Fatalf("project name = %q", got)
+	}
+	if got := server.sessions[0].opts[tmuxopts.ProjectPathSession]; got != "/work/gamma" {
+		t.Fatalf("project path = %q", got)
+	}
+
+	server, runner, route, writes = newFixture()
+	server.sessions[0].opts[tmuxopts.ProjectUIDSession] = "project-foreign"
+	beforeWrites = tmuxMutationCallCount(server)
+	err := executeControllerRuntimeMutations(context.Background(), runner, route, writes)
+	if err == nil || !strings.Contains(err.Error(), "guard @projmux_project_uid drifted") {
+		t.Fatalf("foreign sibling UID drift = %v", err)
+	}
+	if got := tmuxMutationCallCount(server) - beforeWrites; got != 0 {
+		t.Fatalf("foreign sibling UID received %d write(s)", got)
+	}
+}
+
+func TestAuthorshipPromotionRuntimeRollbackIsIndependentOfActionOrder(t *testing.T) {
+	fields := []string{tmuxopts.AgentUIDPane, tmuxopts.PaneOwnerKind, tmuxopts.PaneOwnerUID, tmuxopts.PaneRole}
+	for _, order := range [][]int{{0, 1, 2, 3}, {3, 1, 0, 2}, {2, 0, 3, 1}} {
+		name := strings.Trim(strings.ReplaceAll(strings.Trim(fmt.Sprint(order), "[]"), " ", "-"), "-")
+		t.Run(name, func(t *testing.T) {
+			server := newFakeTmux()
+			server.socketPath = "/tmp/fake-tmux/promotion-shuffle"
+			session := server.addSession("alpha")
+			window, pane := session.windows[0], session.windows[0].panes[0]
+			pane.opts[tmuxopts.PaneUID] = "pane-promotion"
+			pane.opts[tmuxopts.AgentProviderPane] = "codex"
+			pane.opts[tmuxopts.AgentLaunchAuthorshipPane] = "1"
+			runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
+			route := runtimeMutationRoute{target: explicitTmuxTarget{flag: "-L", value: "primary"}, expectedSocketPath: server.socketPath,
+				socketName: "primary", authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID}}
+			values := map[string]string{
+				tmuxopts.AgentUIDPane: "agent-promotion", tmuxopts.PaneOwnerKind: "Agent",
+				tmuxopts.PaneOwnerUID: "agent-promotion", tmuxopts.PaneRole: "agent",
+			}
+			var writes []controller.Action
+			for index, fieldIndex := range order {
+				field := fields[fieldIndex]
+				writes = append(writes, controller.Action{
+					Key: fmt.Sprintf("promotion-%d-%s", index, field), Surface: controller.SurfaceTmux, Intent: controller.IntentRepairMirror,
+					Authority: controller.AuthorityAllow, Scope: resourcegraph.ObjectPane, Target: pane.id, Field: field, Before: "", After: values[field],
+					Guards: []controller.Guard{{Field: tmuxopts.PaneUID, Expect: "pane-promotion"}, {Field: "session_id", Expect: session.id},
+						{Field: "window_id", Expect: window.id}, {Field: tmuxopts.AgentLaunchAuthorshipPane, Expect: "1"},
+						{Field: tmuxopts.AgentProviderPane, Expect: "codex"}},
+					Args: []string{"set-option", "-p", "-t", pane.id, "-q", field, values[field]},
+				})
+			}
+			server.fail = []string{"set-option", fields[order[len(order)-1]]}
+			server.failAfterMutation = true
+			if err := executeControllerRuntimeMutations(context.Background(), runner, route, writes); err == nil || strings.Contains(err.Error(), "owned reverse rollback incomplete") {
+				t.Fatalf("shuffled injected failure = %v", err)
+			}
+			for _, field := range fields {
+				if pane.opts[field] != "" {
+					t.Fatalf("shuffled rollback left %s=%q; order=%v", field, pane.opts[field], order)
+				}
+			}
+		})
 	}
 }
 
@@ -370,7 +478,7 @@ func TestControllerRuntimeMutationClosedProductionFieldAndArgvGrammar(t *testing
 			}
 		})
 	}
-	for _, field := range []string{tmuxopts.AppGlobal, tmuxopts.EphemeralSession, tmuxopts.AgentProviderPane, runtimeMutationSocketNameOption, "@global"} {
+	for _, field := range []string{tmuxopts.AppGlobal, tmuxopts.EphemeralSession, tmuxopts.AgentLaunchAuthorshipPane, runtimeMutationSocketNameOption, "@global"} {
 		write := controllerClosedWrite(resourcegraph.ObjectPane, "%1", "pane-1", field, "", "x")
 		if _, err := controllerRuntimeMutationAction(1, route, write, nil); err == nil {
 			t.Fatalf("unclassified field %q acquired controller execution", field)

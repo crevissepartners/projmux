@@ -231,12 +231,13 @@ func TestObserveLegacySessionCollectsTheMigrationSeedsWithoutWriting(t *testing.
 		// object already carries: window 0 is still bound, window 1 is blank.
 		"list-windows": "0" + sep + "editor" + sep + "off" + sep + "$1" + sep + "@4" + sep + "win-editor\n" +
 			"1" + sep + "zsh" + sep + "on" + sep + "$1" + sep + "@5" + sep + "\n",
-		// The last two pane fields are the provider conversation ids the AI
-		// routes wrote onto the live pane; only the agent pane carries them.
+		// The launch receipt is independent from provider observation. The last
+		// two fields are the provider conversation ids; only the authored Agent
+		// pane carries them.
 		"list-panes": strings.Join([]string{
-			strings.Join([]string{"0", "nvim", "", "", "nvim", "src/main.go", "/src/projmux", "%1", "pan-nvim", "", ""}, sep),
-			strings.Join([]string{"0", "", "codex", "refactor naming", "codex", "codex", "/src/projmux", "%2", "", "sess-9", "thread-9"}, sep),
-			strings.Join([]string{"1", "", "", "", "zsh", "~/src/projmux", "/src/projmux", "%3", "", "", ""}, sep),
+			strings.Join([]string{"0", "nvim", "", "", "", "nvim", "src/main.go", "/src/projmux", "%1", "pan-nvim", "", ""}, sep),
+			strings.Join([]string{"0", "", "codex", "1", "refactor naming", "codex", "codex", "/src/projmux", "%2", "", "sess-9", "thread-9"}, sep),
+			strings.Join([]string{"1", "", "", "", "", "zsh", "~/src/projmux", "/src/projmux", "%3", "", "", ""}, sep),
 		}, "\n") + "\n",
 	}}
 	legacy, targets, err := NewMirror(runner).ObserveLegacySessionTargets(context.Background(), "projmux")
@@ -269,7 +270,7 @@ func TestObserveLegacySessionCollectsTheMigrationSeedsWithoutWriting(t *testing.
 	if len(legacy.Windows[0].Panes) != 2 || len(legacy.Windows[1].Panes) != 1 {
 		t.Fatalf("pane counts = %d/%d", len(legacy.Windows[0].Panes), len(legacy.Windows[1].Panes))
 	}
-	if legacy.Windows[0].Panes[1].Provider != "codex" || legacy.Windows[0].Panes[1].Topic != "refactor naming" {
+	if legacy.Windows[0].Panes[1].Provider != "codex" || legacy.Windows[0].Panes[1].LaunchAuthorship != "1" || legacy.Windows[0].Panes[1].Topic != "refactor naming" {
 		t.Fatalf("agent pane = %+v", legacy.Windows[0].Panes[1])
 	}
 	// The already-carried binding comes back with the observation, so adoption

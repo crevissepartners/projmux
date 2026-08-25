@@ -12,6 +12,10 @@ import (
 type LegacyPane struct {
 	Label    string
 	Provider string
+	// LaunchAuthorship is the raw canonical Projmux launch receipt. Only the
+	// exact value "1" together with a provider authorizes topology promotion.
+	// It is deliberately independent of hook/provider presentation markers.
+	LaunchAuthorship string
 	// Topic is carried for the derived display title only. It is never a name
 	// seed for a Pane, a Window, or an Agent.
 	Topic   string
@@ -410,9 +414,12 @@ func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID
 	if cwd == "" {
 		cwd = root
 	}
-	provider := NormalizeProvider(legacyPane.Provider)
-	if provider == "" && strings.TrimSpace(legacyPane.Provider) != "" {
-		provider = FallbackAgentNameBase
+	provider := ""
+	if ResolveAgentPaneAuthority(legacyPane) == AgentPaneAuthorityLaunch {
+		provider = NormalizeProvider(legacyPane.Provider)
+		if provider == "" && strings.TrimSpace(legacyPane.Provider) != "" {
+			provider = FallbackAgentNameBase
+		}
 	}
 
 	if provider == "" {

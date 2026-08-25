@@ -41,10 +41,186 @@ func importedShellPane(t *testing.T, mutator Mutator, registry *Registry, window
 // marker and the provider conversation id.
 func claudePane(sessionID string) LegacyPane {
 	return LegacyPane{
-		Provider:  "claude",
-		Topic:     "roadmap",
-		Command:   "claude",
-		SessionID: sessionID,
+		Provider:         "claude",
+		LaunchAuthorship: "1",
+		Topic:            "roadmap",
+		Command:          "claude",
+		SessionID:        sessionID,
+	}
+}
+
+func TestResolveAgentPaneAuthorityClosedTable(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name     string
+		observed LegacyPane
+		want     AgentPaneAuthority
+	}{
+		{name: "no marker", observed: LegacyPane{Command: "codex", Title: "codex"}, want: AgentPaneAuthorityNoMarker},
+		{name: "hook only", observed: LegacyPane{Provider: "codex"}, want: AgentPaneAuthorityHookOnly},
+		{name: "canonical launch", observed: LegacyPane{Provider: "codex", LaunchAuthorship: "1"}, want: AgentPaneAuthorityLaunch},
+		{name: "launch without provider", observed: LegacyPane{LaunchAuthorship: "1"}, want: AgentPaneAuthorityAmbiguous},
+		{name: "unknown launch receipt", observed: LegacyPane{Provider: "codex", LaunchAuthorship: "yes"}, want: AgentPaneAuthorityAmbiguous},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ResolveAgentPaneAuthority(tt.observed); got != tt.want {
+				t.Fatalf("authority = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLinkAgentPaneLaunchAuthorityConflictsAreRecordedAndZeroWrite(t *testing.T) {
+	t.Parallel()
+	for _, tt := range []struct {
+		name     string
+		observed LegacyPane
+		want     string
+	}{
+		{
+			name: "ambiguous launch receipt", observed: LegacyPane{Provider: "codex", LaunchAuthorship: "yes"},
+			want: "launch authorship marker and provider do not form one canonical receipt",
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mutator, registry, windowUID := agentLinkageFixture(t)
+			window, _ := registry.Window(windowUID)
+			pane, _ := registry.Pane(window.Spec.AnchorPaneRef)
+			window.Spec.DefaultShellPaneRef = ""
+			before := registry.Clone()
+			if got := AgentPanePromotionRefusal(registry, windowUID, pane.Metadata.UID, tt.observed); got != tt.want {
+				t.Fatalf("refusal = %q, want %q", got, tt.want)
+			}
+			linkage, err := mutator.LinkAgentPane(registry, windowUID, pane.Metadata.UID, tt.observed, nil, "op-conflict")
+			if err != nil || linkage.Linked() || !reflect.DeepEqual(before, *registry) {
+				t.Fatalf("conflict was not zero-write: linkage=%+v err=%v\nbefore=%+v\nafter=%+v", linkage, err, before, *registry)
+			}
+		})
+	}
+}
+
+func TestLinkAgentPaneExistingOwnerAndProviderConflictsAreZeroWrite(t *testing.T) {
+	t.Parallel()
+
+	mutator, registry, windowUID := agentLinkageFixture(t)
+	window, _ := registry.Window(windowUID)
+	paneUID := window.Spec.AnchorPaneRef
+	window.Spec.DefaultShellPaneRef = ""
+	linked, err := mutator.LinkAgentPane(registry, windowUID, paneUID, LegacyPane{
+		Provider: "codex", LaunchAuthorship: "1",
+	}, nil, "op-seed-owner")
+	if err != nil || !linked.Linked() {
+		t.Fatalf("seed exact Agent owner: linkage=%+v err=%v", linked, err)
+	}
+
+	t.Run("provider conflicts with exact owner", func(t *testing.T) {
+		before := registry.Clone()
+		observed := LegacyPane{Provider: "claude", LaunchAuthorship: "1"}
+		if got := AgentPanePromotionRefusal(registry, windowUID, paneUID, observed); got != "launch provider conflicts with the exact Agent owner provider" {
+			t.Fatalf("provider conflict refusal = %q", got)
+		}
+		linkage, err := mutator.LinkAgentPane(registry, windowUID, paneUID, observed, nil, "op-provider-conflict")
+		if err != nil || linkage.Linked() || !reflect.DeepEqual(before, *registry) {
+			t.Fatalf("provider conflict wrote state: linkage=%+v err=%v", linkage, err)
+		}
+	})
+
+	t.Run("Agent belongs to another Window", func(t *testing.T) {
+		pane, _ := registry.Pane(paneUID)
+		agent, _ := registry.Agent(linked.AgentUID)
+		agent.Metadata.OwnerRef = &OwnerRef{Kind: KindWindow, UID: "win-other"}
+		before := registry.Clone()
+		observed := LegacyPane{Provider: "codex", LaunchAuthorship: "1"}
+		if got := AgentPanePromotionRefusal(registry, windowUID, pane.Metadata.UID, observed); got != "launch authorship conflicts with the exact Agent/Pane owner chain" {
+			t.Fatalf("owner conflict refusal = %q", got)
+		}
+		linkage, err := mutator.LinkAgentPane(registry, windowUID, paneUID, observed, nil, "op-owner-conflict")
+		if err != nil || linkage.Linked() || !reflect.DeepEqual(before, *registry) {
+			t.Fatalf("owner conflict wrote state: linkage=%+v err=%v", linkage, err)
+		}
+	})
+}
+
+func TestLinkAgentPaneMalformedAuthorityRefusesBeforeAlreadyOwnedRebind(t *testing.T) {
+	t.Parallel()
+	mutator, registry, windowUID := agentLinkageFixture(t)
+	window, _ := registry.Window(windowUID)
+	paneUID := window.Spec.AnchorPaneRef
+	window.Spec.DefaultShellPaneRef = ""
+	seeded, err := mutator.LinkAgentPane(registry, windowUID, paneUID, LegacyPane{
+		Provider: "codex", LaunchAuthorship: "1",
+	}, nil, "op-seed-malformed-owned")
+	if err != nil || !seeded.Linked() {
+		t.Fatalf("seed exact owner: linkage=%+v err=%v", seeded, err)
+	}
+	agent, _ := registry.Agent(seeded.AgentUID)
+	agent.Status.PaneRef = ""
+	before := registry.Clone()
+	linkage, err := mutator.LinkAgentPane(registry, windowUID, paneUID, LegacyPane{
+		Provider: "codex", LaunchAuthorship: "yes",
+	}, NewBindingMatcher(RuntimeObservation{}), "op-malformed-owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if linkage.Linked() || !reflect.DeepEqual(*registry, before) {
+		t.Fatalf("malformed already-owned receipt rebound topology: linkage=%+v\nbefore=%+v\nafter=%+v", linkage, before, *registry)
+	}
+}
+
+func TestLinkAgentPanePostStateValidationFailureRestoresExactPreimage(t *testing.T) {
+	t.Parallel()
+	mutator, registry, windowUID := agentLinkageFixture(t)
+	window, _ := registry.Window(windowUID)
+	paneUID := window.Spec.AnchorPaneRef
+	window.Spec.DefaultShellPaneRef = ""
+	mutator.NewUID = func(kind Kind) (string, error) {
+		if kind == KindAgent {
+			return paneUID, nil // deliberately violates global UID uniqueness after mint
+		}
+		return NewUID(kind)
+	}
+	before := registry.Clone()
+	if _, err := mutator.LinkAgentPane(registry, windowUID, paneUID, LegacyPane{
+		Provider: "codex", LaunchAuthorship: "1",
+	}, nil, "op-invalid-post-state"); err == nil {
+		t.Fatal("invalid composite post-state succeeded")
+	}
+	if !reflect.DeepEqual(*registry, before) {
+		t.Fatalf("post-state validation failure leaked partial promotion:\nbefore=%+v\nafter=%+v", before, *registry)
+	}
+}
+
+func TestLinkAgentPaneCanonicalLaunchClearsDefaultAndRetainsAnchor(t *testing.T) {
+	t.Parallel()
+
+	mutator, registry, windowUID := agentLinkageFixture(t)
+	window, _ := registry.Window(windowUID)
+	paneUID := window.Spec.DefaultShellPaneRef
+	if paneUID == "" || window.Spec.AnchorPaneRef != paneUID {
+		t.Fatalf("fixture default/anchor = %q/%q, want the same exact Pane", paneUID, window.Spec.AnchorPaneRef)
+	}
+	linkage, err := mutator.LinkAgentPane(registry, windowUID, paneUID, LegacyPane{
+		Provider: "codex", LaunchAuthorship: "1", SessionID: "session-1",
+	}, NewBindingMatcher(RuntimeObservation{}), "op-canonical-launch")
+	if err != nil {
+		t.Fatalf("link canonical launch: %v", err)
+	}
+	if linkage.Kind != AgentLinkMinted || !linkage.Promoted {
+		t.Fatalf("linkage = %+v, want one minted atomic promotion", linkage)
+	}
+	window, _ = registry.Window(windowUID)
+	if window.Spec.AnchorPaneRef != paneUID || window.Spec.DefaultShellPaneRef != "" {
+		t.Fatalf("post Window refs = anchor %q default %q, want retained anchor and cleared default", window.Spec.AnchorPaneRef, window.Spec.DefaultShellPaneRef)
+	}
+	pane, _ := registry.Pane(paneUID)
+	agent, _ := registry.Agent(linkage.AgentUID)
+	if pane.Metadata.OwnerUID() != agent.Metadata.UID || pane.Spec.Role != PaneRoleAgent || agent.Status.PaneRef != paneUID {
+		t.Fatalf("composite post-state pane=%+v agent=%+v", pane, agent)
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("composite post-state is invalid: %v", err)
 	}
 }
 
@@ -164,6 +340,7 @@ func TestLinkAgentPaneNeverActsOnAPaneWithNoAuthorshipMarker(t *testing.T) {
 	}{
 		{name: "a shell", observed: LegacyPane{Command: "zsh"}},
 		{name: "claude typed into a shell", observed: LegacyPane{Command: "claude", Title: "claude - working"}},
+		{name: "a provider hook without launch authorship", observed: LegacyPane{Provider: "codex", Command: "codex"}},
 		{name: "a title that mentions codex", observed: LegacyPane{Command: "zsh", Title: "codex refactor"}},
 	}
 
@@ -508,7 +685,7 @@ func TestLinkAgentPaneKeepsAnUnknownProviderSpellingAnAgent(t *testing.T) {
 	t.Parallel()
 
 	mutator, registry, windowUID := agentLinkageFixture(t)
-	observed := LegacyPane{Provider: "some-future-model", Command: "sfm"}
+	observed := LegacyPane{Provider: "some-future-model", LaunchAuthorship: "1", Command: "sfm"}
 	pane := importedShellPane(t, mutator, registry, windowUID, observed)
 
 	linkage, err := mutator.LinkAgentPane(registry, windowUID, pane.Metadata.UID, observed, NewBindingMatcher(RuntimeObservation{}), "op-1")

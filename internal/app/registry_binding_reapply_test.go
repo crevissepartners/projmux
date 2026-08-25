@@ -122,12 +122,13 @@ func unanchoredObservation(name string, session *fakeTmuxSession) func(context.C
 				// mirror reads them, so a fake pane is an agent pane only when
 				// projmux itself marked it as one.
 				observed.Panes = append(observed.Panes, coremetadata.LegacyPane{
-					Command:   pane.command,
-					UID:       pane.opts[tmuxopts.PaneUID],
-					Provider:  pane.opts[tmuxopts.AgentProviderPane],
-					Topic:     pane.opts[tmuxopts.AgentTopicPane],
-					SessionID: pane.opts[tmuxopts.AgentSessionIDPane],
-					ThreadID:  pane.opts[tmuxopts.AgentThreadIDPane],
+					Command:          pane.command,
+					UID:              pane.opts[tmuxopts.PaneUID],
+					Provider:         pane.opts[tmuxopts.AgentProviderPane],
+					LaunchAuthorship: pane.opts[tmuxopts.AgentLaunchAuthorshipPane],
+					Topic:            pane.opts[tmuxopts.AgentTopicPane],
+					SessionID:        pane.opts[tmuxopts.AgentSessionIDPane],
+					ThreadID:         pane.opts[tmuxopts.AgentThreadIDPane],
 				})
 				row = append(row, pane.id)
 			}

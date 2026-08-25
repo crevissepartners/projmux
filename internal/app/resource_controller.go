@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"slices"
 	"sort"
 	"strings"
@@ -261,6 +262,20 @@ func (k *resourceControllerKernel) authorize(graph resourcegraph.Graph, registry
 		candidates = append(candidates, controllerRecoveryCandidates(graph, k.trigger)...)
 	}
 	actions, policy := controller.Authorize(handles, controllerGuardFields, grant, candidates)
+	plannedByKey := map[string]plannedTmuxWrite{}
+	for _, write := range registryPlan.writes {
+		plannedByKey[write.itemKey()] = write
+	}
+	for index := range actions {
+		write, ok := plannedByKey[actions[index].Key]
+		if !ok || !actions[index].Allowed() {
+			continue
+		}
+		if actions[index].Scope == resourcegraph.ObjectPane && strings.TrimSpace(write.guardSessionID) != "" {
+			actions[index].Guards = append(actions[index].Guards, controller.Guard{Field: "session_id", Expect: write.guardSessionID})
+		}
+		actions[index].Guards = append(actions[index].Guards, slices.Clone(write.semanticGuards)...)
+	}
 	policy = append(policy, controller.Exercised(handles, grant, graphHasOfflineRow(graph))...)
 	plan := controller.NewPlan(graph.Transport, graph.HostMode, actions, policy)
 	projectRecoveryActions(registryPlan, plan.Actions, graph)
@@ -472,6 +487,33 @@ func plannedWriteKind(write plannedTmuxWrite) string {
 func applyPolicy(registryPlan *resourceReconcilePlan, actions []controller.Action) []controller.Action {
 	plan := controller.Plan{Actions: actions}
 	refused := map[string]controller.Action{}
+	actionByKey := map[string]controller.Action{}
+	for _, action := range actions {
+		actionByKey[action.Key] = action
+	}
+	for index := range registryPlan.items {
+		if action, ok := actionByKey[registryPlan.items[index].Key]; ok {
+			registryPlan.items[index].Guards = slices.Clone(action.Guards)
+		}
+		if registryPlan.items[index].Action == "promote-authorship" {
+			seen := map[string]bool{}
+			for _, guard := range registryPlan.items[index].Guards {
+				seen[guard.Field+"\x00"+guard.Expect] = true
+			}
+			for _, action := range actions {
+				if action.Target != registryPlan.items[index].Target {
+					continue
+				}
+				for _, guard := range action.Guards {
+					key := guard.Field + "\x00" + guard.Expect
+					if !seen[key] {
+						seen[key] = true
+						registryPlan.items[index].Guards = append(registryPlan.items[index].Guards, guard)
+					}
+				}
+			}
+		}
+	}
 	for _, action := range plan.Refusals() {
 		refused[action.Key] = action
 	}
@@ -630,6 +672,12 @@ func (e *controllerRunError) Error() string {
 
 func (e *controllerRunError) Unwrap() error { return e.err }
 
+type promotionRegistryReceipt struct {
+	before     coremetadata.Registry
+	committed  coremetadata.Registry
+	promotions []resourceAuthorshipPromotion
+}
+
 // converge runs the six contractual stages against one exact server.
 //
 // The observation is taken once, before the Registry lock, and the plan is
@@ -658,7 +706,9 @@ func (k *resourceControllerKernel) converge(ctx context.Context) (controllerRun,
 	run.completed = []string{"exact socket observed: " + run.graph.Transport.String()}
 
 	failedStage := ""
+	var promotionReceipt promotionRegistryReceipt
 	_, registryChanged, updateErr := k.store.updateConvergent(func(working *coremetadata.Registry) error {
+		lockedBefore := working.Clone()
 		// Resolve the same bounded runtime observation against the Registry bytes
 		// protected by this lock. If another writer claimed an orphan between the
 		// preview and this transaction, the locked graph is Managed and neither
@@ -680,6 +730,12 @@ func (k *resourceControllerKernel) converge(ctx context.Context) (controllerRun,
 		run.graph = lockedGraph
 		run.authorized = k.authorize(lockedGraph, &currentPlan)
 		run.plan = currentPlan
+		if len(currentPlan.promotions) != 0 {
+			promotionReceipt = promotionRegistryReceipt{
+				before: lockedBefore, committed: currentPlan.registry.Clone(),
+				promotions: slices.Clone(currentPlan.promotions),
+			}
+		}
 		run.completed = append(run.completed, "plan rechecked under Registry lock")
 		*working = run.plan.registry.Clone()
 		return nil
@@ -704,10 +760,26 @@ func (k *resourceControllerKernel) converge(ctx context.Context) (controllerRun,
 
 	writes := run.authorized.Writes()
 	if err := k.guardPlan(ctx, run.socket, writes); err != nil {
+		if len(run.plan.promotions) != 0 {
+			if rollbackErr := k.rollbackPromotionRegistry(promotionReceipt); rollbackErr != nil {
+				err = errors.Join(err, fmt.Errorf("atomic promotion Registry rollback failed: %w", rollbackErr))
+			} else {
+				run.registryChanged = false
+				run.completed = append(run.completed, "atomic promotion Registry preimage restored")
+			}
+		}
 		return run, &controllerRunError{stage: "tmux prevalidation", err: err, run: run}
 	}
 	run.completed = append(run.completed, "tmux targets prevalidated")
 	if err := executeControllerRuntimeMutations(ctx, k.runner, *k.route, writes); err != nil {
+		if len(run.plan.promotions) != 0 {
+			if rollbackErr := k.rollbackPromotionRegistry(promotionReceipt); rollbackErr != nil {
+				err = errors.Join(err, fmt.Errorf("atomic promotion Registry rollback failed: %w", rollbackErr))
+			} else {
+				run.registryChanged = false
+				run.completed = append(run.completed, "atomic promotion Registry preimage restored")
+			}
+		}
 		return run, &controllerRunError{stage: "controller.identity", err: err, run: run}
 	}
 	for _, write := range writes {
@@ -720,4 +792,108 @@ func (k *resourceControllerKernel) converge(ctx context.Context) (controllerRun,
 		run.completed = append(run.completed, controllerReobserveStage(reobserved))
 	}
 	return run, nil
+}
+
+// rollbackPromotionRegistry restores the exact preimage only when the current
+// Registry still equals this transaction's committed postimage. It therefore
+// cannot erase a concurrent writer while closing the promotion's runtime
+// failure boundary back to a pure before state.
+func (k *resourceControllerKernel) rollbackPromotionRegistry(receipt promotionRegistryReceipt) error {
+	if k == nil || k.store == nil || k.store.updateConvergent == nil {
+		return errors.New("promotion rollback store is not configured")
+	}
+	_, _, err := k.store.updateConvergent(func(current *coremetadata.Registry) error {
+		return rollbackPromotionScope(current, receipt)
+	})
+	return err
+}
+
+func rollbackPromotionScope(current *coremetadata.Registry, receipt promotionRegistryReceipt) error {
+	if current == nil || len(receipt.promotions) == 0 {
+		return errors.New("promotion rollback has no exact transaction receipt")
+	}
+	affectedReservations := map[string]bool{}
+	for _, promotion := range receipt.promotions {
+		beforePane, beforePaneOK := receipt.before.Pane(promotion.PaneUID)
+		committedPane, committedPaneOK := receipt.committed.Pane(promotion.PaneUID)
+		currentPane, currentPaneOK := current.Pane(promotion.PaneUID)
+		beforeWindow, beforeWindowOK := receipt.before.Window(promotion.WindowUID)
+		committedWindow, committedWindowOK := receipt.committed.Window(promotion.WindowUID)
+		currentWindow, currentWindowOK := current.Window(promotion.WindowUID)
+		if !beforePaneOK || !committedPaneOK || !currentPaneOK || !beforeWindowOK || !committedWindowOK || !currentWindowOK {
+			return fmt.Errorf("promotion rollback scope %s is incomplete", promotion.PaneUID)
+		}
+		if !reflect.DeepEqual(currentPane.Metadata.OwnerRef, committedPane.Metadata.OwnerRef) || currentPane.Spec.Role != committedPane.Spec.Role ||
+			currentWindow.Spec.AnchorPaneRef != committedWindow.Spec.AnchorPaneRef ||
+			currentWindow.Spec.DefaultShellPaneRef != committedWindow.Spec.DefaultShellPaneRef {
+			return fmt.Errorf("promotion rollback CAS changed inside exact Window scope %s", promotion.WindowUID)
+		}
+		beforePaneClone := beforePane.Clone()
+		currentPane.Metadata.OwnerRef = beforePaneClone.Metadata.OwnerRef
+		currentPane.Spec.Role = beforePane.Spec.Role
+		currentWindow.Spec.AnchorPaneRef = beforeWindow.Spec.AnchorPaneRef
+		currentWindow.Spec.DefaultShellPaneRef = beforeWindow.Spec.DefaultShellPaneRef
+		affectedReservations[promotion.PaneUID] = true
+		affectedReservations[promotion.AgentUID] = true
+
+		beforeAgent, existedBefore := receipt.before.Agent(promotion.AgentUID)
+		committedAgent, committedAgentOK := receipt.committed.Agent(promotion.AgentUID)
+		currentAgent, currentAgentOK := current.Agent(promotion.AgentUID)
+		if !committedAgentOK || !currentAgentOK {
+			return fmt.Errorf("promotion rollback Agent %s is absent", promotion.AgentUID)
+		}
+		if existedBefore {
+			if !reflect.DeepEqual(currentAgent.Status, committedAgent.Status) {
+				return fmt.Errorf("promotion rollback Agent status CAS changed for %s", promotion.AgentUID)
+			}
+			currentAgent.Status = beforeAgent.Clone().Status
+		} else {
+			if !reflect.DeepEqual(currentAgent.Clone(), committedAgent.Clone()) {
+				return fmt.Errorf("promotion rollback minted Agent CAS changed for %s", promotion.AgentUID)
+			}
+			current.Agents = slices.DeleteFunc(current.Agents, func(agent coremetadata.Agent) bool {
+				return agent.Metadata.UID == promotion.AgentUID
+			})
+		}
+	}
+	committedAffected := slices.DeleteFunc(slices.Clone(receipt.committed.NameReservations), func(value coremetadata.NameReservation) bool {
+		return !affectedReservations[value.UID]
+	})
+	currentAffected := slices.DeleteFunc(slices.Clone(current.NameReservations), func(value coremetadata.NameReservation) bool {
+		return !affectedReservations[value.UID]
+	})
+	if !reflect.DeepEqual(currentAffected, committedAffected) {
+		return errors.New("promotion rollback reservation CAS changed inside exact scope")
+	}
+	// Restore affected reservations in the locked preimage order while keeping
+	// every unrelated current reservation/value, including concurrent inserts.
+	currentByUID := map[string]coremetadata.NameReservation{}
+	for _, reservation := range current.NameReservations {
+		if !affectedReservations[reservation.UID] {
+			currentByUID[reservation.UID] = reservation
+		}
+	}
+	var restored []coremetadata.NameReservation
+	used := map[string]bool{}
+	for _, reservation := range receipt.before.NameReservations {
+		if affectedReservations[reservation.UID] {
+			restored = append(restored, reservation)
+			continue
+		}
+		if currentReservation, ok := currentByUID[reservation.UID]; ok {
+			restored = append(restored, currentReservation)
+			used[reservation.UID] = true
+		}
+	}
+	for _, reservation := range current.NameReservations {
+		if !affectedReservations[reservation.UID] && !used[reservation.UID] {
+			restored = append(restored, reservation)
+			used[reservation.UID] = true
+		}
+	}
+	current.NameReservations = restored
+	if err := current.Validate(); err != nil {
+		return fmt.Errorf("promotion rollback post-state is invalid: %w", err)
+	}
+	return nil
 }

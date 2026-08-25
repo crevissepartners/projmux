@@ -178,20 +178,20 @@ func (o *InventoryObserver) observe(ctx context.Context) resourcegraph.Inventory
 	panes, err := runner.Run(ctx, "tmux", "list-panes", "-a", "-F", tmuxFormat(
 		"#{pane_id}", "#{window_id}",
 		"#{"+tmuxopts.PaneUID+"}", "#{"+tmuxopts.PaneName+"}",
-		"#{"+tmuxopts.AgentProviderPane+"}", "#{pane_title}",
+		"#{"+tmuxopts.AgentProviderPane+"}", "#{"+tmuxopts.AgentLaunchAuthorshipPane+"}", "#{pane_title}",
 		"#{"+tmuxopts.AgentSessionIDPane+"}", "#{"+tmuxopts.AgentThreadIDPane+"}"))
 	if err != nil {
 		inventory = inventory.MarkUnavailable(resourcegraph.ScopePanes,
 			"tmux panes could not be listed: "+err.Error())
 	} else {
-		rows := parseRows(string(panes), 8)
+		rows := parseRows(string(panes), 9)
 		// Older test adapters and compatibility observers may still return the
 		// pre-L8 six-field row. Treat the two routing indexes as absent without
 		// weakening production: the production format above always requests all
-		// eight in the same bounded list query.
+		// nine in the same bounded list query.
 		if len(rows) == 0 && strings.TrimSpace(string(panes)) != "" {
 			for _, row := range parseRows(string(panes), 6) {
-				rows = append(rows, append(row, "", ""))
+				rows = append(rows, []string{row[0], row[1], row[2], row[3], row[4], "", row[5], "", ""})
 			}
 		}
 		for _, row := range rows {
@@ -199,14 +199,15 @@ func (o *InventoryObserver) observe(ctx context.Context) resourcegraph.Inventory
 				continue
 			}
 			inventory.Panes = append(inventory.Panes, resourcegraph.Pane{
-				ID:             row[0],
-				WindowID:       row[1],
-				UID:            strings.TrimSpace(row[2]),
-				MirroredName:   row[3],
-				AgentProvider:  strings.TrimSpace(row[4]),
-				Title:          row[5],
-				AgentSessionID: strings.TrimSpace(row[6]),
-				AgentThreadID:  strings.TrimSpace(row[7]),
+				ID:                    row[0],
+				WindowID:              row[1],
+				UID:                   strings.TrimSpace(row[2]),
+				MirroredName:          row[3],
+				AgentProvider:         strings.TrimSpace(row[4]),
+				AgentLaunchAuthorship: strings.TrimSpace(row[5]),
+				Title:                 row[6],
+				AgentSessionID:        strings.TrimSpace(row[7]),
+				AgentThreadID:         strings.TrimSpace(row[8]),
 			})
 		}
 	}

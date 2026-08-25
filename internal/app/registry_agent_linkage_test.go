@@ -25,9 +25,10 @@ import (
 // into. A pane the operator started an agent in by hand carries none of them.
 func aiPaneOptions(provider, sessionID string) map[string]string {
 	return map[string]string{
-		tmuxopts.AgentProviderPane:  provider,
-		tmuxopts.AgentTopicPane:     "roadmap",
-		tmuxopts.AgentSessionIDPane: sessionID,
+		tmuxopts.AgentProviderPane:         provider,
+		tmuxopts.AgentLaunchAuthorshipPane: "1",
+		tmuxopts.AgentTopicPane:            "roadmap",
+		tmuxopts.AgentSessionIDPane:        sessionID,
 	}
 }
 
@@ -251,9 +252,12 @@ func TestAgentLinkageNeedsProjmuxAuthorshipNotACommandName(t *testing.T) {
 			// The marker is what counts, not whether projmux recognizes the
 			// spelling: a provider projmux has never heard of is still a pane
 			// projmux launched an agent into.
-			name:      "an unrecognized provider spelling",
-			command:   "sfm",
-			opts:      map[string]string{tmuxopts.AgentProviderPane: "some-future-model"},
+			name:    "an unrecognized provider spelling",
+			command: "sfm",
+			opts: map[string]string{
+				tmuxopts.AgentProviderPane:         "some-future-model",
+				tmuxopts.AgentLaunchAuthorshipPane: "1",
+			},
 			wantAgent: true,
 		},
 	}

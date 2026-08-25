@@ -242,8 +242,10 @@ func TestControllerAdapterFieldInventoryIsSourceDerivedAndBidirectional(t *testi
 			"disableAutomaticRename": false, "writeWindowIdentityName": false, "writeWindowDisplayName": false,
 			"MirrorPane": false, "writePaneName": false,
 		},
-		"resource_reconcile_plan.go": {"planResourceAgentProjections": false, "recordWrite": false},
-		"resource_controller.go":     {"controllerRecoveryCandidates": false},
+		"resource_reconcile_plan.go": {
+			"planResourceAgentProjections": false, "planAuthorshipPromotionOptions": false, "recordWrite": false,
+		},
+		"resource_controller.go": {"controllerRecoveryCandidates": false},
 	}
 	selectorFields := map[string]string{
 		"ProjectUIDSession": tmuxopts.ProjectUIDSession, "ProjectNameSession": tmuxopts.ProjectNameSession,
@@ -251,6 +253,9 @@ func TestControllerAdapterFieldInventoryIsSourceDerivedAndBidirectional(t *testi
 		"AutomaticRenameWindow": tmuxopts.AutomaticRenameWindow, "WindowName": tmuxopts.WindowName,
 		"PaneUID": tmuxopts.PaneUID, "PaneName": tmuxopts.PaneName,
 		"AgentSessionIDPane": tmuxopts.AgentSessionIDPane, "AgentThreadIDPane": tmuxopts.AgentThreadIDPane,
+		"PaneOwnerKind": tmuxopts.PaneOwnerKind, "PaneOwnerUID": tmuxopts.PaneOwnerUID,
+		"PaneRole": tmuxopts.PaneRole, "AgentUIDPane": tmuxopts.AgentUIDPane,
+		"AgentProviderPane": tmuxopts.AgentProviderPane,
 	}
 	identFields := map[string]string{
 		"aiPaneTopicOption": aiPaneTopicOption, "aiPaneTopicManualOption": aiPaneTopicManualOption,
@@ -2638,6 +2643,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"resource_reconcile_plan.go:planResourceBoundMirrorDrift:helper:DisableAutomaticRename": "controller.identity",
 		"resource_reconcile_plan.go:planResourceBoundMirrorDrift:set-option":                    "controller.identity",
 		"resource_reconcile_plan.go:planExactPaneOption:variable-argv":                          "controller.identity",
+		"resource_reconcile_plan.go:planExactManagedPaneOption:set-option":                      "controller.identity",
 		"resource_reconcile_plan.go:Run:variable-argv":                                          "controller.identity",
 		"project_registry.go:newRegistryReconcilerWithRoute:helper:MirrorPane":                  "controller.identity",
 		"../integrations/metadata/tmuxmirror.go:MirrorProject:set-option":                       "controller.identity",
