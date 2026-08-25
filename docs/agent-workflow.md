@@ -296,6 +296,8 @@
   command, path, permission, and request content out of Registry, tmux, notify,
   diagnostics, support, and Archive sinks.
 
+- `make test` / `make test-integration` / `make test-e2e`: Window anchor and primary-shell role separation Phase 1 makes launch-authorship promotion one atomic Registry/runtime transaction. `TestResolveAgentPaneAuthorityClosedTable` closes explicit launch-authorship, hook-only, no-marker, and ambiguous authority; `TestMarkAIHookPaneSeparatesTransientShellObservationFromOwnedAgentStatus` keeps exact Agent-owned hook status/sessionRef separate from unbound shell transients; `TestPublicAuthorshipPromotionMultiAllocationOrderParity` and `TestPublicAuthorshipPromotionAttachesExistingAgentWithoutAllocation` pin symbolic UID order plus distinct mint/attach allocation; `TestPublicResourceReconcilePromotesCanonicalLaunchAuthorshipAtomicallyAndRepeatsEmpty` covers Pane owner/role, Agent paneRef, anchor/default transitions, guarded exact runtime options, dry-run/execute structure, and repeat zero-write; `TestPublicLaunchProviderConflictFreezesExactTargetAndConvergesUnrelatedTarget` requires target conflict zero-write without suppressing unrelated convergence; and `TestPublicAuthorshipPromotionPrecommitAndGuardFaultMatrixLeavesNoMixedState`, `TestAuthorshipPromotionRuntimeRollbackIsIndependentOfActionOrder`, and `TestAuthorshipPromotionPreservesSiblingProjectAndSocket` cover fault/action-order rollback with no mixed state and preservation of sibling Project/socket and D5 state.
+
 ## When To Update This List
 
 - A feature moves between unit, integration, and e2e coverage levels.
