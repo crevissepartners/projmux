@@ -729,7 +729,7 @@ func (m *materializer) observeMaterializeMutationEffect(ctx context.Context, act
 }
 
 func materializeOptionEffectObserved(option, want, got string) bool {
-	if option != tmuxopts.AutomaticRenameWindow {
+	if option != tmuxopts.AutomaticRenameWindow && option != tmuxopts.RemainOnExitPane {
 		return got == want
 	}
 	wantValue, wantOK := exactTmuxBoolean(want)
@@ -1592,10 +1592,17 @@ func (m *materializer) mirrorWindow(ctx context.Context, target string, window c
 }
 
 func (m *materializer) mirrorPane(ctx context.Context, target string, pane coremetadata.Pane) error {
-	return m.runIdentityWrites(ctx, "pane", target, pane.Metadata.UID, []identityPlanWrite{
+	writes := []identityPlanWrite{
 		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneUID, pane.Metadata.UID}, effect: "Pane UID mirror equals Registry"},
 		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneName, pane.Metadata.Name}, effect: "Pane stable-name mirror equals Registry"},
-	})
+	}
+	if pane.Spec.Role == coremetadata.PaneRoleAgent {
+		writes = append(writes, identityPlanWrite{
+			operands: []string{"-p", "-t", target, tmuxopts.RemainOnExitPane, "on"},
+			effect:   "managed Agent Pane remains as an exact dead anchor until lifecycle replacement",
+		})
+	}
+	return m.runIdentityWrites(ctx, "pane", target, pane.Metadata.UID, writes)
 }
 
 type identityPlanWrite struct {

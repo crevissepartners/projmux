@@ -203,7 +203,7 @@ func TestPlanOnlyMutationProductSurfaceInventoryIsBidirectionalAndClosed(t *test
 		"pane-menu.swap-down", "pane-menu.mark", "pane-menu.zoom", "pane-menu.mouse-forward", "shell.foreground-attach",
 		"app.quit", "attach.ensure-home", "attach.ephemeral-prune", "attach.ephemeral-create", "standalone.prune", "manual.tagged-kill", "switch.manual-kill", "sidebar.unmanaged-candidate-stop", "replay.retired-snapshot",
 		"config.apply-source", "pane.rebalance", "trigger.after-new-window", "trigger.after-split-window",
-		"trigger.after-kill-pane", "trigger.after-kill-pane.rebalance", "trigger.pane-exited", "trigger.pane-exited.rebalance", "trigger.window-unlinked",
+		"trigger.after-kill-pane", "trigger.after-kill-pane.rebalance", "trigger.pane-exited", "trigger.pane-exited.rebalance", "trigger.pane-died", "trigger.pane-died.rebalance", "trigger.window-unlinked",
 		"trigger.attention-focus", "trigger.recent-window-record", "trigger.client-attached-welcome", "config.generated-statusbar", "config.generated-key-sequences",
 		"resource.rename-project", "resource.rename-window", "resource.rename-pane", "resource.rebind-project",
 		"settings.desktop-notify-option", "settings.statusbar-decoration-option", "settings.ai-badge-option",
@@ -785,7 +785,7 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 		rows[row.ID] = row.Disposition
 	}
 	for _, id := range []string{
-		"trigger.attention-focus", "pane.rebalance", "trigger.pane-exited", "trigger.pane-exited.rebalance",
+		"trigger.attention-focus", "pane.rebalance", "trigger.pane-exited", "trigger.pane-exited.rebalance", "trigger.pane-died", "trigger.pane-died.rebalance",
 		"trigger.after-kill-pane", "trigger.after-kill-pane.rebalance", "trigger.window-unlinked",
 		"trigger.recent-window-record", "trigger.after-new-window", "trigger.after-split-window",
 		"trigger.client-attached-welcome", "config.generated-statusbar", "config.generated-key-sequences",
@@ -818,6 +818,7 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 	requiredArtifacts := map[string]string{
 		"trigger.attention-focus":        "set-hook -g pane-focus-out",
 		"trigger.pane-exited":            "set-hook -g pane-exited",
+		"trigger.pane-died":              "set-hook -g pane-died",
 		"trigger.after-kill-pane":        "set-hook -g after-kill-pane",
 		"trigger.window-unlinked":        "set-hook -g window-unlinked",
 		"trigger.recent-window-record":   "set-hook -g after-select-window",
@@ -834,34 +835,34 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 	}
 	expectedArtifactCounts := map[string]map[string]int{
 		"standalone": {
-			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.after-kill-pane": 1,
+			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.pane-died": 1, "trigger.after-kill-pane": 1,
 			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
 			"config.generated-statusbar": 2, "config.generated-key-sequences": 1,
 			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
 		},
 		"app": {
-			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.after-kill-pane": 1,
+			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.pane-died": 1, "trigger.after-kill-pane": 1,
 			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
 			"config.generated-statusbar": 4, "config.generated-key-sequences": 2,
 			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
 		},
 		"standalone-settings-override": {
-			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.after-kill-pane": 1,
+			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.pane-died": 1, "trigger.after-kill-pane": 1,
 			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
 			"config.generated-statusbar": 2, "config.generated-key-sequences": 1,
 			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
 		},
 		"app-settings-override": {
-			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.after-kill-pane": 1,
+			"trigger.attention-focus": 1, "trigger.pane-exited": 1, "trigger.pane-died": 1, "trigger.after-kill-pane": 1,
 			"trigger.window-unlinked": 1, "trigger.recent-window-record": 1,
 			"config.generated-statusbar": 4, "config.generated-key-sequences": 2,
 			"pane-menu.swap-up": 1, "pane-menu.swap-down": 1, "pane-menu.zoom": 1,
 		},
 	}
 	for kind, rendered := range configs {
-		wantConverge := 3
+		wantConverge := 4
 		if strings.HasPrefix(kind, "app") {
-			wantConverge = 5
+			wantConverge = 6
 		}
 		convergeCount := strings.Count(rendered, "internal tmux converge")
 		unsetCount := strings.Count(rendered, "env -u TMUX -u TMUX_PANE '/usr/local/bin/projmux' internal tmux converge")
@@ -885,6 +886,7 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 		}
 		for hook, rebalanceID := range map[string]string{
 			"pane-exited":     "trigger.pane-exited.rebalance",
+			"pane-died":       "trigger.pane-died.rebalance",
 			"after-kill-pane": "trigger.after-kill-pane.rebalance",
 		} {
 			prefix := "set-hook -g " + hook + " "
@@ -910,8 +912,8 @@ func TestFullRenderedTmuxConfigsHaveClosedGeneratedMutationSurfaces(t *testing.T
 				t.Errorf("generated %s hook maps %d surface rows, want exact controller+rebalance pair", hook, matchedRows)
 			}
 		}
-		if got := strings.Count(rendered, "internal tmux rebalance-panes"); got != 2 {
-			t.Errorf("%s generated config has %d rebalance handler occurrence(s), want exact pane-exited+after-kill-pane pair", kind, got)
+		if got := strings.Count(rendered, "internal tmux rebalance-panes"); got != 3 {
+			t.Errorf("%s generated config has %d rebalance handler occurrence(s), want exact pane-exited+pane-died+after-kill-pane trio", kind, got)
 		}
 		for verb := range closedTmuxTopologyMutationVerbs {
 			occurrences := regexp.MustCompile(`(^|[[:space:];{}'\"])(`+regexp.QuoteMeta(verb)+`)([[:space:];{}'\"]|$)`).FindAllStringIndex(rendered, -1)
@@ -1162,21 +1164,23 @@ func TestPropertyPlannedRuntimeMutationIsGuardedOrderedAndIdempotent(t *testing.
 }
 
 func TestMaterializerOptionEffectUsesTmuxCanonicalBooleanWithoutAcceptingUnknown(t *testing.T) {
-	for _, test := range []struct {
-		name, want, got string
-		observed        bool
-	}{
-		{name: "off renders zero", want: "off", got: "0", observed: true},
-		{name: "on renders one", want: "on", got: "1", observed: true},
-		{name: "different boolean", want: "off", got: "1", observed: false},
-		{name: "blank is unknown", want: "off", got: "", observed: false},
-		{name: "arbitrary value is unknown", want: "off", got: "disabled", observed: false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := materializeOptionEffectObserved(tmuxopts.AutomaticRenameWindow, test.want, test.got); got != test.observed {
-				t.Fatalf("observed = %t, want %t", got, test.observed)
-			}
-		})
+	for _, option := range []string{tmuxopts.AutomaticRenameWindow, tmuxopts.RemainOnExitPane} {
+		for _, test := range []struct {
+			name, want, got string
+			observed        bool
+		}{
+			{name: "off renders zero", want: "off", got: "0", observed: true},
+			{name: "on renders one", want: "on", got: "1", observed: true},
+			{name: "different boolean", want: "off", got: "1", observed: false},
+			{name: "blank is unknown", want: "off", got: "", observed: false},
+			{name: "arbitrary value is unknown", want: "off", got: "disabled", observed: false},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				if got := materializeOptionEffectObserved(option, test.want, test.got); got != test.observed {
+					t.Fatalf("observed = %t, want %t", got, test.observed)
+				}
+			})
+		}
 	}
 	if !materializeOptionEffectObserved(tmuxopts.WindowUID, "win-1", "win-1") ||
 		materializeOptionEffectObserved(tmuxopts.WindowUID, "win-1", "win-2") {

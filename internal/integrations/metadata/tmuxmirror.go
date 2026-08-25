@@ -321,7 +321,15 @@ func (m Mirror) MirrorPane(ctx context.Context, paneID string, pane coremetadata
 	if _, err := m.run(ctx, "set-option", "-p", "-t", paneID, "-q", tmuxopts.PaneUID, pane.Metadata.UID); err != nil {
 		return fmt.Errorf("metadata: mirror pane uid: %w", err)
 	}
-	return m.writePaneName(ctx, paneID, pane.Metadata.Name)
+	if err := m.writePaneName(ctx, paneID, pane.Metadata.Name); err != nil {
+		return err
+	}
+	if pane.Spec.Role == coremetadata.PaneRoleAgent {
+		if _, err := m.run(ctx, "set-option", "-p", "-t", paneID, tmuxopts.RemainOnExitPane, "on"); err != nil {
+			return fmt.Errorf("metadata: protect managed Agent pane lifecycle: %w", err)
+		}
+	}
+	return nil
 }
 
 func (m Mirror) writePaneName(ctx context.Context, paneID, name string) error {
@@ -412,6 +420,25 @@ func (m Mirror) LivePaneUIDs(ctx context.Context) (map[string]bool, error) {
 		}
 	}
 	return uids, nil
+}
+
+// DeadPaneUIDs returns only exact mirrored Pane uids whose retained tmux Pane
+// reports pane_dead=1. Agent panes opt into per-pane remain-on-exit, so this is
+// positive same-socket evidence that the supervisor process ended while the
+// Window/session anchor still exists; ordinary absence is deliberately not
+// represented here.
+func (m Mirror) DeadPaneUIDs(ctx context.Context) (map[string]bool, error) {
+	out, err := m.run(ctx, "list-panes", "-a", "-F", tmuxFormat("#{"+tmuxopts.PaneUID+"}", "#{pane_dead}"))
+	if err != nil {
+		return nil, fmt.Errorf("metadata: list dead Panes: %w", err)
+	}
+	dead := map[string]bool{}
+	for _, fields := range parseRows(string(out), 2) {
+		if fields[0] != "" && fields[1] == "1" {
+			dead[fields[0]] = true
+		}
+	}
+	return dead, nil
 }
 
 // LivePaneCount reports whether a successful exact-host observation saw any

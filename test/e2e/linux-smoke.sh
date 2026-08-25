@@ -7312,7 +7312,7 @@ fi
 # tables makes this the whole live trigger inventory rather than the half that
 # happens to be server-global.
 exitrec_hooks="$(exitrec_tmux show-hooks -g; exitrec_tmux show-hooks -gw)"
-for exitrec_hook in pane-exited after-kill-pane window-unlinked after-new-window after-split-window; do
+for exitrec_hook in pane-exited pane-died after-kill-pane window-unlinked after-new-window after-split-window; do
   if ! printf '%s\n' "$exitrec_hooks" | grep -q "^$exitrec_hook.*internal tmux converge --socket-path"; then
     echo "hook $exitrec_hook does not reach the controller entrypoint" >&2
     printf '%s\n' "$exitrec_hooks" >&2
@@ -7426,6 +7426,8 @@ fi
 exitrec_doc agent "$exitrec_failed_agent"
 if [[ "$(exitrec_field phase)" != "Failed" ]]; then
   echo "one-of-many clean exit changed failed sibling Agent $exitrec_failed_agent" >&2
+  cat "$exitrec_root/doc.json" >&2 || true
+  cat "$exitrec_root/doc.err" >&2 || true
   exit 1
 fi
 if ! exitrec_pmx describe window "uid:$exitrec_window_uid" -o json >"$exitrec_root/window-after-clean.json"; then
