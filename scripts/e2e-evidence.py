@@ -145,8 +145,22 @@ def record_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def append_attempt_record(
+    seen: dict[tuple[str, int], list[dict[str, object]]],
+    record: dict[str, object],
+) -> None:
+    key = (str(record["scenario_id"]), int(record["attempt"]))
+    records = seen.setdefault(key, [])
+    records.append(record)
+    outcomes = [str(item["outcome"]) for item in records]
+    if outcomes[0] != "begin" or outcomes.count("begin") != 1:
+        raise ValueError("attempt must start with exactly one begin")
+    if len(outcomes) > 2 or (len(outcomes) == 2 and outcomes[-1] not in {"pass", "fail", "cancel"}):
+        raise ValueError("attempt must have exactly one terminal outcome")
+
+
 def validate_command(args: argparse.Namespace) -> int:
-    seen: dict[tuple[str, int], list[str]] = {}
+    seen: dict[tuple[str, int], list[dict[str, object]]] = {}
     failures = 0
     with Path(args.path).open(encoding="utf-8") as stream:
         for line_number, line in enumerate(stream, 1):
@@ -155,20 +169,14 @@ def validate_command(args: argparse.Namespace) -> int:
                 if not isinstance(record, dict):
                     raise ValueError("record is not an object")
                 validate(record)
-                key = (str(record["scenario_id"]), int(record["attempt"]))
-                outcomes = seen.setdefault(key, [])
-                outcomes.append(str(record["outcome"]))
-                if outcomes[0] != "begin" or outcomes.count("begin") != 1:
-                    raise ValueError("attempt must start with exactly one begin")
-                if len(outcomes) > 2 or (len(outcomes) == 2 and outcomes[-1] not in {"pass", "fail", "cancel"}):
-                    raise ValueError("attempt must have exactly one terminal outcome")
+                append_attempt_record(seen, record)
             except (ValueError, json.JSONDecodeError) as error:
                 print(f"{args.path}:{line_number}: {error}", file=sys.stderr)
                 failures += 1
     if failures:
         return 1
     if args.terminal:
-        unterminated = [key for key, outcomes in seen.items() if len(outcomes) != 2]
+        unterminated = [key for key, records in seen.items() if len(records) != 2]
         if unterminated:
             print(f"unterminated attempts: {unterminated}", file=sys.stderr)
             return 1
@@ -178,18 +186,39 @@ def validate_command(args: argparse.Namespace) -> int:
 def result_hash_command(args: argparse.Namespace) -> int:
     import hashlib
 
-    rows: list[str] = []
+    seen: dict[tuple[str, int], list[dict[str, object]]] = {}
     expected = set(args.expected.split(",")) if args.expected else set()
     for path in sorted(Path(args.directory).rglob("summary.jsonl")):
         with path.open(encoding="utf-8") as stream:
-            for line in stream:
+            for line_number, line in enumerate(stream, 1):
                 record = json.loads(line)
+                if not isinstance(record, dict):
+                    raise ValueError(f"{path}:{line_number}: record is not an object")
                 validate(record)
-                if record["outcome"] in {"pass", "fail", "cancel"}:
-                    rows.append("|".join(str(record[field]) for field in (
-                        "scenario_id", "outcome", "class", "phase", "owner", "binary_sha256"
-                    )))
-    ids = [row.split("|", 1)[0] for row in rows]
+                try:
+                    append_attempt_record(seen, record)
+                except ValueError as error:
+                    raise ValueError(f"{path}:{line_number}: {error}") from error
+
+    rows: list[str] = []
+    ids: list[str] = []
+    for key, records in seen.items():
+        if len(records) != 2:
+            raise ValueError(f"required result has unterminated attempt: {key}")
+        terminal = records[1]
+        if terminal["outcome"] != "pass":
+            raise ValueError(
+                f"required result terminal is not pass: scenario={key[0]} "
+                f"attempt={key[1]} outcome={terminal['outcome']}"
+            )
+        if terminal["class"] == "unattributed":
+            raise ValueError(
+                f"required result terminal is unattributed: scenario={key[0]} attempt={key[1]}"
+            )
+        ids.append(key[0])
+        rows.append("|".join(str(terminal[field]) for field in (
+            "scenario_id", "outcome", "class", "phase", "owner", "binary_sha256"
+        )))
     if len(ids) != len(set(ids)):
         raise ValueError("duplicate terminal scenario evidence")
     if expected and set(ids) != expected:

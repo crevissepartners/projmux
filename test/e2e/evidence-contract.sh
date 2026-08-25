@@ -47,6 +47,35 @@ if python3 "$root/scripts/e2e-evidence.py" validate --terminal "$tmp/unterminate
 fi
 grep -Fq 'unterminated attempts' "$tmp/terminal.err"
 
+assert_result_hash_rejects() {
+  local label="$1"
+  local directory="$2"
+  if python3 "$root/scripts/e2e-evidence.py" result-hash --expected L01 "$directory" >"$tmp/$label.out" 2>"$tmp/$label.err"; then
+    echo "result hash accepted $label evidence" >&2
+    exit 1
+  fi
+}
+
+pass_record=(python3 "$root/scripts/e2e-evidence.py" record --directory "$tmp/pass" --scenario-id L01 --suite linux-bootstrap --attempt 1 --phase bootstrap --owner harness)
+"${pass_record[@]}" --class environment --outcome begin --elapsed-ms 0 >/dev/null
+"${pass_record[@]}" --class environment --outcome pass --elapsed-ms 1 >/dev/null
+python3 "$root/scripts/e2e-evidence.py" result-hash --expected L01 "$tmp/pass" >"$tmp/pass.sha256"
+
+terminal_record=(python3 "$root/scripts/e2e-evidence.py" record --directory "$tmp/terminal-only" --scenario-id L01 --suite linux-bootstrap --attempt 1 --phase bootstrap --owner harness)
+"${terminal_record[@]}" --class environment --outcome pass --elapsed-ms 1 >/dev/null
+assert_result_hash_rejects terminal-only "$tmp/terminal-only"
+assert_result_hash_rejects terminal-fail "$tmp/golden"
+
+cancel_record=(python3 "$root/scripts/e2e-evidence.py" record --directory "$tmp/cancel" --scenario-id L01 --suite linux-bootstrap --attempt 1 --phase bootstrap --owner harness)
+"${cancel_record[@]}" --class environment --outcome begin --elapsed-ms 0 >/dev/null
+"${cancel_record[@]}" --class environment --outcome cancel --elapsed-ms 1 >/dev/null
+assert_result_hash_rejects terminal-cancel "$tmp/cancel"
+
+unattributed_record=(python3 "$root/scripts/e2e-evidence.py" record --directory "$tmp/unattributed" --scenario-id L01 --suite linux-bootstrap --attempt 1 --phase bootstrap --owner harness)
+"${unattributed_record[@]}" --class environment --outcome begin --elapsed-ms 0 >/dev/null
+"${unattributed_record[@]}" --class unattributed --outcome pass --elapsed-ms 1 >/dev/null
+assert_result_hash_rejects terminal-unattributed "$tmp/unattributed"
+
 set +e
 PROJMUX_E2E_INTENTIONAL_FAILURE=1 \
   PROJMUX_E2E_ARTIFACTS="$tmp/intentional" \
@@ -61,4 +90,4 @@ fi
 python3 "$root/scripts/e2e-evidence.py" validate --terminal "$tmp/intentional/summary.jsonl"
 grep -Fq 'id=L17 attempt=1 phase=exit-reconcile outcome=fail class=deterministic-regression owner=exit-reconciler' "$tmp/intentional.err"
 
-echo ">> evidence parser/golden/privacy/intentional-failure tests passed"
+echo ">> evidence parser/golden/privacy/pass-only aggregation/intentional-failure tests passed"

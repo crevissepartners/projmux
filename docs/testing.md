@@ -80,6 +80,14 @@ queried exact real-tmux socket below its owned smoke root. Lower-layer parity
 therefore owns the combinatorial table; E2E still owns transport, origin, and
 socket/root containment.
 
+The required result hash accepts exactly one `begin` followed by one typed
+`pass` for every expected stable ID. A terminal `fail`, `cancel`, or
+`unattributed` class, a terminal without its begin row, and an interrupted
+unterminated attempt all keep the aggregate red. `cancel` remains a schema
+value for an explicitly observed cancellation; the shell harness does not
+invent cancellation evidence from a signal whose semantic cause it cannot
+attribute.
+
 ## Host-Only Checks
 
 The Docker suites do not replace checks that depend on a real host terminal,
