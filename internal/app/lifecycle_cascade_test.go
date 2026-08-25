@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
@@ -317,6 +318,46 @@ func TestWindowUnlinkedWithoutExactPendingEvidenceWritesNothing(t *testing.T) {
 	}
 	if result.transactions != 0 || store.snapshot() != before {
 		t.Fatalf("unpaired window-unlinked result=%+v changed Registry", result)
+	}
+}
+
+func TestWindowUnlinkedWithLegacyExactTeardownEvidenceHasZeroLifecycleAuthority(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	activateExactPane(t, store, "pan-alpha-review", "", "gen-legacy-unlink", "%9")
+	event := exactPaneExitDirty()
+	event.teardownKind = coremetadata.TeardownEventWindowUnlinked
+	event.runtimePaneID = ""
+	event.runtimeSessionID = "$1"
+	event.runtimeWindowID = "@4"
+	for i := range store.registry.Panes {
+		if store.registry.Panes[i].Metadata.UID != "pan-alpha-review" {
+			continue
+		}
+		store.registry.Panes[i].Status.Teardown = &coremetadata.PaneTeardownEvidence{
+			SocketIdentity: event.target.label(), RuntimeSessionID: "$1", RuntimePaneID: "%9", RuntimeWindowID: "@4",
+			WindowUID: "win-alpha-review", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
+			Generation: "gen-legacy-unlink", Classification: coremetadata.TerminationNormal,
+			ObservedAt: time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC),
+		}
+	}
+	if err := store.registry.Validate(); err != nil {
+		t.Fatalf("legacy teardown fixture: %v", err)
+	}
+	before := store.snapshot()
+	allocationsBefore := len(store.newUIDs)
+	inventory := &exactPaneExitInventory{
+		uids: map[string]bool{}, windows: map[string]bool{}, windowSessions: map[string]int{},
+	}
+	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.snapshot() != before || len(store.newUIDs) != allocationsBefore || result.transactions != 0 ||
+		len(result.cascaded) != 0 || len(result.rootCascaded) != 0 || len(result.pending) != 0 ||
+		inventory.prepares != 0 || inventory.cleanups != 0 || inventory.rollbacks != 0 || inventory.calls != 0 {
+		t.Fatalf("legacy window-unlinked gained lifecycle authority: result=%+v allocations=%d->%d inventory=%+v",
+			result, allocationsBefore, len(store.newUIDs), inventory)
 	}
 }
 
