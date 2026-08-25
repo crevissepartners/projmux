@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -37,9 +38,23 @@ func (s orderedFreshStarter) PlanProjectFreshStart(string) (projectFreshStartPla
 	return projectFreshStartPlan{}, nil
 }
 
-func (s orderedFreshStarter) PruneProjectFreshStart(context.Context, string, projectFreshStartPlan) error {
+func (s orderedFreshStarter) PruneProjectFreshStart(context.Context, string, projectFreshStartPlan) (projectFreshStartCommit, error) {
 	*s.calls = append(*s.calls, "prune")
-	return nil
+	return projectFreshStartCommit{}, nil
+}
+
+type failingContinueStarter struct{ err error }
+
+func (s failingContinueStarter) PlanProjectFreshStart(string) (projectFreshStartPlan, error) {
+	return projectFreshStartPlan{}, nil
+}
+
+func (s failingContinueStarter) PruneProjectFreshStart(context.Context, string, projectFreshStartPlan) (projectFreshStartCommit, error) {
+	return projectFreshStartCommit{}, nil
+}
+
+func (s failingContinueStarter) ContinueProject(context.Context, string, string) (openedProjectBootstrap, error) {
+	return openedProjectBootstrap{}, s.err
 }
 
 type orderedFreshTopology struct{ calls *[]string }
@@ -116,6 +131,23 @@ func TestProjectStartupBackgroundActionsUseExactClientHandoff(t *testing.T) {
 	}
 }
 
+func TestAuthorizeAndContinueWrapsRawPreparationFailure(t *testing.T) {
+	t.Parallel()
+	cmd := &switchCommand{
+		sessions:          &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true},
+		projectFreshStart: failingContinueStarter{err: errors.New("injected preparation failure")},
+	}
+	err := cmd.authorizeAndContinueProjectOpen(context.Background(), "/srv/missing", "missing", projectStartupCandidate{Kind: projectStartupKindTopology})
+	if err == nil {
+		t.Fatal("raw Continue preparation failure = nil")
+	}
+	for _, want := range []string{"action=continue", "stage=preparation", "old_uid=-", "new_uid=-", "injected preparation failure"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("preparation failure=%q, want %q", err, want)
+		}
+	}
+}
+
 // freshStartFixtureStore builds the shared resource fixture with one conversation
 // pointer recorded, so the confirmation's status.sessionRef count is a real
 // number rather than a constant zero.
@@ -147,14 +179,14 @@ func TestProjectStartupRowTable(t *testing.T) {
 			name:            "continue project",
 			candidate:       topologyProjectStartupCandidate(),
 			wantName:        "Continue project",
-			wantDescription: "open every saved Window, shell Pane, and Agent",
+			wantDescription: "keep this Project identity; restore saved Windows, shell Panes, and Agents, or create a new Window and shell when none remain",
 			wantValue:       "continue",
 		},
 		{
 			name:            "open fresh",
 			candidate:       newProjectStartupCandidate(),
 			wantName:        "Open fresh",
-			wantDescription: "reuse the canonical Project Window with one shell",
+			wantDescription: "replace this Project identity with a new Project, Window, and shell",
 			wantValue:       "fresh",
 		},
 	}
@@ -204,8 +236,8 @@ func TestProjectStartupKoreanLocaleRendersExactTwoRowsAndFreshConfirmation(t *te
 		}
 	}
 
-	plan := projectFreshStartPlan{}
-	if got := plan.ResultMessageLocale(locale, "alpha"); !strings.Contains(got, "alpha") || !strings.Contains(got, "canonical Project Window") {
+	plan := projectFreshStartPlan{ProjectUID: "proj-old", NewProjectUID: "proj-new"}
+	if got := plan.ResultMessageLocale(locale, "alpha"); !strings.Contains(got, "alpha") || !strings.Contains(got, "proj-old") || !strings.Contains(got, "proj-new") || !strings.Contains(got, "stage=materialized") {
 		t.Fatalf("Korean fresh result = %q", got)
 	}
 }
@@ -316,10 +348,57 @@ func TestContinueDeletedProjectUnavailableSnapshotIsZeroWriteAndNeverFreshFallba
 			if err == nil || !strings.Contains(err.Error(), "choose Open fresh") {
 				t.Fatalf("Continue error = %v", err)
 			}
+			for _, want := range []string{"action=continue", "stage=snapshot-preflight", "old_uid=-", "new_uid=-"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("Continue unavailable error=%q, want %q", err, want)
+				}
+			}
 			if store.transactions != 0 || store.writes != 0 || store.snapshot() != before {
 				t.Fatalf("unavailable Continue changed Registry: transactions=%d writes=%d", store.transactions, store.writes)
 			}
 		})
+	}
+}
+
+func TestContinueDeletedProjectCommitFailureReportsAllocatedUIDAndRetainsPreimage(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	root := "/srv/continued"
+	store.dirs[root] = true
+	before := store.snapshot()
+	resources := store.store()
+	resources.updateConvergent = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+		working := store.registry.Clone()
+		if err := fn(&working); err != nil {
+			return coremetadata.Registry{}, false, err
+		}
+		return coremetadata.Registry{}, false, errors.New("injected Continue commit failure")
+	}
+	starter := &registryProjectFreshStarter{
+		resources: resources, shell: "/bin/zsh",
+		loadSnapshot: func(string) (sessionstate.Snapshot, error) {
+			return sessionstate.Snapshot{
+				Version: sessionstate.Version, Session: "continued", DefaultCWD: root,
+				SavedAt: time.Date(2026, time.August, 23, 10, 0, 0, 0, time.UTC),
+				Windows: []sessionstate.Window{{Index: 0, Name: "main", Panes: []sessionstate.Pane{{Index: 0, CWD: root, Recipe: sessionstate.ShellRecipe()}}}},
+			}, nil
+		},
+	}
+	_, err := starter.ContinueProject(context.Background(), root, "continued")
+	if err == nil || !strings.Contains(err.Error(), "injected Continue commit failure") {
+		t.Fatalf("Continue commit failure=%v", err)
+	}
+	if len(store.newUIDs) == 0 {
+		t.Fatal("Continue commit failure did not expose an allocated Project UID")
+	}
+	newUID := store.newUIDs[0]
+	for _, want := range []string{"action=continue", "stage=registry-commit", "old_uid=-", "new_uid=" + newUID} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Continue commit failure=%q, want %q", err, want)
+		}
+	}
+	if store.writes != 0 || store.snapshot() != before {
+		t.Fatalf("Continue commit failure changed Registry preimage: writes=%d", store.writes)
 	}
 }
 
@@ -384,78 +463,40 @@ func TestProjectStartupCandidateFromValueParity(t *testing.T) {
 	}
 }
 
-// TestProjectFreshStartPruneScope pins the confirmed prune target: that Project's
-// every stored Window, Pane, and Agent, and nothing else. The Registry state
-// before and after each prune is asserted as a whole, so a cascade that reached
-// one record too far -- another Project, a Project record, a name reservation --
-// fails here rather than in production.
+// TestProjectFreshStartPruneScope pins atomic same-root identity replacement:
+// the old graph disappears, exactly one new claimant with a canonical shell is
+// committed, and unrelated graphs survive. Repeating Fresh replaces identity
+// again; a canonical graph is not permission to reuse its UIDs.
 func TestProjectFreshStartPruneScope(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name        string
-		root        string
-		wantWindows int
-		wantPanes   int
-		wantAgents  int
-		wantRefs    int
-		wantCounts  string
-		// wantRemoved is every uid the prune must delete.
-		wantRemoved []string
-		// wantKept is every uid that must survive it.
-		wantKept []string
+		name                               string
+		root                               string
+		wantWindows, wantPanes, wantAgents int
+		wantRefs                           int
 	}{
-		{
-			name:        "project with windows panes and an agent",
-			root:        "/srv/alpha",
-			wantWindows: 1, wantPanes: 3, wantAgents: 1, wantRefs: 1,
-			wantCounts:  "Window 1 / Pane 3 / Agent 1",
-			wantRemoved: []string{"win-alpha-review", "pan-alpha-log", "pan-alpha-codex", "pan-alpha-review", "agt-alpha-codex"},
-			wantKept:    []string{"prj-alpha", "win-alpha-main", "pan-alpha-zsh", "prj-beta", "prj-gone", "win-beta-main", "pan-beta-zsh", "agt-beta-codex"},
-		},
-		{
-			name:        "project with one window and an offline agent",
-			root:        "/srv/beta",
-			wantWindows: 0, wantPanes: 0, wantAgents: 1, wantRefs: 0,
-			wantCounts:  "Window 0 / Pane 0 / Agent 1",
-			wantRemoved: []string{"agt-beta-codex"},
-			wantKept:    []string{"prj-alpha", "prj-beta", "prj-gone", "win-beta-main", "pan-beta-zsh", "win-alpha-main", "win-alpha-review", "pan-alpha-zsh", "pan-alpha-log", "pan-alpha-codex", "pan-alpha-review", "agt-alpha-codex"},
-		},
-		{
-			name:        "project with the minimum canonical topology",
-			root:        "/srv/gone",
-			wantWindows: 0, wantPanes: 0, wantAgents: 0, wantRefs: 0,
-			wantCounts:  "Window 0 / Pane 0 / Agent 0",
-			wantRemoved: nil,
-			wantKept:    []string{"prj-alpha", "prj-beta", "prj-gone", "win-alpha-main", "win-alpha-review", "win-beta-main", "agt-alpha-codex", "agt-beta-codex"},
-		},
-		{
-			name:        "root no Project claims",
-			root:        "/srv/unregistered",
-			wantWindows: 0, wantPanes: 0, wantAgents: 0, wantRefs: 0,
-			wantCounts:  "Window 0 / Pane 0 / Agent 0",
-			wantRemoved: nil,
-			wantKept:    []string{"prj-alpha", "prj-beta", "prj-gone", "win-alpha-main", "win-alpha-review", "win-beta-main", "agt-alpha-codex", "agt-beta-codex"},
-		},
+		{name: "retained graph", root: "/srv/alpha", wantWindows: 2, wantPanes: 4, wantAgents: 1, wantRefs: 1},
+		{name: "retained graph with offline agent", root: "/srv/beta", wantWindows: 1, wantPanes: 1, wantAgents: 1},
+		{name: "zero-window Project", root: "/srv/gone"},
+		{name: "deleted Project", root: "/srv/unregistered"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			store := freshStartFixtureStore(t)
 			store.dirs[tc.root] = true
-			starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
-			var canonicalWindowUID, canonicalShellUID string
-			if beforeProject, ok := store.registry.ProjectByRoot(tc.root); ok {
-				canonicalWindowUID = beforeProject.Spec.PrimaryWindowRef
-				if beforeWindow, ok := store.registry.Window(canonicalWindowUID); ok {
-					canonicalShellUID = beforeWindow.Spec.DefaultShellPaneRef
-					if canonicalShellUID == "" {
-						if anchor, ok := store.registry.WindowAnchor(beforeWindow.Metadata.UID); ok && anchor.Spec.Role == coremetadata.PaneRoleShell {
-							canonicalShellUID = anchor.Metadata.UID
-						}
+			if tc.root == "/srv/gone" {
+				mutator := store.mutator()
+				for _, window := range store.registry.WindowsOf("prj-gone") {
+					if err := mutator.DeleteWindow(&store.registry, window.Metadata.UID); err != nil {
+						t.Fatal(err)
 					}
 				}
 			}
+			starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}}
+			before := store.registry.Clone()
+			oldProject, existed := before.ProjectByRoot(tc.root)
 
 			plan, err := starter.PlanProjectFreshStart(tc.root)
 			if err != nil {
@@ -468,52 +509,71 @@ func TestProjectFreshStartPruneScope(t *testing.T) {
 			if plan.AgentSessionRefs != tc.wantRefs {
 				t.Fatalf("plan.AgentSessionRefs = %d, want %d", plan.AgentSessionRefs, tc.wantRefs)
 			}
-			if got := plan.Counts(); got != tc.wantCounts {
-				t.Fatalf("plan.Counts() = %q, want %q", got, tc.wantCounts)
+			if got, want := plan.Counts(), fmt.Sprintf("Window %d / Pane %d / Agent %d", tc.wantWindows, tc.wantPanes, tc.wantAgents); got != want {
+				t.Fatalf("plan.Counts() = %q, want %q", got, want)
 			}
 			if store.writes != 0 {
 				t.Fatalf("planning wrote the Registry %d time(s)", store.writes)
 			}
 
 			plan.SessionName = "fresh"
-			if err := starter.PruneProjectFreshStart(context.Background(), tc.root, plan); err != nil {
+			if _, err := starter.PruneProjectFreshStart(context.Background(), tc.root, plan); err != nil {
 				t.Fatal(err)
 			}
 			fresh, ok := store.registry.ProjectByRoot(tc.root)
-			if !ok || (plan.ProjectUID != "" && fresh.Metadata.UID != plan.ProjectUID) {
-				t.Fatalf("Open fresh Project = %+v, want preserved uid=%q", fresh, plan.ProjectUID)
+			if !ok || (existed && fresh.Metadata.UID == oldProject.Metadata.UID) {
+				t.Fatalf("Open fresh Project = %+v, old uid=%q", fresh, oldProject.Metadata.UID)
+			}
+			claimants := 0
+			for _, project := range store.registry.Projects {
+				if project.Spec.Root == tc.root {
+					claimants++
+				}
+			}
+			if claimants != 1 {
+				t.Fatalf("same-root claimants = %d, want 1", claimants)
 			}
 			windows := store.registry.WindowsOf(fresh.Metadata.UID)
 			if len(windows) != 1 || len(store.registry.PanesOf(windows[0].Metadata.UID)) != 1 || len(store.registry.AgentsOf(windows[0].Metadata.UID)) != 0 {
 				t.Fatalf("Open fresh topology = windows=%+v panes=%+v agents=%+v", windows,
 					store.registry.PanesOf(windows[0].Metadata.UID), store.registry.AgentsOf(windows[0].Metadata.UID))
 			}
-			if plan.ProjectUID != "" && (windows[0].Metadata.UID != canonicalWindowUID ||
-				store.registry.PanesOf(windows[0].Metadata.UID)[0].Metadata.UID != canonicalShellUID) {
-				t.Fatalf("Open fresh canonical chain changed: Window %q/%q shell %q/%q",
-					windows[0].Metadata.UID, canonicalWindowUID,
-					store.registry.PanesOf(windows[0].Metadata.UID)[0].Metadata.UID, canonicalShellUID)
+			if existed {
+				for _, uid := range []string{oldProject.Metadata.UID, oldProject.Spec.PrimaryWindowRef} {
+					if uid != "" && freshStartRegistryHasUID(store.registry, uid) {
+						t.Fatalf("old graph uid %s survived Fresh", uid)
+					}
+				}
+			}
+			for _, siblingRoot := range []string{"/srv/alpha", "/srv/beta", "/srv/gone"} {
+				if siblingRoot == tc.root {
+					continue
+				}
+				beforeSibling, beforeOK := before.ProjectByRoot(siblingRoot)
+				afterSibling, afterOK := store.registry.ProjectByRoot(siblingRoot)
+				if beforeOK != afterOK || (beforeOK && beforeSibling.Metadata.UID != afterSibling.Metadata.UID) {
+					t.Fatalf("unrelated Project %q changed", siblingRoot)
+				}
 			}
 			repeat, err := starter.PlanProjectFreshStart(tc.root)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !repeat.Empty() {
-				t.Fatalf("repeat plan=%+v", repeat)
-			}
-			afterFirst, writesAfterFirst := store.snapshot(), store.writes
+			firstUID := fresh.Metadata.UID
+			writesAfterFirst := store.writes
 			repeat.SessionName = "fresh"
-			if err := starter.PruneProjectFreshStart(context.Background(), tc.root, repeat); err != nil {
+			if _, err := starter.PruneProjectFreshStart(context.Background(), tc.root, repeat); err != nil {
 				t.Fatal(err)
 			}
-			if store.snapshot() != afterFirst || store.writes != writesAfterFirst {
-				t.Fatalf("repeat Open fresh was not Registry zero-diff: writes=%d->%d", writesAfterFirst, store.writes)
+			repeated, ok := store.registry.ProjectByRoot(tc.root)
+			if !ok || repeated.Metadata.UID == firstUID || store.writes != writesAfterFirst+1 {
+				t.Fatalf("repeat Fresh Project=%+v writes=%d->%d", repeated, writesAfterFirst, store.writes)
 			}
 		})
 	}
 }
 
-func TestProjectFreshStartAgentAnchorCreatesExactMinimumShellAndRepeatsNoop(t *testing.T) {
+func TestProjectFreshStartAgentAnchorCreatesNewMinimumIdentityOnEveryFresh(t *testing.T) {
 	t.Parallel()
 
 	store := freshStartFixtureStore(t)
@@ -558,16 +618,19 @@ func TestProjectFreshStartAgentAnchorCreatesExactMinimumShellAndRepeatsNoop(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.ProjectUID != "prj-beta" || plan.Windows != 0 || plan.Panes != 1 || plan.Agents != 1 {
+	if plan.ProjectUID != "prj-beta" || plan.Windows != 1 || plan.Panes != 1 || plan.Agents != 1 {
 		t.Fatalf("Agent-anchor Fresh plan = %+v", plan)
 	}
-	if err := starter.PruneProjectFreshStart(context.Background(), "/srv/beta", plan); err != nil {
+	if _, err := starter.PruneProjectFreshStart(context.Background(), "/srv/beta", plan); err != nil {
 		t.Fatal(err)
 	}
-	project, _ := store.registry.Project("prj-beta")
+	project, ok := store.registry.ProjectByRoot("/srv/beta")
+	if !ok || project.Metadata.UID == "prj-beta" {
+		t.Fatalf("Fresh Project = %+v, want a new identity", project)
+	}
 	windows := store.registry.WindowsOf(project.Metadata.UID)
-	if len(windows) != 1 || windows[0].Metadata.UID != "win-beta-main" {
-		t.Fatalf("canonical Window changed: %+v", windows)
+	if len(windows) != 1 || windows[0].Metadata.UID == "win-beta-main" {
+		t.Fatalf("Fresh Window = %+v, want a new canonical identity", windows)
 	}
 	panes := store.registry.PanesOf(windows[0].Metadata.UID)
 	if len(panes) != 1 || panes[0].Spec.Role != coremetadata.PaneRoleShell ||
@@ -577,20 +640,18 @@ func TestProjectFreshStartAgentAnchorCreatesExactMinimumShellAndRepeatsNoop(t *t
 	if len(store.registry.AgentsOf(windows[0].Metadata.UID)) != 0 {
 		t.Fatal("Open fresh retained Agent descendants")
 	}
-	afterFirst := store.registry.Clone()
+	firstUID := project.Metadata.UID
 	writesAfterFirst := store.writes
 	repeat, err := starter.PlanProjectFreshStart("/srv/beta")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !repeat.Empty() {
-		t.Fatalf("repeat plan = %+v", repeat)
-	}
-	if err := starter.PruneProjectFreshStart(context.Background(), "/srv/beta", repeat); err != nil {
+	if _, err := starter.PruneProjectFreshStart(context.Background(), "/srv/beta", repeat); err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(afterFirst, store.registry) || store.writes != writesAfterFirst {
-		t.Fatalf("repeat changed Registry: writes %d -> %d", writesAfterFirst, store.writes)
+	repeated, ok := store.registry.ProjectByRoot("/srv/beta")
+	if !ok || repeated.Metadata.UID == firstUID || store.writes != writesAfterFirst+1 {
+		t.Fatalf("repeat Fresh Project=%+v writes %d -> %d", repeated, writesAfterFirst, store.writes)
 	}
 }
 
@@ -621,10 +682,10 @@ func TestProjectFreshStartNeverReachesAControlSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PlanProjectFreshStart() error = %v", err)
 	}
-	if plan.Windows != 1 || plan.Panes != 3 || plan.Agents != 1 {
-		t.Fatalf("plan = %+v, want only non-canonical Project descendants", plan)
+	if plan.Windows != 2 || plan.Panes != 4 || plan.Agents != 1 {
+		t.Fatalf("plan = %+v, want the complete old Project graph", plan)
 	}
-	if err := starter.PruneProjectFreshStart(context.Background(), "/srv/alpha", plan); err != nil {
+	if _, err := starter.PruneProjectFreshStart(context.Background(), "/srv/alpha", plan); err != nil {
 		t.Fatal(err)
 	}
 	for _, uid := range []string{"ctl-home", "win-ctl-home", "pan-ctl-home"} {
@@ -700,7 +761,7 @@ func TestProjectFreshStartHasNoConfirmationSurface(t *testing.T) {
 	if strings.Contains(label, settingsColorRemove) || strings.Contains(label, "confirm") || strings.Contains(label, "delete") {
 		t.Fatalf("Fresh row is destructive or confirmatory: %q", label)
 	}
-	if got := (projectFreshStartPlan{}).ResultMessage("alpha"); !strings.Contains(got, "canonical Project Window") {
+	if got := (projectFreshStartPlan{ProjectUID: "proj-old", NewProjectUID: "proj-new"}).ResultMessage("alpha"); !strings.Contains(got, "old Project UID proj-old") || !strings.Contains(got, "new Project UID proj-new") || !strings.Contains(got, "stage=materialized") {
 		t.Fatalf("Fresh result = %q", got)
 	}
 }
@@ -742,7 +803,10 @@ func freshStartSwitchFixture(t *testing.T, steps []pickerStep) (
 		nativePicker:      native,
 		projectTopology:   &fakeProjectTopologyMaterializer{},
 		projectFreshStart: &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}},
-		startupNotices:    reporter,
+		projectRegistrar: &defaultSwitchProjectRegistrar{
+			store: store.store(), shell: "/bin/zsh", sessionNameFor: func(string) string { return "alpha" },
+		},
+		startupNotices: reporter,
 	}
 	return cmd, store, executor, tmux, reporter, stateStore
 }
@@ -755,6 +819,7 @@ func TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity
 	})
 	topology := cmd.projectTopology.(*fakeProjectTopologyMaterializer)
 	topology.materialized = true
+	oldProject, _ := store.registry.ProjectByRoot("/srv/alpha")
 	snapshotPath, err := stateStore.Path("alpha")
 	if err != nil {
 		t.Fatal(err)
@@ -770,6 +835,19 @@ func TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity
 	if store.writes != 1 {
 		t.Fatalf("Open fresh Registry writes=%d, want one scoped commit", store.writes)
 	}
+	newProject, ok := store.registry.ProjectByRoot("/srv/alpha")
+	if !ok || newProject.Metadata.UID == oldProject.Metadata.UID {
+		t.Fatalf("Open fresh Project = %+v, old uid=%s", newProject, oldProject.Metadata.UID)
+	}
+	claimants := 0
+	for _, project := range store.registry.Projects {
+		if project.Spec.Root == "/srv/alpha" {
+			claimants++
+		}
+	}
+	if claimants != 1 {
+		t.Fatalf("Open fresh same-root claimants=%d", claimants)
+	}
 	if _, err := stateStore.Summary("alpha"); err != nil {
 		t.Fatalf("Open fresh removed the source snapshot: %v", err)
 	}
@@ -782,6 +860,11 @@ func TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity
 	}
 	if len(topology.calls) != 1 || !equalStrings(executor.calls, []string{"authorize:/srv/alpha", "open:alpha"}) || len(tmux.calls) != 0 || len(reporter.messages) != 1 {
 		t.Fatalf("Open fresh flow: topology=%v executor=%v tmux=%v notices=%v", topology.calls, executor.calls, tmux.calls, reporter.messages)
+	}
+	if !strings.Contains(reporter.messages[0], "old Project UID "+oldProject.Metadata.UID) ||
+		!strings.Contains(reporter.messages[0], "new Project UID "+newProject.Metadata.UID) ||
+		!strings.Contains(reporter.messages[0], "stage=materialized") {
+		t.Fatalf("Open fresh notice=%q", reporter.messages)
 	}
 }
 
@@ -892,6 +975,7 @@ func TestSwitchProjectStartupNewRefusesToStartWhileTopologyRemains(t *testing.T)
 	cmd.projectFreshStart = &stubProjectFreshStarter{
 		plan: projectFreshStartPlan{ProjectUID: "prj-alpha", Windows: 1, Panes: 2, Agents: 1},
 	}
+	cmd.projectRegistrar = nil
 
 	err := cmd.openProjectTarget(context.Background(), "/srv/alpha", "alpha")
 	if err == nil || !strings.Contains(err.Error(), "still declares Window 1 / Pane 2 / Agent 1 after the prune") {
@@ -912,8 +996,8 @@ func (s *stubProjectFreshStarter) PlanProjectFreshStart(string) (projectFreshSta
 	return s.plan, nil
 }
 
-func (s *stubProjectFreshStarter) PruneProjectFreshStart(context.Context, string, projectFreshStartPlan) error {
-	return nil
+func (s *stubProjectFreshStarter) PruneProjectFreshStart(context.Context, string, projectFreshStartPlan) (projectFreshStartCommit, error) {
+	return projectFreshStartCommit{}, nil
 }
 
 // TestProjectFreshStartRefusesADriftedPlan pins the reuse of the canonical
@@ -940,63 +1024,178 @@ func TestProjectFreshStartRefusesADriftedPlan(t *testing.T) {
 	writesBefore := store.writes
 
 	plan.SessionName = "alpha"
-	err = starter.PruneProjectFreshStart(context.Background(), "/srv/alpha", plan)
+	_, err = starter.PruneProjectFreshStart(context.Background(), "/srv/alpha", plan)
+	if err == nil || !strings.Contains(err.Error(), "graph drifted after preflight") {
+		t.Fatalf("drifted Fresh error=%v", err)
+	}
+	if store.writes != writesBefore || store.snapshot() != before {
+		t.Fatalf("drift refusal changed Registry: writes=%d before=%d", store.writes, writesBefore)
+	}
+}
+
+func TestProjectFreshStartCommitFailureRetainsExactOldGraphPreimage(t *testing.T) {
+	t.Parallel()
+	store := freshStartFixtureStore(t)
+	before := store.snapshot()
+	resources := store.store()
+	resources.updateConvergent = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+		working := store.registry.Clone()
+		if err := fn(&working); err != nil {
+			return coremetadata.Registry{}, false, err
+		}
+		return coremetadata.Registry{}, false, errors.New("injected atomic commit failure")
+	}
+	starter := &registryProjectFreshStarter{resources: resources, runner: &projectionMissingSessionRunner{}, shell: "/bin/zsh"}
+	plan, err := starter.PlanProjectFreshStart("/srv/alpha")
 	if err != nil {
-		t.Fatalf("one-step Fresh rejected current root state: %v", err)
+		t.Fatal(err)
 	}
-	if store.writes != writesBefore+1 || store.snapshot() == before {
-		t.Fatalf("Fresh replacement writes=%d before=%d", store.writes, writesBefore)
+	plan.SessionName = "alpha"
+	commit, err := starter.PruneProjectFreshStart(context.Background(), "/srv/alpha", plan)
+	if err == nil || !strings.Contains(err.Error(), "injected atomic commit failure") {
+		t.Fatalf("Fresh commit failure=%v", err)
 	}
-	if fresh, ok := store.registry.ProjectByRoot("/srv/alpha"); !ok || fresh.Metadata.UID != plan.ProjectUID {
-		t.Fatalf("Fresh did not preserve the canonical Project: %+v", fresh)
+	if commit.NewProjectUID == "" || commit.NewProjectUID == plan.ProjectUID {
+		t.Fatalf("Fresh commit failure allocated identity = %+v, old_uid=%s", commit, plan.ProjectUID)
+	}
+	for _, want := range []string{"action=fresh", "stage=registry-commit", "old_uid=" + plan.ProjectUID, "new_uid=" + commit.NewProjectUID} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("Fresh commit failure=%q, want %q", err, want)
+		}
+	}
+	if store.writes != 0 || store.snapshot() != before {
+		t.Fatalf("Fresh commit failure changed old graph: writes=%d", store.writes)
+	}
+}
+
+func TestStartProjectFreshCommitFailureReportsAllocatedNewUID(t *testing.T) {
+	t.Parallel()
+	store := freshStartFixtureStore(t)
+	before := store.snapshot()
+	resources := store.store()
+	resources.updateConvergent = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
+		working := store.registry.Clone()
+		if err := fn(&working); err != nil {
+			return coremetadata.Registry{}, false, err
+		}
+		return coremetadata.Registry{}, false, errors.New("injected production Fresh commit failure")
+	}
+	cmd := &switchCommand{projectFreshStart: &registryProjectFreshStarter{
+		resources: resources, runner: &projectionMissingSessionRunner{}, shell: "/bin/zsh",
+	}}
+	err := cmd.startProjectFresh(context.Background(), "alpha", "/srv/alpha", openedProjectBootstrap{})
+	if err == nil || !strings.Contains(err.Error(), "injected production Fresh commit failure") {
+		t.Fatalf("production Fresh commit failure=%v", err)
+	}
+	if len(store.newUIDs) == 0 {
+		t.Fatal("production Fresh failure did not allocate a replacement UID")
+	}
+	newUID := store.newUIDs[0]
+	for _, want := range []string{"action=fresh", "stage=registry-commit", "old_uid=prj-alpha", "new_uid=" + newUID} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("production Fresh commit failure=%q, want %q", err, want)
+		}
+	}
+	if store.writes != 0 || store.snapshot() != before {
+		t.Fatalf("production Fresh commit failure changed old preimage: writes=%d", store.writes)
+	}
+}
+
+func TestStartProjectFreshPostCommitReadbackFailureReportsAllocatedNewUID(t *testing.T) {
+	t.Parallel()
+	store := freshStartFixtureStore(t)
+	cmd := &switchCommand{
+		projectFreshStart: &registryProjectFreshStarter{
+			resources: store.store(), runner: &projectionMissingSessionRunner{}, shell: "/bin/zsh",
+		},
+		projectRegistrar: &fakeProjectRegistrar{err: errors.New("injected replacement readback failure")},
+	}
+	err := cmd.startProjectFresh(context.Background(), "alpha", "/srv/alpha", openedProjectBootstrap{})
+	if err == nil || !strings.Contains(err.Error(), "injected replacement readback failure") {
+		t.Fatalf("production Fresh replacement readback failure=%v", err)
+	}
+	replacement, ok := store.registry.ProjectByRoot("/srv/alpha")
+	if !ok {
+		t.Fatal("successful Fresh commit has no replacement Project claimant")
+	}
+	if replacement.Metadata.UID == "" || replacement.Metadata.UID == "prj-alpha" {
+		t.Fatalf("successful Fresh commit replacement UID=%q, want allocated new UID", replacement.Metadata.UID)
+	}
+	for _, want := range []string{
+		"action=fresh",
+		"stage=replacement-readback",
+		"old_uid=prj-alpha",
+		"new_uid=" + replacement.Metadata.UID,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("production Fresh replacement readback failure=%q, want %q", err, want)
+		}
+	}
+	if store.writes != 1 {
+		t.Fatalf("successful Fresh commit writes=%d, want 1 before post-commit readback failure", store.writes)
+	}
+	if _, ok := store.registry.Project("prj-alpha"); ok {
+		t.Fatal("successful Fresh commit retained the old Project after post-commit readback failure")
 	}
 }
 
 // TestProjectFreshStartKeepsEverySnapshot is the snapshot-storage boundary.
 func TestProjectFreshStartKeepsEverySnapshot(t *testing.T) {
 	home := t.TempDir()
-	project := filepath.Join(home, "workspace")
-	if err := os.MkdirAll(filepath.Join(project, ".projmux", "layouts"), 0o755); err != nil {
-		t.Fatal(err)
+	root := filepath.Join(home, "workspace")
+	assets := map[string][]byte{
+		filepath.Join(root, ".git", "HEAD"):                         []byte("ref: refs/heads/main\n"),
+		filepath.Join(root, ".git", "worktrees", "topic", "gitdir"): []byte("/tmp/topic/.git\n"),
+		filepath.Join(root, ".projmux", "layouts", "team.toml"):     []byte("schemaVersion = 1\n"),
 	}
-	named := filepath.Join(project, ".projmux", "layouts", "team.toml")
-	if err := os.WriteFile(named, []byte("schemaVersion = 1\n"), 0o644); err != nil {
-		t.Fatal(err)
+	for path, contents := range assets {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, contents, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	stateStore := sessionstate.NewStore(filepath.Join(home, "state", "projmux", "sessions"))
 	saveSwitchProjectStartupSnapshot(t, stateStore, "workspace")
+	snapshotPath, err := stateStore.Path("workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotBefore, err := os.ReadFile(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
-	cmd := &switchCommand{
-		sessions: executor,
-		identity: stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:  func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return filepath.Join(home, "state")
-			case "XDG_CONFIG_HOME":
-				return filepath.Join(home, "config")
-			default:
-				return ""
-			}
-		},
-		projectTopology: &fakeProjectTopologyMaterializer{},
+	store := freshStartFixtureStore(t)
+	project, _ := store.registry.Project("prj-alpha")
+	project.Spec.Root = root
+	store.dirs[root] = true
+	starter := &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}, shell: "/bin/zsh"}
+	plan, err := starter.PlanProjectFreshStart(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	wireFakeProjectSessionPlan(cmd)
-
-	opened := openedProjectBootstrap{project: coremetadata.Project{Metadata: coremetadata.ObjectMeta{UID: "proj-workspace", Name: "workspace"}, Spec: coremetadata.ProjectSpec{Root: project}}}
-	if err := cmd.startProjectFresh(context.Background(), "workspace", project, opened); err != nil {
-		t.Fatalf("startProjectFresh() error = %v", err)
+	plan.SessionName = "workspace"
+	if _, err := starter.PruneProjectFreshStart(context.Background(), root, plan); err != nil {
+		t.Fatalf("Fresh replacement: %v", err)
 	}
-	if _, err := os.Stat(named); err != nil {
-		t.Fatalf("fresh start deleted the manual snapshot: %v", err)
+	fresh, ok := store.registry.ProjectByRoot(root)
+	if !ok || fresh.Metadata.UID == "prj-alpha" {
+		t.Fatalf("Fresh Project identity = %+v", fresh)
 	}
-	if _, err := stateStore.Summary("workspace"); err != nil {
-		t.Fatalf("fresh start changed the latest snapshot: %v", err)
+	for path, want := range assets {
+		got, readErr := os.ReadFile(path)
+		if readErr != nil || !bytes.Equal(got, want) {
+			t.Fatalf("Fresh changed external asset %s: bytes=%q err=%v", path, got, readErr)
+		}
 	}
-	if _, err := os.Stat(project); err != nil {
-		t.Fatalf("fresh start removed the managed root: %v", err)
+	snapshotAfter, err := os.ReadFile(snapshotPath)
+	if err != nil || !bytes.Equal(snapshotAfter, snapshotBefore) {
+		t.Fatalf("Fresh changed latest snapshot: bytes=%q err=%v", snapshotAfter, err)
+	}
+	if info, err := os.Stat(root); err != nil || !info.IsDir() {
+		t.Fatalf("Fresh changed root: info=%v err=%v", info, err)
 	}
 }
 

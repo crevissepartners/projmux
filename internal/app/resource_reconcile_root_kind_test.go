@@ -184,6 +184,11 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "deletes one Project and its owned graph; DeleteControlSession is not a route that exists",
 	},
 	{
+		File: "internal/core/metadata/lifecycle_decision.go", Func: "PlanProjectFreshReplacement",
+		Source: "Registry", Verdict: rootKindProjectOnly,
+		Why: "proves exactly one Project claims the replaced filesystem root; ControlSessions have no root path by construction",
+	},
+	{
 		File: "internal/core/metadata/model.go", Func: "Registry.Project",
 		Source: "Registry", Verdict: rootKindPaired, Pair: "Registry.ControlSession",
 		Why: "uid lookup, one function per root kind",
@@ -407,14 +412,14 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 	for verdict, want := range map[rootKindVerdict]int{
 		rootKindBoth:        18,
 		rootKindPaired:      2,
-		rootKindProjectOnly: 20,
+		rootKindProjectOnly: 21,
 		rootKindGap:         0,
 	} {
 		if counts[verdict] != want {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 40; got != want {
+	if got, want := len(rootKindProjectionSites), 41; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

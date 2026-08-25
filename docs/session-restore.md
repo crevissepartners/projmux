@@ -50,21 +50,21 @@ continuation has no inherited `TMUX` variable.
 A closed Project has exactly two actions:
 
 - `Continue project` opens the current Registry desired state with the ordinary
-  materializer.
-- `Open fresh` keeps the exact schema-v2 canonical Project Window. It reuses an
-  existing exact direct shell when available or allocates the minimum one,
-  makes that Pane both anchor and default, and removes every Agent/extra
-  descendant and descendant reservation.
+  materializer. A retained graph keeps its Project, Window, Pane, and Agent
+  UIDs. A zero-Window Project keeps its Project UID and atomically receives one
+  new canonical Window and shell UID before materialization.
+- `Open fresh` atomically replaces the same-root graph with a new Project UID
+  and one new canonical Window/shell UID chain. It does not archive or retain
+  the old generation.
 
 Esc/cancel returns to Projects; it is not an action row. Picker failure falls
 back to the non-destructive `Continue project` action.
 
 `Open fresh` never deletes or overwrites autosave or named snapshot files. It
-also preserves the Project UID/root/trust decision and all unrelated Registry
-graphs. An invalid canonical Window is refused with zero writes and repair
-guidance; an Agent-only canonical Window receives one allocated shell instead
-of being rejected, and an unregistered path may use ordinary first-use Project
-bootstrap. Repeating `Open fresh` is a Registry zero-diff.
+preserves the root, Git/worktrees, trust decision, and all unrelated Registry
+graphs while changing the Project identity. A rejected commit retains the
+exact old Registry preimage. Repeating `Open fresh` replaces identity again;
+each successful result has exactly one Project claiming the root.
 
 ## Snapshot contents and diagnostics
 

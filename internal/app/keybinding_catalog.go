@@ -587,7 +587,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "Sidebar:KillSession",
 			CanonicalID: "project-sidebar.runtime.stop",
-			Description: "Kill the focused existing session",
+			Description: "Stop only the focused Project runtime; keep its Project UID and desired Window/Pane topology",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "Sidebar",
@@ -596,7 +596,7 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		{
 			ID:          "SessionPopup:KillSession",
 			CanonicalID: "session-picker.runtime.stop",
-			Description: "Kill the focused existing session",
+			Description: "Stop only the focused runtime Session; keep managed Registry identity and desired topology",
 			Kind:        keyBindingActionPickerInternal,
 			Tier:        keyBindingTierNativePickerInternal,
 			Surface:     "SessionPopup",
@@ -873,8 +873,8 @@ var keyBindingDisplayNames = map[string]string{
 	"select-pane-down":        "Focus Pane down",
 
 	"Sidebar:PinProject":                  "Pin / unpin Project",
-	"Sidebar:KillSession":                 "Stop Project Runtime",
-	"SessionPopup:KillSession":            "Stop Runtime Session",
+	"Sidebar:KillSession":                 "Stop Project Runtime (keep UID/topology)",
+	"SessionPopup:KillSession":            "Stop Runtime Session (keep managed identity)",
 	"SessionPopup:OpenState":              "Open Snapshots",
 	"SessionPopup:CyclePreviewWindowPrev": "Preview previous Window",
 	"SessionPopup:CyclePreviewWindowNext": "Preview next Window",
@@ -998,8 +998,8 @@ var keyBindingActionSemanticsByID = map[string]keyBindingActionSemantics{
 
 	// --- Sidebar & picker actions ----------------------------------------
 	"Sidebar:PinProject":                  {TargetKind: "Project", ResultKind: "pin or unpin the focused Project", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"Sidebar:KillSession":                 {TargetKind: "Project", ResultKind: "stop the Project runtime; Project metadata is kept", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"SessionPopup:KillSession":            {TargetKind: "Session", ResultKind: "stop a runtime Session", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"Sidebar:KillSession":                 {TargetKind: "Project", ResultKind: "stop only the Project runtime; keep its Project UID and desired Window/Pane topology", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
+	"SessionPopup:KillSession":            {TargetKind: "Session", ResultKind: "stop only the runtime Session; keep managed Registry identity and desired topology", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 	"SessionPopup:OpenState":              {TargetKind: "Snapshot", ResultKind: "open Snapshots for the focused Session", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 	"SessionPopup:CyclePreviewWindowPrev": {TargetKind: "Window", ResultKind: "preview the previous Window", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 	"SessionPopup:CyclePreviewWindowNext": {TargetKind: "Window", ResultKind: "preview the next Window", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},

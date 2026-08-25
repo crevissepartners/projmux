@@ -333,6 +333,14 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 	var out []byte
 	var err error
 	switch args[0] {
+	case "has-session":
+		name := strings.TrimPrefix(flagValue(args, "-t"), "=")
+		if f.session(name) == nil {
+			return nil, appTypedCommandFailure{failure: inttmux.CommandFailure{
+				Kind: inttmux.CommandFailureExit, Stderr: "can't find session: " + name,
+			}}
+		}
+		return nil, nil
 	case "new-session":
 		out, err = f.runNewSession(args)
 	case "new-window":

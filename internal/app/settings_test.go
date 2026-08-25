@@ -4965,8 +4965,8 @@ func TestSettingsHubKeybindingsListsPopupLocalAndMovementActions(t *testing.T) {
 		wantSearchText string
 	}{
 		{settingsActionPrefixKeymap + "Sidebar:PinProject", "Pin / unpin Project", []string{"Alt-P", "M-p", "state Default"}, "Pin / unpin Project"},
-		{settingsActionPrefixKeymap + "Sidebar:KillSession", "Stop Project Runtime", []string{"Ctrl-X", "C-x", "state Default"}, "Stop Project Runtime"},
-		{settingsActionPrefixKeymap + "SessionPopup:KillSession", "Stop Runtime Session", []string{"Ctrl-X", "C-x", "state Default"}, "Stop Runtime Session"},
+		{settingsActionPrefixKeymap + "Sidebar:KillSession", "Stop Project Runtime (keep UID/topology)", []string{"Ctrl-X", "C-x", "state Default"}, "Stop Project Runtime (keep UID/topology)"},
+		{settingsActionPrefixKeymap + "SessionPopup:KillSession", "Stop Runtime Session (keep managed identity)", []string{"Ctrl-X", "C-x", "state Default"}, "Stop Runtime Session (keep managed identity)"},
 		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewWindowPrev", "Preview previous Window", []string{"Left", "state Default"}, "Preview previous Window"},
 		{settingsActionPrefixKeymap + "SessionPopup:CyclePreviewPanePrev", "Preview previous Pane", []string{"Alt-Up", "M-Up", "state Default"}, "Preview previous Pane"},
 		{settingsActionPrefixKeymap + "NotifySidebar:Ack", "Acknowledge Notification", []string{"A", "a", "state Default"}, "Acknowledge Notification"},
@@ -5501,9 +5501,9 @@ keys = []
 	}
 	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
 		{ActionID: "Sidebar:PinProject", Label: "pin project"},
-		{ActionID: "Sidebar:KillSession", Label: "kill session"},
+		{ActionID: "Sidebar:KillSession", Label: "stop runtime; keep Project UID/topology"},
 	})
-	if !strings.Contains(guide, "p: pin project") || strings.Contains(guide, "kill session") {
+	if !strings.Contains(guide, "p: pin project") || strings.Contains(guide, "stop runtime") {
 		t.Fatalf("picker guide = %q, want custom pin key and no unbound kill guide", guide)
 	}
 }
@@ -5565,8 +5565,8 @@ func TestKeyBindingDisplayNameSeparatesUserLabelFromInternalID(t *testing.T) {
 		"SettingsToggle":            "Open / close Settings",
 		"ProjectSwitcherToggle":     "Open Project Picker",
 		"Sidebar:PinProject":        "Pin / unpin Project",
-		"Sidebar:KillSession":       "Stop Project Runtime",
-		"SessionPopup:KillSession":  "Stop Runtime Session",
+		"Sidebar:KillSession":       "Stop Project Runtime (keep UID/topology)",
+		"SessionPopup:KillSession":  "Stop Runtime Session (keep managed identity)",
 		"NotifySidebar:Ack":         "Acknowledge Notification",
 		"NotifySidebar:AckGroup":    "Acknowledge Notification group",
 		"NotifySidebar:ClearAll":    "Clear all Notifications",

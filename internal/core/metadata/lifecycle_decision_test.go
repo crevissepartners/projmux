@@ -621,6 +621,9 @@ func TestLastPaneCausalPairDeletesWindowAndPreservesZeroWindowProject(t *testing
 	if err != nil || !plan.Changed {
 		t.Fatalf("PlanWindowRootCascadeDelete = %+v, %v", plan, err)
 	}
+	if plan.Operation != ProjectLifecycleOperationCloseWindow {
+		t.Fatalf("causal Window plan operation = %q, want close-window", plan.Operation)
+	}
 	project, ok := plan.Desired.Project(registered.Project.Metadata.UID)
 	if !ok || project.Spec.PrimaryWindowRef != "" || len(plan.Desired.WindowsOf(project.Metadata.UID)) != 0 {
 		t.Fatalf("zero-Window Project = %+v windows=%v", project, plan.Desired.WindowsOf(registered.Project.Metadata.UID))
@@ -830,4 +833,296 @@ func TestProjectOpenStateTableHasNoBlankCells(t *testing.T) {
 	if invalid.Reason != ProjectOpenReasonInvalid || len(invalid.AtomicWriteSet) == 0 {
 		t.Fatalf("invalid table cell = %+v", invalid)
 	}
+}
+
+func TestProjectLifecycleStateTableHasTwelveClosedExclusiveCells(t *testing.T) {
+	t.Parallel()
+
+	states := []ProjectLifecycleState{
+		ProjectLifecycleRetainedWindows,
+		ProjectLifecycleZeroWindows,
+		ProjectLifecycleDeleted,
+	}
+	actions := []ProjectLifecycleAction{
+		ProjectLifecycleStop,
+		ProjectLifecycleContinue,
+		ProjectLifecycleFresh,
+		ProjectLifecycleDeleteProject,
+	}
+	for _, state := range states {
+		for _, action := range actions {
+			plan := DecideProjectLifecycle(state, action, ProjectLifecyclePreconditions{})
+			if plan.State != state || plan.Action != action || plan.Operation == ProjectLifecycleOperationNone || plan.ProjectUID == "" ||
+				plan.DescendantUIDs == "" || plan.Reason == "" || len(plan.AtomicWriteSet) == 0 {
+				t.Fatalf("state=%q action=%q has a blank cell: %+v", state, action, plan)
+			}
+			if plan.ExternalAssets != projectPreservedAssets() {
+				t.Fatalf("state=%q action=%q external assets = %+v", state, action, plan.ExternalAssets)
+			}
+			seen := map[ProjectStartupWrite]bool{}
+			for _, write := range plan.AtomicWriteSet {
+				if write == "" || seen[write] {
+					t.Fatalf("state=%q action=%q invalid write set: %+v", state, action, plan.AtomicWriteSet)
+				}
+				seen[write] = true
+			}
+			if seen[ProjectStartupWriteStopRuntime] &&
+				(seen[ProjectStartupWriteDeleteProjectGraph] || seen[ProjectStartupWriteCreateProject]) {
+				t.Fatalf("state=%q action=%q mixed stop and identity writes: %+v", state, action, plan.AtomicWriteSet)
+			}
+			if action != ProjectLifecycleFresh && seen[ProjectStartupWriteCreateProject] {
+				t.Fatalf("state=%q action=%q unexpectedly creates Project identity: %+v", state, action, plan.AtomicWriteSet)
+			}
+		}
+	}
+	projectOperations := map[ProjectLifecycleOperation]bool{}
+	for _, action := range actions {
+		projectOperations[DecideProjectLifecycle(ProjectLifecycleRetainedWindows, action, ProjectLifecyclePreconditions{}).Operation] = true
+	}
+	if projectOperations[ProjectLifecycleOperationCloseWindow] || len(projectOperations) != len(actions) {
+		t.Fatalf("Project lifecycle operations overlap close-window or each other: %+v", projectOperations)
+	}
+
+	retainedContinue := DecideProjectLifecycle(ProjectLifecycleRetainedWindows, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
+	if retainedContinue.ProjectUID != ProjectUIDPreserved || retainedContinue.DescendantUIDs != ProjectDescendantUIDsPreserved {
+		t.Fatalf("retained Continue identity = %+v", retainedContinue)
+	}
+	zeroContinue := DecideProjectLifecycle(ProjectLifecycleZeroWindows, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
+	if zeroContinue.ProjectUID != ProjectUIDPreserved || zeroContinue.DescendantUIDs != ProjectDescendantUIDsCreated ||
+		!slices.Equal(zeroContinue.AtomicWriteSet, []ProjectStartupWrite{ProjectStartupWriteCreateCanonicalWindow, ProjectStartupWriteCreateCanonicalShell}) {
+		t.Fatalf("zero-Window Continue identity = %+v", zeroContinue)
+	}
+	for _, state := range []ProjectLifecycleState{ProjectLifecycleRetainedWindows, ProjectLifecycleZeroWindows} {
+		fresh := DecideProjectLifecycle(state, ProjectLifecycleFresh, ProjectLifecyclePreconditions{})
+		if !fresh.Available || fresh.ProjectUID != ProjectUIDReplaced || !slices.Equal(fresh.AtomicWriteSet, freshReplacementWriteSet()) {
+			t.Fatalf("state=%q Fresh identity = %+v", state, fresh)
+		}
+	}
+	deletedContinueUnavailable := DecideProjectLifecycle(ProjectLifecycleDeleted, ProjectLifecycleContinue, ProjectLifecyclePreconditions{})
+	if deletedContinueUnavailable.Available || deletedContinueUnavailable.Reason != "no-usable-snapshot" ||
+		!slices.Equal(deletedContinueUnavailable.AtomicWriteSet, []ProjectStartupWrite{ProjectStartupWriteNone}) {
+		t.Fatalf("deleted Continue without snapshot evidence = %+v", deletedContinueUnavailable)
+	}
+	deletedContinue := DecideProjectLifecycle(ProjectLifecycleDeleted, ProjectLifecycleContinue, ProjectLifecyclePreconditions{UsableSnapshot: true})
+	if !deletedContinue.Available || deletedContinue.ProjectUID != ProjectUIDCreated || deletedContinue.DescendantUIDs != ProjectDescendantUIDsCreated ||
+		!slices.Equal(deletedContinue.AtomicWriteSet, []ProjectStartupWrite{ProjectStartupWriteCreateProject, ProjectStartupWriteRestoreSnapshotGraph}) {
+		t.Fatalf("deleted Continue with usable snapshot = %+v", deletedContinue)
+	}
+}
+
+func TestPlanProjectFreshReplacementCreatesOneNewClaimantAndPreservesPreimage(t *testing.T) {
+	t.Parallel()
+
+	mutator := testMutator(dirSet{"/srv/alpha": true, "/srv/sibling": true})
+	registry := NewRegistry()
+	registry.UpdatedAt = fixedNow
+	target, err := registerFixture(mutator, &registry, "/srv/alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sibling, err := registerFixture(mutator, &registry, "/srv/sibling")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := registry.Clone()
+	plan, err := PlanProjectFreshReplacement(registry, target.Project.Metadata.UID, RegisterProjectOptions{
+		SessionName: "alpha", DefaultShell: "/bin/zsh",
+	}, mutator)
+	if err != nil {
+		t.Fatalf("PlanProjectFreshReplacement() error = %v", err)
+	}
+	if !reflect.DeepEqual(registry, before) || !reflect.DeepEqual(plan.Preimage, before) {
+		t.Fatal("Fresh planning mutated or failed to retain the old graph preimage")
+	}
+	if plan.OldProjectUID != target.Project.Metadata.UID || plan.NewProjectUID == "" || plan.NewProjectUID == plan.OldProjectUID {
+		t.Fatalf("Fresh Project identity = old %q new %q", plan.OldProjectUID, plan.NewProjectUID)
+	}
+	claimants := 0
+	for _, project := range plan.Desired.Projects {
+		if project.Spec.Root == "/srv/alpha" {
+			claimants++
+		}
+	}
+	if claimants != 1 || len(plan.Desired.WindowsOf(plan.NewProjectUID)) != 1 {
+		t.Fatalf("Fresh claimant/topology = claimants %d windows %+v", claimants, plan.Desired.WindowsOf(plan.NewProjectUID))
+	}
+	if got, ok := plan.Desired.Project(sibling.Project.Metadata.UID); !ok || !reflect.DeepEqual(got, &sibling.Project) {
+		t.Fatalf("Fresh changed unrelated Project: %+v", got)
+	}
+	if err := plan.Desired.Validate(); err != nil {
+		t.Fatalf("Fresh desired Registry invalid: %v", err)
+	}
+}
+
+func TestPlanProjectFreshReplacementSupportsZeroWindowAndFailureRetainsOldGraph(t *testing.T) {
+	t.Parallel()
+
+	mutator := testMutator(dirSet{"/srv/alpha": true})
+	registry := NewRegistry()
+	registry.UpdatedAt = fixedNow
+	target, err := registerFixture(mutator, &registry, "/srv/alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, window := range registry.WindowsOf(target.Project.Metadata.UID) {
+		if err := mutator.DeleteWindow(&registry, window.Metadata.UID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := registry.Clone()
+	plan, err := PlanProjectFreshReplacement(registry, target.Project.Metadata.UID, RegisterProjectOptions{
+		SessionName: "alpha", DefaultShell: "/bin/zsh",
+	}, mutator)
+	if err != nil || plan.NewProjectUID == plan.OldProjectUID || len(plan.Desired.WindowsOf(plan.NewProjectUID)) != 1 {
+		t.Fatalf("zero-Window Fresh = %+v, err %v", plan, err)
+	}
+	if !reflect.DeepEqual(registry, before) {
+		t.Fatal("zero-Window Fresh planning mutated its input")
+	}
+
+	failing := mutator
+	failing.NewUID = func(Kind) (string, error) { return "", fmt.Errorf("injected uid allocation failure") }
+	if _, err := PlanProjectFreshReplacement(registry, target.Project.Metadata.UID, RegisterProjectOptions{
+		SessionName: "alpha", DefaultShell: "/bin/zsh",
+	}, failing); err == nil || !strings.Contains(err.Error(), "injected uid allocation failure") {
+		t.Fatalf("Fresh failure = %v", err)
+	}
+	if !reflect.DeepEqual(registry, before) {
+		t.Fatal("Fresh plan failure did not retain the old graph preimage")
+	}
+}
+
+func FuzzPlanProjectFreshReplacementIsScopedValidAndAlwaysMintsIdentity(f *testing.F) {
+	f.Add(false, uint8(0))
+	f.Add(false, uint8(3))
+	f.Add(true, uint8(0))
+	f.Add(true, uint8(2))
+	f.Fuzz(func(t *testing.T, zeroWindows bool, retainedShape uint8) {
+		mutator := testMutator(dirSet{"/srv/alpha": true, "/srv/sibling": true})
+		registry := NewRegistry()
+		registry.UpdatedAt = fixedNow
+		target, err := registerFixture(mutator, &registry, "/srv/alpha")
+		if err != nil {
+			t.Fatal(err)
+		}
+		sibling, err := registerFixture(mutator, &registry, "/srv/sibling")
+		if err != nil {
+			t.Fatal(err)
+		}
+		control, err := mutator.BindControlSession(&registry, ControlSessionObservation{
+			Session: "home",
+			Windows: []ControlSessionWindow{{
+				DisplayName: "control",
+				Panes:       []ControlSessionPane{{Command: "/bin/zsh", CWD: "/srv/sibling"}},
+			}},
+		}, "/bin/zsh", "op-control", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for index := 0; index < int(retainedShape%4); index++ {
+			if _, _, err := mutator.AddWindow(&registry, target.Project.Metadata.UID, BootstrapWindow{
+				Name: fmt.Sprintf("retained-%d", index),
+				Panes: []BootstrapPane{{
+					Name:    fmt.Sprintf("shell-%d", index),
+					Command: "/bin/zsh",
+				}},
+			}, "/bin/zsh", fmt.Sprintf("op-retained-%d", index)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if retainedShape&1 != 0 {
+			agent, err := mutator.CreateAgent(&registry, target.Project.Spec.PrimaryWindowRef, CreateAgentOptions{
+				Provider: "codex", Workspace: AgentWorkspace{CWD: "/srv/alpha"}, OperationID: "op-agent",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := mutator.AttachAgentPane(&registry, agent.Metadata.UID, BootstrapPane{
+				Command: "codex", CWD: "/srv/alpha",
+			}, "op-agent-pane"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if zeroWindows {
+			for _, window := range registry.WindowsOf(target.Project.Metadata.UID) {
+				if err := mutator.DeleteWindow(&registry, window.Metadata.UID); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		if err := registry.Validate(); err != nil {
+			t.Fatalf("fuzz fixture is invalid: %v", err)
+		}
+
+		before := registry.Clone()
+		plan, err := PlanProjectFreshReplacement(registry, target.Project.Metadata.UID, RegisterProjectOptions{
+			SessionName: "alpha", DefaultShell: "/bin/zsh",
+		}, mutator)
+		if err != nil {
+			t.Fatalf("PlanProjectFreshReplacement() error = %v", err)
+		}
+		if !reflect.DeepEqual(registry, before) || !reflect.DeepEqual(plan.Preimage, before) {
+			t.Fatal("Fresh planning mutated its input or did not retain the exact preimage")
+		}
+		if plan.OldProjectUID != target.Project.Metadata.UID || plan.NewProjectUID == "" || plan.NewProjectUID == plan.OldProjectUID {
+			t.Fatalf("Fresh Project identity = old %q new %q", plan.OldProjectUID, plan.NewProjectUID)
+		}
+		claimants := 0
+		for _, project := range plan.Desired.Projects {
+			if project.Spec.Root == target.Project.Spec.Root {
+				claimants++
+			}
+		}
+		if claimants != 1 {
+			t.Fatalf("same-root Project claimants = %d, want exactly 1", claimants)
+		}
+		freshWindows := plan.Desired.WindowsOf(plan.NewProjectUID)
+		if len(freshWindows) != 1 || len(plan.Desired.PanesOf(freshWindows[0].Metadata.UID)) != 1 {
+			t.Fatalf("Fresh desired topology = windows %+v panes %+v, want one canonical Window/shell", freshWindows, func() []Pane {
+				if len(freshWindows) == 0 {
+					return nil
+				}
+				return plan.Desired.PanesOf(freshWindows[0].Metadata.UID)
+			}())
+		}
+		if err := plan.Desired.Validate(); err != nil {
+			t.Fatalf("Fresh desired Registry invalid: %v", err)
+		}
+		if got, ok := plan.Desired.Project(sibling.Project.Metadata.UID); !ok || !reflect.DeepEqual(got, &sibling.Project) {
+			t.Fatalf("Fresh changed unrelated Project: %+v", got)
+		}
+		if got, ok := plan.Desired.ControlSession(control.ControlSession.Metadata.UID); !ok || !reflect.DeepEqual(got, &control.ControlSession) {
+			t.Fatalf("Fresh changed unrelated ControlSession: %+v", got)
+		}
+
+		// Removing the new graph from Desired must leave exactly the same
+		// unrelated Project, ControlSession, descendant, and reservation state as
+		// removing the old graph from the input preimage.
+		wantRemainder := before.Clone()
+		if err := mutator.DeleteProject(&wantRemainder, plan.OldProjectUID); err != nil {
+			t.Fatal(err)
+		}
+		gotRemainder := plan.Desired.Clone()
+		if err := mutator.DeleteProject(&gotRemainder, plan.NewProjectUID); err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(gotRemainder, wantRemainder) {
+			t.Fatal("Fresh replacement changed unrelated graph or reservation state")
+		}
+
+		failing := mutator
+		failing.NewUID = func(Kind) (string, error) {
+			return "", fmt.Errorf("injected fuzz uid allocation failure")
+		}
+		failed, err := PlanProjectFreshReplacement(registry, target.Project.Metadata.UID, RegisterProjectOptions{
+			SessionName: "alpha", DefaultShell: "/bin/zsh",
+		}, failing)
+		if err == nil || !strings.Contains(err.Error(), "injected fuzz uid allocation failure") {
+			t.Fatalf("Fresh allocation failure = %v", err)
+		}
+		if !reflect.DeepEqual(registry, before) || !reflect.DeepEqual(failed.Preimage, before) {
+			t.Fatal("failed Fresh planning mutated its input or lost its old graph preimage")
+		}
+	})
 }

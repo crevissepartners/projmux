@@ -116,6 +116,7 @@ func kindSpellingCases(t *testing.T) []kindSpellingCase {
 		{verb: "describe", canonical: "pane", alias: "panes", tail: []string{"log", "--project", "alpha"}, run: runDescribeRoute},
 		{verb: "describe", canonical: "agent", alias: "agents", tail: []string{"codex", "--project", "alpha"}, run: runDescribeRoute},
 
+		{verb: "delete", canonical: "project", alias: "projects", tail: []string{"alpha", "--dry-run"}, run: runDeleteRoute},
 		{verb: "delete", canonical: "window", alias: "windows", tail: []string{"review", "--project", "alpha", "--dry-run"}, run: runDeleteRoute},
 		{verb: "delete", canonical: "pane", alias: "panes", tail: []string{"log", "--project", "alpha", "--dry-run"}, run: runDeleteRoute},
 		{verb: "delete", canonical: "agent", alias: "agents", tail: []string{"codex", "--project", "alpha", "--dry-run"}, run: runDeleteRoute},

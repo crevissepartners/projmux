@@ -149,9 +149,10 @@ var matrix = map[Target]Cardinality{
 	// Tightening these to exact-one would have broken every explicit fan-out to
 	// fix an argv shape that does not reach this table -- the route refuses the
 	// unbounded empty selector before Enforce is ever called.
-	{Verb: VerbDelete, Kind: metadata.KindWindow}: CardinalityAtLeastOne,
-	{Verb: VerbDelete, Kind: metadata.KindPane}:   CardinalityAtLeastOne,
-	{Verb: VerbDelete, Kind: metadata.KindAgent}:  CardinalityAtLeastOne,
+	{Verb: VerbDelete, Kind: metadata.KindProject}: CardinalityAtLeastOne,
+	{Verb: VerbDelete, Kind: metadata.KindWindow}:  CardinalityAtLeastOne,
+	{Verb: VerbDelete, Kind: metadata.KindPane}:    CardinalityAtLeastOne,
+	{Verb: VerbDelete, Kind: metadata.KindAgent}:   CardinalityAtLeastOne,
 }
 
 // CardinalityFor returns the declared cardinality for one matrix cell.

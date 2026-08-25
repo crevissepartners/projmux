@@ -22,7 +22,7 @@ var resourceVerbs = []string{"get", "describe", "delete", "rename"}
 var canonicalKindSpellings = map[string][]string{
 	"get":      {"projects", "windows", "panes", "agents", "notifications", "snapshots", "pane"},
 	"describe": {"project", "window", "pane", "agent"},
-	"delete":   {"window", "pane", "agent", "notification", "snapshot"},
+	"delete":   {"project", "window", "pane", "agent", "notification", "snapshot"},
 	"rename":   {"project", "window", "pane", "agent"},
 }
 

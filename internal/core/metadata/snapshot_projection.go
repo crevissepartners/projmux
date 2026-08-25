@@ -407,55 +407,6 @@ func sameProjectedConversation(old, projected *AgentSessionRef) bool {
 	return old != nil && projected != nil && old.Provider == projected.Provider && old.ConversationID() != "" && old.ConversationID() == projected.ConversationID()
 }
 
-// PlanOpenFresh keeps only the schema-v2 canonical Project Window and its
-// exact minimum direct shell. An optional uid source makes shell allocation
-// deterministic in tests; production uses NewUID.
-func PlanOpenFresh(registry Registry, targetProjectUID string, now time.Time, uidSources ...func(Kind) (string, error)) (SnapshotProjectionPlan, error) {
-	if now.IsZero() {
-		return SnapshotProjectionPlan{}, inputErr("open fresh", ErrInvalidRegistry, "projection timestamp is required")
-	}
-	target, ok := registry.Project(strings.TrimSpace(targetProjectUID))
-	if !ok {
-		return SnapshotProjectionPlan{}, stateErr("open fresh", ErrNotFound, "target Project %q does not exist", targetProjectUID)
-	}
-	if len(uidSources) > 1 {
-		return SnapshotProjectionPlan{}, inputErr("open fresh", ErrInvalidRegistry, "accepts at most one uid source")
-	}
-	uidSource := NewUID
-	if len(uidSources) == 1 && uidSources[0] != nil {
-		uidSource = uidSources[0]
-	}
-	window, pane, reusedPane, err := canonicalProjectShell(registry, target.Metadata.UID, now.UTC(), uidSource)
-	if err != nil {
-		return SnapshotProjectionPlan{}, err
-	}
-	desired := registry.Clone()
-	owned := targetDescendantUIDs(registry, target.Metadata.UID)
-	stripTargetDescendants(&desired, target.Metadata.UID, owned)
-	desired.Windows = append(desired.Windows, window)
-	desired.Panes = append(desired.Panes, pane)
-	desired.putReservation(target.Metadata.UID, KindWindow, window.Metadata.Name, window.Metadata.UID)
-	desired.putReservation(window.Metadata.UID, KindPane, pane.Metadata.Name, pane.Metadata.UID)
-	if err := desired.Validate(); err != nil {
-		return SnapshotProjectionPlan{}, err
-	}
-	changed := !reflect.DeepEqual(registry, desired)
-	if changed {
-		desired.UpdatedAt = now.UTC()
-	}
-	preserved := 1
-	deletedPanes := len(owned.panes)
-	if reusedPane {
-		preserved++
-		deletedPanes--
-	}
-	return SnapshotProjectionPlan{
-		ProjectUID: target.Metadata.UID, Desired: desired, Changed: changed,
-		ReplacedWindows: len(owned.windows), ReplacedPanes: len(owned.panes), ReplacedAgents: len(owned.agents),
-		PreservedUIDs: preserved, DeletedWindows: len(owned.windows) - 1, DeletedPanes: deletedPanes, DeletedAgents: len(owned.agents),
-	}, nil
-}
-
 type descendantSet struct{ windows, panes, agents map[string]bool }
 
 func targetDescendantUIDs(r Registry, projectUID string) descendantSet {
@@ -497,11 +448,11 @@ func filter[T any](in []T, keep func(T) bool) []T {
 func canonicalProjectShell(r Registry, projectUID string, createdAt time.Time, newUID func(Kind) (string, error)) (Window, Pane, bool, error) {
 	p, ok := r.Project(projectUID)
 	if !ok {
-		return Window{}, Pane{}, false, stateErr("open fresh", ErrNotFound, "Project %q does not exist", projectUID)
+		return Window{}, Pane{}, false, stateErr("canonical project shell projection", ErrNotFound, "Project %q does not exist", projectUID)
 	}
 	w, ok := r.Window(p.Spec.PrimaryWindowRef)
 	if !ok || w.Metadata.OwnerRef == nil || w.Metadata.OwnerRef.Kind != KindProject || w.Metadata.OwnerUID() != projectUID {
-		return Window{}, Pane{}, false, inputErr("open fresh", ErrInvalidRegistry, "Project %q canonical Window anchor is invalid; run Phase 3 registry repair", p.Metadata.Name)
+		return Window{}, Pane{}, false, inputErr("canonical project shell projection", ErrInvalidRegistry, "Project %q canonical Window anchor is invalid; run Phase 3 registry repair", p.Metadata.Name)
 	}
 	var pane *Pane
 	if candidate, found := r.WindowDefaultShell(w.Metadata.UID); found {
@@ -521,7 +472,7 @@ func canonicalProjectShell(r Registry, projectUID string, createdAt time.Time, n
 	wc.Status = WindowStatus{}
 	if pane == nil {
 		if newUID == nil {
-			return Window{}, Pane{}, false, fmt.Errorf("open fresh: uid source is not configured")
+			return Window{}, Pane{}, false, fmt.Errorf("canonical project shell projection: uid source is not configured")
 		}
 		used := make(map[string]bool)
 		for _, project := range r.Projects {
@@ -553,10 +504,10 @@ func canonicalProjectShell(r Registry, projectUID string, createdAt time.Time, n
 			break
 		}
 		if paneUID == "" {
-			return Window{}, Pane{}, false, stateErr("open fresh", ErrInvalidRegistry, "could not allocate a unique Pane uid after %d attempts", maxSnapshotUIDAllocationAttempts)
+			return Window{}, Pane{}, false, stateErr("canonical project shell projection", ErrInvalidRegistry, "could not allocate a unique Pane uid after %d attempts", maxSnapshotUIDAllocationAttempts)
 		}
 		nameRegistry := r.Clone()
-		name, err := nameRegistry.allocateName("open fresh", w.Metadata.UID, KindPane, "shell", paneUID)
+		name, err := nameRegistry.allocateName("canonical project shell projection", w.Metadata.UID, KindPane, "shell", paneUID)
 		if err != nil {
 			return Window{}, Pane{}, false, err
 		}

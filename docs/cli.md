@@ -486,6 +486,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 Delete Projmux resources with an explicit cascade plan
 
 ```
+projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]
 projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
@@ -495,13 +496,24 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
+| [`projmux delete project`](#projmux-delete-project) | Explicitly unregister Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime |
 | [`projmux delete window`](#projmux-delete-window) | Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry |
 | [`projmux delete pane`](#projmux-delete-pane) | Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry |
 | [`projmux delete agent`](#projmux-delete-agent) | Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry |
 | [`projmux delete notification`](#projmux-delete-notification) | Delete pending notification rows |
 | [`projmux delete snapshot`](#projmux-delete-snapshot) | Delete saved session snapshots |
 
-Canonical spelling: `projmux delete window`, `projmux delete pane`, `projmux delete agent`, `projmux delete notification`, `projmux delete snapshot`
+Canonical spelling: `projmux delete project`, `projmux delete window`, `projmux delete pane`, `projmux delete agent`, `projmux delete notification`, `projmux delete snapshot`
+
+### `projmux delete project`
+
+Explicitly unregister Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime
+
+```
+projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]
+```
+
+Aliases: `projects`
 
 ### `projmux delete window`
 

@@ -862,10 +862,11 @@ materializes the closed Project's current Registry desired state before moving
 the client. The optional `Settings > Session State > Sidebar startup picker`
 toggle enables a native `Start project` step with exactly `Continue project` and
 `Open fresh`. `Open fresh` confirms exact `Window n / Pane n / Agent n` counts
-and conversation-pointer loss, preserves the canonical Project Window and shell
-Pane UID/recipe, and removes every other target descendant and reservation.
-Snapshot bytes remain unchanged; the Project resource keeps its UID, root,
-trust decision, and metadata. Esc returns to Projects with zero writes. After
+and conversation-pointer loss, then atomically replaces the old Project graph
+with a new Project UID and a new canonical Window/shell UID pair. Exactly one
+same-root Project claimant remains. Snapshot bytes, the root directory,
+Git/worktree data, and the trust decision remain unchanged. Esc returns to
+Projects with zero writes. After
 the startup mode is selected, project automation trust is evaluated if needed.
 The Alt-1 sidebar opens trust as the shared client-scoped `Trust project
 automation` popup instead of inline sidebar rows. The selected open

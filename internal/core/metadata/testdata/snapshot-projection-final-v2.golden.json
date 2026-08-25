@@ -23,14 +23,5 @@
     "anchor_role": "agent",
     "direct_shells": 0,
     "agents": 1
-  },
-  {
-    "case": "Open fresh creates exact minimum shell",
-    "window_uid": "window-01",
-    "anchor_uid": "pane-01",
-    "anchor_role": "shell",
-    "default_shell_uid": "pane-01",
-    "direct_shells": 1,
-    "agents": 0
   }
 ]

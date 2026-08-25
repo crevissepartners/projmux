@@ -32,7 +32,7 @@ const (
 	// names Agents because the row restores them: a saved Agent comes back into
 	// its own Pane and, when the Registry recorded a provider session ref, into
 	// the conversation it already had.
-	projectTopologyStartupDescription = "open every saved Window, shell Pane, and Agent"
+	projectTopologyStartupDescription = "keep this Project identity; restore saved Windows, shell Panes, and Agents, or create a new Window and shell when none remain"
 )
 
 var errProjectStartupBack = errors.New("project startup back")
@@ -106,7 +106,8 @@ func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, tar
 	}
 	opened, err := c.prepareProjectContinue(ctx, target, sessionName)
 	if err != nil {
-		return err
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "preparation",
+			opened.project.Metadata.UID, opened.project.Metadata.UID, err)
 	}
 	_, err = c.continueProjectOpen(ctx, target, sessionName, mode, opened)
 	return err
@@ -130,7 +131,14 @@ func (c *switchCommand) continueProjectOpen(ctx context.Context, target, session
 	case projectStartupKindNew:
 		return diagnostics.SessionStateCounts{}, c.startProjectFresh(ctx, sessionName, target, opened)
 	default:
-		return diagnostics.SessionStateCounts{}, c.materializeAndOpenProjectTopology(ctx, sessionName, target, opened)
+		oldUID := opened.project.Metadata.UID
+		if err := c.materializeProjectTopology(ctx, sessionName, target, opened); err != nil {
+			return diagnostics.SessionStateCounts{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "topology-materialization", oldUID, oldUID, err)
+		}
+		if err := c.openProjectSession(ctx, sessionName); err != nil {
+			return diagnostics.SessionStateCounts{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "client-handoff", oldUID, oldUID, err)
+		}
+		return diagnostics.SessionStateCounts{}, nil
 	}
 }
 
@@ -470,24 +478,6 @@ func (r *defaultSwitchProjectRegistrar) RegisterProjectRoot(ctx context.Context,
 // into a session the topology never reached.
 type switchProjectTopologyMaterializer interface {
 	MaterializeProjectTopology(ctx context.Context, root, sessionName string) (bool, error)
-}
-
-// materializeAndOpenProjectTopology is the non-snapshot closed-Project start.
-// The client move is strictly last: materialization either converges the whole
-// declared shell topology or fails without an open.
-//
-// A bootstrapped open -- this open is what registered the Project -- already
-// declares the minimum one-Window, one-shell-Pane graph, so it enters the
-// canonical first-session transaction directly. Every later open first asks the
-// full topology engine to converge any richer stored graph; a false result still
-// returns to that same typed first-session transaction. The Project travels with
-// the flag because both paths require its exact UID/root declaration; see
-// ensureProjectSession.
-func (c *switchCommand) materializeAndOpenProjectTopology(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
-	if err := c.materializeProjectTopology(ctx, sessionName, target, opened); err != nil {
-		return err
-	}
-	return c.openProjectSession(ctx, sessionName)
 }
 
 func (c *switchCommand) materializeProjectTopology(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {

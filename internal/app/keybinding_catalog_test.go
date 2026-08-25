@@ -4,7 +4,75 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/i18n"
 )
+
+func TestProjectRuntimeStopCopyHasEnglishKoreanIdentityAndTopologyParity(t *testing.T) {
+	t.Parallel()
+	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "Sidebar:KillSession")
+	if !ok {
+		t.Fatal("Sidebar:KillSession missing from keybinding catalog")
+	}
+	semantics, ok := keyBindingActionSemanticsFor(action)
+	if !ok {
+		t.Fatal("Sidebar:KillSession has no semantic contract")
+	}
+	for _, test := range []struct {
+		locale                          i18n.Locale
+		wantLabel, wantDesc, wantResult string
+	}{
+		{locale: "en-US", wantLabel: "Stop Project Runtime (keep UID/topology)",
+			wantDesc:   "Stop only the focused Project runtime; keep its Project UID and desired Window/Pane topology",
+			wantResult: "stop only the Project runtime; keep its Project UID and desired Window/Pane topology"},
+		{locale: "ko-KR", wantLabel: "Project 런타임 중지 (UID/토폴로지 유지)",
+			wantDesc:   "포커스한 Project 런타임만 중지하고 Project UID와 desired Window/Pane 토폴로지는 유지",
+			wantResult: "Project 런타임만 중지하고 Project UID와 desired Window/Pane 토폴로지는 유지"},
+	} {
+		if got := settingsCatalogTextLocale(test.locale, keyBindingDisplayName(action)); got != test.wantLabel {
+			t.Fatalf("locale=%s Stop label=%q, want %q", test.locale, got, test.wantLabel)
+		}
+		if got := settingsCatalogTextLocale(test.locale, action.Description); got != test.wantDesc {
+			t.Fatalf("locale=%s Stop description=%q, want %q", test.locale, got, test.wantDesc)
+		}
+		if got := settingsCatalogTextLocale(test.locale, semantics.ResultKind); got != test.wantResult {
+			t.Fatalf("locale=%s Stop result=%q, want %q", test.locale, got, test.wantResult)
+		}
+	}
+}
+
+func TestRuntimeSessionStopCopyHasEnglishKoreanManagedIdentityParity(t *testing.T) {
+	t.Parallel()
+	action, ok := keyBindingActionByID(defaultKeyBindingCatalog(), "SessionPopup:KillSession")
+	if !ok {
+		t.Fatal("SessionPopup:KillSession missing from keybinding catalog")
+	}
+	semantics, ok := keyBindingActionSemanticsFor(action)
+	if !ok {
+		t.Fatal("SessionPopup:KillSession has no semantic contract")
+	}
+	for _, test := range []struct {
+		locale                          i18n.Locale
+		wantLabel, wantDesc, wantResult string
+	}{
+		{locale: "en-US", wantLabel: "Stop Runtime Session (keep managed identity)",
+			wantDesc:   "Stop only the focused runtime Session; keep managed Registry identity and desired topology",
+			wantResult: "stop only the runtime Session; keep managed Registry identity and desired topology"},
+		{locale: "ko-KR", wantLabel: "런타임 Session 중지 (관리 identity 유지)",
+			wantDesc:   "포커스한 런타임 Session만 중지하고 관리 Registry identity와 desired 토폴로지는 유지",
+			wantResult: "런타임 Session만 중지하고 관리 Registry identity와 desired 토폴로지는 유지"},
+	} {
+		if got := settingsCatalogTextLocale(test.locale, keyBindingDisplayName(action)); got != test.wantLabel {
+			t.Fatalf("locale=%s generic Stop label=%q, want %q", test.locale, got, test.wantLabel)
+		}
+		if got := settingsCatalogTextLocale(test.locale, action.Description); got != test.wantDesc {
+			t.Fatalf("locale=%s generic Stop description=%q, want %q", test.locale, got, test.wantDesc)
+		}
+		if got := settingsCatalogTextLocale(test.locale, semantics.ResultKind); got != test.wantResult {
+			t.Fatalf("locale=%s generic Stop result=%q, want %q", test.locale, got, test.wantResult)
+		}
+	}
+}
 
 func TestGhosttyBindingsFromCatalogUsePlainMeta(t *testing.T) {
 	t.Parallel()

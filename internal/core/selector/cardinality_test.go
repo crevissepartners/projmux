@@ -46,6 +46,7 @@ func TestCardinalityMatrixPinsTheContractCells(t *testing.T) {
 		{target: Target{Verb: VerbReview, Kind: metadata.KindAgent}, want: CardinalityExactOne},
 
 		// delete fans out.
+		{target: Target{Verb: VerbDelete, Kind: metadata.KindProject}, want: CardinalityAtLeastOne},
 		{target: Target{Verb: VerbDelete, Kind: metadata.KindAgent}, want: CardinalityAtLeastOne},
 	} {
 		got, ok := CardinalityFor(test.target)
