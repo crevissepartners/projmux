@@ -80,6 +80,17 @@ queried exact real-tmux socket below its owned smoke root. Lower-layer parity
 therefore owns the combinatorial table; E2E still owns transport, origin, and
 socket/root containment.
 
+Merged main evidence is closed by the same manifest without adding stable IDs.
+L17 links the simultaneous/coalesced exact-generation exit unit tests and the
+integration marker to its real-hook replay: both dead/mirrored Panes disappear,
+Agents become resumable Offline with cleared pane refs, siblings survive, and
+the repeat is Registry-byte-identical. L18 links the closed foreground
+`run-shell` producer ledger and integration transport marker to its attached
+client replay: success is silent or one bounded exact-client message, no
+view-mode overlay appears, and origin PID, focus, and Registry identity remain.
+The audit fails when any linked guarantee, test symbol/selector, or executable
+integration/E2E marker is missing, misspelled, or duplicated.
+
 The required result hash accepts exactly one `begin` followed by one typed
 `pass` for every expected stable ID. A terminal `fail`, `cancel`, or
 `unattributed` class, a terminal without its begin row, and an interrupted

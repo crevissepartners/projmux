@@ -19,6 +19,30 @@ SOURCE_BY_SUITE = {
     "npm": "test/e2e/npm-staging-path.sh",
 }
 REQUIRED_AGS_OEDR = ("A", "G", "S", "O", "E", "D", "R")
+EXPECTED_MERGED_EVIDENCE = {
+    "L17.merged-766": {
+        "scenario_id": "L17",
+        "source_commit": "fc04577e7b5908ecb3d73f3694d32d174c519ac3",
+        "guarantees": {
+            "simultaneous_or_coalesced_exit",
+            "exact_generation_cleanup",
+            "offline_resumable_refs",
+            "sibling_preservation",
+            "fixed_point",
+        },
+    },
+    "L18.merged-767": {
+        "scenario_id": "L18",
+        "source_commit": "217bdc32f51f36914625df92bfb17de7abe1e03d",
+        "guarantees": {
+            "foreground_producer_matrix",
+            "exact_client_delivery",
+            "success_silent_no_overlay",
+            "origin_identity_preservation",
+            "bounded_refusal_failure",
+        },
+    },
+}
 BEGIN_RE = re.compile(
     r"^smoke_contract_begin\s+(?P<id>[LCN]\d{2})\s+(?P<scenario>[a-z0-9-]+)\s+(?P<owner>[a-z0-9-]+)\s*$",
     re.MULTILINE,
@@ -54,6 +78,29 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
     if document.get("schema") != "projmux.e2e.ags-oedr.v1":
         fail("manifest schema is not projmux.e2e.ags-oedr.v1")
     return document
+
+
+def validate_go_test_reference(
+    root: pathlib.Path,
+    item: Any,
+    label: str,
+) -> tuple[str, str]:
+    if not isinstance(item, dict) or set(item) != {"path", "symbol", "selector"}:
+        fail(f"{label} must contain exact path/symbol/selector fields")
+    relative = nonempty_string(item.get("path"), f"{label}.path")
+    lower_path = closed_relative_path(root, relative, f"{label}.path")
+    if lower_path.suffix != ".go" or not lower_path.name.endswith("_test.go"):
+        fail(f"{label}.path must name a Go test source")
+    symbol = nonempty_string(item.get("symbol"), f"{label}.symbol")
+    lower_text = lower_path.read_text(encoding="utf-8")
+    if not re.search(rf"^func\s+{re.escape(symbol)}\s*\(", lower_text, re.MULTILINE):
+        fail(f"{label} referenced test symbol disappeared: {symbol}")
+    selector = nonempty_string(item.get("selector"), f"{label}.selector")
+    package = pathlib.PurePosixPath(relative).parent.as_posix()
+    expected_selector = f"go test ./{package} -run ^{symbol}$ -count=1"
+    if selector != expected_selector:
+        fail(f"{label} exact lower-layer selector differs: {selector}")
+    return relative, symbol
 
 
 def source_inventory(root: pathlib.Path) -> dict[str, dict[str, str]]:
@@ -194,6 +241,74 @@ def validate(root: pathlib.Path, manifest: dict[str, Any]) -> dict[str, Any]:
             nonempty_string(lower.get(evidence_kind), f"{moved_id}.lower_layer.{evidence_kind}")
         nonempty_string(item.get("e2e_sentinel"), f"{moved_id}.e2e_sentinel")
 
+    merged = manifest.get("merged_evidence")
+    if not isinstance(merged, list):
+        fail("merged_evidence must be an array")
+    merged_ids = [item.get("id") if isinstance(item, dict) else None for item in merged]
+    if len(merged_ids) != len(set(merged_ids)):
+        fail("merged_evidence contains duplicate ids")
+    if set(merged_ids) != set(EXPECTED_MERGED_EVIDENCE):
+        fail(
+            "merged_evidence inventory differs: "
+            f"actual={sorted(str(item) for item in merged_ids)} "
+            f"expected={sorted(EXPECTED_MERGED_EVIDENCE)}"
+        )
+    merged_lower_refs: set[tuple[str, str]] = set()
+    merged_lower_count = 0
+    for item in merged:
+        if not isinstance(item, dict) or set(item) != {
+            "id", "scenario_id", "source_commit", "guarantees", "lower_layer", "integration", "e2e"
+        }:
+            fail("merged_evidence row has an open or incomplete field set")
+        evidence_id = str(item["id"])
+        expected_merged = EXPECTED_MERGED_EVIDENCE[evidence_id]
+        scenario_id = nonempty_string(item.get("scenario_id"), f"{evidence_id}.scenario_id")
+        if scenario_id != expected_merged["scenario_id"] or scenario_id not in manifest_ids:
+            fail(f"{evidence_id} scenario_id differs from its closed merged source")
+        if item.get("source_commit") != expected_merged["source_commit"]:
+            fail(f"{evidence_id} source_commit differs from the merged main evidence")
+        guarantees = item.get("guarantees")
+        if not isinstance(guarantees, dict) or set(guarantees) != expected_merged["guarantees"]:
+            fail(f"{evidence_id} guarantee inventory differs")
+        for guarantee, description in guarantees.items():
+            nonempty_string(description, f"{evidence_id}.guarantees.{guarantee}")
+
+        lower_layer = item.get("lower_layer")
+        if not isinstance(lower_layer, list) or not lower_layer:
+            fail(f"{evidence_id}.lower_layer must contain executable tests")
+        local_refs: set[tuple[str, str]] = set()
+        for lower_index, lower in enumerate(lower_layer):
+            ref = validate_go_test_reference(root, lower, f"{evidence_id}.lower_layer[{lower_index}]")
+            if ref in local_refs or ref in merged_lower_refs:
+                fail(f"duplicate merged lower-layer test reference: {ref}")
+            local_refs.add(ref)
+            merged_lower_refs.add(ref)
+            merged_lower_count += 1
+
+        for layer in ("integration", "e2e"):
+            boundary = item.get(layer)
+            if not isinstance(boundary, dict) or set(boundary) != {"path", "marker"}:
+                fail(f"{evidence_id}.{layer} must contain exact path/marker fields")
+            expected_path = "test/integration/linux-smoke.sh" if layer == "integration" else sources[scenario_id]["source"]
+            if boundary.get("path") != expected_path:
+                fail(f"{evidence_id}.{layer}.path differs: {boundary.get('path')}")
+            boundary_path = closed_relative_path(root, expected_path, f"{evidence_id}.{layer}.path")
+            marker = nonempty_string(boundary.get("marker"), f"{evidence_id}.{layer}.marker")
+            boundary_text = boundary_path.read_text(encoding="utf-8")
+            if boundary_text.count(marker) != 1:
+                fail(f"{evidence_id}.{layer} marker is missing or duplicated")
+            if layer == "e2e":
+                begin = re.search(rf"^smoke_contract_begin\s+{scenario_id}\s+", boundary_text, re.MULTILINE)
+                if begin is None:
+                    fail(f"{evidence_id} has no executable E2E begin marker")
+                next_begin = re.search(r"^smoke_contract_begin\s+", boundary_text[begin.end():], re.MULTILINE)
+                end = begin.end() + next_begin.start() if next_begin else len(boundary_text)
+                scenario_body = boundary_text[begin.start():end]
+                marker_offset = scenario_body.find(marker)
+                pass_offset = scenario_body.find("smoke_contract_pass", marker_offset + len(marker))
+                if marker_offset < 0 or pass_offset < 0:
+                    fail(f"{evidence_id} marker is not enforced before its E2E pass")
+
     manifest_bytes = json.dumps(manifest, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
     return {
         "schema": "projmux.e2e.coverage-audit.v1",
@@ -202,6 +317,8 @@ def validate(root: pathlib.Path, manifest: dict[str, Any]) -> dict[str, Any]:
         "moved_matrix_count": len(moved),
         "moved_former_cells": sum(item["former_e2e_cells"] for item in moved),
         "moved_e2e_sentinel_cells": sum(item["e2e_sentinel_cells"] for item in moved),
+        "merged_evidence_count": len(merged),
+        "merged_lower_test_count": merged_lower_count,
         "orphan_count": 0,
         "manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
     }

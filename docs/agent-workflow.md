@@ -331,6 +331,14 @@
   identical output/error/observation count and zero Registry transaction,
   write, or model change. The L19 real-tmux fixture retains five sentinels and
   owns exact popup origin, queried socket containment, and owned-root cleanup.
+- The same manifest absorbs merged-main evidence without expanding the stable
+  inventory. L17 closes simultaneous/coalesced provider exits through exact
+  generation dead/mirrored cleanup, resumable Offline Agent refs, sibling
+  preservation, and byte-identical repeat. L18 closes the generated foreground
+  `run-shell` matrix through exact-client bounded delivery, success silence,
+  no view-mode overlay, and origin PID/focus/Registry identity preservation.
+  Every referenced unit symbol/selector and integration/E2E pass marker is
+  fail-closed by the coverage audit.
 - `make test-e2e` uses one attempt-local binary across isolated four-way Linux,
   Codex, and npm consumers. Local Security is the exact three-way
   `make security` topology; CI's required branch-protection context is the
