@@ -1,6 +1,6 @@
 package version
 
-var current = "0.12.2" // x-release-please-version
+var current = "0.13.0" // x-release-please-version
 
 func String() string {
 	return current
