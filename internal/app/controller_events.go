@@ -140,7 +140,10 @@ type controllerEventRecord struct {
 	Session    string                  `json:"session,omitempty"`
 	HookPane   string                  `json:"hookPane,omitempty"`
 	HookWindow string                  `json:"hookWindow,omitempty"`
-	Retry      int                     `json:"retry,omitempty"`
+	// Retry is controller transport state. It bounds both causal unlink replay
+	// and a worker's replay after a convergence error; it never becomes
+	// Registry teardown evidence.
+	Retry int `json:"retry,omitempty"`
 }
 
 func (l controllerEventLog) mark(trigger controllerTrigger) error {

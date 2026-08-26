@@ -128,9 +128,10 @@ type controllerTrigger struct {
 	// corresponding hook. They are evidence, never selector guesses.
 	hookPane   string
 	hookWindow string
-	// retry counts bounded event-log deferrals of an unlink that arrived before
-	// its causal pane-exited half. It is controller transport state only and
-	// never becomes Registry teardown evidence.
+	// retry counts bounded event-log replays: either an unlink that arrived
+	// before its causal pane-exited half or a convergence pass that returned an
+	// error. It is controller transport state only and never becomes Registry
+	// teardown evidence.
 	retry int
 	// fullReobserve is set internally once this worker coalesces another event.
 	// It is sticky for the rest of the worker, including its verification pass.
@@ -217,6 +218,12 @@ func (o controllerTriggerOutcome) describe() string {
 // from the event log, so the next producer's pass reaches the same answer this
 // worker would have reached on pass nine.
 const controllerTriggerMaxPasses = 8
+
+// controllerTriggerMaxRetries bounds replay of one event whose convergence
+// body returns an error. The event remains durable after the bound so a later
+// producer can acquire the lease and retry it; the current producer still gets
+// the terminal error instead of a false convergence claim.
+const controllerTriggerMaxRetries = 3
 
 const (
 	terminationReceiptWaitTimeout = 750 * time.Millisecond
@@ -376,7 +383,9 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 		sortControllerTriggers(drained)
 		batchChanged := false
 		sawPaneExit := false
-		for _, passTrigger := range controllerPassTriggers(drained, trigger) {
+		passTriggers := controllerPassTriggers(drained, trigger)
+		retryQueued := false
+		for passIndex, passTrigger := range passTriggers {
 			body := r.pass
 			var pass controllerPassResult
 			if body == nil {
@@ -388,13 +397,26 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 			if err != nil {
 				var cleanupRetry *lifecycleCleanupRetryError
 				if errors.As(err, &cleanupRetry) && passTrigger.reason == controllerTriggerPaneExited &&
-					!passTrigger.fullReobserve && passTrigger.retry < 3 {
-					passTrigger.retry++
-					if markErr := r.events.mark(passTrigger); markErr != nil {
-						return outcome, fmt.Errorf("%w; requeue %s: %v", err, cleanupRetry.Reason, markErr)
-					}
+					!passTrigger.fullReobserve {
 					outcome.retryReason = cleanupRetry.Reason
-					continue
+				}
+				canRetry := passTrigger.retry < controllerTriggerMaxRetries
+				if canRetry {
+					passTrigger.retry++
+				}
+				// drain acknowledges before a pass so a concurrent producer cannot
+				// be lost. Restore the failing pass and every pass this batch has not
+				// reached before either retrying or returning: otherwise an ordinary
+				// Registry-lock race turns one hook into a permanently dead Pane.
+				requeue := append([]controllerTrigger{passTrigger}, passTriggers[passIndex+1:]...)
+				for _, pendingTrigger := range requeue {
+					if markErr := r.events.mark(pendingTrigger); markErr != nil {
+						return outcome, fmt.Errorf("%w; requeue controller event: %v", err, markErr)
+					}
+				}
+				if canRetry {
+					retryQueued = true
+					break
 				}
 				return outcome, err
 			}
@@ -405,7 +427,7 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 			if passTrigger.reason == controllerTriggerPaneExited {
 				sawPaneExit = true
 			}
-			if passTrigger.reason == controllerTriggerWindowUnlinked && !passTrigger.fullReobserve && pass.awaitingPaneExit && !sawPaneExit && passTrigger.retry < 3 {
+			if passTrigger.reason == controllerTriggerWindowUnlinked && !passTrigger.fullReobserve && pass.awaitingPaneExit && !sawPaneExit && passTrigger.retry < controllerTriggerMaxRetries {
 				passTrigger.retry++
 				carriedUnlinks = append(carriedUnlinks, passTrigger)
 			}
@@ -423,6 +445,9 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 			// convergence, is the whole of the honest answer here.
 			outcome.unverified = pass.unobserved
 			return outcome, nil
+		}
+		if retryQueued {
+			continue
 		}
 		pending, err := r.events.pending(trigger.target)
 		if err != nil {
@@ -485,15 +510,19 @@ func controllerPassTriggers(events []controllerTrigger, fallback controllerTrigg
 	}
 	out := make([]controllerTrigger, 0, len(events)+1)
 	generic := false
+	genericRetry := fallback.retry
 	for _, event := range events {
 		if event.reason == controllerTriggerPaneExited || event.reason == controllerTriggerWindowUnlinked {
 			out = append(out, event)
 			continue
 		}
 		generic = true
+		genericRetry = max(genericRetry, event.retry)
 	}
 	if generic || len(out) == 0 {
-		out = append(out, fallback.widened())
+		widened := fallback.widened()
+		widened.retry = genericRetry
+		out = append(out, widened)
 	}
 	return out
 }
