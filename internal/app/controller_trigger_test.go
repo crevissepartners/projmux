@@ -579,6 +579,39 @@ func TestAConvergenceErrorReachesTheProducer(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "registry lock exhausted") {
 		t.Fatalf("err = %v, want the convergence failure", err)
 	}
+	if len(fixture.passes) != controllerTriggerMaxRetries+1 {
+		t.Fatalf("passes = %d, want initial attempt plus %d bounded retries", len(fixture.passes), controllerTriggerMaxRetries)
+	}
+	queued, drainErr := fixture.runner.events.drain(fixture.target)
+	if drainErr != nil || len(queued) != 1 || queued[0].retry != controllerTriggerMaxRetries {
+		t.Fatalf("durable terminal retry = %+v, err=%v", queued, drainErr)
+	}
+}
+
+func TestATransientConvergenceErrorReplaysTheDrainedEventAndConverges(t *testing.T) {
+	t.Parallel()
+
+	fixture := newTriggerFixture(t)
+	fixture.err = errors.New("registry lock exhausted")
+	fixture.beforePass = func(pass int) {
+		if pass == 3 {
+			fixture.err = nil
+		}
+	}
+	outcome, err := fixture.runner.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerPaneExited, target: fixture.target, hookPane: "%9",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcome.passes != 3 || outcome.events != 3 || !outcome.converged {
+		t.Fatalf("outcome = %s, want two durable retries then convergence", outcome.describe())
+	}
+	for pass, trigger := range fixture.triggers {
+		if trigger.hookPane != "%9" || trigger.retry != pass {
+			t.Fatalf("pass %d trigger = %+v, want exact Pane and retry=%d", pass+1, trigger, pass)
+		}
+	}
 }
 
 // TestTheTriggerRefusesToRunWithoutItsSeams pins the misconfiguration guards.
