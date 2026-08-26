@@ -34,6 +34,12 @@ type superviseSpec struct {
 	AgentUID    string
 	Generation  string
 	OperationID string
+	// RuntimeID is the exact raw tmux Pane handle observed by the activation
+	// gate after tmux started this generation. It is intentionally absent from
+	// the supervisor argv because no raw Pane exists when that argv is planned;
+	// activation-exec fills it only after the committed Registry binding agrees
+	// with its inherited TMUX_PANE.
+	RuntimeID string
 	// RegistryPath is the creator-resolved private authority for Agent
 	// admission. It is carried only between internal routes and is never
 	// exported to providers or public PROJMUX_* hooks.

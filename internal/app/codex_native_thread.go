@@ -37,6 +37,23 @@ type codexNativeAgentLauncher interface {
 	BindNativeCodexPane(paneID, contextDir, title, threadID string)
 }
 
+type routedCodexNativeAgentLauncher interface {
+	BindNativeCodexPaneOnRoute(context.Context, tmuxCommandRunner, string, string, string, string) error
+}
+
+func bindNativeCodexPaneOnRoute(
+	ctx context.Context,
+	launcher codexNativeAgentLauncher,
+	runner tmuxCommandRunner,
+	paneID, contextDir, title, threadID string,
+) error {
+	if routed, ok := launcher.(routedCodexNativeAgentLauncher); ok {
+		return routed.BindNativeCodexPaneOnRoute(ctx, runner, paneID, contextDir, title, threadID)
+	}
+	launcher.BindNativeCodexPane(paneID, contextDir, title, threadID)
+	return nil
+}
+
 type codexNativeLaunchOutcomeRow struct {
 	Action       string
 	NativeResult string

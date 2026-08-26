@@ -350,7 +350,7 @@ func TestSuperviseActivationAdmissionIsExactAndZeroWrite(t *testing.T) {
 			t.Fatalf("exact activation exec = %v", err)
 		}
 		if strings.Join(gotArgv, "\x00") != "provider\x00--exact-arg" || gotArgv0 != "-provider" ||
-			gotSpec != (superviseSpec{PaneUID: "pan-alpha-codex", AgentUID: "agt-alpha-codex", Generation: "gen-exact", OperationID: "op-exact", RegistryPath: registryPath}) {
+			gotSpec != (superviseSpec{PaneUID: "pan-alpha-codex", AgentUID: "agt-alpha-codex", Generation: "gen-exact", OperationID: "op-exact", RuntimeID: "%9", RegistryPath: registryPath}) {
 			t.Fatalf("exec handoff = argv=%v argv0=%q spec=%+v", gotArgv, gotArgv0, gotSpec)
 		}
 		if store.transactions != transactions+1 || store.writes != writes {

@@ -55,6 +55,14 @@ type agentLauncher interface {
 	AwaitAgentActivation(context.Context, tmuxCommandRunner, string, time.Duration, time.Duration) (bool, string, error)
 }
 
+// routedAgentPaneBinder is the transactional create-only binding seam. The
+// canonical route has already proved and installed one exact tmux runner by the
+// time the Pane exists, so the production binder must not reopen authority
+// through aiCommand's ambient compatibility runner.
+type routedAgentPaneBinder interface {
+	BindManagedAgentPaneOnRoute(context.Context, tmuxCommandRunner, string, string, string, string) error
+}
+
 type codexCapabilityAgentLauncher interface {
 	PlanAgentLaunchWithCapability(provider string, workspace coremetadata.AgentWorkspace, payload []string, selection corecap.Selection) (title string, argv []string, err error)
 }

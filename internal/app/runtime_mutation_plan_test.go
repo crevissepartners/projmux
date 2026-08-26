@@ -2225,6 +2225,37 @@ func TestStandaloneProducerAnchorSuppliesExactInvocationAuthorityWithoutInherite
 	}
 }
 
+func TestNativePrivateActivationAnchorSuppliesExactAppAuthorityWithoutInheritedPaneEnv(t *testing.T) {
+	server := newFakeTmux()
+	driver := server.addSession("driver")
+	pane := driver.windows[0].panes[0]
+	route, err := resolveInvocationRuntimeMutationRoute(context.Background(), server, func(key string) string {
+		switch key {
+		case "TMUX":
+			return server.socketPath + "," + server.serverPID + ",0"
+		case runtimeMutationAnchorPaneEnv:
+			return pane.id
+		default:
+			return ""
+		}
+	})
+	if err != nil {
+		t.Fatalf("resolve private-anchored app route: %v", err)
+	}
+	if route.target != (explicitTmuxTarget{flag: "-L", value: server.socketName}) ||
+		route.expectedSocketPath != server.socketPath || route.authority == nil ||
+		route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != server.serverPID ||
+		route.authority.SessionID != driver.id || route.authority.WindowID != driver.windows[0].id ||
+		route.authority.PaneID != pane.id {
+		t.Fatalf("private-anchored app authority = %#v", route)
+	}
+	for _, call := range server.calls {
+		if len(call) < 3 || (call[0] != "-L" && call[0] != "-S") {
+			t.Fatalf("private-anchored app reobservation used a bare route: %#v", call)
+		}
+	}
+}
+
 func TestRuntimeMutationAnchorSourcesRefuseMalformedHigherPrecedenceEvidence(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -2274,6 +2305,71 @@ func TestRuntimeMutationAnchorSourcesRefuseMalformedHigherPrecedenceEvidence(t *
 			}
 			if len(server.calls) != 0 {
 				t.Fatalf("malformed higher-precedence anchor reached tmux before refusal: %#v", server.calls)
+			}
+		})
+	}
+}
+
+func TestNativePrivateActivationAnchorNegativeAuthorityMatrixIsFirstWriteZero(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		privatePane string
+		receiptPath string
+		receiptPID  string
+		appMarker   string
+		logical     string
+		want        string
+	}{
+		{name: "stale Pane", privatePane: "%999", want: "reobserve inherited anchor"},
+		{name: "malformed Pane", privatePane: "pane-nine", want: "private producer anchor"},
+		{name: "wrong server path", receiptPath: "/tmp/projmux-route/foreign.sock", want: "inherited socket drifted"},
+		{name: "stale server PID", receiptPID: "999999", want: "containment drifted"},
+		{name: "foreign ownership marker", appMarker: "0", want: "not app-owned"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			server := newFakeTmux()
+			driver := server.addSession("driver")
+			anchor := driver.windows[0].panes[0].id
+			if test.privatePane != "" {
+				anchor = test.privatePane
+			}
+			path := server.socketPath
+			if test.receiptPath != "" {
+				path = test.receiptPath
+			}
+			pid := server.serverPID
+			if test.receiptPID != "" {
+				pid = test.receiptPID
+			}
+			if test.appMarker != "" {
+				server.appMarker = test.appMarker
+			}
+			if test.logical != "" {
+				server.socketName = test.logical
+			}
+			_, err := resolveInvocationRuntimeMutationRoute(context.Background(), server, func(key string) string {
+				switch key {
+				case "TMUX":
+					return path + "," + pid + ",0"
+				case runtimeMutationAnchorPaneEnv:
+					return anchor
+				case "TMUX_PANE":
+					return "%998"
+				default:
+					return ""
+				}
+			})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("negative native authority error = %v, want %q", err, test.want)
+			}
+			for _, call := range server.calls {
+				argv := tmuxCommandArgv(call)
+				for _, write := range []string{"set-option", "set-environment", "new-session", "new-window", "split-window", "kill-pane", "kill-window", "kill-session"} {
+					if slices.Contains(argv, write) {
+						t.Fatalf("negative native authority reached first write %q: %#v", write, server.calls)
+					}
+				}
 			}
 		})
 	}
@@ -2333,6 +2429,58 @@ func TestDefaultInvocationAliasRecoversCanonicalAppRouteBidirectionally(t *testi
 	if route.target.flag != "-L" || route.target.value != name || route.socketName != name || route.expectedSocketPath != path ||
 		route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != "4242" || route.authority.PaneID != "" {
 		t.Fatalf("canonical alias route = %#v", route)
+	}
+}
+
+func TestOutsideTmuxAppRouteSuppressesOnlyTypedNoServerProbe(t *testing.T) {
+	probe := recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}")
+	for _, test := range []struct {
+		name    string
+		failure inttmux.CommandFailure
+		wantOK  bool
+		want    string
+	}{
+		{
+			name: "expected absent app server is an internal route outcome",
+			failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit,
+				Stderr: "no server running on /tmp/projmux-route/app.sock"},
+			wantOK: true,
+		},
+		{
+			name: "permission stays visible",
+			failure: inttmux.CommandFailure{Kind: inttmux.CommandFailurePermission,
+				Stderr: "failed to connect to server: Permission denied"},
+			want: "Permission denied",
+		},
+		{
+			name: "generic protocol refusal stays visible",
+			failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit,
+				Stderr: "protocol version mismatch"},
+			want: "protocol version mismatch",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runner := &recordingTmuxRunner{errors: map[string]error{
+				probe: appTypedCommandFailure{failure: test.failure},
+			}}
+			route, err := resolveInvocationRuntimeMutationRoute(context.Background(), runner, func(string) string { return "" })
+			if test.wantOK {
+				if err != nil || route.target != (explicitTmuxTarget{flag: "-L", value: defaultAppSocket}) || route.authority != nil {
+					t.Fatalf("typed no-server route = %#v err=%v", route, err)
+				}
+			} else {
+				if err == nil || !strings.Contains(err.Error(), "probe default logical socket") || inttmux.IsNoServerFailure(err) {
+					t.Fatalf("visible route error = %v, want non-absence routed failure", err)
+				}
+				var carrier interface{ CommandFailure() inttmux.CommandFailure }
+				if !errors.As(err, &carrier) || carrier.CommandFailure() != test.failure {
+					t.Fatalf("route failure lost typed diagnostic: err=%v carrier=%#v", err, carrier)
+				}
+			}
+			if len(runner.calls) != 1 || len(runner.calls[0].args) < 2 || runner.calls[0].args[0] != "-L" || runner.calls[0].args[1] != defaultAppSocket {
+				t.Fatalf("outside route probe argv = %#v", runner.calls)
+			}
+		})
 	}
 }
 
@@ -2623,6 +2771,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"ai.go:BindNativeCodexPane:set-option":                                            "agent.presentation",
 		"ai.go:configureAIPane:set-option":                                                "agent.presentation",
 		"ai.go:configureAIPaneResumeMetadata:set-option":                                  "agent.presentation",
+		"ai.go:runAIPaneOptionOnRoute:set-option":                                         "agent.presentation",
 		"ai.go:bootstrapAIWatchMetadata:set-option":                                       "agent.presentation",
 		"ai.go:recordAITopic:set-option":                                                  "agent.presentation",
 		"ai.go:projectManagedAgentInteraction:variable-argv":                              "agent.presentation",

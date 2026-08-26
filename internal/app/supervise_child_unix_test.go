@@ -18,16 +18,43 @@ import (
 
 func TestSupervisedProviderExportsExactActivationEvidenceToHooks(t *testing.T) {
 	t.Parallel()
-	spec := superviseSpec{PaneUID: "pane-exact", Generation: "gen-exact"}
+	spec := superviseSpec{PaneUID: "pane-exact", Generation: "gen-exact", RuntimeID: "%41"}
 	outcome, err := runSupervisedChildWithEnvironment([]string{
 		"sh", "-c",
-		`test "$` + internalActivationPaneUIDEnv + `" = pane-exact && test "$` + internalActivationGenerationEnv + `" = gen-exact`,
+		`test "$` + internalActivationPaneUIDEnv + `" = pane-exact && test "$` + internalActivationGenerationEnv + `" = gen-exact && test "$` + runtimeMutationAnchorPaneEnv + `" = %41`,
 	}, "", activationEnvironment(spec), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if outcome.ExitCode != 0 || outcome.Signal != "" {
 		t.Fatalf("activation evidence child outcome = %+v", outcome)
+	}
+}
+
+func TestNativeActivationEnvironmentAddsOnlyThePrivateExactRouteAnchor(t *testing.T) {
+	t.Parallel()
+
+	base := activationEnvironment(superviseSpec{PaneUID: "pane-exact", Generation: "gen-exact"})
+	anchored := activationEnvironment(superviseSpec{PaneUID: "pane-exact", Generation: "gen-exact", RuntimeID: "%41"})
+	if len(anchored) != len(base)+1 || anchored[len(anchored)-1] != runtimeMutationAnchorPaneEnv+"=%41" {
+		t.Fatalf("anchored activation environment = %#v, base=%#v", anchored, base)
+	}
+	for _, entry := range anchored {
+		if strings.HasPrefix(entry, "PROJMUX_") {
+			t.Fatalf("native route authority added public hook environment %q", entry)
+		}
+	}
+	for _, runtimeID := range []string{"", "41", "%41 ", "%bad"} {
+		environment := activationEnvironment(superviseSpec{PaneUID: "pane-exact", Generation: "gen-exact", RuntimeID: runtimeID})
+		if runtimeID == "%41 " {
+			if len(environment) != len(base)+1 || environment[len(environment)-1] != runtimeMutationAnchorPaneEnv+"=%41" {
+				t.Fatalf("trimmed exact runtime environment = %#v", environment)
+			}
+			continue
+		}
+		if len(environment) != len(base) {
+			t.Fatalf("non-exact runtime %q exported an anchor: %#v", runtimeID, environment)
+		}
 	}
 }
 

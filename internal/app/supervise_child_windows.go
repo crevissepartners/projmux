@@ -36,9 +36,11 @@ func runSupervisedChildWithActivation(argv []string, argv0 string, spec supervis
 	// is returned as a launch failure and therefore cannot fabricate a receipt.
 	// WSL uses the Unix build and its CLOEXEC handshake.
 	gate := newActivationExecCommand()
-	if err := gate.awaitCommittedActivation(spec); err != nil {
+	runtimeID, err := gate.awaitCommittedActivation(spec)
+	if err != nil {
 		return processOutcome{}, fmt.Errorf("activation admission: %w", err)
 	}
+	spec.RuntimeID = runtimeID
 	return runSupervisedChildWithEnvironment(argv, argv0, activationEnvironment(spec))
 }
 

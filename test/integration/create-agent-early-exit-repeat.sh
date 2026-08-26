@@ -258,7 +258,8 @@ for iteration in $(seq 1 "$repeats"); do
   case_phase="setup"
   mkdir -p "$case_root"/{home,config,runtime,state,tmp,tmux,bin,work/evidence}
   chmod 0700 "$case_root/runtime" "$case_root/tmux"
-  printf '#!/usr/bin/env bash\nexit 42\n' >"$case_root/bin/codex"
+  printf '#!/usr/bin/env bash\n[[ "${__PROJMUX_RUNTIME_ANCHOR_PANE:-}" == "${TMUX_PANE:-}" && "${TMUX_PANE:-}" =~ ^%%[0-9]+$ ]] || exit 43\nprintf "%%s|%%s\\n" "$__PROJMUX_RUNTIME_ANCHOR_PANE" "$TMUX_PANE" >%q\nexit 42\n' \
+    "$case_root/provider-anchor" >"$case_root/bin/codex"
   chmod 0755 "$case_root/bin/codex"
 
   case_tmux "$app_socket" new-session -d -s work-evidence -n main \
@@ -318,6 +319,17 @@ for iteration in $(seq 1 "$repeats"); do
   set -e
   if [[ "$create_status" != "0" || ! "$agent_uid" =~ ^agent-[a-z2-7]+$ ]]; then
     echo "PRODUCT-AUTHORITY create failed status=$create_status agent=$agent_uid" >&2
+    exit 1
+  fi
+  provider_anchor=""
+  for _ in $(seq 1 200); do
+    provider_anchor="$(cat "$case_root/provider-anchor" 2>/dev/null || true)"
+    [[ -n "$provider_anchor" ]] && break
+    sleep 0.05
+  done
+  if [[ ! "$provider_anchor" =~ ^%[0-9]+\|%[0-9]+$ ]] ||
+    [[ "${provider_anchor%%|*}" != "${provider_anchor##*|}" ]]; then
+    echo "PRODUCT-AUTHORITY provider did not observe the exact private activation Pane: $provider_anchor" >&2
     exit 1
   fi
   if grep -Fq 'rollback preserved pane' "$case_root/create.err"; then

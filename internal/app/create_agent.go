@@ -269,15 +269,17 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			// pipeline. They are applied after the pane exists and before the
 			// result is reported.
 			if usedNative {
-				nativeLauncher.BindNativeCodexPane(paneID, workspace.CWD, workTitle, nativeBinding.ThreadID)
+				if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.runner, paneID, workspace.CWD, workTitle, nativeBinding.ThreadID); err != nil {
+					return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", spelling, paneID, err)
+				}
 				if nativeLifecycleCapable {
 					nativeLifecycleTargets = append(nativeLifecycleTargets, codexLifecycleIdentity{
 						AgentUID: work.agent.Metadata.UID, PaneUID: work.pane.Metadata.UID, RuntimeID: paneID,
 						Generation: work.activation.Generation, ThreadID: nativeBinding.ThreadID,
 					})
 				}
-			} else {
-				c.bindAgentPane(paneID, provider, workspace.CWD, workTitle, flags)
+			} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, workTitle, flags); err != nil {
+				return tmuxError("%s: bind Agent Pane %s presentation metadata: %v", spelling, paneID, err)
 			}
 			// Canonical Agent topic authority starts empty. The shared legacy
 			// binder seeds its display title as a compatibility topic, so remove
@@ -449,18 +451,28 @@ func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetad
 // index from the moment the pane exists, which is what lets the provider's first
 // hook event be attributed to this pane instead of having to wait for the
 // provider to report the conversation itself.
-func (c *createCommand) bindAgentPane(paneID, provider, contextDir, title string, flags resourceCreateFlags) {
+func (c *createCommand) bindAgentPane(ctx context.Context, paneID, provider, contextDir, title string, flags resourceCreateFlags) error {
 	if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" && c.resumes != nil {
 		if source := strings.TrimSpace(flags.resumeSource); source != "" {
+			if routed, ok := c.resumes.(routedSourcedResumedAgentPaneBinder); ok {
+				return routed.BindResumedAgentPaneWithSourceOnRoute(ctx, c.runtime.runner, paneID, provider, contextDir, title, conversation, source)
+			}
 			if sourced, ok := c.resumes.(interface {
 				BindResumedAgentPaneWithSource(string, string, string, string, string, string)
 			}); ok {
 				sourced.BindResumedAgentPaneWithSource(paneID, provider, contextDir, title, conversation, source)
-				return
+				return nil
 			}
 		}
+		if routed, ok := c.resumes.(routedResumedAgentPaneBinder); ok {
+			return routed.BindResumedAgentPaneOnRoute(ctx, c.runtime.runner, paneID, provider, contextDir, title, conversation)
+		}
 		c.resumes.BindResumedAgentPane(paneID, provider, contextDir, title, conversation)
-		return
+		return nil
+	}
+	if routed, ok := c.agents.(routedAgentPaneBinder); ok {
+		return routed.BindManagedAgentPaneOnRoute(ctx, c.runtime.runner, paneID, provider, contextDir, title)
 	}
 	c.agents.BindManagedAgentPane(paneID, provider, contextDir, title)
+	return nil
 }
