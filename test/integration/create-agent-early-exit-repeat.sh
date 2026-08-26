@@ -258,6 +258,8 @@ for iteration in $(seq 1 "$repeats"); do
   case_phase="setup"
   mkdir -p "$case_root"/{home,config,runtime,state,tmp,tmux,bin,work/evidence}
   chmod 0700 "$case_root/runtime" "$case_root/tmux"
+  # The generated provider, not this harness, expands the activation environment.
+  # shellcheck disable=SC2016
   printf '#!/usr/bin/env bash\n[[ "${__PROJMUX_RUNTIME_ANCHOR_PANE:-}" == "${TMUX_PANE:-}" && "${TMUX_PANE:-}" =~ ^%%[0-9]+$ ]] || exit 43\nprintf "%%s|%%s\\n" "$__PROJMUX_RUNTIME_ANCHOR_PANE" "$TMUX_PANE" >%q\nexit 42\n' \
     "$case_root/provider-anchor" >"$case_root/bin/codex"
   chmod 0755 "$case_root/bin/codex"
