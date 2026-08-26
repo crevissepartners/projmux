@@ -660,6 +660,51 @@ func TestReleasedSameGenerationDeadPaneRetryConvergesAndPreservesSessionRef(t *t
 	}
 }
 
+func TestExactDeadPaneUIDDisambiguatesAReusedRuntimeHandle(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	activateExactPane(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-current", "%9")
+	currentReceipt := phase2NormalReceipt("pan-alpha-codex", "agt-alpha-codex", "gen-current")
+
+	stale, err := store.mutator().AttachAgentPane(&store.registry, "agt-beta-codex",
+		coremetadata.BootstrapPane{CWD: "/srv/beta"}, "attach-stale-agent")
+	if err != nil {
+		t.Fatalf("attach stale Agent Pane: %v", err)
+	}
+	activateExactPane(t, store, stale.Metadata.UID, "agt-beta-codex", "gen-stale", "%9")
+	staleReceipt := phase2NormalReceipt(stale.Metadata.UID, "agt-beta-codex", "gen-stale")
+	if _, err := store.mutator().RecordTermination(&store.registry, staleReceipt); err != nil {
+		t.Fatalf("record stale termination: %v", err)
+	}
+	if projection, err := store.mutator().ProjectTermination(&store.registry, coremetadata.TerminationProjectionInput{
+		PaneUID: stale.Metadata.UID, Generation: "gen-stale", ObservedAt: resourceFixtureClock.Add(time.Minute),
+	}); err != nil || !projection.Changed {
+		t.Fatalf("release stale Pane = %+v, %v", projection, err)
+	}
+	stalePaneBefore, _ := store.registry.Pane(stale.Metadata.UID)
+	staleAgentBefore, _ := store.registry.Agent("agt-beta-codex")
+
+	live := exitReconcileFixtureLiveExcept("pan-alpha-codex")
+	delete(live, stale.Metadata.UID)
+	live["pan-alpha-codex"] = true
+	inventory := &exactPaneExitInventory{
+		uids: live, dead: map[string]bool{"pan-alpha-codex": true}, windowUID: "win-alpha-main",
+	}
+	result, err := reconcileLifecycle(context.Background(), exactPaneExitDirty(currentReceipt), inventory, store.store())
+	if err != nil || len(result.cascaded) != 1 || inventory.cleanups != 1 {
+		t.Fatalf("reused-handle convergence result=%+v inventory=%+v err=%v", result, inventory, err)
+	}
+	if _, ok := store.registry.Pane("pan-alpha-codex"); ok || inventory.dead["pan-alpha-codex"] {
+		t.Fatal("current exact dead Pane survived reused-handle convergence")
+	}
+	stalePaneAfter, paneOK := store.registry.Pane(stale.Metadata.UID)
+	staleAgentAfter, agentOK := store.registry.Agent("agt-beta-codex")
+	if !paneOK || !agentOK || !reflect.DeepEqual(stalePaneAfter, stalePaneBefore) || !reflect.DeepEqual(staleAgentAfter, staleAgentBefore) {
+		t.Fatalf("historical Pane/Agent changed: pane=%+v agent=%+v", stalePaneAfter, staleAgentAfter)
+	}
+}
+
 func TestSimultaneousCleanAgentExitsConvergeWithoutDeadOrMirroredResiduals(t *testing.T) {
 	t.Parallel()
 
