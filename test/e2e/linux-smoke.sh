@@ -5683,7 +5683,68 @@ if [[ -s "$startup_agent_argv" ]]; then
   exit 1
 fi
 
-# 7. Make the fresh Project zero-Window, then Fresh once more. This second
+# 7. Run the native Alt-1 sidebar on its own pseudo-TTY with the exact popup
+# receipt, stop that origin runtime with Ctrl-X, then select the refreshed same
+# Project and Continue it. The sidebar process survives the in-place stop, but
+# its original Pane is gone; Continue must replace that dead private anchor
+# with the still-live client's Pane and rematerialize the exact fresh UID graph.
+startup_fresh_continue_project_uid="$startup_project_uid_after"
+startup_fresh_continue_window_uids="$(startup_pmx get windows --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)"
+startup_fresh_continue_pane_uids="$(startup_pmx get panes --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)"
+startup_fresh_anchor="$(startup_tmux display-message -p -t "$startup_session" '#{pane_id}')"
+mkdir -p "$startup_root/config/projmux"
+printf 'on\n' >"$startup_root/config/projmux/sidebar-startup-picker"
+startup_sidebar_log="$startup_root/fresh-stop-sidebar.log"
+startup_sidebar_input="$startup_root/fresh-stop-sidebar.in"
+mkfifo "$startup_sidebar_input"
+exec 5<>"$startup_sidebar_input"
+(
+  TERM=xterm-256color script -qefc \
+    "TERM=xterm-256color env HOME='$startup_root/home' XDG_CONFIG_HOME='$startup_root/config' XDG_STATE_HOME='$startup_root/state' XDG_RUNTIME_DIR='$startup_root/runtime' PROJMUX_MANAGED_ROOTS='$startup_root/work' TMUX_TMPDIR='$startup_root/tmux' TMUX='$startup_socket_path,$startup_socket_pid,0' TMUX_PANE='$startup_fresh_anchor' __PROJMUX_RUNTIME_ANCHOR_PANE='$startup_fresh_anchor' TMUX_SESSIONIZER_CONTEXT_SESSION='$startup_session' PROJMUX_HOOK_TRUST_TARGET_CLIENT='$startup_client' PROJMUX_SWITCH_TARGET_CLIENT='$startup_client' SHELL='$startup_shell' PATH='$startup_root/bin:$startup_root/shim:$PATH' '$bin' switch --ui sidebar" \
+    "$startup_sidebar_log" <"$startup_sidebar_input" >"$startup_root/fresh-stop-sidebar.out" 2>"$startup_root/fresh-stop-sidebar.err"
+  echo $? >"$startup_root/fresh-stop-sidebar.rc"
+) &
+startup_fresh_sidebar_pid=$!
+startup_wait_for "Fresh Alt-1 sidebar rendered" sh -c \
+  "test -f '$startup_sidebar_log' && grep -aFq 'Ctrl-X: stop' '$startup_sidebar_log'"
+printf '\030' >&5
+startup_wait_for "Fresh sidebar Ctrl-X session removal" sh -c \
+  "! env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' has-session -t '$startup_session' 2>/dev/null"
+startup_wait_for "Fresh sidebar Ctrl-X fallback client handoff" startup_client_is_on "$startup_driver"
+startup_fresh_sidebar_terminal() { ! kill -0 "$startup_fresh_sidebar_pid" 2>/dev/null; }
+if startup_fresh_sidebar_terminal; then
+  echo "Fresh sidebar did not remain active after Ctrl-X refresh" >&2
+  exit 1
+fi
+if [[ "$(startup_pmx get projects -o uid)" != "$startup_fresh_continue_project_uid" ]] ||
+  [[ "$(startup_pmx get windows --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)" != "$startup_fresh_continue_window_uids" ]] ||
+  [[ "$(startup_pmx get panes --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)" != "$startup_fresh_continue_pane_uids" ]]; then
+  echo "Fresh sidebar Ctrl-X changed the retained fresh UID graph" >&2
+  exit 1
+fi
+startup_start_picker_log_offset="$(stat -c %s "$startup_sidebar_log")"
+printf '\r' >&5
+startup_wait_for "Fresh sidebar Start project screen" sh -c \
+  "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Start project'"
+printf '\r' >&5
+startup_wait_for "Fresh sidebar Continue process termination" startup_fresh_sidebar_terminal
+wait "$startup_fresh_sidebar_pid" || true
+exec 5>&-
+if [[ "$(tr -d '[:space:]' <"$startup_root/fresh-stop-sidebar.rc")" != "0" ]]; then
+  echo "Fresh sidebar Ctrl-X -> Continue failed" >&2
+  cat "$startup_root/fresh-stop-sidebar.err" >&2 || true
+  exit 1
+fi
+startup_wait_for "Fresh sidebar Continue client handoff" startup_client_is_on "$startup_session"
+startup_fresh_continue_graph_converged() {
+  [[ "$(startup_pmx get projects -o uid)" == "$startup_fresh_continue_project_uid" ]] &&
+    [[ "$(startup_pmx get windows --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)" == "$startup_fresh_continue_window_uids" ]] &&
+    [[ "$(startup_pmx get panes --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)" == "$startup_fresh_continue_pane_uids" ]] &&
+    [[ "$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)" == "$startup_fresh_continue_project_uid" ]]
+}
+startup_wait_for "Fresh sidebar Ctrl-X -> Continue exact UID graph convergence" startup_fresh_continue_graph_converged
+
+# 8. Make the fresh Project zero-Window, then Fresh once more. This second
 # replacement proves the zero-Window input has the same always-new Project,
 # Window, and Pane identity contract as the retained input.
 startup_project_uid_before_repeat_fresh="$startup_project_uid_after"

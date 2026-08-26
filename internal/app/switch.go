@@ -135,8 +135,14 @@ type switchCommand struct {
 	nativePicker         intpicker.Runner
 	focusSession         string
 	sidebarResume        switchSidebarResume
-	cleanupKilledSession func(string)
-	projectTopology      switchProjectTopologyMaterializer
+	sidebarOriginSession string
+	// sidebarOriginAnchorInvalidated is set when an in-place sidebar stop kills
+	// the popup's own origin session. A later closed-Project continuation must
+	// resolve authority from the still-live client instead of forwarding the
+	// now-dead private origin Pane.
+	sidebarOriginAnchorInvalidated bool
+	cleanupKilledSession           func(string)
+	projectTopology                switchProjectTopologyMaterializer
 	// projectRegistrar performs the explicit Project bootstrap of one open.
 	projectRegistrar switchProjectRegistrar
 	// projectMirror is retained only for legacy unit-fixture observation. The
@@ -631,6 +637,9 @@ func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (swi
 		OriginSession: c.originSession(),
 		InitialQuery:  strings.TrimSpace(resume.Query),
 		StatusMessage: strings.TrimSpace(resume.Message),
+	}
+	if ui == switchUISidebar && c.sidebarOriginSession == "" {
+		c.sidebarOriginSession = plan.OriginSession
 	}
 
 	return c.completePlan(plan)
@@ -1727,8 +1736,22 @@ func (c *switchCommand) launchSidebarOpenContinuation(ctx context.Context, plan 
 	if strings.TrimSpace(client) != "" {
 		args = append(args, "--client", strings.TrimSpace(client))
 	}
+	anchorPane := c.lookupEnvValue(runtimeMutationAnchorPaneEnv)
+	if c.sidebarOriginAnchorInvalidated {
+		if strings.TrimSpace(client) == "" {
+			return errors.New("rebind switch sidebar continuation anchor: target client is empty")
+		}
+		out, err := c.tmuxRunner.Run(ctx, "tmux", "display-message", "-p", "-c", strings.TrimSpace(client), "-F", "#{pane_id}")
+		if err != nil {
+			return fmt.Errorf("rebind switch sidebar continuation anchor to client %q: %w", strings.TrimSpace(client), err)
+		}
+		anchorPane = exactTmuxHandle(strings.TrimSpace(string(out)), "%")
+		if anchorPane == "" {
+			return fmt.Errorf("rebind switch sidebar continuation anchor to client %q: current Pane is not exact", strings.TrimSpace(client))
+		}
+	}
 	env := map[string]string{}
-	if anchorPane := c.lookupEnvValue(runtimeMutationAnchorPaneEnv); anchorPane != "" {
+	if anchorPane != "" {
 		env[runtimeMutationAnchorPaneEnv] = anchorPane
 	}
 	if strings.TrimSpace(client) != "" {
@@ -2117,6 +2140,9 @@ func (c *switchCommand) mutateSwitchSidebarKill(ctx context.Context, action intp
 	}
 	if err := c.stopManagedProjectSession(ctx, target, sessionName, fallbackSession); err != nil {
 		return intpicker.DeferredUpdate{}, err
+	}
+	if originSession := strings.TrimSpace(c.sidebarOriginSession); originSession != "" && originSession == sessionName {
+		c.sidebarOriginAnchorInvalidated = true
 	}
 	if c.cleanupKilledSession != nil && switchRegistrySelectionUID(target) != "" {
 		c.cleanupKilledSession(sessionName)

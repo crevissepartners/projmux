@@ -247,6 +247,63 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 	}
 }
 
+func TestSwitchExecuteSidebarAfterOriginStopRebindsContinuationAnchorToClient(t *testing.T) {
+	t.Parallel()
+
+	target := t.TempDir()
+	tmuxRunner := &recordingTmuxRunner{outputs: map[string]string{
+		recordedTmuxCallKey("tmux", "display-message", "-p", "-c", "/dev/pts/9", "-F", "#{pane_id}"): "%99\n",
+	}}
+	cmd := &switchCommand{
+		tmuxRunner:                     tmuxRunner,
+		sessions:                       &capturingSwitchSessionExecutor{exists: map[string]bool{"target": false}},
+		executable:                     func() (string, error) { return "/tmp/projmux", nil },
+		identity:                       stubSwitchIdentityResolver{name: "target"},
+		sidebarOriginAnchorInvalidated: true,
+		lookupEnv: func(name string) string {
+			switch name {
+			case hookTrustPopupTargetClientEnv:
+				return "/dev/pts/9"
+			case runtimeMutationAnchorPaneEnv:
+				return "%12"
+			}
+			return ""
+		},
+	}
+
+	reopen, err := cmd.execute(context.Background(), switchPlan{
+		UI:          switchUISidebar,
+		Selection:   target,
+		SessionName: "target",
+	}, nil)
+	if err != nil {
+		t.Fatalf("execute() error = %v", err)
+	}
+	if reopen {
+		t.Fatal("execute() reopen = true, want false")
+	}
+	if len(tmuxRunner.calls) != 2 {
+		t.Fatalf("tmux calls = %#v, want client Pane rebind and run-shell continuation", tmuxRunner.calls)
+	}
+	if got, want := tmuxRunner.calls[0].args, []string{"display-message", "-p", "-c", "/dev/pts/9", "-F", "#{pane_id}"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("client Pane rebind = %#v, want %#v", got, want)
+	}
+	command := tmuxRunner.calls[1].args[2]
+	if strings.Contains(command, runtimeMutationAnchorPaneEnv+"='%12'") {
+		t.Fatalf("continuation command retained dead origin anchor: %q", command)
+	}
+	for _, want := range []string{
+		runtimeMutationAnchorPaneEnv + "='%99'",
+		"PROJMUX_HOOK_TRUST_TARGET_CLIENT='/dev/pts/9'",
+		"PROJMUX_SWITCH_TARGET_CLIENT='/dev/pts/9'",
+		"'/tmp/projmux' 'switch' 'sidebar-open'",
+	} {
+		if !strings.Contains(command, want) {
+			t.Fatalf("continuation command = %q, want live-client substring %q", command, want)
+		}
+	}
+}
+
 func TestSwitchExecuteSidebarTrustDenyRefreshesWithoutSessionCreate(t *testing.T) {
 	t.Parallel()
 
@@ -2743,7 +2800,15 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 		}),
 		sessions:   executor,
 		tmuxRunner: stopRunner,
-		lookupEnv:  func(string) string { return "" },
+		lookupEnv: func(name string) string {
+			switch name {
+			case switchContextSessionEnv:
+				return "tmp-app"
+			case runtimeMutationAnchorPaneEnv:
+				return "%12"
+			}
+			return ""
+		},
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		identity: switchIdentityResolverFunc(func(path string) (string, error) {
 			switch path {
@@ -2779,6 +2844,9 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 	}
 	if got, want := cmd.focusSession, "tmp-previous"; got != want {
 		t.Fatalf("focus session = %q, want %q", got, want)
+	}
+	if !cmd.sidebarOriginAnchorInvalidated {
+		t.Fatal("successful stop of the sidebar origin session retained its dead private anchor")
 	}
 }
 
