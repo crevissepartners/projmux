@@ -42,8 +42,10 @@ type lifecycleDirtyEvent struct {
 	// paneUID narrows the event to one Pane. Empty means the whole host.
 	paneUID string
 	// runtimePaneID is the exact #{hook_pane} supplied by pane-exited. It is
-	// matched only against the activation handle projmux stored when that
-	// generation was materialized; no name, cwd, or pane order participates.
+	// matched against the activation handle projmux stored when that generation
+	// was materialized and, when tmux retained the Pane, narrowed again by the
+	// exact mirrored uid whose current pane_dead observation is positive. tmux
+	// reuses %N handles, so the handle alone is not a durable identity.
 	runtimePaneID    string
 	runtimeSessionID string
 	// runtimeWindowID is the exact event Window handle supplied by
@@ -241,7 +243,8 @@ func planExactLifecycleCascade(
 	var pane *coremetadata.Pane
 	for i := range registry.Panes {
 		candidate := &registry.Panes[i]
-		if candidate.Status.Activation.RuntimeID != strings.TrimSpace(event.runtimePaneID) {
+		if candidate.Status.Activation.RuntimeID != strings.TrimSpace(event.runtimePaneID) ||
+			(strings.TrimSpace(event.paneUID) != "" && candidate.Metadata.UID != strings.TrimSpace(event.paneUID)) {
 			continue
 		}
 		if pane != nil {
@@ -354,6 +357,36 @@ func planExactLifecycleCascade(
 		cascade.deadCleanup = &target
 	}
 	return cascade, err
+}
+
+// narrowLifecycleDeadPaneEvent binds a reusable tmux %N hook handle back to
+// the one Registry Pane uid that the same exact socket currently reports as a
+// retained dead Pane. Historical Pane resources deliberately keep activation
+// diagnostics, including their old runtime handle, so matching the handle alone
+// eventually becomes ambiguous on a long-lived server. The positive pane_dead
+// mirror is current-generation evidence and safely removes that ambiguity. A
+// missing or contradictory observation leaves the event unchanged and the
+// existing fail-closed conflict path intact.
+func narrowLifecycleDeadPaneEvent(registry coremetadata.Registry, dead map[string]bool, event lifecycleDirtyEvent) lifecycleDirtyEvent {
+	if event.teardownKind != coremetadata.TeardownEventPaneExited ||
+		strings.TrimSpace(event.paneUID) != "" || strings.TrimSpace(event.runtimePaneID) == "" {
+		return event
+	}
+	resolved := ""
+	for i := range registry.Panes {
+		candidate := registry.Panes[i]
+		if candidate.Status.Activation.RuntimeID != strings.TrimSpace(event.runtimePaneID) || !dead[candidate.Metadata.UID] {
+			continue
+		}
+		if resolved != "" {
+			return event
+		}
+		resolved = candidate.Metadata.UID
+	}
+	if resolved != "" {
+		event.paneUID = resolved
+	}
+	return event
 }
 
 func planExactWindowUnlinkCascade(
@@ -736,11 +769,12 @@ func reconcileLifecycle(
 	}
 	candidate := registry.Clone()
 	_, _ = absorbTerminationReceipts(&candidate, store.mutator(), event.receipts)
-	cascade, cascadeErr := planExactLifecycleCascade(candidate, live, dead, liveHostPanes, liveWindows, liveWindowSessions, event, store.mutator())
+	candidateEvent := narrowLifecycleDeadPaneEvent(candidate, dead, event)
+	cascade, cascadeErr := planExactLifecycleCascade(candidate, live, dead, liveHostPanes, liveWindows, liveWindowSessions, candidateEvent, store.mutator())
 	if cascadeErr != nil {
 		return result, cascadeErr
 	}
-	if !cascade.Changed && len(lifecycleProjectionTargets(registry, lifecycleEffectiveLivePanes(live, dead), event)) == 0 &&
+	if !cascade.Changed && len(lifecycleProjectionTargets(registry, lifecycleEffectiveLivePanes(live, dead), candidateEvent)) == 0 &&
 		!terminationReceiptsNeedAbsorption(registry, store.mutator(), event.receipts) {
 		result.awaitingPaneExit = cascade.awaiting
 		result.skipped = "nothing left to reconcile: " + event.describe()
@@ -780,7 +814,8 @@ func reconcileLifecycle(
 			return err
 		}
 		result.receiptsChanged = absorbed
-		cascade, err := planExactLifecycleCascade(*working, fresh, freshDead, freshHostPanes, freshWindows, freshWindowSessions, event, mutator)
+		lockedEvent := narrowLifecycleDeadPaneEvent(*working, freshDead, event)
+		cascade, err := planExactLifecycleCascade(*working, fresh, freshDead, freshHostPanes, freshWindows, freshWindowSessions, lockedEvent, mutator)
 		if err != nil {
 			return err
 		}
@@ -818,7 +853,7 @@ func reconcileLifecycle(
 				result.cascaded = append(result.cascaded, cascade.paneAgent)
 			}
 		}
-		result.projected = projectTerminations(working, mutator, lifecycleProjectionTargets(*working, lifecycleEffectiveLivePanes(fresh, freshDead), event))
+		result.projected = projectTerminations(working, mutator, lifecycleProjectionTargets(*working, lifecycleEffectiveLivePanes(fresh, freshDead), lockedEvent))
 		return nil
 	})
 	result.transactions = 1
