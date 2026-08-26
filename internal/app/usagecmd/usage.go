@@ -56,9 +56,10 @@ type Command struct {
 // can project for a provider. It is deliberately closed over the explicit HUD
 // projection below; opaque quota buckets never become Settings rows.
 type HUDWindowCapability struct {
-	Window usage.Window
-	Key    string
-	Label  string
+	Window            usage.Window
+	Key               string
+	Label             string
+	DefaultVisibility config.StatusbarVisibility
 }
 
 // HUDProviderCapability is the Settings/render contract for one provider.
@@ -1450,14 +1451,19 @@ func HUDProviderCapabilities() []HUDProviderCapability {
 			DisplayName: provider.DisplayName,
 		}
 		switch provider.ID {
-		case aiprovider.Claude, aiprovider.Codex:
+		case aiprovider.Claude:
 			capability.Windows = []HUDWindowCapability{
-				{Window: usage.Window5h, Key: "5h", Label: "5h"},
-				{Window: usage.WindowWeekly, Key: "weekly", Label: "Weekly"},
+				{Window: usage.Window5h, Key: "5h", Label: "5h", DefaultVisibility: config.StatusbarVisibilityOn},
+				{Window: usage.WindowWeekly, Key: "weekly", Label: "Weekly", DefaultVisibility: config.StatusbarVisibilityOn},
+			}
+		case aiprovider.Codex:
+			capability.Windows = []HUDWindowCapability{
+				{Window: usage.Window5h, Key: "5h", Label: "5h", DefaultVisibility: config.StatusbarVisibilityOff},
+				{Window: usage.WindowWeekly, Key: "weekly", Label: "Weekly", DefaultVisibility: config.StatusbarVisibilityOn},
 			}
 		case aiprovider.Antigravity:
 			capability.Windows = []HUDWindowCapability{
-				{Window: usage.WindowWeekly, Key: "weekly", Label: "Weekly"},
+				{Window: usage.WindowWeekly, Key: "weekly", Label: "Weekly", DefaultVisibility: config.StatusbarVisibilityOn},
 			}
 		}
 		out = append(out, capability)
@@ -1470,18 +1476,28 @@ func (c *Command) loadHUDVisibilityPreferences() hudVisibilityPreferences {
 		providers: make(map[string]bool),
 		windows:   make(map[string]map[usage.Window]bool),
 	}
+	capabilities := HUDProviderCapabilities()
+	for _, provider := range capabilities {
+		model := strings.ToLower(strings.TrimSpace(provider.Model))
+		prefs.providers[model] = true
+		prefs.windows[model] = make(map[usage.Window]bool, len(provider.Windows))
+		for _, window := range provider.Windows {
+			prefs.windows[model][window.Window] = config.NormalizeStatusbarVisibility(string(window.DefaultVisibility)) == config.StatusbarVisibilityOn
+		}
+	}
 	paths, err := c.hudVisibilityConfigPaths()
 	if err != nil {
 		return prefs
 	}
-	for _, provider := range HUDProviderCapabilities() {
+	for _, provider := range capabilities {
 		model := strings.ToLower(strings.TrimSpace(provider.Model))
 		providerState, err := config.LoadStatusbarVisibilityFile(paths.StatusbarAgentUsageProviderVisibilityFile(string(provider.ID)))
 		prefs.providers[model] = err != nil || providerState.Effective == config.StatusbarVisibilityOn
-		prefs.windows[model] = make(map[usage.Window]bool, len(provider.Windows))
 		for _, window := range provider.Windows {
-			state, err := config.LoadStatusbarVisibilityFile(paths.StatusbarAgentUsageWindowVisibilityFile(string(provider.ID), window.Key))
-			prefs.windows[model][window.Window] = err != nil || state.Effective == config.StatusbarVisibilityOn
+			state, err := config.LoadStatusbarVisibilityFileWithDefault(paths.StatusbarAgentUsageWindowVisibilityFile(string(provider.ID), window.Key), window.DefaultVisibility)
+			if err == nil {
+				prefs.windows[model][window.Window] = state.Effective == config.StatusbarVisibilityOn
+			}
 		}
 	}
 	return prefs

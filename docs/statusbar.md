@@ -31,8 +31,9 @@ row 1  [#S]  #{pane_current_path}  <git>  CPU 12%  MEM 41%   %H:%M
   Usage HUD` independently. Agent Usage HUD is a View whose `Visible` parent
   contains Claude/Codex/Antigravity provider Views; each provider has its own
   `Visible` plus explicit supported windows (Claude/Codex: `5h`, `Weekly`;
-  Antigravity: `Weekly`). Every leaf defaults on. Parent off preserves saved
-  children, and returning it on restores them. When only one HUD is visible, its
+  Antigravity: `Weekly`). Every leaf defaults on except Codex `5h`, which
+  defaults off; saving it as on explicitly restores that window. Parent off
+  preserves saved children, and returning it on restores them. When only one HUD is visible, its
   sole range receives the full `#{client_width}` budget and the absent range and
   alignment are not emitted. When both are hidden, tmux collapses to one line
   with `status on`,

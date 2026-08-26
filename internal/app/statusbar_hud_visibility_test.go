@@ -132,6 +132,11 @@ func TestAgentUsageSettingsCapabilityOrderRowsAndLocaleProjection(t *testing.T) 
 	if !hasEntryLabelContainingAll(claudeRows, "5h", "saved on", "effective on", "default") || !hasEntryLabelContainingAll(claudeRows, "Weekly", "saved on", "effective on", "default") {
 		t.Fatalf("missing leaf defaults = %#v, want on/default", claudeRows)
 	}
+	codexRows := cmd.agentUsageProviderEntries("codex")
+	if !hasEntryLabelContainingAll(codexRows, "5h", "saved off", "effective off", "default") || !hasEntryLabelContainingAll(codexRows, "Weekly", "saved on", "effective on", "default") ||
+		!hasEntryValue(codexRows, settingsActionPrefixHUDVisibility+agentUsageWindowVisibilityAction+":codex:5h:on") {
+		t.Fatalf("Codex leaf defaults = %#v, want 5h off/default with on action and Weekly on/default", codexRows)
+	}
 	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, ".config")}.Paths()
 	if err != nil {
 		t.Fatal(err)
@@ -142,9 +147,16 @@ func TestAgentUsageSettingsCapabilityOrderRowsAndLocaleProjection(t *testing.T) 
 	if err := os.WriteFile(paths.StatusbarAgentUsageWindowVisibilityFile("claude", "5h"), []byte("broken\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	if err := config.SaveStatusbarVisibilityFile(paths.StatusbarAgentUsageWindowVisibilityFile("codex", "5h"), config.StatusbarVisibilityOn); err != nil {
+		t.Fatal(err)
+	}
 	claudeRows = cmd.agentUsageProviderEntries("claude")
 	if !hasEntryLabelContainingAll(claudeRows, "5h", "saved on", "effective on", "default", "invalid saved value ignored") {
 		t.Fatalf("invalid leaf projection = %#v", claudeRows)
+	}
+	codexRows = cmd.agentUsageProviderEntries("codex")
+	if !hasEntryLabelContainingAll(codexRows, "5h", "saved on", "effective on", "saved") {
+		t.Fatalf("saved Codex 5h override = %#v, want on/saved", codexRows)
 	}
 	for _, locale := range []i18n.Locale{i18n.FallbackLocale, i18n.Locale("ko-KR")} {
 		text := agentUsageVisibilityStateText(locale, config.DefaultStatusbarVisibilityState(), config.DefaultStatusbarVisibilityState())

@@ -51,6 +51,29 @@ func TestStatusbarVisibilityDefaultSavedInvalidAndRoundTrip(t *testing.T) {
 		t.Fatalf("missing state = %#v, want on/default with no saved value", state)
 	}
 
+	offDefaultPath := paths.StatusbarAgentUsageWindowVisibilityFile("codex", "5h")
+	offDefault, err := LoadStatusbarVisibilityFileWithDefault(offDefaultPath, StatusbarVisibilityOff)
+	if err != nil || offDefault.Effective != StatusbarVisibilityOff || offDefault.Source != StatusbarVisibilitySourceDefault {
+		t.Fatalf("missing off-default state = %#v, %v; want off/default", offDefault, err)
+	}
+	if err := os.MkdirAll(filepath.Dir(offDefaultPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(offDefaultPath, []byte("broken\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	offDefault, err = LoadStatusbarVisibilityFileWithDefault(offDefaultPath, StatusbarVisibilityOff)
+	if err != nil || offDefault.Effective != StatusbarVisibilityOff || offDefault.Source != StatusbarVisibilitySourceDefault || offDefault.Invalid != "broken" {
+		t.Fatalf("invalid off-default state = %#v, %v; want off/default with invalid projection", offDefault, err)
+	}
+	if err := SaveStatusbarVisibilityFile(offDefaultPath, StatusbarVisibilityOn); err != nil {
+		t.Fatal(err)
+	}
+	offDefault, err = LoadStatusbarVisibilityFileWithDefault(offDefaultPath, StatusbarVisibilityOff)
+	if err != nil || offDefault.Effective != StatusbarVisibilityOn || offDefault.Source != StatusbarVisibilitySourceSaved || offDefault.Saved != "on" {
+		t.Fatalf("saved on over off-default state = %#v, %v; want on/saved", offDefault, err)
+	}
+
 	if err := SaveStatusbarVisibilityFile(path, StatusbarVisibilityOff); err != nil {
 		t.Fatalf("SaveStatusbarVisibilityFile(off) error = %v", err)
 	}
