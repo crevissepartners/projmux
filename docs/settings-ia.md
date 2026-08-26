@@ -139,9 +139,11 @@ step, never a silent no-op.
     `Weekly` only. Parent off states gate effective visibility without rewriting
     saved child values. Provider/window rows show saved, effective, and source.
     `Project`, `Clock` and `Settings launcher` are direct visibility Toggles. These global
-    presentation values default on and report saved/default source; hiding the
-    Settings launcher removes only its mouse chip, not the CLI or keybinding
-    entry. `Resources` remains one enablement Toggle backed only by
+    presentation values default on except Codex `5h`, which defaults off to
+    keep the ambient HUD compact; every row reports saved/default source and an
+    explicit saved `on` restores Codex `5h`. Hiding the Settings launcher
+    removes only its mouse chip, not the CLI or keybinding entry. `Resources`
+    remains one enablement Toggle backed only by
     `live-resources` (default off): off removes its segment and sampler/cache
     mutation. Notifications and every Agent Usage visibility depth remain
     presentation-only and do not disable their underlying producers, cache,

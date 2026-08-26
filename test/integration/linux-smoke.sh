@@ -890,19 +890,32 @@ mkdir -p "$usage_leaf_state"
 cat >"$usage_leaf_state/snapshots.json" <<'USAGE_VISIBILITY_JSON'
 {
   "version": 2,
-  "last_collect": {"claude": "2026-08-16T12:00:00Z"},
-  "backoff": {"claude": {"until": "2099-08-16T13:00:00Z", "consecutive": 2}},
+  "last_collect": {"claude": "2026-08-16T12:00:00Z", "codex": "2026-08-16T12:00:00Z"},
+  "backoff": {
+    "claude": {"until": "2099-08-16T13:00:00Z", "consecutive": 2},
+    "codex": {"until": "2099-08-16T13:00:00Z", "consecutive": 2}
+  },
   "snapshots": [
     {"model":"claude","window":"5h","pct":42,"resets_at":"2026-08-16T17:00:00Z","updated_at":"2026-08-16T12:00:00Z"},
-    {"model":"claude","window":"weekly","pct":18,"resets_at":"2026-08-23T12:00:00Z","updated_at":"2026-08-16T12:00:00Z"}
+    {"model":"claude","window":"weekly","pct":18,"resets_at":"2026-08-23T12:00:00Z","updated_at":"2026-08-16T12:00:00Z"},
+    {"model":"codex","window":"5h","pct":71,"resets_at":"2026-08-16T17:00:00Z","updated_at":"2026-08-16T12:00:00Z"},
+    {"model":"codex","window":"weekly","pct":55,"resets_at":"2026-08-23T12:00:00Z","updated_at":"2026-08-16T12:00:00Z"}
   ]
 }
 USAGE_VISIBILITY_JSON
-printf 'claude\n' >"$XDG_CONFIG_HOME/projmux/ai-enabled-agents"
 claude_provider_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-agent-usage-provider-claude"
 claude_5h_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-agent-usage-window-claude-5h"
 claude_weekly_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-agent-usage-window-claude-weekly"
+codex_5h_visibility="$XDG_CONFIG_HOME/projmux/statusbar-visibility-agent-usage-window-codex-5h"
 
+printf 'codex\n' >"$XDG_CONFIG_HOME/projmux/ai-enabled-agents"
+codex_missing="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 200)"
+[[ "$codex_missing" == *"Codex"* && "$codex_missing" == *"weekly"* && "$codex_missing" != *"5h"* ]] || { echo "Codex missing leaf did not default 5h off: $codex_missing" >&2; exit 1; }
+printf 'on\n' >"$codex_5h_visibility"
+codex_saved_on="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 200)"
+[[ "$codex_saved_on" == *"5h"* && "$codex_saved_on" == *"weekly"* ]] || { echo "Codex saved 5h on did not override default: $codex_saved_on" >&2; exit 1; }
+
+printf 'claude\n' >"$XDG_CONFIG_HOME/projmux/ai-enabled-agents"
 usage_missing_wide="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 200)"
 usage_missing_narrow="$(PROJMUX_USAGE_STATE_DIR="$usage_leaf_state" "$bin" internal status usage --max-width 40)"
 printf 'on\n' >"$claude_provider_visibility"

@@ -41,8 +41,12 @@ type StatusbarVisibilityState struct {
 }
 
 func DefaultStatusbarVisibilityState() StatusbarVisibilityState {
+	return defaultStatusbarVisibilityState(StatusbarVisibilityOn)
+}
+
+func defaultStatusbarVisibilityState(value StatusbarVisibility) StatusbarVisibilityState {
 	return StatusbarVisibilityState{
-		Effective: StatusbarVisibilityOn,
+		Effective: NormalizeStatusbarVisibility(string(value)),
 		Source:    StatusbarVisibilitySourceDefault,
 	}
 }
@@ -97,7 +101,14 @@ func (p Paths) StatusbarSettingsLauncherVisibilityFile() string {
 }
 
 func LoadStatusbarVisibilityFile(path string) (StatusbarVisibilityState, error) {
-	state := DefaultStatusbarVisibilityState()
+	return LoadStatusbarVisibilityFileWithDefault(path, StatusbarVisibilityOn)
+}
+
+// LoadStatusbarVisibilityFileWithDefault reads one visibility leaf while
+// preserving a caller-owned default for missing, empty, and invalid values.
+// A valid saved value always wins.
+func LoadStatusbarVisibilityFileWithDefault(path string, defaultValue StatusbarVisibility) (StatusbarVisibilityState, error) {
+	state := defaultStatusbarVisibilityState(defaultValue)
 	if strings.TrimSpace(path) == "" {
 		return state, nil
 	}

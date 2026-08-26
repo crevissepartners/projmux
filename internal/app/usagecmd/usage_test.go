@@ -52,6 +52,17 @@ func isolateUsageCommandEnv(t *testing.T, command *Command) {
 	}
 }
 
+func saveHUDWindowVisibility(t *testing.T, command *Command, provider, window string, value config.StatusbarVisibility) {
+	t.Helper()
+	paths, err := command.hudVisibilityConfigPaths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveStatusbarVisibilityFile(paths.StatusbarAgentUsageWindowVisibilityFile(provider, window), value); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCodexNativeUsageJSONTableAndHUDShareValueSourceAndReasons(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 22, 10, 0, 0, 0, time.UTC)
@@ -258,6 +269,7 @@ func TestCommandCodexJSONAndStatusHUDSelectSameCanonicalNativeRow(t *testing.T) 
 			return ""
 		}
 	}
+	saveHUDWindowVisibility(t, command, "codex", "5h", config.StatusbarVisibilityOn)
 
 	var jsonOut, jsonErr bytes.Buffer
 	if err := command.Run([]string{"--model", "codex", "--json"}, &jsonOut, &jsonErr); err != nil {
@@ -883,6 +895,7 @@ func TestUsageStatusScopesToEnabledCodexOnly(t *testing.T) {
 
 	c := New(func() time.Time { return now })
 	isolateUsageCommandEnv(t, c)
+	saveHUDWindowVisibility(t, c, "codex", "5h", config.StatusbarVisibilityOn)
 	c.enabledAgentsFn = func() ([]config.AIAgentProvider, error) {
 		return []config.AIAgentProvider{config.AIAgentCodex}, nil
 	}
@@ -1258,6 +1271,7 @@ func TestUsageStatusEmitsFormattedSegment(t *testing.T) {
 	now := time.Date(2026, 5, 6, 12, 0, 0, 0, time.UTC)
 	c := New(nil)
 	isolateUsageCommandEnv(t, c)
+	saveHUDWindowVisibility(t, c, "codex", "5h", config.StatusbarVisibilityOn)
 	mgr := newStubManager(t, []*stubAdapter{
 		{name: "claude", snaps: []usage.Snapshot{
 			{Model: "claude", Window: usage.Window5h, Pct: 30, ResetsAt: now.Add(time.Hour), UpdatedAt: now},
@@ -2057,23 +2071,29 @@ func TestHUDProviderCapabilityMatrixFollowsUsageCatalogAndRejectsFabrication(t *
 		t.Fatalf("capability providers = %d, want every usage-supported provider (%d)", got, want)
 	}
 	want := []struct {
-		id      aiprovider.ID
-		windows []string
+		id         aiprovider.ID
+		windows    []string
+		visibility []config.StatusbarVisibility
 	}{
-		{aiprovider.Claude, []string{"5h", "weekly"}},
-		{aiprovider.Codex, []string{"5h", "weekly"}},
-		{aiprovider.Antigravity, []string{"weekly"}},
+		{aiprovider.Claude, []string{"5h", "weekly"}, []config.StatusbarVisibility{config.StatusbarVisibilityOn, config.StatusbarVisibilityOn}},
+		{aiprovider.Codex, []string{"5h", "weekly"}, []config.StatusbarVisibility{config.StatusbarVisibilityOff, config.StatusbarVisibilityOn}},
+		{aiprovider.Antigravity, []string{"weekly"}, []config.StatusbarVisibility{config.StatusbarVisibilityOn}},
 	}
 	for i, expected := range want {
 		if capabilities[i].ID != expected.id {
 			t.Fatalf("capability[%d] provider = %q, want declared order %q", i, capabilities[i].ID, expected.id)
 		}
 		var keys []string
+		var visibility []config.StatusbarVisibility
 		for _, window := range capabilities[i].Windows {
 			keys = append(keys, window.Key)
+			visibility = append(visibility, window.DefaultVisibility)
 		}
 		if !reflect.DeepEqual(keys, expected.windows) {
 			t.Fatalf("%s windows = %v, want %v", expected.id, keys, expected.windows)
+		}
+		if !reflect.DeepEqual(visibility, expected.visibility) {
+			t.Fatalf("%s window defaults = %v, want %v", expected.id, visibility, expected.visibility)
 		}
 	}
 
@@ -2086,6 +2106,44 @@ func TestHUDProviderCapabilityMatrixFollowsUsageCatalogAndRejectsFabrication(t *
 	})
 	if got, want := projected, []usage.Snapshot{{Model: "antigravity", Window: usage.WindowWeekly, Pct: 55}}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("explicit projection = %#v, want only exact Antigravity gemini-weekly %#v", got, want)
+	}
+}
+
+func TestHUDVisibilityDefaultsHideOnlyCodexFiveHourAndSavedOnOverrides(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configHome := filepath.Join(home, "config")
+	c := New(nil)
+	c.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "XDG_CONFIG_HOME":
+			return configHome
+		}
+		return ""
+	}
+	prefs := c.loadHUDVisibilityPreferences()
+	for model, windows := range map[string]map[usage.Window]bool{
+		"claude":      {usage.Window5h: true, usage.WindowWeekly: true},
+		"codex":       {usage.Window5h: false, usage.WindowWeekly: true},
+		"antigravity": {usage.WindowWeekly: true},
+	} {
+		if !prefs.providers[model] || !reflect.DeepEqual(prefs.windows[model], windows) {
+			t.Fatalf("%s defaults = provider:%v windows:%v, want provider:on windows:%v", model, prefs.providers[model], prefs.windows[model], windows)
+		}
+	}
+	paths, err := config.Homes{HomeDir: home, ConfigHome: configHome}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := config.SaveStatusbarVisibilityFile(paths.StatusbarAgentUsageWindowVisibilityFile("codex", "5h"), config.StatusbarVisibilityOn); err != nil {
+		t.Fatal(err)
+	}
+	prefs = c.loadHUDVisibilityPreferences()
+	if !prefs.windows["codex"][usage.Window5h] {
+		t.Fatal("saved Codex 5h on did not override the off default")
 	}
 }
 

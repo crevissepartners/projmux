@@ -185,17 +185,27 @@ func agentUsageVisibilityPath(paths config.Paths, leaf agentUsageVisibilityLeaf)
 }
 
 func loadAgentUsageVisibilityState(homeDir func() (string, error), lookupEnv func(string) string, leaf agentUsageVisibilityLeaf) config.StatusbarVisibilityState {
+	defaultState := config.DefaultStatusbarVisibilityState()
+	window, hasWindow := agentUsageWindowCapability(leaf.provider, leaf.window)
+	if strings.TrimSpace(leaf.window) != "" && hasWindow {
+		defaultState.Effective = config.NormalizeStatusbarVisibility(string(window.DefaultVisibility))
+	}
 	paths, err := configPaths(homeDir, lookupEnv)
 	if err != nil {
-		return config.DefaultStatusbarVisibilityState()
+		return defaultState
 	}
 	path, ok := agentUsageVisibilityPath(paths, leaf)
 	if !ok {
-		return config.DefaultStatusbarVisibilityState()
+		return defaultState
 	}
-	state, err := config.LoadStatusbarVisibilityFile(path)
+	var state config.StatusbarVisibilityState
+	if hasWindow {
+		state, err = config.LoadStatusbarVisibilityFileWithDefault(path, window.DefaultVisibility)
+	} else {
+		state, err = config.LoadStatusbarVisibilityFile(path)
+	}
 	if err != nil {
-		return config.DefaultStatusbarVisibilityState()
+		return defaultState
 	}
 	return state
 }

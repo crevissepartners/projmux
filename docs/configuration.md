@@ -968,7 +968,8 @@ The saved values are `on` or `off` in these files:
 ~/.config/projmux/statusbar-visibility-agent-usage-window-antigravity-weekly
 ```
 
-Missing, empty, and invalid values resolve to the compatibility default `on`;
+Missing, empty, and invalid values resolve to `on` except the Codex `5h`
+window, whose ambient HUD default is `off`; an explicit saved `on` restores it.
 Settings shows whether the effective value came from `saved` or `default` and
 marks an invalid saved value as ignored. Saving a toggle regenerates the app
 and standalone tmux output, and Settings source-reloads the generated app config

@@ -74,6 +74,7 @@ func TestUsageStatusSuccessfulEventBatchSkipsCollectorForSourceDecision(t *testi
 		}
 		return ""
 	}
+	saveHUDWindowVisibility(t, command, "codex", "5h", config.StatusbarVisibilityOn)
 
 	var stdout, stderr bytes.Buffer
 	if err := command.RunStatus(nil, &stdout, &stderr); err != nil {
@@ -195,7 +196,6 @@ func TestEnsureNativeWatcherHonorsLiveHeartbeatAndFailureBackoff(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-
 	command.ensureNativeWatcher(stateDir)
 	if starts != 1 {
 		t.Fatalf("starts without heartbeat/backoff = %d, want 1", starts)
