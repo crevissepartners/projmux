@@ -991,6 +991,16 @@ mkdir -p "$create_shim"
 cat >"$create_shim/tmux" <<CREATE_SHIM
 #!/usr/bin/env bash
 create_args=("\$@")
+if [[ "\${PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE:-}" == "1" ]]; then
+  if [[ "\${create_args[0]:-}" != "-L" && "\${create_args[0]:-}" != "-S" ]]; then
+    echo "runtime tmux call omitted exact -L/-S route: \${create_args[*]}" >&2
+    exit 97
+  fi
+  if [[ "\${create_args[0]:-}" == "-L" && "\${create_args[1]:-}" == "default" ]]; then
+    echo "runtime tmux call selected forbidden default socket: \${create_args[*]}" >&2
+    exit 97
+  fi
+fi
 if [[ "\${create_args[0]:-}" == "-S" || "\${create_args[0]:-}" == "-L" ]] && [[ \${#create_args[@]} -ge 2 ]]; then
   create_args=("\${create_args[@]:2}")
 fi
@@ -1668,6 +1678,12 @@ agent_home="$create_root/agent-home"
 mkdir -p "$agent_home/.local/bin"
 cat >"$agent_home/.local/bin/codex" <<AGENT_STUB
 #!/usr/bin/env bash
+if [[ ! "\${TMUX_PANE:-}" =~ ^%[0-9]+$ ]] ||
+  [[ "\${__PROJMUX_RUNTIME_ANCHOR_PANE:-}" != "\$TMUX_PANE" ]]; then
+  printf 'private_anchor=%s tmux_pane=%s\n' "\${__PROJMUX_RUNTIME_ANCHOR_PANE:-}" "\${TMUX_PANE:-}" \
+    >>$(printf %q "$create_root/agent-launch.log")
+  exit 43
+fi
 {
   printf 'cwd=%s\n' "\$PWD"
   printf 'args=%s\n' "\$*"
@@ -1758,11 +1774,12 @@ agent_window_before="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
 agent_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
 agent_window_uid_before="$(ctx show-options -wqv -t "$agent_window_before" @projmux_window_uid)"
 agent_host_pane_uid_before="$(ctx show-options -pqv -t "$agent_pane_before" @projmux_pane_uid)"
+agent_project_uid_before="$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)"
 agent_primary_pane_uid="$(pmx_agent describe window "$alpha_window_name" -p alpha -o json | sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\1/p' | head -n 1)"
 if [[ ! "$agent_session_before" =~ ^\$[0-9]+$ ]] ||
   [[ ! "$agent_window_before" =~ ^@[0-9]+$ ]] ||
   [[ ! "$agent_pane_before" =~ ^%[0-9]+$ ]] ||
-  [[ -z "$agent_window_uid_before" || -z "$agent_host_pane_uid_before" ]] ||
+  [[ -z "$agent_project_uid_before" || -z "$agent_window_uid_before" || -z "$agent_host_pane_uid_before" ]] ||
   [[ "$agent_host_pane_uid_before" != "$agent_primary_pane_uid" ]]; then
   echo "Agent fixture has no exact managed primary host receipt: $agent_session_before/$agent_window_before/$agent_pane_before window_uid=$agent_window_uid_before pane_uid=$agent_host_pane_uid_before primary=$agent_primary_pane_uid" >&2
   exit 1
@@ -1818,6 +1835,36 @@ if [[ "$(ctx display-message -p -t legacy-alpha '#{window_id}')" != "$agent_wind
 fi
 if [[ "$(ctx display-message -p -t "$agent_pane" '#{?pane_active,1,0}')" != "0" ]]; then
   echo "the detached Agent split left $agent_pane active" >&2
+  exit 1
+fi
+
+# The outside-tmux exact-selector boundary uses only the explicit app route.
+# The shim rejects every target-less/default tmux subprocess for this one
+# command, including the production AI presentation binder's set-option writes.
+exact_foreign_before="$(cfx list-panes -a -F '#{session_name}|#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}' | sha256sum | awk '{print $1}')"
+PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 pmx_agent create agent --provider codex \
+  --project "uid:$agent_project_uid_before" --window "uid:$agent_window_uid_before" \
+  --pane "uid:$agent_host_pane_uid_before" --name exact-native-route -o pane-id \
+  >"$create_root/agent-exact.out" 2>"$create_root/agent-exact.err"
+exact_agent_pane="$(tr -d '[:space:]' <"$create_root/agent-exact.out")"
+if [[ ! "$exact_agent_pane" =~ ^%[0-9]+$ ]] ||
+  [[ "$(wc -l <"$create_root/agent-exact.out" | tr -d '[:space:]')" != "1" ]] ||
+  [[ "$(wc -c <"$create_root/agent-exact.out" | tr -d '[:space:]')" != "$(( ${#exact_agent_pane} + 1 ))" ]]; then
+  echo "outside exact create stdout is not one trimmed %N: $(od -An -tx1 "$create_root/agent-exact.out")" >&2
+  exit 1
+fi
+if [[ -s "$create_root/agent-exact.err" ]]; then
+  echo "outside exact create wrote to stderr" >&2
+  cat "$create_root/agent-exact.err" >&2
+  exit 1
+fi
+if [[ "$(ctx display-message -p -t "$exact_agent_pane" '#{pane_id}')" != "$exact_agent_pane" ]]; then
+  echo "outside exact create returned a Pane outside the app socket: $exact_agent_pane" >&2
+  exit 1
+fi
+exact_foreign_after="$(cfx list-panes -a -F '#{session_name}|#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}' | sha256sum | awk '{print $1}')"
+if [[ "$exact_foreign_after" != "$exact_foreign_before" ]]; then
+  echo "outside exact create changed the sibling socket hash" >&2
   exit 1
 fi
 

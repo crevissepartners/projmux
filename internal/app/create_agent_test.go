@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -140,6 +141,23 @@ type fakeBoundPane struct {
 	title    string
 }
 
+// productionBindingAgentLauncher keeps launch planning deterministic while
+// exercising the real aiCommand pane binder used by app.go. The optional routed
+// method is intentionally the only binding path the command-boundary tests
+// accept: an ambient aiCommand.run invocation would bypass the fake tmux ledger.
+type productionBindingAgentLauncher struct {
+	*fakeAgentLauncher
+	binder *aiCommand
+}
+
+func (l *productionBindingAgentLauncher) BindManagedAgentPaneOnRoute(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	paneID, provider, contextDir, title string,
+) error {
+	return l.binder.BindManagedAgentPaneOnRoute(ctx, runner, paneID, provider, contextDir, title)
+}
+
 func newFakeAgentLauncher() *fakeAgentLauncher {
 	return &fakeAgentLauncher{disabled: map[string]bool{}, activationAcknowledged: true}
 }
@@ -217,6 +235,178 @@ func newTestAgentCreateCommand(t *testing.T, store *fakeResourceStore, tmux *fak
 		return resolveAgentWorkspace(registry, owner, provider, cwd, additional)
 	}
 	return create, launcher
+}
+
+func bindTestCreateRuntimeRoute(command *createCommand, tmux *fakeTmux, lookupEnv func(string) string) *runtimeMutationRoute {
+	var resolved runtimeMutationRoute
+	command.bindRuntime = func(ctx context.Context) error {
+		route, err := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, tmux, lookupEnv, command.routeAnchor)
+		if err != nil {
+			return err
+		}
+		resolved = route
+		exact := explicitTmuxRunner{runner: tmux, target: route.target}
+		command.reconciler.mirror = intmetadata.NewMirror(exact)
+		command.runtime.runner = exact
+		command.runtime.mirror = intmetadata.NewMirror(exact)
+		command.runtime.target = route.target
+		command.runtime.expectedSocketPath = route.expectedSocketPath
+		command.runtime.socketName = route.socketName
+		command.runtime.routeAuthority = route.authority
+		return nil
+	}
+	return &resolved
+}
+
+func seedExactCreateAgentTarget(t *testing.T, tmux *fakeTmux) {
+	t.Helper()
+	session := tmux.addSession("alpha")
+	seedOwnedSession(session, "prj-alpha", "/srv/alpha")
+	seedLiveWindow(t, tmux, session, "win-alpha-main", "pan-alpha-zsh")
+}
+
+func assertEveryTmuxCallHasExactRoute(t *testing.T, calls [][]string) {
+	t.Helper()
+	for _, call := range calls {
+		if len(call) < 3 || (call[0] != "-L" && call[0] != "-S") || strings.TrimSpace(call[1]) == "" {
+			t.Fatalf("runtime tmux call has no exact -L/-S route: %#v", call)
+		}
+		if call[0] == "-L" && call[1] == "default" {
+			t.Fatalf("runtime tmux call probed the ambient default socket: %#v", call)
+		}
+	}
+}
+
+func TestExactThreeUIDCreateAgentRouteIgnoresUnrelatedAmbientPane(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	seedExactCreateAgentTarget(t, tmux)
+	authoritySession := tmux.addSession("native-authority")
+	authorityPane := authoritySession.windows[0].panes[0]
+	ambientSession := tmux.addSession("ambient-client")
+	ambientPane := ambientSession.windows[0].panes[0]
+	ambientBefore := tmux.state()
+
+	command, _ := newTestAgentCreateCommand(t, store, tmux)
+	route := bindTestCreateRuntimeRoute(command, tmux, func(key string) string {
+		switch key {
+		case "TMUX":
+			return tmux.socketPath + "," + tmux.serverPID + ",17"
+		case "TMUX_PANE":
+			return ambientPane.id
+		case runtimeMutationAnchorPaneEnv:
+			return authorityPane.id
+		default:
+			return ""
+		}
+	})
+
+	stdout, stderr, err := runRoute(t, command,
+		"agent", "--provider", "codex",
+		"--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "--pane", "uid:pan-alpha-zsh",
+		"-o", "pane-id")
+	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" || stdout != strings.TrimSpace(stdout)+"\n" {
+		t.Fatalf("exact three-UID create = stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != authorityPane.id ||
+		route.authority.PaneID == ambientPane.id {
+		t.Fatalf("native route authority = %#v, private=%s ambient=%s", route.authority, authorityPane.id, ambientPane.id)
+	}
+	if ambientSession.windows[0].panes[0].id != ambientPane.id || len(ambientSession.windows) != 1 || len(ambientSession.windows[0].panes) != 1 {
+		t.Fatalf("unrelated ambient client changed: before=%s after=%s", ambientBefore, tmux.state())
+	}
+	assertEveryTmuxCallHasExactRoute(t, tmux.calls)
+}
+
+func TestOutsideTmuxExactThreeUIDCreateAgentUsesOnlyQuietAppRoute(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	seedExactCreateAgentTarget(t, tmux)
+	command, _ := newTestAgentCreateCommand(t, store, tmux)
+	route := bindTestCreateRuntimeRoute(command, tmux, func(string) string { return "" })
+
+	stdout, stderr, err := runRoute(t, command,
+		"agent", "--provider", "codex",
+		"--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "--pane", "uid:pan-alpha-zsh",
+		"-o", "pane-id")
+	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" || stdout != strings.TrimSpace(stdout)+"\n" {
+		t.Fatalf("outside exact create = stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if route.target != (explicitTmuxTarget{flag: "-L", value: defaultAppSocket}) || route.authority == nil ||
+		route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != "" {
+		t.Fatalf("outside exact app route = %#v", *route)
+	}
+	assertEveryTmuxCallHasExactRoute(t, tmux.calls)
+}
+
+func TestOutsideTmuxExactThreeUIDCreateRoutesProductionAIPresentationWrites(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	seedExactCreateAgentTarget(t, tmux)
+	command, planner := newTestAgentCreateCommand(t, store, tmux)
+	binder := testAICommand(t.TempDir())
+	command.agents = &productionBindingAgentLauncher{fakeAgentLauncher: planner, binder: binder}
+	bindTestCreateRuntimeRoute(command, tmux, func(string) string { return "" })
+
+	stdout, stderr, err := runRoute(t, command,
+		"agent", "--provider", "codex",
+		"--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "--pane", "uid:pan-alpha-zsh",
+		"-o", "pane-id")
+	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" || stdout != strings.TrimSpace(stdout)+"\n" {
+		t.Fatalf("production-bound outside create = stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if commands := cmdRecorder(binder).commands; len(commands) != 0 {
+		t.Fatalf("production ai binder used ambient subprocess runner: %#v", commands)
+	}
+	for _, option := range []string{
+		aiPaneManagedOption, aiPaneAgentOption, aiPaneLaunchAuthorshipOption,
+		aiPaneContextOption, aiPaneTopicOption, aiPaneStateOption,
+	} {
+		found := false
+		for _, call := range tmux.calls {
+			if slices.Contains(call, "set-option") && slices.Contains(call, option) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("production ai presentation option %s was not written through exact route: %#v", option, tmux.calls)
+		}
+	}
+	assertEveryTmuxCallHasExactRoute(t, tmux.calls)
+}
+
+func TestOutsideTmuxProductionAIPresentationFailureIsVisibleAndRollsBack(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	seedExactCreateAgentTarget(t, tmux)
+	registryBefore, runtimeBefore := store.snapshot(), tmux.state()
+	tmux.fail = []string{"set-option", aiPaneAgentOption}
+	tmux.failMessage = "permission denied writing exact app socket"
+	command, planner := newTestAgentCreateCommand(t, store, tmux)
+	binder := testAICommand(t.TempDir())
+	command.agents = &productionBindingAgentLauncher{fakeAgentLauncher: planner, binder: binder}
+	bindTestCreateRuntimeRoute(command, tmux, func(string) string { return "" })
+
+	stdout, stderr, err := runRoute(t, command,
+		"agent", "--provider", "codex",
+		"--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "--pane", "uid:pan-alpha-zsh",
+		"-o", "pane-id")
+	if err == nil || stdout != "" || stderr != "" || !strings.Contains(err.Error(), "permission denied writing exact app socket") {
+		t.Fatalf("presentation failure = stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if store.snapshot() != registryBefore || tmux.state() != runtimeBefore {
+		t.Fatalf("presentation failure did not roll back: registry before=%s after=%s runtime before=%s after=%s",
+			registryBefore, store.snapshot(), runtimeBefore, tmux.state())
+	}
+	if commands := cmdRecorder(binder).commands; len(commands) != 0 {
+		t.Fatalf("failed production ai binder used ambient subprocess runner: %#v", commands)
+	}
+	assertEveryTmuxCallHasExactRoute(t, tmux.calls)
 }
 
 func TestProviderShortcutPreservesForeignWindowOnAttributionFailure(t *testing.T) {

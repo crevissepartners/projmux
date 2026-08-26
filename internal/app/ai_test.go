@@ -67,6 +67,45 @@ func TestAISettingsGetAndSetMode(t *testing.T) {
 	}
 }
 
+func TestProductionAIPaneBindersUseOnlySuppliedExactRuntimeRoute(t *testing.T) {
+	t.Parallel()
+	tmux := newFakeTmux()
+	session := tmux.addSession("agent-bind")
+	paneID := session.windows[0].panes[0].id
+	routed := explicitTmuxRunner{runner: tmux, target: explicitTmuxTarget{flag: "-S", value: tmux.socketPath}}
+	cmd := testAICommand(t.TempDir())
+
+	if err := cmd.BindManagedAgentPaneOnRoute(context.Background(), routed, paneID, aiModeCodex, "/repo", "fresh"); err != nil {
+		t.Fatalf("BindManagedAgentPaneOnRoute error = %v", err)
+	}
+	if err := cmd.BindResumedAgentPaneWithSourceOnRoute(context.Background(), routed, paneID, aiModeCodex, "/repo", "resume", "thread-1", "rollout"); err != nil {
+		t.Fatalf("BindResumedAgentPaneWithSourceOnRoute error = %v", err)
+	}
+	if err := cmd.BindNativeCodexPaneOnRoute(context.Background(), routed, paneID, "/repo", "native", "thread-2"); err != nil {
+		t.Fatalf("BindNativeCodexPaneOnRoute error = %v", err)
+	}
+	if commands := cmdRecorder(cmd).commands; len(commands) != 0 {
+		t.Fatalf("routed production binders used ambient subprocess runner: %#v", commands)
+	}
+	for _, option := range []string{
+		aiPaneManagedOption, aiPaneAgentOption, aiPaneLaunchAuthorshipOption, aiPaneContextOption,
+		aiPaneTopicOption, aiPaneStateOption, aiPaneSessionIDOption, aiPaneResumeIDOption,
+		aiPaneResumeSourceOption, aiPaneResumeUpdatedAtOption, aiPaneThreadIDOption,
+	} {
+		found := false
+		for _, call := range tmux.calls {
+			if slices.Contains(call, "set-option") && slices.Contains(call, option) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("routed production binder omitted %s: %#v", option, tmux.calls)
+		}
+	}
+	assertEveryTmuxCallHasExactRoute(t, tmux.calls)
+}
+
 func TestAISettingsSetModeDisplaysTmuxToastInsideTmux(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)

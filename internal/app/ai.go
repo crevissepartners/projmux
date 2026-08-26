@@ -2254,6 +2254,14 @@ func (c *aiCommand) BindManagedAgentPane(paneID, provider, contextDir, title str
 	c.configureAIPane(paneID, provider, contextDir, title, aiPaneResumeMetadata{})
 }
 
+func (c *aiCommand) BindManagedAgentPaneOnRoute(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	paneID, provider, contextDir, title string,
+) error {
+	return c.configureAIPaneOnRoute(ctx, runner, paneID, provider, contextDir, title, aiPaneResumeMetadata{})
+}
+
 // PlanNativeCodexResume builds the TUI attachment for a thread already created
 // or resumed through the local app-server. It carries no prompt: turn/start is
 // the sole initial-prompt writer on the native lane.
@@ -2287,6 +2295,20 @@ func (c *aiCommand) BindNativeCodexPane(paneID, contextDir, title, threadID stri
 		sessionID: threadID, resumeID: threadID, source: "app-server", updatedAt: c.nowTime().UTC(),
 	})
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneThreadIDOption, threadID)
+}
+
+func (c *aiCommand) BindNativeCodexPaneOnRoute(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	paneID, contextDir, title, threadID string,
+) error {
+	threadID = strings.TrimSpace(threadID)
+	if err := c.configureAIPaneOnRoute(ctx, runner, paneID, aiModeCodex, contextDir, title, aiPaneResumeMetadata{
+		sessionID: threadID, resumeID: threadID, source: "app-server", updatedAt: c.nowTime().UTC(),
+	}); err != nil {
+		return err
+	}
+	return runAIPaneOptionOnRoute(ctx, runner, paneID, aiPaneThreadIDOption, threadID)
 }
 
 func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, string, error) {
@@ -2546,22 +2568,67 @@ func (c *aiCommand) configureAIPane(paneID, mode, contextDir, title string, resu
 	c.configureAIPaneResumeMetadata(paneID, resume)
 }
 
+func (c *aiCommand) configureAIPaneOnRoute(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	paneID, mode, contextDir, title string,
+	resume aiPaneResumeMetadata,
+) error {
+	paneID = strings.TrimSpace(paneID)
+	if paneID == "" {
+		return nil
+	}
+	for _, option := range [][2]string{
+		{aiPaneManagedOption, "1"},
+		{aiPaneAgentOption, normalizeAIMode(mode)},
+		{aiPaneLaunchAuthorshipOption, "1"},
+		{aiPaneContextOption, strings.TrimSpace(contextDir)},
+		{aiPaneTopicOption, displayAITopic(title)},
+		{aiPaneStateOption, "idle"},
+	} {
+		if err := runAIPaneOptionOnRoute(ctx, runner, paneID, option[0], option[1]); err != nil {
+			return err
+		}
+	}
+	for _, option := range aiPaneResumeOptions(resume) {
+		if err := runAIPaneOptionOnRoute(ctx, runner, paneID, option[0], option[1]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runAIPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, option, value string) error {
+	if runner == nil {
+		return errors.New("managed Agent Pane binding requires an exact tmux runner")
+	}
+	if _, err := runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, option, value); err != nil {
+		return fmt.Errorf("set Pane option %s: %w", option, err)
+	}
+	return nil
+}
+
 func (c *aiCommand) configureAIPaneResumeMetadata(paneID string, resume aiPaneResumeMetadata) {
-	sessionID := strings.TrimSpace(resume.sessionID)
-	resumeID := strings.TrimSpace(resume.resumeID)
-	source := strings.TrimSpace(resume.source)
-	if sessionID != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneSessionIDOption, sessionID)
+	for _, option := range aiPaneResumeOptions(resume) {
+		_ = c.run("tmux", "set-option", "-p", "-t", paneID, option[0], option[1])
 	}
-	if resumeID != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneResumeIDOption, resumeID)
-	}
-	if source != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneResumeSourceOption, source)
+}
+
+func aiPaneResumeOptions(resume aiPaneResumeMetadata) [][2]string {
+	options := make([][2]string, 0, 4)
+	for _, option := range [][2]string{
+		{aiPaneSessionIDOption, strings.TrimSpace(resume.sessionID)},
+		{aiPaneResumeIDOption, strings.TrimSpace(resume.resumeID)},
+		{aiPaneResumeSourceOption, strings.TrimSpace(resume.source)},
+	} {
+		if option[1] != "" {
+			options = append(options, option)
+		}
 	}
 	if !resume.updatedAt.IsZero() {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneResumeUpdatedAtOption, resume.updatedAt.UTC().Format(time.RFC3339))
+		options = append(options, [2]string{aiPaneResumeUpdatedAtOption, resume.updatedAt.UTC().Format(time.RFC3339)})
 	}
+	return options
 }
 
 func (c *aiCommand) popupAxisSize(axis string, percent, minimum int) string {

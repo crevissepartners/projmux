@@ -38,6 +38,14 @@ type agentResumeLauncher interface {
 	BindResumedAgentPane(paneID, provider, contextDir, title, conversationID string)
 }
 
+type routedResumedAgentPaneBinder interface {
+	BindResumedAgentPaneOnRoute(context.Context, tmuxCommandRunner, string, string, string, string, string) error
+}
+
+type routedSourcedResumedAgentPaneBinder interface {
+	BindResumedAgentPaneWithSourceOnRoute(context.Context, tmuxCommandRunner, string, string, string, string, string, string) error
+}
+
 // The aiCommand is the production implementation of both launch seams. The two
 // methods below live here rather than beside PlanAgentLaunch so this Phase adds
 // the resume seam without editing the file that owns the create seam.
@@ -102,6 +110,27 @@ func (c *aiCommand) BindResumedAgentPane(paneID, provider, contextDir, title, co
 
 func (c *aiCommand) BindResumedAgentPaneWithSource(paneID, provider, contextDir, title, conversationID, source string) {
 	c.configureAIPane(paneID, provider, contextDir, title, aiPaneResumeMetadata{
+		sessionID: conversationID,
+		resumeID:  conversationID,
+		source:    strings.TrimSpace(source),
+		updatedAt: c.nowTime().UTC(),
+	})
+}
+
+func (c *aiCommand) BindResumedAgentPaneOnRoute(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	paneID, provider, contextDir, title, conversationID string,
+) error {
+	return c.BindResumedAgentPaneWithSourceOnRoute(ctx, runner, paneID, provider, contextDir, title, conversationID, "")
+}
+
+func (c *aiCommand) BindResumedAgentPaneWithSourceOnRoute(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	paneID, provider, contextDir, title, conversationID, source string,
+) error {
+	return c.configureAIPaneOnRoute(ctx, runner, paneID, provider, contextDir, title, aiPaneResumeMetadata{
 		sessionID: conversationID,
 		resumeID:  conversationID,
 		source:    strings.TrimSpace(source),
@@ -481,12 +510,18 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			return err
 		}
 		if usedNative {
-			nativeLauncher.BindNativeCodexPane(paneID, contextDir, workTitle, plan.conversationID)
+			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, r.create.runtime.runner, paneID, contextDir, workTitle, plan.conversationID); err != nil {
+				return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", spelling, paneID, err)
+			}
 			if nativeLifecycleCapable {
 				nativeLifecycleIdentityAfterCommit = codexLifecycleIdentity{
 					AgentUID: plan.agentUID, PaneUID: pane.Metadata.UID, RuntimeID: paneID,
 					Generation: activation.Generation, ThreadID: nativeThreadID,
 				}
+			}
+		} else if routed, ok := r.launcher.(routedResumedAgentPaneBinder); ok {
+			if err := routed.BindResumedAgentPaneOnRoute(ctx, r.create.runtime.runner, paneID, plan.provider, contextDir, workTitle, plan.conversationID); err != nil {
+				return tmuxError("%s: bind resumed Agent Pane %s presentation metadata: %v", spelling, paneID, err)
 			}
 		} else {
 			r.launcher.BindResumedAgentPane(paneID, plan.provider, contextDir, workTitle, plan.conversationID)

@@ -77,9 +77,11 @@ func (c *activationExecCommand) Run(args []string, stdout, stderr io.Writer) (ru
 	if err := exactActivationRegistryPath(spec.RegistryPath); err != nil {
 		return fmt.Errorf("internal activation-exec: %w", err)
 	}
-	if err := c.awaitCommittedActivation(spec); err != nil {
+	runtimeID, err := c.awaitCommittedActivation(spec)
+	if err != nil {
 		return fmt.Errorf("internal activation-exec: activation admission: %w", err)
 	}
+	spec.RuntimeID = runtimeID
 	execProvider := c.exec
 	if execProvider == nil {
 		execProvider = execCommittedActivation
@@ -95,16 +97,16 @@ func (c *activationExecCommand) Run(args []string, stdout, stderr io.Writer) (ru
 // cross-process lock. The callback admits the provider only after the committed
 // Registry contains the exact Agent/Pane/runtime/generation/operation binding;
 // it deliberately changes no field, so success performs zero Registry writes.
-func (c *activationExecCommand) awaitCommittedActivation(spec superviseSpec) error {
+func (c *activationExecCommand) awaitCommittedActivation(spec superviseSpec) (string, error) {
 	store := c.store
 	if store == nil {
 		if err := exactActivationRegistryPath(spec.RegistryPath); err != nil {
-			return err
+			return "", err
 		}
 		store = resourceStoreAtPath(spec.RegistryPath)
 	}
 	if store.updateConvergent == nil {
-		return errors.New("resource registry convergence store is not configured")
+		return "", errors.New("resource registry convergence store is not configured")
 	}
 	lookupEnv := c.lookupEnv
 	if lookupEnv == nil {
@@ -113,10 +115,10 @@ func (c *activationExecCommand) awaitCommittedActivation(spec superviseSpec) err
 	runtimeID, ok := lookupEnv("TMUX_PANE")
 	runtimeID = strings.TrimSpace(runtimeID)
 	if !ok || runtimeID == "" {
-		return errors.New("TMUX_PANE is empty")
+		return "", errors.New("TMUX_PANE is empty")
 	}
 	if exactTmuxHandle(runtimeID, "%") == "" {
-		return fmt.Errorf("TMUX_PANE %q is not an exact tmux Pane handle", runtimeID)
+		return "", fmt.Errorf("TMUX_PANE %q is not an exact tmux Pane handle", runtimeID)
 	}
 
 	_, changed, err := store.updateConvergent(func(registry *coremetadata.Registry) error {
@@ -140,12 +142,12 @@ func (c *activationExecCommand) awaitCommittedActivation(spec superviseSpec) err
 		return nil
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if changed {
-		return errors.New("activation admission unexpectedly changed the Registry")
+		return "", errors.New("activation admission unexpectedly changed the Registry")
 	}
-	return nil
+	return runtimeID, nil
 }
 
 func activationExecArgv(binary string, spec superviseSpec, argv0 string, failureFD int, child []string) []string {
@@ -167,8 +169,12 @@ func activationExecArgv(binary string, spec superviseSpec, argv0 string, failure
 }
 
 func activationEnvironment(spec superviseSpec) []string {
-	return []string{
+	environment := []string{
 		internalActivationPaneUIDEnv + "=" + spec.PaneUID,
 		internalActivationGenerationEnv + "=" + spec.Generation,
 	}
+	if runtimeID := exactTmuxHandle(strings.TrimSpace(spec.RuntimeID), "%"); runtimeID != "" {
+		environment = append(environment, runtimeMutationAnchorPaneEnv+"="+runtimeID)
+	}
+	return environment
 }

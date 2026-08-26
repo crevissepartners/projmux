@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"reflect"
@@ -68,6 +69,19 @@ type fakeResumedPane struct {
 	provider       string
 	title          string
 	conversationID string
+}
+
+type productionBindingResumeLauncher struct {
+	*fakeResumeLauncher
+	binder *aiCommand
+}
+
+func (l *productionBindingResumeLauncher) BindResumedAgentPaneOnRoute(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	paneID, provider, contextDir, title, conversationID string,
+) error {
+	return l.binder.BindResumedAgentPaneOnRoute(ctx, runner, paneID, provider, contextDir, title, conversationID)
 }
 
 func newFakeResumeLauncher() *fakeResumeLauncher {
@@ -299,6 +313,38 @@ func TestAgentResumeRebindsTheExistingAgentToANewManagedPane(t *testing.T) {
 	// Resume is detached like create: it rebinds a pane, it does not move the
 	// operator's view onto it.
 	assertNoClientMovement(t, tmux)
+}
+
+func TestAgentResumeRoutesProductionAIPresentationWritesThroughExactRuntime(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
+	tmux := newFakeTmux()
+	agent, planner, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	binder := testAICommand(t.TempDir())
+	agent.rebind.launcher = &productionBindingResumeLauncher{fakeResumeLauncher: planner, binder: binder}
+	bindTestCreateRuntimeRoute(agent.rebind.create, tmux, func(string) string { return "" })
+
+	stdout, stderr, err := runRoute(t, agent, "resume", "codex", "--project", "uid:prj-beta")
+	if err != nil || stdout != "agent/codex resumed\n" || stderr != "" {
+		t.Fatalf("production-bound resume = stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if commands := cmdRecorder(binder).commands; len(commands) != 0 {
+		t.Fatalf("production resume binder used ambient subprocess runner: %#v", commands)
+	}
+	for _, option := range []string{aiPaneManagedOption, aiPaneSessionIDOption, aiPaneResumeIDOption, aiPaneResumeUpdatedAtOption} {
+		found := false
+		for _, call := range tmux.calls {
+			if slices.Contains(call, "set-option") && slices.Contains(call, option) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("production resume option %s was not written through exact route: %#v", option, tmux.calls)
+		}
+	}
+	assertEveryTmuxCallHasExactRoute(t, tmux.calls)
 }
 
 func TestAgentResumeRefusesForeignSelectedSessionBeforeReconcileOrLaunch(t *testing.T) {
