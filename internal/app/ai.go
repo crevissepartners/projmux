@@ -2548,7 +2548,6 @@ func (c *aiCommand) agentLaunchCommandForArgv(mode, pathPrepend, contextDir, tit
 	parts = append(parts,
 		titleVar+"="+shellQuote(title),
 		`printf '\033]0;%s\007' "$`+titleVar+`"`,
-		`if [[ -n "${TMUX:-}" ]]; then tmux select-pane -T "$`+titleVar+`" >/dev/null 2>&1 || true; fi`,
 		strings.Join(execParts, " "),
 	)
 	return strings.Join(parts, " && ")
@@ -2578,6 +2577,9 @@ func (c *aiCommand) configureAIPaneOnRoute(
 	if paneID == "" {
 		return nil
 	}
+	if err := runAIPaneTitleOnRoute(ctx, runner, paneID, title); err != nil {
+		return err
+	}
 	for _, option := range [][2]string{
 		{aiPaneManagedOption, "1"},
 		{aiPaneAgentOption, normalizeAIMode(mode)},
@@ -2594,6 +2596,16 @@ func (c *aiCommand) configureAIPaneOnRoute(
 		if err := runAIPaneOptionOnRoute(ctx, runner, paneID, option[0], option[1]); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+func runAIPaneTitleOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, title string) error {
+	if runner == nil {
+		return errors.New("managed Agent Pane binding requires an exact tmux runner")
+	}
+	if _, err := runner.Run(ctx, "tmux", "select-pane", "-T", title, "-t", paneID); err != nil {
+		return fmt.Errorf("set Pane title: %w", err)
 	}
 	return nil
 }

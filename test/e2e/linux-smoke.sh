@@ -991,6 +991,7 @@ mkdir -p "$create_shim"
 cat >"$create_shim/tmux" <<CREATE_SHIM
 #!/usr/bin/env bash
 create_args=("\$@")
+printf '%s\n' "\${create_args[*]}" >>$(printf %q "$create_root/exact-tmux-argv.log")
 if [[ "\${PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE:-}" == "1" ]]; then
   if [[ "\${create_args[0]:-}" != "-L" && "\${create_args[0]:-}" != "-S" ]]; then
     echo "runtime tmux call omitted exact -L/-S route: \${create_args[*]}" >&2
@@ -1091,8 +1092,18 @@ esac
 ctx set-option -gq @projmux_app 1
 ctx set-option -gq @projmux_socket_name "$create_socket"
 
+create_client_one_pid=""
+create_client_two_pid=""
 create_cleanup() {
-  local actual
+  local actual client_pid
+  for client_pid in "$create_client_one_pid" "$create_client_two_pid"; do
+    if [[ -n "$client_pid" ]]; then
+      kill "$client_pid" >/dev/null 2>&1 || true
+      wait "$client_pid" 2>/dev/null || true
+    fi
+  done
+  create_client_one_pid=""
+  create_client_two_pid=""
   actual="$(ctx display-message -p '#{socket_path}' 2>/dev/null || true)"
   if [[ -n "$actual" ]]; then
     case "$actual" in
@@ -1840,8 +1851,38 @@ fi
 
 # The outside-tmux exact-selector boundary uses only the explicit app route.
 # The shim rejects every target-less/default tmux subprocess for this one
-# command, including the production AI presentation binder's set-option writes.
+# command, including the production AI presentation binder's title and
+# set-option writes. Two attached sibling clients pin different ambient Windows;
+# neither one is title authority for the newly returned exact Pane.
+TERM=xterm-256color script -qefc \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$create_root/tt' '$create_real_tmux' -L '$create_socket' attach-session -t legacy-alpha" \
+  "$create_root/exact-client-one.typescript" >/dev/null 2>&1 &
+create_client_one_pid=$!
+TERM=xterm-256color script -qefc \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$create_root/tt' '$create_real_tmux' -L '$create_socket' attach-session -t legacy-alpha" \
+  "$create_root/exact-client-two.typescript" >/dev/null 2>&1 &
+create_client_two_pid=$!
+for _ in {1..200}; do
+  [[ "$(ctx list-clients -F '#{client_name}' | wc -l)" -ge 2 ]] && break
+  sleep 0.05
+done
+mapfile -t exact_clients < <(ctx list-clients -F '#{client_name}' | head -n 2)
+if [[ "${#exact_clients[@]}" != "2" ]]; then
+  echo "outside exact create did not establish two isolated clients" >&2
+  exit 1
+fi
+ctx switch-client -c "${exact_clients[0]}" -t "$agent_window_before"
+ctx switch-client -c "${exact_clients[1]}" -t legacy-alpha:review
+exact_review_pane="$(ctx list-panes -t legacy-alpha:review -F '#{pane_id}' | head -n 1)"
+ctx select-pane -T exact-host-sentinel -t "$agent_pane_before"
+ctx select-pane -T exact-review-sentinel -t "$exact_review_pane"
+exact_siblings_before="$({
+  ctx display-message -p -t "$agent_pane_before" '#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}'
+  ctx display-message -p -t "$exact_review_pane" '#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}'
+} | sha256sum | awk '{print $1}')"
 exact_foreign_before="$(cfx list-panes -a -F '#{session_name}|#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}' | sha256sum | awk '{print $1}')"
+exact_route_log_before="$(wc -l <"$create_root/exact-tmux-argv.log" | tr -d '[:space:]')"
+exact_launch_log_before="$(wc -l <"$create_root/agent-launch.log" | tr -d '[:space:]')"
 PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 pmx_agent create agent --provider codex \
   --project "uid:$agent_project_uid_before" --window "uid:$agent_window_uid_before" \
   --pane "uid:$agent_host_pane_uid_before" --name exact-native-route -o pane-id \
@@ -1862,11 +1903,41 @@ if [[ "$(ctx display-message -p -t "$exact_agent_pane" '#{pane_id}')" != "$exact
   echo "outside exact create returned a Pane outside the app socket: $exact_agent_pane" >&2
   exit 1
 fi
+for _ in {1..200}; do
+  exact_title="$(ctx display-message -p -t "$exact_agent_pane" '#{pane_title}')"
+  exact_launch_log_after="$(wc -l <"$create_root/agent-launch.log" | tr -d '[:space:]')"
+  [[ "$exact_title" == "codex:alpha" && "$exact_launch_log_after" -gt "$exact_launch_log_before" ]] && break
+  sleep 0.05
+done
+if [[ "${exact_title:-}" != "codex:alpha" || "${exact_launch_log_after:-0}" -le "$exact_launch_log_before" ]]; then
+  echo "outside exact create provider/title did not settle on $exact_agent_pane" >&2
+  exit 1
+fi
+exact_siblings_after="$({
+  ctx display-message -p -t "$agent_pane_before" '#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}'
+  ctx display-message -p -t "$exact_review_pane" '#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}'
+} | sha256sum | awk '{print $1}')"
+if [[ "$exact_siblings_after" != "$exact_siblings_before" ]]; then
+  echo "outside exact create changed a two-client sibling Window hash" >&2
+  exit 1
+fi
+tail -n "+$((exact_route_log_before + 1))" "$create_root/exact-tmux-argv.log" >"$create_root/exact-tmux-argv.delta.log"
+if grep -Ev '^(-L|-S) [^ ]+ ' "$create_root/exact-tmux-argv.delta.log" >/dev/null ||
+  ! grep -Fq "select-pane -T codex:alpha -t $exact_agent_pane" "$create_root/exact-tmux-argv.delta.log"; then
+  echo "outside exact create emitted a bare/default tmux argv or omitted the exact title target" >&2
+  cat "$create_root/exact-tmux-argv.delta.log" >&2
+  exit 1
+fi
 exact_foreign_after="$(cfx list-panes -a -F '#{session_name}|#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}' | sha256sum | awk '{print $1}')"
 if [[ "$exact_foreign_after" != "$exact_foreign_before" ]]; then
   echo "outside exact create changed the sibling socket hash" >&2
   exit 1
 fi
+kill "$create_client_one_pid" "$create_client_two_pid" >/dev/null 2>&1 || true
+wait "$create_client_one_pid" 2>/dev/null || true
+wait "$create_client_two_pid" 2>/dev/null || true
+create_client_one_pid=""
+create_client_two_pid=""
 
 # 9. The shortcut normalizes onto the same route, and a second create allocates a
 #    new Agent instead of reusing the first.

@@ -85,6 +85,7 @@ type fakeTmuxWindow struct {
 type fakeTmuxPane struct {
 	id      string
 	opts    map[string]string
+	title   string
 	command string
 	left    int
 	top     int
@@ -190,7 +191,7 @@ func (f *fakeTmux) state() string {
 		for _, w := range s.windows {
 			fmt.Fprintf(&b, "  window %s %s %v\n", w.id, w.name, w.opts)
 			for _, p := range w.panes {
-				fmt.Fprintf(&b, "    pane %s %v cmd=%q\n", p.id, p.opts, p.command)
+				fmt.Fprintf(&b, "    pane %s %v title=%q cmd=%q\n", p.id, p.opts, p.title, p.command)
 			}
 		}
 	}
@@ -357,6 +358,8 @@ func (f *fakeTmux) Run(_ context.Context, name string, args ...string) ([]byte, 
 		return f.runResizePane(args)
 	case "set-option":
 		out, err = f.runSetOption(args)
+	case "select-pane":
+		return f.runSelectPane(args)
 	case "set-environment":
 		return f.runSetEnvironment(args)
 	case "show-environment":
@@ -503,6 +506,18 @@ func (f *fakeTmux) runResizePane(args []string) ([]byte, error) {
 			return nil, fmt.Errorf("fake tmux: resize-pane: invalid height %q", raw)
 		}
 	}
+	return nil, nil
+}
+
+func (f *fakeTmux) runSelectPane(args []string) ([]byte, error) {
+	if !slices.Contains(args, "-T") {
+		return nil, fmt.Errorf("fake tmux: select-pane: unsupported argv %v", args)
+	}
+	_, _, pane := f.pane(flagValue(args, "-t"))
+	if pane == nil {
+		return nil, fmt.Errorf("fake tmux: select-pane: no pane %q", flagValue(args, "-t"))
+	}
+	pane.title = flagValue(args, "-T")
 	return nil, nil
 }
 
@@ -877,6 +892,8 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, window.opts[token])
 		case token == "pane_id" && pane != nil:
 			out = append(out, pane.id)
+		case token == "pane_title" && pane != nil:
+			out = append(out, pane.title)
 		case token == "pane_index" && window != nil && pane != nil:
 			out = append(out, fmt.Sprintf("%d", slices.Index(window.panes, pane)))
 		case token == "pane_left" && pane != nil:

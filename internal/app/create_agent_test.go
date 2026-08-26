@@ -346,6 +346,8 @@ func TestOutsideTmuxExactThreeUIDCreateRoutesProductionAIPresentationWrites(t *t
 	store := newFakeResourceStore(t)
 	tmux := newFakeTmux()
 	seedExactCreateAgentTarget(t, tmux)
+	hostPane := tmux.sessions[0].windows[0].panes[0]
+	hostPane.title = "unrelated-host-title"
 	command, planner := newTestAgentCreateCommand(t, store, tmux)
 	binder := testAICommand(t.TempDir())
 	command.agents = &productionBindingAgentLauncher{fakeAgentLauncher: planner, binder: binder}
@@ -360,6 +362,14 @@ func TestOutsideTmuxExactThreeUIDCreateRoutesProductionAIPresentationWrites(t *t
 	}
 	if commands := cmdRecorder(binder).commands; len(commands) != 0 {
 		t.Fatalf("production ai binder used ambient subprocess runner: %#v", commands)
+	}
+	createdPane := strings.TrimSpace(stdout)
+	session, window, pane := tmux.pane(createdPane)
+	if session == nil || window == nil || pane == nil || pane.title != "codex:launch" {
+		t.Fatalf("production ai title was not written to exact created Pane %s: session=%v window=%v pane=%#v", createdPane, session != nil, window != nil, pane)
+	}
+	if hostPane.title != "unrelated-host-title" {
+		t.Fatalf("production ai title mutated the unrelated host Pane: %#v", hostPane)
 	}
 	for _, option := range []string{
 		aiPaneManagedOption, aiPaneAgentOption, aiPaneLaunchAuthorshipOption,

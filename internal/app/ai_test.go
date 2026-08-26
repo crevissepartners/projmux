@@ -87,6 +87,19 @@ func TestProductionAIPaneBindersUseOnlySuppliedExactRuntimeRoute(t *testing.T) {
 	if commands := cmdRecorder(cmd).commands; len(commands) != 0 {
 		t.Fatalf("routed production binders used ambient subprocess runner: %#v", commands)
 	}
+	for _, title := range []string{"fresh", "resume", "native"} {
+		found := false
+		for _, call := range tmux.calls {
+			if slices.Contains(call, "select-pane") && slices.Contains(call, "-T") &&
+				slices.Contains(call, title) && flagValue(tmuxCommandArgv(call), "-t") == paneID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("routed production binder omitted exact title %q for %s: %#v", title, paneID, tmux.calls)
+		}
+	}
 	for _, option := range []string{
 		aiPaneManagedOption, aiPaneAgentOption, aiPaneLaunchAuthorshipOption, aiPaneContextOption,
 		aiPaneTopicOption, aiPaneStateOption, aiPaneSessionIDOption, aiPaneResumeIDOption,
@@ -932,6 +945,9 @@ func TestAgentLaunchCommandPrependsAgentBinDirToPath(t *testing.T) {
 	}
 	if !strings.Contains(got, "exec '/home/u/.nvm/versions/node/v24.0.0/bin/codex'") {
 		t.Fatalf("agentLaunchCommand = %q, want it to exec the agent binary", got)
+	}
+	if strings.Contains(got, "tmux select-pane") {
+		t.Fatalf("agentLaunchCommand = %q, must not delegate Pane title authority to the provider shell", got)
 	}
 }
 

@@ -309,6 +309,8 @@ for iteration in $(seq 1 "$repeats"); do
     echo "HARNESS app owner anchor receipt is malformed: $anchor_receipt" >&2
     exit 1
   }
+  anchor_title="authority-host-$iteration"
+  exact_tmux "$app_socket_path" select-pane -T "$anchor_title" -t "$anchor_pane"
 
   sibling_before="$(exact_tmux "$sibling_socket_path" show-options -gqv @projmux_authority_sentinel):$(exact_tmux "$sibling_socket_path" list-panes -a -F '#{pane_id}')"
   case_status="product-authority"
@@ -332,6 +334,15 @@ for iteration in $(seq 1 "$repeats"); do
   if [[ ! "$provider_anchor" =~ ^%[0-9]+\|%[0-9]+$ ]] ||
     [[ "${provider_anchor%%|*}" != "${provider_anchor##*|}" ]]; then
     echo "PRODUCT-AUTHORITY provider did not observe the exact private activation Pane: $provider_anchor" >&2
+    exit 1
+  fi
+  provider_pane="${provider_anchor%%|*}"
+  if [[ "$(exact_tmux "$app_socket_path" display-message -p -t "$anchor_pane" '#{pane_title}')" != "$anchor_title" ]]; then
+    echo "PRODUCT-AUTHORITY provider title presentation mutated the owner anchor" >&2
+    exit 1
+  fi
+  if [[ "$(exact_tmux "$app_socket_path" display-message -p -t "$provider_pane" '#{pane_title}')" != "codex:evidence" ]]; then
+    echo "PRODUCT-AUTHORITY provider title was not routed to exact Pane $provider_pane" >&2
     exit 1
   fi
   if grep -Fq 'rollback preserved pane' "$case_root/create.err"; then
