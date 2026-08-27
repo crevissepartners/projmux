@@ -278,11 +278,16 @@ Every create is **detached**: no create moves the client. Use `focus pane` or
 `-o pane-id` when you want to end up in the new pane. A natural create validates
 the inherited exact route and Pane containment. An explicit resource scope
 binds the selected app resource route without letting unrelated inherited
-`TMUX`/`TMUX_PANE` choose or veto it; exact Project plus `--create-window`
-therefore uses the validated app logical `-L` route on its first attempt, with
-no `env -u` workaround. Marker, physical-socket, server-PID, generation, and
-owner reobservation remain mandatory. Commands that explicitly select an
-existing live `--socket-path` keep that exact `-S` route unchanged.
+`TMUX`/`TMUX_PANE` choose or change the resource target; exact Project plus
+`--create-window` therefore uses the validated app logical `-L` route on its
+first attempt, with no `env -u` workaround. Runtime safety remains independent
+and may refuse before mutation. An inherited app-owned `TMUX` socket/PID stays
+route evidence: projmux validates its exact `-S` path, ownership/logical
+markers, logical `-L` alias, and PID while ignoring unrelated `TMUX_PANE`
+containment. Outside tmux it validates the default app `-L` route. Marker,
+physical-socket, server-PID, generation, and owner reobservation remain
+mandatory. Commands that explicitly select an existing live `--socket-path`
+keep that exact `-S` route unchanged.
 
 #### Splits started from a popup
 

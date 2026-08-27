@@ -142,9 +142,10 @@ type createCommand struct {
 	// the first runtime action. Construction and help remain read/write free.
 	bindRuntime func(context.Context) error
 	// bindExplicitRuntime is the selector-authoritative sibling. It resolves
-	// the app's logical route without letting an unrelated inherited TMUX or
-	// TMUX_PANE choose or veto the resource target. Marker, physical socket,
-	// PID, and typed object guards remain mandatory.
+	// the app's logical route without letting inherited TMUX_PANE containment
+	// choose or veto the resource target. Inherited TMUX socket/PID evidence is
+	// preserved for exact route validation; marker, physical socket, PID, and
+	// typed object guards remain mandatory.
 	bindExplicitRuntime      func(context.Context) error
 	runtimeBound             bool
 	explicitRuntimeAuthority bool
@@ -190,11 +191,7 @@ func newCreateCommand() *createCommand {
 		resolveWorkspace: resolveAgentWorkspace,
 	}
 	bind := func(ctx context.Context, explicit bool) error {
-		lookup := os.Getenv
-		if explicit {
-			lookup = func(string) string { return "" }
-		}
-		route, err := resolveInvocationRuntimeMutationRouteWithPolicy(ctx, runner, lookup, command.routeAnchor, explicit)
+		route, err := resolveInvocationRuntimeMutationRouteWithPolicy(ctx, runner, os.Getenv, command.routeAnchor, explicit)
 		if err != nil {
 			return err
 		}
