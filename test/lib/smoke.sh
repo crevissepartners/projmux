@@ -5,8 +5,32 @@ smoke_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SMOKE_CONTRACT_ID=""
 SMOKE_CONTRACT_PHASE=""
 SMOKE_CONTRACT_OWNER=""
+SMOKE_CONTRACT_SOURCE=""
+SMOKE_CONTRACT_TERMINAL_STATE_PATH=""
 SMOKE_CONTRACT_STARTED_MS=0
 SMOKE_CONTRACT_TERMINAL=0
+
+SMOKE_L06_HOLDER_PID=0
+SMOKE_L06_HOLDER_STARTED_MS=0
+SMOKE_L06_OPERATION="controller-trigger-burst"
+SMOKE_L06_ACQUIRE_STATE="not-started"
+SMOKE_L06_RELEASE_STATE="not-started"
+declare -a SMOKE_L06_RACER_PIDS=(0 0 0 0 0 0 0 0)
+declare -a SMOKE_L06_RACER_STATUSES=(0 0 0 0 0 0 0 0)
+declare -a SMOKE_L06_RACER_OUTCOMES=(not-started not-started not-started not-started not-started not-started not-started not-started)
+
+SMOKE_L08_REGISTRY_BEFORE=""
+SMOKE_L08_REGISTRY_AFTER=""
+SMOKE_L08_CONTROLLER_ROOT=""
+SMOKE_L08_SOCKET_ROOT=""
+
+SMOKE_L16_CHILD_PID=0
+SMOKE_L16_CHILD_PID_PATH=""
+SMOKE_L16_RC_PATH=""
+SMOKE_L16_OUT_PATH=""
+SMOKE_L16_ERR_PATH=""
+SMOKE_L16_TAIL_PATH=""
+SMOKE_L16_TMUX_FUNCTION=""
 
 smoke_now_ms() {
   date +%s%3N
@@ -43,6 +67,140 @@ smoke_contract_record() {
     --state-sha256 "$state_hash"
 }
 
+smoke_contract_shard() {
+  if [[ -n "${PROJMUX_E2E_LINUX_SHARD:-}" ]]; then
+    printf '%s\n' "$PROJMUX_E2E_LINUX_SHARD"
+    return
+  fi
+  case "${PROJMUX_E2E_SUITE:-}" in
+    codex*) printf '%s\n' codex-lifecycle ;;
+    npm*) printf '%s\n' npm-staging ;;
+    linux) printf '%s\n' all ;;
+    *) printf '%s\n' contract ;;
+  esac
+}
+
+smoke_contract_terminal() {
+  local status="$1"
+  local line="$2"
+  local state_hash
+  if [[ -n "$SMOKE_CONTRACT_TERMINAL_STATE_PATH" && -f "$SMOKE_CONTRACT_TERMINAL_STATE_PATH" ]]; then
+    state_hash="$(sha256sum "$SMOKE_CONTRACT_TERMINAL_STATE_PATH" | awk '{print $1}')"
+  else
+    state_hash="$(smoke_contract_state_hash)"
+  fi
+  python3 "$smoke_root/scripts/e2e-first-failure.py" terminal \
+    --scenario "$SMOKE_CONTRACT_ID" \
+    --phase "$SMOKE_CONTRACT_PHASE" \
+    --owner "$SMOKE_CONTRACT_OWNER" \
+    --shard "$(smoke_contract_shard)" \
+    --status "$status" \
+    --source "$SMOKE_CONTRACT_SOURCE" \
+    --line "$line" \
+    --command "make test-e2e E2E_SCENARIO=$SMOKE_CONTRACT_ID" \
+    --binary-sha256 "${PROJMUX_SMOKE_BIN_SHA256:-${PROJMUX_SMOKE_EXPECTED_BIN_SHA256:-}}" \
+    --state-sha256 "$state_hash"
+}
+
+smoke_l06_failure_diagnostic() {
+  local index
+  local -a command=(
+    python3 "$smoke_root/scripts/e2e-first-failure.py" l06
+    --holder-pid "$SMOKE_L06_HOLDER_PID"
+    --holder-started-ms "$SMOKE_L06_HOLDER_STARTED_MS"
+    --operation "$SMOKE_L06_OPERATION"
+    --acquire "$SMOKE_L06_ACQUIRE_STATE"
+    --release "$SMOKE_L06_RELEASE_STATE"
+  )
+  for index in {0..7}; do
+    command+=(--racer "$((index + 1)):${SMOKE_L06_RACER_PIDS[$index]}:${SMOKE_L06_RACER_STATUSES[$index]}:${SMOKE_L06_RACER_OUTCOMES[$index]}")
+  done
+  "${command[@]}"
+}
+
+smoke_count_entries() {
+  local root="$1"
+  if [[ ! -d "$root" ]]; then
+    printf '0\n'
+    return
+  fi
+  find "$root" -mindepth 1 -maxdepth 3 -print 2>/dev/null | awk 'NR <= 128 { count++ } END { print count + 0 }'
+}
+
+smoke_l08_failure_diagnostic() {
+  local inventory controller_entries hook_processes owned_processes socket_entries
+  inventory="$(smoke_owned_process_inventory)"
+  owned_processes="$(printf '%s\n' "$inventory" | awk 'NF && NR <= 128 { count++ } END { print count + 0 }')"
+  hook_processes="$(printf '%s\n' "$inventory" | grep -c $'executable=projmux\t' || true)"
+  controller_entries="$(smoke_count_entries "$SMOKE_L08_CONTROLLER_ROOT")"
+  if [[ -d "$SMOKE_L08_SOCKET_ROOT" ]]; then
+    socket_entries="$(find "$SMOKE_L08_SOCKET_ROOT" -mindepth 1 -maxdepth 3 -type s -print 2>/dev/null | awk 'NR <= 128 { count++ } END { print count + 0 }')"
+  else
+    socket_entries=0
+  fi
+  python3 "$smoke_root/scripts/e2e-first-failure.py" l08 \
+    --before "$SMOKE_L08_REGISTRY_BEFORE" \
+    --after "$SMOKE_L08_REGISTRY_AFTER" \
+    --controller-entries "$controller_entries" \
+    --hook-processes "$hook_processes" \
+    --owned-processes "$owned_processes" \
+    --socket-entries "$socket_entries"
+}
+
+smoke_l16_failure_diagnostic() {
+  local child_pid clients panes
+  child_pid="$SMOKE_L16_CHILD_PID"
+  if [[ -f "$SMOKE_L16_CHILD_PID_PATH" ]]; then
+    read -r child_pid <"$SMOKE_L16_CHILD_PID_PATH" || child_pid=0
+    [[ "$child_pid" =~ ^[0-9]+$ ]] || child_pid=0
+  fi
+  clients="$PROJMUX_SMOKE_WORKDIR/l16-clients.failure"
+  panes="$PROJMUX_SMOKE_WORKDIR/l16-panes.failure"
+  : >"$clients"
+  : >"$panes"
+  if [[ -n "$SMOKE_L16_TMUX_FUNCTION" ]] && declare -F "$SMOKE_L16_TMUX_FUNCTION" >/dev/null; then
+    "$SMOKE_L16_TMUX_FUNCTION" list-clients \
+      -F '#{client_pid}|#{session_id}|#{window_id}|#{pane_id}|#{client_key_table}' \
+      >"$clients" 2>/dev/null || true
+    "$SMOKE_L16_TMUX_FUNCTION" list-panes -a \
+      -F '#{pane_pid}|#{session_id}|#{window_id}|#{pane_id}|#{pane_active}|#{pane_dead}|#{pane_dead_status}' \
+      >"$panes" 2>/dev/null || true
+  fi
+  python3 "$smoke_root/scripts/e2e-first-failure.py" l16 \
+    --child-pid "$child_pid" \
+    --rc "$SMOKE_L16_RC_PATH" \
+    --out "$SMOKE_L16_OUT_PATH" \
+    --err "$SMOKE_L16_ERR_PATH" \
+    --clients "$clients" \
+    --panes "$panes" \
+    --tail "$SMOKE_L16_TAIL_PATH"
+}
+
+smoke_contract_failure_diagnostic() {
+  case "$SMOKE_CONTRACT_ID" in
+    L06) smoke_l06_failure_diagnostic ;;
+    L08) smoke_l08_failure_diagnostic ;;
+    L16) smoke_l16_failure_diagnostic ;;
+  esac
+}
+
+# Bash does not run ERR for the explicit `exit 1` branches used by assertion
+# blocks. Keep exit semantics intact while giving those branches the same exact
+# call-site source line as command failures. This function is not exported, so
+# fixture children and product commands retain the shell builtin unchanged.
+exit() {
+  local status="${1:-0}"
+  local line="${BASH_LINENO[0]:-0}"
+  if [[ "$status" != "0" && -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
+    set +e
+    smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-deterministic-regression}" >&2
+    smoke_contract_terminal "$status" "$line" || true
+    smoke_contract_failure_diagnostic || true
+    SMOKE_CONTRACT_TERMINAL=1
+  fi
+  builtin exit "$status"
+}
+
 smoke_contract_begin() {
   local scenario_id="$1"
   local phase="$2"
@@ -54,6 +212,8 @@ smoke_contract_begin() {
   SMOKE_CONTRACT_ID="$scenario_id"
   SMOKE_CONTRACT_PHASE="$phase"
   SMOKE_CONTRACT_OWNER="$owner"
+  SMOKE_CONTRACT_SOURCE="${BASH_SOURCE[1]#"$smoke_root/"}"
+  SMOKE_CONTRACT_TERMINAL_STATE_PATH=""
   SMOKE_CONTRACT_STARTED_MS="$(smoke_now_ms)"
   SMOKE_CONTRACT_TERMINAL=0
   smoke_contract_record begin environment
@@ -79,6 +239,8 @@ smoke_contract_err() {
   # false deterministic regression.
   if [[ "$had_errexit" == "1" && -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
     smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-deterministic-regression}" >&2
+    smoke_contract_terminal "$status" "$line" || true
+    smoke_contract_failure_diagnostic || true
     SMOKE_CONTRACT_TERMINAL=1
   elif [[ "$had_errexit" == "1" ]]; then
     echo "E2E_CONTRACT unattributed=1 status=$status line=$line" >&2
