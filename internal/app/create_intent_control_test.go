@@ -253,8 +253,8 @@ func TestCanonicalWindowCreateCommitsExactOwnerPairAndInitialActivationForManage
 			if err := fx.create.createWindowFromIntent(windowCreateIntent{anchorPaneID: fx.originID}, ioDiscard{}, ioDiscard{}); err != nil {
 				t.Fatalf("canonical %s Window create: %v", rootName, err)
 			}
-			if bindingCalls != 1 {
-				t.Fatalf("producer owner-pair binding calls = %d, want exactly 1", bindingCalls)
+			if bindingCalls != 2 {
+				t.Fatalf("producer owner-pair binding calls = %d, want existing origin plus created Window", bindingCalls)
 			}
 
 			var created coremetadata.Window
@@ -285,6 +285,42 @@ func TestCanonicalWindowCreateCommitsExactOwnerPairAndInitialActivationForManage
 	}
 }
 
+func TestC1ExistingLiveManagedRootCreateRebindsCurrentWindowAndClearsMissingRuntime(t *testing.T) {
+	for _, control := range []bool{false, true} {
+		rootName := "Project"
+		if control {
+			rootName = "ControlSession"
+		}
+		t.Run(rootName, func(t *testing.T) {
+			fx := canonicalFixture(t, control)
+			session, runtimeWindow, _ := fx.tmux.pane(fx.originID)
+			if session == nil || runtimeWindow == nil {
+				t.Fatal("fixture origin has no current runtime containment")
+			}
+			fx.store.mutator().ObserveRuntimeBindings(&fx.store.registry, coremetadata.RuntimeObservation{})
+			stored, _ := fx.store.registry.Window(fx.windowUID)
+			stored.Status.RuntimeSessionID = "$2"
+			stored.Status.RuntimeID = "@6"
+			if _, ok := stored.HasCondition(coremetadata.ConditionMissingRuntime); !ok {
+				t.Fatal("fixture did not carry stale MissingRuntime")
+			}
+
+			if err := fx.create.createFromIntent(agentPaneIntent{
+				producer: canonicalProducerDirectShell, placement: "right", anchorPaneID: fx.originID,
+			}, ioDiscard{}, ioDiscard{}); err != nil {
+				t.Fatalf("existing-live %s create: %v", rootName, err)
+			}
+			rebound, _ := fx.store.registry.Window(fx.windowUID)
+			if rebound.Status.RuntimeSessionID != session.id || rebound.Status.RuntimeID != runtimeWindow.id {
+				t.Fatalf("rebound pair=%s/%s, want current %s/%s", rebound.Status.RuntimeSessionID, rebound.Status.RuntimeID, session.id, runtimeWindow.id)
+			}
+			if _, ok := rebound.HasCondition(coremetadata.ConditionMissingRuntime); ok {
+				t.Fatal("current positive runtime projection retained MissingRuntime")
+			}
+		})
+	}
+}
+
 func TestCanonicalWindowOwnerPairBindingFailureRollsBackRegistryAndRuntime(t *testing.T) {
 	for _, control := range []bool{false, true} {
 		rootName := "Project"
@@ -295,12 +331,15 @@ func TestCanonicalWindowOwnerPairBindingFailureRollsBackRegistryAndRuntime(t *te
 			fx := canonicalFixture(t, control)
 			registryBefore, runtimeBefore := fx.store.snapshot(), fx.tmux.state()
 			bindingCalls := 0
-			fx.create.bindWindowRuntime = func(_ coremetadata.Mutator, _ *coremetadata.Registry,
+			fx.create.bindWindowRuntime = func(mutator coremetadata.Mutator, registry *coremetadata.Registry,
 				windowUID, sessionID, windowID string,
 			) (coremetadata.Window, error) {
 				bindingCalls++
 				if windowUID == "" || exactTmuxHandle(sessionID, "$") == "" || exactTmuxHandle(windowID, "@") == "" {
 					t.Fatalf("binding failure seam received incomplete identity %q/%q/%q", windowUID, sessionID, windowID)
+				}
+				if bindingCalls == 1 {
+					return mutator.ObserveWindowRuntimeBinding(registry, windowUID, sessionID, windowID)
 				}
 				return coremetadata.Window{}, errors.New("injected canonical owner-pair binding failure")
 			}
@@ -310,8 +349,8 @@ func TestCanonicalWindowOwnerPairBindingFailureRollsBackRegistryAndRuntime(t *te
 			if err == nil || !strings.Contains(err.Error(), "injected canonical owner-pair binding failure") {
 				t.Fatalf("binding failure = %v", err)
 			}
-			if bindingCalls != 1 || stdout.Len() != 0 {
-				t.Fatalf("binding calls=%d stdout=%q, want 1/empty", bindingCalls, stdout.String())
+			if bindingCalls != 2 || stdout.Len() != 0 {
+				t.Fatalf("binding calls=%d stdout=%q, want existing projection plus failing created binding/empty", bindingCalls, stdout.String())
 			}
 			if fx.store.writes != 0 || fx.store.snapshot() != registryBefore {
 				t.Fatalf("binding failure committed a Registry claimant: writes=%d", fx.store.writes)
@@ -457,7 +496,7 @@ func TestCanonicalWindowCreateLifecycleAuthorityMatrixIsClosed(t *testing.T) {
 				wantDelete bool
 			}{
 				{name: "normal exact causal pair", wantDelete: true},
-				{name: "missing binding", prepare: func(registry *coremetadata.Registry, _, _ *coremetadata.TeardownEvent) {
+				{name: "missing cached binding", wantDelete: true, prepare: func(registry *coremetadata.Registry, _, _ *coremetadata.TeardownEvent) {
 					stored, _ := registry.Window(window.Metadata.UID)
 					stored.Status.RuntimeSessionID, stored.Status.RuntimeID = "", ""
 				}},
@@ -476,7 +515,7 @@ func TestCanonicalWindowCreateLifecycleAuthorityMatrixIsClosed(t *testing.T) {
 				{name: "foreign socket", prepare: func(_ *coremetadata.Registry, _ *coremetadata.TeardownEvent, unlinkEvent *coremetadata.TeardownEvent) {
 					unlinkEvent.Chain.SocketIdentity = "/tmp/foreign.sock"
 				}},
-				{name: "mismatched owner pair", prepare: func(_ *coremetadata.Registry, paneEvent, unlinkEvent *coremetadata.TeardownEvent) {
+				{name: "rebound current locator ignores cached pair", wantDelete: true, prepare: func(_ *coremetadata.Registry, paneEvent, unlinkEvent *coremetadata.TeardownEvent) {
 					paneEvent.Chain.WindowHandle, unlinkEvent.Chain.WindowHandle = "@999", "@999"
 				}},
 			} {

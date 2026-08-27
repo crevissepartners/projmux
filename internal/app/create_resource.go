@@ -875,6 +875,9 @@ func (c *createCommand) materializeWindow(
 			return errors.Join(err, bindingErr)
 		}
 		work.window = projected
+		ledger.observeCurrentWindow(work.window.Metadata.UID, runtimeOwner{
+			SessionID: projected.Status.RuntimeSessionID, WindowID: projected.Status.RuntimeID,
+		})
 	}
 	if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, work.initial.Metadata.UID, ledger); claimErr != nil {
 		return errors.Join(err, claimErr)
@@ -917,9 +920,17 @@ func (c *createCommand) ensureAnchorPane(
 		}
 	}
 
-	windowID, err := c.runtime.windowIDForUID(ctx, sessionName, target.windowUID)
-	if err != nil {
-		return "", err
+	owner, observedCurrent := ledger.currentWindow(target.windowUID)
+	if observedCurrent && owner.SessionID != sessionName {
+		return "", fmt.Errorf("create pane: Window uid %q moved outside current Project session %s", target.windowUID, sessionName)
+	}
+	windowID := owner.WindowID
+	var err error
+	if !observedCurrent {
+		windowID, err = c.runtime.windowIDForUID(ctx, sessionName, target.windowUID)
+		if err != nil {
+			return "", err
+		}
 	}
 	if windowID == "" {
 		// A whole offline Window has no Pane against which tmux can split. A stored
@@ -953,11 +964,15 @@ func (c *createCommand) ensureAnchorPane(
 				return "", errors.Join(err, mirrorErr)
 			}
 			if strings.TrimSpace(sessionName) != "" || strings.TrimSpace(windowID) != "" {
-				if _, bindingErr := mutator.ObserveWindowRuntimeBinding(
+				projected, bindingErr := mutator.ObserveWindowRuntimeBinding(
 					working, window.Metadata.UID, sessionName, windowID,
-				); bindingErr != nil {
+				)
+				if bindingErr != nil {
 					return "", errors.Join(err, bindingErr)
 				}
+				ledger.observeCurrentWindow(window.Metadata.UID, runtimeOwner{
+					SessionID: projected.Status.RuntimeSessionID, WindowID: projected.Status.RuntimeID,
+				})
 			}
 			if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimePane, created.PaneID, bootstrap.Metadata.UID, ledger); claimErr != nil {
 				return "", errors.Join(err, claimErr)
@@ -1035,6 +1050,31 @@ func (c *createCommand) ensureProjectRuntime(
 			return "", err
 		}
 	}
+	// Re-project every already-live Window from its stable UID. The Registry's
+	// cached $/@ pair is diagnostic only and may name a prior tmux generation;
+	// this current pair and the positive MissingRuntime clear commit atomically
+	// with the create operation.
+	windowRuntimes, observeErr := c.runtime.windowRuntimeInventory(ctx, sessionName)
+	if observeErr != nil {
+		return "", observeErr
+	}
+	ledger.resetCurrentWindows()
+	for _, window := range working.WindowsOf(project.Metadata.UID) {
+		owner, found, observeErr := resolveWindowRuntimeUID(windowRuntimes, window.Metadata.UID)
+		if observeErr != nil {
+			return "", observeErr
+		}
+		if !found {
+			continue
+		}
+		if owner.SessionID != created.SessionID {
+			return "", fmt.Errorf("create: Window uid %q resolved outside current Project session %s", window.Metadata.UID, created.SessionID)
+		}
+		if _, bindingErr := c.observeWindowRuntimeBinding(mutator, working, window.Metadata.UID, owner.SessionID, owner.WindowID); bindingErr != nil {
+			return "", bindingErr
+		}
+		ledger.observeCurrentWindow(window.Metadata.UID, owner)
+	}
 	if _, err := mutator.BindProjectSession(working, project.Metadata.UID, sessionName, true); err != nil {
 		return "", MapMetadataError(err)
 	}
@@ -1077,6 +1117,9 @@ func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coreme
 			return err
 		}
 		first = projected
+		ledger.observeCurrentWindow(first.Metadata.UID, runtimeOwner{
+			SessionID: projected.Status.RuntimeSessionID, WindowID: projected.Status.RuntimeID,
+		})
 	}
 	primary, ok := registry.WindowDefaultShell(first.Metadata.UID)
 	if !ok {

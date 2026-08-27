@@ -8,6 +8,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -201,6 +202,10 @@ func equalOptionalInt(left, right *int) bool {
 	return *left == *right
 }
 
+func stableDeadPaneAuthorityConflict(reason coremetadata.TeardownReason, detail string) error {
+	return fmt.Errorf("stable dead Pane authority conflict (%s): %s", reason, detail)
+}
+
 // planExactPaneExitCascade converts only a positively observed exact
 // pane-exited event into the Phase 2 Pane/Agent desired plan. The supervisor
 // journal match is intentionally part of authority: after the resource rows
@@ -219,7 +224,7 @@ type exactLifecycleCascadePlan struct {
 func planExactLifecycleCascade(
 	registry coremetadata.Registry,
 	live map[string]bool,
-	dead map[string]bool,
+	dead []intmetadata.DeadPaneObservation,
 	liveHostPanes int,
 	liveWindows map[string]bool,
 	liveWindowSessions map[string]int,
@@ -240,46 +245,103 @@ func planExactLifecycleCascade(
 	if strings.TrimSpace(event.runtimePaneID) == "" {
 		return exactLifecycleCascadePlan{}, nil
 	}
-	var pane *coremetadata.Pane
-	for i := range registry.Panes {
-		candidate := &registry.Panes[i]
-		if candidate.Status.Activation.RuntimeID != strings.TrimSpace(event.runtimePaneID) ||
-			(strings.TrimSpace(event.paneUID) != "" && candidate.Metadata.UID != strings.TrimSpace(event.paneUID)) {
+	var observed *intmetadata.DeadPaneObservation
+	for i := range dead {
+		candidate := &dead[i]
+		if candidate.PaneID != strings.TrimSpace(event.runtimePaneID) ||
+			(strings.TrimSpace(event.paneUID) != "" && candidate.PaneUID != strings.TrimSpace(event.paneUID)) {
 			continue
 		}
-		if pane != nil {
-			return exactLifecycleCascadePlan{paneAgent: coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
-				Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonConflictingOwnerFacts,
-			}}}, nil
+		if observed != nil {
+			return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+				coremetadata.TeardownReasonConflictingOwnerFacts, "current tmux locator names multiple dead Pane observations")
 		}
-		pane = candidate
+		observed = candidate
 	}
-	if pane == nil || (live[pane.Metadata.UID] && !dead[pane.Metadata.UID]) {
-		return exactLifecycleCascadePlan{}, nil
+	retainedDead := observed != nil
+	if observed == nil {
+		var absent *coremetadata.Pane
+		for i := range registry.Panes {
+			candidate := &registry.Panes[i]
+			if candidate.Spec.Role == coremetadata.PaneRoleAgent ||
+				(strings.TrimSpace(event.paneUID) != "" && candidate.Metadata.UID != strings.TrimSpace(event.paneUID)) ||
+				(strings.TrimSpace(event.paneUID) == "" && candidate.Status.Activation.RuntimeID != strings.TrimSpace(event.runtimePaneID)) {
+				continue
+			}
+			if absent != nil {
+				return exactLifecycleCascadePlan{paneAgent: coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
+					Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonConflictingOwnerFacts,
+				}}}, nil
+			}
+			absent = candidate
+		}
+		if absent == nil {
+			return exactLifecycleCascadePlan{}, nil
+		}
+		rows := lifecycleLegacyDeadPaneObservations(registry, lifecycleDeadPaneSnapshot{
+			uids: map[string]bool{absent.Metadata.UID: true}, legacy: true,
+		})
+		if len(rows) != 1 {
+			return exactLifecycleCascadePlan{}, nil
+		}
+		observed = &rows[0]
+	}
+	if exactTmuxHandle(observed.SessionID, "$") == "" || exactTmuxHandle(observed.WindowID, "@") == "" ||
+		exactTmuxHandle(observed.PaneID, "%") == "" || strings.TrimSpace(observed.PaneUID) == "" ||
+		strings.TrimSpace(observed.WindowUID) == "" || strings.TrimSpace(observed.SessionName) == "" {
+		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+			coremetadata.TeardownReasonConflictingOwnerFacts, "current dead Pane observation has incomplete stable containment")
+	}
+	pane, ok := registry.Pane(observed.PaneUID)
+	if !ok || (strings.TrimSpace(event.generation) != "" && pane.Status.Activation.Generation != strings.TrimSpace(event.generation)) {
+		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+			coremetadata.TeardownReasonStaleGeneration, "observed Pane UID or activation generation is not current Registry authority")
+	}
+	if pane.Metadata.OwnerRef == nil || observed.OwnerKind != string(pane.Metadata.OwnerRef.Kind) ||
+		observed.OwnerUID != pane.Metadata.OwnerRef.UID || observed.PaneRole != string(pane.Spec.Role) {
+		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+			coremetadata.TeardownReasonConflictingOwnerFacts, "current Pane ownerRef or role mirror conflicts with the stable Registry graph")
+	}
+	if pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
+		if observed.AgentUID != pane.Metadata.OwnerRef.UID {
+			return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+				coremetadata.TeardownReasonConflictingOwnerFacts, "current Agent UID mirror conflicts with Pane ownerRef")
+		}
+	} else if strings.TrimSpace(observed.AgentUID) != "" {
+		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+			coremetadata.TeardownReasonConflictingOwnerFacts, "non-Agent Pane carries a foreign Agent UID mirror")
 	}
 	windowUID, ok := paneWindowUID(registry, *pane)
 	if !ok {
-		return exactLifecycleCascadePlan{paneAgent: coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
-			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonStaleOwnerBinding,
-		}}}, nil
+		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+			coremetadata.TeardownReasonStaleOwnerBinding, "Pane ownerRef does not resolve one stable Window")
 	}
 	window, _ := registry.Window(windowUID)
-	if strings.TrimSpace(window.Status.RuntimeSessionID) == "" || strings.TrimSpace(window.Status.RuntimeID) == "" {
-		return exactLifecycleCascadePlan{paneAgent: coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
-			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonUnavailable,
-		}}}, nil
+	if observed.WindowUID != windowUID {
+		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+			coremetadata.TeardownReasonConflictingOwnerFacts, "current Window UID mirror conflicts with the stable owner graph")
 	}
 	root := window.Metadata.OwnerRef
 	if root == nil || (root.Kind != coremetadata.KindProject && root.Kind != coremetadata.KindControlSession) {
-		return exactLifecycleCascadePlan{paneAgent: coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
-			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonStaleOwnerBinding,
-		}}}, nil
+		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+			coremetadata.TeardownReasonStaleOwnerBinding, "Window ownerRef does not resolve one managed root")
 	}
 	sessionName := lifecycleRootSessionName(registry, *root)
-	if sessionName == "" {
-		return exactLifecycleCascadePlan{paneAgent: coremetadata.PaneAgentCascadeDeletePlan{Decision: coremetadata.TeardownDecision{
-			Action: coremetadata.TeardownRefuse, Reason: coremetadata.TeardownReasonUnavailable,
-		}}}, nil
+	if sessionName == "" || sessionName != observed.SessionName {
+		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+			coremetadata.TeardownReasonUnavailable, "current session name conflicts with the stable root declaration")
+	}
+	switch root.Kind {
+	case coremetadata.KindProject:
+		if observed.ProjectUID != root.UID || strings.TrimSpace(observed.SessionRole) != "" {
+			return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+				coremetadata.TeardownReasonConflictingOwnerFacts, "current Project UID or session role conflicts with the stable root")
+		}
+	case coremetadata.KindControlSession:
+		if strings.TrimSpace(observed.ProjectUID) != "" || observed.SessionRole != resourcegraph.ControlSessionRole {
+			return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+				coremetadata.TeardownReasonConflictingOwnerFacts, "current ControlSession role or Project UID mirror conflicts with the stable root")
+		}
 	}
 
 	classification := coremetadata.TerminationUnknown
@@ -292,10 +354,11 @@ func planExactLifecycleCascade(
 	if liveHostPanes == 0 {
 		observation = coremetadata.TeardownObservationEmpty
 	}
+	deadUIDs := lifecycleDeadPaneUIDs(dead)
 	liveSiblingPane := false
 	for i := range registry.Panes {
 		sibling := registry.Panes[i]
-		if sibling.Metadata.UID == pane.Metadata.UID || !live[sibling.Metadata.UID] || dead[sibling.Metadata.UID] {
+		if sibling.Metadata.UID == pane.Metadata.UID || !live[sibling.Metadata.UID] || deadUIDs[sibling.Metadata.UID] {
 			continue
 		}
 		if siblingWindow, exists := paneWindowUID(registry, sibling); exists && siblingWindow == windowUID {
@@ -311,7 +374,7 @@ func planExactLifecycleCascade(
 		for i := range registry.Panes {
 			candidate := registry.Panes[i]
 			if candidateWindow, exists := paneWindowUID(registry, candidate); exists &&
-				candidateWindow == siblingWindow.Metadata.UID && live[candidate.Metadata.UID] && !dead[candidate.Metadata.UID] {
+				candidateWindow == siblingWindow.Metadata.UID && live[candidate.Metadata.UID] && !deadUIDs[candidate.Metadata.UID] {
 				liveSiblingRootWindow = true
 				break
 			}
@@ -324,8 +387,8 @@ func planExactLifecycleCascade(
 		Kind: event.teardownKind, Classification: classification,
 		Generation: coremetadata.TeardownGenerationCurrent, Observation: observation,
 		Chain: coremetadata.TeardownOwnerChain{
-			SocketIdentity: event.target.label(), SessionHandle: strings.TrimSpace(window.Status.RuntimeSessionID), PaneHandle: strings.TrimSpace(event.runtimePaneID),
-			WindowHandle: strings.TrimSpace(window.Status.RuntimeID), PaneUID: pane.Metadata.UID,
+			SocketIdentity: event.target.label(), SessionHandle: observed.SessionID, PaneHandle: observed.PaneID,
+			WindowHandle: observed.WindowID, PaneUID: pane.Metadata.UID,
 			WindowUID: windowUID, RootKind: root.Kind, RootUID: root.UID,
 			Generation: pane.Status.Activation.Generation,
 		},
@@ -333,9 +396,8 @@ func planExactLifecycleCascade(
 	}
 	decision := coremetadata.DecideTeardownEvent(teardown)
 	if decision.Action == coremetadata.TeardownDeletePaneAgent && !exactJournalReceipt(event.receipts, *pane) {
-		decision.Action = coremetadata.TeardownRefuse
-		decision.Reason = coremetadata.TeardownReasonUnavailable
-		return exactLifecycleCascadePlan{paneAgent: coremetadata.PaneAgentCascadeDeletePlan{Decision: decision}}, nil
+		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
+			coremetadata.TeardownReasonUnavailable, "normal teardown lacks one exact current-generation supervisor journal receipt")
 	}
 	now := time.Now
 	if mutator.Now != nil {
@@ -344,16 +406,16 @@ func planExactLifecycleCascade(
 	if liveSiblingPane {
 		plan, err := coremetadata.PlanPaneAgentCascadeDelete(registry, teardown, now().UTC())
 		cascade := exactLifecycleCascadePlan{Desired: plan.Desired, Changed: plan.Changed, paneAgent: plan}
-		if err == nil && plan.Changed && dead[pane.Metadata.UID] {
-			target := lifecycleDeadPaneTarget(teardown, sessionName)
+		if err == nil && plan.Changed && retainedDead {
+			target := lifecycleDeadPaneTarget(teardown, sessionName, *pane)
 			cascade.deadCleanup = &target
 		}
 		return cascade, err
 	}
 	pending, err := coremetadata.PlanPaneTeardownEvidence(registry, teardown, now().UTC())
 	cascade := exactLifecycleCascadePlan{Desired: pending.Desired, Changed: pending.Changed, pending: pending}
-	if err == nil && pending.Changed && dead[pane.Metadata.UID] {
-		target := lifecycleDeadPaneTarget(teardown, sessionName)
+	if err == nil && pending.Changed && retainedDead {
+		target := lifecycleDeadPaneTarget(teardown, sessionName, *pane)
 		cascade.deadCleanup = &target
 	}
 	return cascade, err
@@ -367,21 +429,21 @@ func planExactLifecycleCascade(
 // mirror is current-generation evidence and safely removes that ambiguity. A
 // missing or contradictory observation leaves the event unchanged and the
 // existing fail-closed conflict path intact.
-func narrowLifecycleDeadPaneEvent(registry coremetadata.Registry, dead map[string]bool, event lifecycleDirtyEvent) lifecycleDirtyEvent {
+func narrowLifecycleDeadPaneEvent(dead []intmetadata.DeadPaneObservation, event lifecycleDirtyEvent) lifecycleDirtyEvent {
 	if event.teardownKind != coremetadata.TeardownEventPaneExited ||
 		strings.TrimSpace(event.paneUID) != "" || strings.TrimSpace(event.runtimePaneID) == "" {
 		return event
 	}
 	resolved := ""
-	for i := range registry.Panes {
-		candidate := registry.Panes[i]
-		if candidate.Status.Activation.RuntimeID != strings.TrimSpace(event.runtimePaneID) || !dead[candidate.Metadata.UID] {
+	for i := range dead {
+		candidate := dead[i]
+		if candidate.PaneID != strings.TrimSpace(event.runtimePaneID) || strings.TrimSpace(candidate.PaneUID) == "" {
 			continue
 		}
 		if resolved != "" {
 			return event
 		}
-		resolved = candidate.Metadata.UID
+		resolved = candidate.PaneUID
 	}
 	if resolved != "" {
 		event.paneUID = resolved
@@ -485,14 +547,23 @@ func lifecycleRootSessionName(registry coremetadata.Registry, root coremetadata.
 	return ""
 }
 
-func lifecycleDeadPaneTarget(event coremetadata.TeardownEvent, sessionName string) paneLiveDeleteTarget {
-	return paneLiveDeleteTarget{
+func lifecycleDeadPaneTarget(event coremetadata.TeardownEvent, sessionName string, pane coremetadata.Pane) paneLiveDeleteTarget {
+	target := paneLiveDeleteTarget{
 		PaneUID: event.Chain.PaneUID, PaneID: event.Chain.PaneHandle,
 		WindowUID: event.Chain.WindowUID, WindowID: event.Chain.WindowHandle,
 		SessionID: event.Chain.SessionHandle, SessionName: strings.TrimSpace(sessionName),
 		RootKind: event.Chain.RootKind, RootUID: event.Chain.RootUID,
-		EndsWindow: !event.LiveSiblingPane,
+		EndsWindow: !event.LiveSiblingPane, RequireDead: true,
+		PaneRole: pane.Spec.Role, Generation: pane.Status.Activation.Generation,
 	}
+	if pane.Metadata.OwnerRef != nil {
+		target.OwnerKind = pane.Metadata.OwnerRef.Kind
+		target.OwnerUID = pane.Metadata.OwnerRef.UID
+		if pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
+			target.AgentUID = pane.Metadata.OwnerRef.UID
+		}
+	}
+	return target
 }
 
 type lifecycleLiveWindowInventory interface {
@@ -526,7 +597,17 @@ type lifecycleDeadPaneCleanupInventory interface {
 }
 
 type lifecycleDeadPaneInventory interface {
+	DeadPaneObservations(context.Context) ([]intmetadata.DeadPaneObservation, error)
+}
+
+type lifecycleLegacyDeadPaneInventory interface {
 	DeadPaneUIDs(context.Context) (map[string]bool, error)
+}
+
+type lifecycleDeadPaneSnapshot struct {
+	observations []intmetadata.DeadPaneObservation
+	uids         map[string]bool
+	legacy       bool
 }
 
 type exactLifecycleInventory struct {
@@ -547,17 +628,75 @@ func (i *exactLifecycleInventory) CleanupLifecycleDeadPane(ctx context.Context, 
 	return i.runtime.kill(ctx, target)
 }
 
-func lifecycleObservedDeadPanes(ctx context.Context, inventory livePaneInventory, event lifecycleDirtyEvent) (map[string]bool, error) {
+func lifecycleObservedDeadPanes(ctx context.Context, inventory livePaneInventory, event lifecycleDirtyEvent) (lifecycleDeadPaneSnapshot, error) {
 	if event.teardownKind != coremetadata.TeardownEventPaneExited {
-		return nil, nil
+		return lifecycleDeadPaneSnapshot{}, nil
 	}
 	dead, ok := inventory.(lifecycleDeadPaneInventory)
+	if ok {
+		observed, err := dead.DeadPaneObservations(ctx)
+		return lifecycleDeadPaneSnapshot{observations: observed, uids: lifecycleDeadPaneUIDs(observed)}, err
+	}
+	legacy, ok := inventory.(lifecycleLegacyDeadPaneInventory)
 	if !ok {
 		// Older/non-authoritative inventory implementations may still project
 		// absence, but they can never grant exact dead-Pane cleanup authority.
-		return nil, nil
+		return lifecycleDeadPaneSnapshot{}, nil
 	}
-	return dead.DeadPaneUIDs(ctx)
+	uids, err := legacy.DeadPaneUIDs(ctx)
+	return lifecycleDeadPaneSnapshot{uids: uids, legacy: true}, err
+}
+
+func lifecycleDeadPaneUIDs(observed []intmetadata.DeadPaneObservation) map[string]bool {
+	uids := make(map[string]bool, len(observed))
+	for _, pane := range observed {
+		if uid := strings.TrimSpace(pane.PaneUID); uid != "" {
+			uids[uid] = true
+		}
+	}
+	return uids
+}
+
+// lifecycleLegacyDeadPaneObservations is test-adapter compatibility only. The
+// production Mirror implements DeadPaneObservations and never enters this
+// cached-locator bridge.
+func lifecycleLegacyDeadPaneObservations(registry coremetadata.Registry, dead lifecycleDeadPaneSnapshot) []intmetadata.DeadPaneObservation {
+	if !dead.legacy {
+		return dead.observations
+	}
+	observed := make([]intmetadata.DeadPaneObservation, 0, len(dead.uids))
+	for uid := range dead.uids {
+		pane, ok := registry.Pane(uid)
+		if !ok {
+			continue
+		}
+		windowUID, ok := paneWindowUID(registry, *pane)
+		if !ok {
+			continue
+		}
+		window, _ := registry.Window(windowUID)
+		root := window.Metadata.OwnerRef
+		if root == nil {
+			continue
+		}
+		row := intmetadata.DeadPaneObservation{
+			SessionID: window.Status.RuntimeSessionID, SessionName: lifecycleRootSessionName(registry, *root),
+			WindowID: window.Status.RuntimeID, PaneID: pane.Status.Activation.RuntimeID,
+			WindowUID: windowUID, PaneUID: uid,
+			OwnerKind: string(pane.Metadata.OwnerRef.Kind), OwnerUID: pane.Metadata.OwnerRef.UID,
+			PaneRole: string(pane.Spec.Role),
+		}
+		if pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
+			row.AgentUID = pane.Metadata.OwnerRef.UID
+		}
+		if root.Kind == coremetadata.KindProject {
+			row.ProjectUID = root.UID
+		} else if root.Kind == coremetadata.KindControlSession {
+			row.SessionRole = resourcegraph.ControlSessionRole
+		}
+		observed = append(observed, row)
+	}
+	return observed
 }
 
 func lifecycleObservedLiveWindows(ctx context.Context, inventory livePaneInventory, event lifecycleDirtyEvent) (map[string]bool, error) {
@@ -769,12 +908,13 @@ func reconcileLifecycle(
 	}
 	candidate := registry.Clone()
 	_, _ = absorbTerminationReceipts(&candidate, store.mutator(), event.receipts)
-	candidateEvent := narrowLifecycleDeadPaneEvent(candidate, dead, event)
-	cascade, cascadeErr := planExactLifecycleCascade(candidate, live, dead, liveHostPanes, liveWindows, liveWindowSessions, candidateEvent, store.mutator())
+	deadObservations := lifecycleLegacyDeadPaneObservations(candidate, dead)
+	candidateEvent := narrowLifecycleDeadPaneEvent(deadObservations, event)
+	cascade, cascadeErr := planExactLifecycleCascade(candidate, live, deadObservations, liveHostPanes, liveWindows, liveWindowSessions, candidateEvent, store.mutator())
 	if cascadeErr != nil {
 		return result, cascadeErr
 	}
-	if !cascade.Changed && len(lifecycleProjectionTargets(registry, lifecycleEffectiveLivePanes(live, dead), candidateEvent)) == 0 &&
+	if !cascade.Changed && len(lifecycleProjectionTargets(registry, lifecycleEffectiveLivePanes(live, dead.uids), candidateEvent)) == 0 &&
 		!terminationReceiptsNeedAbsorption(registry, store.mutator(), event.receipts) {
 		result.awaitingPaneExit = cascade.awaiting
 		result.skipped = "nothing left to reconcile: " + event.describe()
@@ -814,8 +954,9 @@ func reconcileLifecycle(
 			return err
 		}
 		result.receiptsChanged = absorbed
-		lockedEvent := narrowLifecycleDeadPaneEvent(*working, freshDead, event)
-		cascade, err := planExactLifecycleCascade(*working, fresh, freshDead, freshHostPanes, freshWindows, freshWindowSessions, lockedEvent, mutator)
+		freshDeadObservations := lifecycleLegacyDeadPaneObservations(*working, freshDead)
+		lockedEvent := narrowLifecycleDeadPaneEvent(freshDeadObservations, event)
+		cascade, err := planExactLifecycleCascade(*working, fresh, freshDeadObservations, freshHostPanes, freshWindows, freshWindowSessions, lockedEvent, mutator)
 		if err != nil {
 			return err
 		}
@@ -853,7 +994,7 @@ func reconcileLifecycle(
 				result.cascaded = append(result.cascaded, cascade.paneAgent)
 			}
 		}
-		result.projected = projectTerminations(working, mutator, lifecycleProjectionTargets(*working, lifecycleEffectiveLivePanes(fresh, freshDead), lockedEvent))
+		result.projected = projectTerminations(working, mutator, lifecycleProjectionTargets(*working, lifecycleEffectiveLivePanes(fresh, freshDead.uids), lockedEvent))
 		return nil
 	})
 	result.transactions = 1

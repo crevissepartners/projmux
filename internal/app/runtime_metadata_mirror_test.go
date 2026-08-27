@@ -242,7 +242,10 @@ func TestTypedMetadataMirrorRefusesForeignUIDContainmentAndControlOwner(t *testi
 
 func TestTypedMetadataMirrorPaneRefusesForeignUIDAndRepeatsEmpty(t *testing.T) {
 	runner, mirror := newMetadataMirrorPlanFixture()
-	pane := coremetadata.Pane{Metadata: coremetadata.ObjectMeta{UID: "pan-3", Name: "shell"}}
+	pane := coremetadata.Pane{
+		Metadata: coremetadata.ObjectMeta{UID: "pan-3", Name: "shell", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindWindow, UID: "win-2"}},
+		Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell},
+	}
 	runner.paneUID = "pan-foreign"
 	if err := mirror.MirrorPane(context.Background(), "%3", "win-2", pane); err == nil {
 		t.Fatal("foreign Pane UID unexpectedly succeeded")
@@ -263,8 +266,8 @@ func TestTypedMetadataMirrorPaneRefusesForeignUIDAndRepeatsEmpty(t *testing.T) {
 			writes++
 		}
 	}
-	if writes != 2 {
-		t.Fatalf("Pane identity writes=%d, want 2", writes)
+	if writes != 5 {
+		t.Fatalf("Pane identity writes=%d, want 5", writes)
 	}
 	if err := mirror.MirrorPane(context.Background(), "%3", "win-2", pane); err != nil {
 		t.Fatal(err)

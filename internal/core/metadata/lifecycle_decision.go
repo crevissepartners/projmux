@@ -443,8 +443,7 @@ func PlanPaneAgentCascadeDelete(registry Registry, event TeardownEvent, now time
 		return PaneAgentCascadeDeletePlan{}, fmt.Errorf("%s source Registry: %w", op, err)
 	}
 	pane, ok := registry.Pane(strings.TrimSpace(event.Chain.PaneUID))
-	if !ok || pane.Status.Activation.Generation != strings.TrimSpace(event.Chain.Generation) ||
-		pane.Status.Activation.RuntimeID != strings.TrimSpace(event.Chain.PaneHandle) {
+	if !ok || pane.Status.Activation.Generation != strings.TrimSpace(event.Chain.Generation) {
 		out.Decision.Action = TeardownRefuse
 		out.Decision.Reason = TeardownReasonStaleGeneration
 		return out, nil
@@ -572,8 +571,7 @@ func PlanPaneTeardownEvidence(registry Registry, event TeardownEvent, now time.T
 		return PaneTeardownEvidencePlan{}, fmt.Errorf("%s source Registry: %w", op, err)
 	}
 	pane, ok := registry.Pane(strings.TrimSpace(event.Chain.PaneUID))
-	if !ok || pane.Status.Activation.Generation != strings.TrimSpace(event.Chain.Generation) ||
-		pane.Status.Activation.RuntimeID != strings.TrimSpace(event.Chain.PaneHandle) {
+	if !ok || pane.Status.Activation.Generation != strings.TrimSpace(event.Chain.Generation) {
 		out.Decision.Action = TeardownRefuse
 		out.Decision.Reason = TeardownReasonStaleGeneration
 		return out, nil
@@ -618,9 +616,7 @@ func PlanPaneTeardownEvidence(registry Registry, event TeardownEvent, now time.T
 	}
 	window, ok := registry.Window(windowUID)
 	if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != event.Chain.RootKind ||
-		window.Metadata.OwnerRef.UID != event.Chain.RootUID ||
-		window.Status.RuntimeSessionID != strings.TrimSpace(event.Chain.SessionHandle) ||
-		window.Status.RuntimeID != strings.TrimSpace(event.Chain.WindowHandle) {
+		window.Metadata.OwnerRef.UID != event.Chain.RootUID {
 		out.Decision.Action = TeardownRefuse
 		out.Decision.Reason = TeardownReasonStaleOwnerBinding
 		return out, nil

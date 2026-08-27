@@ -49,6 +49,23 @@ type windowRenameIntent struct {
 	displayName  string
 }
 
+func (c *createCommand) projectCanonicalOriginWindowBinding(
+	ctx context.Context,
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	scope canonicalIntentScope,
+) error {
+	owner, found, err := c.runtime.windowRuntimeForUID(ctx, scope.sessionName, scope.windowUID)
+	if err != nil {
+		return err
+	}
+	if !found || owner.SessionID != scope.sessionID {
+		return usageError("canonical create: origin Window has no single current stable-UID runtime containment; nothing was created")
+	}
+	_, err = c.observeWindowRuntimeBinding(mutator, working, scope.windowUID, owner.SessionID, owner.WindowID)
+	return err
+}
+
 func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout, stderr io.Writer) error {
 	anchor := strings.TrimSpace(intent.anchorPaneID)
 	if exactTmuxHandle(anchor, "%") == "" {
@@ -62,6 +79,9 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 	}
 	var result createResult
 	err = c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
+			return err
+		}
 		cwd := scope.cwd
 		if scope.rootKind == coremetadata.KindControlSession {
 			var cwdErr error
@@ -397,6 +417,9 @@ func (c *createCommand) canonicalIntentGuards(scope canonicalIntentScope) []crea
 func (c *createCommand) createCanonicalIntentPane(scope canonicalIntentScope, intent agentPaneIntent, stdout io.Writer) error {
 	var result createResult
 	err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
+			return err
+		}
 		window, ok := working.Window(scope.windowUID)
 		if !ok {
 			return usageError("canonical create: origin Window disappeared before allocation; nothing was created")
@@ -458,6 +481,9 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 	nativePickerResume := nativeCatalogResume && c.codexNative != nil && nativeLaunchCapable
 	var result createResult
 	err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
+		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
+			return err
+		}
 		window, ok := working.Window(scope.windowUID)
 		if !ok {
 			return usageError("canonical create: origin Window disappeared before allocation; nothing was created")

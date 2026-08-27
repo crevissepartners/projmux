@@ -710,8 +710,10 @@ func TestPaneDeleteRuntimeProducerAnchorBindsRouteWithoutInheritedPaneEnv(t *tes
 }
 
 type lifecycleSiblingCleanupRunner struct {
-	killed bool
-	calls  []recordedTmuxCall
+	killed   bool
+	calls    []recordedTmuxCall
+	pid      string
+	ownerUID string
 }
 
 func (r *lifecycleSiblingCleanupRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -725,10 +727,22 @@ func (r *lifecycleSiblingCleanupRunner) Run(_ context.Context, name string, args
 		case "#{socket_path}":
 			return []byte(testDeleteTarget.value + "\n"), nil
 		case "#{pid}":
-			return []byte("4242\n"), nil
+			pid := r.pid
+			if pid == "" {
+				pid = "4242"
+			}
+			return []byte(pid + "\n"), nil
 		case tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
 			"#{@projmux_project_uid}", "#{@projmux_window_uid}", "#{@projmux_pane_uid}"):
 			return []byte(livePaneInventoryRow("$1", "alpha", "@10", "%31", "prj-alpha", "win-alpha-main", "pan-alpha-log")), nil
+		case tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
+			"#{@projmux_project_uid}", "#{@projmux_session_role}", "#{@projmux_window_uid}", "#{@projmux_pane_uid}",
+			"#{pane_dead}", "#{@projmux_pane_owner_kind}", "#{@projmux_pane_owner_uid}", "#{@projmux_agent_uid}", "#{@projmux_pane_role}"):
+			ownerUID := r.ownerUID
+			if ownerUID == "" {
+				ownerUID = "win-alpha-main"
+			}
+			return []byte(livePaneInventoryRow("$1", "alpha", "@10", "%31", "prj-alpha", "", "win-alpha-main", "pan-alpha-log", "1", "Window", ownerUID, "", "shell")), nil
 		}
 	case "show-options":
 		switch args[len(args)-1] {
@@ -766,6 +780,8 @@ func TestLifecycleSiblingCleanupBindsExistingExactSocketBeforeKillPlan(t *testin
 	cleanup := paneLiveDeleteTarget{
 		PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10",
 		SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
+		OwnerKind: coremetadata.KindWindow, OwnerUID: "win-alpha-main", PaneRole: coremetadata.PaneRoleShell,
+		Generation: "gen-current", RequireDead: true,
 	}
 
 	if err := inventory.CleanupLifecycleDeadPane(context.Background(), cleanup); err != nil {
@@ -784,6 +800,44 @@ func TestLifecycleSiblingCleanupBindsExistingExactSocketBeforeKillPlan(t *testin
 	}
 	if kills != 1 {
 		t.Fatalf("exact lifecycle cleanup kill calls = %d, want 1: %#v", kills, runner.calls)
+	}
+}
+
+func TestC2LifecycleFirstWriteGuardRejectsOwnerAndServerPIDDriftWithZeroKill(t *testing.T) {
+	target, err := tmuxSocketPathTarget(testDeleteTarget.value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup := paneLiveDeleteTarget{
+		PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10",
+		SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
+		OwnerKind: coremetadata.KindWindow, OwnerUID: "win-alpha-main", PaneRole: coremetadata.PaneRoleShell,
+		Generation: "gen-current", RequireDead: true,
+	}
+	for _, test := range []struct {
+		name      string
+		runner    *lifecycleSiblingCleanupRunner
+		prebound  bool
+		wantError string
+	}{
+		{name: "stable ownerRef mirror drift", runner: &lifecycleSiblingCleanupRunner{ownerUID: "win-foreign"}, wantError: "stable owner mirror drifted"},
+		{name: "server PID generation drift", runner: &lifecycleSiblingCleanupRunner{pid: "999"}, prebound: true, wantError: "server generation drifted"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := &tmuxPaneDeleteRuntime{runner: test.runner, target: target, getenv: func(string) string { return "" }}
+			if test.prebound {
+				runtime.expectedSocketPath = testDeleteTarget.value
+				runtime.expectedLogicalSocket = defaultAppSocket
+				runtime.routeAuthority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"}
+			}
+			err := (&exactLifecycleInventory{runtime: runtime}).CleanupLifecycleDeadPane(context.Background(), cleanup)
+			if err == nil || !strings.Contains(err.Error(), test.wantError) {
+				t.Fatalf("guard error=%v, want %q", err, test.wantError)
+			}
+			if test.runner.killed {
+				t.Fatal("conflicting stable authority reached kill-pane")
+			}
+		})
 	}
 }
 

@@ -324,6 +324,22 @@ func (m Mirror) MirrorPane(ctx context.Context, paneID string, pane coremetadata
 	if err := m.writePaneName(ctx, paneID, pane.Metadata.Name); err != nil {
 		return err
 	}
+	if pane.Metadata.OwnerRef == nil {
+		return fmt.Errorf("metadata: pane %s has no stable ownerRef to mirror", pane.Metadata.UID)
+	}
+	ownerWrites := [][2]string{
+		{tmuxopts.PaneOwnerKind, string(pane.Metadata.OwnerRef.Kind)},
+		{tmuxopts.PaneOwnerUID, pane.Metadata.OwnerRef.UID},
+		{tmuxopts.PaneRole, string(pane.Spec.Role)},
+	}
+	if pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
+		ownerWrites = append(ownerWrites, [2]string{tmuxopts.AgentUIDPane, pane.Metadata.OwnerRef.UID})
+	}
+	for _, write := range ownerWrites {
+		if _, err := m.run(ctx, "set-option", "-p", "-t", paneID, "-q", write[0], write[1]); err != nil {
+			return fmt.Errorf("metadata: mirror pane stable owner graph: %w", err)
+		}
+	}
 	if pane.Spec.Role == coremetadata.PaneRoleAgent {
 		if _, err := m.run(ctx, "set-option", "-p", "-t", paneID, tmuxopts.RemainOnExitPane, "on"); err != nil {
 			return fmt.Errorf("metadata: protect managed Agent pane lifecycle: %w", err)
@@ -428,15 +444,60 @@ func (m Mirror) LivePaneUIDs(ctx context.Context) (map[string]bool, error) {
 // Window/session anchor still exists; ordinary absence is deliberately not
 // represented here.
 func (m Mirror) DeadPaneUIDs(ctx context.Context) (map[string]bool, error) {
-	out, err := m.run(ctx, "list-panes", "-a", "-F", tmuxFormat("#{"+tmuxopts.PaneUID+"}", "#{pane_dead}"))
+	observed, err := m.DeadPaneObservations(ctx)
+	if err != nil {
+		return nil, err
+	}
+	dead := make(map[string]bool, len(observed))
+	for _, pane := range observed {
+		dead[pane.PaneUID] = true
+	}
+	return dead, nil
+}
+
+// DeadPaneObservation is one positive pane_dead row together with its current
+// exact containment. Projmux UIDs are durable identity; the tmux handles are
+// only the locators observed for this server generation.
+type DeadPaneObservation struct {
+	SessionID   string
+	SessionName string
+	WindowID    string
+	PaneID      string
+	ProjectUID  string
+	SessionRole string
+	WindowUID   string
+	PaneUID     string
+	OwnerKind   string
+	OwnerUID    string
+	AgentUID    string
+	PaneRole    string
+}
+
+// DeadPaneObservations transports the stable mirrored owner graph and current
+// $N/@N/%N locator in one tmux inventory. Rows with incomplete identity or
+// containment are retained as observations so the lifecycle planner can fail
+// closed instead of silently treating conflicting facts as absence.
+func (m Mirror) DeadPaneObservations(ctx context.Context) ([]DeadPaneObservation, error) {
+	out, err := m.run(ctx, "list-panes", "-a", "-F", tmuxFormat(
+		"#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}", "#{pane_dead}",
+		"#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}",
+		"#{"+tmuxopts.WindowUID+"}", "#{"+tmuxopts.PaneUID+"}",
+		"#{"+tmuxopts.PaneOwnerKind+"}", "#{"+tmuxopts.PaneOwnerUID+"}",
+		"#{"+tmuxopts.AgentUIDPane+"}", "#{"+tmuxopts.PaneRole+"}",
+	))
 	if err != nil {
 		return nil, fmt.Errorf("metadata: list dead Panes: %w", err)
 	}
-	dead := map[string]bool{}
-	for _, fields := range parseRows(string(out), 2) {
-		if fields[0] != "" && fields[1] == "1" {
-			dead[fields[0]] = true
+	var dead []DeadPaneObservation
+	for _, fields := range parseRows(string(out), 13) {
+		if fields[4] != "1" {
+			continue
 		}
+		dead = append(dead, DeadPaneObservation{
+			SessionID: fields[0], SessionName: fields[1], WindowID: fields[2], PaneID: fields[3],
+			ProjectUID: fields[5], SessionRole: fields[6], WindowUID: fields[7], PaneUID: fields[8],
+			OwnerKind: fields[9], OwnerUID: fields[10], AgentUID: fields[11], PaneRole: fields[12],
+		})
 	}
 	return dead, nil
 }

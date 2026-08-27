@@ -8339,7 +8339,179 @@ if [[ "$(exitrec_tmux list-panes -a -F '#{@projmux_pane_uid}' | grep -c . || tru
 fi
 echo ">> exit reconciliation e2e restart converged pane=$exitrec_shell_pane class=$(exitrec_termination_field classification) no-autostart"
 
-# 6. The sibling socket was never read or written.
+# 7. The restarted server's handles are only fresh execution locators. Bind the
+# original stable Project/Window/shell UID graph to a deliberately later tmux
+# session, materialize its current pair through the exact physical route, and
+# drive one supervisor-normal retained Agent Pane through the exact current
+# pane-exited event. No generated hook survived the server restart, so the
+# explicit hidden controller call below is the causal event source and cannot
+# hide a stale locator behind hook interpolation.
+exitrec_tmux new-session -d -s "$exitrec_session" -n main \
+  -c "$exitrec_root/work/alpha" sleep 600
+exitrec_rebound_receipt="$(
+  exitrec_tmux display-message -p -t "$exitrec_session" \
+    '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}|receipt-end'
+)"
+IFS='|' read -r exitrec_rebound_socket exitrec_rebound_pid exitrec_rebound_session \
+  exitrec_rebound_window exitrec_rebound_pane exitrec_rebound_end \
+  <<<"$exitrec_rebound_receipt"
+if [[ "$exitrec_rebound_socket" != "$exitrec_socket_path" ]] || \
+  [[ "$exitrec_rebound_pid" != "$exitrec_restarted_socket_pid" ]] || \
+  [[ ! "$exitrec_rebound_session" =~ ^\$[0-9]+$ ]] || \
+  [[ ! "$exitrec_rebound_window" =~ ^@[0-9]+$ ]] || \
+  [[ ! "$exitrec_rebound_pane" =~ ^%[0-9]+$ ]] || \
+  [[ "$exitrec_rebound_end" != "receipt-end" ]] || \
+  [[ "$exitrec_rebound_session" == "$exitrec_anchor_session" ]] || \
+  [[ "$exitrec_rebound_window" == "$exitrec_anchor_window" ]] || \
+  [[ "$exitrec_rebound_pane" == "$exitrec_anchor_pane" ]]; then
+  echo "exit reconciliation rebound fixture did not yield a distinct exact second-generation locator: old=$exitrec_anchor_session/$exitrec_anchor_window/$exitrec_anchor_pane current=$exitrec_rebound_receipt" >&2
+  exit 1
+fi
+
+exitrec_tmux set-option -t "$exitrec_rebound_pane" -q @projmux_project_uid "$exitrec_project_uid"
+exitrec_tmux set-option -t "$exitrec_rebound_pane" -q @projmux_project_path "$exitrec_root/work/alpha"
+exitrec_tmux set-option -w -t "$exitrec_rebound_pane" -q @projmux_window_uid "$exitrec_window_uid"
+exitrec_tmux set-option -p -t "$exitrec_rebound_pane" -q @projmux_pane_uid "$exitrec_anchor_pane_uid"
+exitrec_socket_pid="$exitrec_rebound_pid"
+exitrec_create_anchor_pane="$exitrec_rebound_pane"
+printf 'sleep 1\n%s\n' 'exit 0' >"$exitrec_root/stub-script"
+set +e
+exitrec_rebound_agent="$(exitrec_live_pmx create agent --provider claude \
+  --project "uid:$exitrec_project_uid" -o uid \
+  2>"$exitrec_root/rebound-create.err")"
+exitrec_rebound_create_status=$?
+set -e
+if [[ "$exitrec_rebound_create_status" != "0" ]]; then
+  echo "second-generation Agent create failed status=$exitrec_rebound_create_status" >&2
+  cat "$exitrec_root/rebound-create.err" >&2
+  exit 1
+fi
+echo ">> exit reconciliation e2e rebound create agent=$exitrec_rebound_agent current=$exitrec_rebound_session/$exitrec_rebound_window/$exitrec_rebound_pane"
+exitrec_doc agent "$exitrec_rebound_agent"
+exitrec_rebound_pane_uid="$(exitrec_field paneRef)"
+if [[ -z "$exitrec_rebound_agent" || -z "$exitrec_rebound_pane_uid" ]]; then
+  echo "second-generation Agent create exposed no stable Agent/Pane binding" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+if ! exitrec_pmx describe window "uid:$exitrec_window_uid" -o json \
+  >"$exitrec_root/rebound-window.json" 2>"$exitrec_root/rebound-window.err"; then
+  echo "second-generation create left its stable Window unreadable" >&2
+  cat "$exitrec_root/rebound-window.err" >&2
+  exit 1
+fi
+if ! awk \
+  -v uid="$exitrec_window_uid" \
+  -v session="$exitrec_rebound_session" \
+  -v window="$exitrec_rebound_window" '
+    index($0, "\"uid\": \"" uid "\"") { resource = 1; remaining = 80 }
+    resource && index($0, "\"runtimeSessionID\": \"" session "\"") { have_session = 1 }
+    resource && index($0, "\"runtimeID\": \"" window "\"") { have_window = 1 }
+    resource && have_session && have_window { found = 1; exit }
+    resource && --remaining == 0 { resource = 0 }
+    END { exit !found }
+  ' "$exitrec_registry"; then
+  echo "second-generation create did not commit current Window pair $exitrec_rebound_session/$exitrec_rebound_window for $exitrec_window_uid" >&2
+  cat "$exitrec_registry" >&2
+  exit 1
+fi
+if grep -Fq '"type": "MissingRuntime"' "$exitrec_root/rebound-window.json"; then
+  echo "second-generation create retained stale MissingRuntime on $exitrec_window_uid" >&2
+  cat "$exitrec_root/rebound-window.json" >&2
+  exit 1
+fi
+exitrec_rebound_runtime="$(
+  exitrec_tmux list-panes -a \
+    -F '#{pane_id}|#{pane_dead}|#{@projmux_pane_uid}|#{@projmux_pane_owner_kind}|#{@projmux_pane_owner_uid}|#{@projmux_agent_uid}|#{@projmux_pane_role}' \
+    | awk -F '|' -v pane="$exitrec_rebound_pane_uid" -v agent="$exitrec_rebound_agent" \
+      '$3 == pane && $4 == "Agent" && $5 == agent && $6 == agent && $7 == "agent" { print $1 }'
+)"
+if [[ ! "$exitrec_rebound_runtime" =~ ^%[0-9]+$ ]] || \
+  [[ "$(printf '%s\n' "$exitrec_rebound_runtime" | grep -c .)" != "1" ]]; then
+  echo "second-generation Agent has no unique current stable owner mirror: agent=$exitrec_rebound_agent pane=$exitrec_rebound_pane_uid runtime=$exitrec_rebound_runtime" >&2
+  exitrec_tmux list-panes -a \
+    -F '#{pane_id}|#{pane_dead}|#{@projmux_pane_uid}|#{@projmux_pane_owner_kind}|#{@projmux_pane_owner_uid}|#{@projmux_agent_uid}|#{@projmux_pane_role}' >&2
+  exit 1
+fi
+for _ in $(seq 1 150); do
+  if exitrec_tmux list-panes -a -F '#{pane_id}|#{pane_dead}' \
+    | grep -Fqx "$exitrec_rebound_runtime|1"; then
+    break
+  fi
+  sleep 0.1
+done
+if ! exitrec_tmux list-panes -a -F '#{pane_id}|#{pane_dead}' \
+  | grep -Fqx "$exitrec_rebound_runtime|1"; then
+  echo "second-generation normal Agent did not become a retained dead current Pane: $exitrec_rebound_runtime" >&2
+  exit 1
+fi
+for _ in $(seq 1 150); do
+  if awk -v pane="\"paneUID\":\"$exitrec_rebound_pane_uid\"" \
+    -v classification='"classification":"normal"' \
+    -v source='"source":"supervisor"' \
+    'index($0, pane) && index($0, classification) && index($0, source) { found = 1 } END { exit !found }' \
+    "$exitrec_root/state/projmux/termination-receipts.jsonl" 2>/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+if ! awk -v pane="\"paneUID\":\"$exitrec_rebound_pane_uid\"" \
+  -v classification='"classification":"normal"' \
+  -v source='"source":"supervisor"' \
+  'index($0, pane) && index($0, classification) && index($0, source) { found = 1 } END { exit !found }' \
+  "$exitrec_root/state/projmux/termination-receipts.jsonl" 2>/dev/null; then
+  echo "second-generation normal Agent has no durable exact supervisor receipt" >&2
+  exit 1
+fi
+for _ in $(seq 1 100); do
+  set +e
+  exitrec_live_pmx internal tmux converge \
+    --socket-path "$exitrec_socket_path" \
+    --reason pane-exited \
+    --hook-pane "$exitrec_rebound_runtime" \
+    >"$exitrec_root/rebound-converge.out" \
+    2>"$exitrec_root/rebound-converge.err"
+  exitrec_rebound_converge_status=$?
+  set -e
+  if [[ "$exitrec_rebound_converge_status" != "0" ]]; then
+    echo "second-generation pane-exited pass failed status=$exitrec_rebound_converge_status" >&2
+    cat "$exitrec_root/rebound-converge.err" >&2
+    exit 1
+  fi
+  if ! grep -Fq 'deferred: another controller worker holds' \
+    "$exitrec_root/rebound-converge.err"; then
+    break
+  fi
+  sleep 0.05
+done
+if grep -Fq 'deferred: another controller worker holds' \
+  "$exitrec_root/rebound-converge.err"; then
+  echo "second-generation pane-exited event remained behind a controller lease" >&2
+  cat "$exitrec_root/rebound-converge.err" >&2
+  exit 1
+fi
+if exitrec_pmx describe pane "uid:$exitrec_rebound_pane_uid" -o json \
+  >"$exitrec_root/rebound-pane-after-converge.json" 2>/dev/null; then
+  echo "second-generation pane-exited pass retained the Pane; controller output follows" >&2
+  cat "$exitrec_root/rebound-converge.out" >&2
+  cat "$exitrec_root/rebound-converge.err" >&2
+  cat "$exitrec_root/rebound-pane-after-converge.json" >&2
+  exitrec_tmux list-panes -a \
+    -F '#{socket_path}|#{pid}|#{session_id}|#{session_name}|#{window_id}|#{pane_id}|#{pane_dead}|#{@projmux_project_uid}|#{@projmux_session_role}|#{@projmux_window_uid}|#{@projmux_pane_uid}|#{@projmux_pane_owner_kind}|#{@projmux_pane_owner_uid}|#{@projmux_agent_uid}|#{@projmux_pane_role}' >&2
+  exit 1
+fi
+exitrec_await_phase agent "$exitrec_rebound_agent" Offline
+exitrec_await_absent pane "$exitrec_rebound_pane_uid"
+exitrec_doc agent "$exitrec_rebound_agent"
+if [[ -n "$(exitrec_field paneRef)" ]] || \
+  exitrec_tmux list-panes -a -F '#{pane_id}' | grep -Fqx "$exitrec_rebound_runtime"; then
+  echo "second-generation cleanup left the Agent bound or retained its current dead runtime" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+echo ">> exit reconciliation e2e stable-uid rebound old=$exitrec_anchor_session/$exitrec_anchor_window/$exitrec_anchor_pane current=$exitrec_rebound_session/$exitrec_rebound_window/$exitrec_rebound_runtime agent=$exitrec_rebound_agent phase=Offline pane=removed"
+
+# 8. The sibling socket was never read or written.
 exitrec_other_after="$(exitrec_other_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
 if [[ "$exitrec_other_after" != "$exitrec_other_before" ]]; then
   echo "exit reconciliation e2e touched the sibling socket: $exitrec_other_after" >&2

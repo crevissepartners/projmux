@@ -879,11 +879,17 @@ func (r *controllerTriggerRunner) awaitRuntimeExitTerminationReceipts(ctx contex
 	}
 	dead := map[string]bool{}
 	if retained, ok := inventory.(lifecycleDeadPaneInventory); ok {
-		dead, err = retained.DeadPaneUIDs(ctx)
+		observed, observeErr := retained.DeadPaneObservations(ctx)
+		dead, err = lifecycleDeadPaneUIDs(observed), observeErr
 		if err != nil {
 			// As with an unreadable live inventory, a failed dead-state query is
 			// not evidence that a mirrored Pane is still executing. The ordinary
 			// convergence pass owns the fail-closed diagnostic.
+			return receipts, nil
+		}
+	} else if retained, ok := inventory.(lifecycleLegacyDeadPaneInventory); ok {
+		dead, err = retained.DeadPaneUIDs(ctx)
+		if err != nil {
 			return receipts, nil
 		}
 	}

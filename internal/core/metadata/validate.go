@@ -289,8 +289,7 @@ func (r Registry) validatePaneTeardown(op string, pane Pane) error {
 		strings.TrimSpace(evidence.Generation) == "" || evidence.ObservedAt.IsZero() {
 		return stateErr(op, ErrInvalidRegistry, "pane %q has incomplete teardown evidence", pane.Metadata.Name)
 	}
-	if evidence.Generation != pane.Status.Activation.Generation ||
-		evidence.RuntimePaneID != pane.Status.Activation.RuntimeID {
+	if evidence.Generation != pane.Status.Activation.Generation {
 		return stateErr(op, ErrInvalidRegistry, "pane %q teardown evidence is stale", pane.Metadata.Name)
 	}
 	if evidence.Classification != TerminationNormal && evidence.Classification != TerminationIntentional {
@@ -304,9 +303,6 @@ func (r Registry) validatePaneTeardown(op string, pane Pane) error {
 	if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != evidence.RootKind ||
 		window.Metadata.OwnerRef.UID != evidence.RootUID {
 		return stateErr(op, ErrInvalidRegistry, "pane %q teardown evidence names a stale root", pane.Metadata.Name)
-	}
-	if window.Status.RuntimeSessionID != evidence.RuntimeSessionID || window.Status.RuntimeID != evidence.RuntimeWindowID {
-		return stateErr(op, ErrInvalidRegistry, "pane %q teardown evidence names a stale runtime Window", pane.Metadata.Name)
 	}
 	return nil
 }
