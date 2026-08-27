@@ -1263,8 +1263,30 @@ func (s *Store) tryBreakStaleRecoveryLock() bool {
 }
 
 func (s *Store) acquireLock() error {
+	return s.acquireLockWithPolicy(defaultLockMaxAttempts, defaultLockBaseDelay, defaultLockMaxDelay, time.Sleep)
+}
+
+// acquireLockWithPolicy applies the retry budget to one observed lock owner.
+// A create burst consists of several healthy, serialized owners; charging a
+// waiter for time spent behind owners that have already released the lock can
+// exhaust the budget even though no individual lease is stuck. Only an exact,
+// positive pid transition proves lease progress and resets the attempts. Empty,
+// malformed, or transiently unreadable lock contents keep consuming the current
+// owner's budget instead of manufacturing progress.
+func (s *Store) acquireLockWithPolicy(maxAttempts int, baseDelay, maxDelay time.Duration, sleep func(time.Duration)) error {
+	if sleep == nil {
+		sleep = time.Sleep
+	}
 	delay := defaultLockBaseDelay
-	for range defaultLockMaxAttempts {
+	if baseDelay > 0 {
+		delay = baseDelay
+	}
+	if maxDelay <= 0 {
+		maxDelay = defaultLockMaxDelay
+	}
+	lastOwnerPID := 0
+	attempts := 0
+	for attempts < maxAttempts {
 		f, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, localstate.PrivateFileMode)
 		if err == nil {
 			_, _ = fmt.Fprintf(f, "pid=%d\n", os.Getpid())
@@ -1274,18 +1296,38 @@ func (s *Store) acquireLock() error {
 		if !errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("metadata: acquire lock: %w", err)
 		}
+		if ownerPID, ok := observedLockOwnerPID(s.lockPath); ok {
+			if lastOwnerPID > 0 && ownerPID != lastOwnerPID {
+				attempts = 0
+			}
+			lastOwnerPID = ownerPID
+		}
+		attempts++
 		if s.tryBreakStaleLock() {
 			continue
 		}
-		time.Sleep(delay + s.lockJitter())
-		if delay < defaultLockMaxDelay {
+		sleep(delay + s.lockJitter())
+		if delay < maxDelay {
 			delay *= 2
-			if delay > defaultLockMaxDelay {
-				delay = defaultLockMaxDelay
+			if delay > maxDelay {
+				delay = maxDelay
 			}
 		}
 	}
-	return fmt.Errorf("metadata: acquire lock: exhausted %d attempts on %s", defaultLockMaxAttempts, s.lockPath)
+	return fmt.Errorf("metadata: acquire lock: exhausted %d attempts on %s", maxAttempts, s.lockPath)
+}
+
+func observedLockOwnerPID(path string) (int, bool) {
+	data, err := os.ReadFile(path) // #nosec G304 -- path is the Store's own private registry lock sibling
+	if err != nil {
+		return 0, false
+	}
+	raw, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "pid=")
+	if !ok || raw == "" || strings.ContainsAny(raw, " \t\r\n") {
+		return 0, false
+	}
+	pid, err := strconv.Atoi(raw)
+	return pid, err == nil && pid > 0
 }
 
 func (s *Store) lockJitter() time.Duration {

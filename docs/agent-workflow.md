@@ -383,6 +383,13 @@
   exact tmux state plus sanitized hashed tails; denylist checks reject token,
   raw HOME/path, full Registry, and raw command leakage. Normal scenario meaning,
   one-build/four-shard topology, and `.bin/e2e-evidence` retention are unchanged.
+- `make test` / `make test-e2e`: L06 Registry lock recurrence applies the
+  unchanged 400-attempt, 2ms/50ms delay, and 30s stale budget to one verified
+  positive-PID owner lease. `TestRegistryLockRetryBudgetTracksVerifiedOwnerLease`
+  permits a waiter to continue across healthy owner turnover while unchanged,
+  empty, malformed, and unreadable owners remain bounded; the real-tmux L06
+  burst requires all eight exact-socket creates to converge on one Window with
+  nine unique mirrored Panes and no lock or staged residue.
 - `make test` / `make test-integration`: attention omitted-target convergence
   is enforced by `TestAttentionMutationOmittedTargetMatchesExplicitPaneLedger`,
   `TestAttentionMutationOmittedTargetRefusesWithoutExactInvocationPane`, and
