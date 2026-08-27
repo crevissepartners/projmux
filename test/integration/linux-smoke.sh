@@ -1565,6 +1565,80 @@ assert_automatic_success_no_record() {
   fi
 }
 
+# Omitted attention mutation targets converge on the exact inherited Pane.
+# A sibling Pane stands in for unrelated live topology: it must remain byte
+# unchanged while toggle -> clear and arm run against automatic_pane.
+automatic_sibling="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" split-window -dPF '#{pane_id}' -t "$automatic_pane")"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" select-pane -T attention-target -t "$automatic_pane"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" select-pane -T attention-sibling -t "$automatic_sibling"
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -p -u -t "$automatic_pane" @projmux_attention_state 2>/dev/null || true
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -p -u -t "$automatic_pane" @projmux_attention_focus_armed 2>/dev/null || true
+
+env TMUX="$automatic_tmux_env" TMUX_PANE="$automatic_pane" "$bin" attention toggle \
+  >"$PROJMUX_SMOKE_WORKDIR/automatic-attention-toggle-omitted.out"
+attention_toggle_state="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -pqv -t "$automatic_pane" @projmux_attention_state)"
+attention_toggle_title="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t "$automatic_pane" '#{pane_title}')"
+attention_sibling_state="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -pqv -t "$automatic_sibling" @projmux_attention_state)"
+attention_sibling_title="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t "$automatic_sibling" '#{pane_title}')"
+if [[ -s "$PROJMUX_SMOKE_WORKDIR/automatic-attention-toggle-omitted.out" ]] ||
+  [[ "$attention_toggle_state" != "reply" ]] ||
+  [[ -n "$attention_sibling_state" ]] ||
+  [[ "$attention_sibling_title" != "attention-sibling" ]]; then
+  echo "omitted attention toggle did not stay on the exact inherited Pane: target=$automatic_pane state=$attention_toggle_state title=$attention_toggle_title sibling=$automatic_sibling sibling_state=$attention_sibling_state sibling_title=$attention_sibling_title" >&2
+  exit 1
+fi
+
+# A detached integration server has no visible client. Arm the reply explicitly
+# so clear exercises its existing mutation path without changing or depending
+# on paneVisibleToClient's intentionally server-wide list-clients semantics.
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -p -t "$automatic_pane" @projmux_attention_focus_armed 1
+assert_automatic_success_no_record attention-clear-omitted \
+  env TMUX="$automatic_tmux_env" TMUX_PANE="$automatic_pane" "$bin" attention clear
+if [[ -n "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -pqv -t "$automatic_pane" @projmux_attention_state)" ]] ||
+  [[ -n "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -pqv -t "$automatic_pane" @projmux_attention_focus_armed)" ]]; then
+  echo "omitted attention clear did not clear the exact inherited Pane" >&2
+  exit 1
+fi
+
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -p -t "$automatic_pane" @projmux_attention_state reply
+assert_automatic_success_no_record attention-arm-omitted \
+  env TMUX="$automatic_tmux_env" TMUX_PANE="$automatic_pane" "$bin" attention arm
+if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -pqv -t "$automatic_pane" @projmux_attention_focus_armed)" != "1" ]] ||
+  [[ -n "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -pqv -t "$automatic_sibling" @projmux_attention_focus_armed)" ]]; then
+  echo "omitted attention arm did not stay on the exact inherited Pane" >&2
+  exit 1
+fi
+
+assert_attention_target_refusal() {
+  local label="$1"
+  shift
+  set +e
+  "$@" >"$PROJMUX_SMOKE_WORKDIR/$label.out" 2>"$PROJMUX_SMOKE_WORKDIR/$label.err"
+  local status=$?
+  set -e
+  if [[ "$status" != "1" ]] || [[ -s "$PROJMUX_SMOKE_WORKDIR/$label.out" ]]; then
+    echo "$label exit/stdout contract drifted: status=$status" >&2
+    exit 1
+  fi
+  smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/$label.err" "requires an explicit pane or valid inherited TMUX_PANE"
+  if [[ "$(wc -c <"$PROJMUX_SMOKE_WORKDIR/$label.err")" -gt 512 ]]; then
+    echo "$label stderr was not bounded" >&2
+    exit 1
+  fi
+}
+
+negative_state_before="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -pqv -t "$automatic_pane" @projmux_attention_state)"
+negative_title_before="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t "$automatic_pane" '#{pane_title}')"
+assert_attention_target_refusal attention-toggle-outside \
+  env -u TMUX -u TMUX_PANE "$bin" attention toggle
+assert_attention_target_refusal attention-toggle-stale \
+  env TMUX="$automatic_tmux_env" TMUX_PANE="%999999" "$bin" attention toggle
+if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -pqv -t "$automatic_pane" @projmux_attention_state)" != "$negative_state_before" ]] ||
+  [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t "$automatic_pane" '#{pane_title}')" != "$negative_title_before" ]]; then
+  echo "refused omitted attention target wrote to live attention state" >&2
+  exit 1
+fi
+
 assert_automatic_success_no_record agent-hook-ingest \
   env TMUX="$automatic_tmux_env" "$bin" internal agent-hook ingest bell --pane "$automatic_pane"
 assert_automatic_success_no_record attention-arm \

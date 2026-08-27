@@ -1737,6 +1737,34 @@ func TestTmuxPrintConfigUsesStandaloneBindings(t *testing.T) {
 	}
 }
 
+// TestGeneratedAttentionFocusHooksKeepExplicitPaneArgv is the acceptance
+// golden for the three generated focus-hook callers. Omitted-target support
+// must not remove, rewrite, or re-quote these exact event-pane arguments.
+func TestGeneratedAttentionFocusHooksKeepExplicitPaneArgv(t *testing.T) {
+	t.Parallel()
+
+	cmd := &tmuxCommand{executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil }}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"print-config"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	var got []string
+	for line := range strings.SplitSeq(strings.TrimSpace(stdout.String()), "\n") {
+		if strings.Contains(line, " attention arm ") || strings.Contains(line, " attention clear ") {
+			got = append(got, line)
+		}
+	}
+	want := []string{
+		`set-hook -g pane-focus-out "run-shell -b \"'/tmp/proj mux/bin/projmux' attention arm #{hook_pane} >/dev/null 2>&1 || true\""`,
+		`set-hook -g pane-focus-in "run-shell -b \"'/tmp/proj mux/bin/projmux' attention clear #{hook_pane} >/dev/null 2>&1 || true\""`,
+		`set-hook -g after-select-pane "run-shell -b \"'/tmp/proj mux/bin/projmux' attention clear #{pane_id} >/dev/null 2>&1 || true\""`,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("generated attention focus-hook argv = %#v, want %#v", got, want)
+	}
+}
+
 func TestTmuxPrintConfigCanonicalizesNpmStagingBinaryPath(t *testing.T) {
 	t.Parallel()
 

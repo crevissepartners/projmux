@@ -96,6 +96,31 @@ func TestPadNameMatchesHistoricalColumnRule(t *testing.T) {
 	}
 }
 
+// TestAttentionMutationHelpUsesOptionalPaneCatalogUsage pins the catalog as
+// the single authority for all three runtime help synopses. The generated CLI
+// reference consumes the same Route.Usage values.
+func TestAttentionMutationHelpUsesOptionalPaneCatalogUsage(t *testing.T) {
+	t.Parallel()
+
+	for _, verb := range []string{"toggle", "clear", "arm"} {
+		path, route, ok := Resolve([]string{"attention", verb})
+		if !ok {
+			t.Fatalf("attention %s did not resolve", verb)
+		}
+		wantUsage := "projmux attention " + verb + " [pane]"
+		if !reflect.DeepEqual(route.Usage, []string{wantUsage}) {
+			t.Fatalf("attention %s Usage = %q, want [%q]", verb, route.Usage, wantUsage)
+		}
+		var out bytes.Buffer
+		if err := RenderRouteHelp(&out, path, route); err != nil {
+			t.Fatalf("RenderRouteHelp(attention %s) error = %v", verb, err)
+		}
+		if !strings.Contains(out.String(), "  "+wantUsage+"\n") {
+			t.Fatalf("attention %s runtime help = %q, want optional pane synopsis", verb, out.String())
+		}
+	}
+}
+
 // helpFlagSpellings enumerates every argv spelling the shared boundary must
 // intercept: both dash prefixes of both names, bare and with any `=value`.
 func helpFlagSpellings() []string {

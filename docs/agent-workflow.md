@@ -367,6 +367,20 @@
   Codex, and npm consumers. Local Security is the exact three-way
   `make security` topology; CI's required branch-protection context is the
   fail-closed aggregate named `Test`.
+- `make test` / `make test-integration`: attention omitted-target convergence
+  is enforced by `TestAttentionMutationOmittedTargetMatchesExplicitPaneLedger`,
+  `TestAttentionMutationOmittedTargetRefusesWithoutExactInvocationPane`, and
+  `TestAttentionMutationHelpUsesOptionalPaneCatalogUsage`; generated/reference/
+  guide parity stays pinned by `TestAttentionMutationOptionalPaneDocsParity`,
+  and generated hook argv by
+  `TestGeneratedAttentionFocusHooksKeepExplicitPaneArgv`. The unit tables pin
+  three-verb explicit/omitted handler-ledger parity, exact `%N` targeted
+  reobservation, no targetless tmux calls, and no-write refusal for outside,
+  missing, blank, malformed, stale, or contradictory inherited evidence. The
+  isolated real-tmux integration runs omitted toggle→clear and arm against one
+  inherited Pane with a sibling unchanged, then proves outside/stale failures
+  have non-zero status, stdout zero, bounded actionable stderr, and unchanged
+  attention state.
 
 ## Review Checklist
 - The branch stays within its stated scope.

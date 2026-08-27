@@ -180,7 +180,7 @@ func (c *attentionCommand) runList(args []string, stdout, stderr io.Writer) erro
 }
 
 func (c *attentionCommand) runToggle(args []string, stderr io.Writer) error {
-	paneID, err := parseOptionalAttentionTarget(args, "attention toggle", stderr)
+	paneID, err := c.resolveOptionalAttentionTarget(args, "attention toggle", stderr)
 	if err != nil || paneID == "" {
 		return err
 	}
@@ -202,7 +202,7 @@ func (c *attentionCommand) runToggle(args []string, stderr io.Writer) error {
 }
 
 func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
-	paneID, err := parseOptionalAttentionTarget(args, "attention clear", stderr)
+	paneID, err := c.resolveOptionalAttentionTarget(args, "attention clear", stderr)
 	if err != nil || paneID == "" {
 		return err
 	}
@@ -233,7 +233,7 @@ func (c *attentionCommand) runClear(args []string, stderr io.Writer) error {
 }
 
 func (c *attentionCommand) runArm(args []string, stderr io.Writer) error {
-	paneID, err := parseOptionalAttentionTarget(args, "attention arm", stderr)
+	paneID, err := c.resolveOptionalAttentionTarget(args, "attention arm", stderr)
 	if err != nil || paneID == "" {
 		return err
 	}
@@ -303,6 +303,40 @@ func parseOptionalAttentionTarget(args []string, command string, stderr io.Write
 		return "", nil
 	}
 	return strings.TrimSpace(args[0]), nil
+}
+
+// resolveOptionalAttentionTarget keeps explicit targets byte-for-byte on their
+// historical path. An omitted target is different: it is authority to mutate
+// only the exact pane that invoked the command, so both halves of tmux's
+// inherited client receipt must be present and the pane must still reobserve as
+// itself before the first attention handler read or write.
+func (c *attentionCommand) resolveOptionalAttentionTarget(args []string, command string, stderr io.Writer) (string, error) {
+	paneID, err := parseOptionalAttentionTarget(args, command, stderr)
+	if err != nil || len(args) != 0 {
+		return paneID, err
+	}
+
+	requireTarget := func(detail string) (string, error) {
+		return "", fmt.Errorf("%s requires an explicit pane or valid inherited TMUX_PANE; %s", command, detail)
+	}
+	if c == nil || c.lookupEnv == nil || strings.TrimSpace(c.lookupEnv("TMUX")) == "" {
+		return requireTarget("run it inside the target tmux pane or pass [pane]")
+	}
+	inherited := c.lookupEnv("TMUX_PANE")
+	if exactTmuxHandle(inherited, "%") == "" || exactTmuxHandle(inherited, "%") != inherited {
+		return requireTarget("TMUX_PANE must be an exact pane id such as %7, or pass [pane]")
+	}
+	if c.runner == nil {
+		return requireTarget("the inherited pane could not be observed; pass [pane]")
+	}
+	observed, observeErr := intmux.NewRunner(c.runner).DisplayMessageTrimmed(context.Background(), intmux.DisplayMessageOptions{
+		Target: inherited,
+		Format: intmux.TmuxFormat("pane_id"),
+	})
+	if observeErr != nil || observed != inherited {
+		return requireTarget("the inherited pane is stale or no longer resolves on this tmux server; pass [pane]")
+	}
+	return inherited, nil
 }
 
 type attentionWindowRow struct {
