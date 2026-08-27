@@ -101,6 +101,11 @@ for racer in 1 2 3 4 5 6 7 8; do
     SMOKE_L06_RACER_OUTCOMES[racer - 1]=exhausted
   fi
 done
+# The sourced formatter consumes this state indirectly. This explicit no-op
+# read keeps that cross-file contract visible to standalone ShellCheck.
+: "$SMOKE_L06_HOLDER_PID" "$SMOKE_L06_HOLDER_STARTED_MS" "$SMOKE_L06_OPERATION" \
+  "$SMOKE_L06_ACQUIRE_STATE" "$SMOKE_L06_RELEASE_STATE" \
+  "${SMOKE_L06_RACER_PIDS[*]}" "${SMOKE_L06_RACER_STATUSES[*]}" "${SMOKE_L06_RACER_OUTCOMES[*]}"
 smoke_l06_failure_diagnostic >"$diagnostic_root/l06.out" 2>"$diagnostic_root/l06.err"
 [[ ! -s "$diagnostic_root/l06.out" ]]
 

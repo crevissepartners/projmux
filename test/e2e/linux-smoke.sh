@@ -3123,6 +3123,12 @@ done
 if [[ ! -e "$binding_registry.lock" ]]; then
   SMOKE_L06_RELEASE_STATE=released
 fi
+# These variables are consumed indirectly by the failure trap sourced from
+# test/lib/smoke.sh. Keep an explicit no-op read so standalone ShellCheck sees
+# the cross-file diagnostic-state contract.
+: "$SMOKE_L06_HOLDER_PID" "$SMOKE_L06_HOLDER_STARTED_MS" "$SMOKE_L06_OPERATION" \
+  "$SMOKE_L06_ACQUIRE_STATE" "$SMOKE_L06_RELEASE_STATE" \
+  "${SMOKE_L06_RACER_PIDS[*]}" "${SMOKE_L06_RACER_STATUSES[*]}" "${SMOKE_L06_RACER_OUTCOMES[*]}"
 if [[ "$binding_burst_failed" != "0" ]]; then
   echo "a hook burst producer exited non-zero" >&2
   cat "$binding_root"/burst-*.err >&2 || true
@@ -4142,6 +4148,11 @@ if ! awk -v route="-L $delete_product_socket " '
   echo "delete used an unclassified command on default app socket -L $delete_product_socket" >&2
   exit 1
 fi
+
+# See the L06 diagnostic-state receipt above. The sourced failure trap owns
+# these values; this no-op read documents that indirect use for ShellCheck.
+: "$SMOKE_CONTRACT_TERMINAL_STATE_PATH" "$SMOKE_L08_REGISTRY_BEFORE" \
+  "$SMOKE_L08_REGISTRY_AFTER" "$SMOKE_L08_CONTROLLER_ROOT" "$SMOKE_L08_SOCKET_ROOT"
 
 delete_cleanup
 trap smoke_cleanup_env EXIT
@@ -7627,6 +7638,12 @@ if [[ "$disc_other_after" != "$disc_other_before" ]]; then
   echo "discovery authority e2e touched the sibling socket" >&2
   exit 1
 fi
+
+# See the L06 diagnostic-state receipt above. The sourced failure trap owns
+# these values; this no-op read documents that indirect use for ShellCheck.
+: "$SMOKE_CONTRACT_TERMINAL_STATE_PATH" "$SMOKE_L16_TMUX_FUNCTION" \
+  "$SMOKE_L16_TAIL_PATH" "$SMOKE_L16_RC_PATH" "$SMOKE_L16_CHILD_PID_PATH" \
+  "$SMOKE_L16_OUT_PATH" "$SMOKE_L16_ERR_PATH"
 
 exec 9>&-
 kill "$disc_client_pid" >/dev/null 2>&1 || true
