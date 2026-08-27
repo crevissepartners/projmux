@@ -64,7 +64,7 @@ type codexNativeLaunchOutcomeRow struct {
 var codexNativeLaunchOutcomeTable = []codexNativeLaunchOutcomeRow{
 	{Action: "create", NativeResult: "thread+turn", Launch: "remote resume without prompt", Binding: "exact Agent/Pane/generation/thread/turn"},
 	{Action: "resume", NativeResult: "same thread", Launch: "remote resume without prompt", Binding: "exact Agent/Pane/generation/thread"},
-	{Action: "create/resume", NativeResult: "unavailable or unsupported before provider mutation", Launch: "current CLI", Binding: "current hook late-ack/refinement"},
+	{Action: "create/resume", NativeResult: "empty prompt, unavailable, or unsupported before provider mutation", Launch: "current CLI", Binding: "current hook late-ack/refinement"},
 	{Action: "create", NativeResult: "indeterminate after thread creation", Launch: "none", Binding: "write zero; refuse duplicate lane"},
 }
 

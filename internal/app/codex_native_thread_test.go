@@ -162,6 +162,182 @@ func TestNativeCodexCreateBindsExactThreadAndSubmitsPromptOnce(t *testing.T) {
 	}
 }
 
+func TestEmptyPromptCodexCreateUsesOnePlainCLILaneAndNoNativeBinding(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{name: "canonical", args: []string{"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "-o", "pane-id"}},
+		{name: "provider shortcut", args: []string{"codex", "--project", "alpha", "--window", "main", "-o", "pane-id"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			create, legacy := newTestAgentCreateCommand(t, store, tmux)
+			native := &fakeNativeThreadController{createErr: errFakeNativeUnavailable, fallback: true}
+			panes := &fakeNativePaneLauncher{}
+			create.codexNative = native
+			create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
+
+			stdout, stderr, err := runRoute(t, create, test.args...)
+			if err != nil || strings.TrimSpace(stdout) == "" || stderr != "" {
+				t.Fatalf("stdout=%q stderr=%q err=%v", stdout, stderr, err)
+			}
+			if len(native.creates) != 1 || native.creates[0].prompt != "" || len(native.resumes) != 0 {
+				t.Fatalf("native creates=%+v resumes=%+v", native.creates, native.resumes)
+			}
+			if len(legacy.plans) != 1 || len(legacy.plans[0].payload) != 0 || len(legacy.bound) != 1 || len(legacy.activationPanes) != 0 {
+				t.Fatalf("plain plans=%+v bindings=%+v activation probes=%v", legacy.plans, legacy.bound, legacy.activationPanes)
+			}
+			calls := splitWindowCalls(tmux)
+			if len(calls) != 1 {
+				t.Fatalf("plain CLI split calls = %v, want exactly one", calls)
+			}
+			joined := strings.Join(calls[0], " ")
+			if !strings.Contains(joined, "exec codex") || strings.Contains(joined, " resume ") || strings.Contains(joined, "--remote") {
+				t.Fatalf("empty create launch = %v, want one fresh plain Codex CLI", calls[0])
+			}
+			if len(panes.plans) != 0 || len(panes.bound) != 0 || len(panes.lifecycle) != 0 {
+				t.Fatalf("empty fallback gained native Pane state: plans=%+v bindings=%+v lifecycle=%+v", panes.plans, panes.bound, panes.lifecycle)
+			}
+			agent := agentNamed(t, store, "win-alpha-main", "codex-1")
+			pane, ok := store.registry.Pane(agent.Status.PaneRef)
+			if !ok || pane.Status.Activation.Codex != nil || agent.Status.SessionRef != nil ||
+				agent.Status.Activation.State != coremetadata.ActivationNotRequested || agent.Status.Activation.Source != "" {
+				t.Fatalf("fallback Agent/Pane binding = agent:%#v pane:%#v", agent.Status, pane.Status)
+			}
+		})
+	}
+}
+
+func TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane(t *testing.T) {
+	for _, producer := range []canonicalCreateProducer{
+		canonicalProducerSavedDefault,
+		canonicalProducerProviderPicker,
+		canonicalProducerDirectProvider,
+	} {
+		t.Run(string(producer), func(t *testing.T) {
+			fx := canonicalFixture(t, false)
+			native := &fakeNativeThreadController{createErr: errFakeNativeUnavailable, fallback: true}
+			legacy := newFakeResumeLauncher()
+			panes := &fakeNativePaneLauncher{}
+			fx.create.codexNative = native
+			fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
+
+			err := fx.create.createFromIntent(agentPaneIntent{
+				producer: producer, provider: aiModeCodex, placement: "right", anchorPaneID: fx.originID,
+			}, ioDiscard{}, ioDiscard{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(native.creates) != 0 || len(native.resumes) != 0 || len(legacy.plans) != 0 || len(panes.plans) != 0 || len(panes.bound) != 0 {
+				t.Fatalf("split producer changed lane: native create=%+v resume=%+v legacy resume=%+v native plans=%+v bindings=%+v",
+					native.creates, native.resumes, legacy.plans, panes.plans, panes.bound)
+			}
+			calls := splitWindowCalls(fx.tmux)
+			if len(calls) != 1 {
+				t.Fatalf("split calls = %v, want exactly one", calls)
+			}
+			joined := strings.Join(calls[0], " ")
+			if !strings.Contains(joined, "exec codex") || strings.Contains(joined, " resume ") || strings.Contains(joined, "--remote") {
+				t.Fatalf("split producer launch = %v, want one fresh plain Codex CLI", calls[0])
+			}
+		})
+	}
+}
+
+func TestEmptyPromptCodexFallbackFirstInputConvergesSessionRefAndRouting(t *testing.T) {
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, planner := newTestAgentCreateCommand(t, store, tmux)
+	binder := testAICommand(t.TempDir())
+	create.agents = &productionBindingAgentLauncher{fakeAgentLauncher: planner, binder: binder}
+	create.codexNative = &fakeNativeThreadController{createErr: errFakeNativeUnavailable, fallback: true}
+	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
+
+	stdout, stderr, err := runRoute(t, create,
+		"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "-o", "pane-id")
+	if err != nil || stderr != "" {
+		t.Fatalf("empty create stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	paneID := strings.TrimSpace(stdout)
+	agent := agentNamed(t, store, "win-alpha-main", "codex-1")
+	pane, ok := store.registry.Pane(agent.Status.PaneRef)
+	if !ok || pane.Status.Activation.Codex != nil || pane.Status.Activation.Generation == "" || pane.Status.Activation.RuntimeID != paneID {
+		t.Fatalf("empty fallback Pane activation = %#v", pane.Status.Activation)
+	}
+
+	home := t.TempDir()
+	ingest := testAICommand(home)
+	ingest.lookupEnv = func(name string) string {
+		switch name {
+		case "HOME":
+			return home
+		case "TMUX_PANE":
+			return paneID
+		case internalActivationPaneUIDEnv:
+			return pane.Metadata.UID
+		case internalActivationGenerationEnv:
+			return pane.Status.Activation.Generation
+		default:
+			return ""
+		}
+	}
+	backing := store.store()
+	ingest.loadRegistry = backing.load
+	ingest.updateRegistry = backing.update
+	ingest.now = store.mutator().Now
+	ingest.runCommand = func(ctx context.Context, name string, args ...string) error {
+		_, err := tmux.Run(ctx, name, args...)
+		return err
+	}
+	ingest.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && len(args) > 0 && args[0] == "display-message" {
+			format := args[len(args)-1]
+			if strings.HasPrefix(format, "#{@") && strings.HasSuffix(format, "}") {
+				_, _, target := tmux.pane(flagValue(args, "-t"))
+				return []byte(target.opts[strings.TrimSuffix(strings.TrimPrefix(format, "#{"), "}")] + "\n"), nil
+			}
+		}
+		return tmux.Run(ctx, name, args...)
+	}
+	if binding, managed, err := ingest.managedAgentBindingForPane(paneID); err != nil || !managed || !ingest.exactProviderActivationEvidence(binding, paneID) {
+		t.Fatalf("first-input managed binding = %#v managed=%t err=%v", binding, managed, err)
+	}
+	ingest.stdin = strings.NewReader(`{"hook_event_name":"UserPromptSubmit","thread_id":"thread-first-input","session_id":"session-first-input","cwd":"/srv/alpha"}`)
+	if err := ingest.runIngest([]string{"codex-hook"}, ioDiscard{}, ioDiscard{}); err != nil {
+		t.Fatal(err)
+	}
+
+	agent = agentNamed(t, store, "win-alpha-main", "codex-1")
+	if agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.ThreadID != "thread-first-input" {
+		t.Fatalf("first-input sessionRef = %#v (transactions=%d writes=%d)", agent.Status.SessionRef, store.transactions, store.writes)
+	}
+	_, _, livePane := tmux.pane(paneID)
+	if livePane.opts[aiPaneThreadIDOption] != "thread-first-input" || livePane.opts[aiPaneAgentOption] != aiModeCodex ||
+		livePane.opts[aiPaneManagedOption] != "1" {
+		t.Fatalf("first-input live routing options = %#v", livePane.opts)
+	}
+}
+
+func TestCodexFanOutKeepsCurrentPlainCLILaneWithoutNativeCreate(t *testing.T) {
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, legacy := newTestAgentCreateCommand(t, store, tmux)
+	native := &fakeNativeThreadController{createBinding: codexappserver.ThreadBinding{ThreadID: "must-not-create", TurnID: "must-not-turn"}}
+	create.codexNative = native
+	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
+
+	stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "-o", "pane-id")
+	if err != nil || stderr != "" || len(strings.Fields(stdout)) != 2 {
+		t.Fatalf("fan-out stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if len(native.creates) != 0 || len(native.resumes) != 0 || len(legacy.plans) != 1 || len(legacy.bound) != 2 || len(splitWindowCalls(tmux)) != 2 {
+		t.Fatalf("fan-out native=%+v/%+v plain plans=%+v bindings=%+v splits=%v",
+			native.creates, native.resumes, legacy.plans, legacy.bound, splitWindowCalls(tmux))
+	}
+}
+
 func TestNativeCodexResumeReusesStoredThreadAndCreatesZeroThreads(t *testing.T) {
 	store := newFakeResourceStore(t)
 	setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
