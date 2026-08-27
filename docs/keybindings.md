@@ -406,7 +406,9 @@ installed yet, and only it knows its own canonical ids.
 
 `--no-apply` suppresses the live tmux reload, not the migration. Installer paths
 still invoke the new binary as `config apply --no-reload` so the schema does not
-fall behind the binary that writes it.
+fall behind the binary that writes it. They omit pre-publication live
+convergence entirely and print the exact explicit `config apply --socket`
+still required before ordinary mutation.
 
 ### Downgrading or rolling back
 

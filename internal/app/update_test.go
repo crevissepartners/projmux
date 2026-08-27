@@ -154,14 +154,20 @@ func testUpdateCommand(t *testing.T, now time.Time) (*updateCommand, string) {
 		})},
 		apiURL:     "https://example.invalid/latest",
 		executable: func() (string, error) { return "/tmp/projmux", nil },
-		goos:       "linux",
-		goarch:     "amd64",
-		mkdirTemp:  os.MkdirTemp,
-		removeAll:  os.RemoveAll,
-		rename:     os.Rename,
-		chmod:      os.Chmod,
-		remove:     os.Remove,
-		copyFile:   copyRegularFile,
+		lookPath: func(name string) (string, error) {
+			if name != "projmux" {
+				return "", fmt.Errorf("unexpected executable lookup %q", name)
+			}
+			return "/npm/bin/projmux", nil
+		},
+		goos:      "linux",
+		goarch:    "amd64",
+		mkdirTemp: os.MkdirTemp,
+		removeAll: os.RemoveAll,
+		rename:    os.Rename,
+		chmod:     os.Chmod,
+		remove:    os.Remove,
+		copyFile:  copyRegularFile,
 	}
 	return cmd, cacheDir
 }
@@ -314,6 +320,7 @@ func TestUpdateApplyDryRunForNPM(t *testing.T) {
 	}
 	out := stdout.String()
 	for _, want := range []string{
+		"would run: /tmp/projmux config apply --bin /npm/bin/projmux --socket projmux",
 		"would run: npm install -g projmux@latest",
 		"would run: projmux config apply",
 	} {
@@ -342,9 +349,89 @@ func TestUpdateApplyRunsNPMCommands(t *testing.T) {
 	if err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []string{"npm install -g projmux@latest", "projmux config apply"}
+	want := []string{
+		"/tmp/projmux config apply --bin /npm/bin/projmux --socket projmux",
+		"npm install -g projmux@latest",
+		"projmux config apply",
+	}
 	if !equalStrings(ran, want) {
 		t.Fatalf("ran = %#v, want %#v", ran, want)
+	}
+}
+
+func TestUpdateApplyPublicationFailureContract(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		failAt     int
+		wantCalls  int
+		wantDetail string
+	}{
+		{name: "pre-apply prevents publication", failAt: 0, wantCalls: 1, wantDetail: "binary publication not started"},
+		{name: "installer failure is not success", failAt: 1, wantCalls: 2, wantDetail: "binary publication failed; update not successful"},
+		{name: "post-verify failure is not success", failAt: 2, wantCalls: 3, wantDetail: "post-publication convergence failed; update not successful"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
+			cmd.getenv = func(name string) string {
+				if name == "PROJMUX_INSTALLER" {
+					return "npm"
+				}
+				return ""
+			}
+			var ran []string
+			cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+				ran = append(ran, strings.Join(append([]string{name}, args...), " "))
+				if len(ran)-1 == tc.failAt {
+					return errors.New("injected stage failure")
+				}
+				return nil
+			}
+
+			err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), tc.wantDetail) ||
+				!strings.Contains(err.Error(), "projmux config apply --socket projmux") {
+				t.Fatalf("Run() error = %v, want stage detail and exact remediation", err)
+			}
+			if len(ran) != tc.wantCalls {
+				t.Fatalf("ran = %#v, want %d calls before stop", ran, tc.wantCalls)
+			}
+		})
+	}
+}
+
+func TestUpdateApplyNoApplySkipsLiveConvergenceAndRequiresExplicitApply(t *testing.T) {
+	t.Parallel()
+
+	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
+	cmd.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "npm"
+		}
+		return ""
+	}
+	var ran []string
+	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
+		return nil
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"apply", "--no-apply"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"npm install -g projmux@latest",
+		"projmux config apply --no-reload",
+	}
+	if !slices.Equal(ran, want) {
+		t.Fatalf("ran = %#v, want zero-live-write sequence %#v", ran, want)
+	}
+	if !strings.Contains(stdout.String(), "live tmux unchanged; explicit apply required: run `projmux config apply --socket projmux`") {
+		t.Fatalf("stdout = %q, want explicit apply-required state", stdout.String())
 	}
 }
 
@@ -377,6 +464,36 @@ func TestUpdateApplyRunsGoUpgradeNoApply(t *testing.T) {
 	}
 }
 
+func TestUpdateApplyRunsGoUpgradeInPublicationOrder(t *testing.T) {
+	t.Parallel()
+
+	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
+	cmd.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return "go"
+		}
+		return ""
+	}
+	cmd.executable = func() (string, error) { return "/home/me/bin/projmux", nil }
+	var ran []string
+	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
+		return nil
+	}
+
+	if err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []string{
+		"/home/me/bin/projmux config apply --bin /home/me/bin/projmux --socket projmux",
+		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
+		"/home/me/bin/projmux config apply",
+	}
+	if !equalStrings(ran, want) {
+		t.Fatalf("ran = %#v, want exact pre-converge/publication/post-verify order %#v", ran, want)
+	}
+}
+
 func TestUpdateApplyDryRunForGitHubRelease(t *testing.T) {
 	t.Parallel()
 
@@ -402,6 +519,7 @@ func TestUpdateApplyDryRunForGitHubRelease(t *testing.T) {
 		"would fetch: https://example.invalid/latest",
 		"would download: projmux_latest_linux_amd64.tar.gz",
 		"would replace: /home/me/bin/projmux (atomic via temp file)",
+		"would run before replacement: /home/me/bin/projmux config apply --bin /home/me/bin/projmux --socket projmux",
 		"would run: /home/me/bin/projmux config apply",
 	} {
 		if !strings.Contains(out, want) {
@@ -413,60 +531,96 @@ func TestUpdateApplyDryRunForGitHubRelease(t *testing.T) {
 func TestUpdateApplyRunsGitHubReleaseReplacement(t *testing.T) {
 	t.Parallel()
 
-	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-	cmd.getenv = func(name string) string {
-		if name == "PROJMUX_INSTALLER" {
-			return "github-release"
-		}
-		return ""
+	tests := []struct {
+		name              string
+		args              []string
+		wantCommands      func(string) []string
+		wantExplicitApply bool
+	}{
+		{
+			name: "normal pre-converges and post-verifies",
+			args: []string{"apply"},
+			wantCommands: func(target string) []string {
+				return []string{
+					target + " config apply --bin " + target + " --socket projmux",
+					target + " config apply",
+				}
+			},
+		},
+		{
+			name: "no-apply performs no live preapply and requires explicit apply",
+			args: []string{"apply", "--no-apply"},
+			wantCommands: func(target string) []string {
+				return []string{target + " config apply --no-reload"}
+			},
+			wantExplicitApply: true,
+		},
 	}
-	target := filepath.Join(t.TempDir(), "projmux")
-	if err := os.WriteFile(target, []byte("old\n"), 0o755); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-	cmd.executable = func() (string, error) { return target, nil }
-	assetURL := "https://github.com/crevissepartners/projmux/releases/download/v0.4.2/projmux_0.4.2_linux_amd64.tar.gz"
-	archive := testReleaseArchive(t, "new\n")
-	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		switch req.URL.String() {
-		case cmd.apiURL:
-			body := `{"tag_name":"v0.4.2","assets":[{"name":"projmux_0.4.2_linux_amd64.tar.gz","browser_download_url":"` + assetURL + `","digest":"` + testReleaseDigest(archive) + `"}]}`
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(strings.NewReader(body)),
-				Header:     make(http.Header),
-			}, nil
-		case assetURL:
-			return &http.Response{
-				StatusCode: http.StatusOK,
-				Body:       io.NopCloser(bytes.NewReader(archive)),
-				Header:     make(http.Header),
-			}, nil
-		default:
-			t.Fatalf("unexpected request URL %q", req.URL.String())
-			return nil, nil
-		}
-	})}
-	var ran []string
-	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
-		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
-		return nil
-	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 
-	var stdout bytes.Buffer
-	if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v\nstdout:\n%s", err, stdout.String())
-	}
-	got, err := os.ReadFile(target)
-	if err != nil {
-		t.Fatalf("ReadFile() error = %v", err)
-	}
-	if string(got) != "new\n" {
-		t.Fatalf("target content = %q, want new binary", got)
-	}
-	want := []string{target + " config apply"}
-	if !equalStrings(ran, want) {
-		t.Fatalf("ran = %#v, want %#v", ran, want)
+			cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
+			cmd.getenv = func(name string) string {
+				if name == "PROJMUX_INSTALLER" {
+					return "github-release"
+				}
+				return ""
+			}
+			target := filepath.Join(t.TempDir(), "projmux")
+			if err := os.WriteFile(target, []byte("old\n"), 0o755); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			cmd.executable = func() (string, error) { return target, nil }
+			assetURL := "https://github.com/crevissepartners/projmux/releases/download/v0.4.2/projmux_0.4.2_linux_amd64.tar.gz"
+			archive := testReleaseArchive(t, "new\n")
+			cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.URL.String() {
+				case cmd.apiURL:
+					body := `{"tag_name":"v0.4.2","assets":[{"name":"projmux_0.4.2_linux_amd64.tar.gz","browser_download_url":"` + assetURL + `","digest":"` + testReleaseDigest(archive) + `"}]}`
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(strings.NewReader(body)),
+						Header:     make(http.Header),
+					}, nil
+				case assetURL:
+					return &http.Response{
+						StatusCode: http.StatusOK,
+						Body:       io.NopCloser(bytes.NewReader(archive)),
+						Header:     make(http.Header),
+					}, nil
+				default:
+					t.Fatalf("unexpected request URL %q", req.URL.String())
+					return nil, nil
+				}
+			})}
+			var ran []string
+			cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+				ran = append(ran, strings.Join(append([]string{name}, args...), " "))
+				return nil
+			}
+
+			var stdout bytes.Buffer
+			if err := cmd.Run(tc.args, &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v\nstdout:\n%s", err, stdout.String())
+			}
+			got, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			if string(got) != "new\n" {
+				t.Fatalf("target content = %q, want new binary", got)
+			}
+			want := tc.wantCommands(target)
+			if !equalStrings(ran, want) {
+				t.Fatalf("ran = %#v, want %#v", ran, want)
+			}
+			gotExplicitApply := strings.Contains(stdout.String(),
+				"live tmux unchanged; explicit apply required: run `projmux config apply --socket projmux`")
+			if gotExplicitApply != tc.wantExplicitApply {
+				t.Fatalf("explicit apply state = %v, want %v; stdout=%q", gotExplicitApply, tc.wantExplicitApply, stdout.String())
+			}
+		})
 	}
 }
 

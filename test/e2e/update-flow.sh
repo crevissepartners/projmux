@@ -46,13 +46,14 @@ versions_json="$(npm view projmux versions --json 2>/dev/null)" || skip "cannot 
 latest="$(npm view projmux version 2>/dev/null || true)"
 [ -n "$latest" ] || skip "no published projmux latest dist-tag"
 
-# Pick the newest published version that is not the current latest.
+# Prefer the exact pre-marker v0.12.2 fixture. Fall back to the newest
+# published non-latest version only when that historical artifact is absent.
 older="$(node -e '
   const versions = JSON.parse(process.argv[1]);
   const arr = Array.isArray(versions) ? versions : [versions];
   const latest = process.argv[2];
   const older = arr.filter((v) => v !== latest);
-  console.log(older.length ? older[older.length - 1] : "");
+  console.log(older.includes("0.12.2") ? "0.12.2" : (older.length ? older[older.length - 1] : ""));
 ' "$versions_json" "$latest")"
 [ -n "$older" ] || skip "need at least two published versions to test an upgrade (latest=$latest)"
 
@@ -64,6 +65,30 @@ got_old="$(projmux version 2>/dev/null || true)"
 echo ">> before update: $got_old"
 echo "$got_old" | grep -Fq "$older" || fail "expected installed version $older, got: $got_old"
 
+# Keep the exact old physical generation live across the update. v0.12.2 wrote
+# @projmux_app but not the logical marker required by v0.13+ consumers.
+export TMUX_TMPDIR="$HOME/tmux"
+mkdir -p "$TMUX_TMPDIR"
+chmod 0700 "$TMUX_TMPDIR"
+update_socket="projmux"
+cleanup_update_tmux() {
+  local actual
+  actual="$(env -u TMUX -u TMUX_PANE tmux -L "$update_socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+  [[ -n "$actual" ]] || return 0
+  case "$actual" in
+    "$TMUX_TMPDIR"/*) ;;
+    *) fail "refusing cleanup outside update tmux root: $actual" ;;
+  esac
+  env -u TMUX -u TMUX_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true
+}
+trap cleanup_update_tmux EXIT
+env -u TMUX -u TMUX_PANE tmux -L "$update_socket" new-session -d -s legacy sleep 300
+env -u TMUX -u TMUX_PANE tmux -L "$update_socket" set-option -gq @projmux_app 1
+env -u TMUX -u TMUX_PANE tmux -L "$update_socket" set-option -gu @projmux_socket_name 2>/dev/null || true
+legacy_socket_path="$(env -u TMUX -u TMUX_PANE tmux -L "$update_socket" display-message -p '#{socket_path}')"
+legacy_server_pid="$(env -u TMUX -u TMUX_PANE tmux -L "$update_socket" display-message -p '#{pid}')"
+legacy_sessions="$(env -u TMUX -u TMUX_PANE tmux -L "$update_socket" list-sessions -F '#{session_id}|#{session_name}')"
+
 # Step 2: build the fixed binary under test from the mounted source tree.
 build="$(mktemp -d)"
 ( cd /workspace && go build -o "$build/projmux" ./cmd/projmux ) || fail "go build ./cmd/projmux failed"
@@ -73,8 +98,19 @@ fixed_plan="$(PROJMUX_INSTALLER=npm "$build/projmux" update apply --dry-run --no
 echo "$fixed_plan" | grep -Fq "npm install -g projmux@latest" \
   || fail "fixed apply plan missing 'npm install -g projmux@latest': $fixed_plan"
 
-# Step 3: run the fixed apply for real (skip tmux reload; not the focus here).
-PROJMUX_INSTALLER=npm "$build/projmux" update apply --no-apply || fail "update apply failed"
+# Step 3: run the fixed apply for real. The fixed orchestrator must migrate the
+# exact legacy server before npm publishes the new consumer, then verify with
+# the newly published binary.
+PROJMUX_INSTALLER=npm "$build/projmux" update apply || fail "update apply failed"
+
+logical_marker="$(env -u TMUX -u TMUX_PANE tmux -L "$update_socket" show-options -gqv @projmux_socket_name)"
+updated_socket_path="$(env -u TMUX -u TMUX_PANE tmux -L "$update_socket" display-message -p '#{socket_path}')"
+updated_server_pid="$(env -u TMUX -u TMUX_PANE tmux -L "$update_socket" display-message -p '#{pid}')"
+updated_sessions="$(env -u TMUX -u TMUX_PANE tmux -L "$update_socket" list-sessions -F '#{session_id}|#{session_name}')"
+[[ "$logical_marker" == "$update_socket" ]] || fail "logical marker=$logical_marker, want $update_socket"
+[[ "$updated_socket_path" == "$legacy_socket_path" ]] || fail "update changed physical socket"
+[[ "$updated_server_pid" == "$legacy_server_pid" ]] || fail "update changed server generation"
+[[ "$updated_sessions" == "$legacy_sessions" ]] || fail "update changed legacy sessions"
 
 # Step 4: the global projmux must now be the latest published version.
 got_new="$(projmux version 2>/dev/null || true)"
@@ -83,6 +119,25 @@ echo "$got_new" | grep -Fq "$latest" || fail "after update expected $latest, got
 [ "$older" != "$latest" ] && echo "$got_new" | grep -Fq "$older" \
   && fail "still reporting old version $older after update: $got_new"
 echo ">> PASS: upgraded $older -> $latest via fixed 'update apply'"
+
+# The published consumer reaches both mutation-bearing entrypoints without a
+# raw missing-marker diagnostic. A non-TTY attach failure is acceptable here;
+# marker exposure is not.
+for surface in shell attach; do
+  set +e
+  if [[ "$surface" == "shell" ]]; then
+    timeout 5 projmux shell --session legacy --no-install \
+      >"$build/after-shell.out" 2>"$build/after-shell.err"
+  else
+    timeout 5 projmux runtime attach --fallback=home \
+      >"$build/after-attach.out" 2>"$build/after-attach.err"
+  fi
+  set -e
+  if grep -Fq "has no logical socket marker" "$build/after-$surface.err" ||
+    grep -Fq "missing-logical-marker" "$build/after-$surface.err"; then
+    fail "published $surface exposed raw missing-marker state"
+  fi
+done
 
 # Step 5 (bonus): installer autodetection from an npm-shaped path with the env
 # hint removed. Copy the fixed binary into a node_modules/@projmux layout and

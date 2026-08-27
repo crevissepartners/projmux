@@ -6890,7 +6890,11 @@ func TestSettingsHubRunsUpdateApplyAction(t *testing.T) {
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []string{"npm install -g projmux@latest", "projmux config apply"}
+	want := []string{
+		"/tmp/projmux config apply --bin /npm/bin/projmux --socket projmux",
+		"npm install -g projmux@latest",
+		"projmux config apply",
+	}
 	if !equalStrings(ran, want) {
 		t.Fatalf("ran = %#v, want %#v", ran, want)
 	}

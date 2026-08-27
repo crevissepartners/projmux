@@ -15,8 +15,10 @@ and humans run the same entrypoints.
   `tmux` server, and notify queue CRUD.
 - `make test-install-smoke` builds the same Docker image and runs
   `test/install/smoke.sh`. It validates `make install`, atomic binary
-  replacement into an isolated install dir, `tmux apply`, and post-install
-  `notify reconcile` initialization with a fresh HOME/XDG state tree.
+  replacement into an isolated install dir, pre-publication marker convergence,
+  concurrent legacy/candidate/installed shell and attach consumers, exact
+  server-generation/session preservation, `tmux apply`, and post-install notify
+  reconcile initialization with a fresh HOME/XDG state tree.
 - `make test-e2e` prepares one attempt-local immutable product binary, then
   runs four isolated Linux real-tmux fixtures plus the Codex lifecycle and npm
   staging fixtures. The required inventory is `L01`-`L19`, `C01`, and `N01`;

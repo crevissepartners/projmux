@@ -1722,8 +1722,8 @@ keymap action is no longer accepted: replace a stale
 The `projmux agent topic set/clear` commands keep
 AI topic ownership separate from the user pane label and raw pane title.
 `apply` regenerates the app tmux config and reloads the live `-L projmux`
-server without restarting it. `make install` and `projmux update apply` invoke it
-after replacing the binary. Settings > Keybindings normally runs the same
+server without restarting it. `make install` and `projmux update apply` invoke
+it before binary publication and again afterward for verification. Settings > Keybindings normally runs the same
 save/config/reload flow automatically; use `projmux config apply` (or its
 hidden equivalent `projmux internal tmux apply`) as the CLI recovery or sync path after
 hand-editing `keymap.toml`, after saving Settings outside tmux, or after
@@ -1812,15 +1812,21 @@ binary in `$GOBIN`/`$GOPATH/bin`/`~/go/bin` as `go`, and a local `go build`
 still require an explicit `PROJMUX_INSTALLER=github-release`. Anything else is
 reported as `unknown` with guidance.
 `apply` is installer-aware and only runs after explicit user selection.
-For npm installs, it runs `npm install -g projmux@latest` (which reliably
+For npm installs, the current binary first runs `config apply --bin` with the
+exact published target. Only after that succeeds does it run
+`npm install -g projmux@latest` (which reliably
 crosses minor/major versions where `npm update -g` does not, and re-resolves
 the per-platform optional dependency) and then runs the new binary's
-`projmux config apply`. With `--no-apply`, that convergence step uses
+`projmux config apply` as post-publication verification. A failed preparation
+does not invoke the installer; later failures are non-zero and print the exact
+`projmux config apply --socket projmux` recovery. With `--no-apply`, the
+pre-publication live convergence is omitted and the post-update step uses
 `--no-reload`: it still migrates marker-owned files and writes generated
-configuration without accessing live tmux. For Go installs, it uses the existing atomic
+configuration without accessing live tmux, then explicitly reports that live
+apply remains required. For Go installs, it uses the same ordering around the existing atomic
 replacement implementation. For `github-release` installs, it downloads the latest
 matching `projmux_<version>_<goos>_<goarch>.tar.gz` release asset, extracts the
-binary, atomically replaces the current executable, then performs the same
+binary, pre-converges, atomically replaces the current executable, then performs the same
 apply/`--no-reload` convergence. `source` installs report an
 actionable error to update the checkout with `git pull --ff-only && make install`.
 
