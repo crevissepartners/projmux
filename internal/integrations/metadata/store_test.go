@@ -958,6 +958,131 @@ func TestConcurrentUpdatesSerializeThroughTheRegistryLock(t *testing.T) {
 	}
 }
 
+func TestRegistryLockRetryBudgetTracksVerifiedOwnerLease(t *testing.T) {
+	writeOwner := func(t *testing.T, path string, pid int) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatalf("mkdir lock parent: %v", err)
+		}
+		if err := os.WriteFile(path, fmt.Appendf(nil, "pid=%d\n", pid), 0o600); err != nil {
+			t.Fatalf("write lock owner: %v", err)
+		}
+	}
+	replaceOwner := func(t *testing.T, path string, pid int) {
+		t.Helper()
+		if err := os.Remove(path); err != nil {
+			t.Fatalf("remove prior lock owner: %v", err)
+		}
+		writeOwner(t, path, pid)
+	}
+
+	t.Run("owner turnover resets the unchanged per-lease budget", func(t *testing.T) {
+		store := NewStore(PathFor(t.TempDir()))
+		writeOwner(t, store.lockPath, 1001)
+		sleeps := 0
+		err := store.acquireLockWithPolicy(2, time.Nanosecond, time.Nanosecond, func(time.Duration) {
+			sleeps++
+			switch sleeps {
+			case 1:
+				replaceOwner(t, store.lockPath, 1002)
+			case 2:
+				if err := os.Remove(store.lockPath); err != nil {
+					t.Fatalf("release second owner: %v", err)
+				}
+			}
+		})
+		if err != nil {
+			t.Fatalf("acquire after two healthy owners: %v", err)
+		}
+		if sleeps != 2 {
+			t.Fatalf("contention sleeps = %d, want 2 owner leases", sleeps)
+		}
+		if err := os.Remove(store.lockPath); err != nil {
+			t.Fatalf("release acquired lock: %v", err)
+		}
+		assertNoStagedGarbage(t, store)
+	})
+
+	t.Run("unchanged owner exhausts exactly the production attempt count", func(t *testing.T) {
+		store := NewStore(PathFor(t.TempDir()))
+		writeOwner(t, store.lockPath, 2001)
+		sleeps := 0
+		err := store.acquireLockWithPolicy(defaultLockMaxAttempts, time.Nanosecond, time.Nanosecond, func(time.Duration) {
+			sleeps++
+		})
+		if err == nil || !strings.Contains(err.Error(), "exhausted 400 attempts") {
+			t.Fatalf("stable owner error = %v, want exact 400-attempt exhaustion", err)
+		}
+		if sleeps != defaultLockMaxAttempts {
+			t.Fatalf("stable owner sleeps = %d, want %d", sleeps, defaultLockMaxAttempts)
+		}
+		if err := os.Remove(store.lockPath); err != nil {
+			t.Fatalf("release fixture lock: %v", err)
+		}
+		assertNoStagedGarbage(t, store)
+	})
+
+	for _, test := range []struct {
+		name    string
+		replace func(*testing.T, string)
+	}{
+		{name: "empty owner", replace: func(t *testing.T, path string) {
+			t.Helper()
+			if err := os.Remove(path); err != nil {
+				t.Fatalf("remove valid owner: %v", err)
+			}
+			if err := os.WriteFile(path, nil, 0o600); err != nil {
+				t.Fatalf("write empty owner: %v", err)
+			}
+		}},
+		{name: "malformed owner", replace: func(t *testing.T, path string) {
+			t.Helper()
+			if err := os.WriteFile(path, []byte("owner=not-a-pid\n"), 0o600); err != nil {
+				t.Fatalf("write malformed owner: %v", err)
+			}
+		}},
+		{name: "transiently unreadable owner", replace: func(t *testing.T, path string) {
+			t.Helper()
+			if err := os.Remove(path); err != nil {
+				t.Fatalf("remove valid owner: %v", err)
+			}
+			if err := os.Mkdir(path, 0o700); err != nil {
+				t.Fatalf("replace owner with unreadable directory: %v", err)
+			}
+		}},
+	} {
+		t.Run(test.name+" does not reset", func(t *testing.T) {
+			store := NewStore(PathFor(t.TempDir()))
+			writeOwner(t, store.lockPath, 3001)
+			sleeps := 0
+			err := store.acquireLockWithPolicy(2, time.Nanosecond, time.Nanosecond, func(time.Duration) {
+				sleeps++
+				if sleeps == 1 {
+					test.replace(t, store.lockPath)
+				}
+			})
+			if err == nil || !strings.Contains(err.Error(), "exhausted 2 attempts") {
+				t.Fatalf("invalid owner error = %v, want bounded exhaustion", err)
+			}
+			if sleeps != 2 {
+				t.Fatalf("invalid owner sleeps = %d, want 2 without reset", sleeps)
+			}
+			if err := os.RemoveAll(store.lockPath); err != nil {
+				t.Fatalf("remove invalid owner fixture: %v", err)
+			}
+			assertNoStagedGarbage(t, store)
+		})
+	}
+}
+
+func TestRegistryLockProductionBudgetConstantsRemainUnchanged(t *testing.T) {
+	if defaultLockMaxAttempts != 400 || defaultLockBaseDelay != 2*time.Millisecond ||
+		defaultLockMaxDelay != 50*time.Millisecond || defaultLockStaleAfter != 30*time.Second {
+		t.Fatalf("ordinary Registry lock budget drifted: attempts=%d base=%s max=%s stale=%s",
+			defaultLockMaxAttempts, defaultLockBaseDelay, defaultLockMaxDelay, defaultLockStaleAfter)
+	}
+}
+
 // TestAnAbsentOrContentFreeRegistryFileLoadsAnEmptyRegistry keeps the
 // legitimate empty cases distinct from the fail-closed unknown-document case:
 // only a file with actual content that lacks a usable schemaVersion is
