@@ -133,6 +133,9 @@ type controllerTrigger struct {
 	// error. It is controller transport state only and never becomes Registry
 	// teardown evidence.
 	retry int
+	// exhaustedReplay is private startup transport state. It never appears in
+	// the persisted body and cannot be supplied by a hook or public command.
+	exhaustedReplay bool
 	// fullReobserve is set internally once this worker coalesces another event.
 	// It is sticky for the rest of the worker, including its verification pass.
 	fullReobserve bool
@@ -238,6 +241,7 @@ const (
 // records the trigger and performs nothing.
 type controllerTriggering interface {
 	run(context.Context, controllerTrigger) (controllerTriggerOutcome, error)
+	replayExhaustedCleanExits(context.Context, tmuxTransport) (controllerTriggerOutcome, error)
 }
 
 // controllerTriggerRunner is the one convergence entrypoint.
@@ -348,7 +352,7 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 		}
 	}
 
-	if err := r.events.mark(trigger); err != nil {
+	if _, err := r.events.mark(trigger); err != nil {
 		return outcome, err
 	}
 	release, acquired, err := r.events.acquire(trigger.target)
@@ -372,8 +376,9 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 		maxPasses = controllerTriggerMaxPasses
 	}
 	var carriedUnlinks []controllerTrigger
+	allowedExhausted := make(map[string]bool)
 	for range maxPasses {
-		drained, err := r.events.drain(trigger.target)
+		drained, err := r.events.drain(trigger.target, allowedExhausted)
 		if err != nil {
 			return outcome, err
 		}
@@ -410,8 +415,12 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 				// Registry-lock race turns one hook into a permanently dead Pane.
 				requeue := append([]controllerTrigger{passTrigger}, passTriggers[passIndex+1:]...)
 				for _, pendingTrigger := range requeue {
-					if markErr := r.events.mark(pendingTrigger); markErr != nil {
+					name, markErr := r.events.mark(pendingTrigger)
+					if markErr != nil {
 						return outcome, fmt.Errorf("%w; requeue controller event: %v", err, markErr)
+					}
+					if canRetry && exhaustedCleanExitTrigger(pendingTrigger) {
+						allowedExhausted[name] = true
 					}
 				}
 				if canRetry {
@@ -449,7 +458,7 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 		if retryQueued {
 			continue
 		}
-		pending, err := r.events.pending(trigger.target)
+		pending, err := r.events.pending(trigger.target, false)
 		if err != nil {
 			return outcome, err
 		}
@@ -458,7 +467,7 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 				continue
 			}
 			for _, unlink := range carriedUnlinks {
-				if err := r.events.mark(unlink); err != nil {
+				if _, err := r.events.mark(unlink); err != nil {
 					return outcome, err
 				}
 			}
@@ -480,7 +489,7 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 			}
 			release()
 			release = nil
-			pending, err = r.events.pending(trigger.target)
+			pending, err = r.events.pending(trigger.target, false)
 			if err != nil {
 				return outcome, err
 			}
@@ -501,6 +510,64 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 			continue
 		}
 	}
+	return outcome, nil
+}
+
+// replayExhaustedCleanExits re-evaluates only durable retry-limit pane-exited
+// records at the verified upgrade/config-apply boundary. Selection and reads
+// are non-destructive; one exact event is acknowledged only after the current
+// lifecycle planner reports the Pane/Agent cascade itself completed.
+func (r *controllerTriggerRunner) replayExhaustedCleanExits(ctx context.Context, target tmuxTransport) (controllerTriggerOutcome, error) {
+	outcome := controllerTriggerOutcome{reason: controllerTriggerConfigApply}
+	if r == nil || r.runner == nil || r.store == nil || r.store.load == nil || r.store.updateConvergent == nil || r.store.mutator == nil {
+		return outcome, errors.New("exhausted clean-exit replay requires the configured controller")
+	}
+	if target.Flag() == "" || target.Value == "" {
+		return outcome, errors.New("exhausted clean-exit replay requires an explicit tmux target")
+	}
+	release, acquired, err := r.events.acquire(target)
+	if err != nil {
+		return outcome, err
+	}
+	if !acquired {
+		outcome.deferred = "another controller worker holds this server's lease: exhausted clean-exit replay"
+		return outcome, nil
+	}
+	defer release()
+
+	events, err := r.events.exhausted(target)
+	if err != nil {
+		return outcome, err
+	}
+	if len(events) > controllerTriggerMaxPasses {
+		events = events[:controllerTriggerMaxPasses]
+	}
+	for _, event := range events {
+		trigger := event.trigger
+		trigger.exhaustedReplay = true
+		body := r.pass
+		var pass controllerPassResult
+		if body == nil {
+			pass, err = r.converge(ctx, trigger)
+		} else {
+			pass, err = body(ctx, trigger)
+		}
+		outcome.passes++
+		if err != nil {
+			// Authority conflicts and cleanup failures retain the byte-identical
+			// terminal record for a later fixed binary or operator inspection.
+			continue
+		}
+		if !pass.exhaustedCleanExitConverged {
+			continue
+		}
+		if err := r.events.ack(target, event); err != nil {
+			return outcome, err
+		}
+		outcome.events++
+		outcome.changed++
+	}
+	outcome.converged = true
 	return outcome, nil
 }
 
@@ -551,6 +618,10 @@ type controllerPassResult struct {
 	controlRoot      bool
 	awaitingPaneExit bool
 	refused          string
+	// exhaustedCleanExitConverged is set only when the existing exact planner
+	// removed the retained Agent Pane and projected its stable Agent Offline.
+	// It is the acknowledgement authority for a terminal event record.
+	exhaustedCleanExitConverged bool
 }
 
 func (r controllerPassResult) changed() bool {
@@ -630,6 +701,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 			runtimeSessionID: trigger.session,
 			runtimePaneID:    trigger.hookPane, runtimeWindowID: trigger.hookWindow,
 			receipts: receipts, pinStore: r.pins,
+			exhaustedReplay: trigger.exhaustedReplay,
 		}
 		if trigger.reason == controllerTriggerPaneExited {
 			dirty.teardownKind = coremetadata.TeardownEventPaneExited
@@ -645,6 +717,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 			return pass, nil
 		}
 		pass.residualExits = exits.changed()
+		pass.exhaustedCleanExitConverged = len(exits.cascaded) == 1
 		pass.awaitingPaneExit = exits.awaitingPaneExit
 		return pass, nil
 	}

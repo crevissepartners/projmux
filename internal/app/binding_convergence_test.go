@@ -110,11 +110,14 @@ func bindingFixtureReconciler(root string) func(tmuxCommandRunner, sessionLister
 // without a reconciliation in the way.
 type recordingTriggering struct {
 	triggers []controllerTrigger
+	replays  []tmuxTransport
+	sequence []string
 	err      error
 	refused  string
 }
 
 func (r *recordingTriggering) run(_ context.Context, trigger controllerTrigger) (controllerTriggerOutcome, error) {
+	r.sequence = append(r.sequence, "run")
 	r.triggers = append(r.triggers, trigger)
 	if r.err != nil {
 		return controllerTriggerOutcome{reason: trigger.reason}, r.err
@@ -122,6 +125,12 @@ func (r *recordingTriggering) run(_ context.Context, trigger controllerTrigger) 
 	return controllerTriggerOutcome{
 		reason: trigger.reason, passes: 1, converged: r.refused == "", refused: r.refused,
 	}, nil
+}
+
+func (r *recordingTriggering) replayExhaustedCleanExits(_ context.Context, target tmuxTransport) (controllerTriggerOutcome, error) {
+	r.replays = append(r.replays, target)
+	r.sequence = append(r.sequence, "replay")
+	return controllerTriggerOutcome{reason: controllerTriggerConfigApply, converged: true}, nil
 }
 
 func (r *recordingTriggering) targets() []tmuxTransport {
@@ -569,6 +578,11 @@ func TestPublicConfigApplySurfacesExactControlTargetRefusal(t *testing.T) {
 	}
 	if len(recorder.triggers) != 1 || recorder.triggers[0].reason != controllerTriggerConfigApply {
 		t.Fatalf("config apply triggers = %+v, want one config-apply", recorder.triggers)
+	}
+	if len(recorder.replays) != 1 || recorder.replays[0].Flag() != "-S" ||
+		!filepath.IsAbs(recorder.replays[0].Value) || !reflect.DeepEqual(recorder.sequence, []string{"replay", "run"}) {
+		t.Fatalf("config apply startup replay = %+v sequence=%v, want verified physical -S before generic convergence",
+			recorder.replays, recorder.sequence)
 	}
 	for _, call := range runner.calls {
 		if slices.Contains(call.args, tmuxopts.SessionRole) ||

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -111,7 +112,7 @@ func TestEventMarkedAfterFinalPendingCheckIsConsumedAcrossLeaseRelease(t *testin
 			return
 		}
 		injected = true
-		if err := fixture.runner.events.mark(controllerTrigger{
+		if _, err := fixture.runner.events.mark(controllerTrigger{
 			reason: controllerTriggerWindowUnlinked, target: fixture.target,
 			session: "$1", hookWindow: "@4",
 		}); err != nil {
@@ -207,7 +208,7 @@ func TestWindowUnlinkedArrivingFirstIsReplayedAfterItsCausalPaneExit(t *testing.
 		if pass != 1 {
 			return
 		}
-		if err := fixture.runner.events.mark(controllerTrigger{
+		if _, err := fixture.runner.events.mark(controllerTrigger{
 			reason: controllerTriggerPaneExited, target: fixture.target, hookPane: "%9",
 		}); err != nil {
 			t.Fatalf("coalesced pane-exited mark: %v", err)
@@ -248,7 +249,7 @@ func TestStandaloneWindowUnlinkedPersistsOneBoundedCausalRetry(t *testing.T) {
 	if outcome.passes != 1 || outcome.events != 1 || outcome.deferred == "" || outcome.converged {
 		t.Fatalf("outcome = %s, want one deferred causal retry", outcome.describe())
 	}
-	queued, err := fixture.runner.events.drain(fixture.target)
+	queued, err := fixture.runner.events.drain(fixture.target, nil)
 	if err != nil || len(queued) != 1 || queued[0].retry != 1 || queued[0].reason != controllerTriggerWindowUnlinked {
 		t.Fatalf("queued retry = %+v, err=%v", queued, err)
 	}
@@ -311,7 +312,7 @@ func TestTheCoalescingLoopIsBounded(t *testing.T) {
 	fixture := newTriggerFixture(t)
 	fixture.runner.maxPasses = 3
 	fixture.beforePass = func(int) {
-		if err := fixture.runner.events.mark(controllerTrigger{target: fixture.target, reason: controllerTriggerPaneKilled}); err != nil {
+		if _, err := fixture.runner.events.mark(controllerTrigger{target: fixture.target, reason: controllerTriggerPaneKilled}); err != nil {
 			t.Fatalf("mark: %v", err)
 		}
 	}
@@ -408,30 +409,30 @@ func TestTheEventLogKeepsSiblingServersApart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := log.mark(controllerTrigger{target: primary, reason: controllerTriggerPaneKilled}); err != nil {
+	if _, err := log.mark(controllerTrigger{target: primary, reason: controllerTriggerPaneKilled}); err != nil {
 		t.Fatalf("mark primary: %v", err)
 	}
-	if err := log.mark(controllerTrigger{target: primary, reason: controllerTriggerRuntimeCreated}); err != nil {
+	if _, err := log.mark(controllerTrigger{target: primary, reason: controllerTriggerRuntimeCreated}); err != nil {
 		t.Fatalf("mark primary again: %v", err)
 	}
-	pending, err := log.pending(secondary)
+	pending, err := log.pending(secondary, true)
 	if err != nil {
 		t.Fatalf("pending secondary: %v", err)
 	}
 	if pending {
 		t.Fatal("an event on one server appeared on a sibling")
 	}
-	drained, err := log.drain(secondary)
+	drained, err := log.drain(secondary, nil)
 	if err != nil || len(drained) != 0 {
 		t.Fatalf("drain secondary = %d, %v; want zero", len(drained), err)
 	}
-	drained, err = log.drain(primary)
+	drained, err = log.drain(primary, nil)
 	if err != nil || len(drained) != 2 {
 		t.Fatalf("drain primary = %d, %v; want the two marked events", len(drained), err)
 	}
 	// Draining is idempotent, and a never-marked server reads clean without the
 	// read creating anything.
-	drained, err = log.drain(primary)
+	drained, err = log.drain(primary, nil)
 	if err != nil || len(drained) != 0 {
 		t.Fatalf("repeat drain = %d, %v; want zero", len(drained), err)
 	}
@@ -455,13 +456,13 @@ func TestControllerEventLogPreservesExactLifecycleEnvelopesInCausalOrder(t *test
 	}
 	// Mark in the adversarial order. The queue must replay the causal pane half
 	// first without widening away either envelope.
-	if err := log.mark(window); err != nil {
+	if _, err := log.mark(window); err != nil {
 		t.Fatal(err)
 	}
-	if err := log.mark(pane); err != nil {
+	if _, err := log.mark(pane); err != nil {
 		t.Fatal(err)
 	}
-	events, err := log.drain(target)
+	events, err := log.drain(target, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -489,14 +490,133 @@ func TestAReadOnTheEventLogCreatesNothing(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pending, err := log.pending(target); err != nil || pending {
+	if pending, err := log.pending(target, true); err != nil || pending {
 		t.Fatalf("pending = %t, %v; want a clean read", pending, err)
 	}
-	if drained, err := log.drain(target); err != nil || len(drained) != 0 {
+	if drained, err := log.drain(target, nil); err != nil || len(drained) != 0 {
 		t.Fatalf("drain = %d, %v; want a clean read", len(drained), err)
 	}
 	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("stat %s = %v; want the directory not to exist", dir, err)
+	}
+}
+
+func TestExhaustedCleanExitReplayReservesTerminalEventsAndAcknowledgesOnlySuccess(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	nonces := []string{"terminal", "config", "concurrent"}
+	log := controllerEventLog{dir: dir, newNonce: func() (string, error) {
+		name := nonces[0]
+		nonces = nonces[1:]
+		return name, nil
+	}}
+	target, err := tmuxSocketPathTarget(filepath.Join(t.TempDir(), "upgrade.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal := controllerTrigger{
+		reason: controllerTriggerPaneExited, target: target, hookPane: "%19", retry: controllerTriggerMaxRetries,
+	}
+	if _, err := log.mark(terminal); err != nil {
+		t.Fatal(err)
+	}
+	terminalPath := filepath.Join(log.eventsDir(target), "terminal")
+	before, err := os.ReadFile(terminalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	passes := 0
+	runner := &controllerTriggerRunner{
+		runner: &routedTmuxRunner{},
+		store:  (&fakeResourceStore{registry: coremetadata.Registry{}, now: resourceFixtureClock}).store(),
+		events: log,
+		pass: func(_ context.Context, trigger controllerTrigger) (controllerPassResult, error) {
+			passes++
+			if trigger.exhaustedReplay {
+				if trigger.hookPane != "%19" || trigger.retry != controllerTriggerMaxRetries {
+					t.Fatalf("replay trigger = %+v", trigger)
+				}
+				if _, err := log.mark(controllerTrigger{reason: controllerTriggerPaneKilled, target: target}); err != nil {
+					t.Fatalf("mark concurrent event: %v", err)
+				}
+				return controllerPassResult{exhaustedCleanExitConverged: true}, nil
+			}
+			return controllerPassResult{}, nil
+		},
+	}
+	ordinary, err := runner.run(context.Background(), controllerTrigger{reason: controllerTriggerConfigApply, target: target})
+	if err != nil || !ordinary.converged || passes != 1 {
+		t.Fatalf("ordinary config pass = %s passes=%d err=%v", ordinary.describe(), passes, err)
+	}
+	if after, err := os.ReadFile(terminalPath); err != nil || !slices.Equal(after, before) {
+		t.Fatalf("ordinary drain changed terminal event: err=%v before=%q after=%q", err, before, after)
+	}
+
+	replayed, err := runner.replayExhaustedCleanExits(context.Background(), target)
+	if err != nil || replayed.events != 1 || replayed.changed != 1 || !replayed.converged || passes != 2 {
+		t.Fatalf("startup replay = %s passes=%d err=%v", replayed.describe(), passes, err)
+	}
+	if _, err := os.Stat(terminalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("successful terminal event still exists: %v", err)
+	}
+	queued, err := log.drain(target, nil)
+	if err != nil || len(queued) != 1 || queued[0].reason != controllerTriggerPaneKilled {
+		t.Fatalf("concurrent queue = %+v err=%v", queued, err)
+	}
+	repeat, err := runner.replayExhaustedCleanExits(context.Background(), target)
+	if err != nil || repeat.events != 0 || repeat.changed != 0 || passes != 2 {
+		t.Fatalf("repeat replay = %s passes=%d err=%v", repeat.describe(), passes, err)
+	}
+}
+
+func TestExhaustedCleanExitReplayRetainsIneligibleAndFailedEventsByteIdentical(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		result controllerPassResult
+		err    error
+	}{
+		{name: "ineligible current authority"},
+		{name: "planner conflict", err: errors.New("stable dead Pane authority conflict")},
+		{name: "runtime first-write guard", err: errors.New("server generation drifted")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			dir := t.TempDir()
+			log := controllerEventLog{dir: dir, newNonce: func() (string, error) { return "terminal", nil }}
+			target, err := tmuxSocketPathTarget(filepath.Join(t.TempDir(), "negative.sock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := log.mark(controllerTrigger{
+				reason: controllerTriggerPaneExited, target: target, hookPane: "%19", retry: controllerTriggerMaxRetries,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(log.eventsDir(target), "terminal")
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			runner := &controllerTriggerRunner{
+				runner: &routedTmuxRunner{},
+				store:  (&fakeResourceStore{registry: coremetadata.Registry{}, now: resourceFixtureClock}).store(),
+				events: log,
+				pass: func(context.Context, controllerTrigger) (controllerPassResult, error) {
+					return test.result, test.err
+				},
+			}
+			outcome, err := runner.replayExhaustedCleanExits(context.Background(), target)
+			if err != nil || outcome.events != 0 || outcome.changed != 0 {
+				t.Fatalf("replay = %s err=%v", outcome.describe(), err)
+			}
+			after, err := os.ReadFile(path)
+			if err != nil || !slices.Equal(after, before) {
+				t.Fatalf("retained event changed: err=%v before=%q after=%q", err, before, after)
+			}
+		})
 	}
 }
 
@@ -582,9 +702,57 @@ func TestAConvergenceErrorReachesTheProducer(t *testing.T) {
 	if len(fixture.passes) != controllerTriggerMaxRetries+1 {
 		t.Fatalf("passes = %d, want initial attempt plus %d bounded retries", len(fixture.passes), controllerTriggerMaxRetries)
 	}
-	queued, drainErr := fixture.runner.events.drain(fixture.target)
+	queued, drainErr := fixture.runner.events.drain(fixture.target, nil)
 	if drainErr != nil || len(queued) != 1 || queued[0].retry != controllerTriggerMaxRetries {
 		t.Fatalf("durable terminal retry = %+v, err=%v", queued, drainErr)
+	}
+}
+
+func TestConcurrentExhaustedEventNeverJoinsAnotherWorkersFinalRetry(t *testing.T) {
+	t.Parallel()
+
+	fixture := newTriggerFixture(t)
+	sequence := 0
+	fixture.runner.events.newNonce = func() (string, error) {
+		sequence++
+		return fmt.Sprintf("event-%d", sequence), nil
+	}
+	fixture.err = errors.New("persistent current-worker failure")
+	injected := false
+	fixture.beforePass = func(int) {
+		if injected {
+			return
+		}
+		injected = true
+		if _, err := fixture.runner.events.mark(controllerTrigger{
+			reason: controllerTriggerPaneExited, target: fixture.target,
+			hookPane: "%88", retry: controllerTriggerMaxRetries,
+		}); err != nil {
+			t.Fatalf("mark concurrent terminal event: %v", err)
+		}
+	}
+	_, err := fixture.runner.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerPaneExited, target: fixture.target, hookPane: "%9",
+	})
+	if err == nil || !strings.Contains(err.Error(), "persistent current-worker failure") {
+		t.Fatalf("terminal current-worker error = %v", err)
+	}
+	if len(fixture.triggers) != controllerTriggerMaxRetries+1 {
+		t.Fatalf("current worker passes = %+v", fixture.triggers)
+	}
+	for _, trigger := range fixture.triggers {
+		if trigger.hookPane != "%9" {
+			t.Fatalf("concurrent terminal event joined current worker: %+v", fixture.triggers)
+		}
+	}
+	queued, err := fixture.runner.events.exhausted(fixture.target)
+	if err != nil || len(queued) != 2 {
+		t.Fatalf("terminal queue = %+v err=%v, want concurrent and failed current events", queued, err)
+	}
+	panes := []string{queued[0].trigger.hookPane, queued[1].trigger.hookPane}
+	slices.Sort(panes)
+	if !reflect.DeepEqual(panes, []string{"%88", "%9"}) {
+		t.Fatalf("terminal queue panes = %v", panes)
 	}
 }
 
