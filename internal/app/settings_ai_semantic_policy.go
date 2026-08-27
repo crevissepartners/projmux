@@ -242,7 +242,7 @@ func safeCodexAuthorityValue(value string) string {
 
 func safeCodexAuthorityReason(value string) string {
 	switch strings.TrimSpace(value) {
-	case "ready", "connecting", "unsupported", "protocol-error", "timeout", "unavailable", "disconnected", "thread-unloaded", "sink-error", "observer-unavailable", "no active native epoch":
+	case "ready", "connecting", "unsupported", "protocol-error", "timeout", "unavailable", "disconnected", "thread-unloaded", "sink-error", "observer-unavailable", "observer-start-failed", "observer-exited", "observer-timeout", "control-unavailable", "no active native epoch":
 		return strings.TrimSpace(value)
 	default:
 		return "bounded reason unavailable"

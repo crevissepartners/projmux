@@ -1,9 +1,11 @@
 package app
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -40,6 +42,11 @@ const (
 	codexObserverReconnectDelay = time.Second
 	codexObserverBindingDelay   = 25 * time.Millisecond
 	codexObserverBindingTimeout = 3 * time.Second
+	codexObserverStartupTimeout = 3 * time.Second
+	codexObserverStartupSettle  = 75 * time.Millisecond
+
+	codexObserverStartupEnvironment = "PROJMUX_INTERNAL_CODEX_OBSERVER_STARTUP"
+	codexObserverStartupPrefix      = "projmux-codex-observer-v1"
 )
 
 type codexLifecycleConnection interface {
@@ -60,7 +67,24 @@ type codexProgressSink interface {
 }
 
 type codexNativeLifecycleStarter interface {
-	startNativeCodexLifecycleObserver(codexLifecycleObserverTarget)
+	startNativeCodexLifecycleObserver(codexLifecycleObserverTarget) codexObserverStartupResult
+}
+
+type codexObserverStartupStatus string
+
+const (
+	codexObserverStartupReady    codexObserverStartupStatus = "ready"
+	codexObserverStartupFallback codexObserverStartupStatus = "fallback"
+	codexObserverStartupStale    codexObserverStartupStatus = "stale"
+)
+
+type codexObserverStartupResult struct {
+	Status codexObserverStartupStatus
+	Epoch  string
+	Reason string
+	// committed is true only for a result reported by the child after its exact
+	// authority write. Parent-side launch failures still need convergence.
+	committed bool
 }
 
 type codexLifecycleObserverTarget struct {
@@ -83,6 +107,7 @@ type codexNativeObserver struct {
 	reducer        codexLifecycleReducer
 	startControl   func(*codexControlEpoch) (*codexControlServer, error)
 	requireControl bool
+	reportStartup  func(codexObserverStartupResult)
 	progress       agentprogress.Reducer
 	now            func() time.Time
 }
@@ -104,12 +129,14 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			if ctx.Err() == nil {
 				// SetAuthority repeats the exact binding predicate. A still-current
 				// startup may fall back; a replaced runtime writes nothing.
-				_ = o.sink.SetAuthority(o.identity, codexAuthorityHook, "", "observer-unavailable")
+				o.setStartupFallback("observer-timeout")
+			} else {
+				o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
 			}
 			return nil
 		}
 		if err := o.clearProgress(); err != nil {
-			_ = o.sink.SetAuthority(o.identity, codexAuthorityHook, "", "sink-error")
+			o.setStartupFallback("sink-error")
 			return err
 		}
 		openTimeout := o.openTimeout
@@ -120,7 +147,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		client, err := o.open(openCtx)
 		cancelOpen()
 		if err != nil {
-			_ = o.sink.SetAuthority(o.identity, codexAuthorityHook, "", codexNativeReason(err))
+			o.setStartupFallback(codexNativeReason(err))
 			if !waitCodexObserver(ctx, delay) {
 				return nil
 			}
@@ -128,7 +155,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		}
 		if !client.LifecycleEventsAvailable() {
 			_ = client.Close()
-			_ = o.sink.SetAuthority(o.identity, codexAuthorityHook, "", "unsupported")
+			o.setStartupFallback("unsupported")
 			if !waitCodexObserver(ctx, delay) {
 				return nil
 			}
@@ -143,7 +170,9 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		if snapshotErr != nil || !o.sink.BindingCurrent(o.identity) {
 			_ = client.Close()
 			if snapshotErr != nil {
-				_ = o.sink.SetAuthority(o.identity, codexAuthorityHook, "", codexNativeReason(snapshotErr))
+				o.setStartupFallback(codexNativeReason(snapshotErr))
+			} else {
+				o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
 			}
 			if !waitCodexObserver(ctx, delay) {
 				return nil
@@ -153,7 +182,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		projection := o.reducer.begin(epoch, o.identity, snapshot)
 		if !projection.Accepted {
 			_ = client.Close()
-			_ = o.sink.SetAuthority(o.identity, codexAuthorityHook, "", "protocol-error")
+			o.setStartupFallback("protocol-error")
 			return errors.New("codex native lifecycle snapshot did not match exact binding")
 		}
 		if projection.Invalidated {
@@ -212,6 +241,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			_ = client.Close()
 			return errors.Join(err, cleanupErr)
 		}
+		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupReady, Epoch: epochLabel})
 
 		reconnectReason := "disconnected"
 		invalidated := false
@@ -381,6 +411,20 @@ func (o *codexNativeObserver) currentTime() time.Time {
 	return o.now().UTC()
 }
 
+func (o *codexNativeObserver) reportStartupResult(result codexObserverStartupResult) {
+	if o.reportStartup != nil {
+		o.reportStartup(result)
+	}
+}
+
+func (o *codexNativeObserver) setStartupFallback(reason string) {
+	if err := o.sink.SetAuthority(o.identity, codexAuthorityHook, "", reason); err == nil {
+		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: reason})
+	} else if !o.sink.BindingCurrent(o.identity) {
+		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
+	}
+}
+
 func (o *codexNativeObserver) observeProgress(event agentprogress.Event) bool {
 	// ThreadRef is an opaque routing identity, not content. Refuse mismatches
 	// before the reducer can mutate either progress or diagnostic counters.
@@ -441,7 +485,11 @@ func (o *codexNativeObserver) applyInvalidationAndFallback(epochLabel, reason st
 	if err := o.clearProgress(); err != nil {
 		return err
 	}
-	return o.sink.SetAuthority(o.identity, codexAuthorityHook, "", reason)
+	if err := o.sink.SetAuthority(o.identity, codexAuthorityHook, "", reason); err != nil {
+		return err
+	}
+	o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: reason})
+	return nil
 }
 
 func waitForCodexLifecycleBinding(ctx context.Context, sink codexLifecycleSink, identity codexLifecycleIdentity, timeout time.Duration) bool {
@@ -861,9 +909,9 @@ func (c *aiCommand) codexSemanticPolicyForInteraction(kind coremetadata.AgentInt
 	return policies.Events[event]
 }
 
-func (c *aiCommand) startNativeCodexLifecycleObserver(target codexLifecycleObserverTarget) {
+func (c *aiCommand) startNativeCodexLifecycleObserver(target codexLifecycleObserverTarget) codexObserverStartupResult {
 	if c == nil || !target.valid() {
-		return
+		return codexObserverStartupResult{Status: codexObserverStartupStale}
 	}
 	identity := target.Identity
 	runner := explicitTmuxRunner{runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, target: target.Route}
@@ -873,28 +921,41 @@ func (c *aiCommand) startNativeCodexLifecycleObserver(target codexLifecycleObser
 	// an authority write, so prove the same exact Registry + tmux Pane identity
 	// used by every observer projection before touching the runtime.
 	if !sink.BindingCurrent(identity) {
-		return
+		return codexObserverStartupResult{Status: codexObserverStartupStale}
 	}
 	if err := sink.SetAuthority(identity, codexAuthorityPending, "", "connecting"); err != nil {
-		return
+		return codexObserverStartupResult{Status: codexObserverStartupStale}
 	}
 	executable := c.executable
 	if executable == nil {
 		executable = os.Executable
 	}
 	path, err := executable()
-	if err == nil {
-		err = startCodexLifecycleObserverProcess(path, target)
-	}
 	if err != nil {
-		_ = sink.SetAuthority(identity, codexAuthorityHook, "", "observer-unavailable")
+		return convergeCodexObserverStartupFallback(sink, identity, "observer-start-failed")
 	}
+	result := startCodexLifecycleObserverProcess(path, target, codexObserverStartupTimeout)
+	if result.Status == codexObserverStartupFallback && result.Reason != "" && !result.committed {
+		return convergeCodexObserverStartupFallback(sink, identity, result.Reason)
+	}
+	return result
 }
 
-func startCodexLifecycleObserverProcess(executable string, target codexLifecycleObserverTarget) error {
+func convergeCodexObserverStartupFallback(sink codexLifecycleSink, identity codexLifecycleIdentity, reason string) codexObserverStartupResult {
+	result := codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: reason}
+	if !sink.BindingCurrent(identity) {
+		return codexObserverStartupResult{Status: codexObserverStartupStale}
+	}
+	if err := sink.SetAuthority(identity, codexAuthorityHook, "", reason); err != nil && !sink.BindingCurrent(identity) {
+		return codexObserverStartupResult{Status: codexObserverStartupStale}
+	}
+	return result
+}
+
+func startCodexLifecycleObserverProcess(executable string, target codexLifecycleObserverTarget, timeout time.Duration) codexObserverStartupResult {
 	executable, err := validateCodexLifecycleObserverExecutable(executable)
 	if err != nil {
-		return err
+		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-start-failed"}
 	}
 	identity := target.Identity
 	args := []string{"internal", "agent-hook", "ingest", "codex-appserver-watch",
@@ -905,15 +966,108 @@ func startCodexLifecycleObserverProcess(executable string, target codexLifecycle
 	} else if target.Route.Flag() == "-S" {
 		args = append(args, "--tmux-socket-path", target.Route.Value)
 	} else {
-		return errors.New("codex native lifecycle observer requires an exact tmux route")
+		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-start-failed"}
 	}
 	// #nosec G204 -- executable is an absolute, existing, regular executable validated above; argv is a fixed internal route plus bounded identity values and never enters a shell.
 	cmd := exec.Command(executable, args...)
-	cmd.Env = withoutInheritedTmuxEnvironment(os.Environ())
-	if err := cmd.Start(); err != nil {
-		return err
+	cmd.Env = append(withoutInheritedTmuxEnvironment(os.Environ()), codexObserverStartupEnvironment+"=1")
+	configureCodexObserverProcess(cmd)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-start-failed"}
 	}
-	return cmd.Process.Release()
+	if err := cmd.Start(); err != nil {
+		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-start-failed"}
+	}
+	if timeout <= 0 {
+		timeout = codexObserverStartupTimeout
+	}
+	line := make(chan string, 2)
+	go func() {
+		reader := bufio.NewReader(io.LimitReader(stdout, 512))
+		value, _ := reader.ReadString('\n')
+		line <- value
+		value, _ = reader.ReadString('\n')
+		line <- value
+	}()
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case value := <-line:
+		result, ok := parseCodexObserverStartupLine(value)
+		if !ok {
+			terminateCodexObserverProcess(cmd)
+			return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-exited"}
+		}
+		if result.Status == codexObserverStartupReady {
+			settled := time.NewTimer(codexObserverStartupSettle)
+			defer settled.Stop()
+			select {
+			case <-line:
+				terminateCodexObserverProcess(cmd)
+				return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-exited"}
+			case <-settled.C:
+				_ = stdout.Close()
+				if err := cmd.Process.Release(); err != nil {
+					terminateCodexObserverProcess(cmd)
+					return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-start-failed"}
+				}
+				return result
+			}
+		}
+		terminateCodexObserverProcess(cmd)
+		return result
+	case <-timer.C:
+		terminateCodexObserverProcess(cmd)
+		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-timeout"}
+	}
+}
+
+func parseCodexObserverStartupLine(line string) (codexObserverStartupResult, bool) {
+	fields := strings.Fields(strings.TrimSpace(line))
+	if len(fields) < 2 || fields[0] != codexObserverStartupPrefix {
+		return codexObserverStartupResult{}, false
+	}
+	switch codexObserverStartupStatus(fields[1]) {
+	case codexObserverStartupReady:
+		if len(fields) != 3 || fields[2] == "" {
+			return codexObserverStartupResult{}, false
+		}
+		return codexObserverStartupResult{Status: codexObserverStartupReady, Epoch: fields[2], committed: true}, true
+	case codexObserverStartupFallback:
+		if len(fields) != 3 || fields[2] == "" {
+			return codexObserverStartupResult{}, false
+		}
+		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: fields[2], committed: true}, true
+	case codexObserverStartupStale:
+		if len(fields) != 2 {
+			return codexObserverStartupResult{}, false
+		}
+		return codexObserverStartupResult{Status: codexObserverStartupStale, committed: true}, true
+	default:
+		return codexObserverStartupResult{}, false
+	}
+}
+
+func codexObserverStartupReporter() func(codexObserverStartupResult) {
+	if os.Getenv(codexObserverStartupEnvironment) != "1" {
+		return nil
+	}
+	var reported bool
+	return func(result codexObserverStartupResult) {
+		if reported {
+			return
+		}
+		reported = true
+		switch result.Status {
+		case codexObserverStartupReady:
+			_, _ = fmt.Fprintf(os.Stdout, "%s %s %s\n", codexObserverStartupPrefix, result.Status, result.Epoch)
+		case codexObserverStartupFallback:
+			_, _ = fmt.Fprintf(os.Stdout, "%s %s %s\n", codexObserverStartupPrefix, result.Status, result.Reason)
+		case codexObserverStartupStale:
+			_, _ = fmt.Fprintf(os.Stdout, "%s %s\n", codexObserverStartupPrefix, result.Status)
+		}
+	}
 }
 
 func validateCodexLifecycleObserverExecutable(executable string) (string, error) {
@@ -940,7 +1094,7 @@ func withoutInheritedTmuxEnvironment(env []string) []string {
 	clean := make([]string, 0, len(env))
 	for _, entry := range env {
 		key, _, _ := strings.Cut(entry, "=")
-		if key == "TMUX" || key == "TMUX_PANE" || key == runtimeMutationAnchorPaneEnv {
+		if key == "TMUX" || key == "TMUX_PANE" || key == runtimeMutationAnchorPaneEnv || key == codexObserverStartupEnvironment {
 			continue
 		}
 		clean = append(clean, entry)
@@ -961,7 +1115,8 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 		open: func(ctx context.Context) (codexLifecycleConnection, error) {
 			return codexappserver.OpenDefaultProxy(ctx, codexappserver.DefaultProbeTimeout, version.String())
 		},
-		sink: aiCodexLifecycleSink{command: c, runner: runner},
+		sink:          aiCodexLifecycleSink{command: c, runner: runner},
+		reportStartup: codexObserverStartupReporter(),
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		observer.startControl = func(epoch *codexControlEpoch) (*codexControlServer, error) {
