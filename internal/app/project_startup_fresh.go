@@ -126,7 +126,7 @@ type projectFreshStartCommit struct {
 type registryProjectFreshStarter struct {
 	resources    *resourceStore
 	runner       tmuxRunner
-	target       explicitTmuxTarget
+	target       tmuxTransport
 	shell        string
 	loadSnapshot func(string) (sessionstate.Snapshot, error)
 }
@@ -478,7 +478,7 @@ func (s *registryProjectFreshStarter) requireClosedProject(ctx context.Context, 
 		return nil
 	}
 	target := s.target
-	if target.flag == "" || target.value == "" {
+	if target.Flag() == "" || target.Value == "" {
 		target, err = tmuxSocketNameTarget(defaultAppSocket)
 		if err != nil {
 			return fmt.Errorf("project fresh start: exact tmux target: %w", err)

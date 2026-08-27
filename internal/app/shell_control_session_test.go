@@ -621,7 +621,7 @@ func TestControlBootstrapLeaseClearRefusesPhysicalRouteDriftBeforeWrite(t *testi
 	receipt := controlBootstrapReceipt{
 		created: true, sessionID: "$9", windowID: "@12", paneID: "%15", operationMarker: tmux.operationMarker,
 		route: runtimeMutationRoute{
-			target: explicitTmuxTarget{flag: "-L", value: "projmux"}, socketName: "projmux",
+			target: tmuxTransport{Kind: tmuxSocketName, Value: "projmux", Source: tmuxSocketNameSource}, socketName: "projmux",
 			expectedSocketPath: "/tmp/tmux-1000/original",
 			authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242", SessionID: "$9", WindowID: "@12", PaneID: "%15"},
 		},

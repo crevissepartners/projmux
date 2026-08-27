@@ -72,7 +72,7 @@ func TestProductionAIPaneBindersUseOnlySuppliedExactRuntimeRoute(t *testing.T) {
 	tmux := newFakeTmux()
 	session := tmux.addSession("agent-bind")
 	paneID := session.windows[0].panes[0].id
-	routed := explicitTmuxRunner{runner: tmux, target: explicitTmuxTarget{flag: "-S", value: tmux.socketPath}}
+	routed := explicitTmuxRunner{runner: tmux, target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}}
 	cmd := testAICommand(t.TempDir())
 
 	if err := cmd.BindManagedAgentPaneOnRoute(context.Background(), routed, paneID, aiModeCodex, "/repo", "fresh"); err != nil {

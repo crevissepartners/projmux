@@ -116,16 +116,16 @@ func newControllerEventNonce() (string, error) {
 // not perform, because the log is consulted before any tmux call. Two spellings
 // of one server therefore get two leases, which costs one redundant convergence
 // pass and never loses one.
-func (l controllerEventLog) key(target explicitTmuxTarget) string {
-	sum := sha256.Sum256([]byte(target.flag + "\x00" + target.value))
+func (l controllerEventLog) key(target tmuxTransport) string {
+	sum := sha256.Sum256([]byte(target.Flag() + "\x00" + target.Value))
 	return hex.EncodeToString(sum[:8])
 }
 
-func (l controllerEventLog) eventsDir(target explicitTmuxTarget) string {
+func (l controllerEventLog) eventsDir(target tmuxTransport) string {
 	return filepath.Join(l.dir, l.key(target)+".events")
 }
 
-func (l controllerEventLog) lockPath(target explicitTmuxTarget) string {
+func (l controllerEventLog) lockPath(target tmuxTransport) string {
 	return filepath.Join(l.dir, l.key(target)+".lock")
 }
 
@@ -151,7 +151,7 @@ func (l controllerEventLog) mark(trigger controllerTrigger) error {
 		return errors.New("controller event log has no state directory")
 	}
 	target := trigger.target
-	if target.flag == "" || target.value == "" {
+	if target.Flag() == "" || target.Value == "" {
 		return errors.New("controller event log requires an explicit tmux target")
 	}
 	dir := l.eventsDir(target)
@@ -215,7 +215,7 @@ func (l controllerEventLog) mark(trigger controllerTrigger) error {
 // arrives during a pass count as a new one: the alternative acknowledges work
 // the pass could not have seen, which is precisely the lost-wakeup this loop
 // exists to avoid.
-func (l controllerEventLog) drain(target explicitTmuxTarget) ([]controllerTrigger, error) {
+func (l controllerEventLog) drain(target tmuxTransport) ([]controllerTrigger, error) {
 	dir := l.eventsDir(target)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -271,7 +271,7 @@ func controllerEventPriority(reason controllerTriggerReason) int {
 
 // pending reports whether any event is currently recorded for target. It is a
 // read: it creates nothing and removes nothing.
-func (l controllerEventLog) pending(target explicitTmuxTarget) (bool, error) {
+func (l controllerEventLog) pending(target tmuxTransport) (bool, error) {
 	entries, err := os.ReadDir(l.eventsDir(target))
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -293,7 +293,7 @@ func (l controllerEventLog) pending(target explicitTmuxTarget) (bool, error) {
 // another worker holds the lease, and that worker will drain the event this
 // caller just marked. The caller's correct response is to exit, which is what
 // makes the burst cost one convergence instead of one per event.
-func (l controllerEventLog) acquire(target explicitTmuxTarget) (func(), bool, error) {
+func (l controllerEventLog) acquire(target tmuxTransport) (func(), bool, error) {
 	if strings.TrimSpace(l.dir) == "" {
 		return nil, false, errors.New("controller event log has no state directory")
 	}

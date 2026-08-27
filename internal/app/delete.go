@@ -544,7 +544,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 // runtime, close a Window, or touch the root, Git/worktree, or snapshot stores.
 func (c *deleteCommand) runProjectDelete(spelling string, plan deletePlan, resolution selector.Resolution, dryRun, yes bool, stdout io.Writer) error {
 	if dryRun {
-		return writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, explicitTmuxTarget{}, true, false)
+		return writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, tmuxTransport{}, true, false)
 	}
 	prompt := fmt.Sprintf("%s will unregister %d Project%s and %d descendant Registry resources; runtime and external assets are preserved",
 		spelling, len(plan.Targets), plural(len(plan.Targets)), plan.Cascades())
@@ -586,7 +586,7 @@ func (c *deleteCommand) runProjectDelete(spelling string, plan deletePlan, resol
 	}); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "registry-unregister", strings.Join(oldUIDs, ","), "", err)
 	}
-	if err := writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, explicitTmuxTarget{}, false, false); err != nil {
+	if err := writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, tmuxTransport{}, false, false); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "result-write", strings.Join(oldUIDs, ","), "", err)
 	}
 	_, err := fmt.Fprintf(stdout, "operation=delete-project stage=registry-unregister old_uid=%s new_uid=%s runtime=preserved external-assets=preserved\n",
@@ -726,7 +726,7 @@ func cascadeOf(registry coremetadata.Registry, kind coremetadata.Kind, uid strin
 }
 
 // writeDeletePlan renders the plan for both the dry run and the executed run.
-func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live windowLiveDeletePlan, panes paneLiveDeletePlan, socket explicitTmuxTarget, dryRun, selfQueued bool) error {
+func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live windowLiveDeletePlan, panes paneLiveDeletePlan, socket tmuxTransport, dryRun, selfQueued bool) error {
 	var b strings.Builder
 	verb := "deleting"
 	if dryRun {
@@ -758,7 +758,7 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 				action = "will queue after this result is flushed to kill"
 			}
 			fmt.Fprintf(&b, "  live %s tmux window %s session=%s session-id=%s socket=%s\n",
-				action, liveTarget.WindowID, liveTarget.SessionName, liveTarget.SessionID, socket.label())
+				action, liveTarget.WindowID, liveTarget.SessionName, liveTarget.SessionID, socket.Label())
 			if liveTarget.EndsSession {
 				impact := "ended"
 				if dryRun {
@@ -775,7 +775,7 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 			if dryRun {
 				action = "would delete this Window; no tmux Window would be killed"
 			}
-			fmt.Fprintf(&b, "  registry-only %s on socket=%s\n", action, socket.label())
+			fmt.Fprintf(&b, "  registry-only %s on socket=%s\n", action, socket.Label())
 		}
 		for _, liveTarget := range panes.Targets {
 			if liveTarget.ResourceUID != target.Match.UID {
@@ -789,7 +789,7 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 			}
 			fmt.Fprintf(&b, "  live %s tmux pane %s pane-uid=%s window=%s session=%s session-id=%s socket=%s\n",
 				action, liveTarget.PaneID, liveTarget.PaneUID, liveTarget.WindowID,
-				liveTarget.SessionName, liveTarget.SessionID, socket.label())
+				liveTarget.SessionName, liveTarget.SessionID, socket.Label())
 			if liveTarget.EndsWindow {
 				impact := "created"
 				if dryRun {
@@ -812,7 +812,7 @@ func writeDeletePlan(stdout io.Writer, spelling string, plan deletePlan, live wi
 				liveImpact = "would be killed"
 			}
 			fmt.Fprintf(&b, "  registry-only %s this %s; no tmux Pane %s on socket=%s evidence=%s owner-window=%s root=%s/%s preserving owner and siblings\n",
-				action, registryTarget.Kind, liveImpact, socket.label(), registryTarget.Evidence,
+				action, registryTarget.Kind, liveImpact, socket.Label(), registryTarget.Evidence,
 				registryTarget.WindowUID, strings.ToLower(string(registryTarget.RootKind)), registryTarget.RootUID)
 		}
 	}

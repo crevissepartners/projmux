@@ -1621,7 +1621,7 @@ func TestMaterializerSocketDriftRefusesBeforeFirstWrite(t *testing.T) {
 	session := server.addSession("drift")
 	runtime := &materializer{
 		runner: server, mirror: intmetadata.NewMirror(server), sessions: sessions,
-		target:             explicitTmuxTarget{flag: "-S", value: server.socketPath},
+		target:             tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource},
 		expectedSocketPath: server.socketPath,
 		socketName:         defaultAppSocket,
 		routeAuthority:     &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
@@ -1644,7 +1644,7 @@ func TestMaterializerAbsentDeclarationRefusesServerAppearingBeforeWrite(t *testi
 	server.addSession("appeared")
 	runtime := &materializer{
 		runner: server,
-		target: explicitTmuxTarget{flag: "-L", value: defaultAppSocket},
+		target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
 	}
 	action := materializeMutationAction(mutationCreateSession, runtime.boundMutationTarget(
 		"project-declaration", "appeared", "prj-appeared",
@@ -1675,7 +1675,7 @@ func TestMaterializerUnsetIdentityRequiresReadableOwnedTargetBeforeReplan(t *tes
 		session.windows[0].opts[tmuxopts.WindowUID] = "win-identity"
 		pane := session.windows[0].panes[0]
 		pane.opts[tmuxopts.PaneUID] = ownerUID
-		target := explicitTmuxTarget{flag: "-S", value: server.socketPath}
+		target := tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}
 		return &materializer{
 			runner: explicitTmuxRunner{runner: server, target: target},
 			target: target, expectedSocketPath: server.socketPath,
@@ -1729,7 +1729,7 @@ func TestMaterializerReceiptBearingMatchingEffectsStillRequireExactInvariant(t *
 			Created: true, SessionID: session.id,
 			WindowID: session.windows[0].id, PaneID: session.windows[0].panes[0].id,
 		}
-		target := explicitTmuxTarget{flag: "-S", value: server.socketPath}
+		target := tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}
 		sessions := &fakeSessionMaterializer{tmux: server}
 		return &materializer{
 			runner: explicitTmuxRunner{runner: server, target: target}, sessions: sessions,
@@ -1810,7 +1810,7 @@ func TestMaterializerReceiptBearingMatchingEffectsStillRequireExactInvariant(t *
 
 func TestMaterializerFirstSessionBindsPhysicalRouteBeforeFollowUpWrites(t *testing.T) {
 	server := newFakeTmux()
-	target := explicitTmuxTarget{flag: "-L", value: defaultAppSocket}
+	target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 	routed := explicitTmuxRunner{runner: server, target: target}
 	sessions := &fakeSessionMaterializer{tmux: server}
 	runtime := &materializer{
@@ -1856,7 +1856,7 @@ func TestMaterializerAbsentServerConfigAndRouteMarkerSequence(t *testing.T) {
 		server.serverAbsent = true
 		server.appMarker = appMarker
 		server.socketName = logicalMarker
-		target := explicitTmuxTarget{flag: "-L", value: "phase10-fresh"}
+		target := tmuxTransport{Kind: tmuxSocketName, Value: "phase10-fresh", Source: tmuxSocketNameSource}
 		routed := explicitTmuxRunner{runner: server, target: target}
 		runtime := &materializer{
 			runner: routed, mirror: intmetadata.NewMirror(routed), sessions: &fakeSessionMaterializer{tmux: server},
@@ -2094,7 +2094,7 @@ func TestMaterializerDefaultRouteForgedServerRefusesBeforeFirstWrite(t *testing.
 		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", tmuxopts.AppGlobal):      "0\n",
 		recordedTmuxCallKey("tmux", "-S", path, "show-options", "-gqv", tmuxopts.AppGlobal):                  "0\n",
 	}}
-	target := explicitTmuxTarget{flag: "-L", value: defaultAppSocket}
+	target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 	runtime := &materializer{
 		runner: explicitTmuxRunner{runner: base, target: target}, target: target, expectedSocketPath: path,
 	}
@@ -2134,7 +2134,7 @@ func TestInvocationRoutePreservesNonDefaultLogicalSocketWithoutBasenameInference
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.target.flag != "-L" || route.target.value != name || route.expectedSocketPath != path || route.socketName != name ||
+	if route.target.Flag() != "-L" || route.target.Value != name || route.expectedSocketPath != path || route.socketName != name ||
 		route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != "123" || route.authority.PaneID != "%8" {
 		t.Fatalf("resolved route = %#v, want logical -L %s over exact path %s", route, name, path)
 	}
@@ -2164,7 +2164,7 @@ func TestStandaloneInheritedRouteMaterializesWithPrintablePIDAndPaneAuthority(t 
 	if err != nil {
 		t.Fatalf("resolve inherited standalone route: %v", err)
 	}
-	if route.target.flag != "-S" || route.target.value != server.socketPath || route.expectedSocketPath != server.socketPath ||
+	if route.target.Flag() != "-S" || route.target.Value != server.socketPath || route.expectedSocketPath != server.socketPath ||
 		route.socketName != defaultAppSocket || route.authority == nil {
 		t.Fatalf("standalone route = %#v", route)
 	}
@@ -2253,7 +2253,7 @@ func TestNativePrivateActivationAnchorSuppliesExactAppAuthorityWithoutInheritedP
 	if err != nil {
 		t.Fatalf("resolve private-anchored app route: %v", err)
 	}
-	if route.target != (explicitTmuxTarget{flag: "-L", value: server.socketName}) ||
+	if route.target != (tmuxTransport{Kind: tmuxSocketName, Value: server.socketName, Source: tmuxSocketNameSource}) ||
 		route.expectedSocketPath != server.socketPath || route.authority == nil ||
 		route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != server.serverPID ||
 		route.authority.SessionID != driver.id || route.authority.WindowID != driver.windows[0].id ||
@@ -2306,7 +2306,7 @@ func TestRuntimeMutationAnchorSourcesRefuseMalformedHigherPrecedenceEvidence(t *
 			if test.existing {
 				_, err = resolveExistingRuntimeMutationRouteWithAnchor(
 					context.Background(), server,
-					explicitTmuxTarget{flag: "-S", value: server.socketPath}, lookup, test.explicit,
+					tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}, lookup, test.explicit,
 				)
 			} else {
 				_, err = resolveInvocationRuntimeMutationRouteWithAnchor(context.Background(), server, lookup, test.explicit)
@@ -2437,7 +2437,7 @@ func TestDefaultInvocationAliasRecoversCanonicalAppRouteBidirectionally(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if route.target.flag != "-L" || route.target.value != name || route.socketName != name || route.expectedSocketPath != path ||
+	if route.target.Flag() != "-L" || route.target.Value != name || route.socketName != name || route.expectedSocketPath != path ||
 		route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != "4242" || route.authority.PaneID != "" {
 		t.Fatalf("canonical alias route = %#v", route)
 	}
@@ -2616,7 +2616,7 @@ func TestOutsideTmuxAppRouteSuppressesOnlyTypedNoServerProbe(t *testing.T) {
 			}}
 			route, err := resolveInvocationRuntimeMutationRoute(context.Background(), runner, func(string) string { return "" })
 			if test.wantOK {
-				if err != nil || route.target != (explicitTmuxTarget{flag: "-L", value: defaultAppSocket}) || route.authority != nil {
+				if err != nil || route.target != (tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}) || route.authority != nil {
 					t.Fatalf("typed no-server route = %#v err=%v", route, err)
 				}
 			} else {
@@ -2701,7 +2701,7 @@ func TestObservationFailureNeverPlansRegistryDeletion(t *testing.T) {
 	runtime, runner, _ := newPaneRuntimeFixture(t, paneRuntimeInventory())
 	format := tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
 		"#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.WindowUID+"}", "#{"+tmuxopts.PaneUID+"}")
-	listKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.value, "list-panes", "-a", "-F", format)
+	listKey := recordedTmuxCallKey("tmux", "-S", testDeleteTarget.Value, "list-panes", "-a", "-F", format)
 	runner.errors = map[string]error{listKey: errPropertyDrift}
 	command := newTestDeleteCommand(store, false, false, nil)
 	command.panes = runtime

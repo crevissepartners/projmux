@@ -101,7 +101,7 @@ func newMetadataMirrorPlanFixture() (*metadataMirrorPlanRunner, runtimeMutationM
 		sessionID: "$1", sessionName: "repo", projectUID: "prj-1",
 		options: map[string]string{},
 	}
-	target := explicitTmuxTarget{flag: "-S", value: runner.path}
+	target := tmuxTransport{Kind: tmuxSocketPath, Value: runner.path, Source: tmuxSocketPathSource}
 	return runner, runtimeMutationMetadataMirror{runner: explicitTmuxRunner{runner: runner, target: target}}
 }
 

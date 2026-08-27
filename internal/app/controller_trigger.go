@@ -120,7 +120,7 @@ type controllerTrigger struct {
 	// target is the exact server. There is no zero value and no fallback to the
 	// default socket or to inherited $TMUX: a generated hook passes tmux's own
 	// expanded `#{socket_path}`, and apply passes the `-L` name it reloaded.
-	target explicitTmuxTarget
+	target tmuxTransport
 	// session is a create hook's current `#{session_id}` or window-unlinked's
 	// exact `#{hook_session}`. It is empty for apply and pane-exited.
 	session string
@@ -146,7 +146,7 @@ func (t controllerTrigger) widened() controllerTrigger {
 }
 
 func (t controllerTrigger) describe() string {
-	out := string(t.reason) + " socket=" + t.target.label()
+	out := string(t.reason) + " socket=" + t.target.Label()
 	if session := strings.TrimSpace(t.session); session != "" {
 		out += " session=" + session
 	}
@@ -256,10 +256,10 @@ type controllerTriggerRunner struct {
 	// not be taken is indistinguishable from an empty one, and reading it as
 	// empty would file an unknown termination against every managed Pane on a
 	// machine whose tmux server simply is not up.
-	observe func(explicitTmuxTarget) livePaneInventory
+	observe func(tmuxTransport) livePaneInventory
 	// deferToCreate reports that a live canonical create owns the registry lock
 	// for this hook's session.
-	deferToCreate func(context.Context, explicitTmuxTarget, string) (bool, error)
+	deferToCreate func(context.Context, tmuxTransport, string) (bool, error)
 	// newOperationID labels each pass's registry transaction.
 	newOperationID func() (string, error)
 	// pass is the convergence body. Production leaves it nil and uses converge
@@ -317,7 +317,7 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 	if !slices.Contains(controllerTriggerReasons(), trigger.reason) {
 		return outcome, fmt.Errorf("controller trigger carries no reason: %s", trigger.describe())
 	}
-	if trigger.target.flag == "" || trigger.target.value == "" {
+	if trigger.target.Flag() == "" || trigger.target.Value == "" {
 		return outcome, errors.New("controller trigger requires an explicit tmux target")
 	}
 	if r.runner == nil {
@@ -334,7 +334,7 @@ func (r *controllerTriggerRunner) run(ctx context.Context, trigger controllerTri
 	if session := strings.TrimSpace(trigger.session); session != "" && trigger.reason == controllerTriggerRuntimeCreated {
 		defers := r.deferToCreate
 		if defers == nil {
-			defers = func(ctx context.Context, target explicitTmuxTarget, session string) (bool, error) {
+			defers = func(ctx context.Context, target tmuxTransport, session string) (bool, error) {
 				return deferBindingConvergence(ctx, r.runner, target, session)
 			}
 		}
@@ -621,7 +621,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 	if !trigger.fullReobserve && (trigger.reason == controllerTriggerPaneExited || trigger.reason == controllerTriggerWindowUnlinked) {
 		observe := r.observe
 		if observe == nil {
-			observe = func(target explicitTmuxTarget) livePaneInventory {
+			observe = func(target tmuxTransport) livePaneInventory {
 				return lifecycleInventory(r.runner, target)
 			}
 		}
@@ -652,7 +652,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 	if err != nil {
 		return pass, err
 	}
-	routed := explicitTmuxRunner{runner: r.runner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
+	routed := explicitTmuxRunner{runner: r.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
 	newReconciler := r.newReconciler
 	if newReconciler == nil {
 		reconciler := newRegistryReconcilerWithRoute(routed, inttmux.NewClient(routed), route)
@@ -692,7 +692,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 
 	observe := r.observe
 	if observe == nil {
-		observe = func(target explicitTmuxTarget) livePaneInventory {
+		observe = func(target tmuxTransport) livePaneInventory {
 			return lifecycleInventory(r.runner, target)
 		}
 	}
@@ -715,7 +715,7 @@ func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controll
 // the canonical Home declaration, which is the one authority allowed to mint a
 // missing root; hook triggers may only continue identities the Registry already
 // records.
-func (r *controllerTriggerRunner) convergeControlTargets(ctx context.Context, target explicitTmuxTarget, declareHome bool) (controlSessionConvergence, error) {
+func (r *controllerTriggerRunner) convergeControlTargets(ctx context.Context, target tmuxTransport, declareHome bool) (controlSessionConvergence, error) {
 	routed := explicitTmuxRunner{runner: r.runner, target: target}
 	out, err := routed.Run(ctx, "tmux", "list-sessions", "-F", "#{session_name}")
 	if err != nil {
@@ -778,7 +778,7 @@ func (r *controllerTriggerRunner) convergeControlTargets(ctx context.Context, ta
 // bytes used by the classifier. The callback never changes those bytes, so the
 // convergent store remains a Registry-write no-op.
 func runLockedAutomaticMirrorRecovery(ctx context.Context, store *resourceStore, runner tmuxCommandRunner,
-	target explicitTmuxTarget, trigger controller.RecoveryTrigger, routeHint ...runtimeMutationRoute) (int, error) {
+	target tmuxTransport, trigger controller.RecoveryTrigger, routeHint ...runtimeMutationRoute) (int, error) {
 	if store == nil || store.updateConvergent == nil {
 		return 0, errors.New("automatic recovery write store is not configured")
 	}
@@ -805,7 +805,7 @@ func verifyAutomaticRecoveryRegistryUnchanged(before, after coremetadata.Registr
 	return nil
 }
 
-func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, target explicitTmuxTarget,
+func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, target tmuxTransport,
 	registry coremetadata.Registry, trigger controller.RecoveryTrigger, routeHint ...runtimeMutationRoute) (int, error) {
 	if !trigger.Valid() {
 		return 0, fmt.Errorf("automatic recovery trigger %q is outside the closed authority table", trigger)
@@ -831,9 +831,9 @@ func runAutomaticMirrorRecovery(ctx context.Context, runner tmuxCommandRunner, t
 			return 0, err
 		}
 	}
-	exactTarget := explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}
-	inventory := intmetadata.NewInventoryObserver(runner, controllerTransport(exactTarget)).Observe(ctx)
-	inventory.Transport = controllerTransport(target)
+	exactTarget := tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}
+	inventory := intmetadata.NewInventoryObserver(runner, exactTarget.ExplicitProjection()).Observe(ctx)
+	inventory.Transport = target.ExplicitProjection()
 	graph := resourcegraph.Resolve(registry, inventory)
 	candidates := controllerRecoveryCandidates(graph, trigger)
 	if len(candidates) == 0 {
@@ -866,7 +866,7 @@ func (r *controllerTriggerRunner) awaitRuntimeExitTerminationReceipts(ctx contex
 	receipts []coremetadata.TerminationEvidence) ([]coremetadata.TerminationEvidence, error) {
 	observe := r.observe
 	if observe == nil {
-		observe = func(target explicitTmuxTarget) livePaneInventory {
+		observe = func(target tmuxTransport) livePaneInventory {
 			return lifecycleInventory(r.runner, target)
 		}
 	}

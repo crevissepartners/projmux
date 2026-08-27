@@ -66,7 +66,7 @@ func TestManagedRuntimeStopUsesOnePrintedPhysicalObservationAndRegistryAuthority
 	target := managedRuntimeStopTarget{
 		SessionID: "$1", SessionName: "alpha", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
 		Route: runtimeMutationRoute{
-			target: explicitTmuxTarget{flag: "-L", value: defaultAppSocket}, socketName: defaultAppSocket,
+			target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}, socketName: defaultAppSocket,
 			expectedSocketPath: runner.physical,
 			authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
 		},
@@ -98,7 +98,7 @@ func TestManagedRuntimeStopRegistryAuthorityDriftRefusesBeforeWrite(t *testing.T
 	target := managedRuntimeStopTarget{
 		SessionID: "$1", SessionName: "alpha", RootKind: coremetadata.KindProject, RootUID: "uid:project",
 		Route: runtimeMutationRoute{
-			target: explicitTmuxTarget{flag: "-L", value: defaultAppSocket}, socketName: defaultAppSocket,
+			target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}, socketName: defaultAppSocket,
 			expectedSocketPath: runner.physical,
 			authority:          &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
 		},

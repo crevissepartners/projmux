@@ -157,7 +157,7 @@ func TestCodexObserverStartupUsesExactRouteAndFallsBackAfterProcessFailure(t *te
 		return nil, os.ErrNotExist
 	}
 	cmd.executable = func() (string, error) { return "/tmp/projmux.test", nil }
-	cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{Identity: identity, Route: explicitTmuxTarget{flag: "-L", value: "exact"}})
+	cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{Identity: identity, Route: tmuxTransport{Kind: tmuxSocketName, Value: "exact", Source: tmuxSocketNameSource}})
 	commands := cmdRecorder(cmd).commands
 	for _, command := range commands {
 		if len(command.args) < 2 || command.args[0] != "-L" || command.args[1] != "exact" {
@@ -175,7 +175,7 @@ func TestCodexObserverStartupUsesExactRouteAndFallsBackAfterProcessFailure(t *te
 	cmdRecorder(cmd).commands = nil
 	stale := identity
 	stale.Generation = "generation-replaced"
-	cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{Identity: stale, Route: explicitTmuxTarget{flag: "-L", value: "exact"}})
+	cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{Identity: stale, Route: tmuxTransport{Kind: tmuxSocketName, Value: "exact", Source: tmuxSocketNameSource}})
 	if commands := cmdRecorder(cmd).commands; len(commands) != 0 {
 		t.Fatalf("stale/reused runtime startup writes = %#v, want zero", commands)
 	}
@@ -201,15 +201,15 @@ func TestCodexLifecycleAuthorityWriteCompensatesFirstMiddleLastOnExactRoutes(t *
 	command := testAICommand(t.TempDir())
 	command.loadRegistry = store.store().load
 	fields := []string{aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption}
-	for _, route := range []explicitTmuxTarget{{flag: "-L", value: "authority"}, {flag: "-S", value: "/tmp/authority.sock"}} {
+	for _, route := range []tmuxTransport{{Kind: tmuxSocketName, Value: "authority", Source: tmuxSocketNameSource}, {Kind: tmuxSocketPath, Value: "/tmp/authority.sock", Source: tmuxSocketPathSource}} {
 		for failWrite := 1; failWrite <= len(fields); failWrite++ {
-			t.Run(strings.TrimPrefix(route.flag, "-")+fmt.Sprintf("/failure-%d", failWrite), func(t *testing.T) {
+			t.Run(strings.TrimPrefix(route.Flag(), "-")+fmt.Sprintf("/failure-%d", failWrite), func(t *testing.T) {
 				before := map[string]string{
 					tmuxopts.PaneUID: identity.PaneUID, aiPaneCodexAuthorityOption: "old-authority",
 					aiPaneCodexEpochOption: "old-epoch", aiPaneCodexReasonOption: "old-reason", "@sibling": "keep",
 				}
 				raw := &bindingFailureRunner{
-					targetFlag: route.flag, targetValue: route.value, options: maps.Clone(before),
+					targetFlag: route.Flag(), targetValue: route.Value, options: maps.Clone(before),
 					failWrite: failWrite, failureCommand: -1,
 				}
 				sink := aiCodexLifecycleSink{command: command, runner: explicitTmuxRunner{runner: raw, target: route}}
@@ -238,7 +238,7 @@ func TestCodexLifecycleAuthorityWriteCompensatesFirstMiddleLastOnExactRoutes(t *
 					}
 				}
 				for _, command := range raw.commands {
-					if len(command) < 2 || command[0] != route.flag || command[1] != route.value {
+					if len(command) < 2 || command[0] != route.Flag() || command[1] != route.Value {
 						t.Fatalf("authority escaped exact route: %q", raw.commands)
 					}
 				}
@@ -286,7 +286,7 @@ func TestCodexLifecycleObserverTargetRequiresAndPreservesExactRoute(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		if target.Identity != phase6Identity() || target.Route.value != routeArgs[1] {
+		if target.Identity != phase6Identity() || target.Route.Value != routeArgs[1] {
 			t.Fatalf("target = %+v, route args = %q", target, routeArgs)
 		}
 	}

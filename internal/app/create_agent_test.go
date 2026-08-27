@@ -350,7 +350,7 @@ func TestExactProjectCreateWindowUsesAppRouteDespiteStaleInheritedPane(t *testin
 	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" {
 		t.Fatalf("exact Project create-window = stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
-	if route.target != (explicitTmuxTarget{flag: "-L", value: "phase1-custom-app"}) || route.expectedSocketPath != tmux.socketPath || route.authority == nil ||
+	if route.target != (tmuxTransport{Kind: tmuxSocketName, Value: "phase1-custom-app", Source: tmuxSocketNameSource}) || route.expectedSocketPath != tmux.socketPath || route.authority == nil ||
 		route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != "" {
 		t.Fatalf("explicit create-window route = %#v, want validated custom app -L without inherited Pane containment", *route)
 	}
@@ -400,7 +400,7 @@ func TestExactProjectCreateWindowIsByteEquivalentAcrossAmbientPanes(t *testing.T
 		if err != nil {
 			t.Fatal(err)
 		}
-		return stdout + "\x00" + store.snapshot() + "\x00" + route.target.flag + "=" + route.target.value + "\x00" + string(calls)
+		return stdout + "\x00" + store.snapshot() + "\x00" + route.target.Flag() + "=" + route.target.Value + "\x00" + string(calls)
 	}
 
 	current := run(t, false)
@@ -450,7 +450,7 @@ func TestExactProjectWindowAgentCreateIsByteEquivalentAcrossAmbientPaneContainme
 		if err != nil {
 			t.Fatal(err)
 		}
-		return stdout + "\x00" + store.snapshot() + "\x00" + route.target.label() + "\x00" + string(calls)
+		return stdout + "\x00" + store.snapshot() + "\x00" + route.target.Label() + "\x00" + string(calls)
 	}
 	current := run(t, "current")
 	for _, anchor := range []string{"unrelated", "stale"} {
@@ -558,7 +558,7 @@ func TestOutsideTmuxExactThreeUIDCreateAgentUsesOnlyQuietAppRoute(t *testing.T) 
 	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" || stdout != strings.TrimSpace(stdout)+"\n" {
 		t.Fatalf("outside exact create = stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
-	if route.target != (explicitTmuxTarget{flag: "-L", value: defaultAppSocket}) || route.authority == nil ||
+	if route.target != (tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}) || route.authority == nil ||
 		route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != "" {
 		t.Fatalf("outside exact app route = %#v", *route)
 	}

@@ -119,7 +119,7 @@ func TestWindowUnlinkedRecordsKillEvidenceWithoutPersistedRuntimeState(t *testin
 		t.Fatalf("read receipts: %v", err)
 	}
 	result, err := reconcileLifecycle(context.Background(), lifecycleDirtyEvent{
-		target:          explicitTmuxTarget{flag: "-S", value: "/tmp/phase6.sock"},
+		target:          tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/phase6.sock", Source: tmuxSocketPathSource},
 		runtimeWindowID: "@12", receipts: receipts,
 	}, &stubPaneInventory{uids: map[string]bool{"pan-alpha-review": true}}, store.store())
 	if err != nil {
@@ -294,7 +294,7 @@ func TestPaneKilledWaitsPastHookDelayForSupervisorReceipt(t *testing.T) {
 	appendDone := make(chan error, 1)
 	runner := &controllerTriggerRunner{
 		store: store.store(), receipts: journal,
-		observe: func(explicitTmuxTarget) livePaneInventory {
+		observe: func(tmuxTransport) livePaneInventory {
 			return &stubPaneInventory{uids: map[string]bool{}}
 		},
 		receiptWaitTimeout: 300 * time.Millisecond,
@@ -313,7 +313,7 @@ func TestPaneKilledWaitsPastHookDelayForSupervisorReceipt(t *testing.T) {
 	}()
 	trigger := controllerTrigger{
 		reason: controllerTriggerPaneKilled,
-		target: explicitTmuxTarget{flag: "-S", value: "/tmp/phase6-delayed-kill.sock"},
+		target: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/phase6-delayed-kill.sock", Source: tmuxSocketPathSource},
 	}
 	started := time.Now()
 	receipts, err := runner.awaitRuntimeExitTerminationReceipts(context.Background(), trigger, nil)
@@ -347,7 +347,7 @@ func TestPaneKilledReceiptWaitIsBoundedBeforeUnknownProjection(t *testing.T) {
 	activatePaneFixture(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-no-receipt")
 	runner := &controllerTriggerRunner{
 		store: store.store(), receipts: terminationJournal{path: filepath.Join(t.TempDir(), terminationJournalFile)},
-		observe: func(explicitTmuxTarget) livePaneInventory {
+		observe: func(tmuxTransport) livePaneInventory {
 			return &stubPaneInventory{uids: map[string]bool{}}
 		},
 		receiptWaitTimeout: 70 * time.Millisecond,
@@ -355,7 +355,7 @@ func TestPaneKilledReceiptWaitIsBoundedBeforeUnknownProjection(t *testing.T) {
 	}
 	trigger := controllerTrigger{
 		reason: controllerTriggerPaneKilled,
-		target: explicitTmuxTarget{flag: "-S", value: "/tmp/phase6-no-receipt.sock"},
+		target: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/phase6-no-receipt.sock", Source: tmuxSocketPathSource},
 	}
 	started := time.Now()
 	receipts, err := runner.awaitRuntimeExitTerminationReceipts(context.Background(), trigger, nil)
@@ -393,7 +393,7 @@ func TestPaneKilledWaitRefinesRacingUnknownWithDelayedSupervisorReceipt(t *testi
 	appendDone := make(chan error, 1)
 	runner := &controllerTriggerRunner{
 		store: store.store(), receipts: journal,
-		observe: func(explicitTmuxTarget) livePaneInventory {
+		observe: func(tmuxTransport) livePaneInventory {
 			return &stubPaneInventory{uids: map[string]bool{}}
 		},
 		receiptWaitTimeout: 300 * time.Millisecond,
@@ -411,7 +411,7 @@ func TestPaneKilledWaitRefinesRacingUnknownWithDelayedSupervisorReceipt(t *testi
 	}()
 	trigger := controllerTrigger{
 		reason: controllerTriggerPaneKilled,
-		target: explicitTmuxTarget{flag: "-S", value: "/tmp/phase6-racing-unknown.sock"},
+		target: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/phase6-racing-unknown.sock", Source: tmuxSocketPathSource},
 	}
 	receipts, err := runner.awaitRuntimeExitTerminationReceipts(context.Background(), trigger, nil)
 	if err != nil {
@@ -440,14 +440,14 @@ func TestExactPaneExitedReceiptWaitIsBoundedBeforeUnknownProjection(t *testing.T
 	}
 	runner := &controllerTriggerRunner{
 		store: store.store(), receipts: terminationJournal{path: filepath.Join(t.TempDir(), terminationJournalFile)},
-		observe: func(explicitTmuxTarget) livePaneInventory {
+		observe: func(tmuxTransport) livePaneInventory {
 			return &stubPaneInventory{uids: map[string]bool{}}
 		},
 		beforeReceiptWait: func() {}, receiptWaitTimeout: time.Millisecond, receiptPoll: 100 * time.Microsecond,
 	}
 	pass, err := runner.converge(context.Background(), controllerTrigger{
 		reason: controllerTriggerPaneExited, hookPane: "%9", hookWindow: "@4",
-		target: explicitTmuxTarget{flag: "-S", value: "/tmp/phase6-voluntary.sock"},
+		target: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/phase6-voluntary.sock", Source: tmuxSocketPathSource},
 	})
 	if err != nil {
 		t.Fatalf("exact pane-exited: %v", err)
@@ -465,7 +465,7 @@ func TestExactDeadPaneReceiptWaitUsesLiveMinusDeadObservation(t *testing.T) {
 	appendDone := make(chan error, 1)
 	runner := &controllerTriggerRunner{
 		store: store.store(), receipts: journal,
-		observe: func(explicitTmuxTarget) livePaneInventory {
+		observe: func(tmuxTransport) livePaneInventory {
 			return &exactPaneExitInventory{
 				uids: map[string]bool{"pan-alpha-codex": true},
 				dead: map[string]bool{"pan-alpha-codex": true},
@@ -482,7 +482,7 @@ func TestExactDeadPaneReceiptWaitUsesLiveMinusDeadObservation(t *testing.T) {
 	}()
 	receipts, err := runner.awaitRuntimeExitTerminationReceipts(context.Background(), controllerTrigger{
 		reason: controllerTriggerPaneExited, hookPane: "%9",
-		target: explicitTmuxTarget{flag: "-S", value: "/tmp/phase0-dead-wait.sock"},
+		target: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/phase0-dead-wait.sock", Source: tmuxSocketPathSource},
 	}, nil)
 	if err != nil {
 		t.Fatalf("wait for dead mirrored Pane receipt: %v", err)

@@ -53,7 +53,7 @@ func missingRuntimeMutationMarker(socketName string) error {
 const runtimeMutationAnchorPaneEnv = "__PROJMUX_RUNTIME_ANCHOR_PANE"
 
 type runtimeMutationRoute struct {
-	target             explicitTmuxTarget
+	target             tmuxTransport
 	expectedSocketPath string
 	socketName         string
 	authority          *runtimeMutationRouteAuthority
@@ -84,7 +84,7 @@ func bindRuntimeMutationRouteTarget(target *runtimeMutationTarget, route runtime
 	if target == nil {
 		return
 	}
-	target.Socket = route.target.flag + "=" + route.target.value
+	target.Socket = route.target.Flag() + "=" + route.target.Value
 	target.PhysicalSocket = printableRuntimeMutationSocket(route.expectedSocketPath)
 	target.RouteAuthority = route.authority.printable()
 }
@@ -131,7 +131,7 @@ func parseInheritedTmuxReceipt(value string) (inheritedTmuxReceipt, error) {
 		return inheritedTmuxReceipt{}, errors.New("runtime mutation route: inherited TMUX must contain exactly path,pid,index")
 	}
 	pathTarget, err := tmuxSocketPathTarget(parts[0])
-	if err != nil || pathTarget.value != parts[0] {
+	if err != nil || pathTarget.Value != parts[0] {
 		return inheritedTmuxReceipt{}, errors.New("runtime mutation route: inherited TMUX socket path is not absolute and clean")
 	}
 	pid, pidErr := strconv.Atoi(parts[1])
@@ -139,7 +139,7 @@ func parseInheritedTmuxReceipt(value string) (inheritedTmuxReceipt, error) {
 	if pidErr != nil || pid <= 0 || indexErr != nil || index < 0 {
 		return inheritedTmuxReceipt{}, errors.New("runtime mutation route: inherited TMUX pid or client index is invalid")
 	}
-	return inheritedTmuxReceipt{SocketPath: pathTarget.value, ServerPID: parts[1], ClientID: parts[2]}, nil
+	return inheritedTmuxReceipt{SocketPath: pathTarget.Value, ServerPID: parts[1], ClientID: parts[2]}, nil
 }
 
 func observeInheritedRuntimeMutationAuthority(
@@ -196,7 +196,7 @@ func observeExplicitAppAnchorAuthority(
 
 func defaultRuntimeMutationRoute() runtimeMutationRoute {
 	return runtimeMutationRoute{
-		target:     explicitTmuxTarget{flag: "-L", value: defaultAppSocket},
+		target:     tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
 		socketName: defaultAppSocket,
 	}
 }
@@ -209,7 +209,7 @@ func defaultRuntimeMutationRoute() runtimeMutationRoute {
 func resolveExistingRuntimeMutationRoute(
 	ctx context.Context,
 	runner tmuxCommandRunner,
-	target explicitTmuxTarget,
+	target tmuxTransport,
 	lookupEnv func(string) string,
 ) (runtimeMutationRoute, error) {
 	return resolveExistingRuntimeMutationRouteWithAnchor(ctx, runner, target, lookupEnv, "")
@@ -218,7 +218,7 @@ func resolveExistingRuntimeMutationRoute(
 func resolveExistingRuntimeMutationRouteWithAnchor(
 	ctx context.Context,
 	runner tmuxCommandRunner,
-	target explicitTmuxTarget,
+	target tmuxTransport,
 	lookupEnv func(string) string,
 	anchorPaneID string,
 ) (runtimeMutationRoute, error) {
@@ -235,7 +235,7 @@ func resolveExistingRuntimeMutationRouteWithAnchor(
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return runtimeMutationRoute{}, errors.New("runtime mutation route: observed socket is not absolute and clean")
 	}
-	physical := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: path}}
+	physical := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: path, Source: tmuxSocketPathSource}}
 	appOut, appErr := physical.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
 	logicalOut, logicalErr := physical.Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
 	if appErr != nil || logicalErr != nil {
@@ -261,7 +261,7 @@ func resolveExistingRuntimeMutationRouteWithAnchor(
 			return runtimeMutationRoute{}, err
 		}
 		return runtimeMutationRoute{
-			target: explicitTmuxTarget{flag: "-S", value: path}, expectedSocketPath: path,
+			target: tmuxTransport{Kind: tmuxSocketPath, Value: path, Source: tmuxSocketPathSource}, expectedSocketPath: path,
 			socketName: defaultAppSocket, authority: authority,
 		}, nil
 	}
@@ -276,7 +276,7 @@ func resolveExistingRuntimeMutationRouteWithAnchor(
 		return runtimeMutationRoute{}, errors.New("runtime mutation route: app server logical marker is invalid")
 	}
 	routeTarget := target
-	if target.flag == "-L" {
+	if target.Flag() == "-L" {
 		byName, err := (explicitTmuxRunner{runner: runner, target: logicalTarget}).Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 		if err != nil || strings.TrimSpace(string(byName)) != path {
 			return runtimeMutationRoute{}, errors.New("runtime mutation route: app logical alias no longer names the exact server")
@@ -331,7 +331,7 @@ func resolveRuntimeMutationAnchorPane(lookupEnv func(string) string, explicit st
 // guardRuntimeMutationServerOwnership proves that an already-running server is
 // the app-owned server declared by the logical route. A matching socket path is
 // not ownership evidence: a foreign server can be cloned onto the same -L name.
-func guardRuntimeMutationServerOwnership(ctx context.Context, routed tmuxCommandRunner, target explicitTmuxTarget) error {
+func guardRuntimeMutationServerOwnership(ctx context.Context, routed tmuxCommandRunner, target tmuxTransport) error {
 	owned, err := routed.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
 	if err != nil {
 		return fmt.Errorf("runtime mutation route: read app ownership marker: %w", err)
@@ -346,16 +346,16 @@ func guardRuntimeMutationServerOwnership(ctx context.Context, routed tmuxCommand
 	logicalName := strings.TrimSpace(string(logical))
 	if logicalName == "" {
 		name := ""
-		if target.flag == "-L" {
-			name = target.value
+		if target.Flag() == "-L" {
+			name = target.Value
 		}
 		return missingRuntimeMutationMarker(name)
 	}
 	if _, err := tmuxSocketNameTarget(logicalName); err != nil {
 		return errors.New("runtime mutation route: app server logical marker is invalid")
 	}
-	if target.flag == "-L" && logicalName != target.value {
-		return fmt.Errorf("runtime mutation route: logical socket marker is %q, planned %q", logicalName, target.value)
+	if target.Flag() == "-L" && logicalName != target.Value {
+		return fmt.Errorf("runtime mutation route: logical socket marker is %q, planned %q", logicalName, target.Value)
 	}
 	return nil
 }
@@ -465,13 +465,13 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 		nameRunner := explicitTmuxRunner{runner: runner, target: nameTarget}
 		byName, err := nameRunner.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 		if err != nil {
-			return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: reobserve default server canonical -L %s: %w", nameTarget.value, err)
+			return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: reobserve default server canonical -L %s: %w", nameTarget.Value, err)
 		}
 		byNamePath := filepath.Clean(strings.TrimSpace(string(byName)))
 		if byNamePath != route.expectedSocketPath {
-			return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: canonical -L %s resolves to %q, default invocation is %q", nameTarget.value, byNamePath, route.expectedSocketPath)
+			return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: canonical -L %s resolves to %q, default invocation is %q", nameTarget.Value, byNamePath, route.expectedSocketPath)
 		}
-		physical := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
+		physical := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
 		pidOut, err := physical.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pid}")
 		pid := strings.TrimSpace(string(pidOut))
 		parsedPID, pidErr := strconv.Atoi(pid)
@@ -486,7 +486,7 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 			}
 		}
 		return runtimeMutationRoute{
-			target: nameTarget, expectedSocketPath: route.expectedSocketPath, socketName: nameTarget.value,
+			target: nameTarget, expectedSocketPath: route.expectedSocketPath, socketName: nameTarget.Value,
 			authority: authority,
 		}, nil
 	}
@@ -504,8 +504,8 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 		return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: reobserve inherited socket: %w", err)
 	}
 	observedPath := filepath.Clean(strings.TrimSpace(string(observed)))
-	if observedPath != pathTarget.value {
-		return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: inherited socket drifted: observed %q, expected %q", observedPath, pathTarget.value)
+	if observedPath != pathTarget.Value {
+		return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: inherited socket drifted: observed %q, expected %q", observedPath, pathTarget.Value)
 	}
 	appOwnedOut, err := pathRunner.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
 	if err != nil {
@@ -547,11 +547,11 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 	nameRunner := explicitTmuxRunner{runner: runner, target: nameTarget}
 	byName, err := nameRunner.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 	if err != nil {
-		return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: reobserve logical socket -L %s: %w", nameTarget.value, err)
+		return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: reobserve logical socket -L %s: %w", nameTarget.Value, err)
 	}
 	byNamePath := filepath.Clean(strings.TrimSpace(string(byName)))
 	if byNamePath != observedPath {
-		return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: logical socket -L %s resolves to %q, invocation is %q", nameTarget.value, byNamePath, observedPath)
+		return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: logical socket -L %s resolves to %q, invocation is %q", nameTarget.Value, byNamePath, observedPath)
 	}
 	var authority *runtimeMutationRouteAuthority
 	if paneID != "" || !allowAppPIDOnly {
@@ -568,7 +568,7 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 		authority = &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: pid}
 	}
 	return runtimeMutationRoute{
-		target: nameTarget, expectedSocketPath: observedPath, socketName: nameTarget.value, authority: authority,
+		target: nameTarget, expectedSocketPath: observedPath, socketName: nameTarget.Value, authority: authority,
 	}, nil
 }
 
@@ -579,13 +579,13 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 func observeMissingMarkerLogicalSocket(
 	ctx context.Context,
 	runner tmuxCommandRunner,
-	target explicitTmuxTarget,
+	target tmuxTransport,
 	expectedPath string,
 	lookupEnv func(string) string,
 ) string {
 	candidates := make([]string, 0, 3)
-	if target.flag == "-L" {
-		candidates = append(candidates, target.value)
+	if target.Flag() == "-L" {
+		candidates = append(candidates, target.Value)
 	}
 	if lookupEnv != nil {
 		candidates = append(candidates, strings.TrimSpace(lookupEnv("PROJMUX_SOCKET")))

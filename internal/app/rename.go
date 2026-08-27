@@ -232,7 +232,7 @@ func (c *renameCommand) renameRuntimeWindow(ctx context.Context, uid, name strin
 	if route.expectedSocketPath == "" {
 		return nil
 	}
-	routed := explicitTmuxRunner{runner: c.tmuxRunner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
+	routed := explicitTmuxRunner{runner: c.tmuxRunner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
 	observe := func(ctx context.Context) (runtimeWindowRenameObservation, bool, error) {
 		out, err := routed.Run(ctx, "tmux", "list-windows", "-a", "-F", tmuxRowFormat(
 			"#{window_id}", "#{"+tmuxopts.WindowUID+"}", "#{session_id}",

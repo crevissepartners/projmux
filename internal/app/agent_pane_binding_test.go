@@ -114,19 +114,19 @@ func TestAgentPaneBinderRequiredOptionsAndFailureCompensationOnExactRoutes(t *te
 			ResumeSource: "app-server", ThreadID: "thread-native", NativeCodex: true,
 		}, expected: nativeExpected},
 	}
-	routes := []explicitTmuxTarget{{flag: "-L", value: "phase2"}, {flag: "-S", value: "/tmp/phase2.sock"}}
+	routes := []tmuxTransport{{Kind: tmuxSocketName, Value: "phase2", Source: tmuxSocketNameSource}, {Kind: tmuxSocketPath, Value: "/tmp/phase2.sock", Source: tmuxSocketPathSource}}
 	for _, shape := range shapes {
 		for _, route := range routes {
 			for _, failure := range []struct {
 				name  string
 				write int
 			}{{name: "success"}, {name: "first", write: 2}, {name: "middle", write: 9}, {name: "last", write: 16}} {
-				t.Run(shape.name+"/"+strings.TrimPrefix(route.flag, "-")+"/"+failure.name, func(t *testing.T) {
+				t.Run(shape.name+"/"+strings.TrimPrefix(route.Flag(), "-")+"/"+failure.name, func(t *testing.T) {
 					before := map[string]string{
 						aiPaneManagedOption: "old-managed", aiPaneContextOption: "/old", aiPaneCodexEpochOption: "old-epoch", "@sibling": "keep",
 					}
 					raw := &bindingFailureRunner{
-						targetFlag: route.flag, targetValue: route.value, title: "old-title", options: map[string]string{},
+						targetFlag: route.Flag(), targetValue: route.Value, title: "old-title", options: map[string]string{},
 						failWrite: failure.write, failureCommand: -1,
 					}
 					maps.Copy(raw.options, before)

@@ -32,7 +32,7 @@ type sessionStateCommand struct {
 	projectTopology switchProjectTopologyMaterializer
 	projectTrust    switchProjectTrustAuthorizer
 	notices         projectStartupReporter
-	target          explicitTmuxTarget
+	target          tmuxTransport
 }
 
 func newSessionStateCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionStateCommand {
@@ -57,7 +57,7 @@ func newSessionStateCommand(recorders ...*diagnostics.LifecycleRecorder) *sessio
 
 func (c *sessionStateCommand) exactRunner() (tmuxRunner, error) {
 	target := c.target
-	if target.flag == "" || target.value == "" {
+	if target.Flag() == "" || target.Value == "" {
 		var err error
 		target, err = tmuxSocketNameTarget(defaultAppSocket)
 		if err != nil {

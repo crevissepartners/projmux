@@ -20,7 +20,7 @@ import (
 // in-memory tmux server.
 func newTestReconciler(tmux *fakeTmux, roots []string) *registryReconciler {
 	typed := runtimeMutationMetadataMirror{runner: explicitTmuxRunner{
-		runner: tmux, target: explicitTmuxTarget{flag: "-L", value: defaultAppSocket},
+		runner: tmux, target: tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource},
 	}}
 	return &registryReconciler{
 		discoverRoots: func() ([]string, error) { return roots, nil },

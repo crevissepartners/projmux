@@ -34,7 +34,7 @@ func executeUnmanagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, 
 	}
 	observeTarget := route.target
 	if route.expectedSocketPath != "" {
-		observeTarget = explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}
+		observeTarget = tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}
 	}
 	routed := explicitTmuxRunner{runner: runner, target: observeTarget}
 	observe := func(ctx context.Context) (unmanagedRuntimeStopObservation, bool, error) {

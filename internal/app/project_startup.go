@@ -414,7 +414,7 @@ func materializeProjectSessionCanonical(ctx context.Context, store *resourceStor
 	if store == nil || runner == nil {
 		return errors.New("canonical Project session materializer is not configured")
 	}
-	if route.target.flag == "" || route.target.value == "" || strings.TrimSpace(route.socketName) == "" {
+	if route.target.Flag() == "" || route.target.Value == "" || strings.TrimSpace(route.socketName) == "" {
 		return errors.New("canonical Project session materializer has no exact app-owned route")
 	}
 	routed := explicitTmuxRunner{runner: runner, target: route.target}
@@ -632,7 +632,7 @@ func (c *switchCommand) materializeProjectTopology(ctx context.Context, request 
 type registryProjectTopologyMaterializer struct {
 	resources          *resourceStore
 	runner             tmuxCommandRunner
-	target             explicitTmuxTarget
+	target             tmuxTransport
 	expectedSocketPath string
 	socketName         string
 	routeAuthority     *runtimeMutationRouteAuthority

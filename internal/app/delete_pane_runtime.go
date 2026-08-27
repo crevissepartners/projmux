@@ -26,7 +26,7 @@ const deletedPaneMirrorPrefix = coremetadata.DeletedPaneMirrorPrefix
 type paneDeleteRuntime interface {
 	// useExactTarget pins every read and write of this seam to one resolved
 	// server. It is called before the first inventory of an invocation.
-	useExactTarget(explicitTmuxTarget)
+	useExactTarget(tmuxTransport)
 	preflight(context.Context, coremetadata.Registry, deletePlan) (paneLiveDeletePlan, error)
 	prepareReplacements(context.Context, []paneReplacementShell) (paneReplacementReceipt, error)
 	rollbackReplacements(context.Context, paneReplacementReceipt) error
@@ -131,7 +131,7 @@ func (p paneLiveDeletePlan) hasSelfTarget() bool {
 
 type tmuxPaneDeleteRuntime struct {
 	runner                tmuxCommandRunner
-	target                explicitTmuxTarget
+	target                tmuxTransport
 	expectedSocketPath    string
 	expectedLogicalSocket string
 	routeAuthority        *runtimeMutationRouteAuthority
@@ -149,7 +149,7 @@ func newTmuxPaneDeleteRuntime() *tmuxPaneDeleteRuntime {
 	return &tmuxPaneDeleteRuntime{runner: inttmux.ExecRunner{}, getenv: os.Getenv}
 }
 
-func (r *tmuxPaneDeleteRuntime) useExactTarget(target explicitTmuxTarget) {
+func (r *tmuxPaneDeleteRuntime) useExactTarget(target tmuxTransport) {
 	if r == nil {
 		return
 	}
@@ -175,13 +175,13 @@ type livePaneDeleteRow struct {
 
 func (r *tmuxPaneDeleteRuntime) routed() explicitTmuxRunner {
 	if r.expectedSocketPath != "" {
-		return explicitTmuxRunner{runner: r.runner, target: explicitTmuxTarget{flag: "-S", value: r.expectedSocketPath}}
+		return explicitTmuxRunner{runner: r.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: r.expectedSocketPath, Source: tmuxSocketPathSource}}
 	}
 	return explicitTmuxRunner{runner: r.runner, target: r.target}
 }
 
 func (r *tmuxPaneDeleteRuntime) mutationAction(kind runtimeMutationVerb, target paneLiveDeleteTarget, guard, _ string, args ...string) plannedRuntimeMutation {
-	logicalRoute := r.target.flag + "=" + r.target.value
+	logicalRoute := r.target.Flag() + "=" + r.target.Value
 	action := newRuntimeMutation(1, kind, runtimeMutationTarget{
 		Socket: logicalRoute, PhysicalSocket: printableRuntimeMutationSocket(r.expectedSocketPath),
 		RouteAuthority: r.routeAuthority.printable(),
@@ -216,7 +216,7 @@ func (r *tmuxPaneDeleteRuntime) mutationSteps(
 		attempted := false
 		guardUID := guardMirror(target)
 		effectUID := effectMirror(target)
-		guardDetail := "socket=" + r.target.flag + "=" + r.target.value +
+		guardDetail := "socket=" + r.target.Flag() + "=" + r.target.Value +
 			";session=" + target.SessionID + "/" + target.SessionName +
 			";window=" + target.WindowID + "/" + target.WindowUID +
 			";pane=" + target.PaneID + "/" + guardUID +
@@ -321,7 +321,7 @@ func (r *tmuxPaneDeleteRuntime) revalidateMutationTarget(ctx context.Context, ta
 	format := tmuxRowFormat(columns...)
 	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-t", target.PaneID, "-F", format)
 	if err != nil {
-		return tmuxError("revalidate exact live Pane %s on %s %s: %v", target.PaneID, r.target.flag, r.target.value, err)
+		return tmuxError("revalidate exact live Pane %s on %s %s: %v", target.PaneID, r.target.Flag(), r.target.Value, err)
 	}
 	rows := splitTmuxRows(strings.ReplaceAll(string(out), tmuxRowSepFormat, tmuxRowSep), len(columns))
 	if len(rows) != 1 {
@@ -368,7 +368,7 @@ func (r *tmuxPaneDeleteRuntime) inventory(ctx context.Context) ([]livePaneDelete
 	if r == nil || r.runner == nil {
 		return nil, errors.New("delete pane: tmux runtime is not configured")
 	}
-	if r.target.flag == "" || r.target.value == "" {
+	if r.target.Flag() == "" || r.target.Value == "" {
 		return nil, errors.New("delete pane: no exact tmux target is bound")
 	}
 	if err := r.observeSocketIdentity(ctx); err != nil {
@@ -439,8 +439,8 @@ func (r *tmuxPaneDeleteRuntime) observeSocketIdentity(ctx context.Context) error
 	if observed == "" {
 		return errors.New("delete pane: exact socket identity is empty")
 	}
-	if r.target.flag == "-S" && observed != r.target.value {
-		return fmt.Errorf("delete pane: exact socket drifted: observed %q, planned %q", observed, r.target.value)
+	if r.target.Flag() == "-S" && observed != r.target.Value {
+		return fmt.Errorf("delete pane: exact socket drifted: observed %q, planned %q", observed, r.target.Value)
 	}
 	if r.expectedSocketPath == "" {
 		r.expectedSocketPath = observed
@@ -696,7 +696,7 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 	}
 	if len(rows) == 0 {
 		return paneLiveDeletePlan{}, fmt.Errorf("delete %s: exact tmux inventory on %s was empty; absence is not Registry deletion authority and nothing was changed",
-			strings.ToLower(string(plan.Kind)), r.target.label())
+			strings.ToLower(string(plan.Kind)), r.target.Label())
 	}
 	authority, err := paneDeleteAuthoritySignature(registry, plan)
 	if err != nil {
@@ -785,11 +785,11 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 				continue
 			}
 			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: registry Pane uid %q has no exact live tmux Pane mirror on -L %s; nothing was changed",
-				strings.ToLower(string(plan.Kind)), target.paneUID, r.target.value)
+				strings.ToLower(string(plan.Kind)), target.paneUID, r.target.Value)
 		}
 		if len(matches) != 1 {
 			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: registry Pane uid %q has %d live tmux Pane mirrors on -L %s; exact target is ambiguous and nothing was changed",
-				strings.ToLower(string(plan.Kind)), target.paneUID, len(matches), r.target.value)
+				strings.ToLower(string(plan.Kind)), target.paneUID, len(matches), r.target.Value)
 		}
 		row := matches[0]
 		if row.windowUID != window.Metadata.UID {
@@ -802,7 +802,7 @@ func (r *tmuxPaneDeleteRuntime) preflight(ctx context.Context, registry coremeta
 		}
 		if mirrors := len(windowIDsByUID[window.Metadata.UID]); mirrors != 1 {
 			return paneLiveDeletePlan{}, fmt.Errorf("delete %s: registry Window uid %q has %d live tmux Window mirrors on -L %s while resolving Pane uid %q; exact owner is ambiguous and nothing was changed",
-				strings.ToLower(string(plan.Kind)), window.Metadata.UID, mirrors, r.target.value, target.paneUID)
+				strings.ToLower(string(plan.Kind)), window.Metadata.UID, mirrors, r.target.Value, target.paneUID)
 		}
 		spelling := "delete " + strings.ToLower(string(plan.Kind))
 		if err := root.validateLiveSession(spelling, "Pane", row.paneID, target.paneUID, row.projectUID, row.sessionName); err != nil {

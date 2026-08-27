@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
@@ -36,9 +37,8 @@ func inheritedResourceMutationMirror(lookupEnv func(string) string, runner tmuxC
 	if lookupEnv == nil || runner == nil {
 		return nil
 	}
-	socket, _, _ := strings.Cut(strings.TrimSpace(lookupEnv("TMUX")), ",")
-	target, err := tmuxSocketPathTarget(socket)
-	if err != nil {
+	target, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{InheritedTMUX: lookupEnv("TMUX")})
+	if err != nil || !target.Present() {
 		return nil
 	}
 	routed := explicitTmuxRunner{runner: runner, target: target}

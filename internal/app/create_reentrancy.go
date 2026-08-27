@@ -52,7 +52,7 @@ func sessionEnvironmentValue(output, name string) string {
 // deferBindingConvergence reports whether session is owned by a live canonical
 // create. Invalid and stale leases are removed before normal convergence so a
 // crashed creator cannot disable lifecycle repair permanently.
-func deferBindingConvergence(ctx context.Context, runner tmuxCommandRunner, target explicitTmuxTarget, session string) (bool, error) {
+func deferBindingConvergence(ctx context.Context, runner tmuxCommandRunner, target tmuxTransport, session string) (bool, error) {
 	session = strings.TrimSpace(session)
 	if session == "" {
 		return false, fmt.Errorf("binding convergence requires an explicit hook session")

@@ -21,13 +21,13 @@ type staticAgentControlBinding struct {
 }
 
 type exactControlRouteRunner struct {
-	target explicitTmuxTarget
+	target tmuxTransport
 	calls  [][]string
 }
 
 func (r *exactControlRouteRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
 	r.calls = append(r.calls, append([]string(nil), args...))
-	if name != "tmux" || len(args) < 3 || args[0] != r.target.flag || args[1] != r.target.value {
+	if name != "tmux" || len(args) < 3 || args[0] != r.target.Flag() || args[1] != r.target.Value {
 		return nil, errors.New("unexpected control route")
 	}
 	switch args[2] {
@@ -189,11 +189,11 @@ func TestAgentControlCLIStaleBindingCallsNoControl(t *testing.T) {
 }
 
 func TestAgentControlBindingLookupUsesResolvedLogicalRouteOnly(t *testing.T) {
-	for _, target := range []explicitTmuxTarget{
-		{flag: "-L", value: "exact-control"},
-		{flag: "-S", value: "/tmp/exact-control.sock"},
+	for _, target := range []tmuxTransport{
+		{Kind: tmuxSocketName, Value: "exact-control", Source: tmuxSocketNameSource},
+		{Kind: tmuxSocketPath, Value: "/tmp/exact-control.sock", Source: tmuxSocketPathSource},
 	} {
-		t.Run(strings.TrimPrefix(target.flag, "-"), func(t *testing.T) {
+		t.Run(strings.TrimPrefix(target.Flag(), "-"), func(t *testing.T) {
 			cmd, _, _ := exactControlCLICommand(t)
 			tmux := &exactControlRouteRunner{target: target}
 			cmd.controlBinding = nil
@@ -212,7 +212,7 @@ func TestAgentControlBindingLookupUsesResolvedLogicalRouteOnly(t *testing.T) {
 				t.Fatal("control binding performed no tmux reads")
 			}
 			for _, call := range tmux.calls {
-				if len(call) < 2 || call[0] != target.flag || call[1] != target.value {
+				if len(call) < 2 || call[0] != target.Flag() || call[1] != target.Value {
 					t.Fatalf("ambient/default control read = %q", call)
 				}
 			}

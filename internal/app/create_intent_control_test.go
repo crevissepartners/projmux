@@ -411,7 +411,7 @@ func TestCanonicalWindowCreateFeedsExactLastPaneCausalCleanupForManagedRoots(t *
 				windows: liveWindows, windowSessions: windowSessions,
 			}
 			event := lifecycleDirtyEvent{
-				target:        explicitTmuxTarget{flag: "-S", value: fx.tmux.socketPath},
+				target:        tmuxTransport{Kind: tmuxSocketPath, Value: fx.tmux.socketPath, Source: tmuxSocketPathSource},
 				runtimePaneID: pane.Status.Activation.RuntimeID,
 				teardownKind:  coremetadata.TeardownEventPaneExited,
 				receipts:      []coremetadata.TerminationEvidence{receipt},

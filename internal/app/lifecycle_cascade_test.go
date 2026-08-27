@@ -161,7 +161,7 @@ func activateExactPane(t *testing.T, store *fakeResourceStore, paneUID, agentUID
 
 func exactPaneExitDirty(receipts ...coremetadata.TerminationEvidence) lifecycleDirtyEvent {
 	return lifecycleDirtyEvent{
-		target:        explicitTmuxTarget{flag: "-S", value: "/tmp/phase2-exact.sock"},
+		target:        tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/phase2-exact.sock", Source: tmuxSocketPathSource},
 		runtimePaneID: "%9",
 		teardownKind:  coremetadata.TeardownEventPaneExited,
 		receipts:      receipts,
@@ -366,7 +366,7 @@ func TestWindowUnlinkedConsumesStoredExactTeardownEvidenceOnlyForTargetWindow(t 
 			continue
 		}
 		store.registry.Panes[i].Status.Teardown = &coremetadata.PaneTeardownEvidence{
-			SocketIdentity: event.target.label(), RuntimeSessionID: "$1", RuntimePaneID: "%9", RuntimeWindowID: "@4",
+			SocketIdentity: event.target.Label(), RuntimeSessionID: "$1", RuntimePaneID: "%9", RuntimeWindowID: "@4",
 			WindowUID: "win-alpha-review", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
 			Generation: "gen-legacy-unlink", Classification: coremetadata.TerminationNormal,
 			ObservedAt: time.Date(2026, 8, 25, 0, 0, 0, 0, time.UTC),

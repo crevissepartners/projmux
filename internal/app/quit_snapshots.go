@@ -236,7 +236,7 @@ func (c *quitCommand) saveProjectSnapshotsAndQuit(ctx context.Context, socketNam
 		if deps.now != nil {
 			at = deps.now()
 		}
-		exactRunner := explicitTmuxRunner{runner: c.runner, target: explicitTmuxTarget{flag: "-S", value: path}}
+		exactRunner := explicitTmuxRunner{runner: c.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: path, Source: tmuxSocketPathSource}}
 		for _, target := range plan.Targets {
 			entry := quitSnapshotLedgerEntry{Target: target}
 			if _, captureErr := deps.capture(ctx, exactRunner, store, target, at); captureErr != nil {

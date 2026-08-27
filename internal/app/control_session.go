@@ -130,15 +130,15 @@ func (c *controlSessionConverger) converge(ctx context.Context, socketName, sess
 // convergeTarget is shared by shell lifecycle and config-apply. The caller has
 // already declared both coordinates; there is no inherited/default socket
 // fallback and no session-name inference inside this method.
-func (c *controlSessionConverger) convergeTarget(ctx context.Context, target explicitTmuxTarget, sessionName string) (controlSessionConvergence, error) {
+func (c *controlSessionConverger) convergeTarget(ctx context.Context, target tmuxTransport, sessionName string) (controlSessionConvergence, error) {
 	return c.convergeTargetWithEvidence(ctx, target, sessionName, true)
 }
 
-func (c *controlSessionConverger) convergeTargetWithEvidence(ctx context.Context, target explicitTmuxTarget, sessionName string, declared bool) (controlSessionConvergence, error) {
+func (c *controlSessionConverger) convergeTargetWithEvidence(ctx context.Context, target tmuxTransport, sessionName string, declared bool) (controlSessionConvergence, error) {
 	if c == nil || c.runner == nil {
 		return controlSessionConvergence{}, errors.New("control session convergence requires a tmux runner")
 	}
-	if target.flag == "" || strings.TrimSpace(target.value) == "" || strings.TrimSpace(sessionName) == "" {
+	if target.Flag() == "" || strings.TrimSpace(target.Value) == "" || strings.TrimSpace(sessionName) == "" {
 		return controlSessionConvergence{}, errors.New("control session convergence requires an exact tmux target and session declaration")
 	}
 	mirror := intmetadata.NewMirror(explicitTmuxRunner{runner: c.runner, target: target})
@@ -259,11 +259,11 @@ func controlPlanNeedsBinding(plan controller.ControlTargetPlan) bool {
 		controlPlanHas(plan, controller.ControlEnsurePaneMirror)
 }
 
-func controlTargetControllerState(target explicitTmuxTarget, sessionName string, declared bool, markers intmetadata.ControlSessionMarkers,
+func controlTargetControllerState(target tmuxTransport, sessionName string, declared bool, markers intmetadata.ControlSessionMarkers,
 	registry coremetadata.Registry, observed coremetadata.ControlSessionObservation, targets intmetadata.LegacyTargets,
 ) controller.ControlTargetState {
 	state := controller.ControlTargetState{
-		Declaration: controller.ControlTargetDeclaration{Transport: controllerTransport(target), Session: sessionName, Declared: declared},
+		Declaration: controller.ControlTargetDeclaration{Transport: target.ExplicitProjection(), Session: sessionName, Declared: declared},
 		AppOwned:    markers.AppOwned, Ephemeral: markers.Ephemeral, Role: markers.Role, ProjectUID: markers.ProjectUID,
 	}
 	for _, project := range registry.Projects {
@@ -376,7 +376,7 @@ func observeMirroredUIDs(ctx context.Context, mirror intmetadata.Mirror) (coreme
 // writer with weaker guarantees.
 func executeControlSessionIdentityPlan(
 	ctx context.Context,
-	target explicitTmuxTarget,
+	target tmuxTransport,
 	sessionName string,
 	mirror intmetadata.Mirror,
 	registry coremetadata.Registry,
@@ -393,20 +393,20 @@ func executeControlSessionIdentityPlan(
 	for {
 		switch explicit := transport.(type) {
 		case explicitTmuxRunner:
-			if explicit.target.flag == "-L" && explicit.target != target {
+			if explicit.target.Flag() == "-L" && !explicit.target.SameRoute(target) {
 				return 0, errors.New("ControlSession identity plan route disagrees with its mirror")
 			}
-			if explicit.target.flag == "-S" {
-				boundPaths = append(boundPaths, filepath.Clean(explicit.target.value))
+			if explicit.target.Flag() == "-S" {
+				boundPaths = append(boundPaths, filepath.Clean(explicit.target.Value))
 			}
 			transport = explicit.runner
 			continue
 		case *explicitTmuxRunner:
-			if explicit.target.flag == "-L" && explicit.target != target {
+			if explicit.target.Flag() == "-L" && !explicit.target.SameRoute(target) {
 				return 0, errors.New("ControlSession identity plan route disagrees with its mirror")
 			}
-			if explicit.target.flag == "-S" {
-				boundPaths = append(boundPaths, filepath.Clean(explicit.target.value))
+			if explicit.target.Flag() == "-S" {
+				boundPaths = append(boundPaths, filepath.Clean(explicit.target.Value))
 			}
 			transport = explicit.runner
 			continue
@@ -424,13 +424,13 @@ func executeControlSessionIdentityPlan(
 			return 0, errors.New("ControlSession identity plan physical route disagrees with its mirror")
 		}
 	}
-	routed := explicitTmuxRunner{runner: transport, target: explicitTmuxTarget{flag: "-S", value: expectedSocket}}
+	routed := explicitTmuxRunner{runner: transport, target: tmuxTransport{Kind: tmuxSocketPath, Value: expectedSocket, Source: tmuxSocketPathSource}}
 	sessionOut, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", sessionName, "-F", "#{session_id}")
 	if err != nil || exactTmuxHandle(strings.TrimSpace(string(sessionOut)), "$") == "" {
 		return 0, errors.New("ControlSession identity plan: exact session handle is unavailable")
 	}
 	sessionID := strings.TrimSpace(string(sessionOut))
-	socket := target.flag + "=" + target.value
+	socket := target.Flag() + "=" + target.Value
 	var steps []runtimeMutationStep
 	logicalWrites := 0
 	appendWrite := func(verb runtimeMutationVerb, stable runtimeMutationTarget, expect string, operands []string,

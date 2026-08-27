@@ -158,7 +158,7 @@ func (c *createCommand) observeWindowRuntimeBinding(
 
 func newCreateCommand() *createCommand {
 	runner := inttmux.ExecRunner{}
-	target := explicitTmuxTarget{flag: "-L", value: defaultAppSocket}
+	target := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 	routed := explicitTmuxRunner{runner: runner, target: target}
 	client := defaultTmuxClientWithRunner(routed)
 	home, _ := os.UserHomeDir()

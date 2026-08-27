@@ -124,8 +124,8 @@ func (r *recordingTriggering) run(_ context.Context, trigger controllerTrigger) 
 	}, nil
 }
 
-func (r *recordingTriggering) targets() []explicitTmuxTarget {
-	out := make([]explicitTmuxTarget, 0, len(r.triggers))
+func (r *recordingTriggering) targets() []tmuxTransport {
+	out := make([]tmuxTransport, 0, len(r.triggers))
 	for _, trigger := range r.triggers {
 		out = append(out, trigger.target)
 	}
@@ -335,7 +335,7 @@ func TestGeneratedLifecycleTriggersConvergeOnOneEntrypoint(t *testing.T) {
 	if err := cmd.runConverge([]string{"--socket-path", path, "--session", "alpha", "--reason", "runtime-created"}, &stderr); err != nil {
 		t.Fatalf("hidden lifecycle command: %v; stderr=%q", err, stderr.String())
 	}
-	want := []controllerTrigger{{reason: controllerTriggerRuntimeCreated, target: explicitTmuxTarget{flag: "-S", value: path}, session: "alpha"}}
+	want := []controllerTrigger{{reason: controllerTriggerRuntimeCreated, target: tmuxTransport{Kind: tmuxSocketPath, Value: path, Source: tmuxSocketPathSource}, session: "alpha"}}
 	if !reflect.DeepEqual(recorder.triggers, want) {
 		t.Fatalf("trigger = %+v, want %+v", recorder.triggers, want)
 	}
@@ -458,7 +458,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	if err := cmd.runApply([]string{"--config", configPath, "--socket", "isolated"}, &stdout, &stderr); err != nil {
 		t.Fatalf("apply: %v; stderr=%q", err, stderr.String())
 	}
-	if want := []explicitTmuxTarget{{flag: "-S", value: "/tmp/tmux-1000/isolated"}}; !reflect.DeepEqual(recorder.targets(), want) {
+	if want := []tmuxTransport{{Kind: tmuxSocketPath, Value: "/tmp/tmux-1000/isolated", Source: tmuxSocketPathSource}}; !reflect.DeepEqual(recorder.targets(), want) {
 		t.Fatalf("convergence targets = %+v, want %+v", recorder.targets(), want)
 	}
 	// Apply carries no hook session: it is not caused by a create, so it has no
@@ -503,7 +503,7 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	if configWrites != 1 {
 		t.Fatalf("repeat apply rewrote generated config: writes=%d", configWrites)
 	}
-	if want := []explicitTmuxTarget{{flag: "-S", value: "/tmp/tmux-1000/isolated"}}; !reflect.DeepEqual(recorder.targets(), want) {
+	if want := []tmuxTransport{{Kind: tmuxSocketPath, Value: "/tmp/tmux-1000/isolated", Source: tmuxSocketPathSource}}; !reflect.DeepEqual(recorder.targets(), want) {
 		t.Fatalf("repeat convergence targets = %+v, want %+v", recorder.targets(), want)
 	}
 

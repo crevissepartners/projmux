@@ -186,7 +186,7 @@ func TestDeleteProjectPostCommitFlushFailureReportsActionStageAndUIDs(t *testing
 var testDeleteEnvironment = map[string]string{"TMUX": "/tmp/projmux-test/isolated,1234,0"}
 
 // testDeleteTarget is the exact target testDeleteEnvironment resolves to.
-var testDeleteTarget = explicitTmuxTarget{flag: "-S", value: "/tmp/projmux-test/isolated"}
+var testDeleteTarget = tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/projmux-test/isolated", Source: tmuxInheritedSource}
 
 type fakePaneDeleteRuntime struct {
 	preflights             int
@@ -212,10 +212,10 @@ type fakePaneDeleteRuntime struct {
 	preflightHook          func(int, *coremetadata.Registry)
 	// boundTarget records the exact server the route installed, so a test can
 	// prove the live half never routes anywhere the invocation did not name.
-	boundTarget explicitTmuxTarget
+	boundTarget tmuxTransport
 }
 
-func (r *fakePaneDeleteRuntime) useExactTarget(target explicitTmuxTarget) { r.boundTarget = target }
+func (r *fakePaneDeleteRuntime) useExactTarget(target tmuxTransport) { r.boundTarget = target }
 
 func newFixturePaneDeleteRuntime() *fakePaneDeleteRuntime { return &fakePaneDeleteRuntime{} }
 
@@ -251,7 +251,7 @@ func (r *fakePaneDeleteRuntime) preflight(_ context.Context, registry coremetada
 	if err != nil {
 		return paneLiveDeletePlan{}, err
 	}
-	out := paneLiveDeletePlan{SocketPath: testDeleteTarget.value, Authority: authority}
+	out := paneLiveDeletePlan{SocketPath: testDeleteTarget.Value, Authority: authority}
 	registryOnly := map[string]bool{}
 	for _, target := range plan.Targets {
 		candidate, ok, err := registryOnlyPaneTarget(registry, plan, target)
@@ -410,10 +410,10 @@ type fakeWindowDeleteRuntime struct {
 	queueHook     func([]windowLiveDeleteTarget)
 	offlineUIDs   map[string]bool
 	preflightHook func(int)
-	boundTarget   explicitTmuxTarget
+	boundTarget   tmuxTransport
 }
 
-func (r *fakeWindowDeleteRuntime) useExactTarget(target explicitTmuxTarget) { r.boundTarget = target }
+func (r *fakeWindowDeleteRuntime) useExactTarget(target tmuxTransport) { r.boundTarget = target }
 
 func newFixtureWindowDeleteRuntime() *fakeWindowDeleteRuntime {
 	return &fakeWindowDeleteRuntime{}
@@ -505,7 +505,7 @@ func TestDeleteOfflineWindowDryRunAndExecutionAreRegistryOnly(t *testing.T) {
 		"cascade pane/log uid=pan-alpha-log",
 		// The reported socket is the one this invocation resolved, not the
 		// app's default name.
-		"registry-only would delete this Window; no tmux Window would be killed on socket=" + testDeleteTarget.label(),
+		"registry-only would delete this Window; no tmux Window would be killed on socket=" + testDeleteTarget.Label(),
 		"dry-run: nothing was deleted",
 	} {
 		if !strings.Contains(stdout, want) {
@@ -609,7 +609,7 @@ func TestDeleteOfflinePaneAndAgentDryRunApplyRepeatAreRegistryOnly(t *testing.T)
 		if err != nil {
 			t.Fatalf("offline Pane dry-run: %v", err)
 		}
-		wantPreview := "  registry-only would delete this Pane; no tmux Pane would be killed on socket=" + testDeleteTarget.label() +
+		wantPreview := "  registry-only would delete this Pane; no tmux Pane would be killed on socket=" + testDeleteTarget.Label() +
 			" evidence=MissingRuntime owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
 		for _, want := range []string{wantPreview, "evidence=MissingRuntime", "preserving owner and siblings"} {
 			if !strings.Contains(preview, want) {
@@ -624,7 +624,7 @@ func TestDeleteOfflinePaneAndAgentDryRunApplyRepeatAreRegistryOnly(t *testing.T)
 		if err != nil {
 			t.Fatalf("offline Pane apply: %v", err)
 		}
-		wantApplied := "  registry-only deleted this Pane; no tmux Pane was killed on socket=" + testDeleteTarget.label() +
+		wantApplied := "  registry-only deleted this Pane; no tmux Pane was killed on socket=" + testDeleteTarget.Label() +
 			" evidence=MissingRuntime owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
 		if _, ok := store.registry.Pane("pan-alpha-log"); ok || len(runtime.killed) != 0 ||
 			!strings.Contains(applied, wantApplied) {
@@ -661,7 +661,7 @@ func TestDeleteOfflinePaneAndAgentDryRunApplyRepeatAreRegistryOnly(t *testing.T)
 		if err != nil {
 			t.Fatalf("offline Agent dry-run: %v", err)
 		}
-		wantPreview := "  registry-only would delete this Agent; no tmux Pane would be killed on socket=" + testDeleteTarget.label() +
+		wantPreview := "  registry-only would delete this Agent; no tmux Pane would be killed on socket=" + testDeleteTarget.Label() +
 			" evidence=Offline+MissingRuntime owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
 		for _, want := range []string{"cascade pane/codex-pane uid=pan-alpha-codex", wantPreview, "evidence=Offline+MissingRuntime"} {
 			if !strings.Contains(preview, want) {
@@ -676,7 +676,7 @@ func TestDeleteOfflinePaneAndAgentDryRunApplyRepeatAreRegistryOnly(t *testing.T)
 		if err != nil {
 			t.Fatalf("offline Agent apply: %v", err)
 		}
-		wantApplied := "  registry-only deleted this Agent; no tmux Pane was killed on socket=" + testDeleteTarget.label() +
+		wantApplied := "  registry-only deleted this Agent; no tmux Pane was killed on socket=" + testDeleteTarget.Label() +
 			" evidence=Offline+MissingRuntime owner-window=win-alpha-main root=project/prj-alpha preserving owner and siblings\n"
 		if registryUIDs(store.registry)["agt-alpha-codex"] || registryUIDs(store.registry)["pan-alpha-codex"] ||
 			len(runtime.killed) != 0 || !strings.Contains(applied, wantApplied) {
@@ -1873,7 +1873,7 @@ func TestDeleteWindowDryRunShowsLiveAndLastSessionCascadeWithoutWrites(t *testin
 		t.Fatalf("dry-run error = %v", err)
 	}
 	for _, want := range []string{
-		"live would kill tmux window @12 session=beta session-id=$21 socket=" + testDeleteTarget.label(),
+		"live would kill tmux window @12 session=beta session-id=$21 socket=" + testDeleteTarget.Label(),
 		"live cascade would end Project session beta because its last live Window is deleted",
 	} {
 		if !strings.Contains(stdout, want) {

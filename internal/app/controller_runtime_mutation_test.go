@@ -61,7 +61,7 @@ func controllerMutationFixture(t *testing.T) (*fakeTmux, *routedTmuxRunner, runt
 	session.opts[tmuxopts.ProjectNameSession] = "before"
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
 	route := runtimeMutationRoute{
-		target:             explicitTmuxTarget{flag: "-L", value: "primary"},
+		target:             tmuxTransport{Kind: tmuxSocketName, Value: "primary", Source: tmuxSocketNameSource},
 		expectedSocketPath: server.socketPath, socketName: "primary",
 		authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID},
 	}
@@ -128,7 +128,7 @@ func TestControllerRuntimeMutationAcceptsExactSiblingUIDEffectBetweenPlanAndGuar
 		session.opts[tmuxopts.ProjectPathSession] = "/before"
 		runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
 		route := runtimeMutationRoute{
-			target: explicitTmuxTarget{flag: "-L", value: "primary"}, expectedSocketPath: server.socketPath,
+			target: tmuxTransport{Kind: tmuxSocketName, Value: "primary", Source: tmuxSocketNameSource}, expectedSocketPath: server.socketPath,
 			socketName: "primary", authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID},
 		}
 		guard := []controller.Guard{{Field: tmuxopts.ProjectUIDSession, Expect: ""}}
@@ -194,7 +194,7 @@ func TestAuthorshipPromotionRuntimeRollbackIsIndependentOfActionOrder(t *testing
 			pane.opts[tmuxopts.AgentProviderPane] = "codex"
 			pane.opts[tmuxopts.AgentLaunchAuthorshipPane] = "1"
 			runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
-			route := runtimeMutationRoute{target: explicitTmuxTarget{flag: "-L", value: "primary"}, expectedSocketPath: server.socketPath,
+			route := runtimeMutationRoute{target: tmuxTransport{Kind: tmuxSocketName, Value: "primary", Source: tmuxSocketNameSource}, expectedSocketPath: server.socketPath,
 				socketName: "primary", authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID}}
 			values := map[string]string{
 				tmuxopts.AgentUIDPane: "agent-promotion", tmuxopts.PaneOwnerKind: "Agent",
@@ -238,7 +238,7 @@ func TestControllerNonUIDOptionsHaveTypedEffectsRepeatEmptyAndOwnedRollback(t *t
 		base := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
 		runner := controllerBooleanOptionRunner{base: base}
 		route := runtimeMutationRoute{
-			target: explicitTmuxTarget{flag: "-L", value: "primary"}, expectedSocketPath: server.socketPath, socketName: "primary",
+			target: tmuxTransport{Kind: tmuxSocketName, Value: "primary", Source: tmuxSocketNameSource}, expectedSocketPath: server.socketPath, socketName: "primary",
 			authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID},
 		}
 		guards := []controller.Guard{{Field: tmuxopts.WindowUID, Expect: ""}, {Field: "session_id", Expect: session.id}}
@@ -507,7 +507,7 @@ func TestControllerUIDMintAndUnsetRollbackDistinguishNoEffectFromOwnedEffect(t *
 				session := server.addSession("alpha")
 				session.opts[tmuxopts.ProjectUIDSession] = operation.before
 				runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00primary": server}}
-				route := runtimeMutationRoute{target: explicitTmuxTarget{flag: "-L", value: "primary"}, expectedSocketPath: server.socketPath, socketName: "primary", authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID}}
+				route := runtimeMutationRoute{target: tmuxTransport{Kind: tmuxSocketName, Value: "primary", Source: tmuxSocketNameSource}, expectedSocketPath: server.socketPath, socketName: "primary", authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID}}
 				write := controllerClosedWrite(resourcegraph.ObjectSession, session.id, operation.before, tmuxopts.ProjectUIDSession, operation.before, operation.after)
 				server.fail, server.failAfterMutation, server.failMessage = []string{"set-option", tmuxopts.ProjectUIDSession}, failure.afterEffect, "injected UID apply failure"
 				beforeWrites := tmuxMutationCallCount(server)
@@ -541,7 +541,7 @@ func TestRealL8OrphanRecoveryPrintsOwnedUIDForEveryUnset(t *testing.T) {
 		SessionID: "session_id", WindowID: "window_id",
 	}, controller.Grant{}, candidates)
 	route := runtimeMutationRoute{
-		target: explicitTmuxTarget{flag: "-L", value: "primary"}, expectedSocketPath: "/tmp/controller-l8", socketName: "primary",
+		target: tmuxTransport{Kind: tmuxSocketName, Value: "primary", Source: tmuxSocketNameSource}, expectedSocketPath: "/tmp/controller-l8", socketName: "primary",
 		authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: "4242"},
 	}
 	final := map[string]string{}
@@ -665,7 +665,7 @@ func TestControllerExplicitStandaloneAuthorityNeverInfersAPane(t *testing.T) {
 	server.addSession("operator")
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-S\x00" + server.socketPath: server}}
 	route, err := resolveControllerRuntimeMutationRoute(context.Background(), runner,
-		explicitTmuxTarget{flag: "-S", value: server.socketPath}, func(string) string { return "" })
+		tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}, func(string) string { return "" })
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -679,7 +679,7 @@ func TestControllerExplicitStandaloneAuthorityNeverInfersAPane(t *testing.T) {
 		}
 	}
 	if _, err := resolveControllerRuntimeMutationRoute(context.Background(), runner,
-		explicitTmuxTarget{flag: "-L", value: "operator"}, func(string) string { return "" }); err == nil {
+		tmuxTransport{Kind: tmuxSocketName, Value: "operator", Source: tmuxSocketNameSource}, func(string) string { return "" }); err == nil {
 		t.Fatal("logical standalone route acquired internal explicit-path authority")
 	}
 }

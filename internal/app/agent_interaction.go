@@ -13,6 +13,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -314,9 +315,8 @@ func inheritedAgentMutationMirror(lookupEnv func(string) string, runner tmuxComm
 	if lookupEnv == nil || runner == nil {
 		return nil
 	}
-	socket, _, _ := strings.Cut(strings.TrimSpace(lookupEnv("TMUX")), ",")
-	target, err := tmuxSocketPathTarget(socket)
-	if err != nil {
+	target, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{InheritedTMUX: lookupEnv("TMUX")})
+	if err != nil || !target.Present() {
 		return nil
 	}
 	routed := explicitTmuxRunner{runner: runner, target: target}

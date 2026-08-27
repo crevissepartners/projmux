@@ -142,7 +142,7 @@ func observeExactManagedRuntimeStopTarget(ctx context.Context, runner tmuxComman
 	if target.Route.expectedSocketPath == "" {
 		return false, errors.New("managed runtime stop has no physical socket authority")
 	}
-	exact := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: filepath.Clean(target.Route.expectedSocketPath)}}
+	exact := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: filepath.Clean(target.Route.expectedSocketPath), Source: tmuxSocketPathSource}}
 	out, err := exact.Run(ctx, "tmux", "list-sessions", "-F", tmuxRowFormat(
 		"#{session_id}", "#{session_name}", "#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}"))
 	if err != nil {
@@ -186,7 +186,7 @@ func guardResolvedRuntimeMutationRouteBeforeMarkerWrite(ctx context.Context, run
 }
 
 func guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, allowMissingLogicalMarker bool) error {
-	if runner == nil || route.target.flag == "" || route.target.value == "" {
+	if runner == nil || route.target.Flag() == "" || route.target.Value == "" {
 		return errors.New("runtime mutation route is not exact")
 	}
 	// Once a physical socket has been observed, it is the execution authority.
@@ -194,7 +194,7 @@ func guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx context.Context, runn
 	// pre-observation report the effect from the wrong server.
 	probeTarget := route.target
 	if route.expectedSocketPath != "" {
-		probeTarget = explicitTmuxTarget{flag: "-S", value: filepath.Clean(route.expectedSocketPath)}
+		probeTarget = tmuxTransport{Kind: tmuxSocketPath, Value: filepath.Clean(route.expectedSocketPath), Source: tmuxSocketPathSource}
 	}
 	routed := explicitTmuxRunner{runner: runner, target: probeTarget}
 	out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
@@ -207,7 +207,7 @@ func guardResolvedRuntimeMutationRouteWithMarkerPolicy(ctx context.Context, runn
 	}
 	if route.authority != nil {
 		if (route.authority.Class == runtimeMutationRouteStandalone || route.authority.Class == runtimeMutationRouteStandaloneExplicit) &&
-			(route.target.flag != "-S" || route.target.value != route.expectedSocketPath) {
+			(route.target.Flag() != "-S" || route.target.Value != route.expectedSocketPath) {
 			return errors.New("planned standalone runtime route is not exact physical authority")
 		}
 		pidOut, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pid}")
@@ -268,7 +268,7 @@ func guardPrintedRuntimeMutationRouteWithMarkerPolicy(ctx context.Context, runne
 		if route.authority == nil || action.Target.RouteAuthority == "" || action.Target.RouteAuthority != route.authority.printable() {
 			return errors.New("printed runtime route authority disagrees with captured server generation")
 		}
-		printedRoute := route.target.flag + "=" + route.target.value
+		printedRoute := route.target.Flag() + "=" + route.target.Value
 		if action.Verb == mutationWriteRouteMarker {
 			printedRoute = "-S=" + route.expectedSocketPath
 		}
