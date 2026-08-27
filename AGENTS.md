@@ -27,21 +27,22 @@
 
 ## Standard Dev Flow
 - Make targets are the contract for local validation. Keep them stable and predictable.
-- Run work in this order before opening a PR:
-  1. `make fmt`
-  2. `make fix`
-  3. `make test`
-  4. `make test-integration`
-  5. `make test-e2e`
-- Then push and open the PR:
-  6. `git push -u origin <branch>`
-  7. `gh pr create --title ... --body ...` (Conventional Commit title; see [docs/pr-guideline.md](docs/pr-guideline.md)).
-  8. Wait for the `Test` check to turn green (`gh pr checks <num> --watch`). Use `--auto` on `gh pr merge` if you want it queued.
-  9. `gh pr merge <num> --squash --delete-branch`.
+- Refresh and validate the candidate base before every first push or force-push:
+  1. `git fetch origin main`.
+  2. Require `git merge-base --is-ancestor origin/main HEAD`. If it fails, rebase onto latest `origin/main` before continuing. The repository-policy range scan rejects a PR base that is not an ancestor of its head, so knowingly publishing that state only creates a deterministic failed CI run.
+  3. Run the fast local gates in order: `make fmt` → `make fix` → `make test`.
+  4. Refresh `origin/main` and check ancestry once more immediately before publishing. If main advanced, rebase and restart the fast local gates for the new head.
+- Publish the validated head as soon as the fast gates pass; do not serialize remote CI behind the long-running local gates:
+  5. `git push -u origin <branch>` for the first push, or `git push --force-with-lease` after a rebase.
+  6. Create or refresh the PR with a Conventional Commit title (see [docs/pr-guideline.md](docs/pr-guideline.md)).
+  7. While CI runs on that exact head, finish the remaining local gates in order: `make test-integration` → `make test-e2e`.
+  8. If a local or remote gate fails, keep merge blocked, fix the cause, and publish a new validated head through the same flow. Any rebase invalidates the previous local gate evidence, so rerun the full local sequence for the rebased head while starting its CI after the fast gates.
+  9. Wait for both the complete local gate sequence and the required CI `Test` check to turn green (`gh pr checks <num> --watch`). Use `--auto` on `gh pr merge` if you want it queued.
+  10. `gh pr merge <num> --squash --delete-branch`.
 - Promote the build only after merge:
-  10. `git -C <repo> pull --ff-only`
-  11. `make install` — atomic replace of `$(go env GOPATH)/bin/projmux` plus `projmux config apply`. **Never run it before step 10**; pre-merge state has not cleared CI yet and may not match what `main` will hold.
-  12. Retire the merged checkout/worktree with your local tooling if you used one.
+  11. `git -C <repo> pull --ff-only`
+  12. `make install` — atomic replace of `$(go env GOPATH)/bin/projmux` plus `projmux config apply`. **Never run it before step 11**; pre-merge state has not cleared CI yet and may not match what `main` will hold.
+  13. Retire the merged checkout/worktree with your local tooling if you used one.
 - If a target is missing for the area you are changing, add it or leave the repository in a state where the gap is explicit in docs and review notes.
 - If behavior changes, update the maintained test list in [docs/agent-workflow.md](docs/agent-workflow.md) in the same branch.
 - Do not skip `fmt` or `fix` because tests passed. Formatting, automatic fixes, and test execution are separate gates.
