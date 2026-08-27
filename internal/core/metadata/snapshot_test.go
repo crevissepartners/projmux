@@ -2,6 +2,8 @@ package metadata
 
 import (
 	"encoding/json"
+	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/crevissepartners/projmux/internal/core/sessionstate"
@@ -20,11 +22,15 @@ func buildSnapshot(reg *Registry, projectUID, session string) sessionstate.Snaps
 	for wi, window := range reg.WindowsOf(projectUID) {
 		snapWindow := sessionstate.Window{Index: wi, Name: window.Metadata.Name}
 		for pi, pane := range reg.snapshotPanesOf(window.Metadata.UID) {
+			recipe := sessionstate.ShellRecipe()
+			if pane.Spec.Command != "" {
+				recipe = sessionstate.StartupRecipe(pane.Spec.Command)
+			}
 			snapWindow.Panes = append(snapWindow.Panes, sessionstate.Pane{
 				Index:  pi,
 				Label:  pane.Metadata.Name,
 				CWD:    pane.Spec.CWD,
-				Recipe: sessionstate.ShellRecipe(),
+				Recipe: recipe,
 			})
 		}
 		snap.Windows = append(snap.Windows, snapWindow)
@@ -32,7 +38,39 @@ func buildSnapshot(reg *Registry, projectUID, session string) sessionstate.Snaps
 	return snap
 }
 
-func TestSnapshotCarriesResourceMetadataAndRestoresTheSameLogicalResources(t *testing.T) {
+// buildCurrentSnapshot adds the resource identity blocks emitted by current
+// snapshot producers. It is a fixture constructor, not a second application
+// path for projecting snapshot state into the Registry.
+func buildCurrentSnapshot(reg *Registry, projectUID, session string) sessionstate.Snapshot {
+	snap := buildSnapshot(reg, projectUID, session)
+	project, _ := reg.Project(projectUID)
+	snap.Metadata = snapshotFixtureMetadata(project.Metadata, "", "")
+	for wi, window := range reg.WindowsOf(projectUID) {
+		if wi >= len(snap.Windows) {
+			break
+		}
+		snap.Windows[wi].Metadata = snapshotFixtureMetadata(window.Metadata, string(KindProject), projectUID)
+		for pi, pane := range reg.snapshotPanesOf(window.Metadata.UID) {
+			if pi >= len(snap.Windows[wi].Panes) {
+				break
+			}
+			snap.Windows[wi].Panes[pi].Metadata = snapshotFixtureMetadata(pane.Metadata, string(pane.Metadata.OwnerRef.Kind), pane.Metadata.OwnerUID())
+		}
+	}
+	return snap
+}
+
+func snapshotFixtureMetadata(meta ObjectMeta, ownerKind, ownerUID string) *sessionstate.ResourceMetadata {
+	return &sessionstate.ResourceMetadata{
+		UID:       meta.UID,
+		Name:      meta.Name,
+		Labels:    cloneStringMap(meta.Labels),
+		OwnerKind: ownerKind,
+		OwnerUID:  ownerUID,
+	}
+}
+
+func TestSnapshotProjectionCurrentMetadataRestoresExactDesiredRegistry(t *testing.T) {
 	t.Parallel()
 
 	roots := dirSet{"/src/projmux": true}
@@ -53,10 +91,7 @@ func TestSnapshotCarriesResourceMetadataAndRestoresTheSameLogicalResources(t *te
 	}
 	projectUID := registered.Project.Metadata.UID
 
-	snap := buildSnapshot(&reg, projectUID, "projmux")
-	if err := AttachSnapshotMetadata(&reg, projectUID, &snap); err != nil {
-		t.Fatalf("attach: %v", err)
-	}
+	snap := buildCurrentSnapshot(&reg, projectUID, "projmux")
 	if err := snap.Validate(); err != nil {
 		t.Fatalf("snapshot with resource metadata is invalid: %v", err)
 	}
@@ -80,25 +115,19 @@ func TestSnapshotCarriesResourceMetadataAndRestoresTheSameLogicalResources(t *te
 		t.Fatalf("restored snapshot is invalid: %v", err)
 	}
 
-	reconciled := ReconcileSnapshot(&reg, restored)
-	if reconciled.ProjectUID != projectUID || reconciled.ProjectMatch != MatchUID {
-		t.Fatalf("project reconciliation = %+v", reconciled)
+	uidSourceCalled := false
+	plan, err := PlanSnapshotProjection(reg, projectUID, restored, fixedNow, func(Kind) (string, error) {
+		uidSourceCalled = true
+		return "", errors.New("current metadata fixture unexpectedly requested a uid")
+	})
+	if err != nil {
+		t.Fatalf("plan projection: %v", err)
 	}
-	for _, binding := range reconciled.Windows {
-		if binding.Match != MatchUID {
-			t.Fatalf("window %d matched by %q, want uid", binding.WindowIndex, binding.Match)
-		}
+	if uidSourceCalled {
+		t.Fatal("current metadata fixture allocated a replacement uid")
 	}
-	if len(reconciled.Panes) != 3 {
-		t.Fatalf("pane bindings = %d, want 3", len(reconciled.Panes))
-	}
-	for _, binding := range reconciled.Panes {
-		if binding.Match != MatchUID {
-			t.Fatalf("pane %d/%d matched by %q, want uid", binding.WindowIndex, binding.PaneIndex, binding.Match)
-		}
-		if _, ok := reg.Pane(binding.UID); !ok {
-			t.Fatalf("pane binding %q does not resolve", binding.UID)
-		}
+	if plan.Changed || !reflect.DeepEqual(plan.Desired, reg) {
+		t.Fatalf("current metadata projection changed desired Registry:\n%s", mustJSON(t, plan.Desired))
 	}
 
 	// Window ownerRef survives the round trip.
@@ -107,17 +136,16 @@ func TestSnapshotCarriesResourceMetadataAndRestoresTheSameLogicalResources(t *te
 	}
 }
 
-func TestSnapshotsWithoutResourceMetadataStillLoadAndReconcileDeterministically(t *testing.T) {
+func TestSnapshotProjectionLegacyMetadataFallbackRestoresExactDesiredRegistry(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name       string
 		session    string
 		defaultCWD string
-		wantMatch  MatchSource
 	}{
-		{name: "legacy snapshot matches by session projection", session: "projmux", defaultCWD: "", wantMatch: MatchSession},
-		{name: "legacy snapshot matches by root", session: "other", defaultCWD: "/src/projmux", wantMatch: MatchRoot},
-		{name: "unrelated legacy snapshot matches nothing", session: "other", defaultCWD: "", wantMatch: MatchNone},
+		{name: "matching runtime projection", session: "projmux", defaultCWD: ""},
+		{name: "matching root", session: "other", defaultCWD: "/src/projmux"},
+		{name: "unrelated legacy hints", session: "other", defaultCWD: ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -151,33 +179,19 @@ func TestSnapshotsWithoutResourceMetadataStillLoadAndReconcileDeterministically(
 				t.Fatalf("a legacy snapshot must still validate: %v", err)
 			}
 
-			reconciled := ReconcileSnapshot(&reg, legacy)
-			if reconciled.ProjectMatch != tt.wantMatch {
-				t.Fatalf("project match = %q, want %q", reconciled.ProjectMatch, tt.wantMatch)
+			plan, err := PlanSnapshotProjection(reg, projectUID, legacy, fixedNow, sequentialUIDs())
+			if err != nil {
+				t.Fatalf("plan legacy projection: %v", err)
 			}
-			if tt.wantMatch == MatchNone {
-				for _, binding := range reconciled.Windows {
-					if binding.Match != MatchNone {
-						t.Fatalf("window %d matched %q without a project", binding.WindowIndex, binding.Match)
-					}
-				}
-				return
+			if plan.Changed || !reflect.DeepEqual(plan.Desired, reg) {
+				t.Fatalf("legacy positional projection changed desired Registry:\n%s", mustJSON(t, plan.Desired))
 			}
-			if reconciled.ProjectUID != projectUID {
-				t.Fatalf("project uid = %q, want %q", reconciled.ProjectUID, projectUID)
+			repeat, err := PlanSnapshotProjection(plan.Desired, projectUID, legacy, fixedNow.Add(1), sequentialUIDs())
+			if err != nil {
+				t.Fatalf("repeat legacy projection: %v", err)
 			}
-			windows := reg.WindowsOf(projectUID)
-			for i, binding := range reconciled.Windows {
-				if binding.Match != MatchPositional {
-					t.Fatalf("window %d matched by %q, want positional", i, binding.Match)
-				}
-				if binding.UID != windows[i].Metadata.UID {
-					t.Fatalf("window %d bound to %q, want %q", i, binding.UID, windows[i].Metadata.UID)
-				}
-			}
-			// Reconciliation is deterministic: repeated runs agree.
-			if mustJSON(t, ReconcileSnapshot(&reg, legacy)) != mustJSON(t, reconciled) {
-				t.Fatal("legacy reconciliation is not deterministic")
+			if repeat.Changed || !reflect.DeepEqual(repeat.Desired, plan.Desired) {
+				t.Fatal("legacy positional projection did not reach an exact Registry fixed point")
 			}
 		})
 	}

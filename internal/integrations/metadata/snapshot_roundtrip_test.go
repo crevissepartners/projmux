@@ -1,6 +1,10 @@
 package metadata
 
 import (
+	"bytes"
+	"encoding/json"
+	"errors"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,23 +28,43 @@ func snapshotFor(t *testing.T, reg *coremetadata.Registry, projectUID, session s
 		Source:     sessionstate.SourceFresh,
 		DefaultCWD: project.Spec.Root,
 		SavedAt:    fixedNow,
+		Metadata: &sessionstate.ResourceMetadata{
+			UID: project.Metadata.UID, Name: project.Metadata.Name, Labels: copySnapshotLabels(project.Metadata.Labels),
+		},
 	}
 	for wi, window := range reg.WindowsOf(projectUID) {
-		snapWindow := sessionstate.Window{Index: wi, Name: window.Metadata.Name}
+		snapWindow := sessionstate.Window{Index: wi, Name: window.Metadata.Name, Metadata: &sessionstate.ResourceMetadata{
+			UID: window.Metadata.UID, Name: window.Metadata.Name, Labels: copySnapshotLabels(window.Metadata.Labels),
+			OwnerKind: string(coremetadata.KindProject), OwnerUID: projectUID,
+		}}
 		for pi, pane := range reg.PanesOf(window.Metadata.UID) {
+			recipe := sessionstate.ShellRecipe()
+			if pane.Spec.Command != "" {
+				recipe = sessionstate.StartupRecipe(pane.Spec.Command)
+			}
 			snapWindow.Panes = append(snapWindow.Panes, sessionstate.Pane{
 				Index:  pi,
 				Label:  pane.Metadata.Name,
 				CWD:    pane.Spec.CWD,
-				Recipe: sessionstate.ShellRecipe(),
+				Recipe: recipe,
+				Metadata: &sessionstate.ResourceMetadata{
+					UID: pane.Metadata.UID, Name: pane.Metadata.Name, Labels: copySnapshotLabels(pane.Metadata.Labels),
+					OwnerKind: string(coremetadata.KindWindow), OwnerUID: window.Metadata.UID,
+				},
 			})
 		}
 		snap.Windows = append(snap.Windows, snapWindow)
 	}
-	if err := coremetadata.AttachSnapshotMetadata(reg, projectUID, &snap); err != nil {
-		t.Fatalf("attach snapshot metadata: %v", err)
-	}
 	return snap
+}
+
+func copySnapshotLabels(in map[string]string) map[string]string {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	maps.Copy(out, in)
+	return out
 }
 
 func TestOfflineSnapshotRoundTripsThroughBothStoresAndKeepsTheSameLogicalResources(t *testing.T) {
@@ -90,8 +114,8 @@ func TestOfflineSnapshotRoundTripsThroughBothStoresAndKeepsTheSameLogicalResourc
 		}
 	}
 
-	// A fresh process reloads both stores and reconciles the restored
-	// snapshot back onto the very same resources.
+	// A fresh process reloads both stores and projects the restored snapshot
+	// back onto the very same desired Registry resources.
 	reloadedRegistry, err := NewStore(registryStore.Path()).Load()
 	if err != nil {
 		t.Fatalf("reload registry: %v", err)
@@ -101,17 +125,27 @@ func TestOfflineSnapshotRoundTripsThroughBothStoresAndKeepsTheSameLogicalResourc
 		t.Fatalf("reload snapshot: %v", err)
 	}
 
-	reconciled := coremetadata.ReconcileSnapshot(&reloadedRegistry, restored)
-	if reconciled.ProjectUID != projectUID || reconciled.ProjectMatch != coremetadata.MatchUID {
-		t.Fatalf("project reconciliation = %+v", reconciled)
+	registryBytes, err := json.Marshal(reloadedRegistry)
+	if err != nil {
+		t.Fatalf("marshal registry baseline: %v", err)
 	}
-	if len(reconciled.Windows) != 2 || len(reconciled.Panes) != 3 {
-		t.Fatalf("bindings = %d windows / %d panes, want 2/3", len(reconciled.Windows), len(reconciled.Panes))
+	uidSourceCalled := false
+	projection, err := coremetadata.PlanSnapshotProjection(reloadedRegistry, projectUID, restored, fixedNow, func(coremetadata.Kind) (string, error) {
+		uidSourceCalled = true
+		return "", errors.New("current snapshot unexpectedly requested a uid")
+	})
+	if err != nil {
+		t.Fatalf("plan snapshot projection: %v", err)
 	}
-	for _, binding := range append(append([]coremetadata.SnapshotBinding{}, reconciled.Windows...), reconciled.Panes...) {
-		if binding.Match != coremetadata.MatchUID {
-			t.Fatalf("%s %d/%d matched by %q, want uid", binding.Kind, binding.WindowIndex, binding.PaneIndex, binding.Match)
-		}
+	if uidSourceCalled {
+		t.Fatal("current snapshot projection allocated a replacement uid")
+	}
+	projectedBytes, err := json.Marshal(projection.Desired)
+	if err != nil {
+		t.Fatalf("marshal projected Registry: %v", err)
+	}
+	if projection.Changed || !bytes.Equal(projectedBytes, registryBytes) {
+		t.Fatalf("projected Registry bytes drifted:\n%s", projectedBytes)
 	}
 
 	// anchorPaneRef still resolves to a live registry pane after the whole

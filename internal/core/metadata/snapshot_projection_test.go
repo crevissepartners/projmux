@@ -69,10 +69,7 @@ func projectionFixture(t *testing.T) (Registry, string, string, sessionstate.Sna
 	if err := reg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	snap := buildSnapshot(&reg, one.Project.Metadata.UID, "one")
-	if err := AttachSnapshotMetadata(&reg, one.Project.Metadata.UID, &snap); err != nil {
-		t.Fatal(err)
-	}
+	snap := buildCurrentSnapshot(&reg, one.Project.Metadata.UID, "one")
 	for wi := range snap.Windows {
 		for pi := range snap.Windows[wi].Panes {
 			if snap.Windows[wi].Panes[pi].Metadata != nil && snap.Windows[wi].Panes[pi].Metadata.OwnerKind == string(KindAgent) {
@@ -154,6 +151,87 @@ func FuzzSnapshotProjectionIsScopedValidAndIdempotent(f *testing.F) {
 	})
 }
 
+func TestSnapshotProjectionMetadataUIDsTakePriorityOverPosition(t *testing.T) {
+	reg, targetUID, _, snap := projectionFixture(t)
+	if len(snap.Windows) < 2 || len(snap.Windows[0].Panes) < 2 {
+		t.Fatal("fixture requires two Windows and two Panes in the first Window")
+	}
+	snap.Windows[0].Panes[0], snap.Windows[0].Panes[1] = snap.Windows[0].Panes[1], snap.Windows[0].Panes[0]
+	snap.Windows[0], snap.Windows[1] = snap.Windows[1], snap.Windows[0]
+
+	plan, err := PlanSnapshotProjection(reg, targetUID, snap, fixedNow.Add(time.Minute), sequentialUIDs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	windows := plan.Desired.WindowsOf(targetUID)
+	if len(windows) != len(snap.Windows) {
+		t.Fatalf("projected Windows=%d, want %d", len(windows), len(snap.Windows))
+	}
+	for wi, snapshotWindow := range snap.Windows {
+		if got, want := windows[wi].Metadata.UID, snapshotWindow.Metadata.UID; got != want {
+			t.Fatalf("Window %d uid=%q, want metadata uid %q", wi, got, want)
+		}
+		panes := plan.Desired.snapshotPanesOf(gotUID(snapshotWindow.Metadata))
+		if len(panes) != len(snapshotWindow.Panes) {
+			t.Fatalf("Window %q projected Panes=%d, want %d", gotUID(snapshotWindow.Metadata), len(panes), len(snapshotWindow.Panes))
+		}
+		for pi, snapshotPane := range snapshotWindow.Panes {
+			if got, want := panes[pi].Metadata.UID, gotUID(snapshotPane.Metadata); got != want {
+				t.Fatalf("Window %d Pane %d uid=%q, want metadata uid %q", wi, pi, got, want)
+			}
+		}
+	}
+}
+
+func TestSnapshotProjectionPreservesAgentOwnerChainAtExactFixedPoint(t *testing.T) {
+	reg, targetUID, _, snap := projectionFixture(t)
+	plan, err := PlanSnapshotProjection(reg, targetUID, snap, fixedNow.Add(time.Minute), sequentialUIDs())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := false
+	for _, snapshotWindow := range snap.Windows {
+		for _, snapshotPane := range snapshotWindow.Panes {
+			if snapshotPane.Recipe.Kind != sessionstate.RecipeKindAgent {
+				continue
+			}
+			found = true
+			paneUID := gotUID(snapshotPane.Metadata)
+			agentUID := snapshotPane.Metadata.OwnerUID
+			pane, ok := plan.Desired.Pane(paneUID)
+			if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindAgent || pane.Metadata.OwnerUID() != agentUID {
+				t.Fatalf("projected Agent Pane owner chain=%+v, want Agent %q", pane.Metadata.OwnerRef, agentUID)
+			}
+			agent, ok := plan.Desired.Agent(agentUID)
+			if !ok || agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != KindWindow || agent.Metadata.OwnerUID() != gotUID(snapshotWindow.Metadata) {
+				t.Fatalf("projected Agent owner chain=%+v, want Window %q", agent.Metadata.OwnerRef, gotUID(snapshotWindow.Metadata))
+			}
+			if agent.Status.PaneRef != paneUID {
+				t.Fatalf("projected Agent paneRef=%q, want %q", agent.Status.PaneRef, paneUID)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("fixture requires an Agent Pane")
+	}
+
+	repeat, err := PlanSnapshotProjection(plan.Desired, targetUID, snap, fixedNow.Add(2*time.Minute), sequentialUIDs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeat.Changed || !reflect.DeepEqual(repeat.Desired, plan.Desired) {
+		t.Fatal("owner-chain projection did not reach an exact desired Registry fixed point")
+	}
+}
+
+func gotUID(meta *sessionstate.ResourceMetadata) string {
+	if meta == nil {
+		return ""
+	}
+	return meta.UID
+}
+
 func TestSnapshotProjectionFinalV2RefsGolden(t *testing.T) {
 	reg, targetUID, _, snap := projectionFixture(t)
 	project, _ := reg.Project(targetUID)
@@ -167,10 +245,7 @@ func TestSnapshotProjectionFinalV2RefsGolden(t *testing.T) {
 	if err := reg.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	snap = buildSnapshot(&reg, targetUID, "one")
-	if err := AttachSnapshotMetadata(&reg, targetUID, &snap); err != nil {
-		t.Fatal(err)
-	}
+	snap = buildCurrentSnapshot(&reg, targetUID, "one")
 	for wi := range snap.Windows {
 		for pi := range snap.Windows[wi].Panes {
 			if snap.Windows[wi].Panes[pi].Metadata != nil && snap.Windows[wi].Panes[pi].Metadata.OwnerKind == string(KindAgent) {
