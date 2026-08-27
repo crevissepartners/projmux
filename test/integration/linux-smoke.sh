@@ -1280,9 +1280,11 @@ fi
 cmp "$PROJMUX_SMOKE_WORKDIR/session-state-snapshot.before" "$session_state_snapshot"
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" switch-client -c "$control_client" -t integration-smoke
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" kill-session -t "=$session_state_name"
+session_state_continue_anchor="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -c "$control_client" '#{pane_id}')"
 env -u TMUX -u TMUX_PANE PATH="$lifecycle_path" PROJMUX_REAL_TMUX="$real_tmux" \
   "$bin" switch sidebar-open --path "$session_state_root" --session "$session_state_name" \
-  --mode continue --client "$control_client" >"$PROJMUX_SMOKE_WORKDIR/session-state-continue.out"
+  --mode continue --client "$control_client" --anchor "$session_state_continue_anchor" \
+  >"$PROJMUX_SMOKE_WORKDIR/session-state-continue.out"
 if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -c "$control_client" '#{session_name}')" != "$session_state_name" ]]; then
   echo "Continue project did not use the exact client as its final handoff" >&2
   exit 1

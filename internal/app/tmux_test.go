@@ -1540,6 +1540,27 @@ func TestBuildPopupTogglePropagatesVerifiedRouteAnchorThroughPrivateChildEnv(t *
 	}
 }
 
+func TestBuildPopupToggleCarriesSidebarAnchorAsTypedSwitchArgumentOnly(t *testing.T) {
+	command, options, err := buildPopupToggleWithStyle(
+		tmuxPopupToggleMode{Raw: "sessionizer-sidebar", Canonical: "sessionizer-sidebar", AnchorPane: "%12"},
+		"/tmp/projmux", "/tmp/marker",
+		tmuxPopupContext{OriginPane: "%12", TargetClient: "/dev/pts/8"},
+		func(string) string { return "" }, "",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(command, "'switch' '--ui=sidebar' '--anchor' '%12'") {
+		t.Fatalf("sidebar popup command omitted typed anchor: %q", command)
+	}
+	if strings.Contains(command, runtimeMutationAnchorPaneEnv) {
+		t.Fatalf("sidebar popup command retained private anchor env: %q", command)
+	}
+	if _, ok := options.Env[runtimeMutationAnchorPaneEnv]; ok {
+		t.Fatalf("sidebar popup options retained private anchor env: %#v", options.Env)
+	}
+}
+
 func TestAppRunTmuxPopupTogglePropagatesLegacySessionizerRoots(t *testing.T) {
 	t.Parallel()
 

@@ -61,12 +61,14 @@ func TestProjectStartupExactTwoRowGolden(t *testing.T) {
 // (materialize, then move the client) can be asserted on its own.
 type fakeProjectTopologyMaterializer struct {
 	calls        []string
+	requests     []projectTopologyMaterializeRequest
 	materialized bool
 	err          error
 }
 
-func (f *fakeProjectTopologyMaterializer) MaterializeProjectTopology(_ context.Context, root, sessionName string) (bool, error) {
-	f.calls = append(f.calls, "topology:"+root+":"+sessionName)
+func (f *fakeProjectTopologyMaterializer) MaterializeProjectTopology(_ context.Context, request projectTopologyMaterializeRequest) (bool, error) {
+	f.calls = append(f.calls, "topology:"+request.Root+":"+request.SessionName)
+	f.requests = append(f.requests, request)
 	if f.err != nil {
 		return false, f.err
 	}
@@ -140,7 +142,7 @@ func newProjectStartupTopologyFixture(t *testing.T) (*registryProjectTopologyMat
 func TestClosedProjectStartupMaterializesFullRegistryTopology(t *testing.T) {
 	activation, store, server, root, logs := newProjectStartupTopologyFixture(t)
 
-	materialized, err := activation.MaterializeProjectTopology(context.Background(), root, "beta")
+	materialized, err := activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{Root: root, SessionName: "beta"})
 	if err != nil || !materialized {
 		t.Fatalf("MaterializeProjectTopology() = %t, %v; want true, nil", materialized, err)
 	}
@@ -169,7 +171,7 @@ func TestClosedProjectStartupMaterializesFullRegistryTopology(t *testing.T) {
 
 	server.calls = nil
 	writesBefore := store.writes
-	materialized, err = activation.MaterializeProjectTopology(context.Background(), root, "beta")
+	materialized, err = activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{Root: root, SessionName: "beta"})
 	if err != nil || !materialized {
 		t.Fatalf("repeat MaterializeProjectTopology() = %t, %v; want true, nil", materialized, err)
 	}
@@ -192,7 +194,7 @@ func TestClosedProjectStartupWithoutDesiredTopologyStaysOnEnsureSession(t *testi
 	activation, store, server, root, _ := newProjectStartupTopologyFixture(t)
 
 	unregistered := t.TempDir()
-	materialized, err := activation.MaterializeProjectTopology(context.Background(), unregistered, "beta")
+	materialized, err := activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{Root: unregistered, SessionName: "beta"})
 	if err != nil || materialized {
 		t.Fatalf("unregistered root = %t, %v; want false, nil", materialized, err)
 	}
@@ -200,7 +202,7 @@ func TestClosedProjectStartupWithoutDesiredTopologyStaysOnEnsureSession(t *testi
 	// Strip the Project's Windows: the Project exists, but declares no topology.
 	store.registry.Windows = nil
 	store.registry.Panes = nil
-	materialized, err = activation.MaterializeProjectTopology(context.Background(), root, "beta")
+	materialized, err = activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{Root: root, SessionName: "beta"})
 	if err != nil || materialized {
 		t.Fatalf("windowless Project = %t, %v; want false, nil", materialized, err)
 	}
@@ -258,7 +260,7 @@ func TestZeroWindowContinuePreservesProjectAndAllocatesCanonicalWindowShellUIDs(
 func TestClosedProjectStartupRefusesForeignSessionProjection(t *testing.T) {
 	activation, store, server, root, _ := newProjectStartupTopologyFixture(t)
 
-	materialized, err := activation.MaterializeProjectTopology(context.Background(), root, "work-alpha")
+	materialized, err := activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{Root: root, SessionName: "work-alpha"})
 	if err == nil || materialized {
 		t.Fatalf("foreign session projection = %t, %v; want false and an error", materialized, err)
 	}
@@ -464,7 +466,7 @@ func TestClosedProjectStartupReplaysStoredAgents(t *testing.T) {
 	})
 	fresh := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "codex", provider: "codex", cwd: root})
 
-	materialized, err := activation.MaterializeProjectTopology(context.Background(), root, "beta")
+	materialized, err := activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{Root: root, SessionName: "beta"})
 	if err != nil || !materialized {
 		t.Fatalf("MaterializeProjectTopology() = %t, %v; want true, nil", materialized, err)
 	}

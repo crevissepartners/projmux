@@ -36,15 +36,18 @@ func wireFakeProjectSessionPlan(cmd *switchCommand) {
 	if cmd.tmuxRunner == nil {
 		cmd.tmuxRunner = &recordingTmuxRunner{}
 	}
-	cmd.projectSessionPlan = func(ctx context.Context, sessionName, cwd string, opened openedProjectBootstrap) error {
-		if err := cmd.sessions.EnsureSession(ctx, sessionName, cwd); err != nil {
+	if cmd.validateProjectOpenRoute == nil {
+		cmd.validateProjectOpenRoute = func(context.Context, string) error { return nil }
+	}
+	cmd.projectSessionPlan = func(ctx context.Context, request projectSessionRequest) error {
+		if err := cmd.sessions.EnsureSession(ctx, request.SessionName, request.CWD); err != nil {
 			return err
 		}
-		if !opened.bootstrapped || cmd.projectMirror == nil {
+		if !request.Opened.bootstrapped || cmd.projectMirror == nil {
 			return nil
 		}
-		if err := cmd.projectMirror.MirrorProject(ctx, sessionName, opened.project); err != nil {
-			return fmt.Errorf("mirror Project identity onto tmux session %q: %w", sessionName, err)
+		if err := cmd.projectMirror.MirrorProject(ctx, request.SessionName, request.Opened.project); err != nil {
+			return fmt.Errorf("mirror Project identity onto tmux session %q: %w", request.SessionName, err)
 		}
 		return nil
 	}

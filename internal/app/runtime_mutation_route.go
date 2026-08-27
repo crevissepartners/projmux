@@ -166,6 +166,34 @@ func observeInheritedRuntimeMutationAuthority(
 	}, nil
 }
 
+// observeExplicitAppAnchorAuthority binds a detached invocation's required
+// `%N` operand to the already-proven physical app socket and server generation.
+// Unlike the generic inherited path, it uses no TMUX_PANE or active-pane
+// inference: the typed operand must itself resolve to one exact $/@/% receipt.
+func observeExplicitAppAnchorAuthority(
+	ctx context.Context,
+	routed tmuxCommandRunner,
+	expectedSocketPath, serverPID, paneID string,
+) (*runtimeMutationRouteAuthority, error) {
+	if exactTmuxHandle(paneID, "%") == "" {
+		return nil, errors.New("runtime mutation route: detached invocation requires an exact --anchor %N")
+	}
+	out, err := routed.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, "-F", tmuxRowFormat(
+		"#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}"))
+	if err != nil {
+		return nil, fmt.Errorf("runtime mutation route: reobserve explicit anchor: %w", err)
+	}
+	rows := splitTmuxRows(string(out), 5)
+	if len(rows) != 1 || rows[0][0] != expectedSocketPath || rows[0][1] != serverPID ||
+		exactTmuxHandle(rows[0][2], "$") == "" || exactTmuxHandle(rows[0][3], "@") == "" || rows[0][4] != paneID {
+		return nil, errors.New("runtime mutation route: explicit anchor socket/pid/pane containment drifted")
+	}
+	return &runtimeMutationRouteAuthority{
+		Class: runtimeMutationRouteApp, ServerPID: serverPID,
+		SessionID: rows[0][2], WindowID: rows[0][3], PaneID: rows[0][4],
+	}, nil
+}
+
 func defaultRuntimeMutationRoute() runtimeMutationRoute {
 	return runtimeMutationRoute{
 		target:     explicitTmuxTarget{flag: "-L", value: defaultAppSocket},
@@ -391,6 +419,9 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 		observed, err := routed.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 		if err != nil {
 			if inttmux.IsNoServerFailure(err) {
+				if paneID != "" {
+					return runtimeMutationRoute{}, errors.New("runtime mutation route: explicit anchor server is unavailable")
+				}
 				return route, nil
 			}
 			return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: probe default logical socket: %w", err)
@@ -431,9 +462,16 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 		if err != nil || pidErr != nil || parsedPID <= 0 {
 			return runtimeMutationRoute{}, errors.New("runtime mutation route: default app server generation is unreadable")
 		}
+		authority := &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: pid}
+		if paneID != "" {
+			authority, err = observeExplicitAppAnchorAuthority(ctx, physical, route.expectedSocketPath, pid, paneID)
+			if err != nil {
+				return runtimeMutationRoute{}, err
+			}
+		}
 		return runtimeMutationRoute{
 			target: nameTarget, expectedSocketPath: route.expectedSocketPath, socketName: nameTarget.value,
-			authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: pid},
+			authority: authority,
 		}, nil
 	}
 	receipt, err := parseInheritedTmuxReceipt(tmuxEnv)

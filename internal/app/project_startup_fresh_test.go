@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -59,7 +60,7 @@ func (s failingContinueStarter) ContinueProject(context.Context, string, string)
 
 type orderedFreshTopology struct{ calls *[]string }
 
-func (m orderedFreshTopology) MaterializeProjectTopology(context.Context, string, string) (bool, error) {
+func (m orderedFreshTopology) MaterializeProjectTopology(context.Context, projectTopologyMaterializeRequest) (bool, error) {
 	*m.calls = append(*m.calls, "materialize")
 	return true, nil
 }
@@ -89,7 +90,7 @@ func TestOpenFreshFinalClientHandoffIsLast(t *testing.T) {
 		projectTopology:   orderedFreshTopology{calls: &calls},
 		startupNotices:    orderedFreshReporter{calls: &calls},
 	}
-	if err := cmd.startProjectFresh(context.Background(), "workspace", "/tmp/workspace", openedProjectBootstrap{}); err != nil {
+	if err := cmd.startProjectFresh(context.Background(), "workspace", "/tmp/workspace", openedProjectBootstrap{}, ""); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"plan", "prune", "plan", "materialize", "notice", "open"}
@@ -1083,7 +1084,7 @@ func TestStartProjectFreshCommitFailureReportsAllocatedNewUID(t *testing.T) {
 	cmd := &switchCommand{projectFreshStart: &registryProjectFreshStarter{
 		resources: resources, runner: &projectionMissingSessionRunner{}, shell: "/bin/zsh",
 	}}
-	err := cmd.startProjectFresh(context.Background(), "alpha", "/srv/alpha", openedProjectBootstrap{})
+	err := cmd.startProjectFresh(context.Background(), "alpha", "/srv/alpha", openedProjectBootstrap{}, "")
 	if err == nil || !strings.Contains(err.Error(), "injected production Fresh commit failure") {
 		t.Fatalf("production Fresh commit failure=%v", err)
 	}
@@ -1110,7 +1111,7 @@ func TestStartProjectFreshPostCommitReadbackFailureReportsAllocatedNewUID(t *tes
 		},
 		projectRegistrar: &fakeProjectRegistrar{err: errors.New("injected replacement readback failure")},
 	}
-	err := cmd.startProjectFresh(context.Background(), "alpha", "/srv/alpha", openedProjectBootstrap{})
+	err := cmd.startProjectFresh(context.Background(), "alpha", "/srv/alpha", openedProjectBootstrap{}, "")
 	if err == nil || !strings.Contains(err.Error(), "injected replacement readback failure") {
 		t.Fatalf("production Fresh replacement readback failure=%v", err)
 	}
@@ -1222,10 +1223,13 @@ func TestSwitchSidebarOpenAcceptsFreshMode(t *testing.T) {
 		projectTopology:   &fakeProjectTopologyMaterializer{},
 		projectFreshStart: &registryProjectFreshStarter{resources: store.store(), runner: &projectionMissingSessionRunner{}},
 		startupNotices:    reporter,
+		validateProjectOpenRoute: func(context.Context, string) error {
+			return nil
+		},
 	}
 
 	cmd.projectTopology.(*fakeProjectTopologyMaterializer).materialized = true
-	if err := cmd.runSidebarOpen([]string{"--path", "/srv/alpha", "--session", "alpha", "--mode", projectStartupValueNew}, &bytes.Buffer{}); err != nil {
+	if err := cmd.runSidebarOpen([]string{"--path", "/srv/alpha", "--session", "alpha", "--mode", projectStartupValueNew, "--anchor", "%12"}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
 	if store.writes != 1 {
@@ -1233,6 +1237,62 @@ func TestSwitchSidebarOpenAcceptsFreshMode(t *testing.T) {
 	}
 	if !equalStrings(executor.calls, []string{"authorize:/srv/alpha", "open:alpha"}) {
 		t.Fatalf("--mode fresh calls: %v", executor.calls)
+	}
+}
+
+// TestSidebarAnchorDriftAfterPreflightRefusesBeforeFreshRegistryWrite pins the
+// two-observation boundary. The parser preflight may succeed, but authority can
+// still drift while the trust prompt is open; the post-trust guard must fail
+// before Fresh opens even one Registry transaction.
+func TestSidebarAnchorDriftAfterPreflightRefusesBeforeFreshRegistryWrite(t *testing.T) {
+	store := freshStartFixtureStore(t)
+	registryBefore, err := json.Marshal(store.registry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryProjectionBefore := store.snapshot()
+	routeChecks := 0
+	runner := &recordingTmuxRunner{}
+	cmd := &switchCommand{
+		sessions:   &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true},
+		tmuxRunner: runner,
+		executable: func() (string, error) { return "/usr/bin/projmux", nil },
+		projectFreshStart: &registryProjectFreshStarter{
+			resources: store.store(), runner: &projectionMissingSessionRunner{},
+		},
+		validateProjectOpenRoute: func(context.Context, string) error {
+			routeChecks++
+			if routeChecks == 1 {
+				return nil
+			}
+			return errors.New("injected Pane/Project ownership drift")
+		},
+	}
+
+	err = cmd.runSidebarOpen([]string{
+		"--path", "/srv/alpha", "--session", "alpha", "--mode", projectStartupValueNew, "--anchor", "%12",
+	}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "injected Pane/Project ownership drift") {
+		t.Fatalf("post-trust anchor drift error = %v", err)
+	}
+	if routeChecks != 2 {
+		t.Fatalf("route checks = %d, want parser preflight and post-trust guard", routeChecks)
+	}
+	registryAfter, marshalErr := json.Marshal(store.registry)
+	if marshalErr != nil {
+		t.Fatal(marshalErr)
+	}
+	if store.transactions != 0 || store.writes != 0 || !bytes.Equal(registryAfter, registryBefore) || store.snapshot() != registryProjectionBefore {
+		t.Fatalf("post-trust drift reached Registry state: transactions=%d writes=%d bytesChanged=%t projectionChanged=%t",
+			store.transactions, store.writes, !bytes.Equal(registryAfter, registryBefore), store.snapshot() != registryProjectionBefore)
+	}
+	for _, call := range runner.calls {
+		argv := tmuxCommandArgv(call.args)
+		for _, write := range []string{"set-option", "set-environment", "new-session", "new-window", "split-window", "kill-pane", "kill-window", "kill-session", "switch-client"} {
+			if slices.Contains(argv, write) {
+				t.Fatalf("post-trust drift reached tmux mutation %q: %#v", write, runner.calls)
+			}
+		}
 	}
 }
 
