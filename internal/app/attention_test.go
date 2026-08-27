@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -584,6 +585,124 @@ func TestAttentionRejectsInvalidUsage(t *testing.T) {
 				t.Fatalf("stderr = %q, want usage", stderr.String())
 			}
 		})
+	}
+}
+
+// TestAttentionMutationOmittedTargetMatchesExplicitPaneLedger is the C-1
+// positive command-boundary table. Each omitted mutation first reobserves the
+// exact inherited pane and then enters the unchanged explicit-target handler.
+func TestAttentionMutationOmittedTargetMatchesExplicitPaneLedger(t *testing.T) {
+	t.Parallel()
+
+	for _, verb := range []string{"toggle", "clear", "arm"} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+
+			outputs := map[string][]byte{
+				"tmux display-message -p -t %7 #{pane_id}":                        []byte("%7\n"),
+				"tmux display-message -p -t %7 #{pane_title}":                     []byte("shell\n"),
+				"tmux display-message -p -t %7 #{@projmux_attention_state}":       []byte(map[string]string{"arm": "reply\n"}[verb]),
+				"tmux display-message -p -t %7 #{@projmux_ai_badge_kind}":         nil,
+				"tmux display-message -p -t %7 #{@projmux_ai_state}":              nil,
+				"tmux display-message -p -t %7 #{@projmux_attention_focus_armed}": nil,
+				"tmux display-message -p -t %7 #{@projmux_attention_ack}":         nil,
+				"tmux display-message -p -t %7 #{@projmux_ai_agent}":              nil,
+				"tmux display-message -p -t %7 #{@projmux_ai_topic}":              nil,
+			}
+			explicitRunner := &recordingAttentionRunner{outputs: outputs}
+			explicit := &attentionCommand{runner: explicitRunner}
+			if err := explicit.Run([]string{verb, "%7"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("explicit Run() error = %v", err)
+			}
+
+			omittedRunner := &recordingAttentionRunner{outputs: outputs}
+			omitted := &attentionCommand{
+				runner: omittedRunner,
+				lookupEnv: func(name string) string {
+					return map[string]string{"TMUX": "/tmp/tmux,123,0", "TMUX_PANE": "%7"}[name]
+				},
+			}
+			var stdout, stderr bytes.Buffer
+			if err := omitted.Run([]string{verb}, &stdout, &stderr); err != nil {
+				t.Fatalf("omitted Run() error = %v", err)
+			}
+			if stdout.Len() != 0 || stderr.Len() != 0 {
+				t.Fatalf("omitted streams = stdout %q stderr %q, want empty", stdout.String(), stderr.String())
+			}
+
+			reobserve := attentionCall{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "#{pane_id}"}}
+			if len(omittedRunner.calls) == 0 || !reflect.DeepEqual(omittedRunner.calls[0], reobserve) {
+				t.Fatalf("first omitted call = %#v, want exact targeted reobserve %#v", omittedRunner.calls, reobserve)
+			}
+			if !reflect.DeepEqual(omittedRunner.calls[1:], explicitRunner.calls) {
+				t.Fatalf("omitted handler ledger = %#v, explicit = %#v", omittedRunner.calls[1:], explicitRunner.calls)
+			}
+			for _, call := range omittedRunner.calls {
+				if call.name == "tmux" && !slices.Contains(call.args, "-t") {
+					t.Fatalf("targetless tmux call escaped despite unrelated client evidence: %#v", call)
+				}
+				if index := slices.Index(call.args, "-t"); index >= 0 && (index+1 >= len(call.args) || call.args[index+1] != "%7") {
+					t.Fatalf("tmux call targeted outside inherited pane: %#v", call)
+				}
+			}
+		})
+	}
+}
+
+// TestAttentionMutationOmittedTargetRefusesWithoutExactInvocationPane is the
+// C-1 negative table. Missing, blank, malformed, stale, and contradictory
+// evidence may perform the one exact read needed to detect staleness, but no
+// attention mutation is allowed.
+func TestAttentionMutationOmittedTargetRefusesWithoutExactInvocationPane(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		tmux    string
+		pane    string
+		outputs map[string][]byte
+		err     error
+	}{
+		{name: "outside tmux"},
+		{name: "blank tmux", tmux: "   ", pane: "%7"},
+		{name: "missing pane", tmux: "/tmp/tmux,123,0"},
+		{name: "blank pane", tmux: "/tmp/tmux,123,0", pane: "   "},
+		{name: "malformed pane", tmux: "/tmp/tmux,123,0", pane: "7"},
+		{name: "non exact pane whitespace", tmux: "/tmp/tmux,123,0", pane: "%7 "},
+		{name: "stale pane", tmux: "/tmp/tmux,123,0", pane: "%7", err: errors.New("can't find pane: %7")},
+		{name: "contradictory reobserve", tmux: "/tmp/tmux,123,0", pane: "%7", outputs: map[string][]byte{"tmux display-message -p -t %7 #{pane_id}": []byte("%8\n")}},
+	}
+
+	for _, verb := range []string{"toggle", "clear", "arm"} {
+		for _, test := range tests {
+			t.Run(verb+"/"+test.name, func(t *testing.T) {
+				t.Parallel()
+
+				runner := &recordingAttentionRunner{outputs: test.outputs, err: test.err}
+				cmd := &attentionCommand{
+					runner: runner,
+					lookupEnv: func(name string) string {
+						return map[string]string{"TMUX": test.tmux, "TMUX_PANE": test.pane}[name]
+					},
+				}
+				var stdout, stderr bytes.Buffer
+				err := cmd.Run([]string{verb}, &stdout, &stderr)
+				if err == nil {
+					t.Fatal("Run() error = nil, want explicit refusal")
+				}
+				if got := err.Error(); !strings.Contains(got, "requires an explicit pane or valid inherited TMUX_PANE") || len(got) > 240 {
+					t.Fatalf("error = %q, want bounded actionable target refusal", got)
+				}
+				if stdout.Len() != 0 || stderr.Len() != 0 {
+					t.Fatalf("streams = stdout %q stderr %q, want command-boundary output 0", stdout.String(), stderr.String())
+				}
+				for _, call := range runner.calls {
+					if !reflect.DeepEqual(call, attentionCall{name: "tmux", args: []string{"display-message", "-p", "-t", "%7", "#{pane_id}"}}) {
+						t.Fatalf("call before refusal = %#v, want only exact targeted reobserve", call)
+					}
+				}
+			})
+		}
 	}
 }
 

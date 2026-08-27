@@ -240,9 +240,9 @@ var routes = []Route{
 		Usage:       []string{"projmux attention toggle|clear|arm|list|window"},
 		Canonical:   []string{"attention list", "attention toggle", "attention clear", "attention arm", "attention window"},
 		Children: []Route{
-			{Name: "toggle", Summary: "Toggle attention state for a pane", Canonical: []string{"attention toggle"}},
-			{Name: "clear", Summary: "Clear attention state for a pane", Canonical: []string{"attention clear"}},
-			{Name: "arm", Summary: "Arm focus-only attention consumption", Canonical: []string{"attention arm"}},
+			{Name: "toggle", Summary: "Toggle attention state for a pane", Usage: []string{"projmux attention toggle [pane]"}, Canonical: []string{"attention toggle"}},
+			{Name: "clear", Summary: "Clear attention state for a pane", Usage: []string{"projmux attention clear [pane]"}, Canonical: []string{"attention clear"}},
+			{Name: "arm", Summary: "Arm focus-only attention consumption", Usage: []string{"projmux attention arm [pane]"}, Canonical: []string{"attention arm"}},
 			{Name: "list", Summary: "List live pane attention state", Canonical: []string{"attention list"}},
 			{Name: "window", Summary: "Render window-scoped attention badges", Canonical: []string{"attention window"}},
 		},

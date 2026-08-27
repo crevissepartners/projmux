@@ -85,6 +85,41 @@ func TestGeneratedReferenceMatchesTheCommandManifest(t *testing.T) {
 	t.Fatalf("%s is stale; run %q", ReferencePath, ReferenceRegenCommand)
 }
 
+// TestAttentionMutationOptionalPaneDocsParity closes the hand-maintained guide
+// side of the catalog/generated/runtime help contract. Route.Usage and runtime
+// rendering are pinned in help_test; this test pins both checked-in documents.
+func TestAttentionMutationOptionalPaneDocsParity(t *testing.T) {
+	t.Parallel()
+
+	reference := readGeneratedReference(t)
+	guidePath := filepath.Join(repoRoot(t), "docs", "cli-guide.md")
+	guideBytes, err := os.ReadFile(guidePath) // #nosec G304 -- repository-relative maintained doc
+	if err != nil {
+		t.Fatalf("read docs/cli-guide.md: %v", err)
+	}
+	guide := string(guideBytes)
+	for _, verb := range []string{"toggle", "clear", "arm"} {
+		spelling := "projmux attention " + verb + " [pane]"
+		if !strings.Contains(reference, spelling) {
+			t.Errorf("generated reference lost %q", spelling)
+		}
+		guideSpelling := regexp.MustCompile(`(?m)^projmux attention ` + verb + `\s+\[pane\]$`)
+		if !guideSpelling.MatchString(guide) {
+			t.Errorf("guide lost optional target spelling for attention %s", verb)
+		}
+	}
+	guideWords := strings.Join(strings.Fields(guide), " ")
+	for _, want := range []string{
+		"optional pane is the exact pane invoking the command",
+		"requires inherited `$TMUX` plus an exact `$TMUX_PANE=%N`",
+		"the command fails without writing attention state",
+	} {
+		if !strings.Contains(guideWords, want) {
+			t.Errorf("guide lost omitted-target meaning %q", want)
+		}
+	}
+}
+
 // TestGeneratedReferenceIsDeterministic proves regeneration on an unchanged
 // tree is a no-op, which is what makes the drift gate above a signal instead of
 // noise. Rendering repeatedly must produce identical bytes: no timestamp, no

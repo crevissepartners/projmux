@@ -1269,6 +1269,13 @@ projmux attention window [window]
 Toggles the `✳` pane title prefix and the `@projmux_attention_state` pane
 option. `toggle` flips between cleared and `reply`; `clear` always
 clears; `arm` sets a pre-reply armed state used by the AI flow. The
+optional pane is the exact pane invoking the command: when it is omitted,
+Projmux requires inherited `$TMUX` plus an exact `$TMUX_PANE=%N` and verifies
+that same pane with a targeted tmux read before changing attention state. From
+outside tmux, or when that evidence is missing, malformed, or stale, pass an
+explicit pane target instead; the command fails without writing attention
+state. Explicit targets used by generated focus hooks keep their existing
+meaning.
 producer side pushes the matching entry into the notify queue when the pane
 has an associated AI agent option; clearing attention does not ack the queue
 row (manual toggles on shell panes do not push). `list` reads `tmux list-panes -a` and shows live pane

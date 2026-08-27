@@ -229,7 +229,7 @@ Canonical spelling: `projmux attention list`, `projmux attention toggle`, `projm
 Toggle attention state for a pane
 
 ```
-projmux attention toggle
+projmux attention toggle [pane]
 ```
 
 ### `projmux attention clear`
@@ -237,7 +237,7 @@ projmux attention toggle
 Clear attention state for a pane
 
 ```
-projmux attention clear
+projmux attention clear [pane]
 ```
 
 ### `projmux attention arm`
@@ -245,7 +245,7 @@ projmux attention clear
 Arm focus-only attention consumption
 
 ```
-projmux attention arm
+projmux attention arm [pane]
 ```
 
 ### `projmux attention list`
