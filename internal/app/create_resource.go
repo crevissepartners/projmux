@@ -145,6 +145,9 @@ func (c *createCommand) resolveCreateScope(spelling string, flags resourceCreate
 		}
 		return createScope{project: ref}, nil
 	}
+	if flags.explicitWindowScope() {
+		return c.resolveExplicitCreateScope(spelling, flags)
+	}
 	if c == nil || c.store == nil || c.store.load == nil {
 		return createScope{}, errors.New("create: the resource-backed create routes are not configured")
 	}
@@ -181,6 +184,104 @@ func (c *createCommand) resolveCreateScope(spelling string, flags resourceCreate
 		scope.pane = &pane
 	}
 	return scope, nil
+}
+
+// resolveExplicitCreateScope derives the one Project owner from selectors the
+// operator actually supplied. It deliberately does not consult the invoking
+// Pane: an explicit Window/Pane/label target must have the same meaning under
+// an unrelated focused client, and a missing Window ensure has no owner unless
+// --project names one.
+func (c *createCommand) resolveExplicitCreateScope(spelling string, flags resourceCreateFlags) (createScope, error) {
+	if c == nil || c.store == nil || c.store.load == nil {
+		return createScope{}, errors.New("create: the resource-backed create routes are not configured")
+	}
+	registry, err := c.store.load()
+	if err != nil {
+		return createScope{}, MapMetadataError(err)
+	}
+	query := selector.Query{}
+	for _, raw := range flags.windows {
+		ref, parseErr := selector.ParseRef(coremetadata.KindWindow, raw)
+		if parseErr != nil {
+			return createScope{}, MapMetadataError(parseErr)
+		}
+		query.Windows = append(query.Windows, ref)
+	}
+	for _, raw := range flags.selectors {
+		label, parseErr := selector.ParseLabel(raw)
+		if parseErr != nil {
+			return createScope{}, MapMetadataError(parseErr)
+		}
+		query.Labels = append(query.Labels, label)
+	}
+
+	projectUIDs := map[string]bool{}
+	addWindow := func(windowUID string) error {
+		window, ok := registry.Window(windowUID)
+		if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != coremetadata.KindProject {
+			return usageError(fmt.Sprintf("%s: explicit target window uid:%s is not owned by a Project; pass --project <ref>", spelling, windowUID))
+		}
+		projectUIDs[window.Metadata.OwnerUID()] = true
+		return nil
+	}
+
+	if len(query.Windows) > 0 || len(query.Labels) > 0 {
+		windows, err := selector.New(registry).ResolveWindows(query)
+		if err != nil {
+			return createScope{}, MapMetadataError(err)
+		}
+		for _, match := range windows.Matches {
+			if err := addWindow(match.UID); err != nil {
+				return createScope{}, err
+			}
+		}
+	}
+
+	if len(flags.panes) > 0 {
+		paneQuery := selector.Query{Windows: query.Windows}
+		for _, raw := range flags.panes {
+			ref, parseErr := selector.ParseRef(coremetadata.KindPane, raw)
+			if parseErr != nil {
+				return createScope{}, MapMetadataError(parseErr)
+			}
+			paneQuery.Panes = append(paneQuery.Panes, ref)
+		}
+		panes, resolveErr := selector.New(registry).ResolvePanes(paneQuery)
+		if resolveErr != nil {
+			return createScope{}, MapMetadataError(resolveErr)
+		}
+		for _, match := range panes.Matches {
+			pane, ok := registry.Pane(match.UID)
+			if !ok || pane.Metadata.OwnerRef == nil {
+				continue
+			}
+			windowUID := pane.Metadata.OwnerUID()
+			if pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
+				agent, ok := registry.Agent(windowUID)
+				if !ok {
+					continue
+				}
+				windowUID = agent.Metadata.OwnerUID()
+			}
+			if err := addWindow(windowUID); err != nil {
+				return createScope{}, err
+			}
+		}
+	}
+
+	if len(projectUIDs) != 1 {
+		detail := "matched no Project owner"
+		if len(projectUIDs) > 1 {
+			detail = "matched more than one Project owner"
+		}
+		return createScope{}, usageError(fmt.Sprintf(
+			"%s: explicit Window/Pane selector %s; ambient TMUX/TMUX_PANE is not target authority, so pass --project <ref>",
+			spelling, detail))
+	}
+	for uid := range projectUIDs {
+		return createScope{project: uidRef(coremetadata.KindProject, uid)}, nil
+	}
+	panic("unreachable explicit create Project scope")
 }
 
 // observeActiveTarget is the nil-safe read of the invocation's tmux target.
@@ -328,6 +429,14 @@ func (f resourceCreateFlags) explicitWindowScope() bool {
 	return len(f.windows) > 0 || len(f.panes) > 0 || len(f.selectors) > 0
 }
 
+// explicitTargetAuthority reports whether argv selected any resource scope or
+// named an exact missing Window to ensure. Once one occurrence is explicit the
+// whole target chain is explicit: inherited TMUX/TMUX_PANE may still be useful
+// diagnostics, but it cannot choose, narrow, or refuse the target.
+func (f resourceCreateFlags) explicitTargetAuthority() bool {
+	return len(f.projects) > 0 || f.explicitWindowScope() || f.createWindow
+}
+
 // runResourceWindow answers the canonical `create window`.
 func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Writer) error {
 	const spelling = canonicalCreateWindow
@@ -353,6 +462,7 @@ func (c *createCommand) runResourceWindow(args []string, stdout, stderr io.Write
 	if err != nil {
 		return err
 	}
+	c.selectRuntimeAuthority(flags.explicitTargetAuthority())
 
 	var results []createResult
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
@@ -424,6 +534,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 	if err != nil {
 		return err
 	}
+	c.selectRuntimeAuthority(flags.explicitTargetAuthority())
 
 	var results []createResult
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {

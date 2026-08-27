@@ -149,6 +149,13 @@ func RenderRouteHelp(w io.Writer, path []string, route Route) error {
 		b.WriteString(route.Summary)
 		b.WriteString("\n")
 	}
+	if route.Invocation != "" {
+		b.WriteString("\nSelectorless authority:\n  ")
+		b.WriteString(string(route.Invocation))
+		b.WriteString(" — ")
+		b.WriteString(route.Invocation.Summary())
+		b.WriteString("\n")
+	}
 	usage := route.Usage
 	if len(usage) == 0 {
 		usage = []string{"projmux " + strings.Join(path, " ")}

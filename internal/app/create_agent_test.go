@@ -239,8 +239,12 @@ func newTestAgentCreateCommand(t *testing.T, store *fakeResourceStore, tmux *fak
 
 func bindTestCreateRuntimeRoute(command *createCommand, tmux *fakeTmux, lookupEnv func(string) string) *runtimeMutationRoute {
 	var resolved runtimeMutationRoute
-	command.bindRuntime = func(ctx context.Context) error {
-		route, err := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, tmux, lookupEnv, command.routeAnchor)
+	bind := func(ctx context.Context, explicit bool) error {
+		lookup := lookupEnv
+		if explicit {
+			lookup = func(string) string { return "" }
+		}
+		route, err := resolveInvocationRuntimeMutationRouteWithPolicy(ctx, tmux, lookup, command.routeAnchor, explicit)
 		if err != nil {
 			return err
 		}
@@ -255,6 +259,8 @@ func bindTestCreateRuntimeRoute(command *createCommand, tmux *fakeTmux, lookupEn
 		command.runtime.routeAuthority = route.authority
 		return nil
 	}
+	command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }
+	command.bindExplicitRuntime = func(ctx context.Context) error { return bind(ctx, true) }
 	return &resolved
 }
 
@@ -309,12 +315,52 @@ func TestExactThreeUIDCreateAgentRouteIgnoresUnrelatedAmbientPane(t *testing.T) 
 	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" || stdout != strings.TrimSpace(stdout)+"\n" {
 		t.Fatalf("exact three-UID create = stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
-	if route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != authorityPane.id ||
-		route.authority.PaneID == ambientPane.id {
-		t.Fatalf("native route authority = %#v, private=%s ambient=%s", route.authority, authorityPane.id, ambientPane.id)
+	if route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != "" {
+		t.Fatalf("explicit resource route authority = %#v, want app PID authority without private=%s or ambient=%s Pane containment", route.authority, authorityPane.id, ambientPane.id)
 	}
 	if ambientSession.windows[0].panes[0].id != ambientPane.id || len(ambientSession.windows) != 1 || len(ambientSession.windows[0].panes) != 1 {
 		t.Fatalf("unrelated ambient client changed: before=%s after=%s", ambientBefore, tmux.state())
+	}
+	assertEveryTmuxCallHasExactRoute(t, tmux.calls)
+}
+
+func TestExactProjectCreateWindowUsesAppRouteDespiteStaleInheritedPane(t *testing.T) {
+	t.Parallel()
+	store, tmux := aliveAlphaRuntime(t)
+	command, launcher := newTestAgentCreateCommand(t, store, tmux)
+	ambientSession := tmux.addSession("unrelated-client")
+	ambientWindow, ambientPane := ambientSession.windows[0], ambientSession.windows[0].panes[0]
+	route := bindTestCreateRuntimeRoute(command, tmux, func(key string) string {
+		switch key {
+		case "TMUX":
+			return tmux.socketPath + "," + tmux.serverPID + ",17"
+		case "TMUX_PANE":
+			return "%999999"
+		default:
+			return ""
+		}
+	})
+
+	stdout, stderr, err := runRoute(t, command,
+		"agent", "--provider", "codex", "--project", "uid:prj-alpha",
+		"--window", "fresh", "--create-window", "-o", "pane-id")
+	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" {
+		t.Fatalf("exact Project create-window = stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if route.target != (explicitTmuxTarget{flag: "-L", value: defaultAppSocket}) || route.authority == nil ||
+		route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != "" {
+		t.Fatalf("explicit create-window route = %#v, want validated app -L without inherited Pane containment", *route)
+	}
+	if len(launcher.plans) != 1 {
+		t.Fatalf("provider launches = %d, want one", len(launcher.plans))
+	}
+	window := windowNamed(t, store, "prj-alpha", "fresh")
+	if session, liveWindow := liveWindowWithUID(t, tmux, window.Metadata.UID); session != "alpha" || liveWindow == "" {
+		t.Fatalf("new Window live binding = session=%q window=%q, want alpha and one exact Window", session, liveWindow)
+	}
+	if len(ambientSession.windows) != 1 || ambientSession.windows[0] != ambientWindow ||
+		len(ambientWindow.panes) != 1 || ambientWindow.panes[0] != ambientPane || ambientWindow.name != "tmux" {
+		t.Fatalf("explicit create-window mutated unrelated session: %#v", ambientSession)
 	}
 	assertEveryTmuxCallHasExactRoute(t, tmux.calls)
 }

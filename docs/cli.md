@@ -16,6 +16,25 @@ Prose that a manifest cannot hold -- the help boundary contract, exit codes,
 per-flag behavior, and task-oriented walkthroughs -- lives in the
 [CLI Task Guide](cli-guide.md).
 
+## Selectorless authority
+
+Each label describes what omission means for one graph route; explicit selectors still replace a natural target.
+
+- `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+- `explicit-target` — the route or caller must name the exact target.
+- `refusal` — there is no safe selectorless action; refuse before output or mutation.
+- `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
+Root parser bridges outside the route graph are censused from their parser token lists:
+
+| Bridge | Selectorless authority |
+| --- | --- |
+| `<bare invocation>` | `natural-omitted` |
+| `<root help flag:help>` | `explicit-fan-out` |
+| `<root help flag:h>` | `explicit-fan-out` |
+| `--version` | `explicit-fan-out` |
+| `-version` | `explicit-fan-out` |
+
 ## Commands
 
 ```
@@ -60,6 +79,8 @@ projmux <command> [args...]
 
 Manage Agent state, topic, integrations, and account usage
 
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
 ```
 projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
@@ -92,6 +113,8 @@ Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agen
 
 Read or set semantic Agent interaction independently of lifecycle
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]
 ```
@@ -99,6 +122,8 @@ projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval
 ### `projmux agent topic`
 
 Read, set, or clear one exact Agent topic annotation
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
@@ -109,6 +134,8 @@ projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 
 Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]...
 ```
@@ -116,6 +143,8 @@ projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <re
 ### `projmux agent turn`
 
 Send, steer, or interrupt one exact native Codex turn
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
 ```
 projmux agent turn start|steer <agent-ref> -- <text>
@@ -136,6 +165,8 @@ Canonical spelling: `projmux agent turn start`, `projmux agent turn steer`, `pro
 
 Send a new turn to one exact idle Codex thread
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux agent turn start <agent-ref> -- <text>
 ```
@@ -143,6 +174,8 @@ projmux agent turn start <agent-ref> -- <text>
 #### `projmux agent turn steer`
 
 Steer one exact current Codex turn
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
 ```
 projmux agent turn steer <agent-ref> -- <text>
@@ -152,6 +185,8 @@ projmux agent turn steer <agent-ref> -- <text>
 
 Interrupt one exact current Codex turn
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux agent turn interrupt <agent-ref>
 ```
@@ -159,6 +194,8 @@ projmux agent turn interrupt <agent-ref>
 ### `projmux agent approval`
 
 Review one exact pending native Codex approval
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
 ```
 projmux agent approval review <agent-ref> [--request <normalized-id>]
@@ -176,6 +213,8 @@ Canonical spelling: `projmux agent approval review`
 
 Review one exact pending native Codex approval
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux agent approval review <agent-ref> [--request <normalized-id>]
 ```
@@ -183,6 +222,8 @@ projmux agent approval review <agent-ref> [--request <normalized-id>]
 ### `projmux agent review`
 
 Start a native review on an exact-bound Codex Agent
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
@@ -192,6 +233,8 @@ projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <
 
 Install or remove provider hook integrations
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux agent integrate <provider> [--dry-run]
 ```
@@ -200,6 +243,8 @@ projmux agent integrate <provider> [--dry-run]
 
 Read provider account usage quota snapshots
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
 ```
@@ -207,6 +252,8 @@ projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
 ## `projmux attention`
 
 View and manage live tmux pane attention state
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux attention toggle|clear|arm|list|window
@@ -228,6 +275,8 @@ Canonical spelling: `projmux attention list`, `projmux attention toggle`, `projm
 
 Toggle attention state for a pane
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux attention toggle [pane]
 ```
@@ -235,6 +284,8 @@ projmux attention toggle [pane]
 ### `projmux attention clear`
 
 Clear attention state for a pane
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux attention clear [pane]
@@ -244,6 +295,8 @@ projmux attention clear [pane]
 
 Arm focus-only attention consumption
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux attention arm [pane]
 ```
@@ -251,6 +304,8 @@ projmux attention arm [pane]
 ### `projmux attention list`
 
 List live pane attention state
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux attention list
@@ -260,6 +315,8 @@ projmux attention list
 
 Render window-scoped attention badges
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux attention window
 ```
@@ -267,6 +324,8 @@ projmux attention window
 ## `projmux attach`
 
 Enter a Project runtime from outside tmux
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux attach project <ref>
@@ -284,6 +343,8 @@ Canonical spelling: `projmux attach project`
 
 Enter a Project runtime from outside tmux, materializing it when offline
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux attach project <ref>
 ```
@@ -291,6 +352,8 @@ projmux attach project <ref>
 ## `projmux config`
 
 Edit AI split-mode settings; render or apply generated tmux configuration
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux config edit [--get|--set <mode>]
@@ -312,6 +375,8 @@ Canonical spelling: `projmux config edit`, `projmux config render`, `projmux con
 
 Edit the AI split-mode configuration
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux config edit [--get|--set <mode>]
 ```
@@ -319,6 +384,8 @@ projmux config edit [--get|--set <mode>]
 ### `projmux config render`
 
 Print a generated tmux config to stdout; writes nothing
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
 ```
 projmux config render standalone [--bin <path>]
@@ -336,6 +403,8 @@ Subcommands:
 
 Print the snippet you source from your own tmux.conf
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux config render standalone [--bin <path>]
 ```
@@ -345,6 +414,8 @@ Canonical spelling: `projmux config render`
 #### `projmux config render app`
 
 Print the config the app-owned projmux tmux server runs from
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
 ```
 projmux config render app [--bin <path>]
@@ -356,6 +427,8 @@ Canonical spelling: `projmux config render`
 
 Write the generated app tmux config and reload the live projmux server
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux config apply [--bin <path>] [--config <path>] [--socket <name>]
 ```
@@ -363,6 +436,8 @@ projmux config apply [--bin <path>] [--config <path>] [--socket <name>]
 ## `projmux create`
 
 Create Projmux resources
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
@@ -399,6 +474,8 @@ Canonical spelling: `projmux create project`, `projmux create window`, `projmux 
 
 Register one exact filesystem path as a Registry Project; no runtime is materialized
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
 ```
@@ -408,6 +485,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 ### `projmux create window`
 
 Create a Window and its initial Pane below one Project; the runtime is materialized detached
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
@@ -419,6 +498,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 
 Create a shell Pane detached on an explicit Pane or the Window's exact shell or Agent anchor
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
@@ -428,6 +509,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 ### `projmux create agent`
 
 Create an Agent detached on an explicit Pane or the Window's exact shell or Agent anchor; --provider is required
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
@@ -439,6 +522,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 
 Create a pending notification row
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--socket <s>]
 ```
@@ -447,6 +532,8 @@ projmux create notification --text <s> --target <SESSION[:WINDOW[.PANE]]> [--soc
 
 Create a session snapshot
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux create snapshot
 ```
@@ -454,6 +541,8 @@ projmux create snapshot
 ### `projmux create codex`
 
 Provider shortcut for create agent --provider codex
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
@@ -465,6 +554,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 
 Provider shortcut for create agent --provider claude
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
@@ -475,6 +566,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 
 Provider shortcut for create agent --provider antigravity
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
@@ -484,6 +577,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
 ## `projmux delete`
 
 Delete Projmux resources with an explicit cascade plan
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]
@@ -509,6 +604,8 @@ Canonical spelling: `projmux delete project`, `projmux delete window`, `projmux 
 
 Explicitly unregister Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]
 ```
@@ -518,6 +615,8 @@ Aliases: `projects`
 ### `projmux delete window`
 
 Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
@@ -529,6 +628,8 @@ Aliases: `windows`
 
 Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
 ```
@@ -538,6 +639,8 @@ Aliases: `panes`
 ### `projmux delete agent`
 
 Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]
@@ -549,6 +652,8 @@ Aliases: `agents`
 
 Delete pending notification rows
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux delete notification
 ```
@@ -559,6 +664,8 @@ Aliases: `notifications`
 
 Delete saved session snapshots
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux delete snapshot
 ```
@@ -568,6 +675,8 @@ Aliases: `snapshots`
 ## `projmux describe`
 
 Describe one Projmux resource
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux describe project [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
@@ -591,6 +700,8 @@ Canonical spelling: `projmux describe project`, `projmux describe window`, `proj
 
 Describe one Project resource; with no selector inside tmux, the active Project
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux describe project [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
 ```
@@ -602,6 +713,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 ### `projmux describe window`
 
 Describe one Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]
@@ -615,6 +728,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 Describe one Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
 ```
@@ -626,6 +741,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 ### `projmux describe agent`
 
 Describe one Agent resource; inside tmux a reference resolves within the active Project and no selector means the Agent owning the active Pane
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]
@@ -639,6 +756,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 Run read-only runtime and integration diagnostics
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux doctor [--json] [--section <name>] [--verbose]
 ```
@@ -646,6 +765,8 @@ projmux doctor [--json] [--section <name>] [--verbose]
 ## `projmux diagnostics`
 
 Read operational events or create an explicit local support report
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux diagnostics log [--json] [--tail <n>]
@@ -667,6 +788,8 @@ Canonical spelling: `projmux diagnostics log`, `projmux diagnostics agent-hook`,
 
 Read the bounded local operations journal
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux diagnostics log
 ```
@@ -674,6 +797,8 @@ projmux diagnostics log
 ### `projmux diagnostics agent-hook`
 
 Read the bounded Agent hook ingest journal
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
 ```
 projmux diagnostics agent-hook [--tail <n>] [--json] [--path]
@@ -683,6 +808,8 @@ projmux diagnostics agent-hook [--tail <n>] [--json] [--path]
 
 Create an explicit redacted local support report
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux diagnostics report
 ```
@@ -690,6 +817,8 @@ projmux diagnostics report
 ## `projmux focus`
 
 Move the current client to a live resource
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux focus project <ref>
@@ -711,6 +840,8 @@ Canonical spelling: `projmux focus project`, `projmux focus window`, `projmux fo
 
 Move the current client to an already-live Project; never materializes
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]
 ```
@@ -718,6 +849,8 @@ projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]
 ### `projmux focus window`
 
 Move the current client to an already-live Window in an exact live root session; never materializes
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
 ```
 projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--json]
@@ -727,6 +860,8 @@ projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--cli
 
 Move the current client to an already-live Pane in an exact live root session; never materializes
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--json]
 ```
@@ -734,6 +869,8 @@ projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>
 ## `projmux get`
 
 Read Projmux resources by selector
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]
@@ -764,6 +901,8 @@ Canonical spelling: `projmux get projects`, `projmux get windows`, `projmux get 
 
 List Project resources
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]
 ```
@@ -775,6 +914,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 ### `projmux get windows`
 
 List Window resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
@@ -788,6 +929,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 List Pane resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
 ```
@@ -797,6 +940,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 ### `projmux get agents`
 
 List Agent resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
@@ -809,6 +954,8 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 ### `projmux get runtime`
 
 List every tmux Session, Window, and Pane on one exact server with its attribution
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
 ```
 projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o json|none]
@@ -830,6 +977,8 @@ Canonical spelling: `projmux get runtime sessions`, `projmux get runtime windows
 
 List every tmux session on one exact server with its attribution
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o json|none]
 ```
@@ -839,6 +988,8 @@ Output modes (`-o`): `json`, `none`
 #### `projmux get runtime windows`
 
 List every tmux window on one exact server with its attribution
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
 ```
 projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o json|none]
@@ -850,6 +1001,8 @@ Output modes (`-o`): `json`, `none`
 
 List every tmux pane on one exact server with its attribution
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o json|none]
 ```
@@ -859,6 +1012,8 @@ Output modes (`-o`): `json`, `none`
 ### `projmux get notifications`
 
 List pending notification rows
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
 ```
 projmux get notifications
@@ -870,6 +1025,8 @@ Aliases: `notification`
 
 List saved session snapshots
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux get snapshots
 ```
@@ -879,6 +1036,8 @@ Aliases: `snapshot`
 ### `projmux get pane`
 
 Read one Pane resource; with no selector inside tmux, the active Pane
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux get pane [--current] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
@@ -891,6 +1050,8 @@ Field projections (`-o`): `cwd`
 ## `projmux hook`
 
 List, edit, validate, and trust lifecycle hook config
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux hook list|edit|validate|trust|untrust
@@ -912,6 +1073,8 @@ Canonical spelling: `projmux hook list`, `projmux hook edit`, `projmux hook vali
 
 List global and project lifecycle hooks
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux hook list
 ```
@@ -919,6 +1082,8 @@ projmux hook list
 ### `projmux hook edit`
 
 Edit lifecycle hook config
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux hook edit
@@ -928,6 +1093,8 @@ projmux hook edit
 
 Validate lifecycle hook config
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux hook validate
 ```
@@ -935,6 +1102,8 @@ projmux hook validate
 ### `projmux hook trust`
 
 Trust the current project hook config
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux hook trust
@@ -944,6 +1113,8 @@ projmux hook trust
 
 Revoke project hook config trust
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux hook untrust
 ```
@@ -951,6 +1122,8 @@ projmux hook untrust
 ## `projmux notification`
 
 Manage pending notification workflow state
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux notification ack <id> | --all
@@ -970,6 +1143,8 @@ Canonical spelling: `projmux notification ack`, `projmux notification reconcile`
 
 Acknowledge notification rows
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux notification ack <id> | --all
 ```
@@ -978,6 +1153,8 @@ projmux notification ack <id> | --all
 
 Reconcile the notification queue against live targets
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux notification reconcile [--json]
 ```
@@ -985,6 +1162,8 @@ projmux notification reconcile [--json]
 ## `projmux pin`
 
 Manage pinned project directories
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux pin project list|add|remove|toggle|clear
@@ -1002,6 +1181,8 @@ Canonical spelling: `projmux pin project`
 
 Manage pinned project directories (canonical spelling)
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux pin project list|add|remove|toggle|clear
 ```
@@ -1009,6 +1190,8 @@ projmux pin project list|add|remove|toggle|clear
 ## `projmux prune`
 
 Prune stale Projects and snapshots
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux prune snapshot [--older-than <duration>]
@@ -1028,6 +1211,8 @@ Canonical spelling: `projmux prune project`, `projmux prune snapshot`
 
 Delete Projects whose spec.root has been missing for a bounded age
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux prune project --missing --older-than <duration> [--yes]
 ```
@@ -1035,6 +1220,8 @@ projmux prune project --missing --older-than <duration> [--yes]
 ### `projmux prune snapshot`
 
 Inspect or delete preserved session snapshots (canonical spelling)
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
 ```
 projmux prune snapshot [--older-than <duration>]
@@ -1047,6 +1234,8 @@ Canonical spelling: `projmux delete snapshot`
 
 Quit the app-owned projmux tmux runtime
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux quit [--yes|--force]
 ```
@@ -1054,6 +1243,8 @@ projmux quit [--yes|--force]
 ## `projmux reconcile`
 
 Preview or repair Registry and exact tmux resource drift
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]
@@ -1073,6 +1264,8 @@ Canonical spelling: `projmux reconcile resources`, `projmux reconcile registry`
 
 Preview or repair exact anchor-aware Registry and tmux topology on one exact socket
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
@@ -1081,6 +1274,8 @@ projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [
 
 Plan Registry state-loss recovery with zero writes, then restore one explicitly named verified source
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect-source-checksum <sha256:hex>] [--expect-current-checksum <sha256:hex>] [--socket <name> | --socket-path <absolute>] [-o json]
 ```
@@ -1088,6 +1283,8 @@ projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect
 ## `projmux rebind`
 
 Rebind a Project to a new absolute root without moving files
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-path>
@@ -1105,6 +1302,8 @@ Canonical spelling: `projmux rebind project`
 
 Rewrite one Project spec.root; no filesystem move, no heuristic uid merge
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-path>
 ```
@@ -1112,6 +1311,8 @@ projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-pat
 ## `projmux rename`
 
 Rename a Projmux resource metadata.name
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>
@@ -1135,6 +1336,8 @@ Canonical spelling: `projmux rename project`, `projmux rename window`, `projmux 
 
 Rename a Projmux Project resource; with no selector inside tmux, the active Project
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>
 ```
@@ -1144,6 +1347,8 @@ Aliases: `projects`
 ### `projmux rename window`
 
 Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]
@@ -1155,6 +1360,8 @@ Aliases: `windows`
 
 Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
 ```
@@ -1164,6 +1371,8 @@ Aliases: `panes`
 ### `projmux rename agent`
 
 Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]...
@@ -1175,6 +1384,8 @@ Aliases: `agents`
 
 Inspect live Project, Window, and Pane CPU/RSS attribution
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux resources
 ```
@@ -1182,6 +1393,8 @@ projmux resources
 ## `projmux restore`
 
 Project a saved snapshot into one exact closed Project desired state
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]
@@ -1199,6 +1412,8 @@ Canonical spelling: `projmux restore snapshot`
 
 Project a saved snapshot into one exact closed Project desired state
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]
 ```
@@ -1206,6 +1421,8 @@ projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-ru
 ## `projmux runtime`
 
 Manage the live and ephemeral tmux runtime inventory
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux runtime sessions [--ui=popup|sidebar]
@@ -1233,6 +1450,8 @@ Canonical spelling: `projmux runtime sessions`, `projmux runtime diagnostics`, `
 
 Pick a live or ephemeral tmux session
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux runtime sessions
 ```
@@ -1240,6 +1459,8 @@ projmux runtime sessions
 ### `projmux runtime diagnostics`
 
 Inspect every tmux object on one exact server, with attribution and safe actions
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]
@@ -1249,6 +1470,8 @@ projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=p
 
 Attach a live or ephemeral runtime without Project identity
 
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
 ```
 projmux runtime attach
 ```
@@ -1256,6 +1479,8 @@ projmux runtime attach
 ### `projmux runtime stop`
 
 Terminate live tmux sessions by tagged selection
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
 ```
 projmux runtime stop
@@ -1265,6 +1490,8 @@ projmux runtime stop
 
 Manage the ephemeral tagged session selection
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux runtime tag
 ```
@@ -1272,6 +1499,8 @@ projmux runtime tag
 ### `projmux runtime prune`
 
 Trim old ephemeral tmux sessions
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
 ```
 projmux runtime prune
@@ -1281,6 +1510,8 @@ projmux runtime prune
 
 Configure projmux
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux settings
 ```
@@ -1288,6 +1519,8 @@ projmux settings
 ## `projmux setup`
 
 Probe terminal keys or remediate them with setup terminal
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux setup
@@ -1306,6 +1539,8 @@ Canonical spelling: `projmux setup terminal`
 
 Show or apply terminal key remediation
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux setup terminal [terminal] [--apply] [--config <path>] [--allow-symlink]
 ```
@@ -1314,6 +1549,8 @@ projmux setup terminal [terminal] [--apply] [--config <path>] [--allow-symlink]
 
 Open the isolated projmux tmux app
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux shell [--session <name>]
 ```
@@ -1321,6 +1558,8 @@ projmux shell [--session <name>]
 ## `projmux switch`
 
 Pick and open a project tmux session
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux switch [<project>]
@@ -1331,6 +1570,8 @@ Canonical spelling: `projmux focus project`
 ## `projmux update`
 
 Check installer-aware release update status
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux update status|check|apply
@@ -1350,6 +1591,8 @@ Canonical spelling: `projmux update status`, `projmux update check`, `projmux up
 
 Show read-only update status
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux update status
 ```
@@ -1357,6 +1600,8 @@ projmux update status
 ### `projmux update check`
 
 Check for a newer release and refresh the cache
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
 ```
 projmux update check
@@ -1366,6 +1611,8 @@ projmux update check
 
 Apply an available update
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux update apply
 ```
@@ -1374,6 +1621,8 @@ projmux update apply
 
 Reprint the shell welcome guide
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux welcome [--popup [--force]]
 ```
@@ -1381,6 +1630,8 @@ projmux welcome [--popup [--force]]
 ## `projmux window`
 
 Open recent window navigation surfaces
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
 ```
 projmux window record|recent
@@ -1399,6 +1650,8 @@ Canonical spelling: `projmux get windows`, `projmux describe window`, `projmux c
 
 Record the current window into the MRU store
 
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
 ```
 projmux window record
 ```
@@ -1408,6 +1661,8 @@ Canonical spelling: `projmux get windows`
 ### `projmux window recent`
 
 Open the recent-window navigation picker
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
 ```
 projmux window recent
@@ -1419,6 +1674,8 @@ Canonical spelling: `projmux get windows`
 
 Show bootstrap help
 
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
+
 ```
 projmux help
 projmux --help
@@ -1428,6 +1685,8 @@ projmux <route> --help
 ## `projmux version`
 
 Print the current version
+
+Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
 ```
 projmux version

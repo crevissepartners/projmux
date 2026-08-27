@@ -27,64 +27,35 @@ func withActiveTarget(create *createCommand, active *recordedActiveTarget) *crea
 	return create
 }
 
-// TestCreateAgentWithoutProjectResolvesTheUserReproduction is acceptance
-// criterion 1, spelled as the command that failed.
-//
-// `projmux create codex -w hi --create-window` used to die on `flag provided but
-// not defined: -w`, because the absent `--project` chose a parser that had no
-// Window surface at all. It now allocates a Window, an Agent, and the Agent's
-// managed Pane under the active managed Project in one Registry transaction,
-// materializes them on the inherited host, and answers with the managed Pane's
-// raw tmux handle.
-func TestCreateAgentWithoutProjectResolvesTheUserReproduction(t *testing.T) {
+// TestCreateAgentExplicitMissingWindowWithoutProjectRefusesBeforeWrite pins the
+// explicit-owner boundary. A missing --window with --create-window cannot
+// reveal its Project owner, and the command must not borrow that owner from the
+// active Pane. The actionable remedy is an exact --project.
+func TestCreateAgentExplicitMissingWindowWithoutProjectRefusesBeforeWrite(t *testing.T) {
 	t.Parallel()
 
 	store, tmux := aliveAlphaRuntime(t)
-	create, launcher := newTestAgentCreateCommand(t, store, tmux)
+	create, _ := newTestAgentCreateCommand(t, store, tmux)
 	active := insideTmux("pan-alpha-zsh", "win-alpha-main")
 	withActiveTarget(create, active)
+	registryBefore, tmuxBefore := store.snapshot(), tmux.state()
 
-	stdout, _, err := runRoute(t, create, "codex", "-w", "hi", "--create-window", "-o", "pane-id")
-	if err != nil {
-		t.Fatalf("create codex -w hi --create-window error = %v", err)
+	stdout, stderr, err := runRoute(t, create, "codex", "-w", "hi", "--create-window", "-o", "pane-id")
+	if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "pass --project <ref>") {
+		t.Fatalf("create codex -w hi --create-window = stdout=%q stderr=%q err=%v, want actionable usage refusal", stdout, stderr, err)
 	}
-	if active.calls == 0 {
-		t.Fatal("the implicit scope never observed the active tmux target")
+	if stdout != "" || stderr != "" {
+		t.Fatalf("refusal emitted stdout=%q stderr=%q", stdout, stderr)
 	}
-
-	window := windowNamed(t, store, "prj-alpha", "hi")
-	agent := agentNamed(t, store, window.Metadata.UID, "codex")
-	if agent.Status.PaneRef == "" {
-		t.Fatalf("the Agent owns no managed Pane: %+v", agent.Status)
+	if active.calls != 0 {
+		t.Fatalf("explicit missing Window consulted ambient target %d times", active.calls)
 	}
-	pane, ok := store.registry.Pane(agent.Status.PaneRef)
-	if !ok {
-		t.Fatalf("the Agent's paneRef resolves to no Pane; registry:\n%s", store.snapshot())
+	if store.transactions != 0 || store.writes != 0 || store.snapshot() != registryBefore {
+		t.Fatalf("refusal changed Registry: transactions=%d writes=%d changed=%t", store.transactions, store.writes, store.snapshot() != registryBefore)
 	}
-	if len(launcher.plans) != 1 || launcher.plans[0].provider != "codex" {
-		t.Fatalf("provider launches = %+v, want exactly one codex launch", launcher.plans)
+	if writes := tmuxMutationCallCount(tmux); writes != 0 || tmux.state() != tmuxBefore {
+		t.Fatalf("refusal changed tmux: writes=%d changed=%t calls=%#v", writes, tmux.state() != tmuxBefore, tmux.calls)
 	}
-
-	// The scalar projection is the managed Pane's live handle, and that handle
-	// is the tmux pane the Registry uid was mirrored onto.
-	paneID := strings.TrimSpace(stdout)
-	if paneID == "" {
-		t.Fatal("-o pane-id printed nothing")
-	}
-	livePane := livePaneWithUID(t, tmux, pane.Metadata.UID)
-	if livePane != paneID {
-		t.Fatalf("-o pane-id printed %q, want the managed Pane's live handle %q", paneID, livePane)
-	}
-	// The Window is live on the inherited host, under the derived Project's own
-	// session, and carries the allocated Window uid.
-	session, liveWindow := liveWindowWithUID(t, tmux, window.Metadata.UID)
-	if liveWindow == "" {
-		t.Fatalf("Window %q was never materialized; tmux:\n%s", window.Metadata.Name, tmux.state())
-	}
-	if session != "alpha" {
-		t.Fatalf("Window materialized in session %q, want the derived Project's session alpha", session)
-	}
-	assertNoClientMovement(t, tmux)
 }
 
 // TestCreatePaneWithNoScopeAtAllSplitsTheActiveWindow is the generated
@@ -233,7 +204,11 @@ func TestImplicitScopeRefusesEveryUnmanagedRuntime(t *testing.T) {
 				if !IsUsageError(err) {
 					t.Fatalf("create %v error is not a usage error: %v", args, err)
 				}
-				for _, want := range []string{"--project", test.want} {
+				wants := []string{"--project", test.want}
+				if args[0] == "codex" {
+					wants = []string{"--project", "ambient TMUX/TMUX_PANE is not target authority"}
+				}
+				for _, want := range wants {
 					if !strings.Contains(err.Error(), want) {
 						t.Fatalf("create %v error = %q, want it to mention %q", args, err, want)
 					}
