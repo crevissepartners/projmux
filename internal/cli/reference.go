@@ -8,19 +8,12 @@ import (
 
 // The generated CLI reference.
 //
-// The compatibility contract makes the command manifest the common source of
-// runtime help and the published reference. The manifest that runtime help
-// actually renders is `routes` -- the Cobra command tree in catalog.go -- so
-// this renderer walks that tree and nothing else.
+// The command graph is the common source of runtime help, canonical audit, and
+// the published reference. This renderer projects the graph's public help view:
+// hidden nodes stay hidden and Summary wins over an explicit CanonicalSummary
+// contract override.
 //
-// It deliberately does not read `canonicalRoutes`. That manifest audits
-// executable canonical spellings and their source namespaces, while `routes`
-// owns user-visible summaries, usage, disposition, and help structure. Keeping
-// the renderer on `routes` prevents internal spellings and audit-only metadata
-// from leaking into public help; tests enforce the boundary. See the header
-// comment in canonical.go.
-//
-// Every byte this renderer emits is a pure function of the manifest: no
+// Every byte this renderer emits is a pure function of the graph: no
 // timestamp, no version string, no host path, no map iteration. Regenerating on
 // a clean tree is a no-op.
 
