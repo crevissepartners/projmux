@@ -93,9 +93,27 @@ type Route struct {
 	Namespace bool
 	// Usage holds representative synopsis lines (not an exhaustive flag list).
 	Usage []string
-	// Canonical lists the canonical v2 route spellings this node maps onto.
-	// Every entry must resolve against CanonicalRoutes.
+	// Canonical lists the canonical route spellings this executable node reaches.
+	// The node whose own path appears in this list owns that canonical command;
+	// other entries are explicit source aliases. CanonicalRoutes, help hints, and
+	// the source audit are all projections of these edges.
 	Canonical []string
+	// CanonicalOrder orders canonical command families independently of public
+	// root-help order. Only top-level canonical owners set it.
+	CanonicalOrder int
+	// CanonicalNodeOrder overrides depth-first order inside one family without
+	// changing public help order. Zero keeps graph order.
+	CanonicalNodeOrder int
+	// CanonicalSummary overrides Summary only when the canonical contract and
+	// the current help sentence intentionally differ. Empty means Summary.
+	CanonicalSummary string
+	// AcceptedOutputs overrides Outputs only when parser acceptance is wider
+	// than help advertising (notably pane-id on Registry reads). Nil means
+	// Outputs. Both values stay on this one command node.
+	AcceptedOutputs []OutputMode
+	// CanonicalSelfFirst preserves source ordering for the few canonical routes
+	// whose own namespace historically precedes a compatibility source.
+	CanonicalSelfFirst bool
 	// Outputs pins the route-local shared output modes where the contract
 	// fixes them for this node today.
 	Outputs []OutputMode
@@ -111,13 +129,13 @@ type Route struct {
 // A `%N` pane id is a live transport binding rather than stored metadata, so
 // the read path answers `-o pane-id` with "needs a live transport binding,
 // which is not wired yet" and exits 1. The parser still accepts the token --
-// `ResolveOutputToken` consults the canonical manifest, whose Outputs list is
+// `ResolveOutputToken` consults the graph's canonical projection, whose Outputs list is
 // parser input rather than advertising -- but a route may not advertise a
 // projection whose only outcome today is an error. The create routes, where the
 // projection does work, keep the full catalog.
 //
 // Splitting the two is what keeps the error classification stable. Dropping
-// `pane-id` from the manifest would make the token malformed rather than
+// `pane-id` from the accepted graph projection would make the token malformed rather than
 // unimplemented and move `get panes -o pane-id` from exit 1 to exit 2, which is
 // a behavior change; narrowing only what the route lists changes nothing a
 // caller can observe except the help text.
@@ -174,9 +192,10 @@ var routes = []Route{
 		// `resume` is the one route with logic of its own: it resolves exactly
 		// one existing Agent, applies the phase gate, and rebinds it to a new
 		// managed Pane launched with the provider's resume argv.
-		Name:        "agent",
-		Summary:     "Manage Agent state, topic, integrations, and account usage",
-		Disposition: DispositionCanonical,
+		Name:           "agent",
+		CanonicalOrder: 13,
+		Summary:        "Manage Agent state, topic, integrations, and account usage",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]",
 			"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]",
@@ -191,19 +210,20 @@ var routes = []Route{
 		},
 		Canonical: []string{"agent status", "agent topic", "agent resume", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage"},
 		Children: []Route{
-			{Name: "status", Summary: "Read or set semantic Agent interaction independently of lifecycle", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
-			{Name: "topic", Summary: "Read, set, or clear one exact Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
+			{Name: "status", Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
+			{Name: "topic", Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
 			{
 				// This route resolves exactly one existing Agent, refuses a
 				// Running one, and rebinds an Offline or Failed one to a new
 				// managed Pane built from the conversation its `status.sessionRef`
-				// records. The command tree and the canonical manifest now state
+				// records. The help and canonical graph views now state
 				// the same sentence, because the route does what the contract
 				// asked for.
-				Name:      "resume",
-				Summary:   "Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor",
-				Usage:     []string{"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."},
-				Canonical: []string{"agent resume"},
+				Name:             "resume",
+				Summary:          "Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor",
+				CanonicalSummary: "Rebind an Offline or Failed Agent to a new managed Pane",
+				Usage:            []string{"projmux agent resume <ref> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]..."},
+				Canonical:        []string{"agent resume"},
 			},
 			{
 				Name:      "turn",
@@ -234,31 +254,34 @@ var routes = []Route{
 		},
 	},
 	{
-		Name:        "attention",
-		Summary:     "View and manage live tmux pane attention state",
-		Disposition: DispositionCanonical,
-		Usage:       []string{"projmux attention toggle|clear|arm|list|window"},
-		Canonical:   []string{"attention list", "attention toggle", "attention clear", "attention arm", "attention window"},
+		Name:           "attention",
+		CanonicalOrder: 14,
+		Summary:        "View and manage live tmux pane attention state",
+		Disposition:    DispositionCanonical,
+		Usage:          []string{"projmux attention toggle|clear|arm|list|window"},
+		Canonical:      []string{"attention list", "attention toggle", "attention clear", "attention arm", "attention window"},
 		Children: []Route{
-			{Name: "toggle", Summary: "Toggle attention state for a pane", Usage: []string{"projmux attention toggle [pane]"}, Canonical: []string{"attention toggle"}},
-			{Name: "clear", Summary: "Clear attention state for a pane", Usage: []string{"projmux attention clear [pane]"}, Canonical: []string{"attention clear"}},
-			{Name: "arm", Summary: "Arm focus-only attention consumption", Usage: []string{"projmux attention arm [pane]"}, Canonical: []string{"attention arm"}},
-			{Name: "list", Summary: "List live pane attention state", Canonical: []string{"attention list"}},
-			{Name: "window", Summary: "Render window-scoped attention badges", Canonical: []string{"attention window"}},
+			{Name: "toggle", Summary: "Toggle attention state for a pane", CanonicalSummary: "Toggle live Pane attention state", CanonicalNodeOrder: 2, Usage: []string{"projmux attention toggle [pane]"}, Canonical: []string{"attention toggle"}},
+			{Name: "clear", Summary: "Clear attention state for a pane", CanonicalSummary: "Clear live Pane attention state", CanonicalNodeOrder: 3, Usage: []string{"projmux attention clear [pane]"}, Canonical: []string{"attention clear"}},
+			{Name: "arm", Summary: "Arm focus-only attention consumption", CanonicalNodeOrder: 4, Usage: []string{"projmux attention arm [pane]"}, Canonical: []string{"attention arm"}},
+			{Name: "list", Summary: "List live pane attention state", CanonicalSummary: "List live Pane attention state", CanonicalNodeOrder: 1, Canonical: []string{"attention list"}},
+			{Name: "window", Summary: "Render window-scoped attention badges", CanonicalNodeOrder: 5, Canonical: []string{"attention window"}},
 		},
 	},
 	{
-		Name:        "attach",
-		Summary:     "Enter a Project runtime from outside tmux",
-		Disposition: DispositionCanonical,
-		Usage:       []string{"projmux attach project <ref>"},
-		Canonical:   []string{"attach project"},
+		Name:           "attach",
+		CanonicalOrder: 4,
+		Summary:        "Enter a Project runtime from outside tmux",
+		Disposition:    DispositionCanonical,
+		Usage:          []string{"projmux attach project <ref>"},
+		Canonical:      []string{"attach project"},
 		Children: []Route{
 			{
-				Name:      "project",
-				Summary:   "Enter a Project runtime from outside tmux, materializing it when offline",
-				Usage:     []string{"projmux attach project <ref>"},
-				Canonical: []string{"attach project"},
+				Name:             "project",
+				Summary:          "Enter a Project runtime from outside tmux, materializing it when offline",
+				CanonicalSummary: "Enter a Project runtime from outside tmux",
+				Usage:            []string{"projmux attach project <ref>"},
+				Canonical:        []string{"attach project"},
 			},
 		},
 	},
@@ -289,9 +312,10 @@ var routes = []Route{
 		// the hidden `tmux` / `internal tmux` routes, which are unchanged and
 		// undeprecated. The summaries below name the exact artifact each route
 		// touches so the public surface cannot be read as covering them.
-		Name:        "config",
-		Summary:     "Edit AI split-mode settings; render or apply generated tmux configuration",
-		Disposition: DispositionCanonical,
+		Name:           "config",
+		CanonicalOrder: 17,
+		Summary:        "Edit AI split-mode settings; render or apply generated tmux configuration",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux config edit [--get|--set <mode>]",
 			"projmux config render standalone|app [--bin <path>]",
@@ -306,8 +330,9 @@ var routes = []Route{
 				Canonical: []string{"config edit"},
 			},
 			{
-				Name:    "render",
-				Summary: "Print a generated tmux config to stdout; writes nothing",
+				Name:             "render",
+				Summary:          "Print a generated tmux config to stdout; writes nothing",
+				CanonicalSummary: "Print a generated tmux config to stdout",
 				Usage: []string{
 					"projmux config render standalone [--bin <path>]",
 					"projmux config render app [--bin <path>]",
@@ -329,10 +354,11 @@ var routes = []Route{
 				},
 			},
 			{
-				Name:      "apply",
-				Summary:   "Write the generated app tmux config and reload the live projmux server",
-				Usage:     []string{"projmux config apply [--bin <path>] [--config <path>] [--socket <name>]"},
-				Canonical: []string{"config apply"},
+				Name:             "apply",
+				Summary:          "Write the generated app tmux config and reload the live projmux server",
+				CanonicalSummary: "Write the generated app tmux config and reload the live server",
+				Usage:            []string{"projmux config apply [--bin <path>] [--config <path>] [--socket <name>]"},
+				Canonical:        []string{"config apply"},
 			},
 		},
 	},
@@ -349,9 +375,10 @@ var routes = []Route{
 		// The kinds and the provider shortcuts share one handler and one schema.
 		// A shortcut is a spelling of `create agent --provider <id>`, so it is
 		// listed apart from the resource kinds and is never counted as one.
-		Name:        "create",
-		Summary:     "Create Projmux resources",
-		Disposition: DispositionCanonical,
+		Name:           "create",
+		CanonicalOrder: 3,
+		Summary:        "Create Projmux resources",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]",
 			"projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
@@ -372,8 +399,9 @@ var routes = []Route{
 				// Registration is Registry-only -- no session, window or pane is
 				// materialized -- so `-o pane-id` is deliberately absent from the
 				// projections it advertises.
-				Name:    "project",
-				Summary: "Register one exact filesystem path as a Registry Project; no runtime is materialized",
+				Name:             "project",
+				Summary:          "Register one exact filesystem path as a Registry Project; no runtime is materialized",
+				CanonicalSummary: "Register one exact filesystem path as a Registry Project",
 				Usage: []string{
 					"projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]",
 				},
@@ -385,8 +413,9 @@ var routes = []Route{
 				// owns, and that Pane's uid is stored as the Window's
 				// compatibility shell ref -- the anchor a later `create pane` splits
 				// when no explicit --pane is given.
-				Name:    "window",
-				Summary: "Create a Window and its initial Pane below one Project; the runtime is materialized detached",
+				Name:             "window",
+				Summary:          "Create a Window and its initial Pane below one Project; the runtime is materialized detached",
+				CanonicalSummary: "Create a Window with its initial Pane",
 				Usage: []string{
 					"projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 				},
@@ -401,8 +430,9 @@ var routes = []Route{
 				// all the Project, the Window, and the anchor come from the
 				// active managed runtime, so the split lands where the operator
 				// is looking.
-				Name:    "pane",
-				Summary: "Create a shell Pane detached on an explicit Pane or the Window's exact shell or Agent anchor",
+				Name:             "pane",
+				Summary:          "Create a shell Pane detached on an explicit Pane or the Window's exact shell or Agent anchor",
+				CanonicalSummary: "Create a shell Pane below a Window",
 				Usage: []string{
 					"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
@@ -414,8 +444,9 @@ var routes = []Route{
 				// rule. It allocates a Window-owned Agent plus its managed Pane,
 				// splits the resolved Windows detached, and never moves the
 				// client.
-				Name:    "agent",
-				Summary: "Create an Agent detached on an explicit Pane or the Window's exact shell or Agent anchor; --provider is required",
+				Name:             "agent",
+				Summary:          "Create an Agent detached on an explicit Pane or the Window's exact shell or Agent anchor; --provider is required",
+				CanonicalSummary: "Create an Agent and its managed Pane",
 				Usage: []string{
 					"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
@@ -469,9 +500,10 @@ var routes = []Route{
 	{
 		// The registry-backed kinds own the cascade planner; `notification` and
 		// `snapshot` forward raw argv to the handlers that already own them.
-		Name:        "delete",
-		Summary:     "Delete Projmux resources with an explicit cascade plan",
-		Disposition: DispositionCanonical,
+		Name:           "delete",
+		CanonicalOrder: 9,
+		Summary:        "Delete Projmux resources with an explicit cascade plan",
+		Disposition:    DispositionCanonical,
 		// The `<ref>` is bracketed for the same reason it is on `describe`:
 		// omitting the whole selector is a meaningful invocation inside tmux,
 		// where it addresses the active target. It is spelled `[<ref>...]`
@@ -497,41 +529,46 @@ var routes = []Route{
 		Canonical: []string{"delete project", "delete window", "delete pane", "delete agent", "delete notification", "delete snapshot"},
 		Children: []Route{
 			{
-				Name:      "project",
-				Summary:   "Explicitly unregister Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime",
-				Aliases:   []string{"projects"},
-				Usage:     []string{"projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]"},
-				Canonical: []string{"delete project"},
+				Name:             "project",
+				Summary:          "Explicitly unregister Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime",
+				CanonicalSummary: "Unregister a Project and its Registry graph while preserving runtime and external assets",
+				Aliases:          []string{"projects"},
+				Usage:            []string{"projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]"},
+				Canonical:        []string{"delete project"},
 			},
 			{
-				Name:      "window",
-				Summary:   "Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry",
-				Aliases:   []string{"windows"},
-				Usage:     []string{"projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
-				Canonical: []string{"delete window"},
+				Name:             "window",
+				Summary:          "Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry",
+				CanonicalSummary: "Delete a Window and its descendants",
+				Aliases:          []string{"windows"},
+				Usage:            []string{"projmux delete window [<ref>...] [--project <ref> | -p <ref>] [--selector key=value]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
+				Canonical:        []string{"delete window"},
 			},
 			{
-				Name:      "pane",
-				Summary:   "Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry",
-				Aliases:   []string{"panes"},
-				Usage:     []string{"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
-				Canonical: []string{"delete pane"},
+				Name:             "pane",
+				Summary:          "Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry",
+				CanonicalSummary: "Delete a Pane resource and its live binding",
+				Aliases:          []string{"panes"},
+				Usage:            []string{"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
+				Canonical:        []string{"delete pane"},
 			},
 			{
-				Name:      "agent",
-				Summary:   "Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry",
-				Aliases:   []string{"agents"},
-				Usage:     []string{"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
-				Canonical: []string{"delete agent"},
+				Name:             "agent",
+				Summary:          "Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry",
+				CanonicalSummary: "Delete an Agent and its managed Panes",
+				Aliases:          []string{"agents"},
+				Usage:            []string{"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
+				Canonical:        []string{"delete agent"},
 			},
 			{Name: "notification", Summary: "Delete pending notification rows", Aliases: []string{"notifications"}, Canonical: []string{"delete notification"}},
 			{Name: "snapshot", Summary: "Delete saved session snapshots", Aliases: []string{"snapshots"}, Canonical: []string{"delete snapshot"}},
 		},
 	},
 	{
-		Name:        "describe",
-		Summary:     "Describe one Projmux resource",
-		Disposition: DispositionCanonical,
+		Name:           "describe",
+		CanonicalOrder: 2,
+		Summary:        "Describe one Projmux resource",
+		Disposition:    DispositionCanonical,
 		// The `<ref>` is bracketed because omitting the whole selector is a
 		// meaningful invocation inside tmux, where it addresses the active
 		// target. Outside tmux it stays the ambiguity error it always was, so
@@ -545,10 +582,10 @@ var routes = []Route{
 		},
 		Canonical: []string{"describe project", "describe window", "describe pane", "describe agent"},
 		Children: []Route{
-			{Name: "project", Summary: "Describe one Project resource; with no selector inside tmux, the active Project", Aliases: []string{"projects"}, Usage: []string{"projmux describe project [<ref>] [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"describe project"}, Outputs: readProjectionCatalog},
-			{Name: "window", Summary: "Describe one Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window", Aliases: []string{"windows"}, Usage: []string{"projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"describe window"}, Outputs: readProjectionCatalog},
-			{Name: "pane", Summary: "Describe one Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane", Aliases: []string{"panes"}, Usage: []string{"projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe pane"}, Outputs: readProjectionCatalog},
-			{Name: "agent", Summary: "Describe one Agent resource; inside tmux a reference resolves within the active Project and no selector means the Agent owning the active Pane", Aliases: []string{"agents"}, Usage: []string{"projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe agent"}, Outputs: readProjectionCatalog},
+			{Name: "project", Summary: "Describe one Project resource; with no selector inside tmux, the active Project", CanonicalSummary: "Describe one Project resource", Aliases: []string{"projects"}, Usage: []string{"projmux describe project [<ref>] [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"describe project"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
+			{Name: "window", Summary: "Describe one Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window", CanonicalSummary: "Describe one Window resource", Aliases: []string{"windows"}, Usage: []string{"projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"describe window"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
+			{Name: "pane", Summary: "Describe one Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane", CanonicalSummary: "Describe one Pane resource", Aliases: []string{"panes"}, Usage: []string{"projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe pane"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
+			{Name: "agent", Summary: "Describe one Agent resource; inside tmux a reference resolves within the active Project and no selector means the Agent owning the active Pane", CanonicalSummary: "Describe one Agent resource", Aliases: []string{"agents"}, Usage: []string{"projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe agent"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
 		},
 	},
 	{
@@ -558,9 +595,10 @@ var routes = []Route{
 		Usage:       []string{"projmux doctor [--json] [--section <name>] [--verbose]"},
 	},
 	{
-		Name:        "diagnostics",
-		Summary:     "Read operational events or create an explicit local support report",
-		Disposition: DispositionCanonical,
+		Name:           "diagnostics",
+		CanonicalOrder: 19,
+		Summary:        "Read operational events or create an explicit local support report",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux diagnostics log [--json] [--tail <n>]",
 			"projmux diagnostics agent-hook [--tail <n>] [--json] [--path]",
@@ -574,9 +612,10 @@ var routes = []Route{
 		},
 	},
 	{
-		Name:        "focus",
-		Summary:     "Move the current client to a live resource",
-		Disposition: DispositionCanonical,
+		Name:           "focus",
+		CanonicalOrder: 5,
+		Summary:        "Move the current client to a live resource",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux focus project <ref>",
 			"projmux focus window <ref> {--project <ref> | -p <ref>}",
@@ -585,22 +624,27 @@ var routes = []Route{
 		Canonical: []string{"focus project", "focus window", "focus pane"},
 		Children: []Route{
 			{
-				Name:      "project",
-				Summary:   "Move the current client to an already-live Project; never materializes",
-				Usage:     []string{"projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]"},
-				Canonical: []string{"focus project"},
+				Name:               "project",
+				Summary:            "Move the current client to an already-live Project; never materializes",
+				CanonicalSummary:   "Move the current client to a live Project",
+				CanonicalSelfFirst: true,
+				Usage:              []string{"projmux focus project <ref> [--socket <path>] [--client <tty>] [--json]"},
+				Canonical:          []string{"focus project"},
 			},
 			{
-				Name:      "window",
-				Summary:   "Move the current client to an already-live Window in an exact live root session; never materializes",
-				Usage:     []string{"projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--json]"},
-				Canonical: []string{"focus window"},
+				Name:               "window",
+				Summary:            "Move the current client to an already-live Window in an exact live root session; never materializes",
+				CanonicalSummary:   "Move the current client to a live Window",
+				CanonicalSelfFirst: true,
+				Usage:              []string{"projmux focus window <ref> {--project <ref> | -p <ref>} [--socket <path>] [--client <tty>] [--json]"},
+				Canonical:          []string{"focus window"},
 			},
 			{
-				Name:      "pane",
-				Summary:   "Move the current client to an already-live Pane in an exact live root session; never materializes",
-				Usage:     []string{"projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--json]"},
-				Canonical: []string{"focus pane"},
+				Name:             "pane",
+				Summary:          "Move the current client to an already-live Pane in an exact live root session; never materializes",
+				CanonicalSummary: "Move the current client to a live Pane",
+				Usage:            []string{"projmux focus pane <ref> {--project <ref> | -p <ref>} {--window <ref> | -w <ref>} [--socket <path>] [--json]"},
+				Canonical:        []string{"focus pane"},
 			},
 		},
 	},
@@ -617,9 +661,10 @@ var routes = []Route{
 		// Aliasing `pane` onto `panes` would delete a shipped route's meaning, so
 		// the two stay separate canonical children and the asymmetry is
 		// deliberate rather than an omission.
-		Name:        "get",
-		Summary:     "Read Projmux resources by selector",
-		Disposition: DispositionCanonical,
+		Name:           "get",
+		CanonicalOrder: 1,
+		Summary:        "Read Projmux resources by selector",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]",
 			"projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]",
@@ -633,21 +678,24 @@ var routes = []Route{
 			"get runtime sessions", "get runtime windows", "get runtime panes",
 			"get notifications", "get snapshots", "get pane"},
 		Children: []Route{
-			{Name: "projects", Summary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: readProjectionCatalog},
+			{Name: "projects", Summary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
 			{
 				Name: "windows", Summary: "List Window resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
-				Aliases: []string{"window"}, Usage: []string{"projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
-				Canonical: []string{"get windows"}, Outputs: readProjectionCatalog,
+				CanonicalSummary: "List Window resources",
+				Aliases:          []string{"window"}, Usage: []string{"projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
+				Canonical: []string{"get windows"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes,
 			},
 			{
 				Name: "panes", Summary: "List Pane resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
-				Usage:     []string{"projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
-				Canonical: []string{"get panes"}, Outputs: readProjectionCatalog,
+				CanonicalSummary: "List Pane resources",
+				Usage:            []string{"projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
+				Canonical:        []string{"get panes"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes,
 			},
 			{
 				Name: "agents", Summary: "List Agent resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
-				Aliases: []string{"agent"}, Usage: []string{"projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
-				Canonical: []string{"get agents"}, Outputs: readProjectionCatalog,
+				CanonicalSummary: "List Agent resources",
+				Aliases:          []string{"agent"}, Usage: []string{"projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
+				Canonical: []string{"get agents"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes,
 			},
 			{
 				// The Runtime diagnostics escape hatch. It is a child of `get`
@@ -690,26 +738,29 @@ var routes = []Route{
 					},
 				},
 			},
-			{Name: "notifications", Summary: "List pending notification rows", Aliases: []string{"notification"}, Canonical: []string{"get notifications"}},
-			{Name: "snapshots", Summary: "List saved session snapshots", Aliases: []string{"snapshot"}, Canonical: []string{"get snapshots"}},
+			{Name: "notifications", Summary: "List pending notification rows", Aliases: []string{"notification"}, Canonical: []string{"get notifications"}, AcceptedOutputs: sharedOutputModes},
+			{Name: "snapshots", Summary: "List saved session snapshots", Aliases: []string{"snapshot"}, Canonical: []string{"get snapshots"}, AcceptedOutputs: sharedOutputModes},
 			{
-				Name:      "pane",
-				Summary:   "Read one Pane resource; with no selector inside tmux, the active Pane",
-				Usage:     []string{"projmux get pane [--current] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]"},
-				Canonical: []string{"get pane"},
-				Outputs:   readProjectionCatalog,
-				Fields:    []FieldProjection{FieldProjectionCWD},
+				Name:             "pane",
+				Summary:          "Read one Pane resource; with no selector inside tmux, the active Pane",
+				CanonicalSummary: "Read one Pane resource",
+				Usage:            []string{"projmux get pane [--current] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]"},
+				Canonical:        []string{"get pane"},
+				Outputs:          readProjectionCatalog,
+				AcceptedOutputs:  sharedOutputModes,
+				Fields:           []FieldProjection{FieldProjectionCWD},
 			},
 		},
 	},
 	{
-		Name:        "hook",
-		Summary:     "List, edit, validate, and trust lifecycle hook config",
-		Disposition: DispositionCanonical,
-		Usage:       []string{"projmux hook list|edit|validate|trust|untrust"},
-		Canonical:   []string{"hook list", "hook edit", "hook validate", "hook trust", "hook untrust"},
+		Name:           "hook",
+		CanonicalOrder: 16,
+		Summary:        "List, edit, validate, and trust lifecycle hook config",
+		Disposition:    DispositionCanonical,
+		Usage:          []string{"projmux hook list|edit|validate|trust|untrust"},
+		Canonical:      []string{"hook list", "hook edit", "hook validate", "hook trust", "hook untrust"},
 		Children: []Route{
-			{Name: "list", Summary: "List global and project lifecycle hooks", Canonical: []string{"hook list"}},
+			{Name: "list", Summary: "List global and project lifecycle hooks", CanonicalSummary: "List lifecycle hook config", Canonical: []string{"hook list"}},
 			{Name: "edit", Summary: "Edit lifecycle hook config", Canonical: []string{"hook edit"}},
 			{Name: "validate", Summary: "Validate lifecycle hook config", Canonical: []string{"hook validate"}},
 			{Name: "trust", Summary: "Trust the current project hook config", Canonical: []string{"hook trust"}},
@@ -717,9 +768,10 @@ var routes = []Route{
 		},
 	},
 	{
-		Name:        "notification",
-		Summary:     "Manage pending notification workflow state",
-		Disposition: DispositionCanonical,
+		Name:           "notification",
+		CanonicalOrder: 15,
+		Summary:        "Manage pending notification workflow state",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux notification ack <id> | --all",
 			"projmux notification reconcile [--json]",
@@ -731,24 +783,26 @@ var routes = []Route{
 		},
 	},
 	{
-		Name:        "pin",
-		Summary:     "Manage pinned project directories",
-		Disposition: DispositionCanonical,
-		Usage:       []string{"projmux pin project list|add|remove|toggle|clear"},
-		Canonical:   []string{"pin project"},
+		Name:           "pin",
+		CanonicalOrder: 11,
+		Summary:        "Manage pinned project directories",
+		Disposition:    DispositionCanonical,
+		Usage:          []string{"projmux pin project list|add|remove|toggle|clear"},
+		Canonical:      []string{"pin project"},
 		Children: []Route{
 			// The store behind this route is a lines file of directory paths, not
 			// a Project registry: there is no uid, no ownerRef, and no resource
 			// document. So the summary says "project directories" like every
 			// sibling below it, rather than "Project resources", which would name
 			// a resource kind the route never touches.
-			{Name: "project", Summary: "Manage pinned project directories (canonical spelling)", Usage: []string{"projmux pin project list|add|remove|toggle|clear"}, Canonical: []string{"pin project"}},
+			{Name: "project", Summary: "Manage pinned project directories (canonical spelling)", CanonicalSummary: "Manage pinned project directories", Usage: []string{"projmux pin project list|add|remove|toggle|clear"}, Canonical: []string{"pin project"}},
 		},
 	},
 	{
-		Name:        "prune",
-		Summary:     "Prune stale Projects and snapshots",
-		Disposition: DispositionCanonical,
+		Name:           "prune",
+		CanonicalOrder: 12,
+		Summary:        "Prune stale Projects and snapshots",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux prune snapshot [--older-than <duration>]",
 			"projmux prune project --missing --older-than <duration> [--yes]",
@@ -756,16 +810,18 @@ var routes = []Route{
 		Canonical: []string{"prune project", "prune snapshot"},
 		Children: []Route{
 			{
-				Name:      "project",
-				Summary:   "Delete Projects whose spec.root has been missing for a bounded age",
-				Usage:     []string{"projmux prune project --missing --older-than <duration> [--yes]"},
-				Canonical: []string{"prune project"},
+				Name:             "project",
+				Summary:          "Delete Projects whose spec.root has been missing for a bounded age",
+				CanonicalSummary: "Prune Projects whose spec.root has been missing for a bounded age",
+				Usage:            []string{"projmux prune project --missing --older-than <duration> [--yes]"},
+				Canonical:        []string{"prune project"},
 			},
 			{
-				Name:      "snapshot",
-				Summary:   "Inspect or delete preserved session snapshots (canonical spelling)",
-				Usage:     []string{"projmux prune snapshot [--older-than <duration>]", "projmux prune snapshot delete <session>..."},
-				Canonical: []string{"prune snapshot", "delete snapshot"},
+				Name:             "snapshot",
+				Summary:          "Inspect or delete preserved session snapshots (canonical spelling)",
+				CanonicalSummary: "Prune preserved session snapshots",
+				Usage:            []string{"projmux prune snapshot [--older-than <duration>]", "projmux prune snapshot delete <session>..."},
+				Canonical:        []string{"prune snapshot", "delete snapshot"},
 			},
 		},
 	},
@@ -776,9 +832,10 @@ var routes = []Route{
 		Usage:       []string{"projmux quit [--yes|--force]"},
 	},
 	{
-		Name:        "reconcile",
-		Summary:     "Preview or repair Registry and exact tmux resource drift",
-		Disposition: DispositionCanonical,
+		Name:           "reconcile",
+		CanonicalOrder: 8,
+		Summary:        "Preview or repair Registry and exact tmux resource drift",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]",
 			"projmux reconcile registry [--dry-run] [--source <name|absolute-path>] [--expect-source-checksum <sha256:hex>] [--expect-current-checksum <sha256:hex>] [--socket <name> | --socket-path <absolute>] [-o json]",
@@ -786,10 +843,11 @@ var routes = []Route{
 		Canonical: []string{"reconcile resources", "reconcile registry"},
 		Children: []Route{
 			{
-				Name:      "resources",
-				Summary:   "Preview or repair exact anchor-aware Registry and tmux topology on one exact socket",
-				Usage:     []string{"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]"},
-				Canonical: []string{"reconcile resources"},
+				Name:             "resources",
+				Summary:          "Preview or repair exact anchor-aware Registry and tmux topology on one exact socket",
+				CanonicalSummary: "Preview or repair Registry and exact tmux resource drift",
+				Usage:            []string{"projmux reconcile resources [--dry-run] [--materialize-project <name|uid:uid>] [--socket <name> | --socket-path <absolute>] [-o json]"},
+				Canonical:        []string{"reconcile resources"},
 			},
 			{
 				Name:      "registry",
@@ -800,24 +858,27 @@ var routes = []Route{
 		},
 	},
 	{
-		Name:        "rebind",
-		Summary:     "Rebind a Project to a new absolute root without moving files",
-		Disposition: DispositionCanonical,
-		Usage:       []string{"projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-path>"},
-		Canonical:   []string{"rebind project"},
+		Name:           "rebind",
+		CanonicalOrder: 7,
+		Summary:        "Rebind a Project to a new absolute root without moving files",
+		Disposition:    DispositionCanonical,
+		Usage:          []string{"projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-path>"},
+		Canonical:      []string{"rebind project"},
 		Children: []Route{
 			{
-				Name:      "project",
-				Summary:   "Rewrite one Project spec.root; no filesystem move, no heuristic uid merge",
-				Usage:     []string{"projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-path>"},
-				Canonical: []string{"rebind project"},
+				Name:             "project",
+				Summary:          "Rewrite one Project spec.root; no filesystem move, no heuristic uid merge",
+				CanonicalSummary: "Rebind one Project spec.root to a new absolute directory",
+				Usage:            []string{"projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-path>"},
+				Canonical:        []string{"rebind project"},
 			},
 		},
 	},
 	{
-		Name:        "rename",
-		Summary:     "Rename a Projmux resource metadata.name",
-		Disposition: DispositionCanonical,
+		Name:           "rename",
+		CanonicalOrder: 6,
+		Summary:        "Rename a Projmux resource metadata.name",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>",
 			"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]",
@@ -826,10 +887,10 @@ var routes = []Route{
 		},
 		Canonical: []string{"rename project", "rename window", "rename pane", "rename agent"},
 		Children: []Route{
-			{Name: "project", Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", Aliases: []string{"projects"}, Usage: []string{"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>"}, Canonical: []string{"rename project"}},
-			{Name: "window", Summary: "Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]"}, Canonical: []string{"rename window"}},
-			{Name: "pane", Summary: "Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename pane"}},
-			{Name: "agent", Summary: "Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane", Aliases: []string{"agents"}, Usage: []string{"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename agent"}},
+			{Name: "project", Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", CanonicalSummary: "Rename a Projmux Project resource", Aliases: []string{"projects"}, Usage: []string{"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>"}, Canonical: []string{"rename project"}},
+			{Name: "window", Summary: "Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window", CanonicalSummary: "Rename a Projmux Window resource", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]"}, Canonical: []string{"rename window"}},
+			{Name: "pane", Summary: "Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title", CanonicalSummary: "Rename a Projmux Pane resource; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename pane"}},
+			{Name: "agent", Summary: "Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane", CanonicalSummary: "Rename an Agent stable resource name only", Aliases: []string{"agents"}, Usage: []string{"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename agent"}},
 		},
 	},
 	{
@@ -839,11 +900,12 @@ var routes = []Route{
 		Usage:       []string{"projmux resources"},
 	},
 	{
-		Name:        "restore",
-		Summary:     "Project a saved snapshot into one exact closed Project desired state",
-		Disposition: DispositionCanonical,
-		Usage:       []string{"projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]"},
-		Canonical:   []string{"restore snapshot"},
+		Name:           "restore",
+		CanonicalOrder: 10,
+		Summary:        "Project a saved snapshot into one exact closed Project desired state",
+		Disposition:    DispositionCanonical,
+		Usage:          []string{"projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]"},
+		Canonical:      []string{"restore snapshot"},
 		Children: []Route{
 			{
 				Name:      "snapshot",
@@ -858,9 +920,10 @@ var routes = []Route{
 		// carries no uid, name reservation, or ownerRef and is therefore not a
 		// Projmux resource. Every subcommand forwards raw argv to the handler
 		// that already owns the behavior.
-		Name:        "runtime",
-		Summary:     "Manage the live and ephemeral tmux runtime inventory",
-		Disposition: DispositionCanonical,
+		Name:           "runtime",
+		CanonicalOrder: 18,
+		Summary:        "Manage the live and ephemeral tmux runtime inventory",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux runtime sessions [--ui=popup|sidebar]",
 			"projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]",
@@ -898,9 +961,10 @@ var routes = []Route{
 		Usage:       []string{"projmux settings"},
 	},
 	{
-		Name:        "setup",
-		Summary:     "Probe terminal keys or remediate them with setup terminal",
-		Disposition: DispositionCanonical,
+		Name:           "setup",
+		CanonicalOrder: 20,
+		Summary:        "Probe terminal keys or remediate them with setup terminal",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux setup",
 			"projmux setup terminal [terminal] [--apply]",
@@ -924,11 +988,12 @@ var routes = []Route{
 		Canonical:   []string{"focus project"},
 	},
 	{
-		Name:        "update",
-		Summary:     "Check installer-aware release update status",
-		Disposition: DispositionCanonical,
-		Usage:       []string{"projmux update status|check|apply"},
-		Canonical:   []string{"update status", "update check", "update apply"},
+		Name:           "update",
+		CanonicalOrder: 21,
+		Summary:        "Check installer-aware release update status",
+		Disposition:    DispositionCanonical,
+		Usage:          []string{"projmux update status|check|apply"},
+		Canonical:      []string{"update status", "update check", "update apply"},
 		Children: []Route{
 			{Name: "status", Summary: "Show read-only update status", Canonical: []string{"update status"}},
 			{Name: "check", Summary: "Check for a newer release and refresh the cache", Canonical: []string{"update check"}},
@@ -953,9 +1018,11 @@ var routes = []Route{
 		},
 	},
 	{
-		Name:        "help",
-		Summary:     "Show bootstrap help",
-		Disposition: DispositionCanonical,
+		Name:             "help",
+		CanonicalOrder:   22,
+		Summary:          "Show bootstrap help",
+		CanonicalSummary: "Show help for projmux or one route",
+		Disposition:      DispositionCanonical,
 		Usage: []string{
 			"projmux help",
 			"projmux --help",
@@ -964,9 +1031,10 @@ var routes = []Route{
 		Canonical: []string{"help"},
 	},
 	{
-		Name:        "version",
-		Summary:     "Print the current version",
-		Disposition: DispositionCanonical,
+		Name:           "version",
+		CanonicalOrder: 23,
+		Summary:        "Print the current version",
+		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux version",
 			"projmux --version",
@@ -983,10 +1051,11 @@ var routes = []Route{
 		// Every subcommand forwards raw argv to the handler that owns the
 		// behavior. Old pre-namespace spellings are absent from the public and
 		// hidden route graph; generated config uses only this namespace.
-		Name:        "internal",
-		Summary:     "Internal plumbing invoked by generated tmux config, hooks, and popups",
-		Disposition: DispositionInternal,
-		Hidden:      true,
+		Name:           "internal",
+		CanonicalOrder: 24,
+		Summary:        "Internal plumbing invoked by generated tmux config, hooks, and popups",
+		Disposition:    DispositionInternal,
+		Hidden:         true,
 		Usage: []string{
 			"projmux internal tmux print-config|apply|popup-toggle|rebalance-panes|autosave-session-state ...",
 			"projmux internal status git|project|usage|notify|resources",
@@ -1017,10 +1086,11 @@ var routes = []Route{
 		},
 		Children: []Route{
 			{
-				Name:      "tmux",
-				Summary:   "Generated tmux config, popup, and pane plumbing",
-				Usage:     []string{"projmux internal tmux print-config|print-app-config|install|install-app|apply", "projmux internal tmux popup-preview|popup-switch|popup-sessions|popup-toggle", "projmux internal tmux hook-trust-prompt|rebalance-panes|rename-pane|autosave-session-state"},
-				Canonical: []string{"internal tmux"},
+				Name:             "tmux",
+				Summary:          "Generated tmux config, popup, and pane plumbing",
+				CanonicalSummary: "Generated tmux config and popup plumbing",
+				Usage:            []string{"projmux internal tmux print-config|print-app-config|install|install-app|apply", "projmux internal tmux popup-preview|popup-switch|popup-sessions|popup-toggle", "projmux internal tmux hook-trust-prompt|rebalance-panes|rename-pane|autosave-session-state"},
+				Canonical:        []string{"internal tmux"},
 				Children: []Route{
 					{Name: "hook-trust-prompt", Summary: "Show the project hook trust prompt", Canonical: []string{"internal tmux"}},
 					{Name: "popup-preview", Summary: "Open the preview popup", Canonical: []string{"internal tmux"}},
@@ -1038,10 +1108,11 @@ var routes = []Route{
 				},
 			},
 			{
-				Name:      "status",
-				Summary:   "Render tmux status bar segments",
-				Usage:     []string{"projmux internal status git|project|usage|notify|resources"},
-				Canonical: []string{"internal status", "agent usage"},
+				Name:             "status",
+				Summary:          "Render tmux status bar segments",
+				CanonicalSummary: "tmux status segment renderer",
+				Usage:            []string{"projmux internal status git|project|usage|notify|resources"},
+				Canonical:        []string{"internal status", "agent usage"},
 				Children: []Route{
 					{Name: "git", Summary: "Render the git status segment", Canonical: []string{"internal status"}},
 					{Name: "project", Summary: "Render the project status segment", Canonical: []string{"internal status"}},
@@ -1051,20 +1122,22 @@ var routes = []Route{
 				},
 			},
 			{
-				Name:      "statusbar",
-				Summary:   "Dispatch projmux status bar clicks and shortcuts",
-				Usage:     []string{"projmux internal statusbar click <range-id> ...", "projmux internal statusbar usage-refresh"},
-				Canonical: []string{"internal statusbar"},
+				Name:             "statusbar",
+				Summary:          "Dispatch projmux status bar clicks and shortcuts",
+				CanonicalSummary: "tmux status bar click and key dispatcher",
+				Usage:            []string{"projmux internal statusbar click <range-id> ...", "projmux internal statusbar usage-refresh"},
+				Canonical:        []string{"internal statusbar"},
 				Children: []Route{
 					{Name: "click", Summary: "Dispatch a status bar click range", Canonical: []string{"internal statusbar"}},
 					{Name: "usage-refresh", Summary: "Refresh the AI usage snapshot", Canonical: []string{"internal statusbar"}},
 				},
 			},
 			{
-				Name:      "preview",
-				Summary:   "Manage persisted tmux preview selection",
-				Usage:     []string{"projmux internal preview cycle-pane|cycle-window|select"},
-				Canonical: []string{"internal preview"},
+				Name:             "preview",
+				Summary:          "Manage persisted tmux preview selection",
+				CanonicalSummary: "Persisted preview cursor plumbing",
+				Usage:            []string{"projmux internal preview cycle-pane|cycle-window|select"},
+				Canonical:        []string{"internal preview"},
 				Children: []Route{
 					{Name: "cycle-pane", Summary: "Advance the persisted preview pane cursor", Canonical: []string{"internal preview"}},
 					{Name: "cycle-window", Summary: "Advance the persisted preview window cursor", Canonical: []string{"internal preview"}},
@@ -1072,10 +1145,11 @@ var routes = []Route{
 				},
 			},
 			{
-				Name:      "session-popup",
-				Summary:   "Read tmux popup preview state",
-				Usage:     []string{"projmux internal session-popup preview|open|cycle-pane|cycle-window"},
-				Canonical: []string{"internal session-popup"},
+				Name:             "session-popup",
+				Summary:          "Read tmux popup preview state",
+				CanonicalSummary: "Generated session popup payload",
+				Usage:            []string{"projmux internal session-popup preview|open|cycle-pane|cycle-window"},
+				Canonical:        []string{"internal session-popup"},
 				Children: []Route{
 					{Name: "preview", Summary: "Render the session popup preview", Canonical: []string{"internal session-popup"}},
 					{Name: "open", Summary: "Open the previewed session", Canonical: []string{"internal session-popup"}},
@@ -1098,10 +1172,11 @@ var routes = []Route{
 				// and by the pane title watcher, never by a user, so the Agent
 				// decomposition parks it here rather than in the public `agent`
 				// namespace.
-				Name:      "agent-hook",
-				Summary:   "Provider hook ingest and Agent pane title watcher plumbing",
-				Usage:     []string{"projmux internal agent-hook ingest <source> ...", "projmux internal agent-hook watch-title [pane]"},
-				Canonical: []string{"internal agent-hook"},
+				Name:             "agent-hook",
+				Summary:          "Provider hook ingest and Agent pane title watcher plumbing",
+				CanonicalSummary: "Provider hook ingest and title watcher plumbing",
+				Usage:            []string{"projmux internal agent-hook ingest <source> ...", "projmux internal agent-hook watch-title [pane]"},
+				Canonical:        []string{"internal agent-hook"},
 				Children: []Route{
 					{Name: "ingest", Summary: "Ingest provider hook and log events", Canonical: []string{"internal agent-hook"}},
 					{Name: "watch-title", Summary: "Run the Agent pane title watcher", Canonical: []string{"internal agent-hook"}},
@@ -1114,28 +1189,32 @@ var routes = []Route{
 				Canonical: []string{"internal focus"},
 			},
 			{
-				Name:      "key-broker",
-				Summary:   "Forward captured physical key chords into the tmux root table",
-				Usage:     []string{"projmux internal key-broker [--once]"},
-				Canonical: []string{"internal key-broker"},
+				Name:             "key-broker",
+				Summary:          "Forward captured physical key chords into the tmux root table",
+				CanonicalSummary: "Darwin physical key transport",
+				Usage:            []string{"projmux internal key-broker [--once]"},
+				Canonical:        []string{"internal key-broker"},
 			},
 			{
-				Name:      "popup-wait-key",
-				Summary:   "Read a single key for a display-only tmux popup",
-				Usage:     []string{"projmux internal popup-wait-key"},
-				Canonical: []string{"internal popup-wait-key"},
+				Name:             "popup-wait-key",
+				Summary:          "Read a single key for a display-only tmux popup",
+				CanonicalSummary: "Display-only popup single-key reader",
+				Usage:            []string{"projmux internal popup-wait-key"},
+				Canonical:        []string{"internal popup-wait-key"},
 			},
 			{
-				Name:      "supervise",
-				Summary:   "Supervise one managed Pane process and record its exit evidence",
-				Usage:     []string{"projmux internal supervise --pane-uid <uid> --generation <gen> [--agent-uid <uid> --operation-id <id> --registry-path <absolute>] [--argv0 <name>] -- <command> ..."},
-				Canonical: []string{"internal supervise"},
+				Name:             "supervise",
+				Summary:          "Supervise one managed Pane process and record its exit evidence",
+				CanonicalSummary: "Managed Pane process supervisor and termination receipt writer",
+				Usage:            []string{"projmux internal supervise --pane-uid <uid> --generation <gen> [--agent-uid <uid> --operation-id <id> --registry-path <absolute>] [--argv0 <name>] -- <command> ..."},
+				Canonical:        []string{"internal supervise"},
 			},
 			{
-				Name:      "activation-exec",
-				Summary:   "Admit one exact committed Agent activation before provider exec",
-				Usage:     []string{"projmux internal activation-exec --pane-uid <uid> --agent-uid <uid> --generation <gen> --operation-id <id> --registry-path <absolute> [--failure-fd <fd>] [--argv0 <name>] -- <command> ..."},
-				Canonical: []string{"internal activation-exec"},
+				Name:             "activation-exec",
+				Summary:          "Admit one exact committed Agent activation before provider exec",
+				CanonicalSummary: "Exact committed Agent activation admission",
+				Usage:            []string{"projmux internal activation-exec --pane-uid <uid> --agent-uid <uid> --generation <gen> --operation-id <id> --registry-path <absolute> [--failure-fd <fd>] [--argv0 <name>] -- <command> ..."},
+				Canonical:        []string{"internal activation-exec"},
 			},
 		},
 	},

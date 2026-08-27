@@ -265,13 +265,13 @@ func TestGeneratedReferenceExcludesEveryHiddenRoute(t *testing.T) {
 	}
 }
 
-// canonicalManifestOnlySummaries returns the canonical-manifest summaries that
-// no command-tree node states verbatim.
+// canonicalOverrideOnlySummaries returns explicit canonical-summary overrides
+// that no help node states verbatim.
 //
 // These are the strings that make the boundary necessary: the command tree says
-// what a route does today, and the canonical manifest says what the contract
-// will eventually require, so the two diverge whenever a spelling is ahead of
-// its handler. `agent resume` used to be the clearest survivor and no longer is
+// what a route does today, and CanonicalSummary says what the contract requires,
+// so the two graph views diverge whenever a spelling is ahead of its handler.
+// `agent resume` used to be the clearest survivor and no longer is
 // -- its owning track landed the rebind, so both surfaces now say "Rebind an
 // Offline or Failed Agent to a new managed Pane" and it left this set by being
 // built. That is the intended way out of it.
@@ -281,7 +281,7 @@ func TestGeneratedReferenceExcludesEveryHiddenRoute(t *testing.T) {
 // target was retired rather than deferred, because the persistent
 // Project-metadata tag is a permanently abandoned plan and not a feature
 // waiting on a Phase.
-func canonicalManifestOnlySummaries() []string {
+func canonicalOverrideOnlySummaries() []string {
 	treeSummaries := map[string]bool{}
 	walkRoutes(Routes(), func(_ []string, route Route) {
 		treeSummaries[route.Summary] = true
@@ -295,22 +295,19 @@ func canonicalManifestOnlySummaries() []string {
 	return out
 }
 
-// TestGeneratedReferenceCarriesNoCanonicalManifestOnlySummary is the enforced
-// boundary between the two manifests.
+// TestGeneratedReferenceCarriesNoCanonicalOverrideOnlySummary enforces the
+// boundary between the public-help and canonical projections of one graph.
 //
-// The generator reads the command tree and never the canonical manifest, but
-// "the current code happens not to import it" is not a contract. This test
-// falsifies the claim directly against the artifact: it derives every summary
-// that exists only in canonical.go and asserts none of them reached the page.
-// Point the renderer at the canonical manifest -- even for one route -- and
-// this fails.
-func TestGeneratedReferenceCarriesNoCanonicalManifestOnlySummary(t *testing.T) {
+// The generator reads Summary rather than CanonicalSummary. This test falsifies
+// that claim against the artifact by deriving every override-only sentence and
+// asserting none of them reached the page.
+func TestGeneratedReferenceCarriesNoCanonicalOverrideOnlySummary(t *testing.T) {
 	t.Parallel()
 
-	divergent := canonicalManifestOnlySummaries()
+	divergent := canonicalOverrideOnlySummaries()
 	if len(divergent) == 0 {
-		t.Fatal("no canonical-manifest-only summary exists, so this assertion proves nothing; " +
-			"if the two manifests have genuinely converged, delete this test with the reason recorded")
+		t.Fatal("no canonical-summary-only override exists, so this assertion proves nothing; " +
+			"if the graph views have genuinely converged, delete this test with the reason recorded")
 	}
 
 	// The known divergences the roadmap owner still has to close, each naming a
@@ -331,7 +328,7 @@ func TestGeneratedReferenceCarriesNoCanonicalManifestOnlySummary(t *testing.T) {
 	}
 	for _, summary := range knownTargetStateSummaries {
 		if !slices.Contains(divergent, summary) {
-			t.Fatalf("the canonical manifest no longer diverges on %q; re-derive the boundary before relaxing it", summary)
+			t.Fatalf("the canonical graph projection no longer diverges on %q; re-derive the boundary before relaxing it", summary)
 		}
 	}
 
@@ -343,7 +340,7 @@ func TestGeneratedReferenceCarriesNoCanonicalManifestOnlySummary(t *testing.T) {
 	rendered := renderedStrings(t)
 	for _, summary := range divergent {
 		if rendered[summary] {
-			t.Errorf("the generated reference renders the canonical-manifest-only summary %q verbatim; "+
+			t.Errorf("the generated reference renders the canonical-override-only summary %q verbatim; "+
 				"the reference must be rendered from the command tree alone", summary)
 		}
 	}
