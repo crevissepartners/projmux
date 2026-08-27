@@ -46,6 +46,15 @@ const (
 	keyBindingActionPickerInternal keyBindingActionKind = "picker-internal"
 )
 
+// keyBindingActionSemantics is the product meaning projected into Settings
+// and diagnostics for one canonical keybinding action record.
+type keyBindingActionSemantics struct {
+	TargetKind string
+	ResultKind string
+	Placement  string
+	Anchor     string
+}
+
 const (
 	paneRenameActionID        = "rename-pane-label"
 	retiredPaneRenameActionID = "rename-pane-topic"
@@ -72,10 +81,16 @@ type keyBindingAction struct {
 	CanonicalID string
 	Aliases     []string
 	Description string
-	Kind        keyBindingActionKind
-	Tier        keyBindingTier
-	Surface     string
-	Scope       keyBindingScope
+	DisplayName string
+	Category    string
+	Semantics   keyBindingActionSemantics
+	// HandlerBoundaryNote records only the boundary information that cannot be
+	// derived from TmuxKind/TmuxBody and the shipped CLI manifest.
+	HandlerBoundaryNote string
+	Kind                keyBindingActionKind
+	Tier                keyBindingTier
+	Surface             string
+	Scope               keyBindingScope
 
 	PlainChord  string
 	PlainChords []string
@@ -111,6 +126,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 	return []keyBindingAction{
 		{
 			ID:              "ProjectSidebarToggle",
+			DisplayName:     "Open / close Project Sidebar",
+			Category:        keyBindingCategoryLaunch,
+			Semantics:       keyBindingActionSemantics{TargetKind: "Project", ResultKind: "open or close the Project Sidebar", Placement: keyBindingPlacementPopup},
 			CanonicalID:     "project-sidebar.toggle",
 			Description:     "Project sidebar",
 			Kind:            keyBindingActionTogglePopup,
@@ -137,6 +155,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "NotifySidebarToggle",
+			DisplayName:    "Open / close Notification Sidebar",
+			Category:       keyBindingCategoryLaunch,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "open or close the Notification Sidebar", Placement: keyBindingPlacementPopup},
 			CanonicalID:    "notification-sidebar.toggle",
 			Description:    "Notify sidebar",
 			Kind:           keyBindingActionTogglePopup,
@@ -161,6 +182,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopupToggle",
+			DisplayName: "Open / close Session Picker",
+			Category:    keyBindingCategoryLaunch,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Session", ResultKind: "open or close the Session Picker", Placement: keyBindingPlacementPopup},
 			CanonicalID: "session-picker.toggle",
 			Description: "Existing session popup",
 			Kind:        keyBindingActionTogglePopup,
@@ -172,6 +196,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "Resources:Open",
+			DisplayName: "Open Resource Inspector",
+			Category:    keyBindingCategoryLaunch,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Project, Window, Pane", ResultKind: "open the read-only Resource Inspector", Placement: keyBindingPlacementPopup},
 			CanonicalID: "resource-inspector.open",
 			Description: "Open the read-only Project, Window, and Pane resource inspector",
 			Kind:        keyBindingActionTogglePopup,
@@ -183,6 +210,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "RecentWindows:Open",
+			DisplayName:    "Open Recent Windows",
+			Category:       keyBindingCategoryLaunch,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "open the recent Windows queue", Placement: keyBindingPlacementPopup},
 			CanonicalID:    "recent-windows.open",
 			Description:    "Recent windows queue across projects; switches to a live window without restoring a historical pane, distinct from last-pane and the existing-session popup.",
 			Kind:           keyBindingActionTogglePopup,
@@ -207,6 +237,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:              "AISplitPickerToggle",
+			DisplayName:     "Open Agent / Pane Launcher",
+			Category:        keyBindingCategoryLaunch,
+			Semantics:       keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "choose a launch target; the chosen target then creates", Placement: keyBindingPlacementPopup},
 			CanonicalID:     "agent-pane-launcher.toggle",
 			Description:     "Toggle the popup picker for choosing an AI split mode",
 			Kind:            keyBindingActionTogglePopup,
@@ -232,6 +265,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "SettingsToggle",
+			DisplayName:    "Open / close Settings",
+			Category:       keyBindingCategoryLaunch,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Settings", ResultKind: "open or close Settings", Placement: keyBindingPlacementPopup},
 			CanonicalID:    "settings.toggle",
 			Description:    "Settings",
 			Kind:           keyBindingActionTogglePopup,
@@ -256,6 +292,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:              "AIResumePickerToggle",
+			DisplayName:     "Open Agent Resume Picker",
+			Category:        keyBindingCategoryLaunch,
+			Semantics:       keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "resume one existing Offline or Failed Agent; never creates an Agent", Placement: keyBindingPlacementPopup},
 			CanonicalID:     "agent-resume-picker.toggle",
 			Description:     "Toggle the popup picker for resuming AI sessions",
 			Kind:            keyBindingActionTogglePopup,
@@ -281,6 +320,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ProjectSwitcherToggle",
+			DisplayName:    "Open Project Picker",
+			Category:       keyBindingCategoryLaunch,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Project", ResultKind: "open the Project Picker", Placement: keyBindingPlacementPopup},
 			CanonicalID:    "project-picker.toggle",
 			Description:    "Project switcher popup",
 			Kind:           keyBindingActionTogglePopup,
@@ -298,6 +340,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "rename-window",
+			DisplayName:    "Rename Window",
+			Category:       keyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "rename the focused Window", Placement: keyBindingPlacementInFocusedWindow},
 			CanonicalID:    "window.rename",
 			Description:    "Rename the current tmux window",
 			Kind:           keyBindingActionCommand,
@@ -315,6 +360,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             paneRenameActionID,
+			DisplayName:    "Rename Pane",
+			Category:       keyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "set or clear the focused Pane label", Placement: keyBindingPlacementInFocusedWindow},
 			CanonicalID:    "pane.rename",
 			Description:    "Set or clear the current tmux pane's user label",
 			Kind:           keyBindingActionCommand,
@@ -329,6 +377,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "ai-split-right",
+			DisplayName: "Launch default target right",
+			Category:    keyBindingCategoryAgentPane,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "the configured default launch target", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID: "agent-pane.launch-default.right",
 			Description: "Open a new AI split to the right",
 			Kind:        keyBindingActionCommand,
@@ -346,6 +397,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "ai-split-down",
+			DisplayName: "Launch default target down",
+			Category:    keyBindingCategoryAgentPane,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "the configured default launch target", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID: "agent-pane.launch-default.down",
 			Description: "Open a new AI split below",
 			Kind:        keyBindingActionCommand,
@@ -363,6 +417,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-codex-right",
+			DisplayName:    "Create Codex Agent right",
+			Category:       keyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "agent.create.codex.right",
 			Description:    "Open a Codex split to the right without the picker",
 			Kind:           keyBindingActionCommand,
@@ -374,6 +431,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-codex-down",
+			DisplayName:    "Create Codex Agent down",
+			Category:       keyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "agent.create.codex.down",
 			Description:    "Open a Codex split below without the picker",
 			Kind:           keyBindingActionCommand,
@@ -385,6 +445,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-claude-right",
+			DisplayName:    "Create Claude Agent right",
+			Category:       keyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "agent.create.claude.right",
 			Description:    "Open a Claude split to the right without the picker",
 			Kind:           keyBindingActionCommand,
@@ -396,6 +459,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-claude-down",
+			DisplayName:    "Create Claude Agent down",
+			Category:       keyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "agent.create.claude.down",
 			Description:    "Open a Claude split below without the picker",
 			Kind:           keyBindingActionCommand,
@@ -407,6 +473,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-shell-right",
+			DisplayName:    "Create Shell Pane right",
+			Category:       keyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "a new Shell Pane", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "pane.create.shell.right",
 			Description:    "Open a shell split to the right without the picker",
 			Kind:           keyBindingActionCommand,
@@ -418,6 +487,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "ai-split-shell-down",
+			DisplayName:    "Create Shell Pane down",
+			Category:       keyBindingCategoryAgentPane,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "a new Shell Pane", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
 			CanonicalID:    "pane.create.shell.down",
 			Description:    "Open a shell split below without the picker",
 			Kind:           keyBindingActionCommand,
@@ -428,17 +500,24 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			PlainBindOrder: 87,
 		},
 		{
-			ID:          "current-project-session",
-			CanonicalID: "project.open-for-current-directory",
-			Description: "Jump to current pane project session",
-			Kind:        keyBindingActionCommand,
-			Tier:        keyBindingTierUserConfigurableDirect,
-			Scope:       keyBindingScopeStandalone,
-			TmuxKind:    tmuxBindingRunProjmux,
-			TmuxBody:    "switch open #{q:pane_current_path}",
+			ID:                  "current-project-session",
+			DisplayName:         "Open Project for Current Directory",
+			Category:            keyBindingCategoryNavigation,
+			Semantics:           keyBindingActionSemantics{TargetKind: "Project", ResultKind: "ensure and attach the Project runtime derived from the current Pane cwd", Anchor: keyBindingAnchorCurrentPaneCwdInput},
+			HandlerBoundaryNote: "the retained switch shortcut receives the current Pane cwd and owns the ensure/attach outcome",
+			CanonicalID:         "project.open-for-current-directory",
+			Description:         "Jump to current pane project session",
+			Kind:                keyBindingActionCommand,
+			Tier:                keyBindingTierUserConfigurableDirect,
+			Scope:               keyBindingScopeStandalone,
+			TmuxKind:            tmuxBindingRunProjmux,
+			TmuxBody:            "switch open #{q:pane_current_path}",
 		},
 		{
 			ID:             "new-window",
+			DisplayName:    "Create Window",
+			Category:       keyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "new Window with its initial Pane", Placement: "next index in the current Session", Anchor: keyBindingAnchorCurrentPaneCwdSeed},
 			CanonicalID:    "window.create",
 			Description:    "New tmux window in the current pane directory",
 			Kind:           keyBindingActionCommand,
@@ -466,6 +545,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			// entirely because its default behaviour already emits the
 			// xterm sequence.
 			ID:             "previous-window",
+			DisplayName:    "Focus previous Window",
+			Category:       keyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "focus the previous Window", Placement: keyBindingPlacementLeft},
 			CanonicalID:    "window.focus-previous",
 			Description:    "Previous tmux window",
 			Kind:           keyBindingActionCommand,
@@ -488,6 +570,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			// See `previous-window` above — the same reasoning applies to the
 			// next-window chord (xterm sequence `\x1b[1;4C`).
 			ID:             "next-window",
+			DisplayName:    "Focus next Window",
+			Category:       keyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Window", ResultKind: "focus the next Window", Placement: keyBindingPlacementRight},
 			CanonicalID:    "window.focus-next",
 			Description:    "Next tmux window",
 			Kind:           keyBindingActionCommand,
@@ -508,6 +593,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "select-pane-left",
+			DisplayName:    "Focus Pane left",
+			Category:       keyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementLeft, Anchor: keyBindingAnchorActiveTmuxPane},
 			CanonicalID:    "pane.focus-left",
 			Description:    "Move focus to the left pane",
 			Kind:           keyBindingActionCommand,
@@ -520,6 +608,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "select-pane-right",
+			DisplayName:    "Focus Pane right",
+			Category:       keyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorActiveTmuxPane},
 			CanonicalID:    "pane.focus-right",
 			Description:    "Move focus to the right pane",
 			Kind:           keyBindingActionCommand,
@@ -532,6 +623,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "select-pane-up",
+			DisplayName:    "Focus Pane up",
+			Category:       keyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementUp, Anchor: keyBindingAnchorActiveTmuxPane},
 			CanonicalID:    "pane.focus-up",
 			Description:    "Move focus to the pane above",
 			Kind:           keyBindingActionCommand,
@@ -544,6 +638,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "select-pane-down",
+			DisplayName:    "Focus Pane down",
+			Category:       keyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorActiveTmuxPane},
 			CanonicalID:    "pane.focus-down",
 			Description:    "Move focus to the pane below",
 			Kind:           keyBindingActionCommand,
@@ -556,6 +653,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:             "last-pane",
+			DisplayName:    "Focus last Pane",
+			Category:       keyBindingCategoryNavigation,
+			Semantics:      keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "focus the previously active Pane", Anchor: keyBindingAnchorActiveTmuxPane},
 			CanonicalID:    "pane.focus-last",
 			Description:    "Return to the previously active pane",
 			Kind:           keyBindingActionCommand,
@@ -566,17 +666,24 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 			PlainBindOrder: 45,
 		},
 		{
-			ID:          "toggle-mouse",
-			CanonicalID: "mouse.toggle",
-			Description: "Toggle tmux mouse mode",
-			Kind:        keyBindingActionCommand,
-			Tier:        keyBindingTierUserConfigurableDirect,
-			Scope:       keyBindingScopeApp,
-			TmuxKind:    tmuxBindingCommand,
-			TmuxBody:    "if -F \"#{mouse}\" \"set -g mouse off \\; display-message 'tmux mouse: off'\" \"set -g mouse on \\; display-message 'tmux mouse: on'\"",
+			ID:                  "toggle-mouse",
+			DisplayName:         "Toggle mouse",
+			Category:            keyBindingCategoryNavigation,
+			Semantics:           keyBindingActionSemantics{TargetKind: "tmux runtime", ResultKind: "turn tmux mouse mode on or off for the running server"},
+			HandlerBoundaryNote: "tmux `if-shell` flips the server-wide mouse option",
+			CanonicalID:         "mouse.toggle",
+			Description:         "Toggle tmux mouse mode",
+			Kind:                keyBindingActionCommand,
+			Tier:                keyBindingTierUserConfigurableDirect,
+			Scope:               keyBindingScopeApp,
+			TmuxKind:            tmuxBindingCommand,
+			TmuxBody:            "if -F \"#{mouse}\" \"set -g mouse off \\; display-message 'tmux mouse: off'\" \"set -g mouse on \\; display-message 'tmux mouse: on'\"",
 		},
 		{
 			ID:          "Sidebar:PinProject",
+			DisplayName: "Pin / unpin Project",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Project", ResultKind: "pin or unpin the focused Project", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "project-sidebar.project.pin-toggle",
 			Description: "Pin or unpin the focused project",
 			Kind:        keyBindingActionPickerInternal,
@@ -586,6 +693,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "Sidebar:KillSession",
+			DisplayName: "Stop Project Runtime (keep UID/topology)",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Project", ResultKind: "stop only the Project runtime; keep its Project UID and desired Window/Pane topology", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "project-sidebar.runtime.stop",
 			Description: "Stop only the focused Project runtime; keep its Project UID and desired Window/Pane topology",
 			Kind:        keyBindingActionPickerInternal,
@@ -595,6 +705,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:KillSession",
+			DisplayName: "Stop Runtime Session (keep managed identity)",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Session", ResultKind: "stop only the runtime Session; keep managed Registry identity and desired topology", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "session-picker.runtime.stop",
 			Description: "Stop only the focused runtime Session; keep managed Registry identity and desired topology",
 			Kind:        keyBindingActionPickerInternal,
@@ -604,6 +717,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:OpenState",
+			DisplayName: "Open Snapshots",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Snapshot", ResultKind: "open Snapshots for the focused Session", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "session-picker.snapshots.open",
 			Description: "Open session state for the focused session",
 			Kind:        keyBindingActionPickerInternal,
@@ -613,6 +729,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewWindowPrev",
+			DisplayName: "Preview previous Window",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Window", ResultKind: "preview the previous Window", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "session-picker.preview.window-previous",
 			Description: "Preview previous window",
 			Kind:        keyBindingActionPickerInternal,
@@ -622,6 +741,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewWindowNext",
+			DisplayName: "Preview next Window",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Window", ResultKind: "preview the next Window", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "session-picker.preview.window-next",
 			Description: "Preview next window",
 			Kind:        keyBindingActionPickerInternal,
@@ -631,6 +753,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewPanePrev",
+			DisplayName: "Preview previous Pane",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "preview the previous Pane", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "session-picker.preview.pane-previous",
 			Description: "Preview previous pane",
 			Kind:        keyBindingActionPickerInternal,
@@ -640,6 +765,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "SessionPopup:CyclePreviewPaneNext",
+			DisplayName: "Preview next Pane",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Pane", ResultKind: "preview the next Pane", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "session-picker.preview.pane-next",
 			Description: "Preview next pane",
 			Kind:        keyBindingActionPickerInternal,
@@ -649,6 +777,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:FocusAndAck",
+			DisplayName: "Focus source and acknowledge Notification",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "focus the source Pane and acknowledge the Notification", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "notification-sidebar.focus-and-acknowledge",
 			Description: "Focus and acknowledge the selected notification",
 			Kind:        keyBindingActionPickerInternal,
@@ -658,6 +789,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:Ack",
+			DisplayName: "Acknowledge Notification",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "acknowledge the focused Notification", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "notification-sidebar.acknowledge",
 			Description: "Acknowledge the selected notification",
 			Kind:        keyBindingActionPickerInternal,
@@ -667,6 +801,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:AckGroup",
+			DisplayName: "Acknowledge Notification group",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "acknowledge every visible Notification in the focused group", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
 			CanonicalID: "notification-sidebar.acknowledge-group",
 			Description: "Acknowledge every visible notification in the selected group",
 			Kind:        keyBindingActionPickerInternal,
@@ -676,6 +813,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:ClearNonCritical",
+			DisplayName: "Clear non-critical Notifications",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "clear non-critical Notifications", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "notification-sidebar.clear-non-critical",
 			Description: "Clear non-critical notifications",
 			Kind:        keyBindingActionPickerInternal,
@@ -685,6 +825,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:ClearAll",
+			DisplayName: "Clear all Notifications",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "clear all Notifications", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "notification-sidebar.clear-all",
 			Description: "Clear all notifications",
 			Kind:        keyBindingActionPickerInternal,
@@ -694,6 +837,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "NotifySidebar:ClearGone",
+			DisplayName: "Clear gone Notifications",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Notification", ResultKind: "clear gone Notifications", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "notification-sidebar.clear-gone",
 			Description: "Clear gone notifications",
 			Kind:        keyBindingActionPickerInternal,
@@ -703,6 +849,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "Settings:SwitchTabPrev",
+			DisplayName: "Previous Settings tab",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Settings", ResultKind: "move to the previous Settings scope tab", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "settings.tab-previous",
 			Description: "Switch Settings tab left",
 			Kind:        keyBindingActionPickerInternal,
@@ -712,6 +861,9 @@ func defaultKeyBindingCatalog() []keyBindingAction {
 		},
 		{
 			ID:          "Settings:SwitchTabNext",
+			DisplayName: "Next Settings tab",
+			Category:    keyBindingCategorySurfaces,
+			Semantics:   keyBindingActionSemantics{TargetKind: "Settings", ResultKind: "move to the next Settings scope tab", Placement: keyBindingPlacementInOpenPicker},
 			CanonicalID: "settings.tab-next",
 			Description: "Switch Settings tab right",
 			Kind:        keyBindingActionPickerInternal,
@@ -737,10 +889,9 @@ func keyBindingCatalogForScopeFrom(catalog []keyBindingAction, scope keyBindingS
 }
 
 // Settings-owned keybinding navigation categories. Every catalog action
-// belongs to exactly one category, and the assignment is explicit metadata in
-// keyBindingCategoryByActionID: it is never inferred from the action ID prefix,
-// because the IDs are a compatibility surface and their spelling is not a
-// product taxonomy.
+// belongs to exactly one category through its canonical Category field. It is
+// never inferred from the action ID prefix, because IDs are a compatibility
+// surface and their spelling is not a product taxonomy.
 const (
 	keyBindingCategoryLaunch     = "launch-and-popups"
 	keyBindingCategoryAgentPane  = "agent-and-pane-launch"
@@ -781,132 +932,10 @@ var keyBindingSurfaceOrder = []struct {
 	{"Settings", "Settings"},
 }
 
-// keyBindingCategoryByActionID assigns every catalog action to exactly one
-// category. Exhaustiveness in both directions is a test.
-var keyBindingCategoryByActionID = map[string]string{
-	"ProjectSidebarToggle":  keyBindingCategoryLaunch,
-	"NotifySidebarToggle":   keyBindingCategoryLaunch,
-	"SessionPopupToggle":    keyBindingCategoryLaunch,
-	"Resources:Open":        keyBindingCategoryLaunch,
-	"RecentWindows:Open":    keyBindingCategoryLaunch,
-	"AISplitPickerToggle":   keyBindingCategoryLaunch,
-	"SettingsToggle":        keyBindingCategoryLaunch,
-	"AIResumePickerToggle":  keyBindingCategoryLaunch,
-	"ProjectSwitcherToggle": keyBindingCategoryLaunch,
-
-	"ai-split-right":        keyBindingCategoryAgentPane,
-	"ai-split-down":         keyBindingCategoryAgentPane,
-	"ai-split-codex-right":  keyBindingCategoryAgentPane,
-	"ai-split-codex-down":   keyBindingCategoryAgentPane,
-	"ai-split-claude-right": keyBindingCategoryAgentPane,
-	"ai-split-claude-down":  keyBindingCategoryAgentPane,
-	"ai-split-shell-right":  keyBindingCategoryAgentPane,
-	"ai-split-shell-down":   keyBindingCategoryAgentPane,
-
-	"current-project-session": keyBindingCategoryNavigation,
-	"new-window":              keyBindingCategoryNavigation,
-	"rename-window":           keyBindingCategoryNavigation,
-	paneRenameActionID:        keyBindingCategoryNavigation,
-	"toggle-mouse":            keyBindingCategoryNavigation,
-	"previous-window":         keyBindingCategoryNavigation,
-	"next-window":             keyBindingCategoryNavigation,
-	"last-pane":               keyBindingCategoryNavigation,
-	"select-pane-left":        keyBindingCategoryNavigation,
-	"select-pane-right":       keyBindingCategoryNavigation,
-	"select-pane-up":          keyBindingCategoryNavigation,
-	"select-pane-down":        keyBindingCategoryNavigation,
-
-	"Sidebar:PinProject":                  keyBindingCategorySurfaces,
-	"Sidebar:KillSession":                 keyBindingCategorySurfaces,
-	"SessionPopup:KillSession":            keyBindingCategorySurfaces,
-	"SessionPopup:OpenState":              keyBindingCategorySurfaces,
-	"SessionPopup:CyclePreviewWindowPrev": keyBindingCategorySurfaces,
-	"SessionPopup:CyclePreviewWindowNext": keyBindingCategorySurfaces,
-	"SessionPopup:CyclePreviewPanePrev":   keyBindingCategorySurfaces,
-	"SessionPopup:CyclePreviewPaneNext":   keyBindingCategorySurfaces,
-	"NotifySidebar:FocusAndAck":           keyBindingCategorySurfaces,
-	"NotifySidebar:Ack":                   keyBindingCategorySurfaces,
-	"NotifySidebar:AckGroup":              keyBindingCategorySurfaces,
-	"NotifySidebar:ClearNonCritical":      keyBindingCategorySurfaces,
-	"NotifySidebar:ClearAll":              keyBindingCategorySurfaces,
-	"NotifySidebar:ClearGone":             keyBindingCategorySurfaces,
-	"Settings:SwitchTabPrev":              keyBindingCategorySurfaces,
-	"Settings:SwitchTabNext":              keyBindingCategorySurfaces,
-}
-
-// keyBindingDisplayNames is the canonical display label for every catalog
-// action. The labels follow the shared resource vocabulary (Project, Window,
-// Pane, Agent, Provider, Notification, Snapshot); the keymap action IDs above
-// keep their current spelling, so a label change never rewrites a saved
-// `keymap.toml` table or a runtime route.
-var keyBindingDisplayNames = map[string]string{
-	"ProjectSidebarToggle":  "Open / close Project Sidebar",
-	"NotifySidebarToggle":   "Open / close Notification Sidebar",
-	"SessionPopupToggle":    "Open / close Session Picker",
-	"Resources:Open":        "Open Resource Inspector",
-	"RecentWindows:Open":    "Open Recent Windows",
-	"AISplitPickerToggle":   "Open Agent / Pane Launcher",
-	"SettingsToggle":        "Open / close Settings",
-	"AIResumePickerToggle":  "Open Agent Resume Picker",
-	"ProjectSwitcherToggle": "Open Project Picker",
-
-	"ai-split-right":        "Launch default target right",
-	"ai-split-down":         "Launch default target down",
-	"ai-split-codex-right":  "Create Codex Agent right",
-	"ai-split-codex-down":   "Create Codex Agent down",
-	"ai-split-claude-right": "Create Claude Agent right",
-	"ai-split-claude-down":  "Create Claude Agent down",
-	"ai-split-shell-right":  "Create Shell Pane right",
-	"ai-split-shell-down":   "Create Shell Pane down",
-
-	"current-project-session": "Open Project for Current Directory",
-	"new-window":              "Create Window",
-	"rename-window":           "Rename Window",
-	paneRenameActionID:        "Rename Pane",
-	"toggle-mouse":            "Toggle mouse",
-	"previous-window":         "Focus previous Window",
-	"next-window":             "Focus next Window",
-	"last-pane":               "Focus last Pane",
-	"select-pane-left":        "Focus Pane left",
-	"select-pane-right":       "Focus Pane right",
-	"select-pane-up":          "Focus Pane up",
-	"select-pane-down":        "Focus Pane down",
-
-	"Sidebar:PinProject":                  "Pin / unpin Project",
-	"Sidebar:KillSession":                 "Stop Project Runtime (keep UID/topology)",
-	"SessionPopup:KillSession":            "Stop Runtime Session (keep managed identity)",
-	"SessionPopup:OpenState":              "Open Snapshots",
-	"SessionPopup:CyclePreviewWindowPrev": "Preview previous Window",
-	"SessionPopup:CyclePreviewWindowNext": "Preview next Window",
-	"SessionPopup:CyclePreviewPanePrev":   "Preview previous Pane",
-	"SessionPopup:CyclePreviewPaneNext":   "Preview next Pane",
-	"NotifySidebar:FocusAndAck":           "Focus source and acknowledge Notification",
-	"NotifySidebar:Ack":                   "Acknowledge Notification",
-	"NotifySidebar:AckGroup":              "Acknowledge Notification group",
-	"NotifySidebar:ClearNonCritical":      "Clear non-critical Notifications",
-	"NotifySidebar:ClearAll":              "Clear all Notifications",
-	"NotifySidebar:ClearGone":             "Clear gone Notifications",
-	"Settings:SwitchTabPrev":              "Previous Settings tab",
-	"Settings:SwitchTabNext":              "Next Settings tab",
-}
-
-// keyBindingActionSemantics is the product meaning of a key action, projected
-// into the Settings action detail. It answers the four questions the target
-// action detail asks — what resource the action targets, what it produces,
-// where the result is placed, and which anchor it is placed against — without
-// touching the action ID, the tmux body, or the keymap file.
-//
-// The anchor field is the contract that keeps interactive splits adjacent to
+// The semantics anchor field keeps interactive splits adjacent to
 // the pane the user pressed the key in: an interactive right/down action
 // passes the current Pane as an explicit anchor, and never falls back to a
 // Window's persisted primary Pane or to whatever pane happens to be focused.
-type keyBindingActionSemantics struct {
-	TargetKind string
-	ResultKind string
-	Placement  string
-	Anchor     string
-}
-
 const (
 	// keyBindingAnchorCurrentPaneSplitTarget is the exact anchor an interactive
 	// right/down action passes. A launch that came from a popup resolves it in
@@ -949,75 +978,8 @@ const (
 	keyBindingPlacementInOpenPicker    = "inside the open picker"
 )
 
-// keyBindingActionSemanticsByID declares the product semantics of every catalog
-// action. Coverage is exhaustive in both directions (a test pins it) so an
-// action detail can never silently fall back to "no semantics"; Placement and
-// Anchor stay empty only where the action has no spatial result at all.
-var keyBindingActionSemanticsByID = map[string]keyBindingActionSemantics{
-	// --- Launch & popups -------------------------------------------------
-	"ProjectSidebarToggle":  {TargetKind: "Project", ResultKind: "open or close the Project Sidebar", Placement: keyBindingPlacementPopup},
-	"NotifySidebarToggle":   {TargetKind: "Notification", ResultKind: "open or close the Notification Sidebar", Placement: keyBindingPlacementPopup},
-	"SessionPopupToggle":    {TargetKind: "Session", ResultKind: "open or close the Session Picker", Placement: keyBindingPlacementPopup},
-	"Resources:Open":        {TargetKind: "Project, Window, Pane", ResultKind: "open the read-only Resource Inspector", Placement: keyBindingPlacementPopup},
-	"RecentWindows:Open":    {TargetKind: "Window", ResultKind: "open the recent Windows queue", Placement: keyBindingPlacementPopup},
-	"AISplitPickerToggle":   {TargetKind: "Agent", ResultKind: "choose a launch target; the chosen target then creates", Placement: keyBindingPlacementPopup},
-	"SettingsToggle":        {TargetKind: "Settings", ResultKind: "open or close Settings", Placement: keyBindingPlacementPopup},
-	"AIResumePickerToggle":  {TargetKind: "Agent", ResultKind: "resume one existing Offline or Failed Agent; never creates an Agent", Placement: keyBindingPlacementPopup},
-	"ProjectSwitcherToggle": {TargetKind: "Project", ResultKind: "open the Project Picker", Placement: keyBindingPlacementPopup},
-
-	// --- Agent & Pane launch ---------------------------------------------
-	"ai-split-right": {TargetKind: "Pane", ResultKind: "the configured default launch target", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
-	"ai-split-down":  {TargetKind: "Pane", ResultKind: "the configured default launch target", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
-
-	"ai-split-codex-right":  {TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
-	"ai-split-codex-down":   {TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
-	"ai-split-claude-right": {TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
-	"ai-split-claude-down":  {TargetKind: "Agent", ResultKind: "always a new Agent; never resumes an existing Agent", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
-
-	"ai-split-shell-right": {TargetKind: "Pane", ResultKind: "a new Shell Pane", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
-	"ai-split-shell-down":  {TargetKind: "Pane", ResultKind: "a new Shell Pane", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorCurrentPaneSplitTarget},
-
-	// --- Pane & Window navigation ----------------------------------------
-	//
-	// current-project-session passes the current Pane cwd to the retained
-	// `switch open` shortcut, which owns the same ensure-and-attach outcome.
-	// tmux's `q` format modifier keeps that cwd one literal shell argument when
-	// the generated binding crosses the run-shell boundary.
-	"current-project-session": {TargetKind: "Project", ResultKind: "ensure and attach the Project runtime derived from the current Pane cwd", Anchor: keyBindingAnchorCurrentPaneCwdInput},
-	"new-window":              {TargetKind: "Window", ResultKind: "new Window with its initial Pane", Placement: "next index in the current Session", Anchor: keyBindingAnchorCurrentPaneCwdSeed},
-	"rename-window":           {TargetKind: "Window", ResultKind: "rename the focused Window", Placement: keyBindingPlacementInFocusedWindow},
-	paneRenameActionID:        {TargetKind: "Pane", ResultKind: "set or clear the focused Pane label", Placement: keyBindingPlacementInFocusedWindow},
-	"toggle-mouse":            {TargetKind: "tmux runtime", ResultKind: "turn tmux mouse mode on or off for the running server"},
-	"previous-window":         {TargetKind: "Window", ResultKind: "focus the previous Window", Placement: keyBindingPlacementLeft},
-	"next-window":             {TargetKind: "Window", ResultKind: "focus the next Window", Placement: keyBindingPlacementRight},
-	"last-pane":               {TargetKind: "Pane", ResultKind: "focus the previously active Pane", Anchor: keyBindingAnchorActiveTmuxPane},
-	"select-pane-left":        {TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementLeft, Anchor: keyBindingAnchorActiveTmuxPane},
-	"select-pane-right":       {TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementRight, Anchor: keyBindingAnchorActiveTmuxPane},
-	"select-pane-up":          {TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementUp, Anchor: keyBindingAnchorActiveTmuxPane},
-	"select-pane-down":        {TargetKind: "Pane", ResultKind: "focus the adjacent Pane", Placement: keyBindingPlacementDown, Anchor: keyBindingAnchorActiveTmuxPane},
-
-	// --- Sidebar & picker actions ----------------------------------------
-	"Sidebar:PinProject":                  {TargetKind: "Project", ResultKind: "pin or unpin the focused Project", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"Sidebar:KillSession":                 {TargetKind: "Project", ResultKind: "stop only the Project runtime; keep its Project UID and desired Window/Pane topology", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"SessionPopup:KillSession":            {TargetKind: "Session", ResultKind: "stop only the runtime Session; keep managed Registry identity and desired topology", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"SessionPopup:OpenState":              {TargetKind: "Snapshot", ResultKind: "open Snapshots for the focused Session", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"SessionPopup:CyclePreviewWindowPrev": {TargetKind: "Window", ResultKind: "preview the previous Window", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"SessionPopup:CyclePreviewWindowNext": {TargetKind: "Window", ResultKind: "preview the next Window", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"SessionPopup:CyclePreviewPanePrev":   {TargetKind: "Pane", ResultKind: "preview the previous Pane", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"SessionPopup:CyclePreviewPaneNext":   {TargetKind: "Pane", ResultKind: "preview the next Pane", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"NotifySidebar:FocusAndAck":           {TargetKind: "Notification", ResultKind: "focus the source Pane and acknowledge the Notification", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"NotifySidebar:Ack":                   {TargetKind: "Notification", ResultKind: "acknowledge the focused Notification", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"NotifySidebar:AckGroup":              {TargetKind: "Notification", ResultKind: "acknowledge every visible Notification in the focused group", Placement: keyBindingPlacementInOpenPicker, Anchor: keyBindingAnchorFocusedRow},
-	"NotifySidebar:ClearNonCritical":      {TargetKind: "Notification", ResultKind: "clear non-critical Notifications", Placement: keyBindingPlacementInOpenPicker},
-	"NotifySidebar:ClearAll":              {TargetKind: "Notification", ResultKind: "clear all Notifications", Placement: keyBindingPlacementInOpenPicker},
-	"NotifySidebar:ClearGone":             {TargetKind: "Notification", ResultKind: "clear gone Notifications", Placement: keyBindingPlacementInOpenPicker},
-	"Settings:SwitchTabPrev":              {TargetKind: "Settings", ResultKind: "move to the previous Settings scope tab", Placement: keyBindingPlacementInOpenPicker},
-	"Settings:SwitchTabNext":              {TargetKind: "Settings", ResultKind: "move to the next Settings scope tab", Placement: keyBindingPlacementInOpenPicker},
-}
-
 func keyBindingActionSemanticsFor(action keyBindingAction) (keyBindingActionSemantics, bool) {
-	semantics, ok := keyBindingActionSemanticsByID[action.ID]
-	return semantics, ok
+	return action.Semantics, strings.TrimSpace(action.Semantics.TargetKind) != "" && strings.TrimSpace(action.Semantics.ResultKind) != ""
 }
 
 // keyBindingActionHandler pins the exact shipped handler one key action
@@ -1040,20 +1002,13 @@ type keyBindingActionHandler struct {
 	Note string
 }
 
-// keyBindingActionHandlerNotes pins the handler boundaries that the invocation
-// string alone leaves implicit.
-var keyBindingActionHandlerNotes = map[string]string{
-	"current-project-session": "the retained switch shortcut receives the current Pane cwd and owns the ensure/attach outcome",
-	"toggle-mouse":            "tmux `if-shell` flips the server-wide mouse option",
-}
-
 // keyBindingActionHandlerFor projects one action's shipped handler.
 func keyBindingActionHandlerFor(action keyBindingAction) (keyBindingActionHandler, bool) {
 	handler, ok := keyBindingActionShippedInvocation(action)
 	if !ok {
 		return keyBindingActionHandler{}, false
 	}
-	handler.Note = keyBindingActionHandlerNotes[action.ID]
+	handler.Note = action.HandlerBoundaryNote
 	return handler, true
 }
 
@@ -1115,7 +1070,7 @@ func condenseTmuxHandlerBody(body string) string {
 }
 
 func keyBindingDisplayName(action keyBindingAction) string {
-	if name := strings.TrimSpace(keyBindingDisplayNames[action.ID]); name != "" {
+	if name := strings.TrimSpace(action.DisplayName); name != "" {
 		return name
 	}
 	return humanizeKeyBindingActionID(action.ID)
@@ -1125,8 +1080,8 @@ func keyBindingDisplayName(action keyBindingAction) string {
 // to. An unassigned action returns false so the Settings loop can fail loudly
 // instead of hiding the action from every category.
 func keyBindingActionCategory(action keyBindingAction) (string, bool) {
-	category, ok := keyBindingCategoryByActionID[action.ID]
-	return category, ok
+	category := strings.TrimSpace(action.Category)
+	return category, category != ""
 }
 
 // keyBindingSurfaceLabel maps a catalog `Surface` value to its canonical

@@ -49,6 +49,7 @@ func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 	if len(catalog) == 0 {
 		t.Fatalf("empty keybinding catalog")
 	}
+	handlerClasses := map[string]int{}
 
 	for _, action := range catalog {
 		semantics, ok := keyBindingActionSemanticsFor(action)
@@ -64,6 +65,23 @@ func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 		}
 		if strings.TrimSpace(handler.Invocation) == "" {
 			t.Fatalf("action %q handler = %#v, want an exact shipped invocation", action.ID, handler)
+		}
+		switch {
+		case action.Kind == keyBindingActionPickerInternal:
+			handlerClasses["picker-internal"]++
+			if handler.Manifest != "" {
+				t.Fatalf("picker-internal action %q projected CLI manifest %q", action.ID, handler.Manifest)
+			}
+		case action.TmuxKind == tmuxBindingCommand || action.TmuxKind == tmuxBindingCommandPrompt:
+			handlerClasses["direct-tmux"]++
+			if handler.Manifest != "" {
+				t.Fatalf("direct tmux action %q projected CLI manifest %q", action.ID, handler.Manifest)
+			}
+		default:
+			handlerClasses["projmux"]++
+			if handler.Manifest == "" {
+				t.Fatalf("projmux action %q has no canonical CLI manifest projection", action.ID)
+			}
 		}
 		// The handler projection is the shipped manifest, not a second table.
 		if handler.Manifest != "" {
@@ -131,6 +149,11 @@ func TestSettingsKeybindingActionDetailMatrix(t *testing.T) {
 			default:
 				t.Fatalf("action detail %q row %q resolves to unhandled operation %q", action.ID, value, op)
 			}
+		}
+	}
+	for _, class := range []string{"direct-tmux", "picker-internal", "projmux"} {
+		if handlerClasses[class] == 0 {
+			t.Fatalf("handler classification %q has no catalog action", class)
 		}
 	}
 }

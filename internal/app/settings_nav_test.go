@@ -1040,6 +1040,9 @@ func TestSettingsKeybindingCategoryExhaustiveness(t *testing.T) {
 	catalog := defaultKeyBindingCatalog()
 	assigned := map[string]int{}
 	for _, action := range catalog {
+		if strings.TrimSpace(action.DisplayName) == "" {
+			t.Fatalf("keymap action %q has no canonical display name", action.ID)
+		}
 		category, ok := keyBindingActionCategory(action)
 		if !ok {
 			t.Fatalf("keymap action %q has no navigation category", action.ID)
@@ -1060,16 +1063,8 @@ func TestSettingsKeybindingCategoryExhaustiveness(t *testing.T) {
 			}
 		}
 	}
-	for id := range keyBindingCategoryByActionID {
-		if _, ok := keyBindingActionByID(catalog, id); !ok {
-			t.Fatalf("category assignment names unknown action %q", id)
-		}
-	}
-	if len(keyBindingCategoryByActionID) != len(catalog) {
-		t.Fatalf("category assignments = %d, want one per catalog action (%d)", len(keyBindingCategoryByActionID), len(catalog))
-	}
-	if len(keyBindingDisplayNames) != len(catalog) {
-		t.Fatalf("display labels = %d, want one per catalog action (%d)", len(keyBindingDisplayNames), len(catalog))
+	if len(assigned) != len(catalog) {
+		t.Fatalf("canonical action metadata records = %d, want one per catalog action (%d)", len(assigned), len(catalog))
 	}
 
 	// The rendered categories cover the catalog exactly once, and the sidebar
