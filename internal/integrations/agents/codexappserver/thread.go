@@ -8,8 +8,8 @@ import (
 )
 
 // ThreadBinding is the content-free native identity returned for one launch.
-// TurnID is empty when the caller intentionally starts/resumes interactively
-// without an initial prompt.
+// TurnID is empty when the caller intentionally resumes interactively without
+// an initial prompt.
 type ThreadBinding struct {
 	ThreadID string
 	TurnID   string
@@ -33,10 +33,15 @@ func CanFallback(err error) bool {
 	return errors.As(err, &action) && action.SafeFallback
 }
 
-// StartDefaultThread creates one daemon-owned thread and, when prompt is
-// non-empty, sends exactly one turn/start. requestKey is the caller's opaque
-// activation generation and becomes Codex's client user-message id.
+// StartDefaultThread creates one daemon-owned thread and sends exactly one
+// turn/start. An empty prompt is not attachable native input, so it is
+// classified as a safe fallback before opening or mutating the provider.
+// requestKey is the caller's opaque activation generation and becomes Codex's
+// client user-message id.
 func StartDefaultThread(ctx context.Context, projmuxVersion, cwd string, roots []string, prompt, requestKey string) (ThreadBinding, error) {
+	if prompt == "" {
+		return ThreadBinding{}, &ThreadActionError{Reason: "empty-prompt", SafeFallback: true}
+	}
 	client, err := openReadyThreadClient(ctx, projmuxVersion)
 	if err != nil {
 		return ThreadBinding{}, err
@@ -47,9 +52,6 @@ func StartDefaultThread(ctx context.Context, projmuxVersion, cwd string, roots [
 		return ThreadBinding{}, &ThreadActionError{
 			Reason: "thread-start-failed", SafeFallback: errors.Is(err, ErrUnsupported), err: err,
 		}
-	}
-	if prompt == "" {
-		return binding, nil
 	}
 	turnID, err := client.StartTurn(ctx, binding.ThreadID, prompt, requestKey)
 	if err != nil {
