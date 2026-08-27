@@ -81,7 +81,21 @@ type sessionStateCodexRolloutCandidate struct {
 // restore snapshot. Process commands are intentionally not captured; only
 // explicit projmux recipe metadata is converted into replay recipes.
 func (c *Client) CaptureSessionSnapshot(ctx context.Context, sessionName string, now time.Time) (sessionstate.Snapshot, error) {
+	return c.captureExplicitSessionSnapshot(ctx, sessionName, sessionName, now)
+}
+
+// captureExplicitSessionSnapshot captures one exact tmux target while keeping
+// the stable session name used by the snapshot store. Most callers use the
+// name for both values. A server-wide operation that already observed a
+// session uses its immutable tmux session id as target, so a concurrent rename
+// cannot redirect the capture to a different session; the invocation-start
+// name remains the persisted restore identity.
+func (c *Client) captureExplicitSessionSnapshot(ctx context.Context, target, sessionName string, now time.Time) (sessionstate.Snapshot, error) {
+	target = strings.TrimSpace(target)
 	sessionName = strings.TrimSpace(sessionName)
+	if target == "" {
+		return sessionstate.Snapshot{}, errSessionNameRequired
+	}
 	if sessionName == "" {
 		return sessionstate.Snapshot{}, errSessionNameRequired
 	}
@@ -89,11 +103,11 @@ func (c *Client) CaptureSessionSnapshot(ctx context.Context, sessionName string,
 		now = time.Now()
 	}
 
-	windows, err := c.listSessionStateWindows(ctx, sessionName)
+	windows, err := c.listSessionStateWindows(ctx, target)
 	if err != nil {
 		return sessionstate.Snapshot{}, err
 	}
-	panes, err := c.listSessionStatePanes(ctx, sessionName)
+	panes, err := c.listSessionStatePanes(ctx, target)
 	if err != nil {
 		return sessionstate.Snapshot{}, err
 	}
@@ -115,7 +129,7 @@ func (c *Client) CaptureSessionSnapshot(ctx context.Context, sessionName string,
 	snap := sessionstate.Snapshot{
 		Version:    sessionstate.Version,
 		Session:    sessionName,
-		Source:     sessionstate.SourceLabel(c.SessionStateSource(ctx, sessionName)),
+		Source:     sessionstate.SourceLabel(c.SessionStateSource(ctx, target)),
 		DefaultCWD: defaultCWD,
 		SavedAt:    now,
 		Windows:    make([]sessionstate.Window, 0, len(windows)),
@@ -156,17 +170,29 @@ func (c *Client) CaptureSessionSnapshot(ctx context.Context, sessionName string,
 
 // SaveSessionSnapshot captures and atomically stores a tmux session snapshot.
 func (c *Client) SaveSessionSnapshot(ctx context.Context, store sessionstate.Store, sessionName string, now time.Time) (sessionstate.Snapshot, error) {
+	return c.SaveExplicitSessionSnapshot(ctx, store, sessionName, sessionName, now)
+}
+
+// SaveExplicitSessionSnapshot captures target and atomically stores it under
+// sessionName. It is the shared seam for current-session manual save and for a
+// pre-observed server-wide batch whose exact tmux session id differs from the
+// stable snapshot identity.
+func (c *Client) SaveExplicitSessionSnapshot(ctx context.Context, store sessionstate.Store, target, sessionName string, now time.Time) (sessionstate.Snapshot, error) {
+	target = strings.TrimSpace(target)
 	sessionName = strings.TrimSpace(sessionName)
+	if target == "" {
+		return sessionstate.Snapshot{}, errSessionNameRequired
+	}
 	if sessionName == "" {
 		return sessionstate.Snapshot{}, errSessionNameRequired
 	}
 	if now.IsZero() {
 		now = time.Now()
 	}
-	if err := c.refreshSessionStateAIResumeMetadata(ctx, sessionName, now); err != nil {
+	if err := c.refreshSessionStateAIResumeMetadata(ctx, target, now); err != nil {
 		return sessionstate.Snapshot{}, err
 	}
-	snap, err := c.CaptureSessionSnapshot(ctx, sessionName, now)
+	snap, err := c.captureExplicitSessionSnapshot(ctx, target, sessionName, now)
 	if err != nil {
 		return sessionstate.Snapshot{}, err
 	}

@@ -1880,12 +1880,23 @@ human configuration work should prefer `config render` and `config apply`.
   a new Project/Window/shell UID chain and one same-root claimant. Repeating it
   allocates another new identity. Neither action modifies snapshot
   bytes, the project directory, git/worktrees, unrelated roots, or trust state.
-- `quit` — open an action picker with `Quit projmux` and `Cancel`. Selecting
-  `Quit projmux` terminates only a `tmux -L projmux` runtime whose global
-  `@projmux_app` option is set by the generated app config. Missing servers,
-  default tmux servers, embedded tmux servers, and other tmux runtimes without
-  that marker are no-ops. Non-interactive callers must pass `--yes` or
-  `--force`; the default command always goes through the action picker.
+- `quit` — open an action picker with `Save Project snapshots and quit`, `Quit
+  without saving`, and `Cancel`. The safe first action takes one complete,
+  exact-socket Registry/resource-graph observation, freezes every live managed
+  Project session in Project UID/session order, and captures each latest
+  snapshot even when auto-save is off. Home/control, ephemeral, unattributed,
+  recoverable, foreign, and offline sessions are excluded and reported as
+  bounded class counts. Every target is attempted. A failed capture leaves the
+  successful per-session atomic files in place, reports the exact failed
+  session, and does not stop the app; retry captures every target again. Only an
+  all-success ledger reaches the existing physical-socket, app-marker, and
+  logical-route guarded shutdown. Named snapshots and Registry bytes are never
+  written, and the batch is not a multi-file transaction or topology freeze.
+  `Quit without saving` preserves the earlier guarded shutdown behavior:
+  missing servers and runtimes without the app marker are no-ops. Existing
+  non-interactive `--yes` and `--force` callers retain that same snapshot-free
+  behavior and exact shutdown route; the default command always uses the
+  action picker.
 - `attach project <ref>` — enter a Project runtime from outside tmux.
   Automatic live-runtime attachment is `runtime attach`.
 - `settings` — interactive configuration UI for the project picker, AI
