@@ -63,6 +63,28 @@ rendered from the same command manifest the binary renders `projmux help`
 from and is verified against it on every `make test`, so it cannot drift.
 Nothing in this guide restates it.
 
+Every executable route and root-level parser bridge in that same graph has one
+**selectorless authority** class. The label describes what omission means; it
+does not prevent a route from accepting an explicit selector:
+
+- `natural-omitted` — omission resolves one predictable current resource or a
+  documented contextual read/scope, such as an active-root inventory or picker;
+  supplying any selector replaces that natural target or scope instead of
+  blending with it. Current Pane/Window mutations still require one exact
+  resource.
+- `explicit-target` — the route or its generated caller must name the exact
+  target; ambient tmux context cannot supply or narrow it.
+- `refusal` — the node has no safe selectorless action, so omission refuses
+  before output or mutation. Namespace nodes use this class when only a child
+  route is executable.
+- `explicit-fan-out` — the route spelling is an intentional global or
+  whole-set operation. Resource mutations never enter this class merely
+  because a selector happened to match several rows.
+
+The generated reference and `projmux <route> --help` print the class projected
+from the graph. Completeness tests census every graph node plus bare/help/version
+root bridges and reject missing, duplicate, conflicting, or unknown rows.
+
 ## Resource selectors and the active target
 
 The resource routes (`get`, `describe`, `create`, `rename`, `rebind`, `delete`,
@@ -215,7 +237,7 @@ The scope resolves in two branches:
 
 - **Explicit `--project`/`-p` wins**, inside tmux and outside it. The active
   tmux target is not consulted at all.
-- **With no `--project`, the Project comes from the active managed runtime**:
+- **With no explicit scope occurrence, the Project comes from the active managed runtime**:
   the `@projmux_window_uid` mirrored on the pane you are in, and that Window's
   registry `ownerRef`. This is the same seam the empty-selector reads use.
 
@@ -224,7 +246,7 @@ flag alone:
 
 ```
 projmux create codex                       # active Project, active Window, split from the active Pane
-projmux create codex -w hi --create-window  # active Project, new Window "hi"
+projmux create codex -p alpha -w hi --create-window  # exact Project, new Window "hi"
 projmux create codex -p beta -w main        # everything explicit
 projmux create pane -p alpha                # every Window of alpha; a deliberate fan-out
 ```
@@ -237,6 +259,11 @@ shell-required offline operation may plan a lazy direct
 `spec.defaultShellPaneRef` without replacing an Agent anchor. A missing or stale
 anchor is exit `2` rather than a silent alternate-Pane repair.
 
+An exact existing Window or Pane can reveal its owner Project through Registry
+`ownerRef`. A Window named with `--create-window` does not exist yet and cannot;
+without `--project` that spelling refuses and names `--project <ref>` as the
+remedy, even when the invocation happens inside a managed Pane.
+
 Refusals are exit `2` with zero Registry writes and zero tmux mutations, and
 they name `--project` as the fix:
 
@@ -248,9 +275,19 @@ they name `--project` as the fix:
   gone — a `recoverable` runtime is reported, never adopted.
 
 Every create is **detached**: no create moves the client. Use `focus pane` or
-`-o pane-id` when you want to end up in the new pane. Creates run against the
-inherited exact socket inside tmux; outside tmux an explicit `--project` is
-required before anything live is touched.
+`-o pane-id` when you want to end up in the new pane. A natural create validates
+the inherited exact route and Pane containment. An explicit resource scope
+binds the selected app resource route without letting unrelated inherited
+`TMUX`/`TMUX_PANE` choose or change the resource target; exact Project plus
+`--create-window` therefore uses the validated app logical `-L` route on its
+first attempt, with no `env -u` workaround. Runtime safety remains independent
+and may refuse before mutation. An inherited app-owned `TMUX` socket/PID stays
+route evidence: projmux validates its exact `-S` path, ownership/logical
+markers, logical `-L` alias, and PID while ignoring unrelated `TMUX_PANE`
+containment. Outside tmux it validates the default app `-L` route. Marker,
+physical-socket, server-PID, generation, and owner reobservation remain
+mandatory. Commands that explicitly select an existing live `--socket-path`
+keep that exact `-S` route unchanged.
 
 #### Splits started from a popup
 

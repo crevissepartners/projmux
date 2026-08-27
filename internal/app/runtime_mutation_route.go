@@ -405,7 +405,22 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 	if runner == nil {
 		return runtimeMutationRoute{}, errors.New("runtime mutation route requires a tmux runner")
 	}
-	paneID, err := resolveRuntimeMutationAnchorPane(lookupEnv, paneID)
+	anchorLookup := lookupEnv
+	inheritedPaneID := ""
+	if allowAppPIDOnly && lookupEnv != nil {
+		// Exact resource selectors own the object target, so an unrelated
+		// inherited TMUX_PANE cannot choose or veto it. Preserve TMUX itself as
+		// physical socket/server-generation evidence and preserve the private
+		// producer anchor when one was deliberately supplied.
+		anchorLookup = func(key string) string {
+			if key == "TMUX_PANE" {
+				return ""
+			}
+			return lookupEnv(key)
+		}
+		inheritedPaneID = exactTmuxHandle(strings.TrimSpace(lookupEnv("TMUX_PANE")), "%")
+	}
+	paneID, err := resolveRuntimeMutationAnchorPane(anchorLookup, paneID)
 	if err != nil {
 		return runtimeMutationRoute{}, err
 	}
@@ -502,7 +517,13 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 	appMarker := strings.TrimSpace(string(appOwnedOut))
 	logicalMarker := strings.TrimSpace(string(nameOut))
 	if appMarker == "" && logicalMarker == "" {
-		authority, err := observeInheritedRuntimeMutationAuthority(ctx, pathRunner, receipt, paneID, runtimeMutationRouteStandalone)
+		standalonePaneID := paneID
+		if standalonePaneID == "" && allowAppPIDOnly {
+			// PID-only authority is app-owned only. A standalone invocation must
+			// still prove its exact inherited Pane containment.
+			standalonePaneID = inheritedPaneID
+		}
+		authority, err := observeInheritedRuntimeMutationAuthority(ctx, pathRunner, receipt, standalonePaneID, runtimeMutationRouteStandalone)
 		if err != nil {
 			return runtimeMutationRoute{}, err
 		}

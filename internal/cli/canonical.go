@@ -9,11 +9,12 @@ import (
 // node. The graph owns every spelling, summary, source edge, output mode, and
 // field; this value contains no independently maintained command data.
 type CanonicalRoute struct {
-	Spelling string
-	Summary  string
-	Sources  []string
-	Outputs  []OutputMode
-	Fields   []FieldProjection
+	Spelling   string
+	Summary    string
+	Invocation InvocationAuthority
+	Sources    []string
+	Outputs    []OutputMode
+	Fields     []FieldProjection
 }
 
 type canonicalProjection struct {
@@ -46,10 +47,11 @@ func CanonicalRoutes() []CanonicalRoute {
 		}
 		owners[spelling] = &canonicalProjection{
 			route: CanonicalRoute{
-				Spelling: spelling,
-				Summary:  summary,
-				Outputs:  slices.Clone(outputs),
-				Fields:   slices.Clone(node.Fields),
+				Spelling:   spelling,
+				Summary:    summary,
+				Invocation: node.Invocation,
+				Outputs:    slices.Clone(outputs),
+				Fields:     slices.Clone(node.Fields),
 			},
 			order:     canonicalFamilyOrder(path[0]),
 			nodeOrder: node.CanonicalNodeOrder,

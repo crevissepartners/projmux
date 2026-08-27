@@ -140,9 +140,16 @@ type createCommand struct {
 	bindWindowRuntime func(coremetadata.Mutator, *coremetadata.Registry, string, string, string) (coremetadata.Window, error)
 	// bindRuntime resolves the invocation's app-owned logical route lazily at
 	// the first runtime action. Construction and help remain read/write free.
-	bindRuntime  func(context.Context) error
-	runtimeBound bool
-	routeAnchor  string
+	bindRuntime func(context.Context) error
+	// bindExplicitRuntime is the selector-authoritative sibling. It resolves
+	// the app's logical route without letting inherited TMUX_PANE containment
+	// choose or veto the resource target. Inherited TMUX socket/PID evidence is
+	// preserved for exact route validation; marker, physical socket, PID, and
+	// typed object guards remain mandatory.
+	bindExplicitRuntime      func(context.Context) error
+	runtimeBound             bool
+	explicitRuntimeAuthority bool
+	routeAnchor              string
 }
 
 func (c *createCommand) observeWindowRuntimeBinding(
@@ -183,8 +190,8 @@ func newCreateCommand() *createCommand {
 		newGeneration:    coremetadata.NewGeneration,
 		resolveWorkspace: resolveAgentWorkspace,
 	}
-	command.bindRuntime = func(ctx context.Context) error {
-		route, err := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, runner, os.Getenv, command.routeAnchor)
+	bind := func(ctx context.Context, explicit bool) error {
+		route, err := resolveInvocationRuntimeMutationRouteWithPolicy(ctx, runner, os.Getenv, command.routeAnchor, explicit)
 		if err != nil {
 			return err
 		}
@@ -200,6 +207,8 @@ func newCreateCommand() *createCommand {
 		command.runtime.routeAuthority = route.authority
 		return nil
 	}
+	command.bindRuntime = func(ctx context.Context) error { return bind(ctx, false) }
+	command.bindExplicitRuntime = func(ctx context.Context) error { return bind(ctx, true) }
 	return command
 }
 
@@ -207,11 +216,26 @@ func (c *createCommand) ensureRuntimeRoute(ctx context.Context) error {
 	if c == nil || c.runtimeBound || c.bindRuntime == nil {
 		return nil
 	}
-	if err := c.bindRuntime(ctx); err != nil {
+	binder := c.bindRuntime
+	if c.explicitRuntimeAuthority && c.bindExplicitRuntime != nil {
+		binder = c.bindExplicitRuntime
+	}
+	if err := binder(ctx); err != nil {
 		return err
 	}
 	c.runtimeBound = true
 	return nil
+}
+
+// selectRuntimeAuthority records the already-parsed resource-target policy for
+// the lazy route bind. It never changes selector resolution: it only decides
+// whether inherited Pane containment is relevant runtime evidence (natural
+// invocation) or unrelated ambient context (explicit invocation).
+func (c *createCommand) selectRuntimeAuthority(explicit bool) {
+	if c == nil || c.runtimeBound {
+		return
+	}
+	c.explicitRuntimeAuthority = explicit
 }
 
 // newCreateOperationID mints the id that labels one create transaction and its

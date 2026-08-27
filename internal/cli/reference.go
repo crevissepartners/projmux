@@ -61,7 +61,7 @@ func referenceSpelling(path []string) string {
 // part of the public surface just because a document could enumerate it.
 func publicRoutes() []Route {
 	out := make([]Route, 0, len(routes))
-	for _, route := range routes {
+	for _, route := range Routes() {
 		if route.Hidden {
 			continue
 		}
@@ -136,6 +136,7 @@ func RenderReference(w io.Writer) error {
 	fmt.Fprintf(&b, "per-flag behavior, and task-oriented walkthroughs -- lives in the\n")
 	fmt.Fprintf(&b, "[CLI Task Guide](%s).\n\n", referenceGuidePath)
 
+	writeInvocationAuthorityContract(&b)
 	writeReferenceIndex(&b)
 
 	for _, route := range publicRoutes() {
@@ -148,6 +149,24 @@ func RenderReference(w io.Writer) error {
 	rendered := strings.TrimRight(b.String(), "\n") + "\n"
 	_, err := io.WriteString(w, rendered)
 	return err
+}
+
+func writeInvocationAuthorityContract(b *strings.Builder) {
+	b.WriteString("## Selectorless authority\n\n")
+	b.WriteString("Each label describes what omission means for one graph route; explicit selectors still replace a natural target.\n\n")
+	for _, class := range InvocationAuthorities() {
+		fmt.Fprintf(b, "- `%s` — %s.\n", class, class.Summary())
+	}
+	b.WriteString("\nRoot parser bridges outside the route graph are censused from their parser token lists:\n\n")
+	b.WriteString("| Bridge | Selectorless authority |\n")
+	b.WriteString("| --- | --- |\n")
+	for _, row := range InvocationCensus() {
+		if row.Catalog {
+			continue
+		}
+		fmt.Fprintf(b, "| `%s` | `%s` |\n", referenceCell(row.Spelling), row.Authority)
+	}
+	b.WriteString("\n")
 }
 
 // writeReferenceIndex writes the top-level command table. The disposition
@@ -174,6 +193,9 @@ func writeReferenceRoute(b *strings.Builder, path []string, route Route) {
 	if route.Summary != "" {
 		b.WriteString(route.Summary)
 		b.WriteString("\n\n")
+	}
+	if route.Invocation != "" {
+		fmt.Fprintf(b, "Selectorless authority: `%s` — %s.\n\n", route.Invocation, route.Invocation.Summary())
 	}
 
 	usage := route.Usage

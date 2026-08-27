@@ -90,6 +90,30 @@ func TestDeleteResolvesOneExactTargetAndNeverTheAppSocket(t *testing.T) {
 	}
 }
 
+func TestExplicitLiveSocketPathIsAmbientInvariant(t *testing.T) {
+	t.Parallel()
+	flags := deleteSocketFlags{socketPath: "/tmp/isolated/socket"}
+	var results []explicitTmuxTarget
+	for _, ambient := range []string{"", "/tmp/tmux-1000/projmux,1,0", "/tmp/foreign/socket,9999,7"} {
+		target, err := resolveDeleteTarget("delete window", flags, func(name string) string {
+			if name == "TMUX" {
+				return ambient
+			}
+			return ""
+		})
+		if err != nil {
+			t.Fatalf("ambient %q: %v", ambient, err)
+		}
+		results = append(results, target)
+	}
+	want := explicitTmuxTarget{flag: "-S", value: "/tmp/isolated/socket"}
+	for index, got := range results {
+		if got != want {
+			t.Fatalf("ambient row %d target = %#v, want unchanged live %#v", index, got, want)
+		}
+	}
+}
+
 // TestDeleteInstallsTheResolvedTargetOnTheLiveHalf proves the route's own
 // resolution is what the inventory and the kills route through, for both kinds.
 func TestDeleteInstallsTheResolvedTargetOnTheLiveHalf(t *testing.T) {

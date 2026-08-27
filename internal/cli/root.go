@@ -20,6 +20,27 @@ type Handler func(args []string, stdout, stderr io.Writer) error
 // with the historical unknown-command error instead of letting Cobra answer.
 var reservedCobraTokens = []string{"__complete", "__completeNoDesc", "completion"}
 
+// rootVersionFlags is both parser input and census input for the public version
+// spellings that do not have their own graph node.
+var rootVersionFlags = []string{"--version", "-version"}
+
+func rootInvocationBridgeRows() []InvocationCensusRow {
+	rows := []InvocationCensusRow{{
+		Spelling: "<bare invocation>", Authority: InvocationNatural,
+	}}
+	for _, name := range helpFlagNames {
+		rows = append(rows, InvocationCensusRow{
+			Spelling: "<root help flag:" + name + ">", Authority: InvocationFanOut,
+		})
+	}
+	for _, spelling := range rootVersionFlags {
+		rows = append(rows, InvocationCensusRow{
+			Spelling: spelling, Authority: InvocationFanOut,
+		})
+	}
+	return rows
+}
+
 // RootOptions configures the Cobra root factory. Writers are injected, so the
 // factory never reaches for os.Stdout/os.Stderr and never calls os.Exit.
 type RootOptions struct {
@@ -191,9 +212,10 @@ func (r *Root) runRoot(args []string) error {
 	if len(args) == 0 {
 		return RenderRootHelp(r.stdout)
 	}
-	switch args[0] {
-	case "--version", "-version":
+	if slices.Contains(rootVersionFlags, args[0]) {
 		return r.printVersion()
+	}
+	switch args[0] {
 	case "help", "--help", "-h":
 		return RenderRootHelp(r.stdout)
 	default:

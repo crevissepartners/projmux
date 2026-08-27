@@ -2262,100 +2262,132 @@ if ! pmx_agent get agents --project alpha -o name | grep -qx "$cross_agent_name"
   exit 1
 fi
 
-# 15. The user reproduction, from inside a managed Pane. `create codex -w hi
-#     --create-window` names no Project: the scope is derived from the managed
-#     identity mirrored on the pane the command runs in, and the Window, the
-#     Agent, and the Agent's managed Pane are created below that Project in one
-#     transaction on the inherited exact socket.
+# 15. Any explicit Window occurrence makes the owner scope explicit. A missing
+#     `-w hi --create-window` therefore cannot borrow a Project from the
+#     inherited Pane: it refuses before a Registry or tmux write and names the
+#     exact `--project` remedy. Supplying that Project then succeeds on the same
+#     validated app route without moving the caller or touching the sibling
+#     server.
+phase15_app_hash() {
+  {
+    ctx list-sessions -F '#{session_id}|#{session_name}|#{@projmux_project_uid}'
+    ctx list-windows -a -F '#{session_id}|#{window_id}|#{window_name}|#{@projmux_window_uid}'
+    ctx list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_pane_uid}'
+  } | sha256sum | awk '{print $1}'
+}
 foreign_state_before="$(cfx list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{@projmux_pane_uid} #{@projmux_window_uid}')"
-implicit_window_before="$(ctx display-message -p -t legacy-alpha '#{window_id}')"
-implicit_pane_before="$(ctx display-message -p -t legacy-alpha '#{pane_id}')"
-: >"$create_root/agent-launch.log"
-pmx_agent_live create codex -w hi --create-window -o pane-id \
-  >"$create_root/implicit-agent.out" 2>"$create_root/implicit-agent.err"
-implicit_pane="$(tr -d '[:space:]' <"$create_root/implicit-agent.out")"
-if [[ ! "$implicit_pane" =~ ^%[0-9]+$ ]]; then
-  echo "implicit-scope create codex -o pane-id = $implicit_pane, want a raw %N handle" >&2
-  cat "$create_root/implicit-agent.err" >&2 || true
+phase15_host_before="$(ctx display-message -p -t "$agent_pane" '#{session_id}|#{window_id}|#{pane_id}')"
+phase15_registry_before="$(sha256sum "$create_registry" | awk '{print $1}')"
+phase15_runtime_before="$(phase15_app_hash)"
+phase15_route_before="$(wc -l <"$create_root/exact-tmux-argv.log" | tr -d '[:space:]')"
+set +e
+PATH="$create_shim:$PATH" PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 \
+  pmx_agent_live create codex -w hi --create-window -o pane-id \
+  >"$create_root/explicit-owner-refusal-agent.out" 2>"$create_root/explicit-owner-refusal-agent.err"
+phase15_refusal_status=$?
+set -e
+if [[ "$phase15_refusal_status" != "2" ]] || [[ -s "$create_root/explicit-owner-refusal-agent.out" ]]; then
+  echo "explicit missing-Window Agent create status/stdout = $phase15_refusal_status/$(wc -c <"$create_root/explicit-owner-refusal-agent.out"), want 2/0" >&2
+  cat "$create_root/explicit-owner-refusal-agent.err" >&2 || true
   exit 1
 fi
-# The returned handle is live on the exact inherited socket and carries the
-# managed Pane uid mirror.
-if [[ "$(ctx display-message -p -t "$implicit_pane" '#{pane_id}')" != "$implicit_pane" ]]; then
-  echo "the implicit-scope pane handle is not live on the exact socket" >&2
-  exit 1
-fi
-if [[ -z "$(ctx display-message -p -t "$implicit_pane" '#{@projmux_pane_uid}')" ]]; then
-  echo "the implicit-scope managed Pane has no Projmux uid mirror" >&2
-  exit 1
-fi
-# The Window was created below the derived Project, not below any other one.
-if ! pmx_agent get windows --project alpha -o name | grep -qx "hi"; then
-  echo "implicit-scope --create-window did not create Window hi under the derived Project" >&2
-  pmx_agent get windows --project alpha -o name >&2 || true
-  exit 1
-fi
-if pmx_agent get windows --project beta -o name | grep -qx "hi"; then
-  echo "implicit-scope create leaked a Window into another Project" >&2
-  exit 1
-fi
-implicit_window_uid="$(ctx display-message -p -t "$implicit_pane" '#{@projmux_window_uid}')"
-if [[ -z "$implicit_window_uid" ]]; then
-  echo "the implicit-scope Window has no uid mirror" >&2
-  exit 1
-fi
-if [[ "$(ctx display-message -p -t "$implicit_pane" '#{session_name}')" != "legacy-alpha" ]]; then
-  echo "the implicit-scope Window landed outside the derived Project's session" >&2
-  exit 1
-fi
-if [[ "$(ctx display-message -p -t "$implicit_pane" '#{window_name}')" != "hi" ]]; then
-  echo "the implicit-scope Window is not named hi" >&2
-  exit 1
-fi
-# The provider really launched, and the client never moved.
-for _ in {1..200}; do
-  [[ -s "$create_root/agent-launch.log" ]] && break
-  sleep 0.05
-done
-if ! grep -Fq "cwd=$create_root/legacy/alpha" "$create_root/agent-launch.log"; then
-  echo "the implicit-scope create did not launch the provider in the derived Project root" >&2
-  cat "$create_root/agent-launch.log" >&2 || true
-  exit 1
-fi
-if [[ "$(ctx display-message -p -t legacy-alpha '#{window_id}')" != "$implicit_window_before" ]] ||
-  [[ "$(ctx display-message -p -t legacy-alpha '#{pane_id}')" != "$implicit_pane_before" ]]; then
-  echo "an implicit-scope create moved the active window or pane" >&2
+smoke_assert_file_contains "$create_root/explicit-owner-refusal-agent.err" "pass --project <ref>"
+if [[ "$(sha256sum "$create_registry" | awk '{print $1}')" != "$phase15_registry_before" ]] ||
+  [[ "$(phase15_app_hash)" != "$phase15_runtime_before" ]] ||
+  [[ "$(cfx list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{@projmux_pane_uid} #{@projmux_window_uid}')" != "$foreign_state_before" ]] ||
+  [[ "$(ctx display-message -p -t "$agent_pane" '#{session_id}|#{window_id}|#{pane_id}')" != "$phase15_host_before" ]] ||
+  [[ "$(wc -l <"$create_root/exact-tmux-argv.log" | tr -d '[:space:]')" != "$phase15_route_before" ]]; then
+  echo "explicit missing-Window Agent refusal changed Registry/runtime/foreign/focus state or made a tmux call" >&2
   exit 1
 fi
 
-# 15b. The same command on an app-owned host. Host mode is a runtime property,
-#      not an authority boundary: the create mutates only the socket it
-#      inherited, and the sibling server is byte-identical before and after both
-#      halves of the matrix.
-ctx set-option -gq @projmux_app 1
-pmx_agent_live create pane -w app-owned-host --create-window -o pane-id \
-  >"$create_root/app-owned.out" 2>"$create_root/app-owned.err"
-app_owned_pane="$(tr -d '[:space:]' <"$create_root/app-owned.out")"
-if [[ ! "$app_owned_pane" =~ ^%[0-9]+$ ]]; then
-  echo "app-owned host create -o pane-id = $app_owned_pane, want a raw %N handle" >&2
-  cat "$create_root/app-owned.err" >&2 || true
+phase15_launch_before="$(wc -l <"$create_root/agent-launch.log" | tr -d '[:space:]')"
+PATH="$create_shim:$PATH" PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 pmx_agent_live create codex \
+  --project "uid:$agent_project_uid_before" -w hi --create-window -o pane-id \
+  >"$create_root/explicit-owner-agent.out" 2>"$create_root/explicit-owner-agent.err"
+phase15_agent_pane="$(tr -d '[:space:]' <"$create_root/explicit-owner-agent.out")"
+if [[ ! "$phase15_agent_pane" =~ ^%[0-9]+$ ]] || [[ -s "$create_root/explicit-owner-agent.err" ]]; then
+  echo "exact-Project create codex result is not one quiet %N: $phase15_agent_pane" >&2
+  cat "$create_root/explicit-owner-agent.err" >&2 || true
   exit 1
 fi
-if [[ "$(ctx display-message -p -t "$app_owned_pane" '#{session_name}')" != "legacy-alpha" ]]; then
-  echo "the app-owned host create landed outside the derived Project's session" >&2
+for _ in {1..200}; do
+  phase15_launch_after="$(wc -l <"$create_root/agent-launch.log" | tr -d '[:space:]')"
+  [[ "$phase15_launch_after" -gt "$phase15_launch_before" ]] && break
+  sleep 0.05
+done
+if [[ "${phase15_launch_after:-0}" -le "$phase15_launch_before" ]] ||
+  [[ "$(ctx display-message -p -t "$phase15_agent_pane" '#{session_name}|#{window_name}|#{pane_id}')" != "legacy-alpha|hi|$phase15_agent_pane" ]] ||
+  [[ -z "$(ctx show-options -pqv -t "$phase15_agent_pane" @projmux_pane_uid)" ]] ||
+  [[ "$(ctx display-message -p -t "$agent_pane" '#{session_id}|#{window_id}|#{pane_id}')" != "$phase15_host_before" ]] ||
+  [[ "$(cfx list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{@projmux_pane_uid} #{@projmux_window_uid}')" != "$foreign_state_before" ]]; then
+  echo "exact-Project create codex did not stay on the app route or changed host/foreign state" >&2
+  exit 1
+fi
+tail -n "+$((phase15_route_before + 1))" "$create_root/exact-tmux-argv.log" >"$create_root/explicit-owner-agent-route.log"
+if [[ ! -s "$create_root/explicit-owner-agent-route.log" ]] ||
+  grep -Ev '^(-L|-S) [^ ]+ ' "$create_root/explicit-owner-agent-route.log" >/dev/null ||
+  ! grep -Fq -- "-S $create_socket_path " "$create_root/explicit-owner-agent-route.log"; then
+  echo "exact-Project create codex omitted its validated logical/physical app route" >&2
+  cat "$create_root/explicit-owner-agent-route.log" >&2
+  exit 1
+fi
+
+# 15b. The resource spelling has the same two cells on an app-owned host:
+#      missing explicit owner refuses with zero writes, while the exact Project
+#      enables one detached create on the inherited validated route.
+ctx set-option -gq @projmux_app 1
+phase15b_host_before="$(ctx display-message -p -t "$agent_pane" '#{session_id}|#{window_id}|#{pane_id}')"
+phase15b_registry_before="$(sha256sum "$create_registry" | awk '{print $1}')"
+phase15b_runtime_before="$(phase15_app_hash)"
+phase15b_foreign_before="$(cfx list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{@projmux_pane_uid} #{@projmux_window_uid}')"
+phase15b_route_before="$(wc -l <"$create_root/exact-tmux-argv.log" | tr -d '[:space:]')"
+set +e
+PATH="$create_shim:$PATH" PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 \
+  pmx_agent_live create pane -w app-owned-host --create-window -o pane-id \
+  >"$create_root/explicit-owner-refusal-pane.out" 2>"$create_root/explicit-owner-refusal-pane.err"
+phase15b_refusal_status=$?
+set -e
+if [[ "$phase15b_refusal_status" != "2" ]] || [[ -s "$create_root/explicit-owner-refusal-pane.out" ]]; then
+  echo "explicit missing-Window Pane create status/stdout = $phase15b_refusal_status/$(wc -c <"$create_root/explicit-owner-refusal-pane.out"), want 2/0" >&2
+  cat "$create_root/explicit-owner-refusal-pane.err" >&2 || true
+  exit 1
+fi
+smoke_assert_file_contains "$create_root/explicit-owner-refusal-pane.err" "pass --project <ref>"
+if [[ "$(sha256sum "$create_registry" | awk '{print $1}')" != "$phase15b_registry_before" ]] ||
+  [[ "$(phase15_app_hash)" != "$phase15b_runtime_before" ]] ||
+  [[ "$(cfx list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{@projmux_pane_uid} #{@projmux_window_uid}')" != "$phase15b_foreign_before" ]] ||
+  [[ "$(ctx display-message -p -t "$agent_pane" '#{session_id}|#{window_id}|#{pane_id}')" != "$phase15b_host_before" ]] ||
+  [[ "$(wc -l <"$create_root/exact-tmux-argv.log" | tr -d '[:space:]')" != "$phase15b_route_before" ]]; then
+  echo "explicit missing-Window Pane refusal changed Registry/runtime/foreign/focus state or made a tmux call" >&2
+  exit 1
+fi
+
+PATH="$create_shim:$PATH" PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 pmx_agent_live create pane \
+  --project "uid:$agent_project_uid_before" -w app-owned-host --create-window -o pane-id \
+  >"$create_root/explicit-owner-pane.out" 2>"$create_root/explicit-owner-pane.err"
+phase15b_pane="$(tr -d '[:space:]' <"$create_root/explicit-owner-pane.out")"
+if [[ ! "$phase15b_pane" =~ ^%[0-9]+$ ]] || [[ -s "$create_root/explicit-owner-pane.err" ]] ||
+  [[ "$(ctx display-message -p -t "$phase15b_pane" '#{session_name}|#{window_name}|#{pane_id}')" != "legacy-alpha|app-owned-host|$phase15b_pane" ]] ||
+  [[ "$(ctx display-message -p -t "$agent_pane" '#{session_id}|#{window_id}|#{pane_id}')" != "$phase15b_host_before" ]] ||
+  [[ "$(cfx list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{@projmux_pane_uid} #{@projmux_window_uid}')" != "$phase15b_foreign_before" ]]; then
+  echo "exact-Project create pane did not stay on the app route or changed host/foreign state: $phase15b_pane" >&2
+  cat "$create_root/explicit-owner-pane.err" >&2 || true
+  exit 1
+fi
+tail -n "+$((phase15b_route_before + 1))" "$create_root/exact-tmux-argv.log" >"$create_root/explicit-owner-pane-route.log"
+if [[ ! -s "$create_root/explicit-owner-pane-route.log" ]] ||
+  grep -Ev '^(-L|-S) [^ ]+ ' "$create_root/explicit-owner-pane-route.log" >/dev/null ||
+  ! grep -Fq -- "-S $create_socket_path " "$create_root/explicit-owner-pane-route.log"; then
+  echo "exact-Project create pane omitted its validated logical/physical app route" >&2
+  cat "$create_root/explicit-owner-pane-route.log" >&2
   exit 1
 fi
 if [[ "$(ctx show-options -gqv @projmux_app)" != "1" ]]; then
-  echo "the app-owned host marker disappeared during the create" >&2
+  echo "the app-owned host marker disappeared during the explicit create matrix" >&2
   exit 1
 fi
 ctx set-option -gqu @projmux_app
-foreign_state_after="$(cfx list-panes -a -F '#{session_name} #{window_id} #{pane_id} #{@projmux_pane_uid} #{@projmux_window_uid}')"
-if [[ "$foreign_state_after" != "$foreign_state_before" ]]; then
-  echo "an inherited-socket create changed a sibling tmux server" >&2
-  printf 'before:\n%s\nafter:\n%s\n' "$foreign_state_before" "$foreign_state_after" >&2
-  exit 1
-fi
 
 # 16. A pane whose Window carries no managed identity is unattributed. It is a
 #     refusal with zero mutations on the very server the command is running in;

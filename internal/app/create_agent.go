@@ -111,6 +111,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	if err != nil {
 		return err
 	}
+	c.selectRuntimeAuthority(flags.explicitTargetAuthority())
 
 	var results []createResult
 	var activationTargets []agentActivationTarget
