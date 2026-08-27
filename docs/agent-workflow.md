@@ -370,6 +370,17 @@
   Codex, and npm consumers. Local Security is the exact three-way
   `make security` topology; CI's required branch-protection context is the
   fail-closed aggregate named `Test`.
+- `test/e2e/evidence-contract.sh` (`make test-e2e-contract`) and
+  `test/e2e/reliability-contract.sh` (`make test-e2e-reliability`) keep the persisted
+  `projmux.e2e-attempt/v1` evidence and success result hash stable while adding
+  a separate stderr-only `projmux.e2e-terminal/v1` first-failure record. Its
+  closed fields identify scenario, phase, owner, shard, status, repository
+  source/line, sanitized single-scenario command, binary/state hashes, and exact
+  replay without raw argv. Synthetic L06/L08/L16 fixtures pin eight-racer lock
+  state, bounded Registry changed paths plus pending owned state, and child/file/
+  exact tmux state plus sanitized hashed tails; denylist checks reject token,
+  raw HOME/path, full Registry, and raw command leakage. Normal scenario meaning,
+  one-build/four-shard topology, and `.bin/e2e-evidence` retention are unchanged.
 - `make test` / `make test-integration`: attention omitted-target convergence
   is enforced by `TestAttentionMutationOmittedTargetMatchesExplicitPaneLedger`,
   `TestAttentionMutationOmittedTargetRefusesWithoutExactInvocationPane`, and

@@ -15,6 +15,17 @@ if [[ "${PROJMUX_E2E_INTENTIONAL_FAILURE:-}" == "1" ]]; then
   exit 99
 fi
 
+if [[ "${PROJMUX_E2E_INTENTIONAL_EXIT:-}" == "1" ]]; then
+  source "$root/test/lib/smoke.sh"
+  smoke_setup_env
+  PROJMUX_E2E_SUITE="intentional-failure"
+  export PROJMUX_E2E_SUITE
+  smoke_contract_install_trap
+  trap smoke_cleanup_env EXIT
+  smoke_contract_begin L06 create-materialize resource-controller
+  exit 23
+fi
+
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 
@@ -22,6 +33,34 @@ record=(python3 "$root/scripts/e2e-evidence.py" record --directory "$tmp/golden"
 "${record[@]}" --class unattributed --outcome begin --elapsed-ms 0 >"$tmp/begin.out"
 "${record[@]}" --class environment --outcome fail --elapsed-ms 17 >"$tmp/fail.out"
 python3 "$root/scripts/e2e-evidence.py" validate --terminal "$tmp/golden/summary.jsonl"
+
+terminal_command=(python3 "$root/scripts/e2e-first-failure.py" terminal \
+  --scenario L01 --phase bootstrap --owner harness --shard fixture-1 \
+  --status 17 --source test/e2e/linux-smoke.sh --line 123 \
+  --command "make test-e2e E2E_SCENARIO=L01" \
+  --binary-sha256 "$(printf 'a%.0s' {1..64})" \
+  --state-sha256 "$(printf 'b%.0s' {1..64})")
+"${terminal_command[@]}" >"$tmp/terminal-record.out" 2>"$tmp/terminal-record.err"
+[[ ! -s "$tmp/terminal-record.out" ]]
+terminal_golden='E2E_TERMINAL {"binary_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","command":"make test-e2e E2E_SCENARIO=L01","line":123,"owner":"harness","phase":"bootstrap","replay":"make test-e2e E2E_SCENARIO=L01","scenario":"L01","schema":"projmux.e2e-terminal/v1","shard":"fixture-1","source":"test/e2e/linux-smoke.sh","state_sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","status":17}'
+if [[ "$(cat "$tmp/terminal-record.err")" != "$terminal_golden" ]]; then
+  echo "stderr terminal JSON golden mismatch" >&2
+  diff -u <(printf '%s\n' "$terminal_golden") "$tmp/terminal-record.err" >&2 || true
+  exit 1
+fi
+if python3 "$root/scripts/e2e-first-failure.py" terminal \
+  --scenario L01 --phase bootstrap --owner harness --shard fixture-1 \
+  --status 17 --source test/e2e/linux-smoke.sh --line 123 \
+  --command "github_pat_FAKE_SECRET_SHAPED_ARG_1234567890" \
+  >"$tmp/terminal-private.out" 2>"$tmp/terminal-private.err"; then
+  echo "terminal schema accepted a raw non-allowlisted command" >&2
+  exit 1
+fi
+if grep -Fq "github_pat_FAKE_SECRET_SHAPED_ARG_1234567890" \
+  "$tmp/terminal-record.err" "$tmp/terminal-private.err" "$tmp/terminal-private.out"; then
+  echo "terminal schema or its rejection leaked a raw command" >&2
+  exit 1
+fi
 
 golden='{"artifact":"L01-attempt-1.json","attempt":1,"binary_sha256":"","class":"unattributed","elapsed_ms":0,"outcome":"begin","owner":"harness","phase":"bootstrap","replay":"make test-e2e E2E_SCENARIO=L01","route_socket":"","scenario_id":"L01","schema":"projmux.e2e-attempt/v1","state_sha256":"","suite":"linux-bootstrap"}'
 if [[ "$(head -n 1 "$tmp/golden/summary.jsonl")" != "$golden" ]]; then
@@ -90,4 +129,28 @@ fi
 python3 "$root/scripts/e2e-evidence.py" validate --terminal "$tmp/intentional/summary.jsonl"
 grep -Fq 'id=L17 attempt=1 phase=exit-reconcile outcome=fail class=deterministic-regression owner=exit-reconciler' "$tmp/intentional.err"
 
-echo ">> evidence parser/golden/privacy/pass-only aggregation/intentional-failure tests passed"
+set +e
+PROJMUX_E2E_INTENTIONAL_EXIT=1 \
+  PROJMUX_E2E_ARTIFACTS="$tmp/intentional-exit" \
+  "$root/test/e2e/evidence-contract.sh" >"$tmp/intentional-exit.out" 2>"$tmp/intentional-exit.err"
+intentional_exit_status=$?
+set -e
+if [[ "$intentional_exit_status" != "23" ]]; then
+  echo "intentional explicit exit returned $intentional_exit_status, want 23" >&2
+  exit 1
+fi
+python3 - "$tmp/intentional-exit.err" <<'PY'
+import json
+import pathlib
+import sys
+
+lines = pathlib.Path(sys.argv[1]).read_text().splitlines()
+records = [json.loads(line.split(" ", 1)[1]) for line in lines if line.startswith("E2E_TERMINAL ")]
+assert len(records) == 1
+record = records[0]
+assert record["scenario"] == "L06" and record["status"] == 23
+assert record["source"] == "test/e2e/evidence-contract.sh" and record["line"] > 1
+assert record["command"] == record["replay"] == "make test-e2e E2E_SCENARIO=L06"
+PY
+
+echo ">> evidence parser/terminal/golden/privacy/pass-only aggregation/intentional-failure tests passed"

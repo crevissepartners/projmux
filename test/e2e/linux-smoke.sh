@@ -1027,6 +1027,7 @@ pmx() {
 }
 
 create_registry="$create_root/state/projmux/metadata/registry.json"
+SMOKE_CONTRACT_TERMINAL_STATE_PATH="$create_registry"
 if [[ -e "$create_registry" ]]; then
   echo "create e2e did not start from an empty registry" >&2
   exit 1
@@ -1552,19 +1553,48 @@ phase0_stress_window_uid_before="$(ctx show-options -wqv -t "$legacy_window_id" 
 phase0_stress_pane_uid_before="$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)"
 phase0_stress_project_uid_before="$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)"
 phase0_stress_pids=()
+SMOKE_L06_HOLDER_PID=0
+SMOKE_L06_HOLDER_STARTED_MS="$(( $(date +%s) * 1000 ))"
+SMOKE_L06_OPERATION=concurrent-create-pane
+SMOKE_L06_ACQUIRE_STATE=contended
+SMOKE_L06_RELEASE_STATE=held
+SMOKE_L06_RACER_PIDS=(0 0 0 0 0 0 0 0)
+SMOKE_L06_RACER_STATUSES=(0 0 0 0 0 0 0 0)
+SMOKE_L06_RACER_OUTCOMES=(not-started not-started not-started not-started not-started not-started not-started not-started)
 for phase0_racer in {1..8}; do
   pmx create pane --project alpha --window phase0-stress --create-window -o pane-id \
     >"$create_root/phase0-stress-$phase0_racer.out" \
     2>"$create_root/phase0-stress-$phase0_racer.err" &
   phase0_stress_pids+=("$!")
+  SMOKE_L06_RACER_PIDS[phase0_racer - 1]="$!"
 done
 phase0_stress_failed=0
 for phase0_racer in {1..8}; do
-  if ! wait "${phase0_stress_pids[$((phase0_racer - 1))]}"; then
+  phase0_stress_pid="${phase0_stress_pids[phase0_racer - 1]}"
+  if wait "$phase0_stress_pid"; then
+    SMOKE_L06_RACER_STATUSES[phase0_racer - 1]=0
+    SMOKE_L06_RACER_OUTCOMES[phase0_racer - 1]=completed
+  else
+    SMOKE_L06_RACER_STATUSES[phase0_racer - 1]="$?"
     phase0_stress_failed=1
+    if grep -q "acquire lock: exhausted" "$create_root/phase0-stress-$phase0_racer.err"; then
+      SMOKE_L06_RACER_OUTCOMES[phase0_racer - 1]=exhausted
+    else
+      SMOKE_L06_RACER_OUTCOMES[phase0_racer - 1]=other
+    fi
+    if [[ -f "$create_registry.lock" ]]; then
+      phase0_lock_pid="$(sed -n 's/^pid=\([0-9][0-9]*\)$/\1/p' "$create_registry.lock" | head -n 1)"
+      if [[ -n "$phase0_lock_pid" ]]; then
+        SMOKE_L06_HOLDER_PID="$phase0_lock_pid"
+      fi
+      SMOKE_L06_HOLDER_STARTED_MS="$(( $(stat -c %Y "$create_registry.lock") * 1000 ))"
+    fi
     cat "$create_root/phase0-stress-$phase0_racer.err" >&2 || true
   fi
 done
+if [[ ! -e "$create_registry.lock" ]]; then
+  SMOKE_L06_RELEASE_STATE=released
+fi
 if [[ "$phase0_stress_failed" != 0 ]]; then
   echo "concurrent exact-socket create stress had a failed racer" >&2
   exit 1
@@ -3045,18 +3075,60 @@ fi
 # of concurrent workers contending for the one registry lock produces.
 cp "$binding_registry" "$binding_root/registry.before-burst"
 binding_burst_pids=()
+SMOKE_L06_HOLDER_STARTED_MS="$(( $(date +%s) * 1000 ))"
+SMOKE_L06_ACQUIRE_STATE=contended
+SMOKE_L06_RELEASE_STATE=held
+SMOKE_L06_RACER_PIDS=(0 0 0 0 0 0 0 0)
+SMOKE_L06_RACER_STATUSES=(0 0 0 0 0 0 0 0)
+SMOKE_L06_RACER_OUTCOMES=(not-started not-started not-started not-started not-started not-started not-started not-started)
 for binding_burst_index in 1 2 3 4 5 6 7 8; do
   binding_pmx internal tmux converge --socket-path "$binding_socket_path" \
     --session "$binding_session" --reason pane-killed \
     >"$binding_root/burst-$binding_burst_index.out" 2>"$binding_root/burst-$binding_burst_index.err" &
   binding_burst_pids+=("$!")
+  SMOKE_L06_RACER_PIDS[binding_burst_index - 1]="$!"
 done
 binding_burst_failed=0
-for binding_burst_pid in "${binding_burst_pids[@]}"; do
-  if ! wait "$binding_burst_pid"; then
+for binding_burst_index in 1 2 3 4 5 6 7 8; do
+  binding_burst_pid="${binding_burst_pids[binding_burst_index - 1]}"
+  if wait "$binding_burst_pid"; then
+    SMOKE_L06_RACER_STATUSES[binding_burst_index - 1]=0
+  else
+    SMOKE_L06_RACER_STATUSES[binding_burst_index - 1]="$?"
     binding_burst_failed=1
+    if [[ -f "$binding_registry.lock" ]]; then
+      binding_lock_pid="$(sed -n 's/^pid=\([0-9][0-9]*\)$/\1/p' "$binding_registry.lock" | head -n 1)"
+      if [[ -n "$binding_lock_pid" ]]; then
+        SMOKE_L06_HOLDER_PID="$binding_lock_pid"
+      fi
+      SMOKE_L06_HOLDER_STARTED_MS="$(( $(stat -c %Y "$binding_registry.lock") * 1000 ))"
+      SMOKE_L06_ACQUIRE_STATE=contended
+      SMOKE_L06_RELEASE_STATE=held
+    fi
+  fi
+  if grep -q "exhausted" "$binding_root/burst-$binding_burst_index.err"; then
+    SMOKE_L06_RACER_OUTCOMES[binding_burst_index - 1]=exhausted
+  elif grep -q "another controller worker holds" "$binding_root/burst-$binding_burst_index.err"; then
+    SMOKE_L06_RACER_OUTCOMES[binding_burst_index - 1]=deferred
+  elif grep -q "converged=true" "$binding_root/burst-$binding_burst_index.err"; then
+    SMOKE_L06_RACER_OUTCOMES[binding_burst_index - 1]=converged
+    if [[ "$SMOKE_L06_HOLDER_PID" == "0" ]]; then
+      SMOKE_L06_HOLDER_PID="$binding_burst_pid"
+      SMOKE_L06_ACQUIRE_STATE=acquired
+    fi
+  else
+    SMOKE_L06_RACER_OUTCOMES[binding_burst_index - 1]=other
   fi
 done
+if [[ ! -e "$binding_registry.lock" ]]; then
+  SMOKE_L06_RELEASE_STATE=released
+fi
+# These variables are consumed indirectly by the failure trap sourced from
+# test/lib/smoke.sh. Keep an explicit no-op read so standalone ShellCheck sees
+# the cross-file diagnostic-state contract.
+: "$SMOKE_L06_HOLDER_PID" "$SMOKE_L06_HOLDER_STARTED_MS" "$SMOKE_L06_OPERATION" \
+  "$SMOKE_L06_ACQUIRE_STATE" "$SMOKE_L06_RELEASE_STATE" \
+  "${SMOKE_L06_RACER_PIDS[*]}" "${SMOKE_L06_RACER_STATUSES[*]}" "${SMOKE_L06_RACER_OUTCOMES[*]}"
 if [[ "$binding_burst_failed" != "0" ]]; then
   echo "a hook burst producer exited non-zero" >&2
   cat "$binding_root"/burst-*.err >&2 || true
@@ -3153,6 +3225,10 @@ mkdir -p \
   "$delete_root/work/beta" \
   "$delete_root/work/gamma"
 chmod 0700 "$delete_root/runtime" "$delete_root/tmux"
+SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.phase-start"
+SMOKE_L08_REGISTRY_AFTER="$delete_root/state/projmux/metadata/registry.json"
+SMOKE_L08_CONTROLLER_ROOT="$delete_root/state/projmux/controller"
+SMOKE_L08_SOCKET_ROOT="$delete_root/tmux"
 
 delete_real_tmux="$(command -v tmux)"
 delete_shim="$delete_root/shim"
@@ -3366,7 +3442,9 @@ if [[ "$delete_singular_status" != "0" ]]; then
 fi
 
 delete_registry="$delete_root/state/projmux/metadata/registry.json"
+SMOKE_CONTRACT_TERMINAL_STATE_PATH="$delete_registry"
 cp "$delete_registry" "$delete_root/registry.before-dry-run"
+SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.before-dry-run"
 delete_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' \
   >"$delete_root/windows.before-dry-run"
 delete_pmx_delete window "uid:$delete_primary_uid" --dry-run >"$delete_root/external-dry-run.out"
@@ -3630,6 +3708,7 @@ delete_tmux list-panes -a -F '#{session_id}:#{window_id}:#{pane_id}:#{@projmux_p
 } | grep -Fvx -e "$delete_offline_pane_uid" -e "$delete_offline_agent_uid" -e "$delete_offline_agent_pane_uid" | sort >"$delete_root/offline-sibling-graph.before"
 sha256sum "$delete_root/offline-sibling-graph.before" >"$delete_root/offline-sibling-graph.before.sha256"
 cp "$delete_registry" "$delete_root/registry.before-offline-pane-dry-run"
+SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.before-offline-pane-dry-run"
 delete_pmx_delete pane "uid:$delete_offline_pane_uid" --dry-run >"$delete_root/offline-pane-dry-run.out"
 cmp "$delete_root/registry.before-offline-pane-dry-run" "$delete_registry"
 smoke_assert_file_contains "$delete_root/offline-pane-dry-run.out" "registry-only would delete this Pane; no tmux Pane would be killed"
@@ -3712,6 +3791,7 @@ delete_tmux kill-window -t "$delete_offline_window"
 sleep 0.5
 
 cp "$delete_registry" "$delete_root/registry.before-offline-dry-run"
+SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.before-offline-dry-run"
 delete_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' >"$delete_root/windows.before-offline-dry-run"
 delete_pmx_delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --dry-run >"$delete_root/offline-dry-run.out"
 cmp "$delete_root/registry.before-offline-dry-run" "$delete_registry"
@@ -3759,6 +3839,7 @@ for delete_forbidden_route in "-L $delete_socket" "-L $delete_product_socket" "-
 done
 
 cp "$delete_registry" "$delete_root/registry.before-offline-repeat"
+SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.before-offline-repeat"
 if delete_pmx_delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --yes \
   >"$delete_root/offline-repeat.out" 2>"$delete_root/offline-repeat.err"; then
   echo "repeat offline Window delete unexpectedly succeeded" >&2
@@ -3962,6 +4043,7 @@ delete_tmux kill-server
 delete_settled=0
 delete_stable_samples=0
 cp "$delete_registry" "$delete_root/registry.settle-probe"
+SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.settle-probe"
 for _ in {1..200}; do
   sleep 0.05
   if cmp -s "$delete_root/registry.settle-probe" "$delete_registry"; then
@@ -3974,12 +4056,14 @@ for _ in {1..200}; do
   fi
   delete_stable_samples=0
   cp "$delete_registry" "$delete_root/registry.settle-probe"
+  SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.settle-probe"
 done
 if [[ "$delete_settled" != "1" ]]; then
   echo "hook-driven convergence never settled after kill-server" >&2
   exit 1
 fi
 cp "$delete_registry" "$delete_root/registry.before-no-server-dry-run"
+SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.before-no-server-dry-run"
 if delete_pmx_delete pane "uid:$delete_sibling_shell_uid" --dry-run \
   >"$delete_root/no-server-pane.out" 2>"$delete_root/no-server-pane.err"; then
   echo "absent-server Pane delete incorrectly treated absence as authority" >&2
@@ -4064,6 +4148,11 @@ if ! awk -v route="-L $delete_product_socket " '
   echo "delete used an unclassified command on default app socket -L $delete_product_socket" >&2
   exit 1
 fi
+
+# See the L06 diagnostic-state receipt above. The sourced failure trap owns
+# these values; this no-op read documents that indirect use for ShellCheck.
+: "$SMOKE_CONTRACT_TERMINAL_STATE_PATH" "$SMOKE_L08_REGISTRY_BEFORE" \
+  "$SMOKE_L08_REGISTRY_AFTER" "$SMOKE_L08_CONTROLLER_ROOT" "$SMOKE_L08_SOCKET_ROOT"
 
 delete_cleanup
 trap smoke_cleanup_env EXIT
@@ -7286,8 +7375,10 @@ mkdir -p "$disc_root/home" "$disc_root/config" "$disc_root/state" "$disc_root/ru
   "$disc_root/work/app" "$disc_root/work/scratch" "$disc_root/work/sibling"
 chmod 0700 "$disc_root/runtime" "$disc_root/tmux"
 disc_registry="$disc_root/state/projmux/metadata/registry.json"
+SMOKE_CONTRACT_TERMINAL_STATE_PATH="$disc_registry"
 disc_pins="$disc_root/config/projmux/pins"
 disc_real_tmux="$(command -v tmux)"
+SMOKE_L16_TMUX_FUNCTION=disc_tmux
 
 disc_shell="$disc_root/shim/persistent-shell"
 cat >"$disc_shell" <<'DISC_SHELL_STUB'
@@ -7333,6 +7424,7 @@ chmod 0755 "$disc_root/bin/tmux"
 
 cat >"$disc_root/open-candidate.sh" <<DISC_OPEN_SCRIPT
 #!/usr/bin/env bash
+printf '%s\n' "\$\$" >"$disc_root/open-\$2.pid"
 export HOME="$disc_root/home"
 export XDG_CONFIG_HOME="$disc_root/config"
 export XDG_STATE_HOME="$disc_root/state"
@@ -7402,6 +7494,11 @@ TERM=xterm-256color script -qefc \
   "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$disc_root/tmux' tmux -L '$disc_socket' attach-session -t '$disc_driver'" \
   "$disc_client_log" <"$disc_client_input" >/dev/null 2>&1 &
 disc_client_pid=$!
+SMOKE_L16_TAIL_PATH="$disc_client_log"
+SMOKE_L16_CHILD_PID_PATH="$disc_root/open-bootstrap.pid"
+SMOKE_L16_RC_PATH="$disc_root/open-bootstrap.rc"
+SMOKE_L16_OUT_PATH="$disc_root/open-bootstrap.out"
+SMOKE_L16_ERR_PATH="$disc_root/open-bootstrap.err"
 
 disc_wait_for() {
   local description="$1"
@@ -7413,7 +7510,6 @@ disc_wait_for() {
     sleep 0.05
   done
   echo "timed out waiting for $description" >&2
-  tail -c 8000 "$disc_client_log" >&2 || true
   return 1
 }
 
@@ -7426,14 +7522,12 @@ disc_tmux send-keys -t "$disc_driver_pane" "bash '$disc_root/open-candidate.sh' 
 disc_wait_for "candidate bootstrap open" test -s "$disc_root/open-bootstrap.rc"
 if [[ "$(tr -d '[:space:]' <"$disc_root/open-bootstrap.rc")" != "0" ]]; then
   echo "opening an unregistered candidate failed" >&2
-  cat "$disc_root/open-bootstrap.err" >&2 || true
   exit 1
 fi
 
 disc_project_uids="$(disc_pmx get projects -o uid)"
 if [[ "$(printf '%s\n' "$disc_project_uids" | wc -l)" != "1" ]]; then
   echo "one candidate open registered more than one Project: $disc_project_uids" >&2
-  disc_pmx get projects -o json >&2
   exit 1
 fi
 disc_project_uid="$disc_project_uids"
@@ -7455,11 +7549,14 @@ done
 
 # 3. Reopening the now-registered Project is write-free.
 cp "$disc_registry" "$disc_root/registry.after-bootstrap"
+SMOKE_L16_RC_PATH="$disc_root/open-repeat.rc"
+SMOKE_L16_CHILD_PID_PATH="$disc_root/open-repeat.pid"
+SMOKE_L16_OUT_PATH="$disc_root/open-repeat.out"
+SMOKE_L16_ERR_PATH="$disc_root/open-repeat.err"
 disc_tmux send-keys -t "$disc_driver_pane" "bash '$disc_root/open-candidate.sh' '$disc_root/work/app' repeat" Enter
 disc_wait_for "candidate reopen" test -s "$disc_root/open-repeat.rc"
 if [[ "$(tr -d '[:space:]' <"$disc_root/open-repeat.rc")" != "0" ]]; then
   echo "reopening the registered Project failed" >&2
-  cat "$disc_root/open-repeat.err" >&2 || true
   exit 1
 fi
 cmp "$disc_root/registry.after-bootstrap" "$disc_registry"
@@ -7473,6 +7570,10 @@ disc_runtime_before="$(
   disc_tmux list-windows -a -F '#{session_id}|#{window_id}|#{@projmux_window_uid}'
   disc_tmux list-panes -a -F '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_pane_uid}'
 )"
+SMOKE_L16_RC_PATH="$disc_root/open-home.rc"
+SMOKE_L16_CHILD_PID_PATH="$disc_root/open-home.pid"
+SMOKE_L16_OUT_PATH="$disc_root/open-home.out"
+SMOKE_L16_ERR_PATH="$disc_root/open-home.err"
 disc_tmux send-keys -t "$disc_driver_pane" "bash '$disc_root/open-candidate.sh' '$disc_root/home' home" Enter
 disc_wait_for "Home open" test -s "$disc_root/open-home.rc"
 if [[ "$(tr -d '[:space:]' <"$disc_root/open-home.rc")" == "0" ]]; then
@@ -7481,14 +7582,12 @@ if [[ "$(tr -d '[:space:]' <"$disc_root/open-home.rc")" == "0" ]]; then
 fi
 if ! grep -Fq "exact Registry Project UID is unavailable; no runtime was created" "$disc_root/open-home.err"; then
   echo "opening undeclared Home lacked the exact fail-closed diagnostic" >&2
-  cat "$disc_root/open-home.err" >&2 || true
   exit 1
 fi
 cmp "$disc_root/registry.before-home" "$disc_registry"
 disc_pmx get projects -o uid >"$disc_root/projects-after-home.uid"
 if [[ "$(wc -l <"$disc_root/projects-after-home.uid")" != "1" ]]; then
-  echo "opening Home registered a Project:" >&2
-  cat "$disc_root/projects-after-home.uid" >&2
+  echo "opening Home registered an unexpected Project count" >&2
   exit 1
 fi
 if grep -Fq "$disc_root/home" "$disc_root/projects-after-home.uid"; then
@@ -7513,8 +7612,7 @@ smoke_assert_file_contains "$disc_root/pin-managed.out" "pinned: project $disc_p
 disc_pmx pin project add "$disc_root/work/scratch" >"$disc_root/pin-candidate.out"
 smoke_assert_file_contains "$disc_root/pin-candidate.out" "pinned: candidate $disc_root/work/scratch"
 if [[ "$(cat "$disc_pins")" != "$(printf 'projmux-pins v2\nproject %s\ncandidate %s' "$disc_project_uid" "$disc_root/work/scratch")" ]]; then
-  echo "the pin file is not the typed envelope:" >&2
-  cat "$disc_pins" >&2
+  echo "the pin file is not the typed envelope" >&2
   exit 1
 fi
 disc_pmx pin project list >"$disc_root/pin-list.out" 2>"$disc_root/pin-list.err"
@@ -7540,6 +7638,12 @@ if [[ "$disc_other_after" != "$disc_other_before" ]]; then
   echo "discovery authority e2e touched the sibling socket" >&2
   exit 1
 fi
+
+# See the L06 diagnostic-state receipt above. The sourced failure trap owns
+# these values; this no-op read documents that indirect use for ShellCheck.
+: "$SMOKE_CONTRACT_TERMINAL_STATE_PATH" "$SMOKE_L16_TMUX_FUNCTION" \
+  "$SMOKE_L16_TAIL_PATH" "$SMOKE_L16_RC_PATH" "$SMOKE_L16_CHILD_PID_PATH" \
+  "$SMOKE_L16_OUT_PATH" "$SMOKE_L16_ERR_PATH"
 
 exec 9>&-
 kill "$disc_client_pid" >/dev/null 2>&1 || true
