@@ -36,14 +36,7 @@ type agentResumeLauncher interface {
 	// caller already created and seeds the live routing index with the resumed
 	// conversation id.
 	BindResumedAgentPane(paneID, provider, contextDir, title, conversationID string)
-}
-
-type routedResumedAgentPaneBinder interface {
-	BindResumedAgentPaneOnRoute(context.Context, tmuxCommandRunner, string, string, string, string, string) error
-}
-
-type routedSourcedResumedAgentPaneBinder interface {
-	BindResumedAgentPaneWithSourceOnRoute(context.Context, tmuxCommandRunner, string, string, string, string, string, string) error
+	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 }
 
 // The aiCommand is the production implementation of both launch seams. The two
@@ -130,11 +123,9 @@ func (c *aiCommand) BindResumedAgentPaneWithSourceOnRoute(
 	runner tmuxCommandRunner,
 	paneID, provider, contextDir, title, conversationID, source string,
 ) error {
-	return c.configureAIPaneOnRoute(ctx, runner, paneID, provider, contextDir, title, aiPaneResumeMetadata{
-		sessionID: conversationID,
-		resumeID:  conversationID,
-		source:    strings.TrimSpace(source),
-		updatedAt: c.nowTime().UTC(),
+	return c.BindAgentPaneOnRoute(ctx, runner, agentPaneBinding{
+		PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
+		ConversationID: conversationID, ResumeSource: source,
 	})
 }
 
@@ -381,7 +372,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	}
 	nativeLauncher, nativeLaunchCapable := r.launcher.(codexNativeAgentLauncher)
 	nativeLifecycle, nativeLifecycleCapable := r.launcher.(codexNativeLifecycleStarter)
-	var nativeLifecycleIdentityAfterCommit codexLifecycleIdentity
+	var nativeLifecycleTargetAfterCommit codexLifecycleObserverTarget
 
 	for _, other := range plan.shared {
 		if _, err := fmt.Fprintf(stderr,
@@ -510,42 +501,30 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			return err
 		}
 		if usedNative {
-			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, r.create.runtime.runner, paneID, contextDir, workTitle, plan.conversationID); err != nil {
+			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, r.create.runtime.runner, paneID, contextDir, workTitle, nativeThreadID); err != nil {
 				return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", spelling, paneID, err)
 			}
 			if nativeLifecycleCapable {
-				nativeLifecycleIdentityAfterCommit = codexLifecycleIdentity{
-					AgentUID: plan.agentUID, PaneUID: pane.Metadata.UID, RuntimeID: paneID,
-					Generation: activation.Generation, ThreadID: nativeThreadID,
+				nativeLifecycleTargetAfterCommit = codexLifecycleObserverTarget{
+					Identity: codexLifecycleIdentity{
+						AgentUID: plan.agentUID, PaneUID: pane.Metadata.UID, RuntimeID: paneID,
+						Generation: activation.Generation, ThreadID: nativeThreadID,
+					},
+					Route: r.create.runtime.target,
 				}
 			}
-		} else if routed, ok := r.launcher.(routedResumedAgentPaneBinder); ok {
-			if err := routed.BindResumedAgentPaneOnRoute(ctx, r.create.runtime.runner, paneID, plan.provider, contextDir, workTitle, plan.conversationID); err != nil {
-				return tmuxError("%s: bind resumed Agent Pane %s presentation metadata: %v", spelling, paneID, err)
-			}
-		} else {
-			r.launcher.BindResumedAgentPane(paneID, plan.provider, contextDir, workTitle, plan.conversationID)
-		}
-		if topic := strings.TrimSpace(plan.topic); topic != "" {
-			if _, err := r.create.runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic); err != nil {
-				return tmuxError("%s: mirror stored Agent topic to resumed Pane %s: %v", spelling, paneID, err)
-			}
-			if _, err := r.create.runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, aiPaneTopicManualOption, "on"); err != nil {
-				return tmuxError("%s: mark stored Agent topic manual on resumed Pane %s: %v", spelling, paneID, err)
-			}
-		} else {
-			for _, option := range []string{aiPaneTopicOption, aiPaneTopicManualOption} {
-				if _, err := r.create.runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-u", "-t", paneID, option); err != nil {
-					return tmuxError("%s: clear empty Agent topic projection %s on resumed Pane %s: %v", spelling, option, paneID, err)
-				}
-			}
+		} else if err := r.launcher.BindAgentPaneOnRoute(ctx, r.create.runtime.runner, agentPaneBinding{
+			PaneID: paneID, Provider: plan.provider, ContextDir: contextDir, Title: workTitle,
+			Topic: plan.topic, TopicManual: strings.TrimSpace(plan.topic) != "", ConversationID: plan.conversationID,
+		}); err != nil {
+			return tmuxError("%s: bind resumed Agent Pane %s presentation metadata: %v", spelling, paneID, err)
 		}
 		return nil
 	}, r.create.exactProjectOwnershipGuard(plan.projectUID)); err != nil {
 		return err
 	}
-	if nativeLifecycleIdentityAfterCommit.valid() {
-		nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleIdentityAfterCommit)
+	if nativeLifecycleTargetAfterCommit.valid() {
+		nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleTargetAfterCommit)
 	}
 
 	_, err = fmt.Fprintf(stdout, "agent/%s resumed\n", plan.agentName)

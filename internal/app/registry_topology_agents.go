@@ -33,6 +33,7 @@ type topologyAgentLauncher interface {
 	// BindResumedAgentPane applies them and seeds the live routing index with
 	// the resumed conversation id.
 	BindResumedAgentPane(paneID, provider, contextDir, title, conversationID string)
+	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 }
 
 // The aiCommand is the production implementation of both halves already.
@@ -315,40 +316,14 @@ func replayTopologyWindowAgents(
 		}
 		bindings[pane.Metadata.UID] = paneID
 		runtime.equalizeSplitLayout(ctx, anchorID, defaultPlacement)
-		if replay.conversationID != "" {
-			launcher.BindResumedAgentPane(paneID, replay.provider, replay.cwd, replay.title, replay.conversationID)
-		} else {
-			launcher.BindManagedAgentPane(paneID, replay.provider, replay.cwd, replay.title)
-		}
-		if err := mirrorTopologyAgentTopic(ctx, runtime, replay, paneID); err != nil {
+		if err := launcher.BindAgentPaneOnRoute(ctx, runtime.runner, agentPaneBinding{
+			PaneID: paneID, Provider: replay.provider, ContextDir: replay.cwd, Title: replay.title,
+			Topic:          replay.agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic],
+			TopicManual:    strings.TrimSpace(replay.agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic]) != "",
+			ConversationID: replay.conversationID,
+		}); err != nil {
 			return nil, err
 		}
 	}
 	return bindings, nil
-}
-
-// mirrorTopologyAgentTopic projects the stored Agent topic onto the replayed
-// Pane, the same way `agent resume` does. A replayed Agent is the Agent the
-// operator already had, so its topic comes back with it; an Agent with no
-// stored topic clears the shared legacy binder's compatibility seed instead.
-func mirrorTopologyAgentTopic(ctx context.Context, runtime *materializer, replay *registryTopologyAgentPlan, paneID string) error {
-	if strings.TrimSpace(paneID) == "" {
-		return nil
-	}
-	topic := strings.TrimSpace(replay.agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic])
-	if topic == "" {
-		for _, option := range []string{aiPaneTopicOption, aiPaneTopicManualOption} {
-			if _, err := runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-u", "-t", paneID, option); err != nil {
-				return tmuxError("materialize topology: clear empty Agent topic projection %s on Pane %s: %v", option, paneID, err)
-			}
-		}
-		return nil
-	}
-	if _, err := runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic); err != nil {
-		return tmuxError("materialize topology: mirror stored Agent topic to Pane %s: %v", paneID, err)
-	}
-	if _, err := runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, aiPaneTopicManualOption, "on"); err != nil {
-		return tmuxError("materialize topology: mark stored Agent topic manual on Pane %s: %v", paneID, err)
-	}
-	return nil
 }

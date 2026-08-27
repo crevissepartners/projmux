@@ -20,6 +20,26 @@ type staticAgentControlBinding struct {
 	err      error
 }
 
+type exactControlRouteRunner struct {
+	target explicitTmuxTarget
+	calls  [][]string
+}
+
+func (r *exactControlRouteRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
+	r.calls = append(r.calls, append([]string(nil), args...))
+	if name != "tmux" || len(args) < 3 || args[0] != r.target.flag || args[1] != r.target.value {
+		return nil, errors.New("unexpected control route")
+	}
+	switch args[2] {
+	case "list-panes":
+		return []byte("pan-alpha-codex" + tmuxRowSepFormat + "%7\n"), nil
+	case "display-message":
+		return []byte(strings.Join([]string{"%7", "pan-alpha-codex", "thread-1", codexAuthorityControlPlane, "epoch-1", "ready"}, "\x1f") + "\n"), nil
+	default:
+		return nil, errors.New("unexpected control operation")
+	}
+}
+
 func (b *staticAgentControlBinding) Live(context.Context, string) (agentControlLive, bool, error) {
 	return b.live, b.observed, b.err
 }
@@ -165,5 +185,37 @@ func TestAgentControlCLIStaleBindingCallsNoControl(t *testing.T) {
 	wantFocus := "`projmux focus pane uid:pan-alpha-codex --project uid:prj-alpha --window uid:win-alpha-main`"
 	if err == nil || calls != 0 || !strings.Contains(err.Error(), wantFocus) || strings.Contains(err.Error(), "send-keys") {
 		t.Fatalf("stale binding err=%v calls=%d", err, calls)
+	}
+}
+
+func TestAgentControlBindingLookupUsesResolvedLogicalRouteOnly(t *testing.T) {
+	for _, target := range []explicitTmuxTarget{
+		{flag: "-L", value: "exact-control"},
+		{flag: "-S", value: "/tmp/exact-control.sock"},
+	} {
+		t.Run(strings.TrimPrefix(target.flag, "-"), func(t *testing.T) {
+			cmd, _, _ := exactControlCLICommand(t)
+			tmux := &exactControlRouteRunner{target: target}
+			cmd.controlBinding = nil
+			cmd.controlRunner = tmux
+			cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) {
+				return runtimeMutationRoute{target: target}, nil
+			}
+			binding, err := cmd.resolveControlBinding("agent turn interrupt", "uid:agt-alpha-codex")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if binding.Identity != phase6CLIIdentity() || binding.Epoch != "epoch-1" {
+				t.Fatalf("binding = %+v", binding)
+			}
+			if len(tmux.calls) == 0 {
+				t.Fatal("control binding performed no tmux reads")
+			}
+			for _, call := range tmux.calls {
+				if len(call) < 2 || call[0] != target.flag || call[1] != target.value {
+					t.Fatalf("ambient/default control read = %q", call)
+				}
+			}
+		})
 	}
 }

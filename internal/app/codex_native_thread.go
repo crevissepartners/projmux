@@ -35,10 +35,7 @@ func (defaultCodexNativeThreadController) CanFallback(err error) bool {
 type codexNativeAgentLauncher interface {
 	PlanNativeCodexResume(coremetadata.AgentWorkspace, string) (title string, argv []string, err error)
 	BindNativeCodexPane(paneID, contextDir, title, threadID string)
-}
-
-type routedCodexNativeAgentLauncher interface {
-	BindNativeCodexPaneOnRoute(context.Context, tmuxCommandRunner, string, string, string, string) error
+	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 }
 
 func bindNativeCodexPaneOnRoute(
@@ -47,11 +44,10 @@ func bindNativeCodexPaneOnRoute(
 	runner tmuxCommandRunner,
 	paneID, contextDir, title, threadID string,
 ) error {
-	if routed, ok := launcher.(routedCodexNativeAgentLauncher); ok {
-		return routed.BindNativeCodexPaneOnRoute(ctx, runner, paneID, contextDir, title, threadID)
-	}
-	launcher.BindNativeCodexPane(paneID, contextDir, title, threadID)
-	return nil
+	return launcher.BindAgentPaneOnRoute(ctx, runner, agentPaneBinding{
+		PaneID: paneID, Provider: aiModeCodex, ContextDir: contextDir, Title: title,
+		ConversationID: threadID, ThreadID: threadID, NativeCodex: true,
+	})
 }
 
 type codexNativeLaunchOutcomeRow struct {

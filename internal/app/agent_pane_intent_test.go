@@ -701,6 +701,10 @@ func (r *recordingAgentLauncher) PlanAgentLaunch(string, coremetadata.AgentWorks
 
 func (r *recordingAgentLauncher) BindManagedAgentPane(string, string, string, string) {}
 
+func (r *recordingAgentLauncher) BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error {
+	return nil
+}
+
 func (r *recordingAgentLauncher) AwaitAgentActivation(context.Context, tmuxCommandRunner, string, time.Duration, time.Duration) (bool, string, error) {
 	return false, "", nil
 }

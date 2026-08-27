@@ -18,7 +18,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
-	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -37,6 +36,7 @@ type agentControlLive struct {
 	ThreadID  string
 	Authority string
 	Epoch     string
+	Reason    string
 }
 
 type agentControlCaller func(context.Context, string, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error)
@@ -54,38 +54,21 @@ type tmuxAgentControlBindingLookup struct {
 	runner tmuxCommandRunner
 }
 
-func defaultAgentControlBindingLookup() agentControlBindingLookup {
-	return inheritedAgentControlBindingLookup(os.Getenv, inttmux.ExecRunner{})
-}
-
-func inheritedAgentControlBindingLookup(lookupEnv func(string) string, runner tmuxCommandRunner) agentControlBindingLookup {
-	if lookupEnv == nil || runner == nil {
-		return nil
-	}
-	socket, _, _ := strings.Cut(strings.TrimSpace(lookupEnv("TMUX")), ",")
-	target, err := tmuxSocketPathTarget(socket)
-	if err != nil {
-		return nil
-	}
-	routed := explicitTmuxRunner{runner: runner, target: target}
-	return &tmuxAgentControlBindingLookup{lookup: intmetadata.NewMirror(routed), runner: routed}
-}
-
 func (l *tmuxAgentControlBindingLookup) Live(ctx context.Context, paneUID string) (agentControlLive, bool, error) {
 	target, found, err := l.lookup.FindPaneTargetForUID(ctx, paneUID)
 	if err != nil || !found {
 		return agentControlLive{}, found, err
 	}
-	format := strings.Join([]string{"#{pane_id}", "#{@projmux_pane_uid}", "#{" + aiPaneThreadIDOption + "}", "#{" + aiPaneCodexAuthorityOption + "}", "#{" + aiPaneCodexEpochOption + "}"}, "\x1f")
+	format := strings.Join([]string{"#{pane_id}", "#{@projmux_pane_uid}", "#{" + aiPaneThreadIDOption + "}", "#{" + aiPaneCodexAuthorityOption + "}", "#{" + aiPaneCodexEpochOption + "}", "#{" + aiPaneCodexReasonOption + "}"}, "\x1f")
 	out, err := l.runner.Run(ctx, "tmux", "display-message", "-p", "-t", target, format)
 	if err != nil {
 		return agentControlLive{}, false, err
 	}
 	fields := strings.Split(strings.TrimSpace(string(out)), "\x1f")
-	if len(fields) != 5 {
+	if len(fields) != 6 {
 		return agentControlLive{}, false, errors.New("live Codex control binding is malformed")
 	}
-	return agentControlLive{RuntimeID: fields[0], PaneUID: fields[1], ThreadID: fields[2], Authority: fields[3], Epoch: fields[4]}, true, nil
+	return agentControlLive{RuntimeID: fields[0], PaneUID: fields[1], ThreadID: fields[2], Authority: fields[3], Epoch: fields[4], Reason: fields[5]}, true, nil
 }
 
 type exactAgentControlBinding struct {
@@ -121,7 +104,11 @@ func resolveExactAgentControlBinding(registry coremetadata.Registry, agent corem
 		return refusal("live Pane identity no longer matches the activation")
 	}
 	if live.Authority != codexAuthorityControlPlane || strings.TrimSpace(live.Epoch) == "" {
-		return refusal("the native connection epoch is unavailable; Open Codex")
+		reason := strings.TrimSpace(live.Reason)
+		if reason == "" {
+			reason = "not-ready"
+		}
+		return refusal("the native connection epoch is unavailable (" + reason + "); Open Codex")
 	}
 	window, ok := registry.Window(agent.Metadata.OwnerUID())
 	if !ok {
@@ -142,12 +129,24 @@ func (c *agentCommand) resolveControlBinding(spelling, ref string) (exactAgentCo
 	if err != nil {
 		return exactAgentControlBinding{}, err
 	}
-	if c.controlBinding == nil {
-		return exactAgentControlBinding{}, errors.New("exact Agent native control unavailable: live binding lookup is not configured")
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.controlTimeoutValue())
 	defer cancel()
-	live, observed, err := c.controlBinding.Live(ctx, agent.Status.PaneRef)
+	lookup := c.controlBinding
+	if lookup == nil {
+		if c.controlRoute == nil {
+			return exactAgentControlBinding{}, errors.New("exact Agent native control unavailable: logical tmux route resolver is not configured")
+		}
+		route, routeErr := c.controlRoute(ctx)
+		if routeErr != nil {
+			return exactAgentControlBinding{}, fmt.Errorf("exact Agent native control unavailable: resolve logical tmux route: %w", routeErr)
+		}
+		if c.controlRunner == nil {
+			return exactAgentControlBinding{}, errors.New("exact Agent native control unavailable: exact tmux runner is not configured")
+		}
+		routed := explicitTmuxRunner{runner: c.controlRunner, target: route.target}
+		lookup = &tmuxAgentControlBindingLookup{lookup: intmetadata.NewMirror(routed), runner: routed}
+	}
+	live, observed, err := lookup.Live(ctx, agent.Status.PaneRef)
 	if err != nil {
 		return exactAgentControlBinding{}, fmt.Errorf("exact Agent native control unavailable: read live binding: %w", err)
 	}

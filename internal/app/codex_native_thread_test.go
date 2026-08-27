@@ -50,7 +50,7 @@ func (f *fakeNativeThreadController) CanFallback(error) bool { return f.fallback
 type fakeNativePaneLauncher struct {
 	plans                     []fakeNativePanePlan
 	bound                     []fakeNativePaneBinding
-	lifecycle                 []codexLifecycleIdentity
+	lifecycle                 []codexLifecycleObserverTarget
 	lifecycleBindingCurrent   func(codexLifecycleIdentity) (registryCurrent, paneUIDCurrent bool)
 	lifecycleObservedRegistry []bool
 	lifecycleObservedPaneUID  []bool
@@ -74,8 +74,9 @@ func (f *fakeNativePaneLauncher) BindNativeCodexPane(paneID, contextDir, title, 
 	f.bound = append(f.bound, fakeNativePaneBinding{paneID: paneID, contextDir: contextDir, title: title, threadID: threadID})
 }
 
-func (f *fakeNativePaneLauncher) startNativeCodexLifecycleObserver(identity codexLifecycleIdentity) {
-	f.lifecycle = append(f.lifecycle, identity)
+func (f *fakeNativePaneLauncher) startNativeCodexLifecycleObserver(target codexLifecycleObserverTarget) {
+	f.lifecycle = append(f.lifecycle, target)
+	identity := target.Identity
 	registryCurrent, paneUIDCurrent := false, false
 	if f.lifecycleBindingCurrent != nil {
 		registryCurrent, paneUIDCurrent = f.lifecycleBindingCurrent(identity)
@@ -84,10 +85,33 @@ func (f *fakeNativePaneLauncher) startNativeCodexLifecycleObserver(identity code
 	f.lifecycleObservedPaneUID = append(f.lifecycleObservedPaneUID, paneUIDCurrent)
 }
 
+func (f *fakeNativePaneLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
+	for _, option := range []string{aiPaneTopicOption, aiPaneTopicManualOption} {
+		if _, err := runner.Run(ctx, "tmux", "set-option", "-p", "-u", "-t", binding.PaneID, option); err != nil {
+			return err
+		}
+	}
+	f.BindNativeCodexPane(binding.PaneID, binding.ContextDir, binding.Title, binding.ConversationID)
+	return nil
+}
+
 type fakeNativeResumeLauncher struct {
 	*fakeResumeLauncher
 	*fakeNativePaneLauncher
 	sources []string
+}
+
+func (f *fakeNativeResumeLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
+	if binding.NativeCodex {
+		return f.fakeNativePaneLauncher.BindAgentPaneOnRoute(ctx, runner, binding)
+	}
+	if err := f.fakeResumeLauncher.BindAgentPaneOnRoute(ctx, runner, binding); err != nil {
+		return err
+	}
+	if binding.ResumeSource != "" {
+		f.sources = append(f.sources, binding.ResumeSource)
+	}
+	return nil
 }
 
 func (f *fakeNativeResumeLauncher) BindResumedAgentPaneWithSource(paneID, provider, contextDir, title, conversationID, source string) {

@@ -48,19 +48,12 @@ type agentLauncher interface {
 	// BindManagedAgentPane applies the managed-agent pane options without the
 	// legacy title/content watcher.
 	BindManagedAgentPane(paneID, provider, contextDir, title string)
+	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 	// AwaitAgentActivation observes bounded provider/hook metadata only. Startup
 	// readiness and initial-task acknowledgement have independent bounds; it
 	// never reads pane content and runs after the create transaction releases
 	// the Registry lock.
 	AwaitAgentActivation(context.Context, tmuxCommandRunner, string, time.Duration, time.Duration) (bool, string, error)
-}
-
-// routedAgentPaneBinder is the transactional create-only binding seam. The
-// canonical route has already proved and installed one exact tmux runner by the
-// time the Pane exists, so the production binder must not reopen authority
-// through aiCommand's ambient compatibility runner.
-type routedAgentPaneBinder interface {
-	BindManagedAgentPaneOnRoute(context.Context, tmuxCommandRunner, string, string, string, string) error
 }
 
 type codexCapabilityAgentLauncher interface {

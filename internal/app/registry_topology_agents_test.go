@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -60,6 +61,15 @@ func (f *fakeTopologyAgentLauncher) BindManagedAgentPane(paneID, provider, conte
 
 func (f *fakeTopologyAgentLauncher) BindResumedAgentPane(paneID, provider, contextDir, title, conversationID string) {
 	f.binds = append(f.binds, fmt.Sprintf("resumed %s %s %s %s", paneID, provider, contextDir, conversationID))
+}
+
+func (f *fakeTopologyAgentLauncher) BindAgentPaneOnRoute(_ context.Context, _ tmuxCommandRunner, binding agentPaneBinding) error {
+	if binding.ConversationID != "" {
+		f.BindResumedAgentPane(binding.PaneID, binding.Provider, binding.ContextDir, binding.Title, binding.ConversationID)
+	} else {
+		f.BindManagedAgentPane(binding.PaneID, binding.Provider, binding.ContextDir, binding.Title)
+	}
+	return nil
 }
 
 var _ topologyAgentLauncher = (*fakeTopologyAgentLauncher)(nil)

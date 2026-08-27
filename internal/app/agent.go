@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -13,6 +14,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
@@ -57,6 +59,8 @@ type agentCommand struct {
 	reviewBinding  agentReviewBindingLookup
 	reviewTimeout  time.Duration
 	controlBinding agentControlBindingLookup
+	controlRoute   func(context.Context) (runtimeMutationRoute, error)
+	controlRunner  tmuxCommandRunner
 	controlCall    agentControlCaller
 	controlPaths   agentControlPathResolver
 	controlPicker  agentControlPicker
@@ -75,11 +79,14 @@ func newAgentCommand() *agentCommand {
 		reviews:          defaultCodexReviewStarter{},
 		reviewBinding:    defaultAgentReviewBindingLookup(),
 		reviewTimeout:    25 * time.Second,
-		controlBinding:   defaultAgentControlBindingLookup(),
-		controlCall:      callCodexControl,
-		controlPaths:     config.DefaultPathsFromEnv,
-		controlPicker:    intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		controlTimeout:   10 * time.Second,
+		controlRoute: func(ctx context.Context) (runtimeMutationRoute, error) {
+			return resolveExactObjectRuntimeMutationRoute(ctx, inttmux.ExecRunner{}, os.Getenv)
+		},
+		controlRunner:  inttmux.ExecRunner{},
+		controlCall:    callCodexControl,
+		controlPaths:   config.DefaultPathsFromEnv,
+		controlPicker:  intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		controlTimeout: 10 * time.Second,
 	}
 }
 

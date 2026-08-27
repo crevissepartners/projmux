@@ -442,7 +442,7 @@ func nativeProjectionStringConstants(t *testing.T) map[string]string {
 			}
 		}
 	}
-	constants := map[string]string{}
+	constants := map[string]string{"aiPaneLaunchAuthorshipOption": tmuxopts.AgentLaunchAuthorshipPane}
 	for changed := true; changed; {
 		changed = false
 		for name, expr := range pending {
@@ -502,7 +502,11 @@ func extractNativeAgentProjectionOptions(function *ast.FuncDecl, constants map[s
 		}
 		value, ok := resolveNativeProjectionString(expr, constants)
 		if !ok || !strings.HasPrefix(value, "@") {
-			failures = append(failures, fmt.Errorf("unresolved or non-option set-option operand %T", expr))
+			if identifier, ok := expr.(*ast.Ident); ok {
+				failures = append(failures, fmt.Errorf("unresolved or non-option set-option operand identifier %s", identifier.Name))
+			} else {
+				failures = append(failures, fmt.Errorf("unresolved or non-option set-option operand %T", expr))
+			}
 			return
 		}
 		options[value] = true
@@ -580,6 +584,14 @@ func extractNativeAgentProjectionOptions(function *ast.FuncDecl, constants map[s
 
 func TestNativeAgentProjectionWriterFieldInventoryIsClosed(t *testing.T) {
 	targets := map[string]map[string][]string{
+		"ai.go": {
+			"BindAgentPaneOnRoute": {
+				aiPaneManagedOption, aiPaneAgentOption, aiPaneLaunchAuthorshipOption, aiPaneContextOption,
+				aiPaneTopicOption, aiPaneTopicManualOption, aiPaneStateOption, aiPaneSessionIDOption,
+				aiPaneResumeIDOption, aiPaneResumeSourceOption, aiPaneResumeUpdatedAtOption, aiPaneThreadIDOption,
+				aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption,
+			},
+		},
 		"agent_interaction.go": {
 			"WriteTopic":       {aiPaneTopicOption, aiPaneTopicManualOption},
 			"WriteInteraction": {aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption},
@@ -588,10 +600,9 @@ func TestNativeAgentProjectionWriterFieldInventoryIsClosed(t *testing.T) {
 			"applyCodexHookSemanticDelivery": {aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption},
 		},
 		"ai_ingest_codex_native.go": {
-			"SetAuthority":                      {aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption},
-			"Apply":                             {aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption},
-			"ApplyProgress":                     {aiPaneCodexDroppedOption, aiPaneCodexUnknownOption, aiPaneCodexOverflowOption},
-			"startNativeCodexLifecycleObserver": {aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption},
+			"SetAuthority":  {aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption},
+			"Apply":         {aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption},
+			"ApplyProgress": {aiPaneCodexDroppedOption, aiPaneCodexUnknownOption, aiPaneCodexOverflowOption},
 		},
 	}
 	constants := nativeProjectionStringConstants(t)
@@ -2876,7 +2887,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"ai_ingest_codex_native.go:Apply:variable-argv":                                   "agent.presentation",
 		"ai_ingest_codex_native.go:ApplyProgress:variable-argv":                           "agent.presentation",
 		"ai_ingest_codex_native.go:SetAuthority:variable-argv":                            "codex.native-lifecycle-authority",
-		"ai_ingest_codex_native.go:startNativeCodexLifecycleObserver:set-option":          "codex.native-lifecycle-authority",
+		"ai_ingest_codex_native.go:recordAINotification:set-option":                       "agent.presentation",
 		"attention.go:run:variable-argv":                                                  "agent.presentation",
 		"binding_convergence.go:Run:variable-argv":                                        "binding.convergence",
 		"create_reentrancy.go:deferBindingConvergence:set-environment":                    "create.reentrancy",
@@ -2886,7 +2897,6 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"focus.go:listClients:variable-argv":                                              "runtime.observation",
 		"hook_trust_popup.go:runTmuxHookTrustPopup:variable-argv":                         "popup.display",
 		"notify.go:focusNotification:variable-argv":                                       "notification.focus",
-		"registry_topology_agents.go:mirrorTopologyAgentTopic:set-option":                 "agent.presentation",
 		"runtime_diagnostics.go:socketPath:variable-argv":                                 "runtime.observation",
 		"status.go:readTrimmed:variable-argv":                                             "runtime.observation",
 		"status.go:Run:variable-argv":                                                     "runtime.observation",
@@ -2911,7 +2921,8 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"ai.go:BindNativeCodexPane:set-option":                                            "agent.presentation",
 		"ai.go:configureAIPane:set-option":                                                "agent.presentation",
 		"ai.go:configureAIPaneResumeMetadata:set-option":                                  "agent.presentation",
-		"ai.go:runAIPaneOptionOnRoute:set-option":                                         "agent.presentation",
+		"ai.go:BindAgentPaneOnRoute:variable-argv":                                        "agent.presentation",
+		"ai.go:writeAgentPaneOptionOnRoute:variable-argv":                                 "codex.native-lifecycle-authority",
 		"ai.go:bootstrapAIWatchMetadata:set-option":                                       "agent.presentation",
 		"ai.go:recordAITopic:set-option":                                                  "agent.presentation",
 		"ai.go:projectManagedAgentInteraction:variable-argv":                              "agent.presentation",
