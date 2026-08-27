@@ -224,11 +224,6 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "stamps apiVersion/kind and UTC timestamps on every resource of every kind",
 	},
 	{
-		File: "internal/core/metadata/snapshot.go", Func: "resolveSnapshotProject",
-		Source: "Registry", Verdict: rootKindProjectOnly,
-		Why: "matches a session-state snapshot to a Project root; snapshot replay has no control-session shape",
-	},
-	{
 		File: "internal/core/metadata/snapshot_projection.go", Func: "PlanSnapshotProjection",
 		Source: "Registry", Verdict: rootKindBoth,
 		Why: "replaces one exact Project subtree while preserving every unrelated Project and ControlSession root",
@@ -417,14 +412,14 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 	for verdict, want := range map[rootKindVerdict]int{
 		rootKindBoth:        19,
 		rootKindPaired:      2,
-		rootKindProjectOnly: 21,
+		rootKindProjectOnly: 20,
 		rootKindGap:         0,
 	} {
 		if counts[verdict] != want {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 42; got != want {
+	if got, want := len(rootKindProjectionSites), 41; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

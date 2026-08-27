@@ -11,6 +11,17 @@ import (
 
 const maxSnapshotUIDAllocationAttempts = 1024
 
+// snapshotPanesOf returns the Panes a Window contributes to a snapshot: its
+// own shell Panes followed by the managed Panes of its Agents, both in
+// registry insertion order.
+func (r *Registry) snapshotPanesOf(windowUID string) []Pane {
+	panes := r.PanesOf(windowUID)
+	for _, agent := range r.AgentsOf(windowUID) {
+		panes = append(panes, r.PanesOf(agent.Metadata.UID)...)
+	}
+	return panes
+}
+
 // SnapshotProjectionPlan is the pure, scoped replacement of one Project's
 // descendants. Desired is safe to commit as one Registry transaction.
 type SnapshotProjectionPlan struct {
