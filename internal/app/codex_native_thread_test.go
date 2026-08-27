@@ -74,7 +74,7 @@ func (f *fakeNativePaneLauncher) BindNativeCodexPane(paneID, contextDir, title, 
 	f.bound = append(f.bound, fakeNativePaneBinding{paneID: paneID, contextDir: contextDir, title: title, threadID: threadID})
 }
 
-func (f *fakeNativePaneLauncher) startNativeCodexLifecycleObserver(target codexLifecycleObserverTarget) {
+func (f *fakeNativePaneLauncher) startNativeCodexLifecycleObserver(target codexLifecycleObserverTarget) codexObserverStartupResult {
 	f.lifecycle = append(f.lifecycle, target)
 	identity := target.Identity
 	registryCurrent, paneUIDCurrent := false, false
@@ -83,6 +83,7 @@ func (f *fakeNativePaneLauncher) startNativeCodexLifecycleObserver(target codexL
 	}
 	f.lifecycleObservedRegistry = append(f.lifecycleObservedRegistry, registryCurrent)
 	f.lifecycleObservedPaneUID = append(f.lifecycleObservedPaneUID, paneUIDCurrent)
+	return codexObserverStartupResult{Status: codexObserverStartupReady, Epoch: "fake-epoch"}
 }
 
 func (f *fakeNativePaneLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {

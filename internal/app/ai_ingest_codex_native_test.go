@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -157,7 +158,10 @@ func TestCodexObserverStartupUsesExactRouteAndFallsBackAfterProcessFailure(t *te
 		return nil, os.ErrNotExist
 	}
 	cmd.executable = func() (string, error) { return "/tmp/projmux.test", nil }
-	cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{Identity: identity, Route: tmuxTransport{Kind: tmuxSocketName, Value: "exact", Source: tmuxSocketNameSource}})
+	result := cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{Identity: identity, Route: tmuxTransport{Kind: tmuxSocketName, Value: "exact", Source: tmuxSocketNameSource}})
+	if result.Status != codexObserverStartupFallback || result.Reason != "observer-start-failed" {
+		t.Fatalf("observer start failure result = %+v", result)
+	}
 	commands := cmdRecorder(cmd).commands
 	for _, command := range commands {
 		if len(command.args) < 2 || command.args[0] != "-L" || command.args[1] != "exact" {
@@ -171,11 +175,17 @@ func TestCodexObserverStartupUsesExactRouteAndFallsBackAfterProcessFailure(t *te
 	if !hasRecordedAICommand(commands, recordedAICommand{name: "tmux", args: []string{"-L", "exact", "set-option", "-p", "-t", "%9", aiPaneCodexAuthorityOption, codexAuthorityHook}}) {
 		t.Fatalf("failed observer did not enable bounded fallback: %#v", commands)
 	}
+	if !hasRecordedAICommand(commands, recordedAICommand{name: "tmux", args: []string{"-L", "exact", "set-option", "-p", "-t", "%9", aiPaneCodexReasonOption, "observer-start-failed"}}) {
+		t.Fatalf("failed observer did not retain typed start reason: %#v", commands)
+	}
 
 	cmdRecorder(cmd).commands = nil
 	stale := identity
 	stale.Generation = "generation-replaced"
-	cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{Identity: stale, Route: tmuxTransport{Kind: tmuxSocketName, Value: "exact", Source: tmuxSocketNameSource}})
+	result = cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{Identity: stale, Route: tmuxTransport{Kind: tmuxSocketName, Value: "exact", Source: tmuxSocketNameSource}})
+	if result.Status != codexObserverStartupStale {
+		t.Fatalf("stale startup result = %+v", result)
+	}
 	if commands := cmdRecorder(cmd).commands; len(commands) != 0 {
 		t.Fatalf("stale/reused runtime startup writes = %#v, want zero", commands)
 	}
@@ -296,9 +306,111 @@ func TestCodexLifecycleObserverTargetRequiresAndPreservesExactRoute(t *testing.T
 	if _, err := parseCodexNativeLifecycleTarget(append(append([]string(nil), identityArgs...), "--tmux-socket-name", "one", "--tmux-socket-path", "/tmp/two")); err == nil {
 		t.Fatal("ambiguous observer routes were accepted")
 	}
-	clean := withoutInheritedTmuxEnvironment([]string{"HOME=/home/test", "TMUX=/tmp/default,1,0", "TMUX_PANE=%9", runtimeMutationAnchorPaneEnv + "=%9"})
+	clean := withoutInheritedTmuxEnvironment([]string{
+		"HOME=/home/test", "TMUX=/tmp/default,1,0", "TMUX_PANE=%9", runtimeMutationAnchorPaneEnv + "=%9",
+		codexObserverStartupEnvironment + "=stale",
+	})
 	if !slices.Equal(clean, []string{"HOME=/home/test"}) {
 		t.Fatalf("sanitized observer environment = %q", clean)
+	}
+}
+
+func TestCodexObserverStartupHandshakeParserIsClosed(t *testing.T) {
+	tests := []struct {
+		line string
+		want codexObserverStartupResult
+		ok   bool
+	}{
+		{line: codexObserverStartupPrefix + " ready 123-1\n", want: codexObserverStartupResult{Status: codexObserverStartupReady, Epoch: "123-1", committed: true}, ok: true},
+		{line: codexObserverStartupPrefix + " fallback control-unavailable\n", want: codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "control-unavailable", committed: true}, ok: true},
+		{line: codexObserverStartupPrefix + " stale\n", want: codexObserverStartupResult{Status: codexObserverStartupStale, committed: true}, ok: true},
+		{line: "ready 123-1\n"},
+		{line: codexObserverStartupPrefix + " ready\n"},
+		{line: codexObserverStartupPrefix + " fallback\n"},
+		{line: codexObserverStartupPrefix + " unknown reason\n"},
+	}
+	for _, test := range tests {
+		got, ok := parseCodexObserverStartupLine(test.line)
+		if ok != test.ok || got != test.want {
+			t.Errorf("parse startup %q = (%+v, %t), want (%+v, %t)", test.line, got, ok, test.want, test.ok)
+		}
+	}
+}
+
+func TestCodexNativeObserverReportsExactStartupTerminalState(t *testing.T) {
+	identity := testCodexLifecycleIdentity()
+	for _, test := range []struct {
+		name           string
+		current        bool
+		requireControl bool
+		open           func(context.Context) (codexLifecycleConnection, error)
+		want           codexObserverStartupResult
+	}{
+		{
+			name: "ready", current: true,
+			open: func(context.Context) (codexLifecycleConnection, error) {
+				return &fakeCodexLifecycleConnection{
+					snapshot: codexappserver.LifecycleSnapshot{ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateIdle},
+					events:   make(chan codexappserver.Notification),
+				}, nil
+			},
+			want: codexObserverStartupResult{Status: codexObserverStartupReady},
+		},
+		{
+			name: "endpoint unavailable", current: true,
+			open: func(context.Context) (codexLifecycleConnection, error) { return nil, codexappserver.ErrDisconnected },
+			want: codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "unavailable"},
+		},
+		{
+			name: "control endpoint unavailable", current: true, requireControl: true,
+			open: func(context.Context) (codexLifecycleConnection, error) {
+				return &fakeCodexLifecycleConnection{
+					snapshot: codexappserver.LifecycleSnapshot{ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateIdle},
+					events:   make(chan codexappserver.Notification),
+				}, nil
+			},
+			want: codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "control-unavailable"},
+		},
+		{
+			name: "stale binding",
+			open: func(context.Context) (codexLifecycleConnection, error) {
+				t.Fatal("stale binding opened a connection")
+				return nil, nil
+			},
+			want: codexObserverStartupResult{Status: codexObserverStartupStale},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sink := newRecordingCodexLifecycleSink()
+			sink.setCurrent(test.current)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			reported := make(chan codexObserverStartupResult, 1)
+			observer := codexNativeObserver{
+				identity: identity, sink: sink, open: test.open, requireControl: test.requireControl,
+				bindingTimeout: time.Millisecond, delay: time.Hour,
+				reportStartup: func(result codexObserverStartupResult) { reported <- result },
+			}
+			done := make(chan error, 1)
+			go func() { done <- observer.Run(ctx) }()
+			select {
+			case got := <-reported:
+				if got.Status != test.want.Status || got.Reason != test.want.Reason || (got.Status == codexObserverStartupReady && got.Epoch == "") {
+					t.Fatalf("startup result = %+v, want %+v with non-empty ready epoch", got, test.want)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("observer did not report bounded startup result")
+			}
+			cancel()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatal(err)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("observer did not stop after cancellation")
+			}
+		})
 	}
 }
 
@@ -319,6 +431,91 @@ func (c *fakeCodexLifecycleConnection) ReadLifecycleSnapshot(context.Context, st
 	return c.snapshot, nil
 }
 func (c *fakeCodexLifecycleConnection) Close() error { return nil }
+
+type fakeControllableCodexLifecycleConnection struct {
+	*fakeCodexLifecycleConnection
+	*fakeExactControlWire
+}
+
+func TestCodexNativeObserverReadyHandshakeSteersAndShutdownRemovesControlSocket(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "observer-control-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	identity := testCodexLifecycleIdentity()
+	wire := &fakeExactControlWire{}
+	connection := &fakeControllableCodexLifecycleConnection{
+		fakeCodexLifecycleConnection: &fakeCodexLifecycleConnection{
+			snapshot: codexappserver.LifecycleSnapshot{
+				ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateActive,
+				TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+			},
+			events: make(chan codexappserver.Notification),
+		},
+		fakeExactControlWire: wire,
+	}
+	sink := newRecordingCodexLifecycleSink()
+	reported := make(chan codexObserverStartupResult, 4)
+	observer := codexNativeObserver{
+		identity: identity, sink: sink, requireControl: true,
+		open: func(context.Context) (codexLifecycleConnection, error) { return connection, nil },
+		startControl: func(epoch *codexControlEpoch) (*codexControlServer, error) {
+			return startCodexControlServer(root, epoch)
+		},
+		reportStartup: func(result codexObserverStartupResult) { reported <- result },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(ctx) }()
+	var ready codexObserverStartupResult
+	select {
+	case ready = <-reported:
+	case <-time.After(time.Second):
+		cancel()
+		t.Fatal("observer did not complete ready handshake")
+	}
+	if ready.Status == codexObserverStartupFallback && ready.Reason == "control-unavailable" {
+		cancel()
+		<-done
+		t.Skip("Unix sockets are unavailable in this sandbox")
+	}
+	if ready.Status != codexObserverStartupReady || ready.Epoch == "" {
+		cancel()
+		<-done
+		t.Fatalf("ready handshake = %+v", ready)
+	}
+	request := agentControlRequest{Operation: agentControlOpSteer, Identity: identity, Epoch: ready.Epoch, Text: "exact steer"}
+	response, err := callCodexControl(context.Background(), root, identity, request)
+	if errors.Is(err, syscall.EPERM) {
+		cancel()
+		<-done
+		t.Skip("Unix sockets are unavailable in this sandbox")
+	}
+	if err != nil || !response.OK || wire.writes() != 1 {
+		cancel()
+		<-done
+		t.Fatalf("exact steer response=%+v err=%v writes=%d", response, err, wire.writes())
+	}
+	path, err := agentControlSocketPath(root, identity)
+	if err != nil {
+		cancel()
+		<-done
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("observer shutdown did not finish")
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("control socket survived observer shutdown: %s err=%v", path, err)
+	}
+}
 
 type recordingCodexLifecycleSink struct {
 	mu            sync.Mutex
@@ -374,6 +571,25 @@ func (*timeoutCodexLifecycleSink) Apply(codexLifecycleIdentity, codexLifecyclePr
 	return nil
 }
 
+type replacedCodexLifecycleSink struct{ authorityAttempts int }
+
+func (*replacedCodexLifecycleSink) BindingCurrent(codexLifecycleIdentity) bool { return false }
+func (s *replacedCodexLifecycleSink) SetAuthority(codexLifecycleIdentity, string, string, string) error {
+	s.authorityAttempts++
+	return errManagedAgentObservationIgnored
+}
+func (*replacedCodexLifecycleSink) Apply(codexLifecycleIdentity, codexLifecycleProjection) error {
+	return errManagedAgentObservationIgnored
+}
+
+func TestCodexObserverParentFallbackAfterReplacementWritesZero(t *testing.T) {
+	sink := &replacedCodexLifecycleSink{}
+	result := convergeCodexObserverStartupFallback(sink, testCodexLifecycleIdentity(), "observer-exited")
+	if result.Status != codexObserverStartupStale || result.Reason != "" || sink.authorityAttempts != 0 {
+		t.Fatalf("replaced parent convergence result=%+v attempts=%d", result, sink.authorityAttempts)
+	}
+}
+
 func newRecordingCodexLifecycleSink() *recordingCodexLifecycleSink {
 	return &recordingCodexLifecycleSink{wake: make(chan struct{}, 32), current: true}
 }
@@ -385,6 +601,10 @@ func (s *recordingCodexLifecycleSink) BindingCurrent(codexLifecycleIdentity) boo
 }
 func (s *recordingCodexLifecycleSink) SetAuthority(_ codexLifecycleIdentity, source, _, reason string) error {
 	s.mu.Lock()
+	if !s.current {
+		s.mu.Unlock()
+		return errManagedAgentObservationIgnored
+	}
 	s.authorities = append(s.authorities, source+":"+reason)
 	s.mu.Unlock()
 	s.record("authority:" + source)
@@ -608,7 +828,7 @@ func TestCodexNativeObserverBindingTimeoutFallsBackOnlyThroughExactGuard(t *test
 		allowAuthority bool
 		want           []string
 	}{
-		{name: "still current", allowAuthority: true, want: []string{"provider-hook:observer-unavailable"}},
+		{name: "still current", allowAuthority: true, want: []string{"provider-hook:observer-timeout"}},
 		{name: "binding replaced", allowAuthority: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -1575,6 +1795,17 @@ func TestCodexLifecycleAuthorityRejectsUnboundedRuntimeReason(t *testing.T) {
 	diagnostic := observeCodexLifecycleAuthority(context.Background(), phase3StaticTmuxRunner{output: "pan-alpha-codex\x1fprovider-control-plane\x1fepoch-1\x1fprompt=private"}, "pan-alpha-codex")
 	if diagnostic.Source != codexAuthorityControlPlane || diagnostic.EpochStatus != "active" || diagnostic.Reason != "bounded reason unavailable" {
 		t.Fatalf("sanitized diagnostic = %#v", diagnostic)
+	}
+}
+
+func TestCodexLifecycleAuthorityPreservesTypedStartupReasons(t *testing.T) {
+	for _, reason := range []string{"observer-start-failed", "observer-exited", "observer-timeout", "control-unavailable"} {
+		diagnostic := observeCodexLifecycleAuthority(context.Background(), phase3StaticTmuxRunner{
+			output: "pan-alpha-codex\x1fprovider-hook\x1f\x1f" + reason,
+		}, "pan-alpha-codex")
+		if diagnostic.Source != codexAuthorityHook || diagnostic.EpochStatus != "inactive" || diagnostic.Reason != reason {
+			t.Errorf("typed startup reason %q = %#v", reason, diagnostic)
+		}
 	}
 }
 
