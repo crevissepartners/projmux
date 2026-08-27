@@ -1282,6 +1282,16 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	// logical identity only and cannot retarget the operation midway through.
 	applyRoute, sessionsOut, listErr := bindConfigApplyRuntimeRoute(ctx, c.runner, socketName)
 	if listErr != nil {
+		if !inttmux.IsNoServerFailure(listErr) {
+			if c.diagnostics != nil {
+				c.diagnostics.Hint(diagnostics.LifecycleError, diagnostics.CodeTmuxApplyFailed)
+			}
+			// Do not preserve an underlying exec.ExitError here. main treats any
+			// wrapped ExitCode as already presented to the operator, while the tmux
+			// runner captured its stderr. This boundary must print the explicit
+			// authority refusal instead of silently forwarding the runner's code.
+			return rollbackManagedIngest(fmt.Errorf("bind config apply to exact live tmux server -L %s: %v", socketName, listErr))
+		}
 		if err := writeGenerated(); err != nil {
 			return rollbackManagedIngest(err)
 		}
@@ -1321,7 +1331,7 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		return rollbackManagedIngest(fmt.Errorf("retire generated key sequence state on -L %s: %w", socketName, err))
 	}
 
-	if err := guardConfigApplyRuntimeRoute(ctx, c.runner, applyRoute, false, false); err != nil {
+	if err := guardConfigApplyRuntimeRoute(ctx, c.runner, applyRoute, false); err != nil {
 		return rollbackManagedIngest(fmt.Errorf("guard generated config source on -L %s: %w", socketName, err))
 	}
 	if _, err := c.runner.Run(ctx, "tmux", "-S", applyRoute.expectedSocketPath, "source-file", resolved); err != nil {
@@ -1399,10 +1409,10 @@ func (c *tmuxCommand) writeRuntimeMutationRouteMarker(ctx context.Context, route
 				action.Target.RouteAuthority != route.authority.printable() {
 				return errors.New("config route-marker printable authority disagrees with captured route")
 			}
-			return guardConfigApplyRuntimeRoute(ctx, c.runner, route, true, false)
+			return guardConfigApplyRuntimeRoute(ctx, c.runner, route, false)
 		},
 		Reobserve: func(ctx context.Context) (bool, error) {
-			if err := guardConfigApplyRuntimeRoute(ctx, c.runner, route, true, false); err != nil {
+			if err := guardConfigApplyRuntimeRoute(ctx, c.runner, route, false); err != nil {
 				return false, err
 			}
 			current, err := c.runner.Run(ctx, "tmux", "-S", action.Target.PhysicalSocket, "show-options", "-gqv", runtimeMutationSocketNameOption)
@@ -1413,7 +1423,7 @@ func (c *tmuxCommand) writeRuntimeMutationRouteMarker(ctx context.Context, route
 			return err == nil && strings.TrimSpace(string(current)) == socketName && strings.TrimSpace(string(owned)) == "1", err
 		},
 		Guard: func(ctx context.Context) error {
-			return guardConfigApplyRuntimeRoute(ctx, c.runner, route, true, false)
+			return guardConfigApplyRuntimeRoute(ctx, c.runner, route, false)
 		},
 		Apply: func(ctx context.Context) error {
 			_, err := runRuntimeMutationCommand(ctx, c.runner, action)
@@ -1447,7 +1457,7 @@ func bindConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner, 
 		target: target, expectedSocketPath: path, socketName: socketName,
 		authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: pid},
 	}
-	if err := guardConfigApplyRuntimeRoute(ctx, runner, route, false, false); err != nil {
+	if err := guardConfigApplyRuntimeRoute(ctx, runner, route, false); err != nil {
 		return runtimeMutationRoute{}, nil, err
 	}
 	sessions, err := exact.Run(ctx, "tmux", "list-sessions", "-F", "#{session_id}")
@@ -1457,10 +1467,15 @@ func bindConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner, 
 	return route, sessions, nil
 }
 
-func guardConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, requireOwned, requireLogical bool) error {
+func guardConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, requireLogical bool) error {
 	if route.target.flag != "-L" || route.target.value != route.socketName || route.socketName == "" ||
 		route.expectedSocketPath == "" || !filepath.IsAbs(route.expectedSocketPath) || filepath.Clean(route.expectedSocketPath) != route.expectedSocketPath {
 		return errors.New("config apply route is not exact")
+	}
+	logicalRoute := explicitTmuxRunner{runner: runner, target: route.target}
+	logicalPath, err := logicalRoute.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+	if err != nil || strings.TrimSpace(string(logicalPath)) != route.expectedSocketPath {
+		return errors.New("config apply logical alias no longer names the exact physical socket")
 	}
 	exact := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
 	pathOut, err := exact.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
@@ -1474,17 +1489,17 @@ func guardConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner,
 	if err != nil || strings.TrimSpace(string(pidOut)) != route.authority.ServerPID {
 		return errors.New("config apply server generation drifted")
 	}
-	if requireOwned {
-		owned, err := exact.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
-		if err != nil || strings.TrimSpace(string(owned)) != "1" {
-			return errors.New("config apply target is not app-owned")
-		}
+	owned, err := exact.Run(ctx, "tmux", "show-options", "-gqv", tmuxopts.AppGlobal)
+	if err != nil || strings.TrimSpace(string(owned)) != "1" {
+		return errors.New("config apply target is not app-owned")
 	}
-	if requireLogical {
-		logical, err := exact.Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
-		if err != nil || strings.TrimSpace(string(logical)) != route.socketName {
-			return errors.New("config apply target logical route marker drifted")
-		}
+	logical, err := exact.Run(ctx, "tmux", "show-options", "-gqv", runtimeMutationSocketNameOption)
+	if err != nil {
+		return errors.New("config apply target logical route marker is unreadable")
+	}
+	logicalName := strings.TrimSpace(string(logical))
+	if logicalName != route.socketName && (requireLogical || logicalName != "") {
+		return errors.New("config apply target logical route marker drifted")
 	}
 	return nil
 }
@@ -1506,7 +1521,7 @@ func (c *tmuxCommand) managedIngestMigrationAIForRoute(route runtimeMutationRout
 		if name != "tmux" {
 			return fmt.Errorf("managed ingest migration refuses non-tmux command %q", name)
 		}
-		if err := guardConfigApplyRuntimeRoute(ctx, c.runner, route, false, false); err != nil {
+		if err := guardConfigApplyRuntimeRoute(ctx, c.runner, route, false); err != nil {
 			return err
 		}
 		_, err := c.runner.Run(ctx, name, append([]string{"-S", route.expectedSocketPath}, args...)...)
@@ -1516,7 +1531,7 @@ func (c *tmuxCommand) managedIngestMigrationAIForRoute(route runtimeMutationRout
 		if name != "tmux" {
 			return nil, fmt.Errorf("managed ingest migration refuses non-tmux command %q", name)
 		}
-		if err := guardConfigApplyRuntimeRoute(ctx, c.runner, route, false, false); err != nil {
+		if err := guardConfigApplyRuntimeRoute(ctx, c.runner, route, false); err != nil {
 			return nil, err
 		}
 		return c.runner.Run(ctx, name, append([]string{"-S", route.expectedSocketPath}, args...)...)
@@ -1532,7 +1547,7 @@ func (c *tmuxCommand) managedIngestMigrationAIForRoute(route runtimeMutationRout
 // current trie. An unset option reads as empty and retires nothing.
 func (c *tmuxCommand) retireGeneratedKeySequenceState(ctx context.Context, route runtimeMutationRoute) error {
 	read := func(option string) (string, error) {
-		if err := guardConfigApplyRuntimeRoute(ctx, c.runner, route, false, false); err != nil {
+		if err := guardConfigApplyRuntimeRoute(ctx, c.runner, route, false); err != nil {
 			return "", err
 		}
 		out, err := c.runner.Run(ctx, "tmux", "-S", route.expectedSocketPath, "show-options", "-gqv", option)
@@ -1550,7 +1565,7 @@ func (c *tmuxCommand) retireGeneratedKeySequenceState(ctx context.Context, route
 		return err
 	}
 	for _, command := range keySequenceRetireCommandsWithPrefix([]string{"tmux"}, roots, tables) {
-		if err := guardConfigApplyRuntimeRoute(ctx, c.runner, route, false, false); err != nil {
+		if err := guardConfigApplyRuntimeRoute(ctx, c.runner, route, false); err != nil {
 			return err
 		}
 		if _, err := c.runner.Run(ctx, "tmux", append([]string{"-S", route.expectedSocketPath}, command[1:]...)...); err != nil {

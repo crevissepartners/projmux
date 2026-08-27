@@ -18,6 +18,34 @@ import (
 // latter can preserve the name-only PROJMUX_SOCKET hook contract.
 const runtimeMutationSocketNameOption = "@projmux_socket_name"
 
+type runtimeMutationMarkerDiagnosis string
+
+const runtimeMutationMarkerMissing runtimeMutationMarkerDiagnosis = "missing-logical-marker"
+
+// runtimeMutationMarkerError is the typed, zero-write diagnosis returned when
+// an app-owned server has only the pre-0.13 ownership marker. Ordinary
+// mutation routes never repair this state. The only recovery is the explicit
+// config-apply writer, and the command is included only after the logical -L
+// name has been matched back to the observed physical socket.
+type runtimeMutationMarkerError struct {
+	Diagnosis     runtimeMutationMarkerDiagnosis
+	LogicalSocket string
+}
+
+func (e *runtimeMutationMarkerError) Error() string {
+	if e == nil {
+		return "runtime mutation route: app-owned server has an invalid marker diagnosis"
+	}
+	if e.LogicalSocket == "" {
+		return "runtime mutation route: app-owned server has no logical socket marker (partial marker state); run `projmux doctor --section runtime` to identify the exact recovery route"
+	}
+	return fmt.Sprintf("runtime mutation route: app-owned server has no logical socket marker (partial marker state); recovery: run `projmux config apply --socket %s`, then retry", e.LogicalSocket)
+}
+
+func missingRuntimeMutationMarker(socketName string) error {
+	return &runtimeMutationMarkerError{Diagnosis: runtimeMutationMarkerMissing, LogicalSocket: socketName}
+}
+
 // runtimeMutationAnchorPaneEnv is private transport between a generated,
 // authority-checked popup launcher and its child process. It is deliberately
 // distinct from TMUX_PANE: display-popup does not promise that inherited value
@@ -209,6 +237,9 @@ func resolveExistingRuntimeMutationRouteWithAnchor(
 			socketName: defaultAppSocket, authority: authority,
 		}, nil
 	}
+	if appMarker == "1" && logicalMarker == "" {
+		return runtimeMutationRoute{}, missingRuntimeMutationMarker(observeMissingMarkerLogicalSocket(ctx, runner, target, path, lookupEnv))
+	}
 	if appMarker != "1" || logicalMarker == "" {
 		return runtimeMutationRoute{}, errors.New("runtime mutation route: exact server is not app-owned; partial or foreign markers refuse mutation authority")
 	}
@@ -285,8 +316,15 @@ func guardRuntimeMutationServerOwnership(ctx context.Context, routed tmuxCommand
 		return fmt.Errorf("runtime mutation route: read app logical socket marker: %w", err)
 	}
 	logicalName := strings.TrimSpace(string(logical))
+	if logicalName == "" {
+		name := ""
+		if target.flag == "-L" {
+			name = target.value
+		}
+		return missingRuntimeMutationMarker(name)
+	}
 	if _, err := tmuxSocketNameTarget(logicalName); err != nil {
-		return errors.New("runtime mutation route: exact server has no app logical socket marker")
+		return errors.New("runtime mutation route: app server logical marker is invalid")
 	}
 	if target.flag == "-L" && logicalName != target.value {
 		return fmt.Errorf("runtime mutation route: logical socket marker is %q, planned %q", logicalName, target.value)
@@ -369,9 +407,13 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 		if err != nil {
 			return runtimeMutationRoute{}, fmt.Errorf("runtime mutation route: read default server logical socket marker: %w", err)
 		}
-		nameTarget, err := tmuxSocketNameTarget(strings.TrimSpace(string(logical)))
+		logicalName := strings.TrimSpace(string(logical))
+		if logicalName == "" {
+			return runtimeMutationRoute{}, missingRuntimeMutationMarker(defaultAppSocket)
+		}
+		nameTarget, err := tmuxSocketNameTarget(logicalName)
 		if err != nil {
-			return runtimeMutationRoute{}, errors.New("runtime mutation route: default server has no app logical socket marker")
+			return runtimeMutationRoute{}, errors.New("runtime mutation route: default server logical marker is invalid")
 		}
 		nameRunner := explicitTmuxRunner{runner: runner, target: nameTarget}
 		byName, err := nameRunner.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
@@ -430,6 +472,11 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 			target: pathTarget, expectedSocketPath: observedPath, socketName: defaultAppSocket, authority: authority,
 		}, nil
 	}
+	if appMarker == "1" && logicalMarker == "" {
+		return runtimeMutationRoute{}, missingRuntimeMutationMarker(observeMissingMarkerLogicalSocket(
+			ctx, runner, pathTarget, observedPath, lookupEnv,
+		))
+	}
 	if appMarker != "1" || logicalMarker == "" {
 		return runtimeMutationRoute{}, errors.New("runtime mutation route: exact invocation server is not app-owned; partial or foreign ownership markers refuse standalone classification")
 	}
@@ -463,4 +510,41 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 	return runtimeMutationRoute{
 		target: nameTarget, expectedSocketPath: observedPath, socketName: nameTarget.value, authority: authority,
 	}, nil
+}
+
+// observeMissingMarkerLogicalSocket finds a recovery-only logical name. It
+// never grants mutation authority: each candidate must independently resolve
+// through -L to the already observed absolute socket path, and the caller
+// still returns the typed refusal unconditionally.
+func observeMissingMarkerLogicalSocket(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	target explicitTmuxTarget,
+	expectedPath string,
+	lookupEnv func(string) string,
+) string {
+	candidates := make([]string, 0, 3)
+	if target.flag == "-L" {
+		candidates = append(candidates, target.value)
+	}
+	if lookupEnv != nil {
+		candidates = append(candidates, strings.TrimSpace(lookupEnv("PROJMUX_SOCKET")))
+	}
+	candidates = append(candidates, defaultAppSocket)
+	seen := map[string]bool{}
+	for _, candidate := range candidates {
+		if candidate == "" || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		logical, err := tmuxSocketNameTarget(candidate)
+		if err != nil {
+			continue
+		}
+		out, err := (explicitTmuxRunner{runner: runner, target: logical}).Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
+		if err == nil && filepath.Clean(strings.TrimSpace(string(out))) == expectedPath {
+			return candidate
+		}
+	}
+	return ""
 }

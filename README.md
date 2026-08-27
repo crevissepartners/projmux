@@ -55,6 +55,8 @@ distribution path for normal users.
 
 Verify with `projmux version`. Then `projmux doctor` provides read-only local
 runtime diagnostics (tmux 3.4+ and hook integration health).
+If installation succeeds but the app cannot enter or npm reports an incomplete
+optional dependency, follow [Troubleshooting](docs/troubleshooting.md).
 
 Manual Go, source checkout, GitHub Release, and packaging details live in
 [Install](docs/install.md).
@@ -151,6 +153,7 @@ Templates and naming conventions for Claude, Codex, and other agents are in
 - [Resource Inspector](docs/resource-attribution.md)
 - [Session State](docs/session-restore.md)
 - [Operational Diagnostics](docs/operational-diagnostics.md)
+- [Troubleshooting](docs/troubleshooting.md)
 - [Agent Workflow](docs/agent-workflow.md)
 
 ## Development

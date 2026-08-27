@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 const (
@@ -317,6 +319,12 @@ func (r *failingBellApplyRunner) Run(_ context.Context, name string, args ...str
 	case "list-sessions":
 		return []byte("$1\n"), nil
 	case "show-options":
+		if args[len(args)-1] == tmuxopts.AppGlobal {
+			return []byte("1\n"), nil
+		}
+		if args[len(args)-1] == runtimeMutationSocketNameOption {
+			return []byte(r.socket + "\n"), nil
+		}
 		return []byte(r.options[args[len(args)-1]] + "\n"), nil
 	case "show-hooks":
 		var lines []string

@@ -1,5 +1,11 @@
 # Upgrading
 
+If an older live app server refuses ordinary commands after upgrading, or npm
+cannot resolve the platform optional dependency, follow
+[Troubleshooting](troubleshooting.md). The canonical marker recovery is the
+exact `projmux config apply --socket <name>` printed by the refusal; ordinary
+runtime commands never backfill missing markers.
+
 projmux has two update surfaces:
 
 - `projmux shell` reads the cached release status before opening the app. When
