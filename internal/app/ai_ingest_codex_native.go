@@ -60,7 +60,16 @@ type codexProgressSink interface {
 }
 
 type codexNativeLifecycleStarter interface {
-	startNativeCodexLifecycleObserver(codexLifecycleIdentity)
+	startNativeCodexLifecycleObserver(codexLifecycleObserverTarget)
+}
+
+type codexLifecycleObserverTarget struct {
+	Identity codexLifecycleIdentity
+	Route    explicitTmuxTarget
+}
+
+func (t codexLifecycleObserverTarget) valid() bool {
+	return t.Identity.valid() && t.Route.flag != "" && t.Route.value != ""
 }
 
 type codexNativeObserver struct {
@@ -69,9 +78,11 @@ type codexNativeObserver struct {
 	sink           codexLifecycleSink
 	delay          time.Duration
 	bindingTimeout time.Duration
+	openTimeout    time.Duration
 	sequence       uint64
 	reducer        codexLifecycleReducer
 	startControl   func(*codexControlEpoch) (*codexControlServer, error)
+	requireControl bool
 	progress       agentprogress.Reducer
 	now            func() time.Time
 }
@@ -101,7 +112,13 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			_ = o.sink.SetAuthority(o.identity, codexAuthorityHook, "", "sink-error")
 			return err
 		}
-		client, err := o.open(ctx)
+		openTimeout := o.openTimeout
+		if openTimeout <= 0 {
+			openTimeout = codexappserver.DefaultProbeTimeout
+		}
+		openCtx, cancelOpen := context.WithTimeout(ctx, openTimeout)
+		client, err := o.open(openCtx)
+		cancelOpen()
 		if err != nil {
 			_ = o.sink.SetAuthority(o.identity, codexAuthorityHook, "", codexNativeReason(err))
 			if !waitCodexObserver(ctx, delay) {
@@ -166,6 +183,17 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				controlEpoch.Revoke()
 				control = nil
 			}
+		}
+		if control == nil && o.requireControl {
+			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "control-unavailable")
+			_ = client.Close()
+			if cleanupErr != nil {
+				return cleanupErr
+			}
+			if !waitCodexObserver(ctx, delay) {
+				return nil
+			}
+			continue
 		}
 		if err := o.sink.SetAuthority(o.identity, codexAuthorityControlPlane, epochLabel, "ready"); err != nil {
 			if control != nil {
@@ -459,7 +487,10 @@ func codexNativeReason(err error) string {
 	}
 }
 
-type aiCodexLifecycleSink struct{ command *aiCommand }
+type aiCodexLifecycleSink struct {
+	command *aiCommand
+	runner  tmuxCommandRunner
+}
 
 func (s aiCodexLifecycleSink) BindingCurrent(identity codexLifecycleIdentity) bool {
 	c := s.command
@@ -470,7 +501,11 @@ func (s aiCodexLifecycleSink) BindingCurrent(identity codexLifecycleIdentity) bo
 	if err != nil {
 		return false
 	}
-	return exactCodexLifecycleBinding(registry, identity) && c.readTmuxPaneOption(identity.RuntimeID, tmuxopts.PaneUID) == identity.PaneUID
+	if s.runner == nil {
+		return false
+	}
+	out, err := s.runner.Run(context.Background(), "tmux", "show-options", "-pqv", "-t", identity.RuntimeID, tmuxopts.PaneUID)
+	return err == nil && strings.TrimSpace(string(out)) == identity.PaneUID && exactCodexLifecycleBinding(registry, identity)
 }
 
 func exactCodexLifecycleBinding(registry coremetadata.Registry, identity codexLifecycleIdentity) bool {
@@ -488,16 +523,37 @@ func (s aiCodexLifecycleSink) SetAuthority(identity codexLifecycleIdentity, sour
 	if !s.BindingCurrent(identity) {
 		return errManagedAgentObservationIgnored
 	}
-	for _, field := range []struct{ option, value string }{
+	fields := []struct{ option, value string }{
 		{aiPaneCodexAuthorityOption, source}, {aiPaneCodexEpochOption, epoch}, {aiPaneCodexReasonOption, reason},
-	} {
+	}
+	before := make(map[string]string, len(fields))
+	for _, field := range fields {
+		value, err := readAgentPaneOptionOnRoute(context.Background(), s.runner, identity.RuntimeID, field.option)
+		if err != nil {
+			return err
+		}
+		before[field.option] = value
+	}
+	applied := make([]string, 0, len(fields))
+	for _, field := range fields {
 		args := []string{"set-option", "-p", "-t", identity.RuntimeID, field.option, field.value}
 		if field.value == "" {
 			args = []string{"set-option", "-p", "-u", "-t", identity.RuntimeID, field.option}
 		}
-		if err := s.command.run("tmux", args...); err != nil {
+		if _, err := s.runner.Run(context.Background(), "tmux", args...); err != nil {
+			var compensation []error
+			for i := len(applied) - 1; i >= 0; i-- {
+				prior := before[applied[i]]
+				if restoreErr := writeAgentPaneOptionOnRoute(context.Background(), s.runner, identity.RuntimeID, agentPaneOptionWrite{option: applied[i], value: prior, unset: prior == ""}); restoreErr != nil {
+					compensation = append(compensation, restoreErr)
+				}
+			}
+			if joined := errors.Join(compensation...); joined != nil {
+				return errors.Join(err, fmt.Errorf("restore Codex authority: %w", joined))
+			}
 			return err
 		}
+		applied = append(applied, field.option)
 	}
 	return nil
 }
@@ -559,7 +615,7 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 		if field.value == "" {
 			args = []string{"set-option", "-p", "-u", "-t", identity.RuntimeID, field.option}
 		}
-		if err := c.run("tmux", args...); err != nil {
+		if _, err := s.runner.Run(context.Background(), "tmux", args...); err != nil {
 			return err
 		}
 	}
@@ -597,11 +653,86 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 			}
 		}
 		input := attentionNotifyInput{
-			PaneID: identity.RuntimeID, Lookup: c.notifyLookup(), ID: notice.ID, Text: text,
+			PaneID: identity.RuntimeID, Lookup: routedAINotifyLookup{runner: s.runner}, ID: notice.ID, Text: text,
 			Severity: notice.Severity, Metadata: metadata, Force: true, BadgeKind: badge,
 		}
-		_ = c.notifyAIWithInput(identity.RuntimeID, input)
+		_ = s.notifyAIWithInput(identity.RuntimeID, input)
 		c.notifyProducer().PushReplyReady(input)
+	}
+	return nil
+}
+
+type routedAINotifyLookup struct{ runner tmuxCommandRunner }
+
+func (l routedAINotifyLookup) PaneOption(paneID, option string) string {
+	if l.runner == nil {
+		return ""
+	}
+	out, err := l.runner.Run(context.Background(), "tmux", "show-options", "-pqv", "-t", paneID, option)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func (l routedAINotifyLookup) PaneFormat(paneID, format string) string {
+	if l.runner == nil {
+		return ""
+	}
+	out, err := l.runner.Run(context.Background(), "tmux", "display-message", "-p", "-t", paneID, format)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func (s aiCodexLifecycleSink) notifyAIWithInput(paneID string, in attentionNotifyInput) error {
+	c := s.command
+	if c == nil || s.runner == nil || strings.TrimSpace(in.Text) == "" {
+		return nil
+	}
+	text := strings.TrimSpace(in.Text)
+	key := aiNotificationKey("hook", text)
+	lookup := routedAINotifyLookup{runner: s.runner}
+	if !in.Force && lookup.PaneOption(paneID, "@projmux_desktop_notification_key") == key {
+		lastAt := parsePositiveInt(lookup.PaneOption(paneID, "@projmux_desktop_notification_at"))
+		if lastAt > 0 && c.now().Unix()-int64(lastAt) < int64(c.aiNotifyDedupeSeconds()) {
+			return s.recordAINotification(paneID, key)
+		}
+	}
+	rendered := renderAINotifyText(text, in.Metadata, c.locale())
+	summary, detail := rendered.Summary, rendered.Detail
+	if summary == "" {
+		summary = text
+	}
+	path := lookup.PaneFormat(paneID, "#{pane_current_path}")
+	notification := aiNotification{
+		Summary: summary,
+		Body:    aiNotificationBody(detail, aiProjectName(path), c.gitBranchForPath(path), lookup.PaneFormat(paneID, "#S"), lookup.PaneFormat(paneID, "#W")),
+		Urgency: aiOSNotificationUrgency(in.Severity), ExpireMS: c.notificationExpireMS(), AppName: desktopAppID,
+		Icon: c.notificationIcon(aiNotificationTextAgentWithMetadata(text, in.Metadata)), Tag: paneID,
+		Group:              lookup.PaneFormat(paneID, "#S"),
+		diagnosticProvider: notifyLabels(notify.SourceAI, in.Metadata).provider,
+		diagnosticCategory: notifyLabels(notify.SourceAI, in.Metadata).category,
+	}
+	if err := c.notificationNotifier().Notify(notification); err != nil {
+		return nil
+	}
+	return s.recordAINotification(paneID, key)
+}
+
+func (s aiCodexLifecycleSink) recordAINotification(paneID, key string) error {
+	for _, field := range []struct{ option, value string }{
+		{"@projmux_desktop_notified", "1"},
+		{"@projmux_desktop_notification_key", key},
+		{"@projmux_desktop_notification_at", fmt.Sprintf("%d", s.command.now().Unix())},
+	} {
+		if field.value == "" {
+			continue
+		}
+		if _, err := s.runner.Run(context.Background(), "tmux", "set-option", "-p", "-t", paneID, field.option, field.value); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -676,7 +807,7 @@ func (s aiCodexLifecycleSink) ApplyProgress(identity codexLifecycleIdentity, pro
 		if field.value > 0 {
 			args = []string{"set-option", "-p", "-t", identity.RuntimeID, field.option, strconv.FormatUint(uint64(field.value), 10)}
 		}
-		if err := c.run("tmux", args...); err != nil {
+		if _, err := s.runner.Run(context.Background(), "tmux", args...); err != nil {
 			return err
 		}
 	}
@@ -730,31 +861,22 @@ func (c *aiCommand) codexSemanticPolicyForInteraction(kind coremetadata.AgentInt
 	return policies.Events[event]
 }
 
-func (c *aiCommand) startNativeCodexLifecycleObserver(identity codexLifecycleIdentity) {
-	if c == nil || !identity.valid() {
+func (c *aiCommand) startNativeCodexLifecycleObserver(target codexLifecycleObserverTarget) {
+	if c == nil || !target.valid() {
 		return
 	}
+	identity := target.Identity
+	runner := explicitTmuxRunner{runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, target: target.Route}
+	sink := aiCodexLifecycleSink{command: c, runner: runner}
 	// The activation may have been replaced between create/resume committing
 	// its binding and reaching this synchronous transition. Pending is itself
 	// an authority write, so prove the same exact Registry + tmux Pane identity
 	// used by every observer projection before touching the runtime.
-	if !(aiCodexLifecycleSink{command: c}).BindingCurrent(identity) {
+	if !sink.BindingCurrent(identity) {
 		return
 	}
-	// Pending is written synchronously before the child can observe or emit any
-	// event, closing the startup dual-authority gap.
-	if err := c.run("tmux", "set-option", "-p", "-u", "-t", identity.RuntimeID, aiPaneCodexEpochOption); err != nil {
+	if err := sink.SetAuthority(identity, codexAuthorityPending, "", "connecting"); err != nil {
 		return
-	}
-	for _, field := range []struct{ option, value string }{
-		{aiPaneCodexAuthorityOption, codexAuthorityPending},
-		{aiPaneCodexReasonOption, "connecting"},
-	} {
-		if err := c.run("tmux", "set-option", "-p", "-t", identity.RuntimeID, field.option, field.value); err != nil {
-			_ = c.run("tmux", "set-option", "-p", "-t", identity.RuntimeID, aiPaneCodexAuthorityOption, codexAuthorityHook)
-			_ = c.run("tmux", "set-option", "-p", "-t", identity.RuntimeID, aiPaneCodexReasonOption, "observer-unavailable")
-			return
-		}
 	}
 	executable := c.executable
 	if executable == nil {
@@ -762,23 +884,32 @@ func (c *aiCommand) startNativeCodexLifecycleObserver(identity codexLifecycleIde
 	}
 	path, err := executable()
 	if err == nil {
-		err = startCodexLifecycleObserverProcess(path, identity)
+		err = startCodexLifecycleObserverProcess(path, target)
 	}
 	if err != nil {
-		_ = c.run("tmux", "set-option", "-p", "-t", identity.RuntimeID, aiPaneCodexAuthorityOption, codexAuthorityHook)
-		_ = c.run("tmux", "set-option", "-p", "-t", identity.RuntimeID, aiPaneCodexReasonOption, "observer-unavailable")
+		_ = sink.SetAuthority(identity, codexAuthorityHook, "", "observer-unavailable")
 	}
 }
 
-func startCodexLifecycleObserverProcess(executable string, identity codexLifecycleIdentity) error {
+func startCodexLifecycleObserverProcess(executable string, target codexLifecycleObserverTarget) error {
 	executable, err := validateCodexLifecycleObserverExecutable(executable)
 	if err != nil {
 		return err
 	}
-	// #nosec G204 -- executable is an absolute, existing, regular executable validated above; argv is a fixed internal route plus bounded identity values and never enters a shell.
-	cmd := exec.Command(executable, "internal", "agent-hook", "ingest", "codex-appserver-watch",
+	identity := target.Identity
+	args := []string{"internal", "agent-hook", "ingest", "codex-appserver-watch",
 		"--agent-uid", identity.AgentUID, "--pane-uid", identity.PaneUID, "--pane", identity.RuntimeID,
-		"--generation", identity.Generation, "--thread", identity.ThreadID)
+		"--generation", identity.Generation, "--thread", identity.ThreadID}
+	if target.Route.flag == "-L" {
+		args = append(args, "--tmux-socket-name", target.Route.value)
+	} else if target.Route.flag == "-S" {
+		args = append(args, "--tmux-socket-path", target.Route.value)
+	} else {
+		return errors.New("codex native lifecycle observer requires an exact tmux route")
+	}
+	// #nosec G204 -- executable is an absolute, existing, regular executable validated above; argv is a fixed internal route plus bounded identity values and never enters a shell.
+	cmd := exec.Command(executable, args...)
+	cmd.Env = withoutInheritedTmuxEnvironment(os.Environ())
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -805,15 +936,32 @@ func validateCodexLifecycleObserverExecutable(executable string) (string, error)
 	return executable, nil
 }
 
-func (c *aiCommand) runCodexNativeLifecycleObserver(identity codexLifecycleIdentity) error {
+func withoutInheritedTmuxEnvironment(env []string) []string {
+	clean := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		if key == "TMUX" || key == "TMUX_PANE" || key == runtimeMutationAnchorPaneEnv {
+			continue
+		}
+		clean = append(clean, entry)
+	}
+	return clean
+}
+
+func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserverTarget) error {
+	if !target.valid() {
+		return errors.New("codex native lifecycle observer requires exact identity and tmux route")
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	runner := explicitTmuxRunner{runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, target: target.Route}
 	observer := codexNativeObserver{
-		identity: identity,
+		identity:       target.Identity,
+		requireControl: true,
 		open: func(ctx context.Context) (codexLifecycleConnection, error) {
 			return codexappserver.OpenDefaultProxy(ctx, codexappserver.DefaultProbeTimeout, version.String())
 		},
-		sink: aiCodexLifecycleSink{command: c},
+		sink: aiCodexLifecycleSink{command: c, runner: runner},
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		observer.startControl = func(epoch *codexControlEpoch) (*codexControlServer, error) {
@@ -823,33 +971,51 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(identity codexLifecycleIdent
 	return observer.Run(ctx)
 }
 
-func parseCodexNativeLifecycleIdentity(args []string) (codexLifecycleIdentity, error) {
-	identity := codexLifecycleIdentity{}
+func parseCodexNativeLifecycleTarget(args []string) (codexLifecycleObserverTarget, error) {
+	target := codexLifecycleObserverTarget{}
 	for len(args) > 0 {
 		if len(args) < 2 {
-			return identity, errors.New("codex app-server watcher has an incomplete flag")
+			return target, errors.New("codex app-server watcher has an incomplete flag")
 		}
 		value := strings.TrimSpace(args[1])
 		switch args[0] {
 		case "--agent-uid":
-			identity.AgentUID = value
+			target.Identity.AgentUID = value
 		case "--pane-uid":
-			identity.PaneUID = value
+			target.Identity.PaneUID = value
 		case "--pane":
-			identity.RuntimeID = value
+			target.Identity.RuntimeID = value
 		case "--generation":
-			identity.Generation = value
+			target.Identity.Generation = value
 		case "--thread":
-			identity.ThreadID = value
+			target.Identity.ThreadID = value
+		case "--tmux-socket-name":
+			if target.Route.flag != "" {
+				return target, errors.New("codex app-server watcher accepts exactly one tmux route")
+			}
+			var err error
+			target.Route, err = tmuxSocketNameTarget(value)
+			if err != nil {
+				return target, err
+			}
+		case "--tmux-socket-path":
+			if target.Route.flag != "" {
+				return target, errors.New("codex app-server watcher accepts exactly one tmux route")
+			}
+			var err error
+			target.Route, err = tmuxSocketPathTarget(value)
+			if err != nil {
+				return target, err
+			}
 		default:
-			return identity, fmt.Errorf("unknown Codex app-server watcher flag: %s", args[0])
+			return target, fmt.Errorf("unknown Codex app-server watcher flag: %s", args[0])
 		}
 		args = args[2:]
 	}
-	if !identity.valid() {
-		return identity, errors.New("codex app-server watcher requires exact Agent, Pane, runtime, generation, and thread identity")
+	if !target.valid() {
+		return target, errors.New("codex app-server watcher requires exact Agent, Pane, runtime, generation, thread, and tmux route")
 	}
-	return identity, nil
+	return target, nil
 }
 
 func codexAuthoritySuppressesHooks(source string) bool {

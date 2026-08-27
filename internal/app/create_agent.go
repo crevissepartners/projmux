@@ -115,7 +115,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 
 	var results []createResult
 	var activationTargets []agentActivationTarget
-	var nativeLifecycleTargets []codexLifecycleIdentity
+	var nativeLifecycleTargets []codexLifecycleObserverTarget
 	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
 	nativeLifecycle, nativeLifecycleCapable := c.resumes.(codexNativeLifecycleStarter)
 	prompt, nativePromptExact := nativePrompt(flags.payload)
@@ -274,22 +274,16 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 					return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", spelling, paneID, err)
 				}
 				if nativeLifecycleCapable {
-					nativeLifecycleTargets = append(nativeLifecycleTargets, codexLifecycleIdentity{
-						AgentUID: work.agent.Metadata.UID, PaneUID: work.pane.Metadata.UID, RuntimeID: paneID,
-						Generation: work.activation.Generation, ThreadID: nativeBinding.ThreadID,
+					nativeLifecycleTargets = append(nativeLifecycleTargets, codexLifecycleObserverTarget{
+						Identity: codexLifecycleIdentity{
+							AgentUID: work.agent.Metadata.UID, PaneUID: work.pane.Metadata.UID, RuntimeID: paneID,
+							Generation: work.activation.Generation, ThreadID: nativeBinding.ThreadID,
+						},
+						Route: c.runtime.target,
 					})
 				}
 			} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, workTitle, flags); err != nil {
 				return tmuxError("%s: bind Agent Pane %s presentation metadata: %v", spelling, paneID, err)
-			}
-			// Canonical Agent topic authority starts empty. The shared legacy
-			// binder seeds its display title as a compatibility topic, so remove
-			// that seed through the transaction's exact routed runner before the
-			// create can commit.
-			for _, option := range []string{aiPaneTopicOption, aiPaneTopicManualOption} {
-				if _, err := c.runtime.runner.Run(ctx, "tmux", "set-option", "-p", "-u", "-t", paneID, option); err != nil {
-					return tmuxError("%s: clear compatibility topic projection %s on Pane %s: %v", spelling, option, paneID, err)
-				}
 			}
 			if len(flags.payload) > 0 && !usedNative {
 				activationTargets = append(activationTargets, agentActivationTarget{
@@ -319,8 +313,8 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	// The exact Registry binding becomes observable only after the transaction
 	// commits. Starting inside the callback would correctly fail the startup
 	// guard against the pre-transaction snapshot and strand no observer.
-	for _, identity := range nativeLifecycleTargets {
-		nativeLifecycle.startNativeCodexLifecycleObserver(identity)
+	for _, target := range nativeLifecycleTargets {
+		nativeLifecycle.startNativeCodexLifecycleObserver(target)
 	}
 	if err := c.confirmAgentActivations(activationTargets); err != nil {
 		return err
@@ -455,25 +449,16 @@ func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetad
 func (c *createCommand) bindAgentPane(ctx context.Context, paneID, provider, contextDir, title string, flags resourceCreateFlags) error {
 	if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" && c.resumes != nil {
 		if source := strings.TrimSpace(flags.resumeSource); source != "" {
-			if routed, ok := c.resumes.(routedSourcedResumedAgentPaneBinder); ok {
-				return routed.BindResumedAgentPaneWithSourceOnRoute(ctx, c.runtime.runner, paneID, provider, contextDir, title, conversation, source)
-			}
-			if sourced, ok := c.resumes.(interface {
-				BindResumedAgentPaneWithSource(string, string, string, string, string, string)
-			}); ok {
-				sourced.BindResumedAgentPaneWithSource(paneID, provider, contextDir, title, conversation, source)
-				return nil
-			}
+			return c.resumes.BindAgentPaneOnRoute(ctx, c.runtime.runner, agentPaneBinding{
+				PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
+				ConversationID: conversation, ResumeSource: source,
+			})
 		}
-		if routed, ok := c.resumes.(routedResumedAgentPaneBinder); ok {
-			return routed.BindResumedAgentPaneOnRoute(ctx, c.runtime.runner, paneID, provider, contextDir, title, conversation)
-		}
-		c.resumes.BindResumedAgentPane(paneID, provider, contextDir, title, conversation)
-		return nil
+		return c.resumes.BindAgentPaneOnRoute(ctx, c.runtime.runner, agentPaneBinding{
+			PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title, ConversationID: conversation,
+		})
 	}
-	if routed, ok := c.agents.(routedAgentPaneBinder); ok {
-		return routed.BindManagedAgentPaneOnRoute(ctx, c.runtime.runner, paneID, provider, contextDir, title)
-	}
-	c.agents.BindManagedAgentPane(paneID, provider, contextDir, title)
-	return nil
+	return c.agents.BindAgentPaneOnRoute(ctx, c.runtime.runner, agentPaneBinding{
+		PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
+	})
 }

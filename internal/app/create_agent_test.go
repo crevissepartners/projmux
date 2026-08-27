@@ -158,6 +158,10 @@ func (l *productionBindingAgentLauncher) BindManagedAgentPaneOnRoute(
 	return l.binder.BindManagedAgentPaneOnRoute(ctx, runner, paneID, provider, contextDir, title)
 }
 
+func (l *productionBindingAgentLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
+	return l.binder.BindAgentPaneOnRoute(ctx, runner, binding)
+}
+
 func newFakeAgentLauncher() *fakeAgentLauncher {
 	return &fakeAgentLauncher{disabled: map[string]bool{}, activationAcknowledged: true}
 }
@@ -216,6 +220,11 @@ func (f *fakeAgentLauncher) BindManagedAgentPane(paneID, provider, _, title stri
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.bound = append(f.bound, fakeBoundPane{paneID: paneID, provider: provider, title: title})
+}
+
+func (f *fakeAgentLauncher) BindAgentPaneOnRoute(_ context.Context, _ tmuxCommandRunner, binding agentPaneBinding) error {
+	f.BindManagedAgentPane(binding.PaneID, binding.Provider, binding.ContextDir, binding.Title)
+	return nil
 }
 
 // newTestAgentCreateCommand wires the canonical Agent create onto the in-memory
@@ -398,6 +407,88 @@ func TestExactProjectCreateWindowIsByteEquivalentAcrossAmbientPanes(t *testing.T
 	stale := run(t, true)
 	if current != stale {
 		t.Fatalf("explicit result/mutation ledger changed with unrelated ambient Pane:\ncurrent=%q\nstale=%q", current, stale)
+	}
+}
+
+func TestExactProjectWindowAgentCreateIsByteEquivalentAcrossAmbientPaneContainment(t *testing.T) {
+	t.Parallel()
+	run := func(t *testing.T, privateAnchor string) string {
+		t.Helper()
+		store, tmux := aliveAlphaRuntime(t)
+		tmux.socketName = "phase2-exact-create"
+		tmux.socketPath = "/tmp/fake-tmux/phase2-exact-create"
+		current := livePaneWithUID(t, tmux, "pan-alpha-zsh")
+		unrelated := tmux.addSession("unrelated-owner").windows[0].panes[0].id
+		switch privateAnchor {
+		case "current":
+			privateAnchor = current
+		case "unrelated":
+			privateAnchor = unrelated
+		case "stale":
+			privateAnchor = "%999999"
+		}
+		command, _ := newTestAgentCreateCommand(t, store, tmux)
+		route := bindTestCreateRuntimeRoute(command, tmux, func(key string) string {
+			switch key {
+			case "TMUX":
+				return tmux.socketPath + "," + tmux.serverPID + ",23"
+			case "TMUX_PANE":
+				return unrelated
+			case runtimeMutationAnchorPaneEnv:
+				return privateAnchor
+			default:
+				return ""
+			}
+		})
+		stdout, stderr, err := runRoute(t, command,
+			"agent", "--provider", "claude", "--project", "uid:prj-alpha",
+			"--window", "uid:win-alpha-main", "-o", "pane-id")
+		if err != nil || stderr != "" {
+			t.Fatalf("private anchor %q: stdout=%q stderr=%q err=%v", privateAnchor, stdout, stderr, err)
+		}
+		calls, err := json.Marshal(tmux.calls)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return stdout + "\x00" + store.snapshot() + "\x00" + route.target.label() + "\x00" + string(calls)
+	}
+	current := run(t, "current")
+	for _, anchor := range []string{"unrelated", "stale"} {
+		if got := run(t, anchor); got != current {
+			t.Fatalf("same-Window exact create changed with %s private anchor:\ncurrent=%q\ngot=%q", anchor, current, got)
+		}
+	}
+}
+
+func TestExactProjectWindowAgentCreateStillGuardsExplicitRouteAnchor(t *testing.T) {
+	t.Parallel()
+	store, tmux := aliveAlphaRuntime(t)
+	tmux.socketName = "phase2-explicit-anchor"
+	tmux.socketPath = "/tmp/fake-tmux/phase2-explicit-anchor"
+	current := livePaneWithUID(t, tmux, "pan-alpha-zsh")
+	beforeRegistry, beforeRuntime := store.snapshot(), tmux.state()
+	command, launcher := newTestAgentCreateCommand(t, store, tmux)
+	command.routeAnchor = "%999999"
+	bindTestCreateRuntimeRoute(command, tmux, func(key string) string {
+		switch key {
+		case "TMUX":
+			return tmux.socketPath + "," + tmux.serverPID + ",23"
+		case runtimeMutationAnchorPaneEnv, "TMUX_PANE":
+			return current
+		default:
+			return ""
+		}
+	})
+
+	stdout, stderr, err := runRoute(t, command,
+		"agent", "--provider", "claude", "--project", "uid:prj-alpha",
+		"--window", "uid:win-alpha-main", "-o", "pane-id")
+	if err == nil || !strings.Contains(err.Error(), "anchor") {
+		t.Fatalf("stale explicit route anchor: stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if stdout != "" || stderr != "" || store.transactions != 0 || store.writes != 0 ||
+		store.snapshot() != beforeRegistry || tmux.state() != beforeRuntime || len(launcher.plans) != 0 {
+		t.Fatalf("stale explicit route anchor changed state: stdout=%q stderr=%q tx=%d writes=%d launches=%d", stdout, stderr, store.transactions, store.writes, len(launcher.plans))
 	}
 }
 

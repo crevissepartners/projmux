@@ -2259,7 +2259,9 @@ func (c *aiCommand) BindManagedAgentPaneOnRoute(
 	runner tmuxCommandRunner,
 	paneID, provider, contextDir, title string,
 ) error {
-	return c.configureAIPaneOnRoute(ctx, runner, paneID, provider, contextDir, title, aiPaneResumeMetadata{})
+	return c.BindAgentPaneOnRoute(ctx, runner, agentPaneBinding{
+		PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
+	})
 }
 
 // PlanNativeCodexResume builds the TUI attachment for a thread already created
@@ -2303,12 +2305,10 @@ func (c *aiCommand) BindNativeCodexPaneOnRoute(
 	paneID, contextDir, title, threadID string,
 ) error {
 	threadID = strings.TrimSpace(threadID)
-	if err := c.configureAIPaneOnRoute(ctx, runner, paneID, aiModeCodex, contextDir, title, aiPaneResumeMetadata{
-		sessionID: threadID, resumeID: threadID, source: "app-server", updatedAt: c.nowTime().UTC(),
-	}); err != nil {
-		return err
-	}
-	return runAIPaneOptionOnRoute(ctx, runner, paneID, aiPaneThreadIDOption, threadID)
+	return c.BindAgentPaneOnRoute(ctx, runner, agentPaneBinding{
+		PaneID: paneID, Provider: aiModeCodex, ContextDir: contextDir, Title: title,
+		ConversationID: threadID, ResumeSource: "app-server", ThreadID: threadID, NativeCodex: true,
+	})
 }
 
 func (c *aiCommand) agentExecArgv(mode string, extraArgs []string) ([]string, string, error) {
@@ -2567,55 +2567,213 @@ func (c *aiCommand) configureAIPane(paneID, mode, contextDir, title string, resu
 	c.configureAIPaneResumeMetadata(paneID, resume)
 }
 
-func (c *aiCommand) configureAIPaneOnRoute(
-	ctx context.Context,
-	runner tmuxCommandRunner,
-	paneID, mode, contextDir, title string,
-	resume aiPaneResumeMetadata,
-) error {
-	paneID = strings.TrimSpace(paneID)
+// agentPaneBinding is the one typed materialization contract shared by create,
+// resume, topology replay, and native Codex binding. The supplied runner has
+// already been bound to one explicit logical tmux route; this value contains
+// resource/presentation state only and therefore cannot reopen socket authority.
+type agentPaneBinding struct {
+	PaneID         string
+	Provider       string
+	ContextDir     string
+	Title          string
+	Topic          string
+	TopicManual    bool
+	ConversationID string
+	ResumeSource   string
+	ThreadID       string
+	NativeCodex    bool
+	UpdatedAt      time.Time
+}
+
+type agentPaneBindError struct {
+	Operation    string
+	Cause        error
+	Compensation error
+}
+
+func (e *agentPaneBindError) Error() string {
+	if e == nil {
+		return "managed Agent Pane binding failed"
+	}
+	message := fmt.Sprintf("managed Agent Pane binding failed at %s: %v", e.Operation, e.Cause)
+	if e.Compensation != nil {
+		message += fmt.Sprintf("; compensation failed: %v", e.Compensation)
+	}
+	return message
+}
+
+func (e *agentPaneBindError) Unwrap() error { return e.Cause }
+
+type agentPaneOptionWrite struct {
+	option string
+	value  string
+	unset  bool
+}
+
+// BindAgentPaneOnRoute applies the complete managed-Agent option set as one
+// all-or-error result. If any write fails, every preceding write is restored in
+// reverse order on the same exact runner. The surrounding materializer may then
+// roll back the Pane itself without leaving a partially authoritative live
+// object behind.
+func (c *aiCommand) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
+	paneID := strings.TrimSpace(binding.PaneID)
 	if paneID == "" {
+		return errors.New("managed Agent Pane binding requires an exact Pane runtime id")
+	}
+	if runner == nil {
+		return errors.New("managed Agent Pane binding requires an exact tmux runner")
+	}
+	binding.Provider = normalizeAIMode(binding.Provider)
+	binding.ContextDir = strings.TrimSpace(binding.ContextDir)
+	binding.Topic = strings.TrimSpace(binding.Topic)
+	binding.ConversationID = strings.TrimSpace(binding.ConversationID)
+	binding.ResumeSource = strings.TrimSpace(binding.ResumeSource)
+	binding.ThreadID = strings.TrimSpace(binding.ThreadID)
+	if binding.UpdatedAt.IsZero() && binding.ConversationID != "" {
+		binding.UpdatedAt = c.nowTime().UTC()
+	}
+
+	writes := []struct {
+		option string
+		value  string
+		unset  bool
+	}{
+		{option: aiPaneManagedOption, value: "1"},
+		{option: aiPaneAgentOption, value: binding.Provider},
+		{option: aiPaneLaunchAuthorshipOption, value: "1"},
+		{option: aiPaneContextOption, value: binding.ContextDir},
+		{option: aiPaneTopicOption, value: binding.Topic, unset: binding.Topic == ""},
+		{option: aiPaneTopicManualOption, value: "on", unset: !binding.TopicManual},
+		{option: aiPaneStateOption, value: "idle"},
+		{option: aiPaneSessionIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
+		{option: aiPaneResumeIDOption, value: binding.ConversationID, unset: binding.ConversationID == ""},
+		{option: aiPaneResumeSourceOption, value: binding.ResumeSource, unset: binding.ResumeSource == ""},
+		{option: aiPaneResumeUpdatedAtOption, unset: binding.UpdatedAt.IsZero()},
+		{option: aiPaneThreadIDOption, value: binding.ThreadID, unset: binding.ThreadID == ""},
+		{option: aiPaneCodexAuthorityOption, unset: true},
+		{option: aiPaneCodexEpochOption, unset: true},
+		{option: aiPaneCodexReasonOption, unset: true},
+	}
+	if !binding.UpdatedAt.IsZero() {
+		writes[10].value = binding.UpdatedAt.UTC().Format(time.RFC3339)
+	}
+	if binding.Provider == aiModeCodex {
+		writes[12] = struct {
+			option string
+			value  string
+			unset  bool
+		}{option: aiPaneCodexAuthorityOption, value: codexAuthorityHook}
+		writes[14] = struct {
+			option string
+			value  string
+			unset  bool
+		}{option: aiPaneCodexReasonOption, value: "native-fallback"}
+	}
+	if binding.NativeCodex {
+		if binding.ThreadID == "" || binding.ConversationID == "" {
+			return errors.New("native Codex Pane binding requires an exact thread identity")
+		}
+		writes[12] = struct {
+			option string
+			value  string
+			unset  bool
+		}{option: aiPaneCodexAuthorityOption, value: codexAuthorityHook}
+		writes[14] = struct {
+			option string
+			value  string
+			unset  bool
+		}{option: aiPaneCodexReasonOption, value: "observer-starting"}
+	}
+
+	titleBefore, err := readAgentPaneFieldOnRoute(ctx, runner, paneID, "#{pane_title}")
+	if err != nil {
+		return &agentPaneBindError{Operation: "read Pane title", Cause: err}
+	}
+	before := make(map[string]string, len(writes))
+	for _, write := range writes {
+		value, readErr := readAgentPaneOptionOnRoute(ctx, runner, paneID, write.option)
+		if readErr != nil {
+			return &agentPaneBindError{Operation: "read Pane option " + write.option, Cause: readErr}
+		}
+		before[write.option] = value
+	}
+
+	applied := make([]struct {
+		option string
+		value  string
+		unset  bool
+	}, 0, len(writes))
+	titleApplied := false
+	writeBindingOption := func(write struct {
+		option string
+		value  string
+		unset  bool
+	}) error {
+		args := []string{"set-option", "-p", "-t", paneID, write.option, write.value}
+		if write.unset {
+			args = []string{"set-option", "-p", "-u", "-t", paneID, write.option}
+		}
+		if _, err := runner.Run(ctx, "tmux", args...); err != nil {
+			return fmt.Errorf("write Pane option %s: %w", write.option, err)
+		}
 		return nil
 	}
-	if err := runAIPaneTitleOnRoute(ctx, runner, paneID, title); err != nil {
-		return err
-	}
-	for _, option := range [][2]string{
-		{aiPaneManagedOption, "1"},
-		{aiPaneAgentOption, normalizeAIMode(mode)},
-		{aiPaneLaunchAuthorshipOption, "1"},
-		{aiPaneContextOption, strings.TrimSpace(contextDir)},
-		{aiPaneTopicOption, displayAITopic(title)},
-		{aiPaneStateOption, "idle"},
-	} {
-		if err := runAIPaneOptionOnRoute(ctx, runner, paneID, option[0], option[1]); err != nil {
-			return err
+	compensate := func() error {
+		var failures []error
+		for i := len(applied) - 1; i >= 0; i-- {
+			prior := before[applied[i].option]
+			restore := struct {
+				option string
+				value  string
+				unset  bool
+			}{option: applied[i].option, value: prior, unset: prior == ""}
+			if restoreErr := writeBindingOption(restore); restoreErr != nil {
+				failures = append(failures, restoreErr)
+			}
 		}
-	}
-	for _, option := range aiPaneResumeOptions(resume) {
-		if err := runAIPaneOptionOnRoute(ctx, runner, paneID, option[0], option[1]); err != nil {
-			return err
+		if titleApplied {
+			if _, restoreErr := runner.Run(ctx, "tmux", "select-pane", "-T", titleBefore, "-t", paneID); restoreErr != nil {
+				failures = append(failures, fmt.Errorf("restore Pane title: %w", restoreErr))
+			}
 		}
+		return errors.Join(failures...)
+	}
+	if _, err := runner.Run(ctx, "tmux", "select-pane", "-T", binding.Title, "-t", paneID); err != nil {
+		return &agentPaneBindError{Operation: "set Pane title", Cause: err}
+	}
+	titleApplied = true
+	for _, write := range writes {
+		if err := writeBindingOption(write); err != nil {
+			return &agentPaneBindError{Operation: "set Pane option " + write.option, Cause: err, Compensation: compensate()}
+		}
+		applied = append(applied, write)
 	}
 	return nil
 }
 
-func runAIPaneTitleOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, title string) error {
-	if runner == nil {
-		return errors.New("managed Agent Pane binding requires an exact tmux runner")
+func readAgentPaneFieldOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, format string) (string, error) {
+	out, err := runner.Run(ctx, "tmux", "display-message", "-p", "-t", paneID, format)
+	if err != nil {
+		return "", err
 	}
-	if _, err := runner.Run(ctx, "tmux", "select-pane", "-T", title, "-t", paneID); err != nil {
-		return fmt.Errorf("set Pane title: %w", err)
-	}
-	return nil
+	return strings.TrimRight(string(out), "\r\n"), nil
 }
 
-func runAIPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, option, value string) error {
-	if runner == nil {
-		return errors.New("managed Agent Pane binding requires an exact tmux runner")
+func readAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID, option string) (string, error) {
+	out, err := runner.Run(ctx, "tmux", "show-options", "-pqv", "-t", paneID, option)
+	if err != nil {
+		return "", err
 	}
-	if _, err := runner.Run(ctx, "tmux", "set-option", "-p", "-t", paneID, option, value); err != nil {
-		return fmt.Errorf("set Pane option %s: %w", option, err)
+	return strings.TrimRight(string(out), "\r\n"), nil
+}
+
+func writeAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, paneID string, write agentPaneOptionWrite) error {
+	args := []string{"set-option", "-p", "-t", paneID, write.option, write.value}
+	if write.unset {
+		args = []string{"set-option", "-p", "-u", "-t", paneID, write.option}
+	}
+	if _, err := runner.Run(ctx, "tmux", args...); err != nil {
+		return fmt.Errorf("write Pane option %s: %w", write.option, err)
 	}
 	return nil
 }
@@ -2812,6 +2970,9 @@ func (b aiCommandMuxBackend) Run(ctx context.Context, name string, args ...strin
 }
 
 func aiMuxCommandNeedsOutput(args []string) bool {
+	if len(args) >= 2 && (args[0] == "-L" || args[0] == "-S") {
+		args = args[2:]
+	}
 	if len(args) == 0 {
 		return true
 	}

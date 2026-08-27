@@ -84,6 +84,10 @@ func (l *productionBindingResumeLauncher) BindResumedAgentPaneOnRoute(
 	return l.binder.BindResumedAgentPaneOnRoute(ctx, runner, paneID, provider, contextDir, title, conversationID)
 }
 
+func (l *productionBindingResumeLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
+	return l.binder.BindAgentPaneOnRoute(ctx, runner, binding)
+}
+
 func newFakeResumeLauncher() *fakeResumeLauncher {
 	return &fakeResumeLauncher{disabled: map[string]bool{}}
 }
@@ -123,6 +127,25 @@ func (f *fakeResumeLauncher) BindResumedAgentPane(paneID, provider, _, title, co
 	f.bound = append(f.bound, fakeResumedPane{
 		paneID: paneID, provider: provider, title: title, conversationID: conversationID,
 	})
+}
+
+func (f *fakeResumeLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
+	if binding.Topic != "" {
+		if _, err := runner.Run(ctx, "tmux", "set-option", "-p", "-t", binding.PaneID, aiPaneTopicOption, binding.Topic); err != nil {
+			return err
+		}
+		if _, err := runner.Run(ctx, "tmux", "set-option", "-p", "-t", binding.PaneID, aiPaneTopicManualOption, "on"); err != nil {
+			return err
+		}
+	} else {
+		for _, option := range []string{aiPaneTopicOption, aiPaneTopicManualOption} {
+			if _, err := runner.Run(ctx, "tmux", "set-option", "-p", "-u", "-t", binding.PaneID, option); err != nil {
+				return err
+			}
+		}
+	}
+	f.BindResumedAgentPane(binding.PaneID, binding.Provider, binding.ContextDir, binding.Title, binding.ConversationID)
+	return nil
 }
 
 // newTestAgentResumeCommand wires the Agent namespace onto the in-memory

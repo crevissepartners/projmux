@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -20,6 +21,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -126,7 +128,7 @@ func TestCodexSemanticHooksStaySuppressedAcrossNonHookAuthorityWithRawNotify(t *
 	}
 }
 
-func TestCodexObserverStartupMarksPendingBeforeProcessAttempt(t *testing.T) {
+func TestCodexObserverStartupUsesExactRouteAndFallsBackAfterProcessFailure(t *testing.T) {
 	store := newFakeResourceStore(t)
 	identity := codexLifecycleIdentity{
 		AgentUID: "agt-alpha-codex", PaneUID: "pan-alpha-codex", RuntimeID: "%9",
@@ -146,32 +148,102 @@ func TestCodexObserverStartupMarksPendingBeforeProcessAttempt(t *testing.T) {
 	cmd := testAICommand(t.TempDir())
 	cmd.loadRegistry = store.store().load
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", identity.RuntimeID, "#{@projmux_pane_uid}"}) {
+		if name == "tmux" && reflect.DeepEqual(args, []string{"-L", "exact", "show-options", "-pqv", "-t", identity.RuntimeID, tmuxopts.PaneUID}) {
 			return []byte(identity.PaneUID + "\n"), nil
+		}
+		if name == "tmux" && len(args) == 7 && slices.Equal(args[:6], []string{"-L", "exact", "show-options", "-pqv", "-t", identity.RuntimeID}) {
+			return nil, nil
 		}
 		return nil, os.ErrNotExist
 	}
 	cmd.executable = func() (string, error) { return "/tmp/projmux.test", nil }
-	cmd.startNativeCodexLifecycleObserver(identity)
+	cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{Identity: identity, Route: explicitTmuxTarget{flag: "-L", value: "exact"}})
 	commands := cmdRecorder(cmd).commands
-	wantPrefix := []recordedAICommand{
-		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%9", aiPaneCodexEpochOption}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneCodexAuthorityOption, codexAuthorityPending}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneCodexReasonOption, "connecting"}},
+	for _, command := range commands {
+		if len(command.args) < 2 || command.args[0] != "-L" || command.args[1] != "exact" {
+			t.Fatalf("observer startup used ambient/default route: %#v", commands)
+		}
 	}
-	if len(commands) < len(wantPrefix) || !reflect.DeepEqual(commands[:len(wantPrefix)], wantPrefix) {
-		t.Fatalf("startup commands = %#v, want prefix %#v", commands, wantPrefix)
+	if !hasRecordedAICommand(commands, recordedAICommand{name: "tmux", args: []string{"-L", "exact", "set-option", "-p", "-t", "%9", aiPaneCodexAuthorityOption, codexAuthorityPending}}) ||
+		!hasRecordedAICommand(commands, recordedAICommand{name: "tmux", args: []string{"-L", "exact", "set-option", "-p", "-t", "%9", aiPaneCodexReasonOption, "connecting"}}) {
+		t.Fatalf("observer startup did not enter bounded connecting state: %#v", commands)
 	}
-	if !hasRecordedAICommand(commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%9", aiPaneCodexAuthorityOption, codexAuthorityHook}}) {
+	if !hasRecordedAICommand(commands, recordedAICommand{name: "tmux", args: []string{"-L", "exact", "set-option", "-p", "-t", "%9", aiPaneCodexAuthorityOption, codexAuthorityHook}}) {
 		t.Fatalf("failed observer did not enable bounded fallback: %#v", commands)
 	}
 
 	cmdRecorder(cmd).commands = nil
 	stale := identity
 	stale.Generation = "generation-replaced"
-	cmd.startNativeCodexLifecycleObserver(stale)
+	cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{Identity: stale, Route: explicitTmuxTarget{flag: "-L", value: "exact"}})
 	if commands := cmdRecorder(cmd).commands; len(commands) != 0 {
 		t.Fatalf("stale/reused runtime startup writes = %#v, want zero", commands)
+	}
+}
+
+func TestCodexLifecycleAuthorityWriteCompensatesFirstMiddleLastOnExactRoutes(t *testing.T) {
+	store := newFakeResourceStore(t)
+	identity := codexLifecycleIdentity{
+		AgentUID: "agt-alpha-codex", PaneUID: "pan-alpha-codex", RuntimeID: "%9",
+		Generation: "generation-authority", ThreadID: "thread-authority",
+	}
+	mutator := store.mutator()
+	if _, err := mutator.RecordPaneActivation(&store.registry, identity.PaneUID, coremetadata.PaneActivationOptions{
+		Generation: identity.Generation, RuntimeID: identity.RuntimeID, AgentUID: identity.AgentUID, OperationID: "phase2-authority",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mutator.BindCodexActivation(&store.registry, coremetadata.CodexActivationObservation{
+		AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, Generation: identity.Generation, ThreadID: identity.ThreadID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	command := testAICommand(t.TempDir())
+	command.loadRegistry = store.store().load
+	fields := []string{aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption}
+	for _, route := range []explicitTmuxTarget{{flag: "-L", value: "authority"}, {flag: "-S", value: "/tmp/authority.sock"}} {
+		for failWrite := 1; failWrite <= len(fields); failWrite++ {
+			t.Run(strings.TrimPrefix(route.flag, "-")+fmt.Sprintf("/failure-%d", failWrite), func(t *testing.T) {
+				before := map[string]string{
+					tmuxopts.PaneUID: identity.PaneUID, aiPaneCodexAuthorityOption: "old-authority",
+					aiPaneCodexEpochOption: "old-epoch", aiPaneCodexReasonOption: "old-reason", "@sibling": "keep",
+				}
+				raw := &bindingFailureRunner{
+					targetFlag: route.flag, targetValue: route.value, options: maps.Clone(before),
+					failWrite: failWrite, failureCommand: -1,
+				}
+				sink := aiCodexLifecycleSink{command: command, runner: explicitTmuxRunner{runner: raw, target: route}}
+				if err := sink.SetAuthority(identity, codexAuthorityControlPlane, "epoch-current", "ready"); err == nil {
+					t.Fatal("injected authority write failure returned nil")
+				}
+				if !reflect.DeepEqual(raw.options, before) {
+					t.Fatalf("partial authority remained: got %#v want %#v", raw.options, before)
+				}
+				if raw.failureCommand < 0 {
+					t.Fatal("authority failure command was not recorded")
+				}
+				restores := raw.commands[raw.failureCommand+1:]
+				if len(restores) != failWrite-1 {
+					t.Fatalf("authority compensation = %q, want %d reverse restores", restores, failWrite-1)
+				}
+				for index, command := range restores {
+					argv := command[2:]
+					option := argv[len(argv)-2]
+					if slices.Contains(argv, "-u") {
+						option = argv[len(argv)-1]
+					}
+					want := fields[failWrite-2-index]
+					if option != want {
+						t.Fatalf("authority compensation[%d] = %q, want %q; commands=%q", index, option, want, restores)
+					}
+				}
+				for _, command := range raw.commands {
+					if len(command) < 2 || command[0] != route.flag || command[1] != route.value {
+						t.Fatalf("authority escaped exact route: %q", raw.commands)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -204,9 +276,39 @@ func TestCodexLifecycleObserverExecutableValidation(t *testing.T) {
 	}
 }
 
+func TestCodexLifecycleObserverTargetRequiresAndPreservesExactRoute(t *testing.T) {
+	identityArgs := []string{
+		"--agent-uid", "agent-1", "--pane-uid", "pane-1", "--pane", "%7",
+		"--generation", "generation-1", "--thread", "thread-1",
+	}
+	for _, routeArgs := range [][]string{{"--tmux-socket-name", "projmux-test"}, {"--tmux-socket-path", "/tmp/projmux-test.sock"}} {
+		target, err := parseCodexNativeLifecycleTarget(append(append([]string(nil), identityArgs...), routeArgs...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if target.Identity != phase6Identity() || target.Route.value != routeArgs[1] {
+			t.Fatalf("target = %+v, route args = %q", target, routeArgs)
+		}
+	}
+	if _, err := parseCodexNativeLifecycleTarget(identityArgs); err == nil {
+		t.Fatal("route-less observer identity was accepted")
+	}
+	if _, err := parseCodexNativeLifecycleTarget(append(append([]string(nil), identityArgs...), "--tmux-socket-name", "one", "--tmux-socket-path", "/tmp/two")); err == nil {
+		t.Fatal("ambiguous observer routes were accepted")
+	}
+	clean := withoutInheritedTmuxEnvironment([]string{"HOME=/home/test", "TMUX=/tmp/default,1,0", "TMUX_PANE=%9", runtimeMutationAnchorPaneEnv + "=%9"})
+	if !slices.Equal(clean, []string{"HOME=/home/test"}) {
+		t.Fatalf("sanitized observer environment = %q", clean)
+	}
+}
+
 type fakeCodexLifecycleConnection struct {
 	snapshot codexappserver.LifecycleSnapshot
 	events   chan codexappserver.Notification
+}
+
+func testCodexLifecycleSink(cmd *aiCommand) aiCodexLifecycleSink {
+	return aiCodexLifecycleSink{command: cmd, runner: aiCommandMuxBackend{runCommand: cmd.runCommand, readCommand: cmd.readCommand}}
 }
 
 func (c *fakeCodexLifecycleConnection) Notifications() <-chan codexappserver.Notification {
@@ -528,6 +630,56 @@ func TestCodexNativeObserverBindingTimeoutFallsBackOnlyThroughExactGuard(t *test
 	}
 }
 
+func TestCodexNativeObserverConnectDeadlineConvergesToActionableFallback(t *testing.T) {
+	identity := codexLifecycleIdentity{AgentUID: "agent-1", PaneUID: "pane-1", RuntimeID: "%7", Generation: "generation-1", ThreadID: "thread-1"}
+	sink := &recordingCodexLifecycleSink{current: true, wake: make(chan struct{}, 20)}
+	observer := codexNativeObserver{
+		identity: identity, sink: sink, openTimeout: 5 * time.Millisecond, delay: time.Hour,
+		open: func(ctx context.Context) (codexLifecycleConnection, error) {
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := observer.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if !slices.Contains(sink.authorities, codexAuthorityHook+":timeout") {
+		t.Fatalf("bounded connect authorities = %q", sink.authorities)
+	}
+}
+
+func TestCodexNativeObserverWithoutControlEndpointNeverClaimsReadyEpoch(t *testing.T) {
+	identity := codexLifecycleIdentity{AgentUID: "agent-1", PaneUID: "pane-1", RuntimeID: "%7", Generation: "generation-1", ThreadID: "thread-1"}
+	sink := &recordingCodexLifecycleSink{current: true, wake: make(chan struct{}, 20)}
+	connection := &fakeCodexLifecycleConnection{
+		snapshot: codexappserver.LifecycleSnapshot{ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateIdle},
+		events:   make(chan codexappserver.Notification),
+	}
+	observer := codexNativeObserver{
+		identity: identity, sink: sink, requireControl: true, delay: time.Hour,
+		open: func(context.Context) (codexLifecycleConnection, error) { return connection, nil },
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := observer.Run(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sink.mu.Lock()
+	defer sink.mu.Unlock()
+	if !slices.Contains(sink.authorities, codexAuthorityHook+":control-unavailable") {
+		t.Fatalf("missing control fallback authorities = %q", sink.authorities)
+	}
+	for _, authority := range sink.authorities {
+		if strings.HasPrefix(authority, codexAuthorityControlPlane+":") {
+			t.Fatalf("observer without endpoint claimed ready authority: %q", sink.authorities)
+		}
+	}
+}
+
 func TestCodexNativeObserverNotLoadedSnapshotClearsBeforeFallbackWithoutHealthyEpoch(t *testing.T) {
 	identity := testCodexLifecycleIdentity()
 	conn := &fakeCodexLifecycleConnection{
@@ -725,6 +877,16 @@ func TestCodexLifecycleSinkIntegratesExactRegistryTmuxAndQuietPolicy(t *testing.
 	cmd.loadRegistry = store.store().load
 	cmd.updateRegistry = store.store().update
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && len(args) == 5 && reflect.DeepEqual(args[:4], []string{"show-options", "-pqv", "-t", "%7"}) {
+			switch args[4] {
+			case tmuxopts.PaneUID:
+				return []byte("pan-alpha-codex\n"), nil
+			case aiPaneAgentOption:
+				return []byte("codex\n"), nil
+			case aiPaneTopicOption:
+				return []byte("topic\n"), nil
+			}
+		}
 		if name == "tmux" && len(args) == 5 && reflect.DeepEqual(args[:4], []string{"display-message", "-p", "-t", "%7"}) {
 			switch args[4] {
 			case "#{@projmux_pane_uid}":
@@ -762,7 +924,7 @@ func TestCodexLifecycleSinkIntegratesExactRegistryTmuxAndQuietPolicy(t *testing.
 		Category: "approval_required", ID: "notice-1", Severity: "critical", ThreadID: "thread-1", TurnID: "turn-1", ItemID: "item-1", RequestID: "request-1",
 	}}}
 	notifyStore.ackErr = notify.ErrNotFound
-	if err := (aiCodexLifecycleSink{command: cmd}).Apply(identity, projection); err != nil {
+	if err := testCodexLifecycleSink(cmd).Apply(identity, projection); err != nil {
 		t.Fatal(err)
 	}
 	agent, _ := store.registry.Agent(identity.AgentUID)
@@ -789,7 +951,7 @@ func TestCodexLifecycleSinkIntegratesExactRegistryTmuxAndQuietPolicy(t *testing.
 		t.Fatal(err)
 	}
 	cmdRecorder(cmd).commands = nil
-	if err := (aiCodexLifecycleSink{command: cmd}).Apply(identity, codexLifecycleProjection{
+	if err := testCodexLifecycleSink(cmd).Apply(identity, codexLifecycleProjection{
 		Accepted: true, Interaction: coremetadata.InteractionApprovalRequired,
 		Notices: []codexLifecycleNotice{{Category: "approval_required", ID: "notice-2", Severity: "critical", ThreadID: "thread-1", TurnID: "turn-1", ItemID: "item-1", RequestID: "request-2", ResponderAvailable: true}},
 	}); err != nil {
@@ -818,7 +980,7 @@ func TestCodexLifecycleSinkIntegratesExactRegistryTmuxAndQuietPolicy(t *testing.
 	if desktopWrites != 1 {
 		t.Fatalf("Notify desktop writes = %d; commands=%#v", desktopWrites, cmdRecorder(cmd).commands)
 	}
-	if err := (aiCodexLifecycleSink{command: cmd}).Apply(identity, codexLifecycleProjection{
+	if err := testCodexLifecycleSink(cmd).Apply(identity, codexLifecycleProjection{
 		Accepted: true, Interaction: coremetadata.InteractionInProgress, ClearNoticeIDs: []string{"notice-2"},
 	}); err != nil {
 		t.Fatal(err)
@@ -827,7 +989,7 @@ func TestCodexLifecycleSinkIntegratesExactRegistryTmuxAndQuietPolicy(t *testing.
 		t.Fatalf("resolved approval did not clean queue row: acked=%q", notifyStore.ackedID)
 	}
 	notifyStore.pushed = nil
-	if err := (aiCodexLifecycleSink{command: cmd}).Apply(identity, codexLifecycleProjection{
+	if err := testCodexLifecycleSink(cmd).Apply(identity, codexLifecycleProjection{
 		Accepted: true, Interaction: coremetadata.InteractionApprovalRequired,
 		Notices: []codexLifecycleNotice{{Category: "approval_required", ID: "notice-focus", Severity: "critical", ThreadID: "thread-1", TurnID: "turn-1", ItemID: "item-1", RequestID: "request-focus"}},
 	}); err != nil {
@@ -841,7 +1003,7 @@ func TestCodexLifecycleSinkIntegratesExactRegistryTmuxAndQuietPolicy(t *testing.
 	notifyStore.pushed = nil
 	stale := identity
 	stale.Generation = "replaced-generation"
-	if err := (aiCodexLifecycleSink{command: cmd}).Apply(stale, projection); !errors.Is(err, errManagedAgentObservationIgnored) {
+	if err := testCodexLifecycleSink(cmd).Apply(stale, projection); !errors.Is(err, errManagedAgentObservationIgnored) {
 		t.Fatalf("stale Apply error = %v", err)
 	}
 	if len(cmdRecorder(cmd).commands) != 0 || len(notifyStore.pushed) != 0 {

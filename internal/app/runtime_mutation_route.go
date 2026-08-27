@@ -409,11 +409,12 @@ func resolveInvocationRuntimeMutationRouteWithPolicy(
 	inheritedPaneID := ""
 	if allowAppPIDOnly && lookupEnv != nil {
 		// Exact resource selectors own the object target, so an unrelated
-		// inherited TMUX_PANE cannot choose or veto it. Preserve TMUX itself as
-		// physical socket/server-generation evidence and preserve the private
-		// producer anchor when one was deliberately supplied.
+		// inherited TMUX_PANE or private child-process anchor cannot choose or
+		// veto it. Preserve TMUX itself as physical socket/server-generation
+		// evidence. The explicit paneID argument remains authoritative for a
+		// generated intent that deliberately supplied command.routeAnchor.
 		anchorLookup = func(key string) string {
-			if key == "TMUX_PANE" {
+			if key == "TMUX_PANE" || key == runtimeMutationAnchorPaneEnv {
 				return ""
 			}
 			return lookupEnv(key)

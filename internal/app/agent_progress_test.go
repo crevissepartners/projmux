@@ -11,6 +11,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 func TestRenderAgentProgressWidthAndLocaleMatrix(t *testing.T) {
@@ -61,6 +62,9 @@ func TestCodexProgressSinkProjectsBoundedRegistryAndClearsOnTerminal(t *testing.
 	cmd.loadRegistry = store.store().load
 	cmd.updateRegistry = store.store().update
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && len(args) == 5 && args[0] == "show-options" && args[4] == tmuxopts.PaneUID {
+			return []byte("pan-alpha-codex\n"), nil
+		}
 		if name == "tmux" && len(args) == 5 && args[4] == "#{@projmux_pane_uid}" {
 			return []byte("pan-alpha-codex\n"), nil
 		}
@@ -72,7 +76,7 @@ func TestCodexProgressSinkProjectsBoundedRegistryAndClearsOnTerminal(t *testing.
 		ChangedFiles: 3, ActiveItemCount: 1, StartedAt: time.Unix(1, 0).UTC(), ObservedAt: time.Unix(2, 0).UTC(),
 		Source: coremetadata.AgentProgressSource,
 	}
-	if err := (aiCodexLifecycleSink{command: cmd}).ApplyProgress(identity, progress, agentprogress.Diagnostics{Dropped: 1, Unknown: 2, Overflow: 3}); err != nil {
+	if err := testCodexLifecycleSink(cmd).ApplyProgress(identity, progress, agentprogress.Diagnostics{Dropped: 1, Unknown: 2, Overflow: 3}); err != nil {
 		t.Fatal(err)
 	}
 	agent, _ := store.registry.Agent(identity.AgentUID)
@@ -83,7 +87,7 @@ func TestCodexProgressSinkProjectsBoundedRegistryAndClearsOnTerminal(t *testing.
 	if pane.Status.Activation.Codex.TurnID != "turn-2" {
 		t.Fatalf("activation turn = %q", pane.Status.Activation.Codex.TurnID)
 	}
-	if err := (aiCodexLifecycleSink{command: cmd}).Apply(identity, codexLifecycleProjection{
+	if err := testCodexLifecycleSink(cmd).Apply(identity, codexLifecycleProjection{
 		Accepted: true, Interaction: coremetadata.InteractionIdle, ClearProgress: true,
 	}); err != nil {
 		t.Fatal(err)

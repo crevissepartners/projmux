@@ -84,11 +84,11 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 	}
 	switch args[0] {
 	case "codex-appserver-watch":
-		identity, err := parseCodexNativeLifecycleIdentity(args[1:])
+		target, err := parseCodexNativeLifecycleTarget(args[1:])
 		if err != nil {
 			return err
 		}
-		return c.runCodexNativeLifecycleObserver(identity)
+		return c.runCodexNativeLifecycleObserver(target)
 	case "codex-hook":
 		if len(args) != 1 {
 			printAIUsage(stderr)
