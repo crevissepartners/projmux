@@ -88,6 +88,35 @@ Informational `*.ready`, `*.current`, `*.reachable`, `*.none`, `*.clean`, and
 `*.audited` codes need no remediation. JSON exposes the same `code` and
 `remediation` values as verbose text.
 
+## Codex app-server install topology
+
+Start with the read-only integration report:
+
+```sh
+projmux doctor --section integrations --verbose
+```
+
+The `Codex app-server` result keeps four decisions separate:
+
+- `Source` and `reason` describe the effective control source Projmux selected.
+- `App-server probe` describes why the existing endpoint probe succeeded or
+  failed.
+- `install capability` reports the bounded relationship between the `codex`
+  executable on `PATH` and the canonical managed daemon payload.
+- `lifecycle` reports whether a native user action attempted a daemon start.
+
+`external-cli-only` means the ordinary Codex CLI executable is present, but
+the canonical managed payload needed by `codex app-server daemon start` was not
+observed. It does not mean the ordinary CLI is unsupported. An already-ready
+endpoint remains available regardless of install topology.
+
+If native app-server features are needed, review the
+[official Codex CLI installation options](https://learn.chatgpt.com/docs/codex/cli)
+and install or repair the managed standalone payload. Then rerun Doctor. Do not
+copy binaries, create symlinks in the Codex home, or edit the control socket as
+a diagnostic workaround. Doctor, Settings, and support-report collection never
+start the daemon or modify the installation.
+
 ## Incomplete npm install
 
 If the npm shim exits before Projmux starts with:
