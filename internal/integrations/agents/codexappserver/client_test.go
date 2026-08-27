@@ -319,6 +319,12 @@ func TestDecisionTableAndSecretFreeHealth(t *testing.T) {
 		if health.Source != tc.wantSource {
 			t.Fatalf("Decide(%s, hook=%v) source = %s", tc.availability, tc.hook, health.Source)
 		}
+		if health.ProbeReason != tc.reason {
+			t.Fatalf("Decide(%s, hook=%v) probe reason = %s, want %s", tc.availability, tc.hook, health.ProbeReason, tc.reason)
+		}
+		if health.InstallCapability != InstallCapabilityUnknown {
+			t.Fatalf("Decide(%s, hook=%v) install capability = %s", tc.availability, tc.hook, health.InstallCapability)
+		}
 		if health.Version != "0.149.0" {
 			t.Fatalf("safe version extraction = %q", health.Version)
 		}

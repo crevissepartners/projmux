@@ -56,6 +56,18 @@ const (
 	ReasonHookUnavailable     Reason = "hook-unavailable"
 )
 
+// InstallCapability is the bounded relationship between the Codex executable
+// on PATH and the canonical managed standalone payload used by daemon start.
+// It identifies no package manager and carries no filesystem path.
+type InstallCapability string
+
+const (
+	InstallCapabilityManagedReady    InstallCapability = "managed-ready"
+	InstallCapabilityExternalCLIOnly InstallCapability = "external-cli-only"
+	InstallCapabilityCLIMissing      InstallCapability = "cli-missing"
+	InstallCapabilityUnknown         InstallCapability = "unknown"
+)
+
 // EndpointKind describes transport shape without exposing a socket path.
 type EndpointKind string
 
@@ -77,15 +89,16 @@ const (
 
 // Health is safe to render in Doctor, Settings, and support reports.
 type Health struct {
-	Source          Source           `json:"source"`
-	Availability    Availability     `json:"availability"`
-	Reason          Reason           `json:"reason"`
-	Version         string           `json:"version,omitempty"`
-	Endpoint        EndpointKind     `json:"endpoint_kind"`
-	Connection      ConnectionState  `json:"connection_state"`
-	Lifecycle       LifecycleOutcome `json:"lifecycle_outcome,omitempty"`
-	LifecycleReason LifecycleReason  `json:"lifecycle_reason,omitempty"`
-	probeReason     Reason
+	Source            Source            `json:"source"`
+	Availability      Availability      `json:"availability"`
+	Reason            Reason            `json:"reason"`
+	ProbeReason       Reason            `json:"probe_reason"`
+	InstallCapability InstallCapability `json:"install_capability"`
+	Version           string            `json:"version,omitempty"`
+	Endpoint          EndpointKind      `json:"endpoint_kind"`
+	Connection        ConnectionState   `json:"connection_state"`
+	Lifecycle         LifecycleOutcome  `json:"lifecycle_outcome,omitempty"`
+	LifecycleReason   LifecycleReason   `json:"lifecycle_reason,omitempty"`
 }
 
 // Decide applies the bounded primary/fallback policy to one probe result.
@@ -100,13 +113,14 @@ func Decide(availability Availability, reason Reason, version string, endpoint E
 		}
 	}
 	return Health{
-		Source:       source,
-		Availability: availability,
-		Reason:       reason,
-		Version:      safeVersion(version),
-		Endpoint:     endpoint,
-		Connection:   connection,
-		probeReason:  probeReason,
+		Source:            source,
+		Availability:      availability,
+		Reason:            reason,
+		ProbeReason:       probeReason,
+		InstallCapability: InstallCapabilityUnknown,
+		Version:           safeVersion(version),
+		Endpoint:          endpoint,
+		Connection:        connection,
 	}
 }
 

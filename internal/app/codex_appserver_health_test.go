@@ -24,6 +24,7 @@ func TestDoctorAndSupportReportProjectSecretFreeCodexAppServerHealth(t *testing.
 		)
 		health.Lifecycle = codexappserver.LifecycleNotAttempted
 		health.LifecycleReason = codexappserver.LifecycleReasonReadOnly
+		health.InstallCapability = codexappserver.InstallCapabilityExternalCLIOnly
 		return health
 	}
 	doctor.aiDiagnostics = func() []doctorAINotifyIntegration {
@@ -57,7 +58,7 @@ func TestDoctorAndSupportReportProjectSecretFreeCodexAppServerHealth(t *testing.
 	if !reflect.DeepEqual(triggers, []codexappserver.TriggerKind{codexappserver.TriggerDoctor, codexappserver.TriggerSupportReport}) {
 		t.Fatalf("doctor/support triggers = %#v", triggers)
 	}
-	for _, want := range []string{`"source": "hook-fallback"`, `"reason": "unsupported"`, `"version": "codex-cli/0.149.0"`, `"lifecycle_outcome": "not-attempted"`, `"lifecycle_reason": "read-only"`} {
+	for _, want := range []string{`"source": "hook-fallback"`, `"reason": "unsupported"`, `"probe_reason": "unsupported"`, `"install_capability": "external-cli-only"`, `"version": "codex-cli/0.149.0"`, `"lifecycle_outcome": "not-attempted"`, `"lifecycle_reason": "read-only"`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("support doctor JSON missing %q:\n%s", want, data)
 		}
@@ -86,6 +87,7 @@ func TestSettingsCodexAppServerHealthIsReadOnlyStateRow(t *testing.T) {
 			)
 			health.Lifecycle = codexappserver.LifecycleNotAttempted
 			health.LifecycleReason = codexappserver.LifecycleReasonReadOnly
+			health.InstallCapability = codexappserver.InstallCapabilityExternalCLIOnly
 			return health
 		},
 		aiNotifyDiagnostics: func() []doctorAINotifyIntegration {
@@ -107,7 +109,7 @@ func TestSettingsCodexAppServerHealthIsReadOnlyStateRow(t *testing.T) {
 		if entry.Value != settingsNoopValue {
 			t.Fatalf("health row value = %q, want read-only noop", entry.Value)
 		}
-		for _, want := range []string{"Hook fallback", "timed-out", "timeout", "not-attempted/read-only"} {
+		for _, want := range []string{"Hook fallback", "timed-out", "timeout", "probe: timeout", "install: external-cli-only", "not-attempted/read-only"} {
 			if !strings.Contains(entry.Label, want) {
 				t.Fatalf("health row missing %q: %s", want, entry.Label)
 			}
@@ -215,5 +217,42 @@ func TestSupportVersionAllowlistRejectsPathAndTokenStrings(t *testing.T) {
 	redactDoctorJSON(arbitrary, "")
 	if got := arbitrary["runtime"].(map[string]any)["version"].(string); !strings.HasPrefix(got, "sha256:") {
 		t.Fatalf("arbitrary version escaped redaction: %q", got)
+	}
+}
+
+func TestSupportCodexHealthAllowlistKeepsClosedAxesIndependent(t *testing.T) {
+	value := map[string]any{"codex_app_server": map[string]any{
+		"reason":             "hook-unavailable",
+		"probe_reason":       "hook-unavailable",
+		"install_capability": "external-cli-only",
+		"lifecycle_reason":   "start-managed-payload-missing",
+	}}
+	redactDoctorJSON(value, "")
+	health := value["codex_app_server"].(map[string]any)
+	if health["reason"] != "hook-unavailable" {
+		t.Fatalf("effective reason was not allowlisted: %#v", health)
+	}
+	if got := health["probe_reason"].(string); !strings.HasPrefix(got, "sha256:") {
+		t.Fatalf("effective-only reason escaped probe allowlist: %q", got)
+	}
+	if health["install_capability"] != "external-cli-only" || health["lifecycle_reason"] != "start-managed-payload-missing" {
+		t.Fatalf("closed topology axes were not allowlisted: %#v", health)
+	}
+
+	for _, reason := range []codexappserver.Reason{
+		codexappserver.ReasonNone,
+		codexappserver.ReasonExecutableMissing,
+		codexappserver.ReasonDaemonNotRunning,
+		codexappserver.ReasonEndpointUnavailable,
+		codexappserver.ReasonUnsupported,
+		codexappserver.ReasonTimeout,
+		codexappserver.ReasonProtocolError,
+		codexappserver.ReasonDisconnected,
+	} {
+		value := map[string]any{"codex_app_server": map[string]any{"probe_reason": string(reason)}}
+		redactDoctorJSON(value, "")
+		if got := value["codex_app_server"].(map[string]any)["probe_reason"]; got != string(reason) {
+			t.Fatalf("closed producer probe reason %q was redacted to %q", reason, got)
+		}
 	}
 }

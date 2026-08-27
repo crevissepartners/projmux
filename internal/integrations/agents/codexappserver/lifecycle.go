@@ -1,10 +1,11 @@
 package codexappserver
 
 import (
+	"bytes"
 	"context"
 	"errors"
-	"io"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 )
@@ -53,6 +54,7 @@ const (
 	LifecycleReasonProbeEndpointError         LifecycleReason = "probe-endpoint-error"
 	LifecycleReasonProbeUnavailable           LifecycleReason = "probe-unavailable"
 	LifecycleReasonStartExecutableMissing     LifecycleReason = "start-executable-missing"
+	LifecycleReasonStartManagedPayloadMissing LifecycleReason = "start-managed-payload-missing"
 	LifecycleReasonStartNonzero               LifecycleReason = "start-nonzero"
 	LifecycleReasonStartTimeout               LifecycleReason = "start-timeout"
 	LifecycleReasonReadinessExecutableMissing LifecycleReason = "readiness-executable-missing"
@@ -69,6 +71,7 @@ const (
 	startNotRun startResult = iota
 	startSucceeded
 	startExecutableMissing
+	startManagedPayloadMissing
 	startNonzero
 	startTimedOut
 )
@@ -285,10 +288,12 @@ func runDaemonStart(ctx context.Context, timeout time.Duration, lookPath func(st
 	startCtx, cancel := context.WithTimeout(ctx, positiveDuration(timeout, DefaultStartTimeout))
 	defer cancel()
 	cmd := command(startCtx, path, "app-server", "daemon", "start")
-	// Lifecycle diagnostics use only closed outcomes. Process output is neither
-	// retained nor exposed because it may contain paths or other host detail.
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
+	// Only a bounded prefix of stderr is consumed in-memory for the closed known
+	// error classifier. The bytes are discarded when this function returns and
+	// never enter Health, operational diagnostics, or support reports.
+	stderr := boundedStartCapture{remaining: maxStartStderrBytes}
+	cmd.Stdout = discardWriter{}
+	cmd.Stderr = &stderr
 	err = cmd.Run()
 	if err == nil {
 		return startSucceeded
@@ -298,6 +303,48 @@ func runDaemonStart(ctx context.Context, timeout time.Duration, lookPath func(st
 	}
 	if errors.Is(err, exec.ErrNotFound) {
 		return startExecutableMissing
+	}
+	if classifyDaemonStartStderr(stderr.Bytes()) == startManagedPayloadMissing {
+		return startManagedPayloadMissing
+	}
+	return startNonzero
+}
+
+const maxStartStderrBytes = 32 * 1024
+
+type boundedStartCapture struct {
+	buffer    bytes.Buffer
+	remaining int
+}
+
+func (w *boundedStartCapture) Write(p []byte) (int, error) {
+	originalLen := len(p)
+	if w.remaining > 0 {
+		keep := len(p)
+		if keep > w.remaining {
+			keep = w.remaining
+		}
+		_, _ = w.buffer.Write(p[:keep])
+		w.remaining -= keep
+	}
+	return originalLen, nil
+}
+
+func (w *boundedStartCapture) Bytes() []byte { return w.buffer.Bytes() }
+
+type discardWriter struct{}
+
+func (discardWriter) Write(p []byte) (int, error) { return len(p), nil }
+
+func classifyDaemonStartStderr(stderr []byte) startResult {
+	text := string(stderr)
+	for _, signature := range []string{
+		"managed standalone Codex install not found",
+		"requires the standalone install managed by the Codex installer",
+	} {
+		if strings.Contains(text, signature) {
+			return startManagedPayloadMissing
+		}
 	}
 	return startNonzero
 }
@@ -315,6 +362,8 @@ func decideLifecycle(trigger TriggerKind, probeState probeResult, startState sta
 	switch startState {
 	case startExecutableMissing:
 		return LifecycleStartFailed, LifecycleReasonStartExecutableMissing
+	case startManagedPayloadMissing:
+		return LifecycleStartFailed, LifecycleReasonStartManagedPayloadMissing
 	case startNonzero:
 		return LifecycleStartFailed, LifecycleReasonStartNonzero
 	case startTimedOut:
@@ -388,8 +437,8 @@ func probeLifecycleReason(health Health) LifecycleReason {
 }
 
 func healthCause(health Health) Reason {
-	if health.probeReason != "" {
-		return health.probeReason
+	if health.ProbeReason != "" {
+		return health.ProbeReason
 	}
 	return health.Reason
 }
@@ -402,6 +451,7 @@ func withLifecycle(health Health, outcome LifecycleOutcome, reason LifecycleReas
 
 func projectLifecycleHealth(health Health, hookAvailable bool) Health {
 	projected := Decide(health.Availability, healthCause(health), health.Version, health.Endpoint, health.Connection, hookAvailable)
+	projected.InstallCapability = health.InstallCapability
 	projected.Lifecycle = health.Lifecycle
 	projected.LifecycleReason = health.LifecycleReason
 	return projected

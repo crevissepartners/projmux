@@ -38,7 +38,7 @@ func ProbeDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersio
 	health := probeProxy(ctx, timeout, projmuxVersion, hookAvailable, exec.LookPath, func(ctx context.Context) *exec.Cmd {
 		return exec.CommandContext(ctx, "codex", "app-server", "proxy")
 	}, defaultDaemonNotRunning)
-	return withLifecycle(health, LifecycleNotAttempted, LifecycleReasonReadOnly)
+	return withLifecycle(withInstallCapability(health, ObserveDefaultInstallCapability()), LifecycleNotAttempted, LifecycleReasonReadOnly)
 }
 
 func probeProxy(ctx context.Context, timeout time.Duration, projmuxVersion string, hookAvailable bool, lookPath func(string) (string, error), command func(context.Context) *exec.Cmd, daemonNotRunning func() bool) Health {

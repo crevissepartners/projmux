@@ -2,12 +2,14 @@ package codexappserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -18,7 +20,7 @@ import (
 func TestLifecycleDecisionTableExhaustive(t *testing.T) {
 	triggers := []TriggerKind{TriggerNativeUserAction, TriggerDoctor, TriggerSettings, TriggerSupportReport}
 	probes := []probeResult{probeReady, probeDaemonNotRunning, probeNotStartable}
-	starts := []startResult{startNotRun, startSucceeded, startExecutableMissing, startNonzero, startTimedOut}
+	starts := []startResult{startNotRun, startSucceeded, startExecutableMissing, startManagedPayloadMissing, startNonzero, startTimedOut}
 	readiness := []readinessResult{
 		readinessNotRun,
 		readinessReady,
@@ -59,6 +61,8 @@ func expectedLifecycleDecision(trigger TriggerKind, probe probeResult, start sta
 		return LifecycleNotAttempted, LifecycleReasonProbeTimeout
 	case startExecutableMissing:
 		return LifecycleStartFailed, LifecycleReasonStartExecutableMissing
+	case startManagedPayloadMissing:
+		return LifecycleStartFailed, LifecycleReasonStartManagedPayloadMissing
 	case startNonzero:
 		return LifecycleStartFailed, LifecycleReasonStartNonzero
 	case startTimedOut:
@@ -444,6 +448,7 @@ func TestLifecycleFailureMatrix(t *testing.T) {
 		wantReason LifecycleReason
 	}{
 		{name: "command missing", start: startExecutableMissing, wantReason: LifecycleReasonStartExecutableMissing},
+		{name: "managed payload missing", start: startManagedPayloadMissing, wantReason: LifecycleReasonStartManagedPayloadMissing},
 		{name: "nonzero", start: startNonzero, wantReason: LifecycleReasonStartNonzero},
 		{name: "start timeout", start: startTimedOut, wantReason: LifecycleReasonStartTimeout},
 		{name: "socket not created", start: startSucceeded, readiness: testProbeHealth(AvailabilityUnavailable, ReasonDaemonNotRunning), wantReason: LifecycleReasonReadinessSocketUnavailable},
@@ -585,6 +590,13 @@ func TestDaemonStartHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.WriteString("/secret/path prompt=never-expose token=never-expose")
 		_, _ = os.Stderr.WriteString("process output is not a diagnostic")
 		os.Exit(17)
+	case "managed-payload-missing":
+		_, _ = os.Stderr.WriteString("managed standalone Codex install not found at /private/host/path token=never-expose prompt=never-expose")
+		os.Exit(17)
+	case "large-managed-payload-missing":
+		_, _ = os.Stderr.WriteString(strings.Repeat("x", maxStartStderrBytes))
+		_, _ = os.Stderr.WriteString("managed standalone Codex install not found")
+		os.Exit(17)
 	case "timeout":
 		time.Sleep(10 * time.Second)
 	}
@@ -601,6 +613,8 @@ func TestRunDaemonStartFailureClassificationAndExactArgv(t *testing.T) {
 	}{
 		{name: "missing", missing: true, timeout: time.Second, want: startExecutableMissing},
 		{name: "nonzero", scenario: "nonzero", timeout: time.Second, want: startNonzero},
+		{name: "managed payload missing", scenario: "managed-payload-missing", timeout: time.Second, want: startManagedPayloadMissing},
+		{name: "signature beyond capture bound", scenario: "large-managed-payload-missing", timeout: time.Second, want: startNonzero},
 		{name: "timeout", scenario: "timeout", timeout: 20 * time.Millisecond, want: startTimedOut},
 	}
 	for _, tc := range tests {
@@ -633,6 +647,71 @@ func TestRunDaemonStartFailureClassificationAndExactArgv(t *testing.T) {
 				t.Fatalf("start argv = %#v, want %#v", argv, wantArgv)
 			}
 		})
+	}
+}
+
+func TestKnownManagedPayloadFailureProjectsClosedHealthWithoutRawProcessOutput(t *testing.T) {
+	policy := testLifecyclePolicy(
+		func(context.Context) Health {
+			health := testProbeHealth(AvailabilityUnavailable, ReasonDaemonNotRunning)
+			health.InstallCapability = InstallCapabilityExternalCLIOnly
+			return health
+		},
+		func(ctx context.Context) startResult {
+			return runDaemonStart(ctx, time.Second,
+				func(string) (string, error) { return os.Args[0], nil },
+				func(commandCtx context.Context, _ string, _ ...string) *exec.Cmd {
+					cmd := exec.CommandContext(commandCtx, os.Args[0], "-test.run=TestDaemonStartHelperProcess")
+					cmd.Env = append(os.Environ(), "GO_WANT_DAEMON_START_HELPER=1", "DAEMON_START_SCENARIO=managed-payload-missing")
+					return cmd
+				})
+		},
+	)
+	health, err := policy.ensureReadyForHook(context.Background(), TriggerNativeUserAction, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.Reason != ReasonHookUnavailable || health.ProbeReason != ReasonDaemonNotRunning || health.InstallCapability != InstallCapabilityExternalCLIOnly || health.LifecycleReason != LifecycleReasonStartManagedPayloadMissing {
+		t.Fatalf("health axes = %+v", health)
+	}
+	data, err := json.Marshal(health)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"/private/host/path", "token=never-expose", "prompt=never-expose", "managed standalone Codex install not found"} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("closed health leaked %q: %s", forbidden, data)
+		}
+	}
+}
+
+func TestDaemonStartStderrClassifierIsClosedAndNarrow(t *testing.T) {
+	for _, signature := range []string{
+		"managed standalone Codex install not found at /private/host/path",
+		"This command requires the standalone install managed by the Codex installer, because token=private",
+	} {
+		if got := classifyDaemonStartStderr([]byte(signature)); got != startManagedPayloadMissing {
+			t.Fatalf("known signature classified as %d", got)
+		}
+	}
+	for _, unknown := range []string{
+		"package not found",
+		"standalone installer failed",
+		"/private/host/path token=private prompt=private",
+		strings.ToUpper("managed standalone Codex install not found"),
+	} {
+		if got := classifyDaemonStartStderr([]byte(unknown)); got != startNonzero {
+			t.Fatalf("unknown stderr %q classified as %d", unknown, got)
+		}
+	}
+
+	capture := boundedStartCapture{remaining: 8}
+	payload := []byte("12345678/private/path token=private prompt=private")
+	if n, err := capture.Write(payload); err != nil || n != len(payload) {
+		t.Fatalf("bounded write = %d, %v", n, err)
+	}
+	if got := string(capture.Bytes()); got != "12345678" {
+		t.Fatalf("bounded capture = %q", got)
 	}
 }
 
