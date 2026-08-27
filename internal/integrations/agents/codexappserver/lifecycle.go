@@ -320,10 +320,7 @@ type boundedStartCapture struct {
 func (w *boundedStartCapture) Write(p []byte) (int, error) {
 	originalLen := len(p)
 	if w.remaining > 0 {
-		keep := len(p)
-		if keep > w.remaining {
-			keep = w.remaining
-		}
+		keep := min(len(p), w.remaining)
 		_, _ = w.buffer.Write(p[:keep])
 		w.remaining -= keep
 	}
