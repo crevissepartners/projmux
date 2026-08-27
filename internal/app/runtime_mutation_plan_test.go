@@ -2380,7 +2380,7 @@ func TestStandaloneRouteRequiresBlankClassAndExactInheritedPaneReceipt(t *testin
 		name, appMarker, logicalMarker, pane string
 		want                                 string
 	}{
-		{name: "partial app marker", appMarker: "1", want: "not app-owned"},
+		{name: "partial app marker", appMarker: "1", want: "projmux config apply --socket projmux"},
 		{name: "partial logical marker", logicalMarker: "forged", want: "not app-owned"},
 		{name: "missing pane receipt", want: "TMUX_PANE"},
 	} {
@@ -2429,6 +2429,32 @@ func TestDefaultInvocationAliasRecoversCanonicalAppRouteBidirectionally(t *testi
 	if route.target.flag != "-L" || route.target.value != name || route.socketName != name || route.expectedSocketPath != path ||
 		route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != "4242" || route.authority.PaneID != "" {
 		t.Fatalf("canonical alias route = %#v", route)
+	}
+}
+
+func TestPre013DefaultAppRouteReturnsTypedRecoveryAndZeroWrites(t *testing.T) {
+	server := newFakeTmux()
+	server.socketName = ""
+	server.addSession("legacy")
+	_, err := resolveInvocationRuntimeMutationRoute(context.Background(), server, func(string) string { return "" })
+	var markerErr *runtimeMutationMarkerError
+	if !errors.As(err, &markerErr) || markerErr.Diagnosis != runtimeMutationMarkerMissing || markerErr.LogicalSocket != defaultAppSocket {
+		t.Fatalf("missing marker diagnosis = %#v / %v", markerErr, err)
+	}
+	wantRecovery := "projmux config apply --socket " + defaultAppSocket
+	if !strings.Contains(err.Error(), wantRecovery) {
+		t.Fatalf("missing marker error = %q, want recovery %q", err, wantRecovery)
+	}
+	if server.session("legacy") == nil {
+		t.Fatal("ordinary diagnosis killed the live legacy session")
+	}
+	for _, call := range server.calls {
+		argv := tmuxCommandArgv(call)
+		for _, write := range []string{"set-option", "set-environment", "source-file", "new-session", "new-window", "split-window", "kill-pane", "kill-window", "kill-session"} {
+			if slices.Contains(argv, write) {
+				t.Fatalf("ordinary missing-marker diagnosis reached write %q: %#v", write, server.calls)
+			}
+		}
 	}
 }
 

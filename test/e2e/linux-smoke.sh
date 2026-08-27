@@ -297,6 +297,8 @@ recorder_input="$PROJMUX_SMOKE_WORKDIR/recorder-client.in"
 mkdir -p "$recorder_root" "$recorder_bootstrap_root"
 mkfifo "$recorder_input"
 tmux -L "$recorder_socket" new-session -d -s "$recorder_bootstrap_session" -c "$recorder_bootstrap_root" sleep 300
+# Model the only migratable legacy state: app-owned with no logical marker.
+tmux -L "$recorder_socket" set-option -gq @projmux_app 1
 exec 9<>"$recorder_input"
 TERM=xterm-256color script -qefc \
   "TERM=xterm-256color tmux -L '$recorder_socket' attach-session -t '$recorder_bootstrap_session'" \
@@ -2419,6 +2421,7 @@ if [[ -z "$canonical_shell_uid" || "$canonical_default_shell_uid" != "$canonical
   exit 1
 fi
 # Settle unrelated status projection before taking the protected preimage.
+ctx set-option -gq @projmux_app 1
 pmx config apply >"$create_root/canonical-shell-config-baseline.out"
 canonical_agents_before="$(pmx get agents -p alpha -o uid | sort)"
 ctx set-option -p -t "$legacy_pane" @projmux_ai_agent codex
@@ -2636,6 +2639,9 @@ fi
 binding_pmx create project --root "$binding_root/work/alpha" --name alpha >"$binding_root/register-alpha.out"
 binding_pmx create project --root "$binding_root/work/beta" --name beta >"$binding_root/register-beta.out"
 binding_config="$binding_root/config/projmux/tmux.conf"
+# A raw tmux fixture is not adoptable. Declare only the legacy app marker so
+# this explicit apply owns the missing logical-marker migration.
+binding_tmux set-option -gq @projmux_app 1
 binding_pmx internal tmux apply --bin "$bin" --config "$binding_config" --socket "$binding_socket" \
   >"$binding_root/first-apply.out"
 smoke_assert_file_contains "$binding_root/first-apply.out" "reloaded tmux server -L $binding_socket"
@@ -3276,6 +3282,7 @@ if [[ -e "$delete_root/state/projmux/metadata/registry.json" ]]; then
 fi
 delete_pmx create project --root "$delete_root/work/alpha" --name alpha >"$delete_root/register-alpha.out"
 delete_pmx create project --root "$delete_root/work/beta" --name beta >"$delete_root/register-beta.out"
+delete_tmux set-option -gq @projmux_app 1
 delete_pmx internal tmux apply --bin "$bin" --config "$delete_config" --socket "$delete_socket" \
   >"$delete_root/apply.out"
 smoke_assert_file_contains "$delete_root/apply.out" "reloaded tmux server -L $delete_socket"
@@ -4168,6 +4175,7 @@ if [[ -e "$rename_root/state/projmux/metadata/registry.json" ]]; then
   exit 1
 fi
 rename_base_pmx create project --root "$rename_root/work/alpha" --name alpha >"$rename_root/register-alpha.out"
+rename_tmux set-option -gq @projmux_app 1
 rename_base_pmx internal tmux apply --bin "$bin" --config "$rename_config" --socket "$rename_socket" >"$rename_root/apply.out"
 e2e_bounded_reconcile_to_noop --allow-initial-noop "$rename_root/initial-reconcile" \
   rename_base_pmx reconcile resources --socket "$rename_socket" -o json
@@ -4558,6 +4566,7 @@ if [[ -e "$topology_root/state/projmux/metadata/registry.json" ]]; then
   exit 1
 fi
 topology_pmx create project --root "$topology_root/work/alpha" --name alpha >"$topology_root/register-alpha.out"
+topology_tmux set-option -gq @projmux_app 1
 topology_pmx internal tmux apply --bin "$bin" --config "$topology_root/config/projmux/tmux.conf" --socket "$topology_socket" >"$topology_root/apply.out"
 e2e_bounded_reconcile_to_noop --allow-initial-noop "$topology_root/import" \
   topology_pmx reconcile resources --socket "$topology_socket" -o json
@@ -5199,6 +5208,7 @@ if [[ -e "$startup_root/state/projmux/metadata/registry.json" ]]; then
   exit 1
 fi
 startup_pmx create project --root "$startup_root/work/alpha" --name alpha >"$startup_root/register-alpha.out"
+startup_tmux set-option -gq @projmux_app 1
 startup_pmx internal tmux apply --bin "$bin" --config "$startup_root/config/projmux/tmux.conf" --socket "$startup_socket" >"$startup_root/apply.out"
 e2e_bounded_reconcile_to_noop --allow-initial-noop "$startup_root/import" \
   startup_pmx reconcile resources --socket "$startup_socket" -o json
@@ -7684,6 +7694,7 @@ if [[ -e "$exitrec_root/state/projmux/metadata/registry.json" ]]; then
   exit 1
 fi
 exitrec_pmx create project --root "$exitrec_root/work/alpha" --name alpha >"$exitrec_root/register-alpha.out"
+exitrec_tmux set-option -gq @projmux_app 1
 exitrec_pmx internal tmux apply --bin "$bin" \
   --config "$exitrec_root/config/projmux/tmux.conf" --socket "$exitrec_socket" \
   >"$exitrec_root/apply.out"
@@ -8432,6 +8443,7 @@ if [[ -e "$menu_root/state/projmux/metadata/registry.json" ]]; then
   exit 1
 fi
 menu_project_uid="$(menu_pmx create project --root "$menu_root/work/alpha" -o uid)"
+menu_tmux set-option -gq @projmux_app 1
 menu_pmx config apply --bin "$bin" --config "$menu_config" --socket "$menu_socket" >"$menu_root/apply.out"
 e2e_bounded_reconcile_to_noop --allow-initial-noop "$menu_root/reconcile" \
   menu_pmx reconcile resources --socket "$menu_socket" -o json
@@ -8858,6 +8870,7 @@ case "$p12_socket_path" in
     ;;
 esac
 
+p12_tmux set-option -gq @projmux_app 1
 p12_pmx config apply --bin "$bin" --config "$p12_config" --socket "$p12_socket" >"$p12_root/apply.out"
 p12_control_uid="$(sed -n '/"controlSessions"/,/"windows"/ s/.*"uid": "\([^"]*\)".*/\1/p' "$p12_registry" | head -n 1)"
 p12_window_uid="$(p12_tmux show-options -wqv -t "$p12_origin_pane" @projmux_window_uid)"

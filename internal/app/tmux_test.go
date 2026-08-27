@@ -72,12 +72,12 @@ func TestTmuxApplyLifecycleOutcomeTable(t *testing.T) {
 	}{
 		{name: "success", runner: &recordingTmuxRunner{}, wantResult: "success", wantEvents: 2},
 		{name: "recognized socket unreachable keeps command success", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running on /private/socket"}}}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplySocketUnreachable, wantEvents: 2},
-		{name: "generic list failure keeps command success", runner: &recordingTmuxRunner{err: errors.New("permission denied for private runner")}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
-		{name: "permission-shaped typed exit stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "failed to connect to server: Permission denied"}}}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
-		{name: "missing executable stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureNotFound, Stderr: "no server running on /private/socket"}}}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
-		{name: "permission kind stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailurePermission, Stderr: "no server running on /private/socket"}}}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
-		{name: "runner kind stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureRunner, Stderr: "no server running on /private/socket"}}}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
-		{name: "argv spoof stays generic", runner: &recordingTmuxRunner{err: errors.New("tmux -L no server running on /private/socket list-sessions")}, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "generic list failure refuses command", runner: &recordingTmuxRunner{err: errors.New("permission denied for private runner")}, wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "permission-shaped typed exit stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "failed to connect to server: Permission denied"}}}, wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "missing executable stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureNotFound, Stderr: "no server running on /private/socket"}}}, wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "permission kind stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailurePermission, Stderr: "no server running on /private/socket"}}}, wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "runner kind stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureRunner, Stderr: "no server running on /private/socket"}}}, wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
+		{name: "argv spoof stays generic", runner: &recordingTmuxRunner{err: errors.New("tmux -L no server running on /private/socket list-sessions")}, wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
 		{name: "reload failure keeps command success", runner: &recordingTmuxRunner{}, reloadErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyReloadFailed, wantEvents: 2},
 		{name: "config write error", runner: &recordingTmuxRunner{}, writeErr: errors.New("private config path"), wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
 		{name: "append stores then errors is best effort", runner: &recordingTmuxRunner{}, writerErr: errors.New("permission denied"), wantResult: "success", wantEvents: 2},
@@ -146,6 +146,123 @@ func TestConfigRouteMarkerMatchingEffectCannotSkipCapturedServerGeneration(t *te
 	for _, call := range server.calls {
 		if slices.Contains(tmuxCommandArgv(call), "set-option") {
 			t.Fatalf("matching config marker skipped captured generation guard and wrote: %#v", call)
+		}
+	}
+}
+
+func TestConfigApplyRouteMarkerAuthorityTableIsFailClosed(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		appMarker  string
+		logical    string
+		wantErr    string
+		wantMarker string
+	}{
+		{name: "pre-0.13 app server permits explicit migration", appMarker: "1", wantMarker: "phase0-config"},
+		{name: "current exact marker is idempotent", appMarker: "1", logical: "phase0-config", wantMarker: "phase0-config"},
+		{name: "other logical marker refuses overwrite", appMarker: "1", logical: "other", wantErr: "logical route marker drifted", wantMarker: "other"},
+		{name: "foreign server refuses adoption", wantErr: "not app-owned"},
+		{name: "forged app marker refuses adoption", appMarker: "0", logical: "phase0-config", wantErr: "not app-owned", wantMarker: "phase0-config"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newFakeTmux()
+			server.socketName = tc.logical
+			server.appMarker = tc.appMarker
+			server.addSession("legacy")
+			route, _, err := bindConfigApplyRuntimeRoute(context.Background(), server, "phase0-config")
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("bind error = %v, want %q", err, tc.wantErr)
+				}
+				for _, call := range server.calls {
+					if slices.Contains(tmuxCommandArgv(call), "set-option") || slices.Contains(tmuxCommandArgv(call), "source-file") {
+						t.Fatalf("refused config apply reached a live write: %#v", server.calls)
+					}
+				}
+				if server.socketName != tc.wantMarker {
+					t.Fatalf("refused apply changed marker to %q, want %q", server.socketName, tc.wantMarker)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := (&tmuxCommand{runner: server}).writeRuntimeMutationRouteMarker(context.Background(), route); err != nil {
+				t.Fatal(err)
+			}
+			if server.socketName != tc.wantMarker || server.session("legacy") == nil {
+				t.Fatalf("explicit migration marker/session = %q/%v", server.socketName, server.session("legacy") != nil)
+			}
+		})
+	}
+}
+
+func TestConfigApplyRouteMarkerRejectsAliasAndPIDDriftBeforeWrite(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*fakeTmux)
+		want   string
+	}{
+		{name: "alias path", mutate: func(server *fakeTmux) { server.socketPath = "/tmp/fake-tmux/alias-drift" }, want: "logical alias"},
+		{name: "pid", mutate: func(server *fakeTmux) { server.serverPID = "9999" }, want: "server generation drifted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := newFakeTmux()
+			server.socketName = ""
+			server.addSession("legacy")
+			route, _, err := bindConfigApplyRuntimeRoute(context.Background(), server, defaultAppSocket)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.mutate(server)
+			server.calls = nil
+			err = (&tmuxCommand{runner: server}).writeRuntimeMutationRouteMarker(context.Background(), route)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("drift error = %v, want %q", err, tc.want)
+			}
+			for _, call := range server.calls {
+				if slices.Contains(tmuxCommandArgv(call), "set-option") {
+					t.Fatalf("drifted apply reached marker write: %#v", server.calls)
+				}
+			}
+		})
+	}
+}
+
+func TestConfigApplyFullSurfaceReturnsForeignMarkerRefusal(t *testing.T) {
+	home := t.TempDir()
+	server := newFakeTmux()
+	server.appMarker = "0"
+	server.socketName = "forged"
+	server.addSession("foreign")
+	cmd := newTmuxCommand()
+	cmd.runner = server
+	cmd.executable = func() (string, error) { return "/tmp/projmux", nil }
+	cmd.homeDir = func() (string, error) { return home, nil }
+	cmd.lookupEnv = func(key string) string {
+		if key == "HOME" {
+			return home
+		}
+		if key == "XDG_CONFIG_HOME" {
+			return filepath.Join(home, ".config")
+		}
+		return ""
+	}
+	var stdout, stderr bytes.Buffer
+	err := cmd.runApply([]string{
+		"--bin", "/tmp/projmux",
+		"--config", filepath.Join(home, ".config", "projmux", "tmux.conf"),
+		"--socket", defaultAppSocket,
+	}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "not app-owned") {
+		t.Fatalf("full config apply error = %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), "skipped reload: no live tmux server") {
+		t.Fatalf("authority refusal was misreported as no-server: %s", stdout.String())
+	}
+	for _, call := range server.calls {
+		if slices.Contains(tmuxCommandArgv(call), "source-file") || slices.Contains(tmuxCommandArgv(call), "set-option") {
+			t.Fatalf("foreign full apply reached live write: %#v", server.calls)
 		}
 	}
 }
@@ -3249,7 +3366,7 @@ func TestTmuxApplySkipsReloadWhenServerMissing(t *testing.T) {
 
 	home := t.TempDir()
 	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
-	runner := &recordingTmuxRunner{err: errors.New("no server running on /tmp/tmux-1000/projmux")}
+	runner := &recordingTmuxRunner{err: appTypedCommandFailure{failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running on /tmp/tmux-1000/projmux"}}}
 	cmd := &tmuxCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		lookupEnv:  func(name string) string { return home },
@@ -3302,7 +3419,7 @@ func TestTmuxApplyUsesSavedDesktopNotifyMode(t *testing.T) {
 		t.Fatalf("SaveDesktopNotifyModeFile() error = %v", err)
 	}
 	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
-	runner := &recordingTmuxRunner{err: errors.New("no server running on /tmp/tmux-1000/projmux")}
+	runner := &recordingTmuxRunner{err: appTypedCommandFailure{failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running on /tmp/tmux-1000/projmux"}}}
 	cmd := &tmuxCommand{
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		homeDir:    func() (string, error) { return home, nil },
@@ -3370,7 +3487,7 @@ func TestTmuxApplyGeneratesOnlyTwoDesktopNotifyModes(t *testing.T) {
 				}
 			}
 			configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
-			runner := &recordingTmuxRunner{err: errors.New("no server running on /tmp/tmux-1000/projmux")}
+			runner := &recordingTmuxRunner{err: appTypedCommandFailure{failure: inttmux.CommandFailure{Kind: inttmux.CommandFailureExit, Stderr: "no server running on /tmp/tmux-1000/projmux"}}}
 			cmd := &tmuxCommand{
 				executable: func() (string, error) { return "/tmp/projmux", nil },
 				homeDir:    func() (string, error) { return home, nil },
@@ -3605,6 +3722,7 @@ type recordingTmuxRunner struct {
 	errors  map[string]error
 	calls   []recordedTmuxCall
 	err     error
+	markers map[string]string
 }
 
 type recordedTmuxCall struct {
@@ -3631,6 +3749,10 @@ func (r *recordingTmuxRunner) Run(_ context.Context, name string, args ...string
 		}
 		showKey := recordedTmuxCallKey("tmux", "-S", args[1], "show-options", "-gqv", runtimeMutationSocketNameOption)
 		r.outputs[showKey] = args[len(args)-1] + "\n"
+		if r.markers == nil {
+			r.markers = map[string]string{}
+		}
+		r.markers[args[1]] = args[len(args)-1]
 		return nil, nil
 	}
 	if name == "tmux" && len(args) >= 6 && args[len(args)-4] == "display-message" && args[len(args)-3] == "-p" &&
@@ -3638,7 +3760,14 @@ func (r *recordingTmuxRunner) Run(_ context.Context, name string, args ...string
 		for i := 0; i+1 < len(args); i++ {
 			switch args[i] {
 			case "-L":
-				return []byte("/tmp/tmux-1000/" + args[i+1] + "\n"), nil
+				path := "/tmp/tmux-1000/" + args[i+1]
+				if r.markers == nil {
+					r.markers = map[string]string{}
+				}
+				if _, exists := r.markers[path]; !exists {
+					r.markers[path] = args[i+1]
+				}
+				return []byte(path + "\n"), nil
 			case "-S":
 				return []byte(args[i+1] + "\n"), nil
 			}
@@ -3656,6 +3785,9 @@ func (r *recordingTmuxRunner) Run(_ context.Context, name string, args ...string
 			for i := 0; i+1 < len(args); i++ {
 				if args[i] == "-L" {
 					return []byte(args[i+1] + "\n"), nil
+				}
+				if args[i] == "-S" && r.markers != nil {
+					return []byte(r.markers[args[i+1]] + "\n"), nil
 				}
 			}
 			return []byte(defaultAppSocket + "\n"), nil

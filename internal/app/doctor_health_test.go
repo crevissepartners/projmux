@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 type doctorHealthStore struct {
@@ -107,6 +108,79 @@ func TestDoctorRuntimeFindingTable(t *testing.T) {
 				t.Fatalf("findings = %#v, want %#v", findings, tc.want)
 			}
 		})
+	}
+}
+
+func TestDoctorAppRouteMarkerFindingTextJSONAndReadOnlyParity(t *testing.T) {
+	valid := []byte(withTmuxConfigDigest("set -g @fixture 1\n"))
+	for _, tc := range []struct {
+		name  string
+		state runtimeMutationMarkerDiagnosis
+		code  string
+	}{
+		{name: "missing", state: runtimeMutationMarkerMissing, code: "runtime.route-marker.missing"},
+		{name: "mismatch", state: doctorRuntimeMarkerMismatch, code: "runtime.route-marker.mismatch"},
+		{name: "unreadable", state: doctorRuntimeMarkerUnreadable, code: "runtime.route-marker.unreadable"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd, root := healthDoctor(t, diagnostics.ReadResult{}, nil, doctorRuntimeProbe{
+				SocketState: diagnostics.RuntimeHealthy,
+				MarkerState: tc.state,
+			}, valid)
+			before := snapshotDoctorTree(t, root)
+			var textOut, jsonOut bytes.Buffer
+			if err := cmd.Run([]string{"--section", "runtime", "--verbose"}, &textOut, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Run([]string{"--section", "runtime", "--json"}, &jsonOut, &bytes.Buffer{}); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(textOut.String(), tc.code) || !strings.Contains(jsonOut.String(), `"code": "`+tc.code+`"`) {
+				t.Fatalf("marker finding missing from projections\ntext=%s\njson=%s", textOut.String(), jsonOut.String())
+			}
+			after := snapshotDoctorTree(t, root)
+			if !reflect.DeepEqual(before, after) {
+				t.Fatalf("doctor marker diagnosis mutated source tree\nbefore=%#v\nafter=%#v", before, after)
+			}
+		})
+	}
+}
+
+func TestTroubleshootingMarkerAndNPMRecoveryEntryPoints(t *testing.T) {
+	troubleshooting, err := os.ReadFile("../../docs/troubleshooting.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(troubleshooting)
+	for _, want := range []string{
+		"projmux doctor --section runtime --verbose",
+		"projmux diagnostics log",
+		"tmux -L projmux show-options -gqv @projmux_app",
+		"tmux -L projmux show-options -gqv @projmux_socket_name",
+		"projmux config apply --socket projmux",
+		"runtime.route-marker.missing",
+		"runtime.route-marker.mismatch",
+		"runtime.route-marker.unreadable",
+		"unsupported or incomplete npm install",
+		"npm install -g projmux@latest --include=optional",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("troubleshooting guide missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{"diagnostics log --level", "diagnostics log --tail", "tmux -L projmux set"} {
+		if strings.Contains(body, forbidden) {
+			t.Errorf("troubleshooting guide contains unsupported or unsafe command %q", forbidden)
+		}
+	}
+	for _, path := range []string{"../../README.md", "../../docs/install.md", "../../docs/upgrading.md"} {
+		raw, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if !strings.Contains(string(raw), "troubleshooting.md") {
+			t.Errorf("%s has no troubleshooting entry link", path)
+		}
 	}
 }
 
@@ -402,6 +476,9 @@ type doctorProbeRunner struct {
 	calls      [][]string
 	state      diagnostics.RuntimeState
 	digest     string
+	appMarker  string
+	logical    string
+	markerErr  bool
 	outputSize int
 	limit      int
 }
@@ -418,16 +495,35 @@ func (r *doctorProbeRunner) RunBounded(ctx context.Context, name string, args []
 	if r.outputSize > limit {
 		return make([]byte, limit), nil, errDoctorInputTooLarge
 	}
-	return []byte(r.digest + "\n"), nil, nil
+	switch args[len(args)-1] {
+	case tmuxConfigDigestOption:
+		return []byte(r.digest + "\n"), nil, nil
+	case tmuxopts.AppGlobal:
+		if r.markerErr {
+			return nil, nil, errors.New("closed marker read failure")
+		}
+		return []byte(r.appMarker + "\n"), nil, nil
+	case runtimeMutationSocketNameOption:
+		if r.markerErr {
+			return nil, nil, errors.New("closed marker read failure")
+		}
+		return []byte(r.logical + "\n"), nil, nil
+	default:
+		return nil, nil, errors.New("unexpected probe option")
+	}
 }
 
 func TestDoctorRuntimeProbeUsesFixedBoundedReadOnlyArgv(t *testing.T) {
-	runner := &doctorProbeRunner{state: diagnostics.RuntimeHealthy, digest: strings.Repeat("a", 64)}
+	runner := &doctorProbeRunner{state: diagnostics.RuntimeHealthy, digest: strings.Repeat("a", 64), appMarker: "1", logical: defaultAppSocket}
 	probe := doctorRuntimeProbeWith(runner, 20*time.Millisecond)
 	if probe.SocketState != diagnostics.RuntimeHealthy || probe.AppliedDigest != runner.digest {
 		t.Fatalf("probe = %#v", probe)
 	}
-	want := [][]string{{"tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_config_digest"}}
+	want := [][]string{
+		{"tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_config_digest"},
+		{"tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_app"},
+		{"tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_socket_name"},
+	}
 	if !reflect.DeepEqual(runner.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", runner.calls, want)
 	}
@@ -436,6 +532,33 @@ func TestDoctorRuntimeProbeUsesFixedBoundedReadOnlyArgv(t *testing.T) {
 	}
 	if runtime.GOOS == "windows" && strings.Contains(strings.Join(runner.calls[0], " "), "sh") {
 		t.Fatal("probe used a shell")
+	}
+}
+
+func TestDoctorRuntimeProbeClassifiesAppRouteMarkers(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		app       string
+		logical   string
+		markerErr bool
+		want      runtimeMutationMarkerDiagnosis
+	}{
+		{name: "current", app: "1", logical: defaultAppSocket},
+		{name: "pre-0.13 missing", app: "1", want: runtimeMutationMarkerMissing},
+		{name: "mismatch", app: "1", logical: "other", want: doctorRuntimeMarkerMismatch},
+		{name: "unreadable", app: "1", markerErr: true, want: doctorRuntimeMarkerUnreadable},
+		{name: "foreign is not app-owned finding", app: "", logical: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &doctorProbeRunner{
+				state: diagnostics.RuntimeHealthy, digest: strings.Repeat("a", 64),
+				appMarker: tc.app, logical: tc.logical, markerErr: tc.markerErr,
+			}
+			probe := doctorRuntimeProbeWith(runner, 20*time.Millisecond)
+			if probe.SocketState != diagnostics.RuntimeHealthy || probe.MarkerState != tc.want {
+				t.Fatalf("probe = %#v, want marker %q", probe, tc.want)
+			}
+		})
 	}
 }
 

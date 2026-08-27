@@ -21,6 +21,11 @@ projmux doctor
 `doctor` performs read-only diagnostics for runtime tools such as `tmux`,
 `git`, and `stty`.
 
+If the npm shim reports `unsupported or incomplete npm install`, or a live
+pre-0.13 app server is missing its logical socket marker, use the canonical
+[Troubleshooting](troubleshooting.md) diagnosis and recovery steps. Doctor is
+read-only; its displayed remediation is never executed automatically.
+
 Provider integrations are opt-in and use the canonical installer spelling:
 
 ```sh
@@ -133,3 +138,6 @@ config. It does not touch a live tmux bell hook. See
 Repository packaging and publish details are maintained in
 [npm Distribution](npm-distribution.md). That document is for maintainers; end
 users should not need it for installation.
+
+For incomplete optional dependencies, Doctor findings, and live app socket
+marker recovery, see [Troubleshooting](troubleshooting.md).

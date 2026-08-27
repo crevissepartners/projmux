@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 type doctorFindingSeverity string
@@ -26,6 +27,7 @@ const (
 var doctorFindingCodeInventory = append([]string{
 	"runtime.backend.tmux", "runtime.backend.unknown",
 	"runtime.socket.reachable", "runtime.socket.unreachable", "runtime.socket.probe-failed",
+	"runtime.route-marker.missing", "runtime.route-marker.mismatch", "runtime.route-marker.unreadable",
 	"runtime.config.generated-current", "runtime.config.generated-missing", "runtime.config.generated-unreadable", "runtime.config.generated-invalid",
 	"runtime.config.applied-current", "runtime.config.applied-stale", "runtime.config.applied-unknown",
 	"logs.state.ready", "logs.state.missing", "logs.state.unreadable", "logs.state.unsafe-type", "logs.state.insecure-permissions", "logs.state.privacy-unverified", "logs.state.not-writable", "logs.state.unresolved",
@@ -71,7 +73,13 @@ const (
 type doctorRuntimeProbe struct {
 	SocketState   diagnostics.RuntimeState
 	AppliedDigest string
+	MarkerState   runtimeMutationMarkerDiagnosis
 }
+
+const (
+	doctorRuntimeMarkerMismatch   runtimeMutationMarkerDiagnosis = "logical-marker-mismatch"
+	doctorRuntimeMarkerUnreadable runtimeMutationMarkerDiagnosis = "marker-unreadable"
+)
 
 var doctorDigestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
@@ -111,6 +119,14 @@ func (c *doctorCommand) evaluateRuntimeFindings() []doctorFinding {
 		findings = append(findings, doctorFinding{Severity: doctorSeverityWarning, Code: "runtime.socket.unreachable", Remediation: doctorRemediationStartRuntime})
 	default:
 		findings = append(findings, doctorFinding{Severity: doctorSeverityWarning, Code: "runtime.socket.probe-failed", Remediation: doctorRemediationInspectRuntimeLogs})
+	}
+	switch probe.MarkerState {
+	case runtimeMutationMarkerMissing:
+		findings = append(findings, doctorFinding{Severity: doctorSeverityWarning, Code: "runtime.route-marker.missing", Remediation: doctorRemediationRunTmuxApply})
+	case doctorRuntimeMarkerMismatch:
+		findings = append(findings, doctorFinding{Severity: doctorSeverityError, Code: "runtime.route-marker.mismatch", Remediation: doctorRemediationInspectRuntimeLogs})
+	case doctorRuntimeMarkerUnreadable:
+		findings = append(findings, doctorFinding{Severity: doctorSeverityError, Code: "runtime.route-marker.unreadable", Remediation: doctorRemediationInspectRuntimeLogs})
 	}
 
 	generatedState, generatedDigest := c.generatedConfigHealth()
@@ -308,7 +324,17 @@ func (doctorExecBoundedRunner) RunBounded(ctx context.Context, name string, args
 	if name != "tmux" || !doctorRuntimeProbeArgsMatch(args) {
 		return nil, nil, errDoctorUnsupportedProbeCommand
 	}
-	cmd := exec.CommandContext(ctx, "tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_config_digest")
+	var cmd *exec.Cmd
+	switch args[4] {
+	case tmuxConfigDigestOption:
+		cmd = exec.CommandContext(ctx, "tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_config_digest")
+	case tmuxopts.AppGlobal:
+		cmd = exec.CommandContext(ctx, "tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_app")
+	case runtimeMutationSocketNameOption:
+		cmd = exec.CommandContext(ctx, "tmux", "-L", "projmux", "show-options", "-gqv", "@projmux_socket_name")
+	default:
+		return nil, nil, errDoctorUnsupportedProbeCommand
+	}
 	return doctorRunCommandBounded(cmd, limit)
 }
 
@@ -322,9 +348,12 @@ func doctorRunCommandBounded(cmd *exec.Cmd, limit int) ([]byte, []byte, error) {
 }
 
 func doctorRuntimeProbeArgsMatch(args []string) bool {
-	return len(args) == 5 &&
-		args[0] == "-L" && args[1] == defaultAppSocket &&
-		args[2] == "show-options" && args[3] == "-gqv" && args[4] == tmuxConfigDigestOption
+	if len(args) != 5 ||
+		args[0] != "-L" || args[1] != defaultAppSocket ||
+		args[2] != "show-options" || args[3] != "-gqv" {
+		return false
+	}
+	return args[4] == tmuxConfigDigestOption || args[4] == tmuxopts.AppGlobal || args[4] == runtimeMutationSocketNameOption
 }
 
 func doctorRuntimeProbeWith(runner doctorBoundedRunner, timeout time.Duration) doctorRuntimeProbe {
@@ -345,7 +374,28 @@ func doctorRuntimeProbeWith(runner doctorBoundedRunner, timeout time.Duration) d
 	if !doctorDigestPattern.MatchString(digest) {
 		digest = ""
 	}
-	return doctorRuntimeProbe{SocketState: diagnostics.RuntimeHealthy, AppliedDigest: digest}
+	probe := doctorRuntimeProbe{SocketState: diagnostics.RuntimeHealthy, AppliedDigest: digest}
+	app, _, appErr := runner.RunBounded(ctx, "tmux", []string{"-L", defaultAppSocket, "show-options", "-gqv", tmuxopts.AppGlobal}, doctorProbeOutputMaxBytes)
+	if appErr != nil {
+		probe.MarkerState = doctorRuntimeMarkerUnreadable
+		return probe
+	}
+	if strings.TrimSpace(string(app)) != "1" {
+		return probe
+	}
+	logical, _, logicalErr := runner.RunBounded(ctx, "tmux", []string{"-L", defaultAppSocket, "show-options", "-gqv", runtimeMutationSocketNameOption}, doctorProbeOutputMaxBytes)
+	if logicalErr != nil {
+		probe.MarkerState = doctorRuntimeMarkerUnreadable
+		return probe
+	}
+	logicalName := strings.TrimSpace(string(logical))
+	switch {
+	case logicalName == "":
+		probe.MarkerState = runtimeMutationMarkerMissing
+	case logicalName != defaultAppSocket:
+		probe.MarkerState = doctorRuntimeMarkerMismatch
+	}
+	return probe
 }
 
 func doctorProbeNoServer(err error, stderr []byte) bool {

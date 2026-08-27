@@ -472,13 +472,19 @@ func TestApplyConvergesOnlyAfterSuccessfulReloadOnTheSameSocket(t *testing.T) {
 	sourceIdx := slices.IndexFunc(calls, func(call recordedTmuxCall) bool {
 		return slices.Contains(call.args, "source-file")
 	})
-	markerIdx := slices.IndexFunc(calls, func(call recordedTmuxCall) bool {
-		return slices.Contains(call.args, "set-option") && slices.Contains(call.args, runtimeMutationSocketNameOption)
+	markerVerifyOffset := slices.IndexFunc(calls[sourceIdx+1:], func(call recordedTmuxCall) bool {
+		return slices.Contains(call.args, "show-options") && slices.Contains(call.args, runtimeMutationSocketNameOption)
 	})
-	if len(calls) < 3 || !reflect.DeepEqual(calls[0].args[:2], []string{"-L", "isolated"}) || sourceIdx < 0 || markerIdx <= sourceIdx {
+	if len(calls) < 3 || !reflect.DeepEqual(calls[0].args[:2], []string{"-L", "isolated"}) || sourceIdx < 0 || markerVerifyOffset < 0 {
 		t.Fatalf("reload did not precede same-socket convergence: %+v", calls)
 	}
 	for _, call := range calls[sourceIdx:] {
+		if len(call.args) >= 2 && call.args[0] == "-L" {
+			if call.args[1] != "isolated" || !slices.Contains(call.args, "display-message") || !slices.Contains(call.args, "#{socket_path}") {
+				t.Fatalf("post-bind logical re-observation was not the exact socket-path read: %+v", call)
+			}
+			continue
+		}
 		if len(call.args) < 2 || call.args[0] != "-S" || call.args[1] != "/tmp/tmux-1000/isolated" {
 			t.Fatalf("post-bind apply call left the exact physical socket: %+v", call)
 		}

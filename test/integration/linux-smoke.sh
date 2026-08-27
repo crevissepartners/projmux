@@ -603,6 +603,9 @@ chmod 0700 "$TMUX_TMPDIR"
 PROJMUX_SMOKE_TMUX_SOCKET="projmux-it-$$-$RANDOM"
 export PROJMUX_SMOKE_TMUX_SOCKET
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" new-session -d -s integration-smoke -c "$smoke_root" sleep 300
+# Initial apply is an explicit migration of an app-owned pre-logical-marker
+# server, never adoption of an arbitrary foreign tmux server.
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -gq @projmux_app 1
 PROJMUX_SMOKE_TMUX_STARTED=1
 PROJMUX_SMOKE_TMUX_ACTUAL="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -t integration-smoke '#{socket_path}')"
 case "$PROJMUX_SMOKE_TMUX_ACTUAL" in
@@ -1021,11 +1024,19 @@ if [[ "${1:-}" != "-L" || "${2:-}" != "projmux" ]]; then
   exit 64
 fi
 shift 2
+if [[ -n "${PROJMUX_DOCTOR_MARKER_READ_FAIL:-}" && "${*: -1}" == "@projmux_socket_name" ]]; then
+  echo "injected marker read failure" >&2
+  exit 65
+fi
 exec "$PROJMUX_REAL_TMUX" -L "$PROJMUX_SMOKE_TMUX_SOCKET" "$@"
 DOCTOR_TMUX
 chmod 0755 "$doctor_mux_dir/tmux"
 
 doctor_config="$XDG_CONFIG_HOME/projmux/tmux.conf"
+# Doctor's public runtime probe is intentionally fixed to -L projmux. The
+# wrapper maps that logical test name to the run-unique physical test server,
+# so expose the matching logical marker during this isolated probe fixture.
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -gq @projmux_socket_name projmux
 cp "$doctor_config" "$PROJMUX_SMOKE_WORKDIR/doctor-config.before"
 cp "$operations_log" "$PROJMUX_SMOKE_WORKDIR/doctor-operations.before"
 find "$XDG_STATE_HOME/projmux" "$XDG_CONFIG_HOME/projmux" -printf '%p|%m|%s|%T@\n' | sort >"$PROJMUX_SMOKE_WORKDIR/doctor-inventory.before"
@@ -1060,6 +1071,52 @@ for package_state in /var/lib/dpkg/status /lib/apk/db/installed /var/lib/rpm/rpm
   fi
 done >"$PROJMUX_SMOKE_WORKDIR/doctor-package-state.after"
 cmp "$PROJMUX_SMOKE_WORKDIR/doctor-package-state.before" "$PROJMUX_SMOKE_WORKDIR/doctor-package-state.after"
+
+# Marker diagnosis is read-only and distinguishes the three bounded app-owned
+# states in both the real tmux probe and JSON projection.
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -gu @projmux_socket_name
+env -u TMUX -u TMUX_PANE \
+  PATH="$doctor_mux_dir:$PATH" \
+  PROJMUX_REAL_TMUX="$real_doctor_tmux" \
+  "$bin" doctor --json --section runtime >"$PROJMUX_SMOKE_WORKDIR/doctor-runtime-marker-missing.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime-marker-missing.json" '"code": "runtime.route-marker.missing"'
+if [[ -n "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_socket_name)" ]]; then
+  echo "Doctor missing-marker diagnosis wrote the marker" >&2
+  exit 1
+fi
+
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -gq @projmux_socket_name forged-logical
+env -u TMUX -u TMUX_PANE \
+  PATH="$doctor_mux_dir:$PATH" \
+  PROJMUX_REAL_TMUX="$real_doctor_tmux" \
+  "$bin" doctor --json --section runtime >"$PROJMUX_SMOKE_WORKDIR/doctor-runtime-marker-mismatch.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime-marker-mismatch.json" '"code": "runtime.route-marker.mismatch"'
+if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_socket_name)" != "forged-logical" ]]; then
+  echo "Doctor mismatch diagnosis rewrote the existing marker" >&2
+  exit 1
+fi
+
+env -u TMUX -u TMUX_PANE \
+  PATH="$doctor_mux_dir:$PATH" \
+  PROJMUX_REAL_TMUX="$real_doctor_tmux" \
+  PROJMUX_DOCTOR_MARKER_READ_FAIL=1 \
+  "$bin" doctor --json --section runtime >"$PROJMUX_SMOKE_WORKDIR/doctor-runtime-marker-unreadable.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/doctor-runtime-marker-unreadable.json" '"code": "runtime.route-marker.unreadable"'
+
+# Restore the exact marker with an explicit operator route. The existing live
+# session and server generation must survive, and an idempotent mutation must
+# then succeed against the same route.
+env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -gu @projmux_socket_name
+marker_recovery_pid="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p '#{pid}')"
+marker_recovery_sessions="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-sessions -F '#{session_id}|#{session_name}')"
+marker_recovery_out="$(env -u TMUX -u TMUX_PANE "$bin" config apply --socket "$PROJMUX_SMOKE_TMUX_SOCKET")"
+smoke_assert_output_contains "$marker_recovery_out" "reloaded tmux server -L $PROJMUX_SMOKE_TMUX_SOCKET: 1 sessions"
+if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" show-options -gqv @projmux_socket_name)" != "$PROJMUX_SMOKE_TMUX_SOCKET" ]] ||
+  [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p '#{pid}')" != "$marker_recovery_pid" ]] ||
+  [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" list-sessions -F '#{session_id}|#{session_name}')" != "$marker_recovery_sessions" ]]; then
+  echo "explicit marker recovery changed the live server generation or sessions" >&2
+  exit 1
+fi
 
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" set-option -g @projmux_config_digest "$(printf '0%.0s' {1..64})"
 env -u TMUX -u TMUX_PANE \
@@ -1367,7 +1424,15 @@ echo "permission denied by deterministic integration runner" >&2
 exit 13
 GENERIC_TMUX
 chmod 0755 "$generic_mux_dir/tmux"
-PATH="$generic_mux_dir:$PATH" "$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket raw-generic-socket >"$PROJMUX_SMOKE_WORKDIR/apply-generic.out"
+if PATH="$generic_mux_dir:$PATH" "$bin" internal tmux apply --bin "$bin" --config "$XDG_CONFIG_HOME/projmux/tmux.conf" --socket raw-generic-socket \
+  >"$PROJMUX_SMOKE_WORKDIR/apply-generic.out" 2>"$PROJMUX_SMOKE_WORKDIR/apply-generic.err"; then
+  echo "generic live-route apply failure unexpectedly succeeded" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/apply-generic.err" \
+  "bind config apply to exact live tmux server -L raw-generic-socket"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/apply-generic.err" \
+  "permission denied by deterministic integration runner"
 
 # Stop only the control client process; the guarded trap owns the exact server.
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" detach-client -s integration-smoke >/dev/null 2>&1 || true
@@ -1375,13 +1440,14 @@ exec 9>&-
 wait "$control_pid" || true
 
 # Each explicit apply owns one correlated lifecycle pair and suppresses the
-# older generic top-level outcome. Eighteen apply invocations ran above: the
+# older generic top-level outcome. Nineteen apply invocations ran above: the
 # existing six, five row-0 visibility convergence applies, three row-1
 # mixed/minimal/default convergence applies, and four sequence applies
-# (install, repeat, rejected duplicate, removal). The rejected duplicate still
-# owns a correlated pair because it fails inside the apply operation.
+# (install, repeat, rejected duplicate, removal), plus the explicit missing
+# logical-marker recovery. The rejected duplicate still owns a correlated pair
+# because it fails inside the apply operation.
 operations_log="$XDG_STATE_HOME/projmux/logs/operations.jsonl"
-expected_apply_count=18
+expected_apply_count=19
 apply_starts="$(grep -c '"event":"lifecycle.start".*"operation":"tmux.apply"' "$operations_log")"
 apply_outcomes="$(grep -c '"event":"lifecycle.outcome".*"operation":"tmux.apply"' "$operations_log")"
 if [[ "$apply_starts" != "$expected_apply_count" || "$apply_outcomes" != "$expected_apply_count" ]]; then
