@@ -1,0 +1,66 @@
+internal.back|parent=|value=__settings_back__|axis=3|nav=View|entry=navigation|owner=passive|label=Back|key=settings.text.back
+internal.noop|parent=|value=__settings_noop__|axis=3|nav=State|entry=info-or-disabled|owner=passive|label=Info or disabled|key=settings.node.info_or_disabled
+internal.tab.global|parent=|value=__settings_tab_global__|axis=3|nav=View|entry=navigation|owner=root|label=Global Settings|key=settings.root.tab.global
+internal.tab.project|parent=|value=__settings_tab_project__|axis=3|nav=View|entry=navigation|owner=root|label=Project Settings|key=settings.root.tab.project
+internal.hooks.global|parent=|value=section:hooks-global|axis=1|nav=View|entry=navigation|owner=automation|label=Projmux session lifecycle|key=settings.text.projmux_session_lifecycle
+internal.notifications.delivery|parent=|value=notifications:delivery|axis=1|nav=View|entry=navigation|owner=notifications|label=Provider Integrations|key=settings.text.provider_integrations
+internal.keybindings.bindings|parent=|value=keybindings:bindings|axis=1|nav=View|entry=navigation|owner=keybindings|label=Keybindings|key=settings.text.keybindings
+internal.keybindings.diagnostic|parent=|value=keybindings:diagnostic|axis=1|nav=View|entry=navigation|owner=keybindings|label=Keybinding Diagnostic|key=settings.node.keybinding_diagnostic
+internal.keybindings.probe|parent=|value=keybindings:probe|axis=1|nav=View|entry=navigation|owner=keybindings|label=Keybinding Probe|key=settings.node.keybinding_probe
+internal.ai.notify-diagnostics|parent=|value=ai-notify-diagnostics|axis=1|nav=View|entry=navigation|owner=ai|label=Provider Integrations|key=settings.text.provider_integrations
+internal.workdir.typed|parent=|value=workdir:typed|axis=1|nav=Edit|entry=actionable|owner=project|label=Type path manually...|key=settings.text.type_path_manually
+global.projects|parent=global|value=section:project-picker|axis=1|nav=View|entry=navigation|owner=root|label=Projects|key=picker.crumb.projects
+global.projects.primary-root|parent=global.projects|value=project-root:manage|axis=1|nav=View|entry=navigation|owner=project-picker|label=Primary discovery root|key=settings.text.primary_discovery_root
+global.projects.primary-root.use-current|parent=global.projects.primary-root|value=projdir:set-current|axis=1|nav=Edit|entry=actionable|owner=project|label=Use Current Project as Root|key=settings.text.use_current_project_root
+global.projects.primary-root.enter-path|parent=global.projects.primary-root|value=projdir:set-typed|axis=1|nav=Edit|entry=actionable|owner=project|label=Enter path|key=settings.text.enter_path
+global.projects.primary-root.clear|parent=global.projects.primary-root|value=projdir:clear|axis=1|nav=Confirm|entry=actionable|owner=project|label=Clear saved root|key=settings.text.clear_saved_root
+global.projects.additional-roots|parent=global.projects|value=workdir:list|axis=1|nav=View|entry=navigation|owner=project-picker|label=Additional discovery roots|key=settings.text.additional_discovery_roots
+global.projects.additional-roots.add-path|parent=global.projects.additional-roots|value=workdir:add|axis=1|nav=Edit|entry=actionable|owner=project-picker|label=Add path|key=settings.text.add_path
+global.projects.pinned|parent=global.projects|value=project:pins|axis=1|nav=View|entry=navigation|owner=project-picker|label=Pinned Projects|key=settings.text.pinned_projects
+global.projects.pinned.select|parent=global.projects.pinned|value=project:add|axis=1|nav=Edit|entry=actionable|owner=project-picker|label=Select Project to pin|key=settings.text.select_project_to_pin
+global.projects.candidate-pins|parent=global.projects|value=project:candidate-pins|axis=1|nav=View|entry=navigation|owner=project-picker|label=Candidate Pins|key=settings.text.candidate_pins
+global.projects.sidebar|parent=global.projects|value=projects:sidebar|axis=1|nav=View|entry=navigation|owner=project-picker|label=Project Sidebar|key=settings.text.project_sidebar
+global.ai|parent=global|value=section:ai|axis=1|nav=View|entry=navigation|owner=root|label=AI|key=settings.node.ai
+global.ai.launch-target|parent=global.ai|value=ai-default-mode|axis=1|nav=Choice|entry=navigation|owner=ai|label=Default launch target|key=settings.text.default_launch_target
+global.ai.enabled-providers|parent=global.ai|value=ai-enabled-agents|axis=1|nav=View|entry=navigation|owner=ai|label=Enabled providers|key=settings.text.enabled_providers
+global.ai.resume-picker|parent=global.ai|value=ai-resume-picker|axis=1|nav=View|entry=navigation|owner=ai|label=Agent Resume Picker|key=settings.text.agent_resume_picker
+global.ai.resume-picker.limit|parent=global.ai.resume-picker|value=ai-resume-picker-limit|axis=1|nav=Choice|entry=navigation|owner=ai|label=Picker limit|key=settings.text.ai_resume_picker_limit_row
+global.ai.resume-picker.depth|parent=global.ai.resume-picker|value=ai-resume-picker-depth|axis=1|nav=Choice|entry=navigation|owner=ai|label=Scan depth|key=settings.text.ai_resume_picker_depth_row
+global.notifications|parent=global|value=section:notifications|axis=1|nav=View|entry=navigation|owner=root|label=Notifications|key=settings.root.notifications
+global.notifications.desktop-delivery|parent=global.notifications|value=notifications:desktop|axis=1|nav=View|entry=navigation|owner=notifications|label=Desktop delivery|key=settings.text.desktop_delivery
+global.notifications.desktop-delivery.dedupe|parent=global.notifications.desktop-delivery|value=notifications:ai-dedupe|axis=1|nav=Choice|entry=navigation|owner=notifications|label=Dedupe window|key=settings.text.dedupe_window
+global.notifications.provider-integrations|parent=global.notifications|value=notifications:provider-integrations|axis=1|nav=View|entry=navigation|owner=notifications|label=Provider Integrations|key=settings.text.provider_integrations
+global.notifications.tmux-event-source|parent=global.notifications|value=notifications:tmux-event-source|axis=1|nav=View|entry=navigation|owner=notifications|label=tmux event source|key=settings.text.tmux_event_source
+global.notifications.agent-event-behavior|parent=global.notifications|value=notifications:hook-actions|axis=1|nav=View|entry=navigation|owner=notifications|label=Agent event behavior|key=settings.text.agent_event_behavior
+global.automation|parent=global|value=section:automation|axis=1|nav=View|entry=navigation|owner=root|label=Automation|key=settings.text.automation
+global.automation.session-lifecycle|parent=global.automation|value=automation:lifecycle|axis=1|nav=View|entry=navigation|owner=automation|label=Projmux session lifecycle|key=settings.text.projmux_session_lifecycle
+global.automation.after-notification-queued|parent=global.automation|value=automation:send-noti|axis=1|nav=View|entry=navigation|owner=automation|label=After notification queued|key=settings.text.after_notification_queued
+global.appearance|parent=global|value=section:statusbar|axis=1|nav=View|entry=navigation|owner=root|label=Appearance|key=settings.root.appearance
+global.appearance.theme|parent=global.appearance|value=appearance:theme|axis=1|nav=View|entry=navigation|owner=appearance|label=Theme|key=settings.text.theme
+global.appearance.status-bar|parent=global.appearance|value=appearance:status-bar|axis=1|nav=View|entry=navigation|owner=appearance|label=Status Bar|key=settings.text.status_bar
+global.appearance.status-bar.notifications-hud|parent=global.appearance.status-bar|value=statusbar-decoration:notify|axis=1|nav=View|entry=navigation|owner=appearance|label=Notifications HUD|key=settings.text.notifications_hud
+global.appearance.status-bar.agent-usage-hud|parent=global.appearance.status-bar|value=appearance:status-bar:agent-usage-hud|axis=1|nav=View|entry=navigation|owner=appearance|label=Agent Usage HUD|key=settings.node.agent_usage_hud
+global.appearance.status-bar.working-directory|parent=global.appearance.status-bar|value=statusbar-decoration:cwd|axis=1|nav=View|entry=navigation|owner=appearance|label=Working directory|key=settings.text.working_directory
+global.appearance.status-bar.git|parent=global.appearance.status-bar|value=statusbar-decoration:git|axis=1|nav=View|entry=navigation|owner=appearance|label=Git|key=settings.node.git
+global.appearance.locale|parent=global.appearance|value=appearance:language|axis=1|nav=Choice|entry=navigation|owner=appearance|label=Language / Locale|key=settings.text.language_locale
+global.appearance.badge|parent=global.appearance|value=ai-badge-style:|axis=1|nav=Choice|entry=navigation|owner=appearance|label=Agent attention badge style|key=settings.text.agent_attention_badge_style
+global.snapshots|parent=global|value=section:sessionstate|axis=1|nav=View|entry=navigation|owner=root|label=Snapshots|key=settings.text.snapshots
+global.keybindings|parent=global|value=section:keybindings|axis=1|nav=View|entry=navigation|owner=root|label=Keybindings|key=settings.text.keybindings
+global.keybindings.launch-and-popups|parent=global.keybindings|value=keymap-category:launch-and-popups|axis=1|nav=View|entry=navigation|owner=keybindings|label=Launch & popups|key=settings.text.keybinding_category_launch
+global.keybindings.agent-and-pane-launch|parent=global.keybindings|value=keymap-category:agent-and-pane-launch|axis=1|nav=View|entry=navigation|owner=keybindings|label=Agent & Pane launch|key=settings.text.keybinding_category_agent_pane
+global.keybindings.pane-and-window-navigation|parent=global.keybindings|value=keymap-category:pane-and-window-navigation|axis=1|nav=View|entry=navigation|owner=keybindings|label=Pane & Window navigation|key=settings.text.keybinding_category_navigation
+global.keybindings.sidebar-and-picker-actions|parent=global.keybindings|value=keymap-category:sidebar-and-picker-actions|axis=1|nav=View|entry=navigation|owner=keybindings|label=Sidebar & picker actions|key=settings.text.keybinding_category_surfaces
+global.keybindings.input-delivery|parent=global.keybindings|value=keymap-category:input-delivery|axis=1|nav=View|entry=navigation|owner=keybindings|label=Input delivery|key=settings.text.keybinding_category_input
+global.keybindings.input-delivery.native-macos|parent=global.keybindings.input-delivery|value=native-keys:toggle|axis=1|nav=Toggle|entry=actionable|owner=keybindings|label=Native macOS keybindings|key=settings.text.native_macos_keybindings
+global.about|parent=global|value=section:about|axis=1|nav=View|entry=navigation|owner=root|label=About|key=settings.text.about
+global.about.updates|parent=global.about|value=about:updates|axis=1|nav=View|entry=navigation|owner=about|label=Updates|key=settings.text.updates
+global.about.updates.check|parent=global.about.updates|value=update:check|axis=1|nav=Action|entry=actionable|owner=about|label=Check for updates|key=settings.text.check_for_updates
+global.about.updates.apply|parent=global.about.updates|value=update:apply|axis=1|nav=Action|entry=actionable|owner=about|label=Update now|key=settings.text.update_now
+global.about.welcome|parent=global.about|value=welcome:show|axis=1|nav=View|entry=navigation|owner=about|label=Welcome|key=settings.about.welcome
+global.about.quit|parent=global.about|value=quit:open|axis=1|nav=Confirm|entry=navigation|owner=about|label=Quit Projmux|key=settings.text.quit_projmux
+project.automation|parent=project|value=section:project-automation|axis=2|nav=View|entry=navigation|owner=root|label=Automation|key=settings.text.automation
+project.automation.trust|parent=project.automation|value=section:project-trust|axis=2|nav=View|entry=navigation|owner=project-automation|label=Trust|key=settings.text.trust
+project.automation.project-hooks|parent=project.automation|value=section:hooks-project|axis=2|nav=View|entry=navigation|owner=project-automation|label=Project hooks|key=settings.text.project_hooks_lower
+project.automation.project-hooks.lifecycle|parent=project.automation.project-hooks|value=project-automation:lifecycle|axis=2|nav=View|entry=navigation|owner=project-automation|label=Session lifecycle|key=settings.text.session_lifecycle
+project.automation.project-hooks.send-noti|parent=project.automation.project-hooks|value=project-automation:send-noti|axis=2|nav=View|entry=navigation|owner=project-automation|label=After notification queued|key=settings.text.after_notification_queued
+project.snapshots|parent=project|value=section:project-sessionstate|axis=2|nav=View|entry=navigation|owner=root|label=Snapshots|key=settings.text.snapshots

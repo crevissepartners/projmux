@@ -24,16 +24,16 @@ func (c *settingsCommand) aboutEntries() []intpickercompat.Entry {
 		SearchKey: "version source build projmux",
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAbout+".updates"), c.aboutUpdatesSummary()),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavAbout+".updates", settingsGlyphOpen, settingsColorType, c.aboutUpdatesSummary()),
 		Value:     settingsAboutUpdates,
 		SearchKey: "updates check update now latest installer release notes",
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label: settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAbout+".welcome"), "revisit the shell quickstart guide"),
+		Label: settingsNodeRowLabelLocale(locale, settingsNavAbout+".welcome", settingsGlyphOpen, settingsColorType, "revisit the shell quickstart guide"),
 		Value: settingsWelcomeShow,
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, settingsNavLabel(settingsNavAbout+".quit"), "stops the app-owned runtime and its socket"),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavAbout+".quit", settingsGlyphRemove, settingsColorRemove, "stops the app-owned runtime and its socket"),
 		Value:     settingsQuitOpen,
 		SearchKey: "quit projmux runtime socket exit",
 	})
@@ -103,11 +103,11 @@ func (c *settingsCommand) aboutUpdateEntries() []intpickercompat.Entry {
 	}
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, settingsNavLabel(settingsNavAbout+".updates.check"), "refresh cached GitHub release metadata"),
+			Label: settingsNodeRowLabelLocale(locale, settingsNavAbout+".updates.check", settingsGlyphAdd, settingsColorAdd, "refresh cached GitHub release metadata"),
 			Value: settingsUpdateCheck,
 		},
 		intpickercompat.Entry{
-			Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, settingsNavLabel(settingsNavAbout+".updates.apply"), "run installer-specific update command"),
+			Label: settingsNodeRowLabelLocale(locale, settingsNavAbout+".updates.apply", settingsGlyphAdd, settingsColorAdd, "run installer-specific update command"),
 			Value: settingsUpdateApply,
 		},
 	)

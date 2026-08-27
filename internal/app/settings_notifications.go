@@ -216,22 +216,22 @@ func (c *settingsCommand) notificationsEntries() []intpickercompat.Entry {
 	return []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyDesktop), desktopNotifyDisplayName(notifyMode)+" - "+string(notifySource)),
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavNotifyDesktop, settingsGlyphOpen, settingsColorType, desktopNotifyDisplayName(notifyMode)+" - "+string(notifySource)),
 			Value:     settingsNotificationsDesktop,
 			SearchKey: "desktop delivery notifications off notify toast dedupe external sender",
 		},
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyProviders), c.providerIntegrationsSummary()),
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavNotifyProviders, settingsGlyphOpen, settingsColorType, c.providerIntegrationsSummary()),
 			Value:     settingsNotificationsProviders,
 			SearchKey: "provider integrations codex claude antigravity wiring install remove setup",
 		},
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyTmuxSource), c.tmuxEventSourceSummary()),
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavNotifyTmuxSource, settingsGlyphOpen, settingsColorType, c.tmuxEventSourceSummary()),
 			Value:     settingsNotificationsTmuxSource,
 			SearchKey: "tmux event source bell producer wiring fallback",
 		},
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyAgentEvents), c.aiHookActionsSummary()),
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavNotifyAgentEvents, settingsGlyphOpen, settingsColorType, c.aiHookActionsSummary()),
 			Value:     settingsNotificationsHookActions,
 			SearchKey: "agent event behavior provider event default notify state only quiet",
 		},
@@ -930,12 +930,12 @@ func (c *settingsCommand) desktopNotifyEntries() []intpickercompat.Entry {
 			SearchKey: "effective desktop sender source availability",
 		},
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyDesktop+".mode"), desktopNotifyDisplayName(notifyMode)),
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavNotifyDesktop+".mode", settingsGlyphOpen, settingsColorType, desktopNotifyDisplayName(notifyMode)),
 			Value:     settingsActionPrefixDesktopNotifyMode + "choose",
 			SearchKey: "delivery mode off notify desktop toast",
 		},
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavNotifyDesktop+".dedupe"), fmt.Sprintf("%ds - %s", dedupe.Seconds, dedupe.Source)),
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavNotifyDesktop+".dedupe", settingsGlyphOpen, settingsColorType, fmt.Sprintf("%ds - %s", dedupe.Seconds, dedupe.Source)),
 			Value:     settingsNotificationsAIDedupe,
 			SearchKey: "dedupe window seconds duplicate collapse desktop",
 		},
@@ -954,7 +954,7 @@ func (c *settingsCommand) desktopNotifyModeEntries() []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
 		{
-			Label: settingsLabelInfoLocale(locale, settingsNavLabel(settingsNavNotifyDesktop+".mode"), desktopNotifyDisplayName(notifyMode), string(notifySource)),
+			Label: settingsNodeRowLabelInfoLocale(locale, settingsNavNotifyDesktop+".mode", desktopNotifyDisplayName(notifyMode), string(notifySource)),
 			Value: settingsNoopValue,
 		},
 	}

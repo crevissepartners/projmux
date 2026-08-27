@@ -256,11 +256,11 @@ func (c *settingsCommand) sessionStateEntries() []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavSnapshots+".autosave"), string(autosave.Mode)+" - interval "+formatSessionStateAutosaveInterval(interval.Duration)+" - "+autosave.Source),
+			Label: c.nodeRowLabel(settingsNavSnapshots+".autosave", settingsGlyphOpen, settingsColorType, string(autosave.Mode)+" - interval "+formatSessionStateAutosaveInterval(interval.Duration)+" - "+autosave.Source),
 			Value: settingsSessionStateAutosaveDetail,
 		},
 		{
-			Label:     c.rowLabelInfo(settingsNavLabel(settingsNavSnapshots+".storage"), "latest snapshot only", "per-session JSON under XDG state; named snapshots are manual project files"),
+			Label:     c.nodeRowLabelInfo(settingsNavSnapshots+".storage", "latest snapshot only", "per-session JSON under XDG state; named snapshots are manual project files"),
 			Value:     settingsNoopValue,
 			SearchKey: "snapshot storage retention location session-state",
 		},
@@ -350,7 +350,7 @@ func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStat
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.rowLabelInfo(settingsNavLabel(settingsNavProjectsSidebar+".closed-startup"), sidebarStartupChoiceLabel(sidebarStartup.Mode), sidebarStartup.Source),
+			Label: c.nodeRowLabelInfo(settingsNavProjectsSidebar+".closed-startup", sidebarStartupChoiceLabel(sidebarStartup.Mode), sidebarStartup.Source),
 			Value: settingsNoopValue,
 		},
 	}

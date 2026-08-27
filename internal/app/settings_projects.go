@@ -51,7 +51,7 @@ func (c *settingsCommand) projectTabEntries() []intpickercompat.Entry {
 	// override and the saved snapshots.
 	return []intpickercompat.Entry{
 		{
-			Label:     settingsRootLabel(settingsGlyphOpen, settingsNavLabel(settingsNavProjectAutomation), "trust and project lifecycle scripts in "+filepath.Join(ctx.Path, ".projmux")),
+			Label:     settingsNodeRootLabelLocale(c.locale(), settingsNavProjectAutomation, settingsGlyphOpen, "trust and project lifecycle scripts in "+filepath.Join(ctx.Path, ".projmux")),
 			Value:     settingsSectionProjectAutomation,
 			SearchKey: "automation trust project hooks lifecycle send-noti config.toml",
 		},
@@ -418,7 +418,7 @@ func (c *settingsCommand) runAddWorkdir(stdout, stderr io.Writer) error {
 
 func settingsWorkdirTypedEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	return intpickercompat.Entry{
-		Label: settingsLabelLocale(locale, settingsGlyphType, settingsColorType, "Type path manually...", "skip filesystem scan"),
+		Label: settingsNodeRowLabelLocale(locale, settingsNavInternalWorkdirTyped, settingsGlyphType, settingsColorType, "skip filesystem scan"),
 		Value: settingsWorkdirTyped,
 	}
 }
@@ -566,7 +566,7 @@ func (c *settingsCommand) workdirListEntries() ([]intpickercompat.Entry, error) 
 	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
 	if c.switcher == nil {
 		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDimLocale(locale, settingsNavLabel(settingsNavProjectsExtraRoots), "unavailable"),
+			Label: settingsNodeRowLabelDimLocale(locale, settingsNavProjectsExtraRoots, "unavailable"),
 			Value: settingsNoopValue,
 		}), nil
 	}
@@ -604,7 +604,7 @@ func (c *settingsCommand) workdirListEntries() ([]intpickercompat.Entry, error) 
 	}
 	entries = append(entries, c.addCurrentDiscoveryRootEntryLocale(locale, saved))
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, settingsNavLabel(settingsNavProjectsExtraRoots+".add-path"), "choose or type a directory to scan"),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsExtraRoots+".add-path", settingsGlyphAdd, settingsColorAdd, "choose or type a directory to scan"),
 		Value:     settingsWorkdirAdd,
 		SearchKey: "add discovery root path browse type",
 	})
@@ -616,7 +616,7 @@ func (c *settingsCommand) workdirListEntries() ([]intpickercompat.Entry, error) 
 // is disabled with its reason when there is no context or the root is already
 // saved.
 func (c *settingsCommand) addCurrentDiscoveryRootEntryLocale(locale i18n.Locale, saved []string) intpickercompat.Entry {
-	label := settingsNavLabel(settingsNavProjectsExtraRoots + ".add-current")
+	label := settingsNavLabelLocale(locale, settingsNavProjectsExtraRoots+".add-current")
 	if c.switcher == nil {
 		return intpickercompat.Entry{
 			Label: settingsLabelDimLocale(locale, label, "unavailable"),
@@ -656,7 +656,7 @@ func (c *settingsCommand) runDiscoveryRootDetail(root string, stdout, stderr io.
 				SearchKey: "discovery root path source " + root,
 			},
 			{
-				Label:     settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, settingsNavLabel(settingsNavProjectsExtraRoots+".item.remove"), "stops scanning "+root),
+				Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsExtraRoots+".item.remove", settingsGlyphRemove, settingsColorRemove, "stops scanning "+root),
 				Value:     settingsActionPrefixWorkdir + "remove:" + root,
 				SearchKey: "remove discovery root " + root,
 			},
@@ -874,7 +874,7 @@ func (c *settingsCommand) pinnedProjectDetailEntries(reference string) ([]intpic
 
 	entries = append(entries, c.rebindPinnedProjectEntry(locale, reference, registered, ok))
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, settingsNavLabel(settingsNavProjectsPins+".item.unpin"), "removes the pin; Project metadata is kept"),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsPins+".item.unpin", settingsGlyphRemove, settingsColorRemove, "removes the pin; Project metadata is kept"),
 		Value:     settingsActionPrefixSwitch + "pin:" + reference,
 		SearchKey: "unpin project " + reference,
 	})
@@ -882,7 +882,7 @@ func (c *settingsCommand) pinnedProjectDetailEntries(reference string) ([]intpic
 }
 
 func (c *settingsCommand) rebindPinnedProjectEntry(locale i18n.Locale, reference string, project coremetadata.Project, registered bool) intpickercompat.Entry {
-	label := settingsNavLabel(settingsNavProjectsPins + ".item.rebind")
+	label := settingsNavLabelLocale(locale, settingsNavProjectsPins+".item.rebind")
 	if !registered {
 		return intpickercompat.Entry{
 			Label:     settingsLabelDimLocale(locale, label, "unavailable - no Registry Project carries this UID"),
@@ -1075,12 +1075,12 @@ func (c *settingsCommand) candidatePinDetailEntries(path string) ([]intpickercom
 		})
 	}
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, settingsNavLabel(settingsNavProjectsCandidates+".item.register"), "registers this exact path only"),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsCandidates+".item.register", settingsGlyphAdd, settingsColorAdd, "registers this exact path only"),
 		Value:     settingsActionPrefixCandidatePinItem + path + ":register",
 		SearchKey: "register candidate as project " + path,
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, settingsNavLabel(settingsNavProjectsCandidates+".item.unpin"), "removes the pin; the directory is untouched"),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsCandidates+".item.unpin", settingsGlyphRemove, settingsColorRemove, "removes the pin; the directory is untouched"),
 		Value:     settingsActionPrefixSwitch + "pin:" + path,
 		SearchKey: "unpin candidate " + path,
 	})
@@ -1111,22 +1111,22 @@ func (c *settingsCommand) projectPickerEntries() []intpickercompat.Entry {
 
 	entries = append(entries, c.projectRootEntryLocale(locale))
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsExtraRoots), "scan roots; scanning never registers a Project"),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsExtraRoots, settingsGlyphOpen, settingsColorType, "scan roots; scanning never registers a Project"),
 		Value:     settingsWorkdirList,
 		SearchKey: "additional discovery roots workdirs scan roots",
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsPins), "pinned Registry Projects, by UID"),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsPins, settingsGlyphOpen, settingsColorType, "pinned Registry Projects, by UID"),
 		Value:     settingsProjectPins,
 		SearchKey: "pinned projects pin unpin rebind root managed uid",
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsCandidates), "pinned paths no Registry Project claims"),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsCandidates, settingsGlyphOpen, settingsColorType, "pinned paths no Registry Project claims"),
 		Value:     settingsProjectCandidatePins,
 		SearchKey: "candidate pins unregistered path register project",
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsSidebar), c.projectSidebarSummary()),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsSidebar, settingsGlyphOpen, settingsColorType, c.projectSidebarSummary()),
 		Value:     settingsProjectsSidebar,
 		SearchKey: "project sidebar closed project startup snapshot topology runtime diagnostics",
 	})
@@ -1193,13 +1193,12 @@ func (c *settingsCommand) projectSidebarEntries() []intpickercompat.Entry {
 	return []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
 		{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectsSidebar+".closed-startup"), choice+" - "+startup.Source),
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsSidebar+".closed-startup", settingsGlyphOpen, settingsColorType, choice+" - "+startup.Source),
 			Value:     settingsSessionStateSidebarStartupPickerDetail,
 			SearchKey: "closed project startup continue open fresh sidebar startup picker",
 		},
 		{
-			Label: settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType,
-				settingsNavLabel(settingsNavProjectsSidebar+".runtime-diagnostics"),
+			Label: settingsNodeRowLabelLocale(locale, settingsNavProjectsSidebar+".runtime-diagnostics", settingsGlyphOpen, settingsColorType,
 				runtimeDiagnosticsVisibilityChoiceLabel(runtime.Mode)+" - "+runtime.Source()),
 			Value:     settingsRuntimeDiagnosticsVisibilityDetail,
 			SearchKey: "runtime diagnostics row visibility when needed always sidebar escape hatch",
@@ -1249,7 +1248,7 @@ func (c *settingsCommand) runtimeDiagnosticsVisibilityEntries(runtime runtimeDia
 	entries := []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
 		{
-			Label: settingsLabelInfoLocale(locale, settingsNavLabel(settingsNavProjectsSidebar+".runtime-diagnostics"),
+			Label: settingsNodeRowLabelInfoLocale(locale, settingsNavProjectsSidebar+".runtime-diagnostics",
 				runtimeDiagnosticsVisibilityChoiceLabel(runtime.Mode), runtime.Source()),
 			Value: settingsNoopValue,
 		},
@@ -1279,19 +1278,19 @@ func (c *settingsCommand) runtimeDiagnosticsVisibilityEntries(runtime runtimeDia
 func (c *settingsCommand) projectRootEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	if c.switcher == nil {
 		return intpickercompat.Entry{
-			Label: settingsLabelDimLocale(locale, "Primary discovery root", "unavailable"),
+			Label: settingsNodeRowLabelDimLocale(locale, settingsNavProjectsPrimaryRoot, "unavailable"),
 			Value: settingsNoopValue,
 		}
 	}
 	value, source, err := c.switcher.currentProjdirInfo()
 	if err != nil || value == "" {
 		return intpickercompat.Entry{
-			Label: settingsLabelDimLocale(locale, "Primary discovery root", "not configured"),
+			Label: settingsNodeRowLabelDimLocale(locale, settingsNavProjectsPrimaryRoot, "not configured"),
 			Value: settingsProjectRootManage,
 		}
 	}
 	return intpickercompat.Entry{
-		Label: settingsLabelInfoLocale(locale, "Primary discovery root", value, source),
+		Label: settingsNodeRowLabelInfoLocale(locale, settingsNavProjectsPrimaryRoot, value, source),
 		Value: settingsProjectRootManage,
 	}
 }
@@ -1310,7 +1309,7 @@ func (c *settingsCommand) projectRootEntries() ([]intpickercompat.Entry, error) 
 	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
 	if c.switcher == nil {
 		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDimLocale(locale, "Primary discovery root", "unavailable"),
+			Label: settingsNodeRowLabelDimLocale(locale, settingsNavProjectsPrimaryRoot, "unavailable"),
 			Value: settingsNoopValue,
 		}), nil
 	}
@@ -1357,12 +1356,12 @@ func (c *settingsCommand) projectRootEntries() ([]intpickercompat.Entry, error) 
 
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Enter path", "save one primary discovery root directly"),
+			Label: settingsNodeRowLabelLocale(locale, settingsNavProjectsPrimaryRoot+".enter-path", settingsGlyphAdd, settingsColorAdd, "save one primary discovery root directly"),
 			Value: settingsProjdirSetTyped,
 		},
 		c.setCurrentProjectRootEntryLocale(locale),
 		intpickercompat.Entry{
-			Label: settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Clear saved root", "remove ~/.config/projmux/projdir"),
+			Label: settingsNodeRowLabelLocale(locale, settingsNavProjectsPrimaryRoot+".clear", settingsGlyphRemove, settingsColorRemove, "remove ~/.config/projmux/projdir"),
 			Value: settingsProjdirClear,
 		},
 		c.projectRootHintEntryLocale(locale),
@@ -1377,7 +1376,7 @@ func (c *settingsCommand) projectRootEntries() ([]intpickercompat.Entry, error) 
 func (c *settingsCommand) setCurrentProjectRootEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	if c.switcher == nil {
 		return intpickercompat.Entry{
-			Label: settingsLabelDimLocale(locale, "Use Current Project as Root", "unavailable"),
+			Label: settingsNodeRowLabelDimLocale(locale, settingsNavProjectsPrimaryRoot+".use-current", "unavailable"),
 			Value: settingsNoopValue,
 		}
 	}
@@ -1385,7 +1384,7 @@ func (c *settingsCommand) setCurrentProjectRootEntryLocale(locale i18n.Locale) i
 	homeDir, err := c.switcher.resolveHomeDir()
 	if err != nil {
 		return intpickercompat.Entry{
-			Label: settingsLabelDimLocale(locale, "Use Current Project as Root", "home unavailable"),
+			Label: settingsNodeRowLabelDimLocale(locale, settingsNavProjectsPrimaryRoot+".use-current", "home unavailable"),
 			Value: settingsNoopValue,
 		}
 	}
@@ -1393,12 +1392,12 @@ func (c *settingsCommand) setCurrentProjectRootEntryLocale(locale i18n.Locale) i
 	currentTarget, err := c.switcher.resolveSwitchTargetNoMemoize(nil, "settings project root")
 	if err != nil || currentTarget == "" || currentTarget == switchSettingsSentinel {
 		return intpickercompat.Entry{
-			Label: settingsLabelDimLocale(locale, "Use Current Project as Root", "no project context"),
+			Label: settingsNodeRowLabelDimLocale(locale, settingsNavProjectsPrimaryRoot+".use-current", "no project context"),
 			Value: settingsNoopValue,
 		}
 	}
 	return intpickercompat.Entry{
-		Label: settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, "Use Current Project as Root", intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
+		Label: settingsNodeRowLabelLocale(locale, settingsNavProjectsPrimaryRoot+".use-current", settingsGlyphAdd, settingsColorAdd, intrender.PrettyPath(currentTarget, homeDir, repoRoot)),
 		Value: settingsProjdirSetCurrent,
 	}
 }
@@ -1492,7 +1491,7 @@ func (c *settingsCommand) pinnedProjectEntries() ([]intpickercompat.Entry, error
 	}
 	entries = append(entries, c.addCurrentProjectEntryLocale(locale))
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphAdd, settingsColorAdd, settingsNavLabel(settingsNavProjectsPins+".select"), "scan filesystem roots"),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsPins+".select", settingsGlyphAdd, settingsColorAdd, "scan filesystem roots"),
 		Value:     settingsProjectAdd,
 		SearchKey: "select project to pin scan filesystem roots",
 	})

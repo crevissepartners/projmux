@@ -455,6 +455,34 @@ func (c *settingsCommand) backEntry() intpickercompat.Entry {
 	return settingsBackEntryLocale(c.locale())
 }
 
+func (c *settingsCommand) navLabel(id string) string {
+	return settingsNavLabelLocale(c.locale(), id)
+}
+
+func settingsNodeRowLabelLocale(locale i18n.Locale, id, glyph, color, description string) string {
+	return settingsResolvedLabelLocale(locale, glyph, color, settingsNavLabelLocale(locale, id), description)
+}
+
+func settingsNodeRowLabelDimLocale(locale i18n.Locale, id, description string) string {
+	return settingsResolvedLabelDimLocale(locale, settingsNavLabelLocale(locale, id), description)
+}
+
+func settingsNodeRowLabelInfoLocale(locale i18n.Locale, id, value, source string) string {
+	return settingsResolvedLabelInfoLocale(locale, settingsNavLabelLocale(locale, id), value, source)
+}
+
+func (c *settingsCommand) nodeRowLabel(id, glyph, color, description string) string {
+	return settingsNodeRowLabelLocale(c.locale(), id, glyph, color, description)
+}
+
+func (c *settingsCommand) nodeRowLabelDim(id, description string) string {
+	return settingsNodeRowLabelDimLocale(c.locale(), id, description)
+}
+
+func (c *settingsCommand) nodeRowLabelInfo(id, value, source string) string {
+	return settingsNodeRowLabelInfoLocale(c.locale(), id, value, source)
+}
+
 func (c *settingsCommand) rowLabel(glyph, color, name, description string) string {
 	return settingsLabelLocale(c.locale(), glyph, color, name, description)
 }
@@ -670,7 +698,7 @@ func settingsBackEntry() intpickercompat.Entry {
 
 func settingsBackEntryLocale(locale i18n.Locale) intpickercompat.Entry {
 	return intpickercompat.Entry{
-		Label: settingsLabelLocale(locale, settingsGlyphBack, settingsColorBack, "Back", ""),
+		Label: settingsNodeRowLabelLocale(locale, settingsNavInternalBack, settingsGlyphBack, settingsColorBack, ""),
 		Value: settingsBackValue,
 	}
 }

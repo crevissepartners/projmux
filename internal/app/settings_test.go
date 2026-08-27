@@ -1516,7 +1516,7 @@ func TestSettingsRenderedEntryReachabilityRejectsHandlerlessValues(t *testing.T)
 		t.Fatalf("validateSettingsEntryContracts() error = %v, want missing-handler failure", err)
 	}
 
-	meta := settingsActionMeta("Broken", settingsAxisGlobal, settingsOwnerNone)
+	meta := settingsActionMeta("Broken", "settings.test.broken", settingsAxisGlobal, settingsOwnerNone)
 	if settingsEntryOwnerHandles(meta.Owner, settingsUpdateCheck) {
 		t.Fatalf("handlerless actionable metadata %#v unexpectedly reached an owner", meta)
 	}
@@ -1525,12 +1525,17 @@ func TestSettingsRenderedEntryReachabilityRejectsHandlerlessValues(t *testing.T)
 func TestSettingsReachabilityCatalogUsesClosedOwnerTable(t *testing.T) {
 	t.Parallel()
 
-	for value, meta := range settingsEntryCatalog {
+	for _, node := range settingsNodeCatalog {
+		if node.Value == "" || node.Dynamic || (node.Value == settingsNoopValue && !node.Hidden) {
+			continue
+		}
+		value := node.Value
+		meta := settingsEntryMetaFromNode(node)
 		if meta.Owner == settingsOwnerNone || !settingsEntryOwnerHandles(meta.Owner, value) {
 			t.Fatalf("exact entry %q has no reachable owner: %#v", value, meta)
 		}
 	}
-	for _, candidate := range settingsEntryPrefixCatalog {
+	for _, candidate := range settingsDynamicEntryCatalog {
 		value := candidate.prefix + "contract-fixture"
 		if candidate.meta.Owner == settingsOwnerNone || !settingsEntryOwnerHandles(candidate.meta.Owner, value) {
 			t.Fatalf("entry prefix %q has no reachable owner: %#v", candidate.prefix, candidate.meta)

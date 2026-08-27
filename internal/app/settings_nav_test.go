@@ -2,8 +2,13 @@ package app
 
 import (
 	"context"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -13,6 +18,407 @@ import (
 )
 
 const settingsNavTreeGolden = "testdata/settings-nav-tree.golden"
+const settingsStaticNodeContractGolden = "testdata/settings-static-node-contract.golden"
+
+// TestSettingsStaticNodeContractGolden freezes the exact static catalog that
+// drives navigation, ownership validation, and localized row projection.
+func TestSettingsStaticNodeContractGolden(t *testing.T) {
+	t.Parallel()
+
+	got := renderSettingsStaticNodeContracts()
+	if os.Getenv("UPDATE_GOLDEN") != "" {
+		if err := os.WriteFile(settingsStaticNodeContractGolden, []byte(got), 0o644); err != nil {
+			t.Fatalf("write static node contract golden: %v", err)
+		}
+	}
+	want, err := os.ReadFile(settingsStaticNodeContractGolden)
+	if err != nil {
+		t.Fatalf("read static node contract golden: %v\n--- got ---\n%s", err, got)
+	}
+	if got != string(want) {
+		t.Fatalf("static Settings node contract changed.\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func renderSettingsStaticNodeContracts() string {
+	var b strings.Builder
+	for _, node := range settingsNodeCatalog {
+		if node.Value == "" || node.Dynamic || (node.Value == settingsNoopValue && !node.Hidden) {
+			continue
+		}
+		label, key := node.entryLabel()
+		fmt.Fprintf(&b, "%s|parent=%s|value=%s|axis=%d|nav=%s|entry=%s|owner=%s|label=%s|key=%s\n",
+			node.ID, node.Parent, node.Value, node.Axis, node.Kind, node.interactionKind(), settingsEntryOwnerName(node.Owner), label, key)
+	}
+	return b.String()
+}
+
+func settingsEntryOwnerName(owner settingsEntryOwner) string {
+	switch owner {
+	case settingsOwnerPassiveLoop:
+		return "passive"
+	case settingsOwnerRoot:
+		return "root"
+	case settingsOwnerProjectPicker:
+		return "project-picker"
+	case settingsOwnerAI:
+		return "ai"
+	case settingsOwnerNotifications:
+		return "notifications"
+	case settingsOwnerAppearance:
+		return "appearance"
+	case settingsOwnerSessionState:
+		return "session-state"
+	case settingsOwnerKeybindings:
+		return "keybindings"
+	case settingsOwnerAbout:
+		return "about"
+	case settingsOwnerAutomation:
+		return "automation"
+	case settingsOwnerProjectAutomation:
+		return "project-automation"
+	case settingsOwnerProject:
+		return "project"
+	case settingsOwnerHooks:
+		return "hooks"
+	case settingsOwnerTheme:
+		return "theme"
+	case settingsOwnerAINotifyDiagnostics:
+		return "ai-notify-diagnostics"
+	default:
+		return fmt.Sprintf("owner-%d", owner)
+	}
+}
+
+func TestSettingsStaticNodeLabelsHaveExplicitLocaleCoverage(t *testing.T) {
+	t.Parallel()
+
+	var keys []i18n.Key
+	seenValues := map[string]string{}
+	for _, node := range settingsNodeCatalog {
+		if node.Value == "" || node.Dynamic || (node.Value == settingsNoopValue && !node.Hidden) {
+			continue
+		}
+		if previous, ok := seenValues[node.Value]; ok {
+			t.Fatalf("static value %q is owned by both %q and %q", node.Value, previous, node.ID)
+		}
+		seenValues[node.Value] = node.ID
+		label, key := node.entryLabel()
+		if key == "" {
+			t.Fatalf("static node %q has no explicit label key", node.ID)
+		}
+		if node.Owner == settingsOwnerNone || !settingsEntryOwnerHandles(node.Owner, node.Value) {
+			t.Fatalf("static node %q owner %s cannot handle %q", node.ID, settingsEntryOwnerName(node.Owner), node.Value)
+		}
+		meta, ok := settingsEntryMetaForValue(node.Value)
+		if !ok || meta != settingsEntryMetaFromNode(node) {
+			t.Fatalf("static node %q metadata projection = %#v, %v; want %#v", node.ID, meta, ok, settingsEntryMetaFromNode(node))
+		}
+		keys = append(keys, key)
+		if node.LabelKey != "" && node.LabelKey != key {
+			keys = append(keys, node.LabelKey)
+		}
+		if !node.Hidden {
+			for _, locale := range []i18n.Locale{i18n.FallbackLocale, i18n.Locale("ko-KR")} {
+				got := settingsNavLabelLocale(locale, node.ID)
+				want := settingsCatalogTextLocale(locale, label)
+				if got != want {
+					t.Fatalf("static node %q label in %s = %q, want pre-cutover render %q", node.ID, locale, got, want)
+				}
+			}
+		}
+	}
+	catalog := i18n.DefaultCatalog()
+	if missing := catalog.MissingLocaleKeys(i18n.FallbackLocale, keys); len(missing) != 0 {
+		t.Fatalf("static node keys missing en-US entries: %#v", missing)
+	}
+	if missing := catalog.MissingLocaleKeys(i18n.Locale("ko-KR"), keys); len(missing) != 0 {
+		t.Fatalf("static node keys missing ko-KR entries: %#v", missing)
+	}
+}
+
+func TestSettingsDynamicCatalogIsBoundedAndCannotInventNavigation(t *testing.T) {
+	t.Parallel()
+
+	seen := map[string]bool{}
+	var keys []i18n.Key
+	for _, template := range settingsDynamicEntryCatalog {
+		if template.prefix == "" || seen[template.prefix] {
+			t.Fatalf("dynamic prefix %q is empty or duplicated", template.prefix)
+		}
+		seen[template.prefix] = true
+		if template.meta.LabelKey == "" {
+			t.Fatalf("dynamic prefix %q has no explicit template label key", template.prefix)
+		}
+		keys = append(keys, i18n.Key(template.meta.LabelKey))
+		if template.meta.Kind == settingsEntryNavigation && !settingsDynamicNavigationAuthorized(template.nodeID, template.meta) {
+			t.Fatalf("dynamic navigation prefix %q bypasses a declared template node %q", template.prefix, template.nodeID)
+		}
+		if _, ok := settingsDynamicEntryMetaForValue(template.prefix); ok {
+			t.Fatalf("empty dynamic suffix for %q unexpectedly gained authority", template.prefix)
+		}
+	}
+	for _, value := range []string{
+		settingsActionPrefixKeymapCategory + "retired-category",
+		settingsActionPrefixWelcome + "retired-route",
+		"provider:unregistered",
+	} {
+		if _, ok := settingsEntryMetaForValue(value); ok {
+			t.Fatalf("unregistered dynamic value %q gained Settings authority", value)
+		}
+	}
+	catalog := i18n.DefaultCatalog()
+	if missing := catalog.MissingLocaleKeys(i18n.FallbackLocale, keys); len(missing) != 0 {
+		t.Fatalf("dynamic template keys missing en-US entries: %#v", missing)
+	}
+	if missing := catalog.MissingLocaleKeys(i18n.Locale("ko-KR"), keys); len(missing) != 0 {
+		t.Fatalf("dynamic template keys missing ko-KR entries: %#v", missing)
+	}
+}
+
+func TestSettingsRetiredSecondaryCatalogSourcesStayAbsent(t *testing.T) {
+	t.Parallel()
+
+	source, err := os.ReadFile("settings_catalog.go")
+	if err != nil {
+		t.Fatalf("read settings_catalog.go: %v", err)
+	}
+	for _, retired := range []string{"settingsEntryCatalog =", "settingsEntryPrefixCatalog"} {
+		if strings.Contains(string(source), retired) {
+			t.Fatalf("retired secondary Settings source %q reappeared", retired)
+		}
+	}
+}
+
+// TestSettingsStaticBuildersBypassLiteralReverseLookup enforces the renderer
+// half of the single-node contract. It derives the shipped static fallbacks
+// from settingsNodeCatalog, then rejects passing one of those names (or a node
+// resolver itself) through the legacy literal-localizing formatters.
+func TestSettingsStaticBuildersBypassLiteralReverseLookup(t *testing.T) {
+	staticLabels := map[string]string{}
+	staticValues := map[string]string{}
+	for _, node := range settingsNodeCatalog {
+		if node.Value == "" || node.Dynamic || node.Value == settingsNoopValue {
+			continue
+		}
+		label, _ := node.entryLabel()
+		staticLabels[label] = node.ID
+		staticValues[node.Value] = node.ID
+	}
+
+	// Function name -> zero-based name argument. The resolved/node formatters
+	// are deliberately absent: they never consult uiTextKeys.
+	legacyNameArg := map[string]int{
+		"settingsLabel":                    2,
+		"settingsLabelLocale":              3,
+		"settingsLabelDim":                 0,
+		"settingsLabelDimLocale":           1,
+		"settingsLabelInfo":                0,
+		"settingsLabelInfoLocale":          1,
+		"settingsRootLabel":                1,
+		"settingsRootLabelLocale":          2,
+		"settingsRootLabelDim":             0,
+		"settingsRootLabelWithColorLocale": 3,
+		"rowLabel":                         2,
+		"rowLabelDim":                      0,
+		"rowLabelInfo":                     0,
+	}
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read app package: %v", err)
+	}
+	fset := token.NewFileSet()
+	type parsedSource struct {
+		name string
+		file *ast.File
+	}
+	var sources []parsedSource
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		sources = append(sources, parsedSource{name: name, file: file})
+	}
+
+	constExpressions := map[string]ast.Expr{}
+	for _, source := range sources {
+		for _, decl := range source.file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				valueSpec := spec.(*ast.ValueSpec)
+				for i, name := range valueSpec.Names {
+					if i < len(valueSpec.Values) {
+						constExpressions[name.Name] = valueSpec.Values[i]
+					}
+				}
+			}
+		}
+	}
+	constValues := map[string]string{}
+	for changed := true; changed; {
+		changed = false
+		for name, expression := range constExpressions {
+			if _, ok := constValues[name]; ok {
+				continue
+			}
+			if value, ok := settingsTestStringExpression(expression, constValues); ok {
+				constValues[name] = value
+				changed = true
+			}
+		}
+	}
+
+	for _, source := range sources {
+		name, file := source.name, source.file
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			called := settingsTestCallName(call.Fun)
+			argIndex, legacy := legacyNameArg[called]
+			if !legacy || argIndex >= len(call.Args) {
+				return true
+			}
+			nameArg := call.Args[argIndex]
+			if literal, ok := nameArg.(*ast.BasicLit); ok && literal.Kind == token.STRING {
+				value, err := strconv.Unquote(literal.Value)
+				if err == nil {
+					if nodeID, static := staticLabels[value]; static {
+						t.Errorf("%s:%d static node %q label %q passes through legacy %s", name, fset.Position(literal.Pos()).Line, nodeID, value, called)
+					}
+				}
+			}
+			ast.Inspect(nameArg, func(n ast.Node) bool {
+				nested, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				switch settingsTestCallName(nested.Fun) {
+				case "settingsNavLabelLocale", "navLabel":
+					t.Errorf("%s:%d node label passes through legacy %s", name, fset.Position(nested.Pos()).Line, called)
+				}
+				return true
+			})
+			return true
+		})
+		ast.Inspect(file, func(n ast.Node) bool {
+			literal, ok := n.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			var labelExpression, valueExpression ast.Expr
+			for _, element := range literal.Elts {
+				keyed, ok := element.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				key, ok := keyed.Key.(*ast.Ident)
+				if !ok {
+					continue
+				}
+				switch key.Name {
+				case "Label":
+					labelExpression = keyed.Value
+				case "Value":
+					valueExpression = keyed.Value
+				}
+			}
+			value, ok := settingsTestStringExpression(valueExpression, constValues)
+			if !ok || labelExpression == nil {
+				return true
+			}
+			nodeID, static := staticValues[value]
+			if !static {
+				return true
+			}
+			ast.Inspect(labelExpression, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				called := settingsTestCallName(call.Fun)
+				if _, legacy := legacyNameArg[called]; legacy {
+					t.Errorf("%s:%d static node %q value %q uses legacy %s formatter", name, fset.Position(call.Pos()).Line, nodeID, value, called)
+				}
+				return true
+			})
+			return true
+		})
+	}
+}
+
+func settingsTestStringExpression(expression ast.Expr, constants map[string]string) (string, bool) {
+	switch expression := expression.(type) {
+	case *ast.BasicLit:
+		if expression.Kind != token.STRING {
+			return "", false
+		}
+		value, err := strconv.Unquote(expression.Value)
+		return value, err == nil
+	case *ast.Ident:
+		value, ok := constants[expression.Name]
+		return value, ok
+	case *ast.BinaryExpr:
+		if expression.Op != token.ADD {
+			return "", false
+		}
+		left, leftOK := settingsTestStringExpression(expression.X, constants)
+		right, rightOK := settingsTestStringExpression(expression.Y, constants)
+		return left + right, leftOK && rightOK
+	case *ast.ParenExpr:
+		return settingsTestStringExpression(expression.X, constants)
+	default:
+		return "", false
+	}
+}
+
+func settingsTestCallName(expr ast.Expr) string {
+	switch fn := expr.(type) {
+	case *ast.Ident:
+		return fn.Name
+	case *ast.SelectorExpr:
+		return fn.Sel.Name
+	default:
+		return ""
+	}
+}
+
+func TestSettingsSaveAndQuitCopyBaselineIsPreserved(t *testing.T) {
+	t.Parallel()
+
+	want := map[string]i18n.Key{
+		"Save Project snapshots and quit":                    "quit.action.save_and_quit",
+		"capture every live managed Project before shutdown": "quit.action.save_and_quit_help",
+		"Quit without saving":                                "quit.action.quit_without_saving",
+		"terminate without capturing Project snapshots":      "quit.action.quit_without_saving_help",
+		"Quit projmux":         "quit.title",
+		"Quit > ":              "quit.prompt",
+		"keep projmux running": "quit.action.cancel_help",
+	}
+	keys := make([]i18n.Key, 0, len(want))
+	for literal, key := range want {
+		if got := uiTextKeys[literal]; got != key {
+			t.Fatalf("Save and Quit copy %q key = %q, want %q", literal, got, key)
+		}
+		keys = append(keys, key)
+	}
+	catalog := i18n.DefaultCatalog()
+	for _, locale := range []i18n.Locale{i18n.FallbackLocale, i18n.Locale("ko-KR")} {
+		if missing := catalog.MissingLocaleKeys(locale, keys); len(missing) != 0 {
+			t.Fatalf("Save and Quit keys missing for %s: %#v", locale, missing)
+		}
+	}
+}
 
 // TestSettingsNavigationTreeGolden freezes the whole visible information
 // architecture in one artifact. A Settings IA change is a diff on this file,
@@ -43,7 +449,10 @@ func TestSettingsNavigationCatalogIsStructurallySound(t *testing.T) {
 	t.Parallel()
 
 	seen := map[string]bool{}
-	for _, node := range settingsNavCatalog {
+	for _, node := range settingsNodeCatalog {
+		if node.Hidden {
+			continue
+		}
 		if node.ID == "" {
 			t.Fatalf("navigation node %#v has no id", node)
 		}
@@ -58,7 +467,10 @@ func TestSettingsNavigationCatalogIsStructurallySound(t *testing.T) {
 			t.Fatalf("navigation node %q has no scope axis", node.ID)
 		}
 	}
-	for _, node := range settingsNavCatalog {
+	for _, node := range settingsNodeCatalog {
+		if node.Hidden {
+			continue
+		}
 		if node.Parent == "" {
 			if node.ID != settingsNavScopeGlobal && node.ID != settingsNavScopeProject {
 				t.Fatalf("navigation node %q has no parent but is not a scope root", node.ID)
@@ -81,7 +493,10 @@ func TestSettingsNavigationCatalogIsStructurallySound(t *testing.T) {
 func TestSettingsNavigationAffordanceExclusivity(t *testing.T) {
 	t.Parallel()
 
-	for _, node := range settingsNavCatalog {
+	for _, node := range settingsNodeCatalog {
+		if node.Hidden {
+			continue
+		}
 		if node.Parent == "" {
 			continue
 		}
@@ -382,7 +797,7 @@ func TestSettingsNavigationControlOwnerCardinality(t *testing.T) {
 	t.Parallel()
 
 	owners := map[string]string{}
-	for _, node := range settingsNavCatalog {
+	for _, node := range settingsNodeCatalog {
 		if node.Value == "" || node.Value == settingsNoopValue {
 			continue
 		}
@@ -452,47 +867,12 @@ func TestSettingsRenderedRowsMapOntoNavigationCatalog(t *testing.T) {
 			// Dynamic rows (collection items, chooser values, toggles whose
 			// value carries the next state) are declared as templates, so they
 			// are matched by their owning prefix instead.
-			if settingsNavDynamicValueDeclared(value) {
+			if _, ok := settingsDynamicEntryMetaForValue(value); ok {
 				continue
 			}
 			t.Fatalf("%s surface renders value %q with no navigation node", name, value)
 		}
 	}
-}
-
-// settingsNavDynamicValueDeclared reports whether a runtime value belongs to a
-// dynamic template the catalog declares.
-func settingsNavDynamicValueDeclared(value string) bool {
-	for _, prefix := range []string{
-		settingsActionPrefixHooks,
-		settingsActionPrefixHookEvent,
-		settingsActionPrefixLiveResources,
-		settingsActionPrefixHUDVisibility,
-		settingsActionPrefixKeymapCategory,
-		settingsActionPrefixKeymapSurface,
-		settingsActionPrefixWorkdirItem,
-		settingsActionPrefixPinItem,
-		settingsActionPrefixDesktopNotifyMode,
-		settingsActionPrefixSessionStateSidebarStartup,
-		settingsActionPrefixRuntimeDiagnostics,
-		settingsActionPrefixAINotifyDiagnostic,
-		settingsActionPrefixAINotifyCheck,
-		settingsActionPrefixAINotifyCommand,
-		settingsActionPrefixAIHookProvider,
-		settingsActionPrefixAIHookEvent,
-		settingsActionPrefixAIHookSet,
-		settingsActionPrefixSessionState,
-		settingsActionPrefixStatusbar,
-		settingsActionPrefixTheme,
-		settingsActionPrefixWorkdir,
-		settingsActionPrefixSwitch,
-		settingsActionPrefixProjdir,
-	} {
-		if strings.HasPrefix(value, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 // TestSettingsRemovedRoutesAreUnreachable is the removed-path negative guard.
@@ -562,7 +942,10 @@ func TestSettingsLegacyVisibleCopyIsRetired(t *testing.T) {
 	home := t.TempDir()
 	cmd := settingsNavTestCommand(t, home)
 
-	for _, node := range settingsNavCatalog {
+	for _, node := range settingsNodeCatalog {
+		if node.Hidden {
+			continue
+		}
 		for _, legacy := range settingsNavRemovedVisibleCopy {
 			if strings.Contains(node.Label, legacy) {
 				t.Fatalf("navigation node %q label %q still carries retired copy %q", node.ID, node.Label, legacy)
@@ -744,7 +1127,10 @@ func TestSettingsCategoryEnterDoesNotMutate(t *testing.T) {
 func TestSettingsPassiveRowsConsumeEnter(t *testing.T) {
 	t.Parallel()
 
-	for _, node := range settingsNavCatalog {
+	for _, node := range settingsNodeCatalog {
+		if node.Hidden {
+			continue
+		}
 		if node.Kind != settingsNavState {
 			continue
 		}
@@ -849,7 +1235,7 @@ func TestSettingsResourceVocabularyGolden(t *testing.T) {
 		settingsNavProjectSnapshots:                 "Snapshots",
 	}
 	for id, label := range want {
-		if got := settingsNavLabel(id); got != label {
+		if got := settingsNavLabelLocale(i18n.FallbackLocale, id); got != label {
 			t.Fatalf("navigation label for %q = %q, want %q", id, got, label)
 		}
 	}

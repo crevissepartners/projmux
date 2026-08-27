@@ -59,6 +59,13 @@ func settingsLabel(glyph, color, name, description string) string {
 
 func settingsLabelLocale(locale i18n.Locale, glyph, color, name, description string) string {
 	name = settingsCatalogTextLocale(locale, name)
+	return settingsResolvedLabelLocale(locale, glyph, color, name, description)
+}
+
+// settingsResolvedLabelLocale formats a name that has already been resolved
+// from an explicit i18n key. Static node builders use this path so the legacy
+// literal registry cannot become a second label-key authority.
+func settingsResolvedLabelLocale(locale i18n.Locale, glyph, color, name, description string) string {
 	description = settingsCatalogExactTextOrFallbackLocale(locale, description)
 	var b strings.Builder
 
@@ -96,6 +103,10 @@ func settingsLabelDim(name, description string) string {
 
 func settingsLabelDimLocale(locale i18n.Locale, name, description string) string {
 	name = settingsCatalogTextLocale(locale, name)
+	return settingsResolvedLabelDimLocale(locale, name, description)
+}
+
+func settingsResolvedLabelDimLocale(locale i18n.Locale, name, description string) string {
 	description = settingsCatalogExactTextOrFallbackLocale(locale, description)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
@@ -125,6 +136,10 @@ func settingsLabelInfo(name, value, source string) string {
 
 func settingsLabelInfoLocale(locale i18n.Locale, name, value, source string) string {
 	name = settingsCatalogTextLocale(locale, name)
+	return settingsResolvedLabelInfoLocale(locale, name, value, source)
+}
+
+func settingsResolvedLabelInfoLocale(locale i18n.Locale, name, value, source string) string {
 	source = settingsCatalogExactTextOrFallbackLocale(locale, source)
 	var b strings.Builder
 	b.WriteString(settingsGlyphInfo)
