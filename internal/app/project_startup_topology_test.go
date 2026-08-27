@@ -445,7 +445,7 @@ func TestNewSwitchCommandWiresExactSocketTopologyActivation(t *testing.T) {
 	if !ok {
 		t.Fatalf("newSwitchCommand().projectTopology = %T, want the Registry topology activation", newSwitchCommand().projectTopology)
 	}
-	want := explicitTmuxTarget{flag: "-L", value: defaultAppSocket}
+	want := tmuxTransport{Kind: tmuxSocketName, Value: defaultAppSocket, Source: tmuxSocketNameSource}
 	if !reflect.DeepEqual(activation.target, want) {
 		t.Fatalf("activation target = %+v, want %+v", activation.target, want)
 	}

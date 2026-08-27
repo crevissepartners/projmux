@@ -188,7 +188,7 @@ type resourceReconcilePlanner struct {
 	// public reconcile route leaves it empty and accepts whatever session the
 	// Registry projects.
 	materializeSession string
-	exactTarget        explicitTmuxTarget
+	exactTarget        tmuxTransport
 	// agents is the provider-launch seam the Agent half of a materialization
 	// plan consumes. It is read-only at plan time: it builds argv and applies
 	// the Settings gate, and creates nothing.

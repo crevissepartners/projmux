@@ -182,18 +182,18 @@ func TestTheReconciliationObservesOneExactHostAndLeavesSiblingsAlone(t *testing.
 
 	for _, test := range []struct {
 		name   string
-		target explicitTmuxTarget
-		other  explicitTmuxTarget
+		target tmuxTransport
+		other  tmuxTransport
 	}{
 		{
 			name:   "an explicit socket name",
-			target: explicitTmuxTarget{flag: "-L", value: "event-host"},
-			other:  explicitTmuxTarget{flag: "-L", value: "sibling-host"},
+			target: tmuxTransport{Kind: tmuxSocketName, Value: "event-host", Source: tmuxSocketNameSource},
+			other:  tmuxTransport{Kind: tmuxSocketName, Value: "sibling-host", Source: tmuxSocketNameSource},
 		},
 		{
 			name:   "an explicit socket path",
-			target: explicitTmuxTarget{flag: "-S", value: "/tmp/event/socket"},
-			other:  explicitTmuxTarget{flag: "-S", value: "/tmp/sibling/socket"},
+			target: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/event/socket", Source: tmuxSocketPathSource},
+			other:  tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/sibling/socket", Source: tmuxSocketPathSource},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -214,8 +214,8 @@ func TestTheReconciliationObservesOneExactHostAndLeavesSiblingsAlone(t *testing.
 			seedLiveWindow(t, siblingHost, siblingSession, "win-alpha-main", "pan-alpha-codex")
 
 			runner := &routedTmuxRunner{servers: map[string]*fakeTmux{
-				test.target.flag + "\x00" + test.target.value: eventHost,
-				test.other.flag + "\x00" + test.other.value:   siblingHost,
+				test.target.Flag() + "\x00" + test.target.Value: eventHost,
+				test.other.Flag() + "\x00" + test.other.Value:   siblingHost,
 			}}
 
 			store := newFakeResourceStore(t)
@@ -239,10 +239,10 @@ func TestTheReconciliationObservesOneExactHostAndLeavesSiblingsAlone(t *testing.
 			}
 
 			for _, call := range runner.calls {
-				if call.flag == test.other.flag && call.value == test.other.value {
+				if call.flag == test.other.Flag() && call.value == test.other.Value {
 					t.Fatalf("the sibling server was addressed: %s %s %v", call.flag, call.value, call.args)
 				}
-				if call.flag != test.target.flag || call.value != test.target.value {
+				if call.flag != test.target.Flag() || call.value != test.target.Value {
 					t.Fatalf("an unexpected server was addressed: %s %s %v", call.flag, call.value, call.args)
 				}
 			}
@@ -251,8 +251,8 @@ func TestTheReconciliationObservesOneExactHostAndLeavesSiblingsAlone(t *testing.
 			}
 			// The event describes the exact target it routed, so a diagnostic line
 			// names the server the pass actually read.
-			if !strings.Contains(event.describe(), test.target.label()) {
-				t.Fatalf("event.describe() = %q, want it to name %q", event.describe(), test.target.label())
+			if !strings.Contains(event.describe(), test.target.Label()) {
+				t.Fatalf("event.describe() = %q, want it to name %q", event.describe(), test.target.Label())
 			}
 		})
 	}
@@ -276,9 +276,9 @@ func TestTheReconciliationNeverMutatesTmux(t *testing.T) {
 	host := newFakeTmux()
 	session := host.addSession("alpha")
 	seedLiveWindow(t, host, session, "win-alpha-main", "pan-alpha-zsh")
-	target := explicitTmuxTarget{flag: "-L", value: "audit-host"}
+	target := tmuxTransport{Kind: tmuxSocketName, Value: "audit-host", Source: tmuxSocketNameSource}
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{
-		target.flag + "\x00" + target.value: host,
+		target.Flag() + "\x00" + target.Value: host,
 	}}
 
 	store := newFakeResourceStore(t)

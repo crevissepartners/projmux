@@ -39,7 +39,7 @@ type lifecycleDirtyEvent struct {
 	// target is the exact tmux server to re-observe. The zero value routes
 	// through the inherited client, which is the absolute socket in $TMUX; a
 	// non-zero value is an explicit -L/-S and addresses that server only.
-	target explicitTmuxTarget
+	target tmuxTransport
 	// paneUID narrows the event to one Pane. Empty means the whole host.
 	paneUID string
 	// runtimePaneID is the exact #{hook_pane} supplied by pane-exited. It is
@@ -74,7 +74,7 @@ type lifecycleDirtyEvent struct {
 
 // describe renders the event for a diagnostic line.
 func (e lifecycleDirtyEvent) describe() string {
-	out := "socket=" + e.target.label()
+	out := "socket=" + e.target.Label()
 	if pane := strings.TrimSpace(e.paneUID); pane != "" {
 		out += " pane=" + pane
 	}
@@ -233,7 +233,7 @@ func planExactLifecycleCascade(
 ) (exactLifecycleCascadePlan, error) {
 	if (event.teardownKind != coremetadata.TeardownEventPaneExited &&
 		event.teardownKind != coremetadata.TeardownEventWindowUnlinked) ||
-		event.target.flag == "" || event.target.value == "" {
+		event.target.Flag() == "" || event.target.Value == "" {
 		return exactLifecycleCascadePlan{}, nil
 	}
 	if event.teardownKind == coremetadata.TeardownEventWindowUnlinked {
@@ -387,7 +387,7 @@ func planExactLifecycleCascade(
 		Kind: event.teardownKind, Classification: classification,
 		Generation: coremetadata.TeardownGenerationCurrent, Observation: observation,
 		Chain: coremetadata.TeardownOwnerChain{
-			SocketIdentity: event.target.label(), SessionHandle: observed.SessionID, PaneHandle: observed.PaneID,
+			SocketIdentity: event.target.Label(), SessionHandle: observed.SessionID, PaneHandle: observed.PaneID,
 			WindowHandle: observed.WindowID, PaneUID: pane.Metadata.UID,
 			WindowUID: windowUID, RootKind: root.Kind, RootUID: root.UID,
 			Generation: pane.Status.Activation.Generation,
@@ -465,7 +465,7 @@ func planExactWindowUnlinkCascade(
 	for i := range registry.Panes {
 		candidate := &registry.Panes[i]
 		evidence := candidate.Status.Teardown
-		if evidence == nil || evidence.SocketIdentity != event.target.label() ||
+		if evidence == nil || evidence.SocketIdentity != event.target.Label() ||
 			evidence.RuntimeSessionID != strings.TrimSpace(event.runtimeSessionID) ||
 			evidence.RuntimeWindowID != strings.TrimSpace(event.runtimeWindowID) {
 			continue
@@ -728,9 +728,9 @@ func lifecycleObservedLiveWindowSessions(ctx context.Context, inventory livePane
 // binding-convergence routes use. A zero target falls through to the bare runner
 // so an in-tmux invocation observes the server $TMUX names -- introducing a
 // default socket here is the exact mistake the delete corrective removed.
-func lifecycleInventory(runner tmuxCommandRunner, target explicitTmuxTarget) livePaneInventory {
+func lifecycleInventory(runner tmuxCommandRunner, target tmuxTransport) livePaneInventory {
 	routed := runner
-	if target.flag != "" && target.value != "" {
+	if target.Flag() != "" && target.Value != "" {
 		routed = explicitTmuxRunner{runner: runner, target: target}
 	}
 	runtime := newTmuxPaneDeleteRuntime()

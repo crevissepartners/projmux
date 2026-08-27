@@ -60,7 +60,7 @@ type controllerReobservation struct {
 
 // resourceControllerKernel orchestrates one command against one exact server.
 type resourceControllerKernel struct {
-	target               explicitTmuxTarget
+	target               tmuxTransport
 	runner               tmuxCommandRunner
 	store                *resourceStore
 	planner              resourceReconcilePlanner
@@ -89,7 +89,7 @@ var controllerGuardFields = controller.GuardFields{
 	WindowID:   "window_id",
 }
 
-func newResourceControllerKernel(runner tmuxCommandRunner, store *resourceStore, planner resourceReconcilePlanner, target explicitTmuxTarget) *resourceControllerKernel {
+func newResourceControllerKernel(runner tmuxCommandRunner, store *resourceStore, planner resourceReconcilePlanner, target tmuxTransport) *resourceControllerKernel {
 	kernel := &resourceControllerKernel{
 		target: target, runner: runner, store: store, planner: planner,
 		trigger: controller.RecoveryExplicit, lookupEnv: os.Getenv,
@@ -100,18 +100,18 @@ func newResourceControllerKernel(runner tmuxCommandRunner, store *resourceStore,
 		// stages would make the reobservation report the pre-execute machine.
 		readTarget := kernel.target
 		if kernel.route != nil && kernel.route.expectedSocketPath != "" {
-			readTarget = explicitTmuxTarget{flag: "-S", value: kernel.route.expectedSocketPath}
+			readTarget = tmuxTransport{Kind: tmuxSocketPath, Value: kernel.route.expectedSocketPath, Source: tmuxSocketPathSource}
 		}
-		inventory := intmetadata.NewInventoryObserver(runner, controllerTransport(readTarget)).Observe(ctx)
+		inventory := intmetadata.NewInventoryObserver(runner, readTarget.ExplicitProjection()).Observe(ctx)
 		// The public plan continues to describe the operator's requested route;
 		// the internal typed plan separately prints the physical generation.
-		inventory.Transport = controllerTransport(kernel.target)
+		inventory.Transport = kernel.target.ExplicitProjection()
 		return inventory
 	}
 	kernel.socketPath = func(ctx context.Context) (string, bool) {
 		readTarget := kernel.target
 		if kernel.route != nil && kernel.route.expectedSocketPath != "" {
-			readTarget = explicitTmuxTarget{flag: "-S", value: kernel.route.expectedSocketPath}
+			readTarget = tmuxTransport{Kind: tmuxSocketPath, Value: kernel.route.expectedSocketPath, Source: tmuxSocketPathSource}
 		}
 		routed := explicitTmuxRunner{runner: runner, target: readTarget}
 		out, err := routed.Run(ctx, "tmux", "display-message", "-p", "#{socket_path}")
@@ -137,22 +137,6 @@ func (k *resourceControllerKernel) bindRuntimeRoute(ctx context.Context) error {
 	}
 	k.route = &route
 	return nil
-}
-
-// controllerTransport turns the command's exact routing into the typed
-// transport the graph is resolved against. There is no branch for an absent
-// target: this command refuses one before a kernel is built.
-func controllerTransport(target explicitTmuxTarget) resourcegraph.Transport {
-	if target.flag == "-S" {
-		return resourcegraph.Transport{
-			Kind: resourcegraph.TransportSocketPath, Value: target.value,
-			Source: resourcegraph.TransportSourceSocketPath,
-		}
-	}
-	return resourcegraph.Transport{
-		Kind: resourcegraph.TransportSocketName, Value: target.value,
-		Source: resourcegraph.TransportSourceSocketName,
-	}
 }
 
 // controllerPass is one observe-and-plan cycle: the resolved graph, the
@@ -286,16 +270,16 @@ func (k *resourceControllerKernel) authorize(graph resourcegraph.Graph, registry
 	return plan
 }
 
-func addApprovedD3ImportCommand(plan *resourceReconcilePlan, graph resourcegraph.Graph, target explicitTmuxTarget) {
+func addApprovedD3ImportCommand(plan *resourceReconcilePlan, graph resourcegraph.Graph, target tmuxTransport) {
 	count := len(graph.RuntimeOfClass(resourcegraph.ClassRecoverable))
 	if count == 0 {
 		return
 	}
 	flag := "--socket"
-	if target.flag == "-S" {
+	if target.Flag() == "-S" {
 		flag = "--socket-path"
 	}
-	command := "projmux reconcile resources " + flag + " " + shellQuote(target.value) + " --import-orphan-mirrors --yes"
+	command := "projmux reconcile resources " + flag + " " + shellQuote(target.Value) + " --import-orphan-mirrors --yes"
 	verdict := controller.AuthorizeRecovery(resourcegraph.DivergenceOrphanMirror, controller.RecoveryExplicit, controller.RecoveryImport, false, count)
 	plan.items = append(plan.items, resourceReconcileItem{
 		Key: "recovery:approved:d3-import", Drift: resourceDriftOrphan, Surface: "registry",
@@ -553,11 +537,11 @@ func (k *resourceControllerKernel) guardPlan(ctx context.Context, socket string,
 	if err := guardResolvedRuntimeMutationRoute(ctx, k.runner, *k.route); err != nil {
 		return fmt.Errorf("exact tmux socket changed before repair: %w", err)
 	}
-	routed := explicitTmuxRunner{runner: k.runner, target: explicitTmuxTarget{flag: "-S", value: k.route.expectedSocketPath}}
+	routed := explicitTmuxRunner{runner: k.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: k.route.expectedSocketPath, Source: tmuxSocketPathSource}}
 	if socket != "" {
 		current, ok := k.socketPath(ctx)
 		if !ok {
-			return fmt.Errorf("exact tmux server %s became unreachable before repair", k.target.value)
+			return fmt.Errorf("exact tmux server %s became unreachable before repair", k.target.Value)
 		}
 		if current != socket {
 			return fmt.Errorf("exact tmux socket changed before repair: #{socket_path} is %q, planned against %q", current, socket)

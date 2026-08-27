@@ -18,7 +18,7 @@ import (
 // physical server generation. Explicit standalone reconcile is an internal
 // operator grant over --socket-path only: action-specific graph guards provide
 // the real handle/owner containment, so this route never invents a Pane receipt.
-func resolveControllerRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRunner, target explicitTmuxTarget, lookupEnv func(string) string) (runtimeMutationRoute, error) {
+func resolveControllerRuntimeMutationRoute(ctx context.Context, runner tmuxCommandRunner, target tmuxTransport, lookupEnv func(string) string) (runtimeMutationRoute, error) {
 	route, err := resolveExistingRuntimeMutationRoute(ctx, runner, target, lookupEnv)
 	if err == nil {
 		return route, nil
@@ -26,7 +26,7 @@ func resolveControllerRuntimeMutationRoute(ctx context.Context, runner tmuxComma
 	if !strings.Contains(err.Error(), "standalone authority requires exact inherited TMUX receipt") {
 		return runtimeMutationRoute{}, err
 	}
-	if target.flag != "-S" {
+	if target.Flag() != "-S" {
 		return runtimeMutationRoute{}, errors.New("controller standalone mutation requires explicit --socket-path authority")
 	}
 	routed := explicitTmuxRunner{runner: runner, target: target}
@@ -39,7 +39,7 @@ func resolveControllerRuntimeMutationRoute(ctx context.Context, runner tmuxComma
 	}
 	path, pid := strings.TrimSpace(string(pathOut)), strings.TrimSpace(string(pidOut))
 	parsedPID, parseErr := strconv.Atoi(pid)
-	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path != target.value || parseErr != nil || parsedPID <= 0 {
+	if !filepath.IsAbs(path) || filepath.Clean(path) != path || path != target.Value || parseErr != nil || parsedPID <= 0 {
 		return runtimeMutationRoute{}, errors.New("controller standalone authority has no exact physical path/PID receipt")
 	}
 	if strings.TrimSpace(string(appOut)) != "" || strings.TrimSpace(string(logicalOut)) != "" {
@@ -383,7 +383,7 @@ func guardControllerRuntimeMutationFinal(ctx context.Context, runner tmuxCommand
 	if err := guardPrintedRuntimeMutationRoute(ctx, runner, route, action); err != nil {
 		return err
 	}
-	exact := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
+	exact := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
 	for _, guard := range write.Guards {
 		out, err := exact.Run(ctx, "tmux", "display-message", "-p", "-t", write.Target, "-F", "#{"+guard.Field+"}")
 		if err != nil || strings.TrimSpace(string(out)) != controllerFinalGuardValue(final, write, guard) {
@@ -397,7 +397,7 @@ func guardControllerRuntimeMutation(ctx context.Context, runner tmuxCommandRunne
 	if err := guardPrintedRuntimeMutationRoute(ctx, runner, route, action); err != nil {
 		return err
 	}
-	exact := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
+	exact := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
 	for _, guard := range write.Guards {
 		out, err := exact.Run(ctx, "tmux", "display-message", "-p", "-t", write.Target, "-F", "#{"+guard.Field+"}")
 		if err != nil {
@@ -422,7 +422,7 @@ func observeControllerRuntimeMutation(ctx context.Context, runner tmuxCommandRun
 	if err := guardPrintedRuntimeMutationRoute(ctx, runner, route, action); err != nil {
 		return false, err
 	}
-	exact := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
+	exact := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
 	for _, guard := range write.Guards {
 		out, err := exact.Run(ctx, "tmux", "display-message", "-p", "-t", write.Target, "-F", "#{"+guard.Field+"}")
 		if err != nil {
@@ -535,7 +535,7 @@ func executeControllerRuntimeMutations(ctx context.Context, runner tmuxCommandRu
 				if err := guardPrintedRuntimeMutationRoute(ctx, runner, route, action); err != nil {
 					return err
 				}
-				exact := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
+				exact := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
 				out, err := exact.Run(ctx, "tmux", "display-message", "-p", "-t", write.Target, "-F", "#{"+write.Field+"}")
 				if err != nil {
 					return errors.New("controller rollback target effect is unreadable")

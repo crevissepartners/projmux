@@ -75,7 +75,7 @@ func planRegistryTopology(
 	projectRef string,
 	reconciler *registryReconciler,
 	sessions []observedResourceProjectSession,
-	exactTarget explicitTmuxTarget,
+	exactTarget tmuxTransport,
 	launcher topologyAgentLauncher,
 ) (*registryTopologyPlan, error) {
 	if strings.TrimSpace(projectRef) == "" {
@@ -132,7 +132,7 @@ func planRegistryTopology(
 	}
 	if target == nil {
 		plan.addItem(0, coremetadata.KindProject, project.Metadata.Name, project.Metadata.UID, "materialize")
-		if exactTarget.flag == "-S" {
+		if exactTarget.Flag() == "-S" {
 			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindProject, project.Metadata.Name,
 				"offline Project session creation via --socket-path cannot preserve exact name-only PROJMUX_SOCKET hook re-entry")
 		}
@@ -521,7 +521,7 @@ func isMissingTmuxServer(err error) bool {
 type topologyMaterializeRun struct {
 	resources          *resourceStore
 	runner             tmuxCommandRunner
-	target             explicitTmuxTarget
+	target             tmuxTransport
 	expectedSocketPath string
 	diagnostics        *diagnostics.LifecycleRecorder
 	socketName         string
@@ -558,11 +558,11 @@ type topologyMaterializeOutcome struct {
 // defaultTopologyMaterializer builds the runtime for one exact target. The tmux
 // client is the existing one, so the public pre/post-create and startup hook
 // contract has exactly one implementation.
-func defaultTopologyMaterializer(target explicitTmuxTarget, recorder *diagnostics.LifecycleRecorder) func(tmuxCommandRunner, io.Writer) *materializer {
+func defaultTopologyMaterializer(target tmuxTransport, recorder *diagnostics.LifecycleRecorder) func(tmuxCommandRunner, io.Writer) *materializer {
 	return func(runner tmuxCommandRunner, warn io.Writer) *materializer {
 		opts := []inttmux.ClientOption{}
-		if target.flag == "-L" {
-			opts = append(opts, inttmux.WithSocketName(target.value))
+		if target.Flag() == "-L" {
+			opts = append(opts, inttmux.WithSocketName(target.Value))
 		}
 		if recorder != nil {
 			opts = append(opts, inttmux.WithLifecycleDiagnostics(recorder))
@@ -743,7 +743,7 @@ func requireMaterializeSession(plan *registryTopologyPlan, sessionName string) {
 func (c *resourceReconcileCommand) runMaterializeExecute(
 	ctx context.Context,
 	planner resourceReconcilePlanner,
-	target explicitTmuxTarget,
+	target tmuxTransport,
 	reportTarget resourceReconcileTarget,
 	opts resourceReconcileOptions,
 	stdout, stderr io.Writer,
@@ -789,7 +789,7 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	return writeResourceReconcileReport(stdout, opts.output, report)
 }
 
-func bindExplicitMaterializeSocket(ctx context.Context, runner tmuxCommandRunner, target explicitTmuxTarget, lookupEnv func(string) string) (runtimeMutationRoute, error) {
+func bindExplicitMaterializeSocket(ctx context.Context, runner tmuxCommandRunner, target tmuxTransport, lookupEnv func(string) string) (runtimeMutationRoute, error) {
 	if runner == nil {
 		return runtimeMutationRoute{}, errors.New("resource materialization requires a tmux runner")
 	}
@@ -800,12 +800,12 @@ func bindExplicitMaterializeSocket(ctx context.Context, runner tmuxCommandRunner
 			// A fresh logical route has no physical identity until new-session
 			// returns and the materializer binds #{socket_path}. An explicit -S
 			// declaration already names the immutable path the create must use.
-			if target.flag == "-L" {
-				return runtimeMutationRoute{target: target, socketName: target.value}, nil
+			if target.Flag() == "-L" {
+				return runtimeMutationRoute{target: target, socketName: target.Value}, nil
 			}
-			if target.flag == "-S" {
-				path := filepath.Clean(strings.TrimSpace(target.value))
-				if filepath.IsAbs(path) && path == target.value {
+			if target.Flag() == "-S" {
+				path := filepath.Clean(strings.TrimSpace(target.Value))
+				if filepath.IsAbs(path) && path == target.Value {
 					return runtimeMutationRoute{target: target, expectedSocketPath: path, socketName: defaultAppSocket}, nil
 				}
 			}
@@ -816,7 +816,7 @@ func bindExplicitMaterializeSocket(ctx context.Context, runner tmuxCommandRunner
 	if path == "." || !filepath.IsAbs(path) {
 		return runtimeMutationRoute{}, errors.New("resource materialization observed no absolute socket identity")
 	}
-	if target.flag == "-S" && path != filepath.Clean(target.value) {
+	if target.Flag() == "-S" && path != filepath.Clean(target.Value) {
 		return runtimeMutationRoute{}, errors.New("resource materialization physical socket drifted")
 	}
 	route, err := resolveExistingRuntimeMutationRoute(ctx, runner, target, lookupEnv)

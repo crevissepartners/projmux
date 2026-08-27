@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -121,8 +120,8 @@ func (c *resourceReconcileCommand) Run(args []string, stdout, stderr io.Writer) 
 	if c.runner == nil || c.resources == nil {
 		return errors.New("resource reconciliation is not configured")
 	}
-	reportTarget := resourceReconcileTarget{Mode: "socket-name", Flag: target.flag, Value: target.value}
-	if target.flag == "-S" {
+	reportTarget := resourceReconcileTarget{Mode: "socket-name", Flag: target.Flag(), Value: target.Value}
+	if target.Flag() == "-S" {
 		reportTarget.Mode = "socket-path"
 	}
 	planner := resourceReconcilePlanner{
@@ -204,32 +203,19 @@ func firstRepeatedValue(values []string) string {
 	return strings.TrimSpace(values[0])
 }
 
-func (c *resourceReconcileCommand) resolveTarget(opts resourceReconcileOptions) (explicitTmuxTarget, error) {
-	if strings.TrimSpace(opts.socket) != "" {
-		target, err := tmuxSocketNameTarget(opts.socket)
-		if err != nil {
-			return explicitTmuxTarget{}, usageError("reconcile resources: " + err.Error())
-		}
-		return target, nil
-	}
-	if strings.TrimSpace(opts.socketPath) != "" {
-		target, err := tmuxSocketPathTarget(opts.socketPath)
-		if err != nil {
-			return explicitTmuxTarget{}, usageError("reconcile resources: --socket-path must be absolute")
-		}
-		return target, nil
-	}
+func (c *resourceReconcileCommand) resolveTarget(opts resourceReconcileOptions) (tmuxTransport, error) {
 	tmuxEnv := ""
 	if c.lookupEnv != nil {
-		tmuxEnv = strings.TrimSpace(c.lookupEnv("TMUX"))
+		tmuxEnv = c.lookupEnv("TMUX")
 	}
-	inherited, _, _ := strings.Cut(tmuxEnv, ",")
-	if inherited == "" || !filepath.IsAbs(inherited) {
-		return explicitTmuxTarget{}, usageError("reconcile resources requires --socket <name> or --socket-path <absolute> outside tmux")
-	}
-	target, err := tmuxSocketPathTarget(inherited)
+	target, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{
+		SocketName: opts.socket, SocketPath: opts.socketPath, InheritedTMUX: tmuxEnv,
+	})
 	if err != nil {
-		return explicitTmuxTarget{}, usageError("reconcile resources: inherited $TMUX socket path is not absolute")
+		return tmuxTransport{}, usageError("reconcile resources: --socket-path must be absolute")
+	}
+	if !target.Present() {
+		return tmuxTransport{}, usageError("reconcile resources requires --socket <name> or --socket-path <absolute> outside tmux")
 	}
 	return target, nil
 }

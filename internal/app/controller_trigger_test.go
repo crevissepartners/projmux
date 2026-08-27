@@ -27,9 +27,9 @@ import (
 // local to one test.
 type triggerFixture struct {
 	runner *controllerTriggerRunner
-	target explicitTmuxTarget
+	target tmuxTransport
 	// passes records the target of every convergence body invocation.
-	passes []explicitTmuxTarget
+	passes []tmuxTransport
 	// triggers records the scope handed to each convergence body invocation.
 	triggers []controllerTrigger
 	// results is consumed one entry per pass; the last entry repeats.
@@ -514,7 +514,7 @@ func TestTheTriggerRefusesAnythingButOneExactServerAndOneDeclaredReason(t *testi
 	fixture := newTriggerFixture(t)
 	for _, trigger := range []controllerTrigger{
 		{reason: controllerTriggerPaneKilled},
-		{reason: controllerTriggerPaneKilled, target: explicitTmuxTarget{flag: "-L"}},
+		{reason: controllerTriggerPaneKilled, target: tmuxTransport{Kind: tmuxSocketName}},
 		{target: fixture.target},
 		{reason: controllerTriggerReason("made-up"), target: fixture.target},
 	} {

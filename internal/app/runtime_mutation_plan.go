@@ -360,7 +360,7 @@ func guardRuntimeMutationQueueRoute(ctx context.Context, runner tmuxCommandRunne
 		return errors.New("runtime mutation queue route has no printable declaration")
 	}
 	route := runtimeMutationRoute{
-		target:             explicitTmuxTarget{flag: "-S", value: action.Queue.PhysicalSocket},
+		target:             tmuxTransport{Kind: tmuxSocketPath, Value: action.Queue.PhysicalSocket, Source: tmuxSocketPathSource},
 		expectedSocketPath: action.Queue.PhysicalSocket,
 		socketName:         action.Queue.LogicalSocket,
 	}

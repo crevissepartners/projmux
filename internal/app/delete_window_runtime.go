@@ -20,7 +20,7 @@ import (
 type windowDeleteRuntime interface {
 	// useExactTarget pins every read and write of this seam to one resolved
 	// server. It is called before the first inventory of an invocation.
-	useExactTarget(explicitTmuxTarget)
+	useExactTarget(tmuxTransport)
 	preflight(context.Context, coremetadata.Registry, deletePlan) (windowLiveDeletePlan, error)
 	killAll(context.Context, []windowLiveDeleteTarget) (int, error)
 	queueSelfKill(context.Context, []windowLiveDeleteTarget) error
@@ -71,7 +71,7 @@ func (p windowLiveDeletePlan) hasSelfTarget() bool {
 
 type tmuxWindowDeleteRuntime struct {
 	runner                tmuxCommandRunner
-	target                explicitTmuxTarget
+	target                tmuxTransport
 	expectedSocketPath    string
 	expectedLogicalSocket string
 	routeAuthority        *runtimeMutationRouteAuthority
@@ -87,7 +87,7 @@ func newTmuxWindowDeleteRuntime() *tmuxWindowDeleteRuntime {
 	}
 }
 
-func (r *tmuxWindowDeleteRuntime) useExactTarget(target explicitTmuxTarget) {
+func (r *tmuxWindowDeleteRuntime) useExactTarget(target tmuxTransport) {
 	if r == nil {
 		return
 	}
@@ -107,7 +107,7 @@ type liveWindowRow struct {
 
 func (r *tmuxWindowDeleteRuntime) routed() explicitTmuxRunner {
 	if r.expectedSocketPath != "" {
-		return explicitTmuxRunner{runner: r.runner, target: explicitTmuxTarget{flag: "-S", value: r.expectedSocketPath}}
+		return explicitTmuxRunner{runner: r.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: r.expectedSocketPath, Source: tmuxSocketPathSource}}
 	}
 	return explicitTmuxRunner{runner: r.runner, target: r.target}
 }
@@ -116,7 +116,7 @@ func (r *tmuxWindowDeleteRuntime) inventory(ctx context.Context) ([]liveWindowRo
 	if r == nil || r.runner == nil {
 		return nil, false, errors.New("delete window: tmux runtime is not configured")
 	}
-	if r.target.flag == "" || r.target.value == "" {
+	if r.target.Flag() == "" || r.target.Value == "" {
 		return nil, false, errors.New("delete window: no exact tmux target is bound")
 	}
 	if err := r.observeSocketIdentity(ctx, true); err != nil {
@@ -222,13 +222,13 @@ func (r *tmuxWindowDeleteRuntime) preflight(ctx context.Context, registry coreme
 			// zero-match case closed also protects against a caller/window race.
 			if plan.Implicit {
 				return windowLiveDeletePlan{}, fmt.Errorf("delete window: registry window uid %q has no exact live tmux Window mirror on -L %s; nothing was changed",
-					target.Match.UID, r.target.value)
+					target.Match.UID, r.target.Value)
 			}
 			continue
 		}
 		if len(matches) != 1 {
 			return windowLiveDeletePlan{}, fmt.Errorf("delete window: registry window uid %q has %d live tmux Window mirrors on -L %s; exact target is ambiguous and nothing was changed",
-				target.Match.UID, len(matches), r.target.value)
+				target.Match.UID, len(matches), r.target.Value)
 		}
 		row := matches[0]
 		if err := root.validateLiveSession("delete window", "Window", row.windowID, target.Match.UID, row.projectUID, row.sessionName); err != nil {
@@ -426,14 +426,14 @@ func (r *tmuxWindowDeleteRuntime) revalidateQueuedWindow(ctx context.Context, ta
 }
 
 func (r *tmuxWindowDeleteRuntime) mutationAction(verb runtimeMutationVerb, target windowLiveDeleteTarget, mirror string, args ...string) plannedRuntimeMutation {
-	logicalRoute := r.target.flag + "=" + r.target.value
+	logicalRoute := r.target.Flag() + "=" + r.target.Value
 	action := newRuntimeMutation(1, verb, runtimeMutationTarget{
 		Socket: logicalRoute, PhysicalSocket: printableRuntimeMutationSocket(r.expectedSocketPath),
 		RouteAuthority: r.routeAuthority.printable(),
 		Kind:           "window", ID: target.WindowID, UID: target.UID,
 		Parent: target.SessionID + "/" + target.RootUID,
 	})
-	bindRuntimeMutationGuard(&action, "socket="+r.target.flag+"="+r.target.value+
+	bindRuntimeMutationGuard(&action, "socket="+r.target.Flag()+"="+r.target.Value+
 		";session="+target.SessionID+"/"+target.SessionName+
 		";window="+target.WindowID+"/"+mirror+
 		";root="+string(target.RootKind)+"/"+target.RootUID)
@@ -519,8 +519,8 @@ func (r *tmuxWindowDeleteRuntime) observeSocketIdentity(ctx context.Context, all
 	if observed == "" {
 		return errors.New("delete window: exact socket identity is empty")
 	}
-	if r.target.flag == "-S" && observed != r.target.value {
-		return fmt.Errorf("delete window: exact socket drifted: observed %q, planned %q", observed, r.target.value)
+	if r.target.Flag() == "-S" && observed != r.target.Value {
+		return fmt.Errorf("delete window: exact socket drifted: observed %q, planned %q", observed, r.target.Value)
 	}
 	if r.expectedSocketPath == "" {
 		r.expectedSocketPath = observed

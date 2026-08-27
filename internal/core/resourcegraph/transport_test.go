@@ -48,6 +48,29 @@ func TestResolveTransportPicksExactlyOneServer(t *testing.T) {
 			wantSource: TransportSourceSocketName, wantArgs: []string{"-L", "probe"},
 		},
 		{
+			name:     "blank socket name does not outrank inherited transport",
+			request:  TransportRequest{SocketName: " \t", InheritedTMUX: "/tmp/tmux-1000/projmux,8084,6"},
+			wantKind: TransportSocketPath, wantValue: "/tmp/tmux-1000/projmux",
+			wantSource: TransportSourceInheritedEnv, wantArgs: []string{"-S", "/tmp/tmux-1000/projmux"},
+		},
+		{
+			name:     "blank socket path does not conflict with explicit name",
+			request:  TransportRequest{SocketName: "probe", SocketPath: " \n"},
+			wantKind: TransportSocketName, wantValue: "probe",
+			wantSource: TransportSourceSocketName, wantArgs: []string{"-L", "probe"},
+		},
+		{
+			name:     "blank socket name does not conflict with explicit path",
+			request:  TransportRequest{SocketName: " ", SocketPath: "/tmp/probe"},
+			wantKind: TransportSocketPath, wantValue: "/tmp/probe",
+			wantSource: TransportSourceSocketPath, wantArgs: []string{"-S", "/tmp/probe"},
+		},
+		{
+			name:    "relative explicit path is refused even with valid inherited transport",
+			request: TransportRequest{SocketPath: "relative/probe", InheritedTMUX: "/tmp/tmux-1000/projmux,8084,6"},
+			wantErr: true,
+		},
+		{
 			name:     "inherited $TMUX supplies the absolute socket path",
 			request:  TransportRequest{InheritedTMUX: "/tmp/tmux-1000/projmux,8084,6"},
 			wantKind: TransportSocketPath, wantValue: "/tmp/tmux-1000/projmux",
@@ -56,6 +79,11 @@ func TestResolveTransportPicksExactlyOneServer(t *testing.T) {
 		{
 			name:     "a relative inherited value is discarded, not guessed at",
 			request:  TransportRequest{InheritedTMUX: "projmux,8084,6"},
+			wantKind: TransportNone, wantSource: TransportSourceNone,
+		},
+		{
+			name:     "blank inherited value is no transport",
+			request:  TransportRequest{InheritedTMUX: " \t\n"},
 			wantKind: TransportNone, wantSource: TransportSourceNone,
 		},
 		{
@@ -88,6 +116,9 @@ func TestResolveTransportPicksExactlyOneServer(t *testing.T) {
 			if !slices.Equal(transport.Args(), test.wantArgs) {
 				t.Fatalf("args = %v, want %v", transport.Args(), test.wantArgs)
 			}
+			if transport.Present() && transport.Flag() != test.wantArgs[0] {
+				t.Fatalf("Flag() = %q, want %q", transport.Flag(), test.wantArgs[0])
+			}
 			if transport.Present() != (len(test.wantArgs) > 0) {
 				t.Fatalf("Present() = %v with args %v", transport.Present(), transport.Args())
 			}
@@ -103,6 +134,38 @@ func TestResolveTransportConflictIsTyped(t *testing.T) {
 	_, err := ResolveTransport(TransportRequest{SocketName: "a", SocketPath: "/tmp/b"})
 	if !errors.Is(err, ErrTransportConflict) {
 		t.Fatalf("err = %v, want ErrTransportConflict", err)
+	}
+}
+
+func TestTransportNeverProjectsAnInvalidTargetToBareTmux(t *testing.T) {
+	t.Parallel()
+	for _, transport := range []Transport{
+		{},
+		{Kind: TransportNone, Value: "ignored"},
+		{Kind: TransportKind("future"), Value: "socket"},
+		{Kind: TransportSocketName},
+		{Kind: TransportSocketName, Value: " socket "},
+		{Kind: TransportSocketPath, Value: "relative/socket"},
+		{Kind: TransportSocketPath, Value: "/tmp/../relative/socket"},
+	} {
+		if transport.Present() || transport.Args() != nil || transport.Flag() != "" {
+			t.Fatalf("invalid transport projected a tmux route: %+v args=%v flag=%q", transport, transport.Args(), transport.Flag())
+		}
+	}
+}
+
+func TestTransportSourceIsNotRouteIdentity(t *testing.T) {
+	t.Parallel()
+	explicit := Transport{Kind: TransportSocketPath, Value: "/tmp/projmux", Source: TransportSourceSocketPath}
+	inherited := Transport{Kind: TransportSocketPath, Value: "/tmp/projmux", Source: TransportSourceInheritedEnv}
+	if !explicit.SameRoute(inherited) {
+		t.Fatalf("the same socket path split route identity by diagnostic source: explicit=%+v inherited=%+v", explicit, inherited)
+	}
+	if explicit.SameRoute(Transport{Kind: TransportSocketName, Value: "/tmp/projmux", Source: TransportSourceSocketName}) {
+		t.Fatal("socket name and socket path collapsed into one route")
+	}
+	if projected := inherited.ExplicitProjection(); projected.Source != TransportSourceSocketPath || !projected.SameRoute(inherited) {
+		t.Fatalf("explicit projection = %+v, want the same -S route with explicit-path report source", projected)
 	}
 }
 

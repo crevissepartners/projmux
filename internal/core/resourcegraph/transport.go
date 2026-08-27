@@ -66,7 +66,14 @@ type Transport struct {
 
 // Present reports whether this transport can reach a tmux server at all.
 func (t Transport) Present() bool {
-	return t.Kind != TransportNone && t.Kind != "" && t.Value != ""
+	switch t.Kind {
+	case TransportSocketName:
+		return strings.TrimSpace(t.Value) != "" && strings.TrimSpace(t.Value) == t.Value
+	case TransportSocketPath:
+		return filepath.IsAbs(t.Value) && filepath.Clean(t.Value) == t.Value
+	default:
+		return false
+	}
 }
 
 // Args returns the argv prefix that pins every tmux call to this exact server.
@@ -83,6 +90,51 @@ func (t Transport) Args() []string {
 	default:
 		return nil
 	}
+}
+
+// Flag returns the exact tmux routing flag carried by this transport.
+// It is empty for TransportNone and invalid/unknown kinds.
+func (t Transport) Flag() string {
+	switch {
+	case !t.Present():
+		return ""
+	case t.Kind == TransportSocketName:
+		return "-L"
+	case t.Kind == TransportSocketPath:
+		return "-S"
+	default:
+		return ""
+	}
+}
+
+// Label renders the compact flag/value spelling used by command reports.
+func (t Transport) Label() string {
+	if !t.Present() {
+		return "none"
+	}
+	return t.Flag() + "/" + t.Value
+}
+
+// SameRoute reports whether two transports select the same tmux server shape.
+// Source is diagnostic provenance, not routing identity or mutation authority.
+func (t Transport) SameRoute(other Transport) bool {
+	return t.Kind == other.Kind && t.Value == other.Value
+}
+
+// ExplicitProjection keeps the selected route while describing it as the
+// exact -L/-S command carrier used by mutation plans. Read surfaces retain the
+// original Source; this projection preserves the mutation report vocabulary.
+func (t Transport) ExplicitProjection() Transport {
+	projected := t
+	switch t.Kind {
+	case TransportSocketName:
+		projected.Source = TransportSourceSocketName
+	case TransportSocketPath:
+		projected.Source = TransportSourceSocketPath
+	case TransportNone:
+		projected.Source = TransportSourceNone
+	}
+	return projected
 }
 
 // String renders the transport the way an operator would type it.

@@ -1443,7 +1443,7 @@ func bindConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner, 
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return runtimeMutationRoute{}, nil, errors.New("config apply route requires one absolute clean physical socket")
 	}
-	exact := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: path}}
+	exact := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: path, Source: tmuxSocketPathSource}}
 	pidOut, err := exact.Run(ctx, "tmux", "display-message", "-p", "-F", "#{pid}")
 	pid := strings.TrimSpace(string(pidOut))
 	parsedPID, pidErr := strconv.Atoi(pid)
@@ -1465,7 +1465,7 @@ func bindConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner, 
 }
 
 func guardConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner, route runtimeMutationRoute, requireLogical bool) error {
-	if route.target.flag != "-L" || route.target.value != route.socketName || route.socketName == "" ||
+	if route.target.Flag() != "-L" || route.target.Value != route.socketName || route.socketName == "" ||
 		route.expectedSocketPath == "" || !filepath.IsAbs(route.expectedSocketPath) || filepath.Clean(route.expectedSocketPath) != route.expectedSocketPath {
 		return errors.New("config apply route is not exact")
 	}
@@ -1474,7 +1474,7 @@ func guardConfigApplyRuntimeRoute(ctx context.Context, runner tmuxCommandRunner,
 	if err != nil || strings.TrimSpace(string(logicalPath)) != route.expectedSocketPath {
 		return errors.New("config apply logical alias no longer names the exact physical socket")
 	}
-	exact := explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: route.expectedSocketPath}}
+	exact := explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: route.expectedSocketPath, Source: tmuxSocketPathSource}}
 	pathOut, err := exact.Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
 	if err != nil || strings.TrimSpace(string(pathOut)) != route.expectedSocketPath {
 		return errors.New("config apply physical socket drifted")

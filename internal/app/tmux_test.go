@@ -132,7 +132,7 @@ func TestConfigRouteMarkerMatchingEffectCannotSkipCapturedServerGeneration(t *te
 	server := newFakeTmux()
 	server.socketName = "phase10-config"
 	route := runtimeMutationRoute{
-		target:             explicitTmuxTarget{flag: "-L", value: "phase10-config"},
+		target:             tmuxTransport{Kind: tmuxSocketName, Value: "phase10-config", Source: tmuxSocketNameSource},
 		expectedSocketPath: server.socketPath, socketName: "phase10-config",
 		authority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: server.serverPID},
 	}

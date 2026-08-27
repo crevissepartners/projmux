@@ -210,7 +210,7 @@ func newTestResourceCreateCommand(t *testing.T, store *fakeResourceStore, tmux *
 			runner:     tmux,
 			mirror:     mirror,
 			sessions:   sessions,
-			target:     explicitTmuxTarget{flag: "-S", value: tmux.socketPath},
+			target:     tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource},
 			socketName: defaultAppSocket,
 			warn:       testWarnWriter{t},
 			executable: func() (string, error) { return testSupervisorBinary, nil },
@@ -1366,7 +1366,7 @@ func TestOperationRollbackRemovesOnlyWhatThisOperationCreated(t *testing.T) {
 		var warnings bytes.Buffer
 		runtime := &materializer{
 			runner: tmux, mirror: intmetadata.NewMirror(tmux), warn: &warnings,
-			target: explicitTmuxTarget{flag: "-S", value: tmux.socketPath}, expectedSocketPath: tmux.socketPath,
+			target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}, expectedSocketPath: tmux.socketPath,
 			socketName:     defaultAppSocket,
 			routeAuthority: &runtimeMutationRouteAuthority{Class: runtimeMutationRouteApp, ServerPID: tmux.serverPID},
 		}

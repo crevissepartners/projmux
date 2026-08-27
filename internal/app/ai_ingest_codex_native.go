@@ -65,11 +65,11 @@ type codexNativeLifecycleStarter interface {
 
 type codexLifecycleObserverTarget struct {
 	Identity codexLifecycleIdentity
-	Route    explicitTmuxTarget
+	Route    tmuxTransport
 }
 
 func (t codexLifecycleObserverTarget) valid() bool {
-	return t.Identity.valid() && t.Route.flag != "" && t.Route.value != ""
+	return t.Identity.valid() && t.Route.Flag() != "" && t.Route.Value != ""
 }
 
 type codexNativeObserver struct {
@@ -900,10 +900,10 @@ func startCodexLifecycleObserverProcess(executable string, target codexLifecycle
 	args := []string{"internal", "agent-hook", "ingest", "codex-appserver-watch",
 		"--agent-uid", identity.AgentUID, "--pane-uid", identity.PaneUID, "--pane", identity.RuntimeID,
 		"--generation", identity.Generation, "--thread", identity.ThreadID}
-	if target.Route.flag == "-L" {
-		args = append(args, "--tmux-socket-name", target.Route.value)
-	} else if target.Route.flag == "-S" {
-		args = append(args, "--tmux-socket-path", target.Route.value)
+	if target.Route.Flag() == "-L" {
+		args = append(args, "--tmux-socket-name", target.Route.Value)
+	} else if target.Route.Flag() == "-S" {
+		args = append(args, "--tmux-socket-path", target.Route.Value)
 	} else {
 		return errors.New("codex native lifecycle observer requires an exact tmux route")
 	}
@@ -990,7 +990,7 @@ func parseCodexNativeLifecycleTarget(args []string) (codexLifecycleObserverTarge
 		case "--thread":
 			target.Identity.ThreadID = value
 		case "--tmux-socket-name":
-			if target.Route.flag != "" {
+			if target.Route.Flag() != "" {
 				return target, errors.New("codex app-server watcher accepts exactly one tmux route")
 			}
 			var err error
@@ -999,7 +999,7 @@ func parseCodexNativeLifecycleTarget(args []string) (codexLifecycleObserverTarge
 				return target, err
 			}
 		case "--tmux-socket-path":
-			if target.Route.flag != "" {
+			if target.Route.Flag() != "" {
 				return target, errors.New("codex app-server watcher accepts exactly one tmux route")
 			}
 			var err error

@@ -190,7 +190,7 @@ func TestControlSessionIdentityPlanNormalizesAutomaticRenameFormatBoolean(t *tes
 
 func TestControlSessionIdentityPlanFlattensEquivalentNestedRoutes(t *testing.T) {
 	converger, _, server, runner := controlSessionFixture(t)
-	converger.runner = explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: server.socketPath}}
+	converger.runner = explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: server.socketPath, Source: tmuxSocketPathSource}}
 
 	result, err := converger.converge(context.Background(), controlFixtureSocket, "home")
 	if err != nil {
@@ -208,7 +208,7 @@ func TestControlSessionIdentityPlanRefusesMismatchedNestedPhysicalRoute(t *testi
 	converger, store, _, runner := controlSessionFixture(t)
 	server := runner.servers["-L\x00"+controlFixtureSocket]
 	runner.servers["-S\x00/tmp/foreign-control.sock"] = server
-	converger.runner = explicitTmuxRunner{runner: runner, target: explicitTmuxTarget{flag: "-S", value: "/tmp/foreign-control.sock"}}
+	converger.runner = explicitTmuxRunner{runner: runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/foreign-control.sock", Source: tmuxSocketPathSource}}
 
 	_, err := converger.converge(context.Background(), controlFixtureSocket, "home")
 	if err == nil || !strings.Contains(err.Error(), "physical route disagrees") {
@@ -270,11 +270,11 @@ func TestControlSessionIdentityConvergenceNeverOverwritesForeignDescendantUID(t 
 			}
 			mirror := intmetadata.NewMirror(explicitTmuxRunner{
 				runner: runner,
-				target: explicitTmuxTarget{flag: "-L", value: controlFixtureSocket},
+				target: tmuxTransport{Kind: tmuxSocketName, Value: controlFixtureSocket, Source: tmuxSocketNameSource},
 			})
 			_, err := executeControlSessionIdentityPlan(
 				context.Background(),
-				explicitTmuxTarget{flag: "-L", value: controlFixtureSocket},
+				tmuxTransport{Kind: tmuxSocketName, Value: controlFixtureSocket, Source: tmuxSocketNameSource},
 				"home",
 				mirror,
 				registry,

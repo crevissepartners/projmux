@@ -19,25 +19,25 @@ func TestDeleteResolvesOneExactTargetAndNeverTheAppSocket(t *testing.T) {
 		name     string
 		flags    deleteSocketFlags
 		env      string
-		want     explicitTmuxTarget
+		want     tmuxTransport
 		wantFail string
 	}{
 		{
 			name:  "an explicit socket name wins over the inherited client",
 			flags: deleteSocketFlags{socket: "isolated"},
 			env:   "/tmp/tmux-1000/projmux,1,0",
-			want:  explicitTmuxTarget{flag: "-L", value: "isolated"},
+			want:  tmuxTransport{Kind: tmuxSocketName, Value: "isolated", Source: tmuxSocketNameSource},
 		},
 		{
 			name:  "an explicit socket path wins over the inherited client",
 			flags: deleteSocketFlags{socketPath: "/tmp/isolated/socket"},
 			env:   "/tmp/tmux-1000/projmux,1,0",
-			want:  explicitTmuxTarget{flag: "-S", value: "/tmp/isolated/socket"},
+			want:  tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/isolated/socket", Source: tmuxSocketPathSource},
 		},
 		{
 			name: "the inherited client routes when no flag is given",
 			env:  "/tmp/isolated/socket,4242,0",
-			want: explicitTmuxTarget{flag: "-S", value: "/tmp/isolated/socket"},
+			want: tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/isolated/socket", Source: tmuxInheritedSource},
 		},
 		{
 			name:     "both flags together are a usage refusal",
@@ -72,7 +72,7 @@ func TestDeleteResolvesOneExactTargetAndNeverTheAppSocket(t *testing.T) {
 				if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), test.wantFail) {
 					t.Fatalf("error = %v, want a usage refusal mentioning %q", err, test.wantFail)
 				}
-				if target != (explicitTmuxTarget{}) {
+				if target != (tmuxTransport{}) {
 					t.Fatalf("a refused resolution still produced %#v", target)
 				}
 				return
@@ -83,7 +83,7 @@ func TestDeleteResolvesOneExactTargetAndNeverTheAppSocket(t *testing.T) {
 			if target != test.want {
 				t.Fatalf("target = %#v, want %#v", target, test.want)
 			}
-			if target.flag == "-L" && target.value == defaultAppSocket {
+			if target.Flag() == "-L" && target.Value == defaultAppSocket {
 				t.Fatal("the resolution reached the app socket")
 			}
 		})
@@ -93,7 +93,7 @@ func TestDeleteResolvesOneExactTargetAndNeverTheAppSocket(t *testing.T) {
 func TestExplicitLiveSocketPathIsAmbientInvariant(t *testing.T) {
 	t.Parallel()
 	flags := deleteSocketFlags{socketPath: "/tmp/isolated/socket"}
-	var results []explicitTmuxTarget
+	var results []tmuxTransport
 	for _, ambient := range []string{"", "/tmp/tmux-1000/projmux,1,0", "/tmp/foreign/socket,9999,7"} {
 		target, err := resolveDeleteTarget("delete window", flags, func(name string) string {
 			if name == "TMUX" {
@@ -106,7 +106,7 @@ func TestExplicitLiveSocketPathIsAmbientInvariant(t *testing.T) {
 		}
 		results = append(results, target)
 	}
-	want := explicitTmuxTarget{flag: "-S", value: "/tmp/isolated/socket"}
+	want := tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/isolated/socket", Source: tmuxSocketPathSource}
 	for index, got := range results {
 		if got != want {
 			t.Fatalf("ambient row %d target = %#v, want unchanged live %#v", index, got, want)
@@ -129,7 +129,7 @@ func TestDeleteInstallsTheResolvedTargetOnTheLiveHalf(t *testing.T) {
 			"--socket", "isolated-run", "--dry-run"); err != nil {
 			t.Fatalf("dry-run error = %v", err)
 		}
-		if want := (explicitTmuxTarget{flag: "-L", value: "isolated-run"}); runtime.boundTarget != want {
+		if want := (tmuxTransport{Kind: tmuxSocketName, Value: "isolated-run", Source: tmuxSocketNameSource}); runtime.boundTarget != want {
 			t.Fatalf("pane runtime target = %#v, want %#v", runtime.boundTarget, want)
 		}
 	})
@@ -144,7 +144,7 @@ func TestDeleteInstallsTheResolvedTargetOnTheLiveHalf(t *testing.T) {
 			"--socket-path", "/tmp/isolated/socket", "--dry-run"); err != nil {
 			t.Fatalf("dry-run error = %v", err)
 		}
-		if want := (explicitTmuxTarget{flag: "-S", value: "/tmp/isolated/socket"}); runtime.boundTarget != want {
+		if want := (tmuxTransport{Kind: tmuxSocketPath, Value: "/tmp/isolated/socket", Source: tmuxSocketPathSource}); runtime.boundTarget != want {
 			t.Fatalf("window runtime target = %#v, want %#v", runtime.boundTarget, want)
 		}
 	})
@@ -159,7 +159,7 @@ func TestDeleteInstallsTheResolvedTargetOnTheLiveHalf(t *testing.T) {
 			"--socket", "isolated-run", "--dry-run"); err != nil {
 			t.Fatalf("dry-run error = %v", err)
 		}
-		if want := (explicitTmuxTarget{flag: "-L", value: "isolated-run"}); runtime.boundTarget != want {
+		if want := (tmuxTransport{Kind: tmuxSocketName, Value: "isolated-run", Source: tmuxSocketNameSource}); runtime.boundTarget != want {
 			t.Fatalf("agent delete target = %#v, want %#v", runtime.boundTarget, want)
 		}
 	})
@@ -179,7 +179,7 @@ func TestDeleteResultNamesTheResolvedSocket(t *testing.T) {
 	}{
 		{name: "an explicit socket name", args: []string{"--socket", "isolated-run"}, want: "socket=-L/isolated-run"},
 		{name: "an explicit socket path", args: []string{"--socket-path", "/tmp/isolated/socket"}, want: "socket=-S//tmp/isolated/socket"},
-		{name: "the inherited client", want: "socket=" + testDeleteTarget.label()},
+		{name: "the inherited client", want: "socket=" + testDeleteTarget.Label()},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()

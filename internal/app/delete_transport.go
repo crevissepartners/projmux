@@ -1,9 +1,10 @@
 package app
 
 import (
+	"errors"
 	"os"
-	"path/filepath"
-	"strings"
+
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 )
 
 // deleteSocketFlags are the two mutually exclusive exact-target flags every
@@ -24,38 +25,24 @@ type deleteSocketFlags struct {
 // the app's own socket instead: the route asked one server for its resources
 // and answered by mutating another. Refusing outside tmux is the only remaining
 // honest answer, and it names the two flags that fix it.
-func resolveDeleteTarget(spelling string, flags deleteSocketFlags, lookupEnv func(string) string) (explicitTmuxTarget, error) {
-	name := strings.TrimSpace(flags.socket)
-	path := strings.TrimSpace(flags.socketPath)
-	if name != "" && path != "" {
-		return explicitTmuxTarget{}, usageError(spelling + " accepts only one of --socket and --socket-path")
-	}
-	if name != "" {
-		target, err := tmuxSocketNameTarget(name)
-		if err != nil {
-			return explicitTmuxTarget{}, usageError(spelling + ": --socket must not be empty")
-		}
-		return target, nil
-	}
-	if path != "" {
-		target, err := tmuxSocketPathTarget(path)
-		if err != nil {
-			return explicitTmuxTarget{}, usageError(spelling + ": --socket-path must be absolute")
-		}
-		return target, nil
-	}
+func resolveDeleteTarget(spelling string, flags deleteSocketFlags, lookupEnv func(string) string) (tmuxTransport, error) {
 	if lookupEnv == nil {
 		lookupEnv = os.Getenv
 	}
-	inherited, _, _ := strings.Cut(strings.TrimSpace(lookupEnv("TMUX")), ",")
-	inherited = strings.TrimSpace(inherited)
-	if inherited == "" || !filepath.IsAbs(inherited) {
-		return explicitTmuxTarget{}, usageError(spelling +
-			" requires --socket <name> or --socket-path <absolute> outside tmux")
-	}
-	target, err := tmuxSocketPathTarget(inherited)
+	target, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{
+		SocketName:    flags.socket,
+		SocketPath:    flags.socketPath,
+		InheritedTMUX: lookupEnv("TMUX"),
+	})
 	if err != nil {
-		return explicitTmuxTarget{}, usageError(spelling + ": inherited $TMUX socket path is not absolute")
+		if errors.Is(err, resourcegraph.ErrTransportConflict) {
+			return tmuxTransport{}, usageError(spelling + " accepts only one of --socket and --socket-path")
+		}
+		return tmuxTransport{}, usageError(spelling + ": --socket-path must be absolute")
+	}
+	if !target.Present() {
+		return tmuxTransport{}, usageError(spelling +
+			" requires --socket <name> or --socket-path <absolute> outside tmux")
 	}
 	return target, nil
 }

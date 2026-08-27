@@ -108,8 +108,8 @@ func TestLockedAutomaticRecoveryReclassifiesConcurrentRegistryClaimBeforeL8(t *t
 	session.windows[0].opts[tmuxopts.WindowUID] = full.Windows[0].Metadata.UID
 	session.windows[0].panes[0].opts[tmuxopts.PaneUID] = full.Panes[0].Metadata.UID
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00locked-race": server}}
-	target := explicitTmuxTarget{flag: "-L", value: "locked-race"}
-	if got := len(resourcegraph.Resolve(snapshot, intmetadata.NewInventoryObserver(runner, controllerTransport(target)).Observe(context.Background())).RuntimeOfClass(resourcegraph.ClassRecoverable)); got != 1 {
+	target := tmuxTransport{Kind: tmuxSocketName, Value: "locked-race", Source: tmuxSocketNameSource}
+	if got := len(resourcegraph.Resolve(snapshot, intmetadata.NewInventoryObserver(runner, target.ExplicitProjection()).Observe(context.Background())).RuntimeOfClass(resourcegraph.ClassRecoverable)); got != 1 {
 		t.Fatalf("unlocked preview D3 count = %d, want 1", got)
 	}
 	store := &resourceStore{updateConvergent: func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, bool, error) {
@@ -144,7 +144,7 @@ func TestLockedAutomaticRecoveryIgnoresOuterStoreNormalizationChangeSignal(t *te
 		return working, true, nil
 	}}
 	recovered, err := runLockedAutomaticMirrorRecovery(context.Background(), store, runner,
-		explicitTmuxTarget{flag: "-L", value: "outer-normalize"}, controller.RecoveryHookConverge)
+		tmuxTransport{Kind: tmuxSocketName, Value: "outer-normalize", Source: tmuxSocketNameSource}, controller.RecoveryHookConverge)
 	if err != nil || recovered != 0 {
 		t.Fatalf("outer changed=true was attributed to L8: recovered=%d err=%v", recovered, err)
 	}
@@ -222,8 +222,8 @@ func slicesDeleteReservations(in []coremetadata.NameReservation, known map[strin
 func TestIncident20260820ExactD3AutomaticallyRunsL8WhileL7RequiresApproval(t *testing.T) {
 	registry, server, root := incident20260820RecoveryFixture(t)
 	runner := &routedTmuxRunner{servers: map[string]*fakeTmux{"-L\x00incident": server}}
-	target := explicitTmuxTarget{flag: "-L", value: "incident"}
-	inventory := intmetadata.NewInventoryObserver(runner, controllerTransport(target)).Observe(context.Background())
+	target := tmuxTransport{Kind: tmuxSocketName, Value: "incident", Source: tmuxSocketNameSource}
+	inventory := intmetadata.NewInventoryObserver(runner, target.ExplicitProjection()).Observe(context.Background())
 	items := resourcegraph.ClassifyDivergences(registry, inventory)
 	d3 := 0
 	for _, item := range items {

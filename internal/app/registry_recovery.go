@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -48,7 +49,7 @@ type registryRecoveryCommand struct {
 	// test ever inspects or restores the operator's own Registry.
 	newStore func() (*intmetadata.Store, error)
 	// observeFragments is the mirror seam, resolved against one exact target.
-	observeFragments func(context.Context, explicitTmuxTarget) ([]intmetadata.IdentityFragment, error)
+	observeFragments func(context.Context, tmuxTransport) ([]intmetadata.IdentityFragment, error)
 }
 
 func newRegistryRecoveryCommand(tmux *tmuxCommand) *registryRecoveryCommand {
@@ -65,7 +66,7 @@ func newRegistryRecoveryCommand(tmux *tmuxCommand) *registryRecoveryCommand {
 	if tmux != nil {
 		command.runner = tmux.runner
 	}
-	command.observeFragments = func(ctx context.Context, target explicitTmuxTarget) ([]intmetadata.IdentityFragment, error) {
+	command.observeFragments = func(ctx context.Context, target tmuxTransport) ([]intmetadata.IdentityFragment, error) {
 		if command.runner == nil {
 			return nil, errors.New("no tmux runner is configured")
 		}
@@ -333,7 +334,11 @@ func (c *registryRecoveryCommand) observeMirror(ctx context.Context, opts regist
 		report.Reason = err.Error()
 		return report
 	}
-	report.Target = "tmux " + target.flag + " " + target.value
+	if !target.Present() {
+		report.Reason = "no exact tmux transport: pass --socket <name> or --socket-path <absolute> to inspect a live mirror"
+		return report
+	}
+	report.Target = target.String()
 	if c.observeFragments == nil {
 		report.Reason = "no tmux mirror reader is configured"
 		return report
@@ -366,22 +371,14 @@ func (c *registryRecoveryCommand) observeMirror(ctx context.Context, opts regist
 
 // resolveMirrorTarget picks the exact server to observe. Unlike `reconcile
 // resources` an absent target is not a usage error here; it is a reason.
-func (c *registryRecoveryCommand) resolveMirrorTarget(opts registryRecoveryOptions) (explicitTmuxTarget, error) {
-	if strings.TrimSpace(opts.socket) != "" {
-		return tmuxSocketNameTarget(opts.socket)
-	}
-	if strings.TrimSpace(opts.socketPath) != "" {
-		return tmuxSocketPathTarget(opts.socketPath)
-	}
+func (c *registryRecoveryCommand) resolveMirrorTarget(opts registryRecoveryOptions) (tmuxTransport, error) {
 	tmuxEnv := ""
 	if c.lookupEnv != nil {
-		tmuxEnv = strings.TrimSpace(c.lookupEnv("TMUX"))
+		tmuxEnv = c.lookupEnv("TMUX")
 	}
-	inherited, _, _ := strings.Cut(tmuxEnv, ",")
-	if inherited == "" || !filepath.IsAbs(inherited) {
-		return explicitTmuxTarget{}, errors.New("no exact tmux transport: pass --socket <name> or --socket-path <absolute> to inspect a live mirror")
-	}
-	return tmuxSocketPathTarget(inherited)
+	return resourcegraph.ResolveTransport(resourcegraph.TransportRequest{
+		SocketName: opts.socket, SocketPath: opts.socketPath, InheritedTMUX: tmuxEnv,
+	})
 }
 
 // registryRecoveryGaps is the fixed statement of what no mirror can return.

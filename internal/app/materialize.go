@@ -243,7 +243,7 @@ type materializer struct {
 	// target is the immutable logical route shared by runner, mirror, and
 	// sessions. Every printable action carries it and every write reobserves
 	// the server's #{socket_path} through that same route first.
-	target explicitTmuxTarget
+	target tmuxTransport
 	// expectedSocketPath is the exact invocation identity resolved before the
 	// plan. It closes the gap where an -L name could be retargeted between
 	// planning and execution.
@@ -276,9 +276,9 @@ func (m *materializer) routedRunner() tmuxCommandRunner {
 	return m.runner
 }
 
-func (m *materializer) exactMutationRoute() (explicitTmuxTarget, string, error) {
+func (m *materializer) exactMutationRoute() (tmuxTransport, string, error) {
 	target := m.target
-	if target.flag == "" || target.value == "" {
+	if target.Flag() == "" || target.Value == "" {
 		switch runner := m.runner.(type) {
 		case explicitTmuxRunner:
 			target = runner.target
@@ -286,19 +286,19 @@ func (m *materializer) exactMutationRoute() (explicitTmuxTarget, string, error) 
 			target = runner.target
 		}
 	}
-	switch target.flag {
+	switch target.Flag() {
 	case "-L":
-		if strings.TrimSpace(target.value) == "" {
+		if strings.TrimSpace(target.Value) == "" {
 			break
 		}
-		return target, "-L=" + target.value, nil
+		return target, "-L=" + target.Value, nil
 	case "-S":
-		if filepath.IsAbs(target.value) {
-			target.value = filepath.Clean(target.value)
-			return target, "-S=" + target.value, nil
+		if filepath.IsAbs(target.Value) {
+			target.Value = filepath.Clean(target.Value)
+			return target, "-S=" + target.Value, nil
 		}
 	}
-	return explicitTmuxTarget{}, "", errors.New("materializer requires an exact -L socket name or absolute -S socket path")
+	return tmuxTransport{}, "", errors.New("materializer requires an exact -L socket name or absolute -S socket path")
 }
 
 func (m *materializer) boundMutationTarget(kind, id, uid string) runtimeMutationTarget {
@@ -329,7 +329,7 @@ func (m *materializer) targetRouteGuard(action plannedRuntimeMutation) func(cont
 		}
 		if action.Target.PhysicalSocket == runtimeMutationSocketAbsentBeforeCreate {
 			if m.expectedSocketPath != "" || m.routeAuthority != nil ||
-				action.Target.Socket != target.flag+"="+target.value || action.Target.RouteAuthority != "" {
+				action.Target.Socket != target.Flag()+"="+target.Value || action.Target.RouteAuthority != "" {
 				return errors.New("materializer absent-before-create authority disagrees with printable target")
 			}
 			probe := m.runnerAtTarget(target)
@@ -341,7 +341,7 @@ func (m *materializer) targetRouteGuard(action plannedRuntimeMutation) func(cont
 			}
 			return errors.New("materializer absent-before-create server appeared after planning")
 		}
-		wantSocket := target.flag + "=" + target.value
+		wantSocket := target.Flag() + "=" + target.Value
 		if action.Verb == mutationWriteRouteMarker {
 			wantSocket = "-S=" + m.expectedSocketPath
 		}
@@ -376,10 +376,10 @@ func (m *materializer) targetRouteGuard(action plannedRuntimeMutation) func(cont
 }
 
 func (m *materializer) runnerAtPhysicalSocket(path string) tmuxCommandRunner {
-	return m.runnerAtTarget(explicitTmuxTarget{flag: "-S", value: filepath.Clean(path)})
+	return m.runnerAtTarget(tmuxTransport{Kind: tmuxSocketPath, Value: filepath.Clean(path), Source: tmuxSocketPathSource})
 }
 
-func (m *materializer) runnerAtTarget(target explicitTmuxTarget) tmuxCommandRunner {
+func (m *materializer) runnerAtTarget(target tmuxTransport) tmuxCommandRunner {
 	return explicitTmuxRunner{runner: m.baseRunner(), target: target}
 }
 
@@ -497,10 +497,10 @@ func (m *materializer) guardExactRouteOwnership(ctx context.Context, allowNoServ
 			return errors.New("runtime mutation route: exact server is not app-owned")
 		}
 	}
-	switch target.flag {
+	switch target.Flag() {
 	case "-S":
-		if observed != target.value {
-			return fmt.Errorf("tmux socket drifted: observed %q, planned %q", observed, target.value)
+		if observed != target.Value {
+			return fmt.Errorf("tmux socket drifted: observed %q, planned %q", observed, target.Value)
 		}
 	case "-L":
 		// The logical route is proved by expectedSocketPath, which was resolved
@@ -509,12 +509,12 @@ func (m *materializer) guardExactRouteOwnership(ctx context.Context, allowNoServ
 	return nil
 }
 
-func (m *materializer) logicalSocketName(target explicitTmuxTarget) string {
+func (m *materializer) logicalSocketName(target tmuxTransport) string {
 	if strings.TrimSpace(m.socketName) != "" {
 		return strings.TrimSpace(m.socketName)
 	}
-	if target.flag == "-L" {
-		return target.value
+	if target.Flag() == "-L" {
+		return target.Value
 	}
 	return ""
 }
@@ -1304,15 +1304,15 @@ func (m *materializer) writeCreatedProjectRouteMarker(ctx context.Context, resul
 	if err != nil {
 		return err
 	}
-	if target.flag != "-L" || strings.TrimSpace(target.value) == "" || !filepath.IsAbs(m.expectedSocketPath) {
+	if target.Flag() != "-L" || strings.TrimSpace(target.Value) == "" || !filepath.IsAbs(m.expectedSocketPath) {
 		return errors.New("created Project route marker requires an exact logical and physical route")
 	}
-	printableTarget := m.boundMutationTarget("session", result.SessionID, "logical:"+target.value)
+	printableTarget := m.boundMutationTarget("session", result.SessionID, "logical:"+target.Value)
 	printableTarget.Socket = "-S=" + m.expectedSocketPath
 	printableTarget.Parent = result.WindowID + "/" + result.PaneID
 	action := newRuntimeMutation(1, mutationWriteRouteMarker, printableTarget)
 	bindRuntimeMutationGuard(&action, "exact created Project tuple and operation lease="+marker)
-	action.Operands = []string{"-S", m.expectedSocketPath, "-gq", runtimeMutationSocketNameOption, target.value}
+	action.Operands = []string{"-S", m.expectedSocketPath, "-gq", runtimeMutationSocketNameOption, target.Value}
 	observeReceipt := func(ctx context.Context) (bool, error) {
 		if err := m.guardExactAppRoute(ctx, false, action.Target.PhysicalSocket); err != nil {
 			return false, err
@@ -1332,10 +1332,10 @@ func (m *materializer) writeCreatedProjectRouteMarker(ctx context.Context, resul
 				return false, err
 			}
 			current := strings.TrimSpace(string(out))
-			if current != "" && current != target.value {
-				return false, fmt.Errorf("created Project logical route marker is %q, want %q", current, target.value)
+			if current != "" && current != target.Value {
+				return false, fmt.Errorf("created Project logical route marker is %q, want %q", current, target.Value)
 			}
-			return current == target.value, nil
+			return current == target.Value, nil
 		},
 		Guard: func(ctx context.Context) error {
 			owned, err := observeReceipt(ctx)
@@ -1347,7 +1347,7 @@ func (m *materializer) writeCreatedProjectRouteMarker(ctx context.Context, resul
 				return err
 			}
 			current := strings.TrimSpace(string(out))
-			if current != "" && current != target.value {
+			if current != "" && current != target.Value {
 				return fmt.Errorf("created Project logical route marker is %q, want blank or exact", current)
 			}
 			return nil
@@ -1447,14 +1447,14 @@ func (m *materializer) bindCreatedProjectRecoveryRoute(ctx context.Context) (boo
 	if err != nil {
 		return false, err
 	}
-	if target.flag == "-S" {
-		if !filepath.IsAbs(target.value) || filepath.Clean(target.value) != target.value {
-			return false, fmt.Errorf("created Project recovery route is not an absolute clean socket: %q", target.value)
+	if target.Flag() == "-S" {
+		if !filepath.IsAbs(target.Value) || filepath.Clean(target.Value) != target.Value {
+			return false, fmt.Errorf("created Project recovery route is not an absolute clean socket: %q", target.Value)
 		}
-		m.expectedSocketPath = target.value
+		m.expectedSocketPath = target.Value
 		return true, nil
 	}
-	if target.flag != "-L" {
+	if target.Flag() != "-L" {
 		return false, errors.New("created Project recovery requires an exact logical or physical route")
 	}
 	out, err := m.runnerAtTarget(target).Run(ctx, "tmux", "display-message", "-p", "-F", "#{socket_path}")
