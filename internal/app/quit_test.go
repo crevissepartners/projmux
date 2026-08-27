@@ -8,11 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
 
-func TestQuitCommandPickerShowsQuitAndCancel(t *testing.T) {
+func TestQuitCommandPickerShowsSaveQuitWithoutSavingAndCancel(t *testing.T) {
 	t.Parallel()
 
 	var got intpickercompat.Options
@@ -33,12 +34,12 @@ func TestQuitCommandPickerShowsQuitAndCancel(t *testing.T) {
 	if got.DisableSearch != true {
 		t.Fatalf("quit picker DisableSearch = false, want true")
 	}
-	for _, want := range []string{"Quit projmux", "Cancel"} {
+	for _, want := range []string{"Save Project snapshots and quit", "Quit without saving", "Cancel"} {
 		if !hasEntryLabelContaining(got.Entries, want) {
 			t.Fatalf("quit picker entries = %#v, want label containing %q", got.Entries, want)
 		}
 	}
-	if got, want := entryValues(got.Entries), []string{quitActionQuit, quitActionCancel}; !reflect.DeepEqual(got, want) {
+	if got, want := entryValues(got.Entries), []string{quitActionSaveAndQuit, quitActionQuit, quitActionCancel}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("quit picker entry values = %#v, want %#v", got, want)
 	}
 }
@@ -46,20 +47,52 @@ func TestQuitCommandPickerShowsQuitAndCancel(t *testing.T) {
 func TestQuitCommandDestructiveRowKeepsDangerColorWhenSelected(t *testing.T) {
 	t.Parallel()
 
-	options := quitActionOptions()
+	options := quitActionOptions(i18n.FallbackLocale)
 	if len(options.Entries) == 0 {
 		t.Fatal("quit picker has no entries")
 	}
 	quitLabel := options.Entries[0].Label
-	if !strings.Contains(quitLabel, settingsColorRemove+"Quit projmux") {
+	if !strings.Contains(quitLabel, settingsColorRemove+"Save Project snapshots and quit") {
 		t.Fatalf("quit label = %q, want danger-colored action name", quitLabel)
 	}
 	selected := projmuxpicker.SelectedLine(projmuxpicker.Pointer, quitLabel)
-	if !strings.Contains(selected, settingsColorRemove+"Quit projmux") {
+	if !strings.Contains(selected, settingsColorRemove+"Save Project snapshots and quit") {
 		t.Fatalf("selected quit label = %q, destructive action lost danger color", selected)
 	}
 	if !strings.Contains(selected, settingsColorReset+projmuxpicker.CurrentStart) {
 		t.Fatalf("selected quit label = %q, want current-row style restored after embedded color resets", selected)
+	}
+}
+
+func TestQuitCommandPickerActionsHaveEnglishKoreanMeaningParity(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		locale i18n.Locale
+		want   []string
+	}{
+		{locale: i18n.FallbackLocale, want: []string{"Save Project snapshots and quit", "capture every live managed Project before shutdown", "Quit without saving", "terminate without capturing Project snapshots", "Cancel", "keep projmux running"}},
+		{locale: i18n.Locale("ko-KR"), want: []string{"Project 스냅샷 저장 후 종료", "모든 live managed Project를 캡처한 뒤 종료", "저장하지 않고 종료", "Project 스냅샷을 캡처하지 않고 종료", "취소", "Projmux를 계속 실행"}},
+	}
+	for _, tc := range tests {
+		t.Run(string(tc.locale), func(t *testing.T) {
+			options := quitActionOptions(tc.locale)
+			options.Locale = tc.locale
+			options = localizePickerOptions(nil, nil, options)
+			if got, want := entryValues(options.Entries), []string{quitActionSaveAndQuit, quitActionQuit, quitActionCancel}; !reflect.DeepEqual(got, want) {
+				t.Fatalf("entry values = %#v, want locale-invariant %#v", got, want)
+			}
+			var joined strings.Builder
+			joined.WriteString(options.Title + "\n" + options.Prompt)
+			for _, entry := range options.Entries {
+				joined.WriteString("\n" + entry.Label)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(joined.String(), want) {
+					t.Fatalf("picker text = %q, want %q", joined.String(), want)
+				}
+			}
+		})
 	}
 }
 

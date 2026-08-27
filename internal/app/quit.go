@@ -10,28 +10,35 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
 const (
-	quitActionQuit   = "quit:quit"
-	quitActionCancel = "quit:cancel"
+	quitActionSaveAndQuit = "quit:save-and-quit"
+	quitActionQuit        = "quit:quit-without-saving"
+	quitActionCancel      = "quit:cancel"
 )
 
 type quitCommand struct {
 	lookupEnv    func(string) string
+	homeDir      func() (string, error)
 	runner       tmuxRunner
 	nativePicker intpicker.Runner
+	snapshots    *quitSnapshotDependencies
 }
 
 func newQuitCommand() *quitCommand {
-	return &quitCommand{
+	cmd := &quitCommand{
 		lookupEnv:    os.Getenv,
+		homeDir:      os.UserHomeDir,
 		runner:       inttmux.ExecRunner{},
 		nativePicker: intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 	}
+	cmd.snapshots = newQuitSnapshotDependencies()
+	return cmd
 }
 
 func (c *quitCommand) Run(args []string, stdout, stderr io.Writer) error {
@@ -56,6 +63,8 @@ func (c *quitCommand) Run(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		switch action {
+		case quitActionSaveAndQuit:
+			return c.saveProjectSnapshotsAndQuit(context.Background(), defaultAppSocket, stdout)
 		case quitActionQuit:
 		case "", quitActionCancel:
 			return nil
@@ -67,7 +76,11 @@ func (c *quitCommand) Run(args []string, stdout, stderr io.Writer) error {
 }
 
 func (c *quitCommand) pickAction() (string, error) {
-	result, err := runNativePickerOption(os.UserHomeDir, c.lookupEnv, c.nativePicker, quitActionOptions())
+	homeDir := c.homeDir
+	if homeDir == nil {
+		homeDir = os.UserHomeDir
+	}
+	result, err := runNativePickerOption(homeDir, c.lookupEnv, c.nativePicker, quitActionOptions(appLocale(homeDir, c.lookupEnv)))
 	if err != nil {
 		if isNoSelectionExit(err) {
 			return "", nil
@@ -80,7 +93,7 @@ func (c *quitCommand) pickAction() (string, error) {
 	return strings.TrimSpace(result.Value), nil
 }
 
-func quitActionOptions() intpickercompat.Options {
+func quitActionOptions(locale i18n.Locale) intpickercompat.Options {
 	return intpickercompat.Options{
 		UI:            "quit",
 		Title:         "Quit projmux",
@@ -90,11 +103,15 @@ func quitActionOptions() intpickercompat.Options {
 		DisableSearch: true,
 		Entries: []intpickercompat.Entry{
 			{
-				Label: settingsLabel(settingsGlyphRemove, settingsColorRemove, "Quit projmux", "terminate the app-owned mux runtime"),
+				Label: settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Save Project snapshots and quit", "capture every live managed Project before shutdown"),
+				Value: quitActionSaveAndQuit,
+			},
+			{
+				Label: settingsLabelLocale(locale, settingsGlyphRemove, settingsColorRemove, "Quit without saving", "terminate without capturing Project snapshots"),
 				Value: quitActionQuit,
 			},
 			{
-				Label: settingsLabel(settingsGlyphBack, settingsColorBack, "Cancel", "keep projmux running"),
+				Label: settingsLabelLocale(locale, settingsGlyphBack, settingsColorBack, "Cancel", "keep projmux running"),
 				Value: quitActionCancel,
 			},
 		},
@@ -102,7 +119,14 @@ func quitActionOptions() intpickercompat.Options {
 	}
 }
 
-func (c *quitCommand) shutdownAppRuntime(ctx context.Context, socketName string) error {
+func (c *quitCommand) shutdownAppRuntime(ctx context.Context, socketName string, expectedPaths ...string) error {
+	if len(expectedPaths) > 1 {
+		return errors.New("quit app runtime: at most one expected physical socket is allowed")
+	}
+	expectedPath := ""
+	if len(expectedPaths) == 1 {
+		expectedPath = expectedPaths[0]
+	}
 	if strings.TrimSpace(socketName) == "" {
 		return errors.New("quit target socket is required")
 	}
@@ -118,6 +142,9 @@ func (c *quitCommand) shutdownAppRuntime(ctx context.Context, socketName string)
 	pathOut, err := routed.Run(ctx, command, "display-message", "-p", "-F", "#{socket_path}")
 	if err != nil {
 		if tmuxServerMissing(err) {
+			if expectedPath != "" {
+				return errors.New("quit app runtime: observed app server disappeared after snapshot capture")
+			}
 			return nil
 		}
 		return fmt.Errorf("resolve app %s runtime: %w", command, err)
@@ -126,11 +153,17 @@ func (c *quitCommand) shutdownAppRuntime(ctx context.Context, socketName string)
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return errors.New("quit app runtime: requested socket has no exact absolute physical identity")
 	}
+	if expectedPath != "" && path != expectedPath {
+		return fmt.Errorf("quit app runtime: physical socket generation drifted from %s to %s", expectedPath, path)
+	}
 	owned, err := routed.Run(ctx, command, "show-options", "-gqv", "@projmux_app")
 	if err != nil {
 		return fmt.Errorf("check app %s runtime ownership: %w", command, err)
 	}
 	if strings.TrimSpace(string(owned)) != "1" {
+		if expectedPath != "" {
+			return errors.New("quit app runtime: observed app server lost its ownership marker after snapshot capture")
+		}
 		return nil
 	}
 	logical, err := routed.Run(ctx, command, "show-options", "-gqv", runtimeMutationSocketNameOption)

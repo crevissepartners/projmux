@@ -928,6 +928,15 @@ that target subtree atomically, runs the ordinary materializer, and performs an
 explicit client handoff last when `--client` is present. Restore never modifies
 or deletes the source snapshot.
 
+Interactive `projmux quit` also offers `Save Project snapshots and quit`. It
+recaptures the latest snapshot for every live Registry-bound Project on the
+exact app server, regardless of the global or Project auto-save toggle, and
+stops the server only after all captures succeed. A partial failure keeps the
+server running and keeps each successful atomic snapshot for inspection or
+retry. Control/Home, ephemeral, unmanaged, conflicted, and sibling-server
+sessions are never promoted into Project snapshots. `Quit without saving`,
+`quit --yes`, and `quit --force` perform no snapshot inventory or store I/O.
+
 ## Decoration Mode
 
 Settings > Appearance controls optional icon decoration per surface:

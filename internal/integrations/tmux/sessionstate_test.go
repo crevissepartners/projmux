@@ -129,6 +129,43 @@ func TestClientSaveSessionSnapshotWritesStore(t *testing.T) {
 	}
 }
 
+func TestClientSaveExplicitSessionSnapshotTargetsObservedIDAndStoresStableName(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 27, 3, 4, 5, 0, time.UTC)
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{output: []byte("\n")},
+			{output: []byte("0\x1fshell\x1flayout\n")},
+			{output: []byte("0\x1f0\x1fshell\x1f\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\n")},
+			{output: []byte("\n")},
+		},
+	}
+	store := sessionstate.NewStore(t.TempDir())
+
+	snap, err := NewClient(runner).SaveExplicitSessionSnapshot(context.Background(), store, "$7", "workspace", now)
+	if err != nil {
+		t.Fatalf("SaveExplicitSessionSnapshot() error = %v", err)
+	}
+	if snap.Session != "workspace" {
+		t.Fatalf("snapshot Session = %q, want stable invocation-start name", snap.Session)
+	}
+	loaded, err := store.Load("workspace")
+	if err != nil || !reflect.DeepEqual(loaded, snap) {
+		t.Fatalf("Load(workspace) = %#v, %v; want saved snapshot %#v", loaded, err, snap)
+	}
+	for _, call := range runner.calls {
+		joined := strings.Join(call.args, " ")
+		if !strings.Contains(joined, "$7") {
+			t.Fatalf("tmux call = %#v, want every capture read pinned to exact session id $7", call)
+		}
+		if strings.Contains(joined, "-t workspace") {
+			t.Fatalf("tmux call followed mutable session name: %#v", call)
+		}
+	}
+}
+
 func TestClientSaveSessionSnapshotRefreshesAIResumeIDFromSessionIDBeforeCapture(t *testing.T) {
 	t.Parallel()
 
