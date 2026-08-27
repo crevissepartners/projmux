@@ -408,7 +408,9 @@ func (c *sessionStateCommand) commitSnapshotProjection(ctx context.Context, expl
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	resultFormat := localizeUIText(locale, "restored snapshot into Project %s: Window %d / Pane %d / Agent %d, preserved uid %d\n")
 	_, _ = fmt.Fprintf(stdout, resultFormat, committedProject.Metadata.Name, len(snap.Windows), statusbarSessionStatePaneCount(snap), applied.ReplacedAgents, applied.PreservedUIDs)
-	if _, err := c.projectTopology.MaterializeProjectTopology(ctx, committedProject.Spec.Root, declaredSession); err != nil {
+	if _, err := c.projectTopology.MaterializeProjectTopology(ctx, projectTopologyMaterializeRequest{
+		Root: committedProject.Spec.Root, SessionName: declaredSession,
+	}); err != nil {
 		if c.notices != nil {
 			noticeFormat := localizeUIText(locale, "projmux: snapshot desired state was committed; runtime item was refused: %s")
 			c.notices.Report(fmt.Sprintf(noticeFormat, err.Error()))

@@ -1785,7 +1785,7 @@ func buildPopupToggleWithStyle(mode tmuxPopupToggleMode, binaryPath, marker stri
 	}
 	commandArgs := []string{}
 	env := map[string]string{}
-	if mode.AnchorPane != "" {
+	if mode.AnchorPane != "" && mode.Raw != "sessionizer-sidebar" {
 		env[runtimeMutationAnchorPaneEnv] = mode.AnchorPane
 	}
 	cwd := ""
@@ -1819,6 +1819,9 @@ func buildPopupToggleWithStyle(mode tmuxPopupToggleMode, binaryPath, marker stri
 		env["TMUX_SESSIONIZER_CONTEXT_SESSION"] = ctx.OriginSession
 		env["TMUX_SESSIONIZER_CONTEXT_PANE"] = ctx.OriginPane
 		commandArgs = []string{"switch", "--ui=sidebar"}
+		if mode.AnchorPane != "" {
+			commandArgs = append(commandArgs, "--anchor", mode.AnchorPane)
+		}
 	case "notify-sidebar":
 		options.Client = ctx.TargetClient
 		options.Target = ""

@@ -61,6 +61,29 @@ type projectStartupCandidate struct {
 	Description string
 }
 
+// projectOpenRequest is the typed authority handoff for one Project open. The
+// sidebar path fills Anchor from its required hidden-command operand; ordinary
+// in-process opens leave it blank and retain their existing invocation route.
+type projectOpenRequest struct {
+	Target      string
+	SessionName string
+	Mode        projectStartupCandidate
+	Anchor      string
+}
+
+type projectSessionRequest struct {
+	SessionName string
+	CWD         string
+	Opened      openedProjectBootstrap
+	Anchor      string
+}
+
+type projectTopologyMaterializeRequest struct {
+	Root        string
+	SessionName string
+	Anchor      string
+}
+
 func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionName string) error {
 	exists, err := c.switchSessionExists(ctx, sessionName)
 	if err != nil {
@@ -93,24 +116,129 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 }
 
 func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate) (err error) {
-	trusted, err := c.authorizeProjectOpen(ctx, target)
+	return c.authorizeAndContinueProjectOpenRequest(ctx, projectOpenRequest{Target: target, SessionName: sessionName, Mode: mode})
+}
+
+func (c *switchCommand) authorizeAndContinueProjectOpenRequest(ctx context.Context, request projectOpenRequest) (err error) {
+	trusted, err := c.authorizeProjectOpen(ctx, request.Target)
 	if err != nil {
 		return errProjectTrustGate{err: err}
 	}
 	if !trusted {
 		return errProjectTrustDenied
 	}
-	if mode.Kind == projectStartupKindNew && !c.openedRootIsHome(target) {
-		_, err = c.continueProjectOpen(ctx, target, sessionName, mode, openedProjectBootstrap{})
+	// The parser-level preflight happened before the sidebar popup was closed.
+	// Reobserve the same typed anchor after trust and immediately before the
+	// first preparation/fresh-prune path that can write Registry state. This
+	// closes a stale/foreign authority change between those two boundaries.
+	if strings.TrimSpace(request.Anchor) != "" {
+		if c.validateProjectOpenRoute == nil {
+			return errors.New("project open route validator is not configured")
+		}
+		if err := c.validateProjectOpenRoute(ctx, request.Anchor); err != nil {
+			return err
+		}
+	}
+	if request.Mode.Kind == projectStartupKindNew && !c.openedRootIsHome(request.Target) {
+		_, err = c.continueProjectOpenRequest(ctx, request, openedProjectBootstrap{})
 		return err
 	}
-	opened, err := c.prepareProjectContinue(ctx, target, sessionName)
+	opened, err := c.prepareProjectContinue(ctx, request.Target, request.SessionName)
 	if err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "preparation",
 			opened.project.Metadata.UID, opened.project.Metadata.UID, err)
 	}
-	_, err = c.continueProjectOpen(ctx, target, sessionName, mode, opened)
+	_, err = c.continueProjectOpenRequest(ctx, request, opened)
 	return err
+}
+
+// validateSidebarProjectOpenRoute proves that the detached sidebar anchor is
+// one exact Pane on the observed app-owned server. An unmanaged/control client
+// Pane stays valid without being promoted into Registry ownership; if managed
+// mirrors are present, they must resolve to one exact Registry owner chain
+// rooted in a Project or ControlSession. The opened target Project may differ.
+func validateSidebarProjectOpenRoute(
+	ctx context.Context,
+	runner tmuxCommandRunner,
+	lookupEnv func(string) string,
+	readRegistry func() (coremetadata.Registry, error),
+	anchor string,
+) error {
+	route, err := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, runner, lookupEnv, anchor)
+	if err != nil {
+		return err
+	}
+	anchor = strings.TrimSpace(anchor)
+	if route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.PaneID != anchor ||
+		exactTmuxHandle(route.authority.SessionID, "$") == "" || exactTmuxHandle(route.authority.WindowID, "@") == "" {
+		return errors.New("runtime mutation route: sidebar anchor has no exact app-owned $/@/% authority")
+	}
+	if readRegistry == nil {
+		return errors.New("runtime mutation route: sidebar anchor Registry reader is not configured")
+	}
+	registry, err := readRegistry()
+	if err != nil {
+		return fmt.Errorf("runtime mutation route: read sidebar anchor ownership: %w", err)
+	}
+	mirror := intmetadata.NewMirror(explicitTmuxRunner{runner: runner, target: route.target})
+	paneUID, paneErr := mirror.ResolvePaneUID(ctx, anchor)
+	windowUID, windowErr := mirror.ResolveWindowUID(ctx, anchor)
+	if paneErr != nil || windowErr != nil {
+		return errors.New("runtime mutation route: sidebar anchor managed ownership is unreadable")
+	}
+	paneUID, windowUID = strings.TrimSpace(paneUID), strings.TrimSpace(windowUID)
+	// An exact app-owned but unmanaged/control client Pane is a valid transport
+	// anchor and is deliberately not promoted into Project ownership. Once
+	// either managed mirror exists, however, require and verify the complete
+	// Pane -> Window -> Project/ControlSession Registry chain.
+	if paneUID == "" && windowUID == "" {
+		return nil
+	}
+	if paneUID == "" || windowUID == "" {
+		return errors.New("runtime mutation route: sidebar anchor has incomplete managed ownership")
+	}
+	pane, ok := registry.Pane(paneUID)
+	if !ok {
+		return errors.New("runtime mutation route: sidebar anchor Pane ownership is absent from the Registry")
+	}
+	window, ok := registry.Window(windowUID)
+	if !ok {
+		return errors.New("runtime mutation route: sidebar anchor Window ownership is absent from the Registry")
+	}
+	paneOwned := false
+	if owner := pane.Metadata.OwnerRef; owner != nil {
+		switch owner.Kind {
+		case coremetadata.KindWindow:
+			paneOwned = owner.UID == window.Metadata.UID
+		case coremetadata.KindAgent:
+			agent, exists := registry.Agent(owner.UID)
+			paneOwned = exists && agent.Metadata.OwnerUID() == window.Metadata.UID && agent.Status.PaneRef == pane.Metadata.UID
+		}
+	}
+	if !paneOwned {
+		return errors.New("runtime mutation route: sidebar anchor Pane/Window ownership mismatch")
+	}
+	owner := window.Metadata.OwnerRef
+	if owner == nil {
+		return errors.New("runtime mutation route: sidebar anchor Window has no managed root owner")
+	}
+	switch owner.Kind {
+	case coremetadata.KindProject:
+		if _, ok := registry.Project(owner.UID); !ok {
+			return errors.New("runtime mutation route: sidebar anchor Project ownership mismatch")
+		}
+	case coremetadata.KindControlSession:
+		if _, ok := registry.ControlSession(owner.UID); !ok {
+			return errors.New("runtime mutation route: sidebar anchor ControlSession ownership mismatch")
+		}
+	default:
+		return errors.New("runtime mutation route: sidebar anchor has a foreign root owner")
+	}
+	if (window.Status.RuntimeSessionID != "" && window.Status.RuntimeSessionID != route.authority.SessionID) ||
+		(window.Status.RuntimeID != "" && window.Status.RuntimeID != route.authority.WindowID) {
+		return errors.New("runtime mutation route: sidebar anchor Registry/runtime ownership mismatch")
+	}
+	return nil
 }
 
 func (c *switchCommand) prepareProjectContinue(ctx context.Context, target, sessionName string) (openedProjectBootstrap, error) {
@@ -126,16 +254,18 @@ func (c *switchCommand) prepareProjectContinue(ctx context.Context, target, sess
 	return c.registerOpenedProjectRoot(ctx, target)
 }
 
-func (c *switchCommand) continueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate, opened openedProjectBootstrap) (diagnostics.SessionStateCounts, error) {
-	switch mode.Kind {
+func (c *switchCommand) continueProjectOpenRequest(ctx context.Context, request projectOpenRequest, opened openedProjectBootstrap) (diagnostics.SessionStateCounts, error) {
+	switch request.Mode.Kind {
 	case projectStartupKindNew:
-		return diagnostics.SessionStateCounts{}, c.startProjectFresh(ctx, sessionName, target, opened)
+		return diagnostics.SessionStateCounts{}, c.startProjectFresh(ctx, request.SessionName, request.Target, opened, request.Anchor)
 	default:
 		oldUID := opened.project.Metadata.UID
-		if err := c.materializeProjectTopology(ctx, sessionName, target, opened); err != nil {
+		if err := c.materializeProjectTopology(ctx, projectTopologyMaterializeRequest{
+			Root: request.Target, SessionName: request.SessionName, Anchor: request.Anchor,
+		}, opened); err != nil {
 			return diagnostics.SessionStateCounts{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "topology-materialization", oldUID, oldUID, err)
 		}
-		if err := c.openProjectSession(ctx, sessionName); err != nil {
+		if err := c.openProjectSession(ctx, request.SessionName); err != nil {
 			return diagnostics.SessionStateCounts{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "client-handoff", oldUID, oldUID, err)
 		}
 		return diagnostics.SessionStateCounts{}, nil
@@ -254,7 +384,7 @@ func projectStartupCandidateFromValue(value string) (projectStartupCandidate, bo
 // ensureProjectSession is the shipped first-session plan transaction without
 // client handoff. It refuses reduced/unwired callers instead of retaining a raw
 // EnsureSession escape hatch outside the managed mutation executor.
-func (c *switchCommand) ensureProjectSession(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
+func (c *switchCommand) ensureProjectSession(ctx context.Context, request projectTopologyMaterializeRequest, opened openedProjectBootstrap) error {
 	if strings.TrimSpace(opened.project.Metadata.UID) == "" {
 		return errors.New("ensure Project session: exact Registry Project UID is unavailable; no runtime was created")
 	}
@@ -264,18 +394,20 @@ func (c *switchCommand) ensureProjectSession(ctx context.Context, sessionName, t
 	if c.projectSessionPlan == nil {
 		return errors.New("ensure Project session: canonical materializer is not configured; no runtime was created")
 	}
-	return c.projectSessionPlan(ctx, sessionName, target, opened)
+	return c.projectSessionPlan(ctx, projectSessionRequest{
+		SessionName: request.SessionName, CWD: request.Root, Opened: opened, Anchor: request.Anchor,
+	})
 }
 
-func (c *switchCommand) ensureBootstrappedProjectSessionPlanned(ctx context.Context, sessionName, cwd string, project coremetadata.Project) error {
+func (c *switchCommand) ensureBootstrappedProjectSessionPlanned(ctx context.Context, request projectSessionRequest) error {
 	if c.tmuxRunner == nil {
 		return errors.New("ensure bootstrapped Project session: tmux mutation runner is not configured")
 	}
-	route, err := resolveInvocationRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
+	route, err := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, c.tmuxRunner, c.lookupEnv, request.Anchor)
 	if err != nil {
 		return err
 	}
-	return materializeProjectSessionCanonical(ctx, newResourceStore(), c.tmuxRunner, route, c.diagnostics, sessionName, cwd, project)
+	return materializeProjectSessionCanonical(ctx, newResourceStore(), c.tmuxRunner, route, c.diagnostics, request.SessionName, request.CWD, request.Opened.project)
 }
 
 func materializeProjectSessionCanonical(ctx context.Context, store *resourceStore, runner tmuxCommandRunner, route runtimeMutationRoute, recorder *diagnostics.LifecycleRecorder, sessionName, cwd string, project coremetadata.Project) error {
@@ -477,20 +609,20 @@ func (r *defaultSwitchProjectRegistrar) RegisterProjectRoot(ctx context.Context,
 // materialization all reach the caller as one, so the client is never moved
 // into a session the topology never reached.
 type switchProjectTopologyMaterializer interface {
-	MaterializeProjectTopology(ctx context.Context, root, sessionName string) (bool, error)
+	MaterializeProjectTopology(ctx context.Context, request projectTopologyMaterializeRequest) (bool, error)
 }
 
-func (c *switchCommand) materializeProjectTopology(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
+func (c *switchCommand) materializeProjectTopology(ctx context.Context, request projectTopologyMaterializeRequest, opened openedProjectBootstrap) error {
 	if c.projectTopology != nil && (!opened.bootstrapped || opened.materializeTopology) {
-		materialized, err := c.projectTopology.MaterializeProjectTopology(ctx, target, sessionName)
+		materialized, err := c.projectTopology.MaterializeProjectTopology(ctx, request)
 		if err != nil {
-			return fmt.Errorf("materialize Registry topology for session %q: %w", sessionName, err)
+			return fmt.Errorf("materialize Registry topology for session %q: %w", request.SessionName, err)
 		}
 		if materialized {
 			return nil
 		}
 	}
-	return c.ensureProjectSession(ctx, sessionName, target, opened)
+	return c.ensureProjectSession(ctx, request, opened)
 }
 
 // registryProjectTopologyMaterializer runs closed-Project activation through the
@@ -504,7 +636,7 @@ type registryProjectTopologyMaterializer struct {
 	expectedSocketPath string
 	socketName         string
 	routeAuthority     *runtimeMutationRouteAuthority
-	resolveRoute       func(context.Context) (runtimeMutationRoute, error)
+	resolveRoute       func(context.Context, string) (runtimeMutationRoute, error)
 	diagnostics        *diagnostics.LifecycleRecorder
 	newReconciler      func(tmuxCommandRunner, sessionLister) *registryReconciler
 	newOperationID     func() (string, error)
@@ -548,14 +680,14 @@ func newRegistryProjectTopologyMaterializer(recorders ...*diagnostics.LifecycleR
 		// read, so stderr alone was a disclosure nobody received.
 		notices: newProjectStartupNoticeSink(runner),
 	}
-	materializer.resolveRoute = func(ctx context.Context) (runtimeMutationRoute, error) {
-		return resolveInvocationRuntimeMutationRoute(ctx, runner, os.Getenv)
+	materializer.resolveRoute = func(ctx context.Context, anchor string) (runtimeMutationRoute, error) {
+		return resolveInvocationRuntimeMutationRouteWithAnchor(ctx, runner, os.Getenv, anchor)
 	}
 	return materializer
 }
 
-func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx context.Context, root, sessionName string) (bool, error) {
-	root, sessionName = strings.TrimSpace(root), strings.TrimSpace(sessionName)
+func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx context.Context, request projectTopologyMaterializeRequest) (bool, error) {
+	root, sessionName := strings.TrimSpace(request.Root), strings.TrimSpace(request.SessionName)
 	if m == nil || m.resources == nil || root == "" || sessionName == "" {
 		return false, nil
 	}
@@ -564,7 +696,7 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		return false, err
 	}
 	if m.resolveRoute != nil {
-		route, routeErr := m.resolveRoute(ctx)
+		route, routeErr := m.resolveRoute(ctx, request.Anchor)
 		if routeErr != nil {
 			return false, routeErr
 		}

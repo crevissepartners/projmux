@@ -518,7 +518,8 @@ func (c *switchCommand) planProjectFreshStart(sessionName, target string) (proje
 // well as the Registry and tmux runtime; Open fresh never writes snapshot
 // storage.
 // The mirror decision stays in the one place that owns Project registration.
-func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, target string, opened openedProjectBootstrap) error {
+func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, target string, opened openedProjectBootstrap, anchor string) error {
+	anchor = strings.TrimSpace(anchor)
 	plan, err := c.planProjectFreshStart(sessionName, target)
 	if err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "preflight", plan.ProjectUID, "", err)
@@ -550,7 +551,9 @@ func (c *switchCommand) startProjectFresh(ctx context.Context, sessionName, targ
 	if err := c.verifyProjectFreshStartPruned(target); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "replacement-verification", plan.ProjectUID, plan.NewProjectUID, err)
 	}
-	if err := c.materializeProjectTopology(ctx, sessionName, target, opened); err != nil {
+	if err := c.materializeProjectTopology(ctx, projectTopologyMaterializeRequest{
+		Root: target, SessionName: sessionName, Anchor: anchor,
+	}, opened); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleFresh, "topology-materialization", plan.ProjectUID, plan.NewProjectUID, err)
 	}
 	c.reportProjectStartup(plan.ResultMessageLocale(appLocale(c.homeDir, c.lookupEnv), sessionName))

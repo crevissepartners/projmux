@@ -199,8 +199,6 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 			switch name {
 			case hookTrustPopupTargetClientEnv:
 				return "/dev/pts/9"
-			case runtimeMutationAnchorPaneEnv:
-				return "%12"
 			}
 			return ""
 		},
@@ -208,6 +206,7 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 
 	reopen, err := cmd.execute(context.Background(), switchPlan{
 		UI:          switchUISidebar,
+		Anchor:      "%12",
 		Selection:   target,
 		SessionName: "target",
 	}, nil)
@@ -226,7 +225,6 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 	}
 	command := call.args[2]
 	for _, want := range []string{
-		runtimeMutationAnchorPaneEnv + "='%12'",
 		"PROJMUX_HOOK_TRUST_TARGET_CLIENT='/dev/pts/9'",
 		"PROJMUX_SWITCH_TARGET_CLIENT='/dev/pts/9'",
 		"'/tmp/projmux' 'switch' 'sidebar-open'",
@@ -234,6 +232,7 @@ func TestSwitchExecuteSidebarHookProjectLaunchesContinuationBeforeSelfClose(t *t
 		"'--session' 'target'",
 		"'--mode' 'continue'",
 		"'--client' '/dev/pts/9'",
+		"'--anchor' '%12'",
 	} {
 		if !strings.Contains(command, want) {
 			t.Fatalf("continuation command = %q, want substring %q", command, want)
@@ -264,8 +263,6 @@ func TestSwitchExecuteSidebarAfterOriginStopRebindsContinuationAnchorToClient(t 
 			switch name {
 			case hookTrustPopupTargetClientEnv:
 				return "/dev/pts/9"
-			case runtimeMutationAnchorPaneEnv:
-				return "%12"
 			}
 			return ""
 		},
@@ -273,6 +270,7 @@ func TestSwitchExecuteSidebarAfterOriginStopRebindsContinuationAnchorToClient(t 
 
 	reopen, err := cmd.execute(context.Background(), switchPlan{
 		UI:          switchUISidebar,
+		Anchor:      "%12",
 		Selection:   target,
 		SessionName: "target",
 	}, nil)
@@ -289,11 +287,11 @@ func TestSwitchExecuteSidebarAfterOriginStopRebindsContinuationAnchorToClient(t 
 		t.Fatalf("client Pane rebind = %#v, want %#v", got, want)
 	}
 	command := tmuxRunner.calls[1].args[2]
-	if strings.Contains(command, runtimeMutationAnchorPaneEnv+"='%12'") {
+	if strings.Contains(command, "'--anchor' '%12'") {
 		t.Fatalf("continuation command retained dead origin anchor: %q", command)
 	}
 	for _, want := range []string{
-		runtimeMutationAnchorPaneEnv + "='%99'",
+		"'--anchor' '%99'",
 		"PROJMUX_HOOK_TRUST_TARGET_CLIENT='/dev/pts/9'",
 		"PROJMUX_SWITCH_TARGET_CLIENT='/dev/pts/9'",
 		"'/tmp/projmux' 'switch' 'sidebar-open'",
@@ -323,6 +321,7 @@ func TestSwitchExecuteSidebarTrustDenyRefreshesWithoutSessionCreate(t *testing.T
 		"--mode", projectStartupKindTopology,
 		"--query", "tar",
 		"--client", "/dev/pts/9",
+		"--anchor", "%12",
 	}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("runSidebarOpen() error = %v", err)
@@ -374,6 +373,7 @@ func TestSwitchSidebarOpenApproveContinuesSelectedEmptyOpen(t *testing.T) {
 		"--session", "target",
 		"--mode", projectStartupKindTopology,
 		"--client", "/dev/pts/9",
+		"--anchor", "%12",
 	}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("runSidebarOpen() error = %v", err)
@@ -416,6 +416,7 @@ func TestSwitchSidebarOpenPropagatesProjectOpenFailureAfterReopen(t *testing.T) 
 		"--mode", projectStartupKindTopology,
 		"--query", "tar",
 		"--client", "/dev/pts/9",
+		"--anchor", "%12",
 	}, &bytes.Buffer{})
 	if !errors.Is(err, openErr) {
 		t.Fatalf("runSidebarOpen() error = %v, want injected topology failure", err)
@@ -475,6 +476,7 @@ func TestSwitchSidebarOpenTrustPopupUsesClientScope(t *testing.T) {
 		"--session", "target",
 		"--mode", projectStartupKindTopology,
 		"--client", "/dev/pts/9",
+		"--anchor", "%12",
 	}, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("runSidebarOpen() error = %v", err)
@@ -494,6 +496,69 @@ func TestSwitchSidebarOpenTrustPopupUsesClientScope(t *testing.T) {
 	}
 	if containsTmuxArg(call.args, "-t") {
 		t.Fatalf("trust popup args = %#v, want no unrelated pane target", call.args)
+	}
+}
+
+func TestSwitchSidebarOpenRequiresExplicitAnchorBeforeEffects(t *testing.T) {
+	t.Parallel()
+	target := t.TempDir()
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "missing", args: nil, want: "requires --anchor"},
+		{name: "blank", args: []string{"--anchor", " "}, want: "requires --anchor"},
+		{name: "malformed", args: []string{"--anchor", "pane-12"}, want: "exact %N"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			sessions := &capturingSwitchSessionExecutor{}
+			runner := &recordingTmuxRunner{}
+			validatorCalls := 0
+			cmd := &switchCommand{
+				sessions: sessions, tmuxRunner: runner,
+				validateProjectOpenRoute: func(context.Context, string) error {
+					validatorCalls++
+					return nil
+				},
+			}
+			args := append([]string{"--path", target, "--session", "target", "--mode", projectStartupKindTopology}, test.args...)
+			err := cmd.runSidebarOpen(args, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("anchor refusal = %v, want %q", err, test.want)
+			}
+			if validatorCalls != 0 || len(sessions.calls) != 0 || len(runner.calls) != 0 {
+				t.Fatalf("invalid anchor reached effects: validator=%d sessions=%v tmux=%v", validatorCalls, sessions.calls, runner.calls)
+			}
+		})
+	}
+}
+
+func TestSwitchSidebarOpenCarriesOneExplicitAnchorThroughTypedMaterializerRequest(t *testing.T) {
+	t.Parallel()
+	target := t.TempDir()
+	sessions := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
+	topology := &fakeProjectTopologyMaterializer{materialized: true}
+	validated := ""
+	cmd := &switchCommand{
+		sessions: sessions, tmuxRunner: &recordingTmuxRunner{},
+		projectRegistrar: &fakeProjectRegistrar{uid: "proj-target", name: "target", reused: true},
+		projectTopology:  topology,
+		validateProjectOpenRoute: func(_ context.Context, anchor string) error {
+			validated = anchor
+			return nil
+		},
+	}
+	if err := cmd.runSidebarOpen([]string{
+		"--path", target, "--session", "target", "--mode", projectStartupKindTopology, "--anchor", "%12",
+	}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if validated != "%12" || len(topology.requests) != 1 || topology.requests[0].Anchor != "%12" {
+		t.Fatalf("typed anchor handoff validator=%q requests=%#v", validated, topology.requests)
+	}
+	if got, want := sessions.calls, []string{"authorize:" + target, "open:target"}; !equalStrings(got, want) {
+		t.Fatalf("calls = %v, want %v", got, want)
 	}
 }
 
@@ -1548,7 +1613,7 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	if err := cmd.Run([]string{"--ui=sidebar"}, &stdout, &stderr); err != nil {
+	if err := cmd.Run([]string{"--ui=sidebar", "--anchor", "%12"}, &stdout, &stderr); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if stderr.Len() != 0 {
@@ -2804,8 +2869,6 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 			switch name {
 			case switchContextSessionEnv:
 				return "tmp-app"
-			case runtimeMutationAnchorPaneEnv:
-				return "%12"
 			}
 			return ""
 		},
@@ -2827,7 +2890,7 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 		workingDir: func() (string, error) { return "/tmp", nil },
 	}
 
-	if err := cmd.Run([]string{"--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+	if err := cmd.Run([]string{"--ui=sidebar", "--anchor", "%12"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	if nativeCalls != 1 {
@@ -2846,7 +2909,7 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 		t.Fatalf("focus session = %q, want %q", got, want)
 	}
 	if !cmd.sidebarOriginAnchorInvalidated {
-		t.Fatal("successful stop of the sidebar origin session retained its dead private anchor")
+		t.Fatal("successful stop of the sidebar origin session retained its dead explicit anchor")
 	}
 }
 

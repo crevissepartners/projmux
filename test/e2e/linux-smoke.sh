@@ -5100,7 +5100,7 @@ export TMUX_TMPDIR="$startup_root/tmux"
 export SHELL="$startup_shell"
 export PATH="$startup_root/bin:$startup_root/shim:\$PATH"
 env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
-  $(printf %q "$bin") switch sidebar-open --path "\$1" --session "\$2" --mode fresh --client "\$3" \
+  $(printf %q "$bin") switch sidebar-open --path "\$1" --session "\$2" --mode fresh --client "\$3" --anchor "\$4" \
   >"$startup_root/open-new.out" 2>"$startup_root/open-new.err"
 echo \$? >"$startup_root/open-new.rc"
 STARTUP_FRESH_SCRIPT
@@ -5117,7 +5117,7 @@ export TMUX_TMPDIR="$startup_root/tmux"
 export SHELL="$startup_shell"
 export PATH="$startup_root/bin:$startup_root/shim:\$PATH"
 env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
-  $(printf %q "$bin") switch sidebar-open --path "\$1" --session "\$2" --mode continue --client "\$3" \
+  $(printf %q "$bin") switch sidebar-open --path "\$1" --session "\$2" --mode continue --client "\$3" --anchor "\$4" \
   >"$startup_root/open-continue.out" 2>"$startup_root/open-continue.err"
 echo \$? >"$startup_root/open-continue.rc"
 STARTUP_CONTINUE_SCRIPT
@@ -5322,7 +5322,9 @@ startup_client_pid=$!
 startup_wait_for() {
   local description="$1"
   shift
-  for _ in {1..200}; do
+  # Full four-shard Docker load can delay the real attached-client and Project
+  # materialization path; keep the same predicate with a bounded 30s budget.
+  for _ in {1..600}; do
     if "$@"; then
       return 0
     fi
@@ -5543,7 +5545,7 @@ startup_managed_stop() {
   local result="$startup_root/managed-stop-$label.rc"
   rm -f "$result"
   startup_tmux send-keys -t "$startup_driver_pane" \
-    "env -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_SESSIONIZER_CONTEXT_SESSION='$startup_session' '$bin' switch --ui sidebar >'$startup_root/managed-stop-$label.out' 2>'$startup_root/managed-stop-$label.err'; echo \$? >'$result'" Enter
+    "env -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_SESSIONIZER_CONTEXT_SESSION='$startup_session' '$bin' switch --ui sidebar --anchor '$startup_driver_pane' >'$startup_root/managed-stop-$label.out' 2>'$startup_root/managed-stop-$label.err'; echo \$? >'$result'" Enter
   startup_wait_for "managed stop picker process for $label" sh -c \
     "test \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -t '$startup_driver_pane' '#{pane_current_command}' 2>/dev/null)\" = projmux"
   startup_tmux send-keys -t "$startup_driver_pane" C-x
@@ -5576,7 +5578,7 @@ if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
   exit 1
 fi
 rm -f "$startup_root/open-continue.rc"
-startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client'" Enter
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
 startup_wait_for "Continue project after projection" test -s "$startup_root/open-continue.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-continue.rc")" != "0" ]]; then
   cat "$startup_root/open-continue.err" >&2 || true
@@ -5618,7 +5620,7 @@ if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
   exit 1
 fi
 rm -f "$startup_root/open-continue.rc"
-startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client'" Enter
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
 startup_wait_for "zero-Window Continue" test -s "$startup_root/open-continue.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-continue.rc")" != "0" ]]; then
   cat "$startup_root/open-continue.err" >&2 || true
@@ -5647,7 +5649,7 @@ startup_primary_window_before="$startup_zero_window_continue_window_uid"
 startup_primary_pane_before="$startup_zero_window_continue_pane_uid"
 : >"$startup_agent_argv"
 startup_managed_stop retained-fresh
-startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session' '$startup_client'" Enter
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
 startup_wait_for "Open fresh continuation" test -s "$startup_root/open-new.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
   cat "$startup_root/open-new.err" >&2 || true
@@ -5696,7 +5698,7 @@ fi
 # 7. Run the native Alt-1 sidebar on its own pseudo-TTY with the exact popup
 # receipt, stop that origin runtime with Ctrl-X, then select the refreshed same
 # Project and Continue it. The sidebar process survives the in-place stop, but
-# its original Pane is gone; Continue must replace that dead private anchor
+# its original Pane is gone; Continue must replace that dead explicit anchor
 # with the still-live client's Pane and rematerialize the exact fresh UID graph.
 startup_fresh_continue_project_uid="$startup_project_uid_after"
 startup_fresh_continue_window_uids="$(startup_pmx get windows --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)"
@@ -5710,7 +5712,7 @@ mkfifo "$startup_sidebar_input"
 exec 5<>"$startup_sidebar_input"
 (
   TERM=xterm-256color script -qefc \
-    "TERM=xterm-256color env HOME='$startup_root/home' XDG_CONFIG_HOME='$startup_root/config' XDG_STATE_HOME='$startup_root/state' XDG_RUNTIME_DIR='$startup_root/runtime' PROJMUX_MANAGED_ROOTS='$startup_root/work' TMUX_TMPDIR='$startup_root/tmux' TMUX='$startup_socket_path,$startup_socket_pid,0' TMUX_PANE='$startup_fresh_anchor' __PROJMUX_RUNTIME_ANCHOR_PANE='$startup_fresh_anchor' TMUX_SESSIONIZER_CONTEXT_SESSION='$startup_session' PROJMUX_HOOK_TRUST_TARGET_CLIENT='$startup_client' PROJMUX_SWITCH_TARGET_CLIENT='$startup_client' SHELL='$startup_shell' PATH='$startup_root/bin:$startup_root/shim:$PATH' '$bin' switch --ui sidebar" \
+    "TERM=xterm-256color env -u __PROJMUX_RUNTIME_ANCHOR_PANE HOME='$startup_root/home' XDG_CONFIG_HOME='$startup_root/config' XDG_STATE_HOME='$startup_root/state' XDG_RUNTIME_DIR='$startup_root/runtime' PROJMUX_MANAGED_ROOTS='$startup_root/work' TMUX_TMPDIR='$startup_root/tmux' TMUX='$startup_socket_path,$startup_socket_pid,0' TMUX_PANE='$startup_fresh_anchor' TMUX_SESSIONIZER_CONTEXT_SESSION='$startup_session' PROJMUX_HOOK_TRUST_TARGET_CLIENT='$startup_client' PROJMUX_SWITCH_TARGET_CLIENT='$startup_client' SHELL='$startup_shell' PATH='$startup_root/bin:$startup_root/shim:$PATH' '$bin' switch --ui sidebar --anchor '$startup_fresh_anchor'" \
     "$startup_sidebar_log" <"$startup_sidebar_input" >"$startup_root/fresh-stop-sidebar.out" 2>"$startup_root/fresh-stop-sidebar.err"
   echo $? >"$startup_root/fresh-stop-sidebar.rc"
 ) &
@@ -5768,7 +5770,7 @@ if [[ -n "$(startup_pmx get windows --project "uid:$startup_project_uid_before_r
   exit 1
 fi
 rm -f "$startup_root/open-new.rc"
-startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session' '$startup_client'" Enter
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
 startup_wait_for "repeat Open fresh continuation" test -s "$startup_root/open-new.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
   cat "$startup_root/open-new.err" >&2 || true

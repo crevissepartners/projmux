@@ -2458,6 +2458,120 @@ func TestPre013DefaultAppRouteReturnsTypedRecoveryAndZeroWrites(t *testing.T) {
 	}
 }
 
+func TestDetachedExplicitAnchorBindsExactAppRouteWithoutAmbientEnvironment(t *testing.T) {
+	path, pane := "/tmp/projmux-route/sidebar.sock", "%8"
+	receipt := strings.Join([]string{path, "4242", "$1", "@2", pane}, tmuxRowSepFormat) + "\n"
+	runner := &recordingTmuxRunner{outputs: map[string]string{
+		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"):         path + "\n",
+		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", tmuxopts.AppGlobal):              "1\n",
+		recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", runtimeMutationSocketNameOption): defaultAppSocket + "\n",
+		recordedTmuxCallKey("tmux", "-S", path, "display-message", "-p", "-t", pane, "-F", tmuxRowFormat(
+			"#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}")): receipt,
+	}}
+	route, err := resolveInvocationRuntimeMutationRouteWithAnchor(context.Background(), runner, func(string) string { return "" }, pane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.authority == nil || route.authority.Class != runtimeMutationRouteApp || route.authority.ServerPID != "4242" ||
+		route.authority.SessionID != "$1" || route.authority.WindowID != "@2" || route.authority.PaneID != pane {
+		t.Fatalf("detached explicit route = %#v", route)
+	}
+}
+
+func TestDetachedExplicitAnchorAuthorityNegativeMatrixIsFirstWriteZero(t *testing.T) {
+	for _, test := range []struct {
+		name, pane, receiptPath, receiptPID, appMarker, want string
+	}{
+		{name: "stale Pane", pane: "%999", want: "reobserve explicit anchor"},
+		{name: "wrong socket", pane: "%8", receiptPath: "/tmp/projmux-route/foreign.sock", want: "containment drifted"},
+		{name: "wrong server PID", pane: "%8", receiptPID: "9999", want: "containment drifted"},
+		{name: "foreign ownership", pane: "%8", appMarker: "0", want: "not app-owned"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			path := "/tmp/projmux-route/sidebar.sock"
+			receiptPath, receiptPID := path, "4242"
+			if test.receiptPath != "" {
+				receiptPath = test.receiptPath
+			}
+			if test.receiptPID != "" {
+				receiptPID = test.receiptPID
+			}
+			appMarker := "1"
+			if test.appMarker != "" {
+				appMarker = test.appMarker
+			}
+			receiptKey := recordedTmuxCallKey("tmux", "-S", path, "display-message", "-p", "-t", test.pane, "-F", tmuxRowFormat(
+				"#{socket_path}", "#{pid}", "#{session_id}", "#{window_id}", "#{pane_id}"))
+			runner := &recordingTmuxRunner{outputs: map[string]string{
+				recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}"):         path + "\n",
+				recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", tmuxopts.AppGlobal):              appMarker + "\n",
+				recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "show-options", "-gqv", runtimeMutationSocketNameOption): defaultAppSocket + "\n",
+				receiptKey: strings.Join([]string{receiptPath, receiptPID, "$1", "@2", test.pane}, tmuxRowSepFormat) + "\n",
+			}}
+			if test.name == "stale Pane" {
+				runner.errors = map[string]error{receiptKey: errors.New("can't find pane")}
+			}
+			_, err := resolveInvocationRuntimeMutationRouteWithAnchor(context.Background(), runner, func(string) string { return "" }, test.pane)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("negative explicit anchor error = %v, want %q", err, test.want)
+			}
+			for _, call := range runner.calls {
+				argv := tmuxCommandArgv(call.args)
+				for _, write := range []string{"set-option", "set-environment", "new-session", "new-window", "split-window", "kill-pane", "kill-window", "kill-session"} {
+					if slices.Contains(argv, write) {
+						t.Fatalf("negative explicit anchor reached write %q: %#v", write, runner.calls)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestSidebarProjectOpenRouteRejectsActualPaneProjectOwnershipMismatchWithoutWrites(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		windowUID   string
+		paneUID     string
+		wantErrText string
+	}{
+		{name: "unmanaged exact client anchor"},
+		{name: "matching Project ownership", windowUID: "win-alpha-main", paneUID: "pan-alpha-zsh"},
+		{name: "Pane belongs to another Project", windowUID: "win-alpha-main", paneUID: "pan-beta-zsh", wantErrText: "Pane/Window ownership mismatch"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			registryBefore := store.snapshot()
+			server := newFakeTmux()
+			session := server.addSession("alpha")
+			window, pane := session.windows[0], session.windows[0].panes[0]
+			if test.windowUID != "" {
+				window.opts[tmuxopts.WindowUID] = test.windowUID
+			}
+			if test.paneUID != "" {
+				pane.opts[tmuxopts.PaneUID] = test.paneUID
+			}
+
+			err := validateSidebarProjectOpenRoute(
+				context.Background(), server, func(string) string { return "" }, store.store().snapshot, pane.id,
+			)
+			if test.wantErrText == "" {
+				if err != nil {
+					t.Fatalf("matching ownership error = %v", err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), test.wantErrText) {
+				t.Fatalf("ownership mismatch error = %v, want %q", err, test.wantErrText)
+			}
+			if store.transactions != 0 || store.writes != 0 || store.snapshot() != registryBefore {
+				t.Fatalf("ownership validation changed Registry: transactions=%d writes=%d changed=%t",
+					store.transactions, store.writes, store.snapshot() != registryBefore)
+			}
+			if writes := tmuxMutationCallCount(server); writes != 0 {
+				t.Fatalf("ownership validation issued %d tmux writes: %#v", writes, server.calls)
+			}
+		})
+	}
+}
+
 func TestOutsideTmuxAppRouteSuppressesOnlyTypedNoServerProbe(t *testing.T) {
 	probe := recordedTmuxCallKey("tmux", "-L", defaultAppSocket, "display-message", "-p", "-F", "#{socket_path}")
 	for _, test := range []struct {

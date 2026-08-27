@@ -139,7 +139,7 @@ type switchCommand struct {
 	// sidebarOriginAnchorInvalidated is set when an in-place sidebar stop kills
 	// the popup's own origin session. A later closed-Project continuation must
 	// resolve authority from the still-live client instead of forwarding the
-	// now-dead private origin Pane.
+	// now-dead explicit popup anchor.
 	sidebarOriginAnchorInvalidated bool
 	cleanupKilledSession           func(string)
 	projectTopology                switchProjectTopologyMaterializer
@@ -151,7 +151,11 @@ type switchCommand struct {
 	// projectSessionPlan is the one canonical first-use Project materialization
 	// transaction. Production wires the typed materializer; tests must opt in to
 	// an explicit fake instead of falling through to a raw EnsureSession call.
-	projectSessionPlan func(context.Context, string, string, openedProjectBootstrap) error
+	projectSessionPlan func(context.Context, projectSessionRequest) error
+	// validateProjectOpenRoute is the read-only first-write guard for detached
+	// sidebar-open. Production reobserves the required explicit Anchor on the
+	// app-owned route before trust, Registry, popup, or topology lifecycle work.
+	validateProjectOpenRoute func(context.Context, string) error
 	// projectFreshStart is the `new` row's prune seam: it plans the exact
 	// Window/Pane/Agent cascade the confirmation states, and removes it through
 	// the canonical delete cascade.
@@ -169,6 +173,7 @@ type switchCommand struct {
 
 type switchPlan struct {
 	UI             string
+	Anchor         string
 	Candidates     []string
 	Rows           []intpickercompat.Entry
 	Items          []intpicker.Item
@@ -230,8 +235,11 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		startupNotices:    newProjectStartupNoticeSink(inttmux.ExecRunner{}),
 		navigation:        newRegistryNavigationCommand(inttmux.ExecRunner{}),
 	}
-	cmd.projectSessionPlan = func(ctx context.Context, sessionName, cwd string, opened openedProjectBootstrap) error {
-		return cmd.ensureBootstrappedProjectSessionPlanned(ctx, sessionName, cwd, opened.project)
+	cmd.projectSessionPlan = func(ctx context.Context, request projectSessionRequest) error {
+		return cmd.ensureBootstrappedProjectSessionPlanned(ctx, request)
+	}
+	cmd.validateProjectOpenRoute = func(ctx context.Context, anchor string) error {
+		return validateSidebarProjectOpenRoute(ctx, cmd.tmuxRunner, cmd.lookupEnv, newResourceStore().snapshot, anchor)
 	}
 	if pathsErr != nil {
 		cmd.previewStoreErr = fmt.Errorf("resolve default config paths: %w", pathsErr)
@@ -296,6 +304,7 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	ui := fs.String(switchUIFlag, switchUIPopup, "future sessionizer surface to prepare")
+	anchor := fs.String("anchor", "", "exact tmux Pane that anchors Project sidebar continuation")
 	if err := fs.Parse(args); err != nil {
 		printSwitchUsage(stderr)
 		return err
@@ -308,6 +317,11 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 		printSwitchUsage(stderr)
 		return err
 	}
+	anchorPane := strings.TrimSpace(*anchor)
+	if anchorPane != "" && exactTmuxHandle(anchorPane, "%") == "" {
+		printSwitchUsage(stderr)
+		return errors.New("switch --anchor requires an exact %N Pane handle")
+	}
 
 	ctx := context.Background()
 	for {
@@ -315,6 +329,7 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 		if err != nil {
 			return err
 		}
+		plan.Anchor = anchorPane
 
 		reopen, err := c.execute(ctx, plan, stdout)
 		if err != nil {
@@ -1736,7 +1751,10 @@ func (c *switchCommand) launchSidebarOpenContinuation(ctx context.Context, plan 
 	if strings.TrimSpace(client) != "" {
 		args = append(args, "--client", strings.TrimSpace(client))
 	}
-	anchorPane := c.lookupEnvValue(runtimeMutationAnchorPaneEnv)
+	anchorPane := strings.TrimSpace(plan.Anchor)
+	if exactTmuxHandle(anchorPane, "%") == "" {
+		return errors.New("launch switch sidebar continuation: exact popup --anchor %N is required")
+	}
 	if c.sidebarOriginAnchorInvalidated {
 		if strings.TrimSpace(client) == "" {
 			return errors.New("rebind switch sidebar continuation anchor: target client is empty")
@@ -1750,10 +1768,8 @@ func (c *switchCommand) launchSidebarOpenContinuation(ctx context.Context, plan 
 			return fmt.Errorf("rebind switch sidebar continuation anchor to client %q: current Pane is not exact", strings.TrimSpace(client))
 		}
 	}
+	args = append(args, "--anchor", anchorPane)
 	env := map[string]string{}
-	if anchorPane != "" {
-		env[runtimeMutationAnchorPaneEnv] = anchorPane
-	}
 	if strings.TrimSpace(client) != "" {
 		env[hookTrustPopupTargetClientEnv] = strings.TrimSpace(client)
 		env[inttmux.SwitchTargetClientEnv] = strings.TrimSpace(client)
@@ -1784,11 +1800,19 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	mode := fs.String("mode", projectStartupKindTopology, "startup mode")
 	query := fs.String("query", "", "sidebar query to restore on deny")
 	client := fs.String("client", "", "tmux client to restore sidebar popup")
+	anchor := fs.String("anchor", "", "exact tmux Pane that anchors Project materialization")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if fs.NArg() != 0 {
 		return fmt.Errorf("switch sidebar-open does not accept positional arguments")
+	}
+	anchorPane := strings.TrimSpace(*anchor)
+	if anchorPane == "" {
+		return errors.New("switch sidebar-open requires --anchor")
+	}
+	if exactTmuxHandle(anchorPane, "%") == "" {
+		return errors.New("switch sidebar-open --anchor requires an exact %N Pane handle")
 	}
 	openTarget := cleanOptionalPath(*target)
 	if openTarget == "" {
@@ -1807,19 +1831,36 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 		restoreLookup := c.withSidebarOpenClientEnv(targetClient)
 		defer restoreLookup()
 	}
-	c.closeSidebarPopupForTrust(context.Background(), targetClient)
 	openMode, ok := projectStartupCandidateFromValue(strings.TrimSpace(*mode))
 	if !ok {
 		return fmt.Errorf("switch sidebar-open: unknown startup mode %q", strings.TrimSpace(*mode))
 	}
-	exists, err := c.switchSessionExists(context.Background(), openSession)
+	ctx := context.Background()
+	if c.validateProjectOpenRoute == nil {
+		return errors.New("switch sidebar-open route validator is not configured")
+	}
+	if err := c.validateProjectOpenRoute(ctx, anchorPane); err != nil {
+		resume := switchSidebarResume{
+			Query: strings.TrimSpace(*query), Selection: openTarget,
+			Message: sidebarTrustStatusMessage(err),
+		}
+		reopenErr := c.reopenSidebarAfterTrust(ctx, targetClient, resume)
+		if reopenErr != nil {
+			return errors.Join(err, reopenErr)
+		}
+		return fmt.Errorf("open selected project: %w", err)
+	}
+	c.closeSidebarPopupForTrust(ctx, targetClient)
+	exists, err := c.switchSessionExists(ctx, openSession)
 	if err != nil {
 		return err
 	}
 	if exists {
-		return c.openProjectSession(context.Background(), openSession)
+		return c.openProjectSession(ctx, openSession)
 	}
-	openErr := c.authorizeAndContinueProjectOpen(context.Background(), openTarget, openSession, openMode)
+	openErr := c.authorizeAndContinueProjectOpenRequest(ctx, projectOpenRequest{
+		Target: openTarget, SessionName: openSession, Mode: openMode, Anchor: anchorPane,
+	})
 	if openErr == nil {
 		return nil
 	}
@@ -1828,7 +1869,7 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 		Selection: openTarget,
 		Message:   sidebarTrustStatusMessage(openErr),
 	}
-	reopenErr := c.reopenSidebarAfterTrust(context.Background(), targetClient, resume)
+	reopenErr := c.reopenSidebarAfterTrust(ctx, targetClient, resume)
 	if errors.Is(openErr, errProjectTrustDenied) {
 		return reopenErr
 	}
