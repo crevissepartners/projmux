@@ -23,10 +23,11 @@ const (
 )
 
 type settingsEntryMeta struct {
-	Name  string
-	Axis  SettingsAxis
-	Kind  settingsEntryKind
-	Owner settingsEntryOwner
+	Name     string
+	LabelKey string
+	Axis     SettingsAxis
+	Kind     settingsEntryKind
+	Owner    settingsEntryOwner
 }
 
 // settingsEntryKind makes the interaction contract for every rendered
@@ -92,144 +93,110 @@ const (
 	settingsOwnerProjectAutomation
 )
 
-func settingsActionMeta(name string, axis SettingsAxis, owner settingsEntryOwner) settingsEntryMeta {
-	return settingsEntryMeta{Name: name, Axis: axis, Kind: settingsEntryActionable, Owner: owner}
+func settingsActionMeta(name, labelKey string, axis SettingsAxis, owner settingsEntryOwner) settingsEntryMeta {
+	return settingsEntryMeta{Name: name, LabelKey: labelKey, Axis: axis, Kind: settingsEntryActionable, Owner: owner}
 }
 
-func settingsNavigationMeta(name string, axis SettingsAxis, owner settingsEntryOwner) settingsEntryMeta {
-	return settingsEntryMeta{Name: name, Axis: axis, Kind: settingsEntryNavigation, Owner: owner}
+func settingsNavigationMeta(name, labelKey string, axis SettingsAxis, owner settingsEntryOwner) settingsEntryMeta {
+	return settingsEntryMeta{Name: name, LabelKey: labelKey, Axis: axis, Kind: settingsEntryNavigation, Owner: owner}
 }
 
-func settingsPassiveMeta(name string, axis SettingsAxis) settingsEntryMeta {
-	return settingsEntryMeta{Name: name, Axis: axis, Kind: settingsEntryPassive, Owner: settingsOwnerPassiveLoop}
+func settingsEntryMetaFromNode(node settingsNavNode) settingsEntryMeta {
+	label, key := node.entryLabel()
+	return settingsEntryMeta{
+		Name:     label,
+		LabelKey: string(key),
+		Axis:     node.Axis,
+		Kind:     node.interactionKind(),
+		Owner:    node.Owner,
+	}
 }
 
-// settingsEntryCatalog maps a rendered picker value to its interaction kind,
-// scope axis and owning loop. Retired routes are absent by design: a value with
-// no entry here cannot be rendered at all, which is what keeps the removed
-// Labs, Theme root, Project recipe and Effective merge destinations from
-// coming back as a hidden redirect.
-var settingsEntryCatalog = map[string]settingsEntryMeta{
-	settingsBackValue:                              settingsNavigationMeta("Back", settingsAxisBoth, settingsOwnerPassiveLoop),
-	settingsNoopValue:                              settingsPassiveMeta("Info or disabled", settingsAxisBoth),
-	settingsRootTabGlobalValue:                     settingsNavigationMeta("Global Settings", settingsAxisBoth, settingsOwnerRoot),
-	settingsRootTabProjectValue:                    settingsNavigationMeta("Project Settings", settingsAxisBoth, settingsOwnerRoot),
-	settingsSectionProject:                         settingsNavigationMeta("Projects", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionAutomation:                      settingsNavigationMeta("Automation", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionProjectAutomation:               settingsNavigationMeta("Automation", settingsAxisProject, settingsOwnerRoot),
-	settingsSectionGlobalHooks:                     settingsNavigationMeta("Projmux session lifecycle", settingsAxisGlobal, settingsOwnerAutomation),
-	settingsSectionProjectHooks:                    settingsNavigationMeta("Project hooks", settingsAxisProject, settingsOwnerProjectAutomation),
-	settingsSectionProjectTrust:                    settingsNavigationMeta("Trust", settingsAxisProject, settingsOwnerProjectAutomation),
-	settingsSectionProjectSessionState:             settingsNavigationMeta("Snapshots", settingsAxisProject, settingsOwnerRoot),
-	settingsSectionAI:                              settingsNavigationMeta("AI", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionNotifications:                   settingsNavigationMeta("Notifications", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionStatusbar:                       settingsNavigationMeta("Appearance", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionSessionState:                    settingsNavigationMeta("Snapshots", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionKeybindings:                     settingsNavigationMeta("Keybindings", settingsAxisGlobal, settingsOwnerRoot),
-	settingsSectionAbout:                           settingsNavigationMeta("About", settingsAxisGlobal, settingsOwnerRoot),
-	settingsProjectAdd:                             settingsActionMeta("Select Project to pin", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsProjectPins:                            settingsNavigationMeta("Pinned Projects", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsProjectCandidatePins:                   settingsNavigationMeta("Candidate Pins", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsProjectRootManage:                      settingsNavigationMeta("Primary discovery root", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsProjectsSidebar:                        settingsNavigationMeta("Project Sidebar", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsProjdirClear:                           settingsActionMeta("Clear saved root", settingsAxisGlobal, settingsOwnerProject),
-	settingsProjdirSetCurrent:                      settingsActionMeta("Use current directory", settingsAxisGlobal, settingsOwnerProject),
-	settingsProjdirSetTyped:                        settingsActionMeta("Enter path", settingsAxisGlobal, settingsOwnerProject),
-	settingsWorkdirAdd:                             settingsActionMeta("Add current directory", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsWorkdirList:                            settingsNavigationMeta("Additional discovery roots", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsWorkdirTyped:                           settingsActionMeta("Add path", settingsAxisGlobal, settingsOwnerProject),
-	settingsKeybindingsBindings:                    settingsNavigationMeta("Keybindings", settingsAxisGlobal, settingsOwnerKeybindings),
-	settingsKeybindingsDiagnostic:                  settingsNavigationMeta("Keybinding Diagnostic", settingsAxisGlobal, settingsOwnerKeybindings),
-	settingsKeybindingsProbe:                       settingsNavigationMeta("Keybinding Probe", settingsAxisGlobal, settingsOwnerKeybindings),
-	settingsAIDefaultMode:                          settingsNavigationMeta("Default launch target", settingsAxisGlobal, settingsOwnerAI),
-	settingsAIEnabledAgents:                        settingsNavigationMeta("Enabled providers", settingsAxisGlobal, settingsOwnerAI),
-	settingsAIResumePicker:                         settingsNavigationMeta("Agent Resume Picker", settingsAxisGlobal, settingsOwnerAI),
-	settingsAIResumePickerLimit:                    settingsNavigationMeta("Picker limit", settingsAxisGlobal, settingsOwnerAI),
-	settingsAIResumePickerDepth:                    settingsNavigationMeta("Scan depth", settingsAxisGlobal, settingsOwnerAI),
-	settingsNotificationsDesktop:                   settingsNavigationMeta("Desktop delivery", settingsAxisGlobal, settingsOwnerNotifications),
-	settingsNotificationsAIDedupe:                  settingsNavigationMeta("Dedupe window", settingsAxisGlobal, settingsOwnerNotifications),
-	settingsNotificationsDelivery:                  settingsNavigationMeta("Provider Integrations", settingsAxisGlobal, settingsOwnerNotifications),
-	settingsNotificationsProviders:                 settingsNavigationMeta("Provider Integrations", settingsAxisGlobal, settingsOwnerNotifications),
-	settingsNotificationsTmuxSource:                settingsNavigationMeta("tmux event source", settingsAxisGlobal, settingsOwnerNotifications),
-	settingsNotificationsHookActions:               settingsNavigationMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications),
-	settingsAppearanceLanguage:                     settingsNavigationMeta("Language / Locale", settingsAxisGlobal, settingsOwnerAppearance),
-	settingsAppearanceTheme:                        settingsNavigationMeta("Theme", settingsAxisGlobal, settingsOwnerAppearance),
-	settingsAppearanceStatusBar:                    settingsNavigationMeta("Status Bar", settingsAxisGlobal, settingsOwnerAppearance),
-	settingsAppearanceAgentUsageHUD:                settingsNavigationMeta("Agent Usage HUD", settingsAxisGlobal, settingsOwnerAppearance),
-	settingsAutomationLifecycle:                    settingsNavigationMeta("Projmux session lifecycle", settingsAxisGlobal, settingsOwnerAutomation),
-	settingsAutomationSendNoti:                     settingsNavigationMeta("After notification queued", settingsAxisGlobal, settingsOwnerAutomation),
-	settingsProjectAutomationLifecycle:             settingsNavigationMeta("Session lifecycle", settingsAxisProject, settingsOwnerProjectAutomation),
-	settingsProjectAutomationSendNoti:              settingsNavigationMeta("After notification queued", settingsAxisProject, settingsOwnerProjectAutomation),
-	settingsNativeKeysToggle:                       settingsActionMeta("Native macOS keybindings", settingsAxisGlobal, settingsOwnerKeybindings),
-	settingsSessionStateDelete:                     settingsActionMeta("Delete snapshot", settingsAxisGlobal, settingsOwnerSessionState),
-	settingsSessionStateSidebarStartupPickerDetail: settingsNavigationMeta("Closed Project startup", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsRuntimeDiagnosticsVisibilityDetail:     settingsNavigationMeta("Runtime diagnostics", settingsAxisGlobal, settingsOwnerProjectPicker),
-	settingsAboutUpdates:                           settingsNavigationMeta("Updates", settingsAxisGlobal, settingsOwnerAbout),
-	settingsUpdateApply:                            settingsActionMeta("Update now", settingsAxisGlobal, settingsOwnerAbout),
-	settingsUpdateCheck:                            settingsActionMeta("Check for updates", settingsAxisGlobal, settingsOwnerAbout),
-	settingsWelcomeShow:                            settingsNavigationMeta("Welcome", settingsAxisGlobal, settingsOwnerAbout),
-	settingsQuitOpen:                               settingsNavigationMeta("Quit Projmux", settingsAxisGlobal, settingsOwnerAbout),
-}
-
-var settingsEntryPrefixCatalog = []struct {
+// settingsDynamicEntryCatalog is the bounded authority for values whose
+// provider, path, event, or chord suffix is supplied at runtime. Static values
+// never appear here and are resolved exclusively through settingsNodeCatalog.
+var settingsDynamicEntryCatalog = []struct {
 	prefix string
+	nodeID string
 	meta   settingsEntryMeta
 }{
-	{settingsAppearanceAgentUsageProviderPrefix, settingsNavigationMeta("Agent Usage HUD provider", settingsAxisGlobal, settingsOwnerAppearance)},
-	{settingsActionPrefixAI, settingsActionMeta("Default launch target", settingsAxisGlobal, settingsOwnerAI)},
-	{settingsActionPrefixAIEnabledAgent, settingsActionMeta("Enabled providers", settingsAxisGlobal, settingsOwnerAI)},
-	{settingsActionPrefixAINotifyDiagnostic, settingsNavigationMeta("Provider Integrations", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixAINotifyCommand, settingsActionMeta("AI notify diagnostic command", settingsAxisGlobal, settingsOwnerAINotifyDiagnostics)},
-	{settingsActionPrefixAINotifyCheck, settingsActionMeta("AI notify diagnostic check", settingsAxisGlobal, settingsOwnerAINotifyDiagnostics)},
-	{settingsActionPrefixAIBadgeStyle, settingsActionMeta("Agent attention badge style", settingsAxisGlobal, settingsOwnerAppearance)},
-	{settingsActionPrefixDesktopNotifyMode, settingsActionMeta("Delivery mode", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixAINotifyDedupe, settingsActionMeta("Dedupe window", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixAIResumeLimit, settingsActionMeta("Agent Resume Picker", settingsAxisGlobal, settingsOwnerAI)},
-	{settingsActionPrefixAIResumeDepth, settingsActionMeta("Scan depth", settingsAxisGlobal, settingsOwnerAI)},
-	{settingsActionPrefixAIHookProvider, settingsNavigationMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixAIHookEvent, settingsNavigationMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixAIHookSet, settingsActionMeta("Agent event behavior", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixAISemanticEvent, settingsNavigationMeta("Native semantic policy", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixAISemanticSet, settingsActionMeta("Native semantic policy", settingsAxisGlobal, settingsOwnerNotifications)},
-	{settingsActionPrefixHooks, settingsActionMeta("Project automation policy", settingsAxisGlobal, settingsOwnerAutomation)},
-	{settingsActionPrefixLiveResources, settingsActionMeta("Resources", settingsAxisGlobal, settingsOwnerAppearance)},
-	{settingsActionPrefixHUDVisibility, settingsActionMeta("Status Bar visibility", settingsAxisGlobal, settingsOwnerAppearance)},
-	{settingsActionPrefixHookEvent + hookScopeGlobal + ":", settingsNavigationMeta("Automation event", settingsAxisGlobal, settingsOwnerAutomation)},
-	{settingsActionPrefixHookEvent + hookScopeProject + ":", settingsNavigationMeta("Project automation event", settingsAxisProject, settingsOwnerProjectAutomation)},
-	{settingsActionPrefixKeymapCategory, settingsNavigationMeta("Keybindings category", settingsAxisGlobal, settingsOwnerKeybindings)},
-	{settingsActionPrefixKeymapSurface, settingsNavigationMeta("Keybindings surface", settingsAxisGlobal, settingsOwnerKeybindings)},
-	{settingsActionPrefixWorkdirItem, settingsNavigationMeta("Additional discovery roots", settingsAxisGlobal, settingsOwnerProjectPicker)},
-	{settingsActionPrefixPinItem, settingsNavigationMeta("Pinned Projects", settingsAxisGlobal, settingsOwnerProjectPicker)},
-	{settingsActionPrefixCandidatePinItem, settingsNavigationMeta("Candidate Pins", settingsAxisGlobal, settingsOwnerProjectPicker)},
-	{settingsActionPrefixSessionStateSidebarStartup, settingsActionMeta("Closed Project startup", settingsAxisGlobal, settingsOwnerProjectPicker)},
-	{settingsActionPrefixRuntimeDiagnostics, settingsActionMeta("Runtime diagnostics", settingsAxisGlobal, settingsOwnerProjectPicker)},
-	{settingsActionPrefixHookAdd, settingsActionMeta("Hook maker - add", settingsAxisBoth, settingsOwnerHooks)},
-	{settingsActionPrefixHookEdit, settingsActionMeta("Hook maker - edit", settingsAxisBoth, settingsOwnerHooks)},
-	{settingsActionPrefixHookRemove, settingsActionMeta("Hook maker - remove", settingsAxisBoth, settingsOwnerHooks)},
-	{settingsActionPrefixHookView, settingsNavigationMeta("Hook maker - view", settingsAxisBoth, settingsOwnerHooks)},
-	{settingsActionPrefixKeymap, settingsActionMeta("Keybindings", settingsAxisGlobal, settingsOwnerKeybindings)},
-	{settingsActionPrefixLocale, settingsActionMeta("Language / Locale", settingsAxisGlobal, settingsOwnerAppearance)},
-	{settingsActionPrefixWelcome, settingsNavigationMeta("Welcome", settingsAxisGlobal, settingsOwnerAbout)},
-	{settingsActionPrefixTrust, settingsActionMeta("Trust", settingsAxisProject, settingsOwnerProject)},
-	{settingsActionPrefixProjdir, settingsActionMeta("Primary discovery root", settingsAxisGlobal, settingsOwnerProject)},
-	{settingsActionPrefixSessionState, settingsActionMeta("Snapshots", settingsAxisGlobal, settingsOwnerSessionState)},
-	{settingsActionPrefixStatusbar, settingsActionMeta("Status Bar", settingsAxisGlobal, settingsOwnerAppearance)},
-	{settingsActionPrefixSwitch, settingsActionMeta("Pinned Projects", settingsAxisGlobal, settingsOwnerProject)},
-	{settingsActionPrefixTheme, settingsActionMeta("Theme", settingsAxisBoth, settingsOwnerTheme)},
-	{settingsActionPrefixUpdate, settingsActionMeta("About", settingsAxisGlobal, settingsOwnerAbout)},
-	{settingsActionPrefixWorkdir, settingsActionMeta("Additional discovery roots", settingsAxisGlobal, settingsOwnerProject)},
+	{settingsAppearanceAgentUsageProviderPrefix, settingsNavStatusBar + ".agent-usage-hud.provider", settingsNavigationMeta("Agent Usage HUD provider", "settings.node.agent_usage_hud", settingsAxisGlobal, settingsOwnerAppearance)},
+	{settingsActionPrefixAI, "", settingsActionMeta("Default launch target", "settings.text.default_launch_target", settingsAxisGlobal, settingsOwnerAI)},
+	{settingsActionPrefixAIEnabledAgent, "", settingsActionMeta("Enabled providers", "settings.text.enabled_providers", settingsAxisGlobal, settingsOwnerAI)},
+	{settingsActionPrefixAINotifyDiagnostic, settingsNavNotifyProviders + ".item", settingsNavigationMeta("Provider Integrations", "settings.text.provider_integrations", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAINotifyCommand, "", settingsActionMeta("AI notify diagnostic command", "settings.text.provider_integrations", settingsAxisGlobal, settingsOwnerAINotifyDiagnostics)},
+	{settingsActionPrefixAINotifyCheck, "", settingsActionMeta("AI notify diagnostic check", "settings.text.provider_integrations", settingsAxisGlobal, settingsOwnerAINotifyDiagnostics)},
+	{settingsActionPrefixAIBadgeStyle, "", settingsActionMeta("Agent attention badge style", "settings.text.agent_attention_badge_style", settingsAxisGlobal, settingsOwnerAppearance)},
+	{settingsActionPrefixDesktopNotifyMode, "", settingsActionMeta("Delivery mode", "settings.text.delivery_mode", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAINotifyDedupe, "", settingsActionMeta("Dedupe window", "settings.text.dedupe_window", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAIResumeLimit, "", settingsActionMeta("Agent Resume Picker", "settings.text.agent_resume_picker", settingsAxisGlobal, settingsOwnerAI)},
+	{settingsActionPrefixAIResumeDepth, "", settingsActionMeta("Scan depth", "settings.text.ai_resume_picker_depth_row", settingsAxisGlobal, settingsOwnerAI)},
+	{settingsActionPrefixAIHookProvider, settingsNavNotifyAgentEvents + ".item", settingsNavigationMeta("Agent event behavior", "settings.text.agent_event_behavior", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAIHookEvent, settingsNavNotifyAgentEvents + ".item.event", settingsNavigationMeta("Agent event behavior", "settings.text.agent_event_behavior", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAIHookSet, "", settingsActionMeta("Agent event behavior", "settings.text.agent_event_behavior", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAISemanticEvent, settingsNavNotifyAgentEvents + ".item.event", settingsNavigationMeta("Native semantic policy", "settings.text.native_semantic_policy", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixAISemanticSet, "", settingsActionMeta("Native semantic policy", "settings.text.native_semantic_policy", settingsAxisGlobal, settingsOwnerNotifications)},
+	{settingsActionPrefixHooks, "", settingsActionMeta("Project automation policy", "settings.text.project_automation_policy", settingsAxisGlobal, settingsOwnerAutomation)},
+	{settingsActionPrefixLiveResources, "", settingsActionMeta("Resources", "settings.keybinding.resources.name", settingsAxisGlobal, settingsOwnerAppearance)},
+	{settingsActionPrefixHUDVisibility, "", settingsActionMeta("Status Bar visibility", "settings.text.status_bar", settingsAxisGlobal, settingsOwnerAppearance)},
+	{settingsActionPrefixHookEvent + hookScopeGlobal + ":", settingsNavAutomationLifecycle + ".event", settingsNavigationMeta("Automation event", "settings.text.automation", settingsAxisGlobal, settingsOwnerAutomation)},
+	{settingsActionPrefixHookEvent + hookScopeProject + ":", settingsNavProjectHooks + ".lifecycle.event", settingsNavigationMeta("Project automation event", "settings.text.project_automation_policy", settingsAxisProject, settingsOwnerProjectAutomation)},
+	{settingsActionPrefixKeymapSurface, settingsNavKeybindings + "." + keyBindingCategorySurfaces + ".surface", settingsNavigationMeta("Keybindings surface", "settings.text.keybindings", settingsAxisGlobal, settingsOwnerKeybindings)},
+	{settingsActionPrefixWorkdirItem, settingsNavProjectsExtraRoots + ".item", settingsNavigationMeta("Additional discovery roots", "settings.text.additional_discovery_roots", settingsAxisGlobal, settingsOwnerProjectPicker)},
+	{settingsActionPrefixPinItem, settingsNavProjectsPins + ".item", settingsNavigationMeta("Pinned Projects", "settings.text.pinned_projects", settingsAxisGlobal, settingsOwnerProjectPicker)},
+	{settingsActionPrefixCandidatePinItem, settingsNavProjectsCandidates + ".item", settingsNavigationMeta("Candidate Pins", "settings.text.candidate_pins", settingsAxisGlobal, settingsOwnerProjectPicker)},
+	{settingsActionPrefixSessionStateSidebarStartup, "", settingsActionMeta("Closed Project startup", "settings.text.closed_project_startup", settingsAxisGlobal, settingsOwnerProjectPicker)},
+	{settingsActionPrefixRuntimeDiagnostics, "", settingsActionMeta("Runtime diagnostics", "picker.runtime.title", settingsAxisGlobal, settingsOwnerProjectPicker)},
+	{settingsActionPrefixHookAdd, "", settingsActionMeta("Hook maker - add", "settings.text.hooks", settingsAxisBoth, settingsOwnerHooks)},
+	{settingsActionPrefixHookEdit, "", settingsActionMeta("Hook maker - edit", "settings.text.hooks", settingsAxisBoth, settingsOwnerHooks)},
+	{settingsActionPrefixHookRemove, "", settingsActionMeta("Hook maker - remove", "settings.text.hooks", settingsAxisBoth, settingsOwnerHooks)},
+	{settingsActionPrefixHookView + hookScopeGlobal + ":", settingsNavAutomationLifecycle + ".event", settingsNavigationMeta("Hook maker - view", "settings.text.hooks", settingsAxisGlobal, settingsOwnerHooks)},
+	{settingsActionPrefixHookView + hookScopeProject + ":", settingsNavProjectHooks + ".lifecycle.event", settingsNavigationMeta("Hook maker - view", "settings.text.hooks", settingsAxisProject, settingsOwnerHooks)},
+	{settingsActionPrefixKeymap, "", settingsActionMeta("Keybindings", "settings.text.keybindings", settingsAxisGlobal, settingsOwnerKeybindings)},
+	{settingsActionPrefixLocale, "", settingsActionMeta("Language / Locale", "settings.text.language_locale", settingsAxisGlobal, settingsOwnerAppearance)},
+	{settingsActionPrefixTrust, "", settingsActionMeta("Trust", "settings.text.trust", settingsAxisProject, settingsOwnerProject)},
+	{settingsActionPrefixProjdir, "", settingsActionMeta("Primary discovery root", "settings.text.primary_discovery_root", settingsAxisGlobal, settingsOwnerProject)},
+	{settingsActionPrefixSessionState, "", settingsActionMeta("Snapshots", "settings.text.snapshots", settingsAxisGlobal, settingsOwnerSessionState)},
+	{settingsActionPrefixStatusbar, "", settingsActionMeta("Status Bar", "settings.text.status_bar", settingsAxisGlobal, settingsOwnerAppearance)},
+	{settingsActionPrefixSwitch, "", settingsActionMeta("Pinned Projects", "settings.text.pinned_projects", settingsAxisGlobal, settingsOwnerProject)},
+	{settingsActionPrefixTheme, "", settingsActionMeta("Theme", "settings.text.theme", settingsAxisBoth, settingsOwnerTheme)},
+	{settingsActionPrefixUpdate, "", settingsActionMeta("About", "settings.text.about", settingsAxisGlobal, settingsOwnerAbout)},
+	{settingsActionPrefixWorkdir, "", settingsActionMeta("Additional discovery roots", "settings.text.additional_discovery_roots", settingsAxisGlobal, settingsOwnerProject)},
 }
 
 func settingsEntryMetaForValue(value string) (settingsEntryMeta, bool) {
-	if meta, ok := settingsEntryCatalog[value]; ok {
-		return meta, true
+	value = strings.TrimSpace(value)
+	if node, ok := settingsNavByValue(value); ok && !node.Dynamic {
+		return settingsEntryMetaFromNode(node), true
 	}
-	for _, candidate := range settingsEntryPrefixCatalog {
-		if strings.HasPrefix(value, candidate.prefix) {
-			return candidate.meta, true
+	return settingsDynamicEntryMetaForValue(value)
+}
+
+func settingsDynamicEntryMetaForValue(value string) (settingsEntryMeta, bool) {
+	for _, candidate := range settingsDynamicEntryCatalog {
+		if !strings.HasPrefix(value, candidate.prefix) {
+			continue
 		}
+		if len(value) == len(candidate.prefix) {
+			return settingsEntryMeta{}, false
+		}
+		if candidate.meta.Kind == settingsEntryNavigation && !settingsDynamicNavigationAuthorized(candidate.nodeID, candidate.meta) {
+			return settingsEntryMeta{}, false
+		}
+		return candidate.meta, true
 	}
 	return settingsEntryMeta{}, false
+}
+
+// settingsDynamicNavigationAuthorized prevents a runtime prefix from becoming
+// an independent navigation graph. Every navigation matcher must project onto
+// a declared dynamic node in the static IA catalog with the same axis.
+func settingsDynamicNavigationAuthorized(nodeID string, meta settingsEntryMeta) bool {
+	node, ok := settingsNavByID(nodeID)
+	if !ok || !node.Dynamic || node.Axis != meta.Axis {
+		return false
+	}
+	return node.Kind == settingsNavView || node.Kind == settingsNavChoice
 }
 
 func validateSettingsEntryContracts(options intpickercompat.Options) error {

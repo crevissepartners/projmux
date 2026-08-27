@@ -23,18 +23,18 @@ func (c *settingsCommand) statusbarEntries() []intpickercompat.Entry {
 	entries := make([]intpickercompat.Entry, 0, 5)
 	entries = append(entries, settingsBackEntryLocale(locale))
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAppearanceTheme), c.themeSettingsSummary()),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavAppearanceTheme, settingsGlyphOpen, settingsColorType, c.themeSettingsSummary()),
 		Value:     settingsAppearanceTheme,
 		SearchKey: "appearance theme preset color tokens palette",
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavStatusBar), c.statusBarSummary()),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavStatusBar, settingsGlyphOpen, settingsColorType, c.statusBarSummary()),
 		Value:     settingsAppearanceStatusBar,
 		SearchKey: "appearance status bar components notifications agent usage hud providers windows working directory git resources",
 	})
 	entries = append(entries, c.localeSettingsEntry())
 	entries = append(entries, intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAppearance+".badge"), string(badgeStyle)+" - "+aiBadgeStylePreview(badgeStyle)),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavAppearance+".badge", settingsGlyphOpen, settingsColorType, string(badgeStyle)+" - "+aiBadgeStylePreview(badgeStyle)),
 		Value:     settingsActionPrefixAIBadgeStyle,
 		SearchKey: "appearance agent attention badge style pane border " + string(badgeStyle),
 	})
@@ -64,6 +64,10 @@ func (c *settingsCommand) statusBarEntries() []intpickercompat.Entry {
 		if !ok {
 			continue
 		}
+		nodeID := statusBarDecorationNodeID(target)
+		if nodeID == "" {
+			continue
+		}
 		mode := current.modeForTarget(target)
 		state := string(mode) + " - " + statusbarDecorationPreview(target, mode)
 		if target == statusbarDecorationTargetNotify {
@@ -78,14 +82,14 @@ func (c *settingsCommand) statusBarEntries() []intpickercompat.Entry {
 			state = string(visibility.Effective) + " - " + state + " - " + statusbarHUDVisibilitySourceLabel(visibility)
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, meta.Name, state),
+			Label:     settingsNodeRowLabelLocale(locale, nodeID, settingsGlyphOpen, settingsColorType, state),
 			Value:     settingsActionPrefixStatusbar + string(target),
 			SearchKey: "status bar component " + string(target) + " " + string(mode) + " " + meta.Name + " " + meta.Description,
 		})
 		if target == statusbarDecorationTargetNotify {
 			usageState := loadStatusbarHUDVisibilityState(c.homeDir, c.lookupEnv, statusbarHUDAgentUsage)
 			entries = append(entries, intpickercompat.Entry{
-				Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Agent Usage HUD", agentUsageVisibilityStateText(locale, usageState, usageState)),
+				Label:     settingsNodeRowLabelLocale(locale, settingsNavStatusBar+".agent-usage-hud", settingsGlyphOpen, settingsColorType, agentUsageVisibilityStateText(locale, usageState, usageState)),
 				Value:     settingsAppearanceAgentUsageHUD,
 				SearchKey: "status bar agent usage hud providers windows visible source preview",
 			})
@@ -100,12 +104,25 @@ func (c *settingsCommand) statusBarEntries() []intpickercompat.Entry {
 	return entries
 }
 
+func statusBarDecorationNodeID(target statusbarDecorationTarget) string {
+	switch target {
+	case statusbarDecorationTargetNotify:
+		return settingsNavStatusBar + ".notifications-hud"
+	case statusbarDecorationTargetCwd:
+		return settingsNavStatusBar + ".working-directory"
+	case statusbarDecorationTargetGit:
+		return settingsNavStatusBar + ".git"
+	default:
+		return ""
+	}
+}
+
 // statusBarResourcesEntry is the promoted Labs toggle. Off stops the segment
 // and the host sampler together, which is why its off state is worded as
 // enablement rather than visibility.
 func (c *settingsCommand) statusBarResourcesEntry(locale i18n.Locale) intpickercompat.Entry {
 	mode, source, supported := c.currentLiveResourcesMode()
-	label := settingsNavLabel(settingsNavStatusBar + ".resources")
+	label := c.navLabel(settingsNavStatusBar + ".resources")
 	if !supported {
 		return intpickercompat.Entry{
 			Label:     settingsLabelDimLocale(locale, label, "unavailable on this platform"),

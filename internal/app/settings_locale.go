@@ -16,7 +16,7 @@ func (c *settingsCommand) localeSettingsEntry() intpickercompat.Entry {
 	setting, source, err := c.currentGlobalLocaleSetting()
 	if err != nil {
 		return intpickercompat.Entry{
-			Label:     settingsLabelDimLocale(locale, "Language / Locale", settingsCatalogTextLocale(locale, "unreadable")+" - "+err.Error()),
+			Label:     settingsNodeRowLabelDimLocale(locale, settingsNavAppearance+".locale", settingsCatalogTextLocale(locale, "unreadable")+" - "+err.Error()),
 			Value:     settingsNoopValue,
 			SearchKey: "appearance language locale unreadable PROJMUX_LOCALE ui.locale",
 		}
@@ -29,7 +29,7 @@ func (c *settingsCommand) localeSettingsEntry() intpickercompat.Entry {
 		desc += " - " + source
 	}
 	return intpickercompat.Entry{
-		Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, "Language / Locale", desc),
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavAppearance+".locale", settingsGlyphOpen, settingsColorType, desc),
 		Value:     settingsAppearanceLanguage,
 		SearchKey: "appearance language locale ui.locale PROJMUX_LOCALE auto en-US ko-KR",
 	}

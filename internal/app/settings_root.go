@@ -31,12 +31,12 @@ func (c *settingsCommand) rootOptions(tab settingsRootTab) intpickercompat.Optio
 func settingsRootTabChipsLocale(active settingsRootTab, hasProject bool, locale i18n.Locale) []projmuxpicker.Chip {
 	return []projmuxpicker.Chip{
 		{
-			Label:      settingsCatalogTextLocale(locale, "Global"),
+			Label:      settingsNavLabelLocale(locale, settingsNavScopeGlobal),
 			Active:     active == settingsRootTabGlobal,
 			ClickValue: settingsRootTabGlobalValue,
 		},
 		{
-			Label:      settingsCatalogTextLocale(locale, "Project"),
+			Label:      settingsNavLabelLocale(locale, settingsNavScopeProject),
 			Active:     active == settingsRootTabProject,
 			Disabled:   !hasProject,
 			ClickValue: settingsRootTabProjectValue,
@@ -133,7 +133,7 @@ var settingsRootDescriptions = map[string]string{
 }
 
 // rootEntriesForAxisLocale renders the Global root from the navigation
-// catalog. The row order, labels and destinations come from settingsNavCatalog
+// catalog. The row order, labels and destinations come from settingsNodeCatalog
 // rather than from a second hand-maintained list, so the visible root cannot
 // drift from the tree the golden freezes.
 func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18n.Locale) []intpickercompat.Entry {
@@ -154,7 +154,7 @@ func (c *settingsCommand) rootEntriesForAxisLocale(axis SettingsAxis, locale i18
 			continue
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label: settingsRootLabelLocale(locale, settingsGlyphOpen, node.Label, settingsRootDescriptions[node.ID]),
+			Label: settingsNodeRootLabelLocale(locale, node.ID, settingsGlyphOpen, settingsRootDescriptions[node.ID]),
 			Value: node.Value,
 		})
 	}
@@ -168,20 +168,16 @@ var (
 	settingsRootColorDim  = theme.ANSITextMutedStart
 )
 
-func settingsRootLabel(glyph, name, description string) string {
-	return settingsRootLabelLocale(settingsLocale(), glyph, name, description)
-}
-
-func settingsRootLabelLocale(locale i18n.Locale, glyph, name, description string) string {
-	return settingsRootLabelWithColorLocale(locale, glyph, settingsRootColorOpen, name, description)
-}
-
 func settingsRootLabelDim(name, description string) string {
 	return settingsRootLabelWithColorLocale(settingsLocale(), settingsGlyphInfo, settingsRootColorDim, name, description)
 }
 
 func settingsRootLabelWithColorLocale(locale i18n.Locale, glyph, color, name, description string) string {
 	name = settingsCatalogTextLocale(locale, name)
+	return settingsResolvedRootLabelWithColorLocale(locale, glyph, color, name, description)
+}
+
+func settingsResolvedRootLabelWithColorLocale(locale i18n.Locale, glyph, color, name, description string) string {
 	description = settingsCatalogTextLocale(locale, description)
 	var b strings.Builder
 	if glyph == "" {
@@ -202,6 +198,10 @@ func settingsRootLabelWithColorLocale(locale i18n.Locale, glyph, color, name, de
 	return b.String()
 }
 
+func settingsNodeRootLabelLocale(locale i18n.Locale, id, glyph, description string) string {
+	return settingsResolvedRootLabelWithColorLocale(locale, glyph, settingsRootColorOpen, settingsNavLabelLocale(locale, id), description)
+}
+
 func (c *settingsCommand) sessionStateSettingsRootLabelLocale(locale i18n.Locale) string {
 	autosave := c.currentSessionStateAutosave()
 	interval := c.currentSessionStateAutosaveInterval()
@@ -215,7 +215,7 @@ func (c *settingsCommand) sessionStateSettingsRootLabelLocale(locale i18n.Locale
 		"{mode}", mode,
 		"{interval}", formatSessionStateAutosaveInterval(interval.Duration),
 	).Replace(localizeText(locale, "settings.text.session_state_summary", "autosave {mode}, interval {interval}"))
-	return settingsRootLabelLocale(locale, settingsGlyphOpen, settingsNavLabel(settingsNavSnapshots), desc)
+	return settingsNodeRootLabelLocale(locale, settingsNavSnapshots, settingsGlyphOpen, desc)
 }
 
 func (c *settingsCommand) projectSessionStateSettingsRootLabel(ctx settingsProjectContext) string {
@@ -224,5 +224,5 @@ func (c *settingsCommand) projectSessionStateSettingsRootLabel(ctx settingsProje
 	if identity.Err == nil {
 		desc = identity.Session
 	}
-	return settingsRootLabel(settingsGlyphOpen, settingsNavLabel(settingsNavProjectSnapshots), desc)
+	return settingsNodeRootLabelLocale(c.locale(), settingsNavProjectSnapshots, settingsGlyphOpen, desc)
 }

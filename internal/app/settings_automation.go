@@ -108,12 +108,12 @@ func (c *settingsCommand) automationEntries() []intpickercompat.Entry {
 	locale := c.locale()
 	entries := []intpickercompat.Entry{settingsBackEntryLocale(locale)}
 	entries = append(entries, intpickercompat.Entry{
-		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAutomationLifecycle), c.automationLifecycleSummary()),
+		Label:     c.nodeRowLabel(settingsNavAutomationLifecycle, settingsGlyphOpen, settingsColorType, c.automationLifecycleSummary()),
 		Value:     settingsAutomationLifecycle,
 		SearchKey: "automation lifecycle hooks pre-create post-create post-attach session",
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAutomationSendNoti), c.automationEventSummary(hookScopeGlobal, string(hooks.EventSendNoti))),
+		Label:     c.nodeRowLabel(settingsNavAutomationSendNoti, settingsGlyphOpen, settingsColorType, c.automationEventSummary(hookScopeGlobal, string(hooks.EventSendNoti))),
 		Value:     settingsAutomationSendNoti,
 		SearchKey: "automation send-noti notification queued user script fan-out",
 	})
@@ -135,7 +135,7 @@ func (c *settingsCommand) automationProjectPolicyEntry() intpickercompat.Entry {
 		next = config.ProjectHooksOff
 	}
 	return intpickercompat.Entry{
-		Label:     c.rowLabel(glyph, color, settingsNavLabel(settingsNavAutomation+".project-policy"), string(mode)+" - "+source),
+		Label:     c.nodeRowLabel(settingsNavAutomation+".project-policy", glyph, color, string(mode)+" - "+source),
 		Value:     settingsActionPrefixHooks + string(next),
 		SearchKey: "project automation policy trusted project hooks on off " + source,
 	}
@@ -368,7 +368,7 @@ func (c *settingsCommand) hookEventDetailEntries(scope, event string) []intpicke
 	})
 	if scope == hookScopeProject {
 		entries = append(entries, intpickercompat.Entry{
-			Label: c.rowLabelInfo("Trust", c.projectAutomationTrustSummary(), "project automation runs only from an approved config"),
+			Label: c.nodeRowLabelInfo(settingsNavProjectTrust, c.projectAutomationTrustSummary(), "project automation runs only from an approved config"),
 			Value: settingsNoopValue,
 		})
 	}
@@ -384,7 +384,7 @@ func (c *settingsCommand) hookEventDetailEntries(scope, event string) []intpicke
 }
 
 func (c *settingsCommand) hookEventEditEntry(scope, event, command, configPath string) intpickercompat.Entry {
-	label := settingsNavLabel(settingsNavAutomationSendNoti + ".edit")
+	label := c.navLabel(settingsNavAutomationSendNoti + ".edit")
 	if scope != hookScopeProject {
 		// Global `[hooks.*]` is read-only in app. Show why and where the
 		// change belongs instead of offering a row that cannot act.
@@ -406,7 +406,7 @@ func (c *settingsCommand) hookEventEditEntry(scope, event, command, configPath s
 }
 
 func (c *settingsCommand) hookEventRemoveEntry(scope, event, command, configPath string) intpickercompat.Entry {
-	label := settingsNavLabel(settingsNavAutomationSendNoti + ".remove")
+	label := c.navLabel(settingsNavAutomationSendNoti + ".remove")
 	if scope != hookScopeProject {
 		return intpickercompat.Entry{
 			Label:     c.rowLabelDim(label, "read-only here - edit "+configPath+" or run projmux hook edit "+event),
@@ -479,7 +479,7 @@ func (c *settingsCommand) projectAutomationEntries() []intpickercompat.Entry {
 	}
 	entries = append(entries, c.projectTrustEntry(ctx))
 	entries = append(entries, intpickercompat.Entry{
-		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectHooks), filepath.Join(ctx.Path, ".projmux", "config.toml")),
+		Label:     c.nodeRowLabel(settingsNavProjectHooks, settingsGlyphOpen, settingsColorType, filepath.Join(ctx.Path, ".projmux", "config.toml")),
 		Value:     settingsSectionProjectHooks,
 		SearchKey: "project hooks lifecycle send-noti config.toml automation",
 	})

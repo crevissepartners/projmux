@@ -75,7 +75,7 @@ func (c *settingsCommand) projectHookEntries(ctx settingsProjectContext) []intpi
 		// Phase 2.7: the frame title chip strip already announces the
 		// active scope, so drop the redundant "Project context" row.
 		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim(settingsNavLabel(settingsNavProjectHooks), "disabled - no project context"),
+			Label: c.nodeRowLabelDim(settingsNavProjectHooks, "disabled - no project context"),
 			Value: settingsNoopValue,
 		})
 	}
@@ -85,12 +85,12 @@ func (c *settingsCommand) projectHookEntries(ctx settingsProjectContext) []intpi
 		SearchKey: "project config hooks source path",
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectHooks+".lifecycle"), c.projectHookLifecycleSummary()),
+		Label:     c.nodeRowLabel(settingsNavProjectHooks+".lifecycle", settingsGlyphOpen, settingsColorType, c.projectHookLifecycleSummary()),
 		Value:     settingsProjectAutomationLifecycle,
 		SearchKey: "project hooks lifecycle pre-create post-create post-attach",
 	})
 	entries = append(entries, intpickercompat.Entry{
-		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavProjectHooks+".send-noti"), c.automationEventSummary(hookScopeProject, string(hooks.EventSendNoti))),
+		Label:     c.nodeRowLabel(settingsNavProjectHooks+".send-noti", settingsGlyphOpen, settingsColorType, c.automationEventSummary(hookScopeProject, string(hooks.EventSendNoti))),
 		Value:     settingsProjectAutomationSendNoti,
 		SearchKey: "project hooks send-noti notification queued fan-out",
 	})

@@ -161,19 +161,19 @@ func (c *settingsCommand) themeEntries() ([]intpickercompat.Entry, error) {
 	}
 	entries := []intpickercompat.Entry{c.backEntry()}
 	entries = append(entries, intpickercompat.Entry{
-		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAppearanceTheme+".preset"), themePresetSummary(cfg.Theme)),
+		Label:     c.nodeRowLabel(settingsNavAppearanceTheme+".preset", settingsGlyphOpen, settingsColorType, themePresetSummary(cfg.Theme)),
 		Value:     themeAction("preset"),
 		SearchKey: "theme preset selector swatch colors",
 	})
 	effective := theme.ResolveTheme(cfg.Theme)
 	entries = append(entries, intpickercompat.Entry{
-		Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAppearanceTheme+".tokens"), themeTokenGroupsSummary()),
+		Label:     c.nodeRowLabel(settingsNavAppearanceTheme+".tokens", settingsGlyphOpen, settingsColorType, themeTokenGroupsSummary()),
 		Value:     themeAction("tokens"),
 		SearchKey: "theme color tokens core surface state chrome swatch hex",
 	})
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label: c.rowLabel(settingsGlyphRemove, settingsColorRemove, settingsNavLabel(settingsNavAppearanceTheme+".reset"), "remove only global theme values"),
+			Label: c.nodeRowLabel(settingsNavAppearanceTheme+".reset", settingsGlyphRemove, settingsColorRemove, "remove only global theme values"),
 			Value: themeAction("reset"),
 		},
 	)

@@ -42,13 +42,13 @@ func (c *settingsCommand) projectTrustEntry(ctx settingsProjectContext) intpicke
 		// error message in a dedicated page instead of losing it on the
 		// background log.
 		return intpickercompat.Entry{
-			Label: settingsLabelDim("Trust", "trust state unavailable - "+err.Error()),
+			Label: c.nodeRowLabelDim(settingsNavProjectTrust, "trust state unavailable - "+err.Error()),
 			Value: settingsSectionProjectTrust,
 		}
 	}
 	glyph, color, summary := trustBadgeAppearance(report.State)
 	return intpickercompat.Entry{
-		Label: settingsLabel(glyph, color, "Trust", summary),
+		Label: c.nodeRowLabel(settingsNavProjectTrust, glyph, color, summary),
 		Value: settingsSectionProjectTrust,
 	}
 }
@@ -167,7 +167,7 @@ func (c *settingsCommand) projectTrustEntries(ctx settingsProjectContext) []intp
 	entries := []intpickercompat.Entry{settingsBackEntry()}
 	if !ctx.hasProject() {
 		return append(entries, intpickercompat.Entry{
-			Label: settingsLabelDim("Trust", "disabled - no project context"),
+			Label: c.nodeRowLabelDim(settingsNavProjectTrust, "disabled - no project context"),
 			Value: settingsNoopValue,
 		})
 	}

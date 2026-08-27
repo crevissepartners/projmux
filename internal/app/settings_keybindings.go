@@ -1638,9 +1638,10 @@ func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 	entries := make([]intpickercompat.Entry, 0, len(keyBindingCategoryOrder)+1)
 	entries = append(entries, c.backEntry())
 	for _, category := range keyBindingCategoryOrder {
+		nodeID := settingsNavKeybindings + "." + category.ID
 		if category.ID == keyBindingCategoryInput {
 			entries = append(entries, intpickercompat.Entry{
-				Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, category.Label, c.keybindingInputDeliverySummary()),
+				Label:     c.nodeRowLabel(nodeID, settingsGlyphOpen, settingsColorType, c.keybindingInputDeliverySummary()),
 				Value:     settingsActionPrefixKeymapCategory + category.ID,
 				SearchKey: "input delivery native macOS keybindings Accessibility Option",
 			})
@@ -1648,7 +1649,7 @@ func (c *settingsCommand) keybindingEntries() ([]intpickercompat.Entry, error) {
 		}
 		members := keybindingActionsInCategory(actions, category.ID)
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, category.Label, fmt.Sprintf("%d actions", len(members))),
+			Label:     c.nodeRowLabel(nodeID, settingsGlyphOpen, settingsColorType, fmt.Sprintf("%d actions", len(members))),
 			Value:     settingsActionPrefixKeymapCategory + category.ID,
 			SearchKey: keybindingCategorySearchText(locale, keymap, members),
 		})
@@ -1793,25 +1794,25 @@ func (c *settingsCommand) keybindingInputDeliveryEntries() []intpickercompat.Ent
 	switch {
 	case settingErr != nil:
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabelDim("Native macOS keybindings", "global config unreadable - "+settingErr.Error()),
+			Label:     c.nodeRowLabelDim(settingsNavKeybindings+"."+keyBindingCategoryInput+".native-macos", "global config unreadable - "+settingErr.Error()),
 			Value:     settingsNoopValue,
 			SearchKey: "native macOS keybindings Accessibility Option",
 		})
 	case !nativeKeysEnvEnabled(c.lookupEnv):
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabel(settingsGlyphInactive, settingsColorDim, "Native macOS keybindings", "off - PROJMUX_NATIVE_KEYS override"),
+			Label:     c.nodeRowLabel(settingsNavKeybindings+"."+keyBindingCategoryInput+".native-macos", settingsGlyphInactive, settingsColorDim, "off - PROJMUX_NATIVE_KEYS override"),
 			Value:     settingsNativeKeysToggle,
 			SearchKey: "native macOS keybindings Accessibility Option PROJMUX_NATIVE_KEYS off",
 		})
 	case enabled:
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabel(settingsGlyphToggle, settingsColorAdd, "Native macOS keybindings", "on - modified chords only, processed locally"),
+			Label:     c.nodeRowLabel(settingsNavKeybindings+"."+keyBindingCategoryInput+".native-macos", settingsGlyphToggle, settingsColorAdd, "on - modified chords only, processed locally"),
 			Value:     settingsNativeKeysToggle,
 			SearchKey: "native macOS keybindings Accessibility Option on",
 		})
 	default:
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabel(settingsGlyphInactive, settingsColorDim, "Native macOS keybindings", "off - broker and Accessibility prompt disabled"),
+			Label:     c.nodeRowLabel(settingsNavKeybindings+"."+keyBindingCategoryInput+".native-macos", settingsGlyphInactive, settingsColorDim, "off - broker and Accessibility prompt disabled"),
 			Value:     settingsNativeKeysToggle,
 			SearchKey: "native macOS keybindings Accessibility Option off",
 		})

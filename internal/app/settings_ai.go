@@ -301,12 +301,12 @@ func (c *settingsCommand) aiResumePickerEntries() []intpickercompat.Entry {
 			SearchKey: "create new agent resume picker new action label",
 		},
 		{
-			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAIResumePicker+".limit"), c.aiResumePickerLimitSummary()),
+			Label:     c.nodeRowLabel(settingsNavAIResumePicker+".limit", settingsGlyphOpen, settingsColorType, c.aiResumePickerLimitSummary()),
 			Value:     settingsAIResumePickerLimit,
 			SearchKey: "resume picker limit max sessions resume_picker_limit",
 		},
 		{
-			Label:     c.rowLabel(settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAIResumePicker+".depth"), c.aiResumeScanDepthSummary()),
+			Label:     c.nodeRowLabel(settingsNavAIResumePicker+".depth", settingsGlyphOpen, settingsColorType, c.aiResumeScanDepthSummary()),
 			Value:     settingsAIResumePickerDepth,
 			SearchKey: "resume scan depth cwd child directories resume_scan_depth",
 		},
@@ -427,17 +427,17 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 	}
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAI+".launch-target"), defaultDesc),
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavAI+".launch-target", settingsGlyphOpen, settingsColorType, defaultDesc),
 			Value:     settingsAIDefaultMode,
 			SearchKey: "default launch target agent provider claude codex antigravity shell pane choose at launch",
 		},
 		intpickercompat.Entry{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAIProviders), c.aiEnabledAgentsSummary()),
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavAIProviders, settingsGlyphOpen, settingsColorType, c.aiEnabledAgentsSummary()),
 			Value:     settingsAIEnabledAgents,
 			SearchKey: "enabled providers claude codex antigravity",
 		},
 		intpickercompat.Entry{
-			Label:     settingsLabelLocale(locale, settingsGlyphOpen, settingsColorType, settingsNavLabel(settingsNavAIResumePicker), c.aiResumePickerSummary()),
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavAIResumePicker, settingsGlyphOpen, settingsColorType, c.aiResumePickerSummary()),
 			Value:     settingsAIResumePicker,
 			SearchKey: "agent resume picker limit sessions resume_picker_limit scan depth cwd resume_scan_depth offline failed",
 		},
@@ -539,7 +539,7 @@ func (c *settingsCommand) aiEnabledAgentEntries() []intpickercompat.Entry {
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.rowLabelInfo("Enabled providers", c.aiEnabledAgentsSummary(), "~/.config/projmux/"+config.AIEnabledAgentsFileName),
+			Label: c.nodeRowLabelInfo(settingsNavAIProviders, c.aiEnabledAgentsSummary(), "~/.config/projmux/"+config.AIEnabledAgentsFileName),
 			Value: settingsNoopValue,
 		},
 	}
