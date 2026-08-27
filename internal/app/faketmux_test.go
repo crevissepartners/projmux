@@ -888,6 +888,12 @@ func renderFormat(format string, session *fakeTmuxSession, window *fakeTmuxWindo
 			out = append(out, fmt.Sprintf("%d", slices.Index(session.windows, window)))
 		case token == "window_name" && window != nil:
 			out = append(out, window.name)
+		case token == "window_active" && session != nil && window != nil:
+			if slices.Index(session.windows, window) == 0 {
+				out = append(out, "1")
+			} else {
+				out = append(out, "0")
+			}
 		case token == "automatic-rename" && window != nil:
 			out = append(out, window.opts[token])
 		case token == "pane_id" && pane != nil:

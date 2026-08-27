@@ -1,6 +1,7 @@
 package registryview
 
 import (
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -121,6 +122,10 @@ type Row struct {
 	Role string `json:"role,omitempty"`
 	// Status is the runtime overlay of this row on the exact observed host.
 	Status resourcegraph.Status `json:"status"`
+	// Live and Active are independent read-time facts for Window rows. Active
+	// is exact window_active evidence, never an inference from stored metadata.
+	Live   bool `json:"live,omitempty"`
+	Active bool `json:"active,omitempty"`
 	// MissingRoot marks a row whose owning Project lost spec.root.
 	MissingRoot bool `json:"missingRoot,omitempty"`
 	// Runtime is the exact handle of the observed object, nil when none was
@@ -144,8 +149,8 @@ type Row struct {
 	Termination *coremetadata.TerminationEvidence `json:"termination,omitempty"`
 }
 
-// Live reports whether an exact runtime object was observed for this row.
-func (r Row) Live() bool { return r.Status == resourcegraph.StatusLive }
+// IsLive reports whether an exact runtime object was observed for this row.
+func (r Row) IsLive() bool { return r.Status == resourcegraph.StatusLive }
 
 // Allows reports whether action is eligible on this row.
 func (r Row) Allows(action Action) bool {
@@ -198,6 +203,28 @@ type View struct {
 	Unavailable []resourcegraph.Unavailability `json:"unavailable,omitempty"`
 	Rows        []Row                          `json:"rows"`
 	Runtime     RuntimeCounts                  `json:"runtimeCounts,omitzero"`
+}
+
+// ValidateWindowRuntimeState checks the projected Window invariants without
+// changing row order or coercing malformed facts.
+func (v View) ValidateWindowRuntimeState() error {
+	activeByProject := map[string]string{}
+	for _, row := range v.Rows {
+		if row.Kind != RowKindWindow {
+			continue
+		}
+		if row.Active && !row.Live {
+			return fmt.Errorf("window row %s is active but not live", row.ID)
+		}
+		if !row.Active {
+			continue
+		}
+		if previous := activeByProject[row.ParentID]; previous != "" {
+			return fmt.Errorf("project row %s has multiple active windows: %s and %s", row.ParentID, previous, row.ID)
+		}
+		activeByProject[row.ParentID] = row.ID
+	}
+	return nil
 }
 
 // Observed reports whether a tmux server was reachable for this view.
@@ -346,7 +373,7 @@ func (b *builder) controlWindows(controlUID, controlID string) {
 		b.rows = append(b.rows, Row{
 			Section: SectionControl, Kind: RowKindWindow, ID: windowID, UID: window.Window.Metadata.UID,
 			ParentID: controlID, Depth: 1, Name: window.Window.Metadata.Name,
-			DisplayName: window.Window.DisplayName(), Status: window.Status, Runtime: window.Runtime,
+			DisplayName: window.Window.DisplayName(), Status: window.Status, Live: window.Live, Active: window.Active, Runtime: window.Runtime,
 			Reason: statusReason(window.Status, false), ActiveAgents: counts.active,
 			ApprovalAgents: counts.approval, WorkingAgents: counts.working,
 		})
@@ -408,6 +435,8 @@ func (b *builder) windows(project resourcegraph.ProjectNode, projectID string) {
 			DisplayName:  window.Window.DisplayName(),
 			Root:         root,
 			Status:       window.Status,
+			Live:         window.Live,
+			Active:       window.Active,
 			MissingRoot:  window.MissingRoot,
 			Runtime:      window.Runtime,
 			Actions:      resourceActions(RowKindWindow, window.Status, window.MissingRoot),

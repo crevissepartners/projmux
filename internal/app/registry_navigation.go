@@ -76,7 +76,14 @@ func (r *registryNavigationReader) view(ctx context.Context, candidates []regist
 	if err != nil {
 		return registryview.View{}, err
 	}
-	return registryview.Build(registryview.Input{Graph: graph, Candidates: candidates}), nil
+	if err := graph.ValidateWindowRuntimeState(); err != nil {
+		return registryview.View{}, fmt.Errorf("validate resource graph Window runtime state: %w", err)
+	}
+	view := registryview.Build(registryview.Input{Graph: graph, Candidates: candidates})
+	if err := view.ValidateWindowRuntimeState(); err != nil {
+		return registryview.View{}, fmt.Errorf("validate registry view Window runtime state: %w", err)
+	}
+	return view, nil
 }
 
 // socketPath is the exact `#{socket_path}` of the observed server, used only to
@@ -219,7 +226,7 @@ func (c *registryNavigationCommand) runProject(ctx context.Context, ui, projectU
 // happened would show a machine state that is no longer current.
 func (c *registryNavigationCommand) runActions(ctx context.Context, nav registryNavigationView, row registryview.Row, ui string, stdout, stderr io.Writer) (bool, error) {
 	socket := ""
-	if row.Live() {
+	if row.IsLive() {
 		socket = c.reader.socketPath(ctx)
 	}
 	for {

@@ -2979,6 +2979,7 @@ func (c *switchCommand) switchCardWindowTabs(ctx context.Context, sessionName, m
 			AttentionRank: attentionRanks[strings.TrimSpace(window.Index)],
 			AIBadgeKind:   aiBadgeKinds[strings.TrimSpace(window.Index)],
 			AIBadgeStyle:  aiBadgeStyle,
+			Live:          true,
 			Active:        window.Active,
 		})
 	}

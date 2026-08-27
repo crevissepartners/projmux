@@ -327,13 +327,21 @@ func (r *resolver) buildRegistryNodes() {
 		}
 		missingRoot := r.projectMissingRootByUID(projectUID)
 		ref := r.boundRef(uid)
+		status := r.status(missingRoot, ref, ScopeWindows)
+		live := ref != nil
+		active := false
+		if live {
+			active = r.windowByID[ref.ID].Active
+		}
 		r.windows = append(r.windows, WindowNode{
 			Window:      window,
 			RootKind:    rootKind,
 			RootUID:     rootUID,
 			ProjectUID:  projectUID,
 			Class:       r.rowClass(uid),
-			Status:      r.status(missingRoot, ref, ScopeWindows),
+			Status:      status,
+			Live:        live,
+			Active:      active,
 			MissingRoot: missingRoot,
 			Runtime:     ref,
 		})

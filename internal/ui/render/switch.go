@@ -105,6 +105,7 @@ type SwitchWindowTab struct {
 	AttentionRank int
 	AIBadgeKind   string
 	AIBadgeStyle  string
+	Live          bool
 	Active        bool
 }
 
@@ -305,7 +306,7 @@ func formatSwitchWindowTab(name, badgeKind string, attentionRank int, badgeStyle
 
 func formatSidebarSwitchWindowTabs(windows []SwitchWindowTab, badgeStyle string) string {
 	tabs := make([]string, 0, switchSidebarTabSlots)
-	for _, window := range windows {
+	for _, window := range orderSidebarSwitchWindowTabs(windows) {
 		if len(tabs) >= switchSidebarTabSlots {
 			break
 		}
@@ -323,6 +324,29 @@ func formatSidebarSwitchWindowTabs(windows []SwitchWindowTab, badgeStyle string)
 		tabs = append(tabs, formatSidebarBlankLane(sidebarSwitchWindowTabWidth()))
 	}
 	return strings.Join(tabs, " ")
+}
+
+// orderSidebarSwitchWindowTabs is a stable partition of Registry membership:
+// exact active first, then the other live Windows, then offline/unknown. It
+// does not coerce malformed Active bits; upstream owns those invariants.
+func orderSidebarSwitchWindowTabs(windows []SwitchWindowTab) []SwitchWindowTab {
+	ordered := make([]SwitchWindowTab, 0, len(windows))
+	for _, window := range windows {
+		if window.Active {
+			ordered = append(ordered, window)
+		}
+	}
+	for _, window := range windows {
+		if !window.Active && window.Live {
+			ordered = append(ordered, window)
+		}
+	}
+	for _, window := range windows {
+		if !window.Active && !window.Live {
+			ordered = append(ordered, window)
+		}
+	}
+	return ordered
 }
 
 func formatSidebarSwitchWindowTab(name, badgeKind string, attentionRank int, badgeStyle string, active bool) string {

@@ -125,7 +125,7 @@ func (c *switchCommand) switchManagedRows(
 			sessionNames[cleanOptionalPath(row.Root)] = sessionName
 		}
 		modeLabel := "new"
-		if row.Live() {
+		if row.IsLive() {
 			modeLabel = "existing"
 		}
 		gitBranch := ""
@@ -191,7 +191,7 @@ func switchManagedProjectTierOf(project registryview.Row, selection pinSelection
 	switch {
 	case selection.pinnedProject(project.UID):
 		return switchManagedTierPinned
-	case project.Live():
+	case project.IsLive():
 		return switchManagedTierLive
 	default:
 		return switchManagedTierOffline
@@ -264,7 +264,8 @@ func switchRegistryWindowTabs(view registryview.View, project registryview.Row, 
 		tabs = append(tabs, intrender.SwitchWindowTab{
 			Name:         name,
 			AIBadgeStyle: badgeStyle,
-			Active:       child.Live(),
+			Live:         child.Live,
+			Active:       child.Active,
 		})
 	}
 	if len(tabs) == 0 {

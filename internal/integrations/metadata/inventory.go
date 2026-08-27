@@ -155,23 +155,17 @@ func (o *InventoryObserver) observe(ctx context.Context) resourcegraph.Inventory
 
 	windows, err := runner.Run(ctx, "tmux", "list-windows", "-a", "-F", tmuxFormat(
 		"#{window_id}", "#{session_id}", "#{window_index}", "#{window_name}",
-		"#{"+tmuxopts.WindowUID+"}", "#{"+tmuxopts.WindowName+"}"))
+		"#{"+tmuxopts.WindowUID+"}", "#{"+tmuxopts.WindowName+"}", "#{window_active}"))
 	if err != nil {
 		inventory = inventory.MarkUnavailable(resourcegraph.ScopeWindows,
 			"tmux windows could not be listed: "+err.Error())
 	} else {
-		for _, row := range parseRows(string(windows), 6) {
-			if row[0] == "" {
-				continue
-			}
-			inventory.Windows = append(inventory.Windows, resourcegraph.Window{
-				ID:           row[0],
-				SessionID:    row[1],
-				Index:        row[2],
-				DisplayName:  row[3],
-				UID:          strings.TrimSpace(row[4]),
-				MirroredName: row[5],
-			})
+		parsed, parseErr := parseInventoryWindows(string(windows))
+		if parseErr != nil {
+			inventory = inventory.MarkUnavailable(resourcegraph.ScopeWindows,
+				"tmux windows could not be parsed: "+parseErr.Error())
+		} else {
+			inventory.Windows = parsed
 		}
 	}
 
@@ -212,6 +206,62 @@ func (o *InventoryObserver) observe(ctx context.Context) resourcegraph.Inventory
 		}
 	}
 	return inventory
+}
+
+func parseInventoryWindows(output string) ([]resourcegraph.Window, error) {
+	if strings.TrimSpace(output) == "" {
+		return nil, nil
+	}
+	rows := parseRows(output, 7)
+	if len(rows) != countInventoryRows(output) {
+		return nil, errors.New("malformed list-windows row")
+	}
+	windows := make([]resourcegraph.Window, 0, len(rows))
+	activeBySession := map[string]bool{}
+	for _, row := range rows {
+		if row[0] == "" {
+			return nil, errors.New("empty window id")
+		}
+		active, err := parseInventoryActiveFlag(row[6])
+		if err != nil {
+			return nil, err
+		}
+		if active && activeBySession[row[1]] {
+			return nil, fmt.Errorf("multiple active windows in session %q", row[1])
+		}
+		activeBySession[row[1]] = activeBySession[row[1]] || active
+		windows = append(windows, resourcegraph.Window{
+			ID:           row[0],
+			SessionID:    row[1],
+			Index:        row[2],
+			DisplayName:  row[3],
+			UID:          strings.TrimSpace(row[4]),
+			MirroredName: row[5],
+			Active:       active,
+		})
+	}
+	return windows, nil
+}
+
+func parseInventoryActiveFlag(value string) (bool, error) {
+	switch strings.TrimSpace(value) {
+	case "0":
+		return false, nil
+	case "1":
+		return true, nil
+	default:
+		return false, fmt.Errorf("invalid window_active flag %q", value)
+	}
+}
+
+func countInventoryRows(output string) int {
+	count := 0
+	for line := range strings.SplitSeq(output, "\n") {
+		if strings.TrimSpace(strings.TrimRight(line, "\r")) != "" {
+			count++
+		}
+	}
+	return count
 }
 
 // optionUnset recognizes the stderr signature tmux uses when a user option has
