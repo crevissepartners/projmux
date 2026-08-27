@@ -133,7 +133,7 @@ func (c *switchCommand) authorizeAndContinueProjectOpenRequest(ctx context.Conte
 	// closes a stale/foreign authority change between those two boundaries.
 	if strings.TrimSpace(request.Anchor) != "" {
 		if c.validateProjectOpenRoute == nil {
-			return errors.New("Project open route validator is not configured")
+			return errors.New("project open route validator is not configured")
 		}
 		if err := c.validateProjectOpenRoute(ctx, request.Anchor); err != nil {
 			return err
