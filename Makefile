@@ -17,13 +17,15 @@ GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './.wt/*')
 
 DEADCODE_ALLOWLIST ?= .deadcode-allowlist.txt
+DEADCODE_MUST_KEEP ?= .deadcode-must-keep.txt
+DEADCODE_BASELINE_GATE ?= scripts/deadcode_baseline.py
 
 SECURITY_BIN_DIR ?= $(BUILD_DIR)/security-tools
 SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
 DOCS_REFERENCE ?= docs/cli.md
 
-.PHONY: fmt fmt-check fix build install npm-pack docs test test-integration test-install-smoke test-e2e test-e2e-contract test-e2e-reliability test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode security security-serial security-go security-static security-policy security-contract security-tools
+.PHONY: fmt fmt-check fix build install npm-pack docs test test-integration test-install-smoke test-e2e test-e2e-contract test-e2e-reliability test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -87,36 +89,26 @@ fix:
 	$(GO) fix ./...
 	@$(MAKE) --no-print-directory deadcode
 
-# deadcode runs golang.org/x/tools/cmd/deadcode (pinned via the go.mod tool
-# directive) over the module and filters findings against an allowlist of
-# intentional / MUST-KEEP symbols. It exits non-zero only when a NEW
-# (non-allowlisted) unreachable function appears, so the checked-in baseline
-# stays green while genuinely new dead code is surfaced.
-deadcode:
-	@findings="$$( $(GO) tool deadcode ./... )"; \
-	if [ -z "$$findings" ]; then \
-		echo ">> deadcode: no unreachable functions reported"; \
-		exit 0; \
-	fi; \
-	allow="$$(mktemp)"; \
-	grep -v '^[[:space:]]*#' $(DEADCODE_ALLOWLIST) | grep -v '^[[:space:]]*$$' > "$$allow"; \
-	remaining="$$( printf '%s\n' "$$findings" | while IFS= read -r line; do \
-		sym="$${line##*unreachable func: }"; \
-		if grep -Fxq -- "$$sym" "$$allow"; then \
-			continue; \
-		fi; \
-		printf '%s\n' "$$line"; \
-	done )"; \
-	rm -f "$$allow"; \
-	if [ -n "$$remaining" ]; then \
-		echo ">> deadcode: NEW unreachable functions (not in $(DEADCODE_ALLOWLIST)):"; \
-		printf '%s\n' "$$remaining"; \
+# The current baseline is an exact set of symbols reported by deadcode. The
+# proactive file protects migration/compatibility/proof APIs whether currently
+# reachable, test-only, or reported. New findings are rejected against the
+# union, while stale rows are rejected from the current baseline alone.
+deadcode: deadcode-contract
+	@findings="$$(mktemp)"; \
+	trap 'rm -f "$$findings"' EXIT HUP INT TERM; \
+	if ! $(GO) tool deadcode ./... > "$$findings"; then \
+		echo ">> deadcode: tool execution failed; baseline was not evaluated" >&2; \
 		exit 1; \
 	fi; \
-	echo ">> deadcode: clean (all findings allowlisted in $(DEADCODE_ALLOWLIST))"; \
-	exit 0
+	python3 $(DEADCODE_BASELINE_GATE) \
+		--allowlist $(DEADCODE_ALLOWLIST) \
+		--must-keep $(DEADCODE_MUST_KEEP) \
+		--findings "$$findings"
 
-test:
+deadcode-contract:
+	python3 -m unittest discover -s test -p 'deadcode_baseline_test.py'
+
+test: deadcode-contract
 	$(GO) test ./...
 
 test-integration:

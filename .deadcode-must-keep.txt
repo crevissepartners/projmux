@@ -1,0 +1,35 @@
+# .deadcode-must-keep.txt
+#
+# Proactive maintenance ledger for symbols that are not current deadcode
+# findings but must survive for migration, compatibility, or proof contracts.
+# Each data row is exactly `symbol<TAB>maintenance reason`; reasons are
+# mandatory. This file suppresses only its exact, reason-bearing symbols when
+# they appear in deadcode output; unrelated new findings still fail the gate.
+
+AggregateTeardownEvents	Pure multi-event teardown authority is retained for lifecycle decision proofs and planned consumers.
+CanonicalRoutes	The canonical route table accessor is retained for cross-package coverage and generated-reference consumers.
+CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
+DecideTeardownEvent	The pure teardown decision API is retained for lifecycle authority proofs and planned consumers.
+Discover	The background-context discovery wrapper is retained as a test and compatibility seam.
+LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
+MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
+MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
+ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnostics tests and the planned doctor consumer.
+Registry.snapshotPanesOf	Snapshot pane lookup remains part of the retained snapshot reconciliation implementation.
+Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
+Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.
+Store.Path	The Registry path accessor is retained for migration and storage-boundary tests.
+Store.SetClock	The injected Registry clock is retained as a deterministic migration and transaction test seam.
+TeardownObservations	The closed teardown-observation catalog is retained for authority proofs and planned consumers.
+WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
+formatLegacyPaneSummary	Legacy pane-summary rendering remains required while persisted legacy pane metadata is readable.
+genericTeardownRefusal	The generic refusal constructor is retained inside the pure teardown authority proof surface.
+legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
+legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
+observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
+projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
+rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
+tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
+validOwnerChain	Owner-chain validation is retained inside the pure teardown decision authority.
+validTeardownEventKind	The closed event-kind validator is retained inside the pure teardown decision authority.
+validTeardownObservation	The closed observation validator is retained inside the pure teardown decision authority.
