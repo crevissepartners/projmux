@@ -1,121 +1,99 @@
 # .deadcode-allowlist.txt
 #
-# Allowlist for `make deadcode` (golang.org/x/tools/cmd/deadcode).
+# Exact current output baseline for `go tool deadcode ./...`.
 #
-# Each non-comment, non-blank line is the EXACT fully-qualified symbol name as
-# emitted by deadcode after "unreachable func: " (e.g. "aiCommand.notifyAIText"
-# or "tmuxTruthy"). A finding is suppressed only when its symbol matches a line
-# here exactly; matching is on the symbol, not the file:line, so the baseline
-# survives line-number drift. New dead code that is NOT listed here makes
-# `make deadcode` exit non-zero.
+# Each non-comment, non-blank line is one exact symbol emitted after
+# "unreachable func: ". This file contains current findings only. The gate
+# rejects duplicates, stale rows, and findings outside the two-file union.
+# Deliberately retained APIs belong in .deadcode-must-keep.txt instead.
 #
-# Lines starting with '#' are comments; blank lines are ignored.
-#
-# This baseline was captured from `go tool deadcode ./...` at the time the
-# detector was introduced. The goal of this phase is to STAND UP detection so
-# only NEW dead code shows up red -- NOT to remove the existing findings.
-# Entries are grouped by intent below.
+# Symbols are sorted bytewise. `Run` is emitted by two packages; this
+# package-agnostic baseline records the symbol once and reports both raw and
+# unique finding counts.
 
-# ---------------------------------------------------------------------------
-# MUST-KEEP: deliberately retained legacy / migration / planned-consumer
-# symbols. These read old persisted state, clean stale bindings, or are
-# planned future consumers. deadcode may flag them as unreachable in some
-# builds, but they MUST NOT be removed. Listed explicitly even when not
-# currently flagged, so a future refactor that makes them unreachable does
-# not turn the baseline red and tempt their removal.
-# ---------------------------------------------------------------------------
-MigrateProjectLegacyScripts
-MigrateGlobalLegacyScripts
-legacyDesktopAppID
-CleanupLegacyArtifacts
-legacyWindowAttentionRows
-formatLegacyPaneSummary
-tmuxRetiredKeyUnbindLines
-# Operational diagnostics Phase 2 typed no-write seam. Doctor Phase 2 is the
-# planned consumer after this producer contract lands.
-ReadRuntimeHealth
-# MUST-KEEP: Runtime topology exit cascade Phase 0 pure authority, root,
-# reopen, and pin planning seam. Phases 1-3 are the planned consumers; wiring
-# these symbols into production now is intentionally excluded so this Phase
-# can close the decision contract without changing Registry/runtime behavior.
-TeardownEventKinds
-TeardownObservations
-rootDefaults
-validTeardownEventKind
-validTeardownObservation
-validOwnerChain
-observationRefusal
-DecideTeardownEvent
-AggregateTeardownEvents
-genericTeardownRefusal
-PlanProjectCascadeDelete
-projectAgentCount
-projectPreservedAssets
-DecideProjectOpen
-EqualTeardownPlans
-PlanProjectDeletion
-# Phase 10 plan-only mutation keeps reobservation/replanning pure and directly
-# exercised by its maintained property and failure tests. Runtime execution
-# reaches the same plan's printable validation; these two helpers deliberately
-# remain a zero-I/O proof surface rather than acquiring a fake production
-# caller that would confuse observation with execution success.
-runtimeMutationPlan.withoutEffects
-runtimeMutationEffectKey
-# `projmux://focus?...` encoder. Desktop notification delivery became a
-# two-state model in 0.11.0 (off / notify): Toasts carry no click URI and no
-# protocol handler is registered, so nothing in production emits this URI any
-# more. `projmux focus --uri` and parseFocusURI stay as a compatibility input
-# for handlers wired before 0.11.0, and this encoder is the canonical
-# round-trip counterpart that keeps the retained parser honest. Do not remove
-# it while the parser is supported.
-buildFocusURI
-# Interactive `run-shell` output ledger. The classification of every generated
-# producer and the registry of source sites that may emit one are declarations,
-# not behavior: they exist so `run_shell_output_ledger_test.go` can prove the
-# set is closed against the generated config and against the package source. A
-# production caller would be a fake -- the enforcement that keeps a producer
-# silent at runtime is the guard in interactive_run_shell.go, which App.Run
-# reaches on every invocation. Removing either function removes the proof that
-# a new producer cannot ship unclassified.
-runShellOutputLedger
-runShellSourceSites
-# "last-pane" action handler: audit shows it as dead but it is a PLANNED
-# consumer and must stay (it is a keybinding catalog string ID, not a func,
-# so deadcode does not flag it by name -- recorded here for intent).
-
-# ---------------------------------------------------------------------------
-# Baseline findings captured at detector introduction. Intentional / false
-# positive / not-yet-wired surfaces; retained as the clean baseline so only
-# NEW dead code is reported. Grouped loosely by package.
-# ---------------------------------------------------------------------------
-
-# internal/i18n -- string-audit and catalog helpers (audit tooling surface)
 All
 AuditGoStringLiterals
 AuditGoStringLiteralsInDir
 AuditGoStrings
-RuntimeKoreanStringAuditOptions
-PickerChromeStringAuditOptions
-StringAuditFinding.IsCandidate
-auditGoStringLiteralsInFile
-classifyStringLiteral
-containsASCIILetter
-containsHangul
-isDataStringLiteral
-isDebugStringContext
-isDebugStringLiteral
-isEnglishUserFacingCandidate
-isPickerChromeFieldContext
-isPreservedLiteralString
-shouldKeepStringAuditFinding
-sortStringAuditFindings
+BuildSwitchPickerItems
+CapturePane
 Catalog.Keys
 Catalog.LocaleKeys
 Catalog.MissingFallbackKeys
 Catalog.MissingLocaleKeys
+ChromeLine
+ClassifySchemaVersion
+ClosePopup
+DecideProjectOpen
+DisplayMessage
+DisplayMessageTrimmed
+DisplayPaneFields
+DisplayPopup
+Dispositions
+EqualTeardownPlans
+FooterBlockLines
+FormatList
 FoundationKeys
+HeaderLine
+InteractiveListLines
+InteractiveRowLines
+InverseSelectedContent
+InverseSelectedContentWithTheme
+IsProjectConfigTrusted
+IsSharedOutputMode
+Kinds
+ListLinesWithScrollbar
+ListPanes
+ListWindows
+LoadSessionStateToggleFile
 Localizer.Locale
 Localizer.Styled
+Matrix
+MigrateRegistry
+NewState
+NewWithConfig
+NewWithRoot
+NextPane
+NextWindow
+PickerChromeStringAuditOptions
+PlanProjectCascadeDelete
+PlanProjectDeletion
+PreviousPane
+PreviousWindow
+PromptLine
+PromptLineWithCursor
+PromptLineWithCursorLabel
+PromptLineWithRenderedQuery
+PromptLineWithRenderedQueryLabel
+QueryWithCursor
+Read
+ReadTrimmed
+RedactToken
+Registry.rebuildMissingReservations
+RenderBar
+RenderFullFrameUpdate
+RenderInlinePreview
+RenderSplitPreview
+RenderSwitchPreview
+RenderableListLine
+RenderableListLines
+RenderableListLinesWithTheme
+Renderer.ContentLayout
+Renderer.RenderFrame
+RouteLocalFieldProjections
+Run
+Runner.ListWindows
+RuntimeKoreanStringAuditOptions
+SchemaAction.String
+SelectPane
+SelectWindow
+SelectedContent
+SelectedContentWithTheme
+SelectedLine
+SetPaneOption
+SharedOutputModes
+ShowPaneOption
+StringAuditFinding.IsCandidate
 StyledFragment.IsANSI
 StyledFragment.IsStyledKind
 StyledFragment.IsTmuxStyle
@@ -123,44 +101,41 @@ StyledFragment.Key
 StyledFragment.Kind
 StyledFragment.Locale
 StyledFragment.String
+SwitchClient
+TeardownEventKinds
 Text.Key
 Text.Locale
-FormatList
-firstRune
-runeLen
-
-# internal/ui/picker, pickercompat, projmuxpicker, render -- native picker
-# rendering surface and internal option/result mapping.
-BuildSwitchPickerItems
-ChromeLine
-FooterBlockLines
-HeaderLine
-InteractiveListLines
-InteractiveRowLines
-InverseSelectedContent
-InverseSelectedContentWithTheme
-ListLinesWithScrollbar
-PromptLine
-PromptLineWithCursor
-PromptLineWithCursorLabel
-PromptLineWithRenderedQuery
-PromptLineWithRenderedQueryLabel
-QueryWithCursor
-RenderBar
-RenderFullFrameUpdate
-RenderInlinePreview
-RenderSplitPreview
-RenderSwitchPreview
-RenderWindowsCommandLine
-RenderableListLine
-RenderableListLines
-RenderableListLinesWithTheme
-Renderer.ContentLayout
-Renderer.RenderFrame
-SelectedContent
-SelectedContentWithTheme
-SelectedLine
+UIDKind
+UnsetPaneOption
+WindowTarget
+WithCodexCatalogThreadReader
+WithFileReader
 WriteContentWithFooter
+aiSummaryForKind
+auditGoStringLiteralsInFile
+buildFocusURI
+buildPopupToggle
+callName
+classifyStringLiteral
+codexHooksBlock
+containsASCIILetter
+containsHangul
+defaultAIHookInstallEvents
+effectivePaneCount
+firstRune
+formatPopupSummary
+formatRelativeAge
+formatSelectedSummary
+formatStatusNotify
+formatStatusNotifyWithLive
+formatTargetSummary
+isDataStringLiteral
+isDebugStringContext
+isDebugStringLiteral
+isEnglishUserFacingCandidate
+isPickerChromeFieldContext
+isPreservedLiteralString
+joinFinal
 nativeAppendPartialNextItemLines
 nativeFooterBlockLines
 nativeHeaderLine
@@ -188,90 +163,7 @@ nativeSearchSeparatorLine
 nativeSelectedContent
 nativeTruncateANSI
 nativeVisibleLen
-renderNativeFrame
-renderNativeInteractive
-renderNativeInteractiveWithCursor
-padsInsideFinalStyle
-joinFinal
-selectionMarker
-writeNativeContentWithFooter
-formatPopupSummary
-formatSelectedSummary
-formatTargetSummary
-sanitizeSwitchPreviewPath
-
-# internal/integrations/mux, psmux, tmux -- mux abstraction methods kept for
-# the pluggable backend surface (not all wired by the live tmux path).
-Command.WindowsCommandLine
-Run
-CapturePane
-ClosePopup
-DisplayMessage
-DisplayMessageTrimmed
-DisplayPaneFields
-DisplayPopup
-ListPanes
-ListWindows
-NewSession
-NewWindow
-NextPane
-NextWindow
-PreviousPane
-PreviousWindow
-Read
-ReadTrimmed
-Runner.ListWindows
-Runner.NewWindow
-SelectPane
-SelectWindow
-SetHook
-SetOption
-SetPaneOption
-ShowPaneOption
-SplitWindow
-SwitchClient
-UnsetPaneOption
-NewWithConfig
-NewWithRoot
-NewWithSocketName
-WithFileReader
-# Test and compatibility seams for content-free AI conversation discovery and
-# exact Session State thread validation. Production uses the context-aware
-# catalog path and the default probe-only reader; in-package tests retain the
-# background-context wrapper and injected reader without manufacturing live
-# callers for either.
-Discover
-WithCodexCatalogThreadReader
-WithSocketName
 newClientWithEnv
-RenderWindowsCommandLine
-windowsCommandLineArg
-effectivePaneCount
-
-# internal/config -- config readers / trust helpers retained for callers.
-IsProjectConfigTrusted
-LoadSessionStateToggleFile
-
-# internal/core/usage -- adapter / store / registry surface.
-NewState
-Registry.Lookup
-Registry.Replace
-RedactToken
-Store.SaveAll
-UsageSupported
-
-# internal/integrations/hooks -- hook install / trust helpers.
-
-# internal/app -- AI / notify / status / settings / tmux / switch surfaces
-# that are not currently reachable from the wired command paths.
-aiSummaryForKind
-callName
-codexHooksBlock
-defaultAIHookInstallEvents
-formatRelativeAge
-formatStatusNotify
-formatStatusNotifyWithLive
-buildPopupToggle
 notifyCommand.buildNotifyLiveReport
 notifyCommand.listNotifyLivePanes
 notifySidebarAgentBadge
@@ -280,14 +172,30 @@ notifySidebarEntriesWithLive
 notifySidebarEntriesWithLiveLocale
 notifySidebarReadModel.CollapsedEntries
 notifySidebarStateBadge
+padsInsideFinalStyle
 pickerOptionsFromCompatPicker
+projectAgentCount
+renderNativeFrame
+renderNativeInteractive
+renderNativeInteractiveWithCursor
 renderNotifyBadge
+renderSettingsNavTree
 renderThemeSource.tmuxAppConfig
 renderThemeSource.tmuxAppConfigWithAIBadgeStyle
 renderThemeSource.tmuxStandaloneConfig
 renderThemeSource.tmuxStandaloneConfigWithAIBadgeStyle
+runShellOutputLedger
+runShellSourceSites
+runeLen
+runtimeMutationEffectKey
+runtimeMutationPlan.withoutEffects
+sanitizeSwitchPreviewPath
+scopeFor
+selectionMarker
 settingsCommand.rootEntries
 settingsCommand.rootEntriesForAxis
+shouldKeepStringAuditFinding
+sortStringAuditFindings
 sortedProbeLabels
 statusbarDecorationSetFromGlobal
 tmuxAppConfig
@@ -300,175 +208,5 @@ tmuxStandaloneConfigWithKeymap
 tmuxStandaloneConfigWithKeymapTheme
 tmuxStandaloneConfigWithKeymapThemeAndAIBadgeStyle
 tmuxStyledVisiblePaneLabelFormat
-
-# ---------------------------------------------------------------------------
-# MUST-KEEP: CLI information architecture v2 Phase 0 command manifest API.
-# internal/cli owns the canonical route catalog, the shared output projection
-# catalog, and the closed disposition set. Runtime help reads the manifest
-# through the unexported package-level tables, so these exported accessors are
-# reachable only from the coverage/orphan audit tests today; the generated CLI
-# reference Phase consumes them next. They MUST NOT be removed.
-# ---------------------------------------------------------------------------
-CanonicalRoutes
-LookupCanonicalRoute
-Dispositions
-Routes
-SharedOutputModes
-IsSharedOutputMode
-RouteLocalFieldProjections
-
-# ---------------------------------------------------------------------------
-# MUST-KEEP: CLI information architecture v2 Phase 1 resource metadata
-# foundation. internal/core/metadata owns the pure Project -> Window ->
-# (Pane | Agent) resource model, its uid/name allocation, schema migration,
-# snapshot reconciliation, and operation transaction; internal/integrations/
-# metadata owns the locked registry file and the tmux transport mirror;
-# app.MapMetadataError is the single seam mapping the core's typed input
-# errors onto the CLI usage-error -> exit 2 path.
-#
-# The public verb-to-kind Phase consumed the mutation, naming, transaction, and
-# registry-write surface of this block through the get/describe/rename/rebind/
-# delete/prune routes. The detached materialization Phase then consumed the whole
-# tmux transport mirror: the resource-backed `create window` / `create pane`
-# routes mirror allocated identity onto live sessions, windows, and panes, and the
-# mutation-route registry reconciliation observes and migrates pre-v2 sessions
-# through it. Both groups of entries were removed from this list.
-#
-# What remains is the surface no production path reaches yet: snapshot
-# reconciliation and the schema migration machinery whose production migration set
-# is still deliberately empty. It MUST NOT be removed; it must instead keep
-# shrinking as later Phases wire it. Symbol matching is exact and
-# package-agnostic, which is the documented limitation of this baseline
-# mechanism.
-# ---------------------------------------------------------------------------
-AttachSnapshotMetadata
-ClassifySchemaVersion
-Kinds
-MigrateRegistry
-ReconcileSnapshot
-Registry.snapshotPanesOf
-SchemaAction.String
-Store.Migrate
-Store.Path
-Store.SetClock
-UIDKind
-WindowTarget
-resolveSnapshotProject
-scopeFor
-Registry.rebuildMissingReservations
-
-# ---------------------------------------------------------------------------
-# MUST-KEEP: CLI information architecture v2 Phase 2 selector and read-only
-# resolution. internal/core/selector owns the pure selector grammar, the fixed
-# name/uid-union -> label-filter -> uid-dedupe pipeline, the live/offline/
-# MissingRoot status interpretation, and the declared <verb, kind> cardinality
-# matrix.
-#
-# The public verb-to-kind Phase wired the Window resolution and the resolved-uid
-# accessor into real routes, so those entries were removed. The detached
-# materialization Phase then settled the two whole-table accessors that were
-# left, one each way.
-#
-# `StageOrder` was retired. Every one of its callers was in this package's own
-# tests, and Go in-package tests read unexported identifiers directly, so the
-# accessor did not need to exist at all: the tests now read the unexported
-# `stageOrder` table itself. Note the mechanism -- unexporting the function would
-# NOT have retired the entry, because deadcode analyses the non-test build and
-# reports an unexported test-only function just the same. Removing the function
-# is what removes the finding, which is the same move the Agent namespace Phase
-# used when it kept in-package tests on an unexported table instead of adding an
-# exported helper.
-#
-# `Matrix` stays, and stays exported, as a permanent cross-package test seam. It
-# is read from internal/app/cardinality_adoption_test.go, which is the record
-# that keeps the declared <verb, kind> matrix and the routes that enforce it from
-# drifting apart; a test in a different package cannot reach an unexported
-# symbol. Production consumes the matrix through `CardinalityFor`/`Enforce` and
-# the pipeline through `Resolution.Trace`, so a whole-table copy has no
-# production caller by design and manufacturing one would be worse than this
-# entry. This is NOT a shrinking-backlog item: it is not expected to be consumed
-# by a later Phase, and its absence from a future Phase's reclaim list is not a
-# signal about anything.
-# ---------------------------------------------------------------------------
-Matrix
-
-# ---------------------------------------------------------------------------
-# Settings IA re-cut Phase 0 — navigation catalog accessors.
-#
-# The navigation catalog is the single structural source of truth for the
-# visible Settings tree. Production renders from the catalog through
-# `settingsNavChildren`/`settingsNavLabel`; these four functions exist for the
-# contract that keeps the catalog honest — the tree golden
-# (internal/app/testdata/settings-nav-tree.golden) and the structural,
-# affordance-exclusivity and control-owner-cardinality tests. Manufacturing a
-# production caller for a renderer whose only job is to freeze the tree would be
-# worse than this entry. This is NOT a shrinking-backlog item.
-settingsNavByID
-settingsNavByValue
-renderSettingsNavTree
+writeNativeContentWithFooter
 writeSettingsNavNode
-
-# ---------------------------------------------------------------------------
-# Registry-first control plane Phase 2 — resolved resource graph producer.
-#
-# `internal/core/resourcegraph` is the pure read model that joins the Registry's
-# desired graph to one exact tmux server, plus the bounded observation adapter
-# that fills it (`InventoryObserver` in internal/integrations/metadata). The
-# phase ships the producer and its contract tests deliberately without a
-# consumer: the controller kernel (Phase 3), the runtime diagnostics route
-# (Phase 4), and the Registry-first primary UI (Phase 5) are the planned
-# consumers, and each is a separate reviewable change. Wiring a call site now
-# would mean changing UI or reconcile semantics inside the phase that is
-# supposed to only define the model.
-#
-# These entries are expected to leave this list as those phases land. They are
-# NOT MUST-KEEP, and they must not be deleted as dead code in the meantime.
-Resolve
-newResolver
-Classes
-Graph.RuntimeOfClass
-ObjectKinds
-objectKindRank
-Scopes
-scopeRank
-Inventory.Clone
-Inventory.Available
-Inventory.Unavailability
-Inventory.withUnavailable
-Inventory.MarkUnavailable
-Session.isControlSession
-resolver.resolveClaims
-resolver.acceptClaim
-resolver.bind
-resolver.reject
-resolver.classify
-resolver.windowContainmentContradiction
-resolver.paneContainmentContradiction
-resolver.paneOwnerChain
-resolver.sessionRef
-resolver.windowRef
-resolver.paneRef
-resolver.buildRegistryNodes
-resolver.buildRuntimeNodes
-resolver.resolvedClass
-resolver.unownedClass
-resolver.rowClass
-resolver.boundRef
-resolver.status
-resolver.projectMissingRootByUID
-projectMissingRoot
-resolver.graph
-compareRuntimeID
-tmuxIDNumber
-sortedKeys
-nonEmpty
-Transport.Present
-Transport.Args
-Transport.String
-ResolveTransport
-HostModeFromAppMarker
-transportRunner.Run
-NewInventoryObserver
-InventoryObserver.Observe
-InventoryObserver.observe
-serverAbsent

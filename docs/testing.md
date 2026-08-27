@@ -43,10 +43,15 @@ and humans run the same entrypoints.
   checks scanner/rule/baseline identity, PR-range/full-history secret scans,
   cache miss-to-hit convergence, privacy-safe artifacts, and the fail-closed
   aggregate. CI exposes their stable aggregate as `Test`.
-- `make deadcode` runs `go tool deadcode` (pinned via the go.mod tool
-  directive) over the module and reports unreachable functions, filtering out
-  the intentional/MUST-KEEP baseline in `.deadcode-allowlist.txt`; it fails
-  only on NEW dead code, and `make fix` runs it after `go fix`.
+- `make deadcode` runs the focused baseline-contract fixture, then runs
+  `go tool deadcode` (pinned via the go.mod tool directive) over the module.
+  `.deadcode-allowlist.txt` is exact to current findings: duplicate and stale
+  rows fail. `.deadcode-must-keep.txt` separately records proactive migration,
+  compatibility, and proof APIs as `symbol<TAB>non-empty reason`; duplicates
+  within either file, overlap across files, malformed reasons, and findings
+  outside the two-file union fail deterministically. `make test` also runs the
+  focused fixture, and `make fix` runs the complete deadcode gate after
+  `go fix`.
 
 ## Docker-Covered Checks
 
