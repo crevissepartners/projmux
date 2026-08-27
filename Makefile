@@ -9,6 +9,8 @@ GO_INSTALL_DIR := $(strip $(shell $(GO) env GOPATH 2>/dev/null))/bin
 endif
 INSTALL_DIR ?= $(GO_INSTALL_DIR)
 INSTALL_BIN := $(INSTALL_DIR)/projmux
+PROJMUX_INSTALL_SOCKET ?= projmux
+INSTALL_MV ?= mv
 
 GO_FILES := $(shell find . -type f -name '*.go' \
 	-not -path './.git/*' \
@@ -30,13 +32,24 @@ build:
 
 install: build
 	@mkdir -p $(INSTALL_DIR)
+	@echo ">> converging live config before binary publication..."
+	@$(PROJMUX_BIN) config apply --bin $(INSTALL_BIN) --socket $(PROJMUX_INSTALL_SOCKET) || { \
+	  echo "install pre-publication convergence failed; binary publication not started; recovery: run \`projmux config apply --socket $(PROJMUX_INSTALL_SOCKET)\`" >&2; \
+	  exit 1; \
+	}
 	@tmpfile="$(INSTALL_BIN).tmp.$$$$"; \
 	  cp $(PROJMUX_BIN) "$$tmpfile" && \
 	  chmod 0755 "$$tmpfile" && \
-	  mv "$$tmpfile" $(INSTALL_BIN)
+	  $(INSTALL_MV) "$$tmpfile" $(INSTALL_BIN) || { \
+	    echo "install binary publication failed; install not successful; recovery: run \`projmux config apply --socket $(PROJMUX_INSTALL_SOCKET)\`" >&2; \
+	    exit 1; \
+	  }
 	@echo ">> atomically replaced $(INSTALL_BIN)"
-	@echo ">> applying live config..."
-	@$(INSTALL_BIN) config apply
+	@echo ">> verifying post-publication live config..."
+	@$(INSTALL_BIN) config apply --socket $(PROJMUX_INSTALL_SOCKET) || { \
+	  echo "install post-publication convergence failed; install not successful; recovery: run \`projmux config apply --socket $(PROJMUX_INSTALL_SOCKET)\`" >&2; \
+	  exit 1; \
+	}
 	@echo ">> reconciling notify queue..."
 	@$(INSTALL_BIN) notification reconcile || true
 

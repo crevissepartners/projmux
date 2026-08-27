@@ -105,10 +105,15 @@ cd projmux
 make install
 ```
 
-`make install` builds the binary, atomically replaces
-`$(go env GOPATH)/bin/projmux`, runs `projmux config apply`, and reconciles the
-notify queue through `projmux notification reconcile`. Override the destination
-with `INSTALL_DIR=/usr/local/bin`.
+`make install` builds the candidate, uses that candidate to run
+`config apply --bin <install-target>` before publication, atomically replaces
+`$(go env GOPATH)/bin/projmux`, and runs the installed binary's `config apply`
+again as post-publication verification. This ordering migrates a pre-0.13 live
+server's exact logical socket marker before a consumer that requires it becomes
+reachable. A convergence or publication failure is non-zero and prints the
+exact `projmux config apply --socket <name>` recovery. Successful installs then
+reconcile the notify queue through `projmux notification reconcile`. Override
+the destination with `INSTALL_DIR=/usr/local/bin`.
 
 Update source checkouts with the repository workflow:
 
@@ -126,11 +131,14 @@ marked as release-managed:
 export PROJMUX_INSTALLER=github-release
 ```
 
-With that set, `projmux update apply` downloads the latest matching release
-asset, replaces the current executable, and reapplies the live tmux config.
+With that set, `projmux update apply` downloads and verifies the latest matching
+release asset, converges the exact live route before replacement, atomically
+replaces the current executable, and reapplies the live tmux config as
+post-publication verification.
 `--no-apply` skips the live reload only — the new binary still migrates the
 keymap schema and marker-owned provider files, then writes the generated
-config. It does not touch a live tmux bell hook. See
+config. It prints the exact explicit apply required before ordinary mutation
+and does not touch a live tmux bell hook. See
 [Upgrading](upgrading.md#managed-agent-hook-producer-migration).
 
 ## npm Packaging Details

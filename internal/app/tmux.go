@@ -1342,10 +1342,7 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 		if _, writeErr := fmt.Fprintf(stdout, "skipped reload: source-file failed on -L %s\n", socketName); writeErr != nil {
 			return rollbackManagedIngest(writeErr)
 		}
-		if rollbackErr := rollbackManagedIngest(nil); rollbackErr != nil {
-			return rollbackErr
-		}
-		return nil
+		return rollbackManagedIngest(fmt.Errorf("source generated config on -L %s: %w", socketName, err))
 	}
 	// Persist the logical invocation name on the server itself. Runtime
 	// mutation producers may start under an inherited -S path, but they must

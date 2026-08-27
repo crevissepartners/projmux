@@ -968,7 +968,11 @@ func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 	if err := cmd.Run([]string{"--no-install"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	wantCommands := []string{"npm install -g projmux@latest", "projmux config apply"}
+	wantCommands := []string{
+		"/tmp/projmux config apply --bin /npm/bin/projmux --socket projmux",
+		"npm install -g projmux@latest",
+		"projmux config apply",
+	}
 	if !reflect.DeepEqual(updateCommands, wantCommands) {
 		t.Fatalf("update commands = %#v, want %#v", updateCommands, wantCommands)
 	}

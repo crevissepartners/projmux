@@ -63,6 +63,7 @@ type updateCommand struct {
 	client      updateHTTPClient
 	apiURL      string
 	executable  func() (string, error)
+	lookPath    func(string) (string, error)
 	runExternal func(name string, args []string, stdout, stderr io.Writer) error
 	goos        string
 	goarch      string
@@ -124,6 +125,7 @@ func newUpdateCommand() *updateCommand {
 		client:      &http.Client{Timeout: updateHTTPTimeout},
 		apiURL:      updateReleaseURL,
 		executable:  resolveExecutablePath,
+		lookPath:    exec.LookPath,
 		runExternal: runUpdateExternal,
 		goos:        runtime.GOOS,
 		goarch:      runtime.GOARCH,
@@ -202,15 +204,28 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 			return err
 		}
 		if err := c.externalRunner()(command.Name, command.Args, stdout, stderr); err != nil {
-			return fmt.Errorf("run %s: %w", command.String(), err)
+			return updateApplyStageError(command, err)
 		}
+	}
+	if *noApply {
+		return writeUpdateExplicitApplyRequired(stdout, defaultAppSocket)
 	}
 	return nil
 }
 
+type updateApplyStage string
+
+const (
+	updateApplyPrePublication updateApplyStage = "pre-publication convergence"
+	updateApplyPublication    updateApplyStage = "binary publication"
+	updateApplyVerification   updateApplyStage = "post-publication verification"
+	updateApplyConfigOnly     updateApplyStage = "config-only migration"
+)
+
 type updateApplyCommand struct {
-	Name string
-	Args []string
+	Stage updateApplyStage
+	Name  string
+	Args  []string
 }
 
 // postUpdateApplyArgs is the argv every installer path hands the *new* binary
@@ -232,6 +247,37 @@ func postUpdateApplyArgs(noApply bool) []string {
 		args = append(args, "--no-reload")
 	}
 	return args
+}
+
+func preUpdateApplyArgs(publishedTarget, socketName string) []string {
+	return []string{"config", "apply", "--bin", publishedTarget, "--socket", socketName}
+}
+
+func updateApplyRecoveryCommand(socketName string) string {
+	return fmt.Sprintf("projmux config apply --socket %s", socketName)
+}
+
+func writeUpdateExplicitApplyRequired(stdout io.Writer, socketName string) error {
+	_, err := fmt.Fprintf(stdout,
+		">> live tmux unchanged; explicit apply required: run `%s` before ordinary mutation\n",
+		updateApplyRecoveryCommand(socketName))
+	return err
+}
+
+func updateApplyStageError(command updateApplyCommand, cause error) error {
+	recovery := updateApplyRecoveryCommand(defaultAppSocket)
+	switch command.Stage {
+	case updateApplyPrePublication:
+		return fmt.Errorf("update pre-publication convergence failed; binary publication not started; recovery: run `%s`: run %s: %w", recovery, command.String(), cause)
+	case updateApplyPublication:
+		return fmt.Errorf("update binary publication failed; update not successful; recovery: run `%s`: run %s: %w", recovery, command.String(), cause)
+	case updateApplyVerification:
+		return fmt.Errorf("update post-publication convergence failed; update not successful; recovery: run `%s`: run %s: %w", recovery, command.String(), cause)
+	case updateApplyConfigOnly:
+		return fmt.Errorf("update config-only migration failed; update not successful; live tmux unchanged; recovery: run `%s`: run %s: %w", recovery, command.String(), cause)
+	default:
+		return fmt.Errorf("run %s: %w", command.String(), cause)
+	}
 }
 
 // keymapMigrationStagePreviewLine describes the migration step for a dry run.
@@ -265,18 +311,47 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 		// stuck on an old version. `npm install -g projmux@latest` always
 		// pulls the newest published release and re-resolves the per-platform
 		// optionalDependency, which is what "update" must actually do.
-		commands := []updateApplyCommand{{Name: "npm", Args: []string{"install", "-g", "projmux@latest"}}}
-		commands = append(commands, updateApplyCommand{Name: "projmux", Args: postUpdateApplyArgs(noApply)})
+		commands := []updateApplyCommand{{Stage: updateApplyPublication, Name: "npm", Args: []string{"install", "-g", "projmux@latest"}}}
+		if !noApply {
+			current, err := c.currentExecutable()
+			if err != nil {
+				return nil, err
+			}
+			target, err := c.npmPublishedTarget()
+			if err != nil {
+				return nil, err
+			}
+			commands = append([]updateApplyCommand{{
+				Stage: updateApplyPrePublication,
+				Name:  current,
+				Args:  preUpdateApplyArgs(target, defaultAppSocket),
+			}}, commands...)
+		}
+		postStage := updateApplyVerification
+		if noApply {
+			postStage = updateApplyConfigOnly
+		}
+		commands = append(commands, updateApplyCommand{Stage: postStage, Name: "projmux", Args: postUpdateApplyArgs(noApply)})
 		return commands, nil
 	case "go":
 		exe, err := c.currentExecutable()
 		if err != nil {
 			return nil, err
 		}
-		return []updateApplyCommand{
-			{Name: "go", Args: []string{"install", "github.com/crevissepartners/projmux/cmd/projmux@latest"}},
-			{Name: exe, Args: postUpdateApplyArgs(noApply)},
-		}, nil
+		commands := []updateApplyCommand{{Stage: updateApplyPublication, Name: "go", Args: []string{"install", "github.com/crevissepartners/projmux/cmd/projmux@latest"}}}
+		if !noApply {
+			commands = append([]updateApplyCommand{{
+				Stage: updateApplyPrePublication,
+				Name:  exe,
+				Args:  preUpdateApplyArgs(exe, defaultAppSocket),
+			}}, commands...)
+		}
+		postStage := updateApplyVerification
+		if noApply {
+			postStage = updateApplyConfigOnly
+		}
+		commands = append(commands, updateApplyCommand{Stage: postStage, Name: exe, Args: postUpdateApplyArgs(noApply)})
+		return commands, nil
 	case "github-release":
 		return nil, errors.New("update apply for github-release installs is handled by direct release binary replacement")
 	case "source":
@@ -284,6 +359,27 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 	default:
 		return nil, errors.New("update apply could not detect a supported installer; run from an npm/go/github-release install or set PROJMUX_INSTALLER=npm|go|github-release (source installs update with `git pull --ff-only && make install`)")
 	}
+}
+
+func (c *updateCommand) npmPublishedTarget() (string, error) {
+	if c.lookPath == nil {
+		return "", errors.New("update apply: npm published-target resolver is not configured")
+	}
+	target, err := c.lookPath("projmux")
+	if err != nil {
+		return "", fmt.Errorf("update apply: resolve npm published target: %w", err)
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return "", errors.New("update apply: npm published target is empty")
+	}
+	if !filepath.IsAbs(target) {
+		target, err = filepath.Abs(target)
+		if err != nil {
+			return "", fmt.Errorf("update apply: make npm published target absolute: %w", err)
+		}
+	}
+	return filepath.Clean(target), nil
 }
 
 func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writer) error {
@@ -302,6 +398,12 @@ func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writ
 	if _, err := fmt.Fprintf(stdout, "would replace: %s (atomic via temp file)\n", target); err != nil {
 		return err
 	}
+	if !noApply {
+		if _, err := fmt.Fprintf(stdout, "would run before replacement: %s %s\n",
+			target, strings.Join(preUpdateApplyArgs(target, defaultAppSocket), " ")); err != nil {
+			return err
+		}
+	}
 	if _, err := fmt.Fprintf(stdout, "would run: %s %s\n",
 		target, strings.Join(postUpdateApplyArgs(noApply), " ")); err != nil {
 		return err
@@ -311,6 +413,9 @@ func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writ
 	}
 	if _, err := fmt.Fprintln(stdout, managedIngestMigrationStagePreviewLine(target)); err != nil {
 		return err
+	}
+	if noApply {
+		return writeUpdateExplicitApplyRequired(stdout, defaultAppSocket)
 	}
 	return nil
 }
@@ -351,8 +456,22 @@ func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Wr
 	if err := c.downloadAndExtractReleaseAsset(context.Background(), asset, extracted); err != nil {
 		return err
 	}
+	if !noApply {
+		preApply := updateApplyCommand{
+			Stage: updateApplyPrePublication,
+			Name:  target,
+			Args:  preUpdateApplyArgs(target, defaultAppSocket),
+		}
+		if _, err := fmt.Fprintf(stdout, ">> running: %s\n", preApply.String()); err != nil {
+			return err
+		}
+		if err := c.externalRunner()(preApply.Name, preApply.Args, stdout, stderr); err != nil {
+			return updateApplyStageError(preApply, err)
+		}
+	}
 	if err := c.atomicReplaceRelease(extracted, target); err != nil {
-		return err
+		return fmt.Errorf("update binary publication failed; update not successful; recovery: run `%s`: %w",
+			updateApplyRecoveryCommand(defaultAppSocket), err)
 	}
 	if _, err := fmt.Fprintf(stdout, ">> atomically replaced %s\n", target); err != nil {
 		return err
@@ -372,7 +491,14 @@ func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Wr
 		return err
 	}
 	if err := c.externalRunner()(target, applyArgs, stdout, stderr); err != nil {
-		return fmt.Errorf("apply live config via %s %s: %w", target, strings.Join(applyArgs, " "), err)
+		stage := updateApplyVerification
+		if noApply {
+			stage = updateApplyConfigOnly
+		}
+		return updateApplyStageError(updateApplyCommand{Stage: stage, Name: target, Args: applyArgs}, err)
+	}
+	if noApply {
+		return writeUpdateExplicitApplyRequired(stdout, defaultAppSocket)
 	}
 	return nil
 }

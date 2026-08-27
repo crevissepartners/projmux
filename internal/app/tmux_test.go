@@ -78,7 +78,7 @@ func TestTmuxApplyLifecycleOutcomeTable(t *testing.T) {
 		{name: "permission kind stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailurePermission, Stderr: "no server running on /private/socket"}}}, wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
 		{name: "runner kind stays generic", runner: &recordingTmuxRunner{err: appTypedCommandFailure{inttmux.CommandFailure{Kind: inttmux.CommandFailureRunner, Stderr: "no server running on /private/socket"}}}, wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
 		{name: "argv spoof stays generic", runner: &recordingTmuxRunner{err: errors.New("tmux -L no server running on /private/socket list-sessions")}, wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
-		{name: "reload failure keeps command success", runner: &recordingTmuxRunner{}, reloadErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyReloadFailed, wantEvents: 2},
+		{name: "reload failure is not convergence success", runner: &recordingTmuxRunner{}, reloadErr: true, wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyReloadFailed, wantEvents: 2},
 		{name: "config write error", runner: &recordingTmuxRunner{}, writeErr: errors.New("private config path"), wantErr: true, wantResult: "error", wantCode: diagnostics.CodeTmuxApplyFailed, wantEvents: 2},
 		{name: "append stores then errors is best effort", runner: &recordingTmuxRunner{}, writerErr: errors.New("permission denied"), wantResult: "success", wantEvents: 2},
 		{name: "total writer failure is best effort", runner: &recordingTmuxRunner{}, writerErr: errors.New("permission denied"), dropWriter: true, wantResult: "success"},
@@ -263,6 +263,48 @@ func TestConfigApplyFullSurfaceReturnsForeignMarkerRefusal(t *testing.T) {
 	for _, call := range server.calls {
 		if slices.Contains(tmuxCommandArgv(call), "source-file") || slices.Contains(tmuxCommandArgv(call), "set-option") {
 			t.Fatalf("foreign full apply reached live write: %#v", server.calls)
+		}
+	}
+}
+
+func TestConfigApplySourceFailureIsNotConvergenceSuccess(t *testing.T) {
+	home := t.TempDir()
+	server := newFakeTmux()
+	server.socketName = ""
+	server.addSession("legacy")
+	server.fail = []string{"source-file"}
+	server.failMessage = "injected source failure"
+	cmd := newTmuxCommand()
+	cmd.runner = server
+	cmd.executable = func() (string, error) { return "/tmp/projmux", nil }
+	cmd.homeDir = func() (string, error) { return home, nil }
+	cmd.lookupEnv = func(key string) string {
+		if key == "HOME" {
+			return home
+		}
+		if key == "XDG_CONFIG_HOME" {
+			return filepath.Join(home, ".config")
+		}
+		return ""
+	}
+	var stdout, stderr bytes.Buffer
+	err := cmd.runApply([]string{
+		"--bin", "/tmp/projmux",
+		"--config", filepath.Join(home, ".config", "projmux", "tmux.conf"),
+		"--socket", defaultAppSocket,
+	}, &stdout, &stderr)
+	if err == nil || !strings.Contains(err.Error(), "source generated config on -L projmux") {
+		t.Fatalf("runApply() error = %v, want source failure; stdout=%q stderr=%q", err, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "skipped reload: source-file failed on -L projmux") {
+		t.Fatalf("stdout = %q, want failed convergence state", stdout.String())
+	}
+	if server.socketName != "" || server.session("legacy") == nil {
+		t.Fatalf("failed source changed marker/session = %q/%v", server.socketName, server.session("legacy") != nil)
+	}
+	for _, call := range server.calls {
+		if slices.Contains(tmuxCommandArgv(call), "set-option") {
+			t.Fatalf("source failure reached route-marker write: %#v", server.calls)
 		}
 	}
 }

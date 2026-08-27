@@ -31,7 +31,9 @@ projmux update apply
 Use `--dry-run` to see the planned action and `--no-apply` to skip reloading
 the live tmux config after the binary changes. `--no-apply` suppresses live
 tmux access only; the new binary still migrates the keymap schema and
-marker-owned provider files, then writes the generated config. See
+marker-owned provider files, then writes the generated config. It finishes by
+printing `projmux config apply --socket projmux` as the explicit live
+convergence still required before ordinary mutation. See
 [Keymap schema migration](#keymap-schema-migration) and
 [Managed Agent hook producer migration](#managed-agent-hook-producer-migration).
 
@@ -544,9 +546,16 @@ npm install -g projmux
 For npm-managed installs, `projmux update apply` runs:
 
 ```sh
+<current-projmux> config apply --bin <published-projmux> --socket projmux
 npm install -g projmux@latest
 projmux config apply
 ```
+
+The first apply must succeed before npm publication begins. The final apply is
+post-publication verification by the new binary. Go, GitHub Release, and source
+`make install` use the same pre-converge → publish → verify contract. A failed
+pre-apply prevents publication; a publication or verification failure returns
+non-zero and prints the exact `projmux config apply --socket projmux` recovery.
 
 `npm install -g projmux@latest` is used instead of `npm update -g projmux`
 because `npm update -g` honors the installed semver range and frequently
@@ -570,9 +579,10 @@ projmux update apply --no-apply  # migrate + write config, skip the live reload
 projmux update apply --dry-run   # print the steps only
 ```
 
-`projmux update apply` reinstalls via `go install`, atomically replaces the active
-file, and reapplies the live tmux config so a running `-L projmux` server picks
-up new bindings without a restart.
+`projmux update apply` first converges the live route with the current binary
+and exact eventual executable path, reinstalls via `go install`, then reapplies
+with the published binary so a running `-L projmux` server picks up new bindings
+without a restart.
 
 The command reads `PROJMUX_PROJDIR` from the calling shell and memoizes the
 primary path to `~/.config/projmux/projdir`, so the new binary keeps the same
@@ -591,8 +601,9 @@ PROJMUX_PROJDIR="/main/repos:/secondary/repos" projmux update apply
 
 When `PROJMUX_INSTALLER=github-release`, `projmux update apply` downloads the
 latest matching `projmux_<version>_<goos>_<goarch>.tar.gz` asset from GitHub
-Releases, extracts the binary, atomically replaces the current executable, and
-then runs the new binary's `projmux config apply` — or `config apply --no-reload`
+Releases, extracts the binary, converges the exact live route, atomically
+replaces the current executable, and then runs the new binary's
+`projmux config apply` — or `config apply --no-reload`
 when `--no-apply` is set, so the keymap schema migration still happens.
 
 Set the installer explicitly if you manage a release binary outside npm or Go:
