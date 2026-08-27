@@ -150,10 +150,19 @@ type runtimeLedger struct {
 	created          []runtimeObject
 	operationMarker  string
 	markedSessionIDs []string
+	// currentWindows is the transaction-local stable-UID resolution already
+	// proved by ensureProjectRuntime (or by an exact Window creation in this
+	// transaction). It lets later Pane materialization consume the same current
+	// locator without another list-windows round trip while the Registry lock is
+	// held. It is never carried across transactions.
+	currentWindows map[string]runtimeOwner
 }
 
 func newRuntimeLedger(operationID string) *runtimeLedger {
-	return &runtimeLedger{operationMarker: newCreateOperationMarker(operationID)}
+	return &runtimeLedger{
+		operationMarker: newCreateOperationMarker(operationID),
+		currentWindows:  make(map[string]runtimeOwner),
+	}
 }
 
 func (l *runtimeLedger) record(kind runtimeObjectKind, id, uid string) {
@@ -179,6 +188,32 @@ func (l *runtimeLedger) markSession(session string) {
 		return
 	}
 	l.markedSessionIDs = append(l.markedSessionIDs, session)
+}
+
+func (l *runtimeLedger) resetCurrentWindows() {
+	if l == nil {
+		return
+	}
+	l.currentWindows = make(map[string]runtimeOwner)
+}
+
+func (l *runtimeLedger) observeCurrentWindow(uid string, owner runtimeOwner) {
+	if l == nil || strings.TrimSpace(uid) == "" || exactTmuxHandle(owner.SessionID, "$") == "" ||
+		exactTmuxHandle(owner.WindowID, "@") == "" {
+		return
+	}
+	if l.currentWindows == nil {
+		l.currentWindows = make(map[string]runtimeOwner)
+	}
+	l.currentWindows[strings.TrimSpace(uid)] = owner
+}
+
+func (l *runtimeLedger) currentWindow(uid string) (runtimeOwner, bool) {
+	if l == nil {
+		return runtimeOwner{}, false
+	}
+	owner, ok := l.currentWindows[strings.TrimSpace(uid)]
+	return owner, ok
 }
 
 // ownershipOption is the mirrored option that proves this operation owns a
@@ -1592,12 +1627,21 @@ func (m *materializer) mirrorWindow(ctx context.Context, target string, window c
 }
 
 func (m *materializer) mirrorPane(ctx context.Context, target string, pane coremetadata.Pane) error {
+	if pane.Metadata.OwnerRef == nil {
+		return fmt.Errorf("mirror Pane %s: stable ownerRef is required", pane.Metadata.UID)
+	}
 	writes := []identityPlanWrite{
 		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneUID, pane.Metadata.UID}, effect: "Pane UID mirror equals Registry"},
 		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneName, pane.Metadata.Name}, effect: "Pane stable-name mirror equals Registry"},
+		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneOwnerKind, string(pane.Metadata.OwnerRef.Kind)}, effect: "Pane stable owner kind equals Registry"},
+		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneOwnerUID, pane.Metadata.OwnerRef.UID}, effect: "Pane stable owner uid equals Registry"},
+		{operands: []string{"-p", "-t", target, "-q", tmuxopts.PaneRole, string(pane.Spec.Role)}, effect: "Pane stable role equals Registry"},
 	}
 	if pane.Spec.Role == coremetadata.PaneRoleAgent {
 		writes = append(writes, identityPlanWrite{
+			operands: []string{"-p", "-t", target, "-q", tmuxopts.AgentUIDPane, pane.Metadata.OwnerRef.UID},
+			effect:   "Pane Agent uid equals Registry owner",
+		}, identityPlanWrite{
 			operands: []string{"-p", "-t", target, tmuxopts.RemainOnExitPane, "on"},
 			effect:   "managed Agent Pane remains as an exact dead anchor until lifecycle replacement",
 		})
@@ -1768,20 +1812,60 @@ func (m *materializer) clearCreateOperations(ctx context.Context, ledger *runtim
 
 // windowIDForUID returns the tmux window id inside sessionName that mirrors uid.
 func (m *materializer) windowIDForUID(ctx context.Context, sessionName, uid string) (string, error) {
+	owner, found, err := m.windowRuntimeForUID(ctx, sessionName, uid)
+	if err != nil || !found {
+		return "", err
+	}
+	return owner.WindowID, nil
+}
+
+// windowRuntimeForUID resolves one stable Window UID to its current exact
+// $N/@N containment. Duplicate claims are conflicting identity evidence and
+// never degrade into first-row selection.
+func (m *materializer) windowRuntimeForUID(ctx context.Context, sessionName, uid string) (runtimeOwner, bool, error) {
 	if strings.TrimSpace(uid) == "" {
-		return "", nil
+		return runtimeOwner{}, false, nil
 	}
-	out, err := m.read(ctx, "list-windows", "-t", sessionName, "-F",
-		tmuxRowFormat("#{"+tmuxopts.WindowUID+"}", "#{window_id}"))
+	inventory, err := m.windowRuntimeInventory(ctx, sessionName)
 	if err != nil {
-		return "", tmuxError("list tmux windows of session %q: %v", sessionName, err)
+		return runtimeOwner{}, false, err
 	}
-	for _, fields := range splitTmuxRows(out, 2) {
-		if fields[0] == uid {
-			return fields[1], nil
+	return resolveWindowRuntimeUID(inventory, uid)
+}
+
+// windowRuntimeInventory takes one exact current snapshot for every stable
+// Window UID in a session. Create transactions use the shared snapshot to
+// project all existing-live Windows without holding the Registry lock across
+// one tmux round trip per Window.
+func (m *materializer) windowRuntimeInventory(ctx context.Context, sessionName string) (map[string][]runtimeOwner, error) {
+	out, err := m.read(ctx, "list-windows", "-t", sessionName, "-F",
+		tmuxRowFormat("#{"+tmuxopts.WindowUID+"}", "#{session_id}", "#{window_id}"))
+	if err != nil {
+		return nil, tmuxError("list tmux windows of session %q: %v", sessionName, err)
+	}
+	inventory := make(map[string][]runtimeOwner)
+	for _, fields := range splitTmuxRows(out, 3) {
+		uid := strings.TrimSpace(fields[0])
+		if uid != "" {
+			inventory[uid] = append(inventory[uid], runtimeOwner{SessionID: fields[1], WindowID: fields[2]})
 		}
 	}
-	return "", nil
+	return inventory, nil
+}
+
+func resolveWindowRuntimeUID(inventory map[string][]runtimeOwner, uid string) (runtimeOwner, bool, error) {
+	owners := inventory[strings.TrimSpace(uid)]
+	if len(owners) == 0 {
+		return runtimeOwner{}, false, nil
+	}
+	if len(owners) != 1 {
+		return runtimeOwner{}, false, fmt.Errorf("window uid %q has ambiguous current runtime containment", uid)
+	}
+	owner := owners[0]
+	if exactTmuxHandle(owner.SessionID, "$") == "" || exactTmuxHandle(owner.WindowID, "@") == "" {
+		return runtimeOwner{}, false, fmt.Errorf("window uid %q has malformed current runtime containment", uid)
+	}
+	return owner, true, nil
 }
 
 // panesOf lists the panes of a tmux window as (mirrored uid, pane id) rows in

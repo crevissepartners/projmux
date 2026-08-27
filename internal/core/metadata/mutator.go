@@ -586,7 +586,8 @@ func (m Mutator) ObserveWindowRuntimeBinding(reg *Registry, windowUID, sessionID
 	if !validRuntimeHandle(sessionID, '$') || !validRuntimeHandle(runtimeID, '@') {
 		return Window{}, inputErr(op, ErrInvalidRegistry, "window %q requires exact $N/@N runtime handles", windowUID)
 	}
-	if window.Status.RuntimeSessionID == sessionID && window.Status.RuntimeID == runtimeID {
+	clearedMissing := clearCondition(&window.Status.Conditions, ConditionMissingRuntime)
+	if window.Status.RuntimeSessionID == sessionID && window.Status.RuntimeID == runtimeID && !clearedMissing {
 		return window.Clone(), nil
 	}
 	window.Status.RuntimeSessionID = sessionID

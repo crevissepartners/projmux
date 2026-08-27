@@ -83,12 +83,16 @@ func TestMirrorWritesResourceIdentityIntoScopedTmuxOptionsAndTurnsOffAutomaticRe
 			name: "pane mirrors the uid and the pane name",
 			run: func(m Mirror) error {
 				return m.MirrorPane(context.Background(), "%7", coremetadata.Pane{
-					Metadata: coremetadata.ObjectMeta{UID: "pane-1", Name: "logs"},
+					Metadata: coremetadata.ObjectMeta{UID: "pane-1", Name: "logs", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindWindow, UID: "window-1"}},
+					Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell},
 				})
 			},
 			want: []string{
 				"tmux set-option -p -t %7 -q @projmux_pane_uid pane-1",
 				"tmux set-option -p -t %7 -q @projmux_pane_label logs",
+				"tmux set-option -p -t %7 -q @projmux_pane_owner_kind Window",
+				"tmux set-option -p -t %7 -q @projmux_pane_owner_uid window-1",
+				"tmux set-option -p -t %7 -q @projmux_pane_role shell",
 			},
 			never: []string{"pane_title", "select-pane -T", "rename-window", "remain-on-exit"},
 		},
@@ -96,13 +100,17 @@ func TestMirrorWritesResourceIdentityIntoScopedTmuxOptionsAndTurnsOffAutomaticRe
 			name: "Agent pane is protected until exact dead-anchor reconciliation",
 			run: func(m Mirror) error {
 				return m.MirrorPane(context.Background(), "%8", coremetadata.Pane{
-					Metadata: coremetadata.ObjectMeta{UID: "pane-agent", Name: "worker"},
+					Metadata: coremetadata.ObjectMeta{UID: "pane-agent", Name: "worker", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindAgent, UID: "agent-1"}},
 					Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleAgent},
 				})
 			},
 			want: []string{
 				"tmux set-option -p -t %8 -q @projmux_pane_uid pane-agent",
 				"tmux set-option -p -t %8 -q @projmux_pane_label worker",
+				"tmux set-option -p -t %8 -q @projmux_pane_owner_kind Agent",
+				"tmux set-option -p -t %8 -q @projmux_pane_owner_uid agent-1",
+				"tmux set-option -p -t %8 -q @projmux_pane_role agent",
+				"tmux set-option -p -t %8 -q @projmux_agent_uid agent-1",
 				"tmux set-option -p -t %8 remain-on-exit on",
 			},
 		},
@@ -410,7 +418,8 @@ func TestDeadPaneUIDsRequiresExactMirroredDeadEvidence(t *testing.T) {
 	t.Parallel()
 	sep := escapedFieldSep
 	runner := &fakeRunner{outputs: map[string]string{
-		"#{pane_dead}": "pane-dead" + sep + "1\n" + "pane-live" + sep + "0\n" + sep + "1\n",
+		"#{pane_dead}": "$1" + sep + "alpha" + sep + "@2" + sep + "%3" + sep + "1" + sep + "project" + sep + sep + "window" + sep + "pane-dead" + sep + "Agent" + sep + "agent" + sep + "agent" + sep + "agent\n" +
+			"$1" + sep + "alpha" + sep + "@2" + sep + "%4" + sep + "0" + sep + "project" + sep + sep + "window" + sep + "pane-live" + sep + "Agent" + sep + "agent" + sep + "agent" + sep + "agent\n",
 	}}
 	dead, err := NewMirror(runner).DeadPaneUIDs(context.Background())
 	if err != nil {

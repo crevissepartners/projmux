@@ -262,9 +262,18 @@ func (m runtimeMutationMetadataMirror) MirrorPane(ctx context.Context, paneID, w
 		}
 		return strings.TrimSpace(string(out)) == pane.Metadata.UID, nil
 	}
+	if pane.Metadata.OwnerRef == nil {
+		return errors.New("typed metadata mirror requires Pane stable ownerRef")
+	}
 	declarations := []struct{ option, value string }{
 		{tmuxopts.PaneUID, pane.Metadata.UID},
 		{tmuxopts.PaneName, pane.Metadata.Name},
+		{tmuxopts.PaneOwnerKind, string(pane.Metadata.OwnerRef.Kind)},
+		{tmuxopts.PaneOwnerUID, pane.Metadata.OwnerRef.UID},
+		{tmuxopts.PaneRole, string(pane.Spec.Role)},
+	}
+	if pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
+		declarations = append(declarations, struct{ option, value string }{tmuxopts.AgentUIDPane, pane.Metadata.OwnerRef.UID})
 	}
 	steps := make([]runtimeMutationStep, 0, len(declarations))
 	for index, item := range declarations {

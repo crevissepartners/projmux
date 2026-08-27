@@ -553,6 +553,27 @@ func TestPaneAgentCascadeDeletePlanReleasesPaneAndRetainsAgentWindow(t *testing.
 	}
 }
 
+func TestC2StableUIDGenerationAuthorityAcceptsReboundCurrentLocators(t *testing.T) {
+	registry, event, paneUID, agentUID := exactAgentCascadeFixture(t)
+	event.LiveSiblingPane = true
+	// The Registry retains diagnostics from an older tmux server generation.
+	// Current observed locators are deliberately different.
+	pane, _ := registry.Pane(paneUID)
+	pane.Status.Activation.RuntimeID = "%6"
+	window, _ := registry.Window(event.Chain.WindowUID)
+	window.Status.RuntimeSessionID, window.Status.RuntimeID = "$2", "@6"
+	event.Chain.SessionHandle, event.Chain.WindowHandle, event.Chain.PaneHandle = "$2", "@2", "%2"
+
+	plan, err := PlanPaneAgentCascadeDelete(registry, event, fixedNow.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Changed || plan.PaneUID != paneUID || plan.AgentUID != agentUID ||
+		plan.Decision.Action != TeardownDeletePaneAgent {
+		t.Fatalf("stable-authority rebound plan = %+v", plan)
+	}
+}
+
 func TestLastPaneCausalPairDeletesWindowAndPreservesZeroWindowProject(t *testing.T) {
 	t.Parallel()
 

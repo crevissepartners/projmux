@@ -5,12 +5,14 @@ import (
 	"errors"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 type exactPaneExitInventory struct {
@@ -27,6 +29,7 @@ type exactPaneExitInventory struct {
 	rollbacks      int
 	cleanups       int
 	cleanupErr     error
+	cleanupTarget  paneLiveDeleteTarget
 	prepareHook    func([]paneReplacementShell)
 }
 
@@ -51,6 +54,7 @@ func (i *exactPaneExitInventory) RollbackLifecycleReplacements(context.Context, 
 
 func (i *exactPaneExitInventory) CleanupLifecycleDeadPane(_ context.Context, target paneLiveDeleteTarget) error {
 	i.cleanups++
+	i.cleanupTarget = target
 	if i.cleanupErr != nil {
 		return i.cleanupErr
 	}
@@ -63,6 +67,18 @@ func (i *exactPaneExitInventory) CleanupLifecycleDeadPane(_ context.Context, tar
 		}
 	}
 	return nil
+}
+
+type stableDeadPaneInventory struct {
+	*exactPaneExitInventory
+	observed []intmetadata.DeadPaneObservation
+}
+
+func (i *stableDeadPaneInventory) DeadPaneObservations(context.Context) ([]intmetadata.DeadPaneObservation, error) {
+	if i.err != nil {
+		return nil, i.err
+	}
+	return slices.Clone(i.observed), nil
 }
 
 func (i *exactPaneExitInventory) DeadPaneUIDs(context.Context) (map[string]bool, error) {
@@ -407,7 +423,7 @@ func TestLifecycleDeadPaneCleanupUsesExactRootSessionName(t *testing.T) {
 				PaneUID: "pane-dead", PaneHandle: "%9", WindowUID: "window-owner", WindowHandle: "@3",
 				SessionHandle: "$1", RootKind: tc.root.Kind, RootUID: tc.root.UID,
 			}}
-			target := lifecycleDeadPaneTarget(event, lifecycleRootSessionName(registry, tc.root))
+			target := lifecycleDeadPaneTarget(event, lifecycleRootSessionName(registry, tc.root), coremetadata.Pane{})
 			if target.SessionName != tc.want || target.SessionID != "$1" || target.PaneID != "%9" {
 				t.Fatalf("cleanup target = %+v, want session name %q with exact handles", target, tc.want)
 			}
@@ -702,6 +718,174 @@ func TestExactDeadPaneUIDDisambiguatesAReusedRuntimeHandle(t *testing.T) {
 	staleAgentAfter, agentOK := store.registry.Agent("agt-beta-codex")
 	if !paneOK || !agentOK || !reflect.DeepEqual(stalePaneAfter, stalePaneBefore) || !reflect.DeepEqual(staleAgentAfter, staleAgentBefore) {
 		t.Fatalf("historical Pane/Agent changed: pane=%+v agent=%+v", stalePaneAfter, staleAgentAfter)
+	}
+}
+
+func TestC1C2CurrentUIDContainmentRebindsCachedLocatorsForRetainedDeadPaneCleanup(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	activateExactPane(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-current", "%6")
+	window, _ := store.registry.Window("win-alpha-main")
+	window.Status.RuntimeSessionID, window.Status.RuntimeID = "$2", "@6"
+	receipt := phase2NormalReceipt("pan-alpha-codex", "agt-alpha-codex", "gen-current")
+	live := exitReconcileFixtureLiveExcept("pan-alpha-codex")
+	live["pan-alpha-codex"] = true
+	base := &exactPaneExitInventory{
+		uids: live, dead: map[string]bool{"pan-alpha-codex": true}, windowUID: "win-alpha-main",
+	}
+	inventory := &stableDeadPaneInventory{exactPaneExitInventory: base, observed: []intmetadata.DeadPaneObservation{{
+		SessionID: "$2", SessionName: "alpha", WindowID: "@2", PaneID: "%2",
+		ProjectUID: "prj-alpha", WindowUID: "win-alpha-main", PaneUID: "pan-alpha-codex",
+		OwnerKind: string(coremetadata.KindAgent), OwnerUID: "agt-alpha-codex", AgentUID: "agt-alpha-codex",
+		PaneRole: string(coremetadata.PaneRoleAgent),
+	}}}
+	event := exactPaneExitDirty(receipt)
+	event.runtimePaneID = "%2"
+	event.runtimeSessionID = "$2"
+
+	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.cascaded) != 1 || base.cleanups != 1 || base.cleanupTarget.SessionID != "$2" ||
+		base.cleanupTarget.WindowID != "@2" || base.cleanupTarget.PaneID != "%2" {
+		t.Fatalf("rebound cleanup result=%+v target=%+v", result, base.cleanupTarget)
+	}
+	if _, ok := store.registry.Pane("pan-alpha-codex"); ok {
+		t.Fatal("current same-UID dead Pane row survived")
+	}
+	agent, _ := store.registry.Agent("agt-alpha-codex")
+	if agent.Status.Phase != coremetadata.PhaseOffline || agent.Status.PaneRef != "" {
+		t.Fatalf("resumable Agent=%+v", agent.Status)
+	}
+}
+
+func TestC2StableAuthorityConflictsWriteZeroAndReturnRetryErrors(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		mutate    func(*intmetadata.DeadPaneObservation, *lifecycleDirtyEvent)
+		duplicate bool
+	}{
+		{name: "missing Pane UID", mutate: func(observed *intmetadata.DeadPaneObservation, _ *lifecycleDirtyEvent) {
+			observed.PaneUID = ""
+		}},
+		{name: "foreign Pane UID", mutate: func(observed *intmetadata.DeadPaneObservation, _ *lifecycleDirtyEvent) {
+			observed.PaneUID = "pan-foreign"
+		}},
+		{name: "foreign Pane ownerRef", mutate: func(observed *intmetadata.DeadPaneObservation, _ *lifecycleDirtyEvent) {
+			observed.OwnerUID = "agt-foreign"
+		}},
+		{name: "foreign Agent UID", mutate: func(observed *intmetadata.DeadPaneObservation, _ *lifecycleDirtyEvent) {
+			observed.AgentUID = "agt-foreign"
+		}},
+		{name: "foreign Window UID", mutate: func(observed *intmetadata.DeadPaneObservation, _ *lifecycleDirtyEvent) {
+			observed.WindowUID = "win-foreign"
+		}},
+		{name: "foreign Project UID", mutate: func(observed *intmetadata.DeadPaneObservation, _ *lifecycleDirtyEvent) {
+			observed.ProjectUID = "prj-foreign"
+		}},
+		{name: "stale activation generation", mutate: func(_ *intmetadata.DeadPaneObservation, event *lifecycleDirtyEvent) {
+			event.generation = "gen-stale"
+		}},
+		{name: "ambiguous duplicate current locator", duplicate: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			store := newFakeResourceStore(t)
+			activateExactPane(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-current", "%9")
+			receipt := phase2NormalReceipt("pan-alpha-codex", "agt-alpha-codex", "gen-current")
+			live := exitReconcileFixtureLiveExcept("pan-alpha-codex")
+			live["pan-alpha-codex"] = true
+			base := &exactPaneExitInventory{
+				uids: live, dead: map[string]bool{"pan-alpha-codex": true}, windowUID: "win-alpha-main",
+			}
+			observed := intmetadata.DeadPaneObservation{
+				SessionID: "$1", SessionName: "alpha", WindowID: "@4", PaneID: "%9",
+				ProjectUID: "prj-alpha", WindowUID: "win-alpha-main", PaneUID: "pan-alpha-codex",
+				OwnerKind: string(coremetadata.KindAgent), OwnerUID: "agt-alpha-codex", AgentUID: "agt-alpha-codex",
+				PaneRole: string(coremetadata.PaneRoleAgent),
+			}
+			event := exactPaneExitDirty(receipt)
+			if test.mutate != nil {
+				test.mutate(&observed, &event)
+			}
+			observations := []intmetadata.DeadPaneObservation{observed}
+			if test.duplicate {
+				observations = append(observations, observed)
+			}
+			inventory := &stableDeadPaneInventory{exactPaneExitInventory: base, observed: observations}
+			before := store.registry.Clone()
+			transactionsBefore, writesBefore := store.transactions, store.writes
+
+			result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+			if err == nil || !strings.Contains(err.Error(), "stable dead Pane authority conflict") {
+				t.Fatalf("conflict error = %v", err)
+			}
+			if result.transactions != 0 || store.transactions != transactionsBefore || store.writes != writesBefore || base.cleanups != 0 {
+				t.Fatalf("conflict wrote state: result=%+v transactions=%d writes=%d cleanups=%d",
+					result, store.transactions-transactionsBefore, store.writes-writesBefore, base.cleanups)
+			}
+			if !reflect.DeepEqual(store.registry, before) || !base.dead["pan-alpha-codex"] || !base.uids["pan-alpha-codex"] {
+				t.Fatal("conflict changed the Registry or retained dead-Pane retry evidence")
+			}
+		})
+	}
+}
+
+func TestC2StableAuthorityConflictRemainsInDurableControllerRetryQueue(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	activateExactPane(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-current", "%9")
+	receipt := phase2NormalReceipt("pan-alpha-codex", "agt-alpha-codex", "gen-current")
+	live := exitReconcileFixtureLiveExcept("pan-alpha-codex")
+	live["pan-alpha-codex"] = true
+	base := &exactPaneExitInventory{
+		uids: live, dead: map[string]bool{"pan-alpha-codex": true}, windowUID: "win-alpha-main",
+	}
+	inventory := &stableDeadPaneInventory{exactPaneExitInventory: base, observed: []intmetadata.DeadPaneObservation{{
+		SessionID: "$1", SessionName: "alpha", WindowID: "@4", PaneID: "%9",
+		ProjectUID: "prj-alpha", WindowUID: "win-alpha-main", PaneUID: "pan-alpha-codex",
+		OwnerKind: string(coremetadata.KindAgent), OwnerUID: "agt-foreign", AgentUID: "agt-alpha-codex",
+		PaneRole: string(coremetadata.PaneRoleAgent),
+	}}}
+	target, err := tmuxSocketPathTarget(filepath.Join(t.TempDir(), "stable-conflict.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &controllerTriggerRunner{
+		runner: &routedTmuxRunner{}, store: store.store(), events: controllerEventLog{dir: t.TempDir()},
+		pass: func(ctx context.Context, trigger controllerTrigger) (controllerPassResult, error) {
+			dirty := exactPaneExitDirty(receipt)
+			dirty.target = trigger.target
+			dirty.runtimePaneID = trigger.hookPane
+			result, reconcileErr := reconcileLifecycle(ctx, dirty, inventory, store.store())
+			return controllerPassResult{residualExits: result.changed()}, reconcileErr
+		},
+	}
+	before := store.registry.Clone()
+	transactionsBefore, writesBefore := store.transactions, store.writes
+
+	_, err = runner.run(context.Background(), controllerTrigger{
+		reason: controllerTriggerPaneExited, target: target, hookPane: "%9",
+	})
+	if err == nil || !strings.Contains(err.Error(), "stable dead Pane authority conflict") {
+		t.Fatalf("terminal controller conflict = %v", err)
+	}
+	queued, drainErr := runner.events.drain(target)
+	if drainErr != nil || len(queued) != 1 || queued[0].retry != controllerTriggerMaxRetries || queued[0].hookPane != "%9" {
+		t.Fatalf("durable terminal retry = %+v, err=%v", queued, drainErr)
+	}
+	if store.transactions != transactionsBefore || store.writes != writesBefore || base.cleanups != 0 ||
+		!reflect.DeepEqual(store.registry, before) || !base.dead["pan-alpha-codex"] || !base.uids["pan-alpha-codex"] {
+		t.Fatalf("controller conflict changed authority: transactions=%d writes=%d cleanups=%d",
+			store.transactions-transactionsBefore, store.writes-writesBefore, base.cleanups)
 	}
 }
 
@@ -1073,8 +1257,10 @@ func TestExactPaneExitReceiptPermutationsConvergeToOneIdempotentPlan(t *testing.
 	for index, receipts := range permutations {
 		store := newFakeResourceStore(t)
 		activateExactPane(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-current", "%9")
+		live := exitReconcileFixtureLiveExcept("pan-alpha-codex")
+		live["pan-alpha-codex"] = true
 		result, err := reconcileLifecycle(context.Background(), exactPaneExitDirty(receipts...),
-			&exactPaneExitInventory{uids: exitReconcileFixtureLiveExcept("pan-alpha-codex"), windowUID: "win-alpha-main"},
+			&exactPaneExitInventory{uids: live, dead: map[string]bool{"pan-alpha-codex": true}, windowUID: "win-alpha-main"},
 			store.store())
 		if err != nil {
 			t.Fatalf("permutation %d: %v", index, err)

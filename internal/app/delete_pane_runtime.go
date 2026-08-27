@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -61,6 +62,15 @@ type paneLiveDeleteTarget struct {
 	EndsWindow  bool
 	EndsSession bool
 	Self        bool
+	OwnerKind   coremetadata.Kind
+	OwnerUID    string
+	AgentUID    string
+	PaneRole    coremetadata.PaneRole
+	Generation  string
+	// RequireDead is set only by retained lifecycle cleanup. Its first-write
+	// guard must re-prove positive pane_dead on the current UID containment;
+	// canonical live delete intentionally leaves this false.
+	RequireDead bool
 }
 
 type paneLiveDeletePlan struct {
@@ -86,10 +96,11 @@ func (p paneLiveDeletePlan) signature() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "socket=%q;authority=%q;", p.SocketPath, p.Authority)
 	for _, target := range p.Targets {
-		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%t,%t,%t;", target.ResourceUID,
+		fmt.Fprintf(&b, "%s,%s,%s,%s,%s,%s,%s,%s,%s,%t,%t,%t,%s,%s,%s,%s,%s,%t;", target.ResourceUID,
 			target.PaneUID, target.PaneID, target.WindowUID, target.WindowID,
 			target.SessionID, target.SessionName, target.RootKind, target.RootUID,
-			target.EndsWindow, target.EndsSession, target.Self)
+			target.EndsWindow, target.EndsSession, target.Self, target.OwnerKind, target.OwnerUID,
+			target.AgentUID, target.PaneRole, target.Generation, target.RequireDead)
 	}
 	for _, target := range p.RegistryOnly {
 		fmt.Fprintf(&b, "registry-only,%s,%s,%s,%s,%s,%s;", target.ResourceUID,
@@ -294,24 +305,57 @@ func (r *tmuxPaneDeleteRuntime) revalidateMutationTarget(ctx context.Context, ta
 	if err := r.guardSocketIdentity(ctx); err != nil {
 		return err
 	}
-	format := tmuxRowFormat(
+	columns := []string{
 		"#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
-		"#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.WindowUID+"}", "#{"+tmuxopts.PaneUID+"}",
-	)
+		"#{" + tmuxopts.ProjectUIDSession + "}", "#{" + tmuxopts.WindowUID + "}", "#{" + tmuxopts.PaneUID + "}",
+	}
+	if target.RequireDead {
+		columns = []string{
+			"#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
+			"#{" + tmuxopts.ProjectUIDSession + "}", "#{" + tmuxopts.SessionRole + "}",
+			"#{" + tmuxopts.WindowUID + "}", "#{" + tmuxopts.PaneUID + "}", "#{pane_dead}",
+			"#{" + tmuxopts.PaneOwnerKind + "}", "#{" + tmuxopts.PaneOwnerUID + "}",
+			"#{" + tmuxopts.AgentUIDPane + "}", "#{" + tmuxopts.PaneRole + "}",
+		}
+	}
+	format := tmuxRowFormat(columns...)
 	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-t", target.PaneID, "-F", format)
 	if err != nil {
 		return tmuxError("revalidate exact live Pane %s on %s %s: %v", target.PaneID, r.target.flag, r.target.value, err)
 	}
-	rows := splitTmuxRows(strings.ReplaceAll(string(out), tmuxRowSepFormat, tmuxRowSep), 7)
+	rows := splitTmuxRows(strings.ReplaceAll(string(out), tmuxRowSepFormat, tmuxRowSep), len(columns))
 	if len(rows) != 1 {
 		return fmt.Errorf("exact live Pane %s returned malformed containment evidence", target.PaneID)
 	}
 	row := rows[0]
+	windowUIDIndex, paneUIDIndex := 5, 6
+	if target.RequireDead {
+		windowUIDIndex, paneUIDIndex = 6, 7
+	}
 	if row[0] != target.SessionID || row[1] != target.SessionName || row[2] != target.WindowID ||
-		row[3] != target.PaneID || row[5] != target.WindowUID || row[6] != wantMirror {
+		row[3] != target.PaneID || row[windowUIDIndex] != target.WindowUID || row[paneUIDIndex] != wantMirror {
 		return fmt.Errorf("exact live Pane %s drifted: got session=%s/%q window=%s/%q pane=%s uid=%q, want session=%s/%q window=%s/%q pane=%s uid=%q",
-			target.PaneID, row[0], row[1], row[2], row[5], row[3], row[6],
+			target.PaneID, row[0], row[1], row[2], row[windowUIDIndex], row[3], row[paneUIDIndex],
 			target.SessionID, target.SessionName, target.WindowID, target.WindowUID, target.PaneID, wantMirror)
+	}
+	if target.RequireDead && row[8] != "1" {
+		return fmt.Errorf("exact lifecycle Pane %s is no longer retained dead", target.PaneID)
+	}
+	if target.RequireDead && (row[9] != string(target.OwnerKind) || row[10] != target.OwnerUID ||
+		row[11] != target.AgentUID || row[12] != string(target.PaneRole)) {
+		return fmt.Errorf("exact lifecycle Pane %s stable owner mirror drifted", target.PaneID)
+	}
+	if target.RequireDead {
+		switch target.RootKind {
+		case coremetadata.KindProject:
+			if row[4] != target.RootUID || strings.TrimSpace(row[5]) != "" {
+				return fmt.Errorf("exact live Pane %s Project root identity drifted", target.PaneID)
+			}
+		case coremetadata.KindControlSession:
+			if strings.TrimSpace(row[4]) != "" || row[5] != resourcegraph.ControlSessionRole {
+				return fmt.Errorf("exact live Pane %s ControlSession root identity drifted", target.PaneID)
+			}
+		}
 	}
 	root := deleteRootOwner{Kind: target.RootKind, UID: target.RootUID, Session: target.SessionName}
 	if err := root.validateLiveSession("delete pane", "Pane", target.PaneID, target.PaneUID, row[4], row[1]); err != nil {
