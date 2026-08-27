@@ -60,6 +60,100 @@ lifecycle_pmx() {
     "$bin" "$@"
 }
 
+# Keep install topology diagnosis inside C01 while leaving the existing native
+# lifecycle fixture and tmux authority sequence unchanged. These Doctor calls
+# run before the isolated tmux server exists and always strip caller identity.
+lifecycle_topology_root="$lifecycle_root/topology"
+lifecycle_topology_ready_shim="$lifecycle_topology_root/ready-path"
+lifecycle_topology_missing_shim="$lifecycle_topology_root/missing-path"
+lifecycle_topology_invocations="$lifecycle_topology_root/codex-invocations"
+lifecycle_topology_stderr_sentinel='managed standalone Codex install not found at /private/e2e-topology token=e2e-topology-secret prompt=e2e-topology-secret'
+mkdir -p "$lifecycle_topology_ready_shim" "$lifecycle_topology_missing_shim"
+: >"$lifecycle_topology_invocations"
+
+cat >"$lifecycle_topology_ready_shim/codex" <<'READY_CODEX'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${PROJMUX_FAKE_CODEX_INVOCATIONS:?}"
+exec "${PROJMUX_FAKE_CODEX_BINARY:?}" "$@"
+READY_CODEX
+cat >"$lifecycle_topology_missing_shim/codex" <<'MISSING_CODEX'
+#!/bin/bash
+set -euo pipefail
+printf '%s\n' "$*" >>"${PROJMUX_FAKE_CODEX_INVOCATIONS:?}"
+printf '%s\n' 'managed standalone Codex install not found at /private/e2e-topology token=e2e-topology-secret prompt=e2e-topology-secret' >&2
+exit 0
+MISSING_CODEX
+chmod 0755 "$lifecycle_topology_ready_shim/codex" "$lifecycle_topology_missing_shim/codex"
+
+lifecycle_topology_snapshot() {
+  local root="$1" path relative metadata digest
+  while IFS= read -r path; do
+    relative="${path#"$root"}"
+    metadata="$(stat -c '%F|%a|%s' "$path")"
+    digest=directory
+    if [[ -f "$path" ]]; then
+      digest="$(sha256sum "$path" | awk '{print $1}')"
+    fi
+    printf '%s|%s|%s\n' "$relative" "$metadata" "$digest"
+  done < <(find "$root" -print | LC_ALL=C sort)
+}
+
+lifecycle_topology_doctor() {
+  local name="$1" path="$2" capability="$3" source="$4" availability="$5" reason="$6" probe_reason="$7" connection="$8"
+  local codex_home="$lifecycle_topology_root/$name-codex-home"
+  local before="$lifecycle_topology_root/$name.before" after="$lifecycle_topology_root/$name.after"
+  local output="$lifecycle_topology_root/$name.json" stderr="$lifecycle_topology_root/$name.err"
+  mkdir -p "$codex_home"
+  printf '%s\n' 'user-state-must-remain-byte-identical' >"$codex_home/user-state-sentinel"
+  chmod 0600 "$codex_home/user-state-sentinel"
+  if [[ "$capability" == "managed-ready" ]]; then
+    mkdir -p "$codex_home/packages/standalone/current/bin"
+    printf '%s\n' managed >"$codex_home/packages/standalone/current/bin/codex"
+    chmod 0755 "$codex_home/packages/standalone/current/bin/codex"
+  fi
+  lifecycle_topology_snapshot "$codex_home" >"$before"
+  env -u TMUX -u TMUX_PANE \
+    CODEX_HOME="$codex_home" \
+    PATH="$path" \
+    PROJMUX_FAKE_CODEX_BINARY="$lifecycle_shim/codex" \
+    PROJMUX_FAKE_CODEX_INVOCATIONS="$lifecycle_topology_invocations" \
+    PROJMUX_FAKE_CODEX_STATE="$lifecycle_fixture_state" \
+    "$bin" doctor --section integrations --json >"$output" 2>"$stderr"
+  lifecycle_topology_snapshot "$codex_home" >"$after"
+  if ! cmp -s "$before" "$after"; then
+    echo "Codex lifecycle topology Doctor changed CODEX_HOME for $name" >&2
+    diff -u "$before" "$after" >&2 || true
+    exit 1
+  fi
+  smoke_assert_file_contains "$output" '"source": "'"$source"'"'
+  smoke_assert_file_contains "$output" '"availability": "'"$availability"'"'
+  smoke_assert_file_contains "$output" '"reason": "'"$reason"'"'
+  smoke_assert_file_contains "$output" '"probe_reason": "'"$probe_reason"'"'
+  smoke_assert_file_contains "$output" '"install_capability": "'"$capability"'"'
+  smoke_assert_file_contains "$output" '"connection_state": "'"$connection"'"'
+  smoke_assert_file_contains "$output" '"lifecycle_outcome": "not-attempted"'
+  smoke_assert_file_contains "$output" '"lifecycle_reason": "read-only"'
+}
+
+lifecycle_topology_doctor external-ready "$lifecycle_topology_ready_shim" external-cli-only app-server available none none ready
+lifecycle_topology_doctor managed-ready "$lifecycle_topology_ready_shim" managed-ready app-server available none none ready
+lifecycle_topology_doctor endpoint-missing "$lifecycle_topology_missing_shim" external-cli-only unavailable unavailable hook-unavailable daemon-not-running disconnected
+
+if grep -Fq 'daemon start' "$lifecycle_topology_invocations" ||
+  [[ "$(grep -Fxc 'app-server proxy' "$lifecycle_topology_invocations" || true)" != "3" ]]; then
+  echo "Codex lifecycle topology issued unexpected process calls" >&2
+  cat "$lifecycle_topology_invocations" >&2
+  exit 1
+fi
+if grep -Fq "$lifecycle_topology_stderr_sentinel" "$lifecycle_topology_root"/*.json "$lifecycle_topology_root"/*.err ||
+  grep -Fq '/private/e2e-topology' "$lifecycle_topology_root"/*.json "$lifecycle_topology_root"/*.err ||
+  grep -Fq 'token=e2e-topology-secret' "$lifecycle_topology_root"/*.json "$lifecycle_topology_root"/*.err ||
+  grep -Fq 'prompt=e2e-topology-secret' "$lifecycle_topology_root"/*.json "$lifecycle_topology_root"/*.err; then
+  echo "Codex lifecycle topology exposed raw process output" >&2
+  exit 1
+fi
+
 lifecycle_pmx_at_anchor() {
   env -u PMX_INTERNAL_ACTIVATION_PANE_UID -u PMX_INTERNAL_ACTIVATION_GENERATION \
     TMUX="$lifecycle_socket_path,$lifecycle_server_pid,0" \

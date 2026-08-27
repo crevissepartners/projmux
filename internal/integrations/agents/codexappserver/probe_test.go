@@ -13,6 +13,9 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -56,6 +59,75 @@ func TestProxyProbeFaultMatrix(t *testing.T) {
 		func(context.Context) *exec.Cmd { return nil }, nil)
 	if health.Source != SourceUnavailable || health.Reason != ReasonHookUnavailable {
 		t.Fatalf("missing proxy without hook = %+v", health)
+	}
+	if health.ProbeReason != ReasonExecutableMissing {
+		t.Fatalf("missing proxy root reason = %q", health.ProbeReason)
+	}
+}
+
+func TestDefaultProbeProjectsReadyEndpointAheadOfInstallTopology(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is POSIX-only")
+	}
+	helper, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	pathDir := t.TempDir()
+	fakeCodex := filepath.Join(pathDir, "codex")
+	script := "#!/bin/sh\nexec \"$PROJMUX_CODEX_PROBE_HELPER\" -test.run=TestProxyProbeHelperProcess -- \"$PROJMUX_CODEX_PROBE_SCENARIO\"\n"
+	if err := os.WriteFile(fakeCodex, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", pathDir)
+	t.Setenv("PROJMUX_CODEX_PROBE_HELPER", helper)
+	t.Setenv("GO_WANT_PROXY_HELPER", "1")
+
+	tests := []struct {
+		name        string
+		scenario    string
+		managed     bool
+		hook        bool
+		wantSource  Source
+		wantReason  Reason
+		wantProbe   Reason
+		wantInstall InstallCapability
+	}{
+		{name: "external CLI ready endpoint", scenario: "healthy", wantSource: SourceAppServer, wantReason: ReasonNone, wantProbe: ReasonNone, wantInstall: InstallCapabilityExternalCLIOnly},
+		{name: "managed standalone ready endpoint", scenario: "healthy", managed: true, wantSource: SourceAppServer, wantReason: ReasonNone, wantProbe: ReasonNone, wantInstall: InstallCapabilityManagedReady},
+		{name: "external CLI missing endpoint and hook", scenario: "missing-socket", wantSource: SourceUnavailable, wantReason: ReasonHookUnavailable, wantProbe: ReasonDaemonNotRunning, wantInstall: InstallCapabilityExternalCLIOnly},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			codexHome := t.TempDir()
+			t.Setenv("CODEX_HOME", codexHome)
+			t.Setenv("PROJMUX_CODEX_PROBE_SCENARIO", tt.scenario)
+			if tt.managed {
+				payload := filepath.Join(codexHome, "packages", "standalone", "current", "bin", "codex")
+				if err := os.MkdirAll(filepath.Dir(payload), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(payload, []byte("managed"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			health := ProbeDefaultProxy(context.Background(), 3*time.Second, "0.13.0", tt.hook)
+			if health.Source != tt.wantSource || health.Reason != tt.wantReason || health.ProbeReason != tt.wantProbe || health.InstallCapability != tt.wantInstall {
+				t.Fatalf("health = %+v", health)
+			}
+			if tt.scenario == "healthy" && (health.Availability != AvailabilityAvailable || health.Connection != ConnectionReady) {
+				t.Fatalf("ready endpoint lost to install topology: %+v", health)
+			}
+			data, err := json.Marshal(health)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, forbidden := range []string{codexHome, fakeCodex, helper, "PROJMUX_CODEX_PROBE"} {
+				if strings.Contains(string(data), forbidden) {
+					t.Fatalf("health leaked host fixture %q: %s", forbidden, data)
+				}
+			}
+		})
 	}
 }
 

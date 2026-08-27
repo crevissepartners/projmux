@@ -171,7 +171,7 @@ scan_shellcheck() {
 	readarray -d '' shell_files < <(git ls-files -z -- '*.sh' '*.bash')
 	for file in "${shell_files[@]}"; do
 		case "$file" in
-			test/lib/smoke.sh | test/e2e/codex-lifecycle.sh | test/e2e/evidence-contract.sh | test/e2e/linux-smoke.sh | test/e2e/npm-staging-path.sh | test/e2e/reliability-contract.sh | test/install/smoke.sh | test/integration/linux-smoke.sh) ;;
+			test/lib/smoke.sh | test/e2e/codex-lifecycle.sh | test/e2e/evidence-contract.sh | test/e2e/linux-smoke.sh | test/e2e/npm-staging-path.sh | test/e2e/reliability-contract.sh | test/install/smoke.sh | test/integration/codex-appserver-topology.sh | test/integration/linux-smoke.sh) ;;
 			*) regular_shell_files+=("$file") ;;
 		esac
 	done
@@ -191,6 +191,7 @@ scan_shellcheck() {
 		test/e2e/npm-staging-path.sh \
 		test/e2e/reliability-contract.sh \
 		test/install/smoke.sh \
+		test/integration/codex-appserver-topology.sh \
 		test/integration/linux-smoke.sh; then
 		return 1
 	fi

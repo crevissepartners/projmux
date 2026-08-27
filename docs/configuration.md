@@ -422,18 +422,24 @@ user/global preference in this release.
 ## Codex app-server health
 
 Settings > AI includes a read-only `Codex control plane` row. It reports one of
-`App Server`, `Hook fallback`, or `Unavailable`, together with a closed reason,
+`App Server`, `Hook fallback`, or `Unavailable`, together with the existing
+effective reason. Separate closed `probe_reason` and `install_capability` axes
+preserve the app-server root cause and bounded PATH/managed-payload topology;
 endpoint kind, connection state, lifecycle outcome/reason, and a sanitized
-version when initialization returned one. Read-only surfaces report
-`not-attempted/read-only`. `projmux doctor --section integrations` and explicit
-support reports expose the same bounded fields without socket paths, prompts,
-tokens, process output, or response payloads.
+version remain independent. Read-only surfaces report `not-attempted/read-only`.
+`projmux doctor --section integrations` and explicit support reports expose the
+same bounded fields without executable/socket paths, prompts, tokens, process
+output, or response payloads.
 
 There is no app-server source setting or environment override. Authority is a
 capability result, not a preference: Projmux probes the existing local control
 socket through `codex app-server proxy` with a short timeout and otherwise keeps
 the current hook behavior. Doctor, Settings, and support reports never start or
 otherwise mutate the daemon.
+
+An `external-cli-only` install capability acknowledges that the ordinary CLI
+exists while the canonical managed daemon payload was not observed. It does
+not identify a package manager or reject an already-ready endpoint.
 
 The Codex integration has a lifecycle seam for later native features. Only an
 actual native user action may use it, and only an exact missing or

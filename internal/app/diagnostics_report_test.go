@@ -16,6 +16,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 const (
@@ -32,6 +33,7 @@ const (
 	reportEnv     = "env-REPORT-SEED"
 	reportSocket  = "/tmp/socket-REPORT-SEED/projmux-private"
 	reportName    = "name-REPORT-SEED"
+	reportStderr  = "managed standalone Codex install not found at /private/stderr-REPORT-SEED token=stderr-REPORT-SEED prompt=stderr-REPORT-SEED"
 )
 
 type failingWriter struct{}
@@ -82,6 +84,20 @@ func testReportCommand(t *testing.T) (*diagnosticsCommand, string, string) {
 			SnapshotPath: filepath.Join(home, reportWindow, reportPane),
 		}}
 	}
+	doctor.appServerHealth = func(codexappserver.TriggerKind, bool) codexappserver.Health {
+		health := codexappserver.Decide(
+			codexappserver.AvailabilityUnavailable,
+			codexappserver.ReasonDaemonNotRunning,
+			"codex-cli/0.150.0",
+			codexappserver.EndpointStdioProxy,
+			codexappserver.ConnectionDisconnected,
+			false,
+		)
+		health.InstallCapability = codexappserver.InstallCapabilityExternalCLIOnly
+		health.Lifecycle = codexappserver.LifecycleNotAttempted
+		health.LifecycleReason = codexappserver.LifecycleReasonReadOnly
+		return health
+	}
 	doctor.readRuntimeHealth = func(diagnostics.ReadOnlyStore) (diagnostics.RuntimeHealth, error) {
 		return diagnostics.RuntimeHealth{
 			MuxBackend: diagnostics.MuxBackend(), RecentErrorCount: 2,
@@ -97,7 +113,7 @@ func seedReportSources(t *testing.T, stateHome, configHome string) (operationsPa
 	store := diagnostics.NewStore(operationsPath)
 	event := diagnosticsFixture(reportUUID, "error", "runtime")
 	event.Version = "version-" + reportSecret
-	event.Message = strings.Join([]string{reportSecret, reportProject, reportSession, reportWindow, reportPane, reportThread, reportRouting, reportUUID, reportArgv, reportPrompt, reportEnv, reportSocket, reportName}, " ")
+	event.Message = strings.Join([]string{reportSecret, reportProject, reportSession, reportWindow, reportPane, reportThread, reportRouting, reportUUID, reportArgv, reportPrompt, reportEnv, reportSocket, reportName, reportStderr}, " ")
 	if err := store.Append(event); err != nil {
 		t.Fatal(err)
 	}
@@ -215,6 +231,22 @@ func TestDiagnosticsReportPreviewArchiveManifestPermissionsAndRedaction(t *testi
 	if doctor["schema_version"] != float64(doctorSchemaVersion) {
 		t.Fatalf("doctor schema_version = %#v", doctor["schema_version"])
 	}
+	appServer, ok := doctor["codex_app_server"].(map[string]any)
+	if !ok {
+		t.Fatalf("doctor codex_app_server = %#v", doctor["codex_app_server"])
+	}
+	for field, want := range map[string]string{
+		"source":             "unavailable",
+		"reason":             "hook-unavailable",
+		"probe_reason":       "daemon-not-running",
+		"install_capability": "external-cli-only",
+		"lifecycle_outcome":  "not-attempted",
+		"lifecycle_reason":   "read-only",
+	} {
+		if appServer[field] != want {
+			t.Fatalf("doctor codex_app_server.%s = %#v, want %q", field, appServer[field], want)
+		}
+	}
 	resume, ok := doctor["session_state_resume"].([]any)
 	if !ok || len(resume) != 1 {
 		t.Fatalf("doctor session_state_resume = %#v", doctor["session_state_resume"])
@@ -259,7 +291,7 @@ func TestDiagnosticsReportPreviewArchiveManifestPermissionsAndRedaction(t *testi
 	if bytes.Contains(entries["operational-errors.json"], []byte(`"resource_result": "partial"`)) {
 		t.Fatalf("support report exported local-only info anomaly:\n%s", entries["operational-errors.json"])
 	}
-	for _, raw := range []string{reportSecret, "home-REPORT-SEED", reportProject, reportSession, reportWindow, reportPane, reportThread, reportRouting, reportUUID, reportArgv, reportPrompt, reportEnv, reportSocket, reportName} {
+	for _, raw := range []string{reportSecret, "home-REPORT-SEED", reportProject, reportSession, reportWindow, reportPane, reportThread, reportRouting, reportUUID, reportArgv, reportPrompt, reportEnv, reportSocket, reportName, reportStderr, "/private/stderr-REPORT-SEED", "token=stderr-REPORT-SEED", "prompt=stderr-REPORT-SEED"} {
 		if bytes.Contains(preview, []byte(raw)) || bytes.Contains(archiveText, []byte(raw)) {
 			t.Fatalf("raw sensitive value %q leaked\npreview=%s\narchive=%s", raw, preview, archiveText)
 		}

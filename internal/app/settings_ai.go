@@ -444,7 +444,7 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 	)
 	if c.appServerHealth != nil {
 		health := c.appServerHealth(codexHookFallbackAvailable(c.currentAINotifyDiagnostics()))
-		detail := fmt.Sprintf("%s - %s, %s", health.Source.Label(), health.Connection, health.Reason)
+		detail := fmt.Sprintf("%s - %s, %s - probe: %s; install: %s", health.Source.Label(), health.Connection, health.Reason, health.ProbeReason, health.InstallCapability)
 		if health.Version != "" {
 			detail += " - " + health.Version
 		}
@@ -454,7 +454,7 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 		entries = append(entries, intpickercompat.Entry{
 			Label:     c.rowLabelInfo("Codex control plane", detail, "read-only capability health"),
 			Value:     settingsNoopValue,
-			SearchKey: "codex app server hook fallback unavailable health read only",
+			SearchKey: "codex app server hook fallback unavailable health read only probe install external cli managed standalone doctor",
 		})
 	}
 	return entries

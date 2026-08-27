@@ -2,7 +2,15 @@ package app
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"runtime"
+	"sort"
 	"strings"
 	"testing"
 
@@ -24,6 +32,7 @@ func TestDoctorAndSupportReportProjectSecretFreeCodexAppServerHealth(t *testing.
 		)
 		health.Lifecycle = codexappserver.LifecycleNotAttempted
 		health.LifecycleReason = codexappserver.LifecycleReasonReadOnly
+		health.InstallCapability = codexappserver.InstallCapabilityExternalCLIOnly
 		return health
 	}
 	doctor.aiDiagnostics = func() []doctorAINotifyIntegration {
@@ -42,7 +51,7 @@ func TestDoctorAndSupportReportProjectSecretFreeCodexAppServerHealth(t *testing.
 	if err := writeDoctorText(&text, report, doctorSectionIntegrations, true); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Codex app-server", "Hook fallback", "unsupported", "stdio-proxy", "codex-cli/0.149.0", "not-attempted/read-only"} {
+	for _, want := range []string{"Codex app-server", "Hook fallback", "reason: unsupported", "stdio-proxy", "codex-cli/0.149.0", "not-attempted/read-only", "App-server probe: unsupported", "install capability: external-cli-only"} {
 		if !strings.Contains(text.String(), want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, text.String())
 		}
@@ -57,7 +66,7 @@ func TestDoctorAndSupportReportProjectSecretFreeCodexAppServerHealth(t *testing.
 	if !reflect.DeepEqual(triggers, []codexappserver.TriggerKind{codexappserver.TriggerDoctor, codexappserver.TriggerSupportReport}) {
 		t.Fatalf("doctor/support triggers = %#v", triggers)
 	}
-	for _, want := range []string{`"source": "hook-fallback"`, `"reason": "unsupported"`, `"version": "codex-cli/0.149.0"`, `"lifecycle_outcome": "not-attempted"`, `"lifecycle_reason": "read-only"`} {
+	for _, want := range []string{`"source": "hook-fallback"`, `"reason": "unsupported"`, `"probe_reason": "unsupported"`, `"install_capability": "external-cli-only"`, `"version": "codex-cli/0.149.0"`, `"lifecycle_outcome": "not-attempted"`, `"lifecycle_reason": "read-only"`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("support doctor JSON missing %q:\n%s", want, data)
 		}
@@ -67,6 +76,240 @@ func TestDoctorAndSupportReportProjectSecretFreeCodexAppServerHealth(t *testing.
 			t.Fatalf("support doctor JSON leaked %q:\n%s", forbidden, data)
 		}
 	}
+}
+
+func TestDoctorCodexAppServerJSONSchemaV2IsAdditive(t *testing.T) {
+	health := codexappserver.Decide(
+		codexappserver.AvailabilityUnavailable,
+		codexappserver.ReasonDaemonNotRunning,
+		"",
+		codexappserver.EndpointStdioProxy,
+		codexappserver.ConnectionDisconnected,
+		false,
+	)
+	health.InstallCapability = codexappserver.InstallCapabilityExternalCLIOnly
+	health.Lifecycle = codexappserver.LifecycleNotAttempted
+	health.LifecycleReason = codexappserver.LifecycleReasonReadOnly
+	report := doctorReport{SchemaVersion: doctorSchemaVersion, CodexAppServer: &health}
+	var output bytes.Buffer
+	if err := writeDoctorJSON(&output, report, doctorSectionIntegrations); err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(output.Bytes(), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if got := string(decoded["schema_version"]); got != "2" {
+		t.Fatalf("schema_version = %s", got)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(decoded["codex_app_server"], &fields); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"source":             "unavailable",
+		"availability":       "unavailable",
+		"reason":             "hook-unavailable",
+		"probe_reason":       "daemon-not-running",
+		"install_capability": "external-cli-only",
+		"endpoint_kind":      "stdio-proxy",
+		"connection_state":   "disconnected",
+		"lifecycle_outcome":  "not-attempted",
+		"lifecycle_reason":   "read-only",
+	}
+	for field, value := range want {
+		if fields[field] != value {
+			t.Fatalf("codex_app_server.%s = %#v, want %q; fields=%#v", field, fields[field], value, fields)
+		}
+	}
+}
+
+func TestDoctorAndSettingsCodexTopologyProjectionMatrix(t *testing.T) {
+	tests := []struct {
+		name         string
+		availability codexappserver.Availability
+		probeReason  codexappserver.Reason
+		capability   codexappserver.InstallCapability
+		hook         bool
+		want         []string
+	}{
+		{name: "external only missing endpoint", availability: codexappserver.AvailabilityUnavailable, probeReason: codexappserver.ReasonDaemonNotRunning, capability: codexappserver.InstallCapabilityExternalCLIOnly, want: []string{"Unavailable", "hook-unavailable", "daemon-not-running", "external-cli-only"}},
+		{name: "managed ready", availability: codexappserver.AvailabilityAvailable, probeReason: codexappserver.ReasonNone, capability: codexappserver.InstallCapabilityManagedReady, want: []string{"App Server", "reason: none", "probe: none", "managed-ready"}},
+		{name: "external ready", availability: codexappserver.AvailabilityAvailable, probeReason: codexappserver.ReasonNone, capability: codexappserver.InstallCapabilityExternalCLIOnly, want: []string{"App Server", "reason: none", "probe: none", "external-cli-only"}},
+		{name: "CLI missing", availability: codexappserver.AvailabilityUnavailable, probeReason: codexappserver.ReasonExecutableMissing, capability: codexappserver.InstallCapabilityCLIMissing, want: []string{"Unavailable", "hook-unavailable", "executable-missing", "cli-missing"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			connection := codexappserver.ConnectionDisconnected
+			if tt.availability == codexappserver.AvailabilityAvailable {
+				connection = codexappserver.ConnectionReady
+			}
+			health := codexappserver.Decide(tt.availability, tt.probeReason, "", codexappserver.EndpointStdioProxy, connection, tt.hook)
+			health.InstallCapability = tt.capability
+			health.Lifecycle = codexappserver.LifecycleNotAttempted
+			health.LifecycleReason = codexappserver.LifecycleReasonReadOnly
+
+			var doctorText bytes.Buffer
+			writeDoctorAppServerText(&doctorText, &health)
+			home := t.TempDir()
+			settings := &settingsCommand{
+				ai:                  testAICommand(home),
+				homeDir:             func() (string, error) { return home, nil },
+				lookupEnv:           func(string) string { return "" },
+				aiNotifyDiagnostics: func() []doctorAINotifyIntegration { return nil },
+				appServerHealth:     func(bool) codexappserver.Health { return health },
+			}
+			var settingsText string
+			for _, entry := range settings.aiRootEntries() {
+				if strings.Contains(entry.Label, "Codex control plane") {
+					settingsText = entry.Label
+					if entry.Value != settingsNoopValue {
+						t.Fatalf("Settings health row is not read-only: %q", entry.Value)
+					}
+				}
+			}
+			combined := doctorText.String() + "\n" + settingsText
+			for _, value := range tt.want {
+				if !strings.Contains(combined, value) {
+					t.Fatalf("projection missing %q:\n%s", value, combined)
+				}
+			}
+		})
+	}
+}
+
+func TestDoctorAndSettingsReadOnlyTopologyNeverStartOrWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is POSIX-only")
+	}
+	tests := []struct {
+		name       string
+		managed    bool
+		missingCLI bool
+		want       codexappserver.InstallCapability
+		wantProbe  codexappserver.Reason
+	}{
+		{name: "external only", want: codexappserver.InstallCapabilityExternalCLIOnly, wantProbe: codexappserver.ReasonDaemonNotRunning},
+		{name: "managed standalone", managed: true, want: codexappserver.InstallCapabilityManagedReady, wantProbe: codexappserver.ReasonDaemonNotRunning},
+		{name: "CLI missing", missingCLI: true, want: codexappserver.InstallCapabilityCLIMissing, wantProbe: codexappserver.ReasonExecutableMissing},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			root := t.TempDir()
+			codexHome := filepath.Join(root, "codex-home")
+			if err := os.MkdirAll(codexHome, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			marker := filepath.Join(codexHome, "user-state-sentinel")
+			if err := os.WriteFile(marker, []byte("must-remain-byte-identical"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tt.managed {
+				payload := filepath.Join(codexHome, "packages", "standalone", "current", "bin", "codex")
+				if err := os.MkdirAll(filepath.Dir(payload), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(payload, []byte("managed"), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			pathDir := filepath.Join(root, "path")
+			if err := os.MkdirAll(pathDir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			invocations := filepath.Join(root, "codex-invocations")
+			if !tt.missingCLI {
+				script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$PROJMUX_FAKE_CODEX_INVOCATIONS\"\nexit 0\n"
+				if err := os.WriteFile(filepath.Join(pathDir, "codex"), []byte(script), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			t.Setenv("CODEX_HOME", codexHome)
+			t.Setenv("PATH", pathDir)
+			t.Setenv("PROJMUX_FAKE_CODEX_INVOCATIONS", invocations)
+			before := snapshotCodexHealthTree(t, codexHome)
+
+			doctor := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "git": true, "stty": true})
+			doctor.aiDiagnostics = func() []doctorAINotifyIntegration { return nil }
+			doctor.appServerHealth = func(trigger codexappserver.TriggerKind, hookAvailable bool) codexappserver.Health {
+				health, err := codexappserver.EnsureDefaultProxyReady(context.Background(), trigger, "0.13.0", hookAvailable)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return health
+			}
+			report := doctor.evaluateReport(doctorSectionIntegrations)
+			if report.CodexAppServer == nil || report.CodexAppServer.InstallCapability != tt.want || report.CodexAppServer.ProbeReason != tt.wantProbe || report.CodexAppServer.LifecycleReason != codexappserver.LifecycleReasonReadOnly {
+				t.Fatalf("Doctor health = %+v", report.CodexAppServer)
+			}
+
+			settings := &settingsCommand{
+				ai:                  testAICommand(root),
+				homeDir:             func() (string, error) { return root, nil },
+				lookupEnv:           os.Getenv,
+				aiNotifyDiagnostics: func() []doctorAINotifyIntegration { return nil },
+				appServerHealth: func(hookAvailable bool) codexappserver.Health {
+					health, err := codexappserver.EnsureDefaultProxyReady(context.Background(), codexappserver.TriggerSettings, "0.13.0", hookAvailable)
+					if err != nil {
+						t.Fatal(err)
+					}
+					return health
+				},
+			}
+			_ = settings.aiRootEntries()
+
+			after := snapshotCodexHealthTree(t, codexHome)
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("Doctor/Settings changed CODEX_HOME:\nbefore=%#v\nafter=%#v", before, after)
+			}
+			calls, err := os.ReadFile(invocations)
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(calls), "daemon start") {
+				t.Fatalf("read-only surface started daemon: %s", calls)
+			}
+			wantProxyCalls := 2
+			if tt.missingCLI {
+				wantProxyCalls = 0
+			}
+			if got := strings.Count(string(calls), "app-server proxy"); got != wantProxyCalls {
+				t.Fatalf("proxy calls = %d, want %d; invocations=%q", got, wantProxyCalls, calls)
+			}
+		})
+	}
+}
+
+func snapshotCodexHealthTree(t *testing.T, root string) []string {
+	t.Helper()
+	var snapshot []string
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		digest := "directory"
+		if !entry.IsDir() {
+			contents, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			digest = fmt.Sprintf("%x", sha256.Sum256(contents))
+		}
+		snapshot = append(snapshot, fmt.Sprintf("%s|%s|%d|%s", relative, info.Mode(), info.Size(), digest))
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sort.Strings(snapshot)
+	return snapshot
 }
 
 func TestSettingsCodexAppServerHealthIsReadOnlyStateRow(t *testing.T) {
@@ -86,6 +329,7 @@ func TestSettingsCodexAppServerHealthIsReadOnlyStateRow(t *testing.T) {
 			)
 			health.Lifecycle = codexappserver.LifecycleNotAttempted
 			health.LifecycleReason = codexappserver.LifecycleReasonReadOnly
+			health.InstallCapability = codexappserver.InstallCapabilityExternalCLIOnly
 			return health
 		},
 		aiNotifyDiagnostics: func() []doctorAINotifyIntegration {
@@ -107,7 +351,7 @@ func TestSettingsCodexAppServerHealthIsReadOnlyStateRow(t *testing.T) {
 		if entry.Value != settingsNoopValue {
 			t.Fatalf("health row value = %q, want read-only noop", entry.Value)
 		}
-		for _, want := range []string{"Hook fallback", "timed-out", "timeout", "not-attempted/read-only"} {
+		for _, want := range []string{"Hook fallback", "timed-out", "timeout", "probe: timeout", "install: external-cli-only", "not-attempted/read-only"} {
 			if !strings.Contains(entry.Label, want) {
 				t.Fatalf("health row missing %q: %s", want, entry.Label)
 			}
@@ -215,5 +459,42 @@ func TestSupportVersionAllowlistRejectsPathAndTokenStrings(t *testing.T) {
 	redactDoctorJSON(arbitrary, "")
 	if got := arbitrary["runtime"].(map[string]any)["version"].(string); !strings.HasPrefix(got, "sha256:") {
 		t.Fatalf("arbitrary version escaped redaction: %q", got)
+	}
+}
+
+func TestSupportCodexHealthAllowlistKeepsClosedAxesIndependent(t *testing.T) {
+	value := map[string]any{"codex_app_server": map[string]any{
+		"reason":             "hook-unavailable",
+		"probe_reason":       "hook-unavailable",
+		"install_capability": "external-cli-only",
+		"lifecycle_reason":   "start-managed-payload-missing",
+	}}
+	redactDoctorJSON(value, "")
+	health := value["codex_app_server"].(map[string]any)
+	if health["reason"] != "hook-unavailable" {
+		t.Fatalf("effective reason was not allowlisted: %#v", health)
+	}
+	if got := health["probe_reason"].(string); !strings.HasPrefix(got, "sha256:") {
+		t.Fatalf("effective-only reason escaped probe allowlist: %q", got)
+	}
+	if health["install_capability"] != "external-cli-only" || health["lifecycle_reason"] != "start-managed-payload-missing" {
+		t.Fatalf("closed topology axes were not allowlisted: %#v", health)
+	}
+
+	for _, reason := range []codexappserver.Reason{
+		codexappserver.ReasonNone,
+		codexappserver.ReasonExecutableMissing,
+		codexappserver.ReasonDaemonNotRunning,
+		codexappserver.ReasonEndpointUnavailable,
+		codexappserver.ReasonUnsupported,
+		codexappserver.ReasonTimeout,
+		codexappserver.ReasonProtocolError,
+		codexappserver.ReasonDisconnected,
+	} {
+		value := map[string]any{"codex_app_server": map[string]any{"probe_reason": string(reason)}}
+		redactDoctorJSON(value, "")
+		if got := value["codex_app_server"].(map[string]any)["probe_reason"]; got != string(reason) {
+			t.Fatalf("closed producer probe reason %q was redacted to %q", reason, got)
+		}
 	}
 }

@@ -407,6 +407,7 @@ func writeDoctorAppServerText(buf *bytes.Buffer, health *codexappserver.Health) 
 		fmt.Fprintf(buf, "; lifecycle: %s/%s", health.Lifecycle, health.LifecycleReason)
 	}
 	buf.WriteString("\n")
+	fmt.Fprintf(buf, "  App-server probe: %s; install capability: %s\n", health.ProbeReason, health.InstallCapability)
 }
 
 func writeDoctorFindingsText(buf *bytes.Buffer, title string, findings []doctorFinding, verbose bool) {
