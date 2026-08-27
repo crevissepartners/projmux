@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,11 +14,14 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/candidates"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
+	corepreview "github.com/crevissepartners/projmux/internal/core/preview"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
+	intrender "github.com/crevissepartners/projmux/internal/ui/render"
 )
 
 // The Projects picker, with the Registry as its row source.
@@ -317,6 +321,143 @@ func TestSwitchRegistryWindowTabsComeFromTheRegistry(t *testing.T) {
 	}
 	if tabs[0].Active {
 		t.Fatalf("window tab is marked active with no observed runtime: %#v", tabs[0])
+	}
+	if tabs[0].Live {
+		t.Fatalf("window tab is marked live with no observed runtime: %#v", tabs[0])
+	}
+}
+
+func TestSwitchRegistryWindowTabsSelectActiveThenStableLiveThenOffline(t *testing.T) {
+	t.Parallel()
+	project := registryview.Row{Kind: registryview.RowKindProject, ID: "uid:project"}
+	view := registryview.View{Rows: []registryview.Row{
+		project,
+		{Kind: registryview.RowKindWindow, ID: "uid:off", ParentID: project.ID, Name: "off"},
+		{Kind: registryview.RowKindWindow, ID: "uid:live-a", ParentID: project.ID, Name: "live-a", Live: true},
+		{Kind: registryview.RowKindWindow, ID: "uid:live-b", ParentID: project.ID, Name: "live-b", Live: true},
+		{Kind: registryview.RowKindWindow, ID: "uid:active", ParentID: project.ID, Name: "active", Live: true, Active: true},
+		{Kind: registryview.RowKindWindow, ID: "uid:unknown", ParentID: project.ID, Name: "unknown"},
+	}}
+	tabs := switchRegistryWindowTabs(view, project, "dot")
+	if got := []bool{tabs[0].Live, tabs[1].Live, tabs[2].Live, tabs[3].Live, tabs[4].Live}; !reflect.DeepEqual(got, []bool{false, true, true, true, false}) {
+		t.Fatalf("tab liveness = %v", got)
+	}
+	if !tabs[3].Active {
+		t.Fatalf("fourth Registry Window lost exact active: %#v", tabs)
+	}
+	label := intrender.BuildSwitchRows([]intrender.SwitchCandidate{{
+		Path: "/src/project", DisplayName: "project", UI: "sidebar", WindowTabs: tabs,
+	}})[0].Item.EffectiveLabel()
+	for _, want := range []string{"active", "live-a", "live-b"} {
+		if !strings.Contains(label, want) {
+			t.Fatalf("selected tabs omit %q: %q", want, label)
+		}
+	}
+	for _, excluded := range []string{"off", "unknown"} {
+		if strings.Contains(label, excluded) {
+			t.Fatalf("selected tabs include lower-tier %q: %q", excluded, label)
+		}
+	}
+}
+
+func TestSwitchRegistryAndTmuxWindowTabProducersHaveRuntimeSemanticAndByteParity(t *testing.T) {
+	t.Parallel()
+	registry := coremetadata.NewRegistry()
+	registry.Projects = []coremetadata.Project{{
+		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
+		Metadata: coremetadata.ObjectMeta{UID: "project", Name: "project"},
+		Spec:     coremetadata.ProjectSpec{Root: "/src/project"},
+	}}
+	liveNames := []string{"one", "two", "three", "active"}
+	registryNames := append([]string{"registry-a", "registry-b"}, liveNames...)
+	for _, name := range registryNames {
+		registry.Windows = append(registry.Windows, coremetadata.Window{
+			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
+			Metadata: coremetadata.ObjectMeta{UID: "win-" + name, Name: name,
+				OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "project"}},
+		})
+	}
+	inventory := resourcegraph.Inventory{
+		Transport: resourcegraph.Transport{Kind: resourcegraph.TransportSocketName, Value: "projmux"},
+		HostMode:  resourcegraph.HostModeAppOwned,
+		Sessions:  []resourcegraph.Session{{ID: "$1", Name: "project", ProjectUID: "project"}},
+	}
+	for index, name := range liveNames {
+		inventory.Windows = append(inventory.Windows, resourcegraph.Window{
+			ID: "@" + strconv.Itoa(index+1), SessionID: "$1", Index: strconv.Itoa(index),
+			UID: "win-" + name, DisplayName: name, Active: index == 3,
+		})
+	}
+	registryTabs := func(inv resourcegraph.Inventory) []intrender.SwitchWindowTab {
+		view := registryview.Build(registryview.Input{Graph: resourcegraph.Resolve(registry, inv)})
+		project, _ := view.Row("uid:project")
+		return switchRegistryWindowTabs(view, project, "dot")
+	}
+	want := registryTabs(inventory)
+	if len(want) != len(registryNames) || want[0].Live || want[1].Live {
+		t.Fatalf("Registry-only offline membership was not preserved: %#v", want)
+	}
+	noTransport := resourcegraph.Inventory{Transport: resourcegraph.Transport{Kind: resourcegraph.TransportNone}}
+	for _, scope := range resourcegraph.Scopes() {
+		noTransport = noTransport.MarkUnavailable(scope, "no transport")
+	}
+	unknown := registryTabs(noTransport)
+	if len(unknown) != len(registryNames) {
+		t.Fatalf("no-transport Registry membership = %d tabs, want %d: %#v", len(unknown), len(registryNames), unknown)
+	}
+	for _, tab := range unknown {
+		if tab.Live || tab.Active {
+			t.Fatalf("no-transport Registry Window invented runtime state: %#v", unknown)
+		}
+	}
+	reversed := inventory.Clone()
+	slices.Reverse(reversed.Windows)
+	// Registry slice order is authoritative for membership and order; reversing
+	// tmux observation enumeration must not reorder or replace those rows.
+	if got := registryTabs(reversed); !reflect.DeepEqual(got, want) {
+		t.Fatalf("reversed tmux observation changed Registry producer:\nwant=%#v\n got=%#v", want, got)
+	}
+
+	previewWindows := make([]corepreview.Window, 0, len(liveNames))
+	for index, name := range liveNames {
+		previewWindows = append(previewWindows, corepreview.Window{Index: strconv.Itoa(index), Name: name, Active: index == 3})
+	}
+	command := &switchCommand{
+		inventory: &stubPreviewInventory{windows: previewWindows},
+		homeDir:   func() (string, error) { return t.TempDir(), nil },
+		lookupEnv: func(string) string { return "" },
+	}
+	got := command.switchCardWindowTabs(context.Background(), "project", "existing")
+	for i := range got {
+		got[i].AIBadgeStyle = "dot"
+	}
+	var liveRegistryTabs []intrender.SwitchWindowTab
+	for _, tab := range want {
+		if tab.Live {
+			liveRegistryTabs = append(liveRegistryTabs, tab)
+		}
+	}
+	if !reflect.DeepEqual(got, liveRegistryTabs) {
+		t.Fatalf("tmux/Registry live semantics differ:\nregistry=%#v\n    tmux=%#v", liveRegistryTabs, got)
+	}
+	render := func(tabs []intrender.SwitchWindowTab) string {
+		return intrender.BuildSwitchRows([]intrender.SwitchCandidate{{
+			Path: "/src/project", DisplayName: "project", UI: "sidebar", WindowTabs: tabs,
+		}})[0].Item.EffectiveLabel()
+	}
+	registryBytes, tmuxBytes := render(want), render(got)
+	if registryBytes != tmuxBytes {
+		t.Fatalf("tmux/Registry three-slot bytes differ:\nregistry=%q\n    tmux=%q", registryBytes, tmuxBytes)
+	}
+	for _, selected := range []string{"active", "one", "two"} {
+		if !strings.Contains(registryBytes, selected) {
+			t.Fatalf("three-slot parity bytes omit selected live Window %q: %q", selected, registryBytes)
+		}
+	}
+	for _, excluded := range []string{"registry-a", "registry-b", "three"} {
+		if strings.Contains(registryBytes, excluded) {
+			t.Fatalf("three-slot parity bytes include lower-priority Window %q: %q", excluded, registryBytes)
+		}
 	}
 }
 

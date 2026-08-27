@@ -277,7 +277,7 @@ func TestBuildSwitchRowsSidebarWindowTabsUseAIBadgeStyle(t *testing.T) {
 		UI:           "sidebar",
 		AIBadgeStyle: aibadge.StyleEmoji,
 		WindowTabs: []SwitchWindowTab{
-			{Name: "shell", AIBadgeKind: aibadge.ApprovalRequired, Active: true},
+			{Name: "shell", AIBadgeKind: aibadge.ApprovalRequired, Live: true, Active: true},
 			{Name: "server", AIBadgeKind: aibadge.ResponseComplete},
 			{Name: "tests", AIBadgeKind: aibadge.InProgress},
 		},
@@ -313,7 +313,7 @@ func TestBuildSwitchRowsSidebarCheapAndEnrichedGeometryIsStable(t *testing.T) {
 		ModeLabel:   "existing",
 		GitBranch:   "feature/long-sidebar-branch-name",
 		WindowTabs: []SwitchWindowTab{
-			{Name: "shell", Active: true},
+			{Name: "shell", Live: true, Active: true},
 			{Name: "server", AttentionRank: 2},
 			{Name: "tests", AttentionRank: 1},
 			{Name: "extra"},
@@ -348,6 +348,102 @@ func TestBuildSwitchRowsSidebarCheapAndEnrichedGeometryIsStable(t *testing.T) {
 	}
 	if strings.Contains(enrichedLabel, "extra") {
 		t.Fatalf("enriched label = %q, want fixed sidebar tab slots", enrichedLabel)
+	}
+}
+
+func TestBuildSwitchRowsSidebarThreeLineCardHardClipsWithin80ColumnNativeBudget(t *testing.T) {
+	t.Parallel()
+	row := BuildSwitchRows([]SwitchCandidate{{
+		Path:        "/src/project",
+		DisplayPath: strings.Repeat("p", 90) + "PATH_TAIL",
+		DisplayName: strings.Repeat("n", 90) + "TITLE_TAIL",
+		ModeLabel:   "existing",
+		UI:          "sidebar",
+		WindowTabs: []SwitchWindowTab{
+			{Name: "active", Live: true, Active: true},
+			{Name: "live", Live: true},
+			{Name: "offline"},
+		},
+	}})[0]
+	lines := projmuxpicker.InteractiveRowLines(projmuxpicker.Row{
+		Label: row.Item.EffectiveLabel(),
+	}, true, true)
+	if len(lines) != 3 {
+		t.Fatalf("sidebar native input lines = %d, want fixed three-line card: %#v", len(lines), lines)
+	}
+	content := projmuxpicker.DefaultRenderer().ContentLayout(projmuxpicker.Layout{Rows: 24, Cols: 80})
+	if content.Cols != 78 {
+		t.Fatalf("80-column native frame content width = %d, want 78", content.Cols)
+	}
+	rendered := projmuxpicker.ListLinesWithScrollbarRows(lines, 1, 0, 1, content.Cols, 3)
+	if len(rendered) != 3 {
+		t.Fatalf("80-column native rendered lines = %d, want 3", len(rendered))
+	}
+	for index, line := range rendered {
+		if got := projmuxpicker.VisibleLen(line); got != content.Cols {
+			t.Fatalf("80-column native line %d width = %d, want hard-clipped/padded %d: %q", index, got, content.Cols, line)
+		}
+	}
+	if joined := strings.Join(rendered, "\n"); strings.Contains(joined, "TITLE_TAIL") || strings.Contains(joined, "PATH_TAIL") {
+		t.Fatalf("80-column native hard clip leaked overflow tails: %q", joined)
+	}
+}
+
+func TestFormatSidebarSwitchWindowTabsStableRuntimePartitionAndCap(t *testing.T) {
+	t.Parallel()
+	windows := []SwitchWindowTab{
+		{Name: "off-a"},
+		{Name: "live-a", Live: true},
+		{Name: "live-b", Live: true},
+		{Name: "active", Live: true, Active: true},
+		{Name: "off-b"},
+	}
+	got := formatSidebarSwitchWindowTabs(windows, aibadge.StyleDot)
+	activeAt := strings.Index(got, "active")
+	liveAAt := strings.Index(got, "live-a")
+	liveBAt := strings.Index(got, "live-b")
+	if activeAt < 0 || liveAAt < activeAt || liveBAt < liveAAt {
+		t.Fatalf("tabs are not active -> stable live: %q", got)
+	}
+	for _, excluded := range []string{"off-a", "off-b"} {
+		if strings.Contains(got, excluded) {
+			t.Fatalf("3-slot cap retained %q instead of the live tier: %q", excluded, got)
+		}
+	}
+	if count := strings.Count(got, ansiTabActive); count != 1 {
+		t.Fatalf("active style count = %d, want 1: %q", count, got)
+	}
+	if width := projmuxpicker.VisibleLen(got); width != 38 {
+		t.Fatalf("tab lane width = %d, want fixed 38", width)
+	}
+}
+
+func TestFormatSidebarSwitchWindowTabsOfflineOnlyKeepsRegistryOrderInactive(t *testing.T) {
+	t.Parallel()
+	got := formatSidebarSwitchWindowTabs([]SwitchWindowTab{
+		{Name: "one"}, {Name: "two"}, {Name: "three"}, {Name: "four"},
+	}, aibadge.StyleDot)
+	oneAt, twoAt, threeAt := strings.Index(got, "one"), strings.Index(got, "two"), strings.Index(got, "three")
+	if oneAt < 0 || twoAt < oneAt || threeAt < twoAt || strings.Contains(got, "four") {
+		t.Fatalf("offline tabs did not keep the first three in Registry order: %q", got)
+	}
+	if count := strings.Count(got, ansiTabActive); count != 0 {
+		t.Fatalf("offline tabs have %d active styles: %q", count, got)
+	}
+}
+
+func TestFormatSidebarSwitchWindowTabsDoesNotRepairMalformedActiveFacts(t *testing.T) {
+	t.Parallel()
+	got := formatSidebarSwitchWindowTabs([]SwitchWindowTab{
+		{Name: "not-live", Active: true},
+		{Name: "also", Live: true, Active: true},
+		{Name: "live", Live: true},
+	}, aibadge.StyleDot)
+	if count := strings.Count(got, ansiTabActive); count != 2 {
+		t.Fatalf("renderer coerced malformed active bits; active style count = %d, want 2: %q", count, got)
+	}
+	if first, second := strings.Index(got, "not-live"), strings.Index(got, "also"); first < 0 || second < first {
+		t.Fatalf("renderer did not preserve malformed active tier order: %q", got)
 	}
 }
 
@@ -433,7 +529,7 @@ func TestFormatSwitchCardLabelShowsMultilineContext(t *testing.T) {
 		ModeLabel:   "existing",
 		GitBranch:   "main",
 		WindowTabs: []SwitchWindowTab{
-			{Name: "shell", Active: true},
+			{Name: "shell", Live: true, Active: true},
 			{Name: "server", AttentionRank: 2},
 			{Name: "tests", AttentionRank: 1},
 		},

@@ -59,8 +59,8 @@ func liveServerOutputs() map[string]string {
 			tmuxRow("$3", "scratch-20260818-120000", "", "", "", "", "1"),
 		}, "\n") + "\n",
 		"list-windows": strings.Join([]string{
-			tmuxRow("@1", "$1", "0", "editor", "win-alpha-1", "editor"),
-			tmuxRow("@2", "$2", "0", "zsh", "", ""),
+			tmuxRow("@1", "$1", "0", "editor", "win-alpha-1", "editor", "1"),
+			tmuxRow("@2", "$2", "0", "zsh", "", "", "1"),
 		}, "\n") + "\n",
 		"list-panes": strings.Join([]string{
 			tmuxRow("%1", "@1", "pane-alpha-1", "shell", "", "alpha"),
@@ -128,7 +128,7 @@ func TestInventoryObserverReadsOneBoundedSnapshotThroughOneSocket(t *testing.T) 
 	}
 	wantWindow := resourcegraph.Window{
 		ID: "@1", SessionID: "$1", Index: "0", DisplayName: "editor",
-		UID: "win-alpha-1", MirroredName: "editor",
+		UID: "win-alpha-1", MirroredName: "editor", Active: true,
 	}
 	if first.Windows[0] != wantWindow {
 		t.Fatalf("window[0] = %+v, want %+v", first.Windows[0], wantWindow)
@@ -148,6 +148,77 @@ func TestInventoryObserverReadsOneBoundedSnapshotThroughOneSocket(t *testing.T) 
 	}
 }
 
+func TestInventoryObserverParsesExactWindowActiveWithoutAnotherQuery(t *testing.T) {
+	t.Parallel()
+	outputs := liveServerOutputs()
+	outputs["list-windows"] = strings.Join([]string{
+		tmuxRow("@1", "$1", "0", "editor", "win-alpha-1", "editor", "0"),
+		tmuxRow("@4", "$1", "3", "tests", "win-alpha-4", "tests", "1"),
+	}, "\n") + "\n"
+	runner := &inventoryRunner{outputs: outputs}
+	observed := NewInventoryObserver(runner, resourcegraph.Transport{
+		Kind: resourcegraph.TransportSocketName, Value: "projmux",
+	}).Observe(context.Background())
+
+	if len(runner.calls) != 4 {
+		t.Fatalf("tmux calls = %d, want fixed budget 4: %v", len(runner.calls), runner.calls)
+	}
+	if len(observed.Windows) != 2 || observed.Windows[0].Active || !observed.Windows[1].Active {
+		t.Fatalf("window active facts = %#v, want false/true", observed.Windows)
+	}
+	var windowCall []string
+	for _, call := range runner.calls {
+		if inventoryVerb(call[1:]) == "list-windows" {
+			windowCall = call
+		}
+	}
+	if !strings.Contains(strings.Join(windowCall, " "), "#{window_active}") {
+		t.Fatalf("list-windows does not request exact window_active: %v", windowCall)
+	}
+
+	clone := observed.Clone()
+	clone.Windows[1].Active = false
+	if !observed.Windows[1].Active {
+		t.Fatal("Inventory.Clone shared the active Window row")
+	}
+}
+
+func TestInventoryObserverRejectsMalformedWindowActiveInWindowScopeOnly(t *testing.T) {
+	t.Parallel()
+	tests := map[string]string{
+		"non boolean":   tmuxRow("@1", "$1", "0", "editor", "win-alpha-1", "editor", "true") + "\n",
+		"missing field": tmuxRow("@1", "$1", "0", "editor", "win-alpha-1", "editor") + "\n",
+		"two active": strings.Join([]string{
+			tmuxRow("@1", "$1", "0", "editor", "win-alpha-1", "editor", "1"),
+			tmuxRow("@2", "$1", "1", "tests", "win-alpha-2", "tests", "1"),
+		}, "\n") + "\n",
+	}
+	for name, payload := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			outputs := liveServerOutputs()
+			outputs["list-windows"] = payload
+			runner := &inventoryRunner{outputs: outputs}
+			observed := NewInventoryObserver(runner, resourcegraph.Transport{
+				Kind: resourcegraph.TransportSocketName, Value: "projmux",
+			}).Observe(context.Background())
+
+			if len(runner.calls) != 4 {
+				t.Fatalf("tmux calls = %d, want fixed budget 4", len(runner.calls))
+			}
+			if len(observed.Windows) != 0 {
+				t.Fatalf("malformed window inventory leaked rows: %#v", observed.Windows)
+			}
+			if _, unavailable := observed.Unavailability(resourcegraph.ScopeWindows); !unavailable {
+				t.Fatalf("Window scope stayed available: %+v", observed.Unavailable)
+			}
+			if !observed.Available(resourcegraph.ScopeSessions) || !observed.Available(resourcegraph.ScopePanes) {
+				t.Fatalf("malformed Window row degraded another scope: %+v", observed.Unavailable)
+			}
+		})
+	}
+}
+
 // TestInventoryCallBudgetIsIndependentOfServerSize is the reason the budget is a
 // fixed set of list queries: a big machine must not cost more reads than a small
 // one.
@@ -157,7 +228,7 @@ func TestInventoryCallBudgetIsIndependentOfServerSize(t *testing.T) {
 	var sessions, windows, panes []string
 	for i := range 200 {
 		sessions = append(sessions, tmuxRow(fmt.Sprintf("$%d", i), fmt.Sprintf("s%d", i), "", "", "", "", ""))
-		windows = append(windows, tmuxRow(fmt.Sprintf("@%d", i), fmt.Sprintf("$%d", i), "0", "zsh", "", ""))
+		windows = append(windows, tmuxRow(fmt.Sprintf("@%d", i), fmt.Sprintf("$%d", i), "0", "zsh", "", "", "1"))
 		panes = append(panes, tmuxRow(fmt.Sprintf("%%%d", i), fmt.Sprintf("@%d", i), "", "", "", ""))
 	}
 	big["list-sessions"] = strings.Join(sessions, "\n") + "\n"

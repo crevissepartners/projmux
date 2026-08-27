@@ -1,6 +1,8 @@
 package resourcegraph
 
 import (
+	"fmt"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
@@ -139,14 +141,19 @@ type ControlSessionNode struct {
 
 // WindowNode is one Registry Window with its runtime overlay and resolved owner.
 type WindowNode struct {
-	Window      coremetadata.Window `json:"window"`
-	RootKind    coremetadata.Kind   `json:"rootKind,omitempty"`
-	RootUID     string              `json:"rootUID,omitempty"`
-	ProjectUID  string              `json:"projectUID,omitempty"`
-	Class       Class               `json:"class"`
-	Status      Status              `json:"status"`
-	MissingRoot bool                `json:"missingRoot,omitempty"`
-	Runtime     *RuntimeRef         `json:"runtime,omitempty"`
+	Window     coremetadata.Window `json:"window"`
+	RootKind   coremetadata.Kind   `json:"rootKind,omitempty"`
+	RootUID    string              `json:"rootUID,omitempty"`
+	ProjectUID string              `json:"projectUID,omitempty"`
+	Class      Class               `json:"class"`
+	Status     Status              `json:"status"`
+	// Live and Active are separate runtime facts. Active is never inferred from
+	// a stored id/name or from liveness; it is the exact window_active bit on
+	// the one bound tmux Window.
+	Live        bool        `json:"live,omitempty"`
+	Active      bool        `json:"active,omitempty"`
+	MissingRoot bool        `json:"missingRoot,omitempty"`
+	Runtime     *RuntimeRef `json:"runtime,omitempty"`
 }
 
 // PaneNode is one Registry Pane with its runtime overlay and resolved owner
@@ -221,6 +228,26 @@ type Graph struct {
 	Agents          []AgentNode          `json:"agents,omitempty"`
 	Runtime         []RuntimeNode        `json:"runtime,omitempty"`
 	Conflicts       []Conflict           `json:"conflicts,omitempty"`
+}
+
+// ValidateWindowRuntimeState checks the Window read-model invariants without
+// repairing them.
+func (g Graph) ValidateWindowRuntimeState() error {
+	activeByProject := map[string]string{}
+	for _, window := range g.Windows {
+		uid := window.Window.Metadata.UID
+		if window.Active && !window.Live {
+			return fmt.Errorf("window %s is active but not live", uid)
+		}
+		if !window.Active || window.ProjectUID == "" {
+			continue
+		}
+		if previous := activeByProject[window.ProjectUID]; previous != "" {
+			return fmt.Errorf("project %s has multiple active windows: %s and %s", window.ProjectUID, previous, uid)
+		}
+		activeByProject[window.ProjectUID] = uid
+	}
+	return nil
 }
 
 // RuntimeOfClass returns the observed objects with class, in graph order.

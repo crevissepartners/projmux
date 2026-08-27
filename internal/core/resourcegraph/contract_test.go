@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
 // TestResolvePreservesRegistryRowsWhenAScopeIsUnavailable is acceptance for the
@@ -143,6 +145,9 @@ func TestResolveWithoutTransportIsARegistryOnlySnapshot(t *testing.T) {
 		if node.Status != want {
 			t.Fatalf("window %s status = %q, want %q", node.Window.Metadata.UID, node.Status, want)
 		}
+		if node.Live || node.Active {
+			t.Fatalf("window %s invented runtime facts with no transport: live=%t active=%t", node.Window.Metadata.UID, node.Live, node.Active)
+		}
 	}
 	// An Agent the Registry itself records as holding no Pane is offline, not
 	// unknown: there is no runtime object to be uncertain about.
@@ -151,6 +156,56 @@ func TestResolveWithoutTransportIsARegistryOnlySnapshot(t *testing.T) {
 	}
 	if got := agentNode(t, graph, "agent-alpha-1").Status; got != StatusUnknown {
 		t.Fatalf("agent with a paneRef status = %q, want unknown", got)
+	}
+}
+
+func TestResolveProjectsExactWindowLiveAndActiveAsOrthogonalFacts(t *testing.T) {
+	t.Parallel()
+	registry := testRegistry(t)
+	inventory := liveInventory(HostModeAppOwned)
+	inventory.Sessions = append(inventory.Sessions, Session{
+		ID: "$3", Name: "gone", ProjectUID: "project-gone",
+	})
+	inventory.Windows = append(inventory.Windows, Window{
+		ID: "@3", SessionID: "$3", Index: "0", UID: "win-gone-1", Active: true,
+	})
+	graph := Resolve(registry, inventory)
+
+	active := windowNode(t, graph, "win-alpha-1")
+	if active.Status != StatusLive || !active.Live || !active.Active {
+		t.Fatalf("active Window projection = status=%q live=%t active=%t", active.Status, active.Live, active.Active)
+	}
+	offline := windowNode(t, graph, "win-alpha-2")
+	if offline.Status != StatusOffline || offline.Live || offline.Active {
+		t.Fatalf("offline Window projection = status=%q live=%t active=%t", offline.Status, offline.Live, offline.Active)
+	}
+	missing := windowNode(t, graph, "win-gone-1")
+	if missing.Status != StatusMissingRoot || !missing.Live || !missing.Active {
+		t.Fatalf("missing-root live Window projection = status=%q live=%t active=%t", missing.Status, missing.Live, missing.Active)
+	}
+	if err := graph.ValidateWindowRuntimeState(); err != nil {
+		t.Fatalf("valid Window runtime state: %v", err)
+	}
+}
+
+func TestGraphWindowRuntimeStateInvariantRejectsMalformedFacts(t *testing.T) {
+	t.Parallel()
+	window := func(uid, project string, live, active bool) WindowNode {
+		return WindowNode{
+			Window:     coremetadata.Window{Metadata: coremetadata.ObjectMeta{UID: uid}},
+			ProjectUID: project, Live: live, Active: active,
+		}
+	}
+	for name, graph := range map[string]Graph{
+		"active without live": {Windows: []WindowNode{window("win-a", "project", false, true)}},
+		"multiple active": {Windows: []WindowNode{
+			window("win-a", "project", true, true),
+			window("win-b", "project", true, true),
+		}},
+	} {
+		if err := graph.ValidateWindowRuntimeState(); err == nil {
+			t.Fatalf("%s passed the Window runtime invariant: %+v", name, graph.Windows)
+		}
 	}
 }
 

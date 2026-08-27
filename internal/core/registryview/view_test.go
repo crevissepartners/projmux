@@ -92,7 +92,7 @@ func liveInventory() resourcegraph.Inventory {
 			{ID: "$3", Name: "scratch", Ephemeral: true},
 		},
 		Windows: []resourcegraph.Window{
-			{ID: "@1", SessionID: "$1", Index: "0", UID: "win-main", DisplayName: "main"},
+			{ID: "@1", SessionID: "$1", Index: "0", UID: "win-main", DisplayName: "main", Active: true},
 			{ID: "@9", SessionID: "$1", Index: "1", DisplayName: "hand-opened"},
 		},
 		Panes: []resourcegraph.Pane{
@@ -143,6 +143,43 @@ func TestBuildProjectsBoundedAgentProgressAndAggregatesWindowAtReadTime(t *testi
 		t.Fatal("fixture window missing")
 	} else if raw := strings.ToLower(fmt.Sprintf("%+v", stored.Status)); strings.Contains(raw, "working") || strings.Contains(raw, "progress") {
 		t.Fatalf("window stored an aggregate: %+v", stored.Status)
+	}
+}
+
+func TestBuildPreservesSeparateWindowLiveAndActiveFacts(t *testing.T) {
+	t.Parallel()
+	view := Build(Input{Graph: resourcegraph.Resolve(registryFixture(), liveInventory())})
+	window := rowByID(t, view, "uid:win-main")
+	if !window.Live || !window.Active || window.Status != resourcegraph.StatusLive {
+		t.Fatalf("Window row = status=%q live=%t active=%t", window.Status, window.Live, window.Active)
+	}
+	if err := view.ValidateWindowRuntimeState(); err != nil {
+		t.Fatalf("valid Window row state: %v", err)
+	}
+
+	noTransport := resourcegraph.Inventory{Transport: resourcegraph.Transport{Kind: resourcegraph.TransportNone}}
+	for _, scope := range resourcegraph.Scopes() {
+		noTransport = noTransport.MarkUnavailable(scope, "no transport")
+	}
+	unknown := Build(Input{Graph: resourcegraph.Resolve(registryFixture(), noTransport)})
+	window = rowByID(t, unknown, "uid:win-main")
+	if window.Live || window.Active || window.Status != resourcegraph.StatusUnknown {
+		t.Fatalf("no-transport Window row = status=%q live=%t active=%t", window.Status, window.Live, window.Active)
+	}
+}
+
+func TestViewWindowRuntimeStateInvariantRejectsMalformedRows(t *testing.T) {
+	t.Parallel()
+	for name, view := range map[string]View{
+		"active without live": {Rows: []Row{{Kind: RowKindWindow, ID: "uid:win-a", ParentID: "uid:project", Active: true}}},
+		"multiple active": {Rows: []Row{
+			{Kind: RowKindWindow, ID: "uid:win-a", ParentID: "uid:project", Live: true, Active: true},
+			{Kind: RowKindWindow, ID: "uid:win-b", ParentID: "uid:project", Live: true, Active: true},
+		}},
+	} {
+		if err := view.ValidateWindowRuntimeState(); err == nil {
+			t.Fatalf("%s passed the Window row invariant: %+v", name, view.Rows)
+		}
 	}
 }
 

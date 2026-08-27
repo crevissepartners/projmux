@@ -127,8 +127,8 @@ func liveInventory(host HostMode) Inventory {
 			{ID: "$2", Name: "beta", ProjectUID: "project-beta", ProjectName: "beta", Root: "/src/beta"},
 		},
 		Windows: []Window{
-			{ID: "@1", SessionID: "$1", Index: "0", DisplayName: "editor", UID: "win-alpha-1", MirroredName: "editor"},
-			{ID: "@2", SessionID: "$2", Index: "0", DisplayName: "editor", UID: "win-beta-1", MirroredName: "editor"},
+			{ID: "@1", SessionID: "$1", Index: "0", DisplayName: "editor", UID: "win-alpha-1", MirroredName: "editor", Active: true},
+			{ID: "@2", SessionID: "$2", Index: "0", DisplayName: "editor", UID: "win-beta-1", MirroredName: "editor", Active: true},
 		},
 		Panes: []Pane{
 			{ID: "%1", WindowID: "@1", UID: "pane-alpha-1", MirroredName: "shell"},

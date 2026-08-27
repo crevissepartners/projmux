@@ -72,6 +72,10 @@ type Window struct {
 	UID string `json:"uid,omitempty"`
 	// MirroredName is @projmux_window_name, the stable-name mirror.
 	MirroredName string `json:"mirroredName,omitempty"`
+	// Active is the exact tmux window_active fact from this observation. It is
+	// distinct from liveness: every listed Window is live, but at most one
+	// Window in a session is active.
+	Active bool `json:"active,omitempty"`
 }
 
 // Pane is one observed tmux pane.
