@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"net"
 	"reflect"
 	"testing"
@@ -14,12 +15,18 @@ import (
 // scriptedEndpoint serves one canned reply per request method over a pipe and
 // records the exact request order and params. It answers nothing it was not
 // scripted for, so an unexpected request fails the test instead of silently
-// succeeding.
+// succeeding. The returned client has already negotiated the experimental API
+// capability, and the handshake frames are excluded from the ledger.
 func scriptedEndpoint(t *testing.T, replies map[string]string) (*Client, func() ([]string, []json.RawMessage)) {
 	t.Helper()
 	clientConn, serverConn := net.Pipe()
 	client := NewClient(clientConn)
 	t.Cleanup(func() { _ = client.Close(); _ = serverConn.Close() })
+	replies = maps.Clone(replies)
+	if replies == nil {
+		replies = map[string]string{}
+	}
+	replies[methodInitialize] = `{"userAgent":"codex-cli/0.150.1","platformFamily":"unix","platformOs":"linux"}`
 
 	methods := make(chan string, 8)
 	params := make(chan json.RawMessage, 8)
@@ -42,6 +49,11 @@ func scriptedEndpoint(t *testing.T, replies map[string]string) (*Client, func() 
 			}
 			methods <- request.Method
 			params <- append(json.RawMessage(nil), request.Params...)
+			if len(request.ID) == 0 {
+				// A notification such as `initialized` is recorded and never
+				// answered.
+				continue
+			}
 			reply, ok := replies[request.Method]
 			if !ok {
 				_, _ = serverConn.Write([]byte(`{"id":` + string(request.ID) + `,"error":{"code":-32601,"message":"unscripted"}}` + "\n"))
@@ -50,6 +62,12 @@ func scriptedEndpoint(t *testing.T, replies map[string]string) (*Client, func() 
 			_, _ = serverConn.Write([]byte(`{"id":` + string(request.ID) + `,"result":` + reply + `}` + "\n"))
 		}
 	}()
+
+	handshakeCtx, cancelHandshake := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelHandshake()
+	if _, err := client.InitializeExperimental(handshakeCtx, "0.13.0"); err != nil {
+		t.Fatalf("scripted handshake: %v", err)
+	}
 
 	return client, func() ([]string, []json.RawMessage) {
 		_ = client.Close()
@@ -61,7 +79,9 @@ func scriptedEndpoint(t *testing.T, replies map[string]string) (*Client, func() 
 		for param := range params {
 			gotParams = append(gotParams, param)
 		}
-		return gotMethods, gotParams
+		// Drop the two handshake frames so a ledger assertion describes only
+		// the requests the test itself made.
+		return gotMethods[2:], gotParams[2:]
 	}
 }
 
