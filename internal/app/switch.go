@@ -325,11 +325,10 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	ctx := context.Background()
 	for {
-		plan, err := c.plan(*ui)
+		plan, err := c.plan(*ui, anchorPane)
 		if err != nil {
 			return err
 		}
-		plan.Anchor = anchorPane
 
 		reopen, err := c.execute(ctx, plan, stdout)
 		if err != nil {
@@ -341,13 +340,16 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func (c *switchCommand) plan(ui string) (switchPlan, error) {
+// plan carries the invocation's `--anchor` operand from the first line, because
+// completePlan runs the picker: an anchor attached after plan() returns would
+// arrive too late for the sidebar's own Ctrl-X action.
+func (c *switchCommand) plan(ui, anchorPane string) (switchPlan, error) {
 	inputs, err := c.candidateInputs("")
 	if err != nil {
 		return switchPlan{}, err
 	}
 
-	return c.planFromInputs(ui, inputs)
+	return c.planFromInputs(ui, anchorPane, inputs)
 }
 
 func (c *switchCommand) runToggleTag(args []string, stdout, stderr io.Writer) error {
@@ -441,7 +443,7 @@ func (c *switchCommand) runKill(args []string, stdout, stderr io.Writer) error {
 		return fmt.Errorf("resolve switch kill session identity: %w", err)
 	}
 
-	return c.killFocusedSession(context.Background(), sessionName, "", stdout)
+	return c.killFocusedSession(context.Background(), sessionName, "", stdout, "")
 }
 
 func (c *switchCommand) runOpen(args []string, stderr io.Writer) error {
@@ -608,7 +610,7 @@ func (c *switchCommand) runCycleWindow(args []string, stderr io.Writer) error {
 	})
 }
 
-func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (switchPlan, error) {
+func (c *switchCommand) planFromInputs(ui, anchorPane string, inputs candidates.Inputs) (switchPlan, error) {
 	homeDir, err := c.resolveHomeDir()
 	if err != nil {
 		return switchPlan{}, err
@@ -646,6 +648,7 @@ func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (swi
 
 	plan := switchPlan{
 		UI:            ui,
+		Anchor:        anchorPane,
 		Candidates:    paths,
 		HomeDir:       homeDir,
 		CurrentPath:   cleanOptionalPath(inputs.CurrentPath),
@@ -1585,7 +1588,7 @@ func (c *switchCommand) execute(ctx context.Context, plan switchPlan, stdout io.
 		if fallbackSession == "" {
 			return true, nil
 		}
-		if err := c.stopManagedProjectSession(ctx, plan.Selection, plan.SessionName, fallbackSession); err != nil {
+		if err := c.stopManagedProjectSession(ctx, plan.Selection, plan.SessionName, fallbackSession, plan.Anchor); err != nil {
 			return false, err
 		}
 		if c.cleanupKilledSession != nil && switchRegistrySelectionUID(plan.Selection) != "" {
@@ -2070,7 +2073,7 @@ func (c *switchCommand) runPicker(plan switchPlan) (intpicker.Result, error) {
 
 	sidebarKillActions := intpicker.CustomActions(effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:KillSession"}, []string{switchKillExpectKey})...)
 	if plan.UI == switchUISidebar {
-		sidebarKillActions = c.switchSidebarKillActions()
+		sidebarKillActions = c.switchSidebarKillActions(plan.Anchor)
 	}
 	options := intpicker.Options{
 		UI:             plan.UI,
@@ -2122,7 +2125,11 @@ func (c *switchCommand) runNativePicker(pickerOptions intpicker.Options) (intpic
 	return result, nil
 }
 
-func (c *switchCommand) switchSidebarKillActions() []intpicker.Action {
+// switchSidebarKillActions binds the sidebar's own `--anchor` operand into
+// every in-picker runtime stop. A display-popup -E child is not a Pane and
+// inherits no TMUX_PANE, so the operand is the one anchor transport the stop
+// route can read.
+func (c *switchCommand) switchSidebarKillActions(anchorPane string) []intpicker.Action {
 	keys := effectivePickerKeysForActions(c.homeDir, c.lookupEnv, []string{"Sidebar:KillSession"}, []string{switchKillExpectKey})
 	actions := make([]intpicker.Action, 0, len(keys))
 	for _, key := range keys {
@@ -2134,14 +2141,14 @@ func (c *switchCommand) switchSidebarKillActions() []intpicker.Action {
 			Key:    key,
 			Intent: intpicker.ActionCustom,
 			Mutate: func(ctx intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
-				return c.mutateSwitchSidebarKill(context.Background(), ctx)
+				return c.mutateSwitchSidebarKill(context.Background(), ctx, anchorPane)
 			},
 		})
 	}
 	return actions
 }
 
-func (c *switchCommand) mutateSwitchSidebarKill(ctx context.Context, action intpicker.ActionContext) (intpicker.DeferredUpdate, error) {
+func (c *switchCommand) mutateSwitchSidebarKill(ctx context.Context, action intpicker.ActionContext, anchorPane string) (intpicker.DeferredUpdate, error) {
 	target := cleanOptionalPath(action.Value)
 	// Settings, the Runtime link, and a uid-selected Registry row own no tmux
 	// session, so there is nothing for a kill to address on any of them.
@@ -2179,7 +2186,7 @@ func (c *switchCommand) mutateSwitchSidebarKill(ctx context.Context, action intp
 	if fallbackSession == "" {
 		return c.switchSidebarRefreshUpdate(ctx, action.Value)
 	}
-	if err := c.stopManagedProjectSession(ctx, target, sessionName, fallbackSession); err != nil {
+	if err := c.stopManagedProjectSession(ctx, target, sessionName, fallbackSession, anchorPane); err != nil {
 		return intpicker.DeferredUpdate{}, err
 	}
 	if originSession := strings.TrimSpace(c.sidebarOriginSession); originSession != "" && originSession == sessionName {
@@ -2595,7 +2602,7 @@ func (c *switchCommand) previousActiveSession(ctx context.Context, targetSession
 	return "", nil
 }
 
-func (c *switchCommand) killFocusedSession(ctx context.Context, sessionName, fallbackSession string, stdout io.Writer) error {
+func (c *switchCommand) killFocusedSession(ctx context.Context, sessionName, fallbackSession string, stdout io.Writer, anchorPane string) error {
 	sessionName = strings.TrimSpace(sessionName)
 	if sessionName == "" {
 		return fmt.Errorf("switch kill requires a target session")
@@ -2621,7 +2628,7 @@ func (c *switchCommand) killFocusedSession(ctx context.Context, sessionName, fal
 			return fmt.Errorf("open fallback tmux session %q before kill: %w", fallbackSession, err)
 		}
 	}
-	killed, err := executeUnmanagedRuntimeStop(ctx, c.tmuxRunner, c.lookupEnv, sessionName)
+	killed, err := executeUnmanagedRuntimeStop(ctx, c.tmuxRunner, c.lookupEnv, sessionName, anchorPane)
 	if err != nil {
 		return fmt.Errorf("kill tmux session %q: %w", sessionName, err)
 	}
@@ -2638,7 +2645,7 @@ func (c *switchCommand) killFocusedSession(ctx context.Context, sessionName, fal
 	return nil
 }
 
-func (c *switchCommand) stopManagedProjectSession(ctx context.Context, selection, sessionName, fallbackSession string) error {
+func (c *switchCommand) stopManagedProjectSession(ctx context.Context, selection, sessionName, fallbackSession, anchorPane string) error {
 	if c == nil {
 		return errors.New("switch managed runtime mutation runner is not configured")
 	}
@@ -2672,11 +2679,11 @@ func (c *switchCommand) stopManagedProjectSession(ctx context.Context, selection
 		if switchRegistrySelectionUID(selection) != "" {
 			return fmt.Errorf("switch managed runtime stop: exact Project UID/session containment is unknown; nothing was changed")
 		}
-		return c.killFocusedSession(ctx, sessionName, fallbackSession, nil)
+		return c.killFocusedSession(ctx, sessionName, fallbackSession, nil, anchorPane)
 	} else if c.tmuxRunner == nil {
 		return errors.New("switch managed runtime mutation runner is not configured")
 	}
-	route, err := resolveInvocationRuntimeMutationRoute(ctx, c.tmuxRunner, c.lookupEnv)
+	route, err := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, c.tmuxRunner, c.lookupEnv, anchorPane)
 	if err != nil {
 		return err
 	}

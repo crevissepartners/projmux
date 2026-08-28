@@ -2815,7 +2815,10 @@ func TestSwitchCommandPickerSidebarKillMutatesNativePickerAndRefreshesRows(t *te
 		executor.exists[sessionName] = false
 	}
 	stopRow := strings.Join([]string{"$7", "tmp-app", "", "", ""}, tmuxRowSep) + "\n"
-	stopRunner := &unmanagedStopRunner{appMarker: "1", logical: defaultAppSocket, socketPath: "/tmp/tmux/projmux", listRows: []string{stopRow, stopRow, stopRow}}
+	// The sidebar below supplies `--anchor %12`, and the unmanaged stop now
+	// resolves its route through that operand, so the fake must answer the
+	// containment probe for exactly that Pane.
+	stopRunner := &unmanagedStopRunner{appMarker: "1", logical: defaultAppSocket, socketPath: "/tmp/tmux/projmux", anchorPane: "%12", listRows: []string{stopRow, stopRow, stopRow}}
 
 	var nativeCalls int
 	var mutateCalls int

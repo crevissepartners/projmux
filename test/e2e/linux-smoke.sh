@@ -5661,12 +5661,16 @@ fi
 # the managed stop, and Esc closes the refreshed picker. Completion evidence is
 # the exact session query plus Registry identity checks, never picker output or
 # pane contents.
+#
+# The driver runs with no pane environment at all -- TMUX_PANE and the private
+# anchor env are both unset -- because a `display-popup -E` child inherits
+# neither. The `--anchor` operand is the only anchor transport under test.
 startup_managed_stop() {
   local label="$1"
   local result="$startup_root/managed-stop-$label.rc"
   rm -f "$result"
   startup_tmux send-keys -t "$startup_driver_pane" \
-    "env -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_SESSIONIZER_CONTEXT_SESSION='$startup_session' '$bin' switch --ui sidebar --anchor '$startup_driver_pane' >'$startup_root/managed-stop-$label.out' 2>'$startup_root/managed-stop-$label.err'; echo \$? >'$result'" Enter
+    "env -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_SESSIONIZER_CONTEXT_SESSION='$startup_session' '$bin' switch --ui sidebar --anchor '$startup_driver_pane' >'$startup_root/managed-stop-$label.out' 2>'$startup_root/managed-stop-$label.err'; echo \$? >'$result'" Enter
   startup_wait_for "managed stop picker process for $label" sh -c \
     "test \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_root/tmux' tmux -L '$startup_socket' display-message -p -t '$startup_driver_pane' '#{pane_current_command}' 2>/dev/null)\" = projmux"
   startup_tmux send-keys -t "$startup_driver_pane" C-x
@@ -5821,6 +5825,10 @@ fi
 # Project and Continue it. The sidebar process survives the in-place stop, but
 # its original Pane is gone; Continue must replace that dead explicit anchor
 # with the still-live client's Pane and rematerialize the exact fresh UID graph.
+#
+# The receipt is deliberately TMUX-only: a real popup child owns no Pane, so it
+# inherits no TMUX_PANE and no private anchor env. Both stop and continuation
+# must resolve their authority from the `--anchor` operand alone.
 startup_fresh_continue_project_uid="$startup_project_uid_after"
 startup_fresh_continue_window_uids="$(startup_pmx get windows --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)"
 startup_fresh_continue_pane_uids="$(startup_pmx get panes --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)"
@@ -5833,7 +5841,7 @@ mkfifo "$startup_sidebar_input"
 exec 5<>"$startup_sidebar_input"
 (
   TERM=xterm-256color script -qefc \
-    "TERM=xterm-256color env -u __PROJMUX_RUNTIME_ANCHOR_PANE HOME='$startup_root/home' XDG_CONFIG_HOME='$startup_root/config' XDG_STATE_HOME='$startup_root/state' XDG_RUNTIME_DIR='$startup_root/runtime' PROJMUX_MANAGED_ROOTS='$startup_root/work' TMUX_TMPDIR='$startup_root/tmux' TMUX='$startup_socket_path,$startup_socket_pid,0' TMUX_PANE='$startup_fresh_anchor' TMUX_SESSIONIZER_CONTEXT_SESSION='$startup_session' PROJMUX_HOOK_TRUST_TARGET_CLIENT='$startup_client' PROJMUX_SWITCH_TARGET_CLIENT='$startup_client' SHELL='$startup_shell' PATH='$startup_root/bin:$startup_root/shim:$PATH' '$bin' switch --ui sidebar --anchor '$startup_fresh_anchor'" \
+    "TERM=xterm-256color env -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE HOME='$startup_root/home' XDG_CONFIG_HOME='$startup_root/config' XDG_STATE_HOME='$startup_root/state' XDG_RUNTIME_DIR='$startup_root/runtime' PROJMUX_MANAGED_ROOTS='$startup_root/work' TMUX_TMPDIR='$startup_root/tmux' TMUX='$startup_socket_path,$startup_socket_pid,0' TMUX_SESSIONIZER_CONTEXT_SESSION='$startup_session' PROJMUX_HOOK_TRUST_TARGET_CLIENT='$startup_client' PROJMUX_SWITCH_TARGET_CLIENT='$startup_client' SHELL='$startup_shell' PATH='$startup_root/bin:$startup_root/shim:$PATH' '$bin' switch --ui sidebar --anchor '$startup_fresh_anchor'" \
     "$startup_sidebar_log" <"$startup_sidebar_input" >"$startup_root/fresh-stop-sidebar.out" 2>"$startup_root/fresh-stop-sidebar.err"
   echo $? >"$startup_root/fresh-stop-sidebar.rc"
 ) &
