@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -67,6 +68,10 @@ type paneLiveDeleteTarget struct {
 	AgentUID    string
 	PaneRole    coremetadata.PaneRole
 	Generation  string
+	// SupervisorPID is the retained dead Pane's original pane_pid. A non-zero
+	// value requires the first-write guard to prove both PID identity and bounded
+	// process absence again immediately before cleanup.
+	SupervisorPID int
 	// RequireDead is set only by retained lifecycle cleanup. Its first-write
 	// guard must re-prove positive pane_dead on the current UID containment;
 	// canonical live delete intentionally leaves this false.
@@ -137,6 +142,7 @@ type tmuxPaneDeleteRuntime struct {
 	routeAuthority        *runtimeMutationRouteAuthority
 	getenv                func(string) string
 	routeAnchor           string
+	processAlive          func(int) bool
 }
 
 // newTmuxPaneDeleteRuntime builds the live half with no server bound yet.
@@ -146,7 +152,7 @@ type tmuxPaneDeleteRuntime struct {
 // useExactTarget; a runtime that was never given one refuses rather than
 // reaching for the app socket.
 func newTmuxPaneDeleteRuntime() *tmuxPaneDeleteRuntime {
-	return &tmuxPaneDeleteRuntime{runner: inttmux.ExecRunner{}, getenv: os.Getenv}
+	return &tmuxPaneDeleteRuntime{runner: inttmux.ExecRunner{}, getenv: os.Getenv, processAlive: notifyQueueEventProcessAlive}
 }
 
 func (r *tmuxPaneDeleteRuntime) useExactTarget(target tmuxTransport) {
@@ -317,6 +323,9 @@ func (r *tmuxPaneDeleteRuntime) revalidateMutationTarget(ctx context.Context, ta
 			"#{" + tmuxopts.PaneOwnerKind + "}", "#{" + tmuxopts.PaneOwnerUID + "}",
 			"#{" + tmuxopts.AgentUIDPane + "}", "#{" + tmuxopts.PaneRole + "}",
 		}
+		if target.SupervisorPID > 0 {
+			columns = append(columns, "#{pane_pid}")
+		}
 	}
 	format := tmuxRowFormat(columns...)
 	out, err := r.routed().Run(ctx, "tmux", "display-message", "-p", "-t", target.PaneID, "-F", format)
@@ -344,6 +353,16 @@ func (r *tmuxPaneDeleteRuntime) revalidateMutationTarget(ctx context.Context, ta
 	if target.RequireDead && (row[9] != string(target.OwnerKind) || row[10] != target.OwnerUID ||
 		row[11] != target.AgentUID || row[12] != string(target.PaneRole)) {
 		return fmt.Errorf("exact lifecycle Pane %s stable owner mirror drifted", target.PaneID)
+	}
+	if target.RequireDead && target.SupervisorPID > 0 {
+		pid, parseErr := strconv.Atoi(strings.TrimSpace(row[13]))
+		if parseErr != nil || pid != target.SupervisorPID {
+			return fmt.Errorf("exact lifecycle Pane %s original supervisor PID drifted", target.PaneID)
+		}
+		alive := r.processAlive
+		if alive == nil || alive(pid) {
+			return fmt.Errorf("exact lifecycle Pane %s original supervisor PID %d is active or unobservable", target.PaneID, pid)
+		}
 	}
 	if target.RequireDead {
 		switch target.RootKind {

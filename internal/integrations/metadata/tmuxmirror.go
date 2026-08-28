@@ -463,6 +463,7 @@ type DeadPaneObservation struct {
 	SessionName string
 	WindowID    string
 	PaneID      string
+	PanePID     string
 	ProjectUID  string
 	SessionRole string
 	WindowUID   string
@@ -479,7 +480,7 @@ type DeadPaneObservation struct {
 // closed instead of silently treating conflicting facts as absence.
 func (m Mirror) DeadPaneObservations(ctx context.Context) ([]DeadPaneObservation, error) {
 	out, err := m.run(ctx, "list-panes", "-a", "-F", tmuxFormat(
-		"#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}", "#{pane_dead}",
+		"#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}", "#{pane_dead}", "#{pane_pid}",
 		"#{"+tmuxopts.ProjectUIDSession+"}", "#{"+tmuxopts.SessionRole+"}",
 		"#{"+tmuxopts.WindowUID+"}", "#{"+tmuxopts.PaneUID+"}",
 		"#{"+tmuxopts.PaneOwnerKind+"}", "#{"+tmuxopts.PaneOwnerUID+"}",
@@ -489,14 +490,14 @@ func (m Mirror) DeadPaneObservations(ctx context.Context) ([]DeadPaneObservation
 		return nil, fmt.Errorf("metadata: list dead Panes: %w", err)
 	}
 	var dead []DeadPaneObservation
-	for _, fields := range parseRows(string(out), 13) {
+	for _, fields := range parseRows(string(out), 14) {
 		if fields[4] != "1" {
 			continue
 		}
 		dead = append(dead, DeadPaneObservation{
 			SessionID: fields[0], SessionName: fields[1], WindowID: fields[2], PaneID: fields[3],
-			ProjectUID: fields[5], SessionRole: fields[6], WindowUID: fields[7], PaneUID: fields[8],
-			OwnerKind: fields[9], OwnerUID: fields[10], AgentUID: fields[11], PaneRole: fields[12],
+			PanePID: fields[5], ProjectUID: fields[6], SessionRole: fields[7], WindowUID: fields[8], PaneUID: fields[9],
+			OwnerKind: fields[10], OwnerUID: fields[11], AgentUID: fields[12], PaneRole: fields[13],
 		})
 	}
 	return dead, nil

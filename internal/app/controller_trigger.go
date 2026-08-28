@@ -282,6 +282,10 @@ type controllerTriggerRunner struct {
 	// nil; tests mark an event after the holder's final pending check but before
 	// unlock to prove that producer cannot be stranded behind the old lease.
 	beforeLeaseRelease func()
+	// processAlive is the bounded original-supervisor observer used only by the
+	// config-apply preexisting dead Pane producer. Tests replace it without
+	// consulting the host process table.
+	processAlive func(int) bool
 }
 
 var _ controllerTriggering = (*controllerTriggerRunner)(nil)
@@ -667,6 +671,12 @@ func (r controllerPassResult) changed() bool {
 func (r *controllerTriggerRunner) converge(ctx context.Context, trigger controllerTrigger) (controllerPassResult, error) {
 	var pass controllerPassResult
 	target := trigger.target
+	if trigger.reason == controllerTriggerConfigApply {
+		preexisting, handled, err := r.reconcileOnePreexistingDeadAgentPane(ctx, target)
+		if err != nil || handled {
+			return preexisting, err
+		}
+	}
 	if r.runner != nil {
 		control, err := r.convergeControlTargets(ctx, target, trigger.reason == controllerTriggerConfigApply)
 		if err != nil {
