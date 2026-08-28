@@ -146,17 +146,35 @@ type controllerEventRecord struct {
 	Retry int `json:"retry,omitempty"`
 }
 
-func (l controllerEventLog) mark(trigger controllerTrigger) error {
+// controllerPersistedEvent is one immutable event-file snapshot. The nonce is
+// queue identity and body is its compare-before-ack guard: exhausted replay
+// reads without acknowledgement, then removes only the exact record whose
+// current-authority pass succeeded.
+type controllerPersistedEvent struct {
+	name    string
+	body    []byte
+	trigger controllerTrigger
+}
+
+func exhaustedCleanExitTrigger(trigger controllerTrigger) bool {
+	return trigger.reason == controllerTriggerPaneExited &&
+		trigger.retry == controllerTriggerMaxRetries &&
+		validTmuxHookHandle(strings.TrimSpace(trigger.hookPane), '%') &&
+		strings.TrimSpace(trigger.session) == "" &&
+		strings.TrimSpace(trigger.hookWindow) == ""
+}
+
+func (l controllerEventLog) mark(trigger controllerTrigger) (string, error) {
 	if strings.TrimSpace(l.dir) == "" {
-		return errors.New("controller event log has no state directory")
+		return "", errors.New("controller event log has no state directory")
 	}
 	target := trigger.target
 	if target.Flag() == "" || target.Value == "" {
-		return errors.New("controller event log requires an explicit tmux target")
+		return "", errors.New("controller event log requires an explicit tmux target")
 	}
 	dir := l.eventsDir(target)
 	if err := localstate.EnsurePrivateDir(dir); err != nil {
-		return fmt.Errorf("create controller event dir: %w", err)
+		return "", fmt.Errorf("create controller event dir: %w", err)
 	}
 	nonce := l.newNonce
 	if nonce == nil {
@@ -164,7 +182,7 @@ func (l controllerEventLog) mark(trigger controllerTrigger) error {
 	}
 	name, err := nonce()
 	if err != nil {
-		return err
+		return "", err
 	}
 	path := filepath.Join(dir, name)
 	body, err := json.Marshal(controllerEventRecord{
@@ -172,7 +190,7 @@ func (l controllerEventLog) mark(trigger controllerTrigger) error {
 		HookWindow: trigger.hookWindow, Retry: trigger.retry,
 	})
 	if err != nil {
-		return fmt.Errorf("encode controller event: %w", err)
+		return "", fmt.Errorf("encode controller event: %w", err)
 	}
 	body = append(body, '\n')
 	// Build the record outside the queue directory, then publish it with one
@@ -181,7 +199,7 @@ func (l controllerEventLog) mark(trigger controllerTrigger) error {
 	// partial JSON and turn an ordinary hook burst into a decode failure.
 	tmp, err := os.CreateTemp(l.dir, "."+l.key(target)+".event-*")
 	if err != nil {
-		return fmt.Errorf("create controller event: %w", err)
+		return "", fmt.Errorf("create controller event: %w", err)
 	}
 	tmpName := tmp.Name()
 	cleanup := true
@@ -192,20 +210,20 @@ func (l controllerEventLog) mark(trigger controllerTrigger) error {
 	}()
 	if err := tmp.Chmod(localstate.PrivateFileMode); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("secure controller event: %w", err)
+		return "", fmt.Errorf("secure controller event: %w", err)
 	}
 	if _, err := tmp.Write(body); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write controller event: %w", err)
+		return "", fmt.Errorf("write controller event: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close controller event: %w", err)
+		return "", fmt.Errorf("close controller event: %w", err)
 	}
 	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("publish controller event: %w", err)
+		return "", fmt.Errorf("publish controller event: %w", err)
 	}
 	cleanup = false
-	return nil
+	return name, nil
 }
 
 // drain removes every recorded event for target and returns how many there were.
@@ -215,7 +233,49 @@ func (l controllerEventLog) mark(trigger controllerTrigger) error {
 // arrives during a pass count as a new one: the alternative acknowledges work
 // the pass could not have seen, which is precisely the lost-wakeup this loop
 // exists to avoid.
-func (l controllerEventLog) drain(target tmuxTransport) ([]controllerTrigger, error) {
+// drain reserves every exhausted record except the exact names minted by this
+// worker while advancing its own bounded retry. A terminal event published by
+// another worker at any point therefore remains startup-only evidence, while
+// the current producer still receives its established retry-3 final attempt.
+func (l controllerEventLog) drain(target tmuxTransport, allowedExhausted map[string]bool) ([]controllerTrigger, error) {
+	events, err := l.read(target)
+	if err != nil {
+		return nil, err
+	}
+	drained := make([]controllerTrigger, 0, len(events))
+	for _, event := range events {
+		// Retry exhaustion is durable upgrade evidence. Ordinary hooks and the
+		// generic config-apply pass must not accidentally acknowledge it; the
+		// verified startup replay owns its separate read/evaluate/ack boundary.
+		if exhaustedCleanExitTrigger(event.trigger) && !allowedExhausted[event.name] {
+			continue
+		}
+		if err := l.ack(target, event); err != nil {
+			return drained, err
+		}
+		drained = append(drained, event.trigger)
+	}
+	sortControllerTriggers(drained)
+	return drained, nil
+}
+
+// exhausted returns terminal exact pane-exited events without changing queue
+// bytes. It is called only while the target lease is held by verified startup.
+func (l controllerEventLog) exhausted(target tmuxTransport) ([]controllerPersistedEvent, error) {
+	events, err := l.read(target)
+	if err != nil {
+		return nil, err
+	}
+	out := events[:0]
+	for _, event := range events {
+		if exhaustedCleanExitTrigger(event.trigger) {
+			out = append(out, event)
+		}
+	}
+	return out, nil
+}
+
+func (l controllerEventLog) read(target tmuxTransport) ([]controllerPersistedEvent, error) {
 	dir := l.eventsDir(target)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -224,7 +284,7 @@ func (l controllerEventLog) drain(target tmuxTransport) ([]controllerTrigger, er
 		}
 		return nil, fmt.Errorf("read controller events: %w", err)
 	}
-	drained := make([]controllerTrigger, 0, len(entries))
+	events := make([]controllerPersistedEvent, 0, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -234,28 +294,52 @@ func (l controllerEventLog) drain(target tmuxTransport) ([]controllerTrigger, er
 		// target-keyed controller queue; no caller-supplied path is accepted.
 		body, readErr := os.ReadFile(path)
 		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
-			return drained, fmt.Errorf("read controller event: %w", readErr)
-		}
-		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return drained, fmt.Errorf("acknowledge controller event: %w", err)
+			return events, fmt.Errorf("read controller event: %w", readErr)
 		}
 		if readErr != nil {
 			continue
 		}
 		var record controllerEventRecord
 		if err := json.Unmarshal(body, &record); err != nil {
-			return drained, fmt.Errorf("decode controller event: %w", err)
+			return events, fmt.Errorf("decode controller event: %w", err)
 		}
 		if !slices.Contains(controllerTriggerReasons(), record.Reason) {
-			return drained, fmt.Errorf("decode controller event: unknown reason %q", record.Reason)
+			return events, fmt.Errorf("decode controller event: unknown reason %q", record.Reason)
 		}
-		drained = append(drained, controllerTrigger{
-			reason: record.Reason, target: target, session: record.Session,
-			hookPane: record.HookPane, hookWindow: record.HookWindow, retry: record.Retry,
+		events = append(events, controllerPersistedEvent{
+			name: entry.Name(), body: body,
+			trigger: controllerTrigger{
+				reason: record.Reason, target: target, session: record.Session,
+				hookPane: record.HookPane, hookWindow: record.HookWindow, retry: record.Retry,
+			},
 		})
 	}
-	sortControllerTriggers(drained)
-	return drained, nil
+	slices.SortFunc(events, func(left, right controllerPersistedEvent) int {
+		if priority := controllerEventPriority(left.trigger.reason) - controllerEventPriority(right.trigger.reason); priority != 0 {
+			return priority
+		}
+		return strings.Compare(left.name, right.name)
+	})
+	return events, nil
+}
+
+func (l controllerEventLog) ack(target tmuxTransport, event controllerPersistedEvent) error {
+	path := filepath.Join(l.eventsDir(target), event.name)
+	// #nosec G304 -- event.name came from ReadDir for this private target queue.
+	current, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("re-read controller event before acknowledge: %w", err)
+	}
+	if !slices.Equal(current, event.body) {
+		return errors.New("controller event changed before acknowledge")
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("acknowledge controller event: %w", err)
+	}
+	return nil
 }
 
 func controllerEventPriority(reason controllerTriggerReason) int {
@@ -271,16 +355,16 @@ func controllerEventPriority(reason controllerTriggerReason) int {
 
 // pending reports whether any event is currently recorded for target. It is a
 // read: it creates nothing and removes nothing.
-func (l controllerEventLog) pending(target tmuxTransport) (bool, error) {
-	entries, err := os.ReadDir(l.eventsDir(target))
+// pending excludes exhausted clean-exit evidence when includeExhausted is
+// false. Without this distinction one retained terminal event would keep an
+// otherwise converged hook worker spinning until its pass bound.
+func (l controllerEventLog) pending(target tmuxTransport, includeExhausted bool) (bool, error) {
+	events, err := l.read(target)
 	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		return false, fmt.Errorf("read controller events: %w", err)
+		return false, err
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	for _, event := range events {
+		if includeExhausted || !exhaustedCleanExitTrigger(event.trigger) {
 			return true, nil
 		}
 	}

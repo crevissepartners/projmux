@@ -492,6 +492,22 @@ func (c *tmuxCommand) trigger(ctx context.Context, trigger controllerTrigger) (c
 	return runner.run(ctx, trigger)
 }
 
+func (c *tmuxCommand) replayExhaustedCleanExits(ctx context.Context, target tmuxTransport) (controllerTriggerOutcome, error) {
+	runner := c.triggerRunner
+	if runner == nil {
+		if c.resources == nil {
+			return controllerTriggerOutcome{reason: controllerTriggerConfigApply,
+				deferred: "the resource registry store is not configured: exhausted clean-exit replay"}, nil
+		}
+		built, err := newControllerTriggerRunner(c.runner, c.resources, c.bindingReconciler, c.homeDir, c.lookupEnv)
+		if err != nil {
+			return controllerTriggerOutcome{reason: controllerTriggerConfigApply}, err
+		}
+		runner = built
+	}
+	return runner.replayExhaustedCleanExits(ctx, target)
+}
+
 func (c *tmuxCommand) runRenamePane(args []string, stderr io.Writer) error {
 	if len(args) != 2 || strings.TrimSpace(args[0]) == "" {
 		printTmuxUsage(stderr)
@@ -1364,6 +1380,13 @@ func (c *tmuxCommand) runApply(args []string, stdout, stderr io.Writer) error {
 	target, targetErr := tmuxSocketPathTarget(applyRoute.expectedSocketPath)
 	if targetErr != nil {
 		return rollbackManagedIngest(targetErr)
+	}
+	// The source and route marker above prove the new binary is bound to the
+	// same app-owned physical socket and server generation. Re-evaluate only
+	// retry-exhausted exact clean exits at that boundary, before the ordinary
+	// config-apply convergence drains its own non-terminal event.
+	if _, err := c.replayExhaustedCleanExits(ctx, target); err != nil {
+		return rollbackManagedIngest(fmt.Errorf("replay exhausted clean-exit events on -L %s: %w", socketName, err))
 	}
 	outcome, err := c.trigger(ctx, controllerTrigger{
 		reason: controllerTriggerConfigApply, target: target,

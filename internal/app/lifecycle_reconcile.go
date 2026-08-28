@@ -70,6 +70,9 @@ type lifecycleDirtyEvent struct {
 	// pinStore is the external preference half of a final Project cascade. It is
 	// unused for Pane/Agent, non-last Window, and ControlSession outcomes.
 	pinStore pinSetStore
+	// exhaustedReplay requires the narrow startup-only normal receipt and
+	// current activation operation checks before this event may write.
+	exhaustedReplay bool
 }
 
 // describe renders the event for a diagnostic line.
@@ -193,6 +196,61 @@ func exactJournalReceipt(receipts []coremetadata.TerminationEvidence, pane corem
 		}
 	}
 	return false
+}
+
+// exactExhaustedCleanExitReceipt selects the one receipt a startup replay may
+// offer to the existing planner. It deliberately requires the production
+// positive dead-Pane mirror; cached Registry locators and absence-only test
+// inventories cannot upgrade a terminal event into cleanup authority.
+func exactExhaustedCleanExitReceipt(registry coremetadata.Registry, dead lifecycleDeadPaneSnapshot, event lifecycleDirtyEvent) (coremetadata.TerminationEvidence, bool) {
+	if !event.exhaustedReplay || dead.legacy || strings.TrimSpace(event.runtimePaneID) == "" {
+		return coremetadata.TerminationEvidence{}, false
+	}
+	var observed *intmetadata.DeadPaneObservation
+	for i := range dead.observations {
+		candidate := &dead.observations[i]
+		if candidate.PaneID != strings.TrimSpace(event.runtimePaneID) || strings.TrimSpace(candidate.PaneUID) == "" {
+			continue
+		}
+		if observed != nil {
+			return coremetadata.TerminationEvidence{}, false
+		}
+		observed = candidate
+	}
+	if observed == nil {
+		return coremetadata.TerminationEvidence{}, false
+	}
+	pane, ok := registry.Pane(observed.PaneUID)
+	if !ok || pane.Status.Activation.RuntimeID != observed.PaneID ||
+		strings.TrimSpace(pane.Status.Activation.Generation) == "" ||
+		strings.TrimSpace(pane.Status.Activation.OperationID) == "" ||
+		pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent ||
+		pane.Metadata.OwnerRef.UID != observed.AgentUID || pane.Status.Activation.AgentUID != observed.AgentUID {
+		return coremetadata.TerminationEvidence{}, false
+	}
+	agent, ok := registry.Agent(observed.AgentUID)
+	if !ok || agent.Status.PaneRef != pane.Metadata.UID {
+		return coremetadata.TerminationEvidence{}, false
+	}
+	if stored := pane.Status.LastTermination; stored != nil &&
+		(stored.Source != coremetadata.TerminationSourceSupervisor ||
+			stored.Classification != coremetadata.TerminationNormal ||
+			stored.Generation != pane.Status.Activation.Generation ||
+			stored.OperationID != pane.Status.Activation.OperationID) {
+		return coremetadata.TerminationEvidence{}, false
+	}
+	for _, receipt := range event.receipts {
+		if receipt.Source != coremetadata.TerminationSourceSupervisor ||
+			receipt.Classification != coremetadata.TerminationNormal ||
+			receipt.ExitCode == nil || *receipt.ExitCode != 0 || strings.TrimSpace(receipt.Signal) != "" ||
+			receipt.PaneUID != pane.Metadata.UID || receipt.AgentUID != observed.AgentUID ||
+			receipt.Generation != pane.Status.Activation.Generation ||
+			receipt.OperationID != pane.Status.Activation.OperationID {
+			continue
+		}
+		return receipt, true
+	}
+	return coremetadata.TerminationEvidence{}, false
 }
 
 func equalOptionalInt(left, right *int) bool {
@@ -906,6 +964,14 @@ func reconcileLifecycle(
 	if err != nil {
 		return result, MapMetadataError(err)
 	}
+	if event.exhaustedReplay {
+		receipt, eligible := exactExhaustedCleanExitReceipt(registry, dead, event)
+		if !eligible {
+			result.skipped = "exhausted clean-exit event lacks current exact authority: " + event.describe()
+			return result, nil
+		}
+		event.receipts = []coremetadata.TerminationEvidence{receipt}
+	}
 	candidate := registry.Clone()
 	_, _ = absorbTerminationReceipts(&candidate, store.mutator(), event.receipts)
 	deadObservations := lifecycleLegacyDeadPaneObservations(candidate, dead)
@@ -913,6 +979,10 @@ func reconcileLifecycle(
 	cascade, cascadeErr := planExactLifecycleCascade(candidate, live, deadObservations, liveHostPanes, liveWindows, liveWindowSessions, candidateEvent, store.mutator())
 	if cascadeErr != nil {
 		return result, cascadeErr
+	}
+	if event.exhaustedReplay && !cascade.paneAgent.Changed {
+		result.skipped = "exhausted clean-exit event did not produce the exact Pane/Agent cascade: " + event.describe()
+		return result, nil
 	}
 	if !cascade.Changed && len(lifecycleProjectionTargets(registry, lifecycleEffectiveLivePanes(live, dead.uids), candidateEvent)) == 0 &&
 		!terminationReceiptsNeedAbsorption(registry, store.mutator(), event.receipts) {
@@ -949,16 +1019,30 @@ func reconcileLifecycle(
 			observationFailed = true
 			return observeErr
 		}
-		absorbed, err := absorbTerminationReceipts(working, mutator, event.receipts)
+		applyTo := working
+		if event.exhaustedReplay {
+			candidate := working.Clone()
+			receipt, eligible := exactExhaustedCleanExitReceipt(candidate, freshDead, event)
+			if !eligible {
+				return nil
+			}
+			event.receipts = []coremetadata.TerminationEvidence{receipt}
+			applyTo = &candidate
+		}
+		absorbed, err := absorbTerminationReceipts(applyTo, mutator, event.receipts)
 		if err != nil {
 			return err
 		}
 		result.receiptsChanged = absorbed
-		freshDeadObservations := lifecycleLegacyDeadPaneObservations(*working, freshDead)
+		freshDeadObservations := lifecycleLegacyDeadPaneObservations(*applyTo, freshDead)
 		lockedEvent := narrowLifecycleDeadPaneEvent(freshDeadObservations, event)
-		cascade, err := planExactLifecycleCascade(*working, fresh, freshDeadObservations, freshHostPanes, freshWindows, freshWindowSessions, lockedEvent, mutator)
+		cascade, err := planExactLifecycleCascade(*applyTo, fresh, freshDeadObservations, freshHostPanes, freshWindows, freshWindowSessions, lockedEvent, mutator)
 		if err != nil {
 			return err
+		}
+		if event.exhaustedReplay && !cascade.paneAgent.Changed {
+			result.receiptsChanged = false
+			return nil
 		}
 		result.awaitingPaneExit = cascade.awaiting
 		if cascade.Changed {

@@ -838,6 +838,143 @@ func TestC2StableAuthorityConflictsWriteZeroAndReturnRetryErrors(t *testing.T) {
 	}
 }
 
+func exhaustedReplayLifecycleFixture(t *testing.T) (*fakeResourceStore, *stableDeadPaneInventory, lifecycleDirtyEvent) {
+	t.Helper()
+	store := newFakeResourceStore(t)
+	activateExactPane(t, store, "pan-alpha-codex", "agt-alpha-codex", "gen-exhausted", "%19")
+	agent, _ := store.registry.Agent("agt-alpha-codex")
+	agent.Status.SessionRef = &coremetadata.AgentSessionRef{
+		Provider: "codex", Codex: &coremetadata.CodexSessionRef{ThreadID: "thread-exhausted"},
+	}
+	receipt := phase2NormalReceipt("pan-alpha-codex", "agt-alpha-codex", "gen-exhausted")
+	receipt.OperationID = "op-test"
+	live := exitReconcileFixtureLiveExcept("pan-alpha-codex")
+	live["pan-alpha-codex"] = true
+	base := &exactPaneExitInventory{
+		uids: live, dead: map[string]bool{"pan-alpha-codex": true}, windowUID: "win-alpha-main",
+	}
+	inventory := &stableDeadPaneInventory{exactPaneExitInventory: base, observed: []intmetadata.DeadPaneObservation{{
+		SessionID: "$1", SessionName: "alpha", WindowID: "@4", PaneID: "%19",
+		ProjectUID: "prj-alpha", WindowUID: "win-alpha-main", PaneUID: "pan-alpha-codex",
+		OwnerKind: string(coremetadata.KindAgent), OwnerUID: "agt-alpha-codex", AgentUID: "agt-alpha-codex",
+		PaneRole: string(coremetadata.PaneRoleAgent),
+	}}}
+	event := exactPaneExitDirty(receipt)
+	event.runtimePaneID = "%19"
+	event.exhaustedReplay = true
+	store.transactions = 0
+	store.writes = 0
+	store.reads = 0
+	return store, inventory, event
+}
+
+func TestC1ExhaustedCleanExitReplayConvergesStableAgentAndRepeatsWriteFree(t *testing.T) {
+	t.Parallel()
+
+	store, inventory, event := exhaustedReplayLifecycleFixture(t)
+	beforeAgent, _ := store.registry.Agent("agt-alpha-codex")
+	beforeSibling, _ := store.registry.Pane("pan-alpha-zsh")
+
+	result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+	if err != nil || len(result.cascaded) != 1 || inventory.cleanups != 1 || store.writes != 1 {
+		t.Fatalf("exhausted replay result=%+v inventory=%+v writes=%d err=%v", result, inventory, store.writes, err)
+	}
+	if inventory.dead["pan-alpha-codex"] || inventory.uids["pan-alpha-codex"] {
+		t.Fatal("exhausted replay retained the exact dead runtime Pane")
+	}
+	if _, ok := store.registry.Pane("pan-alpha-codex"); ok {
+		t.Fatal("exhausted replay retained the Pane row")
+	}
+	afterAgent, ok := store.registry.Agent("agt-alpha-codex")
+	if !ok || afterAgent.Metadata.UID != beforeAgent.Metadata.UID || afterAgent.Metadata.Name != beforeAgent.Metadata.Name ||
+		afterAgent.Status.Phase != coremetadata.PhaseOffline || afterAgent.Status.PaneRef != "" ||
+		afterAgent.Status.SessionRef == nil || !afterAgent.Status.SessionRef.SameConversation(beforeAgent.Status.SessionRef) ||
+		afterAgent.Status.LastTermination == nil || afterAgent.Status.LastTermination.OperationID != "op-test" ||
+		afterAgent.Status.LastTermination.ExitCode == nil || *afterAgent.Status.LastTermination.ExitCode != 0 {
+		t.Fatalf("retained resumable Agent = %+v; before=%+v", afterAgent, beforeAgent)
+	}
+	afterSibling, ok := store.registry.Pane("pan-alpha-zsh")
+	if !ok || !reflect.DeepEqual(*afterSibling, *beforeSibling) {
+		t.Fatalf("sibling Pane changed: before=%+v after=%+v", beforeSibling, afterSibling)
+	}
+	settled := store.snapshot()
+	writes := store.writes
+	transactions := store.transactions
+	repeat, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+	if err != nil || repeat.changed() != 0 || store.writes != writes || store.transactions != transactions || store.snapshot() != settled {
+		t.Fatalf("repeat replay=%+v writes=%d/%d transactions=%d/%d err=%v", repeat,
+			store.writes, writes, store.transactions, transactions, err)
+	}
+}
+
+func TestC1ExhaustedCleanExitEligibilityTableWritesAndCleansZero(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		mutate func(*fakeResourceStore, *stableDeadPaneInventory, *lifecycleDirtyEvent)
+	}{
+		{name: "receipt absent", mutate: func(_ *fakeResourceStore, _ *stableDeadPaneInventory, event *lifecycleDirtyEvent) {
+			event.receipts = nil
+		}},
+		{name: "unknown", mutate: func(_ *fakeResourceStore, _ *stableDeadPaneInventory, event *lifecycleDirtyEvent) {
+			event.receipts[0].Source = coremetadata.TerminationSourceReconcile
+			event.receipts[0].Classification = coremetadata.TerminationUnknown
+			event.receipts[0].ExitCode = nil
+		}},
+		{name: "abnormal", mutate: func(_ *fakeResourceStore, _ *stableDeadPaneInventory, event *lifecycleDirtyEvent) {
+			code := 7
+			event.receipts[0].Classification = coremetadata.TerminationAbnormal
+			event.receipts[0].ExitCode = &code
+		}},
+		{name: "killed", mutate: func(_ *fakeResourceStore, _ *stableDeadPaneInventory, event *lifecycleDirtyEvent) {
+			event.receipts[0].Classification = coremetadata.TerminationKilled
+			event.receipts[0].ExitCode = nil
+			event.receipts[0].Signal = "HUP"
+		}},
+		{name: "intentional", mutate: func(_ *fakeResourceStore, _ *stableDeadPaneInventory, event *lifecycleDirtyEvent) {
+			event.receipts[0].Source = coremetadata.TerminationSourceControlAction
+			event.receipts[0].Classification = coremetadata.TerminationIntentional
+			event.receipts[0].ExitCode = nil
+		}},
+		{name: "operation mismatch", mutate: func(_ *fakeResourceStore, _ *stableDeadPaneInventory, event *lifecycleDirtyEvent) {
+			event.receipts[0].OperationID = "op-newer"
+		}},
+		{name: "generation mismatch", mutate: func(_ *fakeResourceStore, _ *stableDeadPaneInventory, event *lifecycleDirtyEvent) {
+			event.receipts[0].Generation = "gen-newer"
+		}},
+		{name: "live not dead", mutate: func(_ *fakeResourceStore, inventory *stableDeadPaneInventory, _ *lifecycleDirtyEvent) {
+			inventory.observed = nil
+			inventory.dead = nil
+		}},
+		{name: "foreign Agent mirror", mutate: func(_ *fakeResourceStore, inventory *stableDeadPaneInventory, _ *lifecycleDirtyEvent) {
+			inventory.observed[0].AgentUID = "agt-foreign"
+		}},
+		{name: "ambiguous dead mirror", mutate: func(_ *fakeResourceStore, inventory *stableDeadPaneInventory, _ *lifecycleDirtyEvent) {
+			inventory.observed = append(inventory.observed, inventory.observed[0])
+		}},
+		{name: "newer activation operation", mutate: func(store *fakeResourceStore, _ *stableDeadPaneInventory, _ *lifecycleDirtyEvent) {
+			pane, _ := store.registry.Pane("pan-alpha-codex")
+			pane.Status.Activation.OperationID = "op-newer"
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store, inventory, event := exhaustedReplayLifecycleFixture(t)
+			test.mutate(store, inventory, &event)
+			before := store.snapshot()
+			result, err := reconcileLifecycle(context.Background(), event, inventory, store.store())
+			if err != nil {
+				t.Fatalf("ineligible replay returned error: %v", err)
+			}
+			if result.changed() != 0 || result.transactions != 0 || store.transactions != 0 || store.writes != 0 ||
+				inventory.cleanups != 0 || store.snapshot() != before {
+				t.Fatalf("ineligible replay mutated state: result=%+v transactions=%d writes=%d cleanups=%d",
+					result, store.transactions, store.writes, inventory.cleanups)
+			}
+		})
+	}
+}
+
 func TestC2StableAuthorityConflictRemainsInDurableControllerRetryQueue(t *testing.T) {
 	t.Parallel()
 
@@ -878,8 +1015,8 @@ func TestC2StableAuthorityConflictRemainsInDurableControllerRetryQueue(t *testin
 	if err == nil || !strings.Contains(err.Error(), "stable dead Pane authority conflict") {
 		t.Fatalf("terminal controller conflict = %v", err)
 	}
-	queued, drainErr := runner.events.drain(target)
-	if drainErr != nil || len(queued) != 1 || queued[0].retry != controllerTriggerMaxRetries || queued[0].hookPane != "%9" {
+	queued, drainErr := runner.events.exhausted(target)
+	if drainErr != nil || len(queued) != 1 || queued[0].trigger.retry != controllerTriggerMaxRetries || queued[0].trigger.hookPane != "%9" {
 		t.Fatalf("durable terminal retry = %+v, err=%v", queued, drainErr)
 	}
 	if store.transactions != transactionsBefore || store.writes != writesBefore || base.cleanups != 0 ||

@@ -3713,10 +3713,120 @@ exitrec_absorb_receipts() {
 # explicit read/write assertions, then restore it verbatim below.
 exitrec_pane_exited_hook="$(exitrec_tmux "$exitrec_socket" show-hooks -g pane-exited \
   | sed -n 's/^pane-exited\[[0-9][0-9]*\] //p')"
-if [[ -z "$exitrec_pane_exited_hook" ]]; then
-  echo "exit reconciliation fixture has no pane-exited hook to isolate" >&2
+exitrec_pane_died_hook="$(exitrec_tmux "$exitrec_socket" show-hooks -g pane-died \
+  | sed -n 's/^pane-died\[[0-9][0-9]*\] //p')"
+if [[ -z "$exitrec_pane_exited_hook" || -z "$exitrec_pane_died_hook" ]]; then
+  echo "exit reconciliation fixture has no pane-exited/pane-died hooks to isolate" >&2
   exit 1
 fi
+exitrec_tmux "$exitrec_socket" set-hook -gu pane-exited
+exitrec_tmux "$exitrec_socket" set-hook -gu pane-died
+
+# Reconstruct the historical exhausted event under this run's isolated state
+# and physical socket. Both exit hooks are temporarily absent so a clean
+# supervisor receipt and positive pane_dead mirror remain beside a Running
+# Agent/Pane row, exactly as they did before the fixed planner was installed.
+printf '%s\n' 'sleep 0.5; exit 0' >"$exitrec_root/stub-script"
+exitrec_exhausted_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
+  create agent --provider codex --project "uid:$exitrec_app_project_uid" -o uid)"
+exitrec_doc agent "$exitrec_exhausted_agent"
+exitrec_exhausted_name="$(exitrec_field name)"
+exitrec_exhausted_pane="$(exitrec_field paneRef)"
+exitrec_exhausted_runtime="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_id}' \
+  | awk -F '|' -v pane="$exitrec_exhausted_pane" '$1 == pane { print $2; exit }')"
+if [[ -z "$exitrec_exhausted_agent" || -z "$exitrec_exhausted_pane" ||
+  ! "$exitrec_exhausted_runtime" =~ ^%[0-9]+$ ]]; then
+  echo "exhausted startup fixture could not resolve the exact Agent/Pane/runtime chain" >&2
+  exit 1
+fi
+exitrec_await_journal_receipt "$exitrec_exhausted_pane" normal
+for _ in $(seq 1 100); do
+  if exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
+    | grep -Fqx "$exitrec_exhausted_pane|1"; then
+    break
+  fi
+  sleep 0.05
+done
+exitrec_doc agent "$exitrec_exhausted_agent"
+if [[ "$(exitrec_field phase)" != "Running" || "$(exitrec_field paneRef)" != "$exitrec_exhausted_pane" ]] ||
+  ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
+    | grep -Fqx "$exitrec_exhausted_pane|1"; then
+  echo "exhausted startup fixture did not retain a Running Agent and positive dead Pane mirror" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+exitrec_exhausted_receipt="$(awk \
+  -v pane="\"paneUID\":\"$exitrec_exhausted_pane\"" \
+  -v classification='"classification":"normal"' \
+  -v source='"source":"supervisor"' \
+  'index($0, pane) && index($0, classification) && index($0, source) { print; exit }' \
+  "$exitrec_root/state/projmux/termination-receipts.jsonl")"
+exitrec_exhausted_generation="$(printf '%s\n' "$exitrec_exhausted_receipt" | sed -n 's/.*"generation":"\([^"]*\)".*/\1/p')"
+exitrec_exhausted_operation="$(printf '%s\n' "$exitrec_exhausted_receipt" | sed -n 's/.*"operationID":"\([^"]*\)".*/\1/p')"
+if [[ -z "$exitrec_exhausted_generation" || -z "$exitrec_exhausted_operation" ]]; then
+  echo "exhausted startup fixture receipt lacks exact generation/operation" >&2
+  exit 1
+fi
+exitrec_controller_key="$(printf '%s\0%s' '-S' "$exitrec_socket_path" | sha256sum | cut -c1-16)"
+exitrec_controller_events="$exitrec_root/state/projmux/controller/$exitrec_controller_key.events"
+mkdir -p "$exitrec_controller_events"
+chmod 0700 "$exitrec_root/state/projmux/controller" "$exitrec_controller_events"
+printf '{"reason":"pane-exited","hookPane":"%s","retry":3}\n' "$exitrec_exhausted_runtime" \
+  >"$exitrec_controller_events/historical-retry3"
+chmod 0600 "$exitrec_controller_events/historical-retry3"
+exitrec_exhausted_event_before="$(sha256sum "$exitrec_controller_events/historical-retry3" | cut -d' ' -f1)"
+exitrec_pmx describe project "uid:$exitrec_standalone_project_uid" -o json >"$exitrec_root/exhausted-sibling-project.before"
+exitrec_exhausted_sibling_socket_before="$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_sibling_tmux list-panes -a -F '#{pane_id}|#{window_id}|#{session_id}')"
+mkdir -p "$exitrec_root/provider-sentinel"
+printf '%s\n' rollout-unchanged >"$exitrec_root/provider-sentinel/rollout"
+printf '%s\n' thread-unchanged >"$exitrec_root/provider-sentinel/thread"
+printf '%s\n' session-unchanged >"$exitrec_root/provider-sentinel/session"
+printf '%s\n' empty-prompt-ledger-unchanged >"$exitrec_root/provider-sentinel/empty-prompt-ledger"
+exitrec_exhausted_provider_before="$(find "$exitrec_root/provider-sentinel" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+
+exitrec_pmx internal tmux apply --bin "$bin" \
+  --config "$exitrec_root/config/projmux/tmux.conf" --socket "$exitrec_socket" \
+  >"$exitrec_root/exhausted-apply.out"
+for _ in $(seq 1 100); do
+  exitrec_doc agent "$exitrec_exhausted_agent"
+  if [[ "$(exitrec_field phase)" == "Offline" && -z "$(exitrec_field paneRef)" ]] &&
+    ! exitrec_doc_exists pane "$exitrec_exhausted_pane"; then
+    break
+  fi
+  sleep 0.05
+done
+exitrec_doc agent "$exitrec_exhausted_agent"
+if [[ "$(exitrec_field name)" != "$exitrec_exhausted_name" || "$(exitrec_field phase)" != "Offline" ||
+  -n "$(exitrec_field paneRef)" || "$(exitrec_termination_field source)" != "supervisor" ||
+  "$(exitrec_termination_field classification)" != "normal" ||
+  "$(exitrec_termination_field generation)" != "$exitrec_exhausted_generation" ||
+  "$(exitrec_termination_field operationID)" != "$exitrec_exhausted_operation" ]] ||
+  exitrec_doc_exists pane "$exitrec_exhausted_pane" ||
+  exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
+    | grep -Eq "^${exitrec_exhausted_pane}\|(0|1)$" ||
+  [[ -e "$exitrec_controller_events/historical-retry3" ]]; then
+  echo "exhausted startup replay did not converge the exact historical Agent/Pane/event" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+exitrec_exhausted_registry="$exitrec_root/state/projmux/metadata/registry.json"
+exitrec_exhausted_registry_before_repeat="$(sha256sum "$exitrec_exhausted_registry" | cut -d' ' -f1)"
+exitrec_pmx internal tmux apply --bin "$bin" \
+  --config "$exitrec_root/config/projmux/tmux.conf" --socket "$exitrec_socket" \
+  >"$exitrec_root/exhausted-apply-repeat.out"
+exitrec_exhausted_registry_after_repeat="$(sha256sum "$exitrec_exhausted_registry" | cut -d' ' -f1)"
+exitrec_pmx describe project "uid:$exitrec_standalone_project_uid" -o json >"$exitrec_root/exhausted-sibling-project.after"
+exitrec_exhausted_provider_after="$(find "$exitrec_root/provider-sentinel" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)"
+if [[ "$exitrec_exhausted_registry_before_repeat" != "$exitrec_exhausted_registry_after_repeat" ]] ||
+  ! cmp "$exitrec_root/exhausted-sibling-project.before" "$exitrec_root/exhausted-sibling-project.after" ||
+  [[ "$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_sibling_tmux list-panes -a -F '#{pane_id}|#{window_id}|#{session_id}')" != "$exitrec_exhausted_sibling_socket_before" ]] ||
+  [[ "$exitrec_exhausted_provider_before" != "$exitrec_exhausted_provider_after" ]]; then
+  echo "exhausted startup replay repeat or sibling/provider containment failed" >&2
+  exit 1
+fi
+echo ">> exhausted clean-exit startup replay agent=$exitrec_exhausted_agent pane=$exitrec_exhausted_pane runtime=$exitrec_exhausted_runtime generation=$exitrec_exhausted_generation operation=$exitrec_exhausted_operation event-before=$exitrec_exhausted_event_before event-acked=1 repeat=byte-identical sibling-project=preserved sibling-socket=preserved provider-ledgers=preserved"
+# The apply above reinstalled both generated hooks. Return to this block's
+# pre-existing explicit-reconciliation isolation while retaining pane-died.
 exitrec_tmux "$exitrec_socket" set-hook -gu pane-exited
 
 # A managed Agent whose child ends a different way each time. The short delay
@@ -4015,6 +4125,7 @@ exitrec_pmx describe pane "uid:$exitrec_shell_pane" >"$exitrec_root/shell-pane.t
 smoke_assert_file_contains "$exitrec_root/shell-pane.txt" "MissingRuntime"
 smoke_assert_file_contains "$exitrec_root/shell-pane.txt" "Termination:"
 exitrec_tmux "$exitrec_socket" set-hook -g pane-exited "$exitrec_pane_exited_hook"
+exitrec_tmux "$exitrec_socket" set-hook -g pane-died "$exitrec_pane_died_hook"
 echo ">> exit reconciliation shell pane preserved uid=$exitrec_shell_pane"
 
 # Keep the real generated pane-exited hook installed for the failure signature
