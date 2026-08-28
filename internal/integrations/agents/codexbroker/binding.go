@@ -38,6 +38,13 @@ type Binding struct {
 	roots    []string
 	epoch    BindingEpoch
 	events   chan Event
+	// suspends carries the out-of-band notice that this binding's control
+	// authority closed at a disconnect while the binding itself survived. It
+	// is separate from events on purpose: a consumer must be able to retire a
+	// live epoch's authority promptly, and the ordered stream cannot say that
+	// because the next thing it will carry is the barrier that already
+	// resolved it.
+	suspends chan struct{}
 
 	stage    bindingStage
 	conn     *connection
@@ -48,6 +55,14 @@ type Binding struct {
 
 // ThreadID returns the exact thread this binding was created for.
 func (bd *Binding) ThreadID() string { return bd.threadID }
+
+// Suspensions signals every disconnect this binding survived.
+//
+// One notice means the authority a consumer holds is no longer current and no
+// replacement is open yet. It is coalesced rather than queued, because a
+// consumer that has already retired its epoch has nothing further to learn
+// from a second notice about the same closed authority.
+func (bd *Binding) Suspensions() <-chan struct{} { return bd.suspends }
 
 // Events is this binding's ordered delivery stream. Each connection epoch
 // contributes exactly one EventOriginSnapshot event followed by that epoch's
@@ -253,6 +268,19 @@ func (bd *Binding) suspendLocked() {
 	bd.stage = stageIdle
 	bd.conn = nil
 	bd.buffered = nil
+	bd.notifySuspendedLocked()
+}
+
+// notifySuspendedLocked coalesces one authority-closed notice. Caller holds
+// Broker.mu.
+func (bd *Binding) notifySuspendedLocked() {
+	if bd.suspends == nil {
+		return
+	}
+	select {
+	case bd.suspends <- struct{}{}:
+	default:
+	}
 }
 
 // revokeLocked terminates the binding. Caller holds Broker.mu.

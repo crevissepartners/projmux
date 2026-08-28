@@ -292,10 +292,11 @@ func (c *Conn) Close() error {
 // Bind opens one exact-thread binding on the shared runtime connection.
 func (c *Conn) Bind(ctx context.Context, threadID, cwd string, roots []string) (*RemoteBinding, error) {
 	binding := &RemoteBinding{
-		conn:    c,
-		thread:  threadID,
-		events:  make(chan Event, remoteBacklog),
-		revoked: RefusalNone,
+		conn:     c,
+		thread:   threadID,
+		events:   make(chan Event, remoteBacklog),
+		suspends: make(chan struct{}, 1),
+		revoked:  RefusalNone,
 	}
 	c.mu.Lock()
 	if c.reason != RefusalNone {
@@ -406,6 +407,8 @@ func (c *Conn) dispatch(reply wireReply) {
 	switch reply.Kind {
 	case replyEvent:
 		binding.deliver(reply.Event)
+	case replySuspended:
+		binding.suspend()
 	case replyRevoked:
 		reason := reply.Refusal
 		if reason == RefusalNone {
@@ -455,9 +458,10 @@ func (c *Conn) fail(reason Refusal) {
 // that opens only behind the snapshot barrier, a mutation path that refuses a
 // stale fence before it writes, and a single-use approval lease.
 type RemoteBinding struct {
-	conn   *Conn
-	thread string
-	events chan Event
+	conn     *Conn
+	thread   string
+	events   chan Event
+	suspends chan struct{}
 
 	mu      sync.Mutex
 	fence   Fence
@@ -472,6 +476,11 @@ func (b *RemoteBinding) ThreadID() string { return b.thread }
 // Events is this binding's ordered delivery stream. It is closed when the
 // binding is revoked; Revocation says why.
 func (b *RemoteBinding) Events() <-chan Event { return b.events }
+
+// Suspensions mirrors the in-process signal: one coalesced notice per
+// disconnect this binding survived, so a consumer retires the authority it
+// holds instead of waiting for a barrier that may be a long outage away.
+func (b *RemoteBinding) Suspensions() <-chan struct{} { return b.suspends }
 
 // Revocation returns the closed reason this binding stopped, or RefusalNone
 // while it is still live.
@@ -628,6 +637,22 @@ func (b *RemoteBinding) deliver(wire *wireEvent) {
 	case b.events <- event:
 	default:
 		b.revoke(RefusalResyncRequired)
+	}
+}
+
+// suspend closes the authority this binding currently grants and tells its
+// consumer, without ending the binding: the next barrier reopens it.
+func (b *RemoteBinding) suspend() {
+	b.mu.Lock()
+	if b.revoked != RefusalNone {
+		b.mu.Unlock()
+		return
+	}
+	b.open = false
+	b.mu.Unlock()
+	select {
+	case b.suspends <- struct{}{}:
+	default:
 	}
 }
 

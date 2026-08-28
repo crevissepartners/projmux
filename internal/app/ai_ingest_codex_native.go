@@ -1245,15 +1245,13 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 		reportStartup:  codexObserverStartupReporter(),
 	}
 	// Exactly one endpoint producer serves this activation generation. The
-	// legacy per-Agent proxy observer stays reachable as the rollback seam and
-	// as the only producer on a platform the broker runtime refuses, but the
-	// two are never both live for one generation.
-	switch codexNativeLifecycleProducerFor(codexbroker.Supported()) {
+	// decision is made once, here, before either producer has run: the legacy
+	// per-Agent proxy observer stays reachable as the rollback seam and as the
+	// only producer where the broker runtime's contract cannot be honored, but
+	// the two are never both live for one generation.
+	session, sessionErr := newCodexBrokerObserverSession(target.Identity, "", nil)
+	switch codexNativeLifecycleProducerFor(codexbroker.Supported() && sessionErr == nil) {
 	case codexNativeProducerBroker:
-		session, err := newCodexBrokerObserverSession(target.Identity, "", nil)
-		if err != nil {
-			return err
-		}
 		defer func() { _ = session.Close() }()
 		observer.open = session.Open
 		observer.openTimeout = codexBrokerObserverOpenTimeout

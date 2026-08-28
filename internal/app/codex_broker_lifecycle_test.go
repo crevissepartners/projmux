@@ -589,3 +589,38 @@ func TestBrokerCutoverPreservesTheHookFallbackVocabulary(t *testing.T) {
 		t.Fatalf("pre-mutation failure did not converge to hook fallback: %v", authority)
 	}
 }
+
+// TestBrokerDisconnectEndsTheEpochBeforeAnyReplacementBarrier is the promptness
+// half of the disconnect contract. A binding survives an outage so the broker
+// can keep reconnecting, which means the ordered stream has nothing to say
+// until the next barrier closes - possibly a long outage away. The binding's
+// out-of-band suspension is what retires the live epoch immediately, so the
+// projection above falls back instead of holding an authority the runtime has
+// already closed, and no stale barrier is ever re-served in its place.
+func TestBrokerDisconnectEndsTheEpochBeforeAnyReplacementBarrier(t *testing.T) {
+	endpoint := newBrokerTestEndpoint()
+	discovery, _ := startBrokerRuntimeForTest(t, endpoint)
+
+	session := newCodexBrokerObserverSessionOn(brokerTestIdentity("thread-suspend"), "", nil, discovery, nil)
+	defer session.Close()
+	epoch := openBrokerEpoch(t, session)
+
+	// The fixture has no replacement endpoint, so every reconnect the
+	// supervisor attempts from here refuses and no replacement barrier can
+	// close.
+	_ = endpoint.Close()
+	waitForBrokerStreamEnd(t, epoch)
+
+	if _, err := epoch.StartExactTurn(context.Background(), "thread-suspend", "late"); err == nil {
+		t.Fatal("a retired epoch started a turn during the outage")
+	}
+	if got := endpoint.requestCount("turn/start"); got != 0 {
+		t.Fatalf("turn/start reached the endpoint %d times during the outage", got)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	if _, err := session.Open(ctx); err == nil {
+		t.Fatal("a session re-served the barrier of a connection that is gone")
+	}
+}

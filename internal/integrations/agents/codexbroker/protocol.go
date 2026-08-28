@@ -89,6 +89,11 @@ const (
 	replyRefused replyKind = "refused"
 	replyEvent   replyKind = "event"
 	replyRevoked replyKind = "revoked"
+	// replySuspended reports that one binding's control authority closed at a
+	// disconnect while the binding survived. A peer that does not know this
+	// kind ignores it and still resynchronizes at the next barrier, so adding
+	// it needs no version bump.
+	replySuspended replyKind = "suspended"
 )
 
 // hello is the first client frame. It carries the credential the running host

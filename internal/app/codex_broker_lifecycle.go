@@ -92,13 +92,15 @@ type codexBrokerObserverSession struct {
 	discovery codexbroker.Discovery
 	launch    codexbroker.Launcher
 
-	mu      sync.Mutex
-	closed  bool
-	conn    *codexbroker.Conn
-	binding *codexbroker.RemoteBinding
-	current *codexBrokerLifecycleEpoch
-	ready   chan codexBrokerEpochRecord
-	pumped  chan struct{}
+	mu         sync.Mutex
+	closed     bool
+	conn       *codexbroker.Conn
+	binding    *codexbroker.RemoteBinding
+	current    *codexBrokerLifecycleEpoch
+	ready      chan codexBrokerEpochRecord
+	pumped     chan struct{}
+	pending    codexBrokerEpochRecord
+	hasPending bool
 }
 
 // newCodexBrokerObserverSession resolves the runtime contract this process's
@@ -151,6 +153,19 @@ func (s *codexBrokerObserverSession) Open(ctx context.Context) (codexLifecycleCo
 	if err != nil {
 		return nil, err
 	}
+	// A barrier that is still closed keeps serving. The observer above tears an
+	// epoch down for reasons the connection knows nothing about - a snapshot
+	// read that timed out against a wedged endpoint, a sink write that failed -
+	// and making it wait for a fresh barrier there would strand it on hook
+	// fallback until the endpoint happened to reconnect. A suspension discards
+	// the record, so a closed authority is never re-served.
+	s.mu.Lock()
+	if s.hasPending && s.current == nil {
+		record := s.pending
+		s.mu.Unlock()
+		return s.publish(record), nil
+	}
+	s.mu.Unlock()
 	select {
 	case record, open := <-ready:
 		if !open {
@@ -170,6 +185,7 @@ func (s *codexBrokerObserverSession) Close() error {
 	s.closed = true
 	binding, conn, current := s.binding, s.conn, s.current
 	s.binding, s.conn, s.current, s.ready = nil, nil, nil, nil
+	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
 	pumped := s.pumped
 	s.pumped = nil
 	s.mu.Unlock()
@@ -253,22 +269,56 @@ func (s *codexBrokerObserverSession) ensure(ctx context.Context) (*codexbroker.R
 func (s *codexBrokerObserverSession) pump(binding *codexbroker.RemoteBinding, ready chan codexBrokerEpochRecord, pumped chan struct{}) {
 	defer close(pumped)
 	defer close(ready)
-	for event := range binding.Events() {
-		if event.Origin == codexbroker.EventOriginSnapshot {
-			s.rotate(codexBrokerEpochRecord{fence: event.Fence, snapshot: event.Snapshot}, ready)
-			continue
-		}
-		s.mu.Lock()
-		current := s.current
-		s.mu.Unlock()
-		if current != nil {
-			current.deliver(event)
+	events := binding.Events()
+	suspends := binding.Suspensions()
+	for events != nil {
+		select {
+		case event, open := <-events:
+			if !open {
+				events = nil
+				continue
+			}
+			if event.Origin == codexbroker.EventOriginSnapshot {
+				s.rotate(codexBrokerEpochRecord{fence: event.Fence, snapshot: event.Snapshot}, ready)
+				continue
+			}
+			s.mu.Lock()
+			current := s.current
+			s.mu.Unlock()
+			if current != nil {
+				current.deliver(event)
+			}
+		case <-suspends:
+			// The connection this epoch was minted on is gone and no
+			// replacement is open yet. Ending the epoch here is what publishes
+			// the hook fallback promptly instead of holding an authority whose
+			// next barrier may be a long outage away.
+			s.retire(ready)
 		}
 	}
 	s.mu.Lock()
 	current := s.current
 	s.current = nil
+	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
 	s.mu.Unlock()
+	if current != nil {
+		current.end()
+	}
+}
+
+// retire ends the live epoch and discards the barrier it was opened from, so
+// the next Open waits for a real replacement instead of re-serving authority
+// the runtime has already closed.
+func (s *codexBrokerObserverSession) retire(ready chan codexBrokerEpochRecord) {
+	s.mu.Lock()
+	current := s.current
+	s.current = nil
+	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
+	s.mu.Unlock()
+	select {
+	case <-ready:
+	default:
+	}
 	if current != nil {
 		current.end()
 	}
@@ -279,6 +329,7 @@ func (s *codexBrokerObserverSession) rotate(record codexBrokerEpochRecord, ready
 	s.mu.Lock()
 	current := s.current
 	s.current = nil
+	s.pending, s.hasPending = record, true
 	s.mu.Unlock()
 	if current != nil {
 		current.end()
@@ -317,6 +368,7 @@ func (s *codexBrokerObserverSession) discard() {
 	s.mu.Lock()
 	binding := s.binding
 	s.binding, s.ready, s.pumped = nil, nil, nil
+	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
 	s.mu.Unlock()
 	if binding != nil {
 		_ = binding.Close()
