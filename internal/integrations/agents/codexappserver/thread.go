@@ -123,10 +123,19 @@ func (c *Client) StartThread(ctx context.Context, cwd string, roots []string) (T
 
 // ResumeThread performs the typed v2 thread/resume request and requires the
 // provider to echo the exact requested thread.
+//
+// It always excludes turns, and upstream refuses `thread/resume.excludeTurns`
+// without the experimental API capability, so this request is available only
+// on a connection whose initialize negotiated that capability. A connection
+// that did not negotiate it is refused before the wire with the same typed
+// unsupported error upstream would have produced after the round trip.
 func (c *Client) ResumeThread(ctx context.Context, threadID, cwd string, roots []string) (ThreadBinding, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return ThreadBinding{}, fmt.Errorf("%w: resume thread is empty", ErrProtocol)
+	}
+	if !c.ExperimentalAPI() {
+		return ThreadBinding{}, fmt.Errorf("%w: %w: thread/resume excludeTurns", ErrUnsupported, ErrExperimentalRequired)
 	}
 	workspaceRoots, err := c.negotiatedRoots(roots)
 	if err != nil {

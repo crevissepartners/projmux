@@ -217,30 +217,54 @@ func TestNativeCreateSendsOnePromptAndReturnsExactThreadTurn(t *testing.T) {
 }
 
 func TestNativeResumeUsesStoredThreadAndCreatesZeroThreads(t *testing.T) {
-	clientConn, serverConn := net.Pipe()
-	client := NewClient(clientConn)
-	t.Cleanup(func() { _ = client.Close(); _ = serverConn.Close() })
-
-	var request wireRequest
-	var params threadResumeParams
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		line, _ := bufio.NewReader(serverConn).ReadBytes('\n')
-		_ = json.Unmarshal(line, &request)
-		data, _ := json.Marshal(request.Params)
-		_ = json.Unmarshal(data, &params)
-		_, _ = serverConn.Write([]byte(`{"id":1,"result":{"thread":{"id":"thread-stored"}}}` + "\n"))
-	}()
+	// thread/resume always excludes turns, and upstream requires the
+	// experimental API capability for that field, so the request exists only on
+	// a negotiated connection.
+	client, collect := scriptedEndpoint(t, map[string]string{
+		methodThreadResume: `{"thread":{"id":"thread-stored"}}`,
+	})
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	binding, err := client.ResumeThread(ctx, "thread-stored", "/work/project", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	<-done
-	if request.Method != methodThreadResume || params.ThreadID != "thread-stored" || !params.ExcludeTurns || binding.ThreadID != "thread-stored" {
-		t.Fatalf("request=%#v params=%#v binding=%#v", request, params, binding)
+	methods, rawParams := collect()
+	if !reflect.DeepEqual(methods, []string{methodThreadResume}) {
+		t.Fatalf("methods = %v, want exactly one thread/resume and zero thread/start", methods)
+	}
+	var params threadResumeParams
+	if err := json.Unmarshal(rawParams[0], &params); err != nil {
+		t.Fatal(err)
+	}
+	if params.ThreadID != "thread-stored" || !params.ExcludeTurns || binding.ThreadID != "thread-stored" {
+		t.Fatalf("params=%#v binding=%#v", params, binding)
+	}
+}
+
+// TestNativeResumeRefusesAnUnnegotiatedConnectionBeforeTheWire pins that the
+// experimental-only excludeTurns field is never sent on a connection that did
+// not negotiate the capability; the refusal is typed and sends nothing.
+func TestNativeResumeRefusesAnUnnegotiatedConnectionBeforeTheWire(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	client := NewClient(clientConn)
+	t.Cleanup(func() { _ = client.Close(); _ = serverConn.Close() })
+	sent := make(chan struct{})
+	go func() {
+		if _, err := bufio.NewReader(serverConn).ReadBytes('\n'); err == nil {
+			close(sent)
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	_, err := client.ResumeThread(ctx, "thread-stored", "/work/project", nil)
+	if !errors.Is(err, ErrExperimentalRequired) || !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("unnegotiated resume = %v, want a typed unsupported refusal", err)
+	}
+	select {
+	case <-sent:
+		t.Fatal("unnegotiated resume reached the wire")
+	default:
 	}
 }
 

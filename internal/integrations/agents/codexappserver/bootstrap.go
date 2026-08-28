@@ -32,7 +32,13 @@ type ThreadSnapshot struct {
 // only the order, not the barrier.
 //
 // It sends exactly one thread/resume and exactly one thread/read, creates no
-// thread, and starts no turn.
+// thread, and starts no turn. Because thread/resume always excludes turns, it
+// requires a connection that negotiated the experimental API capability.
+//
+// Observed upstream limit on installed Codex 0.150.1: thread/resume answers
+// only for a thread whose rollout already exists, so a thread whose first turn
+// never ran refuses the subscription leg while its includeTurns=false snapshot
+// stays readable. The installed smoke records that as typed evidence.
 func (c *Client) BootstrapThread(ctx context.Context, threadID, cwd string, roots []string) (ThreadSnapshot, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
