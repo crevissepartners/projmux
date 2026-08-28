@@ -408,6 +408,23 @@ func writeDoctorAppServerText(buf *bytes.Buffer, health *codexappserver.Health) 
 	}
 	buf.WriteString("\n")
 	fmt.Fprintf(buf, "  App-server probe: %s; install capability: %s\n", health.ProbeReason, health.InstallCapability)
+	fmt.Fprintf(buf, "  Endpoint readiness: %s; running executable: %s; version relation: %s; manager ownership: %s; remote control: %s\n",
+		health.EndpointReadiness, health.RunningExecutable, health.VersionRelation, health.ManagerOwnership, health.RemoteControl)
+	if health.CLIVersion != "" || health.ManagedVersion != "" || health.RunningVersion != "" {
+		fmt.Fprintf(buf, "  Versions: CLI %s; managed %s; running %s\n", diagnosticVersionOrUnknown(health.CLIVersion), diagnosticVersionOrUnknown(health.ManagedVersion), diagnosticVersionOrUnknown(health.RunningVersion))
+	}
+	fmt.Fprintf(buf, "  Native action: %s; refusal: %s; interruption risk: %s; operator recovery: %s\n",
+		health.NativeAction, health.NativeRefusal, health.InterruptionRisk, health.OperatorRecovery)
+	if guidance := health.OperatorRecovery.Guidance(); guidance != "" {
+		fmt.Fprintf(buf, "  Guidance: %s\n", guidance)
+	}
+}
+
+func diagnosticVersionOrUnknown(value string) string {
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }
 
 func writeDoctorFindingsText(buf *bytes.Buffer, title string, findings []doctorFinding, verbose bool) {

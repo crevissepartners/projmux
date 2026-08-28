@@ -124,6 +124,80 @@ func TestDoctorCodexAppServerJSONSchemaV2IsAdditive(t *testing.T) {
 	}
 }
 
+func TestDoctorSettingsAndSupportKeepUnsafeReadinessAxesIndependent(t *testing.T) {
+	health := codexappserver.Decide(
+		codexappserver.AvailabilityAvailable,
+		codexappserver.ReasonNone,
+		"codex-cli/0.149.1",
+		codexappserver.EndpointStdioProxy,
+		codexappserver.ConnectionReady,
+		true,
+	)
+	health.EndpointReadiness = codexappserver.EndpointReady
+	health.RunningExecutable = codexappserver.RunningExecutableUnknown
+	health.VersionRelation = codexappserver.VersionSkew
+	health.CLIVersion = "0.150.1"
+	health.ManagedVersion = "0.150.1"
+	health.RunningVersion = "0.149.1"
+	health.ManagerOwnership = codexappserver.ManagerUnmanaged
+	health.RemoteControl = codexappserver.RemoteControlDisabled
+	health.NativeAction = codexappserver.NativeActionRefused
+	health.NativeRefusal = codexappserver.NativeActionRefusalUnmanagedVersionSkew
+	health.InterruptionRisk = codexappserver.InterruptionRiskSharedClients
+	health.OperatorRecovery = codexappserver.OperatorRecoveryStopOwnerThenStart
+	health.Lifecycle = codexappserver.LifecycleNotAttempted
+	health.LifecycleReason = codexappserver.LifecycleReasonReadOnly
+
+	var doctorText bytes.Buffer
+	writeDoctorAppServerText(&doctorText, &health)
+	for _, want := range []string{
+		"Endpoint readiness: ready", "running executable: unknown", "version relation: skew",
+		"manager ownership: unmanaged", "remote control: disabled", "CLI 0.150.1",
+		"running 0.149.1", "Native action: refused", "unmanaged-version-skew",
+		"shared-clients-disconnect", "stop-owner-then-start-managed-daemon",
+		"Close every sharing Codex client", "Projmux will not kill or restart it",
+	} {
+		if !strings.Contains(doctorText.String(), want) {
+			t.Fatalf("Doctor output missing %q:\n%s", want, doctorText.String())
+		}
+	}
+
+	home := t.TempDir()
+	settings := &settingsCommand{
+		ai:                  testAICommand(home),
+		homeDir:             func() (string, error) { return home, nil },
+		lookupEnv:           func(string) string { return "" },
+		aiNotifyDiagnostics: func() []doctorAINotifyIntegration { return nil },
+		appServerHealth:     func(bool) codexappserver.Health { return health },
+	}
+	var settingsText string
+	for _, entry := range settings.aiRootEntries() {
+		if strings.Contains(entry.Label, "Codex control plane") {
+			settingsText = entry.Label
+		}
+	}
+	for _, want := range []string{"endpoint: ready", "version: skew", "manager: unmanaged", "remote control: disabled", "native action: refused/unmanaged-version-skew"} {
+		if !strings.Contains(settingsText, want) {
+			t.Fatalf("Settings output missing %q: %s", want, settingsText)
+		}
+	}
+
+	doctor := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "git": true, "stty": true})
+	doctor.aiDiagnostics = func() []doctorAINotifyIntegration { return nil }
+	doctor.appServerHealth = func(codexappserver.TriggerKind, bool) codexappserver.Health { return health }
+	diagnostics := newDiagnosticsCommand()
+	diagnostics.doctor = doctor
+	support, err := diagnostics.supportDoctorJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"endpoint_readiness": "ready"`, `"version_relation": "skew"`, `"manager_ownership": "unmanaged"`, `"remote_control_capability": "disabled"`, `"native_action_refusal": "unmanaged-version-skew"`, `"running_version": "0.149.1"`} {
+		if !strings.Contains(string(support), want) {
+			t.Fatalf("support output missing %q:\n%s", want, support)
+		}
+	}
+}
+
 func TestDoctorAndSettingsCodexTopologyProjectionMatrix(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -257,6 +331,11 @@ func TestDoctorAndSettingsReadOnlyTopologyNeverStartOrWrite(t *testing.T) {
 				},
 			}
 			_ = settings.aiRootEntries()
+			diagnostics := newDiagnosticsCommand()
+			diagnostics.doctor = doctor
+			if _, err := diagnostics.supportDoctorJSON(); err != nil {
+				t.Fatal(err)
+			}
 
 			after := snapshotCodexHealthTree(t, codexHome)
 			if !reflect.DeepEqual(after, before) {
@@ -266,15 +345,26 @@ func TestDoctorAndSettingsReadOnlyTopologyNeverStartOrWrite(t *testing.T) {
 			if err != nil && !os.IsNotExist(err) {
 				t.Fatal(err)
 			}
-			if strings.Contains(string(calls), "daemon start") {
-				t.Fatalf("read-only surface started daemon: %s", calls)
+			for _, mutation := range []string{
+				"daemon start", "daemon stop", "daemon restart", "daemon kill",
+				"enable-remote-control", "disable-remote-control", "daemon bootstrap",
+				"login", "logout", "config set", "config write",
+			} {
+				if strings.Contains(string(calls), mutation) {
+					t.Fatalf("read-only surface emitted mutation argv %q: %s", mutation, calls)
+				}
 			}
-			wantProxyCalls := 2
+			wantProxyCalls := 3
+			wantVersionCalls := 3
 			if tt.missingCLI {
 				wantProxyCalls = 0
+				wantVersionCalls = 0
 			}
 			if got := strings.Count(string(calls), "app-server proxy"); got != wantProxyCalls {
 				t.Fatalf("proxy calls = %d, want %d; invocations=%q", got, wantProxyCalls, calls)
+			}
+			if got := strings.Count(string(calls), "app-server daemon version"); got != wantVersionCalls {
+				t.Fatalf("daemon version calls = %d, want %d; invocations=%q", got, wantVersionCalls, calls)
 			}
 		})
 	}

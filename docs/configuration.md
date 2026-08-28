@@ -423,31 +423,39 @@ user/global preference in this release.
 
 Settings > AI includes a read-only `Codex control plane` row. It reports one of
 `App Server`, `Hook fallback`, or `Unavailable`, together with the existing
-effective reason. Separate closed `probe_reason` and `install_capability` axes
-preserve the app-server root cause and bounded PATH/managed-payload topology;
-endpoint kind, connection state, lifecycle outcome/reason, and a sanitized
-version remain independent. Read-only surfaces report `not-attempted/read-only`.
+effective reason. Endpoint readiness, running executable/version, official
+daemon-manager ownership, and remote-control capability are separate closed
+axes. Separate `probe_reason` and `install_capability` fields preserve the
+app-server root cause and bounded PATH/managed-payload topology. Lifecycle
+outcome/reason and sanitized CLI, managed, and running versions remain
+independent. Read-only surfaces report `not-attempted/read-only`.
 `projmux doctor --section integrations` and explicit support reports expose the
 same bounded fields without executable/socket paths, prompts, tokens, process
 output, or response payloads.
 
 There is no app-server source setting or environment override. Authority is a
 capability result, not a preference: Projmux probes the existing local control
-socket through `codex app-server proxy` with a short timeout and otherwise keeps
-the current hook behavior. Doctor, Settings, and support reports never start or
-otherwise mutate the daemon.
+socket through `codex app-server proxy`, reads official manager evidence through
+`codex app-server daemon version`, and reads remote-control state through
+`remoteControl/status/read`, all with short timeouts. An older endpoint that
+does not expose the last method reports `unsupported` on that axis without
+hiding endpoint readiness. Doctor, Settings, and support reports never start or
+otherwise mutate the daemon, configuration, login state, or control socket.
 
 An `external-cli-only` install capability acknowledges that the ordinary CLI
 exists while the canonical managed daemon payload was not observed. It does
-not identify a package manager or reject an already-ready endpoint.
+not identify a package manager. Install topology is not manager ownership:
+only the official daemon response's backend field proves a managed process.
 
 The Codex integration has a lifecycle seam for later native features. Only an
-actual native user action may use it, and only an exact missing or
-connection-refused default control socket is eligible. That path invokes the
+actual native user action may use it. A ready unmanaged, version-skewed, or
+ownership/version-unknown endpoint is refused without mutation and reports the
+shared-client interruption risk plus bounded operator recovery. Only an exact
+missing or connection-refused default control socket is start-eligible. That path invokes the
 official idempotent `codex app-server daemon start` command at most once per
 in-flight process decision, then retries proxy initialization with a bounded
-backoff. Phase 1 itself does not route Agent create/resume, usage, catalog,
-model, or review behavior through that seam.
+backoff. Projmux never automatically stops, kills, restarts, adopts, or enables
+remote control on the shared app server.
 
 The default `Codex` row in the provider picker launches immediately through the
 canonical create route. It does not start or probe the app-server, call

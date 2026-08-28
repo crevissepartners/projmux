@@ -1,6 +1,6 @@
-// Command fake_codex_appserver_fixture is an offline Codex app-server proxy
-// fixture used only by the lifecycle E2E smoke. It implements the minimum
-// websocket/JSON-RPC surface needed for native create and two observer epochs.
+// Command fake_codex_appserver_fixture is an offline Codex app-server fixture
+// used only by the lifecycle E2E smoke. It implements the read-only daemon
+// version probe and minimum proxy surface needed for native lifecycle coverage.
 package main
 
 import (
@@ -22,15 +22,51 @@ import (
 
 const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
+type fixtureCommand uint8
+
+const (
+	fixtureCommandUnknown fixtureCommand = iota
+	fixtureCommandProxy
+	fixtureCommandDaemonVersion
+)
+
 func main() {
-	if len(os.Args) < 3 || os.Args[1] != "app-server" || os.Args[2] != "proxy" {
-		time.Sleep(10 * time.Minute)
-		return
+	var err error
+	switch classifyFixtureCommand(os.Args[1:]) {
+	case fixtureCommandProxy:
+		err = serveProxy()
+	case fixtureCommandDaemonVersion:
+		err = writeDaemonVersion(os.Stdout)
+	default:
+		fmt.Fprintln(os.Stderr, "unsupported fake Codex command")
+		os.Exit(2)
 	}
-	if err := serveProxy(); err != nil && !errors.Is(err, io.EOF) {
+	if err != nil && !errors.Is(err, io.EOF) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func classifyFixtureCommand(args []string) fixtureCommand {
+	if len(args) == 2 && args[0] == "app-server" && args[1] == "proxy" {
+		return fixtureCommandProxy
+	}
+	if len(args) == 3 && args[0] == "app-server" && args[1] == "daemon" && args[2] == "version" {
+		return fixtureCommandDaemonVersion
+	}
+	return fixtureCommandUnknown
+}
+
+func writeDaemonVersion(writer io.Writer) error {
+	return json.NewEncoder(writer).Encode(map[string]any{
+		"status":              "running",
+		"backend":             "pid",
+		"managedCodexPath":    "/discarded/fake-managed-codex",
+		"managedCodexVersion": "0.149.0",
+		"socketPath":          "/discarded/fake-control.sock",
+		"cliVersion":          "0.149.0",
+		"appServerVersion":    "0.149.0",
+	})
 }
 
 func serveProxy() error {
@@ -74,6 +110,10 @@ func serveProxy() error {
 				return err
 			}
 		case "initialized":
+		case "remoteControl/status/read":
+			if err := writeResult(message.ID, map[string]any{"status": "disabled"}); err != nil {
+				return err
+			}
 		case "thread/start":
 			if err := writeResult(message.ID, map[string]any{"thread": map[string]any{"id": "thread-phase3"}}); err != nil {
 				return err

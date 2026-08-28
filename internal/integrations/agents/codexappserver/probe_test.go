@@ -28,8 +28,10 @@ func TestProxyProbeFaultMatrix(t *testing.T) {
 		availability Availability
 		reason       Reason
 		connection   ConnectionState
+		remote       RemoteControlCapability
 	}{
-		{name: "healthy", scenario: "healthy", timeout: 3 * time.Second, availability: AvailabilityAvailable, reason: ReasonNone, connection: ConnectionReady},
+		{name: "healthy", scenario: "healthy", timeout: 3 * time.Second, availability: AvailabilityAvailable, reason: ReasonNone, connection: ConnectionReady, remote: RemoteControlConnected},
+		{name: "remote control unsupported", scenario: "remote-unsupported", timeout: 3 * time.Second, availability: AvailabilityAvailable, reason: ReasonNone, connection: ConnectionReady, remote: RemoteControlUnsupported},
 		{name: "unsupported", scenario: "unsupported", timeout: 3 * time.Second, availability: AvailabilityUnsupported, reason: ReasonUnsupported, connection: ConnectionDisconnected},
 		{name: "malformed", scenario: "malformed", timeout: 3 * time.Second, availability: AvailabilityProtocolError, reason: ReasonProtocolError, connection: ConnectionProtocolErr},
 		{name: "timeout", scenario: "timeout", timeout: 30 * time.Millisecond, availability: AvailabilityTimeout, reason: ReasonTimeout, connection: ConnectionTimedOut},
@@ -47,6 +49,9 @@ func TestProxyProbeFaultMatrix(t *testing.T) {
 				}, func() bool { return tc.scenario == "missing-socket" })
 			if health.Availability != tc.availability || health.Reason != tc.reason || health.Connection != tc.connection {
 				t.Fatalf("probe health = %+v", health)
+			}
+			if tc.remote != "" && health.RemoteControl != tc.remote {
+				t.Fatalf("remote control = %q, want %q; health=%+v", health.RemoteControl, tc.remote, health)
 			}
 			if health.Source != SourceAppServer && health.Source != SourceHookFallback {
 				t.Fatalf("probe source = %q", health.Source)
@@ -159,9 +164,24 @@ func TestProxyProbeHelperProcess(t *testing.T) {
 		os.Exit(3)
 	}
 	switch scenario {
-	case "healthy":
+	case "healthy", "remote-unsupported":
 		writeTestServerFrame(fmt.Sprintf("{\"id\":%d,\"result\":{\"userAgent\":\"codex-cli/0.149.0\",\"platformFamily\":\"unix\",\"platformOs\":\"linux\"}}", initialize.ID))
-		_, _ = readTestClientFrame(reader)
+		if _, err := readTestClientFrame(reader); err != nil { // initialized notification
+			os.Exit(3)
+		}
+		payload, err := readTestClientFrame(reader)
+		if err != nil {
+			os.Exit(3)
+		}
+		var remote wireRequest
+		if json.Unmarshal(payload, &remote) != nil || remote.Method != methodRemoteControlStatusRead {
+			os.Exit(3)
+		}
+		if scenario == "remote-unsupported" {
+			writeTestServerFrame(fmt.Sprintf("{\"id\":%d,\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}", remote.ID))
+		} else {
+			writeTestServerFrame(fmt.Sprintf("{\"id\":%d,\"result\":{\"status\":\"connected\",\"installationId\":\"discard-me\",\"serverName\":\"discard-me\",\"environmentId\":\"discard-me\"}}", remote.ID))
+		}
 	case "unsupported":
 		writeTestServerFrame(fmt.Sprintf("{\"id\":%d,\"error\":{\"code\":-32601,\"message\":\"unsupported\"}}", initialize.ID))
 	case "malformed":

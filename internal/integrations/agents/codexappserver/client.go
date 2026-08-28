@@ -75,10 +75,16 @@ func (c *Client) Notifications() <-chan Notification { return c.events }
 
 // Initialize performs the required single initialize/initialized handshake.
 func (c *Client) Initialize(ctx context.Context, version string) (string, error) {
+	return c.initialize(ctx, version, false)
+}
+
+func (c *Client) initialize(ctx context.Context, version string, experimental bool) (string, error) {
 	var result initializeResult
-	err := c.Request(ctx, methodInitialize, initializeParams{ClientInfo: clientInfo{
-		Name: "projmux", Title: "Projmux", Version: safeVersion(version),
-	}}, &result)
+	params := initializeParams{ClientInfo: clientInfo{Name: "projmux", Title: "Projmux", Version: safeVersion(version)}}
+	if experimental {
+		params.Capabilities = &initializeCapabilities{ExperimentalAPI: true}
+	}
+	err := c.Request(ctx, methodInitialize, params, &result)
 	if err != nil {
 		return "", err
 	}

@@ -41,8 +41,8 @@ func OpenDefaultCapabilitySession(ctx context.Context, projmuxVersion string) (*
 	if err != nil {
 		return nil, err
 	}
-	if health.Source != SourceAppServer || health.Availability != AvailabilityAvailable {
-		return nil, fmt.Errorf("%w: %s", corecap.ErrUnavailable, health.LifecycleReason)
+	if health.Source != SourceAppServer || health.Availability != AvailabilityAvailable || health.NativeAction == NativeActionRefused {
+		return nil, unavailableHealthError(health)
 	}
 	client, version, err := openDefaultProxyClient(ctx, projmuxVersion)
 	if err != nil {
@@ -198,8 +198,8 @@ func StartDefaultReview(ctx context.Context, projmuxVersion, threadID string, ta
 	if err != nil {
 		return corecap.ReviewResult{}, err
 	}
-	if health.Source != SourceAppServer || health.Availability != AvailabilityAvailable {
-		return corecap.ReviewResult{}, fmt.Errorf("%w: %s", corecap.ErrUnavailable, health.LifecycleReason)
+	if health.Source != SourceAppServer || health.Availability != AvailabilityAvailable || health.NativeAction == NativeActionRefused {
+		return corecap.ReviewResult{}, unavailableHealthError(health)
 	}
 	client, version, err := openDefaultProxyClient(ctx, projmuxVersion)
 	if err != nil {
@@ -229,6 +229,13 @@ func StartDefaultReview(ctx context.Context, projmuxVersion, threadID string, ta
 		return corecap.ReviewResult{}, fmt.Errorf("%w: review/start returned an incomplete or unknown initial turn", ErrProtocol)
 	}
 	return projected, nil
+}
+
+func unavailableHealthError(health Health) error {
+	if guidance := health.NativeActionGuidance(); guidance != "" {
+		return fmt.Errorf("%w: %s; %s", corecap.ErrUnavailable, health.LifecycleReason, guidance)
+	}
+	return fmt.Errorf("%w: %s", corecap.ErrUnavailable, health.LifecycleReason)
 }
 
 func reviewTargetParams(target corecap.ReviewTarget) (any, error) {

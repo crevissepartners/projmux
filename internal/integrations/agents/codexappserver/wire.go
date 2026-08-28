@@ -3,17 +3,18 @@ package codexappserver
 import "encoding/json"
 
 const (
-	methodInitialize    = "initialize"
-	methodInitialized   = "initialized"
-	methodModelList     = "model/list"
-	methodReviewStart   = "review/start"
-	methodThreadList    = "thread/list"
-	methodThreadRead    = "thread/read"
-	methodThreadStart   = "thread/start"
-	methodThreadResume  = "thread/resume"
-	methodTurnStart     = "turn/start"
-	methodTurnSteer     = "turn/steer"
-	methodTurnInterrupt = "turn/interrupt"
+	methodInitialize              = "initialize"
+	methodInitialized             = "initialized"
+	methodModelList               = "model/list"
+	methodReviewStart             = "review/start"
+	methodThreadList              = "thread/list"
+	methodThreadRead              = "thread/read"
+	methodThreadStart             = "thread/start"
+	methodThreadResume            = "thread/resume"
+	methodTurnStart               = "turn/start"
+	methodTurnSteer               = "turn/steer"
+	methodTurnInterrupt           = "turn/interrupt"
+	methodRemoteControlStatusRead = "remoteControl/status/read"
 )
 
 type wireRequest struct {
@@ -46,7 +47,12 @@ type wireError struct {
 }
 
 type initializeParams struct {
-	ClientInfo clientInfo `json:"clientInfo"`
+	ClientInfo   clientInfo              `json:"clientInfo"`
+	Capabilities *initializeCapabilities `json:"capabilities,omitempty"`
+}
+
+type initializeCapabilities struct {
+	ExperimentalAPI bool `json:"experimentalApi"`
 }
 
 type clientInfo struct {
@@ -59,6 +65,10 @@ type initializeResult struct {
 	UserAgent      string `json:"userAgent"`
 	PlatformFamily string `json:"platformFamily"`
 	PlatformOS     string `json:"platformOs"`
+}
+
+type remoteControlStatusReadResult struct {
+	Status string `json:"status"`
 }
 
 type modelListParams struct {
