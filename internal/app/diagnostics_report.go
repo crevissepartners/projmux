@@ -201,14 +201,23 @@ func supportDoctorSafeStringValues() map[string]map[string]bool {
 			string(doctorAINotifyStatusInstalled): true, string(doctorAINotifyStatusConflict): true,
 			"available": true, "unavailable": true,
 		},
-		"source":             {"app-server": true, "hook-fallback": true, "unavailable": true},
-		"availability":       {"available": true, "unsupported": true, "unavailable": true, "timeout": true, "protocol-error": true},
-		"reason":             {"none": true, "executable-missing": true, "daemon-not-running": true, "endpoint-unavailable": true, "unsupported": true, "timeout": true, "protocol-error": true, "disconnected": true, "hook-unavailable": true},
-		"probe_reason":       {"none": true, "executable-missing": true, "daemon-not-running": true, "endpoint-unavailable": true, "unsupported": true, "timeout": true, "protocol-error": true, "disconnected": true},
-		"install_capability": {"managed-ready": true, "external-cli-only": true, "cli-missing": true, "unknown": true},
-		"endpoint_kind":      {"stdio": true, "stdio-proxy": true},
-		"connection_state":   {"disconnected": true, "connecting": true, "ready": true, "timed-out": true, "protocol-error": true},
-		"lifecycle_outcome":  {"already-running": true, "started": true, "start-failed": true, "not-attempted": true},
+		"source":                    {"app-server": true, "hook-fallback": true, "unavailable": true},
+		"availability":              {"available": true, "unsupported": true, "unavailable": true, "timeout": true, "protocol-error": true},
+		"reason":                    {"none": true, "executable-missing": true, "daemon-not-running": true, "endpoint-unavailable": true, "unsupported": true, "timeout": true, "protocol-error": true, "disconnected": true, "hook-unavailable": true},
+		"probe_reason":              {"none": true, "executable-missing": true, "daemon-not-running": true, "endpoint-unavailable": true, "unsupported": true, "timeout": true, "protocol-error": true, "disconnected": true},
+		"install_capability":        {"managed-ready": true, "external-cli-only": true, "cli-missing": true, "unknown": true},
+		"endpoint_kind":             {"stdio": true, "stdio-proxy": true},
+		"connection_state":          {"disconnected": true, "connecting": true, "ready": true, "timed-out": true, "protocol-error": true},
+		"endpoint_readiness":        {"ready": true, "dead": true, "unavailable": true, "timed-out": true, "unsupported": true, "protocol-error": true},
+		"running_executable":        {"managed": true, "unknown": true},
+		"version_relation":          {"current": true, "skew": true, "unknown": true},
+		"manager_ownership":         {"managed": true, "unmanaged": true, "unknown": true},
+		"remote_control_capability": {"disabled": true, "connecting": true, "connected": true, "errored": true, "unsupported": true, "unavailable": true, "unknown": true},
+		"native_action_readiness":   {"ready": true, "refused": true, "unknown": true},
+		"native_action_refusal":     {"none": true, "unmanaged": true, "version-skew": true, "unmanaged-version-skew": true, "ownership-unknown": true, "runtime-version-unknown": true},
+		"interruption_risk":         {"none": true, "shared-clients-disconnect": true},
+		"operator_recovery":         {"none": true, "restart-managed-daemon": true, "stop-owner-then-start-managed-daemon": true, "inspect-process-ownership": true},
+		"lifecycle_outcome":         {"already-running": true, "started": true, "start-failed": true, "not-attempted": true, "refused": true},
 		"lifecycle_reason": {
 			"read-only": true, "already-ready": true, "ready-after-start": true,
 			"probe-executable-missing": true, "probe-timeout": true, "probe-unsupported": true,
@@ -218,6 +227,8 @@ func supportDoctorSafeStringValues() map[string]map[string]bool {
 			"readiness-executable-missing": true, "readiness-socket-unavailable": true,
 			"readiness-timeout": true, "readiness-unsupported": true,
 			"readiness-protocol-error": true, "readiness-endpoint-error": true,
+			"unsafe-unmanaged": true, "unsafe-version-skew": true,
+			"unsafe-ownership-unknown": true, "unsafe-runtime-version-unknown": true,
 		},
 		"provider_id": {},
 		"agent":       {},
@@ -260,7 +271,7 @@ func redactDoctorJSON(value any, key string) {
 				continue
 			}
 			if text, ok := child.(string); ok && text != "" {
-				if !doctorSafeStringValues[childKey][text] && !(key == "codex_app_server" && childKey == "version" && codexappserver.IsSafeDiagnosticVersion(text)) {
+				if !doctorSafeStringValues[childKey][text] && !safeCodexDiagnosticVersion(key, childKey, text) {
 					typed[childKey] = supportHash(childKey, text)
 				}
 			} else {
@@ -277,6 +288,18 @@ func redactDoctorJSON(value any, key string) {
 			}
 			redactDoctorJSON(child, key)
 		}
+	}
+}
+
+func safeCodexDiagnosticVersion(parentKey, childKey, value string) bool {
+	if parentKey != "codex_app_server" {
+		return false
+	}
+	switch childKey {
+	case "version", "cli_version", "managed_version", "running_version":
+		return codexappserver.IsSafeDiagnosticVersion(value)
+	default:
+		return false
 	}
 }
 

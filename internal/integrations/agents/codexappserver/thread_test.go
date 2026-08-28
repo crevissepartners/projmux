@@ -28,7 +28,7 @@ func TestStartDefaultThreadEmptyAndPromptedRequestCounts(t *testing.T) {
 	}
 	pathDir := t.TempDir()
 	fakeCodex := filepath.Join(pathDir, "codex")
-	script := "#!/bin/sh\nexec \"$PROJMUX_CODEX_THREAD_HELPER\" -test.run=TestStartDefaultThreadProxyHelperProcess\n"
+	script := "#!/bin/sh\nif [ \"$1 $2 $3\" = \"app-server daemon version\" ]; then printf '%s\\n' '{\"status\":\"running\",\"backend\":\"pid\",\"managedCodexPath\":\"/discarded\",\"managedCodexVersion\":\"0.150.1\",\"socketPath\":\"/discarded\",\"cliVersion\":\"0.150.1\",\"appServerVersion\":\"0.150.1\"}'; exit 0; fi\nexec \"$PROJMUX_CODEX_THREAD_HELPER\" -test.run=TestStartDefaultThreadProxyHelperProcess\n"
 	if err := os.WriteFile(fakeCodex, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -75,10 +75,11 @@ func TestStartDefaultThreadEmptyAndPromptedRequestCounts(t *testing.T) {
 			counts[event]++
 		}
 		for event, want := range map[string]int{
-			"proxy/open":      2,
-			methodInitialize:  2,
-			methodThreadStart: 1,
-			methodTurnStart:   1,
+			"proxy/open":                  2,
+			methodInitialize:              2,
+			methodRemoteControlStatusRead: 1,
+			methodThreadStart:             1,
+			methodTurnStart:               1,
 		} {
 			if got := counts[event]; got != want {
 				t.Fatalf("%s count = %d, want %d; all=%v", event, got, want, counts)
@@ -131,6 +132,8 @@ func TestStartDefaultThreadProxyHelperProcess(t *testing.T) {
 		case methodInitialize:
 			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"userAgent":"codex-cli/0.150.1","platformFamily":"unix","platformOs":"linux"}}`, message.ID))
 		case methodInitialized:
+		case methodRemoteControlStatusRead:
+			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"status":"disabled","installationId":"discarded","serverName":"discarded"}}`, message.ID))
 		case methodThreadStart:
 			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"thread":{"id":"thread-exact"}}}`, message.ID))
 		case methodTurnStart:

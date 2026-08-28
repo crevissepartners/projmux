@@ -38,6 +38,7 @@ func ProbeDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersio
 	health := probeProxy(ctx, timeout, projmuxVersion, hookAvailable, exec.LookPath, func(ctx context.Context) *exec.Cmd {
 		return exec.CommandContext(ctx, "codex", "app-server", "proxy")
 	}, defaultDaemonNotRunning)
+	health = withManagerObservation(health, observeDefaultManager(ctx, timeout))
 	return withLifecycle(withInstallCapability(health, ObserveDefaultInstallCapability()), LifecycleNotAttempted, LifecycleReasonReadOnly)
 }
 
@@ -81,11 +82,15 @@ func probeProxy(ctx context.Context, timeout time.Duration, projmuxVersion strin
 		}
 	}
 	client := NewClient(websocket)
-	version, initErr := client.Initialize(probeCtx, projmuxVersion)
-	_ = client.Close()
+	version, initErr := client.initialize(probeCtx, projmuxVersion, true)
 	if initErr == nil {
-		return Decide(AvailabilityAvailable, ReasonNone, version, EndpointStdioProxy, ConnectionReady, hookAvailable)
+		remoteControl := remoteControlCapability(client, probeCtx)
+		_ = client.Close()
+		health := Decide(AvailabilityAvailable, ReasonNone, version, EndpointStdioProxy, ConnectionReady, hookAvailable)
+		health.RemoteControl = remoteControl
+		return health
 	}
+	_ = client.Close()
 	switch {
 	case errors.Is(initErr, context.DeadlineExceeded), errors.Is(probeCtx.Err(), context.DeadlineExceeded):
 		return Decide(AvailabilityTimeout, ReasonTimeout, "", EndpointStdioProxy, ConnectionTimedOut, hookAvailable)

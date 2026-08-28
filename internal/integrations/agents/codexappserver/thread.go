@@ -19,11 +19,18 @@ type ThreadBinding struct {
 // without risking a second conversation or duplicate prompt.
 type ThreadActionError struct {
 	Reason       string
+	Guidance     string
 	SafeFallback bool
 	err          error
 }
 
-func (e *ThreadActionError) Error() string { return "Codex native thread action: " + e.Reason }
+func (e *ThreadActionError) Error() string {
+	message := "Codex native thread action: " + e.Reason
+	if e.Guidance != "" {
+		message += "; " + e.Guidance
+	}
+	return message
+}
 func (e *ThreadActionError) Unwrap() error { return e.err }
 
 // CanFallback reports whether a failed native preparation mutated no provider
@@ -83,8 +90,8 @@ func openReadyThreadClient(ctx context.Context, projmuxVersion string) (*Client,
 	if err != nil {
 		return nil, &ThreadActionError{Reason: "readiness-cancelled", SafeFallback: true, err: err}
 	}
-	if health.Source != SourceAppServer || health.Availability != AvailabilityAvailable {
-		return nil, &ThreadActionError{Reason: string(health.LifecycleReason), SafeFallback: true, err: ErrDisconnected}
+	if health.Source != SourceAppServer || health.Availability != AvailabilityAvailable || health.NativeAction == NativeActionRefused {
+		return nil, &ThreadActionError{Reason: string(health.LifecycleReason), Guidance: health.NativeActionGuidance(), SafeFallback: true, err: ErrDisconnected}
 	}
 	client, _, err := openDefaultProxyClient(ctx, projmuxVersion)
 	if err != nil {

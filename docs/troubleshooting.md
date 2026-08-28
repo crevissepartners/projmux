@@ -96,19 +96,33 @@ Start with the read-only integration report:
 projmux doctor --section integrations --verbose
 ```
 
-The `Codex app-server` result keeps four decisions separate:
+The `Codex app-server` result keeps four readiness axes separate:
 
-- `Source` and `reason` describe the effective control source Projmux selected.
-- `App-server probe` describes why the existing endpoint probe succeeded or
-  failed.
-- `install capability` reports the bounded relationship between the `codex`
-  executable on `PATH` and the canonical managed daemon payload.
-- `lifecycle` reports whether a native user action attempted a daemon start.
+- `Endpoint readiness` says whether the existing endpoint is ready, dead, or
+  failed with a bounded reason.
+- `running executable` plus the sanitized version fields distinguish a proven
+  managed executable from unknown identity and current from skewed versions.
+- `manager ownership` comes only from the official daemon backend result; an
+  absent or unclear result is never guessed from endpoint health.
+- `remote control` independently reports disabled, connecting, connected,
+  errored, unsupported, unavailable, or unknown.
+
+`Source`/`reason`, `App-server probe`, `install capability`, and `lifecycle`
+remain separate supporting fields. A ready endpoint therefore does not hide an
+unmanaged process or version skew.
 
 `external-cli-only` means the ordinary Codex CLI executable is present, but
 the canonical managed payload needed by `codex app-server daemon start` was not
-observed. It does not mean the ordinary CLI is unsupported. An already-ready
-endpoint remains available regardless of install topology.
+observed. It does not mean the ordinary CLI is unsupported and does not prove
+who owns a running process.
+
+An explicit native action refuses a ready unmanaged or version-skewed endpoint.
+The refusal reports `shared-clients-disconnect`: replacing this shared process
+can interrupt every attached Codex client. For a managed skew, confirm the
+interruption and run `codex app-server daemon restart`. For an unmanaged
+endpoint, close every sharing client, stop the process through the operator
+that owns it, then run `codex app-server daemon start`. Projmux never performs
+those stop/restart steps or invents an ownership-specific kill command.
 
 If native app-server features are needed, review the
 [official Codex CLI installation options](https://learn.chatgpt.com/docs/codex/cli)

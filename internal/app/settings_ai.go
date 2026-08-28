@@ -444,12 +444,15 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 	)
 	if c.appServerHealth != nil {
 		health := c.appServerHealth(codexHookFallbackAvailable(c.currentAINotifyDiagnostics()))
-		detail := fmt.Sprintf("%s - %s, %s - probe: %s; install: %s", health.Source.Label(), health.Connection, health.Reason, health.ProbeReason, health.InstallCapability)
+		detail := fmt.Sprintf("%s - %s, %s - endpoint: %s; executable: %s; version: %s; manager: %s; remote control: %s - probe: %s; install: %s", health.Source.Label(), health.Connection, health.Reason, health.EndpointReadiness, health.RunningExecutable, health.VersionRelation, health.ManagerOwnership, health.RemoteControl, health.ProbeReason, health.InstallCapability)
 		if health.Version != "" {
 			detail += " - " + health.Version
 		}
 		if health.Lifecycle != "" {
 			detail += fmt.Sprintf(" - %s/%s", health.Lifecycle, health.LifecycleReason)
+		}
+		if health.NativeAction != "" {
+			detail += fmt.Sprintf(" - native action: %s/%s; risk: %s; recovery: %s", health.NativeAction, health.NativeRefusal, health.InterruptionRisk, health.OperatorRecovery)
 		}
 		entries = append(entries, intpickercompat.Entry{
 			Label:     c.rowLabelInfo("Codex control plane", detail, "read-only capability health"),

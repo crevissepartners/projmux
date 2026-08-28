@@ -37,6 +37,7 @@ const (
 	LifecycleStarted        LifecycleOutcome = "started"
 	LifecycleStartFailed    LifecycleOutcome = "start-failed"
 	LifecycleNotAttempted   LifecycleOutcome = "not-attempted"
+	LifecycleRefused        LifecycleOutcome = "refused"
 )
 
 // LifecycleReason explains a LifecycleOutcome without retaining command
@@ -63,6 +64,10 @@ const (
 	LifecycleReasonReadinessUnsupported       LifecycleReason = "readiness-unsupported"
 	LifecycleReasonReadinessProtocolError     LifecycleReason = "readiness-protocol-error"
 	LifecycleReasonReadinessEndpointError     LifecycleReason = "readiness-endpoint-error"
+	LifecycleReasonUnsafeUnmanaged            LifecycleReason = "unsafe-unmanaged"
+	LifecycleReasonUnsafeVersionSkew          LifecycleReason = "unsafe-version-skew"
+	LifecycleReasonUnsafeOwnershipUnknown     LifecycleReason = "unsafe-ownership-unknown"
+	LifecycleReasonUnsafeRuntimeUnknown       LifecycleReason = "unsafe-runtime-version-unknown"
 )
 
 type startResult uint8
@@ -160,6 +165,9 @@ func (p lifecyclePolicy) ensureReadyForHook(ctx context.Context, trigger Trigger
 	if trigger != TriggerNativeUserAction {
 		return projectLifecycleHealth(withLifecycle(initial, LifecycleNotAttempted, LifecycleReasonReadOnly), hookAvailable), nil
 	}
+	if initial.NativeAction == NativeActionRefused {
+		return projectLifecycleHealth(withLifecycle(initial, LifecycleRefused, nativeActionLifecycleReason(initial.NativeRefusal)), hookAvailable), nil
+	}
 	if probeState == probeReady {
 		return projectLifecycleHealth(withLifecycle(initial, LifecycleAlreadyRunning, LifecycleReasonAlreadyReady), hookAvailable), nil
 	}
@@ -209,6 +217,10 @@ func (p lifecyclePolicy) runFlight(parent context.Context, flight *lifecycleFlig
 	// several callers observed a cold socket just before the first start.
 	probeHealth := p.probe(flightCtx)
 	probeState := classifyProbe(probeHealth)
+	if probeHealth.NativeAction == NativeActionRefused {
+		p.finishFlight(flight, withLifecycle(probeHealth, LifecycleRefused, nativeActionLifecycleReason(probeHealth.NativeRefusal)))
+		return
+	}
 	if probeState == probeReady {
 		p.finishFlight(flight, withLifecycle(probeHealth, LifecycleAlreadyRunning, LifecycleReasonAlreadyReady))
 		return
@@ -228,6 +240,10 @@ func (p lifecyclePolicy) runFlight(parent context.Context, flight *lifecycleFlig
 	}
 
 	health, readinessState := p.waitReady(flightCtx, readinessTimeout)
+	if health.NativeAction == NativeActionRefused {
+		p.finishFlight(flight, withLifecycle(health, LifecycleRefused, nativeActionLifecycleReason(health.NativeRefusal)))
+		return
+	}
 	outcome, reason := decideLifecycle(TriggerNativeUserAction, probeState, startState, readinessState, LifecycleReasonProbeUnavailable)
 	p.finishFlight(flight, withLifecycle(health, outcome, reason))
 }
@@ -449,9 +465,34 @@ func withLifecycle(health Health, outcome LifecycleOutcome, reason LifecycleReas
 func projectLifecycleHealth(health Health, hookAvailable bool) Health {
 	projected := Decide(health.Availability, healthCause(health), health.Version, health.Endpoint, health.Connection, hookAvailable)
 	projected.InstallCapability = health.InstallCapability
+	projected.EndpointReadiness = health.EndpointReadiness
+	projected.RunningExecutable = health.RunningExecutable
+	projected.VersionRelation = health.VersionRelation
+	projected.CLIVersion = health.CLIVersion
+	projected.ManagedVersion = health.ManagedVersion
+	projected.RunningVersion = health.RunningVersion
+	projected.ManagerOwnership = health.ManagerOwnership
+	projected.RemoteControl = health.RemoteControl
+	projected.NativeAction = health.NativeAction
+	projected.NativeRefusal = health.NativeRefusal
+	projected.InterruptionRisk = health.InterruptionRisk
+	projected.OperatorRecovery = health.OperatorRecovery
 	projected.Lifecycle = health.Lifecycle
 	projected.LifecycleReason = health.LifecycleReason
 	return projected
+}
+
+func nativeActionLifecycleReason(reason NativeActionRefusal) LifecycleReason {
+	switch reason {
+	case NativeActionRefusalUnmanaged, NativeActionRefusalUnmanagedVersionSkew:
+		return LifecycleReasonUnsafeUnmanaged
+	case NativeActionRefusalVersionSkew:
+		return LifecycleReasonUnsafeVersionSkew
+	case NativeActionRefusalRuntimeVersionUnknown:
+		return LifecycleReasonUnsafeRuntimeUnknown
+	default:
+		return LifecycleReasonUnsafeOwnershipUnknown
+	}
 }
 
 func positiveDuration(value, fallback time.Duration) time.Duration {
