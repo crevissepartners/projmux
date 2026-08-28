@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.13.1](https://github.com/crevissepartners/projmux/compare/v0.13.0...v0.13.1) (2026-08-28)
+
+
+### Features
+
+* **quit:** save managed Project snapshots before shutdown ([#786](https://github.com/crevissepartners/projmux/issues/786)) ([d4fada9](https://github.com/crevissepartners/projmux/commit/d4fada92943c12299ff397df993ab1e16e7eb460))
+
+
+### Bug Fixes
+
+* **agent:** converge native control epochs on the exact socket ([#798](https://github.com/crevissepartners/projmux/issues/798)) ([0c99778](https://github.com/crevissepartners/projmux/commit/0c99778c2575a6dde8042033cebd5e5f385bc80c))
+* **attention:** resolve omitted target to the active pane ([#785](https://github.com/crevissepartners/projmux/issues/785)) ([93aa1b0](https://github.com/crevissepartners/projmux/commit/93aa1b054bf5993c56d39f8065925841a34226df))
+* **cli:** converge selectorless invocation authority ([#793](https://github.com/crevissepartners/projmux/issues/793)) ([449ce70](https://github.com/crevissepartners/projmux/commit/449ce706ec732825d9ae5f69a29af7dc146d7c9f))
+* **codex:** diagnose app-server install topology ([#782](https://github.com/crevissepartners/projmux/issues/782)) ([394237e](https://github.com/crevissepartners/projmux/commit/394237e38c08ce06a62e5ca66882d0fa0f91a98e))
+* **codex:** distinguish unmanaged app-server readiness ([#803](https://github.com/crevissepartners/projmux/issues/803)) ([ad6bb83](https://github.com/crevissepartners/projmux/commit/ad6bb831435fdb8a3b0fc1f826fcf466a1c77f01))
+* **codex:** parse live control binding from tmux safely ([#804](https://github.com/crevissepartners/projmux/issues/804)) ([d37edf3](https://github.com/crevissepartners/projmux/commit/d37edf3714007ab06f7ef281dd67f2c0d2e858e0))
+* **codex:** preserve empty-prompt create fallback ([#788](https://github.com/crevissepartners/projmux/issues/788)) ([5b8405f](https://github.com/crevissepartners/projmux/commit/5b8405f287f07c0a5050554996615e4539f20cbb))
+* **codex:** recover native observers after app-server replacement ([#805](https://github.com/crevissepartners/projmux/issues/805)) ([af79603](https://github.com/crevissepartners/projmux/commit/af7960361c85e7d7cbb3a1247b366a1e8b53c75f))
+* **codex:** supervise native lifecycle observer startup ([#800](https://github.com/crevissepartners/projmux/issues/800)) ([cf26c26](https://github.com/crevissepartners/projmux/commit/cf26c26e0445d6806d55620fd3c8ff9a314d9f45))
+* **lifecycle:** reconcile stale dead agent panes at startup ([#802](https://github.com/crevissepartners/projmux/issues/802)) ([258c432](https://github.com/crevissepartners/projmux/commit/258c43267ebc3b53ff4f9f85703424dbad8f0321))
+* **lifecycle:** replay exhausted clean-exit events ([#801](https://github.com/crevissepartners/projmux/issues/801)) ([63f78b9](https://github.com/crevissepartners/projmux/commit/63f78b92028317cf5bf1c18459e29aa5e1f4a028))
+* **lifecycle:** separate stable identity from tmux locators ([#784](https://github.com/crevissepartners/projmux/issues/784)) ([e3d1190](https://github.com/crevissepartners/projmux/commit/e3d11902bb726bb9cd08dbbb68f13166b01dff0b))
+* **metadata:** converge concurrent create lock ownership ([#797](https://github.com/crevissepartners/projmux/issues/797)) ([c50dca4](https://github.com/crevissepartners/projmux/commit/c50dca49f71cb16d1c7fd63c9a2199e064a4899f))
+* **runtime:** diagnose pre-0.13 socket marker migration ([#779](https://github.com/crevissepartners/projmux/issues/779)) ([8da992c](https://github.com/crevissepartners/projmux/commit/8da992cdc7062a27617e641cf2fa7d17754d1e0d))
+* **switch:** distinguish live and active window tabs ([#789](https://github.com/crevissepartners/projmux/issues/789)) ([3e2098c](https://github.com/crevissepartners/projmux/commit/3e2098c20f963fa496a51fe2a3026389c1d8fcf7))
+* **switch:** make sidebar anchor transport explicit ([#780](https://github.com/crevissepartners/projmux/issues/780)) ([5b56f00](https://github.com/crevissepartners/projmux/commit/5b56f00601578089f7883ef70f45d12ec928f41b))
+* **update:** close marker migration publication gap ([#783](https://github.com/crevissepartners/projmux/issues/783)) ([e4dd355](https://github.com/crevissepartners/projmux/commit/e4dd3554d9b7923c206fa8892812b75cfe8a9c1c))
+
 ## [0.13.0](https://github.com/crevissepartners/projmux/compare/v0.12.2...v0.13.0) (2026-08-26)
 
 
