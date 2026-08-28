@@ -290,6 +290,13 @@ func normalizeReviewStatus(status string) corecap.ReviewStatus {
 }
 
 func openDefaultProxyClient(ctx context.Context, projmuxVersion string) (*Client, string, error) {
+	return openDefaultProxyClientWith(ctx, projmuxVersion, false)
+}
+
+// openDefaultProxyClientWith opens the same proxy connection and negotiates the
+// upstream experimental API when the caller requires a request that upstream
+// only answers on a negotiated connection.
+func openDefaultProxyClientWith(ctx context.Context, projmuxVersion string, experimental bool) (*Client, string, error) {
 	if _, err := exec.LookPath("codex"); err != nil {
 		return nil, "", fmt.Errorf("%w: Codex executable missing", corecap.ErrUnavailable)
 	}
@@ -319,7 +326,11 @@ func openDefaultProxyClient(ctx context.Context, projmuxVersion string) (*Client
 		return nil, "", err
 	}
 	client := NewClient(websocket)
-	version, err := client.Initialize(ctx, projmuxVersion)
+	initialize := client.Initialize
+	if experimental {
+		initialize = client.InitializeExperimental
+	}
+	version, err := initialize(ctx, projmuxVersion)
 	if err != nil {
 		_ = client.Close()
 		return nil, "", err

@@ -212,6 +212,14 @@ func (c *codexBrokerCommand) discovery(override string) (codexbroker.Discovery, 
 	if !filepath.IsAbs(domain) {
 		return codexbroker.Discovery{}, usageError("internal codex-broker requires an absolute --state-domain")
 	}
+	return codexBrokerDiscoveryFor(domain)
+}
+
+// codexBrokerDiscoveryFor builds the runtime singleton contract for one
+// absolute state domain. Both the runtime entrypoint and the product binding
+// client resolve their contract here, so a client can never look for a runtime
+// under a domain the runtime would not have published itself under.
+func codexBrokerDiscoveryFor(domain string) (codexbroker.Discovery, error) {
 	discovery, err := codexbroker.NewDiscovery(domain, codexbroker.DefaultEndpointKey)
 	if err != nil {
 		return codexbroker.Discovery{}, fmt.Errorf("resolve codex broker discovery: %s", codexbroker.RefusalOf(err))
@@ -229,6 +237,12 @@ func (c *codexBrokerCommand) stateDomain() (string, error) {
 	if home == nil {
 		home = os.UserHomeDir
 	}
+	return codexBrokerStateDomain(lookupEnv, home)
+}
+
+// codexBrokerStateDomain resolves the projmux state directory the broker
+// singleton is scoped to.
+func codexBrokerStateDomain(lookupEnv func(string) string, home func() (string, error)) (string, error) {
 	homePath, err := home()
 	if err != nil {
 		return "", fmt.Errorf("resolve user home: %w", err)

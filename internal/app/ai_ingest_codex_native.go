@@ -21,6 +21,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -50,6 +51,13 @@ const (
 	codexObserverStartupEnvironment = "PROJMUX_INTERNAL_CODEX_OBSERVER_STARTUP"
 	codexObserverStartupPrefix      = "projmux-codex-observer-v1"
 	codexObserverExhaustedReason    = "reconnect-exhausted"
+
+	// codexObserverUnboundedReconnect disables the attempt ceiling for a
+	// producer that owns its own persistent reconnect policy. The endpoint
+	// broker keeps retrying with capped backoff for as long as a binding
+	// exists, so exhausting a second, smaller count here would strand a live
+	// activation on hook fallback while its endpoint was still being served.
+	codexObserverUnboundedReconnect = -1
 )
 
 type codexLifecycleConnection interface {
@@ -486,10 +494,10 @@ func (o *codexNativeObserver) continueRecovery(ctx context.Context, attempts int
 		return false, nil
 	}
 	limit := o.maxAttempts
-	if limit <= 0 {
+	if limit == 0 {
 		limit = codexObserverReconnectMaxAttempts
 	}
-	if attempts >= limit {
+	if limit > 0 && attempts >= limit {
 		// The exact guard is repeated by SetAuthority. Publishing one terminal
 		// typed fallback is the final observer write; the child then exits.
 		if err := o.sink.SetAuthority(o.identity, codexAuthorityHook, "", codexObserverExhaustedReason); err != nil {
@@ -1233,11 +1241,27 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	observer := codexNativeObserver{
 		identity:       target.Identity,
 		requireControl: true,
-		open: func(ctx context.Context) (codexLifecycleConnection, error) {
+		sink:           aiCodexLifecycleSink{command: c, runner: runner},
+		reportStartup:  codexObserverStartupReporter(),
+	}
+	// Exactly one endpoint producer serves this activation generation. The
+	// legacy per-Agent proxy observer stays reachable as the rollback seam and
+	// as the only producer on a platform the broker runtime refuses, but the
+	// two are never both live for one generation.
+	switch codexNativeLifecycleProducerFor(codexbroker.Supported()) {
+	case codexNativeProducerBroker:
+		session, err := newCodexBrokerObserverSession(target.Identity, "", nil)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = session.Close() }()
+		observer.open = session.Open
+		observer.openTimeout = codexBrokerObserverOpenTimeout
+		observer.maxAttempts = codexObserverUnboundedReconnect
+	default:
+		observer.open = func(ctx context.Context) (codexLifecycleConnection, error) {
 			return codexappserver.OpenDefaultProxy(ctx, codexappserver.DefaultProbeTimeout, version.String())
-		},
-		sink:          aiCodexLifecycleSink{command: c, runner: runner},
-		reportStartup: codexObserverStartupReporter(),
+		}
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		observer.startControl = func(epoch *codexControlEpoch) (*codexControlServer, error) {

@@ -368,6 +368,10 @@ func TestAttachProxyHelperProcess(t *testing.T) {
 			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"thread":{"id":"thread-preturn"}}}`, message.ID))
 		case methodThreadRead:
 			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"thread":{"id":"thread-preturn","cwd":"/work/project","createdAt":1,"updatedAt":2,"status":{"type":"idle"}}}}`, message.ID))
+		case methodThreadStart:
+			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"thread":{"id":"thread-preturn"}}}`, message.ID))
+		case methodTurnStart:
+			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"turn":{"id":"turn-1"}}}`, message.ID))
 		default:
 			os.Exit(24)
 		}

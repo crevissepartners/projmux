@@ -49,7 +49,7 @@ func StartDefaultThread(ctx context.Context, projmuxVersion, cwd string, roots [
 	if prompt == "" {
 		return ThreadBinding{}, &ThreadActionError{Reason: "empty-prompt", SafeFallback: true}
 	}
-	client, err := openReadyThreadClient(ctx, projmuxVersion)
+	client, err := openReadyThreadClient(ctx, projmuxVersion, false)
 	if err != nil {
 		return ThreadBinding{}, err
 	}
@@ -72,8 +72,14 @@ func StartDefaultThread(ctx context.Context, projmuxVersion, cwd string, roots [
 
 // ResumeDefaultThread loads exactly the stored thread. It never calls
 // thread/start and never creates a new conversation.
+//
+// It negotiates the upstream experimental API, because thread/resume always
+// excludes turns and upstream answers `excludeTurns` only on a negotiated
+// connection. Create deliberately stays on the plain connection: negotiating
+// there would silently put additional writable roots on the wire, and opening
+// that surface is the explicit create semantics phase, not this cutover.
 func ResumeDefaultThread(ctx context.Context, projmuxVersion, cwd string, roots []string, threadID string) (ThreadBinding, error) {
-	client, err := openReadyThreadClient(ctx, projmuxVersion)
+	client, err := openReadyThreadClient(ctx, projmuxVersion, true)
 	if err != nil {
 		return ThreadBinding{}, err
 	}
@@ -85,15 +91,31 @@ func ResumeDefaultThread(ctx context.Context, projmuxVersion, cwd string, roots 
 	return binding, nil
 }
 
-func openReadyThreadClient(ctx context.Context, projmuxVersion string) (*Client, error) {
+// openReadyThreadClient opens the connection one native create or resume needs.
+//
+// The gate is endpoint attach authority, not the rendered native-action
+// readiness: attaching to an endpoint that is already running is not process
+// ownership, so a ready, protocol-compatible, exact-current endpoint is
+// attachable whether or not the official daemon manager owns it. Every other
+// row - a skew, an unknown running version, unknown ownership, an endpoint
+// that is not ready - still refuses here, before the connection is opened and
+// therefore before any provider conversation is mutated, and it still refuses
+// as a safe fallback carrying the same typed reason it carried before.
+//
+// Daemon lifecycle authority is untouched by this: EnsureDefaultProxyReady
+// only ever invokes the official idempotent start after an exact
+// daemon-not-running probe, so an unmanaged endpoint this process may now
+// attach to still receives zero lifecycle mutations.
+func openReadyThreadClient(ctx context.Context, projmuxVersion string, experimental bool) (*Client, error) {
 	health, err := EnsureDefaultProxyReady(ctx, TriggerNativeUserAction, projmuxVersion, true)
 	if err != nil {
 		return nil, &ThreadActionError{Reason: "readiness-cancelled", SafeFallback: true, err: err}
 	}
-	if health.Source != SourceAppServer || health.Availability != AvailabilityAvailable || health.NativeAction == NativeActionRefused {
+	if health.Source != SourceAppServer || health.Availability != AvailabilityAvailable ||
+		AuthorityFor(health).Attach != EndpointAttachAllowed {
 		return nil, &ThreadActionError{Reason: string(health.LifecycleReason), Guidance: health.NativeActionGuidance(), SafeFallback: true, err: ErrDisconnected}
 	}
-	client, _, err := openDefaultProxyClient(ctx, projmuxVersion)
+	client, _, err := openDefaultProxyClientWith(ctx, projmuxVersion, experimental)
 	if err != nil {
 		return nil, &ThreadActionError{Reason: "proxy-open-failed", SafeFallback: true, err: err}
 	}

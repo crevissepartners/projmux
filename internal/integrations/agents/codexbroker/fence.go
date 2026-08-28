@@ -14,6 +14,14 @@ type EndpointKey string
 // caller believe an endpoint exists that nothing can open.
 const DefaultEndpointKey EndpointKey = "codex-app-server:default"
 
+// Supported reports whether this build can host or reach a broker runtime.
+//
+// It is the one decision a product path makes before choosing the broker as
+// its endpoint producer, because the runtime's singleton, credential, and
+// stale-artifact contracts are stated in Unix socket and filesystem-ownership
+// terms and this package accepts no weaker substitute.
+func Supported() bool { return platformSupported }
+
 // ConnectionEpoch counts the connections one Broker has opened to its
 // endpoint. It only ever increases and a value is never reused, so a message
 // or a mutation that carries an older epoch is provably from a connection the

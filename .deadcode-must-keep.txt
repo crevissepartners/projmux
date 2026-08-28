@@ -12,11 +12,9 @@ Broker.Diagnostics	The content-free broker telemetry projection is retained for 
 Broker.WriteLedger	The mutation write ledger is retained as the observable no-replay evidence surface.
 CanonicalRoutes	The canonical route table accessor is retained for cross-package coverage and generated-reference consumers.
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
-Conn.Done	The client-side runtime liveness signal is retained for the control cutover that must revoke a binding the instant its runtime dies.
 CurrentProtocol	The build's local IPC version window accessor is retained as the negotiation input an explicit caller supplies.
 DecideTeardownEvent	The pure teardown decision API is retained for lifecycle authority proofs and planned consumers.
 Discover	The background-context discovery wrapper is retained as a test and compatibility seam.
-Discovery.Endpoint	The discovery endpoint accessor is retained with the runtime singleton contract it scopes.
 Host.RuntimeID	The runtime identity accessor is retained as the authority axis clients present alongside both epochs.
 Host.Stats	The content-free runtime telemetry projection is retained for the diagnostics phase that consumes it.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
@@ -24,10 +22,6 @@ MigrateGlobalLegacyScripts	Global legacy hook migration must remain available wh
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
 ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnostics tests and the planned doctor consumer.
 Registry.snapshotPanesOf	Snapshot pane lookup remains part of the retained snapshot reconciliation implementation.
-RemoteBinding.Answer	The fenced once-per-connection approval answer over local IPC is retained as the client approval seam.
-RemoteBinding.Submit	The fenced no-replay mutation path over local IPC is retained as the client control write seam.
-RemoteBinding.ThreadID	The exact bound thread accessor is retained with the remote binding identity contract.
-RemoteBinding.authority	Client-side two-axis fence resolution is retained inside the remote binding implementation.
 Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.
 Store.Path	The Registry path accessor is retained for migration and storage-boundary tests.
