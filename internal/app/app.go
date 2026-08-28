@@ -337,6 +337,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	internalCmd.popupWaitKey = popupWaitKeyCmd
 	internalCmd.supervise = superviseCmd
 	internalCmd.activationExec = activationExecCmd
+	internalCmd.codexBroker = newCodexBrokerCommand()
 	diagnosticsCmd := newDiagnosticsCommand()
 	diagnosticsCmd.ai = ai
 	return &App{
@@ -426,6 +427,7 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 			preview: a.preview, sessionPopup: a.sessionPopup, ai: a.ai,
 			focus: a.focus, keyBroker: a.keyBroker, popupWaitKey: a.popupWaitKey,
 			supervise: a.supervise, activationExec: newActivationExecCommand(),
+			codexBroker: newCodexBrokerCommand(),
 		}
 	}
 	runtime := a.runtime
