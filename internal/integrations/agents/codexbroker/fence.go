@@ -81,6 +81,63 @@ const (
 	// RefusalDisconnectBoundary marks a mutation that terminated at a
 	// disconnect. Its result is indeterminate and it is never resent.
 	RefusalDisconnectBoundary Refusal = "disconnect-boundary"
+
+	// The codes below belong to the runtime host, its discovery, and its
+	// authenticated local IPC. They stay in this one closed set because a
+	// caller switches on Refusal without caring which layer produced it.
+
+	// RefusalDomainRequired marks a discovery contract built without an
+	// absolute state domain to scope the runtime singleton to.
+	RefusalDomainRequired Refusal = "domain-required"
+	// RefusalSocketPathTooLong marks a state domain whose derived socket path
+	// exceeds the platform-safe bound. It is reported when the contract is
+	// built, so nothing is ever created under a path that cannot be bound.
+	RefusalSocketPathTooLong Refusal = "socket-path-too-long"
+	// RefusalDiscoveryUntrusted marks a discovery directory, record, socket, or
+	// lock that is not an owner-private object of the expected kind. Such an
+	// artifact is left untouched rather than repaired: repairing it would be
+	// indistinguishable from taking over something this process does not own.
+	RefusalDiscoveryUntrusted Refusal = "discovery-untrusted"
+	// RefusalUnsupportedPlatform marks a build whose filesystem and socket
+	// semantics cannot carry the runtime's ownership contract.
+	RefusalUnsupportedPlatform Refusal = "unsupported-platform"
+	// RefusalHostUnavailable marks a discovery that found no runtime to reach.
+	RefusalHostUnavailable Refusal = "host-unavailable"
+	// RefusalHostLive marks a reclaim attempt against an artifact that still
+	// answers. A live runtime is never replaced; it is reused.
+	RefusalHostLive Refusal = "host-live"
+	// RefusalRuntimeExists marks a host start whose socket is already bound.
+	RefusalRuntimeExists Refusal = "runtime-exists"
+	// RefusalRuntimeReplaced marks work presented to a runtime other than the
+	// one that granted the authority being presented.
+	RefusalRuntimeReplaced Refusal = "runtime-replaced"
+	// RefusalHostClosed marks work asked of a runtime that is shutting down.
+	RefusalHostClosed Refusal = "host-closed"
+	// RefusalCredentialRejected marks a client whose local credential does not
+	// match the one the running host published.
+	// #nosec G101 -- this is a closed refusal code, not a credential value.
+	RefusalCredentialRejected Refusal = "credential-rejected"
+	// RefusalEndpointMismatch marks a client asking a host for an endpoint that
+	// host does not serve.
+	RefusalEndpointMismatch Refusal = "endpoint-mismatch"
+	// RefusalProtocolIncompatible marks a negotiated protocol version outside
+	// the range the receiving side accepts.
+	RefusalProtocolIncompatible Refusal = "protocol-incompatible"
+	// RefusalDrainRequired marks an incompatible client that arrived at a live
+	// runtime. The running bindings are not severed and the runtime is not
+	// forcibly replaced; the incompatible caller waits for the last binding to
+	// drain, after which a new runtime starts under exact owner proof.
+	RefusalDrainRequired Refusal = "drain-required"
+	// RefusalFrameInvalid marks an IPC frame that was oversized, malformed, or
+	// not the frame the protocol expected at that point.
+	RefusalFrameInvalid Refusal = "frame-invalid"
+	// RefusalRequestUnknown marks an IPC request kind this protocol version
+	// does not implement.
+	RefusalRequestUnknown Refusal = "request-unknown"
+	// RefusalEndpointRefused marks a mutation the upstream endpoint answered
+	// with an error. The error body is provider content, so it stops at the
+	// runtime and the client is told the classification instead.
+	RefusalEndpointRefused Refusal = "endpoint-refused"
 )
 
 // BrokerError is the typed, content-free refusal of one broker operation. Its

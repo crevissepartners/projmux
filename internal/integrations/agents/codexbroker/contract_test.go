@@ -48,9 +48,9 @@ func TestBrokerRetainsNoProviderContent(t *testing.T) {
 		}
 	}
 
-	// The two types the broker retains, as opposed to forwards, may not even
-	// be shaped like provider content.
-	for _, retained := range []any{Diagnostics{}, WriteRecord{}} {
+	// The types the broker and its runtime retain, as opposed to forward, may
+	// not even be shaped like provider content.
+	for _, retained := range []any{Diagnostics{}, WriteRecord{}, HostStats{}} {
 		valueType := reflect.TypeOf(retained)
 		for i := range valueType.NumField() {
 			name := strings.ToLower(valueType.Field(i).Name)
@@ -74,6 +74,12 @@ func TestBrokerRetainsNoProviderContent(t *testing.T) {
 		RefusalStaleConnectionEpoch, RefusalStaleBindingEpoch, RefusalResyncRequired,
 		RefusalSnapshotUnavailable, RefusalLeaseIdentityMismatch,
 		RefusalResponseAlreadyAnswered, RefusalDisconnectBoundary,
+		RefusalDomainRequired, RefusalSocketPathTooLong, RefusalDiscoveryUntrusted,
+		RefusalUnsupportedPlatform, RefusalHostUnavailable, RefusalHostLive,
+		RefusalRuntimeExists, RefusalRuntimeReplaced, RefusalHostClosed,
+		RefusalCredentialRejected, RefusalEndpointMismatch, RefusalProtocolIncompatible,
+		RefusalDrainRequired, RefusalFrameInvalid, RefusalRequestUnknown,
+		RefusalEndpointRefused,
 	} {
 		codes = append(codes, string(code))
 	}

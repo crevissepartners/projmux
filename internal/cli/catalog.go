@@ -1233,6 +1233,12 @@ var routes = []Route{
 			"projmux internal popup-wait-key",
 			"projmux internal supervise --pane-uid <uid> --generation <gen> [--agent-uid <uid> --operation-id <id> --registry-path <absolute>] -- <command> ...",
 			"projmux internal activation-exec --pane-uid <uid> --agent-uid <uid> --generation <gen> --operation-id <id> --registry-path <absolute> -- <command> ...",
+			// The Codex endpoint broker runtime is listed here but is
+			// deliberately absent from the canonical command projection: it is
+			// a per-state-domain service entrypoint, not a command spelling a
+			// user reaches for, and the canonical graph is the surface a
+			// generated reference and a release boundary are built from.
+			"projmux internal codex-broker serve|probe [--state-domain <absolute>] ...",
 		},
 		Canonical: []string{
 			"internal tmux",

@@ -21,6 +21,7 @@ var internalSubcommands = []string{
 	"popup-wait-key",
 	"supervise",
 	"activation-exec",
+	"codex-broker",
 }
 
 // internalAgentHookSubcommands lists the provider hook plumbing routes.
@@ -63,6 +64,9 @@ type internalCommand struct {
 	// tmux command string.
 	supervise      rawArgvCommand
 	activationExec rawArgvCommand
+	// codexBroker is the Codex endpoint broker runtime. It is the only
+	// internal route whose process outlives the invocation that started it.
+	codexBroker rawArgvCommand
 }
 
 func newInternalCommand() *internalCommand {
@@ -100,6 +104,8 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.supervise, "internal supervise", "supervise", nil, rest, stdout, stderr)
 	case "activation-exec":
 		return forwardRawArgv(c.activationExec, "internal activation-exec", "activation-exec", nil, rest, stdout, stderr)
+	case "codex-broker":
+		return forwardRawArgv(c.codexBroker, "internal codex-broker", "codex-broker", nil, rest, stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("internal %s is not available; this release implements: %s",
 			args[0], strings.Join(internalSubcommands, ", ")))
