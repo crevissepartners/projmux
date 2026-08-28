@@ -31,9 +31,12 @@ type managerObservation struct {
 }
 
 func observeDefaultManager(ctx context.Context, timeout time.Duration) managerObservation {
-	return observeManager(ctx, timeout, exec.LookPath, func(commandCtx context.Context, name string, args ...string) *exec.Cmd {
-		return exec.CommandContext(commandCtx, name, args...)
-	})
+	return observeManager(ctx, timeout, exec.LookPath, defaultDaemonVersionCommand)
+}
+
+func defaultDaemonVersionCommand(ctx context.Context, path string, _ ...string) *exec.Cmd {
+	// #nosec G204 -- path comes only from exec.LookPath("codex") and argv is hard-coded here to the read-only daemon version command.
+	return exec.CommandContext(ctx, path, "app-server", "daemon", "version")
 }
 
 func observeManager(ctx context.Context, timeout time.Duration, lookPath func(string) (string, error), command func(context.Context, string, ...string) *exec.Cmd) managerObservation {

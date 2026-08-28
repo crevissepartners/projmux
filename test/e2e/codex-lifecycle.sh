@@ -101,6 +101,8 @@ lifecycle_topology_snapshot() {
 
 lifecycle_topology_doctor() {
   local name="$1" path="$2" capability="$3" source="$4" availability="$5" reason="$6" probe_reason="$7" connection="$8"
+  local endpoint_readiness="$9" running_executable="${10}" version_relation="${11}" manager_ownership="${12}" remote_control="${13}"
+  local native_action="${14}" native_refusal="${15}" interruption_risk="${16}" operator_recovery="${17}"
   local codex_home="$lifecycle_topology_root/$name-codex-home"
   local before="$lifecycle_topology_root/$name.before" after="$lifecycle_topology_root/$name.after"
   local output="$lifecycle_topology_root/$name.json" stderr="$lifecycle_topology_root/$name.err"
@@ -132,16 +134,29 @@ lifecycle_topology_doctor() {
   smoke_assert_file_contains "$output" '"probe_reason": "'"$probe_reason"'"'
   smoke_assert_file_contains "$output" '"install_capability": "'"$capability"'"'
   smoke_assert_file_contains "$output" '"connection_state": "'"$connection"'"'
+  smoke_assert_file_contains "$output" '"endpoint_readiness": "'"$endpoint_readiness"'"'
+  smoke_assert_file_contains "$output" '"running_executable": "'"$running_executable"'"'
+  smoke_assert_file_contains "$output" '"version_relation": "'"$version_relation"'"'
+  smoke_assert_file_contains "$output" '"manager_ownership": "'"$manager_ownership"'"'
+  smoke_assert_file_contains "$output" '"remote_control_capability": "'"$remote_control"'"'
+  smoke_assert_file_contains "$output" '"native_action_readiness": "'"$native_action"'"'
+  smoke_assert_file_contains "$output" '"native_action_refusal": "'"$native_refusal"'"'
+  smoke_assert_file_contains "$output" '"interruption_risk": "'"$interruption_risk"'"'
+  smoke_assert_file_contains "$output" '"operator_recovery": "'"$operator_recovery"'"'
   smoke_assert_file_contains "$output" '"lifecycle_outcome": "not-attempted"'
   smoke_assert_file_contains "$output" '"lifecycle_reason": "read-only"'
 }
 
-lifecycle_topology_doctor external-ready "$lifecycle_topology_ready_shim" external-cli-only app-server available none none ready
-lifecycle_topology_doctor managed-ready "$lifecycle_topology_ready_shim" managed-ready app-server available none none ready
-lifecycle_topology_doctor endpoint-missing "$lifecycle_topology_missing_shim" external-cli-only unavailable unavailable hook-unavailable daemon-not-running disconnected
+lifecycle_topology_doctor external-ready "$lifecycle_topology_ready_shim" external-cli-only app-server available none none ready \
+  ready managed current managed disabled ready none none none
+lifecycle_topology_doctor managed-ready "$lifecycle_topology_ready_shim" managed-ready app-server available none none ready \
+  ready managed current managed disabled ready none none none
+lifecycle_topology_doctor endpoint-missing "$lifecycle_topology_missing_shim" external-cli-only unavailable unavailable hook-unavailable daemon-not-running disconnected \
+  dead unknown unknown unknown unavailable ready none none none
 
-if grep -Fq 'daemon start' "$lifecycle_topology_invocations" ||
-  [[ "$(grep -Fxc 'app-server proxy' "$lifecycle_topology_invocations" || true)" != "3" ]]; then
+if grep -Eq 'app-server daemon (start|stop|restart|kill)|enable-remote-control|disable-remote-control|(^| )login($| )|(^| )logout($| )|config (set|write)' "$lifecycle_topology_invocations" ||
+  [[ "$(grep -Fxc 'app-server proxy' "$lifecycle_topology_invocations" || true)" != "3" ]] ||
+  [[ "$(grep -Fxc 'app-server daemon version' "$lifecycle_topology_invocations" || true)" != "3" ]]; then
   echo "Codex lifecycle topology issued unexpected process calls" >&2
   cat "$lifecycle_topology_invocations" >&2
   exit 1

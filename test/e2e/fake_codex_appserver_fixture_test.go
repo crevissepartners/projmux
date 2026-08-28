@@ -2,10 +2,53 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
+
+func TestClassifyFixtureCommandUsesExactReadOnlyArgv(t *testing.T) {
+	tests := []struct {
+		args []string
+		want fixtureCommand
+	}{
+		{args: []string{"app-server", "proxy"}, want: fixtureCommandProxy},
+		{args: []string{"app-server", "daemon", "version"}, want: fixtureCommandDaemonVersion},
+		{args: []string{"app-server", "daemon", "restart"}, want: fixtureCommandUnknown},
+		{args: []string{"app-server", "proxy", "extra"}, want: fixtureCommandUnknown},
+		{args: nil, want: fixtureCommandUnknown},
+	}
+	for _, test := range tests {
+		if got := classifyFixtureCommand(test.args); got != test.want {
+			t.Fatalf("classifyFixtureCommand(%q) = %v, want %v", test.args, got, test.want)
+		}
+	}
+}
+
+func TestWriteDaemonVersionReturnsManagedCurrentFixture(t *testing.T) {
+	var output bytes.Buffer
+	if err := writeDaemonVersion(&output); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(output.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]any{
+		"status":              "running",
+		"backend":             "pid",
+		"managedCodexPath":    "/discarded/fake-managed-codex",
+		"managedCodexVersion": "0.149.0",
+		"socketPath":          "/discarded/fake-control.sock",
+		"cliVersion":          "0.149.0",
+		"appServerVersion":    "0.149.0",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("daemon version = %#v, want %#v", got, want)
+	}
+}
 
 func TestFixtureStateDirIsFixedPrivateSmokeChild(t *testing.T) {
 	root := t.TempDir()
