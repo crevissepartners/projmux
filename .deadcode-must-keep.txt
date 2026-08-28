@@ -7,18 +7,57 @@
 # they appear in deadcode output; unrelated new findings still fail the gate.
 
 AggregateTeardownEvents	Pure multi-event teardown authority is retained for lifecycle decision proofs and planned consumers.
-AttachDefaultEndpoint	The endpoint attach seam is retained for the Codex broker phases that consume it after this protocol contract lands.
+ApprovalLease.held	The approval lease presence guard is retained inside the fenced answer path it protects.
+AttachDefaultEndpoint	The endpoint attach seam is retained as the production opener the Codex endpoint broker wraps; it stays unreachable from main until a reachable package binds that broker.
 AttachError.Error	The typed attach refusal renderer is retained with the endpoint attach seam it reports.
 AttachError.Unwrap	The typed attach refusal unwrap is retained with the endpoint attach seam it reports.
+AttributeNotification	Content-free thread attribution is retained as the endpoint broker's only event routing input.
 AuthorityFor	The pure endpoint attach and daemon lifecycle authority split is retained as the C-1 decision seam.
+Binding.Answer	The fenced once-per-connection approval answer is retained as the broker approval seam.
+Binding.Close	Binding release is retained as the unbind half of the broker binding lifecycle.
+Binding.ControlAuthority	The snapshot-barrier control authority accessor is retained as the broker mutation gate.
+Binding.Events	The per-binding ordered delivery stream is retained as the broker's only event surface.
+Binding.Revocation	The closed binding revocation reason is retained with the isolation contract it reports.
+Binding.Submit	The fenced no-replay mutation path is retained as the broker control write seam.
+Binding.ThreadID	The exact bound thread accessor is retained with the durable binding identity contract.
+Binding.acceptLocked	Barrier-aware event admission is retained inside the binding isolation implementation.
+Binding.authorityLocked	Two-axis fence resolution is retained inside the broker authority implementation.
+Binding.closeBarrierLocked	The snapshot and live merge is retained inside the reconnect barrier implementation.
+Binding.emitLocked	Bounded ordered delivery is retained inside the binding isolation implementation.
+Binding.liveEventLocked	Fenced event projection and lease minting are retained inside the delivery implementation.
+Binding.revokeLocked	Binding termination is retained inside the binding lifecycle implementation.
+Binding.suspendLocked	Disconnect suspension is retained inside the reconnect barrier implementation.
+Broker.Bind	The exact-thread bind seam is retained as the endpoint broker's only binding entry point.
+Broker.Close	Broker shutdown is retained with the supervisor and binding lifecycle it terminates.
+Broker.Diagnostics	The content-free broker telemetry projection is retained for the diagnostics phases that consume it.
+Broker.WriteLedger	The mutation write ledger is retained as the observable no-replay evidence surface.
+Broker.classify	Mutation outcome classification is retained inside the indeterminate-write contract.
+Broker.open	Connection epoch installation is retained inside the endpoint supervisor implementation.
+Broker.record	Write ledger recording is retained inside the mutation classification implementation.
+Broker.revoke	Old-epoch revocation is retained inside the reconnect ordering contract.
+Broker.revokeBindingLocked	Binding-scoped revocation is retained inside the binding isolation implementation.
+Broker.routeNotification	Fenced single-binding routing is retained inside the endpoint multiplex implementation.
+Broker.runBarrier	The per-binding snapshot barrier is retained inside the reconnect implementation.
+Broker.serve	One connection epoch's service loop is retained inside the endpoint supervisor.
+Broker.shutdown	Supervisor teardown is retained inside the broker close implementation.
+Broker.signal	Supervisor wakeup is retained inside the bind and unbind implementation.
+Broker.startBarriers	Barrier scheduling is retained inside the reconnect implementation.
+Broker.stopping	The supervisor stop check is retained inside the broker close implementation.
+Broker.supervise	The reconnecting endpoint supervisor is retained as the broker connection owner.
+Broker.wanted	The reconnect-while-bound predicate is retained inside the endpoint supervisor.
+BrokerError.Error	The typed broker refusal renderer is retained with the closed refusal codes it reports.
+BrokerError.Unwrap	The typed broker refusal unwrap is retained with the closed refusal codes it reports.
 CanonicalRoutes	The canonical route table accessor is retained for cross-package coverage and generated-reference consumers.
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
 DecideTeardownEvent	The pure teardown decision API is retained for lifecycle authority proofs and planned consumers.
+DefaultOpener	The production endpoint opener is retained as the injection point for the attach seam.
 Discover	The background-context discovery wrapper is retained as a test and compatibility seam.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
+NewBroker	The endpoint broker constructor is retained for the Registry and CLI phases that consume it.
 ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnostics tests and the planned doctor consumer.
+RefusalOf	Closed refusal classification is retained as the broker typed error contract.
 Registry.snapshotPanesOf	Snapshot pane lookup remains part of the retained snapshot reconciliation implementation.
 Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.
@@ -28,13 +67,17 @@ TeardownObservations	The closed teardown-observation catalog is retained for aut
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
 attachPolicy.attach	The injected attach policy is retained as the deterministic seam behind AttachDefaultEndpoint.
 attachTimeout	The bounded attach timeout helper is retained with the attach seam it bounds.
+backoffDelay	The capped jittered reconnect wait is retained with the endpoint supervisor it paces.
 formatLegacyPaneSummary	Legacy pane-summary rendering remains required while persisted legacy pane metadata is readable.
 genericTeardownRefusal	The generic refusal constructor is retained inside the pure teardown authority proof surface.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
+refuse	The typed content-free refusal constructor is retained across the broker refusal surface.
 rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
+systemClock.After	The production broker clock wait is retained behind the injected Clock seam.
+systemClock.Now	The production broker clock reading is retained behind the injected Clock seam.
 tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
 validOwnerChain	Owner-chain validation is retained inside the pure teardown decision authority.
 validTeardownEventKind	The closed event-kind validator is retained inside the pure teardown decision authority.
