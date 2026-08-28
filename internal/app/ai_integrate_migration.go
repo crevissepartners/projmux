@@ -47,7 +47,11 @@ func (c *aiCommand) beginManagedIngestProducerFileMigration() (int, func() error
 	}
 
 	mutations := make([]managedIngestFileMutation, 0, 4)
-	if strings.Contains(codexPlan.current, codexHooksMarkerBegin) && codexPlan.changed {
+	// A Codex re-serialization can drop the marker comments while leaving the
+	// hook wiring projmux authored in place. That file is still projmux-owned,
+	// so this path converges it instead of refusing; it still never installs
+	// wiring into a config that has none.
+	if (strings.Contains(codexPlan.current, codexHooksMarkerBegin) || codexPlan.unmarked) && codexPlan.changed {
 		mutations = append(mutations, managedIngestFileMutation{
 			path: codexPlan.path, current: codexPlan.current, next: codexPlan.next, mode: 0o644, label: "Codex config",
 			write: func() error { return c.writeCodexConfig(codexPlan.path, []byte(codexPlan.next)) },

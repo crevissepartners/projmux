@@ -59,6 +59,10 @@ type codexIntegrationPlan struct {
 	action   string
 	changed  bool
 	conflict string
+	// unmarked reports that the config carried projmux-authored hook wiring
+	// outside a marker block, which the automatic convergence path treats as
+	// projmux-owned exactly like a marker-owned file.
+	unmarked bool
 }
 
 type claudeHookPlan struct {
@@ -267,19 +271,19 @@ func (c *aiCommand) planCodexHooksIntegration(remove bool) (codexIntegrationPlan
 		return codexIntegrationPlan{}, err
 	}
 
-	withoutHooks, hadHooks, err := removeManagedBlock(current, codexHooksMarkerBegin, codexHooksMarkerEnd, "Codex config contains an unterminated projmux-managed hooks block")
+	withoutHooks, hadHooks, err := removeManagedCodexHooksBlock(current)
 	if err != nil {
 		return codexIntegrationPlan{}, err
 	}
-	withoutManaged := withoutHooks
-	plan := codexIntegrationPlan{path: path, current: current, next: withoutManaged}
+	withoutManaged, unmarked := stripUnmarkedProjmuxCodexHooks(withoutHooks)
+	plan := codexIntegrationPlan{path: path, current: current, next: withoutManaged, unmarked: unmarked > 0}
 
 	if remove {
 		withoutManaged, removedFeature := removeManagedCodexHooksFeature(withoutManaged)
 		plan.next = withoutManaged
-		plan.changed = (hadHooks || removedFeature) && withoutManaged != current
+		plan.changed = (hadHooks || plan.unmarked || removedFeature) && withoutManaged != current
 		switch {
-		case hadHooks || removedFeature:
+		case hadHooks || plan.unmarked || removedFeature:
 			plan.action = "removed projmux-managed Codex hooks wiring from " + path
 		default:
 			plan.action = "no changes: projmux-managed Codex wiring is not present in " + path
@@ -650,6 +654,11 @@ func printCodexIntegrationDryRun(stdout io.Writer, plan codexIntegrationPlan) er
 			return err
 		}
 	}
+	if plan.unmarked {
+		if _, err := fmt.Fprintln(stdout, "recovery: adopting projmux-authored Codex hook wiring left outside a managed block"); err != nil {
+			return err
+		}
+	}
 	if !plan.changed {
 		_, err := fmt.Fprintf(stdout, "%s\n", plan.action)
 		return err
@@ -759,25 +768,38 @@ func codexHooksBlockForEvents(includeFeature bool, events []string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func removeManagedBlock(content, begin, end, unterminatedMessage string) (string, bool, error) {
+// removeManagedCodexHooksBlock drops the projmux-managed marker block but keeps
+// whatever the provider wrote inside it. Codex re-serializes the same file and
+// can land `[hooks.state]` — the trust the user granted — between the markers,
+// so the block is not a projmux-owned byte range: only the hook definitions and
+// the feature toggle projmux authored are. Everything else is lifted back out
+// verbatim, in document order, where the block used to be.
+func removeManagedCodexHooksBlock(content string) (string, bool, error) {
 	lines := strings.SplitAfter(content, "\n")
 	var out strings.Builder
 	removed := false
 	for i := 0; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) != begin {
+		if strings.TrimSpace(lines[i]) != codexHooksMarkerBegin {
 			out.WriteString(lines[i])
 			continue
 		}
 		removed = true
+		var block strings.Builder
 		foundEnd := false
 		for i++; i < len(lines); i++ {
-			if strings.TrimSpace(lines[i]) == end {
+			if strings.TrimSpace(lines[i]) == codexHooksMarkerEnd {
 				foundEnd = true
 				break
 			}
+			block.WriteString(lines[i])
 		}
 		if !foundEnd {
-			return "", false, errors.New(unterminatedMessage)
+			//lint:ignore ST1005 Codex is the canonical provider name in this diagnostic.
+			return "", false, errors.New("Codex config contains an unterminated projmux-managed hooks block")
+		}
+		preserved, _ := stripProjmuxManagedCodexHookSections(block.String(), true)
+		if strings.TrimSpace(preserved) != "" {
+			out.WriteString(strings.Trim(preserved, "\n") + "\n")
 		}
 	}
 	return out.String(), removed, nil
