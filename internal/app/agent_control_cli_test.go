@@ -313,6 +313,64 @@ func TestAgentControlCLIStaleBindingCallsNoControl(t *testing.T) {
 	}
 }
 
+func TestAgentControlCLIReconnectGapAndIdentityDriftRefuseEveryPublicWrite(t *testing.T) {
+	actions := []struct {
+		name string
+		args []string
+	}{
+		{name: "start", args: []string{"turn", "start", "uid:agt-alpha-codex", "--", "new turn"}},
+		{name: "steer", args: []string{"turn", "steer", "uid:agt-alpha-codex", "--", "steer turn"}},
+		{name: "interrupt", args: []string{"turn", "interrupt", "uid:agt-alpha-codex"}},
+		{name: "approval", args: []string{"approval", "review", "uid:agt-alpha-codex", "--request", "7"}},
+	}
+	states := []struct {
+		name          string
+		mutate        func(*fakeResourceStore, *staticAgentControlBinding)
+		wantTransport int
+	}{
+		{name: "disconnect invalidating", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) {
+			binding.live.Authority, binding.live.Epoch, binding.live.Reason = codexAuthorityInvalidating, "epoch-1", "disconnected"
+		}},
+		{name: "reconnect hook gap", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) {
+			binding.live.Authority, binding.live.Epoch, binding.live.Reason = codexAuthorityHook, "", "disconnected"
+		}},
+		{name: "reconnect exhausted", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) {
+			binding.live.Authority, binding.live.Epoch, binding.live.Reason = codexAuthorityHook, "", codexObserverExhaustedReason
+		}},
+		{name: "generation replaced", wantTransport: 1, mutate: func(store *fakeResourceStore, _ *staticAgentControlBinding) {
+			pane, _ := store.registry.Pane("pan-alpha-codex")
+			pane.Status.Activation.Generation = "generation-replaced"
+		}},
+		{name: "thread replaced", mutate: func(store *fakeResourceStore, _ *staticAgentControlBinding) {
+			pane, _ := store.registry.Pane("pan-alpha-codex")
+			pane.Status.Activation.Codex.ThreadID = "thread-replaced"
+		}},
+	}
+	for _, state := range states {
+		for _, action := range actions {
+			t.Run(state.name+"/"+action.name, func(t *testing.T) {
+				cmd, store, binding := exactControlCLICommand(t)
+				state.mutate(store, binding)
+				wire := &fakeExactControlWire{}
+				epoch := newCodexControlEpoch(wire, phase6CLIIdentity(), "epoch-1", codexappserver.LifecycleSnapshot{
+					ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive,
+					TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+				}, func(codexLifecycleIdentity) bool { return true })
+				calls := 0
+				cmd.controlCall = func(_ context.Context, _ string, _ codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
+					calls++
+					return epoch.Handle(context.Background(), request), nil
+				}
+				cmd.controlPicker = &scriptedAgentControlPicker{answers: []intpicker.Result{{Value: "decision:accept"}}}
+				_, _, err := runRoute(t, cmd, action.args...)
+				if err == nil || calls != state.wantTransport || wire.writes() != 0 {
+					t.Fatalf("error=%v control transports=%d want=%d app-server writes=%d", err, calls, state.wantTransport, wire.writes())
+				}
+			})
+		}
+	}
+}
+
 func TestAgentControlCLIRegistryAndLiveIdentityMismatchIsTypedAndCallsNoControl(t *testing.T) {
 	for _, test := range []struct {
 		name   string

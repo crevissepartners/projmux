@@ -104,6 +104,11 @@ func serveProxy() error {
 		if json.Unmarshal(payload, &message) != nil {
 			return errors.New("invalid JSON request")
 		}
+		if message.Method == "turn/start" || message.Method == "turn/steer" || message.Method == "turn/interrupt" || (message.Method == "" && len(message.ID) > 0) {
+			if err := recordProviderWrite(message.Method); err != nil {
+				return err
+			}
+		}
 		switch message.Method {
 		case "initialize":
 			if err := writeResult(message.ID, map[string]any{"userAgent": "codex-cli/0.149.0", "platformFamily": "linux", "platformOs": "linux"}); err != nil {
@@ -273,6 +278,26 @@ func markGate(name string) error {
 		return err
 	}
 	return os.WriteFile(filepath.Join(dir, name), []byte("ready\n"), 0o600)
+}
+
+func recordProviderWrite(method string) error {
+	dir, err := fixtureStateDir()
+	if err != nil {
+		return err
+	}
+	if method == "" {
+		method = "server-response"
+	}
+	path := filepath.Join(dir, "provider-writes")
+	// #nosec G304 -- fixtureStateDir validates the isolated smoke child and the
+	// provider-writes leaf is fixed under it.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = fmt.Fprintln(file, method)
+	return err
 }
 
 func writeResult(id json.RawMessage, result any) error {

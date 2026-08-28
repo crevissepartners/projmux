@@ -294,9 +294,10 @@ if [[ "$lifecycle_agent_path" != "$lifecycle_socket_path" ]] ||
   exit 1
 fi
 lifecycle_generation="$(lifecycle_pmx describe pane "uid:$lifecycle_pane_uid" | awk '$1 == "BindingGeneration:" { print $2; exit }')"
-if [[ -z "$lifecycle_pane_uid" || -z "$lifecycle_generation" ]]; then
-  echo "native lifecycle fixture could not resolve exact Pane/generation identity" >&2
-  exit 1
+lifecycle_agent_uid="$(lifecycle_pmx get agents --project "uid:$lifecycle_project_uid" --window "uid:$lifecycle_window_uid" -o uid)"
+if [[ -z "$lifecycle_pane_uid" || -z "$lifecycle_generation" || -z "$lifecycle_agent_uid" ]]; then
+	echo "native lifecycle fixture could not resolve exact Pane/generation identity" >&2
+	exit 1
 fi
 
 lifecycle_pmx_hook() {
@@ -475,6 +476,29 @@ fi
 touch "$lifecycle_fixture_state/disconnect"
 wait_lifecycle_option @projmux_codex_authority provider-hook "ordered disconnect fallback"
 wait_lifecycle_option @projmux_ai_badge_kind "" "disconnect stale badge clear"
+
+# Public native mutations must stop at the live-binding boundary throughout
+# the reconnect gap. The fake endpoint records every turn mutation and server
+# response, so compare the exact count before and after all four public paths.
+provider_writes_before="$(wc -l <"$lifecycle_fixture_state/provider-writes" | tr -d '[:space:]')"
+assert_gap_control_refused() {
+	local label="$1"
+	shift
+	if lifecycle_pmx "$@" >"$lifecycle_root/gap-$label.out" 2>"$lifecycle_root/gap-$label.err"; then
+		echo "reconnect gap unexpectedly accepted public control: $label" >&2
+		exit 1
+	fi
+}
+assert_gap_control_refused start agent turn start "uid:$lifecycle_agent_uid" -- "gap start"
+assert_gap_control_refused steer agent turn steer "uid:$lifecycle_agent_uid" -- "gap steer"
+assert_gap_control_refused interrupt agent turn interrupt "uid:$lifecycle_agent_uid"
+assert_gap_control_refused approval agent approval review "uid:$lifecycle_agent_uid" --request request-actionable
+provider_writes_after="$(wc -l <"$lifecycle_fixture_state/provider-writes" | tr -d '[:space:]')"
+if [[ "$provider_writes_after" != "$provider_writes_before" ]]; then
+	echo "reconnect gap reached the fake app-server wire: before=$provider_writes_before after=$provider_writes_after" >&2
+	cat "$lifecycle_fixture_state/provider-writes" >&2
+	exit 1
+fi
 
 # Only after the invalidation clear made provider-hook current may the same raw
 # hook path project a badge again.

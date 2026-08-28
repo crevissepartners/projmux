@@ -39,14 +39,17 @@ const (
 	codexAuthorityInvalidating = "invalidating"
 	codexAuthorityHook         = "provider-hook"
 
-	codexObserverReconnectDelay = time.Second
-	codexObserverBindingDelay   = 25 * time.Millisecond
-	codexObserverBindingTimeout = 3 * time.Second
-	codexObserverStartupTimeout = 3 * time.Second
-	codexObserverStartupSettle  = 75 * time.Millisecond
+	codexObserverReconnectDelay       = 100 * time.Millisecond
+	codexObserverReconnectMaxDelay    = time.Second
+	codexObserverReconnectMaxAttempts = 6
+	codexObserverBindingDelay         = 25 * time.Millisecond
+	codexObserverBindingTimeout       = 3 * time.Second
+	codexObserverStartupTimeout       = 3 * time.Second
+	codexObserverStartupSettle        = 75 * time.Millisecond
 
 	codexObserverStartupEnvironment = "PROJMUX_INTERNAL_CODEX_OBSERVER_STARTUP"
 	codexObserverStartupPrefix      = "projmux-codex-observer-v1"
+	codexObserverExhaustedReason    = "reconnect-exhausted"
 )
 
 type codexLifecycleConnection interface {
@@ -101,6 +104,9 @@ type codexNativeObserver struct {
 	open           func(context.Context) (codexLifecycleConnection, error)
 	sink           codexLifecycleSink
 	delay          time.Duration
+	maxDelay       time.Duration
+	maxAttempts    int
+	waitRecovery   func(context.Context, time.Duration) bool
 	bindingTimeout time.Duration
 	openTimeout    time.Duration
 	sequence       uint64
@@ -120,6 +126,8 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 	if delay <= 0 {
 		delay = codexObserverReconnectDelay
 	}
+	recovering := false
+	recoveryAttempts := 0
 	for ctx.Err() == nil {
 		bindingTimeout := o.bindingTimeout
 		if bindingTimeout <= 0 {
@@ -147,7 +155,17 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		client, err := o.open(openCtx)
 		cancelOpen()
 		if err != nil {
-			o.setStartupFallback(codexNativeReason(err))
+			reason := codexNativeReason(err)
+			if recovering {
+				recoveryAttempts++
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+					return recoveryErr
+				} else if !retry {
+					return nil
+				}
+				continue
+			}
+			o.setStartupFallback(reason)
 			if !waitCodexObserver(ctx, delay) {
 				return nil
 			}
@@ -155,6 +173,15 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		}
 		if !client.LifecycleEventsAvailable() {
 			_ = client.Close()
+			if recovering {
+				recoveryAttempts++
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+					return recoveryErr
+				} else if !retry {
+					return nil
+				}
+				continue
+			}
 			o.setStartupFallback("unsupported")
 			if !waitCodexObserver(ctx, delay) {
 				return nil
@@ -169,10 +196,21 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		cancel()
 		if snapshotErr != nil || !o.sink.BindingCurrent(o.identity) {
 			_ = client.Close()
+			if !o.sink.BindingCurrent(o.identity) {
+				o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
+				return nil
+			}
+			if recovering {
+				recoveryAttempts++
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+					return recoveryErr
+				} else if !retry {
+					return nil
+				}
+				continue
+			}
 			if snapshotErr != nil {
 				o.setStartupFallback(codexNativeReason(snapshotErr))
-			} else {
-				o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
 			}
 			if !waitCodexObserver(ctx, delay) {
 				return nil
@@ -182,6 +220,15 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		projection := o.reducer.begin(epoch, o.identity, snapshot)
 		if !projection.Accepted {
 			_ = client.Close()
+			if recovering {
+				recoveryAttempts++
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+					return recoveryErr
+				} else if !retry {
+					return nil
+				}
+				continue
+			}
 			o.setStartupFallback("protocol-error")
 			return errors.New("codex native lifecycle snapshot did not match exact binding")
 		}
@@ -190,6 +237,15 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			_ = client.Close()
 			if transitionErr != nil {
 				return transitionErr
+			}
+			if recovering {
+				recoveryAttempts++
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+					return recoveryErr
+				} else if !retry {
+					return nil
+				}
+				continue
 			}
 			if !waitCodexObserver(ctx, delay) {
 				return nil
@@ -219,6 +275,15 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			if cleanupErr != nil {
 				return cleanupErr
 			}
+			if recovering {
+				recoveryAttempts++
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+					return recoveryErr
+				} else if !retry {
+					return nil
+				}
+				continue
+			}
 			if !waitCodexObserver(ctx, delay) {
 				return nil
 			}
@@ -242,6 +307,8 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			return errors.Join(err, cleanupErr)
 		}
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupReady, Epoch: epochLabel})
+		recovering = false
+		recoveryAttempts = 0
 
 		reconnectReason := "disconnected"
 		invalidated := false
@@ -397,11 +464,65 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		if stopAfterTransition {
 			return nil
 		}
-		if !waitCodexObserver(ctx, delay) {
+		recovering = true
+		recoveryAttempts = 0
+		if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+			return recoveryErr
+		} else if !retry {
 			return nil
 		}
 	}
 	return nil
+}
+
+// continueRecovery is the only retry scheduler after a ready epoch is lost.
+// The old control endpoint is already revoked and the invalidation/fallback is
+// already published before this method is called. Every caller increments the
+// attempt count only after one failed replacement open, snapshot, or control
+// proof, so maxAttempts is an exact wire-open bound rather than a timer bound.
+func (o *codexNativeObserver) continueRecovery(ctx context.Context, attempts int) (bool, error) {
+	if !o.sink.BindingCurrent(o.identity) {
+		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
+		return false, nil
+	}
+	limit := o.maxAttempts
+	if limit <= 0 {
+		limit = codexObserverReconnectMaxAttempts
+	}
+	if attempts >= limit {
+		// The exact guard is repeated by SetAuthority. Publishing one terminal
+		// typed fallback is the final observer write; the child then exits.
+		if err := o.sink.SetAuthority(o.identity, codexAuthorityHook, "", codexObserverExhaustedReason); err != nil {
+			if !o.sink.BindingCurrent(o.identity) {
+				return false, nil
+			}
+			return false, fmt.Errorf("publish Codex observer recovery exhaustion: %w", err)
+		}
+		return false, nil
+	}
+	delay := o.delay
+	if delay <= 0 {
+		delay = codexObserverReconnectDelay
+	}
+	maximum := o.maxDelay
+	if maximum <= 0 {
+		maximum = codexObserverReconnectMaxDelay
+	}
+	if maximum < delay {
+		maximum = delay
+	}
+	for index := 0; index < attempts && delay < maximum; index++ {
+		if delay > maximum/2 {
+			delay = maximum
+			break
+		}
+		delay *= 2
+	}
+	wait := o.waitRecovery
+	if wait == nil {
+		wait = waitCodexObserver
+	}
+	return wait(ctx, delay), nil
 }
 
 func (o *codexNativeObserver) currentTime() time.Time {
