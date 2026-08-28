@@ -100,11 +100,17 @@ func openReadyThreadClient(ctx context.Context, projmuxVersion string) (*Client,
 	return client, nil
 }
 
-// StartThread performs the typed v2 thread/start request.
+// StartThread performs the typed v2 thread/start request. Additional writable
+// roots are an experimental-only field, so they are refused before the wire on
+// a connection whose initialize did not negotiate that capability.
 func (c *Client) StartThread(ctx context.Context, cwd string, roots []string) (ThreadBinding, error) {
+	workspaceRoots, err := c.negotiatedRoots(roots)
+	if err != nil {
+		return ThreadBinding{}, err
+	}
 	var result threadResult
 	if err := c.Request(ctx, methodThreadStart, threadStartParams{
-		CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: cleanRoots(roots),
+		CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: workspaceRoots,
 	}, &result); err != nil {
 		return ThreadBinding{}, err
 	}
@@ -122,9 +128,13 @@ func (c *Client) ResumeThread(ctx context.Context, threadID, cwd string, roots [
 	if threadID == "" {
 		return ThreadBinding{}, fmt.Errorf("%w: resume thread is empty", ErrProtocol)
 	}
+	workspaceRoots, err := c.negotiatedRoots(roots)
+	if err != nil {
+		return ThreadBinding{}, err
+	}
 	var result threadResult
 	if err := c.Request(ctx, methodThreadResume, threadResumeParams{
-		ThreadID: threadID, CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: cleanRoots(roots), ExcludeTurns: true,
+		ThreadID: threadID, CWD: strings.TrimSpace(cwd), RuntimeWorkspaceRoots: workspaceRoots, ExcludeTurns: true,
 	}, &result); err != nil {
 		return ThreadBinding{}, err
 	}
@@ -155,6 +165,18 @@ func (c *Client) StartTurn(ctx context.Context, threadID, prompt, requestKey str
 		return "", fmt.Errorf("%w: turn/start returned no turn id", ErrProtocol)
 	}
 	return turnID, nil
+}
+
+// negotiatedRoots returns the cleaned additional writable roots this
+// connection may put on the wire. An empty list is always allowed; a non-empty
+// one requires the negotiated experimental API capability and is otherwise a
+// typed unsupported refusal with zero requests sent.
+func (c *Client) negotiatedRoots(roots []string) ([]string, error) {
+	cleaned := cleanRoots(roots)
+	if len(cleaned) > 0 && !c.ExperimentalAPI() {
+		return nil, fmt.Errorf("%w: %w: additional writable roots", ErrUnsupported, ErrExperimentalRequired)
+	}
+	return cleaned, nil
 }
 
 func cleanRoots(roots []string) []string {

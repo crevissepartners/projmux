@@ -13,6 +13,13 @@ import (
 // to Codex. The setup is bounded and every failure is collapsed to the
 // existing content-free transport errors.
 func OpenDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersion string) (*Client, error) {
+	return openDefaultProxy(ctx, timeout, projmuxVersion, false)
+}
+
+// openDefaultProxy is the single stdio-proxy opener. experimental selects the
+// explicit experimental initialize handshake; everything else, including the
+// zero daemon lifecycle mutation contract, is identical on both paths.
+func openDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersion string, experimental bool) (*Client, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -52,7 +59,7 @@ func OpenDefaultProxy(ctx context.Context, timeout time.Duration, projmuxVersion
 		return nil, classifyProxyOpenError(setupCtx, err)
 	}
 	client := NewClient(websocket)
-	if _, err := client.Initialize(setupCtx, projmuxVersion); err != nil {
+	if _, err := client.initialize(setupCtx, projmuxVersion, experimental); err != nil {
 		_ = client.Close()
 		return nil, classifyProxyOpenError(setupCtx, err)
 	}

@@ -6,6 +6,7 @@ import (
 	"crypto/sha1" // #nosec G505 -- test implementation of the RFC 6455 handshake.
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -63,7 +64,7 @@ func TestStartDefaultThreadEmptyAndPromptedRequestCounts(t *testing.T) {
 		t.Setenv("PROJMUX_CODEX_THREAD_COUNT", countPath)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		binding, err := StartDefaultThread(ctx, "0.13.0", "/work/project", []string{"/work/extra"}, "exact prompt", "generation-prompted")
+		binding, err := StartDefaultThread(ctx, "0.13.0", "/work/project", nil, "exact prompt", "generation-prompted")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -83,6 +84,29 @@ func TestStartDefaultThreadEmptyAndPromptedRequestCounts(t *testing.T) {
 		} {
 			if got := counts[event]; got != want {
 				t.Fatalf("%s count = %d, want %d; all=%v", event, got, want, counts)
+			}
+		}
+	})
+
+	t.Run("additional roots refuse before any thread request", func(t *testing.T) {
+		countPath := filepath.Join(t.TempDir(), "requests")
+		t.Setenv("PROJMUX_CODEX_THREAD_COUNT", countPath)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		binding, err := StartDefaultThread(ctx, "0.13.0", "/work/project", []string{"/work/extra"}, "exact prompt", "generation-roots")
+		if !errors.Is(err, ErrExperimentalRequired) || !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("roots error = %v", err)
+		}
+		if binding != (ThreadBinding{}) || !CanFallback(err) {
+			t.Fatalf("roots binding = %#v, safe fallback=%t", binding, CanFallback(err))
+		}
+		counts := map[string]int{}
+		for _, event := range readEvents(countPath) {
+			counts[event]++
+		}
+		for _, forbidden := range []string{methodThreadStart, methodTurnStart} {
+			if counts[forbidden] != 0 {
+				t.Fatalf("%s count = %d on a connection with no experimental capability; all=%v", forbidden, counts[forbidden], counts)
 			}
 		}
 	})
@@ -171,7 +195,7 @@ func TestNativeCreateSendsOnePromptAndReturnsExactThreadTurn(t *testing.T) {
 	}()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	binding, err := client.StartThread(ctx, "/work/project", []string{"/work/extra"})
+	binding, err := client.StartThread(ctx, "/work/project", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
