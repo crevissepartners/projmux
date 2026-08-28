@@ -24,6 +24,18 @@ var (
 	ErrUnsupported  = errors.New("codex app-server method unsupported")
 	ErrProtocol     = errors.New("codex app-server protocol error")
 	ErrDisconnected = errors.New("codex app-server disconnected")
+
+	// ErrResponseAlreadySent marks a second attempt to answer one inbound
+	// server request on the same connection. The response authority is
+	// connection-scoped and is consumed by the first attempt, so the duplicate
+	// is refused before any byte reaches the wire.
+	ErrResponseAlreadySent = errors.New("codex app-server server request already answered")
+
+	// ErrExperimentalRequired marks a request field that upstream accepts only
+	// on a connection whose initialize negotiated the experimental API
+	// capability. It always wraps ErrUnsupported so existing capability
+	// classification keeps working.
+	ErrExperimentalRequired = errors.New("codex app-server experimental API capability not negotiated")
 )
 
 type readWriteCloser interface {
@@ -51,17 +63,27 @@ type Client struct {
 	err     error
 	version string
 	once    sync.Once
+
+	// answered is the connection-scoped response-once ledger for inbound
+	// server requests. Entries are kind-tagged so the string id "1" and the
+	// number id 1 stay distinct, and they are never released: at-most-once on
+	// the wire outranks retrying an answer whose delivery is already unknown.
+	answered map[string]struct{}
+	// experimental records whether this connection's initialize negotiated the
+	// upstream experimental API capability.
+	experimental bool
 }
 
 // NewClient starts a bounded reader over stream. The caller must Initialize
 // before sending any other request.
 func NewClient(stream readWriteCloser) *Client {
 	c := &Client{
-		stream:  stream,
-		nextID:  1,
-		pending: make(map[int64]chan response),
-		events:  make(chan Notification, notificationBacklog),
-		done:    make(chan struct{}),
+		stream:   stream,
+		nextID:   1,
+		pending:  make(map[int64]chan response),
+		events:   make(chan Notification, notificationBacklog),
+		done:     make(chan struct{}),
+		answered: make(map[string]struct{}),
 	}
 	go c.readLoop()
 	return c
@@ -73,9 +95,27 @@ func NewClient(stream readWriteCloser) *Client {
 // safe domain type rather than persisting the raw payload.
 func (c *Client) Notifications() <-chan Notification { return c.events }
 
-// Initialize performs the required single initialize/initialized handshake.
+// Initialize performs the required single initialize/initialized handshake
+// without requesting the upstream experimental API capability.
 func (c *Client) Initialize(ctx context.Context, version string) (string, error) {
 	return c.initialize(ctx, version, false)
+}
+
+// InitializeExperimental performs the same single handshake and explicitly
+// requests the upstream experimental API capability. Only a connection opened
+// this way may carry experimental-only request fields such as additional
+// writable workspace roots; every other connection refuses them before the
+// wire instead of letting upstream reject the whole request.
+func (c *Client) InitializeExperimental(ctx context.Context, version string) (string, error) {
+	return c.initialize(ctx, version, true)
+}
+
+// ExperimentalAPI reports whether this connection negotiated the experimental
+// API capability during its initialize handshake.
+func (c *Client) ExperimentalAPI() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.experimental
 }
 
 func (c *Client) initialize(ctx context.Context, version string, experimental bool) (string, error) {
@@ -94,6 +134,7 @@ func (c *Client) initialize(ctx context.Context, version string, experimental bo
 	negotiatedVersion := safeVersion(result.UserAgent)
 	c.mu.Lock()
 	c.version = negotiatedVersion
+	c.experimental = experimental
 	c.mu.Unlock()
 	return negotiatedVersion, nil
 }
@@ -296,17 +337,52 @@ func (c *Client) routeFrame(frame []byte) error {
 }
 
 // RespondServerRequest writes one response using the exact scalar request id
-// received from the server. The caller owns response-once state; this method
-// deliberately refuses reconstructed, object, array, null, fractional, and
-// out-of-range ids before touching the wire.
+// received from the server. It deliberately refuses reconstructed, object,
+// array, null, fractional, and out-of-range ids before touching the wire, and
+// it owns the connection-scoped response-once state: the first attempt for one
+// id consumes that request's response authority, every later attempt on the
+// same connection is refused with ErrResponseAlreadySent and writes zero bytes,
+// and a disconnected or replaced connection refuses all of them.
 func (c *Client) RespondServerRequest(ctx context.Context, rawID json.RawMessage, result any) error {
-	if _, err := normalizeServerRequestID(rawID); err != nil || len(rawID) == 0 {
-		if err == nil {
-			err = fmt.Errorf("%w: missing server request id", ErrProtocol)
-		}
+	key, err := serverRequestResponseKey(rawID)
+	if err != nil {
+		return err
+	}
+	if err := c.claimServerRequestResponse(key); err != nil {
 		return err
 	}
 	return c.writeJSONContext(ctx, wireServerResponse{ID: append(json.RawMessage(nil), rawID...), Result: result})
+}
+
+// serverRequestResponseKey returns the connection-scoped response-once key for
+// one raw server request id. The key keeps the wire kind so a string id and a
+// numeric id that normalize to the same text remain two distinct requests.
+func serverRequestResponseKey(raw json.RawMessage) (string, error) {
+	normalized, err := normalizeServerRequestID(raw)
+	if err != nil {
+		return "", err
+	}
+	if normalized == "" {
+		return "", fmt.Errorf("%w: missing server request id", ErrProtocol)
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		return "string:" + normalized, nil
+	}
+	return "number:" + normalized, nil
+}
+
+func (c *Client) claimServerRequestResponse(key string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil {
+		return c.err
+	}
+	if _, done := c.answered[key]; done {
+		return ErrResponseAlreadySent
+	}
+	c.answered[key] = struct{}{}
+	return nil
 }
 
 func normalizeServerRequestID(raw json.RawMessage) (string, error) {
