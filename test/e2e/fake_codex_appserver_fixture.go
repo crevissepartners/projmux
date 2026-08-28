@@ -100,6 +100,9 @@ func serveProxy() error {
 		var message struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
+			Params struct {
+				IncludeTurns bool `json:"includeTurns"`
+			} `json:"params"`
 		}
 		if json.Unmarshal(payload, &message) != nil {
 			return errors.New("invalid JSON request")
@@ -127,7 +130,24 @@ func serveProxy() error {
 			if err := writeResult(message.ID, map[string]any{"turn": map[string]any{"id": "turn-phase3", "status": "inProgress"}}); err != nil {
 				return err
 			}
+		case "thread/resume":
+			// The endpoint broker subscribes the exact thread before it reads
+			// it. The subscription creates nothing and starts no turn.
+			if err := writeResult(message.ID, map[string]any{"thread": map[string]any{"id": "thread-phase3"}}); err != nil {
+				return err
+			}
 		case "thread/read":
+			if !message.Params.IncludeTurns {
+				// The broker's pre-turn bootstrap snapshot. It carries no turn,
+				// so it is not the lifecycle epoch the scripted scenario steps.
+				if err := writeResult(message.ID, map[string]any{"thread": map[string]any{
+					"id": "thread-phase3", "cwd": "/discarded", "createdAt": 1, "updatedAt": 2,
+					"status": map[string]any{"type": "active", "activeFlags": []string{}},
+				}}); err != nil {
+					return err
+				}
+				continue
+			}
 			observerProxy = true
 			epoch, err := nextObserverEpoch()
 			if err != nil {

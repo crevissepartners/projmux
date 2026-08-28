@@ -120,12 +120,19 @@ func (c *Client) LifecycleEventsAvailable() bool {
 // initialized. The wire response can contain rich turn items, but the decoder
 // selects only identifiers and closed statuses and never retains item content.
 func (c *Client) ReadLifecycleSnapshot(ctx context.Context, threadID string) (LifecycleSnapshot, error) {
+	return readLifecycleSnapshot(ctx, c, threadID)
+}
+
+// readLifecycleSnapshot owns the one decoding of the snapshot wire shape, so a
+// connection reached through the endpoint broker converges a thread exactly as
+// this process's own client does.
+func readLifecycleSnapshot(ctx context.Context, requester Requester, threadID string) (LifecycleSnapshot, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return LifecycleSnapshot{}, fmt.Errorf("%w: lifecycle snapshot thread is empty", ErrProtocol)
 	}
 	var result lifecycleThreadReadResult
-	if err := c.Request(ctx, methodThreadRead, lifecycleThreadReadParams{ThreadID: threadID, IncludeTurns: true}, &result); err != nil {
+	if err := requester.Request(ctx, methodThreadRead, lifecycleThreadReadParams{ThreadID: threadID, IncludeTurns: true}, &result); err != nil {
 		return LifecycleSnapshot{}, err
 	}
 	if strings.TrimSpace(result.Thread.ID) != threadID {

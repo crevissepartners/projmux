@@ -248,8 +248,19 @@ func (s *session) handleAnswer(request wireRequest) {
 // pump forwards one binding's ordered stream and reports its revocation.
 func (s *session) pump(binding *Binding) {
 	thread := binding.ThreadID()
-	for event := range binding.Events() {
-		s.send(wireReply{Kind: replyEvent, Thread: thread, Event: wireEventOf(event)})
+	events := binding.Events()
+	suspends := binding.Suspensions()
+	for events != nil {
+		select {
+		case event, open := <-events:
+			if !open {
+				events = nil
+				continue
+			}
+			s.send(wireReply{Kind: replyEvent, Thread: thread, Event: wireEventOf(event)})
+		case <-suspends:
+			s.send(wireReply{Kind: replySuspended, Thread: thread})
+		}
 	}
 	s.send(wireReply{Kind: replyRevoked, Thread: thread, Refusal: binding.Revocation()})
 	s.forget(thread, binding)

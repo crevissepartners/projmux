@@ -144,6 +144,7 @@ func (b *Broker) Bind(threadID, cwd string, roots []string) (*Binding, error) {
 		roots:    append([]string(nil), roots...),
 		epoch:    b.bindEpoch,
 		events:   make(chan Event, b.backlog),
+		suspends: make(chan struct{}, 1),
 		revoked:  RefusalNone,
 	}
 	b.bindings[threadID] = binding

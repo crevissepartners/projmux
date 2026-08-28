@@ -19,12 +19,24 @@ type ControlResult struct {
 // Its serialized params contain exactly threadId and one text input: no
 // client message id and no sticky model/effort/cwd/sandbox/permission fields.
 func (c *Client) StartExactTurn(ctx context.Context, threadID, text string) (ControlResult, error) {
+	return startExactTurn(ctx, c, threadID, text)
+}
+
+func (c *Client) SteerExactTurn(ctx context.Context, threadID, expectedTurnID, text string) (ControlResult, error) {
+	return steerExactTurn(ctx, c, threadID, expectedTurnID, text)
+}
+
+func (c *Client) InterruptExactTurn(ctx context.Context, threadID, turnID string) (ControlResult, error) {
+	return interruptExactTurn(ctx, c, threadID, turnID)
+}
+
+func startExactTurn(ctx context.Context, requester Requester, threadID, text string) (ControlResult, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" || strings.TrimSpace(text) == "" {
 		return ControlResult{}, fmt.Errorf("%w: turn/start requires exact thread and text", ErrProtocol)
 	}
 	var result turnStartResult
-	if err := c.Request(ctx, methodTurnStart, exactTurnStartParams{ThreadID: threadID, Input: []wireUserInput{{Type: "text", Text: text}}}, &result); err != nil {
+	if err := requester.Request(ctx, methodTurnStart, exactTurnStartParams{ThreadID: threadID, Input: []wireUserInput{{Type: "text", Text: text}}}, &result); err != nil {
 		return ControlResult{}, err
 	}
 	turnID := strings.TrimSpace(result.Turn.ID)
@@ -34,12 +46,12 @@ func (c *Client) StartExactTurn(ctx context.Context, threadID, text string) (Con
 	return ControlResult{ThreadID: threadID, TurnID: turnID}, nil
 }
 
-func (c *Client) SteerExactTurn(ctx context.Context, threadID, expectedTurnID, text string) (ControlResult, error) {
+func steerExactTurn(ctx context.Context, requester Requester, threadID, expectedTurnID, text string) (ControlResult, error) {
 	threadID, expectedTurnID = strings.TrimSpace(threadID), strings.TrimSpace(expectedTurnID)
 	if threadID == "" || expectedTurnID == "" || strings.TrimSpace(text) == "" {
 		return ControlResult{}, fmt.Errorf("%w: turn/steer requires exact thread, expected turn, and text", ErrProtocol)
 	}
-	if err := c.Request(ctx, methodTurnSteer, turnSteerParams{
+	if err := requester.Request(ctx, methodTurnSteer, turnSteerParams{
 		ThreadID: threadID, ExpectedTurnID: expectedTurnID, Input: []wireUserInput{{Type: "text", Text: text}},
 	}, nil); err != nil {
 		return ControlResult{}, err
@@ -47,12 +59,12 @@ func (c *Client) SteerExactTurn(ctx context.Context, threadID, expectedTurnID, t
 	return ControlResult{ThreadID: threadID, TurnID: expectedTurnID}, nil
 }
 
-func (c *Client) InterruptExactTurn(ctx context.Context, threadID, turnID string) (ControlResult, error) {
+func interruptExactTurn(ctx context.Context, requester Requester, threadID, turnID string) (ControlResult, error) {
 	threadID, turnID = strings.TrimSpace(threadID), strings.TrimSpace(turnID)
 	if threadID == "" || turnID == "" {
 		return ControlResult{}, fmt.Errorf("%w: turn/interrupt requires exact thread and turn", ErrProtocol)
 	}
-	if err := c.Request(ctx, methodTurnInterrupt, turnInterruptParams{ThreadID: threadID, TurnID: turnID}, nil); err != nil {
+	if err := requester.Request(ctx, methodTurnInterrupt, turnInterruptParams{ThreadID: threadID, TurnID: turnID}, nil); err != nil {
 		return ControlResult{}, err
 	}
 	return ControlResult{ThreadID: threadID, TurnID: turnID}, nil
