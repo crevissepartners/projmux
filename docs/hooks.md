@@ -328,10 +328,31 @@ command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true
 ```
 
 Repeated installs are idempotent and preserve unrelated Codex config, including
-unmanaged hook entries for the same events. If projmux sees an unmanaged
-`projmux internal agent-hook ingest codex-hook` command, it refuses to install over it rather
-than guessing ownership. `--dry-run` previews the TOML update. `--remove`
-removes projmux-managed Codex hooks wiring.
+unmanaged hook entries for the same events. If projmux sees a
+`projmux internal agent-hook ingest codex-hook` command it did not author —
+a different matcher, a wrapped command, or an extra key — it refuses to install
+over it rather than guessing ownership. `--dry-run` previews the TOML update.
+`--remove` removes projmux-managed Codex hooks wiring.
+
+The marker block is not a projmux-owned byte range. Projmux owns only the hook
+definitions it wrote and, inside the block, the `[features] hooks = true`
+toggle; everything else in the file belongs to Codex or to you and is handed
+back verbatim. That split is what keeps hook trust alive across convergence:
+Codex records the hooks you approved as `[hooks.state]` subtables holding a
+`trusted_hash`, and it can write them anywhere in the same file, including
+between the projmux markers. Convergence lifts that state back out of the block
+unchanged instead of rewriting the block wholesale, so `projmux agent integrate
+codex`, `projmux config apply`, and the `make install` convergence leave every
+approval you already made in place.
+
+A Codex TOML re-serialization can also drop the marker comments while leaving
+the hook wiring projmux wrote behind. Projmux recognizes that wiring as its own
+and restores the markers around the byte-identical definitions rather than
+refusing, so a marker-less config still converges and keeps its trust. Recovery
+stops where ownership does: hook entries you hand-wrote keep the refusal above,
+and so does any layout where re-adopting the projmux entries would renumber a
+hook entry projmux does not own, because Codex keys trust state by array
+position.
 
 The Codex hooks install list is catalog-driven. Projmux ships an embedded
 default catalog at `internal/app/ai_hook_catalogs/codex.json`, and merges an
@@ -392,7 +413,11 @@ not stored.
 
 Codex may require reviewing or trusting hooks through its `/hooks` flow before
 commands run. Projmux only writes the managed config block; it does not attempt
-to auto-trust hooks.
+to auto-trust hooks. It never computes, copies, moves, or deletes a
+`trusted_hash`, and it never carries an approval from one hook identity to
+another: if a hook's matcher, type, command, or event changes, Codex asks you to
+review that hook again while the other hooks keep the trust you already gave
+them.
 
 ## Tmux Bell Fallback
 
