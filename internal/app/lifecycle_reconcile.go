@@ -60,6 +60,9 @@ type lifecycleDirtyEvent struct {
 	// absence belonging to a process a resume has already replaced cannot move
 	// the current binding.
 	generation string
+	// operationID is a second private activation narrowing for startup
+	// recovery. Hooks do not supply it; the current Registry candidate does.
+	operationID string
 	// teardownKind is set only for an exact topology event that may carry
 	// automatic delete authority. Whole-host inventory diffs, pane-killed, and
 	// window-unlinked keep the zero value and can only project retained state.
@@ -73,6 +76,12 @@ type lifecycleDirtyEvent struct {
 	// exhaustedReplay requires the narrow startup-only normal receipt and
 	// current activation operation checks before this event may write.
 	exhaustedReplay bool
+	// preexistingRecovery is private config-apply authority. It is produced only
+	// from a positive exact-socket dead Pane observation plus bounded supervisor
+	// absence; it is never persisted and cannot be supplied by a hook or CLI.
+	preexistingRecovery bool
+	supervisorPID       int
+	processAlive        func(int) bool
 }
 
 // describe renders the event for a diagnostic line.
@@ -92,6 +101,9 @@ func (e lifecycleDirtyEvent) describe() string {
 	}
 	if generation := strings.TrimSpace(e.generation); generation != "" {
 		out += " generation=" + generation
+	}
+	if operation := strings.TrimSpace(e.operationID); operation != "" {
+		out += " operation=" + operation
 	}
 	return out
 }
@@ -318,6 +330,12 @@ func planExactLifecycleCascade(
 	}
 	retainedDead := observed != nil
 	if observed == nil {
+		if event.preexistingRecovery {
+			return exactLifecycleCascadePlan{}, &preexistingDeadPaneBlocker{
+				Reason: preexistingBlockerLocatorDrift, PaneUID: strings.TrimSpace(event.paneUID),
+				Detail: "locked positive dead observation no longer names the selected current locator",
+			}
+		}
 		var absent *coremetadata.Pane
 		for i := range registry.Panes {
 			candidate := &registry.Panes[i]
@@ -351,7 +369,8 @@ func planExactLifecycleCascade(
 			coremetadata.TeardownReasonConflictingOwnerFacts, "current dead Pane observation has incomplete stable containment")
 	}
 	pane, ok := registry.Pane(observed.PaneUID)
-	if !ok || (strings.TrimSpace(event.generation) != "" && pane.Status.Activation.Generation != strings.TrimSpace(event.generation)) {
+	if !ok || (event.preexistingRecovery && pane.Status.Activation.RuntimeID != observed.PaneID) ||
+		(strings.TrimSpace(event.generation) != "" && pane.Status.Activation.Generation != strings.TrimSpace(event.generation)) {
 		return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
 			coremetadata.TeardownReasonStaleGeneration, "observed Pane UID or activation generation is not current Registry authority")
 	}
@@ -361,7 +380,7 @@ func planExactLifecycleCascade(
 			coremetadata.TeardownReasonConflictingOwnerFacts, "current Pane ownerRef or role mirror conflicts with the stable Registry graph")
 	}
 	if pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent {
-		if observed.AgentUID != pane.Metadata.OwnerRef.UID {
+		if observed.AgentUID != pane.Metadata.OwnerRef.UID || pane.Status.Activation.AgentUID != observed.AgentUID {
 			return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
 				coremetadata.TeardownReasonConflictingOwnerFacts, "current Agent UID mirror conflicts with Pane ownerRef")
 		}
@@ -400,6 +419,9 @@ func planExactLifecycleCascade(
 			return exactLifecycleCascadePlan{}, stableDeadPaneAuthorityConflict(
 				coremetadata.TeardownReasonConflictingOwnerFacts, "current ControlSession role or Project UID mirror conflicts with the stable root")
 		}
+	}
+	if event.preexistingRecovery {
+		return planPreexistingDeadAgentPaneRecovery(registry, live, dead, *observed, *pane, windowUID, *window, *root, sessionName, event, mutator)
 	}
 
 	classification := coremetadata.TerminationUnknown
@@ -621,6 +643,12 @@ func lifecycleDeadPaneTarget(event coremetadata.TeardownEvent, sessionName strin
 			target.AgentUID = pane.Metadata.OwnerRef.UID
 		}
 	}
+	return target
+}
+
+func lifecyclePreexistingDeadPaneTarget(event coremetadata.TeardownEvent, sessionName string, pane coremetadata.Pane, supervisorPID int) paneLiveDeleteTarget {
+	target := lifecycleDeadPaneTarget(event, sessionName, pane)
+	target.SupervisorPID = supervisorPID
 	return target
 }
 

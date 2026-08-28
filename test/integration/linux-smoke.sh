@@ -3722,6 +3722,80 @@ fi
 exitrec_tmux "$exitrec_socket" set-hook -gu pane-exited
 exitrec_tmux "$exitrec_socket" set-hook -gu pane-died
 
+# Reconstruct the broader receipt-optional preexisting shape without replaying
+# a hook event: kill the supervisor PID itself while remain-on-exit retains the
+# exact managed Pane. Config apply must derive one bounded candidate from the
+# current physical socket and converge it through the ordinary lifecycle
+# authority, then repeat without a Registry write.
+printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
+exitrec_preexisting_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
+  create agent --provider codex --project "uid:$exitrec_app_project_uid" -o uid)"
+exitrec_doc agent "$exitrec_preexisting_agent"
+exitrec_preexisting_pane="$(exitrec_field paneRef)"
+exitrec_preexisting_runtime="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_id}' \
+  | awk -F '|' -v pane="$exitrec_preexisting_pane" '$1 == pane { print $2; exit }')"
+exitrec_preexisting_pid="$(exitrec_tmux "$exitrec_socket" display-message -p -t "$exitrec_preexisting_runtime" -F '#{pane_pid}')"
+if [[ -z "$exitrec_preexisting_agent" || -z "$exitrec_preexisting_pane" ||
+  ! "$exitrec_preexisting_runtime" =~ ^%[0-9]+$ || ! "$exitrec_preexisting_pid" =~ ^[1-9][0-9]*$ ]]; then
+  echo "preexisting startup fixture could not resolve the exact Agent/Pane/runtime/PID chain" >&2
+  exit 1
+fi
+kill -KILL "$exitrec_preexisting_pid"
+for _ in $(seq 1 100); do
+  if exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
+    | grep -Fqx "$exitrec_preexisting_pane|1" && ! kill -0 "$exitrec_preexisting_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.05
+done
+if ! exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' \
+  | grep -Fqx "$exitrec_preexisting_pane|1" || kill -0 "$exitrec_preexisting_pid" 2>/dev/null ||
+  { [[ -s "$exitrec_root/state/projmux/termination-receipts.jsonl" ]] &&
+    grep -Fq "\"paneUID\":\"$exitrec_preexisting_pane\"" "$exitrec_root/state/projmux/termination-receipts.jsonl"; }; then
+  echo "preexisting startup fixture lacks positive dead/absent-supervisor/receipt-absent authority" >&2
+  exit 1
+fi
+exitrec_doc agent "$exitrec_preexisting_agent"
+if [[ "$(exitrec_field phase)" != "Running" || "$(exitrec_field paneRef)" != "$exitrec_preexisting_pane" ]]; then
+  echo "preexisting startup fixture did not retain the Running owner binding" >&2
+  exit 1
+fi
+exitrec_pmx describe project "uid:$exitrec_standalone_project_uid" -o json >"$exitrec_root/preexisting-sibling-project.before"
+exitrec_preexisting_sibling_socket_before="$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_sibling_tmux list-panes -a -F '#{pane_id}|#{window_id}|#{session_id}')"
+exitrec_pmx internal tmux apply --bin "$bin" \
+  --config "$exitrec_root/config/projmux/tmux.conf" --socket "$exitrec_socket" \
+  >"$exitrec_root/preexisting-apply.out"
+exitrec_doc agent "$exitrec_preexisting_agent"
+if [[ "$(exitrec_field phase)" != "Offline" || -n "$(exitrec_field paneRef)" ||
+  "$(exitrec_termination_field classification)" != "unknown" ||
+  "$(exitrec_termination_field source)" != "reconcile" ]] ||
+  exitrec_doc_exists pane "$exitrec_preexisting_pane" ||
+  exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_dead}' 2>/dev/null \
+    | grep -Eq "^${exitrec_preexisting_pane}\\|(0|1)$"; then
+  echo "preexisting startup recovery did not converge the receipt-absent dead Agent Pane" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+exitrec_preexisting_registry="$exitrec_root/state/projmux/metadata/registry.json"
+exitrec_preexisting_registry_before_repeat="$(sha256sum "$exitrec_preexisting_registry" | cut -d' ' -f1)"
+exitrec_pmx internal tmux apply --bin "$bin" \
+  --config "$exitrec_root/config/projmux/tmux.conf" --socket "$exitrec_socket" \
+  >"$exitrec_root/preexisting-apply-repeat.out"
+exitrec_preexisting_registry_after_repeat="$(sha256sum "$exitrec_preexisting_registry" | cut -d' ' -f1)"
+exitrec_pmx describe project "uid:$exitrec_standalone_project_uid" -o json >"$exitrec_root/preexisting-sibling-project.after"
+if [[ "$exitrec_preexisting_registry_before_repeat" != "$exitrec_preexisting_registry_after_repeat" ]] ||
+  ! cmp "$exitrec_root/preexisting-sibling-project.before" "$exitrec_root/preexisting-sibling-project.after" ||
+  [[ "$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_sibling_tmux list-panes -a -F '#{pane_id}|#{window_id}|#{session_id}')" != "$exitrec_preexisting_sibling_socket_before" ]]; then
+  echo "preexisting startup recovery repeat or sibling containment failed" >&2
+  exit 1
+fi
+echo ">> preexisting dead Agent Pane startup recovery agent=$exitrec_preexisting_agent pane=$exitrec_preexisting_pane runtime=$exitrec_preexisting_runtime pid=$exitrec_preexisting_pid class=unknown source=reconcile repeat=byte-identical sibling-project=preserved sibling-socket=preserved"
+
+# Apply reinstalls generated hooks. Keep the following exhausted-event fixture
+# isolated from fresh hook delivery so it continues to test only retry-3 replay.
+exitrec_tmux "$exitrec_socket" set-hook -gu pane-exited
+exitrec_tmux "$exitrec_socket" set-hook -gu pane-died
+
 # Reconstruct the historical exhausted event under this run's isolated state
 # and physical socket. Both exit hooks are temporarily absent so a clean
 # supervisor receipt and positive pane_dead mirror remain beside a Running

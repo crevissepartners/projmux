@@ -713,6 +713,7 @@ type lifecycleSiblingCleanupRunner struct {
 	killed   bool
 	calls    []recordedTmuxCall
 	pid      string
+	panePID  string
 	ownerUID string
 }
 
@@ -743,6 +744,14 @@ func (r *lifecycleSiblingCleanupRunner) Run(_ context.Context, name string, args
 				ownerUID = "win-alpha-main"
 			}
 			return []byte(livePaneInventoryRow("$1", "alpha", "@10", "%31", "prj-alpha", "", "win-alpha-main", "pan-alpha-log", "1", "Window", ownerUID, "", "shell")), nil
+		case tmuxRowFormat("#{session_id}", "#{session_name}", "#{window_id}", "#{pane_id}",
+			"#{@projmux_project_uid}", "#{@projmux_session_role}", "#{@projmux_window_uid}", "#{@projmux_pane_uid}",
+			"#{pane_dead}", "#{@projmux_pane_owner_kind}", "#{@projmux_pane_owner_uid}", "#{@projmux_agent_uid}", "#{@projmux_pane_role}", "#{pane_pid}"):
+			panePID := r.panePID
+			if panePID == "" {
+				panePID = "648421"
+			}
+			return []byte(livePaneInventoryRow("$1", "alpha", "@10", "%31", "prj-alpha", "", "win-alpha-main", "pan-alpha-log", "1", "Window", "win-alpha-main", "", "shell", panePID)), nil
 		}
 	case "show-options":
 		switch args[len(args)-1] {
@@ -836,6 +845,53 @@ func TestC2LifecycleFirstWriteGuardRejectsOwnerAndServerPIDDriftWithZeroKill(t *
 			}
 			if test.runner.killed {
 				t.Fatal("conflicting stable authority reached kill-pane")
+			}
+		})
+	}
+}
+
+func TestPreexistingLifecycleFirstWriteGuardRechecksOriginalSupervisorAbsence(t *testing.T) {
+	t.Parallel()
+
+	target, err := tmuxSocketPathTarget(testDeleteTarget.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup := paneLiveDeleteTarget{
+		PaneUID: "pan-alpha-log", PaneID: "%31", WindowUID: "win-alpha-main", WindowID: "@10",
+		SessionName: "alpha", SessionID: "$1", RootKind: coremetadata.KindProject, RootUID: "prj-alpha",
+		OwnerKind: coremetadata.KindWindow, OwnerUID: "win-alpha-main", PaneRole: coremetadata.PaneRoleShell,
+		Generation: "gen-current", SupervisorPID: 648421, RequireDead: true,
+	}
+	for _, test := range []struct {
+		name      string
+		runner    *lifecycleSiblingCleanupRunner
+		alive     bool
+		wantError string
+	}{
+		{name: "absent exact PID", runner: &lifecycleSiblingCleanupRunner{}},
+		{name: "PID locator drift", runner: &lifecycleSiblingCleanupRunner{panePID: "648422"}, wantError: "original supervisor PID drifted"},
+		{name: "PID became active", runner: &lifecycleSiblingCleanupRunner{}, alive: true, wantError: "is active or unobservable"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := &tmuxPaneDeleteRuntime{
+				runner: test.runner, target: target, getenv: func(string) string { return "" },
+				processAlive: func(pid int) bool {
+					if pid != 648421 && test.wantError != "original supervisor PID drifted" {
+						t.Fatalf("process observer PID=%d", pid)
+					}
+					return test.alive
+				},
+			}
+			err := (&exactLifecycleInventory{runtime: runtime}).CleanupLifecycleDeadPane(context.Background(), cleanup)
+			if test.wantError == "" {
+				if err != nil || !test.runner.killed {
+					t.Fatalf("cleanup err=%v killed=%t", err, test.runner.killed)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), test.wantError) || test.runner.killed {
+				t.Fatalf("guard err=%v killed=%t want=%q", err, test.runner.killed, test.wantError)
 			}
 		})
 	}

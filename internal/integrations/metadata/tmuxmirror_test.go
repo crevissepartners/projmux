@@ -418,8 +418,8 @@ func TestDeadPaneUIDsRequiresExactMirroredDeadEvidence(t *testing.T) {
 	t.Parallel()
 	sep := escapedFieldSep
 	runner := &fakeRunner{outputs: map[string]string{
-		"#{pane_dead}": "$1" + sep + "alpha" + sep + "@2" + sep + "%3" + sep + "1" + sep + "project" + sep + sep + "window" + sep + "pane-dead" + sep + "Agent" + sep + "agent" + sep + "agent" + sep + "agent\n" +
-			"$1" + sep + "alpha" + sep + "@2" + sep + "%4" + sep + "0" + sep + "project" + sep + sep + "window" + sep + "pane-live" + sep + "Agent" + sep + "agent" + sep + "agent" + sep + "agent\n",
+		"#{pane_dead}": "$1" + sep + "alpha" + sep + "@2" + sep + "%3" + sep + "1" + sep + "4242" + sep + "project" + sep + sep + "window" + sep + "pane-dead" + sep + "Agent" + sep + "agent" + sep + "agent" + sep + "agent\n" +
+			"$1" + sep + "alpha" + sep + "@2" + sep + "%4" + sep + "0" + sep + "4243" + sep + "project" + sep + sep + "window" + sep + "pane-live" + sep + "Agent" + sep + "agent" + sep + "agent" + sep + "agent\n",
 	}}
 	dead, err := NewMirror(runner).DeadPaneUIDs(context.Background())
 	if err != nil {

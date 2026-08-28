@@ -8478,10 +8478,11 @@ echo ">> exit reconciliation e2e restart converged pane=$exitrec_shell_pane clas
 # 7. The restarted server's handles are only fresh execution locators. Bind the
 # original stable Project/Window/shell UID graph to a deliberately later tmux
 # session, materialize its current pair through the exact physical route, and
-# drive one supervisor-normal retained Agent Pane through a historical retry-3
-# pane-exited record at the verified config-apply startup boundary. No generated
-# hook survived the server restart, so the persisted record below is the only
-# causal event source and cannot hide a stale locator behind interpolation.
+# first recover one receipt-absent preexisting dead Agent Pane, then drive one
+# supervisor-normal retained Agent Pane through a historical retry-3 pane-exited
+# record at the verified config-apply startup boundary. No generated hook
+# survived the server restart, so neither fixture can hide stale locators behind
+# interpolation or fresh hook delivery.
 exitrec_tmux new-session -d -s "$exitrec_session" -n main \
   -c "$exitrec_root/work/alpha" sleep 600
 exitrec_rebound_receipt="$(
@@ -8510,6 +8511,110 @@ exitrec_tmux set-option -w -t "$exitrec_rebound_pane" -q @projmux_window_uid "$e
 exitrec_tmux set-option -p -t "$exitrec_rebound_pane" -q @projmux_pane_uid "$exitrec_anchor_pane_uid"
 exitrec_socket_pid="$exitrec_rebound_pid"
 exitrec_create_anchor_pane="$exitrec_rebound_pane"
+
+# Reconstruct the historical %19 shape only inside this isolated server: a
+# managed current-generation Agent Pane is positive dead, its exact original
+# supervisor PID is absent, no receipt exists, and the Agent still owns it as
+# Running. Config apply may produce only that candidate and must converge in one
+# pass through the ordinary lifecycle planner and exact first-write guard.
+printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
+exitrec_preexisting_agent="$(exitrec_live_pmx create agent --provider claude \
+  --project "uid:$exitrec_project_uid" -o uid)"
+exitrec_doc agent "$exitrec_preexisting_agent"
+exitrec_preexisting_name="$(exitrec_field name)"
+exitrec_preexisting_pane_uid="$(exitrec_field paneRef)"
+exitrec_preexisting_runtime="$(
+  exitrec_tmux list-panes -a \
+    -F '#{pane_id}|#{pane_dead}|#{@projmux_pane_uid}|#{@projmux_pane_owner_kind}|#{@projmux_pane_owner_uid}|#{@projmux_agent_uid}|#{@projmux_pane_role}' \
+    | awk -F '|' -v pane="$exitrec_preexisting_pane_uid" -v agent="$exitrec_preexisting_agent" \
+      '$2 == "0" && $3 == pane && $4 == "Agent" && $5 == agent && $6 == agent && $7 == "agent" { print $1 }'
+)"
+if [[ -z "$exitrec_preexisting_agent" || -z "$exitrec_preexisting_pane_uid" ]] || \
+  [[ ! "$exitrec_preexisting_runtime" =~ ^%[0-9]+$ ]] || \
+  [[ "$(printf '%s\n' "$exitrec_preexisting_runtime" | grep -c .)" != "1" ]]; then
+  echo "preexisting startup e2e fixture could not resolve one exact Agent/Pane/runtime owner chain" >&2
+  exit 1
+fi
+exitrec_preexisting_pid="$(exitrec_tmux display-message -p -t "$exitrec_preexisting_runtime" '#{pane_pid}')"
+if [[ ! "$exitrec_preexisting_pid" =~ ^[1-9][0-9]*$ ]]; then
+  echo "preexisting startup e2e fixture has no exact supervisor PID: $exitrec_preexisting_pid" >&2
+  exit 1
+fi
+exitrec_pmx describe project "uid:$exitrec_project_uid" -o json >"$exitrec_root/preexisting-project.before"
+exitrec_pmx describe window "uid:$exitrec_window_uid" -o json >"$exitrec_root/preexisting-window.before"
+exitrec_pmx describe pane "uid:$exitrec_anchor_pane_uid" -o json >"$exitrec_root/preexisting-shell.before"
+printf '%s\n' provider-owned >"$exitrec_root/preexisting-provider-sentinel"
+exitrec_preexisting_provider_before="$(sha256sum "$exitrec_root/preexisting-provider-sentinel" | cut -d' ' -f1)"
+kill -KILL "$exitrec_preexisting_pid"
+for _ in $(seq 1 150); do
+  if exitrec_tmux list-panes -a -F '#{pane_id}|#{pane_dead}' \
+    | grep -Fqx "$exitrec_preexisting_runtime|1" && ! kill -0 "$exitrec_preexisting_pid" 2>/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+if ! exitrec_tmux list-panes -a -F '#{pane_id}|#{pane_dead}' \
+  | grep -Fqx "$exitrec_preexisting_runtime|1" || kill -0 "$exitrec_preexisting_pid" 2>/dev/null || \
+  { [[ -s "$exitrec_root/state/projmux/termination-receipts.jsonl" ]] &&
+    grep -Fq "\"paneUID\":\"$exitrec_preexisting_pane_uid\"" "$exitrec_root/state/projmux/termination-receipts.jsonl"; }; then
+  echo "preexisting startup e2e fixture lacks positive dead/absent-supervisor/receipt-absent authority" >&2
+  exit 1
+fi
+exitrec_doc agent "$exitrec_preexisting_agent"
+if [[ "$(exitrec_field phase)" != "Running" || "$(exitrec_field paneRef)" != "$exitrec_preexisting_pane_uid" ]]; then
+  echo "preexisting startup e2e fixture lost the current Running owner binding before apply" >&2
+  exit 1
+fi
+exitrec_tmux set-option -gq @projmux_app 1
+exitrec_pmx internal tmux apply --bin "$bin" \
+  --config "$exitrec_root/config/projmux/tmux.conf" --socket "$exitrec_socket" \
+  >"$exitrec_root/preexisting-upgrade-apply.out"
+if exitrec_pmx describe pane "uid:$exitrec_preexisting_pane_uid" -o json \
+  >"$exitrec_root/preexisting-pane.after" 2>/dev/null; then
+  echo "preexisting startup e2e recovery retained its Pane row" >&2
+  cat "$exitrec_root/preexisting-pane.after" >&2
+  exit 1
+fi
+exitrec_doc agent "$exitrec_preexisting_agent"
+if [[ "$(exitrec_field name)" != "$exitrec_preexisting_name" || "$(exitrec_field phase)" != "Offline" || \
+  -n "$(exitrec_field paneRef)" || "$(exitrec_termination_field classification)" != "unknown" || \
+  "$(exitrec_termination_field source)" != "reconcile" ]] || \
+  exitrec_tmux list-panes -a -F '#{pane_id}' | grep -Fqx "$exitrec_preexisting_runtime"; then
+  echo "preexisting startup e2e recovery did not converge Agent/Pane/runtime to its receipt-absent fixed point" >&2
+  cat "$exitrec_root/doc.json" >&2
+  exit 1
+fi
+exitrec_pmx describe project "uid:$exitrec_project_uid" -o json >"$exitrec_root/preexisting-project.after"
+exitrec_pmx describe window "uid:$exitrec_window_uid" -o json >"$exitrec_root/preexisting-window.after"
+exitrec_pmx describe pane "uid:$exitrec_anchor_pane_uid" -o json >"$exitrec_root/preexisting-shell.after"
+if ! cmp "$exitrec_root/preexisting-project.before" "$exitrec_root/preexisting-project.after" || \
+  ! cmp "$exitrec_root/preexisting-window.before" "$exitrec_root/preexisting-window.after" || \
+  ! cmp "$exitrec_root/preexisting-shell.before" "$exitrec_root/preexisting-shell.after" || \
+  [[ "$(sha256sum "$exitrec_root/preexisting-provider-sentinel" | cut -d' ' -f1)" != "$exitrec_preexisting_provider_before" ]]; then
+  echo "preexisting startup e2e recovery changed Project, Window, shell anchor, or provider sentinel" >&2
+  exit 1
+fi
+exitrec_preexisting_registry_before_repeat="$(sha256sum "$exitrec_registry" | cut -d' ' -f1)"
+exitrec_pmx internal tmux apply --bin "$bin" \
+  --config "$exitrec_root/config/projmux/tmux.conf" --socket "$exitrec_socket" \
+  >"$exitrec_root/preexisting-upgrade-apply-repeat.out"
+exitrec_preexisting_registry_after_repeat="$(sha256sum "$exitrec_registry" | cut -d' ' -f1)"
+if [[ "$exitrec_preexisting_registry_before_repeat" != "$exitrec_preexisting_registry_after_repeat" ]]; then
+  echo "preexisting startup e2e recovery repeat rewrote the Registry" >&2
+  exit 1
+fi
+exitrec_other_after="$(exitrec_other_tmux show-options -gqv @projmux_exitrec_sentinel):$(exitrec_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
+if [[ "$exitrec_other_after" != "$exitrec_other_before" ]]; then
+  echo "preexisting startup e2e recovery touched the sibling socket" >&2
+  exit 1
+fi
+echo ">> exit reconciliation e2e preexisting dead Agent Pane startup recovery current=$exitrec_rebound_session/$exitrec_rebound_window/$exitrec_preexisting_runtime agent=$exitrec_preexisting_agent phase=Offline class=unknown pane=removed pid=absent repeat=byte-identical siblings=preserved"
+
+# Apply reinstalled the generated exit hooks. The next block intentionally
+# reconstructs only the already-supported historical retry-3 record.
+exitrec_tmux set-hook -gu pane-exited
+exitrec_tmux set-hook -gu pane-died
+
 printf 'sleep 1\n%s\n' 'exit 0' >"$exitrec_root/stub-script"
 set +e
 exitrec_rebound_agent="$(exitrec_live_pmx create agent --provider claude \
