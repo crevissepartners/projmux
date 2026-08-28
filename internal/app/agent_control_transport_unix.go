@@ -108,7 +108,14 @@ func (s *codexControlServer) Close() error {
 	if s == nil {
 		return nil
 	}
-	s.epoch.Revoke()
+	if s.epoch != nil {
+		s.epoch.Revoke()
+	}
+	// Revocation is independent of listener lifetime: a transport that never
+	// became externally reachable still has an epoch that must be made stale.
+	if s.listener == nil {
+		return nil
+	}
 	err := s.listener.Close()
 	<-s.done
 	if current, statErr := os.Lstat(s.path); statErr == nil && os.SameFile(s.info, current) && current.Mode()&os.ModeSocket != 0 {

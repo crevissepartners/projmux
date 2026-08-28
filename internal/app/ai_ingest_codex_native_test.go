@@ -417,6 +417,8 @@ func TestCodexNativeObserverReportsExactStartupTerminalState(t *testing.T) {
 type fakeCodexLifecycleConnection struct {
 	snapshot codexappserver.LifecycleSnapshot
 	events   chan codexappserver.Notification
+	mu       sync.Mutex
+	closed   int
 }
 
 func testCodexLifecycleSink(cmd *aiCommand) aiCodexLifecycleSink {
@@ -430,7 +432,18 @@ func (c *fakeCodexLifecycleConnection) LifecycleEventsAvailable() bool { return 
 func (c *fakeCodexLifecycleConnection) ReadLifecycleSnapshot(context.Context, string) (codexappserver.LifecycleSnapshot, error) {
 	return c.snapshot, nil
 }
-func (c *fakeCodexLifecycleConnection) Close() error { return nil }
+func (c *fakeCodexLifecycleConnection) Close() error {
+	c.mu.Lock()
+	c.closed++
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *fakeCodexLifecycleConnection) closeCount() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.closed
+}
 
 type fakeControllableCodexLifecycleConnection struct {
 	*fakeCodexLifecycleConnection
@@ -518,14 +531,15 @@ func TestCodexNativeObserverReadyHandshakeSteersAndShutdownRemovesControlSocket(
 }
 
 type recordingCodexLifecycleSink struct {
-	mu            sync.Mutex
-	events        []string
-	authorities   []string
-	wake          chan struct{}
-	current       bool
-	applyCalls    int
-	failApplyAt   int
-	failApplyFrom int
+	mu              sync.Mutex
+	events          []string
+	authorities     []string
+	authorityEpochs []string
+	wake            chan struct{}
+	current         bool
+	applyCalls      int
+	failApplyAt     int
+	failApplyFrom   int
 }
 
 type recordingCodexProgressSink struct {
@@ -599,13 +613,14 @@ func (s *recordingCodexLifecycleSink) BindingCurrent(codexLifecycleIdentity) boo
 	defer s.mu.Unlock()
 	return s.current
 }
-func (s *recordingCodexLifecycleSink) SetAuthority(_ codexLifecycleIdentity, source, _, reason string) error {
+func (s *recordingCodexLifecycleSink) SetAuthority(_ codexLifecycleIdentity, source, epoch, reason string) error {
 	s.mu.Lock()
 	if !s.current {
 		s.mu.Unlock()
 		return errManagedAgentObservationIgnored
 	}
 	s.authorities = append(s.authorities, source+":"+reason)
+	s.authorityEpochs = append(s.authorityEpochs, source+":"+epoch+":"+reason)
 	s.mu.Unlock()
 	s.record("authority:" + source)
 	return nil
@@ -647,6 +662,12 @@ func (s *recordingCodexLifecycleSink) authoritySnapshot() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return append([]string(nil), s.authorities...)
+}
+
+func (s *recordingCodexLifecycleSink) authorityEpochSnapshot() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.authorityEpochs...)
 }
 
 func TestCodexNativeObserverDropsContentBeforeProgressSinkAndClearsTerminal(t *testing.T) {
@@ -973,6 +994,308 @@ func TestCodexNativeObserverReconnectSnapshotReplacesInvalidatedEpoch(t *testing
 	if !reflect.DeepEqual(events[5:10], wantSecondEpoch) {
 		t.Fatalf("reconnect convergence = %#v, want %#v", events, wantSecondEpoch)
 	}
+}
+
+func TestCodexNativeObserverEndpointReplacementRevokesE1BeforeGapAndPublishesExactE2(t *testing.T) {
+	identity := testCodexLifecycleIdentity()
+	firstWire, secondWire := &fakeExactControlWire{}, &fakeExactControlWire{}
+	first := &fakeControllableCodexLifecycleConnection{
+		fakeCodexLifecycleConnection: &fakeCodexLifecycleConnection{
+			snapshot: codexappserver.LifecycleSnapshot{ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress},
+			events:   make(chan codexappserver.Notification),
+		},
+		fakeExactControlWire: firstWire,
+	}
+	second := &fakeControllableCodexLifecycleConnection{
+		fakeCodexLifecycleConnection: &fakeCodexLifecycleConnection{
+			snapshot: codexappserver.LifecycleSnapshot{ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateIdle},
+			events:   make(chan codexappserver.Notification),
+		},
+		fakeExactControlWire: secondWire,
+	}
+	sink := newRecordingCodexLifecycleSink()
+	startup := make(chan codexObserverStartupResult, 8)
+	allowReconnect := make(chan struct{})
+	openCalls := 0
+	var epochs []*codexControlEpoch
+	observer := codexNativeObserver{
+		identity: identity, sink: sink, requireControl: true,
+		open: func(ctx context.Context) (codexLifecycleConnection, error) {
+			openCalls++
+			switch openCalls {
+			case 1:
+				return first, nil
+			case 2:
+				return second, nil
+			default:
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+		},
+		startControl: func(epoch *codexControlEpoch) (*codexControlServer, error) {
+			epochs = append(epochs, epoch)
+			return &codexControlServer{epoch: epoch}, nil
+		},
+		reportStartup: func(result codexObserverStartupResult) { startup <- result },
+		waitRecovery: func(ctx context.Context, _ time.Duration) bool {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-allowReconnect:
+				return true
+			}
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(ctx) }()
+	e1 := waitForCodexObserverStartupResult(t, startup, codexObserverStartupReady)
+	if e1.Epoch == "" || len(epochs) != 1 {
+		cancel()
+		<-done
+		t.Fatalf("E1 startup=%+v epochs=%d", e1, len(epochs))
+	}
+	close(first.events)
+	fallback := waitForCodexObserverStartupResult(t, startup, codexObserverStartupFallback)
+	if fallback.Reason != "disconnected" {
+		cancel()
+		<-done
+		t.Fatalf("gap fallback=%+v", fallback)
+	}
+	gapRequest := agentControlRequest{Operation: agentControlOpSteer, Identity: identity, Epoch: e1.Epoch, Text: "must not write"}
+	if old := epochs[0].Handle(context.Background(), gapRequest); old.OK || firstWire.writes() != 0 {
+		cancel()
+		<-done
+		t.Fatalf("revoked E1 accepted late control: response=%+v writes=%d", old, firstWire.writes())
+	}
+	close(allowReconnect)
+	e2 := waitForCodexObserverStartupResult(t, startup, codexObserverStartupReady)
+	if e2.Epoch == "" || e2.Epoch == e1.Epoch || len(epochs) != 2 {
+		cancel()
+		<-done
+		t.Fatalf("replacement E1=%+v E2=%+v epochs=%d", e1, e2, len(epochs))
+	}
+	if stale := epochs[1].Handle(context.Background(), gapRequest); stale.OK || secondWire.writes() != 0 {
+		cancel()
+		<-done
+		t.Fatalf("E1 request against E2 response=%+v E2writes=%d", stale, secondWire.writes())
+	}
+	exact := agentControlRequest{Operation: agentControlOpStart, Identity: identity, Epoch: e2.Epoch, Text: "new exact turn"}
+	if response := epochs[1].Handle(context.Background(), exact); !response.OK || secondWire.writes() != 1 {
+		cancel()
+		<-done
+		t.Fatalf("E2 control response=%+v writes=%d", response, secondWire.writes())
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	beforeLate := sink.snapshot()
+	late := observer.reducer.apply(1, codexappserver.LifecycleEvent{
+		Kind: codexappserver.LifecycleTurnStarted, ThreadID: identity.ThreadID, TurnID: "turn-late", TurnState: codexappserver.TurnStateInProgress,
+	})
+	if late.Accepted || !reflect.DeepEqual(sink.snapshot(), beforeLate) {
+		t.Fatalf("late E1 event accepted=%t before=%#v after=%#v", late.Accepted, beforeLate, sink.snapshot())
+	}
+	authorities := sink.authorityEpochSnapshot()
+	firstReady := codexAuthorityControlPlane + ":" + e1.Epoch + ":ready"
+	secondReady := codexAuthorityControlPlane + ":" + e2.Epoch + ":ready"
+	wantOrder := []string{firstReady, codexAuthorityInvalidating + ":" + e1.Epoch + ":disconnected", codexAuthorityHook + "::disconnected", secondReady}
+	position := 0
+	for _, authority := range authorities {
+		if position < len(wantOrder) && authority == wantOrder[position] {
+			position++
+		}
+	}
+	if position != len(wantOrder) {
+		t.Fatalf("authority replacement order=%q want subsequence=%q", authorities, wantOrder)
+	}
+	if response := epochs[1].Handle(context.Background(), exact); response.OK || secondWire.writes() != 1 {
+		t.Fatalf("E2 control remained live after shutdown: response=%+v writes=%d", response, secondWire.writes())
+	}
+	if first.closeCount() != 1 || second.closeCount() != 1 {
+		t.Fatalf("replacement connection cleanup E1=%d E2=%d, want 1/1", first.closeCount(), second.closeCount())
+	}
+}
+
+func TestCodexNativeObserverRecoveryBackoffExhaustionIsExactBoundAndLeakFree(t *testing.T) {
+	identity := testCodexLifecycleIdentity()
+	wire := &fakeExactControlWire{}
+	connection := &fakeControllableCodexLifecycleConnection{
+		fakeCodexLifecycleConnection: &fakeCodexLifecycleConnection{
+			snapshot: codexappserver.LifecycleSnapshot{ThreadID: identity.ThreadID, ThreadState: codexappserver.ThreadStateIdle},
+			events:   make(chan codexappserver.Notification),
+		},
+		fakeExactControlWire: wire,
+	}
+	sink := newRecordingCodexLifecycleSink()
+	startup := make(chan codexObserverStartupResult, 4)
+	openCalls := 0
+	var waits []time.Duration
+	observer := codexNativeObserver{
+		identity: identity, sink: sink, requireControl: true, delay: time.Millisecond, maxDelay: 4 * time.Millisecond, maxAttempts: 3,
+		open: func(context.Context) (codexLifecycleConnection, error) {
+			openCalls++
+			if openCalls == 1 {
+				return connection, nil
+			}
+			return nil, codexappserver.ErrDisconnected
+		},
+		startControl: func(epoch *codexControlEpoch) (*codexControlServer, error) {
+			return &codexControlServer{epoch: epoch}, nil
+		},
+		reportStartup: func(result codexObserverStartupResult) { startup <- result },
+		waitRecovery: func(_ context.Context, delay time.Duration) bool {
+			waits = append(waits, delay)
+			return true
+		},
+	}
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(context.Background()) }()
+	e1 := waitForCodexObserverStartupResult(t, startup, codexObserverStartupReady)
+	close(connection.events)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("recovery exhaustion did not terminate the observer")
+	}
+	if openCalls != 4 {
+		t.Fatalf("open calls=%d, want initial plus exactly 3 recovery attempts", openCalls)
+	}
+	if !reflect.DeepEqual(waits, []time.Duration{time.Millisecond, 2 * time.Millisecond, 4 * time.Millisecond}) {
+		t.Fatalf("recovery waits=%v, want bounded exponential backoff", waits)
+	}
+	if wire.writes() != 0 {
+		t.Fatalf("reconnect gap wrote app-server wire %d times", wire.writes())
+	}
+	authorities := sink.authorityEpochSnapshot()
+	exhausted := codexAuthorityHook + "::" + codexObserverExhaustedReason
+	if count := countCodexObserverEvent(authorities, exhausted); count != 1 {
+		t.Fatalf("terminal fallback count=%d authorities=%q", count, authorities)
+	}
+	if !slices.Contains(authorities, codexAuthorityInvalidating+":"+e1.Epoch+":disconnected") {
+		t.Fatalf("E1 was not invalidated before exhaustion: %q", authorities)
+	}
+	if connection.closeCount() != 1 {
+		t.Fatalf("exhausted observer connection closes=%d, want 1", connection.closeCount())
+	}
+}
+
+func TestCodexNativeObserversSharingEndpointRecoverAndExhaustIndependently(t *testing.T) {
+	type endpointCounts struct {
+		mu    sync.Mutex
+		calls map[string]int
+	}
+	shared := &endpointCounts{calls: map[string]int{}}
+	openCount := func(agent string) int {
+		shared.mu.Lock()
+		defer shared.mu.Unlock()
+		shared.calls[agent]++
+		return shared.calls[agent]
+	}
+	identityA := testCodexLifecycleIdentity()
+	identityB := codexLifecycleIdentity{AgentUID: "agent-2", PaneUID: "pane-2", RuntimeID: "%8", Generation: "generation-2", ThreadID: "thread-2"}
+	firstA := &fakeCodexLifecycleConnection{snapshot: codexappserver.LifecycleSnapshot{ThreadID: identityA.ThreadID, ThreadState: codexappserver.ThreadStateIdle}, events: make(chan codexappserver.Notification)}
+	secondA := &fakeCodexLifecycleConnection{snapshot: codexappserver.LifecycleSnapshot{ThreadID: identityA.ThreadID, ThreadState: codexappserver.ThreadStateIdle}, events: make(chan codexappserver.Notification)}
+	firstB := &fakeCodexLifecycleConnection{snapshot: codexappserver.LifecycleSnapshot{ThreadID: identityB.ThreadID, ThreadState: codexappserver.ThreadStateIdle}, events: make(chan codexappserver.Notification)}
+	sinkA, sinkB := newRecordingCodexLifecycleSink(), newRecordingCodexLifecycleSink()
+	waitImmediately := func(context.Context, time.Duration) bool { return true }
+	observerA := codexNativeObserver{
+		identity: identityA, sink: sinkA, maxAttempts: 3, waitRecovery: waitImmediately,
+		open: func(ctx context.Context) (codexLifecycleConnection, error) {
+			switch openCount(identityA.AgentUID) {
+			case 1:
+				return firstA, nil
+			case 2:
+				return nil, codexappserver.ErrDisconnected
+			case 3:
+				return secondA, nil
+			default:
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+		},
+	}
+	observerB := codexNativeObserver{
+		identity: identityB, sink: sinkB, maxAttempts: 2, waitRecovery: waitImmediately,
+		open: func(context.Context) (codexLifecycleConnection, error) {
+			if openCount(identityB.AgentUID) == 1 {
+				return firstB, nil
+			}
+			return nil, codexappserver.ErrDisconnected
+		},
+	}
+	ctxA, cancelA := context.WithCancel(context.Background())
+	doneA, doneB := make(chan error, 1), make(chan error, 1)
+	go func() { doneA <- observerA.Run(ctxA) }()
+	go func() { doneB <- observerB.Run(context.Background()) }()
+	waitForCodexObserverEvents(t, sinkA, 2)
+	waitForCodexObserverEvents(t, sinkB, 2)
+	close(firstA.events)
+	close(firstB.events)
+	waitForCodexObserverEvents(t, sinkA, 7)
+	select {
+	case err := <-doneB:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		cancelA()
+		<-doneA
+		t.Fatal("second observer did not reach its independent exhaustion bound")
+	}
+	shared.mu.Lock()
+	callsA, callsB := shared.calls[identityA.AgentUID], shared.calls[identityB.AgentUID]
+	shared.mu.Unlock()
+	if callsA != 3 || callsB != 3 {
+		cancelA()
+		<-doneA
+		t.Fatalf("shared endpoint calls A=%d B=%d, want independent 3/3", callsA, callsB)
+	}
+	if countCodexObserverEvent(sinkA.authorityEpochSnapshot(), codexAuthorityHook+"::"+codexObserverExhaustedReason) != 0 ||
+		countCodexObserverEvent(sinkB.authorityEpochSnapshot(), codexAuthorityHook+"::"+codexObserverExhaustedReason) != 1 {
+		cancelA()
+		<-doneA
+		t.Fatalf("independent terminal states A=%q B=%q", sinkA.authorityEpochSnapshot(), sinkB.authorityEpochSnapshot())
+	}
+	cancelA()
+	if err := <-doneA; err != nil {
+		t.Fatal(err)
+	}
+	if firstA.closeCount() != 1 || secondA.closeCount() != 1 || firstB.closeCount() != 1 {
+		t.Fatalf("multi-observer connection cleanup A1=%d A2=%d B1=%d", firstA.closeCount(), secondA.closeCount(), firstB.closeCount())
+	}
+}
+
+func waitForCodexObserverStartupResult(t *testing.T, results <-chan codexObserverStartupResult, status codexObserverStartupStatus) codexObserverStartupResult {
+	t.Helper()
+	deadline := time.NewTimer(time.Second)
+	defer deadline.Stop()
+	var seen []codexObserverStartupResult
+	for {
+		select {
+		case result := <-results:
+			seen = append(seen, result)
+			if result.Status == status {
+				return result
+			}
+		case <-deadline.C:
+			t.Fatalf("observer did not report startup status %s; seen=%+v", status, seen)
+		}
+	}
+}
+
+func countCodexObserverEvent(events []string, want string) int {
+	count := 0
+	for _, event := range events {
+		if event == want {
+			count++
+		}
+	}
+	return count
 }
 
 func TestCodexNativeObserverCancellationInvalidatesSilentConnection(t *testing.T) {
