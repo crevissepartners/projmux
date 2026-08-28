@@ -13,12 +13,21 @@ type unmanagedStopRunner struct {
 	appMarker  string
 	logical    string
 	socketPath string
+	// anchorPane is the one Pane this fake will answer an explicit anchor
+	// containment probe for. Callers that supply no anchor never reach it.
+	anchorPane string
 }
 
 func (r *unmanagedStopRunner) Run(_ context.Context, _ string, args ...string) ([]byte, error) {
 	r.calls = append(r.calls, append([]string(nil), args...))
 	joined := strings.Join(args, " ")
 	switch {
+	case strings.Contains(joined, "display-message") && flagValue(args, "-t") != "":
+		target := flagValue(args, "-t")
+		if target != r.anchorPane {
+			return nil, fmt.Errorf("anchor probe targeted %q, want %q", target, r.anchorPane)
+		}
+		return []byte(tmuxRowFormat(r.socketPath, "4242", "$1", "@1", target) + "\n"), nil
 	case strings.Contains(joined, "display-message") && strings.HasSuffix(joined, "#{pid}"):
 		return []byte("4242\n"), nil
 	case strings.Contains(joined, "display-message"):

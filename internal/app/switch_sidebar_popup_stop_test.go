@@ -445,3 +445,54 @@ func sidebarPopupAnchorOperand(t *testing.T, command string) string {
 	}
 	return match[1]
 }
+
+// TestSwitchSidebarPlanCarriesTheAnchorOperandIntoItsKillAction pins the wiring
+// between the parsed operand and the action that consumes it. completePlan runs
+// the picker, so an anchor attached to the plan after plan() returns is already
+// too late: the sidebar's Ctrl-X closure would capture a blank anchor and the
+// stop would refuse even though the operand was supplied on the command line.
+func TestSwitchSidebarPlanCarriesTheAnchorOperandIntoItsKillAction(t *testing.T) {
+	t.Parallel()
+
+	const (
+		socketPath = "/tmp/fake-tmux/primary"
+		serverPID  = "4242"
+		anchorPane = "%9"
+		projectDir = "/src/alpha"
+	)
+
+	cmd, stop, _ := sidebarPopupStopFixture(t, projectDir, socketPath, serverPID, anchorPane, []string{"fallback"})
+	sessionID := bindSidebarPopupManagedRow(t, cmd, stop, projectDir)
+
+	var mutateErr error
+	killed := false
+	cmd.nativePicker = pickerRunnerFunc(func(options intpicker.Options) (intpicker.Result, error) {
+		for _, action := range options.Actions {
+			if action.Key != switchKillExpectKey || action.Mutate == nil {
+				continue
+			}
+			killed = true
+			_, mutateErr = action.Mutate(intpicker.ActionContext{
+				Key: switchKillExpectKey, Value: projectDir, SelectedIndex: 0,
+			})
+		}
+		return intpicker.Result{}, nil
+	})
+
+	plan, err := cmd.plan(switchUISidebar, anchorPane)
+	if err != nil {
+		t.Fatalf("plan(sidebar, %s) error = %v", anchorPane, err)
+	}
+	if plan.Anchor != anchorPane {
+		t.Fatalf("plan.Anchor = %q, want %q before the picker runs", plan.Anchor, anchorPane)
+	}
+	if !killed {
+		t.Fatalf("the sidebar picker exposed no mutable %q action", switchKillExpectKey)
+	}
+	if mutateErr != nil {
+		t.Fatalf("Ctrl-X through the real plan wiring = %v, want nil", mutateErr)
+	}
+	if stop.killTarget != sessionID {
+		t.Fatalf("Ctrl-X through the real plan wiring killed %q, want %q", stop.killTarget, sessionID)
+	}
+}

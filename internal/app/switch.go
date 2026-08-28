@@ -325,11 +325,10 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 
 	ctx := context.Background()
 	for {
-		plan, err := c.plan(*ui)
+		plan, err := c.plan(*ui, anchorPane)
 		if err != nil {
 			return err
 		}
-		plan.Anchor = anchorPane
 
 		reopen, err := c.execute(ctx, plan, stdout)
 		if err != nil {
@@ -341,13 +340,16 @@ func (c *switchCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 }
 
-func (c *switchCommand) plan(ui string) (switchPlan, error) {
+// plan carries the invocation's `--anchor` operand from the first line, because
+// completePlan runs the picker: an anchor attached after plan() returns would
+// arrive too late for the sidebar's own Ctrl-X action.
+func (c *switchCommand) plan(ui, anchorPane string) (switchPlan, error) {
 	inputs, err := c.candidateInputs("")
 	if err != nil {
 		return switchPlan{}, err
 	}
 
-	return c.planFromInputs(ui, inputs)
+	return c.planFromInputs(ui, anchorPane, inputs)
 }
 
 func (c *switchCommand) runToggleTag(args []string, stdout, stderr io.Writer) error {
@@ -608,7 +610,7 @@ func (c *switchCommand) runCycleWindow(args []string, stderr io.Writer) error {
 	})
 }
 
-func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (switchPlan, error) {
+func (c *switchCommand) planFromInputs(ui, anchorPane string, inputs candidates.Inputs) (switchPlan, error) {
 	homeDir, err := c.resolveHomeDir()
 	if err != nil {
 		return switchPlan{}, err
@@ -646,6 +648,7 @@ func (c *switchCommand) planFromInputs(ui string, inputs candidates.Inputs) (swi
 
 	plan := switchPlan{
 		UI:            ui,
+		Anchor:        anchorPane,
 		Candidates:    paths,
 		HomeDir:       homeDir,
 		CurrentPath:   cleanOptionalPath(inputs.CurrentPath),
