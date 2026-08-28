@@ -54,21 +54,78 @@ type tmuxAgentControlBindingLookup struct {
 	runner tmuxCommandRunner
 }
 
+// agentControlBindingFrameError is the typed refusal for a live tmux binding
+// that cannot be proven to be one exact six-field frame. Control callers use
+// this boundary before resolving the private app-server route, so malformed or
+// ambiguous output can never become a partial identity or a control write.
+type agentControlBindingFrameError struct {
+	Reason     string
+	FieldCount int
+}
+
+func (e *agentControlBindingFrameError) Error() string {
+	if e.FieldCount > 0 {
+		return fmt.Sprintf("live Codex control binding is malformed: %s (%d fields, want 6)", e.Reason, e.FieldCount)
+	}
+	return "live Codex control binding is malformed: " + e.Reason
+}
+
+// exactAgentControlBindingError is the typed Registry/live-activation refusal.
+// Its text remains the public recovery prefix consumed by the CLI while
+// errors.As can distinguish an identity refusal from transport failure.
+type exactAgentControlBindingError struct{ Reason string }
+
+func (e *exactAgentControlBindingError) Error() string {
+	return "exact Agent native control unavailable: " + e.Reason
+}
+
+// parseAgentControlBindingFrame accepts only the two separator spellings tmux
+// has emitted for this contract: the literal octal spelling used by tmux 3.4
+// and the raw unit-separator used by the supported compatibility fixture. It
+// deliberately does not perform general escape decoding. Apart from the one
+// command-output line ending, field bytes are returned unchanged.
+func parseAgentControlBindingFrame(out []byte) (agentControlLive, error) {
+	frame := string(out)
+	if before, ok := strings.CutSuffix(frame, "\n"); ok {
+		frame = before
+		frame = strings.TrimSuffix(frame, "\r")
+	}
+	if strings.ContainsAny(frame, "\r\n") {
+		return agentControlLive{}, &agentControlBindingFrameError{Reason: "multiple output lines"}
+	}
+	hasEscaped := strings.Contains(frame, tmuxRowSepFormat)
+	hasRaw := strings.Contains(frame, tmuxRowSep)
+	if hasEscaped && hasRaw {
+		return agentControlLive{}, &agentControlBindingFrameError{Reason: "mixed separator spellings"}
+	}
+	separator := tmuxRowSepFormat
+	if hasRaw {
+		separator = tmuxRowSep
+	} else if !hasEscaped {
+		return agentControlLive{}, &agentControlBindingFrameError{Reason: "separator is missing", FieldCount: 1}
+	}
+	fields := strings.Split(frame, separator)
+	if len(fields) != 6 {
+		return agentControlLive{}, &agentControlBindingFrameError{Reason: "field count is not exact", FieldCount: len(fields)}
+	}
+	return agentControlLive{RuntimeID: fields[0], PaneUID: fields[1], ThreadID: fields[2], Authority: fields[3], Epoch: fields[4], Reason: fields[5]}, nil
+}
+
 func (l *tmuxAgentControlBindingLookup) Live(ctx context.Context, paneUID string) (agentControlLive, bool, error) {
 	target, found, err := l.lookup.FindPaneTargetForUID(ctx, paneUID)
 	if err != nil || !found {
 		return agentControlLive{}, found, err
 	}
-	format := strings.Join([]string{"#{pane_id}", "#{@projmux_pane_uid}", "#{" + aiPaneThreadIDOption + "}", "#{" + aiPaneCodexAuthorityOption + "}", "#{" + aiPaneCodexEpochOption + "}", "#{" + aiPaneCodexReasonOption + "}"}, "\x1f")
+	format := tmuxRowFormat("#{pane_id}", "#{@projmux_pane_uid}", "#{"+aiPaneThreadIDOption+"}", "#{"+aiPaneCodexAuthorityOption+"}", "#{"+aiPaneCodexEpochOption+"}", "#{"+aiPaneCodexReasonOption+"}")
 	out, err := l.runner.Run(ctx, "tmux", "display-message", "-p", "-t", target, format)
 	if err != nil {
 		return agentControlLive{}, false, err
 	}
-	fields := strings.Split(strings.TrimSpace(string(out)), "\x1f")
-	if len(fields) != 6 {
-		return agentControlLive{}, false, errors.New("live Codex control binding is malformed")
+	live, err := parseAgentControlBindingFrame(out)
+	if err != nil {
+		return agentControlLive{}, false, err
 	}
-	return agentControlLive{RuntimeID: fields[0], PaneUID: fields[1], ThreadID: fields[2], Authority: fields[3], Epoch: fields[4], Reason: fields[5]}, true, nil
+	return live, true, nil
 }
 
 type exactAgentControlBinding struct {
@@ -81,7 +138,7 @@ type exactAgentControlBinding struct {
 
 func resolveExactAgentControlBinding(registry coremetadata.Registry, agent coremetadata.Agent, live agentControlLive, observed bool, stateDir string) (exactAgentControlBinding, error) {
 	refusal := func(reason string) (exactAgentControlBinding, error) {
-		return exactAgentControlBinding{}, fmt.Errorf("exact Agent native control unavailable: %s", reason)
+		return exactAgentControlBinding{}, &exactAgentControlBindingError{Reason: reason}
 	}
 	if agent.Spec.Provider != aiModeCodex {
 		return refusal("the selected Agent is not Codex")

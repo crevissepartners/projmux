@@ -307,6 +307,16 @@
   command, path, permission, and request content out of Registry, tmux, notify,
   diagnostics, support, and Archive sinks.
 
+- `make test` / `make test-integration`: Codex public turn control live-binding
+  compatibility uses one strict six-field tmux frame. Unit tests accept only
+  literal `\037` and raw unit-separator spellings without generic escape
+  decoding or value trimming; missing, extra, mixed, multiline, Registry
+  activation, runtime, Pane, thread, generation, and epoch drift all fail
+  closed with zero app-server writes. The isolated real-tmux regression removes
+  inherited `TMUX`/`TMUX_PANE`, uses run-unique `TMUX_TMPDIR` and `-L` names,
+  pins tmux 3.4's literal frame, and cleans only its immediately queried exact
+  socket path.
+
 - `make test`: Invocation-target authority Phase 2 keeps create, topology replay,
   resume, and native Codex on one typed exact-route Pane binder. The maintained
   matrix crosses `-L`/`-S` with success and first/middle/last option-write

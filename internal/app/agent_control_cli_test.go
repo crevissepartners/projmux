@@ -23,6 +23,7 @@ type staticAgentControlBinding struct {
 type exactControlRouteRunner struct {
 	target tmuxTransport
 	calls  [][]string
+	frame  []byte
 }
 
 func (r *exactControlRouteRunner) Run(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -34,9 +35,58 @@ func (r *exactControlRouteRunner) Run(_ context.Context, name string, args ...st
 	case "list-panes":
 		return []byte("pan-alpha-codex" + tmuxRowSepFormat + "%7\n"), nil
 	case "display-message":
-		return []byte(strings.Join([]string{"%7", "pan-alpha-codex", "thread-1", codexAuthorityControlPlane, "epoch-1", "ready"}, "\x1f") + "\n"), nil
+		if r.frame != nil {
+			return append([]byte(nil), r.frame...), nil
+		}
+		return []byte(strings.Join([]string{"%7", "pan-alpha-codex", "thread-1", codexAuthorityControlPlane, "epoch-1", "ready"}, tmuxRowSepFormat) + "\n"), nil
 	default:
 		return nil, errors.New("unexpected control operation")
+	}
+}
+
+func TestAgentControlBindingFrameAcceptsOnlySupportedExactSixFieldSpellings(t *testing.T) {
+	fields := []string{" %7 ", "pan-alpha-codex", `thread\\literal`, codexAuthorityControlPlane, "epoch-1", ` ready\\n `}
+	want := agentControlLive{RuntimeID: fields[0], PaneUID: fields[1], ThreadID: fields[2], Authority: fields[3], Epoch: fields[4], Reason: fields[5]}
+	for _, test := range []struct {
+		name      string
+		separator string
+		ending    string
+	}{
+		{name: "literal octal", separator: tmuxRowSepFormat, ending: "\n"},
+		{name: "raw unit separator", separator: tmuxRowSep, ending: "\r\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := parseAgentControlBindingFrame([]byte(strings.Join(fields, test.separator) + test.ending))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("binding = %#v, want byte-faithful %#v", got, want)
+			}
+		})
+	}
+}
+
+func TestAgentControlBindingFrameRejectsMalformedMissingExtraAndMixedFrames(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		frame string
+	}{
+		{name: "missing literal field", frame: strings.Join([]string{"%7", "pane", "thread", "authority", "epoch"}, tmuxRowSepFormat) + "\n"},
+		{name: "extra literal field", frame: strings.Join([]string{"%7", "pane", "thread", "authority", "epoch", "reason", "extra"}, tmuxRowSepFormat) + "\n"},
+		{name: "missing raw field", frame: strings.Join([]string{"%7", "pane", "thread", "authority", "epoch"}, tmuxRowSep) + "\n"},
+		{name: "extra raw field", frame: strings.Join([]string{"%7", "pane", "thread", "authority", "epoch", "reason", "extra"}, tmuxRowSep) + "\n"},
+		{name: "mixed separators", frame: "%7" + tmuxRowSep + "pane" + strings.Repeat(tmuxRowSepFormat+"field", 4) + "\n"},
+		{name: "separator missing", frame: "one-field\n"},
+		{name: "multiple lines", frame: strings.Join([]string{"%7", "pane", "thread", "authority", "epoch", "reason\nother"}, tmuxRowSepFormat) + "\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := parseAgentControlBindingFrame([]byte(test.frame))
+			var frameErr *agentControlBindingFrameError
+			if err == nil || !errors.As(err, &frameErr) {
+				t.Fatalf("error = %v, want typed frame refusal", err)
+			}
+		})
 	}
 }
 
@@ -108,6 +158,81 @@ func TestAgentControlCLIExactTurnDispatchAndTextFidelity(t *testing.T) {
 			}
 			if len(calls) != 1 || calls[0].Operation != test.op || calls[0].Text != test.text || calls[0].Identity != phase6CLIIdentity() || calls[0].Epoch != "epoch-1" {
 				t.Fatalf("control calls = %+v", calls)
+			}
+		})
+	}
+}
+
+func TestAgentControlCLIPublicTurnsDispatchFromBothSupportedTmuxFrames(t *testing.T) {
+	for _, frame := range []struct {
+		name      string
+		separator string
+	}{
+		{name: "tmux literal octal", separator: tmuxRowSepFormat},
+		{name: "raw compatibility", separator: tmuxRowSep},
+	} {
+		for _, turn := range []struct {
+			name string
+			args []string
+			op   string
+		}{
+			{name: "start", args: []string{"turn", "start", "uid:agt-alpha-codex", "--", "start exact"}, op: agentControlOpStart},
+			{name: "steer", args: []string{"turn", "steer", "uid:agt-alpha-codex", "--", "steer exact"}, op: agentControlOpSteer},
+			{name: "interrupt", args: []string{"turn", "interrupt", "uid:agt-alpha-codex"}, op: agentControlOpInterrupt},
+		} {
+			t.Run(frame.name+"/"+turn.name, func(t *testing.T) {
+				cmd, _, _ := exactControlCLICommand(t)
+				target := tmuxTransport{Kind: tmuxSocketName, Value: "exact-control", Source: tmuxSocketNameSource}
+				tmux := &exactControlRouteRunner{
+					target: target,
+					frame:  []byte(strings.Join([]string{"%7", "pan-alpha-codex", "thread-1", codexAuthorityControlPlane, "epoch-1", "ready"}, frame.separator) + "\n"),
+				}
+				cmd.controlBinding = nil
+				cmd.controlRunner = tmux
+				cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) { return runtimeMutationRoute{target: target}, nil }
+				var calls []agentControlRequest
+				cmd.controlCall = func(_ context.Context, stateDir string, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
+					if stateDir != "/tmp/projmux-phase6-cli" || identity != phase6CLIIdentity() || request.Identity != identity || request.Epoch != "epoch-1" {
+						t.Fatalf("dispatch state=%q identity=%+v request=%+v", stateDir, identity, request)
+					}
+					calls = append(calls, request)
+					return agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1"}, nil
+				}
+				if _, _, err := runRoute(t, cmd, turn.args...); err != nil {
+					t.Fatal(err)
+				}
+				if len(calls) != 1 || calls[0].Operation != turn.op {
+					t.Fatalf("control calls = %+v", calls)
+				}
+			})
+		}
+	}
+}
+
+func TestAgentControlCLIMalformedTmuxFramesCallNoAppServer(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		frame string
+	}{
+		{name: "missing", frame: strings.Join([]string{"%7", "pane", "thread", "authority", "epoch"}, tmuxRowSepFormat) + "\n"},
+		{name: "extra", frame: strings.Join([]string{"%7", "pane", "thread", "authority", "epoch", "reason", "extra"}, tmuxRowSepFormat) + "\n"},
+		{name: "mixed", frame: "%7" + tmuxRowSep + "pane" + strings.Repeat(tmuxRowSepFormat+"field", 4) + "\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cmd, _, _ := exactControlCLICommand(t)
+			target := tmuxTransport{Kind: tmuxSocketName, Value: "exact-control", Source: tmuxSocketNameSource}
+			cmd.controlBinding = nil
+			cmd.controlRunner = &exactControlRouteRunner{target: target, frame: []byte(test.frame)}
+			cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) { return runtimeMutationRoute{target: target}, nil }
+			calls := 0
+			cmd.controlCall = func(context.Context, string, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+				calls++
+				return agentControlResponse{}, errors.New("must not be called")
+			}
+			_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex")
+			var frameErr *agentControlBindingFrameError
+			if err == nil || !errors.As(err, &frameErr) || calls != 0 {
+				t.Fatalf("error=%v typed=%#v app-server calls=%d", err, frameErr, calls)
 			}
 		})
 	}
@@ -188,6 +313,74 @@ func TestAgentControlCLIStaleBindingCallsNoControl(t *testing.T) {
 	}
 }
 
+func TestAgentControlCLIRegistryAndLiveIdentityMismatchIsTypedAndCallsNoControl(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*fakeResourceStore, *staticAgentControlBinding)
+	}{
+		{name: "runtime", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) { binding.live.RuntimeID = "%8" }},
+		{name: "Pane uid", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) { binding.live.PaneUID = "pan-other" }},
+		{name: "thread", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) { binding.live.ThreadID = "thread-other" }},
+		{name: "unobserved", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) { binding.observed = false }},
+		{name: "activation generation missing", mutate: func(store *fakeResourceStore, _ *staticAgentControlBinding) {
+			pane, _ := store.registry.Pane("pan-alpha-codex")
+			pane.Status.Activation.Generation = ""
+		}},
+		{name: "activation Agent mismatch", mutate: func(store *fakeResourceStore, _ *staticAgentControlBinding) {
+			pane, _ := store.registry.Pane("pan-alpha-codex")
+			pane.Status.Activation.AgentUID = "agt-other"
+		}},
+		{name: "epoch empty", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) { binding.live.Epoch = "" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cmd, store, binding := exactControlCLICommand(t)
+			test.mutate(store, binding)
+			calls := 0
+			cmd.controlCall = func(context.Context, string, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+				calls++
+				return agentControlResponse{}, errors.New("must not be called")
+			}
+			_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex")
+			var bindingErr *exactAgentControlBindingError
+			if err == nil || !errors.As(err, &bindingErr) || calls != 0 {
+				t.Fatalf("error=%v typed=%#v control calls=%d", err, bindingErr, calls)
+			}
+		})
+	}
+}
+
+func TestAgentControlCLIReplacedGenerationOrEpochWritesNoAppServerControl(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*fakeResourceStore, *staticAgentControlBinding)
+	}{
+		{name: "generation", mutate: func(store *fakeResourceStore, _ *staticAgentControlBinding) {
+			pane, _ := store.registry.Pane("pan-alpha-codex")
+			pane.Status.Activation.Generation = "generation-replaced"
+		}},
+		{name: "epoch", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) { binding.live.Epoch = "epoch-replaced" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cmd, store, binding := exactControlCLICommand(t)
+			test.mutate(store, binding)
+			wire := &fakeExactControlWire{}
+			epoch := newCodexControlEpoch(wire, phase6CLIIdentity(), "epoch-1", codexappserver.LifecycleSnapshot{
+				ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive,
+				TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+			}, func(codexLifecycleIdentity) bool { return true })
+			var calls []agentControlRequest
+			cmd.controlCall = func(_ context.Context, _ string, _ codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
+				calls = append(calls, request)
+				return epoch.Handle(context.Background(), request), nil
+			}
+			_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex")
+			if err == nil || len(calls) != 1 || wire.writes() != 0 {
+				t.Fatalf("error=%v calls=%+v app-server writes=%d", err, calls, wire.writes())
+			}
+		})
+	}
+}
+
 func TestAgentControlBindingLookupUsesResolvedLogicalRouteOnly(t *testing.T) {
 	for _, target := range []tmuxTransport{
 		{Kind: tmuxSocketName, Value: "exact-control", Source: tmuxSocketNameSource},
@@ -214,6 +407,12 @@ func TestAgentControlBindingLookupUsesResolvedLogicalRouteOnly(t *testing.T) {
 			for _, call := range tmux.calls {
 				if len(call) < 2 || call[0] != target.Flag() || call[1] != target.Value {
 					t.Fatalf("ambient/default control read = %q", call)
+				}
+				if slices.Contains(call, "display-message") {
+					format := call[len(call)-1]
+					if strings.Count(format, tmuxRowSepFormat) != 5 || strings.Contains(format, tmuxRowSep) {
+						t.Fatalf("unsafe control frame format = %q", format)
+					}
 				}
 			}
 		})
