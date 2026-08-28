@@ -88,7 +88,7 @@ type unmanagedSessionKiller struct {
 }
 
 func (k unmanagedSessionKiller) KillSession(ctx context.Context, sessionName string) error {
-	_, err := executeUnmanagedRuntimeStop(ctx, k.runner, k.lookupEnv, sessionName)
+	_, err := executeUnmanagedRuntimeStop(ctx, k.runner, k.lookupEnv, sessionName, "")
 	return err
 }
 

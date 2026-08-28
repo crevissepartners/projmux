@@ -61,7 +61,7 @@ func TestUnmanagedRuntimeStopRefusesManagedReplacementBeforeWrite(t *testing.T) 
 			strings.Join([]string{"$7", "scratch", "prj-managed", "", ""}, sep) + "\n",
 		},
 	}
-	killed, err := executeUnmanagedRuntimeStop(context.Background(), runner, func(string) string { return "" }, "scratch")
+	killed, err := executeUnmanagedRuntimeStop(context.Background(), runner, func(string) string { return "" }, "scratch", "")
 	if err == nil || killed || !strings.Contains(err.Error(), "Registry-managed") {
 		t.Fatalf("killed/error = %v / %v, want managed replacement refusal", killed, err)
 	}
@@ -79,7 +79,7 @@ func TestUnmanagedRuntimeStopKillsExactStillUnownedHandle(t *testing.T) {
 		// pre-write guard must all see the same exact unowned tuple.
 		listRows: []string{row, row, row},
 	}
-	killed, err := executeUnmanagedRuntimeStop(context.Background(), runner, func(string) string { return "" }, "scratch")
+	killed, err := executeUnmanagedRuntimeStop(context.Background(), runner, func(string) string { return "" }, "scratch", "")
 	if err != nil || !killed {
 		t.Fatalf("killed/error = %v / %v", killed, err)
 	}
@@ -100,7 +100,7 @@ func TestUnmanagedRuntimeStopKillsExactStillUnownedHandle(t *testing.T) {
 func TestUnmanagedRuntimeStopRefusesForgedAppRoute(t *testing.T) {
 	t.Parallel()
 	runner := &unmanagedStopRunner{appMarker: "0", logical: defaultAppSocket, socketPath: "/tmp/tmux/projmux"}
-	if killed, err := executeUnmanagedRuntimeStop(context.Background(), runner, func(string) string { return "" }, "scratch"); err == nil || killed {
+	if killed, err := executeUnmanagedRuntimeStop(context.Background(), runner, func(string) string { return "" }, "scratch", ""); err == nil || killed {
 		t.Fatalf("killed/error = %v / %v, want forged route refusal", killed, err)
 	}
 	if got := runner.topologyWrites(); got != 0 {

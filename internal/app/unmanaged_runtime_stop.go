@@ -23,12 +23,16 @@ type unmanagedRuntimeStopObservation struct {
 // human maintenance. A name selected while it was unowned is not authority:
 // the exact app route and `$N` tuple are rebound immediately before kill, and
 // any Project or ControlSession attribution refuses with zero writes.
-func executeUnmanagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, lookupEnv func(string) string, sessionName string) (bool, error) {
+//
+// anchorPaneID is the caller's explicit anchor operand. A popup surface that
+// owns no Pane of its own supplies it; an inherited invocation leaves it blank
+// and keeps resolving authority from its own TMUX_PANE receipt.
+func executeUnmanagedRuntimeStop(ctx context.Context, runner tmuxCommandRunner, lookupEnv func(string) string, sessionName, anchorPaneID string) (bool, error) {
 	sessionName = strings.TrimSpace(sessionName)
 	if runner == nil || sessionName == "" {
 		return false, errors.New("unmanaged runtime stop requires a runner and session name")
 	}
-	route, err := resolveInvocationRuntimeMutationRoute(ctx, runner, lookupEnv)
+	route, err := resolveInvocationRuntimeMutationRouteWithAnchor(ctx, runner, lookupEnv, anchorPaneID)
 	if err != nil {
 		return false, err
 	}
