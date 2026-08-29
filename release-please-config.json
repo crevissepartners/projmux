@@ -7,6 +7,7 @@
   "bump-patch-for-minor-pre-major": true,
   "packages": {
     ".": {
+      "draft": true,
       "extra-files": [
         "internal/version/version.go",
         "package.json",

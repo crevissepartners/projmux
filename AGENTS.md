@@ -55,8 +55,9 @@
 
 ## Release Flow
 - `release-please-action` watches `main`, accumulates Conventional Commit subjects, and opens or refreshes a "chore(main): release X.Y.Z" PR. That PR contains the version bump (`internal/version/version.go` + `.release-please-manifest.json`), `CHANGELOG.md` updates, and the release notes.
-- Merging the release PR pushes the `vX.Y.Z` tag and creates the GitHub Release with auto-generated notes.
-- `.github/workflows/release.yml` triggers on the tag push, builds the linux/darwin × amd64/arm64 matrix, and uploads tarballs to the release that already exists (`gh release upload --clobber`). Do not add hardcoded notes back to that workflow — release-please owns the notes.
+- Merging the release PR creates the GitHub Release with auto-generated notes as a **draft** (`draft` in `release-please-config.json`). A draft release does not create its git tag, so `.github/workflows/release-please.yml` creates `refs/tags/vX.Y.Z` itself; that ref creation is what triggers the tag workflow, and it uses the release-please PAT because a `GITHUB_TOKEN` push never dispatches another workflow.
+- `.github/workflows/release.yml` triggers on the tag push, builds the linux/darwin × amd64/arm64 matrix, and uploads tarballs to the drafted release (`gh release upload --clobber`). Do not add hardcoded notes back to that workflow — release-please owns the notes.
+- The release becomes visible only in the final `publish-release` job, after `publish-npm` succeeds. That ordering is the contract: users never see a GitHub release for a version npm cannot install yet, and a failed npm publish leaves the release drafted and the workflow red instead of shipping a half-published version.
 - Non-Conventional commit subjects on `main` are silently skipped by release-please. Keep PR titles strict; squash merge ensures the PR title is the only subject that lands.
 
 ## Configuration And Environment

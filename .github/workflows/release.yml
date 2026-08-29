@@ -191,3 +191,22 @@ jobs:
             dist/npm/projmux; do
             npm publish "$dir" --access public
           done
+
+  publish-release:
+    name: Publish GitHub Release
+    needs: publish-npm
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      # release-please drafts the release, so it is invisible to users until
+      # this step. Gating it on `publish-npm` is what keeps the GitHub release
+      # and the npm `dist-tags.latest` from drifting apart: a failed npm
+      # publish leaves the release drafted and fails the workflow instead of
+      # advertising a version npm cannot install yet.
+      - name: Publish the drafted release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false
