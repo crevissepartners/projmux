@@ -183,6 +183,34 @@ jobs:
       - name: Run unit tests
         run: make test
 
+  # The registry lock is the only mutual exclusion the whole application layer
+  # stands on, and its correctness is a property of concurrent execution, not of
+  # any single call. `make test` runs without the detector so the ordinary unit
+  # gate stays fast; this job runs the detector over the packages whose tests
+  # actually create contention. It is scoped on purpose -- `-race` across the
+  # full suite buys coverage of code that never runs concurrently at the cost of
+  # every contributor's feedback loop.
+  race:
+    name: Race Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run concurrency tests under the race detector
+        run: |
+          go test -race -count=2 \
+            ./internal/integrations/metadata/... \
+            ./internal/core/notify/... \
+            ./internal/core/recentwindows/...
+
   darwin-native:
     name: Darwin Native Key Adapter
     runs-on: macos-15
@@ -433,6 +461,7 @@ jobs:
       - security-policy
       - fmt
       - unit
+      - race
       - darwin-native
       - npm-pack
       - integration
@@ -455,6 +484,7 @@ jobs:
             --required security-policy \
             --required fmt \
             --required unit \
+            --required race \
             --required darwin-native \
             --required npm-pack \
             --required integration \

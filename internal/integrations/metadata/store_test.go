@@ -7,16 +7,21 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
 var fixedNow = time.Date(2026, 8, 15, 9, 30, 0, 0, time.UTC)
@@ -50,6 +55,12 @@ func writeRegistryFile(t *testing.T, store *Store, contents string) {
 	}
 }
 
+// dirListing reports the registry state a directory holds. The persistent lock
+// descriptor is skipped: an advisory flock belongs to an open file description,
+// so that file is created once and never unlinked, and its appearance the first
+// time a store touches the directory says nothing about whether an operation
+// wrote registry state. Every other name -- staged temps, backups, quarantine
+// copies, the initialized marker -- is still reported.
 func dirListing(t *testing.T, dir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -58,6 +69,9 @@ func dirListing(t *testing.T, dir string) []string {
 	}
 	var names []string
 	for _, entry := range entries {
+		if strings.HasSuffix(entry.Name(), flockFileSuffix) {
+			continue
+		}
 		names = append(names, entry.Name())
 	}
 	sort.Strings(names)
@@ -896,9 +910,12 @@ func TestConcurrentUpdatesSerializeThroughTheRegistryLock(t *testing.T) {
 	for i := range 8 {
 		roots[fmt.Sprintf("/src/p%d", i)] = true
 	}
-	// The lock's stale-breaking window is measured against the wall clock, so
-	// this test deliberately keeps the real clock instead of the fixed one.
+	// Nothing on the lock path reads the wall clock any more: exclusion is the
+	// kernel queue and staleness is the owner pid's liveness, so this test runs
+	// on the fixed clock like every other store test. Its outcome no longer
+	// depends on how much CPU the eight writers were given.
 	store := NewStore(PathFor(t.TempDir()))
+	store.SetClock(func() time.Time { return fixedNow })
 
 	var wg sync.WaitGroup
 	errs := make([]error, 8)
@@ -956,130 +973,459 @@ func TestConcurrentUpdatesSerializeThroughTheRegistryLock(t *testing.T) {
 	if _, err := os.Stat(store.markerPath); err != nil {
 		t.Fatalf("the concurrent updates did not establish the initialized marker: %v", err)
 	}
+	// Every lease released its kernel lock too, so the next writer is granted
+	// without waiting at all.
+	lease, err := store.acquireLock(t.Context())
+	if err != nil {
+		t.Fatalf("acquire after the concurrent updates: %v", err)
+	}
+	lease.release()
 }
 
-func TestRegistryLockRetryBudgetTracksVerifiedOwnerLease(t *testing.T) {
-	writeOwner := func(t *testing.T, path string, pid int) {
-		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-			t.Fatalf("mkdir lock parent: %v", err)
-		}
-		if err := os.WriteFile(path, fmt.Appendf(nil, "pid=%d\n", pid), 0o600); err != nil {
-			t.Fatalf("write lock owner: %v", err)
-		}
+// steppingClock returns a clock that advances by step on every read. It is how
+// a deadline test reaches its deadline: the lock's time budget is spent in
+// simulated time, so the assertions never depend on how fast the machine ran
+// the loop.
+func steppingClock(start time.Time, step time.Duration) func() time.Time {
+	var mu sync.Mutex
+	now := start
+	return func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		reading := now
+		now = now.Add(step)
+		return reading
 	}
-	replaceOwner := func(t *testing.T, path string, pid int) {
-		t.Helper()
-		if err := os.Remove(path); err != nil {
-			t.Fatalf("remove prior lock owner: %v", err)
-		}
-		writeOwner(t, path, pid)
-	}
+}
 
-	t.Run("owner turnover resets the unchanged per-lease budget", func(t *testing.T) {
-		store := NewStore(PathFor(t.TempDir()))
-		writeOwner(t, store.lockPath, 1001)
-		sleeps := 0
-		err := store.acquireLockWithPolicy(2, time.Nanosecond, time.Nanosecond, func(time.Duration) {
-			sleeps++
-			switch sleeps {
-			case 1:
-				replaceOwner(t, store.lockPath, 1002)
-			case 2:
-				if err := os.Remove(store.lockPath); err != nil {
-					t.Fatalf("release second owner: %v", err)
-				}
-			}
-		})
-		if err != nil {
-			t.Fatalf("acquire after two healthy owners: %v", err)
-		}
-		if sleeps != 2 {
-			t.Fatalf("contention sleeps = %d, want 2 owner leases", sleeps)
-		}
-		if err := os.Remove(store.lockPath); err != nil {
-			t.Fatalf("release acquired lock: %v", err)
-		}
-		assertNoStagedGarbage(t, store)
+// holdRegistryFlock takes the kernel lock through an independent descriptor, the
+// way a second process would. flock is owned by the open file description, not
+// by the process, so this contends with the store under test exactly as another
+// install does.
+func holdRegistryFlock(t *testing.T, store *Store) {
+	t.Helper()
+	if err := localstate.EnsurePrivateDir(filepath.Dir(store.flockPath)); err != nil {
+		t.Fatalf("create lock dir: %v", err)
+	}
+	held, err := os.OpenFile(store.flockPath, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open registry flock: %v", err)
+	}
+	if err := unix.Flock(int(held.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
+		t.Fatalf("hold registry flock: %v", err)
+	}
+	release := sync.OnceFunc(func() {
+		_ = unix.Flock(int(held.Fd()), unix.LOCK_UN)
+		_ = held.Close()
 	})
+	heldRegistryFlocks.Store(store, release)
+	t.Cleanup(release)
+}
 
-	t.Run("unchanged owner exhausts exactly the production attempt count", func(t *testing.T) {
+// heldRegistryFlocks lets a test release the stand-in holder before its cleanup
+// runs, for the cases that need the wait to end inside the test body.
+var heldRegistryFlocks sync.Map
+
+func releaseRegistryFlock(t *testing.T, store *Store) {
+	t.Helper()
+	release, ok := heldRegistryFlocks.Load(store)
+	if !ok {
+		t.Fatal("no registry flock is held for this store")
+	}
+	release.(func())()
+}
+
+// writeLegacyMarker reproduces exactly what an install from before the kernel
+// lock writes: the O_EXCL marker file and nothing else.
+func writeLegacyMarker(t *testing.T, store *Store, contents string) {
+	t.Helper()
+	if err := localstate.EnsurePrivateDir(filepath.Dir(store.lockPath)); err != nil {
+		t.Fatalf("create lock dir: %v", err)
+	}
+	if err := os.WriteFile(store.lockPath, []byte(contents), 0o600); err != nil {
+		t.Fatalf("write legacy marker: %v", err)
+	}
+}
+
+// exitedPID returns the pid of a process that has really been reaped, so the
+// liveness predicate is exercised against an absent owner rather than against a
+// number chosen in the hope that nothing is using it.
+func exitedPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("/bin/sh", "-c", "exit 0")
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start throwaway process: %v", err)
+	}
+	pid := cmd.Process.Pid
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("reap throwaway process: %v", err)
+	}
+	return pid
+}
+
+// TestRegistryLockFailsOnItsDeadlineNotOnAnAttemptBudget pins the failure
+// condition the C-1 contract now states: a mutation is allowed a fixed amount
+// of time, and running out of it is reported as that timeout. The old budget
+// reported "exhausted N attempts", which named how busy the machine was rather
+// than anything the caller decided.
+func TestRegistryLockFailsOnItsDeadlineNotOnAnAttemptBudget(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(PathFor(t.TempDir()))
+	holdRegistryFlock(t, store)
+	// The first reading starts the budget and the second is already past it, so
+	// the contended wait ends on the deadline without any real elapsed time.
+	store.SetClock(steppingClock(fixedNow, time.Minute))
+
+	sleeps := 0
+	lease, err := store.acquireLockWithDeadline(t.Context(), 30*time.Second, func(time.Duration) { sleeps++ })
+	if lease != nil {
+		lease.release()
+		t.Fatal("a lease was granted while another writer held the kernel lock")
+	}
+	if !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("contended acquire error = %v, want %v", err, ErrLockTimeout)
+	}
+	if got := err.Error(); !strings.Contains(got, "after 30s") || strings.Contains(got, "attempt") {
+		t.Fatalf("timeout error = %q, want the granted budget and no attempt count", got)
+	}
+	if sleeps != 0 {
+		t.Fatalf("backoff sleeps = %d, want 0 before the kernel lock is granted", sleeps)
+	}
+	assertNoStagedGarbage(t, store)
+}
+
+// TestRegistryLockDeadlineIsMeasuredOnTheInjectedClock is the test that the
+// wall-clock stale window used to make impossible. Nothing here reads the real
+// clock, so the result cannot change with machine load.
+func TestRegistryLockDeadlineIsMeasuredOnTheInjectedClock(t *testing.T) {
+	t.Parallel()
+
+	store := NewStore(PathFor(t.TempDir()))
+	writeLegacyMarker(t, store, fmt.Sprintf("pid=%d\n", os.Getpid()))
+	store.SetClock(steppingClock(fixedNow, 250*time.Millisecond))
+
+	start := time.Now()
+	sleeps := 0
+	lease, err := store.acquireLockWithDeadline(t.Context(), time.Second, func(time.Duration) { sleeps++ })
+	if lease != nil {
+		lease.release()
+		t.Fatal("a lease was granted while a live legacy holder owned the marker")
+	}
+	if !errors.Is(err, ErrLockTimeout) {
+		t.Fatalf("legacy contention error = %v, want %v", err, ErrLockTimeout)
+	}
+	if sleeps == 0 {
+		t.Fatal("the legacy marker wait never backed off, so it never actually waited")
+	}
+	// A one-second budget spent entirely in simulated time: the real clock
+	// barely moved, which is the property that removes the load dependency.
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("real elapsed time = %s, want a deadline spent on the injected clock", elapsed)
+	}
+	assertNoStagedGarbage(t, store)
+}
+
+// TestRegistryLockReclaimsAMarkerOnlyWhenItsOwnerIsGone covers the stale
+// predicate from both sides. A dead owner is reclaimed immediately instead of
+// after a fixed wall-clock window, and everything that does not prove the owner
+// is gone -- a live pid, an empty file, a malformed line, an unreadable path --
+// keeps the marker, because reclaiming on a guess hands two writers the lock.
+func TestRegistryLockReclaimsAMarkerOnlyWhenItsOwnerIsGone(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a reaped owner is reclaimed at once", func(t *testing.T) {
+		t.Parallel()
+
 		store := NewStore(PathFor(t.TempDir()))
-		writeOwner(t, store.lockPath, 2001)
+		writeLegacyMarker(t, store, fmt.Sprintf("pid=%d\n", exitedPID(t)))
+		store.SetClock(steppingClock(fixedNow, time.Minute))
+
 		sleeps := 0
-		err := store.acquireLockWithPolicy(defaultLockMaxAttempts, time.Nanosecond, time.Nanosecond, func(time.Duration) {
-			sleeps++
-		})
-		if err == nil || !strings.Contains(err.Error(), "exhausted 400 attempts") {
-			t.Fatalf("stable owner error = %v, want exact 400-attempt exhaustion", err)
+		lease, err := store.acquireLockWithDeadline(t.Context(), 30*time.Second, func(time.Duration) { sleeps++ })
+		if err != nil {
+			t.Fatalf("acquire over a dead owner's marker: %v", err)
 		}
-		if sleeps != defaultLockMaxAttempts {
-			t.Fatalf("stable owner sleeps = %d, want %d", sleeps, defaultLockMaxAttempts)
+		if sleeps != 0 {
+			t.Fatalf("backoff sleeps = %d, want 0 for an owner already gone", sleeps)
 		}
-		if err := os.Remove(store.lockPath); err != nil {
-			t.Fatalf("release fixture lock: %v", err)
+		owner, ok := observedLockOwnerPID(store.lockPath)
+		if !ok || owner != os.Getpid() {
+			t.Fatalf("marker owner = %d (parsed=%t), want this process %d", owner, ok, os.Getpid())
+		}
+		lease.release()
+		if _, err := os.Stat(store.lockPath); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the marker survived release: %v", err)
 		}
 		assertNoStagedGarbage(t, store)
 	})
 
 	for _, test := range []struct {
-		name    string
-		replace func(*testing.T, string)
+		name  string
+		write func(*testing.T, *Store)
 	}{
-		{name: "empty owner", replace: func(t *testing.T, path string) {
+		{name: "a live owner", write: func(t *testing.T, store *Store) {
 			t.Helper()
-			if err := os.Remove(path); err != nil {
-				t.Fatalf("remove valid owner: %v", err)
-			}
-			if err := os.WriteFile(path, nil, 0o600); err != nil {
-				t.Fatalf("write empty owner: %v", err)
-			}
+			writeLegacyMarker(t, store, fmt.Sprintf("pid=%d\n", os.Getpid()))
 		}},
-		{name: "malformed owner", replace: func(t *testing.T, path string) {
+		{name: "an empty marker", write: func(t *testing.T, store *Store) {
 			t.Helper()
-			if err := os.WriteFile(path, []byte("owner=not-a-pid\n"), 0o600); err != nil {
-				t.Fatalf("write malformed owner: %v", err)
-			}
+			writeLegacyMarker(t, store, "")
 		}},
-		{name: "transiently unreadable owner", replace: func(t *testing.T, path string) {
+		{name: "a malformed marker", write: func(t *testing.T, store *Store) {
 			t.Helper()
-			if err := os.Remove(path); err != nil {
-				t.Fatalf("remove valid owner: %v", err)
+			writeLegacyMarker(t, store, "owner=not-a-pid\n")
+		}},
+		{name: "an unreadable marker", write: func(t *testing.T, store *Store) {
+			t.Helper()
+			if err := localstate.EnsurePrivateDir(filepath.Dir(store.lockPath)); err != nil {
+				t.Fatalf("create lock dir: %v", err)
 			}
-			if err := os.Mkdir(path, 0o700); err != nil {
-				t.Fatalf("replace owner with unreadable directory: %v", err)
+			if err := os.Mkdir(store.lockPath, 0o700); err != nil {
+				t.Fatalf("replace the marker with an unreadable directory: %v", err)
 			}
 		}},
 	} {
-		t.Run(test.name+" does not reset", func(t *testing.T) {
+		t.Run(test.name+" is never reclaimed", func(t *testing.T) {
+			t.Parallel()
+
 			store := NewStore(PathFor(t.TempDir()))
-			writeOwner(t, store.lockPath, 3001)
-			sleeps := 0
-			err := store.acquireLockWithPolicy(2, time.Nanosecond, time.Nanosecond, func(time.Duration) {
-				sleeps++
-				if sleeps == 1 {
-					test.replace(t, store.lockPath)
-				}
-			})
-			if err == nil || !strings.Contains(err.Error(), "exhausted 2 attempts") {
-				t.Fatalf("invalid owner error = %v, want bounded exhaustion", err)
+			test.write(t, store)
+			store.SetClock(steppingClock(fixedNow, time.Minute))
+
+			lease, err := store.acquireLockWithDeadline(t.Context(), 30*time.Second, func(time.Duration) {})
+			if lease != nil {
+				lease.release()
+				t.Fatal("the marker was reclaimed without proof that its owner is gone")
 			}
-			if sleeps != 2 {
-				t.Fatalf("invalid owner sleeps = %d, want 2 without reset", sleeps)
+			if !errors.Is(err, ErrLockTimeout) {
+				t.Fatalf("error = %v, want %v", err, ErrLockTimeout)
 			}
 			if err := os.RemoveAll(store.lockPath); err != nil {
-				t.Fatalf("remove invalid owner fixture: %v", err)
+				t.Fatalf("remove marker fixture: %v", err)
 			}
 			assertNoStagedGarbage(t, store)
 		})
 	}
 }
 
-func TestRegistryLockProductionBudgetConstantsRemainUnchanged(t *testing.T) {
-	if defaultLockMaxAttempts != 400 || defaultLockBaseDelay != 2*time.Millisecond ||
-		defaultLockMaxDelay != 50*time.Millisecond || defaultLockStaleAfter != 30*time.Second {
-		t.Fatalf("ordinary Registry lock budget drifted: attempts=%d base=%s max=%s stale=%s",
-			defaultLockMaxAttempts, defaultLockBaseDelay, defaultLockMaxDelay, defaultLockStaleAfter)
+// TestRegistryLockKeepsMutualExclusionWithAMarkerOnlyInstall covers the
+// compatibility window in both directions. An older install sees only the
+// marker, so the marker must still be written while the kernel lock is held;
+// and an older install that took the marker first must still exclude us even
+// though it never touches the kernel lock.
+func TestRegistryLockKeepsMutualExclusionWithAMarkerOnlyInstall(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a held lease blocks the marker-only path", func(t *testing.T) {
+		t.Parallel()
+
+		store := NewStore(PathFor(t.TempDir()))
+		if err := localstate.EnsurePrivateDir(filepath.Dir(store.lockPath)); err != nil {
+			t.Fatalf("create lock dir: %v", err)
+		}
+		store.SetClock(func() time.Time { return fixedNow })
+
+		lease, err := store.acquireLockWithDeadline(t.Context(), 30*time.Second, func(time.Duration) {})
+		if err != nil {
+			t.Fatalf("acquire on an idle registry: %v", err)
+		}
+		// This is the whole of the older install's acquisition.
+		legacy, err := os.OpenFile(store.lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			_ = legacy.Close()
+			t.Fatal("a marker-only install acquired the lock while a lease was held")
+		}
+		if !errors.Is(err, os.ErrExist) {
+			t.Fatalf("marker-only acquisition error = %v, want %v", err, os.ErrExist)
+		}
+		lease.release()
+		// Once the lease is released the older install proceeds, so the
+		// compatibility window costs it nothing but the wait it already had.
+		reopened, err := os.OpenFile(store.lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			t.Fatalf("marker-only acquisition after release: %v", err)
+		}
+		_ = reopened.Close()
+		if err := os.Remove(store.lockPath); err != nil {
+			t.Fatalf("release the marker-only lock: %v", err)
+		}
+		assertNoStagedGarbage(t, store)
+	})
+
+	t.Run("a marker-only holder blocks a lease", func(t *testing.T) {
+		t.Parallel()
+
+		store := NewStore(PathFor(t.TempDir()))
+		writeLegacyMarker(t, store, fmt.Sprintf("pid=%d\n", os.Getpid()))
+		store.SetClock(steppingClock(fixedNow, time.Minute))
+
+		lease, err := store.acquireLockWithDeadline(t.Context(), 30*time.Second, func(time.Duration) {})
+		if lease != nil {
+			lease.release()
+			t.Fatal("a lease was granted while a marker-only install held the lock")
+		}
+		if !errors.Is(err, ErrLockTimeout) {
+			t.Fatalf("error = %v, want %v", err, ErrLockTimeout)
+		}
+		// The refused acquisition must leave the older install's marker alone.
+		owner, ok := observedLockOwnerPID(store.lockPath)
+		if !ok || owner != os.Getpid() {
+			t.Fatalf("marker owner after a refused acquire = %d (parsed=%t), want it untouched", owner, ok)
+		}
+		if err := os.Remove(store.lockPath); err != nil {
+			t.Fatalf("remove marker fixture: %v", err)
+		}
+		assertNoStagedGarbage(t, store)
+	})
+}
+
+// TestRegistryLockGrantsEveryWriterUnderDeliberateContention is the direct
+// enforcement of the C-1 guarantee. Contention is created on purpose -- every
+// worker loops on acquire and release with no pacing at all -- and the
+// assertions are that every acquisition eventually succeeds and that no two
+// critical sections overlap.
+//
+// The occupancy counter is atomic rather than plain. A file lock is invisible
+// to the race detector, which builds its happens-before edges out of Go
+// synchronization only, so a plain counter here would be reported as a race
+// even when exclusion is perfect. What `-race` contributes to this test is
+// coverage of the store's own concurrent internals; the exclusion itself is
+// asserted by the counter.
+func TestRegistryLockGrantsEveryWriterUnderDeliberateContention(t *testing.T) {
+	t.Parallel()
+
+	const (
+		writers = 8
+		rounds  = 16
+	)
+	store := NewStore(PathFor(t.TempDir()))
+	store.SetClock(func() time.Time { return fixedNow })
+	if err := localstate.EnsurePrivateDir(filepath.Dir(store.lockPath)); err != nil {
+		t.Fatalf("create lock dir: %v", err)
+	}
+
+	var inside, overlaps atomic.Int32
+	errs := make([]error, writers)
+	var wg sync.WaitGroup
+	for worker := range writers {
+		wg.Go(func() {
+			for range rounds {
+				lease, err := store.acquireLock(t.Context())
+				if err != nil {
+					errs[worker] = err
+					return
+				}
+				if inside.Add(1) != 1 {
+					overlaps.Add(1)
+				}
+				inside.Add(-1)
+				lease.release()
+			}
+		})
+	}
+	wg.Wait()
+
+	for worker, err := range errs {
+		if err != nil {
+			t.Fatalf("writer %d never acquired the lock: %v", worker, err)
+		}
+	}
+	if overlaps.Load() != 0 {
+		t.Fatalf("overlapping critical sections = %d, want 0", overlaps.Load())
+	}
+	if _, err := os.Stat(store.lockPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the marker survived the contended rounds: %v", err)
+	}
+	assertNoStagedGarbage(t, store)
+}
+
+// TestAConcurrentWriterIsNotRefusedInsideAnotherCommitsMarkerWindow pins the
+// C-1 assumption against the one window where a healthy Registry looks lost.
+//
+// A commit publishes the initialized marker before it renames the staged
+// registry into place. An observer without the lock that lands in that window
+// sees "the marker records a completed write but registry.json is missing" --
+// byte for byte the state-loss signature -- while nothing is wrong at all. The
+// degraded gate must not turn a neighbour's in-flight commit into a refusal: a
+// writer that is alive and progressing is exactly what the deadline says a
+// waiter should wait for.
+//
+// The window is built directly rather than raced into: the kernel lock stands in
+// for the committing writer, and the registry file is moved aside to reproduce
+// what that writer's transaction would transiently leave on disk.
+func TestAConcurrentWriterIsNotRefusedInsideAnotherCommitsMarkerWindow(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	registerProject(t, store, "/src/first")
+	staged := store.Path() + ".staged-by-the-committing-writer"
+	if err := os.Rename(store.Path(), staged); err != nil {
+		t.Fatalf("open the marker window: %v", err)
+	}
+	holdRegistryFlock(t, store)
+
+	done := make(chan error, 1)
+	go func() {
+		mutator := coremetadata.Mutator{
+			Now:       func() time.Time { return fixedNow },
+			NewUID:    coremetadata.NewUID,
+			DirExists: func(path string) (bool, error) { return path == "/src/second", nil },
+		}
+		_, err := store.Update(func(registry *coremetadata.Registry) error {
+			_, err := mutator.RegisterProject(registry, coremetadata.RegisterProjectOptions{
+				Root:         "/src/second",
+				DefaultShell: "/bin/zsh",
+				OperationID:  "op-second",
+			})
+			return err
+		})
+		done <- err
+	}()
+
+	// The refusal this guards against is immediate -- the gate only stats two
+	// paths -- so an answer arriving at all inside this window is the defect.
+	select {
+	case err := <-done:
+		t.Fatalf("the second writer answered inside another commit's marker window: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	// The committing writer finishes: the staged bytes become the registry and
+	// its lock is released.
+	if err := os.Rename(staged, store.Path()); err != nil {
+		t.Fatalf("close the marker window: %v", err)
+	}
+	releaseRegistryFlock(t, store)
+
+	if err := <-done; err != nil {
+		t.Fatalf("the second writer was refused by a window that had closed: %v", err)
+	}
+	registry, err := store.Load()
+	if err != nil {
+		t.Fatalf("load after the window: %v", err)
+	}
+	if len(registry.Projects) != 2 {
+		t.Fatalf("projects = %d, want both writers' registrations", len(registry.Projects))
+	}
+	assertNoStagedGarbage(t, store)
+}
+
+// TestRegistryLockProductionDeadlineConstantsRemainUnchanged pins the budget the
+// production path grants, and pins that this change left the separate recovery
+// lock's attempt budget exactly where it was.
+func TestRegistryLockProductionDeadlineConstantsRemainUnchanged(t *testing.T) {
+	if defaultLockTimeout != 30*time.Second || defaultLockBaseDelay != 2*time.Millisecond ||
+		defaultLockMaxDelay != 50*time.Millisecond {
+		t.Fatalf("ordinary Registry lock budget drifted: timeout=%s base=%s max=%s",
+			defaultLockTimeout, defaultLockBaseDelay, defaultLockMaxDelay)
+	}
+	if store := NewStore(PathFor(t.TempDir())); store.lockTimeout != defaultLockTimeout {
+		t.Fatalf("store lock timeout = %s, want the production default %s", store.lockTimeout, defaultLockTimeout)
+	}
+	if defaultRecoveryLockMaxAttempts != 200 || defaultLockStaleAfter != 30*time.Second {
+		t.Fatalf("the out-of-scope recovery lock budget drifted: attempts=%d stale=%s",
+			defaultRecoveryLockMaxAttempts, defaultLockStaleAfter)
 	}
 }
 

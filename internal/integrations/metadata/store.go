@@ -20,6 +20,7 @@ package metadata
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -35,6 +36,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	localstate "github.com/crevissepartners/projmux/internal/state"
@@ -44,6 +47,11 @@ const (
 	stateDirName   = "metadata"
 	registryFile   = "registry.json"
 	lockFileSuffix = ".lock"
+	// flockFileSuffix names the persistent descriptor the kernel lock queue is
+	// attached to. Unlike the marker it is never unlinked: an advisory flock
+	// belongs to an open file description, so a lock file that can be removed
+	// and recreated between two waiters is a lock two writers can hold at once.
+	flockFileSuffix = ".flock"
 	// markerFileName records that at least one registry write has completed.
 	// It is the boundary between "this operator has never registered a
 	// resource" and "the registry that existed is gone".
@@ -62,10 +70,18 @@ const (
 )
 
 var (
-	// Runtime mutation plans deliberately keep exact guard, execute, and
-	// reobserve work inside one Registry transaction. Allow an eight-writer
-	// create burst to serialize without crossing the 30s stale-break boundary.
-	defaultLockMaxAttempts         = 400
+	// defaultLockTimeout is the time budget one Registry mutation is allowed to
+	// spend waiting for the lock. It is deliberately a deadline and not a retry
+	// count: a mutation plan keeps exact guard, execute, and reobserve work
+	// inside one transaction, so what a waiter needs is a bound on how long a
+	// healthy queue may hold it up, not a bound on how many times it managed to
+	// poll while the machine was busy. Under an attempt budget a loaded machine
+	// changes the outcome of a write; under a deadline it changes only latency.
+	defaultLockTimeout = 30 * time.Second
+	// The recovery lock still spends an attempt budget against the wall clock.
+	// It is a separate lock on a separate path taken by explicit recovery
+	// operations, not by the eight-writer create burst, and it is out of this
+	// contract's scope; see withRecoveryLock.
 	defaultRecoveryLockMaxAttempts = 200
 	defaultLockBaseDelay           = 2 * time.Millisecond
 	defaultLockMaxDelay            = 50 * time.Millisecond
@@ -115,9 +131,13 @@ type storeHooks struct {
 type Store struct {
 	path           string
 	lockPath       string
+	flockPath      string
 	repairLockPath string
 	markerPath     string
 	recoveryDir    string
+	// lockTimeout bounds one mutation's wait for the lock. Tests shorten it;
+	// nothing in production overrides the default.
+	lockTimeout time.Duration
 	// retention is the number of recovery copies kept after a semantic write.
 	retention int
 	clock     func() time.Time
@@ -139,10 +159,12 @@ func NewStore(path string) *Store {
 	return &Store{
 		path:           path,
 		lockPath:       path + lockFileSuffix,
+		flockPath:      path + flockFileSuffix,
 		repairLockPath: path + ".repair" + lockFileSuffix,
 		markerPath:     filepath.Join(dir, markerFileName),
 		recoveryDir:    filepath.Join(dir, recoveryDirName),
 		retention:      defaultRecoveryRetention,
+		lockTimeout:    defaultLockTimeout,
 		clock:          time.Now,
 		migrations:     coremetadata.ProductionMigrationSet(),
 		// #nosec G404 -- lock retry jitter is scheduling noise, not a secret;
@@ -173,8 +195,9 @@ func (s *Store) Path() string {
 	return s.path
 }
 
-// SetClock overrides the timestamp source used for backups and stale-lock
-// breaking.
+// SetClock overrides the timestamp source used for backups, recovery stamps,
+// and the mutation lock deadline. Injecting a clock is what lets a test pin the
+// deadline without waiting on the real one.
 func (s *Store) SetClock(clock func() time.Time) {
 	if s != nil && clock != nil {
 		s.clock = clock
@@ -358,11 +381,8 @@ func (s *Store) Update(fn func(*coremetadata.Registry) error) (coremetadata.Regi
 	if s == nil {
 		return coremetadata.Registry{}, errors.New("metadata: nil registry store")
 	}
-	if err := s.refuseDegradedMutation(); err != nil {
-		return coremetadata.Registry{}, err
-	}
 	var out coremetadata.Registry
-	err := s.withLock(func() error {
+	err := s.withMutationLock(func() error {
 		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return s.mapDegradedMutationError(err)
@@ -405,12 +425,10 @@ func (s *Store) UpdateConvergent(fn func(*coremetadata.Registry) error) (coremet
 	if s == nil {
 		return coremetadata.Registry{}, false, errors.New("metadata: nil registry store")
 	}
-	if err := s.refuseDegradedMutation(); err != nil {
-		return coremetadata.Registry{}, false, err
-	}
+
 	var out coremetadata.Registry
 	changed := false
-	err := s.withLock(func() error {
+	err := s.withMutationLock(func() error {
 		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return s.mapDegradedMutationError(err)
@@ -596,10 +614,10 @@ func (s *Store) stateLossError(state string) error {
 		ErrRegistryStateLost, s.markerPath, s.path, state, s.recoveryDir)
 }
 
-// refuseDegradedMutation is the lock-free gate in front of every ordinary
-// write. It keeps a damaged Registry from waiting behind (or entering) the
-// normal mutation transaction and turns the content classification into one
-// actionable recovery instruction.
+// refuseDegradedMutation classifies a damaged Registry into one actionable
+// recovery instruction. It reads without the lock, so a positive answer is a
+// suspicion rather than a verdict: see withMutationLock, which confirms it under
+// the lock before any mutation is refused.
 func (s *Store) refuseDegradedMutation() error {
 	inspection, err := s.InspectRecovery()
 	if err != nil {
@@ -1194,16 +1212,42 @@ func (s *Store) backup(fromVersion int) (string, error) {
 	return path, nil
 }
 
+// withMutationLock runs an ordinary mutation under the write lock and refuses a
+// degraded Registry with the same actionable error the lock-free gate produces.
+//
+// The refusal is confirmed a second time, under the lock, before it is
+// returned. A commit publishes the initialized marker before it renames the
+// staged registry into place, so an observer without the lock can catch a
+// healthy writer inside that window and read it as "the marker records a
+// completed write but registry.json is missing" -- the state-loss signature.
+// Inside the lock no transaction is in flight, so the second look tells a real
+// loss apart from a neighbour's commit in progress.
+//
+// This is the same contract the deadline gives the lock itself: a writer that is
+// alive and progressing is what a waiter is supposed to wait for, not a reason
+// to fail. The cost is that a genuinely degraded Registry now queues for the
+// lock before it is refused, which the deadline bounds.
+func (s *Store) withMutationLock(fn func() error) error {
+	suspected := s.refuseDegradedMutation()
+	return s.withLock(func() error {
+		if suspected != nil {
+			if confirmed := s.refuseDegradedMutation(); confirmed != nil {
+				return confirmed
+			}
+		}
+		return fn()
+	})
+}
+
 func (s *Store) withLock(fn func() error) error {
 	if err := localstate.EnsurePrivateDir(filepath.Dir(s.lockPath)); err != nil {
 		return fmt.Errorf("metadata: create lock dir: %w", err)
 	}
-	if err := s.acquireLock(); err != nil {
+	lease, err := s.acquireLock(context.Background())
+	if err != nil {
 		return err
 	}
-	defer func() {
-		_ = os.Remove(s.lockPath)
-	}()
+	defer lease.release()
 	return fn()
 }
 
@@ -1262,59 +1306,199 @@ func (s *Store) tryBreakStaleRecoveryLock() bool {
 	return os.Remove(s.repairLockPath) == nil
 }
 
-func (s *Store) acquireLock() error {
-	return s.acquireLockWithPolicy(defaultLockMaxAttempts, defaultLockBaseDelay, defaultLockMaxDelay, time.Sleep)
+// ErrLockTimeout marks a Registry mutation that gave up waiting for the lock.
+// It is the deadline outcome, not a retry budget outcome: the operation was
+// allowed a fixed amount of time and the lock did not become available inside
+// it. Callers that distinguish "busy" from "broken" match on this.
+var ErrLockTimeout = errors.New("registry lock acquisition timed out")
+
+// registryLease is one held Registry mutation lock. It is two things at once
+// during the compatibility window: the kernel flock every current install
+// queues on, and the legacy O_EXCL marker that an older install on the same
+// Registry is still the only thing able to observe.
+type registryLease struct {
+	store  *Store
+	flock  *os.File
+	marker bool
 }
 
-// acquireLockWithPolicy applies the retry budget to one observed lock owner.
-// A create burst consists of several healthy, serialized owners; charging a
-// waiter for time spent behind owners that have already released the lock can
-// exhaust the budget even though no individual lease is stuck. Only an exact,
-// positive pid transition proves lease progress and resets the attempts. Empty,
-// malformed, or transiently unreadable lock contents keep consuming the current
-// owner's budget instead of manufacturing progress.
-func (s *Store) acquireLockWithPolicy(maxAttempts int, baseDelay, maxDelay time.Duration, sleep func(time.Duration)) error {
+// release drops exactly what this lease took. The marker is removed only when
+// this lease created it, because removing a marker we do not own would hand a
+// second writer the lock the real owner still holds.
+func (l *registryLease) release() {
+	if l == nil {
+		return
+	}
+	if l.marker && l.store != nil {
+		_ = os.Remove(l.store.lockPath)
+	}
+	if l.flock != nil {
+		_ = unix.Flock(int(l.flock.Fd()), unix.LOCK_UN)
+		_ = l.flock.Close()
+	}
+}
+
+func (s *Store) acquireLock(ctx context.Context) (*registryLease, error) {
+	return s.acquireLockWithDeadline(ctx, s.lockTimeout, time.Sleep)
+}
+
+// acquireLockWithDeadline takes the Registry mutation lock under an explicit
+// time budget.
+//
+// Mutual exclusion between current installs is the kernel's LOCK_EX wait queue,
+// so a waiter cannot be starved by contention and the success of a mutation no
+// longer depends on how many times it managed to poll before a budget ran out.
+// The legacy O_EXCL marker is still written, and still waited for, because an
+// install from before this change observes nothing else; that wait shares the
+// same deadline and reclaims a marker whose recorded owner is gone.
+//
+// Ordering is flock first and marker second in every current install, so the
+// two lock layers cannot be taken in opposite orders. An older install takes
+// only the marker and never waits on the flock, which leaves no cycle to
+// deadlock on.
+func (s *Store) acquireLockWithDeadline(ctx context.Context, timeout time.Duration, sleep func(time.Duration)) (*registryLease, error) {
+	if timeout <= 0 {
+		timeout = defaultLockTimeout
+	}
+	deadline := s.clock().Add(timeout)
+
+	held, err := s.acquireRegistryFlock(ctx, deadline, timeout)
+	if err != nil {
+		return nil, err
+	}
+	lease := &registryLease{store: s, flock: held}
+	if err := s.acquireLegacyMarker(ctx, deadline, timeout, sleep); err != nil {
+		lease.release()
+		return nil, err
+	}
+	lease.marker = true
+	return lease, nil
+}
+
+// acquireRegistryFlock blocks on the kernel lock queue for the persistent lock
+// descriptor until it is granted, the caller's context ends, or the deadline
+// passes.
+func (s *Store) acquireRegistryFlock(ctx context.Context, deadline time.Time, timeout time.Duration) (*os.File, error) {
+	held, err := os.OpenFile(s.flockPath, os.O_CREATE|os.O_RDWR, localstate.PrivateFileMode) // #nosec G304 -- path is the Store's own private registry lock sibling
+	if err != nil {
+		return nil, fmt.Errorf("metadata: open registry lock: %w", err)
+	}
+	fd := int(held.Fd())
+	// The uncontended path is the common one and costs nothing but the
+	// non-blocking attempt: no goroutine, no timer, no clock read.
+	switch err := unix.Flock(fd, unix.LOCK_EX|unix.LOCK_NB); {
+	case err == nil:
+		return held, nil
+	case !errors.Is(err, unix.EWOULDBLOCK):
+		_ = held.Close()
+		return nil, fmt.Errorf("metadata: acquire registry lock: %w", err)
+	}
+
+	remaining := deadline.Sub(s.clock())
+	if remaining <= 0 {
+		_ = held.Close()
+		return nil, s.lockTimeoutError(timeout, "another writer holds the registry lock")
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, remaining)
+	defer cancel()
+
+	granted := make(chan error, 1)
+	go func() { granted <- unix.Flock(fd, unix.LOCK_EX) }()
+
+	select {
+	case err := <-granted:
+		if err != nil {
+			_ = held.Close()
+			return nil, fmt.Errorf("metadata: acquire registry lock: %w", err)
+		}
+		return held, nil
+	case <-waitCtx.Done():
+		// The kernel wait outlives our deadline, so the descriptor is handed to
+		// a releaser instead of abandoned: a grant that arrives after we gave up
+		// must not leave the Registry locked by a mutation that is no longer
+		// running. Closing the descriptor is what ends the lock either way, and
+		// it happens only after the blocking call has returned.
+		go func() {
+			if err := <-granted; err == nil {
+				_ = unix.Flock(fd, unix.LOCK_UN)
+			}
+			_ = held.Close()
+		}()
+		if err := ctx.Err(); err != nil {
+			return nil, fmt.Errorf("metadata: acquire registry lock on %s: %w", s.flockPath, err)
+		}
+		return nil, s.lockTimeoutError(timeout, "another writer holds the registry lock")
+	}
+}
+
+// acquireLegacyMarker takes the O_EXCL marker file the pre-flock installs use.
+// Holding the kernel lock already excludes every current writer, so the only
+// contention left here is an older install, and the only reason the marker is
+// still written is that such an install has no other way to see us.
+func (s *Store) acquireLegacyMarker(ctx context.Context, deadline time.Time, timeout time.Duration, sleep func(time.Duration)) error {
 	if sleep == nil {
 		sleep = time.Sleep
 	}
 	delay := defaultLockBaseDelay
-	if baseDelay > 0 {
-		delay = baseDelay
-	}
-	if maxDelay <= 0 {
-		maxDelay = defaultLockMaxDelay
-	}
-	lastOwnerPID := 0
-	attempts := 0
-	for attempts < maxAttempts {
-		f, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, localstate.PrivateFileMode)
-		if err == nil {
-			_, _ = fmt.Fprintf(f, "pid=%d\n", os.Getpid())
-			_ = f.Close()
+	for {
+		acquired, err := s.tryCreateLegacyMarker()
+		if err != nil {
+			return err
+		}
+		if !acquired && s.tryBreakStaleLock() {
+			// The recorded owner is gone, so try again inside this iteration
+			// rather than paying backoff for a holder that no longer exists.
+			if acquired, err = s.tryCreateLegacyMarker(); err != nil {
+				return err
+			}
+		}
+		if acquired {
 			return nil
 		}
-		if !errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("metadata: acquire lock: %w", err)
-		}
-		if ownerPID, ok := observedLockOwnerPID(s.lockPath); ok {
-			if lastOwnerPID > 0 && ownerPID != lastOwnerPID {
-				attempts = 0
-			}
-			lastOwnerPID = ownerPID
-		}
-		attempts++
-		if s.tryBreakStaleLock() {
-			continue
+		if err := s.lockWaitExpired(ctx, deadline, timeout); err != nil {
+			return err
 		}
 		sleep(delay + s.lockJitter())
-		if delay < maxDelay {
+		if delay < defaultLockMaxDelay {
 			delay *= 2
-			if delay > maxDelay {
-				delay = maxDelay
+			if delay > defaultLockMaxDelay {
+				delay = defaultLockMaxDelay
 			}
 		}
 	}
-	return fmt.Errorf("metadata: acquire lock: exhausted %d attempts on %s", maxAttempts, s.lockPath)
+}
+
+// tryCreateLegacyMarker reports whether this call is the one that created the
+// marker. A marker that already exists is contention, not an error.
+func (s *Store) tryCreateLegacyMarker() (bool, error) {
+	marker, err := os.OpenFile(s.lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, localstate.PrivateFileMode)
+	switch {
+	case err == nil:
+		_, _ = fmt.Fprintf(marker, "pid=%d\n", os.Getpid())
+		_ = marker.Close()
+		return true, nil
+	case errors.Is(err, os.ErrExist):
+		return false, nil
+	default:
+		return false, fmt.Errorf("metadata: acquire lock: %w", err)
+	}
+}
+
+// lockWaitExpired reports the reason to stop waiting, or nil to keep waiting.
+// The deadline is read through s.clock() so the production code path and the
+// tests that pin it share one time source.
+func (s *Store) lockWaitExpired(ctx context.Context, deadline time.Time, timeout time.Duration) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("metadata: acquire lock on %s: %w", s.lockPath, err)
+	}
+	if s.clock().Before(deadline) {
+		return nil
+	}
+	return s.lockTimeoutError(timeout, "an install without the kernel lock still holds the marker")
+}
+
+func (s *Store) lockTimeoutError(timeout time.Duration, cause string) error {
+	return fmt.Errorf("metadata: acquire lock on %s: %w after %s: %s", s.lockPath, ErrLockTimeout, timeout, cause)
 }
 
 func observedLockOwnerPID(path string) (int, bool) {
@@ -1336,13 +1520,34 @@ func (s *Store) lockJitter() time.Duration {
 	return time.Duration(s.rng.Int63n(int64(defaultLockBaseDelay) + 1))
 }
 
+// tryBreakStaleLock reclaims a marker whose recorded owner is gone.
+//
+// The predicate is the owner pid's liveness, not elapsed wall-clock time. A
+// holder that died a millisecond ago is exactly as absent as one that died a
+// minute ago, and a holder still running is never stale no matter how long its
+// transaction legitimately takes. The wall-clock predicate it replaces forced
+// production to read the real clock, which is what made the test that pinned
+// this behavior depend on the machine's load.
+//
+// An unreadable or malformed marker proves nothing about its owner and is never
+// reclaimed; the deadline ends that wait instead of a guess. The liveness read
+// and the removal are not atomic, so a marker created between them can be
+// removed -- the same narrow window the mtime predicate had, now measured
+// against a fact about the owner rather than against elapsed time.
 func (s *Store) tryBreakStaleLock() bool {
-	info, err := os.Stat(s.lockPath)
-	if err != nil {
-		return false
-	}
-	if s.clock().Sub(info.ModTime()) < defaultLockStaleAfter {
+	pid, ok := observedLockOwnerPID(s.lockPath)
+	if !ok || processAlive(pid) {
 		return false
 	}
 	return os.Remove(s.lockPath) == nil
+}
+
+// processAlive reports whether pid still names a live process. EPERM means the
+// process exists but belongs to another user, which is a live holder too.
+func processAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := unix.Kill(pid, 0)
+	return err == nil || errors.Is(err, unix.EPERM)
 }
