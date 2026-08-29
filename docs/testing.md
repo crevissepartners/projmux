@@ -33,6 +33,11 @@ and humans run the same entrypoints.
   suites. CI uses the shard/suite selectors to give every suite its own runner,
   so container isolation and schedule isolation are the same unit there; local
   `make test-e2e` still runs the whole matrix on one machine.
+- Every scenario wait states a budget in seconds rather than a loop count, and
+  `E2E_WAIT_SCALE=<factor>` multiplies all of them at once. Raise it when a
+  runner is slow or loaded; a wait that expires still fails with the description
+  of what it was waiting for, so a slow machine reports a timeout rather than
+  the regression message of the assertion that would have run next.
 - `make test-e2e-contract`, `make test-e2e-reliability`, and
   `make test-e2e-shards` validate typed attempt evidence, bounded semantic
   waits/owned cleanup, and exhaustive four-shard isolation without rerunning

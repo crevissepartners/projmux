@@ -51,6 +51,109 @@ smoke_now_ms() {
   printf '%s\n' "$((10#$seconds * 1000 + 10#${nanoseconds:0:3}))"
 }
 
+# Wait budgets are stated in seconds of wall clock, not in loop iterations, so a
+# call site declares the time it is willing to spend rather than a count that
+# silently means something different on a slower machine. E2E_WAIT_SCALE
+# multiplies every budget, which is how a loaded runner buys time instead of
+# reporting a product regression.
+SMOKE_WAIT_SCALE=""
+SMOKE_WAIT_ATTEMPTS=0
+SMOKE_WAIT_ELAPSED_MS=0
+SMOKE_WAIT_LAST_STATUS=0
+
+smoke_wait_scale() {
+  if [[ -n "$SMOKE_WAIT_SCALE" ]]; then
+    printf '%s' "$SMOKE_WAIT_SCALE"
+    return 0
+  fi
+  local scale="${E2E_WAIT_SCALE:-1}"
+  if [[ ! "$scale" =~ ^[0-9]+([.][0-9]+)?$ ]] ||
+    [[ "$(awk -v k="$scale" 'BEGIN { print (k > 0) ? "y" : "n" }')" != "y" ]]; then
+    echo "ignoring invalid E2E_WAIT_SCALE=$scale; using 1" >&2
+    scale=1
+  fi
+  SMOKE_WAIT_SCALE="$scale"
+  printf '%s' "$scale"
+}
+
+smoke_wait_budget_ms() {
+  local seconds="$1"
+  if [[ ! "$seconds" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+    echo "wait budget must be a number of seconds, got: $seconds" >&2
+    return 2
+  fi
+  awk -v s="$seconds" -v k="$(smoke_wait_scale)" \
+    'BEGIN { ms = s * k * 1000; if (ms < 1) { ms = 1 } printf "%d", ms }'
+}
+
+# smoke_wait_until_quiet <budget-seconds> <command> [args...]
+#
+# The shared polling primitive. It reports nothing, so it is only for waits
+# whose caller handles the timeout as ordinary control flow. Every assertion
+# wait must use smoke_wait_until instead. The command runs in the current shell,
+# so predicate functions can publish what they observed.
+smoke_wait_until_quiet() {
+  local budget_ms started_ms now_ms
+  budget_ms="$(smoke_wait_budget_ms "$1")" || return 2
+  shift
+  SMOKE_WAIT_ATTEMPTS=0
+  SMOKE_WAIT_LAST_STATUS=0
+  started_ms="$(smoke_now_ms)"
+  now_ms="$started_ms"
+  while :; do
+    SMOKE_WAIT_ATTEMPTS=$((SMOKE_WAIT_ATTEMPTS + 1))
+    SMOKE_WAIT_LAST_STATUS=0
+    "$@" || SMOKE_WAIT_LAST_STATUS=$?
+    now_ms="$(smoke_now_ms)"
+    SMOKE_WAIT_ELAPSED_MS=$((now_ms - started_ms))
+    if [[ "$SMOKE_WAIT_LAST_STATUS" == "0" ]]; then
+      return 0
+    fi
+    if ((now_ms >= started_ms + budget_ms)); then
+      SMOKE_WAIT_ELAPSED_MS=$((now_ms - started_ms))
+      return 1
+    fi
+    sleep 0.05
+  done
+}
+
+# smoke_wait_until <budget-seconds> <description> <command> [args...]
+#
+# Waits for <command> to succeed within the scaled budget. A timeout is always
+# an explicit described failure carrying the budget that was actually applied
+# and the state the wait ended in; it never returns success, so the caller
+# cannot walk into the next assertion and report slowness as a regression.
+# Set SMOKE_WAIT_DIAGNOSTIC_LOG to have the timeout tail a scenario log too.
+smoke_wait_until() {
+  local budget="$1"
+  local description="$2"
+  shift 2
+  local quiet_status=0
+  smoke_wait_until_quiet "$budget" "$@" || quiet_status=$?
+  if [[ "$quiet_status" == "0" ]]; then
+    return 0
+  fi
+  # A malformed budget is a harness bug, not a slow runner. Keep it distinct so
+  # it cannot be read as a timeout.
+  if [[ "$quiet_status" == "2" ]]; then
+    return 2
+  fi
+  {
+    printf 'timed out waiting for %s\n' "$description"
+    printf '  budget=%ss scale=%s elapsed_ms=%s attempts=%s last_status=%s\n' \
+      "$budget" "$(smoke_wait_scale)" "$SMOKE_WAIT_ELAPSED_MS" \
+      "$SMOKE_WAIT_ATTEMPTS" "$SMOKE_WAIT_LAST_STATUS"
+    printf '  command:'
+    printf ' %q' "$@"
+    printf '\n'
+  } >&2
+  if [[ -n "${SMOKE_WAIT_DIAGNOSTIC_LOG:-}" && -r "${SMOKE_WAIT_DIAGNOSTIC_LOG:-}" ]]; then
+    printf '  diagnostic tail of %s:\n' "$SMOKE_WAIT_DIAGNOSTIC_LOG" >&2
+    tail -c 12000 "$SMOKE_WAIT_DIAGNOSTIC_LOG" >&2 || true
+  fi
+  return 1
+}
+
 smoke_contract_state_hash() {
   local registry="${XDG_STATE_HOME:-}/projmux/metadata/registry.json"
   if [[ -f "$registry" ]]; then
@@ -439,21 +542,23 @@ smoke_owned_process_inventory() {
   done
 }
 
+smoke_owned_quiet_streak=0
+
+smoke_owned_quiet_sample() {
+  if [[ -n "$(smoke_owned_process_inventory)" ]]; then
+    smoke_owned_quiet_streak=0
+    return 1
+  fi
+  smoke_owned_quiet_streak=$((smoke_owned_quiet_streak + 1))
+  ((smoke_owned_quiet_streak >= 3))
+}
+
+# Cleanup escalation treats a non-quiescent root as ordinary control flow, so
+# this wait stays quiet. It still takes a scaled time budget rather than a fixed
+# sample count, because a loaded machine is exactly when reaping takes longer.
 smoke_wait_owned_quiet() {
-  local stable=0 inventory
-  for _ in {1..10}; do
-    inventory="$(smoke_owned_process_inventory)"
-    if [[ -z "$inventory" ]]; then
-      stable=$((stable + 1))
-      if [[ "$stable" == "3" ]]; then
-        return 0
-      fi
-    else
-      stable=0
-    fi
-    sleep 0.05
-  done
-  return 1
+  smoke_owned_quiet_streak=0
+  smoke_wait_until_quiet 1 smoke_owned_quiet_sample
 }
 
 smoke_reap_owned_processes() {
@@ -524,36 +629,32 @@ smoke_cleanup_env() {
   fi
 }
 
+smoke_current_frame_contains() {
+  local path="$1"
+  local offset="$2"
+  local needle="$3"
+  tail -c "+$((offset + 1))" "$path" 2>/dev/null | grep -aFq "$needle"
+}
+
 smoke_wait_for_current_frame() {
   local description="$1"
   local path="$2"
   local offset="$3"
   local needle="$4"
-  for _ in {1..100}; do
-    if tail -c "+$((offset + 1))" "$path" 2>/dev/null | grep -aFq "$needle"; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "timed out waiting for current-frame $description offset=$offset" >&2
+  if smoke_wait_until 5 "current-frame $description offset=$offset" \
+    smoke_current_frame_contains "$path" "$offset" "$needle"; then
+    return 0
+  fi
   tail -c "+$((offset + 1))" "$path" >&2 || true
   return 1
 }
 
+# The default scenario wait. It is smoke_wait_until with the 5s budget this
+# harness has always used for a settling assertion.
 smoke_wait_for() {
   local description="$1"
   shift
-  for _ in {1..100}; do
-    if "$@"; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "timed out waiting for $description" >&2
-  if [[ -n "${SMOKE_WAIT_DIAGNOSTIC_LOG:-}" ]]; then
-    tail -c 12000 "$SMOKE_WAIT_DIAGNOSTIC_LOG" >&2 || true
-  fi
-  return 1
+  smoke_wait_until 5 "$description" "$@"
 }
 
 smoke_require_uid() {

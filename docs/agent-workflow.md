@@ -437,6 +437,15 @@
   Codex, and npm consumers. Local Security is the exact three-way
   `make security` topology; CI's required branch-protection context is the
   fail-closed aggregate named `Test`.
+- `test/lib/smoke.sh` owns every scenario wait through `smoke_wait_until
+  <seconds> <description> <command>`; `test/e2e/` holds no raw `for _ in
+  {1..N}` polling loop. A wait that expires fails with the description it was
+  given plus the budget applied, elapsed time, attempt count, and last predicate
+  status, so no scenario can enter its next assertion with the condition still
+  unmet. `E2E_WAIT_SCALE` multiplies every budget for a slow runner.
+  `test/e2e/reliability-contract.sh` F08/F09 pin both halves: a deliberately slow
+  fixture times out with its own description and state dump and then passes once
+  the scale buys it time, and the timeout instant itself moves with the scale.
 - `test/e2e/evidence-contract.sh` (`make test-e2e-contract`) and
   `test/e2e/reliability-contract.sh` (`make test-e2e-reliability`) keep the persisted
   `projmux.e2e-attempt/v1` evidence and success result hash stable while adding
