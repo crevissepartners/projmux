@@ -481,11 +481,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 				nativeThreadID = prepared.ThreadID
 				usedNative = true
 			case nativeFallbackAllowed(r.create.codexNative, nativeErr):
-				// The stored thread is app-server identity. Falling back to the
-				// provider's own resume argv would rebind the Agent onto a lane
-				// with no native turn control while still reporting a resume, so
-				// the refusal is typed and nothing is committed.
-				return nativeResumePreparationRefusal(spelling, nativeErr)
+				// Preserve the current provider resume argv and hook refinement.
 			default:
 				return nativeLaunchError(spelling, nativeErr)
 			}

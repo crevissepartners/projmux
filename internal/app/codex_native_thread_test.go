@@ -553,11 +553,18 @@ func TestUnavailableNativeCreateRefusesInsteadOfSilentlyCreatingAPlainAgent(t *t
 	}
 }
 
-// TestUnavailableNativeResumeRefusesInsteadOfRebindingOntoThePlainLane is the
-// stored-Agent half of the resume refusal contract: `agent resume` of an Agent
-// whose sessionRef holds an app-server thread refuses rather than rebinding it
-// onto the provider's own resume argv, and it commits and launches nothing.
-func TestUnavailableNativeResumeRefusesInsteadOfRebindingOntoThePlainLane(t *testing.T) {
+// TestUnavailableNativeResumeKeepsTheStoredConversationOnTheProviderResumeLane
+// pins the boundary of this Phase's native-required rule.
+//
+// The rule governs routes that *create* a managed Agent. `agent resume`
+// creates none -- it reattaches a Pane to an Agent that already exists -- and
+// the Agent it reattaches may never have carried an app-server binding at all,
+// because a native binding lives on the activation-scoped
+// `Pane.Status.Activation.Codex` and dies with the Pane it described. Making
+// this route require native authority would make every Codex resume fail
+// wherever no app-server is reachable, so it keeps the safe fallback: one
+// provider resume of the stored conversation, and zero new conversations.
+func TestUnavailableNativeResumeKeepsTheStoredConversationOnTheProviderResumeLane(t *testing.T) {
 	store := newFakeResourceStore(t)
 	setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
 	tmux := newFakeTmux()
@@ -569,30 +576,24 @@ func TestUnavailableNativeResumeRefusesInsteadOfRebindingOntoThePlainLane(t *tes
 	panes := &fakeNativePaneLauncher{}
 	agentCommand.rebind.launcher = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
 	agentCommand.rebind.create.codexNative = native
-	before, writes, paneCount := store.snapshot(), store.writes, tmux.paneCount()
 
 	stdout, stderr, err := runRoute(t, agentCommand, "resume", "uid:agt-beta-codex")
-	if err == nil || stdout != "" || stderr != "" {
+	if err != nil || stdout != "agent/codex resumed\n" || stderr != "" {
 		t.Fatalf("stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
-	for _, required := range []string{"cannot be resumed natively", "daemon-not-running"} {
-		if !strings.Contains(err.Error(), required) {
-			t.Fatalf("resume refusal = %q, missing %q", err, required)
-		}
+	// Exactly one native resume attempt, no native create, and no native Pane
+	// state: the fallback is a lane choice, never a second conversation.
+	if len(native.creates) != 0 || len(native.resumes) != 1 || len(panes.plans) != 0 || len(panes.bound) != 0 {
+		t.Fatalf("native creates=%+v resumes=%+v nativePlans=%+v nativeBindings=%+v",
+			native.creates, native.resumes, panes.plans, panes.bound)
 	}
-	if strings.Contains(err.Error(), interactiveOnlyFlag) {
-		t.Fatalf("stored resume offered a launch-mode escape hatch it does not have: %q", err)
+	if len(legacy.plans) != 1 || legacy.plans[0].conversationID != resumeFixtureConversation || len(legacy.bound) != 1 {
+		t.Fatalf("provider resume lane = plans:%+v bound:%+v", legacy.plans, legacy.bound)
 	}
-	if len(native.creates) != 0 || len(native.resumes) != 1 {
-		t.Fatalf("native creates=%+v resumes=%+v", native.creates, native.resumes)
-	}
-	if len(legacy.bound) != 0 || len(panes.plans) != 0 || len(panes.bound) != 0 {
-		t.Fatalf("refused resume bound a Pane: legacy=%+v nativePlans=%+v nativeBindings=%+v", legacy.bound, panes.plans, panes.bound)
-	}
-	if store.snapshot() != before || store.writes != writes || tmux.paneCount() != paneCount ||
-		len(splitWindowCalls(tmux)) != 0 {
-		t.Fatalf("refused resume mutated state: writes=%d panes=%d splits=%v registry=%s",
-			store.writes-writes, tmux.paneCount()-paneCount, splitWindowCalls(tmux), store.snapshot())
+	assertOnlyResumeLaunches(t, tmux, resumeFixtureConversation, 1)
+	after, _ := store.registry.Agent("agt-beta-codex")
+	if !after.Status.SessionRef.SameConversation(resumeFixtureRef(resourceFixtureClock)) {
+		t.Fatalf("fallback resume rewrote the stored conversation: %#v", after.Status.SessionRef)
 	}
 }
 
@@ -661,12 +662,12 @@ func TestIndeterminateNativeCreateRefusesASecondLaneAndWritesZero(t *testing.T) 
 }
 
 // TestCodexNativeLaunchOutcomeTableIsClosed keeps the documented outcome table
-// describing reality. Exactly two rows may still reach the plain CLI lane --
-// an empty prompt and the explicit `--interactive-only` opt-out -- and every
-// remaining unproven-authority row must launch nothing.
+// describing reality: exactly which rows may still reach the plain CLI lane,
+// exactly which must launch nothing, and that only a create ever names the
+// `--interactive-only` escape hatch.
 func TestCodexNativeLaunchOutcomeTableIsClosed(t *testing.T) {
-	if len(codexNativeLaunchOutcomeTable) != 8 {
-		t.Fatalf("outcome rows=%d, want 8: %+v", len(codexNativeLaunchOutcomeTable), codexNativeLaunchOutcomeTable)
+	if len(codexNativeLaunchOutcomeTable) != 9 {
+		t.Fatalf("outcome rows=%d, want 9: %+v", len(codexNativeLaunchOutcomeTable), codexNativeLaunchOutcomeTable)
 	}
 	var plainLane, refused []string
 	for _, row := range codexNativeLaunchOutcomeTable {
@@ -680,6 +681,7 @@ func TestCodexNativeLaunchOutcomeTableIsClosed(t *testing.T) {
 	if !slices.Equal(plainLane, []string{
 		"empty prompt before provider mutation",
 		"explicit " + interactiveOnlyFlag,
+		"stored Agent rebind, unavailable or unsupported before provider mutation",
 	}) {
 		t.Fatalf("plain CLI rows drifted: %v", plainLane)
 	}

@@ -61,10 +61,12 @@ type codexNativeLaunchOutcomeRow struct {
 
 // codexNativeLaunchOutcomeTable is the closed native launch outcome contract.
 //
-// Only two rows still reach the plain CLI lane, and neither of them is a
-// degradation: an empty-prompt create has no native input to attach, and
-// `--interactive-only` is the operator asking for a plain interactive Codex
-// Agent. Every other unproven native authority refuses.
+// Native authority is required exactly where an Agent is created. Three rows
+// still reach the plain CLI lane and none of them is a silent degradation: an
+// empty-prompt create has no native input to attach, `--interactive-only` is
+// the operator asking for a plain interactive Codex Agent, and `agent resume`
+// reattaches an Agent that may never have carried an app-server binding, since
+// that binding is activation-scoped and dies with the Pane it described.
 var codexNativeLaunchOutcomeTable = []codexNativeLaunchOutcomeRow{
 	{Action: "create", NativeResult: "thread+turn", Launch: "remote resume without prompt", Binding: "exact Agent/Pane/generation/thread/turn"},
 	{Action: "resume", NativeResult: "same thread", Launch: "remote resume without prompt", Binding: "exact Agent/Pane/generation/thread"},
@@ -72,7 +74,8 @@ var codexNativeLaunchOutcomeTable = []codexNativeLaunchOutcomeRow{
 	{Action: "create", NativeResult: "explicit --interactive-only", Launch: "current CLI", Binding: "no native binding; native turn control unavailable"},
 	{Action: "create", NativeResult: "prompted create, unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse and name --interactive-only"},
 	{Action: "create", NativeResult: "prompted create, selector resolved several Windows", Launch: "none", Binding: "write zero before allocation; refuse and name --interactive-only"},
-	{Action: "resume", NativeResult: "unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse without a second lane"},
+	{Action: "resume", NativeResult: "create-time picker row, unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse without a second lane"},
+	{Action: "resume", NativeResult: "stored Agent rebind, unavailable or unsupported before provider mutation", Launch: "current CLI", Binding: "current provider resume argv and hook refinement"},
 	{Action: "create", NativeResult: "indeterminate after thread creation", Launch: "none", Binding: "write zero; refuse duplicate lane"},
 }
 
