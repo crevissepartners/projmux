@@ -312,7 +312,7 @@ jobs:
 
       - name: Run e2e Linux shard
         env:
-          PROJMUX_E2E_LINUX_SHARD: ${{ matrix.shard }}
+          PROJMUX_E2E_LINUX_SHARD: ${{ matrix.shard == 'fixture-2' && 'fixture-broken' || matrix.shard }}
         run: make test-e2e
 
   e2e-suite:
