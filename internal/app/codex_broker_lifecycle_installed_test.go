@@ -561,6 +561,11 @@ func dialInstalledSmokeTelemetry(ctx context.Context, t *testing.T, discovery co
 // CODEX_HOME must be configured to require approval; the decision this test
 // sends is the first non-executing one the endpoint itself offers, so nothing
 // the model proposed is ever run.
+//
+// Whether an approval happens at all is the endpoint's decision, not this
+// test's: a model that answers in prose escalates nothing. The turn is
+// therefore attempted a bounded number of times, and a run that still sees no
+// approval says so as a missed observation rather than as a lease failure.
 func TestInstalledIsolatedBrokerApprovalLeaseSmoke(t *testing.T) {
 	root := strings.TrimSpace(os.Getenv("PROJMUX_CODEX_APPROVAL_SMOKE_ROOT"))
 	if root == "" {
@@ -639,35 +644,57 @@ func TestInstalledIsolatedBrokerApprovalLeaseSmoke(t *testing.T) {
 	}
 	defer func() { _ = epoch.Close() }()
 
-	started, err := epoch.StartExactTurn(ctx, created.ThreadID,
-		"Use your shell tool to run exactly this one command and nothing else: printf probe > ./projmux-approval-probe.txt")
-	if err != nil {
-		t.Fatalf("start the turn that should request approval: %v", err)
-	}
-
-	// The approval arrives on the broker's own stream, which is what mints the
-	// lease. Anything else on that stream is ordinary lifecycle traffic.
-	deadline := time.After(5 * time.Minute)
-	var envelope codexappserver.ApprovalEnvelope
-	for envelope.RequestID == "" {
-		select {
-		case notification, open := <-epoch.Notifications():
-			if !open {
-				t.Fatal("the broker stream ended before an approval arrived")
-			}
-			decoded, recognized, decodeErr := codexappserver.DecodeApprovalEnvelope(notification)
-			if decodeErr != nil {
-				t.Fatalf("decode the real approval request: %v", decodeErr)
-			}
-			if recognized {
-				envelope = decoded
-			}
-		case <-deadline:
-			_, _ = epoch.InterruptExactTurn(ctx, created.ThreadID, started.TurnID)
-			t.Fatalf("no upstream approval server request arrived for turn %s", started.TurnID)
-		case <-ctx.Done():
-			t.Fatalf("waiting for the approval was cancelled: %v", ctx.Err())
+	// This smoke has one precondition it does not control: the endpoint's model
+	// has to decide to escalate. The workspace is sandboxed read-only and the
+	// prompt asks for a single write, which is the shape most likely to force
+	// an escalation, but a model that answers in prose instead produces no
+	// approval at all. That is a missed observation, not a broken lease, so the
+	// turn is attempted a bounded number of times before the smoke gives up and
+	// says which of the two it was.
+	const approvalTurnAttempts = 3
+	var (
+		started  codexappserver.ControlResult
+		envelope codexappserver.ApprovalEnvelope
+	)
+	for attempt := 1; attempt <= approvalTurnAttempts && envelope.RequestID == ""; attempt++ {
+		var startErr error
+		started, startErr = epoch.StartExactTurn(ctx, created.ThreadID,
+			"Use your shell tool to run exactly this one command and nothing else: printf probe > ./projmux-approval-probe.txt")
+		if startErr != nil {
+			t.Fatalf("start the turn that should request approval (attempt %d): %v", attempt, startErr)
 		}
+		// The approval arrives on the broker's own stream, which is what mints
+		// the lease. Anything else on that stream is ordinary lifecycle traffic.
+		deadline := time.After(2 * time.Minute)
+	attemptLoop:
+		for {
+			select {
+			case notification, open := <-epoch.Notifications():
+				if !open {
+					t.Fatal("the broker stream ended before an approval arrived")
+				}
+				decoded, recognized, decodeErr := codexappserver.DecodeApprovalEnvelope(notification)
+				if decodeErr != nil {
+					t.Fatalf("decode the real approval request: %v", decodeErr)
+				}
+				if recognized {
+					envelope = decoded
+					break attemptLoop
+				}
+			case <-deadline:
+				t.Logf("evidence: attempt %d of %d produced no approval for turn %s",
+					attempt, approvalTurnAttempts, started.TurnID)
+				_, _ = epoch.InterruptExactTurn(ctx, created.ThreadID, started.TurnID)
+				break attemptLoop
+			case <-ctx.Done():
+				t.Fatalf("waiting for the approval was cancelled: %v", ctx.Err())
+			}
+		}
+	}
+	if envelope.RequestID == "" {
+		t.Fatalf("the endpoint's model requested no command approval in %d turns; "+
+			"this smoke observes a real approval and cannot manufacture one, so re-run it",
+			approvalTurnAttempts)
 	}
 	t.Logf("evidence: upstream approval kind=%s thread-matches=%v turn-matches=%v raw-id-present=%v decisions=%v",
 		envelope.Kind, envelope.ThreadID == created.ThreadID, envelope.TurnID == started.TurnID,
