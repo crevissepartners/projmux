@@ -446,10 +446,20 @@ func TestRolloutCatalogPickerResumeStaysOnCurrentCLILane(t *testing.T) {
 	}
 }
 
-func TestNativeCatalogPickerResumeUnavailableFallsBackToOneCLIPlan(t *testing.T) {
+// TestUnavailableNativePickerResumeRefusesInsteadOfRebindingOntoTheRolloutLane
+// pins the split-UI picker half of the stored-resume contract.
+//
+// The picker row names a thread the app-server owns. Silently reopening it
+// through the rollout CLI lane produced an Agent that reported a resume while
+// answering no native turn control, so an unproven native resume now refuses,
+// launches nothing, and offers no second lane.
+func TestUnavailableNativePickerResumeRefusesInsteadOfRebindingOntoTheRolloutLane(t *testing.T) {
 	fx := canonicalFixture(t, false)
 	id := "019f0000-0000-7000-8000-000000000043"
-	native := &fakeNativeThreadController{resumeErr: errFakeNativeUnavailable, fallback: true}
+	native := &fakeNativeThreadController{
+		resumeErr: &codexappserver.ThreadActionError{Reason: "daemon-not-running", SafeFallback: true},
+		fallback:  true,
+	}
 	legacy := newFakeResumeLauncher()
 	panes := &fakeNativePaneLauncher{}
 	launcher := &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
@@ -460,48 +470,109 @@ func TestNativeCatalogPickerResumeUnavailableFallsBackToOneCLIPlan(t *testing.T)
 		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
 		conversationID: id, resumeSource: aisessions.SourceCodexAppServer, anchorPaneID: fx.originID,
 	}, ioDiscard{}, ioDiscard{})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil {
+		t.Fatal("unavailable native picker resume silently rebound onto the rollout lane")
 	}
-	if len(native.creates) != 0 || len(native.resumes) != 1 || native.resumes[0].threadID != id ||
-		len(legacy.plans) != 1 || legacy.plans[0].conversationID != id || len(panes.plans) != 0 || len(panes.bound) != 0 ||
-		len(launcher.sources) != 1 || launcher.sources[0] != aisessions.SourceCodexRollout {
-		t.Fatalf("native=%+v legacy=%+v nativePlans=%+v nativeBindings=%+v sources=%v",
-			native.resumes, legacy.plans, panes.plans, panes.bound, launcher.sources)
+	for _, required := range []string{"cannot be resumed natively", "daemon-not-running"} {
+		if !strings.Contains(err.Error(), required) {
+			t.Fatalf("picker resume refusal = %q, missing %q", err, required)
+		}
 	}
-}
-
-func TestNativeUnavailablePreservesCurrentCreateFallback(t *testing.T) {
-	store := newFakeResourceStore(t)
-	tmux := newFakeTmux()
-	create, legacy := newTestAgentCreateCommand(t, store, tmux)
-	native := &fakeNativeThreadController{createErr: errFakeNativeUnavailable, fallback: true}
-	create.codexNative = native
-	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
-
-	stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "fallback prompt")
-	if err != nil || stdout != "agent/codex-1 created\n" || stderr != "" {
-		t.Fatalf("stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	if strings.Contains(err.Error(), interactiveOnlyFlag) {
+		t.Fatalf("stored resume offered a launch-mode escape hatch it does not have: %q", err)
 	}
-	if len(native.creates) != 1 || len(legacy.activationPanes) != 1 || len(legacy.bound) != 1 {
-		t.Fatalf("native calls=%d activation=%v legacy bindings=%v", len(native.creates), legacy.activationPanes, legacy.bound)
+	if len(native.creates) != 0 || len(native.resumes) != 1 || native.resumes[0].threadID != id {
+		t.Fatalf("native creates=%+v resumes=%+v", native.creates, native.resumes)
 	}
-	if calls := splitWindowCalls(tmux); len(calls) != 1 || !strings.Contains(strings.Join(calls[0], " "), "fallback prompt") {
-		t.Fatalf("fallback split calls = %v", calls)
+	// The provider argv is constructed before the native attempt, but nothing
+	// may be bound, sourced, or launched from it once the resume refuses.
+	if len(legacy.bound) != 0 || len(panes.plans) != 0 || len(panes.bound) != 0 || len(launcher.sources) != 0 {
+		t.Fatalf("refused picker resume still bound a Pane: legacy=%+v nativePlans=%+v nativeBindings=%+v sources=%v",
+			legacy.bound, panes.plans, panes.bound, launcher.sources)
 	}
-	agent := agentNamed(t, store, "win-alpha-main", "codex-1")
-	pane, _ := store.registry.Pane(agent.Status.PaneRef)
-	if pane.Status.Activation.Codex != nil || agent.Status.Activation.Source != string(coremetadata.InteractionSourceProviderHook) {
-		t.Fatalf("fallback changed hook contract: agent=%#v pane=%#v", agent.Status.Activation, pane.Status.Activation)
+	if calls := splitWindowCalls(fx.tmux); len(calls) != 0 {
+		t.Fatalf("refused picker resume split a Pane: %v", calls)
 	}
 }
 
-func TestNativeUnavailablePreservesCurrentResumeFallback(t *testing.T) {
+// TestUnavailableNativeCreateRefusesInsteadOfSilentlyCreatingAPlainAgent is the
+// pre-mutation half of the prompted-create refusal matrix.
+//
+// A prompted Codex create whose native authority cannot be proven used to
+// degrade to the hook/plain lane, producing a managed Agent with no thread
+// binding and no native turn control. It now refuses at the provider-mutation
+// boundary -- before the split, before the hook probe, and before the Registry
+// commit -- and names the one explicit way to ask for that plain Agent.
+func TestUnavailableNativeCreateRefusesInsteadOfSilentlyCreatingAPlainAgent(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		// safeFallback mirrors the adapter's own classification: an
+		// unreachable endpoint reports one, while the fail-closed additional
+		// writable roots row deliberately reports none. Both are raised before
+		// any provider conversation exists, so both must refuse the same way.
+		reason       string
+		safeFallback bool
+	}{
+		{name: "endpoint unavailable", reason: "daemon-not-running", safeFallback: true},
+		{name: "additional writable roots unsupported", reason: codexappserver.ReasonAdditionalRootsUnsupported},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			create, legacy := newTestAgentCreateCommand(t, store, tmux)
+			native := &fakeNativeThreadController{
+				createErr: &codexappserver.ThreadActionError{Reason: test.reason, SafeFallback: test.safeFallback},
+				fallback:  test.safeFallback,
+			}
+			create.codexNative = native
+			create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
+			before, panes := store.snapshot(), tmux.paneCount()
+
+			stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "fallback prompt")
+			if err == nil || stdout != "" || stderr != "" {
+				t.Fatalf("stdout=%q stderr=%q err=%v", stdout, stderr, err)
+			}
+			for _, required := range []string{test.reason, interactiveOnlyFlag, "no native thread binding"} {
+				if !strings.Contains(err.Error(), required) {
+					t.Fatalf("refusal = %q, missing %q", err, required)
+				}
+			}
+			if len(native.creates) != 1 || native.creates[0].prompt != "fallback prompt" {
+				t.Fatalf("native creates = %+v", native.creates)
+			}
+			if len(legacy.plans) != 1 || len(legacy.bound) != 0 || len(legacy.activationPanes) != 0 {
+				t.Fatalf("refused create still launched or acknowledged: plans=%+v bound=%+v activation=%v",
+					legacy.plans, legacy.bound, legacy.activationPanes)
+			}
+			if store.snapshot() != before || store.writes != 0 || tmux.paneCount() != panes ||
+				tmux.argvContains("split-window") || tmux.argvContains("new-window") {
+				t.Fatalf("refused create mutated state: writes=%d panes=%d registry=%s",
+					store.writes, tmux.paneCount()-panes, store.snapshot())
+			}
+		})
+	}
+}
+
+// TestUnavailableNativeResumeKeepsTheStoredConversationOnTheProviderResumeLane
+// pins the boundary of this Phase's native-required rule.
+//
+// The rule governs routes that *create* a managed Agent. `agent resume`
+// creates none -- it reattaches a Pane to an Agent that already exists -- and
+// the Agent it reattaches may never have carried an app-server binding at all,
+// because a native binding lives on the activation-scoped
+// `Pane.Status.Activation.Codex` and dies with the Pane it described. Making
+// this route require native authority would make every Codex resume fail
+// wherever no app-server is reachable, so it keeps the safe fallback: one
+// provider resume of the stored conversation, and zero new conversations.
+func TestUnavailableNativeResumeKeepsTheStoredConversationOnTheProviderResumeLane(t *testing.T) {
 	store := newFakeResourceStore(t)
 	setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
 	tmux := newFakeTmux()
 	agentCommand, legacy, _, _ := newTestAgentResumeCommand(t, store, tmux)
-	native := &fakeNativeThreadController{resumeErr: errFakeNativeUnavailable, fallback: true}
+	native := &fakeNativeThreadController{
+		resumeErr: &codexappserver.ThreadActionError{Reason: "daemon-not-running", SafeFallback: true},
+		fallback:  true,
+	}
 	panes := &fakeNativePaneLauncher{}
 	agentCommand.rebind.launcher = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
 	agentCommand.rebind.create.codexNative = native
@@ -510,10 +581,20 @@ func TestNativeUnavailablePreservesCurrentResumeFallback(t *testing.T) {
 	if err != nil || stdout != "agent/codex resumed\n" || stderr != "" {
 		t.Fatalf("stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
-	if len(native.creates) != 0 || len(native.resumes) != 1 || len(legacy.plans) != 1 || len(legacy.bound) != 1 || len(panes.plans) != 0 {
-		t.Fatalf("native=%+v legacy plans=%+v bindings=%+v native pane plans=%+v", native.resumes, legacy.plans, legacy.bound, panes.plans)
+	// Exactly one native resume attempt, no native create, and no native Pane
+	// state: the fallback is a lane choice, never a second conversation.
+	if len(native.creates) != 0 || len(native.resumes) != 1 || len(panes.plans) != 0 || len(panes.bound) != 0 {
+		t.Fatalf("native creates=%+v resumes=%+v nativePlans=%+v nativeBindings=%+v",
+			native.creates, native.resumes, panes.plans, panes.bound)
+	}
+	if len(legacy.plans) != 1 || legacy.plans[0].conversationID != resumeFixtureConversation || len(legacy.bound) != 1 {
+		t.Fatalf("provider resume lane = plans:%+v bound:%+v", legacy.plans, legacy.bound)
 	}
 	assertOnlyResumeLaunches(t, tmux, resumeFixtureConversation, 1)
+	after, _ := store.registry.Agent("agt-beta-codex")
+	if !after.Status.SessionRef.SameConversation(resumeFixtureRef(resourceFixtureClock)) {
+		t.Fatalf("fallback resume rewrote the stored conversation: %#v", after.Status.SessionRef)
+	}
 }
 
 func TestNativeLifecycleStarterIsNotCalledWhenCreateOrResumeTransactionFails(t *testing.T) {
@@ -566,6 +647,12 @@ func TestIndeterminateNativeCreateRefusesASecondLaneAndWritesZero(t *testing.T) 
 	if err == nil || stdout != "" || !strings.Contains(err.Error(), "refusing a second CLI lane") {
 		t.Fatalf("stdout=%q err=%v", stdout, err)
 	}
+	// Provider identity is already indeterminate, so this refusal must offer no
+	// second lane at all -- the explicit opt-out included. Starting another
+	// Codex process now could submit the same prompt twice.
+	if strings.Contains(err.Error(), interactiveOnlyFlag) {
+		t.Fatalf("post-mutation refusal offered a second lane: %q", err)
+	}
 	if calls := splitWindowCalls(tmux); len(calls) != 0 {
 		t.Fatalf("indeterminate native create synthesized a lane: %v", calls)
 	}
@@ -574,13 +661,39 @@ func TestIndeterminateNativeCreateRefusesASecondLaneAndWritesZero(t *testing.T) 
 	}
 }
 
+// TestCodexNativeLaunchOutcomeTableIsClosed keeps the documented outcome table
+// describing reality: exactly which rows may still reach the plain CLI lane,
+// exactly which must launch nothing, and that only a create ever names the
+// `--interactive-only` escape hatch.
 func TestCodexNativeLaunchOutcomeTableIsClosed(t *testing.T) {
-	if len(codexNativeLaunchOutcomeTable) != 4 {
-		t.Fatalf("outcome rows=%d, want 4: %+v", len(codexNativeLaunchOutcomeTable), codexNativeLaunchOutcomeTable)
+	if len(codexNativeLaunchOutcomeTable) != 9 {
+		t.Fatalf("outcome rows=%d, want 9: %+v", len(codexNativeLaunchOutcomeTable), codexNativeLaunchOutcomeTable)
 	}
-	if codexNativeLaunchOutcomeTable[0].Action != "create" || codexNativeLaunchOutcomeTable[1].Action != "resume" ||
-		!strings.Contains(codexNativeLaunchOutcomeTable[2].Launch, "current CLI") ||
-		!strings.Contains(codexNativeLaunchOutcomeTable[3].Launch, "none") {
-		t.Fatalf("outcome table drifted: %+v", codexNativeLaunchOutcomeTable)
+	var plainLane, refused []string
+	for _, row := range codexNativeLaunchOutcomeTable {
+		switch {
+		case strings.Contains(row.Launch, "current CLI"):
+			plainLane = append(plainLane, row.NativeResult)
+		case row.Launch == "none":
+			refused = append(refused, row.NativeResult)
+		}
+	}
+	if !slices.Equal(plainLane, []string{
+		"empty prompt before provider mutation",
+		"explicit " + interactiveOnlyFlag,
+		"stored Agent rebind, unavailable or unsupported before provider mutation",
+	}) {
+		t.Fatalf("plain CLI rows drifted: %v", plainLane)
+	}
+	if len(refused) != 4 {
+		t.Fatalf("refusal rows = %v, want the four unproven-authority rows", refused)
+	}
+	for _, row := range codexNativeLaunchOutcomeTable {
+		if row.Action == "resume" && strings.Contains(row.Binding, interactiveOnlyFlag) {
+			t.Fatalf("a resume row offers a launch-mode escape hatch: %+v", row)
+		}
+		if strings.Contains(row.NativeResult, "indeterminate") && strings.Contains(row.Binding, interactiveOnlyFlag) {
+			t.Fatalf("the post-mutation row offers a second lane: %+v", row)
+		}
 	}
 }

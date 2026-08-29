@@ -58,6 +58,12 @@ type resourceCreateFlags struct {
 	createWindow bool
 	output       string
 	payload      []string
+	// interactiveOnly is the public opt-out from Codex native turn control. It
+	// is the only spelling that produces a plain-CLI Codex Agent with no native
+	// thread binding, which is what keeps "no native authority" a thing the
+	// operator asked for rather than a silent consequence of an unreachable
+	// endpoint.
+	interactiveOnly bool
 	// resumeConversation is set by the Projmux split UI's resume selection and by
 	// nothing else. It is deliberately not a parsed flag: no public spelling of
 	// `create` accepts it, so an operator cannot reach a resume through the create
@@ -342,6 +348,8 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		fs.StringVar(&out.provider, "provider", "", "Agent provider: "+strings.Join(cli.AgentProviders(), "|"))
 		fs.StringVar(&out.cwd, "cwd", "", "effective Agent working directory (defaults to Project root)")
 		fs.Var(&out.addDirs, "add-dir", "repeatable additional writable root")
+		fs.BoolVar(&out.interactiveOnly, "interactive-only", false,
+			"codex only: launch a plain interactive CLI Agent with no native thread binding")
 	}
 	if pane {
 		fs.Var(&out.windows, "window", "repeatable Window selector: <name> or uid:<uid>")

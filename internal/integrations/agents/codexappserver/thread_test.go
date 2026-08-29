@@ -19,7 +19,15 @@ import (
 	"time"
 )
 
-func TestStartDefaultThreadEmptyAndPromptedRequestCounts(t *testing.T) {
+// startDefaultThreadFixture puts a fake Codex executable on PATH whose
+// `app-server proxy` is this test binary's helper process, and returns the
+// reader for the append-only event ledger that helper writes. Every event a
+// subtest asserts on -- proxy opens, request methods, and the exact
+// runtimeWorkspaceRoots one thread/start carried -- is one whitespace-free
+// field in that file, so a ledger read is an exact wire observation rather
+// than a summary of one.
+func startDefaultThreadFixture(t *testing.T) func(path string) []string {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("fake Codex executable is POSIX-only")
 	}
@@ -37,8 +45,9 @@ func TestStartDefaultThreadEmptyAndPromptedRequestCounts(t *testing.T) {
 	t.Setenv("CODEX_HOME", t.TempDir())
 	t.Setenv("PROJMUX_CODEX_THREAD_HELPER", helper)
 	t.Setenv("GO_WANT_THREAD_HELPER", "1")
+	t.Setenv("PROJMUX_CODEX_THREAD_UNSUPPORTED_ROOTS", "")
 
-	readEvents := func(path string) []string {
+	return func(path string) []string {
 		t.Helper()
 		data, err := os.ReadFile(path)
 		if err != nil && !os.IsNotExist(err) {
@@ -46,6 +55,10 @@ func TestStartDefaultThreadEmptyAndPromptedRequestCounts(t *testing.T) {
 		}
 		return strings.Fields(string(data))
 	}
+}
+
+func TestStartDefaultThreadEmptyAndPromptedRequestCounts(t *testing.T) {
+	readEvents := startDefaultThreadFixture(t)
 
 	t.Run("empty falls back before proxy open", func(t *testing.T) {
 		countPath := filepath.Join(t.TempDir(), "requests")
@@ -87,29 +100,120 @@ func TestStartDefaultThreadEmptyAndPromptedRequestCounts(t *testing.T) {
 			}
 		}
 	})
+}
 
-	t.Run("additional roots refuse before any thread request", func(t *testing.T) {
+// TestStartDefaultThreadDeliversAdditionalRootsOrFailsClosed is the additional
+// writable roots capability matrix for a native create.
+//
+// Additional writable roots are an experimental-only request field. A create
+// that carries them must deliver the exact cleaned list on a connection that
+// negotiated the capability; a create against an endpoint that cannot answer
+// the negotiated form must fail closed, because the alternative -- creating the
+// Agent anyway -- silently narrows the writable workspace the operator asked
+// for; and a create with no roots must widen nothing, keeping the plain
+// connection and putting no roots field on the wire at all.
+func TestStartDefaultThreadDeliversAdditionalRootsOrFailsClosed(t *testing.T) {
+	readEvents := startDefaultThreadFixture(t)
+
+	t.Run("negotiated connection carries the exact cleaned list", func(t *testing.T) {
 		countPath := filepath.Join(t.TempDir(), "requests")
 		t.Setenv("PROJMUX_CODEX_THREAD_COUNT", countPath)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		binding, err := StartDefaultThread(ctx, "0.13.0", "/work/project", []string{"/work/extra"}, "exact prompt", "generation-roots")
-		if !errors.Is(err, ErrExperimentalRequired) || !errors.Is(err, ErrUnsupported) {
-			t.Fatalf("roots error = %v", err)
+		binding, err := StartDefaultThread(ctx, "0.13.0", "/work/project",
+			[]string{"/work/extra", "  ", "/work/second"}, "exact prompt", "generation-roots-ok")
+		if err != nil {
+			t.Fatal(err)
 		}
-		if binding != (ThreadBinding{}) || !CanFallback(err) {
-			t.Fatalf("roots binding = %#v, safe fallback=%t", binding, CanFallback(err))
+		if binding != (ThreadBinding{ThreadID: "thread-exact", TurnID: "turn-exact"}) {
+			t.Fatalf("rooted binding = %#v", binding)
 		}
+		events := readEvents(countPath)
 		counts := map[string]int{}
-		for _, event := range readEvents(countPath) {
+		for _, event := range events {
 			counts[event]++
 		}
-		for _, forbidden := range []string{methodThreadStart, methodTurnStart} {
-			if counts[forbidden] != 0 {
-				t.Fatalf("%s count = %d on a connection with no experimental capability; all=%v", forbidden, counts[forbidden], counts)
+		for event, want := range map[string]int{
+			methodThreadStart: 1,
+			methodTurnStart:   1,
+			"thread/start:roots=/work/extra|/work/second": 1,
+		} {
+			if got := counts[event]; got != want {
+				t.Fatalf("%s count = %d, want %d; all=%v", event, got, want, events)
+			}
+		}
+		if got := threadConnectionNegotiation(t, events); got != "initialize:experimentalApi=true" {
+			t.Fatalf("thread connection handshake = %q, want the experimental negotiation; all=%v", got, events)
+		}
+	})
+
+	t.Run("an endpoint that cannot carry roots fails closed", func(t *testing.T) {
+		countPath := filepath.Join(t.TempDir(), "requests")
+		t.Setenv("PROJMUX_CODEX_THREAD_COUNT", countPath)
+		t.Setenv("PROJMUX_CODEX_THREAD_UNSUPPORTED_ROOTS", "1")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		binding, err := StartDefaultThread(ctx, "0.13.0", "/work/project",
+			[]string{"/work/extra"}, "exact prompt", "generation-roots-unsupported")
+		if binding != (ThreadBinding{}) {
+			t.Fatalf("fail-closed binding = %#v, want the zero binding", binding)
+		}
+		var action *ThreadActionError
+		if !errors.As(err, &action) || action.Reason != ReasonAdditionalRootsUnsupported {
+			t.Fatalf("roots error = %v, want a typed %s refusal", err, ReasonAdditionalRootsUnsupported)
+		}
+		if CanFallback(err) {
+			t.Fatalf("unsupported roots reported a safe fallback: %v", err)
+		}
+		if !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("unsupported roots error does not wrap ErrUnsupported: %v", err)
+		}
+		events := readEvents(countPath)
+		for _, event := range events {
+			if event == methodTurnStart {
+				t.Fatalf("fail-closed create still submitted a turn: %v", events)
 			}
 		}
 	})
+
+	t.Run("an empty root list puts nothing on the wire", func(t *testing.T) {
+		countPath := filepath.Join(t.TempDir(), "requests")
+		t.Setenv("PROJMUX_CODEX_THREAD_COUNT", countPath)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if _, err := StartDefaultThread(ctx, "0.13.0", "/work/project",
+			[]string{"", "   "}, "exact prompt", "generation-roots-empty"); err != nil {
+			t.Fatal(err)
+		}
+		events := readEvents(countPath)
+		for _, event := range events {
+			if strings.HasPrefix(event, "thread/start:roots=") {
+				t.Fatalf("a whitespace-only root list reached the wire: %v", events)
+			}
+		}
+		if got := threadConnectionNegotiation(t, events); got != "initialize:experimentalApi=false" {
+			t.Fatalf("rootless create handshake = %q, want the plain connection; all=%v", got, events)
+		}
+	})
+}
+
+// threadConnectionNegotiation reports the handshake of the connection that
+// actually carried thread/start. The readiness probe opens its own connection
+// first, so the ledger holds more than one initialize and only the last one
+// before thread/start describes the create's own wire surface.
+func threadConnectionNegotiation(t *testing.T, events []string) string {
+	t.Helper()
+	negotiation := ""
+	for _, event := range events {
+		if strings.HasPrefix(event, "initialize:experimentalApi=") {
+			negotiation = event
+		}
+		if event == methodThreadStart {
+			return negotiation
+		}
+	}
+	t.Fatalf("event ledger holds no thread/start: %v", events)
+	return ""
 }
 
 func TestStartDefaultThreadProxyHelperProcess(t *testing.T) {
@@ -147,6 +251,12 @@ func TestStartDefaultThreadProxyHelperProcess(t *testing.T) {
 		var message struct {
 			Method string          `json:"method"`
 			ID     json.RawMessage `json:"id"`
+			Params struct {
+				Capabilities *struct {
+					ExperimentalAPI bool `json:"experimentalApi"`
+				} `json:"capabilities"`
+				RuntimeWorkspaceRoots []string `json:"runtimeWorkspaceRoots"`
+			} `json:"params"`
 		}
 		if json.Unmarshal(payload, &message) != nil || message.Method == "" {
 			os.Exit(23)
@@ -154,11 +264,23 @@ func TestStartDefaultThreadProxyHelperProcess(t *testing.T) {
 		appendEvent(message.Method)
 		switch message.Method {
 		case methodInitialize:
+			negotiated := message.Params.Capabilities != nil && message.Params.Capabilities.ExperimentalAPI
+			appendEvent(fmt.Sprintf("initialize:experimentalApi=%t", negotiated))
 			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"userAgent":"codex-cli/0.150.1","platformFamily":"unix","platformOs":"linux"}}`, message.ID))
 		case methodInitialized:
 		case methodRemoteControlStatusRead:
 			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"status":"disabled","installationId":"discarded","serverName":"discarded"}}`, message.ID))
 		case methodThreadStart:
+			if roots := message.Params.RuntimeWorkspaceRoots; len(roots) > 0 {
+				appendEvent("thread/start:roots=" + strings.Join(roots, "|"))
+				if os.Getenv("PROJMUX_CODEX_THREAD_UNSUPPORTED_ROOTS") == "1" {
+					// The oldest endpoints answer an experimental-only request
+					// field with the unsupported-method code rather than
+					// silently ignoring it.
+					writeTestServerFrame(fmt.Sprintf(`{"id":%s,"error":{"code":-32601,"message":"unsupported"}}`, message.ID))
+					continue
+				}
+			}
 			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"thread":{"id":"thread-exact"}}}`, message.ID))
 		case methodTurnStart:
 			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"turn":{"id":"turn-exact","status":"inProgress"}}}`, message.ID))

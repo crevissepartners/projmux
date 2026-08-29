@@ -40,22 +40,51 @@ func CanFallback(err error) bool {
 	return errors.As(err, &action) && action.SafeFallback
 }
 
+// ReasonAdditionalRootsUnsupported is the typed classification of a create that
+// carries additional writable roots to an endpoint that cannot negotiate the
+// experimental API those roots travel on. It is deliberately not a safe
+// fallback: the alternative is an Agent created with a narrower writable
+// workspace than the operator asked for, which is a silent capability loss
+// rather than a lane choice.
+const ReasonAdditionalRootsUnsupported = "additional-writable-roots-unsupported"
+
 // StartDefaultThread creates one daemon-owned thread and sends exactly one
 // turn/start. An empty prompt is not attachable native input, so it is
 // classified as a safe fallback before opening or mutating the provider.
 // requestKey is the caller's opaque activation generation and becomes Codex's
 // client user-message id.
+//
+// Additional writable roots are an experimental-only request field, so a create
+// that carries them negotiates that capability on its own connection and
+// delivers the exact cleaned list. A create with no roots keeps the plain
+// connection: the common launch must not widen the wire surface it never uses.
+// When the endpoint cannot answer the negotiated form, the create fails closed
+// with ReasonAdditionalRootsUnsupported instead of quietly dropping the roots.
 func StartDefaultThread(ctx context.Context, projmuxVersion, cwd string, roots []string, prompt, requestKey string) (ThreadBinding, error) {
 	if prompt == "" {
 		return ThreadBinding{}, &ThreadActionError{Reason: "empty-prompt", SafeFallback: true}
 	}
-	client, err := openReadyThreadClient(ctx, projmuxVersion, false)
+	requestedRoots := cleanRoots(roots)
+	negotiate := len(requestedRoots) > 0
+	client, err := openReadyThreadClient(ctx, projmuxVersion, negotiate)
 	if err != nil {
+		// An endpoint that refuses the experimental handshake outright is the
+		// unsupported-roots row, not the unavailable-endpoint row.
+		if negotiate && errors.Is(err, ErrUnsupported) {
+			return ThreadBinding{}, unsupportedRootsError(err)
+		}
 		return ThreadBinding{}, err
 	}
 	defer client.Close()
-	binding, err := client.StartThread(ctx, cwd, roots)
+	if negotiate && !client.ExperimentalAPI() {
+		return ThreadBinding{}, unsupportedRootsError(
+			fmt.Errorf("%w: %w: additional writable roots", ErrUnsupported, ErrExperimentalRequired))
+	}
+	binding, err := client.StartThread(ctx, cwd, requestedRoots)
 	if err != nil {
+		if negotiate && errors.Is(err, ErrUnsupported) {
+			return ThreadBinding{}, unsupportedRootsError(err)
+		}
 		return ThreadBinding{}, &ThreadActionError{
 			Reason: "thread-start-failed", SafeFallback: errors.Is(err, ErrUnsupported), err: err,
 		}
@@ -70,14 +99,27 @@ func StartDefaultThread(ctx context.Context, projmuxVersion, cwd string, roots [
 	return binding, nil
 }
 
+// unsupportedRootsError classifies a create that asked for additional writable
+// roots against an endpoint that cannot carry them. It never reports a safe
+// fallback, so no caller may answer it by launching the Agent anyway.
+func unsupportedRootsError(err error) error {
+	return &ThreadActionError{
+		Reason: ReasonAdditionalRootsUnsupported,
+		Guidance: "this Codex app-server endpoint does not negotiate the experimental API that carries additional writable roots; " +
+			"update Codex or create the Agent without additional writable roots",
+		err: err,
+	}
+}
+
 // ResumeDefaultThread loads exactly the stored thread. It never calls
 // thread/start and never creates a new conversation.
 //
 // It negotiates the upstream experimental API, because thread/resume always
 // excludes turns and upstream answers `excludeTurns` only on a negotiated
-// connection. Create deliberately stays on the plain connection: negotiating
-// there would silently put additional writable roots on the wire, and opening
-// that surface is the explicit create semantics phase, not this cutover.
+// connection. Create negotiates the same capability only when it actually
+// carries additional writable roots, so the common rootless create keeps the
+// narrower plain connection while a rooted one delivers the exact list or
+// fails closed.
 func ResumeDefaultThread(ctx context.Context, projmuxVersion, cwd string, roots []string, threadID string) (ThreadBinding, error) {
 	client, err := openReadyThreadClient(ctx, projmuxVersion, true)
 	if err != nil {

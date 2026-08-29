@@ -553,7 +553,12 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 				}
 				usedNative = true
 			case nativeFallbackAllowed(c.codexNative, nativeErr):
-				bindFlags.resumeSource = aisessions.SourceCodexRollout
+				// The picker row names a thread the app-server owns. Rebinding it
+				// onto the rollout CLI lane looks like a resume but carries no
+				// native turn control, so the refusal is typed instead. There is
+				// no `--interactive-only` escape hatch on a resume: the operator
+				// picked an existing conversation, not a launch mode.
+				return nativeResumePreparationRefusal(canonicalCreateAgent, nativeErr)
 			default:
 				return nativeLaunchError(canonicalCreateAgent, nativeErr)
 			}

@@ -75,6 +75,13 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	if err != nil {
 		return err
 	}
+	// An argv-only refusal, so it lands before the Settings gate, the scope
+	// derivation, and the transaction: `--interactive-only` names a Codex-only
+	// lane, and silently ignoring it on another provider would let an operator
+	// believe they had opted out of something that was never there.
+	if err := requireInteractiveOnlyProvider(spelling, provider, flags); err != nil {
+		return err
+	}
 	return c.createAgent(spelling, provider, flags, shape, stdout, stderr)
 }
 
@@ -120,7 +127,14 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	nativeLifecycle, nativeLifecycleCapable := c.resumes.(codexNativeLifecycleStarter)
 	prompt, nativePromptExact := nativePrompt(flags.payload)
 	nativeCandidate := provider == aiModeCodex && c.codexNative != nil && nativeLaunchCapable &&
-		flags.codexCapability == nil && nativePromptExact
+		flags.codexCapability == nil && nativePromptExact && !flags.interactiveOnly
+	// A default native create is the prompted shape: exactly one non-empty
+	// operand on the Codex provider with no explicit interactive-only opt-out
+	// and no capability selection. It is the only shape whose native authority
+	// must be proven rather than attempted, because it is the only shape whose
+	// silent degradation would hand the operator a plain CLI Agent they cannot
+	// control natively without being told.
+	defaultNativeCreate := nativeCandidate && prompt != ""
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
@@ -158,9 +172,19 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			return err
 		}
 		// A Registry transaction can roll back several target Panes, but it
-		// cannot delete app-server threads. Keep native identity atomic by using
-		// it only for the exact-one create shape; fan-out retains the current CLI
-		// contract for every target.
+		// cannot delete app-server threads. Native identity therefore stays
+		// atomic by being used only for the exact-one create shape.
+		//
+		// A default native create whose selector resolved several Windows is
+		// refused here rather than fanned out onto the plain CLI lane: dropping
+		// every target to a lane with no native turn control is exactly the
+		// silent degradation this route no longer performs. The refusal lands
+		// before the first Agent or Pane is allocated, so it costs zero threads,
+		// zero Panes, and zero Registry mutations. `--interactive-only` remains
+		// the way to ask for the plain-CLI fan-out on purpose.
+		if defaultNativeCreate && len(plan.targets) > 1 {
+			return nativeFanOutRefusal(spelling, len(plan.targets))
+		}
 		nativeEligible := nativeCandidate && len(plan.targets) == 1
 
 		// Metadata phase. Every Agent and every managed Pane is allocated before
@@ -244,8 +268,19 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 					nativeBinding = coremetadata.CodexActivationBinding{ThreadID: prepared.ThreadID, TurnID: prepared.TurnID}
 					usedNative = true
 				case nativeFallbackAllowed(c.codexNative, nativeErr):
-					// Preserve the current CLI argv, hook acknowledgement, output, and
-					// late-refinement contract byte-for-byte.
+					if defaultNativeCreate {
+						// Native authority could not be proven, and no provider
+						// conversation was mutated. A managed Agent is not created on
+						// the plain CLI lane behind the operator's back.
+						return nativeCreatePreparationRefusal(spelling, nativeErr)
+					}
+					// Empty prompt. Preserve the current CLI argv, hook
+					// acknowledgement, output, and late-refinement contract
+					// byte-for-byte.
+				case nativeRootsUnsupported(nativeErr):
+					// Fail closed, but before any conversation existed: the
+					// explicit opt-out is still an honest answer here.
+					return nativeCreatePreparationRefusal(spelling, nativeErr)
 				default:
 					return nativeLaunchError(spelling, nativeErr)
 				}
