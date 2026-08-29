@@ -202,9 +202,10 @@ Its captured output is capped at 4 KiB. Doctor reads only a pre-existing
 regular generated config (at most 1 MiB) without following symlinks, and the
 shared read-only journal seam rejects non-regular inputs and files above 5 MiB.
 These conditions degrade to typed findings rather than blocking or repairing
-the source. Windows ACL privacy is reported as unverified because `os.FileMode`
-cannot prove it; a separate finding preserves the metadata-only writability
-result, and Doctor does not modify ACLs.
+the source. The `privacy-unverified` finding remains in the schema for a path
+whose privacy `os.FileMode` cannot prove, but no supported platform emits it:
+Linux and macOS are the only build targets and POSIX mode bits are
+authoritative on both. Doctor does not modify permissions.
 
 ### Registry materialization invariant audit
 
@@ -266,11 +267,9 @@ releases ownership when a process exits, so an orphaned lock path needs no
 path deletion or stale-owner reclamation and cannot race a successor owner.
 Lock acquisition has an explicit 200 ms total budget so this side channel
 cannot materially delay the original command result. When the file exceeds
-5 MiB, a platform-specific atomic replacement retains approximately the
-newest 2 MiB, beginning at a complete valid record; Windows uses replace-
-existing semantics rather than plain rename. A trailing partial record is
-discarded before the next append, and the reader skips malformed or truncated
-records.
+5 MiB, an atomic `rename` replacement retains approximately the newest 2 MiB,
+beginning at a complete valid record. A trailing partial record is discarded
+before the next append, and the reader skips malformed or truncated records.
 
 Classification is intentionally conservative for mutation-capable interactive
 commands: opening session/project/settings/popup flows is treated as changing
