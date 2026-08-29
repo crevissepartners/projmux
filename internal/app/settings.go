@@ -43,6 +43,7 @@ type settingsCommand struct {
 	physicalCaptureAvailable func() bool
 	aiNotifyDiagnostics      func() []doctorAINotifyIntegration
 	appServerHealth          func(hookAvailable bool) codexappserver.Health
+	brokerDiagnostic         codexBrokerDiagnosticLookup
 	// resourceRegistry is the read-only Registry projection the Project surfaces
 	// display. It is a seam so a fixture can declare one instead of reaching for
 	// whatever Registry the host machine has.
@@ -77,6 +78,7 @@ func newSettingsCommand(ai *aiCommand, switcher *switchCommand, update *updateCo
 			health, _ := codexappserver.EnsureDefaultProxyReady(context.Background(), codexappserver.TriggerSettings, version.String(), hookAvailable)
 			return health
 		},
+		brokerDiagnostic: defaultCodexBrokerDiagnosticLookup(),
 	}
 	// The concrete commands satisfy the settings role interfaces structurally.
 	// Guard the nil pointers so the `c.<dep> == nil` checks keep their

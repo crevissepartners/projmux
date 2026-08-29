@@ -36,13 +36,27 @@ const (
 
 // HostStats is the content-free telemetry projection of one runtime host.
 type HostStats struct {
-	Endpoint     EndpointKey
-	Protocol     ProtocolRange
-	Sessions     int
-	LiveSessions int
-	Bindings     int
-	Refused      int
-	Draining     bool
+	Endpoint     EndpointKey   `json:"endpoint"`
+	Protocol     ProtocolRange `json:"protocol"`
+	Sessions     int           `json:"sessions"`
+	LiveSessions int           `json:"liveSessions"`
+	Bindings     int           `json:"bindings"`
+	Refused      int           `json:"refused"`
+	Draining     bool          `json:"draining"`
+}
+
+// RuntimeTelemetry is the whole content-free operational projection of one
+// published runtime: what the host itself is doing, and what the single
+// upstream connection beneath it is doing.
+//
+// It exists so a diagnostics reader gets both halves in one answer. Reading
+// them separately would let a report pair a host count with a broker count
+// taken a reconnect apart and present the two as one moment.
+type RuntimeTelemetry struct {
+	Runtime  string      `json:"runtime"`
+	Protocol int         `json:"protocol"`
+	Host     HostStats   `json:"host"`
+	Broker   Diagnostics `json:"broker"`
 }
 
 // HostConfig is the closed construction input for one runtime host.

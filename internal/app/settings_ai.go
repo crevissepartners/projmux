@@ -460,7 +460,33 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 			SearchKey: "codex app server hook fallback unavailable health read only probe install external cli managed standalone doctor",
 		})
 	}
+	if c.brokerDiagnostic != nil {
+		entries = append(entries, intpickercompat.Entry{
+			Label:     c.rowLabelInfo("Codex endpoint broker", codexBrokerSettingsSummary(c.brokerDiagnostic()), "read-only runtime telemetry"),
+			Value:     settingsNoopValue,
+			SearchKey: "codex endpoint broker runtime connection binding epoch reconnect eviction snapshot telemetry read only doctor",
+		})
+	}
 	return entries
+}
+
+// codexBrokerSettingsSummary renders one line of content-free broker
+// telemetry. A runtime that is merely absent says so plainly: on a machine with
+// no live native Agent that is the correct resting state, not a fault.
+func codexBrokerSettingsSummary(broker codexBrokerDiagnostic) string {
+	if broker.State != codexBrokerStateRunning {
+		if broker.Reason != "" {
+			return fmt.Sprintf("%s - %s", broker.State, broker.Reason)
+		}
+		return broker.State
+	}
+	summary := fmt.Sprintf("%s - upstream connections: %d; bindings: %d; clients: %d - reconnects: %d; evictions: %d; snapshot failures: %d",
+		broker.State, broker.Connections, broker.Bindings, broker.Clients,
+		broker.Reconnects, broker.Evictions, broker.SnapshotFailures)
+	if broker.Draining {
+		summary += " - draining"
+	}
+	return summary
 }
 
 func (c *settingsCommand) aiResumePickerSummary() string {

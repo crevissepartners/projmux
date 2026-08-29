@@ -35,8 +35,10 @@ func TestBrokerRetainsNoProviderContent(t *testing.T) {
 			"Endpoint", "ConnectionEpoch", "OpenAttempts", "Connects", "Disconnects", "Bindings",
 			"ReleasedBindings", "RevokedBindings", "BufferedEvents", "DeliveredEvents",
 			"ThreadlessEvents", "UnboundEvents", "StaleEvents", "Applied", "Refused",
-			"Indeterminate", "Resends",
+			"Indeterminate", "Resends", "Revocations",
 		}},
+		{value: RevocationCount{}, fields: []string{"Reason", "Count"}},
+		{value: RuntimeTelemetry{}, fields: []string{"Runtime", "Protocol", "Host", "Broker"}},
 	} {
 		valueType := reflect.TypeOf(test.value)
 		var got []string
@@ -50,7 +52,7 @@ func TestBrokerRetainsNoProviderContent(t *testing.T) {
 
 	// The types the broker and its runtime retain, as opposed to forward, may
 	// not even be shaped like provider content.
-	for _, retained := range []any{Diagnostics{}, WriteRecord{}, HostStats{}} {
+	for _, retained := range []any{Diagnostics{}, WriteRecord{}, HostStats{}, RevocationCount{}, RuntimeTelemetry{}} {
 		valueType := reflect.TypeOf(retained)
 		for i := range valueType.NumField() {
 			name := strings.ToLower(valueType.Field(i).Name)

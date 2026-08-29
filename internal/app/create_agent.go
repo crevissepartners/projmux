@@ -317,7 +317,8 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 						Route: c.runtime.target,
 					})
 				}
-			} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, workTitle, flags); err != nil {
+			} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, workTitle,
+				declaredPlainCodexLane(provider, flags, prompt), flags); err != nil {
 				return tmuxError("%s: bind Agent Pane %s presentation metadata: %v", spelling, paneID, err)
 			}
 			if len(flags.payload) > 0 && !usedNative {
@@ -481,19 +482,39 @@ func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetad
 // index from the moment the pane exists, which is what lets the provider's first
 // hook event be attributed to this pane instead of having to wait for the
 // provider to report the conversation itself.
-func (c *createCommand) bindAgentPane(ctx context.Context, paneID, provider, contextDir, title string, flags resourceCreateFlags) error {
+func (c *createCommand) bindAgentPane(ctx context.Context, paneID, provider, contextDir, title, declared string, flags resourceCreateFlags) error {
 	if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" && c.resumes != nil {
 		if source := strings.TrimSpace(flags.resumeSource); source != "" {
 			return c.resumes.BindAgentPaneOnRoute(ctx, c.runtime.runner, agentPaneBinding{
 				PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
-				ConversationID: conversation, ResumeSource: source,
+				ConversationID: conversation, ResumeSource: source, CodexNativeDeclared: declared,
 			})
 		}
 		return c.resumes.BindAgentPaneOnRoute(ctx, c.runtime.runner, agentPaneBinding{
-			PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title, ConversationID: conversation,
+			PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
+			ConversationID: conversation, CodexNativeDeclared: declared,
 		})
 	}
 	return c.agents.BindAgentPaneOnRoute(ctx, c.runtime.runner, agentPaneBinding{
-		PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title,
+		PaneID: paneID, Provider: provider, ContextDir: contextDir, Title: title, CodexNativeDeclared: declared,
 	})
+}
+
+// declaredPlainCodexLane names why one managed Codex Agent is being created on
+// the plain CLI lane, from the closed declared vocabulary.
+//
+// Only the two by-design lanes are declared. Every other route to the plain
+// lane is either a refusal that creates nothing, or a genuine loss of native
+// authority that must stay visible as an unexplained native fallback.
+func declaredPlainCodexLane(provider string, flags resourceCreateFlags, prompt string) string {
+	if provider != aiModeCodex || strings.TrimSpace(flags.resumeConversation) != "" {
+		return ""
+	}
+	if flags.interactiveOnly {
+		return codexNativeDeclaredInteractiveOnly
+	}
+	if prompt == "" && len(flags.payload) == 0 {
+		return codexNativeDeclaredEmptyPrompt
+	}
+	return ""
 }

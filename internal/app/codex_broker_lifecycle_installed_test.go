@@ -300,3 +300,412 @@ func settleCodexTurn(ctx context.Context, t *testing.T, workspace, threadID stri
 		}
 	}
 }
+
+// TestInstalledIsolatedRetiredObserverMatrixSmoke is the retirement's final
+// operational proof against a real installed Codex app-server.
+//
+// It is opt-in through PROJMUX_CODEX_RETIREMENT_SMOKE_ROOT and carries the same
+// containment as the cutover smoke above: a contained CODEX_HOME, an isolated
+// state domain, and inherited tmux identity stripped.
+//
+// What it proves is the number the per-Agent observer retirement is measured
+// by. The retired producer opened one upstream app-server connection per
+// managed Agent and owned a private control endpoint for each; two Agents now
+// share one broker connection, one runtime, and one set of artifacts, one
+// Agent's control traffic leaves the other's epoch untouched, and unbinding
+// them both leaves nothing behind.
+func TestInstalledIsolatedRetiredObserverMatrixSmoke(t *testing.T) {
+	root := strings.TrimSpace(os.Getenv("PROJMUX_CODEX_RETIREMENT_SMOKE_ROOT"))
+	if root == "" {
+		t.Skip("set PROJMUX_CODEX_RETIREMENT_SMOKE_ROOT for the installed retirement matrix smoke")
+	}
+	root = filepath.Clean(root)
+	tmpRoot := filepath.Clean("/tmp")
+	if !filepath.IsAbs(root) || root == tmpRoot || !strings.HasPrefix(root, tmpRoot+string(filepath.Separator)) {
+		t.Fatalf("smoke root must be an isolated child of %s", tmpRoot)
+	}
+	for _, inherited := range []string{"TMUX", "TMUX_PANE"} {
+		if _, present := os.LookupEnv(inherited); present {
+			t.Fatalf("%s must be removed for the installed retirement matrix smoke", inherited)
+		}
+	}
+	wantCodexHome := filepath.Join(root, "codex-home")
+	if got := filepath.Clean(os.Getenv("CODEX_HOME")); got != wantCodexHome {
+		t.Fatalf("CODEX_HOME = %q, want %q", got, wantCodexHome)
+	}
+	domain := filepath.Join(root, "state")
+	if err := os.MkdirAll(domain, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := codexbroker.NewDiscovery(domain, codexbroker.DefaultEndpointKey)
+	if err != nil {
+		t.Fatalf("isolated state domain %q is unusable: %v", domain, err)
+	}
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ledger := installCodexArgvLedger(t, root)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	// Two managed Agents, each with its own exact thread. The prompted create
+	// is the product's own, and it is what materializes each thread's rollout.
+	type managed struct {
+		agentUID   string
+		paneUID    string
+		runtimeID  string
+		generation string
+		threadID   string
+	}
+	agents := []managed{
+		{agentUID: "agent-retire-a", paneUID: "pane-retire-a", runtimeID: "%1", generation: "gen-retire-a"},
+		{agentUID: "agent-retire-b", paneUID: "pane-retire-b", runtimeID: "%2", generation: "gen-retire-b"},
+	}
+	for i := range agents {
+		created, err := codexappserver.StartDefaultThread(ctx, version.String(), workspace, nil,
+			"Reply with the single word OK and nothing else.", agents[i].generation)
+		if err != nil {
+			t.Fatalf("prompted create for %s: %v", agents[i].agentUID, err)
+		}
+		if strings.TrimSpace(created.ThreadID) == "" || strings.TrimSpace(created.TurnID) == "" {
+			t.Fatalf("prompted create for %s returned no exact thread and turn", agents[i].agentUID)
+		}
+		agents[i].threadID = created.ThreadID
+		settleCodexTurn(ctx, t, workspace, created.ThreadID)
+	}
+	t.Logf("evidence: managed Agents created=%d distinct-threads=%v",
+		len(agents), agents[0].threadID != agents[1].threadID)
+
+	broker, err := codexbroker.NewBroker(codexbroker.Config{
+		Opener: codexbroker.DefaultOpener(version.String(), codexappserver.AttachOptions{
+			Timeout: 10 * time.Second, ExperimentalAPI: true,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("broker: %v", err)
+	}
+	host, err := codexbroker.StartHost(codexbroker.HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: time.Second})
+	if err != nil {
+		_ = broker.Close()
+		t.Fatalf("publish isolated runtime: %v", err)
+	}
+	defer func() {
+		_ = host.Close()
+		_ = broker.Close()
+	}()
+
+	sessions := make([]*codexBrokerObserverSession, 0, len(agents))
+	epochs := make([]*codexBrokerLifecycleEpoch, 0, len(agents))
+	for _, agent := range agents {
+		session := newCodexBrokerObserverSessionOn(codexLifecycleIdentity{
+			AgentUID: agent.agentUID, PaneUID: agent.paneUID, RuntimeID: agent.runtimeID,
+			Generation: agent.generation, ThreadID: agent.threadID,
+		}, workspace, nil, discovery, nil)
+		sessions = append(sessions, session)
+		openCtx, openCancel := context.WithTimeout(ctx, 30*time.Second)
+		connection, openErr := session.Open(openCtx)
+		openCancel()
+		if openErr != nil {
+			t.Fatalf("broker binding refused for %s: %v", agent.agentUID, openErr)
+		}
+		epoch, ok := connection.(*codexBrokerLifecycleEpoch)
+		if !ok {
+			t.Fatalf("open returned %T", connection)
+		}
+		epochs = append(epochs, epoch)
+	}
+	defer func() {
+		for i := range sessions {
+			_ = epochs[i].Close()
+			_ = sessions[i].Close()
+		}
+	}()
+
+	// One runtime, one upstream connection, two bindings. This is the whole
+	// retirement in one reading: the retired producer would be showing two
+	// connections and two private control endpoints here.
+	stats := dialInstalledSmokeTelemetry(ctx, t, discovery)
+	t.Logf("evidence: runtime=%s connections=%d bindings=%d open-attempts=%d clients=%d",
+		stats.Runtime, stats.Broker.Connects-stats.Broker.Disconnects, stats.Broker.Bindings,
+		stats.Broker.OpenAttempts, stats.Host.LiveSessions)
+	if open := stats.Broker.Connects - stats.Broker.Disconnects; open != 1 {
+		t.Fatalf("open upstream connections = %d for %d managed Agents, want exactly 1", open, len(agents))
+	}
+	if stats.Broker.Bindings != len(agents) {
+		t.Fatalf("bindings = %d, want one per managed Agent (%d)", stats.Broker.Bindings, len(agents))
+	}
+	if stats.Broker.OpenAttempts != 1 {
+		t.Fatalf("upstream open attempts = %d, want the single shared connection", stats.Broker.OpenAttempts)
+	}
+	if stats.Runtime != host.RuntimeID() {
+		t.Fatalf("telemetry runtime = %q, want the single published runtime %q", stats.Runtime, host.RuntimeID())
+	}
+
+	// The projected diagnostic is what an operator actually reads.
+	projected := projectCodexBrokerTelemetry(stats)
+	if projected.State != codexBrokerStateRunning || projected.Connections != 1 || projected.Bindings != len(agents) {
+		t.Fatalf("projected diagnostic = %+v, want one running connection with one binding per Agent", projected)
+	}
+	if projected.Evictions != 0 || projected.SnapshotFailures != 0 {
+		t.Fatalf("a healthy matrix reported binding faults: %+v", projected)
+	}
+
+	// Control on one Agent must leave the other's epoch alone. The steered turn
+	// is started through the same fenced wire that carries it, so it is
+	// provably the exact in-progress turn of that exact Agent.
+	beforeFence := epochs[1].fence
+	started, err := epochs[0].StartExactTurn(ctx, agents[0].threadID,
+		"Write the numbers 1 through 400, one per line, and nothing else.")
+	if err != nil {
+		t.Fatalf("start the turn to steer on %s: %v", agents[0].agentUID, err)
+	}
+	snapshot, err := epochs[0].ReadLifecycleSnapshot(ctx, agents[0].threadID)
+	if err != nil {
+		t.Fatalf("read the lifecycle snapshot for %s: %v", agents[0].agentUID, err)
+	}
+	if snapshot.TurnID != started.TurnID || snapshot.TurnState != codexappserver.TurnStateInProgress {
+		t.Fatalf("turn to steer is not the exact in-progress turn of %s: turn-state=%s matches=%v",
+			agents[0].agentUID, snapshot.TurnState, snapshot.TurnID == started.TurnID)
+	}
+	steered, err := epochs[0].SteerExactTurn(ctx, agents[0].threadID, started.TurnID, "Stop at 5 instead.")
+	if err != nil {
+		t.Fatalf("steer the exact active turn of %s: %v", agents[0].agentUID, err)
+	}
+	if steered.TurnID != started.TurnID {
+		t.Fatalf("steer answered for turn %q, want the exact active turn", steered.TurnID)
+	}
+	if _, err := epochs[0].InterruptExactTurn(ctx, agents[0].threadID, started.TurnID); err != nil {
+		t.Fatalf("interrupt the steered turn of %s: %v", agents[0].agentUID, err)
+	}
+
+	// The sibling's authority is untouched by all of that, and its own exact
+	// thread still reads back through its own fence.
+	if epochs[1].fence != beforeFence {
+		t.Fatalf("sibling fence moved from %+v to %+v during the other Agent's turn", beforeFence, epochs[1].fence)
+	}
+	siblingSnapshot, err := epochs[1].ReadLifecycleSnapshot(ctx, agents[1].threadID)
+	if err != nil {
+		t.Fatalf("read the sibling lifecycle snapshot through its own fence: %v", err)
+	}
+	if siblingSnapshot.ThreadID != agents[1].threadID {
+		t.Fatalf("sibling snapshot answered for thread %q, want %q", siblingSnapshot.ThreadID, agents[1].threadID)
+	}
+	t.Logf("evidence: sibling containment fence-unchanged=true thread-matches=%v",
+		siblingSnapshot.ThreadID == agents[1].threadID)
+
+	// Releasing one Agent leaves the other bound on the same connection.
+	_ = epochs[0].Close()
+	_ = sessions[0].Close()
+	released := dialInstalledSmokeTelemetry(ctx, t, discovery)
+	t.Logf("evidence: after releasing one Agent connections=%d bindings=%d",
+		released.Broker.Connects-released.Broker.Disconnects, released.Broker.Bindings)
+	if released.Broker.Bindings != len(agents)-1 {
+		t.Fatalf("bindings after one release = %d, want %d", released.Broker.Bindings, len(agents)-1)
+	}
+	if open := released.Broker.Connects - released.Broker.Disconnects; open != 1 {
+		t.Fatalf("open upstream connections after one release = %d, want the shared connection kept", open)
+	}
+
+	_ = epochs[1].Close()
+	_ = sessions[1].Close()
+	_ = host.Close()
+	_ = broker.Close()
+	for _, artifact := range []string{discovery.SocketPath(), discovery.RecordPath()} {
+		if _, err := os.Lstat(artifact); err == nil {
+			t.Fatalf("runtime left %q behind", filepath.Base(artifact))
+		}
+	}
+
+	recorded := ledger()
+	t.Logf("evidence: codex argv recorded=%d distinct=%v", len(recorded), distinctCodexArgv(recorded))
+	if len(recorded) == 0 {
+		t.Fatalf("no codex argv was recorded, so the zero-lifecycle-mutation claim is unproven")
+	}
+	for _, argv := range recorded {
+		if !slices.Contains(codexInstalledSmokeReadOnlyArgv, argv) {
+			t.Fatalf("codex argv %q is outside the read-only set %v", argv, codexInstalledSmokeReadOnlyArgv)
+		}
+	}
+}
+
+// dialInstalledSmokeTelemetry reads the published runtime's content-free
+// telemetry over its own local IPC, which is the same path Doctor and Settings
+// take.
+func dialInstalledSmokeTelemetry(ctx context.Context, t *testing.T, discovery codexbroker.Discovery) codexbroker.RuntimeTelemetry {
+	t.Helper()
+	conn, err := codexbroker.Dial(ctx, discovery, codexbroker.DialConfig{Timeout: 10 * time.Second})
+	if err != nil {
+		t.Fatalf("reach the published runtime for telemetry: %v", err)
+	}
+	defer conn.Close()
+	telemetry, err := conn.Stats(ctx)
+	if err != nil {
+		t.Fatalf("read runtime telemetry: %v", err)
+	}
+	return telemetry
+}
+
+// TestInstalledIsolatedBrokerApprovalLeaseSmoke observes one real upstream
+// approval server request end to end.
+//
+// It is the last observation the fake-endpoint suite cannot make. An approval
+// never occurs on a no-turn thread, so every earlier proof of the lease's
+// response-once authority was made against a scripted endpoint. Here the
+// request is issued by a real Codex app-server, delivered over the broker's
+// shared connection, minted into a single-use lease bound to the raw JSON-RPC
+// id and both epochs, spent exactly once, and refused on the second attempt.
+//
+// It is opt-in through PROJMUX_CODEX_APPROVAL_SMOKE_ROOT, whose contained
+// CODEX_HOME must be configured to require approval; the decision this test
+// sends is a decline, so nothing the model proposed is ever executed.
+func TestInstalledIsolatedBrokerApprovalLeaseSmoke(t *testing.T) {
+	root := strings.TrimSpace(os.Getenv("PROJMUX_CODEX_APPROVAL_SMOKE_ROOT"))
+	if root == "" {
+		t.Skip("set PROJMUX_CODEX_APPROVAL_SMOKE_ROOT for the installed approval lease smoke")
+	}
+	root = filepath.Clean(root)
+	tmpRoot := filepath.Clean("/tmp")
+	if !filepath.IsAbs(root) || root == tmpRoot || !strings.HasPrefix(root, tmpRoot+string(filepath.Separator)) {
+		t.Fatalf("smoke root must be an isolated child of %s", tmpRoot)
+	}
+	for _, inherited := range []string{"TMUX", "TMUX_PANE"} {
+		if _, present := os.LookupEnv(inherited); present {
+			t.Fatalf("%s must be removed for the installed approval lease smoke", inherited)
+		}
+	}
+	wantCodexHome := filepath.Join(root, "codex-home")
+	if got := filepath.Clean(os.Getenv("CODEX_HOME")); got != wantCodexHome {
+		t.Fatalf("CODEX_HOME = %q, want %q", got, wantCodexHome)
+	}
+	domain := filepath.Join(root, "state")
+	if err := os.MkdirAll(domain, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := codexbroker.NewDiscovery(domain, codexbroker.DefaultEndpointKey)
+	if err != nil {
+		t.Fatalf("isolated state domain %q is unusable: %v", domain, err)
+	}
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(workspace, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ledger := installCodexArgvLedger(t, root)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	created, err := codexappserver.StartDefaultThread(ctx, version.String(), workspace, nil,
+		"Reply with the single word OK and nothing else.", "gen-approval")
+	if err != nil {
+		t.Fatalf("prompted create against the isolated endpoint: %v", err)
+	}
+	settleCodexTurn(ctx, t, workspace, created.ThreadID)
+
+	broker, err := codexbroker.NewBroker(codexbroker.Config{
+		Opener: codexbroker.DefaultOpener(version.String(), codexappserver.AttachOptions{
+			Timeout: 10 * time.Second, ExperimentalAPI: true,
+		}),
+	})
+	if err != nil {
+		t.Fatalf("broker: %v", err)
+	}
+	host, err := codexbroker.StartHost(codexbroker.HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: time.Second})
+	if err != nil {
+		_ = broker.Close()
+		t.Fatalf("publish isolated runtime: %v", err)
+	}
+	defer func() {
+		_ = host.Close()
+		_ = broker.Close()
+	}()
+
+	session := newCodexBrokerObserverSessionOn(codexLifecycleIdentity{
+		AgentUID: "agent-approval", PaneUID: "pane-approval", RuntimeID: "%1",
+		Generation: "gen-approval", ThreadID: created.ThreadID,
+	}, workspace, nil, discovery, nil)
+	defer func() { _ = session.Close() }()
+	openCtx, openCancel := context.WithTimeout(ctx, 30*time.Second)
+	connection, openErr := session.Open(openCtx)
+	openCancel()
+	if openErr != nil {
+		t.Fatalf("broker binding refused for the created thread: %v", openErr)
+	}
+	epoch, ok := connection.(*codexBrokerLifecycleEpoch)
+	if !ok {
+		t.Fatalf("open returned %T", connection)
+	}
+	defer func() { _ = epoch.Close() }()
+
+	started, err := epoch.StartExactTurn(ctx, created.ThreadID,
+		"Use your shell tool to run exactly this one command and nothing else: printf probe > ./projmux-approval-probe.txt")
+	if err != nil {
+		t.Fatalf("start the turn that should request approval: %v", err)
+	}
+
+	// The approval arrives on the broker's own stream, which is what mints the
+	// lease. Anything else on that stream is ordinary lifecycle traffic.
+	deadline := time.After(5 * time.Minute)
+	var envelope codexappserver.ApprovalEnvelope
+	for envelope.RequestID == "" {
+		select {
+		case notification, open := <-epoch.Notifications():
+			if !open {
+				t.Fatal("the broker stream ended before an approval arrived")
+			}
+			decoded, recognized, decodeErr := codexappserver.DecodeApprovalEnvelope(notification)
+			if decodeErr != nil {
+				t.Fatalf("decode the real approval request: %v", decodeErr)
+			}
+			if recognized {
+				envelope = decoded
+			}
+		case <-deadline:
+			_, _ = epoch.InterruptExactTurn(ctx, created.ThreadID, started.TurnID)
+			t.Fatalf("no upstream approval server request arrived for turn %s", started.TurnID)
+		case <-ctx.Done():
+			t.Fatalf("waiting for the approval was cancelled: %v", ctx.Err())
+		}
+	}
+	t.Logf("evidence: upstream approval kind=%s thread-matches=%v turn-matches=%v raw-id-present=%v decisions=%v",
+		envelope.Kind, envelope.ThreadID == created.ThreadID, envelope.TurnID == started.TurnID,
+		len(envelope.RawRequestID) > 0, envelope.Decisions)
+	if envelope.ThreadID != created.ThreadID || envelope.TurnID != started.TurnID {
+		t.Fatalf("approval identity = thread %q turn %q, want the exact bound thread and started turn",
+			envelope.ThreadID, envelope.TurnID)
+	}
+	if !slices.Contains(envelope.Decisions, codexappserver.DecisionDecline) {
+		t.Fatalf("approval offered no decline decision: %v", envelope.Decisions)
+	}
+
+	// Decline, so nothing the model proposed is executed.
+	result, err := codexappserver.ApprovalResponse(envelope, codexappserver.DecisionDecline)
+	if err != nil {
+		t.Fatalf("build the decline response: %v", err)
+	}
+	if err := epoch.RespondServerRequest(ctx, envelope.RawRequestID, result); err != nil {
+		t.Fatalf("answer the real approval through the broker lease: %v", err)
+	}
+	// The lease is single use. A second answer for the same raw id must be
+	// refused by the epoch before it can reach the wire again.
+	if err := epoch.RespondServerRequest(ctx, envelope.RawRequestID, result); err == nil {
+		t.Fatal("a spent approval lease answered a second time")
+	}
+	t.Log("evidence: approval lease spent once and refused on the second answer")
+
+	if _, err := epoch.InterruptExactTurn(ctx, created.ThreadID, started.TurnID); err != nil {
+		t.Logf("interrupt after the declined approval: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(workspace, "projmux-approval-probe.txt")); err == nil {
+		t.Fatal("the declined command wrote its file anyway")
+	}
+
+	recorded := ledger()
+	t.Logf("evidence: codex argv recorded=%d distinct=%v", len(recorded), distinctCodexArgv(recorded))
+	for _, argv := range recorded {
+		if !slices.Contains(codexInstalledSmokeReadOnlyArgv, argv) {
+			t.Fatalf("codex argv %q is outside the read-only set %v", argv, codexInstalledSmokeReadOnlyArgv)
+		}
+	}
+}

@@ -181,7 +181,7 @@ lifecycle_pmx_at_anchor() {
 
 lifecycle_background_routes() {
   ps -eo pid=,args= | PROJMUX_ROUTE_BIN="$bin" awk '
-    index($0, ENVIRON["PROJMUX_ROUTE_BIN"] " internal agent-hook ingest codex-appserver-watch") > 0 { print }'
+    index($0, ENVIRON["PROJMUX_ROUTE_BIN"] " internal agent-hook ingest codex-broker-watch") > 0 { print }'
 }
 
 lifecycle_cleanup() {

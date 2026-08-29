@@ -78,6 +78,12 @@ const (
 	requestUnbind requestKind = "unbind"
 	requestSubmit requestKind = "submit"
 	requestAnswer requestKind = "answer"
+	// requestStats reads the runtime's content-free telemetry. It binds
+	// nothing and mutates nothing, so it is answered while the runtime is
+	// draining and needs no protocol bump: a runtime that predates it answers
+	// the closed `request-unknown` refusal, which a diagnostics reader renders
+	// as an unsupported runtime rather than as a fault.
+	requestStats requestKind = "stats"
 )
 
 // replyKind is the closed set of host-to-client frames.

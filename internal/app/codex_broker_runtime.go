@@ -43,9 +43,11 @@ const (
 // runtime an endpoint opener, and keeps the process alive. Duplicating any of
 // the runtime's decisions here would give the broker two owners.
 //
-// Nothing in the product path invokes these routes yet. The existing Codex
-// observer and control defaults are unchanged; the cutover onto this runtime is
-// a separate change.
+// The product path reaches the runtime through the binding client rather than
+// through these routes: `serve` is what a client launches when discovery finds
+// no published runtime, and `probe` is the operator-reachable proof of life.
+// Since the per-Agent observer retirement this runtime is the only producer of
+// native Codex lifecycle, control, and approval.
 type codexBrokerCommand struct {
 	lookupEnv  func(string) string
 	homeDir    func() (string, error)

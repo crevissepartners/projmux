@@ -33,6 +33,8 @@ type doctorCommand struct {
 	aiDiagnostics          func() []doctorAINotifyIntegration
 	resumeDiagnostics      func() []doctorSessionStateResumeDiagnostic
 	appServerHealth        func(trigger codexappserver.TriggerKind, hookAvailable bool) codexappserver.Health
+	brokerDiagnostic       codexBrokerDiagnosticLookup
+	codexAuthority         codexLifecycleAuthorityLookup
 	readRuntimeHealth      func(diagnostics.ReadOnlyStore) (diagnostics.RuntimeHealth, error)
 	resolveOperationsPath  func() (string, error)
 	runtimeProbe           func() doctorRuntimeProbe
@@ -62,6 +64,8 @@ func newDoctorCommand() *doctorCommand {
 		health, _ := codexappserver.EnsureDefaultProxyReady(context.Background(), trigger, version.String(), hookAvailable)
 		return health
 	}
+	c.brokerDiagnostic = defaultCodexBrokerDiagnosticLookup()
+	c.codexAuthority = defaultCodexLifecycleAuthorityLookup()
 	c.readRuntimeHealth = diagnostics.ReadRuntimeHealth
 	c.resolveOperationsPath = func() (string, error) { return diagnostics.DefaultPath(c.getenv, os.UserHomeDir) }
 	c.runtimeProbe = defaultDoctorRuntimeProbe
@@ -127,6 +131,8 @@ type doctorReport struct {
 	Dependencies         []doctorResult                       `json:"dependencies"`
 	AINotifyIntegrations []doctorAINotifyIntegration          `json:"ai_notify_integrations"`
 	CodexAppServer       *codexappserver.Health               `json:"codex_app_server,omitempty"`
+	CodexBroker          *codexBrokerDiagnostic               `json:"codex_broker,omitempty"`
+	CodexAuthority       *codexAuthorityCensus                `json:"codex_authority,omitempty"`
 	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    string                               `json:"session_state_prune"`
 	Runtime              []doctorFinding                      `json:"runtime"`
@@ -257,6 +263,19 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 			health := c.appServerHealth(trigger, codexHookFallbackAvailable(report.AINotifyIntegrations))
 			report.CodexAppServer = &health
 		}
+		if c.brokerDiagnostic != nil {
+			broker := c.brokerDiagnostic()
+			report.CodexBroker = &broker
+		}
+		if c.codexAuthority != nil && c.readRegistry != nil {
+			// The snapshot read is the zero-write Registry read, so asking
+			// about managed Agents on a machine that never created a Project
+			// still creates nothing.
+			if registry, err := c.readRegistry(); err == nil {
+				census := censusCodexLifecycleAuthority(registry, c.codexAuthority)
+				report.CodexAuthority = &census
+			}
+		}
 	}
 	if section == doctorSectionAll || section == doctorSectionSessionState {
 		report.SessionStateResume = c.evaluateSessionStateResume()
@@ -379,6 +398,8 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
 		writeDoctorIntegrationsText(&buf, report.AINotifyIntegrations, verbose)
 		writeDoctorAppServerText(&buf, report.CodexAppServer)
+		writeDoctorCodexBrokerText(&buf, report.CodexBroker)
+		writeDoctorCodexAuthorityText(&buf, report.CodexAuthority)
 	}
 	if section == doctorSectionAll || section == doctorSectionSessionState {
 		writeDoctorSessionStateText(&buf, report, verbose)
@@ -418,6 +439,60 @@ func writeDoctorAppServerText(buf *bytes.Buffer, health *codexappserver.Health) 
 	if guidance := health.OperatorRecovery.Guidance(); guidance != "" {
 		fmt.Fprintf(buf, "  Guidance: %s\n", guidance)
 	}
+}
+
+// writeDoctorCodexBrokerText renders the endpoint broker runtime block.
+//
+// The connection count is the line that matters: the retired per-Agent observer
+// opened one upstream connection per managed Agent, and the contract this
+// replaced it with is one per effective endpoint no matter how many Agents are
+// bound.
+func writeDoctorCodexBrokerText(buf *bytes.Buffer, broker *codexBrokerDiagnostic) {
+	if broker == nil {
+		return
+	}
+	buf.WriteString("\nCodex endpoint broker\n")
+	fmt.Fprintf(buf, "  Runtime: %s", broker.State)
+	if broker.Reason != "" {
+		fmt.Fprintf(buf, "; reason: %s", broker.Reason)
+	}
+	if broker.Runtime != "" {
+		fmt.Fprintf(buf, "; runtime: %s; protocol: %d", broker.Runtime, broker.Protocol)
+	}
+	if broker.Draining {
+		buf.WriteString("; draining")
+	}
+	buf.WriteString("\n")
+	if broker.State != codexBrokerStateRunning {
+		return
+	}
+	fmt.Fprintf(buf, "  Upstream connections: %d; bindings: %d; clients: %d; endpoint: %s; connection epoch: %d\n",
+		broker.Connections, broker.Bindings, broker.Clients, broker.Endpoint, broker.ConnectionEpoch)
+	fmt.Fprintf(buf, "  Reconnects: %d; queue evictions: %d; snapshot failures: %d\n",
+		broker.Reconnects, broker.Evictions, broker.SnapshotFailures)
+	if len(broker.Revocations) > 0 {
+		reasons := make([]string, 0, len(broker.Revocations))
+		for _, revocation := range broker.Revocations {
+			reasons = append(reasons, fmt.Sprintf("%s=%d", revocation.Reason, revocation.Count))
+		}
+		fmt.Fprintf(buf, "  Binding revocations: %s\n", strings.Join(reasons, ", "))
+	}
+}
+
+// writeDoctorCodexAuthorityText renders the managed Codex authority census.
+//
+// The unexplained count is the actionable number: an Agent on hook observation
+// with nothing declaring why is either a lost native binding or a silent
+// degradation, and both are regressions.
+func writeDoctorCodexAuthorityText(buf *bytes.Buffer, census *codexAuthorityCensus) {
+	if census == nil || census.Agents == 0 {
+		return
+	}
+	buf.WriteString("\nManaged Codex authority\n")
+	fmt.Fprintf(buf, "  Agents: %d; control plane: %d; pending: %d; invalidating: %d\n",
+		census.Agents, census.ControlPlane, census.Pending, census.Invalidating)
+	fmt.Fprintf(buf, "  Declared hook fallback: %d; unexplained native fallback: %d; unavailable: %d\n",
+		census.DeclaredHook, census.UnexplainedHook, census.Unavailable)
 }
 
 func diagnosticVersionOrUnknown(value string) string {
@@ -689,6 +764,8 @@ type doctorJSONReport struct {
 	Dependencies         *[]doctorResult                       `json:"dependencies,omitempty"`
 	AINotifyIntegrations *[]doctorAINotifyIntegration          `json:"ai_notify_integrations,omitempty"`
 	CodexAppServer       *codexappserver.Health                `json:"codex_app_server,omitempty"`
+	CodexBroker          *codexBrokerDiagnostic                `json:"codex_broker,omitempty"`
+	CodexAuthority       *codexAuthorityCensus                 `json:"codex_authority,omitempty"`
 	SessionStateResume   *[]doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    *string                               `json:"session_state_prune,omitempty"`
 	Runtime              *[]doctorFinding                      `json:"runtime,omitempty"`
@@ -705,6 +782,8 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
 		out.AINotifyIntegrations = &report.AINotifyIntegrations
 		out.CodexAppServer = report.CodexAppServer
+		out.CodexBroker = report.CodexBroker
+		out.CodexAuthority = report.CodexAuthority
 	}
 	if (section == doctorSectionAll && len(report.SessionStateResume) > 0) || section == doctorSectionSessionState {
 		out.SessionStateResume = &report.SessionStateResume

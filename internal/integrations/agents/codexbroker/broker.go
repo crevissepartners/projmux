@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
+	"sort"
 	"strings"
 	"sync"
 
@@ -72,7 +73,11 @@ type Broker struct {
 	bindEpoch BindingEpoch
 	bindings  map[string]*Binding
 	diag      Diagnostics
-	ledger    []WriteRecord
+	// revocations counts involuntary binding terminations by closed reason.
+	// It is a separate map rather than a Diagnostics field so the snapshot the
+	// caller receives is a value copy that cannot alias live broker state.
+	revocations map[Refusal]int
+	ledger      []WriteRecord
 }
 
 // NewBroker starts one broker and its supervisor. The caller must Close it.
@@ -179,6 +184,7 @@ func (b *Broker) Diagnostics() Diagnostics {
 	snapshot.Endpoint = b.endpoint
 	snapshot.ConnectionEpoch = b.connEpoch
 	snapshot.Bindings = len(b.bindings)
+	snapshot.Revocations = b.revocationCountsLocked()
 	return snapshot
 }
 
@@ -388,7 +394,31 @@ func (b *Broker) revokeBindingLocked(binding *Binding, reason Refusal) {
 		b.diag.ReleasedBindings++
 	default:
 		b.diag.RevokedBindings++
+		b.countRevocationLocked(reason)
 	}
+}
+
+// countRevocationLocked records one involuntary revocation under its closed
+// reason. Caller holds b.mu.
+func (b *Broker) countRevocationLocked(reason Refusal) {
+	if b.revocations == nil {
+		b.revocations = make(map[Refusal]int)
+	}
+	b.revocations[reason]++
+}
+
+// revocationCountsLocked projects the reason breakdown in a stable order.
+// Caller holds b.mu.
+func (b *Broker) revocationCountsLocked() []RevocationCount {
+	if len(b.revocations) == 0 {
+		return nil
+	}
+	counts := make([]RevocationCount, 0, len(b.revocations))
+	for reason, count := range b.revocations {
+		counts = append(counts, RevocationCount{Reason: reason, Count: count})
+	}
+	sort.Slice(counts, func(i, j int) bool { return counts[i].Reason < counts[j].Reason })
+	return counts
 }
 
 // classify turns one control request's transport result into its terminal

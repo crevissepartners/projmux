@@ -29,33 +29,6 @@ const (
 	codexBrokerObserverStartupTimeout = 10 * time.Second
 )
 
-// codexNativeLifecycleProducer names which endpoint producer one activation
-// generation runs. Exactly one of them exists per generation: the decision is
-// made once, when the observer process builds its connection opener, and it is
-// never revisited mid-generation, because two producers projecting one
-// activation is precisely the dual-write this cutover forbids.
-type codexNativeLifecycleProducer string
-
-const (
-	// codexNativeProducerBroker routes lifecycle, control, and approval through
-	// the shared endpoint broker runtime.
-	codexNativeProducerBroker codexNativeLifecycleProducer = "broker"
-	// codexNativeProducerLegacyObserver keeps the per-Agent app-server proxy
-	// observer. It remains the producer only where the broker runtime's Unix
-	// socket and filesystem-ownership contracts cannot be honored, and it is
-	// retired in a later phase.
-	codexNativeProducerLegacyObserver codexNativeLifecycleProducer = "legacy-observer"
-)
-
-// codexNativeLifecycleProducerFor picks the single producer for one activation
-// generation.
-func codexNativeLifecycleProducerFor(brokerSupported bool) codexNativeLifecycleProducer {
-	if brokerSupported {
-		return codexNativeProducerBroker
-	}
-	return codexNativeProducerLegacyObserver
-}
-
 // The broker epoch is the whole native producer for one activation: the
 // lifecycle stream the observer reduces, the control wire the exact-Agent
 // control epoch mutates through, and the typed requester those wire shapes are

@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -21,10 +22,8 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
-	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
-	"github.com/crevissepartners/projmux/internal/version"
 )
 
 const (
@@ -34,30 +33,54 @@ const (
 	aiPaneCodexDroppedOption   = "@projmux_codex_progress_dropped"
 	aiPaneCodexUnknownOption   = "@projmux_codex_progress_unknown"
 	aiPaneCodexOverflowOption  = "@projmux_codex_progress_overflow"
+	aiPaneCodexDeclaredOption  = "@projmux_codex_native_declared"
 
 	codexAuthorityPending      = "pending"
 	codexAuthorityControlPlane = "provider-control-plane"
 	codexAuthorityInvalidating = "invalidating"
 	codexAuthorityHook         = "provider-hook"
 
-	codexObserverReconnectDelay       = 100 * time.Millisecond
-	codexObserverReconnectMaxDelay    = time.Second
-	codexObserverReconnectMaxAttempts = 6
-	codexObserverBindingDelay         = 25 * time.Millisecond
-	codexObserverBindingTimeout       = 3 * time.Second
-	codexObserverStartupTimeout       = 3 * time.Second
-	codexObserverStartupSettle        = 75 * time.Millisecond
+	// codexNativeUnexplainedReason is the hook-observation reason a managed
+	// Codex Pane carries when nothing declared why it has no native binding.
+	// It is the only reason that counts as an unexplained native fallback, so
+	// a real regression stays visible instead of being absorbed by a
+	// by-design exception.
+	codexNativeUnexplainedReason = "native-fallback"
+
+	// The declared reasons below are the by-design plain-CLI lanes. Each one
+	// is a decision the operator or an upstream gate made before any provider
+	// conversation existed, so an Agent carrying one is on hook observation on
+	// purpose and is not counted as an unexplained native fallback.
+	//
+	// codexNativeDeclaredEmptyPrompt marks an empty-prompt default create. A
+	// turnless thread cannot carry a live Pane on current upstream Codex, so
+	// this lane is gated on upstream rather than chosen.
+	codexNativeDeclaredEmptyPrompt = "empty-prompt-upstream-gate"
+	// codexNativeDeclaredInteractiveOnly marks the explicit --interactive-only
+	// opt-out.
+	codexNativeDeclaredInteractiveOnly = "interactive-only"
+
+	// The reconnect delay bounds are the observer's own pacing between one
+	// closed epoch and the next open attempt. There is deliberately no attempt
+	// ceiling: the endpoint broker owns the reconnect and keeps retrying with
+	// capped backoff for as long as a binding exists, so a second, smaller
+	// count here could only strand a live activation on hook fallback while
+	// its endpoint was still being served.
+	codexObserverReconnectDelay    = 100 * time.Millisecond
+	codexObserverReconnectMaxDelay = time.Second
+	codexObserverBindingDelay      = 25 * time.Millisecond
+	codexObserverBindingTimeout    = 3 * time.Second
+	codexObserverStartupTimeout    = 3 * time.Second
+	codexObserverStartupSettle     = 75 * time.Millisecond
 
 	codexObserverStartupEnvironment = "PROJMUX_INTERNAL_CODEX_OBSERVER_STARTUP"
 	codexObserverStartupPrefix      = "projmux-codex-observer-v1"
-	codexObserverExhaustedReason    = "reconnect-exhausted"
 
-	// codexObserverUnboundedReconnect disables the attempt ceiling for a
-	// producer that owns its own persistent reconnect policy. The endpoint
-	// broker keeps retrying with capped backoff for as long as a binding
-	// exists, so exhausting a second, smaller count here would strand a live
-	// activation on hook fallback while its endpoint was still being served.
-	codexObserverUnboundedReconnect = -1
+	// codexNativeLifecycleIngestRoute is the hidden ingest route one managed
+	// activation's native lifecycle producer runs under. It names the broker
+	// binding it consumes, not the app-server proxy the retired per-Agent
+	// observer used to open for itself.
+	codexNativeLifecycleIngestRoute = "codex-broker-watch"
 )
 
 type codexLifecycleConnection interface {
@@ -113,7 +136,6 @@ type codexNativeObserver struct {
 	sink           codexLifecycleSink
 	delay          time.Duration
 	maxDelay       time.Duration
-	maxAttempts    int
 	waitRecovery   func(context.Context, time.Duration) bool
 	bindingTimeout time.Duration
 	openTimeout    time.Duration
@@ -487,25 +509,15 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 // The old control endpoint is already revoked and the invalidation/fallback is
 // already published before this method is called. Every caller increments the
 // attempt count only after one failed replacement open, snapshot, or control
-// proof, so maxAttempts is an exact wire-open bound rather than a timer bound.
+// proof, so the count paces the backoff; it never terminates the recovery.
+//
+// The only exits are a binding that is no longer current and a cancelled
+// context. A live activation whose endpoint is merely away is never abandoned
+// on hook fallback, because the broker beneath this loop is still reconnecting
+// on its own capped backoff for as long as the binding exists.
 func (o *codexNativeObserver) continueRecovery(ctx context.Context, attempts int) (bool, error) {
 	if !o.sink.BindingCurrent(o.identity) {
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
-		return false, nil
-	}
-	limit := o.maxAttempts
-	if limit == 0 {
-		limit = codexObserverReconnectMaxAttempts
-	}
-	if limit > 0 && attempts >= limit {
-		// The exact guard is repeated by SetAuthority. Publishing one terminal
-		// typed fallback is the final observer write; the child then exits.
-		if err := o.sink.SetAuthority(o.identity, codexAuthorityHook, "", codexObserverExhaustedReason); err != nil {
-			if !o.sink.BindingCurrent(o.identity) {
-				return false, nil
-			}
-			return false, fmt.Errorf("publish Codex observer recovery exhaustion: %w", err)
-		}
 		return false, nil
 	}
 	delay := o.delay
@@ -1087,7 +1099,7 @@ func startCodexLifecycleObserverProcess(executable string, target codexLifecycle
 		return codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: "observer-start-failed"}
 	}
 	identity := target.Identity
-	args := []string{"internal", "agent-hook", "ingest", "codex-appserver-watch",
+	args := []string{"internal", "agent-hook", "ingest", codexNativeLifecycleIngestRoute,
 		"--agent-uid", identity.AgentUID, "--pane-uid", identity.PaneUID, "--pane", identity.RuntimeID,
 		"--generation", identity.Generation, "--thread", identity.ThreadID}
 	if target.Route.Flag() == "-L" {
@@ -1238,28 +1250,33 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	runner := explicitTmuxRunner{runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, target: target.Route}
+	sink := aiCodexLifecycleSink{command: c, runner: runner}
+	// The endpoint broker is the whole native producer for this activation
+	// generation. The per-Agent app-server proxy observer that used to share
+	// this seam is retired: it opened one upstream connection per Agent, owned
+	// a second private control endpoint alongside the broker's, and gave up
+	// after a fixed reconnect budget.
+	//
+	// A broker session that cannot be prepared is therefore not a reason to
+	// open a second lane. It converges this activation onto the declared hook
+	// fallback with the typed reason and exits, which is the same answer the
+	// observer publishes for every other unavailable endpoint.
+	session, sessionErr := newCodexBrokerObserverSession(target.Identity, "", nil)
+	if sessionErr != nil {
+		result := convergeCodexObserverStartupFallback(sink, target.Identity, codexNativeReason(sessionErr))
+		if report := codexObserverStartupReporter(); report != nil {
+			report(result)
+		}
+		return nil
+	}
+	defer func() { _ = session.Close() }()
 	observer := codexNativeObserver{
 		identity:       target.Identity,
 		requireControl: true,
-		sink:           aiCodexLifecycleSink{command: c, runner: runner},
+		sink:           sink,
 		reportStartup:  codexObserverStartupReporter(),
-	}
-	// Exactly one endpoint producer serves this activation generation. The
-	// decision is made once, here, before either producer has run: the legacy
-	// per-Agent proxy observer stays reachable as the rollback seam and as the
-	// only producer where the broker runtime's contract cannot be honored, but
-	// the two are never both live for one generation.
-	session, sessionErr := newCodexBrokerObserverSession(target.Identity, "", nil)
-	switch codexNativeLifecycleProducerFor(codexbroker.Supported() && sessionErr == nil) {
-	case codexNativeProducerBroker:
-		defer func() { _ = session.Close() }()
-		observer.open = session.Open
-		observer.openTimeout = codexBrokerObserverOpenTimeout
-		observer.maxAttempts = codexObserverUnboundedReconnect
-	default:
-		observer.open = func(ctx context.Context) (codexLifecycleConnection, error) {
-			return codexappserver.OpenDefaultProxy(ctx, codexappserver.DefaultProbeTimeout, version.String())
-		}
+		open:           session.Open,
+		openTimeout:    codexBrokerObserverOpenTimeout,
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		observer.startControl = func(epoch *codexControlEpoch) (*codexControlServer, error) {
@@ -1314,6 +1331,24 @@ func parseCodexNativeLifecycleTarget(args []string) (codexLifecycleObserverTarge
 		return target, errors.New("codex app-server watcher requires exact Agent, Pane, runtime, generation, thread, and tmux route")
 	}
 	return target, nil
+}
+
+// codexNativeDeclaredReasons is the closed declared-reason vocabulary. A value
+// outside it is treated as undeclared, so a stale or forged tmux option cannot
+// silence an unexplained native fallback.
+var codexNativeDeclaredReasons = []string{
+	codexNativeDeclaredEmptyPrompt,
+	codexNativeDeclaredInteractiveOnly,
+}
+
+// codexNativeDeclaredReason normalizes one declared reason, returning "" when
+// the value is not in the closed vocabulary.
+func codexNativeDeclaredReason(value string) string {
+	value = strings.TrimSpace(value)
+	if slices.Contains(codexNativeDeclaredReasons, value) {
+		return value
+	}
+	return ""
 }
 
 func codexAuthoritySuppressesHooks(source string) bool {

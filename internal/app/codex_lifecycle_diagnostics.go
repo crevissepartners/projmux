@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
@@ -14,9 +15,73 @@ type codexLifecycleAuthorityDiagnostic struct {
 	Source      string
 	Reason      string
 	EpochStatus string
-	Dropped     uint32
-	Unknown     uint32
-	Overflow    uint32
+	// Declared is the by-design reason this Agent has no native binding, from
+	// the closed declared vocabulary, or empty. A hook observation with no
+	// declared reason is an unexplained native fallback; one with a declared
+	// reason is a lane that was chosen or gated on purpose.
+	Declared string
+	Dropped  uint32
+	Unknown  uint32
+	Overflow uint32
+}
+
+// unexplainedNativeFallback reports whether this Agent is on hook observation
+// with nothing declaring why.
+func (d codexLifecycleAuthorityDiagnostic) unexplainedNativeFallback() bool {
+	return d.Source == codexAuthorityHook && d.Declared == ""
+}
+
+// codexAuthorityCensus is the closed classification of every managed Codex
+// Agent's current lifecycle authority. It is a count-only projection: it names
+// no Agent, so it is safe on every diagnostics surface.
+type codexAuthorityCensus struct {
+	Agents       int `json:"agents"`
+	ControlPlane int `json:"control_plane"`
+	Pending      int `json:"pending"`
+	Invalidating int `json:"invalidating"`
+	// DeclaredHook counts Agents on hook observation with a declared reason.
+	DeclaredHook int `json:"declared_hook"`
+	// UnexplainedHook counts Agents on hook observation with no declared
+	// reason. This is the number the native-authority contract requires to be
+	// zero for Agents that were created with a payload.
+	UnexplainedHook int `json:"unexplained_hook"`
+	Unavailable     int `json:"unavailable"`
+}
+
+// censusCodexLifecycleAuthority classifies every managed Codex Agent in one
+// Registry snapshot.
+func censusCodexLifecycleAuthority(
+	registry coremetadata.Registry,
+	lookup codexLifecycleAuthorityLookup,
+) codexAuthorityCensus {
+	census := codexAuthorityCensus{}
+	if lookup == nil {
+		return census
+	}
+	for _, agent := range registry.Agents {
+		if agent.Spec.Provider != aiModeCodex || agent.Status.PaneRef == "" {
+			continue
+		}
+		census.Agents++
+		diagnostic := lookup(agent.Status.PaneRef)
+		switch diagnostic.Source {
+		case codexAuthorityControlPlane:
+			census.ControlPlane++
+		case codexAuthorityPending:
+			census.Pending++
+		case codexAuthorityInvalidating:
+			census.Invalidating++
+		case codexAuthorityHook:
+			if diagnostic.unexplainedNativeFallback() {
+				census.UnexplainedHook++
+			} else {
+				census.DeclaredHook++
+			}
+		default:
+			census.Unavailable++
+		}
+	}
+	return census
 }
 
 type codexLifecycleAuthorityLookup func(string) codexLifecycleAuthorityDiagnostic
@@ -41,6 +106,7 @@ func observeCodexLifecycleAuthority(ctx context.Context, runner tmuxRunner, pane
 		intmux.PaneOptionFormat(aiPaneCodexDroppedOption),
 		intmux.PaneOptionFormat(aiPaneCodexUnknownOption),
 		intmux.PaneOptionFormat(aiPaneCodexOverflowOption),
+		intmux.PaneOptionFormat(aiPaneCodexDeclaredOption),
 	}...)
 	out, err := runner.Run(ctx, "tmux", "list-panes", "-a", "-F", format)
 	if err != nil {
@@ -67,6 +133,11 @@ func observeCodexLifecycleAuthority(ctx context.Context, runner tmuxRunner, pane
 			diagnostic.Dropped = safeProgressCounter(parts[4])
 			diagnostic.Unknown = safeProgressCounter(parts[5])
 			diagnostic.Overflow = safeProgressCounter(parts[6])
+		}
+		if len(parts) >= 8 {
+			// The vocabulary check is what keeps a stale or hand-written pane
+			// option from declaring an unexplained fallback away.
+			diagnostic.Declared = codexNativeDeclaredReason(parts[7])
 		}
 		return diagnostic
 	}
