@@ -55,10 +55,18 @@ func (s *startupModeFreshStarter) ContinueProject(_ context.Context, root, sessi
 	}}, nil
 }
 
+type startupModePickerState string
+
+const (
+	startupModePickerNoFile startupModePickerState = "no-file"
+	startupModePickerOn     startupModePickerState = "on"
+	startupModePickerOff    startupModePickerState = "off"
+)
+
 // startupModeConfigHome builds an isolated config home carrying the requested
-// `sidebar-startup-picker` state, so the toggle a test needs is the toggle it
-// reads rather than whatever the operator running the suite has saved.
-func startupModeConfigHome(t *testing.T, pickerOn bool) (string, func(string) string) {
+// `sidebar-startup-picker` state, so no-file, saved on, and saved off remain
+// distinct inputs instead of treating the old missing-file fallback as off.
+func startupModeConfigHome(t *testing.T, pickerState startupModePickerState) (string, func(string) string) {
 	t.Helper()
 	home := t.TempDir()
 	configHome := filepath.Join(home, "config")
@@ -67,11 +75,11 @@ func startupModeConfigHome(t *testing.T, pickerOn bool) (string, func(string) st
 	if err != nil {
 		t.Fatalf("resolve fixture paths: %v", err)
 	}
-	if pickerOn {
+	if pickerState != startupModePickerNoFile {
 		if err := os.MkdirAll(paths.ConfigDir, 0o755); err != nil {
 			t.Fatalf("create fixture config dir: %v", err)
 		}
-		if err := os.WriteFile(paths.SidebarStartupPickerFile(), []byte(string(config.SessionStateToggleOn)+"\n"), 0o644); err != nil {
+		if err := os.WriteFile(paths.SidebarStartupPickerFile(), []byte(string(pickerState)+"\n"), 0o644); err != nil {
 			t.Fatalf("write fixture startup picker toggle: %v", err)
 		}
 	}
@@ -90,9 +98,9 @@ func startupModeConfigHome(t *testing.T, pickerOn bool) (string, func(string) st
 // startupModeFixture wires one closed-Project open with every seam the mode
 // decision touches: the picker toggle, the registration reader, and the two
 // lifecycles a chosen mode can enter.
-func startupModeFixture(t *testing.T, pickerOn, registered bool, steps []pickerStep) (*switchCommand, *startupModeFreshStarter, *capturingSwitchSessionExecutor, string) {
+func startupModeFixture(t *testing.T, pickerState startupModePickerState, registered bool, steps []pickerStep) (*switchCommand, *startupModeFreshStarter, *capturingSwitchSessionExecutor, string) {
 	t.Helper()
-	home, lookupEnv := startupModeConfigHome(t, pickerOn)
+	home, lookupEnv := startupModeConfigHome(t, pickerState)
 	target := t.TempDir()
 	starter := &startupModeFreshStarter{registered: registered}
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
@@ -154,19 +162,18 @@ func sidebarContinuationModeToken(t *testing.T, command string) string {
 // TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints is the mode
 // selection table and the parity contract in one.
 //
-// Every combination of (root registered) x (picker on/off) x (the operator's
-// explicit picker choice) is driven twice: once through the in-process open, and
-// once through the sidebar continuation after its re-exec. Both must land on the
-// same startup mode, because both now adjudicate through the same helper. The
-// picker-off, unregistered row is the defect: the sidebar used to send its fixed
-// `continue` token straight into ContinueProject.
+// The no-file/on/off x registered/unregistered x explicit-choice matrix is
+// driven through the in-process open, the sidebar emitter, and the sidebar
+// continuation after re-exec. Every acted-on entry point must land on the same
+// startup mode exactly once. The saved-off, unregistered row preserves the
+// earlier repair: the sidebar must not send its old fixed `continue` token
+// straight into ContinueProject.
 func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T) {
 	t.Parallel()
 
 	for _, test := range []struct {
-		name string
-		// pickerOn is the `sidebar-startup-picker` state, whose default is off.
-		pickerOn bool
+		name        string
+		pickerState startupModePickerState
 		// registered reports the opened root as an existing Registry Project.
 		registered bool
 		// choice is the row the operator picks when the picker is on. It is also
@@ -177,41 +184,69 @@ func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T)
 		want string
 	}{
 		{
-			name:   "picker off promotes an unregistered root to fresh",
-			want:   projectStartupKindNew,
-			choice: projectStartupKindTopology,
+			name:        "saved off promotes an unregistered root to fresh",
+			pickerState: startupModePickerOff,
+			want:        projectStartupKindNew,
+			choice:      projectStartupKindTopology,
 		},
 		{
-			name:       "picker off keeps a registered root on continue",
-			registered: true,
-			choice:     projectStartupKindTopology,
-			want:       projectStartupKindTopology,
+			name:        "saved off keeps a registered root on continue",
+			pickerState: startupModePickerOff,
+			registered:  true,
+			choice:      projectStartupKindTopology,
+			want:        projectStartupKindTopology,
 		},
 		{
-			name:     "picker on honors an explicit continue on an unregistered root",
-			pickerOn: true,
-			choice:   projectStartupKindTopology,
-			want:     projectStartupKindTopology,
+			name:        "no file honors an explicit continue on an unregistered root",
+			pickerState: startupModePickerNoFile,
+			choice:      projectStartupKindTopology,
+			want:        projectStartupKindTopology,
 		},
 		{
-			name:     "picker on honors an explicit fresh on an unregistered root",
-			pickerOn: true,
-			choice:   projectStartupKindNew,
-			want:     projectStartupKindNew,
+			name:        "no file honors an explicit fresh on an unregistered root",
+			pickerState: startupModePickerNoFile,
+			choice:      projectStartupKindNew,
+			want:        projectStartupKindNew,
 		},
 		{
-			name:       "picker on honors an explicit continue on a registered root",
-			pickerOn:   true,
-			registered: true,
-			choice:     projectStartupKindTopology,
-			want:       projectStartupKindTopology,
+			name:        "no file honors an explicit continue on a registered root",
+			pickerState: startupModePickerNoFile,
+			registered:  true,
+			choice:      projectStartupKindTopology,
+			want:        projectStartupKindTopology,
 		},
 		{
-			name:       "picker on honors an explicit fresh on a registered root",
-			pickerOn:   true,
-			registered: true,
-			choice:     projectStartupKindNew,
-			want:       projectStartupKindNew,
+			name:        "no file honors an explicit fresh on a registered root",
+			pickerState: startupModePickerNoFile,
+			registered:  true,
+			choice:      projectStartupKindNew,
+			want:        projectStartupKindNew,
+		},
+		{
+			name:        "saved on honors an explicit continue on an unregistered root",
+			pickerState: startupModePickerOn,
+			choice:      projectStartupKindTopology,
+			want:        projectStartupKindTopology,
+		},
+		{
+			name:        "saved on honors an explicit fresh on an unregistered root",
+			pickerState: startupModePickerOn,
+			choice:      projectStartupKindNew,
+			want:        projectStartupKindNew,
+		},
+		{
+			name:        "saved on honors an explicit continue on a registered root",
+			pickerState: startupModePickerOn,
+			registered:  true,
+			choice:      projectStartupKindTopology,
+			want:        projectStartupKindTopology,
+		},
+		{
+			name:        "saved on honors an explicit fresh on a registered root",
+			pickerState: startupModePickerOn,
+			registered:  true,
+			choice:      projectStartupKindNew,
+			want:        projectStartupKindNew,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -219,24 +254,24 @@ func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T)
 
 			steps := []pickerStep{{reply: intpickercompat.Result{Key: "enter", Value: test.choice}}}
 
-			inProcess, inProcessStarter, _, inProcessTarget := startupModeFixture(t, test.pickerOn, test.registered, steps)
+			inProcess, inProcessStarter, _, inProcessTarget := startupModeFixture(t, test.pickerState, test.registered, steps)
 			if err := inProcess.openProjectTarget(context.Background(), inProcessTarget, "workspace"); err != nil {
 				t.Fatalf("openProjectTarget() error = %v", err)
 			}
 
 			// The sidebar's own share of the decision: which `--mode` does the
 			// emitted continuation command carry?
-			emit, _, _, emitTarget := startupModeFixture(t, test.pickerOn, test.registered, steps)
+			emit, _, _, emitTarget := startupModeFixture(t, test.pickerState, test.registered, steps)
 			if got := sidebarEmittedStartupMode(t, emit, emitTarget); got != test.want {
 				t.Fatalf("emitted --mode = %q, want %q", got, test.want)
 			}
 
-			sidebar, sidebarStarter, _, sidebarTarget := startupModeFixture(t, test.pickerOn, test.registered, steps)
+			sidebar, sidebarStarter, _, sidebarTarget := startupModeFixture(t, test.pickerState, test.registered, steps)
 			// What the re-exec acts on. The picker-off arrival is deliberately
 			// driven with the neutral `continue` token an older client would still
 			// emit, so the second layer is exercised on its own.
 			forwarded := projectStartupKindTopology
-			if test.pickerOn {
+			if test.pickerState != startupModePickerOff {
 				forwarded = test.choice
 			}
 			if err := sidebar.runSidebarOpen([]string{
@@ -262,18 +297,18 @@ func TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints(t *testing.T)
 // TestSidebarOpenPromotesUnregisteredRootToFreshWhenPickerIsOff is the
 // regression guard for the shipped defect.
 //
-// On a fresh install the Registry is empty, no snapshot exists, and the startup
-// picker is at its default `off`. Opening an unregistered directory from the
-// sidebar used to reach ContinueProject and fail with "no usable snapshot".
+// With an explicit saved `off`, an empty Registry and no snapshot still use the
+// automatic decision. Opening an unregistered directory must promote to Fresh
+// instead of reaching ContinueProject and failing with "no usable snapshot".
 func TestSidebarOpenPromotesUnregisteredRootToFreshWhenPickerIsOff(t *testing.T) {
 	t.Parallel()
 
-	emit, _, _, emitTarget := startupModeFixture(t, false, false, nil)
+	emit, _, _, emitTarget := startupModeFixture(t, startupModePickerOff, false, nil)
 	if got, want := sidebarEmittedStartupMode(t, emit, emitTarget), projectStartupKindNew; got != want {
 		t.Fatalf("emitted --mode = %q, want %q: the sidebar must not launch continue for an unregistered root", got, want)
 	}
 
-	cmd, starter, executor, target := startupModeFixture(t, false, false, nil)
+	cmd, starter, executor, target := startupModeFixture(t, startupModePickerOff, false, nil)
 	if err := cmd.runSidebarOpen([]string{
 		"--path", target, "--session", "workspace", "--mode", projectStartupKindTopology, "--anchor", "%12",
 	}, &bytes.Buffer{}); err != nil {
@@ -296,12 +331,12 @@ func TestSidebarOpenPromotesUnregisteredRootToFreshWhenPickerIsOff(t *testing.T)
 func TestSidebarOpenKeepsRegisteredRootOnContinue(t *testing.T) {
 	t.Parallel()
 
-	emit, _, _, emitTarget := startupModeFixture(t, false, true, nil)
+	emit, _, _, emitTarget := startupModeFixture(t, startupModePickerOff, true, nil)
 	if got, want := sidebarEmittedStartupMode(t, emit, emitTarget), projectStartupKindTopology; got != want {
 		t.Fatalf("emitted --mode = %q, want %q", got, want)
 	}
 
-	cmd, starter, executor, target := startupModeFixture(t, false, true, nil)
+	cmd, starter, executor, target := startupModeFixture(t, startupModePickerOff, true, nil)
 	topology := cmd.projectTopology.(*fakeProjectTopologyMaterializer)
 	if err := cmd.runSidebarOpen([]string{
 		"--path", target, "--session", "workspace", "--mode", projectStartupKindTopology, "--anchor", "%12",
@@ -326,14 +361,14 @@ func TestSidebarOpenKeepsRegisteredRootOnContinue(t *testing.T) {
 func TestSidebarOpenHonorsExplicitPickerChoice(t *testing.T) {
 	t.Parallel()
 
-	emit, _, _, emitTarget := startupModeFixture(t, true, false, []pickerStep{
+	emit, _, _, emitTarget := startupModeFixture(t, startupModePickerOn, false, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueTopology}},
 	})
 	if got, want := sidebarEmittedStartupMode(t, emit, emitTarget), projectStartupKindTopology; got != want {
 		t.Fatalf("emitted --mode = %q, want %q: the operator's row is what the sidebar forwards", got, want)
 	}
 
-	cmd, starter, _, target := startupModeFixture(t, true, false, nil)
+	cmd, starter, _, target := startupModeFixture(t, startupModePickerOn, false, nil)
 	if err := cmd.runSidebarOpen([]string{
 		"--path", target, "--session", "workspace", "--mode", projectStartupKindTopology, "--anchor", "%12",
 	}, &bytes.Buffer{}); err != nil {
@@ -364,7 +399,7 @@ func TestSidebarOpenNeverDemotesAnArrivingFreshMode(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 
-			cmd, starter, _, target := startupModeFixture(t, false, test.registered, nil)
+			cmd, starter, _, target := startupModeFixture(t, startupModePickerOff, test.registered, nil)
 			if err := cmd.runSidebarOpen([]string{
 				"--path", target, "--session", "workspace", "--mode", projectStartupKindNew, "--anchor", "%12",
 			}, &bytes.Buffer{}); err != nil {
@@ -387,7 +422,7 @@ func TestSidebarOpenSurfacesRegistrationReadFailure(t *testing.T) {
 	t.Parallel()
 
 	readErr := errors.New("injected registration read failure")
-	cmd, starter, executor, target := startupModeFixture(t, false, false, nil)
+	cmd, starter, executor, target := startupModeFixture(t, startupModePickerOff, false, nil)
 	starter.registerErr = readErr
 	cmd.tmuxRunner = &recordingTmuxRunner{}
 
@@ -413,30 +448,36 @@ func TestSidebarOpenSurfacesRegistrationReadFailure(t *testing.T) {
 func TestSidebarOpenContinueOnUnregisteredRootKeepsTheSnapshotRefusal(t *testing.T) {
 	t.Parallel()
 
-	home, lookupEnv := startupModeConfigHome(t, true)
-	target := t.TempDir()
-	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
-	cmd := &switchCommand{
-		sessions:   executor,
-		identity:   stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:    func() (string, error) { return home, nil },
-		lookupEnv:  lookupEnv,
-		tmuxRunner: &recordingTmuxRunner{},
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		projectFreshStart: &registryProjectFreshStarter{
-			resources: newFakeResourceStore(t).store(),
-			loadSnapshot: func(string) (sessionstate.Snapshot, error) {
-				return sessionstate.Snapshot{}, errors.New("no snapshot file")
-			},
-		},
-	}
-	wireFakeProjectSessionPlan(cmd)
+	for _, pickerState := range []startupModePickerState{startupModePickerNoFile, startupModePickerOn} {
+		t.Run(string(pickerState), func(t *testing.T) {
+			t.Parallel()
 
-	err := cmd.runSidebarOpen([]string{
-		"--path", target, "--session", "workspace", "--mode", projectStartupKindTopology, "--anchor", "%12",
-	}, &bytes.Buffer{})
-	want := `continue project unavailable: no usable snapshot for "workspace"; choose Open fresh`
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("runSidebarOpen() error = %v, want a message containing %q", err, want)
+			home, lookupEnv := startupModeConfigHome(t, pickerState)
+			target := t.TempDir()
+			executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
+			cmd := &switchCommand{
+				sessions:   executor,
+				identity:   stubSwitchIdentityResolver{name: "workspace"},
+				homeDir:    func() (string, error) { return home, nil },
+				lookupEnv:  lookupEnv,
+				tmuxRunner: &recordingTmuxRunner{},
+				executable: func() (string, error) { return "/tmp/projmux", nil },
+				projectFreshStart: &registryProjectFreshStarter{
+					resources: newFakeResourceStore(t).store(),
+					loadSnapshot: func(string) (sessionstate.Snapshot, error) {
+						return sessionstate.Snapshot{}, errors.New("no snapshot file")
+					},
+				},
+			}
+			wireFakeProjectSessionPlan(cmd)
+
+			err := cmd.runSidebarOpen([]string{
+				"--path", target, "--session", "workspace", "--mode", projectStartupKindTopology, "--anchor", "%12",
+			}, &bytes.Buffer{})
+			want := `continue project unavailable: no usable snapshot for "workspace"; choose Open fresh`
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("runSidebarOpen() error = %v, want a message containing %q", err, want)
+			}
+		})
 	}
 }

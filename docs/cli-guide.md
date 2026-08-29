@@ -571,9 +571,13 @@ client only after it converges; a refusal, a failed preflight, or a rolled-back
 partial leaves the client where it was and reports the exact stage. The
 activation is pinned to the session the open targets, so a Project whose
 Registry projects a different session name is refused instead of populating a
-session the open never reaches. The closed-Project startup screen has exactly
-two neutral actions. `Continue project` materializes current Registry desired
-state with the same Project UID. A retained graph keeps descendant UIDs; a
+session the open never reaches. With no saved `sidebar-startup-picker`
+preference, the closed-Project startup screen has exactly two neutral actions;
+the missing-file default is read-only and does not create a config file. Saved
+`on` retains that explicit choice, while saved `off` skips the screen and keeps
+the registered-Continue/unregistered-Fresh automatic decision. `Continue
+project` materializes current Registry desired state with the same Project UID.
+A retained graph keeps descendant UIDs; a
 zero-Window Project atomically receives a new canonical Window/shell UID chain.
 A deleted Project may use only the exact usable snapshot compatibility path;
 an unavailable Continue is an explicit zero-write refusal with no Fresh
@@ -1919,10 +1923,11 @@ human configuration work should prefer `config render` and `config apply`.
   generated config. The generated app config uses absolute `$SHELL` as the
   tmux default shell when set, otherwise `/bin/sh`. `shell` starts or attaches
   the app session directly after resolving the target app session name and
-  startup directory. Alt-1 sidebar project open defaults to `Continue project`,
-  which materializes the Project's Registry Windows, shell Panes, and Agents
-  before the client moves. When the startup picker is enabled it contains exactly
-  `Continue project` and `Open fresh`; Esc returns to Projects. `Continue
+  startup directory. With no saved startup preference, Alt-1 sidebar project
+  open defaults to a two-action picker containing exactly `Continue project`
+  and `Open fresh`; Esc returns to Projects without writing config. Saved `on`
+  keeps that picker, while saved `off` skips it and preserves the existing
+  automatic registered-Continue/unregistered-Fresh decision. `Continue
   project` restores a deleted Project only from its usable exact snapshot and
   otherwise refuses with zero Registry writes. `Open fresh` is a neutral,
   confirmation-free one-step action that atomically replaces the Project with

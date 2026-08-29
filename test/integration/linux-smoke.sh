@@ -1185,6 +1185,14 @@ run_inside_lifecycle() {
     "$bin" "$@"
 }
 
+# The lifecycle fixture below predates the interactive closed-Project startup
+# surface: its three `switch open` calls exercise automatic create/continue and
+# injected-create-failure outcomes from a non-interactive process. Preserve that
+# exact contract with the explicit saved-off compatibility mode; no-file picker
+# behavior is covered by the dedicated unit table and L11 native E2E.
+mkdir -p "$XDG_CONFIG_HOME/projmux"
+printf 'off\n' >"$XDG_CONFIG_HOME/projmux/sidebar-startup-picker"
+
 # Session State diagnostics uses the same run-unique socket and isolated XDG
 # root. Register and materialize one exact Project, capture a real snapshot,
 # prove successful autosave stays silent, inject one quiet autosave failure,

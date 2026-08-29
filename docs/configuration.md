@@ -871,12 +871,15 @@ override with `inherit`, `on`, and `off`; `inherit` follows the global value,
 while `on` and `off` take precedence. Auto-save only updates the latest
 snapshot. Named snapshots are manual and are never updated by auto-save.
 
-Project open from the Alt-1 sidebar defaults to `Continue project`, which
-materializes the closed Project's current Registry desired state before moving
-the client. The optional `Settings > Session State > Sidebar startup picker`
-toggle enables a native `Start project` step with exactly `Continue project` and
-`Open fresh`. `Open fresh` confirms exact `Window n / Pane n / Agent n` counts
-and conversation-pointer loss, then atomically replaces the old Project graph
+With no saved preference, Project open from the Alt-1 sidebar shows a native
+`Start project` step with exactly `Continue project` and `Open fresh`.
+Settings > Projects > Project Sidebar > Closed Project startup reports this as
+`Continue project / Open fresh - default`. A saved `on` keeps the same explicit
+choice and reports `Continue project / Open fresh - on - saved`. A saved `off`
+reports `Continue project - off - saved` and skips the picker: a registered root
+continues, while an unregistered root follows the existing Fresh adjudication.
+Resolving or cancelling the missing-file default never creates the preference
+file or changes saved bytes or mtime. `Open fresh` atomically replaces the old Project graph
 with a new Project UID and a new canonical Window/shell UID pair. Exactly one
 same-root Project claimant remains. Snapshot bytes, the root directory,
 Git/worktree data, and the trust decision remain unchanged. Esc returns to
@@ -912,6 +915,8 @@ The saved global toggles live under
 auto-save overrides live under
 `${XDG_CONFIG_HOME:-$HOME/.config}/projmux/sessionstate-projects/<session>/autosave`.
 The environment variables above override the global files.
+`sidebar-startup-picker` accepts the existing `on` and `off` bytes; absence is a
+read-only effective `on - default`, not a migration or an implicit write.
 
 Manual snapshot actions are available from the CLI:
 

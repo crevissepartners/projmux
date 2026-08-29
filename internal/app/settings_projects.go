@@ -1185,15 +1185,13 @@ func (c *settingsCommand) runProjectSidebarSection(stdout, stderr io.Writer) err
 func (c *settingsCommand) projectSidebarEntries() []intpickercompat.Entry {
 	locale := appLocale(c.homeDir, c.lookupEnv)
 	startup := c.currentSidebarStartupPicker()
-	choice := "Continue project"
-	if startup.Mode.Enabled() {
-		choice = "Continue project / Open fresh"
-	}
+	choice := settingsCatalogTextLocale(locale, sidebarStartupChoiceLabel(startup.Mode))
+	source := settingsCatalogTextLocale(locale, sidebarStartupSourceLabel(startup))
 	runtime := currentRuntimeDiagnosticsVisibility(c.homeDir, c.lookupEnv)
 	return []intpickercompat.Entry{
 		settingsBackEntryLocale(locale),
 		{
-			Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsSidebar+".closed-startup", settingsGlyphOpen, settingsColorType, choice+" - "+startup.Source),
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavProjectsSidebar+".closed-startup", settingsGlyphOpen, settingsColorType, choice+" - "+source),
 			Value:     settingsSessionStateSidebarStartupPickerDetail,
 			SearchKey: "closed project startup continue open fresh sidebar startup picker",
 		},
