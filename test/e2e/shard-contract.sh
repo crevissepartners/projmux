@@ -31,6 +31,76 @@ fi
 
 echo ">> four-shard L01-L19 inventory is exhaustive and unique"
 
+# The manifest is only a schedule contract if the CI job list is derived from
+# it. One runner per shard is the guarantee: an aggregate job that hides a
+# shard behind its siblings, and a shard with no job at all, both break it.
+workflow="$root/.github/workflows/ci.yml"
+
+job_block() {
+  awk -v job="$1" '
+    $0 == "  " job ":" { inside = 1; next }
+    inside && /^  [^ ]/ { inside = 0 }
+    inside { print }
+  ' "$workflow"
+}
+
+matrix_axis() {
+  awk -v axis="$1" '
+    $0 == "        " axis ":" { inside = 1; next }
+    inside && /^          - / { sub(/^          - /, ""); print; next }
+    inside { inside = 0 }
+  '
+}
+
+if grep -q '^  e2e:$' "$workflow"; then
+  echo "the aggregate e2e job still exists; every shard needs its own runner" >&2
+  exit 1
+fi
+
+linux_block="$(job_block e2e-linux)"
+suite_block="$(job_block e2e-suite)"
+gate_block="$(job_block test)"
+for pair in "e2e-linux:$linux_block" "e2e-suite:$suite_block"; do
+  job="${pair%%:*}"
+  body="${pair#*:}"
+  [[ -n "$body" ]] || { echo "missing e2e job $job" >&2; exit 1; }
+  grep -Fqx '      fail-fast: false' <<<"$body" ||
+    { echo "$job must set fail-fast: false so one failure cannot mask its siblings" >&2; exit 1; }
+  grep -Fqx '    runs-on: ubuntu-latest' <<<"$body" ||
+    { echo "$job must declare its own runner" >&2; exit 1; }
+done
+
+mapfile -t manifest_shards < <(cut -f1 "$manifest")
+mapfile -t job_shards < <(matrix_axis shard <<<"$linux_block")
+if [[ "${manifest_shards[*]}" != "${job_shards[*]}" ]]; then
+  echo "Linux shard manifest/job list mismatch" >&2
+  diff -u <(printf '%s\n' "${manifest_shards[@]}") <(printf '%s\n' "${job_shards[@]}") >&2 || true
+  exit 1
+fi
+grep -Fq 'PROJMUX_E2E_LINUX_SHARD: ${{ matrix.shard }}' <<<"$linux_block" ||
+  { echo "e2e-linux must select its shard through PROJMUX_E2E_LINUX_SHARD" >&2; exit 1; }
+
+mapfile -t job_suites < <(matrix_axis suite <<<"$suite_block")
+if [[ "${job_suites[*]}" != "codex-lifecycle npm-staging" ]]; then
+  echo "non-Linux suite job list is not the codex/npm pair: ${job_suites[*]}" >&2
+  exit 1
+fi
+grep -Fq 'PROJMUX_E2E_SUITE: ${{ matrix.suite }}' <<<"$suite_block" ||
+  { echo "e2e-suite must select its suite through PROJMUX_E2E_SUITE" >&2; exit 1; }
+
+for child in e2e-linux e2e-suite; do
+  grep -Fqx "      - $child" <<<"$gate_block" ||
+    { echo "required Test does not need $child" >&2; exit 1; }
+  grep -Fq -- "--required $child" <<<"$gate_block" ||
+    { echo "required Test gate does not require $child" >&2; exit 1; }
+done
+if grep -Eq -- '--required e2e( |$|\\)' <<<"$gate_block"; then
+  echo "required Test still names the retired aggregate e2e child" >&2
+  exit 1
+fi
+
+echo ">> CI schedules one runner per suite: ${job_shards[*]} ${job_suites[*]}"
+
 [[ "$(python3 "$root/scripts/e2e-evidence.py" route --manifest "$manifest" L17)" == \
   "linux-fixture-4:L17" ]]
 [[ "$(python3 "$root/scripts/e2e-evidence.py" route --manifest "$manifest" C01)" == \
@@ -71,4 +141,6 @@ grep -Fq 'export PROJMUX_TEST_SKIP_PREFETCH=1' "$root/scripts/test-e2e-docker.sh
 grep -Fq 'export PROJMUX_TEST_PREBUILT_BIN="$binary_dir/projmux"' "$root/scripts/test-e2e-docker.sh"
 grep -Fq 'export PROJMUX_TEST_PREBUILT_SHA256="$binary_sha"' "$root/scripts/test-e2e-docker.sh"
 grep -Fq -- '-e E2E_SCENARIO="${E2E_SCENARIO:-}"' "$docker_runner"
+grep -Fq 'suite="${PROJMUX_E2E_SUITE:-}"' "$root/scripts/test-e2e-docker.sh"
+grep -Fq 'suite="linux-${PROJMUX_E2E_LINUX_SHARD}"' "$root/scripts/test-e2e-docker.sh"
 echo ">> module cache topology is one setup writer; E2E exports the immutable binary path/hash pair to read-only consumers"

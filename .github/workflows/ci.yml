@@ -289,15 +289,50 @@ jobs:
       - name: Run integration tests
         run: make test-integration
 
-  e2e:
-    name: E2E Tests
+  # One shard per runner. The four Linux fixtures are mutually isolated by
+  # container, HOME/XDG, and tmux socket, but a single runner still made them
+  # share one CPU budget; the real-tmux waits inside them are load-sensitive.
+  # Splitting the schedule unit to match the isolation unit is the point.
+  e2e-linux:
+    name: E2E Linux ${{ matrix.shard }}
     runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - fixture-1
+          - fixture-2
+          - fixture-3
+          - fixture-4
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Run e2e tests
+      - name: Run e2e Linux shard
+        env:
+          PROJMUX_E2E_LINUX_SHARD: ${{ matrix.shard }}
+        run: make test-e2e
+
+  e2e-suite:
+    name: E2E ${{ matrix.suite }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - codex-lifecycle
+          - npm-staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run e2e suite
+        env:
+          PROJMUX_E2E_SUITE: ${{ matrix.suite }}
         run: make test-e2e
 
   test:
@@ -312,7 +347,8 @@ jobs:
       - darwin-native
       - npm-pack
       - integration
-      - e2e
+      - e2e-linux
+      - e2e-suite
     runs-on: ubuntu-latest
 
     steps:
@@ -333,4 +369,5 @@ jobs:
             --required darwin-native \
             --required npm-pack \
             --required integration \
-            --required e2e
+            --required e2e-linux \
+            --required e2e-suite
