@@ -95,24 +95,53 @@ func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionNa
 	mode := projectStartupCandidate{Kind: projectStartupKindTopology}
 	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
 		mode = c.pickProjectStartupMode(sessionName, target)
-	} else if cleanOptionalPath(target) != switchSettingsSentinel && cleanOptionalPath(target) != switchRuntimeSentinel &&
-		!c.openedRootIsHome(target) {
-		if starter, ok := c.projectFreshStart.(interface {
-			ProjectRegistered(string) (bool, error)
-		}); ok {
-			registered, readErr := starter.ProjectRegistered(target)
-			if readErr != nil {
-				return readErr
-			}
-			if !registered {
-				mode = projectStartupCandidate{Kind: projectStartupKindNew}
-			}
+	} else {
+		resolved, err := c.defaultProjectStartupMode(target)
+		if err != nil {
+			return err
 		}
+		mode = resolved
 	}
 	if mode.Kind == projectStartupKindBack {
 		return errProjectStartupBack
 	}
 	return c.authorizeAndContinueProjectOpen(ctx, target, sessionName, mode)
+}
+
+// defaultProjectStartupMode is the single adjudication of the startup mode a
+// closed Project is opened with when the startup picker is off, and therefore
+// the only reader of Registry registration in that decision.
+//
+// Every entry point that can open a closed Project routes through it: the
+// in-process open, the sidebar emit point that builds the continuation's
+// `--mode` token, and the continuation itself after the re-exec. Keeping one
+// decision point is the contract -- when the sidebar fixed the mode on its own
+// it always sent `continue`, so an unregistered root on a fresh install reached
+// ContinueProject and failed with "no usable snapshot".
+//
+// The sentinel roots and the operator's own home are excluded because they are
+// not Registry Projects at all; promoting them to `fresh` would prune nothing
+// and only add a Registry write to a path that never had one.
+func (c *switchCommand) defaultProjectStartupMode(target string) (projectStartupCandidate, error) {
+	mode := projectStartupCandidate{Kind: projectStartupKindTopology}
+	starter, ok := c.projectFreshStart.(interface {
+		ProjectRegistered(string) (bool, error)
+	})
+	if !ok {
+		return mode, nil
+	}
+	cleaned := cleanOptionalPath(target)
+	if cleaned == switchSettingsSentinel || cleaned == switchRuntimeSentinel || c.openedRootIsHome(target) {
+		return mode, nil
+	}
+	registered, err := starter.ProjectRegistered(target)
+	if err != nil {
+		return mode, err
+	}
+	if !registered {
+		return projectStartupCandidate{Kind: projectStartupKindNew}, nil
+	}
+	return mode, nil
 }
 
 func (c *switchCommand) authorizeAndContinueProjectOpen(ctx context.Context, target, sessionName string, mode projectStartupCandidate) (err error) {
