@@ -15,7 +15,6 @@ SMOKE_CONTRACT_DIAGNOSTIC_JSON=""
 SMOKE_L06_HOLDER_PID=0
 SMOKE_L06_HOLDER_STARTED_MS=0
 SMOKE_L06_OPERATION="controller-trigger-burst"
-SMOKE_L06_ACQUIRE_STATE="not-started"
 SMOKE_L06_RELEASE_STATE="not-started"
 declare -a SMOKE_L06_RACER_PIDS=(0 0 0 0 0 0 0 0)
 declare -a SMOKE_L06_RACER_STATUSES=(0 0 0 0 0 0 0 0)
@@ -34,8 +33,22 @@ SMOKE_L16_ERR_PATH=""
 SMOKE_L16_TAIL_PATH=""
 SMOKE_L16_TMUX_FUNCTION=""
 
+# `date +%s%3N` is not a millisecond clock everywhere. uutils coreutils ignores
+# the %3N field width and prints nanoseconds with leading zeros stripped, so the
+# concatenation loses digits roughly one call in ten and the resulting stamp can
+# be *smaller* than the one before it. Every elapsed_ms in the evidence was that
+# subtraction, which meant a negative elapsed_ms rejected the whole record and
+# left the attempt with no terminal outcome. Read seconds and nanoseconds as two
+# fields of one clock read instead, and pad defensively before truncating.
 smoke_now_ms() {
-  date +%s%3N
+  local stamp seconds nanoseconds
+  stamp="$(date +%s.%N)"
+  seconds="${stamp%%.*}"
+  nanoseconds="${stamp#*.}"
+  while ((${#nanoseconds} < 9)); do
+    nanoseconds="0$nanoseconds"
+  done
+  printf '%s\n' "$((10#$seconds * 1000 + 10#${nanoseconds:0:3}))"
 }
 
 smoke_contract_state_hash() {
@@ -45,9 +58,12 @@ smoke_contract_state_hash() {
   fi
 }
 
+# The second argument is what this call site *declares*, never a verdict. The
+# recorder consults the other attempts recorded for the same product binary and
+# only falls back to the declaration when they say nothing.
 smoke_contract_record() {
   local outcome="$1"
-  local typed_class="$2"
+  local declared_class="$2"
   local now elapsed route_socket state_hash
   [[ -n "$SMOKE_CONTRACT_ID" ]] || return 0
   now="$(smoke_now_ms)"
@@ -56,12 +72,13 @@ smoke_contract_record() {
   state_hash="$(smoke_contract_state_hash)"
   python3 "$smoke_root/scripts/e2e-evidence.py" record \
     --directory "$PROJMUX_E2E_ARTIFACTS" \
+    --evidence-root "${PROJMUX_E2E_EVIDENCE_ROOT:-$PROJMUX_E2E_ARTIFACTS}" \
     --scenario-id "$SMOKE_CONTRACT_ID" \
     --suite "$PROJMUX_E2E_SUITE" \
-    --attempt "${PROJMUX_E2E_ATTEMPT:-1}" \
+    --attempt "${PROJMUX_E2E_ATTEMPT:-${GITHUB_RUN_ATTEMPT:-1}}" \
     --phase "$SMOKE_CONTRACT_PHASE" \
     --owner "$SMOKE_CONTRACT_OWNER" \
-    --class "$typed_class" \
+    --class "$declared_class" \
     --outcome "$outcome" \
     --elapsed-ms "$elapsed" \
     --binary-sha256 "${PROJMUX_SMOKE_BIN_SHA256:-${PROJMUX_SMOKE_EXPECTED_BIN_SHA256:-}}" \
@@ -113,7 +130,6 @@ smoke_l06_failure_diagnostic() {
     --holder-pid "$SMOKE_L06_HOLDER_PID"
     --holder-started-ms "$SMOKE_L06_HOLDER_STARTED_MS"
     --operation "$SMOKE_L06_OPERATION"
-    --acquire "$SMOKE_L06_ACQUIRE_STATE"
     --release "$SMOKE_L06_RELEASE_STATE"
   )
   for index in {0..7}; do
@@ -213,7 +229,7 @@ smoke_contract_fail() {
   local line="$2"
   SMOKE_CONTRACT_TERMINAL_JSON="$(smoke_contract_capture E2E_TERMINAL smoke_contract_terminal "$status" "$line")"
   SMOKE_CONTRACT_DIAGNOSTIC_JSON="$(smoke_contract_capture E2E_DIAGNOSTIC smoke_contract_failure_diagnostic)"
-  smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-deterministic-regression}" >&2
+  smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-}" >&2
   SMOKE_CONTRACT_TERMINAL=1
 }
 
@@ -476,7 +492,7 @@ smoke_cleanup_env() {
   local cleanup_status=0
   if [[ -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
     set +e
-    smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-deterministic-regression}" >&2
+    smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-}" >&2
     SMOKE_CONTRACT_TERMINAL=1
     set -e
   fi

@@ -125,6 +125,44 @@ def parse_racer(value: str) -> dict[str, Any]:
     return {"index": index, "outcome": outcome, "pid": pid, "status": status}
 
 
+def l06_acquire_state(racers: list[dict[str, Any]]) -> str:
+    """State what the racers were seen to do, never what the preamble assumed.
+
+    ``acquire`` used to be assigned ``contended`` before a single racer had run,
+    so it said ``contended`` for every L06 failure whether or not anything ever
+    competed for the lock. Every value below is a statement about an observed
+    racer exit: exhaustion is a racer that reported it could not take the lock,
+    ``acquired`` is every racer completing, and anything else is ``unknown``
+    because a racer that failed for another reason never told us whether its
+    acquisition succeeded.
+    """
+    outcomes = [racer["outcome"] for racer in racers]
+    if any(outcome == "exhausted" for outcome in outcomes):
+        return "contended"
+    if all(outcome == "not-started" for outcome in outcomes):
+        return "not-started"
+    if all(racer["outcome"] == "completed" and racer["status"] == 0 for racer in racers):
+        return "acquired"
+    return "unknown"
+
+
+def l06_attribution(racers: list[dict[str, Any]]) -> str:
+    """Name what was observed, not a cause the observation does not support.
+
+    ``l06-lock-exhaustion`` was a constant: every L06 failure called itself lock
+    exhaustion. The first real capture contradicted it - all eight racers
+    completed with status 0 and no racer reported exhaustion - so the label was
+    asserting a mechanism nothing had seen.
+    """
+    if any(racer["outcome"] == "exhausted" for racer in racers):
+        return "l06-lock-exhaustion"
+    if all(racer["outcome"] == "not-started" for racer in racers):
+        return "l06-no-racers-observed"
+    if any(racer["outcome"] != "completed" or racer["status"] != 0 for racer in racers):
+        return "l06-racer-failure"
+    return "l06-no-racer-failure"
+
+
 def l06_command(args: argparse.Namespace) -> int:
     if not SAFE_OPERATION_RE.fullmatch(args.operation):
         raise ValueError("invalid L06 operation")
@@ -133,29 +171,43 @@ def l06_command(args: argparse.Namespace) -> int:
     racers = sorted((parse_racer(value) for value in args.racer), key=lambda item: item["index"])
     if [item["index"] for item in racers] != list(range(1, 9)):
         raise ValueError("L06 diagnostics require exactly racers 1 through 8")
-    if args.acquire not in {"not-started", "acquired", "contended", "unknown"}:
-        raise ValueError("invalid L06 acquire state")
     if args.release not in {"not-started", "held", "released", "unknown"}:
         raise ValueError("invalid L06 release state")
     now_ms = int(time.time() * 1000)
     holder_started_ms = args.holder_started_ms
-    # GNU date implementations differ on whether a width on %N is honored.
-    # Normalize the nanosecond-shaped value used by the portable smoke helper.
+    # Defensive: a caller that computed this stamp with a `date +%s%3N` whose
+    # width the host ignored hands over a nanosecond-shaped value. The smoke
+    # helper no longer produces one, but a stale caller must not be read as a
+    # lock created millions of seconds ago.
     if holder_started_ms > now_ms * 100:
         holder_started_ms //= 1_000_000
-    age_ms = max(0, now_ms - holder_started_ms) if holder_started_ms else 0
+    # The caller supplies a timestamp only when it actually read the lock file's
+    # mtime. The old field was named for lock age but was fed the scenario start
+    # time, so it reported elapsed scenario time and invited comparison against
+    # the 30s stale boundary. An unobserved lock now says so instead.
+    lock_observed = holder_started_ms > 0
     emit("E2E_DIAGNOSTIC", {
-        "attribution": "l06-lock-exhaustion",
+        "attribution": l06_attribution(racers),
         "holder": {
-            "acquire": args.acquire,
-            "age_ms": age_ms,
+            "acquire": l06_acquire_state(racers),
+            "lock_age_ms": max(0, now_ms - holder_started_ms) if lock_observed else 0,
+            "lock_observed": lock_observed,
             "operation": args.operation,
             "pid": args.holder_pid,
             "release": args.release,
         },
         "racers": racers,
         "scenario": "L06",
-        "schema": "projmux.e2e-diagnostic/v1",
+        # v2, while L08/L16 stay v1. One version string across three
+        # structurally different payloads already identifies the scenario's
+        # field set rather than a shared one, and the L06 payload is the only
+        # one that changed: `age_ms` became `lock_age_ms` + `lock_observed`, and
+        # `attribution` gained values it could never previously report. Failing
+        # e2e artifacts are retained 14 days, so v1 and v2 L06 diagnostics
+        # coexist in downloaded evidence for that window; the version is what
+        # tells a reader which field set to expect instead of leaving them to
+        # probe for a key.
+        "schema": "projmux.e2e-diagnostic/v2",
     })
     return 0
 
@@ -328,7 +380,6 @@ def parser() -> argparse.ArgumentParser:
     l06.add_argument("--holder-pid", required=True, type=int)
     l06.add_argument("--holder-started-ms", required=True, type=int)
     l06.add_argument("--operation", required=True)
-    l06.add_argument("--acquire", required=True)
     l06.add_argument("--release", required=True)
     l06.add_argument("--racer", action="append", default=[])
     l06.set_defaults(function=l06_command)

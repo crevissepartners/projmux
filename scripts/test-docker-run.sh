@@ -145,7 +145,7 @@ docker run --rm \
   -e GOMAXPROCS="$suite_gomaxprocs" \
   -e GOFLAGS="$suite_goflags" \
   -e PROJMUX_E2E_ARTIFACTS=/evidence \
-  -e PROJMUX_E2E_ATTEMPT="${PROJMUX_E2E_ATTEMPT:-1}" \
+  -e PROJMUX_E2E_ATTEMPT="${PROJMUX_E2E_ATTEMPT:-${GITHUB_RUN_ATTEMPT:-1}}" \
   -e PROJMUX_E2E_LINUX_SHARD="${PROJMUX_E2E_LINUX_SHARD:-}" \
   -e E2E_SCENARIO="${E2E_SCENARIO:-}" \
   -v "$root:/workspace:ro" \

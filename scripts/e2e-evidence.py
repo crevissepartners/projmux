@@ -21,7 +21,24 @@ CLASS_NAMES = {
     "harness-lifecycle",
     "observation-frame",
     "environment",
+    "flake",
+    "unowned-nondeterminism",
+    "unrepeated-failure",
     "unattributed",
+}
+# The classification axis is not "does a retry pass" but "do we own the source of
+# the nondeterminism". L06/L08 flip because of the Registry lock we ship, so a
+# retry that passes names a defect we can remove and an owner who can be held to
+# a deadline. C01 drives the real Codex app-server and observes the model's own
+# judgement; a retry that flips there is an observation we do not own and cannot
+# schedule away. Folding both into one `flake` value would hand a quarantine
+# policy rows whose expiry nobody can meet.
+UNOWNED_NONDETERMINISM_OWNERS = {"codex-appserver-adapter"}
+CLASS_BASES = {
+    "observed-nondeterminism",
+    "reproduced-failure",
+    "declared",
+    "single-observation",
 }
 OUTCOMES = {"begin", "pass", "fail", "cancel"}
 FIELDS = {
@@ -49,12 +66,116 @@ OPTIONAL_FIELDS = {
     "terminal_status",
     "terminal_source",
     "diagnostic",
+    "class_basis",
+    "prior_outcomes",
 }
 SOURCE_RE = re.compile(r"^(?:(?:test/e2e|test/lib)/[a-z0-9][a-z0-9._/-]*\.sh)?$")
 FORBIDDEN_VALUE = re.compile(
     r"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9_]{20,}|"
     r"github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|(?i:password|token|secret)=)"
 )
+
+
+TERMINAL_OUTCOMES = {"pass", "fail", "cancel"}
+
+
+def attempt_key(path: Path, root: Path) -> str:
+    """Name the retry an evidence file belongs to.
+
+    ``test-e2e-docker.sh`` gives every attempt its own
+    ``attempt-<run>-<run-attempt>-<pid>`` directory, so the directory name is the
+    one durable statement of which retry produced a record - the ``attempt``
+    field inside the record is whatever the harness was told, and a rerun that
+    never learns ``GITHUB_RUN_ATTEMPT`` reports ``1`` forever. When the root is
+    itself a single attempt directory there is nothing above it to compare
+    against and every record shares the empty key.
+    """
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return ""
+    for part in parts:
+        if part.startswith("attempt-"):
+            return part
+    return ""
+
+
+def read_summary(path: Path) -> list[dict[str, object]]:
+    records: list[dict[str, object]] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return records
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
+    return records
+
+
+def prior_terminal_outcomes(
+    root: Path,
+    current: str,
+    scenario_id: str,
+    binary_sha256: str,
+) -> list[str]:
+    """Terminal outcomes other attempts recorded for this exact binary.
+
+    An empty ``binary_sha256`` is not evidence about a commit, so it never
+    matches: comparing two runs is only meaningful when the same product build
+    produced both.
+    """
+    if not binary_sha256:
+        return []
+    outcomes: set[str] = set()
+    for path in sorted(root.rglob("summary.jsonl")):
+        if attempt_key(path, root) == current:
+            continue
+        for record in read_summary(path):
+            if record.get("scenario_id") != scenario_id:
+                continue
+            if record.get("binary_sha256") != binary_sha256:
+                continue
+            outcome = record.get("outcome")
+            if outcome in TERMINAL_OUTCOMES:
+                outcomes.add(str(outcome))
+    return sorted(outcomes)
+
+
+def classify(
+    outcome: str,
+    declared_class: str,
+    owner: str,
+    prior_outcomes: list[str],
+) -> tuple[str, str]:
+    """Derive the failure class from what the attempts were observed to do.
+
+    A constant is not a predicate. ``deterministic-regression`` is only earned by
+    a failure that was actually seen again on the same build; a single failure
+    says nothing yet about reproduction and must not borrow that claim. When the
+    same build was observed both failing and passing, the split is by whether we
+    own the source of the nondeterminism, never by the retry outcome alone.
+    """
+    prior = set(prior_outcomes)
+    if outcome not in {"fail", "pass"}:
+        return declared_class or "unattributed", "declared"
+    flipped = ("pass" in prior) if outcome == "fail" else ("fail" in prior)
+    if flipped:
+        if owner in UNOWNED_NONDETERMINISM_OWNERS:
+            return "unowned-nondeterminism", "observed-nondeterminism"
+        return "flake", "observed-nondeterminism"
+    if outcome == "fail" and "fail" in prior:
+        return "deterministic-regression", "reproduced-failure"
+    if declared_class:
+        return declared_class, "declared"
+    if outcome == "fail":
+        return "unrepeated-failure", "single-observation"
+    return "environment", "single-observation"
 
 
 def validate_terminal_attribution(record: dict[str, object]) -> None:
@@ -78,6 +199,18 @@ def validate_terminal_attribution(record: dict[str, object]) -> None:
             raise ValueError("terminal_source must not traverse")
     if "diagnostic" in record and not isinstance(record["diagnostic"], dict):
         raise ValueError("diagnostic must be an object")
+    if "class_basis" in record and record["class_basis"] not in CLASS_BASES:
+        raise ValueError("invalid class_basis")
+    if "prior_outcomes" in record:
+        prior_outcomes = record["prior_outcomes"]
+        if not isinstance(prior_outcomes, list) or not prior_outcomes:
+            raise ValueError("prior_outcomes must be a non-empty array")
+        if any(item not in TERMINAL_OUTCOMES for item in prior_outcomes):
+            raise ValueError("prior_outcomes must be terminal outcomes")
+        if list(prior_outcomes) != sorted(set(prior_outcomes)):
+            raise ValueError("prior_outcomes must be sorted and unique")
+        if "class_basis" not in record:
+            raise ValueError("prior_outcomes requires class_basis")
 
 
 def validate(record: dict[str, object]) -> None:
@@ -185,6 +318,19 @@ def terminal_attribution(text: str) -> dict[str, object]:
 
 
 def record_command(args: argparse.Namespace) -> int:
+    directory = Path(args.directory)
+    prior_outcomes: list[str] = []
+    if args.evidence_root and args.outcome in {"fail", "pass"}:
+        root = Path(args.evidence_root)
+        prior_outcomes = prior_terminal_outcomes(
+            root,
+            attempt_key(directory / "summary.jsonl", root),
+            args.scenario_id,
+            args.binary_sha256,
+        )
+    typed_class, class_basis = classify(
+        args.outcome, args.declared_class, args.owner, prior_outcomes
+    )
     record = {
         "schema": "projmux.e2e-attempt/v1",
         "scenario_id": args.scenario_id,
@@ -192,7 +338,7 @@ def record_command(args: argparse.Namespace) -> int:
         "attempt": args.attempt,
         "phase": args.phase,
         "owner": args.owner,
-        "class": args.typed_class,
+        "class": typed_class,
         "outcome": args.outcome,
         "elapsed_ms": args.elapsed_ms,
         "binary_sha256": args.binary_sha256,
@@ -201,11 +347,16 @@ def record_command(args: argparse.Namespace) -> int:
         "artifact": f"{args.scenario_id}-attempt-{args.attempt}.json",
         "replay": f"make test-e2e E2E_SCENARIO={args.scenario_id}",
     }
+    # The derivation trail is only additive where a derivation actually happened.
+    # An attempt with nothing to compare against keeps the exact field set - and
+    # therefore the exact serialized bytes - it had before this schema grew.
+    if prior_outcomes:
+        record["class_basis"] = class_basis
+        record["prior_outcomes"] = prior_outcomes
     record.update(terminal_attribution(args.terminal_json))
     if args.diagnostic:
         record["diagnostic"] = decode_object(args.diagnostic, "diagnostic")
     validate(record)
-    directory = Path(args.directory)
     write_artifact(directory, record)
     atomic_append(directory / "summary.jsonl", json.dumps(record, sort_keys=True, separators=(",", ":")))
     print(
@@ -300,6 +451,88 @@ def result_hash_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def classify_command(args: argparse.Namespace) -> int:
+    """Expose the classification predicate so its truth table is testable alone."""
+    typed_class, basis = classify(
+        args.outcome, args.declared_class, args.owner, sorted(set(args.prior))
+    )
+    print(f"class={typed_class} basis={basis}")
+    return 0
+
+
+def flake_rate_command(args: argparse.Namespace) -> int:
+    """Report per-scenario flake rate across every attempt under a root.
+
+    Record-time classification only sees the attempts a runner can reach. A CI
+    rerun starts on a fresh machine, so the durable cross-attempt view is this
+    pass over downloaded evidence, and it is also where a class recorded by one
+    attempt is confronted with what the other attempts went on to show.
+    """
+    root = Path(args.directory)
+    observed: dict[tuple[str, str], dict[str, dict[str, str]]] = {}
+    owners: dict[tuple[str, str], str] = {}
+    for path in sorted(root.rglob("summary.jsonl")):
+        key_attempt = attempt_key(path, root)
+        for record in read_summary(path):
+            outcome = record.get("outcome")
+            if outcome not in TERMINAL_OUTCOMES:
+                continue
+            scenario = str(record.get("scenario_id", ""))
+            binary = str(record.get("binary_sha256", ""))
+            if not scenario:
+                continue
+            key = (scenario, binary)
+            attempt = key_attempt or f"attempt-{record.get('attempt', 1)}"
+            observed.setdefault(key, {})[attempt] = {
+                "outcome": str(outcome),
+                "class": str(record.get("class", "")),
+            }
+            owners[key] = str(record.get("owner", ""))
+
+    flips = 0
+    nondeterministic = 0
+    for key in sorted(observed):
+        scenario, binary = key
+        attempts = observed[key]
+        outcomes = {entry["outcome"] for entry in attempts.values()}
+        failed = sum(1 for entry in attempts.values() if entry["outcome"] == "fail")
+        passed = sum(1 for entry in attempts.values() if entry["outcome"] == "pass")
+        if "fail" in outcomes and "pass" in outcomes:
+            verdict = (
+                "unowned-nondeterminism"
+                if owners.get(key) in UNOWNED_NONDETERMINISM_OWNERS
+                else "flake"
+            )
+            nondeterministic += 1
+        elif failed:
+            verdict = "deterministic-regression" if failed > 1 else "unrepeated-failure"
+        else:
+            verdict = "stable"
+        total = len(attempts)
+        rate = failed / total if total else 0.0
+        print(
+            f"E2E_FLAKE scenario={scenario} binary={binary[:8] or 'unknown'} "
+            f"attempts={total} pass={passed} fail={failed} "
+            f"flake_rate={rate:.3f} verdict={verdict}"
+        )
+        # A record whose stored class disagrees with what every attempt together
+        # shows is the operator signal this report exists for: the earlier
+        # attempt is not silently overwritten, it is named.
+        for attempt in sorted(attempts):
+            recorded = attempts[attempt]["class"]
+            if verdict in {"flake", "unowned-nondeterminism"} and recorded != verdict:
+                flips += 1
+                print(
+                    f"E2E_FLAKE_FLIP scenario={scenario} binary={binary[:8] or 'unknown'} "
+                    f"attempt={attempt} recorded={recorded} verdict={verdict}"
+                )
+    print(
+        f">> E2E flake report scenarios={len(observed)} "
+        f"nondeterministic={nondeterministic} flips={flips}"
+    )
+    return 0
+
+
 def route_command(args: argparse.Namespace) -> int:
     scenario = args.scenario_id
     if scenario == "C01":
@@ -331,7 +564,11 @@ def parser() -> argparse.ArgumentParser:
     record_parser.add_argument("--attempt", required=True, type=int)
     record_parser.add_argument("--phase", required=True)
     record_parser.add_argument("--owner", required=True)
-    record_parser.add_argument("--class", dest="typed_class", required=True, choices=sorted(CLASS_NAMES))
+    # The class a caller supplies is a declaration, not a verdict. It is used
+    # only where the attempts themselves say nothing, and never outranks an
+    # observed fail/pass split on the same build.
+    record_parser.add_argument("--class", dest="declared_class", default="", choices=sorted(CLASS_NAMES) + [""])
+    record_parser.add_argument("--evidence-root", default="")
     record_parser.add_argument("--outcome", required=True, choices=sorted(OUTCOMES))
     record_parser.add_argument("--elapsed-ms", required=True, type=int)
     record_parser.add_argument("--binary-sha256", default="")
@@ -348,6 +585,15 @@ def parser() -> argparse.ArgumentParser:
     hash_parser.add_argument("--expected", default="")
     hash_parser.add_argument("directory")
     hash_parser.set_defaults(function=result_hash_command)
+    classify_parser = subparsers.add_parser("classify")
+    classify_parser.add_argument("--outcome", required=True, choices=sorted(OUTCOMES))
+    classify_parser.add_argument("--class", dest="declared_class", default="", choices=sorted(CLASS_NAMES) + [""])
+    classify_parser.add_argument("--owner", default="")
+    classify_parser.add_argument("--prior", action="append", default=[], choices=sorted(TERMINAL_OUTCOMES))
+    classify_parser.set_defaults(function=classify_command)
+    flake_parser = subparsers.add_parser("flake-rate")
+    flake_parser.add_argument("directory")
+    flake_parser.set_defaults(function=flake_rate_command)
     route_parser = subparsers.add_parser("route")
     route_parser.add_argument("--manifest", required=True)
     route_parser.add_argument("scenario_id")

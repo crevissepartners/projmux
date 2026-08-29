@@ -1554,9 +1554,12 @@ phase0_stress_pane_uid_before="$(ctx show-options -pqv -t "$legacy_pane" @projmu
 phase0_stress_project_uid_before="$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)"
 phase0_stress_pids=()
 SMOKE_L06_HOLDER_PID=0
-SMOKE_L06_HOLDER_STARTED_MS="$(( $(date +%s) * 1000 ))"
+# Zero means "no lock file was read". The racer-failure branch below is the only
+# place that has a lock file to stat, so seeding this with the scenario start
+# time made the reported lock age an elapsed-scenario timer wearing a lock's
+# name. Acquire state is derived from the racer outcomes, never preset here.
+SMOKE_L06_HOLDER_STARTED_MS=0
 SMOKE_L06_OPERATION=concurrent-create-pane
-SMOKE_L06_ACQUIRE_STATE=contended
 SMOKE_L06_RELEASE_STATE=held
 SMOKE_L06_RACER_PIDS=(0 0 0 0 0 0 0 0)
 SMOKE_L06_RACER_STATUSES=(0 0 0 0 0 0 0 0)
@@ -3107,8 +3110,9 @@ fi
 # of concurrent workers contending for the one registry lock produces.
 cp "$binding_registry" "$binding_root/registry.before-burst"
 binding_burst_pids=()
-SMOKE_L06_HOLDER_STARTED_MS="$(( $(date +%s) * 1000 ))"
-SMOKE_L06_ACQUIRE_STATE=contended
+# Zero until a lock file is actually stat-ed below; acquire state is derived
+# from the racer outcomes rather than asserted before any racer has run.
+SMOKE_L06_HOLDER_STARTED_MS=0
 SMOKE_L06_RELEASE_STATE=held
 SMOKE_L06_RACER_PIDS=(0 0 0 0 0 0 0 0)
 SMOKE_L06_RACER_STATUSES=(0 0 0 0 0 0 0 0)
@@ -3134,7 +3138,6 @@ for binding_burst_index in 1 2 3 4 5 6 7 8; do
         SMOKE_L06_HOLDER_PID="$binding_lock_pid"
       fi
       SMOKE_L06_HOLDER_STARTED_MS="$(( $(stat -c %Y "$binding_registry.lock") * 1000 ))"
-      SMOKE_L06_ACQUIRE_STATE=contended
       SMOKE_L06_RELEASE_STATE=held
     fi
   fi
@@ -3146,7 +3149,6 @@ for binding_burst_index in 1 2 3 4 5 6 7 8; do
     SMOKE_L06_RACER_OUTCOMES[binding_burst_index - 1]=converged
     if [[ "$SMOKE_L06_HOLDER_PID" == "0" ]]; then
       SMOKE_L06_HOLDER_PID="$binding_burst_pid"
-      SMOKE_L06_ACQUIRE_STATE=acquired
     fi
   else
     SMOKE_L06_RACER_OUTCOMES[binding_burst_index - 1]=other
@@ -3159,7 +3161,7 @@ fi
 # test/lib/smoke.sh. Keep an explicit no-op read so standalone ShellCheck sees
 # the cross-file diagnostic-state contract.
 : "$SMOKE_L06_HOLDER_PID" "$SMOKE_L06_HOLDER_STARTED_MS" "$SMOKE_L06_OPERATION" \
-  "$SMOKE_L06_ACQUIRE_STATE" "$SMOKE_L06_RELEASE_STATE" \
+  "$SMOKE_L06_RELEASE_STATE" \
   "${SMOKE_L06_RACER_PIDS[*]}" "${SMOKE_L06_RACER_STATUSES[*]}" "${SMOKE_L06_RACER_OUTCOMES[*]}"
 if [[ "$binding_burst_failed" != "0" ]]; then
   echo "a hook burst producer exited non-zero" >&2

@@ -460,6 +460,30 @@
   The `PROJMUX_E2E_INTENTIONAL_ZERO_LINE` fixture drives that path through the
   real harness, and CI preserves the attempt evidence subtree — excluding
   `binary/` — as a downloadable artifact on both failing and passing e2e runs.
+- `test/e2e/evidence-contract.sh` also pins observed failure classification. The
+  `class` field is derived, not declared: the recorder compares the attempts
+  already recorded for the same `binary_sha256` under `--evidence-root` and only
+  falls back to a caller's `--class` when they say nothing. A build seen both
+  failing and passing is nondeterministic and splits by whether the source of
+  that nondeterminism is ours — `flake` for a scenario we own, and
+  `unowned-nondeterminism` for one like `C01` that observes the real Codex model
+  — so a later quarantine policy never sets a deadline nobody here can meet. A
+  failure reproduced on the same build is `deterministic-regression`; a failure
+  nobody has retried is `unrepeated-failure` and no longer borrows the
+  reproduction claim. Where a derivation happened the record carries the
+  additive optional `class_basis` and `prior_outcomes`; where it did not, the
+  record keeps its exact prior field set and bytes. `e2e-evidence.py classify`
+  exposes the predicate as a truth table, and `e2e-evidence.py flake-rate <dir>`
+  reports per-scenario flake rate over downloaded attempt evidence plus an
+  `E2E_FLAKE_FLIP` line for every stored class the other attempts contradict.
+  L06 diagnostics are derived the same way: `attribution` names what the racers
+  were observed to do instead of always claiming lock exhaustion, `acquire` is
+  no longer unconditionally `contended`, and `lock_age_ms` is paired with
+  `lock_observed` so an unread lock file cannot report a scenario timer as lock
+  age. That renamed payload travels as `projmux.e2e-diagnostic/v2` while the
+  unchanged L08/L16 payloads stay `v1`, and evidence retained from before the
+  rename still validates and still aggregates. `PROJMUX_E2E_ATTEMPT` now defaults to `GITHUB_RUN_ATTEMPT`, so a rerun's
+  evidence is no longer written as attempt 1.
 - `make test` / `make test-e2e`: L06 Registry lock recurrence applies the
   unchanged 400-attempt, 2ms/50ms delay, and 30s stale budget to one verified
   positive-PID owner lease. `TestRegistryLockRetryBudgetTracksVerifiedOwnerLease`
