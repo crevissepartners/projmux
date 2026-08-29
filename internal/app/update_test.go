@@ -136,6 +136,19 @@ func TestUpdateApplyNpmUsesInstallLatest(t *testing.T) {
 	}
 }
 
+// stubUpdateVersionProbe reports one version for the pre-publication reading and
+// another for every reading taken after it.
+func stubUpdateVersionProbe(before, after string) func(string) (string, error) {
+	reads := 0
+	return func(string) (string, error) {
+		reads++
+		if reads == 1 {
+			return "projmux " + before + "\n", nil
+		}
+		return "projmux " + after + "\n", nil
+	}
+}
+
 type updateRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f updateRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -154,6 +167,9 @@ func testUpdateCommand(t *testing.T, now time.Time) (*updateCommand, string) {
 		})},
 		apiURL:     "https://example.invalid/latest",
 		executable: func() (string, error) { return "/tmp/projmux", nil },
+		// Every pre-existing apply test describes an ordinary landed upgrade, so
+		// the default probe reports a higher version after publication.
+		probeVersion: stubUpdateVersionProbe("0.13.0", "0.13.1"),
 		lookPath: func(name string) (string, error) {
 			if name != "projmux" {
 				return "", fmt.Errorf("unexpected executable lookup %q", name)
@@ -1164,4 +1180,443 @@ func testVersionTag(t *testing.T, patchDelta int) string {
 		t.Fatalf("invalid patch delta %d for current version %q", patchDelta, version.String())
 	}
 	return fmt.Sprintf("v%d.%d.%d", parts[0], parts[1], parts[2])
+}
+
+// updateApplyVerificationCommand builds an apply command whose installer is
+// fixed and whose staged commands all succeed, so the only thing under test is
+// the post-publication version verification.
+func updateApplyVerificationCommand(t *testing.T, installer string) (*updateCommand, string, *[]string) {
+	t.Helper()
+	cmd, cacheDir := testUpdateCommand(t, time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC))
+	cmd.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return installer
+		}
+		return ""
+	}
+	cmd.executable = func() (string, error) { return "/home/me/bin/projmux", nil }
+	ran := &[]string{}
+	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+		*ran = append(*ran, strings.Join(append([]string{name}, args...), " "))
+		return nil
+	}
+	return cmd, cacheDir, ran
+}
+
+// TestUpdateApplyFailsWhenTheInstalledVersionDidNotChange pins C-2 Guarantee:
+// every stage exiting 0 is not an upgrade. A reinstall of the same version --
+// what happens while a release exists on GitHub but not yet on the channel this
+// install pulls from -- must end as an explicit failure.
+func TestUpdateApplyFailsWhenTheInstalledVersionDidNotChange(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		installer string
+		args      []string
+		before    string
+		after     string
+		wantParts []string
+	}{
+		{
+			name:      "npm reinstalls the same version",
+			installer: "npm",
+			args:      []string{"apply"},
+			before:    "0.13.1",
+			after:     "0.13.1",
+			wantParts: []string{
+				"installed version did not change",
+				"current version 0.13.1 at /npm/bin/projmux",
+				"expected version v0.13.2",
+				"install channel npm",
+				"not on the npm registry yet",
+			},
+		},
+		{
+			name:      "go reinstalls the same version",
+			installer: "go",
+			args:      []string{"apply"},
+			before:    "0.13.1",
+			after:     "0.13.1",
+			wantParts: []string{
+				"installed version did not change",
+				"expected version v0.13.2",
+				"install channel go",
+				"GOBIN that PATH does not resolve first",
+			},
+		},
+		{
+			name:      "no-apply is verified too",
+			installer: "npm",
+			args:      []string{"apply", "--no-apply"},
+			before:    "0.13.1",
+			after:     "0.13.1",
+			wantParts: []string{
+				"installed version did not change",
+				"install channel npm",
+			},
+		},
+		{
+			name:      "already at the expected version publishes nothing",
+			installer: "npm",
+			args:      []string{"apply"},
+			before:    "0.13.2",
+			after:     "0.13.2",
+			wantParts: []string{
+				"installed version did not change",
+				"current version 0.13.2",
+				"already holds the expected version",
+			},
+		},
+		{
+			name:      "a lower version afterwards is not success",
+			installer: "npm",
+			args:      []string{"apply"},
+			before:    "0.13.1",
+			after:     "0.13.0",
+			wantParts: []string{
+				"installed version went backwards",
+				"current version 0.13.0 at /npm/bin/projmux",
+				"expected version v0.13.2",
+				"install channel npm",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, cacheDir, ran := updateApplyVerificationCommand(t, tc.installer)
+			writeUpdateCacheFixture(t, cacheDir, updateCache{
+				Version:   1,
+				CheckedAt: time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC),
+				TagName:   "v0.13.2",
+			})
+			cmd.probeVersion = stubUpdateVersionProbe(tc.before, tc.after)
+
+			err := cmd.Run(tc.args, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("Run() error = nil, want an explicit failure; ran = %#v", *ran)
+			}
+			for _, want := range tc.wantParts {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q missing %q", err.Error(), want)
+				}
+			}
+		})
+	}
+}
+
+// TestUpdateApplyWithoutACachedCheckStillNamesTheMissingExpectedVersion keeps the
+// failure message complete when no release check has been cached: the expected
+// slot is filled with an explicit unknown and a way to resolve it, never
+// dropped.
+func TestUpdateApplyWithoutACachedCheckStillNamesTheMissingExpectedVersion(t *testing.T) {
+	t.Parallel()
+
+	cmd, _, _ := updateApplyVerificationCommand(t, "npm")
+	cmd.probeVersion = stubUpdateVersionProbe("0.13.1", "0.13.1")
+
+	err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("Run() error = nil, want an explicit failure")
+	}
+	for _, want := range []string{
+		"expected version unknown (no cached release check; run `projmux update check`)",
+		"install channel npm",
+		"current version 0.13.1",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error %q missing %q", err.Error(), want)
+		}
+	}
+}
+
+// TestUpdateApplySucceedsWhenTheInstalledVersionRose keeps a real upgrade
+// passing and names the exact executable that was verified.
+func TestUpdateApplySucceedsWhenTheInstalledVersionRose(t *testing.T) {
+	t.Parallel()
+
+	cmd, cacheDir, _ := updateApplyVerificationCommand(t, "npm")
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:   1,
+		CheckedAt: time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC),
+		TagName:   "v0.13.2",
+	})
+	cmd.probeVersion = stubUpdateVersionProbe("0.13.1", "0.13.2")
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := ">> verified: projmux 0.13.2 is now the active executable at /npm/bin/projmux (was 0.13.1)"
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+	}
+}
+
+// TestUpdateApplyRefusesToReportSuccessWhenTheVersionCannotBeRead covers the
+// negative path: an unreadable version is reported as unverified, never
+// disguised as a successful upgrade.
+func TestUpdateApplyRefusesToReportSuccessWhenTheVersionCannotBeRead(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		probe func(string) (string, error)
+		want  string
+	}{
+		{
+			name:  "the probe itself fails after publication",
+			probe: failingUpdateVersionProbeAfter(1, errors.New("exec format error")),
+			want:  "exec format error",
+		},
+		{
+			name:  "the probe fails before publication",
+			probe: failingUpdateVersionProbeAfter(0, errors.New("permission denied")),
+			want:  "permission denied",
+		},
+		{
+			name: "the output is not a projmux version line",
+			probe: func(string) (string, error) {
+				return "some other tool 1.2.3\n", nil
+			},
+			want: "parse the version reported by",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _, _ := updateApplyVerificationCommand(t, "npm")
+			cmd.probeVersion = tc.probe
+
+			var stdout bytes.Buffer
+			err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{})
+			if err == nil {
+				t.Fatal("Run() error = nil, want an explicit unverified failure")
+			}
+			for _, want := range []string{
+				"installed version could not be verified, so it is not reported as success",
+				"install channel npm",
+				tc.want,
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q missing %q", err.Error(), want)
+				}
+			}
+			if strings.Contains(stdout.String(), ">> verified:") {
+				t.Fatalf("stdout = %q, want no verified line", stdout.String())
+			}
+		})
+	}
+}
+
+// TestUpdateApplyVerifiesThePathResolvedExecutable pins the comparison target:
+// the binary PATH resolves, not whatever the package manager reports. That is
+// the only reading that catches an install which succeeded but landed somewhere
+// else.
+func TestUpdateApplyVerifiesThePathResolvedExecutable(t *testing.T) {
+	t.Parallel()
+
+	cmd, cacheDir, ran := updateApplyVerificationCommand(t, "npm")
+	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Version:   1,
+		CheckedAt: time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC),
+		TagName:   "v0.13.2",
+	})
+	var probed []string
+	cmd.probeVersion = func(exe string) (string, error) {
+		probed = append(probed, exe)
+		// npm exited 0 and published 0.13.2 under a prefix PATH does not
+		// resolve, so the executable a user runs is still the old one.
+		return "projmux 0.13.1\n", nil
+	}
+
+	err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil {
+		t.Fatal("Run() error = nil, want a failure for an install PATH cannot see")
+	}
+	if !strings.Contains(err.Error(), "outside the PATH entry that resolves `projmux`") {
+		t.Fatalf("error %q does not name the misplaced-install cause", err.Error())
+	}
+	want := []string{"/npm/bin/projmux", "/npm/bin/projmux"}
+	if !equalStrings(probed, want) {
+		t.Fatalf("probed = %#v, want the PATH-resolved executable twice %#v", probed, want)
+	}
+	for _, command := range *ran {
+		if strings.Contains(command, " version") || strings.Contains(command, "npm view") || strings.Contains(command, "npm ls") {
+			t.Fatalf("ran = %#v, want no installer version report", *ran)
+		}
+	}
+}
+
+// TestUpdateApplyFallsBackToTheRunningExecutableWhenPathHasNoProjmux keeps an
+// off-PATH install verifiable instead of permanently unverified.
+func TestUpdateApplyFallsBackToTheRunningExecutableWhenPathHasNoProjmux(t *testing.T) {
+	t.Parallel()
+
+	cmd, _, _ := updateApplyVerificationCommand(t, "go")
+	cmd.lookPath = func(string) (string, error) { return "", errors.New("executable file not found in $PATH") }
+	var probed []string
+	cmd.probeVersion = func(exe string) (string, error) {
+		probed = append(probed, exe)
+		if len(probed) == 1 {
+			return "projmux 0.13.1\n", nil
+		}
+		return "projmux 0.13.2\n", nil
+	}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := []string{"/home/me/bin/projmux", "/home/me/bin/projmux"}
+	if !equalStrings(probed, want) {
+		t.Fatalf("probed = %#v, want the running executable %#v", probed, want)
+	}
+	if !strings.Contains(stdout.String(), ">> verified: projmux 0.13.2 is now the active executable at /home/me/bin/projmux") {
+		t.Fatalf("stdout = %q, want the fallback executable verified", stdout.String())
+	}
+}
+
+// TestUpdateApplyStageOrderIsUnchangedByVersionVerification is the change-nothing
+// half of Phase 0: verification is a reading, so the published command sequence
+// -- including the `config apply` stage and its position -- is byte-identical to
+// what it was before.
+func TestUpdateApplyStageOrderIsUnchangedByVersionVerification(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		installer string
+		args      []string
+		want      []string
+	}{
+		{
+			name:      "npm",
+			installer: "npm",
+			args:      []string{"apply"},
+			want: []string{
+				"/home/me/bin/projmux config apply --bin /npm/bin/projmux --socket projmux",
+				"npm install -g projmux@latest",
+				"projmux config apply",
+			},
+		},
+		{
+			name:      "npm no-apply",
+			installer: "npm",
+			args:      []string{"apply", "--no-apply"},
+			want: []string{
+				"npm install -g projmux@latest",
+				"projmux config apply --no-reload",
+			},
+		},
+		{
+			name:      "go",
+			installer: "go",
+			args:      []string{"apply"},
+			want: []string{
+				"/home/me/bin/projmux config apply --bin /home/me/bin/projmux --socket projmux",
+				"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
+				"/home/me/bin/projmux config apply",
+			},
+		},
+		{
+			name:      "go no-apply",
+			installer: "go",
+			args:      []string{"apply", "--no-apply"},
+			want: []string{
+				"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
+				"/home/me/bin/projmux config apply --no-reload",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _, ran := updateApplyVerificationCommand(t, tc.installer)
+			cmd.probeVersion = stubUpdateVersionProbe("0.13.1", "0.13.2")
+
+			if err := cmd.Run(tc.args, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if !equalStrings(*ran, tc.want) {
+				t.Fatalf("ran = %#v, want the unchanged stage order %#v", *ran, tc.want)
+			}
+		})
+	}
+}
+
+// TestUpdateApplyDryRunPreviewsVerificationWithoutProbing keeps `--dry-run` a
+// pure preview: it names the verification stage and reads nothing.
+func TestUpdateApplyDryRunPreviewsVerificationWithoutProbing(t *testing.T) {
+	t.Parallel()
+
+	for _, installer := range []string{"npm", "go", "github-release"} {
+		t.Run(installer, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _, _ := updateApplyVerificationCommand(t, installer)
+			probes := 0
+			cmd.probeVersion = func(string) (string, error) {
+				probes++
+				return "projmux 0.13.1\n", nil
+			}
+
+			var stdout bytes.Buffer
+			if err := cmd.Run([]string{"apply", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			if !strings.Contains(stdout.String(), "would verify: the projmux that PATH resolves reports a higher version") {
+				t.Fatalf("stdout = %q, want the verification preview", stdout.String())
+			}
+			if probes != 0 {
+				t.Fatalf("probes = %d, want a dry run to read nothing", probes)
+			}
+		})
+	}
+}
+
+func TestParseProjmuxVersionOutput(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		raw  string
+		want string
+		ok   bool
+	}{
+		{name: "plain line", raw: "projmux 0.13.1\n", want: "0.13.1", ok: true},
+		{name: "tagged line", raw: "projmux v0.14.0\n", want: "v0.14.0", ok: true},
+		{name: "skips leading noise", raw: "warning: something\nprojmux 0.13.1\n", want: "0.13.1", ok: true},
+		{name: "other tool", raw: "npm 10.8.2\n", ok: false},
+		{name: "no version token", raw: "projmux \n", ok: false},
+		{name: "unparseable version", raw: "projmux dev-build\n", ok: false},
+		{name: "empty", raw: "", ok: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, ok := parseProjmuxVersionOutput(tc.raw)
+			if ok != tc.ok || got != tc.want {
+				t.Fatalf("parseProjmuxVersionOutput(%q) = (%q, %v), want (%q, %v)", tc.raw, got, ok, tc.want, tc.ok)
+			}
+		})
+	}
+}
+
+// failingUpdateVersionProbeAfter succeeds for the first `okReads` readings and
+// fails afterwards.
+func failingUpdateVersionProbeAfter(okReads int, cause error) func(string) (string, error) {
+	reads := 0
+	return func(string) (string, error) {
+		reads++
+		if reads > okReads {
+			return "", cause
+		}
+		return "projmux 0.13.1\n", nil
+	}
 }

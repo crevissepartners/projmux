@@ -32,7 +32,11 @@ const (
 	updateCacheFileName = "update.json"
 	updateCacheMaxAge   = 24 * time.Hour
 	updateHTTPTimeout   = 10 * time.Second
-	updateReleaseURL    = "https://api.github.com/repos/crevissepartners/projmux/releases/latest"
+	// updateVersionProbeTimeout bounds the `projmux version` call that reads
+	// the installed version back. A wedged binary must fail verification, not
+	// hang the apply that just published it.
+	updateVersionProbeTimeout = 10 * time.Second
+	updateReleaseURL          = "https://api.github.com/repos/crevissepartners/projmux/releases/latest"
 
 	updateMaxCompressedBytes   int64 = 64 << 20
 	updateMaxTarBytes          int64 = 256 << 20
@@ -65,17 +69,22 @@ type updateCommand struct {
 	executable  func() (string, error)
 	lookPath    func(string) (string, error)
 	runExternal func(name string, args []string, stdout, stderr io.Writer) error
-	goos        string
-	goarch      string
-	mkdirTemp   func(dir, pattern string) (string, error)
-	removeAll   func(path string) error
-	rename      func(oldpath, newpath string) error
-	chmod       func(name string, mode os.FileMode) error
-	remove      func(name string) error
-	copyFile    func(src, dst string) error
-	buildInfo   func() (*debug.BuildInfo, bool)
-	userHomeDir func() (string, error)
-	limits      updateArchiveLimits
+	// probeVersion reads the raw `projmux version` output of one exact
+	// executable. It is deliberately a separate seam from runExternal: the
+	// probe is a reading, not one of the staged apply commands, so it must
+	// never appear in the published command sequence.
+	probeVersion func(exe string) (string, error)
+	goos         string
+	goarch       string
+	mkdirTemp    func(dir, pattern string) (string, error)
+	removeAll    func(path string) error
+	rename       func(oldpath, newpath string) error
+	chmod        func(name string, mode os.FileMode) error
+	remove       func(name string) error
+	copyFile     func(src, dst string) error
+	buildInfo    func() (*debug.BuildInfo, bool)
+	userHomeDir  func() (string, error)
+	limits       updateArchiveLimits
 }
 
 type updateCache struct {
@@ -119,25 +128,26 @@ type githubReleaseAsset struct {
 
 func newUpdateCommand() *updateCommand {
 	return &updateCommand{
-		now:         time.Now,
-		getenv:      os.Getenv,
-		cacheDir:    defaultUpdateCacheDir,
-		client:      &http.Client{Timeout: updateHTTPTimeout},
-		apiURL:      updateReleaseURL,
-		executable:  resolveExecutablePath,
-		lookPath:    exec.LookPath,
-		runExternal: runUpdateExternal,
-		goos:        runtime.GOOS,
-		goarch:      runtime.GOARCH,
-		mkdirTemp:   os.MkdirTemp,
-		removeAll:   os.RemoveAll,
-		rename:      os.Rename,
-		chmod:       os.Chmod,
-		remove:      os.Remove,
-		copyFile:    copyRegularFile,
-		buildInfo:   debug.ReadBuildInfo,
-		userHomeDir: os.UserHomeDir,
-		limits:      defaultUpdateArchiveLimits(),
+		now:          time.Now,
+		getenv:       os.Getenv,
+		cacheDir:     defaultUpdateCacheDir,
+		client:       &http.Client{Timeout: updateHTTPTimeout},
+		apiURL:       updateReleaseURL,
+		executable:   resolveExecutablePath,
+		lookPath:     exec.LookPath,
+		runExternal:  runUpdateExternal,
+		probeVersion: probeInstalledProjmuxVersion,
+		goos:         runtime.GOOS,
+		goarch:       runtime.GOARCH,
+		mkdirTemp:    os.MkdirTemp,
+		removeAll:    os.RemoveAll,
+		rename:       os.Rename,
+		chmod:        os.Chmod,
+		remove:       os.Remove,
+		copyFile:     copyRegularFile,
+		buildInfo:    debug.ReadBuildInfo,
+		userHomeDir:  os.UserHomeDir,
+		limits:       defaultUpdateArchiveLimits(),
 	}
 }
 
@@ -196,8 +206,17 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 		if _, err := fmt.Fprintln(stdout, managedIngestMigrationStagePreviewLine("the updated binary")); err != nil {
 			return err
 		}
+		if _, err := fmt.Fprintln(stdout, updateApplyVerificationPreviewLine()); err != nil {
+			return err
+		}
 		return nil
 	}
+
+	// Read the pre-publication version before anything runs. A failure here is
+	// carried rather than raised: the update itself is still worth attempting,
+	// and an unreadable baseline must end as "not verified", never as success.
+	before := c.probeActiveVersion()
+	expected := c.cachedLatestVersion()
 
 	for _, command := range commands {
 		if _, err := fmt.Fprintf(stdout, ">> running: %s\n", command.String()); err != nil {
@@ -208,9 +227,11 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 		}
 	}
 	if *noApply {
-		return writeUpdateExplicitApplyRequired(stdout, defaultAppSocket)
+		if err := writeUpdateExplicitApplyRequired(stdout, defaultAppSocket); err != nil {
+			return err
+		}
 	}
-	return nil
+	return c.verifyPublishedVersion(stdout, installer.Source, expected, before)
 }
 
 type updateApplyStage string
@@ -414,6 +435,9 @@ func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writ
 	if _, err := fmt.Fprintln(stdout, managedIngestMigrationStagePreviewLine(target)); err != nil {
 		return err
 	}
+	if _, err := fmt.Fprintln(stdout, updateApplyVerificationPreviewLine()); err != nil {
+		return err
+	}
 	if noApply {
 		return writeUpdateExplicitApplyRequired(stdout, defaultAppSocket)
 	}
@@ -425,6 +449,7 @@ func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Wr
 	if err != nil {
 		return err
 	}
+	before := c.probeActiveVersion()
 	rel, err := c.fetchLatestRelease(context.Background())
 	if err != nil {
 		return err
@@ -498,9 +523,11 @@ func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Wr
 		return updateApplyStageError(updateApplyCommand{Stage: stage, Name: target, Args: applyArgs}, err)
 	}
 	if noApply {
-		return writeUpdateExplicitApplyRequired(stdout, defaultAppSocket)
+		if err := writeUpdateExplicitApplyRequired(stdout, defaultAppSocket); err != nil {
+			return err
+		}
 	}
-	return nil
+	return c.verifyPublishedVersion(stdout, "github-release", rel.TagName, before)
 }
 
 func (c *updateCommand) createReleaseScratchDir(target string) (string, error) {
@@ -1200,6 +1227,180 @@ func (c *updateCommand) externalRunner() func(string, []string, io.Writer, io.Wr
 		return c.runExternal
 	}
 	return runUpdateExternal
+}
+
+// updateApplyVersionProbe is one reading of the projmux a user actually runs.
+//
+// It carries its own error instead of returning one so a failed pre-publication
+// reading does not abort an update that is still worth attempting; the error
+// resurfaces at verification time, where it becomes "not verified" rather than
+// success.
+type updateApplyVersionProbe struct {
+	exe     string
+	version string
+	err     error
+}
+
+func (c *updateCommand) probeActiveVersion() updateApplyVersionProbe {
+	exe, v, err := c.activeExecutableVersion()
+	return updateApplyVersionProbe{exe: exe, version: v, err: err}
+}
+
+// activeExecutableVersion reports the version of the executable that answers to
+// `projmux` right now.
+//
+// The installer's own report is deliberately never consulted. `npm install -g`
+// exits 0 after writing into a prefix that PATH may not resolve first, and
+// `go install` has the same failure mode with GOBIN. Both would call that a
+// successful upgrade. Asking PATH for the binary the user will run next, and
+// then asking that binary for its version, does not — which is the whole point
+// of the check.
+//
+// PATH comes first and the running executable is the fallback, so an install
+// that lives outside PATH entirely is still verifiable.
+func (c *updateCommand) activeExecutableVersion() (string, string, error) {
+	exe, err := c.activeExecutablePath()
+	if err != nil {
+		return "", "", err
+	}
+	probe := c.probeVersion
+	if probe == nil {
+		probe = probeInstalledProjmuxVersion
+	}
+	raw, err := probe(exe)
+	if err != nil {
+		return exe, "", fmt.Errorf("run %s version: %w", exe, err)
+	}
+	v, ok := parseProjmuxVersionOutput(raw)
+	if !ok {
+		return exe, "", fmt.Errorf("parse the version reported by %s: %q", exe, strings.TrimSpace(raw))
+	}
+	return exe, v, nil
+}
+
+func (c *updateCommand) activeExecutablePath() (string, error) {
+	if c.lookPath != nil {
+		if exe, err := c.lookPath("projmux"); err == nil {
+			if exe = strings.TrimSpace(exe); exe != "" {
+				return exe, nil
+			}
+		}
+	}
+	exe, err := c.currentExecutable()
+	if err != nil {
+		return "", fmt.Errorf("resolve the active projmux executable: %w", err)
+	}
+	return exe, nil
+}
+
+func probeInstalledProjmuxVersion(exe string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), updateVersionProbeTimeout)
+	defer cancel()
+	var out bytes.Buffer
+	cmd := exec.CommandContext(ctx, exe, "version")
+	cmd.Stdout = &out
+	cmd.Stderr = io.Discard
+	if err := cmd.Run(); err != nil {
+		return "", err
+	}
+	return out.String(), nil
+}
+
+// parseProjmuxVersionOutput reads the `projmux <version>` line the root version
+// route prints. Anything else is treated as unreadable rather than guessed at.
+func parseProjmuxVersionOutput(raw string) (string, bool) {
+	for line := range strings.SplitSeq(raw, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "projmux ")
+		if !ok {
+			continue
+		}
+		rest = strings.TrimSpace(rest)
+		if rest == "" {
+			continue
+		}
+		if _, ok := parseUpdateVersion(rest); !ok {
+			continue
+		}
+		return rest, true
+	}
+	return "", false
+}
+
+// cachedLatestVersion is the version the last release check said was available.
+//
+// It reads the existing cache and never fetches: apply is not a check, and the
+// expected version is diagnostic text, not a gate.
+func (c *updateCommand) cachedLatestVersion() string {
+	cache, ok, err := c.loadCache()
+	if err != nil || !ok {
+		return ""
+	}
+	return strings.TrimSpace(cache.TagName)
+}
+
+// verifyPublishedVersion turns "every apply stage exited 0" into "the version
+// the user will run next actually went up".
+//
+// Exit codes cannot tell a real upgrade apart from a reinstall of the same
+// version, which is exactly what happens while a release exists on GitHub but
+// not yet on the channel this install pulls from.
+func (c *updateCommand) verifyPublishedVersion(stdout io.Writer, channel, expected string, before updateApplyVersionProbe) error {
+	after := c.probeActiveVersion()
+	expectedText := strings.TrimSpace(expected)
+	if expectedText == "" {
+		expectedText = "unknown (no cached release check; run `projmux update check`)"
+	}
+	if cause := firstUpdateProbeError(before, after); cause != nil {
+		return fmt.Errorf(
+			"update apply finished but the installed version could not be verified, so it is not reported as success: current version unknown; expected version %s; install channel %s: %w",
+			expectedText, channel, cause)
+	}
+
+	beforeParts, _ := parseUpdateVersion(before.version)
+	afterParts, _ := parseUpdateVersion(after.version)
+	switch compareVersionParts(beforeParts, afterParts) {
+	case -1:
+		_, err := fmt.Fprintf(stdout, ">> verified: projmux %s is now the active executable at %s (was %s)\n",
+			after.version, after.exe, before.version)
+		return err
+	case 0:
+		return fmt.Errorf(
+			"update apply finished but the installed version did not change: current version %s at %s; expected version %s; install channel %s. %s",
+			after.version, after.exe, expectedText, channel,
+			updateApplyStalledHint(channel, after.version, expected))
+	default:
+		return fmt.Errorf(
+			"update apply finished but the installed version went backwards: current version %s at %s; expected version %s; install channel %s",
+			after.version, after.exe, expectedText, channel)
+	}
+}
+
+func firstUpdateProbeError(before, after updateApplyVersionProbe) error {
+	if after.err != nil {
+		return after.err
+	}
+	return before.err
+}
+
+// updateApplyStalledHint separates the two causes a user can act on: waiting for
+// the channel to publish, and a binary that landed somewhere PATH does not read.
+func updateApplyStalledHint(channel, current, expected string) string {
+	if trimmed := strings.TrimSpace(expected); trimmed != "" &&
+		strings.TrimPrefix(trimmed, "v") == strings.TrimPrefix(current, "v") {
+		return "The active executable already holds the expected version, so this apply published nothing."
+	}
+	switch channel {
+	case "npm":
+		return "Either the expected version is not on the npm registry yet, or `npm install -g` placed it outside the PATH entry that resolves `projmux`."
+	case "go":
+		return "Either the module proxy has not served the expected version yet, or `go install` wrote to a GOBIN that PATH does not resolve first."
+	default:
+		return "Either the expected version is not published to this channel yet, or the new binary landed outside the PATH entry that resolves `projmux`."
+	}
+}
+
+func updateApplyVerificationPreviewLine() string {
+	return "would verify: the projmux that PATH resolves reports a higher version after publication (the installer's own report is never consulted)"
 }
 
 func runUpdateExternal(name string, args []string, stdout, stderr io.Writer) error {
