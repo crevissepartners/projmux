@@ -448,6 +448,18 @@
   exact tmux state plus sanitized hashed tails; denylist checks reject token,
   raw HOME/path, full Registry, and raw command leakage. Normal scenario meaning,
   one-build/four-shard topology, and `.bin/e2e-evidence` retention are unchanged.
+- `test/e2e/evidence-contract.sh` also pins failure-evidence preservation. A
+  failing attempt folds the emitted terminal record and the L06/L08/L16
+  diagnostic into the persisted `projmux.e2e-attempt/v1` artifact as the additive
+  optional `terminal_line`, `terminal_status`, `terminal_source`, and
+  `diagnostic` fields; a begin/pass record keeps its exact prior field set and
+  bytes. Degraded input no longer discards the whole attribution: a zero
+  `BASH_LINENO[0]`, an out-of-range wait status, and a non-allowlisted source
+  path each drop only their own field and mark the terminal record
+  `attribution=partial` while scenario, phase, owner, shard, and replay survive.
+  The `PROJMUX_E2E_INTENTIONAL_ZERO_LINE` fixture drives that path through the
+  real harness, and CI preserves the attempt evidence subtree — excluding
+  `binary/` — as a downloadable artifact on both failing and passing e2e runs.
 - `make test` / `make test-e2e`: L06 Registry lock recurrence applies the
   unchanged 400-attempt, 2ms/50ms delay, and 30s stale budget to one verified
   positive-PID owner lease. `TestRegistryLockRetryBudgetTracksVerifiedOwnerLease`
