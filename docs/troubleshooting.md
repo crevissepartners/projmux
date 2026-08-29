@@ -124,6 +124,13 @@ endpoint, close every sharing client, stop the process through the operator
 that owns it, then run `codex app-server daemon start`. Projmux never performs
 those stop/restart steps or invents an ownership-specific kill command.
 
+A prompted managed Codex create also requires that endpoint. When it is not
+ready or not attachable, `projmux create codex -- "<prompt>"` refuses instead of
+silently creating a plain-CLI Agent, and the refusal carries the same typed
+reason Doctor reports. `--interactive-only` creates that plain Agent on purpose,
+without native turn control. See
+[Codex Native-Required Create Migration](codex-native-required-migration.md).
+
 If native app-server features are needed, review the
 [official Codex CLI installation options](https://learn.chatgpt.com/docs/codex/cli)
 and install or repair the managed standalone payload. Then rerun Doctor. Do not
