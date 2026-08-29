@@ -289,19 +289,38 @@ jobs:
       - name: Run integration tests
         run: make test-integration
 
-  e2e:
-    name: E2E Tests
+  # One shard per runner. The four Linux fixtures are mutually isolated by
+  # container, HOME/XDG, and tmux socket, but a single runner still made them
+  # share one CPU budget; the real-tmux waits inside them are load-sensitive.
+  # Splitting the schedule unit to match the isolation unit is the point.
+  #
+  # Every matrix leg uploads under its own artifact name. One name shared across
+  # legs would have them overwrite each other's evidence, which is the failure
+  # the upload exists to prevent.
+  e2e-linux:
+    name: E2E Linux ${{ matrix.shard }}
     runs-on: ubuntu-latest
     # Observed steady-state is about four minutes. The default six-hour job
     # ceiling turns one wedged container into a burned runner slot with no
     # evidence, so bound it well above the real distribution instead.
     timeout-minutes: 30
 
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - fixture-1
+          - fixture-2
+          - fixture-3
+          - fixture-4
+
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Run e2e tests
+      - name: Run e2e Linux shard
+        env:
+          PROJMUX_E2E_LINUX_SHARD: ${{ matrix.shard }}
         run: make test-e2e
 
       # The attempt directory dies with the runner, which is why a failing e2e
@@ -312,7 +331,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-evidence-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          name: e2e-evidence-failure-${{ github.run_id }}-${{ github.run_attempt }}-linux-${{ matrix.shard }}
           path: |
             .bin/e2e-evidence/attempt-*/**
             !.bin/e2e-evidence/attempt-*/binary/**
@@ -323,12 +342,88 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-evidence-success-${{ github.run_id }}-${{ github.run_attempt }}
+          name: e2e-evidence-success-${{ github.run_id }}-${{ github.run_attempt }}-linux-${{ matrix.shard }}
           path: |
             .bin/e2e-evidence/attempt-*/**
             !.bin/e2e-evidence/attempt-*/binary/**
           if-no-files-found: warn
           retention-days: 1
+
+  e2e-suite:
+    name: E2E ${{ matrix.suite }}
+    runs-on: ubuntu-latest
+    # Observed steady-state is about four minutes. The default six-hour job
+    # ceiling turns one wedged container into a burned runner slot with no
+    # evidence, so bound it well above the real distribution instead.
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - codex-lifecycle
+          - npm-staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run e2e suite
+        env:
+          PROJMUX_E2E_SUITE: ${{ matrix.suite }}
+        run: make test-e2e
+
+      # The attempt directory dies with the runner, which is why a failing e2e
+      # run leaves nothing to read but the log. Preserve the evidence subtree and
+      # skip binary/: it is 99.8% of the attempt size and is reproducible from the
+      # commit plus the binary_sha256 already recorded in build.json.
+      - name: Preserve failing attempt evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-evidence-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.suite }}
+          path: |
+            .bin/e2e-evidence/attempt-*/**
+            !.bin/e2e-evidence/attempt-*/binary/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Preserve passing attempt evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-evidence-success-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.suite }}
+          path: |
+            .bin/e2e-evidence/attempt-*/**
+            !.bin/e2e-evidence/attempt-*/binary/**
+          if-no-files-found: warn
+          retention-days: 1
+
+  # The `main-protect` ruleset requires a status check named exactly
+  # "E2E Tests". A context that is never reported stays pending forever instead
+  # of failing, so renaming or dropping this job would deadlock every merge
+  # rather than surface an error. Changing the ruleset needs repository admin,
+  # so the name stays here and this job carries it over the split shards.
+  e2e-tests:
+    name: E2E Tests
+    if: always()
+    needs:
+      - e2e-linux
+      - e2e-suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout aggregate policy
+        uses: actions/checkout@v6
+
+      - name: Require every e2e child to succeed
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 scripts/required-gate.py \
+            --results-json "$REQUIRED_RESULTS" \
+            --required e2e-linux \
+            --required e2e-suite
 
   test:
     name: Test
@@ -342,7 +437,8 @@ jobs:
       - darwin-native
       - npm-pack
       - integration
-      - e2e
+      - e2e-linux
+      - e2e-suite
     runs-on: ubuntu-latest
 
     steps:
@@ -363,4 +459,5 @@ jobs:
             --required darwin-native \
             --required npm-pack \
             --required integration \
-            --required e2e
+            --required e2e-linux \
+            --required e2e-suite

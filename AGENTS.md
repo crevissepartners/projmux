@@ -20,7 +20,8 @@
 
 ## Branch Protection And PR Flow
 - `main` is protected by the repository ruleset `main-protect`. Direct pushes to `main` are blocked even for repository admins.
-- Every change ships through a pull request. The required status check is the CI `Test` job.
+- Every change ships through a pull request. The merge criterion is the whole CI run green, not a subset of it: the dev flow below waits for the complete local gate sequence and for CI, and nothing merges while any job is red. The `main-protect` ruleset is a backstop under that discipline, and it enforces five checks by *job name* — `Format`, `Unit Tests`, `NPM Packages`, `Integration Tests`, and `E2E Tests`. The aggregate `Test` job is not one of them.
+- Because the ruleset matches job names, renaming or splitting a job that carries one of those five names removes that context silently. A required context that is never reported stays pending forever instead of failing, so every job can be green and the merge still blocked. Keep a job reporting each required name, or update the ruleset first — that needs repository admin.
 - Admin bypass mode is `pull_request`: the admin can self-merge a PR without approvals, but the PR itself is mandatory.
 - Default merge method is **squash**. The PR title becomes the squash commit subject and is what release-please parses, so write it as a Conventional Commit. Follow [docs/pr-guideline.md](docs/pr-guideline.md) for full conventions.
 - `make install` cannot run before the PR is merged into `main`. The full team-lead loop is: push branch → open PR → wait for CI → merge → `git pull --ff-only` → `make install`.

@@ -25,10 +25,24 @@ and humans run the same entrypoints.
   every fixture has its own HOME/XDG/tmux/socket/evidence roots and every
   consumer records the same binary SHA. `E2E_SCENARIO=<ID>` selects one exact
   stable scenario for replay.
+- Three mutually exclusive selectors narrow one invocation. `E2E_SCENARIO=<ID>`
+  replays one scenario, `PROJMUX_E2E_LINUX_SHARD=<shard>` runs exactly one
+  Linux fixture with the terminal inventory its `linux-shards.tsv` row owns,
+  and `PROJMUX_E2E_SUITE=codex-lifecycle|npm-staging` runs one non-Linux suite.
+  Setting none keeps the default: four Linux shards in parallel plus both
+  suites. CI uses the shard/suite selectors to give every suite its own runner,
+  so container isolation and schedule isolation are the same unit there; local
+  `make test-e2e` still runs the whole matrix on one machine.
 - `make test-e2e-contract`, `make test-e2e-reliability`, and
   `make test-e2e-shards` validate typed attempt evidence, bounded semantic
   waits/owned cleanup, and exhaustive four-shard isolation without rerunning
-  the full product matrix.
+  the full product matrix. The shard target also pins the CI job list to the
+  manifest: one non-fail-fast job per shard and per suite, each with its own
+  runner, its own timeout and its own uniquely named evidence artifacts, all of
+  them required children of the aggregate `Test` gate. It also pins the thin
+  `E2E Tests` job, which exists because the branch ruleset requires a status
+  check under that exact name; a required context that is never reported stays
+  pending rather than failing, so dropping that job would deadlock merges.
 - `make test-e2e-coverage` validates
   `test/e2e/ags-oedr-manifest.json`: executable scenario markers and shard
   assignments must match all 21 rows with orphan count zero. A matrix may move
