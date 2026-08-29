@@ -1412,13 +1412,10 @@ run_in_pane() {
   } >"$script"
   chmod 0755 "$script"
   ctx new-window -d -t legacy-alpha: -n "runner-$label" "$script"
-  for _ in {1..200}; do
-    if [[ -f "$create_markers/$label.code" ]]; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "timed out waiting for the $label runner exit-code marker" >&2
+  if smoke_wait_until 10 "the $label runner exit-code marker" \
+    test -f "$create_markers/$label.code"; then
+    return 0
+  fi
   cat "$create_root/run-$label.err" >&2 || true
   return 1
 }
@@ -1744,23 +1741,23 @@ if [[ " \$* " == *" --topic release triage "* ]]; then
   [[ "\${TMUX_PANE:-}" =~ ^%[0-9]+$ ]] || exit 1
   [[ -n "\${PMX_INTERNAL_ACTIVATION_PANE_UID:-}" ]] || exit 1
   [[ -n "\${PMX_INTERNAL_ACTIVATION_GENERATION:-}" ]] || exit 1
-  activation_ready=0
-  for _ in {1..200}; do
-    if HOME=$(printf %q "$agent_home") \
+  # The stub is a real process outside this harness, so it takes the shared wait
+  # helper the same way the scenarios do. A timeout lands in the launch log the
+  # scenario already dumps, instead of a bare exit the caller has to guess at.
+  source $(printf %q "$smoke_root/test/lib/smoke.sh")
+  stub_activation_bound() {
+    HOME=$(printf %q "$agent_home") \
       PATH=$(printf %q "$create_shim:$agent_home/.local/bin"):\$PATH \
       TMUX_TMPDIR=$(printf %q "$create_root/tt") \
       XDG_STATE_HOME=$(printf %q "$create_root/state") \
       XDG_CONFIG_HOME=$(printf %q "$create_root/config") \
       PROJMUX_MANAGED_ROOTS=$(printf %q "$create_root/legacy:$create_root/work") \
       $(printf %q "$bin") describe pane "uid:\$PMX_INTERNAL_ACTIVATION_PANE_UID" -o uid \
-      >$(printf %q "$create_root/agent-activation-poll.out") 2>/dev/null &&
-      [[ "\$(tr -d '[:space:]' <$(printf %q "$create_root/agent-activation-poll.out"))" == "\$PMX_INTERNAL_ACTIVATION_PANE_UID" ]]; then
-      activation_ready=1
-      break
-    fi
-    sleep 0.05
-  done
-  [[ "\$activation_ready" == "1" ]] || exit 1
+      >$(printf %q "$create_root/agent-activation-poll.out") 2>/dev/null || return 1
+    [[ "\$(tr -d '[:space:]' <$(printf %q "$create_root/agent-activation-poll.out"))" == "\$PMX_INTERNAL_ACTIVATION_PANE_UID" ]]
+  }
+  smoke_wait_until 10 "the created Agent Pane uid to bind in the Registry" stub_activation_bound \
+    2>>$(printf %q "$create_root/agent-launch.log") || exit 1
   printf '{"hook_event_name":"UserPromptSubmit","thread_id":"phase6-activation-thread","session_id":"phase6-activation-session","cwd":"%s"}' "\$PWD" |
     HOME=$(printf %q "$agent_home") \
     PATH=$(printf %q "$create_shim:$agent_home/.local/bin"):\$PATH \
@@ -1847,11 +1844,11 @@ if [[ ! "$agent_pane" =~ ^%[0-9]+$ ]]; then
   exit 1
 fi
 
-# The provider really launched inside the pane the create made.
-for _ in {1..200}; do
-  [[ -s "$create_root/agent-launch.log" ]] && break
-  sleep 0.05
-done
+# The provider really launched inside the pane the create made. The wait for the
+# log to appear is its own named failure, so a slow launch cannot be reported
+# below as a provider that started in the wrong directory.
+smoke_wait_until 10 "the provider stub launch log to appear" \
+  test -s "$create_root/agent-launch.log"
 if ! grep -Fq "cwd=$create_root/legacy/alpha" "$create_root/agent-launch.log"; then
   echo "the provider stub did not launch in the project root" >&2
   cat "$create_root/agent-launch.log" >&2 || true
@@ -1897,10 +1894,10 @@ TERM=xterm-256color script -qefc \
   "TERM=xterm-256color env -u TMUX -u TMUX_PANE TMUX_TMPDIR='$create_root/tt' '$create_real_tmux' -L '$create_socket' attach-session -t legacy-alpha" \
   "$create_root/exact-client-two.typescript" >/dev/null 2>&1 &
 create_client_two_pid=$!
-for _ in {1..200}; do
-  [[ "$(ctx list-clients -F '#{client_name}' | wc -l)" -ge 2 ]] && break
-  sleep 0.05
-done
+create_two_clients_attached() {
+  [[ "$(ctx list-clients -F '#{client_name}' | wc -l)" -ge 2 ]]
+}
+smoke_wait_until 10 "two isolated tmux clients to attach" create_two_clients_attached
 mapfile -t exact_clients < <(ctx list-clients -F '#{client_name}' | head -n 2)
 if [[ "${#exact_clients[@]}" != "2" ]]; then
   echo "outside exact create did not establish two isolated clients" >&2
@@ -1938,16 +1935,13 @@ if [[ "$(ctx display-message -p -t "$exact_agent_pane" '#{pane_id}')" != "$exact
   echo "outside exact create returned a Pane outside the app socket: $exact_agent_pane" >&2
   exit 1
 fi
-for _ in {1..200}; do
+create_exact_agent_settled() {
   exact_title="$(ctx display-message -p -t "$exact_agent_pane" '#{pane_title}')"
   exact_launch_log_after="$(wc -l <"$create_root/agent-launch.log" | tr -d '[:space:]')"
-  [[ "$exact_title" == "codex:alpha" && "$exact_launch_log_after" -gt "$exact_launch_log_before" ]] && break
-  sleep 0.05
-done
-if [[ "${exact_title:-}" != "codex:alpha" || "${exact_launch_log_after:-0}" -le "$exact_launch_log_before" ]]; then
-  echo "outside exact create provider/title did not settle on $exact_agent_pane" >&2
-  exit 1
-fi
+  [[ "$exact_title" == "codex:alpha" && "$exact_launch_log_after" -gt "$exact_launch_log_before" ]]
+}
+smoke_wait_until 10 "outside exact create provider/title to settle on $exact_agent_pane" \
+  create_exact_agent_settled
 exact_siblings_after="$({
   ctx display-message -p -t "$agent_pane_before" '#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}'
   ctx display-message -p -t "$exact_review_pane" '#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}'
@@ -1998,10 +1992,8 @@ if [[ "$(tr -d '[:space:]' <"$create_root/agent-payload.out")" != "codex-2" ]]; 
   echo "a payload changed the Agent name: $(cat "$create_root/agent-payload.out")" >&2
   exit 1
 fi
-for _ in {1..200}; do
-  [[ -s "$create_root/agent-launch.log" ]] && break
-  sleep 0.05
-done
+smoke_wait_until 10 "the payload-bearing provider stub launch log to appear" \
+  test -s "$create_root/agent-launch.log"
 if ! grep -Fq -- "args=-C $create_root/legacy/alpha -p payload-project -w payload-window --topic release triage" "$create_root/agent-launch.log"; then
   echo "the payload did not reach the provider:" >&2
   cat "$create_root/agent-launch.log" >&2 || true
@@ -2314,11 +2306,11 @@ if [[ ! "$phase15_agent_pane" =~ ^%[0-9]+$ ]] || [[ -s "$create_root/explicit-ow
   cat "$create_root/explicit-owner-agent.err" >&2 || true
   exit 1
 fi
-for _ in {1..200}; do
+phase15_launch_grew() {
   phase15_launch_after="$(wc -l <"$create_root/agent-launch.log" | tr -d '[:space:]')"
-  [[ "$phase15_launch_after" -gt "$phase15_launch_before" ]] && break
-  sleep 0.05
-done
+  [[ "$phase15_launch_after" -gt "$phase15_launch_before" ]]
+}
+smoke_wait_until 10 "the exact-Project create codex provider launch line" phase15_launch_grew
 if [[ "${phase15_launch_after:-0}" -le "$phase15_launch_before" ]] ||
   [[ "$(ctx display-message -p -t "$phase15_agent_pane" '#{session_name}|#{window_name}|#{pane_id}')" != "legacy-alpha|hi|$phase15_agent_pane" ]] ||
   [[ -z "$(ctx show-options -pqv -t "$phase15_agent_pane" @projmux_pane_uid)" ]] ||
@@ -3591,20 +3583,13 @@ if [[ -z "$self_uid" ]] || [[ -z "$self_window" ]]; then
   exit 1
 fi
 touch "$delete_root/self-start"
-for _ in {1..200}; do
-  if [[ -s "$delete_root/self.out" ]] && \
-    [[ "$(delete_tmux display-message -p -t "$self_window" '#{window_id}' 2>/dev/null || true)" != "$self_window" ]]; then
-    break
-  fi
-  sleep 0.05
-done
-if [[ ! -s "$delete_root/self.out" ]]; then
-  echo "self-target delete left no durable stdout" >&2
+delete_self_target_settled() {
+  [[ -s "$delete_root/self.out" ]] || return 1
+  [[ "$(delete_tmux display-message -p -t "$self_window" '#{window_id}' 2>/dev/null || true)" != "$self_window" ]]
+}
+if ! smoke_wait_until 10 "self-target delete to leave durable stdout and close $self_window" \
+  delete_self_target_settled; then
   cat "$delete_root/self.err" >&2 || true
-  exit 1
-fi
-if [[ "$(delete_tmux display-message -p -t "$self_window" '#{window_id}' 2>/dev/null || true)" == "$self_window" ]]; then
-  echo "self-target delete left $self_window live" >&2
   exit 1
 fi
 delete_pmx get windows --all-projects -o uid >"$delete_root/windows.after-self"
@@ -3700,39 +3685,25 @@ if [[ "$(delete_tmux show-options -gqv @projmux_app)" != "1" ]]; then
   exit 1
 fi
 delete_tmux kill-pane -t "$delete_offline_pane"
-delete_offline_pane_ready=0
-for _ in {1..200}; do
-  if delete_pmx describe pane "uid:$delete_offline_pane_uid" -o json >"$delete_root/offline-pane.json" 2>/dev/null && \
-    grep -Fq '"type": "MissingRuntime"' "$delete_root/offline-pane.json" && \
-    grep -Fq '"reason": "RuntimeUnbound"' "$delete_root/offline-pane.json"; then
-    delete_offline_pane_ready=1
-    break
-  fi
-  sleep 0.05
-done
-if [[ "$delete_offline_pane_ready" != "1" ]]; then
-  echo "raw Pane loss did not converge to durable MissingRuntime evidence" >&2
-  exit 1
-fi
+delete_offline_pane_converged() {
+  delete_pmx describe pane "uid:$delete_offline_pane_uid" -o json >"$delete_root/offline-pane.json" 2>/dev/null &&
+    grep -Fq '"type": "MissingRuntime"' "$delete_root/offline-pane.json" &&
+    grep -Fq '"reason": "RuntimeUnbound"' "$delete_root/offline-pane.json"
+}
+smoke_wait_until 10 "raw Pane loss to converge to durable MissingRuntime evidence" \
+  delete_offline_pane_converged
 delete_offline_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
 delete_offline_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_offline_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_offline_agent_pane" @projmux_pane_uid)"
 delete_tmux kill-pane -t "$delete_offline_agent_pane"
-delete_offline_agent_ready=0
-for _ in {1..200}; do
-  if delete_pmx describe agent "uid:$delete_offline_agent_uid" -o json >"$delete_root/offline-agent.json" 2>/dev/null && \
-    delete_pmx describe pane "uid:$delete_offline_agent_pane_uid" -o json >"$delete_root/offline-agent-pane.json" 2>/dev/null && \
-    grep -Fq '"phase": "Offline"' "$delete_root/offline-agent.json" && \
-    grep -Fq '"type": "MissingRuntime"' "$delete_root/offline-agent-pane.json"; then
-    delete_offline_agent_ready=1
-    break
-  fi
-  sleep 0.05
-done
-if [[ "$delete_offline_agent_ready" != "1" ]]; then
-  echo "raw Agent Pane loss did not converge to Offline/MissingRuntime evidence" >&2
-  exit 1
-fi
+delete_offline_agent_converged() {
+  delete_pmx describe agent "uid:$delete_offline_agent_uid" -o json >"$delete_root/offline-agent.json" 2>/dev/null &&
+    delete_pmx describe pane "uid:$delete_offline_agent_pane_uid" -o json >"$delete_root/offline-agent-pane.json" 2>/dev/null &&
+    grep -Fq '"phase": "Offline"' "$delete_root/offline-agent.json" &&
+    grep -Fq '"type": "MissingRuntime"' "$delete_root/offline-agent-pane.json"
+}
+smoke_wait_until 10 "raw Agent Pane loss to converge to Offline/MissingRuntime evidence" \
+  delete_offline_agent_converged
 delete_tmux list-panes -a -F '#{session_id}:#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort >"$delete_root/offline-pane.tmux-before"
 {
   delete_pmx get projects -o uid
@@ -4072,30 +4043,26 @@ delete_tmux kill-server
 # generated hooks background their convergence. Those convergences are the last
 # legitimate writers of this registry, so the byte-identity check below has to
 # start from a settled file rather than from whatever the file held mid-flight.
-# Stability is the honest signal: ten identical 50ms observations establish a
-# 500ms quiet window in which no worker is still landing a pass.
-delete_settled=0
+# Stability is the honest signal: ten identical 50ms-spaced observations
+# establish a roughly half-second quiet window in which no worker is still
+# landing a pass. How long the run may spend looking for that window is the
+# wait budget, which is a separate number and scales with the runner.
 delete_stable_samples=0
-cp "$delete_registry" "$delete_root/registry.settle-probe"
-SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.settle-probe"
-for _ in {1..200}; do
-  sleep 0.05
+delete_registry_settled() {
   if cmp -s "$delete_root/registry.settle-probe" "$delete_registry"; then
     delete_stable_samples=$((delete_stable_samples + 1))
-    if [[ "$delete_stable_samples" == "10" ]]; then
-      delete_settled=1
-      break
-    fi
-    continue
+    ((delete_stable_samples >= 10))
+    return
   fi
   delete_stable_samples=0
   cp "$delete_registry" "$delete_root/registry.settle-probe"
   SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.settle-probe"
-done
-if [[ "$delete_settled" != "1" ]]; then
-  echo "hook-driven convergence never settled after kill-server" >&2
-  exit 1
-fi
+  return 1
+}
+cp "$delete_registry" "$delete_root/registry.settle-probe"
+SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.settle-probe"
+smoke_wait_until 10 "hook-driven convergence to settle after kill-server" \
+  delete_registry_settled
 cp "$delete_registry" "$delete_root/registry.before-no-server-dry-run"
 SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.before-no-server-dry-run"
 if delete_pmx_delete pane "uid:$delete_sibling_shell_uid" --dry-run \
@@ -5447,15 +5414,7 @@ startup_wait_for() {
   shift
   # Full four-shard Docker load can delay the real attached-client and Project
   # materialization path; keep the same predicate with a bounded 30s budget.
-  for _ in {1..600}; do
-    if "$@"; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "timed out waiting for $description" >&2
-  tail -c 8000 "$startup_client_log" >&2 || true
-  return 1
+  SMOKE_WAIT_DIAGNOSTIC_LOG="$startup_client_log" smoke_wait_until 30 "$description" "$@"
 }
 
 startup_client_is_on() {
@@ -6327,15 +6286,7 @@ fopen_client_pid=$!
 fopen_wait_for() {
   local description="$1"
   shift
-  for _ in {1..200}; do
-    if "$@"; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "timed out waiting for $description" >&2
-  tail -c 8000 "$fopen_client_log" >&2 || true
-  return 1
+  SMOKE_WAIT_DIAGNOSTIC_LOG="$fopen_client_log" smoke_wait_until 10 "$description" "$@"
 }
 
 fopen_wait_for "attached first-open tmux client" sh -c \
@@ -6706,15 +6657,7 @@ rtd_client_pid=$!
 rtd_wait_for() {
   local description="$1"
   shift
-  for _ in {1..200}; do
-    if "$@"; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "timed out waiting for $description" >&2
-  tail -c 12000 "$rtd_client_log" >&2 || true
-  return 1
+  SMOKE_WAIT_DIAGNOSTIC_LOG="$rtd_client_log" smoke_wait_until 10 "$description" "$@"
 }
 
 rtd_wait_for "attached runtime diagnostics client" sh -c \
@@ -6957,15 +6900,7 @@ nav_client_pid=$!
 nav_wait_for() {
   local description="$1"
   shift
-  for _ in {1..200}; do
-    if "$@"; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "timed out waiting for $description" >&2
-  tail -c 12000 "$nav_client_log" >&2 || true
-  return 1
+  SMOKE_WAIT_DIAGNOSTIC_LOG="$nav_client_log" smoke_wait_until 10 "$description" "$@"
 }
 
 nav_wait_for "attached registry navigation client" sh -c \
@@ -7441,14 +7376,7 @@ rtv_list_has_runtime() {
 rtv_wait_for() {
   local description="$1"
   shift
-  for _ in {1..200}; do
-    if "$@"; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "timed out waiting for $description" >&2
-  return 1
+  smoke_wait_until 10 "$description" "$@"
 }
 
 # Default `When needed` on a healthy host: the Project rows are there and the
@@ -7499,15 +7427,7 @@ rtv_client_pid=$!
 rtv_wait_for_client() {
   local description="$1"
   shift
-  for _ in {1..200}; do
-    if "$@"; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "timed out waiting for $description" >&2
-  tail -c 12000 "$rtv_client_log" >&2 || true
-  return 1
+  SMOKE_WAIT_DIAGNOSTIC_LOG="$rtv_client_log" smoke_wait_until 10 "$description" "$@"
 }
 
 rtv_wait_for_client "attached Alt-1 Runtime visibility client" sh -c \
@@ -7752,14 +7672,7 @@ SMOKE_L16_ERR_PATH="$disc_root/open-bootstrap.err"
 disc_wait_for() {
   local description="$1"
   shift
-  for _ in {1..200}; do
-    if "$@"; then
-      return 0
-    fi
-    sleep 0.05
-  done
-  echo "timed out waiting for $description" >&2
-  return 1
+  smoke_wait_until 10 "$description" "$@"
 }
 
 disc_wait_for "attached discovery tmux client" sh -c \

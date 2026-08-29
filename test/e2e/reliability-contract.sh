@@ -81,6 +81,76 @@ f07=(python3 "$root/scripts/e2e-evidence.py" record --directory "$artifacts/f07"
 "${f07[@]}" --class harness-lifecycle --outcome fail --elapsed-ms 1 >/dev/null
 python3 "$root/scripts/e2e-evidence.py" validate --terminal "$artifacts/f07/summary.jsonl"
 
+# F08: a wait that outlives its budget fails as a named timeout carrying the
+# budget actually applied and the state the wait ended in. It never returns
+# success, so a slow fixture cannot be reported by the next assertion as a
+# product regression. The fixture is slow, not broken: the same predicate
+# succeeds once E2E_WAIT_SCALE buys it enough time.
+f08_marker="$artifacts/f08-slow-marker"
+f08_log="$artifacts/f08-diagnostic.log"
+printf 'f08 fixture diagnostic tail\n' >"$f08_log"
+(
+  sleep 1
+  : >"$f08_marker"
+) &
+f08_fixture_pid=$!
+set +e
+SMOKE_WAIT_DIAGNOSTIC_LOG="$f08_log" \
+  smoke_wait_until 0.2 "the F08 slow fixture marker" test -e "$f08_marker" \
+  2>"$artifacts/f08.err"
+f08_status=$?
+set -e
+if [[ "$f08_status" == "0" ]]; then
+  echo "F08 wait helper reported success before its slow fixture existed" >&2
+  exit 1
+fi
+grep -Fq 'timed out waiting for the F08 slow fixture marker' "$artifacts/f08.err"
+grep -Eq '^  budget=0\.2s scale=1 elapsed_ms=[0-9]+ attempts=[0-9]+ last_status=[1-9][0-9]*$' \
+  "$artifacts/f08.err"
+grep -Fq "command: test -e $f08_marker" "$artifacts/f08.err"
+grep -Fq 'f08 fixture diagnostic tail' "$artifacts/f08.err"
+if ! (
+  SMOKE_WAIT_SCALE=""
+  E2E_WAIT_SCALE=20
+  smoke_wait_until 0.2 "the F08 slow fixture marker under scale" test -e "$f08_marker"
+); then
+  echo "F08 scaled budget did not absorb the slow fixture" >&2
+  exit 1
+fi
+wait "$f08_fixture_pid"
+
+# F09: E2E_WAIT_SCALE moves the timeout instant itself, which is what lets a
+# loaded runner be given time instead of a regression report.
+f09_never_true() { return 7; }
+f09_timeout_ms() {
+  local scale="$1" started
+  started="$(smoke_now_ms)"
+  (
+    SMOKE_WAIT_SCALE=""
+    E2E_WAIT_SCALE="$scale"
+    smoke_wait_until 0.4 "the F09 condition" f09_never_true
+  ) >/dev/null 2>&1 || true
+  printf '%s' "$(($(smoke_now_ms) - started))"
+}
+f09_scale_one="$(f09_timeout_ms 1)"
+f09_scale_five="$(f09_timeout_ms 5)"
+if ((f09_scale_five < f09_scale_one * 3)) || ((f09_scale_five < 1800)); then
+  echo "F09 E2E_WAIT_SCALE did not expand the budget: scale1=${f09_scale_one}ms scale5=${f09_scale_five}ms" >&2
+  exit 1
+fi
+if ! (
+  # shellcheck disable=SC2034 # Both are consumed by the sourced wait helper.
+  SMOKE_WAIT_SCALE=""
+  # shellcheck disable=SC2034
+  E2E_WAIT_SCALE=not-a-number
+  smoke_wait_until 0.1 "the F09 fallback" true
+) 2>"$artifacts/f09-invalid.err"; then
+  echo "F09 invalid E2E_WAIT_SCALE broke the wait instead of falling back" >&2
+  exit 1
+fi
+grep -Fq 'ignoring invalid E2E_WAIT_SCALE=not-a-number; using 1' "$artifacts/f09-invalid.err"
+printf 'F09 wait budget timeout scale1=%sms scale5=%sms\n' "$f09_scale_one" "$f09_scale_five"
+
 # Phase-0 first-failure diagnostics are synthetic and scenario-owned. They
 # exercise only the log formatter; no product timeout, retry, lock, or Registry
 # semantics are changed to manufacture the failures.
@@ -210,4 +280,4 @@ for scenario, name, attribution in (
     assert "class" not in terminal and "class" not in diagnostic
 PY
 
-echo ">> F01/F02/F04/F06/F07 and L06/L08/L16 first-failure contracts passed"
+echo ">> F01/F02/F04/F06/F07/F08/F09 and L06/L08/L16 first-failure contracts passed"
