@@ -1656,6 +1656,7 @@ func TestCreateAgentHelpAdvertisesOnlyImplementedFlagsAndProjections(t *testing.
 			fs.String("placement", "", "")
 			fs.String("cwd", "", "")
 			fs.Var(&out.addDirs, "add-dir", "")
+			fs.Bool("interactive-only", false, "")
 			fs.String("name", "", "")
 			fs.Var(&out.labels, "label", "")
 			fs.String("output", "", "")
