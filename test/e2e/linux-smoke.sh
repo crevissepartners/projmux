@@ -3345,6 +3345,92 @@ case "$delete_other_socket_path" in
     exit 1
     ;;
 esac
+
+# Canonical deletes and raw tmux losses both fire background controller hooks.
+# A fixed delay is not an authority boundary: on a loaded runner the worker may
+# still hold the lease after that delay, and a following dry-run byte snapshot
+# can then observe the worker's legitimate lifecycle commit as if the dry-run
+# wrote it. Observe only the worker argv for this exact physical socket. The
+# durable queue is not an idle signal here: canonical delete intentionally
+# retains retry-exhausted pane-exited evidence for config-apply startup replay.
+# This observer never acquires the controller lease or runs a convergence pass.
+delete_owned_controller_process_count() {
+  local proc command count=0
+  local -a argv=()
+  for proc in /proc/[0-9]*; do
+    argv=()
+    if ! { mapfile -d '' -t argv <"$proc/cmdline"; } 2>/dev/null; then
+      continue
+    fi
+    command="${argv[*]}"
+    # The generated exit hooks begin as `sh -c 'sleep 0.05; ... converge'`
+    # before exec exposes projmux as argv[0]. Match the complete exact-socket
+    # command envelope in either shape so the pre-exec delay is still a writer
+    # candidate and cannot look idle.
+    if [[ "$command" != *"$bin"* || "$command" != *"internal tmux converge"* ||
+      "$command" != *"--socket-path"* || "$command" != *"$delete_socket_path"* ]]; then
+      continue
+    fi
+    count=$((count + 1))
+  done
+  printf '%s\n' "$count"
+}
+delete_controller_idle_streak=0
+delete_controller_process_count=0
+delete_controller_observed_idle() {
+  delete_controller_process_count="$(delete_owned_controller_process_count)"
+  if [[ "$delete_controller_process_count" == "0" ]]; then
+    delete_controller_idle_streak=$((delete_controller_idle_streak + 1))
+    ((delete_controller_idle_streak >= 2))
+    return
+  fi
+  delete_controller_idle_streak=0
+  return 1
+}
+delete_await_controller_observed_idle() {
+  local label="$1"
+  delete_controller_idle_streak=0
+  if smoke_wait_until 10 "delete controller owner idle at $label" \
+    delete_controller_observed_idle; then
+    return 0
+  fi
+  echo "delete controller did not become observed-idle at $label: owned-processes=$delete_controller_process_count" >&2
+  return 1
+}
+delete_registry_stable_samples=0
+delete_registry_stable_probe=""
+delete_registry_stable_sample() {
+  delete_controller_process_count="$(delete_owned_controller_process_count)"
+  if [[ "$delete_controller_process_count" != "0" ]]; then
+    delete_registry_stable_samples=0
+    cp "$delete_registry" "$delete_registry_stable_probe"
+    SMOKE_L08_REGISTRY_BEFORE="$delete_registry_stable_probe"
+    return 1
+  fi
+  if cmp -s "$delete_registry_stable_probe" "$delete_registry"; then
+    delete_registry_stable_samples=$((delete_registry_stable_samples + 1))
+    ((delete_registry_stable_samples >= 10))
+    return
+  fi
+  delete_registry_stable_samples=0
+  cp "$delete_registry" "$delete_registry_stable_probe"
+  SMOKE_L08_REGISTRY_BEFORE="$delete_registry_stable_probe"
+  return 1
+}
+delete_await_registry_stable() {
+  local label="$1"
+  delete_registry_stable_probe="$2"
+  delete_registry_stable_samples=0
+  cp "$delete_registry" "$delete_registry_stable_probe"
+  SMOKE_L08_REGISTRY_BEFORE="$delete_registry_stable_probe"
+  if smoke_wait_until 10 "L08 Registry/no-writer baseline at $label" \
+    delete_registry_stable_sample; then
+    return 0
+  fi
+  echo "L08 baseline did not settle at $label: stable_samples=$delete_registry_stable_samples controller_processes=$delete_controller_process_count" >&2
+  return 1
+}
+
 delete_other_before="$(delete_other_tmux show-options -gqv @projmux_delete_sentinel):$(delete_other_tmux list-windows -a -F '#{session_name}:#{window_id}')"
 echo ">> delete resource e2e socket=$delete_socket path=$delete_socket_path other-socket=$delete_other_socket other-path=$delete_other_socket_path"
 
@@ -3469,6 +3555,25 @@ fi
 
 delete_registry="$delete_root/state/projmux/metadata/registry.json"
 SMOKE_CONTRACT_TERMINAL_STATE_PATH="$delete_registry"
+
+# Pin the observer against the exact pre-exec shape the generated background
+# hooks use. This shell deliberately never runs the controller; its argv merely
+# carries the same delayed command envelope. The idle barrier must see it for
+# the whole delay rather than returning on two early zero samples.
+delete_delayed_hook_started_ms="$(smoke_now_ms)"
+/bin/sh -c 'sleep "$1"' sh 0.4 \
+  "$bin" internal tmux converge --socket-path "$delete_socket_path" --reason pane-killed &
+delete_delayed_hook_pid=$!
+delete_await_controller_observed_idle delayed-pre-exec-hook
+delete_delayed_hook_elapsed_ms=$(($(smoke_now_ms) - delete_delayed_hook_started_ms))
+wait "$delete_delayed_hook_pid"
+if ((delete_delayed_hook_elapsed_ms < 350)); then
+  echo "delete controller observer missed delayed pre-exec hook shell: elapsed_ms=$delete_delayed_hook_elapsed_ms" >&2
+  exit 1
+fi
+
+delete_await_registry_stable initial-window-dry-run \
+  "$delete_root/registry.settle-before-dry-run"
 cp "$delete_registry" "$delete_root/registry.before-dry-run"
 SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.before-dry-run"
 delete_tmux list-windows -a -F '#{session_name}:#{window_id}:#{@projmux_window_uid}' \
@@ -3502,6 +3607,7 @@ fi
 delete_pmx get projects -o uid >"$delete_root/projects.after-external"
 smoke_assert_file_contains "$delete_root/projects.after-external" "$delete_alpha_project_uid"
 smoke_assert_file_contains "$delete_root/external.out" "live killed tmux window $delete_primary"
+delete_await_controller_observed_idle external-window-delete
 
 # The only beta Window explicitly predicts and then causes the canonical
 # Window-root cascade. Explicit Window deletion ends the live session but
@@ -3550,6 +3656,7 @@ if [[ "$delete_other_after_last_window" != "$delete_other_before_last_window" ]]
   echo "explicit last-Window cascade touched the foreign socket" >&2
   exit 1
 fi
+delete_await_controller_observed_idle last-window-delete
 
 # A managed runner Window invokes implicit delete from inside itself. There is
 # intentionally no post-command marker: a correct implementation flushes the
@@ -3602,6 +3709,7 @@ if ! grep -Fqx "$delete_sibling_uid" "$delete_root/windows.after-self"; then
   exit 1
 fi
 smoke_assert_file_contains "$delete_root/self.out" "will queue after this result is flushed to kill tmux window $self_window"
+delete_await_controller_observed_idle self-window-delete
 
 # Pane deletion removes one exact live split and Registry resource while the
 # sibling Pane, owning Window, Project, and foreign socket remain unchanged.
@@ -3623,10 +3731,9 @@ if [[ "$(delete_tmux display-message -p -t "$delete_split" '#{pane_id}' 2>/dev/n
   exit 1
 fi
 # The generated after-kill-pane liveness sweep is intentionally backgrounded.
-# Let that already-triggered inventory transaction settle before introducing a
-# new Agent resource, so this test does not ask a pre-Agent snapshot to judge a
-# Pane created after the snapshot was taken.
-sleep 0.5
+# Require its exact controller-owner boundary before introducing a new Agent, so a
+# pre-Agent snapshot can never judge a Pane created after that snapshot.
+delete_await_controller_observed_idle sibling-pane-delete
 
 # A real provider-shaped managed Pane exercises both ownership outcomes: Pane
 # delete keeps its Agent Offline, while Agent delete cascades through its exact
@@ -3647,7 +3754,7 @@ if grep -Fq '"paneRef"' "$delete_root/managed-agent-offline.json"; then
   echo "managed Pane delete left Agent paneRef behind" >&2
   exit 1
 fi
-sleep 0.5
+delete_await_controller_observed_idle managed-pane-delete
 
 delete_agent_two_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
 delete_agent_two_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
@@ -3670,6 +3777,7 @@ if [[ "$(delete_tmux display-message -p -t "$delete_sibling_shell" '#{pane_id}')
   echo "Agent delete changed shell sibling $delete_sibling_shell" >&2
   exit 1
 fi
+delete_await_controller_observed_idle managed-agent-delete
 
 # Exact runtime absence plus durable lifecycle evidence authorizes only a
 # Registry-only Pane/Agent delete. Exercise the Pane while the socket is
@@ -3692,6 +3800,7 @@ delete_offline_pane_converged() {
 }
 smoke_wait_until 10 "raw Pane loss to converge to durable MissingRuntime evidence" \
   delete_offline_pane_converged
+delete_await_controller_observed_idle raw-pane-loss
 delete_offline_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
 delete_offline_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_offline_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_offline_agent_pane" @projmux_pane_uid)"
@@ -3704,6 +3813,7 @@ delete_offline_agent_converged() {
 }
 smoke_wait_until 10 "raw Agent Pane loss to converge to Offline/MissingRuntime evidence" \
   delete_offline_agent_converged
+delete_await_controller_observed_idle raw-agent-pane-loss
 delete_tmux list-panes -a -F '#{session_id}:#{window_id}:#{pane_id}:#{@projmux_pane_uid}' | sort >"$delete_root/offline-pane.tmux-before"
 {
   delete_pmx get projects -o uid
@@ -3712,6 +3822,8 @@ delete_tmux list-panes -a -F '#{session_id}:#{window_id}:#{pane_id}:#{@projmux_p
   delete_pmx get agents --all-projects -o uid
 } | grep -Fvx -e "$delete_offline_pane_uid" -e "$delete_offline_agent_uid" -e "$delete_offline_agent_pane_uid" | sort >"$delete_root/offline-sibling-graph.before"
 sha256sum "$delete_root/offline-sibling-graph.before" >"$delete_root/offline-sibling-graph.before.sha256"
+delete_await_registry_stable offline-pane-dry-run \
+  "$delete_root/registry.settle-before-offline-pane-dry-run"
 cp "$delete_registry" "$delete_root/registry.before-offline-pane-dry-run"
 SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.before-offline-pane-dry-run"
 delete_pmx_delete pane "uid:$delete_offline_pane_uid" --dry-run >"$delete_root/offline-pane-dry-run.out"
@@ -3793,7 +3905,8 @@ if [[ -z "$delete_offline_window_uid" || -z "$delete_offline_shell_uid" || -z "$
   exit 1
 fi
 delete_tmux kill-window -t "$delete_offline_window"
-sleep 0.5
+delete_await_registry_stable raw-window-loss \
+  "$delete_root/registry.offline-window-settle-probe"
 
 cp "$delete_registry" "$delete_root/registry.before-offline-dry-run"
 SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.before-offline-dry-run"
@@ -3843,6 +3956,8 @@ for delete_forbidden_route in "-L $delete_socket" "-L $delete_product_socket" "-
   fi
 done
 
+delete_await_registry_stable offline-window-repeat \
+  "$delete_root/registry.settle-before-offline-repeat"
 cp "$delete_registry" "$delete_root/registry.before-offline-repeat"
 SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.before-offline-repeat"
 if delete_pmx_delete window "uid:$delete_offline_window_uid" --project "uid:$delete_alpha_project_uid" --yes \
@@ -4043,26 +4158,12 @@ delete_tmux kill-server
 # generated hooks background their convergence. Those convergences are the last
 # legitimate writers of this registry, so the byte-identity check below has to
 # start from a settled file rather than from whatever the file held mid-flight.
-# Stability is the honest signal: ten identical 50ms-spaced observations
-# establish a roughly half-second quiet window in which no worker is still
-# landing a pass. How long the run may spend looking for that window is the
-# wait budget, which is a separate number and scales with the runner.
-delete_stable_samples=0
-delete_registry_settled() {
-  if cmp -s "$delete_root/registry.settle-probe" "$delete_registry"; then
-    delete_stable_samples=$((delete_stable_samples + 1))
-    ((delete_stable_samples >= 10))
-    return
-  fi
-  delete_stable_samples=0
-  cp "$delete_registry" "$delete_root/registry.settle-probe"
-  SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.settle-probe"
-  return 1
-}
-cp "$delete_registry" "$delete_root/registry.settle-probe"
-SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.settle-probe"
-smoke_wait_until 10 "hook-driven convergence to settle after kill-server" \
-  delete_registry_settled
+# Stability is the honest signal: ten identical 50ms-spaced observations with
+# no exact hook shell/controller establish a roughly half-second quiet window.
+# This uses the same baseline boundary as the live-server dry-runs, including
+# its pre-exec delayed-hook coverage and timeout diagnostics.
+delete_await_registry_stable no-server-dry-run \
+  "$delete_root/registry.settle-probe"
 cp "$delete_registry" "$delete_root/registry.before-no-server-dry-run"
 SMOKE_L08_REGISTRY_BEFORE="$delete_root/registry.before-no-server-dry-run"
 if delete_pmx_delete pane "uid:$delete_sibling_shell_uid" --dry-run \
