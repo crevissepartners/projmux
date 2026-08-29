@@ -47,7 +47,10 @@ and humans run the same entrypoints.
   them required children of the aggregate `Test` gate. It also pins the thin
   `E2E Tests` job, which exists because the branch ruleset requires a status
   check under that exact name; a required context that is never reported stays
-  pending rather than failing, so dropping that job would deadlock merges.
+  pending rather than failing, so dropping that job would deadlock merges. The
+  tag-triggered Release workflow uses the same four Linux shards and two suite
+  selectors on separate runners, then reduces them through the fail-closed
+  `Release E2E Tests` aggregate before `Build Release` starts.
 - `make test-e2e-coverage` validates
   `test/e2e/ags-oedr-manifest.json`: executable scenario markers and shard
   assignments must match all 21 rows with orphan count zero. A matrix may move

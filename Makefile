@@ -25,7 +25,7 @@ SECURITY_TOOL_MANIFEST ?= .security/security-tools.versions
 
 DOCS_REFERENCE ?= docs/cli.md
 
-.PHONY: fmt fmt-check fix build install npm-pack docs test test-integration test-install-smoke test-e2e test-e2e-contract test-e2e-reliability test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract security security-serial security-go security-static security-policy security-contract security-tools
+.PHONY: fmt fmt-check fix build install npm-pack docs test test-integration test-install-smoke test-e2e test-e2e-contract test-e2e-reliability test-e2e-shards test-e2e-manifest test-e2e-coverage test-e2e-update e2e verify deadcode deadcode-contract release-contract security security-serial security-go security-static security-policy security-contract security-tools
 
 build:
 	@mkdir -p $(BUILD_DIR)
@@ -108,8 +108,11 @@ deadcode: deadcode-contract
 deadcode-contract:
 	python3 -m unittest discover -s test -p 'deadcode_baseline_test.py'
 
-test: deadcode-contract
+test: deadcode-contract release-contract
 	$(GO) test ./...
+
+release-contract:
+	python3 -m unittest discover -s test -p 'release_workflow_contract_test.py'
 
 test-integration:
 	scripts/test-integration-docker.sh
