@@ -559,7 +559,8 @@ func dialInstalledSmokeTelemetry(ctx context.Context, t *testing.T, discovery co
 //
 // It is opt-in through PROJMUX_CODEX_APPROVAL_SMOKE_ROOT, whose contained
 // CODEX_HOME must be configured to require approval; the decision this test
-// sends is a decline, so nothing the model proposed is ever executed.
+// sends is the first non-executing one the endpoint itself offers, so nothing
+// the model proposed is ever run.
 func TestInstalledIsolatedBrokerApprovalLeaseSmoke(t *testing.T) {
 	root := strings.TrimSpace(os.Getenv("PROJMUX_CODEX_APPROVAL_SMOKE_ROOT"))
 	if root == "" {
@@ -675,30 +676,42 @@ func TestInstalledIsolatedBrokerApprovalLeaseSmoke(t *testing.T) {
 		t.Fatalf("approval identity = thread %q turn %q, want the exact bound thread and started turn",
 			envelope.ThreadID, envelope.TurnID)
 	}
-	if !slices.Contains(envelope.Decisions, codexappserver.DecisionDecline) {
-		t.Fatalf("approval offered no decline decision: %v", envelope.Decisions)
+	// The offered set belongs to the endpoint, not to this test: current Codex
+	// answers a command approval with accept/cancel, while other shapes offer
+	// decline. Pick the first offered decision that executes nothing, because
+	// accepting would run whatever the model proposed inside the smoke root.
+	decision := codexappserver.ApprovalDecision("")
+	for _, safe := range []codexappserver.ApprovalDecision{
+		codexappserver.DecisionDecline, codexappserver.DecisionCancel,
+	} {
+		if slices.Contains(envelope.Decisions, safe) {
+			decision = safe
+			break
+		}
+	}
+	if decision == "" {
+		t.Fatalf("approval offered no non-executing decision: %v", envelope.Decisions)
 	}
 
-	// Decline, so nothing the model proposed is executed.
-	result, err := codexappserver.ApprovalResponse(envelope, codexappserver.DecisionDecline)
+	result, err := codexappserver.ApprovalResponse(envelope, decision)
 	if err != nil {
-		t.Fatalf("build the decline response: %v", err)
+		t.Fatalf("build the %s response: %v", decision, err)
 	}
 	if err := epoch.RespondServerRequest(ctx, envelope.RawRequestID, result); err != nil {
-		t.Fatalf("answer the real approval through the broker lease: %v", err)
+		t.Fatalf("answer the real approval through the broker lease with %s: %v", decision, err)
 	}
 	// The lease is single use. A second answer for the same raw id must be
 	// refused by the epoch before it can reach the wire again.
 	if err := epoch.RespondServerRequest(ctx, envelope.RawRequestID, result); err == nil {
 		t.Fatal("a spent approval lease answered a second time")
 	}
-	t.Log("evidence: approval lease spent once and refused on the second answer")
+	t.Logf("evidence: approval lease spent once with decision=%s and refused on the second answer", decision)
 
 	if _, err := epoch.InterruptExactTurn(ctx, created.ThreadID, started.TurnID); err != nil {
-		t.Logf("interrupt after the declined approval: %v", err)
+		t.Logf("interrupt after the %s approval: %v", decision, err)
 	}
 	if _, err := os.Lstat(filepath.Join(workspace, "projmux-approval-probe.txt")); err == nil {
-		t.Fatal("the declined command wrote its file anyway")
+		t.Fatalf("the command answered with %s wrote its file anyway", decision)
 	}
 
 	recorded := ledger()

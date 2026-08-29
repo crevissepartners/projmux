@@ -213,3 +213,83 @@ func TestRetiredCodexAppServerWatchRouteIsRefused(t *testing.T) {
 		t.Fatal("the surviving route still names the retired app-server proxy producer")
 	}
 }
+
+// TestPlainCodexCreatesWriteTheirDeclarationOntoTheExactPane closes the write
+// half of the declared plain lane, through the real create route and the real
+// pane binder.
+//
+// The read half and the vocabulary are pinned above, but neither would notice
+// if the create route stopped passing the declaration to the binder, or the
+// binder stopped writing it. Then every by-design plain Agent would silently
+// start counting as an unexplained native fallback again, which is the exact
+// signal this phase exists to keep meaningful.
+func TestPlainCodexCreatesWriteTheirDeclarationOntoTheExactPane(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "empty prompt",
+			args: []string{"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "-o", "pane-id"},
+			want: codexNativeDeclaredEmptyPrompt,
+		},
+		{
+			name: "interactive only",
+			args: []string{"agent", "--provider", "codex", "--project", "alpha", "--window", "main",
+				"--interactive-only", "-o", "pane-id", "--", "do the thing"},
+			want: codexNativeDeclaredInteractiveOnly,
+		},
+		{
+			// A sibling provider has no native lane to opt out of, so it may
+			// never carry a Codex declaration.
+			name: "claude",
+			args: []string{"agent", "--provider", "claude", "--project", "alpha", "--window", "main", "-o", "pane-id"},
+			want: "",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			tmux := newFakeTmux()
+			create, planner := newTestAgentCreateCommand(t, store, tmux)
+			create.agents = &productionBindingAgentLauncher{fakeAgentLauncher: planner, binder: testAICommand(t.TempDir())}
+			create.codexNative = &fakeNativeThreadController{createErr: errFakeNativeUnavailable, fallback: true}
+			create.resumes = &fakeNativeResumeLauncher{
+				fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{},
+			}
+			stdout, stderr, err := runRoute(t, create, test.args...)
+			if err != nil || stderr != "" {
+				t.Fatalf("create stdout=%q stderr=%q err=%v", stdout, stderr, err)
+			}
+			paneID := strings.TrimSpace(stdout)
+			_, _, pane := tmux.pane(paneID)
+			if pane == nil {
+				t.Fatalf("create reported pane %q, which the tmux ledger does not have", paneID)
+			}
+			if got := pane.opts[aiPaneCodexDeclaredOption]; got != test.want {
+				t.Fatalf("%s = %q, want %q", aiPaneCodexDeclaredOption, got, test.want)
+			}
+			if test.want == "" {
+				return
+			}
+			// The declaration explains a hook observation; it never claims one
+			// that does not exist.
+			if got := pane.opts[aiPaneCodexAuthorityOption]; got != codexAuthorityHook {
+				t.Fatalf("declared lane authority = %q, want %q", got, codexAuthorityHook)
+			}
+			if got := pane.opts[aiPaneCodexReasonOption]; got != codexNativeUnexplainedReason {
+				t.Fatalf("declared lane reason = %q, want %q", got, codexNativeUnexplainedReason)
+			}
+			// And the declaration is what turns that observation from
+			// unexplained into declared.
+			diagnostic := codexLifecycleAuthorityDiagnostic{
+				Source:   pane.opts[aiPaneCodexAuthorityOption],
+				Reason:   pane.opts[aiPaneCodexReasonOption],
+				Declared: codexNativeDeclaredReason(pane.opts[aiPaneCodexDeclaredOption]),
+			}
+			if diagnostic.unexplainedNativeFallback() {
+				t.Fatalf("a declared plain lane still counts as unexplained: %+v", diagnostic)
+			}
+		})
+	}
+}
