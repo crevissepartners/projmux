@@ -213,7 +213,9 @@ if [[ "$intentional_status" != "1" ]]; then
   exit 1
 fi
 python3 "$root/scripts/e2e-evidence.py" validate --terminal "$tmp/intentional/summary.jsonl"
-grep -Fq 'id=L17 attempt=1 phase=exit-reconcile outcome=fail class=deterministic-regression owner=exit-reconciler' "$tmp/intentional.err"
+# A single observed failure no longer borrows the reproduction claim: nothing has
+# been retried, so the class says exactly that.
+grep -Fq 'id=L17 attempt=1 phase=exit-reconcile outcome=fail class=unrepeated-failure owner=exit-reconciler' "$tmp/intentional.err"
 
 set +e
 PROJMUX_E2E_INTENTIONAL_EXIT=1 \
@@ -241,7 +243,10 @@ assert record["command"] == record["replay"] == "make test-e2e E2E_SCENARIO=L06"
 assert record["attribution"] == "complete"
 
 diagnostics = [json.loads(line.split(" ", 1)[1]) for line in lines if line.startswith("E2E_DIAGNOSTIC ")]
-assert len(diagnostics) == 1 and diagnostics[0]["attribution"] == "l06-lock-exhaustion"
+# No racer ran in this fixture, so the diagnostic must not name lock exhaustion.
+assert len(diagnostics) == 1 and diagnostics[0]["attribution"] == "l06-no-racers-observed"
+assert diagnostics[0]["holder"]["acquire"] == "not-started"
+assert diagnostics[0]["holder"]["lock_observed"] is False
 
 # The artifact must carry the same attribution and diagnostics the log reported.
 # That equality is the whole point: the log dies with the runner, the file does not.
@@ -280,7 +285,251 @@ assert records[0]["line"] == 0 and records[0]["scenario"] == "L06"
 artifact = json.loads(pathlib.Path(sys.argv[2]).read_text())
 assert artifact["outcome"] == "fail" and artifact["terminal_line"] == 0
 assert artifact["terminal_status"] == 42
-assert artifact["diagnostic"]["attribution"] == "l06-lock-exhaustion"
+assert artifact["diagnostic"]["attribution"] == "l06-no-racers-observed"
 PY
 
-echo ">> evidence parser/terminal/golden/privacy/pass-only aggregation/intentional-failure/partial-attribution/preserved-diagnostic tests passed"
+# --- observed failure classification -----------------------------------------
+#
+# The classification axis is "do we own the source of the nondeterminism", not
+# "does a retry pass". Every row below is a statement about attempts that were
+# actually observed; none of them may be produced by a constant.
+
+assert_classify() {
+  local want="$1"
+  shift
+  local got
+  got="$(python3 "$root/scripts/e2e-evidence.py" classify "$@")"
+  if [[ "$got" != "$want" ]]; then
+    echo "classify $* -> [$got], want [$want]" >&2
+    exit 1
+  fi
+}
+
+# A failure nobody has retried claims neither reproduction nor flakiness.
+assert_classify "class=unrepeated-failure basis=single-observation" --outcome fail
+# The same build seen both failing and passing is nondeterministic, whichever
+# side of the split the record being written happens to be on.
+assert_classify "class=flake basis=observed-nondeterminism" --outcome fail --prior pass
+assert_classify "class=flake basis=observed-nondeterminism" --outcome pass --prior fail
+assert_classify "class=flake basis=observed-nondeterminism" --outcome fail --prior fail --prior pass
+# Reproduction is earned by being seen again, never assumed.
+assert_classify "class=deterministic-regression basis=reproduced-failure" --outcome fail --prior fail
+# A scenario whose nondeterminism originates outside this repository is kept out
+# of `flake` so a quarantine policy never sets a deadline nobody here can meet.
+assert_classify "class=unowned-nondeterminism basis=observed-nondeterminism" \
+  --outcome fail --owner codex-appserver-adapter --prior pass
+assert_classify "class=unowned-nondeterminism basis=observed-nondeterminism" \
+  --outcome pass --owner codex-appserver-adapter --prior fail
+# A declaration fills the gap only while the attempts are silent. An observed
+# split outranks it.
+assert_classify "class=product-authority-race basis=declared" \
+  --outcome fail --class product-authority-race
+assert_classify "class=flake basis=observed-nondeterminism" \
+  --outcome fail --class product-authority-race --prior pass
+assert_classify "class=environment basis=single-observation" --outcome pass
+assert_classify "class=environment basis=declared" --outcome begin --class environment
+
+# Cross-attempt derivation through the real recorder. Each attempt writes into
+# its own `attempt-*` directory exactly as scripts/test-e2e-docker.sh lays them
+# out, so the recorder learns the earlier result the same way CI evidence does.
+binary="$(printf 'c%.0s' {1..64})"
+attempt_record() {
+  local root_dir="$1"
+  local attempt="$2"
+  local scenario="$3"
+  local owner="$4"
+  local outcome="$5"
+  shift 5
+  python3 "$root/scripts/e2e-evidence.py" record \
+    --directory "$root_dir/attempt-local-$attempt-1/linux-fixture-2" \
+    --evidence-root "$root_dir" \
+    --scenario-id "$scenario" --suite linux-bootstrap --attempt "$attempt" \
+    --phase create-materialize --owner "$owner" --outcome "$outcome" \
+    --elapsed-ms 1 --binary-sha256 "$binary" "$@"
+}
+
+record_class() {
+  python3 - "$1" <<'RECORD_CLASS_PY'
+import json
+import pathlib
+import sys
+
+record = json.loads(pathlib.Path(sys.argv[1]).read_text())
+print(f"{record['class']} {record.get('class_basis', '-')} {','.join(record.get('prior_outcomes', ['-']))}")
+RECORD_CLASS_PY
+}
+
+# 1. attempt-1 fails, attempt-2 passes on the same binary -> owned flake.
+flake_root="$tmp/retry-flake"
+attempt_record "$flake_root" 1 L06 resource-controller begin >/dev/null
+attempt_record "$flake_root" 1 L06 resource-controller fail >/dev/null
+attempt_record "$flake_root" 2 L06 resource-controller begin >/dev/null
+attempt_record "$flake_root" 2 L06 resource-controller pass >"$tmp/retry-flake.out"
+if [[ "$(record_class "$flake_root/attempt-local-2-1/linux-fixture-2/L06-attempt-2.json")" != "flake observed-nondeterminism fail" ]]; then
+  echo "retried-and-passed attempt was not recorded as an owned flake" >&2
+  cat "$flake_root/attempt-local-2-1/linux-fixture-2/L06-attempt-2.json" >&2
+  exit 1
+fi
+grep -Fq "class=flake" "$tmp/retry-flake.out"
+# The first attempt keeps the bytes it was written with. Reclassification is a
+# report, never a rewrite of evidence somebody already downloaded.
+if [[ "$(record_class "$flake_root/attempt-local-1-1/linux-fixture-2/L06-attempt-1.json")" != "unrepeated-failure - -" ]]; then
+  echo "recording a later attempt rewrote the earlier attempt evidence" >&2
+  exit 1
+fi
+
+# 2. the same failure seen twice on the same binary stays a regression.
+regression_root="$tmp/retry-regression"
+attempt_record "$regression_root" 1 L06 resource-controller begin >/dev/null
+attempt_record "$regression_root" 1 L06 resource-controller fail >/dev/null
+attempt_record "$regression_root" 2 L06 resource-controller begin >/dev/null
+attempt_record "$regression_root" 2 L06 resource-controller fail >"$tmp/retry-regression.out"
+if [[ "$(record_class "$regression_root/attempt-local-2-1/linux-fixture-2/L06-attempt-2.json")" != "deterministic-regression reproduced-failure fail" ]]; then
+  echo "a failure reproduced on the same binary was not a deterministic regression" >&2
+  exit 1
+fi
+grep -Fq "class=deterministic-regression" "$tmp/retry-regression.out"
+
+# 3. a scenario whose nondeterminism we do not own is kept separate from flake.
+unowned_root="$tmp/retry-unowned"
+attempt_record "$unowned_root" 1 C01 codex-appserver-adapter begin >/dev/null
+attempt_record "$unowned_root" 1 C01 codex-appserver-adapter fail >/dev/null
+attempt_record "$unowned_root" 2 C01 codex-appserver-adapter begin >/dev/null
+attempt_record "$unowned_root" 2 C01 codex-appserver-adapter pass >"$tmp/retry-unowned.out"
+if [[ "$(record_class "$unowned_root/attempt-local-2-1/linux-fixture-2/C01-attempt-2.json")" != "unowned-nondeterminism observed-nondeterminism fail" ]]; then
+  echo "unowned nondeterminism was folded into the owned flake value" >&2
+  exit 1
+fi
+grep -Fq "class=unowned-nondeterminism" "$tmp/retry-unowned.out"
+
+# A different build is not evidence about this one.
+other_root="$tmp/retry-other-binary"
+python3 "$root/scripts/e2e-evidence.py" record \
+  --directory "$other_root/attempt-local-1-1/linux-fixture-2" --evidence-root "$other_root" \
+  --scenario-id L06 --suite linux-bootstrap --attempt 1 --phase create-materialize \
+  --owner resource-controller --outcome fail --elapsed-ms 1 \
+  --binary-sha256 "$(printf 'd%.0s' {1..64})" >/dev/null
+attempt_record "$other_root" 2 L06 resource-controller begin >/dev/null
+attempt_record "$other_root" 2 L06 resource-controller fail >/dev/null
+if [[ "$(record_class "$other_root/attempt-local-2-1/linux-fixture-2/L06-attempt-2.json")" != "unrepeated-failure - -" ]]; then
+  echo "a different product binary was treated as evidence about this one" >&2
+  exit 1
+fi
+
+# The report is the operator surface for a class that later attempts contradict.
+python3 "$root/scripts/e2e-evidence.py" flake-rate "$flake_root" >"$tmp/flake-report.out"
+grep -Fq "E2E_FLAKE scenario=L06 binary=cccccccc attempts=2 pass=1 fail=1 flake_rate=0.500 verdict=flake" "$tmp/flake-report.out"
+grep -Fq "E2E_FLAKE_FLIP scenario=L06 binary=cccccccc attempt=attempt-local-1-1 recorded=unrepeated-failure verdict=flake" "$tmp/flake-report.out"
+grep -Fq ">> E2E flake report scenarios=1 nondeterministic=1 flips=1" "$tmp/flake-report.out"
+python3 "$root/scripts/e2e-evidence.py" flake-rate "$unowned_root" >"$tmp/flake-unowned.out"
+grep -Fq "verdict=unowned-nondeterminism" "$tmp/flake-unowned.out"
+python3 "$root/scripts/e2e-evidence.py" flake-rate "$regression_root" >"$tmp/flake-regression.out"
+grep -Fq "verdict=deterministic-regression" "$tmp/flake-regression.out"
+if grep -Fq "E2E_FLAKE_FLIP" "$tmp/flake-regression.out"; then
+  echo "the report invented a classification flip for a reproduced failure" >&2
+  exit 1
+fi
+
+# Derivation is additive only where it happened: an attempt with nothing to
+# compare against keeps the exact byte sequence it had before this schema grew.
+lone_root="$tmp/retry-lone"
+attempt_record "$lone_root" 1 L06 resource-controller begin --class environment >/dev/null
+python3 - "$lone_root/attempt-local-1-1/linux-fixture-2/summary.jsonl" <<'LONE_PY'
+import json
+import pathlib
+import sys
+
+record = json.loads(pathlib.Path(sys.argv[1]).read_text().splitlines()[0])
+assert not {"class_basis", "prior_outcomes"} & set(record), record
+assert record["class"] == "environment", record
+LONE_PY
+
+# Out-of-contract derivation trails are rejected the same way every other field is.
+assert_rejects_evidence() {
+  local label="$1"
+  local mutation="$2"
+  cp "$flake_root/attempt-local-2-1/linux-fixture-2/summary.jsonl" "$tmp/derived-$label.jsonl"
+  sed -i "$mutation" "$tmp/derived-$label.jsonl"
+  if python3 "$root/scripts/e2e-evidence.py" validate "$tmp/derived-$label.jsonl" \
+    >"$tmp/derived-$label.out" 2>"$tmp/derived-$label.err"; then
+    echo "evidence validator accepted $label" >&2
+    exit 1
+  fi
+}
+assert_rejects_evidence unknown-basis 's/"class_basis":"observed-nondeterminism"/"class_basis":"guessed"/'
+assert_rejects_evidence unsorted-prior 's/"prior_outcomes":\["fail"\]/"prior_outcomes":["pass","fail"]/'
+assert_rejects_evidence empty-prior 's/"prior_outcomes":\["fail"\]/"prior_outcomes":[]/'
+assert_rejects_evidence orphan-prior 's/"class_basis":"observed-nondeterminism",//'
+
+# Failing e2e artifacts are retained 14 days, so evidence written before the L06
+# diagnostic payload was renamed stays downloadable and mixes with new evidence
+# in the same report root. Aggregation reads attempt records, never the
+# scenario-specific diagnostic payload, so a retained v1 diagnostic must neither
+# fail validation nor drop its attempt out of the flake report.
+legacy_root="$tmp/retained-v1"
+legacy_diagnostic='{"attribution":"l06-lock-exhaustion","holder":{"acquire":"contended","age_ms":37500,"operation":"concurrent-create-pane","pid":0,"release":"held"},"racers":[{"index":1,"outcome":"completed","pid":7,"status":0}],"scenario":"L06","schema":"projmux.e2e-diagnostic/v1"}'
+attempt_record "$legacy_root" 1 L06 resource-controller begin >/dev/null
+attempt_record "$legacy_root" 1 L06 resource-controller fail --diagnostic "$legacy_diagnostic" >/dev/null
+attempt_record "$legacy_root" 2 L06 resource-controller begin >/dev/null
+attempt_record "$legacy_root" 2 L06 resource-controller pass >/dev/null
+python3 "$root/scripts/e2e-evidence.py" validate --terminal "$legacy_root/attempt-local-1-1/linux-fixture-2/summary.jsonl"
+python3 "$root/scripts/e2e-evidence.py" flake-rate "$legacy_root" >"$tmp/flake-legacy.out"
+grep -Fq "E2E_FLAKE scenario=L06 binary=cccccccc attempts=2 pass=1 fail=1 flake_rate=0.500 verdict=flake" "$tmp/flake-legacy.out"
+grep -Fq "E2E_FLAKE_FLIP scenario=L06 binary=cccccccc attempt=attempt-local-1-1 recorded=unrepeated-failure verdict=flake" "$tmp/flake-legacy.out"
+
+# --- derived L06 diagnostic labels -------------------------------------------
+#
+# Every field below used to assert something no observation supported.
+
+l06_diagnostic() {
+  local -a racers=()
+  local index
+  for index in {1..8}; do
+    racers+=(--racer "$index:$2:$3:$4")
+  done
+  python3 "$root/scripts/e2e-first-failure.py" l06 \
+    --holder-pid 0 --holder-started-ms "$1" --operation concurrent-create-pane \
+    --release held "${racers[@]}" 2>&1 >/dev/null | sed 's/^E2E_DIAGNOSTIC //'
+}
+
+l06_diagnostic 0 900 0 completed >"$tmp/l06-completed.json"
+l06_diagnostic 0 900 1 exhausted >"$tmp/l06-exhausted.json"
+l06_diagnostic 0 900 1 other >"$tmp/l06-other.json"
+l06_diagnostic "$(( $(date +%s) * 1000 - 1250 ))" 900 0 completed >"$tmp/l06-observed.json"
+python3 - "$tmp" <<'L06_PY'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+def diagnostic(name):
+    return json.loads((root / f"l06-{name}.json").read_text())
+
+# The exact shape of the first real capture: eight racers completed with status
+# 0 and no lock file was ever read. The old constants called this lock
+# exhaustion, called it contended, and gave it a lock age measured from the
+# scenario start.
+completed = diagnostic("completed")
+assert completed["schema"] == "projmux.e2e-diagnostic/v2", completed["schema"]
+assert completed["attribution"] == "l06-no-racer-failure", completed["attribution"]
+assert completed["holder"]["acquire"] == "acquired", completed["holder"]
+assert completed["holder"]["lock_observed"] is False
+assert completed["holder"]["lock_age_ms"] == 0
+
+exhausted = diagnostic("exhausted")
+assert exhausted["attribution"] == "l06-lock-exhaustion", exhausted["attribution"]
+assert exhausted["holder"]["acquire"] == "contended", exhausted["holder"]
+
+other = diagnostic("other")
+assert other["attribution"] == "l06-racer-failure", other["attribution"]
+assert other["holder"]["acquire"] == "unknown", other["holder"]
+
+# A lock file that was actually stat-ed is the only thing that makes the age
+# field mean lock age.
+observed = diagnostic("observed")
+assert observed["holder"]["lock_observed"] is True
+assert observed["holder"]["lock_age_ms"] >= 1250
+assert "age_ms" not in observed["holder"], observed["holder"]
+L06_PY
+
+echo ">> evidence parser/terminal/golden/privacy/pass-only aggregation/intentional-failure/partial-attribution/preserved-diagnostic/observed-classification/derived-diagnostic tests passed"

@@ -90,7 +90,6 @@ mkdir -p "$diagnostic_root/controller" "$diagnostic_root/tmux"
 SMOKE_L06_HOLDER_PID=4242
 SMOKE_L06_HOLDER_STARTED_MS="$(( $(date +%s) * 1000 - 1250 ))"
 SMOKE_L06_OPERATION=concurrent-create-pane
-SMOKE_L06_ACQUIRE_STATE=acquired
 SMOKE_L06_RELEASE_STATE=held
 for racer in 1 2 3 4 5 6 7 8; do
   SMOKE_L06_RACER_PIDS[racer - 1]="$((5000 + racer))"
@@ -104,7 +103,7 @@ done
 # The sourced formatter consumes this state indirectly. This explicit no-op
 # read keeps that cross-file contract visible to standalone ShellCheck.
 : "$SMOKE_L06_HOLDER_PID" "$SMOKE_L06_HOLDER_STARTED_MS" "$SMOKE_L06_OPERATION" \
-  "$SMOKE_L06_ACQUIRE_STATE" "$SMOKE_L06_RELEASE_STATE" \
+  "$SMOKE_L06_RELEASE_STATE" \
   "${SMOKE_L06_RACER_PIDS[*]}" "${SMOKE_L06_RACER_STATUSES[*]}" "${SMOKE_L06_RACER_OUTCOMES[*]}"
 smoke_l06_failure_diagnostic >"$diagnostic_root/l06.out" 2>"$diagnostic_root/l06.err"
 [[ ! -s "$diagnostic_root/l06.out" ]]
@@ -161,19 +160,28 @@ def record(name):
 
 l06 = record("l06")
 assert l06["scenario"] == "L06" and l06["attribution"] == "l06-lock-exhaustion"
-assert l06["holder"]["pid"] == 4242 and l06["holder"]["age_ms"] >= 1250
+# The renamed holder field set travels under its own version; L08/L16 are
+# unchanged and stay v1.
+assert l06["schema"] == "projmux.e2e-diagnostic/v2", l06["schema"]
+assert l06["holder"]["pid"] == 4242 and l06["holder"]["lock_age_ms"] >= 1250
+assert l06["holder"]["lock_observed"] is True
 assert l06["holder"]["operation"] == "concurrent-create-pane"
-assert l06["holder"]["acquire"] == "acquired" and l06["holder"]["release"] == "held"
+# The racer that reported exhaustion is what makes this contended. The old
+# fixture declared "acquired" here and the emitter repeated the declaration back
+# even though racer 8 had just said it could not take the lock.
+assert l06["holder"]["acquire"] == "contended" and l06["holder"]["release"] == "held"
 assert len(l06["racers"]) == 8 and l06["racers"][0]["outcome"] == "completed"
 assert l06["racers"][-1]["outcome"] == "exhausted"
 
 l08 = record("l08")
+assert l08["schema"] == "projmux.e2e-diagnostic/v1", l08["schema"]
 assert l08["scenario"] == "L08" and l08["attribution"] == "l08-state-drift"
 assert l08["registry_before_sha256"] != l08["registry_after_sha256"]
 assert l08["changed_json_paths"] == ["$.projects[0].name"]
 assert l08["pending"] == {"controller_entries": 1, "hook_processes": 2, "owned_processes": 3, "socket_entries": 4}
 
 l16 = record("l16")
+assert l16["schema"] == "projmux.e2e-diagnostic/v1", l16["schema"]
 assert l16["scenario"] == "L16" and l16["attribution"] == "l16-semantic-timeout"
 assert l16["child"] == {"alive": False, "pid": 0, "state": ""}
 assert all(l16["files"][name]["exists"] for name in ("rc", "out", "err"))
