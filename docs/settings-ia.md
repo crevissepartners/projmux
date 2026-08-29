@@ -68,7 +68,14 @@ step, never a silent no-op.
     Recent Windows links are unchanged, and `projmux runtime diagnostics` and
     `get runtime` never read it. An unrecognized saved value applies the default
     without writing and shows an invalid source.
-    `Closed Project startup` optionally shows exactly two actions.
+    `Closed Project startup` shows exactly two actions when no preference file
+    exists and reports `Continue project / Open fresh - default` (`이어서 열기 /
+    새로 열기 - 기본값` in ko-KR). Saved `on` keeps those choices and reports
+    `Continue project / Open fresh - on - saved`. Saved `off` reports
+    `Continue project - off - saved`, skips the picker, and retains the
+    registered-Continue/unregistered-Fresh automatic
+    adjudication. Reading the row or opening/cancelling the picker never writes
+    the default or changes saved preference bytes/mtime.
     `Continue project` materializes the Project's current Registry desired state
     and then moves the client. `Open fresh` confirms exact counts,
     atomically replaces the old Project graph with a new Project UID and a new

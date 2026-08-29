@@ -282,13 +282,20 @@ func TestClosedProjectStartupRefusesForeignSessionProjection(t *testing.T) {
 func TestSwitchClosedProjectOpenWithPickerOffMaterializesThenMovesClient(t *testing.T) {
 	t.Parallel()
 
+	home := t.TempDir()
+	disableSidebarStartupPickerForTest(t, home)
 	topology := &fakeProjectTopologyMaterializer{materialized: true}
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
 	cmd := &switchCommand{
-		sessions:        executor,
-		identity:        stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:         func() (string, error) { return t.TempDir(), nil },
-		lookupEnv:       func(string) string { return "" },
+		sessions: executor,
+		identity: stubSwitchIdentityResolver{name: "workspace"},
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return filepath.Join(home, "config")
+			}
+			return ""
+		},
 		projectTopology: topology,
 	}
 
@@ -308,12 +315,11 @@ func TestSwitchClosedProjectOpenWithPickerOffMaterializesThenMovesClient(t *test
 
 // TestSwitchClosedProjectOpenPickerTopologyRowUsesTheSameEngine is acceptance 2's
 // positive half: the picker's `Project topology` row is the same activation the
-// picker-off default performs.
+// explicit picker-off automatic path performs.
 func TestSwitchClosedProjectOpenPickerTopologyRowUsesTheSameEngine(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	enableSidebarStartupPickerForTest(t, home)
 	topology := &fakeProjectTopologyMaterializer{materialized: true}
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
 	var startupOptions intpickercompat.Options

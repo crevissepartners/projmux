@@ -1249,7 +1249,6 @@ func TestSwitchProjectOpenStartupPickerHasExactlyTwoActions(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	enableSidebarStartupPickerForTest(t, home)
 	project := filepath.Join(home, "workspace")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -1314,7 +1313,6 @@ func TestSwitchSidebarProjectStartupEscReturnsToProjectsWithoutHandoff(t *testin
 	t.Parallel()
 
 	home := t.TempDir()
-	enableSidebarStartupPickerForTest(t, home)
 	project := filepath.Join(home, "workspace")
 	if err := os.MkdirAll(project, 0o755); err != nil {
 		t.Fatal(err)
@@ -1362,6 +1360,13 @@ func TestSwitchSidebarProjectStartupEscReturnsToProjectsWithoutHandoff(t *testin
 	}
 	if executor.ensureSessionName != "" || executor.openSessionName != "" || executor.authorizeCalled {
 		t.Fatalf("Esc should not create/open/authorize: %#v", executor)
+	}
+	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(paths.SidebarStartupPickerFile()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Esc created the default preference file: %v", err)
 	}
 }
 
@@ -1439,16 +1444,22 @@ func TestSwitchProjectOpenStartupPickerOffCreatesEmptyWithoutPicker(t *testing.T
 	t.Parallel()
 
 	home := t.TempDir()
+	disableSidebarStartupPickerForTest(t, home)
 	var pickerCalled bool
 	executor := &capturingSwitchSessionExecutor{}
 	runner, native := scriptedPicker(t, []pickerStep{
 		{observe: func(intpickercompat.Options) { pickerCalled = true }},
 	})
 	cmd := &switchCommand{
-		sessions:     executor,
-		identity:     stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:      func() (string, error) { return home, nil },
-		lookupEnv:    func(string) string { return "" },
+		sessions: executor,
+		identity: stubSwitchIdentityResolver{name: "workspace"},
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return filepath.Join(home, "config")
+			}
+			return ""
+		},
 		runner:       runner,
 		nativePicker: native,
 	}
@@ -1510,12 +1521,19 @@ func TestSwitchProjectOpenTrustDenyAfterStartupSelectionAbortsWithoutSession(t *
 func TestSwitchProjectOpenStartupPickerOffStillChecksTrustBeforeCreate(t *testing.T) {
 	t.Parallel()
 
+	home := t.TempDir()
+	disableSidebarStartupPickerForTest(t, home)
 	executor := &capturingSwitchSessionExecutor{authorizeSet: true, authorizeResult: true}
 	cmd := &switchCommand{
-		sessions:  executor,
-		identity:  stubSwitchIdentityResolver{name: "workspace"},
-		homeDir:   func() (string, error) { return t.TempDir(), nil },
-		lookupEnv: func(string) string { return "" },
+		sessions: executor,
+		identity: stubSwitchIdentityResolver{name: "workspace"},
+		homeDir:  func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return filepath.Join(home, "config")
+			}
+			return ""
+		},
 	}
 	wireFakeProjectSessionPlan(cmd)
 
@@ -1598,6 +1616,9 @@ func TestNewSwitchCommandUsesEnvAndDefaultPinStore(t *testing.T) {
 	}
 	if err := os.WriteFile(paths.PinFile(), []byte(fixture.path("pins/app")+"\n"), 0o644); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := config.SaveSessionStateToggleFile(paths.SidebarStartupPickerFile(), config.SessionStateToggleOff); err != nil {
+		t.Fatalf("SaveSessionStateToggleFile(sidebar startup) error = %v", err)
 	}
 	t.Chdir(fixture.path("managed/work-a/nested"))
 
@@ -1840,6 +1861,7 @@ func TestSwitchCommandPropagatesSetupErrors(t *testing.T) {
 				identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 				validate:     func(string) error { return nil },
 				sessions: &capturingSwitchSessionExecutor{
+					exists:  map[string]bool{"tmp-app": true},
 					openErr: errors.New("attach exploded"),
 				},
 			},
@@ -3058,6 +3080,8 @@ func TestSwitchCommandPickerSidebarKillMutateBlocksWithoutPreviousLiveSession(t 
 func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 	t.Parallel()
 
+	home := t.TempDir()
+	disableSidebarStartupPickerForTest(t, home)
 	var gotRunnerOptions []intpickercompat.Options
 	store := newStubPinStore()
 	executor := &capturingSwitchSessionExecutor{}
@@ -3077,8 +3101,14 @@ func TestSwitchCommandPickerAltPLoopsUntilSelection(t *testing.T) {
 		sessions:     executor,
 		identity:     stubSwitchIdentityResolver{name: "tmp-app"},
 		validate:     func(string) error { return nil },
-		homeDir:      func() (string, error) { return "/home/tester", nil },
-		workingDir:   func() (string, error) { return "/tmp", nil },
+		homeDir:      func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string {
+			if name == "XDG_CONFIG_HOME" {
+				return filepath.Join(home, "config")
+			}
+			return ""
+		},
+		workingDir: func() (string, error) { return "/tmp", nil },
 	}
 	wireFakeProjectSessionPlan(cmd)
 
@@ -3815,6 +3845,18 @@ func enableSidebarStartupPickerForTest(t *testing.T, home string) {
 		t.Fatalf("Paths() error = %v", err)
 	}
 	if err := config.SaveSessionStateToggleFile(paths.SidebarStartupPickerFile(), config.SessionStateToggleOn); err != nil {
+		t.Fatalf("SaveSessionStateToggleFile(sidebar startup) error = %v", err)
+	}
+}
+
+func disableSidebarStartupPickerForTest(t *testing.T, home string) {
+	t.Helper()
+
+	paths, err := config.Homes{HomeDir: home, ConfigHome: filepath.Join(home, "config")}.Paths()
+	if err != nil {
+		t.Fatalf("Paths() error = %v", err)
+	}
+	if err := config.SaveSessionStateToggleFile(paths.SidebarStartupPickerFile(), config.SessionStateToggleOff); err != nil {
 		t.Fatalf("SaveSessionStateToggleFile(sidebar startup) error = %v", err)
 	}
 }

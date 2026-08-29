@@ -5528,6 +5528,12 @@ startup_wait_for "attached startup tmux client" sh -c \
 startup_client="$(startup_tmux list-clients -F '#{client_name}' | head -n 1)"
 startup_driver_pane="$(startup_tmux display-message -p -c "$startup_client" '#{pane_id}')"
 
+# Steps 1-6 exercise automatic closed-Project startup and direct hidden-mode
+# execution, so pin that fixture to the compatible explicit-off behavior. The
+# native no-file default is exercised separately in step 7.
+mkdir -p "$startup_root/config/projmux"
+printf 'off\n' >"$startup_root/config/projmux/sidebar-startup-picker"
+
 # 1. The Project is closed. Opening it must materialize the whole declared shell
 # topology under the stored uids and only then move the client.
 startup_tmux kill-session -t "$startup_session"
@@ -5895,8 +5901,7 @@ startup_fresh_continue_project_uid="$startup_project_uid_after"
 startup_fresh_continue_window_uids="$(startup_pmx get windows --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)"
 startup_fresh_continue_pane_uids="$(startup_pmx get panes --project "uid:$startup_fresh_continue_project_uid" -o uid | sort)"
 startup_fresh_anchor="$(startup_tmux display-message -p -t "$startup_session" '#{pane_id}')"
-mkdir -p "$startup_root/config/projmux"
-printf 'on\n' >"$startup_root/config/projmux/sidebar-startup-picker"
+rm -f "$startup_root/config/projmux/sidebar-startup-picker"
 startup_sidebar_log="$startup_root/fresh-stop-sidebar.log"
 startup_sidebar_input="$startup_root/fresh-stop-sidebar.in"
 mkfifo "$startup_sidebar_input"
@@ -5929,13 +5934,64 @@ startup_start_picker_log_offset="$(stat -c %s "$startup_sidebar_log")"
 printf '\r' >&5
 startup_wait_for "Fresh sidebar Start project screen" sh -c \
   "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Start project'"
+startup_wait_for "Fresh sidebar no-file Continue action" sh -c \
+  "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Continue project'"
+startup_wait_for "Fresh sidebar no-file Open fresh action" sh -c \
+  "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Open fresh'"
+startup_no_file_picker_slice="$(tail -c +$((startup_start_picker_log_offset + 1)) "$startup_sidebar_log")"
+if [[ "$(printf '%s' "$startup_no_file_picker_slice" | grep -aoF 'Continue project' | wc -l)" -ne 1 ]] ||
+  [[ "$(printf '%s' "$startup_no_file_picker_slice" | grep -aoF 'Open fresh' | wc -l)" -ne 1 ]]; then
+  echo "no-file startup picker did not render exactly the two expected action rows once" >&2
+  exit 1
+fi
+printf '\033' >&5
+startup_wait_for "Fresh sidebar startup Esc returns to Projects" sh -c \
+  "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Projects'"
+if [[ -e "$startup_root/config/projmux/sidebar-startup-picker" ]]; then
+  echo "no-file startup picker cancel created a preference file" >&2
+  exit 1
+fi
+if startup_fresh_sidebar_terminal; then
+  echo "Fresh sidebar exited instead of returning to Projects after startup Esc" >&2
+  exit 1
+fi
+printf '\033' >&5
+startup_wait_for "Fresh sidebar cancel process termination" startup_fresh_sidebar_terminal
+wait "$startup_fresh_sidebar_pid" || true
+exec 5>&-
+if [[ "$(tr -d '[:space:]' <"$startup_root/fresh-stop-sidebar.rc")" != "0" ]]; then
+  echo "Fresh sidebar startup cancel failed" >&2
+  cat "$startup_root/fresh-stop-sidebar.err" >&2 || true
+  exit 1
+fi
+
+# A second native invocation proves a selection independently from the cancel.
+# The exact client Pane is now the only live anchor because Ctrl-X removed the
+# first invocation's origin Pane with the Project session.
+startup_sidebar_log="$startup_root/fresh-continue-sidebar.log"
+startup_sidebar_input="$startup_root/fresh-continue-sidebar.in"
+mkfifo "$startup_sidebar_input"
+exec 5<>"$startup_sidebar_input"
+(
+  TERM=xterm-256color script -qefc \
+    "TERM=xterm-256color env -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE HOME='$startup_root/home' XDG_CONFIG_HOME='$startup_root/config' XDG_STATE_HOME='$startup_root/state' XDG_RUNTIME_DIR='$startup_root/runtime' PROJMUX_MANAGED_ROOTS='$startup_root/work' TMUX_TMPDIR='$startup_root/tmux' TMUX='$startup_socket_path,$startup_socket_pid,0' TMUX_SESSIONIZER_CONTEXT_SESSION='$startup_session' PROJMUX_HOOK_TRUST_TARGET_CLIENT='$startup_client' PROJMUX_SWITCH_TARGET_CLIENT='$startup_client' SHELL='$startup_shell' PATH='$startup_root/bin:$startup_root/shim:$PATH' '$bin' switch --ui sidebar --anchor '$startup_driver_pane'" \
+    "$startup_sidebar_log" <"$startup_sidebar_input" >"$startup_root/fresh-continue-sidebar.out" 2>"$startup_root/fresh-continue-sidebar.err"
+  echo $? >"$startup_root/fresh-continue-sidebar.rc"
+) &
+startup_fresh_sidebar_pid=$!
+startup_wait_for "Fresh Continue sidebar rendered" sh -c \
+  "test -f '$startup_sidebar_log' && grep -aFq 'Ctrl-X: stop' '$startup_sidebar_log'"
+startup_start_picker_log_offset="$(stat -c %s "$startup_sidebar_log")"
+printf '\r' >&5
+startup_wait_for "Fresh sidebar Start project screen after cancel" sh -c \
+  "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Start project'"
 printf '\r' >&5
 startup_wait_for "Fresh sidebar Continue process termination" startup_fresh_sidebar_terminal
 wait "$startup_fresh_sidebar_pid" || true
 exec 5>&-
-if [[ "$(tr -d '[:space:]' <"$startup_root/fresh-stop-sidebar.rc")" != "0" ]]; then
+if [[ "$(tr -d '[:space:]' <"$startup_root/fresh-continue-sidebar.rc")" != "0" ]]; then
   echo "Fresh sidebar Ctrl-X -> Continue failed" >&2
-  cat "$startup_root/fresh-stop-sidebar.err" >&2 || true
+  cat "$startup_root/fresh-continue-sidebar.err" >&2 || true
   exit 1
 fi
 startup_wait_for "Fresh sidebar Continue client handoff" startup_client_is_on "$startup_session"
@@ -5946,6 +6002,10 @@ startup_fresh_continue_graph_converged() {
     [[ "$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)" == "$startup_fresh_continue_project_uid" ]]
 }
 startup_wait_for "Fresh sidebar Ctrl-X -> Continue exact UID graph convergence" startup_fresh_continue_graph_converged
+if [[ -e "$startup_root/config/projmux/sidebar-startup-picker" ]]; then
+  echo "no-file startup picker selection created a preference file" >&2
+  exit 1
+fi
 
 # 8. Make the fresh Project zero-Window, then Fresh once more. This second
 # replacement proves the zero-Window input has the same always-new Project,
@@ -5999,9 +6059,9 @@ cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 # That arriving token used to be trusted verbatim, so the open reached
 # ContinueProject and failed with `continue project unavailable: no usable
 # snapshot`. Forwarded here against an unregistered root in an empty Registry
-# with `sidebar-startup-picker` at its shipped default `off`, the continuation
-# must now re-decide it as `fresh`, mint the Project, and move the client into
-# its session.
+# with an explicit saved `off`, the continuation must re-decide it as `fresh`,
+# mint the Project, and move the client into its session. This pins the saved-off
+# compatibility path now that the missing-file default shows both actions.
 #
 # The environment is its own so the Registry really is empty: L11's shared root
 # has a registered Project by this point, and an unregistered root is the whole
@@ -6126,14 +6186,17 @@ startup_sel_tmux set-option -gq @projmux_app 1
 startup_sel_pmx internal tmux apply --bin "$bin" --config "$startup_sel_root/config/projmux/tmux.conf" --socket "$startup_sel_socket" >"$startup_sel_root/apply.out"
 
 # The remaining two preconditions: no Project claims anything, and the startup
-# picker is at its shipped default so the decision under test is the default one.
+# picker carries the explicit saved `off` compatibility value.
 if [[ -n "$(startup_sel_pmx get projects -o uid 2>/dev/null || true)" ]]; then
   echo "mode-selection fixture started with a registered Project" >&2
   startup_sel_pmx get projects -o uid >&2 || true
   exit 1
 fi
-if [[ -e "$startup_sel_root/config/projmux/sidebar-startup-picker" ]]; then
-  echo "mode-selection fixture must run with the default sidebar-startup-picker state" >&2
+mkdir -p "$startup_sel_root/config/projmux"
+printf 'off\n' >"$startup_sel_root/config/projmux/sidebar-startup-picker"
+startup_sel_picker_mtime="$(stat -c %y "$startup_sel_root/config/projmux/sidebar-startup-picker")"
+if [[ "$(cat "$startup_sel_root/config/projmux/sidebar-startup-picker")" != "off" ]]; then
+  echo "mode-selection fixture did not persist the exact explicit-off value" >&2
   exit 1
 fi
 
@@ -6179,6 +6242,11 @@ startup_sel_pmx describe project "uid:$startup_sel_project_uid" -o json >"$start
 smoke_assert_file_contains "$startup_sel_root/project.after-selection.json" "\"root\": \"$startup_sel_project\""
 if ! startup_sel_tmux has-session -t "$startup_sel_session" 2>/dev/null; then
   echo "the re-decided mode did not open the Project session" >&2
+  exit 1
+fi
+if [[ "$(cat "$startup_sel_root/config/projmux/sidebar-startup-picker")" != "off" ]] ||
+  [[ "$(stat -c %y "$startup_sel_root/config/projmux/sidebar-startup-picker")" != "$startup_sel_picker_mtime" ]]; then
+  echo "explicit-off startup changed saved preference bytes or mtime" >&2
   exit 1
 fi
 
@@ -6244,6 +6312,10 @@ mkdir -p \
   "$fopen_root/bin"
 chmod 0700 "$fopen_root/runtime" "$fopen_root/tmux"
 fopen_project="$fopen_root/work/gamma"
+# L12 exercises the legacy automatic first-open contract from a non-interactive
+# Pane command; keep that fixture on the explicit saved-off compatibility path.
+mkdir -p "$fopen_root/config/projmux"
+printf 'off\n' >"$fopen_root/config/projmux/sidebar-startup-picker"
 
 fopen_shell="$fopen_root/shim/persistent-shell"
 cat >"$fopen_shell" <<'FOPEN_SHELL_STUB'
@@ -7647,6 +7719,10 @@ chmod 0700 "$disc_root/runtime" "$disc_root/tmux"
 disc_registry="$disc_root/state/projmux/metadata/registry.json"
 SMOKE_CONTRACT_TERMINAL_STATE_PATH="$disc_registry"
 disc_pins="$disc_root/config/projmux/pins"
+# L16 likewise opens an unregistered discovery candidate non-interactively and
+# expects the automatic unregistered-Fresh/registered-Continue split.
+mkdir -p "$disc_root/config/projmux"
+printf 'off\n' >"$disc_root/config/projmux/sidebar-startup-picker"
 disc_real_tmux="$(command -v tmux)"
 SMOKE_L16_TMUX_FUNCTION=disc_tmux
 

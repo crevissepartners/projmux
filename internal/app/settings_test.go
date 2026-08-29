@@ -3845,6 +3845,121 @@ func TestSettingsSessionStateGlobalDefaultAutosaveOffAndNoTree(t *testing.T) {
 	}
 }
 
+func TestSidebarStartupDefaultPolicyIsSharedReadOnlyAndLocaleStable(t *testing.T) {
+	t.Parallel()
+
+	var golden strings.Builder
+	for _, locale := range []string{"en-US", "ko-KR"} {
+		for _, test := range []struct {
+			name       string
+			saved      *config.SessionStateToggle
+			wantMode   config.SessionStateToggle
+			wantSource string
+		}{
+			{name: "no-file", wantMode: config.SessionStateToggleOn, wantSource: "default"},
+			{name: "saved-on", saved: togglePtr(config.SessionStateToggleOn), wantMode: config.SessionStateToggleOn, wantSource: "saved"},
+			{name: "saved-off", saved: togglePtr(config.SessionStateToggleOff), wantMode: config.SessionStateToggleOff, wantSource: "saved"},
+		} {
+			home := t.TempDir()
+			configHome := filepath.Join(home, "config")
+			paths, err := config.Homes{HomeDir: home, ConfigHome: configHome}.Paths()
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := paths.SidebarStartupPickerFile()
+			var before []byte
+			var beforeInfo os.FileInfo
+			if test.saved != nil {
+				if err := config.SaveSessionStateToggleFile(path, *test.saved); err != nil {
+					t.Fatal(err)
+				}
+				stamp := time.Unix(1_700_000_000, 0)
+				if err := os.Chtimes(path, stamp, stamp); err != nil {
+					t.Fatal(err)
+				}
+				before, err = os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				beforeInfo, err = os.Stat(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			lookupEnv := func(name string) string {
+				switch name {
+				case "XDG_CONFIG_HOME":
+					return configHome
+				case "LC_ALL":
+					return locale
+				default:
+					return ""
+				}
+			}
+			cmd := &settingsCommand{
+				homeDir:   func() (string, error) { return home, nil },
+				lookupEnv: lookupEnv,
+			}
+			effective := cmd.currentSidebarStartupPicker()
+			if effective.Mode != test.wantMode || effective.Source != test.wantSource {
+				t.Fatalf("%s/%s Settings effective = %+v, want %s/%s", locale, test.name, effective, test.wantMode, test.wantSource)
+			}
+			if got := sidebarStartupPickerEnabled(cmd.homeDir, lookupEnv); got != test.wantMode.Enabled() {
+				t.Fatalf("%s/%s runtime enabled = %t, want %t", locale, test.name, got, test.wantMode.Enabled())
+			}
+
+			var row intpickercompat.Entry
+			for _, entry := range cmd.projectSidebarEntries() {
+				if entry.Value == settingsSessionStateSidebarStartupPickerDetail {
+					row = entry
+					break
+				}
+			}
+			if row.Value == "" {
+				t.Fatalf("%s/%s Project Sidebar has no startup row", locale, test.name)
+			}
+			fmt.Fprintf(&golden, "locale=%s state=%s\nrow=%s\n", locale, test.name, stripANSI(row.Label))
+			for _, entry := range cmd.sidebarStartupPickerEntries(effective) {
+				if entry.Value == settingsNoopValue || strings.HasPrefix(entry.Value, settingsActionPrefixSessionState+"sidebar-startup:") {
+					fmt.Fprintf(&golden, "detail=%s value=%s\n", stripANSI(entry.Label), entry.Value)
+				}
+			}
+			golden.WriteString("\n")
+
+			if test.saved == nil {
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("%s/%s default observation created %s: %v", locale, test.name, path, err)
+				}
+				continue
+			}
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			afterInfo, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(after, before) || !afterInfo.ModTime().Equal(beforeInfo.ModTime()) {
+				t.Fatalf("%s/%s observation changed saved preference: bytes %q -> %q, mtime %s -> %s",
+					locale, test.name, before, after, beforeInfo.ModTime(), afterInfo.ModTime())
+			}
+		}
+	}
+
+	want, err := os.ReadFile(filepath.Join("testdata", "sidebar-startup-settings.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimRight(golden.String(), "\n"); got != strings.TrimRight(string(want), "\n") {
+		t.Fatalf("sidebar startup Settings golden mismatch:\ngot:\n%swant:\n%s", got, want)
+	}
+}
+
+func togglePtr(value config.SessionStateToggle) *config.SessionStateToggle {
+	return &value
+}
+
 func TestSettingsSessionStateSidebarStartupPickerDetailPersistsExistingFile(t *testing.T) {
 	t.Parallel()
 

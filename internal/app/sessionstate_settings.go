@@ -20,7 +20,10 @@ import (
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
-const sessionStateAutosaveEnv = "PROJMUX_SESSIONSTATE_AUTOSAVE"
+const (
+	sessionStateAutosaveEnv     = "PROJMUX_SESSIONSTATE_AUTOSAVE"
+	sidebarStartupPickerDefault = config.SessionStateToggleOn
+)
 
 type sessionStateEffectiveToggle struct {
 	Mode   config.SessionStateToggle
@@ -346,11 +349,21 @@ func sidebarStartupChoiceLabel(mode config.SessionStateToggle) string {
 	return "Continue project"
 }
 
+func sidebarStartupSourceLabel(toggle sessionStateEffectiveToggle) string {
+	if toggle.Source == "saved" {
+		return string(toggle.Mode) + " - saved"
+	}
+	return toggle.Source
+}
+
 func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStateEffectiveToggle) []intpickercompat.Entry {
+	locale := c.locale()
+	choice := settingsCatalogTextLocale(locale, sidebarStartupChoiceLabel(sidebarStartup.Mode))
+	source := settingsCatalogTextLocale(locale, sidebarStartupSourceLabel(sidebarStartup))
 	entries := []intpickercompat.Entry{
 		c.backEntry(),
 		{
-			Label: c.nodeRowLabelInfo(settingsNavProjectsSidebar+".closed-startup", sidebarStartupChoiceLabel(sidebarStartup.Mode), sidebarStartup.Source),
+			Label: settingsNodeRowLabelInfoLocale(locale, settingsNavProjectsSidebar+".closed-startup", choice, source),
 			Value: settingsNoopValue,
 		},
 	}
@@ -368,7 +381,8 @@ func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStat
 			color = settingsColorAdd
 		}
 		entries = append(entries, intpickercompat.Entry{
-			Label:     c.rowLabel(glyph, color, sidebarStartupChoiceLabel(item.mode), item.desc+" - "+sidebarStartup.Source),
+			Label: settingsLabelLocale(locale, glyph, color, sidebarStartupChoiceLabel(item.mode),
+				settingsCatalogTextLocale(locale, item.desc)+" - "+source),
 			Value:     settingsActionPrefixSessionState + "sidebar-startup:" + string(item.mode),
 			SearchKey: "closed project startup continue open fresh sidebar startup picker on off",
 		})
@@ -888,6 +902,16 @@ func sessionStateToggleFileStateDefault(homeDir func() (string, error), lookupEn
 	return sessionStateEffectiveToggle{Mode: mode, Source: "default"}
 }
 
+// sidebarStartupPickerState is the read-only authority for the closed-Project
+// startup preference. A missing file is effectively on, while an explicit
+// saved on/off value retains its existing meaning. Resolution never persists
+// the fallback: only the Settings mutation path writes the preference file.
+func sidebarStartupPickerState(homeDir func() (string, error), lookupEnv func(string) string) sessionStateEffectiveToggle {
+	return sessionStateToggleFileStateDefault(homeDir, lookupEnv, sidebarStartupPickerDefault, func(paths config.Paths) string {
+		return paths.SidebarStartupPickerFile()
+	})
+}
+
 func (c *settingsCommand) currentProjectSessionStateAutosave(identity projectSessionStateIdentity) projectSessionStateEffectiveToggle {
 	global := c.currentSessionStateAutosave()
 	projectMode, projectSource := c.currentProjectSessionStateAutosaveMode(identity.Session)
@@ -932,9 +956,7 @@ func (c *settingsCommand) setSessionStateAutosave(value config.SessionStateToggl
 }
 
 func (c *settingsCommand) currentSidebarStartupPicker() sessionStateEffectiveToggle {
-	return sessionStateToggleFileStateDefault(c.homeDir, c.lookupEnv, config.SessionStateToggleOff, func(paths config.Paths) string {
-		return paths.SidebarStartupPickerFile()
-	})
+	return sidebarStartupPickerState(c.homeDir, c.lookupEnv)
 }
 
 func (c *settingsCommand) setSessionStateAutosaveInterval(value time.Duration, stdout io.Writer) error {
@@ -1150,9 +1172,7 @@ func sessionStateAutosaveEnabledResult(homeDir func() (string, error), lookupEnv
 }
 
 func sidebarStartupPickerEnabled(homeDir func() (string, error), lookupEnv func(string) string) bool {
-	return sessionStateToggleFileStateDefault(homeDir, lookupEnv, config.SessionStateToggleOff, func(paths config.Paths) string {
-		return paths.SidebarStartupPickerFile()
-	}).Mode.Enabled()
+	return sidebarStartupPickerState(homeDir, lookupEnv).Mode.Enabled()
 }
 
 func sessionStateToggleEnabledDefaultResult(homeDir func() (string, error), lookupEnv func(string) string, envName string, fallback config.SessionStateToggle, file func(config.Paths) string) (bool, error) {
