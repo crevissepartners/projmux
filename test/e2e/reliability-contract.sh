@@ -151,6 +151,15 @@ fi
 grep -Fq 'ignoring invalid E2E_WAIT_SCALE=not-a-number; using 1' "$artifacts/f09-invalid.err"
 printf 'F09 wait budget timeout scale1=%sms scale5=%sms\n' "$f09_scale_one" "$f09_scale_five"
 
+# F10: the budget scale is only useful where the e2e actually runs. `docker run`
+# passes exactly the env it is told to, so a helper that reads E2E_WAIT_SCALE
+# and a runner that never forwards it would leave every containerized wait
+# pinned at scale 1 with nothing to show for it.
+if ! grep -Eq '^[[:space:]]*-e E2E_WAIT_SCALE=' "$root/scripts/test-docker-run.sh"; then
+  echo "F10 test-docker-run.sh does not forward E2E_WAIT_SCALE into the container" >&2
+  exit 1
+fi
+
 # Phase-0 first-failure diagnostics are synthetic and scenario-owned. They
 # exercise only the log formatter; no product timeout, retry, lock, or Registry
 # semantics are changed to manufacture the failures.
@@ -280,4 +289,4 @@ for scenario, name, attribution in (
     assert "class" not in terminal and "class" not in diagnostic
 PY
 
-echo ">> F01/F02/F04/F06/F07/F08/F09 and L06/L08/L16 first-failure contracts passed"
+echo ">> F01/F02/F04/F06/F07/F08/F09/F10 and L06/L08/L16 first-failure contracts passed"
