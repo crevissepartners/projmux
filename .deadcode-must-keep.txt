@@ -8,7 +8,6 @@
 
 AggregateTeardownEvents	Pure multi-event teardown authority is retained for lifecycle decision proofs and planned consumers.
 Binding.ControlAuthority	The snapshot-barrier control authority accessor is retained as the in-process mutation gate; the local IPC path fences inside Submit instead.
-Broker.Diagnostics	The content-free broker telemetry projection is retained for the diagnostics phases that consume it.
 Broker.WriteLedger	The mutation write ledger is retained as the observable no-replay evidence surface.
 CanonicalRoutes	The canonical route table accessor is retained for cross-package coverage and generated-reference consumers.
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
@@ -16,7 +15,6 @@ CurrentProtocol	The build's local IPC version window accessor is retained as the
 DecideTeardownEvent	The pure teardown decision API is retained for lifecycle authority proofs and planned consumers.
 Discover	The background-context discovery wrapper is retained as a test and compatibility seam.
 Host.RuntimeID	The runtime identity accessor is retained as the authority axis clients present alongside both epochs.
-Host.Stats	The content-free runtime telemetry projection is retained for the diagnostics phase that consumes it.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.

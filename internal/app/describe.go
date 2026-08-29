@@ -120,6 +120,13 @@ func (c *describeCommand) runKind(token string, kind coremetadata.Kind, args []s
 				[2]string{"LifecycleReason", diagnostic.Reason},
 				[2]string{"LifecycleEpoch", diagnostic.EpochStatus},
 			)
+			// The declared row is what separates a plain lane that was chosen
+			// or upstream-gated from one that lost native authority. Rendering
+			// it only when it exists keeps the native Agent description
+			// unchanged.
+			if diagnostic.Declared != "" {
+				runtimeRows = append(runtimeRows, [2]string{"LifecycleDeclared", diagnostic.Declared})
+			}
 			if diagnostic.Dropped > 0 {
 				runtimeRows = append(runtimeRows, [2]string{"ProgressDropped", strconv.FormatUint(uint64(diagnostic.Dropped), 10)})
 			}

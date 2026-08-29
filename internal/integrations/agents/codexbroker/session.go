@@ -155,6 +155,8 @@ func (s *session) handle(request wireRequest) {
 		s.handleSubmit(request)
 	case requestAnswer:
 		s.handleAnswer(request)
+	case requestStats:
+		s.handleStats(request)
 	default:
 		s.refuse(request.ID, RefusalRequestUnknown)
 	}
@@ -185,6 +187,27 @@ func (s *session) handleBind(request wireRequest) {
 		s.pump(binding)
 	})
 	s.reply(request.ID, wireReply{Kind: replyResult, Thread: binding.ThreadID()})
+}
+
+// handleStats answers this runtime's content-free telemetry.
+//
+// It is deliberately outside the refusingWork gate that guards bind and
+// submit: a draining or shutting-down runtime is exactly the state an operator
+// most needs described, and describing it neither opens a binding nor writes
+// upstream.
+func (s *session) handleStats(request wireRequest) {
+	telemetry := RuntimeTelemetry{
+		Runtime:  s.host.RuntimeID(),
+		Protocol: s.version,
+		Host:     s.host.Stats(),
+		Broker:   s.host.broker.Diagnostics(),
+	}
+	payload, err := json.Marshal(telemetry)
+	if err != nil {
+		s.refuse(request.ID, RefusalRequestUnknown)
+		return
+	}
+	s.reply(request.ID, wireReply{Kind: replyResult, Result: payload})
 }
 
 // handleUnbind releases one binding this session holds.

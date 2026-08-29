@@ -590,6 +590,7 @@ func TestNativeAgentProjectionWriterFieldInventoryIsClosed(t *testing.T) {
 				aiPaneTopicOption, aiPaneTopicManualOption, aiPaneStateOption, aiPaneSessionIDOption,
 				aiPaneResumeIDOption, aiPaneResumeSourceOption, aiPaneResumeUpdatedAtOption, aiPaneThreadIDOption,
 				aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption,
+				aiPaneCodexDeclaredOption,
 			},
 		},
 		"agent_interaction.go": {

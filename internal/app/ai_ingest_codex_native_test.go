@@ -1118,7 +1118,16 @@ func TestCodexNativeObserverEndpointReplacementRevokesE1BeforeGapAndPublishesExa
 	}
 }
 
-func TestCodexNativeObserverRecoveryBackoffExhaustionIsExactBoundAndLeakFree(t *testing.T) {
+// TestRetiredObserverRecoveryBackoffIsCappedAndNeverExhausts replaces the
+// retired six-attempt exhaustion proof.
+//
+// The observer used to publish a terminal `reconnect-exhausted` fallback and
+// exit once a fixed budget ran out, which abandoned a live activation whose
+// endpoint was merely away. Recovery is now bounded only by the capped backoff
+// and by the exact binding: the wait sequence still saturates at maxDelay, the
+// gap still writes nothing upstream, and the only exits are a replaced binding
+// and a cancelled context.
+func TestRetiredObserverRecoveryBackoffIsCappedAndNeverExhausts(t *testing.T) {
 	identity := testCodexLifecycleIdentity()
 	wire := &fakeExactControlWire{}
 	connection := &fakeControllableCodexLifecycleConnection{
@@ -1130,13 +1139,22 @@ func TestCodexNativeObserverRecoveryBackoffExhaustionIsExactBoundAndLeakFree(t *
 	}
 	sink := newRecordingCodexLifecycleSink()
 	startup := make(chan codexObserverStartupResult, 4)
+	const observedWaits = 6
+	var mu sync.Mutex
 	openCalls := 0
 	var waits []time.Duration
+	enough := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	observer := codexNativeObserver{
-		identity: identity, sink: sink, requireControl: true, delay: time.Millisecond, maxDelay: 4 * time.Millisecond, maxAttempts: 3,
+		identity: identity, sink: sink, requireControl: true,
+		delay: time.Millisecond, maxDelay: 4 * time.Millisecond,
 		open: func(context.Context) (codexLifecycleConnection, error) {
+			mu.Lock()
 			openCalls++
-			if openCalls == 1 {
+			first := openCalls == 1
+			mu.Unlock()
+			if first {
 				return connection, nil
 			}
 			return nil, codexappserver.ErrDisconnected
@@ -1146,45 +1164,72 @@ func TestCodexNativeObserverRecoveryBackoffExhaustionIsExactBoundAndLeakFree(t *
 		},
 		reportStartup: func(result codexObserverStartupResult) { startup <- result },
 		waitRecovery: func(_ context.Context, delay time.Duration) bool {
+			mu.Lock()
 			waits = append(waits, delay)
+			count := len(waits)
+			mu.Unlock()
+			if count == observedWaits {
+				close(enough)
+			}
 			return true
 		},
 	}
 	done := make(chan error, 1)
-	go func() { done <- observer.Run(context.Background()) }()
+	go func() { done <- observer.Run(ctx) }()
 	e1 := waitForCodexObserverStartupResult(t, startup, codexObserverStartupReady)
 	close(connection.events)
+	select {
+	case <-enough:
+	case err := <-done:
+		t.Fatalf("recovery terminated while the binding was still current: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("recovery stopped retrying before the capped backoff was observed")
+	}
+	cancel()
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatal(err)
 		}
 	case <-time.After(time.Second):
-		t.Fatal("recovery exhaustion did not terminate the observer")
+		t.Fatal("cancelled observer did not stop")
 	}
-	if openCalls != 4 {
-		t.Fatalf("open calls=%d, want initial plus exactly 3 recovery attempts", openCalls)
+	mu.Lock()
+	observed := append([]time.Duration(nil), waits...)
+	mu.Unlock()
+	if len(observed) < observedWaits {
+		t.Fatalf("recovery waits=%v, want at least %d", observed, observedWaits)
 	}
-	if !reflect.DeepEqual(waits, []time.Duration{time.Millisecond, 2 * time.Millisecond, 4 * time.Millisecond}) {
-		t.Fatalf("recovery waits=%v, want bounded exponential backoff", waits)
+	want := []time.Duration{
+		time.Millisecond, 2 * time.Millisecond,
+		4 * time.Millisecond, 4 * time.Millisecond, 4 * time.Millisecond, 4 * time.Millisecond,
+	}
+	if !reflect.DeepEqual(observed[:observedWaits], want) {
+		t.Fatalf("recovery waits=%v, want capped exponential backoff %v", observed[:observedWaits], want)
 	}
 	if wire.writes() != 0 {
 		t.Fatalf("reconnect gap wrote app-server wire %d times", wire.writes())
 	}
 	authorities := sink.authorityEpochSnapshot()
-	exhausted := codexAuthorityHook + "::" + codexObserverExhaustedReason
-	if count := countCodexObserverEvent(authorities, exhausted); count != 1 {
-		t.Fatalf("terminal fallback count=%d authorities=%q", count, authorities)
+	for _, entry := range authorities {
+		if strings.Contains(entry, retiredObserverExhaustionReason) {
+			t.Fatalf("the retired exhaustion fallback was published: %q", authorities)
+		}
 	}
 	if !slices.Contains(authorities, codexAuthorityInvalidating+":"+e1.Epoch+":disconnected") {
-		t.Fatalf("E1 was not invalidated before exhaustion: %q", authorities)
+		t.Fatalf("E1 was not invalidated before recovery: %q", authorities)
 	}
 	if connection.closeCount() != 1 {
-		t.Fatalf("exhausted observer connection closes=%d, want 1", connection.closeCount())
+		t.Fatalf("recovering observer connection closes=%d, want 1", connection.closeCount())
 	}
 }
 
-func TestCodexNativeObserversSharingEndpointRecoverAndExhaustIndependently(t *testing.T) {
+// TestCodexNativeObserversSharingOneEndpointRecoverIndependently replaces the
+// retired independent-exhaustion proof with the containment it was really
+// about: one activation losing its epoch reconnects onto its own replacement
+// without touching, terminating, or reordering the other activation, and
+// neither of them can now be ended by a retry budget.
+func TestCodexNativeObserversSharingOneEndpointRecoverIndependently(t *testing.T) {
 	type endpointCounts struct {
 		mu    sync.Mutex
 		calls map[string]int
@@ -1204,7 +1249,7 @@ func TestCodexNativeObserversSharingEndpointRecoverAndExhaustIndependently(t *te
 	sinkA, sinkB := newRecordingCodexLifecycleSink(), newRecordingCodexLifecycleSink()
 	waitImmediately := func(context.Context, time.Duration) bool { return true }
 	observerA := codexNativeObserver{
-		identity: identityA, sink: sinkA, maxAttempts: 3, waitRecovery: waitImmediately,
+		identity: identityA, sink: sinkA, waitRecovery: waitImmediately,
 		open: func(ctx context.Context) (codexLifecycleConnection, error) {
 			switch openCount(identityA.AgentUID) {
 			case 1:
@@ -1220,49 +1265,67 @@ func TestCodexNativeObserversSharingEndpointRecoverAndExhaustIndependently(t *te
 		},
 	}
 	observerB := codexNativeObserver{
-		identity: identityB, sink: sinkB, maxAttempts: 2, waitRecovery: waitImmediately,
-		open: func(context.Context) (codexLifecycleConnection, error) {
+		identity: identityB, sink: sinkB, waitRecovery: waitImmediately,
+		open: func(ctx context.Context) (codexLifecycleConnection, error) {
 			if openCount(identityB.AgentUID) == 1 {
 				return firstB, nil
 			}
-			return nil, codexappserver.ErrDisconnected
+			<-ctx.Done()
+			return nil, ctx.Err()
 		},
 	}
 	ctxA, cancelA := context.WithCancel(context.Background())
+	ctxB, cancelB := context.WithCancel(context.Background())
 	doneA, doneB := make(chan error, 1), make(chan error, 1)
 	go func() { doneA <- observerA.Run(ctxA) }()
-	go func() { doneB <- observerB.Run(context.Background()) }()
+	go func() { doneB <- observerB.Run(ctxB) }()
 	waitForCodexObserverEvents(t, sinkA, 2)
 	waitForCodexObserverEvents(t, sinkB, 2)
+	beforeB := len(sinkB.snapshot())
 	close(firstA.events)
-	close(firstB.events)
 	waitForCodexObserverEvents(t, sinkA, 7)
 	select {
 	case err := <-doneB:
-		if err != nil {
-			t.Fatal(err)
-		}
-	case <-time.After(time.Second):
 		cancelA()
 		<-doneA
-		t.Fatal("second observer did not reach its independent exhaustion bound")
+		cancelB()
+		t.Fatalf("the untouched activation stopped with its sibling: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if after := len(sinkB.snapshot()); after != beforeB {
+		cancelA()
+		<-doneA
+		cancelB()
+		<-doneB
+		t.Fatalf("sibling recovery projected %d extra events onto the untouched activation", after-beforeB)
 	}
 	shared.mu.Lock()
 	callsA, callsB := shared.calls[identityA.AgentUID], shared.calls[identityB.AgentUID]
 	shared.mu.Unlock()
-	if callsA != 3 || callsB != 3 {
+	if callsA != 3 || callsB != 1 {
 		cancelA()
 		<-doneA
-		t.Fatalf("shared endpoint calls A=%d B=%d, want independent 3/3", callsA, callsB)
+		cancelB()
+		<-doneB
+		t.Fatalf("shared endpoint opens A=%d B=%d, want 3 for the recovering activation and 1 for the untouched one", callsA, callsB)
 	}
-	if countCodexObserverEvent(sinkA.authorityEpochSnapshot(), codexAuthorityHook+"::"+codexObserverExhaustedReason) != 0 ||
-		countCodexObserverEvent(sinkB.authorityEpochSnapshot(), codexAuthorityHook+"::"+codexObserverExhaustedReason) != 1 {
-		cancelA()
-		<-doneA
-		t.Fatalf("independent terminal states A=%q B=%q", sinkA.authorityEpochSnapshot(), sinkB.authorityEpochSnapshot())
+	for name, authorities := range map[string][]string{"A": sinkA.authorityEpochSnapshot(), "B": sinkB.authorityEpochSnapshot()} {
+		for _, entry := range authorities {
+			if strings.Contains(entry, retiredObserverExhaustionReason) {
+				cancelA()
+				<-doneA
+				cancelB()
+				<-doneB
+				t.Fatalf("observer %s published the retired exhaustion fallback: %q", name, authorities)
+			}
+		}
 	}
 	cancelA()
 	if err := <-doneA; err != nil {
+		t.Fatal(err)
+	}
+	cancelB()
+	if err := <-doneB; err != nil {
 		t.Fatal(err)
 	}
 	if firstA.closeCount() != 1 || secondA.closeCount() != 1 || firstB.closeCount() != 1 {
@@ -1286,16 +1349,6 @@ func waitForCodexObserverStartupResult(t *testing.T, results <-chan codexObserve
 			t.Fatalf("observer did not report startup status %s; seen=%+v", status, seen)
 		}
 	}
-}
-
-func countCodexObserverEvent(events []string, want string) int {
-	count := 0
-	for _, event := range events {
-		if event == want {
-			count++
-		}
-	}
-	return count
 }
 
 func TestCodexNativeObserverCancellationInvalidatesSilentConnection(t *testing.T) {

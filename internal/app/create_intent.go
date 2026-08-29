@@ -585,7 +585,8 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.runner, paneID, workspace.CWD, title, flags.resumeConversation); err != nil {
 				return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", canonicalCreateAgent, paneID, err)
 			}
-		} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, title, bindFlags); err != nil {
+		} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, title,
+			declaredPlainCodexLane(provider, bindFlags, ""), bindFlags); err != nil {
 			return tmuxError("%s: bind Agent Pane %s presentation metadata: %v", canonicalCreateAgent, paneID, err)
 		}
 		if err := c.runtime.runIdentityWrites(ctx, "pane", paneID, pane.Metadata.UID, []identityPlanWrite{

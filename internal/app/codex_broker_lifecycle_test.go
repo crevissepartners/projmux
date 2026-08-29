@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -396,40 +400,88 @@ func TestBrokerEpochReadsTheExactLifecycleSnapshotThroughItsOwnFence(t *testing.
 	}
 }
 
+// retiredObserverAttemptCeiling is the fixed reconnect budget the per-Agent
+// app-server proxy observer used to exhaust before dropping a live activation
+// onto hook fallback. The constant is gone from the product; the number is kept
+// here so the retirement stays measurable rather than merely asserted.
+const retiredObserverAttemptCeiling = 6
+
+// retiredObserverExhaustionReason is the terminal authority reason that budget
+// published. No product path may publish it again.
+const retiredObserverExhaustionReason = "reconnect-exhausted"
+
 // TestNativeLifecycleProducerIsExactlyOnePerActivationGeneration audits the
-// single-producer rule. The decision is total, it never returns both, and the
-// broker producer disables the legacy attempt ceiling rather than layering a
-// second, smaller retry budget on top of the broker's own persistent reconnect.
+// single-producer rule after the per-Agent observer retirement.
+//
+// The rule used to be enforced by a selection made once per activation
+// generation, with the legacy proxy observer reachable as the other branch.
+// There is no other branch now: `internal/app` opens no app-server proxy of its
+// own at all, and the native lifecycle observer is built with exactly one
+// connection opener, so a dual-write window has nothing to open it with.
 func TestNativeLifecycleProducerIsExactlyOnePerActivationGeneration(t *testing.T) {
-	if got := codexNativeLifecycleProducerFor(true); got != codexNativeProducerBroker {
-		t.Fatalf("supported platform producer = %q", got)
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := codexNativeLifecycleProducerFor(false); got != codexNativeProducerLegacyObserver {
-		t.Fatalf("unsupported platform producer = %q", got)
+	fileSet := token.NewFileSet()
+	inspected, openers := 0, 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || filepath.Ext(name) != ".go" || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		file, err := parser.ParseFile(fileSet, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		inspected++
+		ast.Inspect(file, func(node ast.Node) bool {
+			if selector, ok := node.(*ast.SelectorExpr); ok {
+				if ident, ok := selector.X.(*ast.Ident); ok &&
+					ident.Name == "codexappserver" && selector.Sel.Name == "OpenDefaultProxy" {
+					t.Fatalf("%s opens a per-Agent app-server proxy; the broker binding is the only native producer", name)
+				}
+			}
+			function, ok := node.(*ast.FuncDecl)
+			if !ok || function.Name.Name != "runCodexNativeLifecycleObserver" {
+				return true
+			}
+			ast.Inspect(function.Body, func(inner ast.Node) bool {
+				pair, ok := inner.(*ast.KeyValueExpr)
+				if !ok {
+					return true
+				}
+				if key, ok := pair.Key.(*ast.Ident); ok && key.Name == "open" {
+					openers++
+				}
+				return true
+			})
+			return true
+		})
 	}
-	if codexNativeProducerBroker == codexNativeProducerLegacyObserver {
-		t.Fatal("the two producers are the same token")
+	if inspected < 50 {
+		t.Fatalf("inspected %d files, expected the whole package", inspected)
 	}
-	if codexObserverUnboundedReconnect >= 0 {
-		t.Fatalf("unbounded sentinel %d is a real attempt ceiling", codexObserverUnboundedReconnect)
+	if openers != 1 {
+		t.Fatalf("the native lifecycle observer is built with %d connection openers, want exactly 1", openers)
 	}
 }
 
 // TestBrokerProducerKeepsRecoveringPastTheLegacyAttemptCeiling holds the
 // contract the fixed six-attempt budget violated: while the exact binding is
-// still current, a producer that owns persistent reconnect keeps recovering,
-// and it never publishes the terminal exhaustion fallback. The legacy budget is
-// left byte-identical for the producer that still needs it.
+// still current, the observer keeps recovering, and it never publishes the
+// terminal exhaustion fallback. Since the retirement there is no other budget
+// to fall back to, so this is now the whole reconnect contract rather than one
+// producer's exemption from it.
 func TestBrokerProducerKeepsRecoveringPastTheLegacyAttemptCeiling(t *testing.T) {
 	sink := newRecordingCodexLifecycleSink()
 	identity := brokerTestIdentity("thread-recover")
 	var attempts atomic.Int64
 	observer := codexNativeObserver{
-		identity:    identity,
-		sink:        sink,
-		maxAttempts: codexObserverUnboundedReconnect,
-		delay:       time.Millisecond,
-		maxDelay:    time.Millisecond,
+		identity: identity,
+		sink:     sink,
+		delay:    time.Millisecond,
+		maxDelay: time.Millisecond,
 		open: func(context.Context) (codexLifecycleConnection, error) {
 			attempts.Add(1)
 			return nil, errors.New("endpoint is still being served")
@@ -439,7 +491,7 @@ func TestBrokerProducerKeepsRecoveringPastTheLegacyAttemptCeiling(t *testing.T) 
 	done := make(chan error, 1)
 	go func() { done <- observer.Run(ctx) }()
 
-	want := int64(codexObserverReconnectMaxAttempts) * 3
+	want := int64(retiredObserverAttemptCeiling) * 3
 	deadline := time.After(10 * time.Second)
 	for attempts.Load() < want {
 		select {
@@ -455,8 +507,8 @@ func TestBrokerProducerKeepsRecoveringPastTheLegacyAttemptCeiling(t *testing.T) 
 	cancel()
 	<-done
 	for _, reason := range sink.authoritySnapshot() {
-		if strings.Contains(reason, codexObserverExhaustedReason) {
-			t.Fatalf("a persistent-reconnect producer published %q", codexObserverExhaustedReason)
+		if strings.Contains(reason, retiredObserverExhaustionReason) {
+			t.Fatalf("a persistent-reconnect producer published %q", retiredObserverExhaustionReason)
 		}
 	}
 }

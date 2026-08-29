@@ -2582,7 +2582,12 @@ type agentPaneBinding struct {
 	ResumeSource   string
 	ThreadID       string
 	NativeCodex    bool
-	UpdatedAt      time.Time
+	// CodexNativeDeclared names the by-design reason this managed Codex Pane
+	// has no native binding, from the closed declared vocabulary. It is empty
+	// for every other binding, and an empty value is what makes a hook
+	// observation count as an unexplained native fallback.
+	CodexNativeDeclared string
+	UpdatedAt           time.Time
 }
 
 type agentPaneBindError struct {
@@ -2653,6 +2658,7 @@ func (c *aiCommand) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommand
 		{option: aiPaneCodexAuthorityOption, unset: true},
 		{option: aiPaneCodexEpochOption, unset: true},
 		{option: aiPaneCodexReasonOption, unset: true},
+		{option: aiPaneCodexDeclaredOption, unset: true},
 	}
 	if !binding.UpdatedAt.IsZero() {
 		writes[10].value = binding.UpdatedAt.UTC().Format(time.RFC3339)
@@ -2667,7 +2673,14 @@ func (c *aiCommand) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommand
 			option string
 			value  string
 			unset  bool
-		}{option: aiPaneCodexReasonOption, value: "native-fallback"}
+		}{option: aiPaneCodexReasonOption, value: codexNativeUnexplainedReason}
+		if declared := codexNativeDeclaredReason(binding.CodexNativeDeclared); declared != "" {
+			writes[15] = struct {
+				option string
+				value  string
+				unset  bool
+			}{option: aiPaneCodexDeclaredOption, value: declared}
+		}
 	}
 	if binding.NativeCodex {
 		if binding.ThreadID == "" || binding.ConversationID == "" {

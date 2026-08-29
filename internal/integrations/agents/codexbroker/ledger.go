@@ -43,28 +43,43 @@ type WriteRecord struct {
 	Attempts int
 }
 
+// RevocationCount is one closed revocation reason and how many bindings it
+// ended. It is the shape that lets a reader tell a queue eviction from a
+// refused reconnect snapshot without any binding identity being disclosed.
+type RevocationCount struct {
+	Reason Refusal `json:"reason"`
+	Count  int     `json:"count"`
+}
+
 // Diagnostics is the content-free telemetry projection of one broker. Every
 // field is a closed token or a counter, so it is safe to log, persist, and
 // render without redaction.
 type Diagnostics struct {
-	Endpoint         EndpointKey
-	ConnectionEpoch  ConnectionEpoch
-	OpenAttempts     int
-	Connects         int
-	Disconnects      int
-	Bindings         int
-	ReleasedBindings int
-	RevokedBindings  int
-	BufferedEvents   int
-	DeliveredEvents  int
-	ThreadlessEvents int
-	UnboundEvents    int
-	StaleEvents      int
-	Applied          int
-	Refused          int
-	Indeterminate    int
+	Endpoint         EndpointKey     `json:"endpoint"`
+	ConnectionEpoch  ConnectionEpoch `json:"connectionEpoch"`
+	OpenAttempts     int             `json:"openAttempts"`
+	Connects         int             `json:"connects"`
+	Disconnects      int             `json:"disconnects"`
+	Bindings         int             `json:"bindings"`
+	ReleasedBindings int             `json:"releasedBindings"`
+	RevokedBindings  int             `json:"revokedBindings"`
+	BufferedEvents   int             `json:"bufferedEvents"`
+	DeliveredEvents  int             `json:"deliveredEvents"`
+	ThreadlessEvents int             `json:"threadlessEvents"`
+	UnboundEvents    int             `json:"unboundEvents"`
+	StaleEvents      int             `json:"staleEvents"`
+	Applied          int             `json:"applied"`
+	Refused          int             `json:"refused"`
+	Indeterminate    int             `json:"indeterminate"`
 	// Resends counts mutations this broker retried on its own. It exists to
 	// stay zero: no code path increments it, and the ledger's Attempts column
 	// is the second, independent witness of the same contract.
-	Resends int
+	Resends int `json:"resends"`
+	// Revocations breaks the revoked bindings down by their closed reason,
+	// sorted by reason so two readings of one broker render identically. A bare
+	// RevokedBindings count cannot tell an operator whether a binding was
+	// evicted for overflowing its queue, refused its reconnect snapshot, or
+	// fenced out by a replacement epoch, and those three have different
+	// operator answers.
+	Revocations []RevocationCount `json:"revocations,omitempty"`
 }

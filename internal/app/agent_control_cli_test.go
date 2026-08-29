@@ -334,8 +334,8 @@ func TestAgentControlCLIReconnectGapAndIdentityDriftRefuseEveryPublicWrite(t *te
 		{name: "reconnect hook gap", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) {
 			binding.live.Authority, binding.live.Epoch, binding.live.Reason = codexAuthorityHook, "", "disconnected"
 		}},
-		{name: "reconnect exhausted", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) {
-			binding.live.Authority, binding.live.Epoch, binding.live.Reason = codexAuthorityHook, "", codexObserverExhaustedReason
+		{name: "broker unavailable", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) {
+			binding.live.Authority, binding.live.Epoch, binding.live.Reason = codexAuthorityHook, "", "unsupported-platform"
 		}},
 		{name: "generation replaced", wantTransport: 1, mutate: func(store *fakeResourceStore, _ *staticAgentControlBinding) {
 			pane, _ := store.registry.Pane("pan-alpha-codex")

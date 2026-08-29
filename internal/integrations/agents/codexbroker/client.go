@@ -322,6 +322,26 @@ func (c *Conn) Bind(ctx context.Context, threadID, cwd string, roots []string) (
 	return binding, nil
 }
 
+// Stats reads the runtime's content-free telemetry over this connection.
+//
+// A runtime that predates the stats frame answers `request-unknown`, which is
+// returned as a typed refusal rather than an error string: a diagnostics
+// reader renders that as an unsupported runtime, not as a broken one.
+func (c *Conn) Stats(ctx context.Context) (RuntimeTelemetry, error) {
+	reply, err := c.call(ctx, wireRequest{Kind: requestStats})
+	if err != nil {
+		return RuntimeTelemetry{}, err
+	}
+	if reply.Kind == replyRefused {
+		return RuntimeTelemetry{}, refuse(reply.Refusal, nil)
+	}
+	var telemetry RuntimeTelemetry
+	if err := json.Unmarshal(reply.Result, &telemetry); err != nil {
+		return RuntimeTelemetry{}, refuse(RefusalRequestUnknown, err)
+	}
+	return telemetry, nil
+}
+
 // call sends one request and waits for the frame that answers it.
 func (c *Conn) call(ctx context.Context, request wireRequest) (wireReply, error) {
 	inbox := make(chan wireReply, 1)
