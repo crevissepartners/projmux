@@ -924,10 +924,11 @@ lifetime total; `logs.recent-errors.bounded` means older errors were omitted.
 The probe captures at most 4 KiB, generated config inspection reads at most
 1 MiB, and the journal seam reads at most 5 MiB.
 Symlinks and non-regular inputs are rejected without following or blocking on
-them. On Windows, POSIX mode bits cannot establish ACL privacy, so otherwise
-valid paths report the closed `privacy-unverified` warning rather than a false
-private/insecure classification, followed by a separate metadata-only `ready`
-or `not-writable` finding; Doctor never changes ACLs.
+them. The closed `privacy-unverified` warning stays in the finding schema for
+a path whose privacy cannot be established from its mode bits, but no supported
+platform reports it: Linux and macOS are the only build targets and POSIX mode
+bits are authoritative on both, so a readable path always resolves to a
+private or insecure classification. Doctor never changes permissions.
 
 JSON reports have integer `schema_version: 2`. An unfiltered report retains the
 existing typed `dependencies`, `ai_notify_integrations`,
