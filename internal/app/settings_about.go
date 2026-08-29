@@ -103,7 +103,7 @@ func (c *settingsCommand) aboutUpdateEntries() []intpickercompat.Entry {
 	}
 	entries = append(entries,
 		intpickercompat.Entry{
-			Label: settingsNodeRowLabelLocale(locale, settingsNavAbout+".updates.check", settingsGlyphAdd, settingsColorAdd, "refresh cached GitHub release metadata"),
+			Label: settingsNodeRowLabelLocale(locale, settingsNavAbout+".updates.check", settingsGlyphAdd, settingsColorAdd, updateAvailabilityRefreshDescription(status.SourceName)),
 			Value: settingsUpdateCheck,
 		},
 		intpickercompat.Entry{

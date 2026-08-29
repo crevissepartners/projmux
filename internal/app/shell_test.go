@@ -815,6 +815,7 @@ func TestShellWelcomeSkipInputStoresLatestUpdateTag(t *testing.T) {
 	}
 	latest := testVersionTag(t, 1)
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Source:      updateSourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     latest,
@@ -943,6 +944,7 @@ func TestShellWelcomeAppliesInlineUpdate(t *testing.T) {
 	}
 	latest := testVersionTag(t, 1)
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Source:      updateSourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     latest,
@@ -1001,6 +1003,7 @@ func TestShellWelcomeUnknownActionContinuesWithoutUpdating(t *testing.T) {
 		return nil
 	}
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Source:      updateSourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     testVersionTag(t, 1),
@@ -1042,6 +1045,7 @@ func TestShellWelcomeSkipUntilNextWritesUpdateSkipState(t *testing.T) {
 	}
 	latest := testVersionTag(t, 1)
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Source:      updateSourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     latest,
@@ -1089,6 +1093,7 @@ func TestShellWelcomeSkipsStaleUpdateRow(t *testing.T) {
 		return ""
 	}
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Source:      updateSourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now.Add(-25 * time.Hour),
 		TagName:     testVersionTag(t, 1),
@@ -1130,6 +1135,7 @@ func TestShellDoesNotRunSeparateUpdatePicker(t *testing.T) {
 	}
 	latest := testVersionTag(t, 1)
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Source:      updateSourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     latest,
@@ -1233,6 +1239,7 @@ func TestShellWelcomeSurfacesUpdateFailureAndContinues(t *testing.T) {
 		return fmt.Errorf("npm registry unreachable")
 	}
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Source:      updateSourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     testVersionTag(t, 1),
@@ -1279,6 +1286,7 @@ func TestShellWelcomeSkippedUpdateTagSuppressesActionsUntilNextTag(t *testing.T)
 	}
 	latest := testVersionTag(t, 1)
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Source:      updateSourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now,
 		TagName:     latest,
@@ -1340,8 +1348,13 @@ func TestShellWelcomeRefreshesStaleUpdateCacheBestEffort(t *testing.T) {
 		return ""
 	}
 	latest := testVersionTag(t, 2)
+	// This install is npm, so the stale-cache refresh must reach the registry
+	// and read its unprefixed dist-tag, not the GitHub release API.
 	update.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
-		body := fmt.Sprintf(`{"tag_name":%q,"name":%q,"html_url":"https://github.com/crevissepartners/projmux/releases/tag/%s","published_at":"2026-05-06T10:00:00Z"}`, latest, latest, latest)
+		if got := req.URL.String(); got != update.npmRegistryAPIURL() {
+			t.Fatalf("refresh URL = %q, want %q", got, update.npmRegistryAPIURL())
+		}
+		body := fmt.Sprintf(`{"dist-tags":{"latest":%q}}`, strings.TrimPrefix(latest, "v"))
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(strings.NewReader(body)),
@@ -1349,6 +1362,7 @@ func TestShellWelcomeRefreshesStaleUpdateCacheBestEffort(t *testing.T) {
 		}, nil
 	})}
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
+		Source:      updateSourceNPMRegistry,
 		Version:     1,
 		CheckedAt:   now.Add(-25 * time.Hour),
 		TagName:     testVersionTag(t, 1),

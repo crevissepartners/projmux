@@ -37,6 +37,11 @@ const (
 	// hang the apply that just published it.
 	updateVersionProbeTimeout = 10 * time.Second
 	updateReleaseURL          = "https://api.github.com/repos/crevissepartners/projmux/releases/latest"
+	// updateNPMRegistryURL is the availability authority for npm installs. The
+	// registry is asked the same question the GitHub API is asked for the other
+	// channels: what is the newest version a user of this channel can install
+	// right now.
+	updateNPMRegistryURL = "https://registry.npmjs.org/projmux"
 
 	updateMaxCompressedBytes   int64 = 64 << 20
 	updateMaxTarBytes          int64 = 256 << 20
@@ -44,6 +49,15 @@ const (
 	updateMaxRegularFileBytes  int64 = 128 << 20
 	updateMaxTarEntries              = 256
 	updateMaxRedirects               = 5
+)
+
+// The availability sources an update judgment can come from. A judgment is
+// only meaningful against the channel that will perform the install, so the
+// source is chosen from the detected installer and recorded alongside the
+// answer it produced.
+const (
+	updateSourceGitHubRelease = "github-release"
+	updateSourceNPMRegistry   = "npm-registry"
 )
 
 var errUpdateTarTooLarge = errors.New("release archive exceeded extracted byte limit")
@@ -66,6 +80,7 @@ type updateCommand struct {
 	cacheDir    func() (string, error)
 	client      updateHTTPClient
 	apiURL      string
+	npmURL      string
 	executable  func() (string, error)
 	lookPath    func(string) (string, error)
 	runExternal func(name string, args []string, stdout, stderr io.Writer) error
@@ -88,8 +103,12 @@ type updateCommand struct {
 }
 
 type updateCache struct {
-	Version     int       `json:"version"`
-	CheckedAt   time.Time `json:"checked_at"`
+	Version   int       `json:"version"`
+	CheckedAt time.Time `json:"checked_at"`
+	// Source names the availability authority this answer came from. It is
+	// additive: a cache written before channel-aware judgment existed carries
+	// no source, and every such cache was necessarily a GitHub release answer.
+	Source      string    `json:"source,omitempty"`
 	TagName     string    `json:"tag_name"`
 	Name        string    `json:"name,omitempty"`
 	HTMLURL     string    `json:"html_url,omitempty"`
@@ -102,6 +121,7 @@ type updateStatus struct {
 	ReleaseURL     string          `json:"release_url,omitempty"`
 	CheckedAt      *time.Time      `json:"checked_at,omitempty"`
 	CacheState     string          `json:"cache_state"`
+	SourceName     string          `json:"availability_source"`
 	UpdateState    string          `json:"update_state"`
 	Installer      updateInstaller `json:"installer"`
 	CachePath      string          `json:"cache_path"`
@@ -133,6 +153,7 @@ func newUpdateCommand() *updateCommand {
 		cacheDir:     defaultUpdateCacheDir,
 		client:       &http.Client{Timeout: updateHTTPTimeout},
 		apiURL:       updateReleaseURL,
+		npmURL:       updateNPMRegistryURL,
 		executable:   resolveExecutablePath,
 		lookPath:     exec.LookPath,
 		runExternal:  runUpdateExternal,
@@ -725,6 +746,79 @@ func (c *updateCommand) releaseAPIURL() string {
 	return updateReleaseURL
 }
 
+func (c *updateCommand) npmRegistryAPIURL() string {
+	if c.npmURL != "" {
+		return c.npmURL
+	}
+	return updateNPMRegistryURL
+}
+
+// availabilitySourceForInstaller maps an install channel to the authority that
+// can answer "is there a newer version I can install".
+//
+// Only npm moves. go resolves GitHub tags through the module proxy and a
+// github-release install downloads the release itself, so for both of them the
+// GitHub release is already the channel's own answer; source builds have no
+// channel at all and keep the same default rather than gaining a registry they
+// do not install from.
+func availabilitySourceForInstaller(installer string) string {
+	if installer == "npm" {
+		return updateSourceNPMRegistry
+	}
+	return updateSourceGitHubRelease
+}
+
+func (c *updateCommand) availabilitySource() string {
+	return availabilitySourceForInstaller(c.detectInstaller().Source)
+}
+
+// updateAvailabilityRefreshDescription names the authority the check actually
+// contacts. It is derived from the same source the judgment used, so the row
+// cannot drift from what refreshing the cache will do.
+func updateAvailabilityRefreshDescription(source string) string {
+	if source == updateSourceNPMRegistry {
+		return "refresh cached npm registry metadata"
+	}
+	return "refresh cached GitHub release metadata"
+}
+
+func updateAvailabilitySourceLabel(source string) string {
+	if source == updateSourceNPMRegistry {
+		return "npm registry"
+	}
+	return "GitHub releases"
+}
+
+// availabilitySource reports which authority produced this cached answer.
+//
+// An empty field is not unknown: every cache written before the source was
+// recorded came from the GitHub release API, so reading it as such keeps the
+// unchanged channels from being forced through a needless refetch.
+func (cache updateCache) availabilitySource() string {
+	if source := strings.TrimSpace(cache.Source); source != "" {
+		return source
+	}
+	return updateSourceGitHubRelease
+}
+
+// loadUsableCache returns the cached answer only when it came from the source
+// this install must be judged against.
+//
+// A cache from another channel is not stale; it answers a different question.
+// Ageing it out would leave a GitHub answer driving an npm install for up to
+// updateCacheMaxAge, which is the exact failure this judgment split exists to
+// remove, so a mismatch is discarded outright.
+func (c *updateCommand) loadUsableCache() (updateCache, bool, error) {
+	cache, ok, err := c.loadCache()
+	if err != nil || !ok {
+		return updateCache{}, false, err
+	}
+	if cache.availabilitySource() != c.availabilitySource() {
+		return updateCache{}, false, nil
+	}
+	return cache, true, nil
+}
+
 func (c *updateCommand) runStatus(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("update status", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -757,7 +851,7 @@ func (c *updateCommand) runCheck(args []string, stdout, stderr io.Writer) error 
 		return fmt.Errorf("update check does not accept positional arguments")
 	}
 
-	cache, err := c.fetchAndSaveLatestRelease(context.Background())
+	cache, err := c.fetchAndSaveLatestAvailability(context.Background())
 	if err != nil {
 		return err
 	}
@@ -773,7 +867,7 @@ func (c *updateCommand) runCheck(args []string, stdout, stderr io.Writer) error 
 }
 
 func (c *updateCommand) status() (updateStatus, error) {
-	cache, ok, err := c.loadCache()
+	cache, ok, err := c.loadUsableCache()
 	if err != nil {
 		return updateStatus{}, err
 	}
@@ -785,6 +879,7 @@ func (c *updateCommand) status() (updateStatus, error) {
 		return updateStatus{
 			CurrentVersion: version.String(),
 			CacheState:     "unknown",
+			SourceName:     c.availabilitySource(),
 			UpdateState:    "unknown",
 			Installer:      c.detectInstaller(),
 			CachePath:      path,
@@ -794,7 +889,7 @@ func (c *updateCommand) status() (updateStatus, error) {
 }
 
 func (c *updateCommand) refreshCacheIfNeeded(ctx context.Context) error {
-	cache, ok, err := c.loadCache()
+	cache, ok, err := c.loadUsableCache()
 	if err != nil {
 		return err
 	}
@@ -804,30 +899,70 @@ func (c *updateCommand) refreshCacheIfNeeded(ctx context.Context) error {
 			return nil
 		}
 	}
-	_, err = c.fetchAndSaveLatestRelease(ctx)
+	_, err = c.fetchAndSaveLatestAvailability(ctx)
 	return err
 }
 
-func (c *updateCommand) fetchAndSaveLatestRelease(ctx context.Context) (updateCache, error) {
-	rel, err := c.fetchLatestRelease(ctx)
+func (c *updateCommand) fetchAndSaveLatestAvailability(ctx context.Context) (updateCache, error) {
+	source := c.availabilitySource()
+	cache, err := c.fetchLatestAvailability(ctx, source)
 	if err != nil {
 		return updateCache{}, err
 	}
-	cache := updateCache{
-		Version:     1,
-		CheckedAt:   c.clock().UTC(),
-		TagName:     strings.TrimSpace(rel.TagName),
-		Name:        strings.TrimSpace(rel.Name),
-		HTMLURL:     strings.TrimSpace(rel.HTMLURL),
-		PublishedAt: rel.PublishedAt.UTC(),
-	}
 	if cache.TagName == "" {
-		return updateCache{}, errors.New("update check: latest release response did not include tag_name")
+		return updateCache{}, fmt.Errorf("update check: %s did not report a latest version", updateAvailabilitySourceLabel(source))
 	}
 	if err := c.saveCache(cache); err != nil {
 		return updateCache{}, err
 	}
 	return cache, nil
+}
+
+// fetchLatestAvailability asks one channel's authority for its newest version.
+//
+// Both branches go through the same c.client, so the request timeout and the
+// redirect ceiling the shell gate already budgets for apply unchanged to the
+// npm channel.
+func (c *updateCommand) fetchLatestAvailability(ctx context.Context, source string) (updateCache, error) {
+	if source == updateSourceNPMRegistry {
+		latest, err := c.fetchLatestNPMVersion(ctx)
+		if err != nil {
+			return updateCache{}, err
+		}
+		return updateCache{
+			Version:   1,
+			CheckedAt: c.clock().UTC(),
+			Source:    updateSourceNPMRegistry,
+			TagName:   updateTagFromNPMVersion(latest),
+			// The registry publishes no release notes, and the GitHub release
+			// for this version is still drafted while npm is ahead of it, so
+			// there is no notes URL to offer rather than a link that 404s.
+		}, nil
+	}
+	rel, err := c.fetchLatestRelease(ctx)
+	if err != nil {
+		return updateCache{}, err
+	}
+	return updateCache{
+		Version:     1,
+		CheckedAt:   c.clock().UTC(),
+		Source:      updateSourceGitHubRelease,
+		TagName:     strings.TrimSpace(rel.TagName),
+		Name:        strings.TrimSpace(rel.Name),
+		HTMLURL:     strings.TrimSpace(rel.HTMLURL),
+		PublishedAt: rel.PublishedAt.UTC(),
+	}, nil
+}
+
+// updateTagFromNPMVersion restores the leading "v" the registry drops, so one
+// version string format reaches the gate, the skip state, and the status report
+// no matter which authority answered.
+func updateTagFromNPMVersion(raw string) string {
+	v := strings.TrimSpace(raw)
+	if v == "" || strings.HasPrefix(v, "v") {
+		return v
+	}
+	return "v" + v
 }
 
 func (c *updateCommand) statusFromCache(cache updateCache) (updateStatus, error) {
@@ -846,6 +981,7 @@ func (c *updateCommand) statusFromCache(cache updateCache) (updateStatus, error)
 		ReleaseURL:     strings.TrimSpace(cache.HTMLURL),
 		CheckedAt:      &checked,
 		CacheState:     cacheState,
+		SourceName:     cache.availabilitySource(),
 		UpdateState:    compareUpdateState(version.String(), cache.TagName),
 		Installer:      c.detectInstaller(),
 		CachePath:      path,
@@ -877,6 +1013,46 @@ func (c *updateCommand) fetchLatestRelease(ctx context.Context) (githubRelease, 
 		return githubRelease{}, fmt.Errorf("update check: parse latest release: %w", err)
 	}
 	return rel, nil
+}
+
+// npmPackageDocument is the slice of the registry packument this judgment
+// needs. dist-tags.latest is what `npm install -g projmux@latest` resolves, so
+// it is the only answer that matches what the apply command will actually do.
+type npmPackageDocument struct {
+	DistTags map[string]string `json:"dist-tags"`
+}
+
+func (c *updateCommand) fetchLatestNPMVersion(ctx context.Context) (string, error) {
+	if c.client == nil {
+		return "", errors.New("update check: HTTP client is not configured")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.npmRegistryAPIURL(), nil)
+	if err != nil {
+		return "", fmt.Errorf("update check: build npm registry request: %w", err)
+	}
+	// The abbreviated packument carries dist-tags without the full version
+	// history, which keeps the response small enough for the shell gate budget
+	// on a package that has published many versions.
+	req.Header.Set("Accept", "application/vnd.npm.install-v1+json")
+	req.Header.Set("User-Agent", "projmux/"+version.String())
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("update check: fetch npm dist-tags: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("update check: npm registry request returned status %d", resp.StatusCode)
+	}
+	var doc npmPackageDocument
+	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
+		return "", fmt.Errorf("update check: parse npm registry response: %w", err)
+	}
+	latest := strings.TrimSpace(doc.DistTags["latest"])
+	if latest == "" {
+		return "", errors.New("update check: npm registry response did not include dist-tags.latest")
+	}
+	return latest, nil
 }
 
 func findReleaseAsset(rel githubRelease, goos, goarch string) (githubReleaseAsset, error) {
@@ -1331,7 +1507,7 @@ func parseProjmuxVersionOutput(raw string) (string, bool) {
 // It reads the existing cache and never fetches: apply is not a check, and the
 // expected version is diagnostic text, not a gate.
 func (c *updateCommand) cachedLatestVersion() string {
-	cache, ok, err := c.loadCache()
+	cache, ok, err := c.loadUsableCache()
 	if err != nil || !ok {
 		return ""
 	}
@@ -1449,6 +1625,9 @@ func writeUpdateStatusText(w io.Writer, st updateStatus) error {
 		}
 	}
 	if _, err := fmt.Fprintf(w, "  state:     %s\n", st.UpdateState); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "  source:    %s\n", updateAvailabilitySourceLabel(st.SourceName)); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(w, "  installer: %s - %s\n", st.Installer.Source, st.Installer.Note); err != nil {

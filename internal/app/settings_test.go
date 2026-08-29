@@ -8617,3 +8617,60 @@ func TestSettingsKeybindingCaptureFallsBackToTypedWhenUnavailable(t *testing.T) 
 		t.Fatalf("keymap = %q, want typed fallback M-x alias", keymap)
 	}
 }
+
+// TestSettingsAboutRefreshRowNamesTheAvailabilitySource pins C-1
+// Failure.Detection on the display side: the Updates row promised GitHub
+// release metadata to every channel, including the one that is no longer
+// judged by it.
+func TestSettingsAboutRefreshRowNamesTheAvailabilitySource(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		installer string
+		want      string
+		notWant   string
+	}{
+		{
+			name:      "npm names the registry it actually contacts",
+			installer: "npm",
+			want:      "refresh cached npm registry metadata",
+			notWant:   "refresh cached GitHub release metadata",
+		},
+		{
+			name:      "go keeps naming the GitHub release",
+			installer: "go",
+			want:      "refresh cached GitHub release metadata",
+			notWant:   "refresh cached npm registry metadata",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			update, cacheDir := testUpdateCommand(t, now)
+			update.getenv = func(name string) string {
+				if name == "PROJMUX_INSTALLER" {
+					return tc.installer
+				}
+				return ""
+			}
+			writeUpdateCacheFixture(t, cacheDir, updateCache{
+				Version:   1,
+				CheckedAt: now.Add(-time.Hour),
+				Source:    availabilitySourceForInstaller(tc.installer),
+				TagName:   testVersionTag(t, 1),
+			})
+
+			cmd := &settingsCommand{update: update}
+			entries := cmd.aboutUpdateEntries()
+			if !hasEntryLabelContaining(entries, tc.want) {
+				t.Fatalf("about update entries = %#v, want a row describing %q", entries, tc.want)
+			}
+			if hasEntryLabelContaining(entries, tc.notWant) {
+				t.Fatalf("about update entries = %#v, did not want %q", entries, tc.notWant)
+			}
+		})
+	}
+}

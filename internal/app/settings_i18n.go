@@ -618,6 +618,7 @@ var uiTextKeys = map[string]i18n.Key{
 	"open quit actions":                                        "settings.text.open_quit_actions",
 	"run installer-specific update command":                    "settings.text.run_installer_update",
 	"refresh cached GitHub release metadata":                   "settings.text.refresh_github_release_metadata",
+	"refresh cached npm registry metadata":                     "settings.text.refresh_npm_registry_metadata",
 	"status unavailable":                                       "settings.text.status_unavailable",
 	"unreadable":                                               "settings.text.unreadable",
 	"global config unreadable":                                 "settings.text.global_config_unreadable",

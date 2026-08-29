@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -166,6 +167,7 @@ func testUpdateCommand(t *testing.T, now time.Time) (*updateCommand, string) {
 			return nil, fmt.Errorf("unexpected update request to %s", req.URL.String())
 		})},
 		apiURL:     "https://example.invalid/latest",
+		npmURL:     "https://example.invalid/npm/projmux",
 		executable: func() (string, error) { return "/tmp/projmux", nil },
 		// Every pre-existing apply test describes an ordinary landed upgrade, so
 		// the default probe reports a higher version after publication.
@@ -1182,6 +1184,11 @@ func testVersionTag(t *testing.T, patchDelta int) string {
 	return fmt.Sprintf("v%d.%d.%d", parts[0], parts[1], parts[2])
 }
 
+func testCurrentVersionTag(t *testing.T) string {
+	t.Helper()
+	return testVersionTag(t, 0)
+}
+
 // updateApplyVerificationCommand builds an apply command whose installer is
 // fixed and whose staged commands all succeed, so the only thing under test is
 // the post-publication version verification.
@@ -1290,6 +1297,7 @@ func TestUpdateApplyFailsWhenTheInstalledVersionDidNotChange(t *testing.T) {
 			writeUpdateCacheFixture(t, cacheDir, updateCache{
 				Version:   1,
 				CheckedAt: time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC),
+				Source:    availabilitySourceForInstaller(tc.installer),
 				TagName:   "v0.13.2",
 			})
 			cmd.probeVersion = stubUpdateVersionProbe(tc.before, tc.after)
@@ -1341,6 +1349,7 @@ func TestUpdateApplySucceedsWhenTheInstalledVersionRose(t *testing.T) {
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
 		Version:   1,
 		CheckedAt: time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC),
+		Source:    updateSourceNPMRegistry,
 		TagName:   "v0.13.2",
 	})
 	cmd.probeVersion = stubUpdateVersionProbe("0.13.1", "0.13.2")
@@ -1423,6 +1432,7 @@ func TestUpdateApplyVerifiesThePathResolvedExecutable(t *testing.T) {
 	writeUpdateCacheFixture(t, cacheDir, updateCache{
 		Version:   1,
 		CheckedAt: time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC),
+		Source:    updateSourceNPMRegistry,
 		TagName:   "v0.13.2",
 	})
 	var probed []string
@@ -1618,5 +1628,350 @@ func failingUpdateVersionProbeAfter(okReads int, cause error) func(string) (stri
 			return "", cause
 		}
 		return "projmux 0.13.1\n", nil
+	}
+}
+
+// updateAvailabilityResponder answers whichever availability authority the
+// command decides to ask, and fails the test if it asks the wrong one.
+//
+// Both channels are served by a single client so the request timeout and the
+// redirect ceiling the shell gate budgets for stay identical across them; a
+// second client here would hide a divergence the gate would pay for.
+func updateAvailabilityResponder(t *testing.T, cmd *updateCommand, githubTag, npmVersion string) *http.Client {
+	t.Helper()
+	return &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := ""
+		switch req.URL.String() {
+		case cmd.releaseAPIURL():
+			if githubTag == "" {
+				t.Fatalf("unexpected GitHub release request for a channel that must not ask it")
+			}
+			body = fmt.Sprintf(`{"tag_name":%q,"name":%q,"html_url":"https://github.com/crevissepartners/projmux/releases/tag/%s","published_at":"2026-05-06T10:00:00Z"}`, githubTag, githubTag, githubTag)
+		case cmd.npmRegistryAPIURL():
+			if npmVersion == "" {
+				t.Fatalf("unexpected npm registry request for a channel that must not ask it")
+			}
+			body = fmt.Sprintf(`{"dist-tags":{"latest":%q}}`, npmVersion)
+		default:
+			t.Fatalf("unexpected availability request to %s", req.URL.String())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+}
+
+func updateCommandForInstaller(t *testing.T, now time.Time, installer string) (*updateCommand, string) {
+	t.Helper()
+	cmd, cacheDir := testUpdateCommand(t, now)
+	cmd.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return installer
+		}
+		return ""
+	}
+	return cmd, cacheDir
+}
+
+// TestUpdateCheckPicksTheAvailabilitySourceFromTheInstallChannel pins C-1
+// Guarantee at its root: the authority asked is the one that will perform the
+// install. npm asks the registry, every other channel keeps the GitHub release.
+func TestUpdateCheckPicksTheAvailabilitySourceFromTheInstallChannel(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name       string
+		installer  string
+		wantSource string
+	}{
+		{name: "npm asks the registry", installer: "npm", wantSource: updateSourceNPMRegistry},
+		{name: "go keeps the GitHub release", installer: "go", wantSource: updateSourceGitHubRelease},
+		{name: "github-release keeps the GitHub release", installer: "github-release", wantSource: updateSourceGitHubRelease},
+		{name: "source builds keep the GitHub release", installer: "source", wantSource: updateSourceGitHubRelease},
+		{name: "an undetected channel keeps the GitHub release", installer: "", wantSource: updateSourceGitHubRelease},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, cacheDir := updateCommandForInstaller(t, now, tc.installer)
+			githubTag, npmVersion := testVersionTag(t, 1), ""
+			if tc.wantSource == updateSourceNPMRegistry {
+				githubTag, npmVersion = "", strings.TrimPrefix(testVersionTag(t, 1), "v")
+			}
+			cmd.client = updateAvailabilityResponder(t, cmd, githubTag, npmVersion)
+
+			if err := cmd.Run([]string{"check"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+
+			cache, ok, err := cmd.loadCache()
+			if err != nil || !ok {
+				t.Fatalf("loadCache() = %v, %v, %v", cache, ok, err)
+			}
+			if cache.Source != tc.wantSource {
+				t.Fatalf("cache Source = %q, want %q", cache.Source, tc.wantSource)
+			}
+			// Whichever authority answered, one version string format reaches
+			// the gate.
+			if want := testVersionTag(t, 1); cache.TagName != want {
+				t.Fatalf("cache TagName = %q, want %q", cache.TagName, want)
+			}
+			raw, err := os.ReadFile(filepath.Join(cacheDir, updateCacheFileName))
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			if !strings.Contains(string(raw), `"source": "`+tc.wantSource+`"`) {
+				t.Fatalf("cache file = %s, want a recorded source %q", raw, tc.wantSource)
+			}
+		})
+	}
+}
+
+// TestShellGateWaitsForTheNPMRegistryToPublish is the reported symptom, both
+// halves of it: no `u` while only GitHub has the version, and `u` as soon as
+// npm does. The GitHub authority is not even reachable here, so an offer can
+// only come from the registry.
+func TestShellGateWaitsForTheNPMRegistryToPublish(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name        string
+		npmVersion  string
+		wantPrompt  bool
+		wantState   string
+		wantLatest  string
+		description string
+	}{
+		{
+			name:        "npm has not published the release yet",
+			npmVersion:  strings.TrimPrefix(testCurrentVersionTag(t), "v"),
+			wantPrompt:  false,
+			wantState:   "current",
+			wantLatest:  testCurrentVersionTag(t),
+			description: "GitHub is ahead, but nothing offered is installable here",
+		},
+		{
+			name:       "npm published the release",
+			npmVersion: "0.99.0",
+			wantPrompt: true,
+			wantState:  "update_available",
+			wantLatest: "v0.99.0",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _ := updateCommandForInstaller(t, now, "npm")
+			cmd.client = updateAvailabilityResponder(t, cmd, "", tc.npmVersion)
+
+			if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+				t.Fatalf("refreshCacheIfNeeded() error = %v", err)
+			}
+			st, err := cmd.status()
+			if err != nil {
+				t.Fatalf("status() error = %v", err)
+			}
+			if st.LatestVersion != tc.wantLatest {
+				t.Fatalf("LatestVersion = %q, want %q", st.LatestVersion, tc.wantLatest)
+			}
+			if st.UpdateState != tc.wantState {
+				t.Fatalf("UpdateState = %q, want %q", st.UpdateState, tc.wantState)
+			}
+			if st.SourceName != updateSourceNPMRegistry {
+				t.Fatalf("SourceName = %q, want %q", st.SourceName, updateSourceNPMRegistry)
+			}
+			if got := shouldPromptShellUpdate(st); got != tc.wantPrompt {
+				t.Fatalf("shouldPromptShellUpdate() = %v, want %v", got, tc.wantPrompt)
+			}
+		})
+	}
+}
+
+// TestUpdateJudgmentIsUnchangedForNonNPMChannels holds the change-freeze
+// boundary: go and github-release are already in step with GitHub tags, so
+// neither their authority nor their existing caches may move.
+func TestUpdateJudgmentIsUnchangedForNonNPMChannels(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	for _, installer := range []string{"go", "github-release", "source"} {
+		t.Run(installer+" reads a cache written before sources were recorded", func(t *testing.T) {
+			t.Parallel()
+
+			cmd, cacheDir := updateCommandForInstaller(t, now, installer)
+			cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				t.Fatalf("a fresh pre-existing cache must not trigger a refetch, got %s", req.URL.String())
+				return nil, nil
+			})}
+			writeUpdateCacheFixture(t, cacheDir, updateCache{
+				Version:   1,
+				CheckedAt: now.Add(-time.Hour),
+				TagName:   testVersionTag(t, 1),
+			})
+
+			if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+				t.Fatalf("refreshCacheIfNeeded() error = %v", err)
+			}
+			st, err := cmd.status()
+			if err != nil {
+				t.Fatalf("status() error = %v", err)
+			}
+			if st.CacheState != "fresh" || st.UpdateState != "update_available" {
+				t.Fatalf("status = %q/%q, want fresh/update_available", st.CacheState, st.UpdateState)
+			}
+			if st.SourceName != updateSourceGitHubRelease {
+				t.Fatalf("SourceName = %q, want %q", st.SourceName, updateSourceGitHubRelease)
+			}
+			if !shouldPromptShellUpdate(st) {
+				t.Fatalf("shouldPromptShellUpdate() = false, want the unchanged offer")
+			}
+		})
+	}
+}
+
+// TestUpdateCacheRecordsItsAvailabilitySourceAndDropsAForeignOne pins C-1
+// Scope in time. A cached answer from another channel is not aged out, it is
+// discarded, because otherwise the wrong authority would drive the gate for up
+// to updateCacheMaxAge after a channel switch.
+func TestUpdateCacheRecordsItsAvailabilitySourceAndDropsAForeignOne(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	cmd, cacheDir := testUpdateCommand(t, now)
+	installer := "npm"
+	cmd.getenv = func(name string) string {
+		if name == "PROJMUX_INSTALLER" {
+			return installer
+		}
+		return ""
+	}
+	cmd.client = updateAvailabilityResponder(t, cmd, testVersionTag(t, 2), "0.99.0")
+
+	if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+		t.Fatalf("refreshCacheIfNeeded() error = %v", err)
+	}
+	cache, _, err := cmd.loadCache()
+	if err != nil {
+		t.Fatalf("loadCache() error = %v", err)
+	}
+	if cache.Source != updateSourceNPMRegistry || cache.TagName != "v0.99.0" {
+		t.Fatalf("cache = %+v, want the npm registry answer", cache)
+	}
+
+	// Same cache file, different channel: the recorded answer is about a
+	// question this install no longer asks.
+	installer = "go"
+	st, err := cmd.status()
+	if err != nil {
+		t.Fatalf("status() error = %v", err)
+	}
+	if st.CacheState != "unknown" || st.UpdateState != "unknown" {
+		t.Fatalf("status = %q/%q, want unknown/unknown after the source changed", st.CacheState, st.UpdateState)
+	}
+	if got := cmd.cachedLatestVersion(); got != "" {
+		t.Fatalf("cachedLatestVersion() = %q, want no expected version from a foreign source", got)
+	}
+	if shouldPromptShellUpdate(st) {
+		t.Fatalf("shouldPromptShellUpdate() = true, want no offer from a discarded cache")
+	}
+
+	if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+		t.Fatalf("second refreshCacheIfNeeded() error = %v", err)
+	}
+	cache, _, err = cmd.loadCache()
+	if err != nil {
+		t.Fatalf("second loadCache() error = %v", err)
+	}
+	if cache.Source != updateSourceGitHubRelease || cache.TagName != testVersionTag(t, 2) {
+		t.Fatalf("cache = %+v, want the GitHub release answer after the switch", cache)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, updateCacheFileName)); err != nil {
+		t.Fatalf("cache file name changed: %v", err)
+	}
+}
+
+// TestShellGateStaysSilentWhenTheAvailabilitySourceFails pins C-1
+// Failure.Detection: an authority that cannot answer must leave the gate quiet
+// and say so, never fall through to the other channel's answer.
+func TestShellGateStaysSilentWhenTheAvailabilitySourceFails(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name      string
+		transport updateRoundTripFunc
+	}{
+		{
+			name: "the registry is unreachable",
+			transport: func(req *http.Request) (*http.Response, error) {
+				return nil, errors.New("dial tcp: no route to host")
+			},
+		},
+		{
+			name: "the registry answers with an error status",
+			transport: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusServiceUnavailable,
+					Body:       io.NopCloser(strings.NewReader("")),
+					Header:     make(http.Header),
+				}, nil
+			},
+		},
+		{
+			name: "the response carries no dist-tags",
+			transport: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader(`{"name":"projmux"}`)),
+					Header:     make(http.Header),
+				}, nil
+			},
+		},
+		{
+			name: "the response is not JSON",
+			transport: func(req *http.Request) (*http.Response, error) {
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Body:       io.NopCloser(strings.NewReader("<html>502</html>")),
+					Header:     make(http.Header),
+				}, nil
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _ := updateCommandForInstaller(t, now, "npm")
+			cmd.client = &http.Client{Transport: tc.transport}
+
+			if err := cmd.refreshCacheIfNeeded(context.Background()); err == nil {
+				t.Fatalf("refreshCacheIfNeeded() error = nil, want the failure reported")
+			}
+
+			var stdout bytes.Buffer
+			if err := cmd.Run([]string{"status"}, &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			for _, want := range []string{"latest:    unknown (unknown)", "state:     unknown", "source:    npm registry"} {
+				if !strings.Contains(stdout.String(), want) {
+					t.Fatalf("status output missing %q\nfull output:\n%s", want, stdout.String())
+				}
+			}
+
+			st, err := cmd.status()
+			if err != nil {
+				t.Fatalf("status() error = %v", err)
+			}
+			if shouldPromptShellUpdate(st) {
+				t.Fatalf("shouldPromptShellUpdate() = true, want no offer when the source did not answer")
+			}
+		})
 	}
 }
