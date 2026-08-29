@@ -2,6 +2,7 @@
 
 ## Scope
 - `projmux` is a standalone tmux session-management application.
+- Supported build targets are Linux and macOS on amd64 and arm64. That matrix is the whole contract: the release workflow builds only those four, no CI job builds any other `GOOS`, and `GOOS=windows` compilation is **not** supported or guaranteed. The repository carries no `_windows.go` files and no `//go:build windows` or `//go:build !windows` constraints; do not add them. WSL is not a separate target — it runs the Linux build under the Linux contract, and WSL-specific behavior such as `PROJMUX_WSL_TOAST_ICON_DIR` stays inside that build.
 - Keep portable session-management behavior in `projmux`.
 - Keep machine-local policy outside the application unless the migration plan explicitly calls for it.
 - Keep `AGENTS.md` focused on repo contract. Personal agent recipes, reverse-engineering notes, and machine-local operating memos belong in external local docs (Obsidian/dotfiles anchors), not this tracked file.
