@@ -98,10 +98,12 @@ Release binaries, including the `darwin && cgo` native key adapter, then
 publishes each staged package with `npm publish --access public`.
 
 The GitHub release itself stays a draft until that npm job succeeds. release-please
-creates the release with `draft` set, `release.yml` uploads archives to the drafted
-release, and only the final `publish-release` job flips it visible. So by the time a
-user can see release `vX.Y.Z`, npm `dist-tags.latest` already resolves to `X.Y.Z`;
-a failed npm publish keeps the release hidden and the workflow red.
+creates the release with `draft` and `force-tag-creation` set, so its release pass
+creates the tag before the same action computes the next release PR. The tag starts
+`release.yml`, which uploads archives to the drafted release, and only the final
+`publish-release` job flips it visible. So by the time a user can see release
+`vX.Y.Z`, npm `dist-tags.latest` already resolves to `X.Y.Z`; a failed npm publish
+keeps the release hidden and the workflow red.
 The npm publish job uses GitHub Actions OIDC (`id-token: write`) instead of a
 long-lived `NPM_TOKEN` secret. PR CI runs `make npm-pack` so package staging and
 dry-run packing fail before release.

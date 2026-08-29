@@ -143,6 +143,90 @@ fi
 echo ">> CI schedules one runner per suite: ${job_shards[*]} ${job_suites[*]}"
 echo ">> the required E2E Tests context still reports over the split shards"
 
+# The tag workflow uses the same selectors and manifest, but its aggregate is
+# a release gate rather than a branch-ruleset compatibility context. Build
+# Release must depend on only that aggregate so every matrix result is reduced
+# once, fail-closed, before archive construction starts.
+workflow="$root/.github/workflows/release.yml"
+release_linux_block="$(job_block e2e-linux)"
+release_suite_block="$(job_block e2e-suite)"
+release_e2e_block="$(job_block e2e)"
+release_build_block="$(job_block release)"
+
+for pair in "e2e-linux:$release_linux_block" "e2e-suite:$release_suite_block"; do
+  job="${pair%%:*}"
+  body="${pair#*:}"
+  [[ -n "$body" ]] || { echo "release workflow is missing e2e job $job" >&2; exit 1; }
+  grep -Fqx '      fail-fast: false' <<<"$body" ||
+    { echo "release $job must set fail-fast: false" >&2; exit 1; }
+  grep -Fqx '    runs-on: ubuntu-latest' <<<"$body" ||
+    { echo "release $job must declare its own runner" >&2; exit 1; }
+  grep -Fqx '    timeout-minutes: 30' <<<"$body" ||
+    { echo "release $job must bound a wedged container" >&2; exit 1; }
+done
+
+mapfile -t release_job_shards < <(matrix_axis shard <<<"$release_linux_block")
+if [[ "${manifest_shards[*]}" != "${release_job_shards[*]}" ]]; then
+  echo "Linux shard manifest/release job list mismatch" >&2
+  diff -u <(printf '%s\n' "${manifest_shards[@]}") <(printf '%s\n' "${release_job_shards[@]}") >&2 || true
+  exit 1
+fi
+grep -Fq 'PROJMUX_E2E_LINUX_SHARD: ${{ matrix.shard }}' <<<"$release_linux_block" ||
+  { echo "release e2e-linux must select its shard through PROJMUX_E2E_LINUX_SHARD" >&2; exit 1; }
+
+mapfile -t release_job_suites < <(matrix_axis suite <<<"$release_suite_block")
+if [[ "${release_job_suites[*]}" != "codex-lifecycle npm-staging" ]]; then
+  echo "release non-Linux suite job list is not the codex/npm pair: ${release_job_suites[*]}" >&2
+  exit 1
+fi
+grep -Fq 'PROJMUX_E2E_SUITE: ${{ matrix.suite }}' <<<"$release_suite_block" ||
+  { echo "release e2e-suite must select its suite through PROJMUX_E2E_SUITE" >&2; exit 1; }
+
+grep -Fqx '    name: Release E2E Tests' <<<"$release_e2e_block" ||
+  { echo "release e2e aggregate must report the exact name Release E2E Tests" >&2; exit 1; }
+grep -Fqx '    if: always()' <<<"$release_e2e_block" ||
+  { echo "Release E2E Tests must be if: always()" >&2; exit 1; }
+for child in e2e-linux e2e-suite; do
+  grep -Fqx "      - $child" <<<"$release_e2e_block" ||
+    { echo "Release E2E Tests does not need $child" >&2; exit 1; }
+  grep -Fq -- "--required $child" <<<"$release_e2e_block" ||
+    { echo "Release E2E Tests does not fail closed over $child" >&2; exit 1; }
+done
+
+grep -Fqx '      - e2e' <<<"$release_build_block" ||
+  { echo "Build Release must depend on the Release E2E Tests aggregate" >&2; exit 1; }
+for child in e2e-linux e2e-suite; do
+  if grep -Fqx "      - $child" <<<"$release_build_block"; then
+    echo "Build Release must not bypass the e2e aggregate with direct $child dependency" >&2
+    exit 1
+  fi
+done
+
+release_artifact_names=()
+for pair in "e2e-linux:shard:$release_linux_block" "e2e-suite:suite:$release_suite_block"; do
+  job="${pair%%:*}"
+  rest="${pair#*:}"
+  axis="${rest%%:*}"
+  body="${rest#*:}"
+  [[ "$(grep -Fc 'uses: actions/upload-artifact@v4' <<<"$body")" == "2" ]] ||
+    { echo "release $job must preserve both failing and passing evidence" >&2; exit 1; }
+  mapfile -t job_artifacts < <(grep -E '^          name: release-e2e-evidence-' <<<"$body")
+  [[ "${#job_artifacts[@]}" == "2" ]] ||
+    { echo "release $job must name both evidence artifacts" >&2; exit 1; }
+  for artifact in "${job_artifacts[@]}"; do
+    grep -Fq "\${{ matrix.$axis }}" <<<"$artifact" ||
+      { echo "release $job artifact name omits matrix.$axis: $artifact" >&2; exit 1; }
+  done
+  release_artifact_names+=("${job_artifacts[@]}")
+done
+mapfile -t release_unique_names < <(printf '%s\n' "${release_artifact_names[@]}" | sort -u)
+if [[ "${#release_artifact_names[@]}" != "4" || "${#release_unique_names[@]}" != "4" ]]; then
+  echo "the release e2e jobs share an artifact name" >&2
+  exit 1
+fi
+
+echo ">> Release schedules one runner per suite behind one fail-closed aggregate"
+
 [[ "$(python3 "$root/scripts/e2e-evidence.py" route --manifest "$manifest" L17)" == \
   "linux-fixture-4:L17" ]]
 [[ "$(python3 "$root/scripts/e2e-evidence.py" route --manifest "$manifest" C01)" == \

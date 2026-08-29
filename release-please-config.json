@@ -8,6 +8,7 @@
   "packages": {
     ".": {
       "draft": true,
+      "force-tag-creation": true,
       "extra-files": [
         "internal/version/version.go",
         "package.json",

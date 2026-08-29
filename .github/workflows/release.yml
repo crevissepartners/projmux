@@ -54,16 +54,114 @@ jobs:
       - name: Run integration tests
         run: make test-integration
 
-  e2e:
-    name: Release E2E Tests
+  e2e-linux:
+    name: Release E2E Linux ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - fixture-1
+          - fixture-2
+          - fixture-3
+          - fixture-4
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Run e2e tests
+      - name: Run e2e Linux shard
+        env:
+          PROJMUX_E2E_LINUX_SHARD: ${{ matrix.shard }}
         run: make test-e2e
+
+      - name: Preserve failing attempt evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-evidence-failure-${{ github.run_id }}-${{ github.run_attempt }}-linux-${{ matrix.shard }}
+          path: |
+            .bin/e2e-evidence/attempt-*/**
+            !.bin/e2e-evidence/attempt-*/binary/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Preserve passing attempt evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-evidence-success-${{ github.run_id }}-${{ github.run_attempt }}-linux-${{ matrix.shard }}
+          path: |
+            .bin/e2e-evidence/attempt-*/**
+            !.bin/e2e-evidence/attempt-*/binary/**
+          if-no-files-found: warn
+          retention-days: 1
+
+  e2e-suite:
+    name: Release E2E ${{ matrix.suite }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - codex-lifecycle
+          - npm-staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Run e2e suite
+        env:
+          PROJMUX_E2E_SUITE: ${{ matrix.suite }}
+        run: make test-e2e
+
+      - name: Preserve failing attempt evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-evidence-failure-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.suite }}
+          path: |
+            .bin/e2e-evidence/attempt-*/**
+            !.bin/e2e-evidence/attempt-*/binary/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Preserve passing attempt evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-e2e-evidence-success-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.suite }}
+          path: |
+            .bin/e2e-evidence/attempt-*/**
+            !.bin/e2e-evidence/attempt-*/binary/**
+          if-no-files-found: warn
+          retention-days: 1
+
+  e2e:
+    name: Release E2E Tests
+    if: always()
+    needs:
+      - e2e-linux
+      - e2e-suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout aggregate policy
+        uses: actions/checkout@v6
+
+      - name: Require every release e2e child to succeed
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 scripts/required-gate.py \
+            --results-json "$REQUIRED_RESULTS" \
+            --required e2e-linux \
+            --required e2e-suite
 
   release:
     name: Build Release
