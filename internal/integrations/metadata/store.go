@@ -381,11 +381,8 @@ func (s *Store) Update(fn func(*coremetadata.Registry) error) (coremetadata.Regi
 	if s == nil {
 		return coremetadata.Registry{}, errors.New("metadata: nil registry store")
 	}
-	if err := s.refuseDegradedMutation(); err != nil {
-		return coremetadata.Registry{}, err
-	}
 	var out coremetadata.Registry
-	err := s.withLock(func() error {
+	err := s.withMutationLock(func() error {
 		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return s.mapDegradedMutationError(err)
@@ -428,12 +425,10 @@ func (s *Store) UpdateConvergent(fn func(*coremetadata.Registry) error) (coremet
 	if s == nil {
 		return coremetadata.Registry{}, false, errors.New("metadata: nil registry store")
 	}
-	if err := s.refuseDegradedMutation(); err != nil {
-		return coremetadata.Registry{}, false, err
-	}
+
 	var out coremetadata.Registry
 	changed := false
-	err := s.withLock(func() error {
+	err := s.withMutationLock(func() error {
 		registry, onDiskVersion, existed, report, err := s.readWithReport()
 		if err != nil {
 			return s.mapDegradedMutationError(err)
@@ -619,10 +614,10 @@ func (s *Store) stateLossError(state string) error {
 		ErrRegistryStateLost, s.markerPath, s.path, state, s.recoveryDir)
 }
 
-// refuseDegradedMutation is the lock-free gate in front of every ordinary
-// write. It keeps a damaged Registry from waiting behind (or entering) the
-// normal mutation transaction and turns the content classification into one
-// actionable recovery instruction.
+// refuseDegradedMutation classifies a damaged Registry into one actionable
+// recovery instruction. It reads without the lock, so a positive answer is a
+// suspicion rather than a verdict: see withMutationLock, which confirms it under
+// the lock before any mutation is refused.
 func (s *Store) refuseDegradedMutation() error {
 	inspection, err := s.InspectRecovery()
 	if err != nil {
@@ -1215,6 +1210,33 @@ func (s *Store) backup(fromVersion int) (string, error) {
 		return "", fmt.Errorf("metadata: write registry backup %s: %w", path, err)
 	}
 	return path, nil
+}
+
+// withMutationLock runs an ordinary mutation under the write lock and refuses a
+// degraded Registry with the same actionable error the lock-free gate produces.
+//
+// The refusal is confirmed a second time, under the lock, before it is
+// returned. A commit publishes the initialized marker before it renames the
+// staged registry into place, so an observer without the lock can catch a
+// healthy writer inside that window and read it as "the marker records a
+// completed write but registry.json is missing" -- the state-loss signature.
+// Inside the lock no transaction is in flight, so the second look tells a real
+// loss apart from a neighbour's commit in progress.
+//
+// This is the same contract the deadline gives the lock itself: a writer that is
+// alive and progressing is what a waiter is supposed to wait for, not a reason
+// to fail. The cost is that a genuinely degraded Registry now queues for the
+// lock before it is refused, which the deadline bounds.
+func (s *Store) withMutationLock(fn func() error) error {
+	suspected := s.refuseDegradedMutation()
+	return s.withLock(func() error {
+		if suspected != nil {
+			if confirmed := s.refuseDegradedMutation(); confirmed != nil {
+				return confirmed
+			}
+		}
+		return fn()
+	})
 }
 
 func (s *Store) withLock(fn func() error) error {

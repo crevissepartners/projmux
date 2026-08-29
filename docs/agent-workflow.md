@@ -512,8 +512,16 @@
   covers the compatibility window in both directions, and
   `TestRegistryLockGrantsEveryWriterUnderDeliberateContention` plus the fixed-clock
   `TestConcurrentUpdatesSerializeThroughTheRegistryLock` require every contending
-  writer to be granted with no overlapping critical sections. The `Race Tests`
-  CI job runs the metadata, notify, and recent-window packages under `-race`.
+  writer to be granted with no overlapping critical sections. The degraded-mode
+  gate in front of an ordinary mutation is now a suspicion confirmed under the
+  lock rather than an immediate refusal: a commit publishes the initialized
+  marker before it renames the staged registry into place, so an unlocked
+  observer could read a healthy neighbour's in-flight commit as state loss and
+  refuse a writer that never reached the lock.
+  `TestAConcurrentWriterIsNotRefusedInsideAnotherCommitsMarkerWindow` builds that
+  window directly and requires the second writer to wait through it. The
+  `Race Tests` CI job runs the metadata, notify, and recent-window packages
+  under `-race`.
   The real-tmux L06 burst still requires all eight exact-socket creates to
   converge on one Window with nine unique mirrored Panes and no lock or staged
   residue; it is a regression guard, not the evidence for the lock change.

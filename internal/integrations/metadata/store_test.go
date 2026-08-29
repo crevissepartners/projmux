@@ -1014,10 +1014,25 @@ func holdRegistryFlock(t *testing.T, store *Store) {
 	if err := unix.Flock(int(held.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		t.Fatalf("hold registry flock: %v", err)
 	}
-	t.Cleanup(func() {
+	release := sync.OnceFunc(func() {
 		_ = unix.Flock(int(held.Fd()), unix.LOCK_UN)
 		_ = held.Close()
 	})
+	heldRegistryFlocks.Store(store, release)
+	t.Cleanup(release)
+}
+
+// heldRegistryFlocks lets a test release the stand-in holder before its cleanup
+// runs, for the cases that need the wait to end inside the test body.
+var heldRegistryFlocks sync.Map
+
+func releaseRegistryFlock(t *testing.T, store *Store) {
+	t.Helper()
+	release, ok := heldRegistryFlocks.Load(store)
+	if !ok {
+		t.Fatal("no registry flock is held for this store")
+	}
+	release.(func())()
 }
 
 // writeLegacyMarker reproduces exactly what an install from before the kernel
@@ -1321,6 +1336,77 @@ func TestRegistryLockGrantsEveryWriterUnderDeliberateContention(t *testing.T) {
 	}
 	if _, err := os.Stat(store.lockPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the marker survived the contended rounds: %v", err)
+	}
+	assertNoStagedGarbage(t, store)
+}
+
+// TestAConcurrentWriterIsNotRefusedInsideAnotherCommitsMarkerWindow pins the
+// C-1 assumption against the one window where a healthy Registry looks lost.
+//
+// A commit publishes the initialized marker before it renames the staged
+// registry into place. An observer without the lock that lands in that window
+// sees "the marker records a completed write but registry.json is missing" --
+// byte for byte the state-loss signature -- while nothing is wrong at all. The
+// degraded gate must not turn a neighbour's in-flight commit into a refusal: a
+// writer that is alive and progressing is exactly what the deadline says a
+// waiter should wait for.
+//
+// The window is built directly rather than raced into: the kernel lock stands in
+// for the committing writer, and the registry file is moved aside to reproduce
+// what that writer's transaction would transiently leave on disk.
+func TestAConcurrentWriterIsNotRefusedInsideAnotherCommitsMarkerWindow(t *testing.T) {
+	t.Parallel()
+
+	store := testStore(t)
+	registerProject(t, store, "/src/first")
+	staged := store.Path() + ".staged-by-the-committing-writer"
+	if err := os.Rename(store.Path(), staged); err != nil {
+		t.Fatalf("open the marker window: %v", err)
+	}
+	holdRegistryFlock(t, store)
+
+	done := make(chan error, 1)
+	go func() {
+		mutator := coremetadata.Mutator{
+			Now:       func() time.Time { return fixedNow },
+			NewUID:    coremetadata.NewUID,
+			DirExists: func(path string) (bool, error) { return path == "/src/second", nil },
+		}
+		_, err := store.Update(func(registry *coremetadata.Registry) error {
+			_, err := mutator.RegisterProject(registry, coremetadata.RegisterProjectOptions{
+				Root:         "/src/second",
+				DefaultShell: "/bin/zsh",
+				OperationID:  "op-second",
+			})
+			return err
+		})
+		done <- err
+	}()
+
+	// The refusal this guards against is immediate -- the gate only stats two
+	// paths -- so an answer arriving at all inside this window is the defect.
+	select {
+	case err := <-done:
+		t.Fatalf("the second writer answered inside another commit's marker window: %v", err)
+	case <-time.After(500 * time.Millisecond):
+	}
+
+	// The committing writer finishes: the staged bytes become the registry and
+	// its lock is released.
+	if err := os.Rename(staged, store.Path()); err != nil {
+		t.Fatalf("close the marker window: %v", err)
+	}
+	releaseRegistryFlock(t, store)
+
+	if err := <-done; err != nil {
+		t.Fatalf("the second writer was refused by a window that had closed: %v", err)
+	}
+	registry, err := store.Load()
+	if err != nil {
+		t.Fatalf("load after the window: %v", err)
+	}
+	if len(registry.Projects) != 2 {
+		t.Fatalf("projects = %d, want both writers' registrations", len(registry.Projects))
 	}
 	assertNoStagedGarbage(t, store)
 }
