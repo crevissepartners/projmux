@@ -148,6 +148,7 @@ docker run --rm \
   -e PROJMUX_E2E_ATTEMPT="${PROJMUX_E2E_ATTEMPT:-${GITHUB_RUN_ATTEMPT:-1}}" \
   -e PROJMUX_E2E_LINUX_SHARD="${PROJMUX_E2E_LINUX_SHARD:-}" \
   -e E2E_SCENARIO="${E2E_SCENARIO:-}" \
+  -e E2E_WAIT_SCALE="${E2E_WAIT_SCALE:-}" \
   -v "$root:/workspace:ro" \
   -v "$modcache:/gomodcache:ro" \
   -v "$evidence:/evidence:rw" \
