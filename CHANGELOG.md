@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.14.1](https://github.com/crevissepartners/projmux/compare/v0.14.0...v0.14.1) (2026-08-29)
+
+
+### Bug Fixes
+
+* **e2e:** await L08 controller quiescence ([#839](https://github.com/crevissepartners/projmux/issues/839)) ([fba8700](https://github.com/crevissepartners/projmux/commit/fba870024dbbed36ba9ee3e8176575b8dbddd4b4))
+* **release:** force tags for draft releases ([#837](https://github.com/crevissepartners/projmux/issues/837)) ([c2f84b9](https://github.com/crevissepartners/projmux/commit/c2f84b9ccf1fdbfeb0ac05c357666e7fdb163c72))
+
 ## [0.14.0](https://github.com/crevissepartners/projmux/compare/v0.13.1...v0.14.0) (2026-08-29)
 
 
