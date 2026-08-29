@@ -5920,6 +5920,213 @@ if [[ -z "$startup_repeat_fresh_project_uid" ]] || [[ "$(printf '%s\n' "$startup
 fi
 cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 
+# 9. Mode SELECTION on the ARRIVAL side of the re-exec boundary. Steps 1-8 all
+# pass `--mode` explicitly, so they prove each mode's EXECUTION and say nothing
+# about how the mode is chosen.
+#
+# The selection has two halves and this block owns exactly one of them. The
+# emitted half -- what `openProjectTargetPathFromSidebar` puts in the
+# continuation argv -- now answers `fresh` for an unregistered root with the
+# picker off, and is covered by the unit tests through `sidebarEmittedStartupMode`
+# in `TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints` and
+# `TestSidebarOpenPromotesUnregisteredRootToFreshWhenPickerIsOff`. So the
+# `--mode continue` below is deliberately NOT what the current sidebar emits: it
+# is the legacy neutral token that an older client, or any other caller of the
+# hidden `switch sidebar-open` command, can still send across the boundary.
+#
+# That arriving token used to be trusted verbatim, so the open reached
+# ContinueProject and failed with `continue project unavailable: no usable
+# snapshot`. Forwarded here against an unregistered root in an empty Registry
+# with `sidebar-startup-picker` at its shipped default `off`, the continuation
+# must now re-decide it as `fresh`, mint the Project, and move the client into
+# its session.
+#
+# The environment is its own so the Registry really is empty: L11's shared root
+# has a registered Project by this point, and an unregistered root is the whole
+# precondition. Isolation follows the same four conditions as every other block --
+# stripped TMUX/TMUX_PANE, a run-unique -L socket under a dedicated TMUX_TMPDIR,
+# the real #{socket_path} proven to sit inside the smoke root, and only that
+# exact queried socket killed.
+startup_sel_root="$PROJMUX_SMOKE_WORKDIR/closed-startup-mode-selection"
+startup_sel_socket="projmux-startup-select-$RANDOM-$$"
+startup_sel_driver="startup-select-driver"
+# The namer derives <parent>-<base> from the Project root, so the session the
+# chosen mode must open is known before any Project exists.
+startup_sel_session="work-epsilon"
+mkdir -p \
+  "$startup_sel_root/home" \
+  "$startup_sel_root/config" \
+  "$startup_sel_root/state" \
+  "$startup_sel_root/runtime" \
+  "$startup_sel_root/tmux" \
+  "$startup_sel_root/work/epsilon" \
+  "$startup_sel_root/shim" \
+  "$startup_sel_root/bin"
+chmod 0700 "$startup_sel_root/runtime" "$startup_sel_root/tmux"
+startup_sel_project="$startup_sel_root/work/epsilon"
+
+startup_sel_shell="$startup_sel_root/shim/persistent-shell"
+cat >"$startup_sel_shell" <<'STARTUP_SELECT_SHELL_STUB'
+#!/usr/bin/env bash
+exec sleep 600
+STARTUP_SELECT_SHELL_STUB
+chmod 0755 "$startup_sel_shell"
+
+startup_sel_tmux() {
+  env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
+    HOME="$startup_sel_root/home" \
+    XDG_CONFIG_HOME="$startup_sel_root/config" \
+    XDG_STATE_HOME="$startup_sel_root/state" \
+    XDG_RUNTIME_DIR="$startup_sel_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$startup_sel_root/work" \
+    TMUX_TMPDIR="$startup_sel_root/tmux" \
+    SHELL="$startup_sel_shell" \
+    tmux -L "$startup_sel_socket" "$@"
+}
+
+startup_sel_pmx() {
+  env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
+    HOME="$startup_sel_root/home" \
+    XDG_CONFIG_HOME="$startup_sel_root/config" \
+    XDG_STATE_HOME="$startup_sel_root/state" \
+    XDG_RUNTIME_DIR="$startup_sel_root/runtime" \
+    PROJMUX_MANAGED_ROOTS="$startup_sel_root/work" \
+    TMUX_TMPDIR="$startup_sel_root/tmux" \
+    SHELL="$startup_sel_shell" \
+    "$bin" "$@"
+}
+
+startup_sel_real_tmux="$(command -v tmux)"
+cat >"$startup_sel_root/bin/tmux" <<STARTUP_SELECT_TMUX_SHIM
+#!/usr/bin/env bash
+if [[ "\${1:-}" == "-L" && "\${2:-}" == "projmux" ]]; then
+  shift 2
+  exec $(printf %q "$startup_sel_real_tmux") -L $(printf %q "$startup_sel_socket") "\$@"
+fi
+if [[ "\${1:-}" == "-L" || "\${1:-}" == "-S" ]]; then
+  exec $(printf %q "$startup_sel_real_tmux") "\$@"
+fi
+exec $(printf %q "$startup_sel_real_tmux") -L $(printf %q "$startup_sel_socket") "\$@"
+STARTUP_SELECT_TMUX_SHIM
+chmod 0755 "$startup_sel_root/bin/tmux"
+
+# The one argv under test. `--mode continue` is not a choice here, and it is not
+# what the current picker-off sidebar emits either -- that emits `fresh`. It is
+# the legacy neutral token a stale client can still deliver to this hidden
+# command, and the continuation is what has to re-decide it on arrival.
+cat >"$startup_sel_root/open-selected.sh" <<STARTUP_SELECT_OPEN_SCRIPT
+#!/usr/bin/env bash
+export HOME="$startup_sel_root/home"
+export XDG_CONFIG_HOME="$startup_sel_root/config"
+export XDG_STATE_HOME="$startup_sel_root/state"
+export XDG_RUNTIME_DIR="$startup_sel_root/runtime"
+export PROJMUX_MANAGED_ROOTS="$startup_sel_root/work"
+export TMUX_TMPDIR="$startup_sel_root/tmux"
+export SHELL="$startup_sel_shell"
+export PATH="$startup_sel_root/bin:$startup_sel_root/shim:\$PATH"
+unset __PROJMUX_RUNTIME_ANCHOR_PANE TMUX_SPLIT_TARGET_PANE
+env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
+  $(printf %q "$bin") switch sidebar-open --path "\$1" --session "\$2" --mode continue --client "\$3" --anchor "\$4" \
+  >"$startup_sel_root/open-selected.out" 2>"$startup_sel_root/open-selected.err"
+echo \$? >"$startup_sel_root/open-selected.rc"
+STARTUP_SELECT_OPEN_SCRIPT
+chmod 0755 "$startup_sel_root/open-selected.sh"
+
+startup_sel_cleanup() {
+  local actual
+  actual="$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR="$startup_sel_root/tmux" tmux -L "$startup_sel_socket" display-message -p '#{socket_path}' 2>/dev/null || true)"
+  if [[ -z "$actual" ]]; then
+    return 0
+  fi
+  case "$actual" in
+    "$startup_sel_root"/*) env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE tmux -S "$actual" kill-server >/dev/null 2>&1 || true ;;
+    *) echo "refusing mode-selection cleanup outside smoke root: $actual" >&2 ;;
+  esac
+}
+trap 'startup_sel_cleanup; startup_cleanup; smoke_cleanup_env' EXIT
+
+startup_sel_tmux new-session -d -s "$startup_sel_driver" -c "$startup_sel_root" bash --noprofile --norc
+startup_sel_socket_path="$(startup_sel_tmux display-message -p -t "$startup_sel_driver" '#{socket_path}')"
+case "$startup_sel_socket_path" in
+  "$startup_sel_root"/*) ;;
+  *)
+    echo "mode-selection e2e socket escaped smoke root: $startup_sel_socket_path" >&2
+    exit 1
+    ;;
+esac
+# Fresh install, stated as a precondition rather than assumed: nothing has
+# written a Registry yet.
+if [[ -e "$startup_sel_root/state/projmux/metadata/registry.json" ]]; then
+  echo "mode-selection fixture started with a Registry" >&2
+  exit 1
+fi
+startup_sel_tmux set-option -gq @projmux_app 1
+startup_sel_pmx internal tmux apply --bin "$bin" --config "$startup_sel_root/config/projmux/tmux.conf" --socket "$startup_sel_socket" >"$startup_sel_root/apply.out"
+
+# The remaining two preconditions: no Project claims anything, and the startup
+# picker is at its shipped default so the decision under test is the default one.
+if [[ -n "$(startup_sel_pmx get projects -o uid 2>/dev/null || true)" ]]; then
+  echo "mode-selection fixture started with a registered Project" >&2
+  startup_sel_pmx get projects -o uid >&2 || true
+  exit 1
+fi
+if [[ -e "$startup_sel_root/config/projmux/sidebar-startup-picker" ]]; then
+  echo "mode-selection fixture must run with the default sidebar-startup-picker state" >&2
+  exit 1
+fi
+
+startup_sel_client_log="$startup_sel_root/driver-client.log"
+startup_sel_client_input="$startup_sel_root/driver-client.in"
+mkfifo "$startup_sel_client_input"
+exec 9<>"$startup_sel_client_input"
+TERM=xterm-256color script -qefc \
+  "TERM=xterm-256color env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_sel_root/tmux' tmux -L '$startup_sel_socket' attach-session -t '$startup_sel_driver'" \
+  "$startup_sel_client_log" <"$startup_sel_client_input" >/dev/null 2>&1 &
+startup_sel_client_pid=$!
+
+startup_sel_client_is_on() {
+  local expected="$1"
+  [[ "$(startup_sel_tmux display-message -p -c "$startup_sel_client" '#{session_name}' 2>/dev/null)" == "$expected" ]]
+}
+
+startup_wait_for "attached mode-selection tmux client" sh -c \
+  "test -n \"\$(env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE TMUX_TMPDIR='$startup_sel_root/tmux' tmux -L '$startup_sel_socket' list-clients -F '#{client_name}' 2>/dev/null | head -n 1)\""
+startup_sel_client="$(startup_sel_tmux list-clients -F '#{client_name}' | head -n 1)"
+startup_sel_driver_pane="$(startup_sel_tmux display-message -p -c "$startup_sel_client" '#{pane_id}')"
+
+startup_sel_tmux send-keys -t "$startup_sel_driver_pane" "bash '$startup_sel_root/open-selected.sh' '$startup_sel_project' '$startup_sel_session' '$startup_sel_client' '$startup_sel_driver_pane'" Enter
+startup_wait_for "picker-off sidebar continuation on an unregistered root" test -s "$startup_sel_root/open-selected.rc"
+if [[ "$(tr -d '[:space:]' <"$startup_sel_root/open-selected.rc")" != "0" ]]; then
+  echo "picker-off sidebar continuation refused an unregistered root" >&2
+  cat "$startup_sel_root/open-selected.err" >&2 || true
+  exit 1
+fi
+if grep -Fq 'no usable snapshot' "$startup_sel_root/open-selected.err"; then
+  echo "the forwarded continue token was acted on verbatim instead of being re-decided as fresh" >&2
+  cat "$startup_sel_root/open-selected.err" >&2 || true
+  exit 1
+fi
+startup_wait_for "mode-selection client handoff" startup_sel_client_is_on "$startup_sel_session"
+startup_sel_project_uid="$(startup_sel_pmx get projects -o uid)"
+if [[ -z "$startup_sel_project_uid" ]] || [[ "$(printf '%s\n' "$startup_sel_project_uid" | grep -c .)" != "1" ]]; then
+  echo "the re-decided mode did not mint exactly one Project" >&2
+  startup_sel_pmx get projects -o uid >&2 || true
+  exit 1
+fi
+startup_sel_pmx describe project "uid:$startup_sel_project_uid" -o json >"$startup_sel_root/project.after-selection.json"
+smoke_assert_file_contains "$startup_sel_root/project.after-selection.json" "\"root\": \"$startup_sel_project\""
+if ! startup_sel_tmux has-session -t "$startup_sel_session" 2>/dev/null; then
+  echo "the re-decided mode did not open the Project session" >&2
+  exit 1
+fi
+
+exec 9>&-
+kill "$startup_sel_client_pid" >/dev/null 2>&1 || true
+wait "$startup_sel_client_pid" 2>/dev/null || true
+startup_sel_cleanup
+trap 'startup_cleanup; smoke_cleanup_env' EXIT
+echo ">> Closed Project startup mode selection e2e passed: socket=$startup_sel_socket path=$startup_sel_socket_path client=$startup_sel_client project=$startup_sel_project_uid"
+
 startup_other_after="$(startup_other_tmux show-options -gqv @projmux_startup_sentinel):$(startup_other_tmux list-windows -a -F '#{session_name}:#{window_name}')"
 if [[ "$startup_other_after" != "$startup_other_before" ]]; then
   echo "closed Project startup touched the sibling socket" >&2

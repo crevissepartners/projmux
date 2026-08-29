@@ -1707,9 +1707,20 @@ func (c *switchCommand) openProjectTargetPathFromSidebar(ctx context.Context, pl
 		}
 		return nil
 	}
+	// The emitted `--mode` is the sidebar's half of the one startup decision.
+	// Deciding it here through defaultProjectStartupMode -- the same helper the
+	// in-process open uses -- is what stops the continuation from being launched
+	// with `continue` for a root no Project claims. The re-exec re-adjudicates
+	// again on arrival, which covers a token emitted by an older client.
 	mode := projectStartupCandidate{Kind: projectStartupKindTopology}
 	if sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
 		mode = c.pickProjectStartupMode(sessionName, target)
+	} else {
+		resolved, err := c.defaultProjectStartupMode(target)
+		if err != nil {
+			return err
+		}
+		mode = resolved
 	}
 	if mode.Kind == projectStartupKindBack {
 		return errProjectStartupBack
@@ -1861,9 +1872,7 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 	if exists {
 		return c.openProjectSession(ctx, openSession)
 	}
-	openErr := c.authorizeAndContinueProjectOpenRequest(ctx, projectOpenRequest{
-		Target: openTarget, SessionName: openSession, Mode: openMode, Anchor: anchorPane,
-	})
+	openErr := c.openSidebarClosedProject(ctx, openTarget, openSession, anchorPane, openMode)
 	if openErr == nil {
 		return nil
 	}
@@ -1880,6 +1889,33 @@ func (c *switchCommand) runSidebarOpen(args []string, stderr io.Writer) error {
 		return errors.Join(openErr, reopenErr)
 	}
 	return fmt.Errorf("open selected project: %w", openErr)
+}
+
+// openSidebarClosedProject opens one closed Project for the sidebar
+// continuation, re-adjudicating the startup mode that crossed the re-exec
+// boundary before it is acted on.
+//
+// `--mode` is transport, not authority. openProjectTargetPathFromSidebar already
+// decides it, but that decision was made in a different process: a `continue`
+// arriving from an older client, or from any other caller of this hidden
+// command, would otherwise be acted on verbatim -- which is exactly what sent an
+// unregistered root into ContinueProject. Re-deciding through
+// defaultProjectStartupMode, the same single adjudication the in-process open
+// and the emit point use, closes that boundary.
+//
+// A mode that arrived while the picker is enabled is the operator's explicit
+// choice and is honored verbatim, and `fresh` is never demoted.
+func (c *switchCommand) openSidebarClosedProject(ctx context.Context, target, sessionName, anchor string, mode projectStartupCandidate) error {
+	if mode.Kind == projectStartupKindTopology && !sidebarStartupPickerEnabled(c.homeDir, c.lookupEnv) {
+		resolved, err := c.defaultProjectStartupMode(target)
+		if err != nil {
+			return err
+		}
+		mode = resolved
+	}
+	return c.authorizeAndContinueProjectOpenRequest(ctx, projectOpenRequest{
+		Target: target, SessionName: sessionName, Mode: mode, Anchor: anchor,
+	})
 }
 
 func (c *switchCommand) withSidebarOpenClientEnv(client string) func() {
