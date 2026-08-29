@@ -495,13 +495,28 @@
   unchanged L08/L16 payloads stay `v1`, and evidence retained from before the
   rename still validates and still aggregates. `PROJMUX_E2E_ATTEMPT` now defaults to `GITHUB_RUN_ATTEMPT`, so a rerun's
   evidence is no longer written as attempt 1.
-- `make test` / `make test-e2e`: L06 Registry lock recurrence applies the
-  unchanged 400-attempt, 2ms/50ms delay, and 30s stale budget to one verified
-  positive-PID owner lease. `TestRegistryLockRetryBudgetTracksVerifiedOwnerLease`
-  permits a waiter to continue across healthy owner turnover while unchanged,
-  empty, malformed, and unreadable owners remain bounded; the real-tmux L06
-  burst requires all eight exact-socket creates to converge on one Window with
-  nine unique mirrored Panes and no lock or staged residue.
+- `make test` / `go test -race` / `make test-e2e`: the Registry mutation lock
+  succeeds on a deadline, not on an attempt budget. `acquireLockWithDeadline`
+  blocks on `flock(LOCK_EX)` against a persistent `registry.json.flock`
+  descriptor so the kernel owns the wait queue, keeps writing the legacy
+  `registry.json.lock` O_EXCL marker for the compatibility window an older
+  install still observes, and treats a marker as stale only when its recorded
+  pid is gone rather than after 30s of wall clock. The separate recovery lock
+  (`acquireRecoveryLock`) keeps its 200-attempt budget and wall-clock stale
+  window. `TestRegistryLockFailsOnItsDeadlineNotOnAnAttemptBudget` pins
+  `ErrLockTimeout` and the absence of any attempt count in the failure,
+  `TestRegistryLockDeadlineIsMeasuredOnTheInjectedClock` spends a whole budget
+  in simulated time, `TestRegistryLockReclaimsAMarkerOnlyWhenItsOwnerIsGone`
+  reclaims a reaped owner at once while a live, empty, malformed, or unreadable
+  owner is never reclaimed, `TestRegistryLockKeepsMutualExclusionWithAMarkerOnlyInstall`
+  covers the compatibility window in both directions, and
+  `TestRegistryLockGrantsEveryWriterUnderDeliberateContention` plus the fixed-clock
+  `TestConcurrentUpdatesSerializeThroughTheRegistryLock` require every contending
+  writer to be granted with no overlapping critical sections. The `Race Tests`
+  CI job runs the metadata, notify, and recent-window packages under `-race`.
+  The real-tmux L06 burst still requires all eight exact-socket creates to
+  converge on one Window with nine unique mirrored Panes and no lock or staged
+  residue; it is a regression guard, not the evidence for the lock change.
 - `make test` / `make test-integration`: attention omitted-target convergence
 - `make test` / `make test-e2e`: Closed-Project startup mode selection is one adjudication shared by both entry points. `switch sidebar-open` re-execs across a process boundary, and before this change the picker-off sidebar always emitted `continue` and the re-exec trusted that token verbatim, so an unregistered root on a fresh install failed in `ContinueProject` with `continue project unavailable: no usable snapshot`. `defaultProjectStartupMode` now owns the picker-off decision -- the Settings/runtime sentinels, the `$HOME` guard, and the single `ProjectRegistered` read -- and all three closed-Project entry points call it: `openProjectTarget`, the sidebar emit point `openProjectTargetPathFromSidebar` that builds the `--mode` token, and `runSidebarOpen`, which re-adjudicates a `continue` that crossed the re-exec boundary. `TestProjectStartupModeSelectionIsOneDecisionAcrossEntryPoints` drives the (registered root) x (picker on/off) x (explicit picker choice) table through the in-process open, the sidebar emit point, and the sidebar continuation, requiring the emitted `--mode` token and the mode the continuation acts on to agree with the in-process choice. `TestSidebarOpenPromotesUnregisteredRootToFreshWhenPickerIsOff` is the regression guard, `TestSidebarOpenKeepsRegisteredRootOnContinue` keeps a registered root and its retained topology on `continue`, `TestSidebarOpenHonorsExplicitPickerChoice` proves an explicit picker-on choice is never promoted, `TestSidebarOpenNeverDemotesAnArrivingFreshMode` keeps the re-adjudication one-directional, `TestSidebarOpenSurfacesRegistrationReadFailure` refuses to answer an unreadable Registry with a mode, and `TestSidebarOpenContinueOnUnregisteredRootKeepsTheSnapshotRefusal` pins the no-usable-snapshot message for the continue that is still reachable by explicit choice. The L11 closed-startup e2e keeps its direct `--mode fresh` / `--mode continue` execution paths and adds step 9, `Closed Project startup mode selection`, which covers the arrival half of the decision: the picker-off sidebar now emits `fresh`, so the step deliberately forwards the legacy neutral `continue` token an older client can still send, against an unregistered root in an empty Registry on its own isolated socket/HOME/XDG/TMUX_TMPDIR, and requires the continuation to re-decide it so the Project is minted and its session opened rather than the snapshot refusal. The emitted half is covered by the unit tests through `sidebarEmittedStartupMode`.
   is enforced by `TestAttentionMutationOmittedTargetMatchesExplicitPaneLedger`,
