@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.14.0](https://github.com/crevissepartners/projmux/compare/v0.13.1...v0.14.0) (2026-08-29)
+
+
+### ⚠ BREAKING CHANGES
+
+* **codex:** require native authority for prompted Codex creates ([#816](https://github.com/crevissepartners/projmux/issues/816))
+
+### Features
+
+* **codex:** add broker runtime discovery and authenticated local IPC ([#813](https://github.com/crevissepartners/projmux/issues/813)) ([7109c5c](https://github.com/crevissepartners/projmux/commit/7109c5c328f5fb34c7de00c879f862d2663b6d2e))
+* **codex:** add broker-facing app-server protocol contract ([#806](https://github.com/crevissepartners/projmux/issues/806)) ([50689e3](https://github.com/crevissepartners/projmux/commit/50689e37988f348f6a6e1742823eeb4ff7a2a234))
+* **codex:** add endpoint broker core and binding isolation ([#812](https://github.com/crevissepartners/projmux/issues/812)) ([aa8a3c6](https://github.com/crevissepartners/projmux/commit/aa8a3c6e972a3f63ad768d82fb0baac980e83756))
+* **codex:** require native authority for prompted Codex creates ([#816](https://github.com/crevissepartners/projmux/issues/816)) ([e1e0931](https://github.com/crevissepartners/projmux/commit/e1e0931f33b048c197d5b7826e0f5d0d20526bc8))
+* **codex:** retire the per-Agent native observer ([#818](https://github.com/crevissepartners/projmux/issues/818)) ([0ec262c](https://github.com/crevissepartners/projmux/commit/0ec262c62e7420581cf2b9653921d39e009964d1))
+* **codex:** route native lifecycle and control through the endpoint broker ([#814](https://github.com/crevissepartners/projmux/issues/814)) ([892a006](https://github.com/crevissepartners/projmux/commit/892a006fc67e35206c37f8d46b716b04965c8435))
+
+
+### Bug Fixes
+
+* **codex:** gate thread/resume on the negotiated experimental capability ([#809](https://github.com/crevissepartners/projmux/issues/809)) ([de88946](https://github.com/crevissepartners/projmux/commit/de88946b6bc77b4f4b1efd526e41a36e5538c80b))
+* **hooks:** preserve Codex hook trust state ([#807](https://github.com/crevissepartners/projmux/issues/807)) ([5c125e4](https://github.com/crevissepartners/projmux/commit/5c125e45bfb64e10a77227efd8742596e3d2e000))
+* **metadata:** acquire the registry lock by deadline instead of attempts ([#832](https://github.com/crevissepartners/projmux/issues/832)) ([222fba0](https://github.com/crevissepartners/projmux/commit/222fba08a60598b3d351c728ee14a5914f4ca63c))
+* **switch:** re-adjudicate sidebar startup mode for unregistered roots ([#825](https://github.com/crevissepartners/projmux/issues/825)) ([10a49ac](https://github.com/crevissepartners/projmux/commit/10a49ac71375c3e7bc7c1e600f970f611fc0b391))
+* **switch:** route sidebar runtime stop through the explicit anchor ([#811](https://github.com/crevissepartners/projmux/issues/811)) ([5a275fa](https://github.com/crevissepartners/projmux/commit/5a275fa535139412001ae65c5f7d86d7622a7441))
+* **update:** pick the availability source from the install channel ([#834](https://github.com/crevissepartners/projmux/issues/834)) ([45d2b6f](https://github.com/crevissepartners/projmux/commit/45d2b6f44ec8ceb09c254fec26b8fe2465e4f4d1))
+* **update:** verify the installed version after apply ([#828](https://github.com/crevissepartners/projmux/issues/828)) ([3969546](https://github.com/crevissepartners/projmux/commit/3969546319386a73323aeb93d2a9b9fbffc2f407))
+
 ## [0.13.1](https://github.com/crevissepartners/projmux/compare/v0.13.0...v0.13.1) (2026-08-28)
 
 
