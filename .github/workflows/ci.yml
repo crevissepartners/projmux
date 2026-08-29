@@ -292,6 +292,10 @@ jobs:
   e2e:
     name: E2E Tests
     runs-on: ubuntu-latest
+    # Observed steady-state is about four minutes. The default six-hour job
+    # ceiling turns one wedged container into a burned runner slot with no
+    # evidence, so bound it well above the real distribution instead.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -299,6 +303,32 @@ jobs:
 
       - name: Run e2e tests
         run: make test-e2e
+
+      # The attempt directory dies with the runner, which is why a failing e2e
+      # run leaves nothing to read but the log. Preserve the evidence subtree and
+      # skip binary/: it is 99.8% of the attempt size and is reproducible from the
+      # commit plus the binary_sha256 already recorded in build.json.
+      - name: Preserve failing attempt evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-evidence-failure-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .bin/e2e-evidence/attempt-*/**
+            !.bin/e2e-evidence/attempt-*/binary/**
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Preserve passing attempt evidence
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-evidence-success-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .bin/e2e-evidence/attempt-*/**
+            !.bin/e2e-evidence/attempt-*/binary/**
+          if-no-files-found: warn
+          retention-days: 1
 
   test:
     name: Test

@@ -9,6 +9,8 @@ SMOKE_CONTRACT_SOURCE=""
 SMOKE_CONTRACT_TERMINAL_STATE_PATH=""
 SMOKE_CONTRACT_STARTED_MS=0
 SMOKE_CONTRACT_TERMINAL=0
+SMOKE_CONTRACT_TERMINAL_JSON=""
+SMOKE_CONTRACT_DIAGNOSTIC_JSON=""
 
 SMOKE_L06_HOLDER_PID=0
 SMOKE_L06_HOLDER_STARTED_MS=0
@@ -64,7 +66,9 @@ smoke_contract_record() {
     --elapsed-ms "$elapsed" \
     --binary-sha256 "${PROJMUX_SMOKE_BIN_SHA256:-${PROJMUX_SMOKE_EXPECTED_BIN_SHA256:-}}" \
     --route-socket "$route_socket" \
-    --state-sha256 "$state_hash"
+    --state-sha256 "$state_hash" \
+    --terminal-json "$SMOKE_CONTRACT_TERMINAL_JSON" \
+    --diagnostic "$SMOKE_CONTRACT_DIAGNOSTIC_JSON"
 }
 
 smoke_contract_shard() {
@@ -184,6 +188,35 @@ smoke_contract_failure_diagnostic() {
   esac
 }
 
+# Tee one first-failure emitter: its record still reaches the job log on stderr,
+# and the JSON body is returned so the same bytes can be folded into the attempt
+# artifact. A runner disappears at the end of the job; the artifact does not.
+smoke_contract_capture() {
+  local prefix="$1"
+  shift
+  local emitted line
+  emitted="$("$@" 2>&1 >/dev/null)" || true
+  [[ -n "$emitted" ]] || return 0
+  printf '%s\n' "$emitted" >&2
+  while IFS= read -r line; do
+    if [[ "$line" == "$prefix "* ]]; then
+      printf '%s' "${line#"$prefix" }"
+      return 0
+    fi
+  done <<<"$emitted"
+}
+
+# One terminal path for every failure branch: attribute, diagnose, then record.
+# The record runs last so the artifact carries what the log just reported.
+smoke_contract_fail() {
+  local status="$1"
+  local line="$2"
+  SMOKE_CONTRACT_TERMINAL_JSON="$(smoke_contract_capture E2E_TERMINAL smoke_contract_terminal "$status" "$line")"
+  SMOKE_CONTRACT_DIAGNOSTIC_JSON="$(smoke_contract_capture E2E_DIAGNOSTIC smoke_contract_failure_diagnostic)"
+  smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-deterministic-regression}" >&2
+  SMOKE_CONTRACT_TERMINAL=1
+}
+
 # Bash does not run ERR for the explicit `exit 1` branches used by assertion
 # blocks. Keep exit semantics intact while giving those branches the same exact
 # call-site source line as command failures. This function is not exported, so
@@ -193,10 +226,7 @@ exit() {
   local line="${BASH_LINENO[0]:-0}"
   if [[ "$status" != "0" && -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
     set +e
-    smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-deterministic-regression}" >&2
-    smoke_contract_terminal "$status" "$line" || true
-    smoke_contract_failure_diagnostic || true
-    SMOKE_CONTRACT_TERMINAL=1
+    smoke_contract_fail "$status" "$line"
   fi
   builtin exit "$status"
 }
@@ -216,6 +246,8 @@ smoke_contract_begin() {
   SMOKE_CONTRACT_TERMINAL_STATE_PATH=""
   SMOKE_CONTRACT_STARTED_MS="$(smoke_now_ms)"
   SMOKE_CONTRACT_TERMINAL=0
+  SMOKE_CONTRACT_TERMINAL_JSON=""
+  SMOKE_CONTRACT_DIAGNOSTIC_JSON=""
   smoke_contract_record begin environment
 }
 
@@ -238,10 +270,7 @@ smoke_contract_err() {
   # caller's back: doing so turns the expected status capture itself into a
   # false deterministic regression.
   if [[ "$had_errexit" == "1" && -n "$SMOKE_CONTRACT_ID" && "$SMOKE_CONTRACT_TERMINAL" != "1" ]]; then
-    smoke_contract_record fail "${PROJMUX_E2E_FAILURE_CLASS:-deterministic-regression}" >&2
-    smoke_contract_terminal "$status" "$line" || true
-    smoke_contract_failure_diagnostic || true
-    SMOKE_CONTRACT_TERMINAL=1
+    smoke_contract_fail "$status" "$line"
   elif [[ "$had_errexit" == "1" ]]; then
     echo "E2E_CONTRACT unattributed=1 status=$status line=$line" >&2
   fi

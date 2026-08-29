@@ -40,15 +40,53 @@ FIELDS = {
     "artifact",
     "replay",
 }
+# Terminal attribution and diagnostics only exist for an attempt that actually
+# ended in a failure, so they are additive and optional. A begin/pass record
+# keeps the exact field set - and therefore the exact serialized bytes - it had
+# before this schema grew.
+OPTIONAL_FIELDS = {
+    "terminal_line",
+    "terminal_status",
+    "terminal_source",
+    "diagnostic",
+}
+SOURCE_RE = re.compile(r"^(?:(?:test/e2e|test/lib)/[a-z0-9][a-z0-9._/-]*\.sh)?$")
 FORBIDDEN_VALUE = re.compile(
     r"(?:-----BEGIN [A-Z ]*PRIVATE KEY-----|gh[pousr]_[A-Za-z0-9_]{20,}|"
     r"github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|(?i:password|token|secret)=)"
 )
 
 
+def validate_terminal_attribution(record: dict[str, object]) -> None:
+    if "terminal_status" in record:
+        terminal_status = record["terminal_status"]
+        if not isinstance(terminal_status, int) or isinstance(terminal_status, bool):
+            raise ValueError("terminal_status must be an integer")
+        if not 0 <= terminal_status <= 255:
+            raise ValueError("terminal_status must be a wait-status byte")
+    if "terminal_line" in record:
+        terminal_line = record["terminal_line"]
+        if not isinstance(terminal_line, int) or isinstance(terminal_line, bool):
+            raise ValueError("terminal_line must be an integer")
+        if terminal_line < 0:
+            raise ValueError("terminal_line must be non-negative")
+    if "terminal_source" in record:
+        terminal_source = record["terminal_source"]
+        if not isinstance(terminal_source, str) or not SOURCE_RE.fullmatch(terminal_source):
+            raise ValueError("terminal_source is not an allowlisted repository E2E shell path")
+        if ".." in terminal_source:
+            raise ValueError("terminal_source must not traverse")
+    if "diagnostic" in record and not isinstance(record["diagnostic"], dict):
+        raise ValueError("diagnostic must be an object")
+
+
 def validate(record: dict[str, object]) -> None:
-    if set(record) != FIELDS:
-        raise ValueError(f"field set mismatch: {sorted(set(record) ^ FIELDS)}")
+    present = set(record)
+    missing = FIELDS - present
+    extra = present - FIELDS - OPTIONAL_FIELDS
+    if missing or extra:
+        raise ValueError(f"field set mismatch: {sorted(missing | extra)}")
+    validate_terminal_attribution(record)
     if record["schema"] != "projmux.e2e-attempt/v1":
         raise ValueError("unsupported schema")
     if not isinstance(record["scenario_id"], str) or not SCENARIO_RE.fullmatch(record["scenario_id"]):
@@ -115,6 +153,37 @@ def write_artifact(directory: Path, record: dict[str, object]) -> None:
             os.unlink(temporary)
 
 
+def decode_object(text: str, label: str) -> dict[str, object]:
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{label} is not JSON: {error}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    return value
+
+
+def terminal_attribution(text: str) -> dict[str, object]:
+    """Project the emitted terminal record onto the attempt evidence fields.
+
+    The terminal record written to stderr by ``e2e-first-failure.py`` is the one
+    authority for what was actually attributed, degraded fields included. Reading
+    it back here keeps the artifact and the log from disagreeing.
+    """
+    if not text:
+        return {}
+    terminal = decode_object(text, "terminal")
+    projected: dict[str, object] = {}
+    for source_field, target_field in (
+        ("line", "terminal_line"),
+        ("status", "terminal_status"),
+        ("source", "terminal_source"),
+    ):
+        if source_field in terminal:
+            projected[target_field] = terminal[source_field]
+    return projected
+
+
 def record_command(args: argparse.Namespace) -> int:
     record = {
         "schema": "projmux.e2e-attempt/v1",
@@ -132,6 +201,9 @@ def record_command(args: argparse.Namespace) -> int:
         "artifact": f"{args.scenario_id}-attempt-{args.attempt}.json",
         "replay": f"make test-e2e E2E_SCENARIO={args.scenario_id}",
     }
+    record.update(terminal_attribution(args.terminal_json))
+    if args.diagnostic:
+        record["diagnostic"] = decode_object(args.diagnostic, "diagnostic")
     validate(record)
     directory = Path(args.directory)
     write_artifact(directory, record)
@@ -265,6 +337,8 @@ def parser() -> argparse.ArgumentParser:
     record_parser.add_argument("--binary-sha256", default="")
     record_parser.add_argument("--route-socket", default="")
     record_parser.add_argument("--state-sha256", default="")
+    record_parser.add_argument("--terminal-json", default="")
+    record_parser.add_argument("--diagnostic", default="")
     record_parser.set_defaults(function=record_command)
     validate_parser = subparsers.add_parser("validate")
     validate_parser.add_argument("--terminal", action="store_true")

@@ -71,28 +71,43 @@ def terminal_command(args: argparse.Namespace) -> int:
         raise ValueError("invalid phase or owner")
     if not SHARD_RE.fullmatch(args.shard):
         raise ValueError("invalid shard")
-    if not SOURCE_RE.fullmatch(args.source) or ".." in args.source:
-        raise ValueError("source is not an allowlisted repository E2E shell path")
-    if not 1 <= args.status <= 255 or args.line < 1:
-        raise ValueError("invalid terminal status or source line")
+    # Source line, wait status, and source path are the degradable half of the
+    # attribution. Bash reports BASH_LINENO[0] as 0 for a top-level failure, and a
+    # trap can fire from a path outside the shell allowlist. Raising there used to
+    # discard the scenario, phase, owner, and shard along with it, which is the
+    # whole record. Drop only the field that failed its own rule and say so.
+    attribution = "complete"
+    source = args.source
+    if not SOURCE_RE.fullmatch(source) or ".." in source:
+        source = ""
+        attribution = "partial"
+    status = args.status
+    if not 1 <= status <= 255:
+        status = 0
+        attribution = "partial"
+    line = args.line
+    if line < 1:
+        line = 0
+        attribution = "partial"
     expected_command = command_for(args.scenario)
     if args.command != expected_command:
         raise ValueError("command is not the sanitized single-scenario allowlist shape")
     if not SHA_RE.fullmatch(args.binary_sha256) or not SHA_RE.fullmatch(args.state_sha256):
         raise ValueError("invalid binary or state digest")
     emit("E2E_TERMINAL", {
+        "attribution": attribution,
         "binary_sha256": args.binary_sha256,
         "command": args.command,
-        "line": args.line,
+        "line": line,
         "owner": args.owner,
         "phase": args.phase,
         "replay": expected_command,
         "scenario": args.scenario,
         "schema": "projmux.e2e-terminal/v1",
         "shard": args.shard,
-        "source": args.source,
+        "source": source,
         "state_sha256": args.state_sha256,
-        "status": args.status,
+        "status": status,
     })
     return 0
 
