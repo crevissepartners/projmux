@@ -1366,6 +1366,17 @@ the resolved `claude`, `codex`, or `agy` executable inside the managed wrapper;
 projmux still sets the context directory, tmux title, AI pane metadata, and
 split layout.
 
+A prompted Codex create — provider `codex` with exactly one non-empty payload
+operand — requires native authority. If the app-server endpoint is not ready or
+attachable, if `--add-dir` roots cannot be negotiated, or if the selector
+resolves several Windows, the create refuses with zero Registry and zero tmux
+mutations instead of silently producing a plain-CLI Agent with no native turn
+control. `--interactive-only` is the one public spelling that asks for that
+plain Agent on purpose; it is Codex-only and equivalent on `create agent
+--provider codex` and the `create codex` shortcut. Empty-prompt creates,
+multi-operand payloads, `agent resume`, Claude, and Antigravity are unaffected.
+See [Codex Native-Required Create Migration](codex-native-required-migration.md).
+
 Automation callers get the new pane's handle from `-o pane-id` on the canonical
 create routes: `projmux create agent --provider <p> --placement right -o pane-id`
 and `projmux create pane --placement right -o pane-id` each print exactly the

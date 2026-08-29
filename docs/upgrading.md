@@ -52,6 +52,21 @@ still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 ## Behavior Changes
 
+### Prompted Codex create requires native authority
+
+A prompted managed Codex create — provider `codex` with exactly one non-empty
+payload operand — no longer degrades to the plain CLI lane when native authority
+cannot be proven. It refuses at the provider-mutation boundary with zero
+threads, zero Panes, and zero Registry writes, and names `--interactive-only` as
+the explicit way to ask for a plain interactive Codex Agent instead.
+
+There is nothing to migrate: no Registry schema, configuration, hook contract,
+or stored Agent changes, and every existing resource keeps working after the
+upgrade. `projmux agent resume`, empty-prompt creates, and the Claude and
+Antigravity providers are unchanged. For the affected calls, the escape hatch,
+and how to verify each claim, see
+[Codex Native-Required Create Migration](codex-native-required-migration.md).
+
 ### Registry schema v2 final Window anchors
 
 The unreleased intermediate schema-v2 Window field `primaryPaneRef` has been
