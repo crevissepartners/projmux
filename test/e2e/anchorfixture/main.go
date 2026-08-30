@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
@@ -27,15 +28,15 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: anchorfixture rewrite <test-root> <source-relative> <destination-relative> <window-uid> <agent-uid> | inspect <test-root> <registry-relative> <window-uid> <agent-uid>")
+		return errors.New("usage: anchorfixture rewrite[-interrupted] <test-root> <source-relative> <destination-relative> <window-uid> <agent-uid> | inspect <test-root> <registry-relative> <window-uid> <agent-uid>")
 	}
 	switch args[0] {
-	case "rewrite":
+	case "rewrite", "rewrite-interrupted":
 		if len(args) != 6 {
-			return errors.New("rewrite requires test root, relative source, relative destination, window uid, and agent uid")
+			return fmt.Errorf("%s requires test root, relative source, relative destination, window uid, and agent uid", args[0])
 		}
 		return withTestRoot(args[1], func(root *os.Root) error {
-			return rewrite(root, args[2], args[3], args[4], args[5])
+			return rewrite(root, args[2], args[3], args[4], args[5], args[0] == "rewrite-interrupted")
 		})
 	case "inspect":
 		if len(args) != 5 {
@@ -78,7 +79,7 @@ func load(root *os.Root, name string) (coremetadata.Registry, error) {
 	return registry, nil
 }
 
-func rewrite(root *os.Root, source, destination, windowUID, agentUID string) error {
+func rewrite(root *os.Root, source, destination, windowUID, agentUID string, interrupted bool) error {
 	registry, err := load(root, source)
 	if err != nil {
 		return fmt.Errorf("load source Registry: %w", err)
@@ -99,6 +100,22 @@ func rewrite(root *os.Root, source, destination, windowUID, agentUID string) err
 	// DeleteFunc compacts the Pane slice in place, so retain the opaque identity
 	// value rather than a pointer into the slice that is about to move.
 	anchorUID := anchor.Metadata.UID
+	if interrupted {
+		observedAt := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
+		mutator := coremetadata.Mutator{Now: func() time.Time { return observedAt }}
+		outcome, recordErr := mutator.RecordTermination(&registry, coremetadata.TerminationEvidence{
+			Source:         coremetadata.TerminationSourceControlAction,
+			Classification: coremetadata.TerminationInterrupted,
+			ObservedAt:     observedAt,
+			PaneUID:        anchorUID,
+			AgentUID:       agent.Metadata.UID,
+			Generation:     anchor.Status.Activation.Generation,
+			OperationID:    "e2e-agent-only-interruption",
+		})
+		if recordErr != nil || !outcome.Applied {
+			return fmt.Errorf("record deterministic interrupted authority: outcome=%+v err=%v", outcome, recordErr)
+		}
+	}
 	removed := map[string]bool{}
 	registry.Panes = slices.DeleteFunc(registry.Panes, func(pane coremetadata.Pane) bool {
 		remove := pane.Spec.Role == coremetadata.PaneRoleShell && pane.Metadata.OwnerRef != nil &&
