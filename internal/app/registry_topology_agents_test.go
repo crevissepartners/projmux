@@ -130,6 +130,118 @@ func codexConversationRef(id string) *coremetadata.AgentSessionRef {
 	}
 }
 
+func markTopologyAgentInterrupted(t *testing.T, store *fakeResourceStore, agentUID, paneUID string) coremetadata.Pane {
+	t.Helper()
+	mutator := store.mutator()
+	if paneUID == "" {
+		pane, err := mutator.AttachAgentPane(&store.registry, agentUID, coremetadata.BootstrapPane{
+			Name: "retained", CWD: store.registry.Projects[1].Spec.Root,
+		}, "op-topology-interrupted-pane")
+		if err != nil {
+			t.Fatal(err)
+		}
+		paneUID = pane.Metadata.UID
+	}
+	if _, err := mutator.RecordPaneActivation(&store.registry, paneUID, coremetadata.PaneActivationOptions{
+		Generation: "generation-" + agentUID, AgentUID: agentUID, OperationID: "op-topology-launch",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	receipt := coremetadata.TerminationEvidence{
+		Source: coremetadata.TerminationSourceControlAction, Classification: coremetadata.TerminationInterrupted,
+		ObservedAt: time.Date(2026, 8, 29, 0, 0, 0, 0, time.UTC), PaneUID: paneUID, AgentUID: agentUID,
+		Generation: "generation-" + agentUID, OperationID: "op-topology-stop",
+	}
+	if outcome, err := mutator.RecordTermination(&store.registry, receipt); err != nil || !outcome.Applied {
+		t.Fatalf("record interrupted evidence: %+v, %v", outcome, err)
+	}
+	if projection, err := mutator.ProjectTermination(&store.registry, coremetadata.TerminationProjectionInput{
+		PaneUID: paneUID, Generation: receipt.Generation, ObservedAt: receipt.ObservedAt,
+	}); err != nil || projection.AgentUID != agentUID || projection.Phase != coremetadata.PhaseOffline {
+		t.Fatalf("project interrupted evidence: %+v, %v", projection, err)
+	}
+	pane, ok := store.registry.Pane(paneUID)
+	if !ok {
+		t.Fatalf("interrupted projection removed retained Pane %s", paneUID)
+	}
+	return pane.Clone()
+}
+
+// TestTopologyAgentContinueEligibilityMatrix is the exact
+// source x classification x phase x sessionRef contract. SessionRef chooses
+// fresh versus exact resume only after the termination gate; it never grants
+// launch authority itself.
+func TestTopologyAgentContinueEligibilityMatrix(t *testing.T) {
+	_, store, _, _, root, _ := newTopologyMaterializeFixture(t)
+	seed := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+		name: "matrix", provider: "codex", cwd: root, ref: codexConversationRef("thread-matrix"),
+	})
+	markTopologyAgentInterrupted(t, store, seed.Metadata.UID, "")
+
+	type mutation func(*coremetadata.Registry, *coremetadata.Agent, *coremetadata.Pane)
+	setEvidence := func(source coremetadata.TerminationSource, classification coremetadata.TerminationClassification) mutation {
+		return func(_ *coremetadata.Registry, agent *coremetadata.Agent, pane *coremetadata.Pane) {
+			agent.Status.LastTermination.Source = source
+			agent.Status.LastTermination.Classification = classification
+			pane.Status.LastTermination.Source = source
+			pane.Status.LastTermination.Classification = classification
+		}
+	}
+	for _, test := range []struct {
+		name   string
+		mutate mutation
+		want   bool
+		reason string
+	}{
+		{name: "control interrupted Offline with sessionRef", want: true},
+		{name: "control interrupted Offline without sessionRef", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, _ *coremetadata.Pane) {
+			agent.Status.SessionRef = nil
+		}, want: true},
+		{name: "supervisor normal Offline", mutate: setEvidence(coremetadata.TerminationSourceSupervisor, coremetadata.TerminationNormal), reason: "supervisor/normal"},
+		{name: "supervisor abnormal Failed", mutate: func(reg *coremetadata.Registry, agent *coremetadata.Agent, pane *coremetadata.Pane) {
+			setEvidence(coremetadata.TerminationSourceSupervisor, coremetadata.TerminationAbnormal)(reg, agent, pane)
+			agent.Status.Phase = coremetadata.PhaseFailed
+		}, reason: "supervisor/abnormal"},
+		{name: "supervisor killed Offline", mutate: setEvidence(coremetadata.TerminationSourceSupervisor, coremetadata.TerminationKilled), reason: "supervisor/killed"},
+		{name: "delete intentional Offline", mutate: setEvidence(coremetadata.TerminationSourceControlAction, coremetadata.TerminationIntentional), reason: "control-action/intentional"},
+		{name: "reconcile unknown Offline", mutate: setEvidence(coremetadata.TerminationSourceReconcile, coremetadata.TerminationUnknown), reason: "reconcile/unknown"},
+		{name: "nil evidence", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, pane *coremetadata.Pane) {
+			agent.Status.LastTermination, pane.Status.LastTermination = nil, nil
+		}, reason: "no termination evidence"},
+		{name: "stale generation", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, pane *coremetadata.Pane) {
+			agent.Status.LastTermination.Generation = "generation-stale"
+			pane.Status.LastTermination.Generation = "generation-stale"
+		}, reason: "current Agent activation generation"},
+		{name: "illegal source classification pairing", mutate: setEvidence(coremetadata.TerminationSourceControlAction, coremetadata.TerminationNormal), reason: "control-action/normal"},
+		{name: "interrupted Pending", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, _ *coremetadata.Pane) {
+			agent.Status.Phase = coremetadata.PhasePending
+		}, reason: "phase Pending"},
+		{name: "interrupted Running before absence projection", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, pane *coremetadata.Pane) {
+			agent.Status.Phase = coremetadata.PhaseRunning
+			agent.Status.PaneRef = pane.Metadata.UID
+		}, want: true},
+		{name: "interrupted Failed", mutate: func(_ *coremetadata.Registry, agent *coremetadata.Agent, _ *coremetadata.Pane) {
+			agent.Status.Phase = coremetadata.PhaseFailed
+		}, reason: "phase Failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			registry := store.registry.Clone()
+			agent, _ := registry.Agent(seed.Metadata.UID)
+			pane, _ := registry.Pane(agent.Status.LastTermination.PaneUID)
+			if test.mutate != nil {
+				test.mutate(&registry, agent, pane)
+			}
+			got, reason := decideTopologyAgentContinueEligibility(registry, agent.Clone())
+			if got != test.want {
+				t.Fatalf("eligible=%t reason=%q, want %t", got, reason, test.want)
+			}
+			if test.reason != "" && !strings.Contains(reason, test.reason) {
+				t.Fatalf("reason=%q, want substring %q", reason, test.reason)
+			}
+		})
+	}
+}
+
 // TestTopologyAgentResumeDecisionTable pins the three resume-decision branches
 // the Phase owes: a stored ref resumes, a missing or unusable ref starts a new
 // conversation with a stated reason, and the provider discriminator is the
@@ -253,6 +365,8 @@ func TestRegistryTopologyMaterializationReplaysStoredAgents(t *testing.T) {
 	fresh := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
 		name: "codex", provider: "codex", cwd: root,
 	})
+	markTopologyAgentInterrupted(t, store, resumed.Metadata.UID, "")
+	markTopologyAgentInterrupted(t, store, fresh.Metadata.UID, "")
 
 	out, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
 	if err != nil {
@@ -328,6 +442,67 @@ func TestRegistryTopologyMaterializationReplaysStoredAgents(t *testing.T) {
 	}
 }
 
+func TestRegistryTopologyContinueLaunchesInterruptedBOnceAndRetainsCleanA(t *testing.T) {
+	command, store, server, _, root, _ := newTopologyMaterializeFixture(t)
+	launcher := command.agents.(*fakeTopologyAgentLauncher)
+	cleanRef := codexConversationRef("thread-clean-a")
+	interruptedRef := codexConversationRef("thread-interrupted-b")
+	clean := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+		name: "clean-a", provider: "codex", cwd: root, ref: cleanRef,
+	})
+	interrupted := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+		name: "interrupted-b", provider: "codex", cwd: root, ref: interruptedRef,
+	})
+	cleanPane := markTopologyAgentInterrupted(t, store, clean.Metadata.UID, "")
+	markTopologyAgentInterrupted(t, store, interrupted.Metadata.UID, "")
+	zero := 0
+	cleanStored, _ := store.registry.Agent(clean.Metadata.UID)
+	cleanEvidence := cleanStored.Status.LastTermination.Clone()
+	cleanEvidence.Source = coremetadata.TerminationSourceSupervisor
+	cleanEvidence.Classification = coremetadata.TerminationNormal
+	cleanEvidence.ExitCode = &zero
+	cleanEvidence.OperationID = "op-supervisor-clean"
+	cleanStored.Status.LastTermination = cleanEvidence.Clone()
+	cleanStored.Status.Reason = coremetadata.TerminationReasonNormal
+	cleanPaneStored, _ := store.registry.Pane(cleanPane.Metadata.UID)
+	cleanPaneStored.Status.LastTermination = cleanEvidence.Clone()
+	if err := store.registry.Validate(); err != nil {
+		t.Fatalf("clean/interrupted fixture: %v", err)
+	}
+
+	out, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+	if err != nil || !strings.Contains(out, "uid:"+interrupted.Metadata.UID) || strings.Contains(out, "uid:"+clean.Metadata.UID) {
+		t.Fatalf("Continue plan did not select only interrupted B: err=%v stderr=%q\n%s", err, stderr, out)
+	}
+	if !strings.Contains(stderr, "agent/main/clean-a was not restored") || !strings.Contains(stderr, "supervisor/normal") {
+		t.Fatalf("clean A refusal was not useful: %q", stderr)
+	}
+	afterClean, cleanOK := store.registry.Agent(clean.Metadata.UID)
+	afterInterrupted, interruptedOK := store.registry.Agent(interrupted.Metadata.UID)
+	if !cleanOK || afterClean.Status.Phase != coremetadata.PhaseOffline || afterClean.Status.PaneRef != "" ||
+		!afterClean.Status.SessionRef.SameConversation(cleanRef) {
+		t.Fatalf("clean A UID/sessionRef/state changed: ok=%t status=%+v", cleanOK, afterClean.Status)
+	}
+	if !interruptedOK || afterInterrupted.Status.Phase != coremetadata.PhaseRunning || afterInterrupted.Status.PaneRef == "" ||
+		!afterInterrupted.Status.SessionRef.SameConversation(interruptedRef) {
+		t.Fatalf("interrupted B did not resume exactly: ok=%t status=%+v", interruptedOK, afterInterrupted.Status)
+	}
+	if len(launcher.binds) != 1 || !strings.HasSuffix(launcher.binds[0], "thread-interrupted-b") {
+		t.Fatalf("Continue Agent launches = %v, want interrupted B exactly once", launcher.binds)
+	}
+
+	server.calls = nil
+	writes := store.writes
+	repeat, repeatStderr, repeatErr := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+	if repeatErr != nil || !strings.Contains(repeat, `"outcome": "no-op"`) || store.writes != writes || len(launcher.binds) != 1 {
+		t.Fatalf("repeated Continue duplicated B: err=%v stderr=%q writes=%d->%d binds=%v\n%s",
+			repeatErr, repeatStderr, writes, store.writes, launcher.binds, repeat)
+	}
+	if slices.ContainsFunc(server.calls, func(call []string) bool { return len(call) != 0 && call[0] == "split-window" }) {
+		t.Fatalf("repeated Continue split a duplicate Agent Pane: %#v", server.calls)
+	}
+}
+
 // TestRegistryTopologyMaterializationAgentReplayRefusalsAreNeverFatal fixes the
 // contract's central asymmetry: an Agent projmux cannot launch is disclosed and
 // left behind, and the Windows and shell Panes around it still converge.
@@ -337,17 +512,14 @@ func TestRegistryTopologyMaterializationAgentReplayRefusalsAreNeverFatal(t *test
 		agent   topologyFixtureAgent
 		arrange func(*fakeTopologyAgentLauncher)
 		want    string
-		// launched is whether the Agent still comes up, on a new conversation.
-		launched bool
 	}{
 		{
-			name:  "a provider that refuses resume falls back to a new conversation",
+			name:  "a provider that refuses exact resume is not launched",
 			agent: topologyFixtureAgent{name: "claude", provider: "claude", ref: claudeConversationRef("conv-dead")},
 			arrange: func(f *fakeTopologyAgentLauncher) {
 				f.resumeErr["claude"] = fmt.Errorf("conversation conv-dead is unknown to this provider")
 			},
-			want:     "could not build a resume launch for conversation conv-dead",
-			launched: true,
+			want: "could not build the required exact resume launch for conversation conv-dead",
 		},
 		{
 			name:  "a Settings-disabled provider is not launched at all",
@@ -380,6 +552,7 @@ func TestRegistryTopologyMaterializationAgentReplayRefusalsAreNeverFatal(t *test
 			declared := test.agent
 			declared.cwd = root
 			agent := addTopologyFixtureAgent(t, store, declared)
+			markTopologyAgentInterrupted(t, store, agent.Metadata.UID, "")
 
 			out, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
 			if err != nil {
@@ -399,15 +572,6 @@ func TestRegistryTopologyMaterializationAgentReplayRefusalsAreNeverFatal(t *test
 				}
 			}
 			stored, _ := store.registry.Agent(agent.Metadata.UID)
-			if test.launched {
-				if stored.Status.Phase != coremetadata.PhaseRunning {
-					t.Fatalf("a fallback launch left the Agent %s", stored.Status.Phase)
-				}
-				if server.argvContains("--resume") {
-					t.Fatalf("a refused resume still produced a resume argv: %#v", server.calls)
-				}
-				return
-			}
 			if stored.Status.Phase != coremetadata.PhaseOffline || stored.Status.PaneRef != "" {
 				t.Fatalf("an unlaunchable Agent was still materialized: %s paneRef=%q", stored.Status.Phase, stored.Status.PaneRef)
 			}
@@ -433,6 +597,7 @@ func TestRegistryTopologyMaterializationAgentReplayHonorsTheOwnerGuard(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	markTopologyAgentInterrupted(t, store, agent.Metadata.UID, stale.Metadata.UID)
 
 	// A foreign live session claims the stale managed Pane uid. The pass must
 	// refuse rather than delete a Registry row whose runtime object is alive.
@@ -450,7 +615,6 @@ func TestRegistryTopologyMaterializationAgentReplayHonorsTheOwnerGuard(t *testin
 	if store.snapshot() != before {
 		t.Fatalf("a refused pass mutated the Registry")
 	}
-
 	// With the foreign claim gone the stale row is provably dead, so the Agent
 	// is released and re-attached under its own uid.
 	server.sessions = slices.DeleteFunc(server.sessions, func(s *fakeTmuxSession) bool { return s.name == "foreign" })

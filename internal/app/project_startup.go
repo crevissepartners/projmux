@@ -82,6 +82,9 @@ type projectTopologyMaterializeRequest struct {
 	Root        string
 	SessionName string
 	Anchor      string
+	// AgentReplayAuthority is set only by explicit snapshot restore. Ordinary
+	// Continue leaves the zero value and must prove interrupted evidence.
+	AgentReplayAuthority topologyAgentReplayAuthority
 }
 
 func (c *switchCommand) openProjectTarget(ctx context.Context, target, sessionName string) error {
@@ -751,13 +754,14 @@ func (m *registryProjectTopologyMaterializer) MaterializeProjectTopology(ctx con
 		return false, recoveryErr
 	}
 	planner := resourceReconcilePlanner{
-		reader:             explicitTmuxRunner{runner: m.runner, target: m.target},
-		store:              m.resources,
-		newReconciler:      m.newReconciler,
-		materializeProject: projectRef,
-		materializeSession: sessionName,
-		exactTarget:        m.target,
-		agents:             m.agents,
+		reader:               explicitTmuxRunner{runner: m.runner, target: m.target},
+		store:                m.resources,
+		newReconciler:        m.newReconciler,
+		materializeProject:   projectRef,
+		materializeSession:   sessionName,
+		exactTarget:          m.target,
+		agents:               m.agents,
+		agentReplayAuthority: request.AgentReplayAuthority,
 	}
 	run := topologyMaterializeRun{
 		resources:          m.resources,

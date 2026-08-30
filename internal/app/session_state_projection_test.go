@@ -199,6 +199,9 @@ func TestRestoreSnapshotRecordsCountsAndFinalExplicitClientHandoff(t *testing.T)
 	if err := cmd.runRestore([]string{"--session", "saved-beta", "--project", "uid:prj-beta", "--client", "/dev/pts/9", "--yes"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
+	if len(topology.requests) != 1 || topology.requests[0].AgentReplayAuthority != topologyAgentReplaySnapshot {
+		t.Fatalf("snapshot restore topology authority = %#v, want explicit snapshot replay", topology.requests)
+	}
 	if len(writer.events) != 1 {
 		t.Fatalf("diagnostic events=%#v", writer.events)
 	}

@@ -410,6 +410,7 @@ func (c *sessionStateCommand) commitSnapshotProjection(ctx context.Context, expl
 	_, _ = fmt.Fprintf(stdout, resultFormat, committedProject.Metadata.Name, len(snap.Windows), statusbarSessionStatePaneCount(snap), applied.ReplacedAgents, applied.PreservedUIDs)
 	if _, err := c.projectTopology.MaterializeProjectTopology(ctx, projectTopologyMaterializeRequest{
 		Root: committedProject.Spec.Root, SessionName: declaredSession,
+		AgentReplayAuthority: topologyAgentReplaySnapshot,
 	}); err != nil {
 		if c.notices != nil {
 			noticeFormat := localizeUIText(locale, "projmux: snapshot desired state was committed; runtime item was refused: %s")

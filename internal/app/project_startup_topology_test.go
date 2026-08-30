@@ -460,41 +460,84 @@ func TestNewSwitchCommandWiresExactSocketTopologyActivation(t *testing.T) {
 	}
 }
 
-// TestClosedProjectStartupReplaysStoredAgents is acceptance 1 at the startup
-// boundary: the `Project topology` row brings saved Agents back into their own
-// managed Panes on the exact app socket, resumes the one whose Registry
-// `status.sessionRef` names a conversation, and discloses the one it could not.
-func TestClosedProjectStartupReplaysStoredAgents(t *testing.T) {
+// TestClosedProjectStartupContinuesOnlyInterruptedAgents is the startup-boundary
+// C-2 guarantee: clean A is retained and disclosed, interrupted B resumes its
+// exact conversation once, and a repeated Continue creates no duplicate.
+func TestClosedProjectStartupContinuesOnlyInterruptedAgents(t *testing.T) {
 	activation, store, server, root, _ := newProjectStartupTopologyFixture(t)
 	notices := activation.notices.(*bytes.Buffer)
-	resumed := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
-		name: "claude", provider: "claude", cwd: root, ref: claudeConversationRef("conv-startup"),
+	clean := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+		name: "clean-a", provider: "claude", cwd: root, ref: claudeConversationRef("conv-clean"),
 	})
-	fresh := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "codex", provider: "codex", cwd: root})
+	interrupted := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+		name: "interrupted-b", provider: "codex", cwd: root, ref: codexConversationRef("thread-interrupted"),
+	})
+	cleanPane := markTopologyAgentInterrupted(t, store, clean.Metadata.UID, "")
+	markTopologyAgentInterrupted(t, store, interrupted.Metadata.UID, "")
+	zero := 0
+	cleanStored, _ := store.registry.Agent(clean.Metadata.UID)
+	cleanEvidence := cleanStored.Status.LastTermination.Clone()
+	cleanEvidence.Source = coremetadata.TerminationSourceSupervisor
+	cleanEvidence.Classification = coremetadata.TerminationNormal
+	cleanEvidence.ExitCode = &zero
+	cleanEvidence.OperationID = "op-clean-supervisor"
+	cleanStored.Status.LastTermination = cleanEvidence.Clone()
+	cleanPaneStored, _ := store.registry.Pane(cleanPane.Metadata.UID)
+	cleanPaneStored.Status.LastTermination = cleanEvidence.Clone()
 
 	materialized, err := activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{Root: root, SessionName: "beta"})
 	if err != nil || !materialized {
 		t.Fatalf("MaterializeProjectTopology() = %t, %v; want true, nil", materialized, err)
 	}
-	for _, agentUID := range []string{resumed.Metadata.UID, fresh.Metadata.UID} {
-		agent, ok := store.registry.Agent(agentUID)
-		if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef == "" {
-			t.Fatalf("closed Project startup left agent %s unmanaged: %+v", agentUID, agent)
-		}
-		if !slices.ContainsFunc(server.session("beta").windows[0].panes, func(p *fakeTmuxPane) bool {
-			return p.opts[tmuxopts.PaneUID] == agent.Status.PaneRef
-		}) {
-			t.Fatalf("agent %s managed Pane never reached tmux:\n%s", agentUID, server.state())
-		}
+	cleanAfter, _ := store.registry.Agent(clean.Metadata.UID)
+	interruptedAfter, _ := store.registry.Agent(interrupted.Metadata.UID)
+	if cleanAfter.Status.Phase != coremetadata.PhaseOffline || cleanAfter.Status.PaneRef != "" ||
+		!cleanAfter.Status.SessionRef.SameConversation(claudeConversationRef("conv-clean")) {
+		t.Fatalf("clean A was changed or launched: %+v", cleanAfter.Status)
 	}
-	if !server.argvContains("--resume") || !server.argvContains("conv-startup") {
-		t.Fatalf("startup did not resume the stored conversation:\n%#v", server.calls)
+	if interruptedAfter.Status.Phase != coremetadata.PhaseRunning || interruptedAfter.Status.PaneRef == "" ||
+		!interruptedAfter.Status.SessionRef.SameConversation(codexConversationRef("thread-interrupted")) {
+		t.Fatalf("interrupted B did not resume exactly: %+v", interruptedAfter.Status)
 	}
-	if !strings.Contains(notices.String(), "agent/main/codex starts a new conversation instead of resuming") {
-		t.Fatalf("startup never told the operator which Agent was not resumed: %q", notices.String())
+	if !server.argvContains("--resume") || !server.argvContains("thread-interrupted") ||
+		server.argvContains("conv-clean") {
+		t.Fatalf("startup Agent argv did not select only interrupted B:\n%#v", server.calls)
 	}
-	if strings.Contains(notices.String(), "agent/main/claude") {
-		t.Fatalf("a resumed Agent was reported as unresumed: %q", notices.String())
+	if !strings.Contains(notices.String(), "agent/main/clean-a was not restored") ||
+		!strings.Contains(notices.String(), "supervisor/normal") {
+		t.Fatalf("startup never disclosed clean A refusal: %q", notices.String())
+	}
+
+	server.calls = nil
+	binds := len(activation.agents.(*fakeTopologyAgentLauncher).binds)
+	writes := store.writes
+	materialized, err = activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{Root: root, SessionName: "beta"})
+	if err != nil || !materialized || len(activation.agents.(*fakeTopologyAgentLauncher).binds) != binds || store.writes != writes {
+		t.Fatalf("repeat Continue duplicated B: materialized=%t err=%v binds=%d->%d writes=%d->%d",
+			materialized, err, binds, len(activation.agents.(*fakeTopologyAgentLauncher).binds), writes, store.writes)
+	}
+	if slices.ContainsFunc(server.calls, func(call []string) bool { return len(call) != 0 && call[0] == "split-window" }) {
+		t.Fatalf("repeat Continue split a duplicate Agent Pane: %#v", server.calls)
+	}
+}
+
+func TestExplicitSnapshotRestoreRetainsAgentReplayAuthority(t *testing.T) {
+	activation, store, server, root, _ := newProjectStartupTopologyFixture(t)
+	agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+		name: "snapshot-agent", provider: "codex", cwd: root, ref: codexConversationRef("thread-snapshot"),
+	})
+
+	materialized, err := activation.MaterializeProjectTopology(context.Background(), projectTopologyMaterializeRequest{
+		Root: root, SessionName: "beta", AgentReplayAuthority: topologyAgentReplaySnapshot,
+	})
+	if err != nil || !materialized {
+		t.Fatalf("snapshot materialization = %t, %v", materialized, err)
+	}
+	after, _ := store.registry.Agent(agent.Metadata.UID)
+	if after.Status.Phase != coremetadata.PhaseRunning || after.Status.PaneRef == "" ||
+		!after.Status.SessionRef.SameConversation(codexConversationRef("thread-snapshot")) ||
+		!server.argvContains("thread-snapshot") {
+		t.Fatalf("explicit snapshot Agent replay changed: status=%+v calls=%#v", after.Status, server.calls)
 	}
 }
 
