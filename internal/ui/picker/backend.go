@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -2642,7 +2643,7 @@ func nativeANSIReset(seq string) bool {
 func nativePreviewLines(options Options, items []Item, selected, offset, limit int) []string {
 	if nativeSelectionDetailEnabled(options) && selected >= 0 && selected < len(items) {
 		if output, ok := options.SelectionDetail.TextByValue[items[selected].Value]; ok {
-			return limitedNativePreviewLines(output, offset, limit)
+			return limitedNativeAIResumeDetailLines(options, output, offset, limit)
 		}
 		return nil
 	}
@@ -2667,6 +2668,57 @@ func nativePreviewLines(options Options, items []Item, selected, offset, limit i
 		return nil
 	}
 	return limitedNativePreviewLines(output, offset, limit)
+}
+
+func limitedNativeAIResumeDetailLines(options Options, output string, offset, limit int) []string {
+	if !nativeSelectionDetailEnabled(options) || offset != 0 || limit < 5 {
+		return limitedNativePreviewLines(output, offset, limit)
+	}
+	output = strings.TrimRight(output, "\r\n")
+	lines := strings.Split(output, "\n")
+	if output == "" || len(lines) <= limit {
+		return limitedNativePreviewLines(output, offset, limit)
+	}
+	previewHeading := nativeLocalizedTextForOptions(options, i18n.Key("settings.text.preview"), "Preview")
+	heading := slices.Index(lines, previewHeading)
+	if len(lines) > 2 && lines[2] == previewHeading {
+		heading = 2
+	}
+	if heading < 0 {
+		return limitedNativePreviewLines(output, offset, limit)
+	}
+	detailsHeading := nativeLocalizedTextForOptions(options, i18n.Key("picker.ai.resume_detail_metadata"), "Details")
+	details := -1
+	for index := len(lines) - 1; index > heading; index-- {
+		if lines[index] == detailsHeading {
+			details = index
+			break
+		}
+	}
+	if details < 0 {
+		return limitedNativePreviewLines(output, offset, limit)
+	}
+	content := make([]string, 0, 3)
+	for _, line := range lines[heading+1 : details] {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		content = append(content, line)
+		if len(content) == 3 {
+			break
+		}
+	}
+	if len(content) < 3 {
+		return limitedNativePreviewLines(output, offset, limit)
+	}
+	prefixLimit := min(
+		// preview heading plus overflow notice
+		limit-len(content)-2, heading)
+	visible := append([]string(nil), lines[:prefixLimit]...)
+	visible = append(visible, previewHeading)
+	visible = append(visible, content...)
+	visible = append(visible, fmt.Sprintf("... %d more lines", len(lines)-len(visible)))
+	return visible
 }
 
 func nativePreviewPlacement(window string) string {

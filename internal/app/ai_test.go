@@ -35,7 +35,9 @@ func aiResumeSessionRowsWithLabels(sessions []aisessions.SessionMeta, conversati
 	rows := make([]intpickercompat.Entry, 0, len(sessions)+1)
 	rows = append(rows, intpickercompat.Entry{Label: "\x1b[32m[+ New Session]\x1b[0m", Value: aiResumeNewValue, SearchKey: "new session fresh agent picker"})
 	for _, session := range sessions {
-		rows = append(rows, aiResumeSessionRowWithLabel(session, conversationLabels[strings.TrimSpace(session.ResumeID)], now, locale, baseCWD, depth))
+		rows = append(rows, aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{
+			Topic: conversationLabels[strings.TrimSpace(session.ResumeID)],
+		}, now, locale, baseCWD, depth))
 	}
 	return rows, len(sessions), total
 }
@@ -405,7 +407,7 @@ func TestAIResumeSessionRowColumnsAlign(t *testing.T) {
 
 	for i, session := range sessions {
 		row := rows[i+1] // row 0 is the New Session entry
-		title := cleanAIResumeTitle(session.Title, session.ResumeID)
+		title := truncateAIResumeCells(aiResumeDisplayLabel(session, aiResumeExactAgentLabel{}, i18n.FallbackLocale), aiResumeTitleMaxCells)
 		// The fixed-column prefix width is label width minus the rendered title.
 		prefix := i18n.TerminalCellWidth(row.Label) - i18n.TerminalCellWidth(title)
 		if prefix != aiResumeRowPrefixWidth {
@@ -425,26 +427,26 @@ func TestAIResumeProviderNeutralRowSchema80ColumnGolden(t *testing.T) {
 		name   string
 		source string
 	}{
-		{aiModeClaude, aisessions.SourceClaudeTranscript},
+		{aiModeClaude, ""},
 		{aiModeCodex, aisessions.SourceCodexRollout},
 		{aiModeAntigravity, aisessions.SourceAntigravityMetadata},
 	}
 	var got strings.Builder
 	for _, provider := range providers {
-		row := aiResumeSessionRowWithLabel(aisessions.SessionMeta{
+		row := aiResumeSessionRowWithResolvedLabel(aisessions.SessionMeta{
 			Agent: provider.name, ResumeID: provider.name + "-exact-id", Title: "Shared conversation title",
 			LastModified: now.Add(-2 * time.Hour), Source: provider.source, Turns: 42,
 			Confidence: "private-confidence", Reason: "private-reason", RuntimeStatus: "active",
 			Context: aisessions.SessionContext{Branch: "feature/provider-neutral", CWD: "/workspace/projmux/internal/app"},
-		}, "Codex bound conversation", now, i18n.FallbackLocale, "/workspace/projmux", 1)
+		}, aiResumeExactAgentLabel{Topic: "Codex bound conversation"}, now, i18n.FallbackLocale, "/workspace/projmux", 1)
 		plain := stripANSI(row.Label)
 		for _, forbidden := range []string{"[fallback]", "42t", "active", "private-confidence", "private-reason", provider.source} {
-			if strings.Contains(plain, forbidden) {
+			if forbidden != "" && strings.Contains(plain, forbidden) {
 				t.Fatalf("%s visible row leaked %q: %q", provider.name, forbidden, plain)
 			}
 		}
 		if !strings.Contains(row.SearchKey, provider.source) {
-			t.Fatalf("%s SearchKey = %q, want exact source %q", provider.name, row.SearchKey, provider.source)
+			t.Fatalf("%s SearchKey = %q, want frozen routing source %q", provider.name, row.SearchKey, provider.source)
 		}
 		fmt.Fprintf(&got, "%s|%s\n", provider.name, strings.TrimRight(i18n.TruncateTerminalCells(plain, 80), " "))
 	}
@@ -461,16 +463,16 @@ func TestAIResumeProvidersShareConversationWidthPolicy(t *testing.T) {
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
 	title := strings.Repeat("provider neutral conversation ", 8)
 	providers := []struct{ name, source string }{
-		{aiModeClaude, aisessions.SourceClaudeTranscript},
+		{aiModeClaude, ""},
 		{aiModeCodex, aisessions.SourceCodexAppServer},
 		{aiModeAntigravity, aisessions.SourceAntigravityMetadata},
 	}
 	wantWidth := 0
 	for _, provider := range providers {
-		row := aiResumeSessionRowWithLabel(aisessions.SessionMeta{
+		row := aiResumeSessionRowWithResolvedLabel(aisessions.SessionMeta{
 			Agent: provider.name, ResumeID: provider.name + "-id", Title: title, Source: provider.source,
 			LastModified: now.Add(-time.Hour), Context: aisessions.SessionContext{Branch: "main"},
-		}, "", now, i18n.FallbackLocale, "/work", 0)
+		}, aiResumeExactAgentLabel{}, now, i18n.FallbackLocale, "/work", 0)
 		width := i18n.TerminalCellWidth(row.Label)
 		if wantWidth == 0 {
 			wantWidth = width
@@ -524,17 +526,17 @@ func TestAIResumeSessionRowTitleEllipsis(t *testing.T) {
 	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
 	long := strings.Repeat("x", aiResumeTitleMaxCells+25)
 	const resumeID = "019f0000-0000-7000-8000-000000000009"
-	row := aiResumeSessionRowWithLabel(aisessions.SessionMeta{
+	row := aiResumeSessionRowWithResolvedLabel(aisessions.SessionMeta{
 		Agent:        aiModeClaude,
 		ResumeID:     resumeID,
 		Title:        long,
 		LastModified: now.Add(-time.Hour),
-	}, "", now, i18n.FallbackLocale, "", 0)
+	}, aiResumeExactAgentLabel{}, now, i18n.FallbackLocale, "", 0)
 
 	if !strings.Contains(row.Label, "…") {
 		t.Fatalf("row label = %q, want ellipsis on overflow", row.Label)
 	}
-	title := cleanAIResumeTitle(long, "")
+	title := truncateAIResumeCells(strings.Join(strings.Fields(long), " "), aiResumeTitleMaxCells)
 	if w := i18n.TerminalCellWidth(title); w > aiResumeTitleMaxCells {
 		t.Fatalf("clipped title width = %d, want <= %d", w, aiResumeTitleMaxCells)
 	}
@@ -596,12 +598,12 @@ func TestAIResumeSessionRowShowsCWDColumnOnlyAtDepth(t *testing.T) {
 		Context:      aisessions.SessionContext{CWD: "/workspace/app/web", Branch: "feat/web"},
 	}
 
-	depth0 := aiResumeSessionRowWithLabel(session, "", now, i18n.FallbackLocale, "/workspace/app", 0)
+	depth0 := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{}, now, i18n.FallbackLocale, "/workspace/app", 0)
 	if strings.Contains(depth0.Label, "./web") {
 		t.Fatalf("depth 0 row should hide cwd column: %q", depth0.Label)
 	}
 
-	depth1 := aiResumeSessionRowWithLabel(session, "", now, i18n.FallbackLocale, "/workspace/app", 1)
+	depth1 := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{}, now, i18n.FallbackLocale, "/workspace/app", 1)
 	if !strings.Contains(depth1.Label, "./web") {
 		t.Fatalf("depth 1 row should show cwd column: %q", depth1.Label)
 	}
@@ -688,13 +690,13 @@ func TestAIResumeAgentBadgeTightBracketsAndColor(t *testing.T) {
 
 func TestAIResumeSessionRowHidesTurns(t *testing.T) {
 	now := time.Date(2026, 6, 26, 12, 0, 0, 0, time.UTC)
-	row := aiResumeSessionRowWithLabel(aisessions.SessionMeta{
+	row := aiResumeSessionRowWithResolvedLabel(aisessions.SessionMeta{
 		Agent:        aiModeCodex,
 		ResumeID:     "019f0000-0000-7000-8000-000000000042",
 		Title:        "Optimize picker",
 		LastModified: now.Add(-time.Hour),
 		Turns:        31,
-	}, "", now, i18n.FallbackLocale, "", 0)
+	}, aiResumeExactAgentLabel{}, now, i18n.FallbackLocale, "", 0)
 	if strings.Contains(row.Label, "31t") {
 		t.Fatalf("row label = %q, turn count belongs in detail", row.Label)
 	}
@@ -759,14 +761,14 @@ func TestAIResumeNativeAndFallbackProvenanceIsAbsentFromRows(t *testing.T) {
 		{"fallback", fallback, []string{"[fallback]", "codex-rollout", "medium", "app-server-unavailable"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			row := aiResumeSessionRowWithLabel(test.row, "", time.Time{}, i18n.FallbackLocale, "/work", 0)
+			row := aiResumeSessionRowWithResolvedLabel(test.row, aiResumeExactAgentLabel{}, time.Time{}, i18n.FallbackLocale, "/work", 0)
 			for _, hidden := range test.hidden {
 				if strings.Contains(row.Label, hidden) {
 					t.Fatalf("row=%#v must keep %q out of visible label", row, hidden)
 				}
 			}
 			if !strings.Contains(row.SearchKey, test.row.Source) {
-				t.Fatalf("row=%#v must preserve exact source in SearchKey", row)
+				t.Fatalf("row=%#v must preserve frozen routing source", row)
 			}
 		})
 	}

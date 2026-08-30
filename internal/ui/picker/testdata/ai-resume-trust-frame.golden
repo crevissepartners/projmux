@@ -1,0 +1,132 @@
+[en-US 80x24]
+00|<frame-top width=80>
+01|│AI Resume│
+02|<rule width=80>
+03|│Search AI Resume > stable-query 10/10│
+04|<rule width=80>
+05|│conversation 00 █│
+06|│conversation 01 █│
+07|│conversation 02 █│
+08|│conversation 03 █│
+09|│▌ conversation 04 █│
+10|│conversation 05 █│
+11|│conversation 06 █│
+12|│conversation 07│
+13|<rule width=80>
+14|│codex · Trustworthy conversation│
+15|│Preview│
+16|│content one│
+17|│content two│
+18|│content three│
+19|│... 12 more lines│
+20|<rule width=80>
+21|│Providers Codex 4 found · Claude search failed · Antigravity disabled│
+22|│Showing latest 10 resume sessions.│
+23|<frame-bottom width=80>
+[en-US 120x40]
+00|<frame-top width=120>
+01|│AI Resume│
+02|<rule width=120>
+03|│Search AI Resume > stable-query 10/10│
+04|<rule width=120>
+05|│conversation 00│
+06|│conversation 01│
+07|│conversation 02│
+08|│conversation 03│
+09|│▌ conversation 04│
+10|│conversation 05│
+11|│conversation 06│
+12|│conversation 07│
+13|│conversation 08│
+14|│conversation 09│
+15|<blank>
+16|<blank>
+17|<blank>
+18|<blank>
+19|<blank>
+20|<blank>
+21|<blank>
+22|<blank>
+23|<blank>
+24|<rule width=120>
+25|│codex · Trustworthy conversation│
+26|│Conversation ID: exact-04 · Source: codex-rollout│
+27|│Preview│
+28|│content one│
+29|│content two│
+30|│content three│
+31|│... 11 more lines│
+32|<blank>
+33|<blank>
+34|<blank>
+35|<blank>
+36|<rule width=120>
+37|│Providers Codex 4 found · Claude search failed · Antigravity disabled│
+38|│Showing latest 10 resume sessions.│
+39|<frame-bottom width=120>
+[ko-KR 80x24]
+00|<frame-top width=80>
+01|│AI Resume│
+02|<rule width=80>
+03|│검색 AI Resume > stable-query 10/10│
+04|<rule width=80>
+05|│conversation 00 █│
+06|│conversation 01 █│
+07|│conversation 02 █│
+08|│conversation 03 █│
+09|│▌ conversation 04 █│
+10|│conversation 05 █│
+11|│conversation 06 █│
+12|│conversation 07│
+13|<rule width=80>
+14|│codex · Trustworthy conversation│
+15|│미리 보기│
+16|│content one│
+17|│content two│
+18|│content three│
+19|│... 12 more lines│
+20|<rule width=80>
+21|│제공자 Codex 4건 발견 · Claude 검색 실패 · Antigravity 설정 꺼짐│
+22|│최근 10건 표시.│
+23|<frame-bottom width=80>
+[ko-KR 120x40]
+00|<frame-top width=120>
+01|│AI Resume│
+02|<rule width=120>
+03|│검색 AI Resume > stable-query 10/10│
+04|<rule width=120>
+05|│conversation 00│
+06|│conversation 01│
+07|│conversation 02│
+08|│conversation 03│
+09|│▌ conversation 04│
+10|│conversation 05│
+11|│conversation 06│
+12|│conversation 07│
+13|│conversation 08│
+14|│conversation 09│
+15|<blank>
+16|<blank>
+17|<blank>
+18|<blank>
+19|<blank>
+20|<blank>
+21|<blank>
+22|<blank>
+23|<blank>
+24|<rule width=120>
+25|│codex · Trustworthy conversation│
+26|│대화 ID: exact-04 · 소스: codex-rollout│
+27|│미리 보기│
+28|│content one│
+29|│content two│
+30|│content three│
+31|│... 11 more lines│
+32|<blank>
+33|<blank>
+34|<blank>
+35|<blank>
+36|<rule width=120>
+37|│제공자 Codex 4건 발견 · Claude 검색 실패 · Antigravity 설정 꺼짐│
+38|│최근 10건 표시.│
+39|<frame-bottom width=120>

@@ -2945,7 +2945,7 @@ func TestNativeAIResumeSelectionDetailKeepsFixedGeometry(t *testing.T) {
 		for _, state := range states {
 			options := Options{
 				UI: "ai-resume-picker", Items: items, Prompt: "AI Resume >",
-				Footer:          "Providers Codex available · Claude available · Antigravity empty\nShowing latest 20 resume sessions.",
+				Footer:          "Providers Codex 8 found · Claude 7 found · Antigravity 5 found\nShowing latest 20 resume sessions.",
 				SelectionDetail: &SelectionDetail{TextByValue: map[string]string{items[selected].Value: state.detail}},
 			}
 			window := nativePreviewWindow(options)
@@ -2966,7 +2966,7 @@ func TestNativeAIResumeSelectionDetailKeepsFixedGeometry(t *testing.T) {
 				if strings.Contains(line, "resume item 10") {
 					selectedLine = i
 				}
-				if strings.Contains(line, "Providers Codex available") {
+				if strings.Contains(line, "Providers Codex 8 found") {
 					footerLine = i
 				}
 				if strings.TrimSpace(line) == strings.Repeat("─", layout.Cols) {
@@ -3087,6 +3087,37 @@ func TestLimitedNativePreviewLinesKeepsLimitWithOverflowNotice(t *testing.T) {
 	}
 	if got, want := lines[2], "... 2 more lines"; got != want {
 		t.Fatalf("overflow notice = %q, want %q", got, want)
+	}
+}
+
+func TestNativeAIResumeDetailShowsThreeContentLinesBeforeOverflowNotice(t *testing.T) {
+	items := []Item{{Title: "conversation", Value: "resume\tcodex\texact-id"}}
+	options := Options{
+		UI: "ai-resume-picker", Locale: "en-US", Items: items,
+		SelectionDetail: &SelectionDetail{TextByValue: map[string]string{items[0].Value: strings.Join([]string{
+			"codex · My conversation", "Conversation ID: exact-id · Source: codex-rollout", "Preview",
+			"content one", "", "content two", "", "content three", "content four", "", "Details", "Turns: 42", "Reason: fallback",
+		}, "\n")}},
+	}
+	lines := nativePreviewLines(options, items, 0, 0, 8)
+	overflow := slices.IndexFunc(lines, func(line string) bool { return strings.HasPrefix(line, "... ") })
+	if overflow < 0 {
+		t.Fatalf("detail lines = %#v, want overflow notice", lines)
+	}
+	for _, content := range []string{"content one", "content two", "content three"} {
+		index := slices.Index(lines, content)
+		if index < 0 || index >= overflow {
+			t.Fatalf("detail lines = %#v, want %q before overflow", lines, content)
+		}
+	}
+	shortPreview := options
+	shortPreview.SelectionDetail = &SelectionDetail{TextByValue: map[string]string{items[0].Value: strings.Join([]string{
+		"codex · My conversation", "Conversation ID: exact-id · Source: codex-rollout", "Preview",
+		"content one", "", "content two", "", "Details", "Turns: 42", "Reason: fallback",
+	}, "\n")}}
+	shortLines := nativePreviewLines(shortPreview, items, 0, 0, 8)
+	if slices.Contains(shortLines, "Reason: fallback") || !slices.Contains(shortLines, "") {
+		t.Fatalf("short preview = %#v, metadata must not count as a third content line", shortLines)
 	}
 }
 
@@ -3857,12 +3888,12 @@ func TestAIResumeProviderFooterLocalized80ColumnGoldenClipsAndPreservesOrder(t *
 	}{
 		{
 			name: "en-US", locale: i18n.FallbackLocale,
-			providerPrefix: "Providers Codex fallback · Claude empty · Antigravity unavailable",
+			providerPrefix: "Providers Codex 4 found · Claude 0 found · Antigravity search failed",
 			shownCount:     "Showing latest 1 resume sessions.", moreText: "More conversations not loaded.",
 		},
 		{
 			name: "ko-KR", locale: i18n.Locale("ko-KR"),
-			providerPrefix: "제공자 Codex 대체 · Claude 없음 · Antigravity 사용 불가",
+			providerPrefix: "제공자 Codex 4건 발견 · Claude 0건 발견 · Antigravity 검색 실패",
 			shownCount:     "최근 1건 표시.", moreText: "더 많은 대화를 불러오지 않았습니다.",
 		},
 	}
@@ -3883,7 +3914,7 @@ func TestAIResumeProviderFooterLocalized80ColumnGoldenClipsAndPreservesOrder(t *
 			if len(options.ChromeBands) != 0 {
 				t.Fatalf("upper provider chrome = %#v, want zero bands", options.ChromeBands)
 			}
-			if got := nativeFilteredItems(options, "unavailable"); len(got) != 0 {
+			if got := nativeFilteredItems(options, "search failed"); len(got) != 0 {
 				t.Fatalf("provider footer became searchable: %#v", got)
 			}
 			filtered := nativeFilteredItems(options, "codex")
@@ -3921,6 +3952,78 @@ func TestAIResumeProviderFooterLocalized80ColumnGoldenClipsAndPreservesOrder(t *
 				t.Fatalf("provider footer moved under query: base=%d queried=%d", baseLine, queriedLine)
 			}
 		})
+	}
+}
+
+func TestNativeAIResumeTrustFramesLocaleAndSizeGolden(t *testing.T) {
+	items := make([]Item, 10)
+	for i := range items {
+		items[i] = Item{Title: fmt.Sprintf("conversation %02d", i), Value: fmt.Sprintf("resume\tcodex\texact-%02d", i), SearchText: fmt.Sprintf("codex conversation %02d exact-%02d", i, i)}
+	}
+	tests := []struct {
+		locale         i18n.Locale
+		providerFooter string
+		shownCount     string
+		idLabel        string
+		sourceLabel    string
+		previewLabel   string
+		detailsLabel   string
+	}{
+		{locale: i18n.FallbackLocale, providerFooter: "Providers Codex 4 found · Claude search failed · Antigravity disabled", shownCount: "Showing latest 10 resume sessions.", idLabel: "Conversation ID", sourceLabel: "Source", previewLabel: "Preview", detailsLabel: "Details"},
+		{locale: i18n.Locale("ko-KR"), providerFooter: "제공자 Codex 4건 발견 · Claude 검색 실패 · Antigravity 설정 꺼짐", shownCount: "최근 10건 표시.", idLabel: "대화 ID", sourceLabel: "소스", previewLabel: "미리 보기", detailsLabel: "세부 정보"},
+	}
+	var got strings.Builder
+	for _, test := range tests {
+		for _, layout := range []nativeLayout{{Rows: 24, Cols: 80}, {Rows: 40, Cols: 120}} {
+			detail := strings.Join([]string{
+				"codex · Trustworthy conversation",
+				test.idLabel + ": exact-04 · " + test.sourceLabel + ": codex-rollout",
+				test.previewLabel,
+				"content one", "", "content two", "", "content three", "content four", "content five",
+				"", test.detailsLabel, "Turns: 42", "Runtime: idle", "Confidence: medium", "Reason: app-server-unavailable", "metadata tail",
+			}, "\n")
+			options := Options{
+				UI: "ai-resume-picker", Locale: test.locale, Title: "AI Resume", Prompt: "AI Resume > ", Items: items,
+				Footer:          test.providerFooter + "\n" + test.shownCount,
+				SelectionDetail: &SelectionDetail{TextByValue: map[string]string{items[4].Value: detail}},
+			}
+			lines := nativePlainFrameLines(nativeInteractiveFrame(options, items, "stable-query", len("stable-query"), 4, 0, layout))
+			fmt.Fprintf(&got, "[%s %dx%d]\n", test.locale, layout.Cols, layout.Rows)
+			for index, line := range lines {
+				if projmuxpicker.VisibleLen(line) != layout.Cols {
+					t.Fatalf("%s %dx%d line %d width drift: %q", test.locale, layout.Cols, layout.Rows, index, line)
+				}
+				goldenLine := strings.TrimRight(line, " ")
+				switch {
+				case strings.HasPrefix(goldenLine, "╭"):
+					goldenLine = fmt.Sprintf("<frame-top width=%d>", layout.Cols)
+				case strings.HasPrefix(goldenLine, "╰"):
+					goldenLine = fmt.Sprintf("<frame-bottom width=%d>", layout.Cols)
+				case strings.Count(goldenLine, "─") > layout.Cols/2:
+					goldenLine = fmt.Sprintf("<rule width=%d>", layout.Cols)
+				case strings.TrimSpace(strings.Trim(goldenLine, "│")) == "":
+					goldenLine = "<blank>"
+				case strings.HasPrefix(goldenLine, "│") && strings.HasSuffix(goldenLine, "│"):
+					goldenLine = "│" + strings.Join(strings.Fields(strings.Trim(goldenLine, "│")), " ") + "│"
+				}
+				fmt.Fprintf(&got, "%02d|%s\n", index, goldenLine)
+			}
+			plain := strings.Join(lines, "\n")
+			overflow := strings.Index(plain, "... ")
+			for _, content := range []string{"content one", "content two", "content three"} {
+				index := strings.Index(plain, content)
+				if index < 0 || (overflow >= 0 && index >= overflow) {
+					t.Fatalf("%s %dx%d content priority drift: %q", test.locale, layout.Cols, layout.Rows, plain)
+				}
+			}
+		}
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "ai-resume-trust-frame.golden"))
+	if err != nil {
+		t.Fatalf("read trust frame golden: %v\ngot:\n%s", err, got.String())
+	}
+	if got.String() != string(want) {
+		t.Fatalf("trust frame golden mismatch:\ngot:\n%swant:\n%s", got.String(), want)
 	}
 }
 
