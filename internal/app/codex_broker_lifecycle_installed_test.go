@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +16,89 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/version"
 )
+
+// TestInstalledIsolatedRealTmuxTwoAgentReconnectSmoke runs the maintained
+// reconnect fixture with the installed projmux binary as an immutable input.
+// The fixture carries the exact two-thread endpoint identities and the combined
+// app guard owns sibling isolation; this outer smoke adds the installed binary,
+// disposable Registry/XDG state, unique real-tmux socket, and exact contained
+// cleanup boundary that unit tests cannot provide.
+func TestInstalledIsolatedRealTmuxTwoAgentReconnectSmoke(t *testing.T) {
+	root := strings.TrimSpace(os.Getenv("PROJMUX_CODEX_RECONNECT_SMOKE_ROOT"))
+	if root == "" {
+		t.Skip("set PROJMUX_CODEX_RECONNECT_SMOKE_ROOT for the installed real-tmux reconnect smoke")
+	}
+	root = filepath.Clean(root)
+	tmpRoot := filepath.Clean("/tmp")
+	if !filepath.IsAbs(root) || root == tmpRoot || !strings.HasPrefix(root, tmpRoot+string(filepath.Separator)) {
+		t.Fatalf("reconnect smoke root must be an isolated child of %s", tmpRoot)
+	}
+	for _, inherited := range []string{"TMUX", "TMUX_PANE"} {
+		if _, present := os.LookupEnv(inherited); present {
+			t.Fatalf("%s must be removed for the installed real-tmux reconnect smoke", inherited)
+		}
+	}
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(root); err != nil || len(entries) != 0 {
+		t.Fatalf("reconnect smoke root must start empty: entries=%d err=%v", len(entries), err)
+	}
+	installed, err := exec.LookPath("projmux")
+	if err != nil {
+		t.Fatalf("installed projmux is required for the reconnect smoke: %v", err)
+	}
+	installed, err = filepath.Abs(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	binary, err := os.ReadFile(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256(binary))
+	repoRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(repoRoot, "test", "e2e", "codex-lifecycle.sh")
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(ctx, "bash", script)
+	command.Dir = repoRoot
+	environment := make([]string, 0, len(os.Environ())+3)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "TMUX=") || strings.HasPrefix(entry, "TMUX_PANE=") ||
+			strings.HasPrefix(entry, "TMPDIR=") || strings.HasPrefix(entry, "PROJMUX_SMOKE_PREBUILT_BIN=") ||
+			strings.HasPrefix(entry, "PROJMUX_SMOKE_EXPECTED_BIN_SHA256=") {
+			continue
+		}
+		environment = append(environment, entry)
+	}
+	command.Env = append(environment,
+		"TMPDIR="+root,
+		"PROJMUX_SMOKE_PREBUILT_BIN="+installed,
+		"PROJMUX_SMOKE_EXPECTED_BIN_SHA256="+digest,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("installed real-tmux reconnect smoke: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "Codex native lifecycle E2E passed") {
+		t.Fatalf("installed reconnect smoke returned no terminal receipt:\n%s", output)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		var residual []string
+		for _, entry := range entries {
+			residual = append(residual, entry.Name())
+		}
+		t.Fatalf("installed reconnect smoke left residuals below its exact root: %v", residual)
+	}
+}
 
 // codexInstalledSmokeReadOnlyArgv is the complete set of `codex` argv this
 // whole path is allowed to run. Both entries are read-only: one opens the

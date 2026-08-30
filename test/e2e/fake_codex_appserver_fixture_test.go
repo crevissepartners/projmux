@@ -84,7 +84,7 @@ func TestNextObserverEpochUsesFixedPrivateFile(t *testing.T) {
 	t.Setenv("PROJMUX_FAKE_CODEX_STATE", dir)
 
 	for want := 1; want <= 2; want++ {
-		got, err := nextObserverEpoch()
+		got, err := nextObserverEpoch("thread-phase3")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -92,12 +92,40 @@ func TestNextObserverEpochUsesFixedPrivateFile(t *testing.T) {
 			t.Fatalf("observer epoch = %d, want %d", got, want)
 		}
 	}
-	info, err := os.Stat(filepath.Join(dir, "epoch"))
+	if got, err := nextObserverEpoch("thread-sibling"); err != nil || got != 1 {
+		t.Fatalf("sibling observer epoch = %d, %v; want independent epoch 1", got, err)
+	}
+	if _, err := nextObserverEpoch("thread-foreign"); err == nil {
+		t.Fatal("observer epoch accepted a foreign thread leaf")
+	}
+	info, err := os.Stat(filepath.Join(dir, "epoch-thread-phase3"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if mode := info.Mode().Perm(); mode != 0o600 {
 		t.Fatalf("fixture epoch mode = %04o, want 0600", mode)
+	}
+}
+
+func TestFixtureTwoStartedThreadsHaveIndependentExactIdentities(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "codex-lifecycle", "fake-codex-state")
+	t.Setenv("PROJMUX_SMOKE_WORKDIR", root)
+	t.Setenv("PROJMUX_FAKE_CODEX_STATE", dir)
+
+	first, err := nextStartedThread()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := nextStartedThread()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first != "thread-phase3" || second != "thread-sibling" || fixtureTurnID(first) != "turn-phase3" || fixtureTurnID(second) != "turn-sibling" {
+		t.Fatalf("two-Agent identities first=%q/%q second=%q/%q", first, fixtureTurnID(first), second, fixtureTurnID(second))
+	}
+	if _, err := nextStartedThread(); err == nil {
+		t.Fatal("fixture silently created a fresh fallback beyond the exact two-Agent set")
 	}
 }
 

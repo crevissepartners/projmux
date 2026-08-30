@@ -57,7 +57,7 @@ type codexBrokerEpochRecord struct {
 // observer no longer owns is the reconnect itself. The binding survives the
 // outage, the broker retries it with capped backoff for as long as the binding
 // exists, and there is therefore no attempt ceiling that could strand a live
-// activation on hook fallback.
+// activation in the unavailable reconnect projection.
 type codexBrokerObserverSession struct {
 	identity  codexLifecycleIdentity
 	cwd       string
@@ -263,16 +263,19 @@ func (s *codexBrokerObserverSession) pump(binding *codexbroker.RemoteBinding, re
 			}
 		case <-suspends:
 			// The connection this epoch was minted on is gone and no
-			// replacement is open yet. Ending the epoch here is what publishes
-			// the hook fallback promptly instead of holding an authority whose
-			// next barrier may be a long outage away.
+			// replacement is open yet. Ending the epoch here promptly revokes
+			// exact control and lets the observer publish its one stable
+			// unavailable projection while this binding keeps reconnecting.
 			s.retire(ready)
 		}
 	}
 	s.mu.Lock()
-	current := s.current
-	s.current = nil
-	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
+	var current *codexBrokerLifecycleEpoch
+	if s.binding == binding {
+		current = s.current
+		s.current, s.binding, s.ready = nil, nil, nil
+		s.pending, s.hasPending = codexBrokerEpochRecord{}, false
+	}
 	s.mu.Unlock()
 	if current != nil {
 		current.end()
@@ -501,10 +504,12 @@ func (e *codexBrokerLifecycleEpoch) deliver(event codexbroker.Event) {
 	default:
 		e.mu.Unlock()
 		// The consumer fell a full backlog behind. Ending the epoch hands it a
-		// closed stream it must resync from, which is the same answer the
-		// broker gives its own overflowing binding; silently dropping would
-		// leave a hole nothing downstream could detect.
+		// closed stream it must resync from. Retiring the exact binding forces
+		// the next observer epoch through a fresh broker snapshot barrier while
+		// leaving every sibling binding and the shared upstream connection live;
+		// silently dropping would leave a hole nothing downstream could detect.
 		e.end()
+		e.session.resync(e)
 	}
 }
 
@@ -528,4 +533,23 @@ func (s *codexBrokerObserverSession) clear(epoch *codexBrokerLifecycleEpoch) {
 		s.current = nil
 	}
 	s.mu.Unlock()
+}
+
+// resync retires only the binding whose app-side epoch overflowed. The runtime
+// connection is deliberately retained: Open will bind this exact thread again
+// and wait for its new snapshot barrier, while sibling bindings keep their
+// authority and ordered streams unchanged.
+func (s *codexBrokerObserverSession) resync(epoch *codexBrokerLifecycleEpoch) {
+	s.mu.Lock()
+	if s.current != epoch {
+		s.mu.Unlock()
+		return
+	}
+	binding := s.binding
+	s.current, s.binding, s.ready = nil, nil, nil
+	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
+	s.mu.Unlock()
+	if binding != nil {
+		_ = binding.Close()
+	}
 }
