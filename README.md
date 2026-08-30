@@ -7,7 +7,7 @@
 <p align="center">
   <strong>A tmux-native workspace for multi-agent AI development.</strong>
   <br>
-  <em>Managed Claude Code, Codex, and Antigravity panes with hook-driven attention and agent-aware session resume.</em>
+  <em>Run Codex, Claude Code, and Antigravity side by side in one workspace.</em>
 </p>
 
 <p align="center">
@@ -23,138 +23,81 @@ projmux shell
 ```
 
 <p align="center">
-  <img src="docs/assets/projmux-ai-attention.gif" alt="projmux AI session resume, agent permission, and grouped notification workflow" width="820">
-  <br>
-  <em>Resume an existing AI session, keep working in another project, then return through grouped notifications when the agent needs approval.</em>
+  <img src="docs/assets/projmux-overview.gif" alt="projmux workspace: switch projects, pick a session to resume, and continue it next to a running agent" width="820">
 </p>
 
-## Why
+## Keys
 
-Six tmux windows. Each one is running Claude Code, Codex, or Antigravity on a
-different repo. Three are idle. One is waiting on a permission prompt. One
-crashed an hour ago and you have no idea which.
+- `Alt-1` projects
+- `Alt-2` notifications
+- `Alt-3` recent windows
+- `Alt-4` resume an AI session
+- `Alt-5` settings
+- `Alt-7` new AI split
 
-projmux manages Claude Code, Codex, and Antigravity hook integrations, including
-Antigravity's hook/statusline wiring, shows live per-pane state in the tmux
-status bar, and lets one keystroke take you to the pane that actually needs
-you. It also remembers each agent's resume id, so after a reboot every pane
-comes back as the *same* conversation — not a fresh one.
+`Alt-1`–`Alt-5` work with no configuration. See
+[Terminal Keybindings](docs/keybindings.md) to remap them.
+
+## Pick up a conversation
+
+`Alt-4` lists your Codex, Claude Code, and Antigravity sessions with enough
+context to tell them apart. Choose one and it opens where you left it.
+
+<p align="center">
+  <img src="docs/assets/projmux-resume-picker.gif" alt="projmux resume picker: search sessions and read the detail preview" width="820">
+</p>
+
+## Get called back
+
+Agent permission requests and completions land in one grouped inbox. `Alt-2`
+takes you to the pane that is waiting.
+
+<p align="center">
+  <img src="docs/assets/projmux-ai-attention.gif" alt="projmux attention queue: return from a shell to the agent pane that needs approval" width="820">
+</p>
+
+## Run agents in parallel
+
+Keep a shell, Codex, and Claude Code in the same window. Agents can open other
+agents through the same CLI you use:
+
+```sh
+projmux create claude -- "Draft the migration plan."
+```
+
+<p align="center">
+  <img src="docs/assets/projmux-three-pane-workflow.gif" alt="projmux three-pane workflow: a shell, Codex, and a Claude Code pane Codex opened" width="820">
+</p>
+
+Templates and naming conventions are in
+[AI Agent Shortcuts](docs/ai-agent-shortcuts.md).
+
+## Also in the app
+
+- Live per-project, per-window, and per-pane CPU/RSS in the
+  [Resource Inspector](docs/resource-attribution.md).
+- Layout and cwd snapshots in [Session State](docs/session-restore.md).
+- Search roots, keybindings, and updates in Settings.
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) and npm, for the main install path.
-- [tmux](https://github.com/tmux/tmux/wiki/Installing) **3.4 or newer**.
+[Node.js](https://nodejs.org/) and npm, plus
+[tmux](https://github.com/tmux/tmux/wiki/Installing) 3.4 or newer. Run
+`projmux doctor` for read-only local diagnostics, or
+[Troubleshooting](docs/troubleshooting.md) if the app will not start.
 
-Run `projmux doctor` after installing for read-only local runtime diagnostics.
+## Docs
 
-## Install
-
-The npm package shown above installs a small Node.js shim plus the matching
-projmux binary for Linux and macOS on x64 or arm64. npm is the primary
-distribution path for normal users.
-
-Verify with `projmux version`. Then `projmux doctor` provides read-only local
-runtime diagnostics (tmux 3.4+ and hook integration health).
-If installation succeeds but the app cannot enter or npm reports an incomplete
-optional dependency, follow [Troubleshooting](docs/troubleshooting.md).
-
-Manual Go, source checkout, GitHub Release, and packaging details live in
-[Install](docs/install.md).
-
-## Quick Start
-
-Open the isolated projmux tmux app:
-
-```sh
-projmux shell
-```
-
-Inside the app:
-
-- `Alt-1` opens the project sidebar.
-- `Alt-2` opens the notification list.
-- `Alt-3` opens Recent Windows.
-- `Alt-4` opens the AI resume session picker.
-- `Alt-5` opens settings.
-- `Alt-7` opens the AI split picker.
-
-The `Alt-1` through `Alt-5` launch keys are the guaranteed zero-config
-defaults. `Alt-7` is an additional editable built-in default. Add aliases in
-Settings > Keybindings or `~/.config/projmux/keymap.toml`. If a key does not
-fire, the Darwin release uses a native physical-key adapter automatically
-inside `projmux shell` after one-time macOS Accessibility approval. On other
-paths, run `projmux setup` outside tmux, then use
-`projmux setup terminal [terminal] --apply` for supported terminal delivery
-fallbacks.
-
-## Day-To-Day Use
-
-- Pick a project directory and projmux creates or reuses its tmux session.
-- Pin important projects so they stay easy to reach.
-- Preview windows, panes, git branch, and AI pane state
-  before switching.
-- Resume an existing Claude, Codex, or Antigravity conversation, or open a new
-  managed AI split.
-- Review grouped permission and completion events, then jump directly to the
-  pane that needs attention.
-- Inspect live project, window, and pane CPU/RSS with the read-only Resource
-  Inspector on Linux/tmux.
-- Save and inspect Session State snapshots for window/pane layouts, shell cwd,
-  and supported AI resumes.
-- Use Settings > Project Picker to add roots and workdirs without editing env
-  vars.
-- Use Settings > About > Update or `projmux update apply` to upgrade.
-
-<p align="center">
-  <img src="docs/assets/projmux-shell-sidebar.gif" alt="projmux project switch and managed Codex workflow" width="820">
-  <br>
-  <em>Switch projects, launch a managed Codex pane, and review its completion notification.</em>
-</p>
-
-For detailed configuration, including `PROJMUX_PROJDIR`, managed roots,
-notifications, and usage tracking, see [Configuration](docs/configuration.md).
-For update behavior by installer type, see [Upgrading](docs/upgrading.md).
-
-## Multi-Agent Workflow
-
-Keep a shell and managed Claude, Codex, or Antigravity panes visible in the
-same tmux window. Move between projects and panes while projmux collects agent
-permission and completion events in one grouped inbox.
-
-<p align="center">
-  <img src="docs/assets/projmux-three-pane-workflow.gif" alt="projmux shell, Codex, and Claude three-pane workflow" width="820">
-  <br>
-  <em>Move across shell, Codex, and Claude panes while independent tasks report back through one notification queue.</em>
-</p>
-
-## Automation With Agent Skills
-
-AI tools can invoke the same projmux CLI to open a managed pane and deliver a
-prompt:
-
-```sh
-projmux create codex --placement right -- "Review the retry logic."
-```
-
-Templates and naming conventions for Claude, Codex, and other agents are in
-[AI Agent Shortcuts](docs/ai-agent-shortcuts.md).
-
-## More Docs
-
-- [Install](docs/install.md)
-- [Configuration](docs/configuration.md)
-- [Terminal Keybindings](docs/keybindings.md)
-- [AI Agent Shortcuts](docs/ai-agent-shortcuts.md)
-- [CLI Reference](docs/cli.md) — generated from the command manifest
-- [CLI Task Guide](docs/cli-guide.md)
-- [Statusbar](docs/statusbar.md)
-- [Hooks](docs/hooks.md)
-- [Usage tracking](docs/usage-tracking.md)
-- [Resource Inspector](docs/resource-attribution.md)
-- [Session State](docs/session-restore.md)
-- [Operational Diagnostics](docs/operational-diagnostics.md)
-- [Troubleshooting](docs/troubleshooting.md)
-- [Agent Workflow](docs/agent-workflow.md)
+[Install](docs/install.md) ·
+[Configuration](docs/configuration.md) ·
+[Upgrading](docs/upgrading.md) ·
+[CLI Reference](docs/cli.md) ·
+[CLI Task Guide](docs/cli-guide.md) ·
+[Statusbar](docs/statusbar.md) ·
+[Hooks](docs/hooks.md) ·
+[Usage tracking](docs/usage-tracking.md) ·
+[Operational Diagnostics](docs/operational-diagnostics.md) ·
+[Agent Workflow](docs/agent-workflow.md)
 
 ## Development
 
@@ -166,7 +109,7 @@ make test
 ```
 
 See [Testing](docs/testing.md), [Architecture](docs/architecture.md), and
-[Repo Layout](docs/repo-layout.md) for contributor details.
+[Repo Layout](docs/repo-layout.md).
 
 ## License
 
