@@ -140,10 +140,7 @@ keys = ["M-t"]
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := &settingsCommand{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(string) string { return "" },
-	}
+	cmd := testSettingsCommandWithHome(home)
 
 	options := cmd.rootOptions(settingsRootTabGlobal)
 	if !containsString(options.Bindings, "alt-s:abort") {
@@ -1126,7 +1123,7 @@ func TestSettingsRootChipClickOnDisabledProjectChipIsNoop(t *testing.T) {
 func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
 	t.Parallel()
 
-	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
+	cmd := testSettingsCommandWithoutEnv()
 	options := cmd.rootOptions(settingsRootTabProject)
 
 	// Phase 2.7: the dedicated "Project context: (none) - open
@@ -1159,7 +1156,7 @@ func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
 func TestSettingsRootDescriptionOwnershipBoundaries(t *testing.T) {
 	t.Parallel()
 
-	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
+	cmd := testSettingsCommandWithoutEnv()
 	entries := cmd.rootEntriesForAxisLocale(settingsAxisGlobal, i18n.FallbackLocale)
 	// Appearance now owns every visual surface, Theme included: the target IA
 	// has no separate Theme root, so the row must name Theme and Status Bar.
@@ -2404,10 +2401,7 @@ func TestSettingsAppearanceLocaleDetailUsesCatalog(t *testing.T) {
 [ui]
 locale = "ko-KR"
 `)
-	cmd := &settingsCommand{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(string) string { return "" },
-	}
+	cmd := testSettingsCommandWithHome(home)
 
 	options := cmd.localeOptions()
 	if got, want := options.Title, "모양 - 언어 / Locale"; got != want {
@@ -4663,12 +4657,7 @@ func TestSettingsHubRunsProjectPickerActions(t *testing.T) {
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSwitch + "add:/home/tester/source/repos/app"}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
@@ -5937,10 +5926,7 @@ func TestSettingsHubKeybindingsApplyReportsInvalidKeymapRecovery(t *testing.T) {
 	writeFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"), `[bindings.ProjectSidebarToggle]
 keys = [bad]
 `)
-	cmd := &settingsCommand{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(string) string { return "" },
-	}
+	cmd := testSettingsCommandWithHome(home)
 
 	var stdout bytes.Buffer
 	err := cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", []string{"M-a"}, &stdout)
@@ -6222,10 +6208,7 @@ func TestSettingsThemeColorSetDefaultSentinelStoresDefault(t *testing.T) {
 	t.Parallel()
 
 	home := t.TempDir()
-	cmd := &settingsCommand{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(string) string { return "" },
-	}
+	cmd := testSettingsCommandWithHome(home)
 
 	var stdout bytes.Buffer
 	if err := cmd.setThemeColor(theme.TokenBackground, theme.ThemeDefaultSentinel, &stdout); err != nil {
@@ -6249,10 +6232,7 @@ func TestSettingsThemeColorSetDefaultSentinelRejectedForNonSurfaceToken(t *testi
 	t.Parallel()
 
 	home := t.TempDir()
-	cmd := &settingsCommand{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(string) string { return "" },
-	}
+	cmd := testSettingsCommandWithHome(home)
 	if err := cmd.setThemeColor(theme.TokenTextPrimary, theme.ThemeDefaultSentinel, &bytes.Buffer{}); err == nil {
 		t.Fatalf("setThemeColor(text_primary, default) error = nil, want invalid color error")
 	}
@@ -6854,7 +6834,7 @@ func TestSettingsRemovedAboutGuidanceCanonicalDestinations(t *testing.T) {
 		}
 	}
 
-	entries := (&settingsCommand{lookupEnv: func(string) string { return "" }}).aboutEntries()
+	entries := testSettingsCommandWithoutEnv().aboutEntries()
 	for _, destination := range []string{"projmux setup", "projmux setup terminal", "projmux doctor"} {
 		if hasEntryLabelContaining(entries, destination) {
 			t.Fatalf("About entries = %#v, want canonical destination %q in CLI/docs only", entries, destination)
@@ -7065,7 +7045,7 @@ func TestSettingsHubUpdateFailureStaysOpenWithPassiveFeedback(t *testing.T) {
 func TestSettingsFeedbackReplacementAndClearContract(t *testing.T) {
 	t.Parallel()
 
-	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
+	cmd := testSettingsCommandWithoutEnv()
 	cmd.setSettingsFeedback("First complete", "first result")
 	options := cmd.withSettingsFeedback(intpickercompat.Options{
 		UI:      "settings-about",
@@ -7313,12 +7293,7 @@ func TestSettingsHubAddProjectScansFilesystem(t *testing.T) {
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSwitch + "add:" + app}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
@@ -7361,12 +7336,7 @@ func TestSettingsHubCandidatePinsRemovesACandidate(t *testing.T) {
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSwitch + "pin:" + pin}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
@@ -7410,12 +7380,7 @@ func TestSettingsHubPinnedProjectsRemovesAManagedPin(t *testing.T) {
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSwitch + "pin:uid:" + uid}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -7499,12 +7464,7 @@ func TestSettingsHubAddWorkdirAppendsToSavedFile(t *testing.T) {
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: addAction}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
@@ -7570,12 +7530,7 @@ func TestSettingsHubWorkdirsListRemovesSavedEntry(t *testing.T) {
 		// After remove, list should be empty (just back + placeholder).
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
@@ -7656,12 +7611,7 @@ func TestAddWorkdirEntriesIncludesTypedRow(t *testing.T) {
 		{observe: func(o intpickercompat.Options) { addOptions = o },
 			reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -7709,12 +7659,7 @@ func TestSettingsHubAddWorkdirTypedAppendsTypedPath(t *testing.T) {
 		// After typed flow returns, the project picker reopens. Close it.
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -7768,12 +7713,7 @@ func TestSettingsHubAddWorkdirTypedRejectsRelativePath(t *testing.T) {
 		// project picker section. Close to terminate the run.
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -7828,6 +7768,28 @@ func TestSettingsHubRejectsArguments(t *testing.T) {
 	if !strings.Contains(stderr.String(), "projmux settings") {
 		t.Fatalf("stderr = %q, want usage", stderr.String())
 	}
+}
+
+func testSettingsHubCommand(t *testing.T, runner intpickercompat.Runner, nativePicker intpicker.Runner, switcher settingsSwitcher) *settingsCommand {
+	t.Helper()
+
+	return &settingsCommand{
+		ai:           testAICommand(t.TempDir()),
+		switcher:     switcher,
+		runner:       runner,
+		nativePicker: nativePicker,
+	}
+}
+
+func testSettingsCommandWithHome(home string) *settingsCommand {
+	return &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+	}
+}
+
+func testSettingsCommandWithoutEnv() *settingsCommand {
+	return &settingsCommand{lookupEnv: func(string) string { return "" }}
 }
 
 func testSettingsSwitchCommand(t *testing.T, store *stubSwitchPinStore) *switchCommand {
@@ -8158,12 +8120,7 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
@@ -8211,12 +8168,7 @@ func TestSettingsHubUseCurrentProjectAsRootSavesProjdir(t *testing.T) {
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
@@ -8256,12 +8208,7 @@ func TestSettingsHubClearProjectRootRemovesSavedProjdir(t *testing.T) {
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := &settingsCommand{
-		ai:           testAICommand(t.TempDir()),
-		switcher:     switcher,
-		runner:       runner,
-		nativePicker: native,
-	}
+	cmd := testSettingsHubCommand(t, runner, native, switcher)
 
 	var stdout bytes.Buffer
 	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
@@ -8507,7 +8454,7 @@ func TestSettingsKeybindingPhysicalCaptureAvailabilityDefaults(t *testing.T) {
 		t.Fatal("capture must be unavailable inside tmux without a native or probe transport")
 	}
 
-	outsideTmux := &settingsCommand{lookupEnv: func(string) string { return "" }}
+	outsideTmux := testSettingsCommandWithoutEnv()
 	if !outsideTmux.keybindingPhysicalCaptureAvailable() {
 		t.Fatal("controlling-tty capture outside tmux must stay available")
 	}
@@ -8681,10 +8628,7 @@ func TestSettingsKeybindingRecorderValidationReusesConflictPolicyWithoutWriting(
 	t.Parallel()
 
 	home := t.TempDir()
-	cmd := &settingsCommand{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(string) string { return "" },
-	}
+	cmd := testSettingsCommandWithHome(home)
 	err := cmd.validateKeymapAliasForAction("Sidebar:PinProject", "C-x")
 	if err == nil || !strings.Contains(err.Error(), `key "C-x" is bound to both Sidebar:PinProject and Sidebar:KillSession in Sidebar`) {
 		t.Fatalf("validateKeymapAliasForAction() error = %v, want existing same-surface conflict", err)
