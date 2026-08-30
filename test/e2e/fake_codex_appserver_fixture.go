@@ -16,11 +16,22 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
 
-const websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+const (
+	websocketGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+	// One event beyond both 64-entry delivery bounds deterministically revokes
+	// the target binding. Keep the burst close to that edge: every duplicate
+	// is still an intentional target projection write, and hundreds of them
+	// can load the shared tmux server enough to perturb an otherwise healthy
+	// sibling observer in this timing-sensitive real-process fixture.
+	fixtureDisconnectBurst = 96
+)
+
+var fixtureWriteMu sync.Mutex
 
 type fixtureCommand uint8
 
@@ -71,6 +82,7 @@ func writeDaemonVersion(writer io.Writer) error {
 
 func serveProxy() error {
 	observerProxy := false
+	activeThread := ""
 	defer func() {
 		if observerProxy {
 			_ = markGate("proxy-exited")
@@ -100,15 +112,24 @@ func serveProxy() error {
 		var message struct {
 			ID     json.RawMessage `json:"id"`
 			Method string          `json:"method"`
-			Params struct {
-				IncludeTurns bool `json:"includeTurns"`
-			} `json:"params"`
+			Params json.RawMessage `json:"params"`
 		}
 		if json.Unmarshal(payload, &message) != nil {
 			return errors.New("invalid JSON request")
 		}
+		var params struct {
+			ThreadID     string `json:"threadId"`
+			IncludeTurns bool   `json:"includeTurns"`
+		}
+		if len(message.Params) > 0 && json.Unmarshal(message.Params, &params) != nil {
+			return errors.New("invalid JSON request params")
+		}
 		if message.Method == "turn/start" || message.Method == "turn/steer" || message.Method == "turn/interrupt" || (message.Method == "" && len(message.ID) > 0) {
-			if err := recordProviderWrite(message.Method); err != nil {
+			threadID := params.ThreadID
+			if threadID == "" {
+				threadID = activeThread
+			}
+			if err := recordProviderWrite(threadID, message.Method); err != nil {
 				return err
 			}
 		}
@@ -123,25 +144,51 @@ func serveProxy() error {
 				return err
 			}
 		case "thread/start":
-			if err := writeResult(message.ID, map[string]any{"thread": map[string]any{"id": "thread-phase3"}}); err != nil {
+			threadID, err := nextStartedThread()
+			if err != nil {
+				return err
+			}
+			activeThread = threadID
+			if err := writeResult(message.ID, map[string]any{"thread": map[string]any{"id": threadID}}); err != nil {
 				return err
 			}
 		case "turn/start":
-			if err := writeResult(message.ID, map[string]any{"turn": map[string]any{"id": "turn-phase3", "status": "inProgress"}}); err != nil {
+			threadID := params.ThreadID
+			if threadID == "" {
+				threadID = activeThread
+			}
+			if err := validateFixtureThread(threadID); err != nil {
+				return err
+			}
+			if err := writeResult(message.ID, map[string]any{"turn": map[string]any{"id": fixtureTurnID(threadID), "status": "inProgress"}}); err != nil {
+				return err
+			}
+		case "turn/steer":
+			if err := validateFixtureThread(params.ThreadID); err != nil {
+				return err
+			}
+			if err := writeResult(message.ID, map[string]any{"turn": map[string]any{"id": fixtureTurnID(params.ThreadID), "status": "inProgress"}}); err != nil {
 				return err
 			}
 		case "thread/resume":
 			// The endpoint broker subscribes the exact thread before it reads
 			// it. The subscription creates nothing and starts no turn.
-			if err := writeResult(message.ID, map[string]any{"thread": map[string]any{"id": "thread-phase3"}}); err != nil {
+			if err := validateFixtureThread(params.ThreadID); err != nil {
+				return err
+			}
+			activeThread = params.ThreadID
+			if err := writeResult(message.ID, map[string]any{"thread": map[string]any{"id": params.ThreadID}}); err != nil {
 				return err
 			}
 		case "thread/read":
-			if !message.Params.IncludeTurns {
+			if err := validateFixtureThread(params.ThreadID); err != nil {
+				return err
+			}
+			if !params.IncludeTurns {
 				// The broker's pre-turn bootstrap snapshot. It carries no turn,
 				// so it is not the lifecycle epoch the scripted scenario steps.
 				if err := writeResult(message.ID, map[string]any{"thread": map[string]any{
-					"id": "thread-phase3", "cwd": "/discarded", "createdAt": 1, "updatedAt": 2,
+					"id": params.ThreadID, "cwd": "/discarded", "createdAt": 1, "updatedAt": 2,
 					"status": map[string]any{"type": "active", "activeFlags": []string{}},
 				}}); err != nil {
 					return err
@@ -149,81 +196,107 @@ func serveProxy() error {
 				continue
 			}
 			observerProxy = true
-			epoch, err := nextObserverEpoch()
+			epoch, err := nextObserverEpoch(params.ThreadID)
 			if err != nil {
 				return err
 			}
-			if epoch > 1 {
-				if err := waitForGate("allow-reconnect"); err != nil {
-					return err
-				}
+			if params.ThreadID == "thread-phase3" && epoch > 1 {
+				requestID := append(json.RawMessage(nil), message.ID...)
+				go func() {
+					if err := waitForGate("allow-reconnect"); err != nil {
+						_ = recordFixtureFailure(err)
+						return
+					}
+					if err := writeResult(requestID, map[string]any{"thread": map[string]any{
+						"id": "thread-phase3", "status": map[string]any{"type": "idle", "activeFlags": []string{}}, "turns": []map[string]any{},
+					}}); err != nil {
+						_ = recordFixtureFailure(err)
+					}
+				}()
+				continue
 			}
 			status := map[string]any{"type": "idle", "activeFlags": []string{}}
 			turns := []map[string]any{}
-			if epoch == 1 {
+			if params.ThreadID == "thread-phase3" && epoch == 1 {
 				status = map[string]any{"type": "active", "activeFlags": []string{}}
 				turns = []map[string]any{{"id": "turn-phase3", "status": "inProgress"}}
+			} else if params.ThreadID == "thread-sibling" {
+				status = map[string]any{"type": "active", "activeFlags": []string{}}
+				turns = []map[string]any{{"id": "turn-sibling", "status": "inProgress"}}
 			}
-			if err := writeResult(message.ID, map[string]any{"thread": map[string]any{"id": "thread-phase3", "status": status, "turns": turns}}); err != nil {
+			if err := writeResult(message.ID, map[string]any{"thread": map[string]any{"id": params.ThreadID, "status": status, "turns": turns}}); err != nil {
 				return err
 			}
-			if epoch == 1 {
-				if err := waitForGate("emit-auto-approved"); err != nil {
-					return err
-				}
-				if err := writeMessage(map[string]any{"id": "request-auto", "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": "thread-phase3", "turnId": "turn-phase3", "itemId": "item-auto"}}); err != nil {
-					return err
-				}
-				if err := writeMessage(map[string]any{"method": "serverRequest/resolved", "params": map[string]any{"threadId": "thread-phase3", "requestId": "request-auto"}}); err != nil {
-					return err
-				}
-				if err := markGate("auto-approved-emitted"); err != nil {
-					return err
-				}
-				if err := waitForGate("emit-actionable"); err != nil {
-					return err
-				}
-				if err := writeMessage(map[string]any{"id": "request-actionable", "method": "item/permissions/requestApproval", "params": map[string]any{"threadId": "thread-phase3", "turnId": "turn-phase3", "itemId": "item-actionable"}}); err != nil {
-					return err
-				}
-				if err := writeMessage(map[string]any{"method": "thread/status/changed", "params": map[string]any{"threadId": "thread-phase3", "status": map[string]any{"type": "active", "activeFlags": []string{"waitingOnApproval"}}}}); err != nil {
-					return err
-				}
-				if err := waitForGate("resolve-actionable"); err != nil {
-					return err
-				}
-				if err := writeMessage(map[string]any{"method": "serverRequest/resolved", "params": map[string]any{"threadId": "thread-phase3", "requestId": "request-actionable"}}); err != nil {
-					return err
-				}
-				if err := markGate("resolved-sent"); err != nil {
-					return err
-				}
-				if err := markGate("waiting-completion-gate"); err != nil {
-					return err
-				}
-				if err := waitForGate("emit-complete"); err != nil {
-					return err
-				}
-				if err := markGate("completion-gate-seen"); err != nil {
-					return err
-				}
-				if err := writeMessage(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "thread-phase3", "turn": map[string]any{"id": "turn-phase3", "status": "completed"}}}); err != nil {
-					return err
-				}
-				if err := markGate("first-completion-sent"); err != nil {
-					return err
-				}
-				// Duplicate delivery must not enqueue or dispatch a second completion.
-				if err := writeMessage(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "thread-phase3", "turn": map[string]any{"id": "turn-phase3", "status": "completed"}}}); err != nil {
-					return err
-				}
-				if err := markGate("duplicate-completion-sent"); err != nil {
-					return err
-				}
-				if err := waitForGate("disconnect"); err != nil {
-					return err
-				}
-				return nil
+			if params.ThreadID == "thread-phase3" && epoch == 1 {
+				go func() {
+					if err := func() error {
+						if err := waitForGate("emit-auto-approved"); err != nil {
+							return err
+						}
+						if err := writeMessage(map[string]any{"id": "request-auto", "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": "thread-phase3", "turnId": "turn-phase3", "itemId": "item-auto"}}); err != nil {
+							return err
+						}
+						if err := writeMessage(map[string]any{"method": "serverRequest/resolved", "params": map[string]any{"threadId": "thread-phase3", "requestId": "request-auto"}}); err != nil {
+							return err
+						}
+						if err := markGate("auto-approved-emitted"); err != nil {
+							return err
+						}
+						if err := waitForGate("emit-actionable"); err != nil {
+							return err
+						}
+						if err := writeMessage(map[string]any{"id": "request-actionable", "method": "item/permissions/requestApproval", "params": map[string]any{"threadId": "thread-phase3", "turnId": "turn-phase3", "itemId": "item-actionable"}}); err != nil {
+							return err
+						}
+						if err := writeMessage(map[string]any{"method": "thread/status/changed", "params": map[string]any{"threadId": "thread-phase3", "status": map[string]any{"type": "active", "activeFlags": []string{"waitingOnApproval"}}}}); err != nil {
+							return err
+						}
+						if err := waitForGate("resolve-actionable"); err != nil {
+							return err
+						}
+						if err := writeMessage(map[string]any{"method": "serverRequest/resolved", "params": map[string]any{"threadId": "thread-phase3", "requestId": "request-actionable"}}); err != nil {
+							return err
+						}
+						if err := markGate("resolved-sent"); err != nil {
+							return err
+						}
+						if err := markGate("waiting-completion-gate"); err != nil {
+							return err
+						}
+						if err := waitForGate("emit-complete"); err != nil {
+							return err
+						}
+						if err := markGate("completion-gate-seen"); err != nil {
+							return err
+						}
+						if err := writeMessage(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "thread-phase3", "turn": map[string]any{"id": "turn-phase3", "status": "completed"}}}); err != nil {
+							return err
+						}
+						if err := markGate("first-completion-sent"); err != nil {
+							return err
+						}
+						// Duplicate delivery must not enqueue or dispatch a second completion.
+						if err := writeMessage(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "thread-phase3", "turn": map[string]any{"id": "turn-phase3", "status": "completed"}}}); err != nil {
+							return err
+						}
+						if err := markGate("duplicate-completion-sent"); err != nil {
+							return err
+						}
+						if err := waitForGate("disconnect"); err != nil {
+							return err
+						}
+						for range fixtureDisconnectBurst {
+							if err := writeMessage(map[string]any{"method": "thread/status/changed", "params": map[string]any{
+								"threadId": "thread-phase3", "status": map[string]any{"type": "active", "activeFlags": []string{}},
+							}}); err != nil {
+								return err
+							}
+						}
+						return nil
+					}(); err != nil {
+						_ = recordFixtureFailure(err)
+					}
+				}()
 			}
 		}
 	}
@@ -247,12 +320,15 @@ func fixtureStateDir() (string, error) {
 	return dir, os.MkdirAll(dir, 0o700)
 }
 
-func nextObserverEpoch() (int, error) {
+func nextObserverEpoch(threadID string) (int, error) {
+	if err := validateFixtureThread(threadID); err != nil {
+		return 0, err
+	}
 	dir, err := fixtureStateDir()
 	if err != nil {
 		return 0, err
 	}
-	path := filepath.Join(dir, "epoch")
+	path := filepath.Join(dir, "epoch-"+threadID)
 	// #nosec G304 -- fixtureStateDir validates the private isolated root and epoch is a fixed leaf under it.
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
@@ -275,6 +351,57 @@ func nextObserverEpoch() (int, error) {
 	}
 	_, err = fmt.Fprintf(file, "%d\n", value)
 	return value, err
+}
+
+func nextStartedThread() (string, error) {
+	dir, err := fixtureStateDir()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "started-threads")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	if err := syscall.Flock(int(file.Fd()), syscall.LOCK_EX); err != nil {
+		return "", err
+	}
+	defer syscall.Flock(int(file.Fd()), syscall.LOCK_UN) //nolint:errcheck
+	data, _ := io.ReadAll(file)
+	value := 0
+	_, _ = fmt.Sscanf(strings.TrimSpace(string(data)), "%d", &value)
+	value++
+	if value > 2 {
+		return "", errors.New("fake Codex fixture supports exactly two started threads")
+	}
+	if err := file.Truncate(0); err != nil {
+		return "", err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	if _, err := fmt.Fprintf(file, "%d\n", value); err != nil {
+		return "", err
+	}
+	if value == 1 {
+		return "thread-phase3", nil
+	}
+	return "thread-sibling", nil
+}
+
+func validateFixtureThread(threadID string) error {
+	if threadID != "thread-phase3" && threadID != "thread-sibling" {
+		return fmt.Errorf("unsupported fake Codex thread %q", threadID)
+	}
+	return nil
+}
+
+func fixtureTurnID(threadID string) string {
+	if threadID == "thread-sibling" {
+		return "turn-sibling"
+	}
+	return "turn-phase3"
 }
 
 func waitForGate(name string) error {
@@ -300,13 +427,16 @@ func markGate(name string) error {
 	return os.WriteFile(filepath.Join(dir, name), []byte("ready\n"), 0o600)
 }
 
-func recordProviderWrite(method string) error {
+func recordProviderWrite(threadID, method string) error {
 	dir, err := fixtureStateDir()
 	if err != nil {
 		return err
 	}
 	if method == "" {
 		method = "server-response"
+	}
+	if threadID == "" {
+		threadID = "request"
 	}
 	path := filepath.Join(dir, "provider-writes")
 	// #nosec G304 -- fixtureStateDir validates the isolated smoke child and the
@@ -316,8 +446,16 @@ func recordProviderWrite(method string) error {
 		return err
 	}
 	defer file.Close()
-	_, err = fmt.Fprintln(file, method)
+	_, err = fmt.Fprintf(file, "%s|%s\n", threadID, method)
 	return err
+}
+
+func recordFixtureFailure(failure error) error {
+	dir, err := fixtureStateDir()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "fixture-error"), []byte(failure.Error()+"\n"), 0o600)
 }
 
 func writeResult(id json.RawMessage, result any) error {
@@ -333,6 +471,8 @@ func writeMessage(message any) error {
 	if err != nil {
 		return err
 	}
+	fixtureWriteMu.Lock()
+	defer fixtureWriteMu.Unlock()
 	_, err = os.Stdout.Write(append(header, payload...))
 	return err
 }

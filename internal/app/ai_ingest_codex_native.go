@@ -263,12 +263,13 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			return errors.New("codex native lifecycle snapshot did not match exact binding")
 		}
 		if projection.Invalidated {
-			transitionErr := o.applyInvalidationAndFallback(epochLabel, "thread-unloaded", projection)
-			_ = client.Close()
-			if transitionErr != nil {
-				return transitionErr
-			}
 			if recovering {
+				// A replacement snapshot that cannot re-establish the exact
+				// thread is not a new status transition. The disconnect already
+				// published the one unavailable projection, so discard this
+				// candidate without making the Pane flap through hook fallback.
+				o.discardRecoveryEpoch(epoch)
+				_ = client.Close()
 				recoveryAttempts++
 				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
 					return recoveryErr
@@ -277,6 +278,11 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				}
 				continue
 			}
+			transitionErr := o.applyInvalidationAndFallback(epochLabel, "thread-unloaded", projection)
+			_ = client.Close()
+			if transitionErr != nil {
+				return transitionErr
+			}
 			if !waitCodexObserver(ctx, delay) {
 				return nil
 			}
@@ -284,11 +290,6 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		}
 		if snapshot.TurnID != "" && snapshot.TurnState == codexappserver.TurnStateInProgress {
 			o.progress.Begin(snapshot.TurnID, snapshot.StartedAt, o.currentTime())
-		}
-		if err := o.sink.Apply(o.identity, projection); err != nil {
-			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "sink-error")
-			_ = client.Close()
-			return errors.Join(err, cleanupErr)
 		}
 		var control *codexControlServer
 		if wire, ok := client.(agentControlWire); ok && o.startControl != nil {
@@ -300,6 +301,21 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			}
 		}
 		if control == nil && o.requireControl {
+			if recovering {
+				// Do not publish the replacement snapshot until its exact
+				// control endpoint is proved. A failed candidate is invisible:
+				// the Pane remains on the one unavailable projection emitted at
+				// disconnect, and no hook/badge write can interleave.
+				o.discardRecoveryEpoch(epoch)
+				_ = client.Close()
+				recoveryAttempts++
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+					return recoveryErr
+				} else if !retry {
+					return nil
+				}
+				continue
+			}
 			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "control-unavailable")
 			_ = client.Close()
 			if cleanupErr != nil {
@@ -318,6 +334,18 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				return nil
 			}
 			continue
+		}
+		// A replacement snapshot becomes observable only after its matching
+		// control endpoint exists. The live Pane authority is still
+		// invalidating here, so public callers cannot reach the new socket until
+		// SetAuthority commits the exact replacement epoch below.
+		if err := o.sink.Apply(o.identity, projection); err != nil {
+			if control != nil {
+				_ = control.Close()
+			}
+			cleanupErr := o.invalidateAndFallback(epoch, epochLabel, "sink-error")
+			_ = client.Close()
+			return errors.Join(err, cleanupErr)
 		}
 		if err := o.sink.SetAuthority(o.identity, codexAuthorityControlPlane, epochLabel, "ready"); err != nil {
 			if control != nil {
@@ -487,7 +515,15 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		}
 		_ = client.Close()
 		if !invalidated {
-			if err := o.invalidateAndFallback(epoch, epochLabel, reconnectReason); err != nil {
+			transition := o.invalidateAndFallback
+			if !stopAfterTransition && reconnectReason == "disconnected" {
+				// The broker binding survives a transient endpoint disconnect and
+				// owns the reconnect. Keep one deterministic unavailable
+				// projection until its replacement barrier and control endpoint
+				// are both ready; provider-hook is not reconnect authority.
+				transition = o.invalidateAndHold
+			}
+			if err := transition(epoch, epochLabel, reconnectReason); err != nil {
 				return err
 			}
 		}
@@ -506,15 +542,17 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 }
 
 // continueRecovery is the only retry scheduler after a ready epoch is lost.
-// The old control endpoint is already revoked and the invalidation/fallback is
-// already published before this method is called. Every caller increments the
-// attempt count only after one failed replacement open, snapshot, or control
-// proof, so the count paces the backoff; it never terminates the recovery.
+// The old control endpoint is already revoked and the one unavailable
+// invalidation projection is published before this method is called. Every
+// caller increments the attempt count only after one failed replacement open,
+// snapshot, or control proof, so the count paces the backoff; it never
+// terminates the recovery.
 //
 // The only exits are a binding that is no longer current and a cancelled
-// context. A live activation whose endpoint is merely away is never abandoned
-// on hook fallback, because the broker beneath this loop is still reconnecting
-// on its own capped backoff for as long as the binding exists.
+// context. A live activation whose endpoint is merely away remains
+// invalidating instead of being exposed to hook fallback, because the broker
+// beneath this loop is still reconnecting on its own capped backoff for as long
+// as the binding exists.
 func (o *codexNativeObserver) continueRecovery(ctx context.Context, attempts int) (bool, error) {
 	if !o.sink.BindingCurrent(o.identity) {
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
@@ -604,10 +642,26 @@ func (o *codexNativeObserver) invalidateAndFallback(epoch uint64, epochLabel, re
 	if !projection.Accepted {
 		return errors.New("codex native lifecycle epoch could not be invalidated")
 	}
-	return o.applyInvalidationAndFallback(epochLabel, reason, projection)
+	return o.applyInvalidation(epochLabel, reason, projection, true)
 }
 
 func (o *codexNativeObserver) applyInvalidationAndFallback(epochLabel, reason string, projection codexLifecycleProjection) error {
+	return o.applyInvalidation(epochLabel, reason, projection, true)
+}
+
+// invalidateAndHold publishes the reconnect gap exactly once and deliberately
+// leaves provider-hook suppressed. The same durable broker binding is still
+// reconnecting, so only a replacement snapshot and exact control proof may
+// move the Pane out of this unavailable projection.
+func (o *codexNativeObserver) invalidateAndHold(epoch uint64, epochLabel, reason string) error {
+	projection := o.reducer.invalidate(epoch)
+	if !projection.Accepted {
+		return errors.New("codex native lifecycle epoch could not be invalidated")
+	}
+	return o.applyInvalidation(epochLabel, reason, projection, false)
+}
+
+func (o *codexNativeObserver) applyInvalidation(epochLabel, reason string, projection codexLifecycleProjection, fallback bool) error {
 	if !projection.Accepted || !projection.Invalidated {
 		return errors.New("codex native lifecycle invalidation projection is not accepted")
 	}
@@ -626,11 +680,23 @@ func (o *codexNativeObserver) applyInvalidationAndFallback(epochLabel, reason st
 	if err := o.clearProgress(); err != nil {
 		return err
 	}
+	if !fallback {
+		return nil
+	}
 	if err := o.sink.SetAuthority(o.identity, codexAuthorityHook, "", reason); err != nil {
 		return err
 	}
 	o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: reason})
 	return nil
+}
+
+// discardRecoveryEpoch retires a replacement candidate without writing the
+// already-stable unavailable projection again. It is used only before that
+// candidate has published semantic state or ready authority.
+func (o *codexNativeObserver) discardRecoveryEpoch(epoch uint64) {
+	_ = o.reducer.invalidate(epoch)
+	o.progress.Invalidate()
+	_, _ = o.progress.Flush(o.currentTime())
 }
 
 func waitForCodexLifecycleBinding(ctx context.Context, sink codexLifecycleSink, identity codexLifecycleIdentity, timeout time.Duration) bool {

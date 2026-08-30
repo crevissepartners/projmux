@@ -18,6 +18,8 @@ import (
 
 type fakeExactControlWire struct {
 	mu        sync.Mutex
+	threadID  string
+	turnID    string
 	start     int
 	steer     int
 	interrupt int
@@ -30,19 +32,19 @@ func (w *fakeExactControlWire) StartExactTurn(context.Context, string, string) (
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.start++
-	return codexappserver.ControlResult{ThreadID: "thread-1", TurnID: "turn-new"}, w.err
+	return codexappserver.ControlResult{ThreadID: w.resultThreadID(), TurnID: "turn-new"}, w.err
 }
 func (w *fakeExactControlWire) SteerExactTurn(context.Context, string, string, string) (codexappserver.ControlResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.steer++
-	return codexappserver.ControlResult{ThreadID: "thread-1", TurnID: "turn-1"}, w.err
+	return codexappserver.ControlResult{ThreadID: w.resultThreadID(), TurnID: w.resultTurnID()}, w.err
 }
 func (w *fakeExactControlWire) InterruptExactTurn(context.Context, string, string) (codexappserver.ControlResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.interrupt++
-	return codexappserver.ControlResult{ThreadID: "thread-1", TurnID: "turn-1"}, w.err
+	return codexappserver.ControlResult{ThreadID: w.resultThreadID(), TurnID: w.resultTurnID()}, w.err
 }
 func (w *fakeExactControlWire) RespondServerRequest(_ context.Context, id json.RawMessage, result any) error {
 	w.mu.Lock()
@@ -55,6 +57,20 @@ func (w *fakeExactControlWire) writes() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.start + w.steer + w.interrupt + len(w.responses)
+}
+
+func (w *fakeExactControlWire) resultThreadID() string {
+	if w.threadID == "" {
+		return "thread-1"
+	}
+	return w.threadID
+}
+
+func (w *fakeExactControlWire) resultTurnID() string {
+	if w.turnID == "" {
+		return "turn-1"
+	}
+	return w.turnID
 }
 
 func phase6Identity() codexLifecycleIdentity {

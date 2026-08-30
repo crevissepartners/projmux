@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -978,7 +979,7 @@ func TestCodexNativeObserverReconnectSnapshotReplacesInvalidatedEpoch(t *testing
 	}}
 	done := make(chan error, 1)
 	go func() { done <- observer.Run(ctx) }()
-	waitForCodexObserverEvents(t, sink, 10)
+	waitForCodexObserverEvents(t, sink, 8)
 	cancel()
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -989,10 +990,12 @@ func TestCodexNativeObserverReconnectSnapshotReplacesInvalidatedEpoch(t *testing
 		"authority:provider-control-plane",
 		"authority:invalidating",
 		"apply:unknown:invalidated=true:clears=0",
-		"authority:provider-hook",
 	}
-	if !reflect.DeepEqual(events[5:10], wantSecondEpoch) {
+	if !reflect.DeepEqual(events[4:8], wantSecondEpoch) {
 		t.Fatalf("reconnect convergence = %#v, want %#v", events, wantSecondEpoch)
+	}
+	if containsCodexObserverEvent(events, "authority:provider-hook") {
+		t.Fatalf("transient reconnect exposed hook fallback: %#v", events)
 	}
 }
 
@@ -1056,12 +1059,7 @@ func TestCodexNativeObserverEndpointReplacementRevokesE1BeforeGapAndPublishesExa
 		t.Fatalf("E1 startup=%+v epochs=%d", e1, len(epochs))
 	}
 	close(first.events)
-	fallback := waitForCodexObserverStartupResult(t, startup, codexObserverStartupFallback)
-	if fallback.Reason != "disconnected" {
-		cancel()
-		<-done
-		t.Fatalf("gap fallback=%+v", fallback)
-	}
+	waitForCodexObserverEvents(t, sink, 4)
 	gapRequest := agentControlRequest{Operation: agentControlOpSteer, Identity: identity, Epoch: e1.Epoch, Text: "must not write"}
 	if old := epochs[0].Handle(context.Background(), gapRequest); old.OK || firstWire.writes() != 0 {
 		cancel()
@@ -1100,21 +1098,222 @@ func TestCodexNativeObserverEndpointReplacementRevokesE1BeforeGapAndPublishesExa
 	authorities := sink.authorityEpochSnapshot()
 	firstReady := codexAuthorityControlPlane + ":" + e1.Epoch + ":ready"
 	secondReady := codexAuthorityControlPlane + ":" + e2.Epoch + ":ready"
-	wantOrder := []string{firstReady, codexAuthorityInvalidating + ":" + e1.Epoch + ":disconnected", codexAuthorityHook + "::disconnected", secondReady}
+	wantOrder := []string{firstReady, codexAuthorityInvalidating + ":" + e1.Epoch + ":disconnected", secondReady}
 	position := 0
-	for _, authority := range authorities {
+	secondReadyPosition := -1
+	for index, authority := range authorities {
 		if position < len(wantOrder) && authority == wantOrder[position] {
 			position++
+		}
+		if authority == secondReady && secondReadyPosition < 0 {
+			secondReadyPosition = index
 		}
 	}
 	if position != len(wantOrder) {
 		t.Fatalf("authority replacement order=%q want subsequence=%q", authorities, wantOrder)
+	}
+	for _, authority := range authorities[:secondReadyPosition] {
+		if strings.HasPrefix(authority, codexAuthorityHook+":") {
+			t.Fatalf("replacement gap exposed hook fallback authority: %q", authorities)
+		}
 	}
 	if response := epochs[1].Handle(context.Background(), exact); response.OK || secondWire.writes() != 1 {
 		t.Fatalf("E2 control remained live after shutdown: response=%+v writes=%d", response, secondWire.writes())
 	}
 	if first.closeCount() != 1 || second.closeCount() != 1 {
 		t.Fatalf("replacement connection cleanup E1=%d E2=%d, want 1/1", first.closeCount(), second.closeCount())
+	}
+}
+
+// TestCodexNativeTwoAgentDisconnectRecoversSameAgentControlAndStableProjection
+// is the combined C-1 guard. One activation loses its exact control epoch while
+// a sibling remains healthy; the target publishes one unavailable projection,
+// writes no provider-hook state during the gap, and admits control again only
+// through the replacement snapshot's new epoch.
+func TestCodexNativeTwoAgentDisconnectRecoversSameAgentControlAndStableProjection(t *testing.T) {
+	identityA := testCodexLifecycleIdentity()
+	identityB := codexLifecycleIdentity{
+		AgentUID: "agent-2", PaneUID: "pane-2", RuntimeID: "%8",
+		Generation: "generation-2", ThreadID: "thread-2",
+	}
+	wireA1, wireA2 := &fakeExactControlWire{}, &fakeExactControlWire{}
+	wireB := &fakeExactControlWire{threadID: identityB.ThreadID, turnID: "turn-2"}
+	connection := func(identity codexLifecycleIdentity, snapshot codexappserver.LifecycleSnapshot, wire *fakeExactControlWire) *fakeControllableCodexLifecycleConnection {
+		return &fakeControllableCodexLifecycleConnection{
+			fakeCodexLifecycleConnection: &fakeCodexLifecycleConnection{snapshot: snapshot, events: make(chan codexappserver.Notification)},
+			fakeExactControlWire:         wire,
+		}
+	}
+	firstA := connection(identityA, codexappserver.LifecycleSnapshot{
+		ThreadID: identityA.ThreadID, ThreadState: codexappserver.ThreadStateActive,
+		TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+	}, wireA1)
+	secondA := connection(identityA, codexappserver.LifecycleSnapshot{
+		ThreadID: identityA.ThreadID, ThreadState: codexappserver.ThreadStateIdle,
+		TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted,
+	}, wireA2)
+	connectionB := connection(identityB, codexappserver.LifecycleSnapshot{
+		ThreadID: identityB.ThreadID, ThreadState: codexappserver.ThreadStateActive,
+		TurnID: "turn-2", TurnState: codexappserver.TurnStateInProgress,
+	}, wireB)
+
+	sinkA, sinkB := newRecordingCodexLifecycleSink(), newRecordingCodexLifecycleSink()
+	startupA, startupB := make(chan codexObserverStartupResult, 4), make(chan codexObserverStartupResult, 2)
+	allowReconnect := make(chan struct{})
+	var epochsA, epochsB []*codexControlEpoch
+	openA := 0
+	observerA := codexNativeObserver{
+		identity: identityA, sink: sinkA, requireControl: true,
+		open: func(ctx context.Context) (codexLifecycleConnection, error) {
+			openA++
+			switch openA {
+			case 1:
+				return firstA, nil
+			case 2:
+				return secondA, nil
+			default:
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+		},
+		startControl: func(epoch *codexControlEpoch) (*codexControlServer, error) {
+			epochsA = append(epochsA, epoch)
+			return &codexControlServer{epoch: epoch}, nil
+		},
+		reportStartup: func(result codexObserverStartupResult) { startupA <- result },
+		waitRecovery: func(ctx context.Context, _ time.Duration) bool {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-allowReconnect:
+				return true
+			}
+		},
+	}
+	observerB := codexNativeObserver{
+		identity: identityB, sink: sinkB, requireControl: true,
+		open: func(context.Context) (codexLifecycleConnection, error) { return connectionB, nil },
+		startControl: func(epoch *codexControlEpoch) (*codexControlServer, error) {
+			epochsB = append(epochsB, epoch)
+			return &codexControlServer{epoch: epoch}, nil
+		},
+		reportStartup: func(result codexObserverStartupResult) { startupB <- result },
+	}
+
+	ctxA, cancelA := context.WithCancel(context.Background())
+	ctxB, cancelB := context.WithCancel(context.Background())
+	doneA, doneB := make(chan error, 1), make(chan error, 1)
+	go func() { doneA <- observerA.Run(ctxA) }()
+	go func() { doneB <- observerB.Run(ctxB) }()
+	e1 := waitForCodexObserverStartupResult(t, startupA, codexObserverStartupReady)
+	b1 := waitForCodexObserverStartupResult(t, startupB, codexObserverStartupReady)
+	if len(epochsA) != 1 || len(epochsB) != 1 {
+		cancelA()
+		cancelB()
+		<-doneA
+		<-doneB
+		t.Fatalf("initial control epochs A=%d B=%d", len(epochsA), len(epochsB))
+	}
+	approval := codexappserver.Notification{
+		Method: "item/commandExecution/requestApproval", RequestID: "7", RawRequestID: json.RawMessage(`7`),
+		Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","startedAtMs":1,"command":"make test","cwd":"/work","availableDecisions":["accept","decline","cancel"]}`),
+	}
+	if err := epochsA[0].ApplyNotification(approval); err != nil {
+		t.Fatal(err)
+	}
+
+	siblingProjection := sinkB.snapshot()
+	siblingAuthority := sinkB.authorityEpochSnapshot()
+	close(firstA.events)
+	waitForCodexObserverEvents(t, sinkA, 4)
+	gapProjection := sinkA.snapshot()
+	gapAuthority := sinkA.authorityEpochSnapshot()
+	for range 16 {
+		if got := sinkA.snapshot(); !reflect.DeepEqual(got, gapProjection) {
+			t.Fatalf("reconnect polling changed target projection: before=%#v after=%#v", gapProjection, got)
+		}
+		if got := sinkA.authorityEpochSnapshot(); !reflect.DeepEqual(got, gapAuthority) {
+			t.Fatalf("reconnect polling changed target authority: before=%#v after=%#v", gapAuthority, got)
+		}
+	}
+	if got := gapAuthority; !reflect.DeepEqual(got, []string{
+		codexAuthorityControlPlane + ":" + e1.Epoch + ":ready",
+		codexAuthorityInvalidating + ":" + e1.Epoch + ":disconnected",
+	}) {
+		t.Fatalf("target gap authority = %q", got)
+	}
+	if containsCodexObserverEvent(gapProjection, "authority:provider-hook") {
+		t.Fatalf("target gap exposed provider-hook: %#v", gapProjection)
+	}
+
+	stale := []agentControlRequest{
+		{Operation: agentControlOpStart, Identity: identityA, Epoch: e1.Epoch, Text: "stale start"},
+		{Operation: agentControlOpSteer, Identity: identityA, Epoch: e1.Epoch, Text: "stale steer"},
+		{Operation: agentControlOpInterrupt, Identity: identityA, Epoch: e1.Epoch},
+		{Operation: agentControlOpReview, Identity: identityA, Epoch: e1.Epoch, RequestKey: "7", Decision: "accept"},
+	}
+	for _, request := range stale {
+		if response := epochsA[0].Handle(context.Background(), request); response.OK {
+			t.Fatalf("stale %s control was accepted: %+v", request.Operation, response)
+		}
+	}
+	if wireA1.writes() != 0 || wireA2.writes() != 0 {
+		t.Fatalf("reconnect gap writes E1=%d E2=%d, want 0/0", wireA1.writes(), wireA2.writes())
+	}
+
+	siblingControl := agentControlRequest{Operation: agentControlOpSteer, Identity: identityB, Epoch: b1.Epoch, Text: "sibling remains live"}
+	if response := epochsB[0].Handle(context.Background(), siblingControl); !response.OK || wireB.writes() != 1 {
+		t.Fatalf("healthy sibling control response=%+v writes=%d", response, wireB.writes())
+	}
+	if got := sinkB.snapshot(); !reflect.DeepEqual(got, siblingProjection) {
+		t.Fatalf("target disconnect changed sibling projection: before=%#v after=%#v", siblingProjection, got)
+	}
+	if got := sinkB.authorityEpochSnapshot(); !reflect.DeepEqual(got, siblingAuthority) {
+		t.Fatalf("target disconnect changed sibling authority: before=%#v after=%#v", siblingAuthority, got)
+	}
+
+	close(allowReconnect)
+	e2 := waitForCodexObserverStartupResult(t, startupA, codexObserverStartupReady)
+	waitForCodexObserverEvents(t, sinkA, 6)
+	if len(epochsA) != 2 || e2.Epoch == "" || e2.Epoch == e1.Epoch {
+		t.Fatalf("replacement control epochs=%d E1=%+v E2=%+v", len(epochsA), e1, e2)
+	}
+	if response := epochsA[1].Handle(context.Background(), stale[0]); response.OK || wireA2.writes() != 0 {
+		t.Fatalf("E1 request crossed into E2: response=%+v E2writes=%d", response, wireA2.writes())
+	}
+	exact := agentControlRequest{Operation: agentControlOpStart, Identity: identityA, Epoch: e2.Epoch, Text: "replacement exact turn"}
+	if response := epochsA[1].Handle(context.Background(), exact); !response.OK || wireA2.writes() != 1 {
+		t.Fatalf("same-Agent E2 control response=%+v writes=%d", response, wireA2.writes())
+	}
+	converged := sinkA.snapshot()
+	countEvent := func(want string) int {
+		count := 0
+		for _, event := range converged {
+			if event == want {
+				count++
+			}
+		}
+		return count
+	}
+	if count := countEvent("apply:unknown:invalidated=true:clears=0"); count != 1 {
+		t.Fatalf("unavailable projection writes=%d events=%#v", count, converged)
+	}
+	if count := countEvent("apply:response_complete:invalidated=false:clears=0"); count != 1 {
+		t.Fatalf("replacement semantic writes=%d events=%#v", count, converged)
+	}
+	for _, authority := range sinkA.authorityEpochSnapshot() {
+		if strings.HasPrefix(authority, codexAuthorityHook+":") {
+			t.Fatalf("reconnect sequence exposed hook authority: %q", sinkA.authorityEpochSnapshot())
+		}
+	}
+
+	cancelA()
+	cancelB()
+	if err := <-doneA; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-doneB; err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -1283,7 +1482,7 @@ func TestCodexNativeObserversSharingOneEndpointRecoverIndependently(t *testing.T
 	waitForCodexObserverEvents(t, sinkB, 2)
 	beforeB := len(sinkB.snapshot())
 	close(firstA.events)
-	waitForCodexObserverEvents(t, sinkA, 7)
+	waitForCodexObserverEvents(t, sinkA, 6)
 	select {
 	case err := <-doneB:
 		cancelA()
