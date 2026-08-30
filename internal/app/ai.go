@@ -1727,14 +1727,15 @@ func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direct
 	}
 	// The conversation id is normalized by the provider's own resume builder, so
 	// a row whose id this provider cannot address is caught before any Registry
-	// or tmux mutation. Degrading to a fresh conversation stays the deliberate
-	// behavior of this interactive path -- the operator asked for "resume
-	// something", and the picker already told them which row failed -- and it is
-	// the one difference from `agent resume`, which must never fall through.
+	// or tmux mutation. A selected resume never degrades into a fresh Agent: the
+	// durable sessionRef and the provider argv must name the same conversation or
+	// the picker reports a typed refusal and creates nothing.
 	resumeArgv, err := resumeArgsForAgent(mode, selection.resumeID)
 	if err != nil {
-		_ = c.displayMessage(fmt.Sprintf("Could not resume %s session: %v; launching new session", mode, err))
-		return c.createAgentPane(canonicalProducerResumePicker, mode, direction)
+		refusal := usageError(fmt.Sprintf("AI resume picker: could not prepare exact %s resume for conversation %q: %v; refusing to create a fresh Agent",
+			mode, strings.TrimSpace(selection.resumeID), err))
+		_ = c.displayMessage(refusal.Error())
+		return refusal
 	}
 	if strings.TrimSpace(selection.source) == "" {
 		return c.createResumedAgentPane(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1])

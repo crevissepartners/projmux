@@ -144,6 +144,23 @@ func (h *sessionRefHarness) agent(t *testing.T) coremetadata.Agent {
 	return agent.Clone()
 }
 
+func TestCreateTimeSessionRefMakesSameAndCrossProviderHooksWriteFree(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeCodex)
+	agent, _ := h.registry.Agent(h.agentUID)
+	agent.Status.SessionRef = codexConversationRef("thread-picker")
+	before := h.registry.Clone()
+
+	h.cmd.persistAgentSessionRef("%7", coremetadata.AgentSessionObservation{Provider: aiModeCodex, ThreadID: "thread-picker"})
+	h.cmd.persistAgentSessionRef("%7", coremetadata.AgentSessionObservation{Provider: aiModeClaude, SessionID: "thread-picker"})
+
+	if h.updates != 0 {
+		t.Fatalf("same/cross-provider hooks opened %d Registry write transactions, want zero", h.updates)
+	}
+	if !reflect.DeepEqual(before, *h.registry) {
+		t.Fatal("same/cross-provider hook changed create-time sessionRef")
+	}
+}
+
 func (h *sessionRefHarness) ingest(t *testing.T, args []string, payload string) {
 	t.Helper()
 	h.cmd.stdin = strings.NewReader(payload)

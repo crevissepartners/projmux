@@ -519,6 +519,17 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		if err != nil {
 			return MapMetadataError(err)
 		}
+		// A resume-picker selection already carries provider-owned conversation
+		// identity before the provider starts. Persist that exact normalized
+		// identity now, in the same transaction that owns the Agent and Pane,
+		// instead of waiting for a hook that may arrive only after the Pane has
+		// stopped. Ordinary fresh creates leave the pointer nil.
+		if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" {
+			observation := pickerResumeSessionObservation(provider, conversation)
+			if _, _, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, observation); err != nil {
+				return MapMetadataError(err)
+			}
+		}
 		pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{CWD: workspace.CWD}, operationID)
 		if err != nil {
 			return MapMetadataError(err)
@@ -603,4 +614,19 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		return err
 	}
 	return c.writeResults(stdout, canonicalCreateAgent, cli.OutputModeDefault, coremetadata.KindAgent, []createResult{result})
+}
+
+// pickerResumeSessionObservation projects the provider-discriminated picker
+// identity onto the existing durable sessionRef input shape. The picker owns
+// only the exact resume id: it never reads or persists transcripts, caches, or
+// provider-private turn identity.
+func pickerResumeSessionObservation(provider, conversation string) coremetadata.AgentSessionObservation {
+	observation := coremetadata.AgentSessionObservation{Provider: provider}
+	switch provider {
+	case aiModeCodex, aiModeAntigravity:
+		observation.ThreadID = conversation
+	default:
+		observation.SessionID = conversation
+	}
+	return observation
 }
