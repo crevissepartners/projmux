@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.14.2](https://github.com/crevissepartners/projmux/compare/v0.14.1...v0.14.2) (2026-08-30)
+
+
+### Features
+
+* **codex:** add actionable install capability guidance ([#845](https://github.com/crevissepartners/projmux/issues/845)) ([5de06b9](https://github.com/crevissepartners/projmux/commit/5de06b9bbcadd38a634bbec639ae2b51e0045fbe))
+* **lifecycle:** record project stop interruption provenance ([365c724](https://github.com/crevissepartners/projmux/commit/365c72464bd0fbb23f6f4384859ab9aef290dcfc))
+* **lifecycle:** restrict Continue replay to interrupted agents ([45f74f0](https://github.com/crevissepartners/projmux/commit/45f74f00e7dbf825b0a6a81eb0ba5238662ba176))
+* **sidebar:** default closed Project startup to both actions ([#840](https://github.com/crevissepartners/projmux/issues/840)) ([5274b52](https://github.com/crevissepartners/projmux/commit/5274b5220a26d86c147ce4ec46d03f3ea88643c8))
+
+
+### Bug Fixes
+
+* **codex:** stabilize native reconnect control and status ([#853](https://github.com/crevissepartners/projmux/issues/853)) ([29c960c](https://github.com/crevissepartners/projmux/commit/29c960c8c667e7014bb0dfad4a74ec5ad443dfb2))
+* **lifecycle:** preserve picker-created agent session continuity ([#849](https://github.com/crevissepartners/projmux/issues/849)) ([c5ebb13](https://github.com/crevissepartners/projmux/commit/c5ebb13ac228ba6e7a78d77f2ca2d1f9624f8ef0))
+* **picker:** compact resume footer status ([#854](https://github.com/crevissepartners/projmux/issues/854)) ([2bc8c38](https://github.com/crevissepartners/projmux/commit/2bc8c3876fd7764924ca3b57dfee39648f58836d))
+* **picker:** improve resume picker trust and readability ([#852](https://github.com/crevissepartners/projmux/issues/852)) ([7a74f28](https://github.com/crevissepartners/projmux/commit/7a74f28e4a514e35df59a496deb685e8822b4092))
+* **welcome:** recommend projmux quit for shell exit ([#842](https://github.com/crevissepartners/projmux/issues/842)) ([0d1e84b](https://github.com/crevissepartners/projmux/commit/0d1e84b47df3924a661e15957f1b94e9a11bd0d8))
+
 ## [0.14.1](https://github.com/crevissepartners/projmux/compare/v0.14.0...v0.14.1) (2026-08-29)
 
 
