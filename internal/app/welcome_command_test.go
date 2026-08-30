@@ -10,8 +10,58 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
+	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 	"github.com/crevissepartners/projmux/internal/version"
 )
+
+func TestShellWelcomeExitGuidanceFallbackAndLocales(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		text       string
+		wantPicker string
+	}{
+		{name: "fallback", text: shellWelcomeExitFallback, wantPicker: "interactive action picker"},
+		{name: "en-US", text: localizeText(i18n.FallbackLocale, i18n.KeyWelcomeShellExit, "missing"), wantPicker: "interactive action picker"},
+		{name: "ko-KR", text: localizeText(i18n.Locale("ko-KR"), i18n.KeyWelcomeShellExit, "missing"), wantPicker: "대화형 작업 선택기"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := strings.Count(test.text, "projmux quit"); got != 1 {
+				t.Fatalf("guidance = %q, projmux quit count = %d, want 1", test.text, got)
+			}
+			if !strings.Contains(test.text, test.wantPicker) {
+				t.Fatalf("guidance = %q, want default interactive picker meaning %q", test.text, test.wantPicker)
+			}
+			for _, forbidden := range []string{"tmux -L projmux kill-server", "--yes"} {
+				if strings.Contains(test.text, forbidden) {
+					t.Fatalf("guidance = %q, must not promote %q", test.text, forbidden)
+				}
+			}
+
+			for _, width := range []int{20, 36, 76} {
+				wrapped := wrapWelcomeLine(test.text, width)
+				if got := strings.Join(wrapped, " "); got != test.text {
+					t.Fatalf("wrapWelcomeLine(%d) = %q, want lossless %q", width, got, test.text)
+				}
+				for _, line := range wrapped {
+					if got := i18n.TerminalCellWidth(line); got > width {
+						t.Fatalf("wrapped line width = %d, want <= %d: %q", got, width, line)
+					}
+					var rendered bytes.Buffer
+					if err := writeWelcomeBoxLine(&rendered, line, width); err != nil {
+						t.Fatalf("writeWelcomeBoxLine() error = %v", err)
+					}
+					if got, want := projmuxpicker.VisibleLen(strings.TrimSuffix(rendered.String(), "\n")), width+4; got != want {
+						t.Fatalf("rendered row width = %d, want %d: %q", got, want, rendered.String())
+					}
+				}
+			}
+		})
+	}
+}
 
 func TestWelcomeCommandWritesShellGuide(t *testing.T) {
 	t.Parallel()

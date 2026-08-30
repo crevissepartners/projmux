@@ -16,6 +16,7 @@ import (
 
 const (
 	shellWelcomeApplyCommand = "projmux update apply"
+	shellWelcomeExitFallback = "Exit: run projmux quit; it opens an interactive action picker by default."
 	shellUpdateCheckTimeout  = 1500 * time.Millisecond
 
 	welcomeReset = "\x1b[0m"
@@ -185,7 +186,7 @@ func writeShellWelcome(w io.Writer, current string, status updateStatus, hasStat
 	lines := []string{
 		localizeText(locale, i18n.KeyWelcomeShellTitle, "Welcome to projmux") + " shell " + current + ".",
 		localizeText(locale, i18n.KeyWelcomeShellDetach, "Detach: Ctrl-b d keeps sessions running; re-enter with projmux shell."),
-		localizeText(locale, i18n.KeyWelcomeShellExit, "Exit: run exit in every window, or tmux -L projmux kill-server."),
+		localizeText(locale, i18n.KeyWelcomeShellExit, shellWelcomeExitFallback),
 		localizeText(locale, i18n.KeyWelcomeShellSurfaces, "Bootstrap: generated tmux config and Settings stay available after entry."),
 	}
 	if hasStatus {

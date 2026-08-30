@@ -344,8 +344,11 @@ Literal preservation:
 - Key names such as `Enter`, `Esc`, `Ctrl-b d`, and `s` remain literal inside
   localized guide sentences.
 - Commands, env/config names, and paths such as `projmux shell`,
-  `tmux -L projmux kill-server`, `PROJMUX_PROJDIR`, and
+  `projmux quit`, `PROJMUX_PROJDIR`, and
   `~/.config/projmux/projdir` remain literal payload text.
+- Shell Exit guidance presents literal `projmux quit` as the normal path and
+  briefly predicts its default interactive action picker; it does not promote
+  `--yes` as the normal path.
 - Project names, paths, provider payloads, enum values, and hook/action IDs are
   not translated.
 
