@@ -1346,7 +1346,7 @@ func nativeMouseItemIndex(options Options, items []Item, selected int, layout na
 		}
 	}
 
-	previewHeight := nativePreviewHeight(contentLayout.Rows, previewWindow)
+	previewHeight := nativePreviewHeightForOptions(options, contentLayout.Rows, previewWindow)
 	listLimit := nativeListLimit(options, contentLayout, placement, previewHeight, hasPreview)
 	start, end := nativeVisibleRange(len(items), selected, listLimit)
 	if options.MultiLine {
@@ -1978,7 +1978,7 @@ func renderNativeInteractiveContent(w io.Writer, options Options, items []Item, 
 
 	previewWindow := nativePreviewWindow(options)
 	placement := nativePreviewPlacement(previewWindow)
-	previewHeight := nativePreviewHeight(layout.Rows, previewWindow)
+	previewHeight := nativePreviewHeightForOptions(options, layout.Rows, previewWindow)
 	previewLimit := maxInt(1, layout.Rows-nativeChromeLineCount(options))
 	if placement == "down" {
 		previewLimit = previewHeight
@@ -2241,7 +2241,44 @@ func nativeEffectiveFooter(options Options) string {
 	if footer == "" {
 		return notice
 	}
+	if compacted, ok := nativeAIResumeCompactedFooter(options, footer, notice); ok {
+		return compacted
+	}
 	return footer + "\n" + notice
+}
+
+func nativeAIResumeCompactedFooter(options Options, footer, notice string) (string, bool) {
+	if strings.TrimSpace(options.UI) != "ai-resume-picker" {
+		return "", false
+	}
+	lines := strings.Split(footer, "\n")
+	if len(lines) < 2 {
+		return "", false
+	}
+	status := strings.TrimSpace(lines[len(lines)-1])
+	if !nativeAIResumeShownCountStatus(options, status) {
+		return "", false
+	}
+	locale := options.Locale
+	if locale == "" {
+		locale = nativeLocale()
+	}
+	if normalized, ok := i18n.NormalizeLocale(string(locale)); ok && normalized == i18n.Locale("ko-KR") {
+		status = strings.TrimSuffix(status, ".")
+	}
+	lines[len(lines)-1] = status + " · " + notice
+	return strings.Join(lines, "\n"), true
+}
+
+func nativeAIResumeShownCountStatus(options Options, status string) bool {
+	template := nativeLocalizedTextForOptions(options, i18n.Key("picker.ai.resume_showing_latest"), "Showing latest %d resume sessions.")
+	prefix, suffix, ok := strings.Cut(template, "%d")
+	if !ok || !strings.HasPrefix(status, prefix) || !strings.HasSuffix(status, suffix) {
+		return false
+	}
+	count := strings.TrimSuffix(strings.TrimPrefix(status, prefix), suffix)
+	_, err := strconv.Atoi(count)
+	return err == nil
 }
 
 func nativeTextLineCount(value string) int {
@@ -2698,13 +2735,17 @@ func limitedNativeAIResumeDetailLines(options Options, output string, offset, li
 	if details < 0 {
 		return limitedNativePreviewLines(output, offset, limit)
 	}
-	content := make([]string, 0, 3)
+	contentLimit := 3
+	if nativeAIResumeRecoveredDetailRow(options) {
+		contentLimit++
+	}
+	content := make([]string, 0, contentLimit)
 	for _, line := range lines[heading+1 : details] {
 		if strings.TrimSpace(line) == "" {
 			continue
 		}
 		content = append(content, line)
-		if len(content) == 3 {
+		if len(content) == contentLimit {
 			break
 		}
 	}
@@ -2727,6 +2768,24 @@ func nativePreviewPlacement(window string) string {
 
 func nativePreviewHeight(rows int, window string) int {
 	return projmuxpicker.PreviewHeight(rows, window)
+}
+
+func nativePreviewHeightForOptions(options Options, rows int, window string) int {
+	height := nativePreviewHeight(rows, window)
+	if nativePreviewPlacement(window) != "down" || !nativeAIResumeRecoveredDetailRow(options) {
+		return height
+	}
+	return height + 1
+}
+
+func nativeAIResumeRecoveredDetailRow(options Options) bool {
+	if !nativeSelectionDetailEnabled(options) || !options.MoreNotLoaded {
+		return false
+	}
+	footer := strings.TrimSpace(options.Footer)
+	notice := nativeLocalizedTextForOptions(options, i18n.Key("picker.ai.resume_more_not_loaded"), "More conversations not loaded.")
+	_, compacted := nativeAIResumeCompactedFooter(options, footer, notice)
+	return compacted
 }
 
 func renderNativeSplitPreview(w io.Writer, listLines, previewLines []string, layout nativeLayout, window string, total, start, end, rows int) {

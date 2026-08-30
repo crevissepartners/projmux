@@ -3885,23 +3885,26 @@ func TestAIResumeProviderFooterLocalized80ColumnGoldenClipsAndPreservesOrder(t *
 		providerPrefix string
 		shownCount     string
 		moreText       string
+		compactStatus  string
 	}{
 		{
 			name: "en-US", locale: i18n.FallbackLocale,
 			providerPrefix: "Providers Codex 4 found · Claude 0 found · Antigravity search failed",
 			shownCount:     "Showing latest 1 resume sessions.", moreText: "More conversations not loaded.",
+			compactStatus: "Showing latest 1 resume sessions. · More conversations not loaded.",
 		},
 		{
 			name: "ko-KR", locale: i18n.Locale("ko-KR"),
 			providerPrefix: "제공자 Codex 4건 발견 · Claude 0건 발견 · Antigravity 검색 실패",
 			shownCount:     "최근 1건 표시.", moreText: "더 많은 대화를 불러오지 않았습니다.",
+			compactStatus: "최근 1건 표시 · 더 많은 대화를 불러오지 않았습니다.",
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			// Extend the real provider projection past the 80-column frame so this
-			// golden proves that clipping one footer line cannot consume either of
-			// the following semantic footer rows.
+			// golden proves that clipping the provider line cannot consume the
+			// following compact semantic status row.
 			const clippedSuffix = " · this provider-state suffix must be clipped"
 			options := Options{
 				UI: "ai-resume-picker", Title: "AI Resume", Prompt: "AI Resume > ", Locale: test.locale,
@@ -3910,6 +3913,19 @@ func TestAIResumeProviderFooterLocalized80ColumnGoldenClipsAndPreservesOrder(t *
 					{Label: "exact Codex conversation", Value: "resume\tcodex\texact-id", SearchText: "codex exact conversation"},
 				},
 				Footer: test.providerPrefix + clippedSuffix + "\n" + test.shownCount, MoreNotLoaded: true,
+			}
+			if got, want := nativeEffectiveFooter(options), test.providerPrefix+clippedSuffix+"\n"+test.compactStatus; got != want {
+				t.Fatalf("AI Resume compact footer = %q, want %q", got, want)
+			}
+			withoutMore := options
+			withoutMore.MoreNotLoaded = false
+			if got := nativeEffectiveFooter(withoutMore); got != options.Footer {
+				t.Fatalf("MoreNotLoaded=false footer = %q, want unchanged %q", got, options.Footer)
+			}
+			generic := options
+			generic.UI = "switch"
+			if got, want := nativeEffectiveFooter(generic), options.Footer+"\n"+test.moreText; got != want {
+				t.Fatalf("generic picker footer = %q, want existing multi-line behavior %q", got, want)
 			}
 			if len(options.ChromeBands) != 0 {
 				t.Fatalf("upper provider chrome = %#v, want zero bands", options.ChromeBands)
@@ -3933,15 +3949,15 @@ func TestAIResumeProviderFooterLocalized80ColumnGoldenClipsAndPreservesOrder(t *
 						t.Fatalf("%s line %d width=%d, want %d: %q", frameName, index, got, layout.Cols, line)
 					}
 				}
-				for _, want := range []string{test.providerPrefix, test.shownCount, test.moreText} {
+				for _, want := range []string{test.providerPrefix, test.compactStatus} {
 					if nativeFrameLineContaining(lines, want) < 0 {
 						t.Fatalf("%s frame missing %q: %#v", frameName, want, lines)
 					}
 				}
 				providerLine := nativeFrameLineContaining(lines, test.providerPrefix)
-				shownLine := nativeFrameLineContaining(lines, test.shownCount)
-				moreLine := nativeFrameLineContaining(lines, test.moreText)
-				if shownLine != providerLine+1 || moreLine != shownLine+1 {
+				shownLine := nativeFrameLineContaining(lines, test.compactStatus)
+				moreLine := shownLine
+				if shownLine != providerLine+1 || moreLine != shownLine {
 					t.Fatalf("%s footer order = provider:%d shown:%d more:%d", frameName, providerLine, shownLine, moreLine)
 				}
 				if strings.Contains(lines[providerLine], "suffix") {
@@ -3985,7 +4001,30 @@ func TestNativeAIResumeTrustFramesLocaleAndSizeGolden(t *testing.T) {
 			options := Options{
 				UI: "ai-resume-picker", Locale: test.locale, Title: "AI Resume", Prompt: "AI Resume > ", Items: items,
 				Footer:          test.providerFooter + "\n" + test.shownCount,
+				MoreNotLoaded:   true,
 				SelectionDetail: &SelectionDetail{TextByValue: map[string]string{items[4].Value: detail}},
+			}
+			contentLayout := nativeContentLayoutForOptions(layout, options)
+			window := nativePreviewWindow(options)
+			previewHeight := nativePreviewHeightForOptions(options, contentLayout.Rows, window)
+			withoutMore := options
+			withoutMore.MoreNotLoaded = false
+			basePreviewHeight := nativePreviewHeightForOptions(withoutMore, contentLayout.Rows, window)
+			if previewHeight != basePreviewHeight+1 {
+				t.Fatalf("%s %dx%d preview height = %d, want base %d + exactly one recovered row", test.locale, layout.Cols, layout.Rows, previewHeight, basePreviewHeight)
+			}
+			baseListLimit := nativeListLimit(withoutMore, contentLayout, "down", basePreviewHeight, true)
+			listLimit := nativeListLimit(options, contentLayout, "down", previewHeight, true)
+			legacyMoreNotLoadedListLimit := baseListLimit - 1
+			if listLimit != legacyMoreNotLoadedListLimit {
+				t.Fatalf("%s %dx%d list limit = %d, want pre-compaction MoreNotLoaded limit %d", test.locale, layout.Cols, layout.Rows, listLimit, legacyMoreNotLoadedListLimit)
+			}
+			if layout.Rows == 24 && listLimit < 6 {
+				t.Fatalf("%s %dx%d list limit = %d, want minimum 6", test.locale, layout.Cols, layout.Rows, listLimit)
+			}
+			basePlain := strings.Join(nativePlainFrameLines(nativeInteractiveFrame(withoutMore, items, "stable-query", len("stable-query"), 4, 0, layout)), "\n")
+			if strings.Contains(basePlain, "content four") {
+				t.Fatalf("%s %dx%d MoreNotLoaded=false preview unexpectedly changed: %q", test.locale, layout.Cols, layout.Rows, basePlain)
 			}
 			lines := nativePlainFrameLines(nativeInteractiveFrame(options, items, "stable-query", len("stable-query"), 4, 0, layout))
 			fmt.Fprintf(&got, "[%s %dx%d]\n", test.locale, layout.Cols, layout.Rows)
@@ -4010,11 +4049,14 @@ func TestNativeAIResumeTrustFramesLocaleAndSizeGolden(t *testing.T) {
 			}
 			plain := strings.Join(lines, "\n")
 			overflow := strings.Index(plain, "... ")
-			for _, content := range []string{"content one", "content two", "content three"} {
+			for _, content := range []string{"content one", "content two", "content three", "content four"} {
 				index := strings.Index(plain, content)
 				if index < 0 || (overflow >= 0 && index >= overflow) {
 					t.Fatalf("%s %dx%d content priority drift: %q", test.locale, layout.Cols, layout.Rows, plain)
 				}
+			}
+			if strings.Contains(plain, "content five") {
+				t.Fatalf("%s %dx%d preview gained more than exactly one content row: %q", test.locale, layout.Cols, layout.Rows, plain)
 			}
 		}
 	}
