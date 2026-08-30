@@ -59,6 +59,7 @@ type sessionsCommand struct {
 	homeDir              func() (string, error)
 	stateStore           func() (sessionstate.Store, error)
 	cleanupKilledSession func(string)
+	managedStopStore     *resourceStore
 	// navigation is the shared zero-write Registry read seam. It supplies the
 	// attribution that decides which observed sessions are managed rows; it
 	// never writes and never materializes.
@@ -76,17 +77,18 @@ func newSessionsCommand(recorders ...*diagnostics.LifecycleRecorder) *sessionsCo
 	}
 	client := inttmux.NewClient(inttmux.ExecRunner{}, opts...)
 	return &sessionsCommand{
-		diagnostics:    recorderFrom(recorders),
-		recent:         client,
-		store:          newSessionPopupCommand().store,
-		opener:         client,
-		killer:         client,
-		mutationRunner: inttmux.ExecRunner{},
-		native:         intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
-		executable:     resolveExecutablePath,
-		lookupEnv:      os.Getenv,
-		homeDir:        os.UserHomeDir,
-		stateStore:     sessionstate.NewDefaultStoreFromEnv,
+		diagnostics:      recorderFrom(recorders),
+		recent:           client,
+		store:            newSessionPopupCommand().store,
+		opener:           client,
+		killer:           client,
+		mutationRunner:   inttmux.ExecRunner{},
+		native:           intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
+		executable:       resolveExecutablePath,
+		lookupEnv:        os.Getenv,
+		homeDir:          os.UserHomeDir,
+		stateStore:       sessionstate.NewDefaultStoreFromEnv,
+		managedStopStore: newResourceStore(),
 	}
 }
 
@@ -493,8 +495,17 @@ func (c *sessionsCommand) killFocusedSession(ctx context.Context, summaries []in
 	if c.navigation == nil || c.navigation.reader == nil {
 		return nil, errors.New("sessions managed runtime Registry reader is not configured")
 	}
-	authoritative := managedRuntimeStopRegistryAuthority(c.navigation.reader.loadRegistry)
-	if err := executeManagedRuntimeStop(ctx, c.mutationRunner, target, authoritative); err != nil {
+	authorityLoad := c.navigation.reader.loadRegistry
+	var stopStore *resourceStore
+	if target.RootKind == coremetadata.KindProject {
+		stopStore = c.managedStopStore
+		if stopStore == nil {
+			return nil, errors.New("sessions managed Project runtime Registry store is not configured")
+		}
+		authorityLoad = stopStore.load
+	}
+	authoritative := managedRuntimeStopRegistryAuthority(authorityLoad)
+	if err := executeManagedRuntimeStop(ctx, c.mutationRunner, target, authoritative, stopStore); err != nil {
 		return nil, fmt.Errorf("kill tmux session %q: %w", sessionName, err)
 	}
 	if c.cleanupKilledSession != nil {

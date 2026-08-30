@@ -195,9 +195,9 @@ marker-only edit with a digest-named pre-v2 backup. [docs/keybindings.md](keybin
 table, the upgrade ordering and the downgrade procedure.
 
 This marker is a separate version domain from the CLI resource registry's
-`apiVersion: projmux.io/v1alpha1` / camelCase `schemaVersion: 2` envelope. The
+`apiVersion: projmux.io/v1alpha1` / camelCase `schemaVersion: 3` envelope. The
 two have separate markers, separate backups and separate rollbacks; neither one
-failing affects the other. A successful Registry v1 → v2 migration keeps its
+failing affects the other. A successful Registry v1/v2 → v3 migration keeps its
 private repair/loss evidence at `<exact-versioned-backup>.migration-report.json`,
 including that backup's absolute path and SHA-256; failed or repeated passes
 publish no report.

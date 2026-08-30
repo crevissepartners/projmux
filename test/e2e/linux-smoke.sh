@@ -5763,7 +5763,29 @@ startup_managed_stop() {
 # ordinary startup materializer must consume that same retained graph.
 startup_retained_window_uids="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)"
 startup_retained_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
+startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-before-project-stop.json"
+startup_stop_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/agent-before-project-stop.json" | head -n 1)"
+if [[ -z "$startup_stop_pane_uid" ]]; then
+  echo "managed Project stop fixture has no current Agent Pane" >&2
+  exit 1
+fi
 startup_managed_stop retained-continue
+startup_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-project-stop.json"
+startup_pmx describe pane "uid:$startup_stop_pane_uid" -o json >"$startup_root/pane-after-project-stop.json"
+smoke_assert_file_contains "$startup_root/agent-after-project-stop.json" '"classification": "interrupted"'
+smoke_assert_file_contains "$startup_root/agent-after-project-stop.json" '"source": "control-action"'
+smoke_assert_file_contains "$startup_root/pane-after-project-stop.json" '"classification": "interrupted"'
+smoke_assert_file_contains "$startup_root/pane-after-project-stop.json" '"source": "control-action"'
+startup_stop_agent_generation="$(sed -n 's/.*"generation": "\([^"]*\)".*/\1/p' "$startup_root/agent-after-project-stop.json" | tail -n 1)"
+startup_stop_pane_generation="$(sed -n 's/.*"generation": "\([^"]*\)".*/\1/p' "$startup_root/pane-after-project-stop.json" | tail -n 1)"
+startup_stop_agent_operation="$(sed -n 's/.*"operationID": "\([^"]*\)".*/\1/p' "$startup_root/agent-after-project-stop.json" | tail -n 1)"
+startup_stop_pane_operation="$(sed -n 's/.*"operationID": "\([^"]*\)".*/\1/p' "$startup_root/pane-after-project-stop.json" | tail -n 1)"
+if [[ -z "$startup_stop_agent_generation" || "$startup_stop_agent_generation" != "$startup_stop_pane_generation" ]] ||
+  [[ -z "$startup_stop_agent_operation" || "$startup_stop_agent_operation" != "$startup_stop_pane_operation" ]]; then
+  echo "managed Project stop did not retain matching Agent/Pane generation and operation receipts" >&2
+  exit 1
+fi
+echo ">> startup managed Project stop interruption agent=$startup_agent_uid pane=$startup_stop_pane_uid generation=$startup_stop_agent_generation operation=$startup_stop_agent_operation source=control-action class=interrupted"
 if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
   [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)" != "$startup_retained_window_uids" ]] ||
   [[ "$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)" != "$startup_retained_pane_uids" ]]; then

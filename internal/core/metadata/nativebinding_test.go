@@ -67,7 +67,7 @@ func TestBindCodexActivationRequiresExactAgentPaneGenerationAndThread(t *testing
 	}
 }
 
-func TestNativeCodexBindingIsAdditiveSchemaTwoState(t *testing.T) {
+func TestNativeCodexBindingRemainsAdditiveInCurrentSchema(t *testing.T) {
 	reg := lifecycleFixture(t)
 	agent, _ := reg.Agent(lifecycleAgentUID)
 	agent.Status.SessionRef = nil
@@ -82,7 +82,7 @@ func TestNativeCodexBindingIsAdditiveSchemaTwoState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"schemaVersion":2`, `"codex":{"threadId":"thread-native","turnId":"turn-native"}`} {
+	for _, want := range []string{`"schemaVersion":3`, `"codex":{"threadId":"thread-native","turnId":"turn-native"}`} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("schema-v2 native bytes missing %s: %s", want, raw)
 		}

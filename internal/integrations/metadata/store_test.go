@@ -121,7 +121,7 @@ func TestUpdateConvergentSkipsTheAtomicWriteForAnUnchangedRegistry(t *testing.T)
 
 const newerSchemaRegistry = `{
   "apiVersion": "projmux.io/v2",
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "updatedAt": "2026-08-15T09:30:00Z",
   "projects": [
     {
@@ -473,7 +473,7 @@ func TestIntermediateV2NormalizationPublishesExactEvidenceAndSecondPassIsZeroByt
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantFinal, err := os.ReadFile("../../core/metadata/testdata/registry-v010-v2-bytes.golden")
+	wantFinal, err := os.ReadFile("../../core/metadata/testdata/registry-v010-v3-bytes.golden")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,8 +488,8 @@ func TestIntermediateV2NormalizationPublishesExactEvidenceAndSecondPassIsZeroByt
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !result.Migrated || result.FromVersion != coremetadata.SchemaVersion ||
-		result.Report.FromVersion != coremetadata.SchemaVersion || result.Report.ToVersion != coremetadata.SchemaVersion ||
+	if !result.Migrated || result.FromVersion != 2 ||
+		result.Report.FromVersion != 2 || result.Report.ToVersion != coremetadata.SchemaVersion ||
 		len(result.Report.Repairs) != 1 {
 		t.Fatalf("normalization result = %+v", result)
 	}
@@ -508,7 +508,7 @@ func TestIntermediateV2NormalizationPublishesExactEvidenceAndSecondPassIsZeroByt
 		t.Fatal(err)
 	}
 	digest := sha256.Sum256(source)
-	if evidence.FromVersion != coremetadata.SchemaVersion || evidence.ToVersion != coremetadata.SchemaVersion ||
+	if evidence.FromVersion != 2 || evidence.ToVersion != coremetadata.SchemaVersion ||
 		evidence.BackupPath != result.BackupPath || evidence.BackupSHA256 != fmt.Sprintf("%x", digest) {
 		t.Fatalf("same-version evidence = %+v", evidence)
 	}
@@ -531,6 +531,83 @@ func TestIntermediateV2NormalizationPublishesExactEvidenceAndSecondPassIsZeroByt
 		fileFingerprint(t, result.ReportPath) != reportBefore ||
 		!reflect.DeepEqual(dirListing(t, filepath.Dir(store.Path())), listingBefore) {
 		t.Fatal("second pass changed final-v2 bytes, evidence, or directory entries")
+	}
+}
+
+func TestCanonicalV2ToV3PublishesOneLosslessBackupReportAndRepeatsNoop(t *testing.T) {
+	t.Parallel()
+	current, err := os.ReadFile("../../core/metadata/testdata/registry-v010-v3-bytes.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := bytes.Replace(current, []byte(`"schemaVersion": 3`), []byte(`"schemaVersion": 2`), 1)
+	store := testStore(t)
+	writeRegistryFile(t, store, string(v2))
+
+	result, err := store.Migrate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Migrated || result.FromVersion != 2 || result.Report.FromVersion != 2 ||
+		result.Report.ToVersion != 3 || len(result.Report.Repairs) != 0 || result.Report.InformationLossCount() != 0 {
+		t.Fatalf("migration result = %+v", result)
+	}
+	if got := []byte(readFile(t, result.BackupPath)); !bytes.Equal(got, v2) {
+		t.Fatal("v2 backup did not preserve exact source bytes")
+	}
+	if got := []byte(readFile(t, store.Path())); !bytes.Equal(got, current) {
+		t.Fatalf("v3 bytes differ from lossless golden:\n%s", got)
+	}
+	var evidence migrationEvidence
+	if err := json.Unmarshal([]byte(readFile(t, result.ReportPath)), &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if evidence.FromVersion != 2 || evidence.ToVersion != 3 || evidence.RepairCount != 0 ||
+		evidence.InformationLossCount != 0 || evidence.BackupPath != result.BackupPath {
+		t.Fatalf("migration evidence = %+v", evidence)
+	}
+	listing := dirListing(t, filepath.Dir(store.Path()))
+	second, err := store.Migrate()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Migrated || second.BackupPath != "" || second.ReportPath != "" ||
+		!reflect.DeepEqual(listing, dirListing(t, filepath.Dir(store.Path()))) {
+		t.Fatalf("repeat migration changed evidence: result=%+v", second)
+	}
+}
+
+func TestSchemaV2WriterSimulationRefusesV3BeforeItsMutationCallback(t *testing.T) {
+	t.Parallel()
+	data, err := os.ReadFile("../../core/metadata/testdata/registry-v010-v3-bytes.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := bytes.Clone(data)
+	var envelope struct {
+		SchemaVersion int `json:"schemaVersion"`
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	writes := 0
+	legacyV2Write := func(body []byte, mutate func()) error {
+		var header struct {
+			SchemaVersion int `json:"schemaVersion"`
+		}
+		if err := json.Unmarshal(body, &header); err != nil {
+			return err
+		}
+		if header.SchemaVersion > 2 {
+			return coremetadata.ErrSchemaTooNew
+		}
+		mutate()
+		return nil
+	}
+	err = legacyV2Write(data, func() { writes++ })
+	if envelope.SchemaVersion != 3 || !errors.Is(err, coremetadata.ErrSchemaTooNew) || writes != 0 || !bytes.Equal(data, before) {
+		t.Fatalf("v2 writer downgrade refusal = version:%d err:%v writes:%d bytesChanged:%t",
+			envelope.SchemaVersion, err, writes, !bytes.Equal(data, before))
 	}
 }
 
@@ -715,7 +792,7 @@ func requireSingleMigrationEvidence(t *testing.T, store *Store, source []byte) (
 		t.Fatalf("decode migration evidence: %v", err)
 	}
 	digest := sha256.Sum256(source)
-	if evidence.EvidenceVersion != 1 || evidence.FromVersion != 1 || evidence.ToVersion != 2 ||
+	if evidence.EvidenceVersion != 1 || evidence.FromVersion != 1 || evidence.ToVersion != coremetadata.SchemaVersion ||
 		evidence.RepairCount != 4 || evidence.InformationLossCount != 1 ||
 		evidence.BackupSHA256 != fmt.Sprintf("%x", digest) || readFile(t, evidence.BackupPath) != string(source) {
 		t.Fatalf("migration evidence = %+v", evidence)

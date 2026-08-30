@@ -41,7 +41,7 @@ func runtimeFixtureRegistry() coremetadata.Registry {
 	registry.Projects = []coremetadata.Project{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
 		Metadata: meta(runtimeFixtureProject, "alpha", nil),
-		Spec:     coremetadata.ProjectSpec{Root: "/src/alpha"},
+		Spec:     coremetadata.ProjectSpec{Root: "/src/alpha", PrimaryWindowRef: runtimeFixtureWindow},
 	}}
 	registry.Windows = []coremetadata.Window{{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
@@ -53,6 +53,11 @@ func runtimeFixtureRegistry() coremetadata.Registry {
 		Metadata: meta(runtimeFixturePane, "shell", own(coremetadata.KindWindow, runtimeFixtureWindow)),
 		Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell},
 	}}
+	registry.NameReservations = []coremetadata.NameReservation{
+		{Kind: coremetadata.KindProject, Name: "alpha", UID: runtimeFixtureProject},
+		{Scope: runtimeFixtureProject, Kind: coremetadata.KindWindow, Name: "editor", UID: runtimeFixtureWindow},
+		{Scope: runtimeFixtureWindow, Kind: coremetadata.KindPane, Name: "shell", UID: runtimeFixturePane},
+	}
 	return registry
 }
 

@@ -1,6 +1,6 @@
 {
   "apiVersion": "projmux.io/v1alpha1",
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "updatedAt": "2026-06-11T00:00:00Z",
   "projects": [
     {

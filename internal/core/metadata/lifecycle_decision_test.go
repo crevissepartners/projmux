@@ -38,7 +38,7 @@ func TestTeardownDecisionTableIsTotal(t *testing.T) {
 
 	events := append(TeardownEventKinds(), TeardownEventKind("invalid-event"))
 	classifications := []TerminationClassification{
-		TerminationIntentional, TerminationNormal, TerminationKilled,
+		TerminationIntentional, TerminationInterrupted, TerminationNormal, TerminationKilled,
 		TerminationAbnormal, TerminationUnknown, "invalid-classification",
 	}
 	observations := append(TeardownObservations(), TeardownObservation("invalid-observation"))

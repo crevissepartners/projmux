@@ -16,12 +16,12 @@ import (
 // authority, so a pass that reconciles a hundred dead panes still starts
 // nothing.
 //
-// The four classifications are not collapsed into two phases and then forgotten.
-// The phase answers "is this Agent resumable", which has two useful values, but
-// the reason an operator needs in order to act -- an intentional close, a clean
-// exit, a crash, and an unexplained disappearance -- has four. Both are stored:
-// the phase on status.phase, the evidence on status.lastTermination, and a
-// distinct status.reason clause tying them together.
+// The classifications are not collapsed into phases and then forgotten. The
+// phase answers "is this Agent resumable", but the reason an operator needs in
+// order to act distinguishes a delete, Project-stop interruption, clean exit,
+// external kill, crash, and unexplained disappearance. Both are stored: the
+// phase on status.phase, the evidence on status.lastTermination, and a distinct
+// status.reason clause tying them together.
 
 // Termination reason clauses. Each classification gets its own, because
 // status.reason is the one line an operator reads next to the phase, and two
@@ -30,6 +30,8 @@ import (
 const (
 	// TerminationReasonIntentional is a canonical control action's own record.
 	TerminationReasonIntentional = "managed pane was ended by a control action"
+	// TerminationReasonInterrupted is an exact Project stop's pre-kill record.
+	TerminationReasonInterrupted = "managed process was interrupted by Project stop"
 	// TerminationReasonNormal is a supervised exit status 0.
 	TerminationReasonNormal = "managed process exited with status 0"
 	// TerminationReasonKilled is an externally requested hangup with no paired
@@ -68,6 +70,8 @@ func DispositionFor(classification TerminationClassification) TerminationDisposi
 	switch classification {
 	case TerminationIntentional:
 		return TerminationDisposition{Exit: AgentExitDeleted, Reason: TerminationReasonIntentional}
+	case TerminationInterrupted:
+		return TerminationDisposition{Exit: AgentExitUnknown, Reason: TerminationReasonInterrupted}
 	case TerminationNormal:
 		return TerminationDisposition{Exit: AgentExitNormal, Reason: TerminationReasonNormal}
 	case TerminationKilled:

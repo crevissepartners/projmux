@@ -480,7 +480,7 @@ type MigrationResult struct {
 
 // Migrate performs the durable schema migration or same-version prerelease
 // normalization: backup, durable report, temp write, validate, atomic replace.
-// It is a no-op when the file is missing or already final-v2, and it fails
+// It is a no-op when the file is missing or already schema v3, and it fails
 // closed without writing when the envelope or raw Window authority is unknown.
 func (s *Store) Migrate() (MigrationResult, error) {
 	if s == nil {

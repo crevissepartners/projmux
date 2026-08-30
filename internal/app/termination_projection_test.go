@@ -170,7 +170,7 @@ func TestGetRendersTheTerminationColumn(t *testing.T) {
 	if !strings.Contains(agents, "TERMINATION") {
 		t.Fatalf("get agents has no TERMINATION column:\n%s", agents)
 	}
-	if !strings.Contains(agents, "abnormal/supervisor exit=42 1h") {
+	if !strings.Contains(agents, "abnormal/supervisor exit=42 generation=gen-read 1h") {
 		t.Fatalf("get agents termination cell is wrong:\n%s", agents)
 	}
 	for _, row := range columnarRows(t, agents) {

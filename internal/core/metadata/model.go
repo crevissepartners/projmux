@@ -13,7 +13,7 @@ const APIVersion = "projmux.io/v1alpha1"
 
 // SchemaVersion is the current registry envelope version. A registry file
 // carrying a higher value is rejected fail-closed; see schema.go.
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 // Kind is the closed set of Projmux resource kinds. A persistent tmux Session
 // is intentionally absent: it is a 1:1 runtime projection of a Project stored

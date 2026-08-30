@@ -78,11 +78,13 @@ func TestTerminationPairingRejectsUnentitledClaims(t *testing.T) {
 		classification TerminationClassification
 	}{
 		{"supervisor cannot claim intent", TerminationSourceSupervisor, TerminationIntentional},
+		{"supervisor cannot claim interrupted", TerminationSourceSupervisor, TerminationInterrupted},
 		{"supervisor cannot claim unknown", TerminationSourceSupervisor, TerminationUnknown},
 		{"control action cannot claim killed", TerminationSourceControlAction, TerminationKilled},
 		{"control action cannot claim normal", TerminationSourceControlAction, TerminationNormal},
 		{"reconcile cannot claim killed", TerminationSourceReconcile, TerminationKilled},
 		{"reconcile cannot claim abnormal", TerminationSourceReconcile, TerminationAbnormal},
+		{"reconcile cannot claim interrupted", TerminationSourceReconcile, TerminationInterrupted},
 		{"supervisor TERM cannot claim killed", TerminationSourceSupervisor, TerminationKilled},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -96,6 +98,76 @@ func TestTerminationPairingRejectsUnentitledClaims(t *testing.T) {
 					test.source, test.classification, err)
 			}
 		})
+	}
+}
+
+func TestInterruptedControlActionIsCurrentGenerationStickyAgainstLateSupervisorHUP(t *testing.T) {
+	t.Parallel()
+	m, reg, _, agentUID, paneUID := terminationFixture(t)
+	receipt := TerminationEvidence{
+		Source: TerminationSourceControlAction, Classification: TerminationInterrupted,
+		PaneUID: paneUID, AgentUID: agentUID, Generation: "gen-agent-1", OperationID: "op-project-stop",
+	}
+	if outcome, err := m.RecordTermination(reg, receipt); err != nil || !outcome.Applied {
+		t.Fatalf("record interrupted = %+v, %v", outcome, err)
+	}
+	if outcome, err := m.RecordTermination(reg, TerminationEvidence{
+		Source: TerminationSourceSupervisor, Classification: TerminationKilled,
+		PaneUID: paneUID, AgentUID: agentUID, Generation: "gen-agent-1", Signal: "HUP", OperationID: "op-create",
+	}); err != nil || !outcome.Duplicate || outcome.Applied {
+		t.Fatalf("late supervisor HUP = %+v, %v", outcome, err)
+	}
+	pane, _ := reg.Pane(paneUID)
+	agent, _ := reg.Agent(agentUID)
+	for kind, stored := range map[string]*TerminationEvidence{"Pane": pane.Status.LastTermination, "Agent": agent.Status.LastTermination} {
+		if stored == nil || stored.Classification != TerminationInterrupted || stored.Source != TerminationSourceControlAction ||
+			stored.Generation != "gen-agent-1" || stored.OperationID != "op-project-stop" {
+			t.Fatalf("%s evidence = %+v, want sticky interrupted/control-action", kind, stored)
+		}
+	}
+}
+
+func TestInterruptedForeignOperationCannotOverwriteOrCompensateFirstReceipt(t *testing.T) {
+	t.Parallel()
+	m, reg, _, agentUID, paneUID := terminationFixture(t)
+	receipt := TerminationEvidence{
+		Source: TerminationSourceControlAction, Classification: TerminationInterrupted,
+		PaneUID: paneUID, AgentUID: agentUID, Generation: "gen-agent-1", OperationID: "op-first",
+	}
+	if outcome, err := m.RecordTermination(reg, receipt); err != nil || !outcome.Applied {
+		t.Fatalf("first receipt = %+v, %v", outcome, err)
+	}
+	receipt.OperationID = "op-foreign"
+	if outcome, err := m.RecordTermination(reg, receipt); err != nil || !outcome.Duplicate || outcome.Applied {
+		t.Fatalf("foreign operation = %+v, %v", outcome, err)
+	}
+	if cleared, err := m.ClearTermination(reg, paneUID, "op-foreign"); err != nil || cleared {
+		t.Fatalf("foreign compensation = cleared:%t err:%v", cleared, err)
+	}
+	pane, _ := reg.Pane(paneUID)
+	agent, _ := reg.Agent(agentUID)
+	if pane.Status.LastTermination.OperationID != "op-first" || agent.Status.LastTermination.OperationID != "op-first" {
+		t.Fatalf("foreign operation changed first receipt: pane=%+v agent=%+v", pane.Status.LastTermination, agent.Status.LastTermination)
+	}
+}
+
+func TestIntentionalSameClassDifferentOperationSemanticsRemainUnchanged(t *testing.T) {
+	t.Parallel()
+	m, reg, paneUID, _, _ := terminationFixture(t)
+	receipt := TerminationEvidence{
+		Source: TerminationSourceControlAction, Classification: TerminationIntentional,
+		PaneUID: paneUID, Generation: "gen-shell-1", OperationID: "op-delete-1",
+	}
+	if outcome, err := m.RecordTermination(reg, receipt); err != nil || !outcome.Applied {
+		t.Fatalf("first intentional = %+v, %v", outcome, err)
+	}
+	receipt.OperationID = "op-delete-2"
+	if outcome, err := m.RecordTermination(reg, receipt); err != nil || !outcome.Applied {
+		t.Fatalf("second intentional = %+v, %v", outcome, err)
+	}
+	pane, _ := reg.Pane(paneUID)
+	if pane.Status.LastTermination.OperationID != "op-delete-2" {
+		t.Fatalf("intentional overwrite semantics changed: %+v", pane.Status.LastTermination)
 	}
 }
 

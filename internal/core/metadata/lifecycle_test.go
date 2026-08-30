@@ -146,11 +146,10 @@ func recordIntent(t *testing.T, registry *Registry, paneUID, agentUID, operation
 
 // TestTheClassificationMatrixConvergesDeterministically is acceptance criterion
 // 1: every producer of a managed-process death lands the Agent in exactly one
-// phase, with a reason that names which of the five kinds of evidence produced
-// it.
+// phase, with a reason that names which kind of evidence produced it.
 //
-// The phases collapse four classifications into two values on purpose, so the
-// reason column is the assertion that actually separates them. An operator
+// The phases deliberately collapse classifications, so the reason column is
+// the assertion that actually separates them. An operator
 // reading `Offline` needs to know whether they closed it, it finished, or it
 // simply vanished, and only one of those three is a reason to go looking.
 func TestTheClassificationMatrixConvergesDeterministically(t *testing.T) {
@@ -180,6 +179,22 @@ func TestTheClassificationMatrixConvergesDeterministically(t *testing.T) {
 			wantClassification: TerminationIntentional,
 			wantPhase:          PhaseOffline,
 			wantReason:         TerminationReasonIntentional,
+		},
+		{
+			name: "an exact Project stop is interrupted",
+			record: func(t *testing.T, registry *Registry) {
+				outcome, err := lifecycleMutator().RecordTermination(registry, TerminationEvidence{
+					Source: TerminationSourceControlAction, Classification: TerminationInterrupted,
+					PaneUID: lifecyclePaneUID, AgentUID: lifecycleAgentUID,
+					Generation: lifecycleGeneration, OperationID: "op-project-stop",
+				})
+				if err != nil || !outcome.Applied {
+					t.Fatalf("interrupted receipt = %+v, %v", outcome, err)
+				}
+			},
+			wantClassification: TerminationInterrupted,
+			wantPhase:          PhaseOffline,
+			wantReason:         TerminationReasonInterrupted,
 		},
 		{
 			name: "a supervised exit 0 is normal, never intentional",

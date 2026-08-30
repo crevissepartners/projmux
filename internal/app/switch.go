@@ -142,6 +142,7 @@ type switchCommand struct {
 	// now-dead explicit popup anchor.
 	sidebarOriginAnchorInvalidated bool
 	cleanupKilledSession           func(string)
+	managedStopStore               *resourceStore
 	projectTopology                switchProjectTopologyMaterializer
 	// projectRegistrar performs the explicit Project bootstrap of one open.
 	projectRegistrar switchProjectRegistrar
@@ -234,6 +235,7 @@ func newSwitchCommand(recorders ...*diagnostics.LifecycleRecorder) *switchComman
 		projectFreshStart: newRegistryProjectFreshStarter(),
 		startupNotices:    newProjectStartupNoticeSink(inttmux.ExecRunner{}),
 		navigation:        newRegistryNavigationCommand(inttmux.ExecRunner{}),
+		managedStopStore:  newResourceStore(),
 	}
 	cmd.projectSessionPlan = func(ctx context.Context, request projectSessionRequest) error {
 		return cmd.ensureBootstrappedProjectSessionPlanned(ctx, request)
@@ -2736,8 +2738,11 @@ func (c *switchCommand) stopManagedProjectSession(ctx context.Context, selection
 	if c.navigation == nil || c.navigation.reader == nil || c.navigation.reader.reader == nil {
 		return errors.New("switch managed runtime Registry reader is not configured")
 	}
-	authoritative := managedRuntimeStopRegistryAuthority(c.navigation.reader.reader.loadRegistry)
-	return executeManagedRuntimeStop(ctx, c.tmuxRunner, target, authoritative)
+	if c.managedStopStore == nil {
+		return errors.New("switch managed runtime Registry store is not configured")
+	}
+	authoritative := managedRuntimeStopRegistryAuthority(c.managedStopStore.load)
+	return executeManagedRuntimeStop(ctx, c.tmuxRunner, target, authoritative, c.managedStopStore)
 }
 
 func (c *switchCommand) toggleTag(target string, stdout io.Writer) error {

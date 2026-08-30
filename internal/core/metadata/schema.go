@@ -92,9 +92,13 @@ type Migration func(*Registry, MigrationEnvironment, *MigrationReport) error
 // the next version.
 type MigrationSet map[int]Migration
 
-// productionMigrations recognizes exactly the first shipped Registry envelope.
-// Version 0 remains unknown: a file with no schemaVersion is never rewritten.
-var productionMigrations = MigrationSet{1: migrateV1ToV2}
+// productionMigrations recognizes every shipped Registry envelope older than
+// the current one. Version 0 remains unknown: a file with no schemaVersion is
+// never rewritten.
+var productionMigrations = MigrationSet{
+	1: migrateV1ToV2,
+	2: migrateV2ToV3,
+}
 
 // resolveMigrations treats a nil set as the production set, so callers that do
 // not override migrations automatically track whatever production ships.
@@ -203,8 +207,11 @@ func normalizeWindowSpecShapes(reg *Registry, report *MigrationReport) (bool, er
 	for _, window := range reg.Windows {
 		switch window.Spec.sourceShape {
 		case windowSpecSourceLegacy:
-			if reg.SchemaVersion == SchemaVersion {
+			if reg.SchemaVersion == 2 {
 				legacyCount++
+			} else if reg.SchemaVersion >= 3 {
+				return false, stateErr("normalize registry window schema", ErrInvalidRegistry,
+					"schemaVersion %d window %q uses legacy primaryPaneRef authority", reg.SchemaVersion, window.Metadata.Name)
 			}
 		case windowSpecSourceFinal:
 			finalCount++
@@ -212,20 +219,20 @@ func normalizeWindowSpecShapes(reg *Registry, report *MigrationReport) (bool, er
 			return false, stateErr("normalize registry window schema", ErrInvalidRegistry,
 				"window %q mixes legacy primaryPaneRef with final anchorPaneRef/defaultShellPaneRef authority", window.Metadata.Name)
 		case windowSpecSourceUnknown:
-			if reg.SchemaVersion == SchemaVersion {
+			if reg.SchemaVersion >= 2 {
 				return false, stateErr("normalize registry window schema", ErrInvalidRegistry,
 					"window %q has neither legacy primaryPaneRef nor required final anchorPaneRef", window.Metadata.Name)
 			}
 		case windowSpecSourceTyped:
 			if strings.TrimSpace(window.Spec.AnchorPaneRef) != "" {
 				finalCount++
-			} else if reg.SchemaVersion == SchemaVersion {
+			} else if reg.SchemaVersion >= 2 {
 				return false, stateErr("normalize registry window schema", ErrInvalidRegistry,
 					"window %q has no required anchorPaneRef", window.Metadata.Name)
 			}
 		}
 	}
-	if reg.SchemaVersion == SchemaVersion && legacyCount != 0 && finalCount != 0 {
+	if reg.SchemaVersion == 2 && legacyCount != 0 && finalCount != 0 {
 		return false, stateErr("normalize registry window schema", ErrInvalidRegistry,
 			"registry mixes legacy primaryPaneRef Windows with final anchorPaneRef Windows")
 	}
@@ -396,6 +403,20 @@ func migrateV1ToV2(reg *Registry, env MigrationEnvironment, report *MigrationRep
 	}
 
 	reg.SchemaVersion = 2
+	return nil
+}
+
+// migrateV2ToV3 is intentionally information-lossless. Version 3 closes the
+// termination vocabulary over interrupted/control-action evidence; every v2
+// document already has the same resource shape and therefore only needs the
+// envelope advanced. The integration store still backs up the exact v2 bytes
+// and writes the migration report before replacing them.
+func migrateV2ToV3(reg *Registry, _ MigrationEnvironment, _ *MigrationReport) error {
+	if reg.SchemaVersion != 2 {
+		return stateErr("migrate registry v2 to v3", ErrInvalidRegistry,
+			"source schemaVersion %d is not 2", reg.SchemaVersion)
+	}
+	reg.SchemaVersion = 3
 	return nil
 }
 

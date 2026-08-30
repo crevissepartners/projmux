@@ -69,17 +69,21 @@ func ValidTerminationSource(source TerminationSource) bool {
 
 // TerminationClassification is the closed evidence vocabulary.
 //
-// The five values are not a severity ladder, they are five different *kinds of
-// proof*. Intentional means a canonical control action said so in writing
-// before it acted. Normal and Abnormal mean a supervisor actually reaped the
-// child and read its wait status. Unknown means nothing proved anything, and it
-// is a legal, expected answer rather than a failure.
+// The six values are not a severity ladder, they are six different *kinds of
+// proof*. Intentional and Interrupted mean a canonical control action said so
+// in writing before it acted. Normal and Abnormal mean a supervisor actually
+// reaped the child and read its wait status. Unknown means nothing proved
+// anything, and it is a legal, expected answer rather than a failure.
 type TerminationClassification string
 
 const (
-	// TerminationIntentional is a canonical control-plane action's own record
-	// of its intent. Only TerminationSourceControlAction may carry it.
+	// TerminationIntentional is a canonical delete action's own record of its
+	// intent. Only TerminationSourceControlAction may carry it.
 	TerminationIntentional TerminationClassification = "intentional"
+	// TerminationInterrupted records that an exact Project stop interrupted a
+	// currently Running Agent activation. It is committed before the runtime
+	// session is killed and only a canonical control action may carry it.
+	TerminationInterrupted TerminationClassification = "interrupted"
 	// TerminationNormal is an observed exit status 0.
 	//
 	// It is emphatically NOT intent. A provider that exits 0 because the
@@ -118,7 +122,7 @@ const (
 func validTerminationPairing(source TerminationSource, classification TerminationClassification) bool {
 	switch source {
 	case TerminationSourceControlAction:
-		return classification == TerminationIntentional
+		return classification == TerminationIntentional || classification == TerminationInterrupted
 	case TerminationSourceSupervisor:
 		return classification == TerminationNormal || classification == TerminationAbnormal || classification == TerminationKilled
 	case TerminationSourceReconcile:
@@ -140,7 +144,7 @@ func validTerminationEvidenceShape(receipt TerminationEvidence) bool {
 // closed set.
 func ValidTerminationClassification(classification TerminationClassification) bool {
 	switch classification {
-	case TerminationIntentional, TerminationNormal, TerminationKilled, TerminationAbnormal, TerminationUnknown:
+	case TerminationIntentional, TerminationInterrupted, TerminationNormal, TerminationKilled, TerminationAbnormal, TerminationUnknown:
 		return true
 	default:
 		return false
@@ -236,9 +240,10 @@ func (a PaneActivation) Clone() PaneActivation {
 // It is a pointer field with omitempty everywhere it is stored, which is the
 // entire read-compatibility story: a registry written before this field existed
 // decodes to nil, a nil value re-encodes to an absent key, and the document
-// round-trips byte-identically. It was additive inside schemaVersion 1 and needed
-// no migration step -- bumping the envelope would have made every already installed
-// build reject the file fail-closed with ErrSchemaTooNew.
+// round-trips byte-identically. The block itself was additive inside
+// schemaVersion 1. SchemaVersion 3 later closes its vocabulary over the new
+// interrupted/control-action pair so older writers reject that document
+// fail-closed instead of silently replacing the receipt.
 //
 // It carries no command text, no pane content, and no provider conversation
 // data. Everything here is either a closed vocabulary value, a uid this build
@@ -476,11 +481,19 @@ func (m Mutator) RecordTermination(reg *Registry, receipt TerminationEvidence) (
 		if sameEvidence(stored, &receipt) {
 			return TerminationOutcome{Duplicate: true, Reason: "receipt is already recorded verbatim"}, nil
 		}
-		if stored.Classification == TerminationIntentional && receipt.Classification != TerminationIntentional {
+		if stored.Source == TerminationSourceControlAction && stored.Classification == TerminationInterrupted {
 			return TerminationOutcome{
 				Duplicate: true,
-				Reason: fmt.Sprintf("pane %s already records intentional termination for generation %q",
-					paneUID, receipt.Generation),
+				Reason: fmt.Sprintf("pane %s already records interrupted control-action termination for generation %q operation %q",
+					paneUID, receipt.Generation, stored.OperationID),
+			}, nil
+		}
+		if stored.Source == TerminationSourceControlAction && stored.Classification == TerminationIntentional &&
+			receipt.Classification != TerminationIntentional {
+			return TerminationOutcome{
+				Duplicate: true,
+				Reason: fmt.Sprintf("pane %s already records %s control-action termination for generation %q",
+					paneUID, stored.Classification, receipt.Generation),
 			}, nil
 		}
 	}
