@@ -445,6 +445,7 @@ func (c *settingsCommand) aiRootEntries() []intpickercompat.Entry {
 	if c.appServerHealth != nil {
 		health := c.appServerHealth(codexHookFallbackAvailable(c.currentAINotifyDiagnostics()))
 		detail := fmt.Sprintf("%s - %s, %s - endpoint: %s; executable: %s; version: %s; manager: %s; remote control: %s - probe: %s; install: %s", health.Source.Label(), health.Connection, health.Reason, health.EndpointReadiness, health.RunningExecutable, health.VersionRelation, health.ManagerOwnership, health.RemoteControl, health.ProbeReason, health.InstallCapability)
+		detail += " - guidance: " + codexInstallCapabilityGuidance(health.InstallCapability).Text()
 		if health.Version != "" {
 			detail += " - " + health.Version
 		}
