@@ -474,25 +474,21 @@ func TestCatalogOpenFailurePickerUsesOneVisibleRolloutRowAndIntent(t *testing.T)
 	}
 }
 
-// TestResumeSelectionWithAnUnusableIDFallsBackToAFreshIntent keeps the one
-// deliberate difference between this interactive path and `agent resume`.
-//
-// The operator picked a row and the picker already told them it could not be
-// resumed, so opening a fresh conversation is the useful answer here. The
-// canonical `agent resume` route must never do this, which is why it has a
-// separate launch seam that cannot build a fresh-start argv at all.
-func TestResumeSelectionWithAnUnusableIDFallsBackToAFreshIntent(t *testing.T) {
+// TestResumeSelectionWithAnUnusableIDRefusesWithoutAFreshIntent pins the
+// picker-side no-fallback boundary. The selected conversation is the action;
+// an unusable provider id must stay user-visible and create no replacement.
+func TestResumeSelectionWithAnUnusableIDRefusesWithoutAFreshIntent(t *testing.T) {
 	home := t.TempDir()
 	cmd, creator := intentAICommand(t, home)
 
-	if err := cmd.runSelectedResumeSession(aiResumeSelection{
+	err := cmd.runSelectedResumeSession(aiResumeSelection{
 		agent: aiModeClaude, resumeID: "bad\x01id",
-	}, "down"); err != nil {
-		t.Fatalf("runSelectedResumeSession error = %v", err)
+	}, "down")
+	if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "refusing to create a fresh Agent") {
+		t.Fatalf("runSelectedResumeSession error = %v, want typed no-fallback refusal", err)
 	}
-	want := []agentPaneIntent{{producer: canonicalProducerResumePicker, provider: aiModeClaude, placement: "down"}}
-	if !reflect.DeepEqual(creator.intents, want) {
-		t.Fatalf("intents = %+v, want a fresh %+v", creator.intents, want)
+	if len(creator.intents) != 0 {
+		t.Fatalf("intents = %+v, want no fresh Agent intent", creator.intents)
 	}
 }
 

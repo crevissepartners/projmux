@@ -21,6 +21,8 @@ type fakeTopologyAgentLauncher struct {
 	resumeErr map[string]error
 	launchErr map[string]error
 	binds     []string
+	resumes   []string
+	launches  []string
 }
 
 func newFakeTopologyAgentLauncher() *fakeTopologyAgentLauncher {
@@ -39,6 +41,7 @@ func (f *fakeTopologyAgentLauncher) RequireAgentEnabled(provider string) error {
 }
 
 func (f *fakeTopologyAgentLauncher) PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (string, []string, error) {
+	f.launches = append(f.launches, provider)
 	if err := f.launchErr[provider]; err != nil {
 		return "", nil, err
 	}
@@ -49,6 +52,7 @@ func (f *fakeTopologyAgentLauncher) PlanAgentLaunch(provider string, workspace c
 }
 
 func (f *fakeTopologyAgentLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (string, []string, error) {
+	f.resumes = append(f.resumes, provider+":"+conversationID)
 	if err := f.resumeErr[provider]; err != nil {
 		return "", nil, err
 	}
@@ -490,6 +494,9 @@ func TestRegistryTopologyContinueLaunchesInterruptedBOnceAndRetainsCleanA(t *tes
 	if len(launcher.binds) != 1 || !strings.HasSuffix(launcher.binds[0], "thread-interrupted-b") {
 		t.Fatalf("Continue Agent launches = %v, want interrupted B exactly once", launcher.binds)
 	}
+	if !slices.Equal(launcher.resumes, []string{"codex:thread-interrupted-b"}) || len(launcher.launches) != 0 {
+		t.Fatalf("Continue plans resume=%v fresh=%v, want exact resume once and fresh zero", launcher.resumes, launcher.launches)
+	}
 
 	server.calls = nil
 	writes := store.writes
@@ -577,6 +584,9 @@ func TestRegistryTopologyMaterializationAgentReplayRefusalsAreNeverFatal(t *test
 			}
 			if strings.Contains(out, "uid:"+agent.Metadata.UID) {
 				t.Fatalf("an unlaunchable Agent entered the plan:\n%s", out)
+			}
+			if declared.ref != nil && len(launcher.resumes) != 0 && len(launcher.launches) != 0 {
+				t.Fatalf("exact resume preparation failure planned a fresh Agent: resume=%v fresh=%v", launcher.resumes, launcher.launches)
 			}
 		})
 	}

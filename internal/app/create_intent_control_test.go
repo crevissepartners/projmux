@@ -165,6 +165,142 @@ func TestCanonicalCreateProducerRootOutcomeTable(t *testing.T) {
 	}
 }
 
+// TestResumePickerCreateCommitsExactSessionRefBeforeAnyHook is the hook-0
+// contract. The picker already selected a provider-owned conversation, so the
+// successful create transaction must publish it on the new Agent immediately.
+func TestResumePickerCreateCommitsExactSessionRefBeforeAnyHook(t *testing.T) {
+	tests := []struct {
+		provider     string
+		conversation string
+	}{
+		{provider: aiModeClaude, conversation: "claude-picker-session"},
+		{provider: aiModeCodex, conversation: "codex-picker-thread"},
+		{provider: aiModeAntigravity, conversation: "99999999-8888-7777-6666-555555555555"},
+	}
+	for _, test := range tests {
+		t.Run(test.provider, func(t *testing.T) {
+			fx := canonicalFixture(t, false)
+			before := map[string]bool{}
+			for _, agent := range fx.store.registry.Agents {
+				before[agent.Metadata.UID] = true
+			}
+			if err := fx.create.createFromIntent(agentPaneIntent{
+				producer: canonicalProducerResumePicker, provider: test.provider, placement: "right",
+				conversationID: test.conversation, anchorPaneID: fx.originID,
+			}, ioDiscard{}, ioDiscard{}); err != nil {
+				t.Fatalf("resume-picker create: %v", err)
+			}
+			var created coremetadata.Agent
+			for _, agent := range fx.store.registry.Agents {
+				if !before[agent.Metadata.UID] {
+					created = agent
+				}
+			}
+			if created.Metadata.UID == "" || created.Status.SessionRef == nil ||
+				created.Status.SessionRef.Provider != test.provider ||
+				created.Status.SessionRef.ConversationID() != test.conversation {
+				t.Fatalf("created Agent sessionRef = %#v", created.Status.SessionRef)
+			}
+			if created.Status.PaneRef == "" || livePaneWithUID(t, fx.tmux, created.Status.PaneRef) == "" {
+				t.Fatalf("created Agent/Pane binding = %+v, want one live managed Pane", created.Status)
+			}
+			fresh := fx.create.agents.(*fakeAgentLauncher)
+			resume := fx.create.resumes.(*fakeResumeLauncher)
+			if len(fresh.plans) != 0 || len(resume.plans) != 1 ||
+				resume.plans[0].provider != test.provider || resume.plans[0].conversationID != test.conversation {
+				t.Fatalf("launch plans fresh=%+v resume=%+v", fresh.plans, resume.plans)
+			}
+		})
+	}
+}
+
+func TestOrdinaryFreshPickerCreateLeavesSessionRefUnset(t *testing.T) {
+	fx := canonicalFixture(t, false)
+	before := map[string]bool{}
+	for _, agent := range fx.store.registry.Agents {
+		before[agent.Metadata.UID] = true
+	}
+	if err := fx.create.createFromIntent(agentPaneIntent{
+		producer: canonicalProducerProviderPicker, provider: aiModeClaude, placement: "right", anchorPaneID: fx.originID,
+	}, ioDiscard{}, ioDiscard{}); err != nil {
+		t.Fatal(err)
+	}
+	for _, agent := range fx.store.registry.Agents {
+		if !before[agent.Metadata.UID] && agent.Status.SessionRef != nil {
+			t.Fatalf("ordinary fresh create acquired sessionRef %#v", agent.Status.SessionRef)
+		}
+	}
+}
+
+func TestResumePickerPreparationFailureCreatesNoFreshAgent(t *testing.T) {
+	fx := canonicalFixture(t, false)
+	resume := fx.create.resumes.(*fakeResumeLauncher)
+	resume.planErr = errors.New("provider refused exact picker conversation")
+	registryBefore, runtimeBefore := fx.store.snapshot(), fx.tmux.state()
+	agentsBefore, panesBefore := len(fx.store.registry.Agents), len(fx.store.registry.Panes)
+	err := fx.create.createFromIntent(agentPaneIntent{
+		producer: canonicalProducerResumePicker, provider: aiModeClaude, placement: "right",
+		conversationID: "claude-picker-session", anchorPaneID: fx.originID,
+	}, ioDiscard{}, ioDiscard{})
+	if err == nil || !strings.Contains(err.Error(), "provider refused exact picker conversation") {
+		t.Fatalf("preparation error = %v", err)
+	}
+	if len(fx.create.agents.(*fakeAgentLauncher).plans) != 0 || len(fx.store.registry.Agents) != agentsBefore ||
+		len(fx.store.registry.Panes) != panesBefore || fx.store.writes != 0 || fx.store.snapshot() != registryBefore ||
+		fx.tmux.state() != runtimeBefore {
+		t.Fatalf("resume preparation failure created or committed state: fresh=%+v writes=%d", fx.create.agents.(*fakeAgentLauncher).plans, fx.store.writes)
+	}
+}
+
+func TestResumePickerCreateRollbackLeavesNoAgentPaneOrRefOrphan(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		inject func(*canonicalRootFixture)
+	}{
+		{
+			name: "activation generation",
+			inject: func(fx *canonicalRootFixture) {
+				fx.create.newGeneration = func() (string, error) { return "", errors.New("injected activation failure") }
+			},
+		},
+		{
+			name: "post-runtime commit",
+			inject: func(fx *canonicalRootFixture) {
+				fx.create.store.update = func(fn func(*coremetadata.Registry) error) (coremetadata.Registry, error) {
+					fx.store.transactions++
+					working := fx.store.registry.Clone()
+					if err := fn(&working); err != nil {
+						return coremetadata.Registry{}, err
+					}
+					if err := working.Validate(); err != nil {
+						return coremetadata.Registry{}, err
+					}
+					return coremetadata.Registry{}, errors.New("injected Registry commit failure")
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fx := canonicalFixture(t, false)
+			registryBefore, runtimeBefore := fx.store.snapshot(), fx.tmux.state()
+			agentsBefore, panesBefore := len(fx.store.registry.Agents), len(fx.store.registry.Panes)
+			test.inject(&fx)
+			err := fx.create.createFromIntent(agentPaneIntent{
+				producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right",
+				conversationID: "thread-rollback", anchorPaneID: fx.originID,
+			}, ioDiscard{}, ioDiscard{})
+			if err == nil {
+				t.Fatal("injected failure reported success")
+			}
+			if fx.store.writes != 0 || len(fx.store.registry.Agents) != agentsBefore || len(fx.store.registry.Panes) != panesBefore ||
+				fx.store.snapshot() != registryBefore || fx.tmux.state() != runtimeBefore {
+				t.Fatalf("failure retained Agent/Pane/ref or runtime orphan: writes=%d\nregistry=%s\nruntime=%s",
+					fx.store.writes, fx.store.snapshot(), fx.tmux.state())
+			}
+		})
+	}
+}
+
 func assertCanonicalCreateLeaseBracketsSplit(t *testing.T, calls [][]string) {
 	t.Helper()
 	leaseSet, split, leaseClear := -1, -1, -1

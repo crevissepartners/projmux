@@ -210,8 +210,17 @@ func (c *aiCommand) persistAgentSessionRef(paneID string, obs coremetadata.Agent
 	// Pre-check outside the lock so an unchanged observation never opens a
 	// write transaction at all.
 	if agent, ok := registry.Agent(agentUID); ok {
-		if candidate, built := coremetadata.NewAgentSessionRef(obs, clock()); built && agent.Status.SessionRef.SameConversation(candidate) {
-			return
+		if candidate, built := coremetadata.NewAgentSessionRef(obs, clock()); built {
+			// A hook attributed to the right Pane but naming another provider is
+			// refused before the write transaction opens. This is the same
+			// cross-provider invariant RecordAgentSessionRef enforces under the
+			// lock, made write-free on the common ingest path.
+			if agent.Spec.Provider != "" && candidate.Provider != agent.Spec.Provider {
+				return
+			}
+			if agent.Status.SessionRef.SameConversation(candidate) {
+				return
+			}
 		}
 	}
 
