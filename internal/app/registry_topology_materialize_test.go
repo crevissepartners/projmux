@@ -644,6 +644,10 @@ func TestRegistryTopologyMaterializationAgentAnchorLazyDefaultShellAndRepeatNoop
 	if err != nil {
 		t.Fatal(err)
 	}
+	markTopologyAgentInterrupted(t, store, agent.Metadata.UID, managed.Metadata.UID)
+	agentState, _ := store.registry.Agent(agent.Metadata.UID)
+	agentState.Status.Phase = coremetadata.PhaseRunning
+	agentState.Status.PaneRef = managed.Metadata.UID
 	removed := map[string]bool{}
 	for _, pane := range store.registry.PanesOf("win-beta-main") {
 		if pane.Spec.Role == coremetadata.PaneRoleShell {
@@ -721,8 +725,9 @@ func TestRegistryTopologyMaterializationAgentAnchorLazyDefaultShellAndRepeatNoop
 	}
 }
 
-func TestRestoredOfflineAgentAnchorContinueConvergesLazyShellAgentAndRepeatNoop(t *testing.T) {
+func TestExplicitSnapshotRestoredOfflineAgentAnchorConvergesLazyShellAgentAndRepeatNoop(t *testing.T) {
 	command, store, server, _, root, _ := newTopologyMaterializeFixture(t)
+	command.agentReplayAuthority = topologyAgentReplaySnapshot
 	agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{name: "restored-agent", provider: "codex", cwd: root})
 	managed, err := store.mutator().AttachAgentPane(&store.registry, agent.Metadata.UID, coremetadata.BootstrapPane{
 		Name: "restored-agent-pane", CWD: root,
@@ -760,15 +765,15 @@ func TestRestoredOfflineAgentAnchorContinueConvergesLazyShellAgentAndRepeatNoop(
 	beforeRegistry, beforeRuntime := store.snapshot(), server.state()
 	preview, _, err := runReconcile(t, command, "resources", "--dry-run", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
 	if err != nil || !strings.Contains(preview, `"action": "allocate default shell"`) || !strings.Contains(preview, `"kind": "Agent"`) {
-		t.Fatalf("restored Agent-anchor Continue plan: err=%v\n%s", err, preview)
+		t.Fatalf("snapshot-restored Agent-anchor plan: err=%v\n%s", err, preview)
 	}
 	if store.snapshot() != beforeRegistry || server.state() != beforeRuntime || store.writes != 0 {
-		t.Fatalf("restored Continue dry-run mutated state: writes=%d", store.writes)
+		t.Fatalf("snapshot-restored dry-run mutated state: writes=%d", store.writes)
 	}
 
 	result, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
 	if err != nil {
-		t.Fatalf("restored Agent-anchor Continue: %v\n%s", err, result)
+		t.Fatalf("snapshot-restored Agent-anchor materialization: %v\n%s", err, result)
 	}
 	window, _ = store.registry.Window("win-beta-main")
 	anchor, anchorOK := store.registry.WindowAnchor(window.Metadata.UID)
@@ -777,18 +782,18 @@ func TestRestoredOfflineAgentAnchorContinueConvergesLazyShellAgentAndRepeatNoop(
 	if !anchorOK || anchor.Metadata.UID != managed.Metadata.UID || anchor.Spec.Role != coremetadata.PaneRoleAgent ||
 		!shellOK || defaultShell.Spec.Role != coremetadata.PaneRoleShell ||
 		storedAgent.Status.Phase != coremetadata.PhaseRunning || storedAgent.Status.PaneRef != managed.Metadata.UID {
-		t.Fatalf("restored Continue result anchor=%+v default=%+v Agent=%+v", anchor, defaultShell, storedAgent.Status)
+		t.Fatalf("snapshot-restored result anchor=%+v default=%+v Agent=%+v", anchor, defaultShell, storedAgent.Status)
 	}
 
 	server.calls = nil
 	writesBefore := store.writes
 	repeat, _, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
 	if err != nil || !strings.Contains(repeat, `"outcome": "no-op"`) || store.writes != writesBefore {
-		t.Fatalf("restored Continue repeat: err=%v writes=%d->%d\n%s", err, writesBefore, store.writes, repeat)
+		t.Fatalf("snapshot-restored repeat: err=%v writes=%d->%d\n%s", err, writesBefore, store.writes, repeat)
 	}
 	for _, call := range server.calls {
 		if len(call) > 0 && slices.Contains([]string{"new-session", "new-window", "split-window", "set-environment"}, call[0]) {
-			t.Fatalf("restored Continue repeat mutated runtime with %v", call)
+			t.Fatalf("snapshot-restored repeat mutated runtime with %v", call)
 		}
 	}
 }

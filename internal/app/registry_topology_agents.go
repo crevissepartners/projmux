@@ -68,6 +68,93 @@ type registryTopologyAgentPlan struct {
 	reusePaneUID string
 }
 
+// topologyAgentReplayAuthority names why a stored Agent is being considered
+// for automatic materialization. Ordinary Project Continue and explicit
+// reconcile use interruption evidence as their sole authority. Snapshot restore
+// is an explicit, separate replay authority and keeps the pre-existing snapshot
+// recipe behavior.
+type topologyAgentReplayAuthority uint8
+
+const (
+	topologyAgentReplayInterrupted topologyAgentReplayAuthority = iota
+	topologyAgentReplaySnapshot
+)
+
+// decideTopologyAgentContinueEligibility is the pure retained-Project Continue
+// gate. A phase is not launch authority by itself: only the exact
+// current-generation control-action/interrupted receipt Phase 0 committed on
+// both the Agent and its retained managed Pane may start the Agent again. The
+// Running state is admitted only before the runtime-absence projection clears
+// paneRef; Offline is its projected form.
+func decideTopologyAgentContinueEligibility(registry coremetadata.Registry, agent coremetadata.Agent) (bool, string) {
+	receipt := agent.Status.LastTermination
+	if receipt == nil || receipt.IsZero() {
+		return false, "no termination evidence authorizes automatic Continue replay"
+	}
+	if !coremetadata.ValidTerminationSource(receipt.Source) ||
+		!coremetadata.ValidTerminationClassification(receipt.Classification) {
+		return false, fmt.Sprintf("termination evidence has unsupported source/classification %q/%q",
+			receipt.Source, receipt.Classification)
+	}
+	if receipt.Source != coremetadata.TerminationSourceControlAction ||
+		receipt.Classification != coremetadata.TerminationInterrupted {
+		return false, fmt.Sprintf("termination evidence %s/%s is not exact control-action/interrupted Continue authority",
+			receipt.Source, receipt.Classification)
+	}
+	if strings.TrimSpace(receipt.AgentUID) != agent.Metadata.UID ||
+		strings.TrimSpace(receipt.PaneUID) == "" || strings.TrimSpace(receipt.Generation) == "" ||
+		strings.TrimSpace(receipt.OperationID) == "" || receipt.ObservedAt.IsZero() ||
+		receipt.ExitCode != nil || strings.TrimSpace(receipt.Signal) != "" {
+		return false, "control-action/interrupted evidence lacks the exact Agent, Pane, generation, operation, or intent-only shape"
+	}
+	if agent.Status.Phase != coremetadata.PhaseRunning && agent.Status.Phase != coremetadata.PhaseOffline {
+		return false, "phase " + string(agent.Status.Phase) + " is neither the pre-projection Running nor projected Offline phase allowed for interrupted Continue replay"
+	}
+	switch agent.Status.Phase {
+	case coremetadata.PhaseRunning:
+		if strings.TrimSpace(agent.Status.PaneRef) != receipt.PaneUID {
+			return false, "the pre-projection Running Agent no longer binds the interrupted Pane"
+		}
+	case coremetadata.PhaseOffline:
+		if strings.TrimSpace(agent.Status.PaneRef) != "" {
+			return false, "the projected Offline Agent still records a current paneRef"
+		}
+	}
+	pane, ok := registry.Pane(receipt.PaneUID)
+	if !ok {
+		return false, "termination evidence names retained Pane " + receipt.PaneUID + " which is not in the Registry"
+	}
+	if pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent ||
+		pane.Metadata.OwnerRef.UID != agent.Metadata.UID || pane.Spec.Role != coremetadata.PaneRoleAgent {
+		return false, "termination evidence Pane is not the Agent's retained managed Pane"
+	}
+	activation := pane.Status.Activation
+	if strings.TrimSpace(activation.Generation) == "" || activation.Generation != receipt.Generation ||
+		activation.AgentUID != agent.Metadata.UID {
+		return false, "termination evidence is not for the retained Pane's current Agent activation generation"
+	}
+	if !sameTopologyTerminationEvidence(pane.Status.LastTermination, receipt) {
+		return false, "Agent and retained Pane do not carry the same exact termination evidence"
+	}
+	return true, ""
+}
+
+func sameTopologyTerminationEvidence(left, right *coremetadata.TerminationEvidence) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	if left.Source != right.Source || left.Classification != right.Classification ||
+		!left.ObservedAt.Equal(right.ObservedAt) || left.PaneUID != right.PaneUID ||
+		left.AgentUID != right.AgentUID || left.Generation != right.Generation ||
+		left.Signal != right.Signal || left.OperationID != right.OperationID {
+		return false
+	}
+	if left.ExitCode == nil || right.ExitCode == nil {
+		return left.ExitCode == nil && right.ExitCode == nil
+	}
+	return *left.ExitCode == *right.ExitCode
+}
+
 // topologyAgentResumeDecision is the pure verdict about one stored Agent: which
 // provider its Pane launches, and which conversation -- if any -- that launch
 // rejoins.
@@ -86,10 +173,11 @@ type topologyAgentResumeDecision struct {
 // decideTopologyAgentResume folds one Agent's stored session ref into a launch
 // decision.
 //
-// Every branch that cannot produce a conversation id answers with a reason
-// rather than a refusal. Reopening a Project must not be all-or-nothing: an
-// Agent projmux never observed a conversation for is still an Agent the
-// operator declared, so it comes back on a new conversation and is told so.
+// Every branch that cannot produce a conversation id answers with a reason so
+// the caller's replay authority can apply its own fail-closed rule. An eligible
+// interrupted Agent with no observed conversation can launch fresh; one that
+// records a conversation must resume it exactly. Explicit snapshot restore
+// retains its older recipe fallback.
 func decideTopologyAgentResume(agent coremetadata.Agent) topologyAgentResumeDecision {
 	declared := strings.TrimSpace(agent.Spec.Provider)
 	ref := agent.Status.SessionRef
@@ -115,7 +203,8 @@ func decideTopologyAgentResume(agent coremetadata.Agent) topologyAgentResumeDeci
 	}
 	// spec.provider is cross-checked only when the Agent declares one, matching
 	// `agent resume`. A mismatch is never resolved by guessing which side is
-	// right: the declared provider launches, on a new conversation.
+	// right: ordinary Continue refuses it, while explicit snapshot restore may
+	// retain the recipe's declared-provider fallback.
 	if declared != "" && declared != provider {
 		return topologyAgentResumeDecision{
 			provider: declared,
@@ -140,6 +229,7 @@ func planTopologyWindowAgents(
 	live []observedTopologyPane,
 	launcher topologyAgentLauncher,
 	anchorPaneUID string,
+	authority topologyAgentReplayAuthority,
 ) []registryTopologyAgentPlan {
 	liveUIDs := map[string]bool{}
 	for _, pane := range live {
@@ -167,11 +257,17 @@ func planTopologyWindowAgents(
 		if materialized {
 			continue
 		}
+		if authority != topologyAgentReplaySnapshot {
+			if eligible, reason := decideTopologyAgentContinueEligibility(registry, agent); !eligible {
+				plan.noteAgent(label, reason)
+				continue
+			}
+		}
 		if !coremetadata.CanTransitionAgent(agent.Status.Phase, coremetadata.PhaseRunning) {
 			plan.noteAgent(label, "phase "+string(agent.Status.Phase)+" cannot move to Running")
 			continue
 		}
-		work, ok := planTopologyAgentReplay(plan, project, agent, label, launcher)
+		work, ok := planTopologyAgentReplay(plan, project, agent, label, launcher, authority)
 		if !ok {
 			continue
 		}
@@ -197,12 +293,22 @@ func planTopologyAgentReplay(
 	agent coremetadata.Agent,
 	label string,
 	launcher topologyAgentLauncher,
+	authority topologyAgentReplayAuthority,
 ) (registryTopologyAgentPlan, bool) {
 	if launcher == nil {
 		plan.noteAgent(label, "the Agent provider launcher is not configured on this route")
 		return registryTopologyAgentPlan{}, false
 	}
 	decision := decideTopologyAgentResume(agent)
+	recordedConversation := ""
+	if agent.Status.SessionRef != nil {
+		recordedConversation = strings.TrimSpace(agent.Status.SessionRef.ConversationID())
+	}
+	if authority != topologyAgentReplaySnapshot && recordedConversation != "" && decision.conversationID == "" {
+		plan.noteAgent(label, fmt.Sprintf("recorded conversation %s cannot be resumed exactly: %s",
+			recordedConversation, decision.reason))
+		return registryTopologyAgentPlan{}, false
+	}
 	if decision.provider == "" {
 		plan.noteAgent(label, "neither the Agent nor its session ref names a provider")
 		return registryTopologyAgentPlan{}, false
@@ -229,12 +335,15 @@ func planTopologyAgentReplay(
 			work.conversationID, work.title, work.argv = decision.conversationID, title, argv
 			return work, true
 		}
-		// A provider that refuses to resume the conversation it recorded is the
-		// second half of contract: the Agent still comes back, on a new
-		// conversation, and the operator is told which one and why. This is the
-		// one place topology replay deliberately differs from `agent resume`,
-		// whose whole job is the single Agent the operator named and which
-		// therefore refuses rather than degrading.
+		if authority != topologyAgentReplaySnapshot {
+			plan.noteAgent(label, fmt.Sprintf("the %s provider could not build the required exact resume launch for conversation %s: %v",
+				decision.provider, decision.conversationID, err))
+			return registryTopologyAgentPlan{}, false
+		}
+		// Explicit snapshot restore retains the prior recipe fallback: the Agent
+		// still comes back on a new conversation and the operator is told why.
+		// Ordinary Continue returned above instead of degrading the recorded
+		// conversation.
 		decision.reason = fmt.Sprintf("the %s provider could not build a resume launch for conversation %s: %v",
 			decision.provider, decision.conversationID, err)
 	}

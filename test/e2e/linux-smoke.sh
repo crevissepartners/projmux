@@ -4797,18 +4797,11 @@ topology_create_pmx create window --project "uid:$topology_project_uid" --name r
 topology_stored_command=(sleep 600)
 topology_create_pmx create pane --project "uid:$topology_project_uid" --window review --placement right -o pane-id -- "${topology_stored_command[@]}" >"$topology_root/create-pane.out"
 
-# A stored Agent with a recorded conversation. The guard at the end of this
-# block used to assert that materialization started no Agent; against a fixture
-# with no Agent in it that was vacuously true, and it now contradicts the shipped
-# contract, which is that materialization DOES replay stored Agents and DOES
-# resume the conversation `status.sessionRef` names. The provider is a PATH shim
-# that records its argv, so the resume is asserted without a real provider.
-# The shell Pane uid set is captured before the Agent exists. A replayed Agent is
-# rebound into a *new* managed Pane resource -- releasing the dead one is what
-# clears the stale binding -- so its uid legitimately changes across a kill and a
-# replay, while every Window-owned shell Pane must keep the uid it was created
-# with. Splitting the two is what keeps the shell-Pane identity assertion exact
-# instead of loosening it to accommodate the Agent.
+# A stored Agent with a recorded conversation. Raw Window/server loss below is
+# external HUP, so it retains the Agent and sessionRef but grants zero automatic
+# replay authority. The provider shim records argv so that launch zero is a real
+# process assertion. Shell Pane identity remains exact independently of the
+# retained Agent Pane row.
 topology_shell_pane_uids="$(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort)"
 
 topology_agent_argv="$topology_root/codex-argv.log"
@@ -4825,7 +4818,8 @@ topology_agent_pane="$(PATH="$topology_root/shim:$PATH" topology_create_pmx crea
 # $TMUX and no -L would observe live Agent state against the *default* socket,
 # which is a server this smoke never created.
 topology_agent_uid="$(topology_live_pmx get agents --project "uid:$topology_project_uid" -o uid | tail -n 1)"
-if [[ -z "$topology_agent_pane" || -z "$topology_agent_uid" ]]; then
+topology_agent_pane_uid="$(topology_tmux show-options -pqv -t "$topology_agent_pane" @projmux_pane_uid)"
+if [[ -z "$topology_agent_pane" || -z "$topology_agent_uid" || -z "$topology_agent_pane_uid" ]]; then
   echo "topology e2e fixture did not create an Agent" >&2
   exit 1
 fi
@@ -4888,27 +4882,24 @@ topology_settle_registry() {
   exit 1
 }
 
-# topology_assert_panes_converged is the Pane half of "the runtime is exactly the
-# Registry". It asserts two independent things rather than one loose one: the
-# live Pane uid set equals the Registry Pane uid set as it stands now, and every
-# shell Pane uid the fixture created is still in both. A replayed Agent's managed
-# Pane is allowed to be a new resource; a shell Pane is not.
-topology_assert_panes_converged() {
-  local stage="$1" registry live missing
+# topology_assert_shell_panes_converged is the Pane half of external-HUP
+# convergence. Every retained shell Pane is live under its exact uid, while the
+# killed Agent Pane remains Registry state and is absent from tmux.
+topology_assert_shell_panes_converged() {
+  local stage="$1" registry live
   registry="$(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort)"
   live="$(topology_tmux list-panes -s -t "$topology_session" -F '#{@projmux_pane_uid}' | sort)"
-  if [[ "$registry" != "$live" ]]; then
-    echo "$stage did not restore the exact Registry Pane uids" >&2
+  if [[ "$live" != "$topology_shell_pane_uids" ]] || ! grep -Fqx "$topology_agent_pane_uid" <<<"$registry"; then
+    echo "$stage did not converge exact live shells around the retained Agent Pane" >&2
     printf 'registry=%s\nlive=%s\n' "$registry" "$live" >&2
-    exit 1
-  fi
-  missing="$(comm -23 <(printf '%s\n' "$topology_shell_pane_uids") <(printf '%s\n' "$live"))"
-  if [[ -n "$missing" ]]; then
-    echo "$stage lost shell Pane uids that must never change: $missing" >&2
     exit 1
   fi
 }
 
+topology_settle_registry
+topology_agent_only_source="$topology_root/agent-only-source.json"
+cp "$topology_registry" "$topology_agent_only_source"
+topology_agent_launches_before_external_hup="$(wc -l <"$topology_agent_argv")"
 topology_tmux kill-window -t "$topology_review_window"
 topology_settle_registry
 topology_registry_before="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
@@ -4924,14 +4915,24 @@ fi
 smoke_assert_file_contains "$topology_root/partial-dry-run.json" '"action": "materialize"'
 smoke_assert_file_contains "$topology_root/partial-dry-run.json" "uid:$topology_review_window_uid"
 
-topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/partial.json"
+topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json \
+  >"$topology_root/partial.json" 2>"$topology_root/partial.err"
 topology_window_uids_after="$(topology_tmux list-windows -t "$topology_session" -F '#{@projmux_window_uid}' | sort)"
 if [[ "$topology_window_uids_after" != "$topology_window_uids" ]]; then
   echo "live partial materialization did not restore the exact Registry Window uids" >&2
   printf 'want=%s got=%s\n' "$topology_window_uids" "$topology_window_uids_after" >&2
   exit 1
 fi
-topology_assert_panes_converged "live partial materialization"
+topology_assert_shell_panes_converged "live partial materialization"
+topology_live_pmx describe agent "uid:$topology_agent_uid" -o json >"$topology_root/agent-after-window-hup.json"
+smoke_assert_file_contains "$topology_root/agent-after-window-hup.json" 'topology-thread'
+smoke_assert_file_contains "$topology_root/agent-after-window-hup.json" '"source": "supervisor"'
+smoke_assert_file_contains "$topology_root/agent-after-window-hup.json" '"classification": "killed"'
+smoke_assert_file_contains "$topology_root/partial.err" 'was not restored'
+if [[ "$(wc -l <"$topology_agent_argv")" != "$topology_agent_launches_before_external_hup" ]]; then
+  echo "live partial materialization replayed an external-HUP Agent" >&2
+  exit 1
+fi
 
 # 2. A converged graph is a true no-op: no create and no Registry byte change.
 topology_settle_registry
@@ -4990,7 +4991,7 @@ if [[ "$topology_window_uids_after" != "$topology_window_uids" ]]; then
   printf 'want=%s got=%s\n' "$topology_window_uids" "$topology_window_uids_after" >&2
   exit 1
 fi
-topology_assert_panes_converged "offline full materialization"
+topology_assert_shell_panes_converged "offline full materialization"
 if [[ "$(topology_tmux show-options -qv -t "$topology_session" @projmux_project_uid)" != "$topology_project_uid" ]]; then
   echo "offline full materialization did not restore the exact Project uid binding" >&2
   exit 1
@@ -5035,35 +5036,24 @@ if [[ "$topology_recreated_socket" != "$topology_socket_path" ]] || \
 fi
 topology_socket_pid="$topology_recreated_pid"
 
-# 5. The stored Agent is replayed, and the conversation its `status.sessionRef`
-# names is resumed rather than silently replaced by a new one. The stored Pane
-# command is still never executed; that is asserted in section 2 above.
+# 5. External HUP remains zero replay authority across whole-server loss too.
+# The Agent UID, recorded conversation, and supervisor/killed evidence survive;
+# only the exact shell/window topology is materialized.
 topology_live_pmx describe agent "uid:$topology_agent_uid" -o json >"$topology_root/agent-after.json"
-smoke_assert_file_contains "$topology_root/agent-after.json" '"phase": "Running"'
 smoke_assert_file_contains "$topology_root/agent-after.json" 'topology-thread'
-topology_resume_seen=0
-for _ in $(seq 1 200); do
-  if grep -Fq "resume topology-thread" "$topology_agent_argv"; then
-    topology_resume_seen=1
-    break
-  fi
-  sleep 0.05
-done
-if [[ "$topology_resume_seen" != "1" ]]; then
-  echo "materialization did not resume the Agent's recorded conversation" >&2
+smoke_assert_file_contains "$topology_root/agent-after.json" '"source": "supervisor"'
+smoke_assert_file_contains "$topology_root/agent-after.json" '"classification": "killed"'
+if [[ "$(wc -l <"$topology_agent_argv")" != "$topology_agent_launches_before_external_hup" ]]; then
+  echo "offline full materialization replayed an external-HUP Agent" >&2
   cat "$topology_agent_argv" >&2 || true
   exit 1
 fi
 
-# 6. The final-v2 Agent-only Window shape is now exercised against the same
-# installed binary and real tmux server, not only the fake runtime. Save the
-# live graph while its Agent still owns one exact managed Pane, stop the exact
-# smoke socket, then use the test-only fixture utility to remove this Window's
-# direct shells and make that retained Agent Pane its required anchor. No
-# product lifecycle/delete route is used to manufacture the offline fixture.
-topology_settle_registry
-topology_agent_only_source="$topology_root/agent-only-source.json"
-cp "$topology_registry" "$topology_agent_only_source"
+# 6. The final-v2 Agent-only Window shape uses the pre-HUP source captured while
+# its Agent owned one exact managed Pane. The test-only fixture utility removes
+# direct shells, makes that Pane the required anchor, and records deterministic
+# current-generation control-action/interrupted authority. No product/public
+# producer route is invented for this fixture.
 IFS=$'\t' read -r _ _ topology_agent_anchor_uid _ _ _ < <(
   go run ./test/e2e/anchorfixture inspect "$topology_root" "agent-only-source.json" "$topology_review_window_uid" "$topology_agent_uid"
 )
@@ -5074,7 +5064,7 @@ fi
 topology_tmux kill-server >/dev/null 2>&1 || true
 topology_settle_registry
 topology_rewritten_anchor_uid="$(
-  go run ./test/e2e/anchorfixture rewrite \
+  go run ./test/e2e/anchorfixture rewrite-interrupted \
     "$topology_root" "agent-only-source.json" "state/projmux/metadata/registry.json" \
     "$topology_review_window_uid" "$topology_agent_uid"
 )"
@@ -5082,6 +5072,10 @@ if [[ "$topology_rewritten_anchor_uid" != "$topology_agent_anchor_uid" ]]; then
   echo "Agent-only fixture changed exact Agent anchor uid: $topology_agent_anchor_uid -> $topology_rewritten_anchor_uid" >&2
   exit 1
 fi
+topology_pmx describe agent "uid:$topology_agent_uid" -o json >"$topology_root/agent-only-before.json"
+smoke_assert_file_contains "$topology_root/agent-only-before.json" '"source": "control-action"'
+smoke_assert_file_contains "$topology_root/agent-only-before.json" '"classification": "interrupted"'
+topology_agent_only_launches_before="$(wc -l <"$topology_agent_argv")"
 
 topology_registry_before="$(sha256sum "$topology_registry" | cut -d' ' -f1)"
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" --dry-run -o json >"$topology_root/agent-only-dry-run.json"
@@ -5097,6 +5091,13 @@ if topology_tmux list-sessions >"$topology_root/agent-only-dry-run-sessions.out"
 fi
 
 topology_pmx reconcile resources --socket "$topology_socket" --materialize-project "uid:$topology_project_uid" -o json >"$topology_root/agent-only-execute.json"
+topology_agent_only_launches_after="$(wc -l <"$topology_agent_argv")"
+if [[ "$((topology_agent_only_launches_after - topology_agent_only_launches_before))" != "1" ]] ||
+  ! tail -n 1 "$topology_agent_argv" | grep -Fq "resume topology-thread"; then
+  echo "Agent-only interrupted fixture did not resume its exact conversation once" >&2
+  cat "$topology_agent_argv" >&2 || true
+  exit 1
+fi
 IFS=$'\t' read -r topology_post_anchor_uid topology_post_default_uid topology_post_agent_pane_uid \
   topology_post_default_owner_kind topology_post_default_owner_uid topology_post_default_role < <(
     go run ./test/e2e/anchorfixture inspect "$topology_root" "state/projmux/metadata/registry.json" \
@@ -5473,6 +5474,8 @@ fi
 # Seed the durable conversation pointer through the canonical hook ingress, the
 # only route that writes Agent.status.sessionRef.
 startup_hook_pmx() {
+  local pane="$1"
+  shift
   env -u TMUX -u TMUX_PANE -u __PROJMUX_RUNTIME_ANCHOR_PANE -u TMUX_SPLIT_TARGET_PANE \
     HOME="$startup_root/home" \
     XDG_CONFIG_HOME="$startup_root/config" \
@@ -5481,12 +5484,12 @@ startup_hook_pmx() {
     PROJMUX_MANAGED_ROOTS="$startup_root/work" \
     TMUX_TMPDIR="$startup_root/tmux" \
     TMUX="$startup_socket_path,$startup_socket_pid,0" \
-    TMUX_PANE="$startup_agent_pane" \
+    TMUX_PANE="$pane" \
     SHELL="$startup_shell" \
     "$bin" "$@"
 }
 printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"startup-thread","session_id":"startup-session","turn_id":"startup-turn","cwd":"'"$startup_project"'"}' |
-  startup_hook_pmx internal agent-hook ingest codex-hook >"$startup_root/agent-ingest.out"
+  startup_hook_pmx "$startup_agent_pane" internal agent-hook ingest codex-hook >"$startup_root/agent-ingest.out"
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-before.json"
 smoke_assert_file_contains "$startup_root/agent-before.json" 'startup-thread'
 
@@ -5535,7 +5538,9 @@ mkdir -p "$startup_root/config/projmux"
 printf 'off\n' >"$startup_root/config/projmux/sidebar-startup-picker"
 
 # 1. The Project is closed. Opening it must materialize the whole declared shell
-# topology under the stored uids and only then move the client.
+# topology under the stored uids and only then move the client. This raw external
+# HUP is deliberately not Continue replay authority for the retained Agent.
+startup_agent_launches_before_external_hup="$(wc -l <"$startup_agent_argv")"
 startup_tmux kill-session -t "$startup_session"
 if startup_tmux has-session -t "$startup_session" 2>/dev/null; then
   echo "startup e2e could not close the Project session" >&2
@@ -5555,19 +5560,16 @@ if [[ "$startup_window_uids_after" != "$startup_window_uids" ]]; then
   printf 'want=%s got=%s\n' "$startup_window_uids" "$startup_window_uids_after" >&2
   exit 1
 fi
-# The live Pane set equals the Registry Pane set as it stands after the open, and
-# every shell Pane uid the fixture created is still in it. The Agent's managed
-# Pane is the one resource allowed to be new; nothing else is.
+# Every shell Pane uid the fixture created is live. The retained Agent Pane row
+# deliberately remains in the Registry as refusal state, but external HUP gives
+# it no automatic replay authority and therefore no live tmux Pane.
 startup_registry_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
 startup_pane_uids_after="$(startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}' | sort)"
-if [[ "$startup_pane_uids_after" != "$startup_registry_pane_uids" ]]; then
-  echo "closed Project open did not materialize the exact Registry Pane uids" >&2
-  printf 'registry=%s\nlive=%s\n' "$startup_registry_pane_uids" "$startup_pane_uids_after" >&2
-  exit 1
-fi
 startup_missing_shell_panes="$(comm -23 <(printf '%s\n' "$startup_shell_pane_uids") <(printf '%s\n' "$startup_pane_uids_after"))"
-if [[ -n "$startup_missing_shell_panes" ]]; then
+if [[ -n "$startup_missing_shell_panes" ]] ||
+  [[ "$(printf '%s\n' "$startup_pane_uids_after" | grep -c .)" != "$(printf '%s\n' "$startup_shell_pane_uids" | grep -c .)" ]]; then
   echo "closed Project open lost shell Pane uids that must never change: $startup_missing_shell_panes" >&2
+  printf 'registry=%s\nlive=%s\n' "$startup_registry_pane_uids" "$startup_pane_uids_after" >&2
   exit 1
 fi
 if [[ "$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)" != "$startup_project_uid" ]]; then
@@ -5595,20 +5597,34 @@ while IFS= read -r startup_start_command; do
     exit 1
   fi
 done <<<"$startup_start_commands"
-# The stored Agent is replayed, and because its Registry record carries a
-# `status.sessionRef` it is resumed into the conversation that pointer names
-# rather than silently starting a new one. This guard used to assert that no
-# Agent was running -- against a fixture with no Agent in it.
+# External HUP evidence retains the Agent UID and conversation pointer but does
+# not launch it. Shell topology still converges around that refusal.
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-topology.json"
-smoke_assert_file_contains "$startup_root/agent-after-topology.json" '"phase": "Running"'
 smoke_assert_file_contains "$startup_root/agent-after-topology.json" 'startup-thread'
-startup_wait_for "the replayed Agent to record its resume argv" \
-  grep -Fq "resume startup-thread" "$startup_agent_argv"
-startup_agent_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/agent-after-topology.json" | head -n 1)"
-if [[ -z "$startup_agent_pane_uid" ]] ||
-  ! startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}' | grep -Fqx "$startup_agent_pane_uid"; then
-  echo "the replayed Agent's managed Pane never reached tmux" >&2
-  startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}' >&2 || true
+smoke_assert_file_contains "$startup_root/agent-after-topology.json" '"source": "supervisor"'
+smoke_assert_file_contains "$startup_root/agent-after-topology.json" '"classification": "killed"'
+if [[ "$(wc -l <"$startup_agent_argv")" != "$startup_agent_launches_before_external_hup" ]] ||
+  startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_owner_kind}|#{@projmux_pane_owner_uid}' |
+    grep -Fqx "Agent|$startup_agent_uid"; then
+  echo "external HUP automatically launched the retained Agent" >&2
+  cat "$startup_agent_argv" >&2 || true
+  exit 1
+fi
+smoke_assert_file_contains "$startup_root/open-topology.err" "was not restored"
+
+# The startup planner may observe the supervisor receipt before the asynchronous
+# absence projection clears the old Running binding. Drive the existing public
+# reconciliation to its fixed point before exercising explicit `agent resume`;
+# this grants no replay authority and launches nothing.
+e2e_bounded_reconcile_to_noop --allow-initial-noop "$startup_root/external-hup-projection" \
+  startup_pmx reconcile resources --socket "$startup_socket" -o json
+startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-hup-projection.json"
+smoke_assert_file_contains "$startup_root/agent-after-hup-projection.json" '"phase": "Offline"'
+smoke_assert_file_contains "$startup_root/agent-after-hup-projection.json" 'startup-thread'
+smoke_assert_file_contains "$startup_root/agent-after-hup-projection.json" '"source": "supervisor"'
+smoke_assert_file_contains "$startup_root/agent-after-hup-projection.json" '"classification": "killed"'
+if [[ "$(wc -l <"$startup_agent_argv")" != "$startup_agent_launches_before_external_hup" ]]; then
+  echo "external-HUP absence projection launched the retained Agent" >&2
   exit 1
 fi
 
@@ -5644,6 +5660,22 @@ if [[ "$startup_recreated_socket" != "$startup_socket_path" ]] || \
   [[ "$startup_recreated_pane_uid" != "$startup_anchor_pane_uid" ]] || \
   [[ "$startup_recreated_end" != "receipt-end" ]]; then
   echo "startup replay producer anchor containment drifted: $startup_recreated_anchor_receipt" >&2
+  exit 1
+fi
+
+# Explicit `agent resume` remains its own authority. It consumes the exact
+# retained sessionRef even though automatic Continue just refused external HUP.
+PATH="$startup_root/shim:$PATH" startup_create_pmx agent resume \
+  "uid:$startup_agent_uid" --project "uid:$startup_project_uid" --window review \
+  >"$startup_root/explicit-agent-resume.out"
+startup_wait_for "explicit Agent resume after external HUP" grep -Fq "resume startup-thread" "$startup_agent_argv"
+startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-explicit-resume.json"
+startup_explicit_resume_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/agent-after-explicit-resume.json" | head -n 1)"
+if [[ -z "$startup_explicit_resume_pane_uid" ]] ||
+  ! startup_tmux list-panes -s -t "$startup_session" -F '#{@projmux_pane_uid}' | grep -Fqx "$startup_explicit_resume_pane_uid" ||
+  ! grep -Fq '"phase": "Running"' "$startup_root/agent-after-explicit-resume.json" ||
+  ! grep -Fq 'startup-thread' "$startup_root/agent-after-explicit-resume.json"; then
+  echo "explicit agent resume changed after Continue replay eligibility narrowing" >&2
   exit 1
 fi
 
@@ -5724,6 +5756,54 @@ if [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | g
   exit 1
 fi
 
+# Snapshot restore remains explicit replay authority: the Agent recipe resumes
+# the exact conversation even though ordinary Continue requires interrupted
+# evidence. Seed a second Agent whose provider exits normally; it will be clean
+# A in the Continue eligibility pair below.
+startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-snapshot-restore.json"
+if ! grep -Fq '"phase": "Running"' "$startup_root/agent-after-snapshot-restore.json" ||
+  ! grep -Fq 'startup-thread' "$startup_root/agent-after-snapshot-restore.json"; then
+  echo "explicit snapshot restore lost its Agent replay authority" >&2
+  exit 1
+fi
+startup_wait_for "snapshot restore exact Agent resume argv" sh -c \
+  "test \"\$(grep -c 'resume startup-thread' '$startup_agent_argv')\" -ge 2"
+
+startup_create_anchor_pane="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}|#{@projmux_pane_owner_kind}' | awk -F '|' '$2 == "Window" { print $1; exit }')"
+startup_clean_exit="$startup_root/clean-a.exit"
+startup_clean_argv="$startup_root/clean-a-argv.log"
+: >"$startup_clean_argv"
+cat >"$startup_root/shim/claude" <<STARTUP_CLEAN_PROVIDER
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>$(printf %q "$startup_clean_argv")
+while [[ ! -e $(printf %q "$startup_clean_exit") ]]; do sleep 0.05; done
+exit 0
+STARTUP_CLEAN_PROVIDER
+chmod 0755 "$startup_root/shim/claude"
+startup_clean_agent_uid="$(PATH="$startup_root/shim:$PATH" startup_create_pmx create agent --provider claude \
+  --name clean-a --project "uid:$startup_project_uid" --window review -o uid)"
+startup_live_pmx describe agent "uid:$startup_clean_agent_uid" -o json >"$startup_root/clean-a-before-exit.json"
+startup_clean_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/clean-a-before-exit.json" | head -n 1)"
+startup_clean_pane="$(startup_tmux list-panes -s -t "$startup_session" -F '#{pane_id}|#{@projmux_pane_uid}' |
+  awk -F '|' -v uid="$startup_clean_pane_uid" '$2 == uid { print $1; exit }')"
+if [[ -z "$startup_clean_agent_uid" || -z "$startup_clean_pane_uid" || ! "$startup_clean_pane" =~ ^%[0-9]+$ ]]; then
+  echo "clean A fixture lacks exact Agent/Pane/runtime identity" >&2
+  exit 1
+fi
+printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"clean-a-session","cwd":"'"$startup_project"'"}' |
+  startup_hook_pmx "$startup_clean_pane" internal agent-hook ingest claude-hook >"$startup_root/clean-a-ingest.out"
+startup_live_pmx describe agent "uid:$startup_clean_agent_uid" -o json >"$startup_root/clean-a-before-exit.json"
+smoke_assert_file_contains "$startup_root/clean-a-before-exit.json" 'clean-a-session'
+touch "$startup_clean_exit"
+startup_clean_agent_is_offline() {
+  startup_live_pmx describe agent "uid:$startup_clean_agent_uid" -o json >"$startup_root/clean-a-after-exit.json" 2>/dev/null &&
+    grep -Fq '"phase": "Offline"' "$startup_root/clean-a-after-exit.json" &&
+    ! grep -Fq '"paneRef"' "$startup_root/clean-a-after-exit.json"
+}
+startup_wait_for "clean A supervisor-normal projection" startup_clean_agent_is_offline
+smoke_assert_file_contains "$startup_root/clean-a-after-exit.json" '"source": "supervisor"'
+smoke_assert_file_contains "$startup_root/clean-a-after-exit.json" '"classification": "normal"'
+
 # Drive the shipped sidebar Ctrl-X action against the Project selected by exact
 # context-session identity. The first frame starts on that row, Ctrl-X performs
 # the managed stop, and Esc closes the refreshed picker. Completion evidence is
@@ -5760,7 +5840,8 @@ startup_managed_stop() {
 
 # 4. Stop the just-materialized runtime through the managed Ctrl-X route, then
 # Continue it. The Project/Window/Pane UID sets must survive the stop and the
-# ordinary startup materializer must consume that same retained graph.
+# ordinary startup materializer must consume that same retained graph. Clean A
+# stays Offline and launches zero; interrupted B resumes exactly once.
 startup_retained_window_uids="$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)"
 startup_retained_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-before-project-stop.json"
@@ -5792,6 +5873,12 @@ if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
   echo "managed Project stop changed the retained desired UID graph" >&2
   exit 1
 fi
+startup_agent_launches_before_interrupted_continue="$(wc -l <"$startup_agent_argv")"
+startup_clean_launches_before_continue="$(wc -l <"$startup_clean_argv")"
+if [[ "$startup_clean_launches_before_continue" != "1" ]]; then
+  echo "clean A fixture launched $startup_clean_launches_before_continue times before Continue, want 1" >&2
+  exit 1
+fi
 rm -f "$startup_root/open-continue.rc"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
 startup_wait_for "Continue project after projection" test -s "$startup_root/open-continue.rc"
@@ -5803,6 +5890,7 @@ startup_wait_for "Continue project client handoff" startup_client_is_on "$startu
 startup_retained_continue_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
 startup_missing_retained_shell_panes="$(comm -23 <(printf '%s\n' "$startup_shell_pane_uids") <(printf '%s\n' "$startup_retained_continue_pane_uids"))"
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-retained-continue.json"
+startup_live_pmx describe agent "uid:$startup_clean_agent_uid" -o json >"$startup_root/clean-a-after-retained-continue.json"
 startup_retained_agent_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/agent-after-retained-continue.json" | head -n 1)"
 if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
   [[ "$(startup_pmx get windows --project "uid:$startup_project_uid" -o uid | sort)" != "$startup_retained_window_uids" ]] ||
@@ -5813,6 +5901,36 @@ if [[ "$(startup_pmx get projects -o uid)" != "$startup_project_uid" ]] ||
   echo "retained Project Continue changed durable topology or lost the resumed Agent conversation" >&2
   exit 1
 fi
+startup_agent_launches_after_interrupted_continue="$(wc -l <"$startup_agent_argv")"
+if [[ "$((startup_agent_launches_after_interrupted_continue - startup_agent_launches_before_interrupted_continue))" != "1" ]] ||
+  [[ "$(wc -l <"$startup_clean_argv")" != "$startup_clean_launches_before_continue" ]] ||
+  ! grep -Fq '"phase": "Offline"' "$startup_root/clean-a-after-retained-continue.json" ||
+  grep -Fq '"paneRef"' "$startup_root/clean-a-after-retained-continue.json" ||
+  ! grep -Fq '"source": "supervisor"' "$startup_root/clean-a-after-retained-continue.json" ||
+  ! grep -Fq '"classification": "normal"' "$startup_root/clean-a-after-retained-continue.json" ||
+  ! grep -Fq 'clean-a-session' "$startup_root/clean-a-after-retained-continue.json"; then
+  echo "Continue eligibility did not keep clean A at launch 0 and interrupted B at launch 1" >&2
+  exit 1
+fi
+
+startup_agent_launches_after_first_continue="$(wc -l <"$startup_agent_argv")"
+startup_interrupted_pane_after_first_continue="$startup_retained_agent_pane_uid"
+rm -f "$startup_root/open-continue.rc"
+startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-continue.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
+startup_wait_for "repeated Continue terminal receipt" test -s "$startup_root/open-continue.rc"
+if [[ "$(tr -d '[:space:]' <"$startup_root/open-continue.rc")" != "0" ]]; then
+  cat "$startup_root/open-continue.err" >&2 || true
+  exit 1
+fi
+startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-after-repeated-continue.json"
+startup_interrupted_pane_after_repeat="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/agent-after-repeated-continue.json" | head -n 1)"
+if [[ "$(wc -l <"$startup_agent_argv")" != "$startup_agent_launches_after_first_continue" ]] ||
+  [[ "$(wc -l <"$startup_clean_argv")" != "$startup_clean_launches_before_continue" ]] ||
+  [[ "$startup_interrupted_pane_after_repeat" != "$startup_interrupted_pane_after_first_continue" ]]; then
+  echo "repeated Continue launched a duplicate interrupted Agent" >&2
+  exit 1
+fi
+echo ">> startup Continue eligibility clean-agent=$startup_clean_agent_uid clean-pane=$startup_clean_pane_uid clean-launches=0 interrupted-agent=$startup_agent_uid interrupted-pane=$startup_retained_agent_pane_uid interrupted-launches=1 repeat-duplicates=0 external-hup-launches=0 snapshot=preserved explicit-resume=preserved"
 cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 
 # 5. Stop again, explicitly remove every retained Window while the runtime is

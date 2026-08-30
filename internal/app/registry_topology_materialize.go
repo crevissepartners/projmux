@@ -77,7 +77,12 @@ func planRegistryTopology(
 	sessions []observedResourceProjectSession,
 	exactTarget tmuxTransport,
 	launcher topologyAgentLauncher,
+	agentReplayAuthorities ...topologyAgentReplayAuthority,
 ) (*registryTopologyPlan, error) {
+	agentReplayAuthority := topologyAgentReplayInterrupted
+	if len(agentReplayAuthorities) != 0 {
+		agentReplayAuthority = agentReplayAuthorities[0]
+	}
 	if strings.TrimSpace(projectRef) == "" {
 		return nil, nil
 	}
@@ -243,7 +248,7 @@ func planRegistryTopology(
 				work.panes = append(work.panes, registryTopologyPanePlan{pane: pane, create: true})
 				plan.addItem((wi+1)*1000+pi, coremetadata.KindPane, window.Metadata.Name+"/"+pane.Metadata.Name, pane.Metadata.UID, "materialize")
 			}
-			work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, nil, launcher, work.anchor.Metadata.UID)
+			work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, nil, launcher, work.anchor.Metadata.UID, agentReplayAuthority)
 			if work.anchor.Spec.Role == coremetadata.PaneRoleAgent && !slices.ContainsFunc(work.agents, func(agent registryTopologyAgentPlan) bool {
 				return agent.reusePaneUID == work.anchor.Metadata.UID
 			}) {
@@ -320,7 +325,7 @@ func planRegistryTopology(
 			plan.refuse(resourcegraph.DivergenceUnrealized, coremetadata.KindWindow, window.Metadata.Name,
 				"stored anchor Pane has no exact live binding; refusing alternate live Pane inference")
 		}
-		work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, livePanes, launcher, work.anchor.Metadata.UID)
+		work.agents = planTopologyWindowAgents(plan, registry, project, window, wi+1, livePanes, launcher, work.anchor.Metadata.UID, agentReplayAuthority)
 		plan.windows = append(plan.windows, work)
 	}
 	return plan, nil
