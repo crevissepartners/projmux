@@ -454,6 +454,31 @@
   `test/e2e/reliability-contract.sh` F08/F09 pin both halves: a deliberately slow
   fixture times out with its own description and state dump and then passes once
   the scale buys it time, and the timeout instant itself moves with the scale.
+  CI sets that scale to `2` for both required E2E child families. The Phase 5
+  sample covered 57 runs: the slowest job family (`fixture-3`) had p50 167s,
+  p95 177s, and max 201s. Because the scale applies to scenario waits rather
+  than whole jobs, the deciding tail is the widest scenario distribution: L12
+  had p50 7.185s, p95 8.081s, and max 10.188s (`max/p50=1.42`). Rounding that up
+  to 2 gives headroom while retaining the named fail-closed timeout; the former
+  3-5x suggestion had no runner measurement and is not the configured policy.
+- `make test-e2e-residual-policy` pins the Phase 5 residual decision. The exact
+  required inventory remains `L01`-`L19`/`C01`/`N01` (21 scenarios), and
+  `test/e2e/quarantine.tsv` is empty because the 57-run, 1,128-group evidence
+  corpus found no scenario with three observed flakes. The companion
+  `test/e2e/residual-observations.tsv` records each scenario's actual terminal
+  attempt denominator (51-54 after whole-run self-regression exclusion), and
+  the contract requires its complete inventory and threshold-derived eligible
+  set to equal the quarantine ledger. A row is invalid without
+  a stable scenario ID, owner, ISO-8601 deadline, and at least three observations;
+  this closed zero-set contract rejects a non-empty row until execution/evidence
+  and non-gating wiring exist. Therefore the quarantine execution Negative is
+  N/A: its antecedent does not exist. Instead, the contract proves that both E2E
+  child families still feed the exact `E2E Tests` compatibility context and the
+  project-wide `Test` gate. Go `Unit Tests` remain an exact required child and
+  outside automatic classification/quarantine: they have no per-test attempt
+  artifact or `class` surface, so assigning an observed-flake count would invent
+  evidence. A future unit quarantine first needs attempt-preserving per-test
+  evidence and a separate contract.
 - `test/e2e/evidence-contract.sh` (`make test-e2e-contract`) and
   `test/e2e/reliability-contract.sh` (`make test-e2e-reliability`) keep the persisted
   `projmux.e2e-attempt/v1` evidence and success result hash stable while adding
