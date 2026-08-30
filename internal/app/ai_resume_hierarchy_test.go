@@ -26,21 +26,55 @@ func TestAIResumeCodexConversationLabelPrecedence(t *testing.T) {
 	}{
 		{name: "thread name", title: "Provider conversation", boundLabel: "Registry topic", want: "Provider conversation"},
 		{name: "exact bound topic", title: aiResumeShortID(id), boundLabel: "Registry topic", want: "Registry topic"},
-		{name: "short id", title: aiResumeShortID(id), want: aiResumeShortID(id)},
+		{name: "untitled suffix", title: aiResumeShortID(id), want: "Untitled · …0041"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			session := base
 			session.Title = test.title
-			if got := aiResumeCodexConversationLabel(session, test.boundLabel); got != test.want {
+			labels := aiResumeExactAgentLabel{Topic: test.boundLabel}
+			if got := aiResumeDisplayLabel(session, labels, i18n.FallbackLocale); got != test.want {
 				t.Fatalf("conversation label = %q, want %q", got, test.want)
 			}
-			row := aiResumeSessionRowWithLabel(session, test.boundLabel, time.Time{}, i18n.FallbackLocale, "", 0)
+			row := aiResumeSessionRowWithResolvedLabel(session, labels, time.Time{}, i18n.FallbackLocale, "", 0)
 			visible := stripANSI(row.Label)
 			if !strings.Contains(visible, test.want) {
 				t.Fatalf("visible row = %q, want label %q", visible, test.want)
 			}
-			if test.name == "short id" && strings.Count(visible, test.want) != 1 {
-				t.Fatalf("visible row = %q, short id must occur exactly once", visible)
+			if test.name == "untitled suffix" && strings.Contains(visible, aiResumeShortID(id)) {
+				t.Fatalf("visible row = %q, must not use an id prefix as the title", visible)
+			}
+		})
+	}
+}
+
+func TestAIResumeDisplayLabelAuthorityPrecedence(t *testing.T) {
+	const id = "019f0000-0000-7000-8000-00000000beef"
+	base := aisessions.SessionMeta{Agent: aiModeCodex, ResumeID: id, Source: aisessions.SourceCodexAppServer}
+	for _, test := range []struct {
+		name   string
+		title  string
+		labels aiResumeExactAgentLabel
+		locale i18n.Locale
+		want   string
+		forbid string
+	}{
+		{name: "display name beats provider", title: "Provider title", labels: aiResumeExactAgentLabel{DisplayName: "My conversation", Topic: "Agent topic", Name: "agent-name"}, want: "My conversation", forbid: "Provider title"},
+		{name: "provider beats topic", title: "Provider title", labels: aiResumeExactAgentLabel{Topic: "Agent topic", Name: "agent-name"}, want: "Provider title", forbid: "Agent topic"},
+		{name: "topic beats stable name", title: aiResumeShortID(id), labels: aiResumeExactAgentLabel{Topic: "Agent topic", Name: "agent-name"}, want: "Agent topic", forbid: "agent-name"},
+		{name: "transcript title is rejected", title: "Prompt-derived transcript title", labels: aiResumeExactAgentLabel{Topic: "Agent topic", Name: "agent-name"}, want: "Agent topic", forbid: "Prompt-derived transcript title"},
+		{name: "stable name", title: id, labels: aiResumeExactAgentLabel{Name: "agent-name"}, want: "agent-name", forbid: aiResumeShortID(id)},
+		{name: "localized untitled", title: id, locale: i18n.Locale("ko-KR"), want: "제목 없음 · …beef", forbid: aiResumeShortID(id)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			session := base
+			session.Title = test.title
+			if test.name == "transcript title is rejected" {
+				session.Agent = aiModeClaude
+				session.Source = aisessions.SourceClaudeTranscript
+			}
+			got := aiResumeDisplayLabel(session, test.labels, test.locale)
+			if got != test.want || (test.forbid != "" && strings.Contains(got, test.forbid)) {
+				t.Fatalf("label = %q, want %q without %q", got, test.want, test.forbid)
 			}
 		})
 	}
@@ -51,7 +85,7 @@ func TestAIResumeExactAgentLabelResolverUsesOnlyExactThreadBinding(t *testing.T)
 	registry := coremetadata.Registry{Agents: []coremetadata.Agent{
 		{
 			Spec: coremetadata.AgentSpec{Provider: aiModeCodex},
-			Metadata: coremetadata.ObjectMeta{UID: "agt-z-topic", Name: "agent-name", Annotations: map[string]string{
+			Metadata: coremetadata.ObjectMeta{UID: "agt-z-topic", Name: "agent-name", DisplayName: "Custom display", Annotations: map[string]string{
 				coremetadata.AnnotationAgentTopic: "Bound topic",
 			}},
 			Status: coremetadata.AgentStatus{SessionRef: &coremetadata.AgentSessionRef{
@@ -79,32 +113,70 @@ func TestAIResumeExactAgentLabelResolverUsesOnlyExactThreadBinding(t *testing.T)
 				Provider: aiModeCodex, Codex: &coremetadata.CodexSessionRef{ThreadID: exactID},
 			}},
 		},
+		{
+			Spec:     coremetadata.AgentSpec{Provider: aiModeClaude},
+			Metadata: coremetadata.ObjectMeta{UID: "agt-claude", Name: "claude-agent", DisplayName: "Claude display"},
+			Status: coremetadata.AgentStatus{SessionRef: &coremetadata.AgentSessionRef{
+				Provider: aiModeClaude, Claude: &coremetadata.ClaudeSessionRef{SessionID: "claude-exact"},
+			}},
+		},
+		{
+			Spec:     coremetadata.AgentSpec{Provider: aiModeAntigravity},
+			Metadata: coremetadata.ObjectMeta{UID: "agt-antigravity", Name: "antigravity-agent"},
+			Status: coremetadata.AgentStatus{SessionRef: &coremetadata.AgentSessionRef{
+				Provider: aiModeAntigravity, Antigravity: &coremetadata.AntigravitySessionRef{ConversationID: "antigravity-exact"},
+			}},
+		},
 	}}
 
 	labels := aiResumeExactAgentLabels(registry)
-	if len(labels) != 2 || labels[exactID] != "Bound topic" || labels["thread-other"] != "wrong-agent" {
+	if len(labels) != 4 || labels[aiResumeExactLabelKey(aiModeCodex, exactID)].DisplayName != "Custom display" ||
+		labels[aiResumeExactLabelKey(aiModeCodex, exactID)].Topic != "Bound topic" ||
+		labels[aiResumeExactLabelKey(aiModeCodex, "thread-other")].Name != "wrong-agent" ||
+		labels[aiResumeExactLabelKey(aiModeClaude, "claude-exact")].DisplayName != "Claude display" ||
+		labels[aiResumeExactLabelKey(aiModeAntigravity, "antigravity-exact")].Name != "antigravity-agent" {
 		t.Fatalf("resolved labels = %#v, want exact Codex bindings with topic/name precedence", labels)
+	}
+}
+
+func TestAIResumeUntitledSuffixPreservesExactValueSearchAndDetailID(t *testing.T) {
+	const id = "019f0000-0000-7000-8000-00000000cafe"
+	session := aisessions.SessionMeta{Agent: aiModeCodex, ResumeID: id, Title: aiResumeShortID(id), Source: aisessions.SourceCodexRollout}
+	row := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{}, time.Time{}, i18n.FallbackLocale, "", 0)
+	visible := stripANSI(row.Label)
+	if !strings.Contains(visible, "Untitled · …cafe") || strings.Contains(visible, aiResumeShortID(id)) {
+		t.Fatalf("visible row = %q, want readable untitled suffix without UUID prefix", visible)
+	}
+	if row.Value != aiResumePickerValue(aiModeCodex, id) || !strings.Contains(row.SearchKey, id) {
+		t.Fatalf("exact routing/search lost: %#v", row)
+	}
+	selection, ok := parseAIResumePickerValue(row.Value)
+	if !ok || selection.agent != aiModeCodex || selection.resumeID != id {
+		t.Fatalf("exact value no longer parseable: %#v ok=%t", selection, ok)
+	}
+	summary := aisessions.ResumeSummary{Provider: aiModeCodex, ResumeID: id, Label: session.Title, Source: session.Source}
+	detail := aiResumeDetailProjection(i18n.FallbackLocale, summary, aisessions.ResumeDetailRef{Source: session.Source}, aisessions.ResumeDetail{}, "preview", "Untitled · …cafe")
+	if !strings.Contains(detail, "Conversation ID: "+id) || !strings.Contains(detail, "Source: "+aisessions.SourceCodexRollout) {
+		t.Fatalf("selected detail lost exact id/provenance: %q", detail)
 	}
 }
 
 func TestAIResumeCodexRuntimeAndFallbackStayOutOfVisibleRow(t *testing.T) {
 	const id = "019f0000-0000-7000-8000-000000000099"
 	for _, test := range []struct {
-		name         string
-		source       string
-		confidence   string
-		reason       string
-		status       string
-		locale       i18n.Locale
-		wantStatus   string
-		wantFallback bool
+		name       string
+		source     string
+		confidence string
+		reason     string
+		status     string
+		locale     i18n.Locale
+		wantStatus string
 	}{
 		{name: "native active en", source: aisessions.SourceCodexAppServer, confidence: aisessions.ConfidenceHigh, status: "active", locale: i18n.FallbackLocale, wantStatus: "[active]"},
 		{name: "native idle en", source: aisessions.SourceCodexAppServer, confidence: aisessions.ConfidenceHigh, status: "idle", locale: i18n.FallbackLocale, wantStatus: "[idle]"},
 		{name: "native idle ko", source: aisessions.SourceCodexAppServer, confidence: aisessions.ConfidenceHigh, status: "idle", locale: i18n.Locale("ko-KR"), wantStatus: "[대기]"},
 		{name: "native not loaded en", source: aisessions.SourceCodexAppServer, confidence: aisessions.ConfidenceHigh, status: "notLoaded", locale: i18n.FallbackLocale, wantStatus: "[not loaded]"},
 		{name: "native not loaded ko", source: aisessions.SourceCodexAppServer, confidence: aisessions.ConfidenceHigh, status: "notLoaded", locale: i18n.Locale("ko-KR"), wantStatus: "[미로드]"},
-		{name: "rollout fallback", source: aisessions.SourceCodexRollout, confidence: aisessions.ConfidenceMedium, reason: aisessions.ReasonAppServerUnavailable, locale: i18n.FallbackLocale, wantFallback: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			session := aisessions.SessionMeta{
@@ -112,7 +184,7 @@ func TestAIResumeCodexRuntimeAndFallbackStayOutOfVisibleRow(t *testing.T) {
 				Confidence: test.confidence, Reason: test.reason, RuntimeStatus: test.status,
 				Context: aisessions.SessionContext{Branch: "main"},
 			}
-			row := aiResumeSessionRowWithLabel(session, "Bound topic", time.Time{}, test.locale, "/work", 0)
+			row := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{Topic: "Bound topic"}, time.Time{}, test.locale, "/work", 0)
 			visible := stripANSI(row.Label)
 			if test.wantStatus != "" && strings.Contains(visible, test.wantStatus) {
 				t.Fatalf("visible row = %q, must hide status %q", visible, test.wantStatus)
@@ -125,9 +197,15 @@ func TestAIResumeCodexRuntimeAndFallbackStayOutOfVisibleRow(t *testing.T) {
 					t.Fatalf("visible row leaks raw provenance %q: %q", hidden, visible)
 				}
 			}
-			for _, searchable := range []string{id, test.source} {
-				if !strings.Contains(row.SearchKey, searchable) {
-					t.Fatalf("SearchKey = %q, want frozen field %q", row.SearchKey, searchable)
+			if !strings.Contains(row.SearchKey, id) {
+				t.Fatalf("SearchKey = %q, want exact id %q", row.SearchKey, id)
+			}
+			if !strings.Contains(row.SearchKey, test.source) {
+				t.Fatalf("SearchKey = %q, want frozen routing source %q", row.SearchKey, test.source)
+			}
+			for _, detailOnly := range []string{test.reason} {
+				if detailOnly != "" && strings.Contains(row.SearchKey, detailOnly) {
+					t.Fatalf("SearchKey = %q, provenance %q must be selected-detail-only", row.SearchKey, detailOnly)
 				}
 			}
 			if got := row.Value; got != aiResumePickerValue(aiModeCodex, id) {
@@ -138,19 +216,26 @@ func TestAIResumeCodexRuntimeAndFallbackStayOutOfVisibleRow(t *testing.T) {
 }
 
 func TestAIResumeRolloutProjectionDoesNotInferConversationTitle(t *testing.T) {
-	const id = "019f0000-0000-7000-8000-000000000077"
-	session := aisessions.SessionMeta{
-		Agent: aiModeCodex, ResumeID: id, Source: aisessions.SourceCodexRollout,
-		Title:   "prompt-derived rollout title must remain search-only",
-		Context: aisessions.SessionContext{Branch: "main"},
-	}
-	row := aiResumeSessionRowWithLabel(session, "", time.Time{}, i18n.FallbackLocale, "", 0)
-	visible := stripANSI(row.Label)
-	if !strings.Contains(visible, aiResumeShortID(id)) || strings.Contains(visible, session.Title) {
-		t.Fatalf("rollout row = %q, want one short id and no inferred title", visible)
-	}
-	if !strings.Contains(row.SearchKey, session.Title) {
-		t.Fatalf("SearchKey = %q, existing catalog metadata must remain searchable", row.SearchKey)
+	for _, test := range []struct {
+		name, provider, source, id, title, suffix string
+	}{
+		{name: "codex rollout", provider: aiModeCodex, source: aisessions.SourceCodexRollout, id: "019f0000-0000-7000-8000-000000000077", title: "prompt-derived rollout title", suffix: "0077"},
+		{name: "claude transcript", provider: aiModeClaude, source: aisessions.SourceClaudeTranscript, id: "019f0000-0000-7000-8000-000000000066", title: "prompt-derived transcript title", suffix: "0066"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			session := aisessions.SessionMeta{
+				Agent: test.provider, ResumeID: test.id, Source: test.source, Title: test.title,
+				Context: aisessions.SessionContext{Branch: "main"},
+			}
+			row := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{}, time.Time{}, i18n.FallbackLocale, "", 0)
+			visible := stripANSI(row.Label)
+			if !strings.Contains(visible, "Untitled · …"+test.suffix) || strings.Contains(visible, session.Title) || strings.Contains(visible, aiResumeShortID(test.id)) {
+				t.Fatalf("%s row = %q, want localized untitled suffix and no inferred/id-prefix title", test.name, visible)
+			}
+			if strings.Contains(row.SearchKey, session.Title) || !strings.Contains(row.SearchKey, test.source) {
+				t.Fatalf("SearchKey = %q, rejected prompt title must be absent while routing source remains", row.SearchKey)
+			}
+		})
 	}
 }
 
@@ -165,7 +250,7 @@ func TestAIResumeConversationHierarchyWidthAndLocaleGolden(t *testing.T) {
 	}
 	var got strings.Builder
 	for _, locale := range []i18n.Locale{i18n.FallbackLocale, i18n.Locale("ko-KR")} {
-		row := aiResumeSessionRowWithLabel(session, "Registry topic must lose", now, locale, "/workspace/projmux", 1)
+		row := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{Topic: "Registry topic must lose"}, now, locale, "/workspace/projmux", 1)
 		plain := stripANSI(row.Label)
 		fmt.Fprintf(&got, "%s\n", locale)
 		for _, width := range []int{80, 100, 120} {
@@ -189,7 +274,7 @@ func TestAIResumeClaudeAndAntigravityRowsUseCommonProjection(t *testing.T) {
 			Agent: provider, ResumeID: provider + "-session", Title: provider + " title",
 			LastModified: now.Add(-time.Hour), Context: aisessions.SessionContext{Branch: "main"},
 		}
-		got := aiResumeSessionRowWithLabel(session, "must be ignored", now, i18n.FallbackLocale, "/work", 0)
+		got := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{Topic: "must be ignored"}, now, i18n.FallbackLocale, "/work", 0)
 		visible := stripANSI(got.Label)
 		if !strings.HasPrefix(visible, "1h") || !strings.Contains(visible, "["+provider[:min(len(provider), aiResumeAgentCellWidth)]+"]") ||
 			!strings.Contains(visible, "main") || !strings.HasSuffix(visible, provider+" title") {

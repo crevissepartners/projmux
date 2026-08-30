@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -1412,7 +1413,7 @@ const (
 // Only ResumeSummary fields participate in labels/search/value; detail fields
 // such as turns, runtime status, fallback reason, and preview bytes cannot
 // mutate the list because they are absent from this input type.
-func aiResumeSummaryRowsWithLabels(summaries []aisessions.ResumeSummary, conversationLabels map[string]string, now time.Time, locale i18n.Locale, baseCWD string, depth int) []intpickercompat.Entry {
+func aiResumeSummaryRowsWithLabels(summaries []aisessions.ResumeSummary, conversationLabels map[string]aiResumeExactAgentLabel, now time.Time, locale i18n.Locale, baseCWD string, depth int) []intpickercompat.Entry {
 	rows := make([]intpickercompat.Entry, 0, len(summaries)+1)
 	rows = append(rows, intpickercompat.Entry{
 		Label:     "\x1b[32m[+ New Session]\x1b[0m",
@@ -1421,7 +1422,7 @@ func aiResumeSummaryRowsWithLabels(summaries []aisessions.ResumeSummary, convers
 	})
 	for _, summary := range summaries {
 		session := aiResumeSessionMetaFromSummary(summary, baseCWD)
-		rows = append(rows, aiResumeSessionRowWithLabel(session, conversationLabels[strings.TrimSpace(summary.ResumeID)], now, locale, baseCWD, depth))
+		rows = append(rows, aiResumeSessionRowWithResolvedLabel(session, conversationLabels[aiResumeExactLabelKey(summary.Provider, summary.ResumeID)], now, locale, baseCWD, depth))
 	}
 	return rows
 }
@@ -1440,18 +1441,14 @@ func aiResumeSessionMetaFromSummary(summary aisessions.ResumeSummary, baseCWD st
 	}
 }
 
-func aiResumeSessionRowWithLabel(session aisessions.SessionMeta, boundLabel string, now time.Time, locale i18n.Locale, baseCWD string, depth int) intpickercompat.Entry {
+func aiResumeSessionRowWithResolvedLabel(session aisessions.SessionMeta, boundLabel aiResumeExactAgentLabel, now time.Time, locale i18n.Locale, baseCWD string, depth int) intpickercompat.Entry {
 	agent := strings.TrimSpace(session.Agent)
 	resumeID := strings.TrimSpace(session.ResumeID)
 	branch := strings.TrimSpace(session.Context.Branch)
 	if branch == "" {
 		branch = aiResumeEmptyCell
 	}
-	conversation := cleanAIResumeTitle(session.Title, resumeID)
-	if strings.EqualFold(agent, aiModeCodex) &&
-		(session.Source == aisessions.SourceCodexAppServer || session.Source == aisessions.SourceCodexRollout) {
-		conversation = aiResumeCodexConversationLabel(session, boundLabel)
-	}
+	conversation := aiResumeDisplayLabel(session, boundLabel, locale)
 	conversation = truncateAIResumeCells(conversation, aiResumeTitleMaxCells)
 	relCWD := aiResumeExtraMetaCell(session, baseCWD, depth)
 	parts := []string{
@@ -1465,29 +1462,73 @@ func aiResumeSessionRowWithLabel(session aisessions.SessionMeta, boundLabel stri
 	parts = append(parts, conversation)
 
 	return intpickercompat.Entry{
-		Label:     strings.Join(parts, " "),
-		Value:     aiResumePickerValue(agent, resumeID),
-		SearchKey: strings.TrimSpace(strings.Join([]string{agent, conversation, strings.TrimSpace(session.Title), resumeID, branch, relCWD, session.Source}, " ")),
+		Label: strings.Join(parts, " "),
+		Value: aiResumePickerValue(agent, resumeID),
+		SearchKey: strings.TrimSpace(strings.Join([]string{
+			agent, conversation, strings.TrimSpace(boundLabel.DisplayName), aiResumeProviderOwnedTitle(session),
+			strings.TrimSpace(boundLabel.Topic), strings.TrimSpace(boundLabel.Name), resumeID, branch, relCWD, session.Source,
+		}, " ")),
 	}
 }
 
-func aiResumeCodexConversationLabel(session aisessions.SessionMeta, boundLabel string) string {
+func aiResumeDisplayLabel(session aisessions.SessionMeta, boundLabel aiResumeExactAgentLabel, locale i18n.Locale) string {
 	resumeID := strings.TrimSpace(session.ResumeID)
-	shortID := aiResumeShortID(resumeID)
-	title := strings.Join(strings.Fields(session.Title), " ")
-	if session.Source == aisessions.SourceCodexAppServer && title != "" && title != shortID {
+	if label := strings.Join(strings.Fields(boundLabel.DisplayName), " "); label != "" {
+		return label
+	}
+	title := aiResumeProviderOwnedTitle(session)
+	if title != "" {
 		return title
 	}
-	if boundLabel = strings.Join(strings.Fields(boundLabel), " "); boundLabel != "" {
-		return boundLabel
+	if label := strings.Join(strings.Fields(boundLabel.Topic), " "); label != "" {
+		return label
 	}
-	if session.Source == aisessions.SourceCodexAppServer || session.Source == aisessions.SourceCodexRollout {
-		if shortID != "" {
-			return shortID
-		}
-		return "(untitled)"
+	if label := strings.Join(strings.Fields(boundLabel.Name), " "); label != "" {
+		return label
 	}
-	return cleanAIResumeTitle(title, resumeID)
+	return aiResumeUntitledLabel(locale, resumeID)
+}
+
+func aiResumeDisplayLabelForSummary(summary aisessions.ResumeSummary, labels map[string]aiResumeExactAgentLabel, locale i18n.Locale) string {
+	session := aiResumeSessionMetaFromSummary(summary, "")
+	return aiResumeDisplayLabel(session, labels[aiResumeExactLabelKey(summary.Provider, summary.ResumeID)], locale)
+}
+
+func aiResumeProviderOwnedTitle(session aisessions.SessionMeta) string {
+	title := strings.Join(strings.Fields(session.Title), " ")
+	resumeID := strings.TrimSpace(session.ResumeID)
+	provider := normalizeAIMode(session.Agent)
+	if (provider == aiModeCodex && session.Source == aisessions.SourceCodexRollout) ||
+		(provider == aiModeClaude && session.Source == aisessions.SourceClaudeTranscript) {
+		return ""
+	}
+	if title == "" || aiResumeTitleIsID(title, resumeID) {
+		return ""
+	}
+	return title
+}
+
+func aiResumeTitleIsID(title, resumeID string) bool {
+	title = strings.TrimSpace(title)
+	resumeID = strings.TrimSpace(resumeID)
+	if title == "" || resumeID == "" {
+		return false
+	}
+	foldedTitle, foldedID := strings.ToLower(title), strings.ToLower(resumeID)
+	return foldedTitle == foldedID || foldedTitle == strings.ToLower(aiResumeShortID(resumeID)) ||
+		(len(title) >= 8 && strings.HasPrefix(foldedID, foldedTitle))
+}
+
+func aiResumeUntitledLabel(locale i18n.Locale, resumeID string) string {
+	untitled := localizeText(locale, i18n.Key("picker.ai.resume_untitled"), "Untitled")
+	id := strings.TrimSpace(resumeID)
+	if len(id) > 4 {
+		id = id[len(id)-4:]
+	}
+	if id == "" {
+		return untitled
+	}
+	return untitled + " · …" + id
 }
 
 func aiResumeShortID(id string) string {
@@ -1499,20 +1540,26 @@ func aiResumeShortID(id string) string {
 }
 
 // resolveAIResumeConversationLabels reads the Registry at most once per picker
-// invocation. A label is admitted only through an exact Codex thread binding;
+// invocation. A label is admitted only through an exact provider conversation binding;
 // cwd, title, pane ordering, prompt, and transcript content are never consulted.
-func (c *aiCommand) resolveAIResumeConversationLabels(sessions []aisessions.SessionMeta) map[string]string {
+type aiResumeExactAgentLabel struct {
+	DisplayName string
+	Topic       string
+	Name        string
+}
+
+func (c *aiCommand) resolveAIResumeConversationLabels(sessions []aisessions.SessionMeta) map[string]aiResumeExactAgentLabel {
 	if c == nil || c.loadRegistry == nil {
 		return nil
 	}
-	wantsCodex := false
+	wantsProvider := false
 	for _, session := range sessions {
-		if strings.EqualFold(strings.TrimSpace(session.Agent), aiModeCodex) {
-			wantsCodex = true
+		if _, ok := aiModeProvider(session.Agent); ok {
+			wantsProvider = true
 			break
 		}
 	}
-	if !wantsCodex {
+	if !wantsProvider {
 		return nil
 	}
 	registry, err := c.loadRegistry()
@@ -1522,7 +1569,7 @@ func (c *aiCommand) resolveAIResumeConversationLabels(sessions []aisessions.Sess
 	return aiResumeExactAgentLabels(registry)
 }
 
-func (c *aiCommand) resolveAIResumeSummaryLabels(summaries []aisessions.ResumeSummary) map[string]string {
+func (c *aiCommand) resolveAIResumeSummaryLabels(summaries []aisessions.ResumeSummary) map[string]aiResumeExactAgentLabel {
 	sessions := make([]aisessions.SessionMeta, 0, len(summaries))
 	for _, summary := range summaries {
 		sessions = append(sessions, aiResumeSessionMetaFromSummary(summary, ""))
@@ -1530,44 +1577,73 @@ func (c *aiCommand) resolveAIResumeSummaryLabels(summaries []aisessions.ResumeSu
 	return c.resolveAIResumeConversationLabels(sessions)
 }
 
-func aiResumeExactAgentLabels(registry coremetadata.Registry) map[string]string {
-	type resolved struct {
-		uid   string
-		label string
-		rank  int
-	}
-	byThread := make(map[string]resolved)
+func aiResumeExactAgentLabels(registry coremetadata.Registry) map[string]aiResumeExactAgentLabel {
+	type authority struct{ uid, value string }
+	type resolved struct{ displayName, topic, name authority }
+	byConversation := make(map[string]resolved)
 	for _, agent := range registry.Agents {
-		if !strings.EqualFold(strings.TrimSpace(agent.Spec.Provider), aiModeCodex) ||
-			agent.Status.SessionRef == nil ||
-			!strings.EqualFold(strings.TrimSpace(agent.Status.SessionRef.Provider), aiModeCodex) ||
-			agent.Status.SessionRef.Codex == nil {
+		provider := normalizeAIMode(agent.Spec.Provider)
+		if agent.Status.SessionRef == nil || provider == "" || normalizeAIMode(agent.Status.SessionRef.Provider) != provider {
 			continue
 		}
-		threadID := strings.TrimSpace(agent.Status.SessionRef.Codex.ThreadID)
-		if threadID == "" {
-			continue
-		}
-		label := strings.TrimSpace(agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic])
-		rank := 0
-		if label == "" {
-			label = strings.TrimSpace(agent.Metadata.Name)
-			rank = 1
-		}
-		if label == "" {
-			continue
-		}
-		candidate := resolved{uid: agent.Metadata.UID, label: label, rank: rank}
-		if current, ok := byThread[threadID]; !ok || candidate.rank < current.rank ||
-			(candidate.rank == current.rank && candidate.uid < current.uid) {
-			byThread[threadID] = candidate
+		ids := aiResumeExactAgentConversationIDs(agent.Status.SessionRef, provider)
+		for _, id := range ids {
+			key := aiResumeExactLabelKey(provider, id)
+			current := byConversation[key]
+			for _, candidate := range []struct {
+				value  string
+				target *authority
+			}{
+				{value: strings.TrimSpace(agent.Metadata.DisplayName), target: &current.displayName},
+				{value: strings.TrimSpace(agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic]), target: &current.topic},
+				{value: strings.TrimSpace(agent.Metadata.Name), target: &current.name},
+			} {
+				value, target := candidate.value, candidate.target
+				if value != "" && (target.value == "" || agent.Metadata.UID < target.uid) {
+					*target = authority{uid: agent.Metadata.UID, value: value}
+				}
+			}
+			byConversation[key] = current
 		}
 	}
-	labels := make(map[string]string, len(byThread))
-	for threadID, candidate := range byThread {
-		labels[threadID] = candidate.label
+	labels := make(map[string]aiResumeExactAgentLabel, len(byConversation))
+	for key, candidate := range byConversation {
+		labels[key] = aiResumeExactAgentLabel{DisplayName: candidate.displayName.value, Topic: candidate.topic.value, Name: candidate.name.value}
 	}
 	return labels
+}
+
+func aiResumeExactLabelKey(provider, id string) string {
+	return normalizeAIMode(provider) + "\x00" + strings.TrimSpace(id)
+}
+
+func aiResumeExactAgentConversationIDs(ref *coremetadata.AgentSessionRef, provider string) []string {
+	if ref == nil {
+		return nil
+	}
+	var ids []string
+	switch normalizeAIMode(provider) {
+	case aiModeClaude:
+		if ref.Claude != nil {
+			ids = append(ids, strings.TrimSpace(ref.Claude.SessionID))
+		}
+	case aiModeCodex:
+		if ref.Codex != nil {
+			ids = append(ids, strings.TrimSpace(ref.Codex.ThreadID), strings.TrimSpace(ref.Codex.SessionID))
+		}
+	case aiModeAntigravity:
+		if ref.Antigravity != nil {
+			ids = append(ids, strings.TrimSpace(ref.Antigravity.ConversationID))
+		}
+	}
+	out := ids[:0]
+	for _, id := range ids {
+		if id == "" || slices.Contains(out, id) {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
 }
 
 // aiResumeAgentBadge renders the agent tag as a tight, per-agent-coloured
@@ -1646,17 +1722,6 @@ func aiResumeRelativeCWD(base, recorded string) string {
 		return ""
 	}
 	return "./" + rel
-}
-
-func cleanAIResumeTitle(title, resumeID string) string {
-	title = strings.Join(strings.Fields(title), " ")
-	if title == "" {
-		title = strings.TrimSpace(resumeID)
-	}
-	if title == "" {
-		return "(untitled)"
-	}
-	return truncateAIResumeCells(title, aiResumeTitleMaxCells)
 }
 
 // aiResumeFitCell truncates value to width terminal cells and right-pads with

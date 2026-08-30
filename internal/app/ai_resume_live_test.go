@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
@@ -90,8 +91,8 @@ func TestResumeSummaryHundredsOfCodexRolloutsSettleBeforeBlockedNativeBudget(t *
 	}
 	footer, _ := controller.footer()
 	status := resumeSummaryProviderStatus(footer, aiModeCodex)
-	if status != "fallback" {
-		t.Fatalf("Codex status = %q, want fallback; footer=%q", status, footer)
+	if status != "80 found" {
+		t.Fatalf("Codex status = %q, want settled pre-cap count; footer=%q", status, footer)
 	}
 	var codexRows int
 	for _, entry := range entries {
@@ -116,8 +117,8 @@ func TestResumeSummaryProviderFooterDistinguishesFallbackEmptyAndUnavailable(t *
 		entries := controller.initialEntries()
 		footer, _ := controller.footer()
 		status := resumeSummaryProviderStatus(footer, aiModeCodex)
-		if status != "fallback" {
-			t.Fatalf("empty fallback Codex status = %q, want fallback; entries=%#v", status, entries)
+		if status != "0 found" {
+			t.Fatalf("empty fallback Codex status = %q, want zero count; entries=%#v", status, entries)
 		}
 	})
 
@@ -136,8 +137,8 @@ func TestResumeSummaryProviderFooterDistinguishesFallbackEmptyAndUnavailable(t *
 		entries := controller.initialEntries()
 		footer, _ := controller.footer()
 		status := resumeSummaryProviderStatus(footer, aiModeCodex)
-		if status != "empty" {
-			t.Fatalf("envelope-expired Codex status = %q, want empty; entries=%#v", status, entries)
+		if status != "search failed" {
+			t.Fatalf("envelope-expired Codex status = %q, want search failure; entries=%#v", status, entries)
 		}
 	})
 
@@ -154,8 +155,8 @@ func TestResumeSummaryProviderFooterDistinguishesFallbackEmptyAndUnavailable(t *
 		entries := controller.initialEntries()
 		footer, _ := controller.footer()
 		status := resumeSummaryProviderStatus(footer, aiModeCodex)
-		if status != "unavailable" {
-			t.Fatalf("failed Codex status = %q, want unavailable", status)
+		if status != "search failed" {
+			t.Fatalf("failed Codex status = %q, want search failure", status)
 		}
 		if len(entries) != 1 || entries[0].Value != aiResumeNewValue {
 			t.Fatalf("unavailable provider entered list: %#v", entries)
@@ -166,22 +167,22 @@ func TestResumeSummaryProviderFooterDistinguishesFallbackEmptyAndUnavailable(t *
 func TestResumeProviderStateTableProjectsFooterWithoutInformationalItems(t *testing.T) {
 	tests := []struct {
 		name   string
-		states map[string]aiResumeProviderState
+		states map[string]aiResumeProviderProjection
 		want   map[string]string
 	}{
 		{
-			name: "available empty fallback",
-			states: map[string]aiResumeProviderState{
-				aiModeCodex: aiResumeProviderFallback, aiModeClaude: aiResumeProviderAvailable, aiModeAntigravity: aiResumeProviderEmpty,
+			name: "counts and disabled",
+			states: map[string]aiResumeProviderProjection{
+				aiModeCodex: {state: aiResumeProviderCount, count: 4}, aiModeClaude: {state: aiResumeProviderCount}, aiModeAntigravity: {state: aiResumeProviderDisabled},
 			},
-			want: map[string]string{aiModeCodex: "fallback", aiModeClaude: "available", aiModeAntigravity: "empty"},
+			want: map[string]string{aiModeCodex: "4 found", aiModeClaude: "0 found", aiModeAntigravity: "disabled"},
 		},
 		{
-			name: "unavailable remains provider-specific",
-			states: map[string]aiResumeProviderState{
-				aiModeCodex: aiResumeProviderAvailable, aiModeClaude: aiResumeProviderUnavailable, aiModeAntigravity: aiResumeProviderAvailable,
+			name: "search failure remains provider-specific",
+			states: map[string]aiResumeProviderProjection{
+				aiModeCodex: {state: aiResumeProviderCount, count: 1}, aiModeClaude: {state: aiResumeProviderSearchFailed}, aiModeAntigravity: {state: aiResumeProviderCount, count: 2},
 			},
-			want: map[string]string{aiModeCodex: "available", aiModeClaude: "unavailable", aiModeAntigravity: "available"},
+			want: map[string]string{aiModeCodex: "1 found", aiModeClaude: "search failed", aiModeAntigravity: "2 found"},
 		},
 	}
 	for _, test := range tests {
@@ -221,21 +222,74 @@ func TestResumeProviderStateTableProjectsFooterWithoutInformationalItems(t *test
 	}
 }
 
+func TestResumeProviderProjectionCountFailureAndDisabled(t *testing.T) {
+	states := map[string]aiResumeProviderProjection{
+		aiModeCodex:       {state: aiResumeProviderCount},
+		aiModeClaude:      {state: aiResumeProviderSearchFailed},
+		aiModeAntigravity: {state: aiResumeProviderDisabled},
+	}
+	for _, test := range []struct {
+		locale i18n.Locale
+		want   []string
+	}{
+		{locale: i18n.FallbackLocale, want: []string{"Codex 0 found", "Claude search failed", "Antigravity disabled"}},
+		{locale: i18n.Locale("ko-KR"), want: []string{"Codex 0건 발견", "Claude 검색 실패", "Antigravity 설정 꺼짐"}},
+	} {
+		footer := resumeProviderFooterLine(states, test.locale)
+		for _, want := range test.want {
+			if !strings.Contains(footer, want) {
+				t.Fatalf("%s footer = %q, want %q", test.locale, footer, want)
+			}
+		}
+		for _, forbidden := range []string{"available", "empty", "fallback", "unavailable", "대체", "사용 가능", "비어 있음", "사용 불가"} {
+			if strings.Contains(footer, forbidden) {
+				t.Fatalf("%s footer leaked transport vocabulary %q: %q", test.locale, forbidden, footer)
+			}
+		}
+	}
+	home := t.TempDir()
+	if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), []config.AIAgentProvider{config.AIAgentCodex, config.AIAgentClaude}); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testAICommand(home)
+	var antigravityReads atomic.Int32
+	cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+		if provider == aiModeAntigravity {
+			antigravityReads.Add(1)
+		}
+		return summaryDiscovery(provider, provider+"-exact", provider+"-source", time.Time{}), nil
+	}
+	controller := newAIResumeLiveController(cmd, "/work", home, 0, 20)
+	defer controller.close()
+	entries := controller.initialEntries()
+	footer, _ := controller.footer()
+	if antigravityReads.Load() != 0 || resumeSummaryProviderStatus(footer, aiModeAntigravity) != "disabled" {
+		t.Fatalf("disabled provider reads=%d footer=%q", antigravityReads.Load(), footer)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Value, "resume\t"+aiModeAntigravity+"\t") {
+			t.Fatalf("disabled provider entered selectable catalog: %#v", entry)
+		}
+	}
+}
+
 func TestResumeProviderStateUsesSettledAuthorityBeforeGlobalCap(t *testing.T) {
 	tests := []struct {
-		name   string
-		result aiResumeProviderResult
-		want   aiResumeProviderState
+		name    string
+		result  aiResumeProviderResult
+		enabled bool
+		want    aiResumeProviderProjection
 	}{
-		{name: "native available", result: aiResumeProviderResult{provider: aiModeCodex, discovery: summaryDiscovery(aiModeCodex, "native", aisessions.SourceCodexAppServer, time.Time{})}, want: aiResumeProviderAvailable},
-		{name: "native empty", result: aiResumeProviderResult{provider: aiModeCodex, discovery: aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceNative}}}, want: aiResumeProviderEmpty},
-		{name: "fallback authority", result: aiResumeProviderResult{provider: aiModeCodex, discovery: aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceFallback}}}, want: aiResumeProviderFallback},
-		{name: "provider failure", result: aiResumeProviderResult{provider: aiModeClaude, err: errors.New("failed")}, want: aiResumeProviderUnavailable},
-		{name: "envelope expiry", result: aiResumeProviderResult{provider: aiModeAntigravity, err: context.DeadlineExceeded, envelopeExpired: true}, want: aiResumeProviderEmpty},
+		{name: "native count", enabled: true, result: aiResumeProviderResult{provider: aiModeCodex, discovery: summaryDiscovery(aiModeCodex, "native", aisessions.SourceCodexAppServer, time.Time{})}, want: aiResumeProviderProjection{state: aiResumeProviderCount, count: 1}},
+		{name: "native zero", enabled: true, result: aiResumeProviderResult{provider: aiModeCodex, discovery: aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceNative}}}, want: aiResumeProviderProjection{state: aiResumeProviderCount}},
+		{name: "fallback stays count", enabled: true, result: aiResumeProviderResult{provider: aiModeCodex, discovery: aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceFallback}}}, want: aiResumeProviderProjection{state: aiResumeProviderCount}},
+		{name: "provider failure", enabled: true, result: aiResumeProviderResult{provider: aiModeClaude, err: errors.New("failed")}, want: aiResumeProviderProjection{state: aiResumeProviderSearchFailed}},
+		{name: "envelope expiry", enabled: true, result: aiResumeProviderResult{provider: aiModeAntigravity, err: context.DeadlineExceeded, envelopeExpired: true}, want: aiResumeProviderProjection{state: aiResumeProviderSearchFailed}},
+		{name: "settings disabled", result: aiResumeProviderResult{provider: aiModeClaude}, want: aiResumeProviderProjection{state: aiResumeProviderDisabled}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := resumeProviderState(test.result); got != test.want {
+			if got := resumeProviderProjection(test.result, test.enabled); got != test.want {
 				t.Fatalf("state = %q, want %q", got, test.want)
 			}
 		})
@@ -249,8 +303,8 @@ func TestResumeProviderFooterPrecedesShownCountAndContentFreeContinuation(t *tes
 		{Provider: aiModeCodex, ResumeID: "one", Source: aisessions.SourceCodexAppServer},
 		{Provider: aiModeClaude, ResumeID: "two", Source: aisessions.SourceClaudeTranscript},
 	}
-	controller.providerStates = map[string]aiResumeProviderState{
-		aiModeCodex: aiResumeProviderAvailable, aiModeClaude: aiResumeProviderAvailable, aiModeAntigravity: aiResumeProviderEmpty,
+	controller.providerStates = map[string]aiResumeProviderProjection{
+		aiModeCodex: {state: aiResumeProviderCount, count: 1}, aiModeClaude: {state: aiResumeProviderCount, count: 1}, aiModeAntigravity: {state: aiResumeProviderCount},
 	}
 	controller.moreNotLoaded = true
 	footer, moreNotLoaded := controller.footer()
@@ -265,7 +319,7 @@ func TestResumeProviderFooterPrecedesShownCountAndContentFreeContinuation(t *tes
 		t.Fatalf("footer update changed rows, upper chrome, or footer content: %#v", update)
 	}
 	lines := strings.Split(footer, "\n")
-	if len(lines) != 2 || !strings.HasPrefix(lines[0], "Providers Codex available") || lines[1] != "Showing latest 2 resume sessions." {
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "Providers Codex 1 found") || lines[1] != "Showing latest 2 resume sessions." {
 		t.Fatalf("footer order = %#v, want provider line then shown count", lines)
 	}
 	controller.close()

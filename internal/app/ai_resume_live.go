@@ -47,18 +47,19 @@ type aiResumeLiveController struct {
 	events            chan struct{}
 	startOnce         sync.Once
 	labelsOnce        sync.Once
-	labels            map[string]string
+	labels            map[string]aiResumeExactAgentLabel
 
-	mu             sync.Mutex
-	summaries      []aisessions.ResumeSummary
-	detailRefs     map[string]aisessions.ResumeDetailRef
-	providerStates map[string]aiResumeProviderState
-	detailText     map[string]string
-	detailCache    map[aiResumePreviewKey]string
-	detailReads    map[aiResumePreviewKey]bool
-	previewCancel  context.CancelFunc
-	focusedValue   string
-	moreNotLoaded  bool
+	mu              sync.Mutex
+	summaries       []aisessions.ResumeSummary
+	detailRefs      map[string]aisessions.ResumeDetailRef
+	providerStates  map[string]aiResumeProviderProjection
+	providerEnabled map[string]bool
+	detailText      map[string]string
+	detailCache     map[aiResumePreviewKey]string
+	detailReads     map[aiResumePreviewKey]bool
+	previewCancel   context.CancelFunc
+	focusedValue    string
+	moreNotLoaded   bool
 }
 
 func newAIResumeLiveController(cmd *aiCommand, cwd, home string, depth, limit int) *aiResumeLiveController {
@@ -67,12 +68,16 @@ func newAIResumeLiveController(cmd *aiCommand, cwd, home string, depth, limit in
 	if cmd.now != nil {
 		now = cmd.now()
 	}
+	enabled := make(map[string]bool, 3)
+	for _, provider := range cmd.enabledAIAgents() {
+		enabled[normalizeAIMode(string(provider))] = true
+	}
 	return &aiResumeLiveController{
 		cmd: cmd, ctx: ctx, cancel: cancel, cwd: cwd, home: home, depth: depth,
 		limit: normalizeResumePickerLimit(limit), locale: appLocale(cmd.homeDir, cmd.lookupEnv), now: now,
 		previewTimeout: aiResumePreviewTimeout, populationTimeout: aiResumeSummaryPopulationBudget,
 		populationContext: context.WithTimeout,
-		events:            make(chan struct{}, 16), providerStates: map[string]aiResumeProviderState{},
+		events:            make(chan struct{}, 16), providerStates: map[string]aiResumeProviderProjection{}, providerEnabled: enabled,
 		detailRefs: map[string]aisessions.ResumeDetailRef{}, detailText: map[string]string{},
 		detailCache: map[aiResumePreviewKey]string{}, detailReads: map[aiResumePreviewKey]bool{},
 	}
@@ -107,11 +112,15 @@ type aiResumeProviderResult struct {
 type aiResumeProviderState string
 
 const (
-	aiResumeProviderAvailable   aiResumeProviderState = "available"
-	aiResumeProviderEmpty       aiResumeProviderState = "empty"
-	aiResumeProviderFallback    aiResumeProviderState = "fallback"
-	aiResumeProviderUnavailable aiResumeProviderState = "unavailable"
+	aiResumeProviderCount        aiResumeProviderState = "count"
+	aiResumeProviderSearchFailed aiResumeProviderState = "search_failed"
+	aiResumeProviderDisabled     aiResumeProviderState = "disabled"
 )
+
+type aiResumeProviderProjection struct {
+	state aiResumeProviderState
+	count int
+}
 
 // populate settles all provider summaries before the picker is opened. The
 // caller sees one final row set: provider completion order and late returns can
@@ -138,7 +147,12 @@ func (c *aiResumeLiveController) populateOnce() {
 	}
 	providers := []string{aiModeCodex, aiModeClaude, aiModeAntigravity}
 	results := make(chan aiResumeProviderResult, len(providers))
+	settled := make(map[string]aiResumeProviderResult, len(providers))
 	for _, provider := range providers {
+		if !c.providerEnabled[provider] {
+			settled[provider] = aiResumeProviderResult{provider: provider}
+			continue
+		}
 		go func() {
 			discovery, err := discover(ctx, provider, c.cwd, aisessions.ResumeSummaryOptions{
 				DiscoverOptions: aisessions.DiscoverOptions{
@@ -149,7 +163,6 @@ func (c *aiResumeLiveController) populateOnce() {
 		}()
 	}
 
-	settled := make(map[string]aiResumeProviderResult, len(providers))
 	for len(settled) < len(providers) {
 		select {
 		case result := <-results:
@@ -189,12 +202,12 @@ func (c *aiResumeLiveController) populateOnce() {
 
 	var summaries []aisessions.ResumeSummary
 	allDetailRefs := make(map[string]aisessions.ResumeDetailRef)
-	providerStates := make(map[string]aiResumeProviderState, len(providers))
+	providerStates := make(map[string]aiResumeProviderProjection, len(providers))
 	moreNotLoaded := false
 	for _, provider := range providers {
 		result := settled[provider]
-		providerStates[provider] = resumeProviderState(result)
-		if result.err == nil {
+		providerStates[provider] = resumeProviderProjection(result, c.providerEnabled[provider])
+		if c.providerEnabled[provider] && result.err == nil {
 			summaries = append(summaries, result.discovery.Summaries...)
 			for _, ref := range result.discovery.DetailRefs {
 				key := normalizeAIMode(ref.Provider) + "\x00" + strings.TrimSpace(ref.ResumeID)
@@ -223,26 +236,20 @@ func (c *aiResumeLiveController) populateOnce() {
 	c.mu.Unlock()
 }
 
-func resumeProviderState(result aiResumeProviderResult) aiResumeProviderState {
-	if result.err != nil && !result.envelopeExpired {
-		return aiResumeProviderUnavailable
+func resumeProviderProjection(result aiResumeProviderResult, enabled bool) aiResumeProviderProjection {
+	if !enabled {
+		return aiResumeProviderProjection{state: aiResumeProviderDisabled}
 	}
-	if normalizeAIMode(result.provider) == aiModeCodex {
-		if result.discovery.Codex.Source == aisessions.CatalogSourceFallback {
-			return aiResumeProviderFallback
-		}
-		for _, summary := range result.discovery.Summaries {
-			if normalizeAIMode(summary.Provider) == aiModeCodex && summary.Source == aisessions.SourceCodexRollout {
-				return aiResumeProviderFallback
-			}
-		}
+	if result.err != nil || result.envelopeExpired {
+		return aiResumeProviderProjection{state: aiResumeProviderSearchFailed}
 	}
+	count := 0
 	for _, summary := range result.discovery.Summaries {
 		if normalizeAIMode(summary.Provider) == normalizeAIMode(result.provider) {
-			return aiResumeProviderAvailable
+			count++
 		}
 	}
-	return aiResumeProviderEmpty
+	return aiResumeProviderProjection{state: aiResumeProviderCount, count: count}
 }
 
 // settleAIResumeSummaries is the sole global dedupe/sort/cap pass.
@@ -283,14 +290,14 @@ func (c *aiResumeLiveController) initialEntries() []intpickercompat.Entry {
 }
 
 func (c *aiResumeLiveController) entries(summaries []aisessions.ResumeSummary) []intpickercompat.Entry {
-	var hasCodex bool
+	var hasProvider bool
 	for _, summary := range summaries {
-		if normalizeAIMode(summary.Provider) == aiModeCodex {
-			hasCodex = true
+		if _, ok := aiModeProvider(summary.Provider); ok {
+			hasProvider = true
 			break
 		}
 	}
-	if hasCodex {
+	if hasProvider {
 		c.labelsOnce.Do(func() { c.labels = c.cmd.resolveAIResumeSummaryLabels(summaries) })
 	}
 	labels := c.labels
@@ -303,13 +310,13 @@ func (c *aiResumeLiveController) footer() (string, bool) {
 	return resumePickerFooter(c.providerStates, len(c.summaries), c.locale), c.moreNotLoaded
 }
 
-func resumePickerFooter(states map[string]aiResumeProviderState, visible int, locale i18n.Locale) string {
+func resumePickerFooter(states map[string]aiResumeProviderProjection, visible int, locale i18n.Locale) string {
 	providerLine := resumeProviderFooterLine(states, locale)
 	shownCount := fmt.Sprintf(localizeUIText(locale, "Showing latest %d resume sessions."), visible)
 	return projmuxFooter(providerLine + "\n" + shownCount)
 }
 
-func resumeProviderFooterLine(states map[string]aiResumeProviderState, locale i18n.Locale) string {
+func resumeProviderFooterLine(states map[string]aiResumeProviderProjection, locale i18n.Locale) string {
 	providers := []struct {
 		id    string
 		label string
@@ -320,19 +327,22 @@ func resumeProviderFooterLine(states map[string]aiResumeProviderState, locale i1
 	}
 	parts := make([]string, 0, len(providers))
 	for _, provider := range providers {
-		state := states[provider.id]
-		if state == "" {
-			state = aiResumeProviderEmpty
+		projection := states[provider.id]
+		if projection.state == "" {
+			projection.state = aiResumeProviderCount
 		}
-		parts = append(parts, provider.label+" "+resumeProviderStateText(locale, state))
+		parts = append(parts, provider.label+" "+resumeProviderStateText(locale, projection))
 	}
 	return localizeUIText(locale, "Providers") + " " + strings.Join(parts, " · ")
 }
 
-func resumeProviderStateText(locale i18n.Locale, state aiResumeProviderState) string {
-	text, err := i18n.NewLocalizer(locale).Text(i18n.Key("picker.ai.resume_provider_" + string(state)))
+func resumeProviderStateText(locale i18n.Locale, projection aiResumeProviderProjection) string {
+	text, err := i18n.NewLocalizer(locale).Text(i18n.Key("picker.ai.resume_provider_" + string(projection.state)))
 	if err != nil {
-		return string(state)
+		return string(projection.state)
+	}
+	if projection.state == aiResumeProviderCount {
+		return fmt.Sprintf(text.String(), projection.count)
 	}
 	return text.String()
 }
@@ -396,7 +406,8 @@ func (c *aiResumeLiveController) focus(value string) {
 		c.signal()
 		return
 	}
-	loading := aiResumeDetailProjection(c.locale, summary, detailRef, aisessions.ResumeDetail{}, localizeUIText(c.locale, "Loading preview…"))
+	displayLabel := aiResumeDisplayLabelForSummary(summary, c.labels, c.locale)
+	loading := aiResumeDetailProjection(c.locale, summary, detailRef, aisessions.ResumeDetail{}, localizeUIText(c.locale, "Loading preview…"), displayLabel)
 	c.detailText[value] = loading
 	if c.detailReads[cacheKey] {
 		c.mu.Unlock()
@@ -434,7 +445,7 @@ func (c *aiResumeLiveController) focus(value string) {
 		if err != nil || strings.TrimSpace(previewText) == "" {
 			previewText = localizeUIText(c.locale, "preview unavailable")
 		}
-		text := aiResumeDetailProjection(c.locale, summary, detailRef, detail, previewText)
+		text := aiResumeDetailProjection(c.locale, summary, detailRef, detail, previewText, displayLabel)
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.detailCache[cacheKey] = text
@@ -460,15 +471,23 @@ func (c *aiResumeLiveController) focus(value string) {
 	}()
 }
 
-func aiResumeDetailProjection(locale i18n.Locale, summary aisessions.ResumeSummary, ref aisessions.ResumeDetailRef, detail aisessions.ResumeDetail, previewText string) string {
+func aiResumeDetailProjection(locale i18n.Locale, summary aisessions.ResumeSummary, ref aisessions.ResumeDetailRef, detail aisessions.ResumeDetail, previewText string, displayLabels ...string) string {
+	idLabel := localizeText(locale, i18n.Key("picker.ai.resume_detail_id"), "Conversation ID")
 	sourceLabel := localizeUIText(locale, "Source")
 	turnsLabel := localizeText(locale, i18n.KeyPickerResumeDetailTurns, "Turns")
 	runtimeLabel := localizeUIText(locale, "Runtime")
 	confidenceLabel := localizeText(locale, i18n.KeyPickerResumeDetailConfidence, "Confidence")
 	reasonLabel := localizeText(locale, i18n.KeyPickerResumeDetailReason, "Reason")
+	detailsLabel := localizeText(locale, i18n.Key("picker.ai.resume_detail_metadata"), "Details")
 	unavailable := localizeUIText(locale, "unavailable")
 	provider := strings.TrimSpace(summary.Provider)
-	title := cleanAIResumeTitle(summary.Label, summary.ResumeID)
+	title := ""
+	if len(displayLabels) > 0 {
+		title = strings.TrimSpace(displayLabels[0])
+	}
+	if title == "" {
+		title = aiResumeDisplayLabelForSummary(summary, nil, locale)
+	}
 	lines := []string{provider + " · " + title}
 	source := strings.TrimSpace(detail.Source)
 	if source == "" {
@@ -481,7 +500,9 @@ func aiResumeDetailProjection(locale i18n.Locale, summary aisessions.ResumeSumma
 	if turns == 0 {
 		turns = ref.Turns
 	}
-	metadata := []string{sourceLabel + ": " + source}
+	identity := idLabel + ": " + strings.TrimSpace(summary.ResumeID) + " · " + sourceLabel + ": " + source
+	lines = append(lines, identity, localizeUIText(locale, "Preview"), previewText)
+	metadata := make([]string, 0, 3)
 	if turns > 0 {
 		metadata = append(metadata, fmt.Sprintf("%s: %d", turnsLabel, turns))
 	} else {
@@ -494,7 +515,7 @@ func aiResumeDetailProjection(locale i18n.Locale, summary aisessions.ResumeSumma
 	if runtimeStatus != "" {
 		metadata = append(metadata, runtimeLabel+": "+runtimeStatus)
 	}
-	lines = append(lines, strings.Join(metadata, " · "))
+	lines = append(lines, "", detailsLabel, strings.Join(metadata, " · "))
 	confidence := strings.TrimSpace(detail.Confidence)
 	if confidence == "" {
 		confidence = strings.TrimSpace(ref.Confidence)
@@ -513,7 +534,6 @@ func aiResumeDetailProjection(locale i18n.Locale, summary aisessions.ResumeSumma
 	if len(explanation) > 0 {
 		lines = append(lines, strings.Join(explanation, " · "))
 	}
-	lines = append(lines, "", localizeUIText(locale, "Preview"), previewText)
 	return strings.Join(lines, "\n")
 }
 
