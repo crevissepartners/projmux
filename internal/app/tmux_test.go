@@ -517,27 +517,54 @@ func TestAppRunTmuxPopupCommandsUseMinimumReadableSizes(t *testing.T) {
 	}
 }
 
+type tmuxPopupToggleFixture struct {
+	marker  string
+	runner  *recordingTmuxRunner
+	command *tmuxCommand
+}
+
+func newTmuxPopupToggleFixture(t *testing.T, clientKey, mode string) *tmuxPopupToggleFixture {
+	t.Helper()
+
+	marker := popupMarkerPath(sanitizePopupKey(clientKey), mode)
+	_ = os.Remove(marker)
+	t.Cleanup(func() { _ = os.Remove(marker) })
+	runner := &recordingTmuxRunner{formats: map[string]string{
+		"#{client_tty}":    clientKey,
+		"#{pane_id}":       "%1",
+		"#{client_width}":  "200",
+		"#{client_height}": "50",
+	}}
+	if mode == "sessionizer-sidebar" {
+		runner.formats["#S"] = "work"
+		runner.formats["#{pane_current_path}"] = "/tmp/work tree"
+	}
+	return &tmuxPopupToggleFixture{
+		marker: marker,
+		runner: runner,
+		command: &tmuxCommand{
+			runner:     runner,
+			executable: func() (string, error) { return "/tmp/projmux", nil },
+		},
+	}
+}
+
+func (fixture *tmuxPopupToggleFixture) writeMarker(t *testing.T, content string) {
+	t.Helper()
+
+	if err := os.WriteFile(fixture.marker, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 	t.Parallel()
 
-	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-sidebar"), "sessionizer-sidebar")
-	_ = os.Remove(marker)
-	defer os.Remove(marker)
-
-	runner := &recordingTmuxRunner{formats: map[string]string{
-		"#{client_tty}":        "/dev/pts/projmux-test-sidebar",
-		"#{pane_id}":           "%1",
-		"#S":                   "work",
-		"#{pane_current_path}": "/tmp/work tree",
-		"#{client_width}":      "200",
-		"#{client_height}":     "50",
-	}}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil },
-		homeDir:    func() (string, error) { return t.TempDir(), nil },
-		lookupEnv:  func(string) string { return "" },
-	}
+	fixture := newTmuxPopupToggleFixture(t, "/dev/pts/projmux-test-sidebar", "sessionizer-sidebar")
+	marker, runner, cmd := fixture.marker, fixture.runner, fixture.command
+	cmd.executable = func() (string, error) { return "/tmp/proj mux/bin/projmux", nil }
+	cmd.homeDir = func() (string, error) { return t.TempDir(), nil }
+	cmd.lookupEnv = func(string) string { return "" }
 
 	if err := cmd.Run([]string{"popup-toggle", "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -595,22 +622,8 @@ func TestAppRunTmuxPopupToggleOpensStandaloneSidebar(t *testing.T) {
 }
 
 func TestAppRunTmuxPopupToggleUsesBorderlessNativePopup(t *testing.T) {
-	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-native-border"), "sessionizer-sidebar")
-	_ = os.Remove(marker)
-	defer os.Remove(marker)
-
-	runner := &recordingTmuxRunner{formats: map[string]string{
-		"#{client_tty}":        "/dev/pts/projmux-test-native-border",
-		"#{pane_id}":           "%1",
-		"#S":                   "work",
-		"#{pane_current_path}": "/tmp/work tree",
-		"#{client_width}":      "200",
-		"#{client_height}":     "50",
-	}}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-	}
+	fixture := newTmuxPopupToggleFixture(t, "/dev/pts/projmux-test-native-border", "sessionizer-sidebar")
+	runner, cmd := fixture.runner, fixture.command
 
 	if err := cmd.Run([]string{"popup-toggle", "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -640,24 +653,11 @@ background = "#010203"
 foreground = "#aabbcc"
 `)
 
-	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-native-style"), "sessionizer-sidebar")
-	_ = os.Remove(marker)
-	defer os.Remove(marker)
-
-	runner := &recordingTmuxRunner{formats: map[string]string{
-		"#{client_tty}":        "/dev/pts/projmux-test-native-style",
-		"#{pane_id}":           "%1",
-		"#S":                   "work",
-		"#{pane_current_path}": filepath.Join(project, "subdir"),
-		"#{client_width}":      "200",
-		"#{client_height}":     "50",
-	}}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		homeDir:    func() (string, error) { return home, nil },
-		lookupEnv:  func(string) string { return "" },
-	}
+	fixture := newTmuxPopupToggleFixture(t, "/dev/pts/projmux-test-native-style", "sessionizer-sidebar")
+	runner, cmd := fixture.runner, fixture.command
+	runner.formats["#{pane_current_path}"] = filepath.Join(project, "subdir")
+	cmd.homeDir = func() (string, error) { return home, nil }
+	cmd.lookupEnv = func(string) string { return "" }
 
 	if err := cmd.Run([]string{"popup-toggle", "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -871,20 +871,8 @@ func TestAppRunTmuxPopupToggleIgnoresRetiredBackendArtifacts(t *testing.T) {
 
 func TestAppRunTmuxPopupToggleKeepsNotifySidebarSizing(t *testing.T) {
 	clientKey := "/dev/pts/projmux-test-native-notify"
-	marker := popupMarkerPath(sanitizePopupKey(clientKey), "notify-sidebar")
-	_ = os.Remove(marker)
-	defer os.Remove(marker)
-
-	runner := &recordingTmuxRunner{formats: map[string]string{
-		"#{client_tty}":    clientKey,
-		"#{pane_id}":       "%1",
-		"#{client_width}":  "200",
-		"#{client_height}": "50",
-	}}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-	}
+	fixture := newTmuxPopupToggleFixture(t, clientKey, "notify-sidebar")
+	runner, cmd := fixture.runner, fixture.command
 
 	if err := cmd.Run([]string{"popup-toggle", "notify-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -920,22 +908,11 @@ func TestAppRunTmuxPopupToggleOpensNotifySidebarOnRight(t *testing.T) {
 			t.Parallel()
 
 			clientKey := "/dev/pts/projmux-test-notify-" + tt.name
-			marker := popupMarkerPath(sanitizePopupKey(clientKey), "notify-sidebar")
-			_ = os.Remove(marker)
-			defer os.Remove(marker)
-
-			runner := &recordingTmuxRunner{formats: map[string]string{
-				"#{client_tty}":                    clientKey,
-				"#{pane_id}":                       "%1",
-				"#S":                               "work",
-				"#{client_width}":                  "200",
-				"#{client_height}":                 "50",
-				"#{@projmux_statusbar_decoration}": tt.decoration,
-			}}
-			cmd := &tmuxCommand{
-				runner:     runner,
-				executable: func() (string, error) { return "/tmp/proj mux/bin/projmux", nil },
-			}
+			fixture := newTmuxPopupToggleFixture(t, clientKey, "notify-sidebar")
+			runner, cmd := fixture.runner, fixture.command
+			runner.formats["#S"] = "work"
+			runner.formats["#{@projmux_statusbar_decoration}"] = tt.decoration
+			cmd.executable = func() (string, error) { return "/tmp/proj mux/bin/projmux", nil }
 
 			if err := cmd.Run([]string{"popup-toggle", "notify-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("Run() error = %v", err)
@@ -974,20 +951,10 @@ func TestAppRunTmuxPopupToggleClosesNotifySidebarWithMarkerPane(t *testing.T) {
 	t.Parallel()
 
 	clientKey := "/dev/pts/projmux-test-notify-close"
-	marker := popupMarkerPath(sanitizePopupKey(clientKey), "notify-sidebar")
-	_ = os.Remove(marker)
-	defer os.Remove(marker)
-	if err := os.WriteFile(marker, []byte("%original\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runner := &recordingTmuxRunner{formats: map[string]string{
-		"#{client_tty}": clientKey,
-		"#{pane_id}":    "%active",
-	}}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-	}
+	fixture := newTmuxPopupToggleFixture(t, clientKey, "notify-sidebar")
+	marker, runner, cmd := fixture.marker, fixture.runner, fixture.command
+	fixture.writeMarker(t, "%original\n")
+	runner.formats["#{pane_id}"] = "%active"
 
 	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "notify-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -1053,20 +1020,8 @@ func TestAppRunTmuxPopupToggleOpensRecentWindows(t *testing.T) {
 	t.Parallel()
 
 	clientKey := "/dev/pts/projmux-test-recent-windows"
-	marker := popupMarkerPath(sanitizePopupKey(clientKey), "recent-windows")
-	_ = os.Remove(marker)
-	defer os.Remove(marker)
-
-	runner := &recordingTmuxRunner{formats: map[string]string{
-		"#{client_tty}":    clientKey,
-		"#{pane_id}":       "%1",
-		"#{client_width}":  "200",
-		"#{client_height}": "50",
-	}}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-	}
+	fixture := newTmuxPopupToggleFixture(t, clientKey, "recent-windows")
+	marker, runner, cmd := fixture.marker, fixture.runner, fixture.command
 
 	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "recent-windows"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -1105,19 +1060,14 @@ func TestAppRunTmuxPopupToggleResourcesIsClientScopedAndIsolated(t *testing.T) {
 	t.Parallel()
 	clientKey := "/dev/pts/projmux-test-resources"
 	otherClient := "/dev/pts/projmux-test-resources-other"
-	marker := popupMarkerPath(sanitizePopupKey(clientKey), resourceInspectorPopupMode)
 	otherMarker := popupMarkerPath(sanitizePopupKey(otherClient), resourceInspectorPopupMode)
-	_ = os.Remove(marker)
 	_ = os.Remove(otherMarker)
-	defer os.Remove(marker)
 	defer os.Remove(otherMarker)
 	if err := os.WriteFile(otherMarker, []byte("%other\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	runner := &recordingTmuxRunner{formats: map[string]string{
-		"#{client_tty}": clientKey, "#{pane_id}": "%1", "#{client_width}": "200", "#{client_height}": "50",
-	}}
-	cmd := &tmuxCommand{runner: runner, executable: func() (string, error) { return "/tmp/projmux", nil }}
+	fixture := newTmuxPopupToggleFixture(t, clientKey, resourceInspectorPopupMode)
+	runner, cmd := fixture.runner, fixture.command
 	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, resourceInspectorPopupMode}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
@@ -1149,20 +1099,10 @@ func TestAppRunTmuxPopupToggleClosesRecentWindowsWithClientMarker(t *testing.T) 
 	t.Parallel()
 
 	clientKey := "/dev/pts/projmux-test-recent-close"
-	marker := popupMarkerPath(sanitizePopupKey(clientKey), "recent-windows")
-	_ = os.Remove(marker)
-	defer os.Remove(marker)
-	if err := os.WriteFile(marker, []byte("%original\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runner := &recordingTmuxRunner{formats: map[string]string{
-		"#{client_tty}": clientKey,
-		"#{pane_id}":    "%active",
-	}}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-	}
+	fixture := newTmuxPopupToggleFixture(t, clientKey, "recent-windows")
+	marker, runner, cmd := fixture.marker, fixture.runner, fixture.command
+	fixture.writeMarker(t, "%original\n")
+	runner.formats["#{pane_id}"] = "%active"
 
 	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "recent-windows"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -1248,20 +1188,11 @@ func TestAppRunTmuxPopupToggleClosesExistingMarkerWithClientOverride(t *testing.
 	t.Parallel()
 
 	clientKey := "/dev/pts/original-client"
-	marker := popupMarkerPath(sanitizePopupKey(clientKey), "ai-split-picker")
-	_ = os.Remove(marker)
-	defer os.Remove(marker)
-	if err := os.WriteFile(marker, []byte("%original\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runner := &recordingTmuxRunner{formats: map[string]string{
-		"#{client_tty}": "/dev/pts/popup-client",
-		"#{pane_id}":    "%popup",
-	}}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-	}
+	fixture := newTmuxPopupToggleFixture(t, clientKey, "ai-split-picker")
+	marker, runner, cmd := fixture.marker, fixture.runner, fixture.command
+	fixture.writeMarker(t, "%original\n")
+	runner.formats["#{client_tty}"] = "/dev/pts/popup-client"
+	runner.formats["#{pane_id}"] = "%popup"
 
 	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "ai-split-picker-right"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -1292,26 +1223,12 @@ func TestAppRunTmuxPopupToggleRecoversStaleSettingsMarkerAndReopens(t *testing.T
 			t.Parallel()
 
 			clientKey := "/dev/pts/projmux-test-stale-settings-" + sanitizePopupKey(tt.name)
-			marker := popupMarkerPath(sanitizePopupKey(clientKey), "ai-split-settings")
-			_ = os.Remove(marker)
-			defer os.Remove(marker)
-			if err := os.WriteFile(marker, []byte("%20\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			runner := &recordingTmuxRunner{
-				formats: map[string]string{
-					"#{client_tty}":    clientKey,
-					"#{pane_id}":       "%active",
-					"#{client_width}":  "200",
-					"#{client_height}": "50",
-				},
-				errors: map[string]error{
-					recordedTmuxCallKey("tmux", "display-popup", "-t", "%20", "-C"): tt.err,
-				},
-			}
-			cmd := &tmuxCommand{
-				runner:     runner,
-				executable: func() (string, error) { return "/tmp/projmux", nil },
+			fixture := newTmuxPopupToggleFixture(t, clientKey, "ai-split-settings")
+			marker, runner, cmd := fixture.marker, fixture.runner, fixture.command
+			fixture.writeMarker(t, "%20\n")
+			runner.formats["#{pane_id}"] = "%active"
+			runner.errors = map[string]error{
+				recordedTmuxCallKey("tmux", "display-popup", "-t", "%20", "-C"): tt.err,
 			}
 
 			if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "ai-split-settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -1350,24 +1267,12 @@ func TestAppRunTmuxPopupToggleKeepsGenuineCloseFailure(t *testing.T) {
 	t.Parallel()
 
 	clientKey := "/dev/pts/projmux-test-settings-close-failure"
-	marker := popupMarkerPath(sanitizePopupKey(clientKey), "ai-split-settings")
-	_ = os.Remove(marker)
-	defer os.Remove(marker)
-	if err := os.WriteFile(marker, []byte("%20\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runner := &recordingTmuxRunner{
-		formats: map[string]string{
-			"#{client_tty}": clientKey,
-			"#{pane_id}":    "%active",
-		},
-		errors: map[string]error{
-			recordedTmuxCallKey("tmux", "display-popup", "-t", "%20", "-C"): errors.New("tmux display-popup -t %20 -C: exit status 2: bad command"),
-		},
-	}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
+	fixture := newTmuxPopupToggleFixture(t, clientKey, "ai-split-settings")
+	marker, runner, cmd := fixture.marker, fixture.runner, fixture.command
+	fixture.writeMarker(t, "%20\n")
+	runner.formats["#{pane_id}"] = "%active"
+	runner.errors = map[string]error{
+		recordedTmuxCallKey("tmux", "display-popup", "-t", "%20", "-C"): errors.New("tmux display-popup -t %20 -C: exit status 2: bad command"),
 	}
 
 	if err := cmd.Run([]string{"popup-toggle", "--client", clientKey, "ai-split-settings"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil {
@@ -1386,16 +1291,9 @@ func TestAppRunTmuxPopupToggleKeepsGenuineCloseFailure(t *testing.T) {
 func TestAppRunTmuxPopupToggleTreatsClosedPopupAsNoOp(t *testing.T) {
 	t.Parallel()
 
-	runner := &recordingTmuxRunner{
-		formats: map[string]string{
-			"#{client_tty}": "/dev/pts/projmux-test-close",
-		},
-		err: errors.New("tmux display-popup: exit status 129"),
-	}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-	}
+	fixture := newTmuxPopupToggleFixture(t, "/dev/pts/projmux-test-close", "session-popup")
+	cmd := fixture.command
+	fixture.runner.err = errors.New("tmux display-popup: exit status 129")
 
 	if err := cmd.Run([]string{"popup-toggle", "session-popup"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v, want nil", err)
@@ -1606,27 +1504,13 @@ func TestBuildPopupToggleCarriesSidebarAnchorAsTypedSwitchArgumentOnly(t *testin
 func TestAppRunTmuxPopupTogglePropagatesLegacySessionizerRoots(t *testing.T) {
 	t.Parallel()
 
-	marker := popupMarkerPath(sanitizePopupKey("/dev/pts/projmux-test-legacy-roots"), "sessionizer-sidebar")
-	_ = os.Remove(marker)
-	defer os.Remove(marker)
-
-	runner := &recordingTmuxRunner{formats: map[string]string{
-		"#{client_tty}":        "/dev/pts/projmux-test-legacy-roots",
-		"#{pane_id}":           "%1",
-		"#S":                   "work",
-		"#{pane_current_path}": "/tmp/work tree",
-		"#{client_width}":      "200",
-		"#{client_height}":     "50",
-	}}
-	cmd := &tmuxCommand{
-		runner:     runner,
-		executable: func() (string, error) { return "/tmp/projmux", nil },
-		lookupEnv: func(name string) string {
-			if name == "TMUX_SESSIONIZER_ROOTS" {
-				return "/legacy/projects"
-			}
-			return ""
-		},
+	fixture := newTmuxPopupToggleFixture(t, "/dev/pts/projmux-test-legacy-roots", "sessionizer-sidebar")
+	runner, cmd := fixture.runner, fixture.command
+	cmd.lookupEnv = func(name string) string {
+		if name == "TMUX_SESSIONIZER_ROOTS" {
+			return "/legacy/projects"
+		}
+		return ""
 	}
 
 	if err := cmd.Run([]string{"popup-toggle", "sessionizer-sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -2852,40 +2736,22 @@ func TestTmuxAppShellTitlePolicyDisablesProgramWindowRename(t *testing.T) {
 	}
 }
 
-func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing.T) {
-	t.Parallel()
+type tmuxAutosaveSessionStateFixture struct {
+	runner   *recordingTmuxRunner
+	command  *tmuxCommand
+	home     string
+	storeDir string
+}
 
-	now := time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC)
-	dir := t.TempDir()
-	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
-	paneFormat := strings.Join([]string{
-		"#{window_index}",
-		"#{pane_index}",
-		"#{pane_title}",
-		"#{@projmux_pane_label}",
-		"#{?pane_active,1,0}",
-		"#{pane_current_path}",
-		"#{@projmux_recipe_kind}",
-		"#{@projmux_startup_command}",
-		"#{@projmux_ai_managed}",
-		"#{@projmux_ai_agent}",
-		"#{@projmux_ai_topic}",
-		"#{@projmux_ai_topic_manual}",
-		"#{@projmux_ai_resume_id}",
-		"#{@projmux_ai_resume_source}",
-		"#{@projmux_ai_resume_updated_at}",
-	}, "\x1f")
-	runner := &recordingTmuxRunner{
-		outputs: map[string]string{
-			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):              "workspace\n",
-			strings.Join([]string{"tmux", "list-windows", "-t", "workspace", "-F", windowFormat}, "\x00"):   "0\x1fshell\x1flayout\n",
-			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"): "0\x1f0\x1fshell\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n",
-		},
-	}
-	cmd := &tmuxCommand{
+func newTmuxAutosaveSessionStateFixture(t *testing.T, runner *recordingTmuxRunner) *tmuxAutosaveSessionStateFixture {
+	t.Helper()
+
+	home := t.TempDir()
+	storeDir := t.TempDir()
+	command := &tmuxCommand{
 		runner:  runner,
-		now:     func() time.Time { return now },
-		homeDir: func() (string, error) { return t.TempDir(), nil },
+		now:     func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
+		homeDir: func() (string, error) { return home, nil },
 		lookupEnv: func(name string) string {
 			if name == sessionStateAutosaveEnv {
 				return "on"
@@ -2893,9 +2759,23 @@ func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing
 			return ""
 		},
 		sessionStore: func() (sessionstate.Store, error) {
-			return sessionstate.NewStore(dir), nil
+			return sessionstate.NewStore(storeDir), nil
 		},
 	}
+	return &tmuxAutosaveSessionStateFixture{
+		runner:   runner,
+		command:  command,
+		home:     home,
+		storeDir: storeDir,
+	}
+}
+
+func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing.T) {
+	t.Parallel()
+
+	runner := autosaveCaptureRunner("workspace", "/tmp")
+	fixture := newTmuxAutosaveSessionStateFixture(t, runner)
+	dir, cmd := fixture.storeDir, fixture.command
 
 	if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -2916,7 +2796,6 @@ func TestTmuxAutosaveSessionStateForceCapturesAndStoresCurrentSession(t *testing
 func TestTmuxAutosaveSessionStateSkipsWhenDebounceGateIsFresh(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC)
 	runner := &recordingTmuxRunner{
 		outputs: map[string]string{
 			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):                                         "workspace\n",
@@ -2924,18 +2803,7 @@ func TestTmuxAutosaveSessionStateSkipsWhenDebounceGateIsFresh(t *testing.T) {
 			strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_autosave_at}"}, "\x00"): "1778555030\n",
 		},
 	}
-	cmd := &tmuxCommand{
-		runner:  runner,
-		now:     func() time.Time { return now },
-		homeDir: func() (string, error) { return t.TempDir(), nil },
-		lookupEnv: func(name string) string {
-			if name == sessionStateAutosaveEnv {
-				return "on"
-			}
-			return ""
-		},
-		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
-	}
+	cmd := newTmuxAutosaveSessionStateFixture(t, runner).command
 
 	if err := cmd.Run([]string{"autosave-session-state"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -2948,55 +2816,24 @@ func TestTmuxAutosaveSessionStateSkipsWhenDebounceGateIsFresh(t *testing.T) {
 func TestTmuxAutosaveSessionStateUsesConfiguredInterval(t *testing.T) {
 	t.Parallel()
 
-	now := time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC)
 	configHome := t.TempDir()
 	paths := config.DefaultPaths(configHome, t.TempDir())
 	if err := config.SaveSessionStateDurationFile(paths.SessionStateAutosaveIntervalFile(), 10*time.Second); err != nil {
 		t.Fatalf("SaveSessionStateDurationFile() error = %v", err)
 	}
-	dir := t.TempDir()
-	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
-	paneFormat := strings.Join([]string{
-		"#{window_index}",
-		"#{pane_index}",
-		"#{pane_title}",
-		"#{@projmux_pane_label}",
-		"#{?pane_active,1,0}",
-		"#{pane_current_path}",
-		"#{@projmux_recipe_kind}",
-		"#{@projmux_startup_command}",
-		"#{@projmux_ai_managed}",
-		"#{@projmux_ai_agent}",
-		"#{@projmux_ai_topic}",
-		"#{@projmux_ai_topic_manual}",
-		"#{@projmux_ai_resume_id}",
-		"#{@projmux_ai_resume_source}",
-		"#{@projmux_ai_resume_updated_at}",
-	}, "\x1f")
-	runner := &recordingTmuxRunner{
-		outputs: map[string]string{
-			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"):                                         "workspace\n",
-			strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_source}"}, "\x00"):      "\n",
-			strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_autosave_at}"}, "\x00"): "1778555030\n",
-			strings.Join([]string{"tmux", "list-windows", "-t", "workspace", "-F", windowFormat}, "\x00"):                              "0\x1fshell\x1flayout\n",
-			strings.Join([]string{"tmux", "list-panes", "-s", "-t", "workspace", "-F", paneFormat}, "\x00"):                            "0\x1f0\x1fshell\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\n",
-		},
-	}
-	cmd := &tmuxCommand{
-		runner:  runner,
-		now:     func() time.Time { return now },
-		homeDir: func() (string, error) { return t.TempDir(), nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_CONFIG_HOME":
-				return configHome
-			case sessionStateAutosaveEnv:
-				return "on"
-			default:
-				return ""
-			}
-		},
-		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(dir), nil },
+	runner := autosaveCaptureRunner("workspace", "/tmp")
+	runner.outputs[strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_autosave_at}"}, "\x00")] = "1778555030\n"
+	fixture := newTmuxAutosaveSessionStateFixture(t, runner)
+	dir, cmd := fixture.storeDir, fixture.command
+	cmd.lookupEnv = func(name string) string {
+		switch name {
+		case "XDG_CONFIG_HOME":
+			return configHome
+		case sessionStateAutosaveEnv:
+			return "on"
+		default:
+			return ""
+		}
 	}
 
 	if err := cmd.Run([]string{"autosave-session-state"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -3020,18 +2857,7 @@ func TestTmuxAutosaveSessionStateSkipsFreshSource(t *testing.T) {
 			strings.Join([]string{"tmux", "display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_source}"}, "\x00"): "fresh\n",
 		},
 	}
-	cmd := &tmuxCommand{
-		runner:  runner,
-		now:     func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
-		homeDir: func() (string, error) { return t.TempDir(), nil },
-		lookupEnv: func(name string) string {
-			if name == sessionStateAutosaveEnv {
-				return "on"
-			}
-			return ""
-		},
-		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
-	}
+	cmd := newTmuxAutosaveSessionStateFixture(t, runner).command
 
 	if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
@@ -3053,17 +2879,12 @@ func TestTmuxAutosaveSessionStateSkipsWhenDisabled(t *testing.T) {
 			strings.Join([]string{"tmux", "display-message", "-p", "#{session_name}"}, "\x00"): "workspace\n",
 		},
 	}
-	cmd := &tmuxCommand{
-		runner:  runner,
-		now:     func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
-		homeDir: func() (string, error) { return t.TempDir(), nil },
-		lookupEnv: func(name string) string {
-			if name == sessionStateAutosaveEnv {
-				return "off"
-			}
-			return ""
-		},
-		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
+	cmd := newTmuxAutosaveSessionStateFixture(t, runner).command
+	cmd.lookupEnv = func(name string) string {
+		if name == sessionStateAutosaveEnv {
+			return "off"
+		}
+		return ""
 	}
 
 	if err := cmd.Run([]string{"autosave-session-state"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -3095,28 +2916,20 @@ func TestTmuxAutosaveSessionStateProjectOverridePrecedence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			home := t.TempDir()
-			dir := filepath.Join(home, "state")
+			runner := autosaveCaptureRunner("workspace", "/repo")
+			fixture := newTmuxAutosaveSessionStateFixture(t, runner)
+			home, dir, cmd := fixture.home, fixture.storeDir, fixture.command
 			saveGlobalAutosaveForTest(t, home, tc.global)
 			saveProjectAutosaveForTest(t, home, "workspace", tc.project)
-			runner := autosaveCaptureRunner("workspace", "/repo")
-			cmd := &tmuxCommand{
-				runner:  runner,
-				now:     func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
-				homeDir: func() (string, error) { return home, nil },
-				lookupEnv: func(name string) string {
-					switch name {
-					case "XDG_CONFIG_HOME":
-						return filepath.Join(home, "config")
-					case sessionStateAutosaveEnv:
-						return tc.env
-					default:
-						return ""
-					}
-				},
-				sessionStore: func() (sessionstate.Store, error) {
-					return sessionstate.NewStore(dir), nil
-				},
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case "XDG_CONFIG_HOME":
+					return filepath.Join(home, "config")
+				case sessionStateAutosaveEnv:
+					return tc.env
+				default:
+					return ""
+				}
 			}
 
 			if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -3139,23 +2952,15 @@ func TestTmuxAutosaveSessionStateProjectOverridePrecedence(t *testing.T) {
 func TestTmuxAutosaveSessionStateNoProjectSettingUsesGlobalFallback(t *testing.T) {
 	t.Parallel()
 
-	home := t.TempDir()
-	dir := filepath.Join(home, "state")
-	saveGlobalAutosaveForTest(t, home, config.SessionStateToggleOn)
 	runner := autosaveCaptureRunner("workspace", "/repo")
-	cmd := &tmuxCommand{
-		runner:  runner,
-		now:     func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
-		homeDir: func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == "XDG_CONFIG_HOME" {
-				return filepath.Join(home, "config")
-			}
-			return ""
-		},
-		sessionStore: func() (sessionstate.Store, error) {
-			return sessionstate.NewStore(dir), nil
-		},
+	fixture := newTmuxAutosaveSessionStateFixture(t, runner)
+	home, dir, cmd := fixture.home, fixture.storeDir, fixture.command
+	saveGlobalAutosaveForTest(t, home, config.SessionStateToggleOn)
+	cmd.lookupEnv = func(name string) string {
+		if name == "XDG_CONFIG_HOME" {
+			return filepath.Join(home, "config")
+		}
+		return ""
 	}
 
 	if err := cmd.Run([]string{"autosave-session-state", "--force"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
@@ -3170,13 +2975,8 @@ func TestTmuxAutosaveSessionStateQuietSwallowsRuntimeErrors(t *testing.T) {
 	t.Parallel()
 
 	runner := &recordingTmuxRunner{err: errors.New("tmux unavailable")}
-	cmd := &tmuxCommand{
-		runner:       runner,
-		now:          func() time.Time { return time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC) },
-		homeDir:      func() (string, error) { return t.TempDir(), nil },
-		lookupEnv:    func(string) string { return "" },
-		sessionStore: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
-	}
+	cmd := newTmuxAutosaveSessionStateFixture(t, runner).command
+	cmd.lookupEnv = func(string) string { return "" }
 
 	var stderr bytes.Buffer
 	if err := cmd.Run([]string{"autosave-session-state", "--quiet"}, &bytes.Buffer{}, &stderr); err != nil {
