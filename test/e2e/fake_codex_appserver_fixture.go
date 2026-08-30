@@ -359,6 +359,7 @@ func nextStartedThread() (string, error) {
 		return "", err
 	}
 	path := filepath.Join(dir, "started-threads")
+	// #nosec G304 -- fixtureStateDir validates the private isolated root and started-threads is a fixed leaf under it.
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return "", err
