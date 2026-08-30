@@ -258,7 +258,7 @@ func TestSchemaVersion2WindowShapeNormalizationTable(t *testing.T) {
 
 func TestIntermediateV2NormalizationPreservesIdentityOwnerAndSessionRefs(t *testing.T) {
 	t.Parallel()
-	want, err := os.ReadFile("testdata/registry-v011-v2-bytes.golden")
+	want, err := os.ReadFile("testdata/registry-v011-v3-bytes.golden")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -281,7 +281,7 @@ func TestIntermediateV2NormalizationPreservesIdentityOwnerAndSessionRefs(t *test
 
 func TestIntermediateV2ReaderFailsClosedOnFinalV2WithoutProducingBytes(t *testing.T) {
 	t.Parallel()
-	finalBytes, err := os.ReadFile("testdata/registry-v010-v2-bytes.golden")
+	finalBytes, err := os.ReadFile("testdata/registry-v010-v3-bytes.golden")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,6 +367,11 @@ func rewriteWindowShape(t *testing.T, source []byte, shape string) []byte {
 		t.Fatal(err)
 	}
 	windows := document["windows"].([]any)
+	if shape != "final" {
+		// These variants model the unpublished schema-v2 Window writer. The
+		// canonical golden is now v3, whose reader must reject legacy authority.
+		document["schemaVersion"] = float64(2)
+	}
 	for index, item := range windows {
 		spec := item.(map[string]any)["spec"].(map[string]any)
 		anchor := spec["anchorPaneRef"]

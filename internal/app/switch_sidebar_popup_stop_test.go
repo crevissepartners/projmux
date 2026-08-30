@@ -143,6 +143,12 @@ func sidebarPopupStopFixture(t *testing.T, projectDir, socketPath, serverPID, an
 			lookupEnv: lookup,
 		},
 	}
+	stopRegistry := &fakeResourceStore{
+		registry: runtimeFixtureRegistry(),
+		dirs:     map[string]bool{"/src/alpha": true},
+		now:      resourceFixtureClock,
+	}
+	cmd.managedStopStore = stopRegistry.store()
 	return cmd, stop, executor
 }
 

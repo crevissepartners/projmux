@@ -767,6 +767,9 @@ func resourceTerminationCell(receipt *coremetadata.TerminationEvidence, now time
 	if summary == "" {
 		return ""
 	}
+	if generation := strings.TrimSpace(receipt.Generation); generation != "" {
+		summary += " generation=" + generation
+	}
 	if now.IsZero() || receipt.ObservedAt.IsZero() {
 		return summary
 	}

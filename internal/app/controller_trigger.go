@@ -996,7 +996,7 @@ func (r *controllerTriggerRunner) awaitRuntimeExitTerminationReceipts(ctx contex
 			stored := pane.Status.LastTermination
 			if stored != nil && stored.Generation == pane.Status.Activation.Generation {
 				if stored.Source == coremetadata.TerminationSourceSupervisor ||
-					stored.Classification == coremetadata.TerminationIntentional {
+					stored.Source == coremetadata.TerminationSourceControlAction {
 					continue
 				}
 				// A racing runtime-created pass may already have settled the

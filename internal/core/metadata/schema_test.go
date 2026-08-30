@@ -26,7 +26,7 @@ func migrationGoldenEnvironment() MigrationEnvironment {
 	}
 }
 
-func TestRegistryV2GenerationMigrationGoldens(t *testing.T) {
+func TestRegistryGenerationMigrationGoldens(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		generation   string
@@ -35,9 +35,9 @@ func TestRegistryV2GenerationMigrationGoldens(t *testing.T) {
 		wantRepairs  int
 		wantLosses   int
 	}{
-		{generation: "v010", sourceSHA256: "04a5d550f60df7d6b45e5ae80ac54667d91edd7506773f4a38653b54247b765b", goldenSHA256: "155a612242459c33ad83d9a5973f853715397b6cb3582556c9cba70e65e2f182", wantRepairs: 2},
-		{generation: "v011", sourceSHA256: "d31bbeee815af32d8bc940d99c1bf8daa17f84b63844c524b6ccd0cdd32893d1", goldenSHA256: "f601d61a599e89fbfd4a1698c1d1c2f2471994635efd8262d02b1670e035517a", wantRepairs: 3, wantLosses: 1},
-		{generation: "v012", sourceSHA256: "9424984258a3977999cf8b58ee32e69f69606162c32780fbb41d6776712bbb4b", goldenSHA256: "ea3a8f3aaf26e257849162e2195e2d84e006c3b23fa785a1a0432722eafa2535", wantRepairs: 4, wantLosses: 1},
+		{generation: "v010", sourceSHA256: "04a5d550f60df7d6b45e5ae80ac54667d91edd7506773f4a38653b54247b765b", goldenSHA256: "14d1c828c0f31ea057267301770294130ee7287faf10190c43cb5bb6d4d8f07d", wantRepairs: 2},
+		{generation: "v011", sourceSHA256: "d31bbeee815af32d8bc940d99c1bf8daa17f84b63844c524b6ccd0cdd32893d1", goldenSHA256: "75ed536e2e8f50338a3b3426d02c8210758ff71d59b8522fa98155799d07485f", wantRepairs: 3, wantLosses: 1},
+		{generation: "v012", sourceSHA256: "9424984258a3977999cf8b58ee32e69f69606162c32780fbb41d6776712bbb4b", goldenSHA256: "40d346279f3164e85e085b7fb72ef5214c339d0910cfce52d13ba018a69dc683", wantRepairs: 4, wantLosses: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.generation, func(t *testing.T) {
@@ -58,7 +58,7 @@ func TestRegistryV2GenerationMigrationGoldens(t *testing.T) {
 			if err != nil {
 				t.Fatalf("migrate: %v", err)
 			}
-			if !ran || report.FromVersion != 1 || report.ToVersion != 2 {
+			if !ran || report.FromVersion != 1 || report.ToVersion != SchemaVersion {
 				t.Fatalf("migration = ran:%t report:%+v", ran, report)
 			}
 			if len(report.Repairs) != tt.wantRepairs || report.InformationLossCount() != tt.wantLosses {
@@ -70,7 +70,7 @@ func TestRegistryV2GenerationMigrationGoldens(t *testing.T) {
 			assertExistingIdentityAndAgentPointersPreserved(t, before, migrated)
 
 			got := []byte(mustJSON(t, migrated) + "\n")
-			goldenPath := "testdata/registry-" + tt.generation + "-v2-bytes.golden"
+			goldenPath := "testdata/registry-" + tt.generation + "-v3-bytes.golden"
 			want, err := os.ReadFile(goldenPath)
 			if err != nil {
 				t.Fatalf("read golden %s: %v\n--- got ---\n%s", goldenPath, err, got)
@@ -163,7 +163,7 @@ func TestV1MigrationCreatesCanonicalShellChainForAZeroWindowProject(t *testing.T
 
 func TestValidV2CanonicalAnchorRoundTripsWithZeroDiff(t *testing.T) {
 	t.Parallel()
-	data, err := os.ReadFile("testdata/registry-v010-v2-bytes.golden")
+	data, err := os.ReadFile("testdata/registry-v010-v3-bytes.golden")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,6 +184,33 @@ func TestValidV2CanonicalAnchorRoundTripsWithZeroDiff(t *testing.T) {
 	}
 }
 
+func TestCanonicalV2MigratesToV3WithoutInformationLoss(t *testing.T) {
+	t.Parallel()
+	current, err := os.ReadFile("testdata/registry-v010-v3-bytes.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v2 := bytes.Replace(current, []byte(`"schemaVersion": 3`), []byte(`"schemaVersion": 2`), 1)
+	var source Registry
+	if err := json.Unmarshal(v2, &source); err != nil {
+		t.Fatal(err)
+	}
+	migrated, ran, report, err := MigrateRegistryWithEnvironment(nil, source, MigrationEnvironment{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ran || report.FromVersion != 2 || report.ToVersion != 3 || len(report.Repairs) != 0 || report.InformationLossCount() != 0 {
+		t.Fatalf("v2 -> v3 migration = ran:%t report:%s", ran, report.String())
+	}
+	if got := []byte(mustJSON(t, migrated) + "\n"); !bytes.Equal(got, current) {
+		t.Fatalf("lossless v2 -> v3 changed more than the envelope:\n--- got ---\n%s\n--- want ---\n%s", got, current)
+	}
+	again, ranAgain, secondReport, err := MigrateRegistryWithEnvironment(nil, migrated, MigrationEnvironment{})
+	if err != nil || ranAgain || len(secondReport.Repairs) != 0 || !bytes.Equal([]byte(mustJSON(t, again)+"\n"), current) {
+		t.Fatalf("v3 repeat = ran:%t report:%s err:%v", ranAgain, secondReport.String(), err)
+	}
+}
+
 func TestIntermediateV2NormalizesDirectlyToFinalV2GoldenAndSecondPassIsZeroByte(t *testing.T) {
 	t.Parallel()
 	sourceBytes, err := os.ReadFile("testdata/registry-v010-intermediate-v2-source.json")
@@ -199,14 +226,14 @@ func TestIntermediateV2NormalizesDirectlyToFinalV2GoldenAndSecondPassIsZeroByte(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ran || report.FromVersion != 2 || report.ToVersion != 2 || len(report.Repairs) != 1 {
+	if !ran || report.FromVersion != 2 || report.ToVersion != SchemaVersion || len(report.Repairs) != 1 {
 		t.Fatalf("same-version normalization = ran:%t report:%s", ran, report.String())
 	}
 	if err := normalized.Validate(); err != nil {
 		t.Fatalf("normalized Registry: %v", err)
 	}
 	assertExistingIdentityAndAgentPointersPreserved(t, before, normalized)
-	want, err := os.ReadFile("testdata/registry-v010-v2-bytes.golden")
+	want, err := os.ReadFile("testdata/registry-v010-v3-bytes.golden")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,11 +424,11 @@ func testMigrateV0ToV1(reg *Registry, _ MigrationEnvironment, _ *MigrationReport
 	return nil
 }
 
-func TestProductionShipsExactlyTheV1ToV2MigrationStep(t *testing.T) {
+func TestProductionShipsTheV1ToV2AndLosslessV2ToV3MigrationSteps(t *testing.T) {
 	t.Parallel()
 
-	if len(productionMigrations) != 1 || productionMigrations[1] == nil {
-		t.Fatalf("production migrations = %v, want exactly the v1 -> v2 step", productionMigrations)
+	if len(productionMigrations) != 2 || productionMigrations[1] == nil || productionMigrations[2] == nil {
+		t.Fatalf("production migrations = %v, want v1 -> v2 and v2 -> v3 steps", productionMigrations)
 	}
 }
 
@@ -458,7 +485,7 @@ func TestARegisteredOlderStepTurnsRejectionIntoMigrationWithoutChangingProductio
 		t.Fatalf("classify with an injected step = %s, want migrate", action)
 	}
 	// Registering a step in a private set never mutates the production set.
-	if len(productionMigrations) != 1 || productionMigrations[1] == nil {
+	if len(productionMigrations) != 2 || productionMigrations[1] == nil || productionMigrations[2] == nil {
 		t.Fatalf("production migrations were mutated: %v", productionMigrations)
 	}
 }

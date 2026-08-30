@@ -656,8 +656,10 @@ Registry file and schema:
   bounded retry and stale-lock breaking, matching the notify queue and
   recent-windows stores. Explicit Registry repair uses its own recovery lock;
   see the recovery boundary below.
-- The envelope carries `schemaVersion: 2`. Version 1 is the first Registry
-  envelope projmux wrote and is the only older version this build migrates.
+- The envelope carries `schemaVersion: 3`. Version 1 is the first Registry
+  envelope projmux wrote; this build migrates v1 through v2 and then performs
+  the lossless v2 → v3 envelope advance that admits Project-stop
+  `interrupted/control-action` evidence.
 - Everything else fails closed: the file is refused as unreadable and **no
   write happens at all** — no rewrite, no backup, no staged temp file. This
   covers a **newer** schemaVersion (which would destroy state a newer build
@@ -671,20 +673,20 @@ Registry file and schema:
   registry yet" case **only before the first successful write**; see the durable
   envelope below. Only a file with actual content and no usable `schemaVersion`
   is refused as unknown.
-- A normal locked `Load` of v1 runs the production 1 → 2 migration, validates
-  the repaired graph, writes the versioned backup, and publishes the v2 bytes
-  through the existing temp-file atomic replace. A failed repair leaves the v1
-  source bytes unchanged. Every successful first migrator (`Load`, `Update`,
-  `UpdateConvergent`, or explicit `Migrate`) also atomically publishes a 0600
-  `<exact-backup>.migration-report.json` beside the versioned backup before the
-  Registry replace. That durable evidence records the exact absolute backup
-  path, SHA-256 of its byte-identical v1 contents, version pair, repair/loss
+- A normal locked `Load` of v1 or v2 runs the production migration chain,
+  validates the repaired graph, writes the versioned backup, and publishes the
+  v3 bytes through the existing temp-file atomic replace. A failed migration
+  leaves the source bytes unchanged. Every successful first migrator (`Load`,
+  `Update`, `UpdateConvergent`, or explicit `Migrate`) also atomically publishes
+  a 0600 `<exact-backup>.migration-report.json` beside the versioned backup
+  before the Registry replace. That durable evidence records the exact absolute backup
+  path, SHA-256 of its byte-identical source contents, version pair, repair/loss
   counts, and every repair detail. It is outside rolling recovery retention.
   A failed migration removes any staged/published report before returning while
   leaving the source bytes unchanged. `LoadWithMigrationResult` and `Migrate`
   additionally return both exact paths from the same locked transaction. A
-  second pass sees v2 and writes neither Registry, backup, nor report bytes. An
-  existing invalid v2 document is validated and refused byte-identically even
+  second pass sees v3 and writes neither Registry, backup, nor report bytes. An
+  existing invalid v3 document is validated and refused byte-identically even
   when explicit `Migrate` has no version step to run.
   Explicit read-only inspection migrates only its returned in-memory view and
   never publishes it.
