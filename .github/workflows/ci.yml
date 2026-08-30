@@ -351,6 +351,12 @@ jobs:
 
       - name: Run e2e Linux shard
         env:
+          # Across the 57-run Phase 5 evidence window, the slowest shard was
+          # fixture-3 (p50 167s, p95 177s, max 201s); the widest scenario tail
+          # was L12 (p50 7.185s, p95 8.081s, max 10.188s, max/p50 1.42).
+          # Scale 2 covers the measured wait-bearing tail without adopting the
+          # earlier unmeasured 3-5x suggestion; named timeouts still fail closed.
+          E2E_WAIT_SCALE: "2"
           PROJMUX_E2E_LINUX_SHARD: ${{ matrix.shard }}
         run: make test-e2e
 
@@ -401,6 +407,8 @@ jobs:
 
       - name: Run e2e suite
         env:
+          # Keep every required E2E child on the same measured wait policy.
+          E2E_WAIT_SCALE: "2"
           PROJMUX_E2E_SUITE: ${{ matrix.suite }}
         run: make test-e2e
 

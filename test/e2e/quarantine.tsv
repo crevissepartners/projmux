@@ -1,0 +1,4 @@
+# scenario_id	owner	deadline	observed_flakes
+# Phase 5 evidence (57 CI runs, 1,128 scenario/binary groups) found no scenario
+# with three observed flakes. The quarantine set is therefore intentionally
+# empty; entries require evidence, an owner, and an ISO-8601 deadline.

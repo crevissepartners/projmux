@@ -1,0 +1,27 @@
+# scenario_id	attempts	observed_flakes
+# Window: CI runs with evidence since 2026-08-29T05:38Z through run 33293818203.
+# Method: count terminal scenario records after excluding the complete #840
+# two-head and #847 intermediate-head runs from both numerator and denominator.
+# Cancelled/early-exit runs contribute only scenarios that emitted a terminal
+# record, so each scenario keeps its own actual attempt denominator.
+C01	53	0
+L01	53	0
+L02	53	0
+L03	53	0
+L04	53	0
+L05	51	0
+L06	53	0
+L07	53	0
+L08	53	0
+L09	53	0
+L10	53	0
+L11	51	0
+L12	51	0
+L13	51	0
+L14	51	0
+L15	51	0
+L16	51	0
+L17	53	0
+L18	53	0
+L19	53	0
+N01	54	0
