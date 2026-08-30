@@ -832,33 +832,15 @@ func TestSettingsRootRowsUsePhase0ChromePalette(t *testing.T) {
 func TestSettingsRootSwitchesToProjectTab(t *testing.T) {
 	t.Parallel()
 
-	var calls int
-	var projectOptions intpickercompat.Options
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
+	options := newSettingsRootHarness(t, "").run([]pickerStep{
+		{observe: func(options intpickercompat.Options) {
 			if got := options.TitleChips; len(got) < 1 || !got[0].Active {
 				t.Fatalf("first root chips = %#v, want Global active", got)
 			}
-			return intpickercompat.Result{Key: "ctrl-p"}, nil
-		case 2:
-			projectOptions = options
-			return intpickercompat.Result{}, nil
-		default:
-			t.Fatalf("unexpected settings picker call %d", calls)
-			return intpickercompat.Result{}, nil
-		}
+		}, reply: intpickercompat.Result{Key: "ctrl-p"}},
+		{},
 	})
-	cmd := &settingsCommand{
-		runner:       runner,
-		nativePicker: nativePickerFromCompatRunner(runner),
-		lookupEnv:    func(string) string { return "" },
-	}
-
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
+	projectOptions := options[1]
 	// Without a project context, Ctrl-P remains a no-op so the second
 	// picker call still renders the Global tab.
 	if got, want := projectOptions.Prompt, "Settings > "; got != want {
@@ -874,36 +856,11 @@ func TestSettingsRootAltArrowTogglesTabsWhenProjectAvailable(t *testing.T) {
 
 	home := t.TempDir()
 	project := filepath.Join(home, "app")
-	mkdirAll(t, filepath.Join(project, ".git"))
-
-	var calls int
-	var projectOptions intpickercompat.Options
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "alt-shift-right"}, nil
-		case 2:
-			projectOptions = options
-			return intpickercompat.Result{}, nil
-		default:
-			return intpickercompat.Result{}, nil
-		}
+	options := newSettingsRootHarness(t, project).run([]pickerStep{
+		{reply: intpickercompat.Result{Key: "alt-shift-right"}},
+		{},
 	})
-	cmd := &settingsCommand{
-		runner:       runner,
-		nativePicker: nativePickerFromCompatRunner(runner),
-		lookupEnv: func(name string) string {
-			if name == "PROJMUX_CWD" {
-				return project
-			}
-			return ""
-		},
-	}
-
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
+	projectOptions := options[1]
 	if got, want := projectOptions.Prompt, "Settings > Project > "; got != want {
 		t.Fatalf("project tab prompt = %q, want %q after alt-shift-right", got, want)
 	}
@@ -917,40 +874,18 @@ func TestSettingsRootAltArrowToggleInvariantWithProjectContext(t *testing.T) {
 
 	home := t.TempDir()
 	project := filepath.Join(home, "app")
-	mkdirAll(t, filepath.Join(project, ".git"))
-
-	var calls int
-	var third intpickercompat.Options
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
+	options := newSettingsRootHarness(t, project).run([]pickerStep{
+		{
 			// Global tab — pivot right.
-			return intpickercompat.Result{Key: "alt-shift-right"}, nil
-		case 2:
-			// Project tab — pivot back left.
-			return intpickercompat.Result{Key: "alt-shift-left"}, nil
-		case 3:
-			third = options
-			return intpickercompat.Result{}, nil
-		default:
-			return intpickercompat.Result{}, nil
-		}
-	})
-	cmd := &settingsCommand{
-		runner:       runner,
-		nativePicker: nativePickerFromCompatRunner(runner),
-		lookupEnv: func(name string) string {
-			if name == "PROJMUX_CWD" {
-				return project
-			}
-			return ""
+			reply: intpickercompat.Result{Key: "alt-shift-right"},
 		},
-	}
-
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
+		{
+			// Project tab — pivot back left.
+			reply: intpickercompat.Result{Key: "alt-shift-left"},
+		},
+		{},
+	})
+	third := options[2]
 	if got, want := third.Prompt, "Settings > "; got != want {
 		t.Fatalf("toggled-back prompt = %q, want %q", got, want)
 	}
@@ -1017,29 +952,11 @@ func TestSettingsRootAltArrowChordsAreTransportTierWithDefaultBindings(t *testin
 func TestSettingsRootAltArrowIsNoopWithoutProjectContext(t *testing.T) {
 	t.Parallel()
 
-	var calls int
-	var secondOptions intpickercompat.Options
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "alt-shift-right"}, nil
-		case 2:
-			secondOptions = options
-			return intpickercompat.Result{}, nil
-		default:
-			return intpickercompat.Result{}, nil
-		}
+	options := newSettingsRootHarness(t, "").run([]pickerStep{
+		{reply: intpickercompat.Result{Key: "alt-shift-right"}},
+		{},
 	})
-	cmd := &settingsCommand{
-		runner:       runner,
-		nativePicker: nativePickerFromCompatRunner(runner),
-		lookupEnv:    func(string) string { return "" },
-	}
-
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
+	secondOptions := options[1]
 	if got, want := secondOptions.Prompt, "Settings > "; got != want {
 		t.Fatalf("alt-shift-right with no project context = %q, want still on Global tab %q", got, want)
 	}
@@ -1056,36 +973,11 @@ func TestSettingsRootChipClickSwitchesToProjectTab(t *testing.T) {
 	// click on the chip strip as equivalent tab transitions.
 	home := t.TempDir()
 	project := filepath.Join(home, "app")
-	mkdirAll(t, filepath.Join(project, ".git"))
-
-	var calls int
-	var projectOptions intpickercompat.Options
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		switch calls {
-		case 1:
-			return intpickercompat.Result{Key: "chip", Value: settingsRootTabProjectValue}, nil
-		case 2:
-			projectOptions = options
-			return intpickercompat.Result{}, nil
-		default:
-			return intpickercompat.Result{}, nil
-		}
+	options := newSettingsRootHarness(t, project).run([]pickerStep{
+		{reply: intpickercompat.Result{Key: "chip", Value: settingsRootTabProjectValue}},
+		{},
 	})
-	cmd := &settingsCommand{
-		runner:       runner,
-		nativePicker: nativePickerFromCompatRunner(runner),
-		lookupEnv: func(name string) string {
-			if name == "PROJMUX_CWD" {
-				return project
-			}
-			return ""
-		},
-	}
-
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
+	projectOptions := options[1]
 	if got, want := projectOptions.Prompt, "Settings > Project > "; got != want {
 		t.Fatalf("project tab prompt after chip click = %q, want %q", got, want)
 	}
@@ -1099,31 +991,19 @@ func TestSettingsRootChipClickOnDisabledProjectChipIsNoop(t *testing.T) {
 	// never sees a chip Result for the Project tab. Mimic that behaviour
 	// in the runner stub by returning an empty result on the first call;
 	// the loop should fall through to "close picker" rather than toggle.
-	var calls int
-	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
-		calls++
-		// First call: Global tab. Return Closed result (Key empty, Value
-		// empty) so the loop exits cleanly. If chip click on a disabled
-		// chip were emitted as a Value we'd loop forever.
-		return intpickercompat.Result{}, nil
-	})
-	cmd := &settingsCommand{
-		runner:       runner,
-		nativePicker: nativePickerFromCompatRunner(runner),
-		lookupEnv:    func(string) string { return "" },
-	}
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if calls != 1 {
-		t.Fatalf("runner calls = %d, want exactly one picker invocation when disabled chip click is suppressed", calls)
+	// First call: Global tab. Return Closed result (Key empty, Value
+	// empty) so the loop exits cleanly. If chip click on a disabled
+	// chip were emitted as a Value we'd loop forever.
+	options := newSettingsRootHarness(t, "").run([]pickerStep{{}})
+	if len(options) != 1 {
+		t.Fatalf("runner calls = %d, want exactly one picker invocation when disabled chip click is suppressed", len(options))
 	}
 }
 
 func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
 	t.Parallel()
 
-	cmd := testSettingsCommandWithoutEnv()
+	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
 	options := cmd.rootOptions(settingsRootTabProject)
 
 	// Phase 2.7: the dedicated "Project context: (none) - open
@@ -1156,7 +1036,7 @@ func TestSettingsProjectTabNoProjectShowsDisabledState(t *testing.T) {
 func TestSettingsRootDescriptionOwnershipBoundaries(t *testing.T) {
 	t.Parallel()
 
-	cmd := testSettingsCommandWithoutEnv()
+	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
 	entries := cmd.rootEntriesForAxisLocale(settingsAxisGlobal, i18n.FallbackLocale)
 	// Appearance now owns every visual surface, Theme included: the target IA
 	// has no separate Theme root, so the row must name Theme and Status Bar.
@@ -4141,34 +4021,8 @@ func TestSettingsSessionStateActionsPersistTogglesAndDeleteSnapshot(t *testing.T
 
 	home := t.TempDir()
 	xdgState := t.TempDir()
-	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
-	snap := sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    "workspace",
-		DefaultCWD: "/tmp",
-		SavedAt:    time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC),
-		Windows: []sessionstate.Window{{
-			Index:           0,
-			ActivePaneIndex: 0,
-			Panes:           []sessionstate.Pane{{Index: 0, CWD: "/tmp", Recipe: sessionstate.ShellRecipe()}},
-		}},
-	}
-	if err := store.Save(snap); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
-	cmd := &settingsCommand{
-		homeDir: func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return xdgState
-			case "PROJMUX_SESSION":
-				return "workspace"
-			default:
-				return ""
-			}
-		},
-	}
+	store := saveSettingsWorkspaceSnapshot(t, xdgState)
+	cmd := newSettingsSessionStateCommand(t, home, xdgState)
 
 	if err := cmd.executeSessionStateAction("autosave:off", &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("autosave off error = %v", err)
@@ -4200,21 +4054,7 @@ func TestSettingsSessionStateDeleteRequiresConfirmation(t *testing.T) {
 
 	home := t.TempDir()
 	xdgState := t.TempDir()
-	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
-	snap := sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    "workspace",
-		DefaultCWD: "/tmp",
-		SavedAt:    time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC),
-		Windows: []sessionstate.Window{{
-			Index:           0,
-			ActivePaneIndex: 0,
-			Panes:           []sessionstate.Pane{{Index: 0, CWD: "/tmp", Recipe: sessionstate.ShellRecipe()}},
-		}},
-	}
-	if err := store.Save(snap); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
+	store := saveSettingsWorkspaceSnapshot(t, xdgState)
 
 	var calls int
 	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
@@ -4243,20 +4083,8 @@ func TestSettingsSessionStateDeleteRequiresConfirmation(t *testing.T) {
 			return intpickercompat.Result{}, nil
 		}
 	})
-	cmd := &settingsCommand{
-		nativePicker: nativePickerFromCompatRunner(runner),
-		homeDir:      func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return xdgState
-			case "PROJMUX_SESSION":
-				return "workspace"
-			default:
-				return ""
-			}
-		},
-	}
+	cmd := newSettingsSessionStateCommand(t, home, xdgState)
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if err := cmd.runSessionStateSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runSessionStateSection() error = %v", err)
@@ -4271,21 +4099,7 @@ func TestSettingsSessionStateDeleteConfirmedRemovesSnapshot(t *testing.T) {
 
 	home := t.TempDir()
 	xdgState := t.TempDir()
-	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
-	snap := sessionstate.Snapshot{
-		Version:    sessionstate.Version,
-		Session:    "workspace",
-		DefaultCWD: "/tmp",
-		SavedAt:    time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC),
-		Windows: []sessionstate.Window{{
-			Index:           0,
-			ActivePaneIndex: 0,
-			Panes:           []sessionstate.Pane{{Index: 0, CWD: "/tmp", Recipe: sessionstate.ShellRecipe()}},
-		}},
-	}
-	if err := store.Save(snap); err != nil {
-		t.Fatalf("Save() error = %v", err)
-	}
+	store := saveSettingsWorkspaceSnapshot(t, xdgState)
 
 	var calls int
 	runner := switchRunnerFunc(func(options intpickercompat.Options) (intpickercompat.Result, error) {
@@ -4330,20 +4144,8 @@ func TestSettingsSessionStateDeleteConfirmedRemovesSnapshot(t *testing.T) {
 			return intpickercompat.Result{}, nil
 		}
 	})
-	cmd := &settingsCommand{
-		nativePicker: nativePickerFromCompatRunner(runner),
-		homeDir:      func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			switch name {
-			case "XDG_STATE_HOME":
-				return xdgState
-			case "PROJMUX_SESSION":
-				return "workspace"
-			default:
-				return ""
-			}
-		},
-	}
+	cmd := newSettingsSessionStateCommand(t, home, xdgState)
+	cmd.nativePicker = nativePickerFromCompatRunner(runner)
 
 	if err := cmd.runSessionStateSection(&bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("runSessionStateSection() error = %v", err)
@@ -5834,34 +5636,23 @@ func TestSettingsHubKeybindingsCapturePlainWritesKeymapAndSourcesTmux(t *testing
 func TestSettingsHubKeybindingsApplyOutsideTmuxShowsSkippedLiveState(t *testing.T) {
 	t.Parallel()
 
-	home := t.TempDir()
-	var tmuxCalls [][]string
-	cmd := &settingsCommand{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(string) string { return "" },
-		runCommand: func(name string, args ...string) error {
-			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
-			return nil
-		},
-	}
-	wireSettingsLiveTestRunner(cmd)
+	harness := newSettingsLiveApplyHarness(t, settingsLiveOutsideTmux, nil)
 
-	var stdout bytes.Buffer
-	if err := cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", []string{"M-a"}, &stdout); err != nil {
+	if err := harness.cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", []string{"M-a"}, &harness.stdout); err != nil {
 		t.Fatalf("saveKeymapKeysAndApply() error = %v", err)
 	}
-	if len(tmuxCalls) != 0 {
-		t.Fatalf("tmux calls = %#v, want none outside tmux", tmuxCalls)
+	if len(harness.tmuxCalls) != 0 {
+		t.Fatalf("tmux calls = %#v, want none outside tmux", harness.tmuxCalls)
 	}
-	keymap := readFile(t, filepath.Join(home, ".config", "projmux", "keymap.toml"))
+	keymap := readFile(t, filepath.Join(harness.home, ".config", "projmux", "keymap.toml"))
 	if !strings.Contains(keymap, "[bindings.ProjectSidebarToggle]\nkeys = [\"M-a\"]\n") {
 		t.Fatalf("keymap = %q, want saved binding", keymap)
 	}
-	configText := readFile(t, filepath.Join(home, ".config", "projmux", "tmux.conf"))
+	configText := readFile(t, filepath.Join(harness.home, ".config", "projmux", "tmux.conf"))
 	if !strings.Contains(configText, "bind-key -n M-a") {
 		t.Fatalf("tmux config = %q, want regenerated binding", configText)
 	}
-	got := stdout.String()
+	got := harness.stdout.String()
 	for _, want := range []string{
 		"keybinding apply status\n",
 		"  Saved: ok (keymap.toml: ",
@@ -5994,33 +5785,17 @@ func TestSettingsHubKeybindingsApplyReportsConfigGenerationFailure(t *testing.T)
 func TestSettingsHubKeybindingsApplyReportsLiveReloadFailure(t *testing.T) {
 	t.Parallel()
 
-	home := t.TempDir()
-	var tmuxCalls [][]string
-	cmd := &settingsCommand{
-		homeDir: func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == "TMUX" {
-				return "/tmp/tmux,1,0"
-			}
-			return ""
-		},
-		runCommand: func(name string, args ...string) error {
-			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
-			return errors.New("source-file failed")
-		},
-	}
-	wireSettingsLiveTestRunner(cmd)
+	harness := newSettingsLiveApplyHarness(t, settingsLiveInsideTmux, errors.New("source-file failed"))
 
-	var stdout bytes.Buffer
-	err := cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", []string{"M-a"}, &stdout)
+	err := harness.cmd.saveKeymapKeysAndApply("ProjectSidebarToggle", []string{"M-a"}, &harness.stdout)
 	if err == nil || !strings.Contains(err.Error(), "reload active tmux keybindings: source-file failed") {
 		t.Fatalf("saveKeymapKeysAndApply() error = %v, want live reload failure", err)
 	}
-	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
-	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
-		t.Fatalf("tmux calls = %#v, want source-file app config", tmuxCalls)
+	configPath := filepath.Join(harness.home, ".config", "projmux", "tmux.conf")
+	if !reflect.DeepEqual(harness.tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
+		t.Fatalf("tmux calls = %#v, want source-file app config", harness.tmuxCalls)
 	}
-	got := stdout.String()
+	got := harness.stdout.String()
 	for _, want := range []string{
 		"keybinding apply status\n",
 		"  Saved: ok (keymap.toml: ",
@@ -6037,42 +5812,26 @@ func TestSettingsHubKeybindingsApplyReportsLiveReloadFailure(t *testing.T) {
 func TestSettingsThemeColorSetLiveAppliesInsideTmux(t *testing.T) {
 	t.Parallel()
 
-	home := t.TempDir()
-	var tmuxCalls [][]string
-	cmd := &settingsCommand{
-		homeDir: func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == "TMUX" {
-				return "/tmp/tmux,1,0"
-			}
-			return ""
-		},
-		runCommand: func(name string, args ...string) error {
-			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
-			return nil
-		},
-	}
-	wireSettingsLiveTestRunner(cmd)
+	harness := newSettingsLiveApplyHarness(t, settingsLiveInsideTmux, nil)
 
-	var stdout bytes.Buffer
-	if err := cmd.setThemeColor(theme.TokenBackground, "#0000ff", &stdout); err != nil {
+	if err := harness.cmd.setThemeColor(theme.TokenBackground, "#0000ff", &harness.stdout); err != nil {
 		t.Fatalf("setThemeColor() error = %v", err)
 	}
 
-	configToml := readFile(t, filepath.Join(home, ".config", "projmux", "config.toml"))
+	configToml := readFile(t, filepath.Join(harness.home, ".config", "projmux", "config.toml"))
 	if !strings.Contains(configToml, "#0000ff") {
 		t.Fatalf("config.toml = %q, want saved background", configToml)
 	}
-	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
+	configPath := filepath.Join(harness.home, ".config", "projmux", "tmux.conf")
 	configText := readFile(t, configPath)
 	globalRoles := theme.RenderRolesFromEffective(theme.ResolveTheme(theme.ThemeConfig{Background: "#0000ff"}))
 	if !strings.Contains(configText, "set -g window-style \"bg="+globalRoles.PaneInactiveBg+"\"") {
 		t.Fatalf("generated tmux config = %q, want regenerated themed window-style", configText)
 	}
-	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
-		t.Fatalf("tmux calls = %#v, want source-file app config", tmuxCalls)
+	if !reflect.DeepEqual(harness.tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
+		t.Fatalf("tmux calls = %#v, want source-file app config", harness.tmuxCalls)
 	}
-	got := stdout.String()
+	got := harness.stdout.String()
 	if !strings.Contains(got, "theme saved and applied\n") ||
 		!strings.Contains(got, "  Saved: ok\n") ||
 		!strings.Contains(got, "  Prepared: ok\n") ||
@@ -6084,33 +5843,23 @@ func TestSettingsThemeColorSetLiveAppliesInsideTmux(t *testing.T) {
 func TestSettingsThemeColorSetOutsideTmuxShowsFollowUp(t *testing.T) {
 	t.Parallel()
 
-	home := t.TempDir()
-	var tmuxCalls [][]string
-	cmd := &settingsCommand{
-		homeDir:   func() (string, error) { return home, nil },
-		lookupEnv: func(string) string { return "" },
-		runCommand: func(name string, args ...string) error {
-			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
-			return nil
-		},
-	}
+	harness := newSettingsLiveApplyHarness(t, settingsLiveOutsideTmux, nil)
 
-	var stdout bytes.Buffer
-	if err := cmd.setThemeColor(theme.TokenBackground, "#0000ff", &stdout); err != nil {
+	if err := harness.cmd.setThemeColor(theme.TokenBackground, "#0000ff", &harness.stdout); err != nil {
 		t.Fatalf("setThemeColor() error = %v", err)
 	}
-	if len(tmuxCalls) != 0 {
-		t.Fatalf("tmux calls = %#v, want none outside tmux", tmuxCalls)
+	if len(harness.tmuxCalls) != 0 {
+		t.Fatalf("tmux calls = %#v, want none outside tmux", harness.tmuxCalls)
 	}
-	configToml := readFile(t, filepath.Join(home, ".config", "projmux", "config.toml"))
+	configToml := readFile(t, filepath.Join(harness.home, ".config", "projmux", "config.toml"))
 	if !strings.Contains(configToml, "#0000ff") {
 		t.Fatalf("config.toml = %q, want saved background", configToml)
 	}
-	configText := readFile(t, filepath.Join(home, ".config", "projmux", "tmux.conf"))
+	configText := readFile(t, filepath.Join(harness.home, ".config", "projmux", "tmux.conf"))
 	if !strings.Contains(configText, "set -g @projmux_app 1") {
 		t.Fatalf("generated tmux config = %q, want regenerated app config", configText)
 	}
-	got := stdout.String()
+	got := harness.stdout.String()
 	for _, want := range []string{
 		"theme apply status\n",
 		"  Saved: ok (config.toml: ",
@@ -6127,34 +5876,18 @@ func TestSettingsThemeColorSetOutsideTmuxShowsFollowUp(t *testing.T) {
 func TestSettingsThemeResetLiveAppliesInsideTmux(t *testing.T) {
 	t.Parallel()
 
-	home := t.TempDir()
-	writeFile(t, filepath.Join(home, ".config", "projmux", "config.toml"), `
+	harness := newSettingsLiveApplyHarness(t, settingsLiveInsideTmux, nil)
+	writeFile(t, filepath.Join(harness.home, ".config", "projmux", "config.toml"), `
 [theme]
 background = "#0000ff"
 `)
-	var tmuxCalls [][]string
-	cmd := &settingsCommand{
-		homeDir: func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == "TMUX" {
-				return "/tmp/tmux,1,0"
-			}
-			return ""
-		},
-		runCommand: func(name string, args ...string) error {
-			tmuxCalls = append(tmuxCalls, append([]string{name}, args...))
-			return nil
-		},
-	}
-	wireSettingsLiveTestRunner(cmd)
 
-	var stdout bytes.Buffer
-	if err := cmd.resetTheme(&stdout); err != nil {
+	if err := harness.cmd.resetTheme(&harness.stdout); err != nil {
 		t.Fatalf("resetTheme() error = %v", err)
 	}
-	configPath := filepath.Join(home, ".config", "projmux", "tmux.conf")
-	if !reflect.DeepEqual(tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
-		t.Fatalf("tmux calls = %#v, want source-file app config after reset", tmuxCalls)
+	configPath := filepath.Join(harness.home, ".config", "projmux", "tmux.conf")
+	if !reflect.DeepEqual(harness.tmuxCalls, [][]string{{"tmux", "source-file", configPath}}) {
+		t.Fatalf("tmux calls = %#v, want source-file app config after reset", harness.tmuxCalls)
 	}
 	// After reset the generated config returns to the fallback chrome.
 	configText := readFile(t, configPath)
@@ -6162,35 +5895,21 @@ background = "#0000ff"
 	if !strings.Contains(configText, "set -g window-style \"bg="+fallbackRoles.PaneInactiveBg+"\"") {
 		t.Fatalf("generated tmux config = %q, want fallback window-style after reset", configText)
 	}
-	if !strings.Contains(stdout.String(), "theme saved and applied\n") {
-		t.Fatalf("stdout = %q, want success theme apply status", stdout.String())
+	if !strings.Contains(harness.stdout.String(), "theme saved and applied\n") {
+		t.Fatalf("stdout = %q, want success theme apply status", harness.stdout.String())
 	}
 }
 
 func TestSettingsThemeColorSetReportsLiveReloadFailure(t *testing.T) {
 	t.Parallel()
 
-	home := t.TempDir()
-	cmd := &settingsCommand{
-		homeDir: func() (string, error) { return home, nil },
-		lookupEnv: func(name string) string {
-			if name == "TMUX" {
-				return "/tmp/tmux,1,0"
-			}
-			return ""
-		},
-		runCommand: func(string, ...string) error {
-			return errors.New("source-file failed")
-		},
-	}
-	wireSettingsLiveTestRunner(cmd)
+	harness := newSettingsLiveApplyHarness(t, settingsLiveInsideTmux, errors.New("source-file failed"))
 
-	var stdout bytes.Buffer
-	err := cmd.setThemeColor(theme.TokenBackground, "#0000ff", &stdout)
+	err := harness.cmd.setThemeColor(theme.TokenBackground, "#0000ff", &harness.stdout)
 	if err == nil || !strings.Contains(err.Error(), "reload active tmux theme: source-file failed") {
 		t.Fatalf("setThemeColor() error = %v, want live reload failure", err)
 	}
-	got := stdout.String()
+	got := harness.stdout.String()
 	for _, want := range []string{
 		"theme apply status\n",
 		"  Saved: ok (config.toml: ",
@@ -6834,7 +6553,7 @@ func TestSettingsRemovedAboutGuidanceCanonicalDestinations(t *testing.T) {
 		}
 	}
 
-	entries := testSettingsCommandWithoutEnv().aboutEntries()
+	entries := (&settingsCommand{lookupEnv: func(string) string { return "" }}).aboutEntries()
 	for _, destination := range []string{"projmux setup", "projmux setup terminal", "projmux doctor"} {
 		if hasEntryLabelContaining(entries, destination) {
 			t.Fatalf("About entries = %#v, want canonical destination %q in CLI/docs only", entries, destination)
@@ -7045,7 +6764,7 @@ func TestSettingsHubUpdateFailureStaysOpenWithPassiveFeedback(t *testing.T) {
 func TestSettingsFeedbackReplacementAndClearContract(t *testing.T) {
 	t.Parallel()
 
-	cmd := testSettingsCommandWithoutEnv()
+	cmd := &settingsCommand{lookupEnv: func(string) string { return "" }}
 	cmd.setSettingsFeedback("First complete", "first result")
 	options := cmd.withSettingsFeedback(intpickercompat.Options{
 		UI:      "settings-about",
@@ -7434,13 +7153,11 @@ func TestSettingsHubAddWorkdirAppendsToSavedFile(t *testing.T) {
 
 	home := t.TempDir()
 	mkdirAll(t, filepath.Join(home, "source", "repos", "app"))
-
-	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
-	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+	harness := newSettingsWorkdirHarness(t, home, nil)
 
 	appPath := filepath.Join(home, "source", "repos", "app")
 	addAction := settingsActionPrefixWorkdir + "add:" + appPath
-	runner, native := scriptedPicker(t, []pickerStep{
+	capture := harness.run([]pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
 		{observe: func(o intpickercompat.Options) {
 			if hasEntryValue(o.Entries, settingsWorkdirAdd) {
@@ -7464,12 +7181,6 @@ func TestSettingsHubAddWorkdirAppendsToSavedFile(t *testing.T) {
 			}
 		}, reply: intpickercompat.Result{Key: "enter", Value: addAction}},
 	})
-	cmd := testSettingsHubCommand(t, runner, native, switcher)
-
-	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
 
 	saved, err := readWorkdirsFile(t, home)
 	if err != nil {
@@ -7479,7 +7190,7 @@ func TestSettingsHubAddWorkdirAppendsToSavedFile(t *testing.T) {
 	if !equalStrings(saved, []string{app}) {
 		t.Fatalf("saved workdirs = %#v, want [%q]", saved, app)
 	}
-	if got, want := stdout.String(), "added workdir: "+app+"\n"; got != want {
+	if got, want := capture.stdout.String(), "added workdir: "+app+"\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -7489,21 +7200,10 @@ func TestSettingsHubWorkdirsListRemovesSavedEntry(t *testing.T) {
 
 	home := t.TempDir()
 	target := filepath.Join(home, "source", "repos", "app")
-	if err := os.MkdirAll(filepath.Join(home, ".config", "projmux"), 0o755); err != nil {
-		t.Fatalf("MkdirAll() error = %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(home, ".config", "projmux", "workdirs"), []byte(target+"\n"), 0o644); err != nil {
-		t.Fatalf("WriteFile() error = %v", err)
-	}
-
-	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
-	switcher.loadWorkdirs = func(homeDir string) ([]string, error) {
-		// Use the real loader so removal is observed end-to-end via the saved file.
-		return loadSavedWorkdirsFromFile(homeDir), nil
-	}
+	harness := newSettingsWorkdirHarness(t, home, []string{target})
 
 	removeAction := settingsActionPrefixWorkdir + "remove:" + target
-	runner, native := scriptedPicker(t, []pickerStep{
+	capture := harness.run([]pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsWorkdirList}},
 		{observe: func(o intpickercompat.Options) {
@@ -7530,12 +7230,6 @@ func TestSettingsHubWorkdirsListRemovesSavedEntry(t *testing.T) {
 		// After remove, list should be empty (just back + placeholder).
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := testSettingsHubCommand(t, runner, native, switcher)
-
-	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
 
 	saved, err := readWorkdirsFile(t, home)
 	if err != nil {
@@ -7544,7 +7238,7 @@ func TestSettingsHubWorkdirsListRemovesSavedEntry(t *testing.T) {
 	if len(saved) != 0 {
 		t.Fatalf("saved workdirs = %#v, want empty", saved)
 	}
-	if got, want := stdout.String(), "removed workdir: "+target+"\n"; got != want {
+	if got, want := capture.stdout.String(), "removed workdir: "+target+"\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -7599,23 +7293,16 @@ func TestAddWorkdirEntriesIncludesTypedRow(t *testing.T) {
 
 	home := t.TempDir()
 	mkdirAll(t, filepath.Join(home, "source", "repos", "app"))
-
-	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
-	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+	harness := newSettingsWorkdirHarness(t, home, nil)
 
 	var addOptions intpickercompat.Options
-	runner, native := scriptedPicker(t, []pickerStep{
+	harness.run([]pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsWorkdirList}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsWorkdirAdd}},
 		{observe: func(o intpickercompat.Options) { addOptions = o },
 			reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := testSettingsHubCommand(t, runner, native, switcher)
-
-	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
 	if got, want := addOptions.UI, "settings-workdir-add"; got != want {
 		t.Fatalf("add workdir UI = %q, want %q", got, want)
 	}
@@ -7634,12 +7321,10 @@ func TestSettingsHubAddWorkdirTypedAppendsTypedPath(t *testing.T) {
 	home := t.TempDir()
 	typed := filepath.Join(home, "mnt", "c", "Users", "me", "code")
 	mkdirAll(t, typed)
-
-	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
-	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+	harness := newSettingsWorkdirHarness(t, home, nil)
 
 	var typedOptions intpickercompat.Options
-	runner, native := scriptedPicker(t, []pickerStep{
+	capture := harness.run([]pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsWorkdirList}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsWorkdirAdd}},
@@ -7659,13 +7344,6 @@ func TestSettingsHubAddWorkdirTypedAppendsTypedPath(t *testing.T) {
 		// After typed flow returns, the project picker reopens. Close it.
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := testSettingsHubCommand(t, runner, native, switcher)
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
 	if got, want := typedOptions.UI, "settings-workdir-typed"; got != want {
 		t.Fatalf("typed picker UI = %q, want %q", got, want)
 	}
@@ -7683,7 +7361,7 @@ func TestSettingsHubAddWorkdirTypedAppendsTypedPath(t *testing.T) {
 	if !equalStrings(saved, []string{typed}) {
 		t.Fatalf("saved workdirs = %#v, want [%q]", saved, typed)
 	}
-	if got, want := stdout.String(), "added workdir: "+typed+"\n"; got != want {
+	if got, want := capture.stdout.String(), "added workdir: "+typed+"\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -7693,10 +7371,9 @@ func TestSettingsHubAddWorkdirTypedRejectsRelativePath(t *testing.T) {
 	t.Setenv(projdirEnvVar, "")
 
 	home := t.TempDir()
-	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
-	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+	harness := newSettingsWorkdirHarness(t, home, nil)
 
-	runner, native := scriptedPicker(t, []pickerStep{
+	capture := harness.run([]pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsWorkdirList}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsWorkdirAdd}},
@@ -7713,14 +7390,7 @@ func TestSettingsHubAddWorkdirTypedRejectsRelativePath(t *testing.T) {
 		// project picker section. Close to terminate the run.
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := testSettingsHubCommand(t, runner, native, switcher)
-
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &stderr); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
-	if got := stderr.String(); !strings.Contains(got, "absolute path") {
+	if got := capture.stderr.String(); !strings.Contains(got, "absolute path") {
 		t.Fatalf("stderr = %q, want absolute-path error", got)
 	}
 	saved, err := readWorkdirsFile(t, home)
@@ -7781,15 +7451,175 @@ func testSettingsHubCommand(t *testing.T, runner intpickercompat.Runner, nativeP
 	}
 }
 
+type settingsRootHarness struct {
+	t       *testing.T
+	project string
+}
+
+func newSettingsRootHarness(t *testing.T, project string) *settingsRootHarness {
+	t.Helper()
+	if project != "" {
+		mkdirAll(t, filepath.Join(project, ".git"))
+	}
+	return &settingsRootHarness{t: t, project: project}
+}
+
+func (h *settingsRootHarness) run(steps []pickerStep) []intpickercompat.Options {
+	h.t.Helper()
+	options := make([]intpickercompat.Options, 0, len(steps))
+	runner := switchRunnerFunc(func(got intpickercompat.Options) (intpickercompat.Result, error) {
+		call := len(options)
+		options = append(options, got)
+		if call >= len(steps) {
+			h.t.Fatalf("unexpected settings picker call %d", call+1)
+		}
+		step := steps[call]
+		if step.observe != nil {
+			step.observe(got)
+		}
+		return step.reply, step.err
+	})
+	cmd := &settingsCommand{
+		runner:       runner,
+		nativePicker: nativePickerFromCompatRunner(runner),
+		lookupEnv: func(name string) string {
+			if name == "PROJMUX_CWD" {
+				return h.project
+			}
+			return ""
+		},
+	}
+	if err := cmd.Run(nil, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		h.t.Fatalf("Run() error = %v", err)
+	}
+	return options
+}
+
+type settingsLiveTmuxState int
+
+const (
+	settingsLiveOutsideTmux settingsLiveTmuxState = iota
+	settingsLiveInsideTmux
+)
+
+type settingsLiveApplyHarness struct {
+	home      string
+	cmd       *settingsCommand
+	tmuxCalls [][]string
+	stdout    bytes.Buffer
+}
+
+func newSettingsLiveApplyHarness(t *testing.T, state settingsLiveTmuxState, runErr error) *settingsLiveApplyHarness {
+	t.Helper()
+	harness := &settingsLiveApplyHarness{home: t.TempDir()}
+	harness.cmd = &settingsCommand{
+		homeDir: func() (string, error) { return harness.home, nil },
+		lookupEnv: func(name string) string {
+			if state == settingsLiveInsideTmux && name == "TMUX" {
+				return "/tmp/tmux,1,0"
+			}
+			return ""
+		},
+		runCommand: func(name string, args ...string) error {
+			harness.tmuxCalls = append(harness.tmuxCalls, append([]string{name}, args...))
+			return runErr
+		},
+	}
+	wireSettingsLiveTestRunner(harness.cmd)
+	return harness
+}
+
+func saveSettingsWorkspaceSnapshot(t *testing.T, xdgState string) *sessionstate.Store {
+	t.Helper()
+	store := sessionstate.NewStore(filepath.Join(xdgState, "projmux", "sessions"))
+	if err := store.Save(sessionstate.Snapshot{
+		Version:    sessionstate.Version,
+		Session:    "workspace",
+		DefaultCWD: "/tmp",
+		SavedAt:    time.Date(2026, 5, 12, 3, 4, 5, 0, time.UTC),
+		Windows: []sessionstate.Window{{
+			Index: 0, ActivePaneIndex: 0,
+			Panes: []sessionstate.Pane{{Index: 0, CWD: "/tmp", Recipe: sessionstate.ShellRecipe()}},
+		}},
+	}); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	return &store
+}
+
+func newSettingsSessionStateCommand(t *testing.T, home, xdgState string) *settingsCommand {
+	t.Helper()
+	env := map[string]string{"XDG_STATE_HOME": xdgState, "PROJMUX_SESSION": "workspace"}
+	return &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(name string) string { return env[name] },
+	}
+}
+
+type settingsRunCapture struct {
+	stdout, stderr bytes.Buffer
+}
+
+type settingsWorkdirHarness struct {
+	t        *testing.T
+	switcher *switchCommand
+}
+
+func newSettingsWorkdirHarness(t *testing.T, home string, saved []string) *settingsWorkdirHarness {
+	t.Helper()
+	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
+	if saved == nil {
+		switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+	} else {
+		writeFile(t, filepath.Join(home, ".config", "projmux", "workdirs"), strings.Join(saved, "\n")+"\n")
+		// Use the real loader so removal is observed end-to-end via the saved file.
+		switcher.loadWorkdirs = func(homeDir string) ([]string, error) { return loadSavedWorkdirsFromFile(homeDir), nil }
+	}
+	return &settingsWorkdirHarness{t: t, switcher: switcher}
+}
+
+func (h *settingsWorkdirHarness) run(steps []pickerStep) settingsRunCapture {
+	h.t.Helper()
+	runner, native := scriptedPicker(h.t, steps)
+	cmd := testSettingsHubCommand(h.t, runner, native, h.switcher)
+	var capture settingsRunCapture
+	if err := cmd.Run(nil, &capture.stdout, &capture.stderr); err != nil {
+		h.t.Fatalf("Run() error = %v", err)
+	}
+	return capture
+}
+
+type settingsProjectRootHarness struct {
+	t        *testing.T
+	switcher *switchCommand
+}
+
+func newSettingsProjectRootHarness(t *testing.T, home string) *settingsProjectRootHarness {
+	t.Helper()
+	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
+	switcher.lookupEnv = func(string) string { return "" }
+	switcher.loadProjdir = config.LoadProjdir
+	switcher.saveProjdir = config.SaveProjdir
+	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+	return &settingsProjectRootHarness{t: t, switcher: switcher}
+}
+
+func (h *settingsProjectRootHarness) run(steps []pickerStep) settingsRunCapture {
+	h.t.Helper()
+	runner, native := scriptedPicker(h.t, steps)
+	cmd := testSettingsHubCommand(h.t, runner, native, h.switcher)
+	var capture settingsRunCapture
+	if err := cmd.Run(nil, &capture.stdout, &capture.stderr); err != nil {
+		h.t.Fatalf("Run() error = %v", err)
+	}
+	return capture
+}
+
 func testSettingsCommandWithHome(home string) *settingsCommand {
 	return &settingsCommand{
 		homeDir:   func() (string, error) { return home, nil },
 		lookupEnv: func(string) string { return "" },
 	}
-}
-
-func testSettingsCommandWithoutEnv() *settingsCommand {
-	return &settingsCommand{lookupEnv: func(string) string { return "" }}
 }
 
 func testSettingsSwitchCommand(t *testing.T, store *stubSwitchPinStore) *switchCommand {
@@ -8089,15 +7919,10 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 	home := t.TempDir()
 	target := filepath.Join(home, "projects")
 	mkdirAll(t, target)
-
-	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
-	switcher.lookupEnv = func(string) string { return "" }
-	switcher.loadProjdir = config.LoadProjdir
-	switcher.saveProjdir = config.SaveProjdir
-	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
+	harness := newSettingsProjectRootHarness(t, home)
 
 	var typedOptions intpickercompat.Options
-	runner, native := scriptedPicker(t, []pickerStep{
+	capture := harness.run([]pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
 		{observe: func(o intpickercompat.Options) {
 			if !hasEntryValue(o.Entries, settingsProjectRootManage) {
@@ -8120,12 +7945,6 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := testSettingsHubCommand(t, runner, native, switcher)
-
-	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
 	if got, want := typedOptions.UI, "settings-project-root-typed"; got != want {
 		t.Fatalf("typed project root UI = %q, want %q", got, want)
 	}
@@ -8138,7 +7957,7 @@ func TestSettingsHubSetProjectRootTypedSavesProjdir(t *testing.T) {
 	if got, want := readProjdirFile(t, home), target; got != want {
 		t.Fatalf("saved project root = %q, want %q", got, want)
 	}
-	if got, want := stdout.String(), "saved project root: "+target+"\n"; got != want {
+	if got, want := capture.stdout.String(), "saved project root: "+target+"\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -8150,14 +7969,9 @@ func TestSettingsHubUseCurrentProjectAsRootSavesProjdir(t *testing.T) {
 	home := t.TempDir()
 	currentProject := filepath.Join(home, "source", "repos", "app")
 	mkdirAll(t, currentProject)
+	harness := newSettingsProjectRootHarness(t, home)
 
-	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
-	switcher.lookupEnv = func(string) string { return "" }
-	switcher.loadProjdir = config.LoadProjdir
-	switcher.saveProjdir = config.SaveProjdir
-	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
-
-	runner, native := scriptedPicker(t, []pickerStep{
+	capture := harness.run([]pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsProjectRootManage}},
 		{observe: func(o intpickercompat.Options) {
@@ -8168,16 +7982,10 @@ func TestSettingsHubUseCurrentProjectAsRootSavesProjdir(t *testing.T) {
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := testSettingsHubCommand(t, runner, native, switcher)
-
-	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
 	if got, want := readProjdirFile(t, home), currentProject; got != want {
 		t.Fatalf("saved project root = %q, want %q", got, want)
 	}
-	if got, want := stdout.String(), "saved project root: "+currentProject+"\n"; got != want {
+	if got, want := capture.stdout.String(), "saved project root: "+currentProject+"\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -8190,14 +7998,9 @@ func TestSettingsHubClearProjectRootRemovesSavedProjdir(t *testing.T) {
 	if err := config.SaveProjdir(home, "/saved/root"); err != nil {
 		t.Fatalf("SaveProjdir() error = %v", err)
 	}
+	harness := newSettingsProjectRootHarness(t, home)
 
-	switcher := testSettingsSwitchCommandWithHome(t, home, newStubPinStore())
-	switcher.lookupEnv = func(string) string { return "" }
-	switcher.loadProjdir = config.LoadProjdir
-	switcher.saveProjdir = config.SaveProjdir
-	switcher.loadWorkdirs = func(string) ([]string, error) { return nil, nil }
-
-	runner, native := scriptedPicker(t, []pickerStep{
+	capture := harness.run([]pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsSectionProject}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsProjectRootManage}},
 		{observe: func(o intpickercompat.Options) {
@@ -8208,16 +8011,10 @@ func TestSettingsHubClearProjectRootRemovesSavedProjdir(t *testing.T) {
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 		{reply: intpickercompat.Result{Key: "enter", Value: settingsBackValue}},
 	})
-	cmd := testSettingsHubCommand(t, runner, native, switcher)
-
-	var stdout bytes.Buffer
-	if err := cmd.Run(nil, &stdout, &bytes.Buffer{}); err != nil {
-		t.Fatalf("Run() error = %v", err)
-	}
 	if got := readProjdirFile(t, home); got != "" {
 		t.Fatalf("saved project root = %q, want empty", got)
 	}
-	if got, want := stdout.String(), "cleared saved project root\n"; got != want {
+	if got, want := capture.stdout.String(), "cleared saved project root\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }
@@ -8454,7 +8251,7 @@ func TestSettingsKeybindingPhysicalCaptureAvailabilityDefaults(t *testing.T) {
 		t.Fatal("capture must be unavailable inside tmux without a native or probe transport")
 	}
 
-	outsideTmux := testSettingsCommandWithoutEnv()
+	outsideTmux := &settingsCommand{lookupEnv: func(string) string { return "" }}
 	if !outsideTmux.keybindingPhysicalCaptureAvailable() {
 		t.Fatal("controlling-tty capture outside tmux must stay available")
 	}
