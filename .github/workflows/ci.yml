@@ -166,6 +166,9 @@ jobs:
       - name: Check formatting
         run: make fmt-check
 
+      - name: Check module tidiness
+        run: make mod-tidy-check
+
   unit:
     name: Unit Tests
     runs-on: ubuntu-latest
