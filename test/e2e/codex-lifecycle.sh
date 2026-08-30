@@ -23,6 +23,10 @@ lifecycle_notify_log="$lifecycle_root/desktop-notify-count"
 lifecycle_notify_hook="$lifecycle_root/desktop-notify-hook"
 lifecycle_real_tmux="$(command -v tmux)"
 lifecycle_started=0
+lifecycle_agent_uid=""
+lifecycle_sibling_agent_uid=""
+lifecycle_pane_uid=""
+lifecycle_sibling_pane_uid=""
 mkdir -p "$lifecycle_project" "$lifecycle_shim" "$lifecycle_fixture_state"
 
 # shellcheck disable=SC2016 # Expands in the generated notification hook at runtime.
@@ -180,8 +184,23 @@ lifecycle_pmx_at_anchor() {
 }
 
 lifecycle_background_routes() {
-  ps -eo pid=,args= | PROJMUX_ROUTE_BIN="$bin" awk '
-    index($0, ENVIRON["PROJMUX_ROUTE_BIN"] " internal agent-hook ingest codex-broker-watch") > 0 { print }'
+  ps -eo pid=,args= | \
+    PROJMUX_ROUTE_BIN="$bin" \
+    PROJMUX_ROUTE_AGENT_UID="$lifecycle_agent_uid" \
+    PROJMUX_ROUTE_SIBLING_AGENT_UID="$lifecycle_sibling_agent_uid" \
+    PROJMUX_ROUTE_PANE_UID="$lifecycle_pane_uid" \
+    PROJMUX_ROUTE_SIBLING_PANE_UID="$lifecycle_sibling_pane_uid" \
+    awk '
+      index($0, ENVIRON["PROJMUX_ROUTE_BIN"] " internal agent-hook ingest codex-broker-watch") == 0 { next }
+      ENVIRON["PROJMUX_ROUTE_AGENT_UID"] != "" &&
+        index($0, "--agent-uid " ENVIRON["PROJMUX_ROUTE_AGENT_UID"] " ") > 0 { print; next }
+      ENVIRON["PROJMUX_ROUTE_SIBLING_AGENT_UID"] != "" &&
+        index($0, "--agent-uid " ENVIRON["PROJMUX_ROUTE_SIBLING_AGENT_UID"] " ") > 0 { print; next }
+      ENVIRON["PROJMUX_ROUTE_PANE_UID"] != "" &&
+        index($0, "--pane-uid " ENVIRON["PROJMUX_ROUTE_PANE_UID"] " ") > 0 { print; next }
+      ENVIRON["PROJMUX_ROUTE_SIBLING_PANE_UID"] != "" &&
+        index($0, "--pane-uid " ENVIRON["PROJMUX_ROUTE_SIBLING_PANE_UID"] " ") > 0 { print }
+    '
 }
 
 lifecycle_cleanup() {
