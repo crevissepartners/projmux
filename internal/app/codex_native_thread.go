@@ -150,13 +150,19 @@ func nativeRootsUnsupported(err error) bool {
 // looked native, carried no thread binding, and answered no native turn
 // control, so the degradation is now a refusal that names the explicit opt-out.
 func nativeCreatePreparationRefusal(spelling string, err error) error {
+	return nativeCreatePreparationRefusalForCapability(spelling, err, codexappserver.ObserveDefaultInstallCapability())
+}
+
+func nativeCreatePreparationRefusalForCapability(spelling string, err error, capability codexappserver.InstallCapability) error {
 	if err == nil {
 		return nil
 	}
+	guidance := codexInstallCapabilityGuidance(capability)
 	return errors.New(spelling + ": native Codex thread preparation is unavailable (" + nativeThreadReason(err) +
 		") and no provider conversation was mutated; refusing to create a managed Agent with no native thread binding. " +
 		"Re-run with " + interactiveOnlyFlag + " for a plain interactive Codex Agent with no native turn control, " +
-		"or make the Codex app-server endpoint available: " + err.Error())
+		"or make the Codex app-server endpoint available. Install capability " + string(guidance.Capability) + ": " +
+		guidance.Text() + ". Native error: " + err.Error())
 }
 
 // nativeResumePreparationRefusal answers a stored-thread resume whose native

@@ -58,7 +58,11 @@ native binding.
 Now: the create refuses before the split, before the hook probe, and before the
 Registry commit. Zero threads, zero Panes, zero Registry writes, zero tmux
 objects. The refusal carries the typed reason from the endpoint (for example
-`daemon-not-running`) and names `--interactive-only`. Exit code 1.
+`daemon-not-running`), names `--interactive-only`, reports only the observed
+install-capability facts, and links to the
+[official Codex CLI capability guidance](https://learn.chatgpt.com/docs/codex/cli).
+Exit code 1. Doctor and Settings render that same typed guidance authority;
+they do not maintain separate installer wording.
 
 Fix it by making the app-server endpoint available — start with
 `projmux doctor --section integrations --verbose` — or ask for the plain lane on
@@ -156,7 +160,7 @@ projmux create agent --provider codex --interactive-only -- "interactive task"
 ## Verifying this yourself
 
 ```sh
-go test ./internal/app/ -run 'TestInteractiveOnlyIsTheOnlyPlainCodexLaneAndBothSpellingsAreEquivalent|TestDefaultNativeCodexFanOutRefusesWithZeroMutationsAndInteractiveOnlyKeepsCardinality|TestEmptyPromptCodexCreateIsByteForByteUnchangedByTheNativeRequiredGate|TestClaudeAndAntigravityLifecycleAndHookContractAreUnchangedByTheNativeGate|TestUnavailableNative|TestCodexNativeLaunchOutcomeTableIsClosed'
+go test ./internal/app/ -run 'TestCodexInstallCapability|TestInteractiveOnlyIsTheOnlyPlainCodexLaneAndBothSpellingsAreEquivalent|TestDefaultNativeCodexFanOutRefusesWithZeroMutationsAndInteractiveOnlyKeepsCardinality|TestEmptyPromptCodexCreateIsByteForByteUnchangedByTheNativeRequiredGate|TestClaudeAndAntigravityLifecycleAndHookContractAreUnchangedByTheNativeGate|TestUnavailableNative|TestCodexNativeLaunchOutcomeTableIsClosed'
 go test ./internal/integrations/agents/codexappserver/ -run TestStartDefaultThread
 ```
 
@@ -173,3 +177,4 @@ go test ./internal/integrations/agents/codexappserver/ -run TestStartDefaultThre
 | One payload sends exactly one `turn/start` and never repeats the prompt in Pane argv | `TestPromptedNativeCodexCreateIssuesOneTurnAndNeverRepeatsThePromptInPaneArgv` |
 | The post-mutation row still refuses a second lane | `TestIndeterminateNativeCreateRefusesASecondLaneAndWritesZero` |
 | The outcome table describes exactly these rows and no others | `TestCodexNativeLaunchOutcomeTableIsClosed` |
+| Managed-ready/external-only/CLI-missing/unknown guidance states only observed facts and all three consumers render the same authority | `TestCodexInstallCapabilityGuidanceMatrixStatesOnlyObservedFacts`, `TestCodexInstallCapabilityGuidanceHasThreeConsumerParity`, `TestCodexInstallCapabilityConsumersCarryNoSurfaceLocalCopyOrURL` |

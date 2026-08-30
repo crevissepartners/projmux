@@ -111,9 +111,9 @@ The `Codex app-server` result keeps four readiness axes separate:
 remain separate supporting fields. A ready endpoint therefore does not hide an
 unmanaged process or version skew.
 
-`external-cli-only` means the ordinary Codex CLI executable is present, but
-the canonical managed payload needed by `codex app-server daemon start` was not
-observed. It does not mean the ordinary CLI is unsupported and does not prove
+`external-cli-only` states only two observed facts: the ordinary Codex CLI
+exists, and the managed standalone payload was not observed. It does not mean
+the ordinary CLI is unsupported, identify how that CLI was installed, or prove
 who owns a running process.
 
 An explicit native action refuses a ready unmanaged or version-skewed endpoint.
@@ -131,12 +131,14 @@ reason Doctor reports. `--interactive-only` creates that plain Agent on purpose,
 without native turn control. See
 [Codex Native-Required Create Migration](codex-native-required-migration.md).
 
-If native app-server features are needed, review the
-[official Codex CLI installation options](https://learn.chatgpt.com/docs/codex/cli)
-and install or repair the managed standalone payload. Then rerun Doctor. Do not
-copy binaries, create symlinks in the Codex home, or edit the control socket as
-a diagnostic workaround. Doctor, Settings, and support-report collection never
-start the daemon or modify the installation.
+Native create refusal is the primary actionable surface: it names
+`--interactive-only`, reports the same observed install-capability guidance as
+Doctor and Settings, and links to the
+[official Codex CLI capability guidance](https://learn.chatgpt.com/docs/codex/cli).
+After changing the Codex installation through an operator-chosen supported
+method, rerun Doctor. Do not copy binaries, create symlinks in the Codex home,
+or edit the control socket as a diagnostic workaround. Doctor, Settings, and
+support-report collection never start the daemon or modify the installation.
 
 ## Incomplete npm install
 
