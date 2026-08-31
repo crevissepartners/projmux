@@ -40,12 +40,8 @@ projmux shell
 
 ## 하던 대화를 이어서
 
-`Alt-4`는 Codex, Claude Code, Antigravity 세션을 구분할 수 있을 만큼의 정보와
-함께 보여 줍니다. 고르면 하던 자리에서 그대로 열립니다.
-
-<p align="center">
-  <img src="docs/assets/projmux-resume-picker.gif" alt="projmux 세션 선택 화면: 세션을 검색하고 상세 미리보기를 확인합니다" width="820">
-</p>
+`Alt-4`는 Codex, Claude Code, Antigravity 세션을 보여 줍니다. 고르면 하던
+자리에서, 같은 대화로 열립니다.
 
 ## 필요할 때 부르게
 
@@ -62,7 +58,7 @@ projmux shell
 사용자와 같은 CLI로 다른 에이전트를 열 수 있습니다.
 
 ```sh
-projmux create claude -- "Draft the migration plan."
+projmux create claude --project mobile-client -- "Draft the migration plan."
 ```
 
 <p align="center">

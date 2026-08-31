@@ -40,12 +40,8 @@ projmux shell
 
 ## Pick up a conversation
 
-`Alt-4` lists your Codex, Claude Code, and Antigravity sessions with enough
-context to tell them apart. Choose one and it opens where you left it.
-
-<p align="center">
-  <img src="docs/assets/projmux-resume-picker.gif" alt="projmux resume picker: search sessions and read the detail preview" width="820">
-</p>
+`Alt-4` lists your Codex, Claude Code, and Antigravity sessions. Choose one and
+it opens where you left it, as the same conversation.
 
 ## Get called back
 
@@ -62,7 +58,7 @@ Keep a shell, Codex, and Claude Code in the same window. Agents can open other
 agents through the same CLI you use:
 
 ```sh
-projmux create claude -- "Draft the migration plan."
+projmux create claude --project mobile-client -- "Draft the migration plan."
 ```
 
 <p align="center">
