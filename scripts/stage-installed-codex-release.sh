@@ -14,8 +14,6 @@ codex_version="$3"
 platform_alias="codex-linux-x64"
 target="x86_64-unknown-linux-musl"
 meta_package="$npm_prefix/node_modules/@openai/codex"
-platform_package="$meta_package/node_modules/@openai/$platform_alias"
-source_release="$platform_package/vendor/$target"
 
 # The platform optional dependency is the official native release payload.
 # Validate its public package and standalone manifests before copying it; do
@@ -23,15 +21,33 @@ source_release="$platform_package/vendor/$target"
 jq -e --arg version "$codex_version" \
 	'.name == "@openai/codex" and .version == $version' \
 	"$meta_package/package.json" >/dev/null
-jq -e --arg version "$codex_version-linux-x64" \
-	'.name == "@openai/codex" and .version == $version' \
-	"$platform_package/package.json" >/dev/null
-jq -e --arg version "$codex_version" --arg target "$target" \
-	'.layoutVersion == 1 and .version == $version and .target == $target and
-	 .variant == "codex" and .entrypoint == "bin/codex" and
-	 .resourcesDir == "codex-resources" and .pathDir == "codex-path"' \
-	"$source_release/codex-package.json" >/dev/null
-test -x "$source_release/bin/codex"
+
+platform_package=""
+for candidate in \
+	"$npm_prefix/node_modules/@openai/$platform_alias" \
+	"$meta_package/node_modules/@openai/$platform_alias"; do
+	[[ -e "$candidate" ]] || continue
+	candidate_release="$candidate/vendor/$target"
+	jq -e --arg version "$codex_version-linux-x64" \
+		'.name == "@openai/codex" and .version == $version' \
+		"$candidate/package.json" >/dev/null
+	jq -e --arg version "$codex_version" --arg target "$target" \
+		'.layoutVersion == 1 and .version == $version and .target == $target and
+		 .variant == "codex" and .entrypoint == "bin/codex" and
+		 .resourcesDir == "codex-resources" and .pathDir == "codex-path"' \
+		"$candidate_release/codex-package.json" >/dev/null
+	test -x "$candidate_release/bin/codex"
+	if [[ -n "$platform_package" ]]; then
+		echo "installed Codex platform package resolution is ambiguous" >&2
+		exit 1
+	fi
+	platform_package="$candidate"
+done
+if [[ -z "$platform_package" ]]; then
+	echo "installed Codex platform package was not found" >&2
+	exit 1
+fi
+source_release="$platform_package/vendor/$target"
 
 if [[ -e "$release_root" ]]; then
 	echo "installed Codex staging root already exists" >&2

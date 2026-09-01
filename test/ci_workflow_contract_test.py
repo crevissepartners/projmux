@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -103,10 +104,11 @@ class CIWorkflowContractTest(unittest.TestCase):
             temporary_path = Path(temporary)
             prefix = temporary_path / "npm"
             meta = prefix / "node_modules/@openai/codex"
-            platform = meta / "node_modules/@openai/codex-linux-x64"
+            platform = prefix / "node_modules/@openai/codex-linux-x64"
             source_release = platform / "vendor/x86_64-unknown-linux-musl"
             native = source_release / "bin/codex"
             native.parent.mkdir(parents=True)
+            meta.mkdir(parents=True)
             native.write_text(
                 "#!/bin/sh\nprintf 'codex-cli 0.152.0\\n'\n", encoding="utf-8"
             )
@@ -159,9 +161,49 @@ class CIWorkflowContractTest(unittest.TestCase):
             ).stdout.strip()
             self.assertEqual(version, "codex-cli 0.152.0")
 
+            # npm normally hoists the optional platform alias beside the meta
+            # package. Retain nested compatibility for installers that do not,
+            # but never choose silently when both valid locations exist.
+            nested = meta / "node_modules/@openai/codex-linux-x64"
+            nested.parent.mkdir(parents=True)
+            shutil.move(platform, nested)
+            nested_release = temporary_path / "nested-release"
+            nested_result = subprocess.run(
+                ["bash", str(stage), str(prefix), str(nested_release), "0.152.0"],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(nested_result.returncode, 0, nested_result.stderr)
+            self.assertEqual(
+                (nested_release / "codex").resolve(), nested_release / "bin/codex"
+            )
+
+            shutil.copytree(nested, platform)
+            ambiguous_release = temporary_path / "ambiguous-release"
+            ambiguous = subprocess.run(
+                [
+                    "bash",
+                    str(stage),
+                    str(prefix),
+                    str(ambiguous_release),
+                    "0.152.0",
+                ],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(ambiguous.returncode, 0)
+            self.assertIn("platform package resolution is ambiguous", ambiguous.stderr)
+            self.assertFalse(ambiguous_release.exists())
+
+            shutil.rmtree(platform)
             bad_release = temporary_path / "bad-release"
             manifest["version"] = "0.151.0"
-            (source_release / "codex-package.json").write_text(
+            nested_source_release = nested / "vendor/x86_64-unknown-linux-musl"
+            (nested_source_release / "codex-package.json").write_text(
                 json.dumps(manifest), encoding="utf-8"
             )
             rejected = subprocess.run(
@@ -173,6 +215,19 @@ class CIWorkflowContractTest(unittest.TestCase):
             )
             self.assertNotEqual(rejected.returncode, 0)
             self.assertFalse(bad_release.exists())
+
+            shutil.rmtree(nested)
+            missing_release = temporary_path / "missing-release"
+            missing = subprocess.run(
+                ["bash", str(stage), str(prefix), str(missing_release), "0.152.0"],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(missing.returncode, 0)
+            self.assertIn("platform package was not found", missing.stderr)
+            self.assertFalse(missing_release.exists())
 
     def test_race_children_preserve_coverage_behind_the_stable_aggregate(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
