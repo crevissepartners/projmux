@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -30,6 +31,149 @@ def workflow_job(workflow: str, job: str) -> str:
 
 
 class CIWorkflowContractTest(unittest.TestCase):
+    def test_installed_codex_schedule_is_a_separate_fail_closed_matrix(self) -> None:
+        ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        workflow = (ROOT / ".github/workflows/installed-codex.yml").read_text(
+            encoding="utf-8"
+        )
+        installed = workflow_job(workflow, "installed-codex")
+        aggregate = workflow_job(workflow, "installed-codex-qualification")
+        e2e_required = workflow_job(ci_workflow, "e2e-tests")
+        required_test = workflow_job(ci_workflow, "test")
+
+        self.assertIn('    - cron: "17 3 * * *"', workflow)
+        self.assertIn("  workflow_dispatch:", workflow)
+        self.assertIn("  cancel-in-progress: false", workflow)
+        self.assertNotIn("  installed-codex:", ci_workflow)
+        self.assertIn('          - "0.152.0"', installed)
+        for primitive in ("daemon-lifecycle", "thread-list", "pre-turn-attach"):
+            self.assertEqual(installed.count(f"          - {primitive}"), 1)
+        self.assertIn(
+            "      - name: Install the declared real Codex CLI\n"
+            "        id: install-codex\n"
+            "        continue-on-error: true",
+            installed,
+        )
+        self.assertIn(
+            'npm install --prefix "$npm_prefix" --ignore-scripts --no-audit '
+            '--no-fund "@openai/codex@${CODEX_VERSION}"',
+            installed,
+        )
+        self.assertIn("scripts/stage-installed-codex-release.sh", installed)
+        self.assertIn('echo "$release_root/bin" >> "$GITHUB_PATH"', installed)
+        self.assertIn(
+            'test "$(command -v codex)" = "$release_root/bin/codex"', installed
+        )
+        self.assertIn("scripts/test-installed-codex-qualification.sh", installed)
+        self.assertIn(
+            "      - name: Run canonical installed canary\n        if: always()",
+            installed,
+        )
+        self.assertIn(
+            "          PROJMUX_CODEX_INSTALL_OUTCOME: ${{ steps.install-codex.outcome }}",
+            installed,
+        )
+        self.assertIn(
+            "          PROJMUX_CODEX_EXPECTED_VERSION: ${{ matrix.codex-version }}",
+            installed,
+        )
+        self.assertIn("          OPENAI_API_KEY: \"\"", installed)
+        self.assertIn("          CODEX_API_KEY: \"\"", installed)
+        self.assertIn("          CODEX_TOKEN: \"\"", installed)
+        self.assertIn("      - name: Upload typed primitive result", installed)
+        self.assertIn("        if: always()", installed)
+        self.assertIn("          if-no-files-found: error", installed)
+        self.assertIn("          retention-days: 14", installed)
+
+        self.assertIn("    name: Installed Codex Qualification", aggregate)
+        self.assertIn("    if: always()", aggregate)
+        self.assertIn("      - installed-codex", aggregate)
+        self.assertIn("            aggregate \\", aggregate)
+        self.assertIn("            artifacts/installed-codex/qualification.json", aggregate)
+        self.assertIn("            --required installed-codex", aggregate)
+        self.assertIn("      - name: Upload typed qualification bundle", aggregate)
+
+        # The volatile real-binary lane reports its own non-required status. It
+        # can neither replace fake C01 nor flow into either stable aggregate.
+        for stable_aggregate in (e2e_required, required_test):
+            self.assertNotIn("installed-codex", stable_aggregate)
+
+    def test_native_platform_payload_stages_as_canonical_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_path = Path(temporary)
+            prefix = temporary_path / "npm"
+            meta = prefix / "node_modules/@openai/codex"
+            platform = meta / "node_modules/@openai/codex-linux-x64"
+            source_release = platform / "vendor/x86_64-unknown-linux-musl"
+            native = source_release / "bin/codex"
+            native.parent.mkdir(parents=True)
+            native.write_text(
+                "#!/bin/sh\nprintf 'codex-cli 0.152.0\\n'\n", encoding="utf-8"
+            )
+            native.chmod(0o700)
+            (meta / "package.json").write_text(
+                json.dumps({"name": "@openai/codex", "version": "0.152.0"}),
+                encoding="utf-8",
+            )
+            (platform / "package.json").write_text(
+                json.dumps(
+                    {"name": "@openai/codex", "version": "0.152.0-linux-x64"}
+                ),
+                encoding="utf-8",
+            )
+            manifest = {
+                "layoutVersion": 1,
+                "version": "0.152.0",
+                "target": "x86_64-unknown-linux-musl",
+                "variant": "codex",
+                "entrypoint": "bin/codex",
+                "resourcesDir": "codex-resources",
+                "pathDir": "codex-path",
+            }
+            (source_release / "codex-package.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+            release = temporary_path / "release/0.152.0-x86_64-unknown-linux-musl"
+            stage = ROOT / "scripts/stage-installed-codex-release.sh"
+            completed = subprocess.run(
+                ["bash", str(stage), str(prefix), str(release), "0.152.0"],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            staged = release / "bin/codex"
+            self.assertEqual(staged.resolve(), staged)
+            self.assertEqual(staged.parent.parent, release)
+            self.assertEqual((release / "codex").resolve(), staged)
+            self.assertEqual(
+                json.loads((release / "codex-package.json").read_text())["version"],
+                "0.152.0",
+            )
+            version = subprocess.run(
+                [str(staged), "--version"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            self.assertEqual(version, "codex-cli 0.152.0")
+
+            bad_release = temporary_path / "bad-release"
+            manifest["version"] = "0.151.0"
+            (source_release / "codex-package.json").write_text(
+                json.dumps(manifest), encoding="utf-8"
+            )
+            rejected = subprocess.run(
+                ["bash", str(stage), str(prefix), str(bad_release), "0.152.0"],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertFalse(bad_release.exists())
+
     def test_race_children_preserve_coverage_behind_the_stable_aggregate(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
         core = workflow_job(workflow, "race-core")
