@@ -13,27 +13,74 @@ CanonicalRoutes	The canonical route table accessor is retained for cross-package
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
 CurrentProtocol	The build's local IPC version window accessor is retained as the negotiation input an explicit caller supplies.
 DecideTeardownEvent	The pure teardown decision API is retained for lifecycle authority proofs and planned consumers.
+DirectEndpoint.Close	Test-only installed qualification API retained for bounded direct endpoint cleanup proof.
+DirectEndpoint.Health	Test-only installed qualification API retained for canonical direct readiness evidence.
+DirectEndpoint.forceCleanup	Test-only installed qualification helper retained for injected direct startup-failure cleanup proof.
+DirectEndpoint.markClosed	Test-only installed qualification helper retained for single-consumer bounded direct exit finalization proof.
 Discover	The background-context discovery wrapper is retained as a test and compatibility seam.
+Fixture.ApplyEnv	Test-only installed qualification API retained for isolated environment containment proof.
+Fixture.Cleanup	Test-only installed qualification API retained for exact owned-artifact cleanup proof.
+Fixture.Ledger	Test-only installed qualification API retained for semantic ambient non-mutation proof.
+Fixture.ProvisionManagedPayload	Test-only installed qualification API retained for managed provision classification proof.
+Fixture.RunManagedLifecycle	Test-only installed qualification API retained for managed start/reuse/retire proof.
+Fixture.StartDirect	Test-only installed qualification API retained for disposable direct endpoint readiness proof.
+Fixture.Versions	Test-only installed qualification API retained for complete version-tuple evidence.
+Fixture.cleanupSupportArtifacts	Test-only installed qualification helper retained for exact ledger and shim cleanup proof.
+Fixture.discoverCLI	Test-only installed qualification helper retained for installed CLI version evidence.
+Fixture.observeDaemonVersion	Test-only installed qualification helper retained for managed terminal version evidence.
+Fixture.observeHealth	Test-only installed qualification helper retained for canonical readiness version evidence.
+Fixture.readDaemonVersion	Test-only installed qualification helper retained for managed socket and version observation proof.
+Fixture.readManagedPID	Test-only installed qualification helper retained for contained public PID artifact proof.
+Fixture.readManagedStartResult	Test-only installed qualification helper retained for exact managed start PID proof.
+Fixture.retireAfterFailure	Test-only installed qualification helper retained for bounded exact managed failure cleanup proof.
 Host.RuntimeID	The runtime identity accessor is retained as the authority axis clients present alongside both epochs.
+Ledger.AmbientMutations	Test-only installed qualification API retained for typed ambient mutation counting proof.
+Ledger.AssertNoAmbientMutation	Test-only installed qualification API retained for zero ambient mutation proof.
+Ledger.AssertNoLifecycleMutation	Test-only installed qualification API retained for broker-smoke lifecycle non-mutation proof.
+Ledger.Commands	Test-only installed qualification API retained for semantic command evidence.
+Ledger.DistinctOperations	Test-only installed qualification API retained for content-free command reporting.
+Ledger.HasOperation	Test-only installed qualification API retained for canonical proxy observation proof.
+Ledger.record	Test-only installed qualification helper retained for owned lifecycle command evidence.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
+NewClean	Test-only installed qualification API retained for canonical clean-root topology proof.
+NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
+NewResult	Test-only installed qualification API retained for typed terminal result construction.
 ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnostics tests and the planned doctor consumer.
 Registry.snapshotPanesOf	Snapshot pane lookup remains part of the retained snapshot reconciliation implementation.
+Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.
+Result.Validate	Test-only installed qualification API retained for closed class and nonblank tuple validation.
 Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
+SmokeRoot	Test-only installed qualification API retained for canonical isolated root validation.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.
 Store.Path	The Registry path accessor is retained for migration and storage-boundary tests.
 Store.SetClock	The injected Registry clock is retained as a deterministic migration and transaction test seam.
 TeardownObservations	The closed teardown-observation catalog is retained for authority proofs and planned consumers.
+VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
+boundedBuffer.Bytes	Test-only installed qualification helper retained for bounded public status decoding.
+boundedBuffer.Write	Test-only installed qualification helper retained for bounded installed command capture.
+classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
+equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
 formatLegacyPaneSummary	Legacy pane-summary rendering remains required while persisted legacy pane metadata is readable.
 genericTeardownRefusal	The generic refusal constructor is retained inside the pure teardown authority proof surface.
+isolatedEnvironment	Test-only installed qualification helper retained for CODEX_HOME and tmux identity containment.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
+newFixture	Test-only installed qualification helper retained as the common clean/existing fixture constructor.
+newLedger	Test-only installed qualification helper retained for canonical semantic command evidence.
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
+removeExactResidualSocket	Test-only installed qualification helper retained for ready-time socket identity cleanup proof.
 rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
 tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
 validOwnerChain	Owner-chain validation is retained inside the pure teardown decision authority.
 validTeardownEventKind	The closed event-kind validator is retained inside the pure teardown decision authority.
 validTeardownObservation	The closed observation validator is retained inside the pure teardown decision authority.
+validateInheritedEnvironment	Test-only installed qualification helper retained for inherited tmux refusal proof.
+validateManagedIdentity	Test-only installed qualification helper retained for foreign PID/socket cleanup refusal proof.
+versionOrUnknown	Test-only installed qualification helper retained for nonblank version-tuple evidence.
+waitForProcessExit	Test-only installed qualification helper retained for independently bounded direct kill-wait proof.
+waitForRetirement	Test-only installed qualification helper retained for bounded PID/socket retirement proof.
+writeLedgerShim	Test-only installed qualification helper retained for complete semantic command observation.

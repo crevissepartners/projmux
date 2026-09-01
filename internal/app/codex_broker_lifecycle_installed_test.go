@@ -14,6 +14,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
+	"github.com/crevissepartners/projmux/internal/testutil/codexinstalled"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -100,18 +101,6 @@ func TestInstalledIsolatedRealTmuxTwoAgentReconnectSmoke(t *testing.T) {
 	}
 }
 
-// codexInstalledSmokeReadOnlyArgv is the complete set of `codex` argv this
-// whole path is allowed to run. Both entries are read-only: one opens the
-// official stdio proxy to an endpoint that is already there, the other prints
-// the local version JSON. Every daemon lifecycle mutation - start, stop,
-// restart, bootstrap, remote-control, login, config - is absent by
-// construction, so an argv the ledger records outside this set is the
-// violation itself and needs no separate pattern list.
-var codexInstalledSmokeReadOnlyArgv = []string{
-	"app-server proxy",
-	"app-server daemon version",
-}
-
 // TestInstalledIsolatedBrokerNativeBindingSmoke drives the cutover's product
 // lifecycle and control path against a real installed Codex app-server.
 //
@@ -125,27 +114,11 @@ var codexInstalledSmokeReadOnlyArgv = []string{
 //
 // What it proves is the acceptance the fake-endpoint suite cannot: on that
 // unmanaged endpoint, the product reaches native ready and steers its own
-// exact active turn through the broker's fenced control wire, while every
-// `codex` argv the whole path ran stays inside the read-only set above.
+// exact active turn through the broker's fenced control wire, while the shared
+// semantic ledger proves the whole path performed no endpoint lifecycle or
+// ambient mutation.
 func TestInstalledIsolatedBrokerNativeBindingSmoke(t *testing.T) {
-	root := strings.TrimSpace(os.Getenv("PROJMUX_CODEX_CUTOVER_SMOKE_ROOT"))
-	if root == "" {
-		t.Skip("set PROJMUX_CODEX_CUTOVER_SMOKE_ROOT for the installed native cutover smoke")
-	}
-	root = filepath.Clean(root)
-	tmpRoot := filepath.Clean("/tmp")
-	if !filepath.IsAbs(root) || root == tmpRoot || !strings.HasPrefix(root, tmpRoot+string(filepath.Separator)) {
-		t.Fatalf("smoke root must be an isolated child of %s", tmpRoot)
-	}
-	for _, inherited := range []string{"TMUX", "TMUX_PANE"} {
-		if _, present := os.LookupEnv(inherited); present {
-			t.Fatalf("%s must be removed for the installed native cutover smoke", inherited)
-		}
-	}
-	wantCodexHome := filepath.Join(root, "codex-home")
-	if got := filepath.Clean(os.Getenv("CODEX_HOME")); got != wantCodexHome {
-		t.Fatalf("CODEX_HOME = %q, want %q", got, wantCodexHome)
-	}
+	root, fixture := newInstalledBrokerFixture(t, "PROJMUX_CODEX_CUTOVER_SMOKE_ROOT", "native cutover")
 	domain := filepath.Join(root, "state")
 	if err := os.MkdirAll(domain, 0o700); err != nil {
 		t.Fatal(err)
@@ -158,7 +131,7 @@ func TestInstalledIsolatedBrokerNativeBindingSmoke(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	ledger := installCodexArgvLedger(t, root)
+	ledger := fixture.Ledger()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -281,74 +254,7 @@ func TestInstalledIsolatedBrokerNativeBindingSmoke(t *testing.T) {
 		}
 	}
 
-	recorded := ledger()
-	t.Logf("evidence: codex argv recorded=%d distinct=%v", len(recorded), distinctCodexArgv(recorded))
-	if len(recorded) == 0 {
-		t.Fatalf("no codex argv was recorded, so the zero-lifecycle-mutation claim is unproven")
-	}
-	if !slices.Contains(recorded, "app-server proxy") {
-		t.Fatalf("the recorded argv never opened the official proxy, so the ledger did not observe the product path")
-	}
-	for _, argv := range recorded {
-		if !slices.Contains(codexInstalledSmokeReadOnlyArgv, argv) {
-			t.Fatalf("codex argv %q is outside the read-only set %v", argv, codexInstalledSmokeReadOnlyArgv)
-		}
-	}
-}
-
-// installCodexArgvLedger puts a recording shim in front of the installed codex
-// for this test process and returns the reader of everything it observed.
-//
-// The shim is the only way to make the zero-daemon-lifecycle-mutation half of
-// the acceptance observable against a real endpoint: the product resolves
-// `codex` through PATH on every proxy open and every readiness observation, so
-// a shim there sees the complete argv set of the whole path, including the
-// broker's own opener.
-func installCodexArgvLedger(t *testing.T, root string) func() []string {
-	t.Helper()
-	real, err := exec.LookPath("codex")
-	if err != nil {
-		t.Fatalf("installed codex is required for this smoke: %v", err)
-	}
-	bin := filepath.Join(root, "bin")
-	if err := os.MkdirAll(bin, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	recordPath := filepath.Join(root, "codex-argv.log")
-	shim := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$*\" >> %q\nexec %q \"$@\"\n", recordPath, real)
-	shimPath := filepath.Join(bin, "codex")
-	if err := os.WriteFile(shimPath, []byte(shim), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	if resolved, err := exec.LookPath("codex"); err != nil || resolved != shimPath {
-		t.Fatalf("codex resolves to %q (%v), want the recording shim %q", resolved, err, shimPath)
-	}
-	return func() []string {
-		raw, err := os.ReadFile(recordPath)
-		if err != nil {
-			t.Fatalf("read the codex argv ledger: %v", err)
-		}
-		var argv []string
-		for line := range strings.SplitSeq(string(raw), "\n") {
-			if line = strings.TrimSpace(line); line != "" {
-				argv = append(argv, line)
-			}
-		}
-		return argv
-	}
-}
-
-// distinctCodexArgv renders the ledger as its ordered distinct argv, which is
-// the part worth reading in a log line.
-func distinctCodexArgv(recorded []string) []string {
-	var distinct []string
-	for _, argv := range recorded {
-		if !slices.Contains(distinct, argv) {
-			distinct = append(distinct, argv)
-		}
-	}
-	return distinct
+	assertInstalledBrokerLedger(t, ledger)
 }
 
 // settleCodexTurn waits for the created thread to leave its first turn, so the
@@ -399,24 +305,7 @@ func settleCodexTurn(ctx context.Context, t *testing.T, workspace, threadID stri
 // Agent's control traffic leaves the other's epoch untouched, and unbinding
 // them both leaves nothing behind.
 func TestInstalledIsolatedRetiredObserverMatrixSmoke(t *testing.T) {
-	root := strings.TrimSpace(os.Getenv("PROJMUX_CODEX_RETIREMENT_SMOKE_ROOT"))
-	if root == "" {
-		t.Skip("set PROJMUX_CODEX_RETIREMENT_SMOKE_ROOT for the installed retirement matrix smoke")
-	}
-	root = filepath.Clean(root)
-	tmpRoot := filepath.Clean("/tmp")
-	if !filepath.IsAbs(root) || root == tmpRoot || !strings.HasPrefix(root, tmpRoot+string(filepath.Separator)) {
-		t.Fatalf("smoke root must be an isolated child of %s", tmpRoot)
-	}
-	for _, inherited := range []string{"TMUX", "TMUX_PANE"} {
-		if _, present := os.LookupEnv(inherited); present {
-			t.Fatalf("%s must be removed for the installed retirement matrix smoke", inherited)
-		}
-	}
-	wantCodexHome := filepath.Join(root, "codex-home")
-	if got := filepath.Clean(os.Getenv("CODEX_HOME")); got != wantCodexHome {
-		t.Fatalf("CODEX_HOME = %q, want %q", got, wantCodexHome)
-	}
+	root, fixture := newInstalledBrokerFixture(t, "PROJMUX_CODEX_RETIREMENT_SMOKE_ROOT", "retirement matrix")
 	domain := filepath.Join(root, "state")
 	if err := os.MkdirAll(domain, 0o700); err != nil {
 		t.Fatal(err)
@@ -429,7 +318,7 @@ func TestInstalledIsolatedRetiredObserverMatrixSmoke(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	ledger := installCodexArgvLedger(t, root)
+	ledger := fixture.Ledger()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -602,16 +491,7 @@ func TestInstalledIsolatedRetiredObserverMatrixSmoke(t *testing.T) {
 		}
 	}
 
-	recorded := ledger()
-	t.Logf("evidence: codex argv recorded=%d distinct=%v", len(recorded), distinctCodexArgv(recorded))
-	if len(recorded) == 0 {
-		t.Fatalf("no codex argv was recorded, so the zero-lifecycle-mutation claim is unproven")
-	}
-	for _, argv := range recorded {
-		if !slices.Contains(codexInstalledSmokeReadOnlyArgv, argv) {
-			t.Fatalf("codex argv %q is outside the read-only set %v", argv, codexInstalledSmokeReadOnlyArgv)
-		}
-	}
+	assertInstalledBrokerLedger(t, ledger)
 }
 
 // dialInstalledSmokeTelemetry reads the published runtime's content-free
@@ -651,24 +531,7 @@ func dialInstalledSmokeTelemetry(ctx context.Context, t *testing.T, discovery co
 // therefore attempted a bounded number of times, and a run that still sees no
 // approval says so as a missed observation rather than as a lease failure.
 func TestInstalledIsolatedBrokerApprovalLeaseSmoke(t *testing.T) {
-	root := strings.TrimSpace(os.Getenv("PROJMUX_CODEX_APPROVAL_SMOKE_ROOT"))
-	if root == "" {
-		t.Skip("set PROJMUX_CODEX_APPROVAL_SMOKE_ROOT for the installed approval lease smoke")
-	}
-	root = filepath.Clean(root)
-	tmpRoot := filepath.Clean("/tmp")
-	if !filepath.IsAbs(root) || root == tmpRoot || !strings.HasPrefix(root, tmpRoot+string(filepath.Separator)) {
-		t.Fatalf("smoke root must be an isolated child of %s", tmpRoot)
-	}
-	for _, inherited := range []string{"TMUX", "TMUX_PANE"} {
-		if _, present := os.LookupEnv(inherited); present {
-			t.Fatalf("%s must be removed for the installed approval lease smoke", inherited)
-		}
-	}
-	wantCodexHome := filepath.Join(root, "codex-home")
-	if got := filepath.Clean(os.Getenv("CODEX_HOME")); got != wantCodexHome {
-		t.Fatalf("CODEX_HOME = %q, want %q", got, wantCodexHome)
-	}
+	root, fixture := newInstalledBrokerFixture(t, "PROJMUX_CODEX_APPROVAL_SMOKE_ROOT", "approval lease")
 	domain := filepath.Join(root, "state")
 	if err := os.MkdirAll(domain, 0o700); err != nil {
 		t.Fatal(err)
@@ -681,7 +544,7 @@ func TestInstalledIsolatedBrokerApprovalLeaseSmoke(t *testing.T) {
 	if err := os.MkdirAll(workspace, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	ledger := installCodexArgvLedger(t, root)
+	ledger := fixture.Ledger()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -825,11 +688,56 @@ func TestInstalledIsolatedBrokerApprovalLeaseSmoke(t *testing.T) {
 		t.Fatalf("the command answered with %s wrote its file anyway", decision)
 	}
 
-	recorded := ledger()
-	t.Logf("evidence: codex argv recorded=%d distinct=%v", len(recorded), distinctCodexArgv(recorded))
-	for _, argv := range recorded {
-		if !slices.Contains(codexInstalledSmokeReadOnlyArgv, argv) {
-			t.Fatalf("codex argv %q is outside the read-only set %v", argv, codexInstalledSmokeReadOnlyArgv)
+	assertInstalledBrokerLedger(t, ledger)
+}
+
+func newInstalledBrokerFixture(t *testing.T, envName, label string) (string, *codexinstalled.Fixture) {
+	t.Helper()
+	root, enabled, err := codexinstalled.SmokeRoot(envName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Skipf("set %s for the installed %s smoke", envName, label)
+	}
+	fixture, err := codexinstalled.NewExisting(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.ApplyEnv(t.Setenv)
+	t.Cleanup(func() {
+		if err := fixture.Cleanup(); err != nil {
+			t.Errorf("installed %s fixture cleanup: %v", label, err)
 		}
+	})
+	return root, fixture
+}
+
+func assertInstalledBrokerLedger(t *testing.T, ledger *codexinstalled.Ledger) {
+	t.Helper()
+	commands, err := ledger.Commands()
+	if err != nil {
+		t.Fatal(err)
+	}
+	operations, err := ledger.DistinctOperations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("evidence: semantic Codex commands recorded=%d distinct=%v", len(commands), operations)
+	if len(commands) == 0 {
+		t.Fatal("no semantic Codex command was recorded, so the non-mutation claim is unproven")
+	}
+	proxyObserved, err := ledger.HasOperation("proxy-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !proxyObserved {
+		t.Fatal("the semantic ledger never observed the official proxy product path")
+	}
+	if err := ledger.AssertNoLifecycleMutation(); err != nil {
+		t.Fatal(err)
+	}
+	if err := ledger.AssertNoAmbientMutation(); err != nil {
+		t.Fatal(err)
 	}
 }
