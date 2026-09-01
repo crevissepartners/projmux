@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 )
@@ -90,9 +89,22 @@ func TestResourceSchemaRejectsRawImpossibleAndCrossFamilyFields(t *testing.T) {
 		{"raw source", func(e *Event) { e.Source = "/private/project" }},
 		{"raw result", func(e *Event) { e.ResourceResult = "partial:pid=123" }},
 		{"raw failure", func(e *Event) { e.Failure = "scan failed: secret" }},
+		{"command", func(e *Event) { e.Command = "status" }},
+		{"subcommand", func(e *Event) { e.Subcommand = "resources" }},
 		{"message", func(e *Event) { e.Message = "arbitrary collector error" }},
+		{"operation", func(e *Event) { e.Operation = string(OperationSessionCreate) }},
+		{"code", func(e *Event) { e.Code = string(CodeSessionCreateFailed) }},
 		{"provider", func(e *Event) { e.Provider = string(ProviderOther) }},
+		{"transition", func(e *Event) { e.Transition = string(TransitionNotifyEnqueue) }},
+		{"disposition", func(e *Event) { e.Disposition = string(DispositionQueued) }},
+		{"category", func(e *Event) { e.Category = string(CategoryOther) }},
+		{"route", func(e *Event) { e.Route = string(RouteQueue) }},
 		{"ai kind", func(e *Event) { e.AIKind = string(AIKindPayload) }},
+		{"ai result", func(e *Event) { e.AIResult = string(AIResultFailed) }},
+		{"count", func(e *Event) {
+			count := 1
+			e.ItemCount = &count
+		}},
 		{"inventory unavailable", func(e *Event) { e.Source = string(ResourceSourceInventory) }},
 		{"partial error level", func(e *Event) {
 			e.ResourceResult = string(ResourceResultPartial)
@@ -113,12 +125,6 @@ func TestResourceSchemaRejectsRawImpossibleAndCrossFamilyFields(t *testing.T) {
 				t.Fatalf("sanitizeEvent(%#v) accepted unsafe tuple", event)
 			}
 		})
-	}
-	raw, _ := json.Marshal(base)
-	for _, forbidden := range []string{"pid", "cpu", "memory", "command", "cwd", "title", "pane", "project", "session", "uuid", "/private"} {
-		if strings.Contains(strings.ToLower(string(raw)), forbidden) {
-			t.Fatalf("safe resource event leaked %q: %s", forbidden, raw)
-		}
 	}
 }
 

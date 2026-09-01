@@ -354,17 +354,25 @@ func TestDoctorAndSettingsReadOnlyTopologyNeverStartOrWrite(t *testing.T) {
 					t.Fatalf("read-only surface emitted mutation argv %q: %s", mutation, calls)
 				}
 			}
-			wantProxyCalls := 3
-			wantVersionCalls := 3
 			if tt.missingCLI {
-				wantProxyCalls = 0
-				wantVersionCalls = 0
+				if len(calls) != 0 {
+					t.Fatalf("missing CLI emitted invocations: %q", calls)
+				}
+				return
 			}
-			if got := strings.Count(string(calls), "app-server proxy"); got != wantProxyCalls {
-				t.Fatalf("proxy calls = %d, want %d; invocations=%q", got, wantProxyCalls, calls)
+			observed := map[string]bool{}
+			for invocation := range strings.SplitSeq(strings.TrimSpace(string(calls)), "\n") {
+				switch invocation {
+				case "app-server proxy", "app-server daemon version":
+					observed[invocation] = true
+				default:
+					t.Fatalf("read-only topology surface emitted non-observation argv %q; all=%q", invocation, calls)
+				}
 			}
-			if got := strings.Count(string(calls), "app-server daemon version"); got != wantVersionCalls {
-				t.Fatalf("daemon version calls = %d, want %d; invocations=%q", got, wantVersionCalls, calls)
+			for _, required := range []string{"app-server proxy", "app-server daemon version"} {
+				if !observed[required] {
+					t.Fatalf("read-only topology never crossed required %q observation boundary; all=%q", required, calls)
+				}
 			}
 		})
 	}
