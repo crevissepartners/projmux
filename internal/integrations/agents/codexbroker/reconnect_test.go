@@ -83,6 +83,9 @@ func TestLongDisconnectReconnectsWhileABindingRemainsAndFencesTheOldEpochOut(t *
 	if outcome, err := binding.Submit(t.Context(), liveFence, Mutation{Method: "turn/start"}); outcome != MutationApplied || err != nil {
 		t.Fatalf("live fence mutation = %s/%v", outcome, err)
 	}
+	if got := second.methods(); len(got) != 1 || got[0] != "turn/start" {
+		t.Fatalf("requests on the current connection = %v, want exactly one turn/start", got)
+	}
 
 	// Once no binding remains there is nothing to reconnect for.
 	attempts := opener.count()
