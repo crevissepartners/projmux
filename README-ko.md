@@ -23,7 +23,7 @@ projmux shell
 ```
 
 <p align="center">
-  <img src="docs/assets/projmux-overview.gif" alt="projmux 작업 공간: 프로젝트를 옮기고, 이어서 열 세션을 고르고, 실행 중인 에이전트 옆에서 대화를 이어갑니다" width="820">
+  <img src="docs/assets/projmux-overview-ko.gif" alt="projmux 작업 공간: 프로젝트를 옮기고, 이어서 열 세션을 고르고, 실행 중인 에이전트 옆에서 대화를 이어갑니다" width="820">
 </p>
 
 ## 키
@@ -49,7 +49,7 @@ projmux shell
 누르면 기다리고 있는 pane으로 이동합니다.
 
 <p align="center">
-  <img src="docs/assets/projmux-ai-attention.gif" alt="projmux 알림함: shell에서 작업하다가 승인이 필요한 에이전트 pane으로 돌아갑니다" width="820">
+  <img src="docs/assets/projmux-ai-attention-ko.gif" alt="projmux 알림함: 대화 도중 알림이 도착하면 그 알림을 낸 pane으로 바로 이동합니다" width="820">
 </p>
 
 ## 여러 에이전트를 동시에
@@ -62,7 +62,7 @@ projmux create claude --project mobile-client -- "Draft the migration plan."
 ```
 
 <p align="center">
-  <img src="docs/assets/projmux-three-pane-workflow.gif" alt="projmux 3-pane 작업 흐름: shell, Codex, 그리고 Codex가 연 Claude Code pane" width="820">
+  <img src="docs/assets/projmux-three-pane-workflow-ko.gif" alt="projmux 3-pane 작업 흐름: shell, Codex, 그리고 Codex가 연 Claude Code pane" width="820">
 </p>
 
 에이전트별 템플릿과 이름 규칙은

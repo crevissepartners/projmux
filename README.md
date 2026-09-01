@@ -49,7 +49,7 @@ Agent permission requests and completions land in one grouped inbox. `Alt-2`
 takes you to the pane that is waiting.
 
 <p align="center">
-  <img src="docs/assets/projmux-ai-attention.gif" alt="projmux attention queue: return from a shell to the agent pane that needs approval" width="820">
+  <img src="docs/assets/projmux-ai-attention.gif" alt="projmux attention queue: a notification lands mid-conversation, and one key takes you to the pane that raised it" width="820">
 </p>
 
 ## Run agents in parallel
