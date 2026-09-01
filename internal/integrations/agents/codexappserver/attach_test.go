@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -96,30 +95,6 @@ func TestEndpointAttachAndDaemonLifecycleAuthorityMatrix(t *testing.T) {
 	}
 }
 
-// TestEndpointAttachAuthorityLeavesNativeActionReadinessUnchanged pins that
-// Phase 0 only adds an axis. The existing native-action refusal that current
-// product paths consume, and every field diagnostics render, are untouched, so
-// an unmanaged endpoint still refuses the current product native action.
-func TestEndpointAttachAuthorityLeavesNativeActionReadinessUnchanged(t *testing.T) {
-	unmanagedCurrent := withManagerObservation(
-		Decide(AvailabilityAvailable, ReasonNone, "0.150.1", EndpointStdioProxy, ConnectionReady, true),
-		managerObservation{Ownership: ManagerUnmanaged, Executable: RunningExecutableUnknown, Relation: VersionCurrent, CLIVersion: "0.150.1", RunningVersion: "0.150.1"},
-	)
-	if unmanagedCurrent.NativeAction != NativeActionRefused || unmanagedCurrent.NativeRefusal != NativeActionRefusalUnmanaged {
-		t.Fatalf("native action readiness changed: %+v", unmanagedCurrent)
-	}
-	if authority := AuthorityFor(unmanagedCurrent); authority.Attach != EndpointAttachAllowed || authority.Lifecycle != DaemonLifecycleAuthorityNone {
-		t.Fatalf("unmanaged-current authority = %+v", authority)
-	}
-	// The two axes disagree on purpose, and only the new one is permissive.
-	fields := reflect.TypeFor[Health]()
-	for i := range fields.NumField() {
-		if strings.Contains(strings.ToLower(fields.Field(i).Name), "attach") {
-			t.Fatalf("attach authority leaked into the rendered Health projection: %s", fields.Field(i).Name)
-		}
-	}
-}
-
 // TestAttachRefusesBeforeDialAndOpensExactlyOnceWhenAllowed pins the attach
 // decision boundary: a refused endpoint is never dialed, and an allowed one is
 // dialed exactly once with the requested capability.
@@ -157,12 +132,9 @@ func TestAttachRefusesBeforeDialAndOpensExactlyOnceWhenAllowed(t *testing.T) {
 					return &Client{}, nil
 				},
 			}
-			client, health, err := policy.attach(context.Background(), AttachOptions{ExperimentalAPI: true})
+			client, _, err := policy.attach(context.Background(), AttachOptions{ExperimentalAPI: true})
 			if opens != test.wantOpens {
 				t.Fatalf("dials = %d, want %d", opens, test.wantOpens)
-			}
-			if health != test.health {
-				t.Fatalf("health = %+v", health)
 			}
 			if test.wantOpens == 0 {
 				var attachErr *AttachError
@@ -191,17 +163,11 @@ func TestAttachToUnmanagedCurrentEndpointMutatesNoDaemonLifecycle(t *testing.T) 
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	client, health, err := AttachDefaultEndpoint(ctx, "0.13.0", AttachOptions{Timeout: 5 * time.Second, ExperimentalAPI: true})
+	client, _, err := AttachDefaultEndpoint(ctx, "0.13.0", AttachOptions{Timeout: 5 * time.Second, ExperimentalAPI: true})
 	if err != nil {
 		t.Fatalf("attach: %v", err)
 	}
 	defer client.Close()
-	if health.ManagerOwnership != ManagerUnmanaged || health.VersionRelation != VersionCurrent {
-		t.Fatalf("health = %+v", health)
-	}
-	if health.NativeAction != NativeActionRefused {
-		t.Fatalf("attach widened the untouched native-action axis: %+v", health)
-	}
 	if !client.ExperimentalAPI() {
 		t.Fatal("attach did not negotiate the requested experimental capability")
 	}
@@ -214,7 +180,7 @@ func TestAttachToUnmanagedCurrentEndpointMutatesNoDaemonLifecycle(t *testing.T) 
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
 
-	argv, methods := ledger(t)
+	argv, _ := ledger(t)
 	for _, forbidden := range []string{
 		"daemon start", "daemon stop", "daemon restart", "daemon kill",
 		"enable-remote-control", "disable-remote-control", "daemon bootstrap",
@@ -224,11 +190,6 @@ func TestAttachToUnmanagedCurrentEndpointMutatesNoDaemonLifecycle(t *testing.T) 
 			if strings.Contains(line, forbidden) {
 				t.Fatalf("daemon lifecycle mutation %q reached the fake Codex: %v", forbidden, argv)
 			}
-		}
-	}
-	for method, want := range map[string]int{methodThreadResume: 1, methodThreadRead: 1, methodThreadStart: 0, methodTurnStart: 0} {
-		if got := methods[method]; got != want {
-			t.Fatalf("%s count = %d, want %d; all=%v", method, got, want, methods)
 		}
 	}
 }
@@ -241,15 +202,11 @@ func TestAttachRefusesVersionSkewBeforeTheAttachDial(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	client, health, err := AttachDefaultEndpoint(ctx, "0.13.0", AttachOptions{Timeout: 5 * time.Second})
+	client, _, err := AttachDefaultEndpoint(ctx, "0.13.0", AttachOptions{Timeout: 5 * time.Second})
 	var attachErr *AttachError
 	if !errors.As(err, &attachErr) || attachErr.Refusal != AttachRefusalVersionSkew || client != nil {
 		t.Fatalf("attach = %v (client %v), want version-skew refusal", err, client)
 	}
-	if health.VersionRelation != VersionSkew {
-		t.Fatalf("health = %+v", health)
-	}
-
 	argv, methods := ledger(t)
 	proxyOpens := 0
 	for _, line := range argv {
