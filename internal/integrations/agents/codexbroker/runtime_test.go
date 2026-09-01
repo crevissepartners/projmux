@@ -9,11 +9,109 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
+
+// TestHostStartupAndShutdownHaveDeterministicHappensBefore is the public Host
+// lifecycle boundary. StartHost does not return until the accept owner exists;
+// Close stops that owner before waiting for sessions, then stops the broker,
+// and only then publishes the one terminal Done observed by every caller.
+func TestHostStartupAndShutdownHaveDeterministicHappensBefore(t *testing.T) {
+	t.Run("immediate close orders accept broker and done", func(t *testing.T) {
+		discovery := newRuntimeDiscovery(t)
+		broker, _, _ := newTestBroker(t, 8)
+		host, err := StartHost(HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: -1})
+		if err != nil {
+			t.Fatalf("StartHost() = %v", err)
+		}
+		t.Cleanup(func() { _ = host.Close() })
+
+		select {
+		case <-host.acceptReady:
+		default:
+			t.Fatal("StartHost returned before the accept owner was ready")
+		}
+		if err := host.Close(); err != nil {
+			t.Fatalf("Close() = %v", err)
+		}
+		select {
+		case <-host.acceptDone:
+		default:
+			t.Fatal("Done closed before the accept owner stopped")
+		}
+		select {
+		case <-broker.exit:
+		default:
+			t.Fatal("Done closed before the broker stopped")
+		}
+		select {
+		case <-host.Done():
+		default:
+			t.Fatal("Close returned before Done closed")
+		}
+		assertNoRuntimeArtifacts(t, discovery)
+	})
+
+	t.Run("concurrent callers observe one terminal done", func(t *testing.T) {
+		discovery := newRuntimeDiscovery(t)
+		broker, _, _ := newTestBroker(t, 8)
+		host, err := StartHost(HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: -1})
+		if err != nil {
+			t.Fatalf("StartHost() = %v", err)
+		}
+		t.Cleanup(func() { _ = host.Close() })
+		terminal := host.Done()
+
+		const callers = 8
+		type closeResult struct {
+			done   <-chan struct{}
+			closed bool
+			err    error
+		}
+		start := make(chan struct{})
+		results := make(chan closeResult, callers)
+		var ready sync.WaitGroup
+		ready.Add(callers)
+		for range callers {
+			go func() {
+				observed := host.Done()
+				ready.Done()
+				<-start
+				err := host.Close()
+				closed := false
+				select {
+				case <-observed:
+					closed = true
+				default:
+				}
+				results <- closeResult{done: observed, closed: closed, err: err}
+			}()
+		}
+		ready.Wait()
+		close(start)
+		for range callers {
+			select {
+			case result := <-results:
+				if result.err != nil {
+					t.Fatalf("concurrent Close() = %v", result.err)
+				}
+				if result.done != terminal {
+					t.Fatal("concurrent Close caller observed a different Done channel")
+				}
+				if !result.closed {
+					t.Fatal("concurrent Close returned before the shared Done closed")
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("concurrent Close callers did not terminate")
+			}
+		}
+		assertNoRuntimeArtifacts(t, discovery)
+	})
+}
 
 // TestConcurrentClientsShareOneRuntimeProcessAndOneUpstreamConnection is the
 // singleton contract across real processes.
@@ -94,12 +192,13 @@ func TestConcurrentClientsShareOneRuntimeProcessAndOneUpstreamConnection(t *test
 			t.Fatalf("client %d exited with %v", index, err)
 		}
 	}
-	// Every client is gone, so the runtime holds no binding. Its bounded idle
-	// shutdown must remove exactly what it published and leave no process.
+	// Every client is gone, so the runtime holds no binding. The unique boundary
+	// here is process-level singleton convergence: the shared runtime must stop.
+	// Exact idle-shutdown artifact cleanup is owned by
+	// TestLastBindingRemovalIdlesTheRuntimeOutAndLeavesNoArtifact.
 	waitFor(t, "the shared runtime to idle out", func() bool {
 		return countLedger(t, ledger, "stopped ") == 1
 	})
-	assertNoRuntimeArtifacts(t, discovery)
 }
 
 // TestStaleRuntimeArtifactsAreReclaimedOnlyByExactOwnerProof is the ownership
@@ -192,6 +291,56 @@ func TestStaleRuntimeArtifactsAreReclaimedOnlyByExactOwnerProof(t *testing.T) {
 				}
 				assertNoRuntimeArtifacts(t, discovery)
 			})
+		}
+	})
+
+	t.Run("late old host close preserves replacement artifacts", func(t *testing.T) {
+		discovery := newRuntimeDiscovery(t)
+		oldHost, _ := startTestHost(t, discovery, -1, ProtocolRange{})
+		// The open old listener keeps its unlinked socket allocated. Keep the
+		// removed record inode allocated too, so the replacement fixture has
+		// distinct exact owners on both paths.
+		oldRecord, err := os.Open(discovery.RecordPath()) // #nosec G304 -- test-owned record path.
+		if err != nil {
+			t.Fatalf("pin old record: %v", err)
+		}
+		defer oldRecord.Close()
+		if err := os.Remove(discovery.SocketPath()); err != nil {
+			t.Fatalf("unlink old socket: %v", err)
+		}
+		if err := os.Remove(discovery.RecordPath()); err != nil {
+			t.Fatalf("unlink old record: %v", err)
+		}
+
+		replacement, _ := startTestHost(t, discovery, -1, ProtocolRange{})
+		replacementSocket := lstatOf(t, discovery.SocketPath())
+		replacementRecord := lstatOf(t, discovery.RecordPath())
+		if os.SameFile(oldHost.socketInfo, replacementSocket) || os.SameFile(oldHost.recordInfo, replacementRecord) {
+			t.Fatal("replacement fixture did not establish distinct exact owners")
+		}
+		recordBefore, err := os.ReadFile(discovery.RecordPath()) // #nosec G304 -- test-owned record path.
+		if err != nil {
+			t.Fatalf("read replacement record: %v", err)
+		}
+
+		if err := oldHost.Close(); err != nil {
+			t.Fatalf("old Host.Close() = %v", err)
+		}
+		if current := lstatOf(t, discovery.SocketPath()); !os.SameFile(replacementSocket, current) {
+			t.Fatal("late old Host.Close removed the replacement socket")
+		}
+		if current := lstatOf(t, discovery.RecordPath()); !os.SameFile(replacementRecord, current) {
+			t.Fatal("late old Host.Close removed the replacement record")
+		}
+		recordAfter, err := os.ReadFile(discovery.RecordPath()) // #nosec G304 -- test-owned record path.
+		if err != nil {
+			t.Fatalf("read replacement record after old Close: %v", err)
+		}
+		if string(recordAfter) != string(recordBefore) {
+			t.Fatal("late old Host.Close changed the replacement record")
+		}
+		if replacement.RuntimeID() == oldHost.RuntimeID() {
+			t.Fatal("replacement reused the old Host runtime identity")
 		}
 	})
 }
