@@ -95,9 +95,11 @@ type Host struct {
 	socketInfo os.FileInfo
 	recordInfo os.FileInfo
 
-	done      chan struct{}
-	closeOnce sync.Once
-	sessions  sync.WaitGroup
+	done        chan struct{}
+	acceptReady chan struct{}
+	acceptDone  chan struct{}
+	closeOnce   sync.Once
+	sessions    sync.WaitGroup
 
 	mu       sync.Mutex
 	closing  bool
@@ -141,15 +143,17 @@ func StartHost(cfg HostConfig) (*Host, error) {
 		return nil, refuse(RefusalRuntimeExists, err)
 	}
 	host := &Host{
-		discovery:  cfg.Discovery,
-		broker:     cfg.Broker,
-		idle:       cfg.IdleTimeout,
-		protocol:   cfg.Protocol.normalize(),
-		runtimeID:  runtimeID,
-		credential: credential,
-		listener:   listener,
-		live:       make(map[*net.UnixConn]struct{}),
-		done:       make(chan struct{}),
+		discovery:   cfg.Discovery,
+		broker:      cfg.Broker,
+		idle:        cfg.IdleTimeout,
+		protocol:    cfg.Protocol.normalize(),
+		runtimeID:   runtimeID,
+		credential:  credential,
+		listener:    listener,
+		live:        make(map[*net.UnixConn]struct{}),
+		done:        make(chan struct{}),
+		acceptReady: make(chan struct{}),
+		acceptDone:  make(chan struct{}),
 	}
 	if host.idle == 0 {
 		host.idle = defaultIdleTimeout
@@ -159,8 +163,17 @@ func StartHost(cfg HostConfig) (*Host, error) {
 		removeIfSame(path, host.socketInfo)
 		return nil, err
 	}
-	host.armIdle()
+	// Keep the default auto-unlink through publication failures. Once the Host
+	// is fully published, disable path-based listener cleanup so removeIfSame
+	// is the only shutdown owner and a late old Host cannot delete a replacement.
+	listener.SetUnlinkOnClose(false)
 	go host.accept()
+	// StartHost is the public startup barrier. Waiting for acceptReady makes
+	// the accept owner visible before the Host escapes to a caller that may
+	// immediately call Close; acceptDone then gives Close an exact proof that
+	// no session can be added before it waits for them.
+	<-host.acceptReady
+	host.armIdle()
 	return host, nil
 }
 
@@ -234,6 +247,10 @@ func (h *Host) Close() error {
 			timer.Stop()
 		}
 		_ = h.listener.Close()
+		// The accept loop is the only owner allowed to add a session. Once it
+		// has stopped, sessions.Wait cannot race a future Add or return before
+		// an already-accepted session has been accounted for.
+		<-h.acceptDone
 		removeIfSame(h.discovery.SocketPath(), h.socketInfo)
 		removeIfSame(h.discovery.RecordPath(), h.recordInfo)
 		for _, conn := range live {
@@ -249,6 +266,8 @@ func (h *Host) Close() error {
 
 // accept serves connections until the listener closes.
 func (h *Host) accept() {
+	defer close(h.acceptDone)
+	close(h.acceptReady)
 	for {
 		conn, err := h.listener.AcceptUnix()
 		if err != nil {

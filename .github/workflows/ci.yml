@@ -186,15 +186,12 @@ jobs:
       - name: Run unit tests
         run: make test
 
-  # The registry lock is the only mutual exclusion the whole application layer
-  # stands on, and its correctness is a property of concurrent execution, not of
-  # any single call. `make test` runs without the detector so the ordinary unit
-  # gate stays fast; this job runs the detector over the packages whose tests
-  # actually create contention. It is scoped on purpose -- `-race` across the
-  # full suite buys coverage of code that never runs concurrently at the cost of
-  # every contributor's feedback loop.
-  race:
-    name: Race Tests
+  # `make test` runs without the detector so the ordinary unit gate stays fast.
+  # Keep the detector on the packages whose contracts actually create
+  # contention, with the broker and its app-server transport isolated from the
+  # existing core set so neither child can mask the other's result.
+  race-core:
+    name: Race / Core concurrency
     runs-on: ubuntu-latest
 
     steps:
@@ -213,6 +210,65 @@ jobs:
             ./internal/integrations/metadata/... \
             ./internal/core/notify/... \
             ./internal/core/recentwindows/...
+
+  race-broker:
+    name: Race / Codex broker
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run broker concurrency tests under the race detector
+        run: go test -race -count=2 ./internal/integrations/agents/codexbroker/...
+
+  race-appserver:
+    name: Race / Codex app-server
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run app-server concurrency tests under the race detector
+        run: go test -race -count=2 ./internal/integrations/agents/codexappserver/...
+
+  # Keep the stable Race Tests context while reducing every detector child
+  # through the same fail-closed policy used by the other CI aggregates.
+  race:
+    name: Race Tests
+    if: always()
+    needs:
+      - race-core
+      - race-broker
+      - race-appserver
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout aggregate policy
+        uses: actions/checkout@v6
+
+      - name: Require every race child to succeed
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 scripts/required-gate.py \
+            --results-json "$REQUIRED_RESULTS" \
+            --required race-core \
+            --required race-broker \
+            --required race-appserver
 
   darwin-native:
     name: Darwin Native Key Adapter

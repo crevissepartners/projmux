@@ -554,8 +554,16 @@
   refuse a writer that never reached the lock.
   `TestAConcurrentWriterIsNotRefusedInsideAnotherCommitsMarkerWindow` builds that
   window directly and requires the second writer to wait through it. The
-  `Race Tests` CI job runs the metadata, notify, and recent-window packages
-  under `-race`.
+  `TestHostStartupAndShutdownHaveDeterministicHappensBefore` pins `StartHost`
+  return as the startup barrier: immediate and concurrent `Close` stop accept
+  before waiting for sessions, stop the broker before publishing the shared
+  terminal `Done`, and return every caller through that same channel.
+  `TestStaleRuntimeArtifactsAreReclaimedOnlyByExactOwnerProof/late_old_host_close_preserves_replacement_artifacts`
+  keeps shutdown cleanup behind `SameFile`, so an old Host cannot remove or
+  change a replacement socket or record. The stable `Race Tests` CI aggregate
+  now fails closed over separate core, Codex broker, and Codex app-server
+  children; the core child preserves metadata, notify, and recent-window
+  coverage, and `CIWorkflowContractTest` pins both Codex failure paths red.
   The real-tmux L06 burst still requires all eight exact-socket creates to
   converge on one Window with nine unique mirrored Panes and no lock or staged
   residue; it is a regression guard, not the evidence for the lock change.
