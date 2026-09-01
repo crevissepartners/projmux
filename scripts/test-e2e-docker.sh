@@ -42,7 +42,8 @@ export PROJMUX_TEST_GOMODCACHE="$cache_root/go-mod"
 export PROJMUX_TEST_SKIP_PREFETCH=1
 
 # Required network-isolated suites share the same immutable binary. Linux owns
-# four independent mutable fixtures; serial mode exists only for parity audit.
+# four independent mutable fixtures. Local acceptance runs them serially by
+# default; explicit parallel mode remains available as the stress profile.
 manifest="$root/test/e2e/linux-shards.tsv"
 default_order="fixture-1 fixture-2 fixture-3 fixture-4"
 expected="L01,L02,L03,L04,L05,L06,L07,L08,L09,L10,L11,L12,L13,L14,L15,L16,L17,L18,L19,C01,N01"
@@ -128,7 +129,8 @@ run_linux_shard() {
     "$root/scripts/test-docker-run.sh" test/e2e/linux-smoke.sh "$@"
 }
 
-if [[ "${PROJMUX_E2E_LINUX_MODE:-parallel}" == "serial" || "${#linux_shards[@]}" -lt 2 ]]; then
+linux_mode="${PROJMUX_E2E_LINUX_MODE:-serial}"
+if [[ "$linux_mode" == "serial" || "${#linux_shards[@]}" -lt 2 ]]; then
   for shard in "${linux_shards[@]}"; do
     run_linux_shard "$shard" "$@"
   done

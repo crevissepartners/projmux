@@ -58,6 +58,22 @@ compat_block="$(job_block e2e-tests)"
 artifact_names=()
 gate_block="$(job_block test)"
 
+# These four names plus E2E Tests below are the branch-ruleset contexts.
+# Test is a separate project-wide aggregate and is deliberately checked apart.
+for required_context in \
+  "fmt:Format" \
+  "unit:Unit Tests" \
+  "npm-pack:NPM Packages" \
+  "integration:Integration Tests"; do
+  job="${required_context%%:*}"
+  context="${required_context#*:}"
+  block="$(job_block "$job")"
+  grep -Fqx "    name: $context" <<<"$block" ||
+    { echo "$job must report the exact context name $context" >&2; exit 1; }
+done
+grep -Fqx '    name: Test' <<<"$gate_block" ||
+  { echo "the project-wide aggregate must report the exact context name Test" >&2; exit 1; }
+
 # The branch ruleset requires a context named "E2E Tests", and an unreported
 # required context never fails - it waits. So this job is load-bearing in an
 # unusual way: its absence would not turn a check red, it would deadlock merges.
@@ -270,3 +286,296 @@ grep -Fq -- '-e E2E_SCENARIO="${E2E_SCENARIO:-}"' "$docker_runner"
 grep -Fq 'suite="${PROJMUX_E2E_SUITE:-}"' "$root/scripts/test-e2e-docker.sh"
 grep -Fq 'suite="linux-${PROJMUX_E2E_LINUX_SHARD}"' "$root/scripts/test-e2e-docker.sh"
 echo ">> module cache topology is one setup writer; E2E exports the immutable binary path/hash pair to read-only consumers"
+
+# Exercise the production scheduler with deterministic fake shard consumers.
+# The parallel fixture cannot pass until all four consumers have entered the
+# start barrier, so overlap is observed rather than inferred from elapsed time.
+e2e_runner="$root/scripts/test-e2e-docker.sh"
+grep -Fq 'linux_mode="${PROJMUX_E2E_LINUX_MODE:-serial}"' "$e2e_runner"
+grep -Fq 'if [[ "$linux_mode" == "serial" || "${#linux_shards[@]}" -lt 2 ]]; then' "$e2e_runner"
+
+scheduler_fixture_root="$replay_root/scheduler-fixture"
+mkdir -p "$scheduler_fixture_root/scripts" "$scheduler_fixture_root/test/e2e"
+cp "$e2e_runner" "$scheduler_fixture_root/scripts/test-e2e-docker.sh"
+cp "$root/scripts/e2e-evidence.py" "$scheduler_fixture_root/scripts/e2e-evidence.py"
+cp "$manifest" "$scheduler_fixture_root/test/e2e/linux-shards.tsv"
+
+cat >"$scheduler_fixture_root/scripts/test-docker-run.sh" <<'FIXTURE'
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+state="${PROJMUX_E2E_SCHEDULER_FIXTURE_STATE:?}"
+mkdir -p "$state"
+
+if [[ "${1:-}" == "--build-binary" ]]; then
+  binary_dir="${2:?}"
+  mkdir -p "$binary_dir"
+  printf 'scheduler-contract-immutable-binary\n' >"$binary_dir/projmux"
+  printf '1\n' >"$binary_dir/build-count"
+  printf 'build\n' >>"$state/builds"
+  exit 0
+fi
+
+test_script="${1:?}"
+artifact_dir="${PROJMUX_E2E_ARTIFACTS:?}"
+binary="${PROJMUX_TEST_PREBUILT_BIN:?}"
+binary_sha="${PROJMUX_TEST_PREBUILT_SHA256:?}"
+[[ "$(sha256sum "$binary" | awk '{print $1}')" == "$binary_sha" ]]
+
+suite=""
+ids=""
+shard=""
+case "$test_script" in
+  test/e2e/linux-smoke.sh)
+    suite="linux"
+    shard="${PROJMUX_E2E_LINUX_SHARD:?}"
+    ids="$(awk -F'\t' -v want="$shard" '$1 == want { print $2; found = 1 } END { exit found ? 0 : 1 }' "$root/test/e2e/linux-shards.tsv")"
+    ;;
+  test/e2e/codex-lifecycle.sh)
+    suite="codex"
+    ids="C01"
+    ;;
+  test/e2e/npm-staging-path.sh)
+    suite="npm"
+    ids="N01"
+    ;;
+  *)
+    echo "unexpected scheduler fixture script: $test_script" >&2
+    exit 2
+    ;;
+esac
+
+if [[ -n "$shard" ]]; then
+  mkdir -p "$state/ready"
+  (
+    flock -x 9
+    active="$(cat "$state/active")"
+    active=$((active + 1))
+    printf '%s\n' "$active" >"$state/active"
+    maximum="$(cat "$state/max-active")"
+    if ((active > maximum)); then
+      printf '%s\n' "$active" >"$state/max-active"
+    fi
+    printf 'start:%s\n' "$shard" >>"$state/events"
+    printf '%s\n' "$$" >>"$state/pids"
+    : >"$state/ready/$shard"
+  ) 9>"$state/lock"
+
+  if [[ "${PROJMUX_E2E_SCHEDULER_FIXTURE_PROFILE:?}" == "parallel" ]]; then
+    while :; do
+      ready=("$state"/ready/*)
+      ((${#ready[@]} == 4)) && break
+    done
+    (
+      flock -x 9
+      if [[ ! -e "$state/release" ]]; then
+        printf 'release\n' >>"$state/events"
+        : >"$state/release"
+      fi
+    ) 9>"$state/lock"
+    while [[ ! -e "$state/release" ]]; do :; done
+  fi
+fi
+
+for scenario_id in $ids; do
+  python3 "$root/scripts/e2e-evidence.py" record \
+    --directory "$artifact_dir" --scenario-id "$scenario_id" --suite "$suite" \
+    --attempt 1 --phase scheduler --owner shard-contract --class environment \
+    --outcome begin --elapsed-ms 0 --binary-sha256 "$binary_sha" >/dev/null
+  python3 "$root/scripts/e2e-evidence.py" record \
+    --directory "$artifact_dir" --scenario-id "$scenario_id" --suite "$suite" \
+    --attempt 1 --phase scheduler --owner shard-contract --class environment \
+    --outcome pass --elapsed-ms 1 --binary-sha256 "$binary_sha" >/dev/null
+done
+
+if [[ -n "$shard" ]]; then
+  (
+    flock -x 9
+    active="$(cat "$state/active")"
+    printf 'finish:%s\n' "$shard" >>"$state/events"
+    printf '%s\n' "$((active - 1))" >"$state/active"
+  ) 9>"$state/lock"
+fi
+FIXTURE
+chmod +x "$scheduler_fixture_root/scripts/test-e2e-docker.sh" \
+  "$scheduler_fixture_root/scripts/test-docker-run.sh" \
+  "$scheduler_fixture_root/scripts/e2e-evidence.py"
+git -C "$scheduler_fixture_root" init -q
+
+run_scheduler_process() {
+  local output="$1"
+  local deadline="$2"
+  local state="$3"
+  local profile="$4"
+  local artifacts="$5"
+  local cache="$6"
+  local linux_mode="$7"
+  python3 - "$scheduler_fixture_root/scripts/test-e2e-docker.sh" "$output" "$deadline" \
+    "$state" "$profile" "$artifacts" "$cache" "$linux_mode" <<'PY'
+import os
+import signal
+import subprocess
+import sys
+
+environment = os.environ.copy()
+environment["PROJMUX_E2E_SCHEDULER_FIXTURE_STATE"] = sys.argv[4]
+environment["PROJMUX_E2E_SCHEDULER_FIXTURE_PROFILE"] = sys.argv[5]
+environment["PROJMUX_E2E_ARTIFACTS"] = sys.argv[6]
+environment["PROJMUX_E2E_BUILD_CACHE"] = sys.argv[7]
+if sys.argv[8]:
+    environment["PROJMUX_E2E_LINUX_MODE"] = sys.argv[8]
+else:
+    environment.pop("PROJMUX_E2E_LINUX_MODE", None)
+with open(sys.argv[2], "w", encoding="utf-8") as output:
+    process = subprocess.Popen(
+        [sys.argv[1]], stdout=output, stderr=subprocess.STDOUT,
+        start_new_session=True, env=environment
+    )
+    try:
+        returncode = process.wait(timeout=float(sys.argv[3]))
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait()
+        print("scheduler fixture timed out before its deterministic barrier released", file=output)
+        raise SystemExit(124)
+raise SystemExit(returncode)
+PY
+}
+
+run_scheduler_fixture() {
+  local profile="$1"
+  local state="$scheduler_fixture_root/state-$profile"
+  local artifacts="$scheduler_fixture_root/artifacts-$profile"
+  local output="$scheduler_fixture_root/$profile.log"
+  local linux_mode=""
+  mkdir -p "$state/ready"
+  printf '0\n' >"$state/active"
+  printf '0\n' >"$state/max-active"
+  : >"$state/events"
+  if [[ "$profile" == "parallel" ]]; then
+    linux_mode="parallel"
+  fi
+  run_scheduler_process "$output" 60 "$state" "$profile" "$artifacts" \
+    "$scheduler_fixture_root/cache-$profile" "$linux_mode" || {
+    cat "$output" >&2
+    return 1
+  }
+}
+
+run_scheduler_fixture serial
+run_scheduler_fixture parallel
+
+# A regressed serial schedule cannot cross the parallel fixture's barrier. Keep
+# that failure bounded and prove the process-group timeout leaves no fake shard.
+negative_state="$scheduler_fixture_root/state-negative"
+negative_output="$scheduler_fixture_root/negative.log"
+mkdir -p "$negative_state/ready"
+printf '0\n' >"$negative_state/active"
+printf '0\n' >"$negative_state/max-active"
+: >"$negative_state/events"
+: >"$negative_state/pids"
+if run_scheduler_process "$negative_output" 5 "$negative_state" parallel \
+  "$scheduler_fixture_root/artifacts-negative" \
+  "$scheduler_fixture_root/cache-negative" ""; then
+  echo "parallel barrier unexpectedly accepted a serial schedule" >&2
+  exit 1
+else
+  status="$?"
+  [[ "$status" == "124" ]] || {
+    cat "$negative_output" >&2
+    echo "parallel barrier failed with unexpected status $status" >&2
+    exit 1
+  }
+fi
+[[ -s "$negative_state/pids" ]] || {
+  cat "$negative_output" >&2
+  echo "negative scheduler fixture timed out before a fake shard reached the barrier" >&2
+  exit 1
+}
+while IFS= read -r fixture_pid; do
+  fixture_status="$(ps -o stat= -p "$fixture_pid" 2>/dev/null || true)"
+  fixture_status="$(tr -d '[:space:]' <<<"$fixture_status")"
+  if [[ -n "$fixture_status" && "$fixture_status" != Z* ]]; then
+    echo "timed-out scheduler fixture leaked shard process $fixture_pid" >&2
+    exit 1
+  fi
+done <"$negative_state/pids"
+
+serial_state="$scheduler_fixture_root/state-serial"
+parallel_state="$scheduler_fixture_root/state-parallel"
+serial_artifacts="$scheduler_fixture_root/artifacts-serial"
+parallel_artifacts="$scheduler_fixture_root/artifacts-parallel"
+
+serial_expected="$scheduler_fixture_root/serial-expected"
+: >"$serial_expected"
+for shard in "${manifest_shards[@]}"; do
+  printf 'start:%s\nfinish:%s\n' "$shard" "$shard" >>"$serial_expected"
+done
+if ! diff -u "$serial_expected" "$serial_state/events"; then
+  echo "selectorless default did not start and finish each shard serially in canonical order" >&2
+  exit 1
+fi
+[[ "$(cat "$serial_state/max-active")" == "1" ]] ||
+  { echo "selectorless default overlapped Linux shards" >&2; exit 1; }
+
+mapfile -t parallel_starts < <(sed -n 's/^start://p' "$parallel_state/events" | sort)
+mapfile -t parallel_finishes < <(sed -n 's/^finish://p' "$parallel_state/events" | sort)
+mapfile -t sorted_manifest_shards < <(printf '%s\n' "${manifest_shards[@]}" | sort)
+[[ "${parallel_starts[*]}" == "${sorted_manifest_shards[*]}" ]] ||
+  { echo "explicit parallel mode omitted or duplicated a shard start" >&2; exit 1; }
+[[ "${parallel_finishes[*]}" == "${sorted_manifest_shards[*]}" ]] ||
+  { echo "explicit parallel mode omitted or duplicated a shard finish" >&2; exit 1; }
+awk '
+  /^start:/ { starts++ }
+  /^release$/ {
+    releases++
+    if (starts != 4 || finishes != 0) exit 1
+  }
+  /^finish:/ { finishes++ }
+  END { if (starts != 4 || releases != 1 || finishes != 4) exit 1 }
+' "$parallel_state/events" ||
+  { echo "explicit parallel start/release barrier was not observed" >&2; exit 1; }
+[[ "$(cat "$parallel_state/max-active")" == "4" ]] ||
+  { echo "explicit parallel mode did not overlap all four Linux shards" >&2; exit 1; }
+
+for profile in serial parallel; do
+  state="$scheduler_fixture_root/state-$profile"
+  artifacts="$scheduler_fixture_root/artifacts-$profile"
+  [[ "$(wc -l <"$state/builds")" == "1" ]] ||
+    { echo "$profile scheduler fixture did not build exactly once" >&2; exit 1; }
+  grep -Fq '"build_count":1' "$artifacts/build.json" ||
+    { echo "$profile scheduler fixture lost build-count=1" >&2; exit 1; }
+  recorded_sha="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1], encoding="utf-8"))["binary_sha256"])' "$artifacts/build.json")"
+  [[ "$recorded_sha" == "$(sha256sum "$artifacts/binary/projmux" | awk '{print $1}')" ]] ||
+    { echo "$profile scheduler fixture mutated its product binary" >&2; exit 1; }
+done
+
+cmp "$serial_artifacts/binary/projmux" "$parallel_artifacts/binary/projmux"
+cmp "$serial_artifacts/result.sha256" "$parallel_artifacts/result.sha256"
+python3 - "$serial_artifacts" "$parallel_artifacts" <<'PY'
+import collections
+import json
+import pathlib
+import sys
+
+expected = {f"L{index:02d}" for index in range(1, 20)} | {"C01", "N01"}
+for root_text in sys.argv[1:]:
+    root = pathlib.Path(root_text)
+    terminal = collections.Counter()
+    for summary in root.rglob("summary.jsonl"):
+        for line in summary.read_text(encoding="utf-8").splitlines():
+            record = json.loads(line)
+            if record["outcome"] == "pass":
+                terminal[record["scenario_id"]] += 1
+    if set(terminal) != expected or set(terminal.values()) != {1}:
+        raise SystemExit(f"scheduler inventory mismatch: {terminal}")
+PY
+
+echo ">> selectorless local default is canonical serial with overlap 0"
+echo ">> explicit parallel mode crosses the four-shard start/release barrier with overlap 4"
+echo ">> serial and parallel profiles share build-count 1, immutable binary, exact L01-L19/C01/N01 inventory, and result hash"
