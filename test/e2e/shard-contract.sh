@@ -143,6 +143,79 @@ fi
 echo ">> CI schedules one runner per suite: ${job_shards[*]} ${job_suites[*]}"
 echo ">> the required E2E Tests context still reports over the split shards"
 
+# The local full-suite capacity guard must not turn the already-isolated CI
+# matrix back into one machine-global queue. Hold its capacity slot and prove
+# both selector families still enter immediately. The exact matrix shape and
+# required aggregate above remain the canonical owners of the CI topology.
+(
+  set -euo pipefail
+  admission="$root/scripts/test-e2e-admission.sh"
+  selector_root="$(mktemp -d)"
+  holder_pid=""
+  selected_pid=""
+  # shellcheck disable=SC2317 # Invoked indirectly by the subshell EXIT trap.
+  cleanup_selector_contract() {
+    touch "$selector_root/release" 2>/dev/null || true
+    if [[ -n "$selected_pid" ]]; then
+      kill "$selected_pid" 2>/dev/null || true
+      wait "$selected_pid" 2>/dev/null || true
+    fi
+    if [[ -n "$holder_pid" ]]; then
+      kill "$holder_pid" 2>/dev/null || true
+      wait "$holder_pid" 2>/dev/null || true
+    fi
+    rm -rf "$selector_root"
+  }
+  trap cleanup_selector_contract EXIT
+
+  PROJMUX_E2E_ADMISSION_STATE_DIR="$selector_root/state" \
+    PROJMUX_E2E_ADMISSION_POLL_SECONDS=0.02 \
+    "$admission" bash -c '
+      printf "ready\n" >"$1"
+      while [[ ! -e "$2" ]]; do sleep 0.02; done
+    ' bash "$selector_root/holder-ready" "$selector_root/release" \
+    >"$selector_root/holder.log" 2>&1 &
+  holder_pid=$!
+  for _ in {1..200}; do
+    [[ -e "$selector_root/holder-ready" ]] && break
+    sleep 0.02
+  done
+  [[ -e "$selector_root/holder-ready" && -e "$selector_root/state/active" ]]
+
+  PROJMUX_E2E_ADMISSION_STATE_DIR="$selector_root/state" \
+    PROJMUX_E2E_LINUX_SHARD=fixture-1 \
+    "$admission" bash -c 'printf "selected\n" >"$1"' \
+    bash "$selector_root/linux-selected" &
+  selected_pid=$!
+  for _ in {1..200}; do
+    [[ -e "$selector_root/linux-selected" ]] && break
+    sleep 0.02
+  done
+  [[ -e "$selector_root/linux-selected" ]]
+  wait "$selected_pid"
+  selected_pid=""
+
+  PROJMUX_E2E_ADMISSION_STATE_DIR="$selector_root/state" \
+    PROJMUX_E2E_SUITE=codex-lifecycle \
+    "$admission" bash -c 'printf "selected\n" >"$1"' \
+    bash "$selector_root/suite-selected" &
+  selected_pid=$!
+  for _ in {1..200}; do
+    [[ -e "$selector_root/suite-selected" ]] && break
+    sleep 0.02
+  done
+  [[ -e "$selector_root/suite-selected" ]]
+  wait "$selected_pid"
+  selected_pid=""
+
+  [[ -e "$selector_root/linux-selected" && -e "$selector_root/suite-selected" ]]
+  kill -0 "$holder_pid"
+  touch "$selector_root/release"
+  wait "$holder_pid"
+  holder_pid=""
+)
+echo ">> CI shard/suite selectors bypass the local full-suite admission boundary"
+
 # The tag workflow uses the same selectors and manifest, but its aggregate is
 # a release gate rather than a branch-ruleset compatibility context. Build
 # Release must depend on only that aggregate so every matrix result is reduced
@@ -269,4 +342,5 @@ grep -Fq 'export PROJMUX_TEST_PREBUILT_SHA256="$binary_sha"' "$root/scripts/test
 grep -Fq -- '-e E2E_SCENARIO="${E2E_SCENARIO:-}"' "$docker_runner"
 grep -Fq 'suite="${PROJMUX_E2E_SUITE:-}"' "$root/scripts/test-e2e-docker.sh"
 grep -Fq 'suite="linux-${PROJMUX_E2E_LINUX_SHARD}"' "$root/scripts/test-e2e-docker.sh"
+grep -Fqx $'\tscripts/test-e2e-admission.sh scripts/test-e2e-docker.sh' "$root/Makefile"
 echo ">> module cache topology is one setup writer; E2E exports the immutable binary path/hash pair to read-only consumers"
