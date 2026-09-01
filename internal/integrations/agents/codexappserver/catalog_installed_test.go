@@ -1,75 +1,62 @@
-package codexappserver
+package codexappserver_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/testutil/codexinstalled"
 )
 
 func TestInstalledIsolatedConversationCatalogSmoke(t *testing.T) {
-	root := strings.TrimSpace(os.Getenv("PROJMUX_CODEX_CATALOG_SMOKE_ROOT"))
-	if root == "" {
-		t.Skip("set PROJMUX_CODEX_CATALOG_SMOKE_ROOT for the installed Codex catalog smoke")
-	}
-	root = filepath.Clean(root)
-	tmpRoot := filepath.Clean("/tmp")
-	if !filepath.IsAbs(root) || root == tmpRoot || !strings.HasPrefix(root, tmpRoot+string(filepath.Separator)) {
-		t.Fatalf("smoke root must be an isolated child of %s", tmpRoot)
-	}
-	if _, present := os.LookupEnv("TMUX"); present {
-		t.Fatal("TMUX must be removed for the installed catalog smoke")
-	}
-	if _, present := os.LookupEnv("TMUX_PANE"); present {
-		t.Fatal("TMUX_PANE must be removed for the installed catalog smoke")
-	}
-	wantCodexHome := filepath.Join(root, "codex-home")
-	if got := filepath.Clean(os.Getenv("CODEX_HOME")); got != wantCodexHome {
-		t.Fatalf("CODEX_HOME = %q, want %q", got, wantCodexHome)
-	}
-	socketPath, ok := defaultControlSocketPath()
-	wantSocket := filepath.Join(wantCodexHome, "app-server-control", "app-server-control.sock")
-	if !ok || socketPath != wantSocket || !strings.HasPrefix(socketPath, root+string(filepath.Separator)) {
-		t.Fatalf("control socket = %q, want contained %q", socketPath, wantSocket)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	health, err := EnsureDefaultProxyReady(ctx, TriggerNativeUserAction, "0.13.0", true)
+	root, enabled, err := codexinstalled.SmokeRoot("PROJMUX_CODEX_CATALOG_SMOKE_ROOT")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if health.Source != SourceAppServer || health.Availability != AvailabilityAvailable {
-		t.Fatalf("catalog ensure = %+v", health)
+	if !enabled {
+		t.Skip("set PROJMUX_CODEX_CATALOG_SMOKE_ROOT for the installed Codex catalog smoke")
 	}
-	info, err := os.Lstat(socketPath)
+	fixture, err := codexinstalled.NewClean(root)
 	if err != nil {
-		t.Fatalf("stat control socket: %v", err)
+		t.Fatal(err)
 	}
-	if info.Mode()&os.ModeSocket == 0 {
-		t.Fatalf("control endpoint is not a socket: mode=%s", info.Mode())
-	}
+	fixture.ApplyEnv(t.Setenv)
+	t.Cleanup(func() {
+		if err := fixture.Cleanup(); err != nil {
+			t.Errorf("catalog fixture cleanup: %v", err)
+		}
+	})
+	_ = fixture.ProvisionManagedPayload()
 
-	client, err := OpenDefaultProxy(ctx, DefaultProbeTimeout, "0.13.0")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	direct, ready := fixture.StartDirect(ctx, "installed-catalog-smoke")
+	if ready.Class != codexinstalled.ResultPass {
+		logInstalledResult(t, ready)
+		t.Fatalf("catalog direct endpoint = %+v", ready)
+	}
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer closeCancel()
+		if result := direct.Close(closeCtx); result.Class != codexinstalled.ResultPass {
+			t.Errorf("catalog direct close = %+v", result)
+		}
+	})
+
+	client, err := codexappserver.OpenDefaultProxy(ctx, codexappserver.DefaultProbeTimeout, "installed-catalog-smoke")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer client.Close()
-	page, err := client.ListCatalogThreads(ctx, CatalogQuery{})
+	page, err := client.ListCatalogThreads(ctx, codexappserver.CatalogQuery{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(page.Threads) == 0 {
-		return
-	}
-	listedID := page.Threads[0].ID
-	thread, err := client.ReadCatalogThread(ctx, listedID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if thread.ID != listedID {
-		t.Fatalf("thread/read id = %q, want listed id %q", thread.ID, listedID)
-	}
+	t.Logf("catalog thread/list returned content-free rows=%d", len(page.Threads))
+	// thread/list is this canary's unique real-binary primitive. Exact
+	// thread/read remains owned by the pre-turn second-attach canary.
+	result := codexinstalled.NewResult(fixture.Versions(), codexinstalled.TopologyDirect,
+		codexinstalled.StageReady, codexinstalled.ResultPass, "thread-list-compatible")
+	logInstalledResult(t, result)
 }

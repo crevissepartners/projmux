@@ -1,13 +1,12 @@
-package codexappserver
+package codexappserver_test
 
 import (
 	"context"
-	"errors"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/testutil/codexinstalled"
 )
 
 // TestInstalledIsolatedPreTurnBootstrapSmoke exercises the broker-facing
@@ -23,51 +22,54 @@ import (
 // asserted, because installed Codex 0.150.1 answers thread/resume only for a
 // thread whose rollout already exists. Everything it records is content-free.
 func TestInstalledIsolatedPreTurnBootstrapSmoke(t *testing.T) {
-	root := strings.TrimSpace(os.Getenv("PROJMUX_CODEX_BROKER_SMOKE_ROOT"))
-	if root == "" {
-		t.Skip("set PROJMUX_CODEX_BROKER_SMOKE_ROOT for the installed broker-facing smoke")
-	}
-	root = filepath.Clean(root)
-	tmpRoot := filepath.Clean("/tmp")
-	if !filepath.IsAbs(root) || root == tmpRoot || !strings.HasPrefix(root, tmpRoot+string(filepath.Separator)) {
-		t.Fatalf("smoke root must be an isolated child of %s", tmpRoot)
-	}
-	if _, present := os.LookupEnv("TMUX"); present {
-		t.Fatal("TMUX must be removed for the installed broker-facing smoke")
-	}
-	if _, present := os.LookupEnv("TMUX_PANE"); present {
-		t.Fatal("TMUX_PANE must be removed for the installed broker-facing smoke")
-	}
-	wantCodexHome := filepath.Join(root, "codex-home")
-	if got := filepath.Clean(os.Getenv("CODEX_HOME")); got != wantCodexHome {
-		t.Fatalf("CODEX_HOME = %q, want %q", got, wantCodexHome)
-	}
-	socketPath, ok := defaultControlSocketPath()
-	wantSocket := filepath.Join(wantCodexHome, "app-server-control", "app-server-control.sock")
-	if !ok || socketPath != wantSocket || !strings.HasPrefix(socketPath, root+string(filepath.Separator)) {
-		t.Fatalf("control socket = %q, want contained %q", socketPath, wantSocket)
-	}
-	workspace := filepath.Join(root, "workspace")
-	if err := os.MkdirAll(workspace, 0o700); err != nil {
+	root, enabled, err := codexinstalled.SmokeRoot("PROJMUX_CODEX_BROKER_SMOKE_ROOT")
+	if err != nil {
 		t.Fatal(err)
 	}
+	if !enabled {
+		t.Skip("set PROJMUX_CODEX_BROKER_SMOKE_ROOT for the installed broker-facing smoke")
+	}
+	fixture, err := codexinstalled.NewClean(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.ApplyEnv(t.Setenv)
+	t.Cleanup(func() {
+		if err := fixture.Cleanup(); err != nil {
+			t.Errorf("pre-turn fixture cleanup: %v", err)
+		}
+	})
+	_ = fixture.ProvisionManagedPayload()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	creator, health, err := AttachDefaultEndpoint(ctx, "0.13.0", AttachOptions{Timeout: 10 * time.Second, ExperimentalAPI: true})
-	if err != nil {
-		var attachErr *AttachError
-		if errors.As(err, &attachErr) {
-			t.Skipf("isolated endpoint is not attachable: %s", attachErr.Refusal)
-		}
-		t.Fatal(err)
+	direct, ready := fixture.StartDirect(ctx, "installed-pre-turn-smoke")
+	if ready.Class != codexinstalled.ResultPass {
+		logInstalledResult(t, ready)
+		t.Fatalf("pre-turn direct endpoint = %+v", ready)
 	}
-	authority := AuthorityFor(health)
+	t.Cleanup(func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer closeCancel()
+		if result := direct.Close(closeCtx); result.Class != codexinstalled.ResultPass {
+			t.Errorf("pre-turn direct close = %+v", result)
+		}
+	})
+
+	creator, health, err := codexappserver.AttachDefaultEndpoint(ctx, "installed-pre-turn-smoke",
+		codexappserver.AttachOptions{Timeout: 10 * time.Second, ExperimentalAPI: true})
+	if err != nil {
+		result := codexinstalled.NewResult(fixture.Versions(), codexinstalled.TopologyDirect,
+			codexinstalled.StageReady, codexinstalled.ResultFail, "direct-attach-refused")
+		logInstalledResult(t, result)
+		t.Fatalf("isolated direct endpoint is not attachable: %v", err)
+	}
+	authority := codexappserver.AuthorityFor(health)
 	t.Logf("attach authority=%s lifecycle=%s ownership=%s version=%s",
 		authority.Attach, authority.Lifecycle, health.ManagerOwnership, health.VersionRelation)
 
-	binding, err := creator.StartThread(ctx, workspace, nil)
+	binding, err := creator.StartThread(ctx, fixture.Workspace, nil)
 	if err != nil {
 		_ = creator.Close()
 		t.Fatalf("pre-turn thread/start: %v", err)
@@ -82,7 +84,8 @@ func TestInstalledIsolatedPreTurnBootstrapSmoke(t *testing.T) {
 	// outcome of the close rather than a failure.
 	_ = creator.Close()
 
-	reader, _, err := AttachDefaultEndpoint(ctx, "0.13.0", AttachOptions{Timeout: 10 * time.Second, ExperimentalAPI: true})
+	reader, _, err := codexappserver.AttachDefaultEndpoint(ctx, "installed-pre-turn-smoke",
+		codexappserver.AttachOptions{Timeout: 10 * time.Second, ExperimentalAPI: true})
 	if err != nil {
 		t.Fatalf("second attach: %v", err)
 	}
@@ -91,21 +94,20 @@ func TestInstalledIsolatedPreTurnBootstrapSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pre-turn includeTurns=false snapshot: %v", err)
 	}
-	snapshot := newThreadSnapshot(thread)
-	if snapshot.ThreadID != binding.ThreadID {
-		t.Fatalf("snapshot = %+v, want thread %q", snapshot, binding.ThreadID)
+	if thread.ID != binding.ThreadID {
+		t.Fatalf("snapshot = %+v, want thread %q", thread, binding.ThreadID)
 	}
-	if snapshot.CWD == "" || snapshot.RuntimeStatus == "" {
-		t.Fatalf("snapshot is missing content-free identity: %+v", snapshot)
+	if thread.CWD == "" || thread.RuntimeStatus == "" {
+		t.Fatalf("snapshot is missing content-free identity: %+v", thread)
 	}
-	t.Logf("pre-turn snapshot status=%s flags=%v", snapshot.RuntimeStatus, snapshot.ActiveFlags)
+	t.Logf("pre-turn snapshot status=%s flags=%v", thread.RuntimeStatus, thread.ActiveFlags)
 
 	// Typed evidence for the subscription leg. Installed 0.150.1 has no rollout
 	// for a thread whose first turn never ran, so thread/resume is refused here
 	// while the same call succeeds once the thread has materialized. Recording
 	// it keeps the unsupported item visible without asserting an outcome the
 	// upstream does not offer before the first turn.
-	if _, err := reader.BootstrapThread(ctx, binding.ThreadID, workspace, nil); err != nil {
+	if _, err := reader.BootstrapThread(ctx, binding.ThreadID, fixture.Workspace, nil); err != nil {
 		t.Logf("pre-turn explicit resume subscription unsupported: %v", err)
 	} else {
 		t.Log("pre-turn explicit resume subscription established")
@@ -122,4 +124,7 @@ func TestInstalledIsolatedPreTurnBootstrapSmoke(t *testing.T) {
 	default:
 		t.Log("no inbound server request during a no-turn bootstrap, as expected")
 	}
+	result := codexinstalled.NewResult(fixture.Versions(), codexinstalled.TopologyDirect,
+		codexinstalled.StageReady, codexinstalled.ResultPass, "pre-turn-second-attach-thread-read-compatible")
+	logInstalledResult(t, result)
 }

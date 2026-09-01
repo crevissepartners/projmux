@@ -1,58 +1,85 @@
-package codexappserver
+package codexappserver_test
 
 import (
 	"context"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
+	"time"
+
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/testutil/codexinstalled"
 )
 
-func TestInstalledIsolatedDaemonLifecycleSmoke(t *testing.T) {
-	root := strings.TrimSpace(os.Getenv("PROJMUX_CODEX_DAEMON_SMOKE_ROOT"))
-	if root == "" {
-		t.Skip("set PROJMUX_CODEX_DAEMON_SMOKE_ROOT for the installed Codex daemon smoke")
+// TestInstalledHermeticTopologyQualification is the single lifecycle owner
+// for the installed direct and managed topologies. The old daemon-only smoke's
+// root, socket, readiness, and classification assertions are intentionally
+// gone; the shared fixture now owns those boundaries and always emits one
+// validated terminal result per topology when the opt-in root is supplied.
+func TestInstalledHermeticTopologyQualification(t *testing.T) {
+	root, enabled, err := codexinstalled.SmokeRoot(codexinstalled.DefaultSmokeRootEnv)
+	if err != nil {
+		t.Fatal(err)
 	}
-	root = filepath.Clean(root)
-	tempPrefix := filepath.Clean(os.TempDir()) + string(filepath.Separator)
-	if !filepath.IsAbs(root) || root == filepath.Clean(os.TempDir()) || !strings.HasPrefix(root, tempPrefix) {
-		t.Fatalf("smoke root must be an isolated child of %s", os.TempDir())
+	if !enabled {
+		t.Skip("set PROJMUX_CODEX_DAEMON_SMOKE_ROOT for the installed topology qualification")
 	}
-	if _, present := os.LookupEnv("TMUX"); present {
-		t.Fatal("TMUX must be removed for the installed daemon smoke")
+	fixture, err := codexinstalled.NewClean(root)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, present := os.LookupEnv("TMUX_PANE"); present {
-		t.Fatal("TMUX_PANE must be removed for the installed daemon smoke")
-	}
-	wantCodexHome := filepath.Join(root, "codex-home")
-	if got := filepath.Clean(os.Getenv("CODEX_HOME")); got != wantCodexHome {
-		t.Fatalf("CODEX_HOME = %q, want %q", got, wantCodexHome)
-	}
-	socketPath, ok := defaultControlSocketPath()
-	wantSocket := filepath.Join(wantCodexHome, "app-server-control", "app-server-control.sock")
-	if !ok || socketPath != wantSocket || !strings.HasPrefix(socketPath, root+string(filepath.Separator)) {
-		t.Fatalf("control socket = %q, want contained %q", socketPath, wantSocket)
+	fixture.ApplyEnv(t.Setenv)
+	t.Cleanup(func() {
+		if err := fixture.Cleanup(); err != nil {
+			t.Errorf("installed topology cleanup: %v", err)
+		}
+	})
+
+	provision := fixture.ProvisionManagedPayload()
+	logInstalledResult(t, provision)
+	if provision.Class != codexinstalled.ResultPass && provision.Class != codexinstalled.ResultUnsupported {
+		t.Fatalf("managed payload provision = %+v", provision)
 	}
 
-	first, err := EnsureDefaultProxyReady(context.Background(), TriggerNativeUserAction, "0.13.0", true)
-	if err != nil {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	direct, ready := fixture.StartDirect(ctx, "installed-topology-qualification")
+	logInstalledResult(t, ready)
+	if ready.Class != codexinstalled.ResultPass {
+		t.Fatalf("direct ready = %+v", ready)
+	}
+	if health := direct.Health(); health.EndpointReadiness != codexappserver.EndpointReady ||
+		health.ManagerOwnership != codexappserver.ManagerUnmanaged ||
+		health.VersionRelation != codexappserver.VersionCurrent ||
+		health.NativeAction != codexappserver.NativeActionRefused ||
+		health.NativeRefusal != codexappserver.NativeActionRefusalUnmanaged ||
+		health.Lifecycle != codexappserver.LifecycleNotAttempted ||
+		health.LifecycleReason != codexappserver.LifecycleReasonReadOnly {
+		t.Fatalf("direct topology diagnostics = endpoint=%s ownership=%s version=%s native=%s/%s lifecycle=%s/%s",
+			health.EndpointReadiness, health.ManagerOwnership, health.VersionRelation,
+			health.NativeAction, health.NativeRefusal, health.Lifecycle, health.LifecycleReason)
+	}
+	closeCtx, closeCancel := context.WithTimeout(ctx, 20*time.Second)
+	closed := direct.Close(closeCtx)
+	closeCancel()
+	logInstalledResult(t, closed)
+	if closed.Class != codexinstalled.ResultPass {
+		t.Fatalf("direct close = %+v", closed)
+	}
+
+	managed := fixture.RunManagedLifecycle(ctx, "installed-topology-qualification")
+	logInstalledResult(t, managed)
+	if managed.Class != codexinstalled.ResultPass && managed.Class != codexinstalled.ResultUnsupported {
+		t.Fatalf("managed topology = %+v", managed)
+	}
+	if err := fixture.Ledger().AssertNoAmbientMutation(); err != nil {
 		t.Fatal(err)
 	}
-	if first.Lifecycle != LifecycleStarted && first.Lifecycle != LifecycleAlreadyRunning {
-		t.Fatalf("first ensure = %+v", first)
-	}
-	info, err := os.Lstat(socketPath)
+}
+
+func logInstalledResult(t *testing.T, result codexinstalled.Result) {
+	t.Helper()
+	encoded, err := result.JSON()
 	if err != nil {
-		t.Fatalf("stat control socket: %v", err)
+		t.Fatalf("invalid installed qualification result: %v", err)
 	}
-	if info.Mode()&os.ModeSocket == 0 {
-		t.Fatalf("control endpoint is not a socket: mode=%s", info.Mode())
-	}
-	second, err := EnsureDefaultProxyReady(context.Background(), TriggerNativeUserAction, "0.13.0", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if second.Lifecycle != LifecycleAlreadyRunning {
-		t.Fatalf("second ensure = %+v", second)
-	}
+	t.Logf("installed-result: %s", encoded)
 }
