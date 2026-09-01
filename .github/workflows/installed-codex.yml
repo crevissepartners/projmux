@@ -1,0 +1,135 @@
+name: Installed Codex Qualification
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Every schedule must reach a terminal typed result. A manual observation run
+# queues behind an active schedule instead of cancelling it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # This real-binary lane is intentionally separate from required fake C01 and
+  # every required/aggregate PR context. Each matrix leg invokes one surviving
+  # Phase 0 canonical canary and uploads only its reduced typed record; raw Go
+  # test output is retained only in runner memory and never becomes an artifact.
+  installed-codex:
+    name: Installed Codex ${{ matrix.codex-version }} / ${{ matrix.primitive }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    strategy:
+      fail-fast: false
+      matrix:
+        codex-version:
+          - "0.152.0"
+        primitive:
+          - daemon-lifecycle
+          - thread-list
+          - pre-turn-attach
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install the declared real Codex CLI
+        id: install-codex
+        continue-on-error: true
+        env:
+          CODEX_VERSION: ${{ matrix.codex-version }}
+          NODE_AUTH_TOKEN: ""
+        run: |
+          npm_prefix="${RUNNER_TEMP}/installed-codex-npm"
+          release_root="${RUNNER_TEMP}/installed-codex-release/${CODEX_VERSION}-x86_64-unknown-linux-musl"
+          npm install --prefix "$npm_prefix" --ignore-scripts --no-audit --no-fund "@openai/codex@${CODEX_VERSION}"
+          scripts/stage-installed-codex-release.sh "$npm_prefix" "$release_root" "$CODEX_VERSION"
+          echo "$release_root/bin" >> "$GITHUB_PATH"
+          PATH="$release_root/bin:$PATH"
+          test "$(command -v codex)" = "$release_root/bin/codex"
+          test "$(codex --version)" = "codex-cli ${CODEX_VERSION}"
+
+      - name: Run canonical installed canary
+        if: always()
+        env:
+          OPENAI_API_KEY: ""
+          CODEX_API_KEY: ""
+          CODEX_TOKEN: ""
+          PROJMUX_CODEX_INSTALL_OUTCOME: ${{ steps.install-codex.outcome }}
+          PROJMUX_CODEX_EXPECTED_VERSION: ${{ matrix.codex-version }}
+        run: |
+          scripts/test-installed-codex-qualification.sh \
+            run \
+            "${{ matrix.primitive }}" \
+            "artifacts/installed-codex/${{ matrix.primitive }}.json"
+
+      - name: Upload typed primitive result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installed-codex-result-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.codex-version }}-${{ matrix.primitive }}
+          path: artifacts/installed-codex/${{ matrix.primitive }}.json
+          if-no-files-found: error
+          retention-days: 14
+
+  installed-codex-qualification:
+    name: Installed Codex Qualification
+    if: always()
+    needs:
+      - installed-codex
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout aggregate policy
+        uses: actions/checkout@v6
+
+      - name: Download typed primitive results
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v5
+        with:
+          pattern: installed-codex-result-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: artifacts/installed-codex/children
+          merge-multiple: true
+
+      - name: Reduce every primitive to one terminal result
+        if: always()
+        run: |
+          scripts/test-installed-codex-qualification.sh \
+            aggregate \
+            artifacts/installed-codex/children \
+            artifacts/installed-codex/qualification.json
+
+      - name: Upload typed qualification bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: installed-codex-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/installed-codex/qualification.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Require every installed matrix child to succeed
+        if: always()
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          python3 scripts/required-gate.py \
+            --results-json "$REQUIRED_RESULTS" \
+            --required installed-codex

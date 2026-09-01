@@ -1,9 +1,15 @@
 package codexinstalled
 
 import (
+	"bufio"
+	"encoding/json"
+	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -123,6 +129,113 @@ func TestManagedIdentityMismatchNeverAuthorizesForeignPID(t *testing.T) {
 		if err := validateManagedIdentity(test.status, test.startedPID, test.artifactPID, "/tmp/exact/app-server.sock"); err == nil {
 			t.Fatalf("%s authorized a managed cleanup target", test.name)
 		}
+	}
+}
+
+func TestQualificationRunnerCleanupRetiresOnlyExactOwnedProcess(t *testing.T) {
+	root, err := os.MkdirTemp("", qualificationRootPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	socketPath := filepath.Join(root, "codex-home", "app-server-control", "app-server-control.sock")
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(os.Args[0], "-test.run=^TestQualificationOwnedProcessHelper$")
+	command.Env = append(os.Environ(),
+		"PROJMUX_QUALIFICATION_OWNED_PROCESS_HELPER=1",
+		"PROJMUX_QUALIFICATION_OWNED_SOCKET="+socketPath,
+	)
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := command.Start(); err != nil {
+		t.Fatal(err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- command.Wait() }()
+	reaped := false
+	t.Cleanup(func() {
+		if !reaped {
+			_ = command.Process.Kill()
+			<-exited
+		}
+	})
+	ready := bufio.NewScanner(stdout)
+	if !ready.Scan() || ready.Text() != "ready" {
+		t.Fatalf("owned process did not become ready: %q (%v)", ready.Text(), ready.Err())
+	}
+
+	pidPath := filepath.Join(root, "codex-home", "app-server-daemon", "app-server.pid")
+	if err := os.MkdirAll(filepath.Dir(pidPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pidPath, fmt.Appendf(nil, `{"pid":%d}`, command.Process.Pid), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	started := daemonVersion{
+		Status: "started", Backend: "pid", SocketPath: socketPath, PID: command.Process.Pid + 1,
+	}
+	writeDaemonVersion(t, filepath.Join(root, "managed-start-result"), started)
+	if err := cleanupQualificationRoot(root, time.Second); err == nil {
+		t.Fatal("runner cleanup accepted mismatched contained process identity")
+	}
+	if present, err := processExists(command.Process.Pid); err != nil || !present {
+		t.Fatalf("mismatched process was not preserved: present=%v err=%v", present, err)
+	}
+	if _, err := os.Lstat(root); err != nil {
+		t.Fatalf("runner root was removed before exact process retirement: %v", err)
+	}
+
+	started.PID = command.Process.Pid
+	writeDaemonVersion(t, filepath.Join(root, "managed-start-result"), started)
+	if err := cleanupQualificationRoot(root, 3*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-exited:
+		reaped = true
+		if err != nil {
+			t.Fatalf("exact owned process exit: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("exact owned process was not reaped")
+	}
+	if _, err := os.Lstat(root); !os.IsNotExist(err) {
+		t.Fatalf("runner root remained after exact process retirement: %v", err)
+	}
+}
+
+func TestQualificationOwnedProcessHelper(t *testing.T) {
+	if os.Getenv("PROJMUX_QUALIFICATION_OWNED_PROCESS_HELPER") != "1" {
+		return
+	}
+	socketPath := os.Getenv("PROJMUX_QUALIFICATION_OWNED_SOCKET")
+	listener, err := net.Listen("unix", socketPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM)
+	fmt.Println("ready")
+	<-signals
+	signal.Stop(signals)
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Remove(socketPath)
+}
+
+func writeDaemonVersion(t *testing.T, path string, value daemonVersion) {
+	t.Helper()
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -274,6 +387,7 @@ func TestInstalledCensusDeletionReceiptHasOneOwnerPerPrimitive(t *testing.T) {
 		{"TestInstalledIsolatedDaemonLifecycleSmoke", "TestInstalledHermeticTopologyQualification", "direct ready/close + managed start/reuse/retire", "managed payload absence is typed unsupported"},
 		{"catalog setup/readiness/socket assertions", "codexinstalled.Fixture", "thread/list", "direct startup failure is terminal"},
 		{"pre-turn setup/readiness/attach skip", "codexinstalled.Fixture", "thread/start + second attach + thread/read", "attach failure is terminal"},
+		{"scheduled daemon-lifecycle/thread-list/pre-turn-attach matrix entries (merged; no protocol bodies added)", "the three surviving Phase 0 canonical tests", "matrix invocation + typed reduction only", "missing or invalid terminal evidence is typed infra-error"},
 		{"installCodexArgvLedger + codexInstalledSmokeReadOnlyArgv", "codexinstalled.Ledger", "native binding and exact-turn control", "ambient semantic mutation count is zero"},
 		{"retirement smoke root/readiness/argv blocks", "codexinstalled.Fixture + Ledger", "two-Agent shared connection and sibling fencing", "endpoint lifecycle mutation is rejected"},
 		{"approval smoke root/readiness/argv blocks", "codexinstalled.Fixture + Ledger", "approval lease response-once", "endpoint lifecycle mutation is rejected"},

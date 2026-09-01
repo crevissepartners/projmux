@@ -483,8 +483,15 @@ func (fixture *Fixture) readDaemonVersion(ctx context.Context) (daemonVersion, e
 
 func (fixture *Fixture) readManagedPID() (int, error) {
 	pidPath := filepath.Join(fixture.CodexHome, "app-server-daemon", "app-server.pid")
+	return readManagedPIDAt(pidPath)
+}
+
+func readManagedPIDAt(pidPath string) (int, error) {
 	info, err := os.Lstat(pidPath)
-	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 512 {
+	if err != nil {
+		return 0, err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > 512 {
 		return 0, fmt.Errorf("managed pid artifact is unavailable")
 	}
 	raw, err := os.ReadFile(pidPath) // #nosec G304 -- exact contained public daemon PID artifact.
@@ -501,11 +508,18 @@ func (fixture *Fixture) readManagedPID() (int, error) {
 }
 
 func (fixture *Fixture) readManagedStartResult() (daemonVersion, error) {
-	info, err := os.Lstat(fixture.startResultPath)
-	if err != nil || !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxCommandOutput {
+	return readManagedStartResultAt(fixture.startResultPath)
+}
+
+func readManagedStartResultAt(path string) (daemonVersion, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return daemonVersion{}, err
+	}
+	if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > maxCommandOutput {
 		return daemonVersion{}, fmt.Errorf("managed start result is unavailable")
 	}
-	raw, err := os.ReadFile(fixture.startResultPath) // #nosec G304 -- exact contained public start result.
+	raw, err := os.ReadFile(path) // #nosec G304 -- exact contained public start result.
 	if err != nil {
 		return daemonVersion{}, err
 	}
