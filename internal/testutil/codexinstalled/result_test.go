@@ -69,9 +69,21 @@ func TestSemanticLedgerCountsAmbientMutationWithoutRawArgvOracle(t *testing.T) {
 
 func TestFailureCleanupRemovesOnlyExactOwnedArtifacts(t *testing.T) {
 	root := t.TempDir()
-	fixture, err := NewClean(root)
-	if err != nil {
-		t.Fatal(err)
+	fixture := &Fixture{
+		Root: root, CodexHome: filepath.Join(root, "codex-home"), Workspace: filepath.Join(root, "workspace"),
+		SocketPath: filepath.Join(root, "codex-home", "app-server-control", "app-server-control.sock"),
+		shimPath:   filepath.Join(root, "fixture-bin", "codex"), ledger: newLedger(filepath.Join(root, "codex-command-ledger")),
+		startResultPath: filepath.Join(root, "managed-start-result"), ownsState: true,
+	}
+	for _, ownedDir := range []string{fixture.CodexHome, fixture.Workspace, filepath.Dir(fixture.shimPath)} {
+		if err := os.MkdirAll(ownedDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, ownedFile := range []string{fixture.shimPath, fixture.ledger.path, fixture.startResultPath} {
+		if err := os.WriteFile(ownedFile, []byte("owned"), 0o600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	foreign := filepath.Join(root, "foreign.sock")
 	if err := os.WriteFile(foreign, []byte("foreign"), 0o600); err != nil {
