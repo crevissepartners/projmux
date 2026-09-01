@@ -13,17 +13,20 @@ CanonicalRoutes	The canonical route table accessor is retained for cross-package
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
 CurrentProtocol	The build's local IPC version window accessor is retained as the negotiation input an explicit caller supplies.
 DecideTeardownEvent	The pure teardown decision API is retained for lifecycle authority proofs and planned consumers.
+DecodeCapabilityLedger	Test-only installed qualification API retained for strict checked-in capability-ledger validation.
 DirectEndpoint.Close	Test-only installed qualification API retained for bounded direct endpoint cleanup proof.
 DirectEndpoint.Health	Test-only installed qualification API retained for canonical direct readiness evidence.
 DirectEndpoint.forceCleanup	Test-only installed qualification helper retained for injected direct startup-failure cleanup proof.
 DirectEndpoint.markClosed	Test-only installed qualification helper retained for single-consumer bounded direct exit finalization proof.
 Discover	The background-context discovery wrapper is retained as a test and compatibility seam.
+EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.
 Fixture.ApplyEnv	Test-only installed qualification API retained for isolated environment containment proof.
 Fixture.Cleanup	Test-only installed qualification API retained for exact owned-artifact cleanup proof.
 Fixture.Ledger	Test-only installed qualification API retained for semantic ambient non-mutation proof.
 Fixture.ProvisionManagedPayload	Test-only installed qualification API retained for managed provision classification proof.
 Fixture.RunManagedLifecycle	Test-only installed qualification API retained for managed start/reuse/retire proof.
 Fixture.StartDirect	Test-only installed qualification API retained for disposable direct endpoint readiness proof.
+Fixture.StartTurnFreeAttachPane	Test-only installed qualification API retained for exact isolated live-Pane capability evidence.
 Fixture.Versions	Test-only installed qualification API retained for complete version-tuple evidence.
 Fixture.cleanupSupportArtifacts	Test-only installed qualification helper retained for exact ledger and shim cleanup proof.
 Fixture.discoverCLI	Test-only installed qualification helper retained for installed CLI version evidence.
@@ -34,6 +37,10 @@ Fixture.readManagedPID	Test-only installed qualification helper retained for con
 Fixture.readManagedStartResult	Test-only installed qualification helper retained for exact managed start PID proof.
 Fixture.retireAfterFailure	Test-only installed qualification helper retained for bounded exact managed failure cleanup proof.
 Host.RuntimeID	The runtime identity accessor is retained as the authority axis clients present alongside both epochs.
+IsolatedPane.Alive	Test-only installed qualification API retained for exact pane-dead and socket-identity observation.
+IsolatedPane.Close	Test-only installed qualification API retained for contained exact tmux server cleanup.
+IsolatedPane.ID	Test-only installed qualification API retained for content-free exact Pane evidence.
+IsolatedPane.run	Test-only installed qualification helper retained for inherited tmux identity stripping on every command.
 Ledger.AmbientMutations	Test-only installed qualification API retained for typed ambient mutation counting proof.
 Ledger.AssertNoAmbientMutation	Test-only installed qualification API retained for zero ambient mutation proof.
 Ledger.AssertNoLifecycleMutation	Test-only installed qualification API retained for broker-smoke lifecycle non-mutation proof.
@@ -71,9 +78,11 @@ legacyWindowAttentionRows	Legacy attention rows remain required while older pers
 newFixture	Test-only installed qualification helper retained as the common clean/existing fixture constructor.
 newLedger	Test-only installed qualification helper retained for canonical semantic command evidence.
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
+pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
 removeExactResidualSocket	Test-only installed qualification helper retained for ready-time socket identity cleanup proof.
 rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
+tmuxCapabilityEnvironment	Test-only installed qualification helper retained for per-command tmux and CODEX_HOME isolation.
 tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
 validOwnerChain	Owner-chain validation is retained inside the pure teardown decision authority.
 validTeardownEventKind	The closed event-kind validator is retained inside the pure teardown decision authority.

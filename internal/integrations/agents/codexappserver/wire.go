@@ -8,6 +8,7 @@ const (
 	methodModelList               = "model/list"
 	methodReviewStart             = "review/start"
 	methodThreadList              = "thread/list"
+	methodThreadLoadedList        = "thread/loaded/list"
 	methodThreadRead              = "thread/read"
 	methodThreadStart             = "thread/start"
 	methodThreadResume            = "thread/resume"
@@ -142,6 +143,16 @@ type threadListParams struct {
 type threadListResult struct {
 	Data       []wireCatalogThread `json:"data"`
 	NextCursor *string             `json:"nextCursor"`
+}
+
+type threadLoadedListParams struct {
+	Cursor *string `json:"cursor,omitempty"`
+	Limit  *uint32 `json:"limit,omitempty"`
+}
+
+type threadLoadedListResult struct {
+	Data       []string `json:"data"`
+	NextCursor *string  `json:"nextCursor"`
 }
 
 type threadReadParams struct {

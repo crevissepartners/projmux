@@ -388,6 +388,7 @@ func TestInstalledCensusDeletionReceiptHasOneOwnerPerPrimitive(t *testing.T) {
 		{"catalog setup/readiness/socket assertions", "codexinstalled.Fixture", "thread/list", "direct startup failure is terminal"},
 		{"pre-turn setup/readiness/attach skip", "codexinstalled.Fixture", "thread/start + second attach + thread/read", "attach failure is terminal"},
 		{"scheduled daemon-lifecycle/thread-list/pre-turn-attach matrix entries (merged; no protocol bodies added)", "the three surviving Phase 0 canonical tests", "matrix invocation + typed reduction only", "missing or invalid terminal evidence is typed infra-error"},
+		{"pre-turn optional RPC resume log (merged into the existing canary)", "TestInstalledIsolatedPreTurnBootstrapSmoke", "turn-free CLI attach + exact Pane + loaded/runtime semantic reduction", "dead Pane is unsupported while an unavailable endpoint is infra-error"},
 		{"installCodexArgvLedger + codexInstalledSmokeReadOnlyArgv", "codexinstalled.Ledger", "native binding and exact-turn control", "ambient semantic mutation count is zero"},
 		{"retirement smoke root/readiness/argv blocks", "codexinstalled.Fixture + Ledger", "two-Agent shared connection and sibling fencing", "endpoint lifecycle mutation is rejected"},
 		{"approval smoke root/readiness/argv blocks", "codexinstalled.Fixture + Ledger", "approval lease response-once", "endpoint lifecycle mutation is rejected"},
@@ -410,6 +411,8 @@ func TestInstalledCensusDeletionReceiptHasOneOwnerPerPrimitive(t *testing.T) {
 		{"direct", "thread-list", "TestInstalledIsolatedConversationCatalogSmoke"},
 		{"direct", "thread-start", "TestInstalledIsolatedPreTurnBootstrapSmoke"},
 		{"direct", "thread-read", "TestInstalledIsolatedPreTurnBootstrapSmoke"},
+		{"direct", "thread-loaded-list", "TestInstalledIsolatedPreTurnBootstrapSmoke"},
+		{"direct-real-tmux", "turn-free-live-pane-attach", "TestInstalledIsolatedPreTurnBootstrapSmoke"},
 		{"direct", "native-binding-control", "TestInstalledIsolatedBrokerNativeBindingSmoke"},
 		{"direct", "shared-connection-retirement", "TestInstalledIsolatedRetiredObserverMatrixSmoke"},
 		{"direct", "approval-lease", "TestInstalledIsolatedBrokerApprovalLeaseSmoke"},
@@ -423,5 +426,15 @@ func TestInstalledCensusDeletionReceiptHasOneOwnerPerPrimitive(t *testing.T) {
 			t.Fatalf("installed primitive %q has duplicate owners %q and %q", key, previous, item.owner)
 		}
 		seenPrimitive[key] = item.owner
+	}
+}
+
+func TestTurnFreeCLIResumeIsProtocolMutationNotEndpointLifecycle(t *testing.T) {
+	command := classifyCodexCommand(ScopeIsolated, []string{"resume", "--remote", "unix://", "thread-opaque"})
+	if command.Operation != "pre-turn-cli-remote-resume" || command.Mutation != MutationProtocolSession {
+		t.Fatalf("turn-free CLI attach = %+v", command)
+	}
+	if command.Scope != ScopeIsolated {
+		t.Fatalf("turn-free CLI attach escaped isolated scope: %+v", command)
 	}
 }

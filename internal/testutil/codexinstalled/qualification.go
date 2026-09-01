@@ -10,7 +10,7 @@ import (
 	"golang.org/x/mod/semver"
 )
 
-const QualificationSchemaVersion = 1
+const QualificationSchemaVersion = 2
 
 type QualificationPrimitive string
 
@@ -63,8 +63,9 @@ type QualificationResult struct {
 }
 
 type QualificationArtifact struct {
-	SchemaVersion int                   `json:"schema_version"`
-	Results       []QualificationResult `json:"results"`
+	SchemaVersion    int                   `json:"schema_version"`
+	Results          []QualificationResult `json:"results"`
+	CapabilityLedger *CapabilityLedger     `json:"capability_ledger"`
 }
 
 // QualificationSpec binds each scheduled matrix leg to its existing
@@ -188,6 +189,15 @@ func (artifact QualificationArtifact) Validate(expected []QualificationPrimitive
 			return fmt.Errorf("installed qualification artifact is missing primitive %q", primitive)
 		}
 	}
+	wantsCapability := slices.Contains(expected, PrimitivePreTurnAttach)
+	if wantsCapability != (artifact.CapabilityLedger != nil) {
+		return fmt.Errorf("installed qualification capability ledger presence does not match pre-turn primitive")
+	}
+	if artifact.CapabilityLedger != nil {
+		if err := artifact.CapabilityLedger.Validate(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -283,6 +293,14 @@ func AggregateQualificationArtifacts(children map[QualificationPrimitive][]byte)
 				spec, VersionTuple{}.normalized(), ResultInfraError, QualificationReasonChildArtifactMissing,
 			))
 			invalidChildren++
+			if spec.Primitive == PrimitivePreTurnAttach {
+				ledger := CapabilityLedger{SchemaVersion: CapabilitySchemaVersion, Capabilities: []CapabilityResult{
+					InfraErrorCapability(VersionTuple{}, CapabilityReasonTerminalMissing, CapabilityObservation{
+						Probe: spec.TestName, Run: "aggregate-missing-child",
+					}),
+				}}
+				artifact.CapabilityLedger = &ledger
+			}
 			continue
 		}
 		child, err := DecodeQualificationArtifact(encoded, []QualificationPrimitive{spec.Primitive})
@@ -291,9 +309,25 @@ func AggregateQualificationArtifacts(children map[QualificationPrimitive][]byte)
 				spec, VersionTuple{}.normalized(), ResultInfraError, QualificationReasonChildArtifactInvalid,
 			))
 			invalidChildren++
+			if spec.Primitive == PrimitivePreTurnAttach {
+				ledger := CapabilityLedger{SchemaVersion: CapabilitySchemaVersion, Capabilities: []CapabilityResult{
+					InfraErrorCapability(VersionTuple{}, CapabilityReasonTerminalInvalid, CapabilityObservation{
+						Probe: spec.TestName, Run: "aggregate-invalid-child",
+					}),
+				}}
+				artifact.CapabilityLedger = &ledger
+			}
 			continue
 		}
 		artifact.Results = append(artifact.Results, child.Results[0])
+		if child.CapabilityLedger != nil {
+			if artifact.CapabilityLedger != nil {
+				return QualificationArtifact{}, fmt.Errorf("installed qualification has duplicate capability ledgers")
+			}
+			ledger := *child.CapabilityLedger
+			ledger.Capabilities = append([]CapabilityResult(nil), child.CapabilityLedger.Capabilities...)
+			artifact.CapabilityLedger = &ledger
+		}
 	}
 	expected := qualificationPrimitives()
 	if err := artifact.Validate(expected); err != nil {

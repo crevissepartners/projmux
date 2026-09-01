@@ -7,8 +7,9 @@ import (
 
 func TestQualificationArtifactSchemaIsStructurallyContentFree(t *testing.T) {
 	assertQualificationFields(t, reflect.TypeFor[QualificationArtifact](), map[string]reflect.Type{
-		"schema_version": reflect.TypeFor[int](),
-		"results":        reflect.TypeFor[[]QualificationResult](),
+		"schema_version":    reflect.TypeFor[int](),
+		"results":           reflect.TypeFor[[]QualificationResult](),
+		"capability_ledger": reflect.TypeFor[*CapabilityLedger](),
 	})
 	assertQualificationFields(t, reflect.TypeFor[QualificationResult](), map[string]reflect.Type{
 		"versions":  reflect.TypeFor[VersionTuple](),
@@ -143,6 +144,10 @@ func TestQualificationReducerEmitsOneTerminalRecordPerMatrixLeg(t *testing.T) {
 			spec, _ := QualificationSpecFor(test.primitive)
 			result := ReduceQualification(spec, test.observed, test.succeeded)
 			artifact := QualificationArtifact{SchemaVersion: QualificationSchemaVersion, Results: []QualificationResult{result}}
+			if test.primitive == PrimitivePreTurnAttach {
+				ledger := supportedCapabilityLedger(versions)
+				artifact.CapabilityLedger = &ledger
+			}
 			if err := artifact.Validate([]QualificationPrimitive{test.primitive}); err != nil {
 				t.Fatal(err)
 			}
@@ -218,7 +223,7 @@ func TestQualificationAggregateSynthesizesEveryMissingMatrixChild(t *testing.T) 
 }
 
 func TestQualificationDecoderRejectsUnknownFieldsInsteadOfScanningValues(t *testing.T) {
-	encoded := []byte(`{"schema_version":1,"results":[],"extra":"opaque"}`)
+	encoded := []byte(`{"schema_version":2,"results":[],"extra":"opaque"}`)
 	if _, err := DecodeQualificationArtifact(encoded, nil); err == nil {
 		t.Fatal("an undeclared artifact field passed structural decoding")
 	}
@@ -244,4 +249,19 @@ func assertQualificationFields(t *testing.T, typ reflect.Type, want map[string]r
 
 func installedQualificationVersions() VersionTuple {
 	return VersionTuple{CLI: "0.152.0", Managed: "0.152.0", AppServer: "0.152.0"}
+}
+
+func supportedCapabilityLedger(versions VersionTuple) CapabilityLedger {
+	return CapabilityLedger{
+		SchemaVersion: CapabilitySchemaVersion,
+		Capabilities: []CapabilityResult{EvaluateTurnFreeThreadLiveAttach(
+			versions,
+			CapabilityMethod{Attach: "cli-remote-resume", Loaded: "rpc-thread-loaded-list", Runtime: "rpc-thread-read"},
+			CapabilityEvidence{
+				EndpointReady: true, ThreadCreatedWithoutTurn: true, LoadedBeforeAttach: true,
+				AttachAttempted: true, LoadedAfterAttach: true, RuntimeStatusAfterAttach: "idle", PaneObserved: true, PaneAlive: true,
+			},
+			CapabilityObservation{Probe: "TestInstalledIsolatedPreTurnBootstrapSmoke", Run: "fixture-run"},
+		)},
+	}
 }

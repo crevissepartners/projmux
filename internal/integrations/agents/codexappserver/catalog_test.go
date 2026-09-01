@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"reflect"
 	"testing"
@@ -81,6 +82,48 @@ func TestCatalogRejectsMalformedRuntimeStatus(t *testing.T) {
 		base.Status = wireThreadStatus{Type: status}
 		if _, err := normalizeCatalogThread(base); err != nil {
 			t.Fatalf("closed runtime status %q rejected: %v", status, err)
+		}
+	}
+}
+
+func TestLoadedThreadListIsReadOnlyIdentityEvidence(t *testing.T) {
+	client, collect := scriptedEndpoint(t, map[string]string{
+		methodThreadLoadedList: `{"data":["thread-a","thread-b"],"nextCursor":null}`,
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	loaded, err := client.ListLoadedThreadIDs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded, []string{"thread-a", "thread-b"}) {
+		t.Fatalf("loaded ids = %v", loaded)
+	}
+	methods, params := collect()
+	if !reflect.DeepEqual(methods, []string{methodThreadLoadedList}) {
+		t.Fatalf("methods = %v", methods)
+	}
+	var loadedParams threadLoadedListParams
+	if err := json.Unmarshal(params[0], &loadedParams); err != nil {
+		t.Fatal(err)
+	}
+	if loadedParams.Cursor != nil || loadedParams.Limit != nil {
+		t.Fatalf("loaded params = %+v, want one identity-only request", loadedParams)
+	}
+}
+
+func TestLoadedThreadListRejectsBlankAndDuplicateIdentity(t *testing.T) {
+	for _, payload := range []string{
+		`{"data":["thread-a",""]}`,
+		`{"data":["thread-a","thread-a"]}`,
+	} {
+		client, collect := scriptedEndpoint(t, map[string]string{methodThreadLoadedList: payload})
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		_, err := client.ListLoadedThreadIDs(ctx)
+		cancel()
+		collect()
+		if !errors.Is(err, ErrProtocol) {
+			t.Fatalf("payload %s = %v, want protocol refusal", payload, err)
 		}
 	}
 }
