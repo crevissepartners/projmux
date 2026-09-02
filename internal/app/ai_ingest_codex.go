@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -46,9 +47,38 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	}
-	if authority := c.readTmuxPaneOption(paneID, aiPaneCodexAuthorityOption); codexAuthoritySuppressesHooks(authority) {
+	authority, authorityErr := c.muxRunner().ShowPaneOption(context.Background(), paneID, aiPaneCodexAuthorityOption)
+	if nativeRouted && (authorityErr != nil || authority != codexAuthorityHook) {
+		reason := "native authority unavailable"
+		if authorityErr == nil {
+			reason = "provider-control-plane authority: " + authority
+		}
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: reason, Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
+		return nil
+	}
+	if !nativeRouted && codexAuthoritySuppressesHooks(authority) {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: "provider-control-plane authority: " + authority, Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
 		return nil
+	}
+	if nativeRouted {
+		release, err := c.acquireCodexAuthorityFence(c.env(internalActivationPaneUIDEnv))
+		if err != nil {
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
+			return err
+		}
+		defer release()
+		// SetAuthority owns the same fence. Revalidate after waiting so a hook
+		// that observed provider-hook before an invalidation cannot commit any
+		// Registry, tmux, queue, or desktop write after that invalidation.
+		authority, err = c.muxRunner().ShowPaneOption(context.Background(), paneID, aiPaneCodexAuthorityOption)
+		if err != nil || authority != codexAuthorityHook {
+			reason := "native authority unavailable"
+			if err == nil {
+				reason = "provider-control-plane authority: " + authority
+			}
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: reason, Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
+			return nil
+		}
 	}
 	if allowed, reason := c.nativeCodexHookAllowed(paneID, payload.matchThreadID()); !allowed {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: reason, Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})

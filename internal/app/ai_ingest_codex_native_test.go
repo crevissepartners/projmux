@@ -33,100 +33,296 @@ func (r phase3StaticTmuxRunner) Run(context.Context, string, ...string) ([]byte,
 	return []byte(r.output), nil
 }
 
-func TestCodexHooksWriteZeroDuringControlPlaneAuthority(t *testing.T) {
-	for _, event := range []string{"UserPromptSubmit", "PermissionRequest", "Stop", "SessionStart", "PreToolUse", "PostToolUse", "PreCompact", "PostCompact"} {
-		t.Run(event, func(t *testing.T) {
-			cmd := testAICommand(t.TempDir())
-			store := &stubNotifyStore{}
-			cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
-			cmd.stdin = bytes.NewBufferString(fmt.Sprintf(`{"hook_event_name":%q,"session_id":"codex-session","turn_id":"turn-1","cwd":"/repo/projmux"}`, event))
-			fallbackRead := codexHookIngestReadCommand("%7")
+func phase0RNativeCodexFixture(t *testing.T) (*fakeResourceStore, codexLifecycleIdentity) {
+	t.Helper()
+	store := newFakeResourceStore(t)
+	identity := codexLifecycleIdentity{
+		AgentUID: "agt-alpha-codex", PaneUID: "pan-alpha-codex", RuntimeID: "%7",
+		Generation: "generation-phase0r", ThreadID: "thread-phase0r",
+	}
+	mutator := store.mutator()
+	if _, err := mutator.RecordPaneActivation(&store.registry, identity.PaneUID, coremetadata.PaneActivationOptions{
+		Generation: identity.Generation, RuntimeID: identity.RuntimeID, AgentUID: identity.AgentUID, OperationID: "phase0r-authority",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mutator.BindCodexActivation(&store.registry, coremetadata.CodexActivationObservation{
+		AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, Generation: identity.Generation, ThreadID: identity.ThreadID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return store, identity
+}
+
+func phase0RSemanticPaneWrites(commands []recordedAICommand) map[string][]string {
+	writes := map[string][]string{}
+	for _, command := range commands {
+		if command.name != "tmux" || len(command.args) < 5 || command.args[0] != "set-option" {
+			continue
+		}
+		option := command.args[len(command.args)-2]
+		value := command.args[len(command.args)-1]
+		if slices.Contains(command.args, "-u") {
+			option, value = command.args[len(command.args)-1], ""
+		}
+		if slices.Contains([]string{aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption}, option) {
+			writes[option] = append(writes[option], value)
+		}
+	}
+	return writes
+}
+
+func TestNativeCodexHookAuthoritySemanticWriteSet(t *testing.T) {
+	for _, test := range []struct {
+		authority  string
+		readErr    bool
+		wantCommit bool
+	}{
+		{authority: codexAuthorityPending},
+		{authority: codexAuthorityControlPlane},
+		{authority: codexAuthorityInvalidating},
+		{authority: ""},
+		{authority: "unknown-authority"},
+		{authority: "unavailable", readErr: true},
+		{authority: codexAuthorityHook, wantCommit: true},
+	} {
+		name := test.authority
+		if name == "" {
+			name = "empty"
+		}
+		t.Run(name, func(t *testing.T) {
+			store, identity := phase0RNativeCodexFixture(t)
+			beforeAgent, _ := store.registry.Agent(identity.AgentUID)
+			home := t.TempDir()
+			queue := &stubNotifyStore{}
+			cmd := testAICommand(home)
+			cmd.loadRegistry = store.store().load
+			cmd.updateRegistry = store.store().update
+			cmd.notifyStore = queue
+			cmd.producer = &storeAttentionNotifyProducer{store: queue, ttl: time.Minute}
+			cmd.stdin = bytes.NewBufferString(`{"hook_event_name":"Stop","thread_id":"thread-phase0r","turn_id":"turn-phase0r","cwd":"/repo/projmux"}`)
+			baseRead := codexHookIngestReadCommand(identity.RuntimeID)
 			cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-				if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{" + aiPaneCodexAuthorityOption + "}"}) {
-					return []byte(codexAuthorityControlPlane + "\n"), nil
+				switch {
+				case name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", identity.RuntimeID, "#{" + aiPaneCodexAuthorityOption + "}"}):
+					if test.readErr {
+						return nil, os.ErrNotExist
+					}
+					return []byte(test.authority + "\n"), nil
+				case name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", identity.RuntimeID, "#{" + tmuxopts.PaneUID + "}"}):
+					return []byte(identity.PaneUID + "\n"), nil
+				default:
+					return baseRead(ctx, name, args...)
 				}
-				return fallbackRead(ctx, name, args...)
 			}
+			desktopWrites := 0
+			baseLookup := cmd.lookupEnv
+			cmd.lookupEnv = func(name string) string {
+				switch name {
+				case internalActivationPaneUIDEnv:
+					return identity.PaneUID
+				case internalActivationGenerationEnv:
+					return identity.Generation
+				case "PROJMUX_NOTIFY_HOOK":
+					return "/tmp/projmux-phase0r-notify-recorder"
+				default:
+					return baseLookup(name)
+				}
+			}
+			cmd.runCommand = func(_ context.Context, name string, args ...string) error {
+				if name == "/tmp/projmux-phase0r-notify-recorder" {
+					desktopWrites++
+				}
+				cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+				return nil
+			}
+
 			if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatal(err)
 			}
-			if commands := cmdRecorder(cmd).commands; len(commands) != 0 {
-				t.Fatalf("control-plane hook commands = %#v, want zero", commands)
+			paneWrites := phase0RSemanticPaneWrites(cmdRecorder(cmd).commands)
+			agent, _ := store.registry.Agent(identity.AgentUID)
+			if !test.wantCommit {
+				if len(paneWrites) != 0 || store.writes != 0 || len(queue.pushed) != 0 || len(queue.ackedIDs) != 0 || desktopWrites != 0 || !reflect.DeepEqual(agent.Status.Interaction, beforeAgent.Status.Interaction) {
+					t.Fatalf("suppressed hook write ledger authority=%q pane=%#v Registry=%d interaction=%#v queue=%#v ack=%#v desktop=%d", test.authority, paneWrites, store.writes, agent.Status.Interaction, queue.pushed, queue.ackedIDs, desktopWrites)
+				}
+				return
 			}
-			if len(store.pushed) != 0 {
-				t.Fatalf("control-plane hook queue writes = %#v, want zero", store.pushed)
+			wantPane := map[string][]string{
+				aiPaneStateOption:     {"waiting"},
+				aiPaneBadgeKindOption: {aiBadgeKindResponseComplete},
+				attentionStateOption:  {attentionStateReply},
+			}
+			if !reflect.DeepEqual(paneWrites, wantPane) || store.writes != 1 ||
+				agent.Status.Interaction.Kind != coremetadata.InteractionResponseComplete || agent.Status.Interaction.Source != string(coremetadata.InteractionSourceProviderHook) ||
+				len(queue.pushed) != 1 || desktopWrites != 1 {
+				t.Fatalf("fallback hook write ledger pane=%#v Registry=%d interaction=%#v queue=%#v desktop=%d", paneWrites, store.writes, agent.Status.Interaction, queue.pushed, desktopWrites)
 			}
 		})
 	}
 }
 
-func TestCodexAuthorityHookSuppressionClosesStartupAndInvalidationGaps(t *testing.T) {
-	for _, source := range []string{codexAuthorityPending, codexAuthorityControlPlane, codexAuthorityInvalidating} {
-		if !codexAuthoritySuppressesHooks(source) {
-			t.Fatalf("source %q must suppress hooks", source)
-		}
-	}
-	if codexAuthoritySuppressesHooks(codexAuthorityHook) || codexAuthoritySuppressesHooks("") {
-		t.Fatal("hook fallback must accept hooks only after explicit or compatibility fallback")
-	}
+type phase0RTmuxRunner func(context.Context, string, ...string) ([]byte, error)
+
+func (f phase0RTmuxRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return f(ctx, name, args...)
 }
 
-func TestCodexSemanticHooksStaySuppressedAcrossNonHookAuthorityWithRawNotify(t *testing.T) {
-	for _, authority := range []string{codexAuthorityPending, codexAuthorityControlPlane, codexAuthorityInvalidating} {
-		for _, event := range []string{"PermissionRequest", "Stop"} {
-			t.Run(authority+"/"+event, func(t *testing.T) {
-				home := t.TempDir()
-				paths := config.DefaultPaths(filepath.Join(home, ".config"), filepath.Join(home, ".local", "state"))
-				if err := config.SaveAIHookActionsFile(paths.AIHookActionsFile(), config.AIHookActionsFile{
-					Version: 1,
-					Providers: map[string]config.AIHookProviderActions{
-						aiHookProviderCodex: {Events: map[string]string{event: aiHookActionNotify}},
-					},
-				}); err != nil {
-					t.Fatal(err)
-				}
-				store := &stubNotifyStore{}
-				cmd := testAICommand(home)
-				cmd.notifyStore = store
-				cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: time.Minute}
-				cmd.readFile = os.ReadFile
-				cmd.stdin = bytes.NewBufferString(fmt.Sprintf(`{"hook_event_name":%q,"session_id":"codex-session","turn_id":"turn-1","cwd":"/repo/projmux"}`, event))
-				fallbackRead := codexHookIngestReadCommand("%7")
-				cmd.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
-					if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%7", "#{" + aiPaneCodexAuthorityOption + "}"}) {
-						return []byte(authority + "\n"), nil
-					}
-					return fallbackRead(ctx, name, args...)
-				}
-				desktopCalls := 0
-				cmd.lookupEnv = func(name string) string {
-					switch name {
-					case "HOME":
-						return home
-					case "PROJMUX_NOTIFY_HOOK":
-						return "/tmp/projmux-phase3-notify-spy"
-					default:
-						return ""
-					}
-				}
-				cmd.runCommand = func(_ context.Context, name string, args ...string) error {
-					if name == "/tmp/projmux-phase3-notify-spy" {
-						desktopCalls++
-					}
-					cmdRecorder(cmd).commands = append(cmdRecorder(cmd).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
-					return nil
-				}
-				if err := cmd.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
-					t.Fatal(err)
-				}
-				if commands := cmdRecorder(cmd).commands; len(commands) != 0 {
-					t.Fatalf("suppressed semantic hook commands = %#v, want zero", commands)
-				}
-				if len(store.pushed) != 0 || len(store.ackedIDs) != 0 || desktopCalls != 0 {
-					t.Fatalf("suppressed writes queue=%#v ack=%#v desktop=%d", store.pushed, store.ackedIDs, desktopCalls)
-				}
-			})
+func TestNativeCodexHookAuthorityChangeAfterGuardCommitsZero(t *testing.T) {
+	store, identity := phase0RNativeCodexFixture(t)
+	beforeAgent, _ := store.registry.Agent(identity.AgentUID)
+	options := map[string]string{
+		tmuxopts.PaneUID:           identity.PaneUID,
+		aiPaneCodexAuthorityOption: codexAuthorityHook,
+		aiPaneCodexEpochOption:     "epoch-before",
+		aiPaneCodexReasonOption:    "native-fallback",
+	}
+	var optionsMu sync.Mutex
+	sinkAtAuthorityRead := make(chan struct{})
+	allowInvalidation := make(chan struct{})
+	var sinkReadOnce sync.Once
+	sinkRunner := phase0RTmuxRunner(func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" || len(args) < 1 {
+			return nil, fmt.Errorf("unexpected sink command %s %q", name, args)
 		}
+		switch args[0] {
+		case "show-options":
+			option := args[len(args)-1]
+			if option == aiPaneCodexAuthorityOption {
+				sinkReadOnce.Do(func() {
+					close(sinkAtAuthorityRead)
+					<-allowInvalidation
+				})
+			}
+			optionsMu.Lock()
+			defer optionsMu.Unlock()
+			return []byte(options[option] + "\n"), nil
+		case "set-option":
+			optionsMu.Lock()
+			defer optionsMu.Unlock()
+			option := args[len(args)-2]
+			if slices.Contains(args, "-u") {
+				delete(options, args[len(args)-1])
+			} else {
+				options[option] = args[len(args)-1]
+			}
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("unexpected sink tmux command %q", args)
+		}
+	})
+
+	// The injected token has the same ownership semantics as the production
+	// flock while exposing a deterministic handoff point to the test.
+	token := make(chan struct{}, 1)
+	token <- struct{}{}
+	acquire := func(paneUID string) (func(), error) {
+		if paneUID != identity.PaneUID {
+			return nil, fmt.Errorf("authority fence Pane uid = %q, want %q", paneUID, identity.PaneUID)
+		}
+		<-token
+		var once sync.Once
+		return func() { once.Do(func() { token <- struct{}{} }) }, nil
+	}
+
+	home := t.TempDir()
+	sinkCommand := testAICommand(home)
+	sinkCommand.loadRegistry = store.store().load
+	sinkCommand.acquireCodexAuthority = acquire
+	sink := aiCodexLifecycleSink{command: sinkCommand, runner: sinkRunner}
+	sinkResult := make(chan error, 1)
+	go func() {
+		sinkResult <- sink.SetAuthority(identity, codexAuthorityInvalidating, "epoch-after", "disconnected")
+	}()
+	select {
+	case <-sinkAtAuthorityRead:
+	case <-time.After(time.Second):
+		t.Fatal("native invalidation did not acquire the authority fence")
+	}
+
+	queue := &stubNotifyStore{}
+	hookCommand := testAICommand(home)
+	hookCommand.loadRegistry = store.store().load
+	hookCommand.updateRegistry = store.store().update
+	hookCommand.acquireCodexAuthority = acquire
+	hookCommand.notifyStore = queue
+	hookCommand.producer = &storeAttentionNotifyProducer{store: queue, ttl: time.Minute}
+	hookCommand.stdin = bytes.NewBufferString(`{"hook_event_name":"Stop","thread_id":"thread-phase0r","turn_id":"turn-gap","cwd":"/repo/projmux"}`)
+	hookInitialGuard := make(chan struct{})
+	var hookReadOnce sync.Once
+	baseRead := codexHookIngestReadCommand(identity.RuntimeID)
+	hookCommand.readCommand = func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		switch {
+		case name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", identity.RuntimeID, "#{" + aiPaneCodexAuthorityOption + "}"}):
+			optionsMu.Lock()
+			value := options[aiPaneCodexAuthorityOption]
+			optionsMu.Unlock()
+			hookReadOnce.Do(func() { close(hookInitialGuard) })
+			return []byte(value + "\n"), nil
+		case name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", identity.RuntimeID, "#{" + tmuxopts.PaneUID + "}"}):
+			return []byte(identity.PaneUID + "\n"), nil
+		default:
+			return baseRead(ctx, name, args...)
+		}
+	}
+	desktopWrites := 0
+	baseLookup := hookCommand.lookupEnv
+	hookCommand.lookupEnv = func(name string) string {
+		switch name {
+		case internalActivationPaneUIDEnv:
+			return identity.PaneUID
+		case internalActivationGenerationEnv:
+			return identity.Generation
+		case "PROJMUX_NOTIFY_HOOK":
+			return "/tmp/projmux-phase0r-notify-recorder"
+		default:
+			return baseLookup(name)
+		}
+	}
+	hookCommand.runCommand = func(_ context.Context, name string, args ...string) error {
+		if name == "/tmp/projmux-phase0r-notify-recorder" {
+			desktopWrites++
+		}
+		cmdRecorder(hookCommand).commands = append(cmdRecorder(hookCommand).commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
+		return nil
+	}
+	hookResult := make(chan error, 1)
+	go func() {
+		hookResult <- hookCommand.Run([]string{"ingest", "codex-hook"}, &bytes.Buffer{}, &bytes.Buffer{})
+	}()
+	select {
+	case <-hookInitialGuard:
+	case <-time.After(time.Second):
+		t.Fatal("Stop hook did not observe the initial provider-hook authority")
+	}
+	close(allowInvalidation)
+	select {
+	case err := <-sinkResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("native invalidation did not release the authority fence")
+	}
+	select {
+	case err := <-hookResult:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("suppressed Stop hook did not finish after invalidation")
+	}
+
+	optionsMu.Lock()
+	authorityTuple := strings.Join([]string{options[aiPaneCodexAuthorityOption], options[aiPaneCodexEpochOption], options[aiPaneCodexReasonOption]}, "|")
+	state, badge, attention := options[aiPaneStateOption], options[aiPaneBadgeKindOption], options[attentionStateOption]
+	optionsMu.Unlock()
+	agent, _ := store.registry.Agent(identity.AgentUID)
+	if authorityTuple != "invalidating|epoch-after|disconnected" || state != "" || badge != "" || attention != "" ||
+		store.writes != 0 || !reflect.DeepEqual(agent.Status.Interaction, beforeAgent.Status.Interaction) ||
+		len(queue.pushed) != 0 || len(queue.ackedIDs) != 0 || desktopWrites != 0 {
+		t.Fatalf("forced invalidation write ledger authority=%s state=%q badge=%q attention=%q Registry=%d interaction=%#v queue=%#v ack=%#v desktop=%d hook-commands=%#v",
+			authorityTuple, state, badge, attention, store.writes, agent.Status.Interaction, queue.pushed, queue.ackedIDs, desktopWrites, cmdRecorder(hookCommand).commands)
 	}
 }
 
