@@ -118,8 +118,9 @@ func TestInstalledPrivateGenerationHostDualListenerSmoke(t *testing.T) {
 
 	for name, host := range map[string]*codexgenerationhost.PrivateGenerationHost{"old": oldHost, "new": newHost} {
 		proof := host.Proof()
-		if proof.PID <= 0 || proof.EndpointRuntimeID == "" || proof.SocketIdentity.Inode == 0 ||
-			proof.Executable.Inode == 0 || !host.LeaseHeld() {
+		if proof.PID <= 0 || proof.ProcessGroupID != proof.PID || proof.EndpointRuntimeID == "" ||
+			proof.SocketIdentity.Inode == 0 || proof.SocketIdentity.ChangeTimeSeconds == 0 ||
+			proof.Executable.Inode == 0 || proof.Executable.ChangeTimeSeconds == 0 || !host.LeaseHeld() {
 			t.Fatalf("%s private host proof = %+v held=%v", name, proof, host.LeaseHeld())
 		}
 		argv := host.LaunchArgv()
@@ -131,8 +132,9 @@ func TestInstalledPrivateGenerationHostDualListenerSmoke(t *testing.T) {
 		}
 	}
 	if oldHost.Proof().EndpointRuntimeID == newHost.Proof().EndpointRuntimeID ||
+		oldHost.Proof().ProcessGroupID == newHost.Proof().ProcessGroupID ||
 		oldHost.Proof().SocketPath == newHost.Proof().SocketPath || oldLease.ID == newLease.ID {
-		t.Fatal("dual private generations collapsed runtime, socket, or leased-version identity")
+		t.Fatal("dual private generations collapsed runtime, process group, socket, or leased-version identity")
 	}
 	if err := oldHost.ReleaseLease(); codexgenerationhost.HostRefusalOf(err) != codexgenerationhost.HostRefusalLeaseHeld {
 		t.Fatalf("old pre-terminal lease release = %v", err)

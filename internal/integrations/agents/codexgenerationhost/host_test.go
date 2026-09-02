@@ -1,12 +1,17 @@
 package codexgenerationhost
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -14,6 +19,56 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbundle"
 )
+
+const ownedGenerationProcessHelperRole = "PROJMUX_OWNED_GENERATION_PROCESS_HELPER_ROLE"
+
+func TestOwnedGenerationProcessSessionHelper(t *testing.T) {
+	role := os.Getenv(ownedGenerationProcessHelperRole)
+	if role == "" {
+		return
+	}
+	socket := os.Getenv("PROJMUX_OWNED_GENERATION_PROCESS_HELPER_SOCKET")
+	if role == "leader" {
+		command := exec.Command(os.Args[0], "-test.run=^TestOwnedGenerationProcessSessionHelper$")
+		command.Env = ownedProcessHelperEnvironment("descendant")
+		if err := command.Start(); err != nil {
+			os.Exit(41)
+		}
+		connectOwnedProcessHelper(socket, role)
+		if err := command.Wait(); err != nil {
+			os.Exit(42)
+		}
+		return
+	}
+	connectOwnedProcessHelper(socket, role)
+	select {}
+}
+
+func connectOwnedProcessHelper(socket, role string) {
+	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: socket, Net: "unix"})
+	if err != nil {
+		os.Exit(43)
+	}
+	if _, err := fmt.Fprintln(connection, role); err != nil {
+		os.Exit(44)
+	}
+	// Keep the connection and inherited session token live until the exact
+	// private process-group signal terminates this helper.
+	buffer := make([]byte, 1)
+	if _, err := connection.Read(buffer); err != nil {
+		os.Exit(45)
+	}
+}
+
+func ownedProcessHelperEnvironment(role string) []string {
+	environment := make([]string, 0, len(os.Environ())+1)
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, ownedGenerationProcessHelperRole+"=") {
+			environment = append(environment, entry)
+		}
+	}
+	return append(environment, ownedGenerationProcessHelperRole+"="+role)
+}
 
 func TestPrivateGenerationHostLaunchProofTableAndLeaseRetention(t *testing.T) {
 	root := t.TempDir()
@@ -35,7 +90,9 @@ func TestPrivateGenerationHostLaunchProofTableAndLeaseRetention(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = host.Close() })
 	proof := host.Proof()
-	if proof.PID == 0 || proof.EndpointRuntimeID == "" || proof.SocketIdentity.Inode == 0 || proof.Executable.Inode == 0 {
+	if proof.PID == 0 || proof.ProcessGroupID != proof.PID || proof.EndpointRuntimeID == "" ||
+		proof.SocketIdentity.Inode == 0 || proof.SocketIdentity.ChangeTimeSeconds == 0 ||
+		proof.Executable.Inode == 0 || proof.Executable.ChangeTimeSeconds == 0 {
 		t.Fatalf("incomplete launch proof: %+v", proof)
 	}
 	wantArgv := []string{lease.Paths(codexbundle.RoleServer)[0], "app-server", "--listen", "unix://" + config.SocketPath}
@@ -51,6 +108,7 @@ func TestPrivateGenerationHostLaunchProofTableAndLeaseRetention(t *testing.T) {
 		drift func(*LaunchProof)
 	}{
 		{name: "pid", drift: func(proof *LaunchProof) { proof.PID++ }},
+		{name: "process group", drift: func(proof *LaunchProof) { proof.ProcessGroupID++ }},
 		{name: "socket inode", drift: func(proof *LaunchProof) { proof.SocketIdentity.Inode++ }},
 		{name: "executable inode", drift: func(proof *LaunchProof) { proof.Executable.Inode++ }},
 		{name: "runtime", drift: func(proof *LaunchProof) { proof.EndpointRuntimeID += "-stale" }},
@@ -95,9 +153,32 @@ func TestPrivateGenerationHostLivePIDSocketExecutableDriftKeepsLifecycleAtZero(t
 			want: HostRefusalProcessExited,
 		},
 		{
-			name: "socket inode replacement",
+			name: "process group identity drift",
+			drift: func(_ *testing.T, _ *PrivateGenerationHost, process *fakeOwnedProcess) {
+				process.mu.Lock()
+				process.processGroupID++
+				process.processGroupValid = false
+				process.mu.Unlock()
+			},
+			want: HostRefusalLaunchProofMismatch,
+		},
+		{
+			name: "socket replacement with reused device and inode",
 			drift: func(t *testing.T, host *PrivateGenerationHost, process *fakeOwnedProcess) {
 				process.replaceSocket(t, host.Proof().SocketPath)
+				replacement, err := os.Lstat(host.Proof().SocketPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				replacementIdentity := fileIdentity(replacement)
+				host.mu.Lock()
+				// Simulate immediate filesystem reuse: SameFile plus every legacy
+				// dev/inode/mode/size axis matches. Only the captured change time
+				// remains stale, so validation must still fail closed.
+				host.socketInfo = replacement
+				host.proof.SocketIdentity = replacementIdentity
+				host.proof.SocketIdentity.ChangeTimeNanoseconds ^= 1
+				host.mu.Unlock()
 			},
 			want: HostRefusalLaunchProofMismatch,
 		},
@@ -134,6 +215,10 @@ func TestPrivateGenerationHostLivePIDSocketExecutableDriftKeepsLifecycleAtZero(t
 			if len(host.Mutations()) != 0 {
 				t.Fatalf("live proof drift emitted mutations: %+v", host.Mutations())
 			}
+			process.mu.Lock()
+			process.processGroupID = process.pid
+			process.processGroupValid = true
+			process.mu.Unlock()
 		})
 	}
 }
@@ -409,6 +494,175 @@ func TestProcessExitBarrierIsRepeatableAndCloseAfterObservationDoesNotBlock(t *t
 	}
 }
 
+func TestPrivateGenerationHostCloseWaitsForOwnedSessionDescendants(t *testing.T) {
+	root := t.TempDir()
+	lease, _ := createCompleteTestLease(t, root, CompleteBundleArtifactPaths())
+	config, slot := privateHostTestConfig(t, root, lease)
+	host, err := StartPrivateGeneration(context.Background(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	process := slot.Load()
+	waitObserved := process.holdSessionCompletion()
+	closed := make(chan error, 1)
+	go func() { closed <- host.Close() }()
+	select {
+	case <-waitObserved:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not reach the owned-session completion barrier")
+	}
+	select {
+	case err := <-closed:
+		t.Fatalf("Close returned before the session descendant barrier: %v", err)
+	default:
+	}
+	process.releaseSessionCompletion()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close did not return after session descendant completion")
+	}
+	if _, err := os.Lstat(config.SocketPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("exact private socket remains after session completion: %v", err)
+	}
+}
+
+func TestPrivateGenerationHostCloseProcessSessionBarrierStateTable(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		prepare func(*fakeOwnedProcess)
+	}{
+		{
+			name: "leader exits before token descendant",
+			prepare: func(process *fakeOwnedProcess) {
+				process.holdSessionCompletion()
+				process.exit(errors.New("leader exited first"))
+			},
+		},
+		{
+			name: "token closes before live leader",
+			prepare: func(process *fakeOwnedProcess) {
+				process.releaseSessionCompletion()
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			lease, _ := createCompleteTestLease(t, root, CompleteBundleArtifactPaths())
+			config, slot := privateHostTestConfig(t, root, lease)
+			host, err := StartPrivateGeneration(context.Background(), config)
+			if err != nil {
+				t.Fatal(err)
+			}
+			process := slot.Load()
+			test.prepare(process)
+			if err := host.Close(); err != nil {
+				t.Fatal(err)
+			}
+			process.mu.Lock()
+			signals := process.sessionSignals
+			process.mu.Unlock()
+			if signals != 1 {
+				t.Fatalf("exact private process-group signals = %d, want 1", signals)
+			}
+			select {
+			case <-process.Done():
+			default:
+				t.Fatal("leader exit barrier remained open")
+			}
+			select {
+			case <-process.SessionDone():
+			default:
+				t.Fatal("owned-session exit barrier remained open")
+			}
+		})
+	}
+}
+
+func TestOwnedGenerationProcessCleanupSignalsExactSessionAndWaitsForDescendantExit(t *testing.T) {
+	root, err := os.MkdirTemp("/tmp", "pmx-owned-session-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(root) })
+	socket := filepath.Join(root, "ready.sock")
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socket, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	environment := append(ownedProcessHelperEnvironment("leader"),
+		"PROJMUX_OWNED_GENERATION_PROCESS_HELPER_SOCKET="+socket)
+	process, err := launchOwnedGenerationProcess(
+		os.Args[0], []string{"-test.run=^TestOwnedGenerationProcessSessionHelper$"}, environment,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminated := false
+	t.Cleanup(func() {
+		if !terminated {
+			_ = terminateOwnedSession(process)
+		}
+	})
+	if process.ProcessGroupID() != process.PID() || process.ValidateProcessGroup() != nil {
+		t.Fatalf("private Setsid proof pid=%d pgid=%d", process.PID(), process.ProcessGroupID())
+	}
+	if err := listener.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	readers := make([]*bufio.Reader, 0, 2)
+	roles := make(map[string]bool, 2)
+	connections := make([]*net.UnixConn, 0, 2)
+	defer func() {
+		for _, connection := range connections {
+			_ = connection.Close()
+		}
+	}()
+	for range 2 {
+		connection, err := listener.AcceptUnix()
+		if err != nil {
+			t.Fatal(err)
+		}
+		connections = append(connections, connection)
+		reader := bufio.NewReader(connection)
+		role, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		roles[strings.TrimSpace(role)] = true
+		readers = append(readers, reader)
+	}
+	if !roles["leader"] || !roles["descendant"] {
+		t.Fatalf("private session helper roles = %v", roles)
+	}
+	if err := terminateOwnedSession(process); err != nil {
+		t.Fatal(err)
+	}
+	terminated = true
+	for index, connection := range connections {
+		if err := connection.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := readers[index].ReadByte(); !errors.Is(err, io.EOF) {
+			t.Fatalf("owned session connection %d remained live: %v", index, err)
+		}
+	}
+	select {
+	case <-process.Done():
+	default:
+		t.Fatal("private process leader barrier remained open")
+	}
+	select {
+	case <-process.SessionDone():
+	default:
+		t.Fatal("private process session barrier remained open")
+	}
+}
+
 func TestPrivateGenerationHostRejectsOutsideSymlinkOrPermissiveRootWithZeroMutation(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -507,27 +761,75 @@ func rootOfTestConfig(config *PrivateGenerationConfig) string {
 }
 
 type fakeOwnedProcess struct {
-	pid  int
-	done chan struct{}
-	once sync.Once
+	pid            int
+	processGroupID int
+	done           chan struct{}
+	sessionDone    chan struct{}
+	once           sync.Once
+	sessionOnce    sync.Once
 
-	mu       sync.Mutex
-	exitErr  error
-	listener *net.UnixListener
+	mu                  sync.Mutex
+	exitErr             error
+	listener            *net.UnixListener
+	processGroupValid   bool
+	holdSession         bool
+	sessionWaitObserved chan struct{}
+	sessionWaitOnce     sync.Once
+	sessionSignals      int
 }
 
 func newFakeOwnedProcess(pid int, listener *net.UnixListener) *fakeOwnedProcess {
-	return &fakeOwnedProcess{pid: pid, done: make(chan struct{}), listener: listener}
+	return &fakeOwnedProcess{
+		pid: pid, processGroupID: pid, done: make(chan struct{}), sessionDone: make(chan struct{}),
+		listener: listener, processGroupValid: true,
+	}
 }
 
-func (process *fakeOwnedProcess) PID() int              { return process.pid }
+func (process *fakeOwnedProcess) PID() int { return process.pid }
+func (process *fakeOwnedProcess) ProcessGroupID() int {
+	process.mu.Lock()
+	defer process.mu.Unlock()
+	return process.processGroupID
+}
+func (process *fakeOwnedProcess) ValidateProcessGroup() error {
+	process.mu.Lock()
+	defer process.mu.Unlock()
+	if !process.processGroupValid || process.processGroupID != process.pid {
+		return errors.New("fake private process group drift")
+	}
+	return nil
+}
 func (process *fakeOwnedProcess) Done() <-chan struct{} { return process.done }
+func (process *fakeOwnedProcess) SessionDone() <-chan struct{} {
+	process.mu.Lock()
+	observed := process.sessionWaitObserved
+	process.mu.Unlock()
+	if observed != nil {
+		process.sessionWaitOnce.Do(func() { close(observed) })
+	}
+	return process.sessionDone
+}
 func (process *fakeOwnedProcess) ExitError() error {
 	process.mu.Lock()
 	defer process.mu.Unlock()
 	return process.exitErr
 }
 func (process *fakeOwnedProcess) Signal(os.Signal) error {
+	if err := process.ValidateProcessGroup(); err != nil {
+		return err
+	}
+	return process.SignalProcessGroup(os.Kill)
+}
+func (process *fakeOwnedProcess) SignalProcessGroup(os.Signal) error {
+	process.mu.Lock()
+	process.sessionSignals++
+	process.mu.Unlock()
+	select {
+	case <-process.done:
+		process.releaseSessionCompletion()
+		return nil
+	default:
+	}
 	process.exit(nil)
 	return nil
 }
@@ -542,7 +844,23 @@ func (process *fakeOwnedProcess) exit(err error) {
 			_ = listener.Close()
 		}
 		close(process.done)
+		process.mu.Lock()
+		holdSession := process.holdSession
+		process.mu.Unlock()
+		if !holdSession {
+			process.sessionOnce.Do(func() { close(process.sessionDone) })
+		}
 	})
+}
+func (process *fakeOwnedProcess) holdSessionCompletion() <-chan struct{} {
+	process.mu.Lock()
+	defer process.mu.Unlock()
+	process.holdSession = true
+	process.sessionWaitObserved = make(chan struct{})
+	return process.sessionWaitObserved
+}
+func (process *fakeOwnedProcess) releaseSessionCompletion() {
+	process.sessionOnce.Do(func() { close(process.sessionDone) })
 }
 func (process *fakeOwnedProcess) replaceSocket(t *testing.T, path string) {
 	t.Helper()

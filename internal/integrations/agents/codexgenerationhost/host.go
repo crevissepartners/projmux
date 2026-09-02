@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -97,13 +98,16 @@ func HostRefusalOf(err error) HostRefusal {
 func hostRefuse(reason HostRefusal, err error) error { return &HostError{Refusal: reason, err: err} }
 
 // FileIdentity is the local immutable object identity captured in a launch
-// proof. Device/inode prove replacement at the same path; mode, size and hash
-// are independently revalidated through the content-addressed lease.
+// proof. Device/inode plus change time prove replacement at the same path even
+// when a filesystem immediately reuses an inode; mode, size and hash are
+// independently revalidated through the content-addressed lease.
 type FileIdentity struct {
-	Device uint64 `json:"device"`
-	Inode  uint64 `json:"inode"`
-	Mode   uint32 `json:"mode"`
-	Size   int64  `json:"size"`
+	Device                uint64 `json:"device"`
+	Inode                 uint64 `json:"inode"`
+	Mode                  uint32 `json:"mode"`
+	Size                  int64  `json:"size"`
+	ChangeTimeSeconds     int64  `json:"changeTimeSeconds"`
+	ChangeTimeNanoseconds int64  `json:"changeTimeNanoseconds"`
 }
 
 // LaunchProof is the complete lifecycle authority for one private endpoint.
@@ -113,6 +117,7 @@ type LaunchProof struct {
 	Endpoint          EndpointIdentity `json:"endpoint"`
 	EndpointRuntimeID string           `json:"endpointRuntimeID"`
 	PID               int              `json:"pid"`
+	ProcessGroupID    int              `json:"processGroupID"`
 	SocketPath        string           `json:"socketPath"`
 	SocketIdentity    FileIdentity     `json:"socketIdentity"`
 	ExecutablePath    string           `json:"executablePath"`
@@ -157,23 +162,51 @@ type PrivateGenerationConfig struct {
 
 type ownedGenerationProcess interface {
 	PID() int
+	ProcessGroupID() int
+	ValidateProcessGroup() error
 	Signal(os.Signal) error
+	SignalProcessGroup(os.Signal) error
 	Done() <-chan struct{}
+	SessionDone() <-chan struct{}
 	ExitError() error
 }
 
 type execGenerationProcess struct {
-	cmd     *exec.Cmd
-	done    chan struct{}
-	mu      sync.Mutex
-	exitErr error
+	cmd            *exec.Cmd
+	processGroupID int
+	done           chan struct{}
+	sessionDone    chan struct{}
+	mu             sync.Mutex
+	exitErr        error
 }
 
-func (process *execGenerationProcess) PID() int { return process.cmd.Process.Pid }
-func (process *execGenerationProcess) Signal(signal os.Signal) error {
-	return process.cmd.Process.Signal(signal)
+func (process *execGenerationProcess) PID() int            { return process.cmd.Process.Pid }
+func (process *execGenerationProcess) ProcessGroupID() int { return process.processGroupID }
+func (process *execGenerationProcess) ValidateProcessGroup() error {
+	actual, err := syscall.Getpgid(process.PID())
+	if err != nil {
+		return err
+	}
+	if actual != process.processGroupID || actual != process.PID() {
+		return fmt.Errorf("private process group changed")
+	}
+	return nil
 }
-func (process *execGenerationProcess) Done() <-chan struct{} { return process.done }
+func (process *execGenerationProcess) Signal(signal os.Signal) error {
+	if err := process.ValidateProcessGroup(); err != nil {
+		return err
+	}
+	return process.SignalProcessGroup(signal)
+}
+func (process *execGenerationProcess) SignalProcessGroup(signal os.Signal) error {
+	unixSignal, ok := signal.(syscall.Signal)
+	if !ok {
+		return fmt.Errorf("unsupported private process signal")
+	}
+	return syscall.Kill(-process.processGroupID, unixSignal)
+}
+func (process *execGenerationProcess) Done() <-chan struct{}        { return process.done }
+func (process *execGenerationProcess) SessionDone() <-chan struct{} { return process.sessionDone }
 func (process *execGenerationProcess) ExitError() error {
 	process.mu.Lock()
 	defer process.mu.Unlock()
@@ -278,7 +311,9 @@ func StartPrivateGeneration(ctx context.Context, cfg PrivateGenerationConfig) (*
 	}
 	socketInfo, readyErr := awaitPrivateGenerationReady(readyCtx, cfg.SocketPath, process, ready, watcher)
 	if readyErr != nil {
-		cleanupFailedLaunch(process, cfg.SocketPath, socketInfo)
+		if cleanupErr := cleanupFailedLaunch(process, cfg.SocketPath, socketInfo); cleanupErr != nil {
+			return nil, cleanupErr
+		}
 		return nil, readyErr
 	}
 	// Publication is a second complete lease boundary. A same-user updater (or
@@ -288,43 +323,62 @@ func StartPrivateGeneration(ctx context.Context, cfg PrivateGenerationConfig) (*
 	currentExecutable, executableErr := os.Lstat(executable)
 	if reopenErr != nil || reopened.ID != lease.ID || executableErr != nil ||
 		!os.SameFile(execInfo, currentExecutable) || fileIdentity(execInfo) != fileIdentity(currentExecutable) {
-		cleanupFailedLaunch(process, cfg.SocketPath, socketInfo)
+		if cleanupErr := cleanupFailedLaunch(process, cfg.SocketPath, socketInfo); cleanupErr != nil {
+			return nil, cleanupErr
+		}
 		if reopenErr != nil {
 			return nil, hostRefuse(HostRefusalBundleDrift, reopenErr)
 		}
 		return nil, hostRefuse(HostRefusalLaunchProofMismatch, executableErr)
 	}
 	if err := revalidateOwnerPrivateDirectory(cfg.PrivateRoot, privateRootInfo); err != nil {
-		cleanupFailedLaunch(process, cfg.SocketPath, socketInfo)
+		if cleanupErr := cleanupFailedLaunch(process, cfg.SocketPath, socketInfo); cleanupErr != nil {
+			return nil, cleanupErr
+		}
 		return nil, err
 	}
 	if err := revalidateOwnerPrivateDirectory(cfg.StateDomainPath, stateDomainInfo); err != nil {
-		cleanupFailedLaunch(process, cfg.SocketPath, socketInfo)
+		if cleanupErr := cleanupFailedLaunch(process, cfg.SocketPath, socketInfo); cleanupErr != nil {
+			return nil, cleanupErr
+		}
 		return nil, err
 	}
 	select {
 	case <-process.Done():
-		cleanupFailedLaunch(process, cfg.SocketPath, socketInfo)
+		if cleanupErr := cleanupFailedLaunch(process, cfg.SocketPath, socketInfo); cleanupErr != nil {
+			return nil, cleanupErr
+		}
 		return nil, hostRefuse(HostRefusalProcessExited, process.ExitError())
 	default:
 	}
+	if process.ProcessGroupID() != process.PID() {
+		if cleanupErr := cleanupFailedLaunch(process, cfg.SocketPath, socketInfo); cleanupErr != nil {
+			return nil, cleanupErr
+		}
+		return nil, hostRefuse(HostRefusalLaunchProofMismatch, nil)
+	}
+	if err := process.ValidateProcessGroup(); err != nil {
+		if cleanupErr := cleanupFailedLaunch(process, cfg.SocketPath, socketInfo); cleanupErr != nil {
+			return nil, cleanupErr
+		}
+		return nil, hostRefuse(HostRefusalLaunchProofMismatch, err)
+	}
 	host.socketInfo = socketInfo
 	host.proof = LaunchProof{
-		Endpoint: cfg.Endpoint, EndpointRuntimeID: runtimeID, PID: process.PID(), SocketPath: cfg.SocketPath,
+		Endpoint: cfg.Endpoint, EndpointRuntimeID: runtimeID, PID: process.PID(), ProcessGroupID: process.ProcessGroupID(),
+		SocketPath:     cfg.SocketPath,
 		SocketIdentity: fileIdentity(socketInfo), ExecutablePath: executable, Executable: fileIdentity(execInfo),
 		ExecutableSHA256: artifact.SHA256, BundleID: lease.ID,
 	}
 	return host, nil
 }
 
-func cleanupFailedLaunch(process ownedGenerationProcess, socket string, socketInfo fs.FileInfo) {
-	select {
-	case <-process.Done():
-	default:
-		_ = process.Signal(os.Kill)
-		<-process.Done()
+func cleanupFailedLaunch(process ownedGenerationProcess, socket string, socketInfo fs.FileInfo) error {
+	if err := terminateOwnedSession(process); err != nil {
+		return err
 	}
 	removeExactSocket(socket, socketInfo)
+	return nil
 }
 
 func launchOwnedGenerationProcess(executable string, args, environment []string) (ownedGenerationProcess, error) {
@@ -337,11 +391,35 @@ func launchOwnedGenerationProcess(executable string, args, environment []string)
 		return nil, err
 	}
 	defer devNull.Close()
-	command.Stdout, command.Stderr = devNull, devNull
-	if err := command.Start(); err != nil {
+	sessionRead, sessionWrite, err := os.Pipe()
+	if err != nil {
 		return nil, err
 	}
-	process := &execGenerationProcess{cmd: command, done: make(chan struct{})}
+	command.Stdout, command.Stderr = devNull, devNull
+	// fd 3 is a process-session lifetime token. It is intentionally inherited
+	// across exec by the private app-server and its helpers. The parent holds
+	// only the read end, so EOF is semantic evidence that every token-bearing
+	// process in the owned session has exited or closed its token.
+	command.ExtraFiles = []*os.File{sessionWrite}
+	if err := command.Start(); err != nil {
+		_ = sessionRead.Close()
+		_ = sessionWrite.Close()
+		return nil, err
+	}
+	process := &execGenerationProcess{
+		cmd: command, processGroupID: command.Process.Pid,
+		done: make(chan struct{}), sessionDone: make(chan struct{}),
+	}
+	go func() {
+		defer sessionRead.Close()
+		buffer := make([]byte, 1)
+		for {
+			if _, readErr := sessionRead.Read(buffer); readErr != nil {
+				break
+			}
+		}
+		close(process.sessionDone)
+	}()
 	go func() {
 		err := command.Wait()
 		process.mu.Lock()
@@ -349,7 +427,64 @@ func launchOwnedGenerationProcess(executable string, args, environment []string)
 		process.mu.Unlock()
 		close(process.done)
 	}()
+	if err := sessionWrite.Close(); err != nil {
+		return nil, errors.Join(err, terminateOwnedSession(process))
+	}
+	processGroupID, err := syscall.Getpgid(command.Process.Pid)
+	if err != nil || processGroupID != command.Process.Pid {
+		cleanupErr := terminateOwnedSession(process)
+		if err != nil {
+			return nil, errors.Join(err, cleanupErr)
+		}
+		return nil, errors.Join(fmt.Errorf("private process did not become its session group leader"), cleanupErr)
+	}
 	return process, nil
+}
+
+func terminateOwnedSession(process ownedGenerationProcess) error {
+	sessionDone := process.SessionDone()
+	leaderExited, sessionExited := false, false
+	select {
+	case <-process.Done():
+		leaderExited = true
+	default:
+	}
+	select {
+	case <-sessionDone:
+		sessionExited = true
+	default:
+	}
+	if leaderExited && sessionExited {
+		return nil
+	}
+	if !leaderExited {
+		if err := process.Signal(os.Kill); err != nil {
+			select {
+			case <-process.Done():
+				leaderExited = true
+			default:
+				return hostRefuse(HostRefusalLaunchProofMismatch, err)
+			}
+		}
+	}
+	if leaderExited && !sessionExited {
+		// A live inherited token is exact evidence that this owned private
+		// session still has a descendant. The leader PID can no longer be
+		// queried, so signal only the originally captured Setsid PGID.
+		if err := process.SignalProcessGroup(os.Kill); err != nil {
+			select {
+			case <-sessionDone:
+				sessionExited = true
+			default:
+				return hostRefuse(HostRefusalLaunchProofMismatch, err)
+			}
+		}
+	}
+	<-process.Done()
+	if !sessionExited {
+		<-sessionDone
+	}
+	return nil
 }
 
 func readyPrivateGeneration(ctx context.Context, socket string) error {
@@ -467,10 +602,16 @@ func (host *PrivateGenerationHost) validateProofLocked(presented LaunchProof) er
 	if host.closed || presented != host.proof || !host.leaseHeld {
 		return hostRefuse(HostRefusalLaunchProofMismatch, nil)
 	}
+	if host.process.PID() != host.proof.PID || host.process.ProcessGroupID() != host.proof.ProcessGroupID {
+		return hostRefuse(HostRefusalLaunchProofMismatch, nil)
+	}
 	select {
 	case <-host.process.Done():
 		return hostRefuse(HostRefusalProcessExited, nil)
 	default:
+	}
+	if err := host.process.ValidateProcessGroup(); err != nil {
+		return hostRefuse(HostRefusalLaunchProofMismatch, err)
 	}
 	lease, err := verifyCompleteLease(host.config)
 	if err != nil || lease.ID != host.proof.BundleID {
@@ -507,11 +648,11 @@ func (host *PrivateGenerationHost) Close() error {
 	host.closed = true
 	process, socket, socketInfo := host.process, host.proof.SocketPath, host.socketInfo
 	host.mu.Unlock()
-	select {
-	case <-process.Done():
-	default:
-		_ = process.Signal(os.Kill)
-		<-process.Done()
+	if err := terminateOwnedSession(process); err != nil {
+		host.mu.Lock()
+		host.closed = false
+		host.mu.Unlock()
+		return err
 	}
 	removeExactSocket(socket, socketInfo)
 	return nil
@@ -578,8 +719,27 @@ func fileIdentity(info fs.FileInfo) FileIdentity {
 	if stat, ok := info.Sys().(*syscall.Stat_t); ok {
 		identity.Device = uint64(stat.Dev)
 		identity.Inode = uint64(stat.Ino)
+		identity.ChangeTimeSeconds, identity.ChangeTimeNanoseconds = statChangeTime(stat)
 	}
 	return identity
+}
+
+// Stat_t spells the change-time field Ctim on Linux and Ctimespec on Darwin.
+// Reflection keeps this package inside the repository's explicit two-OS
+// contract without platform build files or narrowing conversions.
+func statChangeTime(stat *syscall.Stat_t) (int64, int64) {
+	value := reflect.ValueOf(stat).Elem()
+	for _, name := range []string{"Ctim", "Ctimespec"} {
+		field := value.FieldByName(name)
+		if !field.IsValid() {
+			continue
+		}
+		seconds, nanoseconds := field.FieldByName("Sec"), field.FieldByName("Nsec")
+		if seconds.IsValid() && nanoseconds.IsValid() && seconds.CanInt() && nanoseconds.CanInt() {
+			return seconds.Int(), nanoseconds.Int()
+		}
+	}
+	return 0, 0
 }
 
 func ownerPrivateDirectory(path string) (fs.FileInfo, error) {
@@ -607,7 +767,8 @@ func removeExactSocket(path string, owned fs.FileInfo) {
 		return
 	}
 	current, err := os.Lstat(path)
-	if err == nil && current.Mode()&os.ModeSocket != 0 && os.SameFile(owned, current) {
+	if err == nil && current.Mode()&os.ModeSocket != 0 && os.SameFile(owned, current) &&
+		fileIdentity(owned) == fileIdentity(current) {
 		_ = os.Remove(path)
 	}
 }

@@ -146,8 +146,12 @@ equalArgv	Test-only installed qualification helper retained for closed command-s
 execGenerationProcess.Done	Phase 2 repeatable process-exit barrier is retained for readiness and exact cleanup consumers.
 execGenerationProcess.ExitError	Phase 2 process-exit cause accessor is retained behind path-free refusal rendering.
 execGenerationProcess.PID	Phase 2 exact child PID accessor is retained as one launch-proof axis.
+execGenerationProcess.ProcessGroupID	Phase 2 exact Setsid group accessor is retained as the private-session launch-proof axis.
+execGenerationProcess.SessionDone	Phase 2 inherited-token EOF barrier is retained for descendant-complete exact cleanup.
 execGenerationProcess.Signal	Phase 2 exact owned child signal seam is retained behind complete proof validation.
-fileIdentity	Phase 2 device/inode/mode/size capture is retained for socket and executable proof.
+execGenerationProcess.SignalProcessGroup	Phase 2 captured private-group signal seam is retained for leader-first descendant cleanup.
+execGenerationProcess.ValidateProcessGroup	Phase 2 live leader and Setsid group revalidation is retained before lifecycle mutation.
+fileIdentity	Phase 2 device/inode/change-time/mode/size capture is retained for socket and executable proof.
 formatLegacyPaneSummary	Legacy pane-summary rendering remains required while persisted legacy pane metadata is readable.
 genericTeardownRefusal	The generic refusal constructor is retained inside the pure teardown authority proof surface.
 hostRefuse	Phase 2 typed private-host refusal constructor is retained for closed zero-effect outcomes.
@@ -170,11 +174,13 @@ randomRuntimeID	Phase 2 endpoint-host runtime nonce generator is retained as a l
 readCommittedRegularFile	Phase 0 committed bundle reader is retained to keep manifest and artifact authority inside the lease root.
 readyPrivateGeneration	Phase 2 initialized private app-server handshake is retained as the readiness publication barrier.
 removeExactResidualSocket	Test-only installed qualification helper retained for ready-time socket identity cleanup proof.
-removeExactSocket	Phase 2 inode-matched private socket cleanup is retained to avoid ambient/default mutation.
+removeExactSocket	Phase 2 inode-and-change-time-matched private socket cleanup is retained to avoid ambient/default mutation.
 revalidateOwnerPrivateDirectory	Phase 2 post-readiness root identity check is retained to refuse ancestor replacement before publication.
 rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
 safeRoot	Phase 0 lease root validator is retained to keep future bundle mutations off broad or relative targets.
 safeVersionToken	Phase 0 bundle version token validator is retained to keep manifests content-free.
+statChangeTime	Phase 2 Linux/Darwin change-time capture is retained to fence immediate socket inode reuse.
+terminateOwnedSession	Phase 2 exact private-group termination and dual process/session barrier is retained for descendant-complete cleanup.
 tmuxCapabilityEnvironment	Test-only installed qualification helper retained for per-command tmux and CODEX_HOME isolation.
 tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
 validGenerationState	Phase 0 closed generation-state validator is retained for bounded-pool topology proofs.

@@ -277,21 +277,27 @@ owner-private `0700` root and must use the exact endpoint-generation name;
 ambient/default parents, symlinks, permissive roots, and occupied paths are
 never repaired or changed.
 
-Lifecycle authority is the full PID, socket device/inode, executable
-device/inode/mode/size/hash, bundle ID, endpoint identity, and random endpoint-
-runtime ID proof. That private app-server host proof feeds only an exact opener;
+Lifecycle authority is the full PID plus `Setsid` process-group ID, socket
+device/inode/change-time, executable device/inode/change-time/mode/size/hash,
+bundle ID, endpoint identity, and random endpoint-runtime ID proof. Change time
+keeps replacement fail-closed even when a filesystem immediately reuses a
+socket inode. That private app-server host proof feeds only an exact opener;
 `codexbroker.GenerationPool` separately owns the broker-runtime ID and composite
 connection/binding fence. The existing OS broker Host and hidden CLI remain
 default-only and are not claimed as generation-enabled. Drift in any one axis,
 an exited/reused PID, or bundle-helper drift
-keeps stop/restart/kill effects at zero. Process exit is a repeatable closed
-barrier, and readiness is driven by private-root filesystem events followed by
-an initialized app-server handshake; neither path uses a fixed sleep. The
-launch argv always names the leased executable and versioned private socket,
-so mutable current/source removal cannot redirect it. Phase 2 exposes no
-successful lease-release path: process exit and caller claims remain refused,
-and the later journaled handover owner must establish terminal retirement.
-Phase 2 does not delete bundle bytes.
+keeps stop/restart/kill effects at zero. Cleanup signals only the revalidated
+private process group and waits for both the repeatable leader-exit channel and
+EOF on an inherited session-lifetime token, including leader-first and
+token-first exit orders, before removing the exact socket or letting the
+installed smoke remove its caller-owned roots.
+Readiness is driven by private-root filesystem events followed by an initialized
+app-server handshake; neither readiness nor cleanup uses a fixed sleep. The
+launch argv always names the leased executable and versioned private socket, so
+mutable current/source removal cannot redirect it. Phase 2 exposes no successful
+lease-release path: process exit and caller claims remain refused, and the later
+journaled handover owner must establish terminal retirement. Phase 2 does not
+delete bundle bytes.
 
 The opt-in installed smoke uses only exact private `0.152.0` and `0.152.1`
 leases and a unique empty root:
@@ -311,8 +317,9 @@ env -u TMUX -u TMUX_PANE \
 
 It requires inherited tmux routing to be absent, observes two initialized
 private listeners and complete held leases, compares ambient/default socket
-and PID-record identity before/after, and removes only the exact two private
-processes, sockets, leases, and smoke root.
+and PID-record identity before/after, waits for both exact private process
+groups and their token-bearing descendants to exit, and removes only the exact
+two private sockets, leases, and smoke root.
 
 ### Phase 2 migration and deletion ledger
 
