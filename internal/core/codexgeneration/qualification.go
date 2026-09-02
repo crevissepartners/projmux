@@ -85,11 +85,11 @@ func EvaluateQualification(versions VersionPair, evidence QualificationEvidence)
 
 func (r QualificationResult) Validate() error {
 	if r.SchemaVersion != QualificationSchemaVersion || !validVersionToken(r.Versions.Old) || !validVersionToken(r.Versions.New) {
-		return fmt.Errorf("Codex generation qualification receipt is incomplete")
+		return fmt.Errorf("codex generation qualification receipt is incomplete")
 	}
 	want := EvaluateQualification(r.Versions, r.Evidence)
 	if r.Verdict != want.Verdict || r.Reason != want.Reason {
-		return fmt.Errorf("Codex generation qualification verdict is inconsistent")
+		return fmt.Errorf("codex generation qualification verdict is inconsistent")
 	}
 	return nil
 }
@@ -123,7 +123,7 @@ func DecodeQualificationResult(encoded []byte) (QualificationResult, error) {
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); err == nil {
-		return QualificationResult{}, fmt.Errorf("Codex generation qualification receipt contains trailing JSON")
+		return QualificationResult{}, fmt.Errorf("codex generation qualification receipt contains trailing JSON")
 	} else if err != io.EOF {
 		return QualificationResult{}, err
 	}
