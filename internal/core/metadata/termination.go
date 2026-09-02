@@ -212,8 +212,41 @@ type PaneActivation struct {
 // local app-server. TurnID is optional for an interactive create/resume that
 // has not started a turn yet.
 type CodexActivationBinding struct {
-	ThreadID string `json:"threadId"`
-	TurnID   string `json:"turnId,omitempty"`
+	ThreadID  string             `json:"threadId"`
+	TurnID    string             `json:"turnId,omitempty"`
+	Authority *CodexAuthorityRef `json:"authority,omitempty"`
+}
+
+// CodexAuthorityRef is the live authority namespace for one exact native
+// binding. Epochs are local counters: StateDomainID, EndpointGenerationID and
+// BrokerRuntimeID make equal numbers from another endpoint or restarted broker
+// unambiguously foreign. A missing authority is legacy state, never authority
+// for a current endpoint.
+type CodexAuthorityRef struct {
+	StateDomainID        string `json:"stateDomainID"`
+	EndpointGenerationID string `json:"endpointGenerationID"`
+	BrokerRuntimeID      string `json:"brokerRuntimeID"`
+	ConnectionEpoch      uint64 `json:"connectionEpoch"`
+	BindingEpoch         uint64 `json:"bindingEpoch"`
+}
+
+// Valid reports whether the complete composite authority is available.
+func (r CodexAuthorityRef) Valid() bool {
+	return validCodexIdentityToken(r.StateDomainID) &&
+		validCodexIdentityToken(r.EndpointGenerationID) &&
+		validCodexIdentityToken(r.BrokerRuntimeID) &&
+		r.ConnectionEpoch != 0 && r.BindingEpoch != 0
+}
+
+// Endpoint returns the durable endpoint portion of this live authority.
+func (r CodexAuthorityRef) Endpoint() CodexEndpointRef {
+	return CodexEndpointRef{StateDomainID: r.StateDomainID, EndpointGenerationID: r.EndpointGenerationID}
+}
+
+// Authorizes requires an exact five-dimensional match. A partial or legacy
+// value returns false even when the numeric epochs happen to be equal.
+func (r CodexAuthorityRef) Authorizes(presented CodexAuthorityRef) bool {
+	return r.Valid() && presented.Valid() && r == presented
 }
 
 // IsZero lets registry documents written before activation generations existed
@@ -229,6 +262,10 @@ func (a PaneActivation) Clone() PaneActivation {
 	out := a
 	if a.Codex != nil {
 		binding := *a.Codex
+		if a.Codex.Authority != nil {
+			authority := *a.Codex.Authority
+			binding.Authority = &authority
+		}
 		out.Codex = &binding
 	}
 	return out

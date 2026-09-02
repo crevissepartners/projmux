@@ -63,8 +63,48 @@ type ClaudeSessionRef struct {
 // not point at the conversation. Storing it would give the Agent a durable
 // field that is stale the moment it is written.
 type CodexSessionRef struct {
-	ThreadID  string `json:"threadId,omitempty"`
-	SessionID string `json:"sessionId,omitempty"`
+	ThreadID  string            `json:"threadId,omitempty"`
+	SessionID string            `json:"sessionId,omitempty"`
+	Endpoint  *CodexEndpointRef `json:"endpoint,omitempty"`
+}
+
+// CodexEndpointRef is the durable endpoint identity of one Codex thread.
+//
+// It is deliberately independent of PaneActivation.Generation. A Pane
+// generation identifies one materialized child process, while this reference
+// survives that process and pins the provider thread to the state domain and
+// app-server generation that currently owns it. Both fields are opaque,
+// content-free identifiers; neither is a path, socket, version, or credential.
+// A nil pointer is the only legacy spelling and is never inferred as current.
+type CodexEndpointRef struct {
+	StateDomainID        string `json:"stateDomainID"`
+	EndpointGenerationID string `json:"endpointGenerationID"`
+}
+
+// Valid reports whether both dimensions of an endpoint identity are present.
+func (r CodexEndpointRef) Valid() bool {
+	return validCodexIdentityToken(r.StateDomainID) && validCodexIdentityToken(r.EndpointGenerationID)
+}
+
+// Same reports exact endpoint identity. Empty or partial references never
+// compare equal as authority.
+func (r CodexEndpointRef) Same(other CodexEndpointRef) bool {
+	return r.Valid() && other.Valid() &&
+		r.StateDomainID == other.StateDomainID && r.EndpointGenerationID == other.EndpointGenerationID
+}
+
+func validCodexIdentityToken(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || len(value) > 128 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '-' || char == '_' || char == '.' || char == ':' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // AntigravitySessionRef is Antigravity's conversation identity as its hook
@@ -84,6 +124,7 @@ type AgentSessionObservation struct {
 	SessionID      string
 	ThreadID       string
 	TranscriptPath string
+	Endpoint       *CodexEndpointRef
 }
 
 // NewAgentSessionRef folds one hook observation onto the provider member that
@@ -112,6 +153,13 @@ func NewAgentSessionRef(obs AgentSessionObservation, observedAt time.Time) (*Age
 			return nil, false
 		}
 		ref.Codex = &CodexSessionRef{ThreadID: threadID, SessionID: sessionID}
+		if obs.Endpoint != nil {
+			endpoint := *obs.Endpoint
+			if !endpoint.Valid() {
+				return nil, false
+			}
+			ref.Codex.Endpoint = &endpoint
+		}
 	case aiprovider.Antigravity:
 		conversationID := threadID
 		if conversationID == "" {
@@ -140,6 +188,10 @@ func (r *AgentSessionRef) Clone() *AgentSessionRef {
 	}
 	if r.Codex != nil {
 		codex := *r.Codex
+		if r.Codex.Endpoint != nil {
+			endpoint := *r.Codex.Endpoint
+			codex.Endpoint = &endpoint
+		}
 		out.Codex = &codex
 	}
 	if r.Antigravity != nil {
@@ -169,12 +221,25 @@ func (r *AgentSessionRef) SameConversation(other *AgentSessionRef) bool {
 	case r.Claude != nil || other.Claude != nil:
 		return r.Claude != nil && other.Claude != nil && *r.Claude == *other.Claude
 	case r.Codex != nil || other.Codex != nil:
-		return r.Codex != nil && other.Codex != nil && *r.Codex == *other.Codex
+		return sameCodexSessionRef(r.Codex, other.Codex)
 	case r.Antigravity != nil || other.Antigravity != nil:
 		return r.Antigravity != nil && other.Antigravity != nil && *r.Antigravity == *other.Antigravity
 	default:
 		return true
 	}
+}
+
+func sameCodexSessionRef(a, b *CodexSessionRef) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	if a.ThreadID != b.ThreadID || a.SessionID != b.SessionID {
+		return false
+	}
+	if a.Endpoint == nil || b.Endpoint == nil {
+		return a.Endpoint == nil && b.Endpoint == nil
+	}
+	return *a.Endpoint == *b.Endpoint
 }
 
 // ConversationID returns the identifier that names the conversation for the
@@ -227,6 +292,10 @@ func (r *AgentSessionRef) Fields() [][2]string {
 	case r.Codex != nil:
 		add("ThreadID", r.Codex.ThreadID)
 		add("SessionID", r.Codex.SessionID)
+		if r.Codex.Endpoint != nil {
+			add("StateDomainID", r.Codex.Endpoint.StateDomainID)
+			add("EndpointGenerationID", r.Codex.Endpoint.EndpointGenerationID)
+		}
 	case r.Antigravity != nil:
 		add("ConversationID", r.Antigravity.ConversationID)
 		add("TranscriptPath", r.Antigravity.TranscriptPath)
@@ -269,12 +338,35 @@ func (m Mutator) RecordAgentSessionRef(reg *Registry, agentUID string, obs Agent
 		return Agent{}, false, inputErr(op, ErrInvalidRegistry, "agent %s is a %s Agent; refusing to record a %s conversation",
 			agent.Metadata.Name, agent.Spec.Provider, ref.Provider)
 	}
+	// Provider hooks in the legacy/default lane know the thread but not the
+	// generation endpoint. A re-observation of the same exact conversation
+	// must not erase a ref written by a generation-aware producer, and it must
+	// not guess a ref when there is none.
+	if ref.Codex != nil && ref.Codex.Endpoint == nil && agent.Status.SessionRef != nil &&
+		sameCodexThreadObservation(agent.Status.SessionRef.Codex, ref.Codex) &&
+		agent.Status.SessionRef.Codex.Endpoint != nil {
+		previous := agent.Status.SessionRef.Codex
+		endpoint := *previous.Endpoint
+		ref.Codex.Endpoint = &endpoint
+		// SessionID is optional hook metadata. Its omission must not turn an
+		// otherwise exact thread re-observation into a destructive rewrite.
+		if ref.Codex.SessionID == "" {
+			ref.Codex.SessionID = previous.SessionID
+		}
+	}
 	if agent.Status.SessionRef.SameConversation(ref) {
 		return agent.Clone(), false, nil
 	}
 	agent.Status.SessionRef = ref
 	reg.UpdatedAt = m.clock()().UTC()
 	return agent.Clone(), true, nil
+}
+
+func sameCodexThreadObservation(previous, observed *CodexSessionRef) bool {
+	if previous == nil || observed == nil || previous.ThreadID == "" || previous.ThreadID != observed.ThreadID {
+		return false
+	}
+	return previous.SessionID == "" || observed.SessionID == "" || previous.SessionID == observed.SessionID
 }
 
 // validateSessionRef checks the union invariants of one Agent session ref.
@@ -317,6 +409,9 @@ func validateSessionRef(op string, agent Agent) error {
 	}
 	if ref.ConversationID() == "" {
 		return stateErr(op, ErrInvalidRegistry, "agent %q sessionRef carries no conversation id", agent.Metadata.Name)
+	}
+	if ref.Codex != nil && ref.Codex.Endpoint != nil && !ref.Codex.Endpoint.Valid() {
+		return stateErr(op, ErrInvalidRegistry, "agent %q Codex sessionRef has an incomplete endpoint identity", agent.Metadata.Name)
 	}
 	// spec.provider is only cross-checked when the Agent actually declares one.
 	// An Agent created from an unrecognized provider spelling normalizes to "",

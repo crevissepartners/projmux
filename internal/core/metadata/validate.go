@@ -134,6 +134,9 @@ func (r Registry) Validate() error {
 			if pane.Spec.Role != PaneRoleAgent || strings.TrimSpace(pane.Status.Activation.AgentUID) == "" || strings.TrimSpace(binding.ThreadID) == "" {
 				return stateErr(op, ErrInvalidRegistry, "pane %q has an invalid native Codex activation binding", pane.Metadata.Name)
 			}
+			if binding.Authority != nil && !binding.Authority.Valid() {
+				return stateErr(op, ErrInvalidRegistry, "pane %q has an incomplete native Codex authority", pane.Metadata.Name)
+			}
 		}
 		if err := validateTermination(op, "pane "+pane.Metadata.Name, pane.Status.LastTermination); err != nil {
 			return err

@@ -600,6 +600,44 @@
   have non-zero status, stdout zero, bounded actionable stderr, and unchanged
   attention state.
 
+### Codex app-server generation Phase 0 tests
+
+- `TestCodexEndpointAndAuthorityRefsRoundTripExactlyAndIgnorePaneGeneration`,
+  `TestLegacyCodexRefsRemainGenerationUnavailableWithoutInference`,
+  `TestLegacyHookReobservationPreservesAnExactCodexEndpointRef`, and
+  `TestCodexEndpointIdentityRejectsNonCanonicalWhitespace` own the additive
+  Registry schema: refs reopen exactly, remain independent of Pane generation,
+  reject noncanonical identities, preserve future exact refs across legacy
+  hook observations, and never infer a current endpoint for legacy state.
+- `TestBoundedPoolRejectsEveryInvalidV1Topology`,
+  `TestBoundedPoolStateSpaceProperty`, and
+  `FuzzBoundedPoolNeverAcceptsMoreThanTwoLiveSlots` own the current-one plus
+  draining-one state model.
+- `TestCompositeAuthorityRejectsSameNumberCrossGenerationAndLegacyWithZeroWrites`
+  and `TestOldStopBarrierKeepsSuccessorResumeAtZeroUntilSafe` own the Phase 0
+  write-zero fences for equal numeric epochs, missing generation identity, and
+  same-thread successor resume before old-stop.
+- `TestReadOnlyUpgradePlanIsRepeatableContentFreeAndNamesExactBlockers` freezes
+  exact JSON/text blockers and all five zero mutation counters;
+  `TestReadOnlyUpgradePlanNeverRendersInvalidIdentitiesOrQualificationFields`
+  keeps hostile invalid input out of both projections.
+- `TestQualificationDecisionTableClosesPhase2OnEitherSharedStateFailure` and
+  `TestQualificationReceiptRetainsOnlyContentFreeAllowlistedFields` own the
+  persisted go/no-go and redaction schema.
+- `TestContentAddressedBundleSurvivesSourceRemovalForServerTUIAndHelpers`,
+  `TestBundleDriftAndProtocolMismatchRefuseBeforeFinalCommit`, and
+  `TestCommittedBundleTamperingIsRefusedBeforeLaunch`,
+  `TestCommittedBundleRefusesMatchingSymlinksBeforeLaunch`, and
+  `TestBundleRefusesNonCanonicalRootsAndVersions` own immutable complete
+  release-bundle retention and refusal, including manifest/artifact links and
+  noncanonical mutation roots.
+- Opt-in `TestInstalledIsolatedGenerationPoolQualification` is the fixed
+  0.152.0/0.152.1 shared-state conformance. It strips inherited tmux identity,
+  uses one unique private state root and two private sockets, records no
+  provider content or secrets, requires distinct-thread overlap plus the
+  old-stop same-thread barrier, and performs exact cleanup. See
+  [codex-generation-pool.md](codex-generation-pool.md).
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.
