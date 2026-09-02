@@ -203,6 +203,21 @@ lifecycle_background_routes() {
     '
 }
 
+lifecycle_proxy_pids() {
+  ps -eo pid=,args= | \
+    PROJMUX_PROXY_BIN="$lifecycle_shim/codex" \
+    awk '
+      {
+        pid = $1
+        argv = $0
+        sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "", argv)
+        if (pid ~ /^[1-9][0-9]*$/ && argv == ENVIRON["PROJMUX_PROXY_BIN"] " app-server proxy") {
+          print pid
+        }
+      }
+    '
+}
+
 lifecycle_cleanup() {
   local actual=""
   if [[ "$lifecycle_started" == "1" ]]; then
@@ -378,6 +393,86 @@ wait_lifecycle_gate() {
   return 1
 }
 
+# Arm one pane-scoped projection barrier before the transition that must close
+# it. Replacement authority follows Apply; disconnect authority precedes Apply
+# but cannot match until the semantic fields are cleared. tmux runs
+# after-set-option synchronously, so both signals observe the exact semantic +
+# authority commit without sleeping, polling, or retrying the transition.
+lifecycle_projection_barrier_serial=0
+lifecycle_projection_barrier_pane=""
+lifecycle_projection_barrier_channel=""
+lifecycle_projection_barrier_label=""
+lifecycle_arm_projection_condition() {
+  local pane="$1" condition="$2" label="$3"
+  lifecycle_projection_barrier_serial="$((lifecycle_projection_barrier_serial + 1))"
+  lifecycle_projection_barrier_pane="$pane"
+  lifecycle_projection_barrier_channel="codex-lifecycle-$lifecycle_server_pid-$lifecycle_projection_barrier_serial"
+  lifecycle_projection_barrier_label="$label"
+  lifecycle_tmux set-hook -p -t "$pane" after-set-option \
+    "if-shell -F '$condition' 'wait-for -S $lifecycle_projection_barrier_channel'"
+  # Close the lost-wakeup window without polling: if the exact level became
+  # current before the hook was installed, signal the same one-shot channel
+  # synchronously. Otherwise the hook owns the future edge.
+  lifecycle_tmux if-shell -F -t "$pane" "$condition" \
+    "wait-for -S $lifecycle_projection_barrier_channel"
+}
+
+lifecycle_arm_projection_barrier() {
+  local pane="$1" source="$2" reason="$3" state="$4" badge="$5" label="$6"
+  local expected="$source|$reason|$state|$badge" condition=""
+  condition='#{==:#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind},'"$expected"'}'
+  lifecycle_arm_projection_condition "$pane" "$condition" "$label"
+}
+
+lifecycle_arm_replacement_projection_barrier() {
+  local pane="$1" previous_epoch="$2" source="$3" reason="$4" state="$5" badge="$6" label="$7"
+  local expected="$source|$reason|$state|$badge" condition=""
+  # The opaque epoch is only the replaceable connection-axis witness here. Do
+  # not parse it or require it to remain byte-identical after this barrier.
+  condition='#{&&:#{!=:#{@projmux_codex_authority_epoch},},#{&&:#{!=:#{@projmux_codex_authority_epoch},'"$previous_epoch"'},#{==:#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind},'"$expected"'}}}'
+  lifecycle_arm_projection_condition "$pane" "$condition" "$label"
+}
+
+lifecycle_wait_projection_barrier() {
+  if ! env -u TMUX -u TMUX_PANE timeout 30 "$lifecycle_real_tmux" -L "$lifecycle_socket" \
+    wait-for "$lifecycle_projection_barrier_channel"; then
+    lifecycle_tmux set-hook -p -u -t "$lifecycle_projection_barrier_pane" after-set-option || true
+    echo "timed out waiting for deterministic $lifecycle_projection_barrier_label projection barrier" >&2
+    dump_lifecycle_diagnostics
+    return 1
+  fi
+  lifecycle_tmux set-hook -p -u -t "$lifecycle_projection_barrier_pane" after-set-option
+}
+
+assert_lifecycle_field() {
+  local stage="$1" field="$2" actual="$3" expected="$4"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "$stage changed sibling $field: actual=$actual expected=$expected" >&2
+    return 1
+  fi
+}
+
+assert_lifecycle_sibling_semantics() {
+  local stage="$1" pane_uid thread_id generation pane_ref source reason state badge
+  pane_uid="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_pane_uid 2>/dev/null || true)"
+  thread_id="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_ai_thread_id 2>/dev/null || true)"
+  generation="$(lifecycle_pmx describe pane "uid:$lifecycle_sibling_pane_uid" | awk '$1 == "BindingGeneration:" { print $2; exit }')"
+  pane_ref="$(lifecycle_pmx describe agent "uid:$lifecycle_sibling_agent_uid" | awk '$1 == "PaneRef:" { print $2; exit }')"
+  source="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_codex_authority 2>/dev/null || true)"
+  reason="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_codex_authority_reason 2>/dev/null || true)"
+  state="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_ai_state 2>/dev/null || true)"
+  badge="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_ai_badge_kind 2>/dev/null || true)"
+
+  assert_lifecycle_field "$stage" "Pane UID" "$pane_uid" "$lifecycle_sibling_pane_uid"
+  assert_lifecycle_field "$stage" "thread identity" "$thread_id" thread-sibling
+  assert_lifecycle_field "$stage" "activation binding generation" "$generation" "$lifecycle_sibling_generation"
+  assert_lifecycle_field "$stage" "Agent PaneRef" "$pane_ref" "$lifecycle_sibling_pane_uid"
+  assert_lifecycle_field "$stage" "authority source" "$source" provider-control-plane
+  assert_lifecycle_field "$stage" "authority reason" "$reason" ready
+  assert_lifecycle_field "$stage" "AI state" "$state" thinking
+  assert_lifecycle_field "$stage" "badge/actionability" "$badge" in_progress
+}
+
 lifecycle_queue_json() {
   lifecycle_pmx get notifications --json
 }
@@ -446,11 +541,15 @@ wait_lifecycle_option @projmux_ai_state thinking "native active snapshot"
 wait_lifecycle_pane_option "$lifecycle_sibling_pane" @projmux_codex_authority provider-control-plane "sibling native authority"
 wait_lifecycle_pane_option "$lifecycle_sibling_pane" @projmux_ai_state thinking "sibling active snapshot"
 epoch_one="$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" @projmux_codex_authority_epoch)"
-sibling_epoch="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_codex_authority_epoch)"
-if [[ -z "$epoch_one" || -z "$sibling_epoch" || "$sibling_epoch" == "$epoch_one" ]]; then
-  echo "native lifecycle target/sibling epochs were not independently exact: target=$epoch_one sibling=$sibling_epoch" >&2
+sibling_epoch_one="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_codex_authority_epoch)"
+lifecycle_proxy_epoch_one_pid="$(lifecycle_proxy_pids)"
+if [[ -z "$epoch_one" || -z "$sibling_epoch_one" ]] ||
+  [[ ! "$lifecycle_proxy_epoch_one_pid" =~ ^[1-9][0-9]*$ ]]; then
+  echo "native lifecycle target or sibling authority epoch was empty: target=$epoch_one sibling=$sibling_epoch_one" >&2
+  echo "native lifecycle shared proxy PID was not exact: pid=$lifecycle_proxy_epoch_one_pid" >&2
   exit 1
 fi
+assert_lifecycle_sibling_semantics "initial snapshot"
 
 if [[ "$(lifecycle_queue_count)" != "0" || "$(lifecycle_desktop_count)" != "0" ]]; then
   echo "native lifecycle started with non-empty notification surfaces" >&2
@@ -518,42 +617,28 @@ if [[ "$(lifecycle_queue_count)" != "1" || "$(lifecycle_desktop_count)" != "2" ]
   exit 1
 fi
 
-lifecycle_sibling_projection="$(lifecycle_tmux display-message -p -t "$lifecycle_sibling_pane" \
-  '#{@projmux_pane_uid}|#{@projmux_ai_thread_id}|#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_codex_authority_epoch}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}')"
-touch "$lifecycle_fixture_state/disconnect"
-wait_lifecycle_option @projmux_codex_authority invalidating "stable disconnect unavailability"
-wait_lifecycle_option @projmux_ai_badge_kind "" "disconnect stale badge clear"
+lifecycle_arm_projection_barrier "$lifecycle_pane" invalidating disconnected "" "" "disconnect"
+# The exact-proxy EOF is the only disconnect trigger. The old fixture burst can
+# revoke only the target binding before TERM and let E1 authority briefly return,
+# so it is deliberately not armed here. Re-observe the complete unique absolute
+# argv immediately before TERM and fail closed on any PID drift.
+lifecycle_proxy_before_term="$(lifecycle_proxy_pids)"
+if [[ "$lifecycle_proxy_before_term" != "$lifecycle_proxy_epoch_one_pid" ]] ||
+  ! kill -TERM "$lifecycle_proxy_epoch_one_pid"; then
+  echo "refusing to terminate a drifted Codex lifecycle E1 proxy: pid=$lifecycle_proxy_epoch_one_pid" >&2
+  exit 1
+fi
+lifecycle_wait_projection_barrier
 
-# Poll the exact projection repeatedly while the replacement barrier is held.
-# The reconnect owner is still the durable native binding, so neither the
-# authority tuple nor the semantic/badge tuple may flap through hook state.
-lifecycle_gap_projection="$(lifecycle_tmux display-message -p -t "$lifecycle_pane" \
-  '#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_codex_authority_epoch}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}')"
-for _ in $(seq 1 20); do
-  lifecycle_polled_projection="$(lifecycle_tmux display-message -p -t "$lifecycle_pane" \
-    '#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_codex_authority_epoch}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}')"
-  if [[ "$lifecycle_polled_projection" != "$lifecycle_gap_projection" ]]; then
-    echo "reconnect gap projection flapped: before=$lifecycle_gap_projection after=$lifecycle_polled_projection" >&2
-    exit 1
-  fi
-done
-
-# Public native mutations must stop at the live-binding boundary throughout
-# the reconnect gap. The fake endpoint records every turn mutation and server
-# response, so compare the exact count before and after all four public paths.
+# One representative public native mutation must stop at the live-binding
+# boundary throughout the reconnect gap. The CLI unit matrix owns all action
+# kinds; C01 keeps the user-visible start refusal and its exact wire-zero canary.
 provider_writes_before="$(wc -l <"$lifecycle_fixture_state/provider-writes" | tr -d '[:space:]')"
-assert_gap_control_refused() {
-	local label="$1"
-	shift
-	if lifecycle_pmx_at_anchor "$@" >"$lifecycle_root/gap-$label.out" 2>"$lifecycle_root/gap-$label.err"; then
-		echo "reconnect gap unexpectedly accepted public control: $label" >&2
-		exit 1
-	fi
-}
-assert_gap_control_refused start agent turn start "uid:$lifecycle_agent_uid" -- "gap start"
-assert_gap_control_refused steer agent turn steer "uid:$lifecycle_agent_uid" -- "gap steer"
-assert_gap_control_refused interrupt agent turn interrupt "uid:$lifecycle_agent_uid"
-assert_gap_control_refused approval agent approval review "uid:$lifecycle_agent_uid" --request request-actionable
+if lifecycle_pmx_at_anchor agent turn start "uid:$lifecycle_agent_uid" -- "gap start" \
+  >"$lifecycle_root/gap-start.out" 2>"$lifecycle_root/gap-start.err"; then
+  echo "reconnect gap unexpectedly accepted public start control" >&2
+  exit 1
+fi
 provider_writes_after="$(wc -l <"$lifecycle_fixture_state/provider-writes" | tr -d '[:space:]')"
 if [[ "$provider_writes_after" != "$provider_writes_before" ]]; then
 	echo "reconnect gap reached the fake app-server wire: before=$provider_writes_before after=$provider_writes_after" >&2
@@ -561,55 +646,60 @@ if [[ "$provider_writes_after" != "$provider_writes_before" ]]; then
 	exit 1
 fi
 
-# The sibling stays on its exact E1 authority and semantic projection while
-# target control is fenced. Its native steer must still reach the provider and
-# the thread-qualified ledger must attribute only that one new write to it.
-lifecycle_sibling_writes_before="$(grep -Fxc 'thread-sibling|turn/steer' "$lifecycle_fixture_state/provider-writes" || true)"
-if ! lifecycle_pmx_at_anchor agent turn steer "uid:$lifecycle_sibling_agent_uid" -- "sibling gap steer" >"$lifecycle_root/sibling-gap-steer.out" 2>"$lifecycle_root/sibling-gap-steer.err"; then
-  echo "healthy sibling native steer failed during target reconnect gap" >&2
-  cat "$lifecycle_root/sibling-gap-steer.err" >&2
-  lifecycle_tmux display-message -p -t "$lifecycle_sibling_pane" \
-    '#{@projmux_pane_uid}|#{@projmux_ai_thread_id}|#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_codex_authority_epoch}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}' >&2 || true
-  cat "$lifecycle_fixture_state/provider-writes" >&2 || true
-  cat "$lifecycle_fixture_state/fixture-error" >&2 2>/dev/null || true
-  exit 1
-fi
-lifecycle_sibling_writes_after="$(grep -Fxc 'thread-sibling|turn/steer' "$lifecycle_fixture_state/provider-writes" || true)"
-lifecycle_sibling_gap_projection="$(lifecycle_tmux display-message -p -t "$lifecycle_sibling_pane" \
-  '#{@projmux_pane_uid}|#{@projmux_ai_thread_id}|#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_codex_authority_epoch}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}')"
-if [[ "$lifecycle_sibling_writes_after" != "$((lifecycle_sibling_writes_before + 1))" ]] ||
-  [[ "$lifecycle_sibling_gap_projection" != "$lifecycle_sibling_projection" ]]; then
-  echo "target reconnect changed sibling authority/status/control: before=$lifecycle_sibling_projection after=$lifecycle_sibling_gap_projection writes=$lifecycle_sibling_writes_before,$lifecycle_sibling_writes_after" >&2
-  exit 1
-fi
-
 # Native reconnect remains authoritative during the gap. The same raw hook
 # event must therefore write no hook badge and must not move the exact
 # invalidating/unavailable projection.
 printf '%s' '{"hook_event_name":"Stop","thread_id":"thread-phase3","turn_id":"turn-fallback","cwd":"'"$lifecycle_project"'"}' |
   lifecycle_pmx_hook internal agent-hook ingest codex-hook
-sleep 0.2
-lifecycle_after_hook_projection="$(lifecycle_tmux display-message -p -t "$lifecycle_pane" \
-  '#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_codex_authority_epoch}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}')"
-if [[ "$lifecycle_after_hook_projection" != "$lifecycle_gap_projection" ]] ||
-  [[ "$(lifecycle_queue_count)" != "1" ]] || [[ "$(lifecycle_desktop_count)" != "2" ]]; then
-  echo "Codex reconnect gap admitted provider-hook projection: before=$lifecycle_gap_projection after=$lifecycle_after_hook_projection" >&2
+lifecycle_gap_after_hook="$(lifecycle_tmux display-message -p -t "$lifecycle_pane" \
+  '#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}')"
+lifecycle_gap_queue_after_hook="$(lifecycle_queue_count)"
+lifecycle_gap_desktop_after_hook="$(lifecycle_desktop_count)"
+if [[ "$lifecycle_gap_after_hook" != "invalidating|disconnected||" ]] ||
+  [[ "$lifecycle_gap_queue_after_hook" != "1" ]] || [[ "$lifecycle_gap_desktop_after_hook" != "2" ]]; then
+  echo "Codex reconnect gap admitted provider-hook projection: tuple=$lifecycle_gap_after_hook queue=$lifecycle_gap_queue_after_hook desktop=$lifecycle_gap_desktop_after_hook" >&2
   exit 1
 fi
 
+lifecycle_arm_replacement_projection_barrier "$lifecycle_pane" "$epoch_one" provider-control-plane ready idle "" "replacement snapshot/control"
 touch "$lifecycle_fixture_state/allow-reconnect"
-wait_lifecycle_option @projmux_codex_authority provider-control-plane "reconnected native authority"
-wait_lifecycle_option @projmux_ai_state idle "reconnect snapshot convergence"
-wait_lifecycle_option @projmux_ai_badge_kind "" "reconnect stale fallback clear"
+lifecycle_wait_projection_barrier
 epoch_two="$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" @projmux_codex_authority_epoch)"
 if [[ -z "$epoch_two" || "$epoch_two" == "$epoch_one" ]]; then
   echo "reconnect did not replace lifecycle epoch: first=$epoch_one second=$epoch_two" >&2
   exit 1
 fi
 
+# The broker may synchronously finish the target's replacement thread/read
+# before it asks for the sibling snapshot. Arm this level-triggered barrier only
+# after target recovery unblocks that request ordering. It still requires the
+# sibling's opaque connection witness to advance and the exact semantic tuple
+# to settle before the sole sibling control receipt.
+lifecycle_arm_replacement_projection_barrier "$lifecycle_sibling_pane" "$sibling_epoch_one" provider-control-plane ready thinking in_progress "sibling replacement snapshot/control"
+lifecycle_wait_projection_barrier
+sibling_epoch_two="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_codex_authority_epoch)"
+assert_lifecycle_sibling_semantics "sibling replacement barrier"
+lifecycle_sibling_writes_before="$(grep -Fxc 'thread-sibling|turn/steer' "$lifecycle_fixture_state/provider-writes" || true)"
+if [[ "$lifecycle_sibling_writes_before" != "0" ]]; then
+  echo "sibling steer ledger was not empty before its exact reconnect receipt: writes=$lifecycle_sibling_writes_before" >&2
+  exit 1
+fi
+if ! lifecycle_pmx_at_anchor agent turn steer "uid:$lifecycle_sibling_agent_uid" -- "sibling replacement steer" >"$lifecycle_root/sibling-replacement-steer.out" 2>"$lifecycle_root/sibling-replacement-steer.err"; then
+  echo "healthy sibling native steer failed after its replacement barrier" >&2
+  cat "$lifecycle_root/sibling-replacement-steer.err" >&2
+  exit 1
+fi
+lifecycle_sibling_writes_after="$(grep -Fxc 'thread-sibling|turn/steer' "$lifecycle_fixture_state/provider-writes" || true)"
+if [[ "$lifecycle_sibling_writes_after" != "1" ]]; then
+  echo "sibling replacement steer did not produce the exact 0->1 thread-qualified write: before=$lifecycle_sibling_writes_before after=$lifecycle_sibling_writes_after" >&2
+  exit 1
+fi
+assert_lifecycle_sibling_semantics "sibling replacement steer"
+
 # Same-Agent native control is recovered directly through the exact Agent UID;
-# no focus, reopen, send-keys, or fresh-Agent lane participates. The provider
-# ledger must attribute one new start to the target replacement epoch.
+# no focus, reopen, send-keys, or fresh-Agent lane participates. Wait until both
+# replacement snapshot barriers have closed before adding this target RPC to
+# the shared connection, then require exactly one target-qualified write.
 lifecycle_target_starts_before="$(grep -Fxc 'thread-phase3|turn/start' "$lifecycle_fixture_state/provider-writes" || true)"
 if ! lifecycle_pmx_at_anchor agent turn start "uid:$lifecycle_agent_uid" -- "target replacement exact start" >"$lifecycle_root/target-e2-start.out" 2>"$lifecycle_root/target-e2-start.err"; then
   echo "target same-Agent exact native start failed after replacement epoch" >&2
@@ -622,23 +712,6 @@ if [[ "$lifecycle_target_starts_after" != "$((lifecycle_target_starts_before + 1
   exit 1
 fi
 
-# The sibling remains byte-identical after target E2 and continues to steer on
-# the same authority epoch, with its own ledger row and no target attribution.
-lifecycle_sibling_writes_before_e2="$lifecycle_sibling_writes_after"
-if ! lifecycle_pmx_at_anchor agent turn steer "uid:$lifecycle_sibling_agent_uid" -- "sibling post-reconnect steer" >"$lifecycle_root/sibling-e2-steer.out" 2>"$lifecycle_root/sibling-e2-steer.err"; then
-  echo "healthy sibling native steer failed after target replacement" >&2
-  cat "$lifecycle_root/sibling-e2-steer.err" >&2
-  exit 1
-fi
-lifecycle_sibling_writes_after_e2="$(grep -Fxc 'thread-sibling|turn/steer' "$lifecycle_fixture_state/provider-writes" || true)"
-lifecycle_sibling_e2_projection="$(lifecycle_tmux display-message -p -t "$lifecycle_sibling_pane" \
-  '#{@projmux_pane_uid}|#{@projmux_ai_thread_id}|#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_codex_authority_epoch}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}')"
-if [[ "$lifecycle_sibling_writes_after_e2" != "$((lifecycle_sibling_writes_before_e2 + 1))" ]] ||
-  [[ "$lifecycle_sibling_e2_projection" != "$lifecycle_sibling_projection" ]]; then
-  echo "target E2 changed sibling authority/status/control: before=$lifecycle_sibling_projection after=$lifecycle_sibling_e2_projection writes=$lifecycle_sibling_writes_before_e2,$lifecycle_sibling_writes_after_e2" >&2
-  exit 1
-fi
-
 if [[ -f "$lifecycle_fixture_state/fixture-error" ]]; then
   echo "fake Codex two-Agent fixture reported an asynchronous failure" >&2
   cat "$lifecycle_fixture_state/fixture-error" >&2
@@ -647,5 +720,5 @@ fi
 
 lifecycle_cleanup
 trap smoke_cleanup_env EXIT
-echo ">> Codex native lifecycle E2E passed: socket=$lifecycle_socket path=$lifecycle_socket_path target-epochs=$epoch_one,$epoch_two sibling-epoch=$sibling_epoch"
+echo ">> Codex native lifecycle E2E passed: socket=$lifecycle_socket path=$lifecycle_socket_path target-epochs=$epoch_one,$epoch_two sibling-epochs=$sibling_epoch_one,$sibling_epoch_two sibling-steer-writes=0,1"
 smoke_contract_pass
