@@ -159,6 +159,35 @@ if ! grep -Eq '^[[:space:]]*-e E2E_WAIT_SCALE=' "$root/scripts/test-docker-run.s
   echo "F10 test-docker-run.sh does not forward E2E_WAIT_SCALE into the container" >&2
   exit 1
 fi
+if ! grep -Eq '^[[:space:]]*-e PROJMUX_E2E_REGISTRY_STRESS=' "$root/scripts/test-docker-run.sh"; then
+  echo "F10 test-docker-run.sh does not forward the explicit Registry stress opt-in" >&2
+  exit 1
+fi
+
+# F11: required L06 is cardinality-neutral holder/waiter acceptance. The real
+# eight-way route must stay behind its explicit opt-in, and current diagnostics
+# must keep their closed causes instead of falling back to other/unknown.
+required_l06_source="$(sed -n '/# Required L06 owns one semantic guarantee:/,/^if \[\[ "${PROJMUX_E2E_REGISTRY_STRESS:-0}" == "1" \]\]; then/p' "$root/test/e2e/linux-smoke.sh")"
+l06_source="$(sed -n '/# Required L06 owns one semantic guarantee:/,/^# 5\./p' "$root/test/e2e/linux-smoke.sh")"
+if grep -Eq '\{1\.\.8\}|phase0-stress' <<<"$required_l06_source"; then
+  echo "F11 required L06 still contains an unconditional eight-way route" >&2
+  exit 1
+fi
+grep -Fq 'if [[ "${PROJMUX_E2E_REGISTRY_STRESS:-0}" == "1" ]]; then' "$root/test/e2e/linux-smoke.sh"
+grep -Fq 'phase0-stress-results.tsv' "$root/test/e2e/linux-smoke.sh"
+grep -Fq '>> opt-in Registry stress racer: index=%s pid=%s status=%s outcome=%s started_ms=%s finished_ms=%s' \
+  "$root/test/e2e/linux-smoke.sh"
+if grep -Fq '$create_registry.lock' <<<"$l06_source" ||
+  grep -Fq 'stat -c %Y' <<<"$l06_source" ||
+  grep -Eq 'SMOKE_L06_RACER_(PIDS|STATUSES|OUTCOMES)' <<<"$l06_source" ||
+  grep -Eq 'l06-(other|unknown)|:(other|unknown):' <<<"$l06_source"; then
+  echo "F11 L06 source retained marker-time inference, fixed racer arrays, or other/unknown attribution" >&2
+  exit 1
+fi
+if grep -Eq 'l06-(other|unknown)|"(other|unknown)"' "$root/scripts/e2e-first-failure.py"; then
+  echo "F11 current L06 diagnostics expose an other/unknown fallback" >&2
+  exit 1
+fi
 
 # Phase-0 first-failure diagnostics are synthetic and scenario-owned. They
 # exercise only the log formatter; no product timeout, retry, lock, or Registry
@@ -167,23 +196,15 @@ diagnostic_root="$artifacts/first-failure"
 mkdir -p "$diagnostic_root/controller" "$diagnostic_root/tmux"
 
 SMOKE_L06_HOLDER_PID=4242
-SMOKE_L06_HOLDER_STARTED_MS="$(( $(date +%s) * 1000 - 1250 ))"
+SMOKE_L06_HOLDER_HELD_MS="$(( $(date +%s) * 1000 - 1250 ))"
+SMOKE_L06_HOLDER_RELEASED_MS="$((SMOKE_L06_HOLDER_HELD_MS + 1000))"
 SMOKE_L06_OPERATION=concurrent-create-pane
-SMOKE_L06_RELEASE_STATE=held
-for racer in 1 2 3 4 5 6 7 8; do
-  SMOKE_L06_RACER_PIDS[racer - 1]="$((5000 + racer))"
-  SMOKE_L06_RACER_STATUSES[racer - 1]=0
-  SMOKE_L06_RACER_OUTCOMES[racer - 1]=completed
-  if [[ "$racer" == "8" ]]; then
-    SMOKE_L06_RACER_STATUSES[racer - 1]=1
-    SMOKE_L06_RACER_OUTCOMES[racer - 1]=exhausted
-  fi
-done
+SMOKE_L06_RELEASE_STATE=released
+SMOKE_L06_RACER_EVENTS=("1:5001:1:deadline:$((SMOKE_L06_HOLDER_HELD_MS + 250)):$((SMOKE_L06_HOLDER_RELEASED_MS + 250))")
 # The sourced formatter consumes this state indirectly. This explicit no-op
 # read keeps that cross-file contract visible to standalone ShellCheck.
-: "$SMOKE_L06_HOLDER_PID" "$SMOKE_L06_HOLDER_STARTED_MS" "$SMOKE_L06_OPERATION" \
-  "$SMOKE_L06_RELEASE_STATE" \
-  "${SMOKE_L06_RACER_PIDS[*]}" "${SMOKE_L06_RACER_STATUSES[*]}" "${SMOKE_L06_RACER_OUTCOMES[*]}"
+: "$SMOKE_L06_HOLDER_PID" "$SMOKE_L06_HOLDER_HELD_MS" "$SMOKE_L06_HOLDER_RELEASED_MS" \
+  "$SMOKE_L06_OPERATION" "$SMOKE_L06_RELEASE_STATE" "${SMOKE_L06_RACER_EVENTS[*]}"
 smoke_l06_failure_diagnostic >"$diagnostic_root/l06.out" 2>"$diagnostic_root/l06.err"
 [[ ! -s "$diagnostic_root/l06.out" ]]
 
@@ -238,19 +259,16 @@ def record(name):
     return json.loads(payload)
 
 l06 = record("l06")
-assert l06["scenario"] == "L06" and l06["attribution"] == "l06-lock-exhaustion"
+assert l06["scenario"] == "L06" and l06["attribution"] == "l06-registry-lock-deadline"
 # The renamed holder field set travels under its own version; L08/L16 are
 # unchanged and stay v1.
-assert l06["schema"] == "projmux.e2e-diagnostic/v2", l06["schema"]
-assert l06["holder"]["pid"] == 4242 and l06["holder"]["lock_age_ms"] >= 1250
-assert l06["holder"]["lock_observed"] is True
+assert l06["schema"] == "projmux.e2e-diagnostic/v3", l06["schema"]
+assert l06["holder"]["pid"] == 4242 and l06["holder"]["observed"] is True
+assert l06["holder"]["held_ms"] < l06["holder"]["released_ms"]
 assert l06["holder"]["operation"] == "concurrent-create-pane"
-# The racer that reported exhaustion is what makes this contended. The old
-# fixture declared "acquired" here and the emitter repeated the declaration back
-# even though racer 8 had just said it could not take the lock.
-assert l06["holder"]["acquire"] == "contended" and l06["holder"]["release"] == "held"
-assert len(l06["racers"]) == 8 and l06["racers"][0]["outcome"] == "completed"
-assert l06["racers"][-1]["outcome"] == "exhausted"
+assert l06["holder"]["release"] == "released"
+assert len(l06["racers"]) == 1 and l06["racers"][0]["outcome"] == "deadline"
+assert l06["racers"][0]["started_ms"] < l06["racers"][0]["finished_ms"]
 
 l08 = record("l08")
 assert l08["schema"] == "projmux.e2e-diagnostic/v1", l08["schema"]
@@ -276,7 +294,7 @@ assert "registry_before_sha256" in joined and '"projects"' not in joined
 # A failed-job-log-only view is sufficient to join the common terminal row to
 # exactly one scenario diagnostic, without asserting product-vs-harness blame.
 for scenario, name, attribution in (
-    ("L06", "l06", "l06-lock-exhaustion"),
+    ("L06", "l06", "l06-registry-lock-deadline"),
     ("L08", "l08", "l08-state-drift"),
     ("L16", "l16", "l16-semantic-timeout"),
 ):
@@ -289,4 +307,4 @@ for scenario, name, attribution in (
     assert "class" not in terminal and "class" not in diagnostic
 PY
 
-echo ">> F01/F02/F04/F06/F07/F08/F09/F10 and L06/L08/L16 first-failure contracts passed"
+echo ">> F01/F02/F04/F06/F07/F08/F09/F10/F11 and L06/L08/L16 first-failure contracts passed"

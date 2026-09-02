@@ -13,12 +13,11 @@ SMOKE_CONTRACT_TERMINAL_JSON=""
 SMOKE_CONTRACT_DIAGNOSTIC_JSON=""
 
 SMOKE_L06_HOLDER_PID=0
-SMOKE_L06_HOLDER_STARTED_MS=0
+SMOKE_L06_HOLDER_HELD_MS=0
+SMOKE_L06_HOLDER_RELEASED_MS=0
 SMOKE_L06_OPERATION="controller-trigger-burst"
 SMOKE_L06_RELEASE_STATE="not-started"
-declare -a SMOKE_L06_RACER_PIDS=(0 0 0 0 0 0 0 0)
-declare -a SMOKE_L06_RACER_STATUSES=(0 0 0 0 0 0 0 0)
-declare -a SMOKE_L06_RACER_OUTCOMES=(not-started not-started not-started not-started not-started not-started not-started not-started)
+declare -a SMOKE_L06_RACER_EVENTS=()
 
 SMOKE_L08_REGISTRY_BEFORE=""
 SMOKE_L08_REGISTRY_AFTER=""
@@ -227,16 +226,17 @@ smoke_contract_terminal() {
 }
 
 smoke_l06_failure_diagnostic() {
-  local index
   local -a command=(
     python3 "$smoke_root/scripts/e2e-first-failure.py" l06
     --holder-pid "$SMOKE_L06_HOLDER_PID"
-    --holder-started-ms "$SMOKE_L06_HOLDER_STARTED_MS"
+    --holder-held-ms "$SMOKE_L06_HOLDER_HELD_MS"
+    --holder-released-ms "$SMOKE_L06_HOLDER_RELEASED_MS"
     --operation "$SMOKE_L06_OPERATION"
     --release "$SMOKE_L06_RELEASE_STATE"
   )
-  for index in {0..7}; do
-    command+=(--racer "$((index + 1)):${SMOKE_L06_RACER_PIDS[$index]}:${SMOKE_L06_RACER_STATUSES[$index]}:${SMOKE_L06_RACER_OUTCOMES[$index]}")
+  local racer_event
+  for racer_event in "${SMOKE_L06_RACER_EVENTS[@]}"; do
+    command+=(--racer "$racer_event")
   done
   "${command[@]}"
 }

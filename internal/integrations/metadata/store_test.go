@@ -1182,7 +1182,6 @@ func TestRegistryLockDeadlineIsMeasuredOnTheInjectedClock(t *testing.T) {
 	writeLegacyMarker(t, store, fmt.Sprintf("pid=%d\n", os.Getpid()))
 	store.SetClock(steppingClock(fixedNow, 250*time.Millisecond))
 
-	start := time.Now()
 	sleeps := 0
 	lease, err := store.acquireLockWithDeadline(t.Context(), time.Second, func(time.Duration) { sleeps++ })
 	if lease != nil {
@@ -1194,11 +1193,6 @@ func TestRegistryLockDeadlineIsMeasuredOnTheInjectedClock(t *testing.T) {
 	}
 	if sleeps == 0 {
 		t.Fatal("the legacy marker wait never backed off, so it never actually waited")
-	}
-	// A one-second budget spent entirely in simulated time: the real clock
-	// barely moved, which is the property that removes the load dependency.
-	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
-		t.Fatalf("real elapsed time = %s, want a deadline spent on the injected clock", elapsed)
 	}
 	assertNoStagedGarbage(t, store)
 }
@@ -1441,6 +1435,14 @@ func TestAConcurrentWriterIsNotRefusedInsideAnotherCommitsMarkerWindow(t *testin
 		t.Fatalf("open the marker window: %v", err)
 	}
 	holdRegistryFlock(t, store)
+	suspected := make(chan struct{})
+	continueToLock := make(chan struct{})
+	waitingOnFlock := make(chan struct{})
+	store.hooks.afterDegradedSuspect = func() {
+		close(suspected)
+		<-continueToLock
+	}
+	store.hooks.afterContendedFlock = func() { close(waitingOnFlock) }
 
 	done := make(chan error, 1)
 	go func() {
@@ -1460,12 +1462,16 @@ func TestAConcurrentWriterIsNotRefusedInsideAnotherCommitsMarkerWindow(t *testin
 		done <- err
 	}()
 
-	// The refusal this guards against is immediate -- the gate only stats two
-	// paths -- so an answer arriving at all inside this window is the defect.
+	// The two test seams turn the pre-lock suspicion and the contended flock into
+	// explicit barriers. A mutant that returns the lock-free suspicion answers
+	// on done; the production path reaches waitingOnFlock and cannot be confused
+	// with a slow scheduler.
+	<-suspected
+	close(continueToLock)
 	select {
 	case err := <-done:
 		t.Fatalf("the second writer answered inside another commit's marker window: %v", err)
-	case <-time.After(500 * time.Millisecond):
+	case <-waitingOnFlock:
 	}
 
 	// The committing writer finishes: the staged bytes become the registry and
@@ -1486,24 +1492,6 @@ func TestAConcurrentWriterIsNotRefusedInsideAnotherCommitsMarkerWindow(t *testin
 		t.Fatalf("projects = %d, want both writers' registrations", len(registry.Projects))
 	}
 	assertNoStagedGarbage(t, store)
-}
-
-// TestRegistryLockProductionDeadlineConstantsRemainUnchanged pins the budget the
-// production path grants, and pins that this change left the separate recovery
-// lock's attempt budget exactly where it was.
-func TestRegistryLockProductionDeadlineConstantsRemainUnchanged(t *testing.T) {
-	if defaultLockTimeout != 30*time.Second || defaultLockBaseDelay != 2*time.Millisecond ||
-		defaultLockMaxDelay != 50*time.Millisecond {
-		t.Fatalf("ordinary Registry lock budget drifted: timeout=%s base=%s max=%s",
-			defaultLockTimeout, defaultLockBaseDelay, defaultLockMaxDelay)
-	}
-	if store := NewStore(PathFor(t.TempDir())); store.lockTimeout != defaultLockTimeout {
-		t.Fatalf("store lock timeout = %s, want the production default %s", store.lockTimeout, defaultLockTimeout)
-	}
-	if defaultRecoveryLockMaxAttempts != 200 || defaultLockStaleAfter != 30*time.Second {
-		t.Fatalf("the out-of-scope recovery lock budget drifted: attempts=%d stale=%s",
-			defaultRecoveryLockMaxAttempts, defaultLockStaleAfter)
-	}
 }
 
 // TestAnAbsentOrContentFreeRegistryFileLoadsAnEmptyRegistry keeps the

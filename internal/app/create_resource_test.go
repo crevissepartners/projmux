@@ -1085,7 +1085,7 @@ func TestCanonicalCreatePaneLayoutServerGenerationDriftWritesZeroResizes(t *test
 	}
 }
 
-func TestCanonicalCreatePaneNinePaneLayoutUsesBoundedBatchInsideRegistryUpdate(t *testing.T) {
+func TestCanonicalCreatePaneMultiPaneLayoutUsesBoundedBatchInsideRegistryUpdate(t *testing.T) {
 	t.Parallel()
 
 	store := newFakeResourceStore(t)
@@ -1101,11 +1101,12 @@ func TestCanonicalCreatePaneNinePaneLayoutUsesBoundedBatchInsideRegistryUpdate(t
 		return baseUpdate(fn)
 	}
 
-	// The Registry's primary Pane plus seven preparatory splits produces the
-	// eight-Pane state the unchanged E2E racers reach before the final split.
-	for range 7 {
+	// More than one existing peer is enough to falsify a per-Pane observation/
+	// write loop while keeping this layout boundary independent of contention
+	// racer cardinality.
+	for range 2 {
 		if _, _, err := runRoute(t, create, "pane", "--project", "beta", "--window", "main", "-o", "pane-id"); err != nil {
-			t.Fatalf("prepare nine-Pane layout: %v", err)
+			t.Fatalf("prepare multi-Pane layout: %v", err)
 		}
 	}
 	probe.layoutCalls, probe.underLock, probe.receiptCalls, probe.resizeCalls, probe.authorityCalls = 0, 0, 0, 0, 0
@@ -1116,17 +1117,17 @@ func TestCanonicalCreatePaneNinePaneLayoutUsesBoundedBatchInsideRegistryUpdate(t
 	if err != nil {
 		t.Fatalf("create Pane: %v", err)
 	}
-	if !strings.HasPrefix(strings.TrimSpace(stdout), "%") || store.writes != 8 {
-		t.Fatalf("create did not commit its ninth Pane: stdout=%q writes=%d", stdout, store.writes)
+	if !strings.HasPrefix(strings.TrimSpace(stdout), "%") || store.writes != 3 {
+		t.Fatalf("create did not commit its fourth Pane: stdout=%q writes=%d", stdout, store.writes)
 	}
 	if probe.receiptCalls != 4 {
-		t.Fatalf("nine-Pane layout receipt calls = %d, want constant four-phase planning/pre-effect/guard/post-effect", probe.receiptCalls)
+		t.Fatalf("multi-Pane layout receipt calls = %d, want constant four-phase planning/pre-effect/guard/post-effect", probe.receiptCalls)
 	}
-	if probe.resizeCalls != 9 {
-		t.Fatalf("nine-Pane typed resize calls = %d, want one ordered action per Pane", probe.resizeCalls)
+	if probe.resizeCalls != 4 {
+		t.Fatalf("multi-Pane typed resize calls = %d, want one ordered action per Pane", probe.resizeCalls)
 	}
 	if probe.authorityCalls != 8 {
-		t.Fatalf("nine-Pane route/PID/app/logical authority calls = %d, want constant two four-read guards", probe.authorityCalls)
+		t.Fatalf("multi-Pane route/PID/app/logical authority calls = %d, want constant two four-read guards", probe.authorityCalls)
 	}
 	var resized []string
 	for _, call := range tmux.calls[finalCallStart:] {
@@ -1156,7 +1157,7 @@ func TestCanonicalCreatePaneNinePaneLayoutUsesBoundedBatchInsideRegistryUpdate(t
 		wantOrder = append(wantOrder, pane.id)
 	}
 	if !slices.Equal(resized, wantOrder) {
-		t.Fatalf("nine-Pane typed resize order = %v, want receipt order %v", resized, wantOrder)
+		t.Fatalf("multi-Pane typed resize order = %v, want receipt order %v", resized, wantOrder)
 	}
 	if probe.underLock != probe.layoutCalls {
 		t.Fatalf("layout escaped serialized create: under-lock=%d total=%d", probe.underLock, probe.layoutCalls)

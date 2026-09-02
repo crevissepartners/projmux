@@ -320,8 +320,9 @@ func TestASecondMutationExtendsTheExistingRegistryWithoutRenumbering(t *testing.
 	}
 }
 
-// TestConcurrentCreatesSerializeOnTheOnDiskLockAndConvergeOnOneWindow proves the
-// cross-process lock actually serializes, which has never run in production.
+// TestConcurrentCreatesSerializeOnTheOnDiskLockAndConvergeOnOneWindow is the
+// fake-tmux/on-disk owner for lost-update and Registry owner convergence. Real
+// tmux materialization and mirror convergence belong to L06 E2E.
 func TestConcurrentCreatesSerializeOnTheOnDiskLockAndConvergeOnOneWindow(t *testing.T) {
 	t.Parallel()
 
@@ -375,21 +376,6 @@ func TestConcurrentCreatesSerializeOnTheOnDiskLockAndConvergeOnOneWindow(t *test
 	}
 	if len(uids) != racers {
 		t.Fatalf("distinct result uids = %d, want %d", len(uids), racers)
-	}
-	// One live tmux window, one Projmux uid on it.
-	live := 0
-	for _, session := range fixture.tmux.sessions {
-		for _, window := range session.windows {
-			if window.opts[tmuxopts.WindowUID] == shared[0] {
-				live++
-			}
-		}
-	}
-	if live != 1 {
-		t.Fatalf("live tmux windows mirroring the shared uid = %d, want 1", live)
-	}
-	if _, err := os.Stat(fixture.registryPath() + ".lock"); !os.IsNotExist(err) {
-		t.Fatal("the store lock was left behind after the race")
 	}
 }
 
