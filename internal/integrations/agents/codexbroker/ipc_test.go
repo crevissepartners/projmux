@@ -186,8 +186,14 @@ func TestDiscoveryCredentialAndPermissionFailuresBindNothingAndWriteNothing(t *t
 				t.Fatalf("NewDiscovery(%q) = %v, want domain-required", domain, err)
 			}
 		}
-		if _, err := NewDiscovery("/tmp", "codex-app-server:other"); RefusalOf(err) != RefusalEndpointUnknown {
-			t.Fatalf("NewDiscovery(foreign endpoint) = %v", err)
+		generationKey, err := NewEndpointKey("private-domain", "private-generation")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, endpoint := range []EndpointKey{"codex-app-server:other", generationKey} {
+			if _, err := NewDiscovery("/tmp", endpoint); RefusalOf(err) != RefusalEndpointUnknown {
+				t.Fatalf("NewDiscovery(%s) = %v, want default-only host", endpoint, err)
+			}
 		}
 	})
 

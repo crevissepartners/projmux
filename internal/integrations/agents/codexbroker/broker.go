@@ -89,7 +89,7 @@ func NewBroker(cfg Config) (*Broker, error) {
 	if cfg.Endpoint == "" {
 		cfg.Endpoint = DefaultEndpointKey
 	}
-	if cfg.Endpoint != DefaultEndpointKey || cfg.Opener == nil {
+	if !validEndpointKey(cfg.Endpoint) || cfg.Opener == nil {
 		return nil, refuse(RefusalEndpointUnknown, nil)
 	}
 	broker := &Broker{
@@ -128,6 +128,13 @@ func NewBroker(cfg Config) (*Broker, error) {
 // EventOriginSnapshot event once the barrier closes, and that event carries
 // the fence every later mutation must present.
 func (b *Broker) Bind(threadID, cwd string, roots []string) (*Binding, error) {
+	return b.bindAtEpoch(threadID, cwd, roots, 0)
+}
+
+// bindAtEpoch restores an exact binding epoch when desired is non-zero. It is
+// package-private because only GenerationPool's sorted broker-restart ledger
+// may preserve an epoch; ordinary callers always receive the next one.
+func (b *Broker) bindAtEpoch(threadID, cwd string, roots []string, desired BindingEpoch) (*Binding, error) {
 	threadID = strings.TrimSpace(threadID)
 	if threadID == "" {
 		return nil, refuse(RefusalThreadRequired, nil)
@@ -141,7 +148,15 @@ func (b *Broker) Bind(threadID, cwd string, roots []string) (*Binding, error) {
 		b.mu.Unlock()
 		return nil, refuse(RefusalBindingExists, nil)
 	}
-	b.bindEpoch++
+	if desired == 0 {
+		b.bindEpoch++
+	} else {
+		if desired <= b.bindEpoch {
+			b.mu.Unlock()
+			return nil, refuse(RefusalBindingRestoreFailed, nil)
+		}
+		b.bindEpoch = desired
+	}
 	binding := &Binding{
 		broker:   b,
 		threadID: threadID,

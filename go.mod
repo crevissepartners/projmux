@@ -7,6 +7,7 @@ toolchain go1.26.6
 tool golang.org/x/tools/cmd/deadcode
 
 require (
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/mod v0.37.0
 	golang.org/x/sys v0.46.0

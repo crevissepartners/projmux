@@ -1,6 +1,10 @@
 package codexbroker
 
-import "errors"
+import (
+	"encoding/base64"
+	"errors"
+	"strings"
+)
 
 // EndpointKey is the durable identity of the one endpoint a Broker
 // multiplexes. It is a closed token rather than a socket path, a pid, or a
@@ -9,10 +13,85 @@ import "errors"
 type EndpointKey string
 
 // DefaultEndpointKey names the official default Codex app-server control
-// endpoint. It is the only endpoint this package can reach, because endpoint
-// discovery is a later phase and inventing a second key here would let a
-// caller believe an endpoint exists that nothing can open.
+// endpoint. It remains unmanaged and attach-only. Private generation keys are
+// accepted only with an explicit generation-scoped opener; this token never
+// silently adopts the installed/default endpoint into that pool.
 const DefaultEndpointKey EndpointKey = "codex-app-server:default"
+
+const generationEndpointPrefix = "codex-app-server:g1:"
+
+// EndpointIdentity is the durable, path-free identity of one private Codex
+// app-server generation. Neither field is a socket path or a mutable version
+// pointer: the state domain and endpoint generation are the two namespaces a
+// routed thread must match before a provider write is possible.
+type EndpointIdentity struct {
+	StateDomainID        string `json:"stateDomainID"`
+	EndpointGenerationID string `json:"endpointGenerationID"`
+}
+
+// NewEndpointKey constructs the canonical key for one private generation.
+// The URL-safe encoding is length-delimited by its separator and cannot
+// collide even when either opaque identity contains punctuation.
+func NewEndpointKey(stateDomainID, endpointGenerationID string) (EndpointKey, error) {
+	identity := EndpointIdentity{StateDomainID: stateDomainID, EndpointGenerationID: endpointGenerationID}
+	if !identity.Valid() {
+		return "", refuse(RefusalEndpointIdentityInvalid, nil)
+	}
+	encode := base64.RawURLEncoding.EncodeToString
+	return EndpointKey(generationEndpointPrefix + encode([]byte(stateDomainID)) + ":" + encode([]byte(endpointGenerationID))), nil
+}
+
+// Identity decodes a private generation key. The official default endpoint is
+// deliberately not assigned a generation identity: it stays unmanaged and
+// attach-only rather than being silently adopted into the managed pool.
+func (key EndpointKey) Identity() (EndpointIdentity, bool) {
+	value := string(key)
+	if !strings.HasPrefix(value, generationEndpointPrefix) {
+		return EndpointIdentity{}, false
+	}
+	parts := strings.Split(strings.TrimPrefix(value, generationEndpointPrefix), ":")
+	if len(parts) != 2 {
+		return EndpointIdentity{}, false
+	}
+	decode := base64.RawURLEncoding.DecodeString
+	domain, domainErr := decode(parts[0])
+	generation, generationErr := decode(parts[1])
+	identity := EndpointIdentity{StateDomainID: string(domain), EndpointGenerationID: string(generation)}
+	if domainErr != nil || generationErr != nil || !identity.Valid() {
+		return EndpointIdentity{}, false
+	}
+	canonical, err := NewEndpointKey(identity.StateDomainID, identity.EndpointGenerationID)
+	return identity, err == nil && canonical == key
+}
+
+// Valid reports whether both opaque endpoint identity components are bounded,
+// non-empty, whitespace-free values. They are intentionally not interpreted
+// as paths or version numbers.
+func (identity EndpointIdentity) Valid() bool {
+	return validEndpointIdentityPart(identity.StateDomainID) && validEndpointIdentityPart(identity.EndpointGenerationID)
+}
+
+func validEndpointIdentityPart(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || len(value) > 128 {
+		return false
+	}
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '-' || char == '_' || char == '.' || char == ':' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func validEndpointKey(key EndpointKey) bool {
+	if key == DefaultEndpointKey {
+		return true
+	}
+	_, ok := key.Identity()
+	return ok
+}
 
 // Supported reports whether this build can host or reach a broker runtime.
 //
@@ -56,6 +135,27 @@ const (
 	RefusalBrokerClosed Refusal = "broker-closed"
 	// RefusalEndpointUnknown marks an endpoint key this phase cannot reach.
 	RefusalEndpointUnknown Refusal = "endpoint-unknown"
+	// RefusalEndpointIdentityInvalid marks a state-domain/generation key whose
+	// opaque components are absent or malformed.
+	RefusalEndpointIdentityInvalid Refusal = "endpoint-identity-invalid"
+	// RefusalRouteMismatch marks a binding or control authority presented to a
+	// different state domain, endpoint generation, or exact thread.
+	RefusalRouteMismatch Refusal = "route-mismatch"
+	// RefusalBrokerRuntimeStale marks authority granted by a broker process
+	// that has since been replaced, even if its local epochs repeat.
+	RefusalBrokerRuntimeStale Refusal = "broker-runtime-stale"
+	// RefusalAdmissionClosed marks a fresh create admission request for a dark
+	// Preparing generation. Readiness alone never opens admission.
+	RefusalAdmissionClosed Refusal = "admission-closed"
+	// RefusalBindingRestoreFailed marks a broker restart that could not restore
+	// every exact endpoint/thread binding in its durable generation ledger.
+	RefusalBindingRestoreFailed Refusal = "binding-restore-failed"
+	// RefusalBrokerRestarting marks a bind or second restart that raced the
+	// exact generation's restore fence. Sibling generations remain available.
+	RefusalBrokerRestarting Refusal = "broker-restarting"
+	// RefusalGenerationCapacityExceeded preserves the Phase 0 bounded-pool
+	// invariant at the runtime construction boundary.
+	RefusalGenerationCapacityExceeded Refusal = "generation-capacity-exceeded"
 	// RefusalThreadRequired marks a bind attempt with no exact thread id.
 	// Guessing one from a working directory or from the newest thread is the
 	// exact "first match" binding this package refuses to invent.
