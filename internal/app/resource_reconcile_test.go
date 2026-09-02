@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -747,6 +748,210 @@ func TestResourceReconcileProjectsAllAgentFieldsFromRegistryAuthority(t *testing
 	}
 	if agent.Status.Interaction.Kind != coremetadata.InteractionResponseComplete {
 		t.Fatalf("reconcile imported/erased durable history: %+v", agent.Status.Interaction)
+	}
+}
+
+func TestGenerationLifecycleProjectionReconcileWritesOnceThenZero(t *testing.T) {
+	for _, test := range []struct {
+		state     codexgeneration.GenerationState
+		wantState string
+		wantBadge string
+	}{
+		{codexgeneration.StateDraining, codexgeneration.LifecycleStateDraining, codexgeneration.LifecycleBadgeDraining},
+		{codexgeneration.StateHandoverPending, codexgeneration.LifecycleStateDraining, codexgeneration.LifecycleBadgeHandoverPending},
+		{codexgeneration.StateRecovering, codexgeneration.LifecycleStateRecovering, codexgeneration.LifecycleBadgeRecovering},
+		{codexgeneration.StateBlocked, codexgeneration.LifecycleStateBlocked, codexgeneration.LifecycleBadgeBlocked},
+	} {
+		t.Run(string(test.state), func(t *testing.T) {
+			registry := resourceFixtureRegistry(t)
+			server := newFakeTmux()
+			pane := server.addSession("phase1-" + string(test.state)).windows[0].panes[0]
+			pane.opts[tmuxopts.PaneUID] = "pan-alpha-codex"
+			pane.opts[aiPaneStateOption] = codexgeneration.LifecycleStateThinking
+			pane.opts[aiPaneBadgeKindOption] = codexgeneration.LifecycleBadgeInProgress
+			pane.opts[attentionStateOption] = codexgeneration.LifecycleAttentionBusy
+			endpoint := &coremetadata.CodexEndpointRef{StateDomainID: "reconcile-domain", EndpointGenerationID: "reconcile-generation"}
+			operation := &coremetadata.CodexGenerationOperationRef{ID: "reconcile-operation", Endpoint: *endpoint}
+			authority := &coremetadata.CodexAuthorityRef{
+				StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID,
+				BrokerRuntimeID: "reconcile-broker", ConnectionEpoch: 2, BindingEpoch: 3,
+			}
+			agent, _ := registry.Agent("agt-alpha-codex")
+			agent.Status.Interaction = coremetadata.AgentInteraction{Kind: coremetadata.InteractionIdle, ObservedAt: resourceFixtureClock}
+			agent.Status.SessionRef = &coremetadata.AgentSessionRef{
+				Provider: aiModeCodex, ObservedAt: resourceFixtureClock,
+				Codex: &coremetadata.CodexSessionRef{
+					ThreadID: "reconcile-thread", Endpoint: endpoint,
+					Lifecycle: &coremetadata.CodexGenerationLifecycleRef{State: test.state, Operation: operation},
+				},
+			}
+			registryPane, _ := registry.Pane("pan-alpha-codex")
+			registryPane.Status.Activation = coremetadata.PaneActivation{
+				Generation: "materialization-generation", RuntimeID: pane.id, AgentUID: agent.Metadata.UID,
+				Codex: &coremetadata.CodexActivationBinding{ThreadID: "reconcile-thread", Authority: authority},
+			}
+			if err := registry.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			first := newResourcePlanTmuxRunner(server)
+			if err := planResourceAgentProjections(context.Background(), first, registry, resourceFixtureClock); err != nil {
+				t.Fatal(err)
+			}
+			if len(first.writes) != 3 {
+				t.Fatalf("first full production reconcile writes=%#v, want exact state/badge/attention", first.writes)
+			}
+			for _, write := range first.writes {
+				if _, err := server.Run(context.Background(), "tmux", write.args...); err != nil {
+					t.Fatalf("execute %v: %v", write.args, err)
+				}
+			}
+			if pane.opts[aiPaneStateOption] != test.wantState || pane.opts[aiPaneBadgeKindOption] != test.wantBadge || pane.opts[attentionStateOption] != "" {
+				t.Fatalf("projected options=%#v", pane.opts)
+			}
+			second := newResourcePlanTmuxRunner(server)
+			if err := planResourceAgentProjections(context.Background(), second, registry, resourceFixtureClock); err != nil {
+				t.Fatal(err)
+			}
+			if len(second.writes) != 0 {
+				t.Fatalf("second full production reconcile erased/repeated authoritative tuple: writes=%#v", second.writes)
+			}
+		})
+	}
+}
+
+func TestGenerationLifecycleProductionReconcileRejectsForeignOrSiblingAuthorityWithZeroWrites(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*coremetadata.Pane, *coremetadata.CodexAuthorityRef)
+	}{
+		{
+			name: "foreign endpoint generation",
+			mutate: func(_ *coremetadata.Pane, authority *coremetadata.CodexAuthorityRef) {
+				authority.EndpointGenerationID = "foreign-generation"
+			},
+		},
+		{
+			name: "sibling runtime",
+			mutate: func(pane *coremetadata.Pane, _ *coremetadata.CodexAuthorityRef) {
+				pane.Status.Activation.RuntimeID = "%999"
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			registry := resourceFixtureRegistry(t)
+			server := newFakeTmux()
+			live := server.addSession("phase1-refused").windows[0].panes[0]
+			live.opts[tmuxopts.PaneUID] = "pan-alpha-codex"
+			endpoint := &coremetadata.CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "generation"}
+			authority := &coremetadata.CodexAuthorityRef{
+				StateDomainID: "domain", EndpointGenerationID: "generation", BrokerRuntimeID: "broker", ConnectionEpoch: 1, BindingEpoch: 1,
+			}
+			agent, _ := registry.Agent("agt-alpha-codex")
+			agent.Status.SessionRef = &coremetadata.AgentSessionRef{Provider: aiModeCodex, Codex: &coremetadata.CodexSessionRef{
+				ThreadID: "thread", Endpoint: endpoint,
+				Lifecycle: &coremetadata.CodexGenerationLifecycleRef{
+					State:     coremetadata.CodexGenerationRecovering,
+					Operation: &coremetadata.CodexGenerationOperationRef{ID: "recover", Endpoint: *endpoint},
+				},
+			}}
+			registryPane, _ := registry.Pane("pan-alpha-codex")
+			registryPane.Status.Activation = coremetadata.PaneActivation{
+				Generation: "materialization", RuntimeID: live.id, AgentUID: agent.Metadata.UID,
+				Codex: &coremetadata.CodexActivationBinding{ThreadID: "thread", Authority: authority},
+			}
+			test.mutate(registryPane, authority)
+			if err := registry.Validate(); err != nil {
+				t.Fatal(err)
+			}
+			recorder := newResourcePlanTmuxRunner(server)
+			if err := planResourceAgentProjections(context.Background(), recorder, registry, resourceFixtureClock); err != nil {
+				t.Fatal(err)
+			}
+			if len(recorder.writes) != 0 {
+				t.Fatalf("refused full production reconcile writes=%#v", recorder.writes)
+			}
+		})
+	}
+}
+
+func TestMarkerlessCrashAndVersionDriftRemainOrdinaryFailureThroughProductionReconcile(t *testing.T) {
+	registry := resourceFixtureRegistry(t)
+	server := newFakeTmux()
+	live := server.addSession("phase1-markerless-crash").windows[0].panes[0]
+	live.opts[tmuxopts.PaneUID] = "pan-alpha-codex"
+	live.opts[aiPaneStateOption] = codexgeneration.LifecycleStateRecovering
+	live.opts[aiPaneBadgeKindOption] = codexgeneration.LifecycleBadgeRecovering
+	live.opts[attentionStateOption] = codexgeneration.LifecycleAttentionBusy
+
+	agent, _ := registry.Agent("agt-alpha-codex")
+	if agent.Metadata.Annotations == nil {
+		agent.Metadata.Annotations = map[string]string{}
+	}
+	agent.Metadata.Annotations["test.projmux.io/codex-version-drift"] = "0.151.0->0.152.1"
+	agent.Status.SessionRef = &coremetadata.AgentSessionRef{
+		Provider: aiModeCodex, ObservedAt: resourceFixtureClock,
+		Codex: &coremetadata.CodexSessionRef{
+			ThreadID: "crashed-thread",
+			Endpoint: &coremetadata.CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "generation"},
+			// No Lifecycle marker: endpoint or version evidence alone cannot
+			// manufacture a planned maintenance operation.
+		},
+	}
+	registryPane, _ := registry.Pane("pan-alpha-codex")
+	registryPane.Status.Activation = coremetadata.PaneActivation{
+		Generation: "crashed-materialization", RuntimeID: live.id, AgentUID: agent.Metadata.UID,
+		Codex: &coremetadata.CodexActivationBinding{ThreadID: "crashed-thread"},
+	}
+	exitCode := 23
+	mutator := coremetadata.Mutator{Now: func() time.Time { return resourceFixtureClock }}
+	if _, err := mutator.RecordTermination(&registry, coremetadata.TerminationEvidence{
+		Source: coremetadata.TerminationSourceSupervisor, Classification: coremetadata.TerminationAbnormal,
+		ObservedAt: resourceFixtureClock, PaneUID: registryPane.Metadata.UID, AgentUID: agent.Metadata.UID,
+		Generation: "crashed-materialization", ExitCode: &exitCode,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if projection, err := mutator.ProjectTermination(&registry, coremetadata.TerminationProjectionInput{
+		PaneUID: registryPane.Metadata.UID, Generation: "crashed-materialization", ObservedAt: resourceFixtureClock,
+	}); err != nil || projection.Phase != coremetadata.PhaseFailed {
+		t.Fatalf("project abnormal crash: projection=%#v err=%v", projection, err)
+	}
+	failedBefore := registry.Clone()
+	recorder := newResourcePlanTmuxRunner(server)
+	if err := planResourceAgentProjections(context.Background(), recorder, registry, resourceFixtureClock); err != nil {
+		t.Fatal(err)
+	}
+	for _, write := range recorder.writes {
+		if write.after == codexgeneration.LifecycleBadgeDraining || write.after == codexgeneration.LifecycleBadgeHandoverPending ||
+			write.after == codexgeneration.LifecycleBadgeRecovering || write.after == codexgeneration.LifecycleBadgeBlocked {
+			t.Fatalf("markerless crash planned maintenance write=%#v", write)
+		}
+		if _, err := server.Run(context.Background(), "tmux", write.args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	failed, _ := registry.Agent(agent.Metadata.UID)
+	if failed.Status.Phase != coremetadata.PhaseFailed || failed.Status.LastTermination == nil ||
+		failed.Status.LastTermination.Classification != coremetadata.TerminationAbnormal {
+		t.Fatalf("ordinary abnormal failure changed: phase=%s receipt=%#v", failed.Status.Phase, failed.Status.LastTermination)
+	}
+	if failed.Status.SessionRef.Codex.Lifecycle != nil {
+		t.Fatalf("markerless crash invented durable lifecycle=%#v", failed.Status.SessionRef.Codex.Lifecycle)
+	}
+	if !reflect.DeepEqual(registry, failedBefore) {
+		t.Fatal("production presentation reconcile mutated the failed Registry")
+	}
+	maintenanceBadges := 0
+	for _, badge := range []string{
+		codexgeneration.LifecycleBadgeDraining, codexgeneration.LifecycleBadgeHandoverPending,
+		codexgeneration.LifecycleBadgeRecovering, codexgeneration.LifecycleBadgeBlocked,
+	} {
+		if live.opts[aiPaneBadgeKindOption] == badge {
+			maintenanceBadges++
+		}
+	}
+	if maintenanceBadges != 0 || live.opts[aiPaneStateOption] != "" || live.opts[attentionStateOption] != "" {
+		t.Fatalf("markerless abnormal failure left maintenance tuple=%#v count=%d", live.opts, maintenanceBadges)
 	}
 }
 

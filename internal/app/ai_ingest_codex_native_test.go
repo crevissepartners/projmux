@@ -19,6 +19,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/agentprogress"
+	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -52,6 +53,35 @@ func phase0RNativeCodexFixture(t *testing.T) (*fakeResourceStore, codexLifecycle
 		t.Fatal(err)
 	}
 	return store, identity
+}
+
+func phase1GenerationAuthorityFixture(t *testing.T) (*fakeResourceStore, codexLifecycleIdentity, *coremetadata.CodexEndpointRef, *coremetadata.CodexAuthorityRef) {
+	t.Helper()
+	store, identity := phase0RNativeCodexFixture(t)
+	endpoint := &coremetadata.CodexEndpointRef{StateDomainID: "phase1-domain", EndpointGenerationID: "phase1-generation"}
+	authority := &coremetadata.CodexAuthorityRef{
+		StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID,
+		BrokerRuntimeID: "phase1-broker", ConnectionEpoch: 11, BindingEpoch: 17,
+	}
+	agent, _ := store.registry.Agent(identity.AgentUID)
+	agent.Status.SessionRef = &coremetadata.AgentSessionRef{
+		Provider: aiModeCodex, ObservedAt: resourceFixtureClock,
+		Codex: &coremetadata.CodexSessionRef{
+			ThreadID: identity.ThreadID, Endpoint: endpoint,
+			Lifecycle: &coremetadata.CodexGenerationLifecycleRef{
+				State: coremetadata.CodexGenerationDraining,
+				Operation: &coremetadata.CodexGenerationOperationRef{
+					ID: "drain-operation", Endpoint: *endpoint,
+				},
+			},
+		},
+	}
+	pane, _ := store.registry.Pane(identity.PaneUID)
+	pane.Status.Activation.Codex.Authority = authority
+	if err := store.registry.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return store, identity, endpoint, authority
 }
 
 func phase0RSemanticPaneWrites(commands []recordedAICommand) map[string][]string {
@@ -323,6 +353,152 @@ func TestNativeCodexHookAuthorityChangeAfterGuardCommitsZero(t *testing.T) {
 		len(queue.pushed) != 0 || len(queue.ackedIDs) != 0 || desktopWrites != 0 {
 		t.Fatalf("forced invalidation write ledger authority=%s state=%q badge=%q attention=%q Registry=%d interaction=%#v queue=%#v ack=%#v desktop=%d hook-commands=%#v",
 			authorityTuple, state, badge, attention, store.writes, agent.Status.Interaction, queue.pushed, queue.ackedIDs, desktopWrites, cmdRecorder(hookCommand).commands)
+	}
+}
+
+func TestNativeSemanticApplyAndInvalidationShareExactPaneFence(t *testing.T) {
+	store, identity := phase0RNativeCodexFixture(t)
+	options := map[string]string{
+		tmuxopts.PaneUID:           identity.PaneUID,
+		aiPaneCodexAuthorityOption: codexAuthorityControlPlane,
+		aiPaneCodexEpochOption:     "epoch-before",
+		aiPaneCodexReasonOption:    "ready",
+	}
+	var optionsMu sync.Mutex
+	oldApplyAtPaneWrite := make(chan struct{})
+	allowOldPaneWrite := make(chan struct{})
+	var oldWriteOnce sync.Once
+	runner := phase0RTmuxRunner(func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name != "tmux" || len(args) == 0 {
+			return nil, fmt.Errorf("unexpected semantic fence command %s %q", name, args)
+		}
+		switch args[0] {
+		case "show-options":
+			option := args[len(args)-1]
+			optionsMu.Lock()
+			value := options[option]
+			optionsMu.Unlock()
+			return []byte(value + "\n"), nil
+		case "set-option":
+			option, value := args[len(args)-2], args[len(args)-1]
+			unset := slices.Contains(args, "-u")
+			if unset {
+				option, value = args[len(args)-1], ""
+			}
+			if option == aiPaneStateOption && value == codexgeneration.LifecycleStateWaiting {
+				oldWriteOnce.Do(func() {
+					close(oldApplyAtPaneWrite)
+					<-allowOldPaneWrite
+				})
+			}
+			optionsMu.Lock()
+			if unset {
+				delete(options, option)
+			} else {
+				options[option] = value
+			}
+			optionsMu.Unlock()
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("unexpected semantic fence tmux command %q", args)
+		}
+	})
+
+	token := make(chan struct{}, 1)
+	token <- struct{}{}
+	invalidationWaiting := make(chan struct{})
+	var acquireMu sync.Mutex
+	acquires := 0
+	acquire := func(paneUID string) (func(), error) {
+		if paneUID != identity.PaneUID {
+			return nil, fmt.Errorf("authority fence Pane uid = %q, want %q", paneUID, identity.PaneUID)
+		}
+		acquireMu.Lock()
+		acquires++
+		attempt := acquires
+		acquireMu.Unlock()
+		if attempt == 2 {
+			close(invalidationWaiting)
+		}
+		<-token
+		var once sync.Once
+		return func() { once.Do(func() { token <- struct{}{} }) }, nil
+	}
+
+	command := testAICommand(t.TempDir())
+	command.loadRegistry = store.store().load
+	command.updateRegistry = store.store().update
+	command.acquireCodexAuthority = acquire
+	sink := aiCodexLifecycleSink{command: command, runner: runner}
+	oldResult := make(chan error, 1)
+	go func() {
+		oldResult <- sink.Apply(identity, codexLifecycleProjection{
+			Accepted: true, Interaction: coremetadata.InteractionResponseComplete,
+		})
+	}()
+	select {
+	case <-oldApplyAtPaneWrite:
+	case <-time.After(time.Second):
+		t.Fatal("old native Apply did not reach the forced Registry/tmux split")
+	}
+	agent, _ := store.registry.Agent(identity.AgentUID)
+	if agent.Status.Interaction.Kind != coremetadata.InteractionResponseComplete {
+		t.Fatalf("forced split did not occur after Registry commit: %#v", agent.Status.Interaction)
+	}
+
+	invalidationResult := make(chan error, 1)
+	go func() {
+		if err := sink.SetAuthority(identity, codexAuthorityInvalidating, "epoch-after", "disconnected"); err != nil {
+			invalidationResult <- err
+			return
+		}
+		invalidationResult <- sink.Apply(identity, codexLifecycleProjection{
+			Accepted: true, Invalidated: true, Interaction: coremetadata.InteractionUnknown,
+		})
+	}()
+	select {
+	case <-invalidationWaiting:
+	case <-time.After(time.Second):
+		t.Fatal("invalidation did not attempt the exact Pane fence")
+	}
+	close(allowOldPaneWrite)
+	for label, result := range map[string]<-chan error{"old Apply": oldResult, "invalidation": invalidationResult} {
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatalf("%s: %v", label, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("%s did not finish behind the semantic fence", label)
+		}
+	}
+
+	optionsMu.Lock()
+	authorityTuple := strings.Join([]string{options[aiPaneCodexAuthorityOption], options[aiPaneCodexEpochOption], options[aiPaneCodexReasonOption]}, "|")
+	state, badge, attention := options[aiPaneStateOption], options[aiPaneBadgeKindOption], options[attentionStateOption]
+	optionsMu.Unlock()
+	agent, _ = store.registry.Agent(identity.AgentUID)
+	if authorityTuple != "invalidating|epoch-after|disconnected" || state != "" || badge != "" || attention != "" ||
+		agent.Status.Interaction.Kind != coremetadata.InteractionUnknown {
+		t.Fatalf("invalidation was not final: authority=%s state=%q badge=%q attention=%q interaction=%#v",
+			authorityTuple, state, badge, attention, agent.Status.Interaction)
+	}
+
+	// Recovery deliberately applies the replacement snapshot while authority is
+	// still invalidating, then publishes the exact ready epoch. The shared fence
+	// serializes these writes without making this established ordering illegal.
+	if err := sink.Apply(identity, codexLifecycleProjection{Accepted: true, Interaction: coremetadata.InteractionIdle}); err != nil {
+		t.Fatalf("replacement Apply while invalidating: %v", err)
+	}
+	if err := sink.SetAuthority(identity, codexAuthorityControlPlane, "epoch-replacement", "ready"); err != nil {
+		t.Fatalf("publish replacement ready authority: %v", err)
+	}
+	optionsMu.Lock()
+	authorityTuple = strings.Join([]string{options[aiPaneCodexAuthorityOption], options[aiPaneCodexEpochOption], options[aiPaneCodexReasonOption]}, "|")
+	state = options[aiPaneStateOption]
+	optionsMu.Unlock()
+	if authorityTuple != codexAuthorityControlPlane+"|epoch-replacement|ready" || state != codexgeneration.LifecycleStateIdle {
+		t.Fatalf("replacement ordering = authority:%s state:%q", authorityTuple, state)
 	}
 }
 
@@ -2006,10 +2182,9 @@ func TestCodexSemanticDeliveryMatrix(t *testing.T) {
 	events := []struct {
 		name        string
 		interaction coremetadata.AgentInteractionKind
-		badge       string
 	}{
-		{name: "approval required", interaction: coremetadata.InteractionApprovalRequired, badge: aiBadgeKindApprovalRequired},
-		{name: "response complete", interaction: coremetadata.InteractionResponseComplete, badge: aiBadgeKindResponseComplete},
+		{name: "approval required", interaction: coremetadata.InteractionApprovalRequired},
+		{name: "response complete", interaction: coremetadata.InteractionResponseComplete},
 	}
 	policies := []struct {
 		name    string
@@ -2025,19 +2200,129 @@ func TestCodexSemanticDeliveryMatrix(t *testing.T) {
 		for _, policy := range policies {
 			t.Run(event.name+"/"+policy.name, func(t *testing.T) {
 				got := codexSemanticDeliveryFor(policy.policy, event.interaction)
+				canonical := codexgeneration.ProjectLifecycle(codexgeneration.LifecycleProjectionInput{Interaction: event.interaction})
 				wantRegistry, wantBadge := coremetadata.InteractionUnknown, ""
 				if policy.visible {
-					wantRegistry, wantBadge = event.interaction, event.badge
+					wantRegistry, wantBadge = event.interaction, canonical.Badge
 				}
 				wantAttention := ""
 				if policy.notify {
-					wantAttention = attentionStateReply
+					wantAttention = canonical.Attention
 				}
-				if got.State != "waiting" || got.RegistryInteraction != wantRegistry || got.Badge != wantBadge || got.Attention != wantAttention || got.Notify != policy.notify {
+				if got.State != canonical.State || got.RegistryInteraction != wantRegistry || got.Badge != wantBadge || got.Attention != wantAttention || got.Notify != policy.notify {
 					t.Fatalf("delivery = %#v", got)
 				}
 			})
 		}
+	}
+}
+
+func TestGenerationLifecycleSinkCompositeAuthorityHasZeroCrossWrites(t *testing.T) {
+	tests := []struct {
+		name          string
+		mutate        func(*coremetadata.CodexEndpointRef, *coremetadata.CodexAuthorityRef, *codexgeneration.LifecycleOperationRef)
+		eventRuntime  string
+		wantCommitted bool
+	}{
+		{name: "owner current target", wantCommitted: true},
+		{name: "sibling runtime target", eventRuntime: "%8"},
+		{
+			name: "same numeric epochs across endpoint generations",
+			mutate: func(endpoint *coremetadata.CodexEndpointRef, authority *coremetadata.CodexAuthorityRef, operation *codexgeneration.LifecycleOperationRef) {
+				endpoint.EndpointGenerationID = "foreign-generation"
+				authority.EndpointGenerationID = endpoint.EndpointGenerationID
+				operation.Endpoint = *endpoint
+			},
+		},
+		{
+			name: "broker restart reuses numeric epochs",
+			mutate: func(_ *coremetadata.CodexEndpointRef, authority *coremetadata.CodexAuthorityRef, _ *codexgeneration.LifecycleOperationRef) {
+				authority.BrokerRuntimeID = "restarted-broker"
+			},
+		},
+		{
+			name: "connection epoch stale",
+			mutate: func(_ *coremetadata.CodexEndpointRef, authority *coremetadata.CodexAuthorityRef, _ *codexgeneration.LifecycleOperationRef) {
+				authority.ConnectionEpoch++
+			},
+		},
+		{
+			name: "binding epoch stale",
+			mutate: func(_ *coremetadata.CodexEndpointRef, authority *coremetadata.CodexAuthorityRef, _ *codexgeneration.LifecycleOperationRef) {
+				authority.BindingEpoch++
+			},
+		},
+		{
+			name: "operation belongs to a foreign generation",
+			mutate: func(_ *coremetadata.CodexEndpointRef, _ *coremetadata.CodexAuthorityRef, operation *codexgeneration.LifecycleOperationRef) {
+				operation.Endpoint.EndpointGenerationID = "foreign-operation-generation"
+			},
+		},
+		{
+			name: "provider self asserts another valid operation",
+			mutate: func(_ *coremetadata.CodexEndpointRef, _ *coremetadata.CodexAuthorityRef, operation *codexgeneration.LifecycleOperationRef) {
+				operation.ID = "another-valid-operation"
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			store, identity, durableEndpoint, storedAuthority := phase1GenerationAuthorityFixture(t)
+			if test.eventRuntime != "" {
+				identity.RuntimeID = test.eventRuntime
+			}
+			presentedEndpoint := *durableEndpoint
+			presentedAuthority := *storedAuthority
+			operation := codexgeneration.LifecycleOperationRef{ID: "drain-operation", Endpoint: presentedEndpoint}
+			if test.mutate != nil {
+				test.mutate(&presentedEndpoint, &presentedAuthority, &operation)
+			}
+			cmd := testAICommand(t.TempDir())
+			cmd.loadRegistry = store.store().load
+			cmd.updateRegistry = store.store().update
+			cmd.acquireCodexAuthority = func(string) (func(), error) { return func() {}, nil }
+			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				if name == "tmux" && reflect.DeepEqual(args, []string{"show-options", "-pqv", "-t", identity.RuntimeID, tmuxopts.PaneUID}) {
+					return []byte(identity.PaneUID + "\n"), nil
+				}
+				return nil, os.ErrNotExist
+			}
+			projection := codexLifecycleProjection{
+				Accepted: true, Interaction: coremetadata.InteractionIdle,
+				Endpoint: &presentedEndpoint, GenerationState: codexgeneration.StateDraining,
+				Operation: &operation, Authority: &presentedAuthority,
+			}
+			err := testCodexLifecycleSink(cmd).Apply(identity, projection)
+			commands := cmdRecorder(cmd).commands
+			writes := phase0RSemanticPaneWrites(commands)
+			tmuxWrites := 0
+			for _, command := range commands {
+				if command.name == "tmux" && len(command.args) > 0 && command.args[0] == "set-option" {
+					tmuxWrites++
+				}
+			}
+			if test.wantCommitted {
+				if err != nil || store.writes != 1 || tmuxWrites != 3 {
+					t.Fatalf("exact generation Apply err=%v Registry writes=%d tmux writes=%d", err, store.writes, tmuxWrites)
+				}
+				if got := writes[aiPaneStateOption]; !reflect.DeepEqual(got, []string{codexgeneration.LifecycleStateDraining}) {
+					t.Fatalf("state writes=%v", got)
+				}
+				if got := writes[aiPaneBadgeKindOption]; !reflect.DeepEqual(got, []string{codexgeneration.LifecycleBadgeDraining}) {
+					t.Fatalf("badge writes=%v", got)
+				}
+				if got := writes[attentionStateOption]; !reflect.DeepEqual(got, []string{""}) {
+					t.Fatalf("attention writes=%v", got)
+				}
+				return
+			}
+			if !errors.Is(err, errManagedAgentObservationIgnored) {
+				t.Fatalf("refused generation Apply error=%v", err)
+			}
+			if store.writes != 0 || tmuxWrites != 0 || len(writes) != 0 {
+				t.Fatalf("refused generation wrote Registry=%d tmux=%d semantic=%v", store.writes, tmuxWrites, writes)
+			}
+		})
 	}
 }
 

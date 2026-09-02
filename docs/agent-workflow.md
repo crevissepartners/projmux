@@ -638,6 +638,56 @@
   old-stop same-thread barrier, and performs exact cleanup. See
   [codex-generation-pool.md](codex-generation-pool.md).
 
+### Codex app-server generation Phase 1 tests
+
+- `TestGenerationLifecycleProjectionClosedTable` and
+  `FuzzGenerationLifecycleProjectionMatchesClosedTable` own the single 6×7
+  effective-interaction × generation-state tuple. Planned drain, handover,
+  recovery, and blocked projections require an exact operation endpoint;
+  `TestPlannedGenerationProjectionRequiresExactDurableOperationRef`,
+  `TestMarkerlessCrashAndVersionDriftRemainOrdinaryFailure`,
+  `TestMarkerlessCrashAndVersionDriftRemainOrdinaryFailureThroughProductionReconcile`, and
+  `TestLifecycleProjectionAuthorityInputsExcludeProcessHeuristics` keep
+  process exit, version, executable, path, socket, and PID evidence from
+  becoming maintenance authority.
+- `TestRuntimeMutationEquivalenceTableIsClosed`,
+  `TestRuntimeMutationClassesMatchDecisionKernel`, and
+  `TestRuntimeMutationCompositeFenceAndSiblingRecorder` own the eight
+  owner/foreign × current/stale × target/sibling classes. Exactly one class
+  has a semantic effect; equal numeric epochs from another endpoint generation
+  or restarted broker invoke neither Registry nor tmux writer.
+- `TestGenerationLifecycleSinkCompositeAuthorityHasZeroCrossWrites` exercises
+  the application sink with a Registry, fake tmux, and the exact-Pane authority
+  fence. Endpoint generation, broker runtime, connection epoch, binding epoch,
+  and stored operation mismatches return the managed-observation refusal with
+  zero Registry and tmux writes. A syntactically valid provider-supplied
+  operation ID cannot replace the durable operation authority.
+- `TestNativeSemanticApplyAndInvalidationShareExactPaneFence` deterministically
+  pauses an older provider-control Apply after its Registry commit and before
+  its Pane writes, starts disconnect invalidation behind the same exact-Pane
+  fence, and requires invalidation to remain the final Registry/Pane tuple.
+  It then pins the recovery order separately: a replacement snapshot may Apply
+  while authority is `invalidating`, followed by the exact ready authority.
+- `TestGenerationLifecycleProjectionReconcileWritesOnceThenZero`,
+  `TestGenerationLifecycleProductionReconcileRejectsForeignOrSiblingAuthorityWithZeroWrites`, and
+  `TestGenerationLifecycleProjectionUsesIsolatedRealTmuxAndExactCleanup` own
+  production fake and isolated-real-tmux convergence for draining,
+  handover-pending, recovering, and blocked tuples. They prove the durable
+  lifecycle/activation input survives a later full resource reconcile and
+  makes its second pass zero-write. The real fixture strips inherited
+  `TMUX`/`TMUX_PANE`, starts on one unique contained physical `-S` path, accepts
+  that path only from the successful `new-session` Pane/socket receipt, waits
+  on tmux command completion as its semantic barrier, and kills/removes only
+  that queried and containment-proven socket; there is no logical-name cleanup
+  fallback.
+- `TestPlanOnlyMutationProductSurfaceInventoryIsBidirectionalAndClosed` keeps
+  generation presentation under the existing `agent.presentation` typed
+  surface and requires the complete composite fence in its guard. Existing
+  pure reducer PBT, Phase 0 endpoint/authority tests, broker reconnect tests,
+  and C01 remain their canonical unique boundaries. The complete
+  old/new-mutant migration receipt is in
+  [codex-generation-pool.md](codex-generation-pool.md#mapping-and-authority-test-migration-ledger).
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.

@@ -222,6 +222,11 @@ func TestPlanOnlyMutationProductSurfaceInventoryIsBidirectionalAndClosed(t *test
 		!strings.Contains(presentation.Guard, "closed topic/manual-topic/state/badge/attention") {
 		t.Fatalf("Agent presentation writes are not exactly classified as a typed exemption: %#v", presentation)
 	}
+	for _, authorityPart := range []string{"endpoint generation", "broker runtime", "connection epoch", "binding epoch", "durable owner", "target runtime"} {
+		if !strings.Contains(presentation.Guard, authorityPart) {
+			t.Fatalf("Agent presentation inventory misses composite authority %q: %#v", authorityPart, presentation)
+		}
+	}
 	codexAuthority := byID["codex.native-lifecycle-authority"]
 	if codexAuthority.Disposition != runtimeMutationSurfaceExempt ||
 		!strings.Contains(codexAuthority.Guard, "authority, epoch, and bounded reason options only") ||
@@ -243,7 +248,8 @@ func TestControllerAdapterFieldInventoryIsSourceDerivedAndBidirectional(t *testi
 			"MirrorPane": false, "writePaneName": false,
 		},
 		"resource_reconcile_plan.go": {
-			"planResourceAgentProjections": false, "planAuthorshipPromotionOptions": false, "recordWrite": false,
+			"planResourceAgentProjections": false, "planAgentLifecycleProjection": false,
+			"planAuthorshipPromotionOptions": false, "recordWrite": false,
 		},
 		"resource_controller.go": {"controllerRecoveryCandidates": false},
 	}

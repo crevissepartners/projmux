@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -104,7 +105,6 @@ func planResourceAgentProjections(ctx context.Context, recorder *resourcePlanTmu
 				topic = strings.TrimSpace(agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic])
 				interaction = agent.EffectiveInteraction(now)
 			}
-			state, badge, attention := agentTmuxProjection(interaction.Kind)
 			manual := ""
 			if topic != "" {
 				manual = "on"
@@ -114,14 +114,72 @@ func planResourceAgentProjections(ctx context.Context, recorder *resourcePlanTmu
 			}{
 				{aiPaneTopicOption, topic},
 				{aiPaneTopicManualOption, manual},
-				{aiPaneStateOption, state},
-				{aiPaneBadgeKindOption, badge},
-				{attentionStateOption, attention},
 			} {
 				if err := planExactPaneOption(ctx, recorder, target, desired.field, desired.value); err != nil {
 					return err
 				}
 			}
+			lifecycleInput, durableLifecycle, authorizedLifecycle := resourceAgentLifecycleProjectionInput(registry, agent, paneUID, target, interaction.Kind)
+			// A durable lifecycle declaration is fail-closed. If its exact
+			// Agent/Pane/endpoint/activation fence is no longer current, this
+			// reconcile does not replace it with a legacy tuple. A later
+			// authoritative producer or binding owns that transition.
+			if durableLifecycle && !authorizedLifecycle {
+				continue
+			}
+			if err := planAgentLifecycleProjection(ctx, recorder, target, lifecycleInput); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// resourceAgentLifecycleProjectionInput joins the durable generation state and
+// operation to the exact live activation fence. It reads no tmux presentation,
+// process, exit, executable, or version evidence. The target is only the
+// resolved route named by the Registry Pane uid.
+func resourceAgentLifecycleProjectionInput(registry coremetadata.Registry, agent coremetadata.Agent, paneUID, target string, interaction coremetadata.AgentInteractionKind) (codexgeneration.LifecycleProjectionInput, bool, bool) {
+	legacy := codexgeneration.LifecycleProjectionInput{Interaction: interaction}
+	if agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.Lifecycle == nil {
+		return legacy, false, true
+	}
+	codex := agent.Status.SessionRef.Codex
+	lifecycle := codex.Lifecycle
+	input := codexgeneration.LifecycleProjectionInput{
+		Interaction: interaction, Endpoint: codex.Endpoint,
+		GenerationState: lifecycle.State, Operation: lifecycle.Operation,
+	}
+	if agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef != paneUID ||
+		agent.Spec.Provider != aiModeCodex || !input.Authoritative() {
+		return input, true, false
+	}
+	pane, ok := registry.Pane(paneUID)
+	if !ok || pane.Metadata.OwnerUID() != agent.Metadata.UID ||
+		pane.Status.Activation.AgentUID != agent.Metadata.UID ||
+		pane.Status.Activation.RuntimeID != target || pane.Status.Activation.Codex == nil ||
+		pane.Status.Activation.Codex.ThreadID != codex.ThreadID ||
+		pane.Status.Activation.Codex.Authority == nil {
+		return input, true, false
+	}
+	authority := pane.Status.Activation.Codex.Authority
+	decision := codexgeneration.DecideRuntimeMutation(codexgeneration.RuntimeMutationInput{
+		DurableEndpoint: codex.Endpoint,
+		StoredAuthority: authority, PresentedAuthority: authority,
+		TargetRuntimeID: pane.Status.Activation.RuntimeID, EventRuntimeID: target,
+	})
+	return input, true, decision.Class.Effect == codexgeneration.MutationSemanticEffect
+}
+
+func planAgentLifecycleProjection(ctx context.Context, recorder *resourcePlanTmuxRunner, target string, input codexgeneration.LifecycleProjectionInput) error {
+	projection := codexgeneration.ProjectLifecycle(input)
+	for _, desired := range []struct{ field, value string }{
+		{aiPaneStateOption, projection.State},
+		{aiPaneBadgeKindOption, projection.Badge},
+		{attentionStateOption, projection.Attention},
+	} {
+		if err := planExactPaneOption(ctx, recorder, target, desired.field, desired.value); err != nil {
+			return err
 		}
 	}
 	return nil

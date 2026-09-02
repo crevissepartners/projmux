@@ -18,6 +18,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/agentprogress"
+	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -774,6 +775,52 @@ func exactCodexLifecycleBinding(registry coremetadata.Registry, identity codexLi
 		pane.Status.Activation.Codex != nil && pane.Status.Activation.Codex.ThreadID == identity.ThreadID
 }
 
+func (p codexLifecycleProjection) generationAware() bool {
+	return p.Endpoint != nil || p.GenerationState != "" || p.Operation != nil || p.Authority != nil
+}
+
+func (p codexLifecycleProjection) generationInput() codexgeneration.LifecycleProjectionInput {
+	return codexgeneration.LifecycleProjectionInput{
+		Interaction: p.Interaction, Endpoint: p.Endpoint,
+		GenerationState: p.GenerationState, Operation: p.Operation,
+	}
+}
+
+// exactCodexGenerationMutation closes every content-free authority dimension
+// before either the Registry or tmux presentation writer may run.
+func exactCodexGenerationMutation(registry coremetadata.Registry, identity codexLifecycleIdentity, projection codexLifecycleProjection) bool {
+	if !projection.generationAware() || !projection.generationInput().Authoritative() || projection.Authority == nil ||
+		!projection.Endpoint.Same(projection.Authority.Endpoint()) || !exactCodexLifecycleBinding(registry, identity) {
+		return false
+	}
+	agent, ok := registry.Agent(identity.AgentUID)
+	if !ok || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil {
+		return false
+	}
+	storedLifecycle := agent.Status.SessionRef.Codex.Lifecycle
+	if storedLifecycle == nil || storedLifecycle.State != projection.GenerationState ||
+		!sameCodexGenerationOperation(storedLifecycle.Operation, projection.Operation) {
+		return false
+	}
+	pane, ok := registry.Pane(identity.PaneUID)
+	if !ok || pane.Status.Activation.Codex == nil {
+		return false
+	}
+	decision := codexgeneration.ApplyRuntimeMutation(codexgeneration.RuntimeMutationInput{
+		DurableEndpoint: agent.Status.SessionRef.Codex.Endpoint,
+		StoredAuthority: pane.Status.Activation.Codex.Authority, PresentedAuthority: projection.Authority,
+		TargetRuntimeID: pane.Status.Activation.RuntimeID, EventRuntimeID: identity.RuntimeID,
+	}, nil, nil)
+	return decision.Class.Effect == codexgeneration.MutationSemanticEffect
+}
+
+func sameCodexGenerationOperation(stored, presented *coremetadata.CodexGenerationOperationRef) bool {
+	if stored == nil || presented == nil {
+		return stored == nil && presented == nil
+	}
+	return *stored == *presented
+}
+
 func (s aiCodexLifecycleSink) SetAuthority(identity codexLifecycleIdentity, source, epoch, reason string) error {
 	if s.command == nil {
 		return errors.New("codex lifecycle authority requires command")
@@ -823,15 +870,45 @@ func (s aiCodexLifecycleSink) SetAuthority(identity codexLifecycleIdentity, sour
 
 func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection codexLifecycleProjection) error {
 	c := s.command
-	if !projection.Accepted || !s.BindingCurrent(identity) || c.updateRegistry == nil {
+	if c == nil || !projection.Accepted || c.updateRegistry == nil {
 		return errManagedAgentObservationIgnored
 	}
+	if projection.generationAware() {
+		if !projection.generationInput().Authoritative() || projection.Authority == nil {
+			return errManagedAgentObservationIgnored
+		}
+	}
+	// Registry interaction, queue cleanup, and Pane presentation form one
+	// native semantic write set. Every projection owns the same exact-Pane
+	// fence as SetAuthority, including the legacy/non-generation-aware lane;
+	// otherwise invalidation can land between the Registry and tmux halves and
+	// an older Apply can restore stale Pane semantics after the clear.
+	release, err := c.acquireCodexAuthorityFence(identity.PaneUID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if !s.BindingCurrent(identity) {
+		return errManagedAgentObservationIgnored
+	}
+	if projection.generationAware() {
+		registry, err := c.loadRegistry()
+		if err != nil {
+			return err
+		}
+		if !exactCodexGenerationMutation(registry, identity, projection) {
+			return errManagedAgentObservationIgnored
+		}
+	}
 	policy := c.codexSemanticPolicyForInteraction(projection.Interaction)
-	delivery := codexSemanticDeliveryFor(policy, projection.Interaction)
+	delivery := codexSemanticDeliveryForLifecycle(policy, projection.generationInput())
 	mutator := intmetadata.DefaultMutator()
 	mutator.Now = c.sessionRefClock()
 	if _, err := c.updateRegistry(func(registry *coremetadata.Registry) error {
 		if !exactCodexLifecycleBinding(*registry, identity) {
+			return errManagedAgentObservationIgnored
+		}
+		if projection.generationAware() && !exactCodexGenerationMutation(*registry, identity, projection) {
 			return errManagedAgentObservationIgnored
 		}
 		if _, err := mutator.SetAgentInteraction(registry, identity.AgentUID, delivery.RegistryInteraction, string(coremetadata.InteractionSourceProviderControl)); err != nil {
@@ -847,6 +924,15 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 	}
 	if !s.BindingCurrent(identity) {
 		return errManagedAgentObservationIgnored
+	}
+	if projection.generationAware() {
+		registry, err := c.loadRegistry()
+		if err != nil {
+			return err
+		}
+		if !exactCodexGenerationMutation(registry, identity, projection) {
+			return errManagedAgentObservationIgnored
+		}
 	}
 	clearNoticeIDs := append([]string(nil), projection.ClearNoticeIDs...)
 	if !delivery.Notify {
@@ -1086,8 +1172,15 @@ type codexSemanticDelivery struct {
 }
 
 func codexSemanticDeliveryFor(policy config.AISemanticPolicy, interaction coremetadata.AgentInteractionKind) codexSemanticDelivery {
-	state, badge, attention := agentTmuxProjection(interaction)
-	delivery := codexSemanticDelivery{RegistryInteraction: interaction, State: state, Badge: badge, Attention: attention}
+	return codexSemanticDeliveryForLifecycle(policy, codexgeneration.LifecycleProjectionInput{Interaction: interaction})
+}
+
+func codexSemanticDeliveryForLifecycle(policy config.AISemanticPolicy, input codexgeneration.LifecycleProjectionInput) codexSemanticDelivery {
+	projection := codexgeneration.ProjectLifecycle(input)
+	delivery := codexSemanticDelivery{
+		RegistryInteraction: input.Interaction,
+		State:               projection.State, Badge: projection.Badge, Attention: projection.Attention,
+	}
 	switch policy {
 	case config.AISemanticQuiet:
 		// Registry interaction is itself a badge input for aggregate views. Quiet
