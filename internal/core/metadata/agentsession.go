@@ -66,6 +66,61 @@ type CodexSessionRef struct {
 	ThreadID  string            `json:"threadId,omitempty"`
 	SessionID string            `json:"sessionId,omitempty"`
 	Endpoint  *CodexEndpointRef `json:"endpoint,omitempty"`
+	// Lifecycle is the durable generation/operation authority consumed by the
+	// presentation reconciler. Provider observations never create or change it;
+	// later control-plane phases may set it alongside Endpoint.
+	Lifecycle *CodexGenerationLifecycleRef `json:"lifecycle,omitempty"`
+}
+
+// CodexGenerationState is the closed durable generation vocabulary shared by
+// the pool model and the presentation reconciler.
+type CodexGenerationState string
+
+const (
+	CodexGenerationPreparing       CodexGenerationState = "preparing"
+	CodexGenerationCurrent         CodexGenerationState = "current"
+	CodexGenerationDraining        CodexGenerationState = "draining"
+	CodexGenerationHandoverPending CodexGenerationState = "handover-pending"
+	CodexGenerationRetired         CodexGenerationState = "retired"
+	CodexGenerationRecovering      CodexGenerationState = "recovering"
+	CodexGenerationBlocked         CodexGenerationState = "blocked"
+)
+
+// CodexGenerationOperationRef distinguishes an explicitly planned generation
+// transition from ordinary provider/process failure. It is content-free and
+// exact to one endpoint generation.
+type CodexGenerationOperationRef struct {
+	ID       string           `json:"id"`
+	Endpoint CodexEndpointRef `json:"endpoint"`
+}
+
+// ValidFor requires an exact endpoint match. A syntactically valid operation
+// from another endpoint is never authority.
+func (r CodexGenerationOperationRef) ValidFor(endpoint *CodexEndpointRef) bool {
+	return endpoint != nil && validCodexIdentityToken(r.ID) && r.Endpoint.Same(*endpoint)
+}
+
+// CodexGenerationLifecycleRef is the durable semantic input to lifecycle
+// projection. It deliberately has no exit, process, executable, version,
+// socket, or tmux field: those observations cannot invent maintenance state.
+type CodexGenerationLifecycleRef struct {
+	State     CodexGenerationState         `json:"state"`
+	Operation *CodexGenerationOperationRef `json:"operation,omitempty"`
+}
+
+// ValidFor closes the state/operation relation for one exact endpoint.
+func (r CodexGenerationLifecycleRef) ValidFor(endpoint *CodexEndpointRef) bool {
+	if endpoint == nil || !endpoint.Valid() {
+		return false
+	}
+	switch r.State {
+	case CodexGenerationDraining, CodexGenerationHandoverPending, CodexGenerationRecovering, CodexGenerationBlocked:
+		return r.Operation != nil && r.Operation.ValidFor(endpoint)
+	case CodexGenerationPreparing, CodexGenerationCurrent, CodexGenerationRetired:
+		return r.Operation == nil
+	default:
+		return false
+	}
 }
 
 // CodexEndpointRef is the durable endpoint identity of one Codex thread.
@@ -191,6 +246,14 @@ func (r *AgentSessionRef) Clone() *AgentSessionRef {
 		if r.Codex.Endpoint != nil {
 			endpoint := *r.Codex.Endpoint
 			codex.Endpoint = &endpoint
+		}
+		if r.Codex.Lifecycle != nil {
+			lifecycle := *r.Codex.Lifecycle
+			if r.Codex.Lifecycle.Operation != nil {
+				operation := *r.Codex.Lifecycle.Operation
+				lifecycle.Operation = &operation
+			}
+			codex.Lifecycle = &lifecycle
 		}
 		out.Codex = &codex
 	}
@@ -412,6 +475,9 @@ func validateSessionRef(op string, agent Agent) error {
 	}
 	if ref.Codex != nil && ref.Codex.Endpoint != nil && !ref.Codex.Endpoint.Valid() {
 		return stateErr(op, ErrInvalidRegistry, "agent %q Codex sessionRef has an incomplete endpoint identity", agent.Metadata.Name)
+	}
+	if ref.Codex != nil && ref.Codex.Lifecycle != nil && !ref.Codex.Lifecycle.ValidFor(ref.Codex.Endpoint) {
+		return stateErr(op, ErrInvalidRegistry, "agent %q Codex sessionRef has invalid generation lifecycle authority", agent.Metadata.Name)
 	}
 	// spec.provider is only cross-checked when the Agent actually declares one.
 	// An Agent created from an unrecognized provider spelling normalizes to "",

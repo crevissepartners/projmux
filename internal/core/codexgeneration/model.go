@@ -19,23 +19,20 @@ const (
 	QualificationSchemaVersion = 1
 )
 
-type GenerationState string
+type GenerationState = metadata.CodexGenerationState
 
 const (
-	StatePreparing       GenerationState = "preparing"
-	StateCurrent         GenerationState = "current"
-	StateDraining        GenerationState = "draining"
-	StateHandoverPending GenerationState = "handover-pending"
-	StateRetired         GenerationState = "retired"
-	StateRecovering      GenerationState = "recovering"
-	StateBlocked         GenerationState = "blocked"
+	StatePreparing       = metadata.CodexGenerationPreparing
+	StateCurrent         = metadata.CodexGenerationCurrent
+	StateDraining        = metadata.CodexGenerationDraining
+	StateHandoverPending = metadata.CodexGenerationHandoverPending
+	StateRetired         = metadata.CodexGenerationRetired
+	StateRecovering      = metadata.CodexGenerationRecovering
+	StateBlocked         = metadata.CodexGenerationBlocked
 )
 
 func validGenerationState(state GenerationState) bool {
-	return slices.Contains([]GenerationState{
-		StatePreparing, StateCurrent, StateDraining, StateHandoverPending,
-		StateRetired, StateRecovering, StateBlocked,
-	}, state)
+	return slices.Contains(GenerationStates(), state)
 }
 
 type OwnerClass string

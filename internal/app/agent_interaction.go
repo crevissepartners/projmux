@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -55,12 +56,16 @@ type codexLifecycleNotice struct {
 }
 
 type codexLifecycleProjection struct {
-	Accepted       bool
-	Invalidated    bool
-	Interaction    coremetadata.AgentInteractionKind
-	Notices        []codexLifecycleNotice
-	ClearNoticeIDs []string
-	ClearProgress  bool
+	Accepted        bool
+	Invalidated     bool
+	Interaction     coremetadata.AgentInteractionKind
+	Endpoint        *coremetadata.CodexEndpointRef
+	GenerationState codexgeneration.GenerationState
+	Operation       *codexgeneration.LifecycleOperationRef
+	Authority       *coremetadata.CodexAuthorityRef
+	Notices         []codexLifecycleNotice
+	ClearNoticeIDs  []string
+	ClearProgress   bool
 }
 
 // codexLifecycleReducer owns one exact source epoch. An event can mutate state
@@ -367,20 +372,8 @@ func (m *tmuxAgentMutationMirror) WriteInteraction(ctx context.Context, target s
 }
 
 func agentTmuxProjection(kind coremetadata.AgentInteractionKind) (state, badge, attention string) {
-	switch kind {
-	case coremetadata.InteractionInProgress:
-		return "thinking", aiBadgeKindInProgress, attentionStateBusy
-	case coremetadata.InteractionApprovalRequired:
-		return "waiting", aiBadgeKindApprovalRequired, attentionStateReply
-	case coremetadata.InteractionInputRequired:
-		return "waiting", aiBadgeKindInputRequired, attentionStateReply
-	case coremetadata.InteractionResponseComplete:
-		return "waiting", aiBadgeKindResponseComplete, attentionStateReply
-	case coremetadata.InteractionIdle:
-		return "idle", "", ""
-	default:
-		return "", "", ""
-	}
+	projection := codexgeneration.ProjectLifecycle(codexgeneration.LifecycleProjectionInput{Interaction: kind})
+	return projection.State, projection.Badge, projection.Attention
 }
 
 func (c *agentCommand) resolveOneAgent(spelling, ref string, verb selector.Verb) (coremetadata.Registry, coremetadata.Agent, error) {

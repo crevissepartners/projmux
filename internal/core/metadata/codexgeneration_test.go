@@ -15,7 +15,15 @@ func TestCodexEndpointAndAuthorityRefsRoundTripExactlyAndIgnorePaneGeneration(t 
 	endpoint := &CodexEndpointRef{StateDomainID: "state-domain-a", EndpointGenerationID: "endpoint-generation-7"}
 	agent.Status.SessionRef = &AgentSessionRef{
 		Provider: "codex", ObservedAt: lifecycleClock,
-		Codex: &CodexSessionRef{ThreadID: "thread-exact", Endpoint: endpoint},
+		Codex: &CodexSessionRef{
+			ThreadID: "thread-exact", Endpoint: endpoint,
+			Lifecycle: &CodexGenerationLifecycleRef{
+				State: CodexGenerationRecovering,
+				Operation: &CodexGenerationOperationRef{
+					ID: "recover-operation", Endpoint: *endpoint,
+				},
+			},
+		},
 	}
 	pane.Status.Activation.Generation = "pane-materialization-unrelated"
 	pane.Status.Activation.Codex = &CodexActivationBinding{
@@ -34,6 +42,7 @@ func TestCodexEndpointAndAuthorityRefsRoundTripExactlyAndIgnorePaneGeneration(t 
 	}
 	for _, exact := range []string{
 		`"endpoint":{"stateDomainID":"state-domain-a","endpointGenerationID":"endpoint-generation-7"}`,
+		`"lifecycle":{"state":"recovering","operation":{"id":"recover-operation","endpoint":{"stateDomainID":"state-domain-a","endpointGenerationID":"endpoint-generation-7"}}}`,
 		`"authority":{"stateDomainID":"state-domain-a","endpointGenerationID":"endpoint-generation-7","brokerRuntimeID":"broker-runtime-2","connectionEpoch":1,"bindingEpoch":1}`,
 		`"generation":"pane-materialization-unrelated"`,
 	} {
@@ -51,12 +60,62 @@ func TestCodexEndpointAndAuthorityRefsRoundTripExactlyAndIgnorePaneGeneration(t 
 	gotAgent, _ := reopened.Agent(lifecycleAgentUID)
 	gotPane, _ := reopened.Pane(lifecyclePaneUID)
 	if !reflect.DeepEqual(gotAgent.Status.SessionRef.Codex.Endpoint, endpoint) ||
+		!reflect.DeepEqual(gotAgent.Status.SessionRef.Codex.Lifecycle, agent.Status.SessionRef.Codex.Lifecycle) ||
 		gotPane.Status.Activation.Codex.Authority.EndpointGenerationID != "endpoint-generation-7" ||
 		gotPane.Status.Activation.Generation == gotPane.Status.Activation.Codex.Authority.EndpointGenerationID {
 		t.Fatal("endpoint/authority identity did not survive independently of PaneActivation.Generation")
 	}
 	if again, err := json.Marshal(&reopened); err != nil || string(again) != string(raw) {
 		t.Fatalf("reopened Registry bytes drifted: err=%v", err)
+	}
+}
+
+func TestCodexGenerationLifecycleSchemaRejectsMissingOrForeignOperationAuthority(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		lifecycle CodexGenerationLifecycleRef
+	}{
+		{name: "unknown state", lifecycle: CodexGenerationLifecycleRef{State: "upgrading"}},
+		{name: "planned marker only", lifecycle: CodexGenerationLifecycleRef{State: CodexGenerationDraining}},
+		{name: "foreign operation", lifecycle: CodexGenerationLifecycleRef{
+			State: CodexGenerationBlocked,
+			Operation: &CodexGenerationOperationRef{
+				ID: "block-operation", Endpoint: CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "other"},
+			},
+		}},
+		{name: "ordinary state with operation", lifecycle: CodexGenerationLifecycleRef{
+			State: CodexGenerationCurrent,
+			Operation: &CodexGenerationOperationRef{
+				ID: "invented-operation", Endpoint: CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "generation"},
+			},
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reg := lifecycleFixture(t)
+			agent, _ := reg.Agent(lifecycleAgentUID)
+			agent.Status.SessionRef.Codex.Endpoint = &CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "generation"}
+			agent.Status.SessionRef.Codex.Lifecycle = &test.lifecycle
+			if err := reg.Validate(); err == nil {
+				t.Fatal("invalid durable lifecycle authority validated")
+			}
+		})
+	}
+}
+
+func TestCodexGenerationLifecycleCloneDoesNotAliasOperation(t *testing.T) {
+	reg := lifecycleFixture(t)
+	agent, _ := reg.Agent(lifecycleAgentUID)
+	endpoint := &CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "generation"}
+	agent.Status.SessionRef.Codex.Endpoint = endpoint
+	agent.Status.SessionRef.Codex.Lifecycle = &CodexGenerationLifecycleRef{
+		State:     CodexGenerationDraining,
+		Operation: &CodexGenerationOperationRef{ID: "drain-operation", Endpoint: *endpoint},
+	}
+	cloned := reg.Clone()
+	cloneAgent, _ := cloned.Agent(lifecycleAgentUID)
+	cloneAgent.Status.SessionRef.Codex.Lifecycle.Operation.ID = "mutated"
+	if agent.Status.SessionRef.Codex.Lifecycle.Operation.ID != "drain-operation" {
+		t.Fatal("mutating cloned lifecycle operation changed original Registry")
 	}
 }
 
@@ -70,7 +129,7 @@ func TestLegacyCodexRefsRemainGenerationUnavailableWithoutInference(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "stateDomainID") || strings.Contains(string(raw), "endpointGenerationID") || strings.Contains(string(raw), "brokerRuntimeID") {
+	if strings.Contains(string(raw), "stateDomainID") || strings.Contains(string(raw), "endpointGenerationID") || strings.Contains(string(raw), "brokerRuntimeID") || strings.Contains(string(raw), "lifecycle") {
 		t.Fatalf("legacy encoding inferred endpoint authority: %s", raw)
 	}
 	var reopened Registry
@@ -130,6 +189,11 @@ func TestLegacyHookReobservationPreservesAnExactCodexEndpointRef(t *testing.T) {
 		Provider: "codex", ObservedAt: lifecycleClock,
 		Codex: &CodexSessionRef{ThreadID: "thread", SessionID: "optional-session", Endpoint: &CodexEndpointRef{
 			StateDomainID: "domain", EndpointGenerationID: "generation",
+		}, Lifecycle: &CodexGenerationLifecycleRef{
+			State: CodexGenerationDraining,
+			Operation: &CodexGenerationOperationRef{
+				ID: "drain-operation", Endpoint: CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "generation"},
+			},
 		}},
 	}
 	mut := Mutator{Now: func() time.Time { return lifecycleClock.Add(time.Minute) }}
@@ -142,5 +206,9 @@ func TestLegacyHookReobservationPreservesAnExactCodexEndpointRef(t *testing.T) {
 	}
 	if got.Status.SessionRef.Codex.SessionID != "optional-session" {
 		t.Fatal("legacy hook erased an omitted optional session identifier")
+	}
+	if got.Status.SessionRef.Codex.Lifecycle == nil || got.Status.SessionRef.Codex.Lifecycle.Operation == nil ||
+		got.Status.SessionRef.Codex.Lifecycle.Operation.ID != "drain-operation" {
+		t.Fatal("legacy hook erased durable generation lifecycle authority")
 	}
 }
