@@ -14,6 +14,8 @@ func testCodexLifecycleIdentity() codexLifecycleIdentity {
 	}
 }
 
+// This readable example remains because it owns notice publish, clear, and
+// re-notify effects that the pure state reference model intentionally omits.
 func TestCodexLifecycleApprovalRequiresExactPendingAndWaitingPair(t *testing.T) {
 	r := &codexLifecycleReducer{}
 	identity := testCodexLifecycleIdentity()
@@ -79,6 +81,8 @@ func TestCodexLifecycleApprovalRequiresExactPendingAndWaitingPair(t *testing.T) 
 	}
 }
 
+// This example retains the unique no-notice projection boundary for a request
+// that resolves before the waiting status arrives.
 func TestCodexLifecycleAutoApprovedRequestNeverProjectsAttention(t *testing.T) {
 	r := &codexLifecycleReducer{}
 	r.begin(1, testCodexLifecycleIdentity(), codexappserver.LifecycleSnapshot{
@@ -98,6 +102,8 @@ func TestCodexLifecycleAutoApprovedRequestNeverProjectsAttention(t *testing.T) {
 	}
 }
 
+// This example owns exact notification identity and clear-ID behavior; the
+// reference model compares pending ownership but never predicts notice IDs.
 func TestCodexLifecycleResolvedRequestUsesStoredExactTuple(t *testing.T) {
 	r := &codexLifecycleReducer{}
 	r.begin(1, testCodexLifecycleIdentity(), codexappserver.LifecycleSnapshot{
@@ -144,6 +150,8 @@ func TestCodexLifecycleResolvedRequestUsesStoredExactTuple(t *testing.T) {
 	}
 }
 
+// This table remains the canonical notification-once example for terminal
+// outcomes. The reference property owns terminal reducer state only.
 func TestCodexLifecycleCompletionIsExactSuccessfulAndOnce(t *testing.T) {
 	for _, test := range []struct {
 		name        string
@@ -174,106 +182,4 @@ func TestCodexLifecycleCompletionIsExactSuccessfulAndOnce(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestCodexLifecycleInvalidationRejectsLateAndReplacementEvents(t *testing.T) {
-	r := &codexLifecycleReducer{}
-	r.begin(1, testCodexLifecycleIdentity(), codexappserver.LifecycleSnapshot{
-		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive,
-		TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
-	})
-	if got := r.invalidate(1); !got.Invalidated || got.Interaction != coremetadata.InteractionUnknown {
-		t.Fatalf("invalidate = %#v", got)
-	}
-	late := r.apply(1, codexappserver.LifecycleEvent{
-		Kind: codexappserver.LifecycleTurnCompleted, ThreadID: "thread-1", TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted,
-	})
-	if late.Accepted || len(late.Notices) != 0 {
-		t.Fatalf("late event accepted: %#v", late)
-	}
-	r.begin(2, testCodexLifecycleIdentity(), codexappserver.LifecycleSnapshot{
-		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle,
-	})
-	if stale := r.apply(1, codexappserver.LifecycleEvent{
-		Kind: codexappserver.LifecycleTurnStarted, ThreadID: "thread-1", TurnID: "turn-old",
-	}); stale.Accepted {
-		t.Fatalf("old epoch event accepted: %#v", stale)
-	}
-	if foreign := r.apply(2, codexappserver.LifecycleEvent{
-		Kind: codexappserver.LifecycleTurnStarted, ThreadID: "thread-foreign", TurnID: "turn-foreign",
-	}); foreign.Accepted {
-		t.Fatalf("foreign thread event accepted: %#v", foreign)
-	}
-}
-
-func TestCodexLifecycleNotLoadedSnapshotIsImmediateInvalidation(t *testing.T) {
-	r := &codexLifecycleReducer{}
-	projection := r.begin(3, testCodexLifecycleIdentity(), codexappserver.LifecycleSnapshot{
-		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateNotLoaded,
-		TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted,
-	})
-	if !projection.Accepted || !projection.Invalidated || projection.Interaction != coremetadata.InteractionUnknown || len(projection.Notices) != 0 {
-		t.Fatalf("not-loaded snapshot = %#v", projection)
-	}
-	if late := r.apply(3, codexappserver.LifecycleEvent{
-		Kind: codexappserver.LifecycleTurnCompleted, ThreadID: "thread-1", TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted,
-	}); late.Accepted {
-		t.Fatalf("not-loaded epoch accepted late completion: %#v", late)
-	}
-}
-
-func FuzzCodexLifecycleEventSequence(f *testing.F) {
-	f.Add([]byte{0, 1, 2, 3, 4, 5})
-	f.Add([]byte{3, 2, 4, 2, 3, 5})
-	f.Fuzz(func(t *testing.T, sequence []byte) {
-		if len(sequence) > 128 {
-			sequence = sequence[:128]
-		}
-		r := &codexLifecycleReducer{}
-		r.begin(1, testCodexLifecycleIdentity(), codexappserver.LifecycleSnapshot{
-			ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive,
-			TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
-		})
-		for index, raw := range sequence {
-			epoch := uint64(1)
-			threadID := "thread-1"
-			if raw&0x40 != 0 {
-				epoch = 99
-			}
-			if raw&0x80 != 0 {
-				threadID = "foreign"
-			}
-			requestID := "request-1"
-			if index%2 == 1 {
-				requestID = "request-2"
-			}
-			var event codexappserver.LifecycleEvent
-			switch raw % 6 {
-			case 0:
-				event = codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleTurnStarted, ThreadID: threadID, TurnID: "turn-1"}
-			case 1:
-				event = codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleThreadStatus, ThreadID: threadID, ThreadState: codexappserver.ThreadStateWaitingOnApproval}
-			case 2:
-				event = codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleApprovalPending, ThreadID: threadID, TurnID: "turn-1", ItemID: "item-1", RequestID: requestID, ApprovalKind: codexappserver.ApprovalCommand}
-			case 3:
-				event = codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleRequestResolved, ThreadID: threadID, RequestID: requestID}
-			case 4:
-				event = codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleTurnCompleted, ThreadID: threadID, TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted}
-			case 5:
-				event = codexappserver.LifecycleEvent{Kind: codexappserver.LifecycleTurnCompleted, ThreadID: threadID, TurnID: "turn-1", TurnState: codexappserver.TurnStateFailed}
-			}
-			projection := r.apply(epoch, event)
-			if projection.Accepted && !coremetadata.ValidAgentInteractionKind(projection.Interaction) {
-				t.Fatalf("open interaction %q after %#v", projection.Interaction, event)
-			}
-			for _, notice := range projection.Notices {
-				if notice.Category == "approval_required" && (notice.ThreadID != "thread-1" || notice.TurnID == "" || notice.ItemID == "" || notice.RequestID == "") {
-					t.Fatalf("inexact approval notice: %#v", notice)
-				}
-				if notice.Category == "response_complete" && event.TurnState != codexappserver.TurnStateCompleted {
-					t.Fatalf("non-success completion notice: event=%#v notice=%#v", event, notice)
-				}
-			}
-		}
-	})
 }
