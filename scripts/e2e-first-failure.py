@@ -9,7 +9,6 @@ import json
 import os
 import re
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -113,101 +112,83 @@ def terminal_command(args: argparse.Namespace) -> int:
 
 
 def parse_racer(value: str) -> dict[str, Any]:
-    fields = value.split(":", 3)
-    if len(fields) != 4:
-        raise ValueError("racer must be index:pid:status:outcome")
+    fields = value.split(":", 5)
+    if len(fields) != 6:
+        raise ValueError("racer must be index:pid:status:outcome:started_ms:finished_ms")
     index, pid, status = (int(fields[position]) for position in range(3))
     outcome = fields[3]
-    if index not in range(1, 9) or pid < 0 or status not in range(0, 256):
+    started_ms, finished_ms = (int(fields[position]) for position in range(4, 6))
+    if index < 1 or pid < 0 or status not in range(0, 256):
         raise ValueError("invalid racer scalar")
-    if outcome not in {"not-started", "completed", "converged", "deferred", "exhausted", "other"}:
+    if outcome not in {"not-started", "completed", "deadline", "command-failure"}:
         raise ValueError("invalid racer outcome")
-    return {"index": index, "outcome": outcome, "pid": pid, "status": status}
-
-
-def l06_acquire_state(racers: list[dict[str, Any]]) -> str:
-    """State what the racers were seen to do, never what the preamble assumed.
-
-    ``acquire`` used to be assigned ``contended`` before a single racer had run,
-    so it said ``contended`` for every L06 failure whether or not anything ever
-    competed for the lock. Every value below is a statement about an observed
-    racer exit: exhaustion is a racer that reported it could not take the lock,
-    ``acquired`` is every racer completing, and anything else is ``unknown``
-    because a racer that failed for another reason never told us whether its
-    acquisition succeeded.
-    """
-    outcomes = [racer["outcome"] for racer in racers]
-    if any(outcome == "exhausted" for outcome in outcomes):
-        return "contended"
-    if all(outcome == "not-started" for outcome in outcomes):
-        return "not-started"
-    if all(racer["outcome"] == "completed" and racer["status"] == 0 for racer in racers):
-        return "acquired"
-    return "unknown"
+    if started_ms < 0 or finished_ms < 0 or (finished_ms and finished_ms < started_ms):
+        raise ValueError("invalid racer timing")
+    if outcome == "not-started" and (pid or status or started_ms or finished_ms):
+        raise ValueError("a not-started racer cannot carry status or process evidence")
+    if outcome != "not-started" and (pid == 0 or started_ms == 0 or finished_ms == 0):
+        raise ValueError("a started racer requires event-time process evidence")
+    if outcome == "completed" and status != 0:
+        raise ValueError("a completed racer requires status 0")
+    if outcome in {"deadline", "command-failure"} and status == 0:
+        raise ValueError("a failed racer requires nonzero status")
+    return {
+        "finished_ms": finished_ms,
+        "index": index,
+        "outcome": outcome,
+        "pid": pid,
+        "started_ms": started_ms,
+        "status": status,
+    }
 
 
 def l06_attribution(racers: list[dict[str, Any]]) -> str:
-    """Name what was observed, not a cause the observation does not support.
-
-    ``l06-lock-exhaustion`` was a constant: every L06 failure called itself lock
-    exhaustion. The first real capture contradicted it - all eight racers
-    completed with status 0 and no racer reported exhaustion - so the label was
-    asserting a mechanism nothing had seen.
-    """
-    if any(racer["outcome"] == "exhausted" for racer in racers):
-        return "l06-lock-exhaustion"
-    if all(racer["outcome"] == "not-started" for racer in racers):
+    """Return the stable cause captured when each process completed."""
+    if any(racer["outcome"] == "command-failure" for racer in racers):
+        return "l06-command-failure"
+    if any(racer["outcome"] == "deadline" for racer in racers):
+        return "l06-registry-lock-deadline"
+    if not racers or all(racer["outcome"] == "not-started" for racer in racers):
         return "l06-no-racers-observed"
-    if any(racer["outcome"] != "completed" or racer["status"] != 0 for racer in racers):
-        return "l06-racer-failure"
     return "l06-no-racer-failure"
 
 
 def l06_command(args: argparse.Namespace) -> int:
     if not SAFE_OPERATION_RE.fullmatch(args.operation):
         raise ValueError("invalid L06 operation")
-    if args.holder_pid < 0 or args.holder_started_ms < 0:
+    if args.holder_pid < 0 or args.holder_held_ms < 0 or args.holder_released_ms < 0:
         raise ValueError("invalid L06 holder state")
     racers = sorted((parse_racer(value) for value in args.racer), key=lambda item: item["index"])
-    if [item["index"] for item in racers] != list(range(1, 9)):
-        raise ValueError("L06 diagnostics require exactly racers 1 through 8")
-    if args.release not in {"not-started", "held", "released", "unknown"}:
+    if [item["index"] for item in racers] != list(range(1, len(racers) + 1)):
+        raise ValueError("L06 diagnostic racer indexes must be contiguous from 1")
+    if args.release not in {"not-started", "held", "released"}:
         raise ValueError("invalid L06 release state")
-    now_ms = int(time.time() * 1000)
-    holder_started_ms = args.holder_started_ms
-    # Defensive: a caller that computed this stamp with a `date +%s%3N` whose
-    # width the host ignored hands over a nanosecond-shaped value. The smoke
-    # helper no longer produces one, but a stale caller must not be read as a
-    # lock created millions of seconds ago.
-    if holder_started_ms > now_ms * 100:
-        holder_started_ms //= 1_000_000
-    # The caller supplies a timestamp only when it actually read the lock file's
-    # mtime. The old field was named for lock age but was fed the scenario start
-    # time, so it reported elapsed scenario time and invited comparison against
-    # the 30s stale boundary. An unobserved lock now says so instead.
-    lock_observed = holder_started_ms > 0
+    if args.holder_released_ms and args.holder_released_ms < args.holder_held_ms:
+        raise ValueError("holder release predates held event")
+    holder_observed = args.holder_pid > 0 and args.holder_held_ms > 0
+    if not holder_observed and (args.holder_pid or args.holder_held_ms or args.holder_released_ms):
+        raise ValueError("partial holder event is not valid evidence")
+    if args.release == "not-started" and holder_observed:
+        raise ValueError("a not-started holder cannot carry held evidence")
+    if args.release == "held" and (not holder_observed or args.holder_released_ms != 0):
+        raise ValueError("a held holder requires held evidence and no release timestamp")
+    if args.release == "released" and (not holder_observed or args.holder_released_ms == 0):
+        raise ValueError("a released holder requires held and released evidence")
     emit("E2E_DIAGNOSTIC", {
         "attribution": l06_attribution(racers),
         "holder": {
-            "acquire": l06_acquire_state(racers),
-            "lock_age_ms": max(0, now_ms - holder_started_ms) if lock_observed else 0,
-            "lock_observed": lock_observed,
+            "held_ms": args.holder_held_ms,
+            "observed": holder_observed,
             "operation": args.operation,
             "pid": args.holder_pid,
             "release": args.release,
+            "released_ms": args.holder_released_ms,
         },
         "racers": racers,
         "scenario": "L06",
-        # v2, while L08/L16 stay v1. One version string across three
-        # structurally different payloads already identifies the scenario's
-        # field set rather than a shared one, and the L06 payload is the only
-        # one that changed: `age_ms` became `lock_age_ms` + `lock_observed`, and
-        # `attribution` gained values it could never previously report. Failing
-        # e2e artifacts are retained 14 days, so v1 and v2 L06 diagnostics
-        # coexist in downloaded evidence for that window; the version is what
-        # tells a reader which field set to expect instead of leaving them to
-        # probe for a key.
-        "schema": "projmux.e2e-diagnostic/v2",
+        # v3 replaces marker-mtime inference and the fixed eight-racer matrix
+        # with process events captured while the holder/waiter were alive.
+        "schema": "projmux.e2e-diagnostic/v3",
     })
     return 0
 
@@ -378,7 +359,8 @@ def parser() -> argparse.ArgumentParser:
 
     l06 = commands.add_parser("l06")
     l06.add_argument("--holder-pid", required=True, type=int)
-    l06.add_argument("--holder-started-ms", required=True, type=int)
+    l06.add_argument("--holder-held-ms", required=True, type=int)
+    l06.add_argument("--holder-released-ms", required=True, type=int)
     l06.add_argument("--operation", required=True)
     l06.add_argument("--release", required=True)
     l06.add_argument("--racer", action="append", default=[])

@@ -92,8 +92,9 @@ Notes:
 `main` is governed by ruleset `main-protect`:
 
 - Direct push to `main` is blocked. Even repository admin must use a PR.
-- Required status check: the CI `Test` job. The PR cannot merge until it is
-  green.
+- Required status checks are the five CI job names `Format`, `Unit Tests`,
+  `NPM Packages`, `Integration Tests`, and `E2E Tests`. The aggregate `Test`
+  job is observed as the project-wide fan-in, but it is not ruleset-required.
 - Admin bypass is `pull_request` mode — admin can self-merge without
   approvals, but the PR itself is mandatory.
 - Linear history is enforced. The merge methods exposed are

@@ -245,8 +245,8 @@ assert record["attribution"] == "complete"
 diagnostics = [json.loads(line.split(" ", 1)[1]) for line in lines if line.startswith("E2E_DIAGNOSTIC ")]
 # No racer ran in this fixture, so the diagnostic must not name lock exhaustion.
 assert len(diagnostics) == 1 and diagnostics[0]["attribution"] == "l06-no-racers-observed"
-assert diagnostics[0]["holder"]["acquire"] == "not-started"
-assert diagnostics[0]["holder"]["lock_observed"] is False
+assert diagnostics[0]["holder"]["observed"] is False
+assert diagnostics[0]["holder"]["release"] == "not-started"
 
 # The artifact must carry the same attribution and diagnostics the log reported.
 # That equality is the whole point: the log dies with the runner, the file does not.
@@ -256,7 +256,7 @@ assert artifact["terminal_status"] == record["status"] == 23
 assert artifact["terminal_line"] == record["line"]
 assert artifact["terminal_source"] == record["source"]
 assert artifact["diagnostic"] == diagnostics[0]
-assert [racer["index"] for racer in artifact["diagnostic"]["racers"]] == list(range(1, 9))
+assert artifact["diagnostic"]["racers"] == []
 PY
 
 set +e
@@ -482,20 +482,58 @@ grep -Fq "E2E_FLAKE_FLIP scenario=L06 binary=cccccccc attempt=attempt-local-1-1 
 # Every field below used to assert something no observation supported.
 
 l06_diagnostic() {
-  local -a racers=()
-  local index
-  for index in {1..8}; do
-    racers+=(--racer "$index:$2:$3:$4")
-  done
+  local holder_pid="$1"
+  local held_ms="$2"
+  local released_ms="$3"
+  local racer="${4:-}"
+  local -a racer_args=()
+  [[ -z "$racer" ]] || racer_args=(--racer "$racer")
   python3 "$root/scripts/e2e-first-failure.py" l06 \
-    --holder-pid 0 --holder-started-ms "$1" --operation concurrent-create-pane \
-    --release held "${racers[@]}" 2>&1 >/dev/null | sed 's/^E2E_DIAGNOSTIC //'
+    --holder-pid "$holder_pid" --holder-held-ms "$held_ms" \
+    --holder-released-ms "$released_ms" --operation concurrent-create-pane \
+    --release "${5:-released}" "${racer_args[@]}" 2>&1 >/dev/null | sed 's/^E2E_DIAGNOSTIC //'
 }
 
-l06_diagnostic 0 900 0 completed >"$tmp/l06-completed.json"
-l06_diagnostic 0 900 1 exhausted >"$tmp/l06-exhausted.json"
-l06_diagnostic 0 900 1 other >"$tmp/l06-other.json"
-l06_diagnostic "$(( $(date +%s) * 1000 - 1250 ))" 900 0 completed >"$tmp/l06-observed.json"
+now_ms="$(( $(date +%s) * 1000 ))"
+l06_diagnostic 900 "$((now_ms - 1250))" "$((now_ms - 250))" \
+  "1:901:0:completed:$((now_ms - 1000)):$now_ms" >"$tmp/l06-completed.json"
+l06_diagnostic 900 "$((now_ms - 1250))" "$((now_ms - 250))" \
+  "1:902:1:deadline:$((now_ms - 1000)):$now_ms" >"$tmp/l06-deadline.json"
+l06_diagnostic 900 "$((now_ms - 1250))" "$((now_ms - 250))" \
+  "1:903:2:command-failure:$((now_ms - 1000)):$now_ms" >"$tmp/l06-command-failure.json"
+l06_diagnostic 0 0 0 "" not-started >"$tmp/l06-not-started.json"
+# A retained legacy marker is not event evidence. The formatter has no marker
+# path input, so the current deadline cause survives while holder identity and
+# timing stay empty instead of being inferred after the process has exited.
+touch "$tmp/registry.json.lock"
+l06_diagnostic 0 0 0 \
+  "1:904:1:deadline:$((now_ms - 1000)):$now_ms" not-started >"$tmp/l06-stale-marker.json"
+python3 "$root/scripts/e2e-first-failure.py" l06 \
+  --holder-pid 900 --holder-held-ms "$((now_ms - 1250))" \
+  --holder-released-ms "$((now_ms - 250))" --operation concurrent-create-pane \
+  --release released \
+  --racer "1:905:1:deadline:$((now_ms - 1000)):$now_ms" \
+  --racer "2:906:2:command-failure:$((now_ms - 900)):$now_ms" \
+  2>&1 >/dev/null | sed 's/^E2E_DIAGNOSTIC //' >"$tmp/l06-mixed.json"
+
+assert_l06_rejected() {
+  if python3 "$root/scripts/e2e-first-failure.py" l06 "$@" >/dev/null 2>&1; then
+    echo "accepted inconsistent L06 event: $*" >&2
+    exit 1
+  fi
+}
+assert_l06_rejected --holder-pid 0 --holder-held-ms 0 --holder-released-ms 0 \
+  --operation concurrent-create-pane --release not-started --racer "1:901:1:completed:$now_ms:$now_ms"
+assert_l06_rejected --holder-pid 0 --holder-held-ms 0 --holder-released-ms 0 \
+  --operation concurrent-create-pane --release not-started --racer "1:901:0:deadline:$now_ms:$now_ms"
+assert_l06_rejected --holder-pid 0 --holder-held-ms 0 --holder-released-ms 0 \
+  --operation concurrent-create-pane --release not-started --racer "1:0:1:not-started:0:0"
+assert_l06_rejected --holder-pid 900 --holder-held-ms "$now_ms" --holder-released-ms 0 \
+  --operation concurrent-create-pane --release not-started
+assert_l06_rejected --holder-pid 900 --holder-held-ms "$((now_ms - 1))" --holder-released-ms "$now_ms" \
+  --operation concurrent-create-pane --release held
+assert_l06_rejected --holder-pid 900 --holder-held-ms "$now_ms" --holder-released-ms 0 \
+  --operation concurrent-create-pane --release released
 python3 - "$tmp" <<'L06_PY'
 import json
 import pathlib
@@ -505,31 +543,44 @@ root = pathlib.Path(sys.argv[1])
 def diagnostic(name):
     return json.loads((root / f"l06-{name}.json").read_text())
 
-# The exact shape of the first real capture: eight racers completed with status
-# 0 and no lock file was ever read. The old constants called this lock
-# exhaustion, called it contended, and gave it a lock age measured from the
-# scenario start.
+# Required and stress runs share one cardinality-neutral event schema. The
+# holder and racer identities below were captured while the processes lived.
 completed = diagnostic("completed")
-assert completed["schema"] == "projmux.e2e-diagnostic/v2", completed["schema"]
+assert completed["schema"] == "projmux.e2e-diagnostic/v3", completed["schema"]
 assert completed["attribution"] == "l06-no-racer-failure", completed["attribution"]
-assert completed["holder"]["acquire"] == "acquired", completed["holder"]
-assert completed["holder"]["lock_observed"] is False
-assert completed["holder"]["lock_age_ms"] == 0
+assert completed["holder"]["observed"] is True
+assert completed["holder"]["held_ms"] < completed["holder"]["released_ms"]
+assert len(completed["racers"]) == 1
+assert completed["racers"][0]["started_ms"] < completed["racers"][0]["finished_ms"]
 
-exhausted = diagnostic("exhausted")
-assert exhausted["attribution"] == "l06-lock-exhaustion", exhausted["attribution"]
-assert exhausted["holder"]["acquire"] == "contended", exhausted["holder"]
+deadline = diagnostic("deadline")
+assert deadline["attribution"] == "l06-registry-lock-deadline", deadline["attribution"]
+assert deadline["racers"][0]["outcome"] == "deadline"
 
-other = diagnostic("other")
-assert other["attribution"] == "l06-racer-failure", other["attribution"]
-assert other["holder"]["acquire"] == "unknown", other["holder"]
+command_failure = diagnostic("command-failure")
+assert command_failure["attribution"] == "l06-command-failure", command_failure["attribution"]
+assert command_failure["racers"][0]["outcome"] == "command-failure"
 
-# A lock file that was actually stat-ed is the only thing that makes the age
-# field mean lock age.
-observed = diagnostic("observed")
-assert observed["holder"]["lock_observed"] is True
-assert observed["holder"]["lock_age_ms"] >= 1250
-assert "age_ms" not in observed["holder"], observed["holder"]
+mixed = diagnostic("mixed")
+assert mixed["attribution"] == "l06-command-failure", mixed["attribution"]
+assert [racer["outcome"] for racer in mixed["racers"]] == ["deadline", "command-failure"]
+
+not_started = diagnostic("not-started")
+assert not_started["attribution"] == "l06-no-racers-observed"
+assert not_started["holder"] == {
+    "held_ms": 0, "observed": False, "operation": "concurrent-create-pane",
+    "pid": 0, "release": "not-started", "released_ms": 0,
+}
+assert not_started["racers"] == []
+
+stale = diagnostic("stale-marker")
+assert stale["attribution"] == "l06-registry-lock-deadline"
+assert stale["holder"]["observed"] is False and stale["holder"]["pid"] == 0
+assert stale["holder"]["held_ms"] == stale["holder"]["released_ms"] == 0
+assert "lock_age_ms" not in stale["holder"] and "acquire" not in stale["holder"]
+assert all(value not in {"other", "unknown"} for value in (
+    stale["attribution"], stale["racers"][0]["outcome"],
+))
 L06_PY
 
 echo ">> evidence parser/terminal/golden/privacy/pass-only aggregation/intentional-failure/partial-attribution/preserved-diagnostic/observed-classification/derived-diagnostic tests passed"

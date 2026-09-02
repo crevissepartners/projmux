@@ -125,6 +125,11 @@ type storeHooks struct {
 	beforeRename         func() error
 	syncFile             func(*os.File) error
 	syncDir              func(string) error
+	// These nil-only production seams let tests observe both sides of the
+	// lock-free suspicion/locked confirmation boundary without a wall clock.
+	// They never replace lock, deadline, or transaction behavior.
+	afterDegradedSuspect func()
+	afterContendedFlock  func()
 }
 
 // Store persists one resource registry file behind a cross-process lock.
@@ -1229,6 +1234,9 @@ func (s *Store) backup(fromVersion int) (string, error) {
 // lock before it is refused, which the deadline bounds.
 func (s *Store) withMutationLock(fn func() error) error {
 	suspected := s.refuseDegradedMutation()
+	if suspected != nil && s.hooks.afterDegradedSuspect != nil {
+		s.hooks.afterDegradedSuspect()
+	}
 	return s.withLock(func() error {
 		if suspected != nil {
 			if confirmed := s.refuseDegradedMutation(); confirmed != nil {
@@ -1392,6 +1400,9 @@ func (s *Store) acquireRegistryFlock(ctx context.Context, deadline time.Time, ti
 	case !errors.Is(err, unix.EWOULDBLOCK):
 		_ = held.Close()
 		return nil, fmt.Errorf("metadata: acquire registry lock: %w", err)
+	}
+	if s.hooks.afterContendedFlock != nil {
+		s.hooks.afterContendedFlock()
 	}
 
 	remaining := deadline.Sub(s.clock())

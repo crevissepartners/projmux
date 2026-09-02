@@ -1543,85 +1543,335 @@ if ! cmp "$create_root/unrelated-before.geometry" "$create_root/unrelated-after.
   exit 1
 fi
 
-# Concurrent same-shape creates serialize through the Registry lock and retain
-# exact transport identity: one stable Window, one primary Pane, and one exact
-# claimed Pane per racer, with the pre-existing Window/Pane bindings unchanged.
-phase0_stress_window_uid_before="$(ctx show-options -wqv -t "$legacy_window_id" @projmux_window_uid)"
-phase0_stress_pane_uid_before="$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)"
-phase0_stress_project_uid_before="$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)"
-phase0_stress_pids=()
-SMOKE_L06_HOLDER_PID=0
-# Zero means "no lock file was read". The racer-failure branch below is the only
-# place that has a lock file to stat, so seeding this with the scenario start
-# time made the reported lock age an elapsed-scenario timer wearing a lock's
-# name. Acquire state is derived from the racer outcomes, never preset here.
-SMOKE_L06_HOLDER_STARTED_MS=0
-SMOKE_L06_OPERATION=concurrent-create-pane
+# Required L06 owns one semantic guarantee: a real CLI waiter that begins while
+# the persistent kernel lock is held converges after an explicit early release.
+# Three FIFO events (held, released, settled) order the actors without sleeping
+# or inferring a holder from the compatibility marker after failure.
+phase0_window_uid_before="$(ctx show-options -wqv -t "$legacy_window_id" @projmux_window_uid)"
+phase0_pane_uid_before="$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)"
+phase0_project_uid_before="$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)"
+phase0_flock="$create_registry.flock"
+phase0_holder_control="$create_root/phase0-holder.control"
+phase0_holder_events="$create_root/phase0-holder.events"
+phase0_waiter_events="$create_root/phase0-waiter.events"
+mkfifo "$phase0_holder_control" "$phase0_holder_events" "$phase0_waiter_events"
+exec 61<>"$phase0_holder_control"
+exec 62<>"$phase0_holder_events"
+exec 63<>"$phase0_waiter_events"
+
+(
+  exec 71>>"$phase0_flock"
+  flock -x 71
+  printf 'held\t%s\t%s\n' "$BASHPID" "$(smoke_now_ms)" >&62
+  IFS= read -r phase0_holder_command <&61
+  [[ "$phase0_holder_command" == "release" ]]
+  flock -u 71
+  printf 'released\t%s\t%s\n' "$BASHPID" "$(smoke_now_ms)" >&62
+) &
+phase0_holder_job=$!
+IFS=$'\t' read -r phase0_holder_state SMOKE_L06_HOLDER_PID SMOKE_L06_HOLDER_HELD_MS <&62
+if [[ "$phase0_holder_state" != "held" ]] || [[ ! "$SMOKE_L06_HOLDER_PID" =~ ^[1-9][0-9]*$ ]] ||
+  [[ ! "$SMOKE_L06_HOLDER_HELD_MS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "required Registry holder did not publish a valid held event" >&2
+  exit 1
+fi
+SMOKE_L06_HOLDER_RELEASED_MS=0
+SMOKE_L06_OPERATION=required-holder-waiter
 SMOKE_L06_RELEASE_STATE=held
-SMOKE_L06_RACER_PIDS=(0 0 0 0 0 0 0 0)
-SMOKE_L06_RACER_STATUSES=(0 0 0 0 0 0 0 0)
-SMOKE_L06_RACER_OUTCOMES=(not-started not-started not-started not-started not-started not-started not-started not-started)
-for phase0_racer in {1..8}; do
-  pmx create pane --project alpha --window phase0-stress --create-window -o pane-id \
-    >"$create_root/phase0-stress-$phase0_racer.out" \
-    2>"$create_root/phase0-stress-$phase0_racer.err" &
-  phase0_stress_pids+=("$!")
-  SMOKE_L06_RACER_PIDS[phase0_racer - 1]="$!"
-done
-phase0_stress_failed=0
-for phase0_racer in {1..8}; do
-  phase0_stress_pid="${phase0_stress_pids[phase0_racer - 1]}"
-  if wait "$phase0_stress_pid"; then
-    SMOKE_L06_RACER_STATUSES[phase0_racer - 1]=0
-    SMOKE_L06_RACER_OUTCOMES[phase0_racer - 1]=completed
+SMOKE_L06_RACER_EVENTS=()
+
+(
+  pmx create pane --project alpha --window phase0-sentinel --create-window -o pane-id \
+    >"$create_root/phase0-sentinel.out" 2>"$create_root/phase0-sentinel.err" &
+  phase0_waiter_pid=$!
+  phase0_waiter_started_ms="$(smoke_now_ms)"
+  printf 'started\t%s\t%s\n' "$phase0_waiter_pid" "$phase0_waiter_started_ms" >&63
+  set +e
+  wait "$phase0_waiter_pid"
+  phase0_waiter_status=$?
+  set -e
+  phase0_waiter_finished_ms="$(smoke_now_ms)"
+  if [[ "$phase0_waiter_status" == "0" ]]; then
+    phase0_waiter_outcome=completed
+  elif grep -Fq "registry lock acquisition timed out" "$create_root/phase0-sentinel.err"; then
+    phase0_waiter_outcome=deadline
   else
-    SMOKE_L06_RACER_STATUSES[phase0_racer - 1]="$?"
-    phase0_stress_failed=1
-    if grep -q "acquire lock: exhausted" "$create_root/phase0-stress-$phase0_racer.err"; then
-      SMOKE_L06_RACER_OUTCOMES[phase0_racer - 1]=exhausted
-    else
-      SMOKE_L06_RACER_OUTCOMES[phase0_racer - 1]=other
-    fi
-    if [[ -f "$create_registry.lock" ]]; then
-      phase0_lock_pid="$(sed -n 's/^pid=\([0-9][0-9]*\)$/\1/p' "$create_registry.lock" | head -n 1)"
-      if [[ -n "$phase0_lock_pid" ]]; then
-        SMOKE_L06_HOLDER_PID="$phase0_lock_pid"
-      fi
-      SMOKE_L06_HOLDER_STARTED_MS="$(( $(stat -c %Y "$create_registry.lock") * 1000 ))"
-    fi
-    cat "$create_root/phase0-stress-$phase0_racer.err" >&2 || true
+    phase0_waiter_outcome="command-failure"
   fi
-done
-if [[ ! -e "$create_registry.lock" ]]; then
+  printf 'settled\t%s\t%s\t%s\t%s\t%s\n' \
+    "$phase0_waiter_pid" "$phase0_waiter_status" "$phase0_waiter_outcome" \
+    "$phase0_waiter_started_ms" "$phase0_waiter_finished_ms" >&63
+) &
+phase0_waiter_job=$!
+IFS=$'\t' read -r phase0_waiter_state phase0_waiter_pid phase0_waiter_started_ms <&63
+if [[ "$phase0_waiter_state" != "started" ]] || [[ ! "$phase0_waiter_pid" =~ ^[1-9][0-9]*$ ]]; then
+  echo "required Registry waiter did not publish a valid started event" >&2
+  exit 1
+fi
+printf 'release\n' >&61
+IFS=$'\t' read -r phase0_release_state phase0_release_pid SMOKE_L06_HOLDER_RELEASED_MS <&62
+SMOKE_L06_RELEASE_STATE=released
+if [[ "$phase0_release_state" != "released" ]] || [[ "$phase0_release_pid" != "$SMOKE_L06_HOLDER_PID" ]] ||
+  ((SMOKE_L06_HOLDER_RELEASED_MS < SMOKE_L06_HOLDER_HELD_MS)); then
+  echo "required Registry holder released event was invalid" >&2
+  exit 1
+fi
+IFS=$'\t' read -r phase0_waiter_state phase0_waiter_pid phase0_waiter_status \
+  phase0_waiter_outcome phase0_waiter_started_ms phase0_waiter_finished_ms <&63
+SMOKE_L06_RACER_EVENTS=("1:$phase0_waiter_pid:$phase0_waiter_status:$phase0_waiter_outcome:$phase0_waiter_started_ms:$phase0_waiter_finished_ms")
+wait "$phase0_holder_job"
+wait "$phase0_waiter_job"
+exec 61>&-
+exec 62>&-
+exec 63>&-
+if [[ "$phase0_waiter_state" != "settled" ]] || [[ "$phase0_waiter_status" != "0" ]] ||
+  [[ "$phase0_waiter_outcome" != "completed" ]] ||
+  ((phase0_waiter_started_ms < SMOKE_L06_HOLDER_HELD_MS)) ||
+  ((phase0_waiter_finished_ms < SMOKE_L06_HOLDER_RELEASED_MS)); then
+  echo "required Registry waiter did not settle after the held/release barrier" >&2
+  cat "$create_root/phase0-sentinel.err" >&2 || true
+  exit 1
+fi
+
+phase0_sentinel_pane="$(tr -d '[:space:]' <"$create_root/phase0-sentinel.out")"
+phase0_sentinel_pane_uid="$(ctx show-options -pqv -t "$phase0_sentinel_pane" @projmux_pane_uid)"
+phase0_sentinel_window_uid="$(ctx show-options -wqv -t legacy-alpha:phase0-sentinel @projmux_window_uid)"
+phase0_sentinel_live_binding="$(
+  ctx display-message -p -t "$phase0_sentinel_pane" \
+    '#{session_id}|#{window_id}|#{pane_id}|#{@projmux_window_uid}|#{@projmux_pane_uid}|#{@projmux_pane_owner_kind}|#{@projmux_pane_owner_uid}'
+)"
+IFS='|' read -r phase0_sentinel_session_id phase0_sentinel_window_id phase0_sentinel_runtime_pane \
+  phase0_mirror_window_uid phase0_mirror_pane_uid phase0_mirror_owner_kind phase0_mirror_owner_uid \
+  <<<"$phase0_sentinel_live_binding"
+ctx list-panes -t legacy-alpha:phase0-sentinel \
+  -F '#{pane_id}|#{@projmux_pane_uid}|#{@projmux_pane_owner_kind}|#{@projmux_pane_owner_uid}' \
+  >"$create_root/phase0-sentinel-live-panes"
+if [[ ! "$phase0_sentinel_pane" =~ ^%[0-9]+$ ]] || [[ -z "$phase0_sentinel_pane_uid" ]] ||
+  [[ -z "$phase0_sentinel_window_uid" ]] ||
+  [[ "$phase0_sentinel_runtime_pane" != "$phase0_sentinel_pane" ]] ||
+  [[ ! "$phase0_sentinel_session_id" =~ ^\$[0-9]+$ ]] ||
+  [[ ! "$phase0_sentinel_window_id" =~ ^@[0-9]+$ ]] ||
+  [[ "$phase0_mirror_window_uid" != "$phase0_sentinel_window_uid" ]] ||
+  [[ "$phase0_mirror_pane_uid" != "$phase0_sentinel_pane_uid" ]] ||
+  [[ "$phase0_mirror_owner_kind" != "Window" ]] ||
+  [[ "$phase0_mirror_owner_uid" != "$phase0_sentinel_window_uid" ]] ||
+  [[ "$(ctx list-panes -t legacy-alpha:phase0-sentinel -F '#{pane_id}' | wc -l)" != "2" ]]; then
+  echo "required Registry waiter lost exact Pane/Window materialization" >&2
+  exit 1
+fi
+python3 - "$create_registry" "$phase0_project_uid_before" "$phase0_sentinel_window_uid" \
+  "$phase0_sentinel_pane_uid" "$phase0_sentinel_session_id" "$phase0_sentinel_window_id" \
+  "$phase0_sentinel_pane" "$create_root/phase0-sentinel-live-panes" <<'PY'
+import json
+import pathlib
+import sys
+
+registry = json.loads(pathlib.Path(sys.argv[1]).read_text())
+project_uid, window_uid, pane_uid, session_id, window_id, pane_id, live_path = sys.argv[2:]
+window = next(item for item in registry["windows"] if item["metadata"]["uid"] == window_uid)
+pane = next(item for item in registry["panes"] if item["metadata"]["uid"] == pane_uid)
+live_panes = {}
+for line in pathlib.Path(live_path).read_text().splitlines():
+    runtime_id, uid, owner_kind, owner_uid = line.split("|")
+    assert runtime_id.startswith("%") and uid and owner_kind == "Window" and owner_uid == window_uid
+    live_panes[runtime_id] = uid
+assert window["metadata"]["name"] == "phase0-sentinel"
+assert window["metadata"]["ownerRef"] == {"kind": "Project", "uid": project_uid}
+assert window["status"]["runtimeSessionID"] == session_id
+assert window["status"]["runtimeID"] == window_id
+assert pane["metadata"]["ownerRef"] == {"kind": "Window", "uid": window_uid}
+assert pane["status"]["activation"]["runtimeID"] == pane_id
+assert live_panes[pane_id] == pane_uid
+owned_panes = [item for item in registry["panes"] if item["metadata"].get("ownerRef") == {"kind": "Window", "uid": window_uid}]
+assert len(live_panes) == len(owned_panes) == 2
+for owned in owned_panes:
+    runtime_id = owned["status"]["activation"]["runtimeID"]
+    assert live_panes[runtime_id] == owned["metadata"]["uid"]
+PY
+if [[ "$(ctx show-options -wqv -t "$legacy_window_id" @projmux_window_uid)" != "$phase0_window_uid_before" ]] ||
+  [[ "$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)" != "$phase0_pane_uid_before" ]] ||
+  [[ "$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)" != "$phase0_project_uid_before" ]]; then
+  echo "required Registry waiter contaminated a pre-existing identity" >&2
+  exit 1
+fi
+phase0_residue="$(find "$(dirname "$create_registry")" -maxdepth 1 -type f \
+  \( -name '*.lock' -o -name '.*.tmp-*' -o -name '*.staged-*' \) -print)"
+if [[ ! -f "$phase0_flock" ]] || [[ -n "$phase0_residue" ]]; then
+  echo "required Registry waiter left lock/staged residue: $phase0_residue" >&2
+  exit 1
+fi
+echo ">> required Registry holder/waiter: holder=$SMOKE_L06_HOLDER_PID waiter=$phase0_waiter_pid pane=$phase0_sentinel_pane persistent_flock=expected residue=0"
+
+# The historical eight-way full tmux create remains available only as an
+# explicit capacity/fairness observation. Its process gate proves all eight
+# racers were ready before release, and event-time intervals prove overlap;
+# deadline results are reported, not promoted into required acceptance.
+if [[ "${PROJMUX_E2E_REGISTRY_STRESS:-0}" == "1" ]]; then
+  phase0_stress_events="$create_root/phase0-stress.events"
+  phase0_stress_holder_control="$create_root/phase0-stress-holder.control"
+  phase0_stress_holder_events="$create_root/phase0-stress-holder.events"
+  mkfifo "$phase0_stress_events" "$phase0_stress_holder_control" "$phase0_stress_holder_events"
+  exec 64<>"$phase0_stress_events"
+  exec 65<>"$phase0_stress_holder_control"
+  exec 66<>"$phase0_stress_holder_events"
+  (
+    exec 75>>"$phase0_flock"
+    flock -x 75
+    printf 'held\t%s\t%s\n' "$BASHPID" "$(smoke_now_ms)" >&66
+    IFS= read -r phase0_stress_holder_command <&65
+    [[ "$phase0_stress_holder_command" == "release" ]]
+    flock -u 75
+    printf 'released\t%s\t%s\n' "$BASHPID" "$(smoke_now_ms)" >&66
+  ) &
+  phase0_stress_holder_job=$!
+  IFS=$'\t' read -r phase0_stress_holder_state SMOKE_L06_HOLDER_PID SMOKE_L06_HOLDER_HELD_MS <&66
+  [[ "$phase0_stress_holder_state" == "held" ]]
+  SMOKE_L06_HOLDER_RELEASED_MS=0
+  SMOKE_L06_OPERATION=opt-in-eight-way-create
+  SMOKE_L06_RELEASE_STATE=held
+  SMOKE_L06_RACER_EVENTS=()
+  : "$SMOKE_L06_OPERATION" "$SMOKE_L06_RELEASE_STATE"
+
+  phase0_stress_jobs=()
+  for phase0_racer in {1..8}; do
+    phase0_stress_gate="$create_root/phase0-stress-$phase0_racer.gate"
+    mkfifo "$phase0_stress_gate"
+    (
+      printf 'ready\t%s\n' "$phase0_racer" >&64
+      IFS= read -r phase0_stress_command <"$phase0_stress_gate"
+      [[ "$phase0_stress_command" == "start" ]]
+      pmx create pane --project alpha --window phase0-stress --create-window -o pane-id \
+        >"$create_root/phase0-stress-$phase0_racer.out" \
+        2>"$create_root/phase0-stress-$phase0_racer.err" &
+      phase0_stress_pid=$!
+      phase0_stress_started_ms="$(smoke_now_ms)"
+      printf 'started\t%s\t%s\t%s\n' "$phase0_racer" "$phase0_stress_pid" "$phase0_stress_started_ms" >&64
+      set +e
+      wait "$phase0_stress_pid"
+      phase0_stress_status=$?
+      set -e
+      phase0_stress_finished_ms="$(smoke_now_ms)"
+      if [[ "$phase0_stress_status" == "0" ]]; then
+        phase0_stress_outcome=completed
+      elif grep -Fq "registry lock acquisition timed out" "$create_root/phase0-stress-$phase0_racer.err"; then
+        phase0_stress_outcome=deadline
+      else
+        phase0_stress_outcome="command-failure"
+      fi
+      printf 'settled\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$phase0_racer" "$phase0_stress_pid" "$phase0_stress_status" "$phase0_stress_outcome" \
+        "$phase0_stress_started_ms" "$phase0_stress_finished_ms" >&64
+    ) &
+    phase0_stress_jobs+=("$!")
+  done
+  for _ in {1..8}; do
+    IFS=$'\t' read -r phase0_stress_state phase0_racer <&64
+    [[ "$phase0_stress_state" == "ready" ]]
+  done
+  for phase0_racer in {1..8}; do
+    printf 'start\n' >"$create_root/phase0-stress-$phase0_racer.gate"
+  done
+
+  phase0_stress_started=0
+  phase0_stress_settled=0
+  phase0_stress_latest_start=0
+  phase0_stress_earliest_finish=0
+  phase0_stress_completed=0
+  phase0_stress_deadlines=0
+  phase0_stress_command_failures=0
+  phase0_stress_pids=()
+  phase0_stress_started_times=()
+  for _ in {1..8}; do
+    IFS=$'\t' read -r phase0_stress_state phase0_racer phase0_stress_pid phase0_stress_started_ms <&64
+    [[ "$phase0_stress_state" == "started" ]] || exit 1
+    [[ "$phase0_racer" =~ ^[1-8]$ ]] || exit 1
+    kill -0 "$phase0_stress_pid"
+    phase0_stress_started=$((phase0_stress_started + 1))
+    phase0_stress_pids[phase0_racer - 1]="$phase0_stress_pid"
+    phase0_stress_started_times[phase0_racer - 1]="$phase0_stress_started_ms"
+    if ((phase0_stress_started_ms > phase0_stress_latest_start)); then
+      phase0_stress_latest_start="$phase0_stress_started_ms"
+    fi
+  done
+  # Every real CLI process is alive behind the persistent flock before the
+  # holder releases it. This is actual process overlap, not launch proximity.
+  printf 'release\n' >&65
+  IFS=$'\t' read -r phase0_stress_release_state phase0_stress_release_pid \
+    SMOKE_L06_HOLDER_RELEASED_MS <&66
   SMOKE_L06_RELEASE_STATE=released
-fi
-if [[ "$phase0_stress_failed" != 0 ]]; then
-  echo "concurrent exact-socket create stress had a failed racer" >&2
-  exit 1
-fi
-if [[ "$(ctx list-windows -t legacy-alpha -F '#{window_name}' | grep -cx phase0-stress)" != 1 ]] ||
-  [[ "$(ctx list-panes -t legacy-alpha:phase0-stress -F '#{pane_id}' | wc -l)" != 9 ]]; then
-  echo "concurrent create stress did not converge on one Window with nine Panes" >&2
-  exit 1
-fi
-for phase0_racer in {1..8}; do
-  phase0_stress_pane="$(tr -d '[:space:]' <"$create_root/phase0-stress-$phase0_racer.out")"
-  if [[ ! "$phase0_stress_pane" =~ ^%[0-9]+$ ]] ||
-    [[ -z "$(ctx show-options -pqv -t "$phase0_stress_pane" @projmux_pane_uid)" ]]; then
-    echo "concurrent create stress lost exact Pane attribution: racer=$phase0_racer pane=$phase0_stress_pane" >&2
+  [[ "$phase0_stress_release_state" == "released" ]] || exit 1
+  [[ "$phase0_stress_release_pid" == "$SMOKE_L06_HOLDER_PID" ]] || exit 1
+  wait "$phase0_stress_holder_job"
+
+  for _ in {1..8}; do
+    IFS=$'\t' read -r phase0_stress_state phase0_racer phase0_stress_pid phase0_stress_status \
+      phase0_stress_outcome phase0_stress_started_ms phase0_stress_finished_ms <&64
+    [[ "$phase0_stress_state" == "settled" ]]
+    [[ "${phase0_stress_pids[phase0_racer - 1]}" == "$phase0_stress_pid" ]]
+    [[ "${phase0_stress_started_times[phase0_racer - 1]}" == "$phase0_stress_started_ms" ]]
+    phase0_stress_settled=$((phase0_stress_settled + 1))
+    SMOKE_L06_RACER_EVENTS[phase0_racer - 1]="$phase0_racer:$phase0_stress_pid:$phase0_stress_status:$phase0_stress_outcome:$phase0_stress_started_ms:$phase0_stress_finished_ms"
+    if ((phase0_stress_started_ms > phase0_stress_latest_start)); then
+      phase0_stress_latest_start="$phase0_stress_started_ms"
+    fi
+    if ((phase0_stress_earliest_finish == 0 || phase0_stress_finished_ms < phase0_stress_earliest_finish)); then
+      phase0_stress_earliest_finish="$phase0_stress_finished_ms"
+    fi
+    case "$phase0_stress_outcome" in
+      completed) phase0_stress_completed=$((phase0_stress_completed + 1)) ;;
+      deadline) phase0_stress_deadlines=$((phase0_stress_deadlines + 1)) ;;
+      command-failure) phase0_stress_command_failures=$((phase0_stress_command_failures + 1)) ;;
+    esac
+  done
+  for phase0_stress_job in "${phase0_stress_jobs[@]}"; do
+    wait "$phase0_stress_job"
+  done
+  exec 64>&-
+  exec 65>&-
+  exec 66>&-
+  if [[ "$phase0_stress_started" != "8" ]] || ((phase0_stress_earliest_finish < phase0_stress_latest_start)); then
+    echo "opt-in Registry stress did not overlap all eight real CLI processes" >&2
     exit 1
   fi
-done
-if [[ "$(ctx list-panes -t legacy-alpha:phase0-stress -F '#{@projmux_pane_uid}' | sed '/^$/d' | sort -u | wc -l)" != 9 ]] ||
-  [[ -z "$(ctx show-options -wqv -t legacy-alpha:phase0-stress @projmux_window_uid)" ]]; then
-  echo "concurrent create stress produced blank or duplicate Registry mirrors" >&2
-  exit 1
-fi
-if [[ "$(ctx show-options -wqv -t "$legacy_window_id" @projmux_window_uid)" != "$phase0_stress_window_uid_before" ]] ||
-  [[ "$(ctx show-options -pqv -t "$legacy_pane" @projmux_pane_uid)" != "$phase0_stress_pane_uid_before" ]] ||
-  [[ "$(ctx show-options -qv -t legacy-alpha @projmux_project_uid)" != "$phase0_stress_project_uid_before" ]]; then
-  echo "concurrent create stress contaminated a pre-existing identity" >&2
-  exit 1
+  if [[ "$phase0_stress_command_failures" != "0" ]]; then
+    echo "opt-in Registry stress observed a non-deadline command failure" >&2
+    cat "$create_root"/phase0-stress-*.err >&2 || true
+    exit 1
+  fi
+  : >"$create_root/phase0-stress-results.tsv"
+  for phase0_stress_event in "${SMOKE_L06_RACER_EVENTS[@]}"; do
+    IFS=':' read -r phase0_racer phase0_stress_pid phase0_stress_status phase0_stress_outcome \
+      phase0_stress_started_ms phase0_stress_finished_ms <<<"$phase0_stress_event"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "$phase0_racer" "$phase0_stress_pid" "$phase0_stress_status" "$phase0_stress_outcome" \
+      "$phase0_stress_started_ms" "$phase0_stress_finished_ms" \
+      >>"$create_root/phase0-stress-results.tsv"
+    printf '>> opt-in Registry stress racer: index=%s pid=%s status=%s outcome=%s started_ms=%s finished_ms=%s\n' \
+      "$phase0_racer" "$phase0_stress_pid" "$phase0_stress_status" "$phase0_stress_outcome" \
+      "$phase0_stress_started_ms" "$phase0_stress_finished_ms"
+  done
+  if [[ "$phase0_stress_completed" != "0" ]]; then
+    if [[ "$(ctx list-windows -t legacy-alpha -F '#{window_name}' | grep -cx phase0-stress)" != "1" ]] ||
+      [[ "$(ctx list-panes -t legacy-alpha:phase0-stress -F '#{pane_id}' | wc -l)" != "$((phase0_stress_completed + 1))" ]]; then
+      echo "opt-in Registry stress lost successful create convergence" >&2
+      exit 1
+    fi
+    for phase0_racer in {1..8}; do
+      if [[ "${SMOKE_L06_RACER_EVENTS[phase0_racer - 1]}" == *":completed:"* ]]; then
+        phase0_stress_pane="$(tr -d '[:space:]' <"$create_root/phase0-stress-$phase0_racer.out")"
+        if [[ ! "$phase0_stress_pane" =~ ^%[0-9]+$ ]] ||
+          [[ -z "$(ctx show-options -pqv -t "$phase0_stress_pane" @projmux_pane_uid)" ]]; then
+          echo "opt-in Registry stress lost exact Pane attribution: racer=$phase0_racer" >&2
+          exit 1
+        fi
+      fi
+    done
+  fi
+  phase0_residue="$(find "$(dirname "$create_registry")" -maxdepth 1 -type f \
+    \( -name '*.lock' -o -name '.*.tmp-*' -o -name '*.staged-*' \) -print)"
+  [[ -f "$phase0_flock" && -z "$phase0_residue" ]]
+  printf '>> opt-in Registry stress: overlap=8 completed=%s deadline=%s command-failure=%s persistent_flock=expected residue=0\n' \
+    "$phase0_stress_completed" "$phase0_stress_deadlines" "$phase0_stress_command_failures"
 fi
 
 # 5. --create-window is the opt-in Window ensure, and the result is still a Pane.
@@ -3102,59 +3352,19 @@ fi
 # of concurrent workers contending for the one registry lock produces.
 cp "$binding_registry" "$binding_root/registry.before-burst"
 binding_burst_pids=()
-# Zero until a lock file is actually stat-ed below; acquire state is derived
-# from the racer outcomes rather than asserted before any racer has run.
-SMOKE_L06_HOLDER_STARTED_MS=0
-SMOKE_L06_RELEASE_STATE=held
-SMOKE_L06_RACER_PIDS=(0 0 0 0 0 0 0 0)
-SMOKE_L06_RACER_STATUSES=(0 0 0 0 0 0 0 0)
-SMOKE_L06_RACER_OUTCOMES=(not-started not-started not-started not-started not-started not-started not-started not-started)
 for binding_burst_index in 1 2 3 4 5 6 7 8; do
   binding_pmx internal tmux converge --socket-path "$binding_socket_path" \
     --session "$binding_session" --reason pane-killed \
     >"$binding_root/burst-$binding_burst_index.out" 2>"$binding_root/burst-$binding_burst_index.err" &
   binding_burst_pids+=("$!")
-  SMOKE_L06_RACER_PIDS[binding_burst_index - 1]="$!"
 done
 binding_burst_failed=0
 for binding_burst_index in 1 2 3 4 5 6 7 8; do
   binding_burst_pid="${binding_burst_pids[binding_burst_index - 1]}"
-  if wait "$binding_burst_pid"; then
-    SMOKE_L06_RACER_STATUSES[binding_burst_index - 1]=0
-  else
-    SMOKE_L06_RACER_STATUSES[binding_burst_index - 1]="$?"
+  if ! wait "$binding_burst_pid"; then
     binding_burst_failed=1
-    if [[ -f "$binding_registry.lock" ]]; then
-      binding_lock_pid="$(sed -n 's/^pid=\([0-9][0-9]*\)$/\1/p' "$binding_registry.lock" | head -n 1)"
-      if [[ -n "$binding_lock_pid" ]]; then
-        SMOKE_L06_HOLDER_PID="$binding_lock_pid"
-      fi
-      SMOKE_L06_HOLDER_STARTED_MS="$(( $(stat -c %Y "$binding_registry.lock") * 1000 ))"
-      SMOKE_L06_RELEASE_STATE=held
-    fi
-  fi
-  if grep -q "exhausted" "$binding_root/burst-$binding_burst_index.err"; then
-    SMOKE_L06_RACER_OUTCOMES[binding_burst_index - 1]=exhausted
-  elif grep -q "another controller worker holds" "$binding_root/burst-$binding_burst_index.err"; then
-    SMOKE_L06_RACER_OUTCOMES[binding_burst_index - 1]=deferred
-  elif grep -q "converged=true" "$binding_root/burst-$binding_burst_index.err"; then
-    SMOKE_L06_RACER_OUTCOMES[binding_burst_index - 1]=converged
-    if [[ "$SMOKE_L06_HOLDER_PID" == "0" ]]; then
-      SMOKE_L06_HOLDER_PID="$binding_burst_pid"
-    fi
-  else
-    SMOKE_L06_RACER_OUTCOMES[binding_burst_index - 1]=other
   fi
 done
-if [[ ! -e "$binding_registry.lock" ]]; then
-  SMOKE_L06_RELEASE_STATE=released
-fi
-# These variables are consumed indirectly by the failure trap sourced from
-# test/lib/smoke.sh. Keep an explicit no-op read so standalone ShellCheck sees
-# the cross-file diagnostic-state contract.
-: "$SMOKE_L06_HOLDER_PID" "$SMOKE_L06_HOLDER_STARTED_MS" "$SMOKE_L06_OPERATION" \
-  "$SMOKE_L06_RELEASE_STATE" \
-  "${SMOKE_L06_RACER_PIDS[*]}" "${SMOKE_L06_RACER_STATUSES[*]}" "${SMOKE_L06_RACER_OUTCOMES[*]}"
 if [[ "$binding_burst_failed" != "0" ]]; then
   echo "a hook burst producer exited non-zero" >&2
   cat "$binding_root"/burst-*.err >&2 || true
