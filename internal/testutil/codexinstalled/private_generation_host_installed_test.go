@@ -62,7 +62,7 @@ func TestInstalledPrivateGenerationHostDualListenerSmoke(t *testing.T) {
 	}
 	bundleStat, statOK := bundleInfo.Sys().(*syscall.Stat_t)
 	if !bundleInfo.IsDir() || bundleInfo.Mode()&os.ModeSymlink != 0 ||
-		bundleInfo.Mode().Perm() != 0o700 || !statOK || bundleStat.Uid != uint32(os.Geteuid()) {
+		bundleInfo.Mode().Perm() != 0o700 || !statOK || int64(bundleStat.Uid) != int64(os.Geteuid()) {
 		t.Fatal("private host bundle root must be exact owner-private 0700")
 	}
 	if entries, err := os.ReadDir(bundleRoot); err != nil || len(entries) != 0 {

@@ -588,7 +588,7 @@ func ownerPrivateDirectory(path string) (fs.FileInfo, error) {
 		return nil, hostRefuse(HostRefusalPrivateRootInvalid, err)
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != uint32(os.Geteuid()) {
+	if !ok || int64(stat.Uid) != int64(os.Geteuid()) {
 		return nil, hostRefuse(HostRefusalPrivateRootInvalid, nil)
 	}
 	return info, nil
