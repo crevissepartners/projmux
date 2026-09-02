@@ -21,7 +21,7 @@ const codexAuthorityFenceDir = "codex-authority-fences"
 // reconnect behind a stale userspace token.
 func (c *aiCommand) acquireCodexAuthorityFence(paneUID string) (func(), error) {
 	if c == nil {
-		return nil, fmt.Errorf("Codex authority fence requires command")
+		return nil, fmt.Errorf("codex authority fence requires command")
 	}
 	if c != nil && c.acquireCodexAuthority != nil {
 		return c.acquireCodexAuthority(paneUID)
@@ -53,7 +53,7 @@ func (c *aiCommand) acquireCodexAuthorityFence(paneUID string) (func(), error) {
 func (c *aiCommand) codexAuthorityFencePath(paneUID string) (string, error) {
 	paneUID = strings.TrimSpace(paneUID)
 	if paneUID == "" {
-		return "", fmt.Errorf("Codex authority fence requires Pane uid")
+		return "", fmt.Errorf("codex authority fence requires pane uid")
 	}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
