@@ -7,18 +7,26 @@
 # they appear in deadcode output; unrelated new findings still fail the gate.
 
 AggregateTeardownEvents	Pure multi-event teardown authority is retained for lifecycle decision proofs and planned consumers.
+ApplyAuthorized	Phase 0 composite authority gate is retained before generation-aware runtime consumers are enabled.
+ApplySuccessorResume	Phase 0 old-stop semantic barrier is retained before journaled handover consumers are enabled.
 Binding.ControlAuthority	The snapshot-barrier control authority accessor is retained as the in-process mutation gate; the local IPC path fences inside Submit instead.
 Broker.WriteLedger	The mutation write ledger is retained as the observable no-replay evidence surface.
 CanonicalRoutes	The canonical route table accessor is retained for cross-package coverage and generated-reference consumers.
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
+Create	Phase 0 immutable Codex release-bundle lease creator is retained for the later private generation host.
 CurrentProtocol	The build's local IPC version window accessor is retained as the negotiation input an explicit caller supplies.
+DecideAuthority	Phase 0 pure five-axis Codex authority decision is retained for the generation-aware projection phase.
+DecideSuccessorResume	Phase 0 pure same-thread old-stop decision is retained for the journaled handover phase.
 DecideTeardownEvent	The pure teardown decision API is retained for lifecycle authority proofs and planned consumers.
 DecodeCapabilityLedger	Test-only installed qualification API retained for strict checked-in capability-ledger validation.
+DecodeQualificationResult	Phase 0 strict content-free generation qualification receipt decoder is retained for later upgrade gates.
 DirectEndpoint.Close	Test-only installed qualification API retained for bounded direct endpoint cleanup proof.
 DirectEndpoint.Health	Test-only installed qualification API retained for canonical direct readiness evidence.
 DirectEndpoint.forceCleanup	Test-only installed qualification helper retained for injected direct startup-failure cleanup proof.
 DirectEndpoint.markClosed	Test-only installed qualification helper retained for single-consumer bounded direct exit finalization proof.
 Discover	The background-context discovery wrapper is retained as a test and compatibility seam.
+Error.Error	Phase 0 bundle refusal renderer is retained as the content-free immutable lease error contract.
+EvaluateQualification	Phase 0 exact-version-pair qualification reducer is retained for installed pool admission gates.
 EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.
 Fixture.ApplyEnv	Test-only installed qualification API retained for isolated environment containment proof.
 Fixture.Cleanup	Test-only installed qualification API retained for exact owned-artifact cleanup proof.
@@ -36,11 +44,14 @@ Fixture.readDaemonVersion	Test-only installed qualification helper retained for 
 Fixture.readManagedPID	Test-only installed qualification helper retained for contained public PID artifact proof.
 Fixture.readManagedStartResult	Test-only installed qualification helper retained for exact managed start PID proof.
 Fixture.retireAfterFailure	Test-only installed qualification helper retained for bounded exact managed failure cleanup proof.
+GateQualification	Phase 0 go/no-go gate is retained to keep unsafe Phase 2+ pool work closed.
 Host.RuntimeID	The runtime identity accessor is retained as the authority axis clients present alongside both epochs.
+Inspect	Phase 0 Codex release manifest inspector is retained for later private generation provisioning.
 IsolatedPane.Alive	Test-only installed qualification API retained for exact pane-dead and socket-identity observation.
 IsolatedPane.Close	Test-only installed qualification API retained for contained exact tmux server cleanup.
 IsolatedPane.ID	Test-only installed qualification API retained for content-free exact Pane evidence.
 IsolatedPane.run	Test-only installed qualification helper retained for inherited tmux identity stripping on every command.
+Lease.Paths	Phase 0 verified bundle role resolver is retained for generation-pinned server, TUI, and helper launch.
 Ledger.AmbientMutations	Test-only installed qualification API retained for typed ambient mutation counting proof.
 Ledger.AssertNoAmbientMutation	Test-only installed qualification API retained for zero ambient mutation proof.
 Ledger.AssertNoLifecycleMutation	Test-only installed qualification API retained for broker-smoke lifecycle non-mutation proof.
@@ -49,29 +60,53 @@ Ledger.DistinctOperations	Test-only installed qualification API retained for con
 Ledger.HasOperation	Test-only installed qualification API retained for canonical proxy observation proof.
 Ledger.record	Test-only installed qualification helper retained for owned lifecycle command evidence.
 LookupCanonicalRoute	Canonical spelling lookup is retained for route coverage and generated-reference consumers.
+Manifest.ContentID	Phase 0 canonical bundle identity is retained for generation lease persistence.
+Manifest.Validate	Phase 0 complete server, TUI, helper, hash, mode, and protocol manifest validation is retained.
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
 NewClean	Test-only installed qualification API retained for canonical clean-root topology proof.
 NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
 NewResult	Test-only installed qualification API retained for typed terminal result construction.
+Open	Phase 0 immutable bundle reopen verification is retained for source-removal relaunch and later recovery.
+OpenPrivateUnix	Test-only private Unix app-server dial is retained for fixed dual-version installed qualification only.
+PlanUpgrade	Phase 0 pure read-only upgrade plan is retained for the later upgrade command.
+Pool.Current	Phase 0 sole-current lookup is retained as part of the bounded read-only planning model.
+Pool.Validate	Phase 0 bounded current-one plus draining-one topology validator is retained for later coordinators.
+ProtocolRange.Supports	Phase 0 protocol range containment check is retained for pre-commit bundle refusal.
+ProtocolRange.Valid	Phase 0 protocol range validation is retained as part of immutable bundle manifests.
+QualificationResult.JSON	Phase 0 content-free generation qualification writer is retained for installed receipts.
+QualificationResult.Validate	Phase 0 strict generation qualification consistency check is retained for installed receipts.
 ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnostics tests and the planned doctor consumer.
+Refusal.String	Phase 0 closed bundle refusal token renderer is retained for content-free diagnostics.
+RefusalOf	Phase 0 bundle refusal classifier is retained for pre-commit drift and protocol gates.
 Registry.snapshotPanesOf	Snapshot pane lookup remains part of the retained snapshot reconciliation implementation.
 Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.
 Result.Validate	Test-only installed qualification API retained for closed class and nonblank tuple validation.
+RetainedQualificationFields	Phase 0 qualification privacy allowlist is retained for schema redaction audits.
 Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
 SmokeRoot	Test-only installed qualification API retained for canonical isolated root validation.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.
 Store.Path	The Registry path accessor is retained for migration and storage-boundary tests.
 Store.SetClock	The injected Registry clock is retained as a deterministic migration and transaction test seam.
 TeardownObservations	The closed teardown-observation catalog is retained for authority proofs and planned consumers.
+TopologyError.Error	Phase 0 topology refusal renderer is retained as the content-free bounded-pool error contract.
+TopologyRefusal.String	Phase 0 closed topology refusal token renderer is retained for exact plan blockers.
+UpgradePlan.JSON	Phase 0 exact JSON plan projection is retained for the later upgrade command.
+UpgradePlan.Text	Phase 0 exact text plan projection is retained for the later upgrade command.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
 WithSocketName	The injected tmux socket option is retained as an exact routing compatibility and test seam.
 boundedBuffer.Bytes	Test-only installed qualification helper retained for bounded public status decoding.
 boundedBuffer.Write	Test-only installed qualification helper retained for bounded installed command capture.
+canonicalize	Phase 0 bundle manifest canonicalizer is retained to make content identity independent of discovery order.
 classifyCodexCommand	Test-only installed qualification helper retained for semantic mutation classification.
+cleanRelative	Phase 0 bundle relative-path validator is retained to keep lease artifacts contained.
+cloneManifest	Phase 0 manifest clone helper is retained to canonicalize without aliasing caller state.
+copyVerified	Phase 0 staged bundle copier is retained for hash, size, mode, and source-identity pre-commit verification.
 equalArgv	Test-only installed qualification helper retained for closed command-shape classification.
 formatLegacyPaneSummary	Legacy pane-summary rendering remains required while persisted legacy pane metadata is readable.
 genericTeardownRefusal	The generic refusal constructor is retained inside the pure teardown authority proof surface.
+inspectArtifact	Phase 0 source artifact inspector is retained for content-addressed upstream identity verification.
+inspectCommittedArtifact	Phase 0 committed artifact inspector is retained to refuse symlinks before launch.
 isolatedEnvironment	Test-only installed qualification helper retained for CODEX_HOME and tmux identity containment.
 legacyDesktopAppID	The retired desktop application identifier remains required to recognize and clean legacy integration state.
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
@@ -80,15 +115,25 @@ newLedger	Test-only installed qualification helper retained for canonical semant
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 projectPreservedAssets	The preserved-assets outcome helper is retained for project teardown authority proofs.
+readCommittedRegularFile	Phase 0 committed bundle reader is retained to keep manifest and artifact authority inside the lease root.
 removeExactResidualSocket	Test-only installed qualification helper retained for ready-time socket identity cleanup proof.
 rootDefaults	Root teardown defaults are retained inside the pure teardown decision authority.
+safeRoot	Phase 0 lease root validator is retained to keep future bundle mutations off broad or relative targets.
+safeVersionToken	Phase 0 bundle version token validator is retained to keep manifests content-free.
 tmuxCapabilityEnvironment	Test-only installed qualification helper retained for per-command tmux and CODEX_HOME isolation.
 tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
+validGenerationState	Phase 0 closed generation-state validator is retained for bounded-pool topology proofs.
+validIdentityToken	Phase 0 opaque identity validator is retained to keep plans and receipts content-free.
+validObligationState	Phase 0 closed Agent-obligation validator is retained for exact plan blockers.
 validOwnerChain	Owner-chain validation is retained inside the pure teardown decision authority.
+validOwnerClass	Phase 0 closed endpoint-owner validator is retained for attach-only unmanaged planning.
 validTeardownEventKind	The closed event-kind validator is retained inside the pure teardown decision authority.
 validTeardownObservation	The closed observation validator is retained inside the pure teardown decision authority.
+validVersionToken	Phase 0 qualification version validator is retained to keep persisted receipts content-free.
 validateInheritedEnvironment	Test-only installed qualification helper retained for inherited tmux refusal proof.
 validateManagedIdentity	Test-only installed qualification helper retained for foreign PID/socket cleanup refusal proof.
+valueOrNone	Phase 0 deterministic absent-identity rendering is retained for exact text plan goldens.
+verifyAt	Phase 0 committed bundle verifier is retained for source-removal relaunch and drift refusal.
 versionOrUnknown	Test-only installed qualification helper retained for nonblank version-tuple evidence.
 waitForProcessExit	Test-only installed qualification helper retained for independently bounded direct kill-wait proof.
 waitForRetirement	Test-only installed qualification helper retained for bounded PID/socket retirement proof.
