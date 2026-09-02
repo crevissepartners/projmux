@@ -73,6 +73,7 @@ jobs:
           CODEX_TOKEN: ""
           PROJMUX_CODEX_INSTALL_OUTCOME: ${{ steps.install-codex.outcome }}
           PROJMUX_CODEX_EXPECTED_VERSION: ${{ matrix.codex-version }}
+          PROJMUX_CODEX_EVIDENCE_RUN: github-actions:${{ github.run_id }}:${{ github.run_attempt }}
         run: |
           scripts/test-installed-codex-qualification.sh \
             run \

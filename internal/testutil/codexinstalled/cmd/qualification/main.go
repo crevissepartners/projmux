@@ -77,12 +77,14 @@ func runPrimitive(primitive codexinstalled.QualificationPrimitive, preflight, ex
 	}
 	if preflight != "success" {
 		result := codexinstalled.InstallationFailureQualification(spec)
-		return childArtifact(result), fmt.Errorf("declared Codex installation did not succeed")
+		return childArtifact(result, capabilityLedgerForFailure(spec, result.Versions,
+			codexinstalled.CapabilityReasonEndpointUnavailable)), fmt.Errorf("declared Codex installation did not succeed")
 	}
 	root, err := os.MkdirTemp("", "projmux-installed-qualification-")
 	if err != nil {
 		result := codexinstalled.ReduceQualification(spec, nil, false)
-		return childArtifact(result), err
+		return childArtifact(result, capabilityLedgerForFailure(spec, result.Versions,
+			codexinstalled.CapabilityReasonEndpointUnavailable)), err
 	}
 
 	command := exec.Command("go", "test", "-count=1", "-timeout=3m", "-json", // #nosec G204 -- fixed command and canonical test spec.
@@ -114,6 +116,7 @@ func runPrimitive(primitive codexinstalled.QualificationPrimitive, preflight, ex
 		retireProcessGroup(command.Process.Pid)
 	}
 	observed := decodeInstalledResults(output.Bytes())
+	capabilities := decodeInstalledCapabilities(output.Bytes())
 	if output.truncated {
 		observed = append(observed, codexinstalled.Result{})
 	}
@@ -129,20 +132,87 @@ func runPrimitive(primitive codexinstalled.QualificationPrimitive, preflight, ex
 
 	result := codexinstalled.ReduceQualification(spec, observed, succeeded)
 	result = codexinstalled.EnforceQualificationVersion(result, expectedVersion)
-	artifact := childArtifact(result)
+	ledger, capabilityErr := reduceCapabilityLedger(spec, capabilities, result.Versions, expectedVersion)
+	artifact := childArtifact(result, ledger)
 	if err := result.Validate(); err != nil {
 		return artifact, err
 	}
 	if result.Class != codexinstalled.ResultPass {
 		return artifact, fmt.Errorf("qualification primitive is %s", result.Class)
 	}
+	if capabilityErr != nil {
+		return artifact, capabilityErr
+	}
 	return artifact, nil
 }
 
-func childArtifact(result codexinstalled.QualificationResult) codexinstalled.QualificationArtifact {
+func childArtifact(result codexinstalled.QualificationResult, ledger *codexinstalled.CapabilityLedger) codexinstalled.QualificationArtifact {
 	return codexinstalled.QualificationArtifact{
-		SchemaVersion: codexinstalled.QualificationSchemaVersion,
-		Results:       []codexinstalled.QualificationResult{result},
+		SchemaVersion:    codexinstalled.QualificationSchemaVersion,
+		Results:          []codexinstalled.QualificationResult{result},
+		CapabilityLedger: ledger,
+	}
+}
+
+func capabilityLedgerForFailure(
+	spec codexinstalled.QualificationSpec,
+	versions codexinstalled.VersionTuple,
+	reason codexinstalled.CapabilityReason,
+) *codexinstalled.CapabilityLedger {
+	if spec.Primitive != codexinstalled.PrimitivePreTurnAttach {
+		return nil
+	}
+	result := codexinstalled.InfraErrorCapability(versions, reason, capabilityObservation(spec))
+	return &codexinstalled.CapabilityLedger{
+		SchemaVersion: codexinstalled.CapabilitySchemaVersion,
+		Capabilities:  []codexinstalled.CapabilityResult{result},
+	}
+}
+
+func reduceCapabilityLedger(
+	spec codexinstalled.QualificationSpec,
+	observed []codexinstalled.CapabilityResult,
+	versions codexinstalled.VersionTuple,
+	expectedVersion string,
+) (*codexinstalled.CapabilityLedger, error) {
+	if spec.Primitive != codexinstalled.PrimitivePreTurnAttach {
+		if len(observed) != 0 {
+			return nil, fmt.Errorf("non-capability primitive emitted capability evidence")
+		}
+		return nil, nil
+	}
+	var result codexinstalled.CapabilityResult
+	var reduceErr error
+	switch len(observed) {
+	case 0:
+		result = codexinstalled.InfraErrorCapability(versions, codexinstalled.CapabilityReasonTerminalMissing, capabilityObservation(spec))
+		reduceErr = fmt.Errorf("pre-turn capability result is missing")
+	case 1:
+		result = observed[0]
+		if err := result.Validate(); err != nil {
+			result = codexinstalled.InfraErrorCapability(versions, codexinstalled.CapabilityReasonTerminalInvalid, capabilityObservation(spec))
+			reduceErr = err
+		} else {
+			result = codexinstalled.EnforceCapabilityVersion(result, expectedVersion)
+			if result.Result == codexinstalled.CapabilityInfraError {
+				reduceErr = fmt.Errorf("pre-turn capability is infrastructure-error")
+			}
+		}
+	default:
+		result = codexinstalled.InfraErrorCapability(versions, codexinstalled.CapabilityReasonTerminalInvalid, capabilityObservation(spec))
+		reduceErr = fmt.Errorf("pre-turn capability emitted %d terminal results", len(observed))
+	}
+	ledger := &codexinstalled.CapabilityLedger{
+		SchemaVersion: codexinstalled.CapabilitySchemaVersion,
+		Capabilities:  []codexinstalled.CapabilityResult{result},
+	}
+	return ledger, reduceErr
+}
+
+func capabilityObservation(spec codexinstalled.QualificationSpec) codexinstalled.CapabilityObservation {
+	return codexinstalled.CapabilityObservation{
+		Probe: spec.TestName,
+		Run:   os.Getenv("PROJMUX_CODEX_EVIDENCE_RUN"),
 	}
 }
 
@@ -205,6 +275,29 @@ func decodeInstalledResults(encoded []byte) []codexinstalled.Result {
 		var result codexinstalled.Result
 		if err := json.Unmarshal([]byte(strings.TrimSpace(event.Output[index+len(marker):])), &result); err != nil {
 			results = append(results, codexinstalled.Result{})
+			continue
+		}
+		results = append(results, result)
+	}
+	return results
+}
+
+func decodeInstalledCapabilities(encoded []byte) []codexinstalled.CapabilityResult {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	results := make([]codexinstalled.CapabilityResult, 0)
+	const marker = "installed-capability: "
+	for {
+		var event testEvent
+		if err := decoder.Decode(&event); err != nil {
+			break
+		}
+		index := strings.Index(event.Output, marker)
+		if index < 0 {
+			continue
+		}
+		var result codexinstalled.CapabilityResult
+		if err := json.Unmarshal([]byte(strings.TrimSpace(event.Output[index+len(marker):])), &result); err != nil {
+			results = append(results, codexinstalled.CapabilityResult{})
 			continue
 		}
 		results = append(results, result)

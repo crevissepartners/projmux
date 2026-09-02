@@ -163,6 +163,8 @@ func classifyCodexCommand(scope CommandScope, argv []string) Command {
 		command.Operation = "managed-stop"
 	case equalArgv(argv, "app-server", "--listen", "unix://"):
 		command.Operation = "direct-start"
+	case len(argv) == 4 && argv[0] == "resume" && argv[1] == "--remote" && argv[2] == "unix://" && strings.TrimSpace(argv[3]) != "":
+		command.Operation, command.Mutation = "pre-turn-cli-remote-resume", MutationProtocolSession
 	}
 	return command
 }

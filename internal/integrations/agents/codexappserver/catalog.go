@@ -39,6 +39,30 @@ type CatalogPage struct {
 	NextCursor *string
 }
 
+// ListLoadedThreadIDs returns only the opaque identities currently resident in
+// the app-server runtime. It is a read-only observation primitive for installed
+// capability qualification; it never resumes, subscribes, or mutates a thread.
+func (c *Client) ListLoadedThreadIDs(ctx context.Context) ([]string, error) {
+	var result threadLoadedListResult
+	if err := c.Request(ctx, methodThreadLoadedList, threadLoadedListParams{}, &result); err != nil {
+		return nil, err
+	}
+	loaded := make([]string, 0, len(result.Data))
+	seen := make(map[string]struct{}, len(result.Data))
+	for _, raw := range result.Data {
+		id := strings.TrimSpace(raw)
+		if id == "" {
+			return nil, fmt.Errorf("%w: thread/loaded/list returned a blank thread id", ErrProtocol)
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return nil, fmt.Errorf("%w: thread/loaded/list returned a duplicate thread id", ErrProtocol)
+		}
+		seen[id] = struct{}{}
+		loaded = append(loaded, id)
+	}
+	return loaded, nil
+}
+
 // CatalogPreview is the bounded content projection for one exact thread. It is
 // separate from CatalogThread so content cannot enter discovery metadata.
 type CatalogPreview struct {

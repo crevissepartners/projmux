@@ -78,6 +78,11 @@ class CIWorkflowContractTest(unittest.TestCase):
             "          PROJMUX_CODEX_EXPECTED_VERSION: ${{ matrix.codex-version }}",
             installed,
         )
+        self.assertIn(
+            "          PROJMUX_CODEX_EVIDENCE_RUN: "
+            "github-actions:${{ github.run_id }}:${{ github.run_attempt }}",
+            installed,
+        )
         self.assertIn("          OPENAI_API_KEY: \"\"", installed)
         self.assertIn("          CODEX_API_KEY: \"\"", installed)
         self.assertIn("          CODEX_TOKEN: \"\"", installed)
