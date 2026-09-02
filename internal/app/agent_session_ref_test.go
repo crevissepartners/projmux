@@ -112,6 +112,9 @@ func newSessionRefHarness(t *testing.T, provider string) *sessionRefHarness {
 			if len(args) >= 5 && args[0] == "display-message" && args[4] == "#{"+tmuxopts.PaneUID+"}" {
 				return []byte(h.paneUID + "\n"), nil
 			}
+			if len(args) >= 5 && args[0] == "display-message" && args[4] == "#{"+aiPaneCodexAuthorityOption+"}" {
+				return []byte(codexAuthorityHook + "\n"), nil
+			}
 			return nil, os.ErrNotExist
 		},
 		loadRegistry: func() (coremetadata.Registry, error) {

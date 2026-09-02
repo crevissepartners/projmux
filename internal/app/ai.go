@@ -112,7 +112,10 @@ type aiCommand struct {
 	readResumeDetail              func(context.Context, aisessions.ResumeDetailRef, aisessions.OpenCodexCatalog) (aisessions.ResumeDetail, error)
 	// readResumePreview is retained as a narrow test seam for fixtures that
 	// exercise preview timing without the metadata projection.
-	readResumePreview          func(context.Context, aisessions.ResumeDetailRef, aisessions.OpenCodexCatalog) (aisessions.Preview, error)
+	readResumePreview func(context.Context, aisessions.ResumeDetailRef, aisessions.OpenCodexCatalog) (aisessions.Preview, error)
+	// acquireCodexAuthority replaces only the kernel fence acquisition boundary
+	// in tests that force a cross-process ordering.
+	acquireCodexAuthority      func(string) (func(), error)
 	codexCapabilityCache       *corecap.Cache
 	codexCapabilitySessionMu   sync.Mutex
 	codexCapabilitySession     codexCapabilitySession

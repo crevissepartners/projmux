@@ -647,17 +647,28 @@ if [[ "$provider_writes_after" != "$provider_writes_before" ]]; then
 fi
 
 # Native reconnect remains authoritative during the gap. The same raw hook
-# event must therefore write no hook badge and must not move the exact
-# invalidating/unavailable projection.
+# event must therefore write no pane semantic, Registry interaction, queue, or
+# desktop delivery and must not move the exact invalidating projection.
+lifecycle_gap_before_hook="$(lifecycle_tmux display-message -p -t "$lifecycle_pane" \
+  '#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}|#{@projmux_attention_state}')"
+lifecycle_gap_registry_before_hook="$(lifecycle_pmx describe agent "uid:$lifecycle_agent_uid" |
+  awk '$1 == "Interaction:" || $1 == "InteractionSource:" { values = values sep $2; sep = "|" } END { print values }')"
+lifecycle_gap_queue_before_hook="$(lifecycle_queue_count)"
+lifecycle_gap_desktop_before_hook="$(lifecycle_desktop_count)"
 printf '%s' '{"hook_event_name":"Stop","thread_id":"thread-phase3","turn_id":"turn-fallback","cwd":"'"$lifecycle_project"'"}' |
   lifecycle_pmx_hook internal agent-hook ingest codex-hook
 lifecycle_gap_after_hook="$(lifecycle_tmux display-message -p -t "$lifecycle_pane" \
-  '#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}')"
+  '#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}|#{@projmux_attention_state}')"
+lifecycle_gap_registry_after_hook="$(lifecycle_pmx describe agent "uid:$lifecycle_agent_uid" |
+  awk '$1 == "Interaction:" || $1 == "InteractionSource:" { values = values sep $2; sep = "|" } END { print values }')"
 lifecycle_gap_queue_after_hook="$(lifecycle_queue_count)"
 lifecycle_gap_desktop_after_hook="$(lifecycle_desktop_count)"
-if [[ "$lifecycle_gap_after_hook" != "invalidating|disconnected||" ]] ||
-  [[ "$lifecycle_gap_queue_after_hook" != "1" ]] || [[ "$lifecycle_gap_desktop_after_hook" != "2" ]]; then
-  echo "Codex reconnect gap admitted provider-hook projection: tuple=$lifecycle_gap_after_hook queue=$lifecycle_gap_queue_after_hook desktop=$lifecycle_gap_desktop_after_hook" >&2
+if [[ "$lifecycle_gap_before_hook" != "invalidating|disconnected|||" ]] ||
+  [[ "$lifecycle_gap_after_hook" != "$lifecycle_gap_before_hook" ]] ||
+  [[ "$lifecycle_gap_registry_after_hook" != "$lifecycle_gap_registry_before_hook" ]] ||
+  [[ "$lifecycle_gap_queue_before_hook" != "1" || "$lifecycle_gap_queue_after_hook" != "$lifecycle_gap_queue_before_hook" ]] ||
+  [[ "$lifecycle_gap_desktop_before_hook" != "2" || "$lifecycle_gap_desktop_after_hook" != "$lifecycle_gap_desktop_before_hook" ]]; then
+  echo "Codex reconnect gap admitted provider-hook projection: pane=$lifecycle_gap_before_hook->$lifecycle_gap_after_hook Registry=$lifecycle_gap_registry_before_hook->$lifecycle_gap_registry_after_hook queue=$lifecycle_gap_queue_before_hook->$lifecycle_gap_queue_after_hook desktop=$lifecycle_gap_desktop_before_hook->$lifecycle_gap_desktop_after_hook" >&2
   exit 1
 fi
 

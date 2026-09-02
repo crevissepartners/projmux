@@ -775,6 +775,14 @@ func exactCodexLifecycleBinding(registry coremetadata.Registry, identity codexLi
 }
 
 func (s aiCodexLifecycleSink) SetAuthority(identity codexLifecycleIdentity, source, epoch, reason string) error {
+	if s.command == nil {
+		return errors.New("codex lifecycle authority requires command")
+	}
+	release, err := s.command.acquireCodexAuthorityFence(identity.PaneUID)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if !s.BindingCurrent(identity) {
 		return errManagedAgentObservationIgnored
 	}
