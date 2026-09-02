@@ -167,16 +167,19 @@ fi
 # F11: required L06 is cardinality-neutral holder/waiter acceptance. The real
 # eight-way route must stay behind its explicit opt-in, and current diagnostics
 # must keep their closed causes instead of falling back to other/unknown.
+# shellcheck disable=SC2016 # The sed address matches the literal opt-in source.
 required_l06_source="$(sed -n '/# Required L06 owns one semantic guarantee:/,/^if \[\[ "${PROJMUX_E2E_REGISTRY_STRESS:-0}" == "1" \]\]; then/p' "$root/test/e2e/linux-smoke.sh")"
 l06_source="$(sed -n '/# Required L06 owns one semantic guarantee:/,/^# 5\./p' "$root/test/e2e/linux-smoke.sh")"
 if grep -Eq '\{1\.\.8\}|phase0-stress' <<<"$required_l06_source"; then
   echo "F11 required L06 still contains an unconditional eight-way route" >&2
   exit 1
 fi
+# shellcheck disable=SC2016 # This is the literal source contract, not an expansion.
 grep -Fq 'if [[ "${PROJMUX_E2E_REGISTRY_STRESS:-0}" == "1" ]]; then' "$root/test/e2e/linux-smoke.sh"
 grep -Fq 'phase0-stress-results.tsv' "$root/test/e2e/linux-smoke.sh"
 grep -Fq '>> opt-in Registry stress racer: index=%s pid=%s status=%s outcome=%s started_ms=%s finished_ms=%s' \
   "$root/test/e2e/linux-smoke.sh"
+# shellcheck disable=SC2016 # The legacy marker spelling must remain literal.
 if grep -Fq '$create_registry.lock' <<<"$l06_source" ||
   grep -Fq 'stat -c %Y' <<<"$l06_source" ||
   grep -Eq 'SMOKE_L06_RACER_(PIDS|STATUSES|OUTCOMES)' <<<"$l06_source" ||

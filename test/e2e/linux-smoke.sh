@@ -1596,7 +1596,7 @@ SMOKE_L06_RACER_EVENTS=()
   elif grep -Fq "registry lock acquisition timed out" "$create_root/phase0-sentinel.err"; then
     phase0_waiter_outcome=deadline
   else
-    phase0_waiter_outcome=command-failure
+    phase0_waiter_outcome="command-failure"
   fi
   printf 'settled\t%s\t%s\t%s\t%s\t%s\n' \
     "$phase0_waiter_pid" "$phase0_waiter_status" "$phase0_waiter_outcome" \
@@ -1730,6 +1730,7 @@ if [[ "${PROJMUX_E2E_REGISTRY_STRESS:-0}" == "1" ]]; then
   SMOKE_L06_OPERATION=opt-in-eight-way-create
   SMOKE_L06_RELEASE_STATE=held
   SMOKE_L06_RACER_EVENTS=()
+  : "$SMOKE_L06_OPERATION" "$SMOKE_L06_RELEASE_STATE"
 
   phase0_stress_jobs=()
   for phase0_racer in {1..8}; do
@@ -1755,7 +1756,7 @@ if [[ "${PROJMUX_E2E_REGISTRY_STRESS:-0}" == "1" ]]; then
       elif grep -Fq "registry lock acquisition timed out" "$create_root/phase0-stress-$phase0_racer.err"; then
         phase0_stress_outcome=deadline
       else
-        phase0_stress_outcome=command-failure
+        phase0_stress_outcome="command-failure"
       fi
       printf 'settled\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$phase0_racer" "$phase0_stress_pid" "$phase0_stress_status" "$phase0_stress_outcome" \
