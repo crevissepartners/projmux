@@ -1,9 +1,14 @@
-# Codex app-server generation pool — Phase 0–1 contract
+# Codex app-server generation pool — Phase 0–2 contract
 
 Phase 0 adds the identity, validation, qualification, immutable bundle, and
 read-only planning contracts needed by a future bounded app-server pool. It
 does not start or stop a product endpoint, change a current pointer, dial more
 than the existing broker endpoint, or change Agent create/resume behavior.
+
+Phase 2 adds a dark, bounded endpoint runtime pool and a private generation
+host. It still does not change a current pointer or Agent create/resume
+routing: even an initialized, ready `Preparing` endpoint refuses fresh create
+admission before a provider, Registry, tmux, or lifecycle write.
 
 ## Identity and schema
 
@@ -242,3 +247,86 @@ surface and records all five live authority dimensions plus durable owner and
 target runtime. Process pool/host, create routing, consumer notification/sidebar/
 statusbar/reply behavior, badge rendering, reducer transitions, and Phase 2+
 remain outside Phase 1.
+
+## Phase 2 endpoint pool and private host
+
+`codexbroker.GenerationPool` keys every managed endpoint by the canonical
+`stateDomainID + endpointGenerationID` pair and enforces the Phase 0 two-slot
+bound again at runtime construction. Each generation owns an independent
+Broker, random broker-runtime ID, connection epoch, binding epoch, and
+initialize/snapshot/reconnect/binding ledger. A sibling reconnect cannot touch
+another generation's opener, fence, binding, or provider wire. A broker
+restart closes a generation-local restart fence, restores the exact sorted
+binding ledger, and issues a new broker-runtime ID; authority from the old
+runtime writes zero even when its local epoch numbers repeat. The restart fence
+also refuses a bind or second restart that raced the restore snapshot.
+
+Thread routing is the exact endpoint plus exact thread ID. Presenting the same
+thread ID under another state domain or generation returns the typed
+`route-mismatch` refusal before the endpoint wire. `Preparing` readiness is a
+separate fact from admission: Phase 2's `AdmitCreate` always returns
+`admission-closed`, including after a snapshot proves the endpoint ready.
+
+`codexgenerationhost` launches only from the Phase 0-qualified immutable
+bundle layout. The required `codex`, `codex-code-mode-host`, bundled `rg`, and
+bundled `bwrap` paths are a closed package-owned set, not caller-overridable
+configuration. The content-addressed lease is re-opened and every manifest,
+role, mode, size, and hash is revalidated before publication and again before
+any lifecycle signal. The versioned socket must be directly below an existing
+owner-private `0700` root and must use the exact endpoint-generation name;
+ambient/default parents, symlinks, permissive roots, and occupied paths are
+never repaired or changed.
+
+Lifecycle authority is the full PID plus `Setsid` process-group ID, socket
+device/inode/change-time, executable device/inode/change-time/mode/size/hash,
+bundle ID, endpoint identity, and random endpoint-runtime ID proof. Change time
+keeps replacement fail-closed even when a filesystem immediately reuses a
+socket inode. That private app-server host proof feeds only an exact opener;
+`codexbroker.GenerationPool` separately owns the broker-runtime ID and composite
+connection/binding fence. The existing OS broker Host and hidden CLI remain
+default-only and are not claimed as generation-enabled. Drift in any one axis,
+an exited/reused PID, or bundle-helper drift
+keeps stop/restart/kill effects at zero. Cleanup signals only the revalidated
+private process group and waits for both the repeatable leader-exit channel and
+EOF on an inherited session-lifetime token, including leader-first and
+token-first exit orders, before removing the exact socket or letting the
+installed smoke remove its caller-owned roots.
+Readiness is driven by private-root filesystem events followed by an initialized
+app-server handshake; neither readiness nor cleanup uses a fixed sleep. The
+launch argv always names the leased executable and versioned private socket, so
+mutable current/source removal cannot redirect it. Phase 2 exposes no successful
+lease-release path: process exit and caller claims remain refused, and the later
+journaled handover owner must establish terminal retirement. Phase 2 does not
+delete bundle bytes.
+
+The opt-in installed smoke uses only exact private `0.152.0` and `0.152.1`
+leases and a unique empty root:
+
+```sh
+smoke_root="$(mktemp -d "${TMPDIR:-/tmp}/projmux-codex-host-XXXXXX")"
+bundle_root="$(mktemp -d /var/tmp/projmux-codex-host-bundles-XXXXXX)"
+env -u TMUX -u TMUX_PANE \
+  PROJMUX_CODEX_GENERATION_HOST_SMOKE_ROOT="$smoke_root" \
+  PROJMUX_CODEX_GENERATION_BUNDLE_SMOKE_ROOT="$bundle_root" \
+  PROJMUX_CODEX_GENERATION_OLD=/absolute/0.152.0/bin/codex \
+  PROJMUX_CODEX_GENERATION_NEW=/absolute/0.152.1/bin/codex \
+  PROJMUX_CODEX_GENERATION_SOURCE_HOME=/absolute/private/source-home \
+  go test ./internal/testutil/codexinstalled \
+    -run '^TestInstalledPrivateGenerationHostDualListenerSmoke$' -count=1 -v
+```
+
+It requires inherited tmux routing to be absent, observes two initialized
+private listeners and complete held leases, compares ambient/default socket
+and PID-record identity before/after, waits for both exact private process
+groups and their token-bearing descendants to exit, and removes only the exact
+two private sockets, leases, and smoke root.
+
+### Phase 2 migration and deletion ledger
+
+No canonical test symbol was deleted or renamed. Existing default-endpoint
+broker reconnect, binding, foreign-event, approval, runtime-loss, Phase 0
+bundle/qualification, and Phase 1 composite-fence/projection tests retain their
+unique owners. Phase 2 adds generation-local mutants instead of replacing
+those canaries. Current-pointer/drain, Agent create/resume, foreign adoption,
+Settings/background UX, derived consumers, and unrelated cleanup remain
+excluded for their later phases.
