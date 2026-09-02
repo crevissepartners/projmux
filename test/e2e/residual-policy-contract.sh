@@ -17,7 +17,6 @@ job_block() {
 
 linux_block="$(job_block e2e-linux)"
 suite_block="$(job_block e2e-suite)"
-e2e_gate_block="$(job_block e2e-tests)"
 test_gate_block="$(job_block test)"
 unit_block="$(job_block unit)"
 
@@ -121,21 +120,11 @@ print(
 )
 PY
 
-# Empty quarantine means the existing fail-closed topology must be byte-for-byte
-# present: both E2E child families still feed the exact required compatibility
-# context and the project-wide Test aggregate.
-grep -Fqx '    name: E2E Tests' <<<"$e2e_gate_block"
-grep -Fqx '    if: always()' <<<"$e2e_gate_block"
-for child in e2e-linux e2e-suite; do
-	grep -Fqx "      - $child" <<<"$e2e_gate_block"
-	grep -Fq -- "--required $child" <<<"$e2e_gate_block"
-	grep -Fqx "      - $child" <<<"$test_gate_block"
-	grep -Fq -- "--required $child" <<<"$test_gate_block"
-done
-
 # Go unit tests have no attempt evidence/classification surface. Phase 5 keeps
 # that blind spot outside automatic quarantine and leaves the exact required
-# child in place instead of inventing observations.
+# child in place instead of inventing observations. The exact E2E matrix,
+# compatibility context, and project-wide aggregate are owned once by
+# shard-contract.sh rather than restated by this residual evidence policy.
 grep -Fqx '    name: Unit Tests' <<<"$unit_block"
 grep -Fqx '      - unit' <<<"$test_gate_block"
 grep -Fq -- '--required unit' <<<"$test_gate_block"

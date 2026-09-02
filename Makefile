@@ -127,9 +127,10 @@ test-install-smoke:
 	scripts/test-install-smoke.sh
 
 test-e2e: test-e2e-manifest
-	scripts/test-e2e-docker.sh
+	scripts/test-e2e-admission.sh scripts/test-e2e-docker.sh
 
 test-e2e-contract:
+	test/e2e/admission-contract.sh
 	test/e2e/evidence-contract.sh
 
 test-e2e-reliability:

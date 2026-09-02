@@ -477,13 +477,27 @@
   a stable scenario ID, owner, ISO-8601 deadline, and at least three observations;
   this closed zero-set contract rejects a non-empty row until execution/evidence
   and non-gating wiring exist. Therefore the quarantine execution Negative is
-  N/A: its antecedent does not exist. Instead, the contract proves that both E2E
-  child families still feed the exact `E2E Tests` compatibility context and the
-  project-wide `Test` gate. Go `Unit Tests` remain an exact required child and
-  outside automatic classification/quarantine: they have no per-test attempt
-  artifact or `class` surface, so assigning an observed-flake count would invent
-  evidence. A future unit quarantine first needs attempt-preserving per-test
-  evidence and a separate contract.
+  N/A: its antecedent does not exist. `test/e2e/shard-contract.sh` is the single
+  canonical owner proving that both E2E child families still feed the exact
+  `E2E Tests` compatibility context and the project-wide `Test` gate. Go
+  `Unit Tests` remain an exact required child and outside automatic
+  classification/quarantine: they have no per-test attempt artifact or `class`
+  surface, so assigning an observed-flake count would invent evidence. A future
+  unit quarantine first needs attempt-preserving per-test evidence and a separate
+  contract.
+- `test/e2e/admission-contract.sh` (`make test-e2e-contract`) pins the local
+  full-suite capacity boundary used by default `make test-e2e`: one invocation
+  owns the active state while another waits, and the wait diagnostic plus state
+  file expose `reason=local-full-suite-capacity`, capacity one, owner pid,
+  start time, cwd, and exact state path. Both callers retain their own terminal
+  status after admission. `PROJMUX_E2E_ADMISSION_BYPASS=1` is the explicit
+  stress path and is required to overlap a live admitted owner. Single-scenario
+  replay and CI shard/suite selectors remain outside this local full-suite
+  boundary; `test/e2e/shard-contract.sh` keeps the four Linux plus two suite
+  jobs on independent runners with `fail-fast: false` and the stable required
+  name `E2E Tests`, while also proving both selector families enter with a local
+  slot already occupied. A dead owner is diagnosed as `stale-owner` and reclaimed
+  only while the active hard link still identifies its exact owner record.
 - `test/e2e/evidence-contract.sh` (`make test-e2e-contract`) and
   `test/e2e/reliability-contract.sh` (`make test-e2e-reliability`) keep the persisted
   `projmux.e2e-attempt/v1` evidence and success result hash stable while adding
