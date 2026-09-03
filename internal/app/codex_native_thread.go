@@ -39,8 +39,11 @@ type defaultCodexNativeThreadController struct {
 // preserves the Phase 3 default behavior; a present journal is exact and never
 // falls through to or adopts the ambient endpoint.
 type rollingCodexNativeThreadController struct {
-	journal  *codexupgrade.Store
-	fallback defaultCodexNativeThreadController
+	journal   *codexupgrade.Store
+	fallback  defaultCodexNativeThreadController
+	activator codexManagedCurrentActivator
+	observe   func(context.Context, codexupgrade.GenerationRoute) error
+	create    func(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string, string) (codexappserver.ThreadBinding, error)
 }
 
 func (controller rollingCodexNativeThreadController) Current(ctx context.Context) (codexNativeEndpointRoute, error) {
@@ -49,13 +52,70 @@ func (controller rollingCodexNativeThreadController) Current(ctx context.Context
 		return codexNativeEndpointRoute{}, err
 	}
 	if !exists {
-		return controller.fallback.Current(ctx)
+		route, fallbackErr := controller.fallback.Current(ctx)
+		if fallbackErr == nil {
+			return route, nil
+		}
+		if controller.activator == nil {
+			return codexNativeEndpointRoute{}, fallbackErr
+		}
+		if activationErr := controller.activator.Ensure(ctx); activationErr != nil {
+			var refusal *managedCodexActivationError
+			if errors.As(activationErr, &refusal) {
+				return codexNativeEndpointRoute{}, &codexNativeRouteError{
+					Reason: "managed-generation-activation-blocked", OperatorAction: refusal.Action, err: activationErr,
+				}
+			}
+			return codexNativeEndpointRoute{}, &codexNativeRouteError{
+				Reason:         "managed-generation-activation-blocked",
+				OperatorAction: "run `projmux doctor --section integrations --json --verbose` and perform the exact generation action it reports before retrying",
+				err:            activationErr,
+			}
+		}
+		journal, exists, err = controller.load()
+		if err != nil || !exists {
+			return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable, err: err}
+		}
 	}
 	route, ok := journal.CurrentRoute()
-	if !ok || codexupgrade.ObserveRoute(ctx, route) != nil {
+	if ok && controller.activator != nil && incompleteManagedActivation(journal) {
+		if activationErr := controller.activator.Ensure(ctx); activationErr != nil {
+			var refusal *managedCodexActivationError
+			if errors.As(activationErr, &refusal) {
+				return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: "managed-generation-activation-blocked", OperatorAction: refusal.Action, err: activationErr}
+			}
+			return codexNativeEndpointRoute{}, &codexNativeRouteError{
+				Reason:         "managed-generation-activation-blocked",
+				OperatorAction: "run `projmux doctor --section integrations --json --verbose` and perform the exact generation action it reports before retrying",
+				err:            activationErr,
+			}
+		}
+		journal, _, err = controller.load()
+		if err != nil {
+			return codexNativeEndpointRoute{}, err
+		}
+		route, ok = journal.CurrentRoute()
+	}
+	if !ok || controller.observeRoute(ctx, route) != nil {
 		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
 	return rollingNativeRoute(route), nil
+}
+
+func incompleteManagedActivation(journal codexupgrade.Journal) bool {
+	if journal.Operation == nil || journal.Operation.Aborted || (journal.Operation.AdmissionCommitted && journal.Operation.DrainPublished) {
+		return false
+	}
+	oldExternal, targetPrivate := false, false
+	for _, route := range journal.Routes {
+		switch route.Generation.Endpoint.EndpointGenerationID {
+		case journal.Operation.OldGenerationID:
+			oldExternal = route.Generation.Owner == codexgeneration.OwnerUnmanaged || route.Generation.Owner == codexgeneration.OwnerOfficialManaged
+		case journal.Operation.TargetGenerationID:
+			targetPrivate = route.Generation.Owner == codexgeneration.OwnerProjmuxPrivate
+		}
+	}
+	return oldExternal && targetPrivate
 }
 
 func (controller rollingCodexNativeThreadController) CatalogRoutes(ctx context.Context) ([]codexNativeEndpointRoute, error) {
@@ -71,7 +131,7 @@ func (controller rollingCodexNativeThreadController) CatalogRoutes(ctx context.C
 		if !route.Ready || route.Proof == nil {
 			continue
 		}
-		if err := codexupgrade.ObserveRoute(ctx, route); err != nil {
+		if err := controller.observeRoute(ctx, route); err != nil {
 			continue
 		}
 		routes = append(routes, rollingNativeRoute(route))
@@ -94,13 +154,16 @@ func (controller rollingCodexNativeThreadController) Resolve(ctx context.Context
 		return controller.fallback.Resolve(ctx, endpoint)
 	}
 	route, ok := journal.Route(endpoint)
-	if !ok || !route.Ready || route.Proof == nil || codexupgrade.ObserveRoute(ctx, route) != nil {
+	if !ok || !route.Ready || route.Proof == nil || controller.observeRoute(ctx, route) != nil {
 		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
 	return rollingNativeRoute(route), nil
 }
 
 func (controller rollingCodexNativeThreadController) Create(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, prompt, requestKey string) (codexappserver.ThreadBinding, error) {
+	if controller.create != nil {
+		return controller.create(ctx, route, workspace, prompt, requestKey)
+	}
 	return controller.fallback.Create(ctx, route, workspace, prompt, requestKey)
 }
 
@@ -121,6 +184,13 @@ func (controller rollingCodexNativeThreadController) load() (codexupgrade.Journa
 		return codexupgrade.Journal{}, false, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
 	return journal, exists, nil
+}
+
+func (controller rollingCodexNativeThreadController) observeRoute(ctx context.Context, route codexupgrade.GenerationRoute) error {
+	if controller.observe != nil {
+		return controller.observe(ctx, route)
+	}
+	return codexupgrade.ObserveRoute(ctx, route)
 }
 
 func rollingNativeRoute(route codexupgrade.GenerationRoute) codexNativeEndpointRoute {
@@ -151,9 +221,21 @@ func (route codexNativeEndpointRoute) brokerRoute() codexBrokerEndpointRoute {
 	}
 }
 
-type codexNativeRouteError struct{ Reason string }
+type codexNativeRouteError struct {
+	Reason         string
+	OperatorAction string
+	err            error
+}
 
-func (e *codexNativeRouteError) Error() string { return "Codex generation route: " + e.Reason }
+func (e *codexNativeRouteError) Error() string {
+	message := "Codex generation route: " + e.Reason
+	if strings.TrimSpace(e.OperatorAction) != "" {
+		message += "; operator action: " + e.OperatorAction
+	}
+	return message
+}
+
+func (e *codexNativeRouteError) Unwrap() error { return e.err }
 
 const (
 	codexNativeReasonGenerationUnavailable = "generation-unavailable"
@@ -203,27 +285,32 @@ func (controller defaultCodexNativeThreadController) Current(ctx context.Context
 // because they run the same Codex version, while symlink spellings of one
 // physical root converge to one identity.
 func defaultCodexStateDomainID(lookupEnv func(string) string, homeDir func() (string, error)) (string, error) {
+	_, id, err := defaultCodexStateDomain(lookupEnv, homeDir)
+	return id, err
+}
+
+func defaultCodexStateDomain(lookupEnv func(string) string, homeDir func() (string, error)) (string, string, error) {
 	root := strings.TrimSpace(lookupEnv("CODEX_HOME"))
 	if root == "" {
 		home, err := homeDir()
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		root = filepath.Join(home, ".codex")
 	}
 	if !filepath.IsAbs(root) {
-		return "", errors.New("codex state domain must be absolute")
+		return "", "", errors.New("codex state domain must be absolute")
 	}
 	canonical, err := filepath.EvalSymlinks(filepath.Clean(root))
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	info, err := os.Stat(canonical)
 	if err != nil || !info.IsDir() {
-		return "", errors.New("codex state domain must be an existing directory")
+		return "", "", errors.New("codex state domain must be an existing directory")
 	}
 	sum := sha256.Sum256([]byte(canonical))
-	return "codex-state-" + hex.EncodeToString(sum[:16]), nil
+	return canonical, "codex-state-" + hex.EncodeToString(sum[:16]), nil
 }
 
 // CatalogRoutes is a read-only inventory projection. The bootstrap/default

@@ -105,6 +105,9 @@ func TestDoctorCodexGenerationActionabilityTable(t *testing.T) {
 }
 
 func doctorReportHasAction(report doctorCodexGenerationPool, action string) bool {
+	if report.Action == action {
+		return true
+	}
 	for _, generation := range report.Generations {
 		if generation.Action == action {
 			return true
@@ -116,6 +119,40 @@ func doctorReportHasAction(report doctorCodexGenerationPool, action string) bool
 		}
 	}
 	return report.Operation != nil && report.Operation.NextAction == action
+}
+
+func TestDoctorManagedActivationShowsCurrentDrainingPinnedTruthReadOnly(t *testing.T) {
+	old := doctorGenerationRoute("codex-0.152.1", codexgeneration.StateDraining, codexgeneration.OwnerUnmanaged)
+	old.Version = "0.152.1"
+	old.Generation.BundleID = "external-0.152.1"
+	current := doctorGenerationRoute("codex-0.153.0", codexgeneration.StateCurrent, codexgeneration.OwnerProjmuxPrivate)
+	current.Version = "0.153.0"
+	journal := codexupgrade.Journal{
+		Version: codexupgrade.JournalVersion, StateDomainID: "state-main", CurrentGenerationID: "codex-0.153.0",
+		Routes: []codexupgrade.GenerationRoute{old, current},
+		Obligations: []codexgeneration.AgentObligation{
+			{AgentUID: "agent-old", EndpointGenerationID: "codex-0.152.1", State: codexgeneration.ObligationApprovalPending},
+			{AgentUID: "agent-new", EndpointGenerationID: "codex-0.153.0", State: codexgeneration.ObligationActive},
+		},
+	}
+	report := diagnoseCodexGenerationPool(journal, coremetadata.Registry{}, func(cfg codexgenerationhost.PrivateGenerationConfig) (codexgenerationhost.VerifiedBundleIdentity, error) {
+		return codexgenerationhost.VerifiedBundleIdentity{ID: "bundle-codex-0.153.0", Version: "0.153.0", TUIPath: "/lease/codex-0.153.0/bin/codex"}, nil
+	})
+	if report.Status != "blocked" || report.Reason != "qualification-missing" || report.Action != "run-isolated-version-pair-qualification" ||
+		report.CurrentGenerationID != "codex-0.153.0" || !report.ExpectedMultiGeneration || report.DoctorMutations != 0 ||
+		len(report.Generations) != 2 || len(report.PinnedAgents) != 2 {
+		t.Fatalf("managed activation Doctor report = %#v", report)
+	}
+	byID := map[string]doctorCodexGeneration{}
+	for _, generation := range report.Generations {
+		byID[generation.GenerationID] = generation
+	}
+	if got := byID["codex-0.152.1"]; got.State != codexgeneration.StateDraining || got.Owner != codexgeneration.OwnerUnmanaged || got.Version != "0.152.1" || got.PinnedAgents != 1 || got.Action != "await-owner-stop" {
+		t.Fatalf("old generation truth = %#v", got)
+	}
+	if got := byID["codex-0.153.0"]; got.State != codexgeneration.StateCurrent || got.Owner != codexgeneration.OwnerProjmuxPrivate || got.Version != "0.153.0" || got.PinnedAgents != 1 || got.Status != "ready" {
+		t.Fatalf("current generation truth = %#v", got)
+	}
 }
 
 func TestDoctorCodexGenerationBundleDriftIsBlockedAndReadOnly(t *testing.T) {

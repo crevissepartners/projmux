@@ -977,6 +977,31 @@ func createCompleteTestLease(t *testing.T, root string, paths []string) (codexbu
 	return lease, source
 }
 
+func TestLeaseStandaloneReleaseRetainsClosedRequiredBundle(t *testing.T) {
+	root := t.TempDir()
+	releaseRoot := filepath.Join(root, "releases", "0.153.0")
+	for _, relative := range CompleteBundleArtifactPaths() {
+		full := filepath.Join(releaseRoot, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("#!/bin/sh\n# "+relative+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	protocol := codexbundle.ProtocolRange{Min: 2, Max: 2}
+	lease, err := LeaseStandaloneRelease(filepath.Join(root, "store"), filepath.Join(releaseRoot, "bin", "codex"), "0.153.0", protocol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.Manifest.Version != "0.153.0" || len(lease.Manifest.Artifacts) != len(CompleteBundleArtifactPaths()) || len(lease.Paths(codexbundle.RoleServer)) != 1 || len(lease.Paths(codexbundle.RoleTUI)) != 1 || len(lease.Paths(codexbundle.RoleHelper)) != 3 {
+		t.Fatalf("standalone lease = %+v", lease)
+	}
+	if _, err := LeaseStandaloneRelease(filepath.Join(root, "other-store"), filepath.Join(releaseRoot, "codex"), "0.153.0", protocol); HostRefusalOf(err) != HostRefusalBundleIncomplete {
+		t.Fatalf("wrong standalone layout refusal = %s err=%v", HostRefusalOf(err), err)
+	}
+}
+
 func TestExactRoleTUIArtifactRefusesWrongAbsolutePathAndPostVerifyDrift(t *testing.T) {
 	root := t.TempDir()
 	lease, _ := createCompleteTestLease(t, root, CompleteBundleArtifactPaths())

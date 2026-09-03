@@ -223,12 +223,27 @@ type DirectEndpoint struct {
 
 func (endpoint *DirectEndpoint) Health() codexappserver.Health { return endpoint.health }
 
-func (fixture *Fixture) StartDirect(ctx context.Context, projmuxVersion string) (*DirectEndpoint, Result) {
+// StartDirect owns an isolated default-socket process. An optional exact
+// executable lets the fixture model an external upgrade: PATH/managed bytes
+// may be N+1 while the live unmanaged endpoint remains N.
+func (fixture *Fixture) StartDirect(ctx context.Context, projmuxVersion string, executableOverride ...string) (*DirectEndpoint, Result) {
 	if fixture.direct != nil {
 		return nil, NewResult(fixture.versions, TopologyDirect, StageStart, ResultInfraError, "direct-endpoint-already-owned")
 	}
+	executable := fixture.realCodex
+	if len(executableOverride) > 1 {
+		return nil, NewResult(fixture.versions, TopologyDirect, StageStart, ResultInfraError, "direct-executable-invalid")
+	}
+	if len(executableOverride) == 1 {
+		executable = executableOverride[0]
+	}
+	executable = filepath.Clean(strings.TrimSpace(executable))
+	info, err := os.Stat(executable)
+	if !filepath.IsAbs(executable) || err != nil || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		return nil, NewResult(fixture.versions, TopologyDirect, StageStart, ResultInfraError, "direct-executable-invalid")
+	}
 	fixture.ledger.record(Command{Scope: ScopeIsolated, Operation: "direct-start", Mutation: MutationEndpointLifecycle})
-	command := exec.CommandContext(ctx, fixture.realCodex, "app-server", "--listen", "unix://") // #nosec G204 -- installed executable and fixed argv.
+	command := exec.CommandContext(ctx, executable, "app-server", "--listen", "unix://") // #nosec G204 -- explicit exact executable and fixed argv.
 	command.Env = isolatedEnvironment(os.Environ(), fixture.CodexHome)
 	var output boundedBuffer
 	command.Stdout = &output
@@ -279,22 +294,17 @@ func (endpoint *DirectEndpoint) Close(ctx context.Context) Result {
 		return NewResult(endpoint.fixture.versions, TopologyDirect, StageClose, ResultInfraError, "direct-process-missing")
 	}
 	_ = endpoint.command.Process.Signal(syscall.SIGTERM)
+	graceCtx, cancel := context.WithTimeout(ctx, defaultTimeout)
+	defer cancel()
 	select {
-	case <-ctx.Done():
-		_ = endpoint.command.Process.Kill()
+	case <-graceCtx.Done():
+		endpoint.fixture.ledger.record(Command{Scope: ScopeIsolated, Operation: "direct-force-close", Mutation: MutationEndpointLifecycle})
+		if err := endpoint.command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+			return NewResult(endpoint.fixture.versions, TopologyDirect, StageClose, ResultFail, "direct-kill-failed")
+		}
 		if err := waitForProcessExit(endpoint.exited, defaultTimeout); err != nil {
 			return NewResult(endpoint.fixture.versions, TopologyDirect, StageClose, ResultFail, "direct-kill-wait-timeout")
 		}
-		endpoint.markClosed()
-		removed, err := removeExactResidualSocket(endpoint.fixture.SocketPath, endpoint.fixture.directSocketInfo)
-		if err != nil {
-			return NewResult(endpoint.fixture.versions, TopologyDirect, StageClose, ResultInfraError, "direct-timeout-socket-observation-failed")
-		}
-		if !removed {
-			return NewResult(endpoint.fixture.versions, TopologyDirect, StageClose, ResultFail, "direct-timeout-foreign-socket-preserved")
-		}
-		endpoint.fixture.directSocketInfo = nil
-		return NewResult(endpoint.fixture.versions, TopologyDirect, StageClose, ResultFail, "direct-close-timeout")
 	case <-endpoint.exited:
 	}
 	endpoint.markClosed()

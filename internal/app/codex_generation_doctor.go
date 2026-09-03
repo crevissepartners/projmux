@@ -17,6 +17,7 @@ import (
 type doctorCodexGenerationPool struct {
 	Status                  string                                     `json:"status"`
 	Reason                  string                                     `json:"reason"`
+	Action                  string                                     `json:"action,omitempty"`
 	StateDomainID           string                                     `json:"state_domain_id,omitempty"`
 	CurrentGenerationID     string                                     `json:"current_generation_id,omitempty"`
 	ExpectedMultiGeneration bool                                       `json:"expected_multi_generation"`
@@ -98,8 +99,10 @@ func diagnoseCodexGenerationPool(journal codexupgrade.Journal, registry coremeta
 	report.ExpectedMultiGeneration = liveGenerations == 2
 	if journal.Qualification == nil {
 		block("qualification-missing")
+		report.Action = "run-isolated-version-pair-qualification"
 	} else if journal.Qualification.Verdict != codexgeneration.VerdictYes {
 		block("version-pair-no")
+		report.Action = "use-single-endpoint-journaled-handover"
 	}
 
 	obligations := make(map[string]codexgeneration.AgentObligation, len(journal.Obligations))
@@ -144,7 +147,7 @@ func diagnoseCodexGenerationPool(journal codexupgrade.Journal, registry coremeta
 		generation := doctorCodexGeneration{
 			GenerationID: route.Generation.Endpoint.EndpointGenerationID, State: route.Generation.State,
 			Owner: route.Generation.Owner, BundleID: route.Generation.BundleID,
-			BundleStatus: "not-managed", Status: "ready", Action: "none", Reason: "ready",
+			BundleStatus: "not-managed", Version: route.Version, Status: "ready", Action: "none", Reason: "ready",
 		}
 		for _, pinned := range report.PinnedAgents {
 			if pinned.GenerationID == generation.GenerationID && pinned.State != codexgeneration.ObligationClosed {
@@ -168,7 +171,7 @@ func diagnoseCodexGenerationPool(journal codexupgrade.Journal, registry coremeta
 				}
 				generation.BundleStatus, generation.Status, generation.Action, generation.Reason = reason, "blocked", "restore-bundle", reason
 				block(reason)
-			} else if identity.ID != route.Generation.BundleID || identity.TUIPath != route.TUIPath {
+			} else if identity.ID != route.Generation.BundleID || identity.TUIPath != route.TUIPath || (route.Version != "" && identity.Version != route.Version) {
 				generation.BundleStatus, generation.Status, generation.Action, generation.Reason = "bundle-drift", "blocked", "restore-bundle", "bundle-drift"
 				block("bundle-drift")
 			} else {
@@ -301,6 +304,9 @@ func writeDoctorCodexGenerationText(buf *bytes.Buffer, pool *doctorCodexGenerati
 	buf.WriteString("\nCodex generation pool\n")
 	fmt.Fprintf(buf, "  Status: %s; reason: %s; state domain: %s; admission current: %s; expected multi-generation: %t; doctor mutations: %d\n",
 		pool.Status, pool.Reason, pool.StateDomainID, pool.CurrentGenerationID, pool.ExpectedMultiGeneration, pool.DoctorMutations)
+	if pool.Action != "" && pool.Action != "none" {
+		fmt.Fprintf(buf, "  Operator action: %s\n", pool.Action)
+	}
 	if pool.Qualification != nil {
 		fmt.Fprintf(buf, "  Version pair: %s -> %s; verdict: %s; reason: %s\n",
 			pool.Qualification.Versions.Old, pool.Qualification.Versions.New, pool.Qualification.Verdict, pool.Qualification.Reason)

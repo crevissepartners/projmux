@@ -138,6 +138,322 @@ func (runtime *fakeRollingRuntime) Prepare(_ context.Context, _ GenerationConfig
 	return publish(runtime.proof)
 }
 
+func TestManagedCurrentActivationAfterDefaultUpgradePreservesOldAgentAndForeignLifecycle(t *testing.T) {
+	request := testRollingRequest(t)
+	newLease := testRollingLease(t, filepath.Join(filepath.Dir(request.Target.LeaseRoot), "managed-0.153.0"), "0.153.0")
+	request.Target.Endpoint.EndpointGenerationID = "codex-0.153.0"
+	request.Target.LeaseRoot = newLease.Root
+	request.TargetBundleID = newLease.ID
+	request.TargetTUIPath = newLease.Paths(codexbundle.RoleTUI)[0]
+	coordinator, runtime, registry := testRollingCoordinator(t, request)
+	oldEndpoint := request.Current.Generation.Endpoint
+	oldAgent := metadata.Agent{
+		APIVersion: metadata.APIVersion,
+		Kind:       metadata.KindAgent,
+		Metadata: metadata.ObjectMeta{
+			UID: "agent-old", Name: "agent-old",
+		},
+		Spec: metadata.AgentSpec{Provider: "codex"},
+		Status: metadata.AgentStatus{
+			Phase:   metadata.PhaseRunning,
+			PaneRef: "pane-old",
+			Interaction: metadata.AgentInteraction{
+				Kind: metadata.InteractionApprovalRequired,
+			},
+			SessionRef: &metadata.AgentSessionRef{
+				Provider: "codex",
+				Codex: &metadata.CodexSessionRef{
+					ThreadID: "thread-old", HasStartedTurn: true,
+					Endpoint: &oldEndpoint,
+					Lifecycle: &metadata.CodexGenerationLifecycleRef{
+						State: metadata.CodexGenerationCurrent,
+					},
+				},
+			},
+		},
+	}
+	registry.registry.Agents = append(registry.registry.Agents, oldAgent)
+
+	activation := ManagedCurrentActivation{
+		OperationRef:   "managed-activation-default-upgrade",
+		OldEndpoint:    oldEndpoint,
+		OldOwner:       codexgeneration.OwnerUnmanaged,
+		OldVersion:     "0.151.0",
+		Target:         request.Target,
+		TargetBundleID: request.TargetBundleID,
+		TargetTUIPath:  request.TargetTUIPath,
+		TargetVersion:  "0.153.0",
+	}
+	journal, err := coordinator.ActivateManagedCurrent(context.Background(), activation)
+	if err != nil {
+		t.Fatalf("ordinary create managed-current activation: %v", err)
+	}
+	current, ok := journal.CurrentRoute()
+	if !ok || !current.Generation.Endpoint.Same(request.Target.Endpoint) || current.Generation.Owner != codexgeneration.OwnerProjmuxPrivate || !current.Ready || current.Proof == nil {
+		t.Fatalf("managed Current route = %+v, found=%t", current, ok)
+	}
+	oldRoute, ok := journal.Route(oldEndpoint)
+	if !ok || oldRoute.Generation.State != codexgeneration.StateDraining || oldRoute.Generation.Owner != codexgeneration.OwnerUnmanaged || oldRoute.Version != "0.151.0" || oldRoute.Ready || oldRoute.Proof != nil {
+		t.Fatalf("foreign old route = %+v, found=%t", oldRoute, ok)
+	}
+	if current.Version != "0.153.0" {
+		t.Fatalf("managed Current version = %q", current.Version)
+	}
+	gotAgent, ok := registry.registry.Agent("agent-old")
+	if !ok || gotAgent.Status.PaneRef != "pane-old" || gotAgent.Status.SessionRef == nil || gotAgent.Status.SessionRef.Codex == nil ||
+		gotAgent.Status.SessionRef.Codex.ThreadID != "thread-old" || !gotAgent.Status.SessionRef.Codex.Endpoint.Same(oldEndpoint) ||
+		gotAgent.Status.SessionRef.Codex.Lifecycle == nil || gotAgent.Status.SessionRef.Codex.Lifecycle.State != metadata.CodexGenerationDraining ||
+		gotAgent.Status.Interaction.Kind != metadata.InteractionApprovalRequired {
+		t.Fatalf("old Agent continuity = %#v", gotAgent.Status)
+	}
+	if runtime.starts != 1 || journal.Operation == nil || journal.Operation.Mutations.ForeignAdoption != 0 || journal.Operation.Mutations.OldEndpointStop != 0 ||
+		journal.Operation.Mutations.SuccessorResume != 0 || journal.Operation.Mutations.EndpointRefCAS != 0 || journal.Operation.Mutations.PaneRelaunch != 0 {
+		t.Fatalf("activation effects runtime=%+v operation=%+v", runtime, journal.Operation)
+	}
+	if _, err := coordinator.Journal.Update(context.Background(), func(stored *Journal, _ bool) error {
+		for index := range stored.Routes {
+			if stored.Routes[index].Generation.Endpoint.Same(request.Target.Endpoint) {
+				stored.Routes[index].Version = ""
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("clear optional route version: %v", err)
+	}
+	if _, err := coordinator.Journal.Update(context.Background(), func(stored *Journal, _ bool) error {
+		for index := range stored.Routes {
+			if stored.Routes[index].Generation.Endpoint.Same(request.Target.Endpoint) {
+				stored.Routes[index].Version = "0.153.0"
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("persist route-only version change: %v", err)
+	}
+	reloaded, exists, err := coordinator.Journal.Load()
+	if err != nil || !exists {
+		t.Fatalf("reload versioned routes exists=%t err=%v", exists, err)
+	}
+	reloadedCurrent, _ := reloaded.CurrentRoute()
+	if reloadedCurrent.Version != "0.153.0" {
+		t.Fatalf("route-only version change was dropped: %+v", reloadedCurrent)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*Journal)
+	}{
+		{
+			name: "unsafe external version",
+			mutate: func(journal *Journal) {
+				journal.Routes[0].Version = "not/a-safe-version"
+			},
+		},
+		{
+			name: "external canonical endpoint mismatch",
+			mutate: func(journal *Journal) {
+				journal.Routes[0].Version = "0.150.0"
+				journal.Routes[0].Generation.BundleID = "external-0.150.0"
+			},
+		},
+		{
+			name: "private canonical endpoint mismatch",
+			mutate: func(journal *Journal) {
+				for index := range journal.Routes {
+					if journal.Routes[index].Generation.Owner == codexgeneration.OwnerProjmuxPrivate {
+						journal.Routes[index].Version = "0.153.1"
+					}
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			corrupted := reloaded
+			corrupted.Routes = append([]GenerationRoute(nil), reloaded.Routes...)
+			test.mutate(&corrupted)
+			if err := corrupted.Validate(); err == nil {
+				t.Fatal("corrupt route version unexpectedly validated")
+			}
+		})
+	}
+}
+
+func TestManagedCurrentActivationRejectsNonCanonicalGenerationIdentityBeforeMutation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*ManagedCurrentActivation)
+	}{
+		{
+			name: "old endpoint does not name observed version",
+			mutate: func(activation *ManagedCurrentActivation) {
+				activation.OldEndpoint.EndpointGenerationID = "codex-9.9.9"
+			},
+		},
+		{
+			name: "target endpoint does not name managed version",
+			mutate: func(activation *ManagedCurrentActivation) {
+				activation.Target.Endpoint.EndpointGenerationID = "codex-9.9.9"
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := testRollingRequest(t)
+			coordinator, runtime, registry := testRollingCoordinator(t, request)
+			activation := ManagedCurrentActivation{
+				OperationRef: "managed-activation-canonical-identity", OldEndpoint: request.Current.Generation.Endpoint,
+				OldOwner: codexgeneration.OwnerUnmanaged, OldVersion: "0.151.0", Target: request.Target,
+				TargetBundleID: request.TargetBundleID, TargetTUIPath: request.TargetTUIPath, TargetVersion: "0.152.1",
+			}
+			test.mutate(&activation)
+			if _, err := coordinator.ActivateManagedCurrent(context.Background(), activation); err == nil || !strings.Contains(err.Error(), "request-invalid") {
+				t.Fatalf("non-canonical activation = %v", err)
+			}
+			_, exists, err := coordinator.Journal.Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if exists || runtime.starts != 0 || runtime.cleanups != 0 || registry.barriers != 0 || registry.convergences != 0 {
+				t.Fatalf("non-canonical identity mutated state: journal=%t runtime=%+v registry=%+v", exists, runtime, registry)
+			}
+		})
+	}
+}
+
+func TestManagedCurrentActivationRefusesMismatchedExistingCurrentWithoutFurtherMutation(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*GenerationRoute)
+	}{
+		{
+			name: "version",
+			mutate: func(route *GenerationRoute) {
+				route.Version = ""
+			},
+		},
+		{
+			name: "bundle",
+			mutate: func(route *GenerationRoute) {
+				route.Generation.BundleID = "sha256-mismatched-existing-current"
+				proof := *route.Proof
+				proof.BundleID = route.Generation.BundleID
+				route.Proof = &proof
+			},
+		},
+		{
+			name: "config",
+			mutate: func(route *GenerationRoute) {
+				route.Config.RequiredProtocol.Max++
+			},
+		},
+		{
+			name: "tui path",
+			mutate: func(route *GenerationRoute) {
+				route.TUIPath += "-mismatched"
+			},
+		},
+		{
+			name: "launch operation",
+			mutate: func(route *GenerationRoute) {
+				route.LaunchOperationRef = "other-managed-activation"
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := testRollingRequest(t)
+			coordinator, runtime, registry := testRollingCoordinator(t, request)
+			activation := ManagedCurrentActivation{
+				OperationRef: "managed-activation-existing-current", OldEndpoint: request.Current.Generation.Endpoint,
+				OldOwner: codexgeneration.OwnerUnmanaged, OldVersion: "0.151.0", Target: request.Target,
+				TargetBundleID: request.TargetBundleID, TargetTUIPath: request.TargetTUIPath, TargetVersion: "0.152.1",
+			}
+			if _, err := coordinator.ActivateManagedCurrent(context.Background(), activation); err != nil {
+				t.Fatalf("seed completed activation: %v", err)
+			}
+			if _, err := coordinator.Journal.Update(context.Background(), func(stored *Journal, _ bool) error {
+				for index := range stored.Routes {
+					if stored.Routes[index].Generation.Endpoint.Same(request.Target.Endpoint) {
+						test.mutate(&stored.Routes[index])
+						return nil
+					}
+				}
+				return errors.New("managed Current route missing")
+			}); err != nil {
+				t.Fatalf("persist structurally valid mismatch: %v", err)
+			}
+			beforeBody, err := os.ReadFile(coordinator.Journal.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			beforeStarts, beforeCleanups := runtime.starts, runtime.cleanups
+			beforeBarriers, beforeConvergences := registry.barriers, registry.convergences
+			if _, err := coordinator.ActivateManagedCurrent(context.Background(), activation); err == nil ||
+				!strings.Contains(err.Error(), "existing-pool-requires-operator-inspection") {
+				t.Fatalf("mismatched existing Current activation = %v", err)
+			}
+			afterBody, err := os.ReadFile(coordinator.Journal.Path())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(afterBody) != string(beforeBody) || runtime.starts != beforeStarts || runtime.cleanups != beforeCleanups ||
+				registry.barriers != beforeBarriers || registry.convergences != beforeConvergences {
+				t.Fatalf("mismatched existing Current mutated state: journal-changed=%t runtime=%+v registry=%+v",
+					string(afterBody) != string(beforeBody), runtime, registry)
+			}
+		})
+	}
+}
+
+func TestManagedCurrentActivationReopenAfterAdmissionConvergesDrainBeforeCreate(t *testing.T) {
+	request := testRollingRequest(t)
+	newLease := testRollingLease(t, filepath.Join(filepath.Dir(request.Target.LeaseRoot), "managed-0.153.0-reopen"), "0.153.0")
+	request.Target.Endpoint.EndpointGenerationID = "codex-0.153.0"
+	request.Target.LeaseRoot = newLease.Root
+	request.TargetBundleID = newLease.ID
+	request.TargetTUIPath = newLease.Paths(codexbundle.RoleTUI)[0]
+	coordinator, runtime, registry := testRollingCoordinator(t, request)
+	oldEndpoint := request.Current.Generation.Endpoint
+	registry.registry.Agents = append(registry.registry.Agents, metadata.Agent{
+		APIVersion: metadata.APIVersion, Kind: metadata.KindAgent,
+		Metadata: metadata.ObjectMeta{UID: "agent-reopen", Name: "agent-reopen"},
+		Spec:     metadata.AgentSpec{Provider: "codex"},
+		Status: metadata.AgentStatus{Phase: metadata.PhaseRunning, PaneRef: "pane-reopen", SessionRef: &metadata.AgentSessionRef{
+			Provider: "codex", Codex: &metadata.CodexSessionRef{ThreadID: "thread-reopen", HasStartedTurn: true, Endpoint: &oldEndpoint,
+				Lifecycle: &metadata.CodexGenerationLifecycleRef{State: metadata.CodexGenerationCurrent}},
+		}},
+	})
+	activation := ManagedCurrentActivation{
+		OperationRef: "managed-activation-reopen", OldEndpoint: oldEndpoint, OldOwner: codexgeneration.OwnerUnmanaged, OldVersion: "0.151.0",
+		Target: request.Target, TargetBundleID: request.TargetBundleID, TargetTUIPath: request.TargetTUIPath, TargetVersion: "0.153.0",
+	}
+	coordinator.Failpoint = func(point string) error {
+		if point == FailAfterAdmission {
+			return errors.New("crash after admission")
+		}
+		return nil
+	}
+	if _, err := coordinator.ActivateManagedCurrent(context.Background(), activation); err == nil || !strings.Contains(err.Error(), "crash after admission") {
+		t.Fatalf("post-admission crash = %v", err)
+	}
+	interrupted, exists, err := coordinator.Journal.Load()
+	if err != nil || !exists || interrupted.Operation == nil || !interrupted.Operation.AdmissionCommitted || interrupted.Operation.DrainPublished || interrupted.CurrentGenerationID != request.Target.Endpoint.EndpointGenerationID {
+		t.Fatalf("interrupted activation journal = %+v exists=%t err=%v", interrupted, exists, err)
+	}
+	reopened := &Coordinator{Journal: NewStore(coordinator.Journal.Path()), Registry: registry, Runtime: runtime}
+	converged, err := reopened.ActivateManagedCurrent(context.Background(), activation)
+	if err != nil {
+		t.Fatalf("reopen activation: %v", err)
+	}
+	if converged.Operation == nil || !converged.Operation.AdmissionCommitted || !converged.Operation.DrainPublished || runtime.starts != 1 ||
+		converged.Operation.Mutations.OldEndpointStop != 0 || converged.Operation.Mutations.ForeignAdoption != 0 || converged.Operation.Mutations.SuccessorResume != 0 {
+		t.Fatalf("reopen convergence runtime=%+v operation=%+v", runtime, converged.Operation)
+	}
+	agent, _ := registry.registry.Agent("agent-reopen")
+	if agent.Status.PaneRef != "pane-reopen" || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil ||
+		agent.Status.SessionRef.Codex.ThreadID != "thread-reopen" || !agent.Status.SessionRef.Codex.Endpoint.Same(oldEndpoint) ||
+		agent.Status.SessionRef.Codex.Lifecycle == nil || agent.Status.SessionRef.Codex.Lifecycle.State != metadata.CodexGenerationDraining {
+		t.Fatalf("reopen old Agent continuity = %#v", agent.Status)
+	}
+}
+
 func TestCoordinatorObserveFailureNamesCandidatePublicationOrAdmissionStage(t *testing.T) {
 	for _, test := range []struct {
 		name              string
@@ -445,8 +761,8 @@ func testRollingRequest(t *testing.T) Request {
 	}
 	oldLease := testRollingLease(t, filepath.Join(root, "old-bundle"), "0.151.0")
 	newLease := testRollingLease(t, filepath.Join(root, "new-bundle"), "0.152.1")
-	oldEndpoint := metadata.CodexEndpointRef{StateDomainID: "domain-one", EndpointGenerationID: "generation-old"}
-	newEndpoint := metadata.CodexEndpointRef{StateDomainID: "domain-one", EndpointGenerationID: "generation-new"}
+	oldEndpoint := metadata.CodexEndpointRef{StateDomainID: "domain-one", EndpointGenerationID: "codex-0.151.0"}
+	newEndpoint := metadata.CodexEndpointRef{StateDomainID: "domain-one", EndpointGenerationID: "codex-0.152.1"}
 	oldSocket := filepath.Join(oldRoot, "app-server.sock")
 	oldServer := oldLease.Paths(codexbundle.RoleServer)[0]
 	oldTUI := oldLease.Paths(codexbundle.RoleTUI)[0]
