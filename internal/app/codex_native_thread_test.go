@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -48,6 +49,31 @@ type fakeNativeResume struct {
 	route     codexNativeEndpointRoute
 	workspace coremetadata.AgentWorkspace
 	threadID  string
+}
+
+type orderedNativeThreadClient struct {
+	events   *[]string
+	closeErr error
+}
+
+func (c *orderedNativeThreadClient) StartThread(context.Context, string, []string) (codexappserver.ThreadBinding, error) {
+	*c.events = append(*c.events, "thread/start")
+	return codexappserver.ThreadBinding{ThreadID: "thread-production-order"}, nil
+}
+
+func (c *orderedNativeThreadClient) StartTurn(context.Context, string, string, string) (string, error) {
+	*c.events = append(*c.events, "turn/start")
+	return "turn-production-order", nil
+}
+
+func (c *orderedNativeThreadClient) BootstrapThread(context.Context, string, string, []string) (codexappserver.ThreadSnapshot, error) {
+	*c.events = append(*c.events, "thread/resume", "thread/read")
+	return codexappserver.ThreadSnapshot{ThreadID: "thread-production-order", RuntimeStatus: "idle"}, nil
+}
+
+func (c *orderedNativeThreadClient) Close() error {
+	*c.events = append(*c.events, "creator/close")
+	return c.closeErr
 }
 
 func (f *fakeNativeThreadController) Current(context.Context) (codexNativeEndpointRoute, error) {
@@ -111,6 +137,81 @@ func nativeTestRoute(generation string, state coremetadata.CodexGenerationState)
 	return codexNativeEndpointRoute{
 		Endpoint: coremetadata.CodexEndpointRef{StateDomainID: "test-domain", EndpointGenerationID: generation},
 		State:    state, SocketPath: "/test/" + generation + ".sock", TUIExecutable: "/test/" + generation + "/codex",
+	}
+}
+
+// TestPayloadFreeNativeCreateClosesCreatorBeforeIndependentDurableResumeBarrier
+// is the production-order regression for Phase 7. It is deliberately distinct
+// from the installed Pane-first capability smoke: Create must close the exact
+// thread/start client, cross an independent resume/read barrier, and only then
+// return the binding that lets the caller plan a TUI Pane.
+func TestPayloadFreeNativeCreateClosesCreatorBeforeIndependentDurableResumeBarrier(t *testing.T) {
+	events := []string{}
+	controller := defaultCodexNativeThreadController{
+		open: func(context.Context, codexNativeEndpointRoute, bool) (codexNativeThreadClient, error) {
+			events = append(events, "creator/open")
+			return &orderedNativeThreadClient{events: &events, closeErr: errors.New("owned stdio proxy reaped")}, nil
+		},
+		awaitDurable: func(_ context.Context, _ codexNativeEndpointRoute, _ coremetadata.AgentWorkspace, threadID string) error {
+			if threadID != "thread-production-order" {
+				t.Fatalf("readiness thread = %q", threadID)
+			}
+			events = append(events, "independent/resume-read-ready")
+			return nil
+		},
+	}
+	binding, err := controller.Create(context.Background(), nativeTestRoute("generation-production-order", coremetadata.CodexGenerationCurrent),
+		coremetadata.AgentWorkspace{CWD: "/work/project"}, "", "generation-request")
+	if err != nil || binding.ThreadID != "thread-production-order" || binding.TurnID != "" {
+		t.Fatalf("binding=%+v err=%v", binding, err)
+	}
+	want := []string{"creator/open", "thread/start", "creator/close", "independent/resume-read-ready"}
+	if !slices.Equal(events, want) {
+		t.Fatalf("production ordering = %v, want %v", events, want)
+	}
+}
+
+func TestPayloadFreeDurableResumeBarrierKeepsDefaultAndPrivateRoutesExact(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		route codexNativeEndpointRoute
+	}{
+		{name: "default daemon proxy", route: func() codexNativeEndpointRoute {
+			route := nativeTestRoute("generation-qualified-default", coremetadata.CodexGenerationCurrent)
+			route.Default, route.SocketPath = true, ""
+			return route
+		}()},
+		{name: "private generation", route: nativeTestRoute("generation-qualified-private", coremetadata.CodexGenerationCurrent)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var opened []codexNativeEndpointRoute
+			var experimental []bool
+			events := []string{}
+			controller := defaultCodexNativeThreadController{
+				open: func(_ context.Context, route codexNativeEndpointRoute, negotiate bool) (codexNativeThreadClient, error) {
+					opened = append(opened, route)
+					experimental = append(experimental, negotiate)
+					return &orderedNativeThreadClient{events: &events}, nil
+				},
+				guard: func(_ context.Context, route codexNativeEndpointRoute) error {
+					if route.Default != test.route.Default || route.SocketPath != test.route.SocketPath || !route.Endpoint.Same(test.route.Endpoint) {
+						t.Fatalf("readiness guard crossed route: got=%+v want=%+v", route, test.route)
+					}
+					return nil
+				},
+			}
+			binding, err := controller.Create(context.Background(), test.route,
+				coremetadata.AgentWorkspace{CWD: "/work/project"}, "", "generation-request")
+			if err != nil || binding.ThreadID != "thread-production-order" {
+				t.Fatalf("binding=%+v err=%v", binding, err)
+			}
+			if len(opened) != 2 || !opened[0].Endpoint.Same(test.route.Endpoint) || !opened[1].Endpoint.Same(test.route.Endpoint) ||
+				opened[0].Default != test.route.Default || opened[1].Default != test.route.Default ||
+				opened[0].SocketPath != test.route.SocketPath || opened[1].SocketPath != test.route.SocketPath ||
+				!slices.Equal(experimental, []bool{false, true}) {
+				t.Fatalf("route opens=%+v experimental=%v", opened, experimental)
+			}
+		})
 	}
 }
 
@@ -737,6 +838,100 @@ func TestEmptyPromptCodexFallbackFirstInputConvergesSessionRefAndRouting(t *test
 	}
 }
 
+func TestPayloadFreeReadinessFailurePreservesOneIdentityAndResumeCreatesNoSecondLane(t *testing.T) {
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, _ := newTestAgentCreateCommand(t, store, tmux)
+	endpoint := nativeTestRoute("generation-readiness-failure", coremetadata.CodexGenerationCurrent)
+	providerCause := errors.New("secret-provider-content-must-not-survive")
+	readinessErr := codexappserver.NewDurableResumeError(
+		codexappserver.DurableResumeTimeout, "thread-readiness-failure", 4, providerCause)
+	native := &fakeNativeThreadController{
+		currentRoute:  endpoint,
+		createBinding: codexappserver.ThreadBinding{ThreadID: "thread-readiness-failure"},
+		createErr:     readinessErr,
+	}
+	panes := &fakeNativePaneLauncher{}
+	create.codexNative = native
+	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
+	beforePanes := len(store.registry.Panes)
+	beforeAgents := len(store.registry.Agents)
+
+	stdout, stderr, err := runRoute(t, create,
+		"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "-o", "pane-id")
+	var outcome *nativeCodexCreateReadinessError
+	if !errors.As(err, &outcome) || stdout != "" || stderr != "" || outcome.ThreadID != "thread-readiness-failure" ||
+		outcome.Outcome != codexappserver.DurableResumeTimeout || outcome.EndpointGenerationID != endpoint.Endpoint.EndpointGenerationID {
+		t.Fatalf("stdout=%q stderr=%q error=%v outcome=%+v", stdout, stderr, err, outcome)
+	}
+	if strings.Contains(err.Error(), "secret-provider-content") {
+		t.Fatalf("content-free outcome leaked provider content: %v", err)
+	}
+	agent := agentNamed(t, store, "win-alpha-main", "codex-1")
+	if agent.Status.Phase != coremetadata.PhaseFailed || agent.Status.PaneRef != "" || agent.Status.Reason != "payload-free-readiness-deadline" ||
+		agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.ThreadID != "thread-readiness-failure" ||
+		agent.Status.SessionRef.Codex.Endpoint == nil || !agent.Status.SessionRef.Codex.Endpoint.Same(endpoint.Endpoint) ||
+		agent.Status.SessionRef.Codex.HasStartedTurn {
+		t.Fatalf("preserved failed Agent = %#v", agent.Status)
+	}
+	if len(store.registry.Panes) != beforePanes || len(native.creates) != 1 || len(native.resumes) != 0 ||
+		len(panes.plans) != 0 || len(panes.bound) != 0 || len(splitWindowCalls(tmux)) != 0 {
+		t.Fatalf("failure side effects: panes=%d/%d create=%+v resume=%+v plans=%+v bound=%+v splits=%v",
+			len(store.registry.Panes), beforePanes, native.creates, native.resumes, panes.plans, panes.bound, splitWindowCalls(tmux))
+	}
+
+	resume, legacy, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	native.createErr = nil
+	native.resolvedRoute = endpoint
+	native.resumeErr = codexappserver.ErrThreadNotDurable
+	native.resumeBinding = codexappserver.ThreadBinding{ThreadID: "thread-readiness-failure"}
+	resumePanes := &fakeNativePaneLauncher{}
+	resume.rebind.create.codexNative = native
+	resume.rebind.launcher = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: resumePanes}
+	beforeRetry := store.snapshot()
+	stdout, stderr, err = runRoute(t, resume, "resume", "uid:"+agent.Metadata.UID)
+	if err == nil || stdout != "" || stderr != "" {
+		t.Fatalf("resume retry stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if len(store.registry.Agents) != beforeAgents+1 || len(native.creates) != 1 || len(native.resumes) != 1 ||
+		len(legacy.bound) != 0 || len(resumePanes.plans) != 1 || resumePanes.plans[0].threadID != "thread-readiness-failure" ||
+		len(splitWindowCalls(tmux)) != 0 || store.snapshot() != beforeRetry {
+		t.Fatalf("retry synthesized identity/lane: agents=%d creates=%+v resumes=%+v legacy=%+v plans=%+v splits=%v",
+			len(store.registry.Agents), native.creates, native.resumes, legacy.bound, resumePanes.plans, splitWindowCalls(tmux))
+	}
+}
+
+var phase3EmptyPromptSymbolMigrationReceipt = map[string]string{
+	"TestEmptyPromptCodexCreateUsesOnePlainCLILaneAndNoNativeBinding":     "native-default-durable-readiness",
+	"TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane":               "native-producer-parity-durable-readiness",
+	"TestEmptyPromptCodexFallbackFirstInputConvergesSessionRefAndRouting": "same-thread-first-real-turn",
+	"TestCodexFanOutKeepsCurrentPlainCLILaneWithoutNativeCreate":          "explicit-interactive-only-cardinality",
+	"TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke":         "exact-tuple-durable-ready-or-typed-failed",
+	"TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration": "managed-current-exact-tuple-durable-ready-or-typed-failed",
+}
+
+var phase7InstalledMigrationSymbolRefs = []func(*testing.T){
+	TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke,
+	TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration,
+}
+
+func TestPhase3EmptyPromptSymbolsHaveExplicitDurableResumeMigrationReceipt(t *testing.T) {
+	want := map[string]string{
+		"TestEmptyPromptCodexCreateUsesOnePlainCLILaneAndNoNativeBinding":     "native-default-durable-readiness",
+		"TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane":               "native-producer-parity-durable-readiness",
+		"TestEmptyPromptCodexFallbackFirstInputConvergesSessionRefAndRouting": "same-thread-first-real-turn",
+		"TestCodexFanOutKeepsCurrentPlainCLILaneWithoutNativeCreate":          "explicit-interactive-only-cardinality",
+		"TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke":         "exact-tuple-durable-ready-or-typed-failed",
+		"TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration": "managed-current-exact-tuple-durable-ready-or-typed-failed",
+	}
+	if !reflect.DeepEqual(phase3EmptyPromptSymbolMigrationReceipt, want) {
+		t.Fatalf("Phase 3 symbol migration receipt = %v, want %v", phase3EmptyPromptSymbolMigrationReceipt, want)
+	}
+	if len(phase7InstalledMigrationSymbolRefs) != 2 || phase7InstalledMigrationSymbolRefs[0] == nil || phase7InstalledMigrationSymbolRefs[1] == nil {
+		t.Fatalf("installed symbol migration refs = %v", phase7InstalledMigrationSymbolRefs)
+	}
+}
+
 func TestCodexFanOutKeepsCurrentPlainCLILaneWithoutNativeCreate(t *testing.T) {
 	store := newFakeResourceStore(t)
 	tmux := newFakeTmux()
@@ -1209,8 +1404,8 @@ func TestIndeterminateNativeCreateRefusesASecondLaneAndWritesZero(t *testing.T) 
 // exactly which must launch nothing, and that only a create ever names the
 // `--interactive-only` escape hatch.
 func TestCodexNativeLaunchOutcomeTableIsClosed(t *testing.T) {
-	if len(codexNativeLaunchOutcomeTable) != 10 {
-		t.Fatalf("outcome rows=%d, want 10: %+v", len(codexNativeLaunchOutcomeTable), codexNativeLaunchOutcomeTable)
+	if len(codexNativeLaunchOutcomeTable) != 11 {
+		t.Fatalf("outcome rows=%d, want 11: %+v", len(codexNativeLaunchOutcomeTable), codexNativeLaunchOutcomeTable)
 	}
 	var plainLane, refused []string
 	for _, row := range codexNativeLaunchOutcomeTable {
@@ -1224,8 +1419,8 @@ func TestCodexNativeLaunchOutcomeTableIsClosed(t *testing.T) {
 	if !slices.Equal(plainLane, []string{"explicit " + interactiveOnlyFlag, "rollout picker source"}) {
 		t.Fatalf("plain CLI rows drifted: %v", plainLane)
 	}
-	if len(refused) != 5 {
-		t.Fatalf("refusal rows = %v, want the five unproven-authority rows", refused)
+	if len(refused) != 6 {
+		t.Fatalf("refusal rows = %v, want the six unproven-authority rows", refused)
 	}
 	for _, row := range codexNativeLaunchOutcomeTable {
 		if row.Action == "resume" && strings.Contains(row.Binding, interactiveOnlyFlag) {

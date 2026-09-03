@@ -529,6 +529,7 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 	}
 	var result createResult
 	var nativeLifecycleTarget codexLifecycleObserverTarget
+	var postCommitReadinessErr error
 	err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
 			return err
@@ -610,6 +611,7 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 			nativeCtx, cancel := prepareNativeContext(ctx)
 			prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, workspace, prompt, activation.Generation)
 			cancel()
+			var readiness *codexappserver.DurableResumeError
 			switch {
 			case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":
 				title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
@@ -627,6 +629,13 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 				usedNative = true
 			case nativeErr == nil:
 				return nativeLaunchError(canonicalCreateAgent, fmt.Errorf("%w: native create returned an empty thread", codexappserver.ErrProtocol))
+			case prompt == "" && strings.TrimSpace(prepared.ThreadID) != "" && errors.As(nativeErr, &readiness):
+				if err := preserveNativeCodexReadinessFailure(working, mutator, agent.Metadata.UID, pane.Metadata.UID,
+					activation.Generation, nativeRoute.Endpoint, prepared, readiness); err != nil {
+					return err
+				}
+				postCommitReadinessErr = newNativeCodexCreateReadinessError(agent.Metadata.UID, nativeRoute.Endpoint, prepared, readiness)
+				return nil
 			case nativeFallbackAllowed(c.codexNative, nativeErr), nativeRootsUnsupported(nativeErr):
 				return nativeCreatePreparationRefusal(canonicalCreateAgent, nativeErr)
 			default:
@@ -712,6 +721,9 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 	}, c.canonicalIntentGuards(scope)...)
 	if err != nil {
 		return err
+	}
+	if postCommitReadinessErr != nil {
+		return postCommitReadinessErr
 	}
 	if nativeLifecycleTarget.valid() {
 		nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleTarget)

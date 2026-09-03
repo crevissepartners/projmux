@@ -31,7 +31,17 @@ type codexNativeThreadController interface {
 }
 
 type defaultCodexNativeThreadController struct {
-	current func(context.Context) (codexNativeEndpointRoute, error)
+	current      func(context.Context) (codexNativeEndpointRoute, error)
+	open         func(context.Context, codexNativeEndpointRoute, bool) (codexNativeThreadClient, error)
+	awaitDurable func(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string) error
+	guard        func(context.Context, codexNativeEndpointRoute) error
+}
+
+type codexNativeThreadClient interface {
+	StartThread(context.Context, string, []string) (codexappserver.ThreadBinding, error)
+	StartTurn(context.Context, string, string, string) (string, error)
+	BootstrapThread(context.Context, string, string, []string) (codexappserver.ThreadSnapshot, error)
+	Close() error
 }
 
 // rollingCodexNativeThreadController overlays the owner-private Phase 4
@@ -164,7 +174,25 @@ func (controller rollingCodexNativeThreadController) Create(ctx context.Context,
 	if controller.create != nil {
 		return controller.create(ctx, route, workspace, prompt, requestKey)
 	}
-	return controller.fallback.Create(ctx, route, workspace, prompt, requestKey)
+	fallback := controller.fallback
+	if _, exists, err := controller.load(); err != nil {
+		return codexappserver.ThreadBinding{}, err
+	} else if !exists {
+		return fallback.Create(ctx, route, workspace, prompt, requestKey)
+	}
+	fallback.guard = func(guardCtx context.Context, expected codexNativeEndpointRoute) error {
+		journal, exists, err := controller.load()
+		if err != nil || !exists {
+			return codexappserver.ErrEndpointChanged
+		}
+		observed, ok := journal.Route(expected.Endpoint)
+		if !ok || !observed.Ready || observed.Proof == nil || observed.Config.SocketPath != expected.SocketPath ||
+			observed.TUIPath != expected.TUIExecutable || controller.observeRoute(guardCtx, observed) != nil {
+			return codexappserver.ErrEndpointChanged
+		}
+		return nil
+	}
+	return fallback.Create(ctx, route, workspace, prompt, requestKey)
 }
 
 func (controller rollingCodexNativeThreadController) Resume(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (codexappserver.ThreadBinding, error) {
@@ -336,21 +364,67 @@ func (controller defaultCodexNativeThreadController) Resolve(ctx context.Context
 	return route, nil
 }
 
-func (defaultCodexNativeThreadController) Create(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, prompt, requestKey string) (codexappserver.ThreadBinding, error) {
+func (controller defaultCodexNativeThreadController) Create(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, prompt, requestKey string) (codexappserver.ThreadBinding, error) {
 	if !route.valid() || route.State != codexgeneration.StateCurrent {
 		return codexappserver.ThreadBinding{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
-	client, err := openCodexNativeRoute(ctx, route, len(workspace.AdditionalWritableRoots) > 0)
+	client, err := controller.openRoute(ctx, route, len(workspace.AdditionalWritableRoots) > 0)
 	if err != nil {
 		return codexappserver.ThreadBinding{}, err
 	}
-	defer client.Close()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = client.Close()
+		}
+	}()
 	binding, err := client.StartThread(ctx, workspace.CWD, workspace.AdditionalWritableRoots)
-	if err != nil || prompt == "" {
+	if err != nil {
 		return binding, err
+	}
+	if prompt == "" {
+		// Closing a default-route client also reaps its owned stdio proxy and may
+		// report that local child exit. That cleanup result says nothing about
+		// whether the shared endpoint persisted the exact thread. The fresh
+		// independent resume/read below is the only semantic readiness verdict.
+		_ = client.Close()
+		closed = true
+		return binding, controller.awaitDurableResume(ctx, route, workspace, binding.ThreadID)
 	}
 	binding.TurnID, err = client.StartTurn(ctx, binding.ThreadID, prompt, requestKey)
 	return binding, err
+}
+
+func (controller defaultCodexNativeThreadController) awaitDurableResume(
+	ctx context.Context,
+	route codexNativeEndpointRoute,
+	workspace coremetadata.AgentWorkspace,
+	threadID string,
+) error {
+	if controller.awaitDurable != nil {
+		return controller.awaitDurable(ctx, route, workspace, threadID)
+	}
+	_, err := (codexappserver.DurableResumeBarrier{Open: func(openCtx context.Context) (codexappserver.DurableResumeClient, error) {
+		if controller.guard != nil {
+			if err := controller.guard(openCtx, route); err != nil {
+				return nil, err
+			}
+		} else if route.Default {
+			current, err := controller.Current(openCtx)
+			if err != nil || !current.Endpoint.Same(route.Endpoint) || !current.Default || current.State != codexgeneration.StateCurrent {
+				return nil, codexappserver.ErrEndpointChanged
+			}
+		}
+		return controller.openRoute(openCtx, route, true)
+	}}).Await(ctx, threadID, workspace.CWD, workspace.AdditionalWritableRoots)
+	return err
+}
+
+func (controller defaultCodexNativeThreadController) openRoute(ctx context.Context, route codexNativeEndpointRoute, experimental bool) (codexNativeThreadClient, error) {
+	if controller.open != nil {
+		return controller.open(ctx, route, experimental)
+	}
+	return openCodexNativeRoute(ctx, route, experimental)
 }
 
 func (defaultCodexNativeThreadController) Resume(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (codexappserver.ThreadBinding, error) {
@@ -464,6 +538,7 @@ var codexNativeLaunchOutcomeTable = []codexNativeLaunchOutcomeRow{
 	{Action: "resume", NativeResult: "create-time picker row, unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse without a second lane"},
 	{Action: "resume", NativeResult: "stored Agent rebind, unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse without a second lane"},
 	{Action: "create", NativeResult: "indeterminate after thread creation", Launch: "none", Binding: "write zero; refuse duplicate lane"},
+	{Action: "create", NativeResult: "payload-free thread not durably resumable", Launch: "none", Binding: "preserve one failed Agent and exact thread; refuse duplicate lane"},
 }
 
 func nativePrompt(payload []string) (string, bool) {
@@ -496,6 +571,63 @@ func nativeLaunchError(spelling string, err error) error {
 	// offer any second lane -- `--interactive-only` included. Starting another
 	// Codex process now could submit the same prompt twice.
 	return errors.New(spelling + ": native Codex thread preparation failed after provider identity became indeterminate; refusing a second CLI lane: " + err.Error())
+}
+
+// nativeCodexCreateReadinessError is the post-provider, pre-TUI outcome for a
+// payload-free create. All fields are opaque identity or a closed enum; neither
+// the upstream response nor provider content is retained or rendered.
+type nativeCodexCreateReadinessError struct {
+	AgentUID             string
+	ThreadID             string
+	StateDomainID        string
+	EndpointGenerationID string
+	Outcome              codexappserver.DurableResumeOutcome
+	err                  error
+}
+
+func (e *nativeCodexCreateReadinessError) Error() string {
+	return fmt.Sprintf(
+		"Codex payload-free create preserved a content-free failed outcome: agent uid:%s thread %s endpoint %s/%s readiness %s; TUI was not launched and retry must use `projmux agent resume uid:%s`",
+		e.AgentUID, e.ThreadID, e.StateDomainID, e.EndpointGenerationID, e.Outcome, e.AgentUID)
+}
+
+func (e *nativeCodexCreateReadinessError) Unwrap() error { return e.err }
+
+func preserveNativeCodexReadinessFailure(
+	working *coremetadata.Registry,
+	mutator coremetadata.Mutator,
+	agentUID, paneUID, activationGeneration string,
+	endpoint coremetadata.CodexEndpointRef,
+	binding codexappserver.ThreadBinding,
+	readiness *codexappserver.DurableResumeError,
+) error {
+	if readiness == nil || strings.TrimSpace(binding.ThreadID) == "" || strings.TrimSpace(binding.TurnID) != "" {
+		return errors.New("native Codex readiness failure is missing an exact payload-free identity")
+	}
+	if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
+		AgentUID: agentUID, PaneUID: paneUID, Generation: activationGeneration,
+		ThreadID: binding.ThreadID, Endpoint: endpoint,
+	}); err != nil {
+		return MapMetadataError(err)
+	}
+	if _, err := mutator.ReleaseAgentPane(working, agentUID, coremetadata.AgentExitLaunchFailure,
+		"payload-free-readiness-"+string(readiness.Outcome)); err != nil {
+		return MapMetadataError(err)
+	}
+	return nil
+}
+
+func newNativeCodexCreateReadinessError(
+	agentUID string,
+	endpoint coremetadata.CodexEndpointRef,
+	binding codexappserver.ThreadBinding,
+	readiness *codexappserver.DurableResumeError,
+) error {
+	return &nativeCodexCreateReadinessError{
+		AgentUID: agentUID, ThreadID: binding.ThreadID,
+		StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID,
+		Outcome: readiness.Outcome, err: readiness,
+	}
 }
 
 // interactiveOnlyFlag is the one public spelling that asks for a plain-CLI
