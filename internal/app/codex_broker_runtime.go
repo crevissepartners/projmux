@@ -34,6 +34,46 @@ const (
 	codexBrokerProbeTimeout = 15 * time.Second
 )
 
+// codexBrokerEndpointRoute is the process-local transport half of one durable
+// generation route. The discovery key carries only the durable endpoint
+// identity; this value tells the broker process how to attach to that exact
+// endpoint without granting it daemon lifecycle authority.
+type codexBrokerEndpointRoute struct {
+	StateDomainID        string
+	EndpointGenerationID string
+	SocketPath           string
+	Default              bool
+}
+
+func (route codexBrokerEndpointRoute) endpointKey() (codexbroker.EndpointKey, error) {
+	if route == (codexBrokerEndpointRoute{}) {
+		return codexbroker.DefaultEndpointKey, nil
+	}
+	if route.Default == (strings.TrimSpace(route.SocketPath) != "") {
+		return "", errors.New("codex broker generation requires exactly one default or private endpoint transport")
+	}
+	if !route.Default && !filepath.IsAbs(strings.TrimSpace(route.SocketPath)) {
+		return "", errors.New("codex broker generation private endpoint socket must be absolute")
+	}
+	key, err := codexbroker.NewEndpointKey(route.StateDomainID, route.EndpointGenerationID)
+	if err != nil {
+		return "", fmt.Errorf("resolve codex broker generation key: %s", codexbroker.RefusalOf(err))
+	}
+	return key, nil
+}
+
+func (route codexBrokerEndpointRoute) opener() codexbroker.Opener {
+	if route == (codexBrokerEndpointRoute{}) || route.Default {
+		return codexbroker.DefaultOpener(version.String(), codexappserver.AttachOptions{
+			Timeout: codexBrokerAttachTimeout, ExperimentalAPI: true,
+		})
+	}
+	socketPath := filepath.Clean(route.SocketPath)
+	return func(ctx context.Context) (codexbroker.Endpoint, error) {
+		return codexappserver.OpenPrivateUnix(ctx, socketPath, codexBrokerAttachTimeout, version.String(), true)
+	}
+}
+
 // codexBrokerCommand is the minimal executable seam for the Codex endpoint
 // broker runtime.
 //
@@ -80,6 +120,10 @@ func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) e
 	fs := flag.NewFlagSet("internal codex-broker serve", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	stateDomain := fs.String("state-domain", "", "absolute state domain the runtime singleton is scoped to")
+	endpointStateDomain := fs.String("endpoint-state-domain", "", "durable Codex endpoint state-domain identity")
+	endpointGeneration := fs.String("endpoint-generation", "", "durable Codex endpoint generation identity")
+	endpointSocket := fs.String("endpoint-socket", "", "absolute private Codex endpoint socket")
+	endpointDefault := fs.Bool("endpoint-default", false, "attach the durable generation to the unmanaged default endpoint")
 	idle := fs.Duration("idle-timeout", 0, "bounded idle shutdown after the last binding is removed")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -90,15 +134,21 @@ func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) e
 	if fs.NArg() != 0 {
 		return usageError("internal codex-broker serve does not accept positional arguments")
 	}
-	discovery, err := c.discovery(*stateDomain)
+	route := codexBrokerEndpointRoute{
+		StateDomainID: strings.TrimSpace(*endpointStateDomain), EndpointGenerationID: strings.TrimSpace(*endpointGeneration),
+		SocketPath: strings.TrimSpace(*endpointSocket), Default: *endpointDefault,
+	}
+	endpointKey, err := route.endpointKey()
+	if err != nil {
+		return usageError(err.Error())
+	}
+	discovery, err := c.discoveryFor(*stateDomain, endpointKey)
 	if err != nil {
 		return err
 	}
 	broker, err := codexbroker.NewBroker(codexbroker.Config{
-		Opener: codexbroker.DefaultOpener(version.String(), codexappserver.AttachOptions{
-			Timeout:         codexBrokerAttachTimeout,
-			ExperimentalAPI: true,
-		}),
+		Endpoint: discovery.Endpoint(),
+		Opener:   route.opener(),
 	})
 	if err != nil {
 		return fmt.Errorf("start codex broker: %w", err)
@@ -203,6 +253,10 @@ func (c *codexBrokerCommand) launcher(discovery codexbroker.Discovery) codexbrok
 
 // discovery resolves the runtime singleton contract for this process.
 func (c *codexBrokerCommand) discovery(override string) (codexbroker.Discovery, error) {
+	return c.discoveryFor(override, codexbroker.DefaultEndpointKey)
+}
+
+func (c *codexBrokerCommand) discoveryFor(override string, endpoint codexbroker.EndpointKey) (codexbroker.Discovery, error) {
 	domain := strings.TrimSpace(override)
 	if domain == "" {
 		resolved, err := c.stateDomain()
@@ -214,15 +268,11 @@ func (c *codexBrokerCommand) discovery(override string) (codexbroker.Discovery, 
 	if !filepath.IsAbs(domain) {
 		return codexbroker.Discovery{}, usageError("internal codex-broker requires an absolute --state-domain")
 	}
-	return codexBrokerDiscoveryFor(domain)
+	return codexBrokerDiscoveryForEndpoint(domain, endpoint)
 }
 
-// codexBrokerDiscoveryFor builds the runtime singleton contract for one
-// absolute state domain. Both the runtime entrypoint and the product binding
-// client resolve their contract here, so a client can never look for a runtime
-// under a domain the runtime would not have published itself under.
-func codexBrokerDiscoveryFor(domain string) (codexbroker.Discovery, error) {
-	discovery, err := codexbroker.NewDiscovery(domain, codexbroker.DefaultEndpointKey)
+func codexBrokerDiscoveryForEndpoint(domain string, endpoint codexbroker.EndpointKey) (codexbroker.Discovery, error) {
+	discovery, err := codexbroker.NewDiscovery(domain, endpoint)
 	if err != nil {
 		return codexbroker.Discovery{}, fmt.Errorf("resolve codex broker discovery: %s", codexbroker.RefusalOf(err))
 	}

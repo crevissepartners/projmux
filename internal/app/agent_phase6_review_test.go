@@ -292,7 +292,8 @@ func TestLegacyZeroWorkspaceProjectsAndPersistsOwnerProjectRootOnResume(t *testi
 		t.Fatalf("legacy describe = %q err=%v", described, err)
 	}
 	tmux := newFakeTmux()
-	cmd, _, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	cmd, recorder, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	enablePinnedNativeResumeFixture(t, cmd, store, agentBefore.Metadata.UID, recorder)
 	cmd.resolveWorkspace = resolveAgentWorkspaceFor
 	cmd.rebind.resolveWorkspace = resolveAgentWorkspaceFor
 	if _, _, err := runRoute(t, cmd, "resume", "uid:"+agentBefore.Metadata.UID); err != nil {

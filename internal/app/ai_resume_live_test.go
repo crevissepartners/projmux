@@ -34,6 +34,21 @@ func summaryDiscovery(provider, id, source string, modified time.Time) aisession
 	}
 }
 
+func nativeSummaryDiscovery(id string, modified time.Time, route codexNativeEndpointRoute) aisessions.ResumeSummaryDiscovery {
+	discovery := summaryDiscovery(aiModeCodex, id, aisessions.SourceCodexAppServer, modified)
+	for i := range discovery.Summaries {
+		discovery.Summaries[i].StateDomainID = route.Endpoint.StateDomainID
+		discovery.Summaries[i].EndpointGenerationID = route.Endpoint.EndpointGenerationID
+		discovery.Summaries[i].GenerationState = string(route.State)
+	}
+	for i := range discovery.DetailRefs {
+		discovery.DetailRefs[i].StateDomainID = route.Endpoint.StateDomainID
+		discovery.DetailRefs[i].EndpointGenerationID = route.Endpoint.EndpointGenerationID
+		discovery.DetailRefs[i].GenerationState = string(route.State)
+	}
+	return discovery
+}
+
 type blockingResumeSummaryCatalog struct {
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -192,7 +207,7 @@ func TestResumeProviderStateTableProjectsFooterWithoutInformationalItems(t *test
 			controller.startOnce.Do(func() {})
 			controller.providerStates = test.states
 			controller.summaries = []aisessions.ResumeSummary{
-				{Provider: aiModeCodex, ResumeID: "codex-exact", Source: aisessions.SourceCodexAppServer},
+				{Provider: aiModeCodex, ResumeID: "codex-exact", Source: aisessions.SourceCodexRollout},
 				{Provider: aiModeClaude, ResumeID: "claude-exact", Source: aisessions.SourceClaudeTranscript},
 				{Provider: aiModeAntigravity, ResumeID: "antigravity-exact", Source: aisessions.SourceAntigravityMetadata},
 			}
@@ -351,7 +366,8 @@ func TestResumeSummaryPopulationEnvelopeKeepsCancellationSettledCodexPartial(t *
 	default:
 		t.Fatal("Codex cancellation-settled result was not collected")
 	}
-	wantValue := aiResumePickerValue(aiModeCodex, exactID)
+	wantValue := aiResumePickerValueForSession(aiResumeSessionMetaFromSummary(
+		summaryDiscovery(aiModeCodex, exactID, aisessions.SourceCodexRollout, time.Unix(30, 0)).Summaries[0], ""))
 	entry, ok := resumeSummaryEntryWithValue(entries, wantValue)
 	if !ok {
 		t.Fatalf("settled frame lost matching Codex partial: %#v", entries)
@@ -468,6 +484,7 @@ func TestResumeSummaryFirstPopulatedFrameSettlesEveryProviderPermutationOnce(t *
 }
 
 func TestResumeSummaryCodexDelayNeverMutatesFrameAfterOpen(t *testing.T) {
+	route := nativeTestRoute("generation-delay", coremetadata.CodexGenerationCurrent)
 	tests := []struct {
 		name  string
 		delay time.Duration
@@ -493,17 +510,18 @@ func TestResumeSummaryCodexDelayNeverMutatesFrameAfterOpen(t *testing.T) {
 					time.Sleep(tc.delay)
 				}
 				close(lateReturned)
-				return summaryDiscovery(provider, "codex-native-exact", aisessions.SourceCodexAppServer, time.Unix(30, 0)), nil
+				return nativeSummaryDiscovery("codex-native-exact", time.Unix(30, 0), route), nil
 			}
 			controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
 			controller.populationTimeout = 100 * time.Millisecond
 			entries := controller.initialEntries()
 			frameHash := pickerEntryHash(entries)
 			if tc.delay < controller.populationTimeout && !tc.block {
-				if _, ok := resumeSummaryEntryWithValue(entries, aiResumePickerValue(aiModeCodex, "codex-native-exact")); !ok {
+				want := aiResumePickerValueForSession(aiResumeSessionMetaFromSummary(nativeSummaryDiscovery("codex-native-exact", time.Unix(30, 0), route).Summaries[0], ""))
+				if _, ok := resumeSummaryEntryWithValue(entries, want); !ok {
 					t.Fatalf("in-budget native summary missing: %#v", entries)
 				}
-			} else if _, ok := resumeSummaryEntryWithValue(entries, aiResumePickerValue(aiModeCodex, "codex-native-exact")); ok {
+			} else if _, ok := resumeSummaryEntryWithValue(entries, aiResumePickerValueForSession(aiResumeSessionMetaFromSummary(nativeSummaryDiscovery("codex-native-exact", time.Unix(30, 0), route).Summaries[0], ""))); ok {
 				t.Fatalf("late native summary entered current frame: %#v", entries)
 			}
 			if tc.block {
@@ -527,11 +545,12 @@ func TestResumeSummaryCodexDelayNeverMutatesFrameAfterOpen(t *testing.T) {
 }
 
 func TestResumeSummaryGlobalSortCapAndExactSource(t *testing.T) {
+	nativeRoute := nativeTestRoute("generation-sort", coremetadata.CodexGenerationCurrent)
 	cmd := testAICommand(t.TempDir())
 	cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
 		switch provider {
 		case aiModeCodex:
-			return summaryDiscovery(provider, "codex-exact", aisessions.SourceCodexAppServer, time.Unix(30, 0)), nil
+			return nativeSummaryDiscovery("codex-exact", time.Unix(30, 0), nativeRoute), nil
 		case aiModeClaude:
 			return summaryDiscovery(provider, "claude-exact", aisessions.SourceClaudeTranscript, time.Unix(20, 0)), nil
 		default:
@@ -541,7 +560,11 @@ func TestResumeSummaryGlobalSortCapAndExactSource(t *testing.T) {
 	controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 2)
 	defer controller.close()
 	entries := controller.initialEntries()
-	wantValues := []string{aiResumeNewValue, aiResumePickerValue(aiModeCodex, "codex-exact"), aiResumePickerValue(aiModeClaude, "claude-exact")}
+	wantValues := []string{
+		aiResumeNewValue,
+		aiResumePickerValueForSession(aiResumeSessionMetaFromSummary(nativeSummaryDiscovery("codex-exact", time.Unix(30, 0), nativeRoute).Summaries[0], "")),
+		aiResumePickerValue(aiModeClaude, "claude-exact"),
+	}
 	var gotValues []string
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Value, "resume\t") || entry.Value == aiResumeNewValue {
@@ -568,13 +591,14 @@ func TestResumeSummaryGlobalSortCapAndExactSource(t *testing.T) {
 
 func TestResumeSummaryEveryProviderAndCodexLanePreservesExactIDAndSource(t *testing.T) {
 	summaries := []aisessions.ResumeSummary{
-		{Provider: aiModeCodex, ResumeID: "codex-native-exact", Source: aisessions.SourceCodexAppServer},
+		{Provider: aiModeCodex, ResumeID: "codex-native-exact", Source: aisessions.SourceCodexAppServer,
+			StateDomainID: "state-exact", EndpointGenerationID: "generation-exact", GenerationState: string(coremetadata.CodexGenerationCurrent)},
 		{Provider: aiModeCodex, ResumeID: "codex-fallback-exact", Source: aisessions.SourceCodexRollout},
 		{Provider: aiModeClaude, ResumeID: "claude-exact", Source: aisessions.SourceClaudeTranscript},
 		{Provider: aiModeAntigravity, ResumeID: "antigravity-exact", Source: aisessions.SourceAntigravityHistory},
 	}
 	for _, summary := range summaries {
-		value := aiResumePickerValue(summary.Provider, summary.ResumeID)
+		value := aiResumePickerValueForSession(aiResumeSessionMetaFromSummary(summary, ""))
 		selection, ok := parseAIResumePickerValue(value)
 		if !ok {
 			t.Fatalf("parse exact picker value %q", value)
@@ -583,6 +607,245 @@ func TestResumeSummaryEveryProviderAndCodexLanePreservesExactIDAndSource(t *test
 		if selection.agent != summary.Provider || selection.resumeID != summary.ResumeID || selection.source != summary.Source {
 			t.Fatalf("summary=%#v selection=%#v", summary, selection)
 		}
+	}
+}
+
+func TestCodexResumePickerPinnedValueShapeIsClosed(t *testing.T) {
+	value := func(source, stateDomain, generation string, state coremetadata.CodexGenerationState) string {
+		return strings.Join([]string{"resume", aiModeCodex, "thread-shape", source, stateDomain, generation, string(state)}, "\t")
+	}
+	for _, test := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "native exact", value: value(aisessions.SourceCodexAppServer, "state-shape", "generation-shape", coremetadata.CodexGenerationCurrent), want: true},
+		{name: "rollout exact", value: value(aisessions.SourceCodexRollout, "", "", ""), want: true},
+		{name: "rollout state domain", value: value(aisessions.SourceCodexRollout, "state-shape", "", "")},
+		{name: "rollout generation", value: value(aisessions.SourceCodexRollout, "", "generation-shape", "")},
+		{name: "rollout state", value: value(aisessions.SourceCodexRollout, "", "", coremetadata.CodexGenerationCurrent)},
+		{name: "native missing state domain", value: value(aisessions.SourceCodexAppServer, "", "generation-shape", coremetadata.CodexGenerationCurrent)},
+		{name: "native missing generation", value: value(aisessions.SourceCodexAppServer, "state-shape", "", coremetadata.CodexGenerationCurrent)},
+		{name: "native missing state", value: value(aisessions.SourceCodexAppServer, "state-shape", "generation-shape", "")},
+		{name: "native unknown state", value: value(aisessions.SourceCodexAppServer, "state-shape", "generation-shape", "unknown")},
+		{name: "unknown source", value: value("codex-unknown", "", "", "")},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			selection, got := parseAIResumePickerValue(test.value)
+			if got != test.want {
+				t.Fatalf("parse=%t selection=%#v want=%t value=%q", got, selection, test.want, test.value)
+			}
+		})
+	}
+}
+
+func TestNativeResumePickerRowsPreserveExactGenerationThreadAndSource(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	draining := nativeTestRoute("generation-picker-old", coremetadata.CodexGenerationDraining)
+	current := nativeTestRoute("generation-picker-current", coremetadata.CodexGenerationCurrent)
+	cmd.codexNative = &fakeNativeThreadController{catalogRoutes: []codexNativeEndpointRoute{draining, current}}
+	var codexCalls atomic.Int32
+	cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+		if provider != aiModeCodex {
+			return aisessions.ResumeSummaryDiscovery{}, nil
+		}
+		call := codexCalls.Add(1)
+		return summaryDiscovery(provider, fmt.Sprintf("thread-picker-%d", call), aisessions.SourceCodexAppServer, time.Unix(int64(call), 0)), nil
+	}
+	controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
+	defer controller.close()
+	entries := controller.initialEntries()
+	if got := codexCalls.Load(); got != 2 {
+		t.Fatalf("generation catalog reads=%d, want one per exact route", got)
+	}
+
+	want := map[string]codexNativeEndpointRoute{"thread-picker-1": draining, "thread-picker-2": current}
+	for _, entry := range entries {
+		selection, parsed := parseAIResumePickerValue(entry.Value)
+		if !parsed || selection.agent != aiModeCodex {
+			continue
+		}
+		route, ok := want[selection.resumeID]
+		if !ok {
+			continue
+		}
+		if !selection.rowPinned || selection.agent != aiModeCodex ||
+			selection.source != aisessions.SourceCodexAppServer || !selection.endpoint.Same(route.Endpoint) ||
+			selection.state != route.State {
+			t.Fatalf("picker identity lost an axis: entry=%#v selection=%#v wantRoute=%+v", entry, selection, route)
+		}
+		if route.State == coremetadata.CodexGenerationDraining && !strings.Contains(stripANSI(entry.Label), "[handover-required]") {
+			t.Fatalf("draining row does not visibly refuse: %q", stripANSI(entry.Label))
+		}
+		if route.State == coremetadata.CodexGenerationCurrent && strings.Contains(stripANSI(entry.Label), "required]") {
+			t.Fatalf("current row rendered blocked: %q", stripANSI(entry.Label))
+		}
+
+		// A refresh/current change after the row was displayed cannot retarget
+		// Enter: the exact route axes live in Entry.Value itself.
+		refreshed := []aisessions.ResumeSummary{{
+			Provider: aiModeCodex, ResumeID: selection.resumeID, Source: aisessions.SourceCodexAppServer,
+			StateDomainID: current.Endpoint.StateDomainID, EndpointGenerationID: current.Endpoint.EndpointGenerationID,
+			GenerationState: string(coremetadata.CodexGenerationCurrent),
+		}}
+		if got := enrichAIResumeSelectionFromSummaries(selection, refreshed); !got.rowPinned || !got.endpoint.Same(route.Endpoint) || got.state != route.State {
+			t.Fatalf("displayed row was retargeted by refresh: before=%#v after=%#v", selection, got)
+		}
+		delete(want, selection.resumeID)
+	}
+	if len(want) != 0 {
+		t.Fatalf("generation picker rows missing: %v", want)
+	}
+}
+
+func TestNativeResumePickerDuplicateVisibilityUsesKnownOwnerOrRefusesAmbiguous(t *testing.T) {
+	const threadID = "thread-visible-from-two-generations"
+	draining := nativeTestRoute("generation-collision-old", coremetadata.CodexGenerationDraining)
+	current := nativeTestRoute("generation-collision-current", coremetadata.CodexGenerationCurrent)
+	for _, test := range []struct {
+		name       string
+		knownOwner bool
+		wantState  coremetadata.CodexGenerationState
+	}{
+		{name: "durable owner selects exact draining row", knownOwner: true, wantState: coremetadata.CodexGenerationDraining},
+		{name: "unknown owner is disabled", wantState: coremetadata.CodexGenerationBlocked},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := testAICommand(t.TempDir())
+			cmd.codexNative = &fakeNativeThreadController{catalogRoutes: []codexNativeEndpointRoute{draining, current}}
+			if test.knownOwner {
+				store := newFakeResourceStore(t)
+				ref := nativeTestSessionRef(draining, threadID)
+				setFixtureSessionRef(t, store, "agt-beta-codex", ref)
+				cmd.loadRegistry = func() (coremetadata.Registry, error) { return store.registry.Clone(), nil }
+			}
+			var codexCalls atomic.Int32
+			cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+				if provider != aiModeCodex {
+					return aisessions.ResumeSummaryDiscovery{}, nil
+				}
+				call := codexCalls.Add(1)
+				return summaryDiscovery(provider, threadID, aisessions.SourceCodexAppServer, time.Unix(int64(call), 0)), nil
+			}
+			controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
+			defer controller.close()
+			entries := controller.initialEntries()
+			var found []aisessions.ResumeSummary
+			for _, summary := range controller.snapshotSummaries() {
+				if summary.Provider == aiModeCodex && summary.ResumeID == threadID {
+					found = append(found, summary)
+				}
+			}
+			if len(found) != 1 || coremetadata.CodexGenerationState(found[0].GenerationState) != test.wantState {
+				t.Fatalf("collision rows=%#v, want one state=%s", found, test.wantState)
+			}
+			var selected aiResumeSelection
+			var selectedLabel string
+			for _, entry := range entries {
+				selection, ok := parseAIResumePickerValue(entry.Value)
+				if ok && selection.agent == aiModeCodex && selection.resumeID == threadID {
+					selected, selectedLabel = selection, stripANSI(entry.Label)
+					break
+				}
+			}
+			if !selected.rowPinned || selected.source != aisessions.SourceCodexAppServer || selected.state != test.wantState ||
+				!selected.endpoint.Same(codexSummaryEndpoint(found[0])) {
+				t.Fatalf("collision picker row lost exact route: selection=%#v summary=%#v", selected, found[0])
+			}
+			wantVisible := "[generation-unavailable]"
+			if test.knownOwner {
+				wantVisible = "[handover-required]"
+			}
+			if !strings.Contains(selectedLabel, wantVisible) {
+				t.Fatalf("collision row state is hidden: label=%q want=%q", selectedLabel, wantVisible)
+			}
+			key := aiModeCodex + "\x00" + threadID
+			detail, hasDetail := controller.detailRefs[key]
+			if test.knownOwner {
+				if endpoint := codexSummaryEndpoint(found[0]); !endpoint.Same(draining.Endpoint) ||
+					!hasDetail || !codexDetailEndpoint(detail).Same(draining.Endpoint) || detail.GenerationState != string(coremetadata.CodexGenerationDraining) {
+					t.Fatalf("known owner/detail crossed generation: summary=%#v detail=%#v", found[0], detail)
+				}
+				return
+			}
+			if hasDetail {
+				t.Fatalf("ambiguous row retained a cross-readable detail ref: %#v", detail)
+			}
+
+			fx := canonicalFixture(t, false)
+			fx.create.codexNative = &fakeNativeThreadController{catalogRoutes: []codexNativeEndpointRoute{draining, current}}
+			legacy := newFakeResumeLauncher()
+			fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
+			before := fx.store.snapshot()
+			err := fx.create.createFromIntent(agentPaneIntent{
+				producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right", anchorPaneID: fx.originID,
+				conversationID: threadID, resumeSource: found[0].Source, resumeEndpoint: codexSummaryEndpoint(found[0]),
+				resumeGenerationState: coremetadata.CodexGenerationState(found[0].GenerationState),
+			}, ioDiscard{}, ioDiscard{})
+			if err == nil || !strings.Contains(err.Error(), codexNativeReasonGenerationUnavailable) || fx.store.transactions != 0 ||
+				fx.store.writes != 0 || fx.store.snapshot() != before || len(legacy.plans) != 0 || len(splitWindowCalls(fx.tmux)) != 0 {
+				t.Fatalf("ambiguous selection was not write-zero: err=%v tx=%d writes=%d plans=%v splits=%v",
+					err, fx.store.transactions, fx.store.writes, legacy.plans, splitWindowCalls(fx.tmux))
+			}
+		})
+	}
+}
+
+func TestNativeResumePickerSoleCurrentVisibilityNeverOverridesKnownOldOwner(t *testing.T) {
+	const threadID = "thread-owned-by-temporarily-missing-old"
+	old := nativeTestRoute("generation-owner-offline", coremetadata.CodexGenerationDraining)
+	current := nativeTestRoute("generation-visible-current", coremetadata.CodexGenerationCurrent)
+	store := newFakeResourceStore(t)
+	setFixtureSessionRef(t, store, "agt-beta-codex", nativeTestSessionRef(old, threadID))
+
+	cmd := testAICommand(t.TempDir())
+	cmd.codexNative = &fakeNativeThreadController{catalogRoutes: []codexNativeEndpointRoute{current}}
+	cmd.loadRegistry = func() (coremetadata.Registry, error) { return store.registry.Clone(), nil }
+	cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+		if provider != aiModeCodex {
+			return aisessions.ResumeSummaryDiscovery{}, nil
+		}
+		return summaryDiscovery(provider, threadID, aisessions.SourceCodexAppServer, time.Unix(1, 0)), nil
+	}
+	controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
+	defer controller.close()
+	entries := controller.initialEntries()
+	summaries := controller.snapshotSummaries()
+	if len(summaries) != 1 || summaries[0].GenerationState != string(coremetadata.CodexGenerationBlocked) ||
+		!codexSummaryEndpoint(summaries[0]).Same(current.Endpoint) {
+		t.Fatalf("sole visible current row gained old-thread authority: %#v", summaries)
+	}
+	if _, exists := controller.detailRefs[aiModeCodex+"\x00"+threadID]; exists {
+		t.Fatal("blocked sole-visible row retained a cross-generation detail ref")
+	}
+	var selection aiResumeSelection
+	var label string
+	for _, entry := range entries {
+		parsed, ok := parseAIResumePickerValue(entry.Value)
+		if ok && parsed.agent == aiModeCodex && parsed.resumeID == threadID {
+			selection, label = parsed, stripANSI(entry.Label)
+			break
+		}
+	}
+	if !selection.rowPinned || selection.state != coremetadata.CodexGenerationBlocked ||
+		!selection.endpoint.Same(current.Endpoint) || !strings.Contains(label, "[generation-unavailable]") {
+		t.Fatalf("blocked sole-visible picker row is not exact/visible: selection=%#v label=%q", selection, label)
+	}
+
+	fx := canonicalFixture(t, false)
+	legacy := newFakeResumeLauncher()
+	fx.create.codexNative = &fakeNativeThreadController{catalogRoutes: []codexNativeEndpointRoute{current}, resolvedRoute: current}
+	fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
+	before := fx.store.snapshot()
+	err := fx.create.createFromIntent(agentPaneIntent{
+		producer: canonicalProducerResumePicker, provider: aiModeCodex, placement: "right", anchorPaneID: fx.originID,
+		conversationID: selection.resumeID, resumeSource: selection.source, resumeEndpoint: selection.endpoint,
+		resumeGenerationState: selection.state,
+	}, ioDiscard{}, ioDiscard{})
+	if err == nil || !strings.Contains(err.Error(), codexNativeReasonGenerationUnavailable) || fx.store.transactions != 0 ||
+		fx.store.writes != 0 || fx.store.snapshot() != before || len(legacy.plans) != 0 || len(splitWindowCalls(fx.tmux)) != 0 {
+		t.Fatalf("sole current visibility crossed durable old ownership: err=%v tx=%d writes=%d plans=%v splits=%v",
+			err, fx.store.transactions, fx.store.writes, legacy.plans, splitWindowCalls(fx.tmux))
 	}
 }
 

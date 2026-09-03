@@ -157,6 +157,40 @@ func TestIdentityAndVersionTokensRejectNonCanonicalWhitespace(t *testing.T) {
 	}
 }
 
+func TestNoTurnGenerationObligationSurvivesProjectionUntilExplicitClose(t *testing.T) {
+	agent := metadata.Agent{
+		Metadata: metadata.ObjectMeta{UID: "agent-no-turn"},
+		Spec:     metadata.AgentSpec{Provider: "codex"},
+		Status: metadata.AgentStatus{
+			Phase: metadata.PhaseRunning,
+			SessionRef: &metadata.AgentSessionRef{
+				Provider: "codex",
+				Codex: &metadata.CodexSessionRef{
+					ThreadID: "thread-no-turn",
+					Endpoint: &metadata.CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "generation-old"},
+				},
+			},
+		},
+	}
+	for i := range 3 {
+		obligation, ok := ProjectAgentObligation(agent, false)
+		if !ok || obligation != (AgentObligation{AgentUID: "agent-no-turn", EndpointGenerationID: "generation-old", State: ObligationNoTurn}) {
+			t.Fatalf("projection %d = (%+v,%t), want stable no-turn", i, obligation, ok)
+		}
+	}
+	agent.Status.Phase = metadata.PhaseOffline
+	if obligation, ok := ProjectAgentObligation(agent, false); !ok || obligation.State != ObligationNoTurn {
+		t.Fatalf("offline projection = (%+v,%t), want no-turn", obligation, ok)
+	}
+	if obligation, ok := ProjectAgentObligation(agent, true); !ok || obligation.State != ObligationClosed {
+		t.Fatalf("explicit close projection = (%+v,%t), want closed", obligation, ok)
+	}
+	agent.Status.SessionRef.Codex.HasStartedTurn = true
+	if obligation, ok := ProjectAgentObligation(agent, false); !ok || obligation.State != ObligationCompletedPersisted {
+		t.Fatalf("post-turn projection = (%+v,%t), want completed-persisted", obligation, ok)
+	}
+}
+
 func TestCompositeAuthorityRejectsSameNumberCrossGenerationAndLegacyWithZeroWrites(t *testing.T) {
 	durable := &metadata.CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "old"}
 	stored := &metadata.CodexAuthorityRef{StateDomainID: "domain", EndpointGenerationID: "old", BrokerRuntimeID: "runtime-old", ConnectionEpoch: 1, BindingEpoch: 1}

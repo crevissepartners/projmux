@@ -34,6 +34,25 @@ func (r phase3StaticTmuxRunner) Run(context.Context, string, ...string) ([]byte,
 	return []byte(r.output), nil
 }
 
+func bindNativeCodexTestFixture(t *testing.T, store *fakeResourceStore, mutator coremetadata.Mutator, obs coremetadata.CodexActivationObservation) coremetadata.CodexEndpointRef {
+	t.Helper()
+	agent, ok := store.registry.Agent(obs.AgentUID)
+	if !ok {
+		t.Fatalf("fixture Agent %q missing", obs.AgentUID)
+	}
+	endpoint := coremetadata.CodexEndpointRef{StateDomainID: "native-test-domain", EndpointGenerationID: "native-test-endpoint"}
+	if agent.Status.SessionRef != nil && agent.Status.SessionRef.Codex != nil && agent.Status.SessionRef.Codex.Endpoint != nil {
+		endpoint = *agent.Status.SessionRef.Codex.Endpoint
+	} else if err := mutator.StageCodexEndpoint(&store.registry, obs.AgentUID, endpoint); err != nil {
+		t.Fatal(err)
+	}
+	obs.Endpoint = endpoint
+	if _, err := mutator.BindCodexActivation(&store.registry, obs); err != nil {
+		t.Fatal(err)
+	}
+	return endpoint
+}
+
 func phase0RNativeCodexFixture(t *testing.T) (*fakeResourceStore, codexLifecycleIdentity) {
 	t.Helper()
 	store := newFakeResourceStore(t)
@@ -47,11 +66,9 @@ func phase0RNativeCodexFixture(t *testing.T) (*fakeResourceStore, codexLifecycle
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mutator.BindCodexActivation(&store.registry, coremetadata.CodexActivationObservation{
+	bindNativeCodexTestFixture(t, store, mutator, coremetadata.CodexActivationObservation{
 		AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, Generation: identity.Generation, ThreadID: identity.ThreadID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	return store, identity
 }
 
@@ -514,11 +531,9 @@ func TestCodexObserverStartupUsesExactRouteAndFallsBackAfterProcessFailure(t *te
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mutator.BindCodexActivation(&store.registry, coremetadata.CodexActivationObservation{
+	endpoint := bindNativeCodexTestFixture(t, store, mutator, coremetadata.CodexActivationObservation{
 		AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, Generation: identity.Generation, ThreadID: identity.ThreadID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	cmd := testAICommand(t.TempDir())
 	cmd.loadRegistry = store.store().load
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
@@ -531,7 +546,11 @@ func TestCodexObserverStartupUsesExactRouteAndFallsBackAfterProcessFailure(t *te
 		return nil, os.ErrNotExist
 	}
 	cmd.executable = func() (string, error) { return "/tmp/projmux.test", nil }
-	result := cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{Identity: identity, Route: tmuxTransport{Kind: tmuxSocketName, Value: "exact", Source: tmuxSocketNameSource}})
+	result := cmd.startNativeCodexLifecycleObserver(codexLifecycleObserverTarget{
+		Identity: identity, Route: tmuxTransport{Kind: tmuxSocketName, Value: "exact", Source: tmuxSocketNameSource},
+		NativeRoute: codexNativeEndpointRoute{Endpoint: endpoint, State: coremetadata.CodexGenerationCurrent,
+			SocketPath: "/tmp/native-test.sock", TUIExecutable: "/tmp/native-test-codex"},
+	})
 	if result.Status != codexObserverStartupFallback || result.Reason != "observer-start-failed" {
 		t.Fatalf("observer start failure result = %+v", result)
 	}
@@ -576,11 +595,9 @@ func TestCodexLifecycleAuthorityWriteCompensatesFirstMiddleLastOnExactRoutes(t *
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mutator.BindCodexActivation(&store.registry, coremetadata.CodexActivationObservation{
+	bindNativeCodexTestFixture(t, store, mutator, coremetadata.CodexActivationObservation{
 		AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, Generation: identity.Generation, ThreadID: identity.ThreadID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	command := testAICommand(t.TempDir())
 	command.loadRegistry = store.store().load
 	fields := []string{aiPaneCodexAuthorityOption, aiPaneCodexEpochOption, aiPaneCodexReasonOption}
@@ -663,13 +680,17 @@ func TestCodexLifecycleObserverTargetRequiresAndPreservesExactRoute(t *testing.T
 	identityArgs := []string{
 		"--agent-uid", "agent-1", "--pane-uid", "pane-1", "--pane", "%7",
 		"--generation", "generation-1", "--thread", "thread-1",
+		"--state-domain", "test-domain", "--endpoint-generation", "generation-current",
+		"--endpoint-state", string(coremetadata.CodexGenerationCurrent), "--endpoint-socket", "/tmp/codex-generation.sock",
+		"--tui-executable", "/tmp/codex-generation/codex",
 	}
 	for _, routeArgs := range [][]string{{"--tmux-socket-name", "projmux-test"}, {"--tmux-socket-path", "/tmp/projmux-test.sock"}} {
 		target, err := parseCodexNativeLifecycleTarget(append(append([]string(nil), identityArgs...), routeArgs...))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if target.Identity != phase6Identity() || target.Route.Value != routeArgs[1] {
+		if target.Identity != phase6Identity() || target.Route.Value != routeArgs[1] || !target.NativeRoute.valid() ||
+			target.NativeRoute.Endpoint.StateDomainID != "test-domain" || target.NativeRoute.Endpoint.EndpointGenerationID != "generation-current" {
 			t.Fatalf("target = %+v, route args = %q", target, routeArgs)
 		}
 	}
@@ -830,6 +851,7 @@ func TestCodexNativeObserverReadyHandshakeSteersAndShutdownRemovesControlSocket(
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	identity := testCodexLifecycleIdentity()
+	endpoint := coremetadata.CodexEndpointRef{StateDomainID: "observer-control-domain", EndpointGenerationID: "observer-control-generation"}
 	wire := &fakeExactControlWire{}
 	connection := &fakeControllableCodexLifecycleConnection{
 		fakeCodexLifecycleConnection: &fakeCodexLifecycleConnection{
@@ -847,7 +869,7 @@ func TestCodexNativeObserverReadyHandshakeSteersAndShutdownRemovesControlSocket(
 		identity: identity, sink: sink, requireControl: true,
 		open: func(context.Context) (codexLifecycleConnection, error) { return connection, nil },
 		startControl: func(epoch *codexControlEpoch) (*codexControlServer, error) {
-			return startCodexControlServer(root, epoch)
+			return startCodexControlServer(root, endpoint, epoch)
 		},
 		reportStartup: func(result codexObserverStartupResult) { reported <- result },
 	}
@@ -872,7 +894,7 @@ func TestCodexNativeObserverReadyHandshakeSteersAndShutdownRemovesControlSocket(
 		t.Fatalf("ready handshake = %+v", ready)
 	}
 	request := agentControlRequest{Operation: agentControlOpSteer, Identity: identity, Epoch: ready.Epoch, Text: "exact steer"}
-	response, err := callCodexControl(context.Background(), root, identity, request)
+	response, err := callCodexControl(context.Background(), root, endpoint, identity, request)
 	if errors.Is(err, syscall.EPERM) {
 		cancel()
 		<-done
@@ -883,7 +905,7 @@ func TestCodexNativeObserverReadyHandshakeSteersAndShutdownRemovesControlSocket(
 		<-done
 		t.Fatalf("exact steer response=%+v err=%v writes=%d", response, err, wire.writes())
 	}
-	path, err := agentControlSocketPath(root, identity)
+	path, err := agentControlSocketPath(root, endpoint, identity)
 	if err != nil {
 		cancel()
 		<-done
@@ -2032,11 +2054,9 @@ func TestCodexLifecycleSinkIntegratesExactRegistryTmuxAndQuietPolicy(t *testing.
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mutator.BindCodexActivation(&store.registry, coremetadata.CodexActivationObservation{
+	bindNativeCodexTestFixture(t, store, mutator, coremetadata.CodexActivationObservation{
 		AgentUID: "agt-alpha-codex", PaneUID: "pan-alpha-codex", Generation: "generation-1", ThreadID: "thread-1",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	cmd := testAICommand(t.TempDir())
 	notifyStore := &stubNotifyStore{}
 	cmd.notifyStore = notifyStore
@@ -2559,11 +2579,9 @@ func TestCodexHookFallbackQuietHidesManagedRegistryAggregate(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mutator.BindCodexActivation(&store.registry, coremetadata.CodexActivationObservation{
+	bindNativeCodexTestFixture(t, store, mutator, coremetadata.CodexActivationObservation{
 		AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, Generation: identity.Generation, ThreadID: identity.ThreadID,
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if _, err := mutator.SetAgentInteraction(&store.registry, identity.AgentUID, coremetadata.InteractionApprovalRequired, string(coremetadata.InteractionSourceProviderControl)); err != nil {
 		t.Fatal(err)
 	}

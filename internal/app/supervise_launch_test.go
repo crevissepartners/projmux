@@ -158,7 +158,7 @@ func TestEveryManagedLaunchCarriesItsOwnGeneration(t *testing.T) {
 	}{
 		{name: "create pane", args: []string{"pane", "--project", "alpha", "--window", "main"}},
 		{name: "create window", args: []string{"window", "--project", "alpha"}},
-		{name: "create agent", args: []string{"agent", "--project", "alpha", "--window", "main", "--provider", "codex"}},
+		{name: "create agent", args: []string{"agent", "--project", "alpha", "--window", "main", "--provider", "codex", "--interactive-only"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -218,7 +218,8 @@ func TestResumeIssuesAFreshGeneration(t *testing.T) {
 	store := newFakeResourceStore(t)
 	setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
 	tmux := newFakeTmux()
-	agent, _, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	agent, recorder, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	enablePinnedNativeResumeFixture(t, agent, store, "agt-beta-codex", recorder)
 	if _, _, err := runRoute(t, agent, "resume", "codex", "--project", "beta"); err != nil {
 		t.Fatalf("agent resume error = %v", err)
 	}

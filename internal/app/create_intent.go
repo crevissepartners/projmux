@@ -476,10 +476,59 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		return errors.New("create agent: the provider launcher is not configured")
 	}
 	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
+	nativeLifecycle, nativeLifecycleCapable := c.resumes.(codexNativeLifecycleStarter)
+	freshNativeCreate := provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) == "" && !flags.interactiveOnly
 	nativeCatalogResume := provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" &&
 		strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexAppServer
-	nativePickerResume := nativeCatalogResume && c.codexNative != nil && nativeLaunchCapable
+	rolloutResume := provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" &&
+		strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexRollout
+	if provider == aiModeCodex && strings.TrimSpace(flags.resumeConversation) != "" && !nativeCatalogResume && !rolloutResume {
+		return nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
+	}
+	var nativeRoute codexNativeEndpointRoute
+	if freshNativeCreate {
+		_, exactPrompt := nativePrompt(flags.payload)
+		if flags.codexCapability != nil || !exactPrompt {
+			return nativeCreatePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: "unsupported-create-shape"})
+		}
+		if !nativeLaunchCapable || c.codexNative == nil {
+			return nativeCreatePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
+		}
+		nativeCtx, cancel := prepareNativeContext(context.Background())
+		var routeErr error
+		nativeRoute, routeErr = c.codexNative.Current(nativeCtx)
+		cancel()
+		if routeErr != nil || !nativeRoute.valid() || nativeRoute.State != coremetadata.CodexGenerationCurrent {
+			if routeErr == nil {
+				routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+			}
+			return nativeCreatePreparationRefusal(canonicalCreateAgent, routeErr)
+		}
+	} else if nativeCatalogResume {
+		if !nativeLaunchCapable || c.codexNative == nil || !flags.resumeEndpoint.Valid() {
+			return nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing})
+		}
+		if flags.resumeGenerationState == coremetadata.CodexGenerationDraining ||
+			flags.resumeGenerationState == coremetadata.CodexGenerationHandoverPending {
+			return nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonHandoverRequired})
+		}
+		if flags.resumeGenerationState != coremetadata.CodexGenerationCurrent {
+			return nativeResumePreparationRefusal(canonicalCreateAgent, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
+		}
+		nativeCtx, cancel := prepareNativeContext(context.Background())
+		var routeErr error
+		nativeRoute, routeErr = c.codexNative.Resolve(nativeCtx, flags.resumeEndpoint)
+		cancel()
+		if routeErr != nil || !nativeRoute.valid() || !nativeRoute.Endpoint.Same(flags.resumeEndpoint) ||
+			nativeRoute.State != coremetadata.CodexGenerationCurrent {
+			if routeErr == nil {
+				routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+			}
+			return nativeResumePreparationRefusal(canonicalCreateAgent, routeErr)
+		}
+	}
 	var result createResult
+	var nativeLifecycleTarget codexLifecycleObserverTarget
 	err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		if err := c.projectCanonicalOriginWindowBinding(ctx, working, mutator, scope); err != nil {
 			return err
@@ -509,9 +558,13 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		if err != nil {
 			return err
 		}
-		title, launchArgv, err := c.planAgentPaneLaunch(provider, workspace, flags)
-		if err != nil {
-			return err
+		var title string
+		var launchArgv []string
+		if !freshNativeCreate && !nativeCatalogResume {
+			title, launchArgv, err = c.planAgentPaneLaunch(provider, workspace, flags)
+			if err != nil {
+				return err
+			}
 		}
 		agent, err := mutator.CreateAgent(working, scope.windowUID, coremetadata.CreateAgentOptions{
 			Provider: provider, Workspace: workspace, Activation: coremetadata.ActivationNotRequested, OperationID: operationID,
@@ -526,8 +579,16 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		// stopped. Ordinary fresh creates leave the pointer nil.
 		if conversation := strings.TrimSpace(flags.resumeConversation); conversation != "" {
 			observation := pickerResumeSessionObservation(provider, conversation)
+			if nativeCatalogResume {
+				endpoint := flags.resumeEndpoint
+				observation.Endpoint = &endpoint
+			}
 			if _, _, err := mutator.RecordAgentSessionRef(working, agent.Metadata.UID, observation); err != nil {
 				return MapMetadataError(err)
+			}
+			if nativeCatalogResume {
+				storedAgent, _ := working.Agent(agent.Metadata.UID)
+				storedAgent.Status.SessionRef.Codex.Lifecycle = &coremetadata.CodexGenerationLifecycleRef{State: coremetadata.CodexGenerationCurrent}
 			}
 		}
 		pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{CWD: workspace.CWD}, operationID)
@@ -539,29 +600,59 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 			return err
 		}
 		usedNative := false
+		nativeThreadID := ""
 		bindFlags := flags
-		if nativeCatalogResume && !nativePickerResume {
-			bindFlags.resumeSource = aisessions.SourceCodexRollout
-		}
-		if nativePickerResume {
+		if freshNativeCreate {
+			if err := mutator.StageCodexEndpoint(working, agent.Metadata.UID, nativeRoute.Endpoint); err != nil {
+				return MapMetadataError(err)
+			}
+			prompt, _ := nativePrompt(flags.payload)
 			nativeCtx, cancel := prepareNativeContext(ctx)
-			prepared, nativeErr := c.codexNative.Resume(nativeCtx, workspace, flags.resumeConversation)
+			prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, workspace, prompt, activation.Generation)
 			cancel()
 			switch {
-			case nativeErr == nil:
-				if strings.TrimSpace(prepared.ThreadID) != strings.TrimSpace(flags.resumeConversation) {
-					return nativeLaunchError(canonicalCreateAgent, fmt.Errorf("%w: native resume returned a different thread", codexappserver.ErrProtocol))
-				}
-				title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(workspace, prepared.ThreadID)
+			case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":
+				title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
 				if err != nil {
 					return nativeLaunchError(canonicalCreateAgent, err)
 				}
 				if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
 					AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID,
 					Generation: activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
+					Endpoint: nativeRoute.Endpoint,
 				}); err != nil {
 					return MapMetadataError(err)
 				}
+				nativeThreadID = prepared.ThreadID
+				usedNative = true
+			case nativeErr == nil:
+				return nativeLaunchError(canonicalCreateAgent, fmt.Errorf("%w: native create returned an empty thread", codexappserver.ErrProtocol))
+			case nativeFallbackAllowed(c.codexNative, nativeErr), nativeRootsUnsupported(nativeErr):
+				return nativeCreatePreparationRefusal(canonicalCreateAgent, nativeErr)
+			default:
+				return nativeLaunchError(canonicalCreateAgent, nativeErr)
+			}
+		} else if nativeCatalogResume {
+			nativeCtx, cancel := prepareNativeContext(ctx)
+			prepared, nativeErr := c.codexNative.Resume(nativeCtx, nativeRoute, workspace, flags.resumeConversation)
+			cancel()
+			switch {
+			case nativeErr == nil:
+				if strings.TrimSpace(prepared.ThreadID) != strings.TrimSpace(flags.resumeConversation) {
+					return nativeLaunchError(canonicalCreateAgent, fmt.Errorf("%w: native resume returned a different thread", codexappserver.ErrProtocol))
+				}
+				title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
+				if err != nil {
+					return nativeLaunchError(canonicalCreateAgent, err)
+				}
+				if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
+					AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID,
+					Generation: activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
+					Endpoint: nativeRoute.Endpoint,
+				}); err != nil {
+					return MapMetadataError(err)
+				}
+				nativeThreadID = prepared.ThreadID
 				usedNative = true
 			case nativeFallbackAllowed(c.codexNative, nativeErr):
 				// The picker row names a thread the app-server owns. Rebinding it
@@ -593,8 +684,17 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 		}
 		c.runtime.equalizeSplitLayout(ctx, scope.anchorPaneID, intent.placement)
 		if usedNative {
-			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.runner, paneID, workspace.CWD, title, flags.resumeConversation); err != nil {
+			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.runner, paneID, workspace.CWD, title, "", nativeThreadID); err != nil {
 				return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", canonicalCreateAgent, paneID, err)
+			}
+			if nativeLifecycleCapable {
+				nativeLifecycleTarget = codexLifecycleObserverTarget{
+					Identity: codexLifecycleIdentity{
+						AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, RuntimeID: paneID,
+						Generation: activation.Generation, ThreadID: nativeThreadID,
+					},
+					Route: c.runtime.target, NativeRoute: nativeRoute,
+				}
 			}
 		} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, title,
 			declaredPlainCodexLane(provider, bindFlags, ""), bindFlags); err != nil {
@@ -612,6 +712,9 @@ func (c *createCommand) createCanonicalIntentAgent(scope canonicalIntentScope, i
 	}, c.canonicalIntentGuards(scope)...)
 	if err != nil {
 		return err
+	}
+	if nativeLifecycleTarget.valid() {
+		nativeLifecycle.startNativeCodexLifecycleObserver(nativeLifecycleTarget)
 	}
 	return c.writeResults(stdout, canonicalCreateAgent, cli.OutputModeDefault, coremetadata.KindAgent, []createResult{result})
 }

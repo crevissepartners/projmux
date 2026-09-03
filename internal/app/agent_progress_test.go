@@ -53,11 +53,9 @@ func TestCodexProgressSinkProjectsBoundedRegistryAndClearsOnTerminal(t *testing.
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mutator.BindCodexActivation(&store.registry, coremetadata.CodexActivationObservation{
+	bindNativeCodexTestFixture(t, store, mutator, coremetadata.CodexActivationObservation{
 		AgentUID: "agt-alpha-codex", PaneUID: "pan-alpha-codex", Generation: "generation-1", ThreadID: "thread-1", TurnID: "turn-1",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	cmd := testAICommand(t.TempDir())
 	cmd.loadRegistry = store.store().load
 	cmd.updateRegistry = store.store().update

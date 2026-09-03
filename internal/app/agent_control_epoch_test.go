@@ -204,20 +204,39 @@ func TestApprovalResponseOnceRawIDCollisionResolutionAndReconnect(t *testing.T) 
 
 func TestExactAgentControlTransportPathAndCollisionSafety(t *testing.T) {
 	identity := phase6Identity()
+	endpoint := phase6CLIEndpoint()
 	shortRoot, err := os.MkdirTemp("/tmp", "p6-")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(shortRoot) })
-	path, err := agentControlSocketPath(shortRoot, identity)
+	path, err := agentControlSocketPath(shortRoot, endpoint, identity)
 	if err != nil {
 		t.Fatal(err)
+	}
+	newActivation := identity
+	newActivation.Generation = "generation-2"
+	activationPath, err := agentControlSocketPath(shortRoot, endpoint, newActivation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activationPath != path {
+		t.Fatalf("Pane activation generation retargeted durable endpoint: got %q want %q", activationPath, path)
+	}
+	newEndpoint := endpoint
+	newEndpoint.EndpointGenerationID = "endpoint-generation-2"
+	endpointPath, err := agentControlSocketPath(shortRoot, newEndpoint, identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpointPath == path {
+		t.Fatalf("different durable endpoint generations collided at %q", path)
 	}
 	if filepath.Ext(path) != ".sock" || strings.Contains(path, identity.AgentUID) {
 		t.Fatalf("socket path is not content-free: %q", path)
 	}
 	long := filepath.Join("/", strings.Repeat("long", 40))
-	if _, err := agentControlSocketPath(long, identity); err == nil {
+	if _, err := agentControlSocketPath(long, endpoint, identity); err == nil {
 		t.Fatal("overlong state path selected TMPDIR-dependent fallback")
 	}
 	dir := filepath.Dir(path)
@@ -239,9 +258,10 @@ func TestExactAgentControlTransportEpochAndFrameBoundaries(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(shortRoot) })
 	identity := phase6Identity()
+	endpoint := phase6CLIEndpoint()
 	wire := &fakeExactControlWire{}
 	epoch := newCodexControlEpoch(wire, identity, "epoch-1", codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle}, func(codexLifecycleIdentity) bool { return true })
-	server, err := startCodexControlServer(shortRoot, epoch)
+	server, err := startCodexControlServer(shortRoot, endpoint, epoch)
 	if errors.Is(err, syscall.EPERM) {
 		t.Skip("Unix sockets are unavailable in this sandbox")
 	}
@@ -259,11 +279,11 @@ func TestExactAgentControlTransportEpochAndFrameBoundaries(t *testing.T) {
 		t.Fatal("active control endpoint collision accepted")
 	}
 	request := agentControlRequest{Operation: agentControlOpStart, Identity: identity, Epoch: "old", Text: "exact text"}
-	if response, err := callCodexControl(context.Background(), shortRoot, identity, request); err != nil || response.OK || wire.writes() != 0 {
+	if response, err := callCodexControl(context.Background(), shortRoot, endpoint, identity, request); err != nil || response.OK || wire.writes() != 0 {
 		t.Fatalf("stale transport response=%+v err=%v writes=%d", response, err, wire.writes())
 	}
 	request.Epoch = "epoch-1"
-	if response, err := callCodexControl(context.Background(), shortRoot, identity, request); err != nil || !response.OK || wire.writes() != 1 {
+	if response, err := callCodexControl(context.Background(), shortRoot, endpoint, identity, request); err != nil || !response.OK || wire.writes() != 1 {
 		t.Fatalf("exact transport response=%+v err=%v writes=%d", response, err, wire.writes())
 	}
 	for _, frame := range [][]byte{
@@ -291,7 +311,7 @@ func TestExactAgentControlTransportEpochAndFrameBoundaries(t *testing.T) {
 	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("epoch exit left endpoint: %v", err)
 	}
-	if _, err := callCodexControl(context.Background(), shortRoot, identity, request); err == nil || wire.writes() != 1 {
+	if _, err := callCodexControl(context.Background(), shortRoot, endpoint, identity, request); err == nil || wire.writes() != 1 {
 		t.Fatalf("closed epoch accepted request: err=%v writes=%d", err, wire.writes())
 	}
 	stale, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})

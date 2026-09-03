@@ -2,11 +2,17 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -15,19 +21,177 @@ import (
 const codexNativeThreadTimeout = 25 * time.Second
 
 type codexNativeThreadController interface {
-	Create(context.Context, coremetadata.AgentWorkspace, string, string) (codexappserver.ThreadBinding, error)
-	Resume(context.Context, coremetadata.AgentWorkspace, string) (codexappserver.ThreadBinding, error)
+	Current(context.Context) (codexNativeEndpointRoute, error)
+	CatalogRoutes(context.Context) ([]codexNativeEndpointRoute, error)
+	Resolve(context.Context, coremetadata.CodexEndpointRef) (codexNativeEndpointRoute, error)
+	Create(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string, string) (codexappserver.ThreadBinding, error)
+	Resume(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string) (codexappserver.ThreadBinding, error)
 	CanFallback(error) bool
 }
 
-type defaultCodexNativeThreadController struct{}
-
-func (defaultCodexNativeThreadController) Create(ctx context.Context, workspace coremetadata.AgentWorkspace, prompt, generation string) (codexappserver.ThreadBinding, error) {
-	return codexappserver.StartDefaultThread(ctx, version.String(), workspace.CWD, workspace.AdditionalWritableRoots, prompt, generation)
+type defaultCodexNativeThreadController struct {
+	current func(context.Context) (codexNativeEndpointRoute, error)
 }
 
-func (defaultCodexNativeThreadController) Resume(ctx context.Context, workspace coremetadata.AgentWorkspace, threadID string) (codexappserver.ThreadBinding, error) {
-	return codexappserver.ResumeDefaultThread(ctx, version.String(), workspace.CWD, workspace.AdditionalWritableRoots, threadID)
+// codexNativeEndpointRoute is process-local routing material for one durable
+// endpoint identity. Paths never enter Registry metadata; the exact endpoint
+// ref does. Current selection is an injected read-only fact in Phase 3.
+type codexNativeEndpointRoute struct {
+	Endpoint      coremetadata.CodexEndpointRef
+	State         codexgeneration.GenerationState
+	SocketPath    string
+	TUIExecutable string
+	Default       bool
+}
+
+func (route codexNativeEndpointRoute) valid() bool {
+	socketPath := strings.TrimSpace(route.SocketPath)
+	transportValid := (route.Default && socketPath == "") || (!route.Default && filepath.IsAbs(socketPath))
+	return route.Endpoint.Valid() && route.State != "" && filepath.IsAbs(strings.TrimSpace(route.TUIExecutable)) && transportValid
+}
+
+func (route codexNativeEndpointRoute) brokerRoute() codexBrokerEndpointRoute {
+	return codexBrokerEndpointRoute{
+		StateDomainID: route.Endpoint.StateDomainID, EndpointGenerationID: route.Endpoint.EndpointGenerationID,
+		SocketPath: route.SocketPath, Default: route.Default,
+	}
+}
+
+type codexNativeRouteError struct{ Reason string }
+
+func (e *codexNativeRouteError) Error() string { return "Codex generation route: " + e.Reason }
+
+const (
+	codexNativeReasonGenerationUnavailable = "generation-unavailable"
+	codexNativeReasonLegacyEndpointMissing = "legacy-generation-unavailable"
+	codexNativeReasonHandoverRequired      = "handover-required"
+)
+
+func (controller defaultCodexNativeThreadController) Current(ctx context.Context) (codexNativeEndpointRoute, error) {
+	if controller.current != nil {
+		return controller.current(ctx)
+	}
+	health := codexappserver.ProbeDefaultProxy(ctx, codexNativeThreadTimeout, version.String(), true)
+	if codexappserver.AuthorityFor(health).Attach != codexappserver.EndpointAttachAllowed {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	runningVersion := strings.TrimSpace(health.RunningVersion)
+	if !codexappserver.IsSafeDiagnosticVersion(runningVersion) {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	executable, err := exec.LookPath("codex")
+	if err != nil {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	executable, err = filepath.Abs(executable)
+	if err != nil {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	executable, err = filepath.EvalSymlinks(executable)
+	if err != nil || !filepath.IsAbs(executable) {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	stateDomainID, err := defaultCodexStateDomainID(os.Getenv, os.UserHomeDir)
+	if err != nil {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	return codexNativeEndpointRoute{
+		Endpoint: coremetadata.CodexEndpointRef{
+			StateDomainID:        stateDomainID,
+			EndpointGenerationID: "codex-" + runningVersion,
+		},
+		State: coremetadata.CodexGenerationCurrent, TUIExecutable: executable, Default: true,
+	}, nil
+}
+
+// defaultCodexStateDomainID derives a content-free durable identity from the
+// exact canonical Codex state root. Two CODEX_HOME values cannot alias merely
+// because they run the same Codex version, while symlink spellings of one
+// physical root converge to one identity.
+func defaultCodexStateDomainID(lookupEnv func(string) string, homeDir func() (string, error)) (string, error) {
+	root := strings.TrimSpace(lookupEnv("CODEX_HOME"))
+	if root == "" {
+		home, err := homeDir()
+		if err != nil {
+			return "", err
+		}
+		root = filepath.Join(home, ".codex")
+	}
+	if !filepath.IsAbs(root) {
+		return "", errors.New("codex state domain must be absolute")
+	}
+	canonical, err := filepath.EvalSymlinks(filepath.Clean(root))
+	if err != nil {
+		return "", err
+	}
+	info, err := os.Stat(canonical)
+	if err != nil || !info.IsDir() {
+		return "", errors.New("codex state domain must be an existing directory")
+	}
+	sum := sha256.Sum256([]byte(canonical))
+	return "codex-state-" + hex.EncodeToString(sum[:16]), nil
+}
+
+// CatalogRoutes is a read-only inventory projection. The bootstrap/default
+// controller has exactly one attach-authorized unmanaged generation; injected
+// pool controllers may return current plus draining generations without
+// changing admission-current or acquiring lifecycle authority.
+func (controller defaultCodexNativeThreadController) CatalogRoutes(ctx context.Context) ([]codexNativeEndpointRoute, error) {
+	route, err := controller.Current(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return []codexNativeEndpointRoute{route}, nil
+}
+
+func (controller defaultCodexNativeThreadController) Resolve(ctx context.Context, endpoint coremetadata.CodexEndpointRef) (codexNativeEndpointRoute, error) {
+	if !endpoint.Valid() {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
+	}
+	route, err := controller.Current(ctx)
+	if err != nil || !route.Endpoint.Same(endpoint) {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	return route, nil
+}
+
+func (defaultCodexNativeThreadController) Create(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, prompt, requestKey string) (codexappserver.ThreadBinding, error) {
+	if !route.valid() || route.State != codexgeneration.StateCurrent {
+		return codexappserver.ThreadBinding{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	client, err := openCodexNativeRoute(ctx, route, len(workspace.AdditionalWritableRoots) > 0)
+	if err != nil {
+		return codexappserver.ThreadBinding{}, err
+	}
+	defer client.Close()
+	binding, err := client.StartThread(ctx, workspace.CWD, workspace.AdditionalWritableRoots)
+	if err != nil || prompt == "" {
+		return binding, err
+	}
+	binding.TurnID, err = client.StartTurn(ctx, binding.ThreadID, prompt, requestKey)
+	return binding, err
+}
+
+func (defaultCodexNativeThreadController) Resume(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (codexappserver.ThreadBinding, error) {
+	if !route.valid() {
+		return codexappserver.ThreadBinding{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	client, err := openCodexNativeRoute(ctx, route, true)
+	if err != nil {
+		return codexappserver.ThreadBinding{}, err
+	}
+	defer client.Close()
+	return client.ResumeThread(ctx, threadID, workspace.CWD, workspace.AdditionalWritableRoots)
+}
+
+func openCodexNativeRoute(ctx context.Context, route codexNativeEndpointRoute, experimental bool) (*codexappserver.Client, error) {
+	if route.Default {
+		client, _, err := codexappserver.AttachDefaultEndpoint(ctx, version.String(), codexappserver.AttachOptions{
+			Timeout: codexNativeThreadTimeout, ExperimentalAPI: experimental,
+		})
+		return client, err
+	}
+	return codexappserver.OpenPrivateUnix(ctx, route.SocketPath, codexNativeThreadTimeout, version.String(), experimental)
 }
 
 func (defaultCodexNativeThreadController) CanFallback(err error) bool {
@@ -35,19 +199,63 @@ func (defaultCodexNativeThreadController) CanFallback(err error) bool {
 }
 
 type codexNativeAgentLauncher interface {
-	PlanNativeCodexResume(coremetadata.AgentWorkspace, string) (title string, argv []string, err error)
+	PlanNativeCodexResume(codexNativeEndpointRoute, coremetadata.AgentWorkspace, string) (title string, argv []string, err error)
 	BindNativeCodexPane(paneID, contextDir, title, threadID string)
 	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
+}
+
+func resolveCodexNativeResumeRoute(ctx context.Context, controller codexNativeThreadController, ref *coremetadata.AgentSessionRef) (codexNativeEndpointRoute, error) {
+	if ref == nil || ref.Codex == nil || ref.Codex.Endpoint == nil || !ref.Codex.Endpoint.Valid() {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
+	}
+	endpoint := *ref.Codex.Endpoint
+	if err := validateCodexNativeResumeRoute(ref, codexNativeEndpointRoute{Endpoint: endpoint, State: coremetadata.CodexGenerationCurrent}); err != nil {
+		return codexNativeEndpointRoute{}, err
+	}
+	if controller == nil {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	route, err := controller.Resolve(ctx, endpoint)
+	if err != nil {
+		return codexNativeEndpointRoute{}, err
+	}
+	if !route.valid() || !route.Endpoint.Same(endpoint) {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	if err := validateCodexNativeResumeRoute(ref, route); err != nil {
+		return codexNativeEndpointRoute{}, err
+	}
+	return route, nil
+}
+
+func validateCodexNativeResumeRoute(ref *coremetadata.AgentSessionRef, route codexNativeEndpointRoute) error {
+	if ref == nil || ref.Codex == nil || ref.Codex.Endpoint == nil || !ref.Codex.Endpoint.Valid() {
+		return &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
+	}
+	endpoint := *ref.Codex.Endpoint
+	lifecycle := ref.Codex.Lifecycle
+	if lifecycle == nil || !lifecycle.ValidFor(&endpoint) || !route.Endpoint.Same(endpoint) {
+		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	if lifecycle.State == coremetadata.CodexGenerationDraining || lifecycle.State == coremetadata.CodexGenerationHandoverPending ||
+		route.State == codexgeneration.StateDraining || route.State == codexgeneration.StateHandoverPending {
+		return &codexNativeRouteError{Reason: codexNativeReasonHandoverRequired}
+	}
+	if lifecycle.State != coremetadata.CodexGenerationCurrent || route.State != codexgeneration.StateCurrent {
+		return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	return nil
 }
 
 func bindNativeCodexPaneOnRoute(
 	ctx context.Context,
 	launcher codexNativeAgentLauncher,
 	runner tmuxCommandRunner,
-	paneID, contextDir, title, threadID string,
+	paneID, contextDir, title, topic, threadID string,
 ) error {
 	return launcher.BindAgentPaneOnRoute(ctx, runner, agentPaneBinding{
 		PaneID: paneID, Provider: aiModeCodex, ContextDir: contextDir, Title: title,
+		Topic: topic, TopicManual: strings.TrimSpace(topic) != "",
 		ConversationID: threadID, ThreadID: threadID, NativeCodex: true,
 	})
 }
@@ -61,21 +269,19 @@ type codexNativeLaunchOutcomeRow struct {
 
 // codexNativeLaunchOutcomeTable is the closed native launch outcome contract.
 //
-// Native authority is required exactly where an Agent is created. Three rows
-// still reach the plain CLI lane and none of them is a silent degradation: an
-// empty-prompt create has no native input to attach, `--interactive-only` is
-// the operator asking for a plain interactive Codex Agent, and `agent resume`
-// reattaches an Agent that may never have carried an app-server binding, since
-// that binding is activation-scoped and dies with the Pane it described.
+// Native authority is required exactly where an Agent is created. Only the
+// explicit interactive-only lane and a picker row sourced from rollout reach
+// the plain CLI. Neither can satisfy native control authority.
 var codexNativeLaunchOutcomeTable = []codexNativeLaunchOutcomeRow{
 	{Action: "create", NativeResult: "thread+turn", Launch: "remote resume without prompt", Binding: "exact Agent/Pane/generation/thread/turn"},
+	{Action: "create", NativeResult: "thread without turn", Launch: "remote resume without prompt", Binding: "exact Agent/Pane/generation/thread/endpoint; no-turn obligation"},
 	{Action: "resume", NativeResult: "same thread", Launch: "remote resume without prompt", Binding: "exact Agent/Pane/generation/thread"},
-	{Action: "create", NativeResult: "empty prompt before provider mutation", Launch: "current CLI", Binding: "current hook late-ack/refinement"},
 	{Action: "create", NativeResult: "explicit --interactive-only", Launch: "current CLI", Binding: "no native binding; native turn control unavailable"},
-	{Action: "create", NativeResult: "prompted create, unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse and name --interactive-only"},
-	{Action: "create", NativeResult: "prompted create, selector resolved several Windows", Launch: "none", Binding: "write zero before allocation; refuse and name --interactive-only"},
+	{Action: "resume", NativeResult: "rollout picker source", Launch: "current CLI resume", Binding: "no native endpoint authority"},
+	{Action: "create", NativeResult: "unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse and name --interactive-only"},
+	{Action: "create", NativeResult: "selector resolved several Windows", Launch: "none", Binding: "write zero before allocation; refuse and name --interactive-only"},
 	{Action: "resume", NativeResult: "create-time picker row, unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse without a second lane"},
-	{Action: "resume", NativeResult: "stored Agent rebind, unavailable or unsupported before provider mutation", Launch: "current CLI", Binding: "current provider resume argv and hook refinement"},
+	{Action: "resume", NativeResult: "stored Agent rebind, unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse without a second lane"},
 	{Action: "create", NativeResult: "indeterminate after thread creation", Launch: "none", Binding: "write zero; refuse duplicate lane"},
 }
 
@@ -121,6 +327,10 @@ const interactiveOnlyFlag = "--interactive-only"
 // only that it could not, or the operator cannot tell an unreachable endpoint
 // from an endpoint that is missing a capability.
 func nativeThreadReason(err error) string {
+	var route *codexNativeRouteError
+	if errors.As(err, &route) && strings.TrimSpace(route.Reason) != "" {
+		return route.Reason
+	}
 	var action *codexappserver.ThreadActionError
 	if errors.As(err, &action) {
 		if reason := strings.TrimSpace(action.Reason); reason != "" {
@@ -187,7 +397,7 @@ func nativeResumePreparationRefusal(spelling string, err error) error {
 // for the plain-CLI fan-out on purpose, both fix it.
 func nativeFanOutRefusal(spelling string, targets int) error {
 	return usageError(fmt.Sprintf(
-		"%s with a prompt creates exactly one native Codex thread, but this selector resolved %d Windows; "+
+		"%s creates exactly one native Codex thread, but this selector resolved %d Windows; "+
 			"narrow the selector to one Window, or pass %s to keep the plain-CLI fan-out of one Agent per resolved Window",
 		spelling, targets, interactiveOnlyFlag))
 }

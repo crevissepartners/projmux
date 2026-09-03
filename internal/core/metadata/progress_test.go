@@ -52,6 +52,7 @@ func TestAgentProgressClosedInventoryAndLifecycleClear(t *testing.T) {
 func TestAgentProgressClearsOnFailedRebindAndPaneRelease(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 8, 23, 12, 0, 0, 0, time.UTC)
+	endpoint := CodexEndpointRef{StateDomainID: "state-progress", EndpointGenerationID: "generation-progress"}
 	progress := AgentProgress{TurnRef: "turn-1", Activity: ProgressTool, ObservedAt: now, Source: AgentProgressSource}
 	fixture := func() Registry {
 		reg := NewRegistry()
@@ -59,7 +60,9 @@ func TestAgentProgressClearsOnFailedRebindAndPaneRelease(t *testing.T) {
 			AgentUID: "agent-1", Generation: "generation-1", Codex: &CodexActivationBinding{ThreadID: "thread-1", TurnID: "turn-1"},
 		}}}}
 		reg.Agents = []Agent{{Metadata: ObjectMeta{UID: "agent-1", Name: "codex"}, Spec: AgentSpec{Provider: "codex"}, Status: AgentStatus{
-			Phase: PhaseRunning, PaneRef: "pane-1", Progress: progress,
+			Phase: PhaseRunning, PaneRef: "pane-1", Progress: progress, SessionRef: &AgentSessionRef{Provider: "codex", Codex: &CodexSessionRef{
+				ThreadID: "thread-1", Endpoint: &endpoint, Lifecycle: &CodexGenerationLifecycleRef{State: CodexGenerationCurrent}, HasStartedTurn: true,
+			}},
 		}}}
 		return reg
 	}
@@ -74,7 +77,7 @@ func TestAgentProgressClearsOnFailedRebindAndPaneRelease(t *testing.T) {
 
 	rebound := fixture()
 	changed, err := mutator.RefineCodexActivation(&rebound, CodexActivationObservation{
-		AgentUID: "agent-1", PaneUID: "pane-1", Generation: "generation-1", ThreadID: "thread-1", TurnID: "turn-2",
+		AgentUID: "agent-1", PaneUID: "pane-1", Generation: "generation-1", ThreadID: "thread-1", TurnID: "turn-2", Endpoint: endpoint,
 	})
 	if err != nil || !changed {
 		t.Fatalf("refine = %t/%v", changed, err)

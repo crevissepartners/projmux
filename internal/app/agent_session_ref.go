@@ -306,6 +306,11 @@ func (c *aiCommand) persistCodexBindingRefinement(paneID string, obs coremetadat
 	obs.AgentUID = binding.agent.Metadata.UID
 	obs.PaneUID = binding.paneUID
 	obs.Generation = binding.generation
+	if binding.agent.Status.SessionRef == nil || binding.agent.Status.SessionRef.Codex == nil ||
+		binding.agent.Status.SessionRef.Codex.Endpoint == nil || !binding.agent.Status.SessionRef.Codex.Endpoint.Valid() {
+		return
+	}
+	obs.Endpoint = *binding.agent.Status.SessionRef.Codex.Endpoint
 	mutator := intmetadata.DefaultMutator()
 	mutator.Now = c.sessionRefClock()
 	_, _ = c.updateRegistry(func(working *coremetadata.Registry) error {
@@ -481,6 +486,11 @@ func (c *aiCommand) persistManagedAgentInteractionWithActivationPolicy(paneID st
 			nativeObservation.AgentUID = binding.agent.Metadata.UID
 			nativeObservation.PaneUID = binding.paneUID
 			nativeObservation.Generation = binding.generation
+			if current.Status.SessionRef == nil || current.Status.SessionRef.Codex == nil ||
+				current.Status.SessionRef.Codex.Endpoint == nil || !current.Status.SessionRef.Codex.Endpoint.Valid() {
+				return fmt.Errorf("managed Agent durable Codex endpoint is missing")
+			}
+			nativeObservation.Endpoint = *current.Status.SessionRef.Codex.Endpoint
 			if _, err := mutator.RefineCodexActivation(working, nativeObservation); err != nil {
 				return err
 			}

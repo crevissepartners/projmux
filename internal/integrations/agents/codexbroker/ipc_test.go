@@ -190,10 +190,12 @@ func TestDiscoveryCredentialAndPermissionFailuresBindNothingAndWriteNothing(t *t
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, endpoint := range []EndpointKey{"codex-app-server:other", generationKey} {
-			if _, err := NewDiscovery("/tmp", endpoint); RefusalOf(err) != RefusalEndpointUnknown {
-				t.Fatalf("NewDiscovery(%s) = %v, want default-only host", endpoint, err)
-			}
+		if _, err := NewDiscovery("/tmp", "codex-app-server:other"); RefusalOf(err) != RefusalEndpointUnknown {
+			t.Fatalf("NewDiscovery(unknown) = %v, want endpoint-unknown", err)
+		}
+		generationDiscovery, err := NewDiscovery("/tmp", generationKey)
+		if err != nil || generationDiscovery.Endpoint() != generationKey {
+			t.Fatalf("NewDiscovery(generation) = %+v/%v, want exact generation endpoint", generationDiscovery, err)
 		}
 	})
 

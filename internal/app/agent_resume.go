@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 // agentResumeLauncher is the provider-launch seam of `agent resume`.
@@ -365,13 +366,30 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 	}
 	workspace := plan.workspace
 	workspace.CWD = contextDir
-	title, launchArgv, err := r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID)
+	nativeLauncher, nativeLaunchCapable := r.launcher.(codexNativeAgentLauncher)
+	nativeLifecycle, nativeLifecycleCapable := r.launcher.(codexNativeLifecycleStarter)
+	var nativeRoute codexNativeEndpointRoute
+	var title string
+	var launchArgv []string
+	var err error
+	if plan.provider == aiModeCodex {
+		nativeCtx, cancel := prepareNativeContext(context.Background())
+		nativeRoute, err = resolveCodexNativeResumeRoute(nativeCtx, r.create.codexNative, plan.ref)
+		cancel()
+		if err != nil {
+			return nativeResumePreparationRefusal(spelling, err)
+		}
+		if !nativeLaunchCapable {
+			return nativeResumePreparationRefusal(spelling, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
+		}
+		title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, plan.conversationID)
+	} else {
+		title, launchArgv, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID)
+	}
 	if err != nil {
 		return fmt.Errorf("%s: agent/%s cannot resume %s conversation %s: %w",
 			spelling, plan.agentName, plan.provider, plan.conversationID, err)
 	}
-	nativeLauncher, nativeLaunchCapable := r.launcher.(codexNativeAgentLauncher)
-	nativeLifecycle, nativeLifecycleCapable := r.launcher.(codexNativeLifecycleStarter)
 	var nativeLifecycleTargetAfterCommit codexLifecycleObserverTarget
 
 	for _, other := range plan.shared {
@@ -462,26 +480,31 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		workLaunchArgv := launchArgv
 		usedNative := false
 		nativeThreadID := ""
-		if plan.provider == aiModeCodex && r.create.codexNative != nil && nativeLaunchCapable {
+		if plan.provider == aiModeCodex {
+			if routeErr := validateCodexNativeResumeRoute(agent.Status.SessionRef, nativeRoute); routeErr != nil {
+				return nativeResumePreparationRefusal(spelling, routeErr)
+			}
 			nativeCtx, cancel := prepareNativeContext(ctx)
-			prepared, nativeErr := r.create.codexNative.Resume(nativeCtx, workspace, plan.conversationID)
+			prepared, nativeErr := r.create.codexNative.Resume(nativeCtx, nativeRoute, workspace, plan.conversationID)
 			cancel()
 			switch {
-			case nativeErr == nil:
-				workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(workspace, prepared.ThreadID)
+			case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) == strings.TrimSpace(plan.conversationID):
+				workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
 				if err != nil {
 					return nativeLaunchError(spelling, err)
 				}
 				if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
 					AgentUID: plan.agentUID, PaneUID: pane.Metadata.UID, Generation: activation.Generation,
-					ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
+					ThreadID: prepared.ThreadID, TurnID: prepared.TurnID, Endpoint: nativeRoute.Endpoint,
 				}); err != nil {
 					return MapMetadataError(err)
 				}
 				nativeThreadID = prepared.ThreadID
 				usedNative = true
+			case nativeErr == nil:
+				return nativeLaunchError(spelling, fmt.Errorf("%w: native resume returned a different thread", codexappserver.ErrProtocol))
 			case nativeFallbackAllowed(r.create.codexNative, nativeErr):
-				// Preserve the current provider resume argv and hook refinement.
+				return nativeResumePreparationRefusal(spelling, nativeErr)
 			default:
 				return nativeLaunchError(spelling, nativeErr)
 			}
@@ -501,7 +524,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 			return err
 		}
 		if usedNative {
-			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, r.create.runtime.runner, paneID, contextDir, workTitle, nativeThreadID); err != nil {
+			if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, r.create.runtime.runner, paneID, contextDir, workTitle, plan.topic, nativeThreadID); err != nil {
 				return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", spelling, paneID, err)
 			}
 			if nativeLifecycleCapable {
@@ -510,7 +533,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 						AgentUID: plan.agentUID, PaneUID: pane.Metadata.UID, RuntimeID: paneID,
 						Generation: activation.Generation, ThreadID: nativeThreadID,
 					},
-					Route: r.create.runtime.target,
+					Route: r.create.runtime.target, NativeRoute: nativeRoute,
 				}
 			}
 		} else if err := r.launcher.BindAgentPaneOnRoute(ctx, r.create.runtime.runner, agentPaneBinding{

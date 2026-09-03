@@ -64,7 +64,7 @@ func NewDiscovery(stateDomain string, endpoint EndpointKey) (Discovery, error) {
 	if endpoint == "" {
 		endpoint = DefaultEndpointKey
 	}
-	if endpoint != DefaultEndpointKey {
+	if !validEndpointKey(endpoint) {
 		return Discovery{}, refuse(RefusalEndpointUnknown, nil)
 	}
 	domain = filepath.Clean(domain)

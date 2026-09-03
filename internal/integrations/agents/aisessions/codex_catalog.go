@@ -83,6 +83,16 @@ type CodexContinuationResult struct {
 
 type defaultCodexCatalog struct{ client *codexappserver.Client }
 
+// NewCodexCatalog wraps an already initialized, generation-routed client. The
+// caller retains responsibility for selecting the exact endpoint; Close on the
+// returned catalog closes that client.
+func NewCodexCatalog(client *codexappserver.Client) CodexCatalog {
+	if client == nil {
+		return nil
+	}
+	return &defaultCodexCatalog{client: client}
+}
+
 func (c *defaultCodexCatalog) List(ctx context.Context, query codexappserver.CatalogQuery) (codexappserver.CatalogPage, error) {
 	return c.client.ListCatalogThreads(ctx, query)
 }

@@ -65,9 +65,13 @@ func TestDelayedProviderActivationReturnsValidatedPaneHandle(t *testing.T) {
 			launcher.activationStartupDelay = 3 * time.Second
 			launcher.activationDelay = 2100 * time.Millisecond
 
-			stdout, _, err := runRoute(t, create,
-				"agent", "--provider", provider, "--project", "uid:prj-alpha",
-				"--window", "uid:win-alpha-review", "-o", "pane-id", "--", "initial task")
+			args := []string{"agent", "--provider", provider, "--project", "uid:prj-alpha",
+				"--window", "uid:win-alpha-review", "-o", "pane-id"}
+			if provider == aiModeCodex {
+				args = append(args, "--interactive-only")
+			}
+			args = append(args, "--", "initial task")
+			stdout, _, err := runRoute(t, create, args...)
 			if err != nil {
 				t.Fatalf("delayed acknowledged create: %v", err)
 			}
@@ -298,7 +302,7 @@ func TestActivationAcknowledgementWinsTheTimeoutRace(t *testing.T) {
 
 	stdout, _, err := runRoute(t, create,
 		"agent", "--provider", "codex", "--project", "uid:prj-alpha",
-		"--window", "uid:win-alpha-review", "-o", "pane-id", "--", "initial task")
+		"--window", "uid:win-alpha-review", "--interactive-only", "-o", "pane-id", "--", "initial task")
 	if err != nil {
 		t.Fatalf("timeout race returned failure after acknowledgement: %v", err)
 	}
@@ -387,7 +391,7 @@ func TestRoadmapWorkerLaunchUsesExactOwnerPane(t *testing.T) {
 	stdout, _, err := runRoute(t, create,
 		"agent", "--provider", "codex",
 		"--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "--pane", "uid:pan-alpha-codex",
-		"-o", "pane-id", "--", "Phase 16")
+		"--interactive-only", "-o", "pane-id", "--", "Phase 16")
 	if err != nil {
 		t.Fatal(err)
 	}

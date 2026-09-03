@@ -12,6 +12,8 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -25,7 +27,7 @@ var canonicalProducerCases = []canonicalProducerCase{
 	{canonicalProducerPaneMenu, agentPaneIntent{placement: "right"}, coremetadata.KindPane},
 	{canonicalProducerSavedDefault, agentPaneIntent{provider: aiModeCodex, placement: "down"}, coremetadata.KindAgent},
 	{canonicalProducerProviderPicker, agentPaneIntent{provider: aiModeClaude, placement: "right"}, coremetadata.KindAgent},
-	{canonicalProducerResumePicker, agentPaneIntent{provider: aiModeCodex, placement: "down", conversationID: "thread-phase12"}, coremetadata.KindAgent},
+	{canonicalProducerResumePicker, agentPaneIntent{provider: aiModeCodex, placement: "down", conversationID: "thread-phase12", resumeSource: aisessions.SourceCodexRollout}, coremetadata.KindAgent},
 	{canonicalProducerDirectProvider, agentPaneIntent{provider: aiModeClaude, placement: "right"}, coremetadata.KindAgent},
 	{canonicalProducerDirectShell, agentPaneIntent{placement: "down"}, coremetadata.KindPane},
 }
@@ -106,6 +108,16 @@ func canonicalFixture(t *testing.T, control bool) canonicalRootFixture {
 		windowUID: windowUID, rootKind: rootKind, rootUID: rootUID}
 }
 
+func configureCanonicalNativeCreate(fx canonicalRootFixture, threadID string) {
+	route := nativeTestRoute("generation-canonical", coremetadata.CodexGenerationCurrent)
+	fx.create.codexNative = &fakeNativeThreadController{
+		currentRoute: route, createBinding: codexappserver.ThreadBinding{ThreadID: threadID},
+	}
+	fx.create.resumes = &fakeNativeResumeLauncher{
+		fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{},
+	}
+}
+
 // TestCanonicalCreateProducerRootOutcomeTable is the closed producer x root x
 // outcome contract. Every row is executable and every producer appears exactly
 // once in the declared producer inventory, so there is no unclassified cell.
@@ -124,6 +136,9 @@ func TestCanonicalCreateProducerRootOutcomeTable(t *testing.T) {
 				intent := row.intent
 				intent.producer = row.producer
 				intent.anchorPaneID = fx.originID
+				if intent.provider == aiModeCodex && intent.conversationID == "" {
+					configureCanonicalNativeCreate(fx, "thread-canonical-"+string(row.producer))
+				}
 				var stdout, stderr bytes.Buffer
 				if err := fx.create.createFromIntent(intent, &stdout, &stderr); err != nil {
 					t.Fatalf("createFromIntent(%+v) error = %v (stderr=%q)", intent, err, stderr.String())
@@ -180,13 +195,17 @@ func TestResumePickerCreateCommitsExactSessionRefBeforeAnyHook(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.provider, func(t *testing.T) {
 			fx := canonicalFixture(t, false)
+			resumeSource := ""
+			if test.provider == aiModeCodex {
+				resumeSource = aisessions.SourceCodexRollout
+			}
 			before := map[string]bool{}
 			for _, agent := range fx.store.registry.Agents {
 				before[agent.Metadata.UID] = true
 			}
 			if err := fx.create.createFromIntent(agentPaneIntent{
 				producer: canonicalProducerResumePicker, provider: test.provider, placement: "right",
-				conversationID: test.conversation, anchorPaneID: fx.originID,
+				conversationID: test.conversation, resumeSource: resumeSource, anchorPaneID: fx.originID,
 			}, ioDiscard{}, ioDiscard{}); err != nil {
 				t.Fatalf("resume-picker create: %v", err)
 			}
@@ -855,7 +874,7 @@ func TestHomePopupOriginSplitResumeDefaultAndShellUseCanonicalCreate(t *testing.
 		{
 			name: "resume picker",
 			run: func(_ *testing.T, ai *aiCommand, _ string) error {
-				return ai.createResumedAgentPane(canonicalProducerResumePicker, aiModeCodex, "down", "thread-home")
+				return ai.createResumedAgentPaneWithSource(canonicalProducerResumePicker, aiModeCodex, "down", "thread-home", aisessions.SourceCodexRollout)
 			},
 		},
 		{
@@ -876,6 +895,9 @@ func TestHomePopupOriginSplitResumeDefaultAndShellUseCanonicalCreate(t *testing.
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			fx := canonicalFixture(t, true)
+			if test.name == "provider picker" {
+				configureCanonicalNativeCreate(fx, "thread-home-picker")
+			}
 			home := t.TempDir()
 			enableAgents(t, home, "codex", "claude")
 			ai := testAICommand(home)
@@ -998,6 +1020,9 @@ func FuzzCanonicalUIIntentStaysManaged(f *testing.F) {
 		intent := row.intent
 		intent.producer = row.producer
 		intent.anchorPaneID = fx.originID
+		if intent.provider == aiModeCodex && intent.conversationID == "" {
+			configureCanonicalNativeCreate(fx, "thread-fuzz-native")
+		}
 		if err := fx.create.createFromIntent(intent, ioDiscard{}, ioDiscard{}); err != nil {
 			t.Fatalf("producer=%s control=%t: %v", row.producer, control, err)
 		}

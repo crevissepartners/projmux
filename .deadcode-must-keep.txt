@@ -108,6 +108,7 @@ PrivateGenerationHost.Restart	Phase 2 full-proof restart gate is retained for la
 PrivateGenerationHost.Stop	Phase 2 full-proof stop gate is retained for later journaled lifecycle operations.
 PrivateGenerationHost.signal	Phase 2 common proof-before-signal gate is retained to keep lifecycle mutation zero on any drift.
 PrivateGenerationHost.validateProofLocked	Phase 2 complete PID/socket/executable/bundle proof validator is retained before every lifecycle signal.
+ProjectAgentObligation	Phase 3 no-turn obligation projector is retained as the invariant-ledger and installed-observation seam until retirement coordination consumes it.
 ProtocolRange.Supports	Phase 0 protocol range containment check is retained for pre-commit bundle refusal.
 ProtocolRange.Valid	Phase 0 protocol range validation is retained as part of immutable bundle manifests.
 QualificationResult.JSON	Phase 0 content-free generation qualification writer is retained for installed receipts.
@@ -118,9 +119,11 @@ RefusalOf	Phase 0 bundle refusal classifier is retained for pre-commit drift and
 Registry.snapshotPanesOf	Snapshot pane lookup remains part of the retained snapshot reconciliation implementation.
 Result.JSON	Test-only installed qualification API retained for terminal JSON evidence.
 Result.Validate	Test-only installed qualification API retained for closed class and nonblank tuple validation.
+ResumeDefaultThread	The default-endpoint resume wrapper is retained for installed protocol qualification; generation-pinned product routing uses explicit routes.
 RetainedQualificationFields	Phase 0 qualification privacy allowlist is retained for schema redaction audits.
 Routes	The public route table accessor is retained for cross-package coverage and generated-reference consumers.
 SmokeRoot	Test-only installed qualification API retained for canonical isolated root validation.
+StartDefaultThread	The default-endpoint start wrapper is retained for installed turn-free protocol qualification; generation-pinned product routing uses explicit routes.
 StartPrivateGeneration	Phase 2 complete-lease private app-server launcher is retained for the later upgrade coordinator.
 Store.Migrate	Registry schema migration must remain available for persisted pre-current Registry files.
 Store.Path	The Registry path accessor is retained for migration and storage-boundary tests.
@@ -165,6 +168,7 @@ legacyWindowAttentionRows	Legacy attention rows remain required while older pers
 newFixture	Test-only installed qualification helper retained as the common clean/existing fixture constructor.
 newLedger	Test-only installed qualification helper retained for canonical semantic command evidence.
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
+openReadyThreadClient	The default-endpoint client helper remains behind installed protocol qualification wrappers, not generation-pinned product routing.
 ownerPrivateDirectory	Phase 2 owner/mode/leaf-symlink directory proof is retained before private socket launch.
 pathWithin	Test-only installed qualification helper retained for tmux socket containment proof.
 privateGenerationEnvironment	Phase 2 environment reducer is retained to strip inherited tmux routing and pin CODEX_HOME.
@@ -183,6 +187,7 @@ statChangeTime	Phase 2 Linux/Darwin change-time capture is retained to fence imm
 terminateOwnedSession	Phase 2 exact private-group termination and dual process/session barrier is retained for descendant-complete cleanup.
 tmuxCapabilityEnvironment	Test-only installed qualification helper retained for per-command tmux and CODEX_HOME isolation.
 tmuxRetiredKeyUnbindLines	Retired key cleanup must remain available so old generated tmux bindings can be removed.
+unsupportedRootsError	The default-endpoint roots refusal helper remains part of the retained installed protocol qualification contract.
 validGenerationState	Phase 0 closed generation-state validator is retained for bounded-pool topology proofs.
 validIdentityToken	Phase 0 opaque identity validator is retained to keep plans and receipts content-free.
 validObligationState	Phase 0 closed Agent-obligation validator is retained for exact plan blockers.

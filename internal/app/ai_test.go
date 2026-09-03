@@ -19,6 +19,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -469,10 +470,16 @@ func TestAIResumeProvidersShareConversationWidthPolicy(t *testing.T) {
 	}
 	wantWidth := 0
 	for _, provider := range providers {
-		row := aiResumeSessionRowWithResolvedLabel(aisessions.SessionMeta{
+		session := aisessions.SessionMeta{
 			Agent: provider.name, ResumeID: provider.name + "-id", Title: title, Source: provider.source,
 			LastModified: now.Add(-time.Hour), Context: aisessions.SessionContext{Branch: "main"},
-		}, aiResumeExactAgentLabel{}, now, i18n.FallbackLocale, "/work", 0)
+		}
+		if provider.name == aiModeCodex {
+			session.StateDomainID = "state-width"
+			session.EndpointGenerationID = "generation-width"
+			session.GenerationState = string(coremetadata.CodexGenerationCurrent)
+		}
+		row := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{}, now, i18n.FallbackLocale, "/work", 0)
 		width := i18n.TerminalCellWidth(row.Label)
 		if wantWidth == 0 {
 			wantWidth = width

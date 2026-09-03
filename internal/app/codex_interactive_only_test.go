@@ -325,33 +325,25 @@ func TestDefaultNativeCodexFanOutRefusesWithZeroMutationsAndInteractiveOnlyKeeps
 		}
 	})
 
-	t.Run("an empty-prompt fan-out is not a native create and still fans out", func(t *testing.T) {
+	t.Run("an empty-prompt native fan-out refuses with zero writes", func(t *testing.T) {
 		create, store, tmux, legacy, native, _ := newInteractiveOnlyCodexCreate(t)
-		before := len(store.registry.Agents)
+		before := store.snapshot()
 
 		stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "-o", "pane-id")
-		if err != nil || stderr != "" || len(strings.Fields(stdout)) != 2 {
+		if err == nil || stdout != "" || stderr != "" || !IsUsageError(err) {
 			t.Fatalf("empty-prompt fan-out stdout=%q stderr=%q err=%v", stdout, stderr, err)
 		}
-		if got := len(store.registry.Agents) - before; got != 2 {
-			t.Fatalf("empty-prompt fan-out created %d Agents, want one per resolved Window", got)
-		}
-		if len(native.creates) != 0 || len(legacy.bound) != 2 || len(splitWindowCalls(tmux)) != 2 {
-			t.Fatalf("empty-prompt fan-out changed lane: native=%+v bound=%+v splits=%v",
-				native.creates, legacy.bound, splitWindowCalls(tmux))
+		if len(native.creates) != 0 || len(legacy.bound) != 0 || len(splitWindowCalls(tmux)) != 0 || store.writes != 0 || store.snapshot() != before {
+			t.Fatalf("empty-prompt refusal mutated: native=%+v bound=%+v splits=%v writes=%d",
+				native.creates, legacy.bound, splitWindowCalls(tmux), store.writes)
 		}
 	})
 }
 
-// TestEmptyPromptCodexCreateIsByteForByteUnchangedByTheNativeRequiredGate is
-// the guard on the deferred Phase's boundary.
-//
-// Empty-prompt thread-first create is deferred by an upstream limitation, so
-// an empty-prompt Codex create must still classify as `empty-prompt`, still
-// fall through to the plain CLI lane, and still produce exactly the argv,
-// stdout, hook acknowledgement, and Registry projection it produced before the
-// prompted create began requiring native authority.
-func TestEmptyPromptCodexCreateIsByteForByteUnchangedByTheNativeRequiredGate(t *testing.T) {
+// TestEmptyPromptCodexCreateUsesNativeDefaultAndInteractiveOnlyPlainLane is the
+// Phase-3 migration receipt for the old empty-prompt plain default. Default
+// create now owns a turnless native thread; the explicit opt-out remains plain.
+func TestEmptyPromptCodexCreateUsesNativeDefaultAndInteractiveOnlyPlainLane(t *testing.T) {
 	run := func(t *testing.T, controller *fakeNativeThreadController) (string, [][]string, coremetadata.Agent, *fakeAgentLauncher) {
 		t.Helper()
 		store := newFakeResourceStore(t)
@@ -366,12 +358,7 @@ func TestEmptyPromptCodexCreateIsByteForByteUnchangedByTheNativeRequiredGate(t *
 		return stdout, splitWindowCalls(tmux), agentNamed(t, store, "win-alpha-main", "codex-1"), legacy
 	}
 
-	// The production classification of an empty prompt, produced by the adapter
-	// itself rather than restated here.
-	empty := &fakeNativeThreadController{
-		createErr: &codexappserver.ThreadActionError{Reason: "empty-prompt", SafeFallback: true},
-		fallback:  true,
-	}
+	empty := &fakeNativeThreadController{createBinding: codexappserver.ThreadBinding{ThreadID: "thread-empty-native"}}
 	stdout, calls, agent, legacy := run(t, empty)
 	if stdout != "agent/codex-1 created\n" {
 		t.Fatalf("empty-prompt stdout = %q", stdout)
@@ -380,15 +367,15 @@ func TestEmptyPromptCodexCreateIsByteForByteUnchangedByTheNativeRequiredGate(t *
 		t.Fatalf("empty-prompt create issued %d splits, want exactly one: %v", len(calls), calls)
 	}
 	joined := strings.Join(calls[0], " ")
-	if !strings.Contains(joined, "exec codex") || strings.Contains(joined, "--remote") || strings.Contains(joined, " resume ") {
-		t.Fatalf("empty-prompt argv = %v, want one fresh plain Codex CLI", calls[0])
+	if !strings.Contains(joined, "resume --remote unix:///test/generation-current.sock thread-empty-native") {
+		t.Fatalf("empty-prompt argv = %v, want pinned native TUI", calls[0])
 	}
-	if agent.Status.SessionRef != nil || agent.Status.Activation.State != coremetadata.ActivationNotRequested ||
-		agent.Status.Activation.Source != "" {
+	if agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.ThreadID != "thread-empty-native" ||
+		agent.Status.SessionRef.Codex.HasStartedTurn || agent.Status.Activation.State != coremetadata.ActivationNotRequested || agent.Status.Activation.Source != "" {
 		t.Fatalf("empty-prompt Agent status = %#v", agent.Status)
 	}
-	if len(legacy.plans) != 1 || len(legacy.plans[0].payload) != 0 || len(legacy.bound) != 1 || len(legacy.activationPanes) != 0 {
-		t.Fatalf("empty-prompt plain lane = plans:%+v bound:%+v activation:%v", legacy.plans, legacy.bound, legacy.activationPanes)
+	if len(legacy.plans) != 1 || len(legacy.plans[0].payload) != 0 || len(legacy.bound) != 0 || len(legacy.activationPanes) != 0 {
+		t.Fatalf("empty-prompt legacy lane = plans:%+v bound:%+v activation:%v", legacy.plans, legacy.bound, legacy.activationPanes)
 	}
 
 	// The same row reached through `--interactive-only` is the same bytes: the
@@ -403,10 +390,10 @@ func TestEmptyPromptCodexCreateIsByteForByteUnchangedByTheNativeRequiredGate(t *
 		t.Fatalf("interactive-only empty create stdout=%q stderr=%q err=%v", optOut, stderr, err)
 	}
 	if optOut != stdout {
-		t.Fatalf("interactive-only empty stdout %q != default empty stdout %q", optOut, stdout)
+		t.Fatalf("interactive-only empty stdout %q != native empty stdout %q", optOut, stdout)
 	}
-	if got := strings.Join(splitWindowCalls(tmux)[0], " "); got != joined {
-		t.Fatalf("interactive-only empty argv %q != default empty argv %q", got, joined)
+	if got := strings.Join(splitWindowCalls(tmux)[0], " "); !strings.Contains(got, "exec codex") || strings.Contains(got, "--remote") || got == joined {
+		t.Fatalf("interactive-only empty argv %q did not stay an intentional plain lane", got)
 	}
 }
 

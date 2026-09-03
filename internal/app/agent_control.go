@@ -39,7 +39,7 @@ type agentControlLive struct {
 	Reason    string
 }
 
-type agentControlCaller func(context.Context, string, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error)
+type agentControlCaller func(context.Context, string, coremetadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error)
 type agentControlPathResolver func() (config.Paths, error)
 type agentControlPicker interface {
 	Run(intpicker.Options) (intpicker.Result, error)
@@ -130,6 +130,7 @@ func (l *tmuxAgentControlBindingLookup) Live(ctx context.Context, paneUID string
 
 type exactAgentControlBinding struct {
 	Identity   codexLifecycleIdentity
+	Endpoint   coremetadata.CodexEndpointRef
 	Epoch      string
 	StateDir   string
 	ProjectUID string
@@ -157,6 +158,23 @@ func resolveExactAgentControlBinding(registry coremetadata.Registry, agent corem
 	if threadID == "" || pane.Status.Activation.Generation == "" || pane.Status.Activation.RuntimeID == "" {
 		return refusal("activation generation or Codex thread identity is missing")
 	}
+	if agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil ||
+		agent.Status.SessionRef.Codex.Endpoint == nil || !agent.Status.SessionRef.Codex.Endpoint.Valid() {
+		return refusal(codexNativeReasonLegacyEndpointMissing)
+	}
+	durableThreadID := strings.TrimSpace(agent.Status.SessionRef.Codex.ThreadID)
+	if durableThreadID == "" || durableThreadID != threadID {
+		return refusal("durable Codex thread does not match the Pane activation")
+	}
+	endpoint := *agent.Status.SessionRef.Codex.Endpoint
+	if agent.Status.SessionRef.Codex.Lifecycle != nil &&
+		!agent.Status.SessionRef.Codex.Lifecycle.ValidFor(&endpoint) {
+		return refusal("durable endpoint lifecycle is invalid")
+	}
+	if pane.Status.Activation.Codex.Authority == nil || !pane.Status.Activation.Codex.Authority.Valid() ||
+		!pane.Status.Activation.Codex.Authority.Endpoint().Same(endpoint) {
+		return refusal("live activation authority does not match the durable endpoint generation")
+	}
 	if !observed || live.RuntimeID != pane.Status.Activation.RuntimeID || live.PaneUID != pane.Metadata.UID || live.ThreadID != threadID {
 		return refusal("live Pane identity no longer matches the activation")
 	}
@@ -177,7 +195,7 @@ func resolveExactAgentControlBinding(registry coremetadata.Registry, agent corem
 	}
 	return exactAgentControlBinding{
 		Identity: codexLifecycleIdentity{AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, RuntimeID: pane.Status.Activation.RuntimeID, Generation: pane.Status.Activation.Generation, ThreadID: threadID},
-		Epoch:    live.Epoch, StateDir: stateDir, ProjectUID: project.Metadata.UID, WindowUID: window.Metadata.UID,
+		Endpoint: endpoint, Epoch: live.Epoch, StateDir: stateDir, ProjectUID: project.Metadata.UID, WindowUID: window.Metadata.UID,
 	}, nil
 }
 
@@ -244,6 +262,11 @@ func (c *agentCommand) runTurn(args []string, stdout, stderr io.Writer) error {
 		if err := response.Error(); err != nil {
 			return addOpenCodexBindingRecovery(err, binding)
 		}
+		if op == agentControlOpStart {
+			if err := c.recordStartedCodexTurn(binding, response); err != nil {
+				return err
+			}
+		}
 		_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s\n", c.agentActionText(label), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID))
 		return err
 	case "interrupt":
@@ -266,6 +289,33 @@ func (c *agentCommand) runTurn(args []string, stdout, stderr io.Writer) error {
 	default:
 		return usageError("agent turn requires start, steer, or interrupt")
 	}
+}
+
+// recordStartedCodexTurn commits only monotonic, content-free evidence after
+// the exact control epoch accepted a first input. It reuses the durable
+// endpoint/thread and Pane generation from the pre-write binding, so a current
+// pointer change cannot retarget the acknowledgement.
+func (c *agentCommand) recordStartedCodexTurn(binding exactAgentControlBinding, response agentControlResponse) error {
+	if strings.TrimSpace(response.ThreadID) != binding.Identity.ThreadID || strings.TrimSpace(response.TurnID) == "" {
+		return addOpenCodexBindingRecovery(&exactAgentControlBindingError{Reason: "turn response did not preserve the exact thread identity"}, binding)
+	}
+	return c.mutateAgent(binding.Identity.AgentUID, func(registry *coremetadata.Registry, mutator coremetadata.Mutator) error {
+		changed, err := mutator.RefineCodexActivation(registry, coremetadata.CodexActivationObservation{
+			AgentUID: binding.Identity.AgentUID, PaneUID: binding.Identity.PaneUID,
+			Generation: binding.Identity.Generation, ThreadID: binding.Identity.ThreadID,
+			TurnID: response.TurnID, Endpoint: binding.Endpoint,
+		})
+		if err != nil {
+			return err
+		}
+		if !changed {
+			agent, ok := registry.Agent(binding.Identity.AgentUID)
+			if !ok || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || !agent.Status.SessionRef.Codex.HasStartedTurn {
+				return &exactAgentControlBindingError{Reason: "first-turn evidence no longer matches the exact native binding"}
+			}
+		}
+		return nil
+	})
 }
 
 func splitAgentTurnText(args []string) ([]string, string, error) {
@@ -332,7 +382,7 @@ func (c *agentCommand) callControl(binding exactAgentControlBinding, request age
 	if call == nil {
 		call = callCodexControl
 	}
-	response, err := call(ctx, binding.StateDir, binding.Identity, request)
+	response, err := call(ctx, binding.StateDir, binding.Endpoint, binding.Identity, request)
 	if err != nil {
 		return agentControlResponse{}, addOpenCodexBindingRecovery(fmt.Errorf("exact Agent native control unavailable: %w", err), binding)
 	}

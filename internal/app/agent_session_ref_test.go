@@ -185,9 +185,13 @@ func seedNativeCodexBinding(t *testing.T, h *sessionRefHarness, threadID, turnID
 	t.Helper()
 	agent, _ := h.registry.Agent(h.agentUID)
 	pane, _ := h.registry.Pane(h.paneUID)
+	endpoint := &coremetadata.CodexEndpointRef{StateDomainID: "hook-test-domain", EndpointGenerationID: "hook-test-generation"}
 	agent.Status.SessionRef = &coremetadata.AgentSessionRef{
 		Provider: aiModeCodex, ObservedAt: sessionRefObservedAt,
-		Codex: &coremetadata.CodexSessionRef{ThreadID: threadID},
+		Codex: &coremetadata.CodexSessionRef{
+			ThreadID: threadID, Endpoint: endpoint,
+			Lifecycle: &coremetadata.CodexGenerationLifecycleRef{State: coremetadata.CodexGenerationCurrent},
+		},
 	}
 	pane.Status.Activation.Codex = &coremetadata.CodexActivationBinding{ThreadID: threadID, TurnID: turnID}
 }
@@ -775,6 +779,7 @@ func TestAgentResumeConsumesTheStoredSessionRefAndStillRefusesRunning(t *testing
 		setFixtureSessionRef(t, with, "agt-beta-codex", ref())
 		tmux := newFakeTmux()
 		cmdWith, launcher, _, _ := newTestAgentResumeCommand(t, with, tmux)
+		enablePinnedNativeResumeFixture(t, cmdWith, with, "agt-beta-codex", launcher)
 		outWith, _, errWith := runRoute(t, cmdWith, "resume", "codex", "--project", "beta")
 		if errWith != nil {
 			t.Fatalf("an Agent with a stored conversation failed to resume: %v", errWith)
@@ -788,10 +793,11 @@ func TestAgentResumeConsumesTheStoredSessionRefAndStillRefusesRunning(t *testing
 		}
 		// The stored pointer is what the launch addressed, and it survives the
 		// rebind unchanged.
-		if len(launcher.plans) != 1 || launcher.plans[0].conversationID != "codex-thread-1" {
-			t.Fatalf("resume launches = %+v, want one addressing codex-thread-1", launcher.plans)
+		if len(launcher.plans) != 2 || launcher.plans[0].conversationID != "codex-thread-1" || launcher.plans[1].conversationID != "codex-thread-1" {
+			t.Fatalf("resume launches = %+v, want two pinned planning barriers addressing codex-thread-1", launcher.plans)
 		}
-		if !agent.Status.SessionRef.SameConversation(ref()) {
+		if agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil ||
+			agent.Status.SessionRef.Codex.ThreadID != "codex-thread-1" || agent.Status.SessionRef.Codex.Endpoint == nil {
 			t.Fatalf("resume rewrote the stored conversation: %#v", agent.Status.SessionRef)
 		}
 	})

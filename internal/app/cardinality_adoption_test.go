@@ -196,9 +196,11 @@ func TestEveryCanonicalRouteCardinalityIsEnforcedAtTheRoute(t *testing.T) {
 		{
 			spelling: "create agent",
 			run: func(t *testing.T, store *fakeResourceStore) error {
-				// 1..N accepts the whole Project scope: one Agent per Window.
+				// 1..N accepts the whole Project scope on the intentional plain
+				// fan-out lane: one Agent per Window. Native-default create is
+				// exact-one because an app-server thread cannot be rolled back.
 				create, _ := newTestAgentCreateCommand(t, store, newFakeTmux())
-				_, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha")
+				_, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--interactive-only")
 				return err
 			},
 		},
@@ -210,7 +212,7 @@ func TestEveryCanonicalRouteCardinalityIsEnforcedAtTheRoute(t *testing.T) {
 				// to 0..N would turn this into a success that created nothing.
 				create, _ := newTestAgentCreateCommand(t, store, newFakeTmux())
 				_, _, err := runRoute(t, create,
-					"agent", "--provider", "codex", "--project", "alpha", "--selector", "role=nosuch")
+					"agent", "--provider", "codex", "--project", "alpha", "--selector", "role=nosuch", "--interactive-only")
 				return err
 			},
 			wantFail: true,
@@ -222,7 +224,7 @@ func TestEveryCanonicalRouteCardinalityIsEnforcedAtTheRoute(t *testing.T) {
 				// which the Agent route shares with `create pane`.
 				create, _ := newTestAgentCreateCommand(t, store, newFakeTmux())
 				_, _, err := runRoute(t, create, "agent", "--provider", "codex",
-					"--project", "alpha", "--window", "main", "--pane", "zsh", "--pane", "log")
+					"--project", "alpha", "--window", "main", "--pane", "zsh", "--pane", "log", "--interactive-only")
 				return err
 			},
 			wantFail: true,

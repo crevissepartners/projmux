@@ -70,6 +70,53 @@ func TestInternalCodexBrokerServePublishesAndIdlesOutWithoutTouchingAnyDaemon(t 
 	}
 }
 
+func TestInternalCodexBrokerServePublishesTheExactGenerationRuntimeWithoutOpeningProvider(t *testing.T) {
+	domain := newBrokerStateDomain(t)
+	key, err := codexbroker.NewEndpointKey("state-exact", "generation-exact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := codexbroker.NewDiscovery(domain, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := newCodexBrokerCommand()
+	var stdout lockedBuffer
+	var stderr bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- command.Run([]string{
+			"serve", "--state-domain", domain, "--idle-timeout", "300ms",
+			"--endpoint-state-domain", "state-exact", "--endpoint-generation", "generation-exact",
+			"--endpoint-socket", filepath.Join(domain, "private-app-server.sock"),
+		}, &stdout, &stderr)
+	}()
+	waitForBroker(t, "the exact generation runtime to publish", func() bool {
+		_, socketErr := os.Lstat(discovery.SocketPath())
+		_, recordErr := os.Lstat(discovery.RecordPath())
+		return socketErr == nil && recordErr == nil
+	})
+	waitForBroker(t, "the exact generation runtime readiness line", func() bool {
+		return strings.Contains(stdout.String(), codexBrokerReadyLine)
+	})
+	conn, err := codexbroker.Dial(t.Context(), discovery, codexbroker.DialConfig{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if conn.Runtime() == "" {
+		t.Fatal("generation runtime returned no authenticated broker runtime identity")
+	}
+	_ = conn.Close()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("generation serve returned %v (stderr=%q)", err, stderr.String())
+		}
+	case <-time.After(15 * time.Second):
+		t.Fatal("the generation runtime never idled out")
+	}
+}
+
 // TestInternalCodexBrokerRouteStaysHiddenPlumbingWithNoPublicSurface is the
 // scope audit for this phase's only CLI change.
 //

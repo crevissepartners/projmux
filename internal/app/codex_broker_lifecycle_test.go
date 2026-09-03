@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
@@ -246,6 +247,107 @@ func TestBrokerBoundAgentsShareOneUpstreamConnectionWithIndependentBindingEpochs
 	}
 }
 
+func TestGenerationRoutedBrokerEpochPublishesItsExactRuntimeAuthority(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("codex broker runtime requires Unix filesystem semantics")
+	}
+	endpointRef := coremetadata.CodexEndpointRef{StateDomainID: "domain-exact", EndpointGenerationID: "generation-exact"}
+	key, err := codexbroker.NewEndpointKey(endpointRef.StateDomainID, endpointRef.EndpointGenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := codexbroker.NewDiscovery(shortTempDomain(t), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := newBrokerTestEndpoint()
+	broker, err := codexbroker.NewBroker(codexbroker.Config{Endpoint: key, Opener: func(context.Context) (codexbroker.Endpoint, error) {
+		return endpoint, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := codexbroker.StartHost(codexbroker.HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: -1})
+	if err != nil {
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = host.Close()
+		_ = broker.Close()
+	})
+	session := newCodexBrokerObserverSessionOn(brokerTestIdentity("thread-generation"), "", nil, discovery, nil)
+	session.endpoint = endpointRef
+	defer session.Close()
+	epoch := openBrokerEpoch(t, session)
+	authority, err := epoch.GenerationAuthority()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !authority.Endpoint().Same(endpointRef) || authority.BrokerRuntimeID != host.RuntimeID() ||
+		authority.ConnectionEpoch == 0 || authority.BindingEpoch == 0 {
+		t.Fatalf("generation authority = %+v, runtime=%q", authority, host.RuntimeID())
+	}
+	if strings.Contains(authority.BrokerRuntimeID, "observer-") {
+		t.Fatalf("observer-local identity leaked into broker authority: %+v", authority)
+	}
+}
+
+func TestBrokerObserverConcurrentCloseAndPublishKeepsSessionClosed(t *testing.T) {
+	endpoint := newBrokerTestEndpoint()
+	discovery, _ := startBrokerRuntimeForTest(t, endpoint)
+	session := newCodexBrokerObserverSessionOn(brokerTestIdentity("thread-close-publish"), "", nil, discovery, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, ready, err := session.ensure(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record codexBrokerEpochRecord
+	select {
+	case record = <-ready:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	start := make(chan struct{})
+	var (
+		epoch      *codexBrokerLifecycleEpoch
+		publishErr error
+		closeErr   error
+		group      sync.WaitGroup
+	)
+	group.Add(2)
+	go func() {
+		defer group.Done()
+		<-start
+		epoch, publishErr = session.publish(record)
+	}()
+	go func() {
+		defer group.Done()
+		<-start
+		closeErr = session.Close()
+	}()
+	close(start)
+	group.Wait()
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if publishErr == nil {
+		waitForBrokerStreamEnd(t, epoch)
+	}
+	session.mu.Lock()
+	closed, current, binding, conn := session.closed, session.current, session.binding, session.conn
+	session.mu.Unlock()
+	if !closed || current != nil || binding != nil || conn != nil {
+		t.Fatalf("concurrent close/publish resurrected the session: closed=%t current=%p binding=%p conn=%p publishErr=%v",
+			closed, current, binding, conn, publishErr)
+	}
+	if _, err := session.Open(ctx); err == nil {
+		t.Fatal("closed session reopened after concurrent publish")
+	}
+}
+
 // TestBrokerThreadlessAndForeignEventsReachNoExactAgentBinding closes the
 // ambiguous-attribution row: a notification that declares no thread, and one
 // that declares a thread nobody bound, must not be handed to any Agent. Same
@@ -325,6 +427,36 @@ func TestBrokerEpochRotationFencesTheOldEpochOutWithZeroEndpointWrites(t *testin
 	second.respondWith("turn/start", `{"turn":{"id":"turn-2"}}`)
 	if result, err := fresh.StartExactTurn(context.Background(), "thread-rotate", "go"); err != nil || result.TurnID != "turn-2" {
 		t.Fatalf("replacement epoch start = %+v, %v", result, err)
+	}
+}
+
+// TestBrokerObserverReplacementSnapshotConsumesPriorSuspensionEdge pins the
+// second half of reconnect ordering. Even when select receives the buffered
+// snapshot first, the observer consumes its causally prior suspension before
+// rotating, so that edge cannot later retire the replacement epoch.
+func TestBrokerObserverReplacementSnapshotConsumesPriorSuspensionEdge(t *testing.T) {
+	ready := make(chan codexBrokerEpochRecord, 1)
+	suspends := make(chan struct{}, 1)
+	suspends <- struct{}{}
+	old := &codexBrokerLifecycleEpoch{notifications: make(chan codexappserver.Notification)}
+	session := &codexBrokerObserverSession{current: old}
+	replacement := codexBrokerEpochRecord{
+		fence:    codexbroker.Fence{Connection: 2, Binding: 1},
+		snapshot: codexappserver.ThreadSnapshot{ThreadID: "thread-replacement"},
+	}
+
+	session.rotateAfterPendingSuspension(replacement, ready, suspends)
+
+	if _, open := <-old.Notifications(); open {
+		t.Fatal("replacement rotation left the previous epoch open")
+	}
+	if got := <-ready; got.fence != replacement.fence || got.snapshot.ThreadID != replacement.snapshot.ThreadID {
+		t.Fatalf("replacement record = %+v, want %+v", got, replacement)
+	}
+	select {
+	case <-suspends:
+		t.Fatal("replacement rotation left a stale suspension edge")
+	default:
 	}
 }
 

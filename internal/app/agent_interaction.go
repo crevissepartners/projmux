@@ -58,6 +58,7 @@ type codexLifecycleNotice struct {
 type codexLifecycleProjection struct {
 	Accepted        bool
 	Invalidated     bool
+	HasStartedTurn  bool
 	Interaction     coremetadata.AgentInteractionKind
 	Endpoint        *coremetadata.CodexEndpointRef
 	GenerationState codexgeneration.GenerationState
@@ -106,7 +107,7 @@ func (r *codexLifecycleReducer) begin(epoch uint64, identity codexLifecycleIdent
 	}
 	r.interaction = r.snapshotInteraction()
 	terminal := snapshot.TurnState == codexappserver.TurnStateCompleted || snapshot.TurnState == codexappserver.TurnStateFailed || snapshot.TurnState == codexappserver.TurnStateInterrupted
-	return codexLifecycleProjection{Accepted: true, Interaction: r.interaction, ClearProgress: terminal}
+	return codexLifecycleProjection{Accepted: true, HasStartedTurn: r.currentTurnID != "", Interaction: r.interaction, ClearProgress: terminal}
 }
 
 func (r *codexLifecycleReducer) invalidate(epoch uint64) codexLifecycleProjection {
@@ -127,7 +128,7 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 	if !r.active || epoch != r.epoch || strings.TrimSpace(event.ThreadID) != strings.TrimSpace(r.identity.ThreadID) {
 		return codexLifecycleProjection{}
 	}
-	projection := codexLifecycleProjection{Accepted: true, Interaction: r.interaction}
+	projection := codexLifecycleProjection{Accepted: true, HasStartedTurn: r.currentTurnID != "", Interaction: r.interaction}
 	switch event.Kind {
 	case codexappserver.LifecycleTurnStarted:
 		if event.TurnID == "" {
@@ -140,6 +141,7 @@ func (r *codexLifecycleReducer) apply(epoch uint64, event codexappserver.Lifecyc
 		r.currentTurnState = codexappserver.TurnStateInProgress
 		r.threadState = codexappserver.ThreadStateActive
 		r.interaction = coremetadata.InteractionInProgress
+		projection.HasStartedTurn = true
 		projection.ClearProgress = true
 	case codexappserver.LifecycleThreadStatus:
 		if event.ThreadState == codexappserver.ThreadStateNotLoaded {

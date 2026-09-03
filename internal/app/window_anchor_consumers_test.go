@@ -110,7 +110,7 @@ func TestAnchorAwareCreatePaneAndAgentUseExactLiveAgentAnchorDetached(t *testing
 			name: "Agent",
 			run: func(t *testing.T, store *fakeResourceStore, tmux *fakeTmux) error {
 				command, _ := newTestAgentCreateCommand(t, store, tmux)
-				_, _, err := runRoute(t, command, "agent", "--provider", "codex", "--project", "alpha", "--window", "main")
+				_, _, err := runRoute(t, command, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--interactive-only")
 				return err
 			},
 		},
@@ -150,7 +150,7 @@ func TestAnchorAwareCreatePaneAndAgentUseExactLiveShellAnchorDetached(t *testing
 		}},
 		{name: "Agent", run: func(t *testing.T, store *fakeResourceStore, tmux *fakeTmux) error {
 			command, _ := newTestAgentCreateCommand(t, store, tmux)
-			_, _, err := runRoute(t, command, "agent", "--provider", "codex", "--project", "alpha", "--window", "main")
+			_, _, err := runRoute(t, command, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--interactive-only")
 			return err
 		}},
 	} {
@@ -246,7 +246,8 @@ func TestAnchorAwareAgentResumeUsesExactLiveAgentAnchorDetached(t *testing.T) {
 	addFixtureAgent(t, store, "agt-alpha-resume", "resume-me", "win-alpha-main", coremetadata.PhaseOffline, resumeFixtureRef(resourceFixtureClock))
 	tmux := newFakeTmux()
 	liveWindow, _, agentAnchorID := seedLiveAgentAnchor(t, store, tmux)
-	command, _, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	command, recorder, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	enablePinnedNativeResumeFixture(t, command, store, "agt-alpha-resume", recorder)
 
 	if _, _, err := runRoute(t, command, "resume", "uid:agt-alpha-resume"); err != nil {
 		t.Fatal(err)
@@ -276,7 +277,8 @@ func TestAnchorAwareAgentResumeUsesExactLiveShellAnchorDetached(t *testing.T) {
 	seedOwnedSession(session, "prj-alpha", "/srv/alpha")
 	liveWindow := session.windows[len(session.windows)-1]
 	shellAnchorID := liveWindow.panes[0].id
-	command, _, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	command, recorder, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	enablePinnedNativeResumeFixture(t, command, store, "agt-alpha-resume", recorder)
 
 	if _, _, err := runRoute(t, command, "resume", "uid:agt-alpha-resume"); err != nil {
 		t.Fatal(err)

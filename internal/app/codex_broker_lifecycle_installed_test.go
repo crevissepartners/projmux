@@ -12,11 +12,254 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/testutil/codexinstalled"
 	"github.com/crevissepartners/projmux/internal/version"
 )
+
+// TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke is the Phase 3
+// installed-product observation. It owns a fresh CODEX_HOME, direct unmanaged
+// endpoint, XDG Registry, and real-tmux socket below one exact temporary root;
+// it never probes or mutates the ambient/default endpoint.
+//
+// The smoke deliberately starts no model turn. It proves that the installed
+// create command mints one thread with no user content, atomically records the
+// Agent/Pane/thread/endpoint chain, launches the TUI against that same endpoint,
+// and projects the no-turn obligation repeatedly until an explicit-close input
+// removes it. First-real-input behavior remains covered by the provider-recorder
+// integration because an installed model turn would require ambient auth.
+func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
+	root, enabled, err := codexinstalled.SmokeRoot("PROJMUX_CODEX_PHASE3_SMOKE_ROOT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Skip("set PROJMUX_CODEX_PHASE3_SMOKE_ROOT for the installed Phase 3 empty-create smoke")
+	}
+	fixture, err := codexinstalled.NewClean(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootRemoved := false
+	t.Cleanup(func() {
+		if err := fixture.Cleanup(); err != nil {
+			t.Errorf("Phase 3 installed fixture cleanup: %v", err)
+		}
+		if !rootRemoved {
+			_ = os.RemoveAll(root)
+		}
+	})
+	fixture.ApplyEnv(t.Setenv)
+
+	home := filepath.Join(root, "home")
+	configHome := filepath.Join(root, "config")
+	stateHome := filepath.Join(root, "state")
+	runtimeHome := filepath.Join(root, "runtime")
+	tmuxRoot := filepath.Join(root, "tmux")
+	for _, dir := range []string{home, configHome, stateHome, runtimeHome, tmuxRoot} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for key, value := range map[string]string{
+		"HOME": home, "XDG_CONFIG_HOME": configHome, "XDG_STATE_HOME": stateHome,
+		"XDG_RUNTIME_DIR": runtimeHome, "TMUX_TMPDIR": tmuxRoot,
+		"PROJMUX_MANAGED_ROOTS": fixture.Workspace, "PROJMUX_PROJDIR": fixture.Workspace,
+		"SHELL": "/bin/sh", "TERM": "xterm-256color",
+	} {
+		t.Setenv(key, value)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	endpoint, started := fixture.StartDirect(ctx, version.String())
+	if started.Class != codexinstalled.ResultPass {
+		t.Fatalf("start exact isolated endpoint: %+v", started)
+	}
+	endpointClosed := false
+	t.Cleanup(func() {
+		if !endpointClosed {
+			_ = endpoint.Close(context.Background())
+		}
+	})
+
+	installed, err := exec.LookPath("projmux")
+	if err != nil {
+		t.Fatalf("installed projmux is required: %v", err)
+	}
+	installed, err = filepath.Abs(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(executable string, args ...string) string {
+		t.Helper()
+		command := exec.CommandContext(ctx, executable, args...) // #nosec G204 -- installed executable and structured test argv.
+		command.Env = withoutInheritedTmuxEnvironment(os.Environ())
+		output, runErr := command.CombinedOutput()
+		if runErr != nil {
+			t.Fatalf("%s %s: %v\n%s", filepath.Base(executable), strings.Join(args, " "), runErr, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	oneLine := func(label, value string) string {
+		t.Helper()
+		fields := strings.Fields(value)
+		if len(fields) != 1 {
+			t.Fatalf("%s=%q, want one exact value", label, value)
+		}
+		return fields[0]
+	}
+
+	projectUID := oneLine("project uid", run(installed, "create", "project", "--root", fixture.Workspace, "--name", "phase3-smoke", "-o", "uid"))
+	windowUID := oneLine("window uid", run(installed, "get", "windows", "--project", "uid:"+projectUID, "-o", "uid"))
+	agentUID := oneLine("agent uid", run(installed, "create", "agent", "--provider", "codex",
+		"--project", "uid:"+projectUID, "--window", "uid:"+windowUID, "-o", "uid"))
+
+	registry, err := loadResourceRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, ok := registry.Agent(agentUID)
+	if !ok || agent.Spec.Provider != aiModeCodex || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil {
+		t.Fatalf("installed Agent identity is incomplete: %#v", agent)
+	}
+	pane, ok := registry.Pane(agent.Status.PaneRef)
+	if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent ||
+		pane.Metadata.OwnerRef.UID != agentUID || pane.Status.Activation.Codex == nil {
+		t.Fatalf("installed Agent/Pane ownership is incomplete: agent=%#v pane=%#v", agent.Status, pane)
+	}
+	ref := agent.Status.SessionRef.Codex
+	expectedDomain, err := defaultCodexStateDomainID(os.Getenv, os.UserHomeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(ref.ThreadID) == "" || ref.SessionID != "" || ref.HasStartedTurn || ref.Endpoint == nil ||
+		ref.Endpoint.StateDomainID != expectedDomain || ref.Lifecycle == nil ||
+		ref.Lifecycle.State != coremetadata.CodexGenerationCurrent || pane.Status.Activation.Codex.ThreadID != ref.ThreadID ||
+		pane.Status.Activation.Codex.TurnID != "" || pane.Status.Activation.RuntimeID == "" {
+		t.Fatalf("payload-free installed identity chain drifted: agent=%#v pane=%#v", agent.Status, pane.Status)
+	}
+	for projection := range 3 {
+		obligation, projected := codexgeneration.ProjectAgentObligation(*agent, false)
+		if !projected || obligation.State != codexgeneration.ObligationNoTurn ||
+			obligation.EndpointGenerationID != ref.Endpoint.EndpointGenerationID {
+			t.Fatalf("no-turn projection %d=%+v projected=%t", projection, obligation, projected)
+		}
+	}
+	if obligation, projected := codexgeneration.ProjectAgentObligation(*agent, true); !projected || obligation.State != codexgeneration.ObligationClosed {
+		t.Fatalf("explicit close did not replace no-turn with closed: obligation=%+v projected=%t", obligation, projected)
+	}
+
+	// The exact broker epoch is a semantic readiness barrier: once published,
+	// cleanup can prove the generation runtime was both started and retired.
+	discoveryKey, err := codexbroker.NewEndpointKey(ref.Endpoint.StateDomainID, ref.Endpoint.EndpointGenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := codexBrokerDiscoveryForEndpoint(filepath.Join(stateHome, "projmux"), discoveryKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := waitInstalledPhase3Condition(ctx, 20*time.Second, func() (bool, error) {
+		latest, loadErr := loadResourceRegistry()
+		if loadErr != nil {
+			return false, loadErr
+		}
+		latestPane, exists := latest.Pane(agent.Status.PaneRef)
+		return exists && latestPane.Status.Activation.Codex != nil && latestPane.Status.Activation.Codex.Authority != nil &&
+			latestPane.Status.Activation.Codex.Authority.Valid() && latestPane.Status.Activation.Codex.Authority.Endpoint().Same(*ref.Endpoint), nil
+	}); err != nil {
+		t.Fatalf("exact generation broker authority did not become ready: %v", err)
+	}
+
+	expectedTUI, err := exec.LookPath("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedTUI, err = filepath.EvalSymlinks(expectedTUI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	format := "#{@projmux_pane_uid}\037#{@projmux_pane_owner_kind}\037#{@projmux_pane_owner_uid}\037#{@projmux_ai_agent}\037#{pane_start_command}\037#{socket_path}"
+	observed := run("tmux", "-L", "projmux", "display-message", "-p", "-t", pane.Status.Activation.RuntimeID, format)
+	fields := strings.Split(observed, "\x1f")
+	if len(fields) != 6 || fields[0] != pane.Metadata.UID || fields[1] != string(coremetadata.KindAgent) ||
+		fields[2] != agentUID || fields[3] != aiModeCodex || !strings.Contains(fields[4], expectedTUI) ||
+		!strings.Contains(fields[4], "resume") || !strings.Contains(fields[4], "--remote") ||
+		!strings.Contains(fields[4], "unix://") || !strings.Contains(fields[4], ref.ThreadID) {
+		t.Fatalf("installed pinned TUI/Pane receipt is not exact: %q", observed)
+	}
+	tmuxSocket := filepath.Clean(fields[5])
+	if !strings.HasPrefix(tmuxSocket, filepath.Clean(tmuxRoot)+string(filepath.Separator)) {
+		t.Fatalf("tmux socket escaped exact cleanup root: %q", tmuxSocket)
+	}
+
+	client, _, err := codexappserver.AttachDefaultEndpoint(ctx, version.String(), codexappserver.AttachOptions{
+		Timeout: 10 * time.Second, ExperimentalAPI: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := client.ResumeThread(ctx, ref.ThreadID, fixture.Workspace, nil)
+	_ = client.Close()
+	if err != nil || resumed.ThreadID != ref.ThreadID || resumed.TurnID != "" {
+		t.Fatalf("payload-free thread gained a turn: binding=%+v err=%v", resumed, err)
+	}
+
+	// Cleanup addresses the previously observed exact tmux socket, then waits
+	// for the exact generation-keyed broker artifacts to retire by idle policy.
+	run("tmux", "-S", tmuxSocket, "kill-server")
+	if err := waitInstalledPhase3Condition(ctx, 40*time.Second, func() (bool, error) {
+		_, socketErr := os.Lstat(discovery.SocketPath())
+		_, recordErr := os.Lstat(discovery.RecordPath())
+		return os.IsNotExist(socketErr) && os.IsNotExist(recordErr), nil
+	}); err != nil {
+		t.Fatalf("exact generation broker did not retire after Pane close: %v", err)
+	}
+	closed := endpoint.Close(ctx)
+	endpointClosed = true
+	if closed.Class != codexinstalled.ResultPass {
+		t.Fatalf("close exact isolated endpoint: %+v", closed)
+	}
+	if err := fixture.Ledger().AssertNoAmbientMutation(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	rootRemoved = true
+	if _, err := os.Lstat(root); !os.IsNotExist(err) {
+		t.Fatalf("Phase 3 installed root remains after exact cleanup: %v", err)
+	}
+	t.Logf("evidence: agent=%s pane=%s runtime=%s endpoint=%s/%s thread-present=true turn-present=false pinned-tui=true",
+		agentUID, pane.Metadata.UID, pane.Status.Activation.RuntimeID, ref.Endpoint.StateDomainID, ref.Endpoint.EndpointGenerationID)
+}
+
+func waitInstalledPhase3Condition(ctx context.Context, timeout time.Duration, condition func() (bool, error)) error {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		ready, err := condition()
+		if err != nil || ready {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("semantic condition did not become true within %s", timeout)
+		case <-ticker.C:
+		}
+	}
+}
 
 // TestInstalledIsolatedRealTmuxTwoAgentReconnectSmoke runs the maintained
 // reconnect fixture with the installed projmux binary as an immutable input.

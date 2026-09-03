@@ -82,6 +82,34 @@ type AgentObligation struct {
 	State                ObligationState `json:"state"`
 }
 
+// ProjectAgentObligation derives one generation-retirement obligation from
+// durable Agent state. In particular, a native thread with no observed turn is
+// ObligationNoTurn regardless of whether its Pane is still Running. Only an
+// explicit close decision changes that row to ObligationClosed.
+func ProjectAgentObligation(agent metadata.Agent, explicitlyClosed bool) (AgentObligation, bool) {
+	ref := agent.Status.SessionRef
+	if ref == nil || ref.Provider != "codex" || ref.Codex == nil || ref.Codex.Endpoint == nil ||
+		!ref.Codex.Endpoint.Valid() || strings.TrimSpace(ref.Codex.ThreadID) == "" {
+		return AgentObligation{}, false
+	}
+	state := ObligationUnknown
+	switch {
+	case explicitlyClosed:
+		state = ObligationClosed
+	case !ref.Codex.HasStartedTurn:
+		state = ObligationNoTurn
+	case agent.Status.Interaction.Kind == metadata.InteractionApprovalRequired:
+		state = ObligationApprovalPending
+	case agent.Status.Phase == metadata.PhaseRunning:
+		state = ObligationActive
+	case agent.Status.Interaction.Kind == metadata.InteractionResponseComplete || agent.Status.Phase == metadata.PhaseOffline:
+		state = ObligationCompletedPersisted
+	}
+	return AgentObligation{
+		AgentUID: agent.Metadata.UID, EndpointGenerationID: ref.Codex.Endpoint.EndpointGenerationID, State: state,
+	}, true
+}
+
 // Pool is the complete input to the Phase 0 topology and plan model.
 type Pool struct {
 	StateDomainID string            `json:"stateDomainID"`
