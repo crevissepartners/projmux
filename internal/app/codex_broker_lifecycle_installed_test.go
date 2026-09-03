@@ -29,8 +29,11 @@ import (
 // create command mints one thread with no user content, atomically records the
 // Agent/Pane/thread/endpoint chain, launches the TUI against that same endpoint,
 // and projects the no-turn obligation repeatedly until an explicit-close input
-// removes it. First-real-input behavior remains covered by the provider-recorder
-// integration because an installed model turn would require ambient auth.
+// removes it. Installed Codex cannot subscribe the broker until the first turn
+// materializes a rollout, so the pre-turn row must retain zero native authority
+// rather than inventing a fallback owner. First-real-input behavior remains
+// covered by the provider-recorder integration because an installed model turn
+// would require ambient auth.
 func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 	root, enabled, err := codexinstalled.SmokeRoot("PROJMUX_CODEX_PHASE3_SMOKE_ROOT")
 	if err != nil {
@@ -112,6 +115,19 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 		}
 		return fields[0]
 	}
+	// A fresh XDG config root intentionally has no generated app config. Use
+	// the installed binary's public convergence path to bootstrap it before
+	// resource materialization; with no live server on this isolated
+	// TMUX_TMPDIR, apply writes the config and performs no tmux mutation.
+	generatedConfig := filepath.Join(configHome, "projmux", "tmux.conf")
+	applyOutput := run(installed, "config", "apply", "--config", generatedConfig, "--socket", "projmux")
+	if !strings.Contains(applyOutput, "wrote "+generatedConfig) ||
+		!strings.Contains(applyOutput, "skipped reload: no live tmux server -L projmux") {
+		t.Fatalf("installed config bootstrap receipt is incomplete: %q", applyOutput)
+	}
+	if info, statErr := os.Stat(generatedConfig); statErr != nil || !info.Mode().IsRegular() {
+		t.Fatalf("installed config bootstrap did not create the exact generated config: info=%v err=%v", info, statErr)
+	}
 
 	projectUID := oneLine("project uid", run(installed, "create", "project", "--root", fixture.Workspace, "--name", "phase3-smoke", "-o", "uid"))
 	windowUID := oneLine("window uid", run(installed, "get", "windows", "--project", "uid:"+projectUID, "-o", "uid"))
@@ -153,8 +169,11 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 		t.Fatalf("explicit close did not replace no-turn with closed: obligation=%+v projected=%t", obligation, projected)
 	}
 
-	// The exact broker epoch is a semantic readiness barrier: once published,
-	// cleanup can prove the generation runtime was both started and retired.
+	// The generation-keyed discovery artifacts are the semantic startup barrier.
+	// A turn-free installed thread has no rollout for thread/resume yet, so the
+	// broker is expected to remain an unbound producer until the first real TUI
+	// input materializes that rollout. It must not manufacture native authority
+	// from the current endpoint merely because the exact broker is running.
 	discoveryKey, err := codexbroker.NewEndpointKey(ref.Endpoint.StateDomainID, ref.Endpoint.EndpointGenerationID)
 	if err != nil {
 		t.Fatal(err)
@@ -163,16 +182,27 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := waitInstalledPhase3Condition(ctx, 20*time.Second, func() (bool, error) {
-		latest, loadErr := loadResourceRegistry()
-		if loadErr != nil {
-			return false, loadErr
-		}
-		latestPane, exists := latest.Pane(agent.Status.PaneRef)
-		return exists && latestPane.Status.Activation.Codex != nil && latestPane.Status.Activation.Codex.Authority != nil &&
-			latestPane.Status.Activation.Codex.Authority.Valid() && latestPane.Status.Activation.Codex.Authority.Endpoint().Same(*ref.Endpoint), nil
+	if err := waitInstalledPhase3Condition(ctx, 10*time.Second, func() (bool, error) {
+		_, socketErr := os.Lstat(discovery.SocketPath())
+		_, recordErr := os.Lstat(discovery.RecordPath())
+		return socketErr == nil && recordErr == nil, nil
 	}); err != nil {
-		t.Fatalf("exact generation broker authority did not become ready: %v", err)
+		t.Fatalf("exact generation broker did not publish its isolated discovery artifacts: %v", err)
+	}
+	registry, err = loadResourceRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	preTurnPane, ok := registry.Pane(agent.Status.PaneRef)
+	if !ok || preTurnPane.Status.Activation.Codex == nil || preTurnPane.Status.Activation.Codex.Authority != nil {
+		t.Fatalf("turn-free installed Pane acquired unsupported native authority: %#v", preTurnPane.Status.Activation)
+	}
+	authorityProjection := run("tmux", "-L", "projmux", "display-message", "-p", "-t", pane.Status.Activation.RuntimeID,
+		"#{@projmux_codex_authority}\037#{@projmux_codex_authority_reason}\037#{@projmux_codex_authority_epoch}")
+	authorityFields := strings.Split(authorityProjection, "\x1f")
+	if len(authorityFields) != 3 || authorityFields[0] != codexAuthorityHook ||
+		strings.TrimSpace(authorityFields[1]) == "" || strings.TrimSpace(authorityFields[2]) != "" {
+		t.Fatalf("turn-free installed Pane native-authority refusal is not exact: %q", authorityProjection)
 	}
 
 	expectedTUI, err := exec.LookPath("codex")
@@ -203,10 +233,23 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resumed, err := client.ResumeThread(ctx, ref.ThreadID, fixture.Workspace, nil)
+	thread, err := client.ReadCatalogThread(ctx, ref.ThreadID)
 	_ = client.Close()
-	if err != nil || resumed.ThreadID != ref.ThreadID || resumed.TurnID != "" {
-		t.Fatalf("payload-free thread gained a turn: binding=%+v err=%v", resumed, err)
+	if err != nil || thread.ID != ref.ThreadID || strings.TrimSpace(thread.RuntimeStatus) == "" {
+		t.Fatalf("payload-free thread identity is not readable without turns: thread=%+v err=%v", thread, err)
+	}
+	registry, err = loadResourceRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	noTurnAgent, agentExists := registry.Agent(agentUID)
+	noTurnPane, paneExists := registry.Pane(agent.Status.PaneRef)
+	if !agentExists || !paneExists || noTurnAgent.Status.SessionRef == nil || noTurnAgent.Status.SessionRef.Codex == nil ||
+		noTurnAgent.Status.SessionRef.Codex.ThreadID != ref.ThreadID || noTurnAgent.Status.SessionRef.Codex.HasStartedTurn ||
+		noTurnPane.Status.Activation.Codex == nil || noTurnPane.Status.Activation.Codex.ThreadID != ref.ThreadID ||
+		noTurnPane.Status.Activation.Codex.TurnID != "" || noTurnPane.Status.Activation.Codex.Authority != nil {
+		t.Fatalf("payload-free thread gained a turn or native authority: agent=%#v pane=%#v",
+			noTurnAgent.Status, noTurnPane.Status.Activation)
 	}
 
 	// Cleanup addresses the previously observed exact tmux socket, then waits
