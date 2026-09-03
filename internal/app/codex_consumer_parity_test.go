@@ -69,6 +69,28 @@ func TestGenerationConsumersShareExactEndpointFenceAndStaleActionZero(t *testing
 	}
 }
 
+func TestGenerationObserverRefreshesDurableDrainingOperationForConsumerProjection(t *testing.T) {
+	store, identity, endpoint, authority := phase1GenerationAuthorityFixture(t)
+	cmd := testAICommand(t.TempDir())
+	cmd.loadRegistry = store.store().load
+	observer := codexNativeObserver{
+		identity: identity, endpoint: *endpoint,
+		// A long-lived observer can retain its launch-time Current state after
+		// admission moves this exact Agent to Draining.
+		generationState: codexgeneration.StateCurrent,
+		authority:       authority,
+		sink:            aiCodexLifecycleSink{command: cmd},
+	}
+	projection := observer.decorateGenerationProjection(codexLifecycleProjection{
+		Accepted: true, Interaction: coremetadata.InteractionResponseComplete,
+	})
+	if projection.GenerationState != codexgeneration.StateDraining || projection.Operation == nil ||
+		projection.Operation.ID != "drain-operation" || !projection.Operation.ValidFor(endpoint) ||
+		!projection.generationInput().Authoritative() {
+		t.Fatalf("durable planned projection = %#v", projection)
+	}
+}
+
 func TestGenerationAwareListerRegistryReadErrorMakesExistingNoticeStaleAndActionZero(t *testing.T) {
 	entry := notify.Notification{
 		ID: "ai:main:%7", Session: "main", Pane: "%7", Source: notify.SourceAI,

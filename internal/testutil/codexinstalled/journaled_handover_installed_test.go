@@ -19,6 +19,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	"github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbundle"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgenerationhost"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
@@ -94,7 +95,7 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 	oldLease := leaseInstalledBundle(t, bundleStore, oldBinary, "0.152.0", protocol)
 	newLease := leaseInstalledBundle(t, bundleStore, newBinary, "0.152.1", protocol)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	oldEndpoint := metadata.CodexEndpointRef{StateDomainID: "installed-phase5", EndpointGenerationID: "generation-0.152.0"}
 	newEndpoint := metadata.CodexEndpointRef{StateDomainID: "installed-phase5", EndpointGenerationID: "generation-0.152.1"}
@@ -296,15 +297,30 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 		t.Fatal(err)
 	}
 	newThread, newThreadErr := newThreadClient.StartThread(ctx, workspace, nil)
-	if closeErr := newThreadClient.Close(); newThreadErr != nil || closeErr != nil || strings.TrimSpace(newThread.ThreadID) == "" {
-		t.Fatalf("create N+1 Agent thread=%+v err=%v close=%v", newThread, newThreadErr, closeErr)
+	if newThreadErr != nil || strings.TrimSpace(newThread.ThreadID) == "" {
+		_ = newThreadClient.Close()
+		t.Fatalf("create N+1 Agent thread=%+v err=%v", newThread, newThreadErr)
+	}
+	// Installed Codex cannot subscribe a broker binding until the thread has a
+	// rollout. Seed exactly one completed setup turn before assigning the
+	// durable Agent tuple; this is new input, never replay, and the two Phase 6
+	// acceptance messages below still begin through the public Agent path.
+	newSeedTurn, newSeedErr := newThreadClient.StartTurn(ctx, newThread.ThreadID,
+		"Reply with exactly AGENT_READY. Do not use tools.", "installed-phase6-new-agent-seed")
+	if newSeedErr != nil || strings.TrimSpace(newSeedTurn) == "" {
+		_ = newThreadClient.Close()
+		t.Fatalf("seed N+1 Agent rollout turn=%q err=%v", newSeedTurn, newSeedErr)
+	}
+	waitForGenerationTurn(t, ctx, newThreadClient, newThread.ThreadID, newSeedTurn)
+	if closeErr := newThreadClient.Close(); closeErr != nil {
+		t.Fatalf("close N+1 Agent setup client: %v", closeErr)
 	}
 	successorPane := runTmux("split-window", "-d", "-t", completedPane, "-c", workspace, "-P", "-F", "#{pane_id}", "tail", "-f", "/dev/null")
 	overlapRegistry, err := registryStore.LoadSnapshot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	successorAgent, successorResourcePane := seedAgent(&overlapRegistry, "successor", successorPane, newThread.ThreadID, "", metadata.InteractionResponseComplete, newEndpoint)
+	successorAgent, successorResourcePane := seedAgent(&overlapRegistry, "successor", successorPane, newThread.ThreadID, newSeedTurn, metadata.InteractionResponseComplete, newEndpoint)
 	if _, changed, err := registryStore.UpdateConvergent(func(current *metadata.Registry) error {
 		*current = overlapRegistry
 		return nil
@@ -315,6 +331,21 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	brokerRuntimes := []installedBrokerRuntime{
+		newInstalledBrokerRuntime(t, paths.StateDir, oldEndpoint),
+		newInstalledBrokerRuntime(t, paths.StateDir, newEndpoint),
+	}
+	brokersRetired := false
+	t.Cleanup(func() {
+		if brokersRetired {
+			return
+		}
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cleanupCancel()
+		if cleanupErr := waitForInstalledBrokerRetirement(cleanupCtx, brokerRuntimes); cleanupErr != nil {
+			t.Errorf("retire exact installed broker runtimes: %v", cleanupErr)
+		}
+	})
 	oldObserver := startInstalledGenerationObserver(t, ctx, projmux, tmuxEnv, installedGenerationObserverTarget{
 		AgentUID: completedAgent.Metadata.UID, PaneUID: completedResourcePane.Metadata.UID, RuntimeID: completedPane,
 		PaneGeneration: completedResourcePane.Status.Activation.Generation, ThreadID: completed.ThreadID,
@@ -325,13 +356,44 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 		PaneGeneration: successorResourcePane.Status.Activation.Generation, ThreadID: newThread.ThreadID,
 		Endpoint: newEndpoint, State: newRoute.Generation.State, SocketPath: newRoute.Config.SocketPath, TUIPath: newRoute.TUIPath,
 	})
+	for index := range brokerRuntimes {
+		brokerRuntimes[index].PID = readInstalledBrokerPID(t, brokerRuntimes[index])
+	}
+	oldOverlapClient, err := codexappserver.OpenPrivateUnix(ctx, oldRoute.Config.SocketPath, 10*time.Second, "installed-phase6-old-agent-result", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newOverlapClient, err := codexappserver.OpenPrivateUnix(ctx, newRoute.Config.SocketPath, 10*time.Second, "installed-phase6-new-agent-result", true)
+	if err != nil {
+		_ = oldOverlapClient.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if oldOverlapClient != nil {
+			_ = oldOverlapClient.Close()
+		}
+		if newOverlapClient != nil {
+			_ = newOverlapClient.Close()
+		}
+	})
+	baselineRegistry, err := registryStore.LoadSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldBaselineAgent, oldBaselineOK := baselineRegistry.Agent(completedAgent.Metadata.UID)
+	newBaselineAgent, newBaselineOK := baselineRegistry.Agent(successorAgent.Metadata.UID)
+	if !oldBaselineOK || !newBaselineOK {
+		t.Fatalf("installed Agent overlap baseline missing old=%t new=%t", oldBaselineOK, newBaselineOK)
+	}
+	oldInteractionBaseline := oldBaselineAgent.Status.Interaction.ObservedAt
+	newInteractionBaseline := newBaselineAgent.Status.Interaction.ObservedAt
 
 	// Start both public Agent messages before waiting for either command or
 	// provider turn. That is the semantic overlap barrier: each installed CLI
 	// must resolve its durable Agent ref through its exact Pane and generation
 	// control endpoint while both private generations remain live.
-	oldMessage := exec.CommandContext(ctx, projmux, "agent", "turn", "start", "uid:"+completedAgent.Metadata.UID, "--", "Write the integers 1 through 80, one per line, and nothing else.")   // #nosec G204 -- exact installed binary and durable Agent ref.
-	newMessage := exec.CommandContext(ctx, projmux, "agent", "turn", "start", "uid:"+successorAgent.Metadata.UID, "--", "Write the integers 81 through 160, one per line, and nothing else.") // #nosec G204 -- exact installed binary and durable Agent ref.
+	oldMessage := exec.CommandContext(ctx, projmux, "agent", "turn", "start", "uid:"+completedAgent.Metadata.UID, "--", "Reply with exactly OLD_AGENT_OK. Do not use tools.") // #nosec G204 -- exact installed binary and durable Agent ref.
+	newMessage := exec.CommandContext(ctx, projmux, "agent", "turn", "start", "uid:"+successorAgent.Metadata.UID, "--", "Reply with exactly NEW_AGENT_OK. Do not use tools.") // #nosec G204 -- exact installed binary and durable Agent ref.
 	oldMessage.Env, newMessage.Env = tmuxEnv, tmuxEnv
 	var oldMessageOutput, newMessageOutput bytes.Buffer
 	oldMessage.Stdout, oldMessage.Stderr = &oldMessageOutput, &oldMessageOutput
@@ -368,17 +430,8 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 		oldMessagePane.Status.Activation.Codex.TurnID == newMessagePane.Status.Activation.Codex.TurnID {
 		t.Fatalf("installed Agent overlap cross-wired oldAgent=%+v oldPane=%+v newAgent=%+v newPane=%+v", oldMessageAgent, oldMessagePane, newMessageAgent, newMessagePane)
 	}
-	oldOverlapClient, err := codexappserver.OpenPrivateUnix(ctx, oldRoute.Config.SocketPath, 10*time.Second, "installed-phase6-old-agent-result", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	newOverlapClient, err := codexappserver.OpenPrivateUnix(ctx, newRoute.Config.SocketPath, 10*time.Second, "installed-phase6-new-agent-result", true)
-	if err != nil {
-		oldOverlapClient.Close()
-		t.Fatal(err)
-	}
-	oldOverlapSnapshot := waitForGenerationTurn(t, ctx, oldOverlapClient, completed.ThreadID, oldMessagePane.Status.Activation.Codex.TurnID)
-	newOverlapSnapshot := waitForGenerationTurn(t, ctx, newOverlapClient, newThread.ThreadID, newMessagePane.Status.Activation.Codex.TurnID)
+	oldOverlapSnapshot := waitForInstalledGenerationTurnSnapshot(t, ctx, oldOverlapClient, completed.ThreadID, oldMessagePane.Status.Activation.Codex.TurnID)
+	newOverlapSnapshot := waitForInstalledGenerationTurnSnapshot(t, ctx, newOverlapClient, newThread.ThreadID, newMessagePane.Status.Activation.Codex.TurnID)
 	if oldOverlapSnapshot.ThreadID != completed.ThreadID || oldOverlapSnapshot.TurnID != oldMessagePane.Status.Activation.Codex.TurnID ||
 		newOverlapSnapshot.ThreadID != newThread.ThreadID || newOverlapSnapshot.TurnID != newMessagePane.Status.Activation.Codex.TurnID {
 		t.Fatalf("installed Agent provider result cross-wire old=%+v new=%+v", oldOverlapSnapshot, newOverlapSnapshot)
@@ -386,8 +439,9 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 	if closeOldErr, closeNewErr := oldOverlapClient.Close(), newOverlapClient.Close(); closeOldErr != nil || closeNewErr != nil {
 		t.Fatalf("close Agent overlap clients old=%v new=%v", closeOldErr, closeNewErr)
 	}
-	waitForInstalledAgentInteraction(t, ctx, registryStore, completedAgent.Metadata.UID, metadata.InteractionResponseComplete)
-	waitForInstalledAgentInteraction(t, ctx, registryStore, successorAgent.Metadata.UID, metadata.InteractionResponseComplete)
+	oldOverlapClient, newOverlapClient = nil, nil
+	waitForInstalledAgentInteractionAfter(t, ctx, registryStore, completedAgent.Metadata.UID, metadata.InteractionResponseComplete, oldInteractionBaseline)
+	waitForInstalledAgentInteractionAfter(t, ctx, registryStore, successorAgent.Metadata.UID, metadata.InteractionResponseComplete, newInteractionBaseline)
 	oldObserver.Stop(t)
 	newObserver.Stop(t)
 	journalAfterOverlap, err := os.ReadFile(journalStore.Path())
@@ -507,6 +561,13 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 	runTmux("kill-server")
 	tmuxClosed = true
 	assertAmbientEndpointUnchanged(t, ambient)
+	retirementCtx, retirementCancel := context.WithTimeout(context.Background(), 45*time.Second)
+	if retirementErr := waitForInstalledBrokerRetirement(retirementCtx, brokerRuntimes); retirementErr != nil {
+		retirementCancel()
+		t.Fatal(retirementErr)
+	}
+	retirementCancel()
+	brokersRetired = true
 	if err := os.RemoveAll(root); err != nil {
 		t.Fatal(err)
 	}
@@ -567,6 +628,72 @@ type installedGenerationObserver struct {
 	command *exec.Cmd
 	stderr  *bytes.Buffer
 	stopped bool
+}
+
+type installedBrokerRuntime struct {
+	Discovery codexbroker.Discovery
+	Endpoint  codexbroker.EndpointKey
+	PID       int
+}
+
+func newInstalledBrokerRuntime(t *testing.T, stateDir string, endpoint metadata.CodexEndpointRef) installedBrokerRuntime {
+	t.Helper()
+	key, err := codexbroker.NewEndpointKey(endpoint.StateDomainID, endpoint.EndpointGenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := codexbroker.NewDiscovery(stateDir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return installedBrokerRuntime{Discovery: discovery, Endpoint: key}
+}
+
+func readInstalledBrokerPID(t *testing.T, runtime installedBrokerRuntime) int {
+	t.Helper()
+	payload, err := os.ReadFile(runtime.Discovery.RecordPath())
+	if err != nil {
+		t.Fatalf("read exact installed broker record: %v", err)
+	}
+	var record struct {
+		Endpoint codexbroker.EndpointKey `json:"endpoint"`
+		PID      int                     `json:"pid"`
+	}
+	if err := json.Unmarshal(payload, &record); err != nil || record.Endpoint != runtime.Endpoint || record.PID <= 0 {
+		t.Fatalf("invalid exact installed broker record: endpoint-match=%t pid-present=%t err=%v",
+			record.Endpoint == runtime.Endpoint, record.PID > 0, err)
+	}
+	return record.PID
+}
+
+func waitForInstalledBrokerRetirement(ctx context.Context, runtimes []installedBrokerRuntime) error {
+	ticker := time.NewTicker(25 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		retired := true
+		for _, runtime := range runtimes {
+			_, socketErr := os.Lstat(runtime.Discovery.SocketPath())
+			_, recordErr := os.Lstat(runtime.Discovery.RecordPath())
+			artifactsAbsent := errors.Is(socketErr, fs.ErrNotExist) && errors.Is(recordErr, fs.ErrNotExist)
+			processAbsent := runtime.PID <= 0
+			if runtime.PID > 0 {
+				processErr := syscall.Kill(runtime.PID, 0)
+				processAbsent = errors.Is(processErr, syscall.ESRCH)
+			}
+			if !artifactsAbsent || !processAbsent {
+				retired = false
+				break
+			}
+		}
+		if retired {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return errors.New("exact installed broker runtime retirement timed out")
+		case <-ticker.C:
+		}
+	}
 }
 
 func startInstalledGenerationObserver(t *testing.T, ctx context.Context, binary string, environment []string, target installedGenerationObserverTarget) *installedGenerationObserver {
@@ -647,7 +774,34 @@ func (o *installedGenerationObserver) Stop(t *testing.T) {
 	}
 }
 
-func waitForInstalledAgentInteraction(t *testing.T, ctx context.Context, store *intmetadata.Store, agentUID string, want metadata.AgentInteractionKind) {
+func waitForInstalledGenerationTurnSnapshot(t *testing.T, ctx context.Context, client *codexappserver.Client, threadID, turnID string) codexappserver.LifecycleSnapshot {
+	t.Helper()
+	barrierCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		snapshot, err := client.ReadLifecycleSnapshot(barrierCtx, threadID)
+		if err != nil {
+			t.Fatalf("read installed generation turn snapshot: %v", err)
+		}
+		if snapshot.ThreadID == threadID && snapshot.TurnID == turnID {
+			switch snapshot.TurnState {
+			case codexappserver.TurnStateCompleted:
+				return snapshot
+			case codexappserver.TurnStateFailed, codexappserver.TurnStateInterrupted:
+				t.Fatalf("installed generation turn ended %s", snapshot.TurnState)
+			}
+		}
+		select {
+		case <-barrierCtx.Done():
+			t.Fatal("installed generation turn snapshot barrier timed out")
+		case <-ticker.C:
+		}
+	}
+}
+
+func waitForInstalledAgentInteractionAfter(t *testing.T, ctx context.Context, store *intmetadata.Store, agentUID string, want metadata.AgentInteractionKind, baseline time.Time) {
 	t.Helper()
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
@@ -657,7 +811,8 @@ func waitForInstalledAgentInteraction(t *testing.T, ctx context.Context, store *
 			t.Fatalf("read installed Agent interaction: %v", err)
 		}
 		agent, ok := registry.Agent(agentUID)
-		if ok && agent.Status.Interaction.Kind == want {
+		if ok && agent.Status.Interaction.Kind == want && agent.Status.Interaction.Source == string(metadata.InteractionSourceProviderControl) &&
+			agent.Status.Interaction.ObservedAt.After(baseline) {
 			return
 		}
 		select {
