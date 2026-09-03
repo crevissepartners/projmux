@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -31,6 +32,99 @@ type codexNativeThreadController interface {
 
 type defaultCodexNativeThreadController struct {
 	current func(context.Context) (codexNativeEndpointRoute, error)
+}
+
+// rollingCodexNativeThreadController overlays the owner-private Phase 4
+// admission journal on the attach-only default endpoint. An absent journal
+// preserves the Phase 3 default behavior; a present journal is exact and never
+// falls through to or adopts the ambient endpoint.
+type rollingCodexNativeThreadController struct {
+	journal  *codexupgrade.Store
+	fallback defaultCodexNativeThreadController
+}
+
+func (controller rollingCodexNativeThreadController) Current(ctx context.Context) (codexNativeEndpointRoute, error) {
+	journal, exists, err := controller.load()
+	if err != nil {
+		return codexNativeEndpointRoute{}, err
+	}
+	if !exists {
+		return controller.fallback.Current(ctx)
+	}
+	route, ok := journal.CurrentRoute()
+	if !ok || codexupgrade.ObserveRoute(ctx, route) != nil {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	return rollingNativeRoute(route), nil
+}
+
+func (controller rollingCodexNativeThreadController) CatalogRoutes(ctx context.Context) ([]codexNativeEndpointRoute, error) {
+	journal, exists, err := controller.load()
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return controller.fallback.CatalogRoutes(ctx)
+	}
+	routes := make([]codexNativeEndpointRoute, 0, len(journal.Routes))
+	for _, route := range journal.Routes {
+		if !route.Ready || route.Proof == nil {
+			continue
+		}
+		if err := codexupgrade.ObserveRoute(ctx, route); err != nil {
+			continue
+		}
+		routes = append(routes, rollingNativeRoute(route))
+	}
+	if len(routes) == 0 {
+		return nil, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	return routes, nil
+}
+
+func (controller rollingCodexNativeThreadController) Resolve(ctx context.Context, endpoint coremetadata.CodexEndpointRef) (codexNativeEndpointRoute, error) {
+	if !endpoint.Valid() {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonLegacyEndpointMissing}
+	}
+	journal, exists, err := controller.load()
+	if err != nil {
+		return codexNativeEndpointRoute{}, err
+	}
+	if !exists {
+		return controller.fallback.Resolve(ctx, endpoint)
+	}
+	route, ok := journal.Route(endpoint)
+	if !ok || !route.Ready || route.Proof == nil || codexupgrade.ObserveRoute(ctx, route) != nil {
+		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	return rollingNativeRoute(route), nil
+}
+
+func (controller rollingCodexNativeThreadController) Create(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, prompt, requestKey string) (codexappserver.ThreadBinding, error) {
+	return controller.fallback.Create(ctx, route, workspace, prompt, requestKey)
+}
+
+func (controller rollingCodexNativeThreadController) Resume(ctx context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (codexappserver.ThreadBinding, error) {
+	return controller.fallback.Resume(ctx, route, workspace, threadID)
+}
+
+func (controller rollingCodexNativeThreadController) CanFallback(err error) bool {
+	return controller.fallback.CanFallback(err)
+}
+
+func (controller rollingCodexNativeThreadController) load() (codexupgrade.Journal, bool, error) {
+	if controller.journal == nil {
+		return codexupgrade.Journal{}, false, nil
+	}
+	journal, exists, err := controller.journal.Load()
+	if err != nil {
+		return codexupgrade.Journal{}, false, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	return journal, exists, nil
+}
+
+func rollingNativeRoute(route codexupgrade.GenerationRoute) codexNativeEndpointRoute {
+	return codexNativeEndpointRoute{Endpoint: route.Generation.Endpoint, State: route.Generation.State, SocketPath: route.Config.SocketPath, TUIExecutable: route.TUIPath}
 }
 
 // codexNativeEndpointRoute is process-local routing material for one durable

@@ -75,11 +75,16 @@ func (f *fakeNativeThreadController) Resolve(_ context.Context, endpoint coremet
 	if f.resolveContinue != nil {
 		<-f.resolveContinue
 	}
-	if !f.resolvedRoute.valid() && f.resolveErr == nil {
-		f.resolvedRoute = nativeTestRoute(endpoint.EndpointGenerationID, coremetadata.CodexGenerationCurrent)
-		f.resolvedRoute.Endpoint = endpoint
+	resolved := f.resolvedRoute
+	if !resolved.valid() && f.resolveErr == nil {
+		if f.currentRoute.valid() && f.currentRoute.Endpoint.Same(endpoint) {
+			resolved = f.currentRoute
+		} else {
+			resolved = nativeTestRoute(endpoint.EndpointGenerationID, coremetadata.CodexGenerationCurrent)
+			resolved.Endpoint = endpoint
+		}
 	}
-	return f.resolvedRoute, f.resolveErr
+	return resolved, f.resolveErr
 }
 
 func (f *fakeNativeThreadController) Create(_ context.Context, route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, prompt, generation string) (codexappserver.ThreadBinding, error) {
@@ -437,10 +442,28 @@ func TestCodexNativeCurrentChangePinsExistingAgentAndAdmitsNewCreateOnlyToNew(t 
 	if got, err := resolveCodexNativeResumeRoute(context.Background(), native, oldAgent.Status.SessionRef); err != nil || !got.Endpoint.Same(oldRoute.Endpoint) {
 		t.Fatalf("old durable ref after current change = %+v, %v", got, err)
 	}
+	// Phase 4 publishes Draining without moving the live old-generation Agent.
+	// Turn/control remains pinned to that endpoint while resume/new-create are
+	// closed. Snapshot the Pane/TUI binding so the control assertion also proves
+	// it did not smuggle in endpoint-ref CAS, Pane relaunch, or TUI replacement.
+	draining := coremetadata.CodexGenerationLifecycleRef{
+		State: coremetadata.CodexGenerationDraining,
+		Operation: &coremetadata.CodexGenerationOperationRef{
+			ID: "upgrade-one", Endpoint: oldRoute.Endpoint,
+		},
+	}
+	if _, changed, err := store.mutator().SetCodexGenerationLifecycle(&store.registry, oldAgent.Metadata.UID, oldRoute.Endpoint, draining); err != nil || !changed {
+		t.Fatalf("publish old Draining lifecycle: changed=%t err=%v", changed, err)
+	}
+	oldAgent = agentNamed(t, store, "win-alpha-main", "codex-1")
+	beforeControlRef := oldAgent.Status.SessionRef.Clone()
 	oldPane, ok := store.registry.Pane(oldAgent.Status.PaneRef)
 	if !ok || oldPane.Status.Activation.Codex == nil {
 		t.Fatalf("old Agent Pane lost native binding: %+v", oldAgent.Status)
 	}
+	beforePaneRef := oldAgent.Status.PaneRef
+	beforePaneActivation := oldPane.Status.Activation
+	beforePlans, beforeSplits := len(panes.plans), len(splitWindowCalls(tmux))
 	oldPane.Status.Activation.Codex.Authority = &coremetadata.CodexAuthorityRef{
 		StateDomainID: oldRoute.Endpoint.StateDomainID, EndpointGenerationID: oldRoute.Endpoint.EndpointGenerationID,
 		BrokerRuntimeID: "broker-old", ConnectionEpoch: 1, BindingEpoch: 1,
@@ -461,6 +484,109 @@ func TestCodexNativeCurrentChangePinsExistingAgentAndAdmitsNewCreateOnlyToNew(t 
 	}
 	if len(controlEndpoints) != 1 || !controlEndpoints[0].Same(oldRoute.Endpoint) || controlEndpoints[0].Same(newRoute.Endpoint) {
 		t.Fatalf("old Agent message crossed generation routes: %+v", controlEndpoints)
+	}
+	oldAgent = agentNamed(t, store, "win-alpha-main", "codex-1")
+	oldPane, ok = store.registry.Pane(oldAgent.Status.PaneRef)
+	if !ok || oldAgent.Status.SessionRef == nil || oldAgent.Status.SessionRef.Codex == nil ||
+		!oldAgent.Status.SessionRef.Codex.Endpoint.Same(oldRoute.Endpoint) || oldAgent.Status.SessionRef.Codex.Lifecycle == nil ||
+		oldAgent.Status.SessionRef.Codex.Lifecycle.State != coremetadata.CodexGenerationDraining ||
+		oldAgent.Status.SessionRef.Codex.Lifecycle.Operation == nil || oldAgent.Status.SessionRef.Codex.Lifecycle.Operation.ID != "upgrade-one" ||
+		oldAgent.Status.PaneRef != beforePaneRef || oldPane.Status.Activation.Generation != beforePaneActivation.Generation ||
+		oldPane.Status.Activation.RuntimeID != beforePaneActivation.RuntimeID || len(panes.plans) != beforePlans ||
+		len(splitWindowCalls(tmux)) != beforeSplits || panes.plans[0].route.TUIExecutable != oldRoute.TUIExecutable {
+		t.Fatalf("Draining old continuity mutated ref/Pane/TUI: before=%#v after=%#v pane=%+v plans=%+v", beforeControlRef, oldAgent.Status.SessionRef, oldPane, panes.plans)
+	}
+}
+
+func TestDrainingOldCodexAgentKeepsExactTurnControlTUIAndPaneBinding(t *testing.T) {
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, _ := newTestAgentCreateCommand(t, store, tmux)
+	oldRoute := nativeTestRoute("generation-old", coremetadata.CodexGenerationCurrent)
+	newRoute := nativeTestRoute("generation-new", coremetadata.CodexGenerationCurrent)
+	native := &fakeNativeThreadController{currentRoute: oldRoute}
+	panes := &fakeNativePaneLauncher{}
+	create.codexNative = native
+	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
+	if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "old live turn"); err != nil {
+		t.Fatal(err)
+	}
+	agent := agentNamed(t, store, "win-alpha-main", "codex-1")
+	pane, ok := store.registry.Pane(agent.Status.PaneRef)
+	if !ok || pane.Status.Activation.Codex == nil {
+		t.Fatalf("old native Pane = %+v", pane)
+	}
+	pane.Status.Activation.Codex.Authority = &coremetadata.CodexAuthorityRef{
+		StateDomainID: oldRoute.Endpoint.StateDomainID, EndpointGenerationID: oldRoute.Endpoint.EndpointGenerationID,
+		BrokerRuntimeID: "broker-old", ConnectionEpoch: 1, BindingEpoch: 1,
+	}
+	draining := coremetadata.CodexGenerationLifecycleRef{
+		State: coremetadata.CodexGenerationDraining,
+		Operation: &coremetadata.CodexGenerationOperationRef{
+			ID: "upgrade-one", Endpoint: oldRoute.Endpoint,
+		},
+	}
+	if _, changed, err := store.mutator().SetCodexGenerationLifecycle(&store.registry, agent.Metadata.UID, oldRoute.Endpoint, draining); err != nil || !changed {
+		t.Fatalf("publish Draining: changed=%t err=%v", changed, err)
+	}
+	native.currentRoute = newRoute
+	agent = agentNamed(t, store, "win-alpha-main", "codex-1")
+	beforeRef, beforePaneRef := agent.Status.SessionRef.Clone(), agent.Status.PaneRef
+	beforeGeneration, beforeRuntime := pane.Status.Activation.Generation, pane.Status.Activation.RuntimeID
+	beforePlans, beforeSplits := len(panes.plans), len(splitWindowCalls(tmux))
+
+	control, _, _ := newTestAgentCommand(t, store)
+	control.controlBinding = &staticAgentControlBinding{observed: true, live: agentControlLive{
+		RuntimeID: beforeRuntime, PaneUID: pane.Metadata.UID, ThreadID: agent.Status.SessionRef.Codex.ThreadID,
+		Authority: codexAuthorityControlPlane, Epoch: "old-epoch",
+	}}
+	control.controlPaths = func() (config.Paths, error) { return config.Paths{StateDir: "/tmp/projmux-draining-old-control"}, nil }
+	var endpoints []coremetadata.CodexEndpointRef
+	control.controlCall = func(_ context.Context, _ string, endpoint coremetadata.CodexEndpointRef, identity codexLifecycleIdentity, _ agentControlRequest) (agentControlResponse, error) {
+		endpoints = append(endpoints, endpoint)
+		return agentControlResponse{OK: true, ThreadID: identity.ThreadID, TurnID: "old-turn-while-draining"}, nil
+	}
+	if _, _, err := runRoute(t, control, "turn", "start", "uid:"+agent.Metadata.UID, "--", "continue exact old thread"); err != nil {
+		t.Fatal(err)
+	}
+	agent = agentNamed(t, store, "win-alpha-main", "codex-1")
+	pane, ok = store.registry.Pane(agent.Status.PaneRef)
+	if !ok || len(endpoints) != 1 || !endpoints[0].Same(oldRoute.Endpoint) || endpoints[0].Same(newRoute.Endpoint) ||
+		agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || !agent.Status.SessionRef.Codex.Endpoint.Same(oldRoute.Endpoint) ||
+		agent.Status.SessionRef.Codex.Lifecycle == nil || agent.Status.SessionRef.Codex.Lifecycle.State != coremetadata.CodexGenerationDraining ||
+		agent.Status.PaneRef != beforePaneRef || pane.Status.Activation.Generation != beforeGeneration || pane.Status.Activation.RuntimeID != beforeRuntime ||
+		len(panes.plans) != beforePlans || len(splitWindowCalls(tmux)) != beforeSplits || panes.plans[0].route.TUIExecutable != oldRoute.TUIExecutable {
+		t.Fatalf("Draining old control continuity drifted: before=%#v after=%#v pane=%+v endpoints=%+v plans=%+v", beforeRef, agent.Status.SessionRef, pane, endpoints, panes.plans)
+	}
+}
+
+func TestNativeCodexCreateRechecksAdmissionCurrentBeforeEveryMutation(t *testing.T) {
+	store := newFakeResourceStore(t)
+	tmux := newFakeTmux()
+	create, _ := newTestAgentCreateCommand(t, store, tmux)
+	oldRoute := nativeTestRoute("generation-old", coremetadata.CodexGenerationCurrent)
+	native := &fakeNativeThreadController{
+		currentRoute: oldRoute, resolveStarted: make(chan struct{}), resolveContinue: make(chan struct{}),
+	}
+	create.codexNative = native
+	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
+	before := store.snapshot()
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "must not be sent")
+		done <- err
+	}()
+	<-native.resolveStarted
+	draining := oldRoute
+	draining.State = coremetadata.CodexGenerationDraining
+	native.resolvedRoute = draining
+	close(native.resolveContinue)
+	err := <-done
+	if err == nil || !strings.Contains(err.Error(), codexNativeReasonGenerationUnavailable) {
+		t.Fatalf("create admission error = %v", err)
+	}
+	if store.snapshot() != before || store.writes != 0 || len(native.creates) != 0 || tmuxMutationCallCount(tmux) != 0 {
+		t.Fatalf("Draining create mutated state: writes=%d provider=%+v tmux=%+v", store.writes, native.creates, tmux.calls)
 	}
 }
 

@@ -119,6 +119,30 @@ func TestCodexGenerationLifecycleCloneDoesNotAliasOperation(t *testing.T) {
 	}
 }
 
+func TestSetCodexGenerationLifecycleIsExactContentFreeAndIdempotent(t *testing.T) {
+	reg := lifecycleFixture(t)
+	agent, _ := reg.Agent(lifecycleAgentUID)
+	endpoint := CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "generation"}
+	agent.Status.SessionRef.Codex.Endpoint = &endpoint
+	agent.Status.SessionRef.Codex.Lifecycle = &CodexGenerationLifecycleRef{State: CodexGenerationCurrent}
+	mutator := Mutator{Now: func() time.Time { return lifecycleClock.Add(time.Minute) }}
+	lifecycle := CodexGenerationLifecycleRef{
+		State:     CodexGenerationDraining,
+		Operation: &CodexGenerationOperationRef{ID: "upgrade-one", Endpoint: endpoint},
+	}
+	updated, changed, err := mutator.SetCodexGenerationLifecycle(reg, lifecycleAgentUID, endpoint, lifecycle)
+	if err != nil || !changed || updated.Status.SessionRef.Codex.Lifecycle == nil || updated.Status.SessionRef.Codex.Lifecycle.State != CodexGenerationDraining {
+		t.Fatalf("set lifecycle = (%+v,%t,%v)", updated, changed, err)
+	}
+	if _, changed, err := mutator.SetCodexGenerationLifecycle(reg, lifecycleAgentUID, endpoint, lifecycle); err != nil || changed {
+		t.Fatalf("idempotent set = changed:%t err:%v", changed, err)
+	}
+	foreign := CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "foreign"}
+	if _, changed, err := mutator.SetCodexGenerationLifecycle(reg, lifecycleAgentUID, foreign, lifecycle); err == nil || changed {
+		t.Fatalf("foreign endpoint lifecycle = changed:%t err:%v", changed, err)
+	}
+}
+
 func TestLegacyCodexRefsRemainGenerationUnavailableWithoutInference(t *testing.T) {
 	reg := lifecycleFixture(t)
 	agent, _ := reg.Agent(lifecycleAgentUID)

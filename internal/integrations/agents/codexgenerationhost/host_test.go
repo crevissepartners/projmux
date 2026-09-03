@@ -977,6 +977,29 @@ func createCompleteTestLease(t *testing.T, root string, paths []string) (codexbu
 	return lease, source
 }
 
+func TestExactRoleTUIArtifactRefusesWrongAbsolutePathAndPostVerifyDrift(t *testing.T) {
+	root := t.TempDir()
+	lease, _ := createCompleteTestLease(t, root, CompleteBundleArtifactPaths())
+	config := PrivateGenerationConfig{LeaseRoot: lease.Root, RequiredProtocol: codexbundle.ProtocolRange{Min: 2, Max: 2}}
+	tuis := lease.Paths(codexbundle.RoleTUI)
+	if len(tuis) != 1 {
+		t.Fatalf("TUI paths = %v", tuis)
+	}
+	if err := observeExactTUIArtifact(config, lease.ID, tuis[0]); err != nil {
+		t.Fatal(err)
+	}
+	wrong := filepath.Join(root, "other", "codex")
+	if err := observeExactTUIArtifact(config, lease.ID, wrong); HostRefusalOf(err) != HostRefusalLaunchProofMismatch {
+		t.Fatalf("wrong absolute TUI refusal = %v", err)
+	}
+	if err := os.WriteFile(tuis[0], []byte("drifted TUI bytes"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := observeExactTUIArtifact(config, lease.ID, tuis[0]); HostRefusalOf(err) != HostRefusalBundleDrift {
+		t.Fatalf("post-verify TUI drift refusal = %v", err)
+	}
+}
+
 func TestPrivateGenerationEnvironmentRemovesInheritedTmuxRouting(t *testing.T) {
 	t.Parallel()
 	config := PrivateGenerationConfig{

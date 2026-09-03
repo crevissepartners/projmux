@@ -442,6 +442,48 @@ func sameCodexThreadObservation(previous, observed *CodexSessionRef) bool {
 	return previous != nil && observed != nil && previous.ThreadID != "" && previous.ThreadID == observed.ThreadID
 }
 
+// SetCodexGenerationLifecycle applies one exact, content-free generation
+// transition marker. It never changes the endpoint, thread, Pane, provider
+// binding, interaction, or Agent phase. Reapplying the identical marker is a
+// semantic no-op so crash recovery can converge Registry after a journaled
+// admission switch without duplicating a write.
+func (m Mutator) SetCodexGenerationLifecycle(reg *Registry, agentUID string, endpoint CodexEndpointRef, lifecycle CodexGenerationLifecycleRef) (Agent, bool, error) {
+	const op = "set Codex generation lifecycle"
+	agent, ok := reg.Agent(agentUID)
+	if !ok {
+		return Agent{}, false, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
+	}
+	ref := agent.Status.SessionRef
+	if ref == nil || ref.Provider != "codex" || ref.Codex == nil || ref.Codex.Endpoint == nil ||
+		!ref.Codex.Endpoint.Same(endpoint) {
+		return Agent{}, false, inputErr(op, ErrInvalidRegistry, "agent %q does not own exact Codex endpoint", agentUID)
+	}
+	if !lifecycle.ValidFor(&endpoint) {
+		return Agent{}, false, inputErr(op, ErrInvalidRegistry, "Codex lifecycle authority is invalid for agent %q", agentUID)
+	}
+	if sameCodexGenerationLifecycle(ref.Codex.Lifecycle, &lifecycle) {
+		return agent.Clone(), false, nil
+	}
+	copy := lifecycle
+	if lifecycle.Operation != nil {
+		operation := *lifecycle.Operation
+		copy.Operation = &operation
+	}
+	ref.Codex.Lifecycle = &copy
+	reg.UpdatedAt = m.clock()().UTC()
+	return agent.Clone(), true, nil
+}
+
+func sameCodexGenerationLifecycle(a, b *CodexGenerationLifecycleRef) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.State != b.State || (a.Operation == nil) != (b.Operation == nil) {
+		return false
+	}
+	return a.Operation == nil || *a.Operation == *b.Operation
+}
+
 // validateSessionRef checks the union invariants of one Agent session ref.
 //
 // The rules are structural only. There is deliberately NO "at most one Agent

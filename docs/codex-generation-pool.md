@@ -1,4 +1,4 @@
-# Codex app-server generation pool — Phase 0–2 contract
+# Codex app-server generation pool — Phase 0–4 contract
 
 Phase 0 adds the identity, validation, qualification, immutable bundle, and
 read-only planning contracts needed by a future bounded app-server pool. It
@@ -9,6 +9,12 @@ Phase 2 adds a dark, bounded endpoint runtime pool and a private generation
 host. It still does not change a current pointer or Agent create/resume
 routing: even an initialized, ready `Preparing` endpoint refuses fresh create
 admission before a provider, Registry, tmux, or lifecycle write.
+
+Phase 4 adds the explicit rolling operation that prepares one private
+successor, commits admission-current at most once, and marks the old generation
+Draining without moving its live Agents. It does not stop the old endpoint,
+resume a successor thread, rewrite an Agent endpoint ref, relaunch a Pane,
+retire a generation, release a bundle lease, or adopt a foreign runtime.
 
 ## Identity and schema
 
@@ -330,3 +336,101 @@ unique owners. Phase 2 adds generation-local mutants instead of replacing
 those canaries. Current-pointer/drain, Agent create/resume, foreign adoption,
 Settings/background UX, derived consumers, and unrelated cleanup remain
 excluded for their later phases.
+
+## Phase 4 rolling admission and drain
+
+`projmux agent app-server upgrade plan|apply --request <absolute-json>` and
+`resume|abort --operation <ref>` are explicit-only operations over one
+owner-private journal. The journal contains exact state-domain/generation and
+operation identities, private routing material, monotonic receipts, and a
+content-free Agent obligation ledger. It never persists prompt, response,
+approval, transcript, credential, or tmux title content. Plan is read-only and
+reports all Registry, provider, tmux, process, and current-pointer mutation
+counts as zero.
+
+Plan re-opens both complete leases read-only and binds the request to the Phase
+0 tuple before any candidate start. The current and target bundle IDs, manifest
+versions, server/TUI/helper inventory, and qualification old/new version pair
+must agree exactly. Both sockets must be distinct direct children of distinct
+owner-private roots; those roots must be physically non-overlapping with each
+other, the shared state-domain path, and either immutable lease root. Current
+and target must name the same canonical state-domain path. Any mismatch is a
+mutation-zero refusal.
+
+Apply durably records launch intent before starting the exact leased successor.
+The operation journal lock spans the final authorization check and physical
+supervisor start, so an abort fence either wins before launch or observes the
+exact operation-owned durable intent. A coordinator crash after supervisor
+launch but before launch-proof publication resumes the existing candidate; it
+cannot start a duplicate. The supervisor captures the exact socket identity,
+keeps a semantic guard for the child lifetime, and cleans only that identity.
+An unknown or rebound socket is refused and never unlinked. CandidateReady and
+in-flight pre-admission abort both clean the exact new candidate while retaining
+the immutable bundle lease. If a crash lands between intent unlink and guard
+unlink, a retry may remove only the exact regular mode-0600 guard after proving
+that it is unlocked and that no socket exists; a locked guard, rebound path, or
+present socket is left untouched and refused.
+
+Before candidate-ready publication and again while the Registry admission
+barrier is held, the complete server/TUI/helper lease is re-opened and verified.
+The recorded TUI executable must equal the lease's single `RoleTUI` artifact;
+an arbitrary absolute path or post-proof TUI drift leaves admission-current
+unchanged. The current pointer and the old/new Draining/Current route transition
+are one atomic journal commit relative to Agent create transactions. A create
+therefore uses either the old Current route before the barrier or the new
+Current route after it; it can never create on Draining. Retired receipt rows do
+not consume a live slot, while Current+Draining closes a third upgrade with all
+mutation surfaces at zero.
+
+Existing live Agents remain pinned to the old generation for turn, reply,
+approval, observation, and TUI routing. An Offline resume on Draining or
+HandoverPending never takes the ordinary rebind path: it creates or reuses one
+generation-wide HandoverPending operation ref and then refuses with
+`handover-required`. An unconfigured requester fails closed before provider,
+Registry, or tmux writes. The drain ledger classifies exact Agent UID plus old
+generation as `active`, `approval-pending`, `no-turn`, `unknown`,
+`completed-persisted`, or `closed`; the first four remain durable blockers.
+
+Every Phase 4 receipt carries seven explicit zero counters:
+`oldEndpointStop`, `successorResume`, `endpointRefCAS`, `paneRelaunch`,
+`retirement`, `leaseRelease`, and `foreignAdoption`. Those effects, same-thread
+successor resume, endpoint-ref CAS, Pane relaunch, retirement, and foreign
+adoption remain Phase 5 work. The default installed Codex endpoint remains
+unmanaged attach-only; an absent rolling journal preserves that read-only route
+and no Phase 4 lifecycle path can stop, restart, kill, or adopt it.
+
+The installed observation is opt-in and must use one unique empty temp root,
+which it partitions into separate state-domain, generation, bundle, and XDG
+roots, plus the existing old/new installed bundle inputs:
+
+```sh
+PROJMUX_CODEX_PHASE4_SMOKE_ROOT=/tmp/<unique-empty-root> \
+PROJMUX_CODEX_PHASE4_PROJMUX=/absolute/installed/projmux \
+PROJMUX_CODEX_GENERATION_OLD=/absolute/0.152.0/bin/codex \
+PROJMUX_CODEX_GENERATION_NEW=/absolute/0.152.1/bin/codex \
+PROJMUX_CODEX_GENERATION_SOURCE_HOME=/absolute/private/source-home \
+go test ./internal/testutil/codexinstalled \
+  -run '^TestInstalledPrivateRollingAdmissionReceipt$' -count=1 -v
+```
+
+It observes the ambient socket/PID record read-only, starts only fixture-owned
+private process groups, checks the rendered seven-zero receipt and durable
+candidate/admission/drain counters, re-observes the old Draining proof and
+reads/lists its exact content-free thread, then creates and reads one
+payload-free thread through the journal-selected new Current. It finally uses
+the exact operation proof for semantic teardown. It never signals or adopts the
+default endpoint.
+
+### Phase 4 migration and deletion ledger
+
+No canonical invariant test symbol is deleted or renamed. The canonical graph
+baseline expands only for the four explicit upgrade leaves, and generated CLI
+reference coverage remains owned by its existing exact-tree tests. Phase 0
+qualification, Phase 1 lifecycle fencing, Phase 2 host/pool, and Phase 3
+generation-pinned routing tests retain their unique boundaries. Phase 4 adds
+model/fuzz, an exhaustive ten-coordinator-failpoint plus two-journal-hook restart
+table whose four durable effects each converge exactly once, launch-intent
+recovery, admission/abort race, Phase-0 tuple/root topology refusal, orphan-guard
+recovery, TUI drift, two-slot, Draining/HandoverPending resume, direct old-route
+continuity, and content-free receipt mutants rather than merging or deleting
+those existing suites.

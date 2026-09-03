@@ -19,7 +19,7 @@ import (
 )
 
 // agentSubcommands lists the Agent domain routes, in help order.
-var agentSubcommands = []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage"}
+var agentSubcommands = []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage", "app-server"}
 
 // resumableAgentPhases is the closed set of phases `agent resume` accepts.
 var resumableAgentPhases = []coremetadata.AgentPhase{
@@ -66,6 +66,12 @@ type agentCommand struct {
 	controlPicker  agentControlPicker
 	controlTimeout time.Duration
 	focus          rawArgvCommand
+	codexUpgrade   rawArgvCommand
+	handover       codexDrainingHandoverRequester
+}
+
+type codexDrainingHandoverRequester interface {
+	RequestHandover(context.Context, coremetadata.CodexEndpointRef) (string, bool, error)
 }
 
 func newAgentCommand() *agentCommand {
@@ -123,6 +129,11 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return c.runApproval(rest, stdout, stderr)
 	case "review":
 		return c.runReview(rest, stdout, stderr)
+	case "app-server":
+		if len(rest) == 0 || rest[0] != "upgrade" {
+			return usageError("agent app-server requires upgrade")
+		}
+		return forwardRawArgv(c.codexUpgrade, "agent app-server upgrade", "agent app-server upgrade", nil, rest[1:], stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("agent %s is not available; this release implements: %s",
 			args[0], strings.Join(agentSubcommands, ", ")))
@@ -191,6 +202,26 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if err := requireResumablePhase(spelling, agent); err != nil {
 		return err
 	}
+	if operationRef, endpoint, draining := drainingCodexResumeRequest(agent); draining {
+		// A Draining/HandoverPending generation cannot take the normal rebind
+		// path. That would silently resume on the old endpoint and bypass the
+		// generation-wide Phase 5 handover gate. An unconfigured requester is
+		// therefore a fail-closed refusal with zero provider/Registry/tmux
+		// effects, not permission to reattach.
+		if c.handover == nil {
+			return fmt.Errorf("%s: %s operation=%s: handover requester is not configured", spelling, codexNativeReasonHandoverRequired, operationRef)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), codexNativeThreadTimeout)
+		defer cancel()
+		requested, _, requestErr := c.handover.RequestHandover(ctx, endpoint)
+		if requestErr != nil {
+			return requestErr
+		}
+		if requested == "" {
+			requested = operationRef
+		}
+		return fmt.Errorf("%s: %s operation=%s", spelling, codexNativeReasonHandoverRequired, requested)
+	}
 	plan, err := planAgentResume(spelling, registry, agent)
 	if err != nil {
 		return err
@@ -208,6 +239,20 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 		return err
 	}
 	return c.rebind.rebind(spelling, plan, stdout, stderr)
+}
+
+func drainingCodexResumeRequest(agent *coremetadata.Agent) (string, coremetadata.CodexEndpointRef, bool) {
+	if agent == nil || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil ||
+		agent.Status.SessionRef.Codex.Endpoint == nil || !agent.Status.SessionRef.Codex.Endpoint.Valid() ||
+		agent.Status.SessionRef.Codex.Lifecycle == nil {
+		return "", coremetadata.CodexEndpointRef{}, false
+	}
+	endpoint := *agent.Status.SessionRef.Codex.Endpoint
+	lifecycle := agent.Status.SessionRef.Codex.Lifecycle
+	if !lifecycle.ValidFor(&endpoint) || (lifecycle.State != coremetadata.CodexGenerationDraining && lifecycle.State != coremetadata.CodexGenerationHandoverPending) {
+		return "", coremetadata.CodexEndpointRef{}, false
+	}
+	return lifecycle.Operation.ID, endpoint, true
 }
 
 // requireResumablePhase enforces the Agent lifecycle gate of resume.

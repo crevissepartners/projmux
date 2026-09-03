@@ -92,6 +92,8 @@ projmux agent approval review <agent-ref> [--request <normalized-id>]
 projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
 projmux agent integrate <provider> [--dry-run]
 projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
+projmux agent app-server upgrade plan|apply --request <absolute-json>
+projmux agent app-server upgrade resume|abort --operation <ref>
 ```
 
 Subcommands:
@@ -106,8 +108,9 @@ Subcommands:
 | [`projmux agent review`](#projmux-agent-review) | Start a native review on an exact-bound Codex Agent |
 | [`projmux agent integrate`](#projmux-agent-integrate) | Install or remove provider hook integrations |
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
+| [`projmux agent app-server`](#projmux-agent-app-server) | Manage explicitly requested private Codex app-server generation operations |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`
 
 ### `projmux agent status`
 
@@ -247,6 +250,85 @@ Selectorless authority: `explicit-fan-out` — the route spelling is an intentio
 
 ```
 projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
+```
+
+### `projmux agent app-server`
+
+Manage explicitly requested private Codex app-server generation operations
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+```
+projmux agent app-server
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux agent app-server upgrade`](#projmux-agent-app-server-upgrade) | Plan, apply, resume, or abort one exact rolling generation operation |
+
+Canonical spelling: `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`
+
+#### `projmux agent app-server upgrade`
+
+Plan, apply, resume, or abort one exact rolling generation operation
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+```
+projmux agent app-server upgrade
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux agent app-server upgrade plan`](#projmux-agent-app-server-upgrade-plan) | Read the mutation-zero plan for one exact private generation upgrade |
+| [`projmux agent app-server upgrade apply`](#projmux-agent-app-server-upgrade-apply) | Apply one exact crash-resumable private generation admission switch |
+| [`projmux agent app-server upgrade resume`](#projmux-agent-app-server-upgrade-resume) | Resume one exact durable rolling generation operation |
+| [`projmux agent app-server upgrade abort`](#projmux-agent-app-server-upgrade-abort) | Abort one pre-admission operation and clean only its exact candidate |
+
+Canonical spelling: `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`
+
+##### `projmux agent app-server upgrade plan`
+
+Read the mutation-zero plan for one exact private generation upgrade
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+```
+projmux agent app-server upgrade plan --request <absolute-json>
+```
+
+##### `projmux agent app-server upgrade apply`
+
+Apply one exact crash-resumable private generation admission switch
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+```
+projmux agent app-server upgrade apply --request <absolute-json>
+```
+
+##### `projmux agent app-server upgrade resume`
+
+Resume one exact durable rolling generation operation
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+```
+projmux agent app-server upgrade resume --operation <ref>
+```
+
+##### `projmux agent app-server upgrade abort`
+
+Abort one pre-admission operation and clean only its exact candidate
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+```
+projmux agent app-server upgrade abort --operation <ref>
 ```
 
 ## `projmux attention`
