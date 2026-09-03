@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -135,6 +136,7 @@ type exactAgentControlBinding struct {
 	StateDir   string
 	ProjectUID string
 	WindowUID  string
+	Fence      string
 }
 
 func resolveExactAgentControlBinding(registry coremetadata.Registry, agent coremetadata.Agent, live agentControlLive, observed bool, stateDir string) (exactAgentControlBinding, error) {
@@ -196,6 +198,7 @@ func resolveExactAgentControlBinding(registry coremetadata.Registry, agent corem
 	return exactAgentControlBinding{
 		Identity: codexLifecycleIdentity{AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, RuntimeID: pane.Status.Activation.RuntimeID, Generation: pane.Status.Activation.Generation, ThreadID: threadID},
 		Endpoint: endpoint, Epoch: live.Epoch, StateDir: stateDir, ProjectUID: project.Metadata.UID, WindowUID: window.Metadata.UID,
+		Fence: codexgeneration.ConsumerFence(endpoint, *pane.Status.Activation.Codex.Authority),
 	}, nil
 }
 

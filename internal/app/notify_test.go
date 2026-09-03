@@ -458,7 +458,7 @@ func TestNotifyListSidebarFocusesAndAcksSelectedRow(t *testing.T) {
 	if got, want := picker.options.Header, "Newest first"; got != want {
 		t.Fatalf("picker header = %q, want %q", got, want)
 	}
-	if got, want := picker.options.Footer, "Right: show child rows  |  Left: hide child rows  |  Enter: focus live/inactive / clean gone  |  a: ack child  |  A: ack group  |  x: clear non-critical  |  g: clear gone  |  Ctrl-X: clear all"; got != want {
+	if got, want := picker.options.Footer, "Right: show child rows  |  Left: hide child rows  |  Enter: focus live / refuse stale / clean gone  |  a: ack child  |  A: ack group  |  x: clear non-critical  |  g: clear gone  |  Ctrl-X: clear all"; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
 	if got, want := picker.options.ExpectKeys, []string{"enter", "a", "A", "x", "g", "right", "left", "ctrl-x"}; !reflect.DeepEqual(got, want) {
@@ -540,7 +540,7 @@ keys = ["C-y"]
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	want := "Right: show child rows  |  Left: hide child rows  |  Enter: focus live/inactive / clean gone  |  a: ack child  |  A: ack group  |  c: clear non-critical  |  g: clear gone  |  Ctrl-Y: clear all"
+	want := "Right: show child rows  |  Left: hide child rows  |  Enter: focus live / refuse stale / clean gone  |  a: ack child  |  A: ack group  |  c: clear non-critical  |  g: clear gone  |  Ctrl-Y: clear all"
 	if got := picker.options.Footer; got != want {
 		t.Fatalf("picker footer = %q, want %q", got, want)
 	}
@@ -1413,7 +1413,7 @@ func TestNotifyListSidebarEnterOnGroupTargetGoneCleansVisibleGroupWithoutFocus(t
 	}
 }
 
-func TestNotifyListSidebarEnterOnGroupStaleRoutableFocusesAndAcks(t *testing.T) {
+func TestNotifyListSidebarEnterOnGroupStaleRoutableHasZeroAction(t *testing.T) {
 	t.Parallel()
 
 	groupValue := notifySidebarGroupValue("pane\x00\x00main\x00%2")
@@ -1440,21 +1440,18 @@ func TestNotifyListSidebarEnterOnGroupStaleRoutableFocusesAndAcks(t *testing.T) 
 	if err := cmd.Run([]string{"list", "--ui=sidebar"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run error = %v", err)
 	}
-	if got, want := store.ackedIDs, []string{"ai:main:%2", "ai:main:%2:critical"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("ackedIDs = %#v, want inactive group focus+ack including critical %#v", got, want)
+	if len(store.ackedIDs) != 0 {
+		t.Fatalf("ackedIDs = %#v, want stale action zero", store.ackedIDs)
 	}
 	focusCalls := filterFocusCalls(runner.calls)
-	if len(focusCalls) != 1 {
-		t.Fatalf("focus calls = %#v, want one focus call when inactive target is routable", focusCalls)
+	if len(focusCalls) != 0 {
+		t.Fatalf("focus calls = %#v, want stale action zero", focusCalls)
 	}
-	if !sliceContainsPair(focusCalls[0].args, "--target", "main:@1.%2") {
-		t.Fatalf("focus args = %#v, want inactive routable target", focusCalls[0].args)
+	if !hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify target stale; no action"}) {
+		t.Fatalf("runner calls = %#v, want stale refusal message", runner.calls)
 	}
-	if hasFocusFakeCall(runner.calls, "tmux", []string{"display-message", "notify inactive group cleaned"}) {
-		t.Fatalf("runner calls = %#v, did not expect inactive cleanup message", runner.calls)
-	}
-	if len(picker.updates) != 1 || len(picker.updates[0]) != 1 || picker.updates[0][0].Value != notifySidebarEmptyValue {
-		t.Fatalf("updates = %#v, want empty state after inactive group focus+ack", picker.updates)
+	if len(picker.updates) != 1 || len(picker.updates[0]) == 0 || picker.updates[0][0].Value == notifySidebarEmptyValue {
+		t.Fatalf("updates = %#v, want stale group retained", picker.updates)
 	}
 }
 
@@ -2225,8 +2222,8 @@ func TestNotifyListLiveJSONExplainsQueueAndLiveStates(t *testing.T) {
 			break
 		}
 	}
-	if !strings.Contains(staleExplanation, "target is inactive") || !strings.Contains(staleExplanation, "reply+agent") || !strings.Contains(staleExplanation, "may still be focusable") {
-		t.Fatalf("queue-stale explanation = %q, want inactive live reply+agent mismatch explanation with routable focus hint", staleExplanation)
+	if !strings.Contains(staleExplanation, "target is stale") || !strings.Contains(staleExplanation, "endpoint/fence") || !strings.Contains(staleExplanation, "actions are refused") {
+		t.Fatalf("queue-stale explanation = %q, want exact endpoint/fence refusal", staleExplanation)
 	}
 	if len(report.Queue) != 2 {
 		t.Fatalf("queue len = %d, want 2", len(report.Queue))

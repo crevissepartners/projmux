@@ -79,10 +79,45 @@ func classifyNotifyRowState(entry notify.Notification, liveByID map[string]notif
 	if !strings.HasPrefix(entry.ID, "ai:") {
 		return notifyDisplayLive
 	}
-	if _, ok := liveByID[entry.ID]; ok {
+	if live, ok := liveByID[entry.ID]; ok && notifyEntryMatchesGenerationAuthority(entry, live) {
 		return notifyDisplayLive
 	}
 	return notifyDisplayStale
+}
+
+func notifyEntryMatchesGenerationAuthority(entry notify.Notification, live notifyLivePane) bool {
+	keys := []string{
+		notify.MetaAgentUID, notify.MetaPaneUID, notify.MetaStateDomainID,
+		notify.MetaEndpointGenerationID, notify.MetaAuthorityFence,
+	}
+	generationAware := false
+	for _, key := range keys {
+		if strings.TrimSpace(entry.Metadata[key]) != "" {
+			generationAware = true
+			break
+		}
+	}
+	if !generationAware {
+		return true
+	}
+	return strings.TrimSpace(entry.Metadata[notify.MetaAgentUID]) != "" &&
+		entry.Metadata[notify.MetaAgentUID] == live.AgentUID &&
+		entry.Metadata[notify.MetaPaneUID] == live.PaneUID &&
+		entry.Metadata[notify.MetaStateDomainID] == live.StateDomainID &&
+		entry.Metadata[notify.MetaEndpointGenerationID] == live.EndpointGenerationID &&
+		entry.Metadata[notify.MetaAuthorityFence] != "" && entry.Metadata[notify.MetaAuthorityFence] == live.AuthorityFence
+}
+
+func notifyEntryHasGenerationAuthority(entry notify.Notification) bool {
+	for _, key := range []string{
+		notify.MetaAgentUID, notify.MetaPaneUID, notify.MetaStateDomainID,
+		notify.MetaEndpointGenerationID, notify.MetaAuthorityFence,
+	} {
+		if strings.TrimSpace(entry.Metadata[key]) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // notifyEntryIsRoutable reports whether [notifyCommand.focusNotification]

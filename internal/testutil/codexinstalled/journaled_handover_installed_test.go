@@ -211,6 +211,27 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 	if _, _, err := registryStore.UpdateConvergent(func(current *metadata.Registry) error { *current = registry; return nil }); err != nil {
 		t.Fatal(err)
 	}
+	// "selectorless E2E" is a refusal guard, never lookup authority. The
+	// installed command must reject the omitted Agent ref before it can infer a
+	// Pane, mutate Registry, or touch either exact endpoint.
+	registryBeforeSelectorless, err := os.ReadFile(registryStore.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	panesBeforeSelectorless := runTmux("list-panes", "-a", "-F", "#{pane_id}")
+	selectorless := exec.CommandContext(ctx, projmux, "agent", "resume") // #nosec G204 -- explicit installed binary; omitted selector is the negative under test.
+	selectorless.Env = tmuxEnv
+	selectorlessOutput, selectorlessErr := selectorless.CombinedOutput()
+	if selectorlessErr == nil || !strings.Contains(string(selectorlessOutput), "requires one Agent reference") {
+		t.Fatalf("selectorless Agent resume was not refused: err=%v output=%s", selectorlessErr, selectorlessOutput)
+	}
+	registryAfterSelectorless, err := os.ReadFile(registryStore.Path())
+	if err != nil || string(registryAfterSelectorless) != string(registryBeforeSelectorless) || runTmux("list-panes", "-a", "-F", "#{pane_id}") != panesBeforeSelectorless {
+		t.Fatalf("selectorless refusal changed exact scope: registry err=%v panes before=%q after=%q", err, panesBeforeSelectorless, runTmux("list-panes", "-a", "-F", "#{pane_id}"))
+	}
+	if err := codexgenerationhost.ObservePrivateGeneration(ctx, oldConfig, oldProof); err != nil {
+		t.Fatalf("selectorless refusal changed old endpoint: %v", err)
+	}
 
 	qualification := codexgeneration.EvaluateQualification(codexgeneration.VersionPair{Old: "0.152.0", New: "0.152.1"}, codexgeneration.QualificationEvidence{
 		SharedStateDomain: true, DistinctPrivateEndpoints: true, DistinctThreadCreateTurn: true, DistinctThreadReadList: true,
@@ -260,6 +281,42 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 	}
 	proof := *newRoute.Proof
 	successorProof = &proof
+	// Phase 6 full-flow overlap: both admitted generations own a distinct
+	// thread/turn before any destructive handover receipt. Starting both turns
+	// before either terminal wait is the semantic barrier; exact thread/turn
+	// reads below prove that neither endpoint cross-wired the sibling tuple.
+	oldOverlapClient, err := codexappserver.OpenPrivateUnix(ctx, oldConfig.SocketPath, 10*time.Second, "installed-phase6-overlap-old", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newOverlapClient, err := codexappserver.OpenPrivateUnix(ctx, newRoute.Config.SocketPath, 10*time.Second, "installed-phase6-overlap-new", true)
+	if err != nil {
+		oldOverlapClient.Close()
+		t.Fatal(err)
+	}
+	oldOverlapThread, oldThreadErr := oldOverlapClient.StartThread(ctx, workspace, nil)
+	newOverlapThread, newThreadErr := newOverlapClient.StartThread(ctx, workspace, nil)
+	if oldThreadErr != nil || newThreadErr != nil || oldOverlapThread.ThreadID == "" || newOverlapThread.ThreadID == "" || oldOverlapThread.ThreadID == newOverlapThread.ThreadID {
+		oldOverlapClient.Close()
+		newOverlapClient.Close()
+		t.Fatalf("distinct overlap threads old=%+v/%v new=%+v/%v", oldOverlapThread, oldThreadErr, newOverlapThread, newThreadErr)
+	}
+	oldOverlapTurn, oldTurnErr := oldOverlapClient.StartTurn(ctx, oldOverlapThread.ThreadID, "Reply with exactly OLD_OK. Do not use tools.", "installed-phase6-overlap-old")
+	newOverlapTurn, newTurnErr := newOverlapClient.StartTurn(ctx, newOverlapThread.ThreadID, "Reply with exactly NEW_OK. Do not use tools.", "installed-phase6-overlap-new")
+	if oldTurnErr != nil || newTurnErr != nil || oldOverlapTurn == "" || newOverlapTurn == "" || oldOverlapTurn == newOverlapTurn {
+		oldOverlapClient.Close()
+		newOverlapClient.Close()
+		t.Fatalf("distinct overlap turns old=%q/%v new=%q/%v", oldOverlapTurn, oldTurnErr, newOverlapTurn, newTurnErr)
+	}
+	oldOverlapSnapshot := waitForGenerationTurn(t, ctx, oldOverlapClient, oldOverlapThread.ThreadID, oldOverlapTurn)
+	newOverlapSnapshot := waitForGenerationTurn(t, ctx, newOverlapClient, newOverlapThread.ThreadID, newOverlapTurn)
+	if oldOverlapSnapshot.ThreadID != oldOverlapThread.ThreadID || oldOverlapSnapshot.TurnID != oldOverlapTurn ||
+		newOverlapSnapshot.ThreadID != newOverlapThread.ThreadID || newOverlapSnapshot.TurnID != newOverlapTurn {
+		t.Fatalf("overlap cross-wire old=%+v new=%+v", oldOverlapSnapshot, newOverlapSnapshot)
+	}
+	if closeOldErr, closeNewErr := oldOverlapClient.Close(), newOverlapClient.Close(); closeOldErr != nil || closeNewErr != nil {
+		t.Fatalf("close overlap clients old=%v new=%v", closeOldErr, closeNewErr)
+	}
 	requester := codexupgrade.Coordinator{Journal: journalStore, Registry: registryStore, Mutator: intmetadata.DefaultMutator}
 	requestedRef, created, err := requester.RequestHandover(ctx, oldEndpoint)
 	if err != nil || !created || requestedRef != upgrade.OperationRef {

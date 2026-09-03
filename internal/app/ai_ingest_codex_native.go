@@ -1062,9 +1062,33 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 		return errManagedAgentObservationIgnored
 	}
 	for _, notice := range projection.Notices {
+		consumer := codexgeneration.ConsumerProjection{}
+		if projection.generationAware() {
+			registry, err := c.loadRegistry()
+			if err != nil {
+				return err
+			}
+			if !exactCodexGenerationMutation(registry, identity, projection) {
+				return errManagedAgentObservationIgnored
+			}
+			consumer = codexgeneration.ProjectConsumers(projection.generationInput(), codexgeneration.RuntimeMutationInput{
+				DurableEndpoint: projection.Endpoint, StoredAuthority: projection.Authority, PresentedAuthority: projection.Authority,
+				TargetRuntimeID: identity.RuntimeID, EventRuntimeID: identity.RuntimeID,
+			}, true)
+			if consumer.Effect != codexgeneration.MutationSemanticEffect || !consumer.Notification {
+				continue
+			}
+		}
 		metadata := map[string]string{
 			notify.MetaAgent: aiModeCodex, notify.MetaCategory: notice.Category,
 			"thread_id": notice.ThreadID, "turn_id": notice.TurnID,
+		}
+		if projection.generationAware() {
+			metadata[notify.MetaAgentUID] = identity.AgentUID
+			metadata[notify.MetaPaneUID] = identity.PaneUID
+			metadata[notify.MetaStateDomainID] = consumer.Endpoint.StateDomainID
+			metadata[notify.MetaEndpointGenerationID] = consumer.Endpoint.EndpointGenerationID
+			metadata[notify.MetaAuthorityFence] = consumer.Fence
 		}
 		if notice.ItemID != "" {
 			metadata["item_id"] = notice.ItemID

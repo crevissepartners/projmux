@@ -22,6 +22,8 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgenerationhost"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
@@ -44,7 +46,8 @@ type doctorCommand struct {
 	// from. It is the snapshot read rather than the ordinary load so running
 	// diagnostics on a machine that never created a Project does not create the
 	// state directory as a side effect.
-	readRegistry func() (coremetadata.Registry, error)
+	readRegistry    func() (coremetadata.Registry, error)
+	codexGeneration func(coremetadata.Registry) *doctorCodexGenerationPool
 }
 
 func newDoctorCommand() *doctorCommand {
@@ -72,6 +75,21 @@ func newDoctorCommand() *doctorCommand {
 	c.resolveGeneratedConfig = func() (string, error) { return doctorGeneratedConfigPath(c.getenv, os.UserHomeDir) }
 	c.readGeneratedConfig = doctorReadRegularFileBounded
 	c.readRegistry = snapshotResourceRegistry
+	c.codexGeneration = func(registry coremetadata.Registry) *doctorCodexGenerationPool {
+		paths, err := configPaths(os.UserHomeDir, c.getenv)
+		if err != nil {
+			return &doctorCodexGenerationPool{Status: "blocked", Reason: "state-path-unavailable", Generations: []doctorCodexGeneration{}, PinnedAgents: []doctorCodexPinnedAgent{}}
+		}
+		journal, exists, err := codexupgrade.NewStateStore(paths.StateDir).Load()
+		if err != nil {
+			return &doctorCodexGenerationPool{Status: "blocked", Reason: "invalid-admission-tuple", Generations: []doctorCodexGeneration{}, PinnedAgents: []doctorCodexPinnedAgent{}}
+		}
+		if !exists {
+			return &doctorCodexGenerationPool{Status: "absent", Reason: "generation-pool-not-installed", Generations: []doctorCodexGeneration{}, PinnedAgents: []doctorCodexPinnedAgent{}}
+		}
+		report := diagnoseCodexGenerationPool(journal, registry, codexgenerationhost.VerifyPrivateGenerationBundle)
+		return &report
+	}
 	return c
 }
 
@@ -133,6 +151,7 @@ type doctorReport struct {
 	CodexAppServer       *codexappserver.Health               `json:"codex_app_server,omitempty"`
 	CodexBroker          *codexBrokerDiagnostic               `json:"codex_broker,omitempty"`
 	CodexAuthority       *codexAuthorityCensus                `json:"codex_authority,omitempty"`
+	CodexGenerationPool  *doctorCodexGenerationPool           `json:"codex_generation_pool,omitempty"`
 	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    string                               `json:"session_state_prune"`
 	Runtime              []doctorFinding                      `json:"runtime"`
@@ -274,6 +293,13 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 			if registry, err := c.readRegistry(); err == nil {
 				census := censusCodexLifecycleAuthority(registry, c.codexAuthority)
 				report.CodexAuthority = &census
+				if c.codexGeneration != nil {
+					report.CodexGenerationPool = c.codexGeneration(registry)
+				}
+			}
+		} else if c.codexGeneration != nil && c.readRegistry != nil {
+			if registry, err := c.readRegistry(); err == nil {
+				report.CodexGenerationPool = c.codexGeneration(registry)
 			}
 		}
 	}
@@ -400,6 +426,7 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 		writeDoctorAppServerText(&buf, report.CodexAppServer)
 		writeDoctorCodexBrokerText(&buf, report.CodexBroker)
 		writeDoctorCodexAuthorityText(&buf, report.CodexAuthority)
+		writeDoctorCodexGenerationText(&buf, report.CodexGenerationPool)
 	}
 	if section == doctorSectionAll || section == doctorSectionSessionState {
 		writeDoctorSessionStateText(&buf, report, verbose)
@@ -767,6 +794,7 @@ type doctorJSONReport struct {
 	CodexAppServer       *codexappserver.Health                `json:"codex_app_server,omitempty"`
 	CodexBroker          *codexBrokerDiagnostic                `json:"codex_broker,omitempty"`
 	CodexAuthority       *codexAuthorityCensus                 `json:"codex_authority,omitempty"`
+	CodexGenerationPool  *doctorCodexGenerationPool            `json:"codex_generation_pool,omitempty"`
 	SessionStateResume   *[]doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    *string                               `json:"session_state_prune,omitempty"`
 	Runtime              *[]doctorFinding                      `json:"runtime,omitempty"`
@@ -785,6 +813,7 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 		out.CodexAppServer = report.CodexAppServer
 		out.CodexBroker = report.CodexBroker
 		out.CodexAuthority = report.CodexAuthority
+		out.CodexGenerationPool = report.CodexGenerationPool
 	}
 	if (section == doctorSectionAll && len(report.SessionStateResume) > 0) || section == doctorSectionSessionState {
 		out.SessionStateResume = &report.SessionStateResume
