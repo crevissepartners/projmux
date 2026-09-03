@@ -61,6 +61,33 @@ func CompleteBundleArtifactPaths() []string {
 	return paths
 }
 
+// LeaseStandaloneRelease turns the exact standalone release containing
+// executable into the closed, content-addressed bundle accepted by private
+// generation launch. The source may be reached through a mutable `current`
+// link; codexbundle.Create retains and re-verifies the exact bytes before the
+// lease becomes launch authority.
+func LeaseStandaloneRelease(storeRoot, executable, releaseVersion string, protocol codexbundle.ProtocolRange) (codexbundle.Lease, error) {
+	executable = filepath.Clean(strings.TrimSpace(executable))
+	if !filepath.IsAbs(executable) || filepath.Base(executable) != "codex" || filepath.Base(filepath.Dir(executable)) != "bin" {
+		return codexbundle.Lease{}, hostRefuse(HostRefusalBundleIncomplete, nil)
+	}
+	releaseRoot := filepath.Dir(filepath.Dir(executable))
+	requirements := qualifiedBundleRequirements()
+	specs := make([]codexbundle.ArtifactSpec, 0, len(requirements))
+	for _, requirement := range requirements {
+		specs = append(specs, codexbundle.ArtifactSpec{Path: requirement.path, Roles: slices.Clone(requirement.roles)})
+	}
+	manifest, err := codexbundle.Inspect(releaseRoot, releaseVersion, protocol, specs)
+	if err != nil {
+		return codexbundle.Lease{}, hostRefuse(HostRefusalBundleIncomplete, err)
+	}
+	lease, err := codexbundle.Create(filepath.Clean(storeRoot), releaseRoot, manifest, protocol)
+	if err != nil {
+		return codexbundle.Lease{}, hostRefuse(HostRefusalBundleIncomplete, err)
+	}
+	return lease, nil
+}
+
 type HostRefusal string
 
 const (

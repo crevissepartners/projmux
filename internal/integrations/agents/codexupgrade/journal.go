@@ -78,6 +78,7 @@ func (cfg GenerationConfig) valid() bool {
 // Paths stay in this owner-private journal and never enter Registry metadata.
 type GenerationRoute struct {
 	Generation         codexgeneration.Generation       `json:"generation"`
+	Version            string                           `json:"version,omitempty"`
 	Config             GenerationConfig                 `json:"config"`
 	TUIPath            string                           `json:"tuiPath"`
 	LaunchOperationRef string                           `json:"launchOperationRef,omitempty"`
@@ -89,8 +90,16 @@ func (route GenerationRoute) valid(stateDomainID string) bool {
 	if route.Generation.Endpoint.StateDomainID != stateDomainID {
 		return false
 	}
+	if route.Version != "" {
+		if !managedActivationVersionPattern.MatchString(route.Version) ||
+			route.Generation.Endpoint.EndpointGenerationID != "codex-"+route.Version {
+			return false
+		}
+	}
 	if route.Generation.Owner != codexgeneration.OwnerProjmuxPrivate {
-		return (route.Generation.Owner == codexgeneration.OwnerOfficialManaged || route.Generation.Owner == codexgeneration.OwnerUnmanaged || route.Generation.Owner == codexgeneration.OwnerUnknown) &&
+		ownerValid := route.Generation.Owner == codexgeneration.OwnerOfficialManaged || route.Generation.Owner == codexgeneration.OwnerUnmanaged || route.Generation.Owner == codexgeneration.OwnerUnknown
+		versionValid := route.Version == "" || route.Generation.BundleID == "external-"+route.Version
+		return ownerValid && versionValid &&
 			route.Config == (GenerationConfig{}) && route.TUIPath == "" && route.LaunchOperationRef == "" && !route.Ready && route.Proof == nil
 	}
 	if !route.Generation.Endpoint.Same(route.Config.Endpoint) || !route.Config.valid() || !filepath.IsAbs(route.TUIPath) || filepath.Clean(route.TUIPath) != route.TUIPath {
@@ -138,8 +147,13 @@ func (j Journal) Validate() error {
 		pool.Generations = append(pool.Generations, route.Generation)
 		if route.Generation.State == codexgeneration.StateCurrent {
 			seenCurrent = route.Generation.Endpoint.EndpointGenerationID
-			if !route.Ready {
+			if route.Generation.Owner == codexgeneration.OwnerProjmuxPrivate && !route.Ready {
 				return errors.New("admission-current Codex generation is not ready")
+			}
+			if route.Generation.Owner != codexgeneration.OwnerProjmuxPrivate &&
+				route.Generation.Owner != codexgeneration.OwnerOfficialManaged &&
+				route.Generation.Owner != codexgeneration.OwnerUnmanaged {
+				return errors.New("admission-current external Codex generation has unknown ownership")
 			}
 		}
 	}
@@ -308,7 +322,7 @@ func (store *Store) Update(ctx context.Context, fn func(*Journal, bool) error) (
 		return Journal{}, err
 	}
 	if exists && slices.EqualFunc(current.Routes, working.Routes, func(a, b GenerationRoute) bool {
-		return a.Generation == b.Generation && a.Config == b.Config && a.TUIPath == b.TUIPath && a.LaunchOperationRef == b.LaunchOperationRef && a.Ready == b.Ready && reflectProof(a.Proof, b.Proof)
+		return a.Generation == b.Generation && a.Version == b.Version && a.Config == b.Config && a.TUIPath == b.TUIPath && a.LaunchOperationRef == b.LaunchOperationRef && a.Ready == b.Ready && reflectProof(a.Proof, b.Proof)
 	}) &&
 		current.Version == working.Version && current.StateDomainID == working.StateDomainID && current.CurrentGenerationID == working.CurrentGenerationID &&
 		slices.Equal(current.Obligations, working.Obligations) && valuesEqual(current.Qualification, working.Qualification) &&
