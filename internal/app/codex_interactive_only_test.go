@@ -3,6 +3,7 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"slices"
 	"strings"
 	"testing"
@@ -103,11 +104,9 @@ func TestPromptedNativeCodexCreateIssuesOneTurnAndNeverRepeatsThePromptInPaneArg
 // TestInteractiveOnlyIsTheOnlyPlainCodexLaneAndBothSpellingsAreEquivalent is
 // the public surface of the opt-out.
 //
-// `--interactive-only` is the single way to ask for a Codex Agent with no
-// native thread binding, the canonical spelling and the provider shortcut are
-// one route rather than two, and a provider that has no native lane refuses the
-// flag instead of accepting it as a no-op the operator would misread as an
-// applied mode.
+// `--interactive-only` remains the explicit way to opt a prompted create out
+// of native control. The permanent payload-free fallback does not change its
+// spelling, argv, stdout, or other-provider refusal contract.
 func TestInteractiveOnlyIsTheOnlyPlainCodexLaneAndBothSpellingsAreEquivalent(t *testing.T) {
 	t.Run("canonical and shortcut produce equivalent output on one plain lane", func(t *testing.T) {
 		var outputs []string
@@ -325,76 +324,241 @@ func TestDefaultNativeCodexFanOutRefusesWithZeroMutationsAndInteractiveOnlyKeeps
 		}
 	})
 
-	t.Run("an empty-prompt native fan-out refuses with zero writes", func(t *testing.T) {
+	t.Run("payload-free fan-out stays on the plain lane before provider mutation", func(t *testing.T) {
 		create, store, tmux, legacy, native, _ := newInteractiveOnlyCodexCreate(t)
-		before := store.snapshot()
+		before := len(store.registry.Agents)
 
 		stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "-o", "pane-id")
-		if err == nil || stdout != "" || stderr != "" || !IsUsageError(err) {
-			t.Fatalf("empty-prompt fan-out stdout=%q stderr=%q err=%v", stdout, stderr, err)
+		if err != nil || stderr != "" || len(strings.Fields(stdout)) != 2 {
+			t.Fatalf("payload-free fan-out stdout=%q stderr=%q err=%v", stdout, stderr, err)
 		}
-		if len(native.creates) != 0 || len(legacy.bound) != 0 || len(splitWindowCalls(tmux)) != 0 || store.writes != 0 || store.snapshot() != before {
-			t.Fatalf("empty-prompt refusal mutated: native=%+v bound=%+v splits=%v writes=%d",
-				native.creates, legacy.bound, splitWindowCalls(tmux), store.writes)
+		if len(store.registry.Agents)-before != 2 || native.currentCalls != 0 || native.resolveCalls != 0 ||
+			len(native.creates) != 0 || len(native.resumes) != 0 || len(legacy.bound) != 2 || len(splitWindowCalls(tmux)) != 2 {
+			t.Fatalf("payload-free fan-out lane drifted: agents=%d current=%d resolve=%d native=%+v/%+v bound=%+v splits=%v",
+				len(store.registry.Agents)-before, native.currentCalls, native.resolveCalls,
+				native.creates, native.resumes, legacy.bound, splitWindowCalls(tmux))
 		}
 	})
 }
 
-// TestEmptyPromptCodexCreateUsesNativeDefaultAndInteractiveOnlyPlainLane is the
-// Phase-3 migration receipt for the old empty-prompt plain default. Default
-// create now owns a turnless native thread; the explicit opt-out remains plain.
-func TestEmptyPromptCodexCreateUsesNativeDefaultAndInteractiveOnlyPlainLane(t *testing.T) {
-	run := func(t *testing.T, controller *fakeNativeThreadController) (string, [][]string, coremetadata.Agent, *fakeAgentLauncher) {
+// TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalentLane
+// is the functional C-2 owner for both public spellings. The default route must
+// choose the existing plain launch before Current/Resolve/thread-start, while
+// --interactive-only retains the same launch bytes and stdout.
+func TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalentLane(t *testing.T) {
+	type receipt struct {
+		stdout      string
+		launch      []string
+		declaration string
+	}
+	run := func(t *testing.T, args ...string) receipt {
 		t.Helper()
 		store := newFakeResourceStore(t)
 		tmux := newFakeTmux()
 		create, legacy := newTestAgentCreateCommand(t, store, tmux)
-		create.codexNative = controller
-		create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
-		stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main")
-		if err != nil || stderr != "" {
-			t.Fatalf("empty-prompt create stdout=%q stderr=%q err=%v", stdout, stderr, err)
+		create.agents = &productionBindingAgentLauncher{fakeAgentLauncher: legacy, binder: testAICommand(t.TempDir())}
+		native := &fakeNativeThreadController{
+			currentErr: errors.New("Current must not be consulted"),
+			createErr:  errors.New("thread/start must not be called"),
 		}
-		return stdout, splitWindowCalls(tmux), agentNamed(t, store, "win-alpha-main", "codex-1"), legacy
+		panes := &fakeNativePaneLauncher{}
+		create.codexNative = native
+		create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
+		stdout, stderr, err := runRoute(t, create, args...)
+		if err != nil || stderr != "" {
+			t.Fatalf("payload-free create %v stdout=%q stderr=%q err=%v", args, stdout, stderr, err)
+		}
+		if native.currentCalls != 0 || native.resolveCalls != 0 || len(native.creates) != 0 || len(native.resumes) != 0 {
+			t.Fatalf("payload-free route consulted provider authority: current=%d resolve=%d creates=%+v resumes=%+v",
+				native.currentCalls, native.resolveCalls, native.creates, native.resumes)
+		}
+		if len(panes.plans) != 0 || len(panes.bound) != 0 || len(panes.lifecycle) != 0 {
+			t.Fatalf("payload-free route acquired native Pane state: plans=%+v bound=%+v lifecycle=%+v", panes.plans, panes.bound, panes.lifecycle)
+		}
+		calls := splitWindowCalls(tmux)
+		if len(calls) != 1 || len(legacy.plans) != 1 || len(legacy.plans[0].payload) != 0 ||
+			len(legacy.bound) != 0 || len(legacy.activationPanes) != 0 {
+			t.Fatalf("payload-free plain lane: plans=%+v bound=%+v activation=%v splits=%v",
+				legacy.plans, legacy.bound, legacy.activationPanes, calls)
+		}
+		launch := tmuxCommandArgv(calls[0])
+		joined := strings.Join(launch, " ")
+		if !strings.Contains(joined, "exec codex") || strings.Contains(joined, "--remote") || strings.Contains(joined, "resume") {
+			t.Fatalf("payload-free launch is not the plain Codex argv: %v", launch)
+		}
+		agent := agentNamed(t, store, "win-alpha-main", "codex-1")
+		pane, ok := store.registry.Pane(agent.Status.PaneRef)
+		if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.SessionRef != nil ||
+			agent.Status.Activation.State != coremetadata.ActivationNotRequested || agent.Status.Activation.Source != "" ||
+			pane.Status.Activation.Codex != nil || pane.Status.Activation.RuntimeID == "" {
+			t.Fatalf("payload-free Agent/Pane is not one Running plain lane: agent=%#v pane=%#v", agent.Status, pane.Status)
+		}
+		_, _, livePane := tmux.pane(pane.Status.Activation.RuntimeID)
+		if livePane == nil || livePane.opts[aiPaneCodexAuthorityOption] != codexAuthorityHook ||
+			livePane.opts[aiPaneCodexReasonOption] != codexNativeUnexplainedReason {
+			t.Fatalf("payload-free authority/source signal is missing: pane=%#v", livePane)
+		}
+		return receipt{stdout: stdout, launch: launch, declaration: livePane.opts[aiPaneCodexDeclaredOption]}
 	}
 
-	empty := &fakeNativeThreadController{createBinding: codexappserver.ThreadBinding{ThreadID: "thread-empty-native"}}
-	stdout, calls, agent, legacy := run(t, empty)
-	if stdout != "agent/codex-1 created\n" {
-		t.Fatalf("empty-prompt stdout = %q", stdout)
+	canonical := run(t, "agent", "--provider", "codex", "--project", "alpha", "--window", "main")
+	shortcut := run(t, "codex", "--project", "alpha", "--window", "main")
+	interactive := run(t, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main")
+	if canonical.stdout != "agent/codex-1 created\n" || shortcut.stdout != canonical.stdout || interactive.stdout != canonical.stdout {
+		t.Fatalf("payload-free stdout drifted: canonical=%q shortcut=%q interactive-only=%q", canonical.stdout, shortcut.stdout, interactive.stdout)
 	}
-	if len(calls) != 1 {
-		t.Fatalf("empty-prompt create issued %d splits, want exactly one: %v", len(calls), calls)
+	if !slices.Equal(canonical.launch, shortcut.launch) || !slices.Equal(canonical.launch, interactive.launch) {
+		t.Fatalf("payload-free plain argv drifted: canonical=%v shortcut=%v interactive-only=%v",
+			canonical.launch, shortcut.launch, interactive.launch)
 	}
-	joined := strings.Join(calls[0], " ")
-	if !strings.Contains(joined, "resume --remote unix:///test/generation-current.sock thread-empty-native") {
-		t.Fatalf("empty-prompt argv = %v, want pinned native TUI", calls[0])
+	if canonical.declaration != codexNativeDeclaredPayloadFreeFallback || shortcut.declaration != codexNativeDeclaredPayloadFreeFallback ||
+		interactive.declaration != codexNativeDeclaredInteractiveOnly {
+		t.Fatalf("diagnostic declarations = canonical:%q shortcut:%q interactive-only:%q",
+			canonical.declaration, shortcut.declaration, interactive.declaration)
 	}
-	if agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.ThreadID != "thread-empty-native" ||
-		agent.Status.SessionRef.Codex.HasStartedTurn || agent.Status.Activation.State != coremetadata.ActivationNotRequested || agent.Status.Activation.Source != "" {
-		t.Fatalf("empty-prompt Agent status = %#v", agent.Status)
-	}
-	if len(legacy.plans) != 1 || len(legacy.plans[0].payload) != 0 || len(legacy.bound) != 0 || len(legacy.activationPanes) != 0 {
-		t.Fatalf("empty-prompt legacy lane = plans:%+v bound:%+v activation:%v", legacy.plans, legacy.bound, legacy.activationPanes)
-	}
+}
 
-	// The same row reached through `--interactive-only` is the same bytes: the
-	// opt-out never had a second empty-prompt product model behind it.
-	store := newFakeResourceStore(t)
-	tmux := newFakeTmux()
-	create, _ := newTestAgentCreateCommand(t, store, tmux)
-	create.codexNative = &fakeNativeThreadController{}
-	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
-	optOut, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main")
-	if err != nil || stderr != "" {
-		t.Fatalf("interactive-only empty create stdout=%q stderr=%q err=%v", optOut, stderr, err)
+// TestCodexCreatePayloadCardinalityInteractiveOnlyAndReadinessOutcomeTable is
+// the closed pre-provider decision table. Readiness is deliberately irrelevant
+// to both plain lanes because neither may ask the controller for it.
+func TestCodexCreatePayloadCardinalityInteractiveOnlyAndReadinessOutcomeTable(t *testing.T) {
+	for _, readiness := range []string{"ready", "unavailable", "indeterminate"} {
+		for payloadCount := 0; payloadCount <= 2; payloadCount++ {
+			for _, interactiveOnly := range []bool{false, true} {
+				name := readiness + "/payload-" + string(rune('0'+payloadCount))
+				if interactiveOnly {
+					name += "/interactive-only"
+				} else {
+					name += "/default"
+				}
+				t.Run(name, func(t *testing.T) {
+					create, store, _, legacy, native, _ := newInteractiveOnlyCodexCreate(t)
+					switch readiness {
+					case "unavailable":
+						native.currentErr = errFakeNativeUnavailable
+						native.fallback = true
+					case "indeterminate":
+						native.createErr = errors.New("provider identity became indeterminate")
+					}
+					args := []string{"agent", "--provider", "codex", "--project", "alpha", "--window", "main"}
+					if interactiveOnly {
+						args = append(args, interactiveOnlyFlag)
+					}
+					for i := 0; i < payloadCount; i++ {
+						if i == 0 {
+							args = append(args, "--")
+						}
+						args = append(args, "payload")
+					}
+					beforeAgents, beforePanes := len(store.registry.Agents), len(store.registry.Panes)
+					stdout, _, err := runRoute(t, create, args...)
+					nativeRequired := !interactiveOnly && payloadCount > 0
+					success := !nativeRequired || (payloadCount == 1 && readiness == "ready")
+					if success != (err == nil) {
+						t.Fatalf("success=%t stdout=%q err=%v", success, stdout, err)
+					}
+					if success {
+						if len(store.registry.Agents) != beforeAgents+1 || len(store.registry.Panes) != beforePanes+1 {
+							t.Fatalf("successful cell cardinality agents=%d panes=%d, want 1/1",
+								len(store.registry.Agents)-beforeAgents, len(store.registry.Panes)-beforePanes)
+						}
+					} else if stdout != "" || len(store.registry.Agents) != beforeAgents || len(store.registry.Panes) != beforePanes {
+						t.Fatalf("refused cell mutated identity: stdout=%q agents=%d panes=%d",
+							stdout, len(store.registry.Agents)-beforeAgents, len(store.registry.Panes)-beforePanes)
+					}
+					if !nativeRequired {
+						if native.currentCalls != 0 || native.resolveCalls != 0 || len(native.creates) != 0 || len(native.resumes) != 0 ||
+							len(legacy.plans) != 1 {
+							t.Fatalf("plain cell consulted provider: current=%d resolve=%d create=%d resume=%d plans=%d",
+								native.currentCalls, native.resolveCalls, len(native.creates), len(native.resumes), len(legacy.plans))
+						}
+						return
+					}
+					if payloadCount == 2 {
+						if native.currentCalls != 0 || len(native.creates) != 0 {
+							t.Fatalf("ambiguous payload reached provider: current=%d creates=%d", native.currentCalls, len(native.creates))
+						}
+						return
+					}
+					wantCreates := 1
+					if readiness == "unavailable" {
+						wantCreates = 0
+					}
+					if native.currentCalls != 1 || len(native.creates) != wantCreates {
+						t.Fatalf("prompted native cell current=%d creates=%d, want 1/%d", native.currentCalls, len(native.creates), wantCreates)
+					}
+				})
+			}
+		}
 	}
-	if optOut != stdout {
-		t.Fatalf("interactive-only empty stdout %q != native empty stdout %q", optOut, stdout)
-	}
-	if got := strings.Join(splitWindowCalls(tmux)[0], " "); !strings.Contains(got, "exec codex") || strings.Contains(got, "--remote") || got == joined {
-		t.Fatalf("interactive-only empty argv %q did not stay an intentional plain lane", got)
-	}
+}
+
+// TestPayloadFreeCodexPlainLaunchFailureRollsBackWithoutProviderMutation pins
+// the transaction boundary for both the CLI and the AI picker default intent.
+func TestPayloadFreeCodexPlainLaunchFailureRollsBackWithoutProviderMutation(t *testing.T) {
+	t.Run("canonical CLI", func(t *testing.T) {
+		create, store, tmux, legacy, native, panes := newInteractiveOnlyCodexCreate(t)
+		tmux.fail = []string{"split-window"}
+		beforeRegistry, beforeTmux := store.snapshot(), tmux.state()
+		stdout, _, err := runRoute(t, create,
+			"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "-o", "pane-id")
+		if err == nil || stdout != "" {
+			t.Fatalf("failed create stdout=%q err=%v", stdout, err)
+		}
+		if store.snapshot() != beforeRegistry || store.writes != 0 || tmux.state() != beforeTmux ||
+			native.currentCalls != 0 || native.resolveCalls != 0 || len(native.creates) != 0 || len(native.resumes) != 0 ||
+			len(legacy.bound) != 0 || len(panes.bound) != 0 {
+			t.Fatalf("failed payload-free launch escaped rollback: writes=%d current=%d resolve=%d create=%d resume=%d plain=%d native=%d",
+				store.writes, native.currentCalls, native.resolveCalls, len(native.creates), len(native.resumes), len(legacy.bound), len(panes.bound))
+		}
+	})
+
+	t.Run("post-split binder failure removes the created Pane", func(t *testing.T) {
+		store := newFakeResourceStore(t)
+		tmux := newFakeTmux()
+		create, plain := newTestAgentCreateCommand(t, store, tmux)
+		create.agents = &productionBindingAgentLauncher{fakeAgentLauncher: plain, binder: testAICommand(t.TempDir())}
+		native := &fakeNativeThreadController{currentErr: errors.New("Current must not be consulted"), createErr: errors.New("thread/start must not be called")}
+		create.codexNative = native
+		create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
+		tmux.fail = []string{"set-option", aiPaneCodexDeclaredOption}
+		beforeRegistry, beforeTmux := store.snapshot(), tmux.state()
+		stdout, _, err := runRoute(t, create,
+			"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "-o", "pane-id")
+		if err == nil || stdout != "" {
+			t.Fatalf("failed post-split bind stdout=%q err=%v", stdout, err)
+		}
+		if store.snapshot() != beforeRegistry || store.writes != 0 || tmux.state() != beforeTmux ||
+			!tmux.argvContains("split-window") || !tmux.argvContains("kill-pane") ||
+			native.currentCalls != 0 || native.resolveCalls != 0 || len(native.creates) != 0 || len(native.resumes) != 0 {
+			t.Fatalf("post-split rollback drifted: writes=%d split=%t kill=%t current=%d resolve=%d create=%d resume=%d",
+				store.writes, tmux.argvContains("split-window"), tmux.argvContains("kill-pane"), native.currentCalls,
+				native.resolveCalls, len(native.creates), len(native.resumes))
+		}
+	})
+
+	t.Run("AI picker saved default", func(t *testing.T) {
+		fx := canonicalFixture(t, false)
+		native := &fakeNativeThreadController{currentErr: errors.New("Current must not be consulted"), createErr: errors.New("thread/start must not be called")}
+		plain := fx.create.agents.(*fakeAgentLauncher)
+		panes := &fakeNativePaneLauncher{}
+		fx.create.codexNative = native
+		fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
+		fx.tmux.fail = []string{"split-window"}
+		beforeRegistry, beforeTmux := fx.store.snapshot(), fx.tmux.state()
+		err := fx.create.createFromIntent(agentPaneIntent{
+			producer: canonicalProducerSavedDefault, provider: aiModeCodex, placement: "right", anchorPaneID: fx.originID,
+		}, ioDiscard{}, ioDiscard{})
+		if err == nil {
+			t.Fatal("failed picker create reported success")
+		}
+		if fx.store.snapshot() != beforeRegistry || fx.store.writes != 0 || fx.tmux.state() != beforeTmux ||
+			native.currentCalls != 0 || native.resolveCalls != 0 || len(native.creates) != 0 || len(native.resumes) != 0 ||
+			len(plain.bound) != 0 || len(panes.bound) != 0 {
+			t.Fatalf("failed picker fallback escaped rollback: writes=%d current=%d resolve=%d create=%d resume=%d plain=%d native=%d",
+				fx.store.writes, native.currentCalls, native.resolveCalls, len(native.creates), len(native.resumes), len(plain.bound), len(panes.bound))
+		}
+	})
 }
 
 // TestClaudeAndAntigravityLifecycleAndHookContractAreUnchangedByTheNativeGate

@@ -20,28 +20,19 @@ import (
 	"github.com/crevissepartners/projmux/internal/version"
 )
 
-// TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke is the Phase 3
-// installed-product observation. It owns a fresh CODEX_HOME, direct unmanaged
-// endpoint, XDG Registry, and real-tmux socket below one exact temporary root;
-// it never probes or mutates the ambient/default endpoint.
-//
-// The smoke deliberately starts no model turn. Each exact installed tuple has
-// one of two closed results: durable readiness launches the historical exact
-// Agent/Pane/thread/TUI chain, while a provider that cannot durably resume a
-// zero-turn thread preserves one exact Failed Agent/thread/endpoint and
-// launches no Pane or fallback lane. Installed Codex cannot subscribe the
-// broker until the first turn materializes a rollout, so the successful
-// pre-turn row retains zero native authority rather than inventing an owner.
-// First-real-input behavior remains covered by the provider-recorder
-// integration because an installed model turn would require ambient auth.
+// TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke is retained as
+// historical Phase-7 negative safety evidence. Its zero-turn native outcomes
+// are not functional create success on the current tuple; Phase 0's maintained
+// functional owner is TestInstalledPayloadFreePlainFallbackOutcomeSmoke.
 func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 	root, enabled, err := codexinstalled.SmokeRoot("PROJMUX_CODEX_PHASE3_SMOKE_ROOT")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !enabled {
-		t.Skip("set PROJMUX_CODEX_PHASE3_SMOKE_ROOT for the installed Phase 3 empty-create smoke")
+		t.Skip("historical Phase-7 negative fixture; use PROJMUX_CODEX_PHASE0_PAYLOAD_FREE_SMOKE_ROOT for functional fallback")
 	}
+	t.Skip("historical Phase-7 zero-turn native fixture is negative safety evidence only")
 	fixture, err := codexinstalled.NewClean(root)
 	if err != nil {
 		t.Fatal(err)
@@ -161,7 +152,7 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := agent.Status.SessionRef.Codex
-	if !createOutcome.DurableReady {
+	if !createOutcome.PlainReady {
 		if agent.Status.Phase != coremetadata.PhaseFailed || agent.Status.PaneRef != "" ||
 			agent.Status.Reason != "payload-free-readiness-"+string(createOutcome.Readiness) ||
 			ref.ThreadID != createOutcome.ThreadID || ref.SessionID != "" || ref.HasStartedTurn || ref.Endpoint == nil ||

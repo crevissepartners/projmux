@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"reflect"
 	"strings"
@@ -13,9 +14,9 @@ import (
 // TestDeclaredPlainCodexLaneNamesOnlyTheByDesignLanes fixes the declared
 // vocabulary at its only producer.
 //
-// Two shapes reach the plain CLI lane on purpose: an explicit
-// --interactive-only create and a picker resume row whose source is rollout.
-// Empty-prompt creates are native and therefore deliberately absent here.
+// Three shapes reach the plain CLI lane on purpose: the permanent payload-free
+// fallback, an explicit --interactive-only create, and a picker resume row
+// whose source is rollout.
 func TestDeclaredPlainCodexLaneNamesOnlyTheByDesignLanes(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -24,7 +25,10 @@ func TestDeclaredPlainCodexLaneNamesOnlyTheByDesignLanes(t *testing.T) {
 		prompt   string
 		want     string
 	}{
-		{name: "empty prompt native create", provider: aiModeCodex},
+		{
+			name: "payload-free fallback", provider: aiModeCodex,
+			want: codexNativeDeclaredPayloadFreeFallback,
+		},
 		{
 			name: "interactive only", provider: aiModeCodex,
 			flags:  resourceCreateFlags{interactiveOnly: true, payload: []string{"do the thing"}},
@@ -62,6 +66,40 @@ func TestDeclaredPlainCodexLaneNamesOnlyTheByDesignLanes(t *testing.T) {
 	}
 }
 
+func TestPayloadFreeFallbackDescribeAndDoctorSignalsAreContentFree(t *testing.T) {
+	diagnostic := codexLifecycleAuthorityDiagnostic{
+		Source: codexAuthorityHook, Reason: codexNativeUnexplainedReason,
+		Declared: codexNativeDeclaredPayloadFreeFallback,
+	}
+	store := newFakeResourceStore(t)
+	describe := newTestDescribeCommand(t, store)
+	describe.codexAuthority = func(paneUID string) codexLifecycleAuthorityDiagnostic {
+		if paneUID != "pan-alpha-codex" {
+			t.Fatalf("describe observed Pane %q", paneUID)
+		}
+		return diagnostic
+	}
+	stdout, stderr, err := runRoute(t, describe, "agent", "uid:agt-alpha-codex")
+	if err != nil || stderr != "" || !strings.Contains(stdout, "LifecycleSource:") ||
+		!strings.Contains(stdout, codexAuthorityHook) || !strings.Contains(stdout, "LifecycleDeclared:") ||
+		!strings.Contains(stdout, codexNativeDeclaredPayloadFreeFallback) {
+		t.Fatalf("describe signal stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	for _, forbidden := range []string{"prompt", "reasoning", "output", "tool", "model"} {
+		if strings.Contains(strings.ToLower(stdout), forbidden) {
+			t.Fatalf("describe payload-free signal leaked forbidden field %q:\n%s", forbidden, stdout)
+		}
+	}
+
+	census := codexAuthorityCensus{Agents: 1, DeclaredHook: 1, PayloadFreeFallback: 1}
+	var doctor bytes.Buffer
+	writeDoctorCodexAuthorityText(&doctor, &census)
+	if got := doctor.String(); !strings.Contains(got, "Payload-free plain fallback (native control unavailable): 1") ||
+		strings.Contains(strings.ToLower(got), "prompt=") {
+		t.Fatalf("Doctor payload-free signal = %q", got)
+	}
+}
+
 // TestDeclaredLaneVocabularyIsClosedAgainstUnknownPaneValues keeps the
 // declaration honest at the reading end.
 //
@@ -96,15 +134,16 @@ func TestDeclaredLaneVocabularyIsClosedAgainstUnknownPaneValues(t *testing.T) {
 // TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback is
 // the acceptance surface for "unexplained native fallback is zero".
 //
-// A payload-bearing managed Agent must converge on the control plane. An
-// rollout or interactive-only Agent stays on hook observation, but with a
-// typed declaration, so it is counted apart rather than inflating the number
-// that is supposed to be zero.
+// A payload-bearing managed Agent must converge on the control plane. A
+// rollout, interactive-only, or payload-free Agent stays on hook observation,
+// but with a typed declaration, so it is counted apart rather than inflating
+// the number that is supposed to be zero.
 func TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback(t *testing.T) {
 	diagnostics := map[string]codexLifecycleAuthorityDiagnostic{
 		"pane-native":       {Source: codexAuthorityControlPlane, Reason: "ready", EpochStatus: "active"},
 		"pane-rollout":      {Source: codexAuthorityHook, Reason: codexNativeUnexplainedReason, Declared: codexNativeDeclaredRolloutCatalogResume},
 		"pane-interactive":  {Source: codexAuthorityHook, Reason: codexNativeUnexplainedReason, Declared: codexNativeDeclaredInteractiveOnly},
+		"pane-payload-free": {Source: codexAuthorityHook, Reason: codexNativeUnexplainedReason, Declared: codexNativeDeclaredPayloadFreeFallback},
 		"pane-lost":         {Source: codexAuthorityHook, Reason: codexNativeUnexplainedReason},
 		"pane-pending":      {Source: codexAuthorityPending, Reason: "connecting", EpochStatus: "pending"},
 		"pane-invalidating": {Source: codexAuthorityInvalidating, Reason: "disconnected", EpochStatus: "active"},
@@ -119,6 +158,7 @@ func TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback(t *
 		{uid: "agent-native", provider: aiModeCodex, pane: "pane-native"},
 		{uid: "agent-rollout", provider: aiModeCodex, pane: "pane-rollout"},
 		{uid: "agent-interactive", provider: aiModeCodex, pane: "pane-interactive"},
+		{uid: "agent-payload-free", provider: aiModeCodex, pane: "pane-payload-free"},
 		{uid: "agent-lost", provider: aiModeCodex, pane: "pane-lost"},
 		{uid: "agent-pending", provider: aiModeCodex, pane: "pane-pending"},
 		{uid: "agent-invalidating", provider: aiModeCodex, pane: "pane-invalidating"},
@@ -139,8 +179,8 @@ func TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback(t *
 		return diagnostics[paneUID]
 	})
 	want := codexAuthorityCensus{
-		Agents: 7, ControlPlane: 1, Pending: 1, Invalidating: 1,
-		DeclaredHook: 2, UnexplainedHook: 1, Unavailable: 1,
+		Agents: 8, ControlPlane: 1, Pending: 1, Invalidating: 1,
+		DeclaredHook: 3, PayloadFreeFallback: 1, UnexplainedHook: 1, Unavailable: 1,
 	}
 	if !reflect.DeepEqual(census, want) {
 		t.Fatalf("census = %+v, want %+v", census, want)
@@ -148,10 +188,10 @@ func TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback(t *
 	if looked["pane-claude"] != 0 {
 		t.Fatal("a sibling provider Agent was observed by the Codex census")
 	}
-	if len(looked) != 7 {
-		t.Fatalf("observed %d panes, want exactly the 7 bound Codex Agents", len(looked))
+	if len(looked) != 8 {
+		t.Fatalf("observed %d panes, want exactly the 8 bound Codex Agents", len(looked))
 	}
-	// With the two by-design lanes declared, the number the contract requires
+	// With the three by-design lanes declared, the number the contract requires
 	// to be zero counts only the Agent that actually lost native authority.
 	if census.UnexplainedHook != 1 {
 		t.Fatalf("unexplained native fallback = %d, want only the lost binding", census.UnexplainedHook)
@@ -233,6 +273,11 @@ func TestPlainCodexCreatesWriteTheirDeclarationOntoTheExactPane(t *testing.T) {
 		args []string
 		want string
 	}{
+		{
+			name: "payload-free fallback",
+			args: []string{"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "-o", "pane-id"},
+			want: codexNativeDeclaredPayloadFreeFallback,
+		},
 		{
 			name: "interactive only",
 			args: []string{"agent", "--provider", "codex", "--project", "alpha", "--window", "main",

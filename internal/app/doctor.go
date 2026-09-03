@@ -521,6 +521,9 @@ func writeDoctorCodexAuthorityText(buf *bytes.Buffer, census *codexAuthorityCens
 		census.Agents, census.ControlPlane, census.Pending, census.Invalidating)
 	fmt.Fprintf(buf, "  Declared hook fallback: %d; unexplained native fallback: %d; unavailable: %d\n",
 		census.DeclaredHook, census.UnexplainedHook, census.Unavailable)
+	if census.PayloadFreeFallback > 0 {
+		fmt.Fprintf(buf, "  Payload-free plain fallback (native control unavailable): %d\n", census.PayloadFreeFallback)
+	}
 }
 
 func diagnosticVersionOrUnknown(value string) string {

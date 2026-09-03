@@ -125,11 +125,10 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	var results []createResult
 	var activationTargets []agentActivationTarget
 	var nativeLifecycleTargets []codexLifecycleObserverTarget
-	var postCommitReadinessErr error
 	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
 	nativeLifecycle, nativeLifecycleCapable := c.resumes.(codexNativeLifecycleStarter)
 	prompt, nativePromptExact := nativePrompt(flags.payload)
-	nativeCreate := provider == aiModeCodex && !flags.interactiveOnly
+	nativeCreate := nativeCodexFreshCreateRequired(provider, flags)
 	var nativeRoute codexNativeEndpointRoute
 	if nativeCreate {
 		if flags.codexCapability != nil || !nativePromptExact {
@@ -285,7 +284,6 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				nativeCtx, cancel := prepareNativeContext(ctx)
 				prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, workspace, prompt, work.activation.Generation)
 				cancel()
-				var readiness *codexappserver.DurableResumeError
 				switch {
 				case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":
 					workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
@@ -303,13 +301,6 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 					usedNative = true
 				case nativeErr == nil:
 					return nativeLaunchError(spelling, fmt.Errorf("%w: native create returned an empty thread", codexappserver.ErrProtocol))
-				case prompt == "" && strings.TrimSpace(prepared.ThreadID) != "" && errors.As(nativeErr, &readiness):
-					if err := preserveNativeCodexReadinessFailure(working, mutator, work.agent.Metadata.UID, work.pane.Metadata.UID,
-						work.activation.Generation, nativeRoute.Endpoint, prepared, readiness); err != nil {
-						return err
-					}
-					postCommitReadinessErr = newNativeCodexCreateReadinessError(work.agent.Metadata.UID, nativeRoute.Endpoint, prepared, readiness)
-					return nil
 				case nativeFallbackAllowed(c.codexNative, nativeErr):
 					return nativeCreatePreparationRefusal(spelling, nativeErr)
 				case nativeRootsUnsupported(nativeErr):
@@ -381,9 +372,6 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	}, c.projectOwnershipGuard(scope)); err != nil {
 		return err
 	}
-	if postCommitReadinessErr != nil {
-		return postCommitReadinessErr
-	}
 	// The exact Registry binding becomes observable only after the transaction
 	// commits. Starting inside the callback would correctly fail the startup
 	// guard against the pre-transaction snapshot and strand no observer.
@@ -409,6 +397,20 @@ func activationStateForPayload(payload []string) coremetadata.AgentActivationSta
 		return coremetadata.ActivationNotRequested
 	}
 	return coremetadata.ActivationPending
+}
+
+// nativeCodexFreshCreateRequired is the pre-provider lane decision shared by
+// public create and every canonical UI intent. A fresh payload-free Codex
+// create is deliberately plain: the current installed tuple cannot hand a
+// zero-turn thread to an independent TUI durably, so consulting Current,
+// Resolve, or Create would already be too late to fall back safely.
+//
+// Prompted creates retain the native-required contract. Multi-operand payloads
+// also stay on that contract and are rejected by nativePrompt instead of being
+// silently reinterpreted by this decision.
+func nativeCodexFreshCreateRequired(provider string, flags resourceCreateFlags) bool {
+	return provider == aiModeCodex && !flags.interactiveOnly && len(flags.payload) > 0 &&
+		strings.TrimSpace(flags.resumeConversation) == ""
 }
 
 func (c *createCommand) confirmAgentActivations(targets []agentActivationTarget) error {
@@ -550,6 +552,9 @@ func declaredPlainCodexLane(provider string, flags resourceCreateFlags, prompt s
 	}
 	if flags.interactiveOnly {
 		return codexNativeDeclaredInteractiveOnly
+	}
+	if len(flags.payload) == 0 && strings.TrimSpace(flags.resumeConversation) == "" {
+		return codexNativeDeclaredPayloadFreeFallback
 	}
 	if strings.TrimSpace(flags.resumeConversation) != "" && strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexRollout {
 		return codexNativeDeclaredRolloutCatalogResume

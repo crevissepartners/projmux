@@ -2170,7 +2170,7 @@ exact_siblings_before="$({
 exact_foreign_before="$(cfx list-panes -a -F '#{session_name}|#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}' | sha256sum | awk '{print $1}')"
 exact_route_log_before="$(wc -l <"$create_root/exact-tmux-argv.log" | tr -d '[:space:]')"
 exact_launch_log_before="$(wc -l <"$create_root/agent-launch.log" | tr -d '[:space:]')"
-PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 pmx_agent create agent --provider codex --interactive-only \
+PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 pmx_agent create agent --provider codex \
   --project "uid:$agent_project_uid_before" --window "uid:$agent_window_uid_before" \
   --pane "uid:$agent_host_pane_uid_before" --name exact-native-route -o pane-id \
   >"$create_root/agent-exact.out" 2>"$create_root/agent-exact.err"
@@ -2197,6 +2197,11 @@ create_exact_agent_settled() {
 }
 smoke_wait_until 10 "outside exact create provider/title to settle on $exact_agent_pane" \
   create_exact_agent_settled
+exact_payload_free_signal="$(ctx display-message -p -t "$exact_agent_pane" '#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_codex_native_declared}')"
+if [[ "$exact_payload_free_signal" != "provider-hook|native-fallback|payload-free-fallback" ]]; then
+  echo "outside exact payload-free create signal = $exact_payload_free_signal" >&2
+  exit 1
+fi
 exact_siblings_after="$({
   ctx display-message -p -t "$agent_pane_before" '#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}'
   ctx display-message -p -t "$exact_review_pane" '#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}'
@@ -2223,9 +2228,10 @@ wait "$create_client_two_pid" 2>/dev/null || true
 create_client_one_pid=""
 create_client_two_pid=""
 
-# 9. The shortcut normalizes onto the same route, and a second create allocates a
-#    new Agent instead of reusing the first.
-pmx_agent create codex --interactive-only -p alpha -w "$alpha_window_name" -o name >"$create_root/agent-second.out"
+# 9. The payload-free shortcut normalizes onto the same pre-provider plain
+#    route, and a second create allocates a new Agent instead of reusing the
+#    first.
+pmx_agent create codex -p alpha -w "$alpha_window_name" -o name >"$create_root/agent-second.out"
 if [[ "$(tr -d '[:space:]' <"$create_root/agent-second.out")" != "codex" ]]; then
   echo "the second Agent name = $(cat "$create_root/agent-second.out"), want codex" >&2
   exit 1

@@ -36,6 +36,8 @@ type fakeNativeThreadController struct {
 	resumes         []fakeNativeResume
 	resolveStarted  chan struct{}
 	resolveContinue chan struct{}
+	currentCalls    int
+	resolveCalls    int
 }
 
 type fakeNativeCreate struct {
@@ -77,6 +79,7 @@ func (c *orderedNativeThreadClient) Close() error {
 }
 
 func (f *fakeNativeThreadController) Current(context.Context) (codexNativeEndpointRoute, error) {
+	f.currentCalls++
 	if !f.currentRoute.valid() && f.currentErr == nil {
 		f.currentRoute = nativeTestRoute("generation-current", coremetadata.CodexGenerationCurrent)
 	}
@@ -95,6 +98,7 @@ func (f *fakeNativeThreadController) CatalogRoutes(ctx context.Context) ([]codex
 }
 
 func (f *fakeNativeThreadController) Resolve(_ context.Context, endpoint coremetadata.CodexEndpointRef) (codexNativeEndpointRoute, error) {
+	f.resolveCalls++
 	if f.resolveStarted != nil {
 		f.resolveStarted <- struct{}{}
 	}
@@ -712,34 +716,33 @@ func TestEmptyPromptCodexCreateUsesOnePlainCLILaneAndNoNativeBinding(t *testing.
 			if err != nil || strings.TrimSpace(stdout) == "" || stderr != "" {
 				t.Fatalf("stdout=%q stderr=%q err=%v", stdout, stderr, err)
 			}
-			if len(native.creates) != 1 || native.creates[0].prompt != "" || len(native.resumes) != 0 {
-				t.Fatalf("native creates=%+v resumes=%+v", native.creates, native.resumes)
+			if native.currentCalls != 0 || native.resolveCalls != 0 || len(native.creates) != 0 || len(native.resumes) != 0 {
+				t.Fatalf("provider route was consulted: current=%d resolve=%d creates=%+v resumes=%+v",
+					native.currentCalls, native.resolveCalls, native.creates, native.resumes)
 			}
-			if len(legacy.plans) != 1 || len(legacy.plans[0].payload) != 0 || len(legacy.bound) != 0 || len(legacy.activationPanes) != 0 {
+			if len(legacy.plans) != 1 || len(legacy.plans[0].payload) != 0 || len(legacy.bound) != 1 || len(legacy.activationPanes) != 0 {
 				t.Fatalf("legacy planning/binding=%+v/%+v activation probes=%v", legacy.plans, legacy.bound, legacy.activationPanes)
 			}
 			calls := splitWindowCalls(tmux)
 			if len(calls) != 1 {
-				t.Fatalf("native TUI split calls = %v, want exactly one", calls)
+				t.Fatalf("plain TUI split calls = %v, want exactly one", calls)
 			}
 			joined := strings.Join(calls[0], " ")
-			if !strings.Contains(joined, "resume --remote unix:///test/generation-current.sock thread-empty-native") {
-				t.Fatalf("empty create launch = %v, want pinned native thread", calls[0])
+			if !strings.Contains(joined, "exec codex") || strings.Contains(joined, "--remote") || strings.Contains(joined, "thread-empty-native") {
+				t.Fatalf("empty create launch = %v, want one plain Codex process", calls[0])
 			}
-			if len(panes.plans) != 1 || len(panes.bound) != 1 || len(panes.lifecycle) != 1 {
-				t.Fatalf("empty native Pane state: plans=%+v bindings=%+v lifecycle=%+v", panes.plans, panes.bound, panes.lifecycle)
+			if len(panes.plans) != 0 || len(panes.bound) != 0 || len(panes.lifecycle) != 0 {
+				t.Fatalf("empty fallback gained native Pane state: plans=%+v bindings=%+v lifecycle=%+v", panes.plans, panes.bound, panes.lifecycle)
 			}
 			agent := agentNamed(t, store, "win-alpha-main", "codex-1")
 			pane, ok := store.registry.Pane(agent.Status.PaneRef)
-			if !ok || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.ThreadID != "thread-empty-native" || pane.Status.Activation.Codex.TurnID != "" ||
-				agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.ThreadID != "thread-empty-native" ||
-				agent.Status.SessionRef.Codex.Endpoint == nil || !agent.Status.SessionRef.Codex.Endpoint.Same(native.creates[0].route.Endpoint) || agent.Status.SessionRef.Codex.HasStartedTurn ||
-				agent.Status.Activation.State != coremetadata.ActivationNotRequested || agent.Status.Activation.Source != "" {
-				t.Fatalf("empty native Agent/Pane binding = agent:%#v pane:%#v", agent.Status, pane.Status)
+			if !ok || pane.Status.Activation.Codex != nil || agent.Status.SessionRef != nil ||
+				agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.Activation.State != coremetadata.ActivationNotRequested ||
+				agent.Status.Activation.Source != "" || pane.Status.Activation.RuntimeID == "" {
+				t.Fatalf("empty plain Agent/Pane binding = agent:%#v pane:%#v", agent.Status, pane.Status)
 			}
-			obligation, projected := codexgeneration.ProjectAgentObligation(agent, false)
-			if !projected || obligation.State != codexgeneration.ObligationNoTurn || obligation.EndpointGenerationID != native.creates[0].route.Endpoint.EndpointGenerationID {
-				t.Fatalf("empty create obligation=%+v projected=%t", obligation, projected)
+			if obligation, projected := codexgeneration.ProjectAgentObligation(agent, false); projected {
+				t.Fatalf("plain fallback projected a native obligation=%+v", obligation)
 			}
 		})
 	}
@@ -753,11 +756,13 @@ func TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane(t *testing.T) {
 	} {
 		t.Run(string(producer), func(t *testing.T) {
 			fx := canonicalFixture(t, false)
+			beforeAgents, beforePanes := len(fx.store.registry.Agents), len(fx.store.registry.Panes)
 			native := &fakeNativeThreadController{createBinding: codexappserver.ThreadBinding{ThreadID: "thread-empty-" + string(producer)}}
-			legacy := newFakeResumeLauncher()
+			legacyResume := newFakeResumeLauncher()
+			plain := fx.create.agents.(*fakeAgentLauncher)
 			panes := &fakeNativePaneLauncher{}
 			fx.create.codexNative = native
-			fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: panes}
+			fx.create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: legacyResume, fakeNativePaneLauncher: panes}
 
 			err := fx.create.createFromIntent(agentPaneIntent{
 				producer: producer, provider: aiModeCodex, placement: "right", anchorPaneID: fx.originID,
@@ -765,170 +770,128 @@ func TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(native.creates) != 1 || native.creates[0].prompt != "" || len(native.resumes) != 0 || len(legacy.plans) != 0 || len(panes.plans) != 1 || len(panes.bound) != 1 {
-				t.Fatalf("split producer changed lane: native create=%+v resume=%+v legacy resume=%+v native plans=%+v bindings=%+v",
-					native.creates, native.resumes, legacy.plans, panes.plans, panes.bound)
+			if native.currentCalls != 0 || native.resolveCalls != 0 || len(native.creates) != 0 || len(native.resumes) != 0 ||
+				len(plain.plans) != 1 || len(plain.bound) != 1 || len(legacyResume.plans) != 0 || len(panes.plans) != 0 || len(panes.bound) != 0 {
+				t.Fatalf("split producer changed lane: current=%d resolve=%d native create=%+v resume=%+v plain=%+v/%+v native plans=%+v bindings=%+v",
+					native.currentCalls, native.resolveCalls, native.creates, native.resumes, plain.plans, plain.bound, panes.plans, panes.bound)
 			}
 			calls := splitWindowCalls(fx.tmux)
 			if len(calls) != 1 {
 				t.Fatalf("split calls = %v, want exactly one", calls)
 			}
+			if len(fx.store.registry.Agents) != beforeAgents+1 || len(fx.store.registry.Panes) != beforePanes+1 {
+				t.Fatalf("split producer cardinality agents=%d panes=%d, want 1/1",
+					len(fx.store.registry.Agents)-beforeAgents, len(fx.store.registry.Panes)-beforePanes)
+			}
 			joined := strings.Join(calls[0], " ")
-			if !strings.Contains(joined, "resume --remote unix:///test/generation-current.sock thread-empty-"+string(producer)) {
-				t.Fatalf("split producer launch = %v, want one pinned native TUI", calls[0])
+			if !strings.Contains(joined, "exec codex") || strings.Contains(joined, "--remote") || strings.Contains(joined, "thread-empty-") {
+				t.Fatalf("split producer launch = %v, want one plain Codex TUI", calls[0])
+			}
+			var running int
+			for _, agent := range fx.store.registry.Agents {
+				if agent.Spec.Provider == aiModeCodex && agent.Status.Phase == coremetadata.PhaseRunning && agent.Status.PaneRef != "" {
+					running++
+				}
+			}
+			if running == 0 {
+				t.Fatal("split producer did not return a Running managed Codex Agent")
 			}
 		})
 	}
 }
 
-func TestEmptyPromptCodexFallbackFirstInputConvergesSessionRefAndRouting(t *testing.T) {
+func TestPayloadFreeCodexFallbackCarriesContentFreeDeclaredAuthority(t *testing.T) {
 	store := newFakeResourceStore(t)
 	tmux := newFakeTmux()
 	create, planner := newTestAgentCreateCommand(t, store, tmux)
 	binder := testAICommand(t.TempDir())
 	create.agents = &productionBindingAgentLauncher{fakeAgentLauncher: planner, binder: binder}
-	native := &fakeNativeThreadController{createBinding: codexappserver.ThreadBinding{ThreadID: "thread-first-input"}}
+	native := &fakeNativeThreadController{
+		currentErr: errors.New("payload-free fallback must not inspect Current"),
+		createErr:  errors.New("payload-free fallback must not start a thread"),
+	}
 	create.codexNative = native
 	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
 
 	stdout, stderr, err := runRoute(t, create,
 		"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "-o", "pane-id")
 	if err != nil || stderr != "" {
-		t.Fatalf("empty create stdout=%q stderr=%q err=%v", stdout, stderr, err)
+		t.Fatalf("payload-free fallback stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 	paneID := strings.TrimSpace(stdout)
 	agent := agentNamed(t, store, "win-alpha-main", "codex-1")
 	pane, ok := store.registry.Pane(agent.Status.PaneRef)
-	if !ok || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.ThreadID != "thread-first-input" || pane.Status.Activation.Codex.TurnID != "" ||
-		pane.Status.Activation.Generation == "" || pane.Status.Activation.RuntimeID != paneID || agent.Status.SessionRef.Codex.HasStartedTurn {
-		t.Fatalf("empty native Pane activation = %#v ref=%#v", pane.Status.Activation, agent.Status.SessionRef)
+	if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.SessionRef != nil ||
+		pane.Status.Activation.Codex != nil || pane.Status.Activation.RuntimeID != paneID {
+		t.Fatalf("payload-free fallback identity = agent:%#v pane:%#v", agent.Status, pane.Status)
 	}
-	endpoint := *agent.Status.SessionRef.Codex.Endpoint
-	authority := coremetadata.CodexAuthorityRef{
-		StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID,
-		BrokerRuntimeID: "broker-first", ConnectionEpoch: 1, BindingEpoch: 1,
+	if native.currentCalls != 0 || native.resolveCalls != 0 || len(native.creates) != 0 || len(native.resumes) != 0 {
+		t.Fatalf("payload-free fallback touched native provider state: current=%d resolve=%d creates=%+v resumes=%+v",
+			native.currentCalls, native.resolveCalls, native.creates, native.resumes)
 	}
-	pane.Status.Activation.Codex.Authority = &authority
-	control, _, _ := newTestAgentCommand(t, store)
-	control.controlBinding = &staticAgentControlBinding{observed: true, live: agentControlLive{
-		RuntimeID: paneID, PaneUID: pane.Metadata.UID, ThreadID: "thread-first-input",
-		Authority: codexAuthorityControlPlane, Epoch: "epoch-first", Reason: "ready",
-	}}
-	control.controlPaths = func() (config.Paths, error) { return config.Paths{StateDir: "/tmp/projmux-empty-first"}, nil }
-	var calls []agentControlRequest
-	control.controlCall = func(_ context.Context, _ string, routedEndpoint coremetadata.CodexEndpointRef, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
-		calls = append(calls, request)
-		if !routedEndpoint.Same(endpoint) || identity.ThreadID != "thread-first-input" || request.Text != "first real input" {
-			t.Fatalf("first input route endpoint=%+v identity=%+v request=%+v", routedEndpoint, identity, request)
-		}
-		return agentControlResponse{OK: true, ThreadID: identity.ThreadID, TurnID: "turn-first"}, nil
-	}
-	if _, _, err := runRoute(t, control, "turn", "start", "uid:"+agent.Metadata.UID, "--", "first real input"); err != nil {
-		t.Fatal(err)
-	}
-
-	agent = agentNamed(t, store, "win-alpha-main", "codex-1")
-	if len(calls) != 1 || len(native.creates) != 1 || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil ||
-		agent.Status.SessionRef.Codex.ThreadID != "thread-first-input" || !agent.Status.SessionRef.Codex.Endpoint.Same(endpoint) || !agent.Status.SessionRef.Codex.HasStartedTurn {
-		t.Fatalf("first-input sessionRef = %#v (transactions=%d writes=%d)", agent.Status.SessionRef, store.transactions, store.writes)
-	}
-	pane, _ = store.registry.Pane(agent.Status.PaneRef)
-	if pane.Status.Activation.Codex.TurnID != "turn-first" {
-		t.Fatalf("first input did not refine same-thread turn: %#v", pane.Status.Activation.Codex)
+	_, _, runtimePane := tmux.pane(paneID)
+	if runtimePane == nil || runtimePane.opts[aiPaneCodexAuthorityOption] != codexAuthorityHook ||
+		runtimePane.opts[aiPaneCodexReasonOption] != codexNativeUnexplainedReason ||
+		runtimePane.opts[aiPaneCodexDeclaredOption] != codexNativeDeclaredPayloadFreeFallback {
+		t.Fatalf("payload-free fallback content-free authority signal = %#v", runtimePane)
 	}
 }
 
-func TestPayloadFreeReadinessFailurePreservesOneIdentityAndResumeCreatesNoSecondLane(t *testing.T) {
-	store := newFakeResourceStore(t)
-	tmux := newFakeTmux()
-	create, _ := newTestAgentCreateCommand(t, store, tmux)
-	endpoint := nativeTestRoute("generation-readiness-failure", coremetadata.CodexGenerationCurrent)
+// TestPhase7PayloadFreeReadinessFailureIsNegativeSafetyEvidenceOnly retains
+// the typed historical outcome as a safety witness, not as a successful fresh
+// create. Phase 0 never reaches this post-provider state for payload-free
+// input because its lane is decided before Current/Resolve/Create.
+func TestPhase7PayloadFreeReadinessFailureIsNegativeSafetyEvidenceOnly(t *testing.T) {
 	providerCause := errors.New("secret-provider-content-must-not-survive")
 	readinessErr := codexappserver.NewDurableResumeError(
 		codexappserver.DurableResumeTimeout, "thread-readiness-failure", 4, providerCause)
-	native := &fakeNativeThreadController{
-		currentRoute:  endpoint,
-		createBinding: codexappserver.ThreadBinding{ThreadID: "thread-readiness-failure"},
-		createErr:     readinessErr,
+	var readiness *codexappserver.DurableResumeError
+	if !errors.As(readinessErr, &readiness) {
+		t.Fatalf("historical readiness error lost its type: %v", readinessErr)
 	}
-	panes := &fakeNativePaneLauncher{}
-	create.codexNative = native
-	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: panes}
-	beforePanes := len(store.registry.Panes)
-	beforeAgents := len(store.registry.Agents)
-
-	stdout, stderr, err := runRoute(t, create,
-		"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "-o", "pane-id")
-	var outcome *nativeCodexCreateReadinessError
-	if !errors.As(err, &outcome) || stdout != "" || stderr != "" || outcome.ThreadID != "thread-readiness-failure" ||
-		outcome.Outcome != codexappserver.DurableResumeTimeout || outcome.EndpointGenerationID != endpoint.Endpoint.EndpointGenerationID {
-		t.Fatalf("stdout=%q stderr=%q error=%v outcome=%+v", stdout, stderr, err, outcome)
+	if readiness.Outcome != codexappserver.DurableResumeTimeout || readiness.ThreadID != "thread-readiness-failure" ||
+		strings.Contains(readiness.Error(), "secret-provider-content") {
+		t.Fatalf("historical safety outcome is not content-free: %+v", readiness)
 	}
-	if strings.Contains(err.Error(), "secret-provider-content") {
-		t.Fatalf("content-free outcome leaked provider content: %v", err)
-	}
-	agent := agentNamed(t, store, "win-alpha-main", "codex-1")
-	if agent.Status.Phase != coremetadata.PhaseFailed || agent.Status.PaneRef != "" || agent.Status.Reason != "payload-free-readiness-deadline" ||
-		agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.ThreadID != "thread-readiness-failure" ||
-		agent.Status.SessionRef.Codex.Endpoint == nil || !agent.Status.SessionRef.Codex.Endpoint.Same(endpoint.Endpoint) ||
-		agent.Status.SessionRef.Codex.HasStartedTurn {
-		t.Fatalf("preserved failed Agent = %#v", agent.Status)
-	}
-	if len(store.registry.Panes) != beforePanes || len(native.creates) != 1 || len(native.resumes) != 0 ||
-		len(panes.plans) != 0 || len(panes.bound) != 0 || len(splitWindowCalls(tmux)) != 0 {
-		t.Fatalf("failure side effects: panes=%d/%d create=%+v resume=%+v plans=%+v bound=%+v splits=%v",
-			len(store.registry.Panes), beforePanes, native.creates, native.resumes, panes.plans, panes.bound, splitWindowCalls(tmux))
-	}
-
-	resume, legacy, _, _ := newTestAgentResumeCommand(t, store, tmux)
-	native.createErr = nil
-	native.resolvedRoute = endpoint
-	native.resumeErr = codexappserver.ErrThreadNotDurable
-	native.resumeBinding = codexappserver.ThreadBinding{ThreadID: "thread-readiness-failure"}
-	resumePanes := &fakeNativePaneLauncher{}
-	resume.rebind.create.codexNative = native
-	resume.rebind.launcher = &fakeNativeResumeLauncher{fakeResumeLauncher: legacy, fakeNativePaneLauncher: resumePanes}
-	beforeRetry := store.snapshot()
-	stdout, stderr, err = runRoute(t, resume, "resume", "uid:"+agent.Metadata.UID)
-	if err == nil || stdout != "" || stderr != "" {
-		t.Fatalf("resume retry stdout=%q stderr=%q err=%v", stdout, stderr, err)
-	}
-	if len(store.registry.Agents) != beforeAgents+1 || len(native.creates) != 1 || len(native.resumes) != 1 ||
-		len(legacy.bound) != 0 || len(resumePanes.plans) != 1 || resumePanes.plans[0].threadID != "thread-readiness-failure" ||
-		len(splitWindowCalls(tmux)) != 0 || store.snapshot() != beforeRetry {
-		t.Fatalf("retry synthesized identity/lane: agents=%d creates=%+v resumes=%+v legacy=%+v plans=%+v splits=%v",
-			len(store.registry.Agents), native.creates, native.resumes, legacy.bound, resumePanes.plans, splitWindowCalls(tmux))
+	for _, row := range codexNativeLaunchOutcomeTable {
+		if row.Action == "create" && row.NativeResult == "thread started; readiness deadline" {
+			t.Fatalf("historical safe failure is still classified as functional create success: %+v", row)
+		}
 	}
 }
 
 var phase3EmptyPromptSymbolMigrationReceipt = map[string]string{
-	"TestEmptyPromptCodexCreateUsesOnePlainCLILaneAndNoNativeBinding":     "native-default-durable-readiness",
-	"TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane":               "native-producer-parity-durable-readiness",
-	"TestEmptyPromptCodexFallbackFirstInputConvergesSessionRefAndRouting": "same-thread-first-real-turn",
-	"TestCodexFanOutKeepsCurrentPlainCLILaneWithoutNativeCreate":          "explicit-interactive-only-cardinality",
-	"TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke":         "exact-tuple-durable-ready-or-typed-failed",
-	"TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration": "managed-current-exact-tuple-durable-ready-or-typed-failed",
+	"TestEmptyPromptCodexCreateUsesOnePlainCLILaneAndNoNativeBinding":                 "payload-free-pre-provider-plain-success",
+	"TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane":                           "canonical-intent-payload-free-parity",
+	"TestPayloadFreeCodexFallbackCarriesContentFreeDeclaredAuthority":                 "content-free-reduced-native-control",
+	"TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalentLane": "canonical-shortcut-interactive-argv-parity",
+	"TestInstalledPayloadFreePlainFallbackOutcomeSmoke":                               "installed-payload-free-plain-success",
+	"TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke":                     "historical-negative-safety-evidence",
+	"TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration":             "historical-generation-fixture-negative-parity",
 }
 
-var phase7InstalledMigrationSymbolRefs = []func(*testing.T){
+var payloadFreeInstalledOutcomeSymbolRefs = []func(*testing.T){
+	TestInstalledPayloadFreePlainFallbackOutcomeSmoke,
 	TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke,
 	TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration,
 }
 
 func TestPhase3EmptyPromptSymbolsHaveExplicitDurableResumeMigrationReceipt(t *testing.T) {
 	want := map[string]string{
-		"TestEmptyPromptCodexCreateUsesOnePlainCLILaneAndNoNativeBinding":     "native-default-durable-readiness",
-		"TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane":               "native-producer-parity-durable-readiness",
-		"TestEmptyPromptCodexFallbackFirstInputConvergesSessionRefAndRouting": "same-thread-first-real-turn",
-		"TestCodexFanOutKeepsCurrentPlainCLILaneWithoutNativeCreate":          "explicit-interactive-only-cardinality",
-		"TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke":         "exact-tuple-durable-ready-or-typed-failed",
-		"TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration": "managed-current-exact-tuple-durable-ready-or-typed-failed",
+		"TestEmptyPromptCodexCreateUsesOnePlainCLILaneAndNoNativeBinding":                 "payload-free-pre-provider-plain-success",
+		"TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane":                           "canonical-intent-payload-free-parity",
+		"TestPayloadFreeCodexFallbackCarriesContentFreeDeclaredAuthority":                 "content-free-reduced-native-control",
+		"TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalentLane": "canonical-shortcut-interactive-argv-parity",
+		"TestInstalledPayloadFreePlainFallbackOutcomeSmoke":                               "installed-payload-free-plain-success",
+		"TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke":                     "historical-negative-safety-evidence",
+		"TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration":             "historical-generation-fixture-negative-parity",
 	}
 	if !reflect.DeepEqual(phase3EmptyPromptSymbolMigrationReceipt, want) {
 		t.Fatalf("Phase 3 symbol migration receipt = %v, want %v", phase3EmptyPromptSymbolMigrationReceipt, want)
 	}
-	if len(phase7InstalledMigrationSymbolRefs) != 2 || phase7InstalledMigrationSymbolRefs[0] == nil || phase7InstalledMigrationSymbolRefs[1] == nil {
-		t.Fatalf("installed symbol migration refs = %v", phase7InstalledMigrationSymbolRefs)
+	if len(payloadFreeInstalledOutcomeSymbolRefs) != 3 || payloadFreeInstalledOutcomeSymbolRefs[0] == nil ||
+		payloadFreeInstalledOutcomeSymbolRefs[1] == nil || payloadFreeInstalledOutcomeSymbolRefs[2] == nil {
+		t.Fatalf("installed symbol migration refs = %v", payloadFreeInstalledOutcomeSymbolRefs)
 	}
 }
 
@@ -1407,20 +1370,25 @@ func TestCodexNativeLaunchOutcomeTableIsClosed(t *testing.T) {
 	if len(codexNativeLaunchOutcomeTable) != 11 {
 		t.Fatalf("outcome rows=%d, want 11: %+v", len(codexNativeLaunchOutcomeTable), codexNativeLaunchOutcomeTable)
 	}
-	var plainLane, refused []string
+	var plainLane, refused, negative []string
 	for _, row := range codexNativeLaunchOutcomeTable {
 		switch {
+		case row.Action == "negative fixture":
+			negative = append(negative, row.NativeResult)
 		case strings.Contains(row.Launch, "current CLI"):
 			plainLane = append(plainLane, row.NativeResult)
 		case row.Launch == "none":
 			refused = append(refused, row.NativeResult)
 		}
 	}
-	if !slices.Equal(plainLane, []string{"explicit " + interactiveOnlyFlag, "rollout picker source"}) {
+	if !slices.Equal(plainLane, []string{"no payload", "explicit " + interactiveOnlyFlag, "rollout picker source"}) {
 		t.Fatalf("plain CLI rows drifted: %v", plainLane)
 	}
-	if len(refused) != 6 {
-		t.Fatalf("refusal rows = %v, want the six unproven-authority rows", refused)
+	if len(refused) != 5 {
+		t.Fatalf("functional refusal rows = %v, want the five unproven-authority rows", refused)
+	}
+	if !slices.Equal(negative, []string{"payload-free thread not durably resumable"}) {
+		t.Fatalf("negative safety rows = %v, want the one historical Phase-7 fixture", negative)
 	}
 	for _, row := range codexNativeLaunchOutcomeTable {
 		if row.Action == "resume" && strings.Contains(row.Binding, interactiveOnlyFlag) {

@@ -131,6 +131,25 @@ reason Doctor reports. `--interactive-only` creates that plain Agent on purpose,
 without native turn control. See
 [Codex Native-Required Create Migration](codex-native-required-migration.md).
 
+A payload-free fresh create is different. On the current Codex 0.153.0 tuple,
+zero-turn independent durable resume is unavailable, so `projmux create codex`
+chooses the managed plain-interactive lane before consulting or mutating an
+app-server. This is a usable Running Agent, not a failed native attempt, and it
+does not create a hidden prompt or turn. Confirm the content-free reduced-control
+signal with either surface:
+
+```sh
+projmux describe agent uid:<agent-uid>
+projmux doctor --section integrations --verbose
+```
+
+The Agent description reports `LifecycleSource: provider-hook` and
+`LifecycleDeclared: payload-free-fallback`; Doctor reports the aggregate
+`Payload-free plain fallback (native control unavailable)` count (JSON:
+`payload_free_fallback`). Neither surface reads or renders provider content.
+`--interactive-only` keeps the same spelling and plain argv; with a payload it
+remains the explicit opt-out from native turn control.
+
 Native create refusal is the primary actionable surface: it names
 `--interactive-only`, reports the same observed install-capability guidance as
 Doctor and Settings, and links to the
