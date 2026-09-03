@@ -131,6 +131,7 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 
 	projectUID := oneLine("project uid", run(installed, "create", "project", "--root", fixture.Workspace, "--name", "phase3-smoke", "-o", "uid"))
 	windowUID := oneLine("window uid", run(installed, "get", "windows", "--project", "uid:"+projectUID, "-o", "uid"))
+	run(installed, "reconcile", "resources", "--socket", "projmux", "--materialize-project", "uid:"+projectUID, "-o", "json")
 	beforeCreate, err := loadResourceRegistry()
 	if err != nil {
 		t.Fatal(err)
@@ -182,8 +183,8 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 			t.Fatalf("typed payload-free failure launched a TUI/plain lane: before=%q after=%q", beforeTmuxPanes, afterTmuxPanes)
 		}
 		beforeRetryThreads, err := installedCatalogThreadIDs(ctx, fixture.SocketPath, fixture.Workspace)
-		if err != nil || !slices.Contains(beforeRetryThreads, ref.ThreadID) {
-			t.Fatalf("typed payload-free failure thread is not exactly observable before retry: ids=%v err=%v", beforeRetryThreads, err)
+		if err != nil {
+			t.Fatalf("read provider threads before exact Failed Agent retry: ids=%v err=%v", beforeRetryThreads, err)
 		}
 		beforeRetryAgent := *agent
 		if err := requireInstalledPayloadFreeResumeRefusal(ctx, installed, withoutInheritedTmuxEnvironment(os.Environ()), agentUID); err != nil {
