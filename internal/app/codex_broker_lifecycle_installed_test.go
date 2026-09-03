@@ -32,7 +32,7 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 	if !enabled {
 		t.Skip("historical Phase-7 negative fixture; use PROJMUX_CODEX_PHASE0_PAYLOAD_FREE_SMOKE_ROOT for functional fallback")
 	}
-	t.Skip("historical Phase-7 zero-turn native fixture is negative safety evidence only")
+	t.Skipf("historical Phase-7 zero-turn native fixture is negative safety evidence only (isolated root configured=%t)", strings.TrimSpace(root) != "")
 	fixture, err := codexinstalled.NewClean(root)
 	if err != nil {
 		t.Fatal(err)

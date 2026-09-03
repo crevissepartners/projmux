@@ -35,7 +35,7 @@ func TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration(t *test
 	if !enabled {
 		t.Skip("set PROJMUX_CODEX_PHASE6_REMEDIATION_SMOKE_ROOT and PROJMUX_CODEX_PHASE6_REMEDIATION_OLD for the installed default-upgrade smoke")
 	}
-	t.Skip("historical payload-free native-generation fixture is negative safety evidence only")
+	t.Skipf("historical payload-free native-generation fixture is negative safety evidence only (isolated root configured=%t)", strings.TrimSpace(root) != "")
 	oldExecutable := filepath.Clean(strings.TrimSpace(os.Getenv("PROJMUX_CODEX_PHASE6_REMEDIATION_OLD")))
 	oldInfo, err := os.Stat(oldExecutable)
 	if !filepath.IsAbs(oldExecutable) || err != nil || !oldInfo.Mode().IsRegular() || oldInfo.Mode()&0o111 == 0 {
