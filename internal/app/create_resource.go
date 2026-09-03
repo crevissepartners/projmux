@@ -69,9 +69,11 @@ type resourceCreateFlags struct {
 	// `create` accepts it, so an operator cannot reach a resume through the create
 	// verb, which is `agent resume`'s job for a Registry Agent and this field's
 	// job for a conversation the picker found on disk.
-	resumeConversation string
-	resumeSource       string
-	codexCapability    *corecap.Selection
+	resumeConversation    string
+	resumeSource          string
+	resumeEndpoint        coremetadata.CodexEndpointRef
+	resumeGenerationState coremetadata.CodexGenerationState
+	codexCapability       *corecap.Selection
 }
 
 // resourceCreateShape selects which optional flag groups a resource-backed

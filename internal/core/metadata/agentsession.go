@@ -63,9 +63,13 @@ type ClaudeSessionRef struct {
 // not point at the conversation. Storing it would give the Agent a durable
 // field that is stale the moment it is written.
 type CodexSessionRef struct {
-	ThreadID  string            `json:"threadId,omitempty"`
-	SessionID string            `json:"sessionId,omitempty"`
-	Endpoint  *CodexEndpointRef `json:"endpoint,omitempty"`
+	ThreadID  string `json:"threadId,omitempty"`
+	SessionID string `json:"sessionId,omitempty"`
+	// HasStartedTurn is monotonic content-free evidence that this thread has
+	// owned at least one turn. False keeps a payload-free native create in the
+	// generation obligation ledger even after its Pane goes Offline.
+	HasStartedTurn bool              `json:"hasStartedTurn,omitempty"`
+	Endpoint       *CodexEndpointRef `json:"endpoint,omitempty"`
 	// Lifecycle is the durable generation/operation authority consumed by the
 	// presentation reconciler. Provider observations never create or change it;
 	// later control-plane phases may set it alongside Endpoint.
@@ -411,6 +415,15 @@ func (m Mutator) RecordAgentSessionRef(reg *Registry, agentUID string, obs Agent
 		previous := agent.Status.SessionRef.Codex
 		endpoint := *previous.Endpoint
 		ref.Codex.Endpoint = &endpoint
+		ref.Codex.HasStartedTurn = previous.HasStartedTurn
+		if previous.Lifecycle != nil {
+			lifecycle := *previous.Lifecycle
+			if lifecycle.Operation != nil {
+				operation := *lifecycle.Operation
+				lifecycle.Operation = &operation
+			}
+			ref.Codex.Lifecycle = &lifecycle
+		}
 		// SessionID is optional hook metadata. Its omission must not turn an
 		// otherwise exact thread re-observation into a destructive rewrite.
 		if ref.Codex.SessionID == "" {
@@ -426,10 +439,7 @@ func (m Mutator) RecordAgentSessionRef(reg *Registry, agentUID string, obs Agent
 }
 
 func sameCodexThreadObservation(previous, observed *CodexSessionRef) bool {
-	if previous == nil || observed == nil || previous.ThreadID == "" || previous.ThreadID != observed.ThreadID {
-		return false
-	}
-	return previous.SessionID == "" || observed.SessionID == "" || previous.SessionID == observed.SessionID
+	return previous != nil && observed != nil && previous.ThreadID != "" && previous.ThreadID == observed.ThreadID
 }
 
 // validateSessionRef checks the union invariants of one Agent session ref.

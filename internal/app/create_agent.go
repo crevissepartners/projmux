@@ -10,6 +10,8 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 // canonicalCreateAgent is the spelling the provider shortcuts normalize onto.
@@ -126,15 +128,25 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
 	nativeLifecycle, nativeLifecycleCapable := c.resumes.(codexNativeLifecycleStarter)
 	prompt, nativePromptExact := nativePrompt(flags.payload)
-	nativeCandidate := provider == aiModeCodex && c.codexNative != nil && nativeLaunchCapable &&
-		flags.codexCapability == nil && nativePromptExact && !flags.interactiveOnly
-	// A default native create is the prompted shape: exactly one non-empty
-	// operand on the Codex provider with no explicit interactive-only opt-out
-	// and no capability selection. It is the only shape whose native authority
-	// must be proven rather than attempted, because it is the only shape whose
-	// silent degradation would hand the operator a plain CLI Agent they cannot
-	// control natively without being told.
-	defaultNativeCreate := nativeCandidate && prompt != ""
+	nativeCreate := provider == aiModeCodex && !flags.interactiveOnly
+	var nativeRoute codexNativeEndpointRoute
+	if nativeCreate {
+		if flags.codexCapability != nil || !nativePromptExact {
+			return nativeCreatePreparationRefusal(spelling, &codexNativeRouteError{Reason: "unsupported-create-shape"})
+		}
+		if c.codexNative == nil || !nativeLaunchCapable {
+			return nativeCreatePreparationRefusal(spelling, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable})
+		}
+		nativeCtx, cancel := prepareNativeContext(context.Background())
+		nativeRoute, err = c.codexNative.Current(nativeCtx)
+		cancel()
+		if err != nil || !nativeRoute.valid() || nativeRoute.State != coremetadata.CodexGenerationCurrent {
+			if err == nil {
+				err = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+			}
+			return nativeCreatePreparationRefusal(spelling, err)
+		}
+	}
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
@@ -182,10 +194,10 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		// before the first Agent or Pane is allocated, so it costs zero threads,
 		// zero Panes, and zero Registry mutations. `--interactive-only` remains
 		// the way to ask for the plain-CLI fan-out on purpose.
-		if defaultNativeCreate && len(plan.targets) > 1 {
+		if nativeCreate && len(plan.targets) > 1 {
 			return nativeFanOutRefusal(spelling, len(plan.targets))
 		}
-		nativeEligible := nativeCandidate && len(plan.targets) == 1
+		nativeEligible := nativeCreate && len(plan.targets) == 1
 
 		// Metadata phase. Every Agent and every managed Pane is allocated before
 		// the first tmux call, so an explicit --name that collides inside a
@@ -250,33 +262,31 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			var nativeBinding coremetadata.CodexActivationBinding
 			usedNative := false
 			if nativeEligible {
+				if err := mutator.StageCodexEndpoint(working, work.agent.Metadata.UID, nativeRoute.Endpoint); err != nil {
+					return MapMetadataError(err)
+				}
 				nativeCtx, cancel := prepareNativeContext(ctx)
-				prepared, nativeErr := c.codexNative.Create(nativeCtx, workspace, prompt, work.activation.Generation)
+				prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, workspace, prompt, work.activation.Generation)
 				cancel()
 				switch {
-				case nativeErr == nil:
-					workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(workspace, prepared.ThreadID)
+				case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":
+					workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
 					if err != nil {
 						return nativeLaunchError(spelling, err)
 					}
 					if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
 						AgentUID: work.agent.Metadata.UID, PaneUID: work.pane.Metadata.UID,
 						Generation: work.activation.Generation, ThreadID: prepared.ThreadID, TurnID: prepared.TurnID,
+						Endpoint: nativeRoute.Endpoint,
 					}); err != nil {
 						return MapMetadataError(err)
 					}
 					nativeBinding = coremetadata.CodexActivationBinding{ThreadID: prepared.ThreadID, TurnID: prepared.TurnID}
 					usedNative = true
+				case nativeErr == nil:
+					return nativeLaunchError(spelling, fmt.Errorf("%w: native create returned an empty thread", codexappserver.ErrProtocol))
 				case nativeFallbackAllowed(c.codexNative, nativeErr):
-					if defaultNativeCreate {
-						// Native authority could not be proven, and no provider
-						// conversation was mutated. A managed Agent is not created on
-						// the plain CLI lane behind the operator's back.
-						return nativeCreatePreparationRefusal(spelling, nativeErr)
-					}
-					// Empty prompt. Preserve the current CLI argv, hook
-					// acknowledgement, output, and late-refinement contract
-					// byte-for-byte.
+					return nativeCreatePreparationRefusal(spelling, nativeErr)
 				case nativeRootsUnsupported(nativeErr):
 					// Fail closed, but before any conversation existed: the
 					// explicit opt-out is still an honest answer here.
@@ -305,7 +315,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			// pipeline. They are applied after the pane exists and before the
 			// result is reported.
 			if usedNative {
-				if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.runner, paneID, workspace.CWD, workTitle, nativeBinding.ThreadID); err != nil {
+				if err := bindNativeCodexPaneOnRoute(ctx, nativeLauncher, c.runtime.runner, paneID, workspace.CWD, workTitle, "", nativeBinding.ThreadID); err != nil {
 					return tmuxError("%s: bind native Codex Pane %s presentation metadata: %v", spelling, paneID, err)
 				}
 				if nativeLifecycleCapable {
@@ -314,7 +324,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 							AgentUID: work.agent.Metadata.UID, PaneUID: work.pane.Metadata.UID, RuntimeID: paneID,
 							Generation: work.activation.Generation, ThreadID: nativeBinding.ThreadID,
 						},
-						Route: c.runtime.target,
+						Route: c.runtime.target, NativeRoute: nativeRoute,
 					})
 				}
 			} else if err := c.bindAgentPane(ctx, paneID, provider, workspace.CWD, workTitle,
@@ -507,14 +517,14 @@ func (c *createCommand) bindAgentPane(ctx context.Context, paneID, provider, con
 // lane is either a refusal that creates nothing, or a genuine loss of native
 // authority that must stay visible as an unexplained native fallback.
 func declaredPlainCodexLane(provider string, flags resourceCreateFlags, prompt string) string {
-	if provider != aiModeCodex || strings.TrimSpace(flags.resumeConversation) != "" {
+	if provider != aiModeCodex {
 		return ""
 	}
 	if flags.interactiveOnly {
 		return codexNativeDeclaredInteractiveOnly
 	}
-	if prompt == "" && len(flags.payload) == 0 {
-		return codexNativeDeclaredEmptyPrompt
+	if strings.TrimSpace(flags.resumeConversation) != "" && strings.TrimSpace(flags.resumeSource) == aisessions.SourceCodexRollout {
+		return codexNativeDeclaredRolloutCatalogResume
 	}
 	return ""
 }

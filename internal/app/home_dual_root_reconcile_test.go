@@ -197,7 +197,7 @@ func TestHomeDualRootIncidentDoesNotBlockUnrelatedCreateAgent(t *testing.T) {
 	create, launcher := newTestAgentCreateCommand(t, store, tmux)
 	create.reconciler = correctiveAReconciler(projectRoot)(tmux, inttmux.NewClient(tmux))
 	create.runtime.sessions = &fakeSessionMaterializer{tmux: tmux}
-	stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main")
+	stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--interactive-only")
 	if err != nil || !strings.Contains(stdout, "agent/") {
 		t.Fatalf("unrelated create agent failed: stdout=%q err=%v", stdout, err)
 	}

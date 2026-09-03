@@ -53,13 +53,13 @@ const (
 	// conversation existed, so an Agent carrying one is on hook observation on
 	// purpose and is not counted as an unexplained native fallback.
 	//
-	// codexNativeDeclaredEmptyPrompt marks an empty-prompt default create. A
-	// turnless thread cannot carry a live Pane on current upstream Codex, so
-	// this lane is gated on upstream rather than chosen.
-	codexNativeDeclaredEmptyPrompt = "empty-prompt-upstream-gate"
 	// codexNativeDeclaredInteractiveOnly marks the explicit --interactive-only
 	// opt-out.
 	codexNativeDeclaredInteractiveOnly = "interactive-only"
+	// codexNativeDeclaredRolloutCatalogResume marks a picker row whose source is the
+	// rollout store. It can launch the provider's legacy resume command, but it
+	// never acquires app-server thread or endpoint authority.
+	codexNativeDeclaredRolloutCatalogResume = "rollout-catalog-resume"
 
 	// The reconnect delay bounds are the observer's own pacing between one
 	// closed epoch and the next open attempt. There is deliberately no attempt
@@ -97,6 +97,14 @@ type codexLifecycleSink interface {
 	Apply(codexLifecycleIdentity, codexLifecycleProjection) error
 }
 
+type codexGenerationLifecycleSink interface {
+	SetGenerationAuthority(codexLifecycleIdentity, coremetadata.CodexEndpointRef, coremetadata.CodexGenerationState, coremetadata.CodexAuthorityRef) error
+}
+
+type codexGenerationAuthorityConnection interface {
+	GenerationAuthority() (coremetadata.CodexAuthorityRef, error)
+}
+
 type codexProgressSink interface {
 	ApplyProgress(codexLifecycleIdentity, coremetadata.AgentProgress, agentprogress.Diagnostics) error
 }
@@ -123,30 +131,34 @@ type codexObserverStartupResult struct {
 }
 
 type codexLifecycleObserverTarget struct {
-	Identity codexLifecycleIdentity
-	Route    tmuxTransport
+	Identity    codexLifecycleIdentity
+	Route       tmuxTransport
+	NativeRoute codexNativeEndpointRoute
 }
 
 func (t codexLifecycleObserverTarget) valid() bool {
-	return t.Identity.valid() && t.Route.Flag() != "" && t.Route.Value != ""
+	return t.Identity.valid() && t.Route.Flag() != "" && t.Route.Value != "" && t.NativeRoute.valid()
 }
 
 type codexNativeObserver struct {
-	identity       codexLifecycleIdentity
-	open           func(context.Context) (codexLifecycleConnection, error)
-	sink           codexLifecycleSink
-	delay          time.Duration
-	maxDelay       time.Duration
-	waitRecovery   func(context.Context, time.Duration) bool
-	bindingTimeout time.Duration
-	openTimeout    time.Duration
-	sequence       uint64
-	reducer        codexLifecycleReducer
-	startControl   func(*codexControlEpoch) (*codexControlServer, error)
-	requireControl bool
-	reportStartup  func(codexObserverStartupResult)
-	progress       agentprogress.Reducer
-	now            func() time.Time
+	identity        codexLifecycleIdentity
+	endpoint        coremetadata.CodexEndpointRef
+	generationState coremetadata.CodexGenerationState
+	authority       *coremetadata.CodexAuthorityRef
+	open            func(context.Context) (codexLifecycleConnection, error)
+	sink            codexLifecycleSink
+	delay           time.Duration
+	maxDelay        time.Duration
+	waitRecovery    func(context.Context, time.Duration) bool
+	bindingTimeout  time.Duration
+	openTimeout     time.Duration
+	sequence        uint64
+	reducer         codexLifecycleReducer
+	startControl    func(*codexControlEpoch) (*codexControlServer, error)
+	requireControl  bool
+	reportStartup   func(codexObserverStartupResult)
+	progress        agentprogress.Reducer
+	now             func() time.Time
 }
 
 func (o *codexNativeObserver) Run(ctx context.Context) error {
@@ -291,6 +303,22 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		}
 		if snapshot.TurnID != "" && snapshot.TurnState == codexappserver.TurnStateInProgress {
 			o.progress.Begin(snapshot.TurnID, snapshot.StartedAt, o.currentTime())
+		}
+		if o.endpoint.Valid() {
+			authoritySource, ok := client.(codexGenerationAuthorityConnection)
+			authority, authorityErr := coremetadata.CodexAuthorityRef{}, errors.New("generation broker authority is unavailable")
+			if ok {
+				authority, authorityErr = authoritySource.GenerationAuthority()
+			}
+			generationSink, ok := o.sink.(codexGenerationLifecycleSink)
+			if authorityErr != nil || !authority.Valid() || !authority.Endpoint().Same(o.endpoint) || !ok || o.generationState == "" ||
+				generationSink.SetGenerationAuthority(o.identity, o.endpoint, o.generationState, authority) != nil {
+				_ = client.Close()
+				o.setStartupFallback(codexNativeReasonGenerationUnavailable)
+				return nil
+			}
+			o.authority = &authority
+			projection = o.decorateGenerationProjection(projection)
 		}
 		var control *codexControlServer
 		if wire, ok := client.(agentControlWire); ok && o.startControl != nil {
@@ -442,7 +470,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 					}
 					continue
 				}
-				projection = o.reducer.apply(epoch, event)
+				projection = o.decorateGenerationProjection(o.reducer.apply(epoch, event))
 				if !projection.Accepted {
 					continue
 				}
@@ -542,6 +570,20 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 	return nil
 }
 
+func (o *codexNativeObserver) decorateGenerationProjection(projection codexLifecycleProjection) codexLifecycleProjection {
+	if !projection.Accepted || !o.endpoint.Valid() || o.generationState == "" {
+		return projection
+	}
+	projection.Endpoint = &o.endpoint
+	projection.GenerationState = o.generationState
+	if o.authority == nil || !o.authority.Valid() || !o.authority.Endpoint().Same(o.endpoint) {
+		return codexLifecycleProjection{}
+	}
+	authority := *o.authority
+	projection.Authority = &authority
+	return projection
+}
+
 // continueRecovery is the only retry scheduler after a ready epoch is lost.
 // The old control endpoint is already revoked and the one unavailable
 // invalidation projection is published before this method is called. Every
@@ -639,7 +681,7 @@ func (o *codexNativeObserver) clearProgress() error {
 // Registry/tmux/queue state. If either write fails, invalidating remains the
 // current hook-suppressing authority.
 func (o *codexNativeObserver) invalidateAndFallback(epoch uint64, epochLabel, reason string) error {
-	projection := o.reducer.invalidate(epoch)
+	projection := o.decorateGenerationProjection(o.reducer.invalidate(epoch))
 	if !projection.Accepted {
 		return errors.New("codex native lifecycle epoch could not be invalidated")
 	}
@@ -655,7 +697,7 @@ func (o *codexNativeObserver) applyInvalidationAndFallback(epochLabel, reason st
 // reconnecting, so only a replacement snapshot and exact control proof may
 // move the Pane out of this unavailable projection.
 func (o *codexNativeObserver) invalidateAndHold(epoch uint64, epochLabel, reason string) error {
-	projection := o.reducer.invalidate(epoch)
+	projection := o.decorateGenerationProjection(o.reducer.invalidate(epoch))
 	if !projection.Accepted {
 		return errors.New("codex native lifecycle epoch could not be invalidated")
 	}
@@ -868,6 +910,41 @@ func (s aiCodexLifecycleSink) SetAuthority(identity codexLifecycleIdentity, sour
 	return nil
 }
 
+func (s aiCodexLifecycleSink) SetGenerationAuthority(identity codexLifecycleIdentity, endpoint coremetadata.CodexEndpointRef, state coremetadata.CodexGenerationState, authority coremetadata.CodexAuthorityRef) error {
+	if s.command == nil || s.command.updateRegistry == nil || !endpoint.Valid() || !authority.Valid() ||
+		!authority.Endpoint().Same(endpoint) {
+		return errManagedAgentObservationIgnored
+	}
+	release, err := s.command.acquireCodexAuthorityFence(identity.PaneUID)
+	if err != nil {
+		return err
+	}
+	defer release()
+	if !s.BindingCurrent(identity) {
+		return errManagedAgentObservationIgnored
+	}
+	_, err = s.command.updateRegistry(func(registry *coremetadata.Registry) error {
+		if !exactCodexLifecycleBinding(*registry, identity) {
+			return errManagedAgentObservationIgnored
+		}
+		agent, ok := registry.Agent(identity.AgentUID)
+		if !ok || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil ||
+			agent.Status.SessionRef.Codex.Endpoint == nil || !agent.Status.SessionRef.Codex.Endpoint.Same(endpoint) ||
+			agent.Status.SessionRef.Codex.Lifecycle == nil || agent.Status.SessionRef.Codex.Lifecycle.State != state ||
+			!agent.Status.SessionRef.Codex.Lifecycle.ValidFor(&endpoint) {
+			return errManagedAgentObservationIgnored
+		}
+		pane, ok := registry.Pane(identity.PaneUID)
+		if !ok || pane.Status.Activation.Codex == nil {
+			return errManagedAgentObservationIgnored
+		}
+		stored := authority
+		pane.Status.Activation.Codex.Authority = &stored
+		return nil
+	})
+	return err
+}
+
 func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection codexLifecycleProjection) error {
 	c := s.command
 	if c == nil || !projection.Accepted || c.updateRegistry == nil {
@@ -913,6 +990,16 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 		}
 		if _, err := mutator.SetAgentInteraction(registry, identity.AgentUID, delivery.RegistryInteraction, string(coremetadata.InteractionSourceProviderControl)); err != nil {
 			return err
+		}
+		if projection.HasStartedTurn {
+			agent, ok := registry.Agent(identity.AgentUID)
+			if !ok || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil ||
+				agent.Status.SessionRef.Codex.Endpoint == nil || projection.Endpoint == nil ||
+				!agent.Status.SessionRef.Codex.Endpoint.Same(*projection.Endpoint) ||
+				strings.TrimSpace(agent.Status.SessionRef.Codex.ThreadID) != identity.ThreadID {
+				return errManagedAgentObservationIgnored
+			}
+			agent.Status.SessionRef.Codex.HasStartedTurn = true
 		}
 		if projection.ClearProgress {
 			_, _, err := mutator.SetAgentProgress(registry, identity.AgentUID, "", coremetadata.AgentProgress{})
@@ -1126,13 +1213,15 @@ func (s aiCodexLifecycleSink) ApplyProgress(identity codexLifecycleIdentity, pro
 			}
 			agent, _ := registry.Agent(identity.AgentUID)
 			pane, _ := registry.Pane(agent.Status.PaneRef)
-			if pane == nil || pane.Status.Activation.Codex == nil {
+			if pane == nil || pane.Status.Activation.Codex == nil || agent.Status.SessionRef == nil ||
+				agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.Endpoint == nil ||
+				!agent.Status.SessionRef.Codex.Endpoint.Valid() {
 				return errManagedAgentObservationIgnored
 			}
 			if pane.Status.Activation.Codex.TurnID != progress.TurnRef {
 				changed, refineErr := mutator.RefineCodexActivation(registry, coremetadata.CodexActivationObservation{
 					AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, Generation: identity.Generation,
-					ThreadID: identity.ThreadID, TurnID: progress.TurnRef,
+					ThreadID: identity.ThreadID, TurnID: progress.TurnRef, Endpoint: *agent.Status.SessionRef.Codex.Endpoint,
 				})
 				if refineErr != nil || !changed {
 					return refineErr
@@ -1268,7 +1357,16 @@ func startCodexLifecycleObserverProcess(executable string, target codexLifecycle
 	identity := target.Identity
 	args := []string{"internal", "agent-hook", "ingest", codexNativeLifecycleIngestRoute,
 		"--agent-uid", identity.AgentUID, "--pane-uid", identity.PaneUID, "--pane", identity.RuntimeID,
-		"--generation", identity.Generation, "--thread", identity.ThreadID}
+		"--generation", identity.Generation, "--thread", identity.ThreadID,
+		"--state-domain", target.NativeRoute.Endpoint.StateDomainID,
+		"--endpoint-generation", target.NativeRoute.Endpoint.EndpointGenerationID,
+		"--endpoint-state", string(target.NativeRoute.State),
+		"--tui-executable", target.NativeRoute.TUIExecutable}
+	if target.NativeRoute.Default {
+		args = append(args, "--endpoint-default", "true")
+	} else {
+		args = append(args, "--endpoint-socket", target.NativeRoute.SocketPath)
+	}
 	if target.Route.Flag() == "-L" {
 		args = append(args, "--tmux-socket-name", target.Route.Value)
 	} else if target.Route.Flag() == "-S" {
@@ -1418,17 +1516,7 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	defer stop()
 	runner := explicitTmuxRunner{runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand}, target: target.Route}
 	sink := aiCodexLifecycleSink{command: c, runner: runner}
-	// The endpoint broker is the whole native producer for this activation
-	// generation. The per-Agent app-server proxy observer that used to share
-	// this seam is retired: it opened one upstream connection per Agent, owned
-	// a second private control endpoint alongside the broker's, and gave up
-	// after a fixed reconnect budget.
-	//
-	// A broker session that cannot be prepared is therefore not a reason to
-	// open a second lane. It converges this activation onto the declared hook
-	// fallback with the typed reason and exits, which is the same answer the
-	// observer publishes for every other unavailable endpoint.
-	session, sessionErr := newCodexBrokerObserverSession(target.Identity, "", nil)
+	session, sessionErr := newCodexBrokerObserverSessionForRoute(target.Identity, "", nil, target.NativeRoute)
 	if sessionErr != nil {
 		result := convergeCodexObserverStartupFallback(sink, target.Identity, codexNativeReason(sessionErr))
 		if report := codexObserverStartupReporter(); report != nil {
@@ -1438,16 +1526,18 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	}
 	defer func() { _ = session.Close() }()
 	observer := codexNativeObserver{
-		identity:       target.Identity,
-		requireControl: true,
-		sink:           sink,
-		reportStartup:  codexObserverStartupReporter(),
-		open:           session.Open,
-		openTimeout:    codexBrokerObserverOpenTimeout,
+		identity:        target.Identity,
+		endpoint:        target.NativeRoute.Endpoint,
+		generationState: target.NativeRoute.State,
+		requireControl:  true,
+		sink:            sink,
+		reportStartup:   codexObserverStartupReporter(),
+		open:            session.Open,
+		openTimeout:     codexBrokerObserverOpenTimeout,
 	}
 	if paths, err := config.DefaultPathsFromEnv(); err == nil {
 		observer.startControl = func(epoch *codexControlEpoch) (*codexControlServer, error) {
-			return startCodexControlServer(paths.StateDir, epoch)
+			return startCodexControlServer(paths.StateDir, target.NativeRoute.Endpoint, epoch)
 		}
 	}
 	return observer.Run(ctx)
@@ -1471,6 +1561,18 @@ func parseCodexNativeLifecycleTarget(args []string) (codexLifecycleObserverTarge
 			target.Identity.Generation = value
 		case "--thread":
 			target.Identity.ThreadID = value
+		case "--state-domain":
+			target.NativeRoute.Endpoint.StateDomainID = value
+		case "--endpoint-generation":
+			target.NativeRoute.Endpoint.EndpointGenerationID = value
+		case "--endpoint-state":
+			target.NativeRoute.State = codexgeneration.GenerationState(value)
+		case "--endpoint-socket":
+			target.NativeRoute.SocketPath = value
+		case "--endpoint-default":
+			target.NativeRoute.Default = value == "true"
+		case "--tui-executable":
+			target.NativeRoute.TUIExecutable = value
 		case "--tmux-socket-name":
 			if target.Route.Flag() != "" {
 				return target, errors.New("codex app-server watcher accepts exactly one tmux route")
@@ -1504,8 +1606,8 @@ func parseCodexNativeLifecycleTarget(args []string) (codexLifecycleObserverTarge
 // outside it is treated as undeclared, so a stale or forged tmux option cannot
 // silence an unexplained native fallback.
 var codexNativeDeclaredReasons = []string{
-	codexNativeDeclaredEmptyPrompt,
 	codexNativeDeclaredInteractiveOnly,
+	codexNativeDeclaredRolloutCatalogResume,
 }
 
 // codexNativeDeclaredReason normalizes one declared reason, returning "" when

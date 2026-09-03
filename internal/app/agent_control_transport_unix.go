@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
 const (
@@ -32,11 +34,11 @@ type codexControlServer struct {
 	done     chan struct{}
 }
 
-func startCodexControlServer(stateDir string, epoch *codexControlEpoch) (*codexControlServer, error) {
-	if epoch == nil || !epoch.identity.valid() || epoch.epoch == "" {
+func startCodexControlServer(stateDir string, endpoint coremetadata.CodexEndpointRef, epoch *codexControlEpoch) (*codexControlServer, error) {
+	if epoch == nil || !endpoint.Valid() || !epoch.identity.valid() || epoch.epoch == "" {
 		return nil, errors.New("exact Agent control server has no active identity or epoch")
 	}
-	path, err := agentControlSocketPath(stateDir, epoch.identity)
+	path, err := agentControlSocketPath(stateDir, endpoint, epoch.identity)
 	if err != nil {
 		return nil, err
 	}
@@ -122,8 +124,8 @@ func (s *codexControlServer) Close() error {
 	return err
 }
 
-func callCodexControl(ctx context.Context, stateDir string, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
-	path, err := agentControlSocketPath(stateDir, identity)
+func callCodexControl(ctx context.Context, stateDir string, endpoint coremetadata.CodexEndpointRef, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
+	path, err := agentControlSocketPath(stateDir, endpoint, identity)
 	if err != nil {
 		return agentControlResponse{}, err
 	}
@@ -169,12 +171,17 @@ func hasTrailingJSON(decoder *json.Decoder) bool {
 	return !errors.Is(err, io.EOF)
 }
 
-func agentControlSocketPath(stateDir string, identity codexLifecycleIdentity) (string, error) {
+func agentControlSocketPath(stateDir string, endpoint coremetadata.CodexEndpointRef, identity codexLifecycleIdentity) (string, error) {
 	stateDir = filepath.Clean(stateDir)
-	if stateDir == "." || !filepath.IsAbs(stateDir) {
-		return "", errors.New("exact Agent control requires an absolute state directory")
+	if stateDir == "." || !filepath.IsAbs(stateDir) || !endpoint.Valid() || !identity.valid() {
+		return "", errors.New("exact Agent control requires an absolute state directory and durable endpoint/thread identity")
 	}
-	sum := sha256.Sum256([]byte(identity.AgentUID + "\x00" + identity.PaneUID + "\x00" + identity.Generation))
+	// The local control address is stable for one durable endpoint/thread and
+	// deliberately excludes PaneActivation.Generation. That activation epoch
+	// fences writes inside the request, but it is not app-server route identity
+	// and cannot retarget an Agent when admission-current changes.
+	sum := sha256.Sum256([]byte(endpoint.StateDomainID + "\x00" + endpoint.EndpointGenerationID + "\x00" +
+		identity.AgentUID + "\x00" + identity.PaneUID + "\x00" + identity.ThreadID))
 	name := "control-" + hex.EncodeToString(sum[:12]) + ".sock"
 	dir := filepath.Join(stateDir, agentControlDirName)
 	path := filepath.Join(dir, name)

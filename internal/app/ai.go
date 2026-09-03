@@ -108,6 +108,7 @@ type aiCommand struct {
 	operationalDiagnostics        *diagnostics.AIRecorder
 	openCodexCapabilitySession    func(context.Context) (codexCapabilitySession, error)
 	openCodexCatalog              aisessions.OpenCodexCatalog
+	codexNative                   codexNativeThreadController
 	discoverResumeSummaryProvider func(context.Context, string, string, aisessions.ResumeSummaryOptions, int) (aisessions.ResumeSummaryDiscovery, error)
 	readResumeDetail              func(context.Context, aisessions.ResumeDetailRef, aisessions.OpenCodexCatalog) (aisessions.ResumeDetail, error)
 	// readResumePreview is retained as a narrow test seam for fixtures that
@@ -1214,8 +1215,13 @@ func (c *aiCommand) createResumedAgentPane(producer canonicalCreateProducer, mod
 }
 
 func (c *aiCommand) createResumedAgentPaneWithSource(producer canonicalCreateProducer, mode, direction, conversationID, source string) error {
+	return c.createResumedAgentPaneWithNativeRoute(producer, mode, direction, conversationID, source, coremetadata.CodexEndpointRef{}, "")
+}
+
+func (c *aiCommand) createResumedAgentPaneWithNativeRoute(producer canonicalCreateProducer, mode, direction, conversationID, source string, endpoint coremetadata.CodexEndpointRef, state coremetadata.CodexGenerationState) error {
 	return c.createPaneFromIntent(agentPaneIntent{
 		producer: producer, provider: mode, placement: direction, conversationID: conversationID, resumeSource: source,
+		resumeEndpoint: endpoint, resumeGenerationState: state,
 	})
 }
 
@@ -1378,6 +1384,9 @@ type aiResumeSelection struct {
 	resumeID  string
 	source    string
 	updatedAt time.Time
+	endpoint  coremetadata.CodexEndpointRef
+	state     coremetadata.CodexGenerationState
+	rowPinned bool
 }
 
 // Resume picker row column schema.
@@ -1441,6 +1450,8 @@ func aiResumeSessionMetaFromSummary(summary aisessions.ResumeSummary, baseCWD st
 		Agent: summary.Provider, ResumeID: summary.ResumeID, Title: summary.Label,
 		LastModified: summary.LastModified, UpdatedAt: summary.UpdatedAt,
 		Context: aisessions.SessionContext{CWD: cwd, Branch: summary.Branch}, Source: summary.Source,
+		StateDomainID: summary.StateDomainID, EndpointGenerationID: summary.EndpointGenerationID,
+		GenerationState: summary.GenerationState,
 	}
 }
 
@@ -1462,15 +1473,30 @@ func aiResumeSessionRowWithResolvedLabel(session aisessions.SessionMeta, boundLa
 	if relCWD != "" {
 		parts = append(parts, ansiDim(aiResumeFitCell(relCWD, aiResumeCWDCellWidth)))
 	}
-	parts = append(parts, conversation)
+	routeStatus := aiResumeGenerationStatus(session)
+	parts = append(parts, strings.TrimSpace(strings.Join([]string{conversation, routeStatus}, " ")))
 
 	return intpickercompat.Entry{
 		Label: strings.Join(parts, " "),
-		Value: aiResumePickerValue(agent, resumeID),
+		Value: aiResumePickerValueForSession(session),
 		SearchKey: strings.TrimSpace(strings.Join([]string{
 			agent, conversation, strings.TrimSpace(boundLabel.DisplayName), aiResumeProviderOwnedTitle(session),
-			strings.TrimSpace(boundLabel.Topic), strings.TrimSpace(boundLabel.Name), resumeID, branch, relCWD, session.Source,
+			strings.TrimSpace(boundLabel.Topic), strings.TrimSpace(boundLabel.Name), resumeID, branch, relCWD, session.Source, routeStatus,
 		}, " ")),
+	}
+}
+
+func aiResumeGenerationStatus(session aisessions.SessionMeta) string {
+	if normalizeAIMode(session.Agent) != aiModeCodex || strings.TrimSpace(session.Source) != aisessions.SourceCodexAppServer {
+		return ""
+	}
+	switch coremetadata.CodexGenerationState(strings.TrimSpace(session.GenerationState)) {
+	case coremetadata.CodexGenerationCurrent:
+		return ""
+	case coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending:
+		return "[handover-required]"
+	default:
+		return "[generation-unavailable]"
 	}
 }
 
@@ -1755,15 +1781,70 @@ func aiResumePickerValue(agent, resumeID string) string {
 	return "resume\t" + strings.TrimSpace(agent) + "\t" + strings.TrimSpace(resumeID)
 }
 
+func aiResumePickerValueForSession(session aisessions.SessionMeta) string {
+	if normalizeAIMode(session.Agent) != aiModeCodex {
+		return aiResumePickerValue(session.Agent, session.ResumeID)
+	}
+	switch strings.TrimSpace(session.Source) {
+	case aisessions.SourceCodexAppServer, aisessions.SourceCodexRollout:
+	default:
+		// Compatibility-only rows from third-party/legacy discovery keep the
+		// historical value. They still cannot enter a Codex create lane unless
+		// enrichment supplies one of the two recognized sources below.
+		return aiResumePickerValue(session.Agent, session.ResumeID)
+	}
+	return strings.Join([]string{
+		"resume", strings.TrimSpace(session.Agent), strings.TrimSpace(session.ResumeID), strings.TrimSpace(session.Source),
+		strings.TrimSpace(session.StateDomainID), strings.TrimSpace(session.EndpointGenerationID), strings.TrimSpace(session.GenerationState),
+	}, "\t")
+}
+
 func parseAIResumePickerValue(value string) (aiResumeSelection, bool) {
 	parts := strings.Split(value, "\t")
-	if len(parts) != 3 || parts[0] != "resume" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
+	if (len(parts) != 3 && len(parts) != 7) || parts[0] != "resume" || strings.TrimSpace(parts[1]) == "" || strings.TrimSpace(parts[2]) == "" {
 		return aiResumeSelection{}, false
 	}
-	return aiResumeSelection{agent: strings.TrimSpace(parts[1]), resumeID: strings.TrimSpace(parts[2])}, true
+	selection := aiResumeSelection{agent: strings.TrimSpace(parts[1]), resumeID: strings.TrimSpace(parts[2])}
+	if len(parts) == 3 {
+		return selection, true
+	}
+	selection.source = strings.TrimSpace(parts[3])
+	selection.endpoint = coremetadata.CodexEndpointRef{StateDomainID: strings.TrimSpace(parts[4]), EndpointGenerationID: strings.TrimSpace(parts[5])}
+	selection.state = coremetadata.CodexGenerationState(strings.TrimSpace(parts[6]))
+	selection.rowPinned = true
+	if normalizeAIMode(selection.agent) == aiModeCodex {
+		switch selection.source {
+		case aisessions.SourceCodexAppServer:
+			if !selection.endpoint.Valid() || !validAIResumeGenerationState(selection.state) {
+				return aiResumeSelection{}, false
+			}
+		case aisessions.SourceCodexRollout:
+			if selection.endpoint.StateDomainID != "" || selection.endpoint.EndpointGenerationID != "" || selection.state != "" {
+				return aiResumeSelection{}, false
+			}
+		default:
+			return aiResumeSelection{}, false
+		}
+	}
+	return selection, true
+}
+
+func validAIResumeGenerationState(state coremetadata.CodexGenerationState) bool {
+	switch state {
+	case coremetadata.CodexGenerationPreparing, coremetadata.CodexGenerationCurrent,
+		coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending,
+		coremetadata.CodexGenerationRetired, coremetadata.CodexGenerationRecovering,
+		coremetadata.CodexGenerationBlocked:
+		return true
+	default:
+		return false
+	}
 }
 
 func enrichAIResumeSelection(selection aiResumeSelection, sessions []aisessions.SessionMeta) aiResumeSelection {
+	if selection.rowPinned {
+		return selection
+	}
 	agent := normalizeAIMode(selection.agent)
 	resumeID := strings.TrimSpace(selection.resumeID)
 	for _, session := range sessions {
@@ -1772,6 +1853,11 @@ func enrichAIResumeSelection(selection aiResumeSelection, sessions []aisessions.
 		}
 		selection.source = strings.TrimSpace(session.Source)
 		selection.updatedAt = session.LastModified
+		selection.endpoint = coremetadata.CodexEndpointRef{
+			StateDomainID:        strings.TrimSpace(session.StateDomainID),
+			EndpointGenerationID: strings.TrimSpace(session.EndpointGenerationID),
+		}
+		selection.state = coremetadata.CodexGenerationState(strings.TrimSpace(session.GenerationState))
 		return selection
 	}
 	return selection
@@ -1808,7 +1894,7 @@ func (c *aiCommand) runSelectedResumeSession(selection aiResumeSelection, direct
 	if strings.TrimSpace(selection.source) == "" {
 		return c.createResumedAgentPane(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1])
 	}
-	return c.createResumedAgentPaneWithSource(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1], selection.source)
+	return c.createResumedAgentPaneWithNativeRoute(canonicalProducerResumePicker, mode, direction, resumeArgv[len(resumeArgv)-1], selection.source, selection.endpoint, selection.state)
 }
 
 func resumeArgsForAgent(mode, resumeID string) ([]string, error) {
@@ -2336,21 +2422,22 @@ func (c *aiCommand) BindManagedAgentPaneOnRoute(
 // PlanNativeCodexResume builds the TUI attachment for a thread already created
 // or resumed through the local app-server. It carries no prompt: turn/start is
 // the sole initial-prompt writer on the native lane.
-func (c *aiCommand) PlanNativeCodexResume(workspace coremetadata.AgentWorkspace, threadID string) (string, []string, error) {
+func (c *aiCommand) PlanNativeCodexResume(route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (string, []string, error) {
 	threadID = strings.TrimSpace(threadID)
-	if threadID == "" {
-		return "", nil, errors.New("native Codex thread is empty")
+	if threadID == "" || !route.valid() {
+		return "", nil, errors.New("native Codex thread or generation route is incomplete")
 	}
-	agentBin := c.findAgentBinary(aiModeCodex)
-	if agentBin == "" {
-		return "", nil, errors.New(c.missingAgentRunnerMessage(aiModeCodex))
-	}
+	agentBin := filepath.Clean(route.TUIExecutable)
 	workspaceArgs, err := providerLaunchArgs(aiModeCodex, workspace, nil)
 	if err != nil {
 		return "", nil, err
 	}
 	execArgv := append([]string{agentBin}, workspaceArgs...)
-	execArgv = append(execArgv, "resume", "--remote", "unix://", threadID)
+	remote := "unix://"
+	if !route.Default {
+		remote += filepath.Clean(route.SocketPath)
+	}
+	execArgv = append(execArgv, "resume", "--remote", remote, threadID)
 	plan, err := c.planAgentLaunch(aiModeCodex, workspace.CWD, nil, execArgv, filepath.Dir(agentBin))
 	if err != nil {
 		return "", nil, err

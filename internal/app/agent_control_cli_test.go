@@ -103,6 +103,10 @@ func phase6CLIIdentity() codexLifecycleIdentity {
 	return codexLifecycleIdentity{AgentUID: "agt-alpha-codex", PaneUID: "pan-alpha-codex", RuntimeID: "%7", Generation: "generation-1", ThreadID: "thread-1"}
 }
 
+func phase6CLIEndpoint() coremetadata.CodexEndpointRef {
+	return coremetadata.CodexEndpointRef{StateDomainID: "control-test-domain", EndpointGenerationID: "control-test-generation"}
+}
+
 func (p *scriptedAgentControlPicker) Run(options intpicker.Options) (intpicker.Result, error) {
 	p.rendered = append(p.rendered, options)
 	if len(p.answers) == 0 {
@@ -120,10 +124,19 @@ func exactControlCLICommand(t *testing.T) (*agentCommand, *fakeResourceStore, *s
 	agent, _ := store.registry.Agent("agt-alpha-codex")
 	pane.Status.Activation = coremetadata.PaneActivation{Generation: "generation-1", RuntimeID: "%7", AgentUID: agent.Metadata.UID}
 	agent.Status.Activation = coremetadata.AgentActivation{State: coremetadata.ActivationPending}
+	endpoint := phase6CLIEndpoint()
+	if err := store.mutator().StageCodexEndpoint(&store.registry, agent.Metadata.UID, endpoint); err != nil {
+		t.Fatalf("stage endpoint fixture: %v", err)
+	}
 	if changed, err := store.mutator().BindCodexActivation(&store.registry, coremetadata.CodexActivationObservation{
 		AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, Generation: "generation-1", ThreadID: "thread-1", TurnID: "turn-1",
+		Endpoint: endpoint,
 	}); err != nil || !changed {
 		t.Fatalf("bind fixture: changed=%t err=%v", changed, err)
+	}
+	pane.Status.Activation.Codex.Authority = &coremetadata.CodexAuthorityRef{
+		StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID,
+		BrokerRuntimeID: "control-test-broker", ConnectionEpoch: 1, BindingEpoch: 1,
 	}
 	cmd, _, _ := newTestAgentCommand(t, store)
 	binding := &staticAgentControlBinding{observed: true, live: agentControlLive{RuntimeID: "%7", PaneUID: pane.Metadata.UID, ThreadID: "thread-1", Authority: codexAuthorityControlPlane, Epoch: "epoch-1"}}
@@ -146,9 +159,9 @@ func TestAgentControlCLIExactTurnDispatchAndTextFidelity(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			cmd, _, _ := exactControlCLICommand(t)
 			var calls []agentControlRequest
-			cmd.controlCall = func(_ context.Context, stateDir string, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
-				if stateDir != "/tmp/projmux-phase6-cli" || identity != phase6CLIIdentity() {
-					t.Fatalf("transport binding state=%q identity=%+v", stateDir, identity)
+			cmd.controlCall = func(_ context.Context, stateDir string, endpoint coremetadata.CodexEndpointRef, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
+				if stateDir != "/tmp/projmux-phase6-cli" || !endpoint.Same(phase6CLIEndpoint()) || identity != phase6CLIIdentity() {
+					t.Fatalf("transport binding state=%q endpoint=%+v identity=%+v", stateDir, endpoint, identity)
 				}
 				calls = append(calls, request)
 				return agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1"}, nil
@@ -191,9 +204,9 @@ func TestAgentControlCLIPublicTurnsDispatchFromBothSupportedTmuxFrames(t *testin
 				cmd.controlRunner = tmux
 				cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) { return runtimeMutationRoute{target: target}, nil }
 				var calls []agentControlRequest
-				cmd.controlCall = func(_ context.Context, stateDir string, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
-					if stateDir != "/tmp/projmux-phase6-cli" || identity != phase6CLIIdentity() || request.Identity != identity || request.Epoch != "epoch-1" {
-						t.Fatalf("dispatch state=%q identity=%+v request=%+v", stateDir, identity, request)
+				cmd.controlCall = func(_ context.Context, stateDir string, endpoint coremetadata.CodexEndpointRef, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
+					if stateDir != "/tmp/projmux-phase6-cli" || !endpoint.Same(phase6CLIEndpoint()) || identity != phase6CLIIdentity() || request.Identity != identity || request.Epoch != "epoch-1" {
+						t.Fatalf("dispatch state=%q endpoint=%+v identity=%+v request=%+v", stateDir, endpoint, identity, request)
 					}
 					calls = append(calls, request)
 					return agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1"}, nil
@@ -225,7 +238,7 @@ func TestAgentControlCLIMalformedTmuxFramesCallNoAppServer(t *testing.T) {
 			cmd.controlRunner = &exactControlRouteRunner{target: target, frame: []byte(test.frame)}
 			cmd.controlRoute = func(context.Context) (runtimeMutationRoute, error) { return runtimeMutationRoute{target: target}, nil }
 			calls := 0
-			cmd.controlCall = func(context.Context, string, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+			cmd.controlCall = func(context.Context, string, coremetadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
 				calls++
 				return agentControlResponse{}, errors.New("must not be called")
 			}
@@ -258,9 +271,9 @@ func TestAgentApprovalCLIReviewNoopAndFocusOnlyFlows(t *testing.T) {
 			focus := &recordingArgv{}
 			cmd.focus = focus
 			var calls []agentControlRequest
-			cmd.controlCall = func(_ context.Context, _ string, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
-				if identity != phase6CLIIdentity() || request.Identity != identity || request.Epoch != "epoch-1" {
-					t.Fatalf("approval binding identity=%+v request=%+v", identity, request)
+			cmd.controlCall = func(_ context.Context, _ string, endpoint coremetadata.CodexEndpointRef, identity codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
+				if !endpoint.Same(phase6CLIEndpoint()) || identity != phase6CLIIdentity() || request.Identity != identity || request.Epoch != "epoch-1" {
+					t.Fatalf("approval binding endpoint=%+v identity=%+v request=%+v", endpoint, identity, request)
 				}
 				calls = append(calls, request)
 				if request.Operation == agentControlOpApprovals {
@@ -301,7 +314,7 @@ func TestAgentControlCLIStaleBindingCallsNoControl(t *testing.T) {
 	cmd, _, binding := exactControlCLICommand(t)
 	binding.live.Epoch = ""
 	calls := 0
-	cmd.controlCall = func(context.Context, string, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+	cmd.controlCall = func(context.Context, string, coremetadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
 		calls++
 		return agentControlResponse{}, errors.New("must not be called")
 	}
@@ -357,7 +370,7 @@ func TestAgentControlCLIReconnectGapAndIdentityDriftRefuseEveryPublicWrite(t *te
 					TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
 				}, func(codexLifecycleIdentity) bool { return true })
 				calls := 0
-				cmd.controlCall = func(_ context.Context, _ string, _ codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
+				cmd.controlCall = func(_ context.Context, _ string, _ coremetadata.CodexEndpointRef, _ codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
 					calls++
 					return epoch.Handle(context.Background(), request), nil
 				}
@@ -372,6 +385,15 @@ func TestAgentControlCLIReconnectGapAndIdentityDriftRefuseEveryPublicWrite(t *te
 }
 
 func TestAgentControlCLIRegistryAndLiveIdentityMismatchIsTypedAndCallsNoControl(t *testing.T) {
+	actions := []struct {
+		name string
+		args []string
+	}{
+		{name: "message", args: []string{"turn", "start", "uid:agt-alpha-codex", "--", "new message"}},
+		{name: "reply", args: []string{"turn", "steer", "uid:agt-alpha-codex", "--", "same-thread reply"}},
+		{name: "interrupt", args: []string{"turn", "interrupt", "uid:agt-alpha-codex"}},
+		{name: "approval", args: []string{"approval", "review", "uid:agt-alpha-codex", "--request", "7"}},
+	}
 	for _, test := range []struct {
 		name   string
 		mutate func(*fakeResourceStore, *staticAgentControlBinding)
@@ -388,22 +410,36 @@ func TestAgentControlCLIRegistryAndLiveIdentityMismatchIsTypedAndCallsNoControl(
 			pane, _ := store.registry.Pane("pan-alpha-codex")
 			pane.Status.Activation.AgentUID = "agt-other"
 		}},
+		{name: "durable endpoint missing", mutate: func(store *fakeResourceStore, _ *staticAgentControlBinding) {
+			agent, _ := store.registry.Agent("agt-alpha-codex")
+			agent.Status.SessionRef.Codex.Endpoint = nil
+		}},
+		{name: "durable thread differs from activation", mutate: func(store *fakeResourceStore, _ *staticAgentControlBinding) {
+			agent, _ := store.registry.Agent("agt-alpha-codex")
+			agent.Status.SessionRef.Codex.ThreadID = "thread-durable-other"
+		}},
+		{name: "activation authority is a foreign generation", mutate: func(store *fakeResourceStore, _ *staticAgentControlBinding) {
+			pane, _ := store.registry.Pane("pan-alpha-codex")
+			pane.Status.Activation.Codex.Authority.EndpointGenerationID = "control-test-foreign-generation"
+		}},
 		{name: "epoch empty", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) { binding.live.Epoch = "" }},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			cmd, store, binding := exactControlCLICommand(t)
-			test.mutate(store, binding)
-			calls := 0
-			cmd.controlCall = func(context.Context, string, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
-				calls++
-				return agentControlResponse{}, errors.New("must not be called")
-			}
-			_, _, err := runRoute(t, cmd, "turn", "interrupt", "uid:agt-alpha-codex")
-			var bindingErr *exactAgentControlBindingError
-			if err == nil || !errors.As(err, &bindingErr) || calls != 0 {
-				t.Fatalf("error=%v typed=%#v control calls=%d", err, bindingErr, calls)
-			}
-		})
+		for _, action := range actions {
+			t.Run(test.name+"/"+action.name, func(t *testing.T) {
+				cmd, store, binding := exactControlCLICommand(t)
+				test.mutate(store, binding)
+				calls := 0
+				cmd.controlCall = func(context.Context, string, coremetadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+					calls++
+					return agentControlResponse{}, errors.New("must not be called")
+				}
+				_, _, err := runRoute(t, cmd, action.args...)
+				var bindingErr *exactAgentControlBindingError
+				if err == nil || !errors.As(err, &bindingErr) || calls != 0 {
+					t.Fatalf("error=%v typed=%#v control calls=%d", err, bindingErr, calls)
+				}
+			})
+		}
 	}
 }
 
@@ -427,7 +463,7 @@ func TestAgentControlCLIReplacedGenerationOrEpochWritesNoAppServerControl(t *tes
 				TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
 			}, func(codexLifecycleIdentity) bool { return true })
 			var calls []agentControlRequest
-			cmd.controlCall = func(_ context.Context, _ string, _ codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
+			cmd.controlCall = func(_ context.Context, _ string, _ coremetadata.CodexEndpointRef, _ codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
 				calls = append(calls, request)
 				return epoch.Handle(context.Background(), request), nil
 			}

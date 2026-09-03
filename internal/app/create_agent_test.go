@@ -53,7 +53,7 @@ func TestInitialTaskUnconfirmedIsDiagnosticAndNeverPersistsPrompt(t *testing.T) 
 	prompt := "secret-task-token-that-must-not-persist"
 
 	stdout, _, err := runRoute(t, create,
-		"agent", "--provider", "codex", "--project", "alpha", "--window", "review", "--", prompt)
+		"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "review", "--", prompt)
 	if err == nil {
 		t.Fatal("unconfirmed initial task returned ordinary success")
 	}
@@ -110,7 +110,7 @@ func TestInitialTaskActivationErrorPersistsOnlyBoundedDiagnostic(t *testing.T) {
 	launcher.activationErr = errors.New("provider leaked secret-token-from-stderr")
 
 	_, _, err := runRoute(t, create,
-		"agent", "--provider", "codex", "--project", "alpha", "--window", "review", "--", "secret prompt")
+		"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "review", "--", "secret prompt")
 	if err == nil {
 		t.Fatal("failed activation returned ordinary success")
 	}
@@ -310,7 +310,7 @@ func TestExactThreeUIDCreateAgentRouteIgnoresUnrelatedAmbientPane(t *testing.T) 
 	})
 
 	stdout, stderr, err := runRoute(t, command,
-		"agent", "--provider", "codex",
+		"agent", "--provider", "codex", "--interactive-only",
 		"--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "--pane", "uid:pan-alpha-zsh",
 		"-o", "pane-id")
 	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" || stdout != strings.TrimSpace(stdout)+"\n" {
@@ -345,7 +345,7 @@ func TestExactProjectCreateWindowUsesAppRouteDespiteStaleInheritedPane(t *testin
 	})
 
 	stdout, stderr, err := runRoute(t, command,
-		"agent", "--provider", "codex", "--project", "uid:prj-alpha",
+		"agent", "--provider", "codex", "--interactive-only", "--project", "uid:prj-alpha",
 		"--window", "fresh", "--create-window", "-o", "pane-id")
 	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" {
 		t.Fatalf("exact Project create-window = stdout=%q stderr=%q err=%v", stdout, stderr, err)
@@ -391,7 +391,7 @@ func TestExactProjectCreateWindowIsByteEquivalentAcrossAmbientPanes(t *testing.T
 			}
 		})
 		stdout, stderr, err := runRoute(t, command,
-			"agent", "--provider", "codex", "--project", "uid:prj-alpha",
+			"agent", "--provider", "codex", "--interactive-only", "--project", "uid:prj-alpha",
 			"--window", "fresh", "--create-window", "-o", "pane-id")
 		if err != nil || stderr != "" {
 			t.Fatalf("ambient Pane %q: stdout=%q stderr=%q err=%v", ambient, stdout, stderr, err)
@@ -522,7 +522,7 @@ func TestExactProjectCreateWindowRejectsInheritedAppDriftBeforeWrite(t *testing.
 			})
 
 			stdout, stderr, err := runRoute(t, command,
-				"agent", "--provider", "codex", "--project", "uid:prj-alpha",
+				"agent", "--provider", "codex", "--interactive-only", "--project", "uid:prj-alpha",
 				"--window", "fresh", "--create-window", "-o", "pane-id")
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("drifted explicit create = stdout=%q stderr=%q err=%v, want %q", stdout, stderr, err, test.want)
@@ -552,7 +552,7 @@ func TestOutsideTmuxExactThreeUIDCreateAgentUsesOnlyQuietAppRoute(t *testing.T) 
 	route := bindTestCreateRuntimeRoute(command, tmux, func(string) string { return "" })
 
 	stdout, stderr, err := runRoute(t, command,
-		"agent", "--provider", "codex",
+		"agent", "--provider", "codex", "--interactive-only",
 		"--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "--pane", "uid:pan-alpha-zsh",
 		"-o", "pane-id")
 	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" || stdout != strings.TrimSpace(stdout)+"\n" {
@@ -578,7 +578,7 @@ func TestOutsideTmuxExactThreeUIDCreateRoutesProductionAIPresentationWrites(t *t
 	bindTestCreateRuntimeRoute(command, tmux, func(string) string { return "" })
 
 	stdout, stderr, err := runRoute(t, command,
-		"agent", "--provider", "codex",
+		"agent", "--provider", "codex", "--interactive-only",
 		"--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "--pane", "uid:pan-alpha-zsh",
 		"-o", "pane-id")
 	if err != nil || stderr != "" || exactTmuxHandle(strings.TrimSpace(stdout), "%") == "" || stdout != strings.TrimSpace(stdout)+"\n" {
@@ -627,7 +627,7 @@ func TestOutsideTmuxProductionAIPresentationFailureIsVisibleAndRollsBack(t *test
 	bindTestCreateRuntimeRoute(command, tmux, func(string) string { return "" })
 
 	stdout, stderr, err := runRoute(t, command,
-		"agent", "--provider", "codex",
+		"agent", "--provider", "codex", "--interactive-only",
 		"--project", "uid:prj-alpha", "--window", "uid:win-alpha-main", "--pane", "uid:pan-alpha-zsh",
 		"-o", "pane-id")
 	if err == nil || stdout != "" || stderr != "" || !strings.Contains(err.Error(), "permission denied writing exact app socket") {
@@ -832,10 +832,14 @@ func TestTheShortcutAndTheCanonicalSpellingProduceIdenticalNaming(t *testing.T) 
 	for _, provider := range cli.ProviderCreateShortcuts() {
 		t.Run(provider, func(t *testing.T) {
 			t.Parallel()
-			canonicalOut, canonicalState := render(t,
-				"agent", "--provider", provider, "--project", "alpha", "--window", "review")
-			shortcutOut, shortcutState := render(t,
-				provider, "--project", "alpha", "--window", "review")
+			canonicalArgs := []string{"agent", "--provider", provider, "--project", "alpha", "--window", "review"}
+			shortcutArgs := []string{provider, "--project", "alpha", "--window", "review"}
+			if provider == aiModeCodex {
+				canonicalArgs = append(canonicalArgs, "--interactive-only")
+				shortcutArgs = append(shortcutArgs, "--interactive-only")
+			}
+			canonicalOut, canonicalState := render(t, canonicalArgs...)
+			shortcutOut, shortcutState := render(t, shortcutArgs...)
 
 			if canonicalOut != shortcutOut {
 				t.Fatalf("create %s stdout = %q, canonical = %q", provider, shortcutOut, canonicalOut)
@@ -877,7 +881,7 @@ func TestCreateAgentNeverReusesAnExistingAgent(t *testing.T) {
 	var uids []string
 	var names []string
 	for i := range 2 {
-		stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "-o", "uid")
+		stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main", "-o", "uid")
 		if err != nil {
 			t.Fatalf("create %d error = %v", i, err)
 		}
@@ -940,7 +944,7 @@ func TestCreateAgentWindowEnsureIsOptIn(t *testing.T) {
 		tmux := newFakeTmux()
 		create, launcher := newTestAgentCreateCommand(t, store, tmux)
 
-		stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "fresh")
+		stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "fresh")
 		if err == nil {
 			t.Fatal("a missing Window silently created itself")
 		}
@@ -991,7 +995,7 @@ func TestCreateAgentWindowEnsureIsOptIn(t *testing.T) {
 		store := newFakeResourceStore(t)
 		create, _ := newTestAgentCreateCommand(t, store, newFakeTmux())
 		_, _, err := runRoute(t, create,
-			"agent", "--provider", "codex", "--project", "alpha", "--selector", "role=shell", "--create-window")
+			"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--selector", "role=shell", "--create-window")
 		if err == nil || !IsUsageError(err) {
 			t.Fatalf("--create-window with only a label selector = %v, want a usage error", err)
 		}
@@ -1014,7 +1018,7 @@ func TestAnExplicitAgentNameIsWindowScoped(t *testing.T) {
 		create, _ := newTestAgentCreateCommand(t, store, tmux)
 
 		stdout, _, err := runRoute(t, create,
-			"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--window", "review",
+			"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main", "--window", "review",
 			"--name", "reviewer", "-o", "name")
 		if err != nil {
 			t.Fatalf("fan-out with one explicit --name error = %v", err)
@@ -1036,7 +1040,7 @@ func TestAnExplicitAgentNameIsWindowScoped(t *testing.T) {
 
 		// `codex` already names an Agent inside alpha's `main` Window.
 		stdout, _, err := runRoute(t, create,
-			"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--name", "codex")
+			"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main", "--name", "codex")
 		if err == nil {
 			t.Fatal("an explicit name collision succeeded")
 		}
@@ -1090,9 +1094,9 @@ func TestTopicAndPromptNeverSeedAnAgentOrPaneName(t *testing.T) {
 		return strings.Join(rows, " "), launcher, store
 	}
 
-	bare, _, _ := names(t, "agent", "--provider", "codex", "--project", "alpha", "--window", "review")
+	bare, _, _ := names(t, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "review")
 	loaded, launcher, store := names(t,
-		"agent", "--provider", "codex", "--project", "alpha", "--window", "review",
+		"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "review",
 		"--", "--topic", "release triage", "안녕")
 
 	if bare != loaded {
@@ -1221,7 +1225,7 @@ func TestCreateAgentRendersEveryAdvertisedProjection(t *testing.T) {
 			tmux := newFakeTmux()
 			create, _ := newTestAgentCreateCommand(t, store, tmux)
 
-			args := []string{"agent", "--provider", "codex", "--project", "alpha", "--window", "review"}
+			args := []string{"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "review"}
 			if test.mode != "" {
 				args = append(args, "-o", test.mode)
 			}
@@ -1248,7 +1252,7 @@ func TestCreateAgentFansOutOverEveryWindowAnchorExactlyOnce(t *testing.T) {
 
 	// No --window fans out over every Window of the Project, the same meaning
 	// the sibling `create pane --project` route gives the omitted flag.
-	stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "-o", "pane-id")
+	stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "-o", "pane-id")
 	if err != nil {
 		t.Fatalf("fan-out error = %v", err)
 	}
@@ -1291,9 +1295,9 @@ func TestCreateAgentAndProviderShortcutsShareScopedEqualization(t *testing.T) {
 		args     []string
 		wantAxis string
 	}{
-		{name: "canonical right", args: []string{"agent", "--provider", "codex", "--project", "beta", "--window", "main", "--placement", "right"}, wantAxis: "-x"},
-		{name: "canonical down", args: []string{"agent", "--provider", "codex", "--project", "beta", "--window", "main", "--placement", "down"}, wantAxis: "-y"},
-		{name: "codex shortcut", args: []string{"codex", "--project", "beta", "--window", "main"}, wantAxis: "-x"},
+		{name: "canonical right", args: []string{"agent", "--provider", "codex", "--interactive-only", "--project", "beta", "--window", "main", "--placement", "right"}, wantAxis: "-x"},
+		{name: "canonical down", args: []string{"agent", "--provider", "codex", "--interactive-only", "--project", "beta", "--window", "main", "--placement", "down"}, wantAxis: "-y"},
+		{name: "codex shortcut", args: []string{"codex", "--interactive-only", "--project", "beta", "--window", "main"}, wantAxis: "-x"},
 		{name: "claude shortcut", args: []string{"claude", "--project", "beta", "--window", "main", "--placement", "down"}, wantAxis: "-y"},
 		{name: "antigravity shortcut", args: []string{"antigravity", "--project", "beta", "--window", "main"}, wantAxis: "-x"},
 	}
@@ -1327,7 +1331,7 @@ func TestCreateAgentFanOutEqualizesBeforeCrossingWindowBoundary(t *testing.T) {
 	store := newFakeResourceStore(t)
 	tmux := newFakeTmux()
 	create, _ := newTestAgentCreateCommand(t, store, tmux)
-	if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha"); err != nil {
+	if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha"); err != nil {
 		t.Fatalf("fan-out create agent error = %v", err)
 	}
 
@@ -1381,7 +1385,7 @@ func TestAFailureAnywhereInAnAgentFanOutLeavesZeroMutations(t *testing.T) {
 	}{
 		{
 			name: "a stale anchor in the second Window",
-			args: []string{"agent", "--provider", "codex", "--project", "alpha"},
+			args: []string{"agent", "--provider", "codex", "--interactive-only", "--project", "alpha"},
 			setup: func(store *fakeResourceStore, _ *fakeTmux, _ *fakeAgentLauncher) {
 				for i := range store.registry.Windows {
 					if store.registry.Windows[i].Metadata.UID == "win-alpha-review" {
@@ -1392,18 +1396,18 @@ func TestAFailureAnywhereInAnAgentFanOutLeavesZeroMutations(t *testing.T) {
 		},
 		{
 			name: "an explicit name that collides in the second Window",
-			args: []string{"agent", "--provider", "codex", "--project", "alpha", "--name", "codex"},
+			args: []string{"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--name", "codex"},
 		},
 		{
 			name: "a launch construction failure",
-			args: []string{"agent", "--provider", "codex", "--project", "alpha"},
+			args: []string{"agent", "--provider", "codex", "--interactive-only", "--project", "alpha"},
 			setup: func(_ *fakeResourceStore, _ *fakeTmux, launcher *fakeAgentLauncher) {
 				launcher.planErr = errors.New("codex runner not found")
 			},
 		},
 		{
 			name: "a tmux split failure after the first Agent already split",
-			args: []string{"agent", "--provider", "codex", "--project", "alpha"},
+			args: []string{"agent", "--provider", "codex", "--interactive-only", "--project", "alpha"},
 			setup: func(_ *fakeResourceStore, tmux *fakeTmux, _ *fakeAgentLauncher) {
 				tmux.fail = []string{"split-window", "-v"}
 			},
@@ -1464,7 +1468,7 @@ func TestATmuxFailureRemovesTheAgentPanesTheOperationCreated(t *testing.T) {
 
 	// Materialize the runtime with a successful create first, so the failing
 	// operation runs against a session it did not create and must not remove.
-	if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main"); err != nil {
+	if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main"); err != nil {
 		t.Fatalf("seed create error = %v", err)
 	}
 	panesBefore := tmux.paneCount()
@@ -1512,7 +1516,7 @@ func TestConcurrentAgentCreatesConvergeOnOneEnsuredWindow(t *testing.T) {
 			cmd := fixture.command(nil)
 			cmd.agents = launcher
 			stdout, _, err := runRoute(t, cmd,
-				"agent", "--provider", "codex", "--project", "alpha", "--window", "shared", "--create-window", "-o", "uid")
+				"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "shared", "--create-window", "-o", "uid")
 			outs[i], errs[i] = stdout, err
 		})
 	}
@@ -1630,6 +1634,9 @@ func TestCreateAgentHelpAdvertisesOnlyImplementedFlagsAndProjections(t *testing.
 			args := []string{node, "--project", "alpha", "--window", "review"}
 			if node == "agent" {
 				args = append(args, "--provider", "codex")
+			}
+			if node == "agent" || node == "codex" {
+				args = append(args, "--interactive-only")
 			}
 			for _, mode := range route.Outputs {
 				if _, _, err := cli.ResolveOutputToken(spelling, string(mode)); err != nil {

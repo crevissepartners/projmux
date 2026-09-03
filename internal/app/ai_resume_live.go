@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
@@ -57,6 +58,7 @@ type aiResumeLiveController struct {
 	detailText      map[string]string
 	detailCache     map[aiResumePreviewKey]string
 	detailReads     map[aiResumePreviewKey]bool
+	catalogRoutes   map[string]codexNativeEndpointRoute
 	previewCancel   context.CancelFunc
 	focusedValue    string
 	moreNotLoaded   bool
@@ -80,6 +82,7 @@ func newAIResumeLiveController(cmd *aiCommand, cwd, home string, depth, limit in
 		events:            make(chan struct{}, 16), providerStates: map[string]aiResumeProviderProjection{}, providerEnabled: enabled,
 		detailRefs: map[string]aisessions.ResumeDetailRef{}, detailText: map[string]string{},
 		detailCache: map[aiResumePreviewKey]string{}, detailReads: map[aiResumePreviewKey]bool{},
+		catalogRoutes: map[string]codexNativeEndpointRoute{},
 	}
 }
 
@@ -154,11 +157,7 @@ func (c *aiResumeLiveController) populateOnce() {
 			continue
 		}
 		go func() {
-			discovery, err := discover(ctx, provider, c.cwd, aisessions.ResumeSummaryOptions{
-				DiscoverOptions: aisessions.DiscoverOptions{
-					HomeDir: c.home, Depth: c.depth, DeferTurns: true, OpenCodexCatalog: c.cmd.openCodexCatalog,
-				},
-			}, c.limit)
+			discovery, err := c.discoverResumeProvider(ctx, discover, provider)
 			results <- aiResumeProviderResult{provider: provider, discovery: discovery, err: err}
 		}()
 	}
@@ -234,6 +233,213 @@ func (c *aiResumeLiveController) populateOnce() {
 		c.moreNotLoaded = moreNotLoaded
 	}
 	c.mu.Unlock()
+}
+
+func (c *aiResumeLiveController) discoverResumeProvider(
+	ctx context.Context,
+	discover func(context.Context, string, string, aisessions.ResumeSummaryOptions, int) (aisessions.ResumeSummaryDiscovery, error),
+	provider string,
+) (aisessions.ResumeSummaryDiscovery, error) {
+	options := func(open aisessions.OpenCodexCatalog) aisessions.ResumeSummaryOptions {
+		return aisessions.ResumeSummaryOptions{DiscoverOptions: aisessions.DiscoverOptions{
+			HomeDir: c.home, Depth: c.depth, DeferTurns: true, OpenCodexCatalog: open,
+		}}
+	}
+	if provider != aiModeCodex || c.cmd.codexNative == nil {
+		return discover(ctx, provider, c.cwd, options(c.cmd.openCodexCatalog), c.limit)
+	}
+
+	routes, routeErr := c.cmd.codexNative.CatalogRoutes(ctx)
+	validRoutes := make([]codexNativeEndpointRoute, 0, len(routes))
+	for _, route := range routes {
+		if route.valid() {
+			validRoutes = append(validRoutes, route)
+		}
+	}
+	// An unavailable pool source may still yield rollout rows, but it must not
+	// reopen the ambient/default native catalog and accidentally grant native
+	// authority. A refusing opener keeps that fallback explicitly source-only.
+	if routeErr != nil || len(validRoutes) == 0 {
+		if routeErr == nil {
+			routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+		}
+		return discover(ctx, provider, c.cwd, options(func(context.Context) (aisessions.CodexCatalog, error) {
+			return nil, routeErr
+		}), c.limit)
+	}
+
+	var combined aisessions.ResumeSummaryDiscovery
+	var failures []error
+	for _, route := range validRoutes {
+		c.mu.Lock()
+		c.catalogRoutes[codexCatalogRouteKey(route.Endpoint)] = route
+		c.mu.Unlock()
+		generation, err := discover(ctx, provider, c.cwd, options(func(openCtx context.Context) (aisessions.CodexCatalog, error) {
+			client, openErr := openCodexNativeRoute(openCtx, route, false)
+			if openErr != nil {
+				return nil, openErr
+			}
+			return aisessions.NewCodexCatalog(client), nil
+		}), c.limit)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		for i := range generation.Summaries {
+			if generation.Summaries[i].Source != aisessions.SourceCodexAppServer {
+				continue
+			}
+			generation.Summaries[i].StateDomainID = route.Endpoint.StateDomainID
+			generation.Summaries[i].EndpointGenerationID = route.Endpoint.EndpointGenerationID
+			generation.Summaries[i].GenerationState = string(route.State)
+		}
+		for i := range generation.DetailRefs {
+			if generation.DetailRefs[i].Source != aisessions.SourceCodexAppServer {
+				continue
+			}
+			generation.DetailRefs[i].StateDomainID = route.Endpoint.StateDomainID
+			generation.DetailRefs[i].EndpointGenerationID = route.Endpoint.EndpointGenerationID
+			generation.DetailRefs[i].GenerationState = string(route.State)
+		}
+		combined.Summaries = append(combined.Summaries, generation.Summaries...)
+		combined.DetailRefs = append(combined.DetailRefs, generation.DetailRefs...)
+		combined.Codex = generation.Codex
+		combined.MoreNotLoaded = combined.MoreNotLoaded || generation.MoreNotLoaded
+	}
+	if len(combined.Summaries) != 0 || len(combined.DetailRefs) != 0 || len(failures) < len(validRoutes) {
+		return c.resolveCodexCatalogCollisions(combined), nil
+	}
+	return combined, errors.Join(failures...)
+}
+
+func codexCatalogRouteKey(endpoint coremetadata.CodexEndpointRef) string {
+	return endpoint.StateDomainID + "\x00" + endpoint.EndpointGenerationID
+}
+
+func codexSummaryEndpoint(summary aisessions.ResumeSummary) coremetadata.CodexEndpointRef {
+	return coremetadata.CodexEndpointRef{StateDomainID: strings.TrimSpace(summary.StateDomainID), EndpointGenerationID: strings.TrimSpace(summary.EndpointGenerationID)}
+}
+
+func codexDetailEndpoint(ref aisessions.ResumeDetailRef) coremetadata.CodexEndpointRef {
+	return coremetadata.CodexEndpointRef{StateDomainID: strings.TrimSpace(ref.StateDomainID), EndpointGenerationID: strings.TrimSpace(ref.EndpointGenerationID)}
+}
+
+// resolveCodexCatalogCollisions closes the cross-generation ownership rule at
+// the list boundary. A thread visible from multiple app-servers is assigned to
+// a generation only when a durable Agent ref names that exact owner. Without
+// one, the deterministic row is marked blocked, which keeps it searchable but
+// makes selection generation-unavailable before any provider or Registry write.
+func (c *aiResumeLiveController) resolveCodexCatalogCollisions(discovery aisessions.ResumeSummaryDiscovery) aisessions.ResumeSummaryDiscovery {
+	groups := make(map[string][]aisessions.ResumeSummary)
+	for _, summary := range discovery.Summaries {
+		key := normalizeAIMode(summary.Provider) + "\x00" + strings.TrimSpace(summary.ResumeID)
+		groups[key] = append(groups[key], summary)
+	}
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	selected := make([]aisessions.ResumeSummary, 0, len(groups))
+	detailRefs := make([]aisessions.ResumeDetailRef, 0, len(groups))
+	for _, key := range keys {
+		group := groups[key]
+		native := make(map[string][]aisessions.ResumeSummary)
+		for _, summary := range group {
+			endpoint := codexSummaryEndpoint(summary)
+			if summary.Source == aisessions.SourceCodexAppServer && endpoint.Valid() {
+				native[codexCatalogRouteKey(endpoint)] = append(native[codexCatalogRouteKey(endpoint)], summary)
+			}
+		}
+		chosen := newestResumeSummary(group)
+		ambiguous := false
+		if len(native) != 0 {
+			owner, ownerKnown := c.knownCodexThreadOwner(chosen.ResumeID)
+			if rows := native[codexCatalogRouteKey(owner)]; ownerKnown && len(rows) != 0 {
+				chosen = newestResumeSummary(rows)
+			} else if ownerKnown {
+				nativeKeys := make([]string, 0, len(native))
+				for nativeKey := range native {
+					nativeKeys = append(nativeKeys, nativeKey)
+				}
+				sort.Strings(nativeKeys)
+				chosen = newestResumeSummary(native[nativeKeys[0]])
+				chosen.GenerationState = string(coremetadata.CodexGenerationBlocked)
+				ambiguous = true
+			} else if len(native) == 1 {
+				for _, rows := range native {
+					chosen = newestResumeSummary(rows)
+				}
+			} else {
+				nativeKeys := make([]string, 0, len(native))
+				for nativeKey := range native {
+					nativeKeys = append(nativeKeys, nativeKey)
+				}
+				sort.Strings(nativeKeys)
+				chosen = newestResumeSummary(native[nativeKeys[0]])
+				chosen.GenerationState = string(coremetadata.CodexGenerationBlocked)
+				ambiguous = true
+			}
+		}
+		selected = append(selected, chosen)
+		if ambiguous {
+			continue
+		}
+		chosenEndpoint := codexSummaryEndpoint(chosen)
+		var matching []aisessions.ResumeDetailRef
+		for _, ref := range discovery.DetailRefs {
+			if normalizeAIMode(ref.Provider)+"\x00"+strings.TrimSpace(ref.ResumeID) != key || ref.Source != chosen.Source {
+				continue
+			}
+			if chosen.Source == aisessions.SourceCodexAppServer && !codexDetailEndpoint(ref).Same(chosenEndpoint) {
+				continue
+			}
+			matching = append(matching, ref)
+		}
+		if len(matching) != 0 {
+			detailRefs = append(detailRefs, newestResumeDetailRef(matching))
+		}
+	}
+	discovery.Summaries, discovery.DetailRefs = selected, detailRefs
+	return discovery
+}
+
+func newestResumeSummary(rows []aisessions.ResumeSummary) aisessions.ResumeSummary {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].LastModified.Equal(rows[j].LastModified) {
+			return codexCatalogRouteKey(codexSummaryEndpoint(rows[i])) < codexCatalogRouteKey(codexSummaryEndpoint(rows[j]))
+		}
+		return rows[i].LastModified.After(rows[j].LastModified)
+	})
+	return rows[0]
+}
+
+func newestResumeDetailRef(rows []aisessions.ResumeDetailRef) aisessions.ResumeDetailRef {
+	sort.SliceStable(rows, func(i, j int) bool { return rows[i].LastModified.After(rows[j].LastModified) })
+	return rows[0]
+}
+
+func (c *aiResumeLiveController) knownCodexThreadOwner(threadID string) (coremetadata.CodexEndpointRef, bool) {
+	if c.cmd.loadRegistry == nil {
+		return coremetadata.CodexEndpointRef{}, false
+	}
+	registry, err := c.cmd.loadRegistry()
+	if err != nil {
+		return coremetadata.CodexEndpointRef{}, false
+	}
+	var owner coremetadata.CodexEndpointRef
+	for _, agent := range registry.Agents {
+		ref := agent.Status.SessionRef
+		if agent.Spec.Provider != aiModeCodex || ref == nil || ref.Codex == nil ||
+			strings.TrimSpace(ref.Codex.ThreadID) != strings.TrimSpace(threadID) || ref.Codex.Endpoint == nil || !ref.Codex.Endpoint.Valid() {
+			continue
+		}
+		if owner.Valid() && !owner.Same(*ref.Codex.Endpoint) {
+			return coremetadata.CodexEndpointRef{}, false
+		}
+		owner = *ref.Codex.Endpoint
+	}
+	return owner, owner.Valid()
 }
 
 func resumeProviderProjection(result aiResumeProviderResult, enabled bool) aiResumeProviderProjection {
@@ -388,7 +594,7 @@ func (c *aiResumeLiveController) focus(value string) {
 	var detailRef aisessions.ResumeDetailRef
 	found := false
 	for _, candidate := range c.summaries {
-		if normalizeAIMode(candidate.Provider) == normalizeAIMode(selection.agent) && strings.TrimSpace(candidate.ResumeID) == selection.resumeID {
+		if aiResumeSummaryMatchesSelection(candidate, selection) {
 			summary, found = candidate, true
 			detailRef = c.detailRefs[normalizeAIMode(candidate.Provider)+"\x00"+strings.TrimSpace(candidate.ResumeID)]
 			break
@@ -421,6 +627,24 @@ func (c *aiResumeLiveController) focus(value string) {
 	}
 	previewCtx, cancel := context.WithTimeout(c.ctx, timeout)
 	c.previewCancel = cancel
+	previewCatalog := c.cmd.openCodexCatalog
+	if summary.Source == aisessions.SourceCodexAppServer {
+		previewCatalog = func(context.Context) (aisessions.CodexCatalog, error) {
+			return nil, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+		}
+		detailEndpoint := codexDetailEndpoint(detailRef)
+		if route, ok := c.catalogRoutes[codexCatalogRouteKey(detailEndpoint)]; ok && detailEndpoint.Valid() &&
+			route.Endpoint.Same(detailEndpoint) && string(route.State) == strings.TrimSpace(detailRef.GenerationState) {
+			route := route
+			previewCatalog = func(openCtx context.Context) (aisessions.CodexCatalog, error) {
+				client, openErr := openCodexNativeRoute(openCtx, route, false)
+				if openErr != nil {
+					return nil, openErr
+				}
+				return aisessions.NewCodexCatalog(client), nil
+			}
+		}
+	}
 	c.mu.Unlock()
 	c.signal()
 	go func() {
@@ -428,7 +652,7 @@ func (c *aiResumeLiveController) focus(value string) {
 		var detail aisessions.ResumeDetail
 		var err error
 		if c.cmd.readResumePreview != nil {
-			detail.Preview, err = c.cmd.readResumePreview(previewCtx, detailRef, c.cmd.openCodexCatalog)
+			detail.Preview, err = c.cmd.readResumePreview(previewCtx, detailRef, previewCatalog)
 			detail.Source = detailRef.Source
 			detail.Turns = detailRef.Turns
 			detail.Confidence = detailRef.Confidence
@@ -439,7 +663,7 @@ func (c *aiResumeLiveController) focus(value string) {
 			if readDetail == nil {
 				readDetail = aisessions.ReadResumeDetail
 			}
-			detail, err = readDetail(previewCtx, detailRef, c.cmd.openCodexCatalog)
+			detail, err = readDetail(previewCtx, detailRef, previewCatalog)
 		}
 		previewText := aisessions.FormatPreview(detail.Preview)
 		if err != nil || strings.TrimSpace(previewText) == "" {
@@ -469,6 +693,19 @@ func (c *aiResumeLiveController) focus(value string) {
 		c.detailText = map[string]string{c.focusedValue: text}
 		c.signal()
 	}()
+}
+
+func aiResumeSummaryMatchesSelection(summary aisessions.ResumeSummary, selection aiResumeSelection) bool {
+	if normalizeAIMode(summary.Provider) != normalizeAIMode(selection.agent) || strings.TrimSpace(summary.ResumeID) != selection.resumeID {
+		return false
+	}
+	if !selection.rowPinned {
+		return true
+	}
+	return strings.TrimSpace(summary.Source) == selection.source &&
+		strings.TrimSpace(summary.StateDomainID) == selection.endpoint.StateDomainID &&
+		strings.TrimSpace(summary.EndpointGenerationID) == selection.endpoint.EndpointGenerationID &&
+		strings.TrimSpace(summary.GenerationState) == string(selection.state)
 }
 
 func aiResumeDetailProjection(locale i18n.Locale, summary aisessions.ResumeSummary, ref aisessions.ResumeDetailRef, detail aisessions.ResumeDetail, previewText string, displayLabels ...string) string {

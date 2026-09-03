@@ -147,11 +147,11 @@ func TestAIResumeUntitledSuffixPreservesExactValueSearchAndDetailID(t *testing.T
 	if !strings.Contains(visible, "Untitled · …cafe") || strings.Contains(visible, aiResumeShortID(id)) {
 		t.Fatalf("visible row = %q, want readable untitled suffix without UUID prefix", visible)
 	}
-	if row.Value != aiResumePickerValue(aiModeCodex, id) || !strings.Contains(row.SearchKey, id) {
+	if row.Value != aiResumePickerValueForSession(session) || !strings.Contains(row.SearchKey, id) {
 		t.Fatalf("exact routing/search lost: %#v", row)
 	}
 	selection, ok := parseAIResumePickerValue(row.Value)
-	if !ok || selection.agent != aiModeCodex || selection.resumeID != id {
+	if !ok || selection.agent != aiModeCodex || selection.resumeID != id || !selection.rowPinned || selection.source != aisessions.SourceCodexRollout {
 		t.Fatalf("exact value no longer parseable: %#v ok=%t", selection, ok)
 	}
 	summary := aisessions.ResumeSummary{Provider: aiModeCodex, ResumeID: id, Label: session.Title, Source: session.Source}
@@ -179,10 +179,12 @@ func TestAIResumeCodexRuntimeAndFallbackStayOutOfVisibleRow(t *testing.T) {
 		{name: "native not loaded ko", source: aisessions.SourceCodexAppServer, confidence: aisessions.ConfidenceHigh, status: "notLoaded", locale: i18n.Locale("ko-KR"), wantStatus: "[미로드]"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
+			endpoint := coremetadata.CodexEndpointRef{StateDomainID: "state-runtime", EndpointGenerationID: "generation-runtime"}
 			session := aisessions.SessionMeta{
 				Agent: aiModeCodex, ResumeID: id, Title: "Conversation", Source: test.source,
 				Confidence: test.confidence, Reason: test.reason, RuntimeStatus: test.status,
-				Context: aisessions.SessionContext{Branch: "main"},
+				Context: aisessions.SessionContext{Branch: "main"}, StateDomainID: endpoint.StateDomainID,
+				EndpointGenerationID: endpoint.EndpointGenerationID, GenerationState: string(coremetadata.CodexGenerationCurrent),
 			}
 			row := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{Topic: "Bound topic"}, time.Time{}, test.locale, "/work", 0)
 			visible := stripANSI(row.Label)
@@ -208,8 +210,8 @@ func TestAIResumeCodexRuntimeAndFallbackStayOutOfVisibleRow(t *testing.T) {
 					t.Fatalf("SearchKey = %q, provenance %q must be selected-detail-only", row.SearchKey, detailOnly)
 				}
 			}
-			if got := row.Value; got != aiResumePickerValue(aiModeCodex, id) {
-				t.Fatalf("selection value = %q, want exact resume value %q", got, aiResumePickerValue(aiModeCodex, id))
+			if got := row.Value; got != aiResumePickerValueForSession(session) {
+				t.Fatalf("selection value = %q, want exact pinned resume value %q", got, aiResumePickerValueForSession(session))
 			}
 		})
 	}

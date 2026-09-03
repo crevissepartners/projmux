@@ -7,16 +7,15 @@ import (
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 )
 
 // TestDeclaredPlainCodexLaneNamesOnlyTheByDesignLanes fixes the declared
 // vocabulary at its only producer.
 //
-// Two create shapes reach the plain CLI lane on purpose: an empty-prompt
-// default create, which current upstream Codex cannot give a live turnless
-// Pane, and an explicit --interactive-only. Everything else that ends up
-// without a native binding is either a refusal that creates nothing or a
-// genuine loss of native authority, and neither may be declared away.
+// Two shapes reach the plain CLI lane on purpose: an explicit
+// --interactive-only create and a picker resume row whose source is rollout.
+// Empty-prompt creates are native and therefore deliberately absent here.
 func TestDeclaredPlainCodexLaneNamesOnlyTheByDesignLanes(t *testing.T) {
 	for _, test := range []struct {
 		name     string
@@ -25,7 +24,7 @@ func TestDeclaredPlainCodexLaneNamesOnlyTheByDesignLanes(t *testing.T) {
 		prompt   string
 		want     string
 	}{
-		{name: "empty prompt codex create", provider: aiModeCodex, want: codexNativeDeclaredEmptyPrompt},
+		{name: "empty prompt native create", provider: aiModeCodex},
 		{
 			name: "interactive only", provider: aiModeCodex,
 			flags:  resourceCreateFlags{interactiveOnly: true, payload: []string{"do the thing"}},
@@ -44,8 +43,13 @@ func TestDeclaredPlainCodexLaneNamesOnlyTheByDesignLanes(t *testing.T) {
 			flags: resourceCreateFlags{payload: []string{"one", "two"}},
 		},
 		{
-			name: "stored resume", provider: aiModeCodex,
-			flags: resourceCreateFlags{resumeConversation: "thread-1"},
+			name: "native stored resume", provider: aiModeCodex,
+			flags: resourceCreateFlags{resumeConversation: "thread-1", resumeSource: aisessions.SourceCodexAppServer},
+		},
+		{
+			name: "rollout picker resume", provider: aiModeCodex,
+			flags: resourceCreateFlags{resumeConversation: "thread-1", resumeSource: aisessions.SourceCodexRollout},
+			want:  codexNativeDeclaredRolloutCatalogResume,
 		},
 		{name: "claude empty create", provider: aiModeClaude},
 		{name: "antigravity empty create", provider: aiModeAntigravity},
@@ -76,7 +80,7 @@ func TestDeclaredLaneVocabularyIsClosedAgainstUnknownPaneValues(t *testing.T) {
 	}
 	for _, forged := range []string{
 		"", "   ", "native-fallback", "provider-hook", "ready", "empty-prompt",
-		"interactive", "EMPTY-PROMPT-UPSTREAM-GATE", "empty-prompt-upstream-gate-2",
+		"interactive", "EMPTY-PROMPT-UPSTREAM-GATE", "empty-prompt-upstream-gate", "rollout",
 	} {
 		if got := codexNativeDeclaredReason(forged); got != "" {
 			t.Fatalf("value %q was accepted as the declared reason %q", forged, got)
@@ -93,13 +97,13 @@ func TestDeclaredLaneVocabularyIsClosedAgainstUnknownPaneValues(t *testing.T) {
 // the acceptance surface for "unexplained native fallback is zero".
 //
 // A payload-bearing managed Agent must converge on the control plane. An
-// empty-prompt or interactive-only Agent stays on hook observation, but with a
+// rollout or interactive-only Agent stays on hook observation, but with a
 // typed declaration, so it is counted apart rather than inflating the number
 // that is supposed to be zero.
 func TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback(t *testing.T) {
 	diagnostics := map[string]codexLifecycleAuthorityDiagnostic{
 		"pane-native":       {Source: codexAuthorityControlPlane, Reason: "ready", EpochStatus: "active"},
-		"pane-empty":        {Source: codexAuthorityHook, Reason: codexNativeUnexplainedReason, Declared: codexNativeDeclaredEmptyPrompt},
+		"pane-rollout":      {Source: codexAuthorityHook, Reason: codexNativeUnexplainedReason, Declared: codexNativeDeclaredRolloutCatalogResume},
 		"pane-interactive":  {Source: codexAuthorityHook, Reason: codexNativeUnexplainedReason, Declared: codexNativeDeclaredInteractiveOnly},
 		"pane-lost":         {Source: codexAuthorityHook, Reason: codexNativeUnexplainedReason},
 		"pane-pending":      {Source: codexAuthorityPending, Reason: "connecting", EpochStatus: "pending"},
@@ -113,7 +117,7 @@ func TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback(t *
 		pane     string
 	}{
 		{uid: "agent-native", provider: aiModeCodex, pane: "pane-native"},
-		{uid: "agent-empty", provider: aiModeCodex, pane: "pane-empty"},
+		{uid: "agent-rollout", provider: aiModeCodex, pane: "pane-rollout"},
 		{uid: "agent-interactive", provider: aiModeCodex, pane: "pane-interactive"},
 		{uid: "agent-lost", provider: aiModeCodex, pane: "pane-lost"},
 		{uid: "agent-pending", provider: aiModeCodex, pane: "pane-pending"},
@@ -166,9 +170,9 @@ func TestDeclaredLaneReadsBackFromTheExactPaneOption(t *testing.T) {
 	const paneUID = "pan-alpha-codex"
 	declared := observeCodexLifecycleAuthority(context.Background(), phase3StaticTmuxRunner{
 		output: paneUID + "\x1f" + codexAuthorityHook + "\x1f\x1f" + codexNativeUnexplainedReason +
-			"\x1f0\x1f0\x1f0\x1f" + codexNativeDeclaredEmptyPrompt,
+			"\x1f0\x1f0\x1f0\x1f" + codexNativeDeclaredRolloutCatalogResume,
 	}, paneUID)
-	if declared.Declared != codexNativeDeclaredEmptyPrompt || declared.unexplainedNativeFallback() {
+	if declared.Declared != codexNativeDeclaredRolloutCatalogResume || declared.unexplainedNativeFallback() {
 		t.Fatalf("declared observation = %+v", declared)
 	}
 	undeclared := observeCodexLifecycleAuthority(context.Background(), phase3StaticTmuxRunner{
@@ -229,11 +233,6 @@ func TestPlainCodexCreatesWriteTheirDeclarationOntoTheExactPane(t *testing.T) {
 		args []string
 		want string
 	}{
-		{
-			name: "empty prompt",
-			args: []string{"agent", "--provider", "codex", "--project", "alpha", "--window", "main", "-o", "pane-id"},
-			want: codexNativeDeclaredEmptyPrompt,
-		},
 		{
 			name: "interactive only",
 			args: []string{"agent", "--provider", "codex", "--project", "alpha", "--window", "main",

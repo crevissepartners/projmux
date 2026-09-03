@@ -9,6 +9,7 @@ import (
 )
 
 func TestBindCodexActivationRequiresExactAgentPaneGenerationAndThread(t *testing.T) {
+	endpoint := CodexEndpointRef{StateDomainID: "state-native", EndpointGenerationID: "endpoint-native"}
 	reg := lifecycleFixture(t)
 	agent, _ := reg.Agent(lifecycleAgentUID)
 	pane, _ := reg.Pane(lifecyclePaneUID)
@@ -38,7 +39,7 @@ func TestBindCodexActivationRequiresExactAgentPaneGenerationAndThread(t *testing
 			before := working.Clone()
 			changed, err := mut.BindCodexActivation(&working, CodexActivationObservation{
 				AgentUID: tc.agentUID, PaneUID: tc.paneUID, Generation: tc.generation,
-				ThreadID: tc.threadID, TurnID: tc.turnID,
+				ThreadID: tc.threadID, TurnID: tc.turnID, Endpoint: endpoint,
 			})
 			if tc.wantWrite {
 				if err != nil || !changed {
@@ -68,13 +69,14 @@ func TestBindCodexActivationRequiresExactAgentPaneGenerationAndThread(t *testing
 }
 
 func TestNativeCodexBindingRemainsAdditiveInCurrentSchema(t *testing.T) {
+	endpoint := CodexEndpointRef{StateDomainID: "state-native", EndpointGenerationID: "endpoint-native"}
 	reg := lifecycleFixture(t)
 	agent, _ := reg.Agent(lifecycleAgentUID)
 	agent.Status.SessionRef = nil
 	mut := Mutator{Now: func() time.Time { return lifecycleClock.Add(time.Minute) }}
 	if changed, err := mut.BindCodexActivation(reg, CodexActivationObservation{
 		AgentUID: lifecycleAgentUID, PaneUID: lifecyclePaneUID, Generation: lifecycleGeneration,
-		ThreadID: "thread-native", TurnID: "turn-native",
+		ThreadID: "thread-native", TurnID: "turn-native", Endpoint: endpoint,
 	}); err != nil || !changed {
 		t.Fatalf("BindCodexActivation() = (%t, %v)", changed, err)
 	}
@@ -97,6 +99,7 @@ func TestNativeCodexBindingRemainsAdditiveInCurrentSchema(t *testing.T) {
 }
 
 func TestRefineCodexActivationRejectsOtherThreadAndStaleGeneration(t *testing.T) {
+	endpoint := CodexEndpointRef{StateDomainID: "state-native", EndpointGenerationID: "endpoint-native"}
 	reg := lifecycleFixture(t)
 	agent, _ := reg.Agent(lifecycleAgentUID)
 	pane, _ := reg.Pane(lifecyclePaneUID)
@@ -105,7 +108,7 @@ func TestRefineCodexActivationRejectsOtherThreadAndStaleGeneration(t *testing.T)
 	mut := Mutator{Now: func() time.Time { return lifecycleClock.Add(time.Minute) }}
 	if changed, err := mut.BindCodexActivation(reg, CodexActivationObservation{
 		AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, Generation: lifecycleGeneration,
-		ThreadID: "thread-native", TurnID: "turn-initial",
+		ThreadID: "thread-native", TurnID: "turn-initial", Endpoint: endpoint,
 	}); err != nil || !changed {
 		t.Fatalf("seed binding = (%t, %v)", changed, err)
 	}
@@ -123,7 +126,7 @@ func TestRefineCodexActivationRejectsOtherThreadAndStaleGeneration(t *testing.T)
 			before := working.Clone()
 			changed, err := mut.RefineCodexActivation(&working, CodexActivationObservation{
 				AgentUID: agent.Metadata.UID, PaneUID: tc.paneUID, Generation: tc.generation,
-				ThreadID: tc.threadID, TurnID: tc.turnID,
+				ThreadID: tc.threadID, TurnID: tc.turnID, Endpoint: endpoint,
 			})
 			if err != nil {
 				t.Fatal(err)

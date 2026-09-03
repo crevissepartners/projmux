@@ -332,7 +332,9 @@ type agentPaneIntent struct {
 	// resumeSource is the private exact picker source reference. Codex uses it
 	// to retain native-vs-rollout authority; other providers carry it unchanged
 	// through the intent without changing their existing launch lane.
-	resumeSource string
+	resumeSource          string
+	resumeEndpoint        coremetadata.CodexEndpointRef
+	resumeGenerationState coremetadata.CodexGenerationState
 	// codexCapability is a connection/version-bound picker selection. It is a
 	// private UI intent field, not a public create flag or persisted config.
 	codexCapability *corecap.Selection
@@ -435,6 +437,8 @@ func (c *createCommand) createFromIntent(intent agentPaneIntent, stdout, stderr 
 	}
 	flags.resumeConversation = conversation
 	flags.resumeSource = strings.TrimSpace(intent.resumeSource)
+	flags.resumeEndpoint = intent.resumeEndpoint
+	flags.resumeGenerationState = intent.resumeGenerationState
 	flags.codexCapability = intent.codexCapability
 	return visibleCanonicalCreateError(c.createCanonicalIntentAgent(scope, intent, provider, flags, stdout))
 }

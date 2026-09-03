@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
@@ -60,6 +61,7 @@ type codexBrokerEpochRecord struct {
 // activation in the unavailable reconnect projection.
 type codexBrokerObserverSession struct {
 	identity  codexLifecycleIdentity
+	endpoint  coremetadata.CodexEndpointRef
 	cwd       string
 	roots     []string
 	discovery codexbroker.Discovery
@@ -76,11 +78,14 @@ type codexBrokerObserverSession struct {
 	hasPending bool
 }
 
-// newCodexBrokerObserverSession resolves the runtime contract this process's
-// state domain publishes and prepares one binding session for it.
-func newCodexBrokerObserverSession(identity codexLifecycleIdentity, cwd string, roots []string) (*codexBrokerObserverSession, error) {
-	if !identity.valid() {
-		return nil, errors.New("codex broker binding requires exact Agent, Pane, runtime, generation, and thread identity")
+// newCodexBrokerObserverSessionForRoute resolves one broker singleton from the
+// durable endpoint generation selected before provider creation. The broker
+// runtime is keyed by that exact endpoint and its launcher receives only the
+// corresponding attach transport; changing admission-current cannot retarget
+// a live session.
+func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd string, roots []string, route codexNativeEndpointRoute) (*codexBrokerObserverSession, error) {
+	if !identity.valid() || !route.valid() {
+		return nil, errors.New("codex generation broker binding requires exact Agent, Pane, endpoint, runtime, generation, and thread identity")
 	}
 	if !codexbroker.Supported() {
 		return nil, errors.New("codex broker runtime requires Unix filesystem semantics")
@@ -89,18 +94,25 @@ func newCodexBrokerObserverSession(identity codexLifecycleIdentity, cwd string, 
 	if err != nil {
 		return nil, err
 	}
-	discovery, err := codexBrokerDiscoveryFor(domain)
+	key, err := codexbroker.NewEndpointKey(route.Endpoint.StateDomainID, route.Endpoint.EndpointGenerationID)
 	if err != nil {
 		return nil, err
 	}
+	discovery, err := codexBrokerDiscoveryForEndpoint(domain, key)
+	if err != nil {
+		return nil, err
+	}
+	brokerRoute := route.brokerRoute()
 	launch := func(context.Context) error {
 		path, err := os.Executable()
 		if err != nil {
 			return err
 		}
-		return startCodexBrokerRuntimeProcess(path, discovery)
+		return startCodexBrokerRuntimeProcessForRoute(path, discovery, brokerRoute)
 	}
-	return newCodexBrokerObserverSessionOn(identity, cwd, roots, discovery, launch), nil
+	session := newCodexBrokerObserverSessionOn(identity, cwd, roots, discovery, launch)
+	session.endpoint = route.Endpoint
+	return session, nil
 }
 
 // newCodexBrokerObserverSessionOn binds one session to an explicit runtime
@@ -136,7 +148,7 @@ func (s *codexBrokerObserverSession) Open(ctx context.Context) (codexLifecycleCo
 	if s.hasPending && s.current == nil {
 		record := s.pending
 		s.mu.Unlock()
-		return s.publish(record), nil
+		return s.publish(record)
 	}
 	s.mu.Unlock()
 	select {
@@ -145,7 +157,7 @@ func (s *codexBrokerObserverSession) Open(ctx context.Context) (codexLifecycleCo
 			s.discard()
 			return nil, s.revocation(binding)
 		}
-		return s.publish(record), nil
+		return s.publish(record)
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
@@ -324,19 +336,26 @@ func (s *codexBrokerObserverSession) rotate(record codexBrokerEpochRecord, ready
 }
 
 // publish makes one closed barrier the live epoch.
-func (s *codexBrokerObserverSession) publish(record codexBrokerEpochRecord) *codexBrokerLifecycleEpoch {
+func (s *codexBrokerObserverSession) publish(record codexBrokerEpochRecord) (*codexBrokerLifecycleEpoch, error) {
+	s.mu.Lock()
+	if s.closed || s.conn == nil || s.binding == nil {
+		s.mu.Unlock()
+		return nil, errors.New("codex broker binding session is closed")
+	}
+	runtimeID := ""
+	runtimeID = s.conn.Runtime()
 	epoch := &codexBrokerLifecycleEpoch{
 		session:       s,
 		fence:         record.fence,
+		brokerRuntime: runtimeID,
 		snapshot:      record.snapshot,
 		notifications: make(chan codexappserver.Notification, codexBrokerObserverBacklog),
 		leases:        map[string]codexbroker.ApprovalLease{},
 	}
-	s.mu.Lock()
 	epoch.binding = s.binding
 	s.current = epoch
 	s.mu.Unlock()
-	return epoch
+	return epoch, nil
 }
 
 // discard drops a revoked binding so the next Open establishes a fresh one.
@@ -376,12 +395,32 @@ type codexBrokerLifecycleEpoch struct {
 	session       *codexBrokerObserverSession
 	binding       *codexbroker.RemoteBinding
 	fence         codexbroker.Fence
+	brokerRuntime string
 	snapshot      codexappserver.ThreadSnapshot
 	notifications chan codexappserver.Notification
 
 	mu     sync.Mutex
 	ended  bool
 	leases map[string]codexbroker.ApprovalLease
+}
+
+// GenerationAuthority returns the complete live authority granted by the
+// generation-keyed broker runtime. Broker runtime and local epochs come from
+// the same authenticated snapshot barrier; an observer process never invents
+// or substitutes any of these values.
+func (e *codexBrokerLifecycleEpoch) GenerationAuthority() (coremetadata.CodexAuthorityRef, error) {
+	if e == nil || e.session == nil || !e.session.endpoint.Valid() || e.brokerRuntime == "" ||
+		e.fence.Connection == 0 || e.fence.Binding == 0 {
+		return coremetadata.CodexAuthorityRef{}, errors.New("codex generation broker authority is unavailable")
+	}
+	want, err := codexbroker.NewEndpointKey(e.session.endpoint.StateDomainID, e.session.endpoint.EndpointGenerationID)
+	if err != nil || e.session.discovery.Endpoint() != want {
+		return coremetadata.CodexAuthorityRef{}, errors.New("codex generation broker route does not match the durable endpoint")
+	}
+	return coremetadata.CodexAuthorityRef{
+		StateDomainID: e.session.endpoint.StateDomainID, EndpointGenerationID: e.session.endpoint.EndpointGenerationID,
+		BrokerRuntimeID: e.brokerRuntime, ConnectionEpoch: uint64(e.fence.Connection), BindingEpoch: uint64(e.fence.Binding),
+	}, nil
 }
 
 // Notifications is this epoch's ordered delivery stream. It closes when the

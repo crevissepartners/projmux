@@ -23,29 +23,35 @@ const (
 // transcript/preview bytes. Invocation-local detail references are kept
 // separately; they are never rendered, searched, or persisted.
 type ResumeSummary struct {
-	Provider     string
-	ResumeID     string
-	LastModified time.Time
-	UpdatedAt    time.Time
-	Label        string
-	Branch       string
-	RelativeCWD  string
-	Source       string
+	Provider             string
+	ResumeID             string
+	LastModified         time.Time
+	UpdatedAt            time.Time
+	Label                string
+	Branch               string
+	RelativeCWD          string
+	Source               string
+	StateDomainID        string
+	EndpointGenerationID string
+	GenerationState      string
 }
 
 // ResumeDetailRef is kept separately from ResumeSummary and crosses into the
 // invocation-local preview boundary only after focus. It contains no preview
 // or transcript bytes. transcriptPath is opaque outside aisessions.
 type ResumeDetailRef struct {
-	Provider      string
-	ResumeID      string
-	LastModified  time.Time
-	UpdatedAt     time.Time
-	Source        string
-	Turns         int
-	Confidence    string
-	Reason        string
-	RuntimeStatus string
+	Provider             string
+	ResumeID             string
+	LastModified         time.Time
+	UpdatedAt            time.Time
+	Source               string
+	StateDomainID        string
+	EndpointGenerationID string
+	GenerationState      string
+	Turns                int
+	Confidence           string
+	Reason               string
+	RuntimeStatus        string
 
 	transcriptPath string
 }
@@ -259,11 +265,16 @@ func projectResumeSummary(session SessionMeta, baseCWD string, depth int) (Resum
 		LastModified: session.LastModified, UpdatedAt: session.UpdatedAt,
 		Label: strings.Join(strings.Fields(session.Title), " "), Branch: strings.TrimSpace(session.Context.Branch),
 		RelativeCWD: relativeCWD, Source: strings.TrimSpace(session.Source),
+		StateDomainID:        strings.TrimSpace(session.StateDomainID),
+		EndpointGenerationID: strings.TrimSpace(session.EndpointGenerationID),
+		GenerationState:      strings.TrimSpace(session.GenerationState),
 	}
 	ref := ResumeDetailRef{
 		Provider: summary.Provider, ResumeID: summary.ResumeID, LastModified: summary.LastModified,
 		UpdatedAt: summary.UpdatedAt, Source: summary.Source, Turns: session.Turns,
-		Confidence: session.Confidence, Reason: session.Reason, RuntimeStatus: session.RuntimeStatus,
+		StateDomainID: summary.StateDomainID, EndpointGenerationID: summary.EndpointGenerationID,
+		GenerationState: summary.GenerationState,
+		Confidence:      session.Confidence, Reason: session.Reason, RuntimeStatus: session.RuntimeStatus,
 		transcriptPath: session.sourcePath,
 	}
 	return summary, ref

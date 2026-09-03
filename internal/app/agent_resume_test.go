@@ -15,6 +15,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codex"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
@@ -74,6 +75,79 @@ type fakeResumedPane struct {
 type productionBindingResumeLauncher struct {
 	*fakeResumeLauncher
 	binder *aiCommand
+}
+
+// pinnedResumeTestLauncher gives a test explicit native endpoint authority
+// while preserving its existing presentation recorder. It never launches the
+// recorder's plain argv; PlanNativeCodexResume returns only the pinned route.
+type pinnedResumeTestLauncher struct {
+	base   agentResumeLauncher
+	record *fakeResumeLauncher
+	panes  *fakeNativePaneLauncher
+}
+
+func (l *pinnedResumeTestLauncher) RequireAgentEnabled(provider string) error {
+	return l.base.RequireAgentEnabled(provider)
+}
+
+func (l *pinnedResumeTestLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (string, []string, error) {
+	return l.base.PlanAgentResume(provider, workspace, conversationID)
+}
+
+func (l *pinnedResumeTestLauncher) BindResumedAgentPane(paneID, provider, contextDir, title, conversationID string) {
+	l.base.BindResumedAgentPane(paneID, provider, contextDir, title, conversationID)
+}
+
+func (l *pinnedResumeTestLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
+	if binding.NativeCodex {
+		if err := l.panes.BindAgentPaneOnRoute(ctx, runner, binding); err != nil {
+			return err
+		}
+	}
+	return l.base.BindAgentPaneOnRoute(ctx, runner, binding)
+}
+
+func (l *pinnedResumeTestLauncher) PlanNativeCodexResume(route codexNativeEndpointRoute, workspace coremetadata.AgentWorkspace, threadID string) (string, []string, error) {
+	l.record.mu.Lock()
+	if l.record.planErr != nil {
+		err := l.record.planErr
+		l.record.mu.Unlock()
+		return "", nil, err
+	}
+	l.record.plans = append(l.record.plans, fakeResumeRequest{
+		provider: aiModeCodex, contextDir: workspace.CWD,
+		additionalDirs: append([]string(nil), workspace.AdditionalWritableRoots...), conversationID: threadID,
+	})
+	l.record.mu.Unlock()
+	_, argv, err := l.panes.PlanNativeCodexResume(route, workspace, threadID)
+	return "codex:resume", argv, err
+}
+
+func (l *pinnedResumeTestLauncher) BindNativeCodexPane(paneID, contextDir, title, threadID string) {
+	l.panes.BindNativeCodexPane(paneID, contextDir, title, threadID)
+}
+
+func (l *pinnedResumeTestLauncher) startNativeCodexLifecycleObserver(target codexLifecycleObserverTarget) codexObserverStartupResult {
+	return l.panes.startNativeCodexLifecycleObserver(target)
+}
+
+func enablePinnedNativeResumeFixture(t *testing.T, command *agentCommand, store *fakeResourceStore, agentUID string, recorder *fakeResumeLauncher) (*fakeNativeThreadController, *fakeNativePaneLauncher) {
+	t.Helper()
+	agent, ok := store.registry.Agent(agentUID)
+	if !ok || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || strings.TrimSpace(agent.Status.SessionRef.Codex.ThreadID) == "" {
+		t.Fatalf("native resume fixture Agent %q has no Codex thread", agentUID)
+	}
+	route := nativeTestRoute("generation-resume-fixture", coremetadata.CodexGenerationCurrent)
+	endpoint := route.Endpoint
+	agent.Status.SessionRef.Codex.Endpoint = &endpoint
+	agent.Status.SessionRef.Codex.Lifecycle = &coremetadata.CodexGenerationLifecycleRef{State: coremetadata.CodexGenerationCurrent}
+	controller := &fakeNativeThreadController{
+		resolvedRoute: route, resumeBinding: codexappserver.ThreadBinding{ThreadID: agent.Status.SessionRef.Codex.ThreadID},
+	}
+	panes := &fakeNativePaneLauncher{}
+	command.rebind.create.codexNative = controller
+	command.rebind.launcher = &pinnedResumeTestLauncher{base: command.rebind.launcher, record: recorder, panes: panes}
+	return controller, panes
 }
 
 func (l *productionBindingResumeLauncher) BindResumedAgentPaneOnRoute(
@@ -262,6 +336,7 @@ func TestAgentResumeRebindsTheExistingAgentToANewManagedPane(t *testing.T) {
 
 	tmux := newFakeTmux()
 	agent, launcher, ai, usage := newTestAgentResumeCommand(t, store, tmux)
+	enablePinnedNativeResumeFixture(t, agent, store, "agt-beta-codex", launcher)
 
 	stdout, stderr, err := runRoute(t, agent, "resume", "codex", "--project", "beta")
 	if err != nil {
@@ -303,7 +378,7 @@ func TestAgentResumeRebindsTheExistingAgentToANewManagedPane(t *testing.T) {
 		t.Fatalf("the new Pane is not this Agent's managed Pane: %#v", pane.Metadata)
 	}
 	// The durable conversation pointer is consumed, never rewritten, by resume.
-	if !after.Status.SessionRef.SameConversation(resumeFixtureRef(resourceFixtureClock)) {
+	if !after.Status.SessionRef.SameConversation(before.Status.SessionRef) {
 		t.Fatalf("resume changed the stored session ref: %#v", after.Status.SessionRef)
 	}
 
@@ -312,8 +387,8 @@ func TestAgentResumeRebindsTheExistingAgentToANewManagedPane(t *testing.T) {
 	}
 	// Exactly one conversation was started, and it was the stored one.
 	assertOnlyResumeLaunches(t, tmux, resumeFixtureConversation, 1)
-	if len(launcher.plans) != 1 {
-		t.Fatalf("the resume launch was constructed %d times, want 1", len(launcher.plans))
+	if len(launcher.plans) != 2 {
+		t.Fatalf("the pinned resume was planned %d times, want preflight plus post-resume", len(launcher.plans))
 	}
 	if got := (launcher.plans[0]); got.provider != "codex" || got.conversationID != resumeFixtureConversation || got.contextDir != "/srv/beta" || !reflect.DeepEqual(got.additionalDirs, []string{"/srv/alpha"}) {
 		t.Fatalf("resume launch request = %+v, want the stored codex conversation rooted at /srv/beta", got)
@@ -346,6 +421,7 @@ func TestAgentResumeRoutesProductionAIPresentationWritesThroughExactRuntime(t *t
 	agent, planner, _, _ := newTestAgentResumeCommand(t, store, tmux)
 	binder := testAICommand(t.TempDir())
 	agent.rebind.launcher = &productionBindingResumeLauncher{fakeResumeLauncher: planner, binder: binder}
+	enablePinnedNativeResumeFixture(t, agent, store, "agt-beta-codex", planner)
 	bindTestCreateRuntimeRoute(agent.rebind.create, tmux, func(string) string { return "" })
 
 	stdout, stderr, err := runRoute(t, agent, "resume", "codex", "--project", "uid:prj-beta")
@@ -381,6 +457,7 @@ func TestAgentResumeRefusesForeignSelectedSessionBeforeReconcileOrLaunch(t *test
 	foreign.opts[tmuxopts.ProjectPathSession] = "/srv/beta"
 	registryBefore, runtimeBefore := store.snapshot(), tmux.state()
 	agent, launcher, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	enablePinnedNativeResumeFixture(t, agent, store, "agt-beta-codex", launcher)
 
 	stdout, _, err := runRoute(t, agent, "resume", "codex", "--project", "beta")
 	if err == nil || stdout != "" || !strings.Contains(err.Error(), "refuse foreign tmux session") {
@@ -433,22 +510,22 @@ func TestAgentResumeFailuresStartNoConversationAtAll(t *testing.T) {
 			want:    "projmux create agent --provider <provider>",
 		},
 		{
-			name: "a stored conversation the provider cannot revive fails loudly",
+			name: "a legacy stored conversation is never guessed current",
 			prepare: func(t *testing.T, store *fakeResourceStore, launcher *fakeResumeLauncher) {
 				setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
 				launcher.planErr = errors.New("invalid codex resume id: contains control character")
 			},
 			args: []string{"resume", "codex", "--project", "beta"},
-			want: "cannot resume codex conversation " + resumeFixtureConversation,
+			want: codexNativeReasonLegacyEndpointMissing,
 		},
 		{
-			name: "a missing provider binary fails before the store is opened",
+			name: "legacy endpoint refusal precedes provider launch planning",
 			prepare: func(t *testing.T, store *fakeResourceStore, launcher *fakeResumeLauncher) {
 				setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
 				launcher.planErr = errors.New("selected runner is not installed: codex")
 			},
 			args: []string{"resume", "codex", "--project", "beta"},
-			want: "selected runner is not installed",
+			want: codexNativeReasonLegacyEndpointMissing,
 		},
 		{
 			name: "a provider switched off in Settings is not resumable either",
@@ -590,6 +667,7 @@ func TestAResumeRuntimeFailureRollsBackAndStartsNoFreshConversation(t *testing.T
 	tmux.fail = []string{"split-window"}
 	tmux.failMessage = "no space for new pane"
 	agent, launcher, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	enablePinnedNativeResumeFixture(t, agent, store, "agt-beta-codex", launcher)
 
 	stdout, _, err := runRoute(t, agent, "resume", "codex", "--project", "beta")
 	if err == nil {
@@ -611,7 +689,8 @@ func TestAResumeRuntimeFailureRollsBackAndStartsNoFreshConversation(t *testing.T
 	if after.Status.Phase != coremetadata.PhaseOffline || after.Status.PaneRef != "" {
 		t.Fatalf("the Agent did not stay Offline: phase=%q paneRef=%q", after.Status.Phase, after.Status.PaneRef)
 	}
-	if !after.Status.SessionRef.SameConversation(resumeFixtureRef(resourceFixtureClock)) {
+	if after.Status.SessionRef == nil || after.Status.SessionRef.Codex == nil ||
+		after.Status.SessionRef.Codex.ThreadID != resumeFixtureConversation || after.Status.SessionRef.Codex.Endpoint == nil {
 		t.Fatal("a failed resume disturbed the stored conversation pointer")
 	}
 	// Exactly one launch was attempted and it was the resume. No fallback ran.
@@ -669,7 +748,13 @@ func TestAgentResumeNeverBuildsAFreshStartLaunch(t *testing.T) {
 func TestSeveralAgentsOnOneConversationResolveDeterministically(t *testing.T) {
 	t.Parallel()
 
-	shared := func() *coremetadata.AgentSessionRef { return resumeFixtureRef(resourceFixtureClock) }
+	shared := func() *coremetadata.AgentSessionRef {
+		ref := resumeFixtureRef(resourceFixtureClock)
+		endpoint := nativeTestRoute("generation-resume-fixture", coremetadata.CodexGenerationCurrent).Endpoint
+		ref.Codex.Endpoint = &endpoint
+		ref.Codex.Lifecycle = &coremetadata.CodexGenerationLifecycleRef{State: coremetadata.CodexGenerationCurrent}
+		return ref
+	}
 
 	var firstStderr string
 	var firstArgv []string
@@ -689,6 +774,7 @@ func TestSeveralAgentsOnOneConversationResolveDeterministically(t *testing.T) {
 
 		tmux := newFakeTmux()
 		agent, launcher, _, _ := newTestAgentResumeCommand(t, store, tmux)
+		enablePinnedNativeResumeFixture(t, agent, store, "agt-beta-codex", launcher)
 		stdout, stderr, err := runRoute(t, agent, "resume", "uid:agt-beta-codex")
 		if err != nil {
 			t.Fatalf("permutation %d: agent resume error = %v", permutation, err)
@@ -711,8 +797,8 @@ func TestSeveralAgentsOnOneConversationResolveDeterministically(t *testing.T) {
 				t.Fatalf("permutation %d: resume rewrote a sibling's conversation pointer", permutation)
 			}
 		}
-		if len(launcher.plans) != 1 {
-			t.Fatalf("permutation %d: %d launches, want 1", permutation, len(launcher.plans))
+		if len(launcher.plans) != 2 {
+			t.Fatalf("permutation %d: %d pinned plans, want preflight plus post-resume", permutation, len(launcher.plans))
 		}
 		argv := splitWindowCalls(tmux)[0]
 
@@ -763,7 +849,8 @@ func TestObservedAtIsNotAResumeGate(t *testing.T) {
 		store := newFakeResourceStore(t)
 		setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(observedAt))
 		tmux := newFakeTmux()
-		agent, _, _, _ := newTestAgentResumeCommand(t, store, tmux)
+		agent, launcher, _, _ := newTestAgentResumeCommand(t, store, tmux)
+		enablePinnedNativeResumeFixture(t, agent, store, "agt-beta-codex", launcher)
 		stdout, stderr, err := runRoute(t, agent, "resume", "codex", "--project", "beta")
 		if err != nil {
 			t.Fatalf("observedAt %s: agent resume error = %v", observedAt, err)
@@ -789,7 +876,8 @@ func TestObservedAtIsNotAResumeGate(t *testing.T) {
 	// pointer, it does not re-observe it.
 	store := newFakeResourceStore(t)
 	setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(ancient))
-	agent, _, _, _ := newTestAgentResumeCommand(t, store, newFakeTmux())
+	agent, launcher, _, _ := newTestAgentResumeCommand(t, store, newFakeTmux())
+	enablePinnedNativeResumeFixture(t, agent, store, "agt-beta-codex", launcher)
 	if _, _, err := runRoute(t, agent, "resume", "codex", "--project", "beta"); err != nil {
 		t.Fatalf("agent resume error = %v", err)
 	}

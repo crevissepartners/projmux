@@ -268,6 +268,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	createCmd.agents = ai
 	createCmd.resumes = ai
 	createCmd.codexNative = defaultCodexNativeThreadController{}
+	ai.codexNative = createCmd.codexNative
 	// The Projmux split UI produces canonical create intents and nothing else.
 	// This is the edge that retired the legacy split: the saved-default binding,
 	// the Alt-7 picker, and the resume picker all reach the same route the typed

@@ -187,7 +187,7 @@ func TestLegacyHookReobservationPreservesAnExactCodexEndpointRef(t *testing.T) {
 	agent, _ := reg.Agent(lifecycleAgentUID)
 	agent.Status.SessionRef = &AgentSessionRef{
 		Provider: "codex", ObservedAt: lifecycleClock,
-		Codex: &CodexSessionRef{ThreadID: "thread", SessionID: "optional-session", Endpoint: &CodexEndpointRef{
+		Codex: &CodexSessionRef{ThreadID: "thread", SessionID: "optional-session", HasStartedTurn: true, Endpoint: &CodexEndpointRef{
 			StateDomainID: "domain", EndpointGenerationID: "generation",
 		}, Lifecycle: &CodexGenerationLifecycleRef{
 			State: CodexGenerationDraining,
@@ -210,5 +210,37 @@ func TestLegacyHookReobservationPreservesAnExactCodexEndpointRef(t *testing.T) {
 	if got.Status.SessionRef.Codex.Lifecycle == nil || got.Status.SessionRef.Codex.Lifecycle.Operation == nil ||
 		got.Status.SessionRef.Codex.Lifecycle.Operation.ID != "drain-operation" {
 		t.Fatal("legacy hook erased durable generation lifecycle authority")
+	}
+	if !got.Status.SessionRef.Codex.HasStartedTurn {
+		t.Fatal("legacy hook erased monotonic first-turn evidence")
+	}
+
+	for _, test := range []struct {
+		name, storedSession, observedSession string
+	}{
+		{name: "hook adds optional session id", observedSession: "session-added"},
+		{name: "hook changes optional session id", storedSession: "session-old", observedSession: "session-new"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			reg := lifecycleFixture(t)
+			agent, _ := reg.Agent(lifecycleAgentUID)
+			endpoint := CodexEndpointRef{StateDomainID: "domain", EndpointGenerationID: "generation"}
+			agent.Status.SessionRef = &AgentSessionRef{Provider: "codex", ObservedAt: lifecycleClock, Codex: &CodexSessionRef{
+				ThreadID: "thread", SessionID: test.storedSession, HasStartedTurn: true, Endpoint: &endpoint,
+				Lifecycle: &CodexGenerationLifecycleRef{State: CodexGenerationCurrent},
+			}}
+			mut := Mutator{Now: func() time.Time { return lifecycleClock.Add(time.Minute) }}
+			if _, changed, err := mut.RecordAgentSessionRef(reg, lifecycleAgentUID, AgentSessionObservation{
+				Provider: "codex", ThreadID: "thread", SessionID: test.observedSession,
+			}); err != nil || !changed {
+				t.Fatalf("same-thread optional session refinement = changed:%t err:%v", changed, err)
+			}
+			got, _ := reg.Agent(lifecycleAgentUID)
+			if got.Status.SessionRef.Codex.SessionID != test.observedSession || !got.Status.SessionRef.Codex.HasStartedTurn ||
+				got.Status.SessionRef.Codex.Endpoint == nil || !got.Status.SessionRef.Codex.Endpoint.Same(endpoint) ||
+				got.Status.SessionRef.Codex.Lifecycle == nil || got.Status.SessionRef.Codex.Lifecycle.State != CodexGenerationCurrent {
+				t.Fatalf("same-thread optional session refinement erased authority: %+v", got.Status.SessionRef.Codex)
+			}
+		})
 	}
 }

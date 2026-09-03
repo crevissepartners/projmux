@@ -77,6 +77,12 @@ type SessionMeta struct {
 	Reason        string
 	Archived      bool
 	RuntimeStatus string
+	// Native Codex rows carry the complete durable endpoint identity and its
+	// observed generation state. Rollout rows leave all three fields empty and
+	// therefore can never satisfy native resume authority.
+	StateDomainID        string
+	EndpointGenerationID string
+	GenerationState      string
 
 	// Turns is the count of user turns in the session log. Counting turns means
 	// scanning the whole log (it defeats the cheap id/cwd/title/branch early-exit

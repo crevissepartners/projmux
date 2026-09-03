@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
@@ -243,6 +244,107 @@ func TestBrokerBoundAgentsShareOneUpstreamConnectionWithIndependentBindingEpochs
 	}
 	if got := waitForBrokerNotification(t, first); !strings.Contains(string(got.Params), "thread-created") {
 		t.Fatalf("created binding received %s", got.Params)
+	}
+}
+
+func TestGenerationRoutedBrokerEpochPublishesItsExactRuntimeAuthority(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("codex broker runtime requires Unix filesystem semantics")
+	}
+	endpointRef := coremetadata.CodexEndpointRef{StateDomainID: "domain-exact", EndpointGenerationID: "generation-exact"}
+	key, err := codexbroker.NewEndpointKey(endpointRef.StateDomainID, endpointRef.EndpointGenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := codexbroker.NewDiscovery(shortTempDomain(t), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint := newBrokerTestEndpoint()
+	broker, err := codexbroker.NewBroker(codexbroker.Config{Endpoint: key, Opener: func(context.Context) (codexbroker.Endpoint, error) {
+		return endpoint, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := codexbroker.StartHost(codexbroker.HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: -1})
+	if err != nil {
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = host.Close()
+		_ = broker.Close()
+	})
+	session := newCodexBrokerObserverSessionOn(brokerTestIdentity("thread-generation"), "", nil, discovery, nil)
+	session.endpoint = endpointRef
+	defer session.Close()
+	epoch := openBrokerEpoch(t, session)
+	authority, err := epoch.GenerationAuthority()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !authority.Endpoint().Same(endpointRef) || authority.BrokerRuntimeID != host.RuntimeID() ||
+		authority.ConnectionEpoch == 0 || authority.BindingEpoch == 0 {
+		t.Fatalf("generation authority = %+v, runtime=%q", authority, host.RuntimeID())
+	}
+	if strings.Contains(authority.BrokerRuntimeID, "observer-") {
+		t.Fatalf("observer-local identity leaked into broker authority: %+v", authority)
+	}
+}
+
+func TestBrokerObserverConcurrentCloseAndPublishKeepsSessionClosed(t *testing.T) {
+	endpoint := newBrokerTestEndpoint()
+	discovery, _ := startBrokerRuntimeForTest(t, endpoint)
+	session := newCodexBrokerObserverSessionOn(brokerTestIdentity("thread-close-publish"), "", nil, discovery, nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, ready, err := session.ensure(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var record codexBrokerEpochRecord
+	select {
+	case record = <-ready:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	start := make(chan struct{})
+	var (
+		epoch      *codexBrokerLifecycleEpoch
+		publishErr error
+		closeErr   error
+		group      sync.WaitGroup
+	)
+	group.Add(2)
+	go func() {
+		defer group.Done()
+		<-start
+		epoch, publishErr = session.publish(record)
+	}()
+	go func() {
+		defer group.Done()
+		<-start
+		closeErr = session.Close()
+	}()
+	close(start)
+	group.Wait()
+	if closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if publishErr == nil {
+		waitForBrokerStreamEnd(t, epoch)
+	}
+	session.mu.Lock()
+	closed, current, binding, conn := session.closed, session.current, session.binding, session.conn
+	session.mu.Unlock()
+	if !closed || current != nil || binding != nil || conn != nil {
+		t.Fatalf("concurrent close/publish resurrected the session: closed=%t current=%p binding=%p conn=%p publishErr=%v",
+			closed, current, binding, conn, publishErr)
+	}
+	if _, err := session.Open(ctx); err == nil {
+		t.Fatal("closed session reopened after concurrent publish")
 	}
 }
 
