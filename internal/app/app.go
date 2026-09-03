@@ -12,6 +12,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexhandover"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -271,11 +272,17 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	createCmd.agents = ai
 	createCmd.resumes = ai
 	var rollingCoordinator *codexupgrade.Coordinator
+	var handoverCoordinator *codexhandover.Coordinator
 	createCmd.codexNative = defaultCodexNativeThreadController{}
 	if paths, pathsErr := config.DefaultPathsFromEnv(); pathsErr == nil {
 		journal := codexupgrade.NewStateStore(paths.StateDir)
 		registry := intmetadata.NewDefaultStore(paths)
 		rollingCoordinator = &codexupgrade.Coordinator{Journal: journal, Registry: registry, Mutator: intmetadata.DefaultMutator}
+		handoverCoordinator = &codexhandover.Coordinator{
+			Journal: journal, Registry: registry,
+			Effects: &codexHandoverEffects{registry: registry, mutator: intmetadata.DefaultMutator(),
+				runner: createCmd.runtime.runner, materialize: createCmd.runtime, launcher: ai},
+		}
 		createCmd.codexNative = rollingCodexNativeThreadController{journal: journal}
 	}
 	ai.codexNative = createCmd.codexNative
@@ -300,6 +307,9 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	if rollingCoordinator != nil {
 		agentCmd.codexUpgrade = &codexUpgradeCommand{coordinator: rollingCoordinator}
 		agentCmd.handover = rollingCoordinator
+	}
+	if handoverCoordinator != nil {
+		agentCmd.codexHandover = &codexHandoverCommand{coordinator: handoverCoordinator}
 	}
 	runtimeDiagnosticsCmd := newRuntimeDiagnosticsCommand(tmuxCmd.runner)
 	runtimeDiagnosticsCmd.focus = focusCmd

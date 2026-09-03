@@ -38,13 +38,14 @@ func validGenerationState(state GenerationState) bool {
 type OwnerClass string
 
 const (
-	OwnerProjmuxPrivate OwnerClass = "projmux-private"
-	OwnerUnmanaged      OwnerClass = "unmanaged"
-	OwnerUnknown        OwnerClass = "unknown"
+	OwnerProjmuxPrivate  OwnerClass = "projmux-private"
+	OwnerOfficialManaged OwnerClass = "official-managed"
+	OwnerUnmanaged       OwnerClass = "unmanaged"
+	OwnerUnknown         OwnerClass = "unknown"
 )
 
 func validOwnerClass(owner OwnerClass) bool {
-	return slices.Contains([]OwnerClass{OwnerProjmuxPrivate, OwnerUnmanaged, OwnerUnknown}, owner)
+	return slices.Contains([]OwnerClass{OwnerProjmuxPrivate, OwnerOfficialManaged, OwnerUnmanaged, OwnerUnknown}, owner)
 }
 
 // Generation is the durable, path-free inventory of one pool slot.
@@ -100,10 +101,10 @@ func ProjectAgentObligation(agent metadata.Agent, explicitlyClosed bool) (AgentO
 		state = ObligationNoTurn
 	case agent.Status.Interaction.Kind == metadata.InteractionApprovalRequired:
 		state = ObligationApprovalPending
-	case agent.Status.Phase == metadata.PhaseRunning:
-		state = ObligationActive
 	case agent.Status.Interaction.Kind == metadata.InteractionResponseComplete || agent.Status.Phase == metadata.PhaseOffline:
 		state = ObligationCompletedPersisted
+	case agent.Status.Phase == metadata.PhaseRunning:
+		state = ObligationActive
 	}
 	return AgentObligation{
 		AgentUID: agent.Metadata.UID, EndpointGenerationID: ref.Codex.Endpoint.EndpointGenerationID, State: state,

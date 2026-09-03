@@ -304,8 +304,10 @@ var routes = []Route{
 			"projmux agent usage [--model <name>] [--window <name>] [--json] [--force]",
 			"projmux agent app-server upgrade plan|apply --request <absolute-json>",
 			"projmux agent app-server upgrade resume|abort --operation <ref>",
+			"projmux agent app-server handover plan|apply --request <absolute-json>",
+			"projmux agent app-server handover resume|abort --operation <ref>",
 		},
-		Canonical: []string{"agent status", "agent topic", "agent resume", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent app-server upgrade plan", "agent app-server upgrade apply", "agent app-server upgrade resume", "agent app-server upgrade abort"},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent app-server upgrade plan", "agent app-server upgrade apply", "agent app-server upgrade resume", "agent app-server upgrade abort", "agent app-server handover plan", "agent app-server handover apply", "agent app-server handover resume", "agent app-server handover abort"},
 		Children: []Route{
 			{Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
 			{Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
@@ -356,7 +358,7 @@ var routes = []Route{
 				Name:       "app-server",
 				Invocation: InvocationRefusal,
 				Summary:    "Manage explicitly requested private Codex app-server generation operations",
-				Canonical:  []string{"agent app-server upgrade plan", "agent app-server upgrade apply", "agent app-server upgrade resume", "agent app-server upgrade abort"},
+				Canonical:  []string{"agent app-server upgrade plan", "agent app-server upgrade apply", "agent app-server upgrade resume", "agent app-server upgrade abort", "agent app-server handover plan", "agent app-server handover apply", "agent app-server handover resume", "agent app-server handover abort"},
 				Children: []Route{{
 					Name:       "upgrade",
 					Invocation: InvocationRefusal,
@@ -367,6 +369,17 @@ var routes = []Route{
 						{Name: "apply", Invocation: InvocationExplicit, Summary: "Apply one exact crash-resumable private generation admission switch", Usage: []string{"projmux agent app-server upgrade apply --request <absolute-json>"}, Canonical: []string{"agent app-server upgrade apply"}},
 						{Name: "resume", Invocation: InvocationExplicit, Summary: "Resume one exact durable rolling generation operation", Usage: []string{"projmux agent app-server upgrade resume --operation <ref>"}, Canonical: []string{"agent app-server upgrade resume"}},
 						{Name: "abort", Invocation: InvocationExplicit, Summary: "Abort one pre-admission operation and clean only its exact candidate", Usage: []string{"projmux agent app-server upgrade abort --operation <ref>"}, Canonical: []string{"agent app-server upgrade abort"}},
+					},
+				}, {
+					Name:       "handover",
+					Invocation: InvocationRefusal,
+					Summary:    "Plan, apply, resume, or abort one exact generation-wide handover",
+					Canonical:  []string{"agent app-server handover plan", "agent app-server handover apply", "agent app-server handover resume", "agent app-server handover abort"},
+					Children: []Route{
+						{Name: "plan", Invocation: InvocationExplicit, Summary: "Read the exact target-set generation handover plan", Usage: []string{"projmux agent app-server handover plan --request <absolute-json>"}, Canonical: []string{"agent app-server handover plan"}},
+						{Name: "apply", Invocation: InvocationExplicit, Summary: "Apply one crash-resumable generation-wide handover", Usage: []string{"projmux agent app-server handover apply --request <absolute-json>"}, Canonical: []string{"agent app-server handover apply"}},
+						{Name: "resume", Invocation: InvocationExplicit, Summary: "Resume one exact durable generation handover", Usage: []string{"projmux agent app-server handover resume --operation <ref>"}, Canonical: []string{"agent app-server handover resume"}},
+						{Name: "abort", Invocation: InvocationExplicit, Summary: "Abort one exact pre-stop generation handover", Usage: []string{"projmux agent app-server handover abort --operation <ref>"}, Canonical: []string{"agent app-server handover abort"}},
 					},
 				}},
 			},

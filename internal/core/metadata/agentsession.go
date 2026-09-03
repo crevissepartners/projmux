@@ -74,6 +74,28 @@ type CodexSessionRef struct {
 	// presentation reconciler. Provider observations never create or change it;
 	// later control-plane phases may set it alongside Endpoint.
 	Lifecycle *CodexGenerationLifecycleRef `json:"lifecycle,omitempty"`
+	// HandoverResume is an operation-qualified, content-free at-most-once
+	// provider-resume receipt. It stays on the old endpoint ref until the
+	// generation CAS consumes it, allowing coordinator crash recovery to avoid
+	// a second resume wire even when the successor itself restarted.
+	HandoverResume *CodexHandoverResumeReceipt `json:"handoverResume,omitempty"`
+}
+
+type CodexHandoverResumeReceipt struct {
+	OperationID       string           `json:"operationID"`
+	SuccessorEndpoint CodexEndpointRef `json:"successorEndpoint"`
+	AgentUID          string           `json:"agentUID"`
+	PaneUID           string           `json:"paneUID"`
+	PaneRuntimeID     string           `json:"paneRuntimeID"`
+	PaneGeneration    string           `json:"paneGeneration"`
+	ThreadID          string           `json:"threadID"`
+}
+
+func (r CodexHandoverResumeReceipt) ValidFor(old *CodexEndpointRef) bool {
+	return old != nil && old.Valid() && r.SuccessorEndpoint.Valid() && old.StateDomainID == r.SuccessorEndpoint.StateDomainID &&
+		!old.Same(r.SuccessorEndpoint) && validCodexIdentityToken(r.OperationID) && validCodexIdentityToken(r.AgentUID) &&
+		validCodexIdentityToken(r.PaneUID) && strings.TrimSpace(r.PaneRuntimeID) != "" && strings.TrimSpace(r.PaneGeneration) != "" &&
+		validCodexIdentityToken(r.ThreadID)
 }
 
 // CodexGenerationState is the closed durable generation vocabulary shared by
@@ -259,6 +281,10 @@ func (r *AgentSessionRef) Clone() *AgentSessionRef {
 			}
 			codex.Lifecycle = &lifecycle
 		}
+		if r.Codex.HandoverResume != nil {
+			receipt := *r.Codex.HandoverResume
+			codex.HandoverResume = &receipt
+		}
 		out.Codex = &codex
 	}
 	if r.Antigravity != nil {
@@ -424,6 +450,10 @@ func (m Mutator) RecordAgentSessionRef(reg *Registry, agentUID string, obs Agent
 			}
 			ref.Codex.Lifecycle = &lifecycle
 		}
+		if previous.HandoverResume != nil {
+			receipt := *previous.HandoverResume
+			ref.Codex.HandoverResume = &receipt
+		}
 		// SessionID is optional hook metadata. Its omission must not turn an
 		// otherwise exact thread re-observation into a destructive rewrite.
 		if ref.Codex.SessionID == "" {
@@ -530,6 +560,10 @@ func validateSessionRef(op string, agent Agent) error {
 	}
 	if ref.Codex != nil && ref.Codex.Lifecycle != nil && !ref.Codex.Lifecycle.ValidFor(ref.Codex.Endpoint) {
 		return stateErr(op, ErrInvalidRegistry, "agent %q Codex sessionRef has invalid generation lifecycle authority", agent.Metadata.Name)
+	}
+	if ref.Codex != nil && ref.Codex.HandoverResume != nil && (!ref.Codex.HandoverResume.ValidFor(ref.Codex.Endpoint) ||
+		ref.Codex.HandoverResume.AgentUID != agent.Metadata.UID || ref.Codex.HandoverResume.ThreadID != ref.Codex.ThreadID) {
+		return stateErr(op, ErrInvalidRegistry, "agent %q Codex sessionRef has invalid handover resume receipt", agent.Metadata.Name)
 	}
 	// spec.provider is only cross-checked when the Agent actually declares one.
 	// An Agent created from an unrecognized provider spelling normalizes to "",

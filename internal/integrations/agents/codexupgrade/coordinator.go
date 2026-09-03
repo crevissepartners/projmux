@@ -272,6 +272,8 @@ func (coordinator *Coordinator) Apply(ctx context.Context, request Request) (Jou
 				Routes:              []GenerationRoute{request.Current},
 			}
 		}
+		qualification := request.Qualification
+		journal.Qualification = &qualification
 		liveRoutes := 0
 		currentRoutes := 0
 		for _, route := range journal.Routes {
@@ -294,7 +296,7 @@ func (coordinator *Coordinator) Apply(ctx context.Context, request Request) (Jou
 		journal.Routes = append(journal.Routes, GenerationRoute{
 			Generation: codexgeneration.Generation{Endpoint: request.Target.Endpoint, State: codexgeneration.StatePreparing,
 				Owner: codexgeneration.OwnerProjmuxPrivate, BundleID: request.TargetBundleID},
-			Config: request.Target, TUIPath: request.TargetTUIPath,
+			Config: request.Target, TUIPath: request.TargetTUIPath, LaunchOperationRef: request.OperationRef,
 		})
 		return nil
 	})
@@ -378,7 +380,8 @@ func (coordinator *Coordinator) Resume(ctx context.Context, operationRef string)
 				// Readiness is not enough to authorize admission: the exact TUI
 				// executable must still be the single verified RoleTUI artifact.
 				if err := coordinator.runtime().Observe(ctx, target.Config, proof, target.TUIPath); err != nil {
-					return err
+					return fmt.Errorf("candidate publication observe failed: refusal=%s proof-axis=%s: %w",
+						codexgenerationhost.HostRefusalOf(err), codexgenerationhost.HostProofAxisOf(err), err)
 				}
 				_, publishErr := coordinator.Journal.Update(ctx, func(current *Journal, exists bool) error {
 					if !exists || current.Operation == nil || current.Operation.OperationRef != operationRef ||
@@ -418,7 +421,8 @@ func (coordinator *Coordinator) Resume(ctx context.Context, operationRef string)
 					return errors.New("admission candidate route is not ready")
 				}
 				if err := coordinator.runtime().Observe(ctx, target.Config, *target.Proof, target.TUIPath); err != nil {
-					return fmt.Errorf("admission candidate route drifted: %w", err)
+					return fmt.Errorf("admission candidate observe failed: refusal=%s proof-axis=%s: %w",
+						codexgenerationhost.HostRefusalOf(err), codexgenerationhost.HostProofAxisOf(err), err)
 				}
 				_, updateErr := coordinator.Journal.Update(ctx, func(current *Journal, exists bool) error {
 					if !exists || current.Operation == nil || current.Operation.OperationRef != operationRef {

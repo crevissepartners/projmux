@@ -140,3 +140,47 @@ func TestRefineCodexActivationRejectsOtherThreadAndStaleGeneration(t *testing.T)
 		})
 	}
 }
+
+func TestCASCodexHandoverTargetKeepsAgentPaneThreadAndRejectsDuplicateOwner(t *testing.T) {
+	old := CodexEndpointRef{StateDomainID: "state-native", EndpointGenerationID: "old"}
+	successor := CodexEndpointRef{StateDomainID: "state-native", EndpointGenerationID: "successor"}
+	reg := lifecycleFixture(t)
+	agent, _ := reg.Agent(lifecycleAgentUID)
+	pane, _ := reg.Pane(lifecyclePaneUID)
+	agent.Status.Interaction = AgentInteraction{Kind: InteractionResponseComplete, Source: string(InteractionSourceProviderControl), ObservedAt: lifecycleClock}
+	agent.Status.SessionRef.Codex = &CodexSessionRef{ThreadID: "thread-native", HasStartedTurn: true, Endpoint: &old,
+		Lifecycle: &CodexGenerationLifecycleRef{State: CodexGenerationHandoverPending,
+			Operation: &CodexGenerationOperationRef{ID: "handover", Endpoint: old}}}
+	pane.Status.Activation.RuntimeID = "%9"
+	pane.Status.Activation.Codex = &CodexActivationBinding{ThreadID: "thread-native", TurnID: "turn-complete"}
+	target := CodexHandoverTarget{AgentUID: lifecycleAgentUID, PaneUID: lifecyclePaneUID, PaneRuntimeID: "%9",
+		PaneGeneration: lifecycleGeneration, RelaunchGeneration: "handover-generation", ThreadID: "thread-native"}
+	mut := Mutator{Now: func() time.Time { return lifecycleClock.Add(time.Minute) }}
+	changed, err := mut.CASCodexHandoverTarget(reg, target, old, successor, "handover")
+	if err != nil || !changed {
+		t.Fatalf("CAS = (%t, %v)", changed, err)
+	}
+	gotAgent, _ := reg.Agent(lifecycleAgentUID)
+	gotPane, _ := reg.Pane(lifecyclePaneUID)
+	if gotAgent.Status.SessionRef.Codex.ThreadID != "thread-native" || !gotAgent.Status.SessionRef.Codex.Endpoint.Same(successor) ||
+		gotPane.Status.Activation.Generation != "handover-generation" || gotPane.Status.Activation.RuntimeID != "%9" ||
+		gotPane.Metadata.UID != lifecyclePaneUID || gotAgent.Metadata.UID != lifecycleAgentUID {
+		t.Fatalf("CAS changed identity tuple: agent=%+v pane=%+v", gotAgent, gotPane)
+	}
+	if changed, err := mut.CASCodexHandoverTarget(reg, target, old, successor, "handover"); err != nil || changed {
+		t.Fatalf("repeat CAS = (%t, %v), want no-op", changed, err)
+	}
+
+	duplicate := gotAgent.Clone()
+	duplicate.Metadata.UID, duplicate.Metadata.Name = "agent-duplicate", "duplicate"
+	duplicate.Status.PaneRef = ""
+	reg.Agents = append(reg.Agents, duplicate)
+	before, _ := json.Marshal(reg)
+	if _, err := mut.CASCodexHandoverTarget(reg, target, old, successor, "handover"); err == nil {
+		t.Fatal("CAS accepted a duplicate successor thread owner")
+	}
+	after, _ := json.Marshal(reg)
+	if !reflect.DeepEqual(before, after) {
+		t.Fatal("duplicate-owner refusal mutated Registry")
+	}
+}

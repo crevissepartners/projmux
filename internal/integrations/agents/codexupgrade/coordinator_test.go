@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 
@@ -135,6 +136,37 @@ func (runtime *fakeRollingRuntime) Prepare(_ context.Context, _ GenerationConfig
 		}
 	}
 	return publish(runtime.proof)
+}
+
+func TestCoordinatorObserveFailureNamesCandidatePublicationOrAdmissionStage(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		failTargetObserve int
+		want              string
+		notWant           string
+	}{
+		{name: "candidate publication", failTargetObserve: 1, want: "candidate publication observe failed", notWant: "admission candidate observe failed"},
+		{name: "admission", failTargetObserve: 2, want: "admission candidate observe failed", notWant: "candidate publication observe failed"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request := testRollingRequest(t)
+			coordinator, runtime, _ := testRollingCoordinator(t, request)
+			targetObserves := 0
+			runtime.observe = func(cfg GenerationConfig, _ codexgenerationhost.LaunchProof, _ string) error {
+				if cfg.Endpoint.Same(request.Target.Endpoint) {
+					targetObserves++
+					if targetObserves == test.failTargetObserve {
+						return errors.New("simulated target proof drift")
+					}
+				}
+				return nil
+			}
+			_, err := coordinator.Apply(context.Background(), request)
+			if err == nil || !strings.Contains(err.Error(), test.want) || strings.Contains(err.Error(), test.notWant) {
+				t.Fatalf("observe failure = %v, want %q and not %q", err, test.want, test.notWant)
+			}
+		})
+	}
 }
 
 func TestCoordinatorWrongAbsoluteTUIPathNeverCommitsAdmission(t *testing.T) {
