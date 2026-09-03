@@ -94,6 +94,8 @@ projmux agent integrate <provider> [--dry-run]
 projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
 projmux agent app-server upgrade plan|apply --request <absolute-json>
 projmux agent app-server upgrade resume|abort --operation <ref>
+projmux agent app-server handover plan|apply --request <absolute-json>
+projmux agent app-server handover resume|abort --operation <ref>
 ```
 
 Subcommands:
@@ -110,7 +112,7 @@ Subcommands:
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
 | [`projmux agent app-server`](#projmux-agent-app-server) | Manage explicitly requested private Codex app-server generation operations |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`, `projmux agent app-server handover plan`, `projmux agent app-server handover apply`, `projmux agent app-server handover resume`, `projmux agent app-server handover abort`
 
 ### `projmux agent status`
 
@@ -267,8 +269,9 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux agent app-server upgrade`](#projmux-agent-app-server-upgrade) | Plan, apply, resume, or abort one exact rolling generation operation |
+| [`projmux agent app-server handover`](#projmux-agent-app-server-handover) | Plan, apply, resume, or abort one exact generation-wide handover |
 
-Canonical spelling: `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`
+Canonical spelling: `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`, `projmux agent app-server handover plan`, `projmux agent app-server handover apply`, `projmux agent app-server handover resume`, `projmux agent app-server handover abort`
 
 #### `projmux agent app-server upgrade`
 
@@ -329,6 +332,67 @@ Selectorless authority: `explicit-target` — the route or caller must name the 
 
 ```
 projmux agent app-server upgrade abort --operation <ref>
+```
+
+#### `projmux agent app-server handover`
+
+Plan, apply, resume, or abort one exact generation-wide handover
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+```
+projmux agent app-server handover
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux agent app-server handover plan`](#projmux-agent-app-server-handover-plan) | Read the exact target-set generation handover plan |
+| [`projmux agent app-server handover apply`](#projmux-agent-app-server-handover-apply) | Apply one crash-resumable generation-wide handover |
+| [`projmux agent app-server handover resume`](#projmux-agent-app-server-handover-resume) | Resume one exact durable generation handover |
+| [`projmux agent app-server handover abort`](#projmux-agent-app-server-handover-abort) | Abort one exact pre-stop generation handover |
+
+Canonical spelling: `projmux agent app-server handover plan`, `projmux agent app-server handover apply`, `projmux agent app-server handover resume`, `projmux agent app-server handover abort`
+
+##### `projmux agent app-server handover plan`
+
+Read the exact target-set generation handover plan
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+```
+projmux agent app-server handover plan --request <absolute-json>
+```
+
+##### `projmux agent app-server handover apply`
+
+Apply one crash-resumable generation-wide handover
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+```
+projmux agent app-server handover apply --request <absolute-json>
+```
+
+##### `projmux agent app-server handover resume`
+
+Resume one exact durable generation handover
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+```
+projmux agent app-server handover resume --operation <ref>
+```
+
+##### `projmux agent app-server handover abort`
+
+Abort one exact pre-stop generation handover
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+```
+projmux agent app-server handover abort --operation <ref>
 ```
 
 ## `projmux attention`

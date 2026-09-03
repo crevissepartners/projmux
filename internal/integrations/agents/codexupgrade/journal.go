@@ -53,6 +53,13 @@ func (cfg GenerationConfig) hostConfig() codexgenerationhost.PrivateGenerationCo
 	}
 }
 
+// HostConfig exposes the exact path-bearing launch input to the Phase 5
+// production lifecycle adapter. Callers cannot weaken it: Journal validation
+// has already checked every path and endpoint relation.
+func (cfg GenerationConfig) HostConfig() codexgenerationhost.PrivateGenerationConfig {
+	return cfg.hostConfig()
+}
+
 func ObserveRoute(ctx context.Context, route GenerationRoute) error {
 	if route.Proof == nil || !route.Ready {
 		return errors.New("codex generation route is not ready")
@@ -70,17 +77,23 @@ func (cfg GenerationConfig) valid() bool {
 // GenerationRoute is one exact pool slot plus its private transport proof.
 // Paths stay in this owner-private journal and never enter Registry metadata.
 type GenerationRoute struct {
-	Generation codexgeneration.Generation       `json:"generation"`
-	Config     GenerationConfig                 `json:"config"`
-	TUIPath    string                           `json:"tuiPath"`
-	Ready      bool                             `json:"ready"`
-	Proof      *codexgenerationhost.LaunchProof `json:"proof,omitempty"`
+	Generation         codexgeneration.Generation       `json:"generation"`
+	Config             GenerationConfig                 `json:"config"`
+	TUIPath            string                           `json:"tuiPath"`
+	LaunchOperationRef string                           `json:"launchOperationRef,omitempty"`
+	Ready              bool                             `json:"ready"`
+	Proof              *codexgenerationhost.LaunchProof `json:"proof,omitempty"`
 }
 
 func (route GenerationRoute) valid(stateDomainID string) bool {
-	if route.Generation.Endpoint.StateDomainID != stateDomainID || !route.Generation.Endpoint.Same(route.Config.Endpoint) ||
-		!route.Config.valid() || !filepath.IsAbs(route.TUIPath) || filepath.Clean(route.TUIPath) != route.TUIPath ||
-		route.Generation.Owner != codexgeneration.OwnerProjmuxPrivate {
+	if route.Generation.Endpoint.StateDomainID != stateDomainID {
+		return false
+	}
+	if route.Generation.Owner != codexgeneration.OwnerProjmuxPrivate {
+		return (route.Generation.Owner == codexgeneration.OwnerOfficialManaged || route.Generation.Owner == codexgeneration.OwnerUnmanaged || route.Generation.Owner == codexgeneration.OwnerUnknown) &&
+			route.Config == (GenerationConfig{}) && route.TUIPath == "" && route.LaunchOperationRef == "" && !route.Ready && route.Proof == nil
+	}
+	if !route.Generation.Endpoint.Same(route.Config.Endpoint) || !route.Config.valid() || !filepath.IsAbs(route.TUIPath) || filepath.Clean(route.TUIPath) != route.TUIPath {
 		return false
 	}
 	if route.Ready != (route.Proof != nil) {
@@ -106,7 +119,10 @@ type Journal struct {
 	CurrentGenerationID string                                   `json:"currentGenerationID"`
 	Routes              []GenerationRoute                        `json:"routes"`
 	Obligations         []codexgeneration.AgentObligation        `json:"obligations,omitempty"`
+	Qualification       *codexgeneration.QualificationResult     `json:"qualification,omitempty"`
 	Operation           *codexgeneration.RollingUpgradeOperation `json:"operation,omitempty"`
+	ColdRecovery        *codexgeneration.ColdRecoveryOperation   `json:"coldRecovery,omitempty"`
+	Handover            *codexgeneration.HandoverOperation       `json:"handover,omitempty"`
 }
 
 func (j Journal) Validate() error {
@@ -139,6 +155,33 @@ func (j Journal) Validate() error {
 		}
 		if j.Operation.StateDomainID != j.StateDomainID {
 			return errors.New("codex operation state domain mismatch")
+		}
+	}
+	if j.Qualification != nil {
+		if err := j.Qualification.Validate(); err != nil {
+			return err
+		}
+	}
+	if j.ColdRecovery != nil {
+		if err := j.ColdRecovery.Validate(); err != nil {
+			return err
+		}
+		recoveryEndpoint := metadata.CodexEndpointRef{StateDomainID: j.ColdRecovery.StateDomainID, EndpointGenerationID: j.ColdRecovery.GenerationID}
+		route, ok := j.Route(recoveryEndpoint)
+		if j.Operation == nil || !ok || route.Generation.Owner != codexgeneration.OwnerProjmuxPrivate ||
+			j.Operation.OperationRef != j.ColdRecovery.RollingOperationRef || j.Operation.OldGenerationID != j.ColdRecovery.GenerationID ||
+			j.StateDomainID != j.ColdRecovery.StateDomainID || route.LaunchOperationRef != j.ColdRecovery.LaunchOperationRef {
+			return errors.New("codex cold recovery is not linked to exact old generation authority")
+		}
+	}
+	if j.Handover != nil {
+		if err := j.Handover.Validate(); err != nil {
+			return err
+		}
+		if j.Operation == nil || j.Operation.OperationRef != j.Handover.RollingOperationRef ||
+			!j.Operation.HandoverRequested || j.Operation.Aborted || j.Operation.OldGenerationID != j.Handover.OldGenerationID ||
+			j.Operation.TargetGenerationID != j.Handover.SuccessorGenerationID || j.StateDomainID != j.Handover.StateDomainID {
+			return errors.New("codex handover is not linked to exact rolling operation")
 		}
 	}
 	return nil
@@ -257,7 +300,7 @@ func (store *Store) Update(ctx context.Context, fn func(*Journal, bool) error) (
 	if err != nil {
 		return Journal{}, err
 	}
-	working := current
+	working := cloneJournal(current)
 	if err := fn(&working, exists); err != nil {
 		return Journal{}, err
 	}
@@ -265,16 +308,53 @@ func (store *Store) Update(ctx context.Context, fn func(*Journal, bool) error) (
 		return Journal{}, err
 	}
 	if exists && slices.EqualFunc(current.Routes, working.Routes, func(a, b GenerationRoute) bool {
-		return a.Generation == b.Generation && a.Config == b.Config && a.TUIPath == b.TUIPath && a.Ready == b.Ready && reflectProof(a.Proof, b.Proof)
+		return a.Generation == b.Generation && a.Config == b.Config && a.TUIPath == b.TUIPath && a.LaunchOperationRef == b.LaunchOperationRef && a.Ready == b.Ready && reflectProof(a.Proof, b.Proof)
 	}) &&
 		current.Version == working.Version && current.StateDomainID == working.StateDomainID && current.CurrentGenerationID == working.CurrentGenerationID &&
-		slices.Equal(current.Obligations, working.Obligations) && operationsEqual(current.Operation, working.Operation) {
+		slices.Equal(current.Obligations, working.Obligations) && valuesEqual(current.Qualification, working.Qualification) &&
+		operationsEqual(current.Operation, working.Operation) && valuesEqual(current.ColdRecovery, working.ColdRecovery) && valuesEqual(current.Handover, working.Handover) {
 		return current, nil
 	}
 	if err := store.write(working); err != nil {
 		return Journal{}, err
 	}
 	return working, nil
+}
+
+func cloneJournal(current Journal) Journal {
+	working := current
+	working.Routes = slices.Clone(current.Routes)
+	for i := range working.Routes {
+		if current.Routes[i].Proof != nil {
+			proof := *current.Routes[i].Proof
+			working.Routes[i].Proof = &proof
+		}
+	}
+	working.Obligations = slices.Clone(current.Obligations)
+	if current.Qualification != nil {
+		qualification := *current.Qualification
+		working.Qualification = &qualification
+	}
+	if current.Operation != nil {
+		operation := *current.Operation
+		operation.Ledger = slices.Clone(current.Operation.Ledger)
+		working.Operation = &operation
+	}
+	if current.ColdRecovery != nil {
+		recovery := *current.ColdRecovery
+		working.ColdRecovery = &recovery
+	}
+	if current.Handover != nil {
+		handover := *current.Handover
+		handover.Targets = slices.Clone(current.Handover.Targets)
+		handover.Choices = slices.Clone(current.Handover.Choices)
+		if current.Handover.ExternalStopReceipt != nil {
+			receipt := *current.Handover.ExternalStopReceipt
+			handover.ExternalStopReceipt = &receipt
+		}
+		working.Handover = &handover
+	}
+	return working
 }
 
 func reflectProof(a, b *codexgenerationhost.LaunchProof) bool {
@@ -288,6 +368,12 @@ func operationsEqual(a, b *codexgeneration.RollingUpgradeOperation) bool {
 	if a == nil || b == nil {
 		return a == b
 	}
+	ab, _ := json.Marshal(a)
+	bb, _ := json.Marshal(b)
+	return bytes.Equal(ab, bb)
+}
+
+func valuesEqual(a, b any) bool {
 	ab, _ := json.Marshal(a)
 	bb, _ := json.Marshal(b)
 	return bytes.Equal(ab, bb)

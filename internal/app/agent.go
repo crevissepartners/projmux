@@ -67,6 +67,7 @@ type agentCommand struct {
 	controlTimeout time.Duration
 	focus          rawArgvCommand
 	codexUpgrade   rawArgvCommand
+	codexHandover  rawArgvCommand
 	handover       codexDrainingHandoverRequester
 }
 
@@ -130,10 +131,17 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 	case "review":
 		return c.runReview(rest, stdout, stderr)
 	case "app-server":
-		if len(rest) == 0 || rest[0] != "upgrade" {
-			return usageError("agent app-server requires upgrade")
+		if len(rest) == 0 {
+			return usageError("agent app-server requires upgrade or handover")
 		}
-		return forwardRawArgv(c.codexUpgrade, "agent app-server upgrade", "agent app-server upgrade", nil, rest[1:], stdout, stderr)
+		switch rest[0] {
+		case "upgrade":
+			return forwardRawArgv(c.codexUpgrade, "agent app-server upgrade", "agent app-server upgrade", nil, rest[1:], stdout, stderr)
+		case "handover":
+			return forwardRawArgv(c.codexHandover, "agent app-server handover", "agent app-server handover", nil, rest[1:], stdout, stderr)
+		default:
+			return usageError("agent app-server requires upgrade or handover")
+		}
 	default:
 		return usageError(fmt.Sprintf("agent %s is not available; this release implements: %s",
 			args[0], strings.Join(agentSubcommands, ", ")))

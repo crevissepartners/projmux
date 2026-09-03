@@ -97,6 +97,41 @@ func HostRefusalOf(err error) HostRefusal {
 
 func hostRefuse(reason HostRefusal, err error) error { return &HostError{Refusal: reason, err: err} }
 
+// HostProofAxis is a content-free diagnostic for an exact launch-proof
+// mismatch. It identifies which authority axis failed without exposing a
+// socket path, executable path, process id, or other machine-local value.
+type HostProofAxis string
+
+const (
+	HostProofAxisNone       HostProofAxis = "none"
+	HostProofAxisShape      HostProofAxis = "shape"
+	HostProofAxisLease      HostProofAxis = "lease"
+	HostProofAxisExecutable HostProofAxis = "executable"
+	HostProofAxisSocket     HostProofAxis = "socket"
+	HostProofAxisProcess    HostProofAxis = "process-group"
+)
+
+type hostProofAxisError struct {
+	axis HostProofAxis
+	err  error
+}
+
+func (err *hostProofAxisError) Error() string { return "launch proof axis: " + string(err.axis) }
+func (err *hostProofAxisError) Unwrap() error { return err.err }
+
+// HostProofAxisOf returns only the closed, content-free proof axis.
+func HostProofAxisOf(err error) HostProofAxis {
+	var axisErr *hostProofAxisError
+	if errors.As(err, &axisErr) {
+		return axisErr.axis
+	}
+	return HostProofAxisNone
+}
+
+func hostProofMismatch(axis HostProofAxis, err error) error {
+	return hostRefuse(HostRefusalLaunchProofMismatch, &hostProofAxisError{axis: axis, err: err})
+}
+
 // FileIdentity is the local immutable object identity captured in a launch
 // proof. Device/inode plus change time prove replacement at the same path even
 // when a filesystem immediately reuses an inode; mode, size and hash are
@@ -382,7 +417,7 @@ func ObservePrivateGeneration(ctx context.Context, cfg PrivateGenerationConfig, 
 		proof.PID <= 0 || proof.ProcessGroupID != proof.PID || proof.SocketPath != cfg.SocketPath ||
 		!absoluteNonRoot(cfg.StateDomainPath) || !absoluteNonRoot(cfg.PrivateRoot) ||
 		!absoluteNonRoot(cfg.SocketPath) || !absoluteNonRoot(cfg.LeaseRoot) || !cfg.RequiredProtocol.Valid() {
-		return hostRefuse(HostRefusalLaunchProofMismatch, nil)
+		return hostProofMismatch(HostProofAxisShape, nil)
 	}
 	if _, err := ownerPrivateDirectory(cfg.PrivateRoot); err != nil {
 		return err
@@ -396,23 +431,23 @@ func ObservePrivateGeneration(ctx context.Context, cfg PrivateGenerationConfig, 
 	}
 	servers := lease.Paths(codexbundle.RoleServer)
 	if len(servers) != 1 || servers[0] != proof.ExecutablePath {
-		return hostRefuse(HostRefusalLaunchProofMismatch, nil)
+		return hostProofMismatch(HostProofAxisLease, nil)
 	}
 	artifact, ok := leaseArtifact(lease, proof.ExecutablePath)
 	if !ok || artifact.SHA256 != proof.ExecutableSHA256 {
-		return hostRefuse(HostRefusalLaunchProofMismatch, nil)
+		return hostProofMismatch(HostProofAxisLease, nil)
 	}
 	executable, err := os.Lstat(proof.ExecutablePath)
 	if err != nil || executable.Mode()&os.ModeSymlink != 0 || !executable.Mode().IsRegular() || fileIdentity(executable) != proof.Executable {
-		return hostRefuse(HostRefusalLaunchProofMismatch, err)
+		return hostProofMismatch(HostProofAxisExecutable, err)
 	}
 	socket, err := os.Lstat(proof.SocketPath)
 	if err != nil || socket.Mode()&os.ModeSocket == 0 || fileIdentity(socket) != proof.SocketIdentity {
-		return hostRefuse(HostRefusalLaunchProofMismatch, err)
+		return hostProofMismatch(HostProofAxisSocket, err)
 	}
 	processGroupID, err := syscall.Getpgid(proof.PID)
 	if err != nil || processGroupID != proof.ProcessGroupID {
-		return hostRefuse(HostRefusalLaunchProofMismatch, err)
+		return hostProofMismatch(HostProofAxisProcess, err)
 	}
 	if err := syscall.Kill(proof.PID, 0); err != nil {
 		return hostRefuse(HostRefusalProcessExited, err)
@@ -426,7 +461,7 @@ func ObservePrivateGeneration(ctx context.Context, cfg PrivateGenerationConfig, 
 	}
 	latest, err := os.Lstat(proof.SocketPath)
 	if err != nil || fileIdentity(latest) != proof.SocketIdentity {
-		return hostRefuse(HostRefusalLaunchProofMismatch, err)
+		return hostProofMismatch(HostProofAxisSocket, err)
 	}
 	return nil
 }

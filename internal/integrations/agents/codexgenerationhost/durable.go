@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"golang.org/x/sys/unix"
@@ -22,6 +23,8 @@ import (
 )
 
 const durableLaunchIntentVersion = 1
+
+const durableStopGrace = 5 * time.Second
 
 type durableLaunchPhase string
 
@@ -77,6 +80,40 @@ func durableIntentPath(cfg PrivateGenerationConfig) string {
 }
 
 func durableGuardPath(cfg PrivateGenerationConfig) string { return durableIntentPath(cfg) + ".guard" }
+
+// ValidateDurableGenerationRecovery is the read-only availability probe used
+// before choosing same-generation restart over qualified fallback. It proves
+// the exact leased server and any retained launch intent still match the
+// original operation; it never creates a guard, receipt, socket, or process.
+func ValidateDurableGenerationRecovery(cfg PrivateGenerationConfig, operationRef string) error {
+	if !validLaunchToken(operationRef) || !cfg.Endpoint.Valid() || !absoluteNonRoot(cfg.StateDomainPath) ||
+		!absoluteNonRoot(cfg.PrivateRoot) || !absoluteNonRoot(cfg.SocketPath) || !absoluteNonRoot(cfg.LeaseRoot) ||
+		!cfg.RequiredProtocol.Valid() || filepath.Dir(cfg.SocketPath) != cfg.PrivateRoot {
+		return hostRefuse(HostRefusalConfigInvalid, nil)
+	}
+	if _, err := ownerPrivateDirectory(cfg.PrivateRoot); err != nil {
+		return err
+	}
+	if _, err := ownerPrivateDirectory(cfg.StateDomainPath); err != nil {
+		return err
+	}
+	lease, err := verifyCompleteLease(cfg)
+	if err != nil {
+		return err
+	}
+	servers := lease.Paths(codexbundle.RoleServer)
+	if len(servers) != 1 {
+		return hostRefuse(HostRefusalBundleIncomplete, nil)
+	}
+	intent, exists, err := readDurableIntent(durableIntentPath(cfg))
+	if err != nil {
+		return err
+	}
+	if exists && !sameDurableIntentRequest(intent, cfg, operationRef, servers[0]) {
+		return hostRefuse(HostRefusalLaunchProofMismatch, nil)
+	}
+	return nil
+}
 
 // PrepareDurableGeneration starts or recovers exactly one operation-owned
 // candidate. The intent is durable before launch; the inherited guard proves a
@@ -402,7 +439,10 @@ func awaitDurableProof(ctx context.Context, cfg PrivateGenerationConfig, lease c
 		return LaunchProof{
 			Endpoint: intent.Endpoint, EndpointRuntimeID: intent.EndpointRuntimeID,
 			PID: intent.PID, ProcessGroupID: intent.ProcessGroupID, SocketPath: cfg.SocketPath,
-			SocketIdentity: fileIdentity(socket), ExecutablePath: intent.ExecutablePath,
+			// Readiness can race a final chmod on the just-created listener. The
+			// inode comparison above proves it is still the same socket; authority
+			// must capture the post-readiness metadata that later Observe calls see.
+			SocketIdentity: fileIdentity(latest), ExecutablePath: intent.ExecutablePath,
 			Executable: fileIdentity(executable), ExecutableSHA256: artifact.SHA256, BundleID: lease.ID,
 		}, true
 	}
@@ -431,6 +471,16 @@ func awaitDurableProof(ctx context.Context, cfg PrivateGenerationConfig, lease c
 // removes only its exact socket/intent/guard. The immutable bundle lease is
 // retained; this is explicitly not Phase 5 lease release.
 func CleanupDurableCandidate(ctx context.Context, cfg PrivateGenerationConfig, operationRef string, proof *LaunchProof) (bool, error) {
+	return cleanupDurableCandidate(ctx, cfg, operationRef, proof, durableStopGrace)
+}
+
+func cleanupDurableCandidate(
+	ctx context.Context,
+	cfg PrivateGenerationConfig,
+	operationRef string,
+	proof *LaunchProof,
+	stopGrace time.Duration,
+) (bool, error) {
 	if !validLaunchToken(operationRef) || !cfg.Endpoint.Valid() || !absoluteNonRoot(cfg.PrivateRoot) ||
 		!absoluteNonRoot(cfg.SocketPath) || filepath.Dir(cfg.SocketPath) != cfg.PrivateRoot {
 		return false, hostRefuse(HostRefusalConfigInvalid, nil)
@@ -499,10 +549,7 @@ func CleanupDurableCandidate(ctx context.Context, cfg PrivateGenerationConfig, o
 	// where the supervisor died after starting its child: the inherited guard
 	// proves an owned descendant is still present even though the leader PID can
 	// no longer receive a signal.
-	if err := syscall.Kill(-intent.ProcessGroupID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
-		return false, hostRefuse(HostRefusalProcessExited, err)
-	}
-	if err := awaitGuardRelease(ctx, guardPath); err != nil {
+	if err := stopDurableProcessGroup(ctx, intentPath, guardPath, guard, intent, stopGrace); err != nil {
 		return false, err
 	}
 	latest, latestExists, latestErr := readDurableIntent(intentPath)
@@ -516,6 +563,113 @@ func CleanupDurableCandidate(ctx context.Context, cfg PrivateGenerationConfig, o
 		return false, err
 	}
 	return true, removeDurableReceipts(intentPath, guardPath)
+}
+
+// stopDurableProcessGroup waits on the inherited guard rather than sleeping.
+// SIGTERM gets one bounded grace window; if the exact session leader, durable
+// intent, and guard identity are all still unchanged, SIGKILL closes only that
+// operation-owned process group and the same guard is awaited to completion.
+func stopDurableProcessGroup(
+	ctx context.Context,
+	intentPath, guardPath string,
+	guard *os.File,
+	intent DurableLaunchIntent,
+	stopGrace time.Duration,
+) error {
+	if err := syscall.Kill(-intent.ProcessGroupID, syscall.SIGTERM); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return hostRefuse(HostRefusalProcessExited, err)
+	}
+	if stopGrace <= 0 {
+		stopGrace = durableStopGrace
+	}
+	graceCtx, cancel := context.WithTimeout(ctx, stopGrace)
+	err := awaitGuardRelease(graceCtx, guardPath)
+	cancel()
+	if err == nil {
+		return nil
+	}
+	if ctx.Err() != nil {
+		return err
+	}
+	latest, exists, readErr := readDurableIntent(intentPath)
+	if readErr != nil || !exists || !sameDurableIntentRequest(latest, PrivateGenerationConfig{
+		Endpoint: intent.Endpoint, SocketPath: intent.SocketPath,
+	}, intent.OperationRef, intent.ExecutablePath) || latest.Phase != durableLaunchRunning ||
+		latest.EndpointRuntimeID != intent.EndpointRuntimeID || latest.PID != intent.PID || latest.ProcessGroupID != intent.ProcessGroupID {
+		return hostProofMismatch(HostProofAxisProcess, readErr)
+	}
+	expectedGuard, statErr := guard.Stat()
+	liveGuard, liveErr := os.Lstat(guardPath)
+	if statErr != nil || liveErr != nil || !os.SameFile(expectedGuard, liveGuard) {
+		return hostProofMismatch(HostProofAxisProcess, errors.Join(statErr, liveErr))
+	}
+	lockErr := unix.Flock(int(guard.Fd()), unix.LOCK_EX|unix.LOCK_NB)
+	if lockErr == nil {
+		_ = unix.Flock(int(guard.Fd()), unix.LOCK_UN)
+		return nil
+	}
+	if !errors.Is(lockErr, unix.EWOULDBLOCK) && !errors.Is(lockErr, unix.EAGAIN) {
+		return hostProofMismatch(HostProofAxisProcess, lockErr)
+	}
+	processGroupID, processErr := syscall.Getpgid(intent.PID)
+	if processErr != nil || processGroupID != intent.ProcessGroupID {
+		return hostProofMismatch(HostProofAxisProcess, processErr)
+	}
+	if killErr := syscall.Kill(-intent.ProcessGroupID, syscall.SIGKILL); killErr != nil && !errors.Is(killErr, syscall.ESRCH) {
+		return hostRefuse(HostRefusalProcessExited, killErr)
+	}
+	return awaitGuardRelease(ctx, guardPath)
+}
+
+// StopDurableGeneration reconstructs lifecycle authority only from the exact
+// launch operation, durable guard, and published proof retained by the pool
+// journal. It is the Phase 5 stop path; unlike candidate cleanup, absence of a
+// live owned supervisor is a converged success after the exact socket and
+// receipts have disappeared.
+func StopDurableGeneration(ctx context.Context, cfg PrivateGenerationConfig, launchOperationRef string, proof LaunchProof) error {
+	_, err := CleanupDurableCandidate(ctx, cfg, launchOperationRef, &proof)
+	if err == nil {
+		return nil
+	}
+	// A prior successful stop may have removed both durable receipts. Accept
+	// only that complete absence; an occupied/rebound socket still refuses in
+	// CleanupDurableCandidate before this point.
+	if HostRefusalOf(err) == HostRefusalLaunchProofMismatch {
+		if _, intentErr := os.Lstat(durableIntentPath(cfg)); errors.Is(intentErr, fs.ErrNotExist) {
+			if _, socketErr := os.Lstat(cfg.SocketPath); errors.Is(socketErr, fs.ErrNotExist) {
+				return nil
+			}
+		}
+	}
+	return err
+}
+
+// ReleaseDurableGenerationLease makes one exact retired bundle eligible for
+// garbage collection. Terminal authority is explicit and caller-owned; an
+// absent directory is the idempotent receipt of an earlier completed release.
+func ReleaseDurableGenerationLease(cfg PrivateGenerationConfig, bundleID string, terminal bool) error {
+	if !terminal || !validLaunchToken(bundleID) || !absoluteNonRoot(cfg.LeaseRoot) {
+		return hostRefuse(HostRefusalLeaseHeld, nil)
+	}
+	lease, err := verifyCompleteLease(cfg)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil || lease.ID != bundleID {
+		if _, statErr := os.Lstat(cfg.LeaseRoot); errors.Is(statErr, fs.ErrNotExist) {
+			return nil
+		}
+		return hostRefuse(HostRefusalBundleDrift, err)
+	}
+	if err := os.RemoveAll(cfg.LeaseRoot); err != nil { // #nosec G703 -- exact validated non-root lease path from the private journal.
+		return err
+	}
+	parent, err := os.Open(filepath.Dir(cfg.LeaseRoot))
+	if err != nil {
+		return err
+	}
+	defer parent.Close()
+	return parent.Sync()
 }
 
 // cleanupUnlockedOrphanGuard completes the only recoverable half-written

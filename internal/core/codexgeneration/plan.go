@@ -22,6 +22,7 @@ const (
 	BlockerQualificationFailed  BlockerCode = "qualification-failed"
 	BlockerPoolFull             BlockerCode = "pool-full"
 	BlockerAgentObligation      BlockerCode = "agent-obligation"
+	BlockerOfficialLifecycle    BlockerCode = "official-managed-lifecycle"
 	BlockerUnmanagedLifecycle   BlockerCode = "unmanaged-lifecycle"
 	BlockerUnknownLifecycle     BlockerCode = "unknown-lifecycle"
 )
@@ -80,6 +81,10 @@ func PlanUpgrade(pool Pool, targetGenerationID string, qualification *Qualificat
 		if current, ok := pool.Current(); ok {
 			plan.CurrentGeneration = current.Endpoint.EndpointGenerationID
 			switch current.Owner {
+			case OwnerOfficialManaged:
+				plan.Blockers = append(plan.Blockers, Blocker{Code: BlockerOfficialLifecycle,
+					EndpointGenerationID: current.Endpoint.EndpointGenerationID,
+					Reason:               "official manager owns endpoint lifecycle; an external exact stop receipt is required"})
 			case OwnerUnmanaged:
 				plan.Blockers = append(plan.Blockers, Blocker{Code: BlockerUnmanagedLifecycle,
 					EndpointGenerationID: current.Endpoint.EndpointGenerationID,

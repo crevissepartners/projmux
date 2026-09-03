@@ -116,6 +116,12 @@ func printableRuntimeMutationInventory() runtimeMutationPlan {
 			action.Operands = []string{"-t", "$1", inttmux.ProjectPathSessionOption, "/work"}
 		case mutationStopManagedSession, mutationStopUnmanagedSession, mutationKillOwned:
 			action.Operands = []string{"-t", "$1"}
+		case mutationCodexHandoverFence, mutationCodexHandoverRestore:
+			action.Target.Kind, action.Target.ID, action.Target.UID = "pane", "%1", "pan-1"
+		case mutationCodexHandoverRelaunch:
+			action.Target.Kind, action.Target.ID, action.Target.UID = "pane", "%1", "pan-1"
+			action.Operands = []string{"handover-op", "handover-generation"}
+			action.Command = []string{"projmux", "internal", "supervise"}
 		}
 		bindRuntimeMutationGuard(&action, "inventory")
 		actions = append(actions, action)
@@ -127,6 +133,9 @@ func TestPlanOnlyMutationInventoryIsClosedAndPrintable(t *testing.T) {
 	want := []runtimeMutationVerb{
 		mutationBootstrapControlSession,
 		mutationClearLease,
+		mutationCodexHandoverFence,
+		mutationCodexHandoverRelaunch,
+		mutationCodexHandoverRestore,
 		mutationConvergeControlIdentity,
 		mutationCreatePane,
 		mutationCreateSession,

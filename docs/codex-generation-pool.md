@@ -1,4 +1,4 @@
-# Codex app-server generation pool — Phase 0–4 contract
+# Codex app-server generation pool — Phase 0–5 contract
 
 Phase 0 adds the identity, validation, qualification, immutable bundle, and
 read-only planning contracts needed by a future bounded app-server pool. It
@@ -15,6 +15,14 @@ successor, commits admission-current at most once, and marks the old generation
 Draining without moving its live Agents. It does not stop the old endpoint,
 resume a successor thread, rewrite an Agent endpoint ref, relaunch a Pane,
 retire a generation, release a bundle lease, or adopt a foreign runtime.
+
+Phase 5 adds a distinct linked handover journal. It pins the generation-wide
+Agent/Pane/thread target set, fences admission and live bindings, stops only an
+exact Projmux-owned old generation, resumes completed persisted threads on the
+qualified successor, observes every snapshot before any cutover, then performs
+endpoint CAS, same-Pane relaunch, terminal retirement, and old lease release.
+It never replays prompt, turn, approval, or content and never kills or adopts a
+foreign/default endpoint.
 
 ## Identity and schema
 
@@ -434,3 +442,55 @@ recovery, admission/abort race, Phase-0 tuple/root topology refusal, orphan-guar
 recovery, TUI drift, two-slot, Draining/HandoverPending resume, direct old-route
 continuity, and content-free receipt mutants rather than merging or deleting
 those existing suites.
+
+## Phase 5 journaled generation handover
+
+`projmux agent app-server handover plan|apply --request <absolute-json>` and
+`resume|abort --operation <ref>` operate on a Phase-5 record linked to the
+unchanged Phase-4 rolling receipt under the same owner-private journal lock.
+Plan is repeatable and read-only. It pins exact Agent UID, Pane UID, live Pane
+runtime ID, Pane activation generation, thread ID, old/successor endpoint tuple,
+owner class, and explicit no-turn decisions. Active, pending-approval, unknown,
+unresolved no-turn, incomplete owner proof, tuple drift, or a successor thread
+already loaded before stop leaves old stop, Pane exit, provider resume, and
+endpoint-ref write at zero.
+
+Apply prewrites an intent for every effect. For Projmux-private ownership it
+revalidates the complete old launch authority and every Registry/live-Pane
+tuple immediately before the exact owner stop. Official-managed, unmanaged,
+and unknown ownership run the reversible fences and successor-absence checks,
+then stop at `AwaitingOwnerStop` with lifecycle argv zero until an exact
+user-owned stop receipt is supplied. Explicit no-turn close/replacement is
+required; no automatic selection exists, and an applied close is a forward-only
+boundary.
+
+The forward-only order is old stop, one operation-qualified successor resume
+per target, completed persisted snapshot for every target, endpoint-ref CAS,
+same-Pane relaunch, terminal retirement, then lease release. The durable resume
+receipt is content-free and survives a successor restart, so coordinator retry
+does not send a second resume wire; a persisted completed not-loaded snapshot
+can still satisfy the semantic barrier before the CAS. CAS keeps the same Agent,
+Pane, and thread identities while issuing a new Pane activation generation.
+Retirement must observe no remaining old endpoint ref, and the old immutable
+lease remains held until the terminal receipt.
+
+If the exact old private process disappeared, a read-only lease/intent probe
+prefers a journaled same-generation durable-host restart. If that exact bundle
+is unavailable but the qualified pair and exact stop authority remain, the
+handover takes the qualified fallback and the normal stop Ensure proves owned
+absence before successor work. No fixed sleep is used; host guard release,
+app-server lifecycle snapshots, Registry CAS, tmux identity mirrors, and Pane
+relaunch markers are the bounded semantic barriers.
+
+### Phase 5 enforcement and deletion ledger
+
+No canonical test symbol is deleted or renamed, and the Phase-4 rolling
+operation plus its seven-zero effect invariant remain unchanged. The command
+graph adds only the four explicit handover leaves. Phase 5 adds a separate
+model/fuzz state machine, coordinator and journal failpoint restart coverage,
+exact ownership/blocker negatives, Registry CAS and durable resume-receipt
+tests, production effect tuple-drift tests, and private installed handover/no-turn
+observations. Prompt/turn/approval resend, provider-content replay or inspection,
+double same-thread ownership, duplicate Agent/Pane identity, foreign lifecycle
+mutation, automatic no-turn migration, live-old same-thread resume, and Phase-6
+consumer/Doctor changes remain enforced at zero.
