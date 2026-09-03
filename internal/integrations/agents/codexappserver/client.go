@@ -24,6 +24,15 @@ var (
 	ErrUnsupported  = errors.New("codex app-server method unsupported")
 	ErrProtocol     = errors.New("codex app-server protocol error")
 	ErrDisconnected = errors.New("codex app-server disconnected")
+	// ErrThreadNotDurable is the content-free classification of a stored
+	// thread/resume refusal whose exact thread has no durable rollout yet.
+	ErrThreadNotDurable = errors.New("codex app-server thread is not durably resumable")
+	// ErrThreadAbsent is the content-free classification of an exact thread
+	// identity the endpoint reports as absent.
+	ErrThreadAbsent = errors.New("codex app-server thread is absent")
+	// ErrEndpointChanged marks a route whose exact endpoint proof changed while
+	// the payload-free readiness barrier was in progress.
+	ErrEndpointChanged = errors.New("codex app-server endpoint changed")
 
 	// ErrResponseAlreadySent marks a second attempt to answer one inbound
 	// server request on the same connection. The response authority is
@@ -37,6 +46,28 @@ var (
 	// classification keeps working.
 	ErrExperimentalRequired = errors.New("codex app-server experimental API capability not negotiated")
 )
+
+type responseError struct {
+	code int
+	kind error
+}
+
+func (e *responseError) Error() string {
+	switch {
+	case errors.Is(e.kind, ErrThreadNotDurable):
+		return fmt.Sprintf("codex app-server response refused: thread-not-durable (code %d)", e.code)
+	case errors.Is(e.kind, ErrThreadAbsent):
+		return fmt.Sprintf("codex app-server response refused: thread-absent (code %d)", e.code)
+	default:
+		return fmt.Sprintf("codex app-server response refused: protocol-error (code %d)", e.code)
+	}
+}
+
+func (e *responseError) Unwrap() error { return ErrProtocol }
+
+func (e *responseError) Is(target error) bool {
+	return target == ErrProtocol || target == e.kind
+}
 
 type readWriteCloser interface {
 	io.Reader
@@ -325,15 +356,31 @@ func (c *Client) routeFrame(frame []byte) error {
 		return nil
 	}
 	if envelope.Error != nil {
-		err := fmt.Errorf("%w", ErrProtocol)
-		if envelope.Error.Code == -32601 {
-			err = ErrUnsupported
-		}
+		err := classifyResponseError(envelope.Error)
 		wait <- response{err: err}
 		return nil
 	}
 	wait <- response{result: append(json.RawMessage(nil), envelope.Result...)}
 	return nil
+}
+
+func classifyResponseError(response *wireError) error {
+	if response == nil {
+		return ErrProtocol
+	}
+	if response.Code == -32601 {
+		return ErrUnsupported
+	}
+	message := strings.ToLower(strings.Join(strings.Fields(response.Message), " "))
+	switch {
+	case strings.Contains(message, "no rollout found"):
+		return &responseError{code: response.Code, kind: ErrThreadNotDurable}
+	case strings.Contains(message, "thread not found"), strings.Contains(message, "thread id not found"),
+		strings.Contains(message, "unknown thread"), strings.Contains(message, "could not find thread"):
+		return &responseError{code: response.Code, kind: ErrThreadAbsent}
+	default:
+		return &responseError{code: response.Code}
+	}
 }
 
 // RespondServerRequest writes one response using the exact scalar request id

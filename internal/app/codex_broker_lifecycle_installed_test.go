@@ -25,15 +25,15 @@ import (
 // endpoint, XDG Registry, and real-tmux socket below one exact temporary root;
 // it never probes or mutates the ambient/default endpoint.
 //
-// The smoke deliberately starts no model turn. It proves that the installed
-// create command mints one thread with no user content, atomically records the
-// Agent/Pane/thread/endpoint chain, launches the TUI against that same endpoint,
-// and projects the no-turn obligation repeatedly until an explicit-close input
-// removes it. Installed Codex cannot subscribe the broker until the first turn
-// materializes a rollout, so the pre-turn row must retain zero native authority
-// rather than inventing a fallback owner. First-real-input behavior remains
-// covered by the provider-recorder integration because an installed model turn
-// would require ambient auth.
+// The smoke deliberately starts no model turn. Each exact installed tuple has
+// one of two closed results: durable readiness launches the historical exact
+// Agent/Pane/thread/TUI chain, while a provider that cannot durably resume a
+// zero-turn thread preserves one exact Failed Agent/thread/endpoint and
+// launches no Pane or fallback lane. Installed Codex cannot subscribe the
+// broker until the first turn materializes a rollout, so the successful
+// pre-turn row retains zero native authority rather than inventing an owner.
+// First-real-input behavior remains covered by the provider-recorder
+// integration because an installed model turn would require ambient auth.
 func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 	root, enabled, err := codexinstalled.SmokeRoot("PROJMUX_CODEX_PHASE3_SMOKE_ROOT")
 	if err != nil {
@@ -131,8 +131,21 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 
 	projectUID := oneLine("project uid", run(installed, "create", "project", "--root", fixture.Workspace, "--name", "phase3-smoke", "-o", "uid"))
 	windowUID := oneLine("window uid", run(installed, "get", "windows", "--project", "uid:"+projectUID, "-o", "uid"))
-	agentUID := oneLine("agent uid", run(installed, "create", "agent", "--provider", "codex",
-		"--project", "uid:"+projectUID, "--window", "uid:"+windowUID, "-o", "uid"))
+	beforeCreate, err := loadResourceRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tmuxSocket := oneLine("isolated tmux socket", run("tmux", "-L", "projmux", "display-message", "-p", "-F", "#{socket_path}"))
+	if !strings.HasPrefix(filepath.Clean(tmuxSocket), filepath.Clean(tmuxRoot)+string(filepath.Separator)) {
+		t.Fatalf("tmux socket escaped exact cleanup root: %q", tmuxSocket)
+	}
+	beforeTmuxPanes := run("tmux", "-L", "projmux", "list-panes", "-a", "-F", "#{pane_id}")
+	createOutcome, err := runInstalledPayloadFreeCreate(ctx, installed, withoutInheritedTmuxEnvironment(os.Environ()),
+		"create", "agent", "--provider", "codex", "--project", "uid:"+projectUID, "--window", "uid:"+windowUID, "-o", "uid")
+	if err != nil {
+		t.Fatal(err)
+	}
+	agentUID := createOutcome.AgentUID
 
 	registry, err := loadResourceRegistry()
 	if err != nil {
@@ -142,15 +155,92 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 	if !ok || agent.Spec.Provider != aiModeCodex || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil {
 		t.Fatalf("installed Agent identity is incomplete: %#v", agent)
 	}
+	expectedDomain, err := defaultCodexStateDomainID(os.Getenv, os.UserHomeDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := agent.Status.SessionRef.Codex
+	if !createOutcome.DurableReady {
+		if agent.Status.Phase != coremetadata.PhaseFailed || agent.Status.PaneRef != "" ||
+			agent.Status.Reason != "payload-free-readiness-"+string(createOutcome.Readiness) ||
+			ref.ThreadID != createOutcome.ThreadID || ref.SessionID != "" || ref.HasStartedTurn || ref.Endpoint == nil ||
+			!ref.Endpoint.Same(createOutcome.Endpoint) || ref.Endpoint.StateDomainID != expectedDomain || ref.Lifecycle == nil ||
+			ref.Lifecycle.State != coremetadata.CodexGenerationCurrent {
+			t.Fatalf("typed payload-free failure identity drifted: outcome=%+v agent=%#v", createOutcome, agent.Status)
+		}
+		if len(registry.Agents) != len(beforeCreate.Agents)+1 || len(registry.Panes) != len(beforeCreate.Panes) {
+			t.Fatalf("typed payload-free failure synthesized a second identity/lane: agents=%d/%d panes=%d/%d",
+				len(registry.Agents), len(beforeCreate.Agents), len(registry.Panes), len(beforeCreate.Panes))
+		}
+		for _, candidate := range registry.Panes {
+			if candidate.Metadata.OwnerRef != nil && candidate.Metadata.OwnerRef.Kind == coremetadata.KindAgent &&
+				candidate.Metadata.OwnerRef.UID == agentUID {
+				t.Fatalf("typed payload-free failure retained an Agent Pane: %#v", candidate)
+			}
+		}
+		if afterTmuxPanes := run("tmux", "-L", "projmux", "list-panes", "-a", "-F", "#{pane_id}"); afterTmuxPanes != beforeTmuxPanes {
+			t.Fatalf("typed payload-free failure launched a TUI/plain lane: before=%q after=%q", beforeTmuxPanes, afterTmuxPanes)
+		}
+		beforeRetryThreads, err := installedCatalogThreadIDs(ctx, fixture.SocketPath, fixture.Workspace)
+		if err != nil || !slices.Contains(beforeRetryThreads, ref.ThreadID) {
+			t.Fatalf("typed payload-free failure thread is not exactly observable before retry: ids=%v err=%v", beforeRetryThreads, err)
+		}
+		beforeRetryAgent := *agent
+		if err := requireInstalledPayloadFreeResumeRefusal(ctx, installed, withoutInheritedTmuxEnvironment(os.Environ()), agentUID); err != nil {
+			t.Fatal(err)
+		}
+		afterRetry, err := loadResourceRegistry()
+		if err != nil {
+			t.Fatal(err)
+		}
+		afterRetryAgent, ok := afterRetry.Agent(agentUID)
+		if !ok || len(afterRetry.Agents) != len(registry.Agents) || len(afterRetry.Panes) != len(registry.Panes) ||
+			!afterRetryAgent.Status.SessionRef.SameConversation(beforeRetryAgent.Status.SessionRef) ||
+			afterRetryAgent.Status.Phase != coremetadata.PhaseFailed || afterRetryAgent.Status.PaneRef != "" {
+			t.Fatalf("exact Failed Agent retry changed Registry identity/lane: before=%#v after=%#v", beforeRetryAgent.Status, afterRetryAgent)
+		}
+		afterRetryThreads, err := installedCatalogThreadIDs(ctx, fixture.SocketPath, fixture.Workspace)
+		if err != nil {
+			t.Fatal(err)
+		}
+		slices.Sort(beforeRetryThreads)
+		slices.Sort(afterRetryThreads)
+		if !slices.Equal(beforeRetryThreads, afterRetryThreads) {
+			t.Fatalf("exact Failed Agent retry created another provider thread: before=%v after=%v", beforeRetryThreads, afterRetryThreads)
+		}
+		if afterRetryTmuxPanes := run("tmux", "-L", "projmux", "list-panes", "-a", "-F", "#{pane_id}"); afterRetryTmuxPanes != beforeTmuxPanes {
+			t.Fatalf("exact Failed Agent retry created another TUI/plain lane: before=%q after=%q", beforeTmuxPanes, afterRetryTmuxPanes)
+		}
+		run("tmux", "-S", tmuxSocket, "kill-server")
+		closed := endpoint.Close(ctx)
+		endpointClosed = true
+		if closed.Class != codexinstalled.ResultPass {
+			t.Fatalf("close exact isolated endpoint: %+v", closed)
+		}
+		if err := fixture.Ledger().AssertNoAmbientMutation(); err != nil {
+			t.Fatal(err)
+		}
+		if err := fixture.Cleanup(); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.RemoveAll(root); err != nil {
+			t.Fatal(err)
+		}
+		rootRemoved = true
+		if _, err := os.Lstat(root); !os.IsNotExist(err) {
+			t.Fatalf("Phase 3 installed root remains after exact cleanup: %v", err)
+		}
+		health := endpoint.Health()
+		t.Logf("evidence: tuple cli=%s app-server=%s route=default-proxy readiness=%s agent=%s endpoint=%s/%s thread=%s failed=true panes=0 retry-second-thread=0 ambient-lifecycle-mutations=0",
+			version.String(), health.RunningVersion, createOutcome.Readiness, agentUID,
+			ref.Endpoint.StateDomainID, ref.Endpoint.EndpointGenerationID, ref.ThreadID)
+		return
+	}
+
 	pane, ok := registry.Pane(agent.Status.PaneRef)
 	if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent ||
 		pane.Metadata.OwnerRef.UID != agentUID || pane.Status.Activation.Codex == nil {
 		t.Fatalf("installed Agent/Pane ownership is incomplete: agent=%#v pane=%#v", agent.Status, pane)
-	}
-	ref := agent.Status.SessionRef.Codex
-	expectedDomain, err := defaultCodexStateDomainID(os.Getenv, os.UserHomeDir)
-	if err != nil {
-		t.Fatal(err)
 	}
 	if strings.TrimSpace(ref.ThreadID) == "" || ref.SessionID != "" || ref.HasStartedTurn || ref.Endpoint == nil ||
 		ref.Endpoint.StateDomainID != expectedDomain || ref.Lifecycle == nil ||
@@ -222,7 +312,7 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 		!strings.Contains(fields[4], "unix://") || !strings.Contains(fields[4], ref.ThreadID) {
 		t.Fatalf("installed pinned TUI/Pane receipt is not exact: %q", observed)
 	}
-	tmuxSocket := filepath.Clean(fields[5])
+	tmuxSocket = filepath.Clean(fields[5])
 	if !strings.HasPrefix(tmuxSocket, filepath.Clean(tmuxRoot)+string(filepath.Separator)) {
 		t.Fatalf("tmux socket escaped exact cleanup root: %q", tmuxSocket)
 	}
@@ -280,8 +370,10 @@ func TestInstalledIsolatedGenerationPinnedEmptyPromptCreateSmoke(t *testing.T) {
 	if _, err := os.Lstat(root); !os.IsNotExist(err) {
 		t.Fatalf("Phase 3 installed root remains after exact cleanup: %v", err)
 	}
-	t.Logf("evidence: agent=%s pane=%s runtime=%s endpoint=%s/%s thread-present=true turn-present=false pinned-tui=true",
-		agentUID, pane.Metadata.UID, pane.Status.Activation.RuntimeID, ref.Endpoint.StateDomainID, ref.Endpoint.EndpointGenerationID)
+	health := endpoint.Health()
+	t.Logf("evidence: tuple cli=%s app-server=%s route=default-proxy readiness=durable-ready agent=%s pane=%s runtime=%s endpoint=%s/%s thread-present=true turn-present=false pinned-tui=true",
+		version.String(), health.RunningVersion, agentUID, pane.Metadata.UID, pane.Status.Activation.RuntimeID,
+		ref.Endpoint.StateDomainID, ref.Endpoint.EndpointGenerationID)
 }
 
 func waitInstalledPhase3Condition(ctx context.Context, timeout time.Duration, condition func() (bool, error)) error {

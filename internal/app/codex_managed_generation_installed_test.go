@@ -243,10 +243,27 @@ func TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration(t *test
 	} {
 		run("tmux", "-L", "projmux", "set-option", "-p", "-t", oldRuntimeID, key, value)
 	}
-	agentUIDs := []string{
-		oneLine("shortcut Agent uid", run(installed, "create", "codex", "--project", "uid:"+projectUID, "--window", "uid:"+windowUID, "-o", "uid")),
-		oneLine("canonical Agent uid", run(installed, "create", "agent", "--provider", "codex", "--project", "uid:"+projectUID, "--window", "uid:"+windowUID, "-o", "uid")),
+	beforeCreates, err := registryStore.LoadSnapshot()
+	if err != nil {
+		t.Fatal(err)
 	}
+	beforeCreateTmuxPanes := run("tmux", "-L", "projmux", "list-panes", "-a", "-F", "#{pane_id}")
+	createArgs := [][]string{
+		{"create", "codex", "--project", "uid:" + projectUID, "--window", "uid:" + windowUID, "-o", "uid"},
+		{"create", "agent", "--provider", "codex", "--project", "uid:" + projectUID, "--window", "uid:" + windowUID, "-o", "uid"},
+	}
+	createOutcomes := make([]installedPayloadFreeCreateOutcome, 0, len(createArgs))
+	for _, args := range createArgs {
+		outcome, createErr := runInstalledPayloadFreeCreate(ctx, installed, withoutInheritedTmuxEnvironment(os.Environ()), args...)
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		createOutcomes = append(createOutcomes, outcome)
+	}
+	if createOutcomes[0].DurableReady != createOutcomes[1].DurableReady {
+		t.Fatalf("ordinary create spellings observed mixed readiness on one exact tuple: %+v", createOutcomes)
+	}
+	agentUIDs := []string{createOutcomes[0].AgentUID, createOutcomes[1].AgentUID}
 
 	journal, exists, err := codexupgrade.NewStateStore(paths.StateDir).Load()
 	if err != nil || !exists || journal.Qualification != nil || len(journal.Routes) != 2 || journal.Operation == nil ||
@@ -271,11 +288,27 @@ func TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, uid := range agentUIDs {
+	for index, uid := range agentUIDs {
 		agent, ok := registry.Agent(uid)
 		if !ok || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.Endpoint == nil ||
 			!agent.Status.SessionRef.Codex.Endpoint.Same(current.Generation.Endpoint) {
 			t.Fatalf("installed Agent %s current pin = %#v found=%t", uid, agent, ok)
+		}
+		if !createOutcomes[index].DurableReady && (agent.Status.Phase != coremetadata.PhaseFailed || agent.Status.PaneRef != "" ||
+			agent.Status.Reason != "payload-free-readiness-"+string(createOutcomes[index].Readiness) ||
+			agent.Status.SessionRef.Codex.ThreadID != createOutcomes[index].ThreadID ||
+			!agent.Status.SessionRef.Codex.Endpoint.Same(createOutcomes[index].Endpoint) || agent.Status.SessionRef.Codex.HasStartedTurn) {
+			t.Fatalf("installed typed readiness Agent %s = outcome:%+v status:%#v", uid, createOutcomes[index], agent.Status)
+		}
+	}
+	if !createOutcomes[0].DurableReady {
+		if agentUIDs[0] == agentUIDs[1] || createOutcomes[0].ThreadID == createOutcomes[1].ThreadID ||
+			len(registry.Agents) != len(beforeCreates.Agents)+2 || len(registry.Panes) != len(beforeCreates.Panes) {
+			t.Fatalf("typed ordinary creates synthesized/replaced identity or Pane: outcomes=%+v agents=%d/%d panes=%d/%d",
+				createOutcomes, len(registry.Agents), len(beforeCreates.Agents), len(registry.Panes), len(beforeCreates.Panes))
+		}
+		if afterCreateTmuxPanes := run("tmux", "-L", "projmux", "list-panes", "-a", "-F", "#{pane_id}"); afterCreateTmuxPanes != beforeCreateTmuxPanes {
+			t.Fatalf("typed ordinary creates launched a TUI/plain fallback lane: before=%q after=%q", beforeCreateTmuxPanes, afterCreateTmuxPanes)
 		}
 	}
 	oldAgentAfter, agentOK := registry.Agent(oldAgentBefore.Metadata.UID)
@@ -318,21 +351,32 @@ func TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Lstat(brokerDiscovery.SocketPath()); err != nil {
-		t.Fatalf("current-generation broker socket before cleanup: %v", err)
-	}
-	if _, err := os.Lstat(brokerDiscovery.RecordPath()); err != nil {
-		t.Fatalf("current-generation broker record before cleanup: %v", err)
+	if createOutcomes[0].DurableReady {
+		if _, err := os.Lstat(brokerDiscovery.SocketPath()); err != nil {
+			t.Fatalf("current-generation broker socket before cleanup: %v", err)
+		}
+		if _, err := os.Lstat(brokerDiscovery.RecordPath()); err != nil {
+			t.Fatalf("current-generation broker record before cleanup: %v", err)
+		}
+	} else {
+		if _, err := os.Lstat(brokerDiscovery.SocketPath()); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("typed readiness failures started a current-generation broker socket: %v", err)
+		}
+		if _, err := os.Lstat(brokerDiscovery.RecordPath()); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("typed readiness failures started a current-generation broker record: %v", err)
+		}
 	}
 
 	// Cleanup targets only identities observed inside the isolated root.
 	run("tmux", "-S", isolatedTmuxSocket, "kill-server")
-	if err := waitInstalledPhase3Condition(ctx, 40*time.Second, func() (bool, error) {
-		_, socketErr := os.Lstat(brokerDiscovery.SocketPath())
-		_, recordErr := os.Lstat(brokerDiscovery.RecordPath())
-		return errors.Is(socketErr, os.ErrNotExist) && errors.Is(recordErr, os.ErrNotExist), nil
-	}); err != nil {
-		t.Fatalf("current-generation broker did not retire after exact Pane cleanup: %v", err)
+	if createOutcomes[0].DurableReady {
+		if err := waitInstalledPhase3Condition(ctx, 40*time.Second, func() (bool, error) {
+			_, socketErr := os.Lstat(brokerDiscovery.SocketPath())
+			_, recordErr := os.Lstat(brokerDiscovery.RecordPath())
+			return errors.Is(socketErr, os.ErrNotExist) && errors.Is(recordErr, os.ErrNotExist), nil
+		}); err != nil {
+			t.Fatalf("current-generation broker did not retire after exact Pane cleanup: %v", err)
+		}
 	}
 	if err := codexgenerationhost.StopDurableGeneration(ctx, current.Config.HostConfig(), current.LaunchOperationRef, *current.Proof); err != nil {
 		t.Fatalf("stop exact managed generation cleanup: %v", err)
@@ -356,6 +400,10 @@ func TestInstalledDefaultUpgradeOrdinaryCreatesActivateManagedGeneration(t *test
 	if _, err := os.Lstat(root); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("installed Phase 6 remediation root remains after exact cleanup: %v", err)
 	}
-	t.Logf("evidence: old=%s agent=%s pane=%s thread=%s current=%s agents=%s,%s doctor-mutations=0 foreign-lifecycle-mutations=0 replay=0",
-		health.RunningVersion, oldAgentBefore.Metadata.UID, oldRuntimeID, oldThread.ThreadID, health.ManagedVersion, agentUIDs[0], agentUIDs[1])
+	readiness := "durable-ready"
+	if !createOutcomes[0].DurableReady {
+		readiness = string(createOutcomes[0].Readiness) + "," + string(createOutcomes[1].Readiness)
+	}
+	t.Logf("evidence: tuple old=%s current=%s route=private-generation readiness=%s old-agent=%s pane=%s thread=%s new-agents=%s,%s doctor-mutations=0 foreign-lifecycle-mutations=0 replay=0",
+		health.RunningVersion, health.ManagedVersion, readiness, oldAgentBefore.Metadata.UID, oldRuntimeID, oldThread.ThreadID, agentUIDs[0], agentUIDs[1])
 }

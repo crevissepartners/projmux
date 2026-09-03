@@ -125,6 +125,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	var results []createResult
 	var activationTargets []agentActivationTarget
 	var nativeLifecycleTargets []codexLifecycleObserverTarget
+	var postCommitReadinessErr error
 	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
 	nativeLifecycle, nativeLifecycleCapable := c.resumes.(codexNativeLifecycleStarter)
 	prompt, nativePromptExact := nativePrompt(flags.payload)
@@ -284,6 +285,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				nativeCtx, cancel := prepareNativeContext(ctx)
 				prepared, nativeErr := c.codexNative.Create(nativeCtx, nativeRoute, workspace, prompt, work.activation.Generation)
 				cancel()
+				var readiness *codexappserver.DurableResumeError
 				switch {
 				case nativeErr == nil && strings.TrimSpace(prepared.ThreadID) != "":
 					workTitle, workLaunchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, prepared.ThreadID)
@@ -301,6 +303,13 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 					usedNative = true
 				case nativeErr == nil:
 					return nativeLaunchError(spelling, fmt.Errorf("%w: native create returned an empty thread", codexappserver.ErrProtocol))
+				case prompt == "" && strings.TrimSpace(prepared.ThreadID) != "" && errors.As(nativeErr, &readiness):
+					if err := preserveNativeCodexReadinessFailure(working, mutator, work.agent.Metadata.UID, work.pane.Metadata.UID,
+						work.activation.Generation, nativeRoute.Endpoint, prepared, readiness); err != nil {
+						return err
+					}
+					postCommitReadinessErr = newNativeCodexCreateReadinessError(work.agent.Metadata.UID, nativeRoute.Endpoint, prepared, readiness)
+					return nil
 				case nativeFallbackAllowed(c.codexNative, nativeErr):
 					return nativeCreatePreparationRefusal(spelling, nativeErr)
 				case nativeRootsUnsupported(nativeErr):
@@ -371,6 +380,9 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		return nil
 	}, c.projectOwnershipGuard(scope)); err != nil {
 		return err
+	}
+	if postCommitReadinessErr != nil {
+		return postCommitReadinessErr
 	}
 	// The exact Registry binding becomes observable only after the transaction
 	// commits. Starting inside the callback would correctly fail the startup
