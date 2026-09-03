@@ -373,6 +373,129 @@ func StartPrivateGeneration(ctx context.Context, cfg PrivateGenerationConfig) (*
 	return host, nil
 }
 
+// ObservePrivateGeneration revalidates an already published exact private
+// launch proof without acquiring a process handle or lifecycle authority. It
+// is a read-only readiness barrier used after coordinator restart; it cannot
+// stop, restart, kill, adopt, or release the generation.
+func ObservePrivateGeneration(ctx context.Context, cfg PrivateGenerationConfig, proof LaunchProof) error {
+	if !cfg.Endpoint.Valid() || proof.Endpoint != cfg.Endpoint || proof.EndpointRuntimeID == "" ||
+		proof.PID <= 0 || proof.ProcessGroupID != proof.PID || proof.SocketPath != cfg.SocketPath ||
+		!absoluteNonRoot(cfg.StateDomainPath) || !absoluteNonRoot(cfg.PrivateRoot) ||
+		!absoluteNonRoot(cfg.SocketPath) || !absoluteNonRoot(cfg.LeaseRoot) || !cfg.RequiredProtocol.Valid() {
+		return hostRefuse(HostRefusalLaunchProofMismatch, nil)
+	}
+	if _, err := ownerPrivateDirectory(cfg.PrivateRoot); err != nil {
+		return err
+	}
+	if _, err := ownerPrivateDirectory(cfg.StateDomainPath); err != nil {
+		return err
+	}
+	lease, err := verifyCompleteLease(cfg)
+	if err != nil || lease.ID != proof.BundleID {
+		return hostRefuse(HostRefusalBundleDrift, err)
+	}
+	servers := lease.Paths(codexbundle.RoleServer)
+	if len(servers) != 1 || servers[0] != proof.ExecutablePath {
+		return hostRefuse(HostRefusalLaunchProofMismatch, nil)
+	}
+	artifact, ok := leaseArtifact(lease, proof.ExecutablePath)
+	if !ok || artifact.SHA256 != proof.ExecutableSHA256 {
+		return hostRefuse(HostRefusalLaunchProofMismatch, nil)
+	}
+	executable, err := os.Lstat(proof.ExecutablePath)
+	if err != nil || executable.Mode()&os.ModeSymlink != 0 || !executable.Mode().IsRegular() || fileIdentity(executable) != proof.Executable {
+		return hostRefuse(HostRefusalLaunchProofMismatch, err)
+	}
+	socket, err := os.Lstat(proof.SocketPath)
+	if err != nil || socket.Mode()&os.ModeSocket == 0 || fileIdentity(socket) != proof.SocketIdentity {
+		return hostRefuse(HostRefusalLaunchProofMismatch, err)
+	}
+	processGroupID, err := syscall.Getpgid(proof.PID)
+	if err != nil || processGroupID != proof.ProcessGroupID {
+		return hostRefuse(HostRefusalLaunchProofMismatch, err)
+	}
+	if err := syscall.Kill(proof.PID, 0); err != nil {
+		return hostRefuse(HostRefusalProcessExited, err)
+	}
+	ready := cfg.ready
+	if ready == nil {
+		ready = readyPrivateGeneration
+	}
+	if err := ready(ctx, proof.SocketPath); err != nil {
+		return hostRefuse(HostRefusalReadinessFailed, err)
+	}
+	latest, err := os.Lstat(proof.SocketPath)
+	if err != nil || fileIdentity(latest) != proof.SocketIdentity {
+		return hostRefuse(HostRefusalLaunchProofMismatch, err)
+	}
+	return nil
+}
+
+// ObservePrivateGenerationRoute revalidates the complete leased release set,
+// the exact private app-server authority, and the single RoleTUI artifact used
+// to materialize a Pane. Calling this immediately inside the admission barrier
+// prevents an arbitrary absolute executable or a drifted lease member from
+// becoming the Current generation's TUI route.
+func ObservePrivateGenerationRoute(ctx context.Context, cfg PrivateGenerationConfig, proof LaunchProof, tuiPath string) error {
+	if err := ObservePrivateGeneration(ctx, cfg, proof); err != nil {
+		return err
+	}
+	return observeExactTUIArtifact(cfg, proof.BundleID, tuiPath)
+}
+
+// VerifiedBundleIdentity is the content-free result of reopening one complete
+// immutable generation lease. It lets the rolling coordinator bind a Phase 0
+// qualification version pair and exact request paths to real leased artifacts
+// before any candidate process can be prepared.
+type VerifiedBundleIdentity struct {
+	ID         string
+	Version    string
+	ServerPath string
+	TUIPath    string
+}
+
+// VerifyPrivateGenerationBundle is a read-only preflight. It validates the
+// exact owner-private state/runtime roots, requires the socket to be directly
+// owned by that runtime root, and reopens the complete server/TUI/helper lease.
+func VerifyPrivateGenerationBundle(cfg PrivateGenerationConfig) (VerifiedBundleIdentity, error) {
+	if !cfg.Endpoint.Valid() || !absoluteNonRoot(cfg.StateDomainPath) || !absoluteNonRoot(cfg.PrivateRoot) ||
+		!absoluteNonRoot(cfg.SocketPath) || !absoluteNonRoot(cfg.LeaseRoot) || !cfg.RequiredProtocol.Valid() ||
+		filepath.Dir(cfg.SocketPath) != cfg.PrivateRoot {
+		return VerifiedBundleIdentity{}, hostRefuse(HostRefusalConfigInvalid, nil)
+	}
+	if _, err := ownerPrivateDirectory(cfg.PrivateRoot); err != nil {
+		return VerifiedBundleIdentity{}, err
+	}
+	if _, err := ownerPrivateDirectory(cfg.StateDomainPath); err != nil {
+		return VerifiedBundleIdentity{}, err
+	}
+	lease, err := verifyCompleteLease(cfg)
+	if err != nil {
+		return VerifiedBundleIdentity{}, err
+	}
+	servers, tuis := lease.Paths(codexbundle.RoleServer), lease.Paths(codexbundle.RoleTUI)
+	if len(servers) != 1 || len(tuis) != 1 {
+		return VerifiedBundleIdentity{}, hostRefuse(HostRefusalBundleIncomplete, nil)
+	}
+	return VerifiedBundleIdentity{ID: lease.ID, Version: lease.Manifest.Version, ServerPath: servers[0], TUIPath: tuis[0]}, nil
+}
+
+func observeExactTUIArtifact(cfg PrivateGenerationConfig, bundleID, tuiPath string) error {
+	lease, err := verifyCompleteLease(cfg)
+	if err != nil || lease.ID != bundleID {
+		return hostRefuse(HostRefusalBundleDrift, err)
+	}
+	tuis := lease.Paths(codexbundle.RoleTUI)
+	if len(tuis) != 1 || !absoluteNonRoot(tuiPath) || tuiPath != tuis[0] {
+		return hostRefuse(HostRefusalLaunchProofMismatch, nil)
+	}
+	info, err := os.Lstat(tuiPath)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return hostRefuse(HostRefusalBundleDrift, err)
+	}
+	return nil
+}
+
 func cleanupFailedLaunch(process ownedGenerationProcess, socket string, socketInfo fs.FileInfo) error {
 	if err := terminateOwnedSession(process); err != nil {
 		return err

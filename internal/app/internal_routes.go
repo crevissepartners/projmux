@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgenerationhost"
 )
 
 // internalSubcommands lists the hidden internal plumbing namespaces, in help
@@ -22,6 +24,7 @@ var internalSubcommands = []string{
 	"supervise",
 	"activation-exec",
 	"codex-broker",
+	"codex-generation-launch",
 }
 
 // internalAgentHookSubcommands lists the provider hook plumbing routes.
@@ -106,6 +109,8 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.activationExec, "internal activation-exec", "activation-exec", nil, rest, stdout, stderr)
 	case "codex-broker":
 		return forwardRawArgv(c.codexBroker, "internal codex-broker", "codex-broker", nil, rest, stdout, stderr)
+	case "codex-generation-launch":
+		return codexgenerationhost.RunDurableLaunchSupervisor(rest)
 	default:
 		return usageError(fmt.Sprintf("internal %s is not available; this release implements: %s",
 			args[0], strings.Join(internalSubcommands, ", ")))

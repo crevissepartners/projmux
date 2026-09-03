@@ -10,8 +10,11 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	"github.com/crevissepartners/projmux/internal/cli"
+	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -267,7 +270,14 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// resource-backed, so nothing forwards a split.
 	createCmd.agents = ai
 	createCmd.resumes = ai
+	var rollingCoordinator *codexupgrade.Coordinator
 	createCmd.codexNative = defaultCodexNativeThreadController{}
+	if paths, pathsErr := config.DefaultPathsFromEnv(); pathsErr == nil {
+		journal := codexupgrade.NewStateStore(paths.StateDir)
+		registry := intmetadata.NewDefaultStore(paths)
+		rollingCoordinator = &codexupgrade.Coordinator{Journal: journal, Registry: registry, Mutator: intmetadata.DefaultMutator}
+		createCmd.codexNative = rollingCodexNativeThreadController{journal: journal}
+	}
 	ai.codexNative = createCmd.codexNative
 	// The Projmux split UI produces canonical create intents and nothing else.
 	// This is the edge that retired the legacy split: the saved-default binding,
@@ -287,6 +297,10 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	// implementations of "which conversation does it join".
 	agentCmd.rebind = newAgentRebinder(createCmd, ai)
 	agentCmd.focus = focusCmd
+	if rollingCoordinator != nil {
+		agentCmd.codexUpgrade = &codexUpgradeCommand{coordinator: rollingCoordinator}
+		agentCmd.handover = rollingCoordinator
+	}
 	runtimeDiagnosticsCmd := newRuntimeDiagnosticsCommand(tmuxCmd.runner)
 	runtimeDiagnosticsCmd.focus = focusCmd
 	runtimeDiagnosticsCmd.attach = attach
@@ -575,6 +589,10 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	switch args[0] {
 	case "ai":
 		return false
+	case "internal":
+		if len(args) >= 2 && args[1] == "codex-generation-launch" {
+			return false
+		}
 	case "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",
 		"key-broker", "popup-wait-key", "preview", "session-popup", "status", "statusbar", "tmux":
 		return false

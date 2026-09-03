@@ -41,8 +41,8 @@ func TestPhase0ModelImportsNoMutationAdapter(t *testing.T) {
 			}
 		}
 	}
-	if inspected != 5 {
-		t.Fatalf("inspected %d pure model files, want 5", inspected)
+	if inspected != 6 {
+		t.Fatalf("inspected %d pure model files, want 6", inspected)
 	}
 }
 

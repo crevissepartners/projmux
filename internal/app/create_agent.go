@@ -198,6 +198,22 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			return nativeFanOutRefusal(spelling, len(plan.targets))
 		}
 		nativeEligible := nativeCreate && len(plan.targets) == 1
+		if nativeEligible {
+			// Admission is revalidated while the Registry mutation lock is held
+			// and before any metadata, provider, or tmux effect. The rolling
+			// coordinator commits its current pointer behind the same lock, so a
+			// create is wholly before or wholly after the switch.
+			admissionCtx, admissionCancel := prepareNativeContext(ctx)
+			admitted, routeErr := c.codexNative.Resolve(admissionCtx, nativeRoute.Endpoint)
+			admissionCancel()
+			if routeErr != nil || !admitted.valid() || !admitted.Endpoint.Same(nativeRoute.Endpoint) || admitted.State != coremetadata.CodexGenerationCurrent {
+				if routeErr == nil {
+					routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+				}
+				return nativeCreatePreparationRefusal(spelling, routeErr)
+			}
+			nativeRoute = admitted
+		}
 
 		// Metadata phase. Every Agent and every managed Pane is allocated before
 		// the first tmux call, so an explicit --name that collides inside a

@@ -245,6 +245,75 @@ func newTestAgentResumeCommand(t *testing.T, store *fakeResourceStore, tmux *fak
 	}, launcher, ai, usage
 }
 
+type fakeDrainingHandoverRequester struct {
+	operationRef string
+	endpoints    []coremetadata.CodexEndpointRef
+}
+
+func (requester *fakeDrainingHandoverRequester) RequestHandover(_ context.Context, endpoint coremetadata.CodexEndpointRef) (string, bool, error) {
+	requester.endpoints = append(requester.endpoints, endpoint)
+	return requester.operationRef, len(requester.endpoints) == 1, nil
+}
+
+func markResumeFixtureHandoverState(t *testing.T, store *fakeResourceStore, agentUID, operationRef string, state coremetadata.CodexGenerationState) coremetadata.CodexEndpointRef {
+	t.Helper()
+	agent, ok := store.registry.Agent(agentUID)
+	if !ok || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.Endpoint == nil {
+		t.Fatal("native resume fixture is missing its exact endpoint")
+	}
+	endpoint := *agent.Status.SessionRef.Codex.Endpoint
+	agent.Status.SessionRef.Codex.Lifecycle = &coremetadata.CodexGenerationLifecycleRef{
+		State:     state,
+		Operation: &coremetadata.CodexGenerationOperationRef{ID: operationRef, Endpoint: endpoint},
+	}
+	if err := store.registry.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return endpoint
+}
+
+func TestAgentResumeDrainingGenerationFailsClosedWhenHandoverRequesterIsUnconfigured(t *testing.T) {
+	for _, state := range []coremetadata.CodexGenerationState{coremetadata.CodexGenerationDraining, coremetadata.CodexGenerationHandoverPending} {
+		t.Run(string(state), func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
+			tmux := newFakeTmux()
+			command, launcher, _, _ := newTestAgentResumeCommand(t, store, tmux)
+			enablePinnedNativeResumeFixture(t, command, store, "agt-beta-codex", launcher)
+			markResumeFixtureHandoverState(t, store, "agt-beta-codex", "upgrade-one", state)
+			before := store.snapshot()
+			_, _, err := runRoute(t, command, "resume", "uid:agt-beta-codex")
+			if err == nil || !strings.Contains(err.Error(), "handover-required operation=upgrade-one") || !strings.Contains(err.Error(), "not configured") {
+				t.Fatalf("%s resume error = %v", state, err)
+			}
+			if store.snapshot() != before || store.transactions != 0 || store.writes != 0 || len(tmux.calls) != 0 || len(launcher.plans) != 0 {
+				t.Fatalf("fail-closed %s resume mutated state: transactions=%d writes=%d tmux=%v provider=%v", state, store.transactions, store.writes, tmux.calls, launcher.plans)
+			}
+		})
+	}
+}
+
+func TestAgentResumeDrainingGenerationReusesOneGenerationWideOperationRef(t *testing.T) {
+	store := newFakeResourceStore(t)
+	setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
+	tmux := newFakeTmux()
+	command, launcher, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	enablePinnedNativeResumeFixture(t, command, store, "agt-beta-codex", launcher)
+	endpoint := markResumeFixtureHandoverState(t, store, "agt-beta-codex", "upgrade-one", coremetadata.CodexGenerationDraining)
+	requester := &fakeDrainingHandoverRequester{operationRef: "upgrade-one"}
+	command.handover = requester
+	before := store.snapshot()
+	for i := range 2 {
+		_, _, err := runRoute(t, command, "resume", "uid:agt-beta-codex")
+		if err == nil || !strings.Contains(err.Error(), "handover-required operation=upgrade-one") {
+			t.Fatalf("resume %d error = %v", i, err)
+		}
+	}
+	if len(requester.endpoints) != 2 || requester.endpoints[0] != endpoint || requester.endpoints[1] != endpoint || store.snapshot() != before || store.transactions != 0 || len(tmux.calls) != 0 || len(launcher.plans) != 0 {
+		t.Fatalf("handover reuse effects endpoints=%+v transactions=%d tmux=%v provider=%v", requester.endpoints, store.transactions, tmux.calls, launcher.plans)
+	}
+}
+
 func testAgentWorkspaceResolver(spelling string, registry coremetadata.Registry, owner coremetadata.Project, provider, cwd string, additional []string) (coremetadata.AgentWorkspace, error) {
 	effective := strings.TrimSpace(cwd)
 	if effective == "" {

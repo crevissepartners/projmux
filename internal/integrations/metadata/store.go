@@ -416,6 +416,27 @@ func (s *Store) Update(fn func(*coremetadata.Registry) error) (coremetadata.Regi
 	return out, nil
 }
 
+// WithAdmissionBarrier runs one callback while holding the same cross-process
+// lock as every Registry mutation, after loading and validating the exact
+// snapshot. The callback cannot edit Registry. Phase 4 uses it to atomically
+// publish an admission-current journal pointer relative to native Agent create
+// transactions: a create is wholly before or wholly after that publication.
+func (s *Store) WithAdmissionBarrier(fn func(coremetadata.Registry) error) error {
+	if s == nil || fn == nil {
+		return errors.New("metadata: nil admission barrier")
+	}
+	return s.withMutationLock(func() error {
+		registry, _, _, _, err := s.readWithReport()
+		if err != nil {
+			return s.mapDegradedMutationError(err)
+		}
+		if err := registry.Validate(); err != nil {
+			return s.mapDegradedMutationError(err)
+		}
+		return fn(registry.Clone())
+	})
+}
+
 // UpdateConvergent is Update with a byte-write no-op for an unchanged
 // registry. Runtime binding convergence uses it because the authoritative
 // identity lives in the registry while the repaired copy lives in tmux: once

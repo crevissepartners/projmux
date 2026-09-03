@@ -210,7 +210,7 @@ func TestAgentDomainNamespaceOwnsTheAgentWorkflowSpellings(t *testing.T) {
 	for _, child := range route.Children {
 		children = append(children, child.Name)
 	}
-	if want := []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage"}; !reflect.DeepEqual(children, want) {
+	if want := []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage", "app-server"}; !reflect.DeepEqual(children, want) {
 		t.Fatalf("agent children = %v, want %v", children, want)
 	}
 
