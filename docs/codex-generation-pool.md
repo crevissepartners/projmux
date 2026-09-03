@@ -416,10 +416,10 @@ go test ./internal/testutil/codexinstalled \
 It observes the ambient socket/PID record read-only, starts only fixture-owned
 private process groups, checks the rendered seven-zero receipt and durable
 candidate/admission/drain counters, re-observes the old Draining proof and
-reads/lists its exact content-free thread, then creates and reads one
-payload-free thread through the journal-selected new Current. It finally uses
-the exact operation proof for semantic teardown. It never signals or adopts the
-default endpoint.
+reads its exact content-free thread, then exercises catalog listing without
+requiring that no-turn thread to appear and creates/reads one payload-free thread
+through the journal-selected new Current. It finally uses the exact operation
+proof for semantic teardown. It never signals or adopts the default endpoint.
 
 ### Phase 4 migration and deletion ledger
 
