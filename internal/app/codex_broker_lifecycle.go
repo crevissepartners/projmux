@@ -264,7 +264,9 @@ func (s *codexBrokerObserverSession) pump(binding *codexbroker.RemoteBinding, re
 				continue
 			}
 			if event.Origin == codexbroker.EventOriginSnapshot {
-				s.rotate(codexBrokerEpochRecord{fence: event.Fence, snapshot: event.Snapshot}, ready)
+				s.rotateAfterPendingSuspension(
+					codexBrokerEpochRecord{fence: event.Fence, snapshot: event.Snapshot}, ready, suspends,
+				)
 				continue
 			}
 			s.mu.Lock()
@@ -292,6 +294,24 @@ func (s *codexBrokerObserverSession) pump(binding *codexbroker.RemoteBinding, re
 	if current != nil {
 		current.end()
 	}
+}
+
+// rotateAfterPendingSuspension preserves the remote binding's causal order.
+// IPC guarantees the suspension frame precedes a replacement snapshot, but
+// select may still choose the buffered snapshot first because the client
+// mirrors them on separate channels. Retire the old epoch before rotating so
+// that edge cannot arrive later and tear down the replacement authority.
+func (s *codexBrokerObserverSession) rotateAfterPendingSuspension(
+	record codexBrokerEpochRecord,
+	ready chan codexBrokerEpochRecord,
+	suspends <-chan struct{},
+) {
+	select {
+	case <-suspends:
+		s.retire(ready)
+	default:
+	}
+	s.rotate(record, ready)
 }
 
 // retire ends the live epoch and discards the barrier it was opened from, so

@@ -280,7 +280,7 @@ func (s *session) pump(binding *Binding) {
 				events = nil
 				continue
 			}
-			s.send(wireReply{Kind: replyEvent, Thread: thread, Event: wireEventOf(event)})
+			s.forwardEvent(thread, event, suspends)
 		case <-suspends:
 			s.send(wireReply{Kind: replySuspended, Thread: thread})
 		}
@@ -288,6 +288,23 @@ func (s *session) pump(binding *Binding) {
 	s.send(wireReply{Kind: replyRevoked, Thread: thread, Refusal: binding.Revocation()})
 	s.forget(thread, binding)
 	s.host.releaseBinding()
+}
+
+// forwardEvent preserves the binding's causal order across the local IPC.
+// Suspensions and events are separate in-process channels, but the wire is the
+// binding's single ordered stream. A replacement snapshot is created only
+// after the preceding connection was suspended, so drain that coalesced edge
+// before forwarding the snapshot. Otherwise select may put the new authority
+// on the wire first and a late suspension would immediately retire it.
+func (s *session) forwardEvent(thread string, event Event, suspends <-chan struct{}) {
+	if event.Origin == EventOriginSnapshot {
+		select {
+		case <-suspends:
+			s.send(wireReply{Kind: replySuspended, Thread: thread})
+		default:
+		}
+	}
+	s.send(wireReply{Kind: replyEvent, Thread: thread, Event: wireEventOf(event)})
 }
 
 // wireEventOf projects one broker event onto the wire.

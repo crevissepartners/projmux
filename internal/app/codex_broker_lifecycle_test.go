@@ -430,6 +430,36 @@ func TestBrokerEpochRotationFencesTheOldEpochOutWithZeroEndpointWrites(t *testin
 	}
 }
 
+// TestBrokerObserverReplacementSnapshotConsumesPriorSuspensionEdge pins the
+// second half of reconnect ordering. Even when select receives the buffered
+// snapshot first, the observer consumes its causally prior suspension before
+// rotating, so that edge cannot later retire the replacement epoch.
+func TestBrokerObserverReplacementSnapshotConsumesPriorSuspensionEdge(t *testing.T) {
+	ready := make(chan codexBrokerEpochRecord, 1)
+	suspends := make(chan struct{}, 1)
+	suspends <- struct{}{}
+	old := &codexBrokerLifecycleEpoch{notifications: make(chan codexappserver.Notification)}
+	session := &codexBrokerObserverSession{current: old}
+	replacement := codexBrokerEpochRecord{
+		fence:    codexbroker.Fence{Connection: 2, Binding: 1},
+		snapshot: codexappserver.ThreadSnapshot{ThreadID: "thread-replacement"},
+	}
+
+	session.rotateAfterPendingSuspension(replacement, ready, suspends)
+
+	if _, open := <-old.Notifications(); open {
+		t.Fatal("replacement rotation left the previous epoch open")
+	}
+	if got := <-ready; got.fence != replacement.fence || got.snapshot.ThreadID != replacement.snapshot.ThreadID {
+		t.Fatalf("replacement record = %+v, want %+v", got, replacement)
+	}
+	select {
+	case <-suspends:
+		t.Fatal("replacement rotation left a stale suspension edge")
+	default:
+	}
+}
+
 // TestBrokerApprovalLeaseAnswersTheExactRawRequestExactlyOnce pins the approval
 // half of C-4 end to end: the inbound server request arrives as a notification
 // carrying its byte-faithful raw id, the answer is admitted once, and every

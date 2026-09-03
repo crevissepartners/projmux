@@ -9897,6 +9897,7 @@ mkdir -p "$p12_root"/{home,bin,cache,config,runtime,state,tmux,workspace} \
 chmod 0700 "$p12_root/runtime"
 
 for p12_provider in claude codex antigravity; do
+	# shellcheck disable=SC2016 # Expands in the generated provider shim at runtime.
   printf '%s\n' '#!/bin/sh' \
     'if [ "${0##*/}" = codex ] && [ "${1:-}" = app-server ]; then exit 1; fi' \
     "printf '%s\\n' \"\$0 \$*\" >> \"\$PROJMUX_PHASE12_AGENT_ARGV\"" \
