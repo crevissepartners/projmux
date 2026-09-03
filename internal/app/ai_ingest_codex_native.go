@@ -101,6 +101,10 @@ type codexGenerationLifecycleSink interface {
 	SetGenerationAuthority(codexLifecycleIdentity, coremetadata.CodexEndpointRef, coremetadata.CodexGenerationState, coremetadata.CodexAuthorityRef) error
 }
 
+type codexGenerationLifecycleSource interface {
+	GenerationLifecycle(codexLifecycleIdentity, coremetadata.CodexEndpointRef) (coremetadata.CodexGenerationLifecycleRef, bool)
+}
+
 type codexGenerationAuthorityConnection interface {
 	GenerationAuthority() (coremetadata.CodexAuthorityRef, error)
 }
@@ -311,8 +315,9 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				authority, authorityErr = authoritySource.GenerationAuthority()
 			}
 			generationSink, ok := o.sink.(codexGenerationLifecycleSink)
-			if authorityErr != nil || !authority.Valid() || !authority.Endpoint().Same(o.endpoint) || !ok || o.generationState == "" ||
-				generationSink.SetGenerationAuthority(o.identity, o.endpoint, o.generationState, authority) != nil {
+			lifecycle, lifecycleOK := o.generationLifecycle()
+			if authorityErr != nil || !authority.Valid() || !authority.Endpoint().Same(o.endpoint) || !ok || !lifecycleOK ||
+				generationSink.SetGenerationAuthority(o.identity, o.endpoint, lifecycle.State, authority) != nil {
 				_ = client.Close()
 				o.setStartupFallback(codexNativeReasonGenerationUnavailable)
 				return nil
@@ -571,17 +576,38 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 }
 
 func (o *codexNativeObserver) decorateGenerationProjection(projection codexLifecycleProjection) codexLifecycleProjection {
-	if !projection.Accepted || !o.endpoint.Valid() || o.generationState == "" {
+	if !projection.Accepted || !o.endpoint.Valid() {
 		return projection
 	}
+	lifecycle, ok := o.generationLifecycle()
+	if !ok {
+		return codexLifecycleProjection{}
+	}
 	projection.Endpoint = &o.endpoint
-	projection.GenerationState = o.generationState
+	projection.GenerationState = lifecycle.State
+	if lifecycle.Operation != nil {
+		operation := *lifecycle.Operation
+		projection.Operation = &operation
+	}
 	if o.authority == nil || !o.authority.Valid() || !o.authority.Endpoint().Same(o.endpoint) {
 		return codexLifecycleProjection{}
 	}
 	authority := *o.authority
 	projection.Authority = &authority
 	return projection
+}
+
+// generationLifecycle reads the durable planned-state operation at projection
+// time. A watcher may be born while its endpoint is Current and remain alive
+// after admission changes that exact Agent to Draining; the route's launch
+// state is therefore only a compatibility fallback for ordinary Current rows,
+// never authority for a planned state.
+func (o *codexNativeObserver) generationLifecycle() (coremetadata.CodexGenerationLifecycleRef, bool) {
+	if source, ok := o.sink.(codexGenerationLifecycleSource); ok {
+		return source.GenerationLifecycle(o.identity, o.endpoint)
+	}
+	lifecycle := coremetadata.CodexGenerationLifecycleRef{State: o.generationState}
+	return lifecycle, lifecycle.ValidFor(&o.endpoint)
 }
 
 // continueRecovery is the only retry scheduler after a ready epoch is lost.
@@ -804,6 +830,28 @@ func (s aiCodexLifecycleSink) BindingCurrent(identity codexLifecycleIdentity) bo
 	}
 	out, err := s.runner.Run(context.Background(), "tmux", "show-options", "-pqv", "-t", identity.RuntimeID, tmuxopts.PaneUID)
 	return err == nil && strings.TrimSpace(string(out)) == identity.PaneUID && exactCodexLifecycleBinding(registry, identity)
+}
+
+func (s aiCodexLifecycleSink) GenerationLifecycle(identity codexLifecycleIdentity, endpoint coremetadata.CodexEndpointRef) (coremetadata.CodexGenerationLifecycleRef, bool) {
+	if s.command == nil || s.command.loadRegistry == nil || !endpoint.Valid() {
+		return coremetadata.CodexGenerationLifecycleRef{}, false
+	}
+	registry, err := s.command.loadRegistry()
+	if err != nil || !exactCodexLifecycleBinding(registry, identity) {
+		return coremetadata.CodexGenerationLifecycleRef{}, false
+	}
+	agent, ok := registry.Agent(identity.AgentUID)
+	if !ok || agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil ||
+		agent.Status.SessionRef.Codex.Endpoint == nil || !agent.Status.SessionRef.Codex.Endpoint.Same(endpoint) ||
+		agent.Status.SessionRef.Codex.Lifecycle == nil || !agent.Status.SessionRef.Codex.Lifecycle.ValidFor(&endpoint) {
+		return coremetadata.CodexGenerationLifecycleRef{}, false
+	}
+	lifecycle := *agent.Status.SessionRef.Codex.Lifecycle
+	if lifecycle.Operation != nil {
+		operation := *lifecycle.Operation
+		lifecycle.Operation = &operation
+	}
+	return lifecycle, true
 }
 
 func exactCodexLifecycleBinding(registry coremetadata.Registry, identity codexLifecycleIdentity) bool {
@@ -1062,9 +1110,33 @@ func (s aiCodexLifecycleSink) Apply(identity codexLifecycleIdentity, projection 
 		return errManagedAgentObservationIgnored
 	}
 	for _, notice := range projection.Notices {
+		consumer := codexgeneration.ConsumerProjection{}
+		if projection.generationAware() {
+			registry, err := c.loadRegistry()
+			if err != nil {
+				return err
+			}
+			if !exactCodexGenerationMutation(registry, identity, projection) {
+				return errManagedAgentObservationIgnored
+			}
+			consumer = codexgeneration.ProjectConsumers(projection.generationInput(), codexgeneration.RuntimeMutationInput{
+				DurableEndpoint: projection.Endpoint, StoredAuthority: projection.Authority, PresentedAuthority: projection.Authority,
+				TargetRuntimeID: identity.RuntimeID, EventRuntimeID: identity.RuntimeID,
+			}, true)
+			if consumer.Effect != codexgeneration.MutationSemanticEffect || !consumer.Notification {
+				continue
+			}
+		}
 		metadata := map[string]string{
 			notify.MetaAgent: aiModeCodex, notify.MetaCategory: notice.Category,
 			"thread_id": notice.ThreadID, "turn_id": notice.TurnID,
+		}
+		if projection.generationAware() {
+			metadata[notify.MetaAgentUID] = identity.AgentUID
+			metadata[notify.MetaPaneUID] = identity.PaneUID
+			metadata[notify.MetaStateDomainID] = consumer.Endpoint.StateDomainID
+			metadata[notify.MetaEndpointGenerationID] = consumer.Endpoint.EndpointGenerationID
+			metadata[notify.MetaAuthorityFence] = consumer.Fence
 		}
 		if notice.ItemID != "" {
 			metadata["item_id"] = notice.ItemID

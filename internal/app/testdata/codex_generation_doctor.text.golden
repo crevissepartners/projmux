@@ -1,0 +1,7 @@
+
+Codex generation pool
+  Status: blocked; reason: no-turn-choice-required; state domain: state-main; admission current: generation-n1; expected multi-generation: true; doctor mutations: 0
+  Version pair: 0.152.0 -> 0.152.1; verdict: yes; reason: qualified
+  Generation generation-n: state=draining owner=projmux-private version=0.152.0 bundle=bundle-generation-n/ready pinned=1 status=action-required action=handover-required reason=draining-resume-requires-handover
+  Generation generation-n1: state=current owner=projmux-private version=0.152.1 bundle=bundle-generation-n1/ready pinned=0 status=ready action=none reason=ready
+  Pinned Agent agent-old: generation=generation-n obligation=no-turn status=blocked action=close-or-replace reason=no-turn-choice-required

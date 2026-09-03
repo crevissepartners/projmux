@@ -387,7 +387,7 @@ func TestFormatStatusNotifyLiveAIEntryUsesTopicBadge(t *testing.T) {
 	}
 }
 
-// TestStatusbarClickNotifyStaleHeadStillFocuses pins the Phase 6 split:
+// TestStatusbarClickNotifyStaleHeadHasZeroAction pins the Phase 6 boundary:
 // inactive/queue-stale means live reply+agent mismatch, not an unroutable
 // target. The statusbar must still run the normal focus subprocess and only
 // ack after focus succeeds.
@@ -397,7 +397,7 @@ func TestFormatStatusNotifyLiveAIEntryUsesTopicBadge(t *testing.T) {
 // "no live data; fall back to live" by classifyHeadDisplayBestEffort (the
 // docker e2e harness hits that fallback), so we have to seed at least one
 // unrelated reply-state pane to keep the live map non-empty here.
-func TestStatusbarClickNotifyStaleHeadStillFocuses(t *testing.T) {
+func TestStatusbarClickNotifyStaleHeadHasZeroAction(t *testing.T) {
 	t.Parallel()
 
 	runner := &statusbarFakeRunner{
@@ -471,18 +471,14 @@ func TestStatusbarClickNotifyStaleHeadStillFocuses(t *testing.T) {
 			focusCalls = append(focusCalls, call)
 		}
 	}
-	if len(focusCalls) != 1 {
-		t.Fatalf("focus calls = %#v, want one focus subprocess for inactive head", focusCalls)
+	if len(focusCalls) != 0 {
+		t.Fatalf("focus calls = %#v, want stale action zero", focusCalls)
 	}
-	if !sliceContainsPair(focusCalls[0].args, "--target", "main:1.%2") {
-		t.Fatalf("focus args = %#v, want inactive routable target", focusCalls[0].args)
+	if !sawTmuxDisplayMessage(runner.calls, "notify target stale; no action") {
+		t.Fatalf("runner calls = %#v, want stale refusal toast", runner.calls)
 	}
-	if sawTmuxDisplayMessage(runner.calls, notifyAckOnlyToast(notifyDisplayGone)) {
-		t.Fatalf("runner calls = %#v, did not expect gone ack-only toast for inactive target", runner.calls)
-	}
-	wantAcked := []string{"ai:main:%2", "ai:main:%2:older-info"}
-	if !equalStringSlices(store.ackedIDs, wantAcked) {
-		t.Fatalf("ackedIDs = %#v, want %#v (inactive target should ack after focus and clear older same-pane non-critical AI rows)", store.ackedIDs, wantAcked)
+	if len(store.ackedIDs) != 0 {
+		t.Fatalf("ackedIDs = %#v, want stale action zero", store.ackedIDs)
 	}
 }
 

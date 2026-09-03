@@ -36,6 +36,13 @@ const (
 	MetaEvent    = "event"
 	MetaCategory = "category"
 	MetaState    = "state"
+	// The generation keys carry content-free resource identity and the digest
+	// of the exact five-dimensional Codex authority used by derived consumers.
+	MetaAgentUID             = "agent_uid"
+	MetaPaneUID              = "pane_uid"
+	MetaStateDomainID        = "state_domain_id"
+	MetaEndpointGenerationID = "endpoint_generation_id"
+	MetaAuthorityFence       = "authority_fence"
 )
 
 // DefaultTTL is the default freshness window applied when the caller does not

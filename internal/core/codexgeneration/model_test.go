@@ -41,8 +41,12 @@ func TestPhase0ModelImportsNoMutationAdapter(t *testing.T) {
 			}
 		}
 	}
-	if inspected != 8 {
-		t.Fatalf("inspected %d pure model files, want 8", inspected)
+	// Phase 6 mutant ownership receipt: consumer.go is the ninth pure owner.
+	// It centralizes endpoint/fence actionability previously restated by the
+	// notification/sidebar/statusbar/reply consumers, while this import census
+	// still kills any mutation-capable dependency added to that owner.
+	if inspected != 9 {
+		t.Fatalf("inspected %d pure model files, want 9", inspected)
 	}
 }
 

@@ -563,7 +563,7 @@ func newAttentionLivePaneLister(runner tmuxRunner) livePaneLister {
 // newDefaultLivePaneLister builds the production live-pane lister used by
 // the app constructor wiring in [New].
 func newDefaultLivePaneLister() livePaneLister {
-	return newAttentionLivePaneLister(inttmux.ExecRunner{})
+	return newGenerationAwareLivePaneLister(newAttentionLivePaneLister(inttmux.ExecRunner{}), snapshotResourceRegistry)
 }
 
 func (l attentionLivePaneLister) ListLivePanes() ([]livePaneRow, error) {

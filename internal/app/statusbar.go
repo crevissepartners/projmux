@@ -601,17 +601,20 @@ func (c *statusbarCommand) handleNotify(opts statusbarClickOptions, _, stderr io
 		Pane:    head.Pane,
 	})
 
-	// Gone fast path: when the head entry has no routable target, skip the
-	// focus subprocess entirely. Inactive/stale entries still try to focus
-	// because their pane can exist even though it no longer matches live
-	// reply+agent state.
+	// Stale generation rows have no consumer action: do not focus and do not
+	// acknowledge them implicitly. Explicit queue acknowledgement remains the
+	// only way to remove such evidence. Gone targets keep the cleanup path.
 	//
 	// The fast path STILL acks the entry: "ack-only" means we skip the focus
 	// round-trip, *not* that we leave the row in the queue. Without the ack
 	// here the next click would re-classify the same head entry as gone
 	// and the user would be stuck repeatedly toasting the same row. The toast
 	// remains as a UX signal that the focus side of the click was skipped.
-	if display := c.classifyHeadDisplayBestEffort(head); display == notifyDisplayGone || strings.TrimSpace(target) == "" {
+	display := c.classifyHeadDisplayBestEffort(head)
+	if display == notifyDisplayStale {
+		return c.displayStatusbarMessage(opts, stderr, "notify target stale; no action")
+	}
+	if display == notifyDisplayGone || strings.TrimSpace(target) == "" {
 		if ackErr := ackFocusedNotification(store, head, entries); ackErr != nil {
 			return c.displayStatusbarMessage(opts, stderr, fmt.Sprintf("%s; ack failed: %s", notifyAckOnlyToast(notifyDisplayGone), focusFailureSummary(ackErr)))
 		}
@@ -680,7 +683,8 @@ func (c *statusbarCommand) classifyHeadDisplayBestEffort(head notify.Notificatio
 	if c == nil || c.runner == nil {
 		return classifyNotifyRowState(head, nil, nil)
 	}
-	panes, paneSet, err := (&notifyCommand{livePanes: newAttentionLivePaneLister(c.runner)}).listNotifyLivePanesAndSet()
+	lister := newGenerationAwareLivePaneLister(newAttentionLivePaneLister(c.runner), snapshotResourceRegistry)
+	panes, paneSet, err := (&notifyCommand{livePanes: lister}).listNotifyLivePanesAndSet()
 	if err != nil {
 		return classifyNotifyRowState(head, nil, nil)
 	}
@@ -690,7 +694,7 @@ func (c *statusbarCommand) classifyHeadDisplayBestEffort(head notify.Notificatio
 	// unrecognized tmux reply, so passing paneSet through preserves the
 	// docker-e2e best-effort fallback (nil paneSet ⇒ no membership GONE).
 	liveByID := notifyLiveShouldQueueByID(panes)
-	if len(liveByID) == 0 {
+	if len(liveByID) == 0 && !notifyEntryHasGenerationAuthority(head) {
 		return classifyNotifyRowState(head, nil, paneSet)
 	}
 	return classifyNotifyRowState(head, liveByID, paneSet)

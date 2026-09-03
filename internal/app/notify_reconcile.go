@@ -130,6 +130,13 @@ func (c *notifyCommand) runReconcileWithOwnership(args []string, stdout, stderr 
 	for id, pane := range wantByID {
 		want := reconcileEntryText(pane)
 		metadata := mergeAttentionNotifyMetadata(nil, pane.Agent, pane.Topic, notify.SeverityInfo)
+		if pane.AuthorityFence != "" {
+			metadata[notify.MetaAgentUID] = pane.AgentUID
+			metadata[notify.MetaPaneUID] = pane.PaneUID
+			metadata[notify.MetaStateDomainID] = pane.StateDomainID
+			metadata[notify.MetaEndpointGenerationID] = pane.EndpointGenerationID
+			metadata[notify.MetaAuthorityFence] = pane.AuthorityFence
+		}
 		if cur, ok := existingByID[id]; ok && cur.Text == want && attentionNotifyMetadataMatches(cur.Metadata, metadata) {
 			result.Kept++
 			continue
@@ -226,7 +233,11 @@ func reconcileTargetExists(entry notify.Notification, paneSet notifyLivePaneSet,
 }
 
 func attentionNotifyMetadataMatches(got, want map[string]string) bool {
-	for _, key := range []string{notify.MetaAgent, notify.MetaCategory, notify.MetaState, notify.MetaTopic} {
+	for _, key := range []string{
+		notify.MetaAgent, notify.MetaCategory, notify.MetaState, notify.MetaTopic,
+		notify.MetaAgentUID, notify.MetaPaneUID, notify.MetaStateDomainID,
+		notify.MetaEndpointGenerationID, notify.MetaAuthorityFence,
+	} {
 		if strings.TrimSpace(got[key]) != strings.TrimSpace(want[key]) {
 			return false
 		}

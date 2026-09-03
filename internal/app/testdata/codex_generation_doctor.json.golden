@@ -1,0 +1,70 @@
+{
+  "status": "blocked",
+  "reason": "no-turn-choice-required",
+  "state_domain_id": "state-main",
+  "current_generation_id": "generation-n1",
+  "expected_multi_generation": true,
+  "doctor_mutations": 0,
+  "qualification": {
+    "schemaVersion": 1,
+    "versions": {
+      "old": "0.152.0",
+      "new": "0.152.1"
+    },
+    "verdict": "yes",
+    "reason": "qualified",
+    "evidence": {
+      "sharedStateDomain": true,
+      "distinctPrivateEndpoints": true,
+      "distinctThreadCreateTurn": true,
+      "distinctThreadReadList": true,
+      "crashRestart": true,
+      "crossThreadWrites": 0,
+      "storeCorruptions": 0,
+      "liveOwnerResumeWrites": 0,
+      "oldStoppedBeforeResume": true,
+      "persistedResumeSnapshot": true,
+      "sharedAuthConfigPrivate": true,
+      "bundleSourceRemovalLaunch": true,
+      "bundleDriftRefused": true,
+      "protocolMismatchRefused": true,
+      "ambientMutations": 0
+    }
+  },
+  "generations": [
+    {
+      "generation_id": "generation-n",
+      "state": "draining",
+      "owner": "projmux-private",
+      "bundle_id": "bundle-generation-n",
+      "bundle_status": "ready",
+      "version": "0.152.0",
+      "pinned_agents": 1,
+      "status": "action-required",
+      "action": "handover-required",
+      "reason": "draining-resume-requires-handover"
+    },
+    {
+      "generation_id": "generation-n1",
+      "state": "current",
+      "owner": "projmux-private",
+      "bundle_id": "bundle-generation-n1",
+      "bundle_status": "ready",
+      "version": "0.152.1",
+      "pinned_agents": 0,
+      "status": "ready",
+      "action": "none",
+      "reason": "ready"
+    }
+  ],
+  "pinned_agents": [
+    {
+      "agent_uid": "agent-old",
+      "generation_id": "generation-n",
+      "state": "no-turn",
+      "status": "blocked",
+      "action": "close-or-replace",
+      "reason": "no-turn-choice-required"
+    }
+  ]
+}

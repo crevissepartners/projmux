@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
+	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/i18n"
@@ -135,6 +136,7 @@ type exactAgentControlBinding struct {
 	StateDir   string
 	ProjectUID string
 	WindowUID  string
+	Fence      string
 }
 
 func resolveExactAgentControlBinding(registry coremetadata.Registry, agent coremetadata.Agent, live agentControlLive, observed bool, stateDir string) (exactAgentControlBinding, error) {
@@ -193,9 +195,22 @@ func resolveExactAgentControlBinding(registry coremetadata.Registry, agent corem
 	if !ok {
 		return refusal("owning Project is missing")
 	}
+	lifecycle, durable, authorized := resourceAgentLifecycleProjectionInput(
+		registry, agent, pane.Metadata.UID, live.RuntimeID, agent.EffectiveInteraction(time.Now()).Kind,
+	)
+	consumer := codexgeneration.ProjectConsumers(lifecycle, codexgeneration.RuntimeMutationInput{
+		DurableEndpoint: agent.Status.SessionRef.Codex.Endpoint,
+		StoredAuthority: pane.Status.Activation.Codex.Authority, PresentedAuthority: pane.Status.Activation.Codex.Authority,
+		TargetRuntimeID: pane.Status.Activation.RuntimeID, EventRuntimeID: live.RuntimeID,
+	}, true)
+	if !durable || !authorized || consumer.Effect != codexgeneration.MutationSemanticEffect ||
+		!consumer.Endpoint.Same(endpoint) || consumer.Fence == "" {
+		return refusal("canonical generation consumer fence is unavailable")
+	}
 	return exactAgentControlBinding{
 		Identity: codexLifecycleIdentity{AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, RuntimeID: pane.Status.Activation.RuntimeID, Generation: pane.Status.Activation.Generation, ThreadID: threadID},
 		Endpoint: endpoint, Epoch: live.Epoch, StateDir: stateDir, ProjectUID: project.Metadata.UID, WindowUID: window.Metadata.UID,
+		Fence: consumer.Fence,
 	}, nil
 }
 
@@ -375,6 +390,9 @@ func (c *agentCommand) runApproval(args []string, stdout, stderr io.Writer) erro
 }
 
 func (c *agentCommand) callControl(binding exactAgentControlBinding, request agentControlRequest) (agentControlResponse, error) {
+	if err := c.revalidateControlConsumerFence(binding); err != nil {
+		return agentControlResponse{}, addOpenCodexBindingRecovery(err, binding)
+	}
 	request.Identity, request.Epoch = binding.Identity, binding.Epoch
 	ctx, cancel := context.WithTimeout(context.Background(), c.controlTimeoutValue())
 	defer cancel()
@@ -387,6 +405,43 @@ func (c *agentCommand) callControl(binding exactAgentControlBinding, request age
 		return agentControlResponse{}, addOpenCodexBindingRecovery(fmt.Errorf("exact Agent native control unavailable: %w", err), binding)
 	}
 	return response, nil
+}
+
+// revalidateControlConsumerFence consumes the same canonical endpoint/fence
+// projection as notification, sidebar, and statusbar immediately before a
+// reply, steer, approval, or message reaches the control transport. The
+// control epoch still owns provider-side fencing; this read-only guard closes
+// the Registry-authority race before that transport is called at all.
+func (c *agentCommand) revalidateControlConsumerFence(binding exactAgentControlBinding) error {
+	if c.loadRegistry == nil {
+		return &exactAgentControlBindingError{Reason: "canonical generation consumer Registry is unavailable"}
+	}
+	registry, err := c.loadRegistry()
+	if err != nil {
+		return &exactAgentControlBindingError{Reason: "canonical generation consumer Registry read failed"}
+	}
+	agent, ok := registry.Agent(binding.Identity.AgentUID)
+	if !ok {
+		return &exactAgentControlBindingError{Reason: "canonical generation consumer Agent is missing"}
+	}
+	pane, ok := registry.Pane(binding.Identity.PaneUID)
+	if !ok || pane.Status.Activation.Codex == nil || pane.Status.Activation.Codex.Authority == nil {
+		return &exactAgentControlBindingError{Reason: "canonical generation consumer Pane authority is missing"}
+	}
+	lifecycle, durable, authorized := resourceAgentLifecycleProjectionInput(
+		registry, *agent, binding.Identity.PaneUID, binding.Identity.RuntimeID, agent.EffectiveInteraction(time.Now()).Kind,
+	)
+	authority := pane.Status.Activation.Codex.Authority
+	consumer := codexgeneration.ProjectConsumers(lifecycle, codexgeneration.RuntimeMutationInput{
+		DurableEndpoint: agent.Status.SessionRef.Codex.Endpoint,
+		StoredAuthority: authority, PresentedAuthority: authority,
+		TargetRuntimeID: pane.Status.Activation.RuntimeID, EventRuntimeID: binding.Identity.RuntimeID,
+	}, true)
+	if !durable || !authorized || consumer.Effect != codexgeneration.MutationSemanticEffect ||
+		!consumer.Endpoint.Same(binding.Endpoint) || consumer.Fence == "" || consumer.Fence != binding.Fence {
+		return &exactAgentControlBindingError{Reason: "canonical generation consumer fence is stale"}
+	}
+	return nil
 }
 
 func (c *agentCommand) controlTimeoutValue() time.Duration {

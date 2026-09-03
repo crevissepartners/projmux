@@ -395,6 +395,11 @@ func (c *notifyCommand) runSidebar(store notifyStore, severities, sources []stri
 		if !ok {
 			return fmt.Errorf("focus notification: %w: %s", notify.ErrNotFound, id)
 		}
+		liveByID, paneSet := c.notifyLiveStateBestEffort()
+		if classifyNotifyRowState(entry, liveByID, paneSet) == notifyDisplayStale {
+			c.displayNotifySidebarMessage("notify target stale; no action")
+			return nil
+		}
 		if err := c.focusNotification(entry, "notify-sidebar", "row-select", clientTTY); err != nil {
 			if isFocusTargetUnresolved(err) {
 				if ackErr := store.Ack(id); ackErr != nil {
@@ -597,7 +602,7 @@ func notifySidebarFooter(homeDir func() (string, error), lookupEnv func(string) 
 		return localizeText(locale, "picker.notify.footer.empty", "Esc: close")
 	}
 	guide := pickerActionKeyGuide(homeDir, lookupEnv, []pickerActionKeyGuideItem{
-		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live/inactive / clean gone"},
+		{ActionID: "NotifySidebar:FocusAndAck", Label: "focus live / refuse stale / clean gone"},
 		{ActionID: "NotifySidebar:Ack", Label: "ack child"},
 		{ActionID: "NotifySidebar:AckGroup", Label: "ack group"},
 		{ActionID: "NotifySidebar:ClearNonCritical", Label: "clear non-critical"},
@@ -820,6 +825,10 @@ func (c *notifyCommand) focusAndAckNotifySidebarGroup(store notifyStore, entries
 			return err
 		}
 		c.displayNotifySidebarMessage(notifySidebarGroupCleanupMessage(display))
+		return nil
+	}
+	if display == notifyDisplayStale {
+		c.displayNotifySidebarMessage("notify target stale; no action")
 		return nil
 	}
 	if err := c.focusNotification(representative, "notify-sidebar", "group-select", clientTTY); err != nil {
@@ -1662,18 +1671,23 @@ type notifyLiveReport struct {
 }
 
 type notifyLivePane struct {
-	ID             string `json:"id"`
-	Session        string `json:"session"`
-	Window         string `json:"window,omitempty"`
-	Pane           string `json:"pane"`
-	Socket         string `json:"socket,omitempty"`
-	Title          string `json:"title,omitempty"`
-	AttentionState string `json:"attention_state"`
-	AIState        string `json:"ai_state,omitempty"`
-	Agent          string `json:"agent,omitempty"`
-	Topic          string `json:"topic,omitempty"`
-	Target         string `json:"target"`
-	ShouldQueue    bool   `json:"should_queue"`
+	ID                   string `json:"id"`
+	Session              string `json:"session"`
+	Window               string `json:"window,omitempty"`
+	Pane                 string `json:"pane"`
+	Socket               string `json:"socket,omitempty"`
+	Title                string `json:"title,omitempty"`
+	AttentionState       string `json:"attention_state"`
+	AIState              string `json:"ai_state,omitempty"`
+	Agent                string `json:"agent,omitempty"`
+	Topic                string `json:"topic,omitempty"`
+	AgentUID             string `json:"agent_uid,omitempty"`
+	PaneUID              string `json:"pane_uid,omitempty"`
+	StateDomainID        string `json:"state_domain_id,omitempty"`
+	EndpointGenerationID string `json:"endpoint_generation_id,omitempty"`
+	AuthorityFence       string `json:"authority_fence,omitempty"`
+	Target               string `json:"target"`
+	ShouldQueue          bool   `json:"should_queue"`
 	// replyState mirrors livePaneRow.ReplyState (pane is in attention "reply"
 	// state) for the manual-reply vs title-attention distinction. Unexported so
 	// the `--live` JSON shape stays unchanged.
@@ -1740,7 +1754,7 @@ func (c *notifyCommand) buildNotifyLiveReportLocale(entries []notify.Notificatio
 			})
 			continue
 		}
-		if entry, ok := queueByID[live.ID]; ok {
+		if entry, ok := queueByID[live.ID]; ok && notifyEntryMatchesGenerationAuthority(entry, live) {
 			entryCopy := entry
 			report.Rows = append(report.Rows, notifyLiveRow{
 				State:       "live-ai-reply-queued",
@@ -1763,7 +1777,7 @@ func (c *notifyCommand) buildNotifyLiveReportLocale(entries []notify.Notificatio
 	}
 
 	for _, entry := range entries {
-		if _, ok := liveByID[entry.ID]; ok {
+		if live, ok := liveByID[entry.ID]; ok && notifyEntryMatchesGenerationAuthority(entry, live) {
 			continue
 		}
 		state := "queue-only"
@@ -1797,7 +1811,7 @@ func notifyLiveExplanationKey(state string) (i18n.Key, string) {
 	case "live-ai-reply-missing-queue":
 		return i18n.KeyNotifyLiveAIReplyMissingQueue, "live AI reply pane has no matching queue entry; run `projmux notification reconcile` to back-fill it"
 	case "queue-stale":
-		return i18n.KeyNotifyLiveQueueStale, "queue entry target is inactive: the live pane no longer matches reply+agent state; it may still be focusable if the target is routable"
+		return i18n.KeyNotifyLiveQueueStale, "queue entry target is stale: the live pane no longer matches the exact reply+agent endpoint/fence; focus and ack actions are refused"
 	case "queue-gone":
 		return i18n.KeyNotifyLiveQueueGone, "queue entry target is gone: no routable target exists; Enter/ack cleans it up without focusing"
 	default:
@@ -1923,16 +1937,21 @@ func notifyLivePanesFromRows(rows []livePaneRow) []notifyLivePane {
 	out := make([]notifyLivePane, 0, len(rows))
 	for _, row := range rows {
 		live := notifyLivePane{
-			ID:             buildAttentionNotifyID(row.Session, row.Pane),
-			Session:        row.Session,
-			Window:         row.Window,
-			Pane:           row.Pane,
-			Socket:         row.Socket,
-			Title:          row.Title,
-			AttentionState: row.AttentionState,
-			AIState:        row.AIState,
-			Agent:          row.Agent,
-			Topic:          row.Topic,
+			ID:                   buildAttentionNotifyID(row.Session, row.Pane),
+			Session:              row.Session,
+			Window:               row.Window,
+			Pane:                 row.Pane,
+			Socket:               row.Socket,
+			Title:                row.Title,
+			AttentionState:       row.AttentionState,
+			AIState:              row.AIState,
+			Agent:                row.Agent,
+			Topic:                row.Topic,
+			AgentUID:             row.AgentUID,
+			PaneUID:              row.PaneUID,
+			StateDomainID:        row.StateDomainID,
+			EndpointGenerationID: row.EndpointGenerationID,
+			AuthorityFence:       row.AuthorityFence,
 			Target: notify.FormatTarget(notify.Target{
 				Session: row.Session,
 				Window:  row.Window,

@@ -17,6 +17,13 @@ type livePaneRow struct {
 	AIState        string
 	Agent          string
 	Topic          string
+	// Generation-aware fields are populated only by the Registry-backed
+	// production decorator. Legacy/provider-neutral rows leave them empty.
+	AgentUID             string
+	PaneUID              string
+	StateDomainID        string
+	EndpointGenerationID string
+	AuthorityFence       string
 	// ReplyState reports that the pane's attention state machine is in the
 	// "reply ready" state (the producer's push condition, together with a
 	// non-empty Agent).
