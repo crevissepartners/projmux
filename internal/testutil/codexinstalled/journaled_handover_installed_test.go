@@ -1,6 +1,8 @@
 package codexinstalled
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -170,43 +172,43 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	seedAgent := func(name, runtimeID, threadID, boundTurn string, interaction metadata.AgentInteractionKind) (metadata.Agent, metadata.Pane) {
+	seedAgent := func(targetRegistry *metadata.Registry, name, runtimeID, threadID, boundTurn string, interaction metadata.AgentInteractionKind, endpoint metadata.CodexEndpointRef) (metadata.Agent, metadata.Pane) {
 		t.Helper()
-		agent, createErr := mutator.CreateAgent(&registry, project.Windows[0].Metadata.UID, metadata.CreateAgentOptions{
+		agent, createErr := mutator.CreateAgent(targetRegistry, project.Windows[0].Metadata.UID, metadata.CreateAgentOptions{
 			Name: name, Provider: "codex", Workspace: metadata.AgentWorkspace{CWD: workspace}, OperationID: "phase5-" + name})
 		if createErr != nil {
 			t.Fatal(createErr)
 		}
-		pane, attachErr := mutator.AttachAgentPane(&registry, agent.Metadata.UID, metadata.BootstrapPane{CWD: workspace}, "phase5-"+name)
+		pane, attachErr := mutator.AttachAgentPane(targetRegistry, agent.Metadata.UID, metadata.BootstrapPane{CWD: workspace}, "phase5-"+name)
 		if attachErr != nil {
 			t.Fatal(attachErr)
 		}
 		generation := "pane-generation-" + name
-		if _, activateErr := mutator.RecordPaneActivation(&registry, pane.Metadata.UID, metadata.PaneActivationOptions{
+		if _, activateErr := mutator.RecordPaneActivation(targetRegistry, pane.Metadata.UID, metadata.PaneActivationOptions{
 			Generation: generation, RuntimeID: runtimeID, AgentUID: agent.Metadata.UID, OperationID: "phase5-" + name}); activateErr != nil {
 			t.Fatal(activateErr)
 		}
-		if stageErr := mutator.StageCodexEndpoint(&registry, agent.Metadata.UID, oldEndpoint); stageErr != nil {
+		if stageErr := mutator.StageCodexEndpoint(targetRegistry, agent.Metadata.UID, endpoint); stageErr != nil {
 			t.Fatal(stageErr)
 		}
-		if _, bindErr := mutator.BindCodexActivation(&registry, metadata.CodexActivationObservation{AgentUID: agent.Metadata.UID,
-			PaneUID: pane.Metadata.UID, Generation: generation, ThreadID: threadID, TurnID: boundTurn, Endpoint: oldEndpoint}); bindErr != nil {
+		if _, bindErr := mutator.BindCodexActivation(targetRegistry, metadata.CodexActivationObservation{AgentUID: agent.Metadata.UID,
+			PaneUID: pane.Metadata.UID, Generation: generation, ThreadID: threadID, TurnID: boundTurn, Endpoint: endpoint}); bindErr != nil {
 			t.Fatal(bindErr)
 		}
-		if _, interactionErr := mutator.SetAgentInteraction(&registry, agent.Metadata.UID, interaction, string(metadata.InteractionSourceLifecycle)); interactionErr != nil {
+		if _, interactionErr := mutator.SetAgentInteraction(targetRegistry, agent.Metadata.UID, interaction, string(metadata.InteractionSourceLifecycle)); interactionErr != nil {
 			t.Fatal(interactionErr)
 		}
-		storedAgent, _ := registry.Agent(agent.Metadata.UID)
-		storedPane, _ := registry.Pane(pane.Metadata.UID)
+		storedAgent, _ := targetRegistry.Agent(agent.Metadata.UID)
+		storedPane, _ := targetRegistry.Pane(pane.Metadata.UID)
 		for key, value := range map[string]string{tmuxopts.PaneUID: storedPane.Metadata.UID, tmuxopts.AgentUIDPane: storedAgent.Metadata.UID,
 			tmuxopts.PaneOwnerKind: string(metadata.KindAgent), tmuxopts.PaneOwnerUID: storedAgent.Metadata.UID,
-			"@projmux_codex_authority": "provider-hook"} {
+			tmuxopts.AgentThreadIDPane: threadID, "@projmux_codex_authority": "provider-hook"} {
 			runTmux("set-option", "-p", "-t", runtimeID, key, value)
 		}
 		return *storedAgent, *storedPane
 	}
-	completedAgent, completedResourcePane := seedAgent("completed", completedPane, completed.ThreadID, turnID, metadata.InteractionResponseComplete)
-	noTurnAgent, _ := seedAgent("no-turn", noTurnPane, noTurn.ThreadID, "", metadata.InteractionIdle)
+	completedAgent, completedResourcePane := seedAgent(&registry, "completed", completedPane, completed.ThreadID, turnID, metadata.InteractionResponseComplete, oldEndpoint)
+	noTurnAgent, _ := seedAgent(&registry, "no-turn", noTurnPane, noTurn.ThreadID, "", metadata.InteractionIdle, oldEndpoint)
 	registryStore := intmetadata.NewDefaultStore(paths)
 	if _, _, err := registryStore.UpdateConvergent(func(current *metadata.Registry) error { *current = registry; return nil }); err != nil {
 		t.Fatal(err)
@@ -279,43 +281,118 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 	if !ok || newRoute.Proof == nil {
 		t.Fatal("successor proof missing immediately after upgrade")
 	}
+	oldRoute, ok := upgradeJournal.Route(oldEndpoint)
+	if !ok || oldRoute.Proof == nil {
+		t.Fatal("old draining route missing immediately after upgrade")
+	}
 	proof := *newRoute.Proof
 	successorProof = &proof
-	// Phase 6 full-flow overlap: both admitted generations own a distinct
-	// thread/turn before any destructive handover receipt. Starting both turns
-	// before either terminal wait is the semantic barrier; exact thread/turn
-	// reads below prove that neither endpoint cross-wired the sibling tuple.
-	oldOverlapClient, err := codexappserver.OpenPrivateUnix(ctx, oldConfig.SocketPath, 10*time.Second, "installed-phase6-overlap-old", true)
+	// Phase 6 full-flow overlap uses the product Agent control path, not raw
+	// app-server turns. The existing N Agent remains pinned to its old
+	// Agent/Pane/thread while one new N+1 Agent owns a distinct Pane/thread.
+	// Neither setup nor the message overlap writes a Phase 5 handover receipt.
+	newThreadClient, err := codexappserver.OpenPrivateUnix(ctx, newRoute.Config.SocketPath, 10*time.Second, "installed-phase6-new-agent", true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	newOverlapClient, err := codexappserver.OpenPrivateUnix(ctx, newRoute.Config.SocketPath, 10*time.Second, "installed-phase6-overlap-new", true)
+	newThread, newThreadErr := newThreadClient.StartThread(ctx, workspace, nil)
+	if closeErr := newThreadClient.Close(); newThreadErr != nil || closeErr != nil || strings.TrimSpace(newThread.ThreadID) == "" {
+		t.Fatalf("create N+1 Agent thread=%+v err=%v close=%v", newThread, newThreadErr, closeErr)
+	}
+	successorPane := runTmux("split-window", "-d", "-t", completedPane, "-c", workspace, "-P", "-F", "#{pane_id}", "tail", "-f", "/dev/null")
+	overlapRegistry, err := registryStore.LoadSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	successorAgent, successorResourcePane := seedAgent(&overlapRegistry, "successor", successorPane, newThread.ThreadID, "", metadata.InteractionResponseComplete, newEndpoint)
+	if _, changed, err := registryStore.UpdateConvergent(func(current *metadata.Registry) error {
+		*current = overlapRegistry
+		return nil
+	}); err != nil || !changed {
+		t.Fatalf("persist N+1 Agent/Pane/thread tuple changed=%t err=%v", changed, err)
+	}
+	journalBeforeOverlap, err := os.ReadFile(journalStore.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldObserver := startInstalledGenerationObserver(t, ctx, projmux, tmuxEnv, installedGenerationObserverTarget{
+		AgentUID: completedAgent.Metadata.UID, PaneUID: completedResourcePane.Metadata.UID, RuntimeID: completedPane,
+		PaneGeneration: completedResourcePane.Status.Activation.Generation, ThreadID: completed.ThreadID,
+		Endpoint: oldEndpoint, State: oldRoute.Generation.State, SocketPath: oldRoute.Config.SocketPath, TUIPath: oldRoute.TUIPath,
+	})
+	newObserver := startInstalledGenerationObserver(t, ctx, projmux, tmuxEnv, installedGenerationObserverTarget{
+		AgentUID: successorAgent.Metadata.UID, PaneUID: successorResourcePane.Metadata.UID, RuntimeID: successorPane,
+		PaneGeneration: successorResourcePane.Status.Activation.Generation, ThreadID: newThread.ThreadID,
+		Endpoint: newEndpoint, State: newRoute.Generation.State, SocketPath: newRoute.Config.SocketPath, TUIPath: newRoute.TUIPath,
+	})
+
+	// Start both public Agent messages before waiting for either command or
+	// provider turn. That is the semantic overlap barrier: each installed CLI
+	// must resolve its durable Agent ref through its exact Pane and generation
+	// control endpoint while both private generations remain live.
+	oldMessage := exec.CommandContext(ctx, projmux, "agent", "turn", "start", "uid:"+completedAgent.Metadata.UID, "--", "Write the integers 1 through 80, one per line, and nothing else.")   // #nosec G204 -- exact installed binary and durable Agent ref.
+	newMessage := exec.CommandContext(ctx, projmux, "agent", "turn", "start", "uid:"+successorAgent.Metadata.UID, "--", "Write the integers 81 through 160, one per line, and nothing else.") // #nosec G204 -- exact installed binary and durable Agent ref.
+	oldMessage.Env, newMessage.Env = tmuxEnv, tmuxEnv
+	var oldMessageOutput, newMessageOutput bytes.Buffer
+	oldMessage.Stdout, oldMessage.Stderr = &oldMessageOutput, &oldMessageOutput
+	newMessage.Stdout, newMessage.Stderr = &newMessageOutput, &newMessageOutput
+	if err := oldMessage.Start(); err != nil {
+		t.Fatalf("start installed N Agent message: %v", err)
+	}
+	if err := newMessage.Start(); err != nil {
+		_ = oldMessage.Process.Kill()
+		t.Fatalf("start installed N+1 Agent message: %v", err)
+	}
+	oldMessageDone, newMessageDone := make(chan error, 1), make(chan error, 1)
+	go func() { oldMessageDone <- oldMessage.Wait() }()
+	go func() { newMessageDone <- newMessage.Wait() }()
+	if oldMessageErr, newMessageErr := <-oldMessageDone, <-newMessageDone; oldMessageErr != nil || newMessageErr != nil {
+		t.Fatalf("installed Agent message overlap old=%v/%s new=%v/%s", oldMessageErr, oldMessageOutput.String(), newMessageErr, newMessageOutput.String())
+	}
+	messageRegistry, err := registryStore.LoadSnapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldMessageAgent, oldAgentOK := messageRegistry.Agent(completedAgent.Metadata.UID)
+	newMessageAgent, newAgentOK := messageRegistry.Agent(successorAgent.Metadata.UID)
+	oldMessagePane, oldPaneOK := messageRegistry.Pane(completedResourcePane.Metadata.UID)
+	newMessagePane, newPaneOK := messageRegistry.Pane(successorResourcePane.Metadata.UID)
+	if !oldAgentOK || !newAgentOK || !oldPaneOK || !newPaneOK || oldMessageAgent.Status.SessionRef == nil || newMessageAgent.Status.SessionRef == nil ||
+		oldMessageAgent.Status.SessionRef.Codex == nil || newMessageAgent.Status.SessionRef.Codex == nil ||
+		oldMessageAgent.Status.SessionRef.Codex.Endpoint == nil || newMessageAgent.Status.SessionRef.Codex.Endpoint == nil ||
+		!oldMessageAgent.Status.SessionRef.Codex.Endpoint.Same(oldEndpoint) || !newMessageAgent.Status.SessionRef.Codex.Endpoint.Same(newEndpoint) ||
+		oldMessageAgent.Status.SessionRef.Codex.ThreadID != completed.ThreadID || newMessageAgent.Status.SessionRef.Codex.ThreadID != newThread.ThreadID ||
+		oldMessagePane.Status.Activation.RuntimeID != completedPane || newMessagePane.Status.Activation.RuntimeID != successorPane ||
+		oldMessagePane.Status.Activation.Codex == nil || newMessagePane.Status.Activation.Codex == nil ||
+		strings.TrimSpace(oldMessagePane.Status.Activation.Codex.TurnID) == "" || strings.TrimSpace(newMessagePane.Status.Activation.Codex.TurnID) == "" ||
+		oldMessagePane.Status.Activation.Codex.TurnID == newMessagePane.Status.Activation.Codex.TurnID {
+		t.Fatalf("installed Agent overlap cross-wired oldAgent=%+v oldPane=%+v newAgent=%+v newPane=%+v", oldMessageAgent, oldMessagePane, newMessageAgent, newMessagePane)
+	}
+	oldOverlapClient, err := codexappserver.OpenPrivateUnix(ctx, oldRoute.Config.SocketPath, 10*time.Second, "installed-phase6-old-agent-result", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newOverlapClient, err := codexappserver.OpenPrivateUnix(ctx, newRoute.Config.SocketPath, 10*time.Second, "installed-phase6-new-agent-result", true)
 	if err != nil {
 		oldOverlapClient.Close()
 		t.Fatal(err)
 	}
-	oldOverlapThread, oldThreadErr := oldOverlapClient.StartThread(ctx, workspace, nil)
-	newOverlapThread, newThreadErr := newOverlapClient.StartThread(ctx, workspace, nil)
-	if oldThreadErr != nil || newThreadErr != nil || oldOverlapThread.ThreadID == "" || newOverlapThread.ThreadID == "" || oldOverlapThread.ThreadID == newOverlapThread.ThreadID {
-		oldOverlapClient.Close()
-		newOverlapClient.Close()
-		t.Fatalf("distinct overlap threads old=%+v/%v new=%+v/%v", oldOverlapThread, oldThreadErr, newOverlapThread, newThreadErr)
-	}
-	oldOverlapTurn, oldTurnErr := oldOverlapClient.StartTurn(ctx, oldOverlapThread.ThreadID, "Reply with exactly OLD_OK. Do not use tools.", "installed-phase6-overlap-old")
-	newOverlapTurn, newTurnErr := newOverlapClient.StartTurn(ctx, newOverlapThread.ThreadID, "Reply with exactly NEW_OK. Do not use tools.", "installed-phase6-overlap-new")
-	if oldTurnErr != nil || newTurnErr != nil || oldOverlapTurn == "" || newOverlapTurn == "" || oldOverlapTurn == newOverlapTurn {
-		oldOverlapClient.Close()
-		newOverlapClient.Close()
-		t.Fatalf("distinct overlap turns old=%q/%v new=%q/%v", oldOverlapTurn, oldTurnErr, newOverlapTurn, newTurnErr)
-	}
-	oldOverlapSnapshot := waitForGenerationTurn(t, ctx, oldOverlapClient, oldOverlapThread.ThreadID, oldOverlapTurn)
-	newOverlapSnapshot := waitForGenerationTurn(t, ctx, newOverlapClient, newOverlapThread.ThreadID, newOverlapTurn)
-	if oldOverlapSnapshot.ThreadID != oldOverlapThread.ThreadID || oldOverlapSnapshot.TurnID != oldOverlapTurn ||
-		newOverlapSnapshot.ThreadID != newOverlapThread.ThreadID || newOverlapSnapshot.TurnID != newOverlapTurn {
-		t.Fatalf("overlap cross-wire old=%+v new=%+v", oldOverlapSnapshot, newOverlapSnapshot)
+	oldOverlapSnapshot := waitForGenerationTurn(t, ctx, oldOverlapClient, completed.ThreadID, oldMessagePane.Status.Activation.Codex.TurnID)
+	newOverlapSnapshot := waitForGenerationTurn(t, ctx, newOverlapClient, newThread.ThreadID, newMessagePane.Status.Activation.Codex.TurnID)
+	if oldOverlapSnapshot.ThreadID != completed.ThreadID || oldOverlapSnapshot.TurnID != oldMessagePane.Status.Activation.Codex.TurnID ||
+		newOverlapSnapshot.ThreadID != newThread.ThreadID || newOverlapSnapshot.TurnID != newMessagePane.Status.Activation.Codex.TurnID {
+		t.Fatalf("installed Agent provider result cross-wire old=%+v new=%+v", oldOverlapSnapshot, newOverlapSnapshot)
 	}
 	if closeOldErr, closeNewErr := oldOverlapClient.Close(), newOverlapClient.Close(); closeOldErr != nil || closeNewErr != nil {
-		t.Fatalf("close overlap clients old=%v new=%v", closeOldErr, closeNewErr)
+		t.Fatalf("close Agent overlap clients old=%v new=%v", closeOldErr, closeNewErr)
+	}
+	waitForInstalledAgentInteraction(t, ctx, registryStore, completedAgent.Metadata.UID, metadata.InteractionResponseComplete)
+	waitForInstalledAgentInteraction(t, ctx, registryStore, successorAgent.Metadata.UID, metadata.InteractionResponseComplete)
+	oldObserver.Stop(t)
+	newObserver.Stop(t)
+	journalAfterOverlap, err := os.ReadFile(journalStore.Path())
+	if err != nil || !bytes.Equal(journalBeforeOverlap, journalAfterOverlap) {
+		t.Fatalf("Phase 6 Agent message overlap polluted Phase 5 journal receipt: err=%v", err)
 	}
 	requester := codexupgrade.Coordinator{Journal: journalStore, Registry: registryStore, Mutator: intmetadata.DefaultMutator}
 	requestedRef, created, err := requester.RequestHandover(ctx, oldEndpoint)
@@ -470,4 +547,123 @@ func journaledHandoverEnvironment(environment []string, codexHome, stateHome, co
 		}
 	}
 	return append(filtered, "TMUX_TMPDIR="+tmuxRoot)
+}
+
+type installedGenerationObserverTarget struct {
+	AgentUID       string
+	PaneUID        string
+	RuntimeID      string
+	PaneGeneration string
+	ThreadID       string
+	Endpoint       metadata.CodexEndpointRef
+	State          codexgeneration.GenerationState
+	SocketPath     string
+	TUIPath        string
+}
+
+type installedGenerationObserver struct {
+	cancel  context.CancelFunc
+	done    <-chan error
+	command *exec.Cmd
+	stderr  *bytes.Buffer
+	stopped bool
+}
+
+func startInstalledGenerationObserver(t *testing.T, ctx context.Context, binary string, environment []string, target installedGenerationObserverTarget) *installedGenerationObserver {
+	t.Helper()
+	observerCtx, cancel := context.WithCancel(ctx)
+	args := []string{
+		"internal", "agent-hook", "ingest", "codex-broker-watch",
+		"--agent-uid", target.AgentUID,
+		"--pane-uid", target.PaneUID,
+		"--pane", target.RuntimeID,
+		"--generation", target.PaneGeneration,
+		"--thread", target.ThreadID,
+		"--state-domain", target.Endpoint.StateDomainID,
+		"--endpoint-generation", target.Endpoint.EndpointGenerationID,
+		"--endpoint-state", string(target.State),
+		"--endpoint-socket", target.SocketPath,
+		"--tui-executable", target.TUIPath,
+		"--tmux-socket-name", journaledHandoverSocket,
+	}
+	command := exec.CommandContext(observerCtx, binary, args...) // #nosec G204 -- exact installed binary and closed internal observer argv.
+	command.Env = append(append([]string(nil), environment...), "PROJMUX_INTERNAL_CODEX_OBSERVER_STARTUP=1")
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		cancel()
+		t.Fatalf("open installed generation observer handshake: %v", err)
+	}
+	stderr := &bytes.Buffer{}
+	command.Stderr = stderr
+	if err := command.Start(); err != nil {
+		cancel()
+		t.Fatalf("start installed generation observer: %v", err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- command.Wait() }()
+	observer := &installedGenerationObserver{cancel: cancel, done: done, command: command, stderr: stderr}
+	t.Cleanup(func() { observer.Stop(t) })
+	handshake := make(chan string, 1)
+	go func() {
+		line, _ := bufio.NewReader(stdout).ReadString('\n')
+		handshake <- line
+	}()
+	startupDeadline := time.NewTimer(30 * time.Second)
+	defer startupDeadline.Stop()
+	select {
+	case line := <-handshake:
+		fields := strings.Fields(line)
+		if len(fields) != 3 || fields[0] != "projmux-codex-observer-v1" || fields[1] != "ready" || strings.TrimSpace(fields[2]) == "" {
+			t.Fatalf("installed generation observer did not publish exact ready epoch: handshake=%q stderr=%s", line, stderr.String())
+		}
+	case err := <-done:
+		observer.stopped = true
+		t.Fatalf("installed generation observer exited before ready: %v: %s", err, stderr.String())
+	case <-startupDeadline.C:
+		t.Fatalf("installed generation observer ready handshake timed out: %s", stderr.String())
+	case <-ctx.Done():
+		t.Fatalf("installed generation observer context ended before ready: %v", ctx.Err())
+	}
+	return observer
+}
+
+func (o *installedGenerationObserver) Stop(t *testing.T) {
+	t.Helper()
+	if o == nil || o.stopped {
+		return
+	}
+	o.stopped = true
+	o.cancel()
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	select {
+	case <-o.done:
+		return
+	case <-deadline.C:
+		if o.command != nil && o.command.Process != nil {
+			_ = o.command.Process.Kill()
+		}
+		t.Fatalf("installed generation observer did not stop in its exact scope: %s", o.stderr.String())
+	}
+}
+
+func waitForInstalledAgentInteraction(t *testing.T, ctx context.Context, store *intmetadata.Store, agentUID string, want metadata.AgentInteractionKind) {
+	t.Helper()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		registry, err := store.LoadSnapshot()
+		if err != nil {
+			t.Fatalf("read installed Agent interaction: %v", err)
+		}
+		agent, ok := registry.Agent(agentUID)
+		if ok && agent.Status.Interaction.Kind == want {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("installed Agent %s interaction did not reach %s: %v", agentUID, want, ctx.Err())
+		case <-ticker.C:
+		}
+	}
 }

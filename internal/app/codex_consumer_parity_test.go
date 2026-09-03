@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"reflect"
 	"testing"
@@ -12,6 +13,12 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/notify"
 	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
+
+type phase6StaticLivePaneLister struct{ rows []livePaneRow }
+
+func (l phase6StaticLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
+	return append([]livePaneRow(nil), l.rows...), nil
+}
 
 func TestGenerationConsumersShareExactEndpointFenceAndStaleActionZero(t *testing.T) {
 	store, identity, endpoint, authority := phase1GenerationAuthorityFixture(t)
@@ -59,6 +66,30 @@ func TestGenerationConsumersShareExactEndpointFenceAndStaleActionZero(t *testing
 	staleLive := notifyLivePanesFromRows([]livePaneRow{staleRow})[0]
 	if got := classifyNotifyRowState(entry, map[string]notifyLivePane{entry.ID: staleLive}, newNotifyLivePaneSet([]livePaneRow{staleRow})); got != notifyDisplayStale {
 		t.Fatalf("stale notification classified %v, row=%#v", got, staleRow)
+	}
+}
+
+func TestGenerationAwareListerRegistryReadErrorMakesExistingNoticeStaleAndActionZero(t *testing.T) {
+	entry := notify.Notification{
+		ID: "ai:main:%7", Session: "main", Pane: "%7", Source: notify.SourceAI,
+		Metadata: map[string]string{
+			notify.MetaAgentUID: "agent-old", notify.MetaPaneUID: "pane-old",
+			notify.MetaStateDomainID: "state-main", notify.MetaEndpointGenerationID: "generation-n",
+			notify.MetaAuthorityFence: "sha256:previous",
+		},
+	}
+	base := phase6StaticLivePaneLister{rows: []livePaneRow{{
+		Session: "main", Pane: "%7", Agent: aiModeCodex,
+		AttentionState: attentionStateReply, ReplyState: true,
+	}}}
+	rows, err := newGenerationAwareLivePaneLister(base, func() (coremetadata.Registry, error) {
+		return coremetadata.Registry{}, errors.New("Registry unavailable")
+	}).ListLivePanes()
+	if err != nil || len(rows) != 1 || rows[0].ReplyState {
+		t.Fatalf("read-error rows=%#v err=%v, want Codex action zero", rows, err)
+	}
+	if got := classifyNotifyRowState(entry, map[string]notifyLivePane{}, newNotifyLivePaneSet(rows)); got != notifyDisplayStale {
+		t.Fatalf("generation notice after Registry read error = %v, want stale", got)
 	}
 }
 

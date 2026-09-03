@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -156,10 +157,11 @@ func TestDoctorCodexGenerationPinnedTupleSkewFailsClosed(t *testing.T) {
 
 func TestDoctorCodexGenerationJSONAndTextAreContentFree(t *testing.T) {
 	report := diagnoseCodexGenerationPool(doctorGenerationJournal(codexgeneration.ObligationNoTurn), coremetadata.Registry{}, doctorBundleVerifier)
-	encoded, err := json.Marshal(report)
+	encoded, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		t.Fatal(err)
 	}
+	encoded = append(encoded, '\n')
 	for _, forbidden := range []string{"prompt", "transcript", "message", "credential", "socket_path", "state_domain_path", "private_root", "tui_path"} {
 		if strings.Contains(strings.ToLower(string(encoded)), forbidden) {
 			t.Fatalf("Doctor JSON contains forbidden %q: %s", forbidden, encoded)
@@ -171,6 +173,19 @@ func TestDoctorCodexGenerationJSONAndTextAreContentFree(t *testing.T) {
 		if !strings.Contains(text.String(), want) {
 			t.Fatalf("Doctor text missing %q:\n%s", want, text.String())
 		}
+	}
+	assertDoctorGenerationGolden(t, "codex_generation_doctor.json.golden", encoded)
+	assertDoctorGenerationGolden(t, "codex_generation_doctor.text.golden", text.Bytes())
+}
+
+func assertDoctorGenerationGolden(t *testing.T, name string, got []byte) {
+	t.Helper()
+	want, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("Doctor golden %s mismatch\n--- got ---\n%s\n--- want ---\n%s", name, got, want)
 	}
 }
 

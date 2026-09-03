@@ -475,6 +475,29 @@ func TestAgentControlCLIReplacedGenerationOrEpochWritesNoAppServerControl(t *tes
 	}
 }
 
+func TestAgentControlCLIStaleCanonicalConsumerFenceCallsNoControlTransport(t *testing.T) {
+	cmd, store, _ := exactControlCLICommand(t)
+	originalPaths := cmd.controlPaths
+	cmd.controlPaths = func() (config.Paths, error) {
+		paths, err := originalPaths()
+		pane, _ := store.registry.Pane("pan-alpha-codex")
+		stale := *pane.Status.Activation.Codex.Authority
+		stale.ConnectionEpoch++
+		pane.Status.Activation.Codex.Authority = &stale
+		return paths, err
+	}
+	calls := 0
+	cmd.controlCall = func(context.Context, string, coremetadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+		calls++
+		return agentControlResponse{}, errors.New("must not be called")
+	}
+	_, _, err := runRoute(t, cmd, "turn", "steer", "uid:agt-alpha-codex", "--", "stale steer")
+	var bindingErr *exactAgentControlBindingError
+	if err == nil || !errors.As(err, &bindingErr) || !strings.Contains(bindingErr.Reason, "consumer fence is stale") || calls != 0 {
+		t.Fatalf("error=%v typed=%#v control calls=%d", err, bindingErr, calls)
+	}
+}
+
 func TestAgentControlBindingLookupUsesResolvedLogicalRouteOnly(t *testing.T) {
 	for _, target := range []tmuxTransport{
 		{Kind: tmuxSocketName, Value: "exact-control", Source: tmuxSocketNameSource},

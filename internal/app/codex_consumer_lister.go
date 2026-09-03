@@ -29,6 +29,15 @@ func (l generationAwareLivePaneLister) ListLivePanes() ([]livePaneRow, error) {
 	}
 	registry, readErr := l.readRegistry()
 	if readErr != nil {
+		// A failed Registry read cannot prove whether a Codex row still owns the
+		// generation-aware tuple it presented previously. Suppress every Codex
+		// action for this observation; notification classification will also see
+		// the missing exact metadata and keep an existing generation notice stale.
+		for i := range rows {
+			if strings.TrimSpace(rows[i].Agent) == aiModeCodex {
+				rows[i].ReplyState = false
+			}
+		}
 		return rows, nil
 	}
 	for i := range rows {
