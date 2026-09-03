@@ -2021,6 +2021,11 @@ fi
 exec sleep 600
 AGENT_STUB
 chmod 0755 "$agent_home/.local/bin/codex"
+# This scenario's long-lived resume witness exercises generic Agent/Pane/tmux
+# authority, not Codex app-server identity. Give it a sibling-provider shim so
+# its later resume remains intentional while every Codex stub create below is
+# explicitly confined to the plain interactive lane.
+cp "$agent_home/.local/bin/codex" "$agent_home/.local/bin/claude"
 
 pmx_agent() {
   env -u TMUX -u TMUX_PANE \
@@ -2078,7 +2083,7 @@ if [[ ! "$agent_session_before" =~ ^\$[0-9]+$ ]] ||
   exit 1
 fi
 
-if pmx_agent create agent --provider codex -p alpha -w "$alpha_window_name" -o pane-id \
+if pmx_agent create agent --provider claude -p alpha -w "$alpha_window_name" -o pane-id \
   >"$create_root/agent.out" 2>"$create_root/agent.err"; then
   :
 else
@@ -2115,7 +2120,7 @@ if [[ "$(ctx display-message -p -t "$agent_pane" '#{@projmux_ai_managed}')" != "
   echo "the managed Agent pane is not marked as an AI pane" >&2
   exit 1
 fi
-if [[ "$(ctx display-message -p -t "$agent_pane" '#{@projmux_ai_agent}')" != "codex" ]]; then
+if [[ "$(ctx display-message -p -t "$agent_pane" '#{@projmux_ai_agent}')" != "claude" ]]; then
   echo "the managed Agent pane does not record its provider" >&2
   exit 1
 fi
@@ -2165,7 +2170,7 @@ exact_siblings_before="$({
 exact_foreign_before="$(cfx list-panes -a -F '#{session_name}|#{window_id}|#{pane_id}|#{pane_title}|#{@projmux_ai_topic}|#{@projmux_ai_state}' | sha256sum | awk '{print $1}')"
 exact_route_log_before="$(wc -l <"$create_root/exact-tmux-argv.log" | tr -d '[:space:]')"
 exact_launch_log_before="$(wc -l <"$create_root/agent-launch.log" | tr -d '[:space:]')"
-PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 pmx_agent create agent --provider codex \
+PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 pmx_agent create agent --provider codex --interactive-only \
   --project "uid:$agent_project_uid_before" --window "uid:$agent_window_uid_before" \
   --pane "uid:$agent_host_pane_uid_before" --name exact-native-route -o pane-id \
   >"$create_root/agent-exact.out" 2>"$create_root/agent-exact.err"
@@ -2220,13 +2225,13 @@ create_client_two_pid=""
 
 # 9. The shortcut normalizes onto the same route, and a second create allocates a
 #    new Agent instead of reusing the first.
-pmx_agent create codex -p alpha -w "$alpha_window_name" -o name >"$create_root/agent-second.out"
-if [[ "$(tr -d '[:space:]' <"$create_root/agent-second.out")" != "codex-1" ]]; then
-  echo "the second Agent name = $(cat "$create_root/agent-second.out"), want codex-1" >&2
+pmx_agent create codex --interactive-only -p alpha -w "$alpha_window_name" -o name >"$create_root/agent-second.out"
+if [[ "$(tr -d '[:space:]' <"$create_root/agent-second.out")" != "codex" ]]; then
+  echo "the second Agent name = $(cat "$create_root/agent-second.out"), want codex" >&2
   exit 1
 fi
 pmx_agent get agents -p alpha -o name >"$create_root/agent-list.out"
-for want in codex codex-1; do
+for want in claude codex; do
   if ! grep -qx "$want" "$create_root/agent-list.out"; then
     echo "get agents is missing $want:" >&2
     cat "$create_root/agent-list.out" >&2
@@ -2236,9 +2241,9 @@ done
 
 # 10. The payload after -- reaches the provider and never the naming.
 : >"$create_root/agent-launch.log"
-pmx_agent create agent --provider codex -p alpha -w "$alpha_window_name" -o name \
+pmx_agent create agent --provider codex --interactive-only -p alpha -w "$alpha_window_name" -o name \
   -- -p payload-project -w payload-window --topic "release triage" >"$create_root/agent-payload.out"
-if [[ "$(tr -d '[:space:]' <"$create_root/agent-payload.out")" != "codex-2" ]]; then
+if [[ "$(tr -d '[:space:]' <"$create_root/agent-payload.out")" != "codex-1" ]]; then
   echo "a payload changed the Agent name: $(cat "$create_root/agent-payload.out")" >&2
   exit 1
 fi
@@ -2276,7 +2281,7 @@ smoke_assert_file_contains "$create_root/agent-noprovider.err" "requires --provi
 #     implicit suffix and no new pane.
 agent_panes_before="$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)"
 set +e
-pmx_agent create agent --provider codex --project alpha --window "$alpha_window_name" --name codex \
+pmx_agent create agent --provider codex --interactive-only --project alpha --window "$alpha_window_name" --name codex \
   >"$create_root/agent-collide.out" 2>"$create_root/agent-collide.err"
 agent_collide_status=$?
 set -e
@@ -2303,7 +2308,7 @@ fi
 #     names the flag and mutates nothing.
 agent_outside_registry_before="$(md5sum "$create_registry" | cut -d' ' -f1)"
 set +e
-pmx_agent create agent --provider codex -o uid \
+pmx_agent create agent --provider codex --interactive-only -o uid \
   >"$create_root/agent-outside.out" 2>"$create_root/agent-outside.err"
 agent_outside_status=$?
 set -e
@@ -2370,10 +2375,11 @@ if [[ -n "$(ctx show-options -pqv -t "$antigravity_hook_pane" @projmux_ai_agent)
   exit 1
 fi
 
-# Seed the durable Codex conversation through the same canonical ingress, then
-# take the Agent offline, change its Registry-only topic, and resume it.
-printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"phase6-thread","session_id":"phase6-session","turn_id":"phase6-turn","cwd":"'"$create_root"'/legacy/alpha"}' |
-  pmx_agent_live internal agent-hook ingest codex-hook
+# Seed the durable sibling-provider conversation through the same canonical
+# ingress, then take the Agent offline, change its Registry-only topic, and
+# resume it. Codex missing-endpoint refs remain a typed refusal elsewhere.
+printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"phase6-thread","cwd":"'"$create_root"'/legacy/alpha"}' |
+  pmx_agent_live internal agent-hook ingest claude-hook
 agent_deleted_pane="$agent_pane"
 agent_target_receipt="$(ctx display-message -p -t "$agent_deleted_pane" '#{socket_path}|#{pid}|#{session_id}|#{window_id}|#{pane_id}')"
 IFS='|' read -r agent_target_socket agent_target_pid agent_target_session agent_target_window agent_target_pane <<<"$agent_target_receipt"
@@ -2498,7 +2504,7 @@ smoke_assert_file_contains "$create_root/agent-reconcile-repeat.json" '"outcome"
 # Cross-Project workspace changes the worker launch only; ownership stays in the
 # explicitly selected alpha Window and only caller-provided roots reach argv.
 : >"$create_root/agent-launch.log"
-cross_agent_name="$(pmx_agent create agent --provider codex --project alpha --window "$alpha_window_name" \
+cross_agent_name="$(pmx_agent create agent --provider codex --interactive-only --project alpha --window "$alpha_window_name" \
   --cwd "$create_root/work/beta" --add-dir "$create_root/legacy/alpha" -o name)"
 smoke_assert_file_contains "$create_root/agent-launch.log" "args=-C $create_root/work/beta --add-dir $create_root/legacy/alpha"
 if ! pmx_agent get agents --project alpha -o name | grep -qx "$cross_agent_name" ||
@@ -2527,7 +2533,7 @@ phase15_runtime_before="$(phase15_app_hash)"
 phase15_route_before="$(wc -l <"$create_root/exact-tmux-argv.log" | tr -d '[:space:]')"
 set +e
 PATH="$create_shim:$PATH" PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 \
-  pmx_agent_live create codex -w hi --create-window -o pane-id \
+  pmx_agent_live create codex --interactive-only -w hi --create-window -o pane-id \
   >"$create_root/explicit-owner-refusal-agent.out" 2>"$create_root/explicit-owner-refusal-agent.err"
 phase15_refusal_status=$?
 set -e
@@ -2547,7 +2553,7 @@ if [[ "$(sha256sum "$create_registry" | awk '{print $1}')" != "$phase15_registry
 fi
 
 phase15_launch_before="$(wc -l <"$create_root/agent-launch.log" | tr -d '[:space:]')"
-PATH="$create_shim:$PATH" PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 pmx_agent_live create codex \
+PATH="$create_shim:$PATH" PMX_TEST_REQUIRE_EXACT_TMUX_ROUTE=1 pmx_agent_live create codex --interactive-only \
   --project "uid:$agent_project_uid_before" -w hi --create-window -o pane-id \
   >"$create_root/explicit-owner-agent.out" 2>"$create_root/explicit-owner-agent.err"
 phase15_agent_pane="$(tr -d '[:space:]' <"$create_root/explicit-owner-agent.out")"
@@ -3953,7 +3959,7 @@ cat >"$delete_shim/codex" <<'DELETE_CODEX_STUB'
 exec sleep 600
 DELETE_CODEX_STUB
 chmod 0755 "$delete_shim/codex"
-delete_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
+delete_agent_pane="$(delete_pmx create agent --provider codex --interactive-only --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
 delete_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_agent_pane" @projmux_pane_uid)"
 echo ">> delete managed Pane target agent=$delete_agent_uid pane=$delete_agent_pane uid=$delete_agent_pane_uid"
@@ -3966,7 +3972,7 @@ if grep -Fq '"paneRef"' "$delete_root/managed-agent-offline.json"; then
 fi
 delete_await_controller_observed_idle managed-pane-delete
 
-delete_agent_two_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
+delete_agent_two_pane="$(delete_pmx create agent --provider codex --interactive-only --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
 delete_agent_two_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_agent_two_pane_uid="$(delete_tmux show-options -pqv -t "$delete_agent_two_pane" @projmux_pane_uid)"
 echo ">> delete Agent target agent=$delete_agent_two_uid pane=$delete_agent_two_pane uid=$delete_agent_two_pane_uid"
@@ -3993,7 +3999,7 @@ delete_await_controller_observed_idle managed-agent-delete
 # Registry-only Pane/Agent delete. Exercise the Pane while the socket is
 # app-owned, then the Agent with the app marker removed (standalone), keeping a
 # live Agent and the complete already-absent tmux inventory byte-identical.
-delete_live_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
+delete_live_agent_pane="$(delete_pmx create agent --provider codex --interactive-only --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
 delete_live_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_live_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_live_agent_pane" @projmux_pane_uid)"
 delete_offline_pane="$(delete_pmx create pane --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id -- sleep 600)"
@@ -4011,7 +4017,7 @@ delete_offline_pane_converged() {
 smoke_wait_until 10 "raw Pane loss to converge to durable MissingRuntime evidence" \
   delete_offline_pane_converged
 delete_await_controller_observed_idle raw-pane-loss
-delete_offline_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
+delete_offline_agent_pane="$(delete_pmx create agent --provider codex --interactive-only --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o pane-id)"
 delete_offline_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_sibling_uid" -o uid | tail -n 1)"
 delete_offline_agent_pane_uid="$(delete_tmux show-options -pqv -t "$delete_offline_agent_pane" @projmux_pane_uid)"
 delete_tmux kill-pane -t "$delete_offline_agent_pane"
@@ -4108,7 +4114,7 @@ delete_offline_window="$(
 )"
 delete_offline_shell="$(delete_tmux display-message -p -t "$delete_offline_window" '#{pane_id}')"
 delete_offline_shell_uid="$(delete_tmux show-options -pqv -t "$delete_offline_shell" @projmux_pane_uid)"
-delete_offline_agent_pane="$(delete_pmx create agent --provider codex --project "uid:$delete_alpha_project_uid" --window "uid:$delete_offline_window_uid" -o pane-id)"
+delete_offline_agent_pane="$(delete_pmx create agent --provider codex --interactive-only --project "uid:$delete_alpha_project_uid" --window "uid:$delete_offline_window_uid" -o pane-id)"
 delete_offline_agent_uid="$(delete_pmx get agents --project "uid:$delete_alpha_project_uid" --window "uid:$delete_offline_window_uid" -o uid | tail -n 1)"
 if [[ -z "$delete_offline_window_uid" || -z "$delete_offline_shell_uid" || -z "$delete_offline_agent_pane" || -z "$delete_offline_agent_uid" ]]; then
   echo "offline Window delete fixture has an empty Registry identity" >&2
@@ -4658,7 +4664,7 @@ if [[ "$rename_agent_anchor_socket" != "$rename_socket_path" ]] || \
 fi
 rename_agent_pane="$(
   PATH="$rename_root/shim:$PATH" rename_pmx_at_pane "$rename_pane" create agent \
-    --provider codex --project "uid:$rename_project_uid" --window "uid:$rename_window_uid" -o pane-id
+    --provider codex --interactive-only --project "uid:$rename_project_uid" --window "uid:$rename_window_uid" -o pane-id
 )"
 rename_agent_uid="$(rename_base_pmx get agents --project "uid:$rename_project_uid" --window "uid:$rename_window_uid" -o uid | tail -n 1)"
 rename_agent_pane_label_before="$(rename_tmux show-options -pqv -t "$rename_agent_pane" @projmux_pane_label)"
@@ -5014,15 +5020,18 @@ topology_create_pmx create pane --project "uid:$topology_project_uid" --window r
 # retained Agent Pane row.
 topology_shell_pane_uids="$(topology_pmx get panes --project "uid:$topology_project_uid" -o uid | sort)"
 
-topology_agent_argv="$topology_root/codex-argv.log"
+topology_agent_argv="$topology_root/claude-argv.log"
 : >"$topology_agent_argv"
-cat >"$topology_root/shim/codex" <<TOPOLOGY_CODEX_STUB
+cat >"$topology_root/shim/claude" <<TOPOLOGY_CLAUDE_STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>$(printf %q "$topology_agent_argv")
 exec sleep 600
-TOPOLOGY_CODEX_STUB
-chmod 0755 "$topology_root/shim/codex"
-topology_agent_pane="$(PATH="$topology_root/shim:$PATH" topology_create_pmx create agent --provider codex \
+TOPOLOGY_CLAUDE_STUB
+chmod 0755 "$topology_root/shim/claude"
+# The replay assertion is provider-neutral. Use a sibling provider whose
+# hook-derived session is sufficient authority; a legacy Codex ref without an
+# exact endpoint must remain generation-unavailable.
+topology_agent_pane="$(PATH="$topology_root/shim:$PATH" topology_create_pmx create agent --provider claude \
   --project "uid:$topology_project_uid" --window review -o pane-id)"
 # Agent reads run through the client-socket helper. A read with no inherited
 # $TMUX and no -L would observe live Agent state against the *default* socket,
@@ -5047,8 +5056,8 @@ topology_hook_pmx() {
     SHELL="$topology_shell" \
     "$bin" "$@"
 }
-printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"topology-thread","session_id":"topology-session","turn_id":"topology-turn","cwd":"'"$topology_root"'/work/alpha"}' |
-  topology_hook_pmx internal agent-hook ingest codex-hook >"$topology_root/agent-ingest.out"
+printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"topology-thread","cwd":"'"$topology_root"'/work/alpha"}' |
+  topology_hook_pmx internal agent-hook ingest claude-hook >"$topology_root/agent-ingest.out"
 topology_live_pmx describe agent "uid:$topology_agent_uid" -o json >"$topology_root/agent-before.json"
 smoke_assert_file_contains "$topology_root/agent-before.json" 'topology-thread'
 
@@ -5663,15 +5672,17 @@ startup_create_pmx create pane --project "uid:$startup_project_uid" --window rev
 # a close and a replay; a Window-owned shell Pane's uid never does.
 startup_shell_pane_uids="$(startup_pmx get panes --project "uid:$startup_project_uid" -o uid | sort)"
 
-startup_agent_argv="$startup_root/codex-argv.log"
+startup_agent_argv="$startup_root/claude-argv.log"
 : >"$startup_agent_argv"
-cat >"$startup_root/shim/codex" <<STARTUP_CODEX_STUB
+cat >"$startup_root/shim/claude" <<STARTUP_CLAUDE_STUB
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>$(printf %q "$startup_agent_argv")
 exec sleep 600
-STARTUP_CODEX_STUB
-chmod 0755 "$startup_root/shim/codex"
-startup_agent_pane="$(PATH="$startup_root/shim:$PATH" startup_create_pmx create agent --provider codex \
+STARTUP_CLAUDE_STUB
+chmod 0755 "$startup_root/shim/claude"
+# Startup topology and replay are provider-neutral. Keep their resume witness
+# on a sibling provider rather than manufacturing Codex endpoint authority.
+startup_agent_pane="$(PATH="$startup_root/shim:$PATH" startup_create_pmx create agent --provider claude \
   --project "uid:$startup_project_uid" --window review -o pane-id)"
 # Agent reads run through the client-socket helper, so live Agent state is never
 # observed against the default socket this smoke never created.
@@ -5698,8 +5709,8 @@ startup_hook_pmx() {
     SHELL="$startup_shell" \
     "$bin" "$@"
 }
-printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"startup-thread","session_id":"startup-session","turn_id":"startup-turn","cwd":"'"$startup_project"'"}' |
-  startup_hook_pmx "$startup_agent_pane" internal agent-hook ingest codex-hook >"$startup_root/agent-ingest.out"
+printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"startup-thread","cwd":"'"$startup_project"'"}' |
+  startup_hook_pmx "$startup_agent_pane" internal agent-hook ingest claude-hook >"$startup_root/agent-ingest.out"
 startup_live_pmx describe agent "uid:$startup_agent_uid" -o json >"$startup_root/agent-before.json"
 smoke_assert_file_contains "$startup_root/agent-before.json" 'startup-thread'
 
@@ -5983,14 +5994,16 @@ startup_create_anchor_pane="$(startup_tmux list-panes -s -t "$startup_session" -
 startup_clean_exit="$startup_root/clean-a.exit"
 startup_clean_argv="$startup_root/clean-a-argv.log"
 : >"$startup_clean_argv"
-cat >"$startup_root/shim/claude" <<STARTUP_CLEAN_PROVIDER
+cat >"$startup_root/shim/codex" <<STARTUP_CLEAN_PROVIDER
 #!/usr/bin/env bash
 printf '%s\n' "\$*" >>$(printf %q "$startup_clean_argv")
 while [[ ! -e $(printf %q "$startup_clean_exit") ]]; do sleep 0.05; done
 exit 0
 STARTUP_CLEAN_PROVIDER
-chmod 0755 "$startup_root/shim/claude"
-startup_clean_agent_uid="$(PATH="$startup_root/shim:$PATH" startup_create_pmx create agent --provider claude \
+chmod 0755 "$startup_root/shim/codex"
+# Clean A is deliberately a no-resume Codex shell fixture. Its explicit plain
+# lane and endpoint-free hook ref must never be mistaken for native authority.
+startup_clean_agent_uid="$(PATH="$startup_root/shim:$PATH" startup_create_pmx create agent --provider codex --interactive-only \
   --name clean-a --project "uid:$startup_project_uid" --window review -o uid)"
 startup_live_pmx describe agent "uid:$startup_clean_agent_uid" -o json >"$startup_root/clean-a-before-exit.json"
 startup_clean_pane_uid="$(sed -n 's/.*"paneRef": "\([^"]*\)".*/\1/p' "$startup_root/clean-a-before-exit.json" | head -n 1)"
@@ -6000,8 +6013,8 @@ if [[ -z "$startup_clean_agent_uid" || -z "$startup_clean_pane_uid" || ! "$start
   echo "clean A fixture lacks exact Agent/Pane/runtime identity" >&2
   exit 1
 fi
-printf '%s' '{"hook_event_name":"UserPromptSubmit","session_id":"clean-a-session","cwd":"'"$startup_project"'"}' |
-  startup_hook_pmx "$startup_clean_pane" internal agent-hook ingest claude-hook >"$startup_root/clean-a-ingest.out"
+printf '%s' '{"hook_event_name":"UserPromptSubmit","thread_id":"clean-a-thread","session_id":"clean-a-session","turn_id":"clean-a-turn","cwd":"'"$startup_project"'"}' |
+  startup_hook_pmx "$startup_clean_pane" internal agent-hook ingest codex-hook >"$startup_root/clean-a-ingest.out"
 startup_live_pmx describe agent "uid:$startup_clean_agent_uid" -o json >"$startup_root/clean-a-before-exit.json"
 smoke_assert_file_contains "$startup_root/clean-a-before-exit.json" 'clean-a-session'
 touch "$startup_clean_exit"
@@ -8660,7 +8673,7 @@ exitrec_await_phase1_window_cascade() {
 
 # 1. A provider that exits non-zero converges to Failed on the hook alone.
 printf '%s\n' 'exit 42' >"$exitrec_root/stub-script"
-exitrec_failed_agent="$(exitrec_live_pmx create agent --provider codex \
+exitrec_failed_agent="$(exitrec_live_pmx create agent --provider codex --interactive-only \
   --project "uid:$exitrec_project_uid" -o uid)"
 if [[ -z "$exitrec_failed_agent" ]]; then
   echo "exit reconciliation e2e created no Agent" >&2
@@ -8735,7 +8748,7 @@ exitrec_pair_agent_one="$(exitrec_live_pmx create agent --provider claude \
   --project "uid:$exitrec_project_uid" -o uid)"
 exitrec_doc agent "$exitrec_pair_agent_one"
 exitrec_pair_pane_one="$(exitrec_field paneRef)"
-exitrec_pair_agent_two="$(exitrec_live_pmx create agent --provider codex \
+exitrec_pair_agent_two="$(exitrec_live_pmx create agent --provider codex --interactive-only \
   --project "uid:$exitrec_project_uid" -o uid)"
 exitrec_doc agent "$exitrec_pair_agent_two"
 exitrec_pair_pane_two="$(exitrec_field paneRef)"
@@ -9885,6 +9898,7 @@ chmod 0700 "$p12_root/runtime"
 
 for p12_provider in claude codex antigravity; do
   printf '%s\n' '#!/bin/sh' \
+    'if [ "${0##*/}" = codex ] && [ "${1:-}" = app-server ]; then exit 1; fi' \
     "printf '%s\\n' \"\$0 \$*\" >> \"\$PROJMUX_PHASE12_AGENT_ARGV\"" \
     'exec sleep 600' >"$p12_root/bin/$p12_provider"
   chmod 0755 "$p12_root/bin/$p12_provider"
@@ -9998,11 +10012,13 @@ p12_assert_managed_create() {
   p12_last_pane_uid="$pane_uid"
 }
 
-# Provider picker: filter to codex, then select the one remaining production
-# row. The resulting process is a harmless run-local provider shim.
+# Provider picker: filter to Claude, then select that production provider from
+# the stable filtered pair. The resulting process is a harmless run-local shim.
 p12_before_panes="$(p12_pane_count)"
 p12_before_agents="$(p12_agent_count)"
-printf 'codex\n1\n' | p12_popup internal agent-pane picker --inside right >"$p12_root/provider-picker.out"
+# The fuzzy matcher also exposes Codex advanced for this query (its descriptive
+# text is a subsequence match); Claude is the stable second filtered row.
+printf 'Claude\n2\n' | p12_popup internal agent-pane picker --inside right >"$p12_root/provider-picker.out"
 p12_assert_managed_create "Home provider picker" "$p12_before_panes" "$p12_before_agents" 1
 p12_provider_uid="$p12_last_pane_uid"
 
@@ -10015,7 +10031,7 @@ printf '%s\n' \
   >"$p12_root/home/.codex/sessions/2026/08/21/rollout-phase12.jsonl"
 p12_before_panes="$(p12_pane_count)"
 p12_before_agents="$(p12_agent_count)"
-{ sleep 1; printf '2\n'; } | p12_popup internal agent-pane picker --inside --resume down >"$p12_root/resume-picker.out"
+printf '2\n' | p12_popup internal agent-pane picker --inside --resume down >"$p12_root/resume-picker.out"
 p12_assert_managed_create "Home resume picker" "$p12_before_panes" "$p12_before_agents" 1
 p12_resume_uid="$p12_last_pane_uid"
 smoke_assert_file_contains "$p12_agent_argv" "resume $p12_resume_id"
@@ -10023,7 +10039,7 @@ smoke_assert_file_contains "$p12_agent_argv" "resume $p12_resume_id"
 # Saved default and direct shell use the same exact popup origin but exercise
 # the two non-picker producers.
 mkdir -p "$p12_root/config/projmux"
-printf 'codex\n' >"$p12_root/config/projmux/tmux-ai-split-mode"
+printf 'claude\n' >"$p12_root/config/projmux/tmux-ai-split-mode"
 p12_before_panes="$(p12_pane_count)"
 p12_before_agents="$(p12_agent_count)"
 p12_popup internal agent-pane launch-default right >"$p12_root/default.out"
@@ -10071,6 +10087,7 @@ fi
 
 p12_project_agent_pane="$(
   p12_inside "$p12_project_origin_pane" create codex \
+    --interactive-only \
     --project "uid:$p12_project_uid" \
     --window "uid:$p12_project_window_uid" \
     -o pane-id

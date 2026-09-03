@@ -19,6 +19,7 @@ lifecycle_session="projects-lifecycle"
 lifecycle_project="$lifecycle_root/projects/lifecycle"
 lifecycle_shim="$lifecycle_root/shim"
 lifecycle_fixture_state="$lifecycle_root/fake-codex-state"
+lifecycle_codex_home="$lifecycle_root/codex-home"
 lifecycle_notify_log="$lifecycle_root/desktop-notify-count"
 lifecycle_notify_hook="$lifecycle_root/desktop-notify-hook"
 lifecycle_real_tmux="$(command -v tmux)"
@@ -27,7 +28,8 @@ lifecycle_agent_uid=""
 lifecycle_sibling_agent_uid=""
 lifecycle_pane_uid=""
 lifecycle_sibling_pane_uid=""
-mkdir -p "$lifecycle_project" "$lifecycle_shim" "$lifecycle_fixture_state"
+mkdir -p "$lifecycle_project" "$lifecycle_shim" "$lifecycle_fixture_state" "$lifecycle_codex_home"
+export CODEX_HOME="$lifecycle_codex_home"
 
 # shellcheck disable=SC2016 # Expands in the generated notification hook at runtime.
 printf '%s\n' \

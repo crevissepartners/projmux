@@ -118,7 +118,7 @@ func defaultCodexStateDomainID(lookupEnv func(string) string, homeDir func() (st
 		root = filepath.Join(home, ".codex")
 	}
 	if !filepath.IsAbs(root) {
-		return "", errors.New("Codex state domain must be absolute")
+		return "", errors.New("codex state domain must be absolute")
 	}
 	canonical, err := filepath.EvalSymlinks(filepath.Clean(root))
 	if err != nil {
@@ -126,7 +126,7 @@ func defaultCodexStateDomainID(lookupEnv func(string) string, homeDir func() (st
 	}
 	info, err := os.Stat(canonical)
 	if err != nil || !info.IsDir() {
-		return "", errors.New("Codex state domain must be an existing directory")
+		return "", errors.New("codex state domain must be an existing directory")
 	}
 	sum := sha256.Sum256([]byte(canonical))
 	return "codex-state-" + hex.EncodeToString(sum[:16]), nil
