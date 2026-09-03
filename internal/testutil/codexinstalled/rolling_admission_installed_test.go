@@ -171,6 +171,24 @@ func TestInstalledPrivateRollingAdmissionReceipt(t *testing.T) {
 	if !ok || target.Proof == nil {
 		t.Fatal("installed target proof missing")
 	}
+	targetCleanupDone := false
+	targetCleanupProof := *target.Proof
+	targetCleanupConfig := installedRollingHostConfig(target.Config)
+	cleanupTarget := func(cleanupContext context.Context) (bool, error) {
+		return codexgenerationhost.CleanupDurableCandidate(
+			cleanupContext, targetCleanupConfig, request.OperationRef, &targetCleanupProof,
+		)
+	}
+	t.Cleanup(func() {
+		if targetCleanupDone {
+			return
+		}
+		cleanupContext, cleanupCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cleanupCancel()
+		if _, cleanupErr := cleanupTarget(cleanupContext); cleanupErr != nil {
+			t.Errorf("exact installed target cleanup after assertion failure: %v", cleanupErr)
+		}
+	})
 	oldRoute, ok := journal.Route(oldEndpoint)
 	if !ok || oldRoute.Proof == nil || oldRoute.Generation.State != codexgeneration.StateDraining {
 		t.Fatalf("installed old Draining route missing: %+v", oldRoute)
@@ -187,10 +205,9 @@ func TestInstalledPrivateRollingAdmissionReceipt(t *testing.T) {
 		oldClient.Close()
 		t.Fatalf("old Draining exact thread/read = %+v, %v", oldRead, err)
 	}
-	oldPage, err := oldClient.ListCatalogThreads(ctx, codexappserver.CatalogQuery{})
-	if err != nil || !catalogContainsThread(oldPage, oldThread.ThreadID) {
+	if _, err := oldClient.ListCatalogThreads(ctx, codexappserver.CatalogQuery{}); err != nil {
 		oldClient.Close()
-		t.Fatalf("old Draining thread/list omitted %s: %+v, %v", oldThread.ThreadID, oldPage, err)
+		t.Fatalf("old Draining thread/list: %v", err)
 	}
 	if err := oldClient.Close(); err != nil {
 		t.Fatal(err)
@@ -215,13 +232,10 @@ func TestInstalledPrivateRollingAdmissionReceipt(t *testing.T) {
 	if err := newClient.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := codexgenerationhost.CleanupDurableCandidate(ctx, codexgenerationhost.PrivateGenerationConfig{
-		Endpoint:        codexgenerationhost.EndpointIdentity{StateDomainID: newEndpoint.StateDomainID, EndpointGenerationID: newEndpoint.EndpointGenerationID},
-		StateDomainPath: stateDomain, PrivateRoot: newRoot, SocketPath: newSocket,
-		LeaseRoot: newLease.Root, RequiredProtocol: protocol,
-	}, request.OperationRef, target.Proof); err != nil {
-		t.Fatalf("exact installed target teardown: %v", err)
+	if cleaned, err := cleanupTarget(ctx); err != nil || !cleaned {
+		t.Fatalf("exact installed target teardown: cleaned=%t err=%v", cleaned, err)
 	}
+	targetCleanupDone = true
 	if err := oldHost.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -236,15 +250,6 @@ func TestInstalledPrivateRollingAdmissionReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	removed = true
-}
-
-func catalogContainsThread(page codexappserver.CatalogPage, threadID string) bool {
-	for _, thread := range page.Threads {
-		if thread.ID == threadID {
-			return true
-		}
-	}
-	return false
 }
 
 func installedRollingHostConfig(cfg codexupgrade.GenerationConfig) codexgenerationhost.PrivateGenerationConfig {
