@@ -14,6 +14,7 @@ Commands:
   get       Read Projmux resources by selector
   hook      List, edit, validate, and trust lifecycle hook config
   notification  Manage pending notification workflow state
+  open      Open a Project runtime and move the current client to it
   pin       Manage pinned project directories
   prune     Prune stale Projects and snapshots
   quit      Quit the app-owned projmux tmux runtime
@@ -26,7 +27,10 @@ Commands:
   settings  Configure projmux
   setup     Probe terminal keys or remediate them with setup terminal
   shell     Open the isolated projmux tmux app
-  switch    Pick and open a project tmux session
+  start     Start a Project runtime without moving any client
+  stop      Stop a Project runtime without unregistering anything
+  switch    Pick a project and compose create project with open project
+  unregister  Unregister Projects from the Registry while preserving runtime and files
   update    Check installer-aware release update status
   welcome   Reprint the shell welcome guide
   window    Open recent window navigation surfaces

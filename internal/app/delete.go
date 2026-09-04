@@ -130,7 +130,42 @@ func (c *deleteCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return usageError(fmt.Sprintf("delete %s is not available; this release implements: %s",
 			args[0], strings.Join(deleteKinds, ", ")))
 	}
-	return c.runKind(token, kind, args[1:], stdout, stderr)
+	return c.runKind(deleteVerbDelete, token, kind, args[1:], stdout, stderr)
+}
+
+// The two verbs that reach the Registry-only Project removal. They are two
+// spellings of one implementation, not two operations: the canonical
+// `unregister project` and the deprecated `delete project` share this file's
+// planner, confirmation, transaction, and receipt, and differ only in the
+// compatibility warning the deprecated one adds.
+const (
+	deleteVerbDelete     = "delete"
+	deleteVerbUnregister = "unregister"
+)
+
+// unregisterCommand implements the canonical `unregister project`.
+//
+// It exists as a separate top-level verb rather than another `delete` child
+// because the defect it fixes is exactly that `delete` promised one cascade
+// meaning across four kinds and delivered two: `delete window|pane|agent` kill
+// an exact live mirror, and `delete project` never has. Naming the Registry-only
+// half is what makes both halves readable without a footnote.
+type unregisterCommand struct {
+	delete *deleteCommand
+}
+
+func (c *unregisterCommand) Run(args []string, stdout, stderr io.Writer) error {
+	if len(args) == 0 {
+		return usageError("unregister requires a resource kind: project")
+	}
+	token, ok := cli.CanonicalChildToken(deleteVerbUnregister, args[0])
+	if !ok || token != "project" {
+		return usageError(fmt.Sprintf("unregister %s is not available; this release implements: project", args[0]))
+	}
+	if c.delete == nil {
+		return errors.New("unregister project: the Registry removal executor is not configured")
+	}
+	return c.delete.runKind(deleteVerbUnregister, token, coremetadata.KindProject, args[1:], stdout, stderr)
 }
 
 // deleteDescendant is one resource the cascade removes together with a target.
@@ -214,8 +249,8 @@ func (p deletePlan) needsConfirmation() bool {
 	return true
 }
 
-func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []string, stdout, stderr io.Writer) error {
-	spelling := "delete " + token
+func (c *deleteCommand) runKind(verb, token string, kind coremetadata.Kind, args []string, stdout, stderr io.Writer) error {
+	spelling := verb + " " + token
 
 	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -284,7 +319,7 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	plan.Implicit = implicit && !*all
 	plan.ExactUID = explicitUIDTargetRefs(flags.targetRefs())
 	if kind == coremetadata.KindProject {
-		return c.runProjectDelete(spelling, plan, resolution, *dryRun, *yes, stdout)
+		return c.runProjectUnregister(verb, spelling, plan, resolution, *dryRun, *yes, stdout, stderr)
 	}
 
 	target, err := resolveDeleteTarget(spelling, deleteSocketFlags{socket: *socket, socketPath: *socketPath}, c.lookupEnv)
@@ -504,7 +539,13 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 		}
 		return withdrawIntent(err)
 	}
-	if err := writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, target, false, selfTarget); err != nil {
+	writeResult := func() error {
+		if err := writeDeletePlan(stdout, spelling, plan, livePlan, panePlan, target, false, selfTarget); err != nil {
+			return err
+		}
+		return childDeleteReceipt(kind, plan, livePlan, panePlan, selfTarget).WriteHuman(stdout)
+	}
+	if err := writeResult(); err != nil {
 		if selfTarget {
 			// The registry result is already durable. Still queue the exact live
 			// half so an unavailable output sink cannot leave a live orphan.
@@ -539,10 +580,20 @@ func (c *deleteCommand) runKind(token string, kind coremetadata.Kind, args []str
 	return nil
 }
 
-// runProjectDelete is the explicit unregister cell of the Project lifecycle
+// runProjectUnregister is the explicit unregister cell of the Project lifecycle
 // table. It performs one Registry-only cascade and deliberately does not stop a
 // runtime, close a Window, or touch the root, Git/worktree, or snapshot stores.
-func (c *deleteCommand) runProjectDelete(spelling string, plan deletePlan, resolution selector.Resolution, dryRun, yes bool, stdout io.Writer) error {
+//
+// Both public spellings land here with the same plan, the same confirmation,
+// and the same transaction. The deprecated `delete project` differs by one
+// stderr line and one receipt warning, which is the whole meaning of
+// "behavior-preserving alias": the bytes on stdout, the Registry writes, and the
+// preserved runtime are identical.
+func (c *deleteCommand) runProjectUnregister(verb, spelling string, plan deletePlan, resolution selector.Resolution, dryRun, yes bool, stdout, stderr io.Writer) error {
+	deprecated := verb == deleteVerbDelete
+	if deprecated {
+		warnDeprecatedProjectDeleteAlias(stderr)
+	}
 	if dryRun {
 		return writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, tmuxTransport{}, true, false)
 	}
@@ -589,9 +640,11 @@ func (c *deleteCommand) runProjectDelete(spelling string, plan deletePlan, resol
 	if err := writeDeletePlan(stdout, spelling, plan, windowLiveDeletePlan{}, paneLiveDeletePlan{}, tmuxTransport{}, false, false); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "result-write", strings.Join(oldUIDs, ","), "", err)
 	}
-	_, err := fmt.Fprintf(stdout, "operation=delete-project stage=registry-unregister old_uid=%s new_uid=%s runtime=preserved external-assets=preserved\n",
-		strings.Join(oldUIDs, ","), absentProjectLifecycleUID)
-	if err != nil {
+	if _, err := fmt.Fprintf(stdout, "operation=delete-project stage=registry-unregister old_uid=%s new_uid=%s runtime=preserved external-assets=preserved\n",
+		strings.Join(oldUIDs, ","), absentProjectLifecycleUID); err != nil {
+		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "result-write", strings.Join(oldUIDs, ","), "", err)
+	}
+	if err := projectUnregisterReceipt(plan, deprecated).WriteHuman(stdout); err != nil {
 		return wrapProjectLifecycleError(coremetadata.ProjectLifecycleDeleteProject, "result-write", strings.Join(oldUIDs, ","), "", err)
 	}
 	if err := flushDeleteResult(stdout); err != nil {
@@ -842,4 +895,106 @@ func flushDeleteResult(stdout io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// projectDeleteAliasWarning is the exact deprecation sentence the deprecated
+// spelling prints. It names the replacement rather than only the deprecation,
+// because a warning an operator cannot act on is noise.
+const projectDeleteAliasWarning = "delete project is deprecated; use `projmux unregister project` instead. " +
+	"Behavior is unchanged: the Registry subtree is removed and the runtime, root, Git/worktrees, and snapshots are preserved."
+
+// warnDeprecatedProjectDeleteAlias writes the alias notice to stderr.
+//
+// stderr rather than stdout on purpose: the stdout bytes of the deprecated
+// spelling have to stay byte-identical to the canonical one, or a script that
+// parses the result would be broken by the very warning that exists to avoid
+// breaking it.
+func warnDeprecatedProjectDeleteAlias(stderr io.Writer) {
+	if stderr == nil {
+		return
+	}
+	fmt.Fprintln(stderr, "projmux: "+projectDeleteAliasWarning)
+}
+
+// projectUnregisterReceipt projects one committed Project unregister onto the
+// shared operation receipt.
+//
+// The runtime axis is `preserved` rather than `unchanged`, and that distinction
+// is the reason the receipt exists: `unchanged` would say the operation had no
+// opinion about the runtime, when in fact it has a deliberate one that differs
+// from every other delete in the CLI.
+func projectUnregisterReceipt(plan deletePlan, deprecated bool) cli.OperationReceipt {
+	target := cli.ReceiptTarget{Kind: "Project"}
+	if len(plan.Targets) > 0 {
+		target.UID = plan.Targets[0].Match.UID
+		target.Name = plan.Targets[0].Match.Name
+	}
+	receipt := cli.NewReceipt(cli.OperationUnregisterProject, target, cli.ReceiptEffects{
+		Identity:     cli.IdentityRemoved,
+		Address:      cli.AddressReleased,
+		Topology:     cli.TopologyRemoved,
+		DesiredState: cli.DesiredStateRemoved,
+		Runtime:      cli.RuntimePreserved,
+		Focus:        cli.FocusUnchanged,
+	})
+	for _, entry := range plan.Targets {
+		receipt.Add("Project", entry.Match.UID, entry.Match.Name, cli.ActionRemoved)
+		for _, descendant := range entry.Descendants {
+			receipt.Add(string(descendant.Kind), descendant.UID, descendant.Name, cli.ActionRemoved)
+		}
+	}
+	if deprecated {
+		receipt.Warn(projectDeleteAliasWarning)
+	}
+	return receipt
+}
+
+// childDeleteReceipt projects one committed Window, Pane, or Agent delete.
+//
+// The runtime axis is the whole reason a child delete and a Project unregister
+// cannot share a receipt: this one stops an exact live mirror when it finds
+// one, and reports `unchanged` only when the delete was Registry-only. A
+// self-targeted Window kill is still `stopped`; the queue after the flush is a
+// transport detail, not a different outcome.
+func childDeleteReceipt(
+	kind coremetadata.Kind,
+	plan deletePlan,
+	windows windowLiveDeletePlan,
+	panes paneLiveDeletePlan,
+	selfTarget bool,
+) cli.OperationReceipt {
+	operation := cli.OperationDeleteWindow
+	switch kind {
+	case coremetadata.KindPane:
+		operation = cli.OperationDeletePane
+	case coremetadata.KindAgent:
+		operation = cli.OperationDeleteAgent
+	}
+	runtime := cli.RuntimeUnchanged
+	if len(windows.Targets) > 0 || len(panes.Targets) > 0 {
+		runtime = cli.RuntimeStopped
+	}
+	focus := cli.FocusUnchanged
+	if selfTarget {
+		focus = cli.FocusMovedCurrentClient
+	}
+	target := cli.ReceiptTarget{Kind: string(kind)}
+	if len(plan.Targets) > 0 {
+		target.UID, target.Name = plan.Targets[0].Match.UID, plan.Targets[0].Match.Name
+	}
+	receipt := cli.NewReceipt(operation, target, cli.ReceiptEffects{
+		Identity:     cli.IdentityRemoved,
+		Address:      cli.AddressReleased,
+		Topology:     cli.TopologyRemoved,
+		DesiredState: cli.DesiredStateRemoved,
+		Runtime:      runtime,
+		Focus:        focus,
+	})
+	for _, entry := range plan.Targets {
+		receipt.Add(string(kind), entry.Match.UID, entry.Match.Name, cli.ActionRemoved)
+		for _, descendant := range entry.Descendants {
+			receipt.Add(string(descendant.Kind), descendant.UID, descendant.Name, cli.ActionRemoved)
+		}
+	}
+	return receipt
 }

@@ -148,8 +148,51 @@ func (c *renameCommand) runKind(token string, kind coremetadata.Kind, args []str
 	}
 	match := resolution.Matches[0]
 	match.Name = *name
+	receipt := renameReceipt(kind, uid, *name)
+	if err := receipt.Validate(); err != nil {
+		return err
+	}
+	if mode == cli.OutputModeReceipt {
+		return receipt.WriteJSON(stdout)
+	}
 	// A singular result renders no elapsed time, so it passes no clock.
-	return writeResourceProjection(stdout, spelling, mode, kind, []selector.Match{match}, renamed, false, time.Time{})
+	if err := writeResourceProjection(stdout, spelling, mode, kind, []selector.Match{match}, renamed, false, time.Time{}); err != nil {
+		return err
+	}
+	if mode != cli.OutputModeDefault {
+		return nil
+	}
+	return receipt.WriteHuman(stdout)
+}
+
+// renameReceipt projects one committed rename.
+//
+// Only the address axis moves, and that is the contract rather than an
+// observation: a rename keeps the uid, keeps the owner edge, keeps the desired
+// state, and keeps the runtime exactly where it was. The previous spelling is
+// deliberately absent -- the receipt schema records what an operation did to
+// each resource, and a second name field would be the beginning of the stored
+// second address this track just finished removing.
+func renameReceipt(kind coremetadata.Kind, uid, name string) cli.OperationReceipt {
+	operation := cli.OperationRenameProject
+	switch kind {
+	case coremetadata.KindWindow:
+		operation = cli.OperationRenameWindow
+	case coremetadata.KindPane:
+		operation = cli.OperationRenamePane
+	case coremetadata.KindAgent:
+		operation = cli.OperationRenameAgent
+	}
+	receipt := cli.NewReceipt(operation, cli.ReceiptTarget{Kind: string(kind), UID: uid, Name: name}, cli.ReceiptEffects{
+		Identity:     cli.IdentityUnchanged,
+		Address:      cli.AddressRenamed,
+		Topology:     cli.TopologyUnchanged,
+		DesiredState: cli.DesiredStateUnchanged,
+		Runtime:      cli.RuntimeUnchanged,
+		Focus:        cli.FocusUnchanged,
+	})
+	receipt.Add(string(kind), uid, name, cli.ActionRenamed)
+	return receipt
 }
 
 func (c *renameCommand) mirrorRenamed(ctx context.Context, kind coremetadata.Kind, uid, name string) error {

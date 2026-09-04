@@ -684,7 +684,8 @@ func TestSingularDefaultProjectionIsUnchangedByTheColumnarList(t *testing.T) {
 		if err != nil {
 			t.Fatalf("rename pane error = %v", err)
 		}
-		if stdout != "pane/renamed status=live owner=project/alpha window/main\n" {
+		if stdout != "pane/renamed status=live owner=project/alpha window/main\n"+
+			"receipt operation=rename.pane identity=unchanged address=renamed topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged projects=0 windows=0 panes=1 agents=0\n" {
 			t.Fatalf("rename pane stdout = %q", stdout)
 		}
 	})

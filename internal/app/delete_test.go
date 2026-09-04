@@ -9,10 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/selector"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
 
@@ -2267,5 +2270,116 @@ func TestDeleteWindowSelfQueueFailureLeavesDurableRegistryResultAndExactDrift(t 
 	}
 	if _, ok := store.registry.Window("win-alpha-main"); ok || !stdout.flushed || stdout.Len() == 0 {
 		t.Fatalf("queue failure lost durable result: flushed=%t stdout=%q", stdout.flushed, stdout.String())
+	}
+}
+
+// TestUnregisterProjectAndItsDeprecatedDeleteAliasAreByteIdenticalOnStdout is
+// the compatibility contract of the rename.
+//
+// "Behavior-preserving alias" is only a claim until the two results are
+// compared, so this compares them: the same plan, the same Registry outcome,
+// the same preserved runtime, and byte-identical stdout. The alias adds exactly
+// one thing, and it adds it to stderr -- a warning on stdout would break the
+// scripts the alias exists to keep working.
+func TestUnregisterProjectAndItsDeprecatedDeleteAliasAreByteIdenticalOnStdout(t *testing.T) {
+	run := func(t *testing.T, verb string) (string, string, *fakeResourceStore, *fakeWindowDeleteRuntime, *fakePaneDeleteRuntime) {
+		t.Helper()
+		store := freshStartFixtureStore(t)
+		windows := newFixtureWindowDeleteRuntime()
+		panes := newFixturePaneDeleteRuntime()
+		deleteCmd := newTestDeleteCommand(store, false, false, nil)
+		deleteCmd.windows, deleteCmd.panes = windows, panes
+
+		var command rawArgvCommand = deleteCmd
+		if verb == "unregister" {
+			command = &unregisterCommand{delete: deleteCmd}
+		}
+		stdout, stderr, err := runRoute(t, command, "project", "uid:prj-alpha", "--yes")
+		if err != nil {
+			t.Fatalf("%s project error = %v (stderr %q)", verb, err, stderr)
+		}
+		return stdout, stderr, store, windows, panes
+	}
+
+	canonicalOut, canonicalErr, canonicalStore, canonicalWindows, canonicalPanes := run(t, "unregister")
+	aliasOut, aliasErr, aliasStore, aliasWindows, aliasPanes := run(t, "delete")
+
+	// The one permitted difference is the spelling each plan line echoes back.
+	// That is what keeps the deprecated route's existing bytes intact: a script
+	// parsing `delete project: ...` today still parses it after the rename.
+	if want := strings.Replace(canonicalOut, "unregister project:", "delete project:", 1); aliasOut != want {
+		t.Fatalf("alias stdout drifted beyond its own spelling:\nalias=%q\nwant =%q", aliasOut, want)
+	}
+	if !strings.HasPrefix(aliasOut, "delete project: ") {
+		t.Fatalf("the deprecated spelling stopped echoing its own name: %q", aliasOut)
+	}
+	if !strings.Contains(canonicalOut, "receipt operation=unregister.project") ||
+		!strings.Contains(canonicalOut, "runtime=preserved focus=unchanged") {
+		t.Fatalf("unregister receipt = %q", canonicalOut)
+	}
+	if canonicalErr != "" {
+		t.Fatalf("the canonical spelling warned: %q", canonicalErr)
+	}
+	if !strings.Contains(aliasErr, "delete project is deprecated") ||
+		!strings.Contains(aliasErr, "projmux unregister project") {
+		t.Fatalf("alias stderr = %q, want the deprecation notice naming the replacement", aliasErr)
+	}
+	for name, store := range map[string]*fakeResourceStore{"unregister": canonicalStore, "delete": aliasStore} {
+		if _, ok := store.registry.Project("prj-alpha"); ok {
+			t.Fatalf("%s project retained the Project", name)
+		}
+		if sibling, ok := store.registry.Project("prj-beta"); !ok || sibling.Metadata.UID != "prj-beta" {
+			t.Fatalf("%s project changed an unrelated graph: %+v", name, sibling)
+		}
+	}
+	for name, pair := range map[string]struct {
+		windows *fakeWindowDeleteRuntime
+		panes   *fakePaneDeleteRuntime
+	}{
+		"unregister": {canonicalWindows, canonicalPanes},
+		"delete":     {aliasWindows, aliasPanes},
+	} {
+		if pair.windows.preflights != 0 || pair.panes.preflights != 0 ||
+			len(pair.windows.killed) != 0 || len(pair.panes.killed) != 0 {
+			t.Fatalf("%s project touched runtime: windows=%+v panes=%+v", name, pair.windows, pair.panes)
+		}
+	}
+}
+
+// TestUnregisterProjectReceiptCountsTheWholeRemovedSubtree proves the receipt
+// reports the cascade rather than only the named target, and that the
+// deprecated spelling carries the warning in its machine result too.
+func TestUnregisterProjectReceiptCountsTheWholeRemovedSubtree(t *testing.T) {
+	store := freshStartFixtureStore(t)
+	registry := store.registry
+	resolution := selector.Resolution{Matches: []selector.Match{{
+		Kind: coremetadata.KindProject, UID: "prj-alpha", Name: "alpha",
+	}}}
+	plan := buildDeletePlan(registry, coremetadata.KindProject, resolution)
+
+	canonical := projectUnregisterReceipt(plan, false)
+	if err := canonical.Validate(); err != nil {
+		t.Fatalf("unregister receipt is not allowed by its route: %v", err)
+	}
+	if canonical.Operation != cli.OperationUnregisterProject ||
+		canonical.Effects.Runtime != cli.RuntimePreserved {
+		t.Fatalf("unregister receipt = %+v", canonical)
+	}
+	if canonical.Cardinality.Projects != 1 || canonical.Cardinality.Windows != 2 ||
+		canonical.Cardinality.Panes != 4 || canonical.Cardinality.Agents != 1 {
+		t.Fatalf("unregister cardinality = %+v, want the whole fixture subtree", canonical.Cardinality)
+	}
+	if len(canonical.CompatibilityWarnings) != 0 {
+		t.Fatalf("the canonical spelling carried a compatibility warning: %v", canonical.CompatibilityWarnings)
+	}
+
+	alias := projectUnregisterReceipt(plan, true)
+	if len(alias.CompatibilityWarnings) != 1 ||
+		!strings.Contains(alias.CompatibilityWarnings[0], "unregister project") {
+		t.Fatalf("alias warnings = %v", alias.CompatibilityWarnings)
+	}
+	alias.CompatibilityWarnings = canonical.CompatibilityWarnings
+	if !reflect.DeepEqual(alias, canonical) {
+		t.Fatalf("the alias receipt differs from the canonical one beyond its warning:\nalias=%+v\ncanonical=%+v", alias, canonical)
 	}
 }

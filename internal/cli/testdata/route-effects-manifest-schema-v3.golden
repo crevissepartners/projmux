@@ -89,6 +89,8 @@ route=hook untrust identity=unchanged address=unchanged topology=unchanged desir
 route=notification identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=notification ack identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=notification reconcile identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=open identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=open project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=materialized|already-live focus=moved-current-client cardinality=exact-one domain-effect=null
 route=pin identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=pin project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=prune identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
@@ -119,7 +121,13 @@ route=settings identity=unchanged address=unchanged topology=unchanged desired-s
 route=setup identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=setup terminal identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=shell identity=unchanged|created|reused address=unchanged|allocated topology=unchanged|established desired-state=unchanged|created|reused runtime=materialized|already-live focus=attached-caller cardinality=exact-one|one-or-more domain-effect=null
+route=start identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=start project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=materialized|already-live focus=unchanged cardinality=exact-one domain-effect=null
+route=stop identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=stop project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=unchanged|moved-current-client cardinality=exact-one domain-effect=null
 route=switch identity=unchanged|created|reused|replaced address=unchanged|allocated|released topology=unchanged|established|replaced desired-state=unchanged|created|reused|replaced runtime=unchanged|materialized|already-live|stopped focus=unchanged|moved-current-client|attached-caller cardinality=unchanged|exact-one domain-effect=null
+route=unregister identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=unregister project identity=removed address=released topology=removed desired-state=removed runtime=preserved focus=unchanged cardinality=one-or-more domain-effect=null
 route=update identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=update status identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=update check identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null

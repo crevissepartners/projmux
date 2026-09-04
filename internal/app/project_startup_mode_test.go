@@ -474,7 +474,7 @@ func TestSidebarOpenContinueOnUnregisteredRootKeepsTheSnapshotRefusal(t *testing
 			err := cmd.runSidebarOpen([]string{
 				"--path", target, "--session", "workspace", "--mode", projectStartupKindTopology, "--anchor", "%12",
 			}, &bytes.Buffer{})
-			want := `continue project unavailable: no usable snapshot for "workspace"; choose Open fresh`
+			want := `continue project unavailable: no usable snapshot for "workspace"; choose Recreate Project`
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatalf("runSidebarOpen() error = %v, want a message containing %q", err, want)
 			}

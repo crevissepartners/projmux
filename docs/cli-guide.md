@@ -580,9 +580,13 @@ A retained graph keeps descendant UIDs; a
 zero-Window Project atomically receives a new canonical Window/shell UID chain.
 A deleted Project may use only the exact usable snapshot compatibility path;
 an unavailable Continue is an explicit zero-write refusal with no Fresh
-fallback. `Open fresh` is one step with no danger styling, confirmation, or
-delete counts: it atomically replaces the same-root graph with a new Project
-UID and new canonical Window/shell UIDs, then hands off only after ordinary
+fallback. `Recreate Project` is the one startup row that replaces identity, and it asks
+before it does. Choosing it opens a confirmation naming the exact old Project
+UID and its Window/Pane/Agent counts; declining returns to the startup rows
+with zero Registry writes, and an unreadable confirmation declines rather than
+proceeds. An unregistered root has no identity to replace and is not asked.
+Confirmed, it atomically replaces the same-root graph with a new Project UID
+and new canonical Window/shell UIDs, then hands off only after ordinary
 materialization. A repeat replaces identity again. The root, git/worktrees,
 trust decision, unrelated roots, and snapshot bytes remain unchanged.
 
@@ -853,6 +857,12 @@ sub-verbs are entry hooks invoked by tmux keybindings (e.g.
 `sidebar-focus` is wired to the sidebar's focus binding so navigation keeps
 the active session in sync).
 
+`switch` composes the canonical Project routes rather than aliasing one of
+them: a live row focuses, an offline row is `open project`, and an unregistered
+candidate row is `create project` followed by `open project`. That is why its
+canonical spelling is those two routes and not `focus project`, which never
+materializes anything.
+
 Settings > Labs remains available for experimental settings, but picker
 selection/source rows have been retired. The native picker is always used, and
 there is no picker selection configuration or migration behavior.
@@ -1045,6 +1055,79 @@ numbers as numbers. Numeric routing fields such as `window_index` and
 `pane_index` become field-scoped hash strings under `default-hash-v1`; consumers
 must treat this support projection as redacted evidence rather than decoding it
 back into the unredacted Doctor Go types.
+
+## Project runtime lifecycle
+
+```
+projmux start project <ref> [-o receipt|none]
+projmux open project <ref> [-o receipt|none]
+projmux attach project <ref>
+projmux focus project <ref>
+projmux stop project <ref> [-o receipt|none]
+projmux unregister project [<ref>...] [--all] [--dry-run] [--yes]
+```
+
+Five verbs that address one Project and change one thing each. They are
+separate spellings because a Project has two independent states -- it is
+registered in the Registry, and its persistent tmux session is or is not
+running -- and one verb that moved both was the reason it was never obvious
+which of them a command had touched.
+
+| Verb | Registry | Runtime | Client |
+| --- | --- | --- | --- |
+| `create project` | creates or reuses the Project, its canonical Window, and its shell | not started | not moved |
+| `start project` | unchanged | materialized when offline | not moved |
+| `open project` | unchanged | materialized when offline | moved to the Project |
+| `attach project` | unchanged | materialized when offline | the outside caller attaches |
+| `focus project` | unchanged | never materialized | moved to the Project |
+| `stop project` | unchanged | the exact session ends | existing safe fallback |
+| `unregister project` | the Project subtree is removed | **preserved** | not moved |
+
+`open project` and `attach project` are the same operation seen from the two
+sides of a tmux client. Inside tmux, `open` moves the client you are in and
+`attach` refuses with a pointer at `open`; outside tmux, `attach` attaches the
+caller and `open` refuses with a pointer at `attach`. Both refusals happen
+before anything is materialized.
+
+`stop project` refuses an offline target rather than succeeding silently: it
+declares exactly one runtime outcome, and reporting `runtime=stopped` for a
+session that was never running would be false. `unregister project` is the
+inverse -- it removes the Registry graph and deliberately leaves the running
+session, the root, Git/worktrees, and snapshots exactly as they were.
+
+`delete project` is a deprecated alias of `unregister project`. It keeps its
+exact behavior and its exact stdout; it adds one deprecation line on stderr and
+one `compatibilityWarnings` entry in the receipt. It is not scheduled for
+removal in this release.
+
+The reference for a Project can be `uid:<uid>`, a bare `metadata.name`, or the
+absolute root path the Project claims.
+
+### Operation receipts
+
+Every create, rename, delete, and Project lifecycle route reports what it did
+as one `OperationReceipt/v1` record. The default human result prints it as a
+trailing line; `-o receipt` prints the same record as JSON.
+
+```
+receipt operation=open.project identity=unchanged address=unchanged topology=unchanged \
+  desired-state=unchanged runtime=materialized focus=moved-current-client \
+  projects=1 windows=0 panes=0 agents=0
+```
+
+The six effect axes use the same enum values `projmux <route> --help` and the
+generated reference advertise as *allowed*, so a result can be compared against
+the contract without translating between two vocabularies. A receipt whose
+actual tuple is not one the route declares is refused before it is printed.
+
+The JSON projection adds `target`, `selectedWindowUIDs`, `affectedUIDs` (every
+resource the operation touched and what happened to it), `compatibilityWarnings`,
+and a `domainEffect` slot that is `null` for every route today. The existing
+`-o uid|name|ref|metadata|json|pane-id|none` projections are unchanged.
+
+One consequence is visible immediately: registering a root that is already a
+Project now says `reused`, not `created`, and its receipt says
+`identity=reused` with address, topology, and desired state unchanged.
 
 ## focus
 
@@ -1926,14 +2009,15 @@ human configuration work should prefer `config render` and `config apply`.
   the app session directly after resolving the target app session name and
   startup directory. With no saved startup preference, Alt-1 sidebar project
   open defaults to a two-action picker containing exactly `Continue project`
-  and `Open fresh`; Esc returns to Projects without writing config. Saved `on`
+  and `Recreate Project`; Esc returns to Projects without writing config. Saved `on`
   keeps that picker, while saved `off` skips it and preserves the existing
   automatic registered-Continue/unregistered-Fresh decision. `Continue
   project` restores a deleted Project only from its usable exact snapshot and
-  otherwise refuses with zero Registry writes. `Open fresh` is a neutral,
-  confirmation-free one-step action that atomically replaces the Project with
-  a new Project/Window/shell UID chain and one same-root claimant. Repeating it
-  allocates another new identity. Neither action modifies snapshot
+  otherwise refuses with zero Registry writes. `Recreate Project` confirms the
+  exact old Project UID and its counts, then atomically replaces the Project
+  with a new Project/Window/shell UID chain and one same-root claimant. A
+  declined confirmation returns to the startup rows and writes nothing.
+  Repeating it allocates another new identity. Neither action modifies snapshot
   bytes, the project directory, git/worktrees, unrelated roots, or trust state.
 - `quit` — open an action picker with `Save Project snapshots and quit`, `Quit
   without saving`, and `Cancel`. The safe first action takes one complete,

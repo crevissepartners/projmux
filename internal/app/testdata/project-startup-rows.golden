@@ -2,4 +2,4 @@ ui=project-startup
 header=Start project
 footer=Enter: open  |  Esc: projects
 row[0]=continue|continue|Continue project|keep this Project identity; restore saved Windows, shell Panes, and Agents, or create a new Window and shell when none remain
-row[1]=fresh|fresh|Open fresh|replace this Project identity with a new Project, Window, and shell
+row[1]=fresh|fresh|Recreate Project|replace this Project identity with a new Project, Window, and shell

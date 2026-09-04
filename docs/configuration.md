@@ -872,14 +872,14 @@ while `on` and `off` take precedence. Auto-save only updates the latest
 snapshot. Named snapshots are manual and are never updated by auto-save.
 
 With no saved preference, Project open from the Alt-1 sidebar shows a native
-`Start project` step with exactly `Continue project` and `Open fresh`.
+`Start project` step with exactly `Continue project` and `Recreate Project`.
 Settings > Projects > Project Sidebar > Closed Project startup reports this as
-`Continue project / Open fresh - default`. A saved `on` keeps the same explicit
-choice and reports `Continue project / Open fresh - on - saved`. A saved `off`
+`Continue project / Recreate Project - default`. A saved `on` keeps the same explicit
+choice and reports `Continue project / Recreate Project - on - saved`. A saved `off`
 reports `Continue project - off - saved` and skips the picker: a registered root
 continues, while an unregistered root follows the existing Fresh adjudication.
 Resolving or cancelling the missing-file default never creates the preference
-file or changes saved bytes or mtime. `Open fresh` atomically replaces the old Project graph
+file or changes saved bytes or mtime. `Recreate Project` confirms first, then atomically replaces the old Project graph
 with a new Project UID and a new canonical Window/shell UID pair. Exactly one
 same-root Project claimant remains. Snapshot bytes, the root directory,
 Git/worktree data, and the trust decision remain unchanged. Esc returns to

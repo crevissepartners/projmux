@@ -1343,6 +1343,7 @@ mkdir -p "$create_root"
 env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" respawn-pane -k -t integration-smoke -c "$create_root" sleep 300
 run_inside_lifecycle switch open "$create_root" >"$PROJMUX_SMOKE_WORKDIR/lifecycle-create.out"
 
+
 # Deterministic real create failure: the production global pre-create hook
 # aborts before tmux new-session and the target remains absent.
 mkdir -p "$XDG_CONFIG_HOME/projmux"
@@ -1358,6 +1359,160 @@ if run_inside_lifecycle switch open "$create_fail_root" >"$PROJMUX_SMOKE_WORKDIR
   exit 1
 fi
 rm -f "$XDG_CONFIG_HOME/projmux/config.toml"
+
+# The Project runtime lifecycle verbs, against the exact live server this
+# fixture owns.
+#
+# They run on a Project of their own rather than on one of the fixtures above,
+# because two of them deliberately end a runtime and remove a Registry subtree,
+# and a verb whose whole point is a side effect must not leave that side effect
+# in a fixture somebody else's assertion depends on. The block returns the
+# server to the state it found it in.
+lifecycle_verbs_root="$PROJMUX_SMOKE_WORKDIR/raw-lifecycle-verbs-$$"
+mkdir -p "$lifecycle_verbs_root"
+run_inside_lifecycle create project --root "$lifecycle_verbs_root" --name lifecycle-verbs \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-verbs-register.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-verbs-register.out" "project/lifecycle-verbs created"
+lifecycle_project_uid="$(run_inside_lifecycle describe project lifecycle-verbs -o uid)"
+# The persistent session name is the Project's own projection of it, which is
+# exactly what the lifecycle verbs resolve internally.
+lifecycle_session="$(run_inside_lifecycle describe project "uid:$lifecycle_project_uid" -o json \
+  | awk '/"session": \{/ { inside = 1 } inside && /"name":/ { sub(/.*"name": "/, ""); sub(/".*/, ""); print; exit }')"
+if [[ -z "$lifecycle_project_uid" || -z "$lifecycle_session" ]]; then
+  echo "lifecycle verbs fixture resolved project=$lifecycle_project_uid session=$lifecycle_session" >&2
+  exit 1
+fi
+
+# Registration starts nothing, so the first stop has no runtime outcome to
+# report and refuses before writing.
+if env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" has-session -t "=$lifecycle_session" 2>/dev/null; then
+  echo "create project materialized a runtime" >&2
+  exit 1
+fi
+if run_inside_lifecycle stop project "uid:$lifecycle_project_uid" \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-stop-offline.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-stop-offline.err"; then
+  echo "stop project succeeded against an offline Project" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-stop-offline.err" "no live persistent session"
+if [[ -s "$PROJMUX_SMOKE_WORKDIR/lifecycle-stop-offline.out" ]]; then
+  echo "a refused stop wrote a result" >&2
+  exit 1
+fi
+
+# start materializes the desired topology detached: the session appears, the
+# Project uid does not change, and the client stays where it was.
+lifecycle_client_before="$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" \
+  display-message -p -t "$control_client" '#{client_session}')"
+run_inside_lifecycle start project "uid:$lifecycle_project_uid" \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-start-offline.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-start-offline.out" \
+  "receipt operation=start.project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=materialized focus=unchanged projects=1 windows=0 panes=0 agents=0"
+if ! env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" has-session -t "=$lifecycle_session" 2>/dev/null; then
+  echo "start project did not materialize the exact session" >&2
+  exit 1
+fi
+if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" \
+  display-message -p -t "$control_client" '#{client_session}')" != "$lifecycle_client_before" ]]; then
+  echo "start project moved the current client" >&2
+  exit 1
+fi
+if [[ "$(run_inside_lifecycle describe project lifecycle-verbs -o uid)" != "$lifecycle_project_uid" ]]; then
+  echo "start project changed Project identity" >&2
+  exit 1
+fi
+
+# start again is idempotent and reports the live outcome rather than a second
+# materialization.
+run_inside_lifecycle start project "uid:$lifecycle_project_uid" \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-start-live.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-start-live.out" \
+  "receipt operation=start.project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=unchanged projects=1 windows=0 panes=0 agents=0"
+
+# open on a live Project moves the current client and materializes nothing.
+run_inside_lifecycle open project "uid:$lifecycle_project_uid" \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-open-live.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-open-live.out" \
+  "receipt operation=open.project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=moved-current-client projects=1 windows=0 panes=0 agents=0"
+
+# `-o receipt` is the machine projection of that same record.
+run_inside_lifecycle open project "uid:$lifecycle_project_uid" -o receipt \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-open-receipt.json"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-open-receipt.json" '"apiVersion": "OperationReceipt/v1"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-open-receipt.json" '"operation": "open.project"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-open-receipt.json" '"focus": "moved-current-client"'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-open-receipt.json" '"selectedWindowUIDs": []'
+
+# attach is the outside-tmux door and refuses from inside a client, pointing at
+# the verb that does work there.
+if run_inside_lifecycle attach project "$lifecycle_verbs_root" \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach-inside.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-attach-inside.err"; then
+  echo "attach project succeeded from inside a tmux client" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-attach-inside.err" "projmux focus project"
+
+# focus moves the client to a live Project and materializes nothing. Parking it
+# back on the fixture session is also what keeps the client addressable for the
+# rest of this file once the Project runtime ends below.
+run_inside_lifecycle focus project "$lifecycle_session" --json \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-focus.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-focus.out" '"ok":true'
+run_inside_lifecycle focus project integration-smoke --json \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-focus-park.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-focus-park.out" '"ok":true'
+
+# stop ends the exact session and leaves the whole Registry subtree behind.
+lifecycle_windows_before_stop="$(run_inside_lifecycle get windows --project "uid:$lifecycle_project_uid" -o uid | sort)"
+run_inside_lifecycle stop project "uid:$lifecycle_project_uid" \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-stop.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-stop.out" \
+  "receipt operation=stop.project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped"
+if env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" has-session -t "=$lifecycle_session" 2>/dev/null; then
+  echo "stop project left the exact session live" >&2
+  exit 1
+fi
+if [[ "$(run_inside_lifecycle describe project lifecycle-verbs -o uid)" != "$lifecycle_project_uid" ]] ||
+  [[ "$(run_inside_lifecycle get windows --project "uid:$lifecycle_project_uid" -o uid | sort)" != "$lifecycle_windows_before_stop" ]]; then
+  echo "stop project changed the Registry graph it must preserve" >&2
+  exit 1
+fi
+
+# unregister removes the Registry subtree and preserves the filesystem root.
+run_inside_lifecycle unregister project "uid:$lifecycle_project_uid" --yes \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-unregister.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-unregister.err"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-unregister.out" \
+  "receipt operation=unregister.project identity=removed address=released topology=removed desired-state=removed runtime=preserved focus=unchanged"
+if [[ -s "$PROJMUX_SMOKE_WORKDIR/lifecycle-unregister.err" ]]; then
+  echo "the canonical unregister spelling warned: $(cat "$PROJMUX_SMOKE_WORKDIR/lifecycle-unregister.err")" >&2
+  exit 1
+fi
+if [[ -n "$(run_inside_lifecycle get projects -o uid | grep -Fx "$lifecycle_project_uid" || true)" ]]; then
+  echo "unregister project retained the Project" >&2
+  exit 1
+fi
+if [[ ! -d "$lifecycle_verbs_root" ]]; then
+  echo "unregister project removed the Project root" >&2
+  exit 1
+fi
+
+# The deprecated spelling reaches the same operation, keeps the same stdout
+# shape, and adds its notice on stderr only.
+run_inside_lifecycle create project --root "$lifecycle_verbs_root" --name lifecycle-verbs \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-realias-register.out"
+lifecycle_alias_uid="$(run_inside_lifecycle describe project lifecycle-verbs -o uid)"
+run_inside_lifecycle delete project "uid:$lifecycle_alias_uid" --yes \
+  >"$PROJMUX_SMOKE_WORKDIR/lifecycle-alias-delete.out" 2>"$PROJMUX_SMOKE_WORKDIR/lifecycle-alias-delete.err"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-alias-delete.err" "delete project is deprecated"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-alias-delete.err" "projmux unregister project"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-alias-delete.out" "delete project: deleting 1 project"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/lifecycle-alias-delete.out" \
+  "receipt operation=unregister.project identity=removed address=released topology=removed desired-state=removed runtime=preserved focus=unchanged"
+if [[ -n "$(run_inside_lifecycle get projects -o uid | grep -Fx "$lifecycle_alias_uid" || true)" ]]; then
+  echo "the deprecated delete project alias retained the Project" >&2
+  exit 1
+fi
+echo ">> project lifecycle verbs: start/open/attach/focus/stop/unregister exercised on $PROJMUX_SMOKE_TMUX_ACTUAL"
 
 # Switch success and failure through the formerly bypassing session-popup
 # surface. The missing target exercises a real tmux switch-client failure.
@@ -2547,10 +2702,21 @@ for unregistered in scratch sibling; do
   fi
 done
 
-# A repeated registration is a write-free no-op.
+# A repeated registration is a write-free no-op, and it says so.
+#
+# The two results are deliberately not byte-identical any more. Both name the
+# same Project uid and the same bootstrap Window and Pane counts -- that is what
+# makes "the same graph" observable -- but the repeat reports `reused` where the
+# first reported `created`, because reporting a creation for a call that wrote
+# nothing was the exact defect the operation receipt closes.
 discovery_registry_fingerprint="$(stat -c '%i %s %y' "$discovery_registry")"
 pmx_discovery create project --root "$discovery_scan/app" >"$PROJMUX_SMOKE_WORKDIR/discovery-register-repeat.out"
-cmp "$PROJMUX_SMOKE_WORKDIR/discovery-register.out" "$PROJMUX_SMOKE_WORKDIR/discovery-register-repeat.out"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-register-repeat.out" "project/$discovery_project_uid reused"
+smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/discovery-register-repeat.out" "created"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-register.out" \
+  "receipt operation=create.project identity=created address=allocated topology=established desired-state=created runtime=unchanged focus=unchanged projects=1 windows=1 panes=1 agents=0"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-register-repeat.out" \
+  "receipt operation=create.project identity=reused address=unchanged topology=unchanged desired-state=reused runtime=unchanged focus=unchanged projects=1 windows=1 panes=1 agents=0"
 if [[ "$(stat -c '%i %s %y' "$discovery_registry")" != "$discovery_registry_fingerprint" ]]; then
   echo "a repeated registration rewrote the Registry" >&2
   exit 1

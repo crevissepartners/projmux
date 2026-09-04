@@ -1,4 +1,2 @@
 schema=v3
-id=create-reuse-result-word current=create-project-reuse compared-route=null compared-scenario=null compared-value=created axes=identity
-id=switch-is-not-focus current=switch-candidate compared-route=null compared-scenario=focus-project compared-value=null axes=identity,address,topology,desired-state,runtime
-id=project-delete-preserves-runtime current=delete-project-live compared-route=null compared-scenario=delete-window-live compared-value=null axes=runtime
+id=project-unregister-preserves-runtime current=unregister-project-live compared-route=null compared-scenario=delete-window-live compared-value=null axes=runtime

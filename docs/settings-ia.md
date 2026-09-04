@@ -69,15 +69,16 @@ step, never a silent no-op.
     `get runtime` never read it. An unrecognized saved value applies the default
     without writing and shows an invalid source.
     `Closed Project startup` shows exactly two actions when no preference file
-    exists and reports `Continue project / Open fresh - default` (`이어서 열기 /
-    새로 열기 - 기본값` in ko-KR). Saved `on` keeps those choices and reports
-    `Continue project / Open fresh - on - saved`. Saved `off` reports
+    exists and reports `Continue project / Recreate Project - default` (`이어서 열기 /
+    Project 다시 만들기 - 기본값` in ko-KR). Saved `on` keeps those choices and reports
+    `Continue project / Recreate Project - on - saved`. Saved `off` reports
     `Continue project - off - saved`, skips the picker, and retains the
     registered-Continue/unregistered-Fresh automatic
     adjudication. Reading the row or opening/cancelling the picker never writes
     the default or changes saved preference bytes/mtime.
     `Continue project` materializes the Project's current Registry desired state
-    and then moves the client. `Open fresh` confirms exact counts,
+    and then moves the client. `Recreate Project` confirms the exact old Project
+    UID and per-kind counts before writing anything,
     atomically replaces the old Project graph with a new Project UID and a new
     canonical Window/shell UID pair, and leaves exactly one same-root claimant
     before ordinary materialization. Esc returns to Projects. Neither action

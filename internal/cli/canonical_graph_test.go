@@ -10,7 +10,18 @@ import (
 	"testing"
 )
 
-func TestCanonicalCommandGraphProjectionMatches013Baseline(t *testing.T) {
+// TestCanonicalCommandGraphProjectionMatchesBaseline pins the whole canonical
+// projection -- spelling, summary, source edges, output modes, and fields -- to
+// one digest, so any change to the public command contract has to be made on
+// purpose.
+//
+// The baseline moved once here, when the Project lifecycle verbs were added:
+// `start|open|stop project` and the canonical `unregister project` are new
+// rows, `delete` became a source edge of the last of those instead of a
+// canonical owner, `switch` became a source of `create project` and
+// `open project` instead of `focus project`, and the mutation routes gained the
+// `receipt` projection.
+func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 	t.Parallel()
 
 	var baseline strings.Builder
@@ -19,9 +30,9 @@ func TestCanonicalCommandGraphProjectionMatches013Baseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "2f958d6bc3fbabc7b5db76ffb18c5db1f637ad1946b21d40d3923d6ea9749492"
+	const want = "afd089ed7d4de4d594c3ad13e0bce51b9bb899f68f41156da836d17fed21de74"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
-		t.Fatalf("canonical command projection digest = %s, want 0.13 baseline %s\n%s", got, want, baseline.String())
+		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}
 }
 

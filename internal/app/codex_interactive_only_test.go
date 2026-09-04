@@ -404,7 +404,9 @@ func TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalent
 	canonical := run(t, "agent", "--provider", "codex", "--project", "alpha", "--window", "main")
 	shortcut := run(t, "codex", "--project", "alpha", "--window", "main")
 	interactive := run(t, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main")
-	if canonical.stdout != "agent/agent-test-1 created\n" || shortcut.stdout != canonical.stdout || interactive.stdout != canonical.stdout {
+	if canonical.stdout != "agent/agent-test-1 created\n"+
+		"receipt operation=create.agent identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged projects=0 windows=0 panes=0 agents=1\n" ||
+		shortcut.stdout != canonical.stdout || interactive.stdout != canonical.stdout {
 		t.Fatalf("payload-free stdout drifted: canonical=%q shortcut=%q interactive-only=%q", canonical.stdout, shortcut.stdout, interactive.stdout)
 	}
 	if !slices.Equal(canonical.launch, shortcut.launch) || !slices.Equal(canonical.launch, interactive.launch) {

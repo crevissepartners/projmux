@@ -1,35 +1,35 @@
 locale=en-US state=no-file
-row=▸  Closed Project startup    Continue project / Open fresh - default
-detail=·  Closed Project startup    Continue project / Open fresh  (default) value=__settings_noop__
-detail=◉  Continue project / Open fresh  show Continue project and Open fresh for a closed Project - default value=sessionstate:sidebar-startup:on
+row=▸  Closed Project startup    Continue project / Recreate Project - default
+detail=·  Closed Project startup    Continue project / Recreate Project  (default) value=__settings_noop__
+detail=◉  Continue project / Recreate Project  show Continue project and Recreate Project for a closed Project - default value=sessionstate:sidebar-startup:on
 detail=○  Continue project          keep this Project identity; restore saved Windows, shell Panes, and Agents, or create a new Window and shell when none remain - default value=sessionstate:sidebar-startup:off
 
 locale=en-US state=saved-on
-row=▸  Closed Project startup    Continue project / Open fresh - on - saved
-detail=·  Closed Project startup    Continue project / Open fresh  (on - saved) value=__settings_noop__
-detail=◉  Continue project / Open fresh  show Continue project and Open fresh for a closed Project - on - saved value=sessionstate:sidebar-startup:on
+row=▸  Closed Project startup    Continue project / Recreate Project - on - saved
+detail=·  Closed Project startup    Continue project / Recreate Project  (on - saved) value=__settings_noop__
+detail=◉  Continue project / Recreate Project  show Continue project and Recreate Project for a closed Project - on - saved value=sessionstate:sidebar-startup:on
 detail=○  Continue project          keep this Project identity; restore saved Windows, shell Panes, and Agents, or create a new Window and shell when none remain - on - saved value=sessionstate:sidebar-startup:off
 
 locale=en-US state=saved-off
 row=▸  Closed Project startup    Continue project - off - saved
 detail=·  Closed Project startup    Continue project  (off - saved) value=__settings_noop__
-detail=○  Continue project / Open fresh  show Continue project and Open fresh for a closed Project - off - saved value=sessionstate:sidebar-startup:on
+detail=○  Continue project / Recreate Project  show Continue project and Recreate Project for a closed Project - off - saved value=sessionstate:sidebar-startup:on
 detail=◉  Continue project          keep this Project identity; restore saved Windows, shell Panes, and Agents, or create a new Window and shell when none remain - off - saved value=sessionstate:sidebar-startup:off
 
 locale=ko-KR state=no-file
-row=▸  닫힌 프로젝트 시작 방식   이어서 열기 / 새로 열기 - 기본값
-detail=·  닫힌 프로젝트 시작 방식   이어서 열기 / 새로 열기  (기본값) value=__settings_noop__
-detail=◉  이어서 열기 / 새로 열기   닫힌 Project에 이어서 열기와 새로 열기 표시 - 기본값 value=sessionstate:sidebar-startup:on
+row=▸  닫힌 프로젝트 시작 방식   이어서 열기 / Project 다시 만들기 - 기본값
+detail=·  닫힌 프로젝트 시작 방식   이어서 열기 / Project 다시 만들기  (기본값) value=__settings_noop__
+detail=◉  이어서 열기 / Project 다시 만들기  닫힌 Project에 이어서 열기와 Project 다시 만들기 표시 - 기본값 value=sessionstate:sidebar-startup:on
 detail=○  이어서 열기               Project identity를 유지하고 저장된 Window, shell Pane, Agent를 복원하거나, 하나도 없으면 새 Window와 shell을 만든다 - 기본값 value=sessionstate:sidebar-startup:off
 
 locale=ko-KR state=saved-on
-row=▸  닫힌 프로젝트 시작 방식   이어서 열기 / 새로 열기 - 켜짐 - 저장됨
-detail=·  닫힌 프로젝트 시작 방식   이어서 열기 / 새로 열기  (켜짐 - 저장됨) value=__settings_noop__
-detail=◉  이어서 열기 / 새로 열기   닫힌 Project에 이어서 열기와 새로 열기 표시 - 켜짐 - 저장됨 value=sessionstate:sidebar-startup:on
+row=▸  닫힌 프로젝트 시작 방식   이어서 열기 / Project 다시 만들기 - 켜짐 - 저장됨
+detail=·  닫힌 프로젝트 시작 방식   이어서 열기 / Project 다시 만들기  (켜짐 - 저장됨) value=__settings_noop__
+detail=◉  이어서 열기 / Project 다시 만들기  닫힌 Project에 이어서 열기와 Project 다시 만들기 표시 - 켜짐 - 저장됨 value=sessionstate:sidebar-startup:on
 detail=○  이어서 열기               Project identity를 유지하고 저장된 Window, shell Pane, Agent를 복원하거나, 하나도 없으면 새 Window와 shell을 만든다 - 켜짐 - 저장됨 value=sessionstate:sidebar-startup:off
 
 locale=ko-KR state=saved-off
 row=▸  닫힌 프로젝트 시작 방식   이어서 열기 - 꺼짐 - 저장됨
 detail=·  닫힌 프로젝트 시작 방식   이어서 열기  (꺼짐 - 저장됨) value=__settings_noop__
-detail=○  이어서 열기 / 새로 열기   닫힌 Project에 이어서 열기와 새로 열기 표시 - 꺼짐 - 저장됨 value=sessionstate:sidebar-startup:on
+detail=○  이어서 열기 / Project 다시 만들기  닫힌 Project에 이어서 열기와 Project 다시 만들기 표시 - 꺼짐 - 저장됨 value=sessionstate:sidebar-startup:on
 detail=◉  이어서 열기               Project identity를 유지하고 저장된 Window, shell Pane, Agent를 복원하거나, 하나도 없으면 새 Window와 shell을 만든다 - 꺼짐 - 저장됨 value=sessionstate:sidebar-startup:off

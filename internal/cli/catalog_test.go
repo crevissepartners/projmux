@@ -47,21 +47,21 @@ func TestRouteCoverageHasExactlyOneDispositionAndNoOrphans(t *testing.T) {
 		}
 	}
 
-	if public != 31 {
-		t.Fatalf("public route count = %d, want 31", public)
+	if public != 35 {
+		t.Fatalf("public route count = %d, want 35", public)
 	}
 	if hidden != 1 {
 		t.Fatalf("hidden route count = %d, want 1", hidden)
 	}
 	wantPublicTally := map[Disposition]int{
-		DispositionCanonical: 24,
+		DispositionCanonical: 28,
 		DispositionShortcut:  7,
 	}
 	if !reflect.DeepEqual(publicTally, wantPublicTally) {
 		t.Fatalf("public disposition tally = %v, want %v", publicTally, wantPublicTally)
 	}
 	wantTally := map[Disposition]int{
-		DispositionCanonical: 24,
+		DispositionCanonical: 28,
 		DispositionShortcut:  7,
 		DispositionInternal:  1,
 	}
@@ -390,11 +390,13 @@ func TestRouteLocalOutputCatalogIsPinnedWhereContractFixesIt(t *testing.T) {
 		t.Fatalf("get pane fields = %v, want [cwd]", pane.Fields)
 	}
 
-	// Every route-local output mode must belong to the shared catalog.
+	// Every route-local output mode must belong to a declared catalog: the
+	// shared resource projections, or the operation receipt the mutation routes
+	// add on top of them.
 	walkRoutes(Routes(), func(path []string, route Route) {
 		for _, mode := range route.Outputs {
-			if !IsSharedOutputMode(mode) {
-				t.Errorf("route %q pins non-shared output mode %q", strings.Join(path, " "), mode)
+			if !IsSharedOutputMode(mode) && mode != OutputModeReceipt {
+				t.Errorf("route %q pins undeclared output mode %q", strings.Join(path, " "), mode)
 			}
 		}
 		for _, field := range route.Fields {

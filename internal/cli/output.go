@@ -33,6 +33,16 @@ const (
 	OutputModePaneID OutputMode = "pane-id"
 	// OutputModeNone prints nothing; explicit quiet automation.
 	OutputModeNone OutputMode = "none"
+
+	// OutputModeReceipt prints one versioned OperationReceipt JSON document.
+	//
+	// It is deliberately outside the shared catalog. The shared modes are
+	// projections of the *resources* a read or a create resolved, and every
+	// route that offers one offers the same seven; a receipt is a projection of
+	// what an *operation did*, which only the mutation routes have. Widening the
+	// shared catalog would advertise `-o receipt` on `get` and `describe`, where
+	// there is no operation to report.
+	OutputModeReceipt OutputMode = "receipt"
 )
 
 // sharedOutputModes is the closed shared catalog accepted by `-o`.
@@ -59,6 +69,28 @@ func SharedOutputModes() []OutputMode {
 func IsSharedOutputMode(mode OutputMode) bool {
 	return slices.Contains(sharedOutputModes, mode)
 }
+
+// receiptOutputModes is the shared catalog plus the operation receipt. It is
+// what a resource-backed create route advertises: every existing projection
+// keeps its bytes and its position, and `receipt` is appended rather than
+// interleaved so a caller reading the list positionally is unaffected.
+var receiptOutputModes = append(append([]OutputMode{}, sharedOutputModes...), OutputModeReceipt)
+
+// createProjectOutputModes is the Project bootstrap catalog: the Registry
+// projections it can answer plus the receipt. `pane-id` stays absent because
+// registration materializes no Pane to name.
+var createProjectOutputModes = append(append([]OutputMode{}, readProjectionCatalog...), OutputModeReceipt)
+
+// receiptOnlyOutputModes is the catalog of the routes whose result is the
+// operation rather than a resource: the Project runtime lifecycle verbs and
+// rename.
+//
+// Those routes resolve resources they do not create, so the Registry
+// projections would print the same line whatever the operation did -- `-o uid`
+// after a rename is the uid the caller already had. What is worth projecting is
+// what happened, which is why the receipt and the explicit quiet mode are the
+// whole catalog.
+var receiptOnlyOutputModes = []OutputMode{OutputModeReceipt, OutputModeNone}
 
 // FieldProjection is a route-local output field that is NOT a member of the
 // shared output catalog. The contract keeps these scoped to the exact read

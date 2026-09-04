@@ -848,7 +848,8 @@ func TestTheShortcutAndTheCanonicalSpellingProduceIdenticalNaming(t *testing.T) 
 				t.Fatalf("create %s registry differs from the canonical route:\n%s\nwant:\n%s",
 					provider, shortcutState, canonicalState)
 			}
-			if canonicalOut != "agent/agent-test-1 created\n" {
+			if canonicalOut != "agent/agent-test-1 created\n"+
+				"receipt operation=create.agent identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged projects=0 windows=0 panes=0 agents=1\n" {
 				t.Fatalf("result line = %q, want the exact Agent uid as its automatic name", canonicalOut)
 			}
 		})
@@ -1134,7 +1135,8 @@ func TestCreateAgentRendersEveryAdvertisedProjection(t *testing.T) {
 		{
 			mode: "",
 			want: func(t *testing.T, stdout string, _ *fakeResourceStore, _ *fakeTmux) {
-				if stdout != "agent/agent-test-1 created\n" {
+				if stdout != "agent/agent-test-1 created\n"+
+					"receipt operation=create.agent identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged projects=0 windows=0 panes=0 agents=1\n" {
 					t.Fatalf("default stdout = %q", stdout)
 				}
 			},

@@ -153,7 +153,8 @@ func TestSingularProjectNamespacePrecedence(t *testing.T) {
 				stdout, _, err := runRoute(t, newTestRenameCommandWithActiveTarget(store, active), "project", "alpha", "--name", "renamed")
 				return stdout, err
 			},
-			want: "project/renamed status=live\n",
+			want: "project/renamed status=live\n" +
+				"receipt operation=rename.project identity=unchanged address=renamed topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged projects=1 windows=0 panes=0 agents=0\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
