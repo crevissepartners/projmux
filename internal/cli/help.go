@@ -156,6 +156,7 @@ func RenderRouteHelp(w io.Writer, path []string, route Route) error {
 		b.WriteString(route.Invocation.Summary())
 		b.WriteString("\n")
 	}
+	writeRouteEffectsHelp(&b, route.Effects)
 	usage := route.Usage
 	if len(usage) == 0 {
 		usage = []string{"projmux " + strings.Join(path, " ")}
@@ -219,6 +220,43 @@ func RenderRouteHelp(w io.Writer, path []string, route Route) error {
 	b.WriteString("\nRun 'projmux help' for the full command list.\n")
 	_, err := io.WriteString(w, b.String())
 	return err
+}
+
+func writeRouteEffectsHelp(b *strings.Builder, effects *AllowedEffects) {
+	if effects == nil {
+		return
+	}
+	b.WriteString("\nAllowed effects:\n")
+	for _, field := range effectProjection(effects) {
+		b.WriteString("  ")
+		b.WriteString(field)
+		b.WriteString("\n")
+	}
+}
+
+func effectProjection(effects *AllowedEffects) []string {
+	domain := "null"
+	if effects.DomainEffect != nil {
+		domain = string(effects.DomainEffect.Kind)
+	}
+	return []string{
+		"identity=" + joinEffectValues(effects.Identity),
+		"address=" + joinEffectValues(effects.Address),
+		"topology=" + joinEffectValues(effects.Topology),
+		"desired-state=" + joinEffectValues(effects.DesiredState),
+		"runtime=" + joinEffectValues(effects.Runtime),
+		"focus=" + joinEffectValues(effects.Focus),
+		"cardinality=" + joinEffectValues(effects.Cardinality),
+		"domain-effect=" + domain,
+	}
+}
+
+func joinEffectValues[T ~string](values []T) string {
+	parts := make([]string, len(values))
+	for i, value := range values {
+		parts[i] = string(value)
+	}
+	return strings.Join(parts, "|")
 }
 
 // writeChildGroup writes one titled child listing, skipping the group entirely

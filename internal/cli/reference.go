@@ -137,6 +137,7 @@ func RenderReference(w io.Writer) error {
 	fmt.Fprintf(&b, "[CLI Task Guide](%s).\n\n", referenceGuidePath)
 
 	writeInvocationAuthorityContract(&b)
+	writeEffectContract(&b)
 	writeReferenceIndex(&b)
 
 	for _, route := range publicRoutes() {
@@ -149,6 +150,33 @@ func RenderReference(w io.Writer) error {
 	rendered := strings.TrimRight(b.String(), "\n") + "\n"
 	_, err := io.WriteString(w, rendered)
 	return err
+}
+
+func writeEffectContract(b *strings.Builder) {
+	b.WriteString("## Command effects\n\n")
+	b.WriteString("Every route declares one allowed-effect record over seven independent resource axes. ")
+	b.WriteString("A pipe separates conditional success outcomes; preflight refusal remains zero-effect. ")
+	b.WriteString("`domain-effect=null` means the route has no typed extension beyond this resource tuple.\n\n")
+	fmt.Fprintf(b, "The machine-readable manifest contains %d route-effect records, including hidden plumbing that the public route sections omit.\n\n", len(EffectManifest()))
+	rows := []struct {
+		axis   string
+		values string
+	}{
+		{"identity", joinEffectValues(identityEffects)},
+		{"address", joinEffectValues(addressEffects)},
+		{"topology", joinEffectValues(topologyEffects)},
+		{"desired-state", joinEffectValues(desiredEffects)},
+		{"runtime", joinEffectValues(runtimeEffects)},
+		{"focus", joinEffectValues(focusEffects)},
+		{"cardinality", joinEffectValues(cardinalities)},
+		{"domain-effect", "null|" + joinEffectValues(domainEffectKinds)},
+	}
+	b.WriteString("| Axis | Closed vocabulary |\n")
+	b.WriteString("| --- | --- |\n")
+	for _, row := range rows {
+		fmt.Fprintf(b, "| `%s` | `%s` |\n", row.axis, row.values)
+	}
+	b.WriteString("\n")
 }
 
 func writeInvocationAuthorityContract(b *strings.Builder) {
@@ -196,6 +224,13 @@ func writeReferenceRoute(b *strings.Builder, path []string, route Route) {
 	}
 	if route.Invocation != "" {
 		fmt.Fprintf(b, "Selectorless authority: `%s` — %s.\n\n", route.Invocation, route.Invocation.Summary())
+	}
+	if route.Effects != nil {
+		b.WriteString("Allowed effects:\n\n")
+		for _, field := range effectProjection(route.Effects) {
+			fmt.Fprintf(b, "- `%s`\n", field)
+		}
+		b.WriteString("\n")
 	}
 
 	usage := route.Usage
