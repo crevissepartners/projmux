@@ -73,7 +73,7 @@ func (m Mutator) validateRoot(op, root string) (string, error) {
 type BootstrapPane struct {
 	// Name is an explicit pane name. Empty means automatic naming.
 	Name string
-	// Command is the one-time name-derivation source for the Pane.
+	// Command is desired runtime state and never participates in naming.
 	Command string
 	// CWD is the declared pane working directory.
 	CWD string
@@ -98,17 +98,14 @@ type RegisterProjectOptions struct {
 	Root string
 	// Name is an explicit --name. A collision fails with ErrNameConflict and
 	// zero mutations; it never receives an implicit suffix.
-	Name string
-	// DisplayName defaults to the root basename and may duplicate.
-	DisplayName string
+	Name        string
 	Labels      map[string]string
 	Annotations map[string]string
 	// Topology is the configured project startup topology. Empty means one
-	// default Window named after the configured shell basename with one
-	// initial shell Pane.
+	// automatic exact-UID Window with one automatic exact-UID shell Pane.
 	Topology []BootstrapWindow
-	// DefaultShell is the configured shell path; its basename seeds default
-	// Window and Pane names.
+	// DefaultShell is retained as a caller compatibility input. It does not
+	// participate in durable naming.
 	DefaultShell string
 	// SessionName optionally records the persistent tmux session projection.
 	SessionName string
@@ -137,6 +134,9 @@ func (m Mutator) RegisterProject(reg *Registry, opts RegisterProjectOptions) (Re
 		return RegisterProjectResult{}, err
 	}
 	if existing, ok := reg.ProjectByRoot(root); ok {
+		if err := ValidateExplicitNameReuse(op, KindProject, existing.Metadata, opts.Name); err != nil {
+			return RegisterProjectResult{}, err
+		}
 		return RegisterProjectResult{
 			Project:     existing.Clone(),
 			Windows:     reg.WindowsOf(existing.Metadata.UID),
@@ -163,26 +163,9 @@ func (m Mutator) RegisterProject(reg *Registry, opts RegisterProjectOptions) (Re
 func (m Mutator) registerProjectTx(txn *Transaction, reg *Registry, root string, now time.Time, opts RegisterProjectOptions) (RegisterProjectResult, error) {
 	const op = "register project"
 
-	projectUID, err := m.mintUID(KindProject)
+	projectUID, name, err := m.mintAndReserveName(reg, op, "", KindProject, opts.Name)
 	if err != nil {
 		return RegisterProjectResult{}, err
-	}
-	displayName := strings.TrimSpace(opts.DisplayName)
-	if displayName == "" {
-		displayName = ProjectDisplayName(root)
-	}
-
-	var name string
-	if explicit := strings.TrimSpace(opts.Name); explicit != "" {
-		if err := reg.reserveExplicitName(op, "", KindProject, explicit, projectUID); err != nil {
-			return RegisterProjectResult{}, err
-		}
-		name = explicit
-	} else {
-		name, err = reg.allocateName(op, "", KindProject, ProjectNameBase(root), projectUID)
-		if err != nil {
-			return RegisterProjectResult{}, err
-		}
 	}
 
 	project := Project{
@@ -191,7 +174,6 @@ func (m Mutator) registerProjectTx(txn *Transaction, reg *Registry, root string,
 		Metadata: ObjectMeta{
 			UID:         projectUID,
 			Name:        name,
-			DisplayName: displayName,
 			Labels:      cloneStringMap(opts.Labels),
 			Annotations: cloneStringMap(opts.Annotations),
 			CreatedAt:   now,
@@ -211,7 +193,7 @@ func (m Mutator) registerProjectTx(txn *Transaction, reg *Registry, root string,
 
 	result := RegisterProjectResult{}
 	for _, declared := range topology {
-		window, panes, err := m.addWindowTx(txn, reg, op, KindProject, projectUID, declared, opts.DefaultShell, root, now)
+		window, panes, err := m.addWindowTx(txn, reg, op, KindProject, projectUID, declared, root, now)
 		if err != nil {
 			return RegisterProjectResult{}, err
 		}
@@ -230,7 +212,7 @@ func (m Mutator) registerProjectTx(txn *Transaction, reg *Registry, root string,
 
 // AddWindow creates one offline Window plus its initial Pane below an existing
 // Project. No tmux window is created.
-func (m Mutator) AddWindow(reg *Registry, projectUID string, declared BootstrapWindow, defaultShell, operationID string) (Window, []Pane, error) {
+func (m Mutator) AddWindow(reg *Registry, projectUID string, declared BootstrapWindow, _ string, operationID string) (Window, []Pane, error) {
 	const op = "create window"
 
 	project, ok := reg.Project(projectUID)
@@ -239,7 +221,7 @@ func (m Mutator) AddWindow(reg *Registry, projectUID string, declared BootstrapW
 	}
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
-	window, panes, err := m.addWindowTx(txn, reg, op, KindProject, projectUID, declared, defaultShell, project.Spec.Root, now)
+	window, panes, err := m.addWindowTx(txn, reg, op, KindProject, projectUID, declared, project.Spec.Root, now)
 	if err != nil {
 		txn.Rollback()
 		return Window{}, nil, err
@@ -253,7 +235,7 @@ func (m Mutator) AddWindow(reg *Registry, projectUID string, declared BootstrapW
 // below an exact Project or ControlSession owner. Generated Window intents use
 // this owner-explicit entrypoint; the public AddWindow contract remains
 // Project-only.
-func (m Mutator) AddWindowToManagedRoot(reg *Registry, ownerKind Kind, ownerUID string, declared BootstrapWindow, defaultShell, defaultCWD, operationID string) (Window, []Pane, error) {
+func (m Mutator) AddWindowToManagedRoot(reg *Registry, ownerKind Kind, ownerUID string, declared BootstrapWindow, _ string, defaultCWD, operationID string) (Window, []Pane, error) {
 	const op = "create window"
 	switch ownerKind {
 	case KindProject:
@@ -271,7 +253,7 @@ func (m Mutator) AddWindowToManagedRoot(reg *Registry, ownerKind Kind, ownerUID 
 	}
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
-	window, panes, err := m.addWindowTx(txn, reg, op, ownerKind, ownerUID, declared, defaultShell, defaultCWD, now)
+	window, panes, err := m.addWindowTx(txn, reg, op, ownerKind, ownerUID, declared, defaultCWD, now)
 	if err != nil {
 		txn.Rollback()
 		return Window{}, nil, err
@@ -281,23 +263,10 @@ func (m Mutator) AddWindowToManagedRoot(reg *Registry, ownerKind Kind, ownerUID 
 	return window, panes, nil
 }
 
-func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op string, ownerKind Kind, ownerUID string, declared BootstrapWindow, defaultShell, defaultCWD string, now time.Time) (Window, []Pane, error) {
-	windowUID, err := m.mintUID(KindWindow)
+func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op string, ownerKind Kind, ownerUID string, declared BootstrapWindow, defaultCWD string, now time.Time) (Window, []Pane, error) {
+	windowUID, name, err := m.mintAndReserveName(reg, op, ownerUID, KindWindow, declared.Name)
 	if err != nil {
 		return Window{}, nil, err
-	}
-
-	var name string
-	if explicit := strings.TrimSpace(declared.Name); explicit != "" {
-		if err := reg.reserveExplicitName(op, ownerUID, KindWindow, explicit, windowUID); err != nil {
-			return Window{}, nil, err
-		}
-		name = explicit
-	} else {
-		name, err = reg.allocateName(op, ownerUID, KindWindow, WindowNameBase("", declared.Command, defaultShell), windowUID)
-		if err != nil {
-			return Window{}, nil, err
-		}
 	}
 
 	window := Window{
@@ -325,7 +294,7 @@ func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op string, ownerKi
 		if cwd == "" {
 			cwd = defaultCWD
 		}
-		pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, declaredPane.Name, PaneNameBase(declaredPane.Command, defaultShell), declaredPane.Command, cwd, declaredPane.Labels, now)
+		pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, declaredPane.Name, declaredPane.Command, cwd, declaredPane.Labels, now)
 		if err != nil {
 			return Window{}, nil, err
 		}
@@ -338,23 +307,10 @@ func (m Mutator) addWindowTx(txn *Transaction, reg *Registry, op string, ownerKi
 	return stored.Clone(), panes, nil
 }
 
-func (m Mutator) addPaneTx(txn *Transaction, reg *Registry, op, ownerUID string, ownerKind Kind, role PaneRole, explicitName, nameBase, command, cwd string, labels map[string]string, now time.Time) (Pane, error) {
-	paneUID, err := m.mintUID(KindPane)
+func (m Mutator) addPaneTx(txn *Transaction, reg *Registry, op, ownerUID string, ownerKind Kind, role PaneRole, explicitName, command, cwd string, labels map[string]string, now time.Time) (Pane, error) {
+	paneUID, name, err := m.mintAndReserveName(reg, op, ownerUID, KindPane, explicitName)
 	if err != nil {
 		return Pane{}, err
-	}
-
-	var name string
-	if explicit := strings.TrimSpace(explicitName); explicit != "" {
-		if err := reg.reserveExplicitName(op, ownerUID, KindPane, explicit, paneUID); err != nil {
-			return Pane{}, err
-		}
-		name = explicit
-	} else {
-		name, err = reg.allocateName(op, ownerUID, KindPane, nameBase, paneUID)
-		if err != nil {
-			return Pane{}, err
-		}
 	}
 
 	pane := Pane{
@@ -481,7 +437,7 @@ func (m Mutator) EnsureWindowDefaultShell(reg *Registry, windowUID, defaultShell
 }
 
 // AddPane creates one offline shell Pane inside an existing Window.
-func (m Mutator) AddPane(reg *Registry, windowUID string, declared BootstrapPane, defaultShell, operationID string) (Pane, error) {
+func (m Mutator) AddPane(reg *Registry, windowUID string, declared BootstrapPane, _ string, operationID string) (Pane, error) {
 	const op = "create pane"
 
 	window, ok := reg.Window(windowUID)
@@ -496,7 +452,7 @@ func (m Mutator) AddPane(reg *Registry, windowUID string, declared BootstrapPane
 	}
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
-	pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, declared.Name, PaneNameBase(declared.Command, defaultShell), declared.Command, cwd, declared.Labels, now)
+	pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, declared.Name, declared.Command, cwd, declared.Labels, now)
 	if err != nil {
 		txn.Rollback()
 		return Pane{}, err
@@ -542,31 +498,12 @@ func (m Mutator) RenameProject(reg *Registry, projectUID, name string) (Project,
 	if !ok {
 		return Project{}, stateErr(op, ErrNotFound, "project %q does not exist", projectUID)
 	}
-	name = strings.TrimSpace(name)
 	if err := reg.reserveExplicitName(op, "", KindProject, name, projectUID); err != nil {
 		return Project{}, err
 	}
 	project.Metadata.Name = name
 	reg.UpdatedAt = m.clock()().UTC()
 	return project.Clone(), nil
-}
-
-// ObserveWindowDisplayName projects one live tmux window_name onto the
-// duplicate-allowed, non-identifying metadata.displayName field. It never
-// changes the Window uid, stable name, owner, or name reservation.
-func (m Mutator) ObserveWindowDisplayName(reg *Registry, windowUID, displayName string) (Window, error) {
-	const op = "observe window display name"
-
-	window, ok := reg.Window(windowUID)
-	if !ok {
-		return Window{}, stateErr(op, ErrNotFound, "window %q does not exist", windowUID)
-	}
-	if window.Metadata.DisplayName == displayName {
-		return window.Clone(), nil
-	}
-	window.Metadata.DisplayName = displayName
-	reg.UpdatedAt = m.clock()().UTC()
-	return window.Clone(), nil
 }
 
 // ObserveWindowRuntimeBinding records the exact live tmux owner pair for one
@@ -596,7 +533,8 @@ func (m Mutator) ObserveWindowRuntimeBinding(reg *Registry, windowUID, sessionID
 	return window.Clone(), nil
 }
 
-// RenameWindow sets a Window metadata.name inside its owning Project scope.
+// RenameWindow sets a Window metadata.name inside its Project or ControlSession
+// root scope.
 func (m Mutator) RenameWindow(reg *Registry, windowUID, name string) (Window, error) {
 	const op = "rename window"
 
@@ -604,7 +542,6 @@ func (m Mutator) RenameWindow(reg *Registry, windowUID, name string) (Window, er
 	if !ok {
 		return Window{}, stateErr(op, ErrNotFound, "window %q does not exist", windowUID)
 	}
-	name = strings.TrimSpace(name)
 	if err := reg.reserveExplicitName(op, window.Metadata.OwnerUID(), KindWindow, name, windowUID); err != nil {
 		return Window{}, err
 	}
@@ -613,7 +550,7 @@ func (m Mutator) RenameWindow(reg *Registry, windowUID, name string) (Window, er
 	return window.Clone(), nil
 }
 
-// RenamePane sets a Pane metadata.name inside its owner scope. The adapter
+// RenamePane sets a Pane metadata.name inside its root-wide Pane scope. The adapter
 // mirrors the new name into the legacy @projmux_pane_label option and never
 // writes the raw tmux pane_title.
 func (m Mutator) RenamePane(reg *Registry, paneUID, name string) (Pane, error) {
@@ -623,24 +560,10 @@ func (m Mutator) RenamePane(reg *Registry, paneUID, name string) (Pane, error) {
 	if !ok {
 		return Pane{}, stateErr(op, ErrNotFound, "pane %q does not exist", paneUID)
 	}
-	name = strings.TrimSpace(name)
 	if err := reg.reserveExplicitName(op, pane.Metadata.OwnerUID(), KindPane, name, paneUID); err != nil {
 		return Pane{}, err
 	}
 	pane.Metadata.Name = name
-	reg.UpdatedAt = m.clock()().UTC()
-	return pane.Clone(), nil
-}
-
-// SetPaneDisplayTitle stores the derived secondary pane title.
-func (m Mutator) SetPaneDisplayTitle(reg *Registry, paneUID, agent, topic, command, rawTitle string) (Pane, error) {
-	const op = "set pane display title"
-
-	pane, ok := reg.Pane(paneUID)
-	if !ok {
-		return Pane{}, stateErr(op, ErrNotFound, "pane %q does not exist", paneUID)
-	}
-	pane.Status.DisplayTitle = DerivePaneDisplayTitle(agent, topic, command, rawTitle)
 	reg.UpdatedAt = m.clock()().UTC()
 	return pane.Clone(), nil
 }

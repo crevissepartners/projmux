@@ -92,8 +92,8 @@ The resource routes (`get`, `describe`, `create`, `rename`, `rebind`, `delete`,
 
 The grammar in one paragraph: a value is either `uid:<uid>` or a bare
 `metadata.name`. There is no bare-uid form, values are never split on commas,
-and a `displayName`, a `spec.root` path, or a raw tmux `%N`/`@N`/`$N` handle
-never resolves anything. `--project`/`-p` occurs at most once and fixes the
+and an ephemeral context value, a `spec.root` path, or a raw tmux
+`%N`/`@N`/`$N` handle never resolves anything. `--project`/`-p` occurs at most once and fixes the
 Project scope; `--window`/`-w` and `--pane` repeat and union in argv order;
 `--selector key=value`
 repeats and ANDs. A singular route also accepts the target as a positional
@@ -184,11 +184,11 @@ default server.
 
 ### Reference scope: the active Project namespace
 
-A `metadata.name` is unique inside its owner scope, never across the registry: a
-Window name is unique inside its Project, a Pane name inside its Window or
-Agent, an Agent name inside its Window. So inside a managed Project a reference
-is resolved inside the Project that owns the active Window, which is the same
-universe the plural reads use in that context:
+A descendant `metadata.name` is unique across its Project or ControlSession root
+for the same kind, never across the whole registry. Direct ownership remains
+Window-owned for Agents and Window/Agent-owned for Panes. Inside a managed root,
+a bare descendant name is therefore resolved in the root that owns the active
+Window, which is the same universe the plural reads use in that context:
 
 ```
 projmux describe window zsh    # the Window named zsh in *this* Project
@@ -331,11 +331,10 @@ managed-menu contract.
 then updates only its exact UID-bound live transport field:
 
 - Project: `@projmux_project_name` (never the tmux session name)
-- Window: `@projmux_window_name` (never `metadata.displayName` or tmux
-  `window_name`)
+- Window: `@projmux_window_name` (never tmux `window_name`)
 - Pane: `@projmux_pane_label` (never raw `pane_title`)
 
-`rename agent` changes only the Agent's stable Window-scoped `metadata.name`.
+`rename agent` changes only the Agent's stable root-scoped `metadata.name`.
 It does not change the Agent topic, provider, lifecycle state, or managed Pane
 name/title. `rebind project` preserves uid and session name, moves no files,
 and updates only `spec.root` plus the exact session's
@@ -746,10 +745,12 @@ An explicit path gets exactly the same verification as a bounded copy.
 Verification is fail closed. Malformed JSON, an empty file, an envelope newer
 than this build, and a graph with a duplicate uid, a dangling `ownerRef`, or a
 broken name reservation are all refused with the current Registry byte-identical.
-The verified bytes are then published **verbatim**, so uids, owner relations, and
-name reservations are preserved exactly rather than re-encoded, and a
-known-older-but-valid envelope stays readable through the normal safe read and
-migrates on the next semantic write.
+A verified current-v4 source is published **verbatim**. A verified v3 source is
+instead imported as one atomic compatibility migration: the exact source bytes
+are written to a versioned backup, a checksum-bearing content-free migration
+report is published beside it, and the deterministic canonical v4 bytes are
+staged and committed as the live Registry. A repeat restore compares against
+the canonical publish checksum and writes no new Registry, backup, or report.
 
 The bytes being replaced are kept first, at
 `recovery/replaced-<stamp>-<seq>.json`. Unlike the write-side copies this keeps

@@ -556,7 +556,6 @@ func executeControlSessionIdentityPlan(
 		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before automatic-rename projection", []string{"-w", "-t", windowID, tmuxopts.AutomaticRenameWindow, "off"}, observeStable, guard)
 		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before UID projection", []string{"-w", "-t", windowID, "-q", tmuxopts.WindowUID, window.Metadata.UID}, observeStable, guard)
 		appendWrite(mutationWriteIdentity, stable, "exact ControlSession Window containment before stable-name projection", []string{"-w", "-t", windowID, "-q", tmuxopts.WindowName, window.Metadata.Name}, observeStable, guard)
-		appendWrite(mutationRenameWindow, stable, "exact ControlSession Window containment before display-name projection", []string{"-t", windowID, window.DisplayName()}, observeStable, guard)
 		logicalWrites++
 	}
 	for _, bound := range binding.Panes {

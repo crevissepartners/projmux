@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"encoding/json"
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
@@ -13,7 +14,7 @@ const APIVersion = "projmux.io/v1alpha1"
 
 // SchemaVersion is the current registry envelope version. A registry file
 // carrying a higher value is rejected fail-closed; see schema.go.
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 // Kind is the closed set of Projmux resource kinds. A persistent tmux Session
 // is intentionally absent: it is a 1:1 runtime projection of a Project stored
@@ -54,20 +55,58 @@ type OwnerRef struct {
 // ObjectMeta is the metadata block shared by every resource.
 //
 //   - UID is opaque, immutable, and independent of tmux lifecycle.
-//   - Name is the stable unique-within-scope query key. Project names are
-//     unique across the registry; Window/Pane/Agent names are unique within
-//     their ownerRef scope.
-//   - DisplayName may duplicate and is never a selector, ownerRef, or identity.
+//   - Name is the stable query key. Root names are kind-global and descendant
+//     names are same-kind unique across their Project or ControlSession root.
 //   - Labels are key/value classification input.
 //   - Annotations are non-identifying metadata (AI topic, provider context).
 type ObjectMeta struct {
 	UID         string            `json:"uid"`
 	Name        string            `json:"name"`
-	DisplayName string            `json:"displayName,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty"`
 	OwnerRef    *OwnerRef         `json:"ownerRef,omitempty"`
 	CreatedAt   time.Time         `json:"createdAt"`
+
+	// removedDisplayName exists only between decoding a schema-v3 document and
+	// its v4 migration. It never marshals and is rejected in an already-v4
+	// document. Keeping the raw presence bit lets the migration report removal
+	// of an explicitly stored empty value without retaining presentation bytes.
+	removedDisplayName removedPresentation
+}
+
+type removedPresentation struct {
+	present bool
+	value   string
+}
+
+// UnmarshalJSON captures the removed schema-v3 displayName field for the
+// content-free v4 migration receipt while exposing no durable model field.
+func (m *ObjectMeta) UnmarshalJSON(data []byte) error {
+	type wireMeta struct {
+		UID         string            `json:"uid"`
+		Name        string            `json:"name"`
+		DisplayName string            `json:"displayName"`
+		Labels      map[string]string `json:"labels"`
+		Annotations map[string]string `json:"annotations"`
+		OwnerRef    *OwnerRef         `json:"ownerRef"`
+		CreatedAt   time.Time         `json:"createdAt"`
+	}
+	var wire wireMeta
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	_, present := fields["displayName"]
+	*m = ObjectMeta{
+		UID: wire.UID, Name: wire.Name, Labels: wire.Labels,
+		Annotations: wire.Annotations, OwnerRef: wire.OwnerRef,
+		CreatedAt:          wire.CreatedAt,
+		removedDisplayName: removedPresentation{present: present, value: wire.DisplayName},
+	}
+	return nil
 }
 
 // Clone returns a deep copy of the metadata block.
@@ -273,17 +312,6 @@ type Window struct {
 	Status     WindowStatus `json:"status,omitzero"`
 }
 
-// DisplayName returns the duplicate-allowed user-facing Window name. Registry
-// files written before Window display names were projected leave the field
-// empty, so those Windows safely fall back to their stable metadata.name until
-// a runtime observation supplies the tmux window_name.
-func (w Window) DisplayName() string {
-	if strings.TrimSpace(w.Metadata.DisplayName) != "" {
-		return w.Metadata.DisplayName
-	}
-	return w.Metadata.Name
-}
-
 // WindowSpec separates the stable role-agnostic Window anchor from the
 // optional direct shell used by shell-requiring compatibility consumers.
 type WindowSpec struct {
@@ -475,24 +503,22 @@ type Pane struct {
 	Status     PaneStatus `json:"status"`
 }
 
-// PaneSpec records the declared pane recipe inputs. Command is the one-time
-// name-derivation source; it is never re-read to rename an existing Pane.
+// PaneSpec records the declared pane recipe inputs. Command never participates
+// in durable naming.
 type PaneSpec struct {
 	Role    PaneRole `json:"role"`
 	CWD     string   `json:"cwd,omitempty"`
 	Command string   `json:"command,omitempty"`
 }
 
-// PaneStatus carries the derived secondary display title and the observed
-// conditions of one Pane. DisplayTitle is never a selector, an identity, or a
-// Window name source.
+// PaneStatus carries the observed conditions and activation evidence of one
+// Pane. Human presentation is invocation-scoped and is never stored here.
 //
 // As with WindowStatus there is no stored liveness field: liveness is derived
 // from a live observation at read time, and Conditions only preserves the
 // reason a runtime object went away.
 type PaneStatus struct {
-	DisplayTitle string      `json:"displayTitle,omitempty"`
-	Conditions   []Condition `json:"conditions,omitempty"`
+	Conditions []Condition `json:"conditions,omitempty"`
 	// Activation names the current materialization of this Pane. It is the
 	// value a launched supervisor quotes back, and the only thing that
 	// separates the running process from the one a resume replaced.
@@ -505,6 +531,36 @@ type PaneStatus struct {
 	// A matching window-unlinked hook consumes it by deleting this Pane's owner
 	// chain; issuing a new activation clears it as stale generation state.
 	Teardown *PaneTeardownEvidence `json:"teardown,omitempty"`
+
+	// See ObjectMeta.removedDisplayName. This is a decode-only schema-v3 seam.
+	removedDisplayTitle removedPresentation
+}
+
+// UnmarshalJSON captures the removed schema-v3 displayTitle field without
+// preserving it in the schema-v4 wire model.
+func (s *PaneStatus) UnmarshalJSON(data []byte) error {
+	type wireStatus struct {
+		DisplayTitle    string                `json:"displayTitle"`
+		Conditions      []Condition           `json:"conditions"`
+		Activation      PaneActivation        `json:"activation"`
+		LastTermination *TerminationEvidence  `json:"lastTermination"`
+		Teardown        *PaneTeardownEvidence `json:"teardown"`
+	}
+	var wire wireStatus
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	_, present := fields["displayTitle"]
+	*s = PaneStatus{
+		Conditions: wire.Conditions, Activation: wire.Activation,
+		LastTermination: wire.LastTermination, Teardown: wire.Teardown,
+		removedDisplayTitle: removedPresentation{present: present, value: wire.DisplayTitle},
+	}
+	return nil
 }
 
 // Clone returns a deep copy of the Pane.
@@ -765,12 +821,9 @@ func (a Agent) Clone() Agent {
 	return out
 }
 
-// NameReservation is the persisted record of one allocated name. Reservations
-// are the authority for suffix allocation: the allocator never recomputes a
-// suffix from resource scan order.
-//
-// Scope is "" for the registry-wide Project scope and the owner uid for
-// Window, Pane, and Agent names.
+// NameReservation is the persisted authority for one (root, kind, name)
+// address. Scope is "" for root resources and the Project or ControlSession
+// uid for every descendant, independent of direct owner topology.
 type NameReservation struct {
 	Scope string `json:"scope,omitempty"`
 	Kind  Kind   `json:"kind"`
@@ -921,6 +974,25 @@ func (r *Registry) ProjectByRoot(root string) (*Project, bool) {
 		}
 	}
 	return nil, false
+}
+
+// ProjectBySession returns the sole Project carrying an exact persistent
+// session projection. Registry validation keeps this relation unique; the
+// explicit ambiguity error protects callers operating on a degraded clone.
+func (r *Registry) ProjectBySession(session string) (*Project, bool, error) {
+	session = strings.TrimSpace(session)
+	var match *Project
+	for i := range r.Projects {
+		project := &r.Projects[i]
+		if project.Status.Session == nil || strings.TrimSpace(project.Status.Session.Name) != session {
+			continue
+		}
+		if match != nil {
+			return nil, false, fmt.Errorf("session %q is claimed by more than one Project", session)
+		}
+		match = project
+	}
+	return match, match != nil, nil
 }
 
 // ProjectByName returns the Project with the registry-unique name.

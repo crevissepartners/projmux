@@ -26,13 +26,10 @@ func orphanPaneFixture(t *testing.T) (Mutator, *Registry, string) {
 	return mutator, &registry, windows[0].Metadata.UID
 }
 
-// TestImportOrphanPaneNamesFromTheFallbackBaseAndNeverFromTheRuntime is the
-// naming contract of the phase, stated as the thing that would go wrong without
-// it: `pane_current_command` is what the operator happens to be running right
-// now, so a name seeded from it is not stable, and metadata.name is contractually
-// never derived from a runtime attribute. The runtime reading still has to land
-// somewhere, and that somewhere is status.displayTitle.
-func TestImportOrphanPaneNamesFromTheFallbackBaseAndNeverFromTheRuntime(t *testing.T) {
+// TestImportOrphanPaneNamesUseExactUIDAndNeverRuntimeContext is the naming
+// contract of the phase: `pane_current_command` is what the operator happens to
+// be running right now, so it cannot participate in a durable address.
+func TestImportOrphanPaneNamesUseExactUIDAndNeverRuntimeContext(t *testing.T) {
 	t.Parallel()
 
 	mutator, registry, windowUID := orphanPaneFixture(t)
@@ -45,23 +42,17 @@ func TestImportOrphanPaneNamesFromTheFallbackBaseAndNeverFromTheRuntime(t *testi
 	if err != nil {
 		t.Fatalf("import orphan pane: %v", err)
 	}
-	// Not "claude", and not "lead-roadmap" either: LegacyPaneNameSeed would have
-	// produced one of those, and both are runtime readings.
-	if first.Metadata.Name != FallbackPaneNameBase {
-		t.Fatalf("minted Pane name = %q, want %q", first.Metadata.Name, FallbackPaneNameBase)
-	}
-	if first.Status.DisplayTitle == "" {
-		t.Fatalf("minted Pane carries no displayTitle; the runtime reading was dropped instead of redirected")
+	if first.Metadata.Name != first.Metadata.UID {
+		t.Fatalf("minted Pane name = %q, want exact uid %q", first.Metadata.Name, first.Metadata.UID)
 	}
 
-	// The allocator uniquifies, so a second orphan in the same Window is a
-	// suffix rather than a collision or a second seed rule.
+	// A second orphan receives another full uid, never a numeric name suffix.
 	second, err := mutator.ImportOrphanPane(registry, windowUID, LegacyPane{Command: "zsh"}, "op-1")
 	if err != nil {
 		t.Fatalf("import second orphan pane: %v", err)
 	}
-	if second.Metadata.Name != FallbackPaneNameBase+"-1" {
-		t.Fatalf("second minted Pane name = %q, want %q", second.Metadata.Name, FallbackPaneNameBase+"-1")
+	if second.Metadata.Name != second.Metadata.UID {
+		t.Fatalf("second minted Pane name = %q, want exact uid %q", second.Metadata.Name, second.Metadata.UID)
 	}
 	if second.Metadata.UID == first.Metadata.UID {
 		t.Fatalf("two orphan panes were minted onto one uid %q", first.Metadata.UID)

@@ -110,11 +110,6 @@ func (c *createCommand) createWindowFromIntent(intent windowCreateIntent, stdout
 		if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, window.Metadata.UID, ledger); claimErr != nil {
 			return errors.Join(createErr, claimErr)
 		}
-		projected, projectErr := mutator.ObserveWindowDisplayName(working, window.Metadata.UID, window.Metadata.Name)
-		if projectErr != nil {
-			return errors.Join(createErr, projectErr)
-		}
-		window = projected
 		if mirrorErr := c.runtime.mirrorWindow(ctx, created.WindowID, window); mirrorErr != nil {
 			return errors.Join(createErr, mirrorErr)
 		}
@@ -154,7 +149,7 @@ func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, stdout
 		return visibleCanonicalCreateError(err)
 	}
 	err = c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, _ string, _ *runtimeLedger) error {
-		window, ok := working.Window(scope.windowUID)
+		_, ok := working.Window(scope.windowUID)
 		if !ok {
 			return usageError("canonical rename: origin Window disappeared; nothing was changed")
 		}
@@ -197,8 +192,7 @@ func (c *createCommand) renameWindowFromIntent(intent windowRenameIntent, stdout
 		}, observeContainment); err != nil {
 			return err
 		}
-		_, err := mutator.ObserveWindowDisplayName(working, window.Metadata.UID, displayName)
-		return err
+		return nil
 	}, c.canonicalIntentGuards(scope)...)
 	if err != nil {
 		return visibleCanonicalCreateError(err)

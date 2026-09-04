@@ -159,8 +159,7 @@ func windowFieldsDrifted(window coremetadata.Window, ref *RuntimeRef, inventory 
 		if observed.ID != ref.ID {
 			continue
 		}
-		return strings.TrimSpace(observed.MirroredName) != strings.TrimSpace(window.Metadata.Name) ||
-			strings.TrimSpace(observed.DisplayName) != strings.TrimSpace(window.DisplayName())
+		return strings.TrimSpace(observed.MirroredName) != strings.TrimSpace(window.Metadata.Name)
 	}
 	return false
 }

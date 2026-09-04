@@ -18,8 +18,8 @@ func TestProjectBootstrapCreatesTheOfflineTopologyWithValidAnchorAndDefaultShell
 	}{
 		{
 			name:            "default topology is one shell window with one shell pane",
-			wantWindowNames: []string{"zsh"},
-			wantPaneNames:   []string{"zsh"},
+			wantWindowNames: []string{"window-01"},
+			wantPaneNames:   []string{"pane-01"},
 		},
 		{
 			name: "configured topology is used verbatim",
@@ -27,18 +27,18 @@ func TestProjectBootstrapCreatesTheOfflineTopologyWithValidAnchorAndDefaultShell
 				{Command: "nvim ."},
 				{Name: "server", Panes: []BootstrapPane{{Command: "npm run dev"}, {Command: "/usr/bin/htop"}}},
 			},
-			wantWindowNames: []string{"nvim", "server"},
-			wantPaneNames:   []string{"nvim", "npm", "htop"},
+			wantWindowNames: []string{"window-01", "server"},
+			wantPaneNames:   []string{"pane-01", "pane-02", "pane-03"},
 		},
 		{
-			name: "duplicate topology names get the lowest free suffix",
+			name: "automatic topology names are exact full uids",
 			topology: []BootstrapWindow{
 				{Command: "zsh"},
 				{Command: "zsh"},
 				{Command: "zsh"},
 			},
-			wantWindowNames: []string{"zsh", "zsh-1", "zsh-2"},
-			wantPaneNames:   []string{"zsh", "zsh", "zsh"},
+			wantWindowNames: []string{"window-01", "window-02", "window-03"},
+			wantPaneNames:   []string{"pane-01", "pane-02", "pane-03"},
 		},
 	}
 	for _, tt := range tests {
@@ -169,11 +169,8 @@ func TestUIDsAreNeverMergedHeuristicallyAndOnlyAnExactSavedRootReusesOne(t *test
 	if first.Project.Metadata.UID == second.Project.Metadata.UID {
 		t.Fatal("projects sharing a root basename must not share a uid")
 	}
-	if first.Project.Metadata.Name != "projmux" || second.Project.Metadata.Name != "projmux-1" {
-		t.Fatalf("names = %q/%q, want projmux/projmux-1", first.Project.Metadata.Name, second.Project.Metadata.Name)
-	}
-	if first.Project.Metadata.DisplayName != "projmux" || second.Project.Metadata.DisplayName != "projmux" {
-		t.Fatalf("display names = %q/%q, want both projmux", first.Project.Metadata.DisplayName, second.Project.Metadata.DisplayName)
+	if first.Project.Metadata.Name != first.Project.Metadata.UID || second.Project.Metadata.Name != second.Project.Metadata.UID {
+		t.Fatalf("automatic project names must be exact uids: %+v / %+v", first.Project.Metadata, second.Project.Metadata)
 	}
 
 	windowsBefore := len(reg.Windows)
@@ -201,10 +198,11 @@ func TestExplicitNameCollisionExitsAsAUsageErrorWithZeroMutations(t *testing.T) 
 	}{
 		{
 			name: "register with a taken explicit project name",
-			mutate: func(m Mutator, reg *Registry, _ string) error {
+			mutate: func(m Mutator, reg *Registry, uid string) error {
+				existing, _ := reg.Project(uid)
 				_, err := m.RegisterProject(reg, RegisterProjectOptions{
 					Root:         "/src/other",
-					Name:         "projmux",
+					Name:         existing.Metadata.Name,
 					DefaultShell: "/bin/zsh",
 					OperationID:  "op-collide",
 				})
@@ -219,8 +217,8 @@ func TestExplicitNameCollisionExitsAsAUsageErrorWithZeroMutations(t *testing.T) 
 					return err
 				}
 				other, _ := reg.ProjectByRoot("/src/other")
-				_, err := m.RenameProject(reg, other.Metadata.UID, "projmux")
-				_ = uid
+				existing, _ := reg.Project(uid)
+				_, err := m.RenameProject(reg, other.Metadata.UID, existing.Metadata.Name)
 				return err
 			},
 			wantErr: ErrNameConflict,
@@ -379,7 +377,7 @@ func TestOperationRollbackRemovesOnlyTheResourcesThisOperationCreated(t *testing
 
 	project, _ := reg.ProjectByRoot("/src/projmux")
 	txn := m.Begin(&reg, "op-rollback")
-	window, panes, err := m.addWindowTx(txn, &reg, "test", KindProject, project.Metadata.UID, BootstrapWindow{Command: "nvim"}, "/bin/zsh", "/src/projmux", fixedNow)
+	window, panes, err := m.addWindowTx(txn, &reg, "test", KindProject, project.Metadata.UID, BootstrapWindow{Command: "nvim"}, "/src/projmux", fixedNow)
 	if err != nil {
 		t.Fatalf("create window: %v", err)
 	}
@@ -406,7 +404,7 @@ func TestOperationRollbackRemovesOnlyTheResourcesThisOperationCreated(t *testing
 	}
 }
 
-func TestDeleteReleasesNameReservationsSoTheSuffixBecomesAvailableAgain(t *testing.T) {
+func TestDeleteReleasesNameReservationsAndNewResourcesUseFreshUIDNames(t *testing.T) {
 	t.Parallel()
 
 	roots := dirSet{"/src/a": true, "/src/b": true}
@@ -436,8 +434,8 @@ func TestDeleteReleasesNameReservationsSoTheSuffixBecomesAvailableAgain(t *testi
 		t.Fatalf("register b: %v", err)
 	}
 	replacement, _ := reg.ProjectByRoot("/src/b")
-	if replacement.Metadata.Name != "b" {
-		t.Fatalf("name = %q, want b", replacement.Metadata.Name)
+	if replacement.Metadata.Name != replacement.Metadata.UID {
+		t.Fatalf("name = %q, want exact uid %q", replacement.Metadata.Name, replacement.Metadata.UID)
 	}
 	if replacement.Metadata.UID == uid {
 		t.Fatal("a new project must never reuse a deleted uid")

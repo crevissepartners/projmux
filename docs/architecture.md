@@ -313,29 +313,24 @@ Identity and naming:
 - `metadata.uid` is opaque, immutable, and independent of tmux lifecycle. It
   survives snapshot/restore, runtime creation, and root rebind.
 - `metadata.name` is the stable unique-within-scope query key. Project names
-  are unique across the registry; Window, Pane, and Agent names are unique
-  within their `ownerRef` scope.
-- `metadata.displayName` may duplicate and is never a selector, an ownerRef, or
-  identity. `metadata.labels` is key/value classification;
-  `metadata.annotations` is non-identifying metadata such as an AI topic.
-- Name bases are assigned once, at create or migration time, and are never
-  re-derived. A declared Window create uses explicit name → initial command
-  basename → configured shell basename → `window`; a Window newly imported
-  from tmux always uses the literal `window` allocator base. Its observed
-  `window_name`, Pane label, provider, command, shell, topic, and title are all
-  excluded from stable identity. Shell Pane uses command basename → shell
-  basename → `pane`; a Pane managed by an Agent uses `<agent-name>-pane`; Agent
-  uses explicit `--name` → normalized provider id → `agent`.
-- For a Window, the observed tmux `window_name` is
-  `metadata.displayName`: duplicate-allowed, visible in `describe window`, and
-  never a selector, ownerRef, or identity input. Existing Window uids, names,
-  owners, and name reservations are preserved; there is no bulk naming
-  migration.
-- Automatic collisions take the lowest free suffix (`Projmux-1`, `codex-1`)
-  from the persisted `nameReservations` table, scanning integer suffixes rather
-  than resource or map iteration order. An **explicit** `--name` or rename
-  collision never receives an implicit suffix: it fails with exit code 2 and
-  zero mutations.
+  and ControlSession names are unique within their own root kind across the
+  registry. Window, Pane, and Agent names are unique by
+  `(rootOwnerUID, kind, name)`, where the root is the Project or ControlSession
+  reached through the direct `ownerRef` chain. Different roots and different
+  kinds may use the same spelling.
+- Automatic creation mints the opaque UID first and stores that exact full UID,
+  including its kind prefix and complete payload, as `metadata.name`. If that
+  name slot is already occupied, the unpublished UID is discarded and reminted
+  up to 100 times. There is no semantic stem, prefix truncation, sibling scan,
+  or numeric suffix allocator. An explicit `--name` keeps its original spelling
+  after validation; explicit create and rename collisions fail with exit code 2
+  and zero Registry, tmux, or provider writes.
+- Schema v4 stores no `metadata.displayName`, `status.displayTitle`, or renamed
+  presentation replacement. Human context is projected for one invocation from
+  the Project root, topic/provider/command, and exact live tmux title. That
+  context may duplicate and is never a selector, reservation, ownerRef, or
+  durable identity input. `metadata.labels` remains key/value classification;
+  `metadata.annotations` remains non-identifying metadata such as an AI topic.
 
 Root lifecycle:
 
@@ -656,10 +651,9 @@ Registry file and schema:
   bounded retry and stale-lock breaking, matching the notify queue and
   recent-windows stores. Explicit Registry repair uses its own recovery lock;
   see the recovery boundary below.
-- The envelope carries `schemaVersion: 3`. Version 1 is the first Registry
-  envelope projmux wrote; this build migrates v1 through v2 and then performs
-  the lossless v2 → v3 envelope advance that admits Project-stop
-  `interrupted/control-action` evidence.
+- The envelope carries `schemaVersion: 4`. Version 1 is the first Registry
+  envelope projmux wrote; this build migrates v1 through v2 and v3 before the
+  v3 → v4 root-scoped naming and presentation-field cutover.
 - Everything else fails closed: the file is refused as unreadable and **no
   write happens at all** — no rewrite, no backup, no staged temp file. This
   covers a **newer** schemaVersion (which would destroy state a newer build
@@ -673,9 +667,9 @@ Registry file and schema:
   registry yet" case **only before the first successful write**; see the durable
   envelope below. Only a file with actual content and no usable `schemaVersion`
   is refused as unknown.
-- A normal locked `Load` of v1 or v2 runs the production migration chain,
+- A normal locked `Load` of v1, v2, or v3 runs the production migration chain,
   validates the repaired graph, writes the versioned backup, and publishes the
-  v3 bytes through the existing temp-file atomic replace. A failed migration
+  v4 bytes through the existing temp-file atomic replace. A failed migration
   leaves the source bytes unchanged. Every successful first migrator (`Load`,
   `Update`, `UpdateConvergent`, or explicit `Migrate`) also atomically publishes
   a 0600 `<exact-backup>.migration-report.json` beside the versioned backup
@@ -685,11 +679,21 @@ Registry file and schema:
   A failed migration removes any staged/published report before returning while
   leaving the source bytes unchanged. `LoadWithMigrationResult` and `Migrate`
   additionally return both exact paths from the same locked transaction. A
-  second pass sees v3 and writes neither Registry, backup, nor report bytes. An
-  existing invalid v3 document is validated and refused byte-identically even
+  second pass sees v4 and writes neither Registry, backup, nor report bytes. An
+  existing invalid v4 document is validated and refused byte-identically even
   when explicit `Migrate` has no version step to run.
   Explicit read-only inspection migrates only its returned in-memory view and
   never publishes it.
+- The v3 → v4 step validates the UID/direct-owner graph, rebuilds reservations
+  from that graph, and changes descendant scope to the owning Project or
+  ControlSession. Every member of a root-wide same-kind duplicate group moves
+  to its exact UID name. If one of those destinations is held by a resource
+  outside the set, the holder is added until destination closure reaches a
+  fixed point; every unique name outside that closure is preserved. The sorted
+  name mapping and content-free receipts for removed `metadata.displayName` and
+  `status.displayTitle` keys are recorded beside the exact-byte v3 backup. A
+  present empty key records zero bytes and SHA-256 of empty content without
+  being counted as information loss.
 - The v1 repair is deterministic over Registry order apart from injected opaque
   uid generation. It preserves every existing uid, ownerRef, reserved name, and
   Agent conversation/session pointer. A valid Project anchor is never
@@ -717,8 +721,8 @@ Registry file and schema:
   Mixed legacy/final authority is refused; the final writer emits no
   `primaryPaneRef`; and a second final-v2 pass writes zero bytes.
 - **Field spelling:** the registry file intentionally uses the resource-model
-  camelCase spelling (`apiVersion`, `schemaVersion`, `metadata`, `displayName`,
-  `ownerRef`, `anchorPaneRef`, `defaultShellPaneRef`, `spec`, `status`) rather than the snake_case
+  camelCase spelling (`apiVersion`, `schemaVersion`, `metadata`, `ownerRef`,
+  `anchorPaneRef`, `defaultShellPaneRef`, `spec`, `status`) rather than the snake_case
   used by the older projmux on-disk JSON. The two spellings coexist on purpose:
   existing snake_case files are **not** retro-changed, and the resource registry
   follows the resource-model contract.
@@ -831,11 +835,14 @@ Registry recovery boundary (`projmux reconcile registry`):
   `ownerRef`, or a broken name reservation are all refused. Restoring an
   unverified source would replace a known-damaged registry with an
   unknown-damaged one, and the second state is worse because it looks healthy.
-- **Byte-semantic restore.** The verified bytes are published verbatim rather than
-  re-encoded, so uids, owner relations, and name reservations are preserved
-  exactly, a repeat restore is a byte comparison instead of a normalization
-  argument, and an older-but-known schema stays readable through the existing safe
-  read and migrates on the next semantic write.
+- **Byte-semantic current restore and canonical v3 import.** A verified v4
+  source is published verbatim. A verified v3 source is never made live in its
+  legacy form: its exact bytes are first written to a versioned backup, a
+  checksum-bearing content-free migration report is published beside that
+  backup, and the same deterministic v3 → v4 migration used by normal Registry
+  loading supplies the staged live bytes. Repeat restore compares the live
+  Registry with that canonical publish checksum, so it writes no new Registry,
+  backup, or report bytes.
 - **The bytes being replaced are kept.** A restore copies the current registry to
   `recovery/replaced-<stamp>-<seq>.json` before replacing it, and unlike the
   write-side copy it keeps content that does **not** verify — that damaged
@@ -974,15 +981,15 @@ tmux transport mirror:
 - `rename pane` changes `Pane.metadata.name` and its `@projmux_pane_label`
   mirror only. It never writes the raw tmux `pane_title`.
 - `rename window` is the explicit stable-identity path: it changes only
-  `Window.metadata.name`, its scoped name reservation, and the exact live
-  `@projmux_window_name` transport mirror. It does not
-  change `metadata.displayName` or tmux `window_name`.
+  `Window.metadata.name`, its root-scoped same-kind name reservation, and the
+  exact live `@projmux_window_name` transport mirror. It does not change tmux
+  `window_name`.
 - `rename project` likewise writes only `Project.metadata.name` and the exact
   live session's `@projmux_project_name`; it never renames the tmux session.
   `rebind project` preserves the Project uid and session name while updating
   `spec.root` and the exact live session's `@projmux_project_path`. Neither
   operation moves files.
-- `rename agent` changes only the Window-scoped Agent `metadata.name` and its
+- `rename agent` changes only the root-scoped Agent `metadata.name` and its
   reservation. Agent topic annotations, provider, lifecycle status, and the
   managed Pane's name and raw title are independent and receive no tmux write.
 - Rename/rebind commits the authoritative Registry transaction before its
@@ -997,24 +1004,23 @@ tmux transport mirror:
   UID claim is nonzero and reports that Registry state committed plus
   `projmux reconcile resources` as the retry boundary.
 - The configured `window.rename` action (`Ctrl-M` by default) is the runtime
-  display path and invokes tmux `rename-window` directly. Reconciliation
-  observes that `window_name` back into `metadata.displayName` without changing
-  stable identity.
+  display path and invokes tmux `rename-window` directly. Reads may observe that
+  exact live `window_name` as invocation-scoped context; reconciliation never
+  persists it as a Registry address or presentation field.
 - Registry-managed Windows are set to `automatic-rename off` so a focused-Pane
   change cannot overwrite the Window name. The **global** `automatic-rename on`
   plus visible-pane-label `automatic-rename-format` default in the generated
   app config is unchanged, so unmanaged windows keep their existing behavior.
-- Legacy import gives every newly discovered Window the literal `window` base,
-  uniquified in Project scope (`window`, `window-1`, ...), and projects its
-  current `window_name` into duplicate-allowed `metadata.displayName` before
-  switching it to `automatic-rename off`. Re-observing an existing Window may
-  refresh only that display field; it never changes the uid, stable name,
-  ownerRef, or name reservation. An existing `@projmux_pane_label` remains the
-  migration seed and transport mirror for the Pane **name**; Pane naming is a
-  separate contract and is unchanged here.
-- `Pane.metadata.name` is the primary pane display source. The derived
-  `Pane.status.displayTitle` (Agent topic → known shell → raw pane title) is
-  secondary and is never a selector, an identity, or a Window name source.
+- Legacy import gives every newly discovered Window, Pane, and Agent its exact
+  minted UID as the automatic Registry name and switches managed Windows to
+  `automatic-rename off`. Observed `window_name`, Pane label/title, command,
+  shell, provider, and topic are never persisted as an address or presentation
+  field. Re-observing an existing resource preserves its UID, stable name,
+  ownerRef, and reservation. `@projmux_window_name` and
+  `@projmux_pane_label` remain live mirrors of the durable name.
+- `Pane.metadata.name` is the stable Pane address. Human-readable Pane context
+  is derived per invocation from the owner Agent topic/provider, command, and
+  exact live title; it is never a selector, identity, or Window name source.
 
 Runtime observation and resource status:
 
@@ -1154,13 +1160,12 @@ Binding reapply and adoption:
   and neither does a **refused** pane — a refusal means a real registry Pane sits
   on the other side of the ambiguity, so minting beside it would leave two Panes
   describing one tmux pane.
-- The registered Pane is named from `FallbackPaneNameBase` (`pane`, `pane-1`, …)
-  through the registry's own allocator, never from `pane_current_command`:
-  `metadata.name` is not derived from a runtime attribute, and the command
-  changes the moment the operator runs something else. The runtime reading goes
-  to `status.displayTitle` instead. The mint itself never creates an Agent: it
-  adds one Pane and stops. Linking that Pane to an Agent is the separate step
-  below, which runs on the Pane the walk just settled on.
+- The registered Pane uses its exact minted UID as `metadata.name`, never
+  `pane_current_command`, the Pane label/title, or a numeric suffix. Those
+  runtime values may contribute only to invocation-scoped context. The mint
+  itself never creates an Agent: it adds one Pane and stops. Linking that Pane
+  to an Agent is the separate step below, which runs on the Pane the walk just
+  settled on.
 - **Nothing is ever re-identified.** Adoption changes no uid, merges no uid, and
   reassigns no uid; it only decides which registry object a live tmux object is
   the runtime of, and then writes that object's existing uid. Adopted objects
@@ -1880,7 +1885,7 @@ Resource-first create:
 Selector and the implicit active target:
 
 - A selector value is either `uid:<uid>` or a `metadata.name`. There is no
-  bare-uid form; `displayName`, `spec.root`, and tmux `%N`/`@N`/`$N` handles are
+  bare-uid form; ephemeral context, `spec.root`, and tmux `%N`/`@N`/`$N` handles are
   structurally unmatchable. `--project` is at-most-once and fixes the scope,
   `--window`/`--pane` repeat and union, `--selector key=value` repeats and ANDs,
   and how many targets a `<verb, kind>` pair accepts comes from one declared

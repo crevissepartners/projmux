@@ -34,11 +34,12 @@ var (
 // form. Field spelling stays snake_case to match the rest of this file; the
 // resource-model camelCase spelling is used only by the resource registry.
 type ResourceMetadata struct {
-	UID       string            `json:"uid,omitempty"`
-	Name      string            `json:"name,omitempty"`
-	Labels    map[string]string `json:"labels,omitempty"`
-	OwnerKind string            `json:"owner_kind,omitempty"`
-	OwnerUID  string            `json:"owner_uid,omitempty"`
+	UID                   string            `json:"uid,omitempty"`
+	Name                  string            `json:"name,omitempty"`
+	Labels                map[string]string `json:"labels,omitempty"`
+	OwnerKind             string            `json:"owner_kind,omitempty"`
+	OwnerUID              string            `json:"owner_uid,omitempty"`
+	RegistrySchemaVersion int               `json:"registry_schema_version,omitempty"`
 }
 
 // Snapshot is the versioned record for one tmux session. Phase 1 only
@@ -60,6 +61,8 @@ type Snapshot struct {
 // Window describes one tmux window in session order.
 type Window struct {
 	Index           int               `json:"index"`
+	RuntimeID       string            `json:"-"`
+	RegistryUID     string            `json:"-"`
 	Name            string            `json:"name"`
 	Layout          string            `json:"layout,omitempty"`
 	ActivePaneIndex int               `json:"active_pane_index"`
@@ -69,12 +72,15 @@ type Window struct {
 
 // Pane describes one tmux pane and the recipe metadata needed by future replay.
 type Pane struct {
-	Index    int               `json:"index"`
-	Label    string            `json:"label,omitempty"`
-	Title    string            `json:"title,omitempty"`
-	CWD      string            `json:"cwd"`
-	Metadata *ResourceMetadata `json:"metadata,omitempty"`
-	Recipe   Recipe            `json:"recipe"`
+	Index         int               `json:"index"`
+	RuntimeID     string            `json:"-"`
+	RegistryUID   string            `json:"-"`
+	Label         string            `json:"label,omitempty"`
+	Title         string            `json:"title,omitempty"`
+	CWD           string            `json:"cwd"`
+	Metadata      *ResourceMetadata `json:"metadata,omitempty"`
+	AgentMetadata *ResourceMetadata `json:"agent_metadata,omitempty"`
+	Recipe        Recipe            `json:"recipe"`
 }
 
 // Recipe records how a pane should be classified for future restore.
@@ -205,6 +211,16 @@ func (s Snapshot) Validate() error {
 			if err := pane.Metadata.validate(fmt.Sprintf("window %d pane %d", wi, pi)); err != nil {
 				return err
 			}
+			if err := pane.AgentMetadata.validate(fmt.Sprintf("window %d pane %d agent", wi, pi)); err != nil {
+				return err
+			}
+			if pane.AgentMetadata != nil {
+				if pane.Recipe.Kind != RecipeKindAgent || pane.Metadata == nil || window.Metadata == nil ||
+					pane.Metadata.OwnerKind != "Agent" || pane.Metadata.OwnerUID != pane.AgentMetadata.UID ||
+					pane.AgentMetadata.OwnerKind != "Window" || pane.AgentMetadata.OwnerUID != window.Metadata.UID {
+					return fmt.Errorf("%w: window %d pane %d Agent metadata does not match the exact Agent/Pane/Window owner chain", ErrInvalidSnapshot, wi, pi)
+				}
+			}
 			if err := pane.Recipe.Validate(); err != nil {
 				return fmt.Errorf("%w: window %d pane %d recipe: %w", ErrInvalidSnapshot, wi, pi, err)
 			}
@@ -213,7 +229,54 @@ func (s Snapshot) Validate() error {
 			return fmt.Errorf("%w: window %d active_pane_index %d does not match a pane index", ErrInvalidSnapshot, wi, window.ActivePaneIndex)
 		}
 	}
+	if _, _, err := s.RegistrySchemaProvenance(); err != nil {
+		return err
+	}
 	return nil
+}
+
+// RegistrySchemaProvenance returns the one Registry schema version carried by
+// every metadata-bearing resource in the snapshot. The boolean is false only
+// when the snapshot carries no resource metadata at all. A zero version is the
+// legacy pre-provenance form; it is still a real, consistently legacy marker
+// when metadata blocks are present.
+//
+// Missing ancestors do not hide a child marker: a Pane stamped by a current
+// producer makes the snapshot current even when the top-level metadata block
+// is absent. Conversely, mixing zero/v3/v4 markers is refused instead of
+// guessing which resource supplied the authoritative version.
+func (s Snapshot) RegistrySchemaProvenance() (version int, present bool, err error) {
+	visit := func(where string, metadata *ResourceMetadata) error {
+		if metadata == nil {
+			return nil
+		}
+		if !present {
+			version, present = metadata.RegistrySchemaVersion, true
+			return nil
+		}
+		if metadata.RegistrySchemaVersion != version {
+			return fmt.Errorf("%w: mixed registry schema provenance: %s carries v%d, want v%d",
+				ErrInvalidSnapshot, where, metadata.RegistrySchemaVersion, version)
+		}
+		return nil
+	}
+	if err := visit("snapshot", s.Metadata); err != nil {
+		return 0, false, err
+	}
+	for wi, window := range s.Windows {
+		if err := visit(fmt.Sprintf("window %d", wi), window.Metadata); err != nil {
+			return 0, false, err
+		}
+		for pi, pane := range window.Panes {
+			if err := visit(fmt.Sprintf("window %d pane %d", wi, pi), pane.Metadata); err != nil {
+				return 0, false, err
+			}
+			if err := visit(fmt.Sprintf("window %d pane %d agent", wi, pi), pane.AgentMetadata); err != nil {
+				return 0, false, err
+			}
+		}
+	}
+	return version, present, nil
 }
 
 // validate rejects a present-but-identity-free resource metadata block. A nil
@@ -231,6 +294,9 @@ func (m *ResourceMetadata) validate(where string) error {
 	}
 	if (m.OwnerKind == "") != (m.OwnerUID == "") {
 		return fmt.Errorf("%w: %s metadata owner_kind and owner_uid must be set together", ErrInvalidSnapshot, where)
+	}
+	if m.RegistrySchemaVersion < 0 {
+		return fmt.Errorf("%w: %s metadata registry_schema_version must not be negative", ErrInvalidSnapshot, where)
 	}
 	return nil
 }

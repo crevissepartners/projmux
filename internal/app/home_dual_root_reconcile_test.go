@@ -51,7 +51,7 @@ func addCorrectiveAIncidentRegistry(t *testing.T, registry *coremetadata.Registr
 		Metadata: meta("pane-home-control", "zsh", owner(coremetadata.KindWindow, "win-home-control")),
 		Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: projectRoot},
 	})
-	reserve("win-home-control", coremetadata.KindPane, "zsh", "pane-home-control")
+	reserve(correctiveAControlUID, coremetadata.KindPane, "zsh", "pane-home-control")
 
 	registry.Projects = append(registry.Projects, coremetadata.Project{
 		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
@@ -71,7 +71,7 @@ func addCorrectiveAIncidentRegistry(t *testing.T, registry *coremetadata.Registr
 		Metadata: meta("pane-home-project", "zsh", owner(coremetadata.KindWindow, "win-home-project")),
 		Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: projectRoot},
 	})
-	reserve("win-home-project", coremetadata.KindPane, "zsh", "pane-home-project")
+	reserve(correctiveAProjectUID, coremetadata.KindPane, "zsh", "pane-home-project")
 	*registry = registry.Normalize()
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("Corrective A incident fixture is invalid: %v", err)

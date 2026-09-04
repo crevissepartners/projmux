@@ -32,6 +32,19 @@ func registryNavigationRowValue(row registryview.Row) string { return row.ID }
 
 var registryNavigationColumns = []string{"KIND", "NAME", "STATUS", "PROGRESS", "TERMINATION", "ACTIONS", "RUNTIME", "UID"}
 
+// registryNavigationColumnBounds is the fixed-viewport display-width budget of
+// this view's free-text columns. See internal/app/picker_table_layout.go for
+// why a fixed-viewport table needs one and how the numbers were measured. The
+// short fixed-vocabulary columns are deliberately absent: they are already
+// bounded by their own vocabulary, and UID is absent because identity stays
+// exact and greppable in the rendered row.
+func registryNavigationColumnBounds() []pickerColumnBound {
+	return pickerColumnBoundsFor(registryNavigationColumns, map[string]int{
+		"NAME":    registryNavigationNameCells,
+		"RUNTIME": registryNavigationRuntimeCells,
+	})
+}
+
 func registryNavigationRowAt(row registryview.Row, locale i18n.Locale, now time.Time) []string {
 	return []string{
 		runtimeCell(registryNavigationIndent(row) + string(row.Kind)),
@@ -150,14 +163,7 @@ func (v registryNavigationView) entries() []intpickercompat.Entry {
 	for _, row := range v.rows {
 		table = append(table, registryNavigationRowAt(row, v.locale, v.now))
 	}
-	widths := make([]int, len(registryNavigationColumns))
-	for _, row := range table {
-		for i, cell := range row {
-			if width := resourceCellWidth(cell); width > widths[i] {
-				widths[i] = width
-			}
-		}
-	}
+	widths := boundPickerTableWidths(table, registryNavigationColumnBounds())
 	entries = append(entries, intpickercompat.Entry{
 		Label: resourceTableLine(table[0], widths),
 		Value: settingsNoopValue,

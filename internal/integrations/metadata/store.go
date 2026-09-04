@@ -506,7 +506,7 @@ type MigrationResult struct {
 
 // Migrate performs the durable schema migration or same-version prerelease
 // normalization: backup, durable report, temp write, validate, atomic replace.
-// It is a no-op when the file is missing or already schema v3, and it fails
+// It is a no-op when the file is missing or already schema v4, and it fails
 // closed without writing when the envelope or raw Window authority is unknown.
 func (s *Store) Migrate() (MigrationResult, error) {
 	if s == nil {
@@ -692,14 +692,16 @@ const migrationReportSuffix = ".migration-report.json"
 // versioned backup. It is deliberately outside recoveryDir and its retention
 // policy: the backup and its report remain an inseparable audit pair.
 type migrationEvidence struct {
-	EvidenceVersion      int                            `json:"evidenceVersion"`
-	BackupPath           string                         `json:"backupPath"`
-	BackupSHA256         string                         `json:"backupSha256"`
-	FromVersion          int                            `json:"fromVersion"`
-	ToVersion            int                            `json:"toVersion"`
-	RepairCount          int                            `json:"repairCount"`
-	InformationLossCount int                            `json:"informationLossCount"`
-	Repairs              []coremetadata.MigrationRepair `json:"repairs"`
+	EvidenceVersion      int                                  `json:"evidenceVersion"`
+	BackupPath           string                               `json:"backupPath"`
+	BackupSHA256         string                               `json:"backupSha256"`
+	FromVersion          int                                  `json:"fromVersion"`
+	ToVersion            int                                  `json:"toVersion"`
+	RepairCount          int                                  `json:"repairCount"`
+	InformationLossCount int                                  `json:"informationLossCount"`
+	Repairs              []coremetadata.MigrationRepair       `json:"repairs"`
+	NameRepairs          []coremetadata.MigrationNameRepair   `json:"nameRepairs,omitempty"`
+	FieldRemovals        []coremetadata.MigrationFieldRemoval `json:"fieldRemovals,omitempty"`
 }
 
 func (s *Store) writeMigratedRegistry(registry coremetadata.Registry, onDiskVersion int, report coremetadata.MigrationReport) (string, string, error) {
@@ -762,9 +764,11 @@ func (s *Store) writeMigrationEvidence(backupPath string, report coremetadata.Mi
 		BackupSHA256:         fmt.Sprintf("%x", digest),
 		FromVersion:          report.FromVersion,
 		ToVersion:            report.ToVersion,
-		RepairCount:          len(report.Repairs),
+		RepairCount:          report.RepairCount(),
 		InformationLossCount: report.InformationLossCount(),
 		Repairs:              report.Repairs,
+		NameRepairs:          report.NameRepairs,
+		FieldRemovals:        report.FieldRemovals,
 	}
 	data, err := json.MarshalIndent(evidence, "", "  ")
 	if err != nil {
@@ -1209,6 +1213,10 @@ func (s *Store) backup(fromVersion int) (string, error) {
 		}
 		return "", fmt.Errorf("metadata: read registry for backup %s: %w", s.path, err)
 	}
+	return s.backupBytes(data, fromVersion)
+}
+
+func (s *Store) backupBytes(data []byte, fromVersion int) (string, error) {
 	if fromVersion == 0 {
 		var envelope struct {
 			SchemaVersion int `json:"schemaVersion"`

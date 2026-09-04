@@ -475,7 +475,7 @@ func TestNativeCodexCreateBindsExactThreadAndSubmitsPromptOnce(t *testing.T) {
 			t.Fatalf("split argv submitted a second prompt or missed exact thread: %v", call)
 		}
 	}
-	agent := agentNamed(t, store, "win-alpha-main", "codex-1")
+	agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
 	if agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.ThreadID != "thread-native-1" {
 		t.Fatalf("sessionRef = %#v", agent.Status.SessionRef)
 	}
@@ -515,15 +515,15 @@ func TestCodexNativeCurrentChangePinsExistingAgentAndAdmitsNewCreateOnlyToNew(t 
 	if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "old generation prompt"); err != nil {
 		t.Fatal(err)
 	}
-	oldAgent := agentNamed(t, store, "win-alpha-main", "codex-1")
+	oldAgent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
 	oldRef := oldAgent.Status.SessionRef.Clone()
 	native.currentRoute = newRoute
 	if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "new generation prompt"); err != nil {
 		t.Fatal(err)
 	}
-	newAgent := agentNamed(t, store, "win-alpha-main", "codex-2")
+	newAgent := agentNamed(t, store, "win-alpha-main", "agent-test-3")
 
-	oldAgent = agentNamed(t, store, "win-alpha-main", "codex-1")
+	oldAgent = agentNamed(t, store, "win-alpha-main", "agent-test-1")
 	if oldAgent.Status.SessionRef == nil || oldAgent.Status.SessionRef.Codex == nil ||
 		oldAgent.Status.SessionRef.Codex.Endpoint == nil || !oldAgent.Status.SessionRef.Codex.Endpoint.Same(oldRoute.Endpoint) ||
 		!oldAgent.Status.SessionRef.SameConversation(oldRef) {
@@ -564,7 +564,7 @@ func TestCodexNativeCurrentChangePinsExistingAgentAndAdmitsNewCreateOnlyToNew(t 
 	if _, changed, err := store.mutator().SetCodexGenerationLifecycle(&store.registry, oldAgent.Metadata.UID, oldRoute.Endpoint, draining); err != nil || !changed {
 		t.Fatalf("publish old Draining lifecycle: changed=%t err=%v", changed, err)
 	}
-	oldAgent = agentNamed(t, store, "win-alpha-main", "codex-1")
+	oldAgent = agentNamed(t, store, "win-alpha-main", "agent-test-1")
 	beforeControlRef := oldAgent.Status.SessionRef.Clone()
 	oldPane, ok := store.registry.Pane(oldAgent.Status.PaneRef)
 	if !ok || oldPane.Status.Activation.Codex == nil {
@@ -594,7 +594,7 @@ func TestCodexNativeCurrentChangePinsExistingAgentAndAdmitsNewCreateOnlyToNew(t 
 	if len(controlEndpoints) != 1 || !controlEndpoints[0].Same(oldRoute.Endpoint) || controlEndpoints[0].Same(newRoute.Endpoint) {
 		t.Fatalf("old Agent message crossed generation routes: %+v", controlEndpoints)
 	}
-	oldAgent = agentNamed(t, store, "win-alpha-main", "codex-1")
+	oldAgent = agentNamed(t, store, "win-alpha-main", "agent-test-1")
 	oldPane, ok = store.registry.Pane(oldAgent.Status.PaneRef)
 	if !ok || oldAgent.Status.SessionRef == nil || oldAgent.Status.SessionRef.Codex == nil ||
 		!oldAgent.Status.SessionRef.Codex.Endpoint.Same(oldRoute.Endpoint) || oldAgent.Status.SessionRef.Codex.Lifecycle == nil ||
@@ -620,7 +620,7 @@ func TestDrainingOldCodexAgentKeepsExactTurnControlTUIAndPaneBinding(t *testing.
 	if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--window", "main", "--", "old live turn"); err != nil {
 		t.Fatal(err)
 	}
-	agent := agentNamed(t, store, "win-alpha-main", "codex-1")
+	agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
 	pane, ok := store.registry.Pane(agent.Status.PaneRef)
 	if !ok || pane.Status.Activation.Codex == nil {
 		t.Fatalf("old native Pane = %+v", pane)
@@ -639,7 +639,7 @@ func TestDrainingOldCodexAgentKeepsExactTurnControlTUIAndPaneBinding(t *testing.
 		t.Fatalf("publish Draining: changed=%t err=%v", changed, err)
 	}
 	native.currentRoute = newRoute
-	agent = agentNamed(t, store, "win-alpha-main", "codex-1")
+	agent = agentNamed(t, store, "win-alpha-main", "agent-test-1")
 	beforeRef, beforePaneRef := agent.Status.SessionRef.Clone(), agent.Status.PaneRef
 	beforeGeneration, beforeRuntime := pane.Status.Activation.Generation, pane.Status.Activation.RuntimeID
 	beforePlans, beforeSplits := len(panes.plans), len(splitWindowCalls(tmux))
@@ -658,7 +658,7 @@ func TestDrainingOldCodexAgentKeepsExactTurnControlTUIAndPaneBinding(t *testing.
 	if _, _, err := runRoute(t, control, "turn", "start", "uid:"+agent.Metadata.UID, "--", "continue exact old thread"); err != nil {
 		t.Fatal(err)
 	}
-	agent = agentNamed(t, store, "win-alpha-main", "codex-1")
+	agent = agentNamed(t, store, "win-alpha-main", "agent-test-1")
 	pane, ok = store.registry.Pane(agent.Status.PaneRef)
 	if !ok || len(endpoints) != 1 || !endpoints[0].Same(oldRoute.Endpoint) || endpoints[0].Same(newRoute.Endpoint) ||
 		agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || !agent.Status.SessionRef.Codex.Endpoint.Same(oldRoute.Endpoint) ||
@@ -738,7 +738,7 @@ func TestEmptyPromptCodexCreateUsesOnePlainCLILaneAndNoNativeBinding(t *testing.
 			if len(panes.plans) != 0 || len(panes.bound) != 0 || len(panes.lifecycle) != 0 {
 				t.Fatalf("empty fallback gained native Pane state: plans=%+v bindings=%+v lifecycle=%+v", panes.plans, panes.bound, panes.lifecycle)
 			}
-			agent := agentNamed(t, store, "win-alpha-main", "codex-1")
+			agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
 			pane, ok := store.registry.Pane(agent.Status.PaneRef)
 			if !ok || pane.Status.Activation.Codex != nil || agent.Status.SessionRef != nil ||
 				agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.Activation.State != coremetadata.ActivationNotRequested ||
@@ -823,7 +823,7 @@ func TestPayloadFreeCodexFallbackCarriesContentFreeDeclaredAuthority(t *testing.
 		t.Fatalf("payload-free fallback stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
 	paneID := strings.TrimSpace(stdout)
-	agent := agentNamed(t, store, "win-alpha-main", "codex-1")
+	agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
 	pane, ok := store.registry.Pane(agent.Status.PaneRef)
 	if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.SessionRef != nil ||
 		pane.Status.Activation.Codex != nil || pane.Status.Activation.RuntimeID != paneID {

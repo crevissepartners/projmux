@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/config"
 	corelayout "github.com/crevissepartners/projmux/internal/core/layout"
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/sessions"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
@@ -721,7 +722,15 @@ func (c *settingsCommand) saveProjectLatestSessionStateSnapshot(stdout io.Writer
 		return err
 	}
 	now := time.Now()
-	snap, err := inttmux.NewClient(c.tmuxRunner).SaveSessionSnapshot(context.Background(), store, identity.Session, now)
+	registry, project, found, err := c.snapshotProjectForSettings(identity.Project.Path)
+	if err != nil {
+		return err
+	}
+	var transform func(sessionstate.Snapshot) (sessionstate.Snapshot, error)
+	if found {
+		transform = snapshotMetadataTransform(registry, project.Metadata.UID)
+	}
+	snap, err := inttmux.NewClient(c.tmuxRunner).SaveSessionSnapshotWithTransform(context.Background(), store, identity.Session, now, transform)
 	if err != nil {
 		return fmt.Errorf("save project session snapshot %q: %w", identity.Session, err)
 	}
@@ -779,6 +788,16 @@ func (c *settingsCommand) saveProjectNamedSessionStateSnapshot(stdout io.Writer,
 	if err != nil {
 		return fmt.Errorf("capture named project session snapshot %q: %w", identity.Session, err)
 	}
+	registry, project, found, err := c.snapshotProjectForSettings(identity.Project.Path)
+	if err != nil {
+		return err
+	}
+	if found {
+		snap, err = coremetadata.StampProjectSnapshot(registry, project.Metadata.UID, snap)
+		if err != nil {
+			return fmt.Errorf("stamp named project session snapshot %q: %w", identity.Session, err)
+		}
+	}
 	preset := corelayout.FromSnapshot(snap, identity.Project.Path, "Named snapshot saved from live session", corelayout.ModeInheritAutosave)
 	if err := corelayout.NewStore(identity.Project.Path).Save(name, preset); err != nil {
 		return fmt.Errorf("save named project session snapshot %q: %w", name, err)
@@ -786,6 +805,22 @@ func (c *settingsCommand) saveProjectNamedSessionStateSnapshot(stdout io.Writer,
 	counts = sessionStateDiagnosticCounts(snap)
 	_, err = fmt.Fprintf(stdout, "saved named project session snapshot: %s (%s, %s)\n", name, sessionStateCount(len(snap.Windows), "window"), sessionStateCount(statusbarSessionStatePaneCount(snap), "pane"))
 	return err
+}
+
+func (c *settingsCommand) snapshotProjectForSettings(root string) (coremetadata.Registry, coremetadata.Project, bool, error) {
+	read := loadResourceRegistry
+	if c != nil && c.resourceRegistry != nil {
+		read = c.resourceRegistry
+	}
+	registry, err := read()
+	if err != nil {
+		return coremetadata.Registry{}, coremetadata.Project{}, false, fmt.Errorf("save project session snapshot: read Registry: %w", err)
+	}
+	root = filepath.Clean(root)
+	if project, found := registry.ProjectByRoot(root); found {
+		return registry, project.Clone(), true, nil
+	}
+	return registry, coremetadata.Project{}, false, nil
 }
 
 func (c *settingsCommand) previewProjectSessionStateSnapshot(stdout io.Writer) error {

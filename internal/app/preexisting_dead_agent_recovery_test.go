@@ -129,8 +129,8 @@ func addSecondPreexistingRecoveryCandidate(store *fakeResourceStore, stable *sta
 	store.registry.Agents = append(store.registry.Agents, agentClone)
 	store.registry.Panes = append(store.registry.Panes, paneClone)
 	store.registry.NameReservations = append(store.registry.NameReservations,
-		coremetadata.NameReservation{Scope: agentClone.Metadata.OwnerUID(), Kind: coremetadata.KindAgent, Name: agentClone.Metadata.Name, UID: secondAgentUID},
-		coremetadata.NameReservation{Scope: secondAgentUID, Kind: coremetadata.KindPane, Name: paneClone.Metadata.Name, UID: secondPaneUID},
+		coremetadata.NameReservation{Scope: "prj-alpha", Kind: coremetadata.KindAgent, Name: agentClone.Metadata.Name, UID: secondAgentUID},
+		coremetadata.NameReservation{Scope: "prj-alpha", Kind: coremetadata.KindPane, Name: paneClone.Metadata.Name, UID: secondPaneUID},
 	)
 	stable.dead[secondPaneUID] = true
 	secondRow := stable.observed[0]

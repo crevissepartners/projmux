@@ -26,9 +26,9 @@ var renameKinds = cli.ChildSpellings("rename")
 // renameCommand implements the canonical `rename` verb.
 //
 // It changes the Projmux `metadata.name` of exactly one resource and nothing
-// else. It never writes the raw tmux `pane_title`, never touches a
-// `displayName`, and never invents a suffix: an explicit name that is already
-// reserved in the target scope is a usage error with zero mutations.
+// else. It never writes raw tmux presentation and never invents a suffix: an
+// explicit name already reserved in the target root/kind scope is a usage error
+// with zero mutations.
 type renameCommand struct {
 	store  *resourceStore
 	mirror resourceMutationMirror

@@ -176,19 +176,10 @@ func (m runtimeMutationMetadataMirror) MirrorWindow(ctx context.Context, windowI
 			return err == nil && strings.TrimSpace(string(out)) == want, err
 		}
 	}
-	observeName := func(ctx context.Context) (bool, error) {
-		owned, err := observeOwnedTarget(ctx)
-		if err != nil || !owned {
-			return false, err
-		}
-		out, err := exact.Run(ctx, "tmux", "display-message", "-p", "-t", windowID, "-F", "#{window_name}")
-		return err == nil && strings.TrimSpace(string(out)) == window.DisplayName(), err
-	}
 	declarations := []declaration{
 		{verb: mutationWriteIdentity, operands: []string{"-w", "-t", windowID, tmuxopts.AutomaticRenameWindow, "off"}, observe: observeOption(tmuxopts.AutomaticRenameWindow, "off")},
 		{verb: mutationWriteIdentity, operands: []string{"-w", "-t", windowID, "-q", tmuxopts.WindowUID, window.Metadata.UID}, observe: observeOption(tmuxopts.WindowUID, window.Metadata.UID)},
 		{verb: mutationWriteIdentity, operands: []string{"-w", "-t", windowID, "-q", tmuxopts.WindowName, window.Metadata.Name}, observe: observeOption(tmuxopts.WindowName, window.Metadata.Name)},
-		{verb: mutationRenameWindow, operands: []string{"-t", windowID, window.DisplayName()}, observe: observeName},
 	}
 	steps := make([]runtimeMutationStep, 0, len(declarations))
 	for index, item := range declarations {

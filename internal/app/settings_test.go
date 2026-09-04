@@ -4169,7 +4169,7 @@ func TestSettingsProjectSessionStateSaveNowCapturesProjectSession(t *testing.T) 
 	xdgState := t.TempDir()
 	project := filepath.Join(home, "source", "repos", "projmux")
 	storeDir := filepath.Join(xdgState, "projmux", "sessions")
-	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
+	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}", "#{window_id}", "#{@projmux_window_uid}"}, "\x1f")
 	paneFormat := strings.Join([]string{
 		"#{window_index}",
 		"#{pane_index}",
@@ -4186,6 +4186,8 @@ func TestSettingsProjectSessionStateSaveNowCapturesProjectSession(t *testing.T) 
 		"#{@projmux_ai_resume_id}",
 		"#{@projmux_ai_resume_source}",
 		"#{@projmux_ai_resume_updated_at}",
+		"#{pane_id}",
+		"#{@projmux_pane_uid}",
 	}, "\x1f")
 	refreshFormat := strings.Join([]string{
 		"#{pane_id}",
@@ -4247,7 +4249,7 @@ func TestSettingsProjectSessionStateSaveNamedSnapshotUsesPortablePaths(t *testin
 	xdgState := t.TempDir()
 	project := filepath.Join(home, "source", "repos", "projmux")
 	service := filepath.Join(project, "service")
-	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
+	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}", "#{window_id}", "#{@projmux_window_uid}"}, "\x1f")
 	paneFormat := strings.Join([]string{
 		"#{window_index}",
 		"#{pane_index}",
@@ -4264,6 +4266,8 @@ func TestSettingsProjectSessionStateSaveNamedSnapshotUsesPortablePaths(t *testin
 		"#{@projmux_ai_resume_id}",
 		"#{@projmux_ai_resume_source}",
 		"#{@projmux_ai_resume_updated_at}",
+		"#{pane_id}",
+		"#{@projmux_pane_uid}",
 	}, "\x1f")
 	runner := &recordingTmuxRunner{
 		outputs: map[string]string{

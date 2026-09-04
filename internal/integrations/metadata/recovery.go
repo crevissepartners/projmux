@@ -575,9 +575,12 @@ type RestoreRequest struct {
 
 // RestoreResult reports what a restore did.
 type RestoreResult struct {
-	SourcePath     string           `json:"sourcePath"`
-	SourceChecksum string           `json:"sourceChecksum"`
-	Contents       RegistryContents `json:"contents"`
+	SourcePath     string `json:"sourcePath"`
+	SourceChecksum string `json:"sourceChecksum"`
+	// PublishedChecksum is the checksum of the canonical bytes committed to
+	// registry.json. It differs from SourceChecksum only for a v3 source.
+	PublishedChecksum string           `json:"publishedChecksum"`
+	Contents          RegistryContents `json:"contents"`
 	// Changed is false when the registry already held the source bytes. A
 	// repeat restore is a no-op: no rename, no preserved copy, no marker write.
 	Changed bool `json:"changed"`
@@ -589,6 +592,20 @@ type RestoreResult struct {
 	PreservedChecksum string `json:"preservedChecksum,omitempty"`
 	// ReplacedState is how the bytes this restore replaced classified.
 	ReplacedState RegistryState `json:"replacedState,omitempty"`
+	// V3 migration evidence is internal to the registry recovery boundary. It
+	// records the exact imported bytes before their canonical v4 replacement;
+	// no public lifecycle OperationReceipt is introduced here.
+	SourceBackupPath    string                       `json:"sourceBackupPath,omitempty"`
+	MigrationReportPath string                       `json:"migrationReportPath,omitempty"`
+	Migration           coremetadata.MigrationReport `json:"-"`
+}
+
+type verifiedRecoverySource struct {
+	info            RegistryFileInfo
+	sourceBytes     []byte
+	publishBytes    []byte
+	publishChecksum string
+	migration       coremetadata.MigrationReport
 }
 
 // RestoreFrom publishes one verified source over the live registry.
@@ -596,17 +613,15 @@ type RestoreResult struct {
 // The sequence is: verify the source with no lock held, take the recovery-only
 // lock, re-read and re-verify the source, read the current bytes, enforce both
 // operator guards, no-op out if the bytes already match, preserve the current
-// bytes, stage the source bytes, re-verify the staged file, publish the
+// bytes, stage the canonical publish bytes, re-verify the staged file, publish the
 // initialized marker, prove under the lock that neither input moved, and only
 // then rename. Every failure before the rename leaves the registry
 // byte-identical and undoes whatever this call created.
 //
-// The source bytes are published verbatim rather than re-encoded. That is what
-// makes the restore byte-semantic: uids, owner relations, and name reservations
-// are preserved exactly as the verified copy holds them, a repeat restore is a
-// trivial byte comparison instead of a normalization argument, and an older but
-// valid schema stays readable through the existing safe-read and migrates on
-// the next semantic write instead of being silently rewritten here.
+// A current source is published verbatim. A v3 source is migrated in memory,
+// its exact input is backed up with checksum-bearing evidence, and only the
+// deterministic canonical v4 bytes are staged. Repeat restores compare against
+// the canonical publish checksum and therefore remain byte-level no-ops.
 func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 	if s == nil {
 		return RestoreResult{}, errors.New("metadata: nil registry store")
@@ -620,7 +635,7 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 	}
 	// Verify before the lock. A rejected source must not have created the
 	// metadata directory or a lock file on its way to being refused.
-	verified, sourceBytes, err := verifyRecoverySource(source, s.migrations, req.ExpectSourceChecksum)
+	verified, err := s.verifyRecoverySource(source, req.ExpectSourceChecksum)
 	if err != nil {
 		return RestoreResult{}, err
 	}
@@ -630,15 +645,15 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 		// Re-verify under the recovery lock. Between the pre-lock verification and here
 		// the file could have been replaced by something this build must not
 		// publish, so the classification is redone rather than trusted.
-		relocked, lockedBytes, err := verifyRecoverySource(source, s.migrations, req.ExpectSourceChecksum)
+		relocked, err := s.verifyRecoverySource(source, req.ExpectSourceChecksum)
 		if err != nil {
 			return err
 		}
-		if relocked.Checksum != verified.Checksum {
+		if relocked.info.Checksum != verified.info.Checksum {
 			return fmt.Errorf("metadata: %w: %s was %s when planned and is %s under the lock",
-				ErrRecoveryRaced, source, verified.Checksum, relocked.Checksum)
+				ErrRecoveryRaced, source, verified.info.Checksum, relocked.info.Checksum)
 		}
-		sourceBytes, verified = lockedBytes, relocked
+		verified = relocked
 
 		current, currentBytes := s.currentForRestore()
 		if guard := strings.TrimSpace(req.ExpectCurrentChecksum); guard != "" && guard != current.Checksum {
@@ -647,16 +662,18 @@ func (s *Store) RestoreFrom(req RestoreRequest) (RestoreResult, error) {
 		}
 
 		result = RestoreResult{
-			SourcePath: source, SourceChecksum: verified.Checksum,
-			Contents: verified.Contents, ReplacedState: current.State,
+			SourcePath: source, SourceChecksum: verified.info.Checksum,
+			PublishedChecksum: verified.publishChecksum,
+			Contents:          verified.info.Contents, ReplacedState: current.State,
+			Migration: verified.migration,
 		}
 		// A repeat restore is a no-op on bytes, which is stronger than a no-op
 		// on meaning: nothing is renamed, no copy is taken, and the marker,
 		// inode, and mtime of the registry are untouched.
-		if current.Checksum == verified.Checksum {
+		if current.Checksum == verified.publishChecksum {
 			return nil
 		}
-		return s.publishRestore(source, sourceBytes, currentBytes, current, &result)
+		return s.publishRestore(source, verified, currentBytes, current, &result)
 	})
 	if err != nil {
 		return RestoreResult{}, err
@@ -679,12 +696,24 @@ func (s *Store) currentForRestore() (RegistryFileInfo, []byte) {
 // publishRestore performs the mutating half. It is only reached with the
 // recovery lock held, a verified source, and a decision that the bytes actually
 // differ. It never acquires or waits for the ordinary mutation lock.
-func (s *Store) publishRestore(source string, sourceBytes, currentBytes []byte, current RegistryFileInfo, result *RestoreResult) error {
+func (s *Store) publishRestore(source string, verified verifiedRecoverySource, currentBytes []byte, current RegistryFileInfo, result *RestoreResult) error {
 	dir := filepath.Dir(s.path)
 	if err := localstate.EnsurePrivateDir(dir); err != nil {
 		return fmt.Errorf("metadata: create registry dir %s: %w", dir, err)
 	}
 	rollback := newRollback()
+	pairPublished := false
+	defer func() {
+		if pairPublished {
+			return
+		}
+		if result.MigrationReportPath != "" {
+			_ = os.Remove(result.MigrationReportPath)
+		}
+		if result.SourceBackupPath != "" {
+			_ = os.Remove(result.SourceBackupPath)
+		}
+	}()
 
 	// Preserve first. Every later step can fail, and the operator's way back
 	// from a restore they regret is these bytes.
@@ -696,6 +725,29 @@ func (s *Store) publishRestore(source string, sourceBytes, currentBytes []byte, 
 		rollback.add(func() { _ = os.Remove(preserved) })
 		result.PreservedPath = preserved
 		result.PreservedChecksum = current.Checksum
+	}
+	if verified.info.SchemaVersion == 3 {
+		backupPath, err := s.backupBytes(verified.sourceBytes, 3)
+		if err != nil {
+			return rollback.undo(err)
+		}
+		result.SourceBackupPath = backupPath
+		if s.hooks.afterBackup != nil {
+			if err := s.hooks.afterBackup(); err != nil {
+				return rollback.undo(err)
+			}
+		}
+		reportPath, err := s.writeMigrationEvidence(backupPath, verified.migration)
+		if err != nil {
+			return rollback.undo(err)
+		}
+		result.MigrationReportPath = reportPath
+		pairPublished = true
+		if s.hooks.afterMigrationReport != nil {
+			if err := s.hooks.afterMigrationReport(); err != nil {
+				return rollback.undo(err)
+			}
+		}
 	}
 
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(s.path)+".tmp-*")
@@ -709,7 +761,7 @@ func (s *Store) publishRestore(source string, sourceBytes, currentBytes []byte, 
 			_ = os.Remove(tmpName)
 		}
 	}()
-	if _, err := tmp.Write(sourceBytes); err != nil {
+	if _, err := tmp.Write(verified.publishBytes); err != nil {
 		_ = tmp.Close()
 		return rollback.undo(fmt.Errorf("metadata: write temp registry: %w", err))
 	}
@@ -732,8 +784,8 @@ func (s *Store) publishRestore(source string, sourceBytes, currentBytes []byte, 
 	if !stagedInfo.State.restorable() {
 		return rollback.undo(fmt.Errorf("metadata: %w: staged copy of %s did not verify: %s", ErrRecoverySourceRejected, source, stagedInfo.Detail))
 	}
-	if checksumOf(stagedBytes) != result.SourceChecksum {
-		return rollback.undo(fmt.Errorf("metadata: staged copy of %s does not match the verified source checksum", source))
+	if checksumOf(stagedBytes) != verified.publishChecksum {
+		return rollback.undo(fmt.Errorf("metadata: staged canonical copy of %s does not match the verified publish checksum", source))
 	}
 
 	created, err := s.ensureInitializedMarker()
@@ -793,25 +845,44 @@ func displayChecksum(checksum string) string {
 
 // verifyRecoverySource reads, classifies, and guards one source, returning its
 // classification and exact bytes.
-func verifyRecoverySource(path string, migrations coremetadata.MigrationSet, expectChecksum string) (RegistryFileInfo, []byte, error) {
-	info := classifyRegistryFile(path, migrations)
+func (s *Store) verifyRecoverySource(path, expectChecksum string) (verifiedRecoverySource, error) {
+	info := classifyRegistryFile(path, s.migrations)
 	if !info.State.restorable() {
-		return RegistryFileInfo{}, nil, fmt.Errorf("metadata: %w: %s", ErrRecoverySourceRejected, info.Detail)
+		return verifiedRecoverySource{}, fmt.Errorf("metadata: %w: %s", ErrRecoverySourceRejected, info.Detail)
 	}
 	if guard := strings.TrimSpace(expectChecksum); guard != "" && guard != info.Checksum {
-		return RegistryFileInfo{}, nil, fmt.Errorf("metadata: %w: %s expected %s but holds %s; re-run the preview before restoring",
+		return verifiedRecoverySource{}, fmt.Errorf("metadata: %w: %s expected %s but holds %s; re-run the preview before restoring",
 			ErrRecoveryRaced, path, guard, info.Checksum)
 	}
 	data, err := os.ReadFile(path) // #nosec G304 -- path is a store-owned recovery copy or an operator-named source
 	if err != nil {
-		return RegistryFileInfo{}, nil, fmt.Errorf("metadata: read recovery source %s: %w", path, err)
+		return verifiedRecoverySource{}, fmt.Errorf("metadata: read recovery source %s: %w", path, err)
 	}
 	// The classification above read the file separately, so prove the bytes
 	// this call is about to publish are the bytes that were classified.
 	if checksumOf(data) != info.Checksum {
-		return RegistryFileInfo{}, nil, fmt.Errorf("metadata: %w: %s changed while it was being verified", ErrRecoveryRaced, path)
+		return verifiedRecoverySource{}, fmt.Errorf("metadata: %w: %s changed while it was being verified", ErrRecoveryRaced, path)
 	}
-	return info, data, nil
+	verified := verifiedRecoverySource{info: info, sourceBytes: data, publishBytes: data, publishChecksum: info.Checksum}
+	if info.SchemaVersion != 3 {
+		return verified, nil
+	}
+	var sourceRegistry coremetadata.Registry
+	if err := json.Unmarshal(data, &sourceRegistry); err != nil {
+		return verifiedRecoverySource{}, fmt.Errorf("metadata: %w: decode v3 recovery source %s: %v", ErrRecoverySourceRejected, path, err)
+	}
+	migrated, _, report, err := coremetadata.MigrateRegistryWithEnvironment(s.migrations, sourceRegistry, s.migrationEnv)
+	if err != nil {
+		return verifiedRecoverySource{}, fmt.Errorf("metadata: %w: migrate v3 recovery source %s: %v", ErrRecoverySourceRejected, path, err)
+	}
+	publish, err := json.MarshalIndent(migrated.Normalize(), "", "  ")
+	if err != nil {
+		return verifiedRecoverySource{}, fmt.Errorf("metadata: encode canonical v4 recovery source %s: %w", path, err)
+	}
+	verified.publishBytes = append(publish, '\n')
+	verified.publishChecksum = checksumOf(verified.publishBytes)
+	verified.migration = report
+	return verified, nil
 }
 
 // preserveReplacedBytes copies the bytes a restore is about to replace.

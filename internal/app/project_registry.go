@@ -781,16 +781,12 @@ func (r *registryReconciler) reapplySessionBindings(
 				continue
 			}
 		}
-		projected, err := mutator.ObserveWindowDisplayName(registry, window.Metadata.UID, legacyWindow.Name)
-		if err != nil {
-			continue
-		}
 		// Rebind means the exact registry uid is already on this live Window.
 		// Reasserting the whole mirror would issue four writes (including a
 		// rename) on every apply/lifecycle pass. Adoption is the missing-binding
 		// case and still takes the existing whole MirrorWindow path.
 		if match.Kind != coremetadata.AdoptionRebind {
-			if err := r.writeWindowMirror(ctx, session.targets.Windows[wi], projected); err != nil {
+			if err := r.writeWindowMirror(ctx, session.targets.Windows[wi], *window); err != nil {
 				continue
 			}
 		}

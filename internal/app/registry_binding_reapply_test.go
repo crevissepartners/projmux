@@ -88,12 +88,12 @@ func driftedRegistry(t *testing.T, root string) coremetadata.Registry {
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
-			Metadata: meta("pan-second", "zsh", owner(coremetadata.KindWindow, "win-second")),
+			Metadata: meta("pan-second", "zsh-second", owner(coremetadata.KindWindow, "win-second")),
 			Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: root},
 		},
 	}
-	reserve("win-first", coremetadata.KindPane, "zsh", "pan-first")
-	reserve("win-second", coremetadata.KindPane, "zsh", "pan-second")
+	reserve("prj-alpha", coremetadata.KindPane, "zsh", "pan-first")
+	reserve("prj-alpha", coremetadata.KindPane, "zsh-second", "pan-second")
 
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("drifted fixture is not a valid registry: %v", err)
@@ -194,11 +194,6 @@ func TestASingleReconcileReattachesADriftedRegistryToItsLiveSession(t *testing.T
 	if got := window.name; got != "zsh" {
 		t.Fatalf("runtime window_name = %q, want the observed display name zsh", got)
 	}
-	projected, _ := registry.Window("win-first")
-	if got := projected.Metadata.DisplayName; got != "zsh" {
-		t.Fatalf("Window displayName = %q, want observed window_name zsh", got)
-	}
-
 	// Nothing was created and nothing was re-identified.
 	if len(registry.Windows) != 2 || len(registry.Panes) != 2 {
 		t.Fatalf("reattachment changed the topology: %d windows, %d panes", len(registry.Windows), len(registry.Panes))
@@ -384,7 +379,7 @@ func TestBindingReapplyNeverMovesAnObjectBetweenProjects(t *testing.T) {
 	registry.NameReservations = append(registry.NameReservations,
 		coremetadata.NameReservation{Kind: coremetadata.KindProject, Name: "beta", UID: "prj-beta"},
 		coremetadata.NameReservation{Scope: "prj-beta", Kind: coremetadata.KindWindow, Name: "zsh", UID: "win-beta"},
-		coremetadata.NameReservation{Scope: "win-beta", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-beta"},
+		coremetadata.NameReservation{Scope: "prj-beta", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-beta"},
 	)
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("two-Project fixture is not a valid registry: %v", err)

@@ -43,6 +43,9 @@ func (r Registry) Validate() error {
 		if err := ValidateName(project.Metadata.Name); err != nil {
 			return err
 		}
+		if project.Metadata.removedDisplayName.present {
+			return stateErr(op, ErrInvalidRegistry, "schemaVersion 4 Project %q contains removed metadata.displayName", project.Metadata.Name)
+		}
 		if project.Metadata.OwnerRef != nil {
 			return stateErr(op, ErrInvalidRegistry, "project %q must not have an ownerRef", project.Metadata.Name)
 		}
@@ -65,6 +68,9 @@ func (r Registry) Validate() error {
 		}
 		if err := ValidateName(control.Metadata.Name); err != nil {
 			return err
+		}
+		if control.Metadata.removedDisplayName.present {
+			return stateErr(op, ErrInvalidRegistry, "schemaVersion 4 ControlSession %q contains removed metadata.displayName", control.Metadata.Name)
 		}
 		if control.Metadata.OwnerRef != nil {
 			return stateErr(op, ErrInvalidRegistry, "control session %q must not have an ownerRef", control.Metadata.Name)
@@ -92,6 +98,9 @@ func (r Registry) Validate() error {
 		if err := ValidateName(window.Metadata.Name); err != nil {
 			return err
 		}
+		if window.Metadata.removedDisplayName.present {
+			return stateErr(op, ErrInvalidRegistry, "schemaVersion 4 Window %q contains removed metadata.displayName", window.Metadata.Name)
+		}
 		if err := r.requireOwner(op, KindWindow, window.Metadata, KindProject, KindControlSession); err != nil {
 			return err
 		}
@@ -114,6 +123,9 @@ func (r Registry) Validate() error {
 		}
 		if err := ValidateName(pane.Metadata.Name); err != nil {
 			return err
+		}
+		if pane.Metadata.removedDisplayName.present || pane.Status.removedDisplayTitle.present {
+			return stateErr(op, ErrInvalidRegistry, "schemaVersion 4 Pane %q contains removed presentation fields", pane.Metadata.Name)
 		}
 		switch pane.Spec.Role {
 		case PaneRoleShell:
@@ -155,6 +167,9 @@ func (r Registry) Validate() error {
 		}
 		if err := ValidateName(agent.Metadata.Name); err != nil {
 			return err
+		}
+		if agent.Metadata.removedDisplayName.present {
+			return stateErr(op, ErrInvalidRegistry, "schemaVersion 4 Agent %q contains removed metadata.displayName", agent.Metadata.Name)
 		}
 		if err := r.requireOwner(op, KindAgent, agent.Metadata, KindWindow); err != nil {
 			return err
@@ -423,14 +438,23 @@ func quotedKinds(kinds []Kind) string {
 // agree in both directions, so name allocation can trust the table alone.
 func (r Registry) validateReservations(op string, uids map[string]Kind) error {
 	seen := map[nameKey]string{}
+	seenUID := map[string]bool{}
 	for _, reservation := range r.NameReservations {
 		key := nameKey{Scope: reservation.Scope, Kind: reservation.Kind, Name: reservation.Name}
 		if owner, ok := seen[key]; ok {
 			return stateErr(op, ErrInvalidRegistry, "duplicate %s name reservation %q in scope %q (%s and %s)", reservation.Kind, reservation.Name, reservation.Scope, owner, reservation.UID)
 		}
-		if _, ok := uids[reservation.UID]; !ok {
+		uidKind, ok := uids[reservation.UID]
+		if !ok {
 			return stateErr(op, ErrInvalidRegistry, "%s name reservation %q refers to unknown uid %q", reservation.Kind, reservation.Name, reservation.UID)
 		}
+		if uidKind != reservation.Kind {
+			return stateErr(op, ErrInvalidRegistry, "%s name reservation %q refers to %s uid %q", reservation.Kind, reservation.Name, uidKind, reservation.UID)
+		}
+		if seenUID[reservation.UID] {
+			return stateErr(op, ErrInvalidRegistry, "%s uid %q has more than one name reservation", reservation.Kind, reservation.UID)
+		}
+		seenUID[reservation.UID] = true
 		seen[key] = reservation.UID
 	}
 
@@ -456,17 +480,29 @@ func (r Registry) validateReservations(op string, uids map[string]Kind) error {
 		}
 	}
 	for _, window := range r.Windows {
-		if err := require(window.Metadata.OwnerUID(), KindWindow, window.Metadata.Name, window.Metadata.UID); err != nil {
+		scope, err := r.scopeFor(KindWindow, window.Metadata.OwnerUID())
+		if err != nil {
+			return err
+		}
+		if err := require(scope, KindWindow, window.Metadata.Name, window.Metadata.UID); err != nil {
 			return err
 		}
 	}
 	for _, pane := range r.Panes {
-		if err := require(pane.Metadata.OwnerUID(), KindPane, pane.Metadata.Name, pane.Metadata.UID); err != nil {
+		scope, err := r.scopeFor(KindPane, pane.Metadata.OwnerUID())
+		if err != nil {
+			return err
+		}
+		if err := require(scope, KindPane, pane.Metadata.Name, pane.Metadata.UID); err != nil {
 			return err
 		}
 	}
 	for _, agent := range r.Agents {
-		if err := require(agent.Metadata.OwnerUID(), KindAgent, agent.Metadata.Name, agent.Metadata.UID); err != nil {
+		scope, err := r.scopeFor(KindAgent, agent.Metadata.OwnerUID())
+		if err != nil {
+			return err
+		}
+		if err := require(scope, KindAgent, agent.Metadata.Name, agent.Metadata.UID); err != nil {
 			return err
 		}
 	}

@@ -81,34 +81,34 @@ func TestFinalV2AnchorAndDefaultShellValidationMatrix(t *testing.T) {
 		{name: "missing anchor", mutate: func(r *Registry) {
 			window, _ := r.Window(fixture.windowUID)
 			window.Spec.AnchorPaneRef = ""
-		}, wantErr: `validate registry: window "zsh" has no anchorPaneRef`},
+		}, wantErr: `validate registry: window "window-01" has no anchorPaneRef`},
 		{name: "dangling anchor", mutate: func(r *Registry) {
 			window, _ := r.Window(fixture.windowUID)
 			window.Spec.AnchorPaneRef = "pane-missing"
-		}, wantErr: `validate registry: window "zsh" anchorPaneRef "pane-missing" does not exist`},
+		}, wantErr: `validate registry: window "window-01" anchorPaneRef "pane-missing" does not exist`},
 		{name: "cross Window anchor", mutate: func(r *Registry) {
 			window, _ := r.Window(fixture.windowUID)
 			window.Spec.AnchorPaneRef = fixture.otherShellUID
-		}, wantErr: fmt.Sprintf(`validate registry: window "zsh" anchorPaneRef %q is not a same-Window shell or Agent Pane`, fixture.otherShellUID)},
+		}, wantErr: fmt.Sprintf(`validate registry: window "window-01" anchorPaneRef %q is not a same-Window shell or Agent Pane`, fixture.otherShellUID)},
 		{name: "Agent anchor is not Agent paneRef", mutate: func(r *Registry) {
 			window, _ := r.Window(fixture.windowUID)
 			window.Spec.AnchorPaneRef = fixture.agentPaneUID
 			agent, _ := r.Agent(fixture.agentUID)
 			agent.Status.Phase = PhaseOffline
 			agent.Status.PaneRef = ""
-		}, wantErr: fmt.Sprintf(`validate registry: window "zsh" anchorPaneRef %q is not its Agent owner's managed Pane`, fixture.agentPaneUID)},
+		}, wantErr: fmt.Sprintf(`validate registry: window "window-01" anchorPaneRef %q is not its Agent owner's managed Pane`, fixture.agentPaneUID)},
 		{name: "dangling default shell", mutate: func(r *Registry) {
 			window, _ := r.Window(fixture.windowUID)
 			window.Spec.DefaultShellPaneRef = "pane-missing"
-		}, wantErr: `validate registry: window "zsh" defaultShellPaneRef "pane-missing" does not exist`},
+		}, wantErr: `validate registry: window "window-01" defaultShellPaneRef "pane-missing" does not exist`},
 		{name: "Agent cannot be default shell", mutate: func(r *Registry) {
 			window, _ := r.Window(fixture.windowUID)
 			window.Spec.DefaultShellPaneRef = fixture.agentPaneUID
-		}, wantErr: fmt.Sprintf(`validate registry: window "zsh" defaultShellPaneRef %q is not a direct Window-owned shell Pane`, fixture.agentPaneUID)},
+		}, wantErr: fmt.Sprintf(`validate registry: window "window-01" defaultShellPaneRef %q is not a direct Window-owned shell Pane`, fixture.agentPaneUID)},
 		{name: "cross Window default shell", mutate: func(r *Registry) {
 			window, _ := r.Window(fixture.windowUID)
 			window.Spec.DefaultShellPaneRef = fixture.otherShellUID
-		}, wantErr: fmt.Sprintf(`validate registry: window "zsh" defaultShellPaneRef %q is not a direct Window-owned shell Pane`, fixture.otherShellUID)},
+		}, wantErr: fmt.Sprintf(`validate registry: window "window-01" defaultShellPaneRef %q is not a direct Window-owned shell Pane`, fixture.otherShellUID)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -220,6 +220,9 @@ func TestSchemaVersion2WindowShapeNormalizationTable(t *testing.T) {
 			if err := json.Unmarshal(sourceBytes, &source); err != nil {
 				t.Fatal(err)
 			}
+			if source.SchemaVersion < SchemaVersion {
+				rewriteLegacyReservationScopes(&source)
+			}
 			before := source.Clone()
 			got, ran, report, err := MigrateRegistryWithEnvironment(nil, source, MigrationEnvironment{})
 			if tt.wantError != "" {
@@ -274,17 +277,30 @@ func TestIntermediateV2NormalizationPreservesIdentityOwnerAndSessionRefs(t *test
 	}
 	assertExistingIdentityAndAgentPointersPreserved(t, before, normalized)
 	got := []byte(mustJSON(t, normalized) + "\n")
-	if !bytes.Equal(got, want) {
-		t.Fatalf("identity/sessionRef-bearing normalization changed non-shape bytes:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	if normalized.SchemaVersion != SchemaVersion || bytes.Contains(got, []byte(`"displayName"`)) || bytes.Contains(got, []byte(`"displayTitle"`)) {
+		t.Fatalf("identity/sessionRef-bearing normalization did not produce the v4 envelope:\n%s", got)
+	}
+	again, ranAgain, _, err := MigrateRegistryWithEnvironment(nil, normalized, MigrationEnvironment{})
+	if err != nil || ranAgain || !bytes.Equal(mustMarshalRegistry(t, again), mustMarshalRegistry(t, normalized)) {
+		t.Fatalf("second normalization changed v4 bytes: ran=%t err=%v", ranAgain, err)
 	}
 }
 
 func TestIntermediateV2ReaderFailsClosedOnFinalV2WithoutProducingBytes(t *testing.T) {
 	t.Parallel()
-	finalBytes, err := os.ReadFile("testdata/registry-v010-v3-bytes.golden")
+	v3Bytes, err := os.ReadFile("testdata/registry-v010-v3-bytes.golden")
 	if err != nil {
 		t.Fatal(err)
 	}
+	var v3 Registry
+	if err := json.Unmarshal(v3Bytes, &v3); err != nil {
+		t.Fatal(err)
+	}
+	current, ran, _, err := MigrateRegistryWithEnvironment(nil, v3, migrationGoldenEnvironment())
+	if err != nil || !ran {
+		t.Fatalf("prepare v4 fixture: ran=%t err=%v", ran, err)
+	}
+	finalBytes := mustMarshalRegistry(t, current)
 	type intermediateWindow struct {
 		Spec struct {
 			PrimaryPaneRef string `json:"primaryPaneRef"`

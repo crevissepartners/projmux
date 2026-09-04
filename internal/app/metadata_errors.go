@@ -11,7 +11,7 @@ import (
 // (explicit name collision, rebind root collision, invalid name, missing or
 // non-absolute root) is a usage error and reaches exit code 2 through the
 // existing UsageError path in cmd/projmux/main.go. Everything else (missing
-// uid, inconsistent persisted registry, exhausted suffix space) stays a
+// uid, inconsistent persisted registry, exhausted UID/name candidates) stays a
 // runtime error and reaches exit code 1.
 //
 // The metadata layer cannot import internal/app, so this is the single seam

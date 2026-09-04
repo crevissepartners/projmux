@@ -1,0 +1,354 @@
+{
+  "apiVersion": "projmux.io/v1alpha1",
+  "schemaVersion": 4,
+  "updatedAt": "2026-08-15T09:30:00Z",
+  "projects": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Project",
+      "metadata": {
+        "uid": "project-root",
+        "name": "project",
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "root": "/src/root",
+        "primaryWindowRef": "window-a"
+      },
+      "status": {}
+    }
+  ],
+  "windows": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-a",
+        "name": "window-a",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-root"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "anchorPaneRef": "pane-a",
+        "defaultShellPaneRef": "pane-a"
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-b",
+        "name": "window-b",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-root"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "anchorPaneRef": "pane-b",
+        "defaultShellPaneRef": "pane-b"
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-c",
+        "name": "window-c",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-root"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "anchorPaneRef": "pane-c",
+        "defaultShellPaneRef": "pane-c"
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-d",
+        "name": "window-d",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-root"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "anchorPaneRef": "pane-d",
+        "defaultShellPaneRef": "pane-d"
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-e",
+        "name": "window-e",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-root"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "anchorPaneRef": "pane-e",
+        "defaultShellPaneRef": "pane-e"
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-f",
+        "name": "window-f",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-root"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "anchorPaneRef": "pane-f",
+        "defaultShellPaneRef": "pane-f"
+      }
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Window",
+      "metadata": {
+        "uid": "window-g",
+        "name": "window-g",
+        "ownerRef": {
+          "kind": "Project",
+          "uid": "project-root"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "anchorPaneRef": "pane-g",
+        "defaultShellPaneRef": "pane-g"
+      }
+    }
+  ],
+  "panes": [
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-a",
+        "name": "pane-a",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-a"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "role": "shell"
+      },
+      "status": {}
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-b",
+        "name": "pane-b",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-b"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "role": "shell"
+      },
+      "status": {}
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-c",
+        "name": "pane-c",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-c"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "role": "shell"
+      },
+      "status": {}
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-d",
+        "name": "pane-d",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-d"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "role": "shell"
+      },
+      "status": {}
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-e",
+        "name": "unique",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-e"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "role": "shell"
+      },
+      "status": {}
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-f",
+        "name": "pane-f",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-f"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "role": "shell"
+      },
+      "status": {}
+    },
+    {
+      "apiVersion": "projmux.io/v1alpha1",
+      "kind": "Pane",
+      "metadata": {
+        "uid": "pane-g",
+        "name": "pane-g",
+        "ownerRef": {
+          "kind": "Window",
+          "uid": "window-g"
+        },
+        "createdAt": "2026-08-15T09:30:00Z"
+      },
+      "spec": {
+        "role": "shell"
+      },
+      "status": {}
+    }
+  ],
+  "nameReservations": [
+    {
+      "kind": "Project",
+      "name": "project",
+      "uid": "project-root"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Pane",
+      "name": "pane-a",
+      "uid": "pane-a"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Pane",
+      "name": "pane-b",
+      "uid": "pane-b"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Pane",
+      "name": "pane-c",
+      "uid": "pane-c"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Pane",
+      "name": "pane-d",
+      "uid": "pane-d"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Pane",
+      "name": "unique",
+      "uid": "pane-e"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Pane",
+      "name": "pane-f",
+      "uid": "pane-f"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Pane",
+      "name": "pane-g",
+      "uid": "pane-g"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Window",
+      "name": "window-a",
+      "uid": "window-a"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Window",
+      "name": "window-b",
+      "uid": "window-b"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Window",
+      "name": "window-c",
+      "uid": "window-c"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Window",
+      "name": "window-d",
+      "uid": "window-d"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Window",
+      "name": "window-e",
+      "uid": "window-e"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Window",
+      "name": "window-f",
+      "uid": "window-f"
+    },
+    {
+      "scope": "project-root",
+      "kind": "Window",
+      "name": "window-g",
+      "uid": "window-g"
+    }
+  ]
+}

@@ -277,9 +277,6 @@ func TestAuthorshipPromotionPreservesSiblingProjectSocketAndOtherHostDesiredStat
 	donusSession.windows[0].opts[tmuxopts.WindowUID] = siblingWindow.Metadata.UID
 	donusSession.windows[0].opts[tmuxopts.WindowName] = siblingWindow.Metadata.Name
 	donusSession.windows[0].opts[tmuxopts.AutomaticRenameWindow] = "off"
-	if storedSiblingWindow, ok := store.registry.Window(siblingWindow.Metadata.UID); ok {
-		storedSiblingWindow.Metadata.DisplayName = donusSession.windows[0].name
-	}
 	donusSession.windows[0].panes[0].opts[tmuxopts.PaneUID] = siblingPane.Metadata.UID
 	donusSession.windows[0].panes[0].opts[tmuxopts.PaneName] = siblingPane.Metadata.Name
 	if _, err := store.mutator().ObserveWindowRuntimeBinding(&store.registry, siblingWindow.Metadata.UID,
@@ -416,8 +413,8 @@ func TestPublicResourceReconcilePromotesCanonicalLaunchAuthorshipAtomicallyAndRe
 	if err := json.Unmarshal([]byte(previewJSON), &preview); err != nil {
 		t.Fatalf("decode promotion preview: %v\n%s", err, previewJSON)
 	}
-	if len(preview.Allocations) != 1 || preview.Allocations[0].Slot != "<allocated-agent-1>" || preview.Allocations[0].Name != "codex-1" {
-		t.Fatalf("promotion allocation slots = %+v, want one symbolic codex-1 Agent", preview.Allocations)
+	if len(preview.Allocations) != 1 || preview.Allocations[0].Slot != "<allocated-agent-1>" || preview.Allocations[0].Name != "<allocated-agent-1>" {
+		t.Fatalf("promotion allocation slots = %+v, want one exact-UID symbolic Agent", preview.Allocations)
 	}
 	if store.snapshot() != registryBefore || server.state() != runtimeBefore || store.writes != writesBefore ||
 		len(store.newUIDs) != allocationsBefore || tmuxMutationCallCount(server) != mutationsBefore {
@@ -428,7 +425,7 @@ func TestPublicResourceReconcilePromotesCanonicalLaunchAuthorshipAtomicallyAndRe
 		t.Fatalf("print promotion dry-run: %v\n%s", err, human)
 	}
 	for _, want := range []string{
-		"allocation slots:", "<allocated-agent-1> Agent codex-1",
+		"allocation slots:", "<allocated-agent-1> Agent <allocated-agent-1>",
 		"authority=launch-authorship allocation-slot=<allocated-agent-1>",
 		"ref Pane.metadata.ownerRef:", "ref Window.spec.defaultShellPaneRef:",
 		"guard " + tmuxopts.PaneUID + "=" + paneBefore.Metadata.UID,
@@ -452,8 +449,8 @@ func TestPublicResourceReconcilePromotesCanonicalLaunchAuthorshipAtomicallyAndRe
 		t.Fatalf("dry-run/execute promotion structure drifted:\npreview=%+v\nexecute=%+v", promotionStructure(preview), promotionStructure(executed))
 	}
 	agents := store.registry.AgentsOf(windowBefore.Metadata.UID)
-	if len(agents) != 2 || agents[1].Metadata.Name != "codex-1" {
-		t.Fatalf("promoted Agents = %+v, want existing codex plus codex-1", agents)
+	if len(agents) != 2 || agents[1].Metadata.Name != agents[1].Metadata.UID {
+		t.Fatalf("promoted Agents = %+v, want existing codex plus an exact-UID automatic name", agents)
 	}
 	paneAfter, _ := store.registry.Pane(paneBefore.Metadata.UID)
 	windowAfter, _ := store.registry.Window(windowBefore.Metadata.UID)
@@ -1112,11 +1109,6 @@ func TestResourceReconcileRefusesCanonicalShellAgentMarkerAndContinuesUnrelatedD
 	betaSession.windows[0].opts[tmuxopts.WindowUID] = betaWindow.Metadata.UID
 	betaSession.windows[0].opts[tmuxopts.WindowName] = betaWindow.Metadata.Name
 	betaSession.windows[0].opts[tmuxopts.AutomaticRenameWindow] = "off"
-	for index := range store.registry.Windows {
-		if store.registry.Windows[index].Metadata.UID == betaWindow.Metadata.UID {
-			store.registry.Windows[index].Metadata.DisplayName = betaSession.windows[0].name
-		}
-	}
 	betaSession.windows[0].panes[0].opts[tmuxopts.PaneUID] = betaPane.Metadata.UID
 	betaSession.windows[0].panes[0].opts[tmuxopts.PaneName] = "stale-beta-pane"
 	if _, err := store.mutator().ObserveWindowRuntimeBinding(&store.registry, alphaWindow.Metadata.UID, alphaSession.id, alphaLiveWindow.id); err != nil {
@@ -1250,7 +1242,7 @@ func TestResourceReconcileRegistryItemsClassifyStaleAndOrphan(t *testing.T) {
 
 	before := bindingFixture(t, t.TempDir())
 	after := before.Clone()
-	after.Windows[0].Metadata.DisplayName = "renamed-runtime"
+	after.Windows[0].Status.RuntimeID = "@renamed-runtime"
 	after.Windows[1].Status.Conditions = append(after.Windows[1].Status.Conditions, coremetadata.Condition{
 		Type: coremetadata.ConditionMissingRuntime, Status: coremetadata.ConditionTrue, Reason: coremetadata.ReasonRuntimeUnbound,
 	})

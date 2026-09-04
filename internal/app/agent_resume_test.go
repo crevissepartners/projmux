@@ -376,8 +376,14 @@ func addFixtureAgent(t *testing.T, store *fakeResourceStore, uid, name, windowUI
 			Phase: phase, LastTransitionAt: resourceFixtureClock, SessionRef: ref,
 		},
 	})
+	rootUID := "prj-alpha"
+	if windowUID == "win-beta-main" {
+		rootUID = "prj-beta"
+	} else if windowUID == "win-gone-main" {
+		rootUID = "prj-gone"
+	}
 	store.registry.NameReservations = append(store.registry.NameReservations, coremetadata.NameReservation{
-		Scope: windowUID, Kind: coremetadata.KindAgent, Name: name, UID: uid,
+		Scope: rootUID, Kind: coremetadata.KindAgent, Name: name, UID: uid,
 	})
 	if err := store.registry.Validate(); err != nil {
 		t.Fatalf("fixture registry invalid after adding agent %q: %v", uid, err)
@@ -833,7 +839,7 @@ func TestSeveralAgentsOnOneConversationResolveDeterministically(t *testing.T) {
 		// second Offline one in alpha/review, and the target in beta.
 		setFixtureSessionRef(t, store, "agt-alpha-codex", shared())
 		setFixtureSessionRef(t, store, "agt-beta-codex", shared())
-		addFixtureAgent(t, store, "agt-review-codex", "codex", "win-alpha-review", coremetadata.PhaseOffline, shared())
+		addFixtureAgent(t, store, "agt-review-codex", "codex-review", "win-alpha-review", coremetadata.PhaseOffline, shared())
 
 		// Rotate the registry order. A conversation-keyed selection, or an
 		// unsorted disclosure, would move with it.
@@ -877,7 +883,7 @@ func TestSeveralAgentsOnOneConversationResolveDeterministically(t *testing.T) {
 			// Agent was actually rebound.
 			for _, want := range []string{
 				"agent/codex (uid:agt-alpha-codex)",
-				"agent/codex (uid:agt-review-codex)",
+				"agent/codex-review (uid:agt-review-codex)",
 				"rebinds only agent/codex",
 			} {
 				if !strings.Contains(stderr, want) {

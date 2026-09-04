@@ -123,7 +123,7 @@ func registryWithControlReadRoot(t *testing.T) metadata.Registry {
 	registry.ControlSessions = append(registry.ControlSessions, metadata.ControlSession{
 		APIVersion: metadata.APIVersion,
 		Kind:       metadata.KindControlSession,
-		Metadata:   metadata.ObjectMeta{UID: "ctl-home", Name: "home", DisplayName: "Home", CreatedAt: fixtureClock},
+		Metadata:   metadata.ObjectMeta{UID: "ctl-home", Name: "home", CreatedAt: fixtureClock},
 		Spec:       metadata.ControlSessionSpec{Session: "home"},
 	})
 	registry.Windows = append(registry.Windows, metadata.Window{
@@ -158,9 +158,9 @@ func registryWithControlReadRoot(t *testing.T) metadata.Registry {
 	registry.NameReservations = append(registry.NameReservations,
 		metadata.NameReservation{Kind: metadata.KindControlSession, Name: "home", UID: "ctl-home"},
 		metadata.NameReservation{Scope: "ctl-home", Kind: metadata.KindWindow, Name: "home", UID: "win-home"},
-		metadata.NameReservation{Scope: "win-home", Kind: metadata.KindPane, Name: "shell", UID: "pan-home-shell"},
-		metadata.NameReservation{Scope: "win-home", Kind: metadata.KindAgent, Name: "codex", UID: "agt-home"},
-		metadata.NameReservation{Scope: "agt-home", Kind: metadata.KindPane, Name: "codex-pane", UID: "pan-home-agent"},
+		metadata.NameReservation{Scope: "ctl-home", Kind: metadata.KindPane, Name: "shell", UID: "pan-home-shell"},
+		metadata.NameReservation{Scope: "ctl-home", Kind: metadata.KindAgent, Name: "codex", UID: "agt-home"},
+		metadata.NameReservation{Scope: "ctl-home", Kind: metadata.KindPane, Name: "codex-pane", UID: "pan-home-agent"},
 	)
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("control read fixture is invalid: %v", err)
@@ -168,10 +168,10 @@ func registryWithControlReadRoot(t *testing.T) metadata.Registry {
 	return registry
 }
 
-// TestResolveAgentsIsWindowScoped pins the Agent pipeline: Agent names are unique
-// inside a Window, so the same name legitimately appears under several Windows
-// and only the scope disambiguates it.
-func TestResolveAgentsIsWindowScoped(t *testing.T) {
+// TestResolveAgentsUsesWindowTargetsWithinRootScopedNames pins the Agent
+// pipeline: Window selection still chooses the ownership target set, while a
+// bare Agent name is unique across the enclosing root.
+func TestResolveAgentsUsesWindowTargetsWithinRootScopedNames(t *testing.T) {
 	t.Parallel()
 
 	resolver := New(standardRegistry(t))

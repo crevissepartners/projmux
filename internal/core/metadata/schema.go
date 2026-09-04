@@ -1,8 +1,10 @@
 package metadata
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"maps"
+	"sort"
 	"strings"
 )
 
@@ -57,9 +59,40 @@ type MigrationRepair struct {
 
 // MigrationReport records every repair made by a migration in Registry order.
 type MigrationReport struct {
-	FromVersion int
-	ToVersion   int
-	Repairs     []MigrationRepair
+	FromVersion   int
+	ToVersion     int
+	Repairs       []MigrationRepair
+	NameRepairs   []MigrationNameRepair
+	FieldRemovals []MigrationFieldRemoval
+}
+
+// MigrationNameRepair is one v3 address canonicalization. The stable tuple is
+// sorted by rootOwnerUID, kind, uid, oldName, newName, reason.
+type MigrationNameRepair struct {
+	RootOwnerUID string `json:"rootOwnerUid"`
+	Kind         Kind   `json:"kind"`
+	UID          string `json:"uid"`
+	OldName      string `json:"oldName"`
+	NewName      string `json:"newName"`
+	Reason       string `json:"reason"`
+}
+
+// MigrationFieldRemoval is a content-free receipt for one removed schema-v3
+// presentation key. The source bytes themselves never enter a report.
+type MigrationFieldRemoval struct {
+	Kind            Kind   `json:"kind"`
+	UID             string `json:"uid"`
+	Field           string `json:"field"`
+	Present         bool   `json:"present"`
+	ByteLength      int    `json:"byteLength"`
+	SHA256          string `json:"sha256"`
+	InformationLoss bool   `json:"informationLoss"`
+}
+
+// RepairCount returns every topology repair, name canonicalization, and
+// removed presentation key represented by the report.
+func (r MigrationReport) RepairCount() int {
+	return len(r.Repairs) + len(r.NameRepairs) + len(r.FieldRemovals)
 }
 
 // InformationLossCount returns the number of repairs that replaced declared
@@ -71,6 +104,11 @@ func (r MigrationReport) InformationLossCount() int {
 			count++
 		}
 	}
+	for _, removal := range r.FieldRemovals {
+		if removal.InformationLoss {
+			count++
+		}
+	}
 	return count
 }
 
@@ -78,9 +116,15 @@ func (r MigrationReport) InformationLossCount() int {
 // migration result or archived test evidence.
 func (r MigrationReport) String() string {
 	var out strings.Builder
-	fmt.Fprintf(&out, "registry schema migration %d -> %d: repairs=%d information-loss=%d", r.FromVersion, r.ToVersion, len(r.Repairs), r.InformationLossCount())
+	fmt.Fprintf(&out, "registry schema migration %d -> %d: repairs=%d information-loss=%d", r.FromVersion, r.ToVersion, r.RepairCount(), r.InformationLossCount())
 	for _, repair := range r.Repairs {
 		fmt.Fprintf(&out, "\n- %s %s %s %s: %q -> %q (information-loss=%t)", repair.Action, repair.Kind, repair.UID, repair.Field, repair.From, repair.To, repair.InformationLoss)
+	}
+	for _, repair := range r.NameRepairs {
+		fmt.Fprintf(&out, "\n- canonicalize-name %s %s %s: %q -> %q (%s)", repair.RootOwnerUID, repair.Kind, repair.UID, repair.OldName, repair.NewName, repair.Reason)
+	}
+	for _, removal := range r.FieldRemovals {
+		fmt.Fprintf(&out, "\n- remove-field %s %s %s: present=%t bytes=%d sha256=%s (information-loss=%t)", removal.Kind, removal.UID, removal.Field, removal.Present, removal.ByteLength, removal.SHA256, removal.InformationLoss)
 	}
 	return out.String()
 }
@@ -98,6 +142,7 @@ type MigrationSet map[int]Migration
 var productionMigrations = MigrationSet{
 	1: migrateV1ToV2,
 	2: migrateV2ToV3,
+	3: migrateV3ToV4,
 }
 
 // resolveMigrations treats a nil set as the production set, so callers that do
@@ -285,21 +330,18 @@ func migrateV1ToV2(reg *Registry, env MigrationEnvironment, report *MigrationRep
 		if err != nil {
 			return err
 		}
-		name, err := reg.allocateName(op, project.Metadata.UID, KindWindow, FallbackWindowNameBase, uid)
-		if err != nil {
-			return err
-		}
+		reg.putReservation(project.Metadata.UID, KindWindow, uid, uid)
 		reg.Windows = append(reg.Windows, Window{
 			APIVersion: APIVersion,
 			Kind:       KindWindow,
 			Metadata: ObjectMeta{
 				UID:       uid,
-				Name:      name,
+				Name:      uid,
 				OwnerRef:  &OwnerRef{Kind: KindProject, UID: project.Metadata.UID},
 				CreatedAt: project.Metadata.CreatedAt,
 			},
 		})
-		report.Repairs = append(report.Repairs, MigrationRepair{Action: "create-canonical-window", Kind: KindWindow, UID: uid, Field: "resource", To: name})
+		report.Repairs = append(report.Repairs, MigrationRepair{Action: "create-canonical-window", Kind: KindWindow, UID: uid, Field: "resource", To: uid})
 	}
 
 	for i := range reg.Windows {
@@ -346,10 +388,7 @@ func migrateV1ToV2(reg *Registry, env MigrationEnvironment, report *MigrationRep
 			if err != nil {
 				return err
 			}
-			name, err := reg.allocateName(op, window.Metadata.UID, KindPane, FallbackPaneNameBase, uid)
-			if err != nil {
-				return err
-			}
+			reg.putReservation(window.Metadata.UID, KindPane, uid, uid)
 			cwd := ""
 			if hasProject {
 				cwd = project.Spec.Root
@@ -359,14 +398,14 @@ func migrateV1ToV2(reg *Registry, env MigrationEnvironment, report *MigrationRep
 				Kind:       KindPane,
 				Metadata: ObjectMeta{
 					UID:       uid,
-					Name:      name,
+					Name:      uid,
 					OwnerRef:  &OwnerRef{Kind: KindWindow, UID: window.Metadata.UID},
 					CreatedAt: window.Metadata.CreatedAt,
 				},
 				Spec: PaneSpec{Role: PaneRoleShell, CWD: cwd},
 			})
 			primaryUID = uid
-			report.Repairs = append(report.Repairs, MigrationRepair{Action: "create-bare-shell", Kind: KindPane, UID: uid, Field: "resource", To: name})
+			report.Repairs = append(report.Repairs, MigrationRepair{Action: "create-bare-shell", Kind: KindPane, UID: uid, Field: "resource", To: uid})
 		}
 		window.Spec.AnchorPaneRef = primaryUID
 		window.Spec.DefaultShellPaneRef = primaryUID
@@ -418,6 +457,342 @@ func migrateV2ToV3(reg *Registry, _ MigrationEnvironment, _ *MigrationReport) er
 	}
 	reg.SchemaVersion = 3
 	return nil
+}
+
+const (
+	migrationReasonDuplicateGroup     = "duplicate-group"
+	migrationReasonDestinationClosure = "destination-closure"
+	migrationReasonAlreadyCanonical   = "already-canonical"
+)
+
+type migrationResource struct {
+	root string
+	kind Kind
+	uid  string
+	name *string
+	meta *ObjectMeta
+	pane *PaneStatus
+}
+
+// migrateV3ToV4 atomically changes the address authority, removes persisted
+// presentation, and reconstructs every reservation from the owner graph.
+func migrateV3ToV4(reg *Registry, _ MigrationEnvironment, report *MigrationReport) error {
+	const op = "migrate registry v3 to v4"
+	if reg.SchemaVersion != 3 {
+		return stateErr(op, ErrSchemaUnsupported, "source schemaVersion %d is not 3", reg.SchemaVersion)
+	}
+	if err := validateV3MigrationSource(*reg); err != nil {
+		return err
+	}
+	resources, err := migrationResources(reg)
+	if err != nil {
+		return err
+	}
+	sort.Slice(resources, func(i, j int) bool {
+		a, b := resources[i], resources[j]
+		if a.root != b.root {
+			return a.root < b.root
+		}
+		if a.kind != b.kind {
+			return a.kind < b.kind
+		}
+		return a.uid < b.uid
+	})
+
+	type addressKey struct {
+		root string
+		kind Kind
+		name string
+	}
+	groups := make(map[addressKey][]int)
+	for i, resource := range resources {
+		groups[addressKey{resource.root, resource.kind, *resource.name}] = append(groups[addressKey{resource.root, resource.kind, *resource.name}], i)
+	}
+	reasons := make(map[int]string)
+	for _, members := range groups {
+		if len(members) < 2 {
+			continue
+		}
+		for _, index := range members {
+			reasons[index] = migrationReasonDuplicateGroup
+		}
+	}
+	for {
+		changed := false
+		for index := range reasons {
+			resource := resources[index]
+			for _, occupant := range groups[addressKey{resource.root, resource.kind, resource.uid}] {
+				if _, exists := reasons[occupant]; exists {
+					continue
+				}
+				reasons[occupant] = migrationReasonDestinationClosure
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	for index, reason := range reasons {
+		resource := resources[index]
+		oldName := *resource.name
+		if oldName == resource.uid {
+			reason = migrationReasonAlreadyCanonical
+		}
+		report.NameRepairs = append(report.NameRepairs, MigrationNameRepair{
+			RootOwnerUID: resource.root, Kind: resource.kind, UID: resource.uid,
+			OldName: oldName, NewName: resource.uid, Reason: reason,
+		})
+	}
+	sort.Slice(report.NameRepairs, func(i, j int) bool {
+		a, b := report.NameRepairs[i], report.NameRepairs[j]
+		if a.RootOwnerUID != b.RootOwnerUID {
+			return a.RootOwnerUID < b.RootOwnerUID
+		}
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.UID != b.UID {
+			return a.UID < b.UID
+		}
+		if a.OldName != b.OldName {
+			return a.OldName < b.OldName
+		}
+		if a.NewName != b.NewName {
+			return a.NewName < b.NewName
+		}
+		return a.Reason < b.Reason
+	})
+	for index := range reasons {
+		*resources[index].name = resources[index].uid
+	}
+
+	for _, resource := range resources {
+		appendRemovedPresentation(report, resource.kind, resource.uid, "metadata.displayName", resource.meta.removedDisplayName)
+		resource.meta.removedDisplayName = removedPresentation{}
+		if resource.pane != nil {
+			appendRemovedPresentation(report, resource.kind, resource.uid, "status.displayTitle", resource.pane.removedDisplayTitle)
+			resource.pane.removedDisplayTitle = removedPresentation{}
+		}
+	}
+	sort.Slice(report.FieldRemovals, func(i, j int) bool {
+		a, b := report.FieldRemovals[i], report.FieldRemovals[j]
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.UID != b.UID {
+			return a.UID < b.UID
+		}
+		return a.Field < b.Field
+	})
+	reg.rebuildAllReservations()
+	reg.SchemaVersion = 4
+	return nil
+}
+
+func appendRemovedPresentation(report *MigrationReport, kind Kind, uid, field string, removed removedPresentation) {
+	if !removed.present {
+		return
+	}
+	digest := sha256.Sum256([]byte(removed.value))
+	report.FieldRemovals = append(report.FieldRemovals, MigrationFieldRemoval{
+		Kind: kind, UID: uid, Field: field, Present: true,
+		ByteLength: len([]byte(removed.value)), SHA256: fmt.Sprintf("%x", digest),
+		InformationLoss: len([]byte(removed.value)) > 0,
+	})
+}
+
+func migrationResources(reg *Registry) ([]migrationResource, error) {
+	resources := make([]migrationResource, 0, len(reg.Projects)+len(reg.ControlSessions)+len(reg.Windows)+len(reg.Panes)+len(reg.Agents))
+	for i := range reg.Projects {
+		p := &reg.Projects[i]
+		resources = append(resources, migrationResource{kind: KindProject, uid: p.Metadata.UID, name: &p.Metadata.Name, meta: &p.Metadata})
+	}
+	for i := range reg.ControlSessions {
+		c := &reg.ControlSessions[i]
+		resources = append(resources, migrationResource{kind: KindControlSession, uid: c.Metadata.UID, name: &c.Metadata.Name, meta: &c.Metadata})
+	}
+	for i := range reg.Windows {
+		w := &reg.Windows[i]
+		root, err := reg.scopeFor(KindWindow, w.Metadata.OwnerUID())
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, migrationResource{root: root, kind: KindWindow, uid: w.Metadata.UID, name: &w.Metadata.Name, meta: &w.Metadata})
+	}
+	for i := range reg.Panes {
+		p := &reg.Panes[i]
+		root, err := reg.scopeFor(KindPane, p.Metadata.OwnerUID())
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, migrationResource{root: root, kind: KindPane, uid: p.Metadata.UID, name: &p.Metadata.Name, meta: &p.Metadata, pane: &p.Status})
+	}
+	for i := range reg.Agents {
+		a := &reg.Agents[i]
+		root, err := reg.scopeFor(KindAgent, a.Metadata.OwnerUID())
+		if err != nil {
+			return nil, err
+		}
+		resources = append(resources, migrationResource{root: root, kind: KindAgent, uid: a.Metadata.UID, name: &a.Metadata.Name, meta: &a.Metadata})
+	}
+	return resources, nil
+}
+
+// validateV3MigrationSource proves the v3 graph and direct-owner reservation
+// authority before any canonicalization. It deliberately does not apply v4
+// root-wide uniqueness to the source document.
+func validateV3MigrationSource(reg Registry) error {
+	const op = "migrate registry v3 to v4"
+	for _, resource := range allResourceMeta(reg) {
+		if err := ValidateName(resource.Name); err != nil {
+			return err
+		}
+	}
+	probe := reg.Clone()
+	probe.SchemaVersion = SchemaVersion
+	probe.NameReservations = nil
+	resources, err := migrationResources(&probe)
+	if err != nil {
+		return err
+	}
+	for _, resource := range resources {
+		if err := ValidateName(resource.uid); err != nil {
+			return stateErr(op, ErrInvalidRegistry, "%s uid %q cannot be its exact v4 name", resource.kind, resource.uid)
+		}
+		*resource.name = resource.uid
+		resource.meta.removedDisplayName = removedPresentation{}
+		if resource.pane != nil {
+			resource.pane.removedDisplayTitle = removedPresentation{}
+		}
+		probe.putReservation(resource.root, resource.kind, resource.uid, resource.uid)
+	}
+	if err := probe.Validate(); err != nil {
+		return stateErr(op, ErrInvalidRegistry, "source owner graph is invalid: %v", err)
+	}
+	return nil
+}
+
+func allResourceMeta(reg Registry) []ObjectMeta {
+	out := make([]ObjectMeta, 0, len(reg.Projects)+len(reg.ControlSessions)+len(reg.Windows)+len(reg.Panes)+len(reg.Agents))
+	for _, v := range reg.Projects {
+		out = append(out, v.Metadata)
+	}
+	for _, v := range reg.ControlSessions {
+		out = append(out, v.Metadata)
+	}
+	for _, v := range reg.Windows {
+		out = append(out, v.Metadata)
+	}
+	for _, v := range reg.Panes {
+		out = append(out, v.Metadata)
+	}
+	for _, v := range reg.Agents {
+		out = append(out, v.Metadata)
+	}
+	return out
+}
+
+// canonicalizeRootConflictsWithReport applies the v3 duplicate-group plus
+// destination-closure rule to one imported snapshot root while preserving
+// every unique name outside the closure.
+func (r *Registry) canonicalizeRootConflictsWithReport(rootUID string) ([]MigrationNameRepair, error) {
+	resources, err := migrationResources(r)
+	if err != nil {
+		return nil, err
+	}
+	type addressKey struct {
+		root string
+		kind Kind
+		name string
+	}
+	groups := make(map[addressKey][]int)
+	for index, resource := range resources {
+		if resource.root != rootUID {
+			continue
+		}
+		groups[addressKey{resource.root, resource.kind, *resource.name}] = append(groups[addressKey{resource.root, resource.kind, *resource.name}], index)
+	}
+	reasons := map[int]string{}
+	for _, members := range groups {
+		if len(members) < 2 {
+			continue
+		}
+		for _, index := range members {
+			reasons[index] = migrationReasonDuplicateGroup
+		}
+	}
+	for {
+		changed := false
+		for index := range reasons {
+			resource := resources[index]
+			for _, occupant := range groups[addressKey{resource.root, resource.kind, resource.uid}] {
+				if _, exists := reasons[occupant]; exists {
+					continue
+				}
+				reasons[occupant] = migrationReasonDestinationClosure
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+	repairs := make([]MigrationNameRepair, 0, len(reasons))
+	for index, reason := range reasons {
+		resource := resources[index]
+		oldName := *resource.name
+		if oldName == resource.uid {
+			reason = migrationReasonAlreadyCanonical
+		}
+		repairs = append(repairs, MigrationNameRepair{RootOwnerUID: resource.root, Kind: resource.kind,
+			UID: resource.uid, OldName: oldName, NewName: resource.uid, Reason: reason})
+		*resources[index].name = resources[index].uid
+	}
+	sort.Slice(repairs, func(i, j int) bool {
+		a, b := repairs[i], repairs[j]
+		if a.RootOwnerUID != b.RootOwnerUID {
+			return a.RootOwnerUID < b.RootOwnerUID
+		}
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.UID != b.UID {
+			return a.UID < b.UID
+		}
+		if a.OldName != b.OldName {
+			return a.OldName < b.OldName
+		}
+		if a.NewName != b.NewName {
+			return a.NewName < b.NewName
+		}
+		return a.Reason < b.Reason
+	})
+	return repairs, nil
+}
+
+// rebuildAllReservations reconstructs the v4 reservation table from the owner
+// graph in stable root/kind/UID order. Persisted v3 reservations are not an
+// authority for migration.
+func (r *Registry) rebuildAllReservations() {
+	resources, err := migrationResources(r)
+	if err != nil {
+		return
+	}
+	r.NameReservations = nil
+	sort.Slice(resources, func(i, j int) bool {
+		a, b := resources[i], resources[j]
+		if a.root != b.root {
+			return a.root < b.root
+		}
+		if a.kind != b.kind {
+			return a.kind < b.kind
+		}
+		return a.uid < b.uid
+	})
+	for _, resource := range resources {
+		r.putReservation(resource.root, resource.kind, *resource.name, resource.uid)
+	}
 }
 
 func migrationDirectoryExists(env MigrationEnvironment, path string) (bool, error) {
@@ -482,11 +857,12 @@ func validProjectPrimary(reg *Registry, project Project) bool {
 		window.Metadata.OwnerRef.UID == project.Metadata.UID && validWindowPrimary(reg, *window)
 }
 
-// rebuildMissingReservations backfills a reservation for every resource name
-// that has none. Existing reservations win, so a migration never renumbers or
-// renames an existing resource.
+// rebuildMissingReservations reconstructs missing v4 root-wide reservations.
 func (r *Registry) rebuildMissingReservations() {
-	index := r.reservationIndex()
+	index := make(map[nameKey]string, len(r.NameReservations))
+	for _, reservation := range r.NameReservations {
+		index[nameKey{Scope: reservation.Scope, Kind: reservation.Kind, Name: reservation.Name}] = reservation.UID
+	}
 	add := func(scope string, kind Kind, name, uid string) {
 		if name == "" || uid == "" {
 			return
@@ -505,14 +881,21 @@ func (r *Registry) rebuildMissingReservations() {
 		add("", KindControlSession, control.Metadata.Name, control.Metadata.UID)
 	}
 	for _, window := range r.Windows {
-		add(window.Metadata.OwnerUID(), KindWindow, window.Metadata.Name, window.Metadata.UID)
+		if scope, err := r.scopeFor(KindWindow, window.Metadata.OwnerUID()); err == nil {
+			add(scope, KindWindow, window.Metadata.Name, window.Metadata.UID)
+		}
 	}
 	for _, pane := range r.Panes {
-		add(pane.Metadata.OwnerUID(), KindPane, pane.Metadata.Name, pane.Metadata.UID)
+		if scope, err := r.scopeFor(KindPane, pane.Metadata.OwnerUID()); err == nil {
+			add(scope, KindPane, pane.Metadata.Name, pane.Metadata.UID)
+		}
 	}
 	for _, agent := range r.Agents {
-		add(agent.Metadata.OwnerUID(), KindAgent, agent.Metadata.Name, agent.Metadata.UID)
+		if scope, err := r.scopeFor(KindAgent, agent.Metadata.OwnerUID()); err == nil {
+			add(scope, KindAgent, agent.Metadata.Name, agent.Metadata.UID)
+		}
 	}
+	sortNameReservations(r.NameReservations)
 }
 
 // normalized stamps the current envelope and canonicalizes timestamps.

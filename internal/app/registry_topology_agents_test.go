@@ -139,7 +139,7 @@ func markTopologyAgentInterrupted(t *testing.T, store *fakeResourceStore, agentU
 	mutator := store.mutator()
 	if paneUID == "" {
 		pane, err := mutator.AttachAgentPane(&store.registry, agentUID, coremetadata.BootstrapPane{
-			Name: "retained", CWD: store.registry.Projects[1].Spec.Root,
+			Name: "retained-" + agentUID, CWD: store.registry.Projects[1].Spec.Root,
 		}, "op-topology-interrupted-pane")
 		if err != nil {
 			t.Fatal(err)

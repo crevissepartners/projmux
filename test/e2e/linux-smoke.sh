@@ -1146,8 +1146,29 @@ if [[ -e "$create_registry" ]]; then
 fi
 pmx create project --root "$create_root/legacy/alpha" --name alpha >"$create_root/register-alpha.out"
 smoke_assert_file_contains "$create_root/register-alpha.out" "project/alpha created"
+# beta is deliberately registered without --name: it is this fixture's single
+# witness for the schema v4 automatic name, which is the exact created uid
+# rather than any semantic stem. Its uid is then read back through the read-only
+# plural projection, selected by beta's exact root -- alpha is registered too,
+# so listing order is not an identity -- rather than by re-issuing the create
+# and leaning on reuse semantics a later Phase owns.
 pmx create project --root "$create_root/work/beta" >"$create_root/register-beta.out"
-smoke_assert_file_contains "$create_root/register-beta.out" "project/beta created"
+pmx get projects -o json >"$create_root/projects-bootstrap.json"
+create_beta_uid="$(awk -v needle="\"root\": \"$create_root/work/beta\"" '
+  $1 == "\"uid\":" { uid = $2; sub(/^"/, "", uid); sub(/",?$/, "", uid) }
+  index($0, needle) > 0 { print uid; exit }
+' "$create_root/projects-bootstrap.json")"
+smoke_require_uid "automatic-name beta Project" project "$create_beta_uid"
+# The root-selected read is self-verifying: the uid it produced must be the
+# Project bound to exactly that root.
+pmx describe project "uid:$create_beta_uid" -o json >"$create_root/beta-bootstrap.json"
+smoke_assert_file_contains "$create_root/beta-bootstrap.json" "\"root\": \"$create_root/work/beta\""
+create_beta_name="$(pmx describe project "uid:$create_beta_uid" -o name | tr -d '[:space:]')"
+if [[ "$create_beta_name" != "$create_beta_uid" ]]; then
+  echo "automatic Project name = '$create_beta_name', want the exact uid '$create_beta_uid'" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$create_root/register-beta.out" "project/$create_beta_uid created"
 if [[ ! -f "$create_registry" ]]; then
   echo "the explicit Project bootstrap did not write the registry" >&2
   exit 1
@@ -1202,7 +1223,7 @@ PRECREATE
 create_sessions_before="$(ctx list-sessions -F '#{session_name}' | wc -l)"
 cp "$create_registry" "$create_root/precreate.registry"
 set +e
-pmx create window --project beta >"$create_root/precreate.out" 2>"$create_root/precreate.err"
+pmx create window --project "uid:$create_beta_uid" >"$create_root/precreate.out" 2>"$create_root/precreate.err"
 precreate_status=$?
 set -e
 if [[ "$precreate_status" == "0" ]]; then
@@ -1225,7 +1246,7 @@ cat >"$create_root/config/projmux/config.toml" <<'POSTCREATE'
 [hooks.post-create]
 run = "exit 9"
 POSTCREATE
-pmx create window --project beta >"$create_root/postcreate.out" 2>"$create_root/postcreate.err"
+pmx create window --project "uid:$create_beta_uid" >"$create_root/postcreate.out" 2>"$create_root/postcreate.err"
 smoke_assert_file_contains "$create_root/postcreate.out" "created"
 smoke_assert_file_contains "$create_root/postcreate.err" "post-create"
 rm -f "$create_root/config/projmux/config.toml"
@@ -1268,7 +1289,7 @@ for phase0_identity in blank foreign; do
   ctx show-options -w -t "$phase0_window" >"$create_root/phase0-$phase0_identity.window-options"
   ctx show-options -p -t "$phase0_pane" >"$create_root/phase0-$phase0_identity.pane-options"
   set +e
-  pmx create window --project beta --name "phase0-$phase0_identity" \
+  pmx create window --project "uid:$create_beta_uid" --name "phase0-$phase0_identity" \
     >"$create_root/phase0-$phase0_identity.out" 2>"$create_root/phase0-$phase0_identity.err"
   phase0_status=$?
   set -e
@@ -2237,13 +2258,27 @@ create_client_two_pid=""
 # 9. The payload-free shortcut normalizes onto the same pre-provider plain
 #    route, and a second create allocates a new Agent instead of reusing the
 #    first.
+#    Under schema v4 the automatic Agent name is the exact Agent uid, so the
+#    returned name is itself the identity that proves the second create
+#    allocated a new Agent rather than reusing the provider-named first one.
+pmx_agent get agents -p alpha -o uid | sort >"$create_root/agents-before-second.out"
 pmx_agent create codex -p alpha -w "$alpha_window_name" -o name >"$create_root/agent-second.out"
-if [[ "$(tr -d '[:space:]' <"$create_root/agent-second.out")" != "codex" ]]; then
-  echo "the second Agent name = $(cat "$create_root/agent-second.out"), want codex" >&2
+create_second_agent="$(tr -d '[:space:]' <"$create_root/agent-second.out")"
+smoke_require_uid "payload-free shortcut Agent" agent "$create_second_agent"
+if [[ "$(pmx_agent describe agent "uid:$create_second_agent" -o name | tr -d '[:space:]')" != "$create_second_agent" ]]; then
+  echo "the second Agent automatic name is not its exact uid: $create_second_agent" >&2
   exit 1
 fi
+pmx_agent get agents -p alpha -o uid | sort >"$create_root/agents-after-second.out"
+if [[ "$(comm -13 "$create_root/agents-before-second.out" "$create_root/agents-after-second.out")" != "$create_second_agent" ]]; then
+  echo "the payload-free shortcut did not allocate exactly one new Agent" >&2
+  diff -u "$create_root/agents-before-second.out" "$create_root/agents-after-second.out" >&2 || true
+  exit 1
+fi
+# The name read surfaces the exact automatic uid alongside the explicit --name
+# the outside-exact create chose, so neither spelling shadows the other.
 pmx_agent get agents -p alpha -o name >"$create_root/agent-list.out"
-for want in claude codex; do
+for want in "$create_second_agent" exact-native-route; do
   if ! grep -qx "$want" "$create_root/agent-list.out"; then
     echo "get agents is missing $want:" >&2
     cat "$create_root/agent-list.out" >&2
@@ -2255,8 +2290,13 @@ done
 : >"$create_root/agent-launch.log"
 pmx_agent create agent --provider codex --interactive-only -p alpha -w "$alpha_window_name" -o name \
   -- -p payload-project -w payload-window --topic "release triage" >"$create_root/agent-payload.out"
-if [[ "$(tr -d '[:space:]' <"$create_root/agent-payload.out")" != "codex-1" ]]; then
-  echo "a payload changed the Agent name: $(cat "$create_root/agent-payload.out")" >&2
+create_payload_agent="$(tr -d '[:space:]' <"$create_root/agent-payload.out")"
+# The automatic name is the exact Agent uid. The `agent-<26>` receipt admits
+# neither a payload token nor the numeric suffix v3 used to append, and the
+# identity is a new one rather than the earlier codex Agent.
+smoke_require_uid "payload-bearing Agent" agent "$create_payload_agent"
+if [[ "$create_payload_agent" == "$create_second_agent" ]]; then
+  echo "the payload-bearing create reused the earlier codex Agent identity: $create_payload_agent" >&2
   exit 1
 fi
 smoke_wait_until 10 "the payload-bearing provider stub launch log to appear" \
@@ -2289,11 +2329,13 @@ if [[ "$(md5sum "$create_registry" | cut -d' ' -f1)" != "$agent_registry_before"
 fi
 smoke_assert_file_contains "$create_root/agent-noprovider.err" "requires --provider"
 
-# 12. An explicit name that collides inside the target Window is exit 2 with no
-#     implicit suffix and no new pane.
+# 12. An explicit name that collides inside the owning root is exit 2 with no
+#     implicit suffix and no new pane. `exact-native-route` is the one Agent
+#     name a human chose here, and schema v4 scopes Agent name uniqueness to
+#     the owning Project root, so the collision does not need the same Window.
 agent_panes_before="$(ctx list-panes -s -t legacy-alpha -F '#{pane_id}' | wc -l)"
 set +e
-pmx_agent create agent --provider codex --interactive-only --project alpha --window "$alpha_window_name" --name codex \
+pmx_agent create agent --provider codex --interactive-only --project alpha --window "$alpha_window_name" --name exact-native-route \
   >"$create_root/agent-collide.out" 2>"$create_root/agent-collide.err"
 agent_collide_status=$?
 set -e
@@ -2520,7 +2562,7 @@ cross_agent_name="$(pmx_agent create agent --provider codex --interactive-only -
   --cwd "$create_root/work/beta" --add-dir "$create_root/legacy/alpha" -o name)"
 smoke_assert_file_contains "$create_root/agent-launch.log" "args=-C $create_root/work/beta --add-dir $create_root/legacy/alpha"
 if ! pmx_agent get agents --project alpha -o name | grep -qx "$cross_agent_name" ||
-  pmx_agent get agents --project beta -o name | grep -qx "$cross_agent_name"; then
+  pmx_agent get agents --project "uid:$create_beta_uid" -o name | grep -qx "$cross_agent_name"; then
   echo "cross-Project workspace changed Agent ownership" >&2
   exit 1
 fi
@@ -3186,19 +3228,32 @@ smoke_assert_file_contains "$binding_root/projects.out" "alpha"
 smoke_assert_file_contains "$binding_root/projects.out" "beta"
 
 # An explicit singular reference resolves inside the active Project too, not
-# against the whole Registry. The fixture is built to separate the two failure
-# modes it has to keep apart: Window `ns-one` and Pane `shared` exist in alpha
-# *and* in beta, so a cross-Project leak is visible, and alpha holds a second
-# Pane `shared` under `ns-two`, so a real intra-Project ambiguity must survive
-# the narrowing instead of being silently broken by the active Window.
+# against the whole Registry. Schema v4 scopes same-kind name uniqueness to the
+# owning root, so the fixture separates the failure modes it has to keep apart
+# without ever spelling one name twice in one kind inside one Project:
+#   * Window `ns-one` and Pane `shared` exist in alpha *and* in beta, so a
+#     cross-Project leak stays visible.
+#   * alpha carries two `role=shell` Panes -- `shared` under `ns-one` and
+#     `sibling` under `ns-two` -- so a real bounded intra-Project ambiguity
+#     survives the narrowing. It is reached through the label the Panes share
+#     rather than a duplicated name, which root-scoped uniqueness refuses.
+#   * alpha additionally holds a Window named `shared`, the cross-kind witness:
+#     one spelling in two kinds inside one root coexists, and each kind still
+#     resolves exactly one resource.
 binding_ns_alpha_pane="$(
-  binding_inside_pmx create pane -p alpha -w ns-one --create-window --name shared -o pane-id -- sleep 600
+  binding_inside_pmx create pane -p alpha -w ns-one --create-window --name shared \
+    --label role=shell -o pane-id -- sleep 600
 )"
 binding_ns_sibling_pane="$(
-  binding_inside_pmx create pane -p alpha -w ns-two --create-window --name shared -o pane-id -- sleep 600
+  binding_inside_pmx create pane -p alpha -w ns-two --create-window --name sibling \
+    --label role=shell -o pane-id -- sleep 600
 )"
 binding_ns_beta_pane="$(
-  binding_inside_pmx create pane -p beta -w ns-one --create-window --name shared -o pane-id -- sleep 600
+  binding_inside_pmx create pane -p beta -w ns-one --create-window --name shared \
+    --label role=shell -o pane-id -- sleep 600
+)"
+binding_ns_crosskind_window_uid="$(
+  binding_inside_pmx create window -p alpha --name shared -o uid -- sleep 600 | tr -d '[:space:]'
 )"
 binding_ns_alpha_pane_uid="$(binding_tmux show-options -pqv -t "$binding_ns_alpha_pane" @projmux_pane_uid)"
 binding_ns_sibling_pane_uid="$(binding_tmux show-options -pqv -t "$binding_ns_sibling_pane" @projmux_pane_uid)"
@@ -3207,12 +3262,17 @@ binding_ns_alpha_window_uid="$(binding_inside_pmx describe window ns-one -p alph
 binding_ns_beta_window_uid="$(binding_inside_pmx describe window ns-one -p beta -o uid | tr -d '[:space:]')"
 if [[ -z "$binding_ns_alpha_pane_uid" ]] || [[ -z "$binding_ns_sibling_pane_uid" ]] ||
   [[ -z "$binding_ns_beta_pane_uid" ]] || [[ -z "$binding_ns_alpha_window_uid" ]] ||
-  [[ -z "$binding_ns_beta_window_uid" ]]; then
+  [[ -z "$binding_ns_beta_window_uid" ]] || [[ -z "$binding_ns_crosskind_window_uid" ]]; then
   echo "singular namespace fixture left an identity empty" >&2
   exit 1
 fi
 if [[ "$binding_ns_alpha_window_uid" == "$binding_ns_beta_window_uid" ]]; then
   echo "singular namespace fixture reused one Window across Projects" >&2
+  exit 1
+fi
+if [[ "$binding_ns_alpha_pane_uid" == "$binding_ns_sibling_pane_uid" ]] ||
+  [[ "$binding_ns_alpha_pane_uid" == "$binding_ns_beta_pane_uid" ]]; then
+  echo "singular namespace fixture reused one Pane identity" >&2
   exit 1
 fi
 
@@ -3243,11 +3303,21 @@ if [[ "$binding_singular_outside_status" == "0" ]] || [[ -s "$binding_root/singu
 fi
 smoke_assert_file_contains "$binding_root/singular-outside.err" "matched 2 windows"
 
-# The Project narrows the search; it never picks the target. Two same-named
-# Panes inside alpha stay a bounded exact-one ambiguity, and the candidate
-# listing must not reach into beta.
+# Cross-kind coexistence: `shared` is a Window name and a Pane name inside the
+# one alpha root, and neither spelling shadows the other. Each kind resolves its
+# own exact resource, and the Pane read is simultaneously the cross-Project
+# narrowing witness for panes, because beta owns a `shared` Pane too.
+binding_assert_singular_uid "$binding_ns_crosskind_window_uid" window-crosskind \
+  describe window shared -o uid
+binding_assert_singular_uid "$binding_ns_alpha_pane_uid" pane-crosskind \
+  describe pane shared -o uid
+
+# The Project narrows the search; it never picks the target. The two `role=shell`
+# Panes inside alpha stay a bounded exact-one ambiguity -- the active Window is
+# not quietly used to break the tie -- and the candidate listing must not reach
+# into beta, whose `shared` Pane carries the same label.
 set +e
-binding_inside_pmx describe pane shared -o uid \
+binding_inside_pmx describe pane --selector role=shell -o uid \
   >"$binding_root/singular-ambiguous.out" 2>"$binding_root/singular-ambiguous.err"
 binding_singular_ambiguous_status=$?
 set -e
@@ -3256,17 +3326,37 @@ if [[ "$binding_singular_ambiguous_status" == "0" ]] || [[ -s "$binding_root/sin
   exit 1
 fi
 smoke_assert_file_contains "$binding_root/singular-ambiguous.err" "matched 2 panes"
-smoke_assert_file_contains "$binding_root/singular-ambiguous.err" "window/ns-one"
-smoke_assert_file_contains "$binding_root/singular-ambiguous.err" "window/ns-two"
-if grep -Fq "project/beta" "$binding_root/singular-ambiguous.err"; then
+smoke_assert_file_contains "$binding_root/singular-ambiguous.err" "pane/shared"
+smoke_assert_file_contains "$binding_root/singular-ambiguous.err" "pane/sibling"
+smoke_assert_file_contains "$binding_root/singular-ambiguous.err" "owner=project/alpha window/ns-one"
+smoke_assert_file_contains "$binding_root/singular-ambiguous.err" "owner=project/alpha window/ns-two"
+if grep -Fq "project/beta" "$binding_root/singular-ambiguous.err" ||
+  grep -Fq "$binding_ns_beta_pane_uid" "$binding_root/singular-ambiguous.err"; then
   echo "intra-Project ambiguity listed a beta candidate" >&2
   cat "$binding_root/singular-ambiguous.err" >&2
   exit 1
 fi
+# Naming the count the same label produces over the whole Registry is what
+# separates "the namespace narrowed" from "there happened to be two".
+set +e
+binding_pmx describe pane --selector role=shell -o uid \
+  >"$binding_root/singular-ambiguous-global.out" 2>"$binding_root/singular-ambiguous-global.err"
+binding_singular_ambiguous_global_status=$?
+set -e
+if [[ "$binding_singular_ambiguous_global_status" == "0" ]] ||
+  [[ -s "$binding_root/singular-ambiguous-global.out" ]]; then
+  echo "outside tmux the whole-Registry label ambiguity resolved instead of failing" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$binding_root/singular-ambiguous-global.err" "matched 3 panes"
+smoke_assert_file_contains "$binding_root/singular-ambiguous-global.err" "owner=project/beta window/ns-one"
+
+# `-w` breaks that bounded ambiguity without widening it: each Window narrows
+# the very same label match down to its own single Pane.
 binding_assert_singular_uid "$binding_ns_alpha_pane_uid" pane-scoped \
-  describe pane shared -w ns-one -o uid
+  describe pane --selector role=shell -w ns-one -o uid
 binding_assert_singular_uid "$binding_ns_sibling_pane_uid" pane-sibling \
-  describe pane shared -w ns-two -o uid
+  describe pane --selector role=shell -w ns-two -o uid
 binding_assert_singular_uid "$binding_ns_beta_pane_uid" pane-explicit \
   describe pane shared -p beta -o uid
 
@@ -6899,8 +6989,13 @@ if [[ "$fopen_mirrored_uid" != "$fopen_project_uid" ]]; then
   echo "first open session project uid = '$fopen_mirrored_uid', want '$fopen_project_uid'" >&2
   exit 1
 fi
-if [[ "$fopen_mirrored_name" != "gamma" ]]; then
-  echo "first open session project name = '$fopen_mirrored_name', want 'gamma'" >&2
+# `@projmux_project_name` and `@projmux_project_uid` stay two separate mirrored
+# fields, so each one keeps its own assertion. Under schema v4 an implicitly
+# registered Project carries the automatic name, which is the exact Project uid,
+# so the two values coincide here -- collapsing them into a single check would
+# let a dropped mirror hide behind the surviving one.
+if [[ "$fopen_mirrored_name" != "$fopen_project_uid" ]]; then
+  echo "first open session project name = '$fopen_mirrored_name', want the exact automatic name '$fopen_project_uid'" >&2
   exit 1
 fi
 if [[ "$fopen_mirrored_path" != "$fopen_project" ]]; then
@@ -6946,6 +7041,55 @@ if ! printf '%s\n' "$fopen_pane_uids" | grep -Fqx "$fopen_live_pane_uid"; then
   echo "the created pane uid '$fopen_live_pane_uid' is not in get panes: $fopen_pane_uids" >&2
   exit 1
 fi
+
+# The three mirror assertions above cannot tell `@projmux_project_name` and
+# `@projmux_project_uid` apart by value: under schema v4 an automatic name *is*
+# the uid, so a mirror that wrote the uid into the name slot -- or read the wrong
+# field composing the mirror -- would still pass. Making the two fields diverge
+# is what discriminates them. An explicit rename moves the Project's address;
+# the name mirror must follow it while identity, root, and the session name stay
+# exactly where they were. It runs on the inherited absolute socket because that
+# is the only route with an immediate live projection, and `rename project` is a
+# whole-registry `uid:` resolution, so the active-target namespace is not
+# involved. Every later step selects this Project by `uid:` only, so no bare-name
+# resolution is left to disturb -- and the round trip proves the mirror follows
+# every address change rather than being written once.
+fopen_assert_project_mirror() {
+  local label="$1" want_name="$2" got_uid got_name got_path
+  got_uid="$(fopen_tmux show-options -qv -t "$fopen_session" @projmux_project_uid)"
+  got_name="$(fopen_tmux show-options -qv -t "$fopen_session" @projmux_project_name)"
+  got_path="$(fopen_tmux show-options -qv -t "$fopen_session" @projmux_project_path)"
+  if [[ "$got_name" != "$want_name" ]]; then
+    echo "$label: @projmux_project_name = '$got_name', want '$want_name'" >&2
+    exit 1
+  fi
+  if [[ "$got_uid" != "$fopen_project_uid" ]]; then
+    echo "$label: @projmux_project_uid drifted to '$got_uid', want the unchanged '$fopen_project_uid'" >&2
+    exit 1
+  fi
+  if [[ "$got_path" != "$fopen_project" ]]; then
+    echo "$label: @projmux_project_path drifted to '$got_path', want the unchanged '$fopen_project'" >&2
+    exit 1
+  fi
+  if ! fopen_tmux has-session -t "$fopen_session" 2>/dev/null; then
+    echo "$label: the session named $fopen_session is gone; a Project rename must not rename its session" >&2
+    fopen_tmux list-sessions -F '#{session_name}' >&2 || true
+    exit 1
+  fi
+}
+fopen_mirrored_name_is() {
+  [[ "$(fopen_tmux show-options -qv -t "$fopen_session" @projmux_project_name)" == "$1" ]]
+}
+fopen_live_pmx rename project "uid:$fopen_project_uid" --name firstopen-explicit \
+  >"$fopen_root/rename-project-explicit.out"
+fopen_wait_for "the name mirror to follow the explicit Project rename" \
+  fopen_mirrored_name_is firstopen-explicit
+fopen_assert_project_mirror "after the explicit Project rename" firstopen-explicit
+fopen_live_pmx rename project "uid:$fopen_project_uid" --name firstopen-renamed \
+  >"$fopen_root/rename-project-again.out"
+fopen_wait_for "the name mirror to follow the second Project rename" \
+  fopen_mirrored_name_is firstopen-renamed
+fopen_assert_project_mirror "after the second Project rename" firstopen-renamed
 
 # 4. Repeating the open converges. Every session option and the Registry itself
 # stay byte-identical, which is the observable form of "no second mirror write".

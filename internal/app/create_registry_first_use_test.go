@@ -105,7 +105,7 @@ func (f *onDiskFixture) command(observe func(context.Context, string) (coremetad
 func (f *onDiskFixture) register(t *testing.T, roots ...string) {
 	t.Helper()
 	for _, root := range roots {
-		if _, _, err := runRoute(t, f.command(nil), "project", "--root", root); err != nil {
+		if _, _, err := runRoute(t, f.command(nil), "project", "--root", root, "--name", filepath.Base(root)); err != nil {
 			t.Fatalf("register project %q: %v", root, err)
 		}
 	}
@@ -139,8 +139,8 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 	if err != nil {
 		t.Fatalf("register error = %v (stderr %q)", err, stderr)
 	}
-	if got, want := stdout, "project/alpha created\n"; got != want {
-		t.Fatalf("stdout = %q, want %q", got, want)
+	if !strings.HasPrefix(stdout, "project/proj-") || !strings.HasSuffix(stdout, " created\n") {
+		t.Fatalf("stdout = %q, want one exact-UID automatic Project name", stdout)
 	}
 
 	info, err := os.Stat(fixture.registryPath())
@@ -177,8 +177,8 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 			t.Fatalf("project %s bootstrap Window has no resolvable default shell ref", project.Metadata.Name)
 		}
 	}
-	if !slices.Equal(names, []string{"alpha"}) {
-		t.Fatalf("registered projects = %v, want only the named root; a discovered sibling must stay unregistered", names)
+	if len(names) != 1 || names[0] != registry.Projects[0].Metadata.UID {
+		t.Fatalf("registered projects = %v, want only the exact Project uid; a discovered sibling must stay unregistered", names)
 	}
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("the written registry does not validate: %v", err)
@@ -194,7 +194,7 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 	if err != nil {
 		t.Fatalf("repeat register error = %v", err)
 	}
-	if got, want := repeatOut, "project/alpha created\n"; got != want {
+	if got, want := repeatOut, stdout; got != want {
 		t.Fatalf("repeat stdout = %q, want %q", got, want)
 	}
 	after, err := os.ReadFile(fixture.registryPath())
@@ -207,7 +207,7 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 
 	// And the Project the bootstrap created is the one the ordinary create routes
 	// resolve.
-	windowOut, windowErr, err := runRoute(t, fixture.command(nil), "window", "--project", "alpha")
+	windowOut, windowErr, err := runRoute(t, fixture.command(nil), "window", "--project", "uid:"+registry.Projects[0].Metadata.UID)
 	if err != nil {
 		t.Fatalf("create window error = %v (stderr %q)", err, windowErr)
 	}
@@ -299,7 +299,7 @@ func TestASecondMutationExtendsTheExistingRegistryWithoutRenumbering(t *testing.
 		t.Fatalf("read registry: %v", err)
 	}
 
-	if _, _, err := runRoute(t, fixture.command(nil), "pane", "--project", "beta", "--window", "zsh"); err != nil {
+	if _, _, err := runRoute(t, fixture.command(nil), "pane", "--project", "beta"); err != nil {
 		t.Fatalf("second create error = %v", err)
 	}
 	second := fixture.load(t)
@@ -379,14 +379,14 @@ func TestConcurrentCreatesSerializeOnTheOnDiskLockAndConvergeOnOneWindow(t *test
 	}
 }
 
-// TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNames
-// is the legacy-state check at the reconciler and describe seams.
+// TestTheFirstLegacyMigrationUsesExactUIDNamesAndEphemeralRuntimeContext is the
+// legacy-state check at the reconciler and describe seams.
 //
 // The tmux ids come back from the observation, so the migration can mirror the
 // uids it allocated onto exactly the objects it imported. Without that, a
 // migrated Window has registry identity and no transport binding, and the next
 // create builds a duplicate next to it.
-func TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNames(t *testing.T) {
+func TestTheFirstLegacyMigrationUsesExactUIDNamesAndEphemeralRuntimeContext(t *testing.T) {
 	t.Parallel()
 
 	fixture := newOnDiskFixture(t)
@@ -397,8 +397,8 @@ func TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNam
 	}
 	fixture.roots = append(fixture.roots, targetRoot)
 	session := fixture.tmux.addSession("legacy")
-	// Two pre-v2 windows with every formerly trusted runtime seed populated. None
-	// of those values may become metadata.name; window_name is displayName only.
+	// Two legacy windows have every formerly trusted runtime seed populated. None
+	// may become metadata.name or another durable presentation field.
 	editor := session.windows[0]
 	editor.name = "editor"
 	extra := &fakeTmuxWindow{id: fixture.tmux.mint("@"), name: "zsh", opts: map[string]string{}}
@@ -441,21 +441,20 @@ func TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNam
 	}
 
 	registry := fixture.load(t)
-	project, ok := registry.ProjectByName(filepath.Base(root))
+	project, ok := registry.ProjectByRoot(root)
 	if !ok {
 		t.Fatalf("the legacy session did not become a Project:\n%+v", registry.Projects)
 	}
 	windows := registry.WindowsOf(project.Metadata.UID)
-	var names, displayNames []string
+	var names []string
 	for _, window := range windows {
 		names = append(names, window.Metadata.Name)
-		displayNames = append(displayNames, window.Metadata.DisplayName)
+		if window.Metadata.Name != window.Metadata.UID {
+			t.Fatalf("migrated Window name = %q, want exact uid %q", window.Metadata.Name, window.Metadata.UID)
+		}
 	}
-	if !slices.Equal(names, []string{"window", "window-1"}) {
-		t.Fatalf("migrated Window names = %v, want window and window-1", names)
-	}
-	if !slices.Equal(displayNames, []string{"editor", "zsh"}) {
-		t.Fatalf("migrated Window displayNames = %v, want observed editor and zsh", displayNames)
+	if len(names) != 2 {
+		t.Fatalf("migrated Window names = %v, want two exact-uid names", names)
 	}
 	if editor.name != "editor" || extra.name != "zsh" {
 		t.Fatalf("runtime window names changed: %q/%q, want observed editor/zsh", editor.name, extra.name)
@@ -464,13 +463,13 @@ func TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNam
 	describe := &describeCommand{
 		loadRegistry: func() (coremetadata.Registry, error) { return fixture.load(t), nil },
 	}
-	description, stderr, err := runRoute(t, describe, "window", "window", "--project", filepath.Base(root))
+	description, stderr, err := runRoute(t, describe, "window", "uid:"+windows[0].Metadata.UID, "--project", "uid:"+project.Metadata.UID)
 	if err != nil {
 		t.Fatalf("describe imported window: %v (stderr=%s)", err, stderr)
 	}
 	hasName, hasContext, hasContextSource := false, false, false
 	for line := range strings.SplitSeq(description, "\n") {
-		hasName = hasName || (strings.HasPrefix(line, "Name:") && strings.TrimSpace(strings.TrimPrefix(line, "Name:")) == "window")
+		hasName = hasName || (strings.HasPrefix(line, "Name:") && strings.TrimSpace(strings.TrimPrefix(line, "Name:")) == windows[0].Metadata.UID)
 		hasContext = hasContext || (strings.HasPrefix(line, "Context:") && strings.TrimSpace(strings.TrimPrefix(line, "Context:")) == "nvim")
 		hasContextSource = hasContextSource || (strings.HasPrefix(line, "ContextSource:") && strings.TrimSpace(strings.TrimPrefix(line, "ContextSource:")) == "command-executable")
 	}

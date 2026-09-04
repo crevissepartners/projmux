@@ -74,6 +74,16 @@ type rootKindProjectionSite struct {
 // exhaustiveness test re-sorts anyway, so the order here is for reading.
 var rootKindProjectionSites = []rootKindProjectionSite{
 	{
+		File: "internal/core/metadata/schema.go", Func: "allResourceMeta",
+		Source: "Registry", Verdict: rootKindBoth,
+		Why: "collects removed presentation-field evidence across both durable root kinds and all descendants",
+	},
+	{
+		File: "internal/core/metadata/schema.go", Func: "migrationResources",
+		Source: "Registry", Verdict: rootKindBoth,
+		Why: "resolves every resource to its Project or ControlSession root for schema-v4 naming canonicalization",
+	},
+	{
 		File: "internal/core/metadata/schema.go", Func: "migrateV1ToV2",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "repairs the schema-v2 canonical shell anchor for Project roots; ControlSession remains a non-materializable control-plane root",
@@ -202,6 +212,11 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		File: "internal/core/metadata/model.go", Func: "Registry.ProjectByRoot",
 		Source: "Registry", Verdict: rootKindProjectOnly,
 		Why: "C-5 Non-Guarantee names ProjectByRoot explicitly: a ControlSession has no root and must never appear here",
+	},
+	{
+		File: "internal/core/metadata/model.go", Func: "Registry.ProjectBySession",
+		Source: "Registry", Verdict: rootKindProjectOnly,
+		Why: "resolves the 1:1 persistent Project session projection for metadata-bearing Project snapshots; ControlSession snapshots are excluded",
 	},
 	{
 		File: "internal/core/metadata/model.go", Func: "Registry.ProjectByName",
@@ -415,16 +430,16 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 		counts[site.Verdict]++
 	}
 	for verdict, want := range map[rootKindVerdict]int{
-		rootKindBoth:        20,
+		rootKindBoth:        22,
 		rootKindPaired:      2,
-		rootKindProjectOnly: 20,
+		rootKindProjectOnly: 21,
 		rootKindGap:         0,
 	} {
 		if counts[verdict] != want {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 42; got != want {
+	if got, want := len(rootKindProjectionSites), 45; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

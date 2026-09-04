@@ -83,7 +83,7 @@ func TestSessionStateSaveCapturesCurrentSessionEvenWhenAutosaveDisabled(t *testi
 
 	now := time.Date(2026, time.May, 12, 3, 4, 5, 0, time.UTC)
 	dir := t.TempDir()
-	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
+	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}", "#{window_id}", "#{@projmux_window_uid}"}, "\x1f")
 	paneFormat := strings.Join([]string{
 		"#{window_index}",
 		"#{pane_index}",
@@ -100,6 +100,8 @@ func TestSessionStateSaveCapturesCurrentSessionEvenWhenAutosaveDisabled(t *testi
 		"#{@projmux_ai_resume_id}",
 		"#{@projmux_ai_resume_source}",
 		"#{@projmux_ai_resume_updated_at}",
+		"#{pane_id}",
+		"#{@projmux_pane_uid}",
 	}, "\x1f")
 	runner := &recordingTmuxRunner{
 		formats: map[string]string{
@@ -392,7 +394,7 @@ func TestSessionStatePopupSaveNowCapturesCurrentSession(t *testing.T) {
 
 	now := time.Date(2026, time.May, 12, 3, 4, 5, 0, time.UTC)
 	dir := t.TempDir()
-	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
+	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}", "#{window_id}", "#{@projmux_window_uid}"}, "\x1f")
 	paneFormat := strings.Join([]string{
 		"#{window_index}",
 		"#{pane_index}",
@@ -409,6 +411,8 @@ func TestSessionStatePopupSaveNowCapturesCurrentSession(t *testing.T) {
 		"#{@projmux_ai_resume_id}",
 		"#{@projmux_ai_resume_source}",
 		"#{@projmux_ai_resume_updated_at}",
+		"#{pane_id}",
+		"#{@projmux_pane_uid}",
 	}, "\x1f")
 	runner := &recordingTmuxRunner{
 		formats: map[string]string{

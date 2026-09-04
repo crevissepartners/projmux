@@ -11,8 +11,11 @@ var (
 	// ErrNameConflict is an explicit --name / rename collision. It never gets
 	// an implicit suffix; the operation fails with zero mutations.
 	ErrNameConflict = errors.New("name is already in use")
-	// ErrNameExhausted means the automatic suffix space for a base is full.
-	ErrNameExhausted = errors.New("automatic name suffix space is exhausted")
+	// ErrNameExhausted means 100 unpublished exact UID/name candidates collided.
+	ErrNameExhausted = errors.New("automatic uid/name candidate space is exhausted")
+	// ErrExplicitNameCardinality rejects one explicit address applied to more
+	// than one create target before UID, Registry, tmux, or provider mutation.
+	ErrExplicitNameCardinality = errors.New("explicit-name-cardinality")
 	// ErrInvalidName marks a name that cannot be a stable query key.
 	ErrInvalidName = errors.New("invalid resource name")
 	// ErrInvalidRoot marks a root that is not an existing absolute directory.
@@ -34,6 +37,12 @@ var (
 	// ErrSchemaUnsupported marks an envelope version with no migration path.
 	ErrSchemaUnsupported = errors.New("unsupported resource registry schema version")
 )
+
+// ExplicitNameCardinalityError returns the typed multi-target create refusal.
+func ExplicitNameCardinalityError(op string, targets int) error {
+	return inputErr(op, ErrExplicitNameCardinality,
+		"explicit-name-cardinality: --name requires exactly one target; resolved %d", targets)
+}
 
 // usageMarker is implemented by metadata errors that are caused by invalid
 // user input rather than by a runtime fault. internal/app maps these onto the

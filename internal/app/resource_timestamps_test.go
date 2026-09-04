@@ -115,7 +115,7 @@ func ageFixtureRegistry(t *testing.T, created time.Time) coremetadata.Registry {
 	registry.NameReservations = []coremetadata.NameReservation{
 		{Kind: coremetadata.KindProject, Name: "alpha", UID: "prj-alpha"},
 		{Scope: "prj-alpha", Kind: coremetadata.KindWindow, Name: "main", UID: "win-alpha"},
-		{Scope: "win-alpha", Kind: coremetadata.KindPane, Name: "shell", UID: "pan-alpha"},
+		{Scope: "prj-alpha", Kind: coremetadata.KindPane, Name: "shell", UID: "pan-alpha"},
 	}
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("age fixture is not a valid registry: %v", err)
@@ -148,7 +148,7 @@ func TestGetListAgeColumnRendersEveryUnitInOneRead(t *testing.T) {
 		"                 false     zsh         live    alpha    main                        9s\n" +
 		"                 false     log         live    alpha    main                        47m\n" +
 		"                 false     codex-pane  live    alpha    main    codex               6h\n" +
-		"                 false     zsh         live    alpha    review                      11d\n"
+		"                 false     review-zsh  live    alpha    review                      11d\n"
 	if stdout != want {
 		t.Fatalf("get panes stdout =\n%q\nwant\n%q", stdout, want)
 	}

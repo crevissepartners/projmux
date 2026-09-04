@@ -7,14 +7,12 @@ import (
 
 // The active Project namespace of an explicit singular reference.
 //
-// A `metadata.name` is unique inside its owner scope, never across the
-// registry: a Window name is unique inside its Project, a Pane name inside its
-// Window or Agent, an Agent name inside its Window. So a bare `describe window
-// zsh` typed inside a managed Project used to compare the operator's word
-// against every Project at once and fail the exact-one cell on names that are
-// not in fact in conflict with each other. The fix is a namespace, not a
-// smarter target rule: inside tmux the search universe of a singular
-// Window/Pane/Agent reference is the Project that owns the active Window,
+// A descendant `metadata.name` is unique within its Project or ControlSession
+// root, not across the registry. So a bare `describe window zsh` typed inside a
+// managed Project must compare the operator's word only with that root, where
+// exact-one follows from the root-wide same-kind reservation. The fix is a
+// namespace, not a smarter target rule: inside tmux the search universe of a
+// singular Window/Pane/Agent reference is the root that owns the active Window,
 // exactly the universe `get windows|panes|agents` already reads.
 //
 // Four edges are deliberate, and each is the reason this is a separate seam
@@ -23,8 +21,7 @@ import (
 //  1. It narrows, it never selects. The Project fills selector.Query's
 //     DefaultRoot and nothing else, so the ref the operator typed is still
 //     the only thing that picks a resource. The active Window and the active
-//     Pane are not pushed down into the query, and two same-named resources
-//     inside the one Project stay the ordinary bounded exact-one ambiguity.
+//     Pane are not pushed down into the query.
 //  2. Explicit `--project`/`-p` wins with zero observations. The lookup is not
 //     consulted at all, so naming a Project can never cost a tmux round trip
 //     or fail because the surrounding pane is unmanaged.

@@ -56,7 +56,7 @@ func controlOwnerFixtureRegistry(control bool) coremetadata.Registry {
 		Metadata: meta("pan-alpha-zsh", "zsh", ownedBy(coremetadata.KindWindow, "win-alpha-main")),
 		Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: "/srv/alpha"},
 	}}
-	reserve("win-alpha-main", coremetadata.KindPane, "zsh", "pan-alpha-zsh")
+	reserve("prj-alpha", coremetadata.KindPane, "zsh", "pan-alpha-zsh")
 
 	if control {
 		registry.ControlSessions = []coremetadata.ControlSession{{
@@ -78,7 +78,7 @@ func controlOwnerFixtureRegistry(control bool) coremetadata.Registry {
 			Metadata: meta("pan-home", "zsh", ownedBy(coremetadata.KindWindow, "win-home")),
 			Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: "/home/operator"},
 		})
-		reserve("win-home", coremetadata.KindPane, "zsh", "pan-home")
+		reserve("ctl-home", coremetadata.KindPane, "zsh", "pan-home")
 	}
 	return registry.Normalize()
 }

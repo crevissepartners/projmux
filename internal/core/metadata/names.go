@@ -2,30 +2,24 @@ package metadata
 
 import (
 	"path/filepath"
-	"strconv"
+	"sort"
 	"strings"
 	"unicode"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
-	"github.com/crevissepartners/projmux/internal/core/paneidentity"
 )
 
 // maxNameLength bounds a name so it stays usable as a CLI query key.
 const maxNameLength = 128
 
-// maxAutoSuffix bounds the automatic suffix search. Exceeding it is a hard
-// error rather than a silent fallback to a non-unique name.
-const maxAutoSuffix = 100000
+// maxUIDNameAttempts bounds unpublished UID/name candidate minting. A
+// collision discards the candidate; it never creates a numeric name suffix.
+const maxUIDNameAttempts = 100
 
-// Fallback name bases used when no better seed exists.
+// Legacy/context fallbacks. Neither participates in automatic Registry naming.
 const (
 	FallbackProjectNameBase = "project"
 	FallbackWindowNameBase  = "window"
-	FallbackPaneNameBase    = "pane"
-	FallbackAgentNameBase   = "agent"
-	// FallbackControlSessionNameBase is used when the bound tmux session name
-	// sanitizes to nothing usable as a query key.
-	FallbackControlSessionNameBase = "control"
 )
 
 // ValidateName rejects names that cannot serve as a stable, unambiguous query
@@ -45,6 +39,24 @@ func ValidateName(name string) error {
 		if !nameRuneAllowed(r) {
 			return inputErr("name", ErrInvalidName, "name %q contains an unsupported character %q", name, string(r))
 		}
+	}
+	return nil
+}
+
+// ValidateExplicitNameReuse accepts an omitted reuse name or the exact stored
+// spelling. A different explicit name is a rename request, not registration
+// reuse, and is refused before any mutation.
+func ValidateExplicitNameReuse(op string, kind Kind, existing ObjectMeta, requested string) error {
+	if requested == "" {
+		return nil
+	}
+	if err := ValidateName(requested); err != nil {
+		return err
+	}
+	if requested != existing.Name {
+		return inputErr(op, ErrNameConflict,
+			"%s %s is already registered as %q; explicit name %q requires rename",
+			kind, existing.UID, existing.Name, requested)
 	}
 	return nil
 }
@@ -93,27 +105,9 @@ func SanitizeNameBase(seed string) string {
 	return out
 }
 
-// commandBase extracts the basename of the executable in a command line.
-// "nvim ." -> "nvim", "/usr/bin/zsh -l" -> "zsh".
-func commandBase(command string) string {
-	fields := strings.Fields(strings.TrimSpace(command))
-	if len(fields) == 0 {
-		return ""
-	}
-	return SanitizeNameBase(filepath.Base(fields[0]))
-}
-
-// shellBase extracts the basename of a configured shell path.
-func shellBase(shell string) string {
-	shell = strings.TrimSpace(shell)
-	if shell == "" {
-		return ""
-	}
-	return SanitizeNameBase(filepath.Base(shell))
-}
-
-// ProjectNameBase derives the Project name base from its root basename.
-// Project displayName seeds from the same value and may duplicate.
+// ProjectNameBase derives the historical path-based Project lookup spelling.
+// It is used only to recognize a previously registered root when old callers
+// provide that spelling; automatic Registry names are always exact UIDs.
 func ProjectNameBase(root string) string {
 	root = cleanRoot(root)
 	if root == "" || root == string(filepath.Separator) {
@@ -123,80 +117,6 @@ func ProjectNameBase(root string) string {
 		return base
 	}
 	return FallbackProjectNameBase
-}
-
-// ProjectDisplayName derives the duplicate-allowed Project display name.
-func ProjectDisplayName(root string) string {
-	root = cleanRoot(root)
-	if root == "" || root == string(filepath.Separator) {
-		return FallbackProjectNameBase
-	}
-	if base := strings.TrimSpace(filepath.Base(root)); base != "" {
-		return base
-	}
-	return FallbackProjectNameBase
-}
-
-// WindowNameBase applies the one-time Window naming order: explicit name,
-// initial command basename, configured shell basename, then "window". Agent
-// topic and raw pane title are deliberately excluded as name seeds.
-func WindowNameBase(explicit, command, shell string) string {
-	if base := SanitizeNameBase(explicit); base != "" {
-		return base
-	}
-	if base := commandBase(command); base != "" {
-		return base
-	}
-	if base := shellBase(shell); base != "" {
-		return base
-	}
-	return FallbackWindowNameBase
-}
-
-// ControlSessionNameBase derives the ControlSession name base from the tmux
-// session name it is bound to.
-//
-// The session name is the only seed there is: a control session owns no root to
-// take a basename from, and inventing one from $HOME would be the very
-// path-derived identity this kind exists to avoid.
-func ControlSessionNameBase(session string) string {
-	if base := SanitizeNameBase(session); base != "" {
-		return base
-	}
-	return FallbackControlSessionNameBase
-}
-
-// PaneNameBase applies the shell Pane naming order: command basename,
-// configured shell basename, then "pane".
-func PaneNameBase(command, shell string) string {
-	if base := commandBase(command); base != "" {
-		return base
-	}
-	if base := shellBase(shell); base != "" {
-		return base
-	}
-	return FallbackPaneNameBase
-}
-
-// ManagedPaneNameBase is the "<agent-name>-pane" base used for a Pane managed
-// by an Agent.
-func ManagedPaneNameBase(agentName string) string {
-	if base := SanitizeNameBase(agentName); base != "" {
-		return base + "-" + FallbackPaneNameBase
-	}
-	return FallbackPaneNameBase
-}
-
-// AgentNameBase applies the Agent naming order: explicit --name, normalized
-// provider id, then "agent" when the provider is unknown.
-func AgentNameBase(explicit, provider string) string {
-	if base := SanitizeNameBase(explicit); base != "" {
-		return base
-	}
-	if id := NormalizeProvider(provider); id != "" {
-		return id
-	}
-	return FallbackAgentNameBase
 }
 
 // NormalizeProvider maps a provider spelling onto its registered id
@@ -212,20 +132,6 @@ func NormalizeProvider(provider string) string {
 	return ""
 }
 
-// DerivePaneDisplayTitle computes the secondary, derived pane title from the
-// Agent topic, a known interactive shell command, or the raw pane title. It is
-// never a selector, an identity, or a Window name source, and the Pane
-// metadata.name is deliberately not an input.
-func DerivePaneDisplayTitle(agent, topic, command, rawTitle string) string {
-	identity := paneidentity.Resolve(paneidentity.Inputs{
-		AIAgent: agent,
-		AITopic: topic,
-		Command: command,
-		Title:   rawTitle,
-	})
-	return identity.Value
-}
-
 // nameKey identifies one reservation slot.
 type nameKey struct {
 	Scope string
@@ -233,9 +139,10 @@ type nameKey struct {
 	Name  string
 }
 
-// scopeFor returns the uniqueness scope for a kind and owner. Project and
-// ControlSession names are unique across the whole registry, so their scope is
-// empty.
+// scopeFor returns the v4 root-wide uniqueness scope for a kind and direct
+// owner. Project and ControlSession names are kind-global and use an empty
+// scope; every descendant uses the exact Project or ControlSession UID at the
+// top of its owner chain.
 //
 // The two root kinds share the empty scope but not a slot: nameKey carries the
 // Kind, so a Project named `home` and a ControlSession named `home` are two
@@ -243,19 +150,33 @@ type nameKey struct {
 // name comes from a tmux session name the operator chose long before any
 // Project existed, and failing `projmux shell` because a Project already holds
 // that word would make the app's own entrypoint hostage to registry contents.
-func scopeFor(kind Kind, ownerUID string) string {
+func (r Registry) scopeFor(kind Kind, ownerUID string) (string, error) {
 	if kind == KindProject || kind == KindControlSession {
-		return ""
+		return "", nil
 	}
-	return ownerUID
-}
-
-func (r *Registry) reservationIndex() map[nameKey]string {
-	index := make(map[nameKey]string, len(r.NameReservations))
-	for _, reservation := range r.NameReservations {
-		index[nameKey{Scope: reservation.Scope, Kind: reservation.Kind, Name: reservation.Name}] = reservation.UID
+	ownerUID = strings.TrimSpace(ownerUID)
+	switch kind {
+	case KindWindow:
+		if _, ok := r.Project(ownerUID); ok {
+			return ownerUID, nil
+		}
+		if _, ok := r.ControlSession(ownerUID); ok {
+			return ownerUID, nil
+		}
+	case KindAgent:
+		if window, ok := r.Window(ownerUID); ok {
+			return r.scopeFor(KindWindow, window.Metadata.OwnerUID())
+		}
+	case KindPane:
+		if window, ok := r.Window(ownerUID); ok {
+			return r.scopeFor(KindWindow, window.Metadata.OwnerUID())
+		}
+		if agent, ok := r.Agent(ownerUID); ok {
+			return r.scopeFor(KindAgent, agent.Metadata.OwnerUID())
+		}
 	}
-	return index
+	return "", stateErr("resolve name scope", ErrInvalidRegistry,
+		"cannot resolve %s owner %q to a Project or ControlSession root", kind, ownerUID)
 }
 
 // nameOwner reports the uid holding name inside scope.
@@ -270,8 +191,12 @@ func (r *Registry) nameOwner(scope string, kind Kind, name string) (string, bool
 
 // reserveExplicitName claims an operator-supplied name. A collision fails with
 // ErrNameConflict and never falls back to an implicit suffix.
-func (r *Registry) reserveExplicitName(op, scope string, kind Kind, name, uid string) error {
+func (r *Registry) reserveExplicitName(op, ownerUID string, kind Kind, name, uid string) error {
 	if err := ValidateName(name); err != nil {
+		return err
+	}
+	scope, err := r.scopeFor(kind, ownerUID)
+	if err != nil {
 		return err
 	}
 	if owner, taken := r.nameOwner(scope, kind, name); taken && owner != uid {
@@ -281,35 +206,52 @@ func (r *Registry) reserveExplicitName(op, scope string, kind Kind, name, uid st
 	return nil
 }
 
-// allocateName claims base, or the lowest free `base-N` suffix when base is
-// taken. Allocation reads the persisted reservation set and scans integer
-// suffixes in ascending order, so the result never depends on resource scan or
-// map iteration order.
-func (r *Registry) allocateName(op, scope string, kind Kind, base, uid string) (string, error) {
-	base = SanitizeNameBase(base)
-	if base == "" {
-		return "", inputErr(op, ErrInvalidName, "cannot derive a %s name base", strings.ToLower(string(kind)))
-	}
-	index := r.reservationIndex()
-	if owner, taken := index[nameKey{Scope: scope, Kind: kind, Name: base}]; !taken || owner == uid {
-		if err := ValidateName(base); err != nil {
-			return "", err
+// mintAndReserveName mints one resource identity and reserves its address.
+// Automatic addresses are the exact full UID. A colliding unpublished UID/name
+// candidate is discarded and reminted at most 100 times; no sibling scan,
+// semantic base, prefix truncation, or integer suffix participates.
+func (m Mutator) mintAndReserveName(reg *Registry, op, ownerUID string, kind Kind, explicit string) (string, string, error) {
+	if explicit != "" {
+		if err := ValidateName(explicit); err != nil {
+			return "", "", err
 		}
-		r.putReservation(scope, kind, base, uid)
-		return base, nil
+		scope, err := reg.scopeFor(kind, ownerUID)
+		if err != nil {
+			return "", "", err
+		}
+		if owner, taken := reg.nameOwner(scope, kind, explicit); taken {
+			return "", "", inputErr(op, ErrNameConflict, "%s name %q is already used by %s", strings.ToLower(string(kind)), explicit, owner)
+		}
 	}
-	for suffix := 1; suffix <= maxAutoSuffix; suffix++ {
-		candidate := base + "-" + strconv.Itoa(suffix)
-		if owner, taken := index[nameKey{Scope: scope, Kind: kind, Name: candidate}]; taken && owner != uid {
+	for range maxUIDNameAttempts {
+		uid, err := m.mintUID(kind)
+		if err != nil {
+			return "", "", err
+		}
+		if strings.TrimSpace(uid) == "" || registryHasUID(*reg, uid) {
 			continue
 		}
-		if err := ValidateName(candidate); err != nil {
-			return "", err
+		name := explicit
+		if name == "" {
+			name = uid
+			if err := ValidateName(name); err != nil {
+				continue
+			}
+			scope, err := reg.scopeFor(kind, ownerUID)
+			if err != nil {
+				return "", "", err
+			}
+			if owner, taken := reg.nameOwner(scope, kind, name); taken && owner != uid {
+				continue
+			}
 		}
-		r.putReservation(scope, kind, candidate, uid)
-		return candidate, nil
+		if err := reg.reserveExplicitName(op, ownerUID, kind, name, uid); err != nil {
+			return "", "", err
+		}
+		return uid, name, nil
 	}
-	return "", stateErr(op, ErrNameExhausted, "no free %s name for base %q after %d suffixes", strings.ToLower(string(kind)), base, maxAutoSuffix)
+	return "", "", stateErr(op, ErrNameExhausted,
+		"no free %s uid/name pair after %d candidates", strings.ToLower(string(kind)), maxUIDNameAttempts)
 }
 
 // putReservation records or replaces the reservation for name inside scope and
@@ -337,40 +279,61 @@ func (r *Registry) putReservation(scope string, kind Kind, name, uid string) {
 	}
 }
 
+func sortNameReservations(reservations []NameReservation) {
+	sort.SliceStable(reservations, func(i, j int) bool {
+		a, b := reservations[i], reservations[j]
+		if a.Scope != b.Scope {
+			return a.Scope < b.Scope
+		}
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.UID < b.UID
+	})
+}
+
 // rescopeName moves one uid's existing reservation from oldScope to newScope,
 // keeping the name byte-identical.
 //
-// Reservations are keyed by (scope, kind, name) and the scope of a Pane is its
-// owner uid, so re-parenting a Pane under an Agent has to move its reservation
-// or validateReservations stops finding one in the scope the resource now
-// reports. The name itself is deliberately untouched: the product contract says
-// existing names are never silently rewritten, and a re-parent is not a rename.
+// Reservations are keyed by (root scope, kind, name). A same-root Pane
+// re-parent therefore preserves the exact reservation bytes; a cross-root move
+// changes only the scope after proving the destination slot is free. The name
+// itself is deliberately untouched: existing names are never silently
+// rewritten, and a re-parent is not a rename.
 //
 // It reports false and writes nothing when the name is already taken in
 // newScope by a different uid. A caller that cannot move the reservation must
 // not move the resource either, or the two would disagree.
 func (r *Registry) rescopeName(oldScope, newScope string, kind Kind, name, uid string) bool {
-	if oldScope == newScope {
+	oldRoot, oldErr := r.scopeFor(kind, oldScope)
+	newRoot, newErr := r.scopeFor(kind, newScope)
+	if oldErr != nil || newErr != nil {
+		return false
+	}
+	if oldRoot == newRoot {
 		return true
 	}
-	if owner, taken := r.nameOwner(newScope, kind, name); taken && owner != uid {
+	if owner, taken := r.nameOwner(newRoot, kind, name); taken && owner != uid {
 		return false
 	}
 	kept := r.NameReservations[:0]
 	for _, reservation := range r.NameReservations {
-		if reservation.Scope == oldScope && reservation.Kind == kind && reservation.UID == uid {
+		if reservation.Scope == oldRoot && reservation.Kind == kind && reservation.UID == uid {
 			continue
 		}
 		kept = append(kept, reservation)
 	}
 	r.NameReservations = kept
-	r.putReservation(newScope, kind, name, uid)
+	r.putReservation(newRoot, kind, name, uid)
 	return true
 }
 
-// releaseNames drops every reservation held by uid, in any scope, and every
-// reservation scoped to uid as an owner. Deleting a resource frees both the
-// name it held and the scope it owned.
+// releaseNames drops every reservation held by uid and every reservation whose
+// root scope is uid. Deleting a root therefore frees its whole namespace;
+// deleting a descendant frees only the names of the exact cascade members.
 func (r *Registry) releaseNames(uid string) {
 	if uid == "" {
 		return

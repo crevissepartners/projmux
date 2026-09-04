@@ -605,7 +605,7 @@ func TestProjectFreshStartAgentAnchorCreatesNewMinimumIdentityOnEveryFresh(t *te
 	}
 	store.registry.Panes = append(store.registry.Panes, agentPane)
 	store.registry.NameReservations = append(store.registry.NameReservations, coremetadata.NameReservation{
-		Scope: agent.Metadata.UID, Kind: coremetadata.KindPane, Name: agentPane.Metadata.Name, UID: agentPane.Metadata.UID,
+		Scope: "prj-beta", Kind: coremetadata.KindPane, Name: agentPane.Metadata.Name, UID: agentPane.Metadata.UID,
 	})
 	agent.Status.PaneRef = agentPane.Metadata.UID
 	window.Spec.AnchorPaneRef = agentPane.Metadata.UID
@@ -728,7 +728,7 @@ func addFreshStartControlSession(t *testing.T, store *fakeResourceStore) {
 	registry.NameReservations = append(registry.NameReservations,
 		coremetadata.NameReservation{Scope: "", Kind: coremetadata.KindControlSession, Name: "home", UID: "ctl-home"},
 		coremetadata.NameReservation{Scope: "ctl-home", Kind: coremetadata.KindWindow, Name: "home", UID: "win-ctl-home"},
-		coremetadata.NameReservation{Scope: "win-ctl-home", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-ctl-home"},
+		coremetadata.NameReservation{Scope: "ctl-home", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-ctl-home"},
 	)
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("control session fixture is not a valid registry: %v", err)

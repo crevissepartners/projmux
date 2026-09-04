@@ -343,7 +343,7 @@ func TestCreateMaterializesAMissingProjectRuntimeInTheBackground(t *testing.T) {
 	assertNoClientMovement(t, tmux)
 }
 
-func TestCreateWindowPersistsExactRuntimeDisplayNameBeforeLifecycleReconcile(t *testing.T) {
+func TestCreateWindowPersistsOnlyTheExplicitRegistryName(t *testing.T) {
 	t.Parallel()
 
 	store := newFakeResourceStore(t)
@@ -363,9 +363,6 @@ func TestCreateWindowPersistsExactRuntimeDisplayNameBeforeLifecycleReconcile(t *
 	}
 	if created == nil {
 		t.Fatal("created review Window is absent from Registry")
-	}
-	if created.Metadata.DisplayName != created.Metadata.Name {
-		t.Fatalf("created Window displayName = %q, want exact runtime name %q", created.Metadata.DisplayName, created.Metadata.Name)
 	}
 	session := tmux.session("beta")
 	if session == nil {
@@ -596,20 +593,14 @@ func TestEveryTargetWindowAnchorsOnExactlyOnePane(t *testing.T) {
 		tmux := newFakeTmux()
 		create, _ := newTestResourceCreateCommand(t, store, tmux)
 
-		// `zsh` names one Pane in win-alpha-main and another in
-		// win-alpha-review, so a fan-out over both resolves one anchor each.
-		if _, _, err := runRoute(t, create, "pane", "--project", "alpha", "--pane", "zsh"); err != nil {
-			t.Fatalf("explicit anchor fan-out error = %v", err)
+		// Root-wide Pane names cannot name one anchor in two Windows. The
+		// explicit selector therefore refuses when it is absent from one target.
+		before := store.snapshot()
+		if _, _, err := runRoute(t, create, "pane", "--project", "alpha", "--pane", "zsh"); err == nil || !IsUsageError(err) {
+			t.Fatalf("explicit anchor fan-out error = %v, want a usage refusal", err)
 		}
-		var split []string
-		for _, call := range tmux.calls {
-			argv := tmuxCommandArgv(call)
-			if len(argv) > 0 && argv[0] == "split-window" {
-				split = append(split, flagValue(argv, "-t"))
-			}
-		}
-		if len(split) != 2 {
-			t.Fatalf("splits = %v, want one per target Window", split)
+		if store.snapshot() != before || tmuxMutationCallCount(tmux) != 0 {
+			t.Fatal("refused explicit anchor fan-out mutated Registry or tmux")
 		}
 	})
 
@@ -2035,17 +2026,17 @@ func TestResourceCreateOutputProjections(t *testing.T) {
 		check func(t *testing.T, stdout string)
 	}{
 		{mode: "", check: func(t *testing.T, out string) {
-			if out != "pane/zsh-1 created\n" {
+			if out != "pane/pane-test-1 created\n" {
 				t.Fatalf("default = %q", out)
 			}
 		}},
 		{mode: "name", check: func(t *testing.T, out string) {
-			if out != "zsh-1\n" {
+			if out != "pane-test-1\n" {
 				t.Fatalf("name = %q", out)
 			}
 		}},
 		{mode: "ref", check: func(t *testing.T, out string) {
-			if out != "pane/zsh-1\n" {
+			if out != "pane/pane-test-1\n" {
 				t.Fatalf("ref = %q", out)
 			}
 		}},
@@ -2131,7 +2122,7 @@ func TestResourceCreateFanOutIsDeterministicallyOrdered(t *testing.T) {
 }
 
 // TestCreatePayloadReachesTheRuntimeUnreinterpreted proves the `--` payload is
-// forwarded verbatim and used only as the one-time name seed.
+// forwarded verbatim and never used as a name seed.
 func TestCreatePayloadReachesTheRuntimeUnreinterpreted(t *testing.T) {
 	t.Parallel()
 
@@ -2160,16 +2151,15 @@ func TestCreatePayloadReachesTheRuntimeUnreinterpreted(t *testing.T) {
 	if payload := strings.Join(command[len(command)-4:], " "); payload != "nvim --clean -o json" {
 		t.Fatalf("payload tail = %q, want it forwarded untouched", payload)
 	}
-	// The Window name seeds from the payload's command basename, not from the
-	// configured shell.
+	// The Window keeps its exact-UID automatic name; payload is runtime-only.
 	var created *coremetadata.Window
 	for i := range store.registry.Windows {
-		if store.registry.Windows[i].Metadata.Name == "nvim" {
+		if store.registry.Windows[i].Metadata.UID == "window-test-1" {
 			created = &store.registry.Windows[i]
 		}
 	}
-	if created == nil {
-		t.Fatalf("no Window was named after the payload command:\n%s", store.snapshot())
+	if created == nil || created.Metadata.Name != created.Metadata.UID {
+		t.Fatalf("created Window did not keep its exact UID name:\n%s", store.snapshot())
 	}
 }
 
@@ -2764,8 +2754,9 @@ func TestAnExplicitNameCollisionLeavesZeroRuntimeObjects(t *testing.T) {
 		},
 		{
 			name: "create pane",
-			// `zsh` is already a Pane name inside beta's `main` Window.
-			args: []string{"pane", "--project", "beta", "--window", "main", "--name", "zsh"},
+			// `zsh` belongs to alpha's `main` Window, so creating it under the
+			// sibling `review` Window distinguishes root-wide scope from v3.
+			args: []string{"pane", "--project", "alpha", "--window", "review", "--name", "zsh"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

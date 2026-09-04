@@ -88,9 +88,9 @@ func lifecycleFixture(t *testing.T) *Registry {
 	registry.NameReservations = []NameReservation{
 		{Scope: "", Kind: KindProject, Name: "alpha", UID: "prj-alpha"},
 		{Scope: "prj-alpha", Kind: KindWindow, Name: "main", UID: "win-main"},
-		{Scope: "win-main", Kind: KindPane, Name: "zsh", UID: lifecycleShellUID},
-		{Scope: lifecycleAgentUID, Kind: KindPane, Name: "codex-pane", UID: lifecyclePaneUID},
-		{Scope: "win-main", Kind: KindAgent, Name: "codex", UID: lifecycleAgentUID},
+		{Scope: "prj-alpha", Kind: KindPane, Name: "zsh", UID: lifecycleShellUID},
+		{Scope: "prj-alpha", Kind: KindPane, Name: "codex-pane", UID: lifecyclePaneUID},
+		{Scope: "prj-alpha", Kind: KindAgent, Name: "codex", UID: lifecycleAgentUID},
 	}
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("lifecycle fixture is not a valid registry: %v", err)
@@ -504,7 +504,7 @@ func TestAReceiptForAPaneTheAgentNoLongerBindsIsEvidenceOnly(t *testing.T) {
 		Status: PaneStatus{Activation: PaneActivation{Generation: "gen-resumed", StartedAt: lifecycleClock}},
 	})
 	registry.NameReservations = append(registry.NameReservations,
-		NameReservation{Scope: lifecycleAgentUID, Kind: KindPane, Name: "codex-pane-2", UID: "pan-managed-2"})
+		NameReservation{Scope: "prj-alpha", Kind: KindPane, Name: "codex-pane-2", UID: "pan-managed-2"})
 	agent, _ := registry.Agent(lifecycleAgentUID)
 	agent.Status.PaneRef = "pan-managed-2"
 	if err := registry.Validate(); err != nil {

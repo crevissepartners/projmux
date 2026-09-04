@@ -22,14 +22,14 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 		t: t,
 		steps: []scriptedStep{
 			{output: []byte(
-				"0\x1fshell\x1flayout-a\n" +
-					"2\x1fwork\x1flayout-b\n",
+				"0\x1fshell\x1flayout-a\x1f@1\x1fwin-1\n" +
+					"2\x1fwork\x1flayout-b\x1f@2\x1fwin-2\n",
 			)},
 			{output: []byte(
-				"0\x1f0\x1fshell\x1fprimary shell\x1f0\x1f/home/tester\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\n" +
-					"0\x1f1\x1fwatcher\x1f\x1f1\x1f/home/tester/app\x1fstartup\x1fmake watch\x1f\x1f\x1f\x1f\x1f\x1f\n" +
-					"2\x1f0\x1fcodex task\x1freview label\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fcodex\x1fsession state\x1fon\x1f01973f21-abc\x1fsession-id\x1f2026-05-12T03:04:05Z\n" +
-					"2\x1f1\x1fclaude task\x1f\x1f0\x1f/home/tester/app\x1f\x1f\x1f1\x1fclaude\x1fmissing resume\x1f\x1f\x1f\x1f\n",
+				"0\x1f0\x1fshell\x1fprimary shell\x1f0\x1f/home/tester\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f%1\x1fpan-1\n" +
+					"0\x1f1\x1fwatcher\x1f\x1f1\x1f/home/tester/app\x1fstartup\x1fmake watch\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f%2\x1fpan-2\n" +
+					"2\x1f0\x1fcodex task\x1freview label\x1f1\x1f/home/tester/app\x1f\x1f\x1f1\x1fcodex\x1fsession state\x1fon\x1f01973f21-abc\x1fsession-id\x1f2026-05-12T03:04:05Z\x1f%3\x1fpan-3\n" +
+					"2\x1f1\x1fclaude task\x1f\x1f0\x1f/home/tester/app\x1f\x1f\x1f1\x1fclaude\x1fmissing resume\x1f\x1f\x1f\x1f\x1f%4\x1fpan-4\n",
 			)},
 			{output: []byte("layout(team)\n")},
 		},
@@ -50,22 +50,26 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 		Windows: []sessionstate.Window{
 			{
 				Index:           0,
+				RuntimeID:       "@1",
+				RegistryUID:     "win-1",
 				Name:            "shell",
 				Layout:          "layout-a",
 				ActivePaneIndex: 1,
 				Panes: []sessionstate.Pane{
-					{Index: 0, Label: "primary shell", Title: "shell", CWD: "/home/tester", Recipe: sessionstate.ShellRecipe()},
-					{Index: 1, Title: "watcher", CWD: "/home/tester/app", Recipe: sessionstate.StartupRecipe("make watch")},
+					{Index: 0, RuntimeID: "%1", RegistryUID: "pan-1", Label: "primary shell", Title: "shell", CWD: "/home/tester", Recipe: sessionstate.ShellRecipe()},
+					{Index: 1, RuntimeID: "%2", RegistryUID: "pan-2", Title: "watcher", CWD: "/home/tester/app", Recipe: sessionstate.StartupRecipe("make watch")},
 				},
 			},
 			{
 				Index:           2,
+				RuntimeID:       "@2",
+				RegistryUID:     "win-2",
 				Name:            "work",
 				Layout:          "layout-b",
 				ActivePaneIndex: 0,
 				Panes: []sessionstate.Pane{
-					{Index: 0, Label: "review label", Title: "codex task", CWD: "/home/tester/app", Recipe: sessionstate.Recipe{Kind: sessionstate.RecipeKindAgent, Agent: "codex", ResumeID: "01973f21-abc", ResumeSource: "session-id", ResumeUpdatedAt: "2026-05-12T03:04:05Z", Topic: "session state", TopicManual: true}},
-					{Index: 1, Title: "claude task", CWD: "/home/tester/app", Recipe: sessionstate.AgentRecipe("claude", "", "missing resume")},
+					{Index: 0, RuntimeID: "%3", RegistryUID: "pan-3", Label: "review label", Title: "codex task", CWD: "/home/tester/app", Recipe: sessionstate.Recipe{Kind: sessionstate.RecipeKindAgent, Agent: "codex", ResumeID: "01973f21-abc", ResumeSource: "session-id", ResumeUpdatedAt: "2026-05-12T03:04:05Z", Topic: "session state", TopicManual: true}},
+					{Index: 1, RuntimeID: "%4", RegistryUID: "pan-4", Title: "claude task", CWD: "/home/tester/app", Recipe: sessionstate.AgentRecipe("claude", "", "missing resume")},
 				},
 			},
 		},
@@ -75,7 +79,7 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 	}
 
 	wantCalls := []commandCall{
-		{name: "tmux", args: []string{"list-windows", "-t", "workspace", "-F", tmuxFormat("#{window_index}", "#{window_name}", "#{window_layout}")}},
+		{name: "tmux", args: []string{"list-windows", "-t", "workspace", "-F", tmuxFormat("#{window_index}", "#{window_name}", "#{window_layout}", "#{window_id}", "#{@projmux_window_uid}")}},
 		{name: "tmux", args: []string{"list-panes", "-s", "-t", "workspace", "-F", tmuxFormat(
 			"#{window_index}",
 			"#{pane_index}",
@@ -92,6 +96,8 @@ func TestClientCaptureSessionSnapshotCapturesWindowsPanesAndConservativeRecipes(
 			"#{@projmux_ai_resume_id}",
 			"#{@projmux_ai_resume_source}",
 			"#{@projmux_ai_resume_updated_at}",
+			"#{pane_id}",
+			"#{@projmux_pane_uid}",
 		)}},
 		{name: "tmux", args: []string{"display-message", "-p", "-t", "workspace", "#{@projmux_sessionstate_source}"}},
 	}
@@ -126,6 +132,37 @@ func TestClientSaveSessionSnapshotWritesStore(t *testing.T) {
 	}
 	if !reflect.DeepEqual(loaded, snap) {
 		t.Fatalf("loaded snapshot = %#v, want %#v", loaded, snap)
+	}
+}
+
+func TestClientSaveSessionSnapshotTransformRefusalIsTotalStoreZeroWrite(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 4, 3, 4, 5, 0, time.UTC)
+	runner := &scriptedRunner{
+		t: t,
+		steps: []scriptedStep{
+			{output: []byte("\n")},
+			{output: []byte("0\x1fshell\x1flayout\x1f@1\x1fwin-stale\n")},
+			{output: []byte("0\x1f0\x1fshell\x1f\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f%1\x1fpan-stale\n")},
+			{output: []byte("\n")},
+		},
+	}
+	store := sessionstate.NewStore(t.TempDir())
+	wantErr := errors.New("refuse stale mirrored uid")
+	_, err := NewClient(runner).SaveSessionSnapshotWithTransform(context.Background(), store, "workspace", now,
+		func(sessionstate.Snapshot) (sessionstate.Snapshot, error) {
+			return sessionstate.Snapshot{}, wantErr
+		})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("SaveSessionSnapshotWithTransform() error=%v, want %v", err, wantErr)
+	}
+	path, err := store.Path("workspace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot path stat error=%v, want absent after transform refusal", err)
 	}
 }
 

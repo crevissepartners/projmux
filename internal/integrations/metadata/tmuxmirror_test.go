@@ -52,21 +52,21 @@ func TestMirrorWritesResourceIdentityIntoScopedTmuxOptionsAndTurnsOffAutomaticRe
 			},
 		},
 		{
-			name: "window mirrors stable identity and a separate runtime display name",
+			name: "window mirrors stable identity without writing runtime presentation",
 			run: func(m Mirror) error {
 				return m.MirrorWindow(context.Background(), "projmux:0", coremetadata.Window{
-					Metadata: coremetadata.ObjectMeta{UID: "win-1", Name: "window", DisplayName: "editor"},
+					Metadata: coremetadata.ObjectMeta{UID: "win-1", Name: "window"},
 				})
 			},
 			want: []string{
 				"tmux set-option -w -t projmux:0 automatic-rename off",
 				"tmux set-option -w -t projmux:0 -q @projmux_window_uid win-1",
 				"tmux set-option -w -t projmux:0 -q @projmux_window_name window",
-				"tmux rename-window -t projmux:0 editor",
 			},
+			never: []string{"rename-window"},
 		},
 		{
-			name: "window with no projected display name falls back to stable name",
+			name: "window name is mirrored only as Registry identity",
 			run: func(m Mirror) error {
 				return m.MirrorWindow(context.Background(), "projmux:1", coremetadata.Window{
 					Metadata: coremetadata.ObjectMeta{UID: "win-2", Name: "review"},
@@ -76,8 +76,8 @@ func TestMirrorWritesResourceIdentityIntoScopedTmuxOptionsAndTurnsOffAutomaticRe
 				"tmux set-option -w -t projmux:1 automatic-rename off",
 				"tmux set-option -w -t projmux:1 -q @projmux_window_uid win-2",
 				"tmux set-option -w -t projmux:1 -q @projmux_window_name review",
-				"tmux rename-window -t projmux:1 review",
 			},
+			never: []string{"rename-window"},
 		},
 		{
 			name: "pane mirrors the uid and the pane name",
@@ -316,14 +316,6 @@ func TestObserveLegacySessionCollectsTheMigrationSeedsWithoutWriting(t *testing.
 		t.Fatalf("a non-agent pane must carry no conversation ids, got %q/%q", got.SessionID, got.ThreadID)
 	}
 
-	// Runtime attributes remain available for display projection, but neither
-	// automatic-rename mode can turn them into a stable Window name seed.
-	if got := coremetadata.LegacyWindowNameSeed(legacy.Windows[0]); got != coremetadata.FallbackWindowNameBase {
-		t.Fatalf("window 0 seed = %q, want %q", got, coremetadata.FallbackWindowNameBase)
-	}
-	if got := coremetadata.LegacyWindowNameSeed(legacy.Windows[1]); got != coremetadata.FallbackWindowNameBase {
-		t.Fatalf("window 1 seed = %q, want %q", got, coremetadata.FallbackWindowNameBase)
-	}
 }
 
 func TestMirrorRequiresARunnerAndSurfacesCommandFailures(t *testing.T) {

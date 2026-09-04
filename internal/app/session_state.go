@@ -155,13 +155,49 @@ func (c *sessionStateCommand) runSave(args []string, stdout, stderr io.Writer) (
 	}
 	now := c.nowTime()
 	client := inttmux.NewClient(c.runner)
-	snap, err := client.SaveSessionSnapshot(ctx, store, sessionName, now)
+	transform, err := c.snapshotMetadataTransform(sessionName)
+	if err != nil {
+		return err
+	}
+	snap, err := client.SaveSessionSnapshotWithTransform(ctx, store, sessionName, now, transform)
 	if err != nil {
 		return fmt.Errorf("save session snapshot %q: %w", sessionName, err)
 	}
 	counts = sessionStateDiagnosticCounts(snap)
 	_, err = fmt.Fprintf(stdout, "saved session snapshot: %s (%s, %s)\n", snap.Session, sessionStateCount(len(snap.Windows), "window"), sessionStateCount(statusbarSessionStatePaneCount(snap), "pane"))
 	return err
+}
+
+func (c *sessionStateCommand) snapshotMetadataTransform(sessionName string) (func(sessionstate.Snapshot) (sessionstate.Snapshot, error), error) {
+	if c.resources == nil || c.resources.snapshot == nil {
+		return nil, nil
+	}
+	registry, err := c.resources.snapshot()
+	if err != nil {
+		return nil, MapMetadataError(err)
+	}
+	project, found, err := snapshotProjectForSession(registry, sessionName)
+	if err != nil || !found {
+		return nil, err
+	}
+	return snapshotMetadataTransform(registry, project.Metadata.UID), nil
+}
+
+func snapshotMetadataTransform(registry coremetadata.Registry, projectUID string) func(sessionstate.Snapshot) (sessionstate.Snapshot, error) {
+	return func(snap sessionstate.Snapshot) (sessionstate.Snapshot, error) {
+		return coremetadata.StampProjectSnapshot(registry, projectUID, snap)
+	}
+}
+
+func snapshotProjectForSession(registry coremetadata.Registry, sessionName string) (coremetadata.Project, bool, error) {
+	project, found, err := registry.ProjectBySession(sessionName)
+	if err != nil {
+		return coremetadata.Project{}, false, fmt.Errorf("save session snapshot: %w", err)
+	}
+	if !found {
+		return coremetadata.Project{}, false, nil
+	}
+	return project.Clone(), true, nil
 }
 
 func (c *sessionStateCommand) runDelete(args []string, stdout, stderr io.Writer) (err error) {

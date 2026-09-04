@@ -100,7 +100,7 @@ func TestCardinalityViolationsAreBoundedUsageErrors(t *testing.T) {
 
 	resolver := New(standardRegistry(t))
 
-	// exact-one, ambiguous: `zsh` names four Panes across the registry.
+	// exact-one, ambiguous: `zsh` names three Panes in distinct roots.
 	ambiguous := Query{Panes: []Ref{mustRef(t, metadata.KindPane, "zsh")}}
 	resolution, err := resolver.ResolvePanes(ambiguous)
 	if err != nil {
@@ -117,11 +117,11 @@ func TestCardinalityViolationsAreBoundedUsageErrors(t *testing.T) {
 	if !asSelectorError(err, &selectorErr) {
 		t.Fatalf("cardinality violation is not a *SelectorError: %v", err)
 	}
-	if selectorErr.Want != CardinalityExactOne || selectorErr.Got != 4 {
+	if selectorErr.Want != CardinalityExactOne || selectorErr.Got != 3 {
 		t.Fatalf("violation = want %q got %d", selectorErr.Want, selectorErr.Got)
 	}
-	if len(selectorErr.Candidates) != 4 || selectorErr.Omitted != 0 {
-		t.Fatalf("candidates = %d omitted = %d, want 4/0", len(selectorErr.Candidates), selectorErr.Omitted)
+	if len(selectorErr.Candidates) != 3 || selectorErr.Omitted != 0 {
+		t.Fatalf("candidates = %d omitted = %d, want 3/0", len(selectorErr.Candidates), selectorErr.Omitted)
 	}
 	// Candidate rows carry name, non-authoritative context, and owner
 	// context -- exactly what a human needs to disambiguate.
@@ -179,10 +179,11 @@ func TestAmbiguityListingIsBoundedToFiveCandidates(t *testing.T) {
 	t.Parallel()
 
 	b := newBuilder(t)
-	b.project("prj-wide", "wide", "", "/srv/wide", nil, false)
 	for i, suffix := range []string{"a", "b", "c", "d", "e", "f", "g"} {
+		projectUID := "prj-wide-" + suffix
 		windowUID := "win-wide-" + suffix
-		b.window(windowUID, "w"+suffix, "prj-wide", nil)
+		b.project(projectUID, "wide-"+suffix, "", "/srv/wide-"+suffix, nil, false)
+		b.window(windowUID, "w"+suffix, projectUID, nil)
 		b.shellPane("pan-wide-"+suffix, "zsh", "display", windowUID, "/srv/wide", nil)
 		_ = i
 	}
@@ -262,10 +263,11 @@ func TestOnlyANoMatchFailureWrapsErrNotFound(t *testing.T) {
 	t.Parallel()
 
 	b := newBuilder(t)
-	b.project("prj-dup", "dup", "", "/srv/dup", nil, false)
 	for _, suffix := range []string{"a", "b"} {
+		projectUID := "prj-dup-" + suffix
 		windowUID := "win-dup-" + suffix
-		b.window(windowUID, "w"+suffix, "prj-dup", nil)
+		b.project(projectUID, "dup-"+suffix, "", "/srv/dup-"+suffix, nil, false)
+		b.window(windowUID, "w"+suffix, projectUID, nil)
 		b.shellPane("pan-dup-"+suffix, "zsh", "display", windowUID, "/srv/dup", nil)
 	}
 	resolver := New(b.build())

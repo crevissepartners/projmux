@@ -89,7 +89,7 @@ func TestDelayedProviderActivationReturnsValidatedPaneHandle(t *testing.T) {
 			if !regexp.MustCompile(`^%[0-9]+\n$`).MatchString(stdout) {
 				t.Fatalf("stdout = %q, want one exact %%N line", stdout)
 			}
-			agent := agentNamed(t, store, "win-alpha-review", provider)
+			agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
 			if agent.Status.Activation.State != coremetadata.ActivationAcknowledged ||
 				agent.Status.Activation.Source != string(coremetadata.InteractionSourceProviderHook) {
 				t.Fatalf("activation = %+v", agent.Status.Activation)
@@ -288,7 +288,7 @@ func TestActivationAcknowledgementWinsTheTimeoutRace(t *testing.T) {
 		if _, err := create.store.update(func(registry *coremetadata.Registry) error {
 			for i := range registry.Agents {
 				agent := &registry.Agents[i]
-				if agent.Metadata.OwnerRef.UID == "win-alpha-review" && agent.Metadata.Name == "codex" {
+				if agent.Metadata.OwnerRef.UID == "win-alpha-review" && agent.Metadata.Name == agent.Metadata.UID {
 					_, err := create.store.mutator().SetAgentActivation(registry, agent.Metadata.UID,
 						coremetadata.ActivationAcknowledged, string(coremetadata.InteractionSourceProviderHook), "")
 					return err
@@ -309,7 +309,7 @@ func TestActivationAcknowledgementWinsTheTimeoutRace(t *testing.T) {
 	if !regexp.MustCompile(`^%[0-9]+\n$`).MatchString(stdout) {
 		t.Fatalf("stdout = %q, want exact acknowledged Pane handle", stdout)
 	}
-	committed := agentNamed(t, store, "win-alpha-review", "codex")
+	committed := agentNamed(t, store, "win-alpha-review", "agent-test-1")
 	if committed.Status.Activation.State != coremetadata.ActivationAcknowledged || committed.Status.Activation.Reason != "" {
 		t.Fatalf("timeout writer downgraded acknowledgement: %+v", committed.Status.Activation)
 	}

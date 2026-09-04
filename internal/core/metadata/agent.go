@@ -69,11 +69,9 @@ func CanTransitionAgent(from, to AgentPhase) bool {
 type CreateAgentOptions struct {
 	// Name is an explicit --name. A collision fails with ErrNameConflict.
 	Name string
-	// Provider is the raw provider spelling; it is normalized to codex,
-	// claude, or antigravity, and falls back to the "agent" name base when
-	// unknown.
+	// Provider is the raw provider spelling normalized into Agent spec. It does
+	// not participate in automatic naming.
 	Provider    string
-	DisplayName string
 	Labels      map[string]string
 	Annotations map[string]string
 	Workspace   AgentWorkspace
@@ -92,24 +90,10 @@ func (m Mutator) CreateAgent(reg *Registry, windowUID string, opts CreateAgentOp
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, opts.OperationID)
 
-	agentUID, err := m.mintUID(KindAgent)
+	agentUID, name, err := m.mintAndReserveName(reg, op, windowUID, KindAgent, opts.Name)
 	if err != nil {
 		txn.Rollback()
 		return Agent{}, err
-	}
-	var name string
-	if explicit := strings.TrimSpace(opts.Name); explicit != "" {
-		if err := reg.reserveExplicitName(op, windowUID, KindAgent, explicit, agentUID); err != nil {
-			txn.Rollback()
-			return Agent{}, err
-		}
-		name = explicit
-	} else {
-		name, err = reg.allocateName(op, windowUID, KindAgent, AgentNameBase("", opts.Provider), agentUID)
-		if err != nil {
-			txn.Rollback()
-			return Agent{}, err
-		}
 	}
 
 	agent := Agent{
@@ -118,7 +102,6 @@ func (m Mutator) CreateAgent(reg *Registry, windowUID string, opts CreateAgentOp
 		Metadata: ObjectMeta{
 			UID:         agentUID,
 			Name:        name,
-			DisplayName: strings.TrimSpace(opts.DisplayName),
 			Labels:      cloneStringMap(opts.Labels),
 			Annotations: cloneStringMap(opts.Annotations),
 			OwnerRef:    &OwnerRef{Kind: KindWindow, UID: windowUID},
@@ -145,8 +128,8 @@ func (m Mutator) CreateAgent(reg *Registry, windowUID string, opts CreateAgentOp
 	return agent, nil
 }
 
-// RenameAgent sets only an Agent's stable metadata.name inside its owning
-// Window scope. Provider, topic annotations, lifecycle state, and managed Pane
+// RenameAgent sets only an Agent's stable metadata.name inside its root-wide
+// Agent scope. Provider, topic annotations, lifecycle state, and managed Pane
 // metadata are independent and remain unchanged.
 func (m Mutator) RenameAgent(reg *Registry, agentUID, name string) (Agent, error) {
 	const op = "rename agent"
@@ -155,7 +138,6 @@ func (m Mutator) RenameAgent(reg *Registry, agentUID, name string) (Agent, error
 	if !ok {
 		return Agent{}, stateErr(op, ErrNotFound, "agent %q does not exist", agentUID)
 	}
-	name = strings.TrimSpace(name)
 	if err := reg.reserveExplicitName(op, agent.Metadata.OwnerUID(), KindAgent, name, agentUID); err != nil {
 		return Agent{}, err
 	}
@@ -165,8 +147,8 @@ func (m Mutator) RenameAgent(reg *Registry, agentUID, name string) (Agent, error
 }
 
 // AttachAgentPane creates the managed Pane owned by an Agent and moves the
-// Agent to Running. The Pane name uses the "<agent-name>-pane" base inside the
-// Agent's owner scope.
+// Agent to Running. An automatic Pane name is its exact minted UID in the
+// Agent's root-wide Pane namespace.
 func (m Mutator) AttachAgentPane(reg *Registry, agentUID string, declared BootstrapPane, operationID string) (Pane, error) {
 	const op = "attach agent pane"
 
@@ -179,7 +161,7 @@ func (m Mutator) AttachAgentPane(reg *Registry, agentUID string, declared Bootst
 	}
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
-	pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, declared.Name, ManagedPaneNameBase(agent.Metadata.Name), declared.Command, declared.CWD, declared.Labels, now)
+	pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, declared.Name, declared.Command, declared.CWD, declared.Labels, now)
 	if err != nil {
 		txn.Rollback()
 		return Pane{}, err

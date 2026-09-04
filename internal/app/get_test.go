@@ -41,9 +41,9 @@ func getFixtureRegistry(t *testing.T) coremetadata.Registry {
 			Scope: scope, Kind: kind, Name: name, UID: uid,
 		})
 	}
-	meta := func(uid, name, displayName string, owner *coremetadata.OwnerRef, labels map[string]string) coremetadata.ObjectMeta {
+	meta := func(uid, name, _ string, owner *coremetadata.OwnerRef, labels map[string]string) coremetadata.ObjectMeta {
 		return coremetadata.ObjectMeta{
-			UID: uid, Name: name, DisplayName: displayName,
+			UID: uid, Name: name,
 			Labels: labels, OwnerRef: owner, CreatedAt: getFixtureClock,
 		}
 	}
@@ -103,9 +103,9 @@ func getFixtureRegistry(t *testing.T) coremetadata.Registry {
 			Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: "/srv/beta"},
 		},
 	}
-	reserve("win-alpha-main", coremetadata.KindPane, "zsh", "pan-alpha-zsh")
-	reserve("win-alpha-main", coremetadata.KindPane, "log", "pan-alpha-log")
-	reserve("win-beta-main", coremetadata.KindPane, "zsh", "pan-beta-zsh")
+	reserve("prj-alpha", coremetadata.KindPane, "zsh", "pan-alpha-zsh")
+	reserve("prj-alpha", coremetadata.KindPane, "log", "pan-alpha-log")
+	reserve("prj-beta", coremetadata.KindPane, "zsh", "pan-beta-zsh")
 
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("get fixture is not a valid registry: %v", err)
@@ -394,7 +394,7 @@ func TestGetPaneOutputProjectionTable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("-o metadata error = %v", err)
 	}
-	if !strings.Contains(stdout, `"uid": "pan-alpha-zsh"`) || !strings.Contains(stdout, `"displayName": "zsh"`) {
+	if !strings.Contains(stdout, `"uid": "pan-alpha-zsh"`) || strings.Contains(stdout, `"displayName"`) {
 		t.Fatalf("-o metadata stdout = %q", stdout)
 	}
 	if strings.Contains(stdout, `"spec"`) || strings.Contains(stdout, `"apiVersion"`) {

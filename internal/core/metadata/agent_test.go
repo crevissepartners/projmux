@@ -132,8 +132,8 @@ func TestAgentOwnsItsManagedPaneAndSurvivesTheManagedPaneExit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("create agent: %v", err)
 			}
-			if agent.Metadata.Name != "codex" || agent.Status.Phase != PhasePending {
-				t.Fatalf("agent = %q/%q, want codex/Pending", agent.Metadata.Name, agent.Status.Phase)
+			if agent.Metadata.Name != agent.Metadata.UID || agent.Status.Phase != PhasePending {
+				t.Fatalf("agent = %q/%q, want exact uid/Pending", agent.Metadata.Name, agent.Status.Phase)
 			}
 			if agent.Metadata.OwnerRef == nil || agent.Metadata.OwnerRef.Kind != KindWindow || agent.Metadata.OwnerRef.UID != windowUID {
 				t.Fatalf("agent ownerRef = %+v, want the window", agent.Metadata.OwnerRef)
@@ -143,8 +143,8 @@ func TestAgentOwnsItsManagedPaneAndSurvivesTheManagedPaneExit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("attach managed pane: %v", err)
 			}
-			if pane.Metadata.Name != "codex-pane" {
-				t.Fatalf("managed pane name = %q, want codex-pane", pane.Metadata.Name)
+			if pane.Metadata.Name != pane.Metadata.UID {
+				t.Fatalf("managed pane name = %q, want exact uid %q", pane.Metadata.Name, pane.Metadata.UID)
 			}
 			if pane.Metadata.OwnerRef.Kind != KindAgent || pane.Metadata.OwnerRef.UID != agent.Metadata.UID {
 				t.Fatalf("managed pane ownerRef = %+v, want the agent", pane.Metadata.OwnerRef)
@@ -179,8 +179,8 @@ func TestAgentOwnsItsManagedPaneAndSurvivesTheManagedPaneExit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("resume: %v", err)
 			}
-			if resumed.Metadata.Name != "codex-pane" {
-				t.Fatalf("resumed pane name = %q, want codex-pane", resumed.Metadata.Name)
+			if resumed.Metadata.Name != resumed.Metadata.UID {
+				t.Fatalf("resumed pane name = %q, want exact uid %q", resumed.Metadata.Name, resumed.Metadata.UID)
 			}
 		})
 	}
@@ -244,7 +244,7 @@ func TestDeletingRetainedManagedPanePreservesCurrentAgentBinding(t *testing.T) {
 	current.Status.Activation.Generation = "generation-current"
 	reg.Panes = append(reg.Panes, current)
 	reg.NameReservations = append(reg.NameReservations, NameReservation{
-		Scope: agent.Metadata.UID, Kind: KindPane, Name: current.Metadata.Name, UID: current.Metadata.UID,
+		Scope: registered.Project.Metadata.UID, Kind: KindPane, Name: current.Metadata.Name, UID: current.Metadata.UID,
 	})
 	stored, _ := reg.Agent(agent.Metadata.UID)
 	stored.Status.Phase = PhaseRunning
@@ -298,7 +298,7 @@ func TestAgentTransitionRejectsUnsupportedPhasesAsUsageErrors(t *testing.T) {
 	}
 }
 
-func TestDuplicateAgentsInOneWindowGetTheLowestFreeSuffix(t *testing.T) {
+func TestAutomaticAgentsInOneWindowUseExactUIDNames(t *testing.T) {
 	t.Parallel()
 
 	roots := dirSet{"/src/projmux": true}
@@ -318,7 +318,7 @@ func TestDuplicateAgentsInOneWindowGetTheLowestFreeSuffix(t *testing.T) {
 		}
 		names = append(names, agent.Metadata.Name)
 	}
-	if !equalStrings(names, []string{"codex", "codex-1", "codex-2"}) {
-		t.Fatalf("names = %v, want codex/codex-1/codex-2", names)
+	if !equalStrings(names, []string{"agent-01", "agent-02", "agent-03"}) {
+		t.Fatalf("names = %v, want exact full agent uids", names)
 	}
 }

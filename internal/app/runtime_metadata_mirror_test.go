@@ -174,7 +174,7 @@ func TestTypedMetadataMirrorProjectRefusesForeignRoleAndPrewriteDrift(t *testing
 func TestTypedMetadataMirrorWindowIsOrderedGuardedAndRepeatEmpty(t *testing.T) {
 	runner, mirror := newMetadataMirrorPlanFixture()
 	window := coremetadata.Window{Metadata: coremetadata.ObjectMeta{
-		UID: "win-2", Name: "main", DisplayName: "Main", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-1"},
+		UID: "win-2", Name: "main", OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-1"},
 	}}
 	if err := mirror.MirrorWindow(context.Background(), "@2", window); err != nil {
 		t.Fatal(err)
@@ -193,10 +193,10 @@ func TestTypedMetadataMirrorWindowIsOrderedGuardedAndRepeatEmpty(t *testing.T) {
 			writes = append(writes, call)
 		}
 	}
-	if len(writes) != 4 || guardRows < 4 || firstWrite < guardRows {
+	if len(writes) != 3 || guardRows < 4 || firstWrite < guardRows {
 		t.Fatalf("typed Window sequence guards=%d firstWrite=%d writes=%#v calls=%#v", guardRows, firstWrite, writes, runner.calls)
 	}
-	if got := []string{writes[0][len(writes[0])-2], writes[1][len(writes[1])-2], writes[2][len(writes[2])-2], writes[3][2]}; !reflect.DeepEqual(got, []string{tmuxopts.AutomaticRenameWindow, tmuxopts.WindowUID, tmuxopts.WindowName, "rename-window"}) {
+	if got := []string{writes[0][len(writes[0])-2], writes[1][len(writes[1])-2], writes[2][len(writes[2])-2]}; !reflect.DeepEqual(got, []string{tmuxopts.AutomaticRenameWindow, tmuxopts.WindowUID, tmuxopts.WindowName}) {
 		t.Fatalf("Window total order = %v", got)
 	}
 	before := len(writes)
