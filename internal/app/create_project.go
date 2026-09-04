@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
@@ -95,12 +96,58 @@ func (c *createCommand) runResourceProject(args []string, stdout, stderr io.Writ
 		return MapMetadataError(err)
 	}
 
-	return c.writeResults(stdout, spelling, mode, coremetadata.KindProject, []createResult{{
+	action := cli.ActionCreated
+	if result.Reused {
+		action = cli.ActionReused
+	}
+	return c.writeResultsWithReceipt(stdout, spelling, mode, coremetadata.KindProject, []createResult{{
 		kind:        coremetadata.KindProject,
 		uid:         result.Project.Metadata.UID,
 		name:        result.Project.Metadata.Name,
 		projectName: result.Project.Metadata.Name,
-	}})
+		action:      action,
+	}}, registerProjectReceipt(result))
+}
+
+// registerProjectReceipt is the conditional half of the Project bootstrap.
+//
+// Registration has two outcomes that used to print the same word. A new root
+// creates a Project, its canonical Window, and that Window's shell; the exact
+// same root a second time creates nothing at all and writes zero Registry
+// bytes. The receipt reports which of the two happened and names the bootstrap
+// Window and Pane either way, because "what did that call leave behind" was not
+// answerable from `project/<name> created`.
+func registerProjectReceipt(result coremetadata.RegisterProjectResult) cli.OperationReceipt {
+	effects := cli.ReceiptEffects{
+		Identity:     cli.IdentityCreated,
+		Address:      cli.AddressAllocated,
+		Topology:     cli.TopologyEstablished,
+		DesiredState: cli.DesiredStateCreated,
+		Runtime:      cli.RuntimeUnchanged,
+		Focus:        cli.FocusUnchanged,
+	}
+	action := cli.ActionCreated
+	if result.Reused {
+		effects.Identity = cli.IdentityReused
+		effects.Address = cli.AddressUnchanged
+		effects.Topology = cli.TopologyUnchanged
+		effects.DesiredState = cli.DesiredStateReused
+		action = cli.ActionReused
+	}
+	receipt := cli.NewReceipt(cli.OperationCreateProject, cli.ReceiptTarget{
+		Kind: string(coremetadata.KindProject),
+		UID:  result.Project.Metadata.UID,
+		Name: result.Project.Metadata.Name,
+	}, effects)
+	receipt.Add(string(coremetadata.KindProject), result.Project.Metadata.UID, result.Project.Metadata.Name, action)
+	for _, window := range result.Windows {
+		receipt.Add(string(coremetadata.KindWindow), window.Metadata.UID, window.Metadata.Name, action)
+		receipt.SelectWindows(window.Metadata.UID)
+	}
+	for _, pane := range result.Panes {
+		receipt.Add(string(coremetadata.KindPane), pane.Metadata.UID, pane.Metadata.Name, action)
+	}
+	return receipt
 }
 
 // registerSessionName projects the persistent session name a Project root maps
@@ -173,9 +220,19 @@ func reuseOrRegisterProject(working *coremetadata.Registry, mutator coremetadata
 		if err := coremetadata.ValidateExplicitNameReuse("register project", coremetadata.KindProject, existing.Metadata, opts.Name); err != nil {
 			return coremetadata.RegisterProjectResult{}, err
 		}
+		windows := working.WindowsOf(existing.Metadata.UID)
+		// The reuse branch reports the Panes too. Without them the repeat
+		// receipt would list fewer resources than the first call for an
+		// identical graph, which is the same "reuse looks different from what it
+		// reused" defect one level down.
+		var panes []coremetadata.Pane
+		for _, window := range windows {
+			panes = append(panes, working.PanesOf(window.Metadata.UID)...)
+		}
 		return coremetadata.RegisterProjectResult{
 			Project:     existing.Clone(),
-			Windows:     working.WindowsOf(existing.Metadata.UID),
+			Windows:     windows,
+			Panes:       panes,
 			Reused:      true,
 			OperationID: opts.OperationID,
 		}, nil

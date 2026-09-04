@@ -1678,7 +1678,8 @@ Explicit Registry topology materialization:
   desired Windows remain Agent-anchored and acquire a shell only through the
   ordinary materializer. Source snapshot bytes and unrelated roots are never
   rewritten, and a second projection is byte-stable.
-- `Open fresh` replaces the exact same-root Project graph in one Registry
+- `Recreate Project` replaces the exact same-root Project graph, after an
+  explicit confirmation, in one Registry
   commit. It always allocates a new Project UID plus one new canonical Window
   and direct shell UID, whether the old Project retained Windows or had zero.
   The preimage remains the durable recovery state when the replacement commit

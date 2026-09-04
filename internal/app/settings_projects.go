@@ -1141,7 +1141,7 @@ func (c *settingsCommand) projectPickerEntries() []intpickercompat.Entry {
 func (c *settingsCommand) projectSidebarSummary() string {
 	startup := c.currentSidebarStartupPicker()
 	if startup.Mode.Enabled() {
-		return "closed Project startup: show Continue project and Open fresh"
+		return "closed Project startup: show Continue project and Recreate Project"
 	}
 	return "closed Project startup: Continue project"
 }

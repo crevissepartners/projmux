@@ -1285,7 +1285,7 @@ func TestSwitchProjectOpenStartupPickerHasExactlyTwoActions(t *testing.T) {
 		t.Fatalf("startup rows = %d, want %d: %#v", got, want, startupOptions.Entries)
 	}
 	requireSwitchEntryLabel(t, startupOptions.Entries, "Continue project")
-	requireSwitchEntryLabel(t, startupOptions.Entries, "Open fresh")
+	requireSwitchEntryLabel(t, startupOptions.Entries, "Recreate Project")
 	requireSwitchEntryValueOrder(t, startupOptions.Entries, []string{
 		projectStartupValueTopology,
 		projectStartupValueNew,

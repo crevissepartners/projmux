@@ -61,17 +61,19 @@ A closed Project has exactly two actions:
   materializer. A retained graph keeps its Project, Window, Pane, and Agent
   UIDs. A zero-Window Project keeps its Project UID and atomically receives one
   new canonical Window and shell UID before materialization.
-- `Open fresh` atomically replaces the same-root graph with a new Project UID
-  and one new canonical Window/shell UID chain. It does not archive or retain
-  the old generation.
+- `Recreate Project` atomically replaces the same-root graph with a new Project
+  UID and one new canonical Window/shell UID chain, after a confirmation naming
+  the exact old Project UID and its Window/Pane/Agent counts. Declining returns
+  to the startup rows and writes nothing. It does not archive or retain the old
+  generation.
 
 Esc/cancel returns to Projects; it is not an action row. Picker failure falls
 back to the non-destructive `Continue project` action.
 
-`Open fresh` never deletes or overwrites autosave or named snapshot files. It
+`Recreate Project` never deletes or overwrites autosave or named snapshot files. It
 preserves the root, Git/worktrees, trust decision, and all unrelated Registry
 graphs while changing the Project identity. A rejected commit retains the
-exact old Registry preimage. Repeating `Open fresh` replaces identity again;
+exact old Registry preimage. Repeating `Recreate Project` replaces identity again;
 each successful result has exactly one Project claiming the root.
 
 ## Snapshot contents and diagnostics

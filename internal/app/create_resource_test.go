@@ -446,7 +446,8 @@ func TestCreateResultKindsFollowTheRouteNotTheSideEffects(t *testing.T) {
 			if err != nil {
 				t.Fatalf("create %v error = %v", test.args, err)
 			}
-			if !strings.HasPrefix(stdout, test.wantKind) || !strings.HasSuffix(strings.TrimSpace(stdout), " created") {
+			firstLine, _, _ := strings.Cut(stdout, "\n")
+			if !strings.HasPrefix(firstLine, test.wantKind) || !strings.HasSuffix(firstLine, " created") {
 				t.Fatalf("default projection = %q, want %q...created", stdout, test.wantKind)
 			}
 			if stderr != "" {
@@ -2026,7 +2027,8 @@ func TestResourceCreateOutputProjections(t *testing.T) {
 		check func(t *testing.T, stdout string)
 	}{
 		{mode: "", check: func(t *testing.T, out string) {
-			if out != "pane/pane-test-1 created\n" {
+			if out != "pane/pane-test-1 created\n"+
+				"receipt operation=create.pane identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged projects=0 windows=0 panes=1 agents=0\n" {
 				t.Fatalf("default = %q", out)
 			}
 		}},

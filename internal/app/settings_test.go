@@ -3869,7 +3869,7 @@ func TestSettingsSessionStateSidebarStartupPickerDetailPersistsExistingFile(t *t
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsActionPrefixSessionState + "sidebar-startup:on"}, nil
 		case 3:
-			if !hasEntryLabelContaining(options.Entries, "Continue project / Open fresh") {
+			if !hasEntryLabelContaining(options.Entries, "Continue project / Recreate Project") {
 				t.Fatalf("closed Project startup entries after save = %#v, want the two-action state", options.Entries)
 			}
 			return intpickercompat.Result{Key: "enter", Value: settingsBackValue}, nil

@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 175 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 183 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -73,6 +73,7 @@ projmux <command> [args...]
 | [`projmux get`](#projmux-get) | canonical | Read Projmux resources by selector |
 | [`projmux hook`](#projmux-hook) | canonical | List, edit, validate, and trust lifecycle hook config |
 | [`projmux notification`](#projmux-notification) | canonical | Manage pending notification workflow state |
+| [`projmux open`](#projmux-open) | canonical | Open a Project runtime and move the current client to it |
 | [`projmux pin`](#projmux-pin) | canonical | Manage pinned project directories |
 | [`projmux prune`](#projmux-prune) | canonical | Prune stale Projects and snapshots |
 | [`projmux quit`](#projmux-quit) | shortcut | Quit the app-owned projmux tmux runtime |
@@ -85,7 +86,10 @@ projmux <command> [args...]
 | [`projmux settings`](#projmux-settings) | shortcut | Configure projmux |
 | [`projmux setup`](#projmux-setup) | canonical | Probe terminal keys or remediate them with setup terminal |
 | [`projmux shell`](#projmux-shell) | shortcut | Open the isolated projmux tmux app |
-| [`projmux switch`](#projmux-switch) | shortcut | Pick and open a project tmux session |
+| [`projmux start`](#projmux-start) | canonical | Start a Project runtime without moving any client |
+| [`projmux stop`](#projmux-stop) | canonical | Stop a Project runtime without unregistering anything |
+| [`projmux switch`](#projmux-switch) | shortcut | Pick a project and compose create project with open project |
+| [`projmux unregister`](#projmux-unregister) | canonical | Unregister Projects from the Registry while preserving runtime and files |
 | [`projmux update`](#projmux-update) | canonical | Check installer-aware release update status |
 | [`projmux welcome`](#projmux-welcome) | shortcut | Reprint the shell welcome guide |
 | [`projmux window`](#projmux-window) | canonical | Open recent window navigation surfaces |
@@ -1084,7 +1088,7 @@ Allowed effects:
 projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]
 ```
 
-Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`, `receipt`
 
 ### `projmux create window`
 
@@ -1107,7 +1111,7 @@ Allowed effects:
 projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]
 ```
 
-Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
 ### `projmux create pane`
 
@@ -1130,7 +1134,7 @@ Allowed effects:
 projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
 
-Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
 ### `projmux create agent`
 
@@ -1153,7 +1157,7 @@ Allowed effects:
 projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
 
-Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
 ### `projmux create notification`
 
@@ -1218,7 +1222,7 @@ Allowed effects:
 projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
 
-Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
 ### `projmux create claude`
 
@@ -1241,7 +1245,7 @@ Allowed effects:
 projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
 
-Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
 ### `projmux create antigravity`
 
@@ -1264,7 +1268,7 @@ Allowed effects:
 projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]
 ```
 
-Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `pane-id`, `none`, `receipt`
 
 ## `projmux delete`
 
@@ -1294,18 +1298,18 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux delete project`](#projmux-delete-project) | Explicitly unregister Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime |
+| [`projmux delete project`](#projmux-delete-project) | Deprecated alias of unregister project; unregisters Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime |
 | [`projmux delete window`](#projmux-delete-window) | Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry |
 | [`projmux delete pane`](#projmux-delete-pane) | Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry |
 | [`projmux delete agent`](#projmux-delete-agent) | Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry |
 | [`projmux delete notification`](#projmux-delete-notification) | Delete pending notification rows |
 | [`projmux delete snapshot`](#projmux-delete-snapshot) | Delete saved session snapshots |
 
-Canonical spelling: `projmux delete project`, `projmux delete window`, `projmux delete pane`, `projmux delete agent`, `projmux delete notification`, `projmux delete snapshot`
+Canonical spelling: `projmux unregister project`, `projmux delete window`, `projmux delete pane`, `projmux delete agent`, `projmux delete notification`, `projmux delete snapshot`
 
 ### `projmux delete project`
 
-Explicitly unregister Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime
+Deprecated alias of unregister project; unregisters Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -1325,6 +1329,8 @@ projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] 
 ```
 
 Aliases: `projects`
+
+Canonical spelling: `projmux unregister project`
 
 ### `projmux delete window`
 
@@ -2313,6 +2319,58 @@ Allowed effects:
 projmux notification reconcile [--json]
 ```
 
+## `projmux open`
+
+Open a Project runtime and move the current client to it
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux open project <ref> [-o receipt|none]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux open project`](#projmux-open-project) | Materialize an offline Project runtime when needed and move the current tmux client to it; outside tmux it refuses and points at attach |
+
+Canonical spelling: `projmux open project`
+
+### `projmux open project`
+
+Materialize an offline Project runtime when needed and move the current tmux client to it; outside tmux it refuses and points at attach
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=materialized|already-live`
+- `focus=moved-current-client`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux open project <ref> [-o receipt|none]
+```
+
+Output modes (`-o`): `receipt`, `none`
+
 ## `projmux pin`
 
 Manage pinned project directories
@@ -2641,6 +2699,8 @@ projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>
 
 Aliases: `projects`
 
+Output modes (`-o`): `receipt`, `none`
+
 ### `projmux rename window`
 
 Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window
@@ -2663,6 +2723,8 @@ projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]
 ```
 
 Aliases: `windows`
+
+Output modes (`-o`): `receipt`, `none`
 
 ### `projmux rename pane`
 
@@ -2687,6 +2749,8 @@ projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window
 
 Aliases: `panes`
 
+Output modes (`-o`): `receipt`, `none`
+
 ### `projmux rename agent`
 
 Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane
@@ -2709,6 +2773,8 @@ projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--windo
 ```
 
 Aliases: `agents`
+
+Output modes (`-o`): `receipt`, `none`
 
 ## `projmux resources`
 
@@ -3039,9 +3105,113 @@ Allowed effects:
 projmux shell [--session <name>]
 ```
 
+## `projmux start`
+
+Start a Project runtime without moving any client
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux start project <ref> [-o receipt|none]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux start project`](#projmux-start-project) | Materialize an offline Project runtime detached; no client is moved and no Registry identity changes |
+
+Canonical spelling: `projmux start project`
+
+### `projmux start project`
+
+Materialize an offline Project runtime detached; no client is moved and no Registry identity changes
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=materialized|already-live`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux start project <ref> [-o receipt|none]
+```
+
+Output modes (`-o`): `receipt`, `none`
+
+## `projmux stop`
+
+Stop a Project runtime without unregistering anything
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux stop project <ref> [-o receipt|none]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux stop project`](#projmux-stop-project) | Terminate the exact persistent tmux session of a Project; the Registry graph, root, and external assets are preserved |
+
+Canonical spelling: `projmux stop project`
+
+### `projmux stop project`
+
+Terminate the exact persistent tmux session of a Project; the Registry graph, root, and external assets are preserved
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=stopped`
+- `focus=unchanged|moved-current-client`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux stop project <ref> [-o receipt|none]
+```
+
+Output modes (`-o`): `receipt`, `none`
+
 ## `projmux switch`
 
-Pick and open a project tmux session
+Pick a project and compose create project with open project
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -3060,7 +3230,59 @@ Allowed effects:
 projmux switch [<project>]
 ```
 
-Canonical spelling: `projmux focus project`
+Canonical spelling: `projmux create project`, `projmux open project`
+
+## `projmux unregister`
+
+Unregister Projects from the Registry while preserving runtime and files
+
+Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=unchanged`
+- `domain-effect=null`
+
+```
+projmux unregister project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]
+```
+
+Subcommands:
+
+| Route | Summary |
+| --- | --- |
+| [`projmux unregister project`](#projmux-unregister-project) | Unregister Projects and their Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime |
+
+Canonical spelling: `projmux unregister project`
+
+### `projmux unregister project`
+
+Unregister Projects and their Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=removed`
+- `address=released`
+- `topology=removed`
+- `desired-state=removed`
+- `runtime=preserved`
+- `focus=unchanged`
+- `cardinality=one-or-more`
+- `domain-effect=null`
+
+```
+projmux unregister project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]
+```
+
+Aliases: `projects`
 
 ## `projmux update`
 

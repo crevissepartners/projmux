@@ -40,6 +40,20 @@ type createResult struct {
 	projectName string
 	windowName  string
 	windowUID   string
+	// action is what actually happened to this resource. It is `created` for
+	// every create except the same-root `create project` repeat, which reuses an
+	// existing graph and has always said "created" anyway -- the exact mismatch
+	// the operation receipt exists to close.
+	action cli.ReceiptAction
+}
+
+// receiptAction answers `created` for the zero value so every existing create
+// path keeps its meaning without restating it.
+func (r createResult) receiptAction() cli.ReceiptAction {
+	if r.action == "" {
+		return cli.ActionCreated
+	}
+	return r.action
 }
 
 // resourceCreateFlags is the parsed argv of a resource-backed create route.
@@ -1451,6 +1465,26 @@ func (c *createCommand) resolveProjection(spelling, token string) (cli.OutputMod
 // Nothing reaches stdout before the transaction commits, so a failed create
 // leaves zero bytes there.
 func (c *createCommand) writeResults(stdout io.Writer, spelling string, mode cli.OutputMode, kind coremetadata.Kind, results []createResult) error {
+	return c.writeResultsWithReceipt(stdout, spelling, mode, kind, results, createResultsReceipt(kind, results))
+}
+
+// writeResultsWithReceipt renders a committed create through the shared output
+// catalog and the operation receipt the route actually earned.
+//
+// The receipt is a separate argument rather than a projection of `results`
+// because the two answer different questions. `results` is what the create
+// *produced* and is what the scalar and structured modes print, byte for byte,
+// as they always have. The receipt is what the operation *did*, which for
+// `create project` includes the bootstrap Window and Pane that the Project row
+// alone never mentioned.
+func (c *createCommand) writeResultsWithReceipt(
+	stdout io.Writer,
+	spelling string,
+	mode cli.OutputMode,
+	kind coremetadata.Kind,
+	results []createResult,
+	receipt cli.OperationReceipt,
+) error {
 	slices.SortStableFunc(results, func(a, b createResult) int {
 		if got := cmp.Compare(a.projectName, b.projectName); got != 0 {
 			return got
@@ -1464,11 +1498,20 @@ func (c *createCommand) writeResults(stdout io.Writer, spelling string, mode cli
 	switch mode {
 	case cli.OutputModeDefault:
 		for _, result := range results {
-			if _, err := fmt.Fprintf(stdout, "%s/%s created\n", strings.ToLower(string(result.kind)), result.name); err != nil {
+			if _, err := fmt.Fprintf(stdout, "%s/%s %s\n",
+				strings.ToLower(string(result.kind)), result.name, result.receiptAction()); err != nil {
 				return err
 			}
 		}
-		return nil
+		if err := receipt.Validate(); err != nil {
+			return err
+		}
+		return receipt.WriteHuman(stdout)
+	case cli.OutputModeReceipt:
+		if err := receipt.Validate(); err != nil {
+			return err
+		}
+		return receipt.WriteJSON(stdout)
 	case cli.OutputModePaneID:
 		for _, result := range results {
 			if _, err := fmt.Fprintln(stdout, result.paneID); err != nil {
@@ -1497,4 +1540,44 @@ func (c *createCommand) writeResults(stdout io.Writer, spelling string, mode cli
 	// handled above, so the columnar table -- and with it the only consumer of a
 	// clock -- is unreachable from here.
 	return writeResourceProjection(stdout, spelling, mode, kind, matches, registry, true, time.Time{})
+}
+
+// createReceiptOperations binds each created kind to its receipt operation. The
+// provider shortcuts share `create.agent` because a receipt records what
+// happened, not which door it was asked through.
+var createReceiptOperations = map[coremetadata.Kind]cli.Operation{
+	coremetadata.KindProject: cli.OperationCreateProject,
+	coremetadata.KindWindow:  cli.OperationCreateWindow,
+	coremetadata.KindPane:    cli.OperationCreatePane,
+	coremetadata.KindAgent:   cli.OperationCreateAgent,
+}
+
+// createResultsReceipt is the default receipt of a child create.
+//
+// A child create is unconditional on every axis: it mints an identity, it
+// allocates that identity's address, it establishes the owner edge, and it
+// materializes the runtime for the Windows the target planner selected. The
+// conditional route is `create project`, which builds its own receipt.
+func createResultsReceipt(kind coremetadata.Kind, results []createResult) cli.OperationReceipt {
+	target := cli.ReceiptTarget{Kind: string(kind)}
+	if len(results) > 0 {
+		target.UID, target.Name = results[0].uid, results[0].name
+	}
+	runtime := cli.RuntimeMaterialized
+	if kind == coremetadata.KindProject {
+		runtime = cli.RuntimeUnchanged
+	}
+	receipt := cli.NewReceipt(createReceiptOperations[kind], target, cli.ReceiptEffects{
+		Identity:     cli.IdentityCreated,
+		Address:      cli.AddressAllocated,
+		Topology:     cli.TopologyEstablished,
+		DesiredState: cli.DesiredStateCreated,
+		Runtime:      runtime,
+		Focus:        cli.FocusUnchanged,
+	})
+	for _, result := range results {
+		receipt.Add(string(result.kind), result.uid, result.name, result.receiptAction())
+		receipt.SelectWindows(result.windowUID)
+	}
+	return receipt
 }

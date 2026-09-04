@@ -194,7 +194,9 @@ func renameResourceEffects() *AllowedEffects {
 	)
 }
 
-func deleteProjectEffects() *AllowedEffects {
+// unregisterProjectEffects removes the Registry subtree and preserves
+// everything outside it, runtime included.
+func unregisterProjectEffects() *AllowedEffects {
 	return allowedEffects(
 		[]IdentityEffect{IdentityRemoved},
 		[]AddressEffect{AddressReleased},
@@ -206,6 +208,14 @@ func deleteProjectEffects() *AllowedEffects {
 	)
 }
 
+// deleteProjectEffects is the deprecated alias's record, and it is the same
+// function call rather than a copied literal on purpose: "behavior-preserving
+// alias" is only true if the two cannot drift, and sharing the constructor is
+// what makes a future edit to one an edit to both.
+func deleteProjectEffects() *AllowedEffects {
+	return unregisterProjectEffects()
+}
+
 func deleteChildEffects() *AllowedEffects {
 	return allowedEffects(
 		[]IdentityEffect{IdentityRemoved},
@@ -215,6 +225,39 @@ func deleteChildEffects() *AllowedEffects {
 		[]RuntimeEffect{RuntimeUnchanged, RuntimeStopped},
 		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient},
 		[]CardinalityEffect{CardinalityOneOrMore},
+	)
+}
+
+// startProjectEffects is the detached materialize cell of the Project
+// lifecycle table: the runtime axis is the only one that can move, and the
+// current client stays where it is.
+func startProjectEffects() *AllowedEffects {
+	return runtimeEffectsOnly(
+		[]RuntimeEffect{RuntimeMaterialized, RuntimeAlreadyLive},
+		[]FocusEffect{FocusUnchanged},
+		CardinalityExactOne,
+	)
+}
+
+// openProjectEffects is start plus the current-client move. It is the one
+// spelling that materializes *and* navigates, which is exactly why it is not
+// `focus project`: focus never materializes, and open never replaces identity.
+func openProjectEffects() *AllowedEffects {
+	return runtimeEffectsOnly(
+		[]RuntimeEffect{RuntimeMaterialized, RuntimeAlreadyLive},
+		[]FocusEffect{FocusMovedCurrentClient},
+		CardinalityExactOne,
+	)
+}
+
+// stopProjectEffects ends the exact persistent session and nothing else. The
+// focus axis carries the existing safe-fallback policy for a client attached to
+// the session being stopped.
+func stopProjectEffects() *AllowedEffects {
+	return runtimeEffectsOnly(
+		[]RuntimeEffect{RuntimeStopped},
+		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient},
+		CardinalityExactOne,
 	)
 }
 
@@ -688,7 +731,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "agent",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 13,
+		CanonicalOrder: 17,
 		Summary:        "Manage Agent state, topic, integrations, and account usage",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
@@ -796,7 +839,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "attention",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 14,
+		CanonicalOrder: 18,
 		Summary:        "View and manage live tmux pane attention state",
 		Disposition:    DispositionCanonical,
 		Usage:          []string{"projmux attention toggle|clear|arm|list|window"},
@@ -813,7 +856,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "attach",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 4,
+		CanonicalOrder: 6,
 		Summary:        "Enter a Project runtime from outside tmux",
 		Disposition:    DispositionCanonical,
 		Usage:          []string{"projmux attach project <ref>"},
@@ -860,7 +903,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "config",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 17,
+		CanonicalOrder: 21,
 		Summary:        "Edit AI split-mode settings; render or apply generated tmux configuration",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
@@ -967,7 +1010,7 @@ var routes = []Route{
 				Usage: []string{
 					"projmux create project --root <absolute-path> [--name <name>] [--label key=value]... [-o <mode>]",
 				},
-				Outputs:   readProjectionCatalog,
+				Outputs:   createProjectOutputModes,
 				Canonical: []string{"create project"},
 			},
 			{
@@ -983,7 +1026,7 @@ var routes = []Route{
 				Usage: []string{
 					"projmux create window [--project <ref> | -p <ref>] [--name <name>] [--label key=value]... [-o <mode>] [-- <payload>]",
 				},
-				Outputs:   sharedOutputModes,
+				Outputs:   receiptOutputModes,
 				Canonical: []string{"create window"},
 			},
 			{
@@ -1002,7 +1045,7 @@ var routes = []Route{
 				Usage: []string{
 					"projmux create pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
-				Outputs:   sharedOutputModes,
+				Outputs:   receiptOutputModes,
 				Canonical: []string{"create pane"},
 			},
 			{
@@ -1018,7 +1061,7 @@ var routes = []Route{
 				Usage: []string{
 					"projmux create agent --provider <provider> [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
-				Outputs:   sharedOutputModes,
+				Outputs:   receiptOutputModes,
 				Canonical: []string{"create agent"},
 			},
 			{
@@ -1046,7 +1089,7 @@ var routes = []Route{
 					"projmux create codex [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--interactive-only] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
 				ProviderShortcut: true,
-				Outputs:          sharedOutputModes,
+				Outputs:          receiptOutputModes,
 				Canonical:        []string{"create codex"},
 			},
 			{
@@ -1058,7 +1101,7 @@ var routes = []Route{
 					"projmux create claude [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
 				ProviderShortcut: true,
-				Outputs:          sharedOutputModes,
+				Outputs:          receiptOutputModes,
 				Canonical:        []string{"create claude"},
 			},
 			{
@@ -1070,7 +1113,7 @@ var routes = []Route{
 					"projmux create antigravity [--project <ref> | -p <ref>] [--cwd <path>] [--add-dir <path>]... [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--create-window] [--name <name>] [--label key=value]... [--placement right|down] [-o <mode>] [-- <payload>]",
 				},
 				ProviderShortcut: true,
-				Outputs:          sharedOutputModes,
+				Outputs:          receiptOutputModes,
 				Canonical:        []string{"create antigravity"},
 			},
 		},
@@ -1081,7 +1124,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "delete",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 9,
+		CanonicalOrder: 13,
 		Summary:        "Delete Projmux resources with an explicit cascade plan",
 		Disposition:    DispositionCanonical,
 		// The `<ref>` is bracketed for the same reason it is on `describe`:
@@ -1106,17 +1149,24 @@ var routes = []Route{
 			"projmux delete pane [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 			"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]",
 		},
-		Canonical: []string{"delete project", "delete window", "delete pane", "delete agent", "delete notification", "delete snapshot"},
+		Canonical: []string{"unregister project", "delete window", "delete pane", "delete agent", "delete notification", "delete snapshot"},
 		Children: []Route{
 			{
-				Effects:          deleteProjectEffects(),
-				Name:             "project",
-				Invocation:       InvocationNatural,
-				Summary:          "Explicitly unregister Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime",
-				CanonicalSummary: "Unregister a Project and its Registry graph while preserving runtime and external assets",
-				Aliases:          []string{"projects"},
-				Usage:            []string{"projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]"},
-				Canonical:        []string{"delete project"},
+				// The deprecated spelling of `unregister project`.
+				//
+				// It is a source edge rather than a canonical owner, and it
+				// shares the canonical route's effect record, so the two cannot
+				// drift into different behavior. What it does not do is change:
+				// removing it, or giving it the live-mirror cascade its three
+				// sibling kinds have, would be a breaking change to every script
+				// that already relies on runtime surviving a Project delete.
+				Effects:    deleteProjectEffects(),
+				Name:       "project",
+				Invocation: InvocationNatural,
+				Summary:    "Deprecated alias of unregister project; unregisters Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime",
+				Aliases:    []string{"projects"},
+				Usage:      []string{"projmux delete project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]"},
+				Canonical:  []string{"unregister project"},
 			},
 			{
 				Effects:          deleteChildEffects(),
@@ -1190,7 +1240,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "diagnostics",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 19,
+		CanonicalOrder: 23,
 		Summary:        "Read operational events or create an explicit local support report",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
@@ -1209,7 +1259,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "focus",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 5,
+		CanonicalOrder: 7,
 		Summary:        "Move the current client to a live resource",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
@@ -1373,7 +1423,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "hook",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 16,
+		CanonicalOrder: 20,
 		Summary:        "List, edit, validate, and trust lifecycle hook config",
 		Disposition:    DispositionCanonical,
 		Usage:          []string{"projmux hook list|edit|validate|trust|untrust"},
@@ -1390,7 +1440,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "notification",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 15,
+		CanonicalOrder: 19,
 		Summary:        "Manage pending notification workflow state",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
@@ -1404,10 +1454,41 @@ var routes = []Route{
 		},
 	},
 	{
+		// The current-client half of the Project runtime lifecycle.
+		//
+		// `open` exists because the two things it does were previously reachable
+		// only as a pair of half-answers: `focus project` moves the client but
+		// refuses an offline Project, and `attach project` materializes but is
+		// the outside-tmux door and refuses a caller that already has a client.
+		// Neither is what "open this Project" means from inside tmux, and the
+		// gap was filled by `switch`, whose spelling says nothing about which of
+		// the two happened.
+		Effects:        unchangedEffects(CardinalityUnchanged),
+		Name:           "open",
+		Invocation:     InvocationRefusal,
+		CanonicalOrder: 5,
+		Summary:        "Open a Project runtime and move the current client to it",
+		Disposition:    DispositionCanonical,
+		Usage:          []string{"projmux open project <ref> [-o receipt|none]"},
+		Canonical:      []string{"open project"},
+		Children: []Route{
+			{
+				Effects:          openProjectEffects(),
+				Name:             "project",
+				Invocation:       InvocationExplicit,
+				Summary:          "Materialize an offline Project runtime when needed and move the current tmux client to it; outside tmux it refuses and points at attach",
+				CanonicalSummary: "Materialize a Project runtime when offline and move the current client to it",
+				Usage:            []string{"projmux open project <ref> [-o receipt|none]"},
+				Canonical:        []string{"open project"},
+				Outputs:          receiptOnlyOutputModes,
+			},
+		},
+	},
+	{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "pin",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 11,
+		CanonicalOrder: 15,
 		Summary:        "Manage pinned project directories",
 		Disposition:    DispositionCanonical,
 		Usage:          []string{"projmux pin project list|add|remove|toggle|clear"},
@@ -1425,7 +1506,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "prune",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 12,
+		CanonicalOrder: 16,
 		Summary:        "Prune stale Projects and snapshots",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
@@ -1466,7 +1547,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "reconcile",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 8,
+		CanonicalOrder: 11,
 		Summary:        "Preview or repair Registry and exact tmux resource drift",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
@@ -1498,7 +1579,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "rebind",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 7,
+		CanonicalOrder: 10,
 		Summary:        "Rebind a Project to a new absolute root without moving files",
 		Disposition:    DispositionCanonical,
 		Usage:          []string{"projmux rebind project [<ref>] [--project <ref> | -p <ref>] --root <absolute-path>"},
@@ -1519,7 +1600,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "rename",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 6,
+		CanonicalOrder: 9,
 		Summary:        "Rename a Projmux resource metadata.name",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
@@ -1530,10 +1611,10 @@ var routes = []Route{
 		},
 		Canonical: []string{"rename project", "rename window", "rename pane", "rename agent"},
 		Children: []Route{
-			{Effects: renameResourceEffects(), Name: "project", Invocation: InvocationNatural, Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", CanonicalSummary: "Rename a Projmux Project resource", Aliases: []string{"projects"}, Usage: []string{"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>"}, Canonical: []string{"rename project"}},
-			{Effects: renameResourceEffects(), Name: "window", Invocation: InvocationNatural, Summary: "Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window", CanonicalSummary: "Rename a Projmux Window resource", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]"}, Canonical: []string{"rename window"}},
-			{Effects: renameResourceEffects(), Name: "pane", Invocation: InvocationNatural, Summary: "Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title", CanonicalSummary: "Rename a Projmux Pane resource; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename pane"}},
-			{Effects: renameResourceEffects(), Name: "agent", Invocation: InvocationNatural, Summary: "Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane", CanonicalSummary: "Rename an Agent stable resource name only", Aliases: []string{"agents"}, Usage: []string{"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename agent"}},
+			{Effects: renameResourceEffects(), Name: "project", Invocation: InvocationNatural, Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", CanonicalSummary: "Rename a Projmux Project resource", Aliases: []string{"projects"}, Usage: []string{"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>"}, Canonical: []string{"rename project"}, Outputs: receiptOnlyOutputModes},
+			{Effects: renameResourceEffects(), Name: "window", Invocation: InvocationNatural, Summary: "Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window", CanonicalSummary: "Rename a Projmux Window resource", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]"}, Canonical: []string{"rename window"}, Outputs: receiptOnlyOutputModes},
+			{Effects: renameResourceEffects(), Name: "pane", Invocation: InvocationNatural, Summary: "Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title", CanonicalSummary: "Rename a Projmux Pane resource; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename pane"}, Outputs: receiptOnlyOutputModes},
+			{Effects: renameResourceEffects(), Name: "agent", Invocation: InvocationNatural, Summary: "Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane", CanonicalSummary: "Rename an Agent stable resource name only", Aliases: []string{"agents"}, Usage: []string{"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename agent"}, Outputs: receiptOnlyOutputModes},
 		},
 	},
 	{
@@ -1548,7 +1629,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "restore",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 10,
+		CanonicalOrder: 14,
 		Summary:        "Project a saved snapshot into one exact closed Project desired state",
 		Disposition:    DispositionCanonical,
 		Usage:          []string{"projmux restore snapshot --session <name> [--project <ref> | -p <ref>] [--dry-run | --yes] [--client <tmux-client>]"},
@@ -1572,7 +1653,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "runtime",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 18,
+		CanonicalOrder: 22,
 		Summary:        "Manage the live and ephemeral tmux runtime inventory",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
@@ -1619,7 +1700,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "setup",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 20,
+		CanonicalOrder: 24,
 		Summary:        "Probe terminal keys or remediate them with setup terminal",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
@@ -1640,19 +1721,106 @@ var routes = []Route{
 		Usage:       []string{"projmux shell [--session <name>]"},
 	},
 	{
+		// The detached half of the Project runtime lifecycle: bring the desired
+		// topology up and leave every client where it is.
+		Effects:        unchangedEffects(CardinalityUnchanged),
+		Name:           "start",
+		Invocation:     InvocationRefusal,
+		CanonicalOrder: 4,
+		Summary:        "Start a Project runtime without moving any client",
+		Disposition:    DispositionCanonical,
+		Usage:          []string{"projmux start project <ref> [-o receipt|none]"},
+		Canonical:      []string{"start project"},
+		Children: []Route{
+			{
+				Effects:          startProjectEffects(),
+				Name:             "project",
+				Invocation:       InvocationExplicit,
+				Summary:          "Materialize an offline Project runtime detached; no client is moved and no Registry identity changes",
+				CanonicalSummary: "Materialize a Project runtime detached",
+				Usage:            []string{"projmux start project <ref> [-o receipt|none]"},
+				Canonical:        []string{"start project"},
+				Outputs:          receiptOnlyOutputModes,
+			},
+		},
+	},
+	{
+		// The inverse of `start`. It ends a runtime and nothing else: the
+		// Registry graph, the root, and every external asset survive, which is
+		// what separates it from `unregister project` on the other axis.
+		Effects:        unchangedEffects(CardinalityUnchanged),
+		Name:           "stop",
+		Invocation:     InvocationRefusal,
+		CanonicalOrder: 8,
+		Summary:        "Stop a Project runtime without unregistering anything",
+		Disposition:    DispositionCanonical,
+		Usage:          []string{"projmux stop project <ref> [-o receipt|none]"},
+		Canonical:      []string{"stop project"},
+		Children: []Route{
+			{
+				Effects:          stopProjectEffects(),
+				Name:             "project",
+				Invocation:       InvocationExplicit,
+				Summary:          "Terminate the exact persistent tmux session of a Project; the Registry graph, root, and external assets are preserved",
+				CanonicalSummary: "Terminate a Project runtime and preserve its Registry graph",
+				Usage:            []string{"projmux stop project <ref> [-o receipt|none]"},
+				Canonical:        []string{"stop project"},
+				Outputs:          receiptOnlyOutputModes,
+			},
+		},
+	},
+	{
+		// `switch` is the picker composition of two canonical operations, not a
+		// synonym for either of them. A live row focuses, an offline row opens,
+		// and a candidate row is `create project` followed by `open project` --
+		// which is why both spellings are listed here and `focus project`, which
+		// never materializes anything, is not.
 		Effects:     switchProjectEffects(),
 		Name:        "switch",
 		Invocation:  InvocationNatural,
-		Summary:     "Pick and open a project tmux session",
+		Summary:     "Pick a project and compose create project with open project",
 		Disposition: DispositionShortcut,
 		Usage:       []string{"projmux switch [<project>]"},
-		Canonical:   []string{"focus project"},
+		Canonical:   []string{"create project", "open project"},
+	},
+	{
+		// The canonical spelling of the Registry-only removal.
+		//
+		// `delete project` keeps working and keeps its exact behavior; it is a
+		// deprecated source edge of this route rather than a second
+		// implementation. The rename is the whole point: the verb `delete` sits
+		// beside `delete window|pane|agent`, which do kill an exact live mirror,
+		// and reading one cascade meaning across the four was the defect.
+		Effects:        unchangedEffects(CardinalityUnchanged),
+		Name:           "unregister",
+		Invocation:     InvocationRefusal,
+		CanonicalOrder: 12,
+		Summary:        "Unregister Projects from the Registry while preserving runtime and files",
+		Disposition:    DispositionCanonical,
+		Usage:          []string{"projmux unregister project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]"},
+		Canonical:      []string{"unregister project"},
+		Children: []Route{
+			{
+				Effects:          unregisterProjectEffects(),
+				Name:             "project",
+				Invocation:       InvocationNatural,
+				Summary:          "Unregister Projects and their Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime",
+				CanonicalSummary: "Unregister a Project and its Registry graph while preserving runtime and external assets",
+				Aliases:          []string{"projects"},
+				Usage:            []string{"projmux unregister project [<ref>...] [--selector key=value]... [--all] [--dry-run] [--yes]"},
+				Canonical:        []string{"unregister project"},
+				// The canonical owner precedes its deprecated `delete` source in
+				// the generated reference, so a reader meets the spelling they
+				// should type first.
+				CanonicalSelfFirst: true,
+			},
+		},
 	},
 	{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "update",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 21,
+		CanonicalOrder: 25,
 		Summary:        "Check installer-aware release update status",
 		Disposition:    DispositionCanonical,
 		Usage:          []string{"projmux update status|check|apply"},
@@ -1688,7 +1856,7 @@ var routes = []Route{
 		Effects:          unchangedEffects(CardinalityUnchanged),
 		Name:             "help",
 		Invocation:       InvocationFanOut,
-		CanonicalOrder:   22,
+		CanonicalOrder:   26,
 		Summary:          "Show bootstrap help",
 		CanonicalSummary: "Show help for projmux or one route",
 		Disposition:      DispositionCanonical,
@@ -1703,7 +1871,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "version",
 		Invocation:     InvocationFanOut,
-		CanonicalOrder: 23,
+		CanonicalOrder: 27,
 		Summary:        "Print the current version",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
@@ -1725,7 +1893,7 @@ var routes = []Route{
 		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "internal",
 		Invocation:     InvocationRefusal,
-		CanonicalOrder: 24,
+		CanonicalOrder: 28,
 		Summary:        "Internal plumbing invoked by generated tmux config, hooks, and popups",
 		Disposition:    DispositionInternal,
 		Hidden:         true,

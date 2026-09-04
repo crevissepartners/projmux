@@ -186,7 +186,7 @@ func TestProjectStartupRowTable(t *testing.T) {
 		{
 			name:            "open fresh",
 			candidate:       newProjectStartupCandidate(),
-			wantName:        "Open fresh",
+			wantName:        "Recreate Project",
 			wantDescription: "replace this Project identity with a new Project, Window, and shell",
 			wantValue:       "fresh",
 		},
@@ -216,7 +216,7 @@ func TestProjectStartupKoreanLocaleRendersExactTwoRowsAndFreshConfirmation(t *te
 		topologyProjectStartupCandidate(locale),
 		newProjectStartupCandidate(locale),
 	}
-	if got, want := []string{candidates[0].Label, candidates[1].Label}, []string{"이어서 열기", "새로 열기"}; !slices.Equal(got, want) {
+	if got, want := []string{candidates[0].Label, candidates[1].Label}, []string{"이어서 열기", "Project 다시 만들기"}; !slices.Equal(got, want) {
 		t.Fatalf("Korean startup row labels = %q, want %q", got, want)
 	}
 	options := projectStartupPickerOptions(candidates)
@@ -231,7 +231,7 @@ func TestProjectStartupKoreanLocaleRendersExactTwoRowsAndFreshConfirmation(t *te
 	if len(options.Entries) != 2 {
 		t.Fatalf("Korean startup rows = %d, want exactly 2", len(options.Entries))
 	}
-	for index, want := range []string{"이어서 열기", "새로 열기"} {
+	for index, want := range []string{"이어서 열기", "Project 다시 만들기"} {
 		if !strings.Contains(options.Entries[index].Label, want) {
 			t.Fatalf("Korean startup row %d = %q, want %q", index, options.Entries[index].Label, want)
 		}
@@ -346,7 +346,7 @@ func TestContinueDeletedProjectUnavailableSnapshotIsZeroWriteAndNeverFreshFallba
 			starter := &registryProjectFreshStarter{resources: store.store(), loadSnapshot: test.load}
 			before := store.snapshot()
 			_, err := starter.ContinueProject(context.Background(), "/srv/continued", "continued")
-			if err == nil || !strings.Contains(err.Error(), "choose Open fresh") {
+			if err == nil || !strings.Contains(err.Error(), "choose Recreate Project") {
 				t.Fatalf("Continue error = %v", err)
 			}
 			for _, want := range []string{"action=continue", "stage=snapshot-preflight", "old_uid=-", "new_uid=-"} {
@@ -817,6 +817,7 @@ func freshStartSwitchFixture(t *testing.T, steps []pickerStep) (
 func TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity(t *testing.T) {
 	cmd, store, executor, tmux, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
+		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupRecreateConfirmValue}},
 	})
 	topology := cmd.projectTopology.(*fakeProjectTopologyMaterializer)
 	topology.materialized = true
@@ -872,6 +873,7 @@ func TestSwitchProjectStartupOpenFreshPreservesSnapshotBytesAndCanonicalIdentity
 func TestSwitchProjectStartupOpenFreshRefusesExactLiveProjectBeforeCommit(t *testing.T) {
 	cmd, store, executor, _, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
+		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupRecreateConfirmValue}},
 	})
 	server := newFakeTmux()
 	live := server.addSession("alpha-under-another-name")
@@ -917,34 +919,75 @@ func TestSwitchProjectStartupOpenFreshRefusesExactLiveProjectBeforeCommit(t *tes
 	}
 }
 
-// TestSwitchProjectStartupNewCancelWritesNothing is the cancel contract: zero
-// Registry writes and zero tmux writes. Cancelling returns the operator to the
-// startup rows, and the Registry file, the snapshot, and the runtime are all
-// exactly as they were.
-func TestSwitchProjectStartupFreshIsOneStepWithoutConfirmation(t *testing.T) {
-	confirmationShown := false
+// TestSwitchProjectStartupRecreateConfirmsBeforeReplacingIdentity is the
+// authorization contract of the one startup row that replaces a Project.
+//
+// Both halves are asserted from the same fixture on purpose. Confirming has to
+// produce exactly the write, notice, and runtime handoff the row always
+// produced -- a confirmation that changed the outcome would be a second
+// behavior, not a gate. Declining has to leave the Registry write count at zero,
+// which is what "confirmation before mutation" means operationally.
+func TestSwitchProjectStartupRecreateConfirmsBeforeReplacingIdentity(t *testing.T) {
+	var confirmation intpickercompat.Options
 	cmd, store, executor, tmux, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
-		{observe: func(intpickercompat.Options) { confirmationShown = true }},
+		{observe: func(o intpickercompat.Options) { confirmation = o },
+			reply: intpickercompat.Result{Key: "enter", Value: projectStartupRecreateConfirmValue}},
 	})
 	cmd.projectTopology.(*fakeProjectTopologyMaterializer).materialized = true
 	if err := cmd.openProjectTarget(context.Background(), "/srv/alpha", "alpha"); err != nil {
 		t.Fatal(err)
 	}
-	if confirmationShown || store.writes != 1 {
-		t.Fatalf("Fresh confirmationShown=%t writes=%d", confirmationShown, store.writes)
+	if confirmation.UI != "project-recreate-confirm" || len(confirmation.Entries) != 2 {
+		t.Fatalf("Recreate confirmation surface = %+v", confirmation)
+	}
+	if confirmation.Entries[0].Value != "" || confirmation.Entries[1].Value != projectStartupRecreateConfirmValue {
+		t.Fatalf("Recreate confirmation rows = %+v", confirmation.Entries)
+	}
+	if store.writes != 1 {
+		t.Fatalf("confirmed Recreate writes=%d, want 1", store.writes)
 	}
 	if _, err := stateStore.Summary("alpha"); err != nil {
-		t.Fatalf("Fresh changed the latest snapshot: %v", err)
+		t.Fatalf("Recreate changed the latest snapshot: %v", err)
 	}
 	if len(tmux.calls) != 0 {
-		t.Fatalf("Fresh issued unexpected tmux commands: %#v", tmux.calls)
+		t.Fatalf("Recreate issued unexpected tmux commands: %#v", tmux.calls)
 	}
 	if !equalStrings(executor.calls, []string{"authorize:/srv/alpha", "open:alpha"}) {
-		t.Fatalf("Fresh runtime calls: %q", executor.calls)
+		t.Fatalf("Recreate runtime calls: %q", executor.calls)
 	}
 	if len(reporter.messages) != 1 {
-		t.Fatalf("Fresh notice = %q", reporter.messages)
+		t.Fatalf("Recreate notice = %q", reporter.messages)
+	}
+}
+
+// TestSwitchProjectStartupRecreateDeclineWritesNothing is the other half: a
+// declined confirmation returns to the startup rows with the Registry, the
+// snapshot, and the runtime untouched.
+func TestSwitchProjectStartupRecreateDeclineWritesNothing(t *testing.T) {
+	cmd, store, executor, tmux, reporter, stateStore := freshStartSwitchFixture(t, []pickerStep{
+		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
+		{reply: intpickercompat.Result{Key: "enter", Value: ""}},
+	})
+	cmd.projectTopology.(*fakeProjectTopologyMaterializer).materialized = true
+	err := cmd.openProjectTarget(context.Background(), "/srv/alpha", "alpha")
+	if !errors.Is(err, errProjectStartupBack) {
+		t.Fatalf("declined Recreate error = %v, want the startup back sentinel", err)
+	}
+	if store.writes != 0 {
+		t.Fatalf("declined Recreate writes=%d, want 0", store.writes)
+	}
+	if _, err := stateStore.Summary("alpha"); err != nil {
+		t.Fatalf("declined Recreate changed the latest snapshot: %v", err)
+	}
+	if len(tmux.calls) != 0 {
+		t.Fatalf("declined Recreate issued tmux commands: %#v", tmux.calls)
+	}
+	if len(executor.calls) != 0 {
+		t.Fatalf("declined Recreate runtime calls: %q", executor.calls)
+	}
+	if len(reporter.messages) != 0 {
+		t.Fatalf("declined Recreate emitted notices: %q", reporter.messages)
 	}
 }
 
@@ -972,6 +1015,7 @@ func TestSwitchProjectStartupFreshRowIsNeutralOpenAction(t *testing.T) {
 func TestSwitchProjectStartupNewRefusesToStartWhileTopologyRemains(t *testing.T) {
 	cmd, _, executor, _, _, _ := freshStartSwitchFixture(t, []pickerStep{
 		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupValueNew}},
+		{reply: intpickercompat.Result{Key: "enter", Value: projectStartupRecreateConfirmValue}},
 	})
 	cmd.projectFreshStart = &stubProjectFreshStarter{
 		plan: projectFreshStartPlan{ProjectUID: "prj-alpha", Windows: 1, Panes: 2, Agents: 1},

@@ -10,6 +10,12 @@ scenario=create-claude route=create claude identity=created address=allocated to
 scenario=create-antigravity route=create antigravity identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
 scenario=agent-resume-existing-agent route=agent resume identity=reused address=unchanged topology=unchanged desired-state=unchanged runtime=materialized focus=unchanged cardinality=exact-one domain-effect=null
 scenario=agent-resume-new-pane route=agent resume identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=exact-one domain-effect=null
+scenario=start-project-offline route=start project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=materialized focus=unchanged cardinality=exact-one domain-effect=null
+scenario=start-project-live route=start project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=unchanged cardinality=exact-one domain-effect=null
+scenario=open-project-offline route=open project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=materialized focus=moved-current-client cardinality=exact-one domain-effect=null
+scenario=open-project-live route=open project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=moved-current-client cardinality=exact-one domain-effect=null
+scenario=stop-project-detached route=stop project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=unchanged cardinality=exact-one domain-effect=null
+scenario=stop-project-attached-fallback route=stop project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=moved-current-client cardinality=exact-one domain-effect=null
 scenario=attach-project-offline route=attach project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=materialized focus=attached-caller cardinality=exact-one domain-effect=null
 scenario=attach-project-live route=attach project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=attached-caller cardinality=exact-one domain-effect=null
 scenario=focus-project route=focus project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=moved-current-client cardinality=exact-one domain-effect=null
@@ -24,7 +30,7 @@ scenario=switch-candidate route=switch identity=created address=allocated topolo
 scenario=switch-existing-inside route=switch identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=moved-current-client cardinality=exact-one domain-effect=null
 scenario=switch-existing-outside route=switch identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=attached-caller cardinality=exact-one domain-effect=null
 scenario=switch-registered-offline-continue route=switch identity=reused address=unchanged topology=unchanged desired-state=reused runtime=materialized focus=moved-current-client cardinality=exact-one domain-effect=null
-scenario=switch-fresh-replace route=switch identity=replaced address=released topology=replaced desired-state=replaced runtime=materialized focus=moved-current-client cardinality=exact-one domain-effect=null
+scenario=switch-recreate-replace route=switch identity=replaced address=released topology=replaced desired-state=replaced runtime=materialized focus=moved-current-client cardinality=exact-one domain-effect=null
 scenario=switch-kill-detached route=switch identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=unchanged cardinality=exact-one domain-effect=null
 scenario=switch-kill-attached-fallback route=switch identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=moved-current-client cardinality=exact-one domain-effect=null
 scenario=rename-project route=rename project identity=unchanged address=renamed topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
@@ -32,7 +38,8 @@ scenario=rename-window route=rename window identity=unchanged address=renamed to
 scenario=rename-pane route=rename pane identity=unchanged address=renamed topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 scenario=rename-agent route=rename agent identity=unchanged address=renamed topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
 scenario=rebind-project route=rebind project identity=unchanged address=unchanged topology=unchanged desired-state=replaced runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
-scenario=delete-project-live route=delete project identity=removed address=released topology=removed desired-state=removed runtime=preserved focus=unchanged cardinality=one-or-more domain-effect=null
+scenario=unregister-project-live route=unregister project identity=removed address=released topology=removed desired-state=removed runtime=preserved focus=unchanged cardinality=one-or-more domain-effect=null
+scenario=delete-project-alias-live route=delete project identity=removed address=released topology=removed desired-state=removed runtime=preserved focus=unchanged cardinality=one-or-more domain-effect=null
 scenario=delete-window-live route=delete window identity=removed address=released topology=removed desired-state=removed runtime=stopped focus=unchanged cardinality=one-or-more domain-effect=null
 scenario=delete-pane-live-active route=delete pane identity=removed address=released topology=removed desired-state=removed runtime=stopped focus=moved-current-client cardinality=one-or-more domain-effect=null
 scenario=delete-agent-offline route=delete agent identity=removed address=released topology=removed desired-state=removed runtime=unchanged focus=unchanged cardinality=one-or-more domain-effect=null

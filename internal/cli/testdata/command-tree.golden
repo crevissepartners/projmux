@@ -14,6 +14,7 @@ help hidden=false disableFlagParsing=true args=true children=0
 hook hidden=false disableFlagParsing=true args=true children=0
 internal hidden=true disableFlagParsing=true args=true children=0
 notification hidden=false disableFlagParsing=true args=true children=0
+open hidden=false disableFlagParsing=true args=true children=0
 pin hidden=false disableFlagParsing=true args=true children=0
 prune hidden=false disableFlagParsing=true args=true children=0
 quit hidden=false disableFlagParsing=true args=true children=0
@@ -26,7 +27,10 @@ runtime hidden=false disableFlagParsing=true args=true children=0
 settings hidden=false disableFlagParsing=true args=true children=0
 setup hidden=false disableFlagParsing=true args=true children=0
 shell hidden=false disableFlagParsing=true args=true children=0
+start hidden=false disableFlagParsing=true args=true children=0
+stop hidden=false disableFlagParsing=true args=true children=0
 switch hidden=false disableFlagParsing=true args=true children=0
+unregister hidden=false disableFlagParsing=true args=true children=0
 update hidden=false disableFlagParsing=true args=true children=0
 version hidden=false disableFlagParsing=true args=true children=0
 welcome hidden=false disableFlagParsing=true args=true children=0

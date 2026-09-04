@@ -27,10 +27,30 @@ const (
 	projectStartupValueNew = "fresh"
 
 	// projectStartupNewLabel is the exact user-facing row name.
-	projectStartupNewLabel = "Open fresh"
+	//
+	// It says `Recreate Project` rather than the historical `Open fresh` because
+	// the row is the one action on the startup screen that replaces identity,
+	// and "open" is the word every other Project entry point uses for the
+	// actions that deliberately do not. `Continue project` opens, `open project`
+	// opens, `attach project` opens; only this one mints a new Project UID and
+	// releases the old graph's addresses, and the label is where an operator
+	// finds that out.
+	projectStartupNewLabel = "Recreate Project"
 
-	// projectStartupNewDescription presents Fresh as an ordinary one-step open.
+	// projectStartupNewDescription names the replacement rather than the open.
 	projectStartupNewDescription = "replace this Project identity with a new Project, Window, and shell"
+
+	// projectStartupRecreateConfirmLabel is the confirmation row that authorizes
+	// the replacement.
+	projectStartupRecreateConfirmLabel = "Recreate Project"
+
+	// projectStartupRecreateCancelLabel returns to the startup screen.
+	projectStartupRecreateCancelLabel = "Keep this Project"
+
+	// projectStartupRecreateConfirmValue is the picker/transport spelling of the
+	// approval. It is deliberately different from projectStartupValueNew so a
+	// stale token from either picker cannot be read as the other one's answer.
+	projectStartupRecreateConfirmValue = "recreate-confirm"
 )
 
 // newProjectStartupCandidate is the fresh-start row.
@@ -235,16 +255,16 @@ func (s *registryProjectFreshStarter) ContinueProject(_ context.Context, root, s
 	}
 	if s.loadSnapshot == nil {
 		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-preflight", "", "",
-			errors.New("continue project unavailable: no read-only snapshot source is configured; choose Open fresh"))
+			errors.New("continue project unavailable: no read-only snapshot source is configured; choose Recreate Project"))
 	}
 	snap, err := s.loadSnapshot(sessionName)
 	if err != nil {
 		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-preflight", "", "",
-			fmt.Errorf("continue project unavailable: no usable snapshot for %q; choose Open fresh: %w", sessionName, err))
+			fmt.Errorf("continue project unavailable: no usable snapshot for %q; choose Recreate Project: %w", sessionName, err))
 	}
 	if candidates.MatchKey(snap.DefaultCWD) != candidates.MatchKey(root) {
 		return openedProjectBootstrap{}, wrapProjectLifecycleError(coremetadata.ProjectLifecycleContinue, "snapshot-preflight", "", "",
-			fmt.Errorf("continue project unavailable: snapshot root %q does not match %q; choose Open fresh", snap.DefaultCWD, root))
+			fmt.Errorf("continue project unavailable: snapshot root %q does not match %q; choose Recreate Project", snap.DefaultCWD, root))
 	}
 	decision, uid = projectLifecycleDecisionFor(registry, root, coremetadata.ProjectLifecycleContinue,
 		coremetadata.ProjectLifecyclePreconditions{UsableSnapshot: true})

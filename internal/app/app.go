@@ -124,28 +124,37 @@ type App struct {
 	kill               *killCommand
 	notify             *notifyCommand
 	notification       *notificationCommand
-	pin                *pinCommand
-	popupWaitKey       *popupWaitKeyCommand
-	supervise          *superviseCommand
-	preview            *previewCommand
-	prune              *pruneCommand
-	quit               *quitCommand
-	resources          *resourceCommand
-	sessions           *sessionsCommand
-	sessionState       *sessionStateCommand
-	sessionPopup       *sessionPopupCommand
-	settings           *settingsCommand
-	setup              *setupCommand
-	shell              *shellCommand
-	status             *statusCommand
-	statusbar          *statusbarCommand
-	switcher           *switchCommand
-	tag                *tagCommand
-	tmux               *tmuxCommand
-	update             *updateCommand
-	usage              *usagecmd.Command
-	welcome            *welcomeCommand
-	window             *windowCommand
+	// The three Project runtime lifecycle verbs. Each holds the verb it answers
+	// to; the shared decision -- resolve one Project, read its session -- lives
+	// in the one command type behind them.
+	startProject *projectLifecycleCommand
+	openProject  *projectLifecycleCommand
+	stopProject  *projectLifecycleCommand
+	// unregister is the canonical spelling of the Registry-only Project removal
+	// that `delete project` keeps reaching under its deprecated name.
+	unregister   *unregisterCommand
+	pin          *pinCommand
+	popupWaitKey *popupWaitKeyCommand
+	supervise    *superviseCommand
+	preview      *previewCommand
+	prune        *pruneCommand
+	quit         *quitCommand
+	resources    *resourceCommand
+	sessions     *sessionsCommand
+	sessionState *sessionStateCommand
+	sessionPopup *sessionPopupCommand
+	settings     *settingsCommand
+	setup        *setupCommand
+	shell        *shellCommand
+	status       *statusCommand
+	statusbar    *statusbarCommand
+	switcher     *switchCommand
+	tag          *tagCommand
+	tmux         *tmuxCommand
+	update       *updateCommand
+	usage        *usagecmd.Command
+	welcome      *welcomeCommand
+	window       *windowCommand
 	// lookupEnv and interactiveRunner are the two seams the generated
 	// interactive `run-shell` guard needs: the binding's exact-client env and
 	// the tmux command that carries a converged failure back to that client.
@@ -396,6 +405,10 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		kill:               kill,
 		notify:             notifyCmd,
 		notification:       notificationCmd,
+		startProject:       newProjectLifecycleCommand(projectLifecycleStart, switcher),
+		openProject:        newProjectLifecycleCommand(projectLifecycleOpen, switcher),
+		stopProject:        newProjectLifecycleCommand(projectLifecycleStop, switcher),
+		unregister:         &unregisterCommand{delete: deleteCmd},
 		pin:                newPinCommand(),
 		popupWaitKey:       popupWaitKeyCmd,
 		supervise:          superviseCmd,
@@ -471,6 +484,24 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 			diagnostics: a.runtimeDiagnostics,
 		}
 	}
+	// Focused handler tests construct partial App values. The Project lifecycle
+	// verbs and the canonical unregister spelling are reconstructed from the
+	// wiring they need rather than left nil, so a narrow fixture reaches a real
+	// refusal instead of a nil dereference.
+	startProject, openProject, stopProject := a.startProject, a.openProject, a.stopProject
+	if startProject == nil {
+		startProject = newProjectLifecycleCommand(projectLifecycleStart, a.switcher)
+	}
+	if openProject == nil {
+		openProject = newProjectLifecycleCommand(projectLifecycleOpen, a.switcher)
+	}
+	if stopProject == nil {
+		stopProject = newProjectLifecycleCommand(projectLifecycleStop, a.switcher)
+	}
+	unregister := a.unregister
+	if unregister == nil {
+		unregister = &unregisterCommand{delete: a.delete}
+	}
 	commands := map[string]rawArgvCommand{
 		"agent":     a.agent,
 		"create":    a.create,
@@ -503,20 +534,24 @@ func (a *App) routeHandlers() map[string]cli.Handler {
 			name: "prune", target: a.prune, allowedFirst: []string{"project", "snapshot"},
 			replacement: pruneReplacement,
 		},
-		"quit":      a.quit,
-		"rebind":    a.rebind,
-		"reconcile": a.reconcile,
-		"rename":    a.rename,
-		"resources": a.resources,
-		"restore":   a.restore,
-		"runtime":   runtime,
-		"settings":  a.settings,
-		"setup":     a.setup,
-		"shell":     a.shell,
-		"switch":    a.switcher,
-		"update":    a.update,
-		"welcome":   a.welcome,
-		"window":    a.window,
+		"open":       openProject,
+		"quit":       a.quit,
+		"rebind":     a.rebind,
+		"reconcile":  a.reconcile,
+		"rename":     a.rename,
+		"resources":  a.resources,
+		"restore":    a.restore,
+		"runtime":    runtime,
+		"settings":   a.settings,
+		"setup":      a.setup,
+		"shell":      a.shell,
+		"start":      startProject,
+		"stop":       stopProject,
+		"switch":     a.switcher,
+		"unregister": unregister,
+		"update":     a.update,
+		"welcome":    a.welcome,
+		"window":     a.window,
 	}
 	handlers := make(map[string]cli.Handler, len(commands))
 	for token, command := range commands {

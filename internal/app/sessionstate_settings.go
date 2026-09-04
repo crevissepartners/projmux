@@ -345,7 +345,7 @@ func (c *settingsCommand) sessionStateAutosaveDetailEntries(autosave sessionStat
 // straight to its stored topology.
 func sidebarStartupChoiceLabel(mode config.SessionStateToggle) string {
 	if mode.Enabled() {
-		return "Continue project / Open fresh"
+		return "Continue project / Recreate Project"
 	}
 	return "Continue project"
 }
@@ -372,7 +372,7 @@ func (c *settingsCommand) sidebarStartupPickerEntries(sidebarStartup sessionStat
 		mode config.SessionStateToggle
 		desc string
 	}{
-		{config.SessionStateToggleOn, "show Continue project and Open fresh for a closed Project"},
+		{config.SessionStateToggleOn, "show Continue project and Recreate Project for a closed Project"},
 		{config.SessionStateToggleOff, projectTopologyStartupDescription},
 	} {
 		glyph := settingsGlyphInactive

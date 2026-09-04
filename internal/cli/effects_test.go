@@ -37,6 +37,12 @@ func currentSchemaV3Outcomes() []currentEffectOutcome {
 		{"create-antigravity", "create antigravity", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusUnchanged, CardinalityOneOrMore, nil},
 		{"agent-resume-existing-agent", "agent resume", IdentityReused, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusUnchanged, CardinalityExactOne, nil},
 		{"agent-resume-new-pane", "agent resume", IdentityCreated, AddressAllocated, TopologyEstablished, DesiredStateCreated, RuntimeMaterialized, FocusUnchanged, CardinalityExactOne, nil},
+		{"start-project-offline", "start project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusUnchanged, CardinalityExactOne, nil},
+		{"start-project-live", "start project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusUnchanged, CardinalityExactOne, nil},
+		{"open-project-offline", "open project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusMovedCurrentClient, CardinalityExactOne, nil},
+		{"open-project-live", "open project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusMovedCurrentClient, CardinalityExactOne, nil},
+		{"stop-project-detached", "stop project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeStopped, FocusUnchanged, CardinalityExactOne, nil},
+		{"stop-project-attached-fallback", "stop project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeStopped, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"attach-project-offline", "attach project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeMaterialized, FocusAttachedCaller, CardinalityExactOne, nil},
 		{"attach-project-live", "attach project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusAttachedCaller, CardinalityExactOne, nil},
 		{"focus-project", "focus project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusMovedCurrentClient, CardinalityExactOne, nil},
@@ -51,7 +57,7 @@ func currentSchemaV3Outcomes() []currentEffectOutcome {
 		{"switch-existing-inside", "switch", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"switch-existing-outside", "switch", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeAlreadyLive, FocusAttachedCaller, CardinalityExactOne, nil},
 		{"switch-registered-offline-continue", "switch", IdentityReused, AddressUnchanged, TopologyUnchanged, DesiredStateReused, RuntimeMaterialized, FocusMovedCurrentClient, CardinalityExactOne, nil},
-		{"switch-fresh-replace", "switch", IdentityReplaced, AddressReleased, TopologyReplaced, DesiredStateReplaced, RuntimeMaterialized, FocusMovedCurrentClient, CardinalityExactOne, nil},
+		{"switch-recreate-replace", "switch", IdentityReplaced, AddressReleased, TopologyReplaced, DesiredStateReplaced, RuntimeMaterialized, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"switch-kill-detached", "switch", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeStopped, FocusUnchanged, CardinalityExactOne, nil},
 		{"switch-kill-attached-fallback", "switch", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateUnchanged, RuntimeStopped, FocusMovedCurrentClient, CardinalityExactOne, nil},
 		{"rename-project", "rename project", IdentityUnchanged, AddressRenamed, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusUnchanged, CardinalityExactOne, nil},
@@ -59,7 +65,8 @@ func currentSchemaV3Outcomes() []currentEffectOutcome {
 		{"rename-pane", "rename pane", IdentityUnchanged, AddressRenamed, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusUnchanged, CardinalityExactOne, nil},
 		{"rename-agent", "rename agent", IdentityUnchanged, AddressRenamed, TopologyUnchanged, DesiredStateUnchanged, RuntimeUnchanged, FocusUnchanged, CardinalityExactOne, nil},
 		{"rebind-project", "rebind project", IdentityUnchanged, AddressUnchanged, TopologyUnchanged, DesiredStateReplaced, RuntimeUnchanged, FocusUnchanged, CardinalityExactOne, nil},
-		{"delete-project-live", "delete project", IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimePreserved, FocusUnchanged, CardinalityOneOrMore, nil},
+		{"unregister-project-live", "unregister project", IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimePreserved, FocusUnchanged, CardinalityOneOrMore, nil},
+		{"delete-project-alias-live", "delete project", IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimePreserved, FocusUnchanged, CardinalityOneOrMore, nil},
 		{"delete-window-live", "delete window", IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimeStopped, FocusUnchanged, CardinalityOneOrMore, nil},
 		{"delete-pane-live-active", "delete pane", IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimeStopped, FocusMovedCurrentClient, CardinalityOneOrMore, nil},
 		{"delete-agent-offline", "delete agent", IdentityRemoved, AddressReleased, TopologyRemoved, DesiredStateRemoved, RuntimeUnchanged, FocusUnchanged, CardinalityOneOrMore, nil},
@@ -385,6 +392,7 @@ func TestCorrectedHandlerEffectsAreFixtureCovered(t *testing.T) {
 	}
 	for _, route := range []string{
 		"create window", "create pane", "create agent", "create codex", "create claude", "create antigravity",
+		"start project", "open project", "stop project", "unregister project", "delete project",
 		"agent resume", "shell", "reconcile resources", "reconcile registry", "restore snapshot",
 		"switch", "runtime sessions", "runtime diagnostics", "window recent", "internal statusbar click", "internal session-popup open",
 		"internal agent-pane launch-default", "internal agent-pane picker", "internal focus",
@@ -432,6 +440,11 @@ func TestCorrectedHandlerEffectsKeepSourceAndTestAnchors(t *testing.T) {
 		{"create window", "create_resource.go", "func (c *createCommand) runResourceWindow", "create_agent_test.go", "TestExactProjectCreateWindowUsesAppRouteDespiteStaleInheritedPane"},
 		{"create pane", "create_resource.go", "func (c *createCommand) runResourcePane", "window_anchor_consumers_test.go", "TestAnchorAwareCreatePaneAndAgentUseExactLiveShellAnchorDetached"},
 		{"create agent", "create_agent.go", "func (c *createCommand) runResourceAgent", "create_agent_test.go", "TestCreateAgentAndProviderShortcutsShareScopedEqualization"},
+		{"start project", "project_lifecycle_verbs.go", "func (c *projectLifecycleCommand) execute", "project_lifecycle_verbs_test.go", "TestStartProjectMaterializesDetachedAndReportsAlreadyLive"},
+		{"open project", "project_lifecycle_verbs.go", "func (c *projectLifecycleCommand) materialize", "project_lifecycle_verbs_test.go", "TestOpenProjectMovesTheCurrentClientAndRefusesOutsideTmux"},
+		{"stop project", "project_lifecycle_verbs.go", "func (c *projectLifecycleCommand) resolveProject", "project_lifecycle_verbs_test.go", "TestStopProjectEndsOnlyTheRuntimeAndRefusesAnOfflineTarget"},
+		{"unregister project", "delete.go", "func (c *deleteCommand) runProjectUnregister", "delete_test.go", "TestUnregisterProjectAndItsDeprecatedDeleteAliasAreByteIdenticalOnStdout"},
+		{"delete project", "delete.go", "func warnDeprecatedProjectDeleteAlias", "delete_test.go", "TestDeleteProjectIsTheOnlyRegistryUnregisterAndPreservesExternalAssets"},
 		{"agent resume", "agent.go", "func (c *agentCommand) runResume", "agent_resume_test.go", "TestAgentResumeRebindsTheExistingAgentToANewManagedPane"},
 		{"shell", "shell.go", "func (c *shellCommand) Run", "shell_control_session_test.go", "TestShellProvisionsAndConvergesTheControlSession"},
 		{"switch", "switch.go", "func (c *switchCommand) execute", "switch_test.go", "TestSwitchCommandAllowsEmptySelection"},
@@ -516,11 +529,23 @@ type mismatchLedgerRow struct {
 	Axes             []string
 }
 
+// currentMismatchLedger records the differences that remain after the lifecycle
+// Phase, not the ones it closed.
+//
+// Two Phase 0 rows are gone because the behavior they described is gone with
+// them. `create-reuse-result-word` said a same-root repeat printed "created";
+// it now prints `reused` and carries a receipt whose identity axis says the
+// same. `switch-is-not-focus` said the shortcut claimed `focus project` as its
+// canonical spelling while it could materialize and replace identity; it now
+// composes `create project` and `open project`, which is what it always did.
+//
+// The remaining row is not a defect. `unregister project` preserving a runtime
+// that `delete window` terminates is the deliberate asymmetry the two spellings
+// exist to make readable, and recording it here is what keeps a later change
+// from "fixing" it.
 func currentMismatchLedger() []mismatchLedgerRow {
 	return []mismatchLedgerRow{
-		{"create-reuse-result-word", "create-project-reuse", "", "", "created", []string{"identity"}},
-		{"switch-is-not-focus", "switch-candidate", "", "focus-project", "", []string{"identity", "address", "topology", "desired-state", "runtime"}},
-		{"project-delete-preserves-runtime", "delete-project-live", "", "delete-window-live", "", []string{"runtime"}},
+		{"project-unregister-preserves-runtime", "unregister-project-live", "", "delete-window-live", "", []string{"runtime"}},
 	}
 }
 
@@ -594,10 +619,6 @@ func renderCurrentOutcome(outcome currentEffectOutcome) string {
 }
 
 func ledgerAxesDiffer(row mismatchLedgerRow, outcomes map[string]currentEffectOutcome, routes map[string]AllowedEffects) bool {
-	if row.ID == "create-reuse-result-word" {
-		return outcomes[row.CurrentScenario].Identity == IdentityReused &&
-			string(outcomes[row.CurrentScenario].Identity) != row.ComparedValue
-	}
 	var current currentEffectOutcome
 	if row.CurrentScenario != "" {
 		current = outcomes[row.CurrentScenario]

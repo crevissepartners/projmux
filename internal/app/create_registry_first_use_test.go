@@ -139,7 +139,7 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 	if err != nil {
 		t.Fatalf("register error = %v (stderr %q)", err, stderr)
 	}
-	if !strings.HasPrefix(stdout, "project/proj-") || !strings.HasSuffix(stdout, " created\n") {
+	if !strings.HasPrefix(stdout, "project/proj-") || !strings.Contains(stdout, " created\n") {
 		t.Fatalf("stdout = %q, want one exact-UID automatic Project name", stdout)
 	}
 
@@ -184,8 +184,14 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 		t.Fatalf("the written registry does not validate: %v", err)
 	}
 
-	// Registering the same root again is a write-free no-op that still reports the
-	// same Project.
+	// Registering the same root again is a write-free no-op that reports the same
+	// Project and says so.
+	//
+	// The two results deliberately differ in exactly one way: the repeat says
+	// `reused` where the first said `created`, and its receipt says
+	// identity=reused with address, topology, and desired state unchanged. Both
+	// name the same Project uid and the same bootstrap Window and Pane counts,
+	// which is what makes "the same graph" observable rather than assumed.
 	before, err := os.ReadFile(fixture.registryPath())
 	if err != nil {
 		t.Fatalf("read registry: %v", err)
@@ -194,8 +200,18 @@ func TestTheFirstMutationCreatesTheRegistryFromACompletelyEmptyState(t *testing.
 	if err != nil {
 		t.Fatalf("repeat register error = %v", err)
 	}
-	if got, want := repeatOut, stdout; got != want {
-		t.Fatalf("repeat stdout = %q, want %q", got, want)
+	projectUID := registry.Projects[0].Metadata.UID
+	wantRepeat := "project/" + projectUID + " reused\n" +
+		"receipt operation=create.project identity=reused address=unchanged topology=unchanged " +
+		"desired-state=reused runtime=unchanged focus=unchanged projects=1 windows=1 panes=1 agents=0\n"
+	if repeatOut != wantRepeat {
+		t.Fatalf("repeat stdout = %q, want %q", repeatOut, wantRepeat)
+	}
+	if strings.Contains(repeatOut, "created") {
+		t.Fatalf("a same-root repeat still reports a creation: %q", repeatOut)
+	}
+	if !strings.Contains(stdout, " created\n") || !strings.Contains(stdout, "identity=created") {
+		t.Fatalf("the first registration no longer reports a creation: %q", stdout)
 	}
 	after, err := os.ReadFile(fixture.registryPath())
 	if err != nil {

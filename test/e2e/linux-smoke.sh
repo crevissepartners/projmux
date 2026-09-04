@@ -5599,9 +5599,10 @@ echo \$? >"$startup_root/open-\$2.rc"
 STARTUP_OPEN_SCRIPT
 chmod 0755 "$startup_root/open-project.sh"
 
-# The `Open fresh` row is a one-step neutral action. Drive the same detached
-# continuation that the sidebar launches so no confirmation or destructive
-# workflow can be hidden behind the picker transport.
+# The `Recreate Project` row is the one startup action that replaces identity.
+# Its picker selection is confirmed; this drives the same detached continuation
+# the sidebar launches once that confirmation is past, so the replacement itself
+# is exercised on its own rather than through the picker transport.
 cat >"$startup_root/open-fresh.sh" <<STARTUP_FRESH_SCRIPT
 #!/usr/bin/env bash
 export HOME="$startup_root/home"
@@ -6308,16 +6309,16 @@ startup_primary_pane_before="$startup_zero_window_continue_pane_uid"
 : >"$startup_agent_argv"
 startup_managed_stop retained-fresh
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
-startup_wait_for "Open fresh continuation" test -s "$startup_root/open-new.rc"
+startup_wait_for "Recreate Project continuation" test -s "$startup_root/open-new.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
   cat "$startup_root/open-new.err" >&2 || true
   exit 1
 fi
-startup_wait_for "Open fresh explicit client handoff" startup_client_is_on "$startup_session"
+startup_wait_for "Recreate Project explicit client handoff" startup_client_is_on "$startup_session"
 startup_project_uid_after="$(startup_pmx get projects -o uid)"
 if [[ -z "$startup_project_uid_after" ]] || [[ "$startup_project_uid_after" == "$startup_project_uid_before_fresh" ]] ||
   [[ "$(printf '%s\n' "$startup_project_uid_after" | grep -c .)" != "1" ]]; then
-  echo "Open fresh did not mint exactly one same-root Project identity" >&2
+  echo "Recreate Project did not mint exactly one same-root Project identity" >&2
   startup_pmx get projects -o uid >&2 || true
   exit 1
 fi
@@ -6328,13 +6329,13 @@ startup_primary_pane_after="$(sed -n 's/.*"defaultShellPaneRef": "\([^"]*\)".*/\
 if [[ -z "$startup_primary_window_after" ]] || [[ -z "$startup_primary_pane_after" ]] ||
   [[ "$startup_primary_window_after" == "$startup_primary_window_before" ]] ||
   [[ "$startup_primary_pane_after" == "$startup_primary_pane_before" ]]; then
-  echo "Open fresh did not mint a new canonical Window/shell identity" >&2
+  echo "Recreate Project did not mint a new canonical Window/shell identity" >&2
   exit 1
 fi
 if [[ "$(startup_pmx get windows --project "uid:$startup_project_uid_after" -o uid | grep -c .)" != "1" ]] ||
   [[ "$(startup_pmx get panes --project "uid:$startup_project_uid_after" -o uid | grep -c .)" != "1" ]] ||
   [[ "$(startup_pmx get agents --project "uid:$startup_project_uid_after" -o uid 2>/dev/null | grep -c . || true)" != "0" ]]; then
-  echo "Open fresh did not create exactly one canonical shell" >&2
+  echo "Recreate Project did not create exactly one canonical shell" >&2
   exit 1
 fi
 startup_runtime_project_uid="$(startup_tmux show-options -qv -t "$startup_session" @projmux_project_uid)"
@@ -6343,12 +6344,12 @@ startup_runtime_pane_uid="$(startup_tmux list-panes -s -t "$startup_session" -F 
 if [[ "$startup_runtime_project_uid" != "$startup_project_uid_after" ]] ||
   [[ "$startup_runtime_window_uid" != "$startup_primary_window_after" ]] ||
   [[ "$startup_runtime_pane_uid" != "$startup_primary_pane_after" ]]; then
-  echo "Open fresh runtime identity does not match the new canonical Registry shell: project=$startup_runtime_project_uid/$startup_project_uid_after window=$startup_runtime_window_uid/$startup_primary_window_after pane=$startup_runtime_pane_uid/$startup_primary_pane_after" >&2
+  echo "Recreate Project runtime identity does not match the new canonical Registry shell: project=$startup_runtime_project_uid/$startup_project_uid_after window=$startup_runtime_window_uid/$startup_primary_window_after pane=$startup_runtime_pane_uid/$startup_primary_pane_after" >&2
   exit 1
 fi
 cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"
 if [[ -s "$startup_agent_argv" ]]; then
-  echo "Open fresh launched a removed Agent" >&2
+  echo "Recreate Project launched a removed Agent" >&2
   cat "$startup_agent_argv" >&2 || true
   exit 1
 fi
@@ -6401,11 +6402,11 @@ startup_wait_for "Fresh sidebar Start project screen" sh -c \
   "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Start project'"
 startup_wait_for "Fresh sidebar no-file Continue action" sh -c \
   "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Continue project'"
-startup_wait_for "Fresh sidebar no-file Open fresh action" sh -c \
-  "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Open fresh'"
+startup_wait_for "Fresh sidebar no-file Recreate Project action" sh -c \
+  "tail -c +$((startup_start_picker_log_offset + 1)) '$startup_sidebar_log' | grep -aFq 'Recreate Project'"
 startup_no_file_picker_slice="$(tail -c +$((startup_start_picker_log_offset + 1)) "$startup_sidebar_log")"
 if [[ "$(printf '%s' "$startup_no_file_picker_slice" | grep -aoF 'Continue project' | wc -l)" -ne 1 ]] ||
-  [[ "$(printf '%s' "$startup_no_file_picker_slice" | grep -aoF 'Open fresh' | wc -l)" -ne 1 ]]; then
+  [[ "$(printf '%s' "$startup_no_file_picker_slice" | grep -aoF 'Recreate Project' | wc -l)" -ne 1 ]]; then
   echo "no-file startup picker did not render exactly the two expected action rows once" >&2
   exit 1
 fi
@@ -6487,12 +6488,12 @@ if [[ -n "$(startup_pmx get windows --project "uid:$startup_project_uid_before_r
 fi
 rm -f "$startup_root/open-new.rc"
 startup_tmux send-keys -t "$startup_driver_pane" "bash '$startup_root/open-fresh.sh' '$startup_project' '$startup_session' '$startup_client' '$startup_driver_pane'" Enter
-startup_wait_for "repeat Open fresh continuation" test -s "$startup_root/open-new.rc"
+startup_wait_for "repeat Recreate Project continuation" test -s "$startup_root/open-new.rc"
 if [[ "$(tr -d '[:space:]' <"$startup_root/open-new.rc")" != "0" ]]; then
   cat "$startup_root/open-new.err" >&2 || true
   exit 1
 fi
-startup_wait_for "repeat Open fresh explicit client handoff" startup_client_is_on "$startup_session"
+startup_wait_for "repeat Recreate Project explicit client handoff" startup_client_is_on "$startup_session"
 startup_repeat_fresh_project_uid="$(startup_pmx get projects -o uid)"
 startup_repeat_fresh_window_uid="$(startup_pmx get windows --project "uid:$startup_repeat_fresh_project_uid" -o uid)"
 startup_repeat_fresh_pane_uid="$(startup_pmx get panes --project "uid:$startup_repeat_fresh_project_uid" -o uid)"
@@ -6502,7 +6503,7 @@ if [[ -z "$startup_repeat_fresh_project_uid" ]] || [[ "$(printf '%s\n' "$startup
   [[ "$startup_repeat_fresh_window_uid" == "$startup_window_uid_before_repeat_fresh" ]] ||
   [[ -z "$startup_repeat_fresh_pane_uid" ]] || [[ "$(printf '%s\n' "$startup_repeat_fresh_pane_uid" | grep -c .)" != "1" ]] ||
   [[ "$startup_repeat_fresh_pane_uid" == "$startup_pane_uid_before_repeat_fresh" ]]; then
-  echo "repeat Open fresh did not replace the zero-Window Project with one new canonical UID chain" >&2
+  echo "repeat Recreate Project did not replace the zero-Window Project with one new canonical UID chain" >&2
   exit 1
 fi
 cmp "$startup_root/latest-snapshot.saved.json" "$startup_latest_snapshot"

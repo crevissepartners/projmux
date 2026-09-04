@@ -190,7 +190,7 @@ var settingsNodeCatalog = []settingsNavNode{
 	{ID: settingsNavProjectsCandidates + ".item.unpin", Parent: settingsNavProjectsCandidates + ".item", Label: "Unpin candidate", LabelKey: "settings.text.unpin_candidate", Kind: settingsNavConfirm, Axis: settingsAxisGlobal, Dynamic: true},
 
 	{ID: settingsNavProjectsSidebar, Parent: settingsNavProjects, Label: "Project Sidebar", LabelKey: "settings.text.project_sidebar", Kind: settingsNavView, Axis: settingsAxisGlobal, Value: settingsProjectsSidebar, Owner: settingsOwnerProjectPicker},
-	{ID: settingsNavProjectsSidebar + ".closed-startup", Parent: settingsNavProjectsSidebar, Label: "Closed Project startup", LabelKey: "settings.text.closed_project_startup", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Dynamic: true, Note: "Continue project / Open fresh"},
+	{ID: settingsNavProjectsSidebar + ".closed-startup", Parent: settingsNavProjectsSidebar, Label: "Closed Project startup", LabelKey: "settings.text.closed_project_startup", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Dynamic: true, Note: "Continue project / Recreate Project"},
 	{ID: settingsNavProjectsSidebar + ".runtime-diagnostics", Parent: settingsNavProjectsSidebar, Label: "Runtime diagnostics", LabelKey: "picker.runtime.title", Kind: settingsNavChoice, Axis: settingsAxisGlobal, Dynamic: true, Note: "When needed / Always"},
 
 	// AI -------------------------------------------------------------------
