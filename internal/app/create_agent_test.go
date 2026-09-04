@@ -1249,9 +1249,9 @@ func TestCreateAgentFansOutOverEveryWindowAnchorExactlyOnce(t *testing.T) {
 	tmux := newFakeTmux()
 	create, launcher := newTestAgentCreateCommand(t, store, tmux)
 
-	// No --window fans out over every Window of the Project, the same meaning
-	// the sibling `create pane --project` route gives the omitted flag.
-	stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "-o", "pane-id")
+	// --all-windows fans out over every Window of the Project, the same meaning
+	// the sibling `create pane --all-windows` route gives the same spelling.
+	stdout, _, err := runRoute(t, create, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--all-windows", "-o", "pane-id")
 	if err != nil {
 		t.Fatalf("fan-out error = %v", err)
 	}
@@ -1330,7 +1330,7 @@ func TestCreateAgentFanOutEqualizesBeforeCrossingWindowBoundary(t *testing.T) {
 	store := newFakeResourceStore(t)
 	tmux := newFakeTmux()
 	create, _ := newTestAgentCreateCommand(t, store, tmux)
-	if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha"); err != nil {
+	if _, _, err := runRoute(t, create, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--all-windows"); err != nil {
 		t.Fatalf("fan-out create agent error = %v", err)
 	}
 

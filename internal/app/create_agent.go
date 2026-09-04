@@ -122,7 +122,6 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		return err
 	}
 	c.selectRuntimeAuthority(flags.explicitTargetAuthority())
-	warning := compatibilityWarningFor(flags, stderr)
 
 	var results []createResult
 	var selectedWindowUIDs []string
@@ -389,7 +388,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		return err
 	}
 	return c.writeResultsWithReceipt(stdout, spelling, mode, coremetadata.KindAgent, results,
-		createPlannedReceipt(coremetadata.KindAgent, results, selectedWindowUIDs, warning))
+		createPlannedReceipt(coremetadata.KindAgent, results, selectedWindowUIDs))
 }
 
 type agentActivationTarget struct {

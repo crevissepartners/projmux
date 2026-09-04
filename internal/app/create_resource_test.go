@@ -563,7 +563,8 @@ func TestEveryTargetWindowAnchorsOnExactlyOnePane(t *testing.T) {
 		create, _ := newTestResourceCreateCommand(t, store, tmux)
 
 		// alpha owns two Windows, each with its own compatibility shell ref.
-		if _, _, err := runRoute(t, create, "pane", "--project", "alpha"); err != nil {
+		// --all-windows is the spelling that addresses both of them.
+		if _, _, err := runRoute(t, create, "pane", "--project", "alpha", "--all-windows"); err != nil {
 			t.Fatalf("fan-out error = %v", err)
 		}
 		for _, window := range []string{"win-alpha-main", "win-alpha-review"} {
@@ -1162,7 +1163,7 @@ func TestCanonicalCreatePaneEqualizationIsWindowLocalInFanOut(t *testing.T) {
 	store := newFakeResourceStore(t)
 	tmux := newFakeTmux()
 	create, _ := newTestResourceCreateCommand(t, store, tmux)
-	if _, _, err := runRoute(t, create, "pane", "--project", "alpha", "--placement", "right"); err != nil {
+	if _, _, err := runRoute(t, create, "pane", "--project", "alpha", "--all-windows", "--placement", "right"); err != nil {
 		t.Fatalf("fan-out create error = %v", err)
 	}
 
@@ -2101,7 +2102,7 @@ func TestResourceCreateFanOutIsDeterministicallyOrdered(t *testing.T) {
 	tmux := newFakeTmux()
 	create, _ := newTestResourceCreateCommand(t, store, tmux)
 
-	stdout, _, err := runRoute(t, create, "pane", "--project", "alpha", "-o", "ref")
+	stdout, _, err := runRoute(t, create, "pane", "--project", "alpha", "--all-windows", "-o", "ref")
 	if err != nil {
 		t.Fatalf("fan-out error = %v", err)
 	}
@@ -2114,7 +2115,7 @@ func TestResourceCreateFanOutIsDeterministicallyOrdered(t *testing.T) {
 	rerunStore := newFakeResourceStore(t)
 	rerunTmux := newFakeTmux()
 	rerun, _ := newTestResourceCreateCommand(t, rerunStore, rerunTmux)
-	again, _, err := runRoute(t, rerun, "pane", "--project", "alpha", "-o", "ref")
+	again, _, err := runRoute(t, rerun, "pane", "--project", "alpha", "--all-windows", "-o", "ref")
 	if err != nil {
 		t.Fatalf("fan-out rerun error = %v", err)
 	}
