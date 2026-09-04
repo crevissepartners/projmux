@@ -70,8 +70,17 @@ type resourceCreateFlags struct {
 	addDirs      repeatedFlag
 	placement    string
 	createWindow bool
-	output       string
-	payload      []string
+	// allWindows and primaryWindow are the two explicit target-cardinality
+	// spellings of a child create. They are the escape hatches the
+	// `--project`-only compatibility warning names: --all-windows preserves
+	// today's whole-Project fan-out verbatim, and --primary-window opts into the
+	// exact-one `spec.primaryWindowRef` selection a future release will make the
+	// default. Neither is a filter, so both are mutually exclusive with every
+	// selector that names a Window and with each other.
+	allWindows    bool
+	primaryWindow bool
+	output        string
+	payload       []string
 	// interactiveOnly is the public opt-out from Codex native turn control. It
 	// is the only spelling that produces a plain-CLI Codex Agent with no native
 	// thread binding, which is what keeps "no native authority" a thing the
@@ -152,12 +161,12 @@ func uidRef(kind coremetadata.Kind, uid string) selector.Ref {
 //     never probes a server the invocation did not inherit.
 //
 // The Window and the anchor Pane follow the *whole* scope, not the Project flag:
-// they are derived only when no --window, --pane, or --selector was given at
-// all. That is the same "an omitted selector is the whole selector" rule the
-// read and rename verbs use, and it is what keeps a bare `create pane
-// --placement right` -- the generated keybinding body -- a split of the Window
-// the operator is looking at instead of a fan-out across every Window of the
-// Project. One explicit scope occurrence turns the whole scope explicit, so an
+// they are derived only when no --window, --pane, --selector, --all-windows, or
+// --primary-window was given at all. That is the same "an omitted selector is
+// the whole selector" rule the read and rename verbs use, and it is what keeps
+// a bare `create pane --placement right` -- the generated keybinding body -- a
+// split of the Window the operator is looking at instead of a fan-out across
+// every Window of the Project. One explicit scope occurrence turns the whole scope explicit, so an
 // operator who names a Window never gets a silent anchor from somewhere else.
 func (c *createCommand) resolveCreateScope(spelling string, flags resourceCreateFlags, shape resourceCreateShape) (createScope, error) {
 	if len(flags.projects) == 1 {
@@ -188,7 +197,7 @@ func (c *createCommand) resolveCreateScope(spelling string, flags resourceCreate
 		return createScope{}, requireExplicitProject(spelling, detail)
 	}
 	scope := createScope{project: uidRef(coremetadata.KindProject, projectUID)}
-	if !shape.split || flags.explicitWindowScope() {
+	if !shape.split || flags.windowScopeSpelled() {
 		return scope, nil
 	}
 	windowUID, detail := observer.uidFor(coremetadata.KindWindow, registry)
@@ -373,6 +382,10 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		fs.Var(&out.panes, "pane", "repeatable anchor Pane selector: <name> or uid:<uid>")
 		fs.Var(&out.selectors, "selector", "repeatable Window label filter: key=value (AND)")
 		fs.BoolVar(&out.createWindow, "create-window", false, "create the exact-name --window Windows that do not exist yet")
+		fs.BoolVar(&out.allWindows, "all-windows", false,
+			"target every Window of the Project scope; the explicit spelling of today's --project-only fan-out")
+		fs.BoolVar(&out.primaryWindow, "primary-window", false,
+			"target exactly the Project scope's spec.primaryWindowRef Window")
 		fs.StringVar(&out.placement, "placement", defaultPlacement, "split placement: "+strings.Join(placementDirections, "|"))
 	}
 	fs.StringVar(&out.name, "name", "", "explicit Projmux metadata.name for the created resource")
@@ -402,6 +415,9 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 		return resourceCreateFlags{}, usageError(fmt.Sprintf("%s --placement must be one of: %s",
 			spelling, strings.Join(placementDirections, ", ")))
 	}
+	if err := out.refuseConflictingWindowScope(spelling); err != nil {
+		return resourceCreateFlags{}, err
+	}
 	if out.createWindow {
 		if len(out.selectors) > 0 {
 			return resourceCreateFlags{}, usageError(spelling +
@@ -420,6 +436,58 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 // uid names nothing, so there is no name to allocate.
 func isExactNameRef(raw string) bool {
 	return strings.TrimSpace(raw) != "" && !strings.HasPrefix(raw, selector.UIDPrefix)
+}
+
+// windowScopeFlagConflict is one flag an explicit cardinality flag cannot be
+// combined with, plus the predicate that reads it off the parsed argv.
+type windowScopeFlagConflict struct {
+	flag    string
+	spelled func(resourceCreateFlags) bool
+}
+
+// windowScopeFlagConflicts is the closed conflict table of --all-windows and
+// --primary-window.
+//
+// Both name a target set outright rather than filtering one, so pairing either
+// with a selector, with a Window ensure, or with the other one asks for two
+// different target sets in one invocation. There is no precedence rule that
+// would make one of them the answer, so the pair is refused as operator input.
+var windowScopeFlagConflicts = []windowScopeFlagConflict{
+	{flag: "--window", spelled: func(f resourceCreateFlags) bool { return len(f.windows) > 0 }},
+	{flag: "--pane", spelled: func(f resourceCreateFlags) bool { return len(f.panes) > 0 }},
+	{flag: "--selector", spelled: func(f resourceCreateFlags) bool { return len(f.selectors) > 0 }},
+	{flag: "--create-window", spelled: func(f resourceCreateFlags) bool { return f.createWindow }},
+}
+
+// refuseConflictingWindowScope is the argv-only cardinality conflict check.
+//
+// It runs inside the parser, so it lands before the projection, the label
+// parse, the scope derivation, and the transaction: a conflicting pair exits 2
+// with zero Registry writes, zero tmux objects, and zero provider calls.
+func (f resourceCreateFlags) refuseConflictingWindowScope(spelling string) error {
+	if f.allWindows && f.primaryWindow {
+		return usageError(spelling +
+			" --all-windows and --primary-window select different target sets; pass exactly one")
+	}
+	for _, exclusive := range []struct {
+		flag    string
+		spelled bool
+	}{
+		{flag: "--all-windows", spelled: f.allWindows},
+		{flag: "--primary-window", spelled: f.primaryWindow},
+	} {
+		if !exclusive.spelled {
+			continue
+		}
+		for _, conflict := range windowScopeFlagConflicts {
+			if conflict.spelled(f) {
+				return usageError(fmt.Sprintf(
+					"%s %s already fixes the target Window set and cannot be combined with %s",
+					spelling, exclusive.flag, conflict.flag))
+			}
+		}
+	}
+	return nil
 }
 
 // labelMap parses the repeatable `--label key=value` creation option.
@@ -451,6 +519,35 @@ func payloadCommand(payload []string) string {
 // addressed on purpose.
 func (f resourceCreateFlags) explicitWindowScope() bool {
 	return len(f.windows) > 0 || len(f.panes) > 0 || len(f.selectors) > 0
+}
+
+// windowScopeSpelled reports whether the argv named the target Window
+// cardinality at all, by selector or by one of the two explicit cardinality
+// flags.
+//
+// It is deliberately wider than explicitWindowScope. The two predicates answer
+// different questions: explicitWindowScope asks "did argv name a resource whose
+// stored ownerRef can supply the Project", which only a --window/--pane/
+// --selector occurrence can; windowScopeSpelled asks "did argv already decide
+// how many Windows this create targets", which --all-windows and
+// --primary-window also do. The second is what suppresses the natural-omitted
+// active Window and active Pane derivation, so `create pane --primary-window`
+// inside a managed Pane targets the Project's primary Window rather than
+// blending it with the Window the operator happens to be looking at.
+func (f resourceCreateFlags) windowScopeSpelled() bool {
+	return f.explicitWindowScope() || f.allWindows || f.primaryWindow
+}
+
+// deprecatedProjectFanOut reports whether argv used the compatibility spelling
+// whose whole-Project fan-out a future release will narrow.
+//
+// It is a question about the spelling, not about the resolved Window count. A
+// Project that owns exactly one Window today resolves the same target set under
+// all three spellings, but the script that typed it will still change meaning
+// the day a second Window appears, so the warning is owed to the argv rather
+// than to the incidental cardinality.
+func (f resourceCreateFlags) deprecatedProjectFanOut() bool {
+	return len(f.projects) > 0 && !f.windowScopeSpelled() && !f.createWindow
 }
 
 // explicitTargetAuthority reports whether argv selected any resource scope or
@@ -559,8 +656,10 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 		return err
 	}
 	c.selectRuntimeAuthority(flags.explicitTargetAuthority())
+	warning := compatibilityWarningFor(flags, stderr)
 
 	var results []createResult
+	var selectedWindowUIDs []string
 	if err := c.transact(func(ctx context.Context, working *coremetadata.Registry, mutator coremetadata.Mutator, operationID string, ledger *runtimeLedger) error {
 		project, err := c.resolveProject(*working, scope)
 		if err != nil {
@@ -578,6 +677,7 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 		if err != nil {
 			return err
 		}
+		selectedWindowUIDs = plan.selectedWindowUIDs()
 		if len(plan.targets) == 0 {
 			return usageError(fmt.Sprintf("%s resolved no target Window; %s matched at least one Window is required",
 				spelling, selector.DescribeSelector(plan.query)))
@@ -665,7 +765,8 @@ func (c *createCommand) runResourcePane(args []string, stdout, stderr io.Writer)
 	}, c.projectOwnershipGuard(scope)); err != nil {
 		return err
 	}
-	return c.writeResults(stdout, spelling, mode, coremetadata.KindPane, results)
+	return c.writeResultsWithReceipt(stdout, spelling, mode, coremetadata.KindPane, results,
+		createPlannedReceipt(coremetadata.KindPane, results, selectedWindowUIDs, warning))
 }
 
 // paneWork is one allocated Pane waiting for its runtime split.
@@ -689,6 +790,61 @@ type panePlan struct {
 	query              selector.Query
 	targets            []paneTarget
 	missingWindowNames []string
+}
+
+// selectedWindowUIDs is the planner's target decision, in planner order.
+//
+// It is the authority the operation receipt quotes. Deriving the selected set
+// from the created results instead would agree only on the happy path and only
+// for the routes that create one resource per target Window, and it would make
+// the same argv report a different selection per provider the moment a provider
+// refuses. Quoting the planner keeps `create pane`, `create agent`, and the
+// three provider shortcuts reporting one identical set for one identical argv.
+func (p panePlan) selectedWindowUIDs() []string {
+	uids := make([]string, 0, len(p.targets))
+	for _, target := range p.targets {
+		uids = append(uids, target.windowUID)
+	}
+	return uids
+}
+
+// projectFanOutDeprecationWarning is the exact compatibility sentence a
+// `--project`-only child create prints.
+//
+// It names both the future default and the two escape hatches, because a
+// deprecation an operator cannot act on is noise. Nothing about today's
+// behavior changes: the invocation still fans out across every Window of the
+// Project, and the only difference is this sentence.
+const projectFanOutDeprecationWarning = "a child create scoped with --project and no Window selector still targets every Window of the Project; " +
+	"a future release will narrow it to the Project's spec.primaryWindowRef Window only. " +
+	"Spell it `--all-windows` to keep today's whole-Project fan-out, or `--primary-window` to take the future behavior now."
+
+// compatibilityWarningFor emits the child-create compatibility notice once and
+// returns the sentence the receipt must carry.
+//
+// It is called after scope resolution and before the transaction opens, which
+// is where the deprecated `delete project` alias emits its own notice: the
+// warning is about what the operator typed, so it is owed whether or not the
+// operation that follows succeeds.
+func compatibilityWarningFor(flags resourceCreateFlags, stderr io.Writer) string {
+	if !flags.deprecatedProjectFanOut() {
+		return ""
+	}
+	warnDeprecatedProjectFanOut(stderr)
+	return projectFanOutDeprecationWarning
+}
+
+// warnDeprecatedProjectFanOut writes the compatibility notice to stderr.
+//
+// stderr rather than stdout on purpose: the stdout bytes of the compatibility
+// spelling have to stay byte-identical to what they were, or a script that
+// parses the result would be broken by the very warning that exists to keep it
+// working.
+func warnDeprecatedProjectFanOut(stderr io.Writer) {
+	if stderr == nil {
+		return
+	}
+	fmt.Fprintln(stderr, "projmux: "+projectFanOutDeprecationWarning)
 }
 
 // resolveSplitTargets is the shared preflight of the two routes that split an
@@ -756,6 +912,13 @@ func (c *createCommand) planPaneTargets(
 	spelling string,
 ) (panePlan, error) {
 	query := scope.projectQuery()
+	if flags.primaryWindow {
+		ref, err := primaryWindowRef(registry, project, spelling)
+		if err != nil {
+			return panePlan{}, err
+		}
+		query.Windows = append(query.Windows, ref)
+	}
 	for _, raw := range flags.windows {
 		ref, err := selector.ParseRef(coremetadata.KindWindow, raw)
 		if err != nil {
@@ -801,6 +964,33 @@ func (c *createCommand) planPaneTargets(
 		plan.targets = append(plan.targets, paneTarget{windowUID: match.UID, anchorUID: anchorUID, storedAnchor: storedAnchor})
 	}
 	return plan, nil
+}
+
+// primaryWindowRef resolves `--primary-window` onto the exact-one Window the
+// Project's spec.primaryWindowRef names.
+//
+// The ref is validated here rather than left to the selector so the refusal
+// names the actual defect. A Project with no Windows carries an empty ref, and
+// a ref that survived into a registry whose Window is gone or reparented is a
+// dangling or cross-root pointer; either way the operator is told to name the
+// Window instead of being handed a bare no-match. The check is read-only and
+// happens inside the preflight, so it costs zero Registry writes, zero tmux
+// objects, and zero provider calls.
+func primaryWindowRef(registry coremetadata.Registry, project coremetadata.Project, spelling string) (selector.Ref, error) {
+	primary := strings.TrimSpace(project.Spec.PrimaryWindowRef)
+	if primary == "" {
+		return selector.Ref{}, usageError(fmt.Sprintf(
+			"%s --primary-window: project/%s has no spec.primaryWindowRef; create a Window first or name one with --window <ref>",
+			spelling, project.Metadata.Name))
+	}
+	window, ok := registry.Window(primary)
+	if !ok || window.Metadata.OwnerRef == nil || window.Metadata.OwnerRef.Kind != coremetadata.KindProject ||
+		window.Metadata.OwnerUID() != project.Metadata.UID {
+		return selector.Ref{}, usageError(fmt.Sprintf(
+			"%s --primary-window: project/%s spec.primaryWindowRef %q is dangling or owned by another Project; name the target with --window <ref>",
+			spelling, project.Metadata.Name, primary))
+	}
+	return uidRef(coremetadata.KindWindow, primary), nil
 }
 
 // unresolvedWindowNames returns the exact-name --window occurrences that match
@@ -1552,13 +1742,38 @@ var createReceiptOperations = map[coremetadata.Kind]cli.Operation{
 	coremetadata.KindAgent:   cli.OperationCreateAgent,
 }
 
-// createResultsReceipt is the default receipt of a child create.
+// createResultsReceipt is the default receipt of a create whose route has no
+// separate target planner to quote.
+//
+// `create window` and the split-UI intents each produce exactly one resource in
+// exactly one Window, so the created row *is* the selection. Every route that
+// fans out goes through createPlannedReceipt instead.
+func createResultsReceipt(kind coremetadata.Kind, results []createResult) cli.OperationReceipt {
+	selected := make([]string, 0, len(results))
+	for _, result := range results {
+		selected = append(selected, result.windowUID)
+	}
+	return createPlannedReceipt(kind, results, selected, "")
+}
+
+// createPlannedReceipt is the receipt of a child create, with the selected
+// Window set supplied by the target planner rather than derived from the
+// results.
 //
 // A child create is unconditional on every axis: it mints an identity, it
 // allocates that identity's address, it establishes the owner edge, and it
 // materializes the runtime for the Windows the target planner selected. The
 // conditional route is `create project`, which builds its own receipt.
-func createResultsReceipt(kind coremetadata.Kind, results []createResult) cli.OperationReceipt {
+//
+// selectedWindowUIDs is the planner's decision and warning is the compatibility
+// sentence the argv spelling earned; both are recorded through the receipt's
+// own deduplicating accumulators, so an empty warning records nothing.
+func createPlannedReceipt(
+	kind coremetadata.Kind,
+	results []createResult,
+	selectedWindowUIDs []string,
+	warning string,
+) cli.OperationReceipt {
 	target := cli.ReceiptTarget{Kind: string(kind)}
 	if len(results) > 0 {
 		target.UID, target.Name = results[0].uid, results[0].name
@@ -1577,7 +1792,8 @@ func createResultsReceipt(kind coremetadata.Kind, results []createResult) cli.Op
 	})
 	for _, result := range results {
 		receipt.Add(string(result.kind), result.uid, result.name, result.receiptAction())
-		receipt.SelectWindows(result.windowUID)
 	}
+	receipt.SelectWindows(selectedWindowUIDs...)
+	receipt.Warn(warning)
 	return receipt
 }

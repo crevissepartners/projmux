@@ -248,16 +248,51 @@ flag alone:
 projmux create codex                       # active Project, active Window, split from the active Pane
 projmux create codex -p alpha -w hi --create-window  # exact Project, new Window "hi"
 projmux create codex -p beta -w main        # everything explicit
-projmux create pane -p alpha                # every Window of alpha; a deliberate fan-out
+projmux create pane -p alpha --all-windows  # every Window of alpha; a deliberate fan-out
+projmux create pane -p alpha --primary-window  # exactly alpha's spec.primaryWindowRef Window
 ```
 
-One explicit scope occurrence (`--project`, `--window`, `--pane`, or
-`--selector`) makes the whole scope explicit, so naming a Window never picks up
-an anchor from somewhere you did not address. With a scope but no `--pane`, the
+One explicit scope occurrence (`--project`, `--window`, `--pane`, `--selector`,
+`--all-windows`, or `--primary-window`) makes the whole scope explicit, so
+naming a Window never picks up an anchor from somewhere you did not address.
+With a scope but no `--pane`, the
 split anchor is the target Window's role-agnostic `spec.anchorPaneRef`. A
 shell-required offline operation may plan a lazy direct
 `spec.defaultShellPaneRef` without replacing an Agent anchor. A missing or stale
 anchor is exit `2` rather than a silent alternate-Pane repair.
+
+#### Target cardinality
+
+`create pane|agent|<provider>` targets a *set* of Windows, and the argv says
+which set:
+
+| spelling | target set |
+| --- | --- |
+| whole scope omitted, inside a managed Pane | the active Window, anchored on the active Pane |
+| `--project P` alone | **every Window of P**, plus a compatibility warning on stderr |
+| `--project P --all-windows` | every Window of P; the explicit spelling of the row above |
+| `--project P --primary-window` | exactly `P`'s `spec.primaryWindowRef` Window |
+| `--project P --window W...` | the named Windows, deduplicated in argv order |
+| `--project P --selector k=v...` | the Windows whose labels match; zero matches refuses |
+| `--project P --pane X...` | the owning Window of each named Pane |
+| `--create-window --window <name>` | the ensured Window |
+
+`--project P` with no Window selector still means "every Window of P" and is
+unchanged, but it now prints a one-line notice on stderr (never stdout, so
+existing scripts keep their exact bytes) saying that a future release will
+narrow it to the Project's primary Window. Respell it `--all-windows` to keep
+today's fan-out or `--primary-window` to take the future behavior now; the
+notice also appears in `-o receipt` as a `compatibilityWarnings` entry.
+
+`--all-windows` and `--primary-window` each fix the target set outright, so
+neither can be combined with `--window`, `--pane`, `--selector`,
+`--create-window`, or with the other one. Every such pair is exit `2` before any
+Registry write, tmux object, or provider launch. An empty `--all-windows` set
+and a dangling or cross-Project `spec.primaryWindowRef` refuse the same way.
+
+The `-o receipt` projection reports the target planner's decision in
+`selectedWindowUIDs`, so `create pane`, `create agent`, and the three provider
+shortcuts report the identical selected set for identical argv.
 
 An exact existing Window or Pane can reveal its owner Project through Registry
 `ownerRef`. A Window named with `--create-window` does not exist yet and cannot;

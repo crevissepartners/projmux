@@ -2249,6 +2249,8 @@ func TestCreateHelpAdvertisesOnlyImplementedProjections(t *testing.T) {
 				fs.Var(&out.panes, "pane", "")
 				fs.Var(&out.selectors, "selector", "")
 				fs.Bool("create-window", false, "")
+				fs.Bool("all-windows", false, "")
+				fs.Bool("primary-window", false, "")
 				fs.String("placement", "", "")
 			}
 			fs.String("name", "", "")

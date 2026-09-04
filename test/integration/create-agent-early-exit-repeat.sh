@@ -317,7 +317,7 @@ for iteration in $(seq 1 "$repeats"); do
   case_phase="claim-to-commit"
   set +e
   agent_uid="$(pmx_inside "$server_pid" "$anchor_pane" create agent \
-    --provider codex --project "uid:$project_uid" -o uid \
+    --provider codex --project "uid:$project_uid" --all-windows -o uid \
     2>"$case_root/create.err")"
   create_status=$?
   set -e

@@ -907,7 +907,7 @@ func TestCodexFanOutKeepsCurrentPlainCLILaneWithoutNativeCreate(t *testing.T) {
 	create.codexNative = native
 	create.resumes = &fakeNativeResumeLauncher{fakeResumeLauncher: newFakeResumeLauncher(), fakeNativePaneLauncher: &fakeNativePaneLauncher{}}
 
-	stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--interactive-only", "-o", "pane-id")
+	stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--all-windows", "--interactive-only", "-o", "pane-id")
 	if err != nil || stderr != "" || len(strings.Fields(stdout)) != 2 {
 		t.Fatalf("fan-out stdout=%q stderr=%q err=%v", stdout, stderr, err)
 	}
