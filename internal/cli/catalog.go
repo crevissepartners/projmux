@@ -11,6 +11,401 @@ import (
 // compatibility contract keeps orphan routes at zero for every later Phase.
 type Disposition string
 
+// The seven effect enums separate the independent resource-graph consequences
+// of one executable route. They deliberately describe allowed outcomes rather
+// than promises that every invocation mutates: preflight refusal is always a
+// zero-effect outcome, and conditional routes such as create project may
+// create or reuse the same schema-v3 graph.
+type IdentityEffect string
+type AddressEffect string
+type TopologyEffect string
+type DesiredStateEffect string
+type RuntimeEffect string
+type FocusEffect string
+type CardinalityEffect string
+
+const (
+	IdentityUnchanged IdentityEffect = "unchanged"
+	IdentityCreated   IdentityEffect = "created"
+	IdentityReused    IdentityEffect = "reused"
+	IdentityRemoved   IdentityEffect = "removed"
+	IdentityReplaced  IdentityEffect = "replaced"
+)
+
+const (
+	AddressUnchanged AddressEffect = "unchanged"
+	AddressAllocated AddressEffect = "allocated"
+	AddressRenamed   AddressEffect = "renamed"
+	AddressReleased  AddressEffect = "released"
+)
+
+const (
+	TopologyUnchanged   TopologyEffect = "unchanged"
+	TopologyEstablished TopologyEffect = "established"
+	TopologyReparented  TopologyEffect = "reparented"
+	TopologyRemoved     TopologyEffect = "removed"
+	TopologyReplaced    TopologyEffect = "replaced"
+)
+
+const (
+	DesiredStateUnchanged DesiredStateEffect = "unchanged"
+	DesiredStateCreated   DesiredStateEffect = "created"
+	DesiredStateReused    DesiredStateEffect = "reused"
+	DesiredStateRemoved   DesiredStateEffect = "removed"
+	DesiredStateReplaced  DesiredStateEffect = "replaced"
+)
+
+const (
+	RuntimeUnchanged    RuntimeEffect = "unchanged"
+	RuntimeMaterialized RuntimeEffect = "materialized"
+	RuntimeAlreadyLive  RuntimeEffect = "already-live"
+	RuntimeReparented   RuntimeEffect = "reparented"
+	RuntimeStopped      RuntimeEffect = "stopped"
+	RuntimePreserved    RuntimeEffect = "preserved"
+)
+
+const (
+	FocusUnchanged          FocusEffect = "unchanged"
+	FocusMovedCurrentClient FocusEffect = "moved-current-client"
+	FocusAttachedCaller     FocusEffect = "attached-caller"
+)
+
+const (
+	CardinalityUnchanged  CardinalityEffect = "unchanged"
+	CardinalityExactOne   CardinalityEffect = "exact-one"
+	CardinalityOneOrMore  CardinalityEffect = "one-or-more"
+	CardinalityZeroOrMore CardinalityEffect = "zero-or-more"
+)
+
+var (
+	identityEffects = []IdentityEffect{IdentityUnchanged, IdentityCreated, IdentityReused, IdentityRemoved, IdentityReplaced}
+	addressEffects  = []AddressEffect{AddressUnchanged, AddressAllocated, AddressRenamed, AddressReleased}
+	topologyEffects = []TopologyEffect{TopologyUnchanged, TopologyEstablished, TopologyReparented, TopologyRemoved, TopologyReplaced}
+	desiredEffects  = []DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated, DesiredStateReused, DesiredStateRemoved, DesiredStateReplaced}
+	runtimeEffects  = []RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized, RuntimeAlreadyLive, RuntimeReparented, RuntimeStopped, RuntimePreserved}
+	focusEffects    = []FocusEffect{FocusUnchanged, FocusMovedCurrentClient, FocusAttachedCaller}
+	cardinalities   = []CardinalityEffect{CardinalityUnchanged, CardinalityExactOne, CardinalityOneOrMore, CardinalityZeroOrMore}
+)
+
+// DomainEffectKind is the closed extension discriminant for effects outside
+// the Projmux resource graph. Phase 0 introduces only the downstream delivery
+// seam; it does not add a send route, reducer, receipt, or provider adapter.
+type DomainEffectKind string
+
+const DomainEffectAgentDelivery DomainEffectKind = "agent-delivery"
+
+var domainEffectKinds = []DomainEffectKind{DomainEffectAgentDelivery}
+
+// DomainEffect declares one optional non-resource effect. Nil is the explicit
+// null form used by current routes whose contract is fully described by the
+// resource tuple in this Phase.
+type DomainEffect struct {
+	Kind DomainEffectKind
+}
+
+// AllowedEffects is the one seven-axis effect record carried by a Route. Each
+// field is a non-empty closed set because one route can have conditional
+// success outcomes (for example create versus reuse) without becoming two
+// command rows.
+type AllowedEffects struct {
+	Identity     []IdentityEffect
+	Address      []AddressEffect
+	Topology     []TopologyEffect
+	DesiredState []DesiredStateEffect
+	Runtime      []RuntimeEffect
+	Focus        []FocusEffect
+	Cardinality  []CardinalityEffect
+	DomainEffect *DomainEffect
+}
+
+func allowedEffects(
+	identity []IdentityEffect,
+	address []AddressEffect,
+	topology []TopologyEffect,
+	desired []DesiredStateEffect,
+	runtime []RuntimeEffect,
+	focus []FocusEffect,
+	cardinality []CardinalityEffect,
+) *AllowedEffects {
+	return &AllowedEffects{
+		Identity: identity, Address: address, Topology: topology,
+		DesiredState: desired, Runtime: runtime, Focus: focus,
+		Cardinality: cardinality,
+	}
+}
+
+func unchangedEffects(cardinality CardinalityEffect) *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateUnchanged},
+		[]RuntimeEffect{RuntimeUnchanged},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{cardinality},
+	)
+}
+
+func createProjectEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityCreated, IdentityReused},
+		[]AddressEffect{AddressAllocated, AddressUnchanged},
+		[]TopologyEffect{TopologyEstablished, TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateCreated, DesiredStateReused},
+		[]RuntimeEffect{RuntimeUnchanged},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityExactOne},
+	)
+}
+
+func createResourceEffects(cardinality CardinalityEffect) *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityCreated},
+		[]AddressEffect{AddressAllocated},
+		[]TopologyEffect{TopologyEstablished},
+		[]DesiredStateEffect{DesiredStateCreated},
+		[]RuntimeEffect{RuntimeMaterialized},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{cardinality},
+	)
+}
+
+func resumeAgentEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityReused, IdentityCreated},
+		[]AddressEffect{AddressUnchanged, AddressAllocated},
+		[]TopologyEffect{TopologyUnchanged, TopologyEstablished},
+		[]DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated},
+		[]RuntimeEffect{RuntimeMaterialized},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityExactOne},
+	)
+}
+
+func renameResourceEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged},
+		[]AddressEffect{AddressRenamed},
+		[]TopologyEffect{TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateUnchanged},
+		[]RuntimeEffect{RuntimeUnchanged},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityExactOne},
+	)
+}
+
+func deleteProjectEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityRemoved},
+		[]AddressEffect{AddressReleased},
+		[]TopologyEffect{TopologyRemoved},
+		[]DesiredStateEffect{DesiredStateRemoved},
+		[]RuntimeEffect{RuntimePreserved},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityOneOrMore},
+	)
+}
+
+func deleteChildEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityRemoved},
+		[]AddressEffect{AddressReleased},
+		[]TopologyEffect{TopologyRemoved},
+		[]DesiredStateEffect{DesiredStateRemoved},
+		[]RuntimeEffect{RuntimeUnchanged, RuntimeStopped},
+		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient},
+		[]CardinalityEffect{CardinalityOneOrMore},
+	)
+}
+
+func attachProjectEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateUnchanged},
+		[]RuntimeEffect{RuntimeMaterialized, RuntimeAlreadyLive},
+		[]FocusEffect{FocusAttachedCaller},
+		[]CardinalityEffect{CardinalityExactOne},
+	)
+}
+
+func focusResourceEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateUnchanged},
+		[]RuntimeEffect{RuntimeUnchanged},
+		[]FocusEffect{FocusMovedCurrentClient},
+		[]CardinalityEffect{CardinalityExactOne},
+	)
+}
+
+func switchProjectEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged, IdentityCreated, IdentityReused, IdentityReplaced},
+		[]AddressEffect{AddressUnchanged, AddressAllocated, AddressReleased},
+		[]TopologyEffect{TopologyUnchanged, TopologyEstablished, TopologyReplaced},
+		[]DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated, DesiredStateReused, DesiredStateReplaced},
+		[]RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized, RuntimeAlreadyLive, RuntimeStopped},
+		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient, FocusAttachedCaller},
+		[]CardinalityEffect{CardinalityUnchanged, CardinalityExactOne},
+	)
+}
+
+func rebindProjectEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateReplaced},
+		[]RuntimeEffect{RuntimeUnchanged},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityExactOne},
+	)
+}
+
+func pruneProjectEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityRemoved},
+		[]AddressEffect{AddressReleased},
+		[]TopologyEffect{TopologyRemoved},
+		[]DesiredStateEffect{DesiredStateRemoved},
+		[]RuntimeEffect{RuntimeUnchanged},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityZeroOrMore},
+	)
+}
+
+func restoreSnapshotEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged, IdentityCreated, IdentityReused, IdentityRemoved, IdentityReplaced},
+		[]AddressEffect{AddressUnchanged, AddressAllocated, AddressReleased},
+		[]TopologyEffect{TopologyUnchanged, TopologyEstablished, TopologyRemoved, TopologyReplaced},
+		[]DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated, DesiredStateRemoved, DesiredStateReplaced},
+		[]RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized},
+		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient, FocusAttachedCaller},
+		[]CardinalityEffect{CardinalityUnchanged, CardinalityOneOrMore},
+	)
+}
+
+func shellEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged, IdentityCreated, IdentityReused},
+		[]AddressEffect{AddressUnchanged, AddressAllocated},
+		[]TopologyEffect{TopologyUnchanged, TopologyEstablished},
+		[]DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated, DesiredStateReused},
+		[]RuntimeEffect{RuntimeMaterialized, RuntimeAlreadyLive},
+		[]FocusEffect{FocusAttachedCaller},
+		[]CardinalityEffect{CardinalityExactOne, CardinalityOneOrMore},
+	)
+}
+
+func reconcileResourcesEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged, IdentityCreated},
+		[]AddressEffect{AddressUnchanged, AddressAllocated},
+		[]TopologyEffect{TopologyUnchanged, TopologyEstablished, TopologyReparented},
+		[]DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated, DesiredStateReplaced},
+		[]RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityExactOne, CardinalityZeroOrMore},
+	)
+}
+
+func reconcileRegistryEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged, IdentityCreated, IdentityRemoved, IdentityReplaced},
+		[]AddressEffect{AddressUnchanged, AddressAllocated, AddressRenamed, AddressReleased},
+		[]TopologyEffect{TopologyUnchanged, TopologyEstablished, TopologyReparented, TopologyRemoved, TopologyReplaced},
+		[]DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated, DesiredStateRemoved, DesiredStateReplaced},
+		[]RuntimeEffect{RuntimeUnchanged},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityZeroOrMore},
+	)
+}
+
+func focusIngressEffects() *AllowedEffects {
+	return runtimeEffectsOnly(
+		[]RuntimeEffect{RuntimeUnchanged},
+		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient},
+		CardinalityExactOne,
+	)
+}
+
+func openRuntimeTargetEffects() *AllowedEffects {
+	return runtimeEffectsOnly(
+		[]RuntimeEffect{RuntimeAlreadyLive},
+		[]FocusEffect{FocusMovedCurrentClient, FocusAttachedCaller},
+		CardinalityExactOne,
+	)
+}
+
+func runtimeSessionsEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateUnchanged},
+		[]RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized, RuntimeAlreadyLive, RuntimeStopped},
+		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient, FocusAttachedCaller},
+		[]CardinalityEffect{CardinalityUnchanged, CardinalityExactOne},
+	)
+}
+
+func agentPaneLaunchEffects(allowResume bool) *AllowedEffects {
+	identity := []IdentityEffect{IdentityUnchanged, IdentityCreated}
+	if allowResume {
+		identity = append(identity, IdentityReused)
+	}
+	return allowedEffects(
+		identity,
+		[]AddressEffect{AddressUnchanged, AddressAllocated},
+		[]TopologyEffect{TopologyUnchanged, TopologyEstablished},
+		[]DesiredStateEffect{DesiredStateUnchanged, DesiredStateCreated},
+		[]RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized},
+		[]FocusEffect{FocusUnchanged},
+		[]CardinalityEffect{CardinalityUnchanged, CardinalityExactOne},
+	)
+}
+
+func runtimeDiagnosticsEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateUnchanged},
+		[]RuntimeEffect{RuntimeUnchanged, RuntimeMaterialized, RuntimeAlreadyLive},
+		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient, FocusAttachedCaller},
+		[]CardinalityEffect{CardinalityUnchanged, CardinalityExactOne},
+	)
+}
+
+func statusbarClickEffects() *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateUnchanged},
+		[]RuntimeEffect{RuntimeUnchanged},
+		[]FocusEffect{FocusUnchanged, FocusMovedCurrentClient},
+		[]CardinalityEffect{CardinalityUnchanged, CardinalityExactOne},
+	)
+}
+
+func runtimeEffectsOnly(runtime []RuntimeEffect, focus []FocusEffect, cardinality CardinalityEffect) *AllowedEffects {
+	return allowedEffects(
+		[]IdentityEffect{IdentityUnchanged},
+		[]AddressEffect{AddressUnchanged},
+		[]TopologyEffect{TopologyUnchanged},
+		[]DesiredStateEffect{DesiredStateUnchanged},
+		runtime,
+		focus,
+		[]CardinalityEffect{cardinality},
+	)
+}
+
 // InvocationAuthority is the selectorless authority contract of one executable
 // command node. It is carried by the unified Route graph beside the parser,
 // help, canonical, and output projections; it is not a second command
@@ -106,6 +501,10 @@ func Dispositions() []Disposition {
 // sub-route tree used by the shared help renderer and carry no disposition of
 // their own (the parent's disposition covers the whole node).
 type Route struct {
+	// Effects is the route's single seven-axis allowed-effect record. It is a
+	// pointer so omission cannot be confused with an all-unchanged declaration;
+	// Routes fails closed on nil, unknown, empty, or duplicate values.
+	Effects *AllowedEffects
 	// Name is the exact current argv token for this node. It is the canonical
 	// spelling: everything a route prints about itself is built from it, and an
 	// alias never replaces it anywhere.
@@ -286,6 +685,7 @@ var routes = []Route{
 		// `resume` is the one route with logic of its own: it resolves exactly
 		// one existing Agent, applies the phase gate, and rebinds it to a new
 		// managed Pane launched with the provider's resume argv.
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "agent",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 13,
@@ -309,8 +709,8 @@ var routes = []Route{
 		},
 		Canonical: []string{"agent status", "agent topic", "agent resume", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent app-server upgrade plan", "agent app-server upgrade apply", "agent app-server upgrade resume", "agent app-server upgrade abort", "agent app-server handover plan", "agent app-server handover apply", "agent app-server handover resume", "agent app-server handover abort"},
 		Children: []Route{
-			{Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
-			{Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
 			{
 				// This route resolves exactly one existing Agent, refuses a
 				// Running one, and rebinds an Offline or Failed one to a new
@@ -318,6 +718,7 @@ var routes = []Route{
 				// records. The help and canonical graph views now state
 				// the same sentence, because the route does what the contract
 				// asked for.
+				Effects:          resumeAgentEffects(),
 				Name:             "resume",
 				Invocation:       InvocationExplicit,
 				Summary:          "Rebind an Offline or Failed Agent detached on its Window's exact shell or Agent anchor",
@@ -326,28 +727,31 @@ var routes = []Route{
 				Canonical:        []string{"agent resume"},
 			},
 			{
+				Effects:    unchangedEffects(CardinalityExactOne),
 				Name:       "turn",
 				Invocation: InvocationExplicit,
 				Summary:    "Send, steer, or interrupt one exact native Codex turn",
 				Usage:      []string{"projmux agent turn start|steer <agent-ref> -- <text>", "projmux agent turn interrupt <agent-ref>"},
 				Canonical:  []string{"agent turn start", "agent turn steer", "agent turn interrupt"},
 				Children: []Route{
-					{Name: "start", Invocation: InvocationExplicit, Summary: "Send a new turn to one exact idle Codex thread", Usage: []string{"projmux agent turn start <agent-ref> -- <text>"}, Canonical: []string{"agent turn start"}},
-					{Name: "steer", Invocation: InvocationExplicit, Summary: "Steer one exact current Codex turn", Usage: []string{"projmux agent turn steer <agent-ref> -- <text>"}, Canonical: []string{"agent turn steer"}},
-					{Name: "interrupt", Invocation: InvocationExplicit, Summary: "Interrupt one exact current Codex turn", Usage: []string{"projmux agent turn interrupt <agent-ref>"}, Canonical: []string{"agent turn interrupt"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "start", Invocation: InvocationExplicit, Summary: "Send a new turn to one exact idle Codex thread", Usage: []string{"projmux agent turn start <agent-ref> -- <text>"}, Canonical: []string{"agent turn start"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "steer", Invocation: InvocationExplicit, Summary: "Steer one exact current Codex turn", Usage: []string{"projmux agent turn steer <agent-ref> -- <text>"}, Canonical: []string{"agent turn steer"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "interrupt", Invocation: InvocationExplicit, Summary: "Interrupt one exact current Codex turn", Usage: []string{"projmux agent turn interrupt <agent-ref>"}, Canonical: []string{"agent turn interrupt"}},
 				},
 			},
 			{
+				Effects:    unchangedEffects(CardinalityUnchanged),
 				Name:       "approval",
 				Invocation: InvocationExplicit,
 				Summary:    "Review one exact pending native Codex approval",
 				Usage:      []string{"projmux agent approval review <agent-ref> [--request <normalized-id>]"},
 				Canonical:  []string{"agent approval review"},
-				Children:   []Route{{Name: "review", Invocation: InvocationExplicit, Summary: "Review one exact pending native Codex approval", Usage: []string{"projmux agent approval review <agent-ref> [--request <normalized-id>]"}, Canonical: []string{"agent approval review"}}},
+				Children:   []Route{{Effects: unchangedEffects(CardinalityUnchanged), Name: "review", Invocation: InvocationExplicit, Summary: "Review one exact pending native Codex approval", Usage: []string{"projmux agent approval review <agent-ref> [--request <normalized-id>]"}, Canonical: []string{"agent approval review"}}},
 			},
-			{Name: "review", Invocation: InvocationNatural, Summary: "Start a native review on an exact-bound Codex Agent", Usage: []string{"projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]"}, Canonical: []string{"agent review"}},
-			{Name: "integrate", Invocation: InvocationExplicit, Summary: "Install or remove provider hook integrations", Usage: []string{"projmux agent integrate <provider> [--dry-run]"}, Canonical: []string{"agent integrate"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "review", Invocation: InvocationNatural, Summary: "Start a native review on an exact-bound Codex Agent", Usage: []string{"projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]"}, Canonical: []string{"agent review"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "integrate", Invocation: InvocationExplicit, Summary: "Install or remove provider hook integrations", Usage: []string{"projmux agent integrate <provider> [--dry-run]"}, Canonical: []string{"agent integrate"}},
 			{
+				Effects:    unchangedEffects(CardinalityUnchanged),
 				Name:       "usage",
 				Invocation: InvocationFanOut,
 				Summary:    "Read provider account usage quota snapshots",
@@ -355,37 +759,41 @@ var routes = []Route{
 				Canonical:  []string{"agent usage"},
 			},
 			{
+				Effects:    unchangedEffects(CardinalityUnchanged),
 				Name:       "app-server",
 				Invocation: InvocationRefusal,
 				Summary:    "Manage explicitly requested private Codex app-server generation operations",
 				Canonical:  []string{"agent app-server upgrade plan", "agent app-server upgrade apply", "agent app-server upgrade resume", "agent app-server upgrade abort", "agent app-server handover plan", "agent app-server handover apply", "agent app-server handover resume", "agent app-server handover abort"},
 				Children: []Route{{
+					Effects:    unchangedEffects(CardinalityUnchanged),
 					Name:       "upgrade",
 					Invocation: InvocationRefusal,
 					Summary:    "Plan, apply, resume, or abort one exact rolling generation operation",
 					Canonical:  []string{"agent app-server upgrade plan", "agent app-server upgrade apply", "agent app-server upgrade resume", "agent app-server upgrade abort"},
 					Children: []Route{
-						{Name: "plan", Invocation: InvocationExplicit, Summary: "Read the mutation-zero plan for one exact private generation upgrade", Usage: []string{"projmux agent app-server upgrade plan --request <absolute-json>"}, Canonical: []string{"agent app-server upgrade plan"}},
-						{Name: "apply", Invocation: InvocationExplicit, Summary: "Apply one exact crash-resumable private generation admission switch", Usage: []string{"projmux agent app-server upgrade apply --request <absolute-json>"}, Canonical: []string{"agent app-server upgrade apply"}},
-						{Name: "resume", Invocation: InvocationExplicit, Summary: "Resume one exact durable rolling generation operation", Usage: []string{"projmux agent app-server upgrade resume --operation <ref>"}, Canonical: []string{"agent app-server upgrade resume"}},
-						{Name: "abort", Invocation: InvocationExplicit, Summary: "Abort one pre-admission operation and clean only its exact candidate", Usage: []string{"projmux agent app-server upgrade abort --operation <ref>"}, Canonical: []string{"agent app-server upgrade abort"}},
+						{Effects: unchangedEffects(CardinalityUnchanged), Name: "plan", Invocation: InvocationExplicit, Summary: "Read the mutation-zero plan for one exact private generation upgrade", Usage: []string{"projmux agent app-server upgrade plan --request <absolute-json>"}, Canonical: []string{"agent app-server upgrade plan"}},
+						{Effects: unchangedEffects(CardinalityUnchanged), Name: "apply", Invocation: InvocationExplicit, Summary: "Apply one exact crash-resumable private generation admission switch", Usage: []string{"projmux agent app-server upgrade apply --request <absolute-json>"}, Canonical: []string{"agent app-server upgrade apply"}},
+						{Effects: unchangedEffects(CardinalityUnchanged), Name: "resume", Invocation: InvocationExplicit, Summary: "Resume one exact durable rolling generation operation", Usage: []string{"projmux agent app-server upgrade resume --operation <ref>"}, Canonical: []string{"agent app-server upgrade resume"}},
+						{Effects: unchangedEffects(CardinalityUnchanged), Name: "abort", Invocation: InvocationExplicit, Summary: "Abort one pre-admission operation and clean only its exact candidate", Usage: []string{"projmux agent app-server upgrade abort --operation <ref>"}, Canonical: []string{"agent app-server upgrade abort"}},
 					},
 				}, {
+					Effects:    unchangedEffects(CardinalityUnchanged),
 					Name:       "handover",
 					Invocation: InvocationRefusal,
 					Summary:    "Plan, apply, resume, or abort one exact generation-wide handover",
 					Canonical:  []string{"agent app-server handover plan", "agent app-server handover apply", "agent app-server handover resume", "agent app-server handover abort"},
 					Children: []Route{
-						{Name: "plan", Invocation: InvocationExplicit, Summary: "Read the exact target-set generation handover plan", Usage: []string{"projmux agent app-server handover plan --request <absolute-json>"}, Canonical: []string{"agent app-server handover plan"}},
-						{Name: "apply", Invocation: InvocationExplicit, Summary: "Apply one crash-resumable generation-wide handover", Usage: []string{"projmux agent app-server handover apply --request <absolute-json>"}, Canonical: []string{"agent app-server handover apply"}},
-						{Name: "resume", Invocation: InvocationExplicit, Summary: "Resume one exact durable generation handover", Usage: []string{"projmux agent app-server handover resume --operation <ref>"}, Canonical: []string{"agent app-server handover resume"}},
-						{Name: "abort", Invocation: InvocationExplicit, Summary: "Abort one exact pre-stop generation handover", Usage: []string{"projmux agent app-server handover abort --operation <ref>"}, Canonical: []string{"agent app-server handover abort"}},
+						{Effects: unchangedEffects(CardinalityUnchanged), Name: "plan", Invocation: InvocationExplicit, Summary: "Read the exact target-set generation handover plan", Usage: []string{"projmux agent app-server handover plan --request <absolute-json>"}, Canonical: []string{"agent app-server handover plan"}},
+						{Effects: unchangedEffects(CardinalityUnchanged), Name: "apply", Invocation: InvocationExplicit, Summary: "Apply one crash-resumable generation-wide handover", Usage: []string{"projmux agent app-server handover apply --request <absolute-json>"}, Canonical: []string{"agent app-server handover apply"}},
+						{Effects: unchangedEffects(CardinalityUnchanged), Name: "resume", Invocation: InvocationExplicit, Summary: "Resume one exact durable generation handover", Usage: []string{"projmux agent app-server handover resume --operation <ref>"}, Canonical: []string{"agent app-server handover resume"}},
+						{Effects: unchangedEffects(CardinalityUnchanged), Name: "abort", Invocation: InvocationExplicit, Summary: "Abort one exact pre-stop generation handover", Usage: []string{"projmux agent app-server handover abort --operation <ref>"}, Canonical: []string{"agent app-server handover abort"}},
 					},
 				}},
 			},
 		},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "attention",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 14,
@@ -394,14 +802,15 @@ var routes = []Route{
 		Usage:          []string{"projmux attention toggle|clear|arm|list|window"},
 		Canonical:      []string{"attention list", "attention toggle", "attention clear", "attention arm", "attention window"},
 		Children: []Route{
-			{Name: "toggle", Invocation: InvocationNatural, Summary: "Toggle attention state for a pane", CanonicalSummary: "Toggle live Pane attention state", CanonicalNodeOrder: 2, Usage: []string{"projmux attention toggle [pane]"}, Canonical: []string{"attention toggle"}},
-			{Name: "clear", Invocation: InvocationNatural, Summary: "Clear attention state for a pane", CanonicalSummary: "Clear live Pane attention state", CanonicalNodeOrder: 3, Usage: []string{"projmux attention clear [pane]"}, Canonical: []string{"attention clear"}},
-			{Name: "arm", Invocation: InvocationNatural, Summary: "Arm focus-only attention consumption", CanonicalNodeOrder: 4, Usage: []string{"projmux attention arm [pane]"}, Canonical: []string{"attention arm"}},
-			{Name: "list", Invocation: InvocationNatural, Summary: "List live pane attention state", CanonicalSummary: "List live Pane attention state", CanonicalNodeOrder: 1, Canonical: []string{"attention list"}},
-			{Name: "window", Invocation: InvocationNatural, Summary: "Render window-scoped attention badges", CanonicalNodeOrder: 5, Canonical: []string{"attention window"}},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "toggle", Invocation: InvocationNatural, Summary: "Toggle attention state for a pane", CanonicalSummary: "Toggle live Pane attention state", CanonicalNodeOrder: 2, Usage: []string{"projmux attention toggle [pane]"}, Canonical: []string{"attention toggle"}},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "clear", Invocation: InvocationNatural, Summary: "Clear attention state for a pane", CanonicalSummary: "Clear live Pane attention state", CanonicalNodeOrder: 3, Usage: []string{"projmux attention clear [pane]"}, Canonical: []string{"attention clear"}},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "arm", Invocation: InvocationNatural, Summary: "Arm focus-only attention consumption", CanonicalNodeOrder: 4, Usage: []string{"projmux attention arm [pane]"}, Canonical: []string{"attention arm"}},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "list", Invocation: InvocationNatural, Summary: "List live pane attention state", CanonicalSummary: "List live Pane attention state", CanonicalNodeOrder: 1, Canonical: []string{"attention list"}},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "window", Invocation: InvocationNatural, Summary: "Render window-scoped attention badges", CanonicalNodeOrder: 5, Canonical: []string{"attention window"}},
 		},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "attach",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 4,
@@ -411,6 +820,7 @@ var routes = []Route{
 		Canonical:      []string{"attach project"},
 		Children: []Route{
 			{
+				Effects:          attachProjectEffects(),
 				Name:             "project",
 				Invocation:       InvocationExplicit,
 				Summary:          "Enter a Project runtime from outside tmux, materializing it when offline",
@@ -447,6 +857,7 @@ var routes = []Route{
 		// the hidden `tmux` / `internal tmux` routes, which are unchanged and
 		// undeprecated. The summaries below name the exact artifact each route
 		// touches so the public surface cannot be read as covering them.
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "config",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 17,
@@ -460,6 +871,7 @@ var routes = []Route{
 		Canonical: []string{"config edit", "config render", "config apply"},
 		Children: []Route{
 			{
+				Effects:    unchangedEffects(CardinalityUnchanged),
 				Name:       "edit",
 				Invocation: InvocationNatural,
 				Summary:    "Edit the AI split-mode configuration",
@@ -467,6 +879,7 @@ var routes = []Route{
 				Canonical:  []string{"config edit"},
 			},
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "render",
 				Invocation:       InvocationExplicit,
 				Summary:          "Print a generated tmux config to stdout; writes nothing",
@@ -478,6 +891,7 @@ var routes = []Route{
 				Canonical: []string{"config render"},
 				Children: []Route{
 					{
+						Effects:    unchangedEffects(CardinalityUnchanged),
 						Name:       "standalone",
 						Invocation: InvocationExplicit,
 						Summary:    "Print the snippet you source from your own tmux.conf",
@@ -485,6 +899,7 @@ var routes = []Route{
 						Canonical:  []string{"config render"},
 					},
 					{
+						Effects:    unchangedEffects(CardinalityUnchanged),
 						Name:       "app",
 						Invocation: InvocationExplicit,
 						Summary:    "Print the config the app-owned projmux tmux server runs from",
@@ -494,6 +909,7 @@ var routes = []Route{
 				},
 			},
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "apply",
 				Invocation:       InvocationFanOut,
 				Summary:          "Write the generated app tmux config and reload the live projmux server",
@@ -516,6 +932,7 @@ var routes = []Route{
 		// The kinds and the provider shortcuts share one handler and one schema.
 		// A shortcut is a spelling of `create agent --provider <id>`, so it is
 		// listed apart from the resource kinds and is never counted as one.
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "create",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 3,
@@ -542,6 +959,7 @@ var routes = []Route{
 				// Registration is Registry-only -- no session, window or pane is
 				// materialized -- so `-o pane-id` is deliberately absent from the
 				// projections it advertises.
+				Effects:          createProjectEffects(),
 				Name:             "project",
 				Invocation:       InvocationExplicit,
 				Summary:          "Register one exact filesystem path as a Registry Project; no runtime is materialized",
@@ -557,6 +975,7 @@ var routes = []Route{
 				// owns, and that Pane's uid is stored as the Window's
 				// compatibility shell ref -- the anchor a later `create pane` splits
 				// when no explicit --pane is given.
+				Effects:          createResourceEffects(CardinalityExactOne),
 				Name:             "window",
 				Invocation:       InvocationNatural,
 				Summary:          "Create a Window and its initial Pane below one Project; the runtime is materialized detached",
@@ -575,6 +994,7 @@ var routes = []Route{
 				// all the Project, the Window, and the anchor come from the
 				// active managed runtime, so the split lands where the operator
 				// is looking.
+				Effects:          createResourceEffects(CardinalityOneOrMore),
 				Name:             "pane",
 				Invocation:       InvocationNatural,
 				Summary:          "Create a shell Pane detached on an explicit Pane or the Window's exact shell or Agent anchor",
@@ -590,6 +1010,7 @@ var routes = []Route{
 				// rule. It allocates a Window-owned Agent plus its managed Pane,
 				// splits the resolved Windows detached, and never moves the
 				// client.
+				Effects:          createResourceEffects(CardinalityOneOrMore),
 				Name:             "agent",
 				Invocation:       InvocationNatural,
 				Summary:          "Create an Agent detached on an explicit Pane or the Window's exact shell or Agent anchor; --provider is required",
@@ -601,6 +1022,7 @@ var routes = []Route{
 				Canonical: []string{"create agent"},
 			},
 			{
+				Effects:    unchangedEffects(CardinalityUnchanged),
 				Name:       "notification",
 				Invocation: InvocationExplicit,
 				Summary:    "Create a pending notification row",
@@ -608,6 +1030,7 @@ var routes = []Route{
 				Canonical:  []string{"create notification"},
 			},
 			{
+				Effects:    unchangedEffects(CardinalityUnchanged),
 				Name:       "snapshot",
 				Invocation: InvocationNatural,
 				Summary:    "Create a session snapshot",
@@ -615,6 +1038,7 @@ var routes = []Route{
 				Canonical:  []string{"create snapshot"},
 			},
 			{
+				Effects:    createResourceEffects(CardinalityOneOrMore),
 				Name:       "codex",
 				Invocation: InvocationNatural,
 				Summary:    "Provider shortcut for create agent --provider codex",
@@ -626,6 +1050,7 @@ var routes = []Route{
 				Canonical:        []string{"create codex"},
 			},
 			{
+				Effects:    createResourceEffects(CardinalityOneOrMore),
 				Name:       "claude",
 				Invocation: InvocationNatural,
 				Summary:    "Provider shortcut for create agent --provider claude",
@@ -637,6 +1062,7 @@ var routes = []Route{
 				Canonical:        []string{"create claude"},
 			},
 			{
+				Effects:    createResourceEffects(CardinalityOneOrMore),
 				Name:       "antigravity",
 				Invocation: InvocationNatural,
 				Summary:    "Provider shortcut for create agent --provider antigravity",
@@ -652,6 +1078,7 @@ var routes = []Route{
 	{
 		// The registry-backed kinds own the cascade planner; `notification` and
 		// `snapshot` forward raw argv to the handlers that already own them.
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "delete",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 9,
@@ -682,6 +1109,7 @@ var routes = []Route{
 		Canonical: []string{"delete project", "delete window", "delete pane", "delete agent", "delete notification", "delete snapshot"},
 		Children: []Route{
 			{
+				Effects:          deleteProjectEffects(),
 				Name:             "project",
 				Invocation:       InvocationNatural,
 				Summary:          "Explicitly unregister Projects and Registry descendants while preserving roots, Git/worktrees, snapshots, and runtime",
@@ -691,6 +1119,7 @@ var routes = []Route{
 				Canonical:        []string{"delete project"},
 			},
 			{
+				Effects:          deleteChildEffects(),
 				Name:             "window",
 				Invocation:       InvocationNatural,
 				Summary:          "Delete Registry Windows and every descendant Agent and Pane, killing an exact live tmux mirror when present; no selector inside tmux means the active Window, and --all means every Window in the registry",
@@ -700,6 +1129,7 @@ var routes = []Route{
 				Canonical:        []string{"delete window"},
 			},
 			{
+				Effects:          deleteChildEffects(),
 				Name:             "pane",
 				Invocation:       InvocationNatural,
 				Summary:          "Delete Panes; an Agent-owned current Pane leaves its Agent Offline; no selector inside tmux means the active Pane, and --all means every Pane in the registry",
@@ -709,6 +1139,7 @@ var routes = []Route{
 				Canonical:        []string{"delete pane"},
 			},
 			{
+				Effects:          deleteChildEffects(),
 				Name:             "agent",
 				Invocation:       InvocationNatural,
 				Summary:          "Delete Agents and their managed Panes; no selector inside tmux means the active Agent, and --all means every Agent in the registry",
@@ -717,11 +1148,12 @@ var routes = []Route{
 				Usage:            []string{"projmux delete agent [<ref>...] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--all] [--socket <name> | --socket-path <absolute>] [--dry-run] [--yes]"},
 				Canonical:        []string{"delete agent"},
 			},
-			{Name: "notification", Invocation: InvocationExplicit, Summary: "Delete pending notification rows", Aliases: []string{"notifications"}, Canonical: []string{"delete notification"}},
-			{Name: "snapshot", Invocation: InvocationExplicit, Summary: "Delete saved session snapshots", Aliases: []string{"snapshots"}, Canonical: []string{"delete snapshot"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "notification", Invocation: InvocationExplicit, Summary: "Delete pending notification rows", Aliases: []string{"notifications"}, Canonical: []string{"delete notification"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "snapshot", Invocation: InvocationExplicit, Summary: "Delete saved session snapshots", Aliases: []string{"snapshots"}, Canonical: []string{"delete snapshot"}},
 		},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "describe",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 2,
@@ -740,13 +1172,14 @@ var routes = []Route{
 		},
 		Canonical: []string{"describe project", "describe window", "describe pane", "describe agent"},
 		Children: []Route{
-			{Name: "project", Invocation: InvocationNatural, Summary: "Describe one Project resource; with no selector inside tmux, the active Project", CanonicalSummary: "Describe one Project resource", Aliases: []string{"projects"}, Usage: []string{"projmux describe project [<ref>] [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"describe project"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
-			{Name: "window", Invocation: InvocationNatural, Summary: "Describe one Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window", CanonicalSummary: "Describe one Window resource", Aliases: []string{"windows"}, Usage: []string{"projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"describe window"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
-			{Name: "pane", Invocation: InvocationNatural, Summary: "Describe one Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane", CanonicalSummary: "Describe one Pane resource", Aliases: []string{"panes"}, Usage: []string{"projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe pane"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
-			{Name: "agent", Invocation: InvocationNatural, Summary: "Describe one Agent resource; inside tmux a reference resolves within the active Project and no selector means the Agent owning the active Pane", CanonicalSummary: "Describe one Agent resource", Aliases: []string{"agents"}, Usage: []string{"projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe agent"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "project", Invocation: InvocationNatural, Summary: "Describe one Project resource; with no selector inside tmux, the active Project", CanonicalSummary: "Describe one Project resource", Aliases: []string{"projects"}, Usage: []string{"projmux describe project [<ref>] [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"describe project"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "window", Invocation: InvocationNatural, Summary: "Describe one Window resource; inside tmux a reference resolves within the active Project and no selector means the active Window", CanonicalSummary: "Describe one Window resource", Aliases: []string{"windows"}, Usage: []string{"projmux describe window [<ref>] [--project <ref> | -p <ref>] [-o <mode>]"}, Canonical: []string{"describe window"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "pane", Invocation: InvocationNatural, Summary: "Describe one Pane resource; inside tmux a reference resolves within the active Project and no selector means the active Pane", CanonicalSummary: "Describe one Pane resource", Aliases: []string{"panes"}, Usage: []string{"projmux describe pane [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe pane"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "agent", Invocation: InvocationNatural, Summary: "Describe one Agent resource; inside tmux a reference resolves within the active Project and no selector means the Agent owning the active Pane", CanonicalSummary: "Describe one Agent resource", Aliases: []string{"agents"}, Usage: []string{"projmux describe agent [<ref>] [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-o <mode>]"}, Canonical: []string{"describe agent"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
 		},
 	},
 	{
+		Effects:     unchangedEffects(CardinalityUnchanged),
 		Name:        "doctor",
 		Invocation:  InvocationFanOut,
 		Summary:     "Run read-only runtime and integration diagnostics",
@@ -754,6 +1187,7 @@ var routes = []Route{
 		Usage:       []string{"projmux doctor [--json] [--section <name>] [--verbose]"},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "diagnostics",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 19,
@@ -766,12 +1200,13 @@ var routes = []Route{
 		},
 		Canonical: []string{"diagnostics log", "diagnostics agent-hook", "diagnostics report"},
 		Children: []Route{
-			{Name: "log", Invocation: InvocationFanOut, Summary: "Read the bounded local operations journal", Canonical: []string{"diagnostics log"}},
-			{Name: "agent-hook", Invocation: InvocationFanOut, Summary: "Read the bounded Agent hook ingest journal", Usage: []string{"projmux diagnostics agent-hook [--tail <n>] [--json] [--path]"}, Canonical: []string{"diagnostics agent-hook"}},
-			{Name: "report", Invocation: InvocationFanOut, Summary: "Create an explicit redacted local support report", Canonical: []string{"diagnostics report"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "log", Invocation: InvocationFanOut, Summary: "Read the bounded local operations journal", Canonical: []string{"diagnostics log"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "agent-hook", Invocation: InvocationFanOut, Summary: "Read the bounded Agent hook ingest journal", Usage: []string{"projmux diagnostics agent-hook [--tail <n>] [--json] [--path]"}, Canonical: []string{"diagnostics agent-hook"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "report", Invocation: InvocationFanOut, Summary: "Create an explicit redacted local support report", Canonical: []string{"diagnostics report"}},
 		},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "focus",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 5,
@@ -785,6 +1220,7 @@ var routes = []Route{
 		Canonical: []string{"focus project", "focus window", "focus pane"},
 		Children: []Route{
 			{
+				Effects:            focusResourceEffects(),
 				Name:               "project",
 				Invocation:         InvocationExplicit,
 				Summary:            "Move the current client to an already-live Project; never materializes",
@@ -794,6 +1230,7 @@ var routes = []Route{
 				Canonical:          []string{"focus project"},
 			},
 			{
+				Effects:            focusResourceEffects(),
 				Name:               "window",
 				Invocation:         InvocationExplicit,
 				Summary:            "Move the current client to an already-live Window in an exact live root session; never materializes",
@@ -803,6 +1240,7 @@ var routes = []Route{
 				Canonical:          []string{"focus window"},
 			},
 			{
+				Effects:          focusResourceEffects(),
 				Name:             "pane",
 				Invocation:       InvocationExplicit,
 				Summary:          "Move the current client to an already-live Pane in an exact live root session; never materializes",
@@ -825,6 +1263,7 @@ var routes = []Route{
 		// Aliasing `pane` onto `panes` would delete a shipped route's meaning, so
 		// the two stay separate canonical children and the asymmetry is
 		// deliberate rather than an omission.
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "get",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 1,
@@ -843,23 +1282,26 @@ var routes = []Route{
 			"get runtime sessions", "get runtime windows", "get runtime panes",
 			"get notifications", "get snapshots", "get pane"},
 		Children: []Route{
-			{Name: "projects", Invocation: InvocationFanOut, Summary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "projects", Invocation: InvocationFanOut, Summary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
 			{
-				Name: "windows", Summary: "List Window resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
+				Effects: unchangedEffects(CardinalityZeroOrMore),
+				Name:    "windows", Summary: "List Window resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Invocation:       InvocationNatural,
 				CanonicalSummary: "List Window resources",
 				Aliases:          []string{"window"}, Usage: []string{"projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
 				Canonical: []string{"get windows"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes,
 			},
 			{
-				Name: "panes", Summary: "List Pane resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
+				Effects: unchangedEffects(CardinalityZeroOrMore),
+				Name:    "panes", Summary: "List Pane resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Invocation:       InvocationNatural,
 				CanonicalSummary: "List Pane resources",
 				Usage:            []string{"projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
 				Canonical:        []string{"get panes"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes,
 			},
 			{
-				Name: "agents", Summary: "List Agent resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
+				Effects: unchangedEffects(CardinalityZeroOrMore),
+				Name:    "agents", Summary: "List Agent resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Invocation:       InvocationNatural,
 				CanonicalSummary: "List Agent resources",
 				Aliases:          []string{"agent"}, Usage: []string{"projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
@@ -879,6 +1321,7 @@ var routes = []Route{
 				// singular alias for the same reason `get pane` is not the
 				// singular of `get panes`: an exact-one runtime read would have
 				// to resolve an identity these objects do not have.
+				Effects:    unchangedEffects(CardinalityZeroOrMore),
 				Name:       "runtime",
 				Invocation: InvocationFanOut,
 				Namespace:  true,
@@ -891,25 +1334,29 @@ var routes = []Route{
 				Canonical: []string{"get runtime sessions", "get runtime windows", "get runtime panes"},
 				Children: []Route{
 					{
-						Name: "sessions", Invocation: InvocationFanOut, Summary: "List every tmux session on one exact server with its attribution",
+						Effects: unchangedEffects(CardinalityZeroOrMore),
+						Name:    "sessions", Invocation: InvocationFanOut, Summary: "List every tmux session on one exact server with its attribution",
 						Usage:     []string{"projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o json|none]"},
 						Canonical: []string{"get runtime sessions"}, Outputs: runtimeProjectionCatalog,
 					},
 					{
-						Name: "windows", Invocation: InvocationFanOut, Summary: "List every tmux window on one exact server with its attribution",
+						Effects: unchangedEffects(CardinalityZeroOrMore),
+						Name:    "windows", Invocation: InvocationFanOut, Summary: "List every tmux window on one exact server with its attribution",
 						Usage:     []string{"projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o json|none]"},
 						Canonical: []string{"get runtime windows"}, Outputs: runtimeProjectionCatalog,
 					},
 					{
-						Name: "panes", Invocation: InvocationFanOut, Summary: "List every tmux pane on one exact server with its attribution",
+						Effects: unchangedEffects(CardinalityZeroOrMore),
+						Name:    "panes", Invocation: InvocationFanOut, Summary: "List every tmux pane on one exact server with its attribution",
 						Usage:     []string{"projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o json|none]"},
 						Canonical: []string{"get runtime panes"}, Outputs: runtimeProjectionCatalog,
 					},
 				},
 			},
-			{Name: "notifications", Invocation: InvocationFanOut, Summary: "List pending notification rows", Aliases: []string{"notification"}, Canonical: []string{"get notifications"}, AcceptedOutputs: sharedOutputModes},
-			{Name: "snapshots", Invocation: InvocationFanOut, Summary: "List saved session snapshots", Aliases: []string{"snapshot"}, Canonical: []string{"get snapshots"}, AcceptedOutputs: sharedOutputModes},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "notifications", Invocation: InvocationFanOut, Summary: "List pending notification rows", Aliases: []string{"notification"}, Canonical: []string{"get notifications"}, AcceptedOutputs: sharedOutputModes},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "snapshots", Invocation: InvocationFanOut, Summary: "List saved session snapshots", Aliases: []string{"snapshot"}, Canonical: []string{"get snapshots"}, AcceptedOutputs: sharedOutputModes},
 			{
+				Effects:          unchangedEffects(CardinalityExactOne),
 				Name:             "pane",
 				Invocation:       InvocationNatural,
 				Summary:          "Read one Pane resource; with no selector inside tmux, the active Pane",
@@ -923,6 +1370,7 @@ var routes = []Route{
 		},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "hook",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 16,
@@ -931,14 +1379,15 @@ var routes = []Route{
 		Usage:          []string{"projmux hook list|edit|validate|trust|untrust"},
 		Canonical:      []string{"hook list", "hook edit", "hook validate", "hook trust", "hook untrust"},
 		Children: []Route{
-			{Name: "list", Invocation: InvocationNatural, Summary: "List global and project lifecycle hooks", CanonicalSummary: "List lifecycle hook config", Canonical: []string{"hook list"}},
-			{Name: "edit", Invocation: InvocationNatural, Summary: "Edit lifecycle hook config", Canonical: []string{"hook edit"}},
-			{Name: "validate", Invocation: InvocationNatural, Summary: "Validate lifecycle hook config", Canonical: []string{"hook validate"}},
-			{Name: "trust", Invocation: InvocationNatural, Summary: "Trust the current project hook config", Canonical: []string{"hook trust"}},
-			{Name: "untrust", Invocation: InvocationNatural, Summary: "Revoke project hook config trust", Canonical: []string{"hook untrust"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "list", Invocation: InvocationNatural, Summary: "List global and project lifecycle hooks", CanonicalSummary: "List lifecycle hook config", Canonical: []string{"hook list"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "edit", Invocation: InvocationNatural, Summary: "Edit lifecycle hook config", Canonical: []string{"hook edit"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "validate", Invocation: InvocationNatural, Summary: "Validate lifecycle hook config", Canonical: []string{"hook validate"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "trust", Invocation: InvocationNatural, Summary: "Trust the current project hook config", Canonical: []string{"hook trust"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "untrust", Invocation: InvocationNatural, Summary: "Revoke project hook config trust", Canonical: []string{"hook untrust"}},
 		},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "notification",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 15,
@@ -950,11 +1399,12 @@ var routes = []Route{
 		},
 		Canonical: []string{"notification ack", "notification reconcile"},
 		Children: []Route{
-			{Name: "ack", Invocation: InvocationExplicit, Summary: "Acknowledge notification rows", Usage: []string{"projmux notification ack <id> | --all"}, Canonical: []string{"notification ack"}},
-			{Name: "reconcile", Invocation: InvocationFanOut, Summary: "Reconcile the notification queue against live targets", Usage: []string{"projmux notification reconcile [--json]"}, Canonical: []string{"notification reconcile"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "ack", Invocation: InvocationExplicit, Summary: "Acknowledge notification rows", Usage: []string{"projmux notification ack <id> | --all"}, Canonical: []string{"notification ack"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "reconcile", Invocation: InvocationFanOut, Summary: "Reconcile the notification queue against live targets", Usage: []string{"projmux notification reconcile [--json]"}, Canonical: []string{"notification reconcile"}},
 		},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "pin",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 11,
@@ -968,10 +1418,11 @@ var routes = []Route{
 			// document. So the summary says "project directories" like every
 			// sibling below it, rather than "Project resources", which would name
 			// a resource kind the route never touches.
-			{Name: "project", Invocation: InvocationExplicit, Summary: "Manage pinned project directories (canonical spelling)", CanonicalSummary: "Manage pinned project directories", Usage: []string{"projmux pin project list|add|remove|toggle|clear"}, Canonical: []string{"pin project"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "project", Invocation: InvocationExplicit, Summary: "Manage pinned project directories (canonical spelling)", CanonicalSummary: "Manage pinned project directories", Usage: []string{"projmux pin project list|add|remove|toggle|clear"}, Canonical: []string{"pin project"}},
 		},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "prune",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 12,
@@ -984,6 +1435,7 @@ var routes = []Route{
 		Canonical: []string{"prune project", "prune snapshot"},
 		Children: []Route{
 			{
+				Effects:          pruneProjectEffects(),
 				Name:             "project",
 				Invocation:       InvocationFanOut,
 				Summary:          "Delete Projects whose spec.root has been missing for a bounded age",
@@ -992,6 +1444,7 @@ var routes = []Route{
 				Canonical:        []string{"prune project"},
 			},
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "snapshot",
 				Invocation:       InvocationFanOut,
 				Summary:          "Inspect or delete preserved session snapshots (canonical spelling)",
@@ -1002,6 +1455,7 @@ var routes = []Route{
 		},
 	},
 	{
+		Effects:     runtimeEffectsOnly([]RuntimeEffect{RuntimeStopped}, []FocusEffect{FocusUnchanged}, CardinalityZeroOrMore),
 		Name:        "quit",
 		Invocation:  InvocationFanOut,
 		Summary:     "Quit the app-owned projmux tmux runtime",
@@ -1009,6 +1463,7 @@ var routes = []Route{
 		Usage:       []string{"projmux quit [--yes|--force]"},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "reconcile",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 8,
@@ -1021,6 +1476,7 @@ var routes = []Route{
 		Canonical: []string{"reconcile resources", "reconcile registry"},
 		Children: []Route{
 			{
+				Effects:          reconcileResourcesEffects(),
 				Name:             "resources",
 				Invocation:       InvocationFanOut,
 				Summary:          "Preview or repair exact anchor-aware Registry and tmux topology on one exact socket",
@@ -1029,6 +1485,7 @@ var routes = []Route{
 				Canonical:        []string{"reconcile resources"},
 			},
 			{
+				Effects:    reconcileRegistryEffects(),
 				Name:       "registry",
 				Invocation: InvocationExplicit,
 				Summary:    "Plan Registry state-loss recovery with zero writes, then restore one explicitly named verified source",
@@ -1038,6 +1495,7 @@ var routes = []Route{
 		},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "rebind",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 7,
@@ -1047,6 +1505,7 @@ var routes = []Route{
 		Canonical:      []string{"rebind project"},
 		Children: []Route{
 			{
+				Effects:          rebindProjectEffects(),
 				Name:             "project",
 				Invocation:       InvocationNatural,
 				Summary:          "Rewrite one Project spec.root; no filesystem move, no heuristic uid merge",
@@ -1057,6 +1516,7 @@ var routes = []Route{
 		},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "rename",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 6,
@@ -1070,13 +1530,14 @@ var routes = []Route{
 		},
 		Canonical: []string{"rename project", "rename window", "rename pane", "rename agent"},
 		Children: []Route{
-			{Name: "project", Invocation: InvocationNatural, Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", CanonicalSummary: "Rename a Projmux Project resource", Aliases: []string{"projects"}, Usage: []string{"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>"}, Canonical: []string{"rename project"}},
-			{Name: "window", Invocation: InvocationNatural, Summary: "Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window", CanonicalSummary: "Rename a Projmux Window resource", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]"}, Canonical: []string{"rename window"}},
-			{Name: "pane", Invocation: InvocationNatural, Summary: "Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title", CanonicalSummary: "Rename a Projmux Pane resource; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename pane"}},
-			{Name: "agent", Invocation: InvocationNatural, Summary: "Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane", CanonicalSummary: "Rename an Agent stable resource name only", Aliases: []string{"agents"}, Usage: []string{"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename agent"}},
+			{Effects: renameResourceEffects(), Name: "project", Invocation: InvocationNatural, Summary: "Rename a Projmux Project resource; with no selector inside tmux, the active Project", CanonicalSummary: "Rename a Projmux Project resource", Aliases: []string{"projects"}, Usage: []string{"projmux rename project [<ref>] [--project <ref> | -p <ref>] --name <name>"}, Canonical: []string{"rename project"}},
+			{Effects: renameResourceEffects(), Name: "window", Invocation: InvocationNatural, Summary: "Rename a Projmux Window resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Window", CanonicalSummary: "Rename a Projmux Window resource", Aliases: []string{"windows"}, Usage: []string{"projmux rename window [<ref>] --name <name> [--project <ref> | -p <ref>]"}, Canonical: []string{"rename window"}},
+			{Effects: renameResourceEffects(), Name: "pane", Invocation: InvocationNatural, Summary: "Rename a Projmux Pane resource; inside tmux a reference resolves within the active Project or ControlSession and no selector means the active Pane; does not change tmux pane_title", CanonicalSummary: "Rename a Projmux Pane resource; does not change tmux pane_title", Aliases: []string{"panes"}, Usage: []string{"projmux rename pane [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename pane"}},
+			{Effects: renameResourceEffects(), Name: "agent", Invocation: InvocationNatural, Summary: "Rename an Agent stable resource name within the active Project or ControlSession without changing its topic, provider, or managed Pane", CanonicalSummary: "Rename an Agent stable resource name only", Aliases: []string{"agents"}, Usage: []string{"projmux rename agent [<ref>] --name <name> [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]..."}, Canonical: []string{"rename agent"}},
 		},
 	},
 	{
+		Effects:     unchangedEffects(CardinalityUnchanged),
 		Name:        "resources",
 		Invocation:  InvocationNatural,
 		Summary:     "Inspect live Project, Window, and Pane CPU/RSS attribution",
@@ -1084,6 +1545,7 @@ var routes = []Route{
 		Usage:       []string{"projmux resources"},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "restore",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 10,
@@ -1093,6 +1555,7 @@ var routes = []Route{
 		Canonical:      []string{"restore snapshot"},
 		Children: []Route{
 			{
+				Effects:    restoreSnapshotEffects(),
 				Name:       "snapshot",
 				Invocation: InvocationExplicit,
 				Summary:    "Project a saved snapshot into one exact closed Project desired state",
@@ -1106,6 +1569,7 @@ var routes = []Route{
 		// carries no uid, name reservation, or ownerRef and is therefore not a
 		// Projmux resource. Every subcommand forwards raw argv to the handler
 		// that already owns the behavior.
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "runtime",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 18,
@@ -1121,7 +1585,7 @@ var routes = []Route{
 		},
 		Canonical: []string{"runtime sessions", "runtime diagnostics", "runtime attach", "runtime stop", "runtime tag", "runtime prune"},
 		Children: []Route{
-			{Name: "sessions", Invocation: InvocationNatural, Summary: "Pick a live or ephemeral tmux session", Canonical: []string{"runtime sessions"}},
+			{Effects: runtimeSessionsEffects(), Name: "sessions", Invocation: InvocationNatural, Summary: "Pick a live or ephemeral tmux session", Canonical: []string{"runtime sessions"}},
 			{
 				// The diagnostics escape hatch, kept separate from `runtime
 				// sessions` on purpose. That picker lists recent sessions to open
@@ -1130,19 +1594,21 @@ var routes = []Route{
 				// what they are. Merging them would put an operator's own shell
 				// into the open-a-session list, which is the adoption this track
 				// refuses.
+				Effects:    runtimeDiagnosticsEffects(),
 				Name:       "diagnostics",
 				Invocation: InvocationNatural,
 				Summary:    "Inspect every tmux object on one exact server, with attribution and safe actions",
 				Usage:      []string{"projmux runtime diagnostics [--socket <name> | --socket-path <absolute>] [--ui=popup|sidebar]"},
 				Canonical:  []string{"runtime diagnostics"},
 			},
-			{Name: "attach", Invocation: InvocationExplicit, Summary: "Attach a live or ephemeral runtime without Project identity", Canonical: []string{"runtime attach"}},
-			{Name: "stop", Invocation: InvocationFanOut, Summary: "Terminate live tmux sessions by tagged selection", Canonical: []string{"runtime stop"}},
-			{Name: "tag", Invocation: InvocationFanOut, Summary: "Manage the ephemeral tagged session selection", Canonical: []string{"runtime tag"}},
-			{Name: "prune", Invocation: InvocationFanOut, Summary: "Trim old ephemeral tmux sessions", Canonical: []string{"runtime prune"}},
+			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeAlreadyLive}, []FocusEffect{FocusAttachedCaller}, CardinalityExactOne), Name: "attach", Invocation: InvocationExplicit, Summary: "Attach a live or ephemeral runtime without Project identity", Canonical: []string{"runtime attach"}},
+			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeStopped}, []FocusEffect{FocusUnchanged}, CardinalityOneOrMore), Name: "stop", Invocation: InvocationFanOut, Summary: "Terminate live tmux sessions by tagged selection", Canonical: []string{"runtime stop"}},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "tag", Invocation: InvocationFanOut, Summary: "Manage the ephemeral tagged session selection", Canonical: []string{"runtime tag"}},
+			{Effects: runtimeEffectsOnly([]RuntimeEffect{RuntimeStopped}, []FocusEffect{FocusUnchanged}, CardinalityZeroOrMore), Name: "prune", Invocation: InvocationFanOut, Summary: "Trim old ephemeral tmux sessions", Canonical: []string{"runtime prune"}},
 		},
 	},
 	{
+		Effects:     unchangedEffects(CardinalityUnchanged),
 		Name:        "settings",
 		Invocation:  InvocationNatural,
 		Summary:     "Configure projmux",
@@ -1150,6 +1616,7 @@ var routes = []Route{
 		Usage:       []string{"projmux settings"},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "setup",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 20,
@@ -1161,10 +1628,11 @@ var routes = []Route{
 		},
 		Canonical: []string{"setup terminal"},
 		Children: []Route{
-			{Name: "terminal", Invocation: InvocationFanOut, Summary: "Show or apply terminal key remediation", Usage: []string{"projmux setup terminal [terminal] [--apply] [--config <path>] [--allow-symlink]"}, Canonical: []string{"setup terminal"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "terminal", Invocation: InvocationFanOut, Summary: "Show or apply terminal key remediation", Usage: []string{"projmux setup terminal [terminal] [--apply] [--config <path>] [--allow-symlink]"}, Canonical: []string{"setup terminal"}},
 		},
 	},
 	{
+		Effects:     shellEffects(),
 		Name:        "shell",
 		Invocation:  InvocationNatural,
 		Summary:     "Open the isolated projmux tmux app",
@@ -1172,6 +1640,7 @@ var routes = []Route{
 		Usage:       []string{"projmux shell [--session <name>]"},
 	},
 	{
+		Effects:     switchProjectEffects(),
 		Name:        "switch",
 		Invocation:  InvocationNatural,
 		Summary:     "Pick and open a project tmux session",
@@ -1180,6 +1649,7 @@ var routes = []Route{
 		Canonical:   []string{"focus project"},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "update",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 21,
@@ -1188,12 +1658,13 @@ var routes = []Route{
 		Usage:          []string{"projmux update status|check|apply"},
 		Canonical:      []string{"update status", "update check", "update apply"},
 		Children: []Route{
-			{Name: "status", Invocation: InvocationFanOut, Summary: "Show read-only update status", Canonical: []string{"update status"}},
-			{Name: "check", Invocation: InvocationFanOut, Summary: "Check for a newer release and refresh the cache", Canonical: []string{"update check"}},
-			{Name: "apply", Invocation: InvocationFanOut, Summary: "Apply an available update", Canonical: []string{"update apply"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "status", Invocation: InvocationFanOut, Summary: "Show read-only update status", Canonical: []string{"update status"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "check", Invocation: InvocationFanOut, Summary: "Check for a newer release and refresh the cache", Canonical: []string{"update check"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "apply", Invocation: InvocationFanOut, Summary: "Apply an available update", Canonical: []string{"update apply"}},
 		},
 	},
 	{
+		Effects:     unchangedEffects(CardinalityUnchanged),
 		Name:        "welcome",
 		Invocation:  InvocationNatural,
 		Summary:     "Reprint the shell welcome guide",
@@ -1201,6 +1672,7 @@ var routes = []Route{
 		Usage:       []string{"projmux welcome [--popup [--force]]"},
 	},
 	{
+		Effects:     unchangedEffects(CardinalityUnchanged),
 		Name:        "window",
 		Invocation:  InvocationRefusal,
 		Summary:     "Open recent window navigation surfaces",
@@ -1208,11 +1680,12 @@ var routes = []Route{
 		Usage:       []string{"projmux window record|recent"},
 		Canonical:   []string{"get windows", "describe window", "create window", "focus window", "rename window"},
 		Children: []Route{
-			{Name: "record", Invocation: InvocationNatural, Summary: "Record the current window into the MRU store", Canonical: []string{"get windows"}},
-			{Name: "recent", Invocation: InvocationNatural, Summary: "Open the recent-window navigation picker", Canonical: []string{"get windows"}},
+			{Effects: unchangedEffects(CardinalityUnchanged), Name: "record", Invocation: InvocationNatural, Summary: "Record the current window into the MRU store", Canonical: []string{"get windows"}},
+			{Effects: runtimeDiagnosticsEffects(), Name: "recent", Invocation: InvocationNatural, Summary: "Open the recent-window navigation picker", Canonical: []string{"get windows"}},
 		},
 	},
 	{
+		Effects:          unchangedEffects(CardinalityUnchanged),
 		Name:             "help",
 		Invocation:       InvocationFanOut,
 		CanonicalOrder:   22,
@@ -1227,6 +1700,7 @@ var routes = []Route{
 		Canonical: []string{"help"},
 	},
 	{
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "version",
 		Invocation:     InvocationFanOut,
 		CanonicalOrder: 23,
@@ -1248,6 +1722,7 @@ var routes = []Route{
 		// Every subcommand forwards raw argv to the handler that owns the
 		// behavior. Old pre-namespace spellings are absent from the public and
 		// hidden route graph; generated config uses only this namespace.
+		Effects:        unchangedEffects(CardinalityUnchanged),
 		Name:           "internal",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 24,
@@ -1290,6 +1765,7 @@ var routes = []Route{
 		},
 		Children: []Route{
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "tmux",
 				Invocation:       InvocationExplicit,
 				Summary:          "Generated tmux config, popup, and pane plumbing",
@@ -1297,22 +1773,23 @@ var routes = []Route{
 				Usage:            []string{"projmux internal tmux print-config|print-app-config|install|install-app|apply", "projmux internal tmux popup-preview|popup-switch|popup-sessions|popup-toggle", "projmux internal tmux hook-trust-prompt|rebalance-panes|rename-pane|autosave-session-state"},
 				Canonical:        []string{"internal tmux"},
 				Children: []Route{
-					{Name: "hook-trust-prompt", Invocation: InvocationExplicit, Summary: "Show the project hook trust prompt", Canonical: []string{"internal tmux"}},
-					{Name: "popup-preview", Invocation: InvocationExplicit, Summary: "Open the preview popup", Canonical: []string{"internal tmux"}},
-					{Name: "popup-switch", Invocation: InvocationExplicit, Summary: "Open the project switch popup", Canonical: []string{"internal tmux"}},
-					{Name: "popup-sessions", Invocation: InvocationExplicit, Summary: "Open the sessions popup", Canonical: []string{"internal tmux"}},
-					{Name: "popup-toggle", Invocation: InvocationExplicit, Summary: "Toggle a client-scoped popup surface", Canonical: []string{"internal tmux"}},
-					{Name: "rebalance-panes", Invocation: InvocationExplicit, Summary: "Rebalance panes after a pane exit", Canonical: []string{"internal tmux"}},
-					{Name: "rename-pane", Invocation: InvocationExplicit, Summary: "Run the pane rename prompt helper", Canonical: []string{"rename pane"}},
-					{Name: "print-config", Invocation: InvocationExplicit, Summary: "Print the generated tmux config", Canonical: []string{"config render"}},
-					{Name: "print-app-config", Invocation: InvocationExplicit, Summary: "Print the generated app tmux config", Canonical: []string{"config render"}},
-					{Name: "install", Invocation: InvocationExplicit, Summary: "Install the generated tmux config", Canonical: []string{"internal tmux"}},
-					{Name: "install-app", Invocation: InvocationExplicit, Summary: "Install the generated app tmux config", Canonical: []string{"internal tmux"}},
-					{Name: "apply", Invocation: InvocationExplicit, Summary: "Apply the generated tmux config to a live server", Canonical: []string{"config apply"}},
-					{Name: "autosave-session-state", Invocation: InvocationExplicit, Summary: "Run the debounced snapshot autosave hook", Canonical: []string{"internal tmux"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "hook-trust-prompt", Invocation: InvocationExplicit, Summary: "Show the project hook trust prompt", Canonical: []string{"internal tmux"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "popup-preview", Invocation: InvocationExplicit, Summary: "Open the preview popup", Canonical: []string{"internal tmux"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "popup-switch", Invocation: InvocationExplicit, Summary: "Open the project switch popup", Canonical: []string{"internal tmux"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "popup-sessions", Invocation: InvocationExplicit, Summary: "Open the sessions popup", Canonical: []string{"internal tmux"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "popup-toggle", Invocation: InvocationExplicit, Summary: "Toggle a client-scoped popup surface", Canonical: []string{"internal tmux"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "rebalance-panes", Invocation: InvocationExplicit, Summary: "Rebalance panes after a pane exit", Canonical: []string{"internal tmux"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "rename-pane", Invocation: InvocationExplicit, Summary: "Run the pane rename prompt helper", Canonical: []string{"rename pane"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "print-config", Invocation: InvocationExplicit, Summary: "Print the generated tmux config", Canonical: []string{"config render"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "print-app-config", Invocation: InvocationExplicit, Summary: "Print the generated app tmux config", Canonical: []string{"config render"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "install", Invocation: InvocationExplicit, Summary: "Install the generated tmux config", Canonical: []string{"internal tmux"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "install-app", Invocation: InvocationExplicit, Summary: "Install the generated app tmux config", Canonical: []string{"internal tmux"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "apply", Invocation: InvocationExplicit, Summary: "Apply the generated tmux config to a live server", Canonical: []string{"config apply"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "autosave-session-state", Invocation: InvocationExplicit, Summary: "Run the debounced snapshot autosave hook", Canonical: []string{"internal tmux"}},
 				},
 			},
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "status",
 				Invocation:       InvocationExplicit,
 				Summary:          "Render tmux status bar segments",
@@ -1320,14 +1797,15 @@ var routes = []Route{
 				Usage:            []string{"projmux internal status git|project|usage|notify|resources"},
 				Canonical:        []string{"internal status", "agent usage"},
 				Children: []Route{
-					{Name: "git", Invocation: InvocationExplicit, Summary: "Render the git status segment", Canonical: []string{"internal status"}},
-					{Name: "project", Invocation: InvocationExplicit, Summary: "Render the project status segment", Canonical: []string{"internal status"}},
-					{Name: "usage", Invocation: InvocationExplicit, Summary: "Render the AI usage status segment", Canonical: []string{"agent usage"}},
-					{Name: "notify", Invocation: InvocationExplicit, Summary: "Render the notify status segment", Canonical: []string{"internal status"}},
-					{Name: "resources", Invocation: InvocationExplicit, Summary: "Render the live resource status segment", Canonical: []string{"internal status"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "git", Invocation: InvocationExplicit, Summary: "Render the git status segment", Canonical: []string{"internal status"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "project", Invocation: InvocationExplicit, Summary: "Render the project status segment", Canonical: []string{"internal status"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "usage", Invocation: InvocationExplicit, Summary: "Render the AI usage status segment", Canonical: []string{"agent usage"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "notify", Invocation: InvocationExplicit, Summary: "Render the notify status segment", Canonical: []string{"internal status"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "resources", Invocation: InvocationExplicit, Summary: "Render the live resource status segment", Canonical: []string{"internal status"}},
 				},
 			},
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "statusbar",
 				Invocation:       InvocationExplicit,
 				Summary:          "Dispatch projmux status bar clicks and shortcuts",
@@ -1335,11 +1813,12 @@ var routes = []Route{
 				Usage:            []string{"projmux internal statusbar click <range-id> ...", "projmux internal statusbar usage-refresh"},
 				Canonical:        []string{"internal statusbar"},
 				Children: []Route{
-					{Name: "click", Invocation: InvocationExplicit, Summary: "Dispatch a status bar click range", Canonical: []string{"internal statusbar"}},
-					{Name: "usage-refresh", Invocation: InvocationExplicit, Summary: "Refresh the AI usage snapshot", Canonical: []string{"internal statusbar"}},
+					{Effects: statusbarClickEffects(), Name: "click", Invocation: InvocationExplicit, Summary: "Dispatch a status bar click range", Canonical: []string{"internal statusbar"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "usage-refresh", Invocation: InvocationExplicit, Summary: "Refresh the AI usage snapshot", Canonical: []string{"internal statusbar"}},
 				},
 			},
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "preview",
 				Invocation:       InvocationExplicit,
 				Summary:          "Manage persisted tmux preview selection",
@@ -1347,12 +1826,13 @@ var routes = []Route{
 				Usage:            []string{"projmux internal preview cycle-pane|cycle-window|select"},
 				Canonical:        []string{"internal preview"},
 				Children: []Route{
-					{Name: "cycle-pane", Invocation: InvocationExplicit, Summary: "Advance the persisted preview pane cursor", Canonical: []string{"internal preview"}},
-					{Name: "cycle-window", Invocation: InvocationExplicit, Summary: "Advance the persisted preview window cursor", Canonical: []string{"internal preview"}},
-					{Name: "select", Invocation: InvocationExplicit, Summary: "Persist the preview selection", Canonical: []string{"internal preview"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "cycle-pane", Invocation: InvocationExplicit, Summary: "Advance the persisted preview pane cursor", Canonical: []string{"internal preview"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "cycle-window", Invocation: InvocationExplicit, Summary: "Advance the persisted preview window cursor", Canonical: []string{"internal preview"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "select", Invocation: InvocationExplicit, Summary: "Persist the preview selection", Canonical: []string{"internal preview"}},
 				},
 			},
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "session-popup",
 				Invocation:       InvocationExplicit,
 				Summary:          "Read tmux popup preview state",
@@ -1360,21 +1840,22 @@ var routes = []Route{
 				Usage:            []string{"projmux internal session-popup preview|open|cycle-pane|cycle-window"},
 				Canonical:        []string{"internal session-popup"},
 				Children: []Route{
-					{Name: "preview", Invocation: InvocationExplicit, Summary: "Render the session popup preview", Canonical: []string{"internal session-popup"}},
-					{Name: "open", Invocation: InvocationExplicit, Summary: "Open the previewed session", Canonical: []string{"internal session-popup"}},
-					{Name: "cycle-pane", Invocation: InvocationExplicit, Summary: "Advance the popup pane cursor", Canonical: []string{"internal session-popup"}},
-					{Name: "cycle-window", Invocation: InvocationExplicit, Summary: "Advance the popup window cursor", Canonical: []string{"internal session-popup"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "preview", Invocation: InvocationExplicit, Summary: "Render the session popup preview", Canonical: []string{"internal session-popup"}},
+					{Effects: openRuntimeTargetEffects(), Name: "open", Invocation: InvocationExplicit, Summary: "Open the previewed session", Canonical: []string{"internal session-popup"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "cycle-pane", Invocation: InvocationExplicit, Summary: "Advance the popup pane cursor", Canonical: []string{"internal session-popup"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "cycle-window", Invocation: InvocationExplicit, Summary: "Advance the popup window cursor", Canonical: []string{"internal session-popup"}},
 				},
 			},
 			{
+				Effects:    unchangedEffects(CardinalityUnchanged),
 				Name:       "agent-pane",
 				Invocation: InvocationExplicit,
 				Summary:    "Generated Agent and Pane launch plumbing",
 				Usage:      []string{"projmux internal agent-pane launch-default <right|down>", "projmux internal agent-pane picker [--resume] --inside <right|down>"},
 				Canonical:  []string{"internal agent-pane"},
 				Children: []Route{
-					{Name: "launch-default", Invocation: InvocationExplicit, Summary: "Launch the saved default target in a new Pane", Canonical: []string{"internal agent-pane"}},
-					{Name: "picker", Invocation: InvocationExplicit, Summary: "Run the Agent launch or resume picker inside its popup", Canonical: []string{"internal agent-pane"}},
+					{Effects: agentPaneLaunchEffects(false), Name: "launch-default", Invocation: InvocationExplicit, Summary: "Launch the saved default target in a new Pane", Canonical: []string{"internal agent-pane"}},
+					{Effects: agentPaneLaunchEffects(true), Name: "picker", Invocation: InvocationExplicit, Summary: "Run the Agent launch or resume picker inside its popup", Canonical: []string{"internal agent-pane"}},
 				},
 			},
 			{
@@ -1382,6 +1863,7 @@ var routes = []Route{
 				// and by the pane title watcher, never by a user, so the Agent
 				// decomposition parks it here rather than in the public `agent`
 				// namespace.
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "agent-hook",
 				Invocation:       InvocationExplicit,
 				Summary:          "Provider hook ingest and Agent pane title watcher plumbing",
@@ -1389,11 +1871,12 @@ var routes = []Route{
 				Usage:            []string{"projmux internal agent-hook ingest <source> ...", "projmux internal agent-hook watch-title [pane]"},
 				Canonical:        []string{"internal agent-hook"},
 				Children: []Route{
-					{Name: "ingest", Invocation: InvocationExplicit, Summary: "Ingest provider hook and log events", Canonical: []string{"internal agent-hook"}},
-					{Name: "watch-title", Invocation: InvocationExplicit, Summary: "Run the Agent pane title watcher", Canonical: []string{"internal agent-hook"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "ingest", Invocation: InvocationExplicit, Summary: "Ingest provider hook and log events", Canonical: []string{"internal agent-hook"}},
+					{Effects: unchangedEffects(CardinalityUnchanged), Name: "watch-title", Invocation: InvocationExplicit, Summary: "Run the Agent pane title watcher", Canonical: []string{"internal agent-hook"}},
 				},
 			},
 			{
+				Effects:    focusIngressEffects(),
 				Name:       "focus",
 				Invocation: InvocationExplicit,
 				Summary:    "Machine focus ingress",
@@ -1401,6 +1884,7 @@ var routes = []Route{
 				Canonical:  []string{"internal focus"},
 			},
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "key-broker",
 				Invocation:       InvocationExplicit,
 				Summary:          "Forward captured physical key chords into the tmux root table",
@@ -1409,6 +1893,7 @@ var routes = []Route{
 				Canonical:        []string{"internal key-broker"},
 			},
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "popup-wait-key",
 				Invocation:       InvocationExplicit,
 				Summary:          "Read a single key for a display-only tmux popup",
@@ -1417,6 +1902,7 @@ var routes = []Route{
 				Canonical:        []string{"internal popup-wait-key"},
 			},
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "supervise",
 				Invocation:       InvocationExplicit,
 				Summary:          "Supervise one managed Pane process and record its exit evidence",
@@ -1425,6 +1911,7 @@ var routes = []Route{
 				Canonical:        []string{"internal supervise"},
 			},
 			{
+				Effects:          unchangedEffects(CardinalityUnchanged),
 				Name:             "activation-exec",
 				Invocation:       InvocationExplicit,
 				Summary:          "Admit one exact committed Agent activation before provider exec",
@@ -1440,6 +1927,9 @@ var routes = []Route{
 // mutate shared graph storage, and no projection fills a missing authority.
 func Routes() []Route {
 	if err := validateInvocationGraph(routes, nil); err != nil {
+		panic(err)
+	}
+	if err := validateEffectGraph(routes, nil); err != nil {
 		panic(err)
 	}
 	return cloneRoutes(routes)
@@ -1458,11 +1948,117 @@ func validateInvocationGraph(nodes []Route, prefix []string) error {
 	return nil
 }
 
+func validateEffectGraph(nodes []Route, prefix []string) error {
+	for _, node := range nodes {
+		path := append(append([]string{}, prefix...), node.Name)
+		if err := validateAllowedEffects(strings.Join(path, " "), node.Effects); err != nil {
+			return err
+		}
+		if err := validateEffectGraph(node.Children, path); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateAllowedEffects(route string, effects *AllowedEffects) error {
+	if effects == nil {
+		return fmt.Errorf("route %q has no effect record", route)
+	}
+	checks := []struct {
+		axis string
+		err  error
+	}{
+		{"identity", validateEffectValues(effects.Identity, identityEffects)},
+		{"address", validateEffectValues(effects.Address, addressEffects)},
+		{"topology", validateEffectValues(effects.Topology, topologyEffects)},
+		{"desired-state", validateEffectValues(effects.DesiredState, desiredEffects)},
+		{"runtime", validateEffectValues(effects.Runtime, runtimeEffects)},
+		{"focus", validateEffectValues(effects.Focus, focusEffects)},
+		{"cardinality", validateEffectValues(effects.Cardinality, cardinalities)},
+	}
+	for _, check := range checks {
+		if check.err != nil {
+			return fmt.Errorf("route %q has invalid %s effects: %w", route, check.axis, check.err)
+		}
+	}
+	if effects.DomainEffect != nil && !slices.Contains(domainEffectKinds, effects.DomainEffect.Kind) {
+		return fmt.Errorf("route %q has unknown domain effect %q", route, effects.DomainEffect.Kind)
+	}
+	return nil
+}
+
+func validateEffectValues[T comparable](values, closed []T) error {
+	if len(values) == 0 {
+		return fmt.Errorf("missing value")
+	}
+	seen := make(map[T]bool, len(values))
+	for _, value := range values {
+		if !slices.Contains(closed, value) {
+			return fmt.Errorf("unknown value %v", value)
+		}
+		if seen[value] {
+			return fmt.Errorf("duplicate value %v", value)
+		}
+		seen[value] = true
+	}
+	return nil
+}
+
+// RouteEffectRow is the flat, machine-readable projection of one graph row.
+// Route is the canonical argv path; aliases deliberately do not create a
+// second effect record because they reach the same handler.
+type RouteEffectRow struct {
+	Route   string
+	Effects AllowedEffects
+}
+
+// EffectManifest projects the unified command graph into one effect row per
+// route. It is useful to audits and future receipt consumers without creating
+// a separately maintained command/effect table.
+func EffectManifest() []RouteEffectRow {
+	return effectManifest(Routes())
+}
+
+func effectManifest(nodes []Route) []RouteEffectRow {
+	var rows []RouteEffectRow
+	walkInvocationGraph(nodes, nil, func(path []string, route Route) {
+		rows = append(rows, RouteEffectRow{
+			Route:   strings.Join(path, " "),
+			Effects: cloneAllowedEffects(route.Effects),
+		})
+	})
+	return rows
+}
+
 func cloneRoutes(nodes []Route) []Route {
 	out := make([]Route, len(nodes))
 	for i, node := range nodes {
+		if node.Effects != nil {
+			effects := cloneAllowedEffects(node.Effects)
+			node.Effects = &effects
+		}
 		node.Children = cloneRoutes(node.Children)
 		out[i] = node
+	}
+	return out
+}
+
+func cloneAllowedEffects(effects *AllowedEffects) AllowedEffects {
+	if effects == nil {
+		return AllowedEffects{}
+	}
+	out := *effects
+	out.Identity = slices.Clone(effects.Identity)
+	out.Address = slices.Clone(effects.Address)
+	out.Topology = slices.Clone(effects.Topology)
+	out.DesiredState = slices.Clone(effects.DesiredState)
+	out.Runtime = slices.Clone(effects.Runtime)
+	out.Focus = slices.Clone(effects.Focus)
+	out.Cardinality = slices.Clone(effects.Cardinality)
+	if effects.DomainEffect != nil {
+		domain := *effects.DomainEffect
+		out.DomainEffect = &domain
 	}
 	return out
 }

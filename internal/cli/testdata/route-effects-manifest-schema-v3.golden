@@ -1,0 +1,176 @@
+schema=v3
+route=agent identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent status identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=agent topic identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=agent resume identity=reused|created address=unchanged|allocated topology=unchanged|established desired-state=unchanged|created runtime=materialized focus=unchanged cardinality=exact-one domain-effect=null
+route=agent turn identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=agent turn start identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=agent turn steer identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=agent turn interrupt identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=agent approval identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent approval review identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent review identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent integrate identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent usage identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server upgrade identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server upgrade plan identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server upgrade apply identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server upgrade resume identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server upgrade abort identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server handover identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server handover plan identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server handover apply identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server handover resume identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server handover abort identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=attention identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=attention toggle identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=attention clear identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=attention arm identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=attention list identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=attention window identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=attach identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=attach project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=materialized|already-live focus=attached-caller cardinality=exact-one domain-effect=null
+route=config identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=config edit identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=config render identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=config render standalone identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=config render app identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=config apply identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=create identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=create project identity=created|reused address=allocated|unchanged topology=established|unchanged desired-state=created|reused runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=create window identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=exact-one domain-effect=null
+route=create pane identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
+route=create agent identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
+route=create notification identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=create snapshot identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=create codex identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
+route=create claude identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
+route=create antigravity identity=created address=allocated topology=established desired-state=created runtime=materialized focus=unchanged cardinality=one-or-more domain-effect=null
+route=delete identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=delete project identity=removed address=released topology=removed desired-state=removed runtime=preserved focus=unchanged cardinality=one-or-more domain-effect=null
+route=delete window identity=removed address=released topology=removed desired-state=removed runtime=unchanged|stopped focus=unchanged|moved-current-client cardinality=one-or-more domain-effect=null
+route=delete pane identity=removed address=released topology=removed desired-state=removed runtime=unchanged|stopped focus=unchanged|moved-current-client cardinality=one-or-more domain-effect=null
+route=delete agent identity=removed address=released topology=removed desired-state=removed runtime=unchanged|stopped focus=unchanged|moved-current-client cardinality=one-or-more domain-effect=null
+route=delete notification identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=delete snapshot identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=describe identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=describe project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=describe window identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=describe pane identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=describe agent identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=doctor identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=diagnostics identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=diagnostics log identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=diagnostics agent-hook identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=diagnostics report identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=focus identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=focus project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=moved-current-client cardinality=exact-one domain-effect=null
+route=focus window identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=moved-current-client cardinality=exact-one domain-effect=null
+route=focus pane identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=moved-current-client cardinality=exact-one domain-effect=null
+route=get identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=get projects identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=get windows identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=get panes identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=get agents identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=get runtime identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=get runtime sessions identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=get runtime windows identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=get runtime panes identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=get notifications identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=get snapshots identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=get pane identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=hook identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=hook list identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=hook edit identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=hook validate identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=hook trust identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=hook untrust identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=notification identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=notification ack identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=notification reconcile identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=pin identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=pin project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=prune identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=prune project identity=removed address=released topology=removed desired-state=removed runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=prune snapshot identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=quit identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=unchanged cardinality=zero-or-more domain-effect=null
+route=reconcile identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=reconcile resources identity=unchanged|created address=unchanged|allocated topology=unchanged|established|reparented desired-state=unchanged|created|replaced runtime=unchanged|materialized focus=unchanged cardinality=exact-one|zero-or-more domain-effect=null
+route=reconcile registry identity=unchanged|created|removed|replaced address=unchanged|allocated|renamed|released topology=unchanged|established|reparented|removed|replaced desired-state=unchanged|created|removed|replaced runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=rebind identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=rebind project identity=unchanged address=unchanged topology=unchanged desired-state=replaced runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=rename identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=rename project identity=unchanged address=renamed topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=rename window identity=unchanged address=renamed topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=rename pane identity=unchanged address=renamed topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=rename agent identity=unchanged address=renamed topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=exact-one domain-effect=null
+route=resources identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=restore identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=restore snapshot identity=unchanged|created|reused|removed|replaced address=unchanged|allocated|released topology=unchanged|established|removed|replaced desired-state=unchanged|created|removed|replaced runtime=unchanged|materialized focus=unchanged|moved-current-client|attached-caller cardinality=unchanged|one-or-more domain-effect=null
+route=runtime identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=runtime sessions identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged|materialized|already-live|stopped focus=unchanged|moved-current-client|attached-caller cardinality=unchanged|exact-one domain-effect=null
+route=runtime diagnostics identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged|materialized|already-live focus=unchanged|moved-current-client|attached-caller cardinality=unchanged|exact-one domain-effect=null
+route=runtime attach identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=attached-caller cardinality=exact-one domain-effect=null
+route=runtime stop identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=unchanged cardinality=one-or-more domain-effect=null
+route=runtime tag identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=zero-or-more domain-effect=null
+route=runtime prune identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=stopped focus=unchanged cardinality=zero-or-more domain-effect=null
+route=settings identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=setup identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=setup terminal identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=shell identity=unchanged|created|reused address=unchanged|allocated topology=unchanged|established desired-state=unchanged|created|reused runtime=materialized|already-live focus=attached-caller cardinality=exact-one|one-or-more domain-effect=null
+route=switch identity=unchanged|created|reused|replaced address=unchanged|allocated|released topology=unchanged|established|replaced desired-state=unchanged|created|reused|replaced runtime=unchanged|materialized|already-live|stopped focus=unchanged|moved-current-client|attached-caller cardinality=unchanged|exact-one domain-effect=null
+route=update identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=update status identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=update check identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=update apply identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=welcome identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=window identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=window record identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=window recent identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged|materialized|already-live focus=unchanged|moved-current-client|attached-caller cardinality=unchanged|exact-one domain-effect=null
+route=help identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=version identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux hook-trust-prompt identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux popup-preview identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux popup-switch identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux popup-sessions identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux popup-toggle identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux rebalance-panes identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux rename-pane identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux print-config identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux print-app-config identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux install identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux install-app identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux apply identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal tmux autosave-session-state identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal status identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal status git identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal status project identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal status usage identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal status notify identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal status resources identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal statusbar identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal statusbar click identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged|moved-current-client cardinality=unchanged|exact-one domain-effect=null
+route=internal statusbar usage-refresh identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal preview identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal preview cycle-pane identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal preview cycle-window identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal preview select identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal session-popup identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal session-popup preview identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal session-popup open identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=already-live focus=moved-current-client|attached-caller cardinality=exact-one domain-effect=null
+route=internal session-popup cycle-pane identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal session-popup cycle-window identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal agent-pane identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal agent-pane launch-default identity=unchanged|created address=unchanged|allocated topology=unchanged|established desired-state=unchanged|created runtime=unchanged|materialized focus=unchanged cardinality=unchanged|exact-one domain-effect=null
+route=internal agent-pane picker identity=unchanged|created|reused address=unchanged|allocated topology=unchanged|established desired-state=unchanged|created runtime=unchanged|materialized focus=unchanged cardinality=unchanged|exact-one domain-effect=null
+route=internal agent-hook identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal agent-hook ingest identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal agent-hook watch-title identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal focus identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged|moved-current-client cardinality=exact-one domain-effect=null
+route=internal key-broker identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal popup-wait-key identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal supervise identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=internal activation-exec identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
