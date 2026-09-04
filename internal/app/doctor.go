@@ -22,6 +22,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgeneration"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgenerationhost"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 	"github.com/crevissepartners/projmux/internal/version"
@@ -48,6 +49,10 @@ type doctorCommand struct {
 	// state directory as a side effect.
 	readRegistry    func() (coremetadata.Registry, error)
 	codexGeneration func(coremetadata.Registry) *doctorCodexGenerationPool
+	// codexPayloadFreeCapability is the same immutable record seam consumed by
+	// the create planner. Doctor only projects it; it never runs qualification or
+	// mutates a provider lifecycle.
+	codexPayloadFreeCapability func() codexgeneration.Record
 }
 
 func newDoctorCommand() *doctorCommand {
@@ -152,6 +157,7 @@ type doctorReport struct {
 	CodexBroker          *codexBrokerDiagnostic               `json:"codex_broker,omitempty"`
 	CodexAuthority       *codexAuthorityCensus                `json:"codex_authority,omitempty"`
 	CodexGenerationPool  *doctorCodexGenerationPool           `json:"codex_generation_pool,omitempty"`
+	CodexPayloadFree     *codexgeneration.Projection          `json:"codex_payload_free_capability,omitempty"`
 	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    string                               `json:"session_state_prune"`
 	Runtime              []doctorFinding                      `json:"runtime"`
@@ -277,6 +283,8 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 		report.Dependencies = c.evaluate()
 	}
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
+		projection := projectCodexPayloadFree(c.codexPayloadFreeCapability)
+		report.CodexPayloadFree = &projection
 		report.AINotifyIntegrations = c.evaluateAINotifyIntegrations()
 		if c.appServerHealth != nil {
 			health := c.appServerHealth(trigger, codexHookFallbackAvailable(report.AINotifyIntegrations))
@@ -427,6 +435,7 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 		writeDoctorCodexBrokerText(&buf, report.CodexBroker)
 		writeDoctorCodexAuthorityText(&buf, report.CodexAuthority)
 		writeDoctorCodexGenerationText(&buf, report.CodexGenerationPool)
+		writeDoctorCodexPayloadFreeText(&buf, report.CodexPayloadFree)
 	}
 	if section == doctorSectionAll || section == doctorSectionSessionState {
 		writeDoctorSessionStateText(&buf, report, verbose)
@@ -439,6 +448,16 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 	}
 	_, err := w.Write(buf.Bytes())
 	return err
+}
+
+func writeDoctorCodexPayloadFreeText(buf *bytes.Buffer, capability *codexgeneration.Projection) {
+	if capability == nil {
+		return
+	}
+	buf.WriteString("\nCodex payload-free capability\n")
+	fmt.Fprintf(buf, "  Cache key: %s; durable-zero-turn-resume: %s; remote-new-session: %s\n",
+		capability.CacheKey, capability.DurableResume, capability.RemoteNew)
+	fmt.Fprintf(buf, "  Create route: %s; reason: %s\n", capability.CreateRoute, capability.Reason)
 }
 
 func writeDoctorAppServerText(buf *bytes.Buffer, health *codexappserver.Health) {
@@ -798,6 +817,7 @@ type doctorJSONReport struct {
 	CodexBroker          *codexBrokerDiagnostic                `json:"codex_broker,omitempty"`
 	CodexAuthority       *codexAuthorityCensus                 `json:"codex_authority,omitempty"`
 	CodexGenerationPool  *doctorCodexGenerationPool            `json:"codex_generation_pool,omitempty"`
+	CodexPayloadFree     *codexgeneration.Projection           `json:"codex_payload_free_capability,omitempty"`
 	SessionStateResume   *[]doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    *string                               `json:"session_state_prune,omitempty"`
 	Runtime              *[]doctorFinding                      `json:"runtime,omitempty"`
@@ -817,6 +837,7 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 		out.CodexBroker = report.CodexBroker
 		out.CodexAuthority = report.CodexAuthority
 		out.CodexGenerationPool = report.CodexGenerationPool
+		out.CodexPayloadFree = report.CodexPayloadFree
 	}
 	if (section == doctorSectionAll && len(report.SessionStateResume) > 0) || section == doctorSectionSessionState {
 		out.SessionStateResume = &report.SessionStateResume

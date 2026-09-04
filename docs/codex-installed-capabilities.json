@@ -13,8 +13,8 @@
         "loaded": "rpc-thread-loaded-list",
         "runtime": "rpc-thread-read"
       },
-      "result": "supported",
-      "reason": "live-pane-attached",
+      "result": "infra-error",
+      "reason": "evidence-incomplete",
       "evidence": {
         "endpoint_ready": true,
         "thread_created_without_turn": true,

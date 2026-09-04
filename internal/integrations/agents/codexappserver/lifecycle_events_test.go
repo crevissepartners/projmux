@@ -124,7 +124,7 @@ func TestReadLifecycleSnapshotKeepsOnlyLatestIdentityAndClosedState(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := LifecycleSnapshot{ThreadID: "thread-1", ThreadState: ThreadStateWaitingOnUserInput, TurnID: "turn-current", TurnState: TurnStateInProgress}
+	want := LifecycleSnapshot{ThreadID: "thread-1", ThreadState: ThreadStateWaitingOnUserInput, TurnCount: 2, TurnID: "turn-current", TurnState: TurnStateInProgress}
 	if got != want {
 		t.Fatalf("snapshot = %#v, want %#v", got, want)
 	}

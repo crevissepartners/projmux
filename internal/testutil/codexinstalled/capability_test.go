@@ -153,8 +153,8 @@ func TestCheckedInCapabilityLedgerMatchesCurrentInstalledGate(t *testing.T) {
 	}
 	result := ledger.Capabilities[0]
 	wantVersions := VersionTuple{CLI: "0.152.0", Managed: "0.152.0", AppServer: "0.152.0"}
-	if result.Versions != wantVersions || result.Result != CapabilitySupported ||
-		result.Reason != CapabilityReasonLivePaneAttached ||
+	if result.Versions != wantVersions || result.Result != CapabilityInfraError ||
+		result.Reason != CapabilityReasonEvidenceIncomplete ||
 		result.LastObserved.Probe != "TestInstalledIsolatedPreTurnBootstrapSmoke" {
 		t.Fatalf("checked-in current capability gate = %+v", result)
 	}

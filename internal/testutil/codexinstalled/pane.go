@@ -11,7 +11,10 @@ import (
 	"strings"
 )
 
-const capabilityTmuxSocket = "projmux-installed-capability"
+const (
+	capabilityTmuxSocket          = "projmux-installed-capability"
+	capabilityTmuxSocketPathLimit = 103
+)
 
 // IsolatedPane is the exact tmux Pane used as carrier evidence for one
 // installed capability probe. It owns its server below the fixture root and
@@ -30,6 +33,9 @@ func (fixture *Fixture) StartTurnFreeAttachPane(ctx context.Context, threadID st
 		return nil, fmt.Errorf("turn-free attach Pane requires thread id")
 	}
 	tmpdir := filepath.Join(fixture.Root, "tmux")
+	if err := validateCapabilityTMUXSocketRoot(tmpdir); err != nil {
+		return nil, err
+	}
 	if err := os.MkdirAll(tmpdir, 0o700); err != nil {
 		return nil, fmt.Errorf("create capability tmux root: %w", err)
 	}
@@ -72,6 +78,90 @@ func (fixture *Fixture) StartTurnFreeAttachPane(ctx context.Context, threadID st
 		return nil, fmt.Errorf("turn-free attach returned an invalid Pane id")
 	}
 	return pane, nil
+}
+
+// StartRemoteNewPane starts the exact RoleTUI binary against one private
+// app-server route without a prompt, resume id, or ambient tmux inheritance.
+// The installed probe never sends input and can therefore establish only
+// content-free liveness/loaded evidence, never remote-new support. A separate
+// externally supplied first-real-input observation must satisfy the product
+// reducer before any record can declare support.
+func (fixture *Fixture) StartRemoteNewPane(ctx context.Context, binary, endpoint string) (*IsolatedPane, error) {
+	binary, endpoint = filepath.Clean(strings.TrimSpace(binary)), filepath.Clean(strings.TrimSpace(endpoint))
+	info, err := os.Stat(binary)
+	if err != nil || !filepath.IsAbs(binary) || !info.Mode().IsRegular() || info.Mode()&0o111 == 0 {
+		return nil, fmt.Errorf("remote-new RoleTUI must be an exact executable")
+	}
+	if !pathWithin(fixture.Root, endpoint) {
+		return nil, fmt.Errorf("remote-new endpoint escaped its fixture root")
+	}
+	tmpdir := filepath.Join(fixture.Root, "tmux")
+	if err := validateCapabilityTMUXSocketRoot(tmpdir); err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(tmpdir, 0o700); err != nil {
+		return nil, fmt.Errorf("create remote-new tmux root: %w", err)
+	}
+	environment := tmuxCapabilityEnvironment(os.Environ(), fixture.CodexHome, tmpdir)
+	pane := &IsolatedPane{tmpdir: tmpdir, environment: environment}
+	keeper, err := pane.run(ctx, "-L", capabilityTmuxSocket, "-f", "/dev/null", "new-session", "-d",
+		"-s", "installed-capability-keeper", "-P", "-F", "#{pane_id}", "tail", "-f", "/dev/null")
+	if err != nil {
+		_ = os.RemoveAll(tmpdir)
+		return nil, fmt.Errorf("start remote-new tmux keeper: %w", err)
+	}
+	if strings.TrimSpace(string(keeper)) == "" {
+		_, _ = pane.run(context.Background(), "-L", capabilityTmuxSocket, "kill-server")
+		_ = os.RemoveAll(tmpdir)
+		return nil, fmt.Errorf("remote-new tmux keeper returned no Pane")
+	}
+	socket, err := pane.run(ctx, "-L", capabilityTmuxSocket, "display-message", "-p", "#{socket_path}")
+	if err != nil {
+		_ = pane.Close(context.Background())
+		return nil, fmt.Errorf("observe remote-new tmux socket: %w", err)
+	}
+	pane.socketPath = filepath.Clean(strings.TrimSpace(string(socket)))
+	if !pathWithin(pane.tmpdir, pane.socketPath) {
+		_ = pane.Close(context.Background())
+		return nil, fmt.Errorf("remote-new tmux socket escaped its fixture root")
+	}
+	if _, err := pane.run(ctx, "-L", capabilityTmuxSocket, "set-option", "-g", "remain-on-exit", "on"); err != nil {
+		_ = pane.Close(context.Background())
+		return nil, fmt.Errorf("enable remote-new Pane exit evidence: %w", err)
+	}
+	created, err := pane.run(ctx, remoteNewTMUXArgs(fixture.Workspace, binary, endpoint)...)
+	if err != nil {
+		_ = pane.Close(context.Background())
+		return nil, fmt.Errorf("start remote-new Pane: %w", err)
+	}
+	pane.paneID = strings.TrimSpace(string(created))
+	if !strings.HasPrefix(pane.paneID, "%") {
+		_ = pane.Close(context.Background())
+		return nil, fmt.Errorf("remote-new returned an invalid Pane id")
+	}
+	return pane, nil
+}
+
+// remoteNewTMUXArgs is intentionally a complete argv allowlist. In particular,
+// there is no resume operand, initial prompt, or send-keys follow-up hidden in
+// the installed conformance route.
+func remoteNewTMUXArgs(workspace, binary, endpoint string) []string {
+	return []string{
+		"-L", capabilityTmuxSocket, "new-session", "-d",
+		"-s", "installed-capability-remote-new", "-c", workspace,
+		"-P", "-F", "#{pane_id}", binary, "--remote", "unix://" + endpoint,
+	}
+}
+
+// validateCapabilityTMUXSocketRoot reserves the terminating NUL in the
+// smallest supported sockaddr_un.sun_path. It reports only a byte count, never
+// the private fixture path.
+func validateCapabilityTMUXSocketRoot(tmpdir string) error {
+	socket := filepath.Join(tmpdir, "tmux-"+strconv.Itoa(os.Getuid()), capabilityTmuxSocket)
+	if len(socket) > capabilityTmuxSocketPathLimit {
+		return fmt.Errorf("private tmux socket path length %d exceeds portable limit %d", len(socket), capabilityTmuxSocketPathLimit)
+	}
+	return nil
 }
 
 func (pane *IsolatedPane) ID() string { return pane.paneID }

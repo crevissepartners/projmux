@@ -168,6 +168,16 @@ generation-pool qualification below may still exercise a payload-free thread
 directly as a provider capability probe; that lower-layer negative evidence is
 not functional `projmux create codex` success.
 
+Payload-free executable qualification is also distinct from pool health. The
+`internal/integrations/agents/codexgeneration` record keys RoleTUI and
+RoleAppServer digests, protocol, bound private socket route, state domain, and
+platform/arch, then reduces stored zero-turn resume separately from remote-new
+first-real-input identity. A healthy Current generation, successful
+`thread/read`, or living TUI does not promote either predicate. Doctor and the
+create planner share that record projection, but Phase 1 keeps every projected
+create route on the Phase-0 plain fallback. Generation admission, drain,
+handover, lease lifecycle, and first-turn production binding are unchanged.
+
 ## Phase 1 lifecycle projection
 
 `codexgeneration.ProjectLifecycle` is the only interaction-plus-generation
