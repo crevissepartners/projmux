@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
 
@@ -1974,5 +1976,601 @@ func TestCodexRouteReadAuthorityIsUnchangedByTheConcurrentScan(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// providerRowsDiscovery builds one provider result with an exact row count and
+// distinct ids, so a settlement table can state "Claude 143" and "Antigravity
+// 4" as the observed footer counts rather than as a shape.
+func providerRowsDiscovery(provider, source string, rows int, modified time.Time) aisessions.ResumeSummaryDiscovery {
+	var discovery aisessions.ResumeSummaryDiscovery
+	for i := range rows {
+		row := summaryDiscovery(provider, fmt.Sprintf("%s-exact-%03d", provider, i), source, modified.Add(time.Duration(i)*time.Second))
+		discovery.Summaries = append(discovery.Summaries, row.Summaries...)
+		discovery.DetailRefs = append(discovery.DetailRefs, row.DetailRefs...)
+	}
+	return discovery
+}
+
+func snapshotProviderElapsed(controller *aiResumeLiveController, provider string) (time.Duration, bool) {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	elapsed, ok := controller.providerElapsed[provider]
+	return elapsed, ok
+}
+
+// awaitProviderElapsed blocks until one provider has terminalized and written
+// its own witness. The witness is recorded at that provider's terminal rather
+// than at the frame's, so waiting on it pins the virtual clock to the exact
+// instant that provider settled.
+func awaitProviderElapsed(t *testing.T, controller *aiResumeLiveController, provider string) time.Duration {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if elapsed, ok := snapshotProviderElapsed(controller, provider); ok {
+			return elapsed
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s never terminalized", provider)
+		}
+		runtime.Gosched()
+	}
+}
+
+// siblingSettlementFixture is the sibling half of every Codex settlement arm:
+// Claude reports 143 rows and Antigravity 4, exactly as the observed picker
+// footer does, so any Codex outcome that moved them would change these counts.
+const (
+	claudeSettlementRows      = 143
+	antigravitySettlementRows = 4
+)
+
+func siblingSettlementDiscovery(provider string) aisessions.ResumeSummaryDiscovery {
+	switch provider {
+	case aiModeClaude:
+		return providerRowsDiscovery(aiModeClaude, aisessions.SourceClaudeTranscript, claudeSettlementRows, time.Unix(20, 0))
+	default:
+		// Antigravity holds the newest rows, so the one global cap keeps all
+		// four of them and fills the rest of the visible window from Claude.
+		return providerRowsDiscovery(aiModeAntigravity, aisessions.SourceAntigravityMetadata, antigravitySettlementRows, time.Unix(1000, 0))
+	}
+}
+
+func settlementBudgets() aiResumeBudgets {
+	budgets := defaultAIResumeBudgets()
+	budgets.route, budgets.native, budgets.fallback, budgets.handoff =
+		60*time.Millisecond, 20*time.Millisecond, 40*time.Millisecond, 10*time.Millisecond
+	return budgets
+}
+
+// TestCodexSettlementLeavesSiblingProviderStatusAndCountUnchanged is C-4
+// Guarantee for the sibling half: across the whole Codex slow/fallback/failure
+// matrix, Claude 143 and Antigravity 4 keep the same status, the same count,
+// and the same rows.
+func TestCodexSettlementLeavesSiblingProviderStatusAndCountUnchanged(t *testing.T) {
+	route := nativeTestRoute("generation-settlement", coremetadata.CodexGenerationCurrent)
+	nativeRows := nativeSummaryDiscovery("codex-native-settlement", time.Unix(30, 0), route)
+	rollout := rolloutSummaryDiscovery("codex-rollout-settlement", time.Unix(15, 0))
+	routeReadFailure := errors.New("route read failed")
+	tests := []struct {
+		name       string
+		routes     []codexNativeEndpointRoute
+		routeErr   error
+		codex      func(opts aisessions.ResumeSummaryOptions) (aisessions.ResumeSummaryDiscovery, error)
+		blockCodex bool
+		wantCodex  aiResumeProviderProjection
+	}{
+		{
+			name:   "native rows",
+			routes: []codexNativeEndpointRoute{route},
+			codex: func(aisessions.ResumeSummaryOptions) (aisessions.ResumeSummaryDiscovery, error) {
+				return nativeRows, nil
+			},
+			wantCodex: aiResumeProviderProjection{state: aiResumeProviderCount, count: 1},
+		},
+		{
+			name:   "route read declines and the scan is the source",
+			routes: []codexNativeEndpointRoute{route},
+			codex: func(opts aisessions.ResumeSummaryOptions) (aisessions.ResumeSummaryDiscovery, error) {
+				if opts.FallbackBudget == codexRouteReadRolloutBudget {
+					return aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceFallback}}, nil
+				}
+				return rollout, nil
+			},
+			wantCodex: aiResumeProviderProjection{state: aiResumeProviderCount, count: 1},
+		},
+		{
+			name:     "route inventory unavailable",
+			routeErr: errFakeNativeUnavailable,
+			codex: func(aisessions.ResumeSummaryOptions) (aisessions.ResumeSummaryDiscovery, error) {
+				return rollout, nil
+			},
+			wantCodex: aiResumeProviderProjection{state: aiResumeProviderCount, count: 1},
+		},
+		{
+			name:   "every route read fails",
+			routes: []codexNativeEndpointRoute{route},
+			codex: func(opts aisessions.ResumeSummaryOptions) (aisessions.ResumeSummaryDiscovery, error) {
+				if opts.FallbackBudget == codexRouteReadRolloutBudget {
+					return aisessions.ResumeSummaryDiscovery{}, routeReadFailure
+				}
+				return rollout, nil
+			},
+			wantCodex: aiResumeProviderProjection{state: aiResumeProviderCount, count: 1},
+		},
+		{
+			name:   "genuine failure with nothing found",
+			routes: []codexNativeEndpointRoute{route},
+			codex: func(opts aisessions.ResumeSummaryOptions) (aisessions.ResumeSummaryDiscovery, error) {
+				if opts.FallbackBudget == codexRouteReadRolloutBudget {
+					return aisessions.ResumeSummaryDiscovery{}, routeReadFailure
+				}
+				return aisessions.ResumeSummaryDiscovery{}, nil
+			},
+			wantCodex: aiResumeProviderProjection{state: aiResumeProviderSearchFailed},
+		},
+		{
+			name:       "codex never returns inside its own envelope",
+			routes:     []codexNativeEndpointRoute{route},
+			blockCodex: true,
+			wantCodex:  aiResumeProviderProjection{state: aiResumeProviderSearchFailed},
+		},
+	}
+	var wantSiblingHash [32]byte
+	for index, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			blocked := make(chan struct{})
+			cmd := testAICommand(t.TempDir())
+			cmd.codexNative = &budgetNativeThreadController{routes: tc.routes, err: tc.routeErr}
+			cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, opts aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+				if provider != aiModeCodex {
+					return siblingSettlementDiscovery(provider), nil
+				}
+				if tc.blockCodex {
+					<-blocked
+					return aisessions.ResumeSummaryDiscovery{}, context.Canceled
+				}
+				return tc.codex(opts)
+			}
+			controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 500)
+			controller.budgets = settlementBudgets()
+			controller.populationTimeout = 60 * time.Millisecond
+			defer func() {
+				close(blocked)
+				controller.close()
+			}()
+			entries := controller.initialEntries()
+			footer, _ := controller.footer()
+
+			if got := settledProviderState(controller, aiModeCodex); got != tc.wantCodex {
+				t.Fatalf("codex projection = %+v want %+v", got, tc.wantCodex)
+			}
+			for provider, want := range map[string]int{aiModeClaude: claudeSettlementRows, aiModeAntigravity: antigravitySettlementRows} {
+				got := settledProviderState(controller, provider)
+				if got.state != aiResumeProviderCount || got.count != want {
+					t.Fatalf("%s projection under codex %q = %+v want %d found", provider, tc.name, got, want)
+				}
+			}
+			if got := resumeSummaryProviderStatus(footer, aiModeClaude); got != "143 found" {
+				t.Fatalf("claude footer under codex %q = %q", tc.name, got)
+			}
+			if got := resumeSummaryProviderStatus(footer, aiModeAntigravity); got != "4 found" {
+				t.Fatalf("antigravity footer under codex %q = %q", tc.name, got)
+			}
+			// The sibling rows themselves are identical in every arm, so no Codex
+			// outcome reordered, dropped, or replaced a sibling row either.
+			var siblings []intpickercompat.Entry
+			for _, entry := range entries {
+				if strings.HasPrefix(entry.Value, "resume\t"+aiModeClaude+"\t") || strings.HasPrefix(entry.Value, "resume\t"+aiModeAntigravity+"\t") {
+					siblings = append(siblings, entry)
+				}
+			}
+			// Codex rows are older than every sibling row, so the one global cap
+			// fills the visible window from the siblings in every arm.
+			if len(siblings) != hooks.AIResumePickerLimitMax {
+				t.Fatalf("sibling rows under codex %q = %d", tc.name, len(siblings))
+			}
+			hash := pickerEntryHash(siblings)
+			if index == 0 {
+				wantSiblingHash = hash
+			} else if hash != wantSiblingHash {
+				t.Fatalf("codex %q changed the sibling row set: got=%x want=%x", tc.name, hash, wantSiblingHash)
+			}
+		})
+	}
+
+	// Whether Codex is configured at all is a Codex fact. It used to move the
+	// instant every sibling terminalized, because one shared envelope stretched
+	// to the longest declared provider bound; now each sibling keeps its own.
+	t.Run("codex configuration does not move the claude terminal", func(t *testing.T) {
+		for _, codexEnabled := range []bool{true, false} {
+			home := t.TempDir()
+			agents := []config.AIAgentProvider{config.AIAgentClaude, config.AIAgentAntigravity}
+			if codexEnabled {
+				agents = append(agents, config.AIAgentCodex)
+			}
+			if err := config.SaveAIEnabledAgentsFile(filepath.Join(home, ".config", "projmux", config.AIEnabledAgentsFileName), agents); err != nil {
+				t.Fatal(err)
+			}
+			blocked := make(chan struct{})
+			cmd := testAICommand(home)
+			cmd.codexNative = &budgetNativeThreadController{routes: []codexNativeEndpointRoute{route}}
+			cmd.discoverResumeSummaryProvider = func(ctx context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+				switch provider {
+				case aiModeCodex:
+					<-blocked
+					return aisessions.ResumeSummaryDiscovery{}, context.Canceled
+				case aiModeClaude:
+					// Claude answers 200ms after its own start: well past its own
+					// 20ms bound and the handoff after it, yet comfortably inside
+					// the 430ms envelope the old shared settlement would have
+					// granted it whenever Codex was configured.
+					_ = ctx
+					time.Sleep(200 * time.Millisecond)
+					return siblingSettlementDiscovery(aiModeClaude), nil
+				default:
+					return siblingSettlementDiscovery(provider), nil
+				}
+			}
+			controller := newAIResumeLiveController(cmd, "/work", home, 0, 500)
+			budgets := settlementBudgets()
+			budgets.route = 400 * time.Millisecond
+			controller.budgets = budgets
+			controller.populationTimeout = 20 * time.Millisecond
+			controller.initialEntries()
+			claude := settledProviderState(controller, aiModeClaude)
+			antigravity := settledProviderState(controller, aiModeAntigravity)
+			close(blocked)
+			controller.close()
+			if claude.state != aiResumeProviderSearchFailed {
+				t.Fatalf("codex enabled=%t moved the claude terminal: %+v", codexEnabled, claude)
+			}
+			if antigravity.state != aiResumeProviderCount || antigravity.count != antigravitySettlementRows {
+				t.Fatalf("codex enabled=%t moved the antigravity result: %+v", codexEnabled, antigravity)
+			}
+		}
+	})
+}
+
+// TestCodexFallbackRowsProjectFoundInsteadOfSearchFailed is C-3 Failure and
+// C-4 Failure: rows this invocation already found are published as a count,
+// and search_failed is reserved for a Codex terminal that has none.
+func TestCodexFallbackRowsProjectFoundInsteadOfSearchFailed(t *testing.T) {
+	route := nativeTestRoute("generation-fallback-found", coremetadata.CodexGenerationCurrent)
+	rollout := providerRowsDiscovery(aiModeCodex, aisessions.SourceCodexRollout, 3, time.Unix(15, 0))
+	rollout.Codex = aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceFallback, Confidence: aisessions.CatalogConfidenceMedium}
+	readFailure := errors.New("native read failed")
+	tests := []struct {
+		name      string
+		routes    []codexNativeEndpointRoute
+		routeErr  error
+		scan      aisessions.ResumeSummaryDiscovery
+		wantState aiResumeProviderState
+		wantCount int
+		wantRows  int
+	}{
+		{name: "route reads fail while the scan holds rows", routes: []codexNativeEndpointRoute{route}, scan: rollout, wantState: aiResumeProviderCount, wantCount: 3, wantRows: 3},
+		{name: "route inventory unavailable while the scan holds rows", routeErr: errFakeNativeUnavailable, scan: rollout, wantState: aiResumeProviderCount, wantCount: 3, wantRows: 3},
+		{name: "route reads fail and the scan found nothing", routes: []codexNativeEndpointRoute{route}, wantState: aiResumeProviderSearchFailed},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := testAICommand(t.TempDir())
+			cmd.codexNative = &budgetNativeThreadController{routes: tc.routes, err: tc.routeErr}
+			cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, opts aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+				if provider != aiModeCodex {
+					return aisessions.ResumeSummaryDiscovery{}, nil
+				}
+				if opts.FallbackBudget == codexRouteReadRolloutBudget {
+					return aisessions.ResumeSummaryDiscovery{}, readFailure
+				}
+				return tc.scan, nil
+			}
+			controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
+			defer controller.close()
+			entries := controller.initialEntries()
+			footer, _ := controller.footer()
+
+			got := settledProviderState(controller, aiModeCodex)
+			if got.state != tc.wantState || got.count != tc.wantCount {
+				t.Fatalf("codex projection = %+v want %s/%d", got, tc.wantState, tc.wantCount)
+			}
+			wantStatus := "search failed"
+			if tc.wantState == aiResumeProviderCount {
+				wantStatus = fmt.Sprintf("%d found", tc.wantCount)
+			}
+			if status := resumeSummaryProviderStatus(footer, aiModeCodex); status != wantStatus {
+				t.Fatalf("codex footer = %q want %q", status, wantStatus)
+			}
+			published := 0
+			for _, summary := range controller.snapshotSummaries() {
+				if summary.Provider != aiModeCodex {
+					continue
+				}
+				published++
+				if summary.Source != aisessions.SourceCodexRollout {
+					t.Fatalf("published codex row lost its rollout source: %#v", summary)
+				}
+				if summary.StateDomainID != "" || summary.EndpointGenerationID != "" || summary.GenerationState != "" {
+					t.Fatalf("rollout row gained a generation axis: %#v", summary)
+				}
+			}
+			if published != tc.wantRows {
+				t.Fatalf("published codex rows = %d want %d; entries=%d", published, tc.wantRows, len(entries))
+			}
+		})
+	}
+
+	// A partial that settles on its own cancellation still carries rows, so it
+	// is a count too: the envelope expiring is not by itself a search failure.
+	t.Run("cancellation-settled partial keeps its rows", func(t *testing.T) {
+		cmd := testAICommand(t.TempDir())
+		cmd.discoverResumeSummaryProvider = func(ctx context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+			if provider != aiModeCodex {
+				return aisessions.ResumeSummaryDiscovery{}, nil
+			}
+			<-ctx.Done()
+			return rollout, ctx.Err()
+		}
+		controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
+		controller.populationTimeout = 10 * time.Millisecond
+		defer controller.close()
+		controller.initialEntries()
+		footer, _ := controller.footer()
+
+		if got := settledProviderState(controller, aiModeCodex); got.state != aiResumeProviderCount || got.count != 3 {
+			t.Fatalf("cancellation-settled codex projection = %+v want 3 found", got)
+		}
+		if status := resumeSummaryProviderStatus(footer, aiModeCodex); status != "3 found" {
+			t.Fatalf("cancellation-settled codex footer = %q", status)
+		}
+		published := 0
+		for _, summary := range controller.snapshotSummaries() {
+			if summary.Provider == aiModeCodex {
+				published++
+			}
+		}
+		if published != 3 {
+			t.Fatalf("cancellation-settled codex rows published = %d want 3", published)
+		}
+	})
+}
+
+// TestProviderElapsedIsMeasuredOnEachProviderOwnClock is C-4 Scope: every
+// provider's elapsed runs from that provider's own start to that provider's
+// own terminal, so a 1.97s Codex route is never added to a sibling that
+// already settled.
+func TestProviderElapsedIsMeasuredOnEachProviderOwnClock(t *testing.T) {
+	route := nativeTestRoute("generation-elapsed", coremetadata.CodexGenerationCurrent)
+	clock := newVirtualResumeBudgetClock()
+	routeCtx := make(chan context.Context, 1)
+	routeRelease := make(chan struct{})
+	native := &budgetNativeThreadController{
+		routes: []codexNativeEndpointRoute{route},
+		observed: func(ctx context.Context) {
+			routeCtx <- ctx
+			<-routeRelease
+		},
+	}
+	cmd := testAICommand(t.TempDir())
+	cmd.codexNative = native
+	started := make(chan string, 3)
+	releases := map[string]chan struct{}{aiModeClaude: make(chan struct{}), aiModeAntigravity: make(chan struct{})}
+	cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+		if provider == aiModeCodex {
+			return nativeSummaryDiscovery("codex-elapsed-exact", time.Unix(30, 0), route), nil
+		}
+		started <- provider
+		<-releases[provider]
+		return summaryDiscovery(provider, provider+"-elapsed-exact", provider+"-source", time.Unix(20, 0)), nil
+	}
+	controller := virtualBudgetController(cmd, clock, t.TempDir(), 0, 20)
+	defer controller.close()
+	entries := make(chan []intpickercompat.Entry, 1)
+	go func() { entries <- controller.initialEntries() }()
+
+	observedRoute := <-routeCtx
+	for range 2 {
+		<-started
+	}
+
+	// Claude terminalizes 120ms after its own start, while the Codex route is
+	// still inside its own bound.
+	clock.advance(120 * time.Millisecond)
+	close(releases[aiModeClaude])
+	if got := awaitProviderElapsed(t, controller, aiModeClaude); got != 120*time.Millisecond {
+		t.Fatalf("claude elapsed = %s want 120ms", got)
+	}
+	// Antigravity terminalizes on its own clock too: 200ms from its own start.
+	clock.advance(80 * time.Millisecond)
+	close(releases[aiModeAntigravity])
+	if got := awaitProviderElapsed(t, controller, aiModeAntigravity); got != 200*time.Millisecond {
+		t.Fatalf("antigravity elapsed = %s want 200ms", got)
+	}
+	// The observed 1.97s route now resolves. It belongs to Codex alone.
+	clock.advance(1970*time.Millisecond - 200*time.Millisecond)
+	if err := observedRoute.Err(); err != nil {
+		t.Fatalf("route cancelled inside its own 2.5s bound: %v", err)
+	}
+	close(routeRelease)
+	<-entries
+	codexElapsed := awaitProviderElapsed(t, controller, aiModeCodex)
+	if codexElapsed < 1970*time.Millisecond {
+		t.Fatalf("codex elapsed = %s want at least its 1.97s route", codexElapsed)
+	}
+	if got, _ := snapshotProviderElapsed(controller, aiModeClaude); got != 120*time.Millisecond {
+		t.Fatalf("claude elapsed absorbed codex route time: %s", got)
+	}
+	if got, _ := snapshotProviderElapsed(controller, aiModeAntigravity); got != 200*time.Millisecond {
+		t.Fatalf("antigravity elapsed absorbed codex route time: %s", got)
+	}
+	for _, provider := range []string{aiModeClaude, aiModeAntigravity, aiModeCodex} {
+		if got := settledProviderState(controller, provider); got.state != aiResumeProviderCount || got.count != 1 {
+			t.Fatalf("%s projection = %+v", provider, got)
+		}
+	}
+	// Each provider was granted its own declared bound: the population budget
+	// for the siblings, the declared provider terminal for Codex.
+	granted := clock.budgets()
+	envelopes := 0
+	for _, budget := range granted {
+		if budget == aiResumeSummaryPopulationBudget {
+			envelopes++
+		}
+	}
+	if envelopes != 2 || !containsBudget(granted, defaultAIResumeBudgets().providerTerminal()) {
+		t.Fatalf("granted provider envelopes %v want two population budgets and one provider terminal", granted)
+	}
+	// The witness stays internal: it never reaches a row value or the footer.
+	footer, _ := controller.footer()
+	for _, forbidden := range []string{"120ms", "200ms", "1.97s", codexElapsed.String()} {
+		if strings.Contains(footer, forbidden) {
+			t.Fatalf("provider elapsed leaked into the footer: %q", footer)
+		}
+	}
+}
+
+// TestGlobalCapAppliesOnceAndProviderFooterCountsStayPreCap is C-4 Guarantee
+// for the aggregation half: one global dedupe/sort/cap over the settled rows
+// of all three providers, with provider counts fixed before it runs.
+func TestGlobalCapAppliesOnceAndProviderFooterCountsStayPreCap(t *testing.T) {
+	cmd := testAICommand(t.TempDir())
+	cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+		switch provider {
+		case aiModeCodex:
+			return providerRowsDiscovery(aiModeCodex, aisessions.SourceCodexRollout, 3, time.Unix(300, 0)), nil
+		case aiModeClaude:
+			return providerRowsDiscovery(aiModeClaude, aisessions.SourceClaudeTranscript, 2, time.Unix(200, 0)), nil
+		default:
+			return providerRowsDiscovery(aiModeAntigravity, aisessions.SourceAntigravityMetadata, 1, time.Unix(100, 0)), nil
+		}
+	}
+	controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 2)
+	defer controller.close()
+	entries := controller.initialEntries()
+	footer, moreNotLoaded := controller.footer()
+
+	for provider, want := range map[string]string{aiModeCodex: "3 found", aiModeClaude: "2 found", aiModeAntigravity: "1 found"} {
+		if got := resumeSummaryProviderStatus(footer, provider); got != want {
+			t.Fatalf("%s footer count = %q want the pre-cap %q", provider, got, want)
+		}
+	}
+	// The cap ran once over the union: the two globally newest rows survive,
+	// and they are Codex rows because Codex owns the newest timestamps.
+	visible := controller.snapshotSummaries()
+	if len(visible) != 2 {
+		t.Fatalf("global cap left %d rows, want the declared limit of 2", len(visible))
+	}
+	newest := providerRowsDiscovery(aiModeCodex, aisessions.SourceCodexRollout, 3, time.Unix(300, 0)).Summaries
+	wantValues := []string{
+		aiResumeNewValue,
+		aiResumePickerValueForSession(aiResumeSessionMetaFromSummary(newest[2], "")),
+		aiResumePickerValueForSession(aiResumeSessionMetaFromSummary(newest[1], "")),
+	}
+	var gotValues []string
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Value, "resume\t") || entry.Value == aiResumeNewValue {
+			gotValues = append(gotValues, entry.Value)
+		}
+	}
+	if !reflect.DeepEqual(gotValues, wantValues) {
+		t.Fatalf("global sort/cap = %#v want %#v", gotValues, wantValues)
+	}
+	if !moreNotLoaded {
+		t.Fatal("capped frame did not report a continuation")
+	}
+	if line := strings.Split(footer, "\n"); len(line) != 2 || line[1] != "Showing latest 2 resume sessions." {
+		t.Fatalf("shown count line = %#v want the post-cap visible count", line)
+	}
+}
+
+// TestProviderSettlementKeepsFooterVocabularyLocalesAndGeometry is the
+// 변경 금지 경계 audit: provider settlement changes values, never the footer
+// vocabulary, its two localizations, its provider order, or its geometry.
+func TestProviderSettlementKeepsFooterVocabularyLocalesAndGeometry(t *testing.T) {
+	states := map[string]aiResumeProviderProjection{
+		aiModeCodex:       {state: aiResumeProviderCount, count: 158},
+		aiModeClaude:      {state: aiResumeProviderSearchFailed},
+		aiModeAntigravity: {state: aiResumeProviderDisabled},
+	}
+	golden := map[i18n.Locale]string{
+		i18n.FallbackLocale:  "Providers Codex 158 found · Claude search failed · Antigravity disabled",
+		i18n.Locale("ko-KR"): "제공자 Codex 158건 발견 · Claude 검색 실패 · Antigravity 설정 꺼짐",
+	}
+	for locale, want := range golden {
+		if got := resumeProviderFooterLine(states, locale); got != want {
+			t.Fatalf("%s provider line = %q want %q", locale, got, want)
+		}
+		footer := resumePickerFooter(states, 20, locale)
+		lines := strings.Split(footer, "\n")
+		if len(lines) != 2 || !strings.Contains(lines[0], want) {
+			t.Fatalf("%s footer geometry = %#v", locale, lines)
+		}
+	}
+	// The only three provider states are the existing ones; settlement added no
+	// fourth name and no elapsed or capability token.
+	stateText := map[aiResumeProviderState]string{
+		aiResumeProviderCount: "7 found", aiResumeProviderSearchFailed: "search failed", aiResumeProviderDisabled: "disabled",
+	}
+	for state, want := range stateText {
+		if got := resumeProviderStateText(i18n.FallbackLocale, aiResumeProviderProjection{state: state, count: 7}); got != want {
+			t.Fatalf("provider state %q text = %q want %q", state, got, want)
+		}
+	}
+	for _, forbidden := range []string{"elapsed", "ms", "budget", "route", "settled", "terminal", "경과", "예산"} {
+		for locale := range golden {
+			if strings.Contains(resumeProviderFooterLine(states, locale), forbidden) {
+				t.Fatalf("%s footer leaked settlement vocabulary %q", locale, forbidden)
+			}
+		}
+	}
+}
+
+// TestLateProviderSendAndCloseNeverMutateSettledItemsOrFooter is the race row:
+// a provider that returns after its own terminal, and a controller close on
+// top of it, change neither the settled Items nor the settled footer.
+func TestLateProviderSendAndCloseNeverMutateSettledItemsOrFooter(t *testing.T) {
+	release := make(chan struct{})
+	lateReturned := make(chan struct{})
+	cmd := testAICommand(t.TempDir())
+	cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+		if provider != aiModeCodex {
+			return siblingSettlementDiscovery(provider), nil
+		}
+		<-release
+		close(lateReturned)
+		return providerRowsDiscovery(aiModeCodex, aisessions.SourceCodexRollout, 7, time.Unix(900, 0)), nil
+	}
+	controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 500)
+	controller.budgets = settlementBudgets()
+	controller.populationTimeout = 30 * time.Millisecond
+	entries := controller.initialEntries()
+	footer, moreNotLoaded := controller.footer()
+	frameHash := pickerEntryHash(entries)
+
+	if got := settledProviderState(controller, aiModeCodex); got.state != aiResumeProviderSearchFailed {
+		t.Fatalf("codex past its own envelope = %+v want search failed", got)
+	}
+	if got := resumeSummaryProviderStatus(footer, aiModeClaude); got != "143 found" {
+		t.Fatalf("claude footer = %q", got)
+	}
+
+	close(release)
+	select {
+	case <-lateReturned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("late provider never returned")
+	}
+	controller.close()
+
+	if got := pickerEntryHash(controller.initialEntries()); got != frameHash {
+		t.Fatalf("late provider send changed the settled frame: got=%x want=%x", got, frameHash)
+	}
+	gotFooter, gotMore := controller.footer()
+	if gotFooter != footer || gotMore != moreNotLoaded {
+		t.Fatalf("late provider send changed the footer: %q -> %q", footer, gotFooter)
+	}
+	if update, _ := controller.update(); update.Items != nil || update.SetFooter {
+		t.Fatalf("late provider send produced a list or footer update: %#v", update)
 	}
 }

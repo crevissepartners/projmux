@@ -52,6 +52,12 @@ type aiResumeLiveController struct {
 	detailRefs      map[string]aisessions.ResumeDetailRef
 	providerStates  map[string]aiResumeProviderProjection
 	providerEnabled map[string]bool
+	// providerElapsed is the settlement witness: one duration per provider,
+	// each measured from that provider's own start instant to that provider's
+	// own terminal on the budget clock. C-4 keeps it out of every user-visible
+	// surface, so no row, value, footer string, or Registry write reads it. It
+	// exists only so provider-independent settlement is observable at all.
+	providerElapsed map[string]time.Duration
 	detailText      map[string]string
 	detailCache     map[aiResumePreviewKey]string
 	detailReads     map[aiResumePreviewKey]bool
@@ -77,7 +83,8 @@ func newAIResumeLiveController(cmd *aiCommand, cwd, home string, depth, limit in
 		previewTimeout: aiResumePreviewTimeout, populationTimeout: aiResumeSummaryPopulationBudget,
 		populationContext: context.WithTimeout, budgets: defaultAIResumeBudgets(),
 		events: make(chan struct{}, 16), providerStates: map[string]aiResumeProviderProjection{}, providerEnabled: enabled,
-		detailRefs: map[string]aisessions.ResumeDetailRef{}, detailText: map[string]string{},
+		providerElapsed: map[string]time.Duration{},
+		detailRefs:      map[string]aisessions.ResumeDetailRef{}, detailText: map[string]string{},
 		detailCache: map[aiResumePreviewKey]string{}, detailReads: map[aiResumePreviewKey]bool{},
 		catalogRoutes: map[string]codexNativeEndpointRoute{},
 	}
@@ -108,6 +115,10 @@ type aiResumeProviderResult struct {
 	routes          []codexNativeEndpointRoute
 	err             error
 	envelopeExpired bool
+	// elapsed is this provider's own witness, measured from this provider's
+	// start instant. It is never derived from the frame's start or from a
+	// sibling's span, and it never leaves this settlement.
+	elapsed time.Duration
 }
 
 type aiResumeProviderState string
@@ -139,19 +150,6 @@ func (c *aiResumeLiveController) populateOnce() {
 	if withTimeout == nil {
 		withTimeout = context.WithTimeout
 	}
-	ctx, cancel := withTimeout(c.ctx, timeout)
-	defer cancel()
-	// Non-Codex providers keep the shared discovery envelope. The Codex
-	// provider measures route, native, and rollout on its own declared clocks,
-	// so the frame settles on the longest declared provider bound instead of
-	// discarding a result that is still inside it.
-	settleTimeout := timeout
-	if c.codexBudgetStagesActive() {
-		settleTimeout = max(timeout, c.budgets.providerTerminal())
-	}
-	settle, cancelSettle := withTimeout(c.ctx, settleTimeout)
-	defer cancelSettle()
-
 	discover := c.cmd.discoverResumeSummaryProvider
 	if discover == nil {
 		discover = aisessions.DiscoverResumeSummariesContext
@@ -159,52 +157,38 @@ func (c *aiResumeLiveController) populateOnce() {
 	providers := []string{aiModeCodex, aiModeClaude, aiModeAntigravity}
 	results := make(chan aiResumeProviderResult, len(providers))
 	settled := make(map[string]aiResumeProviderResult, len(providers))
+	pending := 0
 	for _, provider := range providers {
 		if !c.providerEnabled[provider] {
 			settled[provider] = aiResumeProviderResult{provider: provider}
 			continue
 		}
+		// Every enabled provider opens its own envelope here, at its own start
+		// instant, with its own declared bound. There is no shared discovery
+		// deadline left to inherit, so one provider being slow, failing, or not
+		// being configured at all cannot move where a sibling terminalizes.
+		envelope, stop := withTimeout(c.ctx, c.providerEnvelope(provider, timeout))
+		startedAt := c.budgets.instant()
+		defer stop()
+		pending++
 		go func() {
-			discovery, routes, err := c.discoverResumeProvider(ctx, discover, provider)
-			results <- aiResumeProviderResult{provider: provider, discovery: discovery, routes: routes, err: err}
+			returned := make(chan aiResumeProviderResult, 1)
+			go func() {
+				discovery, routes, err := c.discoverResumeProvider(envelope, discover, provider)
+				returned <- aiResumeProviderResult{provider: provider, discovery: discovery, routes: routes, err: err}
+			}()
+			result := c.settleProviderResult(provider, envelope, startedAt, returned)
+			c.recordProviderElapsed(provider, result.elapsed)
+			results <- result
 		}()
 	}
 
-	for len(settled) < len(providers) {
-		select {
-		case result := <-results:
-			if settle.Err() != nil {
-				result.envelopeExpired = errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)
-			}
-			settled[result.provider] = result
-		case <-settle.Done():
-			// Provider cancellation and its buffered result send are separate
-			// scheduler events. Reserve the declared handoff window after the
-			// settlement envelope so a cancellation-settled partial is not replaced
-			// by available-empty solely because its send lost the select race.
-			settlementTimer := time.NewTimer(c.budgets.stage(aiResumeStageHandoff))
-		settleResults:
-			for len(settled) < len(providers) {
-				select {
-				case result := <-results:
-					result.envelopeExpired = errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)
-					settled[result.provider] = result
-				case <-settlementTimer.C:
-					break settleResults
-				}
-			}
-			if !settlementTimer.Stop() {
-				select {
-				case <-settlementTimer.C:
-				default:
-				}
-			}
-			for _, provider := range providers {
-				if _, ok := settled[provider]; !ok {
-					settled[provider] = aiResumeProviderResult{provider: provider, envelopeExpired: true}
-				}
-			}
-		}
+	// Each goroutine above terminalizes on its own clock and then sends exactly
+	// one result, so collecting them needs no envelope of its own: the frame is
+	// the set of provider terminals, not a deadline that overrides them.
+	for range pending {
+		result := <-results
+		settled[result.provider] = result
 	}
 
 	var summaries []aisessions.ResumeSummary
@@ -214,8 +198,12 @@ func (c *aiResumeLiveController) populateOnce() {
 	moreNotLoaded := false
 	for _, provider := range providers {
 		result := settled[provider]
-		providerStates[provider] = resumeProviderProjection(result, c.providerEnabled[provider])
-		if c.providerEnabled[provider] && result.err == nil {
+		projection := resumeProviderProjection(result, c.providerEnabled[provider])
+		providerStates[provider] = projection
+		// The footer count and the rows published for a provider come from the
+		// same settled result, so a provider can never report rows it did not
+		// contribute or contribute rows it did not report.
+		if projection.state == aiResumeProviderCount {
 			summaries = append(summaries, result.discovery.Summaries...)
 			routes = append(routes, result.routes...)
 			for _, ref := range result.discovery.DetailRefs {
@@ -227,6 +215,8 @@ func (c *aiResumeLiveController) populateOnce() {
 			moreNotLoaded = moreNotLoaded || result.discovery.MoreNotLoaded
 		}
 	}
+	// One global dedupe/sort/cap pass over the settled rows of all three
+	// providers. The provider counts above are already fixed and stay pre-cap.
 	summaries, capped := settleAIResumeSummaries(summaries, c.limit)
 	moreNotLoaded = moreNotLoaded || capped
 	c.mu.Lock()
@@ -249,6 +239,72 @@ func (c *aiResumeLiveController) populateOnce() {
 		c.moreNotLoaded = moreNotLoaded
 	}
 	c.mu.Unlock()
+}
+
+// providerEnvelope is one provider's own declared bound. Codex resolves routes
+// and a bounded native page on its own staged clocks, so its envelope is the
+// declared provider terminal; every other provider keeps the population
+// budget. The bound belongs to the provider: whether Codex is configured, and
+// how long it takes, never changes what Claude or Antigravity are given.
+func (c *aiResumeLiveController) providerEnvelope(provider string, timeout time.Duration) time.Duration {
+	if provider == aiModeCodex && c.codexBudgetStagesActive() {
+		return max(timeout, c.budgets.providerTerminal())
+	}
+	return timeout
+}
+
+// settleProviderResult terminalizes one provider on that provider's own clock.
+// The envelope bound and the handoff window that follows it are both measured
+// from this provider's start instant, so a sibling still resolving neither
+// expires this result nor extends it.
+func (c *aiResumeLiveController) settleProviderResult(
+	provider string,
+	envelope context.Context,
+	startedAt time.Time,
+	returned <-chan aiResumeProviderResult,
+) aiResumeProviderResult {
+	select {
+	case result := <-returned:
+		result.elapsed = c.providerElapsedSince(startedAt)
+		return result
+	case <-envelope.Done():
+	}
+	// Provider cancellation and its buffered result send are separate scheduler
+	// events. Reserve the declared handoff window after this provider's own
+	// envelope so a cancellation-settled partial is not replaced by
+	// available-empty solely because its send lost the select race.
+	handoff := time.NewTimer(c.budgets.stage(aiResumeStageHandoff))
+	defer handoff.Stop()
+	select {
+	case result := <-returned:
+		result.envelopeExpired = errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)
+		result.elapsed = c.providerElapsedSince(startedAt)
+		return result
+	case <-handoff.C:
+		return aiResumeProviderResult{provider: provider, envelopeExpired: true, elapsed: c.providerElapsedSince(startedAt)}
+	}
+}
+
+// recordProviderElapsed publishes one provider's settlement witness at that
+// provider's own terminal rather than at the frame's, which is what makes the
+// value a provider clock instead of a frame clock. C-4 keeps it internal: it
+// is not a row, a value, a footer string, or a Registry write, and nothing
+// user-visible reads it.
+func (c *aiResumeLiveController) recordProviderElapsed(provider string, elapsed time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.providerElapsed[provider] = elapsed
+}
+
+// providerElapsedSince reads the budget clock for one provider witness. The
+// instant it subtracts is that provider's own start, never the frame's and
+// never a sibling stage's.
+func (c *aiResumeLiveController) providerElapsedSince(startedAt time.Time) time.Duration {
+	elapsed := c.budgets.instant().Sub(startedAt)
+	if elapsed < 0 {
+		return 0
+	}
+	return elapsed
 }
 
 // codexBudgetStagesActive reports whether this invocation resolves Codex
@@ -471,13 +527,18 @@ func (c *aiResumeLiveController) discoverResumeProvider(
 	if nativeSettled {
 		return c.resolveCodexCatalogCollisions(combined), resolvedRoutes, nil
 	}
-	if len(failures) == len(inventory.routes) {
+	// No route read settled on the native catalog, whether it declined
+	// authority or failed outright. Either way the rollout scan that has been
+	// running since the provider started is the source of this invocation: it
+	// is already settled or inside its own bound here, and it is never started
+	// at this point.
+	scan := <-scanned
+	if len(scan.discovery.Summaries) == 0 && len(failures) > 0 && len(failures) == len(inventory.routes) {
+		// Every route read failed and the scan found nothing, so the joined
+		// route failures are the one terminal reason and there is no inventory
+		// to publish.
 		return combined, nil, errors.Join(failures...)
 	}
-	// Every route read declined native authority, so the rollout scan that has
-	// been running since the provider started is the source. It is already
-	// settled or inside its own bound here; it is never started at this point.
-	scan := <-scanned
 	return scan.discovery, resolvedRoutes, scan.err
 }
 
@@ -615,14 +676,18 @@ func resumeProviderProjection(result aiResumeProviderResult, enabled bool) aiRes
 	if !enabled {
 		return aiResumeProviderProjection{state: aiResumeProviderDisabled}
 	}
-	if result.err != nil || result.envelopeExpired {
-		return aiResumeProviderProjection{state: aiResumeProviderSearchFailed}
-	}
 	count := 0
 	for _, summary := range result.discovery.Summaries {
 		if normalizeAIMode(summary.Provider) == normalizeAIMode(result.provider) {
 			count++
 		}
+	}
+	// A result that carries rows is a found result, whatever the transport had
+	// to fall back through to produce them: rollout rows this invocation
+	// already holds are not a search failure. search_failed stays reserved for
+	// a provider that reached its terminal with nothing to show.
+	if count == 0 && (result.err != nil || result.envelopeExpired) {
+		return aiResumeProviderProjection{state: aiResumeProviderSearchFailed}
 	}
 	return aiResumeProviderProjection{state: aiResumeProviderCount, count: count}
 }
