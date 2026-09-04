@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1195,4 +1196,474 @@ func TestResumeSummaryPreviewBytesStayOutOfRowsRegistryAndCommands(t *testing.T)
 		t.Fatalf("preview escaped invocation-local state: writes=%d commands=%#v", writes, cmdRecorder(cmd).commands)
 	}
 	controller.close()
+}
+
+// virtualResumeBudgetClock drives the staged resume budgets without sleeping.
+// Every span it hands out expires exactly when the virtual clock passes that
+// span's own bound, so a boundary table can name the contract durations
+// (450ms, 1.97s, 2.5s) instead of scaled stand-ins.
+type virtualResumeBudgetClock struct {
+	mu      sync.Mutex
+	now     time.Time
+	pending []*virtualResumeBudgetSpan
+}
+
+type virtualResumeBudgetSpan struct {
+	budget   time.Duration
+	deadline time.Time
+	cancel   context.CancelCauseFunc
+	expired  bool
+}
+
+func newVirtualResumeBudgetClock() *virtualResumeBudgetClock {
+	return &virtualResumeBudgetClock{now: time.Unix(1_700_000_000, 0)}
+}
+
+func (c *virtualResumeBudgetClock) instant() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.now
+}
+
+func (c *virtualResumeBudgetClock) withTimeout(parent context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(parent)
+	c.mu.Lock()
+	c.pending = append(c.pending, &virtualResumeBudgetSpan{budget: budget, deadline: c.now.Add(budget), cancel: cancel})
+	c.mu.Unlock()
+	return ctx, func() { cancel(context.Canceled) }
+}
+
+// advance moves the virtual clock and expires every span whose own bound has
+// passed, with the same cause a real context.WithTimeout would report.
+func (c *virtualResumeBudgetClock) advance(step time.Duration) {
+	c.mu.Lock()
+	c.now = c.now.Add(step)
+	var due []*virtualResumeBudgetSpan
+	for _, span := range c.pending {
+		if !span.expired && !span.deadline.After(c.now) {
+			span.expired = true
+			due = append(due, span)
+		}
+	}
+	c.mu.Unlock()
+	for _, span := range due {
+		span.cancel(context.DeadlineExceeded)
+	}
+}
+
+func (c *virtualResumeBudgetClock) budgets() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	granted := make([]time.Duration, 0, len(c.pending))
+	for _, span := range c.pending {
+		granted = append(granted, span.budget)
+	}
+	return granted
+}
+
+// virtualBudgetController wires one controller onto the virtual clock so both
+// the provider discovery envelope and every stage span are driven by it.
+func virtualBudgetController(cmd *aiCommand, clock *virtualResumeBudgetClock, home string, depth, limit int) *aiResumeLiveController {
+	controller := newAIResumeLiveController(cmd, "/work", home, depth, limit)
+	controller.populationContext = clock.withTimeout
+	budgets := defaultAIResumeBudgets()
+	budgets.now = clock.instant
+	budgets.withTimeout = clock.withTimeout
+	controller.budgets = budgets
+	return controller
+}
+
+func TestAIResumeStageBudgetsAreDeclaredNotDerived(t *testing.T) {
+	budgets := defaultAIResumeBudgets()
+	table := []struct {
+		stage aiResumeBudgetStage
+		want  time.Duration
+	}{
+		{stage: aiResumeStageRoute, want: 2500 * time.Millisecond},
+		{stage: aiResumeStageNative, want: 300 * time.Millisecond},
+		{stage: aiResumeStageFallback, want: 1250 * time.Millisecond},
+		{stage: aiResumeStageHandoff, want: 35 * time.Millisecond},
+	}
+	for _, row := range table {
+		if got := budgets.stage(row.stage); got != row.want {
+			t.Fatalf("%s budget = %s want %s", row.stage, got, row.want)
+		}
+		// A zero field is filled from the declared constant, never from the
+		// time another stage already spent.
+		if got := (aiResumeBudgets{}).stage(row.stage); got != row.want {
+			t.Fatalf("zero-value %s budget = %s want %s", row.stage, got, row.want)
+		}
+	}
+	if got := budgets.providerTerminal(); got != 2835*time.Millisecond {
+		t.Fatalf("codex provider terminal = %s want 2.835s", got)
+	}
+	if aiResumeSummaryPopulationBudget != 450*time.Millisecond {
+		t.Fatalf("provider discovery envelope = %s want 450ms", aiResumeSummaryPopulationBudget)
+	}
+	if aiResumeNativeBudget != aisessions.DefaultResumeSummaryNativeBudget {
+		t.Fatalf("declared native budget %s drifted from summary default %s", aiResumeNativeBudget, aisessions.DefaultResumeSummaryNativeBudget)
+	}
+	// Every stage is measured from its own start instant.
+	clock := newVirtualResumeBudgetClock()
+	budgets.now, budgets.withTimeout = clock.instant, clock.withTimeout
+	route := budgets.start(context.Background(), aiResumeStageRoute)
+	defer route.stop()
+	clock.advance(400 * time.Millisecond)
+	fallback := budgets.start(context.Background(), aiResumeStageFallback)
+	defer fallback.stop()
+	clock.advance(600 * time.Millisecond)
+	if got := budgets.elapsed(route); got != time.Second {
+		t.Fatalf("route elapsed = %s want 1s", got)
+	}
+	if got := budgets.elapsed(fallback); got != 600*time.Millisecond {
+		t.Fatalf("fallback elapsed = %s want 600ms", got)
+	}
+	timeout := budgets.timeout(route)
+	if timeout.Stage != aiResumeStageRoute || timeout.Budget != 2500*time.Millisecond || timeout.Elapsed != time.Second ||
+		!errors.Is(timeout, context.DeadlineExceeded) {
+		t.Fatalf("typed route timeout = %#v (%v)", timeout, error(timeout))
+	}
+}
+
+func TestResumeRouteBudgetIsNotCutByTheProviderEnvelope(t *testing.T) {
+	route := nativeTestRoute("generation-route-budget", coremetadata.CodexGenerationCurrent)
+	tests := []struct {
+		name         string
+		routeElapsed time.Duration
+		wantRoutes   bool
+	}{
+		{name: "450ms envelope cutoff", routeElapsed: 450 * time.Millisecond, wantRoutes: true},
+		{name: "1.97s route", routeElapsed: 1970 * time.Millisecond, wantRoutes: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := newVirtualResumeBudgetClock()
+			routeCtx := make(chan context.Context, 1)
+			release := make(chan struct{})
+			native := &budgetNativeThreadController{
+				routes: []codexNativeEndpointRoute{route},
+				observed: func(ctx context.Context) {
+					routeCtx <- ctx
+					<-release
+				},
+			}
+			cmd := testAICommand(t.TempDir())
+			cmd.codexNative = native
+			var codexCtx atomic.Value
+			cmd.discoverResumeSummaryProvider = func(ctx context.Context, provider, _ string, opts aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+				if provider != aiModeCodex {
+					return summaryDiscovery(provider, provider+"-exact", provider+"-source", time.Unix(20, 0)), nil
+				}
+				codexCtx.Store(ctx)
+				if opts.NativeBudget != aiResumeNativeBudget {
+					t.Errorf("native budget delivered to summary layer = %s want %s", opts.NativeBudget, aiResumeNativeBudget)
+				}
+				return nativeSummaryDiscovery("codex-route-budget-exact", time.Unix(30, 0), route), nil
+			}
+			controller := virtualBudgetController(cmd, clock, t.TempDir(), 0, 20)
+			defer controller.close()
+			entries := make(chan []intpickercompat.Entry, 1)
+			go func() { entries <- controller.initialEntries() }()
+
+			observed := <-routeCtx
+			clock.advance(tc.routeElapsed)
+			if err := observed.Err(); err != nil {
+				t.Fatalf("route context cancelled after %s: %v", tc.routeElapsed, err)
+			}
+			close(release)
+
+			settled := <-entries
+			if got := settledProviderState(controller, aiModeCodex); got.state != aiResumeProviderCount || got.count != 1 {
+				t.Fatalf("codex provider projection after %s route = %+v", tc.routeElapsed, got)
+			}
+			want := aiResumePickerValueForSession(aiResumeSessionMetaFromSummary(nativeSummaryDiscovery("codex-route-budget-exact", time.Unix(30, 0), route).Summaries[0], ""))
+			if _, ok := resumeSummaryEntryWithValue(settled, want); !ok {
+				t.Fatalf("route resolved inside its own budget but its rows are missing: %#v", settled)
+			}
+			controller.mu.Lock()
+			_, published := controller.catalogRoutes[codexCatalogRouteKey(route.Endpoint)]
+			controller.mu.Unlock()
+			if published != tc.wantRoutes {
+				t.Fatalf("route published = %t want %t", published, tc.wantRoutes)
+			}
+			// The Codex stages never consume the shared 450ms envelope.
+			if ctx, _ := codexCtx.Load().(context.Context); ctx == nil || ctx == controller.ctx {
+				t.Fatalf("codex discovery context = %v", ctx)
+			}
+			if granted := clock.budgets(); !containsBudget(granted, aiResumeRouteBudget) || !containsBudget(granted, aiResumeFallbackBudget) {
+				t.Fatalf("granted budgets %v missing route/fallback stage bounds", granted)
+			}
+		})
+	}
+}
+
+func TestResumeRouteBudgetOverrunIsTypedWithoutLateRouteWrite(t *testing.T) {
+	route := nativeTestRoute("generation-route-overrun", coremetadata.CodexGenerationCurrent)
+	clock := newVirtualResumeBudgetClock()
+	routeCtx := make(chan context.Context, 1)
+	release := make(chan struct{})
+	returned := make(chan struct{})
+	native := &budgetNativeThreadController{
+		routes: []codexNativeEndpointRoute{route},
+		observed: func(ctx context.Context) {
+			routeCtx <- ctx
+			<-release
+			close(returned)
+		},
+	}
+	cmd := testAICommand(t.TempDir())
+	cmd.codexNative = native
+	var routeErr atomic.Value
+	cmd.discoverResumeSummaryProvider = func(ctx context.Context, provider, _ string, opts aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+		if provider != aiModeCodex {
+			return summaryDiscovery(provider, provider+"-exact", provider+"-source", time.Unix(20, 0)), nil
+		}
+		if opts.DiscoverOptions.OpenCodexCatalog == nil {
+			t.Error("codex fallback lost its refusing opener")
+			return aisessions.ResumeSummaryDiscovery{}, nil
+		}
+		if _, err := opts.DiscoverOptions.OpenCodexCatalog(ctx); err != nil {
+			routeErr.Store(err)
+		}
+		return summaryDiscovery(aiModeCodex, "codex-rollout-exact", aisessions.SourceCodexRollout, time.Unix(30, 0)), nil
+	}
+	controller := virtualBudgetController(cmd, clock, t.TempDir(), 0, 20)
+	defer controller.close()
+	entries := make(chan []intpickercompat.Entry, 1)
+	go func() { entries <- controller.initialEntries() }()
+
+	observed := <-routeCtx
+	clock.advance(aiResumeRouteBudget)
+	<-observed.Done()
+	settled := <-entries
+
+	var timeout *aiResumeBudgetTimeoutError
+	err, _ := routeErr.Load().(error)
+	if !errors.As(err, &timeout) || timeout.Stage != aiResumeStageRoute || timeout.Budget != aiResumeRouteBudget ||
+		!errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("route overrun terminal reason = %#v (%v)", timeout, err)
+	}
+	controller.mu.Lock()
+	published := len(controller.catalogRoutes)
+	controller.mu.Unlock()
+	if published != 0 {
+		t.Fatalf("timed-out route published %d inventory entries", published)
+	}
+	if _, ok := resumeSummaryEntryWithValue(settled, aiResumePickerValueForSession(aiResumeSessionMetaFromSummary(summaryDiscovery(aiModeCodex, "codex-rollout-exact", aisessions.SourceCodexRollout, time.Unix(30, 0)).Summaries[0], ""))); !ok {
+		t.Fatalf("route timeout discarded the rollout rows of the same invocation: %#v", settled)
+	}
+	frameHash := pickerEntryHash(settled)
+
+	// The blocked route returns after the frame settled: no inventory write, no
+	// row mutation, no list update.
+	close(release)
+	select {
+	case <-returned:
+	case <-time.After(time.Second):
+		t.Fatal("late route never returned")
+	}
+	controller.mu.Lock()
+	published = len(controller.catalogRoutes)
+	controller.mu.Unlock()
+	if published != 0 {
+		t.Fatalf("late route wrote %d inventory entries after settlement", published)
+	}
+	if got := pickerEntryHash(controller.initialEntries()); got != frameHash {
+		t.Fatalf("late route changed the settled frame: got=%x want=%x", got, frameHash)
+	}
+	if update, _ := controller.update(); update.Items != nil {
+		t.Fatalf("late route produced a list update: %#v", update.Items)
+	}
+}
+
+func TestResumeFallbackClockRunsWhileRouteResolvesWithoutTouchingSiblings(t *testing.T) {
+	route := nativeTestRoute("generation-route-sibling", coremetadata.CodexGenerationCurrent)
+	clock := newVirtualResumeBudgetClock()
+	routeCtx := make(chan context.Context, 1)
+	release := make(chan struct{})
+	native := &budgetNativeThreadController{
+		routes: []codexNativeEndpointRoute{route},
+		observed: func(ctx context.Context) {
+			routeCtx <- ctx
+			<-release
+		},
+	}
+	cmd := testAICommand(t.TempDir())
+	cmd.codexNative = native
+	siblings := make(chan context.Context, 2)
+	codexDiscovery := make(chan context.Context, 1)
+	cmd.discoverResumeSummaryProvider = func(ctx context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+		if provider != aiModeCodex {
+			siblings <- ctx
+			return summaryDiscovery(provider, provider+"-exact", provider+"-source", time.Unix(20, 0)), nil
+		}
+		codexDiscovery <- ctx
+		return nativeSummaryDiscovery("codex-sibling-exact", time.Unix(30, 0), route), nil
+	}
+	controller := virtualBudgetController(cmd, clock, t.TempDir(), 0, 20)
+	defer controller.close()
+	entries := make(chan []intpickercompat.Entry, 1)
+	go func() { entries <- controller.initialEntries() }()
+
+	observed := <-routeCtx
+	claudeCtx, antigravityCtx := <-siblings, <-siblings
+
+	// Inside every declared bound the four clocks are all still running and no
+	// sibling provider context has been touched by the Codex route span.
+	clock.advance(400 * time.Millisecond)
+	for name, ctx := range map[string]context.Context{aiModeClaude: claudeCtx, aiModeAntigravity: antigravityCtx, "route": observed} {
+		if err := ctx.Err(); err != nil {
+			t.Fatalf("%s context cancelled at 400ms: %v", name, err)
+		}
+	}
+	// The rollout clock started with the provider, so it terminalizes on its own
+	// 1.25s bound while the route is still inside its 2.5s bound.
+	clock.advance(aiResumeFallbackBudget - 400*time.Millisecond)
+	if err := observed.Err(); err != nil {
+		t.Fatalf("fallback bound cancelled the route span: %v", err)
+	}
+	clock.advance(aiResumeRouteBudget - aiResumeFallbackBudget - time.Millisecond)
+	if err := observed.Err(); err != nil {
+		t.Fatalf("route span cancelled before its own bound: %v", err)
+	}
+	close(release)
+
+	discoveryCtx := <-codexDiscovery
+	<-entries
+	if !errors.Is(context.Cause(discoveryCtx), context.DeadlineExceeded) {
+		t.Fatalf("codex rollout context cause = %v want its own deadline", context.Cause(discoveryCtx))
+	}
+	if discoveryCtx == observed {
+		t.Fatal("rollout and route share one context")
+	}
+	// A Codex route that spends its whole bound leaves both sibling provider
+	// results exactly as they settled.
+	for _, name := range []string{aiModeClaude, aiModeAntigravity} {
+		if got := settledProviderState(controller, name); got.state != aiResumeProviderCount || got.count != 1 {
+			t.Fatalf("%s projection after a 2.5s Codex route = %+v", name, got)
+		}
+	}
+}
+
+func settledProviderState(controller *aiResumeLiveController, provider string) aiResumeProviderProjection {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	return controller.providerStates[provider]
+}
+
+func containsBudget(granted []time.Duration, want time.Duration) bool {
+	return slices.Contains(granted, want)
+}
+
+// budgetNativeThreadController observes the exact context CatalogRoutes is
+// called with and holds the call until the boundary table releases it.
+type budgetNativeThreadController struct {
+	fakeNativeThreadController
+	routes   []codexNativeEndpointRoute
+	err      error
+	observed func(context.Context)
+}
+
+func (f *budgetNativeThreadController) CatalogRoutes(ctx context.Context) ([]codexNativeEndpointRoute, error) {
+	if f.observed != nil {
+		f.observed(ctx)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return append([]codexNativeEndpointRoute(nil), f.routes...), nil
+}
+
+func TestResumeRouteTerminalReasonTableKeepsOneResultWithoutLateMutation(t *testing.T) {
+	route := nativeTestRoute("generation-route-terminal", coremetadata.CodexGenerationCurrent)
+	tests := []struct {
+		name           string
+		routes         []codexNativeEndpointRoute
+		routeErr       error
+		cancelInvoke   bool
+		wantTypedRoute bool
+		wantReason     string
+	}{
+		{name: "empty routes", wantReason: codexNativeReasonGenerationUnavailable},
+		{name: "invalid routes", routes: []codexNativeEndpointRoute{{Endpoint: route.Endpoint}}, wantReason: codexNativeReasonGenerationUnavailable},
+		{name: "inventory error", routeErr: errFakeNativeUnavailable},
+		{name: "parent cancellation", routes: []codexNativeEndpointRoute{route}, cancelInvoke: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := newVirtualResumeBudgetClock()
+			routeCtx := make(chan context.Context, 1)
+			release := make(chan struct{})
+			native := &budgetNativeThreadController{
+				routes: tc.routes,
+				err:    tc.routeErr,
+				observed: func(ctx context.Context) {
+					if !tc.cancelInvoke {
+						return
+					}
+					routeCtx <- ctx
+					<-release
+				},
+			}
+			cmd := testAICommand(t.TempDir())
+			cmd.codexNative = native
+			var openerErr atomic.Value
+			discoveries := atomic.Int64{}
+			cmd.discoverResumeSummaryProvider = func(ctx context.Context, provider, _ string, opts aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+				if provider != aiModeCodex {
+					return aisessions.ResumeSummaryDiscovery{}, nil
+				}
+				discoveries.Add(1)
+				if opts.DiscoverOptions.OpenCodexCatalog != nil {
+					if _, err := opts.DiscoverOptions.OpenCodexCatalog(ctx); err != nil {
+						openerErr.Store(err)
+					}
+				}
+				return aisessions.ResumeSummaryDiscovery{}, nil
+			}
+			controller := virtualBudgetController(cmd, clock, t.TempDir(), 0, 20)
+			defer controller.close()
+			entries := make(chan []intpickercompat.Entry, 1)
+			go func() { entries <- controller.initialEntries() }()
+			if tc.cancelInvoke {
+				<-routeCtx
+				controller.close()
+				close(release)
+			}
+			settled := <-entries
+
+			if got := discoveries.Load(); got != 1 {
+				t.Fatalf("codex provider produced %d discovery attempts, want exactly one terminal result", got)
+			}
+			if len(settled) != 1 || settled[0].Value != aiResumeNewValue {
+				t.Fatalf("terminal result rows = %#v", settled)
+			}
+			controller.mu.Lock()
+			published := len(controller.catalogRoutes)
+			controller.mu.Unlock()
+			if published != 0 {
+				t.Fatalf("refused route inventory published %d entries", published)
+			}
+			err, _ := openerErr.Load().(error)
+			var timeout *aiResumeBudgetTimeoutError
+			if errors.As(err, &timeout) {
+				t.Fatalf("%s reported a route budget timeout: %#v", tc.name, timeout)
+			}
+			if tc.wantReason != "" {
+				var routeErr *codexNativeRouteError
+				if !errors.As(err, &routeErr) || routeErr.Reason != tc.wantReason {
+					t.Fatalf("route refusal reason = %v want %s", err, tc.wantReason)
+				}
+			}
+			if tc.routeErr != nil && !errors.Is(err, tc.routeErr) {
+				t.Fatalf("inventory error lost on the way to the fallback opener: %v", err)
+			}
+			if tc.cancelInvoke && !errors.Is(err, context.Canceled) {
+				t.Fatalf("cancelled invocation route reason = %v want context.Canceled", err)
+			}
+		})
+	}
 }

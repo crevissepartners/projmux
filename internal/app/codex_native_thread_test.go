@@ -10,12 +10,16 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbundle"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgenerationhost"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 )
 
 var errFakeNativeUnavailable = errors.New("fake app-server unavailable")
@@ -1397,5 +1401,176 @@ func TestCodexNativeLaunchOutcomeTableIsClosed(t *testing.T) {
 		if strings.Contains(row.NativeResult, "indeterminate") && strings.Contains(row.Binding, interactiveOnlyFlag) {
 			t.Fatalf("the post-mutation row offers a second lane: %+v", row)
 		}
+	}
+}
+
+// codexInventoryLedger records every lifecycle-capable call a read-only route
+// inventory could make, so "start/stop/admit/drain 0" is an assertion rather
+// than a claim.
+type codexInventoryLedger struct {
+	activations  int
+	observations []coremetadata.CodexEndpointRef
+	journalBytes []byte
+	journalMod   time.Time
+}
+
+func (ledger *codexInventoryLedger) Ensure(context.Context) error {
+	ledger.activations++
+	return nil
+}
+
+func snapshotCodexJournal(t *testing.T, store *codexupgrade.Store) ([]byte, time.Time) {
+	t.Helper()
+	body, err := os.ReadFile(store.Path())
+	if err != nil {
+		t.Fatalf("read journal: %v", err)
+	}
+	info, err := os.Stat(store.Path())
+	if err != nil {
+		t.Fatalf("stat journal: %v", err)
+	}
+	return body, info.ModTime()
+}
+
+// codexPoolInventoryFixture writes one Current + one Draining private route so
+// the catalog inventory has more than the admission-current slot to project.
+func codexPoolInventoryFixture(t *testing.T) (*codexupgrade.Store, codexupgrade.GenerationRoute, codexupgrade.GenerationRoute) {
+	t.Helper()
+	root := t.TempDir()
+	store := codexupgrade.NewStateStore(filepath.Join(root, "state"))
+	stateDomain := "test-domain-inventory"
+	route := func(version, bundle string, state codexgeneration.GenerationState) codexupgrade.GenerationRoute {
+		endpoint := coremetadata.CodexEndpointRef{StateDomainID: stateDomain, EndpointGenerationID: "codex-" + version}
+		config := codexupgrade.GenerationConfig{
+			Endpoint: endpoint, StateDomainPath: filepath.Join(root, "domain"), PrivateRoot: filepath.Join(root, "runtime", version),
+			SocketPath: filepath.Join(root, "runtime", version, "s"), LeaseRoot: filepath.Join(root, "lease", version),
+			RequiredProtocol: codexbundle.ProtocolRange{Min: 2, Max: 2},
+		}
+		return codexupgrade.GenerationRoute{
+			Generation: codexgeneration.Generation{Endpoint: endpoint, State: state, Owner: codexgeneration.OwnerProjmuxPrivate, BundleID: bundle},
+			Version:    version, Config: config, TUIPath: filepath.Join(root, "lease", version, "bin", "codex"), Ready: true,
+			Proof: &codexgenerationhost.LaunchProof{
+				Endpoint:   codexgenerationhost.EndpointIdentity{StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID},
+				SocketPath: config.SocketPath, BundleID: bundle,
+			},
+		}
+	}
+	draining := route("0.152.1", "sha256-draining", codexgeneration.StateDraining)
+	current := route("0.153.0", "sha256-current", codexgeneration.StateCurrent)
+	if _, err := store.Update(context.Background(), func(journal *codexupgrade.Journal, _ bool) error {
+		*journal = codexupgrade.Journal{
+			Version: codexupgrade.JournalVersion, StateDomainID: stateDomain,
+			CurrentGenerationID: current.Generation.Endpoint.EndpointGenerationID,
+			Routes:              []codexupgrade.GenerationRoute{draining, current},
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("seed pool inventory: %v", err)
+	}
+	return store, draining, current
+}
+
+func TestCatalogRoutesProjectsCurrentAndDrainingWithZeroLifecycleWrites(t *testing.T) {
+	store, draining, current := codexPoolInventoryFixture(t)
+	ledger := &codexInventoryLedger{}
+	ledger.journalBytes, ledger.journalMod = snapshotCodexJournal(t, store)
+	controller := rollingCodexNativeThreadController{
+		journal: store,
+		fallback: defaultCodexNativeThreadController{current: func(context.Context) (codexNativeEndpointRoute, error) {
+			t.Error("pool inventory fell through to the ambient default endpoint")
+			return codexNativeEndpointRoute{}, errFakeNativeUnavailable
+		}},
+		activator: ledger,
+		observe: func(_ context.Context, route codexupgrade.GenerationRoute) error {
+			ledger.observations = append(ledger.observations, route.Generation.Endpoint)
+			return nil
+		},
+	}
+
+	routes, err := controller.CatalogRoutes(context.Background())
+	if err != nil {
+		t.Fatalf("catalog routes: %v", err)
+	}
+	want := []codexupgrade.GenerationRoute{draining, current}
+	if len(routes) != len(want) {
+		t.Fatalf("catalog inventory = %+v want %d routes", routes, len(want))
+	}
+	for i, route := range routes {
+		if !route.Endpoint.Same(want[i].Generation.Endpoint) || route.State != want[i].Generation.State ||
+			route.SocketPath != want[i].Config.SocketPath || route.TUIExecutable != want[i].TUIPath || route.Default {
+			t.Fatalf("route %d identity drifted: got=%+v want=%+v", i, route, want[i])
+		}
+	}
+	if ledger.activations != 0 || len(ledger.observations) != 2 ||
+		!ledger.observations[0].Same(draining.Generation.Endpoint) || !ledger.observations[1].Same(current.Generation.Endpoint) {
+		t.Fatalf("inventory lifecycle ledger: activations=%d observations=%+v", ledger.activations, ledger.observations)
+	}
+	body, modified := snapshotCodexJournal(t, store)
+	if !reflect.DeepEqual(body, ledger.journalBytes) || !modified.Equal(ledger.journalMod) {
+		t.Fatalf("read-only inventory rewrote the admission journal: bytes-equal=%t mtime %s -> %s",
+			reflect.DeepEqual(body, ledger.journalBytes), ledger.journalMod, modified)
+	}
+	journal, exists, err := store.Load()
+	if err != nil || !exists || journal.CurrentGenerationID != current.Generation.Endpoint.EndpointGenerationID ||
+		len(journal.Routes) != 2 || journal.Operation != nil {
+		t.Fatalf("admission-current or pool shape changed: exists=%t err=%v journal=%+v", exists, err, journal)
+	}
+}
+
+func TestUnobservableCatalogRoutesRefuseWithoutMutatingThePool(t *testing.T) {
+	store, _, _ := codexPoolInventoryFixture(t)
+	ledger := &codexInventoryLedger{}
+	ledger.journalBytes, ledger.journalMod = snapshotCodexJournal(t, store)
+	controller := rollingCodexNativeThreadController{
+		journal: store,
+		fallback: defaultCodexNativeThreadController{current: func(context.Context) (codexNativeEndpointRoute, error) {
+			t.Error("unobservable pool fell through to the ambient default endpoint")
+			return codexNativeEndpointRoute{}, errFakeNativeUnavailable
+		}},
+		activator: ledger,
+		observe:   func(context.Context, codexupgrade.GenerationRoute) error { return errFakeNativeUnavailable },
+	}
+
+	routes, err := controller.CatalogRoutes(context.Background())
+	var routeErr *codexNativeRouteError
+	if len(routes) != 0 || !errors.As(err, &routeErr) || routeErr.Reason != codexNativeReasonGenerationUnavailable {
+		t.Fatalf("unobservable inventory = %+v, %v", routes, err)
+	}
+	if ledger.activations != 0 {
+		t.Fatalf("refusal ran %d activations", ledger.activations)
+	}
+	body, modified := snapshotCodexJournal(t, store)
+	if !reflect.DeepEqual(body, ledger.journalBytes) || !modified.Equal(ledger.journalMod) {
+		t.Fatal("refused inventory rewrote the admission journal")
+	}
+}
+
+func TestDefaultCatalogRoutesIsOneAttachOnlyReadWithoutLifecycleCalls(t *testing.T) {
+	route := nativeTestRoute("generation-default-inventory", coremetadata.CodexGenerationCurrent)
+	route.Default, route.SocketPath = true, ""
+	currentCalls := 0
+	controller := defaultCodexNativeThreadController{
+		current: func(context.Context) (codexNativeEndpointRoute, error) {
+			currentCalls++
+			return route, nil
+		},
+		open: func(context.Context, codexNativeEndpointRoute, bool) (codexNativeThreadClient, error) {
+			t.Error("read-only inventory opened a thread client")
+			return nil, errFakeNativeUnavailable
+		},
+		awaitDurable: func(context.Context, codexNativeEndpointRoute, coremetadata.AgentWorkspace, string) error {
+			t.Error("read-only inventory awaited a durable binding")
+			return nil
+		},
+		guard: func(context.Context, codexNativeEndpointRoute) error {
+			t.Error("read-only inventory ran an admission guard")
+			return nil
+		},
+	}
+
+	routes, err := controller.CatalogRoutes(context.Background())
+	if err != nil || len(routes) != 1 || !routes[0].Endpoint.Same(route.Endpoint) ||
+		routes[0].State != route.State || !routes[0].Default || currentCalls != 1 {
+		t.Fatalf("default inventory = %+v, %v (current calls %d)", routes, err, currentCalls)
 	}
 }

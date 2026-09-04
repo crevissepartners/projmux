@@ -20,10 +20,6 @@ import (
 const (
 	aiResumePreviewTimeout          = 2 * time.Second
 	aiResumeSummaryPopulationBudget = 450 * time.Millisecond
-	// This is wider than aisessions' 25ms scanner handoff so the provider
-	// result has 10ms to cross the outer channel, while the whole first frame
-	// remains bounded to 450ms + 35ms.
-	aiResumeSummaryCancellationSettlementBudget = 35 * time.Millisecond
 )
 
 type aiResumePreviewKey struct {
@@ -45,6 +41,7 @@ type aiResumeLiveController struct {
 	previewTimeout    time.Duration
 	populationTimeout time.Duration
 	populationContext func(context.Context, time.Duration) (context.Context, context.CancelFunc)
+	budgets           aiResumeBudgets
 	events            chan struct{}
 	startOnce         sync.Once
 	labelsOnce        sync.Once
@@ -78,8 +75,8 @@ func newAIResumeLiveController(cmd *aiCommand, cwd, home string, depth, limit in
 		cmd: cmd, ctx: ctx, cancel: cancel, cwd: cwd, home: home, depth: depth,
 		limit: normalizeResumePickerLimit(limit), locale: appLocale(cmd.homeDir, cmd.lookupEnv), now: now,
 		previewTimeout: aiResumePreviewTimeout, populationTimeout: aiResumeSummaryPopulationBudget,
-		populationContext: context.WithTimeout,
-		events:            make(chan struct{}, 16), providerStates: map[string]aiResumeProviderProjection{}, providerEnabled: enabled,
+		populationContext: context.WithTimeout, budgets: defaultAIResumeBudgets(),
+		events: make(chan struct{}, 16), providerStates: map[string]aiResumeProviderProjection{}, providerEnabled: enabled,
 		detailRefs: map[string]aisessions.ResumeDetailRef{}, detailText: map[string]string{},
 		detailCache: map[aiResumePreviewKey]string{}, detailReads: map[aiResumePreviewKey]bool{},
 		catalogRoutes: map[string]codexNativeEndpointRoute{},
@@ -108,6 +105,7 @@ func (c *aiResumeLiveController) signal() {
 type aiResumeProviderResult struct {
 	provider        string
 	discovery       aisessions.ResumeSummaryDiscovery
+	routes          []codexNativeEndpointRoute
 	err             error
 	envelopeExpired bool
 }
@@ -143,6 +141,16 @@ func (c *aiResumeLiveController) populateOnce() {
 	}
 	ctx, cancel := withTimeout(c.ctx, timeout)
 	defer cancel()
+	// Non-Codex providers keep the shared discovery envelope. The Codex
+	// provider measures route, native, and rollout on its own declared clocks,
+	// so the frame settles on the longest declared provider bound instead of
+	// discarding a result that is still inside it.
+	settleTimeout := timeout
+	if c.codexBudgetStagesActive() {
+		settleTimeout = max(timeout, c.budgets.providerTerminal())
+	}
+	settle, cancelSettle := withTimeout(c.ctx, settleTimeout)
+	defer cancelSettle()
 
 	discover := c.cmd.discoverResumeSummaryProvider
 	if discover == nil {
@@ -157,24 +165,24 @@ func (c *aiResumeLiveController) populateOnce() {
 			continue
 		}
 		go func() {
-			discovery, err := c.discoverResumeProvider(ctx, discover, provider)
-			results <- aiResumeProviderResult{provider: provider, discovery: discovery, err: err}
+			discovery, routes, err := c.discoverResumeProvider(ctx, discover, provider)
+			results <- aiResumeProviderResult{provider: provider, discovery: discovery, routes: routes, err: err}
 		}()
 	}
 
 	for len(settled) < len(providers) {
 		select {
 		case result := <-results:
-			if ctx.Err() != nil {
+			if settle.Err() != nil {
 				result.envelopeExpired = errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)
 			}
 			settled[result.provider] = result
-		case <-ctx.Done():
+		case <-settle.Done():
 			// Provider cancellation and its buffered result send are separate
-			// scheduler events. Reserve a bounded handoff window after the 450ms
-			// discovery envelope so a cancellation-settled partial is not replaced
+			// scheduler events. Reserve the declared handoff window after the
+			// settlement envelope so a cancellation-settled partial is not replaced
 			// by available-empty solely because its send lost the select race.
-			settlementTimer := time.NewTimer(aiResumeSummaryCancellationSettlementBudget)
+			settlementTimer := time.NewTimer(c.budgets.stage(aiResumeStageHandoff))
 		settleResults:
 			for len(settled) < len(providers) {
 				select {
@@ -200,6 +208,7 @@ func (c *aiResumeLiveController) populateOnce() {
 	}
 
 	var summaries []aisessions.ResumeSummary
+	var routes []codexNativeEndpointRoute
 	allDetailRefs := make(map[string]aisessions.ResumeDetailRef)
 	providerStates := make(map[string]aiResumeProviderProjection, len(providers))
 	moreNotLoaded := false
@@ -208,6 +217,7 @@ func (c *aiResumeLiveController) populateOnce() {
 		providerStates[provider] = resumeProviderProjection(result, c.providerEnabled[provider])
 		if c.providerEnabled[provider] && result.err == nil {
 			summaries = append(summaries, result.discovery.Summaries...)
+			routes = append(routes, result.routes...)
 			for _, ref := range result.discovery.DetailRefs {
 				key := normalizeAIMode(ref.Provider) + "\x00" + strings.TrimSpace(ref.ResumeID)
 				if old, ok := allDetailRefs[key]; !ok || ref.LastModified.After(old.LastModified) {
@@ -229,27 +239,79 @@ func (c *aiResumeLiveController) populateOnce() {
 				c.detailRefs[key] = ref
 			}
 		}
+		// Route inventory is published with the frame it belongs to. A route
+		// that resolves after this invocation settled is discarded instead of
+		// mutating the preview lane behind an already immutable row set.
+		for _, route := range routes {
+			c.catalogRoutes[codexCatalogRouteKey(route.Endpoint)] = route
+		}
 		c.providerStates = providerStates
 		c.moreNotLoaded = moreNotLoaded
 	}
 	c.mu.Unlock()
 }
 
+// codexBudgetStagesActive reports whether this invocation resolves Codex
+// routes, which is the only path that owns the staged budgets.
+func (c *aiResumeLiveController) codexBudgetStagesActive() bool {
+	return c.providerEnabled[aiModeCodex] && c.cmd != nil && c.cmd.codexNative != nil
+}
+
+// catalogRoutesWithinBudget resolves the generation inventory on the route
+// clock alone, started under the invocation lifetime rather than under the
+// provider discovery envelope. CatalogRoutes is a read-only projection, so a
+// return that arrives after the route bound is discarded: the span has already
+// produced the one terminal reason for this invocation.
+func (c *aiResumeLiveController) catalogRoutesWithinBudget() ([]codexNativeEndpointRoute, error) {
+	span := c.budgets.start(c.ctx, aiResumeStageRoute)
+	defer span.stop()
+	type routeInventory struct {
+		routes []codexNativeEndpointRoute
+		err    error
+	}
+	// Buffered so a late CatalogRoutes return neither blocks its goroutine nor
+	// reaches a settled invocation.
+	resolved := make(chan routeInventory, 1)
+	go func() {
+		routes, err := c.cmd.codexNative.CatalogRoutes(span.ctx)
+		resolved <- routeInventory{routes: routes, err: err}
+	}()
+	select {
+	case inventory := <-resolved:
+		return inventory.routes, inventory.err
+	case <-span.ctx.Done():
+		// Cause separates "this stage spent its own bound" from "the invocation
+		// was closed"; only the former is a route budget timeout.
+		if errors.Is(context.Cause(span.ctx), context.DeadlineExceeded) {
+			return nil, c.budgets.timeout(span)
+		}
+		return nil, span.ctx.Err()
+	}
+}
+
 func (c *aiResumeLiveController) discoverResumeProvider(
 	ctx context.Context,
 	discover func(context.Context, string, string, aisessions.ResumeSummaryOptions, int) (aisessions.ResumeSummaryDiscovery, error),
 	provider string,
-) (aisessions.ResumeSummaryDiscovery, error) {
+) (aisessions.ResumeSummaryDiscovery, []codexNativeEndpointRoute, error) {
 	options := func(open aisessions.OpenCodexCatalog) aisessions.ResumeSummaryOptions {
 		return aisessions.ResumeSummaryOptions{DiscoverOptions: aisessions.DiscoverOptions{
 			HomeDir: c.home, Depth: c.depth, DeferTurns: true, OpenCodexCatalog: open,
-		}}
+		}, NativeBudget: c.budgets.stage(aiResumeStageNative)}
 	}
 	if provider != aiModeCodex || c.cmd.codexNative == nil {
-		return discover(ctx, provider, c.cwd, options(c.cmd.openCodexCatalog), c.limit)
+		discovery, err := discover(ctx, provider, c.cwd, options(c.cmd.openCodexCatalog), c.limit)
+		return discovery, nil, err
 	}
 
-	routes, routeErr := c.cmd.codexNative.CatalogRoutes(ctx)
+	// The rollout clock starts with the provider, not after the route is known:
+	// a route that spends most of its own bound must not shorten the rollout
+	// scan by handing it a remainder. Its span is a sibling of the route span,
+	// so neither cancellation reaches the other or any other provider.
+	fallbackSpan := c.budgets.start(c.ctx, aiResumeStageFallback)
+	defer fallbackSpan.stop()
+
+	routes, routeErr := c.catalogRoutesWithinBudget()
 	validRoutes := make([]codexNativeEndpointRoute, 0, len(routes))
 	for _, route := range routes {
 		if route.valid() {
@@ -263,18 +325,18 @@ func (c *aiResumeLiveController) discoverResumeProvider(
 		if routeErr == nil {
 			routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 		}
-		return discover(ctx, provider, c.cwd, options(func(context.Context) (aisessions.CodexCatalog, error) {
+		discovery, err := discover(fallbackSpan.ctx, provider, c.cwd, options(func(context.Context) (aisessions.CodexCatalog, error) {
 			return nil, routeErr
 		}), c.limit)
+		return discovery, nil, err
 	}
 
 	var combined aisessions.ResumeSummaryDiscovery
 	var failures []error
+	resolvedRoutes := make([]codexNativeEndpointRoute, 0, len(validRoutes))
 	for _, route := range validRoutes {
-		c.mu.Lock()
-		c.catalogRoutes[codexCatalogRouteKey(route.Endpoint)] = route
-		c.mu.Unlock()
-		generation, err := discover(ctx, provider, c.cwd, options(func(openCtx context.Context) (aisessions.CodexCatalog, error) {
+		resolvedRoutes = append(resolvedRoutes, route)
+		generation, err := discover(fallbackSpan.ctx, provider, c.cwd, options(func(openCtx context.Context) (aisessions.CodexCatalog, error) {
 			client, openErr := openCodexNativeRoute(openCtx, route, false)
 			if openErr != nil {
 				return nil, openErr
@@ -307,9 +369,9 @@ func (c *aiResumeLiveController) discoverResumeProvider(
 		combined.MoreNotLoaded = combined.MoreNotLoaded || generation.MoreNotLoaded
 	}
 	if len(combined.Summaries) != 0 || len(combined.DetailRefs) != 0 || len(failures) < len(validRoutes) {
-		return c.resolveCodexCatalogCollisions(combined), nil
+		return c.resolveCodexCatalogCollisions(combined), resolvedRoutes, nil
 	}
-	return combined, errors.Join(failures...)
+	return combined, nil, errors.Join(failures...)
 }
 
 func codexCatalogRouteKey(endpoint coremetadata.CodexEndpointRef) string {
