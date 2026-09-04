@@ -46,23 +46,15 @@ func TestLegacyImportBuildsResourcesAndMarksManagedWindowsForAutomaticRenameOff(
 		t.Fatalf("session projection = %+v", result.Project.Status.Session)
 	}
 
-	var windowNames []string
-	for _, window := range result.Windows {
-		windowNames = append(windowNames, window.Name)
+	for i, window := range result.Windows {
 		if !window.NeedsAutomaticRenameOff {
 			t.Fatalf("managed window %q must be marked for automatic-rename off", window.Name)
 		}
-	}
-	for i, window := range result.Windows {
 		if window.Name != window.UID {
 			t.Fatalf("window %d name = %q, want exact uid %q", i, window.Name, window.UID)
 		}
 	}
 
-	var paneNames []string
-	for _, pane := range result.Panes {
-		paneNames = append(paneNames, pane.Name)
-	}
 	for i, pane := range result.Panes {
 		if pane.Name != pane.UID {
 			t.Fatalf("pane %d name = %q, want exact uid %q", i, pane.Name, pane.UID)
@@ -173,10 +165,6 @@ func TestLegacyImportsUseExactUIDNamesWithoutNumericSuffixes(t *testing.T) {
 	}
 
 	// Duplicate Agent migration: two codex agents in one window.
-	var firstAgents []string
-	for _, agent := range first.Agents {
-		firstAgents = append(firstAgents, agent.Name)
-	}
 	for _, agent := range first.Agents {
 		if agent.Name != agent.UID {
 			t.Fatalf("agent name = %q, want exact uid %q", agent.Name, agent.UID)
@@ -184,10 +172,6 @@ func TestLegacyImportsUseExactUIDNamesWithoutNumericSuffixes(t *testing.T) {
 	}
 
 	// The second root follows the same exact-uid rule.
-	var secondAgents []string
-	for _, agent := range second.Agents {
-		secondAgents = append(secondAgents, agent.Name)
-	}
 	for _, agent := range second.Agents {
 		if agent.Name != agent.UID {
 			t.Fatalf("second-root agent name = %q, want exact uid %q", agent.Name, agent.UID)
@@ -195,10 +179,6 @@ func TestLegacyImportsUseExactUIDNamesWithoutNumericSuffixes(t *testing.T) {
 	}
 
 	// Managed pane automatic names are exact pane uids.
-	var paneNames []string
-	for _, pane := range first.Panes {
-		paneNames = append(paneNames, pane.Name)
-	}
 	for _, pane := range first.Panes {
 		if pane.Name != pane.UID {
 			t.Fatalf("managed pane name = %q, want exact uid %q", pane.Name, pane.UID)

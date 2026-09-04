@@ -663,15 +663,6 @@ func TestLinkAgentPanePreservesIdentityAndName(t *testing.T) {
 	}
 }
 
-func linkedAgentUID(t *testing.T, registry *Registry, paneUID string) string {
-	t.Helper()
-	pane, ok := registry.Pane(paneUID)
-	if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != KindAgent {
-		t.Fatalf("pane %q is not Agent-owned", paneUID)
-	}
-	return pane.Metadata.OwnerRef.UID
-}
-
 // TestLinkAgentPaneRefusesUnknownScopeWithZeroWrites keeps a caller that lost
 // its Window or Pane between the match and the link from mutating anything.
 func TestLinkAgentPaneRefusesUnknownScopeWithZeroWrites(t *testing.T) {

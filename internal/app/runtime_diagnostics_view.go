@@ -39,6 +39,19 @@ func runtimeRowValue(row runtimediag.Row) string {
 // and every row shares the rest.
 var runtimeViewColumns = []string{"KIND", "ID", "IN", "NAME", "CLASS", "RESOURCE", "REASON"}
 
+// runtimeViewColumnBounds is this view's half of the same fixed-viewport
+// budget. RESOURCE is the cell schema v4 widened, because it renders
+// `<kind>/<Registry name>`; NAME and REASON are bounded as ceilings over free
+// text rather than as v4 repairs. The exact tmux handles -- ID and IN -- are
+// never clipped: they are the coordinates an operator retypes.
+func runtimeViewColumnBounds() []pickerColumnBound {
+	return pickerColumnBoundsFor(runtimeViewColumns, map[string]int{
+		"NAME":     runtimeDiagnosticsNameCells,
+		"RESOURCE": runtimeDiagnosticsResourceCells,
+		"REASON":   runtimeDiagnosticsReasonCells,
+	})
+}
+
 func runtimeViewRow(row runtimediag.Row) []string {
 	return []string{
 		runtimeCell(row.Kind), runtimeCell(row.ID), runtimeCell(row.ContainerID),
@@ -86,14 +99,7 @@ func (v runtimeDiagnosticsView) entries() []intpickercompat.Entry {
 	for _, row := range v.rows {
 		table = append(table, runtimeViewRow(row))
 	}
-	widths := make([]int, len(runtimeViewColumns))
-	for _, row := range table {
-		for i, cell := range row {
-			if width := resourceCellWidth(cell); width > widths[i] {
-				widths[i] = width
-			}
-		}
-	}
+	widths := boundPickerTableWidths(table, runtimeViewColumnBounds())
 	entries = append(entries, intpickercompat.Entry{
 		Label: resourceTableLine(table[0], widths),
 		Value: settingsNoopValue,
