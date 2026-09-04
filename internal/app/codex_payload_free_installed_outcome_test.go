@@ -223,15 +223,19 @@ func TestInstalledPayloadFreePlainFallbackOutcomeSmoke(t *testing.T) {
 		t.Fatal(err)
 	}
 	environment := withoutInheritedTmuxEnvironment(os.Environ())
-	run := func(executable string, args ...string) string {
+	runWithEnvironment := func(commandEnvironment []string, executable string, args ...string) string {
 		t.Helper()
 		command := exec.CommandContext(ctx, executable, args...) // #nosec G204 -- installed executable and structured test argv.
-		command.Env = environment
+		command.Env = commandEnvironment
 		output, runErr := command.CombinedOutput()
 		if runErr != nil {
 			t.Fatalf("%s %s: %v\n%s", filepath.Base(executable), strings.Join(args, " "), runErr, output)
 		}
 		return strings.TrimSpace(string(output))
+	}
+	run := func(executable string, args ...string) string {
+		t.Helper()
+		return runWithEnvironment(environment, executable, args...)
 	}
 	oneLine := func(label, value string) string {
 		t.Helper()
@@ -251,6 +255,31 @@ func TestInstalledPayloadFreePlainFallbackOutcomeSmoke(t *testing.T) {
 	if !strings.HasPrefix(filepath.Clean(tmuxSocket), filepath.Clean(tmuxRoot)+string(filepath.Separator)) {
 		t.Fatalf("tmux socket escaped exact cleanup root: %q", tmuxSocket)
 	}
+	tmuxSocket = filepath.Clean(tmuxSocket)
+	tmuxClosed := false
+	killExactTmux := func() error {
+		killCtx, killCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer killCancel()
+		command := exec.CommandContext(killCtx, "tmux", "-S", tmuxSocket, "kill-server") // #nosec G204 -- exact observed socket proven under the fixture root.
+		command.Env = environment
+		output, killErr := command.CombinedOutput()
+		if killErr != nil {
+			return fmt.Errorf("kill exact isolated tmux socket: %w (%s)", killErr, installedOutputReceipt(string(output)))
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		if tmuxClosed {
+			return
+		}
+		if err := killExactTmux(); err != nil {
+			t.Errorf("Phase 0 exact tmux cleanup: %v", err)
+		}
+	})
+	tmuxServerPID := oneLine("isolated tmux server pid",
+		run("tmux", "-S", tmuxSocket, "display-message", "-p", "-F", "#{pid}"))
+	diagnosticEnvironment := append([]string(nil), environment...)
+	diagnosticEnvironment = append(diagnosticEnvironment, "TMUX="+tmuxSocket+","+tmuxServerPID+",0")
 	beforeRegistry, err := loadResourceRegistry()
 	if err != nil {
 		t.Fatal(err)
@@ -273,7 +302,7 @@ func TestInstalledPayloadFreePlainFallbackOutcomeSmoke(t *testing.T) {
 	agent, ok := registry.Agent(outcome.AgentUID)
 	if !ok || agent.Spec.Provider != aiModeCodex || agent.Status.Phase != coremetadata.PhaseRunning ||
 		agent.Status.PaneRef == "" || agent.Status.SessionRef != nil ||
-		agent.Status.Activation.State != coremetadata.ActivationNotRequested || agent.Status.Activation.Source != "" {
+		!agent.Status.Activation.IsZero() {
 		t.Fatalf("installed payload-free Agent is not one usable plain identity: %#v", agent)
 	}
 	pane, ok := registry.Pane(agent.Status.PaneRef)
@@ -309,17 +338,20 @@ func TestInstalledPayloadFreePlainFallbackOutcomeSmoke(t *testing.T) {
 		strings.Contains(fields[5], "resume") || fields[6] != "0" {
 		t.Fatalf("installed plain Pane receipt is not exact: %q", receipt)
 	}
-	described := run(installed, "describe", "agent", "uid:"+agent.Metadata.UID)
+	described := runWithEnvironment(diagnosticEnvironment, installed, "describe", "agent", "uid:"+agent.Metadata.UID)
 	if !strings.Contains(described, "LifecycleSource:") || !strings.Contains(described, codexAuthorityHook) ||
 		!strings.Contains(described, "LifecycleDeclared:") || !strings.Contains(described, codexNativeDeclaredPayloadFreeFallback) {
 		t.Fatalf("installed describe signal is missing:\n%s", described)
 	}
-	doctor := run(installed, "doctor", "--section", "integrations", "--json", "--verbose")
+	doctor := runWithEnvironment(diagnosticEnvironment, installed, "doctor", "--section", "integrations", "--json", "--verbose")
 	if !strings.Contains(doctor, `"payload_free_fallback": 1`) || !strings.Contains(doctor, `"unexplained_hook": 0`) {
 		t.Fatalf("installed Doctor signal is missing:\n%s", doctor)
 	}
 
-	run("tmux", "-S", tmuxSocket, "kill-server")
+	if err := killExactTmux(); err != nil {
+		t.Fatal(err)
+	}
+	tmuxClosed = true
 	closed := endpoint.Close(ctx)
 	endpointClosed = true
 	if closed.Class != codexinstalled.ResultPass {
@@ -338,8 +370,8 @@ func TestInstalledPayloadFreePlainFallbackOutcomeSmoke(t *testing.T) {
 	if _, err := os.Lstat(root); !os.IsNotExist(err) {
 		t.Fatalf("Phase 0 installed root remains after exact cleanup: %v", err)
 	}
-	t.Logf("evidence: tuple cli=%s payload-free=plain agent=%s pane=%s provider-thread-delta=0 ambient-lifecycle-mutations=0",
-		version.String(), agent.Metadata.UID, pane.Status.Activation.RuntimeID)
+	t.Logf("evidence: tuple cli=%s payload-free=plain agent=%s pane=%s tmux-socket=%s provider-thread-delta=0 ambient-lifecycle-mutations=0 cleanup=exact-root-removed",
+		version.String(), agent.Metadata.UID, pane.Status.Activation.RuntimeID, tmuxSocket)
 }
 
 func TestInstalledPayloadFreeResumeOutputClassificationIsStrictAndContentFree(t *testing.T) {
