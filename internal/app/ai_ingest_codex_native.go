@@ -56,6 +56,11 @@ const (
 	// codexNativeDeclaredInteractiveOnly marks the explicit --interactive-only
 	// opt-out.
 	codexNativeDeclaredInteractiveOnly = "interactive-only"
+	// codexNativeDeclaredPayloadFreeFallback marks the permanent safe fallback
+	// for a fresh create with no payload. It is chosen before any app-server
+	// route or thread is touched and makes the reduced native-control state
+	// visible without storing provider content.
+	codexNativeDeclaredPayloadFreeFallback = "payload-free-fallback"
 	// codexNativeDeclaredRolloutCatalogResume marks a picker row whose source is the
 	// rollout store. It can launch the provider's legacy resume command, but it
 	// never acquires app-server thread or endpoint authority.
@@ -1679,6 +1684,7 @@ func parseCodexNativeLifecycleTarget(args []string) (codexLifecycleObserverTarge
 // silence an unexplained native fallback.
 var codexNativeDeclaredReasons = []string{
 	codexNativeDeclaredInteractiveOnly,
+	codexNativeDeclaredPayloadFreeFallback,
 	codexNativeDeclaredRolloutCatalogResume,
 }
 

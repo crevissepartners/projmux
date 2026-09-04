@@ -41,6 +41,10 @@ type codexAuthorityCensus struct {
 	Invalidating int `json:"invalidating"`
 	// DeclaredHook counts Agents on hook observation with a declared reason.
 	DeclaredHook int `json:"declared_hook"`
+	// PayloadFreeFallback is the declared-hook subset created by the permanent
+	// pre-provider payload-free fallback. It is a count-only, content-free
+	// reduced-native-control signal.
+	PayloadFreeFallback int `json:"payload_free_fallback,omitempty"`
 	// UnexplainedHook counts Agents on hook observation with no declared
 	// reason. This is the number the native-authority contract requires to be
 	// zero for Agents that were created with a payload.
@@ -76,6 +80,9 @@ func censusCodexLifecycleAuthority(
 				census.UnexplainedHook++
 			} else {
 				census.DeclaredHook++
+				if diagnostic.Declared == codexNativeDeclaredPayloadFreeFallback {
+					census.PayloadFreeFallback++
+				}
 			}
 		default:
 			census.Unavailable++

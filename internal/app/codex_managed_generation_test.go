@@ -330,8 +330,9 @@ func TestOrdinaryCodexCreateSpellingsActivateRollingManagedCurrent(t *testing.T)
 			t.Fatalf("ordinary create %v: stdout=%q stderr=%q err=%v", argv, stdout, stderr, err)
 		}
 	}
-	if activationCalls != 2 || createCalls != 2 {
-		t.Fatalf("activation calls=%d create calls=%d", activationCalls, createCalls)
+	if activationCalls != 2 || createCalls != 1 {
+		t.Fatalf("payload-free create reached generation activation: activation calls=%d create calls=%d, want 2/1 from the prompted create only",
+			activationCalls, createCalls)
 	}
 	converged, exists, err := journal.Load()
 	if err != nil || !exists || converged.Operation == nil || !converged.Operation.DrainPublished {
@@ -343,12 +344,14 @@ func TestOrdinaryCodexCreateSpellingsActivateRollingManagedCurrent(t *testing.T)
 		!oldAfter.Status.SessionRef.SameConversation(oldBefore.Status.SessionRef) || oldAfter.Status.SessionRef.Codex.Endpoint != nil {
 		t.Fatalf("legacy old-generation Agent continuity changed: before=%#v after=%#v", oldBefore.Status, oldAfter.Status)
 	}
-	for _, name := range []string{"codex-1", "codex-2"} {
-		agent := agentNamed(t, store, "win-alpha-main", name)
-		if agent.Status.SessionRef == nil || agent.Status.SessionRef.Codex == nil || agent.Status.SessionRef.Codex.Endpoint == nil ||
-			!agent.Status.SessionRef.Codex.Endpoint.Same(endpoint) {
-			t.Fatalf("Agent %s not pinned to managed current: %#v", name, agent.Status.SessionRef)
-		}
+	plain := agentNamed(t, store, "win-alpha-main", "codex-1")
+	if plain.Status.Phase != coremetadata.PhaseRunning || plain.Status.PaneRef == "" || plain.Status.SessionRef != nil {
+		t.Fatalf("payload-free Agent did not remain on the pre-provider plain lane: %#v", plain.Status)
+	}
+	native := agentNamed(t, store, "win-alpha-main", "codex-2")
+	if native.Status.SessionRef == nil || native.Status.SessionRef.Codex == nil || native.Status.SessionRef.Codex.Endpoint == nil ||
+		!native.Status.SessionRef.Codex.Endpoint.Same(endpoint) {
+		t.Fatalf("prompted Agent not pinned to managed current: %#v", native.Status.SessionRef)
 	}
 }
 

@@ -524,13 +524,15 @@ type codexNativeLaunchOutcomeRow struct {
 
 // codexNativeLaunchOutcomeTable is the closed native launch outcome contract.
 //
-// Native authority is required exactly where an Agent is created. Only the
-// explicit interactive-only lane and a picker row sourced from rollout reach
-// the plain CLI. Neither can satisfy native control authority.
+// Prompted fresh creates and app-server sourced resumes require native
+// authority. A fresh create with no payload instead chooses the permanent
+// plain fallback before any provider mutation; explicit interactive-only and a
+// picker row sourced from rollout remain the other declared plain lanes. None
+// of those declared lanes can satisfy native control authority.
 var codexNativeLaunchOutcomeTable = []codexNativeLaunchOutcomeRow{
 	{Action: "create", NativeResult: "thread+turn", Launch: "remote resume without prompt", Binding: "exact Agent/Pane/generation/thread/turn"},
-	{Action: "create", NativeResult: "thread without turn", Launch: "remote resume without prompt", Binding: "exact Agent/Pane/generation/thread/endpoint; no-turn obligation"},
 	{Action: "resume", NativeResult: "same thread", Launch: "remote resume without prompt", Binding: "exact Agent/Pane/generation/thread"},
+	{Action: "create", NativeResult: "no payload", Launch: "current CLI", Binding: "declared payload-free fallback; native turn control unavailable"},
 	{Action: "create", NativeResult: "explicit --interactive-only", Launch: "current CLI", Binding: "no native binding; native turn control unavailable"},
 	{Action: "resume", NativeResult: "rollout picker source", Launch: "current CLI resume", Binding: "no native endpoint authority"},
 	{Action: "create", NativeResult: "unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse and name --interactive-only"},
@@ -538,7 +540,7 @@ var codexNativeLaunchOutcomeTable = []codexNativeLaunchOutcomeRow{
 	{Action: "resume", NativeResult: "create-time picker row, unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse without a second lane"},
 	{Action: "resume", NativeResult: "stored Agent rebind, unavailable or unsupported before provider mutation", Launch: "none", Binding: "write zero; refuse without a second lane"},
 	{Action: "create", NativeResult: "indeterminate after thread creation", Launch: "none", Binding: "write zero; refuse duplicate lane"},
-	{Action: "create", NativeResult: "payload-free thread not durably resumable", Launch: "none", Binding: "preserve one failed Agent and exact thread; refuse duplicate lane"},
+	{Action: "negative fixture", NativeResult: "payload-free thread not durably resumable", Launch: "none", Binding: "historical safety evidence only; never functional create success"},
 }
 
 func nativePrompt(payload []string) (string, bool) {
@@ -571,63 +573,6 @@ func nativeLaunchError(spelling string, err error) error {
 	// offer any second lane -- `--interactive-only` included. Starting another
 	// Codex process now could submit the same prompt twice.
 	return errors.New(spelling + ": native Codex thread preparation failed after provider identity became indeterminate; refusing a second CLI lane: " + err.Error())
-}
-
-// nativeCodexCreateReadinessError is the post-provider, pre-TUI outcome for a
-// payload-free create. All fields are opaque identity or a closed enum; neither
-// the upstream response nor provider content is retained or rendered.
-type nativeCodexCreateReadinessError struct {
-	AgentUID             string
-	ThreadID             string
-	StateDomainID        string
-	EndpointGenerationID string
-	Outcome              codexappserver.DurableResumeOutcome
-	err                  error
-}
-
-func (e *nativeCodexCreateReadinessError) Error() string {
-	return fmt.Sprintf(
-		"Codex payload-free create preserved a content-free failed outcome: agent uid:%s thread %s endpoint %s/%s readiness %s; TUI was not launched and retry must use `projmux agent resume uid:%s`",
-		e.AgentUID, e.ThreadID, e.StateDomainID, e.EndpointGenerationID, e.Outcome, e.AgentUID)
-}
-
-func (e *nativeCodexCreateReadinessError) Unwrap() error { return e.err }
-
-func preserveNativeCodexReadinessFailure(
-	working *coremetadata.Registry,
-	mutator coremetadata.Mutator,
-	agentUID, paneUID, activationGeneration string,
-	endpoint coremetadata.CodexEndpointRef,
-	binding codexappserver.ThreadBinding,
-	readiness *codexappserver.DurableResumeError,
-) error {
-	if readiness == nil || strings.TrimSpace(binding.ThreadID) == "" || strings.TrimSpace(binding.TurnID) != "" {
-		return errors.New("native Codex readiness failure is missing an exact payload-free identity")
-	}
-	if _, err := mutator.BindCodexActivation(working, coremetadata.CodexActivationObservation{
-		AgentUID: agentUID, PaneUID: paneUID, Generation: activationGeneration,
-		ThreadID: binding.ThreadID, Endpoint: endpoint,
-	}); err != nil {
-		return MapMetadataError(err)
-	}
-	if _, err := mutator.ReleaseAgentPane(working, agentUID, coremetadata.AgentExitLaunchFailure,
-		"payload-free-readiness-"+string(readiness.Outcome)); err != nil {
-		return MapMetadataError(err)
-	}
-	return nil
-}
-
-func newNativeCodexCreateReadinessError(
-	agentUID string,
-	endpoint coremetadata.CodexEndpointRef,
-	binding codexappserver.ThreadBinding,
-	readiness *codexappserver.DurableResumeError,
-) error {
-	return &nativeCodexCreateReadinessError{
-		AgentUID: agentUID, ThreadID: binding.ThreadID,
-		StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID,
-		Outcome: readiness.Outcome, err: readiness,
-	}
 }
 
 // interactiveOnlyFlag is the one public spelling that asks for a plain-CLI

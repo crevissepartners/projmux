@@ -1,4 +1,29 @@
-# Codex Native-Required Create Migration (0.14.0)
+# Codex Native-Required Create and Payload-Free Fallback
+
+## Current payload-free behavior (Codex 0.153.0)
+
+`projmux create codex` and `projmux create agent --provider codex` with no
+payload now open one managed plain-interactive Pane and return one Running
+Agent for each exact target. The same pre-provider decision is used by the AI
+picker's default launch intent. Projmux does not call app-server `Current` or
+`Resolve`, start a thread or turn, or enter a durable-resume barrier for this
+shape. The current Codex 0.153.0 tuple cannot durably hand a zero-turn thread
+to an independent TUI, so a native attempt cannot be a prerequisite for a
+usable payload-free create.
+
+This automatic fallback uses the same provider argv and output as the existing
+payload-free `--interactive-only` lane. It is distinguishable only through the
+content-free lifecycle declaration `payload-free-fallback`: `describe agent`
+shows it as `LifecycleDeclared`, and Doctor reports the aggregate
+`payload_free_fallback` count. No prompt, hidden turn, transcript content, or
+provider response is stored to produce that signal.
+
+The Phase-7 zero-turn durable-readiness failure is retained only as historical
+negative safety evidence. A typed Failed Agent with no Pane is not functional
+create success. Prompted native create, app-server picker resume, existing
+Agent resume, and generation-pinned routes keep their native contracts.
+
+## Native-required prompted create (0.14.0)
 
 0.14.0 makes native authority a requirement for a *prompted* managed Codex
 create instead of something projmux attempts and silently gives up on. Where an
@@ -37,7 +62,7 @@ Exactly one create shape is native-required. All five conditions must hold:
 - `--interactive-only` is not passed, and
 - the create is not carrying a capability selection from the split-UI picker.
 
-Anything outside that shape keeps its previous behavior unchanged. The closed
+The payload-free exception above is selected before this gate. The closed
 outcome table lives in `internal/app/codex_native_thread.go`
 (`codexNativeLaunchOutcomeTable`) and is pinned by
 `TestCodexNativeLaunchOutcomeTableIsClosed`.
@@ -120,9 +145,10 @@ rather than the app-server are unaffected and keep the current CLI lane.
 
 ## The escape hatch: `--interactive-only`
 
-`--interactive-only` is the only public spelling that asks for a plain
-interactive Codex Agent with no native thread binding, and it is the only way to
-reach the plain CLI lane on purpose.
+`--interactive-only` remains the only public spelling that explicitly asks for
+a plain interactive Codex Agent with no native thread binding. Payload-free
+fresh create now chooses that existing lane automatically, without changing the
+flag's spelling or prompted-create meaning.
 
 ```sh
 projmux create codex --interactive-only -- "interactive task"
@@ -151,8 +177,8 @@ projmux create agent --provider codex --interactive-only -- "interactive task"
 | Surface | Behavior |
 | --- | --- |
 | `projmux agent resume` | unchanged. A stored Agent whose native resume cannot be proven keeps its existing safe fallback to one provider resume of the stored conversation. `internal/app/agent_resume.go` has a net diff of zero lines in this release. |
-| Empty-prompt Codex create (`projmux create codex` with no payload) | unchanged byte-for-byte, including argv, hook acknowledgement, output, and late refinement. An empty prompt is not attachable native input, so it was never in the gated shape. |
-| Multi-operand payload (`projmux create codex -- a b`) | unchanged. The legacy CLI owns provider parsing for a multi-operand payload, so it is not a native create candidate and keeps the plain lane. |
+| Payload-free Codex create (`projmux create codex` with no payload) | pre-provider plain fallback: one usable managed Pane and one Running Agent per exact target, with zero native thread/turn/resume-barrier calls and the content-free `payload-free-fallback` declaration. |
+| Multi-operand payload (`projmux create codex -- a b`) | unchanged refusal. Native `turn/start` accepts one text item; Projmux does not join operands or silently reinterpret them as a plain fallback. |
 | Claude and Antigravity | unchanged lifecycle, fan-out, and hook activation contract. |
 | Public hook env and payload schema | unchanged. |
 | Post-thread-creation failures | unchanged. A native failure *after* `thread/start` returned still refuses without offering any second lane — including `--interactive-only` — because starting another Codex process could submit the same prompt twice. |
@@ -160,7 +186,7 @@ projmux create agent --provider codex --interactive-only -- "interactive task"
 ## Verifying this yourself
 
 ```sh
-go test ./internal/app/ -run 'TestCodexInstallCapability|TestInteractiveOnlyIsTheOnlyPlainCodexLaneAndBothSpellingsAreEquivalent|TestDefaultNativeCodexFanOutRefusesWithZeroMutationsAndInteractiveOnlyKeepsCardinality|TestEmptyPromptCodexCreateIsByteForByteUnchangedByTheNativeRequiredGate|TestClaudeAndAntigravityLifecycleAndHookContractAreUnchangedByTheNativeGate|TestUnavailableNative|TestCodexNativeLaunchOutcomeTableIsClosed'
+go test ./internal/app/ -run 'TestCodexCreatePayloadCardinalityInteractiveOnlyAndReadinessOutcomeTable|TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalentLane|TestPayloadFreeCodexPlainLaunchFailureRollsBackWithoutProviderMutation|TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane|TestPromptedNativeCodexCreateIssuesOneTurnAndNeverRepeatsThePromptInPaneArgv|TestNativeResumePicker|TestUnavailableNativeResume|TestClaudeAndAntigravity|TestCodexNativeLaunchOutcomeTableIsClosed'
 go test ./internal/integrations/agents/codexappserver/ -run TestStartDefaultThread
 ```
 
@@ -172,7 +198,12 @@ go test ./internal/integrations/agents/codexappserver/ -run TestStartDefaultThre
 | Picker resume refuses instead of rebinding onto the rollout lane, and offers no launch-mode escape hatch | `TestUnavailableNativePickerResumeRefusesInsteadOfRebindingOntoTheRolloutLane` |
 | `agent resume` keeps its safe fallback to one provider resume | `TestUnavailableNativeResumeKeepsTheStoredConversationOnTheProviderResumeLane` |
 | Both `--interactive-only` spellings are equivalent, and non-Codex providers refuse it at zero transactions | `TestInteractiveOnlyIsTheOnlyPlainCodexLaneAndBothSpellingsAreEquivalent` |
-| Empty-prompt create is unchanged | `TestEmptyPromptCodexCreateIsByteForByteUnchangedByTheNativeRequiredGate` |
+| Payload cardinality × `--interactive-only` × readiness stays a closed pre-provider decision table | `TestCodexCreatePayloadCardinalityInteractiveOnlyAndReadinessOutcomeTable` |
+| Canonical and shortcut payload-free create are byte/argv-equivalent to the explicit plain lane and touch no provider route | `TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalentLane` |
+| Saved-default, provider-picker, and direct-provider AI intents produce one managed plain lane without native mutation | `TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane` |
+| A failed plain launch rolls Registry and tmux back and never tries a provider lane | `TestPayloadFreeCodexPlainLaunchFailureRollsBackWithoutProviderMutation` |
+| The installed outcome requires a Running plain Agent/Pane, no session ref, zero provider-thread delta, diagnostic signals, isolated socket cleanup, and ambient mutation zero | `TestInstalledPayloadFreePlainFallbackOutcomeSmoke` |
+| Phase-7 readiness failure remains negative safety evidence rather than functional create success | `TestPhase7PayloadFreeReadinessFailureIsNegativeSafetyEvidenceOnly`, `TestInstalledPayloadFreeCreateOutputClassificationRequiresFunctionalPlainSuccess` |
 | Claude and Antigravity are unchanged | `TestClaudeAndAntigravityLifecycleAndHookContractAreUnchangedByTheNativeGate` |
 | One payload sends exactly one `turn/start` and never repeats the prompt in Pane argv | `TestPromptedNativeCodexCreateIssuesOneTurnAndNeverRepeatsThePromptInPaneArgv` |
 | The post-mutation row still refuses a second lane | `TestIndeterminateNativeCreateRefusesASecondLaneAndWritesZero` |

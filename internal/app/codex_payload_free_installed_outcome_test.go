@@ -5,26 +5,28 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/testutil/codexinstalled"
+	"github.com/crevissepartners/projmux/internal/version"
 )
 
 type installedPayloadFreeCreateOutcome struct {
-	DurableReady bool
-	AgentUID     string
-	ThreadID     string
-	Endpoint     coremetadata.CodexEndpointRef
-	Readiness    codexappserver.DurableResumeOutcome
+	PlainReady bool
+	AgentUID   string
+	ThreadID   string
+	Endpoint   coremetadata.CodexEndpointRef
+	Readiness  codexappserver.DurableResumeOutcome
 }
-
-var installedPayloadFreeCreateFailurePattern = regexp.MustCompile(
-	"^Codex payload-free create preserved a content-free failed outcome: agent uid:([^[:space:]]+) thread ([^[:space:]]+) endpoint ([^/[:space:]]+)/([^[:space:]]+) readiness ([a-z-]+); TUI was not launched and retry must use `projmux agent resume uid:([^[:space:]]+)`$",
-)
 
 var installedPayloadFreeResumeFailurePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^agent resume: native Codex thread preparation failed after provider identity became indeterminate; refusing a second CLI lane: codex app-server response refused: (thread-not-durable|thread-absent|protocol-error) \(code -?[0-9]+\)$`),
@@ -53,47 +55,17 @@ func runInstalledPayloadFreeCreate(
 
 func classifyInstalledPayloadFreeCreateOutput(output string, exitCode int) (installedPayloadFreeCreateOutcome, error) {
 	output = strings.TrimSpace(output)
-	if exitCode == 0 {
-		if fields := strings.Fields(output); len(fields) == 1 {
-			if kind, ok := coremetadata.UIDKind(fields[0]); ok && kind == coremetadata.KindAgent {
-				return installedPayloadFreeCreateOutcome{DurableReady: true, AgentUID: fields[0]}, nil
-			}
+	if exitCode != 0 {
+		return installedPayloadFreeCreateOutcome{}, fmt.Errorf(
+			"payload-free create exit=%d is negative safety evidence, never functional success: %s",
+			exitCode, installedOutputReceipt(output))
+	}
+	if fields := strings.Fields(output); len(fields) == 1 {
+		if kind, ok := coremetadata.UIDKind(fields[0]); ok && kind == coremetadata.KindAgent {
+			return installedPayloadFreeCreateOutcome{PlainReady: true, AgentUID: fields[0]}, nil
 		}
-		return installedPayloadFreeCreateOutcome{}, fmt.Errorf("successful payload-free create output is not one exact Agent uid: %s", installedOutputReceipt(output))
 	}
-	if exitCode != 1 {
-		return installedPayloadFreeCreateOutcome{}, fmt.Errorf("payload-free create exit=%d %s, want exact success or typed readiness exit 1", exitCode, installedOutputReceipt(output))
-	}
-	match := installedPayloadFreeCreateFailurePattern.FindStringSubmatch(output)
-	agentKind, agentUIDOK := coremetadata.UIDKind(matchValue(match, 1))
-	retryKind, retryUIDOK := coremetadata.UIDKind(matchValue(match, 6))
-	if len(match) != 7 || !agentUIDOK || agentKind != coremetadata.KindAgent || !retryUIDOK || retryKind != coremetadata.KindAgent || match[1] != match[6] {
-		return installedPayloadFreeCreateOutcome{}, fmt.Errorf("payload-free create failure is not the closed content-free readiness outcome: %s", installedOutputReceipt(output))
-	}
-	readiness := codexappserver.DurableResumeOutcome(match[5])
-	switch readiness {
-	case codexappserver.DurableResumeTimeout,
-		codexappserver.DurableResumeThreadAbsent,
-		codexappserver.DurableResumeConnectionClose,
-		codexappserver.DurableResumeEndpointChanged,
-		codexappserver.DurableResumeProtocolRefusal:
-	default:
-		return installedPayloadFreeCreateOutcome{}, fmt.Errorf("payload-free create readiness outcome is outside the closed table: %s", installedOutputReceipt(output))
-	}
-	endpoint := coremetadata.CodexEndpointRef{StateDomainID: match[3], EndpointGenerationID: match[4]}
-	if !endpoint.Valid() {
-		return installedPayloadFreeCreateOutcome{}, fmt.Errorf("payload-free create failure returned an invalid endpoint identity")
-	}
-	return installedPayloadFreeCreateOutcome{
-		AgentUID: match[1], ThreadID: match[2], Endpoint: endpoint, Readiness: readiness,
-	}, nil
-}
-
-func matchValue(match []string, index int) string {
-	if index < 0 || index >= len(match) {
-		return ""
-	}
-	return match[index]
+	return installedPayloadFreeCreateOutcome{}, fmt.Errorf("successful payload-free create output is not one exact Agent uid: %s", installedOutputReceipt(output))
 }
 
 func requireInstalledPayloadFreeResumeRefusal(
@@ -153,14 +125,12 @@ func installedCatalogThreadIDs(ctx context.Context, socketPath, cwd string) ([]s
 	return ids, nil
 }
 
-func TestInstalledPayloadFreeCreateOutputClassificationIsStrictAndContentFree(t *testing.T) {
+func TestInstalledPayloadFreeCreateOutputClassificationRequiresFunctionalPlainSuccess(t *testing.T) {
 	t.Parallel()
 	valid := "Codex payload-free create preserved a content-free failed outcome: agent uid:agent-one thread thread-one endpoint state-one/generation-one readiness deadline; TUI was not launched and retry must use `projmux agent resume uid:agent-one`"
-	outcome, err := classifyInstalledPayloadFreeCreateOutput(valid, 1)
-	if err != nil || outcome.DurableReady || outcome.AgentUID != "agent-one" || outcome.ThreadID != "thread-one" ||
-		outcome.Readiness != codexappserver.DurableResumeTimeout || outcome.Endpoint.StateDomainID != "state-one" ||
-		outcome.Endpoint.EndpointGenerationID != "generation-one" {
-		t.Fatalf("typed classification=%+v err=%v", outcome, err)
+	outcome, err := classifyInstalledPayloadFreeCreateOutput("agent-one", 0)
+	if err != nil || !outcome.PlainReady || outcome.AgentUID != "agent-one" {
+		t.Fatalf("functional classification=%+v err=%v", outcome, err)
 	}
 	for _, test := range []struct {
 		name     string
@@ -168,6 +138,7 @@ func TestInstalledPayloadFreeCreateOutputClassificationIsStrictAndContentFree(t 
 		exitCode int
 	}{
 		{name: "arbitrary failure", output: "provider said secret conversation content", exitCode: 1},
+		{name: "historical typed failure is negative only", output: valid, exitCode: 1},
 		{name: "unknown readiness", output: strings.Replace(valid, "readiness deadline", "readiness provider-secret", 1), exitCode: 1},
 		{name: "different retry identity", output: strings.Replace(valid, "uid:agent-one`", "uid:agent-two`", 1), exitCode: 1},
 		{name: "typed non-Agent identity", output: strings.ReplaceAll(valid, "agent-one", "pane-one"), exitCode: 1},
@@ -182,6 +153,193 @@ func TestInstalledPayloadFreeCreateOutputClassificationIsStrictAndContentFree(t 
 			}
 		})
 	}
+}
+
+// TestInstalledPayloadFreePlainFallbackOutcomeSmoke is the functional
+// installed-product owner for Phase 0. It proves one plain Running Agent/Pane,
+// zero provider threads, a content-free declaration, and exact socket cleanup
+// inside a caller-owned isolated root.
+func TestInstalledPayloadFreePlainFallbackOutcomeSmoke(t *testing.T) {
+	root, enabled, err := codexinstalled.SmokeRoot("PROJMUX_CODEX_PHASE0_PAYLOAD_FREE_SMOKE_ROOT")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !enabled {
+		t.Skip("set PROJMUX_CODEX_PHASE0_PAYLOAD_FREE_SMOKE_ROOT for the installed Phase 0 payload-free smoke")
+	}
+	fixture, err := codexinstalled.NewClean(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootRemoved := false
+	t.Cleanup(func() {
+		if err := fixture.Cleanup(); err != nil {
+			t.Errorf("Phase 0 installed fixture cleanup: %v", err)
+		}
+		if !rootRemoved {
+			_ = os.RemoveAll(root)
+		}
+	})
+	fixture.ApplyEnv(t.Setenv)
+
+	home := filepath.Join(root, "home")
+	configHome := filepath.Join(root, "config")
+	stateHome := filepath.Join(root, "state")
+	runtimeHome := filepath.Join(root, "runtime")
+	tmuxRoot := filepath.Join(root, "tmux")
+	for _, dir := range []string{home, configHome, stateHome, runtimeHome, tmuxRoot} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for key, value := range map[string]string{
+		"HOME": home, "XDG_CONFIG_HOME": configHome, "XDG_STATE_HOME": stateHome,
+		"XDG_RUNTIME_DIR": runtimeHome, "TMUX_TMPDIR": tmuxRoot,
+		"PROJMUX_MANAGED_ROOTS": fixture.Workspace, "PROJMUX_PROJDIR": fixture.Workspace,
+		"SHELL": "/bin/sh", "TERM": "xterm-256color",
+	} {
+		t.Setenv(key, value)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	endpoint, started := fixture.StartDirect(ctx, version.String())
+	if started.Class != codexinstalled.ResultPass {
+		t.Fatalf("start exact isolated endpoint: %+v", started)
+	}
+	endpointClosed := false
+	t.Cleanup(func() {
+		if !endpointClosed {
+			_ = endpoint.Close(context.Background())
+		}
+	})
+
+	installed, err := exec.LookPath("projmux")
+	if err != nil {
+		t.Fatalf("installed projmux is required: %v", err)
+	}
+	installed, err = filepath.Abs(installed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	environment := withoutInheritedTmuxEnvironment(os.Environ())
+	run := func(executable string, args ...string) string {
+		t.Helper()
+		command := exec.CommandContext(ctx, executable, args...) // #nosec G204 -- installed executable and structured test argv.
+		command.Env = environment
+		output, runErr := command.CombinedOutput()
+		if runErr != nil {
+			t.Fatalf("%s %s: %v\n%s", filepath.Base(executable), strings.Join(args, " "), runErr, output)
+		}
+		return strings.TrimSpace(string(output))
+	}
+	oneLine := func(label, value string) string {
+		t.Helper()
+		fields := strings.Fields(value)
+		if len(fields) != 1 {
+			t.Fatalf("%s=%q, want one exact value", label, value)
+		}
+		return fields[0]
+	}
+
+	generatedConfig := filepath.Join(configHome, "projmux", "tmux.conf")
+	run(installed, "config", "apply", "--config", generatedConfig, "--socket", "projmux")
+	projectUID := oneLine("project uid", run(installed, "create", "project", "--root", fixture.Workspace, "--name", "phase0-smoke", "-o", "uid"))
+	windowUID := oneLine("window uid", run(installed, "get", "windows", "--project", "uid:"+projectUID, "-o", "uid"))
+	run(installed, "reconcile", "resources", "--socket", "projmux", "--materialize-project", "uid:"+projectUID, "-o", "json")
+	tmuxSocket := oneLine("isolated tmux socket", run("tmux", "-L", "projmux", "display-message", "-p", "-F", "#{socket_path}"))
+	if !strings.HasPrefix(filepath.Clean(tmuxSocket), filepath.Clean(tmuxRoot)+string(filepath.Separator)) {
+		t.Fatalf("tmux socket escaped exact cleanup root: %q", tmuxSocket)
+	}
+	beforeRegistry, err := loadResourceRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeThreads, err := installedCatalogThreadIDs(ctx, fixture.SocketPath, fixture.Workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforePanes := strings.Fields(run("tmux", "-L", "projmux", "list-panes", "-a", "-F", "#{pane_id}"))
+
+	outcome, err := runInstalledPayloadFreeCreate(ctx, installed, environment,
+		"create", "codex", "--project", "uid:"+projectUID, "--window", "uid:"+windowUID, "-o", "uid")
+	if err != nil || !outcome.PlainReady {
+		t.Fatalf("functional payload-free create outcome=%+v err=%v", outcome, err)
+	}
+	registry, err := loadResourceRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, ok := registry.Agent(outcome.AgentUID)
+	if !ok || agent.Spec.Provider != aiModeCodex || agent.Status.Phase != coremetadata.PhaseRunning ||
+		agent.Status.PaneRef == "" || agent.Status.SessionRef != nil ||
+		agent.Status.Activation.State != coremetadata.ActivationNotRequested || agent.Status.Activation.Source != "" {
+		t.Fatalf("installed payload-free Agent is not one usable plain identity: %#v", agent)
+	}
+	pane, ok := registry.Pane(agent.Status.PaneRef)
+	if !ok || pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent ||
+		pane.Metadata.OwnerRef.UID != agent.Metadata.UID || pane.Status.Activation.Codex != nil ||
+		pane.Status.Activation.RuntimeID == "" {
+		t.Fatalf("installed payload-free Pane ownership is incomplete: %#v", pane)
+	}
+	if len(registry.Agents) != len(beforeRegistry.Agents)+1 || len(registry.Panes) != len(beforeRegistry.Panes)+1 {
+		t.Fatalf("installed cardinality agents=%d panes=%d, want 1/1",
+			len(registry.Agents)-len(beforeRegistry.Agents), len(registry.Panes)-len(beforeRegistry.Panes))
+	}
+	afterThreads, err := installedCatalogThreadIDs(ctx, fixture.SocketPath, fixture.Workspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(beforeThreads)
+	slices.Sort(afterThreads)
+	if !slices.Equal(beforeThreads, afterThreads) {
+		t.Fatalf("payload-free create mutated provider threads: before=%v after=%v", beforeThreads, afterThreads)
+	}
+	afterPanes := strings.Fields(run("tmux", "-L", "projmux", "list-panes", "-a", "-F", "#{pane_id}"))
+	if len(afterPanes) != len(beforePanes)+1 {
+		t.Fatalf("installed live Pane cardinality=%d, want 1", len(afterPanes)-len(beforePanes))
+	}
+	format := "#{@projmux_pane_uid}\037#{@projmux_pane_owner_uid}\037#{@projmux_codex_authority}\037#{@projmux_codex_authority_reason}\037#{@projmux_codex_native_declared}\037#{pane_start_command}\037#{pane_dead}"
+	receipt := run("tmux", "-L", "projmux", "display-message", "-p", "-t", pane.Status.Activation.RuntimeID, format)
+	fields := strings.Split(receipt, "\x1f")
+	if len(fields) != 7 || fields[0] != pane.Metadata.UID || fields[1] != agent.Metadata.UID ||
+		fields[2] != codexAuthorityHook || fields[3] != codexNativeUnexplainedReason ||
+		fields[4] != codexNativeDeclaredPayloadFreeFallback || !strings.Contains(fields[5], "exec") ||
+		!strings.Contains(fields[5], "codex") || strings.Contains(fields[5], "--remote") ||
+		strings.Contains(fields[5], "resume") || fields[6] != "0" {
+		t.Fatalf("installed plain Pane receipt is not exact: %q", receipt)
+	}
+	described := run(installed, "describe", "agent", "uid:"+agent.Metadata.UID)
+	if !strings.Contains(described, "LifecycleSource:") || !strings.Contains(described, codexAuthorityHook) ||
+		!strings.Contains(described, "LifecycleDeclared:") || !strings.Contains(described, codexNativeDeclaredPayloadFreeFallback) {
+		t.Fatalf("installed describe signal is missing:\n%s", described)
+	}
+	doctor := run(installed, "doctor", "--section", "integrations", "--json", "--verbose")
+	if !strings.Contains(doctor, `"payload_free_fallback": 1`) || !strings.Contains(doctor, `"unexplained_hook": 0`) {
+		t.Fatalf("installed Doctor signal is missing:\n%s", doctor)
+	}
+
+	run("tmux", "-S", tmuxSocket, "kill-server")
+	closed := endpoint.Close(ctx)
+	endpointClosed = true
+	if closed.Class != codexinstalled.ResultPass {
+		t.Fatalf("close exact isolated endpoint: %+v", closed)
+	}
+	if err := fixture.Ledger().AssertNoAmbientMutation(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fixture.Cleanup(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(root); err != nil {
+		t.Fatal(err)
+	}
+	rootRemoved = true
+	if _, err := os.Lstat(root); !os.IsNotExist(err) {
+		t.Fatalf("Phase 0 installed root remains after exact cleanup: %v", err)
+	}
+	t.Logf("evidence: tuple cli=%s payload-free=plain agent=%s pane=%s provider-thread-delta=0 ambient-lifecycle-mutations=0",
+		version.String(), agent.Metadata.UID, pane.Status.Activation.RuntimeID)
 }
 
 func TestInstalledPayloadFreeResumeOutputClassificationIsStrictAndContentFree(t *testing.T) {

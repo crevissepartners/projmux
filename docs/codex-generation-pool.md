@@ -160,9 +160,13 @@ uses two root-contained sockets, performs semantic readiness/completion/exit
 barriers rather than fixed sleeps, removes the leased source directories, and
 deletes only the exact owned root after both children and sockets are gone.
 
-The four existing empty-prompt canonical tests retain their current plain-CLI
-expectation. Their migration receipt belongs to Phase 3, not this additive
-model phase.
+Payload-free fresh create now has a stronger product boundary than the
+generation model: canonical CLI, shortcut, and default AI intent choose the
+plain-interactive lane before consulting `Current` or `Resolve`. They therefore
+create no generation obligation, provider thread, turn, or resume barrier. The
+generation-pool qualification below may still exercise a payload-free thread
+directly as a provider capability probe; that lower-layer negative evidence is
+not functional `projmux create codex` success.
 
 ## Phase 1 lifecycle projection
 

@@ -3301,7 +3301,7 @@ termination_closed_shell_uid="$(termination_tmux show-options -pqv -t "$terminat
 termination_closed_release="$termination_root/provider-release-closed"
 rm -f "$termination_closed_release"
 printf 'while [ ! -e %q ]; do sleep 0.05; done\nexit 0\n' "$termination_closed_release" >"$termination_root/stub-script"
-termination_closed_agent_uid="$(termination_pmx_provider create agent --provider codex --interactive-only \
+termination_closed_agent_uid="$(termination_pmx_provider create agent --provider codex \
   --project "uid:$termination_closed_project_uid" --window "uid:$termination_closed_window_uid" -o uid)"
 termination_agent_json "$termination_closed_agent_uid"
 termination_closed_agent_pane_uid="$(termination_agent_pane_ref)"
@@ -3310,6 +3310,11 @@ if [[ -z "$termination_closed_project_uid" || -z "$termination_closed_window_uid
   -z "$termination_closed_shell_uid" || -z "$termination_closed_agent_uid" ||
   -z "$termination_closed_agent_pane_uid" || ! "$termination_closed_runtime_id" =~ ^%[0-9]+$ ]]; then
   echo "Phase 1 integration could not resolve the exact one-Window owner chain" >&2
+  exit 1
+fi
+termination_closed_declaration="$(termination_tmux show-options -pqv -t "$termination_closed_runtime_id" @projmux_codex_native_declared)"
+if [[ "$termination_closed_declaration" != "payload-free-fallback" ]]; then
+  echo "Phase 0 integration payload-free declaration = $termination_closed_declaration" >&2
   exit 1
 fi
 termination_pmx delete pane "uid:$termination_closed_shell_uid" --socket "$termination_socket" --yes \
