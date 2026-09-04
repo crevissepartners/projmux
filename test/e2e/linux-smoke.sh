@@ -8831,7 +8831,7 @@ exitrec_await_phase1_window_cascade() {
 # 1. A provider that exits non-zero converges to Failed on the hook alone.
 printf '%s\n' 'exit 42' >"$exitrec_root/stub-script"
 exitrec_failed_agent="$(exitrec_live_pmx create agent --provider codex --interactive-only \
-  --project "uid:$exitrec_project_uid" -o uid)"
+  --project "uid:$exitrec_project_uid" --all-windows -o uid)"
 if [[ -z "$exitrec_failed_agent" ]]; then
   echo "exit reconciliation e2e created no Agent" >&2
   exit 1
@@ -8854,7 +8854,7 @@ echo ">> exit reconciliation e2e hook-driven immediate failure agent=$exitrec_fa
 # and the failed sibling Agent remain untouched.
 printf 'sleep 1\n%s\n' 'exit 0' >"$exitrec_root/stub-script"
 exitrec_clean_agent="$(exitrec_live_pmx create agent --provider claude \
-  --project "uid:$exitrec_project_uid" -o uid)"
+  --project "uid:$exitrec_project_uid" --all-windows -o uid)"
 exitrec_doc agent "$exitrec_clean_agent"
 exitrec_clean_pane="$(exitrec_field paneRef)"
 if [[ -z "$exitrec_clean_pane" ]]; then
@@ -8902,11 +8902,11 @@ exitrec_pair_release="$exitrec_root/release-clean-pair"
 rm -f "$exitrec_pair_release"
 printf 'while [ ! -e %s ]; do sleep 0.02; done\nexit 0\n' "$exitrec_pair_release" >"$exitrec_root/stub-script"
 exitrec_pair_agent_one="$(exitrec_live_pmx create agent --provider claude \
-  --project "uid:$exitrec_project_uid" -o uid)"
+  --project "uid:$exitrec_project_uid" --all-windows -o uid)"
 exitrec_doc agent "$exitrec_pair_agent_one"
 exitrec_pair_pane_one="$(exitrec_field paneRef)"
 exitrec_pair_agent_two="$(exitrec_live_pmx create agent --provider codex --interactive-only \
-  --project "uid:$exitrec_project_uid" -o uid)"
+  --project "uid:$exitrec_project_uid" --all-windows -o uid)"
 exitrec_doc agent "$exitrec_pair_agent_two"
 exitrec_pair_pane_two="$(exitrec_field paneRef)"
 if [[ -z "$exitrec_pair_pane_one" || -z "$exitrec_pair_pane_two" || "$exitrec_pair_pane_one" == "$exitrec_pair_pane_two" ]]; then
@@ -9242,7 +9242,7 @@ echo ">> exit reconciliation e2e read projection write-free"
 # ordering is explicitly outside this slice; the stable contract here is that no
 # evidence invents normal/intentional, the Pane row survives, and reconciliation
 # starts nothing because observation is not activation authority.
-exitrec_shell_pane="$(exitrec_live_pmx create pane --project "uid:$exitrec_project_uid" -o uid -- sleep 600)"
+exitrec_shell_pane="$(exitrec_live_pmx create pane --project "uid:$exitrec_project_uid" --all-windows -o uid -- sleep 600)"
 exitrec_settle_registry
 env -u TMUX -u TMUX_PANE tmux -S "$exitrec_socket_path" kill-server >/dev/null 2>&1 || true
 exitrec_settle_registry
@@ -9346,7 +9346,7 @@ exitrec_create_anchor_pane="$exitrec_rebound_pane"
 # pass through the ordinary lifecycle planner and exact first-write guard.
 printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
 exitrec_preexisting_agent="$(exitrec_live_pmx create agent --provider claude \
-  --project "uid:$exitrec_project_uid" -o uid)"
+  --project "uid:$exitrec_project_uid" --all-windows -o uid)"
 exitrec_doc agent "$exitrec_preexisting_agent"
 exitrec_preexisting_name="$(exitrec_field name)"
 exitrec_preexisting_pane_uid="$(exitrec_field paneRef)"
@@ -9445,7 +9445,7 @@ exitrec_tmux set-hook -gu pane-died
 printf 'sleep 1\n%s\n' 'exit 0' >"$exitrec_root/stub-script"
 set +e
 exitrec_rebound_agent="$(exitrec_live_pmx create agent --provider claude \
-  --project "uid:$exitrec_project_uid" -o uid \
+  --project "uid:$exitrec_project_uid" --all-windows -o uid \
   2>"$exitrec_root/rebound-create.err")"
 exitrec_rebound_create_status=$?
 set -e

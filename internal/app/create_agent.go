@@ -122,8 +122,10 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		return err
 	}
 	c.selectRuntimeAuthority(flags.explicitTargetAuthority())
+	warning := compatibilityWarningFor(flags, stderr)
 
 	var results []createResult
+	var selectedWindowUIDs []string
 	var activationTargets []agentActivationTarget
 	var nativeLifecycleTargets []codexLifecycleObserverTarget
 	nativeLauncher, nativeLaunchCapable := c.resumes.(codexNativeAgentLauncher)
@@ -184,6 +186,11 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		if err != nil {
 			return err
 		}
+		// The receipt quotes the planner, not the Agents this route produced,
+		// so `create agent` and the three provider shortcuts report the same
+		// selected set as `create pane` for the same argv -- including on the
+		// native refusal below, which is decided on this very set.
+		selectedWindowUIDs = plan.selectedWindowUIDs()
 		// A Registry transaction can roll back several target Panes, but it
 		// cannot delete app-server threads. Native identity therefore stays
 		// atomic by being used only for the exact-one create shape.
@@ -381,7 +388,8 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 	if err := c.confirmAgentActivations(activationTargets); err != nil {
 		return err
 	}
-	return c.writeResults(stdout, spelling, mode, coremetadata.KindAgent, results)
+	return c.writeResultsWithReceipt(stdout, spelling, mode, coremetadata.KindAgent, results,
+		createPlannedReceipt(coremetadata.KindAgent, results, selectedWindowUIDs, warning))
 }
 
 type agentActivationTarget struct {

@@ -3185,7 +3185,7 @@ termination_case() {
   local pane_uid runtime_id activation release_file
   release_file="$termination_root/release-$label"
   rm -f "$release_file"
-  pane_uid="$(termination_pmx_inside create pane --project evidence -o uid -- "$@")"
+  pane_uid="$(termination_pmx_inside create pane --project evidence --all-windows -o uid -- "$@")"
   if [[ -z "$pane_uid" ]]; then
     echo "termination case $label created no Pane" >&2
     exit 1
@@ -3304,7 +3304,7 @@ termination_provider_case() {
   rm -f "$release_file"
   printf 'while [ ! -e %q ]; do sleep 0.05; done\n%s\n' "$release_file" "$script" \
     >"$termination_root/stub-script"
-  local -a create_args=(create agent --project evidence --provider "$provider")
+  local -a create_args=(create agent --project evidence --all-windows --provider "$provider")
   if [[ "$provider" == "codex" ]]; then
     # This matrix exercises only the supervisor's real process wait status;
     # the Codex stub implements no app-server protocol or native authority.
@@ -3534,7 +3534,7 @@ echo ">> termination Phase 1 last-Pane project=$termination_closed_project_uid w
 
 # A long-lived Pane proves the supervisor really is the pane's own process and
 # that the Registry recorded the exact live handle it landed on.
-termination_pane_uid="$(termination_pmx_inside create pane --project evidence -o uid -- sleep 600)"
+termination_pane_uid="$(termination_pmx_inside create pane --project evidence --all-windows -o uid -- sleep 600)"
 termination_pane_id="$(termination_tmux list-panes -a -F '#{@projmux_pane_uid} #{pane_id}' \
   | awk -v uid="$termination_pane_uid" '$1 == uid { print $2; exit }')"
 if [[ -z "$termination_pane_id" ]]; then
@@ -3921,7 +3921,7 @@ exitrec_tmux "$exitrec_socket" set-hook -gu pane-died
 # authority, then repeat without a Registry write.
 printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
 exitrec_preexisting_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
-  create agent --provider codex --interactive-only --project "uid:$exitrec_app_project_uid" -o uid)"
+  create agent --provider codex --interactive-only --project "uid:$exitrec_app_project_uid" --all-windows -o uid)"
 exitrec_doc agent "$exitrec_preexisting_agent"
 exitrec_preexisting_pane="$(exitrec_field paneRef)"
 exitrec_preexisting_runtime="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid}|#{pane_id}' \
@@ -3994,7 +3994,7 @@ exitrec_tmux "$exitrec_socket" set-hook -gu pane-died
 # Agent/Pane row, exactly as they did before the fixed planner was installed.
 printf '%s\n' 'sleep 0.5; exit 0' >"$exitrec_root/stub-script"
 exitrec_exhausted_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
-  create agent --provider codex --interactive-only --project "uid:$exitrec_app_project_uid" -o uid)"
+  create agent --provider codex --interactive-only --project "uid:$exitrec_app_project_uid" --all-windows -o uid)"
 exitrec_doc agent "$exitrec_exhausted_agent"
 exitrec_exhausted_name="$(exitrec_field name)"
 exitrec_exhausted_pane="$(exitrec_field paneRef)"
@@ -4225,11 +4225,11 @@ exitrec_pair_release="$exitrec_root/release-clean-pair"
 rm -f "$exitrec_pair_release"
 printf 'while [ ! -e %s ]; do sleep 0.02; done\nexit 0\n' "$exitrec_pair_release" >"$exitrec_root/stub-script"
 exitrec_pair_agent_one="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
-  create agent --provider claude --project "uid:$exitrec_app_project_uid" -o uid)"
+  create agent --provider claude --project "uid:$exitrec_app_project_uid" --all-windows -o uid)"
 exitrec_doc agent "$exitrec_pair_agent_one"
 exitrec_pair_pane_one="$(exitrec_field paneRef)"
 exitrec_pair_agent_two="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
-  create agent --provider codex --interactive-only --project "uid:$exitrec_app_project_uid" -o uid)"
+  create agent --provider codex --interactive-only --project "uid:$exitrec_app_project_uid" --all-windows -o uid)"
 exitrec_doc agent "$exitrec_pair_agent_two"
 exitrec_pair_pane_two="$(exitrec_field paneRef)"
 if [[ -z "$exitrec_pair_pane_one" || -z "$exitrec_pair_pane_two" || "$exitrec_pair_pane_one" == "$exitrec_pair_pane_two" ]]; then
@@ -4274,7 +4274,7 @@ echo ">> exit reconciliation simultaneous clean providers agents=$exitrec_pair_a
 # the Agent releases its binding while the logical Pane row remains queryable.
 printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
 exitrec_external_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
-  create agent --provider claude --project "uid:$exitrec_app_project_uid" -o uid)"
+  create agent --provider claude --project "uid:$exitrec_app_project_uid" --all-windows -o uid)"
 exitrec_doc agent "$exitrec_external_agent"
 exitrec_external_pane="$(exitrec_field paneRef)"
 exitrec_external_pane_id="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid} #{pane_id}' \
@@ -4331,7 +4331,7 @@ echo ">> exit reconciliation external kill agent=$exitrec_external_agent phase=$
 # nobody observed -- and the Agent must stay resumable.
 printf '%s\n' 'sleep 600' >"$exitrec_root/stub-script"
 exitrec_sigkill_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
-  create agent --provider claude --project "uid:$exitrec_app_project_uid" -o uid)"
+  create agent --provider claude --project "uid:$exitrec_app_project_uid" --all-windows -o uid)"
 exitrec_doc agent "$exitrec_sigkill_agent"
 exitrec_sigkill_pane="$(exitrec_field paneRef)"
 exitrec_sigkill_pid="$(exitrec_tmux "$exitrec_socket" list-panes -a -F '#{@projmux_pane_uid} #{pane_pid}' \
@@ -4371,7 +4371,7 @@ exitrec_shell_release="$exitrec_root/release-shell-pane"
 rm -f "$exitrec_shell_release"
 # shellcheck disable=SC2016 # $1 expands inside the managed child shell.
 exitrec_shell_pane="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
-  create pane --project "uid:$exitrec_app_project_uid" -o uid -- \
+  create pane --project "uid:$exitrec_app_project_uid" --all-windows -o uid -- \
   sh -c 'while [ ! -e "$1" ]; do sleep 0.05; done; exit 0' sh "$exitrec_shell_release")"
 touch "$exitrec_shell_release"
 for _ in $(seq 1 100); do
@@ -4409,7 +4409,7 @@ printf '%s\n' 'exit 42' >"$exitrec_root/stub-script"
 exitrec_early_sibling_before="$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel)"
 set +e
 exitrec_early_agent="$(exitrec_pmx_inside "$exitrec_socket_path" "$exitrec_server_pid" "$exitrec_app_anchor_pane_id" \
-  create agent --provider codex --interactive-only --project "uid:$exitrec_app_project_uid" -o uid \
+  create agent --provider codex --interactive-only --project "uid:$exitrec_app_project_uid" --all-windows -o uid \
   2>"$exitrec_root/early-exit-create.err")"
 exitrec_early_status=$?
 set -e
@@ -4525,7 +4525,7 @@ exitrec_restart_case() {
   local label="$1" socket="$2" socket_path="$3" server_pid="$4" anchor_pane="$5" project_uid="$6"
   local pane_uid before_source before_observed
   pane_uid="$(exitrec_pmx_inside "$socket_path" "$server_pid" "$anchor_pane" \
-    create pane --project "uid:$project_uid" -o uid -- sleep 600)"
+    create pane --project "uid:$project_uid" --all-windows -o uid -- sleep 600)"
   if [[ -z "$pane_uid" ]]; then
     echo "restart case $label created no Pane" >&2
     exit 1

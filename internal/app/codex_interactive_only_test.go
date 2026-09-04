@@ -272,7 +272,7 @@ func TestDefaultNativeCodexFanOutRefusesWithZeroMutationsAndInteractiveOnlyKeeps
 		create, store, tmux, legacy, native, panes := newInteractiveOnlyCodexCreate(t)
 		before, panesBefore, windows := store.snapshot(), tmux.paneCount(), tmux.windowCount()
 
-		stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "-o", "pane-id", "--", "fan-out prompt")
+		stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--all-windows", "-o", "pane-id", "--", "fan-out prompt")
 		if err == nil || stdout != "" || stderr != "" {
 			t.Fatalf("fan-out stdout=%q stderr=%q err=%v", stdout, stderr, err)
 		}
@@ -306,7 +306,7 @@ func TestDefaultNativeCodexFanOutRefusesWithZeroMutationsAndInteractiveOnlyKeeps
 		before := len(store.registry.Agents)
 
 		stdout, stderr, err := runRoute(t, create,
-			"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "-o", "pane-id", "--", "fan-out prompt")
+			"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--all-windows", "-o", "pane-id", "--", "fan-out prompt")
 		if err != nil || stderr != "" {
 			t.Fatalf("interactive-only fan-out stdout=%q stderr=%q err=%v", stdout, stderr, err)
 		}
@@ -328,7 +328,7 @@ func TestDefaultNativeCodexFanOutRefusesWithZeroMutationsAndInteractiveOnlyKeeps
 		create, store, tmux, legacy, native, _ := newInteractiveOnlyCodexCreate(t)
 		before := len(store.registry.Agents)
 
-		stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "-o", "pane-id")
+		stdout, stderr, err := runRoute(t, create, "agent", "--provider", "codex", "--project", "alpha", "--all-windows", "-o", "pane-id")
 		if err != nil || stderr != "" || len(strings.Fields(stdout)) != 2 {
 			t.Fatalf("payload-free fan-out stdout=%q stderr=%q err=%v", stdout, stderr, err)
 		}
@@ -577,7 +577,7 @@ func TestClaudeAndAntigravityLifecycleAndHookContractAreUnchangedByTheNativeGate
 			// another provider's route.
 			agentsBefore := len(store.registry.Agents)
 
-			stdout, stderr, err := runRoute(t, create, "agent", "--provider", provider, "--project", "alpha", "-o", "pane-id", "--", "fan-out prompt")
+			stdout, stderr, err := runRoute(t, create, "agent", "--provider", provider, "--project", "alpha", "--all-windows", "-o", "pane-id", "--", "fan-out prompt")
 			if err != nil || stderr != "" || len(strings.Fields(stdout)) != 2 {
 				t.Fatalf("%s fan-out stdout=%q stderr=%q err=%v", provider, stdout, stderr, err)
 			}
