@@ -97,8 +97,9 @@ type Row struct {
 	Depth int `json:"depth"`
 	// Name is the stable within-scope name. It is a query key, not a label.
 	Name string `json:"name,omitempty"`
-	// DisplayName is what a human reads. It may duplicate and is never identity.
-	DisplayName string `json:"displayName,omitempty"`
+	// Context is invocation-scoped human presentation. It is never identity,
+	// an address, or a selector input.
+	Context Context `json:"context,omitzero"`
 	// Root is the Project root for a Project or candidate row, and the owning
 	// Project's root for a row beneath one.
 	Root string `json:"root,omitempty"`
@@ -303,7 +304,7 @@ func rowID(uid string) string {
 // from the Registry rather than from a sort over runtime facts is what makes
 // the same Registry render identically on every host and across a refresh.
 func Build(in Input) View {
-	b := &builder{graph: in.Graph}
+	b := &builder{graph: in.Graph, contexts: NewObservedContextProjector(in.Graph)}
 	b.projects()
 	b.candidates(in.Candidates)
 	b.runtimeLink()
@@ -317,9 +318,10 @@ func Build(in Input) View {
 }
 
 type builder struct {
-	graph  resourcegraph.Graph
-	rows   []Row
-	counts RuntimeCounts
+	graph    resourcegraph.Graph
+	contexts Projector
+	rows     []Row
+	counts   RuntimeCounts
 	// roots holds the cleaned spec.root of every Registry Project, so a
 	// discovered directory that is already managed is not offered twice.
 	roots map[string]bool
@@ -340,7 +342,7 @@ func (b *builder) projects() {
 			UID:         project.Project.Metadata.UID,
 			Depth:       0,
 			Name:        project.Project.Metadata.Name,
-			DisplayName: displayName(project.Project.Metadata),
+			Context:     b.contexts.For(coremetadata.KindProject, project.Project.Metadata.UID),
 			Root:        root,
 			SessionName: projectSessionName(project.Project),
 			Status:      project.Status,
@@ -356,7 +358,7 @@ func (b *builder) projects() {
 		b.rows = append(b.rows, Row{
 			Section: SectionControl, Kind: RowKindControlSession, ID: controlID,
 			UID: control.ControlSession.Metadata.UID, Name: control.ControlSession.Metadata.Name,
-			DisplayName: displayName(control.ControlSession.Metadata), SessionName: control.ControlSession.Spec.Session,
+			Context: b.contexts.For(coremetadata.KindControlSession, control.ControlSession.Metadata.UID), SessionName: control.ControlSession.Spec.Session,
 			Status: control.Status, Runtime: control.Runtime, Reason: statusReason(control.Status, false),
 		})
 		b.controlWindows(control.ControlSession.Metadata.UID, controlID)
@@ -373,7 +375,7 @@ func (b *builder) controlWindows(controlUID, controlID string) {
 		b.rows = append(b.rows, Row{
 			Section: SectionControl, Kind: RowKindWindow, ID: windowID, UID: window.Window.Metadata.UID,
 			ParentID: controlID, Depth: 1, Name: window.Window.Metadata.Name,
-			DisplayName: window.Window.DisplayName(), Status: window.Status, Live: window.Live, Active: window.Active, Runtime: window.Runtime,
+			Context: b.contexts.For(coremetadata.KindWindow, window.Window.Metadata.UID), Status: window.Status, Live: window.Live, Active: window.Active, Runtime: window.Runtime,
 			Reason: statusReason(window.Status, false), ActiveAgents: counts.active,
 			ApprovalAgents: counts.approval, WorkingAgents: counts.working,
 		})
@@ -399,7 +401,7 @@ func (b *builder) controlWindowPanes(windowUID, windowID string) {
 		b.rows = append(b.rows, Row{
 			Section: SectionControl, Kind: RowKindAgent, ID: agentID, UID: agent.Agent.Metadata.UID,
 			ParentID: windowID, Depth: 2, Name: agent.Agent.Metadata.Name,
-			DisplayName: displayName(agent.Agent.Metadata), Provider: agent.Agent.Spec.Provider,
+			Context: b.contexts.For(coremetadata.KindAgent, agent.Agent.Metadata.UID), Provider: agent.Agent.Spec.Provider,
 			Phase: string(agent.Agent.Status.Phase), Progress: agent.Agent.Status.Progress, Status: agent.Status, Runtime: agent.Runtime,
 			Reason: statusReason(agent.Status, false), Termination: agent.Agent.Status.LastTermination.Clone(),
 		})
@@ -432,7 +434,7 @@ func (b *builder) windows(project resourcegraph.ProjectNode, projectID string) {
 			ParentID:     projectID,
 			Depth:        1,
 			Name:         window.Window.Metadata.Name,
-			DisplayName:  window.Window.DisplayName(),
+			Context:      b.contexts.For(coremetadata.KindWindow, window.Window.Metadata.UID),
 			Root:         root,
 			Status:       window.Status,
 			Live:         window.Live,
@@ -478,7 +480,7 @@ func (b *builder) agents(windowUID, windowID, root string) {
 			ParentID:    windowID,
 			Depth:       2,
 			Name:        agent.Agent.Metadata.Name,
-			DisplayName: displayName(agent.Agent.Metadata),
+			Context:     b.contexts.For(coremetadata.KindAgent, agent.Agent.Metadata.UID),
 			Root:        root,
 			Provider:    agent.Agent.Spec.Provider,
 			Phase:       string(agent.Agent.Status.Phase),
@@ -535,7 +537,7 @@ func (b *builder) paneRow(pane resourcegraph.PaneNode, parentID string, depth in
 		ParentID:    parentID,
 		Depth:       depth,
 		Name:        pane.Pane.Metadata.Name,
-		DisplayName: paneDisplayName(pane.Pane),
+		Context:     b.contexts.For(coremetadata.KindPane, pane.Pane.Metadata.UID),
 		Root:        root,
 		Role:        string(pane.Pane.Spec.Role),
 		Status:      pane.Status,
@@ -561,16 +563,16 @@ func (b *builder) candidates(candidates []Candidate) {
 		}
 		seen[path] = true
 		b.rows = append(b.rows, Row{
-			Section:     SectionUnregistered,
-			Kind:        RowKindCandidate,
-			ID:          CandidateID(path),
-			Depth:       0,
-			Name:        path,
-			DisplayName: strings.TrimSpace(candidate.DisplayName),
-			Root:        path,
-			Status:      resourcegraph.StatusOffline,
-			Actions:     []Action{ActionBootstrap},
-			Reason:      "discovered directory with no Registry Project",
+			Section: SectionUnregistered,
+			Kind:    RowKindCandidate,
+			ID:      CandidateID(path),
+			Depth:   0,
+			Name:    path,
+			Context: contextValue(candidate.DisplayName, ContextSourceCandidatePath, false),
+			Root:    path,
+			Status:  resourcegraph.StatusOffline,
+			Actions: []Action{ActionBootstrap},
+			Reason:  "discovered directory with no Registry Project",
 		})
 	}
 }
@@ -603,14 +605,14 @@ func (b *builder) runtimeLink() {
 		status = resourcegraph.StatusLive
 	}
 	b.rows = append(b.rows, Row{
-		Section:     SectionRuntime,
-		Kind:        RowKindRuntimeLink,
-		ID:          RuntimeLinkID,
-		Name:        "runtime",
-		DisplayName: "Runtime",
-		Status:      status,
-		Actions:     []Action{ActionRuntime},
-		Reason:      runtimeLinkReason(b.graph.Transport.Present(), b.counts),
+		Section: SectionRuntime,
+		Kind:    RowKindRuntimeLink,
+		ID:      RuntimeLinkID,
+		Name:    "runtime",
+		Context: contextValue("Runtime", ContextSourceRuntimeLink, false),
+		Status:  status,
+		Actions: []Action{ActionRuntime},
+		Reason:  runtimeLinkReason(b.graph.Transport.Present(), b.counts),
 	})
 }
 
@@ -675,20 +677,6 @@ func projectSessionName(project coremetadata.Project) string {
 		return ""
 	}
 	return strings.TrimSpace(project.Status.Session.Name)
-}
-
-func displayName(meta coremetadata.ObjectMeta) string {
-	if name := strings.TrimSpace(meta.DisplayName); name != "" {
-		return name
-	}
-	return strings.TrimSpace(meta.Name)
-}
-
-func paneDisplayName(pane coremetadata.Pane) string {
-	if title := strings.TrimSpace(pane.Status.DisplayTitle); title != "" {
-		return title
-	}
-	return displayName(pane.Metadata)
 }
 
 func cleanPath(path string) string {

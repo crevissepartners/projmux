@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 )
 
@@ -90,6 +91,8 @@ func TestResolvedResourceGraphRealTmuxSmoke(t *testing.T) {
 	run(primary, "set-option", "-t", "alpha", "-q", "@projmux_project_path", root)
 	run(primary, "set-option", "-w", "-t", windowID, "-q", "@projmux_window_uid", "win-alpha-1")
 	run(primary, "set-option", "-p", "-t", paneID, "-q", "@projmux_pane_uid", "pane-alpha-1")
+	run(primary, "rename-window", "-t", windowID, "exact-live-window")
+	run(primary, "select-pane", "-t", paneID, "-T", "exact-live-pane")
 	run(primary, "new-session", "-d", "-s", "home", "-c", root)
 	run(primary, "set-option", "-t", "home", "-q", "@projmux_session_role", "control")
 	run(primary, "new-session", "-d", "-s", "scratch", "-c", root)
@@ -106,6 +109,8 @@ func TestResolvedResourceGraphRealTmuxSmoke(t *testing.T) {
 	run(sibling, "set-option", "-t", "alpha", "-q", "@projmux_project_uid", "project-alpha")
 	run(sibling, "set-option", "-w", "-t", siblingFields[0], "-q", "@projmux_window_uid", "win-alpha-1")
 	run(sibling, "set-option", "-p", "-t", siblingFields[1], "-q", "@projmux_pane_uid", "pane-alpha-1")
+	run(sibling, "rename-window", "-t", siblingFields[0], "sibling-window-must-not-overlay")
+	run(sibling, "select-pane", "-t", siblingFields[1], "-T", "sibling-pane-must-not-overlay")
 	siblingSessionsBefore := run(sibling, "list-sessions", "-F", "#{session_name}")
 
 	transport := resourcegraph.Transport{
@@ -164,6 +169,13 @@ func TestResolvedResourceGraphRealTmuxSmoke(t *testing.T) {
 		Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell},
 	}}
 	graph := resourcegraph.Resolve(registry, observed)
+	projector := registryview.NewObservedContextProjector(graph)
+	if got := projector.For(coremetadata.KindWindow, "win-alpha-1"); got.Value != "exact-live-window" || got.Source != registryview.ContextSourceLiveWindowName || !got.Observed {
+		t.Fatalf("exact live Window context = %+v, want primary socket window_name", got)
+	}
+	if got := projector.For(coremetadata.KindPane, "pane-alpha-1"); got.Value != "exact-live-pane" || got.Source != registryview.ContextSourceLivePaneTitle || !got.Observed {
+		t.Fatalf("exact live Pane context = %+v, want primary socket raw pane_title", got)
+	}
 
 	if len(graph.Conflicts) != 0 {
 		t.Fatalf("real observation produced conflicts: %+v", graph.Conflicts)

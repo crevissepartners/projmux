@@ -234,7 +234,7 @@ func switchRowOpensByPath(row registryview.Row) bool {
 }
 
 func switchManagedDisplayName(row registryview.Row) string {
-	if name := strings.TrimSpace(row.DisplayName); name != "" {
+	if name := strings.TrimSpace(row.Context.Value); name != "" {
 		return name
 	}
 	return strings.TrimSpace(row.Name)
@@ -254,7 +254,7 @@ func switchRegistryWindowTabs(view registryview.View, project registryview.Row, 
 		if child.Kind != registryview.RowKindWindow {
 			continue
 		}
-		name := strings.TrimSpace(child.DisplayName)
+		name := strings.TrimSpace(child.Context.Value)
 		if name == "" {
 			name = strings.TrimSpace(child.Name)
 		}

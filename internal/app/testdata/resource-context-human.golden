@@ -1,0 +1,44 @@
+== en-US table ==
+CONTEXT         SOURCE       OBSERVED  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE
+Release review  agent-topic  false     codex  live    unknown      alpha    main                          2d
+== en-US describe ==
+Kind:            Agent
+Name:            codex
+UID:             agt-alpha-codex
+CreatedAt:       2026-08-15T09:00:00Z
+Context:         Release review
+ContextSource:   agent-topic
+ContextObserved: false
+Owner:           project/alpha window/main
+Status:          live
+Provider:        codex
+Phase:           Running
+Interaction:     unknown
+Activation:      not_requested
+WorkspaceCWD:    /srv/alpha
+PhaseSince:      2026-08-15T09:00:00Z
+PaneRef:         pan-alpha-codex
+Labels:          provider=codex
+Annotations:     projmux.io/agent-topic=Release review
+== ko-KR table ==
+CONTEXT      SOURCE       OBSERVED  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE
+릴리스 검토  agent-topic  false     codex  live    unknown      alpha    main                          2d
+== ko-KR describe ==
+Kind:            Agent
+Name:            codex
+UID:             agt-alpha-codex
+CreatedAt:       2026-08-15T09:00:00Z
+Context:         릴리스 검토
+ContextSource:   agent-topic
+ContextObserved: false
+Owner:           project/alpha window/main
+Status:          live
+Provider:        codex
+Phase:           Running
+Interaction:     unknown
+Activation:      not_requested
+WorkspaceCWD:    /srv/alpha
+PhaseSince:      2026-08-15T09:00:00Z
+PaneRef:         pan-alpha-codex
+Labels:          provider=codex
+Annotations:     projmux.io/agent-topic=릴리스 검토

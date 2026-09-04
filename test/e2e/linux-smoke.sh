@@ -1035,7 +1035,8 @@ fi
 
 # A pre-v2 session for explicit Registry convergence: window_name, automatic
 # rename, a user pane label, and a raw pane title must never become the stable
-# Window metadata.name. window_name is retained as displayName.
+# Window metadata.name. window_name is retained only for v3 write/reconcile
+# compatibility; product reads derive ephemeral context instead.
 ctx new-session -d -s legacy-alpha -c "$create_root/legacy/alpha" sleep 600
 ctx set-option -t legacy-alpha -q @projmux_project_path "$create_root/legacy/alpha"
 legacy_window_name_expected="pre-v2-display-sentinel"
@@ -1293,8 +1294,8 @@ done
 
 # 3. Explicit Registry authority keeps its stable Window name independent of
 #    every runtime attribute. The managed rebind path (not D2 import) projects
-#    window_name as displayName, turns automatic-rename off, and mirrors the
-#    allocated uids back.
+#    window_name into the v3 compatibility field, turns automatic-rename off,
+#    and mirrors the allocated uids back. Human reads do not consume that field.
 legacy_window_name="$(ctx display-message -p -t legacy-alpha:0 '#{window_name}')"
 if [[ "$legacy_window_name" != "$legacy_window_name_before" ]]; then
   echo "explicit authority runtime display = $legacy_window_name, want preserved $legacy_window_name_before" >&2
@@ -1319,31 +1320,36 @@ if [[ "$legacy_window_name_before" == "$alpha_window_name" ]]; then
   exit 1
 fi
 pmx get windows --project alpha >"$create_root/alpha-windows-table.out"
-# Tabular spacing expands when the display sentinel is wider than the header;
-# the parser below locates the stable NAME column from the header instead of
-# assuming the minimum two-space gap.
-smoke_assert_file_contains "$create_root/alpha-windows-table.out" "DISPLAY NAME"
-if ! awk -v display="$legacy_window_name_before" -v stable="$alpha_window_name" '
-  NR == 1 {
-    name_column = index($0, "  NAME  ") + 2
-    next
-  }
+# The inherited tmux identity is stripped, so this is deliberately the
+# no-transport projector: this imported legacy Window has no anchor Pane, so
+# the literal Window fallback is context and stable NAME remains the durable
+# address. The stored runtime display sentinel must not leak.
+smoke_assert_file_contains "$create_root/alpha-windows-table.out" "CONTEXT"
+smoke_assert_file_contains "$create_root/alpha-windows-table.out" "SOURCE"
+smoke_assert_file_contains "$create_root/alpha-windows-table.out" "OBSERVED"
+if ! awk -v stable="$alpha_window_name" '
   NR == 2 {
-    display_cell = substr($0, 1, name_column - 3)
-    sub(/[[:space:]]+$/, "", display_cell)
-    name_cell = substr($0, name_column)
-    sub(/[[:space:]].*$/, "", name_cell)
-    found = display_cell == display && name_cell == stable
+    found = $1 == "window" && $2 == "window-fallback" && $3 == "false" && $4 == stable
   }
   END { exit !found }
 ' "$create_root/alpha-windows-table.out"; then
-  echo "legacy Window table did not show displayName first and stable name second:" >&2
+  echo "legacy Window table did not separate no-transport context and stable name (want stable=$alpha_window_name):" >&2
   cat "$create_root/alpha-windows-table.out" >&2
   exit 1
 fi
+if grep -Fq "$legacy_window_name_before" "$create_root/alpha-windows-table.out"; then
+  echo "legacy Window table leaked stored displayName" >&2
+  exit 1
+fi
 pmx describe window "$alpha_window_name" -p alpha >"$create_root/alpha-window.describe"
-smoke_assert_file_contains "$create_root/alpha-window.describe" "DisplayName:"
-smoke_assert_file_contains "$create_root/alpha-window.describe" "$legacy_window_name_before"
+smoke_assert_file_contains "$create_root/alpha-window.describe" "Context:"
+smoke_assert_file_contains "$create_root/alpha-window.describe" "ContextSource:"
+smoke_assert_file_contains "$create_root/alpha-window.describe" "window-fallback"
+if grep -Fq "DisplayName:" "$create_root/alpha-window.describe" ||
+  grep -Fq "$legacy_window_name_before" "$create_root/alpha-window.describe"; then
+  echo "legacy Window description leaked stored displayName" >&2
+  exit 1
+fi
 
 # Canonical focus resolves the short Project/Window scopes on this exact
 # guarded socket. This server deliberately has no attached client, so success

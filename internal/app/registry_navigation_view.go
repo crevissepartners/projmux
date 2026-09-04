@@ -89,7 +89,7 @@ func registryNavigationIndent(row registryview.Row) string {
 }
 
 func registryNavigationName(row registryview.Row) string {
-	name := strings.TrimSpace(row.DisplayName)
+	name := strings.TrimSpace(row.Context.Value)
 	if name == "" {
 		name = strings.TrimSpace(row.Name)
 	}
@@ -174,7 +174,7 @@ func (v registryNavigationView) entries() []intpickercompat.Entry {
 
 func registryNavigationSearchKey(row registryview.Row) string {
 	parts := []string{
-		string(row.Kind), row.Name, row.DisplayName, string(row.Status),
+		string(row.Kind), row.Name, row.Context.Value, string(row.Context.Source), string(row.Status),
 		row.UID, row.Provider, row.Phase, row.Role, row.Root,
 	}
 	if row.Runtime != nil {

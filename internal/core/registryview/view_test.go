@@ -377,7 +377,7 @@ func TestBuildNeverEmitsAControlOrEphemeralRow(t *testing.T) {
 
 	for _, row := range view.Rows {
 		for _, forbidden := range []string{"home", "scratch", "hand-opened"} {
-			if strings.EqualFold(row.Name, forbidden) || strings.EqualFold(row.DisplayName, forbidden) {
+			if strings.EqualFold(row.Name, forbidden) || strings.EqualFold(row.Context.Value, forbidden) {
 				t.Fatalf("row %+v names a runtime-only object; it belongs to the Runtime surface", row)
 			}
 		}

@@ -144,11 +144,11 @@ func TestGetListAgeColumnRendersEveryUnitInOneRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get panes error = %v (stderr %q)", err, stderr)
 	}
-	const want = "DISPLAY NAME  NAME        STATUS  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-		"zsh           zsh         live    alpha    main                        9s\n" +
-		"zsh           log         live    alpha    main                        47m\n" +
-		"codex-pane    codex-pane  live    alpha    main    codex               6h\n" +
-		"zsh           zsh         live    alpha    review                      11d\n"
+	const want = "CONTEXT  SOURCE  OBSERVED  NAME        STATUS  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+		"                 false     zsh         live    alpha    main                        9s\n" +
+		"                 false     log         live    alpha    main                        47m\n" +
+		"                 false     codex-pane  live    alpha    main    codex               6h\n" +
+		"                 false     zsh         live    alpha    review                      11d\n"
 	if stdout != want {
 		t.Fatalf("get panes stdout =\n%q\nwant\n%q", stdout, want)
 	}

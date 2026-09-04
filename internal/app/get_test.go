@@ -10,6 +10,8 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 )
 
 // stubCurrentPath answers the tmux current-pane query without touching tmux.
@@ -293,12 +295,65 @@ func TestGetPaneAmbiguityListingIsBoundedAndCarriesOwnerContext(t *testing.T) {
 		t.Fatalf("error rendered %d lines:\n%s", len(lines), err)
 	}
 	for _, want := range []string{
-		"pane/zsh displayName=zsh owner=project/alpha window/main",
-		"pane/zsh displayName=zsh owner=project/beta window/main",
+		"pane/zsh owner=project/alpha window/main",
+		"pane/zsh owner=project/beta window/main",
 	} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("ambiguity listing is missing %q:\n%s", want, err)
 		}
+	}
+}
+
+func TestGetPaneAmbiguityUsesOneExactRuntimeContextSnapshotWithoutChangingSelection(t *testing.T) {
+	t.Parallel()
+
+	command := newTestGetCommand(t, &stubCurrentPath{})
+	calls := 0
+	command.reads = func(registry coremetadata.Registry) resourceReadSnapshot {
+		calls++
+		inventory := resourcegraph.Inventory{
+			Transport: resourcegraph.Transport{Kind: resourcegraph.TransportSocketName, Value: "isolated"},
+			HostMode:  resourcegraph.HostModeAppOwned,
+			Sessions: []resourcegraph.Session{
+				{ID: "$1", Name: "alpha", ProjectUID: "prj-alpha", ProjectName: "alpha", Root: "/srv/alpha"},
+				{ID: "$2", Name: "beta", ProjectUID: "prj-beta", ProjectName: "beta", Root: "/srv/beta"},
+			},
+			Windows: []resourcegraph.Window{
+				{ID: "@1", SessionID: "$1", UID: "win-alpha-main", MirroredName: "main"},
+				{ID: "@2", SessionID: "$2", UID: "win-beta-main", MirroredName: "main"},
+			},
+			Panes: []resourcegraph.Pane{
+				{ID: "%1", WindowID: "@1", UID: "pan-alpha-zsh", MirroredName: "zsh", Title: "alpha exact title"},
+				{ID: "%2", WindowID: "@2", UID: "pan-beta-zsh", MirroredName: "zsh", Title: "beta exact title"},
+			},
+		}
+		graph := resourcegraph.Resolve(registry, inventory)
+		return resourceReadSnapshot{
+			runtime: coremetadata.RuntimeObservation{
+				Windows: map[string]bool{"win-alpha-main": true, "win-beta-main": true},
+				Panes:   map[string]bool{"pan-alpha-zsh": true, "pan-beta-zsh": true},
+			},
+			contexts: registryview.NewObservedContextProjector(graph),
+		}
+	}
+
+	_, _, err := runGet(t, command, "pane", "--pane", "zsh")
+	if err == nil {
+		t.Fatal("an ambiguous read succeeded")
+	}
+	if calls != 1 {
+		t.Fatalf("resource read snapshots = %d, want exactly one", calls)
+	}
+	for _, want := range []string{
+		"pane/zsh context=alpha exact title contextSource=live-pane-title owner=project/alpha window/main",
+		"pane/zsh context=beta exact title contextSource=live-pane-title owner=project/beta window/main",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("ambiguity listing is missing exact live context %q:\n%s", want, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "matched 2 panes") {
+		t.Fatalf("ephemeral context changed selector cardinality: %v", err)
 	}
 }
 

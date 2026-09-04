@@ -26,6 +26,7 @@ import (
 	corecap "github.com/crevissepartners/projmux/internal/core/aicapability"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/diagnostics"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
@@ -1480,8 +1481,9 @@ func aiResumeSessionRowWithResolvedLabel(session aisessions.SessionMeta, boundLa
 		Label: strings.Join(parts, " "),
 		Value: aiResumePickerValueForSession(session),
 		SearchKey: strings.TrimSpace(strings.Join([]string{
-			agent, conversation, strings.TrimSpace(boundLabel.DisplayName), aiResumeProviderOwnedTitle(session),
-			strings.TrimSpace(boundLabel.Topic), strings.TrimSpace(boundLabel.Name), resumeID, branch, relCWD, session.Source, routeStatus,
+			agent, conversation, boundLabel.Context.Value, string(boundLabel.Context.Source),
+			aiResumeProviderOwnedTitle(session), strings.TrimSpace(boundLabel.Name),
+			resumeID, branch, relCWD, session.Source, routeStatus,
 		}, " ")),
 	}
 }
@@ -1502,18 +1504,12 @@ func aiResumeGenerationStatus(session aisessions.SessionMeta) string {
 
 func aiResumeDisplayLabel(session aisessions.SessionMeta, boundLabel aiResumeExactAgentLabel, locale i18n.Locale) string {
 	resumeID := strings.TrimSpace(session.ResumeID)
-	if label := strings.Join(strings.Fields(boundLabel.DisplayName), " "); label != "" {
+	if label := strings.Join(strings.Fields(boundLabel.Context.Value), " "); label != "" {
 		return label
 	}
 	title := aiResumeProviderOwnedTitle(session)
 	if title != "" {
 		return title
-	}
-	if label := strings.Join(strings.Fields(boundLabel.Topic), " "); label != "" {
-		return label
-	}
-	if label := strings.Join(strings.Fields(boundLabel.Name), " "); label != "" {
-		return label
 	}
 	return aiResumeUntitledLabel(locale, resumeID)
 }
@@ -1572,9 +1568,8 @@ func aiResumeShortID(id string) string {
 // invocation. A label is admitted only through an exact provider conversation binding;
 // cwd, title, pane ordering, prompt, and transcript content are never consulted.
 type aiResumeExactAgentLabel struct {
-	DisplayName string
-	Topic       string
-	Name        string
+	Context registryview.Context
+	Name    string
 }
 
 func (c *aiCommand) resolveAIResumeConversationLabels(sessions []aisessions.SessionMeta) map[string]aiResumeExactAgentLabel {
@@ -1608,8 +1603,16 @@ func (c *aiCommand) resolveAIResumeSummaryLabels(summaries []aisessions.ResumeSu
 
 func aiResumeExactAgentLabels(registry coremetadata.Registry) map[string]aiResumeExactAgentLabel {
 	type authority struct{ uid, value string }
-	type resolved struct{ displayName, topic, name authority }
+	type contextAuthority struct {
+		uid     string
+		context registryview.Context
+	}
+	type resolved struct {
+		context contextAuthority
+		name    authority
+	}
 	byConversation := make(map[string]resolved)
+	projector := registryview.NewContextProjector(registry)
 	for _, agent := range registry.Agents {
 		provider := normalizeAIMode(agent.Spec.Provider)
 		if agent.Status.SessionRef == nil || provider == "" || normalizeAIMode(agent.Status.SessionRef.Provider) != provider {
@@ -1619,25 +1622,32 @@ func aiResumeExactAgentLabels(registry coremetadata.Registry) map[string]aiResum
 		for _, id := range ids {
 			key := aiResumeExactLabelKey(provider, id)
 			current := byConversation[key]
-			for _, candidate := range []struct {
-				value  string
-				target *authority
-			}{
-				{value: strings.TrimSpace(agent.Metadata.DisplayName), target: &current.displayName},
-				{value: strings.TrimSpace(agent.Metadata.Annotations[coremetadata.AnnotationAgentTopic]), target: &current.topic},
-				{value: strings.TrimSpace(agent.Metadata.Name), target: &current.name},
-			} {
-				value, target := candidate.value, candidate.target
-				if value != "" && (target.value == "" || agent.Metadata.UID < target.uid) {
-					*target = authority{uid: agent.Metadata.UID, value: value}
+			context := projector.For(coremetadata.KindAgent, agent.Metadata.UID)
+			contextRank := func(value registryview.Context) int {
+				switch value.Source {
+				case registryview.ContextSourceAgentTopic:
+					return 0
+				case registryview.ContextSourceAgentProvider:
+					return 1
+				default:
+					return 2
 				}
+			}
+			if !context.Empty() && (current.context.context.Empty() ||
+				contextRank(context) < contextRank(current.context.context) ||
+				(contextRank(context) == contextRank(current.context.context) && agent.Metadata.UID < current.context.uid)) {
+				current.context = contextAuthority{uid: agent.Metadata.UID, context: context}
+			}
+			name := strings.TrimSpace(agent.Metadata.Name)
+			if name != "" && (current.name.value == "" || agent.Metadata.UID < current.name.uid) {
+				current.name = authority{uid: agent.Metadata.UID, value: name}
 			}
 			byConversation[key] = current
 		}
 	}
 	labels := make(map[string]aiResumeExactAgentLabel, len(byConversation))
 	for key, candidate := range byConversation {
-		labels[key] = aiResumeExactAgentLabel{DisplayName: candidate.displayName.value, Topic: candidate.topic.value, Name: candidate.name.value}
+		labels[key] = aiResumeExactAgentLabel{Context: candidate.context.context, Name: candidate.name.value}
 	}
 	return labels
 }

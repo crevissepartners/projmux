@@ -123,10 +123,11 @@ func TestCardinalityViolationsAreBoundedUsageErrors(t *testing.T) {
 	if len(selectorErr.Candidates) != 4 || selectorErr.Omitted != 0 {
 		t.Fatalf("candidates = %d omitted = %d, want 4/0", len(selectorErr.Candidates), selectorErr.Omitted)
 	}
-	// Candidate rows carry name, duplicate-allowed displayName, and owner
+	// Candidate rows carry name, non-authoritative context, and owner
 	// context -- exactly what a human needs to disambiguate.
 	first := selectorErr.Candidates[0].String()
-	if !strings.Contains(first, "pane/zsh") || !strings.Contains(first, "displayName=zsh") ||
+	if !strings.Contains(first, "pane/zsh") || !strings.Contains(first, "context=zsh") ||
+		!strings.Contains(first, "contextSource=command-executable") ||
 		!strings.Contains(first, "owner=project/alpha window/main") {
 		t.Fatalf("candidate row = %q", first)
 	}

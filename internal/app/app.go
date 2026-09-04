@@ -318,6 +318,9 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	runtimeDiagnosticsCmd.attach = attach
 	runtimeDiagnosticsCmd.inspect = resourcesCmd
 	getCmd.runtimeDiag = runtimeDiagnosticsCmd.reader
+	getCmd.reads = runtimeResourceReadLookup(runtimeDiagnosticsCmd.reader)
+	describeCmd := newDescribeCommand()
+	describeCmd.reads = runtimeResourceReadLookup(runtimeDiagnosticsCmd.reader)
 	runtimeCmd := newRuntimeCommand()
 	runtimeCmd.sessions = sessions
 	runtimeCmd.diagnostics = runtimeDiagnosticsCmd
@@ -376,7 +379,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		attach:             attach,
 		config:             configCmd,
 		delete:             deleteCmd,
-		describe:           newDescribeCommand(),
+		describe:           describeCmd,
 		doctor:             newDoctorCommand(),
 		diagnostics:        diagnosticsCmd,
 		focus:              focusCmd,

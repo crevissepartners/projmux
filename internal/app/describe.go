@@ -12,6 +12,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/i18n"
 )
@@ -31,11 +32,22 @@ type describeCommand struct {
 	// runtime is the live-tmux observation Window and Pane status is derived
 	// from; see runtime_observation.go.
 	runtime runtimeLookup
+	reads   resourceReadLookup
 	// activeTarget is the empty-selector fallback seam; see active_target.go.
 	activeTarget activeTargetLookup
 	// codexAuthority is a bounded, content-free runtime observation for the
 	// exact managed Pane. It never persists provider payload fields.
 	codexAuthority codexLifecycleAuthorityLookup
+}
+
+func (c *describeCommand) readSnapshot(registry coremetadata.Registry) resourceReadSnapshot {
+	if c != nil && c.reads != nil {
+		return c.reads(registry)
+	}
+	return resourceReadSnapshot{
+		runtime:  c.runtime.observation(),
+		contexts: registryview.NewContextProjector(registry),
+	}
 }
 
 func newDescribeCommand() *describeCommand {
@@ -102,15 +114,18 @@ func (c *describeCommand) runKind(token string, kind coremetadata.Kind, args []s
 	if err != nil {
 		return MapMetadataError(err)
 	}
+	snapshot := c.readSnapshot(registry)
+	flags.runtime = func() coremetadata.RuntimeObservation { return snapshot.runtime }
+	flags.contexts = &snapshot.contexts
 	resolution, err := flags.resolve(selector.VerbDescribe, false, registry)
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	match := resolution.Matches[0]
 	if mode != cli.OutputModeDefault {
 		// A singular read renders no elapsed time, so it passes no clock.
 		return writeResourceProjection(stdout, spelling, mode, kind, resolution.Matches, registry, false, time.Time{})
 	}
+	match := resolution.Matches[0]
 	var runtimeRows [][2]string
 	if kind == coremetadata.KindAgent {
 		if agent, ok := registry.Agent(match.UID); ok && agent.Spec.Provider == aiModeCodex && agent.Status.PaneRef != "" && c.codexAuthority != nil {
@@ -163,9 +178,11 @@ func writeResourceDescription(stdout io.Writer, spelling string, kind coremetada
 	if !meta.CreatedAt.IsZero() {
 		rows = append(rows, [2]string{"CreatedAt", describeTimestamp(meta.CreatedAt)})
 	}
-	if meta.DisplayName != "" {
-		rows = append(rows, [2]string{"DisplayName", meta.DisplayName})
-	}
+	rows = append(rows,
+		[2]string{"Context", match.Context.Value},
+		[2]string{"ContextSource", string(match.Context.Source)},
+		[2]string{"ContextObserved", strconv.FormatBool(match.Context.Observed)},
+	)
 	if owner := match.Owner.String(); owner != "" {
 		rows = append(rows, [2]string{"Owner", owner})
 	}
@@ -211,9 +228,6 @@ func describeSpecRows(resource any) [][2]string {
 		}
 		if typed.Spec.Command != "" {
 			rows = append(rows, [2]string{"Command", typed.Spec.Command})
-		}
-		if typed.Status.DisplayTitle != "" {
-			rows = append(rows, [2]string{"DisplayTitle", typed.Status.DisplayTitle})
 		}
 		if binding := typed.Status.Activation.Codex; binding != nil {
 			rows = append(rows,
