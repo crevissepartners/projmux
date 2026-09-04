@@ -4,9 +4,41 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
+
+func TestRemoteNewPaneArgvIsContentFree(t *testing.T) {
+	got := remoteNewTMUXArgs("/private/workspace", "/exact/codex", "/private/app-server.sock")
+	want := []string{
+		"-L", capabilityTmuxSocket, "new-session", "-d",
+		"-s", "installed-capability-remote-new", "-c", "/private/workspace",
+		"-P", "-F", "#{pane_id}", "/exact/codex", "--remote", "unix:///private/app-server.sock",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("remote-new content-free argv = %q, want %q", got, want)
+	}
+	for _, forbidden := range []string{"resume", "send-keys", "prompt", "turn/start"} {
+		if slices.Contains(got, forbidden) {
+			t.Fatalf("remote-new content-free argv includes forbidden operand %q", forbidden)
+		}
+	}
+}
+
+func TestPayloadFreeSmokeRootRejectsOverlongPrivatePathWithoutDisclosingIt(t *testing.T) {
+	if err := validatePayloadFreeSmokeRoot("/tmp/projmux-payload-free-XXXXXX"); err != nil {
+		t.Fatalf("documented payload-free smoke root exceeded private tmux path budget: %v", err)
+	}
+	privateRoot := "/tmp/" + strings.Repeat("private-", 20)
+	err := validatePayloadFreeSmokeRoot(privateRoot)
+	if err == nil {
+		t.Fatal("overlong private tmux path was accepted")
+	}
+	if strings.Contains(err.Error(), privateRoot) {
+		t.Fatal("private tmux path was disclosed in validation error")
+	}
+}
 
 func TestTurnFreeAttachPaneCommandExcludesCredentialsAndAmbientIdentity(t *testing.T) {
 	binDir := t.TempDir()

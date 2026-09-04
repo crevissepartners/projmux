@@ -16,6 +16,7 @@ import (
 	corecap "github.com/crevissepartners/projmux/internal/core/aicapability"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	coresessions "github.com/crevissepartners/projmux/internal/core/sessions"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgeneration"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
@@ -96,6 +97,11 @@ type createCommand struct {
 	// codexNative prepares exact app-server thread identity. Nil is the bounded
 	// compatibility state and leaves the current CLI/hook path unchanged.
 	codexNative codexNativeThreadController
+	// codexPayloadFreeCapability supplies one immutable exact-tuple record to
+	// the payload-free planner. Phase 1 consumes the verdict but deliberately
+	// keeps its projected route on the Phase-0 plain fallback; Phase 2 owns any
+	// native route mutation.
+	codexPayloadFreeCapability func() codexgeneration.Record
 	// store is the locked registry file. Every resource route touches it, and
 	// the implicit-scope resolution reads it before the transaction opens.
 	store *resourceStore

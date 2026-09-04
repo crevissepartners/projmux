@@ -21,6 +21,13 @@
     }
   ],
   "ai_notify_integrations": null,
+  "codex_payload_free_capability": {
+    "cache_key": "",
+    "durable_zero_turn_resume": "unknown",
+    "remote_new_session": "unknown",
+    "create_route": "plain-fallback",
+    "reason": "exact-capability-unknown"
+  },
   "session_state_prune": "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune snapshot` and delete only by explicit name.",
   "runtime": [
     {

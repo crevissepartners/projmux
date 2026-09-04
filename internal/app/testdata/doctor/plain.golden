@@ -12,6 +12,10 @@ Runtime
 AI notify integrations
   Summary: 0 installed, 0 missing, 0 stale, 0 conflict, 0 skipped.
 
+Codex payload-free capability
+  Cache key: ; durable-zero-turn-resume: unknown; remote-new-session: unknown
+  Create route: plain-fallback; reason: exact-capability-unknown
+
 Session State resume metadata
   Summary: 0 available, 0 stale, 0 unavailable.
 

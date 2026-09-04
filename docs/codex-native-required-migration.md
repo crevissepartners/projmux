@@ -23,6 +23,60 @@ negative safety evidence. A typed Failed Agent with no Pane is not functional
 create success. Prompted native create, app-server picker resume, existing
 Agent resume, and generation-pinned routes keep their native contracts.
 
+## Exact payload-free capability authority (Phase 1)
+
+Payload-free qualification is now owned by
+`internal/integrations/agents/codexgeneration`. A record is valid for exactly
+one tuple: RoleTUI binary SHA-256 and size, RoleAppServer binary SHA-256 and
+size, app-server version, protocol transport/schema, private socket locator and
+bound-runtime digests, state-domain identity/path digest, and platform/arch.
+Changing any one axis is a cache miss. A missing, corrupt, trailing, future
+schema, stopped, or rebound tuple projects `unknown` and the Phase-0
+`plain-fallback`; no semver family, changelog, or successful `thread/read` is an
+authority substitute.
+
+The record reduces two independent executable predicates:
+
+- `durable-zero-turn-resume` requires the same hashed exact thread to pass
+  zero-turn start, independent read, and stored resume. Read visibility alone
+  cannot promote it. Exact 0.153.0 private evidence is read-visible but stored
+  resume is `unsupported/no-rollout-found`.
+- `remote-new-session` requires more than a living TUI. The remote-new thread
+  and the exact first real input's thread must match, the turn identity must be
+  present, and the content-free turn cardinality must be exactly one. An
+  unrelated first-turn event or liveness-only observation stays `unknown`.
+
+Evidence stores timestamps, digests, closed outcomes, cardinality, and boolean
+identity facts only. It has no field for prompts, provider output, turns,
+transcripts, socket paths, or state paths. Doctor JSON/text and the create
+planner consume the same immutable record projection. Phase 1 intentionally
+maps every verdict—including a supported private observation—to
+`plain-fallback`; the remote-new production launch belongs to Phase 2.
+
+The private installed matrix is opt-in and starts/stops only exact root-owned
+app-server and tmux fixtures:
+
+```sh
+smoke_root="$(mktemp -d /tmp/projmux-payload-free-XXXXXX)"
+env -u TMUX -u TMUX_PANE \
+  PROJMUX_CODEX_PAYLOAD_FREE_SMOKE_ROOT="$smoke_root" \
+  PROJMUX_CODEX_PAYLOAD_FREE_SOURCE_HOME=/absolute/private/copied-source-home \
+  PROJMUX_CODEX_PAYLOAD_FREE_0152_0=/absolute/0.152.0/bin/codex \
+  PROJMUX_CODEX_PAYLOAD_FREE_0152_1=/absolute/0.152.1/bin/codex \
+  PROJMUX_CODEX_PAYLOAD_FREE_0153_0=/absolute/0.153.0/bin/codex \
+  go test ./internal/testutil/codexinstalled \
+    -run '^TestInstalledExactPayloadFreeCapabilityMatrix$' -count=1 -v
+```
+
+An unset binary row is logged `unavailable`; the fixture never synthesizes a
+tuple. The installed probe sends no input, prompt, or turn. It may record
+content-free TUI liveness/loaded state, but remote-new remains `unknown`
+without a separately supplied exact first-real-input thread/turn observation.
+Use the documented short smoke-root shape: an overlong private tmux socket path
+is rejected before any lifecycle operation and cannot masquerade as liveness.
+After fixture cleanup the socket has no current route identity, so transient
+private evidence cannot be reused by another route.
+
 ## Native-required prompted create (0.14.0)
 
 0.14.0 makes native authority a requirement for a *prompted* managed Codex
@@ -200,6 +254,10 @@ go test ./internal/integrations/agents/codexappserver/ -run TestStartDefaultThre
 | Both `--interactive-only` spellings are equivalent, and non-Codex providers refuse it at zero transactions | `TestInteractiveOnlyIsTheOnlyPlainCodexLaneAndBothSpellingsAreEquivalent` |
 | Payload cardinality × `--interactive-only` × readiness stays a closed pre-provider decision table | `TestCodexCreatePayloadCardinalityInteractiveOnlyAndReadinessOutcomeTable` |
 | Canonical and shortcut payload-free create are byte/argv-equivalent to the explicit plain lane and touch no provider route | `TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalentLane` |
+| Exact tuple keys, immutable cache fixed points, and one-axis drift/corrupt/future/trailing fail closed | `TestCapabilityCacheInvalidatesEveryExactTupleAxis`, `TestCapabilityCacheCorruptFutureAndTrailingRecordsResolveUnknown` |
+| Read visibility and stored resume reduce independently; remote-new requires the exact first real thread/turn | `TestExactPayloadFreeCapabilitySeparatesReadVisibleFromStoredResumable`, `TestRemoteNewCapabilityRequiresExactFirstRealInputThreadAndTurn` |
+| Doctor and create plan consume byte-semantic identical capability projections while Phase 1 stays plain | `TestCodexPayloadFreeDoctorAndCreatePlannerShareExactRecordProjection`, `TestCodexPayloadFreeUnknownCapabilityCannotBypassPhaseZeroFallback` |
+| Available exact installed binaries are qualified independently in creator-live/closed private rows | `TestInstalledExactPayloadFreeCapabilityMatrix` |
 | Saved-default, provider-picker, and direct-provider AI intents produce one managed plain lane without native mutation | `TestEmptyPromptCodexSplitProducersKeepOnePlainCLILane` |
 | A failed plain launch rolls Registry and tmux back and never tries a provider lane | `TestPayloadFreeCodexPlainLaunchFailureRollsBackWithoutProviderMutation` |
 | The installed outcome requires a Running plain Agent/Pane, no session ref, zero provider-thread delta, diagnostic signals, isolated socket cleanup, and ambient mutation zero | `TestInstalledPayloadFreePlainFallbackOutcomeSmoke` |

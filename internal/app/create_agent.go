@@ -12,6 +12,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexgeneration"
 )
 
 // canonicalCreateAgent is the spelling the provider shortcuts normalize onto.
@@ -508,12 +509,29 @@ func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetad
 			}
 			return launcher.PlanAgentLaunchWithCapability(provider, workspace, flags.payload, *flags.codexCapability)
 		}
+		if provider == aiModeCodex && len(flags.payload) == 0 {
+			return c.planPayloadFreeCodexLaunch(workspace)
+		}
 		return c.agents.PlanAgentLaunch(provider, workspace, flags.payload)
 	}
 	if c.resumes == nil {
 		return "", nil, errors.New("create agent: the provider resume launcher is not configured")
 	}
 	return c.resumes.PlanAgentResume(provider, workspace, conversation)
+}
+
+// planPayloadFreeCodexLaunch is the create planner's sole Phase-1 consumer of
+// the executable capability record. Project is intentionally a closed
+// projection: even an exact supported result keeps the Phase-0 plain lane until
+// Phase 2 adds and reviews the remote-new mutation route.
+func (c *createCommand) planPayloadFreeCodexLaunch(workspace coremetadata.AgentWorkspace) (string, []string, error) {
+	projection := projectCodexPayloadFree(c.codexPayloadFreeCapability)
+	switch projection.CreateRoute {
+	case codexgeneration.CreateRoutePlainFallback:
+		return c.agents.PlanAgentLaunch(aiModeCodex, workspace, nil)
+	default:
+		return "", nil, fmt.Errorf("create agent: unsupported payload-free Codex route %q", projection.CreateRoute)
+	}
 }
 
 // bindAgentPane applies the managed-agent pane options.

@@ -99,9 +99,13 @@ type LifecycleEvent struct {
 type LifecycleSnapshot struct {
 	ThreadID    string
 	ThreadState ThreadState
-	TurnID      string
-	TurnState   TurnState
-	StartedAt   time.Time
+	// TurnCount is the content-free cardinality returned by thread/read. It lets
+	// conformance distinguish the exact first real input from TUI liveness or an
+	// unrelated later event without retaining any turn item content.
+	TurnCount int
+	TurnID    string
+	TurnState TurnState
+	StartedAt time.Time
 }
 
 // LifecycleEventsAvailable closes the event-capability decision on the
@@ -138,7 +142,7 @@ func readLifecycleSnapshot(ctx context.Context, requester Requester, threadID st
 	if strings.TrimSpace(result.Thread.ID) != threadID {
 		return LifecycleSnapshot{}, fmt.Errorf("%w: lifecycle snapshot returned a different thread", ErrProtocol)
 	}
-	snapshot := LifecycleSnapshot{ThreadID: threadID, ThreadState: normalizeThreadState(result.Thread.Status)}
+	snapshot := LifecycleSnapshot{ThreadID: threadID, ThreadState: normalizeThreadState(result.Thread.Status), TurnCount: len(result.Thread.Turns)}
 	if snapshot.ThreadState == ThreadStateUnknown {
 		return LifecycleSnapshot{}, fmt.Errorf("%w: lifecycle snapshot returned an unknown thread state", ErrProtocol)
 	}

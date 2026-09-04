@@ -11,6 +11,10 @@ ApplyAuthorized	Phase 0 composite authority gate is retained before generation-a
 ApplySuccessorResume	Phase 0 old-stop semantic barrier is retained before journaled handover consumers are enabled.
 Binding.ControlAuthority	The snapshot-barrier control authority accessor is retained as the in-process mutation gate; the local IPC path fences inside Submit instead.
 Broker.WriteLedger	The mutation write ledger is retained as the observable no-replay evidence surface.
+Cache.Lookup	Phase 1 exact-tuple cache lookup is retained for the Phase 2 payload-free route consumer.
+Cache.Publish	Phase 1 immutable capability publication is retained for executable installed qualification.
+Cache.Resolve	Phase 1 fail-closed cache projection is retained so invalid evidence can never open a native route.
+Cache.path	Phase 1 private 0600 cache path derivation is retained behind immutable publish and exact lookup.
 CanonicalRoutes	The canonical route table accessor is retained for cross-package coverage and generated-reference consumers.
 CleanupLegacyArtifacts	Persisted usage-state cleanup must remain available across legacy state migrations.
 CompleteBundleArtifactPaths	Phase 2 closed private-host artifact paths are retained for qualified bundle packagers without exposing mutable requirements.
@@ -21,6 +25,7 @@ DecideSuccessorResume	Phase 0 pure same-thread old-stop decision is retained for
 DecideTeardownEvent	The pure teardown decision API is retained for lifecycle authority proofs and planned consumers.
 DecodeCapabilityLedger	Test-only installed qualification API retained for strict checked-in capability-ledger validation.
 DecodeQualificationResult	Phase 0 strict content-free generation qualification receipt decoder is retained for later upgrade gates.
+DecodeRecord	Phase 1 strict capability decoder is retained for cache fixed-point and future-schema refusal.
 DirectEndpoint.Close	Test-only installed qualification API retained for bounded direct endpoint cleanup proof.
 DirectEndpoint.Health	Test-only installed qualification API retained for canonical direct readiness evidence.
 DirectEndpoint.forceCleanup	Test-only installed qualification helper retained for injected direct startup-failure cleanup proof.
@@ -35,6 +40,7 @@ Fixture.Ledger	Test-only installed qualification API retained for semantic ambie
 Fixture.ProvisionManagedPayload	Test-only installed qualification API retained for managed provision classification proof.
 Fixture.RunManagedLifecycle	Test-only installed qualification API retained for managed start/reuse/retire proof.
 Fixture.StartDirect	Test-only installed qualification API retained for disposable direct endpoint readiness proof.
+Fixture.StartRemoteNewPane	Test-only Phase 1 qualification API retained for exact RoleTUI remote-new first-input evidence.
 Fixture.StartTurnFreeAttachPane	Test-only installed qualification API retained for exact isolated live-Pane capability evidence.
 Fixture.Versions	Test-only installed qualification API retained for complete version-tuple evidence.
 Fixture.cleanupSupportArtifacts	Test-only installed qualification helper retained for exact ledger and shim cleanup proof.
@@ -59,6 +65,8 @@ Host.RuntimeID	The runtime identity accessor is retained as the authority axis c
 HostError.Error	Phase 2 private-host refusal renderer is retained as a path-free lifecycle error contract.
 HostError.Unwrap	Phase 2 private-host refusal causes remain available for internal exact cleanup diagnostics without entering rendered output.
 HostRefusalOf	Phase 2 private-host refusal classifier is retained for publish and lifecycle zero-effect callers.
+IdentifyBinary	Phase 1 exact RoleTUI and RoleAppServer digest authority is retained for installed qualification and later route consumption.
+IdentifySocketRoute	Phase 1 exact bound-socket fingerprint is retained to invalidate stopped, restarted, or rebound private routes.
 Inspect	Phase 0 Codex release manifest inspector is retained for later private generation provisioning.
 IsolatedPane.Alive	Test-only installed qualification API retained for exact pane-dead and socket-identity observation.
 IsolatedPane.Close	Test-only installed qualification API retained for contained exact tmux server cleanup.
@@ -78,10 +86,12 @@ Manifest.ContentID	Phase 0 canonical bundle identity is retained for generation 
 Manifest.Validate	Phase 0 complete server, TUI, helper, hash, mode, and protocol manifest validation is retained.
 MigrateGlobalLegacyScripts	Global legacy hook migration must remain available while old installations can still be upgraded.
 MigrateProjectLegacyScripts	Project legacy hook migration must remain available while old repositories can still be upgraded.
+NewCache	Phase 1 exact capability cache constructor is retained for the later production tuple source.
 NewClean	Test-only installed qualification API retained for canonical clean-root topology proof.
 NewExisting	Test-only installed qualification API retained for unchanged model-dependent broker smoke containment.
 NewGenerationPool	Phase 2 dark bounded broker-pool constructor is retained for the later upgrade coordinator.
 NewResult	Test-only installed qualification API retained for typed terminal result construction.
+NewTuple	Phase 1 complete executable tuple constructor is retained for private conformance and later production observation.
 Open	Phase 0 immutable bundle reopen verification is retained for source-removal relaunch and later recovery.
 OpenPrivateUnix	Test-only private Unix app-server dial is retained for fixed dual-version installed qualification only.
 PlanUpgrade	Phase 0 pure read-only upgrade plan is retained for the later upgrade command.
@@ -113,6 +123,8 @@ ProtocolRange.Supports	Phase 0 protocol range containment check is retained for 
 ProtocolRange.Valid	Phase 0 protocol range validation is retained as part of immutable bundle manifests.
 QualificationResult.JSON	Phase 0 content-free generation qualification writer is retained for installed receipts.
 QualificationResult.Validate	Phase 0 strict generation qualification consistency check is retained for installed receipts.
+Qualify	Phase 1 independent durable-resume and remote-new reducer is retained as the executable capability authority.
+QualifyPayloadFreeObservation	Test-only Phase 1 seam retained to hash opaque provider identities before immutable evidence publication.
 ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnostics tests and the planned doctor consumer.
 Refusal.String	Phase 0 closed bundle refusal token renderer is retained for content-free diagnostics.
 RefusalOf	Phase 0 bundle refusal classifier is retained for pre-commit drift and protocol gates.
@@ -131,6 +143,7 @@ Store.SetClock	The injected Registry clock is retained as a deterministic migrat
 TeardownObservations	The closed teardown-observation catalog is retained for authority proofs and planned consumers.
 TopologyError.Error	Phase 0 topology refusal renderer is retained as the content-free bounded-pool error contract.
 TopologyRefusal.String	Phase 0 closed topology refusal token renderer is retained for exact plan blockers.
+UnknownRecord	Phase 1 exact-tuple unknown record is retained for fail-closed cache misses and invalid evidence.
 UpgradePlan.JSON	Phase 0 exact JSON plan projection is retained for the later upgrade command.
 UpgradePlan.Text	Phase 0 exact text plan projection is retained for the later upgrade command.
 VersionTuple.normalized	Test-only installed qualification helper retained for explicit unknown version evidence.
@@ -167,6 +180,8 @@ legacyDesktopAppID	The retired desktop application identifier remains required t
 legacyWindowAttentionRows	Legacy attention rows remain required while older persisted window attention state is readable.
 newFixture	Test-only installed qualification helper retained as the common clean/existing fixture constructor.
 newLedger	Test-only installed qualification helper retained for canonical semantic command evidence.
+normalizeEvidence	Phase 1 content-free evidence normalization is retained behind the immutable reducer.
+normalizeStageEvidence	Phase 1 stage identity/reason normalization is retained behind the immutable reducer.
 observationRefusal	Observation-specific refusal mapping is retained inside the pure teardown authority proof surface.
 openReadyThreadClient	The default-endpoint client helper remains behind installed protocol qualification wrappers, not generation-pinned product routing.
 ownerPrivateDirectory	Phase 2 owner/mode/leaf-symlink directory proof is retained before private socket launch.
@@ -177,6 +192,7 @@ qualifiedBundleRequirements	Phase 2 immutable qualified artifact and role set is
 randomRuntimeID	Phase 2 endpoint-host runtime nonce generator is retained as a launch-proof axis distinct from broker runtime.
 readCommittedRegularFile	Phase 0 committed bundle reader is retained to keep manifest and artifact authority inside the lease root.
 readyPrivateGeneration	Phase 2 initialized private app-server handshake is retained as the readiness publication barrier.
+remoteNewTMUXArgs	Test-only installed qualification argv allowlist is retained to prove remote-new starts without a prompt, resume operand, or send-keys path.
 removeExactResidualSocket	Test-only installed qualification helper retained for ready-time socket identity cleanup proof.
 removeExactSocket	Phase 2 inode-and-change-time-matched private socket cleanup is retained to avoid ambient/default mutation.
 revalidateOwnerPrivateDirectory	Phase 2 post-readiness root identity check is retained to refuse ancestor replacement before publication.
@@ -196,6 +212,7 @@ validOwnerClass	Phase 0 closed endpoint-owner validator is retained for attach-o
 validTeardownEventKind	The closed event-kind validator is retained inside the pure teardown decision authority.
 validTeardownObservation	The closed observation validator is retained inside the pure teardown decision authority.
 validVersionToken	Phase 0 qualification version validator is retained to keep persisted receipts content-free.
+validateCapabilityTMUXSocketRoot	Test-only installed qualification helper retained to reject overlong private tmux routes before lifecycle mutation.
 validateInheritedEnvironment	Test-only installed qualification helper retained for inherited tmux refusal proof.
 validateManagedIdentity	Test-only installed qualification helper retained for foreign PID/socket cleanup refusal proof.
 valueOrNone	Phase 0 deterministic absent-identity rendering is retained for exact text plan goldens.
