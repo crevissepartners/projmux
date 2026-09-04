@@ -289,6 +289,72 @@ func (c *aiResumeLiveController) catalogRoutesWithinBudget() ([]codexNativeEndpo
 	}
 }
 
+// codexRouteReadRolloutBudget is the rollout bound a per-route native read
+// declares for itself. This invocation enters the rollout scan exactly once,
+// with the provider, under fallbackSpan. A route read that opened a scan of its
+// own would enter a second one and start that one at route_end: the very
+// start instant this stage exists to remove, and a bound the declared provider
+// terminal does not include. ResumeSummaryOptions spells "no scan of my own" as
+// an already spent positive bound, because a zero value selects the declared
+// default instead.
+const codexRouteReadRolloutBudget = time.Nanosecond
+
+// errCodexRouteReadOwnsNativeCatalog refuses a native endpoint to the rollout
+// scan's own catalog attempt. The scan is source-only: the endpoint named by a
+// resolved route belongs to the route reads, which start when the route has
+// actually resolved and own the native bound from that instant.
+var errCodexRouteReadOwnsNativeCatalog = errors.New("codex native catalog is owned by the route read of this invocation")
+
+// codexResumeRouteInventory is the settled route span result. Both the rollout
+// scan's opener and the native reads read it after the span terminalized, so
+// the scan never has to wait for a route to start scanning.
+type codexResumeRouteInventory struct {
+	routes []codexNativeEndpointRoute
+	err    error
+}
+
+// codexResumeRolloutScan is the one rollout result of this invocation.
+type codexResumeRolloutScan struct {
+	discovery aisessions.ResumeSummaryDiscovery
+	err       error
+}
+
+// catalogRouteInventory resolves the valid generation routes on the route clock
+// and names the one terminal reason when there are none.
+func (c *aiResumeLiveController) catalogRouteInventory() codexResumeRouteInventory {
+	routes, err := c.catalogRoutesWithinBudget()
+	valid := make([]codexNativeEndpointRoute, 0, len(routes))
+	for _, route := range routes {
+		if route.valid() {
+			valid = append(valid, route)
+		}
+	}
+	if err == nil && len(valid) == 0 {
+		// An unavailable pool source may still yield rollout rows, but it must
+		// not reopen the ambient/default native catalog and accidentally grant
+		// native authority. This reason keeps that fallback explicitly
+		// source-only.
+		err = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+	}
+	return codexResumeRouteInventory{routes: valid, err: err}
+}
+
+// resumeDiscoveryIsNativeAuthority reports whether a route read settled on the
+// native catalog. Native-empty keeps authority, so a settled native source with
+// zero rows is authority just as much as native rows are, and neither is
+// replaced by the rollout scan of the same invocation.
+func resumeDiscoveryIsNativeAuthority(discovery aisessions.ResumeSummaryDiscovery) bool {
+	if discovery.Codex.Source == aisessions.CatalogSourceNative {
+		return true
+	}
+	for _, summary := range discovery.Summaries {
+		if summary.Source == aisessions.SourceCodexAppServer {
+			return true
+		}
+	}
+	return false
+}
+
 func (c *aiResumeLiveController) discoverResumeProvider(
 	ctx context.Context,
 	discover func(context.Context, string, string, aisessions.ResumeSummaryOptions, int) (aisessions.ResumeSummaryDiscovery, error),
@@ -304,39 +370,66 @@ func (c *aiResumeLiveController) discoverResumeProvider(
 		return discovery, nil, err
 	}
 
-	// The rollout clock starts with the provider, not after the route is known:
-	// a route that spends most of its own bound must not shorten the rollout
-	// scan by handing it a remainder. Its span is a sibling of the route span,
-	// so neither cancellation reaches the other or any other provider.
+	// The rollout scan starts with the provider, not after the route is known.
+	// The route has to spend its own bound before it can name an endpoint, so a
+	// scan entered at route_end settles past the declared provider terminal even
+	// when it already holds rows this invocation could publish. Running it
+	// alongside the route is what makes route + native + handoff the real worst
+	// case. Its span is a sibling of the route span, so neither cancellation
+	// reaches the other or any other provider.
 	fallbackSpan := c.budgets.start(c.ctx, aiResumeStageFallback)
 	defer fallbackSpan.stop()
 
-	routes, routeErr := c.catalogRoutesWithinBudget()
-	validRoutes := make([]codexNativeEndpointRoute, 0, len(routes))
-	for _, route := range routes {
-		if route.valid() {
-			validRoutes = append(validRoutes, route)
-		}
-	}
-	// An unavailable pool source may still yield rollout rows, but it must not
-	// reopen the ambient/default native catalog and accidentally grant native
-	// authority. A refusing opener keeps that fallback explicitly source-only.
-	if routeErr != nil || len(validRoutes) == 0 {
-		if routeErr == nil {
-			routeErr = &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
-		}
+	var inventory codexResumeRouteInventory
+	inventoryReady := make(chan struct{})
+	go func() {
+		defer close(inventoryReady)
+		inventory = c.catalogRouteInventory()
+	}()
+
+	// One scan per invocation, entered here and not once per route. Its own
+	// native attempt exists only to carry the route span's terminal reason into
+	// the rollout result; it never opens an endpoint, so it cannot grant native
+	// authority or race the route reads for the same connection.
+	scanned := make(chan codexResumeRolloutScan, 1)
+	go func() {
 		discovery, err := discover(fallbackSpan.ctx, provider, c.cwd, options(func(context.Context) (aisessions.CodexCatalog, error) {
-			return nil, routeErr
+			select {
+			case <-inventoryReady:
+			case <-c.ctx.Done():
+				return nil, c.ctx.Err()
+			}
+			if inventory.err != nil {
+				return nil, inventory.err
+			}
+			return nil, errCodexRouteReadOwnsNativeCatalog
 		}), c.limit)
-		return discovery, nil, err
+		scanned <- codexResumeRolloutScan{discovery: discovery, err: err}
+	}()
+
+	<-inventoryReady
+	if inventory.err != nil {
+		scan := <-scanned
+		return scan.discovery, nil, scan.err
 	}
 
+	// The native reads start now, with the route resolved, and each one owns the
+	// native bound from its own start instant. The rollout scan of this
+	// invocation is already running, so these reads declare no rollout budget:
+	// entering a second scan here is what used to push a route-slow invocation
+	// past its terminal.
+	routeOptions := func(open aisessions.OpenCodexCatalog) aisessions.ResumeSummaryOptions {
+		opts := options(open)
+		opts.FallbackBudget = codexRouteReadRolloutBudget
+		return opts
+	}
 	var combined aisessions.ResumeSummaryDiscovery
 	var failures []error
-	resolvedRoutes := make([]codexNativeEndpointRoute, 0, len(validRoutes))
-	for _, route := range validRoutes {
+	nativeSettled := false
+	resolvedRoutes := make([]codexNativeEndpointRoute, 0, len(inventory.routes))
+	for _, route := range inventory.routes {
 		resolvedRoutes = append(resolvedRoutes, route)
-		generation, err := discover(fallbackSpan.ctx, provider, c.cwd, options(func(openCtx context.Context) (aisessions.CodexCatalog, error) {
+		generation, err := discover(fallbackSpan.ctx, provider, c.cwd, routeOptions(func(openCtx context.Context) (aisessions.CodexCatalog, error) {
 			client, openErr := openCodexNativeRoute(openCtx, route, false)
 			if openErr != nil {
 				return nil, openErr
@@ -347,6 +440,13 @@ func (c *aiResumeLiveController) discoverResumeProvider(
 			failures = append(failures, err)
 			continue
 		}
+		if !resumeDiscoveryIsNativeAuthority(generation) {
+			// This route's native read did not settle on the native catalog. Its
+			// rows are not this invocation's rollout source either: that source is
+			// the single scan above, so nothing from this read is carried forward.
+			continue
+		}
+		nativeSettled = true
 		for i := range generation.Summaries {
 			if generation.Summaries[i].Source != aisessions.SourceCodexAppServer {
 				continue
@@ -368,10 +468,17 @@ func (c *aiResumeLiveController) discoverResumeProvider(
 		combined.Codex = generation.Codex
 		combined.MoreNotLoaded = combined.MoreNotLoaded || generation.MoreNotLoaded
 	}
-	if len(combined.Summaries) != 0 || len(combined.DetailRefs) != 0 || len(failures) < len(validRoutes) {
+	if nativeSettled {
 		return c.resolveCodexCatalogCollisions(combined), resolvedRoutes, nil
 	}
-	return combined, nil, errors.Join(failures...)
+	if len(failures) == len(inventory.routes) {
+		return combined, nil, errors.Join(failures...)
+	}
+	// Every route read declined native authority, so the rollout scan that has
+	// been running since the provider started is the source. It is already
+	// settled or inside its own bound here; it is never started at this point.
+	scan := <-scanned
+	return scan.discovery, resolvedRoutes, scan.err
 }
 
 func codexCatalogRouteKey(endpoint coremetadata.CodexEndpointRef) string {

@@ -646,9 +646,14 @@ func TestNativeResumePickerRowsPreserveExactGenerationThreadAndSource(t *testing
 	current := nativeTestRoute("generation-picker-current", coremetadata.CodexGenerationCurrent)
 	cmd.codexNative = &fakeNativeThreadController{catalogRoutes: []codexNativeEndpointRoute{draining, current}}
 	var codexCalls atomic.Int32
-	cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, _ aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+	cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, opts aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
 		if provider != aiModeCodex {
 			return aisessions.ResumeSummaryDiscovery{}, nil
+		}
+		if opts.FallbackBudget != codexRouteReadRolloutBudget {
+			// The invocation's single rollout scan, entered with the provider.
+			// It is not a generation catalog read and names no route.
+			return summaryDiscovery(provider, "thread-picker-rollout", aisessions.SourceCodexRollout, time.Unix(0, 0)), nil
 		}
 		call := codexCalls.Add(1)
 		return summaryDiscovery(provider, fmt.Sprintf("thread-picker-%d", call), aisessions.SourceCodexAppServer, time.Unix(int64(call), 0)), nil
@@ -1663,6 +1668,310 @@ func TestResumeRouteTerminalReasonTableKeepsOneResultWithoutLateMutation(t *test
 			}
 			if tc.cancelInvoke && !errors.Is(err, context.Canceled) {
 				t.Fatalf("cancelled invocation route reason = %v want context.Canceled", err)
+			}
+		})
+	}
+}
+
+// codexResumeCallLedger records the exact clock instant at which each Codex
+// discovery call was entered, split by what that call is: the invocation's one
+// rollout scan, or a native read of one resolved route.
+type codexResumeCallLedger struct {
+	mu    sync.Mutex
+	scans []time.Time
+	reads []time.Time
+}
+
+func (l *codexResumeCallLedger) enter(at time.Time, opts aisessions.ResumeSummaryOptions) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if opts.FallbackBudget == codexRouteReadRolloutBudget {
+		l.reads = append(l.reads, at)
+		return
+	}
+	l.scans = append(l.scans, at)
+}
+
+func (l *codexResumeCallLedger) snapshot() (scans, reads []time.Time) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]time.Time(nil), l.scans...), append([]time.Time(nil), l.reads...)
+}
+
+func rolloutSummaryDiscovery(id string, modified time.Time) aisessions.ResumeSummaryDiscovery {
+	discovery := summaryDiscovery(aiModeCodex, id, aisessions.SourceCodexRollout, modified)
+	discovery.Codex = aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceFallback, Confidence: aisessions.CatalogConfidenceMedium}
+	return discovery
+}
+
+func resumeEntryPresent(entries []intpickercompat.Entry, discovery aisessions.ResumeSummaryDiscovery) bool {
+	value := aiResumePickerValueForSession(aiResumeSessionMetaFromSummary(discovery.Summaries[0], ""))
+	_, ok := resumeSummaryEntryWithValue(entries, value)
+	return ok
+}
+
+func TestResumeRolloutScanIsEnteredOnceWithTheProviderWhileTheRouteResolves(t *testing.T) {
+	route := nativeTestRoute("generation-concurrent-scan", coremetadata.CodexGenerationCurrent)
+	clock := newVirtualResumeBudgetClock()
+	start := clock.instant()
+	routeCtx := make(chan context.Context, 1)
+	release := make(chan struct{})
+	native := &budgetNativeThreadController{
+		routes: []codexNativeEndpointRoute{route},
+		observed: func(ctx context.Context) {
+			routeCtx <- ctx
+			<-release
+		},
+	}
+	cmd := testAICommand(t.TempDir())
+	cmd.codexNative = native
+	ledger := &codexResumeCallLedger{}
+	scanEntered := make(chan struct{}, 1)
+	cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, opts aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+		if provider != aiModeCodex {
+			return summaryDiscovery(provider, provider+"-exact", provider+"-source", time.Unix(20, 0)), nil
+		}
+		ledger.enter(clock.instant(), opts)
+		if opts.FallbackBudget == codexRouteReadRolloutBudget {
+			return nativeSummaryDiscovery("codex-native-exact", time.Unix(30, 0), route), nil
+		}
+		select {
+		case scanEntered <- struct{}{}:
+		default:
+		}
+		return rolloutSummaryDiscovery("codex-rollout-exact", time.Unix(10, 0)), nil
+	}
+	controller := virtualBudgetController(cmd, clock, t.TempDir(), 0, 20)
+	defer controller.close()
+	entries := make(chan []intpickercompat.Entry, 1)
+	go func() { entries <- controller.initialEntries() }()
+
+	observed := <-routeCtx
+	// The scan is entered before the route can name an endpoint, so it is
+	// already running while the route spends the first 1.97s of its own bound.
+	<-scanEntered
+	clock.advance(1970 * time.Millisecond)
+	if err := observed.Err(); err != nil {
+		t.Fatalf("route context cancelled at 1.97s: %v", err)
+	}
+	scans, _ := ledger.snapshot()
+	if len(scans) != 1 || !scans[0].Equal(start) {
+		t.Fatalf("rollout scan entries while the route is still resolving = %v, want exactly one at the provider start", scans)
+	}
+	close(release)
+	<-entries
+
+	scans, reads := ledger.snapshot()
+	if len(scans) != 1 {
+		t.Fatalf("rollout scan entered %d times, want exactly one per invocation", len(scans))
+	}
+	if got := scans[0].Sub(start); got != 0 {
+		t.Fatalf("rollout scan entered %s after the provider start, want 0", got)
+	}
+	if len(reads) != 1 || reads[0].Sub(start) != 1970*time.Millisecond {
+		t.Fatalf("native route reads = %v, want exactly one at the route terminal", reads)
+	}
+}
+
+func TestRouteSlowInvocationPublishesTheRolloutRowsItAlreadyFound(t *testing.T) {
+	route := nativeTestRoute("generation-route-slow-rows", coremetadata.CodexGenerationCurrent)
+	clock := newVirtualResumeBudgetClock()
+	start := clock.instant()
+	routeCtx := make(chan context.Context, 1)
+	release := make(chan struct{})
+	scanCompleted := make(chan struct{})
+	scanReturned := make(chan struct{})
+	native := &budgetNativeThreadController{
+		routes: []codexNativeEndpointRoute{route},
+		observed: func(ctx context.Context) {
+			routeCtx <- ctx
+			<-release
+		},
+	}
+	cmd := testAICommand(t.TempDir())
+	cmd.codexNative = native
+	rollout := rolloutSummaryDiscovery("codex-rollout-route-slow", time.Unix(10, 0))
+	var scanSettledAt atomic.Value
+	cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, opts aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+		if provider != aiModeCodex {
+			return summaryDiscovery(provider, provider+"-exact", provider+"-source", time.Unix(20, 0)), nil
+		}
+		if opts.FallbackBudget == codexRouteReadRolloutBudget {
+			// The native read spends its own bound and settles on no catalog.
+			return aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceFallback}}, nil
+		}
+		<-scanCompleted
+		scanSettledAt.Store(clock.instant())
+		close(scanReturned)
+		return rollout, nil
+	}
+	controller := virtualBudgetController(cmd, clock, t.TempDir(), 0, 20)
+	defer controller.close()
+	entries := make(chan []intpickercompat.Entry, 1)
+	go func() { entries <- controller.initialEntries() }()
+
+	<-routeCtx
+	// depth-5 scan: 0.95s, entered with the provider, so it settles while the
+	// 1.97s route is still inside its own bound.
+	clock.advance(950 * time.Millisecond)
+	close(scanCompleted)
+	<-scanReturned
+	clock.advance(1970*time.Millisecond - 950*time.Millisecond)
+	close(release)
+	settled := <-entries
+
+	settledAt, _ := scanSettledAt.Load().(time.Time)
+	if got := settledAt.Sub(start); got != 950*time.Millisecond {
+		t.Fatalf("rollout rows became ready %s after the provider start, want 950ms (before the 1.97s route terminal)", got)
+	}
+	if got := settledProviderState(controller, aiModeCodex); got.state != aiResumeProviderCount || got.count != 1 {
+		t.Fatalf("codex projection after a route-slow invocation = %+v, want a count of the retained rollout rows", got)
+	}
+	if !resumeEntryPresent(settled, rollout) {
+		t.Fatalf("route-slow invocation dropped the rollout rows it already had: %#v", settled)
+	}
+	for _, summary := range controller.snapshotSummaries() {
+		if summary.Provider != aiModeCodex {
+			continue
+		}
+		if summary.Source != aisessions.SourceCodexRollout || summary.StateDomainID != "" ||
+			summary.EndpointGenerationID != "" || summary.GenerationState != "" {
+			t.Fatalf("rollout row gained native/generation authority: %#v", summary)
+		}
+	}
+}
+
+func TestCodexProviderTerminalTableStaysWithinTheDeclaredWorstCase(t *testing.T) {
+	budgets := defaultAIResumeBudgets()
+	if got := budgets.providerTerminal(); got != budgets.stage(aiResumeStageRoute)+budgets.stage(aiResumeStageNative)+budgets.stage(aiResumeStageHandoff) {
+		t.Fatalf("provider terminal %s is not route + native + handoff", got)
+	}
+	route := nativeTestRoute("generation-terminal-table", coremetadata.CodexGenerationCurrent)
+	tests := []struct {
+		name         string
+		routeElapsed time.Duration
+		routeRoutes  []codexNativeEndpointRoute
+		wantReads    int
+	}{
+		{name: "route spends its whole bound", routeElapsed: aiResumeRouteBudget, wantReads: 0},
+		{name: "route resolves inside its bound", routeElapsed: aiResumeRouteBudget - time.Millisecond, routeRoutes: []codexNativeEndpointRoute{route}, wantReads: 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			clock := newVirtualResumeBudgetClock()
+			start := clock.instant()
+			routeCtx := make(chan context.Context, 1)
+			release := make(chan struct{})
+			native := &budgetNativeThreadController{
+				routes: tc.routeRoutes,
+				observed: func(ctx context.Context) {
+					routeCtx <- ctx
+					<-release
+				},
+			}
+			cmd := testAICommand(t.TempDir())
+			cmd.codexNative = native
+			ledger := &codexResumeCallLedger{}
+			scanEntered := make(chan struct{}, 1)
+			rollout := rolloutSummaryDiscovery("codex-rollout-terminal", time.Unix(10, 0))
+			cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, opts aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+				if provider != aiModeCodex {
+					return summaryDiscovery(provider, provider+"-exact", provider+"-source", time.Unix(20, 0)), nil
+				}
+				ledger.enter(clock.instant(), opts)
+				if opts.FallbackBudget == codexRouteReadRolloutBudget {
+					return nativeSummaryDiscovery("codex-native-terminal", time.Unix(30, 0), route), nil
+				}
+				select {
+				case scanEntered <- struct{}{}:
+				default:
+				}
+				return rollout, nil
+			}
+			controller := virtualBudgetController(cmd, clock, t.TempDir(), 0, 20)
+			defer controller.close()
+			entries := make(chan []intpickercompat.Entry, 1)
+			go func() { entries <- controller.initialEntries() }()
+
+			<-routeCtx
+			<-scanEntered
+			clock.advance(tc.routeElapsed)
+			close(release)
+			settled := <-entries
+
+			scans, reads := ledger.snapshot()
+			if len(scans) != 1 || !scans[0].Equal(start) {
+				t.Fatalf("rollout scan entries = %v, want exactly one at the provider start", scans)
+			}
+			if len(reads) != tc.wantReads {
+				t.Fatalf("native route reads = %d want %d", len(reads), tc.wantReads)
+			}
+			// The rollout clock starts with the provider, so its terminal is
+			// inside the declared provider terminal instead of route_end + 1.25s.
+			rolloutTerminal := scans[0].Add(aiResumeFallbackBudget).Sub(start)
+			if rolloutTerminal > controller.budgets.providerTerminal() {
+				t.Fatalf("rollout terminal %s exceeds the declared provider terminal %s", rolloutTerminal, controller.budgets.providerTerminal())
+			}
+			if got := settledProviderState(controller, aiModeCodex); got.state != aiResumeProviderCount || got.count != 1 {
+				t.Fatalf("codex projection = %+v, want one settled row inside the declared terminal", got)
+			}
+			if tc.wantReads == 0 && !resumeEntryPresent(settled, rollout) {
+				t.Fatalf("route overrun dropped the concurrent scan's rows: %#v", settled)
+			}
+		})
+	}
+}
+
+func TestCodexRouteReadAuthorityIsUnchangedByTheConcurrentScan(t *testing.T) {
+	route := nativeTestRoute("generation-authority-scan", coremetadata.CodexGenerationCurrent)
+	nativeRows := nativeSummaryDiscovery("codex-native-authority", time.Unix(30, 0), route)
+	nativeEmpty := aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceNative, Confidence: aisessions.CatalogConfidenceHigh}}
+	nativeFailed := aisessions.ResumeSummaryDiscovery{Codex: aisessions.CodexCatalogOutcome{Source: aisessions.CatalogSourceFallback}}
+	tests := []struct {
+		name        string
+		read        aisessions.ResumeSummaryDiscovery
+		wantCount   int
+		wantRollout bool
+		wantNative  bool
+	}{
+		{name: "native rows keep authority", read: nativeRows, wantCount: 1, wantNative: true},
+		{name: "native empty keeps authority", read: nativeEmpty},
+		{name: "native failure selects the concurrent scan", read: nativeFailed, wantCount: 1, wantRollout: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := testAICommand(t.TempDir())
+			cmd.codexNative = &fakeNativeThreadController{catalogRoutes: []codexNativeEndpointRoute{route}}
+			rollout := rolloutSummaryDiscovery("codex-rollout-authority", time.Unix(10, 0))
+			cmd.discoverResumeSummaryProvider = func(_ context.Context, provider, _ string, opts aisessions.ResumeSummaryOptions, _ int) (aisessions.ResumeSummaryDiscovery, error) {
+				if provider != aiModeCodex {
+					return aisessions.ResumeSummaryDiscovery{}, nil
+				}
+				if opts.FallbackBudget == codexRouteReadRolloutBudget {
+					return tc.read, nil
+				}
+				return rollout, nil
+			}
+			controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
+			defer controller.close()
+			entries := controller.initialEntries()
+
+			if got := settledProviderState(controller, aiModeCodex); got.state != aiResumeProviderCount || got.count != tc.wantCount {
+				t.Fatalf("codex projection = %+v want count %d", got, tc.wantCount)
+			}
+			if got := resumeEntryPresent(entries, rollout); got != tc.wantRollout {
+				t.Fatalf("rollout rows published = %t want %t", got, tc.wantRollout)
+			}
+			if got := resumeEntryPresent(entries, nativeRows); got != tc.wantNative {
+				t.Fatalf("native rows published = %t want %t", got, tc.wantNative)
+			}
+			for _, summary := range controller.snapshotSummaries() {
+				if summary.Provider != aiModeCodex || summary.Source != aisessions.SourceCodexRollout {
+					continue
+				}
+				if summary.StateDomainID != "" || summary.EndpointGenerationID != "" || summary.GenerationState != "" {
+					t.Fatalf("rollout row gained a generation axis: %#v", summary)
+				}
 			}
 		})
 	}
