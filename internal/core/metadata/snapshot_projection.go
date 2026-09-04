@@ -13,9 +13,12 @@ const maxSnapshotUIDAllocationAttempts = 100
 
 // StampProjectSnapshot records the current Registry identity and naming
 // provenance on every resource represented by a captured Project snapshot.
-// Capture order and display fields are never identity evidence: transient
-// exact tmux runtime IDs are joined to Window/Pane status, and drift is
-// refused rather than producing partially or incorrectly stamped metadata.
+// Capture order and display fields are never identity evidence. The same-row
+// mirrored UID identifies each Registry resource; its non-empty, unique tmux
+// handle is transient routing evidence. A present Registry runtime observation
+// must agree, but observation state is not required to make identity durable.
+// Drift is refused rather than producing partially or incorrectly stamped
+// metadata.
 func StampProjectSnapshot(registry Registry, projectUID string, snap sessionstate.Snapshot) (sessionstate.Snapshot, error) {
 	const op = "stamp project snapshot metadata"
 	if err := registry.Validate(); err != nil {
@@ -48,32 +51,43 @@ func StampProjectSnapshot(registry Registry, projectUID string, snap sessionstat
 	out := snap
 	out.Metadata = snapshotResourceMetadata(project.Metadata, "", "")
 	out.Windows = append([]sessionstate.Window(nil), snap.Windows...)
-	seenWindows := make(map[string]bool, len(snap.Windows))
-	seenPanes := make(map[string]bool)
+	seenWindowRuntimeIDs := make(map[string]bool, len(snap.Windows))
+	seenWindowUIDs := make(map[string]bool, len(snap.Windows))
+	seenPaneRuntimeIDs := make(map[string]bool)
+	seenPaneUIDs := make(map[string]bool)
 	for wi := range snap.Windows {
 		runtimeID := strings.TrimSpace(snap.Windows[wi].RuntimeID)
-		window, found := windowsByRuntime[runtimeID]
-		if runtimeID == "" || !found || seenWindows[runtimeID] || strings.TrimSpace(snap.Windows[wi].RegistryUID) != window.Metadata.UID {
+		mirroredUID := strings.TrimSpace(snap.Windows[wi].RegistryUID)
+		window, found := registry.Window(mirroredUID)
+		owned := found && window.Metadata.OwnerRef != nil && window.Metadata.OwnerRef.Kind == KindProject && window.Metadata.OwnerUID() == project.Metadata.UID
+		observedRuntimeID := ""
+		if found {
+			observedRuntimeID = strings.TrimSpace(window.Status.RuntimeID)
+		}
+		if runtimeID == "" || mirroredUID == "" || !owned || seenWindowRuntimeIDs[runtimeID] || seenWindowUIDs[mirroredUID] ||
+			(observedRuntimeID != "" && observedRuntimeID != runtimeID) {
 			return sessionstate.Snapshot{}, stateErr(op, ErrInvalidRegistry,
-				"captured Window %d runtime id %q and mirrored uid %q do not identify one unique Window in Project %q", wi, runtimeID, snap.Windows[wi].RegistryUID, project.Metadata.UID)
+				"captured Window %d runtime id %q and mirrored uid %q do not identify one unique current Window in Project %q", wi, runtimeID, mirroredUID, project.Metadata.UID)
 		}
-		seenWindows[runtimeID] = true
+		seenWindowRuntimeIDs[runtimeID] = true
+		seenWindowUIDs[mirroredUID] = true
 		out.Windows[wi].Metadata = snapshotResourceMetadata(window.Metadata, string(KindProject), project.Metadata.UID)
-		windowPanesByRuntime := make(map[string]Pane)
-		for _, pane := range registry.snapshotPanesOf(window.Metadata.UID) {
-			if paneRuntimeID := strings.TrimSpace(pane.Status.Activation.RuntimeID); paneRuntimeID != "" {
-				windowPanesByRuntime[paneRuntimeID] = pane
-			}
-		}
 		out.Windows[wi].Panes = append([]sessionstate.Pane(nil), snap.Windows[wi].Panes...)
 		for pi := range snap.Windows[wi].Panes {
 			paneRuntimeID := strings.TrimSpace(snap.Windows[wi].Panes[pi].RuntimeID)
-			pane, found := windowPanesByRuntime[paneRuntimeID]
-			if paneRuntimeID == "" || !found || seenPanes[paneRuntimeID] || strings.TrimSpace(snap.Windows[wi].Panes[pi].RegistryUID) != pane.Metadata.UID {
+			paneMirroredUID := strings.TrimSpace(snap.Windows[wi].Panes[pi].RegistryUID)
+			pane, found := registry.PaneInWindow(window.Metadata.UID, paneMirroredUID)
+			observedPaneRuntimeID := ""
+			if found {
+				observedPaneRuntimeID = strings.TrimSpace(pane.Status.Activation.RuntimeID)
+			}
+			if paneRuntimeID == "" || paneMirroredUID == "" || !found || seenPaneRuntimeIDs[paneRuntimeID] || seenPaneUIDs[paneMirroredUID] ||
+				(observedPaneRuntimeID != "" && observedPaneRuntimeID != paneRuntimeID) {
 				return sessionstate.Snapshot{}, stateErr(op, ErrInvalidRegistry,
 					"captured Pane %d in Window runtime %q has runtime id %q and mirrored uid %q outside the exact Registry owner graph", pi, runtimeID, paneRuntimeID, snap.Windows[wi].Panes[pi].RegistryUID)
 			}
-			seenPanes[paneRuntimeID] = true
+			seenPaneRuntimeIDs[paneRuntimeID] = true
+			seenPaneUIDs[paneMirroredUID] = true
 			ownerKind, ownerUID := "", ""
 			if pane.Metadata.OwnerRef != nil {
 				ownerKind, ownerUID = string(pane.Metadata.OwnerRef.Kind), pane.Metadata.OwnerRef.UID

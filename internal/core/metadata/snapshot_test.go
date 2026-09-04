@@ -131,6 +131,37 @@ func TestStampProjectSnapshotJoinsExactRuntimeIDsAcrossReorderAndRefusesDrift(t 
 			}
 		}
 	}
+	unobserved := reg.Clone()
+	for _, candidate := range unobserved.WindowsOf(projectUID) {
+		window, _ := unobserved.Window(candidate.Metadata.UID)
+		window.Status.RuntimeSessionID = ""
+		window.Status.RuntimeID = ""
+		for _, paneCandidate := range unobserved.snapshotPanesOf(window.Metadata.UID) {
+			pane, _ := unobserved.Pane(paneCandidate.Metadata.UID)
+			pane.Status.Activation.RuntimeID = ""
+		}
+	}
+	if _, err := StampProjectSnapshot(unobserved, projectUID, captured); err != nil {
+		t.Fatalf("stamp exact physical/mirrored capture without optional Registry runtime observations: %v", err)
+	}
+	cloneCaptured := func() sessionstate.Snapshot {
+		clone := captured
+		clone.Windows = append([]sessionstate.Window(nil), captured.Windows...)
+		for wi := range clone.Windows {
+			clone.Windows[wi].Panes = append([]sessionstate.Pane(nil), captured.Windows[wi].Panes...)
+		}
+		return clone
+	}
+	duplicateCapture := cloneCaptured()
+	duplicateCapture.Windows[1].RuntimeID = duplicateCapture.Windows[0].RuntimeID
+	if _, err := StampProjectSnapshot(unobserved, projectUID, duplicateCapture); !errors.Is(err, ErrInvalidRegistry) {
+		t.Fatalf("duplicate captured Window runtime error=%v, want ErrInvalidRegistry", err)
+	}
+	duplicateCapture = cloneCaptured()
+	duplicateCapture.Windows[1].RegistryUID = duplicateCapture.Windows[0].RegistryUID
+	if _, err := StampProjectSnapshot(unobserved, projectUID, duplicateCapture); !errors.Is(err, ErrInvalidRegistry) {
+		t.Fatalf("duplicate captured Window uid error=%v, want ErrInvalidRegistry", err)
+	}
 	for _, tc := range []struct {
 		name   string
 		mutate func(*sessionstate.Snapshot)

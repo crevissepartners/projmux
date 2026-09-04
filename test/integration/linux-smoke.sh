@@ -2230,7 +2230,7 @@ if ! diff -u "$PROJMUX_SMOKE_WORKDIR/nav-app.shape" "$PROJMUX_SMOKE_WORKDIR/nav-
 fi
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-app.txt" "window sleep"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "window window"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "pane pane (shell)"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "pane $runtime_pane_uid (shell)"
 
 # The standalone host is the same Registry, the same rows, and the same
 # eligibility; only the host header differs.
@@ -2533,12 +2533,12 @@ fi
 
 # One explicit bootstrap registers one exact path.
 pmx_discovery create project --root "$discovery_scan/app" >"$PROJMUX_SMOKE_WORKDIR/discovery-register.out"
-smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-register.out" 'project/app created'
 discovery_project_uid="$(pmx_discovery get projects -o uid)"
 if [[ "$(printf '%s\n' "$discovery_project_uid" | wc -l)" != "1" ]]; then
   echo "explicit registration produced more than one Project: $discovery_project_uid" >&2
   exit 1
 fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-register.out" "project/$discovery_project_uid created"
 pmx_discovery get projects -o json >"$PROJMUX_SMOKE_WORKDIR/discovery-projects-registered.json"
 for unregistered in scratch sibling; do
   if grep -q "$discovery_scan/$unregistered" "$PROJMUX_SMOKE_WORKDIR/discovery-projects-registered.json"; then
@@ -2577,7 +2577,7 @@ if [[ ! "$discovery_primary_window" =~ ^@[0-9]+$ ]] || [[ ! "$discovery_anchor_p
 fi
 env -u TMUX -u TMUX_PANE -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u PROJMUX_PROJDIR -u PROJMUX_MANAGED_ROOTS \
   HOME="$discovery_home" TMUX="$discovery_tmux_env" TMUX_PANE="$discovery_anchor_pane" \
-  "$bin" create window --project app >"$PROJMUX_SMOKE_WORKDIR/discovery-create-window.out"
+  "$bin" create window --project "uid:$discovery_project_uid" >"$PROJMUX_SMOKE_WORKDIR/discovery-create-window.out"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/discovery-create-window.out" 'window/'
 pmx_discovery describe project "uid:$discovery_project_uid" -o json >"$PROJMUX_SMOKE_WORKDIR/discovery-project-after-window.json"
 discovery_primary_window_uid="$(sed -n 's/.*"primaryWindowRef": "\([^"]*\)".*/\1/p' "$PROJMUX_SMOKE_WORKDIR/discovery-project-after-window.json" | head -n 1)"
