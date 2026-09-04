@@ -137,7 +137,13 @@ type threadListParams struct {
 	SortDirection string   `json:"sortDirection"`
 	SourceKinds   []string `json:"sourceKinds"`
 	Archived      bool     `json:"archived"`
-	CWD           any      `json:"cwd,omitempty"`
+	// UseStateDbOnly is always explicit and always true for the Resume Picker
+	// catalog. Upstream returns the state DB page as-is for true and performs
+	// a rollout JSONL scan-and-repair for false or omitted, so a bounded
+	// metadata read never leaves the field off the wire. It carries no
+	// omitempty for that reason: false must be impossible to send by accident.
+	UseStateDbOnly bool `json:"useStateDbOnly"`
+	CWD            any  `json:"cwd,omitempty"`
 }
 
 type threadListResult struct {

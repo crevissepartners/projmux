@@ -3,6 +3,7 @@ package codexappserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -98,14 +99,14 @@ func (c *Client) ListCatalogThreads(ctx context.Context, query CatalogQuery) (Ca
 		Cursor: query.Cursor, Limit: DefaultCatalogPageSize,
 		SortKey: "recency_at", SortDirection: "desc",
 		SourceKinds: []string{"cli", "vscode", "appServer"},
-		Archived:    false,
+		Archived:    false, UseStateDbOnly: true,
 	}
 	if cwd := strings.TrimSpace(query.CWD); cwd != "" {
 		params.CWD = filepath.Clean(cwd)
 	}
 	var result threadListResult
 	if err := c.Request(ctx, methodThreadList, params, &result); err != nil {
-		return CatalogPage{}, err
+		return CatalogPage{}, classifyCatalogListRejection(params, err)
 	}
 	page := CatalogPage{NextCursor: cloneStringPointer(result.NextCursor), Threads: make([]CatalogThread, 0, len(result.Data))}
 	for _, raw := range result.Data {
@@ -116,6 +117,50 @@ func (c *Client) ListCatalogThreads(ctx context.Context, query CatalogQuery) (Ca
 		page.Threads = append(page.Threads, thread)
 	}
 	return page, nil
+}
+
+// ErrStateDbOnlyRejected is the content-free classification of a thread/list
+// refusal attributable to the explicit useStateDbOnly request field: an
+// endpoint that does not know the method at all, or one that refuses the
+// params of the first page. It always wraps ErrUnsupported so existing
+// capability and rollout-fallback classification keep working.
+//
+// It is terminal for the invocation. The catalog never retries the same list
+// with the field false or omitted, because that asks the endpoint for exactly
+// the rollout JSONL scan-and-repair the bounded picker read exists to avoid,
+// and support is never inferred from a version allowlist. The caller hands the
+// invocation to its bounded rollout fallback instead.
+var ErrStateDbOnlyRejected = errors.New("codex app-server rejected thread/list useStateDbOnly")
+
+// jsonRPCInvalidParams is the JSON-RPC code an endpoint returns for a request
+// object it cannot accept, which is how an unknown request field surfaces.
+const jsonRPCInvalidParams = -32602
+
+// classifyCatalogListRejection types one thread/list refusal for the rollout
+// fallback handoff. Only the first page is attributed to the request field:
+// the params of a continuation differ from the first request by its opaque
+// cursor alone, so a refusal there is the endpoint rejecting that cursor, not
+// the field this request added. Every other refusal is returned verbatim, and
+// the original error stays wrapped so its code and protocol classification
+// survive.
+func classifyCatalogListRejection(params threadListParams, err error) error {
+	if err == nil {
+		return nil
+	}
+	if params.Cursor != nil {
+		return err
+	}
+	if !errors.Is(err, ErrUnsupported) && !isResponseErrorCode(err, jsonRPCInvalidParams) {
+		return err
+	}
+	return fmt.Errorf("%w: %w: %w", ErrUnsupported, ErrStateDbOnlyRejected, err)
+}
+
+// isResponseErrorCode reports whether err carries an exact endpoint response
+// code. A transport or context failure carries none and never matches.
+func isResponseErrorCode(err error, code int) bool {
+	var response *responseError
+	return errors.As(err, &response) && response.code == code
 }
 
 // ReadDefaultCatalogThread performs one bounded probe-only validation of an

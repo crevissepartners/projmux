@@ -14,15 +14,19 @@ import (
 )
 
 type fakeCodexCatalog struct {
-	pages  []codexappserver.CatalogPage
-	errAt  int
-	calls  []codexappserver.CatalogQuery
-	closed int
+	pages   []codexappserver.CatalogPage
+	errAt   int
+	listErr error
+	calls   []codexappserver.CatalogQuery
+	closed  int
 }
 
 func (f *fakeCodexCatalog) List(_ context.Context, query codexappserver.CatalogQuery) (codexappserver.CatalogPage, error) {
 	f.calls = append(f.calls, query)
 	if f.errAt > 0 && len(f.calls) == f.errAt {
+		if f.listErr != nil {
+			return codexappserver.CatalogPage{}, f.listErr
+		}
 		return codexappserver.CatalogPage{}, codexappserver.ErrProtocol
 	}
 	if len(f.calls) > len(f.pages) {
@@ -121,6 +125,49 @@ func TestMalformedPaginationDiscardsNativeAndRunsOneAnnotatedRolloutFallback(t *
 	}
 	row := discovery.Sessions[0]
 	if row.ResumeID != id || row.Source != SourceCodexRollout || row.Confidence != ConfidenceMedium || row.Reason != ReasonMalformedPagination {
+		t.Fatalf("fallback row = %#v", row)
+	}
+}
+
+// TestStateDbOnlyRejectionRunsOneRolloutFallbackWithoutRetryOrNativeMerge is
+// the integration half of the state-db-only wire contract. A thread/list
+// refused for the explicit useStateDbOnly field ends the native attempt after
+// exactly one call -- there is no second list with the field false or omitted,
+// which would be the scan-and-repair read the field exists to avoid -- and the
+// invocation settles on one bounded rollout fallback that carries no native
+// authority.
+func TestStateDbOnlyRejectionRunsOneRolloutFallbackWithoutRetryOrNativeMerge(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "2026", "09", "04")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	id := "019f0000-0000-7000-8000-000000000091"
+	writeFile(t, filepath.Join(dir, "rollout-state-db-only.jsonl"), `{"type":"session_meta","payload":{"id":"`+id+`","cwd":"/work/app"}}
+{"type":"event_msg","payload":{"type":"user_message","message":"Rollout title"}}
+`)
+	rejection := fmt.Errorf("%w: %w: refused", codexappserver.ErrUnsupported, codexappserver.ErrStateDbOnlyRejected)
+	fake := &fakeCodexCatalog{errAt: 1, listErr: rejection}
+	discovery, err := DiscoverProviderContext(context.Background(), AgentCodex, "/work/app", DiscoverOptions{
+		ClaudeProjectsDir: t.TempDir(), CodexSessionsDir: root,
+		AntigravityHistoryPath: filepath.Join(t.TempDir(), "missing"), OpenCodexCatalog: openFakeCodexCatalog(fake),
+	}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOutcome := CodexCatalogOutcome{Source: CatalogSourceFallback, Confidence: CatalogConfidenceMedium, Reason: CatalogReason(ReasonAppServerUnsupported)}
+	if discovery.Codex != wantOutcome {
+		t.Fatalf("outcome = %#v, want %#v", discovery.Codex, wantOutcome)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("thread/list calls = %d, want exactly one and no omitted or false retry", len(fake.calls))
+	}
+	if len(discovery.Sessions) != 1 {
+		t.Fatalf("sessions = %#v, want exactly the bounded rollout row", discovery.Sessions)
+	}
+	row := discovery.Sessions[0]
+	if row.ResumeID != id || row.Source != SourceCodexRollout || row.Confidence != ConfidenceMedium ||
+		row.Reason != ReasonAppServerUnsupported {
 		t.Fatalf("fallback row = %#v", row)
 	}
 }
