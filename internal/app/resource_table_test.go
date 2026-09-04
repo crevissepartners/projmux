@@ -2,11 +2,17 @@ package app
 
 import (
 	"bytes"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/ui/projmuxpicker"
 )
@@ -111,34 +117,34 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 	}{
 		{
 			kind: "projects",
-			want: "DISPLAY NAME  NAME   STATUS        AGE\n" +
-				"projmux       alpha  live          2d\n" +
-				"projmux       beta   offline       2d\n" +
-				"gone          gone   missing-root  2d\n",
+			want: "CONTEXT  SOURCE                 OBSERVED  NAME   STATUS        AGE\n" +
+				"alpha    project-root-basename  false     alpha  live          2d\n" +
+				"beta     project-root-basename  false     beta   offline       2d\n" +
+				"gone     project-root-basename  false     gone   missing-root  2d\n",
 		},
 		{
 			kind: "windows",
-			want: "DISPLAY NAME  NAME    STATUS        PROJECT  AGE\n" +
-				"editor        main    live          alpha    2d\n" +
-				"review        review  live          alpha    2d\n" +
-				"main          main    offline       beta     2d\n" +
-				"main          main    missing-root  gone     2d\n",
+			want: "CONTEXT  SOURCE              OBSERVED  NAME    STATUS        PROJECT  AGE\n" +
+				"zsh      command-executable  false     main    live          alpha    2d\n" +
+				"zsh      command-executable  false     review  live          alpha    2d\n" +
+				"zsh      command-executable  false     main    offline       beta     2d\n" +
+				"zsh      command-executable  false     main    missing-root  gone     2d\n",
 		},
 		{
 			kind: "panes",
-			want: "DISPLAY NAME  NAME        STATUS        PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-				"zsh           zsh         live          alpha    main                        2d\n" +
-				"log           log         live          alpha    main                        2d\n" +
-				"codex-pane    codex-pane  live          alpha    main    codex               2d\n" +
-				"zsh           zsh         live          alpha    review                      2d\n" +
-				"zsh           zsh         offline       beta     main                        2d\n" +
-				"zsh           zsh         missing-root  gone     main                        2d\n",
+			want: "CONTEXT     SOURCE              OBSERVED  NAME        STATUS        PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+				"zsh         command-executable  false     zsh         live          alpha    main                        2d\n" +
+				"zsh         command-executable  false     log         live          alpha    main                        2d\n" +
+				"agent task  agent-topic         false     codex-pane  live          alpha    main    codex               2d\n" +
+				"zsh         command-executable  false     zsh         live          alpha    review                      2d\n" +
+				"zsh         command-executable  false     zsh         offline       beta     main                        2d\n" +
+				"zsh         command-executable  false     zsh         missing-root  gone     main                        2d\n",
 		},
 		{
 			kind: "agents",
-			want: "DISPLAY NAME  NAME   STATUS   INTERACTION  PROJECT  WINDOW  SESSION               TERMINATION  AGE\n" +
-				"codex         codex  live     unknown      alpha    main    codex:codex-thread-1               2d\n" +
-				"codex         codex  offline  unknown      beta     main                                       2d\n",
+			want: "CONTEXT     SOURCE       OBSERVED  NAME   STATUS   INTERACTION  PROJECT  WINDOW  SESSION               TERMINATION  AGE\n" +
+				"agent task  agent-topic  false     codex  live     unknown      alpha    main    codex:codex-thread-1               2d\n" +
+				"agent task  agent-topic  false     codex  offline  unknown      beta     main                                       2d\n",
 		},
 	} {
 		t.Run(test.kind, func(t *testing.T) {
@@ -160,7 +166,7 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 			if stderr != "" {
 				t.Fatalf("get %s stderr = %q, want none", test.kind, stderr)
 			}
-			for _, forbidden := range []string{"forbidden-topic-or-raw-title", "forbidden-agent-topic"} {
+			for _, forbidden := range []string{"forbidden-stored-pane-title", "forbidden stored editor label", "forbidden stored review label", "projmux"} {
 				if strings.Contains(stdout, forbidden) {
 					t.Fatalf("get %s promoted secondary display value %q:\n%s", test.kind, forbidden, stdout)
 				}
@@ -180,17 +186,75 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 	}
 }
 
-// prepareDisplayFirstTableFixture models the producer boundaries consumed by
-// the plural table. Projects carry aliases, Windows carry the already-observed
-// tmux window_name, and current Pane/Agent producers leave displayName absent.
-// The secondary Pane title and Agent topic are deliberately tempting values:
-// neither may leak into DISPLAY NAME.
+func TestGetHumanContextNoTransportKeepsStoredPresentationOutAndNameStable(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeResourceStore(t)
+	store.registry.Projects[0].Metadata.DisplayName = "forbidden stored project label"
+	command := newTestListGetCommand(t, store)
+	command.runtime = nil
+	stdout, stderr, err := runRoute(t, command, "projects", "--project", "alpha")
+	if err != nil {
+		t.Fatalf("get projects without transport: %v (stderr=%q)", err, stderr)
+	}
+	rows := columnarRows(t, stdout)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %v, want one Project", rows)
+	}
+	if got := rows[0]; got["CONTEXT"] != "alpha" || got["SOURCE"] != "project-root-basename" ||
+		got["OBSERVED"] != "false" || got["NAME"] != "alpha" {
+		t.Fatalf("no-transport Project row = %v", got)
+	}
+	if strings.Contains(stdout, "forbidden stored project label") {
+		t.Fatalf("no-transport read consumed stored presentation:\n%s", stdout)
+	}
+}
+
+func TestGetAndDescribeHumanContextEnglishKoreanGolden(t *testing.T) {
+	t.Parallel()
+
+	var got strings.Builder
+	for _, test := range []struct {
+		locale string
+		topic  string
+	}{
+		{locale: "en-US", topic: "Release review"},
+		{locale: "ko-KR", topic: "릴리스 검토"},
+	} {
+		store := newFakeResourceStore(t)
+		agent, ok := store.registry.Agent("agt-alpha-codex")
+		if !ok {
+			t.Fatal("fixture Agent is missing")
+		}
+		agent.Metadata.Annotations = map[string]string{coremetadata.AnnotationAgentTopic: test.topic}
+
+		table, stderr, err := runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "alpha")
+		if err != nil {
+			t.Fatalf("%s get agents: %v (stderr=%q)", test.locale, err, stderr)
+		}
+		description, stderr, err := runRoute(t, newTestDescribeCommand(t, store), "agent", "codex", "--project", "alpha")
+		if err != nil {
+			t.Fatalf("%s describe agent: %v (stderr=%q)", test.locale, err, stderr)
+		}
+		fmt.Fprintf(&got, "== %s table ==\n%s== %s describe ==\n%s", test.locale, table, test.locale, description)
+	}
+	want, err := os.ReadFile(filepath.Join("testdata", "resource-context-human.golden"))
+	if err != nil {
+		t.Fatalf("read human context golden: %v\ngot:\n%s", err, got.String())
+	}
+	if got.String() != string(want) {
+		t.Fatalf("human context golden mismatch:\ngot:\n%swant:\n%s", got.String(), string(want))
+	}
+}
+
+// prepareDisplayFirstTableFixture models every no-transport context source the
+// plural table can read without making stored presentation authoritative.
 func prepareDisplayFirstTableFixture(t *testing.T, store *fakeResourceStore) {
 	t.Helper()
 
 	windowDisplays := map[string]string{
-		"win-alpha-main":   "editor",
-		"win-alpha-review": "review",
+		"win-alpha-main":   "forbidden stored editor label",
+		"win-alpha-review": "forbidden stored review label",
 		"win-beta-main":    " \t ",
 	}
 	for i := range store.registry.Windows {
@@ -202,7 +266,10 @@ func prepareDisplayFirstTableFixture(t *testing.T, store *fakeResourceStore) {
 		} else {
 			store.registry.Panes[i].Metadata.DisplayName = "  \t"
 		}
-		store.registry.Panes[i].Status.DisplayTitle = "forbidden-topic-or-raw-title"
+		store.registry.Panes[i].Status.DisplayTitle = "forbidden-stored-pane-title"
+		if store.registry.Panes[i].Spec.Role == coremetadata.PaneRoleShell {
+			store.registry.Panes[i].Spec.Command = "/bin/zsh -l"
+		}
 	}
 	for i := range store.registry.Agents {
 		if i%2 == 0 {
@@ -211,7 +278,7 @@ func prepareDisplayFirstTableFixture(t *testing.T, store *fakeResourceStore) {
 			store.registry.Agents[i].Metadata.DisplayName = " \t "
 		}
 		store.registry.Agents[i].Metadata.Annotations = map[string]string{
-			coremetadata.AnnotationAgentTopic: "forbidden-agent-topic",
+			coremetadata.AnnotationAgentTopic: "agent task",
 		}
 	}
 	if gone, ok := store.registry.Project("prj-gone"); ok {
@@ -231,10 +298,10 @@ func TestResourceTableColumnsAreTheCanonicalContract(t *testing.T) {
 		kind coremetadata.Kind
 		want []string
 	}{
-		{coremetadata.KindProject, []string{"DISPLAY NAME", "NAME", "STATUS", "AGE"}},
-		{coremetadata.KindWindow, []string{"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "AGE"}},
-		{coremetadata.KindPane, []string{"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "TERMINATION", "AGE"}},
-		{coremetadata.KindAgent, []string{"DISPLAY NAME", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "TERMINATION", "AGE"}},
+		{coremetadata.KindProject, []string{"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "AGE"}},
+		{coremetadata.KindWindow, []string{"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "PROJECT", "AGE"}},
+		{coremetadata.KindPane, []string{"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "TERMINATION", "AGE"}},
+		{coremetadata.KindAgent, []string{"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "TERMINATION", "AGE"}},
 	} {
 		got := resourceTableColumns[test.kind]
 		if strings.Join(got, ",") != strings.Join(test.want, ",") {
@@ -246,46 +313,23 @@ func TestResourceTableColumnsAreTheCanonicalContract(t *testing.T) {
 	}
 }
 
-func TestResourceTableNamesUseStoredOriginalOrStableNameFallback(t *testing.T) {
+func TestResourceTableKeepsDurableNameSeparateFromEphemeralContext(t *testing.T) {
 	t.Parallel()
 
-	registry := resourceFixtureRegistry(t)
-	window, ok := registry.Window("win-alpha-main")
-	if !ok {
-		t.Fatal("fixture window is missing")
+	match := selector.Match{
+		UID: "missing", Name: "stable",
+		Context: registryview.Context{Value: "operator hint", Source: registryview.ContextSourceAgentTopic, Observed: true},
+		Status:  selector.StatusOffline,
 	}
-	window.Metadata.DisplayName = "  editor tab  "
-	pane, ok := registry.Pane("pan-alpha-zsh")
-	if !ok {
-		t.Fatal("fixture pane is missing")
+	row := resourceTableRow(match, coremetadata.KindProject, coremetadata.NewRegistry(), time.Time{})
+	if got, want := row[:5], []string{"operator hint", "agent-topic", "true", "stable", "offline"}; !slices.Equal(got, want) {
+		t.Fatalf("context/name cells = %q, want %q", got, want)
 	}
-	pane.Metadata.DisplayName = ""
-	agent, ok := registry.Agent("agt-alpha-codex")
-	if !ok {
-		t.Fatal("fixture agent is missing")
-	}
-	agent.Metadata.DisplayName = " \t "
 
-	for _, test := range []struct {
-		caseName string
-		match    selector.Match
-		kind     coremetadata.Kind
-		want     string
-		wantName string
-	}{
-		{caseName: "Project alias", match: selector.Match{UID: "prj-alpha", Name: "alpha"}, kind: coremetadata.KindProject, want: "projmux", wantName: "alpha"},
-		{caseName: "Window original bytes", match: selector.Match{UID: "win-alpha-main", Name: "main"}, kind: coremetadata.KindWindow, want: "  editor tab  ", wantName: "main"},
-		{caseName: "Pane empty fallback", match: selector.Match{UID: "pan-alpha-zsh", Name: "stale-match"}, kind: coremetadata.KindPane, want: "zsh", wantName: "zsh"},
-		{caseName: "Agent whitespace fallback", match: selector.Match{UID: "agt-alpha-codex", Name: "stale-match"}, kind: coremetadata.KindAgent, want: "codex", wantName: "codex"},
-		{caseName: "missing registry row fallback", match: selector.Match{UID: "missing", Name: "stable"}, kind: coremetadata.KindPane, want: "stable", wantName: "stable"},
-	} {
-		t.Run(test.caseName, func(t *testing.T) {
-			t.Parallel()
-			displayName, stableName := resourceTableNames(test.match, test.kind, registry)
-			if displayName != test.want || stableName != test.wantName {
-				t.Fatalf("resourceTableNames() = %q, %q, want %q, %q", displayName, stableName, test.want, test.wantName)
-			}
-		})
+	match.Context = registryview.Context{}
+	row = resourceTableRow(match, coremetadata.KindProject, coremetadata.NewRegistry(), time.Time{})
+	if got, want := row[:5], []string{"", "", "false", "stable", "offline"}; !slices.Equal(got, want) {
+		t.Fatalf("empty-context/name cells = %q, want %q", got, want)
 	}
 }
 
@@ -317,10 +361,10 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p3", Name: "빌드로그", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "알파", Window: "review"}},
 			},
-			want: "DISPLAY NAME  NAME      STATUS   PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-				"쉘            쉘        live     알파     메인\n" +
-				"log           log       offline  alpha    main\n" +
-				"빌드로그      빌드로그  live     알파     review\n",
+			want: "CONTEXT  SOURCE  OBSERVED  NAME      STATUS   PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+				"                 false     쉘        live     알파     메인\n" +
+				"                 false     log       offline  alpha    main\n" +
+				"                 false     빌드로그  live     알파     review\n",
 		},
 		{
 			name: "a long value widens its own column only",
@@ -331,9 +375,9 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindWindow, UID: "w2", Name: "m", Status: selector.StatusMissingRoot,
 					Owner: selector.OwnerContext{Project: "beta"}},
 			},
-			want: "DISPLAY NAME                    NAME                            STATUS        PROJECT  AGE\n" +
-				"a-very-long-window-name-indeed  a-very-long-window-name-indeed  live          alpha\n" +
-				"m                               m                               missing-root  beta\n",
+			want: "CONTEXT  SOURCE  OBSERVED  NAME                            STATUS        PROJECT  AGE\n" +
+				"                 false     a-very-long-window-name-indeed  live          alpha\n" +
+				"                 false     m                               missing-root  beta\n",
 		},
 		{
 			name: "an empty interior cell still holds its column",
@@ -343,9 +387,9 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p2", Name: "zsh", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "DISPLAY NAME  NAME    STATUS   PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-				"orphan        orphan  offline\n" +
-				"zsh           zsh     live     alpha    main\n",
+			want: "CONTEXT  SOURCE  OBSERVED  NAME    STATUS   PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+				"                 false     orphan  offline\n" +
+				"                 false     zsh     live     alpha    main\n",
 		},
 		{
 			// The AGENT column is the third leg of a Pane's owner chain, which
@@ -360,9 +404,9 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p2", Name: "zsh", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "DISPLAY NAME  NAME        STATUS  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-				"codex-pane    codex-pane  live    alpha    main    codex\n" +
-				"zsh           zsh         live    alpha    main\n",
+			want: "CONTEXT  SOURCE  OBSERVED  NAME        STATUS  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+				"                 false     codex-pane  live    alpha    main    codex\n" +
+				"                 false     zsh         live    alpha    main\n",
 		},
 		{
 			name: "an empty trailing cell ends the line rather than padding it",
@@ -371,8 +415,8 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindAgent, UID: "a1", Name: "codex", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "DISPLAY NAME  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE\n" +
-				"codex         codex  live    unknown      alpha    main\n",
+			want: "CONTEXT  SOURCE  OBSERVED  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE\n" +
+				"                 false     codex  live    unknown      alpha    main\n",
 		},
 		{
 			name:    "zero matches emit zero bytes",
@@ -514,11 +558,11 @@ func TestGetListWithHangulNamesStaysAligned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get panes error = %v (stderr %q)", err, stderr)
 	}
-	const want = "DISPLAY NAME  NAME        STATUS  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-		"쉘 화면       쉘          live    알파     메인                        2d\n" +
-		"log           log         live    알파     메인                        2d\n" +
-		"codex-pane    codex-pane  live    알파     메인    codex               2d\n" +
-		"zsh           zsh         live    알파     review                      2d\n"
+	const want = "CONTEXT  SOURCE  OBSERVED  NAME        STATUS  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+		"                 false     쉘          live    알파     메인                        2d\n" +
+		"                 false     log         live    알파     메인                        2d\n" +
+		"                 false     codex-pane  live    알파     메인    codex               2d\n" +
+		"                 false     zsh         live    알파     review                      2d\n"
 	if stdout != want {
 		t.Fatalf("get panes stdout =\n%q\nwant\n%q", stdout, want)
 	}
@@ -691,16 +735,18 @@ func TestSingularDefaultProjectionIsUnchangedByTheColumnarList(t *testing.T) {
 		// track. What this test guards -- that the columnar projection is
 		// reachable only with `list` true -- is unchanged and still falsifiable
 		// here, because a header line or a padded column would redden it.
-		const want = "Kind:        Pane\n" +
-			"Name:        zsh\n" +
-			"UID:         pan-alpha-zsh\n" +
-			"CreatedAt:   2026-08-15T09:00:00Z\n" +
-			"DisplayName: zsh\n" +
-			"Owner:       project/alpha window/main\n" +
-			"Status:      live\n" +
-			"Role:        shell\n" +
-			"CWD:         /srv/alpha\n" +
-			"Labels:      role=shell\n"
+		const want = "Kind:            Pane\n" +
+			"Name:            zsh\n" +
+			"UID:             pan-alpha-zsh\n" +
+			"CreatedAt:       2026-08-15T09:00:00Z\n" +
+			"Context:         \n" +
+			"ContextSource:   \n" +
+			"ContextObserved: false\n" +
+			"Owner:           project/alpha window/main\n" +
+			"Status:          live\n" +
+			"Role:            shell\n" +
+			"CWD:             /srv/alpha\n" +
+			"Labels:          role=shell\n"
 		if stdout != want {
 			t.Fatalf("describe pane stdout =\n%q\nwant\n%q", stdout, want)
 		}

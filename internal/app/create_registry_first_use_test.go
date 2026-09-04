@@ -468,13 +468,14 @@ func TestTheFirstLegacyMigrationAllocatesStableNamesAndProjectsRuntimeDisplayNam
 	if err != nil {
 		t.Fatalf("describe imported window: %v (stderr=%s)", err, stderr)
 	}
-	hasName, hasDisplayName := false, false
+	hasName, hasContext, hasContextSource := false, false, false
 	for line := range strings.SplitSeq(description, "\n") {
 		hasName = hasName || (strings.HasPrefix(line, "Name:") && strings.TrimSpace(strings.TrimPrefix(line, "Name:")) == "window")
-		hasDisplayName = hasDisplayName || (strings.HasPrefix(line, "DisplayName:") && strings.TrimSpace(strings.TrimPrefix(line, "DisplayName:")) == "editor")
+		hasContext = hasContext || (strings.HasPrefix(line, "Context:") && strings.TrimSpace(strings.TrimPrefix(line, "Context:")) == "nvim")
+		hasContextSource = hasContextSource || (strings.HasPrefix(line, "ContextSource:") && strings.TrimSpace(strings.TrimPrefix(line, "ContextSource:")) == "command-executable")
 	}
-	if !hasName || !hasDisplayName {
-		t.Fatalf("describe window did not separate identity and display:\n%s", description)
+	if !hasName || !hasContext || !hasContextSource {
+		t.Fatalf("describe window did not separate durable name and ephemeral context:\n%s", description)
 	}
 	// The allocated uids are mirrored back onto the live objects.
 	if got := editor.opts[tmuxopts.WindowUID]; got == "" {

@@ -5,6 +5,8 @@ import (
 	"sync"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
 )
@@ -53,6 +55,46 @@ type liveRuntimeInventory interface {
 // for one -- still observes the machine exactly once and judges every match
 // against the same snapshot.
 type runtimeLookup func() coremetadata.RuntimeObservation
+
+// resourceReadSnapshot is the one exact-host observation shared by selector
+// status and human context for one read invocation.
+type resourceReadSnapshot struct {
+	runtime  coremetadata.RuntimeObservation
+	contexts registryview.Projector
+}
+
+type resourceReadLookup func(coremetadata.Registry) resourceReadSnapshot
+
+func runtimeResourceReadLookup(reader *runtimeDiagnosticsReader) resourceReadLookup {
+	return func(registry coremetadata.Registry) resourceReadSnapshot {
+		fallback := resourceReadSnapshot{contexts: registryview.NewContextProjector(registry)}
+		if reader == nil || reader.observe == nil {
+			return fallback
+		}
+		transport, err := reader.transport(runtimeTransportRequest{})
+		if err != nil {
+			return fallback
+		}
+		inventory := reader.observe(context.Background(), transport)
+		graph := resourcegraph.Resolve(registry, inventory)
+		windows := make(map[string]bool)
+		for _, node := range graph.Windows {
+			if node.Status == resourcegraph.StatusLive {
+				windows[node.Window.Metadata.UID] = true
+			}
+		}
+		panes := make(map[string]bool)
+		for _, node := range graph.Panes {
+			if node.Status == resourcegraph.StatusLive {
+				panes[node.Pane.Metadata.UID] = true
+			}
+		}
+		return resourceReadSnapshot{
+			runtime:  coremetadata.RuntimeObservation{Windows: windows, Panes: panes},
+			contexts: registryview.NewObservedContextProjector(graph),
+		}
+	}
+}
 
 // defaultRuntimeLookup is the production seam: the same tmux identity mirror
 // the active-target fallback and the dead-pane sweep already read through.

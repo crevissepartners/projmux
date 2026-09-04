@@ -80,7 +80,7 @@ func (b *builder) shellPane(uid, name, displayName, windowUID, cwd string, label
 		APIVersion: metadata.APIVersion,
 		Kind:       metadata.KindPane,
 		Metadata:   b.meta(uid, name, displayName, owner, labels),
-		Spec:       metadata.PaneSpec{Role: metadata.PaneRoleShell, CWD: cwd},
+		Spec:       metadata.PaneSpec{Role: metadata.PaneRoleShell, CWD: cwd, Command: name},
 	})
 	b.reserve(windowUID, metadata.KindPane, name, uid)
 }

@@ -254,6 +254,11 @@ var rootKindProjectionSites = []rootKindProjectionSite{
 		Why: "migrates legacy path pins onto Project uids; a path can only ever name a Project root",
 	},
 	{
+		File: "internal/core/registryview/context.go", Func: "NewObservedContextProjector",
+		Source: "Graph", Verdict: rootKindBoth,
+		Why: "derives one invocation-scoped context index from both root kinds in the exact resolved graph",
+	},
+	{
 		File: "internal/core/registryview/view.go", Func: "builder.projects",
 		Source: "Graph", Verdict: rootKindBoth,
 		Why: "projects both root graphs while Home's user-facing row remains sidebar chrome",
@@ -410,7 +415,7 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 		counts[site.Verdict]++
 	}
 	for verdict, want := range map[rootKindVerdict]int{
-		rootKindBoth:        19,
+		rootKindBoth:        20,
 		rootKindPaired:      2,
 		rootKindProjectOnly: 20,
 		rootKindGap:         0,
@@ -419,7 +424,7 @@ func TestRootKindProjectionSweepTableIsPrintable(t *testing.T) {
 			t.Errorf("%s rows = %d, want %d; update the count with the table and say why in the commit", verdict, counts[verdict], want)
 		}
 	}
-	if got, want := len(rootKindProjectionSites), 41; got != want {
+	if got, want := len(rootKindProjectionSites), 42; got != want {
 		t.Errorf("sweep rows = %d, want %d", got, want)
 	}
 	for _, want := range []string{"SITE", "SOURCE", "KIND HANDLING", "NOTE"} {

@@ -8,12 +8,14 @@ import (
 	"io"
 	"os"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -165,6 +167,9 @@ type resourceQueryFlags struct {
 	// Status must set it; the alternative it replaced, inheriting the owning
 	// Project's stored liveness, no longer exists anywhere.
 	runtime runtimeLookup
+	// contexts is the same invocation-scoped projector as runtime. It changes
+	// only Match.Context; the selector pipeline never reads it as authority.
+	contexts *registryview.Projector
 	// active observes the tmux target this invocation runs in, for the
 	// empty-selector fallback described in active_target.go.
 	//
@@ -379,7 +384,11 @@ func (f *resourceQueryFlags) unmatchedTargetRefs(registry coremetadata.Registry)
 // resolveQuery runs the kind's resolution pipeline without enforcing a
 // cardinality.
 func (f *resourceQueryFlags) resolveQuery(registry coremetadata.Registry, query selector.Query) (selector.Resolution, error) {
-	resolver := selector.NewObserved(registry, f.runtime.observation())
+	observed := f.runtime.observation()
+	resolver := selector.NewObserved(registry, observed)
+	if f.contexts != nil {
+		resolver = selector.NewObservedWithContext(registry, observed, *f.contexts)
+	}
 	switch f.kind {
 	case coremetadata.KindProject:
 		return resolver.ResolveProjects(query)
@@ -620,10 +629,10 @@ func resourceSummary(match selector.Match, kind coremetadata.Kind, registry core
 //
 // The header set is fixed per kind rather than derived from the rows, so a
 // column never disappears because every row happened to leave it empty.
-// DISPLAY NAME is the stored, duplicate-allowed `metadata.DisplayName` with a
-// read-only fallback to `metadata.Name`; NAME is always that stable name without
-// the `kind/` prefix the one-line summary carries. The spelling the operator
-// typed already states the kind, exactly as it does for `kubectl get pods`.
+// CONTEXT is invocation-scoped presentation from registryview.Projector;
+// SOURCE and OBSERVED state why it won and whether it came from exact live UID
+// binding. NAME remains the durable stable address and is never copied into an
+// empty context cell.
 //
 // AGE is last on every kind, which is where `kubectl get` puts it and the only
 // position that costs the columns before it nothing: it is the one column whose
@@ -634,10 +643,10 @@ func resourceSummary(match selector.Match, kind coremetadata.Kind, registry core
 // "this kind has no age" look like a property of the resource rather than of
 // the table.
 var resourceTableColumns = map[coremetadata.Kind][]string{
-	coremetadata.KindProject: {"DISPLAY NAME", "NAME", "STATUS", "AGE"},
-	coremetadata.KindWindow:  {"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "AGE"},
-	coremetadata.KindPane:    {"DISPLAY NAME", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "TERMINATION", "AGE"},
-	coremetadata.KindAgent:   {"DISPLAY NAME", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "TERMINATION", "AGE"},
+	coremetadata.KindProject: {"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "AGE"},
+	coremetadata.KindWindow:  {"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "PROJECT", "AGE"},
+	coremetadata.KindPane:    {"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "TERMINATION", "AGE"},
+	coremetadata.KindAgent:   {"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "TERMINATION", "AGE"},
 }
 
 // resourceTableGap is the minimum run of spaces between two columns. It is the
@@ -662,8 +671,13 @@ const resourceTableGap = 2
 // registry has always stored and `-o json` has always emitted, measured against
 // the clock this invocation was handed.
 func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry coremetadata.Registry, now time.Time) []string {
-	displayName, stableName := resourceTableNames(match, kind, registry)
-	row := []string{displayName, stableName, string(match.Status)}
+	row := []string{
+		match.Context.Value,
+		string(match.Context.Source),
+		strconv.FormatBool(match.Context.Observed),
+		match.Name,
+		string(match.Status),
+	}
 	age := resourceAgeCell(registry, kind, match.UID, now)
 	switch kind {
 	case coremetadata.KindWindow:
@@ -689,22 +703,6 @@ func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry cor
 	default:
 		return append(row, age)
 	}
-}
-
-// resourceTableNames selects the first two human table cells without changing
-// any stored metadata or identity semantics. Whitespace-only display names are
-// absent; a non-empty value is returned byte-for-byte, including its original
-// surrounding whitespace. A missing registry row is tolerated with the same
-// resolved stable name the pre-display table used.
-func resourceTableNames(match selector.Match, kind coremetadata.Kind, registry coremetadata.Registry) (string, string) {
-	_, meta, ok := resourceFor(registry, kind, match.UID)
-	if !ok {
-		return match.Name, match.Name
-	}
-	if strings.TrimSpace(meta.DisplayName) == "" {
-		return meta.Name, meta.Name
-	}
-	return meta.DisplayName, meta.Name
 }
 
 // resourceAgeCell renders the AGE column of one row: how long ago the resource

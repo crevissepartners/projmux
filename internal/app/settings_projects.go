@@ -13,6 +13,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/pins"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	intrender "github.com/crevissepartners/projmux/internal/ui/render"
@@ -837,9 +838,10 @@ func (c *settingsCommand) pinnedProjectDetailEntries(reference string) ([]intpic
 			SearchKey: "pinned project uid missing registry " + reference,
 		})
 	} else {
-		display := strings.TrimSpace(registered.Metadata.DisplayName)
-		if display == "" {
-			display = "(none)"
+		context := registryview.NewContextProjector(registry).For(coremetadata.KindProject, registered.Metadata.UID)
+		contextValue := strings.TrimSpace(context.Value)
+		if contextValue == "" {
+			contextValue = "(none)"
 		}
 		runtime := "offline"
 		if registered.Status.Session != nil {
@@ -856,7 +858,7 @@ func (c *settingsCommand) pinnedProjectDetailEntries(reference string) ([]intpic
 			root = "(no root)"
 		}
 		for _, row := range [][3]string{
-			{"Display name", display, "duplicates allowed"},
+			{"Context", contextValue, string(context.Source)},
 			{"Unique name", registered.Metadata.Name, "stable query name"},
 			{"UID", registered.Metadata.UID, "never changes across a rebind"},
 			{"Root", root, "spec.root"},
@@ -1518,8 +1520,8 @@ func (c *settingsCommand) settingsProjectRegistry() coremetadata.Registry {
 // stranding the pin under its old spelling.
 func settingsPinnedProjectName(registry coremetadata.Registry, row pinRow, homeDir, repoRoot string) string {
 	if project, ok := registry.Project(row.Pin.Value); ok {
-		if display := strings.TrimSpace(project.Metadata.DisplayName); display != "" {
-			return display
+		if context := registryview.NewContextProjector(registry).For(coremetadata.KindProject, project.Metadata.UID); !context.Empty() {
+			return context.Value
 		}
 		if name := strings.TrimSpace(project.Metadata.Name); name != "" {
 			return name

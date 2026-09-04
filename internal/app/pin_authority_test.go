@@ -48,7 +48,7 @@ func TestManagedPinSurvivesRebindRenameAndMissingRoot(t *testing.T) {
 		{
 			name: "after a rename",
 			refs: []pins.ProjectRef{{UID: uid, Root: "/srv/app"}},
-			row:  registryview.Row{Kind: registryview.RowKindProject, UID: uid, Name: "renamed", DisplayName: "Renamed", Root: "/srv/app", Status: resourcegraph.StatusOffline},
+			row:  registryview.Row{Kind: registryview.RowKindProject, UID: uid, Name: "renamed", Context: registryview.Context{Value: "app", Source: registryview.ContextSourceProjectRoot}, Root: "/srv/app", Status: resourcegraph.StatusOffline},
 		},
 		{
 			name: "with a MissingRoot row that offers rebind instead of open",

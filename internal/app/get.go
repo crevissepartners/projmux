@@ -12,6 +12,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/cli"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
@@ -44,6 +45,7 @@ type getCommand struct {
 	// runtime is the live-tmux observation Window and Pane status is derived
 	// from; see runtime_observation.go.
 	runtime     runtimeLookup
+	reads       resourceReadLookup
 	currentPath currentPathResolver
 	notify      rawArgvCommand
 	snapshots   rawArgvCommand
@@ -65,6 +67,16 @@ type getCommand struct {
 	// the literals the tests build -- valid without a clock they do not care
 	// about.
 	now func() time.Time
+}
+
+func (c *getCommand) readSnapshot(registry coremetadata.Registry) resourceReadSnapshot {
+	if c != nil && c.reads != nil {
+		return c.reads(registry)
+	}
+	return resourceReadSnapshot{
+		runtime:  c.runtime.observation(),
+		contexts: registryview.NewContextProjector(registry),
+	}
 }
 
 // clock answers the invocation's current time, defaulting to the wall clock.
@@ -183,6 +195,9 @@ func (c *getCommand) runList(token string, args []string, stdout, stderr io.Writ
 	if err != nil {
 		return MapMetadataError(err)
 	}
+	snapshot := c.readSnapshot(registry)
+	flags.runtime = func() coremetadata.RuntimeObservation { return snapshot.runtime }
+	flags.contexts = &snapshot.contexts
 	resolution, err := flags.resolve(selector.VerbGet, true, registry)
 	if err != nil {
 		return MapMetadataError(err)
@@ -282,7 +297,8 @@ func (c *getCommand) runPane(args []string, stdout, stderr io.Writer) error {
 			query = withActiveTargetRef(query, coremetadata.KindPane, ref)
 		}
 	}
-	resolution, err := selector.NewObserved(registry, c.runtime.observation()).ResolvePanes(query)
+	snapshot := c.readSnapshot(registry)
+	resolution, err := selector.NewObservedWithContext(registry, snapshot.runtime, snapshot.contexts).ResolvePanes(query)
 	if err != nil {
 		return MapMetadataError(err)
 	}

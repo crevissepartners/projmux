@@ -316,7 +316,7 @@ func TestSwitchRegistryWindowTabsComeFromTheRegistry(t *testing.T) {
 		t.Fatal("the fixture Project row is absent")
 	}
 	tabs := switchRegistryWindowTabs(view, project, "dot")
-	if len(tabs) != 1 || tabs[0].Name != "editor" {
+	if len(tabs) != 1 || tabs[0].Name != "window" {
 		t.Fatalf("window tabs = %#v, want the Registry Window with no transport", tabs)
 	}
 	if tabs[0].Active {

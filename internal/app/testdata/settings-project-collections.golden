@@ -29,7 +29,7 @@ Additional discovery roots
   __settings_noop__	· Add current directory no project context
   workdir:add	＋ Add path choose or type a directory to scan
 Pinned Projects
-  pin-item:uid:proj-winapp	▸ app C:\Users\dev\src\app
+  pin-item:uid:proj-winapp	▸ C:\Users\dev\src\app C:\Users\dev\src\app
   __settings_noop__	· Add Current Project no project context
   project:add	＋ Select Project to pin scan filesystem roots
 Candidate Pins

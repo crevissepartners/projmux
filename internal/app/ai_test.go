@@ -20,6 +20,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 	"github.com/crevissepartners/projmux/internal/theme"
@@ -37,7 +38,10 @@ func aiResumeSessionRowsWithLabels(sessions []aisessions.SessionMeta, conversati
 	rows = append(rows, intpickercompat.Entry{Label: "\x1b[32m[+ New Session]\x1b[0m", Value: aiResumeNewValue, SearchKey: "new session fresh agent picker"})
 	for _, session := range sessions {
 		rows = append(rows, aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{
-			Topic: conversationLabels[strings.TrimSpace(session.ResumeID)],
+			Context: registryview.Context{
+				Value:  conversationLabels[strings.TrimSpace(session.ResumeID)],
+				Source: registryview.ContextSourceAgentTopic,
+			},
 		}, now, locale, baseCWD, depth))
 	}
 	return rows, len(sessions), total
@@ -434,12 +438,16 @@ func TestAIResumeProviderNeutralRowSchema80ColumnGolden(t *testing.T) {
 	}
 	var got strings.Builder
 	for _, provider := range providers {
+		bound := aiResumeExactAgentLabel{}
+		if provider.name == aiModeCodex {
+			bound.Context = registryview.Context{Value: "Codex bound conversation", Source: registryview.ContextSourceAgentTopic}
+		}
 		row := aiResumeSessionRowWithResolvedLabel(aisessions.SessionMeta{
 			Agent: provider.name, ResumeID: provider.name + "-exact-id", Title: "Shared conversation title",
 			LastModified: now.Add(-2 * time.Hour), Source: provider.source, Turns: 42,
 			Confidence: "private-confidence", Reason: "private-reason", RuntimeStatus: "active",
 			Context: aisessions.SessionContext{Branch: "feature/provider-neutral", CWD: "/workspace/projmux/internal/app"},
-		}, aiResumeExactAgentLabel{Topic: "Codex bound conversation"}, now, i18n.FallbackLocale, "/workspace/projmux", 1)
+		}, bound, now, i18n.FallbackLocale, "/workspace/projmux", 1)
 		plain := stripANSI(row.Label)
 		for _, forbidden := range []string{"[fallback]", "42t", "active", "private-confidence", "private-reason", provider.source} {
 			if forbidden != "" && strings.Contains(plain, forbidden) {

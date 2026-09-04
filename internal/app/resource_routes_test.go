@@ -408,7 +408,8 @@ func TestGetReadFamilyResolvesEveryKindWithListCardinality(t *testing.T) {
 		{
 			name: "the default projection is a header plus space-aligned columns",
 			args: []string{"windows", "--project", "beta"},
-			want: "DISPLAY NAME  NAME  STATUS   PROJECT  AGE\nmain          main  offline  beta     2d\n",
+			want: "CONTEXT  SOURCE           OBSERVED  NAME  STATUS   PROJECT  AGE\n" +
+				"window   window-fallback  false     main  offline  beta     2d\n",
 		},
 		{
 			name: "ref projection carries the kind",
@@ -454,6 +455,9 @@ func TestGetListStructuredOutputUsesAListEnvelope(t *testing.T) {
 			t.Fatalf("get windows -o json is missing %q:\n%s", want, stdout)
 		}
 	}
+	if strings.Contains(stdout, `"context"`) {
+		t.Fatalf("get windows -o json leaked ephemeral context:\n%s", stdout)
+	}
 
 	stdout, _, err = runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "alpha", "-o", "metadata")
 	if err != nil {
@@ -464,6 +468,9 @@ func TestGetListStructuredOutputUsesAListEnvelope(t *testing.T) {
 	}
 	if strings.Contains(stdout, `"spec"`) || strings.Contains(stdout, `"status"`) {
 		t.Fatalf("-o metadata leaked spec or status fields: %s", stdout)
+	}
+	if strings.Contains(stdout, `"context"`) {
+		t.Fatalf("get agents -o metadata leaked ephemeral context: %s", stdout)
 	}
 
 	// An empty structured read still emits a document with an empty item list,
@@ -507,7 +514,8 @@ func TestDescribeResolvesExactlyOneResourcePerKind(t *testing.T) {
 			name: "project",
 			args: []string{"project", "alpha"},
 			want: map[string]string{
-				"Kind": "Project", "Name": "alpha", "UID": "prj-alpha", "DisplayName": "projmux",
+				"Kind": "Project", "Name": "alpha", "UID": "prj-alpha", "Context": "alpha",
+				"ContextSource": "project-root-basename", "ContextObserved": "false",
 				"Root": "/srv/alpha", "Session": "alpha live=true", "Status": "live",
 				"CreatedAt": "2026-08-15T09:00:00Z",
 			},
@@ -526,6 +534,7 @@ func TestDescribeResolvesExactlyOneResourcePerKind(t *testing.T) {
 			args: []string{"window", "review", "--project", "alpha"},
 			want: map[string]string{
 				"Kind": "Window", "Name": "review", "UID": "win-alpha-review",
+				"Context": "window", "ContextSource": "window-fallback", "ContextObserved": "false",
 				"Owner": "project/alpha", "AnchorPaneRef": "pan-alpha-review", "Status": "live",
 			},
 		},
@@ -533,7 +542,7 @@ func TestDescribeResolvesExactlyOneResourcePerKind(t *testing.T) {
 			name: "pane",
 			args: []string{"pane", "log", "--project", "alpha", "--window", "main"},
 			want: map[string]string{
-				"Kind": "Pane", "Name": "log", "UID": "pan-alpha-log", "DisplayName": "zsh",
+				"Kind": "Pane", "Name": "log", "UID": "pan-alpha-log",
 				"Role": "shell", "CWD": "/srv/alpha/logs", "Labels": "role=sidecar",
 				"Owner": "project/alpha window/main",
 			},
@@ -543,6 +552,7 @@ func TestDescribeResolvesExactlyOneResourcePerKind(t *testing.T) {
 			args: []string{"agent", "codex", "--project", "alpha"},
 			want: map[string]string{
 				"Kind": "Agent", "Name": "codex", "UID": "agt-alpha-codex",
+				"Context": "codex", "ContextSource": "agent-provider", "ContextObserved": "false",
 				"Provider": "codex", "Phase": "Running", "PaneRef": "pan-alpha-codex",
 				"Owner": "project/alpha window/main", "PhaseSince": "2026-08-15T09:00:00Z",
 			},

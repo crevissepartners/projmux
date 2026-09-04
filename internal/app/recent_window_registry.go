@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/recentwindows"
 	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
@@ -31,12 +33,18 @@ const recentWindowRuntimeValue = "__projmux_recent_window_runtime__"
 type recentWindowAttribution struct {
 	// managed holds the candidates bound to a Registry Window, in recency order.
 	managed []recentwindows.Candidate
-	// names maps a managed window's `@N` id to its Registry Window name.
-	names map[string]string
+	// presentations maps a managed window's `@N` id to the stable Registry
+	// address plus the invocation-scoped context derived from the same graph.
+	presentations map[string]recentWindowPresentation
 	// withheld counts the recent windows that are not managed rows, by class.
 	withheld registryview.RuntimeCounts
 	// resolved reports whether a graph was available to attribute with.
 	resolved bool
+}
+
+type recentWindowPresentation struct {
+	name    string
+	context registryview.Context
 }
 
 // attributeRecentWindows partitions the candidates by what the resolved graph
@@ -46,7 +54,7 @@ type recentWindowAttribution struct {
 // projmux does not manage still needs the "stay here" row, and removing it would
 // make the picker's own current-selection semantics unrepresentable.
 func (c *recentWindowCommand) attributeRecentWindows(ctx context.Context, candidates []recentwindows.Candidate) recentWindowAttribution {
-	out := recentWindowAttribution{names: map[string]string{}}
+	out := recentWindowAttribution{presentations: map[string]recentWindowPresentation{}}
 	if c.navigation == nil {
 		out.managed = candidates
 		return out
@@ -57,9 +65,14 @@ func (c *recentWindowCommand) attributeRecentWindows(ctx context.Context, candid
 		return out
 	}
 	out.resolved = true
-	windowNames := map[string]string{}
+	projector := registryview.NewObservedContextProjector(graph)
+	windowPresentations := map[string]recentWindowPresentation{}
 	for _, window := range graph.Windows {
-		windowNames[window.Window.Metadata.UID] = window.Window.DisplayName()
+		uid := window.Window.Metadata.UID
+		windowPresentations[uid] = recentWindowPresentation{
+			name:    window.Window.Metadata.Name,
+			context: projector.For(coremetadata.KindWindow, uid),
+		}
 	}
 	observed := map[string]resourcegraph.RuntimeNode{}
 	for _, node := range graph.Runtime {
@@ -80,7 +93,7 @@ func (c *recentWindowCommand) attributeRecentWindows(ctx context.Context, candid
 		case node.Class != resourcegraph.ClassManaged || strings.TrimSpace(node.ResourceUID) == "":
 			out.withheld = addWithheldClass(out.withheld, node.Class)
 		default:
-			out.names[id] = windowNames[node.ResourceUID]
+			out.presentations[id] = windowPresentations[node.ResourceUID]
 			out.managed = append(out.managed, candidate)
 		}
 	}
@@ -115,9 +128,10 @@ func (a recentWindowAttribution) runtimeLinkItem() (intpicker.Item, bool) {
 	}, true
 }
 
-// resourceName returns the Registry Window name of one candidate, if managed.
-func (a recentWindowAttribution) resourceName(candidate recentwindows.Candidate) string {
-	return strings.TrimSpace(a.names[strings.TrimSpace(candidate.WindowID)])
+// resourcePresentation returns the durable name and ephemeral context of one
+// exactly managed candidate.
+func (a recentWindowAttribution) resourcePresentation(candidate recentwindows.Candidate) recentWindowPresentation {
+	return a.presentations[strings.TrimSpace(candidate.WindowID)]
 }
 
 // annotate adds the Registry Window name to each managed row's badges.
@@ -131,12 +145,18 @@ func (a recentWindowAttribution) annotate(items []intpicker.Item, candidates []r
 		return items
 	}
 	for i := range items {
-		name := a.resourceName(candidates[i])
-		if name == "" {
-			continue
+		presentation := a.resourcePresentation(candidates[i])
+		for _, badge := range []string{presentation.context.Value, presentation.name} {
+			badge = strings.TrimSpace(badge)
+			if badge == "" || slices.Contains(items[i].Badges, badge) {
+				continue
+			}
+			items[i].Badges = append(items[i].Badges, badge)
 		}
-		items[i].Badges = append(items[i].Badges, name)
-		items[i].SearchText = strings.TrimSpace(items[i].EffectiveSearchText() + " " + name)
+		items[i].SearchText = strings.TrimSpace(strings.Join([]string{
+			items[i].EffectiveSearchText(), presentation.context.Value,
+			string(presentation.context.Source), presentation.name,
+		}, " "))
 	}
 	return items
 }

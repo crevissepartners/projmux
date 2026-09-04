@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 )
 
 // Cardinality is how many resolved targets a <verb, kind> pair accepts.
@@ -172,22 +173,22 @@ func Matrix() map[Target]Cardinality {
 // fixes it at five so a wide no-match never floods a terminal or a log.
 const MaxCandidates = 5
 
-// Candidate is one bounded ambiguity row: name, duplicate-allowed displayName,
-// and owner context. It exists to help a human disambiguate, never to be parsed
+// Candidate is one bounded ambiguity row: stable name, ephemeral context, and
+// owner context. It exists to help a human disambiguate, never to be parsed
 // back in as a selector.
 type Candidate struct {
-	Kind        metadata.Kind
-	UID         string
-	Name        string
-	DisplayName string
-	Owner       string
+	Kind    metadata.Kind
+	UID     string
+	Name    string
+	Context registryview.Context
+	Owner   string
 }
 
 // String renders one candidate row.
 func (c Candidate) String() string {
 	row := strings.ToLower(string(c.Kind)) + "/" + c.Name
-	if c.DisplayName != "" {
-		row += " displayName=" + c.DisplayName
+	if !c.Context.Empty() {
+		row += " context=" + c.Context.Value + " contextSource=" + string(c.Context.Source)
 	}
 	if c.Owner != "" {
 		row += " owner=" + c.Owner
@@ -316,11 +317,11 @@ func boundCandidates(matches []Match) ([]Candidate, int) {
 	out := make([]Candidate, 0, len(shown))
 	for _, match := range shown {
 		out = append(out, Candidate{
-			Kind:        match.Kind,
-			UID:         match.UID,
-			Name:        match.Name,
-			DisplayName: match.DisplayName,
-			Owner:       match.Owner.String(),
+			Kind:    match.Kind,
+			UID:     match.UID,
+			Name:    match.Name,
+			Context: match.Context,
+			Owner:   match.Owner.String(),
 		})
 	}
 	return out, omitted

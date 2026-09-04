@@ -2204,12 +2204,16 @@ smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "host unknown  
 nav_expect_rows "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "unknown"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "start,delete"
 smoke_assert_file_lacks "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "open,delete"
-# Identity and order are the same list; only the overlay differs. nav_shape
-# drops the header line and the two trailing columns -- status and actions --
-# leaving the kind and the name of every row in view order. Comparing that is
-# what "a refresh cannot re-identify or reorder a row" means.
+# Identity and order are the same list; status and invocation-scoped context
+# are overlays. The preview intentionally renders Context rather than the
+# durable name, so a live exact Window/Pane title is allowed to differ from the
+# no-transport fallback. Preserve only the kind sequence here; UID/name and
+# owner authority are pinned at the registryview/selector seams.
 nav_shape() {
-  tail -n +2 "$1" | awk 'NF > 2 { NF -= 2; print }'
+  tail -n +2 "$1" | awk '
+    NF > 2 && $1 == "project" { print $1 }
+    NF > 2 && $1 != "project" { print $2 }
+  '
 }
 nav_shape "$PROJMUX_SMOKE_WORKDIR/nav-app.txt" >"$PROJMUX_SMOKE_WORKDIR/nav-app.shape"
 nav_shape "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" >"$PROJMUX_SMOKE_WORKDIR/nav-dark.shape"
@@ -2224,6 +2228,9 @@ if ! diff -u "$PROJMUX_SMOKE_WORKDIR/nav-app.shape" "$PROJMUX_SMOKE_WORKDIR/nav-
   cat "$PROJMUX_SMOKE_WORKDIR/nav.rowdiff" >&2
   exit 1
 fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-app.txt" "window sleep"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "window window"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/nav-dark.txt" "pane pane (shell)"
 
 # The standalone host is the same Registry, the same rows, and the same
 # eligibility; only the host header differs.

@@ -1,6 +1,7 @@
 package selector
 
 import (
+	"encoding/json"
 	"errors"
 	"reflect"
 	"slices"
@@ -8,6 +9,8 @@ import (
 	"testing"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
+	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 )
 
 // TestNoImplicitCommaDisplayNamePathOrTmuxIDEverResolvesASelector is acceptance
@@ -77,12 +80,10 @@ func TestNoImplicitCommaDisplayNamePathOrTmuxIDEverResolvesASelector(t *testing.
 	}
 }
 
-// TestDisplayNameIsReportedButNeverMatched pins the other half of the
-// displayName rule: the Pane named "log" displays as "zsh", so a `--pane zsh`
-// selector must return exactly the Pane *named* zsh and never the one merely
-// displaying as zsh -- while still reporting the duplicate displayName as
-// operator context.
-func TestDisplayNameIsReportedButNeverMatched(t *testing.T) {
+// TestStoredDisplayNameIsNeverMatchedAndContextIsProjected pins both halves of
+// the cutover: stored presentation never resolves a selector, while the
+// invocation projector still reports non-authoritative context.
+func TestStoredDisplayNameIsNeverMatchedAndContextIsProjected(t *testing.T) {
 	t.Parallel()
 
 	resolver := New(standardRegistry(t))
@@ -100,8 +101,73 @@ func TestDisplayNameIsReportedButNeverMatched(t *testing.T) {
 	if resolution.Matches[0].UID != "pan-alpha-zsh" {
 		t.Fatalf("matched uid = %q, want pan-alpha-zsh", resolution.Matches[0].UID)
 	}
-	if resolution.Matches[0].DisplayName != "zsh" {
-		t.Fatalf("displayName = %q, want it reported as context", resolution.Matches[0].DisplayName)
+	if resolution.Matches[0].Context.Value != "zsh" || resolution.Matches[0].Context.Source != registryview.ContextSourceCommand {
+		t.Fatalf("context = %#v, want command-derived zsh", resolution.Matches[0].Context)
+	}
+}
+
+func TestContextSourcesCannotChangeAddressSelectionReservationOrOwnerRef(t *testing.T) {
+	t.Parallel()
+
+	registry := standardRegistry(t)
+	before, err := json.Marshal(registry)
+	if err != nil {
+		t.Fatalf("marshal Registry before projection: %v", err)
+	}
+	query := Query{Panes: []Ref{mustRef(t, metadata.KindPane, "zsh")}}
+
+	noTransport, err := New(registry).ResolvePanes(query)
+	if err != nil {
+		t.Fatalf("resolve no-transport Panes: %v", err)
+	}
+	graph := resourcegraph.Graph{}
+	for _, project := range registry.Projects {
+		graph.Projects = append(graph.Projects, resourcegraph.ProjectNode{Project: project})
+	}
+	for _, control := range registry.ControlSessions {
+		graph.ControlSessions = append(graph.ControlSessions, resourcegraph.ControlSessionNode{ControlSession: control})
+	}
+	for _, window := range registry.Windows {
+		graph.Windows = append(graph.Windows, resourcegraph.WindowNode{Window: window})
+	}
+	for _, pane := range registry.Panes {
+		node := resourcegraph.PaneNode{Pane: pane}
+		if pane.Metadata.UID == "pan-alpha-zsh" {
+			node.Status = resourcegraph.StatusLive
+			node.Runtime = &resourcegraph.RuntimeRef{Kind: resourcegraph.ObjectPane, ID: "%1", Name: "log"}
+		}
+		graph.Panes = append(graph.Panes, node)
+	}
+	for _, agent := range registry.Agents {
+		graph.Agents = append(graph.Agents, resourcegraph.AgentNode{Agent: agent})
+	}
+	live, err := NewObservedWithContext(registry, liveAlphaObservation(), registryview.NewObservedContextProjector(graph)).ResolvePanes(query)
+	if err != nil {
+		t.Fatalf("resolve live-context Panes: %v", err)
+	}
+	if got, want := live.UIDs(), noTransport.UIDs(); !slices.Equal(got, want) {
+		t.Fatalf("Context changed selected UIDs: got %v, want %v", got, want)
+	}
+	var noTransportContext, liveContext registryview.Context
+	for _, match := range noTransport.Matches {
+		if match.UID == "pan-alpha-zsh" {
+			noTransportContext = match.Context
+		}
+	}
+	for _, match := range live.Matches {
+		if match.UID == "pan-alpha-zsh" {
+			liveContext = match.Context
+		}
+	}
+	if noTransportContext.Source != registryview.ContextSourceCommand || liveContext.Source != registryview.ContextSourceLivePaneTitle || liveContext.Value != "log" {
+		t.Fatalf("test did not vary semantic/live Context sources: no-transport=%+v live=%+v", noTransportContext, liveContext)
+	}
+	after, err := json.Marshal(registry)
+	if err != nil {
+		t.Fatalf("marshal Registry after projection: %v", err)
+	}
+	if !slices.Equal(before, after) {
+		t.Fatalf("Context projection mutated Registry address/reservation/ownerRef bytes:\nbefore %s\nafter  %s", before, after)
 	}
 }
 

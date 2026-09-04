@@ -165,7 +165,11 @@ func TestRecentWindowsWithholdUnmanagedWindows(t *testing.T) {
 	if got, want := attribution.withheld, (registryview.RuntimeCounts{Unattributed: 1, Recoverable: 1}); got != want {
 		t.Fatalf("withheld tally = %+v, want %+v", got, want)
 	}
-	if got := attribution.resourceName(attribution.managed[0]); got != "editor" {
+	presentation := attribution.resourcePresentation(attribution.managed[0])
+	if got := presentation.context.Value; got != "editor" {
+		t.Fatalf("managed window resource context = %q, want the live Window name", got)
+	}
+	if got := presentation.name; got != "editor" {
 		t.Fatalf("managed window resource name = %q, want the Registry Window name", got)
 	}
 	item, ok := attribution.runtimeLinkItem()

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/aisessions"
 )
@@ -24,14 +25,15 @@ func TestAIResumeCodexConversationLabelPrecedence(t *testing.T) {
 		boundLabel string
 		want       string
 	}{
-		{name: "thread name", title: "Provider conversation", boundLabel: "Registry topic", want: "Provider conversation"},
+		{name: "provider title without binding", title: "Provider conversation", want: "Provider conversation"},
+		{name: "bound context beats provider title", title: "Provider conversation", boundLabel: "Registry topic", want: "Registry topic"},
 		{name: "exact bound topic", title: aiResumeShortID(id), boundLabel: "Registry topic", want: "Registry topic"},
 		{name: "untitled suffix", title: aiResumeShortID(id), want: "Untitled · …0041"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			session := base
 			session.Title = test.title
-			labels := aiResumeExactAgentLabel{Topic: test.boundLabel}
+			labels := aiResumeExactAgentLabel{Context: registryview.Context{Value: test.boundLabel, Source: registryview.ContextSourceAgentTopic}}
 			if got := aiResumeDisplayLabel(session, labels, i18n.FallbackLocale); got != test.want {
 				t.Fatalf("conversation label = %q, want %q", got, test.want)
 			}
@@ -58,11 +60,10 @@ func TestAIResumeDisplayLabelAuthorityPrecedence(t *testing.T) {
 		want   string
 		forbid string
 	}{
-		{name: "display name beats provider", title: "Provider title", labels: aiResumeExactAgentLabel{DisplayName: "My conversation", Topic: "Agent topic", Name: "agent-name"}, want: "My conversation", forbid: "Provider title"},
-		{name: "provider beats topic", title: "Provider title", labels: aiResumeExactAgentLabel{Topic: "Agent topic", Name: "agent-name"}, want: "Provider title", forbid: "Agent topic"},
-		{name: "topic beats stable name", title: aiResumeShortID(id), labels: aiResumeExactAgentLabel{Topic: "Agent topic", Name: "agent-name"}, want: "Agent topic", forbid: "agent-name"},
-		{name: "transcript title is rejected", title: "Prompt-derived transcript title", labels: aiResumeExactAgentLabel{Topic: "Agent topic", Name: "agent-name"}, want: "Agent topic", forbid: "Prompt-derived transcript title"},
-		{name: "stable name", title: id, labels: aiResumeExactAgentLabel{Name: "agent-name"}, want: "agent-name", forbid: aiResumeShortID(id)},
+		{name: "topic context beats provider", title: "Provider title", labels: aiResumeExactAgentLabel{Context: registryview.Context{Value: "Agent topic", Source: registryview.ContextSourceAgentTopic}, Name: "agent-name"}, want: "Agent topic", forbid: "Provider title"},
+		{name: "provider context beats provider title", title: "Provider title", labels: aiResumeExactAgentLabel{Context: registryview.Context{Value: "codex", Source: registryview.ContextSourceAgentProvider}, Name: "agent-name"}, want: "codex", forbid: "Provider title"},
+		{name: "transcript title is rejected", title: "Prompt-derived transcript title", labels: aiResumeExactAgentLabel{Context: registryview.Context{Value: "Agent topic", Source: registryview.ContextSourceAgentTopic}, Name: "agent-name"}, want: "Agent topic", forbid: "Prompt-derived transcript title"},
+		{name: "stable name is not context", title: id, labels: aiResumeExactAgentLabel{Name: "agent-name"}, want: "Untitled · …beef", forbid: "agent-name"},
 		{name: "localized untitled", title: id, locale: i18n.Locale("ko-KR"), want: "제목 없음 · …beef", forbid: aiResumeShortID(id)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -130,10 +131,10 @@ func TestAIResumeExactAgentLabelResolverUsesOnlyExactThreadBinding(t *testing.T)
 	}}
 
 	labels := aiResumeExactAgentLabels(registry)
-	if len(labels) != 4 || labels[aiResumeExactLabelKey(aiModeCodex, exactID)].DisplayName != "Custom display" ||
-		labels[aiResumeExactLabelKey(aiModeCodex, exactID)].Topic != "Bound topic" ||
+	if len(labels) != 4 || labels[aiResumeExactLabelKey(aiModeCodex, exactID)].Context.Value != "Bound topic" ||
+		labels[aiResumeExactLabelKey(aiModeCodex, exactID)].Context.Source != registryview.ContextSourceAgentTopic ||
 		labels[aiResumeExactLabelKey(aiModeCodex, "thread-other")].Name != "wrong-agent" ||
-		labels[aiResumeExactLabelKey(aiModeClaude, "claude-exact")].DisplayName != "Claude display" ||
+		labels[aiResumeExactLabelKey(aiModeClaude, "claude-exact")].Context.Value != aiModeClaude ||
 		labels[aiResumeExactLabelKey(aiModeAntigravity, "antigravity-exact")].Name != "antigravity-agent" {
 		t.Fatalf("resolved labels = %#v, want exact Codex bindings with topic/name precedence", labels)
 	}
@@ -186,7 +187,7 @@ func TestAIResumeCodexRuntimeAndFallbackStayOutOfVisibleRow(t *testing.T) {
 				Context: aisessions.SessionContext{Branch: "main"}, StateDomainID: endpoint.StateDomainID,
 				EndpointGenerationID: endpoint.EndpointGenerationID, GenerationState: string(coremetadata.CodexGenerationCurrent),
 			}
-			row := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{Topic: "Bound topic"}, time.Time{}, test.locale, "/work", 0)
+			row := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{Context: registryview.Context{Value: "Bound topic", Source: registryview.ContextSourceAgentTopic}}, time.Time{}, test.locale, "/work", 0)
 			visible := stripANSI(row.Label)
 			if test.wantStatus != "" && strings.Contains(visible, test.wantStatus) {
 				t.Fatalf("visible row = %q, must hide status %q", visible, test.wantStatus)
@@ -252,7 +253,7 @@ func TestAIResumeConversationHierarchyWidthAndLocaleGolden(t *testing.T) {
 	}
 	var got strings.Builder
 	for _, locale := range []i18n.Locale{i18n.FallbackLocale, i18n.Locale("ko-KR")} {
-		row := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{Topic: "Registry topic must lose"}, now, locale, "/workspace/projmux", 1)
+		row := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{Context: registryview.Context{Value: "Registry topic", Source: registryview.ContextSourceAgentTopic}}, now, locale, "/workspace/projmux", 1)
 		plain := stripANSI(row.Label)
 		fmt.Fprintf(&got, "%s\n", locale)
 		for _, width := range []int{80, 100, 120} {
@@ -276,7 +277,7 @@ func TestAIResumeClaudeAndAntigravityRowsUseCommonProjection(t *testing.T) {
 			Agent: provider, ResumeID: provider + "-session", Title: provider + " title",
 			LastModified: now.Add(-time.Hour), Context: aisessions.SessionContext{Branch: "main"},
 		}
-		got := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{Topic: "must be ignored"}, now, i18n.FallbackLocale, "/work", 0)
+		got := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{}, now, i18n.FallbackLocale, "/work", 0)
 		visible := stripANSI(got.Label)
 		if !strings.HasPrefix(visible, "1h") || !strings.Contains(visible, "["+provider[:min(len(provider), aiResumeAgentCellWidth)]+"]") ||
 			!strings.Contains(visible, "main") || !strings.HasSuffix(visible, provider+" title") {

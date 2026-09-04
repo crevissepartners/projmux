@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	metadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/core/registryview"
 )
 
 // UIDPrefix marks a selector value as an opaque Projmux uid. Without it the
@@ -232,16 +233,16 @@ func (o OwnerContext) String() string {
 
 // Match is one resolved resource, pinned to its Projmux uid.
 //
-// DisplayName is reported for operator context only. It never participated in
-// the resolution that produced this match.
+// Context is reported for operator context only. It never participates in the
+// resolution that produced this match.
 type Match struct {
-	Kind        metadata.Kind
-	UID         string
-	Name        string
-	DisplayName string
-	Owner       OwnerContext
-	Status      Status
-	CWD         string
+	Kind    metadata.Kind
+	UID     string
+	Name    string
+	Context registryview.Context
+	Owner   OwnerContext
+	Status  Status
+	CWD     string
 }
 
 // Resolution is the result of one selector pipeline run.
@@ -271,6 +272,7 @@ func (r Resolution) UIDs() []string {
 type Resolver struct {
 	registry metadata.Registry
 	observed metadata.RuntimeObservation
+	contexts registryview.Projector
 }
 
 // New builds a Resolver with no live-tmux observation.
@@ -297,7 +299,19 @@ func New(registry metadata.Registry) *Resolver {
 // takes a fresh one, which is what makes closing a pane visible to the very
 // next query with no hook involved.
 func NewObserved(registry metadata.Registry, observed metadata.RuntimeObservation) *Resolver {
-	return &Resolver{registry: registry.Clone(), observed: observed.Clone()}
+	return NewObservedWithContext(registry, observed, registryview.NewContextProjector(registry))
+}
+
+// NewObservedWithContext builds a Resolver whose human ambiguity projection
+// comes from the caller's one invocation-scoped projector. Matching and
+// cardinality still read only registry identity/address/classification fields.
+func NewObservedWithContext(registry metadata.Registry, observed metadata.RuntimeObservation, contexts registryview.Projector) *Resolver {
+	registry = registry.Clone()
+	return &Resolver{
+		registry: registry,
+		observed: observed.Clone(),
+		contexts: contexts,
+	}
 }
 
 // ResolveProject resolves the exact-one --project selector.
@@ -545,12 +559,12 @@ func dedupe[T any](scope []T, key func(T) string) []T {
 
 func (r *Resolver) projectMatch(project metadata.Project) Match {
 	return Match{
-		Kind:        metadata.KindProject,
-		UID:         project.Metadata.UID,
-		Name:        project.Metadata.Name,
-		DisplayName: project.Metadata.DisplayName,
-		Status:      ProjectStatus(project),
-		CWD:         project.Spec.Root,
+		Kind:    metadata.KindProject,
+		UID:     project.Metadata.UID,
+		Name:    project.Metadata.Name,
+		Context: r.contexts.For(metadata.KindProject, project.Metadata.UID),
+		Status:  ProjectStatus(project),
+		CWD:     project.Spec.Root,
 	}
 }
 
@@ -569,12 +583,12 @@ func (r *Resolver) windowMatch(window metadata.Window) Match {
 		missingRoot = hasMissingRoot(*project)
 	}
 	return Match{
-		Kind:        metadata.KindWindow,
-		UID:         window.Metadata.UID,
-		Name:        window.Metadata.Name,
-		DisplayName: window.Metadata.DisplayName,
-		Owner:       owner,
-		Status:      ObservedStatus(missingRoot, r.observed.BoundWindow(window.Metadata.UID)),
+		Kind:    metadata.KindWindow,
+		UID:     window.Metadata.UID,
+		Name:    window.Metadata.Name,
+		Context: r.contexts.For(metadata.KindWindow, window.Metadata.UID),
+		Owner:   owner,
+		Status:  ObservedStatus(missingRoot, r.observed.BoundWindow(window.Metadata.UID)),
 	}
 }
 
@@ -617,12 +631,12 @@ func (r *Resolver) agentMatch(agent metadata.Agent) Match {
 		}
 	}
 	return Match{
-		Kind:        metadata.KindAgent,
-		UID:         agent.Metadata.UID,
-		Name:        agent.Metadata.Name,
-		DisplayName: agent.Metadata.DisplayName,
-		Owner:       owner,
-		Status:      ObservedStatus(missingRoot, r.agentBound(agent)),
+		Kind:    metadata.KindAgent,
+		UID:     agent.Metadata.UID,
+		Name:    agent.Metadata.Name,
+		Context: r.contexts.For(metadata.KindAgent, agent.Metadata.UID),
+		Owner:   owner,
+		Status:  ObservedStatus(missingRoot, r.agentBound(agent)),
 	}
 }
 
@@ -658,13 +672,13 @@ func (r *Resolver) agentBound(agent metadata.Agent) bool {
 func (r *Resolver) paneMatch(pane metadata.Pane) Match {
 	owner, missingRoot := r.paneOwner(pane)
 	return Match{
-		Kind:        metadata.KindPane,
-		UID:         pane.Metadata.UID,
-		Name:        pane.Metadata.Name,
-		DisplayName: pane.Metadata.DisplayName,
-		Owner:       owner,
-		Status:      ObservedStatus(missingRoot, r.observed.BoundPane(pane.Metadata.UID)),
-		CWD:         pane.Spec.CWD,
+		Kind:    metadata.KindPane,
+		UID:     pane.Metadata.UID,
+		Name:    pane.Metadata.Name,
+		Context: r.contexts.For(metadata.KindPane, pane.Metadata.UID),
+		Owner:   owner,
+		Status:  ObservedStatus(missingRoot, r.observed.BoundPane(pane.Metadata.UID)),
+		CWD:     pane.Spec.CWD,
 	}
 }
 
