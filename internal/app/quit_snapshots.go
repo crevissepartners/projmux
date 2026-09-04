@@ -27,7 +27,7 @@ type quitSnapshotDependencies struct {
 	observe      func(context.Context, resourcegraph.Transport) resourcegraph.Inventory
 	store        func() (sessionstate.Store, error)
 	now          func() time.Time
-	capture      func(context.Context, tmuxRunner, sessionstate.Store, quitSnapshotTarget, time.Time) (sessionstate.Snapshot, error)
+	capture      func(context.Context, tmuxRunner, sessionstate.Store, coremetadata.Registry, quitSnapshotTarget, time.Time) (sessionstate.Snapshot, error)
 }
 
 func newQuitSnapshotDependencies() *quitSnapshotDependencies {
@@ -35,8 +35,9 @@ func newQuitSnapshotDependencies() *quitSnapshotDependencies {
 		loadRegistry: snapshotResourceRegistry,
 		store:        sessionstate.NewDefaultStoreFromEnv,
 		now:          time.Now,
-		capture: func(ctx context.Context, runner tmuxRunner, store sessionstate.Store, target quitSnapshotTarget, at time.Time) (sessionstate.Snapshot, error) {
-			return inttmux.NewClient(runner).SaveExplicitSessionSnapshot(ctx, store, target.RuntimeID, target.Session, at)
+		capture: func(ctx context.Context, runner tmuxRunner, store sessionstate.Store, registry coremetadata.Registry, target quitSnapshotTarget, at time.Time) (sessionstate.Snapshot, error) {
+			return inttmux.NewClient(runner).SaveExplicitSessionSnapshotWithTransform(ctx, store, target.RuntimeID, target.Session, at,
+				snapshotMetadataTransform(registry, target.ProjectUID))
 		},
 	}
 }
@@ -239,7 +240,7 @@ func (c *quitCommand) saveProjectSnapshotsAndQuit(ctx context.Context, socketNam
 		exactRunner := explicitTmuxRunner{runner: c.runner, target: tmuxTransport{Kind: tmuxSocketPath, Value: path, Source: tmuxSocketPathSource}}
 		for _, target := range plan.Targets {
 			entry := quitSnapshotLedgerEntry{Target: target}
-			if _, captureErr := deps.capture(ctx, exactRunner, store, target, at); captureErr != nil {
+			if _, captureErr := deps.capture(ctx, exactRunner, store, registry, target, at); captureErr != nil {
 				entry.Reason = boundedQuitSnapshotReason(captureErr.Error())
 				ledger.Failed++
 			} else {

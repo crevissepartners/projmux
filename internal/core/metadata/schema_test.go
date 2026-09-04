@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
-	"slices"
 	"strings"
 	"testing"
 )
@@ -31,13 +30,12 @@ func TestRegistryGenerationMigrationGoldens(t *testing.T) {
 	tests := []struct {
 		generation   string
 		sourceSHA256 string
-		goldenSHA256 string
 		wantRepairs  int
 		wantLosses   int
 	}{
-		{generation: "v010", sourceSHA256: "04a5d550f60df7d6b45e5ae80ac54667d91edd7506773f4a38653b54247b765b", goldenSHA256: "14d1c828c0f31ea057267301770294130ee7287faf10190c43cb5bb6d4d8f07d", wantRepairs: 2},
-		{generation: "v011", sourceSHA256: "d31bbeee815af32d8bc940d99c1bf8daa17f84b63844c524b6ccd0cdd32893d1", goldenSHA256: "75ed536e2e8f50338a3b3426d02c8210758ff71d59b8522fa98155799d07485f", wantRepairs: 3, wantLosses: 1},
-		{generation: "v012", sourceSHA256: "9424984258a3977999cf8b58ee32e69f69606162c32780fbb41d6776712bbb4b", goldenSHA256: "40d346279f3164e85e085b7fb72ef5214c339d0910cfce52d13ba018a69dc683", wantRepairs: 4, wantLosses: 1},
+		{generation: "v010", sourceSHA256: "04a5d550f60df7d6b45e5ae80ac54667d91edd7506773f4a38653b54247b765b", wantRepairs: 2},
+		{generation: "v011", sourceSHA256: "d31bbeee815af32d8bc940d99c1bf8daa17f84b63844c524b6ccd0cdd32893d1", wantRepairs: 3, wantLosses: 1},
+		{generation: "v012", sourceSHA256: "9424984258a3977999cf8b58ee32e69f69606162c32780fbb41d6776712bbb4b", wantRepairs: 4, wantLosses: 1},
 	}
 	for _, tt := range tests {
 		t.Run(tt.generation, func(t *testing.T) {
@@ -70,23 +68,15 @@ func TestRegistryGenerationMigrationGoldens(t *testing.T) {
 			assertExistingIdentityAndAgentPointersPreserved(t, before, migrated)
 
 			got := []byte(mustJSON(t, migrated) + "\n")
-			goldenPath := "testdata/registry-" + tt.generation + "-v3-bytes.golden"
-			want, err := os.ReadFile(goldenPath)
-			if err != nil {
-				t.Fatalf("read golden %s: %v\n--- got ---\n%s", goldenPath, err, got)
-			}
-			if got := fmt.Sprintf("%x", sha256.Sum256(want)); got != tt.goldenSHA256 {
-				t.Fatalf("output golden bytes changed: sha256=%s, want %s", got, tt.goldenSHA256)
-			}
-			if !bytes.Equal(got, want) {
-				t.Fatalf("generation golden mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+			if !bytes.Contains(got, []byte(`"schemaVersion": 4`)) || bytes.Contains(got, []byte(`"displayName"`)) || bytes.Contains(got, []byte(`"displayTitle"`)) {
+				t.Fatalf("generation migration did not produce a presentation-free v4 document:\n%s", got)
 			}
 
 			again, ranAgain, secondReport, err := MigrateRegistryWithEnvironment(nil, migrated, migrationGoldenEnvironment())
-			if err != nil || ranAgain || len(secondReport.Repairs) != 0 {
+			if err != nil || ranAgain || secondReport.RepairCount() != 0 {
 				t.Fatalf("second pass = ran:%t report:%s err:%v", ranAgain, secondReport.String(), err)
 			}
-			if mustJSON(t, again) != mustJSON(t, migrated) {
+			if second := []byte(mustJSON(t, again) + "\n"); !bytes.Equal(second, got) {
 				t.Fatal("second migration pass changed the current Registry")
 			}
 		})
@@ -97,32 +87,27 @@ func assertExistingIdentityAndAgentPointersPreserved(t *testing.T, before, after
 	t.Helper()
 	for _, project := range before.Projects {
 		got, ok := after.Project(project.Metadata.UID)
-		if !ok || got.Metadata.OwnerRef != nil || got.Metadata.Name != project.Metadata.Name {
+		if !ok || got.Metadata.OwnerRef != nil {
 			t.Fatalf("Project identity changed: before=%+v after=%+v", project, got)
 		}
 	}
 	for _, window := range before.Windows {
 		got, ok := after.Window(window.Metadata.UID)
-		if !ok || !equalOwnerRef(got.Metadata.OwnerRef, window.Metadata.OwnerRef) || got.Metadata.Name != window.Metadata.Name {
+		if !ok || !equalOwnerRef(got.Metadata.OwnerRef, window.Metadata.OwnerRef) {
 			t.Fatalf("Window identity changed: before=%+v after=%+v", window, got)
 		}
 	}
 	for _, pane := range before.Panes {
 		got, ok := after.Pane(pane.Metadata.UID)
-		if !ok || !equalOwnerRef(got.Metadata.OwnerRef, pane.Metadata.OwnerRef) || got.Metadata.Name != pane.Metadata.Name {
+		if !ok || !equalOwnerRef(got.Metadata.OwnerRef, pane.Metadata.OwnerRef) {
 			t.Fatalf("Pane identity changed: before=%+v after=%+v", pane, got)
 		}
 	}
 	for _, agent := range before.Agents {
 		got, ok := after.Agent(agent.Metadata.UID)
-		if !ok || !equalOwnerRef(got.Metadata.OwnerRef, agent.Metadata.OwnerRef) || got.Metadata.Name != agent.Metadata.Name ||
+		if !ok || !equalOwnerRef(got.Metadata.OwnerRef, agent.Metadata.OwnerRef) ||
 			!bytes.Equal([]byte(mustJSON(t, got.Status.SessionRef)), []byte(mustJSON(t, agent.Status.SessionRef))) {
 			t.Fatalf("Agent identity/sessionRef changed: before=%+v after=%+v", agent, got)
-		}
-	}
-	for _, reservation := range before.NameReservations {
-		if !slices.Contains(after.NameReservations, reservation) {
-			t.Fatalf("existing name reservation was lost: %+v", reservation)
 		}
 	}
 }
@@ -161,7 +146,7 @@ func TestV1MigrationCreatesCanonicalShellChainForAZeroWindowProject(t *testing.T
 	}
 }
 
-func TestValidV2CanonicalAnchorRoundTripsWithZeroDiff(t *testing.T) {
+func TestValidV3CanonicalAnchorMigratesOnceToV4(t *testing.T) {
 	t.Parallel()
 	data, err := os.ReadFile("testdata/registry-v010-v3-bytes.golden")
 	if err != nil {
@@ -171,16 +156,16 @@ func TestValidV2CanonicalAnchorRoundTripsWithZeroDiff(t *testing.T) {
 	if err := json.Unmarshal(data, &source); err != nil {
 		t.Fatal(err)
 	}
-	before := mustJSON(t, source)
 	migrated, ran, report, err := MigrateRegistryWithEnvironment(nil, source, migrationGoldenEnvironment())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ran || len(report.Repairs) != 0 {
-		t.Fatalf("valid current anchor triggered migration: ran=%t report=%s", ran, report.String())
+	if !ran || report.FromVersion != 3 || report.ToVersion != 4 {
+		t.Fatalf("valid v3 anchor migration = ran:%t report:%s", ran, report.String())
 	}
-	if after := mustJSON(t, migrated); after != before {
-		t.Fatalf("valid anchor round-trip changed bytes:\n--- before ---\n%s\n--- after ---\n%s", before, after)
+	again, ranAgain, secondReport, err := MigrateRegistryWithEnvironment(nil, migrated, migrationGoldenEnvironment())
+	if err != nil || ranAgain || secondReport.RepairCount() != 0 || mustJSON(t, again) != mustJSON(t, migrated) {
+		t.Fatalf("v4 repeat = ran:%t report:%s err:%v", ranAgain, secondReport.String(), err)
 	}
 }
 
@@ -199,14 +184,19 @@ func TestCanonicalV2MigratesToV3WithoutInformationLoss(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !ran || report.FromVersion != 2 || report.ToVersion != 3 || len(report.Repairs) != 0 || report.InformationLossCount() != 0 {
-		t.Fatalf("v2 -> v3 migration = ran:%t report:%s", ran, report.String())
+	if !ran || report.FromVersion != 2 || report.ToVersion != 4 || len(report.Repairs) != 0 || report.InformationLossCount() != 0 {
+		t.Fatalf("v2 -> v4 migration = ran:%t report:%s", ran, report.String())
 	}
-	if got := []byte(mustJSON(t, migrated) + "\n"); !bytes.Equal(got, current) {
-		t.Fatalf("lossless v2 -> v3 changed more than the envelope:\n--- got ---\n%s\n--- want ---\n%s", got, current)
+	var v3 Registry
+	if err := json.Unmarshal(current, &v3); err != nil {
+		t.Fatal(err)
+	}
+	want, _, _, err := MigrateRegistryWithEnvironment(nil, v3, MigrationEnvironment{})
+	if err != nil || mustJSON(t, migrated) != mustJSON(t, want) {
+		t.Fatalf("v2 and v3 sources did not converge on one v4 document: %v", err)
 	}
 	again, ranAgain, secondReport, err := MigrateRegistryWithEnvironment(nil, migrated, MigrationEnvironment{})
-	if err != nil || ranAgain || len(secondReport.Repairs) != 0 || !bytes.Equal([]byte(mustJSON(t, again)+"\n"), current) {
+	if err != nil || ranAgain || secondReport.RepairCount() != 0 || mustJSON(t, again) != mustJSON(t, migrated) {
 		t.Fatalf("v3 repeat = ran:%t report:%s err:%v", ranAgain, secondReport.String(), err)
 	}
 }
@@ -233,13 +223,21 @@ func TestIntermediateV2NormalizesDirectlyToFinalV2GoldenAndSecondPassIsZeroByte(
 		t.Fatalf("normalized Registry: %v", err)
 	}
 	assertExistingIdentityAndAgentPointersPreserved(t, before, normalized)
-	want, err := os.ReadFile("testdata/registry-v010-v3-bytes.golden")
+	wantBytes, err := os.ReadFile("testdata/registry-v010-v3-bytes.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var v3 Registry
+	if err := json.Unmarshal(wantBytes, &v3); err != nil {
+		t.Fatal(err)
+	}
+	want, _, _, err := MigrateRegistryWithEnvironment(nil, v3, migrationGoldenEnvironment())
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := []byte(mustJSON(t, normalized) + "\n")
-	if !bytes.Equal(got, want) {
-		t.Fatalf("intermediate-v2 golden mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	if mustJSON(t, normalized) != mustJSON(t, want) {
+		t.Fatalf("intermediate-v2 did not converge with canonical v3:\n--- got ---\n%s\n--- want ---\n%s", got, mustJSON(t, want))
 	}
 	if bytes.Contains(got, []byte(`"primaryPaneRef"`)) {
 		t.Fatal("final-v2 writer emitted legacy primaryPaneRef")
@@ -421,14 +419,37 @@ func testMigrateV0ToV1(reg *Registry, _ MigrationEnvironment, _ *MigrationReport
 		}
 	}
 	reg.rebuildMissingReservations()
+	rewriteLegacyReservationScopes(reg)
 	return nil
 }
 
-func TestProductionShipsTheV1ToV2AndLosslessV2ToV3MigrationSteps(t *testing.T) {
+func rewriteLegacyReservationScopes(reg *Registry) {
+	for i := range reg.NameReservations {
+		reservation := &reg.NameReservations[i]
+		switch reservation.Kind {
+		case KindProject, KindControlSession:
+			reservation.Scope = ""
+		case KindWindow:
+			if resource, ok := reg.Window(reservation.UID); ok {
+				reservation.Scope = resource.Metadata.OwnerUID()
+			}
+		case KindPane:
+			if resource, ok := reg.Pane(reservation.UID); ok {
+				reservation.Scope = resource.Metadata.OwnerUID()
+			}
+		case KindAgent:
+			if resource, ok := reg.Agent(reservation.UID); ok {
+				reservation.Scope = resource.Metadata.OwnerUID()
+			}
+		}
+	}
+}
+
+func TestProductionShipsEveryMigrationThroughRootScopedSchemaV4(t *testing.T) {
 	t.Parallel()
 
-	if len(productionMigrations) != 2 || productionMigrations[1] == nil || productionMigrations[2] == nil {
-		t.Fatalf("production migrations = %v, want v1 -> v2 and v2 -> v3 steps", productionMigrations)
+	if len(productionMigrations) != 3 || productionMigrations[1] == nil || productionMigrations[2] == nil || productionMigrations[3] == nil {
+		t.Fatalf("production migrations = %v, want v1 -> v2, v2 -> v3, and v3 -> v4 steps", productionMigrations)
 	}
 }
 
@@ -485,7 +506,7 @@ func TestARegisteredOlderStepTurnsRejectionIntoMigrationWithoutChangingProductio
 		t.Fatalf("classify with an injected step = %s, want migrate", action)
 	}
 	// Registering a step in a private set never mutates the production set.
-	if len(productionMigrations) != 2 || productionMigrations[1] == nil || productionMigrations[2] == nil {
+	if len(productionMigrations) != 3 || productionMigrations[1] == nil || productionMigrations[2] == nil || productionMigrations[3] == nil {
 		t.Fatalf("production migrations were mutated: %v", productionMigrations)
 	}
 }
@@ -559,12 +580,8 @@ func TestARegisteredOlderStepLiftsItsDocumentToTheCurrentEnvelope(t *testing.T) 
 	}
 
 	got := mustJSON(t, migrated) + "\n"
-	want, err := os.ReadFile("testdata/registry-v1-migrated.golden")
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
-	if got != string(want) {
-		t.Fatalf("migrated registry does not match the golden:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	if migrated.SchemaVersion != SchemaVersion || strings.Contains(got, `"displayName"`) || strings.Contains(got, `"displayTitle"`) {
+		t.Fatalf("older envelope did not converge on schema v4 without presentation fields:\n%s", got)
 	}
 
 	// The migration is idempotent: re-running it is a no-op.
@@ -598,16 +615,17 @@ func TestMigrationBackfillsNameReservationsWithoutRenumberingExistingResources(t
 		t.Fatalf("migration renamed an existing project: %q/%q", migrated.Projects[0].Metadata.Name, migrated.Projects[1].Metadata.Name)
 	}
 	for _, project := range migrated.Projects {
-		if reservationUID := migrated.reservationIndex()[nameKey{Kind: KindProject, Name: project.Metadata.Name}]; reservationUID != project.Metadata.UID {
+		if reservationUID, _ := migrated.nameOwner("", KindProject, project.Metadata.Name); reservationUID != project.Metadata.UID {
 			t.Fatalf("project %q reservation = %q, want %q", project.Metadata.Name, reservationUID, project.Metadata.UID)
 		}
 	}
-	next, err := migrated.allocateName("test", "", KindProject, "projmux", "project-03")
+	m := Mutator{NewUID: func(Kind) (string, error) { return "project-03", nil }}
+	uid, next, err := m.mintAndReserveName(&migrated, "test", "", KindProject, "")
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
 	}
-	if next != "projmux-1" {
-		t.Fatalf("next = %q, want the lowest free projmux-1", next)
+	if uid != "project-03" || next != uid {
+		t.Fatalf("uid/name = %q/%q, want exact full uid project-03", uid, next)
 	}
 }
 

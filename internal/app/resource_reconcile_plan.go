@@ -1013,7 +1013,7 @@ func (n resourcePlanUIDNormalizer) slots(registry coremetadata.Registry, promoti
 		slots = append(slots, resourceAllocationSlot{
 			Slot:          slot,
 			Kind:          string(record.kind),
-			Name:          record.name,
+			Name:          n.value(record.name),
 			PromotionKind: promotionKind[record.uid],
 		})
 	}
@@ -1189,8 +1189,9 @@ func promotionPlanItems(promotions []resourceAuthorshipPromotion, normalize reso
 	items := make([]resourceReconcileItem, 0, len(promotions))
 	for _, promotion := range promotions {
 		agentUID := normalize.value(promotion.AgentUID)
+		agentName := normalize.value(promotion.AgentName)
 		allocationSlot := ""
-		agentBefore := promotion.AgentName + " (" + agentUID + ")"
+		agentBefore := agentName + " (" + agentUID + ")"
 		if promotion.LinkKind == coremetadata.AgentLinkMinted {
 			allocationSlot = agentUID
 			agentBefore = "<none>"
@@ -1221,7 +1222,7 @@ func promotionPlanItems(promotions []resourceAuthorshipPromotion, normalize reso
 			Divergence: resourcegraph.DivergenceDrifted, Authority: string(coremetadata.AgentPaneAuthorityLaunch),
 			PromotionKind: string(promotion.LinkKind), AllocationSlot: allocationSlot,
 			Transitions: []resourceRefTransition{
-				{Field: "Agent", Before: agentBefore, After: promotion.AgentName + " (" + agentUID + ")"},
+				{Field: "Agent", Before: agentBefore, After: agentName + " (" + agentUID + ")"},
 				{Field: "Pane.metadata.ownerRef", Before: "Window/" + promotion.WindowUID, After: "Agent/" + agentUID},
 				{Field: "Pane.spec.role", Before: string(coremetadata.PaneRoleShell), After: string(coremetadata.PaneRoleAgent)},
 				{Field: "Agent.status.paneRef", Before: "<none>", After: promotion.PaneUID},
@@ -1307,7 +1308,7 @@ func registryReconcileItems(before, after coremetadata.Registry, normalize resou
 			drift = resourceDriftOrphan
 		}
 		owner := normalize.value(record.owner)
-		target := strings.ToLower(string(record.kind)) + "/" + record.name
+		target := strings.ToLower(string(record.kind)) + "/" + normalize.value(record.name)
 		if owner != "" {
 			target = owner + "/" + target
 		}

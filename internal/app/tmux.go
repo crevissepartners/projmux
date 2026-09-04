@@ -266,7 +266,19 @@ func (c *tmuxCommand) runAutosaveSessionState(args []string, stderr io.Writer) e
 	if err != nil {
 		return c.finishAutosaveSessionState(fmt.Errorf("resolve sessionstate store: %w", err), *quiet, stderr, started)
 	}
-	if _, err := client.SaveSessionSnapshot(ctx, store, sessionName, now); err != nil {
+	var transform func(sessionstate.Snapshot) (sessionstate.Snapshot, error)
+	if c.resources != nil && c.resources.snapshot != nil {
+		registry, loadErr := c.resources.snapshot()
+		if loadErr != nil {
+			return c.finishAutosaveSessionState(MapMetadataError(loadErr), *quiet, stderr, started)
+		}
+		if project, found, resolveErr := snapshotProjectForSession(registry, sessionName); resolveErr != nil {
+			return c.finishAutosaveSessionState(resolveErr, *quiet, stderr, started)
+		} else if found {
+			transform = snapshotMetadataTransform(registry, project.Metadata.UID)
+		}
+	}
+	if _, err := client.SaveSessionSnapshotWithTransform(ctx, store, sessionName, now, transform); err != nil {
 		return c.finishAutosaveSessionState(err, *quiet, stderr, started)
 	}
 	_, err = c.runner.Run(ctx, "tmux", "set-option", "-t", sessionName, "-q", sessionStateAutosaveOption, strconv.FormatInt(now.Unix(), 10))

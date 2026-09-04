@@ -448,7 +448,7 @@ func runtimeBindingRegistry(t *testing.T, root string) coremetadata.Registry {
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
-			Metadata: meta("pan-beta", "zsh", owner(coremetadata.KindWindow, "win-beta")),
+			Metadata: meta("pan-beta", "zsh-beta", owner(coremetadata.KindWindow, "win-beta")),
 			Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: root},
 		},
 		{
@@ -457,9 +457,9 @@ func runtimeBindingRegistry(t *testing.T, root string) coremetadata.Registry {
 			Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: root},
 		},
 	}
-	reserve("win-alpha", coremetadata.KindPane, "zsh", "pan-alpha")
-	reserve("win-beta", coremetadata.KindPane, "zsh", "pan-beta")
-	reserve("win-beta", coremetadata.KindPane, "log", "pan-beta-second")
+	reserve("prj-alpha", coremetadata.KindPane, "zsh", "pan-alpha")
+	reserve("prj-alpha", coremetadata.KindPane, "zsh-beta", "pan-beta")
+	reserve("prj-alpha", coremetadata.KindPane, "log", "pan-beta-second")
 
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("runtime binding fixture is not a valid registry: %v", err)

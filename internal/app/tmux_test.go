@@ -3558,7 +3558,7 @@ func saveProjectAutosaveForTest(t *testing.T, home, sessionName string, mode con
 }
 
 func autosaveCaptureRunner(sessionName, cwd string) *recordingTmuxRunner {
-	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}"}, "\x1f")
+	windowFormat := strings.Join([]string{"#{window_index}", "#{window_name}", "#{window_layout}", "#{window_id}", "#{@projmux_window_uid}"}, "\x1f")
 	paneFormat := strings.Join([]string{
 		"#{window_index}",
 		"#{pane_index}",
@@ -3575,6 +3575,8 @@ func autosaveCaptureRunner(sessionName, cwd string) *recordingTmuxRunner {
 		"#{@projmux_ai_resume_id}",
 		"#{@projmux_ai_resume_source}",
 		"#{@projmux_ai_resume_updated_at}",
+		"#{pane_id}",
+		"#{@projmux_pane_uid}",
 	}, "\x1f")
 	return &recordingTmuxRunner{
 		outputs: map[string]string{

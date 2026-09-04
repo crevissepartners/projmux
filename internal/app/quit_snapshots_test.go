@@ -164,7 +164,7 @@ func TestQuitSaveBarrierContinuesAfterMiddleFailureAndDoesNotKill(t *testing.T) 
 		observe:      func(context.Context, resourcegraph.Transport) resourcegraph.Inventory { return inventory },
 		store:        func() (sessionstate.Store, error) { return store, nil },
 		now:          func() time.Time { return time.Date(2026, 8, 27, 10, 0, 0, 0, time.UTC) },
-		capture: func(_ context.Context, _ tmuxRunner, targetStore sessionstate.Store, target quitSnapshotTarget, at time.Time) (sessionstate.Snapshot, error) {
+		capture: func(_ context.Context, _ tmuxRunner, targetStore sessionstate.Store, _ coremetadata.Registry, target quitSnapshotTarget, at time.Time) (sessionstate.Snapshot, error) {
 			attempted = append(attempted, target)
 			if len(attempted) == 2 {
 				return sessionstate.Snapshot{}, errors.New("injected capture failure")
@@ -217,7 +217,7 @@ func TestQuitSaveBarrierHandlesZeroAndOneTarget(t *testing.T) {
 					stores++
 					return sessionstate.NewStore(t.TempDir()), nil
 				},
-				capture: func(_ context.Context, _ tmuxRunner, _ sessionstate.Store, _ quitSnapshotTarget, _ time.Time) (sessionstate.Snapshot, error) {
+				capture: func(_ context.Context, _ tmuxRunner, _ sessionstate.Store, _ coremetadata.Registry, _ quitSnapshotTarget, _ time.Time) (sessionstate.Snapshot, error) {
 					captures++
 					return sessionstate.Snapshot{}, nil
 				},
@@ -258,7 +258,7 @@ func TestQuitSaveBarrierRetryRecapturesEveryTargetThenRunsOneGuardedShutdown(t *
 			clockCalls++
 			return time.Date(2026, 8, 27, 10+clockCalls, 0, 0, 0, time.UTC)
 		},
-		capture: func(_ context.Context, _ tmuxRunner, targetStore sessionstate.Store, target quitSnapshotTarget, at time.Time) (sessionstate.Snapshot, error) {
+		capture: func(_ context.Context, _ tmuxRunner, targetStore sessionstate.Store, _ coremetadata.Registry, target quitSnapshotTarget, at time.Time) (sessionstate.Snapshot, error) {
 			attempted = append(attempted, target)
 			if first && target == quitTargetsForInventory(t, registry, inventory)[1] {
 				return sessionstate.Snapshot{}, errors.New("retryable failure")
@@ -304,15 +304,15 @@ func TestQuitSaveAndQuitIntegrationCapturesRegistryGraphBeforeGuardedShutdown(t 
 
 	registry, projects, _ := quitSnapshotRegistry(t, 2)
 	path := "/tmp/projmux-save-integration.sock"
-	runner := &quitIntegrationRunner{path: path, projects: projects}
+	runner := &quitIntegrationRunner{path: path, projects: projects, registry: registry}
 	store := sessionstate.NewStore(t.TempDir())
 	at := time.Date(2026, 8, 27, 14, 0, 0, 0, time.UTC)
 	cmd := &quitCommand{runner: runner, snapshots: &quitSnapshotDependencies{
 		loadRegistry: func() (coremetadata.Registry, error) { return registry, nil },
 		store:        func() (sessionstate.Store, error) { return store, nil },
 		now:          func() time.Time { return at },
-		capture: func(ctx context.Context, exact tmuxRunner, targetStore sessionstate.Store, target quitSnapshotTarget, capturedAt time.Time) (sessionstate.Snapshot, error) {
-			return newQuitSnapshotDependencies().capture(ctx, exact, targetStore, target, capturedAt)
+		capture: func(ctx context.Context, exact tmuxRunner, targetStore sessionstate.Store, registry coremetadata.Registry, target quitSnapshotTarget, capturedAt time.Time) (sessionstate.Snapshot, error) {
+			return newQuitSnapshotDependencies().capture(ctx, exact, targetStore, registry, target, capturedAt)
 		},
 	}}
 
@@ -327,6 +327,17 @@ func TestQuitSaveAndQuitIntegrationCapturesRegistryGraphBeforeGuardedShutdown(t 
 		}
 		if snap.SavedAt != at || len(snap.Windows) != 1 || len(snap.Windows[0].Panes) != 1 || snap.Windows[0].Panes[0].Recipe.Kind != sessionstate.RecipeKindShell {
 			t.Fatalf("snapshot %q = %#v, want exact captured topology and shell recipe", session, snap)
+		}
+		if snap.Metadata == nil || snap.Metadata.UID != projects[index].Metadata.UID || snap.Metadata.RegistrySchemaVersion != coremetadata.SchemaVersion {
+			t.Fatalf("snapshot %q Project metadata = %+v, want current Registry provenance", session, snap.Metadata)
+		}
+		window, _ := registry.Window(projects[index].Spec.PrimaryWindowRef)
+		pane, _ := registry.Pane(window.Spec.AnchorPaneRef)
+		if got := snap.Windows[0].Metadata; got == nil || got.UID != window.Metadata.UID || got.RegistrySchemaVersion != coremetadata.SchemaVersion {
+			t.Fatalf("snapshot %q Window metadata = %+v, want %s at schema v%d", session, got, window.Metadata.UID, coremetadata.SchemaVersion)
+		}
+		if got := snap.Windows[0].Panes[0].Metadata; got == nil || got.UID != pane.Metadata.UID || got.RegistrySchemaVersion != coremetadata.SchemaVersion {
+			t.Fatalf("snapshot %q Pane metadata = %+v, want %s at schema v%d", session, got, pane.Metadata.UID, coremetadata.SchemaVersion)
 		}
 	}
 	kills := 0
@@ -386,7 +397,7 @@ func TestQuitSaveBarrierKeepsNamedRegistryAndSiblingBytesInvariant(t *testing.T)
 				},
 				store: func() (sessionstate.Store, error) { return latestStore, nil },
 				now:   func() time.Time { return time.Date(2026, 8, 27, 15, 0, 0, 0, time.UTC) },
-				capture: func(_ context.Context, _ tmuxRunner, store sessionstate.Store, target quitSnapshotTarget, at time.Time) (sessionstate.Snapshot, error) {
+				capture: func(_ context.Context, _ tmuxRunner, store sessionstate.Store, _ coremetadata.Registry, target quitSnapshotTarget, at time.Time) (sessionstate.Snapshot, error) {
 					attempt++
 					if failMiddle && attempt == 2 {
 						return sessionstate.Snapshot{}, errors.New("sentinel failure")
@@ -430,7 +441,7 @@ func TestQuitSaveBarrierMarkerRouteAndSocketDriftNeverKill(t *testing.T) {
 					return quitSnapshotLiveInventory(projects)
 				},
 				store: func() (sessionstate.Store, error) { return sessionstate.NewStore(t.TempDir()), nil },
-				capture: func(_ context.Context, _ tmuxRunner, _ sessionstate.Store, _ quitSnapshotTarget, _ time.Time) (sessionstate.Snapshot, error) {
+				capture: func(_ context.Context, _ tmuxRunner, _ sessionstate.Store, _ coremetadata.Registry, _ quitSnapshotTarget, _ time.Time) (sessionstate.Snapshot, error) {
 					captures++
 					return sessionstate.Snapshot{}, nil
 				},
@@ -507,7 +518,7 @@ func TestQuitSavePreflightUnavailableOrConflictPerformsZeroCaptureAndKill(t *tes
 					stores++
 					return sessionstate.NewStore(t.TempDir()), nil
 				},
-				capture: func(context.Context, tmuxRunner, sessionstate.Store, quitSnapshotTarget, time.Time) (sessionstate.Snapshot, error) {
+				capture: func(context.Context, tmuxRunner, sessionstate.Store, coremetadata.Registry, quitSnapshotTarget, time.Time) (sessionstate.Snapshot, error) {
 					captures++
 					return sessionstate.Snapshot{}, nil
 				},
@@ -532,7 +543,20 @@ func quitSnapshotRegistry(t *testing.T, projectCount int) (coremetadata.Registry
 		if err := os.MkdirAll(root, 0o755); err != nil {
 			t.Fatal(err)
 		}
-		projects = append(projects, registerFixtureProject(t, &registry, mutator, root))
+		project := registerFixtureProject(t, &registry, mutator, root)
+		window, ok := registry.Window(project.Spec.PrimaryWindowRef)
+		if !ok {
+			t.Fatalf("fixture primary Window %q missing", project.Spec.PrimaryWindowRef)
+		}
+		window.Status.RuntimeSessionID = fmt.Sprintf("$%d", index+1)
+		window.Status.RuntimeID = fmt.Sprintf("@%d", index+1)
+		pane, ok := registry.Pane(window.Spec.AnchorPaneRef)
+		if !ok {
+			t.Fatalf("fixture anchor Pane %q missing", window.Spec.AnchorPaneRef)
+		}
+		pane.Status.Activation.Generation = fmt.Sprintf("quit-snapshot-generation-%d", index+1)
+		pane.Status.Activation.RuntimeID = fmt.Sprintf("%%%d", index+1)
+		projects = append(projects, project)
 	}
 	binding, err := mutator.BindControlSession(&registry, coremetadata.ControlSessionObservation{Session: "home"}, "/bin/zsh", "op-control", nil)
 	if err != nil {
@@ -587,6 +611,7 @@ func quitTestSnapshot(session string, at time.Time) sessionstate.Snapshot {
 type quitIntegrationRunner struct {
 	path     string
 	projects []coremetadata.Project
+	registry coremetadata.Registry
 	calls    []recordedTmuxCall
 }
 
@@ -665,12 +690,20 @@ func (r *quitIntegrationRunner) Run(_ context.Context, name string, args ...stri
 		return []byte(out.String()), nil
 	case strings.Contains(joined, "list-windows -a -F"), strings.Contains(joined, "list-panes -a -F"):
 		return nil, nil
-	case strings.Contains(joined, "list-panes -s -t") && strings.Contains(joined, "#{pane_id}"):
+	case strings.Contains(joined, "list-panes -s -t") && strings.Contains(joined, "#{pane_id}") && !strings.Contains(joined, "#{window_index}"):
 		return []byte("\n"), nil
 	case strings.Contains(joined, "list-windows -t"):
-		return []byte("0\x1fshell\x1flayout\n"), nil
+		project, window, _, ok := r.projectSnapshotResources(args)
+		if !ok {
+			return nil, fmt.Errorf("unknown snapshot target: %v", args)
+		}
+		return fmt.Appendf(nil, "0\x1fshell\x1flayout\x1f%s\x1f%s\n", window.Status.RuntimeID, project.Spec.PrimaryWindowRef), nil
 	case strings.Contains(joined, "list-panes -s -t"):
-		return []byte("0\x1f0\x1fshell\x1fprimary\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\n"), nil
+		_, _, pane, ok := r.projectSnapshotResources(args)
+		if !ok {
+			return nil, fmt.Errorf("unknown snapshot target: %v", args)
+		}
+		return fmt.Appendf(nil, "0\x1f0\x1fshell\x1fprimary\x1f1\x1f/tmp\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f\x1f%s\x1f%s\n", pane.Status.Activation.RuntimeID, pane.Metadata.UID), nil
 	case strings.Contains(joined, "display-message -p -t"):
 		return []byte("manual\n"), nil
 	case strings.Contains(joined, "if-shell -F") && strings.Contains(joined, "kill-server"):
@@ -678,4 +711,20 @@ func (r *quitIntegrationRunner) Run(_ context.Context, name string, args ...stri
 	default:
 		return nil, fmt.Errorf("unexpected tmux call: %s %v", name, args)
 	}
+}
+
+func (r *quitIntegrationRunner) projectSnapshotResources(args []string) (coremetadata.Project, coremetadata.Window, coremetadata.Pane, bool) {
+	target := flagValue(args, "-t")
+	for index, project := range r.projects {
+		if target != fmt.Sprintf("$%d", index+1) {
+			continue
+		}
+		window, windowOK := r.registry.Window(project.Spec.PrimaryWindowRef)
+		if !windowOK {
+			return coremetadata.Project{}, coremetadata.Window{}, coremetadata.Pane{}, false
+		}
+		pane, paneOK := r.registry.Pane(window.Spec.AnchorPaneRef)
+		return project, *window, *pane, paneOK
+	}
+	return coremetadata.Project{}, coremetadata.Window{}, coremetadata.Pane{}, false
 }

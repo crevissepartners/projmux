@@ -255,7 +255,7 @@ func ownershipFixture(t *testing.T, ownerKind Kind) Registry {
 	}}
 	reg.NameReservations = append(reg.NameReservations,
 		NameReservation{Scope: ownerUID, Kind: KindWindow, Name: "window", UID: "win-01"},
-		NameReservation{Scope: "win-01", Kind: KindPane, Name: "pane", UID: "pane-01"},
+		NameReservation{Scope: ownerUID, Kind: KindPane, Name: "pane", UID: "pane-01"},
 	)
 	return reg
 }
@@ -287,8 +287,8 @@ func TestBindControlSessionMintsAndConverges(t *testing.T) {
 		t.Fatalf("len(ControlSessions) = %d, want %d", got, want)
 	}
 	control := reg.ControlSessions[0]
-	if control.Spec.Session != "home" || control.Metadata.Name != "home" {
-		t.Fatalf("control session = %+v, want session/name %q", control, "home")
+	if control.Spec.Session != "home" || control.Metadata.Name != control.Metadata.UID {
+		t.Fatalf("control session = %+v, want runtime session home and exact-uid automatic name", control)
 	}
 	if control.Metadata.OwnerRef != nil {
 		t.Fatalf("control session carries an ownerRef %+v; it is a root", control.Metadata.OwnerRef)
@@ -463,8 +463,8 @@ func TestControlSessionAndProjectMayShareAName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BindControlSession() error = %v", err)
 	}
-	if got, want := result.ControlSession.Metadata.Name, "home"; got != want {
-		t.Fatalf("control session name = %q, want %q: the two root kinds hold separate reservation slots", got, want)
+	if got, want := result.ControlSession.Metadata.Name, result.ControlSession.Metadata.UID; got != want {
+		t.Fatalf("control session automatic name = %q, want exact uid %q", got, want)
 	}
 	if project.Project.Metadata.Name != "home" {
 		t.Fatalf("project name = %q, want %q", project.Project.Metadata.Name, "home")

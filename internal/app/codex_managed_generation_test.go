@@ -344,11 +344,11 @@ func TestOrdinaryCodexCreateSpellingsActivateRollingManagedCurrent(t *testing.T)
 		!oldAfter.Status.SessionRef.SameConversation(oldBefore.Status.SessionRef) || oldAfter.Status.SessionRef.Codex.Endpoint != nil {
 		t.Fatalf("legacy old-generation Agent continuity changed: before=%#v after=%#v", oldBefore.Status, oldAfter.Status)
 	}
-	plain := agentNamed(t, store, "win-alpha-main", "codex-1")
+	plain := agentNamed(t, store, "win-alpha-main", "agent-test-1")
 	if plain.Status.Phase != coremetadata.PhaseRunning || plain.Status.PaneRef == "" || plain.Status.SessionRef != nil {
 		t.Fatalf("payload-free Agent did not remain on the pre-provider plain lane: %#v", plain.Status)
 	}
-	native := agentNamed(t, store, "win-alpha-main", "codex-2")
+	native := agentNamed(t, store, "win-alpha-main", "agent-test-3")
 	if native.Status.SessionRef == nil || native.Status.SessionRef.Codex == nil || native.Status.SessionRef.Codex.Endpoint == nil ||
 		!native.Status.SessionRef.Codex.Endpoint.Same(endpoint) {
 		t.Fatalf("prompted Agent not pinned to managed current: %#v", native.Status.SessionRef)

@@ -56,7 +56,7 @@ func runtimeFixtureRegistry() coremetadata.Registry {
 	registry.NameReservations = []coremetadata.NameReservation{
 		{Kind: coremetadata.KindProject, Name: "alpha", UID: runtimeFixtureProject},
 		{Scope: runtimeFixtureProject, Kind: coremetadata.KindWindow, Name: "editor", UID: runtimeFixtureWindow},
-		{Scope: runtimeFixtureWindow, Kind: coremetadata.KindPane, Name: "shell", UID: runtimeFixturePane},
+		{Scope: runtimeFixtureProject, Kind: coremetadata.KindPane, Name: "shell", UID: runtimeFixturePane},
 	}
 	return registry
 }

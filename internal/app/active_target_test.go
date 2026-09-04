@@ -89,7 +89,7 @@ func addControlReadRoot(t *testing.T, store *fakeResourceStore) {
 	store.registry.ControlSessions = append(store.registry.ControlSessions, coremetadata.ControlSession{
 		APIVersion: coremetadata.APIVersion,
 		Kind:       coremetadata.KindControlSession,
-		Metadata:   coremetadata.ObjectMeta{UID: "ctl-home", Name: "home", DisplayName: "Home", CreatedAt: resourceFixtureClock},
+		Metadata:   coremetadata.ObjectMeta{UID: "ctl-home", Name: "home", CreatedAt: resourceFixtureClock},
 		Spec:       coremetadata.ControlSessionSpec{Session: "home"},
 	})
 	store.registry.Windows = append(store.registry.Windows, coremetadata.Window{
@@ -124,9 +124,9 @@ func addControlReadRoot(t *testing.T, store *fakeResourceStore) {
 	store.registry.NameReservations = append(store.registry.NameReservations,
 		coremetadata.NameReservation{Kind: coremetadata.KindControlSession, Name: "home", UID: "ctl-home"},
 		coremetadata.NameReservation{Scope: "ctl-home", Kind: coremetadata.KindWindow, Name: "home", UID: "win-home"},
-		coremetadata.NameReservation{Scope: "win-home", Kind: coremetadata.KindPane, Name: "shell", UID: "pan-home-shell"},
-		coremetadata.NameReservation{Scope: "win-home", Kind: coremetadata.KindAgent, Name: "codex", UID: "agt-home"},
-		coremetadata.NameReservation{Scope: "agt-home", Kind: coremetadata.KindPane, Name: "codex-pane", UID: "pan-home-agent"},
+		coremetadata.NameReservation{Scope: "ctl-home", Kind: coremetadata.KindPane, Name: "shell", UID: "pan-home-shell"},
+		coremetadata.NameReservation{Scope: "ctl-home", Kind: coremetadata.KindAgent, Name: "codex", UID: "agt-home"},
+		coremetadata.NameReservation{Scope: "ctl-home", Kind: coremetadata.KindPane, Name: "codex-pane", UID: "pan-home-agent"},
 	)
 	if err := store.registry.Validate(); err != nil {
 		t.Fatalf("control read fixture is invalid: %v", err)
@@ -353,10 +353,10 @@ func TestPluralReadNameSelectorKeepsActiveRootScope(t *testing.T) {
 		want    string
 		refusal bool
 	}{
-		{name: "Project name stays in Project", active: func() *recordedActiveTarget { return insideTmux("pan-alpha-zsh", "win-alpha-main") }, want: "pan-alpha-zsh\npan-alpha-review\n"},
+		{name: "Project name stays in Project", active: func() *recordedActiveTarget { return insideTmux("pan-alpha-zsh", "win-alpha-main") }, want: "pan-alpha-zsh\n"},
 		{name: "ControlSession name cannot cross into Project", active: func() *recordedActiveTarget { return insideTmux("pan-home-shell", "win-home") }},
 		{name: "foreign name still refuses", active: func() *recordedActiveTarget { return insideTmux("", "win-foreign") }, refusal: true},
-		{name: "outside name stays whole Registry", active: outsideTmux, want: "pan-alpha-zsh\npan-alpha-review\npan-beta-zsh\npan-gone-zsh\n"},
+		{name: "outside name stays whole Registry", active: outsideTmux, want: "pan-alpha-zsh\npan-beta-zsh\npan-gone-zsh\n"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
@@ -866,7 +866,7 @@ func TestEmptySelectorResolvesTheActiveTargetForTheReadAndRenameVerbs(t *testing
 		// Exactly one resource changed: the sibling pane of the same window and
 		// the same-named pane of another window are untouched.
 		for _, untouched := range []struct{ uid, name string }{
-			{"pan-alpha-log", "log"}, {"pan-alpha-review", "zsh"}, {"pan-beta-zsh", "zsh"},
+			{"pan-alpha-log", "log"}, {"pan-alpha-review", "review-zsh"}, {"pan-beta-zsh", "zsh"},
 		} {
 			other, ok := store.registry.Pane(untouched.uid)
 			if !ok || other.Metadata.Name != untouched.name {

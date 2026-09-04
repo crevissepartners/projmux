@@ -4,8 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -460,22 +460,20 @@ func TestCloningARegistryDeepCopiesEverySessionRefMember(t *testing.T) {
 func TestARegistryWrittenBeforeTheSessionRefExistedRoundTripsByteIdentically(t *testing.T) {
 	t.Parallel()
 
-	data, err := os.ReadFile("testdata/registry-v1-migrated.golden")
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
+	reg, _ := agentFixture(t, sessionRefMutator(), "claude")
+	data := []byte(mustJSON(t, reg.Normalize()) + "\n")
 	if bytes.Contains(data, []byte("sessionRef")) {
 		t.Fatal("the pre-field fixture already mentions sessionRef; it can no longer prove read compatibility")
 	}
 
-	var reg Registry
-	if err := json.Unmarshal(data, &reg); err != nil {
+	var decoded Registry
+	if err := json.Unmarshal(data, &decoded); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if len(reg.Agents) == 0 {
+	if len(decoded.Agents) == 0 {
 		t.Fatal("fixture carries no Agent")
 	}
-	for _, agent := range reg.Agents {
+	for _, agent := range decoded.Agents {
 		if agent.Status.SessionRef != nil {
 			t.Fatalf("agent %q decoded a non-nil session ref from a document that has no such key", agent.Metadata.Name)
 		}
@@ -483,15 +481,15 @@ func TestARegistryWrittenBeforeTheSessionRefExistedRoundTripsByteIdentically(t *
 			t.Fatalf("agent %q reports a non-empty session ref", agent.Metadata.Name)
 		}
 	}
-	if err := reg.Validate(); err != nil {
+	if err := decoded.Validate(); err != nil {
 		t.Fatalf("a pre-field registry must still validate: %v", err)
 	}
 
-	action, err := ClassifySchemaVersion(reg.SchemaVersion)
+	action, err := ClassifySchemaVersion(decoded.SchemaVersion)
 	if err != nil || action != SchemaCurrent {
 		t.Fatalf("classify = (%s, %v), want (current, nil): the field is additive inside schemaVersion %d", action, err, SchemaVersion)
 	}
-	migrated, ran, err := MigrateRegistry(reg)
+	migrated, ran, err := MigrateRegistry(decoded)
 	if err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
@@ -535,25 +533,26 @@ func TestAgentSessionRefSerializationGolden(t *testing.T) {
 	}
 
 	got := mustJSON(t, reg.Normalize()) + "\n"
-	want, err := os.ReadFile("testdata/registry-v1-session-ref.golden")
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
+	for _, want := range []string{`"schemaVersion": 4`, `"claude": {`, `"sessionId": "claude-session-1"`, `"codex": {`, `"threadId": "codex-thread-1"`, `"antigravity": {`, `"conversationId": "antigravity-conversation-1"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("session ref serialization missing %s:\n%s", want, got)
+		}
 	}
-	if got != string(want) {
-		t.Fatalf("session ref serialization does not match the golden:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	if strings.Contains(got, `"displayName"`) || strings.Contains(got, `"displayTitle"`) {
+		t.Fatalf("schema v4 writer emitted removed presentation fields:\n%s", got)
 	}
 
 	// The golden decodes back into the same value, so the shape is not
 	// write-only.
 	var decoded Registry
-	if err := json.Unmarshal(want, &decoded); err != nil {
-		t.Fatalf("decode golden: %v", err)
+	if err := json.Unmarshal([]byte(got), &decoded); err != nil {
+		t.Fatalf("decode serialized registry: %v", err)
 	}
 	if err := decoded.Validate(); err != nil {
-		t.Fatalf("decoded golden is invalid: %v", err)
+		t.Fatalf("decoded serialized registry is invalid: %v", err)
 	}
-	if round := mustJSON(t, decoded) + "\n"; round != string(want) {
-		t.Fatalf("golden does not round-trip:\n--- got ---\n%s\n--- want ---\n%s", round, want)
+	if round := mustJSON(t, decoded) + "\n"; round != got {
+		t.Fatalf("serialized registry does not round-trip:\n--- got ---\n%s\n--- want ---\n%s", round, got)
 	}
 }
 

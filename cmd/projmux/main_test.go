@@ -69,6 +69,7 @@ func TestMetadataConflictsReachExitCodeTwoThroughTheUsageErrorPath(t *testing.T)
 		reg := coremetadata.NewRegistry()
 		result, err := m.RegisterProject(&reg, coremetadata.RegisterProjectOptions{
 			Root:         "/src/projmux",
+			Name:         "projmux",
 			DefaultShell: "/bin/zsh",
 			OperationID:  "op-seed",
 		})
@@ -159,26 +160,37 @@ func TestMetadataConflictsReachExitCodeTwoThroughTheUsageErrorPath(t *testing.T)
 func TestSelectorCardinalityFailureReachesExitCodeTwoWithNoStdout(t *testing.T) {
 	t.Parallel()
 
-	// Two Panes named "zsh" in two Windows: a legal registry, and an ambiguous
-	// exact-one read.
+	// Two Panes named "zsh" in different Project roots: a legal registry, and
+	// an ambiguous whole-registry exact-one read.
 	registry := coremetadata.NewRegistry()
-	registry.Projects = []coremetadata.Project{{
-		APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
-		Metadata: coremetadata.ObjectMeta{UID: "prj-1", Name: "alpha"},
-		Spec:     coremetadata.ProjectSpec{Root: "/srv/alpha", PrimaryWindowRef: "win-1"},
-	}}
+	registry.Projects = []coremetadata.Project{
+		{
+			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
+			Metadata: coremetadata.ObjectMeta{UID: "prj-1", Name: "alpha"},
+			Spec:     coremetadata.ProjectSpec{Root: "/srv/alpha", PrimaryWindowRef: "win-1"},
+		},
+		{
+			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindProject,
+			Metadata: coremetadata.ObjectMeta{UID: "prj-2", Name: "beta"},
+			Spec:     coremetadata.ProjectSpec{Root: "/srv/beta", PrimaryWindowRef: "win-2"},
+		},
+	}
 	registry.NameReservations = []coremetadata.NameReservation{
 		{Kind: coremetadata.KindProject, Name: "alpha", UID: "prj-1"},
+		{Kind: coremetadata.KindProject, Name: "beta", UID: "prj-2"},
 		{Scope: "prj-1", Kind: coremetadata.KindWindow, Name: "one", UID: "win-1"},
-		{Scope: "prj-1", Kind: coremetadata.KindWindow, Name: "two", UID: "win-2"},
-		{Scope: "win-1", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-1"},
-		{Scope: "win-2", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-2"},
+		{Scope: "prj-2", Kind: coremetadata.KindWindow, Name: "two", UID: "win-2"},
+		{Scope: "prj-1", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-1"},
+		{Scope: "prj-2", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-2"},
 	}
-	for _, window := range []struct{ uid, name, pane string }{{"win-1", "one", "pan-1"}, {"win-2", "two", "pan-2"}} {
+	for _, window := range []struct{ uid, name, pane, project string }{
+		{"win-1", "one", "pan-1", "prj-1"},
+		{"win-2", "two", "pan-2", "prj-2"},
+	} {
 		registry.Windows = append(registry.Windows, coremetadata.Window{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindWindow,
 			Metadata: coremetadata.ObjectMeta{UID: window.uid, Name: window.name,
-				OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: "prj-1"}},
+				OwnerRef: &coremetadata.OwnerRef{Kind: coremetadata.KindProject, UID: window.project}},
 			Spec: coremetadata.WindowSpec{AnchorPaneRef: window.pane},
 		})
 		registry.Panes = append(registry.Panes, coremetadata.Pane{

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/integrations/sessionstate"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 const (
@@ -35,14 +36,18 @@ const sessionStateMaxClaudeTranscriptBytes = 1024 * 1024
 const sessionStateMaxCodexRolloutPrefixBytes = 256 * 1024
 
 type sessionStateWindowRow struct {
-	index  int
-	name   string
-	layout string
+	index       int
+	name        string
+	layout      string
+	runtimeID   string
+	registryUID string
 }
 
 type sessionStatePaneRow struct {
 	windowIndex    int
 	paneIndex      int
+	runtimeID      string
+	registryUID    string
 	title          string
 	label          string
 	active         bool
@@ -146,15 +151,19 @@ func (c *Client) captureExplicitSessionSnapshot(ctx context.Context, target, ses
 				activePaneIndex = pane.paneIndex
 			}
 			panesOut = append(panesOut, sessionstate.Pane{
-				Index:  pane.paneIndex,
-				Label:  pane.label,
-				Title:  pane.title,
-				CWD:    pane.cwd,
-				Recipe: classifySessionStatePane(pane),
+				Index:       pane.paneIndex,
+				RuntimeID:   pane.runtimeID,
+				RegistryUID: pane.registryUID,
+				Label:       pane.label,
+				Title:       pane.title,
+				CWD:         pane.cwd,
+				Recipe:      classifySessionStatePane(pane),
 			})
 		}
 		snap.Windows = append(snap.Windows, sessionstate.Window{
 			Index:           row.index,
+			RuntimeID:       row.runtimeID,
+			RegistryUID:     row.registryUID,
 			Name:            row.name,
 			Layout:          row.layout,
 			ActivePaneIndex: activePaneIndex,
@@ -170,7 +179,14 @@ func (c *Client) captureExplicitSessionSnapshot(ctx context.Context, target, ses
 
 // SaveSessionSnapshot captures and atomically stores a tmux session snapshot.
 func (c *Client) SaveSessionSnapshot(ctx context.Context, store sessionstate.Store, sessionName string, now time.Time) (sessionstate.Snapshot, error) {
-	return c.SaveExplicitSessionSnapshot(ctx, store, sessionName, sessionName, now)
+	return c.SaveSessionSnapshotWithTransform(ctx, store, sessionName, now, nil)
+}
+
+// SaveSessionSnapshotWithTransform applies one pure metadata projection after
+// capture and before the store's atomic write. A nil transform preserves the
+// legacy metadata-free capture API.
+func (c *Client) SaveSessionSnapshotWithTransform(ctx context.Context, store sessionstate.Store, sessionName string, now time.Time, transform func(sessionstate.Snapshot) (sessionstate.Snapshot, error)) (sessionstate.Snapshot, error) {
+	return c.SaveExplicitSessionSnapshotWithTransform(ctx, store, sessionName, sessionName, now, transform)
 }
 
 // SaveExplicitSessionSnapshot captures target and atomically stores it under
@@ -178,6 +194,12 @@ func (c *Client) SaveSessionSnapshot(ctx context.Context, store sessionstate.Sto
 // pre-observed server-wide batch whose exact tmux session id differs from the
 // stable snapshot identity.
 func (c *Client) SaveExplicitSessionSnapshot(ctx context.Context, store sessionstate.Store, target, sessionName string, now time.Time) (sessionstate.Snapshot, error) {
+	return c.SaveExplicitSessionSnapshotWithTransform(ctx, store, target, sessionName, now, nil)
+}
+
+// SaveExplicitSessionSnapshotWithTransform is the exact-target form of
+// SaveSessionSnapshotWithTransform.
+func (c *Client) SaveExplicitSessionSnapshotWithTransform(ctx context.Context, store sessionstate.Store, target, sessionName string, now time.Time, transform func(sessionstate.Snapshot) (sessionstate.Snapshot, error)) (sessionstate.Snapshot, error) {
 	target = strings.TrimSpace(target)
 	sessionName = strings.TrimSpace(sessionName)
 	if target == "" {
@@ -195,6 +217,12 @@ func (c *Client) SaveExplicitSessionSnapshot(ctx context.Context, store sessions
 	snap, err := c.captureExplicitSessionSnapshot(ctx, target, sessionName, now)
 	if err != nil {
 		return sessionstate.Snapshot{}, err
+	}
+	if transform != nil {
+		snap, err = transform(snap)
+		if err != nil {
+			return sessionstate.Snapshot{}, err
+		}
 	}
 	if err := store.Save(snap); err != nil {
 		return sessionstate.Snapshot{}, err
@@ -555,7 +583,7 @@ func isUUIDLikeSessionStateID(id string) bool {
 }
 
 func (c *Client) listSessionStateWindows(ctx context.Context, sessionName string) ([]sessionStateWindowRow, error) {
-	output, err := c.runner.Run(ctx, "tmux", "list-windows", "-t", sessionName, "-F", tmuxFormat("#{window_index}", "#{window_name}", "#{window_layout}"))
+	output, err := c.runner.Run(ctx, "tmux", "list-windows", "-t", sessionName, "-F", tmuxFormat("#{window_index}", "#{window_name}", "#{window_layout}", "#{window_id}", "#{"+tmuxopts.WindowUID+"}"))
 	if err != nil {
 		return nil, fmt.Errorf("capture tmux session %q windows: %w", sessionName, err)
 	}
@@ -583,6 +611,8 @@ func (c *Client) listSessionStatePanes(ctx context.Context, sessionName string) 
 		"#{"+sessionStateAIResumeIDOption+"}",
 		"#{"+sessionStateAIResumeSourceOption+"}",
 		"#{"+sessionStateAIResumeAtOption+"}",
+		"#{pane_id}",
+		"#{"+tmuxopts.PaneUID+"}",
 	))
 	if err != nil {
 		return nil, fmt.Errorf("capture tmux session %q panes: %w", sessionName, err)
@@ -638,19 +668,27 @@ func parseSessionStateWindows(output []byte) ([]sessionStateWindowRow, error) {
 		if strings.TrimSpace(rawLine) == "" {
 			continue
 		}
-		fields := splitTmuxFields(rawLine, 3)
-		if len(fields) != 3 {
+		fields := splitTmuxFields(rawLine, 5)
+		if len(fields) != 3 && len(fields) != 4 && len(fields) != 5 {
 			return nil, fmt.Errorf("parse tmux sessionstate windows: malformed row %q", rawLine)
 		}
 		index, err := strconv.Atoi(strings.TrimSpace(fields[0]))
 		if err != nil {
 			return nil, errWindowIndexInvalid
 		}
-		windows = append(windows, sessionStateWindowRow{
+		row := sessionStateWindowRow{
 			index:  index,
 			name:   strings.TrimSpace(fields[1]),
 			layout: strings.TrimSpace(fields[2]),
-		})
+		}
+		if len(fields) == 4 {
+			row.runtimeID = strings.TrimSpace(fields[3])
+		}
+		if len(fields) == 5 {
+			row.runtimeID = strings.TrimSpace(fields[3])
+			row.registryUID = strings.TrimSpace(fields[4])
+		}
+		windows = append(windows, row)
 	}
 	return windows, nil
 }
@@ -666,7 +704,17 @@ func parseSessionStatePanes(output []byte) ([]sessionStatePaneRow, error) {
 		if strings.TrimSpace(rawLine) == "" {
 			continue
 		}
-		fields := splitTmuxFields(rawLine, 15)
+		fields := splitTmuxFields(rawLine, 17)
+		runtimeID := ""
+		registryUID := ""
+		if len(fields) == 17 {
+			runtimeID = strings.TrimSpace(fields[15])
+			registryUID = strings.TrimSpace(fields[16])
+			fields = fields[:15]
+		} else if len(fields) == 16 {
+			runtimeID = strings.TrimSpace(fields[15])
+			fields = fields[:15]
+		}
 		switch len(fields) {
 		case 14:
 			// Phase 0 current format had a label but no topic ownership.
@@ -706,6 +754,8 @@ func parseSessionStatePanes(output []byte) ([]sessionStatePaneRow, error) {
 		panes = append(panes, sessionStatePaneRow{
 			windowIndex:    windowIndex,
 			paneIndex:      paneIndex,
+			runtimeID:      runtimeID,
+			registryUID:    registryUID,
 			title:          strings.TrimSpace(fields[2]),
 			label:          strings.TrimSpace(fields[3]),
 			active:         active,

@@ -190,7 +190,6 @@ runeLen
 runtimeMutationEffectKey
 runtimeMutationPlan.withoutEffects
 sanitizeSwitchPreviewPath
-scopeFor
 selectionMarker
 settingsCommand.rootEntries
 settingsCommand.rootEntriesForAxis

@@ -9,7 +9,100 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/sessionstate"
 )
 
-const maxSnapshotUIDAllocationAttempts = 1024
+const maxSnapshotUIDAllocationAttempts = 100
+
+// StampProjectSnapshot records the current Registry identity and naming
+// provenance on every resource represented by a captured Project snapshot.
+// Capture order and display fields are never identity evidence: transient
+// exact tmux runtime IDs are joined to Window/Pane status, and drift is
+// refused rather than producing partially or incorrectly stamped metadata.
+func StampProjectSnapshot(registry Registry, projectUID string, snap sessionstate.Snapshot) (sessionstate.Snapshot, error) {
+	const op = "stamp project snapshot metadata"
+	if err := registry.Validate(); err != nil {
+		return sessionstate.Snapshot{}, fmt.Errorf("%s: %w", op, err)
+	}
+	project, ok := registry.Project(strings.TrimSpace(projectUID))
+	if !ok {
+		return sessionstate.Snapshot{}, stateErr(op, ErrNotFound, "Project %q does not exist", projectUID)
+	}
+	windowsByRuntime := make(map[string]Window)
+	panesByRuntime := make(map[string]Pane)
+	for _, window := range registry.WindowsOf(project.Metadata.UID) {
+		if runtimeID := strings.TrimSpace(window.Status.RuntimeID); runtimeID != "" {
+			if existing, duplicate := windowsByRuntime[runtimeID]; duplicate {
+				return sessionstate.Snapshot{}, stateErr(op, ErrInvalidRegistry,
+					"Registry Windows %q and %q share runtime id %q", existing.Metadata.UID, window.Metadata.UID, runtimeID)
+			}
+			windowsByRuntime[runtimeID] = window
+		}
+		for _, pane := range registry.snapshotPanesOf(window.Metadata.UID) {
+			if runtimeID := strings.TrimSpace(pane.Status.Activation.RuntimeID); runtimeID != "" {
+				if existing, duplicate := panesByRuntime[runtimeID]; duplicate {
+					return sessionstate.Snapshot{}, stateErr(op, ErrInvalidRegistry,
+						"Registry Panes %q and %q share runtime id %q in Project %q", existing.Metadata.UID, pane.Metadata.UID, runtimeID, project.Metadata.UID)
+				}
+				panesByRuntime[runtimeID] = pane
+			}
+		}
+	}
+	out := snap
+	out.Metadata = snapshotResourceMetadata(project.Metadata, "", "")
+	out.Windows = append([]sessionstate.Window(nil), snap.Windows...)
+	seenWindows := make(map[string]bool, len(snap.Windows))
+	seenPanes := make(map[string]bool)
+	for wi := range snap.Windows {
+		runtimeID := strings.TrimSpace(snap.Windows[wi].RuntimeID)
+		window, found := windowsByRuntime[runtimeID]
+		if runtimeID == "" || !found || seenWindows[runtimeID] || strings.TrimSpace(snap.Windows[wi].RegistryUID) != window.Metadata.UID {
+			return sessionstate.Snapshot{}, stateErr(op, ErrInvalidRegistry,
+				"captured Window %d runtime id %q and mirrored uid %q do not identify one unique Window in Project %q", wi, runtimeID, snap.Windows[wi].RegistryUID, project.Metadata.UID)
+		}
+		seenWindows[runtimeID] = true
+		out.Windows[wi].Metadata = snapshotResourceMetadata(window.Metadata, string(KindProject), project.Metadata.UID)
+		windowPanesByRuntime := make(map[string]Pane)
+		for _, pane := range registry.snapshotPanesOf(window.Metadata.UID) {
+			if paneRuntimeID := strings.TrimSpace(pane.Status.Activation.RuntimeID); paneRuntimeID != "" {
+				windowPanesByRuntime[paneRuntimeID] = pane
+			}
+		}
+		out.Windows[wi].Panes = append([]sessionstate.Pane(nil), snap.Windows[wi].Panes...)
+		for pi := range snap.Windows[wi].Panes {
+			paneRuntimeID := strings.TrimSpace(snap.Windows[wi].Panes[pi].RuntimeID)
+			pane, found := windowPanesByRuntime[paneRuntimeID]
+			if paneRuntimeID == "" || !found || seenPanes[paneRuntimeID] || strings.TrimSpace(snap.Windows[wi].Panes[pi].RegistryUID) != pane.Metadata.UID {
+				return sessionstate.Snapshot{}, stateErr(op, ErrInvalidRegistry,
+					"captured Pane %d in Window runtime %q has runtime id %q and mirrored uid %q outside the exact Registry owner graph", pi, runtimeID, paneRuntimeID, snap.Windows[wi].Panes[pi].RegistryUID)
+			}
+			seenPanes[paneRuntimeID] = true
+			ownerKind, ownerUID := "", ""
+			if pane.Metadata.OwnerRef != nil {
+				ownerKind, ownerUID = string(pane.Metadata.OwnerRef.Kind), pane.Metadata.OwnerRef.UID
+			}
+			out.Windows[wi].Panes[pi].Metadata = snapshotResourceMetadata(pane.Metadata, ownerKind, ownerUID)
+			if pane.Spec.Role == PaneRoleAgent {
+				agent, ok := registry.Agent(pane.Metadata.OwnerUID())
+				if !ok || agent.Metadata.OwnerUID() != window.Metadata.UID || agent.Status.PaneRef != pane.Metadata.UID {
+					return sessionstate.Snapshot{}, stateErr(op, ErrInvalidRegistry,
+						"Pane %q runtime %q does not have one exact Agent owner chain", pane.Metadata.UID, paneRuntimeID)
+				}
+				out.Windows[wi].Panes[pi].AgentMetadata = snapshotResourceMetadata(agent.Metadata, string(KindWindow), window.Metadata.UID)
+			} else {
+				out.Windows[wi].Panes[pi].AgentMetadata = nil
+			}
+		}
+	}
+	if err := out.Validate(); err != nil {
+		return sessionstate.Snapshot{}, fmt.Errorf("%s: %w", op, err)
+	}
+	return out, nil
+}
+
+func snapshotResourceMetadata(meta ObjectMeta, ownerKind, ownerUID string) *sessionstate.ResourceMetadata {
+	return &sessionstate.ResourceMetadata{
+		UID: meta.UID, Name: meta.Name, Labels: cloneStringMap(meta.Labels),
+		OwnerKind: ownerKind, OwnerUID: ownerUID, RegistrySchemaVersion: SchemaVersion,
+	}
+}
 
 // snapshotPanesOf returns the Panes a Window contributes to a snapshot: its
 // own shell Panes followed by the managed Panes of its Agents, both in
@@ -36,6 +129,10 @@ type SnapshotProjectionPlan struct {
 	DeletedPanes    int
 	DeletedAgents   int
 	LostSessionRefs int
+	// Migration is the deterministic internal receipt for legacy Registry-name
+	// canonicalization performed while importing this snapshot. It is not a
+	// public command receipt and contains no removed presentation value.
+	Migration MigrationReport
 }
 
 // PlanSnapshotProjection translates a v1 session snapshot into the desired
@@ -45,6 +142,47 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 	const op = "project snapshot projection"
 	if err := snap.Validate(); err != nil {
 		return SnapshotProjectionPlan{}, fmt.Errorf("%s: %w", op, err)
+	}
+	provenance, metadataBearing, err := snap.RegistrySchemaProvenance()
+	if err != nil {
+		return SnapshotProjectionPlan{}, fmt.Errorf("%s: %w", op, err)
+	}
+	if metadataBearing {
+		switch provenance {
+		case 0, 3, SchemaVersion:
+		case 1, 2:
+			return SnapshotProjectionPlan{}, inputErr(op, ErrSchemaUnsupported,
+				"snapshot registry schema provenance v%d is not an importable naming schema", provenance)
+		default:
+			if provenance > SchemaVersion {
+				return SnapshotProjectionPlan{}, inputErr(op, ErrSchemaTooNew,
+					"snapshot registry schema provenance v%d is newer than supported v%d", provenance, SchemaVersion)
+			}
+			return SnapshotProjectionPlan{}, inputErr(op, ErrSchemaUnsupported,
+				"snapshot registry schema provenance v%d is invalid", provenance)
+		}
+	}
+	if metadataBearing && provenance == SchemaVersion {
+		if snap.Metadata == nil {
+			return SnapshotProjectionPlan{}, inputErr(op, ErrInvalidRegistry,
+				"current-v%d snapshot is missing authoritative Project metadata", provenance)
+		}
+		for wi, window := range snap.Windows {
+			if window.Metadata == nil {
+				return SnapshotProjectionPlan{}, inputErr(op, ErrInvalidRegistry,
+					"current-v%d snapshot Window %d is missing authoritative Window metadata", provenance, wi)
+			}
+			for pi, pane := range window.Panes {
+				if pane.Metadata == nil {
+					return SnapshotProjectionPlan{}, inputErr(op, ErrInvalidRegistry,
+						"current-v%d snapshot Window %d Pane %d is missing authoritative Pane metadata", provenance, wi, pi)
+				}
+				if pane.Recipe.Kind == sessionstate.RecipeKindAgent && pane.AgentMetadata == nil {
+					return SnapshotProjectionPlan{}, inputErr(op, ErrInvalidRegistry,
+						"current-v%d snapshot Window %d Pane %d is missing authoritative Agent metadata", provenance, wi, pi)
+				}
+			}
+		}
 	}
 	if now.IsZero() {
 		return SnapshotProjectionPlan{}, inputErr(op, ErrInvalidRegistry, "projection timestamp is required")
@@ -85,6 +223,10 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 		ownedKinds[uid] = KindAgent
 	}
 	stripTargetDescendants(&desired, target.Metadata.UID, owned)
+	projectedNames, err := projectedNameIndex(desired)
+	if err != nil {
+		return SnapshotProjectionPlan{}, fmt.Errorf("%s: index retained names: %w", op, err)
+	}
 	used := map[string]bool{target.Metadata.UID: true}
 	for _, project := range desired.Projects {
 		used[project.Metadata.UID] = true
@@ -101,7 +243,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 	for _, agent := range desired.Agents {
 		used[agent.Metadata.UID] = true
 	}
-	mint := func(kind Kind, preferred string) (string, error) {
+	mint := func(kind Kind, ownerUID, preferred string) (string, error) {
 		uid := strings.TrimSpace(preferred)
 		if uid != "" {
 			if used[uid] {
@@ -135,6 +277,16 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 			if _, existed := ownedKinds[candidate]; existed {
 				continue
 			}
+			if err := ValidateName(candidate); err != nil {
+				continue
+			}
+			scope, err := desired.scopeFor(kind, ownerUID)
+			if err != nil {
+				return "", err
+			}
+			if holder, taken := projectedNames[nameSlot{scope: scope, kind: kind, name: candidate}]; taken && holder != candidate {
+				continue
+			}
 			used[candidate] = true
 			return candidate, nil
 		}
@@ -142,6 +294,9 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 	}
 	stamp := now.UTC()
 	plan := SnapshotProjectionPlan{ProjectUID: target.Metadata.UID, Desired: desired, ReplacedWindows: len(oldWindows)}
+	if metadataBearing {
+		plan.Migration = MigrationReport{FromVersion: provenance, ToVersion: SchemaVersion}
+	}
 	plan.ReplacedPanes = len(owned.panes)
 	plan.ReplacedAgents = len(owned.agents)
 	preservedWindows, preservedPanes, preservedAgents := 0, 0, 0
@@ -170,7 +325,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 			oldWindow = &copy
 			preferred = copy.Metadata.UID
 		}
-		uid, err := mint(KindWindow, preferred)
+		uid, err := mint(KindWindow, target.Metadata.UID, preferred)
 		if err != nil {
 			return SnapshotProjectionPlan{}, err
 		}
@@ -178,6 +333,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 		if err := reserveProjectedName(&desired, op, target.Metadata.UID, KindWindow, &meta, oldWindowMeta(oldWindow), sw.Metadata); err != nil {
 			return SnapshotProjectionPlan{}, err
 		}
+		recordProjectedName(projectedNames, target.Metadata.UID, KindWindow, meta)
 		window := Window{APIVersion: APIVersion, Kind: KindWindow, Metadata: meta}
 		desired.Windows = append(desired.Windows, window)
 		if oldWindow != nil {
@@ -217,7 +373,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 					preferredPane = copy.Metadata.UID
 					shellPos++
 				}
-				paneUID, err := mint(KindPane, preferredPane)
+				paneUID, err := mint(KindPane, uid, preferredPane)
 				if err != nil {
 					return SnapshotProjectionPlan{}, err
 				}
@@ -229,6 +385,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 				if err := reserveProjectedName(&desired, op, uid, KindPane, &paneMeta, oldPaneMeta(oldPane), sp.Metadata); err != nil {
 					return SnapshotProjectionPlan{}, err
 				}
+				recordProjectedName(projectedNames, target.Metadata.UID, KindPane, paneMeta)
 				pane := Pane{APIVersion: APIVersion, Kind: KindPane, Metadata: paneMeta, Spec: PaneSpec{Role: PaneRoleShell, CWD: sp.CWD, Command: command}}
 				desired.Panes = append(desired.Panes, pane)
 				projectedPanes[paneUID] = true
@@ -282,21 +439,28 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 					}
 					agentPos++
 				}
-				agentUID, err := mint(KindAgent, preferredAgent)
+				if sp.AgentMetadata != nil {
+					preferredAgent = sp.AgentMetadata.UID
+				}
+				agentUID, err := mint(KindAgent, uid, preferredAgent)
 				if err != nil {
 					return SnapshotProjectionPlan{}, err
 				}
 				if sp.Metadata != nil && (sp.Metadata.OwnerKind != string(KindAgent) || sp.Metadata.OwnerUID != agentUID) {
 					return SnapshotProjectionPlan{}, inputErr(op, ErrInvalidRegistry, "snapshot Agent Pane uid %q owner %s/%s does not match Agent %q", sp.Metadata.UID, sp.Metadata.OwnerKind, sp.Metadata.OwnerUID, agentUID)
 				}
-				paneUID, err := mint(KindPane, preferredPane)
+				if sp.AgentMetadata != nil && (sp.AgentMetadata.UID != agentUID || sp.AgentMetadata.OwnerKind != string(KindWindow) || sp.AgentMetadata.OwnerUID != uid) {
+					return SnapshotProjectionPlan{}, inputErr(op, ErrInvalidRegistry, "snapshot Agent uid %q owner %s/%s does not match Window %q", sp.AgentMetadata.UID, sp.AgentMetadata.OwnerKind, sp.AgentMetadata.OwnerUID, uid)
+				}
+				paneUID, err := mint(KindPane, agentUID, preferredPane)
 				if err != nil {
 					return SnapshotProjectionPlan{}, err
 				}
-				agentMeta := projectedMeta(KindAgent, agentUID, uid, sp.Recipe.Agent, map[string]string{"projmux.io/topic": sp.Recipe.Topic}, stamp, oldAgentMeta(oldAgent), nil)
-				if err := reserveProjectedName(&desired, op, uid, KindAgent, &agentMeta, oldAgentMeta(oldAgent), nil); err != nil {
+				agentMeta := projectedMeta(KindAgent, agentUID, uid, sp.Recipe.Agent, map[string]string{"projmux.io/topic": sp.Recipe.Topic}, stamp, oldAgentMeta(oldAgent), sp.AgentMetadata)
+				if err := reserveProjectedName(&desired, op, uid, KindAgent, &agentMeta, oldAgentMeta(oldAgent), sp.AgentMetadata); err != nil {
 					return SnapshotProjectionPlan{}, err
 				}
+				recordProjectedName(projectedNames, target.Metadata.UID, KindAgent, agentMeta)
 				agent := Agent{APIVersion: APIVersion, Kind: KindAgent, Metadata: agentMeta, Spec: AgentSpec{Provider: NormalizeProvider(sp.Recipe.Agent), Workspace: AgentWorkspace{CWD: sp.CWD}}, Status: AgentStatus{Phase: PhaseOffline, Interaction: AgentInteraction{Kind: InteractionUnknown}, Activation: AgentActivation{State: ActivationNotRequested}, LastTransitionAt: snap.SavedAt.UTC()}}
 				if sp.Recipe.ResumeID != "" {
 					agent.Status.SessionRef, _ = NewAgentSessionRef(AgentSessionObservation{Provider: sp.Recipe.Agent, SessionID: sp.Recipe.ResumeID, ThreadID: sp.Recipe.ResumeID}, snap.SavedAt.UTC())
@@ -306,6 +470,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 				if err := reserveProjectedName(&desired, op, agentUID, KindPane, &paneMeta, oldPaneMeta(oldPane), sp.Metadata); err != nil {
 					return SnapshotProjectionPlan{}, err
 				}
+				recordProjectedName(projectedNames, target.Metadata.UID, KindPane, paneMeta)
 				pane := Pane{APIVersion: APIVersion, Kind: KindPane, Metadata: paneMeta, Spec: PaneSpec{Role: PaneRoleAgent, CWD: sp.CWD}}
 				agent.Status.PaneRef = paneUID
 				desired.Agents = append(desired.Agents, agent)
@@ -338,7 +503,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 					preferred = copy.Metadata.UID
 				}
 			}
-			paneUID, err := mint(KindPane, preferred)
+			paneUID, err := mint(KindPane, uid, preferred)
 			if err != nil {
 				return SnapshotProjectionPlan{}, err
 			}
@@ -346,6 +511,7 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 			if err := reserveProjectedName(&desired, op, uid, KindPane, &paneMeta, oldPaneMeta(oldPane), nil); err != nil {
 				return SnapshotProjectionPlan{}, err
 			}
+			recordProjectedName(projectedNames, target.Metadata.UID, KindPane, paneMeta)
 			pane := Pane{APIVersion: APIVersion, Kind: KindPane, Metadata: paneMeta, Spec: PaneSpec{Role: PaneRoleShell, CWD: target.Spec.Root}}
 			desired.Panes = append(desired.Panes, pane)
 			projectedPanes[paneUID] = true
@@ -382,8 +548,6 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 		}
 		desired.Windows = append(desired.Windows, anchorWindow)
 		desired.Panes = append(desired.Panes, anchorPane)
-		desired.putReservation(target.Metadata.UID, KindWindow, anchorWindow.Metadata.Name, anchorWindow.Metadata.UID)
-		desired.putReservation(anchorWindow.Metadata.UID, KindPane, anchorPane.Metadata.Name, anchorPane.Metadata.UID)
 		primaryWindowUID = anchorWindow.Metadata.UID
 		plan.PreservedUIDs++
 		if reusedPane {
@@ -403,6 +567,16 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 	plan.DeletedWindows = plan.ReplacedWindows - preservedWindows
 	plan.DeletedPanes = plan.ReplacedPanes - preservedPanes
 	plan.DeletedAgents = plan.ReplacedAgents - preservedAgents
+	nameRepairs, err := desired.canonicalizeRootConflictsWithReport(target.Metadata.UID)
+	if err != nil {
+		return SnapshotProjectionPlan{}, fmt.Errorf("%s canonicalize legacy snapshot names: %w", op, err)
+	}
+	if len(nameRepairs) != 0 && metadataBearing && provenance == SchemaVersion {
+		return SnapshotProjectionPlan{}, inputErr(op, ErrNameConflict,
+			"current-v%d snapshot contains a root-wide same-kind name collision; nothing was changed", provenance)
+	}
+	plan.Migration.NameRepairs = nameRepairs
+	rebuildProjectedReservations(before, &desired)
 	if err := desired.Validate(); err != nil {
 		return SnapshotProjectionPlan{}, fmt.Errorf("%s produced invalid desired Registry: %w", op, err)
 	}
@@ -412,6 +586,69 @@ func PlanSnapshotProjection(registry Registry, targetProjectUID string, snap ses
 		plan.Desired.UpdatedAt = stamp
 	}
 	return plan, nil
+}
+
+type nameSlot struct {
+	scope string
+	kind  Kind
+	name  string
+}
+
+func projectedNameIndex(registry Registry) (map[nameSlot]string, error) {
+	resources, err := migrationResources(&registry)
+	if err != nil {
+		return nil, err
+	}
+	index := make(map[nameSlot]string, len(resources))
+	for _, resource := range resources {
+		key := nameSlot{scope: resource.root, kind: resource.kind, name: *resource.name}
+		if _, exists := index[key]; !exists {
+			index[key] = resource.uid
+		}
+	}
+	return index, nil
+}
+
+func recordProjectedName(index map[nameSlot]string, root string, kind Kind, meta ObjectMeta) {
+	key := nameSlot{scope: root, kind: kind, name: meta.Name}
+	if _, exists := index[key]; !exists {
+		index[key] = meta.UID
+	}
+}
+
+// rebuildProjectedReservations reconstructs the authoritative v4 table while
+// preserving the byte-significant order of every reservation that survives a
+// projection. New resources are appended in canonical order, so a legacy
+// snapshot is deterministic and a current snapshot can remain an exact no-op.
+func rebuildProjectedReservations(before Registry, desired *Registry) {
+	resources, err := migrationResources(desired)
+	if err != nil {
+		return
+	}
+	want := make(map[string]NameReservation, len(resources))
+	for _, resource := range resources {
+		want[resource.uid] = NameReservation{
+			Scope: resource.root, Kind: resource.kind, Name: *resource.name, UID: resource.uid,
+		}
+	}
+	seen := make(map[string]bool, len(want))
+	reservations := make([]NameReservation, 0, len(want))
+	for _, existing := range before.NameReservations {
+		reservation, ok := want[existing.UID]
+		if !ok || seen[existing.UID] {
+			continue
+		}
+		reservations = append(reservations, reservation)
+		seen[existing.UID] = true
+	}
+	var added []NameReservation
+	for uid, reservation := range want {
+		if !seen[uid] {
+			added = append(added, reservation)
+		}
+	}
+	sortNameReservations(added)
+	desired.NameReservations = append(reservations, added...)
 }
 
 func sameProjectedConversation(old, projected *AgentSessionRef) bool {
@@ -517,14 +754,9 @@ func canonicalProjectShell(r Registry, projectUID string, createdAt time.Time, n
 		if paneUID == "" {
 			return Window{}, Pane{}, false, stateErr("canonical project shell projection", ErrInvalidRegistry, "could not allocate a unique Pane uid after %d attempts", maxSnapshotUIDAllocationAttempts)
 		}
-		nameRegistry := r.Clone()
-		name, err := nameRegistry.allocateName("canonical project shell projection", w.Metadata.UID, KindPane, "shell", paneUID)
-		if err != nil {
-			return Window{}, Pane{}, false, err
-		}
 		created := Pane{
 			APIVersion: APIVersion, Kind: KindPane,
-			Metadata: ObjectMeta{UID: paneUID, Name: name, OwnerRef: &OwnerRef{Kind: KindWindow, UID: w.Metadata.UID}, CreatedAt: createdAt.UTC()},
+			Metadata: ObjectMeta{UID: paneUID, Name: paneUID, OwnerRef: &OwnerRef{Kind: KindWindow, UID: w.Metadata.UID}, CreatedAt: createdAt.UTC()},
 			Spec:     PaneSpec{Role: PaneRoleShell, CWD: p.Spec.Root},
 		}
 		pane = &created
@@ -567,7 +799,7 @@ func oldAgentMeta(v *Agent) *ObjectMeta {
 	m := v.Metadata.Clone()
 	return &m
 }
-func projectedMeta(kind Kind, uid, owner, fallback string, annotations map[string]string, now time.Time, old *ObjectMeta, snap *sessionstate.ResourceMetadata) ObjectMeta {
+func projectedMeta(kind Kind, uid, owner, _ string, annotations map[string]string, now time.Time, old *ObjectMeta, snap *sessionstate.ResourceMetadata) ObjectMeta {
 	if old != nil {
 		m := old.Clone()
 		m.OwnerRef = &OwnerRef{Kind: ownerKindFor(kind), UID: owner}
@@ -582,7 +814,7 @@ func projectedMeta(kind Kind, uid, owner, fallback string, annotations map[strin
 		}
 		return m
 	}
-	name := strings.TrimSpace(fallback)
+	name := uid
 	labels := map[string]string(nil)
 	if snap != nil {
 		if strings.TrimSpace(snap.Name) != "" {
@@ -590,10 +822,6 @@ func projectedMeta(kind Kind, uid, owner, fallback string, annotations map[strin
 		}
 		labels = cloneStringMap(snap.Labels)
 	}
-	if name == "" {
-		name = strings.ToLower(string(kind))
-	}
-	name = SanitizeNameBase(name)
 	return ObjectMeta{UID: uid, Name: name, Labels: labels, Annotations: cloneStringMap(annotations), OwnerRef: &OwnerRef{Kind: ownerKindFor(kind), UID: owner}, CreatedAt: now}
 }
 
@@ -602,14 +830,12 @@ func reserveProjectedName(registry *Registry, op, scope string, kind Kind, meta 
 		return inputErr(op, ErrInvalidRegistry, "%s projection metadata is missing", kind)
 	}
 	if old == nil && (snap == nil || strings.TrimSpace(snap.Name) == "") {
-		name, err := registry.allocateName(op, scope, kind, meta.Name, meta.UID)
-		if err != nil {
-			return err
-		}
-		meta.Name = name
-		return nil
+		meta.Name = meta.UID
 	}
-	return registry.reserveExplicitName(op, scope, kind, meta.Name, meta.UID)
+	if err := ValidateName(meta.Name); err != nil {
+		return err
+	}
+	return nil
 }
 func ownerKindFor(kind Kind) Kind {
 	if kind == KindWindow {

@@ -80,51 +80,13 @@ func TestContextProjectorLiveOverlayRequiresExactUIDBinding(t *testing.T) {
 	}
 }
 
-func TestStoredPresentationNeverChangesProjectedContext(t *testing.T) {
-	t.Parallel()
-
-	registry := contextFixtureRegistry()
-	before := NewContextProjector(registry)
-	for i := range registry.Projects {
-		registry.Projects[i].Metadata.DisplayName = "stored project presentation"
-	}
-	for i := range registry.ControlSessions {
-		registry.ControlSessions[i].Metadata.DisplayName = "stored control presentation"
-	}
-	for i := range registry.Windows {
-		registry.Windows[i].Metadata.DisplayName = "stored window presentation"
-	}
-	for i := range registry.Agents {
-		registry.Agents[i].Metadata.DisplayName = "stored agent presentation"
-	}
-	for i := range registry.Panes {
-		registry.Panes[i].Metadata.DisplayName = "stored pane presentation"
-		registry.Panes[i].Status.DisplayTitle = "stored pane title"
-	}
-	after := NewContextProjector(registry)
-	for _, resource := range []struct {
-		kind coremetadata.Kind
-		uid  string
-	}{
-		{coremetadata.KindProject, "project"},
-		{coremetadata.KindControlSession, "control"},
-		{coremetadata.KindWindow, "window-topic"},
-		{coremetadata.KindAgent, "agent-provider"},
-		{coremetadata.KindPane, "pane-empty"},
-	} {
-		if got, want := after.For(resource.kind, resource.uid), before.For(resource.kind, resource.uid); !reflect.DeepEqual(got, want) {
-			t.Fatalf("stored presentation changed %s/%s context: got %+v, want %+v", resource.kind, resource.uid, got, want)
-		}
-	}
-}
-
 func contextFixtureRegistry() coremetadata.Registry {
 	registry := coremetadata.NewRegistry()
 	owner := func(kind coremetadata.Kind, uid string) *coremetadata.OwnerRef {
 		return &coremetadata.OwnerRef{Kind: kind, UID: uid}
 	}
 	meta := func(uid, name string, ref *coremetadata.OwnerRef) coremetadata.ObjectMeta {
-		return coremetadata.ObjectMeta{UID: uid, Name: name, OwnerRef: ref, DisplayName: "stored " + name}
+		return coremetadata.ObjectMeta{UID: uid, Name: name, OwnerRef: ref}
 	}
 	registry.Projects = []coremetadata.Project{{
 		Kind: coremetadata.KindProject, Metadata: meta("project", "project", nil), Spec: coremetadata.ProjectSpec{Root: "/src/pretty project"},
@@ -144,7 +106,7 @@ func contextFixtureRegistry() coremetadata.Registry {
 	}
 	registry.Agents[0].Metadata.Annotations = map[string]string{coremetadata.AnnotationAgentTopic: "review release"}
 	registry.Panes = []coremetadata.Pane{
-		{Kind: coremetadata.KindPane, Metadata: meta("pane-topic", "agent-pane", owner(coremetadata.KindAgent, "agent-topic")), Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleAgent, Command: "/usr/bin/codex"}, Status: coremetadata.PaneStatus{DisplayTitle: "stored topic pane title"}},
+		{Kind: coremetadata.KindPane, Metadata: meta("pane-topic", "agent-pane", owner(coremetadata.KindAgent, "agent-topic")), Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleAgent, Command: "/usr/bin/codex"}},
 		{Kind: coremetadata.KindPane, Metadata: meta("pane-provider", "provider-pane", owner(coremetadata.KindAgent, "agent-provider")), Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleAgent}},
 		{Kind: coremetadata.KindPane, Metadata: meta("pane-command", "command-pane", owner(coremetadata.KindWindow, "window-command")), Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, Command: "/usr/bin/nvim ."}},
 		{Kind: coremetadata.KindPane, Metadata: meta("pane-empty", "stable-pane", owner(coremetadata.KindWindow, "window-empty")), Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell}},

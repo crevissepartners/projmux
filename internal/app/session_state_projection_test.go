@@ -70,7 +70,7 @@ func projectionSnapshot(t *testing.T, registry coremetadata.Registry) coresessio
 	window := registry.WindowsOf(project.Metadata.UID)[0]
 	pane := registry.PanesOf(window.Metadata.UID)[0]
 	return coresessionstate.Snapshot{Version: coresessionstate.Version, Session: "saved-beta", DefaultCWD: project.Spec.Root, SavedAt: resourceFixtureClock,
-		Metadata: &coresessionstate.ResourceMetadata{UID: project.Metadata.UID, Name: project.Metadata.Name}, Windows: []coresessionstate.Window{{Index: 0, Name: window.Metadata.Name, ActivePaneIndex: 0, Metadata: &coresessionstate.ResourceMetadata{UID: window.Metadata.UID, Name: window.Metadata.Name, OwnerKind: string(coremetadata.KindProject), OwnerUID: project.Metadata.UID}, Panes: []coresessionstate.Pane{{Index: 0, CWD: "/srv/beta/restored", Metadata: &coresessionstate.ResourceMetadata{UID: pane.Metadata.UID, Name: pane.Metadata.Name, OwnerKind: string(coremetadata.KindWindow), OwnerUID: window.Metadata.UID}, Recipe: coresessionstate.ShellRecipe()}}}}}
+		Metadata: &coresessionstate.ResourceMetadata{UID: project.Metadata.UID, Name: project.Metadata.Name, RegistrySchemaVersion: coremetadata.SchemaVersion}, Windows: []coresessionstate.Window{{Index: 0, Name: window.Metadata.Name, ActivePaneIndex: 0, Metadata: &coresessionstate.ResourceMetadata{UID: window.Metadata.UID, Name: window.Metadata.Name, OwnerKind: string(coremetadata.KindProject), OwnerUID: project.Metadata.UID, RegistrySchemaVersion: coremetadata.SchemaVersion}, Panes: []coresessionstate.Pane{{Index: 0, CWD: "/srv/beta/restored", Metadata: &coresessionstate.ResourceMetadata{UID: pane.Metadata.UID, Name: pane.Metadata.Name, OwnerKind: string(coremetadata.KindWindow), OwnerUID: window.Metadata.UID, RegistrySchemaVersion: coremetadata.SchemaVersion}, Recipe: coresessionstate.ShellRecipe()}}}}}
 }
 
 func TestRestoreSnapshotDryRunPlansExactProjectWithZeroWrites(t *testing.T) {
@@ -408,5 +408,67 @@ func TestRestoreSnapshotInvalidProjectionRefusesBeforeTrustOrTmux(t *testing.T) 
 	}
 	if !bytes.Equal(snapshotBefore, snapshotAfter) {
 		t.Fatal("invalid projection changed source snapshot")
+	}
+}
+
+func TestRestoreCurrentV4SnapshotRootCollisionRefusesEveryWrite(t *testing.T) {
+	resources := newFakeResourceStore(t)
+	registryBefore := resources.registry.Clone()
+	snapshots := sessionstate.NewStore(t.TempDir())
+	snap := projectionSnapshot(t, resources.registry)
+	snap.Windows[0].Panes[0].Metadata.Name = "duplicate-across-windows"
+	snap.Windows = append(snap.Windows, coresessionstate.Window{
+		Index:           1,
+		Name:            "snapshot-window-collision",
+		ActivePaneIndex: 0,
+		Metadata: &coresessionstate.ResourceMetadata{
+			UID: "snapshot-window-collision", Name: "snapshot-window-collision",
+			OwnerKind: string(coremetadata.KindProject), OwnerUID: snap.Metadata.UID,
+			RegistrySchemaVersion: coremetadata.SchemaVersion,
+		},
+		Panes: []coresessionstate.Pane{{
+			Index: 0, CWD: "/srv/beta/restored",
+			Metadata: &coresessionstate.ResourceMetadata{
+				UID: "snapshot-pane-collision", Name: "duplicate-across-windows",
+				OwnerKind: string(coremetadata.KindWindow), OwnerUID: "snapshot-window-collision",
+				RegistrySchemaVersion: coremetadata.SchemaVersion,
+			},
+			Recipe: coresessionstate.ShellRecipe(),
+		}},
+	})
+	if err := snapshots.Save(snap); err != nil {
+		t.Fatal(err)
+	}
+	path, err := snapshots.Path("saved-beta")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotBefore, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &projectionMissingSessionRunner{}
+	authorizer := &projectionTrustAuthorizer{allowed: true}
+	cmd := &sessionStateCommand{
+		resources: resources.store(), sessionStore: func() (sessionstate.Store, error) { return snapshots, nil },
+		now: func() time.Time { return resourceFixtureClock.Add(time.Hour) }, runner: runner,
+		projectTopology: &fakeProjectTopologyMaterializer{materialized: true}, projectTrust: authorizer,
+	}
+	err = cmd.runRestore([]string{"--session", "saved-beta", "--project", "uid:prj-beta", "--yes"}, &bytes.Buffer{}, &bytes.Buffer{})
+	if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "current-v4 snapshot") {
+		t.Fatalf("error=%v, want current-v4 name-conflict usage refusal", err)
+	}
+	if len(authorizer.calls) != 0 || len(runner.calls) != 0 || resources.transactions != 0 || resources.writes != 0 {
+		t.Fatalf("collision refusal trust=%q tmux=%q transactions=%d Registry writes=%d", authorizer.calls, runner.calls, resources.transactions, resources.writes)
+	}
+	if !reflect.DeepEqual(registryBefore, resources.registry) {
+		t.Fatal("current-v4 collision changed Registry")
+	}
+	snapshotAfter, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(snapshotBefore, snapshotAfter) {
+		t.Fatal("current-v4 collision changed source snapshot")
 	}
 }

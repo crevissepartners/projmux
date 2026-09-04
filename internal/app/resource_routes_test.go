@@ -43,30 +43,38 @@ func addFixtureCanonicalShell(registry *coremetadata.Registry, projectUID, windo
 	})
 	registry.NameReservations = append(registry.NameReservations,
 		coremetadata.NameReservation{Scope: projectUID, Kind: coremetadata.KindWindow, Name: "main", UID: windowUID},
-		coremetadata.NameReservation{Scope: windowUID, Kind: coremetadata.KindPane, Name: "shell", UID: paneUID},
+		coremetadata.NameReservation{Scope: projectUID, Kind: coremetadata.KindPane, Name: "shell", UID: paneUID},
 	)
 }
 
 // resourceFixtureRegistry is the shared fixture of the canonical verb-to-kind
 // routes.
 //
-// It is deliberately adversarial for the selector contract: two Projects share
-// a displayName, a Window name repeats across Projects, a Pane name repeats
-// across owner scopes, an Agent name repeats across Windows, one Window owns a
-// running Agent with a managed Pane, and one Project carries a MissingRoot
-// condition observed long ago with no live session.
+// It is deliberately adversarial for the selector contract: Window, Pane, and
+// Agent names repeat across root owners, one Window owns a running Agent with a
+// managed Pane, and one Project carries a MissingRoot condition observed long
+// ago with no live session.
 func resourceFixtureRegistry(t *testing.T) coremetadata.Registry {
 	t.Helper()
 
 	registry := coremetadata.NewRegistry()
 	reserve := func(scope string, kind coremetadata.Kind, name, uid string) {
+		if kind == coremetadata.KindPane || kind == coremetadata.KindAgent {
+			if window, ok := registry.Window(scope); ok {
+				scope = window.Metadata.OwnerUID()
+			} else if agent, ok := registry.Agent(scope); ok {
+				if window, ok := registry.Window(agent.Metadata.OwnerUID()); ok {
+					scope = window.Metadata.OwnerUID()
+				}
+			}
+		}
 		registry.NameReservations = append(registry.NameReservations, coremetadata.NameReservation{
 			Scope: scope, Kind: kind, Name: name, UID: uid,
 		})
 	}
-	meta := func(uid, name, displayName string, owner *coremetadata.OwnerRef, labels map[string]string) coremetadata.ObjectMeta {
+	meta := func(uid, name, _ string, owner *coremetadata.OwnerRef, labels map[string]string) coremetadata.ObjectMeta {
 		return coremetadata.ObjectMeta{
-			UID: uid, Name: name, DisplayName: displayName,
+			UID: uid, Name: name,
 			Labels: labels, OwnerRef: owner, CreatedAt: resourceFixtureClock,
 		}
 	}
@@ -150,7 +158,7 @@ func resourceFixtureRegistry(t *testing.T) coremetadata.Registry {
 		},
 		{
 			APIVersion: coremetadata.APIVersion, Kind: coremetadata.KindPane,
-			Metadata: meta("pan-alpha-review", "zsh", "", ownedBy(coremetadata.KindWindow, "win-alpha-review"), map[string]string{"role": "shell"}),
+			Metadata: meta("pan-alpha-review", "review-zsh", "", ownedBy(coremetadata.KindWindow, "win-alpha-review"), map[string]string{"role": "shell"}),
 			Spec:     coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: "/srv/alpha"},
 		},
 		{
@@ -166,8 +174,8 @@ func resourceFixtureRegistry(t *testing.T) coremetadata.Registry {
 	}
 	reserve("win-alpha-main", coremetadata.KindPane, "zsh", "pan-alpha-zsh")
 	reserve("win-alpha-main", coremetadata.KindPane, "log", "pan-alpha-log")
-	reserve("agt-alpha-codex", coremetadata.KindPane, "codex-pane", "pan-alpha-codex")
-	reserve("win-alpha-review", coremetadata.KindPane, "zsh", "pan-alpha-review")
+	reserve("prj-alpha", coremetadata.KindPane, "codex-pane", "pan-alpha-codex")
+	reserve("win-alpha-review", coremetadata.KindPane, "review-zsh", "pan-alpha-review")
 	reserve("win-beta-main", coremetadata.KindPane, "zsh", "pan-beta-zsh")
 	reserve("win-gone-main", coremetadata.KindPane, "zsh", "pan-gone-zsh")
 
@@ -193,6 +201,7 @@ func resourceFixtureRegistry(t *testing.T) coremetadata.Registry {
 	reserve("win-alpha-main", coremetadata.KindAgent, "codex", "agt-alpha-codex")
 	reserve("win-beta-main", coremetadata.KindAgent, "codex", "agt-beta-codex")
 
+	registry = registry.Normalize()
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("resource fixture is not a valid registry: %v", err)
 	}
@@ -391,7 +400,7 @@ func TestGetReadFamilyResolvesEveryKindWithListCardinality(t *testing.T) {
 			want: "log\n",
 		},
 		{
-			name: "agents are window scoped",
+			name: "agents use the selected root and Window target set",
 			args: []string{"agents", "--project", "alpha", "-o", "uid"},
 			want: "agt-alpha-codex\n",
 		},

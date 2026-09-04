@@ -703,6 +703,10 @@ func (c *createCommand) resolveSplitTargets(
 	if err != nil {
 		return panePlan{}, nil, err
 	}
+	if flags.name != "" && len(plan.targets)+len(plan.missingWindowNames) > 1 {
+		return panePlan{}, nil, MapMetadataError(coremetadata.ExplicitNameCardinalityError(
+			spelling, len(plan.targets)+len(plan.missingWindowNames)))
+	}
 	var windows []windowWork
 	for _, missing := range plan.missingWindowNames {
 		work, err := c.allocateWindow(working, mutator, project, windowRequest{
@@ -806,8 +810,8 @@ func unresolvedWindowNames(registry coremetadata.Registry, project coremetadata.
 
 // resolveAnchor fixes the split anchor of one target Window.
 //
-// An explicit --pane is resolved inside that Window's own owner scope and must
-// be exactly one. With no --pane the persisted role-agnostic anchorPaneRef is
+// An explicit --pane is resolved among that Window's direct and Agent-owned
+// Panes and must be exactly one. With no --pane the persisted role-agnostic anchorPaneRef is
 // the anchor: an explicitly scoped create has deliberately no fallback to the
 // focused, last-used, or another live Pane, and a missing or stale ref is a
 // usage error rather than a silent repair.
@@ -975,16 +979,6 @@ func (c *createCommand) materializeWindow(
 	if claimErr := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, work.window.Metadata.UID, ledger); claimErr != nil {
 		return errors.Join(err, claimErr)
 	}
-	// The exact attributed Window is immediately renamed by MirrorWindow to
-	// the stable allocated name. Persist that same duplicate-allowed display
-	// value before the mirror so a later lifecycle reconcile has no Registry
-	// drift to discover. This is intentionally after the exact @N UID claim:
-	// an attribution or claim failure leaves the private transaction unchanged.
-	projected, projectErr := mutator.ObserveWindowDisplayName(working, work.window.Metadata.UID, work.window.Metadata.Name)
-	if projectErr != nil {
-		return errors.Join(err, projectErr)
-	}
-	work.window = projected
 	if mirrorErr := c.runtime.mirrorWindow(ctx, created.WindowID, work.window); mirrorErr != nil {
 		return errors.Join(err, mirrorErr)
 	}
@@ -1222,11 +1216,6 @@ func (c *createCommand) adoptInitialWindow(ctx context.Context, registry *coreme
 	if err := c.runtime.claimRuntimeUIDForRollback(ctx, runtimeWindow, created.WindowID, first.Metadata.UID, ledger); err != nil {
 		return err
 	}
-	projected, err := mutator.ObserveWindowDisplayName(registry, first.Metadata.UID, first.Metadata.Name)
-	if err != nil {
-		return err
-	}
-	first = projected
 	if err := c.runtime.mirrorWindow(ctx, created.WindowID, first); err != nil {
 		return err
 	}

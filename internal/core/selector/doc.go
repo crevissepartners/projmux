@@ -24,8 +24,8 @@
 //   - Implicit comma splitting. A selector value is one literal token, so
 //     "--window a,b" is a single name. metadata.ValidateName rejects ',' so no
 //     resource can ever carry that name and the selector resolves to nothing.
-//   - metadata.displayName. It is duplicate-allowed by contract and therefore
-//     can never be identity. It is read here only as ambiguity context.
+//   - Invocation-scoped presentation context. It may duplicate and can never
+//     be identity; ambiguity rendering receives it only after selection.
 //   - Filesystem paths. Project spec.root is spec, not a query key, and '/'
 //     cannot appear in a valid name.
 //   - tmux ids. '%N', '@N', and '$N' are status transport; '%', '@', and '$'

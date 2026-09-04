@@ -27,8 +27,8 @@ func (r Ref) IsUID() bool { return r.UID != "" }
 // ParseRef parses one --project/--window/--pane occurrence.
 //
 // The value is taken as a single literal token. It is never split on commas,
-// never interpreted as a path, and never matched against a displayName or a
-// tmux id; see the package documentation for why each of those is excluded.
+// never interpreted as a path, and never matched against presentation context
+// or a tmux id; see the package documentation for why each is excluded.
 func ParseRef(kind metadata.Kind, raw string) (Ref, error) {
 	flag := flagNameFor(kind)
 	if strings.TrimSpace(raw) == "" {
@@ -368,10 +368,10 @@ func (r *Resolver) ResolveWindows(q Query) (Resolution, error) {
 
 // ResolvePanes resolves the Pane target set for q.
 //
-// The Pane universe is owner-scoped: for every Window in scope it collects the
-// Window's own shell Panes plus the managed Panes owned by that Window's
-// Agents. A Pane name is unique inside its owner scope, not globally, so the
-// same name legitimately appears under several Windows.
+// The Pane universe follows the selected Window set: for every Window in scope
+// it collects the Window's own shell Panes plus the managed Panes owned by that
+// Window's Agents. A Pane name is unique root-wide, so it may repeat only when
+// those Windows belong to different Project or ControlSession roots.
 func (r *Resolver) ResolvePanes(q Query) (Resolution, error) {
 	windows, err := r.selectedWindows(q)
 	if err != nil {
@@ -391,9 +391,9 @@ func (r *Resolver) ResolvePanes(q Query) (Resolution, error) {
 
 // ResolveAgents resolves the Agent target set for q.
 //
-// Agents are Window-owned, so the enclosing scope is the same --project /
-// --window scope the Pane resolution uses. Agent name uniqueness is Window
-// scoped, so the same Agent name legitimately appears under several Windows.
+// Agents remain Window-owned, so the enclosing target scope is the same
+// --project / --window scope the Pane resolution uses. Agent names are unique
+// root-wide and may repeat only across distinct Project or ControlSession roots.
 func (r *Resolver) ResolveAgents(q Query) (Resolution, error) {
 	windows, err := r.selectedWindows(q)
 	if err != nil {
@@ -509,8 +509,8 @@ func runPipeline[T any](
 // matchesRef reports whether meta satisfies one name/uid occurrence.
 //
 // Exactly two comparisons are possible: an exact uid equality or an exact name
-// equality. displayName, spec.root, and any tmux transport handle are never
-// consulted.
+// equality. Presentation context, spec.root, and any tmux transport handle are
+// never consulted.
 func matchesRef(ref Ref, meta metadata.ObjectMeta) bool {
 	if ref.IsUID() {
 		return meta.UID == ref.UID

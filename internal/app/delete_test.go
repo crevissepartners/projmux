@@ -716,7 +716,7 @@ func TestDeleteOfflinePanePreservesResumedLiveAgent(t *testing.T) {
 	resumed.Status.Activation.Generation = "gen-live"
 	store.registry.Panes = append(store.registry.Panes, resumed)
 	store.registry.NameReservations = append(store.registry.NameReservations, coremetadata.NameReservation{
-		Scope: "agt-alpha-codex", Kind: coremetadata.KindPane, Name: resumed.Metadata.Name, UID: resumed.Metadata.UID,
+		Scope: "prj-alpha", Kind: coremetadata.KindPane, Name: resumed.Metadata.Name, UID: resumed.Metadata.UID,
 	})
 	agent, _ := store.registry.Agent("agt-alpha-codex")
 	agent.Status.PaneRef = resumed.Metadata.UID
@@ -1398,7 +1398,7 @@ func TestDeleteAbortsWhenTheCascadePlanChangesBeforeExecution(t *testing.T) {
 			Spec: coremetadata.PaneSpec{Role: coremetadata.PaneRoleShell, CWD: "/srv/alpha"},
 		})
 		store.registry.NameReservations = append(store.registry.NameReservations, coremetadata.NameReservation{
-			Scope: "win-alpha-main", Kind: coremetadata.KindPane, Name: "late", UID: "pan-alpha-late",
+			Scope: "prj-alpha", Kind: coremetadata.KindPane, Name: "late", UID: "pan-alpha-late",
 		})
 		beforeExecution = store.snapshot()
 		return commit(fn)

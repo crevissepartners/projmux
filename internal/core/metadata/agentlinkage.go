@@ -245,8 +245,7 @@ func (m Mutator) linkAgentPaneTx(txn *Transaction, reg *Registry, op, windowUID,
 	if pane.Metadata.OwnerUID() != windowUID {
 		return AgentLinkage{Kind: AgentLinkNone}, nil
 	}
-	nameBase := agentNameBaseFor(observed)
-	if nameBase == "" {
+	if ResolveAgentPaneAuthority(observed) != AgentPaneAuthorityLaunch {
 		return AgentLinkage{Kind: AgentLinkNone}, nil
 	}
 	if AgentPanePromotionRefusal(reg, windowUID, paneUID, observed) != "" {
@@ -266,7 +265,7 @@ func (m Mutator) linkAgentPaneTx(txn *Transaction, reg *Registry, op, windowUID,
 	}
 	if !ok {
 		kind = AgentLinkMinted
-		minted, err := m.mintLinkedAgentTx(txn, reg, op, windowUID, observed, nameBase, now)
+		minted, err := m.mintLinkedAgentTx(txn, reg, op, windowUID, observed, now)
 		if err != nil {
 			return AgentLinkage{}, err
 		}
@@ -365,18 +364,14 @@ func (m Mutator) bindAgentToPane(agent *Agent, paneUID string, now time.Time) {
 
 // mintLinkedAgentTx creates the Agent a live agent pane has never had.
 //
-// It is the Agent-layer twin of ImportOrphanPane and follows the same rules: the
-// name comes from the registry's own allocator over the provider name base, the
-// topic goes to a non-identifying annotation rather than to a name, and nothing
-// that already exists is touched. The Agent is created Pending and the caller
-// transitions it to Running once the Pane is actually attached, which is the
-// order CreateAgent + AttachAgentPane already establish.
-func (m Mutator) mintLinkedAgentTx(txn *Transaction, reg *Registry, op, windowUID string, observed LegacyPane, nameBase string, now time.Time) (string, error) {
-	agentUID, err := m.mintUID(KindAgent)
-	if err != nil {
-		return "", err
-	}
-	name, err := reg.allocateName(op, windowUID, KindAgent, nameBase, agentUID)
+// It is the Agent-layer twin of ImportOrphanPane and follows the same rules:
+// the automatic name is the exact minted UID, the topic goes to a
+// non-identifying annotation, and nothing that already exists is touched. The
+// Agent is created Pending and the caller transitions it to Running once the
+// Pane is actually attached, which is the order CreateAgent + AttachAgentPane
+// already establish.
+func (m Mutator) mintLinkedAgentTx(txn *Transaction, reg *Registry, op, windowUID string, observed LegacyPane, now time.Time) (string, error) {
+	agentUID, name, err := m.mintAndReserveName(reg, op, windowUID, KindAgent, "")
 	if err != nil {
 		return "", err
 	}
@@ -415,8 +410,8 @@ func (m Mutator) mintLinkedAgentTx(txn *Transaction, reg *Registry, op, windowUI
 // leaving it pointing at the Window and expressing the link only in
 // status.paneRef would create a second, disagreeing source of truth.
 //
-// It reports false and writes nothing when the name cannot move scope, so a
-// caller never ends up with a resource and its reservation in different scopes.
+// The direct owner changes, but the Project/ControlSession root does not. The
+// root-wide Pane reservation must therefore remain byte-identical.
 func (r *Registry) promotePaneToAgent(paneUID, windowUID, agentUID string) bool {
 	pane, ok := r.Pane(paneUID)
 	if !ok {
@@ -435,10 +430,15 @@ func (r *Registry) promotePaneToAgent(paneUID, windowUID, agentUID string) bool 
 	return true
 }
 
-// canHoldPaneName reports whether a Pane could keep its current name inside an
-// Agent's name scope.
+// canHoldPaneName reports whether a Pane can keep its current name after the
+// proposed Agent reparent. The lookup resolves through the Agent to the same
+// root-wide Pane namespace.
 func (r *Registry) canHoldPaneName(agentUID, name, paneUID string) bool {
-	owner, taken := r.nameOwner(agentUID, KindPane, name)
+	scope, err := r.scopeFor(KindPane, agentUID)
+	if err != nil {
+		return false
+	}
+	owner, taken := r.nameOwner(scope, KindPane, name)
 	return !taken || owner == paneUID
 }
 
@@ -488,21 +488,4 @@ func (r *Registry) agentForConversation(windowUID string, observed LegacyPane, b
 		found = agent.Metadata.UID
 	}
 	return found, found != ""
-}
-
-// agentNameBaseFor returns the Agent name base a live pane's authorship marker
-// implies, and "" when the pane carries no marker at all.
-//
-// The unknown-spelling fallback matches bindLegacyPaneTx exactly: a pane that
-// declares *some* provider projmux does not recognize is still a projmux-managed
-// agent pane, so it gets the generic "agent" name base rather than being
-// silently demoted to a shell.
-func agentNameBaseFor(observed LegacyPane) string {
-	if ResolveAgentPaneAuthority(observed) != AgentPaneAuthorityLaunch {
-		return ""
-	}
-	if provider := NormalizeProvider(observed.Provider); provider != "" {
-		return provider
-	}
-	return FallbackAgentNameBase
 }

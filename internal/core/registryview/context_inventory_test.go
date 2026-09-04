@@ -10,10 +10,10 @@ import (
 )
 
 // TestStoredPresentationProductConsumerInventoryIsZero mechanically keeps the
-// Phase-1 consumer cutover closed. The syntax inventory below is intentionally
-// paired with the complete compatibility-site inventory: v3 writers and
-// reconcilers remain allowed, while adding the same read to a product view is a
-// test failure rather than another grep note.
+// Phase-1 consumer cutover closed. Phase 2 consumed the exact 11-site
+// compatibility handoff, so the production typed-accessor inventory below is
+// empty. Only decode-only v3 migration wire fields remain, outside these
+// searched accessors; adding a product read is a test failure.
 func TestStoredPresentationProductConsumerInventoryIsZero(t *testing.T) {
 	t.Parallel()
 
@@ -51,26 +51,14 @@ func TestStoredPresentationProductConsumerInventoryIsZero(t *testing.T) {
 	}
 }
 
-func TestStoredPresentationCompatibilityInventoryIsExplicitAndClosed(t *testing.T) {
+func TestStoredPresentationCompatibilityInventoryIsZero(t *testing.T) {
 	t.Parallel()
 
 	type site struct {
 		path   string
 		needle string
 	}
-	want := map[site]int{
-		{"internal/core/metadata/lifecycle_decision.go", "Metadata.DisplayName"}: 1,
-		{"internal/core/metadata/model.go", "Metadata.DisplayName"}:              2,
-		{"internal/core/metadata/mutator.go", "Metadata.DisplayName"}:            2,
-		{"internal/core/metadata/controlsession.go", "Status.DisplayTitle"}:      1,
-		{"internal/core/metadata/legacy.go", "Status.DisplayTitle"}:              3,
-		{"internal/core/metadata/mutator.go", "Status.DisplayTitle"}:             1,
-		{"internal/app/control_session.go", "window.DisplayName()"}:              1,
-		{"internal/app/materialize.go", "window.DisplayName()"}:                  1,
-		{"internal/app/runtime_metadata_mirror.go", "window.DisplayName()"}:      2,
-		{"internal/core/resourcegraph/divergence.go", "window.DisplayName()"}:    1,
-		{"internal/integrations/metadata/tmuxmirror.go", "window.DisplayName()"}: 1,
-	}
+	want := map[site]int{}
 	got := map[site]int{}
 	root := repositoryRoot(t)
 	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, entry fs.DirEntry, err error) error {

@@ -31,14 +31,13 @@ func (b *builder) reserve(scope string, kind metadata.Kind, name, uid string) {
 	})
 }
 
-func (b *builder) meta(uid, name, displayName string, owner *metadata.OwnerRef, labels map[string]string) metadata.ObjectMeta {
+func (b *builder) meta(uid, name, _ string, owner *metadata.OwnerRef, labels map[string]string) metadata.ObjectMeta {
 	return metadata.ObjectMeta{
-		UID:         uid,
-		Name:        name,
-		DisplayName: displayName,
-		Labels:      labels,
-		OwnerRef:    owner,
-		CreatedAt:   fixtureClock,
+		UID:       uid,
+		Name:      name,
+		Labels:    labels,
+		OwnerRef:  owner,
+		CreatedAt: fixtureClock,
 	}
 }
 
@@ -74,6 +73,14 @@ func (b *builder) window(uid, name, projectUID string, labels map[string]string)
 	b.reserve(projectUID, metadata.KindWindow, name, uid)
 }
 
+func (b *builder) rootForWindow(windowUID string) string {
+	window, ok := b.registry.Window(windowUID)
+	if !ok || window.Metadata.OwnerRef == nil {
+		panic("fixture Window does not exist or has no root owner: " + windowUID)
+	}
+	return window.Metadata.OwnerRef.UID
+}
+
 func (b *builder) shellPane(uid, name, displayName, windowUID, cwd string, labels map[string]string) {
 	owner := &metadata.OwnerRef{Kind: metadata.KindWindow, UID: windowUID}
 	b.registry.Panes = append(b.registry.Panes, metadata.Pane{
@@ -82,7 +89,7 @@ func (b *builder) shellPane(uid, name, displayName, windowUID, cwd string, label
 		Metadata:   b.meta(uid, name, displayName, owner, labels),
 		Spec:       metadata.PaneSpec{Role: metadata.PaneRoleShell, CWD: cwd, Command: name},
 	})
-	b.reserve(windowUID, metadata.KindPane, name, uid)
+	b.reserve(b.rootForWindow(windowUID), metadata.KindPane, name, uid)
 }
 
 func (b *builder) agentWithPane(agentUID, agentName, windowUID, paneUID, paneName string, labels map[string]string) {
@@ -98,7 +105,8 @@ func (b *builder) agentWithPane(agentUID, agentName, windowUID, paneUID, paneNam
 			LastTransitionAt: fixtureClock,
 		},
 	})
-	b.reserve(windowUID, metadata.KindAgent, agentName, agentUID)
+	rootUID := b.rootForWindow(windowUID)
+	b.reserve(rootUID, metadata.KindAgent, agentName, agentUID)
 
 	paneOwner := &metadata.OwnerRef{Kind: metadata.KindAgent, UID: agentUID}
 	b.registry.Panes = append(b.registry.Panes, metadata.Pane{
@@ -107,7 +115,7 @@ func (b *builder) agentWithPane(agentUID, agentName, windowUID, paneUID, paneNam
 		Metadata:   b.meta(paneUID, paneName, "", paneOwner, labels),
 		Spec:       metadata.PaneSpec{Role: metadata.PaneRoleAgent},
 	})
-	b.reserve(agentUID, metadata.KindPane, paneName, paneUID)
+	b.reserve(rootUID, metadata.KindPane, paneName, paneUID)
 }
 
 // paneLessAgent adds an Agent that owns no managed Pane: the shape every
@@ -122,7 +130,7 @@ func (b *builder) paneLessAgent(agentUID, agentName, windowUID string, phase met
 		Spec:       metadata.AgentSpec{Provider: agentName},
 		Status:     metadata.AgentStatus{Phase: phase, LastTransitionAt: fixtureClock},
 	})
-	b.reserve(windowUID, metadata.KindAgent, agentName, agentUID)
+	b.reserve(b.rootForWindow(windowUID), metadata.KindAgent, agentName, agentUID)
 }
 
 // build derives the schema-v2 canonical Project/Window shell anchors and
@@ -176,9 +184,9 @@ func (b *builder) build() metadata.Registry {
 //     displayName would return the wrong resource here.
 //   - Offline. "beta" has a session projection with Live=false.
 //   - MissingRoot. "gone" carries the MissingRoot condition.
-//   - Owner scope. The Window name "main" repeats across Projects and the Pane
-//     name "zsh" repeats across Windows, which is legal because those names are
-//     unique only inside their owner scope.
+//   - Root scope. The Window name "main" and Pane name "zsh" repeat across
+//     Projects, which is legal because descendant names are unique only inside
+//     their Project or ControlSession root.
 //   - A managed Pane owned by an Agent rather than by its Window.
 func standardRegistry(t *testing.T) metadata.Registry {
 	t.Helper()
@@ -197,7 +205,7 @@ func standardRegistry(t *testing.T) metadata.Registry {
 	// displayName "zsh" duplicates the Pane above on purpose: a selector that
 	// fell back to displayName would match this Pane for `--pane zsh`.
 	b.shellPane("pan-alpha-log", "log", "zsh", "win-alpha-main", "/srv/alpha/logs", map[string]string{"role": "sidecar"})
-	b.shellPane("pan-alpha-review-zsh", "zsh", "zsh", "win-alpha-review", "/srv/alpha", map[string]string{"role": "shell"})
+	b.shellPane("pan-alpha-review-zsh", "review-zsh", "zsh", "win-alpha-review", "/srv/alpha", map[string]string{"role": "shell"})
 	b.shellPane("pan-beta-zsh", "zsh", "zsh", "win-beta-main", "/srv/beta", map[string]string{"role": "shell"})
 	b.shellPane("pan-gone-zsh", "zsh", "zsh", "win-gone-main", "/srv/gone", map[string]string{"role": "shell"})
 

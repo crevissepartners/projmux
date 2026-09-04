@@ -69,8 +69,6 @@ func bindingFixture(t *testing.T, root string) coremetadata.Registry {
 	t.Helper()
 	registry := driftedRegistry(t, root)
 	registry.Projects[0].Status.Session.Live = true
-	registry.Windows[0].Metadata.DisplayName = "runtime-0"
-	registry.Windows[1].Metadata.DisplayName = "runtime-1"
 	return registry
 }
 

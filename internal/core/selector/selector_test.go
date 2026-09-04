@@ -305,10 +305,10 @@ func TestLabelSelectorsAreANDedOverTheTargetKind(t *testing.T) {
 	}
 }
 
-// TestPaneScopeIsOwnerScopedAcrossProjectsWindowsAndAgents is the owner-scope
-// fixture assertion. The Pane name "zsh" is legal four times over because Pane
-// names are unique only inside their owner scope.
-func TestPaneScopeIsOwnerScopedAcrossProjectsWindowsAndAgents(t *testing.T) {
+// TestPaneScopeIsRootScopedAcrossProjectsWindowsAndAgents is the root-scope
+// fixture assertion. A Pane name can repeat across roots, but not across
+// Windows or Agents under one Project.
+func TestPaneScopeIsRootScopedAcrossProjectsWindowsAndAgents(t *testing.T) {
 	t.Parallel()
 
 	resolver := New(standardRegistry(t))
@@ -319,8 +319,8 @@ func TestPaneScopeIsOwnerScopedAcrossProjectsWindowsAndAgents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolvePanes error = %v", err)
 	}
-	if len(all.Matches) != 4 {
-		t.Fatalf("registry-wide `zsh` matched %d panes, want 4", len(all.Matches))
+	if len(all.Matches) != 3 {
+		t.Fatalf("registry-wide `zsh` matched %d panes, want 3", len(all.Matches))
 	}
 
 	// --project narrows to one Project's Windows.
@@ -331,7 +331,7 @@ func TestPaneScopeIsOwnerScopedAcrossProjectsWindowsAndAgents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolvePanes error = %v", err)
 	}
-	if got := scoped.UIDs(); !reflect.DeepEqual(got, []string{"pan-alpha-zsh", "pan-alpha-review-zsh"}) {
+	if got := scoped.UIDs(); !reflect.DeepEqual(got, []string{"pan-alpha-zsh"}) {
 		t.Fatalf("project-scoped `zsh` = %v", got)
 	}
 

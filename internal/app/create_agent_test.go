@@ -60,7 +60,7 @@ func TestInitialTaskUnconfirmedIsDiagnosticAndNeverPersistsPrompt(t *testing.T) 
 	if stdout != "" {
 		t.Fatalf("unconfirmed create wrote success output %q", stdout)
 	}
-	agent := agentNamed(t, store, "win-alpha-review", "codex")
+	agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
 	if agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef == "" || agent.Status.Activation.State != coremetadata.ActivationUnconfirmed {
 		t.Fatalf("unconfirmed Agent status = %+v", agent.Status)
 	}
@@ -93,7 +93,7 @@ func TestInitialTaskAcknowledgementIsDistinctFromRunningLifecycle(t *testing.T) 
 		"agent", "--provider", "claude", "--project", "alpha", "--window", "review", "--", "review this"); err != nil {
 		t.Fatal(err)
 	}
-	agent := agentNamed(t, store, "win-alpha-review", "claude")
+	agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
 	if agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.Activation.State != coremetadata.ActivationAcknowledged {
 		t.Fatalf("Agent status = %+v", agent.Status)
 	}
@@ -114,7 +114,7 @@ func TestInitialTaskActivationErrorPersistsOnlyBoundedDiagnostic(t *testing.T) {
 	if err == nil {
 		t.Fatal("failed activation returned ordinary success")
 	}
-	agent := agentNamed(t, store, "win-alpha-review", "codex")
+	agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
 	if agent.Status.Activation.Source != string(coremetadata.InteractionSourceProviderHook) || agent.Status.Activation.Reason != coremetadata.ActivationReasonFailed {
 		t.Fatalf("activation = %+v", agent.Status.Activation)
 	}
@@ -848,8 +848,8 @@ func TestTheShortcutAndTheCanonicalSpellingProduceIdenticalNaming(t *testing.T) 
 				t.Fatalf("create %s registry differs from the canonical route:\n%s\nwant:\n%s",
 					provider, shortcutState, canonicalState)
 			}
-			if !strings.Contains(canonicalOut, "agent/"+provider+" created") {
-				t.Fatalf("result line = %q, want the provider id as the Agent name", canonicalOut)
+			if canonicalOut != "agent/agent-test-1 created\n" {
+				t.Fatalf("result line = %q, want the exact Agent uid as its automatic name", canonicalOut)
 			}
 		})
 	}
@@ -896,7 +896,7 @@ func TestCreateAgentNeverReusesAnExistingAgent(t *testing.T) {
 	if uids[0] == uids[1] || uids[0] == existing.Metadata.UID || uids[1] == existing.Metadata.UID {
 		t.Fatalf("uids = %v, existing = %q; every create must mint a new Agent", uids, existing.Metadata.UID)
 	}
-	want := []string{"codex", "codex-1", "codex-2"}
+	want := []string{"codex", "agent-test-1", "agent-test-3"}
 	if strings.Join(names, ",") != strings.Join(want, ",") {
 		t.Fatalf("agent names in window/main = %v, want %v", names, want)
 	}
@@ -923,8 +923,8 @@ func TestCreateAgentNeverReusesAnExistingAgent(t *testing.T) {
 		if !ok {
 			t.Fatalf("created agent %q has no managed Pane", uid)
 		}
-		if want := agent.Metadata.Name + "-pane"; pane.Metadata.Name != want {
-			t.Fatalf("managed pane name = %q, want %q", pane.Metadata.Name, want)
+		if pane.Metadata.Name != pane.Metadata.UID {
+			t.Fatalf("managed pane name = %q, want exact uid %q", pane.Metadata.Name, pane.Metadata.UID)
 		}
 		if pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent {
 			t.Fatalf("managed pane owner = %+v, want the Agent", pane.Metadata.OwnerRef)
@@ -968,8 +968,8 @@ func TestCreateAgentWindowEnsureIsOptIn(t *testing.T) {
 			t.Fatalf("create agent --create-window error = %v", err)
 		}
 		// The ensured Window is operation context, not the result kind.
-		if got := strings.TrimSpace(stdout); got != "agent/claude" {
-			t.Fatalf("result = %q, want agent/claude", got)
+		if got := strings.TrimSpace(stdout); got != "agent/agent-test-3" {
+			t.Fatalf("result = %q, want agent/agent-test-3", got)
 		}
 		var fresh *coremetadata.Window
 		for i := range store.registry.Windows {
@@ -983,7 +983,7 @@ func TestCreateAgentWindowEnsureIsOptIn(t *testing.T) {
 		if fresh.Spec.AnchorPaneRef == "" {
 			t.Fatal("the ensured Window has no compatibility shell ref to anchor on")
 		}
-		agent := agentNamed(t, store, fresh.Metadata.UID, "claude")
+		agent := agentNamed(t, store, fresh.Metadata.UID, "agent-test-3")
 		if agent.Status.Phase != coremetadata.PhaseRunning {
 			t.Fatalf("agent phase = %q, want Running", agent.Status.Phase)
 		}
@@ -1002,45 +1002,42 @@ func TestCreateAgentWindowEnsureIsOptIn(t *testing.T) {
 	})
 }
 
-// TestAnExplicitAgentNameIsWindowScoped is acceptance criterion 5 plus its
-// intentional complement.
-//
-// Agent names are unique inside a Window, so the same explicit --name in two
-// different Windows is legal; a collision inside one Window is exit 2 with no
-// implicit suffix and nothing created.
-func TestAnExplicitAgentNameIsWindowScoped(t *testing.T) {
+// Agent names are unique across a root. An explicit --name requires exactly
+// one target, and a collision is exit 2 with no implicit suffix or writes.
+func TestAnExplicitAgentNameIsRootScopedAndExactOne(t *testing.T) {
 	t.Parallel()
 
-	t.Run("the same name in two Windows is legal", func(t *testing.T) {
+	t.Run("one explicit name across two Windows is rejected before writes", func(t *testing.T) {
 		t.Parallel()
 		store := newFakeResourceStore(t)
 		tmux := newFakeTmux()
-		create, _ := newTestAgentCreateCommand(t, store, tmux)
+		create, launcher := newTestAgentCreateCommand(t, store, tmux)
 
+		before := store.snapshot()
+		uidCount := len(store.newUIDs)
 		stdout, _, err := runRoute(t, create,
 			"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main", "--window", "review",
 			"--name", "reviewer", "-o", "name")
-		if err != nil {
-			t.Fatalf("fan-out with one explicit --name error = %v", err)
+		if err == nil || !IsUsageError(err) || !strings.Contains(err.Error(), "explicit-name-cardinality") {
+			t.Fatalf("fan-out with one explicit --name error = %v, want explicit-name-cardinality", err)
 		}
-		if got := strings.Fields(stdout); len(got) != 2 || got[0] != "reviewer" || got[1] != "reviewer" {
-			t.Fatalf("names = %v, want reviewer twice", got)
-		}
-		if a, b := agentNamed(t, store, "win-alpha-main", "reviewer"), agentNamed(t, store, "win-alpha-review", "reviewer"); a.Metadata.UID == b.Metadata.UID {
-			t.Fatal("one Agent was bound to two Windows")
+		if stdout != "" || store.snapshot() != before || store.writes != 0 || len(store.newUIDs) != uidCount || tmuxMutationCallCount(tmux) != 0 ||
+			len(launcher.bound) != 0 {
+			t.Fatal("explicit-name-cardinality refusal mutated UID, Registry, tmux, or provider state")
 		}
 	})
 
-	t.Run("a collision inside one Window is exit 2 with zero mutations", func(t *testing.T) {
+	t.Run("a collision inside one root is exit 2 with zero mutations", func(t *testing.T) {
 		t.Parallel()
 		store := newFakeResourceStore(t)
 		before := store.snapshot()
 		tmux := newFakeTmux()
 		create, launcher := newTestAgentCreateCommand(t, store, tmux)
 
-		// `codex` already names an Agent inside alpha's `main` Window.
+		// `codex` belongs to alpha's `main` Window, so targeting the sibling
+		// `review` Window distinguishes root-wide scope from v3.
 		stdout, _, err := runRoute(t, create,
-			"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main", "--name", "codex")
+			"agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "review", "--name", "codex")
 		if err == nil {
 			t.Fatal("an explicit name collision succeeded")
 		}
@@ -1102,8 +1099,8 @@ func TestTopicAndPromptNeverSeedAnAgentOrPaneName(t *testing.T) {
 	if bare != loaded {
 		t.Fatalf("payload changed the naming: %q, want %q", loaded, bare)
 	}
-	if bare != "agent=codex pane=codex-pane" {
-		t.Fatalf("naming = %q, want the provider id and its managed pane", bare)
+	if bare != "agent=agent-test-1 pane=pane-test-2" {
+		t.Fatalf("naming = %q, want exact full UID automatic names", bare)
 	}
 	// The payload did reach the launch, so the negative above is about naming
 	// rather than about the payload being dropped.
@@ -1137,7 +1134,7 @@ func TestCreateAgentRendersEveryAdvertisedProjection(t *testing.T) {
 		{
 			mode: "",
 			want: func(t *testing.T, stdout string, _ *fakeResourceStore, _ *fakeTmux) {
-				if stdout != "agent/codex created\n" {
+				if stdout != "agent/agent-test-1 created\n" {
 					t.Fatalf("default stdout = %q", stdout)
 				}
 			},
@@ -1145,7 +1142,7 @@ func TestCreateAgentRendersEveryAdvertisedProjection(t *testing.T) {
 		{
 			mode: "uid",
 			want: func(t *testing.T, stdout string, store *fakeResourceStore, _ *fakeTmux) {
-				agent := agentNamed(t, store, "win-alpha-review", "codex")
+				agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
 				if strings.TrimSpace(stdout) != agent.Metadata.UID {
 					t.Fatalf("uid stdout = %q, want %q", stdout, agent.Metadata.UID)
 				}
@@ -1154,7 +1151,7 @@ func TestCreateAgentRendersEveryAdvertisedProjection(t *testing.T) {
 		{
 			mode: "name",
 			want: func(t *testing.T, stdout string, _ *fakeResourceStore, _ *fakeTmux) {
-				if strings.TrimSpace(stdout) != "codex" {
+				if strings.TrimSpace(stdout) != "agent-test-1" {
 					t.Fatalf("name stdout = %q", stdout)
 				}
 			},
@@ -1162,7 +1159,7 @@ func TestCreateAgentRendersEveryAdvertisedProjection(t *testing.T) {
 		{
 			mode: "ref",
 			want: func(t *testing.T, stdout string, _ *fakeResourceStore, _ *fakeTmux) {
-				if strings.TrimSpace(stdout) != "agent/codex" {
+				if strings.TrimSpace(stdout) != "agent/agent-test-1" {
 					t.Fatalf("ref stdout = %q", stdout)
 				}
 			},
@@ -1198,7 +1195,7 @@ func TestCreateAgentRendersEveryAdvertisedProjection(t *testing.T) {
 				if !strings.HasPrefix(id, "%") {
 					t.Fatalf("pane-id stdout = %q, want a raw %%N handle", stdout)
 				}
-				agent := agentNamed(t, store, "win-alpha-review", "codex")
+				agent := agentNamed(t, store, "win-alpha-review", "agent-test-1")
 				_, _, pane := tmux.pane(id)
 				if pane == nil {
 					t.Fatalf("pane-id %q is not a live pane", id)

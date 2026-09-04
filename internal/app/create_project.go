@@ -80,7 +80,7 @@ func (c *createCommand) runResourceProject(args []string, stdout, stderr io.Writ
 	if _, _, err := c.store.updateConvergent(func(working *coremetadata.Registry) error {
 		registered, err := reuseOrRegisterProject(working, c.store.mutator(), coremetadata.RegisterProjectOptions{
 			Root:         target,
-			Name:         strings.TrimSpace(*name),
+			Name:         *name,
 			Labels:       labelMapping,
 			DefaultShell: c.shell,
 			SessionName:  c.registerSessionName(target),
@@ -170,6 +170,9 @@ func registerProjectRoot(ctx context.Context, store *resourceStore, shell string
 // MissingRoot remediation gets a chance to.
 func reuseOrRegisterProject(working *coremetadata.Registry, mutator coremetadata.Mutator, opts coremetadata.RegisterProjectOptions) (coremetadata.RegisterProjectResult, error) {
 	if existing, ok := working.ProjectByRoot(opts.Root); ok {
+		if err := coremetadata.ValidateExplicitNameReuse("register project", coremetadata.KindProject, existing.Metadata, opts.Name); err != nil {
+			return coremetadata.RegisterProjectResult{}, err
+		}
 		return coremetadata.RegisterProjectResult{
 			Project:     existing.Clone(),
 			Windows:     working.WindowsOf(existing.Metadata.UID),

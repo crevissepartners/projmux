@@ -57,24 +57,6 @@ type LegacySession struct {
 	Windows []LegacyWindow
 }
 
-// LegacyWindowNameSeed returns the stable allocator base for a newly imported
-// Window. Nothing observed from tmux -- window_name, Pane label, provider,
-// command, shell, topic, or title -- is an identity input. The observed
-// window_name is projected separately onto metadata.displayName.
-func LegacyWindowNameSeed(_ LegacyWindow) string {
-	return FallbackWindowNameBase
-}
-
-// LegacyPaneNameSeed derives the one-time Pane name base for a legacy pane:
-// the existing @projmux_pane_label, then the command basename, then the
-// configured shell basename, then "pane".
-func LegacyPaneNameSeed(pane LegacyPane, defaultShell string) string {
-	if base := SanitizeNameBase(pane.Label); base != "" {
-		return base
-	}
-	return PaneNameBase(pane.Command, defaultShell)
-}
-
 // ImportOrigin records how one reported Window or Pane came to be reported.
 //
 // The distinction matters to exactly two callers and for opposite reasons. The
@@ -149,18 +131,16 @@ type ImportResult struct {
 // ImportLegacySession converts one observed pre-v2 tmux session into Projmux
 // resources, and reattaches the ones that already exist.
 //
-// Name collisions during import are automatic, not explicit, so they receive
-// the lowest free suffix rather than failing: two projects whose roots share a
-// basename become `name` and `name-1`, and two agents of the same provider in
-// one window become `codex` and `codex-1`. An exact saved root that reappears
-// reuses the same Project uid; nothing else merges uids.
+// Imported resources without explicit metadata receive exact UID names. An
+// exact saved root that reappears reuses the same Project uid; nothing else
+// merges uids.
 //
 // binder carries the adoption decision across the whole reconciliation pass so
 // one registry Window is never handed to two live tmux windows. A nil binder
 // gets a private one over an empty observation, which is the right reading for
 // a caller importing a single session in isolation: adoption still happens, and
 // nothing is known to be bound elsewhere.
-func (m Mutator) ImportLegacySession(reg *Registry, legacy LegacySession, defaultShell, operationID string, binder *BindingMatcher) (ImportResult, error) {
+func (m Mutator) ImportLegacySession(reg *Registry, legacy LegacySession, _ string, operationID string, binder *BindingMatcher) (ImportResult, error) {
 	const op = "import legacy session"
 
 	root, err := m.validateRoot(op, legacy.Root)
@@ -173,7 +153,7 @@ func (m Mutator) ImportLegacySession(reg *Registry, legacy LegacySession, defaul
 
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
-	result, err := m.importLegacySessionTx(txn, reg, op, legacy, root, defaultShell, now, binder)
+	result, err := m.importLegacySessionTx(txn, reg, op, legacy, root, now, binder)
 	if err != nil {
 		txn.Rollback()
 		return ImportResult{}, err
@@ -185,7 +165,7 @@ func (m Mutator) ImportLegacySession(reg *Registry, legacy LegacySession, defaul
 	return result, nil
 }
 
-func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op string, legacy LegacySession, root, defaultShell string, now time.Time, binder *BindingMatcher) (ImportResult, error) {
+func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op string, legacy LegacySession, root string, now time.Time, binder *BindingMatcher) (ImportResult, error) {
 	result := ImportResult{}
 
 	var projectUID string
@@ -193,11 +173,7 @@ func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op strin
 		projectUID = existing.Metadata.UID
 		result.ProjectReused = true
 	} else {
-		uid, err := m.mintUID(KindProject)
-		if err != nil {
-			return ImportResult{}, err
-		}
-		name, err := reg.allocateName(op, "", KindProject, ProjectNameBase(root), uid)
+		uid, name, err := m.mintAndReserveName(reg, op, "", KindProject, "")
 		if err != nil {
 			return ImportResult{}, err
 		}
@@ -205,10 +181,9 @@ func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op strin
 			APIVersion: APIVersion,
 			Kind:       KindProject,
 			Metadata: ObjectMeta{
-				UID:         uid,
-				Name:        name,
-				DisplayName: ProjectDisplayName(root),
-				CreatedAt:   now,
+				UID:       uid,
+				Name:      name,
+				CreatedAt: now,
 			},
 			Spec: ProjectSpec{Root: root},
 		}
@@ -234,7 +209,7 @@ func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op strin
 	// adopting rather than by skipping, and it additionally reapplies the
 	// bindings the old path left permanently lost.
 	for wi, legacyWindow := range legacy.Windows {
-		if err := m.bindLegacyWindowTx(txn, reg, op, projectUID, root, defaultShell, wi, legacyWindow, now, &result, binder); err != nil {
+		if err := m.bindLegacyWindowTx(txn, reg, op, projectUID, root, wi, legacyWindow, now, &result, binder); err != nil {
 			return ImportResult{}, err
 		}
 	}
@@ -268,7 +243,7 @@ func (m Mutator) importLegacySessionTx(txn *Transaction, reg *Registry, op strin
 //     somebody else. Nothing is created, nothing is bound, and none of its
 //     panes are considered either, because a pane can only be paired inside a
 //     Window that was itself paired.
-func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, projectUID, root, defaultShell string, windowIndex int, legacyWindow LegacyWindow, now time.Time, result *ImportResult, binder *BindingMatcher) error {
+func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, projectUID, root string, windowIndex int, legacyWindow LegacyWindow, now time.Time, result *ImportResult, binder *BindingMatcher) error {
 	match := binder.MatchWindow(reg, projectUID, legacyWindow.UID)
 	if match.Kind == AdoptionRefused {
 		return nil
@@ -283,11 +258,7 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 
 	if match.Kind == AdoptionUnmatched || match.Kind == AdoptionForeign {
 		origin = ImportCreated
-		uid, err := m.mintUID(KindWindow)
-		if err != nil {
-			return err
-		}
-		windowName, err := reg.allocateName(op, projectUID, KindWindow, LegacyWindowNameSeed(legacyWindow), uid)
+		uid, windowName, err := m.mintAndReserveName(reg, op, projectUID, KindWindow, "")
 		if err != nil {
 			return err
 		}
@@ -295,11 +266,10 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 			APIVersion: APIVersion,
 			Kind:       KindWindow,
 			Metadata: ObjectMeta{
-				UID:         uid,
-				Name:        windowName,
-				DisplayName: legacyWindow.Name,
-				OwnerRef:    &OwnerRef{Kind: KindProject, UID: projectUID},
-				CreatedAt:   now,
+				UID:       uid,
+				Name:      windowName,
+				OwnerRef:  &OwnerRef{Kind: KindProject, UID: projectUID},
+				CreatedAt: now,
 			},
 		})
 		txn.record(KindWindow, uid)
@@ -329,7 +299,7 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 	})
 
 	for pi, legacyPane := range legacyPanes {
-		_, err := m.bindLegacyPaneTx(txn, reg, op, windowUID, root, defaultShell, windowIndex, pi, legacyPane, now, result, binder)
+		_, err := m.bindLegacyPaneTx(txn, reg, op, windowUID, root, windowIndex, pi, legacyPane, now, result, binder)
 		if err != nil {
 			return err
 		}
@@ -339,7 +309,7 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 	if !validWindowPrimary(reg, *stored) {
 		shellPaneRef := firstWindowOwnedShellUID(reg, windowUID)
 		if shellPaneRef == "" {
-			pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", FallbackPaneNameBase, "", root, nil, now)
+			pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", "", root, nil, now)
 			if err != nil {
 				return err
 			}
@@ -351,9 +321,6 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 	// Existing identity is deliberately untouched. The runtime-owned spelling
 	// has a separate duplicate-allowed projection, so an adopted or rebound
 	// Window keeps its uid, metadata.name, owner, and reservation.
-	if _, err := m.ObserveWindowDisplayName(reg, windowUID, legacyWindow.Name); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -367,7 +334,7 @@ func (m Mutator) bindLegacyWindowTx(txn *Transaction, reg *Registry, op, project
 // function already trusts on its create path below. Linking there but not here
 // was the inconsistency that left running agents invisible; see agentlinkage.go
 // for why that marker is authorship rather than a content heuristic.
-func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID, root, defaultShell string, windowIndex, paneIndex int, legacyPane LegacyPane, now time.Time, result *ImportResult, binder *BindingMatcher) (string, error) {
+func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID, root string, windowIndex, paneIndex int, legacyPane LegacyPane, now time.Time, result *ImportResult, binder *BindingMatcher) (string, error) {
 	match := binder.MatchPane(reg, windowUID, legacyPane.UID)
 	if match.Kind == AdoptionRefused {
 		return "", nil
@@ -414,21 +381,11 @@ func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID
 	if cwd == "" {
 		cwd = root
 	}
-	provider := ""
-	if ResolveAgentPaneAuthority(legacyPane) == AgentPaneAuthorityLaunch {
-		provider = NormalizeProvider(legacyPane.Provider)
-		if provider == "" && strings.TrimSpace(legacyPane.Provider) != "" {
-			provider = FallbackAgentNameBase
-		}
-	}
-
-	if provider == "" {
-		pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", LegacyPaneNameSeed(legacyPane, defaultShell), legacyPane.Command, cwd, nil, now)
+	if ResolveAgentPaneAuthority(legacyPane) != AgentPaneAuthorityLaunch {
+		pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", legacyPane.Command, cwd, nil, now)
 		if err != nil {
 			return "", err
 		}
-		pane.Status.DisplayTitle = DerivePaneDisplayTitle(legacyPane.Provider, legacyPane.Topic, legacyPane.Command, legacyPane.Title)
-		reg.storePaneStatus(pane.Metadata.UID, pane.Status)
 		binder.Claim(pane.Metadata.UID)
 		result.Panes = append(result.Panes, ImportedPane{
 			UID:         pane.Metadata.UID,
@@ -440,11 +397,7 @@ func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID
 		return pane.Metadata.UID, nil
 	}
 
-	agentUID, err := m.mintUID(KindAgent)
-	if err != nil {
-		return "", err
-	}
-	agentName, err := reg.allocateName(op, windowUID, KindAgent, AgentNameBase("", legacyPane.Provider), agentUID)
+	agentUID, agentName, err := m.mintAndReserveName(reg, op, windowUID, KindAgent, "")
 	if err != nil {
 		return "", err
 	}
@@ -466,12 +419,10 @@ func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID
 	reg.Agents = append(reg.Agents, agent)
 	txn.record(KindAgent, agentUID)
 
-	pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, "", ManagedPaneNameBase(agentName), legacyPane.Command, cwd, nil, now)
+	pane, err := m.addPaneTx(txn, reg, op, agentUID, KindAgent, PaneRoleAgent, "", legacyPane.Command, cwd, nil, now)
 	if err != nil {
 		return "", err
 	}
-	pane.Status.DisplayTitle = DerivePaneDisplayTitle(legacyPane.Provider, legacyPane.Topic, legacyPane.Command, legacyPane.Title)
-	reg.storePaneStatus(pane.Metadata.UID, pane.Status)
 
 	stored, _ := reg.Agent(agentUID)
 	stored.Status.Phase = PhaseRunning
@@ -502,13 +453,9 @@ func (m Mutator) bindLegacyPaneTx(txn *Transaction, reg *Registry, op, windowUID
 // @projmux_pane_uid" in the operator's own active pane. Something has to be
 // created before a uid exists to mirror back.
 //
-// The name base is FallbackPaneNameBase, uniquified by the registry's own
-// allocator, and deliberately *not* LegacyPaneNameSeed. That seed reads
-// `pane_current_command`, which changes the moment the operator runs something
-// else in the pane, and the product contract is that metadata.name is never
-// derived from a runtime attribute. What the runtime reported goes to
-// status.displayTitle instead -- the duplicate-allowed field that exists for
-// exactly this, and the same field the import path fills.
+// The automatic name is the exact minted Pane UID. `pane_current_command`,
+// label, title, topic, and provider are invocation-scoped context only; none is
+// persisted as a name or presentation field.
 //
 // No Agent is minted, whatever the pane happens to be running. Reading the pane
 // options or its title to decide that a Window owes an Agent resource would be a
@@ -534,13 +481,11 @@ func (m Mutator) ImportOrphanPane(reg *Registry, windowUID string, observed Lega
 
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
-	pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", FallbackPaneNameBase, observed.Command, cwd, nil, now)
+	pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", observed.Command, cwd, nil, now)
 	if err != nil {
 		txn.Rollback()
 		return Pane{}, err
 	}
-	pane.Status.DisplayTitle = DerivePaneDisplayTitle(observed.Provider, observed.Topic, observed.Command, observed.Title)
-	reg.storePaneStatus(pane.Metadata.UID, pane.Status)
 	txn.Commit()
 	reg.UpdatedAt = now
 	return pane, nil
@@ -549,12 +494,3 @@ func (m Mutator) ImportOrphanPane(reg *Registry, windowUID string, observed Lega
 // AnnotationAgentTopic is the non-identifying annotation that carries an AI
 // topic. Topics are never a name or a selector input.
 const AnnotationAgentTopic = "projmux.io/agent-topic"
-
-func (r *Registry) storePaneStatus(uid string, status PaneStatus) {
-	for i := range r.Panes {
-		if r.Panes[i].Metadata.UID == uid {
-			r.Panes[i].Status = status
-			return
-		}
-	}
-}

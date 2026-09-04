@@ -188,7 +188,7 @@ func TestSingularProjectNamespaceNarrowsWithoutSelecting(t *testing.T) {
 	}{
 		{
 			name: "positional name", args: []string{"pane", "zsh"},
-			wantInside: "matched 2 panes", wantGlobal: "matched 4 panes",
+			wantInside: "pan-alpha-zsh", wantGlobal: "matched 3 panes",
 		},
 		{
 			name: "label selector", args: []string{"pane", "--selector", "role=shell"},
@@ -201,15 +201,21 @@ func TestSingularProjectNamespaceNarrowsWithoutSelecting(t *testing.T) {
 
 			inside := insideTmux("pan-alpha-zsh", "win-alpha-main")
 			stdout, _, err := runRoute(t, newTestDescribeCommandWithActiveTarget(t, store, inside), test.args...)
-			if err == nil || !IsUsageError(err) || stdout != "" {
-				t.Fatalf("%s inside = stdout %q err %v, want a bounded ambiguity", test.name, stdout, err)
-			}
-			if !strings.Contains(err.Error(), test.wantInside) {
-				t.Fatalf("%s inside error = %v, want %q", test.name, err, test.wantInside)
+			if test.name == "positional name" {
+				if err != nil || !strings.Contains(stdout, "UID:             "+test.wantInside) {
+					t.Fatalf("%s inside = stdout %q err %v, want the unique root-wide Pane", test.name, stdout, err)
+				}
+			} else {
+				if err == nil || !IsUsageError(err) || stdout != "" {
+					t.Fatalf("%s inside = stdout %q err %v, want a bounded ambiguity", test.name, stdout, err)
+				}
+				if !strings.Contains(err.Error(), test.wantInside) {
+					t.Fatalf("%s inside error = %v, want %q", test.name, err, test.wantInside)
+				}
 			}
 			// The beta candidate is the one the namespace removed; naming it
 			// here is what separates "narrowed" from "happened to be two".
-			if strings.Contains(err.Error(), "pan-beta-zsh") {
+			if err != nil && strings.Contains(err.Error(), "pan-beta-zsh") {
 				t.Fatalf("%s inside listed a beta candidate: %v", test.name, err)
 			}
 

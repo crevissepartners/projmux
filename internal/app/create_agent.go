@@ -56,8 +56,8 @@ type agentWork struct {
 //   - The Agent is always new. There is no lookup of an existing Agent of the
 //     same provider anywhere on this path; rebinding an existing conversation is
 //     `agent resume`, which is a different verb with a different cardinality.
-//   - The name never depends on the work. The provider id is the only name seed,
-//     so the topic, the prompt, and the payload after `--` cannot reach it.
+//   - The automatic name is the exact minted Agent UID. Only an explicit
+//     `--name` can replace it; provider, topic, prompt, and payload cannot.
 //   - Nothing moves the client. The split goes through the materializer, which
 //     owns `-d`; the focus-following legacy split is not on this path at all.
 //
@@ -217,8 +217,8 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 		}
 
 		// Metadata phase. Every Agent and every managed Pane is allocated before
-		// the first tmux call, so an explicit --name that collides inside a
-		// target Window refuses with zero runtime objects created.
+		// the first tmux call, so an explicit --name that collides in the target
+		// root refuses with zero runtime objects created.
 		agents := make([]agentWork, 0, len(plan.targets))
 		for _, target := range plan.targets {
 			window, ok := working.Window(target.windowUID)
@@ -226,9 +226,8 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				return fmt.Errorf("%s: window %q disappeared during preflight", spelling, target.windowUID)
 			}
 			agent, err := mutator.CreateAgent(working, target.windowUID, coremetadata.CreateAgentOptions{
-				// The explicit --name names the Agent. The managed Pane derives
-				// its own name from the Agent's, so one flag cannot name two
-				// resources.
+				// The explicit --name names only the Agent. The managed Pane
+				// independently uses its own exact minted UID as its name.
 				Name:        flags.name,
 				Provider:    provider,
 				Labels:      labels,

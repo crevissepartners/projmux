@@ -246,8 +246,8 @@ func TestLinkAgentPaneMintsAnAgentAndPromotesThePaneWhenNoneExists(t *testing.T)
 	if !ok {
 		t.Fatal("the minted Agent is not in the registry")
 	}
-	if agent.Metadata.Name != "claude" {
-		t.Fatalf("minted Agent name = %q, want the provider name base", agent.Metadata.Name)
+	if agent.Metadata.Name != agent.Metadata.UID {
+		t.Fatalf("minted Agent name = %q, want exact uid %q", agent.Metadata.Name, agent.Metadata.UID)
 	}
 	if agent.Metadata.OwnerUID() != windowUID || agent.Metadata.OwnerRef.Kind != KindWindow {
 		t.Fatalf("minted Agent owner = %+v, want the paired Window", agent.Metadata.OwnerRef)
@@ -612,9 +612,9 @@ func TestLinkAgentPaneNeverAttachesAcrossWindows(t *testing.T) {
 	}
 }
 
-// TestLinkAgentPanePreservesIdentityAndName is the preservation contract, which
-// promotion is the one write in this file that could plausibly violate: the uid
-// and the name the operator already selects by must survive a re-parent.
+// TestLinkAgentPanePreservesIdentityAndName is the preservation contract: the
+// uid and name survive a same-root reparent and the root-wide reservation stays
+// byte-identical.
 func TestLinkAgentPanePreservesIdentityAndName(t *testing.T) {
 	t.Parallel()
 
@@ -622,6 +622,13 @@ func TestLinkAgentPanePreservesIdentityAndName(t *testing.T) {
 	pane := importedShellPane(t, mutator, registry, windowUID, claudePane("sess-1"))
 	wantUID, wantName := pane.Metadata.UID, pane.Metadata.Name
 	windowPanesBefore := len(registry.Panes)
+	var reservationBefore NameReservation
+	for _, reservation := range registry.NameReservations {
+		if reservation.UID == wantUID {
+			reservationBefore = reservation
+			break
+		}
+	}
 
 	if _, err := mutator.LinkAgentPane(registry, windowUID, pane.Metadata.UID, claudePane("sess-1"), NewBindingMatcher(RuntimeObservation{}), "op-1"); err != nil {
 		t.Fatalf("link agent pane: %v", err)
@@ -636,13 +643,20 @@ func TestLinkAgentPanePreservesIdentityAndName(t *testing.T) {
 	if len(registry.Panes) != windowPanesBefore {
 		t.Fatalf("Pane count moved from %d to %d; promotion must not create or delete a Pane", windowPanesBefore, len(registry.Panes))
 	}
-	// The reservation followed the resource into the Agent scope, which is what
-	// keeps the name unique where it is now looked up.
-	if owner, taken := registry.nameOwner(linkedAgentUID(t, registry, wantUID), KindPane, wantName); !taken || owner != wantUID {
-		t.Fatalf("the Pane name reservation did not follow it into the Agent scope")
+	// Same-root reparenting leaves the root-wide reservation byte-identical.
+	rootUID := registry.Windows[0].Metadata.OwnerUID()
+	if owner, taken := registry.nameOwner(rootUID, KindPane, wantName); !taken || owner != wantUID {
+		t.Fatalf("the Pane root-wide reservation changed during same-root promotion")
 	}
-	if _, taken := registry.nameOwner(windowUID, KindPane, wantName); taken {
-		t.Fatal("the old Window-scoped reservation was left behind")
+	var reservationAfter NameReservation
+	for _, reservation := range registry.NameReservations {
+		if reservation.UID == wantUID {
+			reservationAfter = reservation
+			break
+		}
+	}
+	if reservationAfter != reservationBefore {
+		t.Fatalf("same-root reparent changed reservation bytes: before=%+v after=%+v", reservationBefore, reservationAfter)
 	}
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("registry does not validate after promotion: %v", err)
@@ -696,8 +710,8 @@ func TestLinkAgentPaneKeepsAnUnknownProviderSpellingAnAgent(t *testing.T) {
 		t.Fatalf("linkage = %+v, want a mint", linkage)
 	}
 	agent, _ := registry.Agent(linkage.AgentUID)
-	if agent.Metadata.Name != FallbackAgentNameBase {
-		t.Fatalf("minted Agent name = %q, want %q", agent.Metadata.Name, FallbackAgentNameBase)
+	if agent.Metadata.Name != agent.Metadata.UID {
+		t.Fatalf("minted Agent name = %q, want exact uid %q", agent.Metadata.Name, agent.Metadata.UID)
 	}
 	if agent.Spec.Provider != "" {
 		t.Fatalf("an unrecognized spelling must not become a normalized provider, got %q", agent.Spec.Provider)

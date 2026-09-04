@@ -38,26 +38,21 @@ func TestRenameChangesOnlyTheMetadataNameOfOneResource(t *testing.T) {
 			wantUID: "win-alpha-review", wantName: "audit", wantKind: "Window", wantScope: "prj-alpha", display: "Runtime Review",
 		},
 		{
-			name: "pane inside its window scope", args: []string{"pane", "log", "--project", "alpha", "--window", "main", "--name", "tail"},
-			wantUID: "pan-alpha-log", wantName: "tail", wantKind: "Pane", wantScope: "win-alpha-main",
+			name: "pane inside its root scope", args: []string{"pane", "log", "--project", "alpha", "--window", "main", "--name", "tail"},
+			wantUID: "pan-alpha-log", wantName: "tail", wantKind: "Pane", wantScope: "prj-alpha",
 		},
 		{
 			name: "managed pane inside its agent scope", args: []string{"pane", "codex-pane", "--project", "alpha", "--window", "main", "--name", "worker"},
-			wantUID: "pan-alpha-codex", wantName: "worker", wantKind: "Pane", wantScope: "agt-alpha-codex",
+			wantUID: "pan-alpha-codex", wantName: "worker", wantKind: "Pane", wantScope: "prj-alpha",
 		},
 		{
-			name: "agent inside its window scope", args: []string{"agent", "codex", "--project", "alpha", "--window", "main", "--name", "reviewer"},
-			wantUID: "agt-alpha-codex", wantName: "reviewer", wantKind: "Agent", wantScope: "win-alpha-main",
+			name: "agent inside its root scope", args: []string{"agent", "codex", "--project", "alpha", "--window", "main", "--name", "reviewer"},
+			wantUID: "agt-alpha-codex", wantName: "reviewer", wantKind: "Agent", wantScope: "prj-alpha",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			store := newFakeResourceStore(t)
-			if test.display != "" {
-				window, _ := store.registry.Window(test.wantUID)
-				window.Metadata.DisplayName = test.display
-			}
-			_, metadataBefore, _ := resourceFor(store.registry, resourceKindTokens[strings.ToLower(test.wantKind)], test.wantUID)
 			before := store.snapshot()
 			stdout, stderr, err := runRoute(t, newTestRenameCommand(store), test.args...)
 			if err != nil {
@@ -79,9 +74,6 @@ func TestRenameChangesOnlyTheMetadataNameOfOneResource(t *testing.T) {
 			}
 			if meta.UID != test.wantUID {
 				t.Fatalf("rename changed the uid: %q", meta.UID)
-			}
-			if meta.DisplayName != metadataBefore.DisplayName {
-				t.Fatalf("rename %v changed displayName to %q, want unchanged %q", test.args, meta.DisplayName, metadataBefore.DisplayName)
 			}
 
 			// The reservation table follows the rename inside the same scope, so
@@ -114,6 +106,7 @@ func TestRenameFailuresLeaveZeroMutations(t *testing.T) {
 	}{
 		{name: "explicit collision in the project scope", args: []string{"project", "alpha", "--name", "beta"}, want: "beta"},
 		{name: "explicit collision in the window scope", args: []string{"window", "review", "--project", "alpha", "--name", "main"}, want: "main"},
+		{name: "root-wide pane collision across sibling windows", args: []string{"pane", "review-zsh", "--project", "alpha", "--window", "review", "--name", "zsh"}, want: "zsh"},
 		{name: "ambiguous target", args: []string{"window", "main", "--name", "renamed"}, want: "want exactly one"},
 		{name: "no match", args: []string{"project", "nosuch", "--name", "renamed"}, want: "matched no projects"},
 		{name: "missing --name", args: []string{"project", "alpha"}, want: "requires --name"},
@@ -125,7 +118,12 @@ func TestRenameFailuresLeaveZeroMutations(t *testing.T) {
 			t.Parallel()
 			store := newFakeResourceStore(t)
 			before := store.snapshot()
-			stdout, _, err := runRoute(t, newTestRenameCommand(store), test.args...)
+			mirror := &fakeMutationMirror{projectTarget: "$1", windowTarget: "@1", paneTarget: "%1"}
+			runner := &mutationRoutingRunner{}
+			command := newTestRenameCommand(store)
+			command.mirror = mirror
+			command.tmuxRunner = runner
+			stdout, _, err := runRoute(t, command, test.args...)
 			if err == nil {
 				t.Fatalf("rename %v succeeded", test.args)
 			}
@@ -143,6 +141,9 @@ func TestRenameFailuresLeaveZeroMutations(t *testing.T) {
 			}
 			if store.snapshot() != before {
 				t.Fatalf("rename %v mutated the registry:\n%s", test.args, store.snapshot())
+			}
+			if len(mirror.calls) != 0 || len(runner.calls) != 0 {
+				t.Fatalf("rename %v reached an external mirror: mirror=%v tmux=%v", test.args, mirror.calls, runner.calls)
 			}
 		})
 	}

@@ -44,8 +44,8 @@ func (c Context) Empty() bool { return strings.TrimSpace(c.Value) == "" }
 // Projector derives every resource context from one immutable Registry
 // snapshot plus, optionally, one exact runtime graph observation.
 //
-// Stored metadata.displayName and status.displayTitle are deliberately not
-// indexed. They remain in schema v3 for wire/write compatibility only.
+// The removed schema-v3 metadata.displayName and status.displayTitle are
+// deliberately not indexed. Schema v4 retains no stored presentation field.
 type Projector struct {
 	registry        coremetadata.Registry
 	liveWindowNames map[string]string

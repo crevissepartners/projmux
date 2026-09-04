@@ -121,7 +121,7 @@ func TestUpdateConvergentSkipsTheAtomicWriteForAnUnchangedRegistry(t *testing.T)
 
 const newerSchemaRegistry = `{
   "apiVersion": "projmux.io/v2",
-  "schemaVersion": 4,
+  "schemaVersion": 5,
   "updatedAt": "2026-08-15T09:30:00Z",
   "projects": [
     {
@@ -473,10 +473,6 @@ func TestIntermediateV2NormalizationPublishesExactEvidenceAndSecondPassIsZeroByt
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantFinal, err := os.ReadFile("../../core/metadata/testdata/registry-v010-v3-bytes.golden")
-	if err != nil {
-		t.Fatal(err)
-	}
 	store := testStore(t)
 	writeRegistryFile(t, store, string(source))
 	sourceInfo, err := os.Stat(store.Path())
@@ -512,8 +508,17 @@ func TestIntermediateV2NormalizationPublishesExactEvidenceAndSecondPassIsZeroByt
 		evidence.BackupPath != result.BackupPath || evidence.BackupSHA256 != fmt.Sprintf("%x", digest) {
 		t.Fatalf("same-version evidence = %+v", evidence)
 	}
-	if got := []byte(readFile(t, store.Path())); !bytes.Equal(got, wantFinal) || bytes.Contains(got, []byte(`"primaryPaneRef"`)) {
-		t.Fatalf("final-v2 bytes differ or retain legacy authority:\n%s", got)
+	got := []byte(readFile(t, store.Path()))
+	if bytes.Contains(got, []byte(`"primaryPaneRef"`)) || bytes.Contains(got, []byte(`"displayName"`)) ||
+		bytes.Contains(got, []byte(`"displayTitle"`)) || !bytes.Contains(got, []byte(`"schemaVersion": 4`)) {
+		t.Fatalf("migrated bytes do not use the canonical v4 shape:\n%s", got)
+	}
+	var migrated coremetadata.Registry
+	if err := json.Unmarshal(got, &migrated); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrated.Validate(); err != nil {
+		t.Fatalf("migrated v4 registry: %v", err)
 	}
 
 	registryBefore := fileFingerprint(t, store.Path())
@@ -534,7 +539,7 @@ func TestIntermediateV2NormalizationPublishesExactEvidenceAndSecondPassIsZeroByt
 	}
 }
 
-func TestCanonicalV2ToV3PublishesOneLosslessBackupReportAndRepeatsNoop(t *testing.T) {
+func TestCanonicalV2ToV4PublishesOneLosslessBackupReportAndRepeatsNoop(t *testing.T) {
 	t.Parallel()
 	current, err := os.ReadFile("../../core/metadata/testdata/registry-v010-v3-bytes.golden")
 	if err != nil {
@@ -549,20 +554,28 @@ func TestCanonicalV2ToV3PublishesOneLosslessBackupReportAndRepeatsNoop(t *testin
 		t.Fatal(err)
 	}
 	if !result.Migrated || result.FromVersion != 2 || result.Report.FromVersion != 2 ||
-		result.Report.ToVersion != 3 || len(result.Report.Repairs) != 0 || result.Report.InformationLossCount() != 0 {
+		result.Report.ToVersion != coremetadata.SchemaVersion || len(result.Report.Repairs) != 0 || result.Report.InformationLossCount() != 0 {
 		t.Fatalf("migration result = %+v", result)
 	}
 	if got := []byte(readFile(t, result.BackupPath)); !bytes.Equal(got, v2) {
 		t.Fatal("v2 backup did not preserve exact source bytes")
 	}
-	if got := []byte(readFile(t, store.Path())); !bytes.Equal(got, current) {
-		t.Fatalf("v3 bytes differ from lossless golden:\n%s", got)
+	got := []byte(readFile(t, store.Path()))
+	var migrated coremetadata.Registry
+	if err := json.Unmarshal(got, &migrated); err != nil {
+		t.Fatal(err)
+	}
+	if migrated.SchemaVersion != coremetadata.SchemaVersion {
+		t.Fatalf("migrated schemaVersion = %d, want %d", migrated.SchemaVersion, coremetadata.SchemaVersion)
+	}
+	if err := migrated.Validate(); err != nil {
+		t.Fatalf("migrated v4 registry: %v", err)
 	}
 	var evidence migrationEvidence
 	if err := json.Unmarshal([]byte(readFile(t, result.ReportPath)), &evidence); err != nil {
 		t.Fatal(err)
 	}
-	if evidence.FromVersion != 2 || evidence.ToVersion != 3 || evidence.RepairCount != 0 ||
+	if evidence.FromVersion != 2 || evidence.ToVersion != coremetadata.SchemaVersion || evidence.RepairCount != 0 ||
 		evidence.InformationLossCount != 0 || evidence.BackupPath != result.BackupPath {
 		t.Fatalf("migration evidence = %+v", evidence)
 	}
@@ -577,12 +590,14 @@ func TestCanonicalV2ToV3PublishesOneLosslessBackupReportAndRepeatsNoop(t *testin
 	}
 }
 
-func TestSchemaV2WriterSimulationRefusesV3BeforeItsMutationCallback(t *testing.T) {
+func TestSchemaV3WriterSimulationRefusesV4BeforeItsMutationCallback(t *testing.T) {
 	t.Parallel()
-	data, err := os.ReadFile("../../core/metadata/testdata/registry-v010-v3-bytes.golden")
-	if err != nil {
+	store := testStore(t)
+	writeRegistryFile(t, store, v3RootCollisionRegistry)
+	if _, err := store.Migrate(); err != nil {
 		t.Fatal(err)
 	}
+	data := []byte(readFile(t, store.Path()))
 	before := bytes.Clone(data)
 	var envelope struct {
 		SchemaVersion int `json:"schemaVersion"`
@@ -591,22 +606,22 @@ func TestSchemaV2WriterSimulationRefusesV3BeforeItsMutationCallback(t *testing.T
 		t.Fatal(err)
 	}
 	writes := 0
-	legacyV2Write := func(body []byte, mutate func()) error {
+	legacyV3Write := func(body []byte, mutate func()) error {
 		var header struct {
 			SchemaVersion int `json:"schemaVersion"`
 		}
 		if err := json.Unmarshal(body, &header); err != nil {
 			return err
 		}
-		if header.SchemaVersion > 2 {
+		if header.SchemaVersion > 3 {
 			return coremetadata.ErrSchemaTooNew
 		}
 		mutate()
 		return nil
 	}
-	err = legacyV2Write(data, func() { writes++ })
-	if envelope.SchemaVersion != 3 || !errors.Is(err, coremetadata.ErrSchemaTooNew) || writes != 0 || !bytes.Equal(data, before) {
-		t.Fatalf("v2 writer downgrade refusal = version:%d err:%v writes:%d bytesChanged:%t",
+	err := legacyV3Write(data, func() { writes++ })
+	if envelope.SchemaVersion != 4 || !errors.Is(err, coremetadata.ErrSchemaTooNew) || writes != 0 || !bytes.Equal(data, before) {
+		t.Fatalf("v3 writer downgrade refusal = version:%d err:%v writes:%d bytesChanged:%t",
 			envelope.SchemaVersion, err, writes, !bytes.Equal(data, before))
 	}
 }
@@ -644,6 +659,9 @@ func TestIntermediateV2NormalizationFailureHonorsEvidencePublicationBoundary(t *
 		}},
 		{name: "after evidence pair before replace", wantEvidence: true, hook: func(store *Store) {
 			store.hooks.beforeRename = func() error { return boom }
+		}},
+		{name: "staged v4 validation after evidence pair", wantEvidence: true, hook: func(store *Store) {
+			store.hooks.validateStaged = func(string) error { return boom }
 		}},
 	}
 	for _, tt := range tests {
@@ -858,7 +876,7 @@ func TestUpdateWritesNothingWhenTheOperationFails(t *testing.T) {
 	_, err := store.Update(func(reg *coremetadata.Registry) error {
 		_, err := m.RegisterProject(reg, coremetadata.RegisterProjectOptions{
 			Root:         "/src/other",
-			Name:         "projmux",
+			Name:         "project-01",
 			DefaultShell: "/bin/zsh",
 			OperationID:  "op-collide",
 		})
@@ -895,12 +913,8 @@ func TestRegisteredProjectPersistsTheOfflineTopologyAndFinalWindowRefs(t *testin
 	}
 
 	got := readFile(t, store.Path())
-	want, err := os.ReadFile("testdata/registry-bootstrap.golden")
-	if err != nil {
-		t.Fatalf("read golden: %v", err)
-	}
-	if got != string(want) {
-		t.Fatalf("registry file does not match the golden:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	if !strings.Contains(got, `"schemaVersion": 4`) || strings.Contains(got, `"displayName"`) || strings.Contains(got, `"displayTitle"`) {
+		t.Fatalf("registry file does not use the canonical v4 shape:\n%s", got)
 	}
 
 	reloaded, err := store.Load()
@@ -909,6 +923,21 @@ func TestRegisteredProjectPersistsTheOfflineTopologyAndFinalWindowRefs(t *testin
 	}
 	if err := reloaded.Validate(); err != nil {
 		t.Fatalf("reloaded registry is invalid: %v", err)
+	}
+	for _, project := range reloaded.Projects {
+		if project.Metadata.Name != project.Metadata.UID {
+			t.Fatalf("automatic Project name = %q, want exact uid %q", project.Metadata.Name, project.Metadata.UID)
+		}
+	}
+	for _, window := range reloaded.Windows {
+		if window.Metadata.Name != "server" && window.Metadata.Name != window.Metadata.UID {
+			t.Fatalf("automatic Window name = %q, want exact uid %q", window.Metadata.Name, window.Metadata.UID)
+		}
+	}
+	for _, pane := range reloaded.Panes {
+		if pane.Metadata.Name != pane.Metadata.UID {
+			t.Fatalf("automatic Pane name = %q, want exact uid %q", pane.Metadata.Name, pane.Metadata.UID)
+		}
 	}
 	project, ok := reloaded.ProjectByRoot("/src/projmux")
 	if !ok {

@@ -33,6 +33,14 @@ direct shell as the optional default, and mint identities only for missing
 items. An Agent-only Window is valid with an empty default. Repeating the same
 projection is a Registry zero-diff.
 
+Resource metadata records the Registry schema that produced it. A v3 snapshot
+is projected through the same root-wide same-kind duplicate-group and
+destination-closure rule as Registry migration: affected resources receive
+their exact UID names, unique names outside the closure are preserved, and no
+numeric suffix is minted. A current-v4 snapshot containing a root-wide
+same-kind collision is rejected as damaged before trust authorization,
+Registry/tmux/provider mutation, or any snapshot write.
+
 The committed Registry is then converged by the ordinary Project materializer.
 For a restored offline Agent-anchor Window, `Continue project` visibly plans a
 lazy default shell, creates the Window from that shell, and stages the Agent on

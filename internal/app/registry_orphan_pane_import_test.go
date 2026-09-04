@@ -97,15 +97,15 @@ func TestReconcileRegistersAnOrphanLivePaneAndMirrorsItsUID(t *testing.T) {
 	if pane.Spec.Role != coremetadata.PaneRoleShell {
 		t.Fatalf("the registered Pane role = %q, want %q", pane.Spec.Role, coremetadata.PaneRoleShell)
 	}
-	// The name is the fallback base, not the `claude` the pane happens to be
-	// running: metadata.name is never derived from a runtime attribute.
-	if pane.Metadata.Name != coremetadata.FallbackPaneNameBase {
-		t.Fatalf("the registered Pane name = %q, want %q", pane.Metadata.Name, coremetadata.FallbackPaneNameBase)
+	// The automatic name is the exact UID, not the `claude` the pane happens to
+	// be running: metadata.name is never derived from a runtime attribute.
+	if pane.Metadata.Name != pane.Metadata.UID {
+		t.Fatalf("the registered Pane name = %q, want exact uid %q", pane.Metadata.Name, pane.Metadata.UID)
 	}
 	// The binding write is the existing whole one, so the name mirror comes with
 	// the uid rather than a uid-only variant.
-	if got := orphan.opts[tmuxopts.PaneName]; got != coremetadata.FallbackPaneNameBase {
-		t.Fatalf("mirrored pane name = %q, want %q", got, coremetadata.FallbackPaneNameBase)
+	if got := orphan.opts[tmuxopts.PaneName]; got != pane.Metadata.UID {
+		t.Fatalf("mirrored pane name = %q, want exact uid %q", got, pane.Metadata.UID)
 	}
 	if len(registry.Agents) != 0 {
 		t.Fatalf("registering a pane running an AI agent minted %d Agents, want 0", len(registry.Agents))
@@ -374,7 +374,7 @@ func TestOrphanPaneRegistrationNeverCrossesAProjectBoundary(t *testing.T) {
 	registry.NameReservations = append(registry.NameReservations,
 		coremetadata.NameReservation{Kind: coremetadata.KindProject, Name: "beta", UID: "prj-beta"},
 		coremetadata.NameReservation{Scope: "prj-beta", Kind: coremetadata.KindWindow, Name: "zsh", UID: "win-beta"},
-		coremetadata.NameReservation{Scope: "win-beta", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-beta"},
+		coremetadata.NameReservation{Scope: "prj-beta", Kind: coremetadata.KindPane, Name: "zsh", UID: "pan-beta"},
 	)
 	if err := registry.Validate(); err != nil {
 		t.Fatalf("two-Project fixture is not a valid registry: %v", err)

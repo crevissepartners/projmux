@@ -1622,7 +1622,6 @@ func (m *materializer) mirrorWindow(ctx context.Context, target string, window c
 		{operands: []string{"-w", "-t", target, tmuxopts.AutomaticRenameWindow, "off"}, effect: "automatic rename disabled"},
 		{operands: []string{"-w", "-t", target, "-q", tmuxopts.WindowUID, window.Metadata.UID}, effect: "Window UID mirror equals Registry"},
 		{operands: []string{"-w", "-t", target, "-q", tmuxopts.WindowName, window.Metadata.Name}, effect: "Window stable-name mirror equals Registry"},
-		{verb: mutationRenameWindow, operands: []string{"-t", target, window.DisplayName()}, effect: "Window display name equals desired projection"},
 	})
 }
 

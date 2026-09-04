@@ -52,8 +52,8 @@ type ControlSessionObservation struct {
 
 // ControlSessionWindow is one observed window of a control session.
 type ControlSessionWindow struct {
-	// DisplayName is the tmux window_name. It is projected onto the
-	// duplicate-allowed metadata.displayName and is never a name seed.
+	// DisplayName is the observed tmux window_name. It is invocation-scoped
+	// runtime context only and is never persisted or used as a name seed.
 	DisplayName      string
 	RuntimeSessionID string
 	RuntimeID        string
@@ -69,10 +69,10 @@ type ControlSessionPane struct {
 	// UID is the `@projmux_pane_uid` the live pane already carries, empty when
 	// it carries none.
 	UID string
-	// Name is the `@projmux_pane_label` mirror, the highest-priority name seed
-	// for a minted Pane.
+	// Name is the observed `@projmux_pane_label` mirror. It is runtime context
+	// only and never participates in automatic naming.
 	Name string
-	// Command is `pane_current_command`, the one-time name-derivation source.
+	// Command is `pane_current_command`, used only as runtime/desired context.
 	Command string
 	// Title is `pane_title`, a derived display source only.
 	Title string
@@ -122,7 +122,7 @@ type ControlSessionBinding struct {
 // Registry Window is never handed to two live tmux windows. A nil binder gets a
 // private one over an empty observation, which is the correct reading for a
 // caller binding a single session in isolation.
-func (m Mutator) BindControlSession(reg *Registry, observed ControlSessionObservation, defaultShell, operationID string, binder *BindingMatcher) (ControlSessionBinding, error) {
+func (m Mutator) BindControlSession(reg *Registry, observed ControlSessionObservation, _ string, operationID string, binder *BindingMatcher) (ControlSessionBinding, error) {
 	const op = "bind control session"
 
 	session := strings.TrimSpace(observed.Session)
@@ -135,7 +135,7 @@ func (m Mutator) BindControlSession(reg *Registry, observed ControlSessionObserv
 
 	now := m.clock()().UTC()
 	txn := m.Begin(reg, operationID)
-	result, err := m.bindControlSessionTx(txn, reg, op, session, observed, defaultShell, now, binder)
+	result, err := m.bindControlSessionTx(txn, reg, op, session, observed, now, binder)
 	if err != nil {
 		txn.Rollback()
 		return ControlSessionBinding{}, err
@@ -147,7 +147,7 @@ func (m Mutator) BindControlSession(reg *Registry, observed ControlSessionObserv
 	return result, nil
 }
 
-func (m Mutator) bindControlSessionTx(txn *Transaction, reg *Registry, op, session string, observed ControlSessionObservation, defaultShell string, now time.Time, binder *BindingMatcher) (ControlSessionBinding, error) {
+func (m Mutator) bindControlSessionTx(txn *Transaction, reg *Registry, op, session string, observed ControlSessionObservation, now time.Time, binder *BindingMatcher) (ControlSessionBinding, error) {
 	result := ControlSessionBinding{}
 
 	var controlUID string
@@ -155,15 +155,7 @@ func (m Mutator) bindControlSessionTx(txn *Transaction, reg *Registry, op, sessi
 		controlUID = existing.Metadata.UID
 		result.Reused = true
 	} else {
-		uid, err := m.mintUID(KindControlSession)
-		if err != nil {
-			return ControlSessionBinding{}, err
-		}
-		// Automatic, not explicit: a session name that collides with an existing
-		// ControlSession name takes the lowest free suffix rather than failing.
-		// `projmux shell` is the app's own entrypoint and must not become
-		// unusable because of a name the Registry already holds.
-		name, err := reg.allocateName(op, "", KindControlSession, ControlSessionNameBase(session), uid)
+		uid, name, err := m.mintAndReserveName(reg, op, "", KindControlSession, "")
 		if err != nil {
 			return ControlSessionBinding{}, err
 		}
@@ -182,7 +174,7 @@ func (m Mutator) bindControlSessionTx(txn *Transaction, reg *Registry, op, sessi
 	}
 
 	for index, window := range observed.Windows {
-		if err := m.bindControlWindowTx(txn, reg, op, controlUID, defaultShell, index, window, now, &result, binder); err != nil {
+		if err := m.bindControlWindowTx(txn, reg, op, controlUID, index, window, now, &result, binder); err != nil {
 			return ControlSessionBinding{}, err
 		}
 	}
@@ -200,7 +192,7 @@ func (m Mutator) bindControlSessionTx(txn *Transaction, reg *Registry, op, sessi
 // uid that exists and belongs to somebody else -- contributes none of its panes
 // either, because a pane can only be paired inside a Window that was itself
 // paired.
-func (m Mutator) bindControlWindowTx(txn *Transaction, reg *Registry, op, controlUID, defaultShell string, index int, observed ControlSessionWindow, now time.Time, result *ControlSessionBinding, binder *BindingMatcher) error {
+func (m Mutator) bindControlWindowTx(txn *Transaction, reg *Registry, op, controlUID string, index int, observed ControlSessionWindow, now time.Time, result *ControlSessionBinding, binder *BindingMatcher) error {
 	match := binder.MatchWindow(reg, controlUID, observed.UID)
 	if match.Kind == AdoptionRefused {
 		return nil
@@ -215,14 +207,7 @@ func (m Mutator) bindControlWindowTx(txn *Transaction, reg *Registry, op, contro
 
 	if match.Kind == AdoptionUnmatched || match.Kind == AdoptionForeign {
 		origin = ImportCreated
-		uid, err := m.mintUID(KindWindow)
-		if err != nil {
-			return err
-		}
-		// Nothing observed from tmux seeds the stable name, exactly as
-		// LegacyWindowNameSeed refuses to: the observed window_name is projected
-		// separately onto the duplicate-allowed displayName.
-		name, err := reg.allocateName(op, controlUID, KindWindow, FallbackWindowNameBase, uid)
+		uid, name, err := m.mintAndReserveName(reg, op, controlUID, KindWindow, "")
 		if err != nil {
 			return err
 		}
@@ -230,11 +215,10 @@ func (m Mutator) bindControlWindowTx(txn *Transaction, reg *Registry, op, contro
 			APIVersion: APIVersion,
 			Kind:       KindWindow,
 			Metadata: ObjectMeta{
-				UID:         uid,
-				Name:        name,
-				DisplayName: observed.DisplayName,
-				OwnerRef:    &OwnerRef{Kind: KindControlSession, UID: controlUID},
-				CreatedAt:   now,
+				UID:       uid,
+				Name:      name,
+				OwnerRef:  &OwnerRef{Kind: KindControlSession, UID: controlUID},
+				CreatedAt: now,
 			},
 		})
 		txn.record(KindWindow, uid)
@@ -264,7 +248,7 @@ func (m Mutator) bindControlWindowTx(txn *Transaction, reg *Registry, op, contro
 
 	shellPaneRef := ""
 	for paneIndex, observedPane := range panes {
-		paneUID, err := m.bindControlPaneTx(txn, reg, op, windowUID, defaultShell, index, paneIndex, observedPane, now, result, binder)
+		paneUID, err := m.bindControlPaneTx(txn, reg, op, windowUID, index, paneIndex, observedPane, now, result, binder)
 		if err != nil {
 			return err
 		}
@@ -281,9 +265,6 @@ func (m Mutator) bindControlWindowTx(txn *Transaction, reg *Registry, op, contro
 		stored.Spec.AnchorPaneRef = shellPaneRef
 		stored.Spec.DefaultShellPaneRef = shellPaneRef
 	}
-	if _, err := m.ObserveWindowDisplayName(reg, windowUID, observed.DisplayName); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -292,7 +273,7 @@ func (m Mutator) bindControlWindowTx(txn *Transaction, reg *Registry, op, contro
 //
 // Every pane is a shell Pane. See the package note above for why no Agent is
 // minted below a control session in this slice.
-func (m Mutator) bindControlPaneTx(txn *Transaction, reg *Registry, op, windowUID, defaultShell string, windowIndex, paneIndex int, observed ControlSessionPane, now time.Time, result *ControlSessionBinding, binder *BindingMatcher) (string, error) {
+func (m Mutator) bindControlPaneTx(txn *Transaction, reg *Registry, op, windowUID string, windowIndex, paneIndex int, observed ControlSessionPane, now time.Time, result *ControlSessionBinding, binder *BindingMatcher) (string, error) {
 	match := binder.MatchPane(reg, windowUID, observed.UID)
 	if match.Kind == AdoptionRefused {
 		return "", nil
@@ -319,16 +300,10 @@ func (m Mutator) bindControlPaneTx(txn *Transaction, reg *Registry, op, windowUI
 		return pane.Metadata.UID, nil
 	}
 
-	nameBase := PaneNameBase(observed.Command, defaultShell)
-	if base := SanitizeNameBase(observed.Name); base != "" {
-		nameBase = base
-	}
-	pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", nameBase, observed.Command, strings.TrimSpace(observed.CWD), nil, now)
+	pane, err := m.addPaneTx(txn, reg, op, windowUID, KindWindow, PaneRoleShell, "", observed.Command, strings.TrimSpace(observed.CWD), nil, now)
 	if err != nil {
 		return "", err
 	}
-	pane.Status.DisplayTitle = DerivePaneDisplayTitle("", "", observed.Command, observed.Title)
-	reg.storePaneStatus(pane.Metadata.UID, pane.Status)
 	binder.Claim(pane.Metadata.UID)
 	result.Panes = append(result.Panes, ImportedPane{
 		UID:         pane.Metadata.UID,

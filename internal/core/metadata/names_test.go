@@ -2,41 +2,50 @@ package metadata
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
-func TestNameBasesFollowTheDeclaredSeedPriorityAndExcludeTopicsAndTitles(t *testing.T) {
+func TestProjectNameBaseRemainsOnlyForHistoricalRootLookup(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name string
-		got  string
-		want string
-	}{
-		{name: "window prefers explicit name", got: WindowNameBase("build", "nvim .", "/bin/zsh"), want: "build"},
-		{name: "window falls back to initial command basename", got: WindowNameBase("", "/usr/bin/nvim .", "/bin/zsh"), want: "nvim"},
-		{name: "window falls back to configured shell basename", got: WindowNameBase("", "", "/bin/zsh"), want: "zsh"},
-		{name: "window falls back to the window literal", got: WindowNameBase("", "", ""), want: "window"},
-		{name: "shell pane prefers command basename", got: PaneNameBase("/usr/bin/htop", "/bin/zsh"), want: "htop"},
-		{name: "shell pane falls back to configured shell basename", got: PaneNameBase("", "/usr/local/bin/fish"), want: "fish"},
-		{name: "shell pane falls back to the pane literal", got: PaneNameBase("", ""), want: "pane"},
-		{name: "managed pane uses the agent name base", got: ManagedPaneNameBase("codex-1"), want: "codex-1-pane"},
-		{name: "managed pane falls back to the pane literal", got: ManagedPaneNameBase(""), want: "pane"},
-		{name: "agent prefers explicit name", got: AgentNameBase("reviewer", "codex"), want: "reviewer"},
-		{name: "agent normalizes a known provider", got: AgentNameBase("", "Codex"), want: "codex"},
-		{name: "agent normalizes claude", got: AgentNameBase("", "claude"), want: "claude"},
-		{name: "agent normalizes antigravity", got: AgentNameBase("", "antigravity"), want: "antigravity"},
-		{name: "agent falls back for an unknown provider", got: AgentNameBase("", "mystery"), want: "agent"},
-		{name: "project seeds from the root basename", got: ProjectNameBase("/home/user/src/Projmux"), want: "Projmux"},
-		{name: "project falls back for the filesystem root", got: ProjectNameBase("/"), want: "project"},
-		{name: "project display name seeds from the root basename", got: ProjectDisplayName("/home/user/src/Projmux"), want: "Projmux"},
+	tests := []struct{ name, root, want string }{
+		{name: "basename", root: "/home/user/src/Projmux", want: "Projmux"},
+		{name: "filesystem root", root: "/", want: "project"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if tt.got != tt.want {
-				t.Fatalf("got %q, want %q", tt.got, tt.want)
+			if got := ProjectNameBase(tt.root); got != tt.want {
+				t.Fatalf("got %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestAutomaticNumericSuffixProducerInventoryIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	files := []string{
+		"names.go", "mutator.go", "agent.go", "agentlinkage.go",
+		"controlsession.go", "legacy.go", "snapshot_projection.go",
+	}
+	banned := []string{
+		"allocateName(", "nextAvailableName(", "WindowNameBase(",
+		"PaneNameBase(", "ManagedPaneNameBase(", "AgentNameBase(",
+		"LegacyWindowNameSeed(", "LegacyPaneNameSeed(", "nameBase :=",
+	}
+	for _, name := range files {
+		data, err := os.ReadFile(filepath.Clean(name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, snippet := range banned {
+			if strings.Contains(string(data), snippet) {
+				t.Errorf("automatic naming producer %q remains in %s", snippet, name)
+			}
+		}
 	}
 }
 
@@ -105,56 +114,39 @@ func TestValidateNameRejectsValuesThatCannotBeStableQueryKeys(t *testing.T) {
 	}
 }
 
-func TestAutomaticNameAllocationReservesTheLowestFreeSuffixPersistentlyAndIndependentlyOfScanOrder(t *testing.T) {
+func TestAutomaticNameAllocationUsesTheExactFullUIDAndRemintsCollisions(t *testing.T) {
 	t.Parallel()
 
 	reg := NewRegistry()
-	first, err := reg.allocateName("test", "", KindProject, "Projmux", "uid-a")
+	reg.NameReservations = append(reg.NameReservations, NameReservation{Kind: KindProject, Name: "project-collision", UID: "project-existing"})
+	candidates := []string{"project-collision", "project-free"}
+	m := Mutator{NewUID: func(Kind) (string, error) {
+		uid := candidates[0]
+		candidates = candidates[1:]
+		return uid, nil
+	}}
+	uid, name, err := m.mintAndReserveName(&reg, "test", "", KindProject, "")
 	if err != nil {
-		t.Fatalf("allocate first: %v", err)
+		t.Fatalf("allocate automatic name: %v", err)
 	}
-	second, err := reg.allocateName("test", "", KindProject, "Projmux", "uid-b")
-	if err != nil {
-		t.Fatalf("allocate second: %v", err)
+	if uid != "project-free" || name != uid {
+		t.Fatalf("got uid/name %q/%q, want exact reminted uid project-free", uid, name)
 	}
-	third, err := reg.allocateName("test", "", KindProject, "Projmux", "uid-c")
-	if err != nil {
-		t.Fatalf("allocate third: %v", err)
-	}
-	if first != "Projmux" || second != "Projmux-1" || third != "Projmux-2" {
-		t.Fatalf("got %q/%q/%q, want Projmux/Projmux-1/Projmux-2", first, second, third)
-	}
-	if len(reg.NameReservations) != 3 {
-		t.Fatalf("reservations = %d, want 3 persisted entries", len(reg.NameReservations))
-	}
-
-	// Reversing the reservation slice must not change the next allocation:
-	// the allocator scans integer suffixes, never the reservation order.
-	reversed := NewRegistry()
-	for i := len(reg.NameReservations) - 1; i >= 0; i-- {
-		reversed.NameReservations = append(reversed.NameReservations, reg.NameReservations[i])
-	}
-	fourth, err := reversed.allocateName("test", "", KindProject, "Projmux", "uid-d")
-	if err != nil {
-		t.Fatalf("allocate fourth: %v", err)
-	}
-	if fourth != "Projmux-3" {
-		t.Fatalf("fourth = %q, want Projmux-3", fourth)
-	}
-
-	// A released reservation frees exactly that suffix and nothing else.
-	reg.releaseNames("uid-b")
-	reused, err := reg.allocateName("test", "", KindProject, "Projmux", "uid-e")
-	if err != nil {
-		t.Fatalf("allocate reused: %v", err)
-	}
-	if reused != "Projmux-1" {
-		t.Fatalf("reused = %q, want the freed Projmux-1", reused)
+	if owner, _ := reg.nameOwner("", KindProject, uid); owner != uid {
+		t.Fatalf("reservation owner = %q, want %q", owner, uid)
 	}
 }
 
-func TestNameScopesAreRegistryWideForProjectsAndOwnerScopedOtherwise(t *testing.T) {
+func TestNameScopesAreRootWideAndKeepKindInTheKey(t *testing.T) {
 	t.Parallel()
+	reg := NewRegistry()
+	reg.Projects = append(reg.Projects, Project{Metadata: ObjectMeta{UID: "project-01", Name: "project-01"}})
+	reg.ControlSessions = append(reg.ControlSessions, ControlSession{Metadata: ObjectMeta{UID: "control-01", Name: "control-01"}})
+	reg.Windows = append(reg.Windows,
+		Window{Metadata: ObjectMeta{UID: "window-project", Name: "window-project", OwnerRef: &OwnerRef{Kind: KindProject, UID: "project-01"}}},
+		Window{Metadata: ObjectMeta{UID: "window-control", Name: "window-control", OwnerRef: &OwnerRef{Kind: KindControlSession, UID: "control-01"}}},
+	)
+	reg.Agents = append(reg.Agents, Agent{Metadata: ObjectMeta{UID: "agent-01", Name: "agent-01", OwnerRef: &OwnerRef{Kind: KindWindow, UID: "window-project"}}})
 	tests := []struct {
 		name     string
 		kind     Kind
@@ -163,26 +155,92 @@ func TestNameScopesAreRegistryWideForProjectsAndOwnerScopedOtherwise(t *testing.
 	}{
 		{name: "project ignores its owner", kind: KindProject, ownerUID: "ignored", want: ""},
 		{name: "window scopes to its project", kind: KindWindow, ownerUID: "project-01", want: "project-01"},
-		{name: "pane scopes to its owner", kind: KindPane, ownerUID: "window-01", want: "window-01"},
-		{name: "agent scopes to its window", kind: KindAgent, ownerUID: "window-01", want: "window-01"},
+		{name: "control Window scopes to ControlSession", kind: KindWindow, ownerUID: "control-01", want: "control-01"},
+		{name: "pane scopes through its Window", kind: KindPane, ownerUID: "window-project", want: "project-01"},
+		{name: "pane scopes through its Agent", kind: KindPane, ownerUID: "agent-01", want: "project-01"},
+		{name: "agent scopes through its Window", kind: KindAgent, ownerUID: "window-project", want: "project-01"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			if got := scopeFor(tt.kind, tt.ownerUID); got != tt.want {
-				t.Fatalf("scopeFor(%s, %q) = %q, want %q", tt.kind, tt.ownerUID, got, tt.want)
+			got, err := reg.scopeFor(tt.kind, tt.ownerUID)
+			if err != nil || got != tt.want {
+				t.Fatalf("scopeFor(%s, %q) = %q, %v; want %q", tt.kind, tt.ownerUID, got, err, tt.want)
 			}
 		})
 	}
+}
+
+func TestRootWideReservationSameDifferentRootAndKindMatrix(t *testing.T) {
+	t.Parallel()
+
+	base := NewRegistry()
+	base.Projects = []Project{
+		{Metadata: ObjectMeta{UID: "project-a", Name: "project-a"}},
+		{Metadata: ObjectMeta{UID: "project-b", Name: "project-b"}},
+	}
+	base.ControlSessions = []ControlSession{
+		{Metadata: ObjectMeta{UID: "control-a", Name: "control-a"}},
+	}
+	base.Windows = []Window{
+		{Metadata: ObjectMeta{UID: "window-a1", Name: "window-a1", OwnerRef: &OwnerRef{Kind: KindProject, UID: "project-a"}}},
+		{Metadata: ObjectMeta{UID: "window-a2", Name: "window-a2", OwnerRef: &OwnerRef{Kind: KindProject, UID: "project-a"}}},
+		{Metadata: ObjectMeta{UID: "window-b1", Name: "window-b1", OwnerRef: &OwnerRef{Kind: KindProject, UID: "project-b"}}},
+		{Metadata: ObjectMeta{UID: "window-c1", Name: "window-c1", OwnerRef: &OwnerRef{Kind: KindControlSession, UID: "control-a"}}},
+		{Metadata: ObjectMeta{UID: "window-c2", Name: "window-c2", OwnerRef: &OwnerRef{Kind: KindControlSession, UID: "control-a"}}},
+	}
+	base.putReservation("project-a", KindPane, "shared", "pane-existing")
+	base.putReservation("control-a", KindPane, "control-shared", "control-pane-existing")
+
+	tests := []struct {
+		name      string
+		ownerUID  string
+		kind      Kind
+		wantScope string
+		conflict  bool
+	}{
+		{name: "same root same kind", ownerUID: "window-a2", kind: KindPane, wantScope: "project-a", conflict: true},
+		{name: "different root same kind", ownerUID: "window-b1", kind: KindPane, wantScope: "project-b"},
+		{name: "different root kind parity", ownerUID: "window-c1", kind: KindPane, wantScope: "control-a"},
+		{name: "same root different kind", ownerUID: "window-a2", kind: KindAgent, wantScope: "project-a"},
+		{name: "different root different kind", ownerUID: "window-b1", kind: KindAgent, wantScope: "project-b"},
+		{name: "different root and kind parity", ownerUID: "window-c1", kind: KindAgent, wantScope: "control-a"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			reg := base.Clone()
+			before := mustJSON(t, reg)
+			err := reg.reserveExplicitName("matrix", tt.ownerUID, tt.kind, "shared", "candidate")
+			if tt.conflict {
+				if !errors.Is(err, ErrNameConflict) || mustJSON(t, reg) != before {
+					t.Fatalf("collision = %v, registry changed=%t", err, mustJSON(t, reg) != before)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if owner, ok := reg.nameOwner(tt.wantScope, tt.kind, "shared"); !ok || owner != "candidate" {
+				t.Fatalf("reservation in scope %q = %q/%t", tt.wantScope, owner, ok)
+			}
+		})
+	}
+	t.Run("ControlSession same root same kind", func(t *testing.T) {
+		reg := base.Clone()
+		before := mustJSON(t, reg)
+		err := reg.reserveExplicitName("matrix", "window-c2", KindPane, "control-shared", "candidate")
+		if !errors.Is(err, ErrNameConflict) || mustJSON(t, reg) != before {
+			t.Fatalf("collision = %v, registry changed=%t", err, mustJSON(t, reg) != before)
+		}
+	})
 }
 
 func TestExplicitNameCollisionFailsWithoutAnImplicitSuffix(t *testing.T) {
 	t.Parallel()
 
 	reg := NewRegistry()
-	if _, err := reg.allocateName("test", "", KindProject, "shared", "uid-a"); err != nil {
-		t.Fatalf("seed allocation: %v", err)
-	}
+	reg.putReservation("", KindProject, "shared", "uid-a")
 	before := len(reg.NameReservations)
 
 	err := reg.reserveExplicitName("rename project", "", KindProject, "shared", "uid-b")
@@ -200,31 +258,5 @@ func TestExplicitNameCollisionFailsWithoutAnImplicitSuffix(t *testing.T) {
 	}
 	if owner, _ := reg.nameOwner("", KindProject, "shared"); owner != "uid-a" {
 		t.Fatalf("owner = %q, want uid-a", owner)
-	}
-}
-
-func TestDerivePaneDisplayTitleUsesTopicShellThenRawTitleAndNeverThePaneName(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name     string
-		agent    string
-		topic    string
-		command  string
-		rawTitle string
-		want     string
-	}{
-		{name: "agent topic wins for an agent pane", agent: "codex", topic: "refactor", command: "node", rawTitle: "raw", want: "refactor"},
-		{name: "topic is ignored without an agent", topic: "refactor", command: "zsh", rawTitle: "raw", want: "zsh"},
-		{name: "known shell beats the raw title", command: "fish", rawTitle: "~/src", want: "fish"},
-		{name: "raw title is the last resort", command: "node", rawTitle: "vite dev", want: "vite dev"},
-		{name: "nothing derives an empty title", want: ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := DerivePaneDisplayTitle(tt.agent, tt.topic, tt.command, tt.rawTitle); got != tt.want {
-				t.Fatalf("got %q, want %q", got, tt.want)
-			}
-		})
 	}
 }

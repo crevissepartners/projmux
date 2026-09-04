@@ -238,7 +238,7 @@ func TestPruneProjectCandidateListingIsBounded(t *testing.T) {
 		})
 		store.registry.NameReservations = append(store.registry.NameReservations,
 			coremetadata.NameReservation{Scope: uid, Kind: coremetadata.KindWindow, Name: "main", UID: windowUID},
-			coremetadata.NameReservation{Scope: windowUID, Kind: coremetadata.KindPane, Name: "shell", UID: paneUID},
+			coremetadata.NameReservation{Scope: uid, Kind: coremetadata.KindPane, Name: "shell", UID: paneUID},
 		)
 	}
 	if err := store.registry.Validate(); err != nil {

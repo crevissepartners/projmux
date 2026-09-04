@@ -136,7 +136,7 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 				"zsh         command-executable  false     zsh         live          alpha    main                        2d\n" +
 				"zsh         command-executable  false     log         live          alpha    main                        2d\n" +
 				"agent task  agent-topic         false     codex-pane  live          alpha    main    codex               2d\n" +
-				"zsh         command-executable  false     zsh         live          alpha    review                      2d\n" +
+				"zsh         command-executable  false     review-zsh  live          alpha    review                      2d\n" +
 				"zsh         command-executable  false     zsh         offline       beta     main                        2d\n" +
 				"zsh         command-executable  false     zsh         missing-root  gone     main                        2d\n",
 		},
@@ -190,7 +190,6 @@ func TestGetHumanContextNoTransportKeepsStoredPresentationOutAndNameStable(t *te
 	t.Parallel()
 
 	store := newFakeResourceStore(t)
-	store.registry.Projects[0].Metadata.DisplayName = "forbidden stored project label"
 	command := newTestListGetCommand(t, store)
 	command.runtime = nil
 	stdout, stderr, err := runRoute(t, command, "projects", "--project", "alpha")
@@ -204,9 +203,6 @@ func TestGetHumanContextNoTransportKeepsStoredPresentationOutAndNameStable(t *te
 	if got := rows[0]; got["CONTEXT"] != "alpha" || got["SOURCE"] != "project-root-basename" ||
 		got["OBSERVED"] != "false" || got["NAME"] != "alpha" {
 		t.Fatalf("no-transport Project row = %v", got)
-	}
-	if strings.Contains(stdout, "forbidden stored project label") {
-		t.Fatalf("no-transport read consumed stored presentation:\n%s", stdout)
 	}
 }
 
@@ -252,38 +248,17 @@ func TestGetAndDescribeHumanContextEnglishKoreanGolden(t *testing.T) {
 func prepareDisplayFirstTableFixture(t *testing.T, store *fakeResourceStore) {
 	t.Helper()
 
-	windowDisplays := map[string]string{
-		"win-alpha-main":   "forbidden stored editor label",
-		"win-alpha-review": "forbidden stored review label",
-		"win-beta-main":    " \t ",
-	}
-	for i := range store.registry.Windows {
-		store.registry.Windows[i].Metadata.DisplayName = windowDisplays[store.registry.Windows[i].Metadata.UID]
-	}
 	for i := range store.registry.Panes {
-		if i%2 == 0 {
-			store.registry.Panes[i].Metadata.DisplayName = ""
-		} else {
-			store.registry.Panes[i].Metadata.DisplayName = "  \t"
-		}
-		store.registry.Panes[i].Status.DisplayTitle = "forbidden-stored-pane-title"
 		if store.registry.Panes[i].Spec.Role == coremetadata.PaneRoleShell {
 			store.registry.Panes[i].Spec.Command = "/bin/zsh -l"
 		}
 	}
 	for i := range store.registry.Agents {
-		if i%2 == 0 {
-			store.registry.Agents[i].Metadata.DisplayName = ""
-		} else {
-			store.registry.Agents[i].Metadata.DisplayName = " \t "
-		}
 		store.registry.Agents[i].Metadata.Annotations = map[string]string{
 			coremetadata.AnnotationAgentTopic: "agent task",
 		}
 	}
-	if gone, ok := store.registry.Project("prj-gone"); ok {
-		gone.Metadata.DisplayName = " \t "
-	} else {
+	if _, ok := store.registry.Project("prj-gone"); !ok {
 		t.Fatal("fixture project prj-gone is missing")
 	}
 }
@@ -543,16 +518,12 @@ func TestGetListWithHangulNamesStaysAligned(t *testing.T) {
 	renameFixtureResource(t, store, "prj-alpha", "알파")
 	renameFixtureResource(t, store, "win-alpha-main", "메인")
 	renameFixtureResource(t, store, "pan-alpha-zsh", "쉘")
-	pane, ok := store.registry.Pane("pan-alpha-zsh")
-	if !ok {
+	if _, ok := store.registry.Pane("pan-alpha-zsh"); !ok {
 		t.Fatal("fixture pane pan-alpha-zsh is missing")
 	}
-	pane.Metadata.DisplayName = "쉘 화면"
-	logPane, ok := store.registry.Pane("pan-alpha-log")
-	if !ok {
+	if _, ok := store.registry.Pane("pan-alpha-log"); !ok {
 		t.Fatal("fixture pane pan-alpha-log is missing")
 	}
-	logPane.Metadata.DisplayName = " \t "
 
 	stdout, stderr, err := runRoute(t, newTestListGetCommand(t, store), "panes", "--project", "알파")
 	if err != nil {
@@ -562,7 +533,7 @@ func TestGetListWithHangulNamesStaysAligned(t *testing.T) {
 		"                 false     쉘          live    알파     메인                        2d\n" +
 		"                 false     log         live    알파     메인                        2d\n" +
 		"                 false     codex-pane  live    알파     메인    codex               2d\n" +
-		"                 false     zsh         live    알파     review                      2d\n"
+		"                 false     review-zsh  live    알파     review                      2d\n"
 	if stdout != want {
 		t.Fatalf("get panes stdout =\n%q\nwant\n%q", stdout, want)
 	}

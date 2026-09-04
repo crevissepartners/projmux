@@ -253,7 +253,7 @@ func TestControllerAdapterFieldInventoryIsSourceDerivedAndBidirectional(t *testi
 	targets := map[string]map[string]bool{
 		"../integrations/metadata/tmuxmirror.go": {
 			"MirrorProject": false, "RebindProject": false, "MirrorWindow": false,
-			"disableAutomaticRename": false, "writeWindowIdentityName": false, "writeWindowDisplayName": false,
+			"disableAutomaticRename": false, "writeWindowIdentityName": false,
 			"MirrorPane": false, "writePaneName": false,
 		},
 		"resource_reconcile_plan.go": {
@@ -2971,7 +2971,6 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"../integrations/metadata/tmuxmirror.go:MirrorWindow:set-option":                        "controller.identity",
 		"../integrations/metadata/tmuxmirror.go:disableAutomaticRename:set-option":              "controller.identity",
 		"../integrations/metadata/tmuxmirror.go:writeWindowIdentityName:set-option":             "controller.identity",
-		"../integrations/metadata/tmuxmirror.go:writeWindowDisplayName:rename-window":           "controller.identity",
 	}
 	surfaceDispositions := map[string]runtimeMutationSurfaceDisposition{}
 	for _, row := range runtimeMutationSurfaces {

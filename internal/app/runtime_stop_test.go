@@ -99,8 +99,8 @@ func addSecondRuntimeStopAgent(t *testing.T, store *fakeResourceStore) {
 	store.registry.Agents = append(store.registry.Agents, secondAgent)
 	store.registry.Panes = append(store.registry.Panes, secondPane)
 	store.registry.NameReservations = append(store.registry.NameReservations,
-		coremetadata.NameReservation{Scope: "win-alpha-main", Kind: coremetadata.KindAgent, Name: "reviewer", UID: secondAgent.Metadata.UID},
-		coremetadata.NameReservation{Scope: secondAgent.Metadata.UID, Kind: coremetadata.KindPane, Name: "reviewer-pane", UID: secondPane.Metadata.UID})
+		coremetadata.NameReservation{Scope: "prj-alpha", Kind: coremetadata.KindAgent, Name: "reviewer", UID: secondAgent.Metadata.UID},
+		coremetadata.NameReservation{Scope: "prj-alpha", Kind: coremetadata.KindPane, Name: "reviewer-pane", UID: secondPane.Metadata.UID})
 	if err := store.registry.Validate(); err != nil {
 		t.Fatal(err)
 	}

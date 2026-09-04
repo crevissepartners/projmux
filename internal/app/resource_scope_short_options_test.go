@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -170,7 +171,7 @@ func TestResourceCreateShortOptionsPreserveMutationAndTmuxPlan(t *testing.T) {
 		tmux := newFakeTmux()
 		cmd, _ := newTestResourceCreateCommand(t, store, tmux)
 		stdout, stderr, err := runRoute(t, cmd, args...)
-		return stdout, stderr, store.snapshot(), tmux.calls, err
+		return stdout, stderr, store.snapshot(), normalizedCreateLeaseCalls(t, tmux.calls), err
 	}
 	longOut, longStderr, longRegistry, longCalls, longErr := run([]string{"pane", "--project", "alpha", "--window", "review", "--window", "main", "-o", "none", "--", "tool", "-p", "opaque", "-w", "opaque"})
 	shortOut, shortStderr, shortRegistry, shortCalls, shortErr := run([]string{"pane", "-p", "alpha", "-w", "review", "--window", "main", "-o", "none", "--", "tool", "-p", "opaque", "-w", "opaque"})
@@ -180,6 +181,48 @@ func TestResourceCreateShortOptionsPreserveMutationAndTmuxPlan(t *testing.T) {
 			longOut, longStderr, longErr, longRegistry, longCalls,
 			shortOut, shortStderr, shortErr, shortRegistry, shortCalls)
 	}
+}
+
+// normalizedCreateLeaseCalls removes only the invocation wall-clock component
+// from this alias-equivalence assertion. Each execution owns a distinct active
+// lease, so two otherwise identical routes that straddle a Unix second cannot
+// produce byte-identical marker values. The helper first proves every observed
+// marker is one consistent, live op-test lease; all remaining argv bytes stay
+// under the exact DeepEqual assertion above.
+func normalizedCreateLeaseCalls(t *testing.T, calls [][]string) [][]string {
+	t.Helper()
+	var marker string
+	out := make([][]string, len(calls))
+	for callIndex, call := range calls {
+		out[callIndex] = append([]string(nil), call...)
+		for argIndex, arg := range out[callIndex] {
+			candidate := ""
+			if value, found := strings.CutPrefix(arg, createOperationEnvironment+"="); found {
+				candidate = value
+			} else if strings.HasPrefix(arg, "v1:") && strings.HasSuffix(arg, ":op-test") {
+				candidate = arg
+			}
+			if candidate == "" {
+				continue
+			}
+			if marker == "" {
+				marker = candidate
+			}
+			if candidate != marker {
+				t.Fatalf("tmux calls carry multiple create leases: %q and %q", marker, candidate)
+			}
+			parts := strings.SplitN(candidate, ":", 4)
+			if len(parts) != 4 || parts[0] != "v1" || parts[3] != "op-test" || !activeCreateOperationMarker(candidate, time.Now()) {
+				t.Fatalf("tmux calls create lease %q is malformed or inactive", candidate)
+			}
+			normalized := strings.Join([]string{parts[0], parts[1], "<started>", parts[3]}, ":")
+			out[callIndex][argIndex] = strings.Replace(arg, candidate, normalized, 1)
+		}
+	}
+	if marker == "" {
+		t.Fatal("tmux calls carry no create lease")
+	}
+	return out
 }
 
 func TestCanonicalFocusShortOptionsPreserveInterleaveAndPlan(t *testing.T) {

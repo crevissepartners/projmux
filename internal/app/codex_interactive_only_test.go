@@ -142,7 +142,7 @@ func TestInteractiveOnlyIsTheOnlyPlainCodexLaneAndBothSpellingsAreEquivalent(t *
 			if strings.Contains(strings.Join(calls[0], " "), "--remote") {
 				t.Fatalf("%v launched a native remote resume: %v", args, calls[0])
 			}
-			agent := agentNamed(t, store, "win-alpha-main", "codex-1")
+			agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
 			pane, ok := store.registry.Pane(agent.Status.PaneRef)
 			if !ok || agent.Status.SessionRef != nil || pane.Status.Activation.Codex != nil {
 				t.Fatalf("%v bound native identity: agent=%#v pane=%#v", args, agent.Status, pane.Status.Activation)
@@ -386,7 +386,7 @@ func TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalent
 		if !strings.Contains(joined, "exec codex") || strings.Contains(joined, "--remote") || strings.Contains(joined, "resume") {
 			t.Fatalf("payload-free launch is not the plain Codex argv: %v", launch)
 		}
-		agent := agentNamed(t, store, "win-alpha-main", "codex-1")
+		agent := agentNamed(t, store, "win-alpha-main", "agent-test-1")
 		pane, ok := store.registry.Pane(agent.Status.PaneRef)
 		if !ok || agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.SessionRef != nil ||
 			agent.Status.Activation.State != coremetadata.ActivationNotRequested || agent.Status.Activation.Source != "" ||
@@ -404,7 +404,7 @@ func TestPayloadFreeCodexCreateUsesSafePlainFallbackAndInteractiveOnlyEquivalent
 	canonical := run(t, "agent", "--provider", "codex", "--project", "alpha", "--window", "main")
 	shortcut := run(t, "codex", "--project", "alpha", "--window", "main")
 	interactive := run(t, "agent", "--provider", "codex", "--interactive-only", "--project", "alpha", "--window", "main")
-	if canonical.stdout != "agent/codex-1 created\n" || shortcut.stdout != canonical.stdout || interactive.stdout != canonical.stdout {
+	if canonical.stdout != "agent/agent-test-1 created\n" || shortcut.stdout != canonical.stdout || interactive.stdout != canonical.stdout {
 		t.Fatalf("payload-free stdout drifted: canonical=%q shortcut=%q interactive-only=%q", canonical.stdout, shortcut.stdout, interactive.stdout)
 	}
 	if !slices.Equal(canonical.launch, shortcut.launch) || !slices.Equal(canonical.launch, interactive.launch) {

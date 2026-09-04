@@ -86,7 +86,7 @@ func TestAIResumeExactAgentLabelResolverUsesOnlyExactThreadBinding(t *testing.T)
 	registry := coremetadata.Registry{Agents: []coremetadata.Agent{
 		{
 			Spec: coremetadata.AgentSpec{Provider: aiModeCodex},
-			Metadata: coremetadata.ObjectMeta{UID: "agt-z-topic", Name: "agent-name", DisplayName: "Custom display", Annotations: map[string]string{
+			Metadata: coremetadata.ObjectMeta{UID: "agt-z-topic", Name: "agent-name", Annotations: map[string]string{
 				coremetadata.AnnotationAgentTopic: "Bound topic",
 			}},
 			Status: coremetadata.AgentStatus{SessionRef: &coremetadata.AgentSessionRef{
@@ -116,7 +116,7 @@ func TestAIResumeExactAgentLabelResolverUsesOnlyExactThreadBinding(t *testing.T)
 		},
 		{
 			Spec:     coremetadata.AgentSpec{Provider: aiModeClaude},
-			Metadata: coremetadata.ObjectMeta{UID: "agt-claude", Name: "claude-agent", DisplayName: "Claude display"},
+			Metadata: coremetadata.ObjectMeta{UID: "agt-claude", Name: "claude-agent"},
 			Status: coremetadata.AgentStatus{SessionRef: &coremetadata.AgentSessionRef{
 				Provider: aiModeClaude, Claude: &coremetadata.ClaudeSessionRef{SessionID: "claude-exact"},
 			}},

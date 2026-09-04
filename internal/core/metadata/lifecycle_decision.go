@@ -1063,9 +1063,6 @@ func PlanProjectFreshReplacement(registry Registry, projectUID string, opts Regi
 	if strings.TrimSpace(opts.Name) == "" {
 		opts.Name = project.Metadata.Name
 	}
-	if strings.TrimSpace(opts.DisplayName) == "" {
-		opts.DisplayName = project.Metadata.DisplayName
-	}
 	if opts.Labels == nil {
 		opts.Labels = cloneStringMap(project.Metadata.Labels)
 	}
