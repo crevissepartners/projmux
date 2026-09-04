@@ -784,3 +784,83 @@ func (r *failAfterReader) Read(p []byte) (int, error) {
 	r.offset++
 	return 1, nil
 }
+
+// The bounded rollout scan is the source a slow or failing native falls back
+// to, so its negative edges must degrade to fewer fully parsed rows — never to
+// torn rows, duplicates, an unbounded walk, or a panic.
+func TestBoundedRolloutScanNegativeEdgesReturnFullyParsedRowsOnly(t *testing.T) {
+	base := time.Date(2026, 6, 25, 12, 0, 0, 0, time.UTC)
+
+	t.Run("an unreadable rollout is skipped, its siblings are not", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root ignores the unreadable mode this arm depends on")
+		}
+		sessionsDir := filepath.Join(t.TempDir(), "sessions")
+		writeNumberedCodexSession(t, sessionsDir, 1, base, "/work/app")
+		unreadable := writeNumberedCodexSession(t, sessionsDir, 2, base.Add(-time.Minute), "/work/app")
+		if err := os.Chmod(unreadable, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(unreadable, 0o644) })
+
+		sessions := discoverCodexContext(context.Background(), "/work/app", sessionsDir, 0)
+		if len(sessions) != 1 || sessions[0].ResumeID != numberedCodexSessionID(1) {
+			t.Fatalf("unreadable rollout arm = %#v", sessions)
+		}
+	})
+
+	t.Run("two symlink paths aliasing one directory yield the row once", func(t *testing.T) {
+		sessionsDir := filepath.Join(t.TempDir(), "sessions")
+		writeNumberedCodexSession(t, sessionsDir, 1, base, "/work/app")
+		day := filepath.Join(sessionsDir, "2026", "06", "25")
+		mustSymlink(t, day, filepath.Join(sessionsDir, "alias-one"))
+		mustSymlink(t, day, filepath.Join(sessionsDir, "alias-two"))
+
+		done := make(chan []SessionMeta, 1)
+		go func() { done <- discoverCodexContext(context.Background(), "/work/app", sessionsDir, 0) }()
+		select {
+		case sessions := <-done:
+			if len(sessions) != 1 || sessions[0].ResumeID != numberedCodexSessionID(1) {
+				t.Fatalf("symlink alias arm = %#v", sessions)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("bounded rollout scan did not terminate over symlink aliases")
+		}
+	})
+
+	t.Run("a scan cancelled before it starts returns no torn row", func(t *testing.T) {
+		sessionsDir := filepath.Join(t.TempDir(), "sessions")
+		for i := 1; i <= 20; i++ {
+			writeNumberedCodexSession(t, sessionsDir, i, base.Add(-time.Duration(i)*time.Minute), "/work/app")
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		if sessions := discoverCodexContext(ctx, "/work/app", sessionsDir, 0); len(sessions) != 0 {
+			t.Fatalf("pre-cancelled scan returned %d rows", len(sessions))
+		}
+	})
+
+	t.Run("a scan cancelled mid-walk returns only complete rows", func(t *testing.T) {
+		sessionsDir := filepath.Join(t.TempDir(), "sessions")
+		const total = 60
+		for i := 1; i <= total; i++ {
+			writeNumberedCodexSession(t, sessionsDir, i, base.Add(-time.Duration(i)*time.Minute), "/work/app")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+		defer cancel()
+		sessions := discoverCodexContext(ctx, "/work/app", sessionsDir, 0)
+		if len(sessions) > total {
+			t.Fatalf("cancelled scan returned %d rows for %d files", len(sessions), total)
+		}
+		seen := make(map[string]bool, len(sessions))
+		for _, session := range sessions {
+			if session.ResumeID == "" || session.Title == "" || session.Source != SourceCodexRollout {
+				t.Fatalf("cancelled scan returned a torn row: %#v", session)
+			}
+			if seen[session.ResumeID] {
+				t.Fatalf("cancelled scan returned %q twice", session.ResumeID)
+			}
+			seen[session.ResumeID] = true
+		}
+	})
+}

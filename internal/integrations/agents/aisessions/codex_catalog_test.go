@@ -251,3 +251,62 @@ func TestCatalogFallbackReasonClassification(t *testing.T) {
 		})
 	}
 }
+
+// The native page read owns its bound. A caller whose own deadline is already
+// spent must not reduce it to that remainder, an overrun must admit no partial
+// page, and the blocked connection must be closed exactly once. A caller that
+// was cancelled rather than timed out is a different terminal reason.
+func TestBoundedNativeSummaryReadOwnsItsBudgetAndClosesOnceOnOverrun(t *testing.T) {
+	const budget = 120 * time.Millisecond
+
+	t.Run("a spent caller deadline does not shorten the native bound", func(t *testing.T) {
+		caller, cancelCaller := context.WithTimeout(context.Background(), time.Millisecond)
+		defer cancelCaller()
+		<-caller.Done()
+
+		catalog := &blockingSummaryCatalog{closed: make(chan struct{}), returned: make(chan struct{})}
+		startedAt := time.Now()
+		sessions, hasMore, err := discoverCodexResumeSummaryBounded(caller, "/work/app", 0,
+			func(context.Context) (CodexCatalog, error) { return catalog, nil }, 20, budget)
+		elapsed := time.Since(startedAt)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("overrun error = %v, want context.DeadlineExceeded", err)
+		}
+		if elapsed < budget {
+			t.Fatalf("native read terminalized in %s, want its own %s bound", elapsed, budget)
+		}
+		if len(sessions) != 0 || hasMore {
+			t.Fatalf("overrun admitted a page: sessions=%d hasMore=%v", len(sessions), hasMore)
+		}
+		select {
+		case <-catalog.returned:
+		case <-time.After(time.Second):
+			t.Fatal("the bound did not actively close the blocked list")
+		}
+		catalog.mu.Lock()
+		closeCalls := catalog.closeCalls
+		catalog.mu.Unlock()
+		if closeCalls != 1 {
+			t.Fatalf("catalog close calls = %d, want exactly one", closeCalls)
+		}
+	})
+
+	t.Run("a cancelled caller is a cancellation, not a bound overrun", func(t *testing.T) {
+		caller, cancelCaller := context.WithCancel(context.Background())
+		cancelCaller()
+
+		catalog := &blockingSummaryCatalog{closed: make(chan struct{}), returned: make(chan struct{})}
+		startedAt := time.Now()
+		sessions, hasMore, err := discoverCodexResumeSummaryBounded(caller, "/work/app", 0,
+			func(context.Context) (CodexCatalog, error) { return catalog, nil }, 20, budget)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled error = %v, want context.Canceled", err)
+		}
+		if elapsed := time.Since(startedAt); elapsed >= budget {
+			t.Fatalf("a cancelled invocation waited %s for the native bound", elapsed)
+		}
+		if len(sessions) != 0 || hasMore {
+			t.Fatalf("cancelled read admitted a page: sessions=%d hasMore=%v", len(sessions), hasMore)
+		}
+	})
+}

@@ -5,16 +5,24 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
 const (
-	DefaultResumeSummaryNativeBudget = 300 * time.Millisecond
+	// DefaultResumeSummaryNativeBudget and DefaultResumeSummaryFallbackBudget
+	// are the two declared bounds of one Codex summary discovery. They are
+	// declared, never derived: the native page read is not the rollout scan's
+	// prefix and the rollout scan is not the native read's remainder, so
+	// neither bound is ever computed from time the other already spent.
+	DefaultResumeSummaryNativeBudget   = 300 * time.Millisecond
+	DefaultResumeSummaryFallbackBudget = 1250 * time.Millisecond
 
 	// resumeSummaryCancellationSettlementBudget is not additional discovery
 	// time. It is a bounded handoff window for a cancellation-aware fallback
 	// that has already stopped scanning to publish its empty or partial result.
-	// The app keeps this inside the <500ms first-frame contract.
+	// It stays below the app-level handoff bound, so an inner settlement always
+	// completes inside the window the caller reserved for publishing a result.
 	resumeSummaryCancellationSettlementBudget = 25 * time.Millisecond
 )
 
@@ -71,9 +79,13 @@ type ResumeDetail struct {
 // ResumeSummaryOptions controls the provider-local bounded population seam.
 // NativeBudget applies only to the Codex native attempt; a timeout selects the
 // rollout summary for this invocation and any late native return is discarded.
+// FallbackBudget applies only to the bounded rollout scan. The two are
+// independent: neither is spent out of the other, and a zero value takes the
+// declared default rather than whatever the caller context has left.
 type ResumeSummaryOptions struct {
 	DiscoverOptions
-	NativeBudget time.Duration
+	NativeBudget   time.Duration
+	FallbackBudget time.Duration
 
 	// discoverCodexFallback is a package-private test seam for coordinating the
 	// native/fallback race without weakening the production filesystem path.
@@ -117,25 +129,26 @@ func DiscoverResumeSummariesContext(ctx context.Context, provider, cwd string, o
 		sessions = discovery.Sessions
 	case AgentCodex:
 		codexOutcome = CodexCatalogOutcome{Source: CatalogSourceFallback, Confidence: CatalogConfidenceMedium}
-		fallbackCtx, cancelFallback := context.WithCancel(ctx)
-		defer cancelFallback()
+		// The rollout scan starts with the provider and owns its own bound. It is
+		// the only remaining source once the native read fails or overruns, so a
+		// native attempt that spends its whole bound must neither cancel it nor
+		// shorten it to the time the caller context happens to have left.
+		fallbackStage := startResumeSummaryStage(ctx, resumeSummaryBudget(opts.FallbackBudget, DefaultResumeSummaryFallbackBudget))
+		defer fallbackStage.stop()
 		fallback := make(chan []SessionMeta, 1)
 		discoverFallback := opts.discoverCodexFallback
 		if discoverFallback == nil {
 			discoverFallback = discoverCodexContext
 		}
 		go func() {
-			fallbackSessions := discoverFallback(fallbackCtx, cwd, discoverOpts.CodexSessionsDir, depth)
+			fallbackSessions := discoverFallback(fallbackStage.ctx, cwd, discoverOpts.CodexSessionsDir, depth)
 			fallback <- finalizeProviderSessions(fallbackSessions, 0, true)
 		}()
 		if discoverOpts.OpenCodexCatalog != nil {
-			budget := opts.NativeBudget
-			if budget <= 0 {
-				budget = DefaultResumeSummaryNativeBudget
-			}
+			budget := resumeSummaryBudget(opts.NativeBudget, DefaultResumeSummaryNativeBudget)
 			native, hasMore, err := discoverCodexResumeSummaryBounded(ctx, cwd, depth, discoverOpts.OpenCodexCatalog, limit, budget)
 			if err == nil {
-				cancelFallback()
+				fallbackStage.stop()
 				sessions = native
 				moreNotLoaded = hasMore
 				codexOutcome = CodexCatalogOutcome{Source: CatalogSourceNative, Confidence: CatalogConfidenceHigh}
@@ -144,14 +157,18 @@ func DiscoverResumeSummariesContext(ctx context.Context, provider, cwd string, o
 			codexOutcome.Reason = codexCatalogFallbackReason(err)
 		}
 		if sessions == nil {
+			// The selection waits on the rollout stage's own clock, not on the
+			// caller's. Settling on the caller deadline is what let a slow native
+			// or a slow route turn rows this invocation had already found into an
+			// empty Codex result.
 			select {
 			case sessions = <-fallback:
-			case <-ctx.Done():
-				cancelFallback()
+			case <-fallbackStage.ctx.Done():
+				fallbackStage.stop()
 				// Cancellation asks the bounded scanner to stop, but its result send
-				// races with ctx.Done. Give only that handoff a short bounded window
-				// so a matching partial cannot become empty merely because the send
-				// had not reached the buffered channel yet.
+				// races with the stage's Done. Give only that handoff a short bounded
+				// window so a matching partial cannot become empty merely because the
+				// send had not reached the buffered channel yet.
 				sessions = settleCanceledCodexFallback(fallback)
 			}
 			for i := range sessions {
@@ -179,6 +196,66 @@ func DiscoverResumeSummariesContext(ctx context.Context, provider, cwd string, o
 	return ResumeSummaryDiscovery{Summaries: summaries, DetailRefs: detailRefs, Codex: codexOutcome, MoreNotLoaded: moreNotLoaded}, nil
 }
 
+// resumeSummaryBudget resolves one declared stage bound. A non-positive value
+// takes the declared default; it is never replaced by a sibling's remainder.
+func resumeSummaryBudget(declared, fallback time.Duration) time.Duration {
+	if declared > 0 {
+		return declared
+	}
+	return fallback
+}
+
+// resumeSummaryStage is one discovery stage that owns its bound. The native
+// page read and the rollout scan are siblings, not a chain: neither derives
+// its context from the other, and neither inherits the time a caller context
+// happens to have left. A caller deadline that has already been mostly spent,
+// which is what a route that used its own bound before this discovery started
+// leaves behind, must not shrink a stage below the bound declared for it:
+// that is exactly how a usable rollout result gets discarded. A cancellation,
+// meaning the invocation the caller closed, still terminates every stage at
+// once, so nothing keeps scanning for a frame that will never be published.
+type resumeSummaryStage struct {
+	ctx  context.Context
+	stop context.CancelFunc
+}
+
+func startResumeSummaryStage(parent context.Context, budget time.Duration) resumeSummaryStage {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), budget)
+	parentDone := parent.Done()
+	if parentDone == nil {
+		return resumeSummaryStage{ctx: ctx, stop: cancel}
+	}
+	if resumeSummaryStageCanceled(parent) {
+		// An invocation that is already closed starts no stage work at all;
+		// deciding this here rather than from a watcher goroutine keeps a
+		// closed invocation from racing one page read to completion.
+		cancel()
+		return resumeSummaryStage{ctx: ctx, stop: cancel}
+	}
+	released := make(chan struct{})
+	var releaseOnce sync.Once
+	go func() {
+		select {
+		case <-parentDone:
+			if resumeSummaryStageCanceled(parent) {
+				cancel()
+			}
+		case <-released:
+		}
+	}()
+	return resumeSummaryStage{ctx: ctx, stop: func() {
+		releaseOnce.Do(func() { close(released) })
+		cancel()
+	}}
+}
+
+// resumeSummaryStageCanceled separates an invocation the caller closed from a
+// caller deadline, which only reports that some sibling stage spent its own
+// bound. Only the former may end a stage before its own bound.
+func resumeSummaryStageCanceled(parent context.Context) bool {
+	return parent.Err() != nil && !errors.Is(context.Cause(parent), context.DeadlineExceeded)
+}
+
 func settleCanceledCodexFallback(fallback <-chan []SessionMeta) []SessionMeta {
 	timer := time.NewTimer(resumeSummaryCancellationSettlementBudget)
 	defer timer.Stop()
@@ -196,9 +273,14 @@ type resumeSummaryNativeResult struct {
 	err      error
 }
 
+// discoverCodexResumeSummaryBounded reads at most one native page on the
+// native stage's own clock. parent contributes cancellation only: a caller
+// whose own deadline is nearly spent must not reduce this read to a fraction
+// of its declared bound, and this read must not consume the rollout scan's.
 func discoverCodexResumeSummaryBounded(parent context.Context, cwd string, depth int, open OpenCodexCatalog, rowBudget int, budget time.Duration) ([]SessionMeta, bool, error) {
-	ctx, cancel := context.WithCancel(parent)
-	defer cancel()
+	stage := startResumeSummaryStage(parent, budget)
+	defer stage.stop()
+	ctx := stage.ctx
 	result := make(chan resumeSummaryNativeResult, 1)
 	opened := make(chan *codexNativeCatalogState, 1)
 	go func() {
@@ -223,8 +305,6 @@ func discoverCodexResumeSummaryBounded(parent context.Context, cwd string, depth
 		result <- resumeSummaryNativeResult{sessions: sessions, hasMore: hasMore, err: err}
 	}()
 
-	timer := time.NewTimer(budget)
-	defer timer.Stop()
 	var state *codexNativeCatalogState
 	for {
 		select {
@@ -232,18 +312,17 @@ func discoverCodexResumeSummaryBounded(parent context.Context, cwd string, depth
 			opened = nil
 		case native := <-result:
 			return native.sessions, native.hasMore, native.err
-		case <-timer.C:
-			cancel()
+		case <-ctx.Done():
+			// Actively close a blocked list so the endpoint does not keep a
+			// connection open for a page this invocation will never publish.
+			stage.stop()
 			if state != nil {
 				_ = state.close()
 			}
-			return nil, false, context.DeadlineExceeded
-		case <-parent.Done():
-			cancel()
-			if state != nil {
-				_ = state.close()
+			if errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
+				return nil, false, context.DeadlineExceeded
 			}
-			return nil, false, parent.Err()
+			return nil, false, ctx.Err()
 		}
 	}
 }
