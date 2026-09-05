@@ -131,12 +131,12 @@ func TestAIResumeExactAgentLabelResolverUsesOnlyExactThreadBinding(t *testing.T)
 	}}
 
 	labels := aiResumeExactAgentLabels(registry)
-	if len(labels) != 4 || labels[aiResumeExactLabelKey(aiModeCodex, exactID)].Context.Value != "Bound topic" ||
-		labels[aiResumeExactLabelKey(aiModeCodex, exactID)].Context.Source != registryview.ContextSourceAgentTopic ||
+	if len(labels) != 4 || labels[aiResumeExactLabelKey(aiModeCodex, exactID)].Context.Value != aiModeCodex ||
+		labels[aiResumeExactLabelKey(aiModeCodex, exactID)].Context.Source != registryview.ContextSourceAgentProvider ||
 		labels[aiResumeExactLabelKey(aiModeCodex, "thread-other")].Name != "wrong-agent" ||
 		labels[aiResumeExactLabelKey(aiModeClaude, "claude-exact")].Context.Value != aiModeClaude ||
 		labels[aiResumeExactLabelKey(aiModeAntigravity, "antigravity-exact")].Name != "antigravity-agent" {
-		t.Fatalf("resolved labels = %#v, want exact Codex bindings with topic/name precedence", labels)
+		t.Fatalf("resolved labels = %#v, want exact bindings from one lexical Agent candidate", labels)
 	}
 }
 
@@ -156,7 +156,7 @@ func TestAIResumeUntitledSuffixPreservesExactValueSearchAndDetailID(t *testing.T
 		t.Fatalf("exact value no longer parseable: %#v ok=%t", selection, ok)
 	}
 	summary := aisessions.ResumeSummary{Provider: aiModeCodex, ResumeID: id, Label: session.Title, Source: session.Source}
-	detail := aiResumeDetailProjection(i18n.FallbackLocale, summary, aisessions.ResumeDetailRef{Source: session.Source}, aisessions.ResumeDetail{}, "preview", "Untitled · …cafe")
+	detail := aiResumeDetailProjection(i18n.FallbackLocale, summary, aisessions.ResumeDetailRef{Source: session.Source}, aisessions.ResumeDetail{}, "preview")
 	if !strings.Contains(detail, "Conversation ID: "+id) || !strings.Contains(detail, "Source: "+aisessions.SourceCodexRollout) {
 		t.Fatalf("selected detail lost exact id/provenance: %q", detail)
 	}
