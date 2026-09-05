@@ -13,6 +13,7 @@ RUN apt-get update \
     make \
     ncurses-bin \
     procps \
+    python3 \
     tmux \
     util-linux \
     zsh \

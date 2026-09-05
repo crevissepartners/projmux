@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -56,7 +57,13 @@ func runSupervisedChildWithActivation(argv []string, argv0 string, spec supervis
 	if err != nil {
 		return processOutcome{}, fmt.Errorf("resolve activation gate executable: %w", err)
 	}
-	return runSupervisedActivationGate(activationExecArgv(binary, spec, argv0, 3, argv))
+	watchContext, cancelWatch := context.WithCancel(context.Background())
+	defer cancelWatch()
+	go watchClaudeActivationLeases(watchContext, spec)
+	outcome, runErr := runSupervisedActivationGate(activationExecArgv(binary, spec, argv0, 3, argv))
+	cancelWatch()
+	cleanupClaudeActivationLeases(spec)
+	return outcome, runErr
 }
 
 // runSupervisedChildWithSignalSource is the test seam for signals delivered to

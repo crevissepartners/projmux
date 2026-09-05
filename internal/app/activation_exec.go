@@ -17,14 +17,15 @@ import (
 // provider. Keeping the gate inside the child means the supervisor can always
 // reap an external HUP, even while create still owns the commit boundary.
 type activationExecCommand struct {
-	store     *resourceStore
-	lookupEnv func(string) (string, bool)
-	exec      func(argv []string, argv0 string, spec superviseSpec) error
-	failure   io.Writer
+	store         *resourceStore
+	lookupEnv     func(string) (string, bool)
+	exec          func(argv []string, argv0 string, spec superviseSpec) error
+	failure       io.Writer
+	prepareClaude func(superviseSpec) (bool, error)
 }
 
 func newActivationExecCommand() *activationExecCommand {
-	return &activationExecCommand{lookupEnv: os.LookupEnv, exec: execCommittedActivation}
+	return &activationExecCommand{lookupEnv: os.LookupEnv, exec: execCommittedActivation, prepareClaude: prepareClaudeActivationProcess}
 }
 
 func (c *activationExecCommand) Run(args []string, stdout, stderr io.Writer) (runErr error) {
@@ -82,6 +83,13 @@ func (c *activationExecCommand) Run(args []string, stdout, stderr io.Writer) (ru
 		return fmt.Errorf("internal activation-exec: activation admission: %w", err)
 	}
 	spec.RuntimeID = runtimeID
+	if c.prepareClaude != nil {
+		claudeRegistration, err := c.prepareClaude(spec)
+		if err != nil {
+			return errors.New("internal activation-exec: Claude process admission failed")
+		}
+		spec.ClaudeRegistration = claudeRegistration
+	}
 	execProvider := c.exec
 	if execProvider == nil {
 		execProvider = execCommittedActivation
@@ -175,6 +183,9 @@ func activationEnvironment(spec superviseSpec) []string {
 	}
 	if runtimeID := exactTmuxHandle(strings.TrimSpace(spec.RuntimeID), "%"); runtimeID != "" {
 		environment = append(environment, runtimeMutationAnchorPaneEnv+"="+runtimeID)
+	}
+	if spec.ClaudeRegistration {
+		environment = append(environment, internalClaudeRegistryPathEnv+"="+spec.RegistryPath)
 	}
 	return environment
 }

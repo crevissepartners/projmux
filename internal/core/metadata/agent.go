@@ -269,6 +269,8 @@ func (m Mutator) TransitionAgent(reg *Registry, agentUID string, phase AgentPhas
 	agent.Status.Reason = strings.TrimSpace(reason)
 	agent.Status.LastTransitionAt = now
 	if phase != PhaseRunning {
+		pane, _ := reg.Pane(agent.Status.PaneRef)
+		clearClaudeRegistration(pane)
 		agent.Status.PaneRef = ""
 		agent.Status.Interaction = AgentInteraction{Kind: InteractionUnknown, ObservedAt: now, Source: "lifecycle"}
 		agent.Status.Progress = AgentProgress{}

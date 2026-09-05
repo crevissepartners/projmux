@@ -20,6 +20,7 @@ import (
 const (
 	internalActivationPaneUIDEnv    = "PMX_INTERNAL_ACTIVATION_PANE_UID"
 	internalActivationGenerationEnv = "PMX_INTERNAL_ACTIVATION_GENERATION"
+	internalClaudeRegistryPathEnv   = "PMX_INTERNAL_CLAUDE_REGISTRY_PATH"
 )
 
 // superviseSpec is the identity one supervised launch quotes back when its
@@ -41,9 +42,14 @@ type superviseSpec struct {
 	// with its inherited TMUX_PANE.
 	RuntimeID string
 	// RegistryPath is the creator-resolved private authority for Agent
-	// admission. It is carried only between internal routes and is never
-	// exported to providers or public PROJMUX_* hooks.
+	// admission. Internal routes carry it explicitly; the admitted Claude
+	// child also passes it to its hook in private PMX_INTERNAL context. It is
+	// never part of the public PROJMUX_* hook contract.
 	RegistryPath string
+	// ClaudeRegistration is set only after exact gate admission identifies a
+	// Claude child. Its registration hook inherits the creator-selected path
+	// through private PMX_INTERNAL context, never the public PROJMUX hook API.
+	ClaudeRegistration bool
 }
 
 // valid reports whether the spec can identify a receipt at all.

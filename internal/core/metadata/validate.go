@@ -150,6 +150,17 @@ func (r Registry) Validate() error {
 				return stateErr(op, ErrInvalidRegistry, "pane %q has an incomplete native Codex authority", pane.Metadata.Name)
 			}
 		}
+		if binding := pane.Status.Activation.Claude; binding != nil {
+			agent, ok := r.Agent(pane.Metadata.OwnerUID())
+			if !ok || agent.Spec.Provider != "claude" || pane.Spec.Role != PaneRoleAgent ||
+				pane.Status.Activation.AgentUID != agent.Metadata.UID || pane.Status.Activation.Codex != nil || !binding.Process.Valid() {
+				return stateErr(op, ErrInvalidRegistry, "invalid Claude process binding")
+			}
+			if registration := binding.Registration; registration != nil &&
+				(!registration.Authority.Valid() || registration.Authority.Process != binding.Process) {
+				return stateErr(op, ErrInvalidRegistry, "invalid Claude registration identity")
+			}
+		}
 		if err := validateTermination(op, "pane "+pane.Metadata.Name, pane.Status.LastTermination); err != nil {
 			return err
 		}
