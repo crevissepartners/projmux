@@ -392,7 +392,13 @@ func (c *aiCommand) planClaudeHookIntegration(remove bool) (claudeHookPlan, erro
 		return claudeHookPlan{}, err
 	}
 	for _, event := range hookEvents {
-		hooks[event] = append(claudeHookEntrySlice(hooks[event]), claudeHookManagedEntry())
+		entry := claudeHookManagedEntry()
+		if event == "SessionStart" {
+			entry["hooks"] = append(entry["hooks"].([]any), map[string]any{
+				"type": "command", "command": claudeRegistrationHookCommand, "timeout": 5,
+			})
+		}
+		hooks[event] = append(claudeHookEntrySlice(hooks[event]), entry)
 	}
 	next, err := encodeClaudeSettings(settings)
 	if err != nil {

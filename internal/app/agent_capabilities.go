@@ -10,8 +10,10 @@ import (
 	"strings"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
+	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 type agentCapabilityProjection struct {
@@ -28,18 +30,25 @@ type agentCapabilityAgent struct {
 }
 
 type agentCapabilityRuntime struct {
-	Ready                bool   `json:"registryReady"`
-	Evidence             string `json:"evidence"`
-	LiveVerified         bool   `json:"liveVerified"`
-	Reason               string `json:"reason"`
-	PaneUID              string `json:"paneUID,omitempty"`
-	PaneRuntimeID        string `json:"paneRuntimeID,omitempty"`
-	ActivationGeneration string `json:"activationGeneration,omitempty"`
-	StateDomainID        string `json:"stateDomainID,omitempty"`
-	EndpointGenerationID string `json:"endpointGenerationID,omitempty"`
-	BrokerRuntimeID      string `json:"brokerRuntimeID,omitempty"`
-	ConnectionEpoch      uint64 `json:"connectionEpoch,omitempty"`
-	BindingEpoch         uint64 `json:"bindingEpoch,omitempty"`
+	Ready                bool                         `json:"registryReady"`
+	Evidence             string                       `json:"evidence"`
+	LiveVerified         bool                         `json:"liveVerified"`
+	Reason               string                       `json:"reason"`
+	PaneUID              string                       `json:"paneUID,omitempty"`
+	PaneRuntimeID        string                       `json:"paneRuntimeID,omitempty"`
+	ActivationGeneration string                       `json:"activationGeneration,omitempty"`
+	StateDomainID        string                       `json:"stateDomainID,omitempty"`
+	EndpointGenerationID string                       `json:"endpointGenerationID,omitempty"`
+	BrokerRuntimeID      string                       `json:"brokerRuntimeID,omitempty"`
+	ConnectionEpoch      uint64                       `json:"connectionEpoch,omitempty"`
+	BindingEpoch         uint64                       `json:"bindingEpoch,omitempty"`
+	Coordination         *agentCapabilityCoordination `json:"coordination,omitempty"`
+}
+
+type agentCapabilityCoordination struct {
+	Eligible bool   `json:"eligible"`
+	Evidence string `json:"evidence"`
+	Reason   string `json:"reason"`
 }
 
 type agentCapabilityProjectionEntry struct {
@@ -101,8 +110,28 @@ func (c *agentCommand) runCapabilities(args []string, stdout, stderr io.Writer) 
 			return fmt.Errorf("%s: agent/%s has unsupported provider %q", spelling, agent.Metadata.Name, agent.Spec.Provider)
 		}
 		projection = projectExactAgentCapabilities(registry, agent, metadata.ID)
+		if metadata.ID == aiprovider.Claude {
+			projection.Runtime.Coordination = projectClaudeCoordinationEligibility(registry, agent)
+		}
 	}
 	return writeAgentCapabilityProjection(stdout, projection, jsonOutput)
+}
+
+func projectClaudeCoordinationEligibility(registry coremetadata.Registry, agent coremetadata.Agent) *agentCapabilityCoordination {
+	projection := &agentCapabilityCoordination{Evidence: "local-registration-lease"}
+	route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID)
+	if reason != "" {
+		projection.Reason = reason
+		return projection
+	}
+	paths, err := config.DefaultPathsFromEnv()
+	if err != nil || !probeClaudeRegistrationLease(intmetadata.PathFor(paths.StateDir), route) {
+		projection.Reason = "Claude registration lease is stale or unavailable"
+		return projection
+	}
+	projection.Eligible = true
+	projection.Reason = "exact local registration lease is ready; message delivery is unavailable"
+	return projection
 }
 
 func projectStaticAgentCapabilities(provider aiprovider.ID) agentCapabilityProjection {
@@ -256,6 +285,11 @@ func writeAgentCapabilityProjection(stdout io.Writer, projection agentCapability
 		projection.Agent.Name, projection.Agent.UID, projection.Provider, projection.Agent.Phase, projection.Runtime.Ready,
 		projection.Runtime.LiveVerified, projection.Runtime.ActivationGeneration, projection.Runtime.ConnectionEpoch, projection.Runtime.BindingEpoch); err != nil {
 		return err
+	}
+	if coordination := projection.Runtime.Coordination; coordination != nil {
+		if _, err := fmt.Fprintf(stdout, "coordination eligible=%t evidence=%s reason=%s\n", coordination.Eligible, coordination.Evidence, coordination.Reason); err != nil {
+			return err
+		}
 	}
 	if _, err := fmt.Fprintln(stdout, "ACTION\tMODE\tCOMPLETION\tAVAILABLE\tEVIDENCE\tREASON"); err != nil {
 		return err

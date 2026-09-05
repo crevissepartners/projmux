@@ -866,6 +866,33 @@
   apart; `TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback`
   keeps that distribution pinned alongside the source counts.
 
+### Claude coordination endpoint Phase 1 tests
+
+- `TestAgentRouteClaudeIdentityTransitions`, `TestClaudeRegistrationAdmissionAndCleanupCAS`,
+  and the `TestAgentRoute` / `TestClaudeRegistration` model tests own the sealed
+  provider authority union, existing Codex composite fence, exact Claude process
+  and registration claims, same-UID rename preservation, and stale registration
+  admission/cleanup replay. The property model retains historical routes and
+  requires stale replay to leave current state unchanged.
+- `TestClaudeEndpoint` unit tests own private lease probes, kernel peer identity,
+  socket owner/mode/inode checks, nested producer refusal, creator-selected
+  activation context, read-only capability observation, and token/locator
+  residue scans. Private readiness probes never connect to a provider inbox.
+- `test/integration/claude-endpoint-binding.sh`, included in
+  `make test-integration`, builds the product and runs
+  `TestClaudeEndpointProcessIntegration` through supervisor, activation gate,
+  public SessionStart hook, and detached helper. It covers registration
+  replacement, actual helper death while the provider remains alive, automatic
+  lease cleanup, nested/forged entrypoint refusal, provider exit, zero provider
+  connections, and zero token/locator residue in output and live lease files.
+- `TestClaudeEndpointInstalledSourceGate` is opt-in evidence from a disposable
+  installed Claude one-shot. It checks public SessionStart identity, exact
+  readiness, exit invalidation, empty tools/MCP/plugins, and zero tool-use.
+  Raw provider streams remain in memory. This is the Phase 1 registration source
+  gate without safe mode; it does not satisfy or relax the later mandatory
+  safe-mode delivery gate. Setup and limits are in
+  [claude-coordination-endpoints.md](claude-coordination-endpoints.md).
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.

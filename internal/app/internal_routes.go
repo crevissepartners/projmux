@@ -107,6 +107,10 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.supervise, "internal supervise", "supervise", nil, rest, stdout, stderr)
 	case "activation-exec":
 		return forwardRawArgv(c.activationExec, "internal activation-exec", "activation-exec", nil, rest, stdout, stderr)
+	case "claude-endpoint-register":
+		return runClaudeEndpointRegistration(rest)
+	case "claude-endpoint-helper":
+		return runClaudeEndpointHelper(rest)
 	case "codex-broker":
 		return forwardRawArgv(c.codexBroker, "internal codex-broker", "codex-broker", nil, rest, stdout, stderr)
 	case "codex-generation-launch":

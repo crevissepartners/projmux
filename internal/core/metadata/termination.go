@@ -205,7 +205,8 @@ type PaneActivation struct {
 	// Codex is the provider-native conversation/turn observed for exactly this
 	// materialization. The durable conversation pointer remains on the Agent;
 	// this refinement is nested under the generation so replacement clears it.
-	Codex *CodexActivationBinding `json:"codex,omitempty"`
+	Codex  *CodexActivationBinding  `json:"codex,omitempty"`
+	Claude *ClaudeActivationBinding `json:"claude,omitempty"`
 }
 
 // CodexActivationBinding is the content-free native identity returned by the
@@ -253,13 +254,21 @@ func (r CodexAuthorityRef) Authorizes(presented CodexAuthorityRef) bool {
 // re-encode without the additive block.
 func (a PaneActivation) IsZero() bool {
 	return a.Generation == "" && a.RuntimeID == "" && a.AgentUID == "" &&
-		a.OperationID == "" && a.StartedAt.IsZero() && a.Codex == nil
+		a.OperationID == "" && a.StartedAt.IsZero() && a.Codex == nil && a.Claude == nil
 }
 
 // Clone returns an activation record whose provider binding cannot alias the
 // source Registry snapshot.
 func (a PaneActivation) Clone() PaneActivation {
 	out := a
+	if a.Claude != nil {
+		binding := *a.Claude
+		if binding.Registration != nil {
+			registration := *binding.Registration
+			binding.Registration = &registration
+		}
+		out.Claude = &binding
+	}
 	if a.Codex != nil {
 		binding := *a.Codex
 		if a.Codex.Authority != nil {
@@ -542,6 +551,7 @@ func (m Mutator) RecordTermination(reg *Registry, receipt TerminationEvidence) (
 		receipt.ObservedAt = receipt.ObservedAt.UTC()
 	}
 	pane.Status.LastTermination = receipt.Clone()
+	clearClaudeRegistration(pane)
 	if agent != nil {
 		agent.Status.LastTermination = receipt.Clone()
 	}
