@@ -64,6 +64,17 @@ func doctorBundleVerifier(cfg codexgenerationhost.PrivateGenerationConfig) (code
 	return codexgenerationhost.VerifiedBundleIdentity{ID: "bundle-" + id, Version: map[string]string{"generation-n": "0.152.0", "generation-n1": "0.152.1"}[id], TUIPath: "/lease/" + id + "/bin/codex"}, nil
 }
 
+// doctorLiveAgentRegistry backs obligations with the bare Registry Agent records
+// the doctor needs to tell a live obligation from an orphaned one. Provider and
+// endpoint fields stay empty so these Agents never enter the projection union.
+func doctorLiveAgentRegistry(uids ...string) coremetadata.Registry {
+	registry := coremetadata.Registry{}
+	for _, uid := range uids {
+		registry.Agents = append(registry.Agents, coremetadata.Agent{Metadata: coremetadata.ObjectMeta{UID: uid}})
+	}
+	return registry
+}
+
 func TestDoctorCodexGenerationActionabilityTable(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -90,7 +101,7 @@ func TestDoctorCodexGenerationActionabilityTable(t *testing.T) {
 			if test.mutate != nil {
 				test.mutate(&journal)
 			}
-			report := diagnoseCodexGenerationPool(journal, coremetadata.Registry{}, doctorBundleVerifier)
+			report := diagnoseCodexGenerationPool(journal, doctorLiveAgentRegistry("agent-old"), doctorBundleVerifier)
 			if report.Status != test.wantStatus || report.Reason != test.wantReason {
 				t.Fatalf("status/reason = %s/%s, want %s/%s; report=%#v", report.Status, report.Reason, test.wantStatus, test.wantReason, report)
 			}
@@ -135,7 +146,7 @@ func TestDoctorManagedActivationShowsCurrentDrainingPinnedTruthReadOnly(t *testi
 			{AgentUID: "agent-new", EndpointGenerationID: "codex-0.153.0", State: codexgeneration.ObligationActive},
 		},
 	}
-	report := diagnoseCodexGenerationPool(journal, coremetadata.Registry{}, func(cfg codexgenerationhost.PrivateGenerationConfig) (codexgenerationhost.VerifiedBundleIdentity, error) {
+	report := diagnoseCodexGenerationPool(journal, doctorLiveAgentRegistry("agent-old", "agent-new"), func(cfg codexgenerationhost.PrivateGenerationConfig) (codexgenerationhost.VerifiedBundleIdentity, error) {
 		return codexgenerationhost.VerifiedBundleIdentity{ID: "bundle-codex-0.153.0", Version: "0.153.0", TUIPath: "/lease/codex-0.153.0/bin/codex"}, nil
 	})
 	if report.Status != "blocked" || report.Reason != "qualification-missing" || report.Action != "run-isolated-version-pair-qualification" ||
@@ -193,7 +204,7 @@ func TestDoctorCodexGenerationPinnedTupleSkewFailsClosed(t *testing.T) {
 }
 
 func TestDoctorCodexGenerationJSONAndTextAreContentFree(t *testing.T) {
-	report := diagnoseCodexGenerationPool(doctorGenerationJournal(codexgeneration.ObligationNoTurn), coremetadata.Registry{}, doctorBundleVerifier)
+	report := diagnoseCodexGenerationPool(doctorGenerationJournal(codexgeneration.ObligationNoTurn), doctorLiveAgentRegistry("agent-old"), doctorBundleVerifier)
 	encoded, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		t.Fatal(err)
@@ -251,7 +262,7 @@ func TestDoctorCodexGenerationHandoverTimelineUsesReceiptOrder(t *testing.T) {
 }
 
 func TestDoctorCommandProjectsGenerationPoolInJSONAndText(t *testing.T) {
-	pool := diagnoseCodexGenerationPool(doctorGenerationJournal(codexgeneration.ObligationNoTurn), coremetadata.Registry{}, doctorBundleVerifier)
+	pool := diagnoseCodexGenerationPool(doctorGenerationJournal(codexgeneration.ObligationNoTurn), doctorLiveAgentRegistry("agent-old"), doctorBundleVerifier)
 	cmd := newStubDoctorCommand("linux", map[string]bool{"tmux": true, "git": true, "stty": true})
 	reads := 0
 	cmd.codexGeneration = func(coremetadata.Registry) *doctorCodexGenerationPool {
@@ -275,5 +286,131 @@ func TestDoctorCommandProjectsGenerationPoolInJSONAndText(t *testing.T) {
 	}
 	if reads != 2 || !strings.Contains(textOut.String(), "Codex generation pool") || !strings.Contains(textOut.String(), "action=close-or-replace") {
 		t.Fatalf("Doctor reads=%d text=%s", reads, textOut.String())
+	}
+}
+
+func TestDoctorCodexGenerationOrphanObligationClassificationTable(t *testing.T) {
+	live := codexgeneration.AgentObligation{AgentUID: "agent-live", EndpointGenerationID: "generation-n", State: codexgeneration.ObligationCompletedPersisted}
+	orphan := codexgeneration.AgentObligation{AgentUID: "agent-orphan", EndpointGenerationID: "generation-n", State: codexgeneration.ObligationCompletedPersisted}
+	tests := []struct {
+		name        string
+		obligations []codexgeneration.AgentObligation
+		registry    coremetadata.Registry
+		wantPinned  int
+		wantOrphans []string
+	}{
+		{name: "orphans only", obligations: []codexgeneration.AgentObligation{orphan}, registry: coremetadata.Registry{}, wantOrphans: []string{"agent-orphan"}},
+		{name: "live only", obligations: []codexgeneration.AgentObligation{live}, registry: doctorLiveAgentRegistry("agent-live"), wantPinned: 1},
+		{name: "mixed", obligations: []codexgeneration.AgentObligation{live, orphan}, registry: doctorLiveAgentRegistry("agent-live"), wantPinned: 1, wantOrphans: []string{"agent-orphan"}},
+		{name: "empty journal", registry: doctorLiveAgentRegistry("agent-live")},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			journal := doctorGenerationJournal("")
+			journal.Obligations = test.obligations
+			report := diagnoseCodexGenerationPool(journal, test.registry, doctorBundleVerifier)
+			if len(report.PinnedAgents) != len(test.obligations) {
+				t.Fatalf("orphans must stay listed: pinned agents = %#v, obligations = %#v", report.PinnedAgents, test.obligations)
+			}
+			orphans := []string{}
+			for _, pinned := range report.PinnedAgents {
+				if pinned.Status != doctorPinnedOrphanedStatus {
+					if pinned.Action != "handover-required" || pinned.Reason != "draining-resume-requires-handover" || pinned.Status != "action-required" {
+						t.Fatalf("live obligation classification changed: %#v", pinned)
+					}
+					continue
+				}
+				if pinned.Action != doctorPinnedOrphanedAction || pinned.Reason != doctorPinnedOrphanedReason {
+					t.Fatalf("orphan needs its own action/reason: %#v", pinned)
+				}
+				if pinned.State != codexgeneration.ObligationCompletedPersisted || pinned.GenerationID != "generation-n" {
+					t.Fatalf("orphan must keep its frozen journal record: %#v", pinned)
+				}
+				orphans = append(orphans, pinned.AgentUID)
+			}
+			if len(orphans) != len(test.wantOrphans) {
+				t.Fatalf("orphans = %v, want %v", orphans, test.wantOrphans)
+			}
+			for i, uid := range test.wantOrphans {
+				if orphans[i] != uid {
+					t.Fatalf("orphans = %v, want %v", orphans, test.wantOrphans)
+				}
+			}
+			var draining doctorCodexGeneration
+			for _, generation := range report.Generations {
+				if generation.GenerationID == "generation-n" {
+					draining = generation
+				}
+			}
+			if draining.PinnedAgents != test.wantPinned || draining.OrphanedAgents != len(test.wantOrphans) {
+				t.Fatalf("draining pinned/orphaned = %d/%d, want %d/%d", draining.PinnedAgents, draining.OrphanedAgents, test.wantPinned, len(test.wantOrphans))
+			}
+			if report.DoctorMutations != 0 {
+				t.Fatalf("doctor mutations = %d", report.DoctorMutations)
+			}
+		})
+	}
+}
+
+func TestDoctorOrphanObligationsCannotBlockOrUnblockThePoolVerdict(t *testing.T) {
+	old := doctorGenerationRoute("codex-0.152.1", codexgeneration.StateDraining, codexgeneration.OwnerUnmanaged)
+	old.Version = "0.152.1"
+	old.Generation.BundleID = "external-0.152.1"
+	current := doctorGenerationRoute("codex-0.153.0", codexgeneration.StateCurrent, codexgeneration.OwnerProjmuxPrivate)
+	current.Version = "0.153.0"
+	journal := codexupgrade.Journal{
+		Version: codexupgrade.JournalVersion, StateDomainID: "state-main", CurrentGenerationID: "codex-0.153.0",
+		Routes: []codexupgrade.GenerationRoute{old, current},
+		Obligations: []codexgeneration.AgentObligation{
+			{AgentUID: "agent-orphan-persisted", EndpointGenerationID: "codex-0.152.1", State: codexgeneration.ObligationCompletedPersisted},
+			// A no-turn obligation is normally an explicit pool blocker. With no
+			// Agent record behind it there is nothing to close or replace, so it
+			// must not gate the pool.
+			{AgentUID: "agent-orphan-no-turn", EndpointGenerationID: "codex-0.152.1", State: codexgeneration.ObligationNoTurn},
+			{AgentUID: "agent-live", EndpointGenerationID: "codex-0.153.0", State: codexgeneration.ObligationActive},
+		},
+	}
+	report := diagnoseCodexGenerationPool(journal, doctorLiveAgentRegistry("agent-live"), func(codexgenerationhost.PrivateGenerationConfig) (codexgenerationhost.VerifiedBundleIdentity, error) {
+		return codexgenerationhost.VerifiedBundleIdentity{ID: "bundle-codex-0.153.0", Version: "0.153.0", TUIPath: "/lease/codex-0.153.0/bin/codex"}, nil
+	})
+	if report.Status != "blocked" || report.Reason != "qualification-missing" || report.Action != "run-isolated-version-pair-qualification" {
+		t.Fatalf("orphan classification must not move the pool verdict: %s/%s/%s", report.Status, report.Reason, report.Action)
+	}
+	if len(report.PinnedAgents) != 3 {
+		t.Fatalf("every obligation stays listed: %#v", report.PinnedAgents)
+	}
+	byID := map[string]doctorCodexGeneration{}
+	for _, generation := range report.Generations {
+		byID[generation.GenerationID] = generation
+	}
+	if got := byID["codex-0.152.1"]; got.PinnedAgents != 0 || got.OrphanedAgents != 2 || got.Action != "await-owner-stop" || got.Reason != "foreign-owner" {
+		t.Fatalf("old generation = %#v", got)
+	}
+	if got := byID["codex-0.153.0"]; got.PinnedAgents != 1 || got.OrphanedAgents != 0 || got.Status != "ready" {
+		t.Fatalf("current generation = %#v", got)
+	}
+	for _, pinned := range report.PinnedAgents {
+		if pinned.AgentUID == "agent-live" {
+			if pinned.Status != "action-required" || pinned.Action != "resolve-active-turn" || pinned.Reason != "active-turn" {
+				t.Fatalf("live obligation classification changed: %#v", pinned)
+			}
+			continue
+		}
+		if pinned.Status != doctorPinnedOrphanedStatus || pinned.Action != doctorPinnedOrphanedAction || pinned.Reason != doctorPinnedOrphanedReason {
+			t.Fatalf("orphan = %#v", pinned)
+		}
+	}
+	var text bytes.Buffer
+	writeDoctorCodexGenerationText(&text, &report)
+	for _, want := range []string{
+		"pinned=0 orphaned=2 status=blocked action=await-owner-stop",
+		"Pinned Agent agent-orphan-no-turn: generation=codex-0.152.1 obligation=no-turn status=orphaned action=await-obligation-reprojection reason=agent-record-absent",
+	} {
+		if !strings.Contains(text.String(), want) {
+			t.Fatalf("Doctor text missing %q:\n%s", want, text.String())
+		}
+	}
+	if report.DoctorMutations != 0 {
+		t.Fatalf("doctor mutations = %d", report.DoctorMutations)
 	}
 }

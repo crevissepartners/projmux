@@ -38,9 +38,14 @@ type doctorCodexGeneration struct {
 	BundleStatus string                          `json:"bundle_status"`
 	Version      string                          `json:"version,omitempty"`
 	PinnedAgents int                             `json:"pinned_agents"`
-	Status       string                          `json:"status"`
-	Action       string                          `json:"action"`
-	Reason       string                          `json:"reason"`
+	// OrphanedAgents counts journal obligations pinned to this generation whose
+	// Agent record no longer exists in the Registry. They are excluded from
+	// PinnedAgents because no live work is pinned, and reported separately so a
+	// stale projection stays visible instead of silently disappearing.
+	OrphanedAgents int    `json:"orphaned_agents,omitempty"`
+	Status         string `json:"status"`
+	Action         string `json:"action"`
+	Reason         string `json:"reason"`
 }
 
 type doctorCodexPinnedAgent struct {
@@ -131,6 +136,15 @@ func diagnoseCodexGenerationPool(journal codexupgrade.Journal, registry coremeta
 	}
 
 	for _, obligation := range obligations {
+		// An obligation whose Agent record is gone from the Registry cannot be
+		// recomputed or tracked: AgentObligation carries no ThreadID, so its
+		// State is frozen at the last projection. Report it under its own
+		// status/action/reason instead of asserting an action against a
+		// subject that no longer exists, and never let it block the pool.
+		if _, live := registry.Agent(obligation.AgentUID); !live {
+			report.PinnedAgents = append(report.PinnedAgents, doctorOrphanedPinnedAgent(obligation))
+			continue
+		}
 		pinned := doctorPinnedAgentAction(obligation)
 		if _, ok := journal.Route(coremetadata.CodexEndpointRef{StateDomainID: journal.StateDomainID, EndpointGenerationID: obligation.EndpointGenerationID}); !ok {
 			pinned.Status, pinned.Action, pinned.Reason = "blocked", "repair-admission-tuple", "pinned-generation-missing"
@@ -150,9 +164,14 @@ func diagnoseCodexGenerationPool(journal codexupgrade.Journal, registry coremeta
 			BundleStatus: "not-managed", Version: route.Version, Status: "ready", Action: "none", Reason: "ready",
 		}
 		for _, pinned := range report.PinnedAgents {
-			if pinned.GenerationID == generation.GenerationID && pinned.State != codexgeneration.ObligationClosed {
-				generation.PinnedAgents++
+			if pinned.GenerationID != generation.GenerationID || pinned.State == codexgeneration.ObligationClosed {
+				continue
 			}
+			if pinned.Status == doctorPinnedOrphanedStatus {
+				generation.OrphanedAgents++
+				continue
+			}
+			generation.PinnedAgents++
 		}
 		if route.Generation.Owner != codexgeneration.OwnerProjmuxPrivate && route.Generation.State != codexgeneration.StateRetired {
 			generation.Status, generation.Action, generation.Reason = "blocked", "await-owner-stop", "foreign-owner"
@@ -280,6 +299,23 @@ func doctorHandoverTimeline(operation codexgeneration.HandoverOperation) []docto
 	return steps
 }
 
+// Dedicated classification for a journal obligation with no Registry Agent.
+// It is deliberately neither "ready" nor "blocked": the record is real and must
+// stay visible, but nothing can act on it and it must not gate the pool. Only a
+// fresh obligation reprojection (drain publication or handover request) drops it.
+const (
+	doctorPinnedOrphanedStatus = "orphaned"
+	doctorPinnedOrphanedAction = "await-obligation-reprojection"
+	doctorPinnedOrphanedReason = "agent-record-absent"
+)
+
+func doctorOrphanedPinnedAgent(obligation codexgeneration.AgentObligation) doctorCodexPinnedAgent {
+	return doctorCodexPinnedAgent{
+		AgentUID: obligation.AgentUID, GenerationID: obligation.EndpointGenerationID, State: obligation.State,
+		Status: doctorPinnedOrphanedStatus, Action: doctorPinnedOrphanedAction, Reason: doctorPinnedOrphanedReason,
+	}
+}
+
 func doctorPinnedAgentAction(obligation codexgeneration.AgentObligation) doctorCodexPinnedAgent {
 	out := doctorCodexPinnedAgent{AgentUID: obligation.AgentUID, GenerationID: obligation.EndpointGenerationID, State: obligation.State, Status: "ready", Action: "none", Reason: "settled"}
 	switch obligation.State {
@@ -312,9 +348,13 @@ func writeDoctorCodexGenerationText(buf *bytes.Buffer, pool *doctorCodexGenerati
 			pool.Qualification.Versions.Old, pool.Qualification.Versions.New, pool.Qualification.Verdict, pool.Qualification.Reason)
 	}
 	for _, generation := range pool.Generations {
-		fmt.Fprintf(buf, "  Generation %s: state=%s owner=%s version=%s bundle=%s/%s pinned=%d status=%s action=%s reason=%s\n",
+		orphaned := ""
+		if generation.OrphanedAgents > 0 {
+			orphaned = fmt.Sprintf(" orphaned=%d", generation.OrphanedAgents)
+		}
+		fmt.Fprintf(buf, "  Generation %s: state=%s owner=%s version=%s bundle=%s/%s pinned=%d%s status=%s action=%s reason=%s\n",
 			generation.GenerationID, generation.State, generation.Owner, diagnosticVersionOrUnknown(generation.Version),
-			generation.BundleID, generation.BundleStatus, generation.PinnedAgents, generation.Status, generation.Action, generation.Reason)
+			generation.BundleID, generation.BundleStatus, generation.PinnedAgents, orphaned, generation.Status, generation.Action, generation.Reason)
 	}
 	for _, agent := range pool.PinnedAgents {
 		fmt.Fprintf(buf, "  Pinned Agent %s: generation=%s obligation=%s status=%s action=%s reason=%s\n",
