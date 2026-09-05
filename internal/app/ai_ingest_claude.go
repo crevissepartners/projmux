@@ -42,6 +42,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 
 	paneID, matchReason := c.matchAIPane(aiPaneMatchInput{
 		ExplicitPane: explicitPane,
+		Provider:     aiModeClaude,
 		CWD:          payload.CWD,
 		SessionID:    payload.SessionID,
 	})

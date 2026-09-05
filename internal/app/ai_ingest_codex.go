@@ -40,6 +40,7 @@ func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 	if !nativeRouted {
 		paneID, matchReason = c.matchAIPane(aiPaneMatchInput{
 			ExplicitPane: explicitPane,
+			Provider:     aiModeCodex,
 			CWD:          payload.CWD,
 			ThreadID:     payload.matchThreadID(),
 			SessionID:    payload.SessionID,
