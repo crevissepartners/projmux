@@ -1155,7 +1155,11 @@ func TestCodexNativeObserverForeignThreadSameTurnWritesNoRegistryProgressOrDiagn
 	sink := &recordingCodexProgressSink{recordingCodexLifecycleSink: newRecordingCodexLifecycleSink()}
 	observer := codexNativeObserver{
 		identity: identity, delay: time.Millisecond, sink: sink,
-		open: func(context.Context) (codexLifecycleConnection, error) { return conn, nil },
+		// The binding loss at the end of this test exits through a bounded
+		// wait, not a single sample, so the window is set short here rather
+		// than left at the three-second production default.
+		bindingTimeout: 20 * time.Millisecond,
+		open:           func(context.Context) (codexLifecycleConnection, error) { return conn, nil },
 	}
 	done := make(chan error, 1)
 	go func() { done <- observer.Run(ctx) }()
@@ -1985,7 +1989,15 @@ func TestCodexNativeObserverBindingLossExitsSilentConnectionWithoutWrites(t *tes
 	}
 	ctx := t.Context()
 	sink := newRecordingCodexLifecycleSink()
-	observer := codexNativeObserver{identity: identity, delay: time.Millisecond, sink: sink, open: func(context.Context) (codexLifecycleConnection, error) { return conn, nil }}
+	// The exit this test owns waits the binding window out before it terminates,
+	// because BindingCurrent returns the same false for a replaced binding and
+	// for one that could not be read right now. The window is short here; the
+	// contract below is unchanged - a provably lost binding still writes no
+	// stale cleanup and no fallback authority.
+	observer := codexNativeObserver{
+		identity: identity, delay: time.Millisecond, sink: sink, bindingTimeout: 20 * time.Millisecond,
+		open: func(context.Context) (codexLifecycleConnection, error) { return conn, nil },
+	}
 	done := make(chan error, 1)
 	go func() { done <- observer.Run(ctx) }()
 	waitForCodexObserverEvents(t, sink, 2)

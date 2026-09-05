@@ -404,6 +404,18 @@ func (b *Broker) revokeBindingLocked(binding *Binding, reason Refusal) {
 	}
 	binding.revokeLocked(reason)
 	delete(b.bindings, binding.threadID)
+	// Wake the supervisor for the same reason Bind and Close do: what this
+	// connection has left to serve just changed. Binding.Close signalled and
+	// the involuntary paths did not, so a bounded queue that overflowed or a
+	// thread-scoped snapshot refusal could take the broker to zero bindings
+	// with no wake pending at all. serve then stays parked in its select
+	// holding an upstream connection nothing is bound to - the exact state
+	// wanted() exists to end, and the one its own wake comment already claims
+	// to cover ("a bind joined, or the last binding left").
+	//
+	// signal takes no lock and cannot block, so raising it from under b.mu is
+	// safe. Close's later signal is coalesced by the one-slot channel.
+	b.signal()
 	switch reason {
 	case RefusalBindingClosed, RefusalBrokerClosed:
 		b.diag.ReleasedBindings++
