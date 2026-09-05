@@ -52,6 +52,16 @@ func TestOpaqueDeliveryReasonsNeverReachTheDiagnosis(t *testing.T) {
 		{reason: "open /home/user/.codex/config.toml: no such file", opaque: true},
 		{reason: "pane option write refused"},
 		{reason: "tmux-socket-unavailable"},
+		// The three shapes the reflection layer's own vocabulary takes. They
+		// are listed as shapes, not as a binding: the gate that requires a
+		// failure reason to be one of those tokens has to reference the
+		// declared constants, or a rename walks past it. What is pinned here
+		// is only that a bounded kebab-or-prose token of this shape is not
+		// mistaken for a raw process detail, so the layer's own vocabulary
+		// cannot trip the opaque verdict the moment it arrives.
+		{reason: "pane runtime route unavailable"},
+		{reason: "pane runtime route does not hold this pane"},
+		{reason: "pane option write rejected"},
 	} {
 		if got := aiIngestReasonIsOpaque(test.reason); got != test.opaque {
 			t.Fatalf("aiIngestReasonIsOpaque(%q) = %v, want %v", test.reason, got, test.opaque)
