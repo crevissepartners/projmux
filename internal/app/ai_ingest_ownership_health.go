@@ -31,6 +31,21 @@ type aiIngestOwnershipHealth struct {
 	// Foreign counts attributions to a Pane the Registry records under another
 	// provider. This is the number the contract requires to be zero.
 	Foreign int `json:"foreign"`
+	// Misrouted counts records whose conversation belongs to another provider's
+	// source, whether or not they ever reached a Pane.
+	//
+	// It is found without asking what a provider's identifiers look like: a
+	// conversation claimed by one source and carried by another is misrouted by
+	// the log's own account of itself, and no version heuristic or provider
+	// table is involved.
+	//
+	// The count matters because the rest of this projection cannot see it. A
+	// misrouted record that fails to attribute lands in the contractual refusal
+	// bucket, which is the correct place for it -- the conversation genuinely
+	// belongs to no Pane the matcher can reach -- and there it is
+	// indistinguishable from an ordinary retired conversation. On this machine
+	// that hid 96 of 98 such records behind a number that reads as routine.
+	Misrouted int `json:"misrouted"`
 	// Unrecorded counts attributions to a Pane the Registry holds but records
 	// no provider for.
 	//
@@ -86,6 +101,7 @@ func projectAIIngestOwnershipHealth(entries []aiIngestLogEntry, registry coremet
 			byRuntime[runtime] = pane.Status.Activation
 		}
 	}
+	health.Misrouted = countMisroutedConversations(entries)
 	for _, entry := range entries {
 		source := strings.TrimSpace(entry.Source)
 		binds, known := codexHookProviderBinding[source]
@@ -133,4 +149,53 @@ func paneRecordedProvider(activation coremetadata.PaneActivation) string {
 // provider for this Pane.
 func paneRecordsAnyProvider(activation coremetadata.PaneActivation) bool {
 	return activation.Codex != nil || activation.Claude != nil
+}
+
+// aiIngestConversationID takes the conversation a record belongs to.
+//
+// A hook records its conversation under whichever field its provider uses, and
+// this reader does not care which: it needs an identifier stable enough to say
+// that two records describe the same conversation.
+func aiIngestConversationID(entry aiIngestLogEntry) string {
+	if thread := strings.TrimSpace(entry.ThreadID); thread != "" {
+		return thread
+	}
+	return strings.TrimSpace(entry.SessionID)
+}
+
+// countMisroutedConversations counts records carried by a source that does not
+// own their conversation.
+//
+// Ownership is decided by the log rather than by any knowledge of provider
+// identifier formats: a conversation is owned by the source that names it in
+// its own thread field, and a record from a different source carrying that
+// same conversation was routed by something that should not have been routing
+// it. Two sources legitimately sharing one conversation would defeat this, and
+// nothing in the hook contract does that.
+func countMisroutedConversations(entries []aiIngestLogEntry) int {
+	owner := map[string]string{}
+	for _, entry := range entries {
+		source := strings.TrimSpace(entry.Source)
+		if _, known := codexHookProviderBinding[source]; !known {
+			continue
+		}
+		if thread := strings.TrimSpace(entry.ThreadID); thread != "" {
+			owner[thread] = source
+		}
+	}
+	misrouted := 0
+	for _, entry := range entries {
+		source := strings.TrimSpace(entry.Source)
+		if _, known := codexHookProviderBinding[source]; !known {
+			continue
+		}
+		conversation := aiIngestConversationID(entry)
+		if conversation == "" {
+			continue
+		}
+		if claimant, found := owner[conversation]; found && claimant != source {
+			misrouted++
+		}
+	}
+	return misrouted
 }

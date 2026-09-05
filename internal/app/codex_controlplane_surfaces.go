@@ -433,6 +433,14 @@ func codexPaneOwnershipSurface(ownership aiIngestOwnershipHealth) codexControlPl
 	surface.Detail = fmt.Sprintf("judged %d of %d attributions; foreign %d; unresolved %d; provider unrecorded %d",
 		ownership.Classified, ownership.Classified+ownership.Unresolved+ownership.Unrecorded,
 		ownership.Foreign, ownership.Unresolved, ownership.Unrecorded)
+	if ownership.Misrouted > 0 {
+		// Counted over the whole window rather than over the judged
+		// attributions, because most misrouted records never reach a Pane at
+		// all: they fail to attribute, land in the contractual refusal bucket
+		// where they belong, and become indistinguishable from an ordinary
+		// retired conversation. That is where 96 of 98 of them hid.
+		surface.Detail += fmt.Sprintf("; %d record(s) misrouted across providers in the window", ownership.Misrouted)
+	}
 	if directions := codexReasonBreakdown(ownership.Directions); directions != "" {
 		// Which way the mismatch runs is the whole diagnosis. One direction is
 		// a hook landing on the Pane that launched its host; the other is an
@@ -441,6 +449,15 @@ func codexPaneOwnershipSurface(ownership aiIngestOwnershipHealth) codexControlPl
 	}
 	if ownership.Foreign > 0 {
 		surface.Status = codexSurfaceStatusBroken
+		return surface
+	}
+	if ownership.Misrouted > 0 {
+		// Degraded rather than broken. A misrouted record is real and worth
+		// seeing, but the routing that produced it lives outside this
+		// application -- a provider host still serving a route its
+		// configuration no longer carries -- so there is nothing here to
+		// repair and a permanent red would train the row away.
+		surface.Status = codexSurfaceStatusDegraded
 		return surface
 	}
 	surface.Status = codexSurfaceStatusOK

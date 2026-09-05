@@ -423,3 +423,71 @@ func TestHookWindowSpanIsCarriedOntoTheSection(t *testing.T) {
 		t.Fatalf("hook window = %q with nothing read, want none", empty.HookWindow)
 	}
 }
+
+// TestOwnershipHealthCountsAConversationCarriedByTheWrongSource pins the
+// detector for records that were routed by something that should not have been
+// routing them.
+//
+// It is built from the shape actually observed: a provider host still serving a
+// hook route its configuration no longer carried kept emitting records for
+// another provider's conversations, and 98 of them reached the log over 95
+// minutes. Only two ever attributed — those two the ownership verdict caught.
+// The other 96 failed to attribute and landed in the contractual refusal
+// bucket, which is the right place for them and also where they became
+// indistinguishable from an ordinary retired conversation. Nothing counted
+// them.
+//
+// Ownership is decided by the log's own account of itself rather than by any
+// knowledge of what a provider's identifiers look like: a conversation belongs
+// to the source that names it in its own thread field, so a record from a
+// different source carrying that conversation is misrouted. No version
+// heuristic, no provider table, nothing to rot when an identifier format
+// changes.
+func TestOwnershipHealthCountsAConversationCarriedByTheWrongSource(t *testing.T) {
+	const conversation = "01a0705a-d4dd-71c2-8c65-f0c3b1506715"
+	registry := coremetadata.Registry{Panes: []coremetadata.Pane{
+		paneWithActivation("%122", coremetadata.PaneActivation{Codex: &coremetadata.CodexActivationBinding{ThreadID: conversation}}),
+	}}
+	entries := []aiIngestLogEntry{
+		// The owning source names the conversation in its own thread field.
+		{Source: "codex-hook", Event: "UserPromptSubmit", Result: "state", Pane: "%122", ThreadID: conversation, SessionID: conversation},
+		{Source: "codex-hook", Event: "Stop", Result: "notify", Pane: "%122", ThreadID: conversation, SessionID: conversation},
+		// The same conversation carried by another provider's source: the two
+		// that attributed, and one of the many that did not.
+		{Source: "claude-hook", Event: "UserPromptSubmit", Result: "state", Pane: "%122", SessionID: conversation},
+		{Source: "claude-hook", Event: "Stop", Result: "notify", Pane: "%122", SessionID: conversation},
+		{Source: "claude-hook", Event: "Stop", Result: "ignored", Reason: aiPaneMatchReasonConversationUnknown, SessionID: conversation},
+		// An ordinary record of the other provider's own conversation.
+		{Source: "claude-hook", Event: "Stop", Result: "state", Pane: "%123", ThreadID: "claude-own", SessionID: "claude-own"},
+	}
+	ownership := projectAIIngestOwnershipHealth(entries, registry, true)
+	if ownership.Misrouted != 3 {
+		t.Fatalf("misrouted = %d, want all three records carrying another source's conversation "+
+			"— including the one that never reached a Pane", ownership.Misrouted)
+	}
+	if ownership.Foreign != 2 {
+		t.Fatalf("foreign = %d, want only the two that actually landed on a Pane", ownership.Foreign)
+	}
+	surface := codexPaneOwnershipSurface(ownership)
+	if !strings.Contains(surface.Detail, "3 record(s) misrouted") {
+		t.Fatalf("detail = %q, want the misroute count visible", surface.Detail)
+	}
+	// A window with no cross-provider carriage counts none, so the number
+	// cannot become background noise.
+	clean := projectAIIngestOwnershipHealth([]aiIngestLogEntry{
+		{Source: "codex-hook", Result: "state", Pane: "%122", ThreadID: conversation},
+		{Source: "claude-hook", Result: "state", Pane: "%123", ThreadID: "claude-own"},
+	}, registry, true)
+	if clean.Misrouted != 0 {
+		t.Fatalf("misrouted = %d on a clean window, want none", clean.Misrouted)
+	}
+	// Misrouting alone is a degradation, not a break: the routing that produced
+	// it lives outside this application, so there is nothing here to repair.
+	if got := codexPaneOwnershipSurface(clean); got.Status != codexSurfaceStatusOK {
+		t.Fatalf("clean window = %q, want %q", got.Status, codexSurfaceStatusOK)
+	}
+	degraded := aiIngestOwnershipHealth{Observed: true, Classified: 10, Misrouted: 96}
+	if got := codexPaneOwnershipSurface(degraded); got.Status != codexSurfaceStatusDegraded {
+		t.Fatalf("misrouted-only window = %q, want %q", got.Status, codexSurfaceStatusDegraded)
+	}
+}

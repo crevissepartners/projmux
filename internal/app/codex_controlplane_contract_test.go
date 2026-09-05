@@ -129,6 +129,8 @@ var codexControlPlaneContractEnforcement = map[string][]string{
 	"C-2-ownership": {
 		"TestPaneOwnershipSurfaceReportsAForeignAttributionAsBroken",
 		"TestOwnershipHealthCallsOnlyAPositivelyForeignPaneForeign",
+		"TestOwnershipHealthCountsAConversationCarriedByTheWrongSource",
+		"TestPaneOwnershipVerdictIgnoresForeignLifecycleChurn",
 		"TestResolveExplicitAIPaneRefusesAnInheritedForeignIdentity",
 		"TestMatchAIPaneNeverAttributesAnInheritedForeignIdentity",
 		"TestMatchAIPaneKeepsAnExplicitPaneWithNoRecordedProvider",
