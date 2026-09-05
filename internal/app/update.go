@@ -192,7 +192,7 @@ type githubReleaseAsset struct {
 }
 
 func newUpdateCommand() *updateCommand {
-	return &updateCommand{
+	cmd := &updateCommand{
 		now:          time.Now,
 		getenv:       os.Getenv,
 		cacheDir:     defaultUpdateCacheDir,
@@ -216,6 +216,12 @@ func newUpdateCommand() *updateCommand {
 		userHomeDir:  os.UserHomeDir,
 		limits:       defaultUpdateArchiveLimits(),
 	}
+	// Bind the release-channel seam to the stored Settings opt-in. The
+	// resolver keeps PROJMUX_RELEASE_CHANNEL as the fallback for an install
+	// that has never used the toggle, so this only takes the axis away from
+	// the environment once the user has actually chosen.
+	cmd.releaseChannelSource = updateReleaseChannelSource(cmd.getenv, cmd.userHomeDir)
+	return cmd
 }
 
 func (c *updateCommand) Run(args []string, stdout, stderr io.Writer) error {

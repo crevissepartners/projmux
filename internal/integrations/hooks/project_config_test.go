@@ -1142,3 +1142,48 @@ func writeProjectConfig(t *testing.T, cwd, body string) string {
 	}
 	return path
 }
+
+func TestProjectUpdateConfigReleaseChannelRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig("[update]\nrelease_channel = \"rc\"\n")
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if cfg.Update.ReleaseChannel != "rc" {
+		t.Fatalf("Update.ReleaseChannel = %q, want %q", cfg.Update.ReleaseChannel, "rc")
+	}
+
+	rendered := renderProjectConfig(cfg)
+	if !strings.Contains(rendered, "[update]") || !strings.Contains(rendered, "release_channel = \"rc\"") {
+		t.Fatalf("rendered = %q, want [update] release_channel = \"rc\"", rendered)
+	}
+
+	reparsed, err := ParseProjectConfig(rendered)
+	if err != nil {
+		t.Fatalf("re-parse error = %v", err)
+	}
+	if reparsed.Update != cfg.Update {
+		t.Fatalf("re-parsed Update = %#v, want %#v", reparsed.Update, cfg.Update)
+	}
+}
+
+// TestProjectUpdateConfigOmitsAnUnsetReleaseChannel keeps "never configured"
+// distinguishable from "configured to the default" on disk. The reader treats
+// an absent key as the environment's turn to answer, so rendering an empty
+// value would silently retire PROJMUX_RELEASE_CHANNEL for every install whose
+// config is rewritten for an unrelated reason.
+func TestProjectUpdateConfigOmitsAnUnsetReleaseChannel(t *testing.T) {
+	t.Parallel()
+
+	cfg, err := ParseProjectConfig("[ui]\nlocale = \"en\"\n")
+	if err != nil {
+		t.Fatalf("ParseProjectConfig() error = %v", err)
+	}
+	if rendered := renderProjectConfig(cfg); strings.Contains(rendered, "[update]") {
+		t.Fatalf("rendered = %q, want no [update] section for an unset release channel", rendered)
+	}
+	if _, err := ParseProjectConfig("[update]\nunknown_key = \"x\"\n"); err == nil {
+		t.Fatal("expected unsupported update key to error")
+	}
+}

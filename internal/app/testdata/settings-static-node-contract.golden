@@ -56,6 +56,7 @@ global.about|parent=global|value=section:about|axis=1|nav=View|entry=navigation|
 global.about.updates|parent=global.about|value=about:updates|axis=1|nav=View|entry=navigation|owner=about|label=Updates|key=settings.text.updates
 global.about.updates.check|parent=global.about.updates|value=update:check|axis=1|nav=Action|entry=actionable|owner=about|label=Check for updates|key=settings.text.check_for_updates
 global.about.updates.apply|parent=global.about.updates|value=update:apply|axis=1|nav=Action|entry=actionable|owner=about|label=Update now|key=settings.text.update_now
+global.about.updates.channel|parent=global.about.updates|value=update:release-channel|axis=1|nav=Toggle|entry=actionable|owner=about|label=Release channel|key=settings.text.release_channel
 global.about.welcome|parent=global.about|value=welcome:show|axis=1|nav=View|entry=navigation|owner=about|label=Welcome|key=settings.about.welcome
 global.about.quit|parent=global.about|value=quit:open|axis=1|nav=Confirm|entry=navigation|owner=about|label=Quit Projmux|key=settings.text.quit_projmux
 project.automation|parent=project|value=section:project-automation|axis=2|nav=View|entry=navigation|owner=root|label=Automation|key=settings.text.automation
