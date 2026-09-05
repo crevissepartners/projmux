@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -408,5 +409,73 @@ func sample(c *aiCommand, err error) {
 	}
 	if found[0].Position.Line != 10 {
 		t.Fatalf("counted line %d, want the log entry on line 10", found[0].Position.Line)
+	}
+}
+
+// aiIngestReasonAssertion matches a test asserting the content of the ingest
+// log's reason field.
+var aiIngestReasonAssertion = regexp.MustCompile(`"reason":"([^"]*)"`)
+
+// TestNoTestExpectsALeakedReason is the narrow half of the leak rule.
+//
+// A test that fixes a leaked value as its expected output is why the leak
+// survives: repairing it turns the suite red, so nobody repairs it. Two such
+// tests were found on this track, and they had pinned a provider's own text
+// into the reason column.
+//
+// The rule reaches only what it can see, and the scoping was measured rather
+// than guessed. Matching these shapes anywhere in a quoted string across the
+// test corpus hits 1598 lines -- socket fixtures, executable paths, transport
+// tables, nearly all legitimate -- and a gate that reddens on those is one
+// people switch off. Matching them inside an asserted reason field hits none
+// today and catches the shape tomorrow.
+//
+// What it cannot see is the pair that prompted it. `unknown termination
+// reason: FUTURE_SAFE_REASON` carries no forbidden shape; what made it a leak
+// is that the tail came from the provider's payload, and provenance is a
+// runtime fact no syntax check reaches. The runtime half -- drive a failure,
+// assert the log does not contain the input -- belongs with the vocabulary
+// owner. This rule makes the detectable half unavoidable and claims nothing
+// about the rest.
+func TestNoTestExpectsALeakedReason(t *testing.T) {
+	root := repoRootForGate(t)
+	var leaked []string
+	for _, scope := range []struct {
+		dir   string
+		match func(string) bool
+	}{
+		{dir: "internal", match: func(name string) bool { return strings.HasSuffix(name, "_test.go") }},
+		{dir: filepath.Join("test", "e2e"), match: func(name string) bool { return strings.HasSuffix(name, ".sh") }},
+	} {
+		err := filepath.WalkDir(filepath.Join(root, scope.dir), func(path string, entry os.DirEntry, err error) error {
+			if err != nil || entry.IsDir() || !scope.match(entry.Name()) {
+				return err
+			}
+			payload, readErr := os.ReadFile(path) // #nosec G304 -- repository source under test.
+			if readErr != nil {
+				return readErr
+			}
+			relative, _ := filepath.Rel(root, path)
+			for index, line := range strings.Split(string(payload), "\n") {
+				for _, match := range aiIngestReasonAssertion.FindAllStringSubmatch(line, -1) {
+					for _, forbidden := range aiIngestReasonForbiddenText {
+						if strings.Contains(match[1], forbidden) {
+							leaked = append(leaked, relative+":"+strconv.Itoa(index+1)+": expects "+strconv.Quote(match[1]))
+						}
+					}
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", scope.dir, err)
+		}
+	}
+	sort.Strings(leaked)
+	if len(leaked) > 0 {
+		t.Fatalf("%d test(s) expect a reason carrying a value the column may not hold:\n  %s\n\n"+
+			"Fixing a leak as the expected output is why leaks survive: repairing one turns the suite red. "+
+			"Expect the bounded token the column should hold instead.",
+			len(leaked), strings.Join(leaked, "\n  "))
 	}
 }
