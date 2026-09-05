@@ -25,7 +25,21 @@ type paneWriteHarness struct {
 	attempts int
 }
 
-func newPaneWriteHarness(t *testing.T, writesFail bool) *paneWriteHarness {
+// failEveryPaneWrite and failOnlyMarkerWrites are the two shapes the field
+// produced. The second is the live one: the routed reflection lands while the
+// unrouted markers do not.
+func failEveryPaneWrite(string) bool { return true }
+
+func failOnlyMarkerWrites(option string) bool {
+	switch option {
+	case aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption,
+		attentionAckOption, attentionFocusArmedOption:
+		return false
+	}
+	return true
+}
+
+func newPaneWriteHarness(t *testing.T, fails func(option string) bool) *paneWriteHarness {
 	t.Helper()
 	home := t.TempDir()
 	stateHome := filepath.Join(home, "state")
@@ -49,7 +63,11 @@ func newPaneWriteHarness(t *testing.T, writesFail bool) *paneWriteHarness {
 	cmd.runCommand = func(_ context.Context, name string, args ...string) error {
 		if name == "tmux" && len(args) > 0 && args[0] == "set-option" {
 			h.attempts++
-			if writesFail {
+			option := args[len(args)-1]
+			if len(args) >= 2 && args[len(args)-2] != "-t" && strings.HasPrefix(args[len(args)-2], "@") {
+				option = args[len(args)-2]
+			}
+			if fails != nil && fails(option) {
 				// The transport text a broken route actually produces. None of
 				// it may reach a record.
 				return errors.New("exit status 1: no server running on /tmp/tmux-1000/default")
@@ -85,26 +103,38 @@ func (h *paneWriteHarness) records(t *testing.T) []aiIngestLogEntry {
 	return entries
 }
 
-// Acceptance 1: a reflection write that failed is not recorded as a delivery.
-// Both spellings of "the hook did its job" are covered -- the state event that
-// applies a status, and the quiet event whose only writes are the routing index
-// markAIHookPane lays down.
+// Acceptance 1: a write that failed is not recorded as a delivery. The three
+// rows are the three shapes an operator meets. The last one is the live shape:
+// the reflection lands through a working route while the markers, written
+// without it, do not -- and the record used to say `state` anyway.
 func TestHookRecordRefusesToReportADeliveryThePaneWritesMissed(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
+		fails   func(string) bool
 		payload string
+		reason  string
 	}{
 		{
-			name:    "state event",
+			name:    "state event, nothing lands",
+			fails:   failEveryPaneWrite,
 			payload: `{"hook_event_name":"UserPromptSubmit","session_id":"s-1","cwd":"/repo"}`,
+			reason:  aiPaneWriteReasonUnavailable,
 		},
 		{
-			name:    "quiet event",
+			name:    "quiet event, only markers were ever written",
+			fails:   failEveryPaneWrite,
 			payload: `{"hook_event_name":"PreToolUse","session_id":"s-1","cwd":"/repo"}`,
+			reason:  aiPaneWriteReasonMarkerUnavailable,
+		},
+		{
+			name:    "state event, reflection lands and markers do not",
+			fails:   failOnlyMarkerWrites,
+			payload: `{"hook_event_name":"UserPromptSubmit","session_id":"s-1","cwd":"/repo"}`,
+			reason:  aiPaneWriteReasonMarkerUnavailable,
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h := newPaneWriteHarness(t, true)
+			h := newPaneWriteHarness(t, tc.fails)
 			_ = h.ingest(t, "claude-hook", tc.payload)
 
 			records := h.records(t)
@@ -113,10 +143,10 @@ func TestHookRecordRefusesToReportADeliveryThePaneWritesMissed(t *testing.T) {
 			}
 			last := records[len(records)-1]
 			if last.Result != "error" {
-				t.Fatalf("Result = %q, want error; the writes never landed", last.Result)
+				t.Fatalf("Result = %q, want error; a write never landed", last.Result)
 			}
-			if last.Reason != aiPaneWriteReasonUnavailable {
-				t.Fatalf("Reason = %q, want %q", last.Reason, aiPaneWriteReasonUnavailable)
+			if last.Reason != tc.reason {
+				t.Fatalf("Reason = %q, want %q", last.Reason, tc.reason)
 			}
 			if last.Pane != "%7" {
 				t.Fatalf("Pane = %q, want %%7; attribution still succeeded", last.Pane)
@@ -128,10 +158,10 @@ func TestHookRecordRefusesToReportADeliveryThePaneWritesMissed(t *testing.T) {
 // Acceptance 4: nothing changes when the writes land. Same result word, same
 // empty reason, same number of attempted writes.
 func TestHookRecordIsUnchangedWhenThePaneWritesLand(t *testing.T) {
-	failing := newPaneWriteHarness(t, true)
+	failing := newPaneWriteHarness(t, failEveryPaneWrite)
 	_ = failing.ingest(t, "claude-hook", `{"hook_event_name":"UserPromptSubmit","session_id":"s-1","cwd":"/repo"}`)
 
-	h := newPaneWriteHarness(t, false)
+	h := newPaneWriteHarness(t, nil)
 	if err := h.ingest(t, "claude-hook", `{"hook_event_name":"UserPromptSubmit","session_id":"s-1","cwd":"/repo"}`); err != nil {
 		t.Fatalf("ingest: %v", err)
 	}
@@ -158,13 +188,15 @@ func TestPaneWriteFailureReasonIsAClosedTokenCarryingNoOpaqueValue(t *testing.T)
 	if classified.Error() != aiPaneWriteReasonUnavailable {
 		t.Fatalf("token = %q, want %q", classified.Error(), aiPaneWriteReasonUnavailable)
 	}
-	for _, forbidden := range []string{"exit status", "/", "tmux-", "no server"} {
-		if strings.Contains(aiPaneWriteReasonUnavailable, forbidden) {
-			t.Fatalf("token %q carries the opaque fragment %q", aiPaneWriteReasonUnavailable, forbidden)
+	for _, token := range []string{aiPaneWriteReasonUnavailable, aiPaneWriteReasonMarkerUnavailable} {
+		for _, forbidden := range []string{"exit status", "/", "tmux-", "no server"} {
+			if strings.Contains(token, forbidden) {
+				t.Fatalf("token %q carries the opaque fragment %q", token, forbidden)
+			}
 		}
 	}
 
-	h := newPaneWriteHarness(t, true)
+	h := newPaneWriteHarness(t, failEveryPaneWrite)
 	_ = h.ingest(t, "claude-hook", `{"hook_event_name":"UserPromptSubmit","session_id":"s-1","cwd":"/repo"}`)
 	raw, err := os.ReadFile(h.logPath)
 	if err != nil {
@@ -181,8 +213,8 @@ func TestPaneWriteFailureReasonIsAClosedTokenCarryingNoOpaqueValue(t *testing.T)
 // into the same file from a process that lives for hours, so its records must
 // never inherit a colour from somewhere else.
 func TestObserverRecordsAreNotColouredByAReflectionWriteFailure(t *testing.T) {
-	h := newPaneWriteHarness(t, true)
-	h.cmd.noteAIPaneWriteFailure(errAIPaneWriteUnavailable)
+	h := newPaneWriteHarness(t, failEveryPaneWrite)
+	h.cmd.noteAIPaneMarkerWriteFailure(errAIPaneWriteUnavailable)
 	h.cmd.appendAIIngestLog(aiIngestLogEntry{
 		Source: aiIngestCodexObserverSource, Event: "connected", Result: "provider-control-plane", Pane: "%7",
 	})

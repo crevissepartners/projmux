@@ -12,15 +12,27 @@ import "errors"
 // That is a stronger failure than an unattributed hook, because an unattributed
 // hook at least says so.
 //
-// One token, deliberately. tmux answers a rejected write with an exit status
-// and a line of transport text, and both are opaque values the track's change
-// boundary keeps out of a record. What is actually known is that the write did
-// not land; splitting that into several tokens would name the call site rather
-// than the outcome, and the record already carries the event and the Pane, so
-// the site stays recoverable without inventing words for it.
-const aiPaneWriteReasonUnavailable = "pane write unavailable"
+// Two tokens, and the split is structural rather than a list of call sites. A
+// hook writes two different things onto its Pane: the reflection of the event
+// itself, whose failure the ingest caller receives and reports, and the markers
+// laid down alongside it, whose callers have no error channel at all. Those two
+// really can fail apart -- observed live at 2026-09-05T09:53:46Z on one Pane,
+// where `@projmux_ai_state`, `@projmux_ai_badge_kind` and
+// `@projmux_attention_state` all held the values of a hook that had run at
+// 09:48Z while `@projmux_ai_hook_active` and `@projmux_ai_resume_source` were
+// empty. One token for both would have called that "nothing landed", which is
+// its own inaccuracy.
+//
+// Neither token says why. tmux answers a rejected write with an exit status and
+// a line of transport text, and both are opaque values the track's change
+// boundary keeps out of a record. What is known is that the write did not land
+// and which of the two kinds it was.
+const (
+	aiPaneWriteReasonUnavailable       = "pane write unavailable"
+	aiPaneWriteReasonMarkerUnavailable = "pane marker write unavailable"
+)
 
-// errAIPaneWriteUnavailable is what every failed reflection write returns. Its
+// errAIPaneWriteUnavailable is what a failed reflection write returns. Its
 // message is the vocabulary token and nothing else, so the ingest call sites
 // that already log `Reason: err.Error()` stay closed-vocabulary without knowing
 // this value exists.
@@ -37,11 +49,12 @@ func (c *aiCommand) clearAIPaneOption(paneID, option string) error {
 }
 
 // recordAIPaneOption is setAIPaneOption for a caller with no error channel of
-// its own. It is the honest spelling of what `_ = c.run("tmux", ...)` used to
-// be: the write is still best-effort and the sequence of attempts is unchanged,
-// but the failure is kept instead of dropped, and the ingest record reads it.
+// its own -- the marker writes. It is the honest spelling of what
+// `_ = c.run("tmux", ...)` used to be: the write is still best-effort and the
+// sequence of attempts is unchanged, but the failure is kept instead of dropped,
+// and the ingest record reads it.
 func (c *aiCommand) recordAIPaneOption(paneID, option, value string) {
-	c.noteAIPaneWriteFailure(c.setAIPaneOption(paneID, option, value))
+	c.noteAIPaneMarkerWriteFailure(c.setAIPaneOption(paneID, option, value))
 }
 
 func classifyAIPaneWrite(err error) error {
@@ -51,17 +64,17 @@ func classifyAIPaneWrite(err error) error {
 	return errAIPaneWriteUnavailable
 }
 
-// noteAIPaneWriteFailure remembers that a reflection write did not land. The
+// noteAIPaneMarkerWriteFailure remembers that a marker write did not land. The
 // first failure wins: a broken route fails every subsequent write in the same
 // invocation, and the record needs one token, not a tally.
-func (c *aiCommand) noteAIPaneWriteFailure(err error) {
+func (c *aiCommand) noteAIPaneMarkerWriteFailure(err error) {
 	if c == nil || err == nil {
 		return
 	}
 	c.paneWriteMu.Lock()
 	defer c.paneWriteMu.Unlock()
 	if c.paneWriteFailure == "" {
-		c.paneWriteFailure = aiPaneWriteReasonUnavailable
+		c.paneWriteFailure = aiPaneWriteReasonMarkerUnavailable
 	}
 }
 
@@ -97,10 +110,14 @@ func aiIngestSourceIsHook(source string) bool {
 	return false
 }
 
-// honestAIIngestResult refuses to let a record claim a delivery the reflection
+// honestAIIngestResult refuses to let a record claim a delivery the marker
 // writes did not achieve. It reports; it does not repair. Retry and recovery are
 // a separate decision, and a record that says `error` with a bounded reason is
 // exactly what the operator was missing.
+//
+// A record that already says `error` is left alone. The event's own reflection
+// failing is the stronger statement of the two, and its caller has already
+// written the reason for it.
 func (c *aiCommand) honestAIIngestResult(entry aiIngestLogEntry) aiIngestLogEntry {
 	reason := c.recordedAIPaneWriteFailure()
 	if reason == "" {

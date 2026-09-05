@@ -980,17 +980,22 @@ unattributed hook at least says so.
 These tests own the reporting, not the repair. Retry, recovery, and the route
 decision itself are separate concerns.
 
-- `TestHookRecordRefusesToReportADeliveryThePaneWritesMissed` owns the record: a
-  state event whose status writes failed and a quiet event whose only writes are
-  the routing index both end as `error` with a bounded reason, while the Pane
-  they were attributed to stays in the record.
+- `TestHookRecordRefusesToReportADeliveryThePaneWritesMissed` owns the record in
+  the three shapes an operator meets: nothing lands, only markers were ever
+  written, and — the live one — the reflection lands through a working route
+  while the markers written without it do not. All three end as `error` with the
+  bounded reason that names which kind of write failed, and the Pane they were
+  attributed to stays in the record.
 - `TestHookRecordIsUnchangedWhenThePaneWritesLand` owns the normal path. Same
   result word, same empty reason, and the same number of attempted writes as the
   broken route — the writes stay best-effort and the sequence of attempts did
   not change.
 - `TestPaneWriteFailureReasonIsAClosedTokenCarryingNoOpaqueValue` owns the
-  vocabulary. tmux answers a rejected write with an exit status and a socket
-  path; the classification keeps both out of the record, and the log file is
+  vocabulary. There are two tokens and the split is structural — the reflection
+  of the event, whose failure its caller reports, and the markers laid down
+  alongside it, whose callers have no error channel — because those two really
+  do fail apart. tmux answers a rejected write with an exit status and a socket
+  path; the classification keeps both out of either token, and the log file is
   checked for the fragments directly.
 - `TestObserverRecordsAreNotColouredByAReflectionWriteFailure` owns the
   boundary. The observer journal writes into the same file from a process that
