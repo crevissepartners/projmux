@@ -218,10 +218,18 @@ func codexManagedHookPairEvent(sections []codexTomlSection, i int) (string, bool
 	if !ok {
 		return "", false
 	}
-	if command != codexHookCommand && command != legacyCodexHookCommand {
+	if !codexProjmuxHookCommand(command) {
 		return "", false
 	}
 	return event, true
+}
+
+// codexProjmuxHookCommand reports whether an installed hook command is one
+// projmux authored. Every spelling projmux has ever written stays recognized so
+// that an older config converges forward instead of being read as hand-edited
+// wiring that the integration must refuse to touch.
+func codexProjmuxHookCommand(command string) bool {
+	return command == codexHookCommand || command == priorCodexHookCommand || command == legacyCodexHookCommand
 }
 
 // codexManagedFlatHookSection reports the event of the pre-0.11 single-table
@@ -236,7 +244,7 @@ func codexManagedFlatHookSection(section codexTomlSection) (string, bool) {
 		return "", false
 	}
 	command, ok := codexTomlUnquote(entries["command"])
-	if !ok || (command != codexHookCommand && command != legacyCodexHookCommand) {
+	if !ok || !codexProjmuxHookCommand(command) {
 		return "", false
 	}
 	return event, true

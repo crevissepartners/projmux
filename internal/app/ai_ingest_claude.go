@@ -33,19 +33,20 @@ type claudeHookPayload struct {
 	TeammateContext  string
 }
 
-func (c *aiCommand) ingestClaudeHook(data []byte) error {
+func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	payload, err := parseClaudeHookPayload(data)
 	if err != nil {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Result: "error", Reason: err.Error()})
 		return err
 	}
 
-	paneID := c.matchAIPane(aiPaneMatchInput{
-		CWD:       payload.CWD,
-		SessionID: payload.SessionID,
+	paneID, matchReason := c.matchAIPane(aiPaneMatchInput{
+		ExplicitPane: explicitPane,
+		CWD:          payload.CWD,
+		SessionID:    payload.SessionID,
 	})
 	if paneID == "" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, SessionID: payload.SessionID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "ignored", Reason: matchReason, CWD: payload.CWD, SessionID: payload.SessionID})
 		return nil
 	}
 	defer c.flushPendingAgentSessionRef(paneID)

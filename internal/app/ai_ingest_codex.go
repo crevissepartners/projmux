@@ -24,7 +24,7 @@ type codexHookPayload struct {
 	ToolInput      map[string]any
 }
 
-func (c *aiCommand) ingestCodexHook(data []byte) error {
+func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 	payload, err := parseCodexHookPayload(data)
 	if err != nil {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Result: "error", Reason: err.Error()})
@@ -36,15 +36,17 @@ func (c *aiCommand) ingestCodexHook(data []byte) error {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: nativeReason, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
 		return nil
 	}
+	matchReason := ""
 	if !nativeRouted {
-		paneID = c.matchAIPane(aiPaneMatchInput{
-			CWD:       payload.CWD,
-			ThreadID:  payload.matchThreadID(),
-			SessionID: payload.SessionID,
+		paneID, matchReason = c.matchAIPane(aiPaneMatchInput{
+			ExplicitPane: explicitPane,
+			CWD:          payload.CWD,
+			ThreadID:     payload.matchThreadID(),
+			SessionID:    payload.SessionID,
 		})
 	}
 	if paneID == "" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: matchReason, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	}
 	authority, authorityErr := c.muxRunner().ShowPaneOption(context.Background(), paneID, aiPaneCodexAuthorityOption)

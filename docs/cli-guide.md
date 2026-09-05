@@ -1508,9 +1508,9 @@ projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
 projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
 projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]
 projmux internal agent-hook watch-title [pane]
-projmux internal agent-hook ingest codex-hook < payload.json
-projmux internal agent-hook ingest claude-hook < payload.json
-projmux internal agent-hook ingest antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop|Statusline>] < payload.json
+projmux internal agent-hook ingest codex-hook [--pane <pane_uid|pane_id>] < payload.json
+projmux internal agent-hook ingest claude-hook [--pane <pane_uid|pane_id>] < payload.json
+projmux internal agent-hook ingest antigravity-hook [--event <PreInvocation|PostInvocation|PostToolUse|Stop|Statusline>] [--pane <pane_uid|pane_id>] < payload.json
 projmux internal agent-hook ingest bell --pane <pane_id>
 projmux diagnostics agent-hook [--tail N] [--json] [--path]
 projmux agent integrate codex [--dry-run] [--remove]
