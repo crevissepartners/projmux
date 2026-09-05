@@ -57,7 +57,7 @@ func prepareClaudeActivationProcess(spec superviseSpec) (bool, error) {
 		claudeRegistration = true
 		process, _, err := claudeadapter.Process(os.Getpid())
 		if err != nil {
-			return errors.New("Claude process identity unavailable")
+			return errors.New("claude process identity unavailable")
 		}
 		return intmetadata.DefaultMutator().RecordClaudeProcess(reg, spec.PaneUID, spec.AgentUID, spec.Generation, process)
 	})
@@ -118,7 +118,7 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 	}
 	process := pane.Status.Activation.Claude.Process
 	actual, _, err := claudeadapter.Process(parentPID)
-	if err != nil || actual != process || actual.OwnerUID != uint32(os.Getuid()) {
+	if err != nil || actual != process || int64(actual.OwnerUID) != int64(os.Getuid()) {
 		return claudeEndpointBootstrap{}, false
 	}
 	socket, token := env("CLAUDE_CODE_MESSAGING_SOCKET"), env("CLAUDE_CODE_MESSAGING_TOKEN")
@@ -157,17 +157,19 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
 	binary, err := os.Executable()
 	if err != nil {
-		return errors.New("Claude helper unavailable")
+		return errors.New("claude helper unavailable")
 	}
 	input, err := json.Marshal(bootstrap)
 	if err != nil {
-		return errors.New("Claude helper bootstrap unavailable")
+		return errors.New("claude helper bootstrap unavailable")
 	}
 	readAck, writeAck, err := os.Pipe()
 	if err != nil {
-		return errors.New("Claude helper acknowledgement unavailable")
+		return errors.New("claude helper acknowledgement unavailable")
 	}
 	defer readAck.Close()
+	// #nosec G204 -- os.Executable above identifies this running Projmux binary;
+	// the hidden route and argv are fixed, and bootstrap secrets use only stdin.
 	cmd := exec.Command(binary, "internal", "claude-endpoint-helper")
 	cmd.Stdin = strings.NewReader(string(input))
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
@@ -182,7 +184,7 @@ func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
 	}
 	if err := cmd.Start(); err != nil {
 		_ = writeAck.Close()
-		return errors.New("Claude helper start failed")
+		return errors.New("claude helper start failed")
 	}
 	_ = writeAck.Close()
 	_ = readAck.SetReadDeadline(time.Now().Add(3 * time.Second))
@@ -191,7 +193,7 @@ func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
 	if err != nil || ack[0] != 1 {
 		_ = cmd.Process.Kill()
 		_ = cmd.Wait()
-		return errors.New("Claude helper admission failed")
+		return errors.New("claude helper admission failed")
 	}
 	return cmd.Process.Release()
 }
@@ -237,7 +239,7 @@ type claudeSocketIdentity struct {
 }
 
 func inspectClaudeSocket(path string) (claudeSocketIdentity, error) {
-	refused := errors.New("Claude socket is unavailable")
+	refused := errors.New("claude socket is unavailable")
 	if path == "" || !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return claudeSocketIdentity{}, refused
 	}
@@ -249,7 +251,7 @@ func inspectClaudeSocket(path string) (claudeSocketIdentity, error) {
 		}
 		if current == path {
 			stat, ok := info.Sys().(*syscall.Stat_t)
-			if !ok || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 || stat.Uid != uint32(os.Getuid()) {
+			if !ok || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 || int64(stat.Uid) != int64(os.Getuid()) {
 				return claudeSocketIdentity{}, refused
 			}
 			first = claudeSocketIdentity{device: uint64(stat.Dev), inode: stat.Ino, owner: stat.Uid, mode: info.Mode()}
@@ -263,7 +265,7 @@ func inspectClaudeSocket(path string) (claudeSocketIdentity, error) {
 		return claudeSocketIdentity{}, refused
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 || stat.Uid != uint32(os.Getuid()) {
+	if !ok || info.Mode()&os.ModeSocket == 0 || info.Mode().Perm() != 0o600 || int64(stat.Uid) != int64(os.Getuid()) {
 		return claudeSocketIdentity{}, refused
 	}
 	last := claudeSocketIdentity{device: uint64(stat.Dev), inode: stat.Ino, owner: stat.Uid, mode: info.Mode()}
@@ -303,7 +305,7 @@ func privateClaudeLeaseDir(path string) bool {
 		return false
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && stat.Uid == uint32(os.Getuid())
+	return ok && int64(stat.Uid) == int64(os.Getuid())
 }
 
 // The supervisor knows the exact activation, so after reaping its child it can
@@ -348,15 +350,15 @@ func cleanupClaudeActivationLeases(spec superviseSpec) {
 
 func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap, ack io.Writer) error {
 	if exactActivationRegistryPath(bootstrap.RegistryPath) != nil || bootstrap.Token == "" {
-		return errors.New("Claude helper admission failed")
+		return errors.New("claude helper admission failed")
 	}
 	process, _, err := claudeadapter.Process(os.Getpid())
 	if err != nil {
-		return errors.New("Claude helper identity unavailable")
+		return errors.New("claude helper identity unavailable")
 	}
 	bootstrap.Registration.Authority.LeaseProcess = process
 	if !bootstrap.Registration.Authority.Valid() {
-		return errors.New("Claude registration identity unavailable")
+		return errors.New("claude registration identity unavailable")
 	}
 	socketIdentity, err := inspectClaudeSocket(bootstrap.Socket)
 	if err != nil {
@@ -364,15 +366,15 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 	}
 	leasePath := claudeLeaseSocket(bootstrap.RegistryPath, bootstrap.PaneUID, bootstrap.Generation, bootstrap.Registration.Authority.RegistrationGeneration)
 	if err := os.Mkdir(filepath.Dir(leasePath), 0o700); err != nil && !errors.Is(err, os.ErrExist) {
-		return errors.New("Claude helper lease unavailable")
+		return errors.New("claude helper lease unavailable")
 	}
 	if !privateClaudeLeaseDir(filepath.Dir(leasePath)) {
-		return errors.New("Claude helper lease unavailable")
+		return errors.New("claude helper lease unavailable")
 	}
 	defer os.Remove(filepath.Dir(leasePath))
 	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: leasePath, Net: "unix"})
 	if err != nil {
-		return errors.New("Claude helper lease unavailable")
+		return errors.New("claude helper lease unavailable")
 	}
 	defer listener.Close()
 	listener.SetUnlinkOnClose(false)
@@ -383,26 +385,26 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 		}
 	}()
 	if os.Chmod(leasePath, 0o600) != nil {
-		return errors.New("Claude helper lease unavailable")
+		return errors.New("claude helper lease unavailable")
 	}
 	leaseIdentity, err := inspectClaudeSocket(leasePath)
 	if err != nil {
-		return errors.New("Claude helper lease unavailable")
+		return errors.New("claude helper lease unavailable")
 	}
 	if writeClaudeLeaseOwner(leasePath+".json", bootstrap) != nil {
-		return errors.New("Claude helper ownership unavailable")
+		return errors.New("claude helper ownership unavailable")
 	}
 	defer os.Remove(leasePath + ".json")
 	store := intmetadata.NewStore(bootstrap.RegistryPath)
 	mutator := intmetadata.DefaultMutator()
 	_, _, err = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
 		if actual, _, err := claudeadapter.Process(bootstrap.Registration.Authority.Process.PID); err != nil || actual != bootstrap.Registration.Authority.Process {
-			return errors.New("Claude provider process is unavailable")
+			return errors.New("claude provider process is unavailable")
 		}
 		return mutator.RecordClaudeRegistration(reg, bootstrap.PaneUID, bootstrap.AgentUID, bootstrap.Generation, bootstrap.Registration)
 	})
 	if err != nil {
-		return errors.New("Claude registration admission failed")
+		return errors.New("claude registration admission failed")
 	}
 	defer func() {
 		_, _, _ = store.UpdateConvergent(func(reg *coremetadata.Registry) error {
@@ -412,11 +414,11 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 	}()
 	initial, err := store.LoadDegradedReadOnly()
 	if err != nil {
-		return errors.New("Claude registration is unavailable")
+		return errors.New("claude registration is unavailable")
 	}
 	expectedRoute, reason := coremetadata.ResolveAgentRoute(initial, bootstrap.AgentUID)
 	if reason != "" {
-		return errors.New("Claude registration is unavailable")
+		return errors.New("claude registration is unavailable")
 	}
 	current := func() bool {
 		if observed, err := inspectClaudeSocket(leasePath); err != nil || observed != leaseIdentity {
@@ -439,10 +441,10 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 		return reason == "" && ok && route.Same(expectedRoute) && route.PaneUID == bootstrap.PaneUID && route.Generation == bootstrap.Generation && authority == bootstrap.Registration.Authority
 	}
 	if !current() {
-		return errors.New("Claude registration is stale")
+		return errors.New("claude registration is stale")
 	}
 	if _, err := ack.Write([]byte{1}); err != nil {
-		return errors.New("Claude helper acknowledgement failed")
+		return errors.New("claude helper acknowledgement failed")
 	}
 	for {
 		if ctx.Err() != nil || !current() {

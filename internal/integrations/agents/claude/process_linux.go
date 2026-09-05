@@ -17,6 +17,8 @@ func Process(pid int) (metadata.ProcessIdentity, int, error) {
 		return metadata.ProcessIdentity{}, 0, errors.New("process unavailable")
 	}
 	path := "/proc/" + strconv.Itoa(pid) + "/stat"
+	// #nosec G304 -- pid is a checked positive integer rendered in decimal;
+	// the fixed procfs stat path cannot contain caller-supplied traversal.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return metadata.ProcessIdentity{}, 0, errors.New("process unavailable")

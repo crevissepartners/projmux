@@ -25,6 +25,9 @@ type claudeLeaseOwnerReceipt struct {
 }
 
 func writeClaudeLeaseOwner(path string, bootstrap claudeEndpointBootstrap) error {
+	// #nosec G304 -- the caller derives this receipt from hashed exact activation
+	// and registration identities under an owned 0700 lease directory. Exclusive
+	// creation refuses an existing path or symlink; no provider locator is used.
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -51,7 +54,7 @@ func readClaudeLeaseOwner(path string, spec superviseSpec) (claudeLeaseOwnerRece
 		return receipt, false
 	}
 	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Uid != uint32(os.Getuid()) {
+	if !ok || int64(stat.Uid) != int64(os.Getuid()) {
 		return receipt, false
 	}
 	if json.NewDecoder(io.LimitReader(file, 8192)).Decode(&receipt) != nil || !receipt.Authority.Valid() ||
