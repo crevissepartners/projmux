@@ -23,6 +23,7 @@ CurrentProtocol	The build's local IPC version window accessor is retained as the
 DecideAuthority	Phase 0 pure five-axis Codex authority decision is retained for the generation-aware projection phase.
 DecideSuccessorResume	Phase 0 pure same-thread old-stop decision is retained for the journaled handover phase.
 DecideTeardownEvent	The pure teardown decision API is retained for lifecycle authority proofs and planned consumers.
+DeclaredGenerationPair	The declared version pair of the generation-pool qualification is retained as the only entry point that turns operator-declared versions into a receipt version pair; no main package reaches it.
 DecodeCapabilityLedger	Test-only installed qualification API retained for strict checked-in capability-ledger validation.
 DecodeQualificationResult	Phase 0 strict content-free generation qualification receipt decoder is retained for later upgrade gates.
 DecodeRecord	Phase 1 strict capability decoder is retained for cache fixed-point and future-schema refusal.
@@ -31,6 +32,7 @@ DirectEndpoint.Health	Test-only installed qualification API retained for canonic
 DirectEndpoint.forceCleanup	Test-only installed qualification helper retained for injected direct startup-failure cleanup proof.
 DirectEndpoint.markClosed	Test-only installed qualification helper retained for single-consumer bounded direct exit finalization proof.
 Discover	The background-context discovery wrapper is retained as a test and compatibility seam.
+EmitGenerationQualificationReceipt	The canonical qualification receipt writer is retained as the single supported receipt exit for the declared-pair harness and its upgrade-request round trip; no main package reaches it.
 Error.Error	Phase 0 bundle refusal renderer is retained as the content-free immutable lease error contract.
 EvaluateQualification	Phase 0 exact-version-pair qualification reducer is retained for installed pool admission gates.
 EvaluateTurnFreeThreadLiveAttach	Test-only installed qualification API retained for method-independent semantic capability reduction.

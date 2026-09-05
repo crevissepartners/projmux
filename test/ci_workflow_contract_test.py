@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -103,6 +104,93 @@ class CIWorkflowContractTest(unittest.TestCase):
         # can neither replace fake C01 nor flow into either stable aggregate.
         for stable_aggregate in (e2e_required, required_test):
             self.assertNotIn("installed-codex", stable_aggregate)
+
+    def test_generation_pool_lane_is_dispatch_only_and_fail_closed(self) -> None:
+        ci_workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
+        workflow = (
+            ROOT / ".github/workflows/generation-pool-qualification.yml"
+        ).read_text(encoding="utf-8")
+        lane = workflow_job(workflow, "generation-pool-qualification")
+        e2e_required = workflow_job(ci_workflow, "e2e-tests")
+        required_test = workflow_job(ci_workflow, "test")
+
+        # A credentialed state domain is what this lane needs and what a hosted
+        # runner lacks, so it is dispatched, never scheduled.
+        self.assertIn("  workflow_dispatch:", workflow)
+        self.assertNotIn("  schedule:", workflow)
+        self.assertNotIn("    - cron:", workflow)
+        self.assertIn("  cancel-in-progress: false", workflow)
+        self.assertNotIn("  generation-pool-qualification:", ci_workflow)
+
+        # The pair is declared per run, never pinned in the lane.
+        for declared in ("old-version", "new-version"):
+            self.assertIn(f"      {declared}:", workflow)
+        self.assertIn("          OLD_VERSION: ${{ inputs.old-version }}", lane)
+        self.assertIn("          NEW_VERSION: ${{ inputs.new-version }}", lane)
+
+        self.assertIn(
+            'npm install --prefix "$npm_prefix" --ignore-scripts --no-audit '
+            '--no-fund "@openai/codex@${version}"',
+            lane,
+        )
+        self.assertIn("scripts/stage-installed-codex-release.sh", lane)
+        self.assertIn("scripts/test-generation-pool-qualification.sh", lane)
+        self.assertIn('          OPENAI_API_KEY: ""', lane)
+        self.assertIn('          CODEX_API_KEY: ""', lane)
+        self.assertIn('          CODEX_TOKEN: ""', lane)
+
+        self.assertIn("      - name: Upload the typed qualification record", lane)
+        self.assertIn("          path: artifacts/generation-pool-qualification", lane)
+        self.assertIn("          if-no-files-found: error", lane)
+        self.assertIn("          retention-days: 14", lane)
+        self.assertIn("      - name: Require a measured qualified record", lane)
+        self.assertIn('record["class"] != "pass"', lane)
+
+        # The volatile real-binary lane can never flow into a stable aggregate.
+        for stable_aggregate in (e2e_required, required_test):
+            self.assertNotIn("generation-pool-qualification", stable_aggregate)
+
+    def test_generation_pool_runner_types_every_terminal_outcome(self) -> None:
+        runner = ROOT / "scripts/test-generation-pool-qualification.sh"
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "artifacts"
+
+            # A declared pair that is not a receipt version pair is refused
+            # before any root is created, so no record is written.
+            for arguments in (
+                ["v1.2.3", "1.2.4"],
+                ["1.2.3", "1.2.3"],
+                ["1.2.3", "1.2 4"],
+            ):
+                refused = subprocess.run(
+                    ["bash", str(runner), *arguments, str(output)],
+                    cwd=ROOT,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                )
+                self.assertEqual(refused.returncode, 2, refused.stderr)
+
+            # An unavailable declared binary still reaches one typed record.
+            unsupported = subprocess.run(
+                ["bash", str(runner), "1.2.3", "1.2.4", str(output)],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "PROJMUX_CODEX_GENERATION_OLD": str(output / "absent-old"),
+                    "PROJMUX_CODEX_GENERATION_NEW": str(output / "absent-new"),
+                },
+            )
+            self.assertEqual(unsupported.returncode, 0, unsupported.stderr)
+            record = json.loads((output / "outcome.json").read_text(encoding="utf-8"))
+            self.assertEqual(record["versions"], {"old": "1.2.3", "new": "1.2.4"})
+            self.assertFalse(record["attempted"])
+            self.assertEqual(record["class"], "unsupported")
+            self.assertEqual(record["reason"], "declared-old-binary-unavailable")
+            self.assertEqual(record["receipt"], "")
 
     def test_native_platform_payload_stages_as_canonical_release(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

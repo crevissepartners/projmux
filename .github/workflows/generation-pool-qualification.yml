@@ -1,0 +1,108 @@
+name: Generation Pool Qualification
+
+# There is deliberately no schedule. The declared-pair qualification needs a
+# credentialed Codex state domain that a GitHub-hosted runner does not have, so
+# a nightly run could only ever report `unsupported`. Dispatch is the trigger,
+# and the lane reaches one terminal typed record on every run regardless.
+on:
+  workflow_dispatch:
+    inputs:
+      old-version:
+        description: Declared old Codex version of the pair under test
+        required: true
+        default: "0.152.0"
+      new-version:
+        description: Declared new Codex version of the pair under test
+        required: true
+        default: "0.152.1"
+
+permissions:
+  contents: read
+
+# A manual observation run queues behind an active one instead of cancelling it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # This real-binary lane is intentionally separate from every required and
+  # aggregate PR context. It reports its own non-required status, uploads the
+  # typed record it produced, and is fail-closed: only a `pass` record — an
+  # actually measured YES receipt for the declared pair — leaves it green.
+  generation-pool-qualification:
+    name: Generation Pool Qualification
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Install the declared Codex version pair
+        id: install-pair
+        env:
+          OLD_VERSION: ${{ inputs.old-version }}
+          NEW_VERSION: ${{ inputs.new-version }}
+          NODE_AUTH_TOKEN: ""
+        run: |
+          for version in "$OLD_VERSION" "$NEW_VERSION"; do
+            npm_prefix="${RUNNER_TEMP}/generation-pool-npm/${version}"
+            release_root="${RUNNER_TEMP}/generation-pool-release/${version}-x86_64-unknown-linux-musl"
+            npm install --prefix "$npm_prefix" --ignore-scripts --no-audit --no-fund "@openai/codex@${version}"
+            scripts/stage-installed-codex-release.sh "$npm_prefix" "$release_root" "$version"
+            test "$("$release_root/bin/codex" --version)" = "codex-cli ${version}"
+          done
+
+      - name: Run the declared-pair qualification
+        if: always()
+        env:
+          OLD_VERSION: ${{ inputs.old-version }}
+          NEW_VERSION: ${{ inputs.new-version }}
+          OPENAI_API_KEY: ""
+          CODEX_API_KEY: ""
+          CODEX_TOKEN: ""
+          PROJMUX_CODEX_GENERATION_BUNDLE_TMPDIR: ${{ runner.temp }}
+        run: |
+          release_root="${RUNNER_TEMP}/generation-pool-release"
+          export PROJMUX_CODEX_GENERATION_OLD="${release_root}/${OLD_VERSION}-x86_64-unknown-linux-musl/bin/codex"
+          export PROJMUX_CODEX_GENERATION_NEW="${release_root}/${NEW_VERSION}-x86_64-unknown-linux-musl/bin/codex"
+          scripts/test-generation-pool-qualification.sh \
+            "$OLD_VERSION" \
+            "$NEW_VERSION" \
+            artifacts/generation-pool-qualification
+
+      - name: Upload the typed qualification record
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generation-pool-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/generation-pool-qualification
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Require a measured qualified record
+        if: always()
+        run: |
+          outcome="artifacts/generation-pool-qualification/outcome.json"
+          test -f "$outcome"
+          cat "$outcome" >> "$GITHUB_STEP_SUMMARY"
+          python3 -c '
+          import json, sys
+          record = json.load(open(sys.argv[1]))
+          if record["class"] != "pass":
+              sys.exit(
+                  "generation pool qualification did not qualify the declared pair: "
+                  + "class=" + record["class"] + " reason=" + record["reason"]
+              )
+          ' "$outcome"

@@ -669,12 +669,39 @@
   `TestBundleRefusesNonCanonicalRootsAndVersions` own immutable complete
   release-bundle retention and refusal, including manifest/artifact links and
   noncanonical mutation roots.
-- Opt-in `TestInstalledIsolatedGenerationPoolQualification` is the fixed
-  0.152.0/0.152.1 shared-state conformance. It strips inherited tmux identity,
-  uses one unique private state root and two private sockets, records no
-  provider content or secrets, requires distinct-thread overlap plus the
-  old-stop same-thread barrier, and performs exact cleanup. See
+- Opt-in `TestInstalledIsolatedGenerationPoolQualification` is the
+  declared-pair shared-state conformance. The pair under test comes from
+  `PROJMUX_CODEX_GENERATION_OLD_VERSION`/`_NEW_VERSION` and each declared
+  version must match what its binary reports; the canonical receipt is written
+  to `PROJMUX_CODEX_GENERATION_RECEIPT` before the verdict is asserted, so a
+  refusal is on disk too. It strips inherited tmux identity, uses one unique
+  private state root and two private sockets, records no provider content or
+  secrets, requires distinct-thread overlap plus the old-stop same-thread
+  barrier, and performs exact cleanup. See
   [codex-generation-pool.md](codex-generation-pool.md).
+- `TestDeclaredGenerationPairAcceptsAnyDistinctReceiptVersionPair`,
+  `TestDeclaredGenerationPairRefusesEmptyEqualAndNonVersionTokens`,
+  `TestEmittedReceiptFileRoundTripsToTheIdenticalResult`,
+  `TestEmittedReceiptReplacesAnEarlierVerdictAndRefusesRelativePaths`, and
+  `TestGenerationQualificationSourcesCarryNoVersionLiteral` own the declared
+  pair and the receipt file: any distinct receipt version pair is accepted, the
+  emitted file is `0600` and byte-identical to the canonical result, a rerun
+  never republishes a stale verdict, and neither harness source may pin a
+  version literal again. Only the pair is declared — every evidence boolean and
+  counter stays measured.
+- `TestEmittedQualificationReceiptEntersTheUpgradeRequestVerbatim` carries the
+  emitted receipt file into the `qualification` field of an `agent app-server
+  upgrade --request` document and reloads it through the real request loader.
+  The declared pair, every counter, `Validate`, and `GateQualification` survive
+  the hop, and a tampered evidence counter stops decoding instead of keeping
+  its verdict.
+- `CIWorkflowContractTest.test_generation_pool_lane_is_dispatch_only_and_fail_closed`
+  and `test_generation_pool_runner_types_every_terminal_outcome` own the
+  dispatch-only lane and `scripts/test-generation-pool-qualification.sh`: the
+  lane never schedules, never joins a required aggregate, always uploads its
+  typed record, and is green only on a measured `pass`; the runner refuses a
+  non-version pair before creating any root and still types an unavailable
+  binary as `unsupported`.
 
 ### Codex app-server generation Phase 1 tests
 
