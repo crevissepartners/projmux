@@ -109,6 +109,15 @@ malformed`, id(22), cwd, id(23), cwd, id(24), cwd, id(29)), 0)
 			if err := json.Unmarshal(baseline, &want); err != nil {
 				t.Fatal(err)
 			}
+			// Filesystem mtimes use the host's local zone, while the unchanged
+			// baseline records the capture machine's offset. Compare exact
+			// instants in UTC so host timezone metadata cannot break row parity.
+			for _, rows := range [][]SessionMeta{discovery.Sessions, want} {
+				for i := range rows {
+					rows[i].LastModified = rows[i].LastModified.UTC()
+					rows[i].UpdatedAt = rows[i].UpdatedAt.UTC()
+				}
+			}
 			if len(want) != 4 || !reflect.DeepEqual(discovery.Sessions, want) {
 				t.Fatalf("discovery changed from fc287c26 fixture:\n%s\nwant:\n%s", data, baseline)
 			}
