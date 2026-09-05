@@ -17,7 +17,7 @@ import (
 func TestAIResumeCodexConversationLabelPrecedence(t *testing.T) {
 	const id = "019f0000-0000-7000-8000-000000000041"
 	base := aisessions.SessionMeta{
-		Agent: aiModeCodex, ResumeID: id, Source: aisessions.SourceCodexAppServer,
+		Agent: aiModeCodex, ResumeID: id, Source: aisessions.SourceCodexAppServer, TitleProvenance: aisessions.TitleExplicitProvider,
 	}
 	for _, test := range []struct {
 		name       string
@@ -26,7 +26,7 @@ func TestAIResumeCodexConversationLabelPrecedence(t *testing.T) {
 		want       string
 	}{
 		{name: "provider title without binding", title: "Provider conversation", want: "Provider conversation"},
-		{name: "bound context beats provider title", title: "Provider conversation", boundLabel: "Registry topic", want: "Registry topic"},
+		{name: "provider title beats bound context", title: "Provider conversation", boundLabel: "Registry topic", want: "Provider conversation"},
 		{name: "exact bound topic", title: aiResumeShortID(id), boundLabel: "Registry topic", want: "Registry topic"},
 		{name: "untitled suffix", title: aiResumeShortID(id), want: "Untitled · …0041"},
 	} {
@@ -51,7 +51,7 @@ func TestAIResumeCodexConversationLabelPrecedence(t *testing.T) {
 
 func TestAIResumeDisplayLabelAuthorityPrecedence(t *testing.T) {
 	const id = "019f0000-0000-7000-8000-00000000beef"
-	base := aisessions.SessionMeta{Agent: aiModeCodex, ResumeID: id, Source: aisessions.SourceCodexAppServer}
+	base := aisessions.SessionMeta{Agent: aiModeCodex, ResumeID: id, Source: aisessions.SourceCodexAppServer, TitleProvenance: aisessions.TitleExplicitProvider}
 	for _, test := range []struct {
 		name   string
 		title  string
@@ -60,8 +60,8 @@ func TestAIResumeDisplayLabelAuthorityPrecedence(t *testing.T) {
 		want   string
 		forbid string
 	}{
-		{name: "topic context beats provider", title: "Provider title", labels: aiResumeExactAgentLabel{Context: registryview.Context{Value: "Agent topic", Source: registryview.ContextSourceAgentTopic}, Name: "agent-name"}, want: "Agent topic", forbid: "Provider title"},
-		{name: "provider context beats provider title", title: "Provider title", labels: aiResumeExactAgentLabel{Context: registryview.Context{Value: "codex", Source: registryview.ContextSourceAgentProvider}, Name: "agent-name"}, want: "codex", forbid: "Provider title"},
+		{name: "provider title beats topic context", title: "Provider title", labels: aiResumeExactAgentLabel{Context: registryview.Context{Value: "Agent topic", Source: registryview.ContextSourceAgentTopic}, Name: "agent-name"}, want: "Provider title", forbid: "Agent topic"},
+		{name: "provider title beats provider context", title: "Provider title", labels: aiResumeExactAgentLabel{Context: registryview.Context{Value: "codex", Source: registryview.ContextSourceAgentProvider}, Name: "agent-name"}, want: "Provider title", forbid: "codex"},
 		{name: "transcript title is rejected", title: "Prompt-derived transcript title", labels: aiResumeExactAgentLabel{Context: registryview.Context{Value: "Agent topic", Source: registryview.ContextSourceAgentTopic}, Name: "agent-name"}, want: "Agent topic", forbid: "Prompt-derived transcript title"},
 		{name: "stable name is not context", title: id, labels: aiResumeExactAgentLabel{Name: "agent-name"}, want: "Untitled · …beef", forbid: "agent-name"},
 		{name: "localized untitled", title: id, locale: i18n.Locale("ko-KR"), want: "제목 없음 · …beef", forbid: aiResumeShortID(id)},
@@ -72,6 +72,7 @@ func TestAIResumeDisplayLabelAuthorityPrecedence(t *testing.T) {
 			if test.name == "transcript title is rejected" {
 				session.Agent = aiModeClaude
 				session.Source = aisessions.SourceClaudeTranscript
+				session.TitleProvenance = aisessions.TitleProvenanceNone
 			}
 			got := aiResumeDisplayLabel(session, test.labels, test.locale)
 			if got != test.want || (test.forbid != "" && strings.Contains(got, test.forbid)) {
@@ -218,7 +219,7 @@ func TestAIResumeCodexRuntimeAndFallbackStayOutOfVisibleRow(t *testing.T) {
 	}
 }
 
-func TestAIResumeRolloutProjectionDoesNotInferConversationTitle(t *testing.T) {
+func TestAIResumeMissingProvenanceDoesNotInferConversationTitle(t *testing.T) {
 	for _, test := range []struct {
 		name, provider, source, id, title, suffix string
 	}{
@@ -276,6 +277,11 @@ func TestAIResumeClaudeAndAntigravityRowsUseCommonProjection(t *testing.T) {
 		session := aisessions.SessionMeta{
 			Agent: provider, ResumeID: provider + "-session", Title: provider + " title",
 			LastModified: now.Add(-time.Hour), Context: aisessions.SessionContext{Branch: "main"},
+		}
+		if provider == aiModeClaude {
+			session.Source, session.TitleProvenance = aisessions.SourceClaudeTranscript, aisessions.TitleExplicitProvider
+		} else {
+			session.Source = aisessions.SourceAntigravityMetadata
 		}
 		got := aiResumeSessionRowWithResolvedLabel(session, aiResumeExactAgentLabel{}, now, i18n.FallbackLocale, "/work", 0)
 		visible := stripANSI(got.Label)

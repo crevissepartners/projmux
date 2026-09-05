@@ -28,7 +28,9 @@ const (
 
 // ResumeSummary is the list-only projection used by the Resume Picker. It
 // deliberately excludes turns, runtime state, provenance explanations, and
-// transcript/preview bytes. Invocation-local detail references are kept
+// transcript/preview bytes. TitleProvenance is a content-free discriminator
+// authorizing the existing label, not an additional transcript field.
+// Invocation-local detail references are kept
 // separately; they are never rendered, searched, or persisted.
 type ResumeSummary struct {
 	Provider             string
@@ -36,6 +38,7 @@ type ResumeSummary struct {
 	LastModified         time.Time
 	UpdatedAt            time.Time
 	Label                string
+	TitleProvenance      TitleProvenance
 	Branch               string
 	RelativeCWD          string
 	Source               string
@@ -342,7 +345,7 @@ func projectResumeSummary(session SessionMeta, baseCWD string, depth int) (Resum
 	summary := ResumeSummary{
 		Provider: strings.TrimSpace(session.Agent), ResumeID: strings.TrimSpace(session.ResumeID),
 		LastModified: session.LastModified, UpdatedAt: session.UpdatedAt,
-		Label: strings.Join(strings.Fields(session.Title), " "), Branch: strings.TrimSpace(session.Context.Branch),
+		Label: strings.Join(strings.Fields(session.Title), " "), TitleProvenance: session.TitleProvenance, Branch: strings.TrimSpace(session.Context.Branch),
 		RelativeCWD: relativeCWD, Source: strings.TrimSpace(session.Source),
 		StateDomainID:        strings.TrimSpace(session.StateDomainID),
 		EndpointGenerationID: strings.TrimSpace(session.EndpointGenerationID),

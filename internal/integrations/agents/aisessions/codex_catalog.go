@@ -182,8 +182,12 @@ func (s *codexNativeCatalogState) readPage(ctx context.Context, cwd string, dept
 		if title == "" {
 			title = shortResumeID(id)
 		}
+		provenance := TitleProvenanceNone
+		if !titleIsResumeID(title, id) {
+			provenance = TitleExplicitProvider
+		}
 		candidate := SessionMeta{
-			Agent: AgentCodex, ResumeID: id, Title: title,
+			Agent: AgentCodex, ResumeID: id, Title: title, TitleProvenance: provenance,
 			LastModified: thread.RecencyAt,
 			UpdatedAt:    thread.UpdatedAt,
 			Context:      SessionContext{CWD: cleanCWD(thread.CWD), Branch: thread.Branch},

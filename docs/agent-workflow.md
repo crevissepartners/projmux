@@ -771,6 +771,52 @@
   historical names are not persisted or reconstructed after cascade. Existing
   title suppression/precedence, provider settlement/status, exact routing,
   and first-frame bound suites remain the authority for those unchanged paths.
+### Resume Picker provider session title Phase 1 tests
+
+- `TestClaudeExplicitTitleProvenanceWithinBoundedScan` pins top-level
+  `type:ai-title` / `aiTitle`, first valid explicit title, duplicate stability,
+  foreign session rejection, blank/full-ID/short-ID rejection followed by a
+  valid title, and the line-100 inclusive bound with no line-101 read. An
+  ordinary Claude prompt cannot stop the scan before a later explicit title.
+  Explicit titles normalize whitespace without prompt-noise filtering.
+- `TestCodexFirstRealPromptHasDerivedTitleProvenance` pins the first typed
+  `user_message` event or user-role response text after scaffold, assistant,
+  tool-carrier, untyped, and wrong-provider records. The label is marked
+  `derived-user-prompt`; Claude `ai-title` and Codex app-server non-ID titles
+  are `explicit-provider-title`. `TestNativeTitleProvenanceRejectsBlankAndIDCandidates`
+  keeps blank/full-ID/short-ID native candidates without title authority.
+- `TestAIResumeTitleAuthorityProviderSourceProvenanceMatrix` closes the
+  provider × source × provenance × ID/context table. For Claude/Codex the
+  conversation label order is explicit title, derived Codex rollout prompt,
+  exact-bound Agent topic, exact-bound Agent provider, localized Untitled.
+  Canonical titles never lose to the bound Agent's topic/provider; stable
+  binding names remain independent. Antigravity keeps its existing known-source
+  title and context-first behavior.
+  This narrowly supersedes the earlier Resume Picker prohibition on prompt
+  inference and context-before-provider-title policy: only bounded Codex
+  typed real-user prompts gain derived display authority, matching the adopted
+  native Codex resume-title policy. Ordinary Claude prompts, missing/unknown
+  provenance, unknown/mismatched sources, and ID-like titles remain rejected;
+  no summary generation or additional transcript read is introduced.
+  `TestAIResumeMissingProvenanceDoesNotInferConversationTitle` preserves the
+  rejection boundary when a caller provides only a transcript/rollout string.
+- `TestResumeSummaryPreservesTitleProvenanceWithoutAdditionalReads` and
+  `TestAIResumeTitleDiscoverySummaryRoundTripNeedsNoTranscriptReread` carry the
+  content-free discriminator through SessionMeta → ResumeSummary → SessionMeta.
+  Real disposable Claude/Codex discovery is projected after its transcript has
+  been removed; row/detail title and exact provider/ID Value remain available.
+  `TestAIResumeBindingSnapshotIsInvocationLocalAndAddsNoReadsOrWrites` now
+  exercises a canonical title with binding while keeping one Registry load,
+  cached detail reads, zero extra reads/writes, frozen row/order/Value/footer,
+  and next-open binding deletion behavior.
+- `TestAIResumeProviderTitleBindingNativeFramesGolden` exercises the public
+  native runner on isolated PTYs at 80x24 and 120x40 in EN/KO for Claude explicit,
+  Codex rollout derived, and Codex app-server explicit rows. Each source is
+  selected in turn; the golden requires combined binding/title rows, the exact
+  provider/title detail heading, and full conversation ID independently of
+  preview text. Existing Phase 0 binding, provider settlement/latency, privacy,
+  frozen-frame, and exact-routing suites retain their unchanged contracts.
+
 ### Codex observer disconnect-reason Phase 0 tests
 
 - `TestCodexObserverEventLoopExitsCarryTheirOwnReasonToken` owns the exit-path
