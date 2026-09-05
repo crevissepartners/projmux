@@ -728,7 +728,7 @@ smoke_build_binary() {
 smoke_assert_file_contains() {
   local path="$1"
   local needle="$2"
-  if ! grep -Fq "$needle" "$path"; then
+  if ! grep -Fq -e "$needle" "$path"; then
     echo "expected $path to contain: $needle" >&2
     exit 1
   fi
