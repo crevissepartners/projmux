@@ -208,6 +208,13 @@ func acquireCodexAuthorityReadFenceIn(ctx context.Context, stateDir, paneUID str
 // does not guarantee. Holding a cross-process kernel lock across Registry
 // projection would only stall the observer that owns the next transition.
 func readSettledAgentControlBinding(ctx context.Context, lookup agentControlBindingLookup, acquire codexAuthorityFenceAcquirer, paneUID string) (agentControlLive, bool, error) {
+	if strings.TrimSpace(paneUID) == "" {
+		// An Agent with no current Pane has nothing to fence and no live
+		// binding to sample. Leaving the read unfenced here keeps the refusal
+		// with the Registry judgment that owns it, instead of replacing it
+		// with a fence-path error.
+		return lookup.Live(ctx, paneUID)
+	}
 	release, err := acquire(ctx, paneUID)
 	if err != nil {
 		return agentControlLive{}, false, err

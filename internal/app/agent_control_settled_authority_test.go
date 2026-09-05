@@ -209,6 +209,27 @@ func TestSettledCodexAuthorityAdmissionIgnoresTornAuthorityWrites(t *testing.T) 
 	}
 }
 
+// TestSettledCodexAuthorityReadKeepsTheRegistryRefusalForAPanelessAgent pins
+// the one case that must stay unfenced: an Agent with no current Pane has no
+// fence to take, and the refusal must remain the Registry judgment that owns it
+// rather than a fence-path error.
+func TestSettledCodexAuthorityReadKeepsTheRegistryRefusalForAPanelessAgent(t *testing.T) {
+	t.Parallel()
+	state := &codexAuthorityPaneState{}
+	lookup := &codexAuthorityPaneLookup{state: state}
+	acquired := false
+	acquire := func(context.Context, string) (func(), error) {
+		acquired = true
+		return nil, errors.New("fence must not be taken for a Pane-less Agent")
+	}
+	if _, _, err := readSettledAgentControlBinding(context.Background(), lookup, acquire, "  "); err != nil {
+		t.Fatalf("Pane-less read = %v, want the lookup answer", err)
+	}
+	if acquired {
+		t.Fatal("Pane-less read reached for an authority fence")
+	}
+}
+
 // TestCodexAuthorityAdmissionTakesTheExactWriterFence pins the reader to the
 // writer's kernel lock rather than a second, independent one. A separate fence
 // would serialize nothing and reintroduce the torn read.
