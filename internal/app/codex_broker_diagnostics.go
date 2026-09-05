@@ -2,16 +2,42 @@ package app
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"io"
 	"os"
+	"path/filepath"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
 
-// codexBrokerDiagnosticTimeout bounds one read-only diagnostics dial. It is
-// short on purpose: a diagnostics surface that blocks on an unhealthy runtime
-// is worse than one that reports the runtime as unreachable.
+// codexBrokerDiagnosticTimeout bounds one read-only diagnostics observation,
+// every dial it makes included. It is short on purpose: a diagnostics surface
+// that blocks on an unhealthy runtime is worse than one that reports the
+// runtime as unreachable.
 const codexBrokerDiagnosticTimeout = 2 * time.Second
+
+const (
+	// codexBrokerRecordPrefix and codexBrokerRecordSuffix bracket the discovery
+	// records a runtime publishes. They are matched rather than derived,
+	// because the key inside a record's filename is a digest of an endpoint
+	// this reader does not know yet: learning which endpoints exist is the
+	// whole reason the directory is read.
+	codexBrokerRecordPrefix = "cb-"
+	codexBrokerRecordSuffix = ".json"
+	// codexBrokerRecordLimit bounds one discovery record read. It matches the
+	// bound the runtime's own reader applies, so a record this reader accepts
+	// is one Dial will also read rather than refuse on size.
+	codexBrokerRecordLimit = 8 << 10
+	// codexBrokerPublishedLimit bounds how many published endpoints one
+	// diagnostics read considers. A discovery directory holds one record per
+	// live endpoint, so this sits far above any real fleet and exists only so
+	// that a directory full of junk cannot turn `doctor` into a scan.
+	codexBrokerPublishedLimit = 64
+)
 
 // Closed states of the Codex endpoint broker runtime, as a diagnostics reader
 // sees it. They are distinct because the operator answer differs: `absent` is
@@ -45,6 +71,12 @@ type codexBrokerDiagnostic struct {
 	Runtime  string `json:"runtime,omitempty"`
 	Protocol int    `json:"protocol,omitempty"`
 	Endpoint string `json:"endpoint,omitempty"`
+	// Published is how many endpoints this state domain has a discovery record
+	// for. It is what separates "nothing is published" from "something is
+	// published and this reader could not reach it", and an operator who sees
+	// a non-zero count next to `absent` knows to look at the directory rather
+	// than at the process table.
+	Published int `json:"published_endpoints"`
 	// Connections is how many upstream app-server connections this runtime
 	// currently owns. The contract is one per effective endpoint regardless of
 	// how many Agents are bound, so this is the number the per-Agent observer
@@ -80,6 +112,12 @@ func defaultCodexBrokerDiagnosticLookup() codexBrokerDiagnosticLookup {
 // It never starts one. A diagnostics read that could start a long-lived
 // process would make `projmux doctor` a side effect, and would report a runtime
 // that exists only because it was asked about.
+//
+// The endpoints it dials are the ones this state domain has published, read
+// out of the discovery directory. Naming an endpoint up front is what this
+// reader must not do: a runtime publishes under the generation-scoped key its
+// route derives, so a reader that assumed the default key reported a live
+// broker as `absent` and an operator acted on that answer by killing a process.
 func observeCodexBrokerRuntime(
 	ctx context.Context,
 	lookupEnv func(string) string,
@@ -92,36 +130,155 @@ func observeCodexBrokerRuntime(
 	if err != nil {
 		return codexBrokerDiagnostic{State: codexBrokerStateUnavailable, Reason: string(codexbroker.RefusalDomainRequired)}
 	}
-	// The discovery contract is built directly rather than through
-	// codexBrokerDiscoveryFor, which renders its refusal into a message. A
-	// diagnostics surface needs the closed token itself: `socket-path-too-long`
-	// and `domain-required` have different operator answers, and both would
-	// arrive here as `unclassified` if the type were flattened first.
-	discovery, err := codexbroker.NewDiscovery(domain, codexbroker.DefaultEndpointKey)
-	if err != nil {
-		return codexBrokerDiagnostic{State: codexBrokerStateUnavailable, Reason: codexBrokerRefusalToken(err)}
+	published, refusal := codexBrokerPublishedRuntimes(domain)
+	if refusal != "" {
+		return codexBrokerDiagnostic{State: codexBrokerStateUnavailable, Reason: refusal}
 	}
+	if len(published) == 0 {
+		// No record means no runtime announced itself here, which is exactly
+		// what a machine with no live native Agent looks like.
+		return codexBrokerDiagnostic{State: codexBrokerStateAbsent, Reason: string(codexbroker.RefusalHostUnavailable)}
+	}
+	// One deadline covers the whole observation rather than each dial, so a
+	// domain that published several unreachable endpoints still cannot hold
+	// `doctor` open for a multiple of the bound.
 	dialCtx, cancel := context.WithTimeout(ctx, codexBrokerDiagnosticTimeout)
 	defer cancel()
+	var refused codexBrokerDiagnostic
+	for _, discovery := range published {
+		diagnostic, running := observeCodexBrokerEndpoint(dialCtx, discovery)
+		diagnostic.Published = len(published)
+		if running {
+			return diagnostic
+		}
+		if refused.State == "" {
+			refused = diagnostic
+		}
+	}
+	return refused
+}
+
+// observeCodexBrokerEndpoint dials one published endpoint and reports whether
+// it answered.
+func observeCodexBrokerEndpoint(ctx context.Context, discovery codexbroker.Discovery) (codexBrokerDiagnostic, bool) {
+	endpoint := string(discovery.Endpoint())
 	// Dial rather than Ensure. Ensure is allowed to create the discovery
 	// directory, reclaim a stale artifact, and start a runtime; a diagnostics
 	// read may do none of those. Dial only reaches a runtime that already
 	// published itself, and refuses `host-unavailable` when none did.
-	conn, err := codexbroker.Dial(dialCtx, discovery, codexbroker.DialConfig{Timeout: codexBrokerDiagnosticTimeout})
+	conn, err := codexbroker.Dial(ctx, discovery, codexbroker.DialConfig{Timeout: codexBrokerDiagnosticTimeout})
 	if err != nil {
-		return codexBrokerDiagnostic{State: codexBrokerStateForRefusal(err), Reason: codexBrokerRefusalToken(err)}
+		return codexBrokerDiagnostic{
+			State:    codexBrokerStateForRefusal(err),
+			Reason:   codexBrokerRefusalToken(err),
+			Endpoint: endpoint,
+		}, false
 	}
 	defer conn.Close()
-	telemetry, err := conn.Stats(dialCtx)
+	telemetry, err := conn.Stats(ctx)
 	if err != nil {
 		return codexBrokerDiagnostic{
 			State:    codexBrokerStateUnavailable,
 			Reason:   codexBrokerRefusalToken(err),
 			Runtime:  conn.Runtime(),
 			Protocol: conn.Protocol(),
-		}
+			Endpoint: endpoint,
+		}, false
 	}
-	return projectCodexBrokerTelemetry(telemetry)
+	diagnostic := projectCodexBrokerTelemetry(telemetry)
+	if diagnostic.Endpoint == "" {
+		diagnostic.Endpoint = endpoint
+	}
+	return diagnostic, true
+}
+
+// codexBrokerPublishedRuntimes lists the discovery contracts this state domain
+// has a published record for, in a stable endpoint order.
+//
+// It creates nothing and repairs nothing: an absent directory is an empty
+// result, and a record it cannot make sense of is skipped rather than removed.
+// Every record it accepts is validated again by Dial, which re-reads the whole
+// file under the ownership rules this reader deliberately does not duplicate;
+// the only thing taken from a record here is which endpoint it announces.
+// It reports a closed refusal token rather than an error, because the only
+// thing its caller can do with a failure is render it, and an unclassified
+// message on a diagnostics surface is exactly what this package refuses.
+func codexBrokerPublishedRuntimes(domain string) ([]codexbroker.Discovery, string) {
+	// The default key is used for one thing here: deriving the per-domain
+	// discovery directory, and surfacing the two contract refusals that depend
+	// on the domain rather than on the endpoint. It is never a dial target.
+	locator, err := codexbroker.NewDiscovery(domain, codexbroker.DefaultEndpointKey)
+	if err != nil {
+		return nil, codexBrokerRefusalToken(err)
+	}
+	dir := locator.Dir()
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ""
+	}
+	if err != nil {
+		// A directory that is there and cannot be listed is not an
+		// owner-private object of the expected kind, which is the condition
+		// the runtime's own reader refuses as `discovery-untrusted`.
+		return nil, string(codexbroker.RefusalDiscoveryUntrusted)
+	}
+	var published []codexbroker.Discovery
+	seen := make(map[codexbroker.EndpointKey]struct{}, len(entries))
+	for _, entry := range entries {
+		if len(published) >= codexBrokerPublishedLimit {
+			break
+		}
+		name := entry.Name()
+		if !entry.Type().IsRegular() ||
+			!strings.HasPrefix(name, codexBrokerRecordPrefix) || !strings.HasSuffix(name, codexBrokerRecordSuffix) {
+			continue
+		}
+		endpoint, ok := codexBrokerRecordEndpoint(filepath.Join(dir, name))
+		if !ok {
+			continue
+		}
+		if _, duplicate := seen[endpoint]; duplicate {
+			continue
+		}
+		discovery, err := codexbroker.NewDiscovery(domain, endpoint)
+		// The endpoint a record announces must derive back to the record that
+		// announced it. A record naming some other endpoint is not a runtime
+		// this domain published; it is a file whose contents disagree with its
+		// own location, and dialing it would reach a socket nobody claimed.
+		if err != nil || discovery.RecordPath() != filepath.Join(dir, name) {
+			continue
+		}
+		seen[endpoint] = struct{}{}
+		published = append(published, discovery)
+	}
+	sort.Slice(published, func(i, j int) bool {
+		return published[i].Endpoint() < published[j].Endpoint()
+	})
+	return published, ""
+}
+
+// codexBrokerRecordEndpoint reads the endpoint one discovery record announces.
+//
+// Only that field is taken. The credential, the pid, and the protocol window
+// stay with Dial, which reads the record again under its own ownership proof,
+// so nothing here can widen what a diagnostics read is trusted to know.
+func codexBrokerRecordEndpoint(path string) (codexbroker.EndpointKey, bool) {
+	file, err := os.Open(path) // #nosec G304 -- path is one entry of the derived discovery directory.
+	if err != nil {
+		return "", false
+	}
+	defer file.Close()
+	payload, err := io.ReadAll(io.LimitReader(file, codexBrokerRecordLimit+1))
+	if err != nil || len(payload) > codexBrokerRecordLimit {
+		return "", false
+	}
+	var record struct {
+		Endpoint codexbroker.EndpointKey `json:"endpoint"`
+	}
+	if err := json.Unmarshal(payload, &record); err != nil || record.Endpoint == "" {
+		return "", false
+	}
+	return record.Endpoint, true
 }
 
 // projectCodexBrokerTelemetry turns one runtime answer into the rendered

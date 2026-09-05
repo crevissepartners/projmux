@@ -510,11 +510,21 @@ func writeDoctorCodexBrokerText(buf *bytes.Buffer, broker *codexBrokerDiagnostic
 		buf.WriteString("; draining")
 	}
 	buf.WriteString("\n")
+	// Which endpoint the verdict was reached on, on every state. An `absent`
+	// next to a non-zero published count is the exact shape of a runtime this
+	// reader could not reach, and telling that apart from a domain that
+	// published nothing is what keeps an operator from acting on `absent` as
+	// if it meant the process is gone.
+	fmt.Fprintf(buf, "  Published endpoints: %d", broker.Published)
+	if broker.Endpoint != "" {
+		fmt.Fprintf(buf, "; observed endpoint: %s", broker.Endpoint)
+	}
+	buf.WriteString("\n")
 	if broker.State != codexBrokerStateRunning {
 		return
 	}
-	fmt.Fprintf(buf, "  Upstream connections: %d; bindings: %d; clients: %d; endpoint: %s; connection epoch: %d\n",
-		broker.Connections, broker.Bindings, broker.Clients, broker.Endpoint, broker.ConnectionEpoch)
+	fmt.Fprintf(buf, "  Upstream connections: %d; bindings: %d; clients: %d; connection epoch: %d\n",
+		broker.Connections, broker.Bindings, broker.Clients, broker.ConnectionEpoch)
 	fmt.Fprintf(buf, "  Reconnects: %d; queue evictions: %d; snapshot failures: %d\n",
 		broker.Reconnects, broker.Evictions, broker.SnapshotFailures)
 	if len(broker.Revocations) > 0 {
