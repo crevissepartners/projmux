@@ -167,6 +167,8 @@ var nonMutationCatalogSurfaceRows = []struct{ canonical, legacy, class, effect s
 	{"notification-sidebar.toggle", "NotifySidebarToggle", "popup navigation", "Notification sidebar opens"},
 	{"session-picker.toggle", "SessionPopupToggle", "popup navigation", "Session picker opens"},
 	{"resource-inspector.open", "Resources:Open", "read-only navigation", "resource inspector opens"},
+	{"resource-inspector.columns.toggle", "Resources:ToggleColumnProfile", "read-only projection", "Registry picker columns toggle for this open lifetime"},
+	{"runtime-diagnostics.columns.toggle", "RuntimeDiagnostics:ToggleColumnProfile", "read-only projection", "Runtime picker columns toggle for this open lifetime"},
 	{"recent-windows.open", "RecentWindows:Open", "popup navigation", "recent Window picker opens"},
 	{"agent-pane-launcher.toggle", "AISplitPickerToggle", "native picker navigation", "AI picker opens"},
 	{"settings.toggle", "SettingsToggle", "settings navigation", "Settings opens"},
