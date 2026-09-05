@@ -36,11 +36,16 @@ import (
 // made and a reviewer can dispute. New writes with no reason stay red.
 const aiBestEffortWriteMarker = "best-effort-write:"
 
-// TestHookReflectionWritesNeverDiscardTheirErrorSilently holds the gate.
+// TestHookReflectionWritesNeverDiscardTheirErrorSilently holds the gate, and it
+// owns the whole package.
 //
-// The scan is over the whole package rather than a named list of files, so a
+// The scan reads every file in the package rather than a named list, so a
 // discarded write appearing somewhere new is caught rather than skipped for
-// being somewhere nobody thought to look.
+// being somewhere nobody thought to look. That breadth is the point, and it is
+// worth stating because a narrower audit lives alongside it: the phase that
+// repaired the reflection writes checks only the files it touched. Its green is
+// evidence about those files, never about the package. This test is where the
+// package-wide claim is made.
 //
 // It reads the syntax tree rather than the text. A textual scan counts the
 // pattern wherever it appears, including inside the comment that explains why a
