@@ -55,16 +55,6 @@ func TestOpaqueDeliveryReasonsNeverReachTheDiagnosis(t *testing.T) {
 		{reason: "open /home/user/.codex/config.toml: no such file", opaque: true},
 		{reason: "pane option write refused"},
 		{reason: "tmux-socket-unavailable"},
-		// The three shapes the reflection layer's own vocabulary takes. They
-		// are listed as shapes, not as a binding: the gate that requires a
-		// failure reason to be one of those tokens has to reference the
-		// declared constants, or a rename walks past it. What is pinned here
-		// is only that a bounded kebab-or-prose token of this shape is not
-		// mistaken for a raw process detail, so the layer's own vocabulary
-		// cannot trip the opaque verdict the moment it arrives.
-		{reason: "pane runtime route unavailable"},
-		{reason: "pane runtime route does not hold this pane"},
-		{reason: "pane option write rejected"},
 	} {
 		if got := aiIngestReasonIsOpaque(test.reason); got != test.opaque {
 			t.Fatalf("aiIngestReasonIsOpaque(%q) = %v, want %v", test.reason, got, test.opaque)
@@ -353,5 +343,38 @@ func TestPaneOwnershipVerdictIgnoresForeignLifecycleChurn(t *testing.T) {
 	foreign.Foreign = 1
 	if got := codexPaneOwnershipSurface(foreign); got.Status != codexSurfaceStatusBroken {
 		t.Fatalf("status = %q, want %q once an attribution is provably foreign", got.Status, codexSurfaceStatusBroken)
+	}
+}
+
+// TestReflectionRefusalVocabularyIsNeverOpaque binds the delivery verdict to
+// the reflection layer's own declarations.
+//
+// Until that layer existed this could only be pinned as shapes -- string
+// literals spelling what its tokens would look like -- and a literal is exactly
+// what a rename walks past. Now the constants are here, so a token renamed or
+// replaced by something the opaque test would refuse fails at this line rather
+// than turning the delivery row red in the field for a reason nobody expected.
+//
+// The check stays provider-neutral. It does not require a failure reason to be
+// one of these three; it requires these three to be the kind of answer the
+// verdict accepts. Requiring membership would tie one provider's vocabulary
+// into a surface all three providers report on.
+func TestReflectionRefusalVocabularyIsNeverOpaque(t *testing.T) {
+	for _, declared := range []string{
+		codexHookRouteUnavailableReason,
+		codexHookRouteForeignPaneReason,
+		codexHookWriteRejectedReason,
+	} {
+		if aiIngestReasonIsOpaque(aiIngestReasonToken(declared)) {
+			t.Fatalf("declared refusal %q reads as opaque; the delivery row would redden on a bounded answer", declared)
+		}
+		if declared == "" {
+			t.Fatal("a declared refusal is empty, which is the plainest opaque value there is")
+		}
+	}
+	// And the failure it replaced still reads as opaque, or the verdict has
+	// stopped distinguishing the two.
+	if !aiIngestReasonIsOpaque(aiIngestReasonToken("exit status 1")) {
+		t.Fatal("a raw process exit no longer reads as opaque")
 	}
 }

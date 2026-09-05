@@ -85,12 +85,18 @@ var codexControlPlaneContractEnforcement = map[string][]string{
 	},
 	// C-2 delivery: an attributed hook event changes the Pane it reached, and a
 	// write that cannot happen leaves a bounded reason rather than a raw
-	// process-exit string. Awaiting the Phase 7 vocabulary; the property gate
-	// below holds without naming its tokens.
+	// process-exit string.
+	//
+	// The last entry binds the reflection layer's own declarations, now that
+	// they exist. It asserts those tokens are the kind of answer the verdict
+	// accepts, not that a failure must be one of them -- requiring membership
+	// would tie one provider's vocabulary into a row all three report on.
 	"C-2-delivery": {
 		"TestHookDeliverySurfaceTreatsAnOpaqueFailureAsBroken",
 		"TestDeliveryHealthCountsOnlyAttributedEvents",
+		"TestDeliveryHealthKeepsTheQuietLaneOutOfTheRate",
 		"TestOpaqueDeliveryReasonsNeverReachTheDiagnosis",
+		"TestReflectionRefusalVocabularyIsNeverOpaque",
 	},
 	// C-2 ownership: an attributed hook event landed on a Pane of its own
 	// provider.
