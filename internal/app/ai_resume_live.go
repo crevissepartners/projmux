@@ -846,8 +846,8 @@ func (c *aiResumeLiveController) focus(value string) {
 		c.signal()
 		return
 	}
-	displayLabel := aiResumeDisplayLabelForSummary(summary, c.labels, c.locale)
-	loading := aiResumeDetailProjection(c.locale, summary, detailRef, aisessions.ResumeDetail{}, localizeUIText(c.locale, "Loading preview…"), displayLabel)
+	binding := c.labels[aiResumeExactLabelKey(summary.Provider, summary.ResumeID)]
+	loading := aiResumeDetailProjection(c.locale, summary, detailRef, aisessions.ResumeDetail{}, localizeUIText(c.locale, "Loading preview…"), binding)
 	c.detailText[value] = loading
 	if c.detailReads[cacheKey] {
 		c.mu.Unlock()
@@ -903,7 +903,7 @@ func (c *aiResumeLiveController) focus(value string) {
 		if err != nil || strings.TrimSpace(previewText) == "" {
 			previewText = localizeUIText(c.locale, "preview unavailable")
 		}
-		text := aiResumeDetailProjection(c.locale, summary, detailRef, detail, previewText, displayLabel)
+		text := aiResumeDetailProjection(c.locale, summary, detailRef, detail, previewText, binding)
 		c.mu.Lock()
 		defer c.mu.Unlock()
 		c.detailCache[cacheKey] = text
@@ -942,7 +942,7 @@ func aiResumeSummaryMatchesSelection(summary aisessions.ResumeSummary, selection
 		strings.TrimSpace(summary.GenerationState) == string(selection.state)
 }
 
-func aiResumeDetailProjection(locale i18n.Locale, summary aisessions.ResumeSummary, ref aisessions.ResumeDetailRef, detail aisessions.ResumeDetail, previewText string, displayLabels ...string) string {
+func aiResumeDetailProjection(locale i18n.Locale, summary aisessions.ResumeSummary, ref aisessions.ResumeDetailRef, detail aisessions.ResumeDetail, previewText string, bindings ...aiResumeExactAgentLabel) string {
 	idLabel := localizeText(locale, i18n.Key("picker.ai.resume_detail_id"), "Conversation ID")
 	sourceLabel := localizeUIText(locale, "Source")
 	turnsLabel := localizeText(locale, i18n.KeyPickerResumeDetailTurns, "Turns")
@@ -952,14 +952,19 @@ func aiResumeDetailProjection(locale i18n.Locale, summary aisessions.ResumeSumma
 	detailsLabel := localizeText(locale, i18n.Key("picker.ai.resume_detail_metadata"), "Details")
 	unavailable := localizeUIText(locale, "unavailable")
 	provider := strings.TrimSpace(summary.Provider)
-	title := ""
-	if len(displayLabels) > 0 {
-		title = strings.TrimSpace(displayLabels[0])
+	var binding aiResumeExactAgentLabel
+	if len(bindings) > 0 {
+		binding = bindings[0]
 	}
-	if title == "" {
-		title = aiResumeDisplayLabelForSummary(summary, nil, locale)
+	title := aiResumeDisplayLabelForSummary(summary, nil, locale)
+	if len(bindings) > 0 {
+		title = aiResumeDisplayLabel(aiResumeSessionMetaFromSummary(summary, ""), binding, locale)
 	}
 	lines := []string{provider + " · " + title}
+	if fragment := aiResumeBindingFragment(binding, 0); fragment != "" {
+		bindingLabel := localizeText(locale, i18n.Key("picker.ai.resume_detail_binding"), "projmux binding")
+		lines = append(lines, bindingLabel+": "+fragment)
+	}
 	source := strings.TrimSpace(detail.Source)
 	if source == "" {
 		source = strings.TrimSpace(ref.Source)
@@ -1005,7 +1010,39 @@ func aiResumeDetailProjection(locale i18n.Locale, summary aisessions.ResumeSumma
 	if len(explanation) > 0 {
 		lines = append(lines, strings.Join(explanation, " · "))
 	}
+	lines = append(lines, aiResumeBindingDetailOverflow(locale, binding)...)
 	return strings.Join(lines, "\n")
+}
+
+// The native detail viewport scrolls vertically. Keep the canonical full
+// binding line, and expose overflow names as readable continuation lines in
+// Details without changing the picker-wide renderer or wrap policy.
+func aiResumeBindingDetailOverflow(locale i18n.Locale, binding aiResumeExactAgentLabel) []string {
+	const maxCells = 64 // includes the label; fits the 80-column detail viewport
+	fragment := aiResumeBindingFragment(binding, 0)
+	bindingLabel := localizeText(locale, i18n.Key("picker.ai.resume_detail_binding"), "projmux binding")
+	if fragment == "" || i18n.TerminalCellWidth(bindingLabel+": "+fragment) <= maxCells {
+		return nil
+	}
+	var lines []string
+	for _, field := range []struct {
+		key            i18n.Key
+		fallback, name string
+	}{
+		{i18n.Key("picker.ai.resume_detail_agent_name"), "Agent name", binding.Name},
+		{i18n.Key("picker.ai.resume_detail_pane_name"), "Pane name", binding.PaneName},
+	} {
+		name := strings.TrimSpace(field.name)
+		prefix := localizeText(locale, field.key, field.fallback) + ": "
+		indent := strings.Repeat(" ", i18n.TerminalCellWidth(prefix))
+		for name != "" {
+			chunk := i18n.TruncateTerminalCells(name, maxCells-i18n.TerminalCellWidth(prefix))
+			lines = append(lines, prefix+chunk)
+			name = strings.TrimPrefix(name, chunk)
+			prefix = indent
+		}
+	}
+	return lines
 }
 
 func aiResumePreviewCacheKey(summary aisessions.ResumeSummary) aiResumePreviewKey {

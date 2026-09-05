@@ -738,6 +738,40 @@
   projection; future `agent message` and `agent wait` parser placeholders and
   provider-specific Agent namespaces remain absent.
 
+### Resume Picker exact projmux binding Phase 0 tests
+
+- `TestAIResumeExactBindingProjectsCoherentAgentAndPaneNames` owns exact
+  provider/conversation sessionRef selection: prefer a round-trip Pane owner,
+  then lexical Agent UID, and project that same Agent's context and stable
+  name with its optional Pane stable name. Duplicate ordering cannot combine
+  different Agents' fields. Stable names come only from `metadata.name`.
+- `TestAIResumeBindingDisplayFallsBackWithoutRoundTripPane` pins the three
+  binding-first row forms: `[agent → pane] conversation`, `[agent] conversation`,
+  and the unchanged conversation-only row. Missing/stale/foreign Pane bindings
+  omit only the Pane; missing Agent bindings retain exact Value, count, and
+  order. No cwd, topic, live tmux title, newest resource, or pane-order guess
+  recovers a deleted binding.
+- `TestAIResumeBindingNamesPreserveFullSearchAndDetailWithinCellBudget` pins
+  the existing 90-cell trailing budget, balanced binding brackets, ANSI/CJK
+  clipping, 128-byte stable names, and full names in SearchKey and selected
+  detail projection. `TestAIResumeBindingLongNamesAreRecoverableByNativeDetailScroll`
+  reconstructs complete 128-byte and CJK names from the app-local, 64-cell
+  continuation lines and verifies native Shift-Down exposes every chunk at
+  80 columns in EN/KO. The canonical full binding line remains intact; only
+  overflowing bindings add continuation fields under Details.
+  `TestAIResumeBindingNativeFramesLocaleAndSizeGolden`
+  exercises the public native runner on an isolated PTY/Registry fixture at
+  80x24 and 120x40 in EN/KO; short Agent and Pane names are visible together in
+  both the row and detail. The PTY harness uses Python 3's standard library.
+- `TestAIResumeBindingSnapshotIsInvocationLocalAndAddsNoReadsOrWrites`
+  pins one Registry load per invocation, cached detail reads, unchanged
+  row/order/Value/footer after focus, zero extra command/file reads and writes,
+  and next-open conversation fallback after Registry deletion. Binding names
+  are an invocation snapshot: rename/deletion is observed on the next open,
+  historical names are not persisted or reconstructed after cascade. Existing
+  title suppression/precedence, provider settlement/status, exact routing,
+  and first-frame bound suites remain the authority for those unchanged paths.
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.

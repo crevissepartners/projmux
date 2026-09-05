@@ -1407,8 +1407,8 @@ type aiResumeSelection struct {
 //   - branch: aiResumeBranchCellWidth (dim, cut).
 //   - extra-meta slot: the depth>0 relative-cwd column (aiResumeCWDCellWidth,
 //     dim); empty at depth 0 so the layout collapses to the base view.
-//   - title: trailing variable width, cut with an ellipsis past
-//     aiResumeTitleMaxCells.
+//   - binding/conversation: trailing variable width, cut with an ellipsis
+//     inside aiResumeTitleMaxCells. Exact stable binding names lead.
 //
 // The absolute time and short resume id are intentionally dropped from the
 // visible columns; the resume id stays in SearchKey so id search still works.
@@ -1464,7 +1464,7 @@ func aiResumeSessionRowWithResolvedLabel(session aisessions.SessionMeta, boundLa
 		branch = aiResumeEmptyCell
 	}
 	conversation := aiResumeDisplayLabel(session, boundLabel, locale)
-	conversation = truncateAIResumeCells(conversation, aiResumeTitleMaxCells)
+	conversation = aiResumeBindingConversation(boundLabel, conversation)
 	relCWD := aiResumeExtraMetaCell(session, baseCWD, depth)
 	parts := []string{
 		ansiDim(aiResumeFitCell(aiResumeRelativeAge(now, session.LastModified, locale), aiResumeRelCellWidth)),
@@ -1482,7 +1482,7 @@ func aiResumeSessionRowWithResolvedLabel(session aisessions.SessionMeta, boundLa
 		Value: aiResumePickerValueForSession(session),
 		SearchKey: strings.TrimSpace(strings.Join([]string{
 			agent, conversation, boundLabel.Context.Value, string(boundLabel.Context.Source),
-			aiResumeProviderOwnedTitle(session), strings.TrimSpace(boundLabel.Name),
+			aiResumeProviderOwnedTitle(session), strings.TrimSpace(boundLabel.Name), strings.TrimSpace(boundLabel.PaneName),
 			resumeID, branch, relCWD, session.Source, routeStatus,
 		}, " ")),
 	}
@@ -1568,8 +1568,9 @@ func aiResumeShortID(id string) string {
 // invocation. A label is admitted only through an exact provider conversation binding;
 // cwd, title, pane ordering, prompt, and transcript content are never consulted.
 type aiResumeExactAgentLabel struct {
-	Context registryview.Context
-	Name    string
+	Context  registryview.Context
+	Name     string
+	PaneName string
 }
 
 func (c *aiCommand) resolveAIResumeConversationLabels(sessions []aisessions.SessionMeta) map[string]aiResumeExactAgentLabel {
@@ -1602,54 +1603,81 @@ func (c *aiCommand) resolveAIResumeSummaryLabels(summaries []aisessions.ResumeSu
 }
 
 func aiResumeExactAgentLabels(registry coremetadata.Registry) map[string]aiResumeExactAgentLabel {
-	type authority struct{ uid, value string }
-	type contextAuthority struct {
+	type candidate struct {
 		uid     string
-		context registryview.Context
+		hasPane bool
+		label   aiResumeExactAgentLabel
 	}
-	type resolved struct {
-		context contextAuthority
-		name    authority
-	}
-	byConversation := make(map[string]resolved)
+	byConversation := make(map[string]candidate)
 	projector := registryview.NewContextProjector(registry)
+	panes := make(map[string]coremetadata.Pane, len(registry.Panes))
+	for _, pane := range registry.Panes {
+		panes[pane.Metadata.UID] = pane
+	}
 	for _, agent := range registry.Agents {
 		provider := normalizeAIMode(agent.Spec.Provider)
 		if agent.Status.SessionRef == nil || provider == "" || normalizeAIMode(agent.Status.SessionRef.Provider) != provider {
 			continue
 		}
-		ids := aiResumeExactAgentConversationIDs(agent.Status.SessionRef, provider)
-		for _, id := range ids {
+		selected := candidate{uid: agent.Metadata.UID, label: aiResumeExactAgentLabel{
+			Context: projector.For(coremetadata.KindAgent, agent.Metadata.UID),
+			Name:    strings.TrimSpace(agent.Metadata.Name),
+		}}
+		if pane, ok := panes[agent.Status.PaneRef]; agent.Status.PaneRef != "" && ok &&
+			pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == coremetadata.KindAgent &&
+			pane.Metadata.OwnerRef.UID == agent.Metadata.UID {
+			selected.hasPane = true
+			selected.label.PaneName = strings.TrimSpace(pane.Metadata.Name)
+		}
+		for _, id := range aiResumeExactAgentConversationIDs(agent.Status.SessionRef, provider) {
 			key := aiResumeExactLabelKey(provider, id)
-			current := byConversation[key]
-			context := projector.For(coremetadata.KindAgent, agent.Metadata.UID)
-			contextRank := func(value registryview.Context) int {
-				switch value.Source {
-				case registryview.ContextSourceAgentTopic:
-					return 0
-				case registryview.ContextSourceAgentProvider:
-					return 1
-				default:
-					return 2
-				}
+			current, exists := byConversation[key]
+			// Select the entire projection from one Agent. Context, stable name,
+			// and Pane name must never be assembled from different candidates.
+			if !exists || (selected.hasPane && !current.hasPane) ||
+				(selected.hasPane == current.hasPane && selected.uid < current.uid) {
+				byConversation[key] = selected
 			}
-			if !context.Empty() && (current.context.context.Empty() ||
-				contextRank(context) < contextRank(current.context.context) ||
-				(contextRank(context) == contextRank(current.context.context) && agent.Metadata.UID < current.context.uid)) {
-				current.context = contextAuthority{uid: agent.Metadata.UID, context: context}
-			}
-			name := strings.TrimSpace(agent.Metadata.Name)
-			if name != "" && (current.name.value == "" || agent.Metadata.UID < current.name.uid) {
-				current.name = authority{uid: agent.Metadata.UID, value: name}
-			}
-			byConversation[key] = current
 		}
 	}
 	labels := make(map[string]aiResumeExactAgentLabel, len(byConversation))
-	for key, candidate := range byConversation {
-		labels[key] = aiResumeExactAgentLabel{Context: candidate.context.context, Name: candidate.name.value}
+	for key, selected := range byConversation {
+		labels[key] = selected.label
 	}
 	return labels
+}
+
+// aiResumeBindingFragment preserves the grammar when either stable name needs
+// clipping. A non-positive limit returns the full names for selected detail.
+func aiResumeBindingFragment(label aiResumeExactAgentLabel, limit int) string {
+	agent, pane := strings.TrimSpace(label.Name), strings.TrimSpace(label.PaneName)
+	if agent == "" {
+		return ""
+	}
+	if pane == "" {
+		if limit > 0 {
+			agent = truncateAIResumeCells(agent, limit-2)
+		}
+		return "[" + agent + "]"
+	}
+	if limit > 0 {
+		budget := limit - 5 // brackets and " → "
+		agentBudget := min(i18n.TerminalCellWidth(agent), budget/2)
+		paneBudget := min(i18n.TerminalCellWidth(pane), budget-agentBudget)
+		agentBudget = budget - paneBudget
+		agent = truncateAIResumeCells(agent, agentBudget)
+		pane = truncateAIResumeCells(pane, paneBudget)
+	}
+	return "[" + agent + " → " + pane + "]"
+}
+
+func aiResumeBindingConversation(label aiResumeExactAgentLabel, conversation string) string {
+	// Reserve one separating space and at least an ellipsis for conversation.
+	binding := aiResumeBindingFragment(label, aiResumeTitleMaxCells-2)
+	if binding == "" {
+		return truncateAIResumeCells(conversation, aiResumeTitleMaxCells)
+	}
+	return binding + " " + truncateAIResumeCells(conversation, aiResumeTitleMaxCells-i18n.TerminalCellWidth(binding)-1)
 }
 
 func aiResumeExactLabelKey(provider, id string) string {
