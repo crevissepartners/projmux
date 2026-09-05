@@ -125,6 +125,20 @@ func TestOwnedSocketCleanupPreservesReplacementAndPathModeBounds(t *testing.T) {
 	}
 }
 
+func TestSocketIncarnationIdentityRejectsLegacyAxisReuse(t *testing.T) {
+	current := SocketIdentity{
+		Device: 41, Inode: 73, Owner: 1000, Mode: os.ModeSocket | 0o600, Size: 0,
+		ChangeTimeSeconds: 900, ChangeTimeNanoseconds: 12,
+	}
+	stale := current
+	// Simulate immediate filesystem reuse: every legacy device/inode/owner/
+	// mode/size axis is identical and only the socket incarnation time differs.
+	stale.ChangeTimeNanoseconds ^= 1
+	if sameSocketIdentity(current, stale) {
+		t.Fatal("socket identity accepted a replacement with reused legacy axes")
+	}
+}
+
 func TestBoundedJSONRoundTripTrailingAndOversize(t *testing.T) {
 	type frame struct {
 		Value string `json:"value"`

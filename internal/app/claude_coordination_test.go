@@ -27,22 +27,32 @@ func coordinationEnvelope(ref string, deadline time.Time) claudeCoordinationEnve
 	}
 }
 
+func newLiveCoordinationTestHub() *claudeCoordinationHub {
+	hub := newClaudeCoordinationHub()
+	hub.processCurrent = func(coremetadata.ProcessIdentity) bool { return true }
+	hub.assignmentWindow = time.Hour
+	hub.receiptWindow = time.Hour
+	return hub
+}
+
 func TestClaudeCoordinationHubTransitionsAreTerminalOnce(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	process := coremetadata.ProcessIdentity{PID: 101, OwnerUID: 1000, Start: "test:hook-1"}
 
 	t.Run("held handoff exact receipt and no automatic resend", func(t *testing.T) {
-		hub := newClaudeCoordinationHub()
+		hub := newLiveCoordinationTestHub()
 		hub.now = func() time.Time { return now }
-		hub.receiptWindow = time.Hour
 		envelope := coordinationEnvelope("message-delivered", now.Add(time.Hour))
 		if got := hub.submit(envelope); got.State != agentdelivery.StateHeld {
 			t.Fatalf("submit state = %s, want held", got.State)
 		}
 		waiter, _ := hub.arm(process)
 		response := <-waiter.result
-		if response.Kind != "handoff" || response.Envelope == nil || response.Envelope.MessageRef != envelope.MessageRef {
+		if response.Kind != "assignment" || response.Envelope == nil || response.Envelope.MessageRef != envelope.MessageRef {
 			t.Fatalf("handoff response = %+v", response)
+		}
+		if got := hub.beginHandoff(envelope.MessageRef, waiter.ref, process); got.State != agentdelivery.StateHandoff {
+			t.Fatalf("begin handoff = %+v", got)
 		}
 		if got := hub.receipt(envelope.MessageRef, "foreign-waiter", process, true); got.State != agentdelivery.StateHandoff {
 			t.Fatalf("foreign receipt state = %s, want handoff", got.State)
@@ -63,27 +73,34 @@ func TestClaudeCoordinationHubTransitionsAreTerminalOnce(t *testing.T) {
 	})
 
 	t.Run("partial pipe receipt is ambiguous failure", func(t *testing.T) {
-		hub := newClaudeCoordinationHub()
+		hub := newLiveCoordinationTestHub()
 		hub.now = func() time.Time { return now }
-		hub.receiptWindow = time.Hour
 		waiter, _ := hub.arm(process)
 		envelope := coordinationEnvelope("message-partial", now.Add(time.Hour))
 		hub.submit(envelope)
 		<-waiter.result
+		hub.beginHandoff(envelope.MessageRef, waiter.ref, process)
 		got := hub.receipt(envelope.MessageRef, waiter.ref, process, false)
 		if got.State != agentdelivery.StateFailed || !got.Ambiguous || got.Reason != "provider-pipe-write-failed" {
 			t.Fatalf("partial receipt = %+v", got)
 		}
+		second, _ := hub.arm(process)
+		select {
+		case response := <-second.result:
+			t.Fatalf("ambiguous post-handoff failure was automatically resent: %+v", response)
+		default:
+		}
+		hub.cancelWaiter(second, "test-cleanup")
 	})
 
 	t.Run("receipt timeout is terminal ambiguous failure", func(t *testing.T) {
-		hub := newClaudeCoordinationHub()
+		hub := newLiveCoordinationTestHub()
 		hub.now = func() time.Time { return now }
-		hub.receiptWindow = time.Hour
 		waiter, _ := hub.arm(process)
 		envelope := coordinationEnvelope("message-timeout", now.Add(time.Hour))
 		hub.submit(envelope)
 		<-waiter.result
+		hub.beginHandoff(envelope.MessageRef, waiter.ref, process)
 		hub.expireHandoff(envelope.MessageRef, waiter.ref)
 		got := hub.status(envelope.MessageRef)
 		if got.State != agentdelivery.StateFailed || !got.Ambiguous || got.Reason != "observation-timeout" {
@@ -92,9 +109,8 @@ func TestClaudeCoordinationHubTransitionsAreTerminalOnce(t *testing.T) {
 	})
 
 	t.Run("ttl before handoff expires without ambiguity", func(t *testing.T) {
-		hub := newClaudeCoordinationHub()
+		hub := newLiveCoordinationTestHub()
 		hub.now = func() time.Time { return now }
-		hub.receiptWindow = time.Hour
 		envelope := coordinationEnvelope("message-ttl", now.Add(time.Minute))
 		hub.submit(envelope)
 		now = now.Add(2 * time.Minute)
@@ -106,7 +122,7 @@ func TestClaudeCoordinationHubTransitionsAreTerminalOnce(t *testing.T) {
 	})
 
 	t.Run("helper restart distinguishes held from handoff", func(t *testing.T) {
-		heldHub := newClaudeCoordinationHub()
+		heldHub := newLiveCoordinationTestHub()
 		heldHub.now = func() time.Time { return now }
 		heldHub.submit(coordinationEnvelope("message-held-restart", now.Add(time.Hour)))
 		heldHub.close()
@@ -114,12 +130,12 @@ func TestClaudeCoordinationHubTransitionsAreTerminalOnce(t *testing.T) {
 			t.Fatalf("held restart = %+v", got)
 		}
 
-		handoffHub := newClaudeCoordinationHub()
+		handoffHub := newLiveCoordinationTestHub()
 		handoffHub.now = func() time.Time { return now }
-		handoffHub.receiptWindow = time.Hour
 		waiter, _ := handoffHub.arm(process)
 		handoffHub.submit(coordinationEnvelope("message-handoff-restart", now.Add(time.Hour)))
 		<-waiter.result
+		handoffHub.beginHandoff("message-handoff-restart", waiter.ref, process)
 		handoffHub.close()
 		if got := handoffHub.status("message-handoff-restart"); got.State != agentdelivery.StateFailed || !got.Ambiguous {
 			t.Fatalf("handoff restart = %+v", got)
@@ -128,8 +144,7 @@ func TestClaudeCoordinationHubTransitionsAreTerminalOnce(t *testing.T) {
 }
 
 func TestClaudeCoordinationSingleWaiterCASAndSupersede(t *testing.T) {
-	hub := newClaudeCoordinationHub()
-	hub.receiptWindow = time.Hour
+	hub := newLiveCoordinationTestHub()
 	first, _ := hub.arm(coremetadata.ProcessIdentity{PID: 101, OwnerUID: 1000, Start: "test:first"})
 	second, superseded := hub.arm(coremetadata.ProcessIdentity{PID: 102, OwnerUID: 1000, Start: "test:second"})
 	if superseded != first {
@@ -139,16 +154,19 @@ func TestClaudeCoordinationSingleWaiterCASAndSupersede(t *testing.T) {
 		t.Fatalf("first waiter result = %+v", got)
 	}
 	envelope := coordinationEnvelope("message-single-waiter", time.Now().Add(time.Hour))
-	if got := hub.submit(envelope); got.State != agentdelivery.StateHandoff || got.WaiterRef != second.ref {
+	if got := hub.submit(envelope); got.State != agentdelivery.StateQueued || got.WaiterRef != "" {
 		t.Fatalf("submit chose wrong waiter: %+v", got)
 	}
-	if got := <-second.result; got.Kind != "handoff" || got.WaiterRef != second.ref {
+	if got := <-second.result; got.Kind != "assignment" || got.WaiterRef != second.ref {
 		t.Fatalf("second waiter result = %+v", got)
+	}
+	if got := hub.beginHandoff(envelope.MessageRef, second.ref, second.process); got.State != agentdelivery.StateHandoff || got.WaiterRef != second.ref {
+		t.Fatalf("second waiter did not begin handoff: %+v", got)
 	}
 }
 
 func TestClaudeCoordinationOverlappingHookChildrenLeaveOneActiveWaiter(t *testing.T) {
-	hub := newClaudeCoordinationHub()
+	hub := newLiveCoordinationTestHub()
 	const count = 32
 	waiters := make(chan *claudeCoordinationWaiter, count)
 	var group sync.WaitGroup
@@ -188,6 +206,66 @@ func TestClaudeCoordinationOverlappingHookChildrenLeaveOneActiveWaiter(t *testin
 	}
 	hub.cancelWaiter(active, "test-cleanup")
 }
+
+func TestClaudeCoordinationDeadHookChildNeverBeginsHandoff(t *testing.T) {
+	hub := newLiveCoordinationTestHub()
+	hub.processCurrent = func(coremetadata.ProcessIdentity) bool { return false }
+	process := coremetadata.ProcessIdentity{PID: 404, OwnerUID: 1000, Start: "test:dead-hook"}
+	waiter, _ := hub.arm(process)
+	delivery := hub.submit(coordinationEnvelope("message-dead-hook", time.Now().Add(time.Hour)))
+	if delivery.State != agentdelivery.StateHeld || delivery.WaiterRef != "" || delivery.Ambiguous {
+		t.Fatalf("dead hook delivery = %+v, want held before handoff", delivery)
+	}
+	if result := <-waiter.result; result.Kind != "stale" || result.WaiterRef != waiter.ref {
+		t.Fatalf("dead hook waiter result = %+v", result)
+	}
+	if hub.hasWaiter() {
+		t.Fatal("dead hook remained the active waiter")
+	}
+	hub.close()
+}
+
+func TestClaudeCoordinationDisconnectedHookResponseFailsBeforeHandoff(t *testing.T) {
+	hub := newLiveCoordinationTestHub()
+	process := coremetadata.ProcessIdentity{PID: 101, OwnerUID: 1000, Start: "test:disconnected-hook"}
+	waiter, _ := hub.arm(process)
+	envelope := coordinationEnvelope("message-disconnected-hook", time.Now().Add(time.Hour))
+	if delivery := hub.submit(envelope); delivery.State != agentdelivery.StateQueued || delivery.WaiterRef != "" {
+		t.Fatalf("disconnected assignment leaked handoff: %+v", delivery)
+	}
+	response := <-waiter.result
+	server := &claudeCoordinationServer{hub: hub}
+	if err := server.writeWaiterResponse(errorWriter{err: io.ErrClosedPipe}, response, process); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("forced response-write error = %v", err)
+	}
+	status := hub.status(envelope.MessageRef)
+	if status.State != agentdelivery.StateFailed || status.Ambiguous || status.WaiterRef != "" || status.Reason != "helper-response-write-failed" {
+		t.Fatalf("disconnected hook terminal = %+v", status)
+	}
+}
+
+func TestClaudeCoordinationAssignmentTimeoutFailsBeforeHandoff(t *testing.T) {
+	hub := newLiveCoordinationTestHub()
+	process := coremetadata.ProcessIdentity{PID: 102, OwnerUID: 1000, Start: "test:assignment-timeout"}
+	waiter, _ := hub.arm(process)
+	envelope := coordinationEnvelope("message-assignment-timeout", time.Now().Add(time.Hour))
+	if delivery := hub.submit(envelope); delivery.State != agentdelivery.StateQueued || delivery.WaiterRef != "" {
+		t.Fatalf("assignment leaked handoff: %+v", delivery)
+	}
+	response := <-waiter.result
+	if response.Kind != "assignment" || response.WaiterRef != waiter.ref {
+		t.Fatalf("assignment response = %+v", response)
+	}
+	hub.expireAssignment(envelope.MessageRef, waiter.ref)
+	status := hub.status(envelope.MessageRef)
+	if status.State != agentdelivery.StateFailed || status.Ambiguous || status.WaiterRef != "" || status.Reason != "waiter-disconnected" {
+		t.Fatalf("assignment timeout terminal = %+v", status)
+	}
+}
+
+type errorWriter struct{ err error }
+
+func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }
 
 type partialPipeWriter struct {
 	written int
@@ -354,7 +432,7 @@ func TestClaudeCoordinationHookOwnedUDSAndProviderPipe(t *testing.T) {
 			envelope.Target = fixture.target
 			response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "submit",
 				Target: fixture.target, Envelope: &envelope})
-			if response.Delivery.State != agentdelivery.StateHandoff {
+			if response.Delivery.State != agentdelivery.StateQueued {
 				t.Fatalf("submit response = %+v", response)
 			}
 			var hookErr error

@@ -193,6 +193,49 @@ func TestTmuxApplyNoReloadMigratesManagedFilesWithoutLiveCalls(t *testing.T) {
 	}
 }
 
+func TestConfigApplyNoReloadPreservesClaudeSettingsBytesWithCoordinationAbsentOrPresent(t *testing.T) {
+	for _, present := range []bool{false, true} {
+		t.Run(fmt.Sprintf("coordination-present-%t", present), func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("PROJMUX_CWD", "")
+			runner := &recordingTmuxRunner{}
+			cmd := managedIngestApplyFixture(home, runner)
+			plan, err := cmd.ai.planClaudeHookIntegrationMode(false, present)
+			if err != nil {
+				t.Fatal(err)
+			}
+			writeCodexTestFile(t, plan.path, plan.next)
+			before, err := os.ReadFile(plan.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			claudeWrites := 0
+			cmd.ai.writeFile = func(path string, data []byte, mode os.FileMode) error {
+				if path == plan.path {
+					claudeWrites++
+				}
+				return os.WriteFile(path, data, mode)
+			}
+			app := &App{tmux: cmd, config: &configCommand{tmux: cmd}}
+			var stdout, stderr bytes.Buffer
+			if err := app.Run([]string{"config", "apply", "--no-reload", "--config", filepath.Join(home, "tmux.conf")}, &stdout, &stderr); err != nil {
+				t.Fatalf("config apply --no-reload error = %v; stderr=%q", err, stderr.String())
+			}
+			after, err := os.ReadFile(plan.path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !bytes.Equal(after, before) || claudeWrites != 0 {
+				t.Fatalf("settings changed: present=%t writes=%d bytesEqual=%t", present, claudeWrites, bytes.Equal(after, before))
+			}
+			if len(runner.calls) != 0 || !strings.Contains(stdout.String(), "skipped reload: --no-reload") || stderr.Len() != 0 {
+				t.Fatalf("apply effects: calls=%#v stdout=%q stderr=%q", runner.calls, stdout.String(), stderr.String())
+			}
+		})
+	}
+}
+
 func TestTmuxApplyMigratesBellOnlyThroughExactSocket(t *testing.T) {
 	home := t.TempDir()
 	socket := "phase0-exact-socket"

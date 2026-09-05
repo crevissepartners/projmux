@@ -52,6 +52,12 @@ for line in sys.stdin:
         receipt.write(json.dumps({'wait_started': child.pid}) + '\n'); receipt.flush()
         out, err = child.communicate(input=json.dumps({'hook_event_name':'Stop','session_id':'synthetic-session-1'}).encode(), timeout=8)
         receipt.write(json.dumps({'wait_rc': child.returncode, 'stdout_len': len(out), 'stderr': err.decode()}) + '\n'); receipt.flush()
+    elif line.strip() == 'wake-file':
+        sink_path = os.path.join(os.environ['PMX_TEST_ROOT'], 'non-provider-pipe.stderr')
+        with open(sink_path, 'wb') as sink:
+            child = subprocess.Popen([os.environ['PMX_TEST_BIN'], 'internal', 'claude-message-wait'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sink)
+            out, _ = child.communicate(input=json.dumps({'hook_event_name':'Stop','session_id':'synthetic-session-1'}).encode(), timeout=8)
+        receipt.write(json.dumps({'file_wait_rc': child.returncode, 'stdout_len': len(out), 'stderr_len': os.path.getsize(sink_path)}) + '\n'); receipt.flush()
     elif line.strip() == 'repeat':
         hook('synthetic-session-2')
         receipt.write('hook-returned\n'); receipt.flush()
@@ -188,6 +194,30 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	}
 	first := getRoute()
 	assertNoClaudeSecretResidue(t, claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration), []string{private.Token, private.Socket})
+	target, ok := claudeTargetForRoute(first)
+	if !ok {
+		t.Fatal("exact coordination target unavailable")
+	}
+	// A same-provider direct child with fd 2 redirected to a regular file must
+	// fail closed before it can arm a waiter or emit any provider-pipe bytes.
+	_, _ = io.WriteString(writeControl, "wake-file\n")
+	line, err = reader.ReadBytes('\n')
+	var fileWake struct {
+		RC        int `json:"file_wait_rc"`
+		StdoutLen int `json:"stdout_len"`
+		StderrLen int `json:"stderr_len"`
+	}
+	if err != nil || json.Unmarshal(line, &fileWake) != nil || fileWake.RC != 0 || fileWake.StdoutLen != 0 || fileWake.StderrLen != 0 {
+		t.Fatalf("non-pipe hook result = %+v err=%v", fileWake, err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	fileWaiter, callErr := callClaudeCoordination(ctx, registryPath, first, claudeCoordinationRequest{
+		Version: claudeCoordinationVersion, Operation: "waiter-ready", Target: target,
+	})
+	cancel()
+	if callErr != nil || fileWaiter.Kind != "no-waiter" {
+		t.Fatalf("non-pipe hook armed a waiter: %+v err=%v", fileWaiter, callErr)
+	}
 	// The disposable provider starts its direct Stop hook child, reports a
 	// barrier without sleeping, and then blocks on the provider stderr pipe.
 	// The test submits only a Projmux-owned coordination frame and waits for the
@@ -199,10 +229,6 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	}
 	if err != nil || json.Unmarshal(line, &waitStarted) != nil || waitStarted.PID <= 0 {
 		t.Fatal("coordination waiter start barrier failed")
-	}
-	target, ok := claudeTargetForRoute(first)
-	if !ok {
-		t.Fatal("exact coordination target unavailable")
 	}
 	waiterDeadline := time.Now().Add(3 * time.Second)
 	for {
@@ -220,12 +246,12 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	}
 	envelope := coordinationEnvelope("process-message-1", time.Now().Add(time.Minute))
 	envelope.Target = target
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
 	response, callErr := callClaudeCoordination(ctx, registryPath, first, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "submit", Target: target, Envelope: &envelope,
 	})
 	cancel()
-	if callErr != nil || response.Delivery.State != agentdelivery.StateHandoff {
+	if callErr != nil || response.Delivery.State != agentdelivery.StateQueued {
 		t.Fatalf("coordination submit = %+v err=%v", response, callErr)
 	}
 	line, err = reader.ReadBytes('\n')

@@ -13,6 +13,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"syscall"
 	"time"
 )
@@ -33,10 +34,13 @@ var (
 // SocketIdentity is the stable kernel identity of one owned Unix socket.
 // Paths alone are never sufficient when deciding whether cleanup is safe.
 type SocketIdentity struct {
-	Device uint64
-	Inode  uint64
-	Owner  uint32
-	Mode   os.FileMode
+	Device                uint64      `json:"device"`
+	Inode                 uint64      `json:"inode"`
+	Owner                 uint32      `json:"owner"`
+	Mode                  os.FileMode `json:"mode"`
+	Size                  int64       `json:"size"`
+	ChangeTimeSeconds     int64       `json:"changeTimeSeconds"`
+	ChangeTimeNanoseconds int64       `json:"changeTimeNanoseconds"`
 }
 
 // InspectOwnedSocket rejects symlinks, non-sockets, foreign owners, and modes
@@ -50,11 +54,11 @@ func InspectOwnedSocket(path string) (SocketIdentity, error) {
 		info.Mode().Perm() != 0o600 || !OwnedByCurrentUser(info) {
 		return SocketIdentity{}, errors.New("private endpoint is unavailable")
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
+	identity, ok := socketIdentity(info)
 	if !ok {
 		return SocketIdentity{}, errors.New("private endpoint is unavailable")
 	}
-	return SocketIdentity{Device: uint64(stat.Dev), Inode: stat.Ino, Owner: stat.Uid, Mode: info.Mode()}, nil
+	return identity, nil
 }
 
 // PrepareSocket creates and secures the parent directory, refuses live or
@@ -85,13 +89,18 @@ func PrepareSocket(path string) error {
 	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 || !OwnedByCurrentUser(info) {
 		return errors.New("private endpoint collision is not an owned socket")
 	}
+	before, ok := socketIdentity(info)
+	if !ok {
+		return errors.New("private endpoint collision identity is unavailable")
+	}
 	conn, dialErr := net.DialTimeout("unix", path, DialTimeout)
 	if dialErr == nil {
 		_ = conn.Close()
 		return errors.New("private endpoint is already active")
 	}
 	latest, latestErr := os.Lstat(path)
-	if latestErr != nil || !os.SameFile(info, latest) || latest.Mode()&os.ModeSocket == 0 || !OwnedByCurrentUser(latest) {
+	after, identityOK := socketIdentity(latest)
+	if latestErr != nil || !identityOK || !sameSocketIdentity(before, after) || latest.Mode()&os.ModeSocket == 0 || !OwnedByCurrentUser(latest) {
 		return errors.New("private stale endpoint changed during ownership check")
 	}
 	if err := os.Remove(path); err != nil {
@@ -157,7 +166,7 @@ func RemoveOwnedSocket(path string, expected SocketIdentity) error {
 	if err != nil {
 		return err
 	}
-	if current != expected {
+	if !sameSocketIdentity(current, expected) {
 		return ErrSocketReplaced
 	}
 	return os.Remove(path)
@@ -215,4 +224,46 @@ func WriteJSON(writer io.Writer, value any) error {
 func OwnedByCurrentUser(info os.FileInfo) bool {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	return ok && int(stat.Uid) == os.Getuid()
+}
+
+func socketIdentity(info os.FileInfo) (SocketIdentity, bool) {
+	if info == nil {
+		return SocketIdentity{}, false
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return SocketIdentity{}, false
+	}
+	seconds, nanoseconds := statChangeTime(stat)
+	return SocketIdentity{
+		Device:                uint64(stat.Dev),
+		Inode:                 stat.Ino,
+		Owner:                 stat.Uid,
+		Mode:                  info.Mode(),
+		Size:                  info.Size(),
+		ChangeTimeSeconds:     seconds,
+		ChangeTimeNanoseconds: nanoseconds,
+	}, true
+}
+
+func sameSocketIdentity(first, second SocketIdentity) bool {
+	return first == second
+}
+
+// Stat_t spells the change-time field Ctim on Linux and Ctimespec on Darwin.
+// Reflection keeps this package inside the repository's explicit two-OS
+// contract without build constraints or narrowing conversions.
+func statChangeTime(stat *syscall.Stat_t) (int64, int64) {
+	value := reflect.ValueOf(stat).Elem()
+	for _, name := range []string{"Ctim", "Ctimespec"} {
+		field := value.FieldByName(name)
+		if !field.IsValid() {
+			continue
+		}
+		seconds, nanoseconds := field.FieldByName("Sec"), field.FieldByName("Nsec")
+		if seconds.IsValid() && nanoseconds.IsValid() && seconds.CanInt() && nanoseconds.CanInt() {
+			return seconds.Int(), nanoseconds.Int()
+		}
+	}
+	return 0, 0
 }

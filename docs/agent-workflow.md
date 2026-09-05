@@ -1014,21 +1014,34 @@
 - `TestClaudeCoordinationHub*` owns single-waiter CAS/supersede, no-waiter hold,
   TTL, receipt timeout, duplicate/out-of-order refusal, helper replacement, and
   zero automatic resend after an ambiguous provider-pipe outcome.
+- `TestClaudeCoordinationDeadHookChildNeverBeginsHandoff` and
+  `TestClaudeCoordinationDisconnectedHookResponseFailsBeforeHandoff` keep a dead
+  child fenced as held with handoff zero and a failed helper response as a
+  non-ambiguous terminal result. `TestClaudeCoordinationAssignmentTimeoutFailsBeforeHandoff`
+  pins the same non-ambiguous terminal boundary after a complete assignment but
+  before the child acknowledges `begin-handoff`. The process integration also
+  refuses a same-provider direct child when fd 2 is a regular file rather than
+  the provider-owned pipe.
 - `TestOwnedSocketCleanupPreservesReplacementAndPathModeBounds`,
+  `TestSocketIncarnationIdentityRejectsLegacyAxisReuse`,
   `TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives`, and
   `TestCleanupClaudeActivationLeasesPreservesCoordinationReplacement` require
   listener close, dead-helper reaping, and supervisor cleanup to unlink only
-  the exact receipt-bound socket inode while preserving a same-path replacement.
+  the exact receipt-bound socket incarnation, including change time when a
+  filesystem reuses device and inode, while preserving a same-path replacement.
 - `TestClaudeCoordinationHookOwnedUDSAndProviderPipe` uses only a disposable
   Projmux-owned Unix socket and pipe, with a waiter-ready barrier and structured
   receipt, to cover exact `SessionStart` and `Stop` final-hop delivery. Its peer
   record stays explicitly untrusted and slash commands remain plaintext; no
   provider/model/vendor socket, MCP, connector, interrupt, approval, or tool is run.
 - `TestAIIntegrateClaude*` and
-  `TestClaudeAutomaticMigrationPreservesCoordinationPresenceAndSettingsBytes`
+  `TestClaudeAutomaticMigrationPreservesCoordinationPresenceAndSettingsBytes`,
+  plus `TestConfigApplyNoReloadPreservesClaudeSettingsBytesWithCoordinationAbsentOrPresent`,
   pin one managed asyncRewake hook for each of `SessionStart` and `Stop`, preserve
-  user and existing managed hooks, and keep automatic install-time migration
-  byte-identical unless the coordination family was explicitly present already.
+  user and existing managed hooks, make repeated remove byte/write-count
+  idempotent, and keep automatic install-time migration and
+  `config apply --no-reload` byte-identical for both absent and present
+  coordination families.
 
 ### Provider hook pane identity tests
 

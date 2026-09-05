@@ -92,10 +92,21 @@ Claude hook process. User hooks and the existing status/registration hooks are
 retained, while explicit install and remove remain idempotent.
 
 Each hook child validates its SessionStart/Stop session ID, private activation
-envelope, direct provider parent, and exact helper peer. The helper admits only
-one waiter: a newer execution supersedes the prior one, which handles the
-documented per-execution non-dedup behavior. Hook and receipt timeouts are
-explicit state-machine inputs rather than evidence that delivery did not occur.
+envelope, direct provider parent, exact helper peer, and fd 2 as an owned pipe.
+A same-provider child whose stderr is a regular file fails closed before it can
+arm a waiter. The helper admits only one waiter: a newer execution supersedes
+the prior one, which handles the documented per-execution non-dedup behavior.
+Hook and receipt timeouts are explicit state-machine inputs rather than evidence
+that delivery did not occur.
+
+Assignment is not handoff. The helper keeps the message in `queued` or `held`
+until it has written the complete assignment response and the still-current hook
+child acknowledges `begin-handoff` immediately before writing fd 2. A dead child
+is dropped before assignment and leaves the message held with provider-pipe
+writes equal to zero. A disconnected response pipe or assignment timeout ends
+before handoff as a non-ambiguous failure with the same zero-write guarantee.
+Once the begin acknowledgement succeeds, partial/EPIPE, child exit, and receipt
+timeout remain ambiguous failures and are never automatically resent.
 
 The bounded versioned envelope labels peer content as an untrusted
 coordination-only record. A slash command is ordinary string data. Delivery is
