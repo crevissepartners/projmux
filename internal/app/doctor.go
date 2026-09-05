@@ -16,6 +16,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -63,6 +64,11 @@ type doctorCommand struct {
 	// controlPlaneVintage reads the binary vintage of the live control-plane
 	// processes this diagnosis is taken from.
 	controlPlaneVintage func() codexControlPlaneVintage
+	// projmuxProcessVintage reads the binary vintage of every live child of
+	// this executable. It is a separate seam from the one above because it
+	// answers a fleet question rather than qualifying a Codex verdict, and the
+	// two render in different sections.
+	projmuxProcessVintage func() projmuxProcessVintage
 }
 
 func newDoctorCommand() *doctorCommand {
@@ -96,17 +102,14 @@ func newDoctorCommand() *doctorCommand {
 		}
 		return readAIIngestLogTail(path, aiIngestAttributionWindow, aiIngestAttributionRecords)
 	}
+	readVintage := defaultProcessVintageReader()
 	c.controlPlaneVintage = func() codexControlPlaneVintage {
-		executable, err := os.Executable()
-		if err != nil {
-			return codexControlPlaneVintage{}
-		}
-		resolved, err := filepath.EvalSymlinks(executable)
-		if err != nil {
-			resolved = executable
-		}
-		images, supported := defaultCodexProcessImages()
-		return projectCodexControlPlaneVintage(resolved, os.Getpid(), images, supported)
+		controlPlane, _ := readVintage()
+		return controlPlane
+	}
+	c.projmuxProcessVintage = func() projmuxProcessVintage {
+		_, fleet := readVintage()
+		return fleet
 	}
 	c.readRuntimeHealth = diagnostics.ReadRuntimeHealth
 	c.resolveOperationsPath = func() (string, error) { return diagnostics.DefaultPath(c.getenv, os.UserHomeDir) }
@@ -193,6 +196,7 @@ type doctorReport struct {
 	CodexGenerationPool  *doctorCodexGenerationPool           `json:"codex_generation_pool,omitempty"`
 	CodexPayloadFree     *codexgeneration.Projection          `json:"codex_payload_free_capability,omitempty"`
 	CodexControlPlane    *codexControlPlaneReport             `json:"codex_control_plane,omitempty"`
+	ProcessVintage       *projmuxProcessVintage               `json:"projmux_process_vintage,omitempty"`
 	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    string                               `json:"session_state_prune"`
 	Runtime              []doctorFinding                      `json:"runtime"`
@@ -358,6 +362,10 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 		report.SessionStatePrune = doctorSessionStatePruneGuidance
 	}
 	if section == doctorSectionAll || section == doctorSectionRuntime {
+		if c.projmuxProcessVintage != nil {
+			vintage := c.projmuxProcessVintage()
+			report.ProcessVintage = &vintage
+		}
 		report.Runtime = c.evaluateRuntimeFindings()
 	}
 	if section == doctorSectionAll || section == doctorSectionLogs {
@@ -470,6 +478,7 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 	}
 	if section == doctorSectionAll || section == doctorSectionRuntime {
 		writeDoctorFindingsText(&buf, "Runtime", report.Runtime, verbose)
+		writeDoctorProcessVintageText(&buf, report.ProcessVintage)
 	}
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
 		writeDoctorIntegrationsText(&buf, report.AINotifyIntegrations, verbose)
@@ -879,6 +888,7 @@ type doctorJSONReport struct {
 	CodexGenerationPool  *doctorCodexGenerationPool            `json:"codex_generation_pool,omitempty"`
 	CodexPayloadFree     *codexgeneration.Projection           `json:"codex_payload_free_capability,omitempty"`
 	CodexControlPlane    *codexControlPlaneReport              `json:"codex_control_plane,omitempty"`
+	ProcessVintage       *projmuxProcessVintage                `json:"projmux_process_vintage,omitempty"`
 	SessionStateResume   *[]doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    *string                               `json:"session_state_prune,omitempty"`
 	Runtime              *[]doctorFinding                      `json:"runtime,omitempty"`
@@ -909,6 +919,7 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 	}
 	if section == doctorSectionAll || section == doctorSectionRuntime {
 		out.Runtime = &report.Runtime
+		out.ProcessVintage = report.ProcessVintage
 	}
 	if section == doctorSectionAll || section == doctorSectionLogs {
 		out.Logs = &report.Logs
@@ -1097,6 +1108,52 @@ func doctorControlPlaneVintage(read func() codexControlPlaneVintage) codexContro
 		return codexControlPlaneVintage{}
 	}
 	return read()
+}
+
+// defaultProcessVintageReader takes one process-table read and projects it two
+// ways.
+//
+// One read rather than two, because the projections are counted over the same
+// processes and a report whose Codex line and fleet line were sampled moments
+// apart could print two numbers that disagree about the same broker. Memoizing
+// also keeps an unfiltered `projmux doctor` to a single walk of the table.
+func defaultProcessVintageReader() func() (codexControlPlaneVintage, projmuxProcessVintage) {
+	var once sync.Once
+	var controlPlane codexControlPlaneVintage
+	var fleet projmuxProcessVintage
+	return func() (codexControlPlaneVintage, projmuxProcessVintage) {
+		once.Do(func() {
+			executable, err := os.Executable()
+			if err != nil {
+				return
+			}
+			resolved, err := filepath.EvalSymlinks(executable)
+			if err != nil {
+				resolved = executable
+			}
+			images, supported := defaultCodexProcessImages()
+			controlPlane = projectCodexControlPlaneVintage(resolved, os.Getpid(), images, supported)
+			fleet = projectProjmuxProcessVintage(resolved, os.Getpid(), images, supported)
+		})
+		return controlPlane, fleet
+	}
+}
+
+// writeDoctorProcessVintageText renders how much of the running fleet the last
+// install did not reach.
+//
+// It sits under Runtime rather than in the Codex section because a per-pane
+// supervisor is provider-neutral: it supervises a Claude pane exactly as it
+// supervises a Codex one. The Codex line answers "which image was this
+// diagnosis read from"; this one answers "how many projmux processes are still
+// running the image from before the last install", and merging them would have
+// answered neither.
+func writeDoctorProcessVintageText(buf *bytes.Buffer, vintage *projmuxProcessVintage) {
+	if vintage == nil {
+		return
+	}
+	buf.WriteString("\nProjmux process vintage\n")
+	fmt.Fprintf(buf, "  Children of this executable: %s\n", projmuxProcessVintageText(*vintage))
 }
 
 // writeDoctorCodexControlPlaneText renders the five named control-plane

@@ -1276,6 +1276,34 @@ resolves `/proc/<pid>/exe` for the broker runtime and the lifecycle observers
 and reports how many run a replaced image; on a platform with no such table it
 reports the answer as unknown rather than claiming currency.
 
+That line answers which image the Codex verdicts under it were read from, so it
+counts only those two roles. It is not the fleet answer, and reading it as one
+understated the fleet by a factor of five: on 2026-09-05 it named six processes
+while thirty-two children of the same executable were live, eighteen of them
+per-pane `internal supervise` supervisors that matched no named route and were
+dropped at a map lookup. `projmux doctor` therefore carries a second census
+under `Runtime`, rendered as `Projmux process vintage` and owned by
+`TestProjmuxProcessVintage*`, `TestProjmuxProcessRole*` and
+`TestDoctorSeparatesTheCodexDiagnosisVintageFromTheFleetCensus`.
+
+- It is provider-neutral, which is why it is not on the Codex line. A
+  supervisor supervises a Claude pane exactly as it supervises a Codex one, and
+  `TestCodexControlPlaneVintageIgnoresProviderNeutralProcesses` keeps it off the
+  line that qualifies Codex verdicts.
+- It has no unmatched case. A child whose route this reader cannot name is
+  counted under `other` rather than dropped, so an unknown route can never make
+  the fleet look smaller than it is.
+- Route words are argv without argv[0] and without anything behind a bare `--`.
+  `projmux agent turn ... -- <text>` carries arbitrary prose, including the very
+  route words this census matches on, and counting a message about the broker as
+  a broker is the same class of error in the other direction.
+- Both censuses come from one process-table read, so the two lines can never
+  disagree about the same process, and both answer `unknown` where the platform
+  exposes no table.
+- Neither line names a process. `TestProcessVintageNamesNoProcess` audits both
+  rendered strings for pids, paths and argv; the section is counts and nothing
+  else, which is what makes a process census printable at all.
+
 The gate does not change `projmux doctor`'s exit code. A broken surface is a
 readable verdict, not a failed command, and the CI half of the detection is the
 regression tests themselves.
