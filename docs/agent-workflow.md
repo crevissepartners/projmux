@@ -1212,6 +1212,19 @@ mechanism not answering: an unreadable inventory or Registry, or the ladder
 running over readable data and finding nothing, which is the shape a re-broken
 hook identity would take.
 
+`TestEverySurfaceDeclaresWhatItsNumbersAreOver` and
+`TestEverySurfaceRendersTheScopeItDeclares` fold four separate corrections into
+one rule. Each of the four was the same mistake wearing a different face: a
+refusal the contract never promised counted among the failures it did; a judged
+count standing without its population; a lane that writes nothing sitting in a
+write rate's denominator; records from two binaries counted in one window. Every
+number was arithmetically right and none said what it ranged over, so a reader
+supplied the wrong range — and all four were found by a person, none by a test.
+A surface must now declare the phrase its rendering carries to answer "over
+what", and adding one without that answer fails the completeness check. The
+rule cannot judge whether a scope is *correct*; it makes stating one
+unavoidable, which is what none of the four had to do.
+
 `TestHookReflectionWritesNeverDiscardTheirErrorSilently` covers what none of the
 log-derived verdicts can. A reflection path that runs a tmux write and throws
 the error away records `result:"state"` for an event whose Pane never moved, so

@@ -14,6 +14,8 @@ package app
 
 // codexControlPlaneSurfaceContract ties each diagnosed surface to the product
 // contract whose Guarantee it renders.
+// C-4 has no surface of its own: it is the claim the whole section makes, and
+// its enforcement below covers the section rather than any one row.
 var codexControlPlaneSurfaceContract = map[string]string{
 	codexSurfaceBrokerDiagnostics:    "C-1",
 	codexSurfaceHookAttribution:      "C-2",
@@ -33,6 +35,18 @@ var codexControlPlaneSurfaceContract = map[string]string{
 // against the declarations in the tree, which turns the roadmap's manual
 // release check into one a build performs.
 var codexControlPlaneContractEnforcement = map[string][]string{
+	// C-4 itself: the diagnosis does not mislead about its own numbers. Four
+	// verdicts here were wrong in one day for want of a stated range, and every
+	// one was caught by a person rather than a test.
+	"C-4": {
+		"TestEverySurfaceDeclaresWhatItsNumbersAreOver",
+		"TestEverySurfaceRendersTheScopeItDeclares",
+		"TestHookWindowSpanIsCarriedOntoTheSection",
+		"TestControlPlaneTestsNeverExpectAnUncapturedReason",
+		"TestControlPlaneContractCellsNameLiveTests",
+		"TestHookReflectionWritesNeverDiscardTheirErrorSilently",
+		"TestIngestReasonColumnCarriesOnlyBoundedValues",
+	},
 	// C-1: the broker diagnosis dials the endpoint the runtime published,
 	// rather than a key it assumed. Assuming it reported a live broker as
 	// absent, and an operator killed a process on that answer.
