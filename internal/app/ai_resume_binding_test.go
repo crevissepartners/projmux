@@ -178,13 +178,16 @@ func TestAIResumeBindingSnapshotIsInvocationLocalAndAddsNoReadsOrWrites(t *testi
 		previews.Add(1)
 		return aisessions.Preview{User: "preview"}, nil
 	}
-	summary := aisessions.ResumeSummary{Provider: aiModeClaude, ResumeID: "exact-binding-id", Source: aisessions.SourceClaudeTranscript, Label: "Suppressed title", Branch: "main"}
+	summary := aisessions.ResumeSummary{Provider: aiModeClaude, ResumeID: "exact-binding-id", Source: aisessions.SourceClaudeTranscript, Label: "Canonical title", TitleProvenance: aisessions.TitleExplicitProvider, Branch: "main"}
 	controller := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
 	defer controller.close()
 	controller.startOnce.Do(func() {})
 	controller.summaries = []aisessions.ResumeSummary{summary, {Provider: aiModeClaude, ResumeID: "unbound-id", Source: aisessions.SourceClaudeTranscript}}
 	controller.detailRefs[aiResumeExactLabelKey(summary.Provider, summary.ResumeID)] = aisessions.ResumeDetailRef{Provider: summary.Provider, ResumeID: summary.ResumeID, Source: summary.Source, RuntimeStatus: "idle"}
 	rows := controller.entries(controller.summaries)
+	if !strings.Contains(rows[1].Label, "[builder → builder-pane] Canonical title") {
+		t.Fatalf("title authority lost: %#v", rows)
+	}
 	footer, more := controller.footer()
 	value := rows[1].Value
 	controller.focus(value)
@@ -221,7 +224,7 @@ func TestAIResumeBindingSnapshotIsInvocationLocalAndAddsNoReadsOrWrites(t *testi
 	next := newAIResumeLiveController(cmd, "/work", t.TempDir(), 0, 20)
 	defer next.close()
 	fallback := next.entries(controller.summaries)
-	if loads.Load() != 2 || strings.Contains(fallback[1].Label, "builder") || fallback[1].Value != value || len(fallback) != len(rows) {
+	if loads.Load() != 2 || strings.Contains(fallback[1].Label, "builder") || !strings.HasSuffix(stripANSI(fallback[1].Label), "Canonical title") || fallback[1].Value != value || len(fallback) != len(rows) {
 		t.Fatalf("next-open fallback = %#v loads=%d", fallback, loads.Load())
 	}
 }

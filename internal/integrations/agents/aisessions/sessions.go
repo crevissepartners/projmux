@@ -56,6 +56,16 @@ const (
 	codexScanBudgetMax = 400
 )
 
+// TitleProvenance identifies how discovery obtained a label. Only closed
+// provider/source/provenance combinations may become a Resume Picker title.
+type TitleProvenance string
+
+const (
+	TitleProvenanceNone    TitleProvenance = ""
+	TitleExplicitProvider  TitleProvenance = "explicit-provider-title"
+	TitleDerivedUserPrompt TitleProvenance = "derived-user-prompt"
+)
+
 // SessionContext captures project metadata associated with a resume session.
 type SessionContext struct {
 	CWD    string
@@ -64,10 +74,11 @@ type SessionContext struct {
 
 // SessionMeta is the Phase 1 picker input contract for a resumable AI session.
 type SessionMeta struct {
-	Agent        string
-	ResumeID     string
-	Title        string
-	LastModified time.Time
+	Agent           string
+	ResumeID        string
+	Title           string
+	TitleProvenance TitleProvenance
+	LastModified    time.Time
 	// UpdatedAt is the provider's exact content revision used only to scope an
 	// invocation-local preview cache. It is never inferred from preview bytes.
 	UpdatedAt     time.Time
@@ -308,11 +319,11 @@ func discoverClaudeDir(dir, cwd string, depth int) []SessionMeta {
 		if err != nil {
 			continue
 		}
-		scanOpts := sessionScanOptions{targetCWD: cwd}
+		scanOpts := sessionScanOptions{targetCWD: cwd, provider: AgentClaude}
 		if treeFilter {
 			// No targetCWD short-circuit: we keep non-exact matches and judge
 			// them by withinTree below. requireCWD ensures we captured one.
-			scanOpts = sessionScanOptions{requireCWD: true}
+			scanOpts = sessionScanOptions{requireCWD: true, provider: AgentClaude}
 		}
 		details, ok := scanSessionJSONL(path, scanOpts)
 		if !ok {
@@ -340,10 +351,11 @@ func discoverClaudeDir(dir, cwd string, depth int) []SessionMeta {
 			title = shortResumeID(id)
 		}
 		sessions = append(sessions, SessionMeta{
-			Agent:        AgentClaude,
-			ResumeID:     id,
-			Title:        title,
-			LastModified: info.ModTime(),
+			Agent:           AgentClaude,
+			ResumeID:        id,
+			Title:           title,
+			TitleProvenance: details.titleProvenance,
+			LastModified:    info.ModTime(),
 			Context: SessionContext{
 				CWD:    recordedCWD,
 				Branch: details.branch,
@@ -410,10 +422,10 @@ func discoverCodexWithFileLimitContext(ctx context.Context, cwd, sessionsDir str
 		if ctx.Err() != nil {
 			break
 		}
-		scanOpts := sessionScanOptions{targetCWD: cwd, requireCWD: true}
+		scanOpts := sessionScanOptions{targetCWD: cwd, requireCWD: true, provider: AgentCodex}
 		if treeFilter {
 			// Keep non-exact matches; judge them by withinTree below.
-			scanOpts = sessionScanOptions{requireCWD: true}
+			scanOpts = sessionScanOptions{requireCWD: true, provider: AgentCodex}
 		}
 		details, ok := scanSessionJSONLContext(ctx, candidate.path, scanOpts)
 		if !ok || details.id == "" || !withinTree(details.cwd, cwd, depth) {
@@ -432,10 +444,11 @@ func discoverCodexWithFileLimitContext(ctx context.Context, cwd, sessionsDir str
 			recordedCWD = cleanCWD(details.cwd)
 		}
 		sessions = append(sessions, SessionMeta{
-			Agent:        AgentCodex,
-			ResumeID:     id,
-			Title:        title,
-			LastModified: candidate.modTime,
+			Agent:           AgentCodex,
+			ResumeID:        id,
+			Title:           title,
+			TitleProvenance: details.titleProvenance,
+			LastModified:    candidate.modTime,
 			Context: SessionContext{
 				CWD:    recordedCWD,
 				Branch: details.branch,
@@ -906,13 +919,15 @@ func sessionSourcePriority(source string) int {
 }
 
 type sessionDetails struct {
-	id     string
-	title  string
-	cwd    string
-	branch string
+	id              string
+	title           string
+	titleProvenance TitleProvenance
+	cwd             string
+	branch          string
 }
 
 type sessionScanOptions struct {
+	provider   string
 	targetCWD  string
 	requireCWD bool
 }
@@ -988,10 +1003,36 @@ func scanSessionJSONLReaderContext(ctx context.Context, r io.Reader, opts sessio
 		if details.branch == "" {
 			details.branch = firstNestedString(fields, "gitBranch", "git_branch", "branch")
 		}
-		if details.title == "" && lineNo <= sessionTitleLineLimit {
-			details.title = titleFromRecord(fields)
+		// An ID learned after an earlier candidate can still disqualify it.
+		if titleIsResumeID(details.title, details.id) {
+			details.title, details.titleProvenance = "", TitleProvenanceNone
 		}
-		if details.ready(opts.requireCWD, targetCWD) {
+		// Keep the same bounded stream open until the provider's first canonical
+		// candidate, not just an earlier legacy prompt, completes the cheap fields.
+		seekCanonical := (opts.provider == AgentClaude && details.titleProvenance != TitleExplicitProvider) ||
+			(opts.provider == AgentCodex && details.titleProvenance != TitleDerivedUserPrompt)
+		if (details.title == "" || seekCanonical) && lineNo <= sessionTitleLineLimit {
+			title := titleFromRecord(fields)
+			provenance := titleProvenanceFromRecord(fields)
+			if opts.provider == AgentClaude && provenance != TitleExplicitProvider {
+				provenance = TitleProvenanceNone
+			}
+			if opts.provider == AgentCodex && provenance == TitleExplicitProvider {
+				title = ""
+			}
+			if provenance == TitleExplicitProvider {
+				if id := stringJSONField(fields, "sessionId"); id != "" && !strings.EqualFold(id, details.id) {
+					title = ""
+				}
+			}
+			if title != "" && !titleIsResumeID(title, details.id) &&
+				(details.title == "" || provenance == TitleExplicitProvider || (opts.provider == AgentCodex && provenance == TitleDerivedUserPrompt)) {
+				details.title, details.titleProvenance = title, provenance
+			}
+		}
+		if details.ready(opts.requireCWD, targetCWD) &&
+			(opts.provider != AgentClaude || details.titleProvenance == TitleExplicitProvider) &&
+			(opts.provider != AgentCodex || details.titleProvenance == TitleDerivedUserPrompt) {
 			// Candidate discovery: stop as soon as the cheap fields are known.
 			// This is the #477 early-exit; the turn count is a separate deferred
 			// full-file pass (see countUserTurns), so nothing defeats it here.
@@ -1074,6 +1115,10 @@ func hasUserText(value any) bool {
 
 func titleFromRecord(fields map[string]any) string {
 	recordType := strings.ToLower(stringJSONField(fields, "type"))
+	if recordType == "ai-title" {
+		// This is a top-level provider field, not transcript prompt inference.
+		return strings.Join(strings.Fields(stringJSONField(fields, "aiTitle")), " ")
+	}
 	if recordType == "event_msg" {
 		if payload, ok := fields["payload"].(map[string]any); ok {
 			// codex: only user_message events carry the human prompt; skip
@@ -1087,7 +1132,7 @@ func titleFromRecord(fields map[string]any) string {
 	}
 	if recordType == "response_item" {
 		if payload, ok := fields["payload"].(map[string]any); ok && strings.EqualFold(stringJSONField(payload, "role"), "user") {
-			return cleanTitleCandidate(contentText(payload["content"]))
+			return cleanTitleCandidate(userPromptText(payload["content"]))
 		}
 	}
 	if recordType == "user" || strings.EqualFold(stringJSONField(fields, "role"), "user") {
@@ -1097,6 +1142,47 @@ func titleFromRecord(fields map[string]any) string {
 		return cleanTitleCandidate(contentText(fields["content"]))
 	}
 	return ""
+}
+
+// userPromptText excludes tool carriers from Codex user response items.
+func userPromptText(value any) string {
+	if blocks, ok := value.([]any); ok {
+		var textBlocks []any
+		for _, block := range blocks {
+			switch block := block.(type) {
+			case string:
+				textBlocks = append(textBlocks, block)
+			case map[string]any:
+				switch strings.ToLower(stringJSONField(block, "type")) {
+				case "text", "input_text":
+					textBlocks = append(textBlocks, block)
+				}
+			}
+		}
+		return contentText(textBlocks)
+	}
+	return contentText(value)
+}
+
+func titleProvenanceFromRecord(fields map[string]any) TitleProvenance {
+	switch strings.ToLower(stringJSONField(fields, "type")) {
+	case "ai-title":
+		return TitleExplicitProvider
+	case "event_msg":
+		if payload, ok := fields["payload"].(map[string]any); ok && strings.EqualFold(stringJSONField(payload, "type"), "user_message") {
+			return TitleDerivedUserPrompt
+		}
+	case "response_item":
+		if payload, ok := fields["payload"].(map[string]any); ok && strings.EqualFold(stringJSONField(payload, "role"), "user") {
+			return TitleDerivedUserPrompt
+		}
+	}
+	return TitleProvenanceNone
+}
+
+func titleIsResumeID(title, id string) bool {
+	title, id = strings.ToLower(strings.TrimSpace(title)), strings.ToLower(strings.TrimSpace(id))
+	return id != "" && (title == id || title == shortResumeID(id) || (len(title) >= 8 && strings.HasPrefix(id, title)))
 }
 
 func contentText(value any) string {

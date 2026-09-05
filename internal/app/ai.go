@@ -1448,7 +1448,7 @@ func aiResumeSessionMetaFromSummary(summary aisessions.ResumeSummary, baseCWD st
 		cwd = filepath.Join(baseCWD, after)
 	}
 	return aisessions.SessionMeta{
-		Agent: summary.Provider, ResumeID: summary.ResumeID, Title: summary.Label,
+		Agent: summary.Provider, ResumeID: summary.ResumeID, Title: summary.Label, TitleProvenance: summary.TitleProvenance,
 		LastModified: summary.LastModified, UpdatedAt: summary.UpdatedAt,
 		Context: aisessions.SessionContext{CWD: cwd, Branch: summary.Branch}, Source: summary.Source,
 		StateDomainID: summary.StateDomainID, EndpointGenerationID: summary.EndpointGenerationID,
@@ -1482,7 +1482,7 @@ func aiResumeSessionRowWithResolvedLabel(session aisessions.SessionMeta, boundLa
 		Value: aiResumePickerValueForSession(session),
 		SearchKey: strings.TrimSpace(strings.Join([]string{
 			agent, conversation, boundLabel.Context.Value, string(boundLabel.Context.Source),
-			aiResumeProviderOwnedTitle(session), strings.TrimSpace(boundLabel.Name), strings.TrimSpace(boundLabel.PaneName),
+			aiResumeCanonicalTitle(session), strings.TrimSpace(boundLabel.Name), strings.TrimSpace(boundLabel.PaneName),
 			resumeID, branch, relCWD, session.Source, routeStatus,
 		}, " ")),
 	}
@@ -1503,15 +1503,19 @@ func aiResumeGenerationStatus(session aisessions.SessionMeta) string {
 }
 
 func aiResumeDisplayLabel(session aisessions.SessionMeta, boundLabel aiResumeExactAgentLabel, locale i18n.Locale) string {
-	resumeID := strings.TrimSpace(session.ResumeID)
+	// Antigravity's existing context-first contract is outside this title policy.
+	if normalizeAIMode(session.Agent) == aiModeAntigravity {
+		if label := strings.Join(strings.Fields(boundLabel.Context.Value), " "); label != "" {
+			return label
+		}
+	}
+	if title := aiResumeCanonicalTitle(session); title != "" {
+		return title
+	}
 	if label := strings.Join(strings.Fields(boundLabel.Context.Value), " "); label != "" {
 		return label
 	}
-	title := aiResumeProviderOwnedTitle(session)
-	if title != "" {
-		return title
-	}
-	return aiResumeUntitledLabel(locale, resumeID)
+	return aiResumeUntitledLabel(locale, strings.TrimSpace(session.ResumeID))
 }
 
 func aiResumeDisplayLabelForSummary(summary aisessions.ResumeSummary, labels map[string]aiResumeExactAgentLabel, locale i18n.Locale) string {
@@ -1519,15 +1523,35 @@ func aiResumeDisplayLabelForSummary(summary aisessions.ResumeSummary, labels map
 	return aiResumeDisplayLabel(session, labels[aiResumeExactLabelKey(summary.Provider, summary.ResumeID)], locale)
 }
 
-func aiResumeProviderOwnedTitle(session aisessions.SessionMeta) string {
+func aiResumeCanonicalTitle(session aisessions.SessionMeta) string {
 	title := strings.Join(strings.Fields(session.Title), " ")
 	resumeID := strings.TrimSpace(session.ResumeID)
 	provider := normalizeAIMode(session.Agent)
-	if (provider == aiModeCodex && session.Source == aisessions.SourceCodexRollout) ||
-		(provider == aiModeClaude && session.Source == aisessions.SourceClaudeTranscript) {
+	if title == "" || aiResumeTitleIsID(title, resumeID) {
 		return ""
 	}
-	if title == "" || aiResumeTitleIsID(title, resumeID) {
+	// Provenance alone cannot promote a label from another provider or source.
+	switch provider {
+	case aiModeClaude:
+		if session.Source != aisessions.SourceClaudeTranscript || session.TitleProvenance != aisessions.TitleExplicitProvider {
+			return ""
+		}
+	case aiModeCodex:
+		if !((session.Source == aisessions.SourceCodexAppServer && session.TitleProvenance == aisessions.TitleExplicitProvider) ||
+			(session.Source == aisessions.SourceCodexRollout && session.TitleProvenance == aisessions.TitleDerivedUserPrompt)) {
+			return ""
+		}
+	case aiModeAntigravity:
+		// Preserve the existing Antigravity metadata/history title contract.
+		if session.TitleProvenance != aisessions.TitleProvenanceNone {
+			return ""
+		}
+		switch session.Source {
+		case aisessions.SourceAntigravityLastConversation, aisessions.SourceAntigravityMetadata, aisessions.SourceAntigravityHistory:
+		default:
+			return ""
+		}
+	default:
 		return ""
 	}
 	return title

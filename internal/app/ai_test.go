@@ -346,9 +346,10 @@ func TestAIResumePickerRowsCapAndMetadata(t *testing.T) {
 	sessions := make([]aisessions.SessionMeta, 0, aiResumePickerLimitDefault+2)
 	for i := range aiResumePickerLimitDefault + 2 {
 		sessions = append(sessions, aisessions.SessionMeta{
-			Agent:        aiModeCodex,
-			ResumeID:     fmt.Sprintf("019f0000-0000-7000-8000-%012d", i),
-			Title:        fmt.Sprintf("Title %02d", i),
+			Agent:    aiModeCodex,
+			ResumeID: fmt.Sprintf("019f0000-0000-7000-8000-%012d", i),
+			Title:    fmt.Sprintf("Title %02d", i),
+			Source:   aisessions.SourceCodexRollout, TitleProvenance: aisessions.TitleDerivedUserPrompt,
 			LastModified: time.Date(2026, 6, 25, 9, i, 0, 0, time.UTC),
 			Context:      aisessions.SessionContext{Branch: "feat/resume-picker"},
 		})
@@ -432,7 +433,7 @@ func TestAIResumeProviderNeutralRowSchema80ColumnGolden(t *testing.T) {
 		name   string
 		source string
 	}{
-		{aiModeClaude, ""},
+		{aiModeClaude, aisessions.SourceClaudeTranscript},
 		{aiModeCodex, aisessions.SourceCodexRollout},
 		{aiModeAntigravity, aisessions.SourceAntigravityMetadata},
 	}
@@ -442,8 +443,13 @@ func TestAIResumeProviderNeutralRowSchema80ColumnGolden(t *testing.T) {
 		if provider.name == aiModeCodex {
 			bound.Context = registryview.Context{Value: "Codex bound conversation", Source: registryview.ContextSourceAgentTopic}
 		}
+		provenance := aisessions.TitleProvenanceNone
+		if provider.name == aiModeClaude {
+			provenance = aisessions.TitleExplicitProvider
+		}
 		row := aiResumeSessionRowWithResolvedLabel(aisessions.SessionMeta{
-			Agent: provider.name, ResumeID: provider.name + "-exact-id", Title: "Shared conversation title",
+			TitleProvenance: provenance,
+			Agent:           provider.name, ResumeID: provider.name + "-exact-id", Title: "Shared conversation title",
 			LastModified: now.Add(-2 * time.Hour), Source: provider.source, Turns: 42,
 			Confidence: "private-confidence", Reason: "private-reason", RuntimeStatus: "active",
 			Context: aisessions.SessionContext{Branch: "feature/provider-neutral", CWD: "/workspace/projmux/internal/app"},
@@ -472,7 +478,7 @@ func TestAIResumeProvidersShareConversationWidthPolicy(t *testing.T) {
 	now := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
 	title := strings.Repeat("provider neutral conversation ", 8)
 	providers := []struct{ name, source string }{
-		{aiModeClaude, ""},
+		{aiModeClaude, aisessions.SourceClaudeTranscript},
 		{aiModeCodex, aisessions.SourceCodexAppServer},
 		{aiModeAntigravity, aisessions.SourceAntigravityMetadata},
 	}
@@ -481,6 +487,9 @@ func TestAIResumeProvidersShareConversationWidthPolicy(t *testing.T) {
 		session := aisessions.SessionMeta{
 			Agent: provider.name, ResumeID: provider.name + "-id", Title: title, Source: provider.source,
 			LastModified: now.Add(-time.Hour), Context: aisessions.SessionContext{Branch: "main"},
+		}
+		if provider.name != aiModeAntigravity {
+			session.TitleProvenance = aisessions.TitleExplicitProvider
 		}
 		if provider.name == aiModeCodex {
 			session.StateDomainID = "state-width"
