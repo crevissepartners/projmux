@@ -411,6 +411,27 @@ duplicate UID claims remain fail-closed.
 
 ### Agent topic, interaction, activation, and workspace
 
+`projmux agent capabilities --provider <codex|claude|antigravity>` prints the
+static action matrix without opening the Registry or consulting tmux, provider
+transport, or an app-server process. Passing an Agent reference (or omitting it
+inside an Agent-owned Pane) adds current Registry-backed eligibility and the
+exact Pane activation generation; Codex rows also expose the stored connection
+and binding epochs. The runtime object reports `evidence=registry`,
+`registryReady`, and `liveVerified=false`; capability reads do not claim a
+live check that mutating routes must perform for themselves. Static `mode`,
+current Registry-backed `available`, and
+`completionPrecision` are separate fields. Use `-o json` for the stable machine
+projection.
+
+The closed static modes are `generic-registry`, `provider-resume`,
+`native-exact-control`, `provider-hook`, `read-only-adapter`, and
+`unsupported`. `message.send`, `message.wait`, `message.status`, and
+`wait.idle` are reserved provider-neutral vocabulary and currently appear only
+as unsupported matrix rows: this release has no `agent message` or `agent wait`
+command placeholder. There is likewise no provider-specific `agent codex`,
+`agent claude`, or `agent antigravity` namespace. A future coordination adapter
+must be selected from the exact Agent's provider and capability.
+
 `agent turn start`, `agent turn steer`, `agent turn interrupt`, and
 `agent approval review` use the live Codex app-server connection only when the
 selected Agent, its owned Pane, activation generation, thread, current turn,
@@ -1473,8 +1494,10 @@ supplied window.
 projmux create agent --provider <claude|codex|antigravity> [--project <ref>] [--window <ref>]... [--create-window] [--placement right|down] ...
 projmux create pane [--project <ref>] [--window <ref>]... [--create-window] [--placement right|down] ...
 projmux config edit [--get|--set <mode>]
-projmux agent status set <thinking|waiting|idle> [pane]
-projmux agent topic ...
+projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]
+projmux agent topic get|clear [<agent-ref>] [--agent <ref>]
+projmux agent topic set <text> [<agent-ref>] [--agent <ref>]
+projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]
 projmux internal agent-hook watch-title [pane]
 projmux internal agent-hook ingest codex-hook < payload.json
 projmux internal agent-hook ingest claude-hook < payload.json

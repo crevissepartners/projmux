@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 183 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 184 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -60,7 +60,7 @@ projmux <command> [args...]
 
 | Command | Kind | Summary |
 | --- | --- | --- |
-| [`projmux agent`](#projmux-agent) | canonical | Manage Agent state, topic, integrations, and account usage |
+| [`projmux agent`](#projmux-agent) | canonical | Manage Agent state, topic, capabilities, integrations, and account usage |
 | [`projmux attention`](#projmux-attention) | canonical | View and manage live tmux pane attention state |
 | [`projmux attach`](#projmux-attach) | canonical | Enter a Project runtime from outside tmux |
 | [`projmux config`](#projmux-config) | canonical | Edit AI split-mode settings; render or apply generated tmux configuration |
@@ -98,7 +98,7 @@ projmux <command> [args...]
 
 ## `projmux agent`
 
-Manage Agent state, topic, integrations, and account usage
+Manage Agent state, topic, capabilities, integrations, and account usage
 
 Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
@@ -122,12 +122,13 @@ projmux agent turn start|steer <agent-ref> -- <text>
 projmux agent turn interrupt <agent-ref>
 projmux agent approval review <agent-ref> [--request <normalized-id>]
 projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <sha> | --instructions <text>]
-projmux agent integrate <provider> [--dry-run]
-projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
+projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]
+projmux agent usage [--model <codex|claude|antigravity|all>] [--window <name>] [--json] [--force]
 projmux agent app-server upgrade plan|apply --request <absolute-json>
 projmux agent app-server upgrade resume|abort --operation <ref>
 projmux agent app-server handover plan|apply --request <absolute-json>
 projmux agent app-server handover resume|abort --operation <ref>
+projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]
 ```
 
 Subcommands:
@@ -140,11 +141,12 @@ Subcommands:
 | [`projmux agent turn`](#projmux-agent-turn) | Send, steer, or interrupt one exact native Codex turn |
 | [`projmux agent approval`](#projmux-agent-approval) | Review one exact pending native Codex approval |
 | [`projmux agent review`](#projmux-agent-review) | Start a native review on an exact-bound Codex Agent |
-| [`projmux agent integrate`](#projmux-agent-integrate) | Install or remove provider hook integrations |
+| [`projmux agent integrate`](#projmux-agent-integrate) | Install, remove, or preview provider hooks and tmux-bell integration |
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
 | [`projmux agent app-server`](#projmux-agent-app-server) | Manage explicitly requested private Codex app-server generation operations |
+| [`projmux agent capabilities`](#projmux-agent-capabilities) | Read static provider support or one exact Agent's Registry-backed runtime eligibility |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`, `projmux agent app-server handover plan`, `projmux agent app-server handover apply`, `projmux agent app-server handover resume`, `projmux agent app-server handover abort`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`, `projmux agent app-server handover plan`, `projmux agent app-server handover apply`, `projmux agent app-server handover resume`, `projmux agent app-server handover abort`, `projmux agent capabilities`
 
 ### `projmux agent status`
 
@@ -378,7 +380,7 @@ projmux agent review [<agent-ref>] [--agent <ref>] [--base <branch> | --commit <
 
 ### `projmux agent integrate`
 
-Install or remove provider hook integrations
+Install, remove, or preview provider hooks and tmux-bell integration
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -394,7 +396,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent integrate <provider> [--dry-run]
+projmux agent integrate <codex|claude|antigravity|tmux-bell> [--remove] [--dry-run]
 ```
 
 ### `projmux agent usage`
@@ -415,7 +417,7 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux agent usage [--model <name>] [--window <name>] [--json] [--force]
+projmux agent usage [--model <codex|claude|antigravity|all>] [--window <name>] [--json] [--force]
 ```
 
 ### `projmux agent app-server`
@@ -679,6 +681,29 @@ Allowed effects:
 ```
 projmux agent app-server handover abort --operation <ref>
 ```
+
+### `projmux agent capabilities`
+
+Read static provider support or one exact Agent's Registry-backed runtime eligibility
+
+Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=null`
+
+```
+projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]
+```
+
+Output modes (`-o`): `json`
 
 ## `projmux attention`
 

@@ -639,6 +639,10 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	switch args[0] {
 	case "ai":
 		return false
+	case "agent":
+		if len(args) >= 2 && args[1] == "capabilities" {
+			return false
+		}
 	case "internal":
 		if len(args) >= 2 && args[1] == "codex-generation-launch" {
 			return false

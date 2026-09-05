@@ -201,7 +201,7 @@ func doctorAntigravityIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegra
 }
 
 func doctorTmuxBellIntegrationDiagnostic(ai *aiCommand) doctorAINotifyIntegration {
-	base := "projmux agent integrate tmux-bell"
+	base := aiprovider.IntegrationCommand("tmux-bell")
 	out := doctorAINotifyIntegration{
 		ID:             "tmux-bell",
 		Name:           "tmux bell fallback",

@@ -219,6 +219,12 @@ func (c *agentCommand) resolveControlBinding(spelling, ref string) (exactAgentCo
 	if err != nil {
 		return exactAgentControlBinding{}, err
 	}
+	// Static provider support is decided before live tmux lookup, private-path
+	// resolution, or provider transport. Unsupported providers therefore cannot
+	// acquire runtime authority as a side effect of probing for it.
+	if err := requireStaticNativeAgentCapability(spelling, agent); err != nil {
+		return exactAgentControlBinding{}, err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.controlTimeoutValue())
 	defer cancel()
 	lookup := c.controlBinding

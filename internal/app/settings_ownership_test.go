@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
@@ -22,28 +23,31 @@ import (
 // tests: the three Agent Providers plus the tmux bell producer, which is
 // deliberately not a Provider.
 func settingsOwnershipDiagnostics() []doctorAINotifyIntegration {
+	claude := aiprovider.IntegrationCommand(string(aiprovider.Claude))
+	codex := aiprovider.IntegrationCommand(string(aiprovider.Codex))
+	antigravity := aiprovider.IntegrationCommand(string(aiprovider.Antigravity))
 	return []doctorAINotifyIntegration{
 		{
 			ID: "claude-hooks", Name: "Claude hooks", ProviderID: aiHookProviderClaude,
 			Status: doctorAINotifyStatusInstalled, ConfigPath: "/home/tester/.claude/settings.json",
-			InstallCommand: "projmux agent integrate claude",
-			RemoveCommand:  "projmux agent integrate claude --remove",
-			DryRunCommand:  "projmux agent integrate claude --dry-run",
+			InstallCommand: claude,
+			RemoveCommand:  claude + " --remove",
+			DryRunCommand:  claude + " --dry-run",
 		},
 		{
 			ID: "codex-hooks", Name: "Codex hooks", ProviderID: aiHookProviderCodex,
 			Status: doctorAINotifyStatusConflict, ConfigPath: "/home/tester/.codex/config.toml",
 			ConflictReason: "unmanaged notify command",
-			InstallCommand: "projmux agent integrate codex",
-			RemoveCommand:  "projmux agent integrate codex --remove",
-			DryRunCommand:  "projmux agent integrate codex --dry-run",
+			InstallCommand: codex,
+			RemoveCommand:  codex + " --remove",
+			DryRunCommand:  codex + " --dry-run",
 		},
 		{
 			ID: "antigravity-hooks", Name: "Antigravity hooks", ProviderID: aiHookProviderAntigravity,
 			Status: doctorAINotifyStatusMissing, ConfigPath: "/home/tester/.gemini/config/hooks.json",
-			InstallCommand: "projmux agent integrate antigravity",
-			RemoveCommand:  "projmux agent integrate antigravity --remove",
-			DryRunCommand:  "projmux agent integrate antigravity --dry-run",
+			InstallCommand: antigravity,
+			RemoveCommand:  antigravity + " --remove",
+			DryRunCommand:  antigravity + " --dry-run",
 		},
 		{
 			ID: settingsTmuxBellDiagnosticID, Name: "tmux bell",

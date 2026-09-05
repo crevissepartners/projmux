@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
@@ -18,8 +19,9 @@ import (
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 )
 
-// agentSubcommands lists the Agent domain routes, in help order.
-var agentSubcommands = []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage", "app-server"}
+// agentSubcommands is projected from the authoritative provider action catalog.
+// capabilities is the metadata query itself, not a provider action cell.
+var agentSubcommands = append(aiprovider.AgentGroups(), "capabilities")
 
 // resumableAgentPhases is the closed set of phases `agent resume` accepts.
 var resumableAgentPhases = []coremetadata.AgentPhase{
@@ -142,6 +144,8 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		default:
 			return usageError("agent app-server requires upgrade or handover")
 		}
+	case "capabilities":
+		return c.runCapabilities(rest, stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("agent %s is not available; this release implements: %s",
 			args[0], strings.Join(agentSubcommands, ", ")))

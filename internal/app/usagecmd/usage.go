@@ -1764,7 +1764,7 @@ func runeLen(s string) int {
 
 func printUsageHelp(w io.Writer) {
 	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintln(w, "  projmux agent usage [--model codex|claude|antigravity|all] [--window 5h|weekly|context|quota|all] [--json] [--force|-f]")
+	fmt.Fprintf(w, "  projmux agent usage [--model %s] [--window 5h|weekly|context|quota|all] [--json] [--force|-f]\n", strings.Join(aiprovider.UsageTargets(), "|"))
 	fmt.Fprintln(w, "  projmux internal status usage [--max-width N] [--force|-f]")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")

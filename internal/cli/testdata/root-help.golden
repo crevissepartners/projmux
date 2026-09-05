@@ -1,7 +1,7 @@
 projmux
 
 Commands:
-  agent     Manage Agent state, topic, integrations, and account usage
+  agent     Manage Agent state, topic, capabilities, integrations, and account usage
   attention View and manage live tmux pane attention state
   attach    Enter a Project runtime from outside tmux
   config    Edit AI split-mode settings; render or apply generated tmux configuration
