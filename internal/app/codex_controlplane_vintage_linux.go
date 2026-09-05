@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // codexProcessScanLimit bounds one process-table read. A diagnostics section
@@ -43,7 +44,12 @@ func defaultCodexProcessImages() ([]codexProcessImage, bool) {
 		if err != nil || strings.TrimSpace(exe) == "" {
 			continue
 		}
-		images = append(images, codexProcessImage{PID: pid, Exe: exe, Cmdline: readProcCmdline(entry.Name())})
+		images = append(images, codexProcessImage{
+			PID:       pid,
+			Exe:       exe,
+			Cmdline:   readProcCmdline(entry.Name()),
+			StartedAt: readProcStartedAt(entry.Name()),
+		})
 	}
 	return images, true
 }
@@ -71,4 +77,31 @@ func readProcCmdline(pid string) []string {
 		}
 	}
 	return kept
+}
+
+// readProcStartedAt reads when one process started, and the zero time when that
+// cannot be established.
+//
+// The source is the modification time of /proc/<pid> itself. The kernel stamps
+// that directory when it creates the process and never moves it afterwards, so
+// it is the process's start instant with one-second resolution. Verified on
+// this machine against `ps -o etimes=` for three live long-lived projmux
+// children: agreement within one second in all three.
+//
+// Chosen over the classic /proc/<pid>/stat field 22 plus /proc/stat btime
+// arithmetic because that path needs a USER_HZ assumption, a second file read
+// for boot time, and parsing around the comm field -- which is an executable
+// name in parentheses and may itself contain ')' and spaces, the standard way
+// /proc/<pid>/stat parsers get the field offsets wrong. Second resolution is
+// far below what the question needs: a drain bound is chosen in minutes and
+// hours, not in milliseconds.
+//
+// This reads a directory's metadata. It opens nothing the process owns, writes
+// nothing, and signals nothing.
+func readProcStartedAt(pid string) time.Time {
+	info, err := os.Stat("/proc/" + pid)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
 }

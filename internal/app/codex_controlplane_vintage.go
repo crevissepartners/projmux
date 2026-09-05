@@ -3,7 +3,9 @@ package app
 import (
 	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
+	"time"
 )
 
 // The binary vintage of one live projmux process, as a diagnostics reader can
@@ -83,14 +85,44 @@ type codexProcessImage struct {
 	PID     int
 	Exe     string
 	Cmdline []string
+	// StartedAt is when this process began, zero when the reader could not
+	// establish it. It is not process identity: it carries no pid, no path,
+	// and no argv, and it is the only fact that answers how long a process
+	// that an install left behind has already been running.
+	StartedAt time.Time
 }
 
+// projmuxProcessRoleAgeSampleLimit bounds how many residual ages one role
+// carries.
+//
+// The distribution is the point, so this sits far above any plausible fleet;
+// it exists only so that a pathological process table cannot make one record
+// unbounded. A census that hit the bound says so rather than silently
+// reporting a truncated distribution as a whole one.
+const projmuxProcessRoleAgeSampleLimit = 512
+
 // projmuxProcessRoleVintage is the vintage census of one process role.
+//
+// Role/Processes/Current/Replaced are the counts a diagnosis renders. The two
+// age fields are the residual measurement: they are populated only when a
+// caller asks for them by supplying a reference instant, so the diagnosis
+// projection is byte-identical to what it was before they existed.
 type projmuxProcessRoleVintage struct {
 	Role      string `json:"role"`
 	Processes int    `json:"processes"`
 	Current   int    `json:"current"`
 	Replaced  int    `json:"replaced"`
+	// ReplacedAgeSeconds is the ascending age distribution of this role's
+	// replaced-image processes, in whole seconds.
+	//
+	// A distribution rather than a mean: the question a bounded drain has to
+	// answer is "what fraction of these outlive T", and a mean cannot answer
+	// it. A replaced process whose start time was unreadable contributes no
+	// sample, so this can be shorter than Replaced.
+	ReplacedAgeSeconds []int `json:"replacedAgeSeconds,omitempty"`
+	// ReplacedAgeCapped reports that the sample bound was reached and the
+	// distribution above is therefore a prefix, not the whole of it.
+	ReplacedAgeCapped bool `json:"replacedAgeCapped,omitempty"`
 }
 
 // codexControlPlaneVintage is the whole answer to "is the diagnosis I am about
@@ -167,7 +199,7 @@ func projectCodexControlPlaneVintage(self string, selfPID int, images []codexPro
 	}
 	return codexControlPlaneVintage{
 		Supported: true,
-		Roles:     censusProjmuxProcessImages(self, selfPID, images, codexControlPlaneRoleOrder, codexControlPlaneRole),
+		Roles:     censusProjmuxProcessImages(self, selfPID, images, codexControlPlaneRoleOrder, codexControlPlaneRole, time.Time{}),
 	}
 }
 
@@ -178,12 +210,25 @@ func projectCodexControlPlaneVintage(self string, selfPID int, images []codexPro
 // and the number an operator needs is how many processes that is — not how many
 // of them happen to sit on a route this reader has a name for.
 func projectProjmuxProcessVintage(self string, selfPID int, images []codexProcessImage, supported bool) projmuxProcessVintage {
+	return projectProjmuxProcessVintageAt(self, selfPID, images, supported, time.Time{})
+}
+
+// projectProjmuxProcessVintageAt is the same projection with the residual age
+// distribution measured against now.
+//
+// A zero now means "count only", which is what a diagnosis wants: `projmux
+// doctor` renders counts and would gain nothing from an age column, and
+// leaving its record untouched keeps the rendered section and its JSON exactly
+// as they were. The install residue census supplies a real instant because the
+// whole question it exists to answer -- can a bounded drain of these processes
+// finish in finite time -- is a question about their ages.
+func projectProjmuxProcessVintageAt(self string, selfPID int, images []codexProcessImage, supported bool, now time.Time) projmuxProcessVintage {
 	if !supported {
 		return projmuxProcessVintage{}
 	}
 	return projmuxProcessVintage{
 		Supported: true,
-		Roles:     censusProjmuxProcessImages(self, selfPID, images, projmuxProcessRoleOrder, projmuxProcessRole),
+		Roles:     censusProjmuxProcessImages(self, selfPID, images, projmuxProcessRoleOrder, projmuxProcessRole, now),
 	}
 }
 
@@ -205,6 +250,7 @@ func censusProjmuxProcessImages(
 	images []codexProcessImage,
 	order []string,
 	roleOf func([]string) string,
+	now time.Time,
 ) []projmuxProcessRoleVintage {
 	self = strings.TrimSpace(self)
 	byRole := map[string]*projmuxProcessRoleVintage{}
@@ -226,17 +272,36 @@ func censusProjmuxProcessImages(
 			continue
 		}
 		census.Processes++
-		if replaced {
-			census.Replaced++
-		} else {
+		if !replaced {
 			census.Current++
+			continue
 		}
+		census.Replaced++
+		if now.IsZero() || image.StartedAt.IsZero() {
+			// No reference instant, or a start time this platform could not
+			// establish. The process is still counted as residual; only its
+			// age is unknown, and inventing one would put a number into the
+			// distribution that no drain bound could be read from.
+			continue
+		}
+		if len(census.ReplacedAgeSeconds) >= projmuxProcessRoleAgeSampleLimit {
+			census.ReplacedAgeCapped = true
+			continue
+		}
+		// A clock that moved backwards between the two reads floors at zero.
+		// A negative age would read as a process started after the census
+		// that observed it.
+		age := max(int(now.Sub(image.StartedAt)/time.Second), 0)
+		census.ReplacedAgeSeconds = append(census.ReplacedAgeSeconds, age)
 	}
 	var rows []projmuxProcessRoleVintage
 	for _, role := range order {
-		if census := byRole[role]; census.Processes > 0 {
-			rows = append(rows, *census)
+		census := byRole[role]
+		if census.Processes == 0 {
+			continue
 		}
+		sort.Ints(census.ReplacedAgeSeconds)
+		rows = append(rows, *census)
 	}
 	return rows
 }

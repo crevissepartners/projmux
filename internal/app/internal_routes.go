@@ -25,6 +25,7 @@ var internalSubcommands = []string{
 	"activation-exec",
 	"codex-broker",
 	"codex-generation-launch",
+	"install-residue",
 }
 
 // internalAgentHookSubcommands lists the provider hook plumbing routes.
@@ -115,6 +116,13 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.codexBroker, "internal codex-broker", "codex-broker", nil, rest, stdout, stderr)
 	case "codex-generation-launch":
 		return codexgenerationhost.RunDurableLaunchSupervisor(rest)
+	case "install-residue":
+		// The install residue census. It is machine-invoked plumbing -- the
+		// last step of `make install` and of the npm wrapper's first
+		// interactive run after an install -- rather than a command a user
+		// types, which is exactly what this namespace is for. It reads the
+		// process table, appends one ledger row, and never fails.
+		return runInstallResidueReport(rest, stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("internal %s is not available; this release implements: %s",
 			args[0], strings.Join(internalSubcommands, ", ")))

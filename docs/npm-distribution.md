@@ -20,6 +20,37 @@ npm-specific guidance. npm is only an update/install source label here; the
 keybinding flow remains `projmux shell` first, then `projmux setup` and
 `projmux setup terminal` only for terminals that swallow shortcuts.
 
+## Install residue notice
+
+There is no `postinstall` script in this package, and there is no plan to add
+one. A lifecycle script is skipped by `--ignore-scripts` and by many global and
+CI installs, and npm buffers or reorders its output unless
+`--foreground-scripts`. The bin shim cannot be skipped — it *is* the entrypoint
+— and it writes straight to the user's terminal.
+
+So the shim carries the install residue notice
+([operational-diagnostics.md](operational-diagnostics.md#install-residue-ledger)).
+`npm install -g projmux` and `npm update` delete and rewrite the package
+directory, so a missing `npm/.install-residue-reported` watermark inside that
+directory *is* the "this install is new" signal — no fingerprinting, no second
+copy of the Go side's XDG path logic in JavaScript, and nothing written outside
+the package directory. The watermark is not in the published `files` list, so
+it never ships in a tarball.
+
+On the first run after an install, if stderr is a TTY, the shim creates the
+watermark and then — **after** the user's command has finished, so the notice is
+the last thing on screen and never delays or interleaves with the real command
+— runs `projmux internal install-residue`. A non-TTY run (a hook, CI, a pipe)
+does nothing and leaves the watermark missing, so the next interactive run is
+the one that reports; the notice should land on a run a human is looking at. If
+the watermark cannot be written the notice is never shown, so an unwritable
+package directory cannot produce it on every invocation forever. None of this
+can change the shim's exit code.
+
+The trade-off is deliberate: for npm the notice appears on the first
+interactive run after the install rather than during `npm install` itself. The
+ledger's `at` timestamp is the install-detection moment either way.
+
 ## Local Packaging
 
 Build and dry-run pack all npm packages:

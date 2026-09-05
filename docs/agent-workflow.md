@@ -1486,6 +1486,74 @@ writers on the same shared-host path, `applyAIStatusInternalWithActivationPolicy
 and `markAIHookPane`, still issue unrouted tmux calls and discard their errors,
 so their failures are invisible rather than fixed.
 
+### Install residue census tests
+
+`make install` and `npm install` replace the executable and leave every
+long-lived projmux child on the image it started with. `projmux internal
+install-residue` measures how much of the fleet that is, appends one record to
+`install-residue.jsonl`, and prints at most one stderr notice; see
+[operational-diagnostics.md](operational-diagnostics.md#install-residue-ledger)
+for the ledger format and the mapping from its fields to the questions a
+bounded drain of those processes has to answer.
+
+The deliverable is the measurement, not the message, so the tests are weighted
+toward the record rather than the wording.
+
+- `TestProjmuxProcessVintageMeasuresTheResidualAgeDistribution` owns the age
+  half of the census: only replaced-image processes contribute an age, the
+  distribution is stored ascending and whole, and a clock that moved backwards
+  floors at zero rather than reporting a process started after the census that
+  observed it.
+- `TestProjmuxProcessVintageKeepsAnUnknownStartTimeOutOfTheDistribution` owns
+  both halves of the unknown case: the process still counts as residue, and no
+  age is invented for it.
+- `TestProjmuxProcessVintageCapsOneRoleAgeDistribution` owns the per-role sample
+  bound and pins that a census which hit it says so, rather than reporting a
+  prefix as a whole distribution.
+- `TestDoctorProcessVintageProjectionCarriesNoAges` keeps `projmux doctor`'s
+  record exactly what it was: the age fields populate only when a caller
+  supplies a reference instant.
+- `TestProcessImageListerReadsAPlausibleStartTime` (Linux) covers the one part
+  a synthetic process table cannot. A reader that silently returned the zero
+  time would leave every distribution empty, which is indistinguishable from a
+  platform where start times are unknowable.
+- `TestInstallResidueReportsPerRoleResidualCountsAndAges` owns the record
+  field-for-field, including the per-role distribution being as long as that
+  role's residual count and ascending.
+- `TestInstallResidueZeroResidualPrintsNothing` owns the boundary that keeps the
+  notice worth reading: an install that reached the whole fleet prints
+  absolutely nothing, and still records that it did.
+- `TestInstallResidueUnsupportedPlatformPrintsNothingButRecordsTheGap` owns the
+  macOS path: no terminal output where the census cannot be taken, and a
+  `supported:false` record so the coverage gap is measured rather than absent.
+- `TestInstallResidueCarriesNoProcessIdentity` is the privacy gate, asserted
+  negatively over the rendered notice and the ledger bytes at once: sentinel
+  pids, executable path, and argv appear in neither.
+- `TestInstallResidueLedgerAppendsAndDerivesTheInstallGap` owns the frequency
+  half — records accumulate and each carries the gap to the one before it.
+- `TestInstallResidueLedgerRotatesAtItsRecordBound` owns growth: the oldest rows
+  go, the newest stay, and the file keeps mode `0600` across the rotation.
+- `TestInstallResidueNoticeOrdersRolesByResidualCount` and
+  `TestInstallResidueNoticeTiesBreakOnTheCensusRoleOrder` own the render
+  contract: biggest residual first, census role order on a tie, zero-residual
+  roles omitted entirely.
+- `TestInstallResidueAgeTextRendersDurationsAnOperatorReads` owns the duration
+  format, the median of both odd and even distributions, and the unknown case,
+  which must not render as a zero age.
+- `TestInstallResidueNeverFailsAnInstall` owns the hard edge: an unresolvable
+  state directory, an unwritable ledger, and the route entrypoint itself all end
+  in a silent success.
+- `TestInstallResidueInstallerComesFromTheExistingEnvVar` pins that installer
+  identity is read from `PROJMUX_INSTALLER` and that no new `PROJMUX_*` variable
+  is introduced, since any such variable is a minor-release input to the hook
+  contract.
+- `TestInstallResidueRouteIsRegisteredAsInternalPlumbing` pins the spelling the
+  installer invokes and keeps the census out of the legacy hook migration path.
+
+Nothing in this feature terminates, starts, signals, or restarts a process.
+The census is two file reads per process; replacing the residual processes is a
+separate decision this measurement exists to inform.
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.
