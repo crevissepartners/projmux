@@ -239,8 +239,8 @@ func TestMatchAIPanePriority(t *testing.T) {
 		}
 		return ""
 	}
-	if got := cmd.matchAIPane(aiPaneMatchInput{CWD: "/repo/projmux", ThreadID: "thread-2"}); got != "%env" {
-		t.Fatalf("env match = %q, want %%env", got)
+	if got, reason := cmd.matchAIPane(aiPaneMatchInput{CWD: "/repo/projmux", ThreadID: "thread-2"}); got != "%env" || reason != "" {
+		t.Fatalf("env match = %q, reason %q, want %%env", got, reason)
 	}
 
 	cmd.lookupEnv = func(string) string { return "" }
@@ -250,14 +250,14 @@ func TestMatchAIPanePriority(t *testing.T) {
 		}
 		return nil, os.ErrNotExist
 	}
-	if got := cmd.matchAIPane(aiPaneMatchInput{CWD: "/repo/projmux", ThreadID: "thread-2"}); got != "%cwd" {
-		t.Fatalf("cwd match = %q, want %%cwd", got)
+	if got, reason := cmd.matchAIPane(aiPaneMatchInput{CWD: "/repo/projmux", ThreadID: "thread-2"}); got != "%cwd" || reason != "" {
+		t.Fatalf("cwd match = %q, reason %q, want %%cwd", got, reason)
 	}
-	if got := cmd.matchAIPane(aiPaneMatchInput{ThreadID: "thread-2"}); got != "%thread" {
-		t.Fatalf("thread match = %q, want %%thread", got)
+	if got, reason := cmd.matchAIPane(aiPaneMatchInput{ThreadID: "thread-2"}); got != "%thread" || reason != "" {
+		t.Fatalf("thread match = %q, reason %q, want %%thread", got, reason)
 	}
-	if got := cmd.matchAIPane(aiPaneMatchInput{SessionID: "session-2"}); got != "%thread" {
-		t.Fatalf("session match = %q, want %%thread", got)
+	if got, reason := cmd.matchAIPane(aiPaneMatchInput{SessionID: "session-2"}); got != "%thread" || reason != "" {
+		t.Fatalf("session match = %q, reason %q, want %%thread", got, reason)
 	}
 }
 

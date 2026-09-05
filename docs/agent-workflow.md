@@ -894,6 +894,37 @@
   safe-mode delivery gate. Setup and limits are in
   [claude-coordination-endpoints.md](claude-coordination-endpoints.md).
 
+### Provider hook pane identity tests
+
+- `TestProviderHookCommandsCarryTheirOwnPaneIdentity` and
+  `TestProviderHookPaneArgumentIsProviderNeutral` own the installed hook command
+  string: every provider hook is handed the Pane it belongs to through the same
+  argument, the argument reads the activation envelope rather than the tmux
+  environment, and an app-server shared by several Panes expands it to an empty
+  value instead of breaking the hook.
+- `TestCodexIntegrationStillOwnsThePaneBlindHookCommand` and
+  `TestCodexIntegrationConvergesThePaneBlindHookCommandForward` own the
+  convergence of an already installed pane-blind command: it stays recognized as
+  projmux-authored and is rewritten forward instead of being refused as
+  hand-edited wiring.
+- `TestMatchAIPaneResolvesTheHandedPaneWithoutTmuxEnvironment` and
+  `TestMatchAIPanePrefersTheHandedPaneOverInheritedEvidence` own attribution
+  when the hook was handed an identity: the Registry resolves it with no tmux
+  server read at all, and it wins over inherited `TMUX_PANE`, cwd, and thread
+  evidence.
+- `TestMatchAIPaneKeepsTheEstablishedFallbackWhenNothingWasHandedOver` owns the
+  unchanged three-step ladder for hooks that were handed nothing.
+- `TestMatchAIPaneRefusesAHandedPaneThatIsGone` owns the four ways a handed
+  identity can be stale and proves none of them redirects the event onto another
+  live Pane.
+- `TestAttributionFailureReasonsAreDistinctAndClosed` owns the failure
+  vocabulary: an unreachable Pane inventory, a genuine no-match, an unreachable
+  Registry, and an unregistered Pane each name themselves, and every token stays
+  a bounded phrase.
+- `TestHookIngestRoutesAcceptTheExplicitPaneArgument` owns the route contract:
+  `--pane` is optional, an empty value is a valid answer, and a positional
+  payload argument is still refused.
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.

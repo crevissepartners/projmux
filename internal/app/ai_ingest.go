@@ -51,11 +51,30 @@ var aiBellPaneFormats = []string{
 
 var aiBellPaneFormat = intmux.JoinFormats(intmux.FieldDelimiter, aiBellPaneFormats...)
 
+// aiPaneMatchInput carries everything a provider hook knows about the Pane it
+// belongs to. ExplicitPane is the identity the hook command was handed; the
+// remaining fields are the inherited-environment evidence the matcher has always
+// used and still uses whenever no explicit identity arrived.
 type aiPaneMatchInput struct {
-	CWD       string
-	ThreadID  string
-	SessionID string
+	ExplicitPane string
+	CWD          string
+	ThreadID     string
+	SessionID    string
 }
+
+// The closed vocabulary a failed attribution reports. Every token names which
+// step could not answer, so a hook that never had an identity is distinguishable
+// from one whose identity went stale and from one whose Pane inventory was
+// simply unreachable. Tokens are provider-neutral and carry no path, payload, or
+// provider text.
+const (
+	aiPaneMatchReasonNoMatch             = "no matching pane"
+	aiPaneMatchReasonNoInventory         = "pane inventory unavailable"
+	aiPaneMatchReasonRegistryUnavailable = "pane registry unavailable"
+	aiPaneMatchReasonExplicitUnknown     = "explicit pane is not registered"
+	aiPaneMatchReasonExplicitNoRuntime   = "explicit pane has no live runtime"
+	aiPaneMatchReasonExplicitStale       = "explicit pane binding is stale"
+)
 
 type aiPaneMatchRow struct {
 	PaneID    string
@@ -98,9 +117,9 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		}
 		return c.runCodexNativeLifecycleObserver(target)
 	case "codex-hook":
-		if len(args) != 1 {
-			printAIUsage(stderr)
-			return errors.New("internal agent-hook ingest codex-hook reads JSON from stdin and accepts no payload arguments")
+		explicitPane, err := parseAIHookPaneArgument("codex-hook", args[1:], stderr)
+		if err != nil {
+			return err
 		}
 		reader := c.stdin
 		if reader == nil {
@@ -115,11 +134,11 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 			c.recordAIIngestFailure(diagnostics.ProviderCodex, diagnostics.AIKindPayload, diagnostics.AIFailurePayloadOversized)
 			return errors.New("codex hook payload exceeds 1 MiB")
 		}
-		return c.ingestCodexHook(data)
+		return c.ingestCodexHook(data, explicitPane)
 	case "claude-hook":
-		if len(args) != 1 {
-			printAIUsage(stderr)
-			return errors.New("internal agent-hook ingest claude-hook reads JSON from stdin and accepts no payload arguments")
+		explicitPane, err := parseAIHookPaneArgument("claude-hook", args[1:], stderr)
+		if err != nil {
+			return err
 		}
 		reader := c.stdin
 		if reader == nil {
@@ -134,11 +153,12 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 			c.recordAIIngestFailure(diagnostics.ProviderClaude, diagnostics.AIKindPayload, diagnostics.AIFailurePayloadOversized)
 			return errors.New("claude hook payload exceeds 1 MiB")
 		}
-		return c.ingestClaudeHook(data)
+		return c.ingestClaudeHook(data, explicitPane)
 	case "antigravity-hook":
 		fs := flag.NewFlagSet("internal agent-hook ingest antigravity-hook", flag.ContinueOnError)
 		fs.SetOutput(stderr)
 		eventName := fs.String("event", "", "authoritative Antigravity hook event name")
+		explicitPane := fs.String("pane", "", aiHookPaneArgumentUsage)
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
@@ -159,7 +179,7 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 			c.recordAIIngestFailure(diagnostics.ProviderAntigravity, diagnostics.AIKindPayload, diagnostics.AIFailurePayloadOversized)
 			return errors.New("antigravity hook payload exceeds 1 MiB")
 		}
-		if err := c.ingestAntigravityHook(data, *eventName); err != nil {
+		if err := c.ingestAntigravityHook(data, *eventName, strings.TrimSpace(*explicitPane)); err != nil {
 			return err
 		}
 		if strings.TrimSpace(*eventName) == "" {
@@ -190,6 +210,29 @@ func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
 		printAIUsage(stderr)
 		return fmt.Errorf("unknown internal agent-hook ingest source: %s", args[0])
 	}
+}
+
+// aiHookPaneArgumentUsage documents the one flag every provider hook route
+// accepts. It is optional on purpose: a provider process shared by several Panes
+// carries no identity to hand over, and an absent value selects the established
+// matcher rather than an error.
+const aiHookPaneArgumentUsage = "exact Pane this hook belongs to, as a Pane uid or a %N runtime id"
+
+// parseAIHookPaneArgument reads the explicit Pane identity a hook command was
+// handed. The route stays payload-on-stdin only; --pane is the sole argument and
+// an empty value is a valid answer meaning "nothing was handed over".
+func parseAIHookPaneArgument(route string, args []string, stderr io.Writer) (string, error) {
+	fs := flag.NewFlagSet("internal agent-hook ingest "+route, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	explicitPane := fs.String("pane", "", aiHookPaneArgumentUsage)
+	if err := fs.Parse(args); err != nil {
+		return "", err
+	}
+	if fs.NArg() != 0 {
+		printAIUsage(stderr)
+		return "", errors.New("internal agent-hook ingest " + route + " reads JSON from stdin and accepts no payload arguments")
+	}
+	return strings.TrimSpace(*explicitPane), nil
 }
 
 func (c *aiCommand) runIngestBell(args []string, stderr io.Writer) error {
@@ -564,41 +607,101 @@ func (c *aiCommand) writeAIHookResumeMetadata(paneID, resumeID string) {
 	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneResumeUpdatedAtOption, c.now().UTC().Format(time.RFC3339))
 }
 
-func (c *aiCommand) matchAIPane(in aiPaneMatchInput) string {
-	if envPane := strings.TrimSpace(c.env("TMUX_PANE")); envPane != "" {
-		return envPane
+// matchAIPane resolves the Pane a hook event belongs to and, when it cannot,
+// says which step failed. An explicit identity handed to the hook command is the
+// whole answer: it is resolved through the Registry and never falls through to
+// the inherited-environment ladder, because falling through would attribute the
+// event to whichever other live Pane happens to share a working directory. The
+// established three-step ladder is unchanged and remains the answer whenever no
+// explicit identity arrived.
+func (c *aiCommand) matchAIPane(in aiPaneMatchInput) (string, string) {
+	if explicit := strings.TrimSpace(in.ExplicitPane); explicit != "" {
+		return c.resolveExplicitAIPane(explicit)
 	}
-	rows := c.listAIPaneMatchRows()
+	if envPane := strings.TrimSpace(c.env("TMUX_PANE")); envPane != "" {
+		return envPane, ""
+	}
+	rows, listed := c.listAIPaneMatchRows()
+	if !listed {
+		return "", aiPaneMatchReasonNoInventory
+	}
 	if cwd := cleanMatchPath(in.CWD); cwd != "" {
 		for _, row := range rows {
 			if cleanMatchPath(row.CWD) == cwd {
-				return row.PaneID
+				return row.PaneID, ""
 			}
 		}
 	}
 	threadID := strings.TrimSpace(in.ThreadID)
 	sessionID := strings.TrimSpace(in.SessionID)
 	if threadID == "" && sessionID == "" {
-		return ""
+		return "", aiPaneMatchReasonNoMatch
 	}
 	for _, row := range rows {
 		if threadID != "" && strings.TrimSpace(row.ThreadID) == threadID {
-			return row.PaneID
+			return row.PaneID, ""
 		}
 		if sessionID != "" && strings.TrimSpace(row.SessionID) == sessionID {
-			return row.PaneID
+			return row.PaneID, ""
 		}
 	}
-	return ""
+	return "", aiPaneMatchReasonNoMatch
 }
 
-func (c *aiCommand) listAIPaneMatchRows() []aiPaneMatchRow {
+// resolveExplicitAIPane turns the identity a hook was handed into the exact
+// runtime handle its Pane currently holds. The Registry is the authority, not
+// the value itself: a `%N` that no longer belongs to the Pane that owned it, or
+// a Pane whose Agent binding no longer round-trips, is a failure rather than a
+// second-best guess. Resolution reads no tmux server, so it survives an
+// app-server that inherited no tmux environment.
+func (c *aiCommand) resolveExplicitAIPane(ref string) (string, string) {
+	if c.loadRegistry == nil {
+		return "", aiPaneMatchReasonRegistryUnavailable
+	}
+	registry, err := c.loadRegistry()
+	if err != nil {
+		return "", aiPaneMatchReasonRegistryUnavailable
+	}
+	pane, ok := explicitAIPaneResource(registry, ref)
+	if !ok {
+		return "", aiPaneMatchReasonExplicitUnknown
+	}
+	runtimeID := strings.TrimSpace(pane.Status.Activation.RuntimeID)
+	if runtimeID == "" {
+		return "", aiPaneMatchReasonExplicitNoRuntime
+	}
+	if agentUID := strings.TrimSpace(pane.Status.Activation.AgentUID); agentUID != "" {
+		agent, ok := registry.Agent(agentUID)
+		if !ok || agent.Status.PaneRef != pane.Metadata.UID {
+			return "", aiPaneMatchReasonExplicitStale
+		}
+	}
+	return runtimeID, ""
+}
+
+// explicitAIPaneResource accepts either spelling a hook can be handed: the
+// stable Pane uid projmux plants in the activation envelope, or the exact `%N`
+// runtime handle. Both are looked up in the Registry so neither is trusted on
+// its own.
+func explicitAIPaneResource(registry coremetadata.Registry, ref string) (*coremetadata.Pane, bool) {
+	if strings.HasPrefix(ref, "%") {
+		for i := range registry.Panes {
+			if strings.TrimSpace(registry.Panes[i].Status.Activation.RuntimeID) == ref {
+				return &registry.Panes[i], true
+			}
+		}
+		return nil, false
+	}
+	return registry.Pane(ref)
+}
+
+func (c *aiCommand) listAIPaneMatchRows() ([]aiPaneMatchRow, bool) {
 	rows, err := c.muxRunner().ListPanes(context.Background(), intmux.ListPanesOptions{
 		All:     true,
 		Formats: aiIngestListPanesFormats,
 	})
 	if err != nil {
-		return nil
+		return nil, false
 	}
 	matches := make([]aiPaneMatchRow, 0, len(rows))
 	for _, fields := range rows {
@@ -613,7 +716,7 @@ func (c *aiCommand) listAIPaneMatchRows() []aiPaneMatchRow {
 			SessionID: fields[3],
 		})
 	}
-	return matches
+	return matches, true
 }
 
 func cleanMatchPath(path string) string {

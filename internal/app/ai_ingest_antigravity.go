@@ -56,19 +56,20 @@ type antigravityHookPayload struct {
 	QuotaBuckets               []antigravityadapter.QuotaBucketRecord
 }
 
-func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent string) error {
+func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent, explicitPane string) error {
 	payload, err := parseAntigravityHookPayload(data, explicitEvent)
 	if err != nil {
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Result: "error", Reason: err.Error()})
 		return err
 	}
 
-	paneID := c.matchAIPane(aiPaneMatchInput{
-		CWD:      payload.CWD,
-		ThreadID: payload.ConversationID,
+	paneID, matchReason := c.matchAIPane(aiPaneMatchInput{
+		ExplicitPane: explicitPane,
+		CWD:          payload.CWD,
+		ThreadID:     payload.ConversationID,
 	})
 	if paneID == "" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "ignored", Reason: "no matching pane", CWD: payload.CWD, ThreadID: payload.ConversationID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "ignored", Reason: matchReason, CWD: payload.CWD, ThreadID: payload.ConversationID})
 		return nil
 	}
 	defer c.flushPendingAgentSessionRef(paneID)

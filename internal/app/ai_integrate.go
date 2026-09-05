@@ -20,13 +20,29 @@ const (
 	codexHooksMarkerBegin   = "# >>> projmux managed codex hooks"
 	codexHooksMarkerEnd     = "# <<< projmux managed codex hooks"
 	codexHooksFeatureMarker = "# projmux-managed:codex-hooks-feature:v1"
-	codexHookCommand        = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
+	codexHookCommand        = canonicalCodexHookRoute + aiHookPaneArgument + " >/dev/null 2>&1 || true"
 	canonicalCodexHookRoute = "projmux internal agent-hook ingest codex-hook"
+	// priorCodexHookCommand is the pane-blind spelling projmux wrote before the
+	// hook carried its own Pane. Installed configs still hold it, so ownership
+	// keeps recognizing it as projmux-authored and `agent integrate codex`
+	// converges it forward instead of refusing the file as hand-edited.
+	priorCodexHookCommand = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
 
 	claudeSettingsRelativePath = ".claude/settings.json"
 	claudeHookManagedMarker    = "projmux-managed:claude-hook:v1"
-	claudeHookCommand          = "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # " + claudeHookManagedMarker
+	claudeHookCommand          = canonicalClaudeHookRoute + aiHookPaneArgument + " >/dev/null 2>&1 || true # " + claudeHookManagedMarker
 	canonicalClaudeHookRoute   = "projmux internal agent-hook ingest claude-hook"
+
+	// aiHookPaneArgument hands a provider hook the Pane it belongs to instead of
+	// letting it inherit one. projmux plants the activation envelope on the
+	// process it launches in the Pane, so the hook keeps its own identity even
+	// when the app-server that spawned it inherited no tmux environment at all.
+	// The value is deliberately unquoted and `=`-joined: an app-server shared by
+	// several Panes carries no envelope and expands this to a bare `--pane=`,
+	// which is not an identity, and the established matcher stays its fallback.
+	// The same argument is written for every provider; nothing here is
+	// provider-specific.
+	aiHookPaneArgument = " --pane=${" + internalActivationPaneUIDEnv + ":-}"
 
 	tmuxBellManagedMarker = "projmux-managed:tmux-bell:v1"
 	tmuxBellHookName      = "alert-bell"

@@ -2,14 +2,14 @@
   "PreInvocation": [
     {
       "type": "command",
-      "command": "'/opt/projmux/bin/projmux' internal agent-hook ingest antigravity-hook --event PreInvocation || printf '%s\\n' '{}' # projmux-managed:antigravity-hooks:v1",
+      "command": "'/opt/projmux/bin/projmux' internal agent-hook ingest antigravity-hook --event PreInvocation --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} || printf '%s\\n' '{}' # projmux-managed:antigravity-hooks:v1",
       "timeout": 30
     }
   ],
   "PostInvocation": [
     {
       "type": "command",
-      "command": "'/opt/projmux/bin/projmux' internal agent-hook ingest antigravity-hook --event PostInvocation || printf '%s\\n' '{}' # projmux-managed:antigravity-hooks:v1",
+      "command": "'/opt/projmux/bin/projmux' internal agent-hook ingest antigravity-hook --event PostInvocation --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} || printf '%s\\n' '{}' # projmux-managed:antigravity-hooks:v1",
       "timeout": 30
     }
   ],
@@ -19,7 +19,7 @@
       "hooks": [
         {
           "type": "command",
-          "command": "'/opt/projmux/bin/projmux' internal agent-hook ingest antigravity-hook --event PostToolUse || printf '%s\\n' '{}' # projmux-managed:antigravity-hooks:v1",
+          "command": "'/opt/projmux/bin/projmux' internal agent-hook ingest antigravity-hook --event PostToolUse --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} || printf '%s\\n' '{}' # projmux-managed:antigravity-hooks:v1",
           "timeout": 30
         }
       ]
@@ -28,7 +28,7 @@
   "Stop": [
     {
       "type": "command",
-      "command": "'/opt/projmux/bin/projmux' internal agent-hook ingest antigravity-hook --event Stop || printf '%s\\n' '{\"decision\":\"stop\"}' # projmux-managed:antigravity-hooks:v1",
+      "command": "'/opt/projmux/bin/projmux' internal agent-hook ingest antigravity-hook --event Stop --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} || printf '%s\\n' '{\"decision\":\"stop\"}' # projmux-managed:antigravity-hooks:v1",
       "timeout": 30
     }
   ]

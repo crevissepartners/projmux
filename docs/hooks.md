@@ -229,6 +229,39 @@ amber-orange status role, response-complete panes use success green, and
 in-progress panes use progress yellow. They do not inherit the critical queue
 severity, and permission/input status badges do not use red.
 
+## Hook Pane Identity
+
+Every provider hook projmux installs is handed the Pane it belongs to:
+
+```
+--pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-}
+```
+
+projmux plants that activation envelope on the process it launches in the Pane,
+so the value reaches the hook without depending on the tmux environment. That
+matters because the process that actually runs a provider hook is often not the
+one projmux started in the pane: an app-server can be launched with no `TMUX` and
+no `TMUX_PANE` at all, and a hook spawned from it inherits nothing tmux knows.
+
+The argument is resolved against the Registry, never trusted on its own. The
+Pane must exist, hold a live runtime handle, and round-trip through the Agent
+that owns it. When it does, that Pane is the answer and no other evidence is
+consulted — falling through to a working-directory match is exactly how an event
+lands on somebody else's Pane. When it does not, the event is not attributed and
+`ai-ingest.log` records which step failed.
+
+An app-server shared by several Panes carries no envelope, so the argument
+expands to a bare `--pane=`. That is a valid answer meaning "nothing was handed
+over", and attribution falls back to the established ladder: `TMUX_PANE`, then a
+working-directory match against the live pane list, then a thread or session id
+match. Nothing about any of this is provider-specific.
+
+Attribution failures are a closed vocabulary in `projmux diagnostics agent-hook`:
+`pane inventory unavailable` (no live pane list could be read), `no matching
+pane` (the list was read and nothing matched), `pane registry unavailable`,
+`explicit pane is not registered`, `explicit pane has no live runtime`, and
+`explicit pane binding is stale`.
+
 ## Codex Hooks Engine
 
 `projmux doctor` reports Codex hooks-engine wiring separately from legacy
@@ -282,49 +315,49 @@ hooks = true
 matcher = "*"
 [[hooks.PreToolUse.hooks]]
 type = "command"
-command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true"
 
 [[hooks.PermissionRequest]]
 matcher = "*"
 [[hooks.PermissionRequest.hooks]]
 type = "command"
-command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true"
 
 [[hooks.PostToolUse]]
 matcher = "*"
 [[hooks.PostToolUse.hooks]]
 type = "command"
-command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true"
 
 [[hooks.PreCompact]]
 matcher = "*"
 [[hooks.PreCompact.hooks]]
 type = "command"
-command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true"
 
 [[hooks.PostCompact]]
 matcher = "*"
 [[hooks.PostCompact.hooks]]
 type = "command"
-command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true"
 
 [[hooks.SessionStart]]
 matcher = "*"
 [[hooks.SessionStart.hooks]]
 type = "command"
-command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true"
 
 [[hooks.UserPromptSubmit]]
 matcher = "*"
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true"
 
 [[hooks.Stop]]
 matcher = "*"
 [[hooks.Stop.hooks]]
 type = "command"
-command = "projmux internal agent-hook ingest codex-hook >/dev/null 2>&1 || true"
+command = "projmux internal agent-hook ingest codex-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true"
 ```
 
 Repeated installs are idempotent and preserve unrelated Codex config, including
@@ -543,7 +576,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -553,7 +586,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -563,7 +596,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -573,7 +606,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -583,7 +616,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -593,7 +626,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }
@@ -603,7 +636,7 @@ an observability hook:
         "hooks": [
           {
             "type": "command",
-            "command": "projmux internal agent-hook ingest claude-hook >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
+            "command": "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"
           }
         ]
       }

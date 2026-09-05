@@ -564,7 +564,7 @@ func antigravityManagedCommand(executable, event string) string {
 	if event == "Stop" {
 		fallback = `{"decision":"stop"}`
 	}
-	return shellQuote(executable) + antigravityCanonicalIngestPath + " --event " + event +
+	return shellQuote(executable) + antigravityCanonicalIngestPath + " --event " + event + aiHookPaneArgument +
 		" || printf '%s\\n' '" + fallback + "' # " + antigravityManagedMarker
 }
 
