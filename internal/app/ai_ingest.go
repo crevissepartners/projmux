@@ -55,8 +55,15 @@ var aiBellPaneFormat = intmux.JoinFormats(intmux.FieldDelimiter, aiBellPaneForma
 // belongs to. ExplicitPane is the identity the hook command was handed; the
 // remaining fields are the inherited-environment evidence the matcher has always
 // used and still uses whenever no explicit identity arrived.
+//
+// Provider is the hook's own provider, which every route already knows about
+// itself. It exists so the matcher can tell an explicit identity that is the
+// hook's own from one it merely inherited: a provider host launched from
+// somebody else's Pane carries that Pane's activation envelope verbatim, and
+// having a value and owning it are different things.
 type aiPaneMatchInput struct {
 	ExplicitPane string
+	Provider     string
 	CWD          string
 	ThreadID     string
 	SessionID    string
@@ -76,6 +83,8 @@ const (
 	aiPaneMatchReasonExplicitStale       = "explicit pane binding is stale"
 	aiPaneMatchReasonConversationUnknown = "conversation is not registered to a pane"
 	aiPaneMatchReasonConversationShared  = "conversation is registered to several panes"
+	aiPaneMatchReasonExplicitForeign     = "explicit pane belongs to another provider"
+	aiPaneMatchReasonExplicitForeignOnly = "explicit pane belongs to another provider; no other match"
 )
 
 type aiPaneMatchRow struct {
@@ -610,12 +619,22 @@ func (c *aiCommand) writeAIHookResumeMetadata(paneID, resumeID string) {
 }
 
 // matchAIPane resolves the Pane a hook event belongs to and, when it cannot,
-// says which step failed. An explicit identity handed to the hook command is the
-// whole answer: it is resolved through the Registry and never falls through to
-// the inherited-environment ladder, because falling through would attribute the
-// event to whichever other live Pane happens to share a working directory. The
-// established three-step ladder is unchanged and remains the answer whenever no
-// explicit identity arrived.
+// says which step failed. An explicit identity handed to the hook command is
+// normally the whole answer: it is resolved through the Registry and does not
+// fall through to the inherited-environment ladder, because falling through
+// would attribute the event to whichever other live Pane happens to share a
+// working directory. The established three-step ladder is unchanged and remains
+// the answer whenever no explicit identity arrived.
+//
+// The one explicit value that is not an answer is one that was never the hook's
+// own. A provider host shared by several Panes inherits the activation envelope
+// of whichever Pane happened to launch it, so the argument can arrive holding a
+// live, perfectly resolvable Pane that belongs to a different provider. Having a
+// value and owning it are different things, and only the Registry can tell them
+// apart: when it positively records a different provider for that Pane, the
+// value is refused and the event continues to the steps that answer from what
+// the hook itself carries. The inherited tmux environment is deliberately not
+// among them -- it comes from the same envelope that was just refused.
 //
 // Behind that ladder sits one further step for the hook nobody can hand an
 // identity to. A provider host shared by several Panes inherits neither the
@@ -627,7 +646,11 @@ func (c *aiCommand) writeAIHookResumeMetadata(paneID, resumeID string) {
 // conversation no Pane claims fails by name rather than landing on a neighbour.
 func (c *aiCommand) matchAIPane(in aiPaneMatchInput) (string, string) {
 	if explicit := strings.TrimSpace(in.ExplicitPane); explicit != "" {
-		return c.resolveExplicitAIPane(explicit)
+		paneID, reason := c.resolveExplicitAIPane(in.Provider, explicit)
+		if paneID != "" || reason != aiPaneMatchReasonExplicitForeign {
+			return paneID, reason
+		}
+		return c.matchAIPaneAfterForeignExplicit(in)
 	}
 	if envPane := strings.TrimSpace(c.env("TMUX_PANE")); envPane != "" {
 		return envPane, ""
@@ -640,6 +663,74 @@ func (c *aiCommand) matchAIPane(in aiPaneMatchInput) (string, string) {
 		return "", reason
 	}
 	return c.resolveRegisteredConversationPane(in.ThreadID, in.SessionID)
+}
+
+// matchAIPaneAfterForeignExplicit continues a refused inherited identity through
+// the steps that answer from what the hook itself carries. The Registry
+// conversation lookup goes first because it is the only step that answers from
+// the payload alone; the established inventory ladder follows it unchanged. The
+// inherited `TMUX_PANE` step is skipped on purpose: that variable arrives in the
+// very envelope whose Pane identity was just refused, so honouring it would
+// reintroduce the same misattribution through a second door.
+//
+// Provider coherence is applied once more here, to whatever these steps resolve.
+// This path exists only because the explicit value was foreign, and its second
+// step matches on working directory alone -- on a machine where every provider
+// Pane sits in the same repository that step would hand the event straight back
+// to a Pane of the very provider just refused. The check is applied to the
+// resolved answer rather than inside the ladder, so the ladder and the path that
+// was handed nothing keep their behavior exactly.
+//
+// A foreign answer ends the attempt rather than restarting the ladder looking
+// for a later row: refusing with a reason is the conservative end, and rescanning
+// would mean changing the shared ladder. Silence stays silence -- a Pane the
+// Registry records no provider for is not a contradiction and is still taken.
+//
+// A failure here keeps the refusal legible. The reason is its own token rather
+// than the downstream step's, so the record still says the hook was handed
+// somebody else's Pane instead of only saying the inventory was unreadable.
+func (c *aiCommand) matchAIPaneAfterForeignExplicit(in aiPaneMatchInput) (string, string) {
+	registry := coremetadata.Registry{}
+	if c.loadRegistry != nil {
+		if loaded, err := c.loadRegistry(); err == nil {
+			registry = loaded
+		}
+	}
+	own := func(paneID string) bool {
+		return !explicitAIPaneIsForeign(in.Provider, registeredPaneProvider(registry, paneID))
+	}
+	if strings.TrimSpace(in.ThreadID) != "" || strings.TrimSpace(in.SessionID) != "" {
+		if paneID, _ := c.resolveRegisteredConversationPane(in.ThreadID, in.SessionID); paneID != "" && own(paneID) {
+			return paneID, ""
+		}
+	}
+	if paneID, _ := c.matchAIPaneFromInventory(in); paneID != "" && own(paneID) {
+		return paneID, ""
+	}
+	return "", aiPaneMatchReasonExplicitForeignOnly
+}
+
+// registeredPaneProvider reports the provider the Registry records for a Pane,
+// addressed by either spelling a step can produce. It demands the same round
+// trip resolveExplicitAIPane does -- activation handle, owning Agent, and that
+// Agent pointing back at this Pane -- and reports nothing for anything short of
+// that. Nothing is silence, which the coherence predicate reads as agreement
+// rather than disagreement, so an unregistered or half-torn Pane never becomes a
+// refusal of its own.
+func registeredPaneProvider(registry coremetadata.Registry, ref string) string {
+	pane, ok := explicitAIPaneResource(registry, strings.TrimSpace(ref))
+	if !ok {
+		return ""
+	}
+	agentUID := strings.TrimSpace(pane.Status.Activation.AgentUID)
+	if agentUID == "" {
+		return ""
+	}
+	agent, ok := registry.Agent(agentUID)
+	if !ok || agent.Status.PaneRef != pane.Metadata.UID {
+		return ""
+	}
+	return agent.Spec.Provider
 }
 
 // matchAIPaneFromInventory is the established three-step ladder over the live
@@ -753,7 +844,16 @@ func registeredConversationPanes(registry coremetadata.Registry) map[string]stri
 // a Pane whose Agent binding no longer round-trips, is a failure rather than a
 // second-best guess. Resolution reads no tmux server, so it survives an
 // app-server that inherited no tmux environment.
-func (c *aiCommand) resolveExplicitAIPane(ref string) (string, string) {
+//
+// The last check is coherence rather than liveness, and it is what separates an
+// identity the hook owns from one it inherited. The Registry already records
+// which provider an Agent runs, in exactly the shape markAIHookPane compares
+// against, so a Codex hook handed a Claude Pane is a contradiction the resource
+// model states outright. Only a recorded and different provider refuses: a Pane
+// the Registry records no provider for -- an unbound shell where somebody just
+// ran a provider by hand -- is not a contradiction and resolves as before. The
+// rule is symmetric over providers and names none of them.
+func (c *aiCommand) resolveExplicitAIPane(provider, ref string) (string, string) {
 	if c.loadRegistry == nil {
 		return "", aiPaneMatchReasonRegistryUnavailable
 	}
@@ -774,8 +874,21 @@ func (c *aiCommand) resolveExplicitAIPane(ref string) (string, string) {
 		if !ok || agent.Status.PaneRef != pane.Metadata.UID {
 			return "", aiPaneMatchReasonExplicitStale
 		}
+		if explicitAIPaneIsForeign(provider, agent.Spec.Provider) {
+			return "", aiPaneMatchReasonExplicitForeign
+		}
 	}
 	return runtimeID, ""
+}
+
+// explicitAIPaneIsForeign reports whether the Registry positively contradicts a
+// hook's claim on a Pane. Both sides are normalized through the one provider
+// vocabulary, and an unrecognized or absent value on either side is silence, not
+// disagreement: only two recognized providers that differ are a contradiction.
+func explicitAIPaneIsForeign(hookProvider, paneProvider string) bool {
+	hook := coremetadata.NormalizeProvider(hookProvider)
+	pane := coremetadata.NormalizeProvider(paneProvider)
+	return hook != "" && pane != "" && hook != pane
 }
 
 // explicitAIPaneResource accepts either spelling a hook can be handed: the

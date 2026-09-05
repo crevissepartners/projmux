@@ -65,6 +65,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent, explicitPa
 
 	paneID, matchReason := c.matchAIPane(aiPaneMatchInput{
 		ExplicitPane: explicitPane,
+		Provider:     aiModeAntigravity,
 		CWD:          payload.CWD,
 		ThreadID:     payload.ConversationID,
 	})

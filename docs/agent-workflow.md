@@ -1007,6 +1007,69 @@ Admission also does not reduce how often the native connection drops, and it
 says nothing about the `@projmux_ai_state` / `@projmux_ai_badge_kind` /
 `@projmux_attention_state` triple, which has no fence of its own.
 
+### Inherited pane identity refusal tests
+
+A provider host shared by several Panes inherits the activation envelope of
+whichever Pane happened to launch it, tmux environment included. The `--pane`
+argument therefore arrives holding a live, perfectly resolvable Pane that
+belongs to a different provider, and resolving it verbatim attributes the event
+to that Pane. Having an explicit value and owning it are different things; only
+the Registry, which already records which provider an Agent runs, can tell them
+apart.
+
+- `TestResolveExplicitAIPaneRefusesAnInheritedForeignIdentity` owns the decision
+  itself. Both spellings of the handed identity are refused whenever the
+  Registry positively records a different provider for that Pane, in every
+  direction between the catalogued providers, so the rule is symmetric rather
+  than a guard around one of them.
+- `TestMatchAIPaneNeverAttributesAnInheritedForeignIdentity` owns the same
+  fixture through the whole matcher: with nothing else able to answer, a refused
+  inherited identity ends as a named failure and never as the foreign Pane.
+- `TestMatchAIPaneKeepsAnExplicitPaneWithNoRecordedProvider` owns the silence
+  case. A Pane the Registry records no provider for — an unbound shell where
+  somebody ran a provider by hand — is not a contradiction, and neither is an
+  unrecognized spelling on either side; all of them resolve exactly as before.
+- `TestMatchAIPaneContinuesPastARefusedInheritedIdentity` owns the priority
+  ladder behind the refusal: the Registry conversation record answers first, the
+  established inventory ladder answers behind it, and only a fall-through that
+  also fails ends as a failure.
+- `TestForeignExplicitFallThroughIgnoresTheInheritedEnvironment` owns the one
+  step the fall-through deliberately skips. `TMUX_PANE` arrives in the same
+  envelope whose Pane identity was just refused, so honouring it would
+  reintroduce the misattribution through a second door; the path that was handed
+  nothing keeps that step exactly as before.
+- `TestForeignExplicitRefusalLeavesTheRegistryPathUnchanged` is the negative
+  audit. The stage writes nothing and defines no binding, and the Registry
+  conversation index returns the same map whether or not an Agent records a
+  provider, so the shared-host attribution path above is unchanged.
+- `TestAttributionFailureReasonsAreDistinctAndClosed` additionally owns the two
+  new tokens: the refusal itself, and the composite the matcher reports once the
+  fall-through has also failed. The composite is its own entry rather than the
+  downstream step's reason, so a record still says the hook was handed somebody
+  else's Pane. Every token stays provider-neutral in wording.
+
+The fall-through has a second door of its own. Its inventory step matches on
+working directory alone, and where every provider Pane sits in the same
+repository that step would hand the event straight back to a Pane of the very
+provider just refused. Phase 8 is what routes a foreign-refused hook into that
+ladder at all, so the coherence check is applied once more to whatever the
+fall-through resolves — to the answer, never inside the shared ladder.
+
+- `TestForeignExplicitFallThroughDoesNotLandOnAnotherProvidersPane` owns that
+  door in both directions: a cwd-sharing Pane of the refused provider is not
+  taken, and the attempt ends with its own reason rather than with that Pane.
+- `TestForeignExplicitFallThroughStillTakesACoherentLadderAnswer` owns the
+  fail-open direction that keeps the Phase 2 contract intact: a ladder answer
+  running the hook's own provider, one the Registry records no provider for, and
+  one recording an unrecognized spelling are all still taken.
+- `TestForeignExplicitFallThroughDoesNotTakeAForeignConversationPane` owns the
+  same check on the Registry conversation record, and proves refusing it does
+  not consume the inventory ladder's turn behind it.
+- `TestNoExplicitPathStillTakesACwdMatchRegardlessOfProvider` is the proof that
+  the shared ladder is untouched: with no explicit value there is no refused
+  envelope and therefore no coherence question, and the cwd and thread steps
+  resolve exactly as before for every provider.
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.
