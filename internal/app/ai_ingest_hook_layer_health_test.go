@@ -468,9 +468,31 @@ func TestOwnershipHealthCountsAConversationCarriedByTheWrongSource(t *testing.T)
 	if ownership.Foreign != 2 {
 		t.Fatalf("foreign = %d, want only the two that actually landed on a Pane", ownership.Foreign)
 	}
+	if ownership.OwnedConversations != 2 {
+		t.Fatalf("owned conversations = %d, want the two the window can see an owner for", ownership.OwnedConversations)
+	}
 	surface := codexPaneOwnershipSurface(ownership)
-	if !strings.Contains(surface.Detail, "3 record(s) misrouted") {
-		t.Fatalf("detail = %q, want the misroute count visible", surface.Detail)
+	if !strings.Contains(surface.Detail, "3 record(s) misrouted across 2 conversation(s) with a known owner") {
+		t.Fatalf("detail = %q, want the misroute count carried with what it is over", surface.Detail)
+	}
+
+	// The detector is a join, so it needs the owning source's records in the
+	// same window. The log is trimmed by size, and when the owner ages out
+	// first the misrouted records revert to looking like ordinary unregistered
+	// conversations — the exact blind spot this counter closed. It was seen
+	// happening: 98 fell to 2 across one trim with nothing repaired. A zero
+	// therefore has to be readable against how much the window could check.
+	blinded := projectAIIngestOwnershipHealth([]aiIngestLogEntry{
+		{Source: "claude-hook", Event: "Stop", Result: "ignored", Reason: aiPaneMatchReasonConversationUnknown, SessionID: conversation},
+	}, registry, true)
+	if blinded.Misrouted != 0 {
+		t.Fatalf("misrouted = %d with the owner outside the window, want the join to find nothing", blinded.Misrouted)
+	}
+	if blinded.OwnedConversations != 0 {
+		t.Fatalf("owned conversations = %d, want zero so the zero above reads as unchecked", blinded.OwnedConversations)
+	}
+	if detail := codexPaneOwnershipSurface(blinded).Detail; !strings.Contains(detail, "0 record(s) misrouted across 0 conversation(s)") {
+		t.Fatalf("detail = %q, want a zero that shows nothing could be checked", detail)
 	}
 	// A window with no cross-provider carriage counts none, so the number
 	// cannot become background noise.
@@ -478,8 +500,9 @@ func TestOwnershipHealthCountsAConversationCarriedByTheWrongSource(t *testing.T)
 		{Source: "codex-hook", Result: "state", Pane: "%122", ThreadID: conversation},
 		{Source: "claude-hook", Result: "state", Pane: "%123", ThreadID: "claude-own"},
 	}, registry, true)
-	if clean.Misrouted != 0 {
-		t.Fatalf("misrouted = %d on a clean window, want none", clean.Misrouted)
+	if clean.Misrouted != 0 || clean.OwnedConversations != 2 {
+		t.Fatalf("clean window misrouted=%d owned=%d, want none over the two it could check",
+			clean.Misrouted, clean.OwnedConversations)
 	}
 	// Misrouting alone is a degradation, not a break: the routing that produced
 	// it lives outside this application, so there is nothing here to repair.

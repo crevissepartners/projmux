@@ -46,6 +46,18 @@ type aiIngestOwnershipHealth struct {
 	// indistinguishable from an ordinary retired conversation. On this machine
 	// that hid 96 of 98 such records behind a number that reads as routine.
 	Misrouted int `json:"misrouted"`
+	// OwnedConversations is how many distinct conversations in the window had
+	// their owning source observed.
+	//
+	// It is the denominator Misrouted is over, and it has to be rendered
+	// because the detector is a join: a record is only known to be misrouted
+	// while the conversation's owner is also in the window. The log is trimmed
+	// by size, so the owner's records can age out while the misrouted ones
+	// remain, and the count silently returns to zero. That is not a repair --
+	// it is the detector going blind, and it was observed doing so: 98 fell to
+	// 2 across one trim with nothing changed. A zero over a small denominator
+	// means "little was visible"; over a large one it means "little happened".
+	OwnedConversations int `json:"owned_conversations"`
 	// Unrecorded counts attributions to a Pane the Registry holds but records
 	// no provider for.
 	//
@@ -101,7 +113,7 @@ func projectAIIngestOwnershipHealth(entries []aiIngestLogEntry, registry coremet
 			byRuntime[runtime] = pane.Status.Activation
 		}
 	}
-	health.Misrouted = countMisroutedConversations(entries)
+	health.Misrouted, health.OwnedConversations = countMisroutedConversations(entries)
 	for _, entry := range entries {
 		source := strings.TrimSpace(entry.Source)
 		binds, known := codexHookProviderBinding[source]
@@ -172,7 +184,7 @@ func aiIngestConversationID(entry aiIngestLogEntry) string {
 // same conversation was routed by something that should not have been routing
 // it. Two sources legitimately sharing one conversation would defeat this, and
 // nothing in the hook contract does that.
-func countMisroutedConversations(entries []aiIngestLogEntry) int {
+func countMisroutedConversations(entries []aiIngestLogEntry) (int, int) {
 	owner := map[string]string{}
 	for _, entry := range entries {
 		source := strings.TrimSpace(entry.Source)
@@ -197,5 +209,5 @@ func countMisroutedConversations(entries []aiIngestLogEntry) int {
 			misrouted++
 		}
 	}
-	return misrouted
+	return misrouted, len(owner)
 }

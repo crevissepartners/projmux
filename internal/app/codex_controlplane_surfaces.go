@@ -424,7 +424,12 @@ func codexPaneOwnershipSurface(ownership aiIngestOwnershipHealth) codexControlPl
 	if ownership.Classified == 0 {
 		surface.Status = codexSurfaceStatusUnobserved
 		surface.Detail = fmt.Sprintf("no attribution could be judged; %d landed on a Pane the Registry no longer holds", ownership.Unresolved)
-		return surface
+		// The misroute counts survive this branch. They are about which source
+		// carried a conversation, not about which Pane an event reached, so a
+		// window where nothing could be judged can still have plenty to say --
+		// and dropping them here would hide the reading exactly when the window
+		// is least informative.
+		return codexWithMisrouteDetail(surface, ownership)
 	}
 	// The denominator leads, because the verdict is only about the numerator.
 	// "judged 718" beside a separate "unrecorded 267" invites reading the first
@@ -433,20 +438,7 @@ func codexPaneOwnershipSurface(ownership aiIngestOwnershipHealth) codexControlPl
 	surface.Detail = fmt.Sprintf("judged %d of %d attributions; foreign %d; unresolved %d; provider unrecorded %d",
 		ownership.Classified, ownership.Classified+ownership.Unresolved+ownership.Unrecorded,
 		ownership.Foreign, ownership.Unresolved, ownership.Unrecorded)
-	if ownership.Misrouted > 0 {
-		// Counted over the whole window rather than over the judged
-		// attributions, because most misrouted records never reach a Pane at
-		// all: they fail to attribute, land in the contractual refusal bucket
-		// where they belong, and become indistinguishable from an ordinary
-		// retired conversation. That is where 96 of 98 of them hid.
-		surface.Detail += fmt.Sprintf("; %d record(s) misrouted across providers in the window", ownership.Misrouted)
-	}
-	if directions := codexReasonBreakdown(ownership.Directions); directions != "" {
-		// Which way the mismatch runs is the whole diagnosis. One direction is
-		// a hook landing on the Pane that launched its host; the other is an
-		// event that arrived under the wrong source before attribution ran.
-		surface.Detail += " (" + directions + ")"
-	}
+	surface = codexWithMisrouteDetail(surface, ownership)
 	if ownership.Foreign > 0 {
 		surface.Status = codexSurfaceStatusBroken
 		return surface
@@ -474,6 +466,27 @@ func codexReasonBreakdown(reasons []aiIngestAttributionReason) string {
 		rendered = append(rendered, fmt.Sprintf("%s=%d", reason.Reason, reason.Count))
 	}
 	return strings.Join(rendered, ", ")
+}
+
+// codexWithMisrouteDetail appends the cross-provider carriage reading.
+//
+// The count is over the whole window rather than over the judged attributions,
+// because most misrouted records never reach a Pane at all: they fail to
+// attribute, land in the contractual refusal bucket where they belong, and
+// become indistinguishable from an ordinary retired conversation. That is where
+// 96 of 98 of them hid.
+//
+// The denominator travels with it because the detector is a join -- a record is
+// only known to be misrouted while its conversation's owner is also in the
+// window. The log is trimmed by size, so the owner can age out while the
+// misrouted records remain, and the count returns to zero without anything
+// being repaired. That was observed: 98 fell to 2 across one trim. A zero over
+// a small denominator means little was visible; over a large one it means
+// little happened.
+func codexWithMisrouteDetail(surface codexControlPlaneSurface, ownership aiIngestOwnershipHealth) codexControlPlaneSurface {
+	surface.Detail += fmt.Sprintf("; %d record(s) misrouted across %d conversation(s) with a known owner",
+		ownership.Misrouted, ownership.OwnedConversations)
+	return surface
 }
 
 func codexEndpointPresence(endpoint string) string {

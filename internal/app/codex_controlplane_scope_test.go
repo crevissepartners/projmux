@@ -117,3 +117,48 @@ func TestEverySurfaceRendersTheScopeItDeclares(t *testing.T) {
 		t.Fatal("the hook rows carry counts over a time span and the section does not name it")
 	}
 }
+
+// TestReasonVocabularyIsDeliberatelyNotADoctorSurface pins an absence.
+//
+// Seven surfaces are rendered. The eighth guarantee this section holds — that
+// the ingest log's reason column carries only bounded values — is a build-time
+// claim about source, and it stays out of the diagnosis on purpose.
+//
+// The reason is the one this whole section exists for. A static claim has no
+// honest runtime rendering: the check reads the writes, and at runtime the only
+// thing a diagnosis could report is whether the values it happened to observe
+// looked bounded. That answer is green on every window where nothing leaked,
+// including the windows where the leaking path simply did not fire — which is
+// "the check passes while the subject leaks", the exact failure this section
+// was built to end. A green row would be worse than no row.
+//
+// So the guarantee is enforced where it can be enforced completely, and a
+// future reader who notices the asymmetry and adds the missing row finds this.
+func TestReasonVocabularyIsDeliberatelyNotADoctorSurface(t *testing.T) {
+	if len(codexControlPlaneSurfaceOrder) != 7 {
+		t.Fatalf("the diagnosis renders %d surfaces, want the seven that have an honest runtime signal",
+			len(codexControlPlaneSurfaceOrder))
+	}
+	for _, surface := range codexControlPlaneSurfaceOrder {
+		for _, forbidden := range []string{"reason-vocabulary", "reason-column", "ingest-reason"} {
+			if surface == forbidden {
+				t.Fatalf("surface %q renders a build-time claim about source. At runtime it can only report "+
+					"that nothing it saw looked wrong, which is green on every window where the leaking path "+
+					"did not fire — a check passing while its subject leaks.", surface)
+			}
+		}
+	}
+	// The guarantee is still held, in the place that can hold it completely.
+	if len(codexControlPlaneContractEnforcement["C-4"]) == 0 {
+		t.Fatal("the reason-column guarantee has no enforcement at all")
+	}
+	var enforced bool
+	for _, name := range codexControlPlaneContractEnforcement["C-4"] {
+		if name == "TestIngestReasonColumnCarriesOnlyBoundedValues" {
+			enforced = true
+		}
+	}
+	if !enforced {
+		t.Fatal("the reason column is absent from the diagnosis and unenforced in the build; it must be one or the other")
+	}
+}
