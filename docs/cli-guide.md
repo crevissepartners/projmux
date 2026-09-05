@@ -248,8 +248,8 @@ flag alone:
 projmux create codex                       # active Project, active Window, split from the active Pane
 projmux create codex -p alpha -w hi --create-window  # exact Project, new Window "hi"
 projmux create codex -p beta -w main        # everything explicit
+projmux create pane -p alpha                # exactly alpha's primary Window
 projmux create pane -p alpha --all-windows  # every Window of alpha; a deliberate fan-out
-projmux create pane -p alpha --primary-window  # exactly alpha's spec.primaryWindowRef Window
 ```
 
 One explicit scope occurrence (`--project`, `--window`, `--pane`, `--selector`,
@@ -269,26 +269,33 @@ which set:
 | spelling | target set |
 | --- | --- |
 | whole scope omitted, inside a managed Pane | the active Window, anchored on the active Pane |
-| `--project P` alone | **every Window of P**, plus a compatibility warning on stderr |
-| `--project P --all-windows` | every Window of P; the explicit spelling of the row above |
-| `--project P --primary-window` | exactly `P`'s `spec.primaryWindowRef` Window |
+| `--project P` alone | exactly `P`'s `spec.primaryWindowRef` Window |
+| `--project P --primary-window` | the same Window, spelled out |
+| `--project P --all-windows` | **every Window of P**; the opt-in fan-out |
 | `--project P --window W...` | the named Windows, deduplicated in argv order |
 | `--project P --selector k=v...` | the Windows whose labels match; zero matches refuses |
 | `--project P --pane X...` | the owning Window of each named Pane |
 | `--create-window --window <name>` | the ensured Window |
 
-`--project P` with no Window selector still means "every Window of P" and is
-unchanged, but it now prints a one-line notice on stderr (never stdout, so
-existing scripts keep their exact bytes) saying that a future release will
-narrow it to the Project's primary Window. Respell it `--all-windows` to keep
-today's fan-out or `--primary-window` to take the future behavior now; the
-notice also appears in `-o receipt` as a `compatibilityWarnings` entry.
+`--project P` with no Window selector means exactly one Window: the Project's
+`spec.primaryWindowRef`. An earlier release spelled the same thing as "every
+Window of P" and spent a release printing a deprecation notice naming this
+default and both flags; the notice is gone now that the default is what it
+named. The whole-Project fan-out is not gone with it -- it is `--all-windows`,
+which resolves the identical set that spelling used to resolve.
+
+Omitting the scope entirely is a different thing and did not change. Inside a
+managed Pane, `projmux create pane` with no `--project` at all still splits the
+Window you are looking at, anchored on the Pane you are in.
 
 `--all-windows` and `--primary-window` each fix the target set outright, so
 neither can be combined with `--window`, `--pane`, `--selector`,
 `--create-window`, or with the other one. Every such pair is exit `2` before any
 Registry write, tmux object, or provider launch. An empty `--all-windows` set
-and a dangling or cross-Project `spec.primaryWindowRef` refuse the same way.
+refuses the same way, and so does a missing, dangling, or cross-Project
+`spec.primaryWindowRef` -- for `--primary-window` and for the bare `--project`
+default alike, since they share one preflight. The refusal names the spelling
+you actually typed.
 
 The `-o receipt` projection reports the target planner's decision in
 `selectedWindowUIDs`, so `create pane`, `create agent`, and the three provider

@@ -1855,11 +1855,12 @@ Resource-first create:
   through the same `@projmux_window_uid` mirror and registry `ownerRef` chain
   the read verbs use.
 - **Window and anchor follow the whole scope, not the Project flag.** They are
-  derived only when the argv named no `--project`, `--window`, `--pane`, and no
-  `--selector` at all. That keeps a bare `create pane --placement right` -- the
-  generated keybinding body -- a split of the Window the operator is looking at,
-  instead of a fan-out over every Window of the Project, while one explicit
-  occurrence still fixes the whole target set. An explicit `--pane` or popup
+  derived only when the argv named no `--project`, `--window`, `--pane`,
+  `--selector`, `--all-windows`, and no `--primary-window` at all. That keeps a
+  bare `create pane --placement right` -- the generated keybinding body -- a
+  split of the Window the operator is looking at, rather than of the Project's
+  primary Window, which is what the same route resolves once a `--project` scope
+  is typed, while one explicit occurrence still fixes the whole target set. An explicit `--pane` or popup
   origin is the exact split anchor. Only a scope with no Pane consumes the
   target Window's role-agnostic `spec.anchorPaneRef`; a missing, stale, dead, or
   cross-Window ref refuses with no alternate-live-Pane inference.

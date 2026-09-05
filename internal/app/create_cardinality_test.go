@@ -89,11 +89,11 @@ func createReceipt(t *testing.T, create *createCommand, args ...string) (cli.Ope
 // TestChildCreateTargetCardinalityTable is the confirmed cardinality contract of
 // the shared target planner, over zero, one, and several Windows.
 //
-// The three rows that matter are the compatibility one and its two explicit
-// respellings: `--project P` alone still resolves every Window of P,
-// `--all-windows` resolves exactly the same set, and `--primary-window`
-// resolves exactly spec.primaryWindowRef. The selected set is read from the
-// receipt because the receipt is what the planner now publishes.
+// The three rows that matter are the default one and its two explicit
+// spellings: `--project P` alone resolves exactly spec.primaryWindowRef, which
+// is what `--primary-window` spells out, and `--all-windows` is the
+// whole-Project fan-out that scope used to resolve. The selected set is read
+// from the receipt because the receipt is what the planner publishes.
 func TestChildCreateTargetCardinalityTable(t *testing.T) {
 	t.Parallel()
 
@@ -101,21 +101,19 @@ func TestChildCreateTargetCardinalityTable(t *testing.T) {
 		name     string
 		args     []string
 		selected []string
-		warned   bool
 	}{
 		{
-			name:     "--project alone still fans out across every Window",
+			name:     "--project alone is the exact-one primary Window",
 			args:     []string{"pane", "--project", cardinalityMultiProject},
-			selected: []string{"win-alpha-main", "win-alpha-review"},
-			warned:   true,
+			selected: []string{"win-alpha-main"},
 		},
 		{
-			name:     "--all-windows is the same set, spelled out",
+			name:     "--all-windows is the opt-in whole-Project fan-out",
 			args:     []string{"pane", "--project", cardinalityMultiProject, "--all-windows"},
 			selected: []string{"win-alpha-main", "win-alpha-review"},
 		},
 		{
-			name:     "--primary-window is the exact-one spec.primaryWindowRef",
+			name:     "--primary-window spells out what --project alone means",
 			args:     []string{"pane", "--project", cardinalityMultiProject, "--primary-window"},
 			selected: []string{"win-alpha-main"},
 		},
@@ -125,16 +123,15 @@ func TestChildCreateTargetCardinalityTable(t *testing.T) {
 			selected: []string{"win-alpha-review"},
 		},
 		{
-			name:     "a one-Window Project fans out onto its only Window",
+			name:     "a one-Window Project resolves its only Window, which is its primary",
 			args:     []string{"pane", "--project", cardinalitySingleProject},
 			selected: []string{"win-beta-main"},
-			warned:   true,
 		},
 		{
-			// The fan-out and the primary selection coincide here, and the
-			// warning is still owed: the spelling is what a future release
-			// changes, and a script with one Window today can have two
-			// tomorrow.
+			// The fan-out and the primary selection coincide here, which is
+			// why a one-Window Project cannot tell the three spellings apart
+			// and the multi-Window rows above are the ones that fix the
+			// contract.
 			name:     "a one-Window Project spelled --all-windows says the same thing",
 			args:     []string{"pane", "--project", cardinalitySingleProject, "--all-windows"},
 			selected: []string{"win-beta-main"},
@@ -154,18 +151,14 @@ func TestChildCreateTargetCardinalityTable(t *testing.T) {
 			if !slicesEqualStrings(receipt.SelectedWindowUIDs, test.selected) {
 				t.Fatalf("selectedWindowUIDs = %v, want %v", receipt.SelectedWindowUIDs, test.selected)
 			}
-			if got := len(receipt.CompatibilityWarnings); (got == 1) != test.warned {
-				t.Fatalf("compatibilityWarnings = %v, want warned=%v", receipt.CompatibilityWarnings, test.warned)
+			// The compatibility release is over: the default is now the
+			// behavior the notice named, so no spelling of a child create
+			// carries a warning on either channel.
+			if len(receipt.CompatibilityWarnings) != 0 {
+				t.Fatalf("compatibilityWarnings = %v, want none", receipt.CompatibilityWarnings)
 			}
-			if test.warned {
-				if receipt.CompatibilityWarnings[0] != projectFanOutDeprecationWarning {
-					t.Fatalf("receipt warning = %q", receipt.CompatibilityWarnings[0])
-				}
-				if strings.Count(stderr, projectFanOutDeprecationWarning) != 1 {
-					t.Fatalf("stderr = %q, want exactly one compatibility notice", stderr)
-				}
-			} else if strings.Contains(stderr, projectFanOutDeprecationWarning) {
-				t.Fatalf("an explicit spelling still warned: %q", stderr)
+			if stderr != "" {
+				t.Fatalf("stderr = %q, want 0 bytes", stderr)
 			}
 		})
 	}
@@ -182,9 +175,12 @@ func TestChildCreateZeroWindowCardinalityRefusesWithZeroWrites(t *testing.T) {
 		want string
 	}{
 		{
-			name: "the compatibility spelling refuses on an empty Project",
+			// The default is the primary selection now, so the empty Project
+			// refuses on the missing pointer rather than on a bare no-match,
+			// and the refusal names --project because that is what was typed.
+			name: "--project alone refuses when there is no primary Window",
 			args: []string{"pane", "--project", cardinalityEmptyProject},
-			want: "matched no windows",
+			want: "--project: project/empty has no spec.primaryWindowRef",
 		},
 		{
 			name: "--all-windows refuses on an empty Project",
@@ -324,6 +320,21 @@ func TestChildCreatePreflightRefusalsCostNothing(t *testing.T) {
 		assertPreflightRefusal(t, err, stdout, "is dangling or owned by another Project", store, before, tmux, launcher)
 	})
 
+	t.Run("a dangling primaryWindowRef refuses through the --project default too", func(t *testing.T) {
+		t.Parallel()
+		// The default spelling shares the flag's preflight, so it shares the
+		// refusal -- and the message names --project rather than a flag the
+		// operator never typed.
+		store := withDanglingPrimary(newFakeResourceStore(t), "prj-alpha", "win-vanished")
+		before := store.snapshot()
+		tmux := newFakeTmux()
+		create, launcher := newTestAgentCreateCommand(t, store, tmux)
+
+		stdout, _, err := runRoute(t, create, "pane", "--project", "alpha")
+		assertPreflightRefusal(t, err,
+			stdout, "create pane --project: project/alpha spec.primaryWindowRef", store, before, tmux, launcher)
+	})
+
 	t.Run("a cross-root primaryWindowRef refuses", func(t *testing.T) {
 		t.Parallel()
 		// win-beta-main exists, but it belongs to project/beta.
@@ -444,58 +455,90 @@ func TestChildCreateSelectedWindowSetIsIdenticalAcrossProviders(t *testing.T) {
 	}
 }
 
-// TestExistingProjectOnlyOmissionIsCompatible is the compatibility guarantee of
-// the whole release: the old spelling keeps its target set and its stdout, and
-// gains exactly one warning on stderr and exactly one in the receipt.
-func TestExistingProjectOnlyOmissionIsCompatible(t *testing.T) {
+// TestProjectOnlyOmissionIsThePrimaryWindowDefault is the cutover guarantee of
+// this release: the spelling the previous release warned about now resolves the
+// exact-one Window that warning named, and the set it used to resolve is still
+// reachable, unchanged, under the flag that warning named for it.
+//
+// Nothing here is silent. The narrowing is the one the notice announced, the
+// wide set is preserved verbatim behind `--all-windows`, and the two spellings
+// that were never part of the compatibility surface -- a wholly omitted scope
+// and an explicit `--primary-window` -- keep the meanings they had.
+func TestProjectOnlyOmissionIsThePrimaryWindowDefault(t *testing.T) {
 	t.Parallel()
 
-	t.Run("stdout is byte-identical to the explicit respelling", func(t *testing.T) {
+	t.Run("the omission is byte-identical to --primary-window", func(t *testing.T) {
 		t.Parallel()
-		compatibility := newFakeResourceStore(t)
-		compatibilityCreate, _ := newTestResourceCreateCommand(t, compatibility, newFakeTmux())
+		omitted := newFakeResourceStore(t)
+		omittedCreate, _ := newTestResourceCreateCommand(t, omitted, newFakeTmux())
 		explicit := newFakeResourceStore(t)
 		explicitCreate, _ := newTestResourceCreateCommand(t, explicit, newFakeTmux())
 
-		oldStdout, oldStderr, err := runRoute(t, compatibilityCreate, "pane", "--project", "alpha")
+		omittedStdout, omittedStderr, err := runRoute(t, omittedCreate, "pane", "--project", "alpha")
 		if err != nil {
-			t.Fatalf("compatibility spelling error = %v", err)
+			t.Fatalf("--project-only error = %v", err)
 		}
-		newStdout, newStderr, err := runRoute(t, explicitCreate, "pane", "--project", "alpha", "--all-windows")
+		explicitStdout, explicitStderr, err := runRoute(t, explicitCreate, "pane", "--project", "alpha", "--primary-window")
 		if err != nil {
-			t.Fatalf("--all-windows error = %v", err)
+			t.Fatalf("--primary-window error = %v", err)
 		}
-		if oldStdout != newStdout {
-			t.Fatalf("stdout drifted: compatibility=%q all-windows=%q", oldStdout, newStdout)
+		if omittedStdout != explicitStdout {
+			t.Fatalf("stdout drifted: omitted=%q primary-window=%q", omittedStdout, explicitStdout)
 		}
-		if strings.Count(oldStdout, "pane/") != 2 {
-			t.Fatalf("the compatibility fan-out stopped producing one Pane per Window: %q", oldStdout)
+		if strings.Count(omittedStdout, "pane/") != 1 {
+			t.Fatalf("the --project-only create did not produce exactly one Pane: %q", omittedStdout)
 		}
-		if oldStderr != "projmux: "+projectFanOutDeprecationWarning+"\n" {
-			t.Fatalf("stderr = %q, want exactly the one compatibility line", oldStderr)
+		if omittedStderr != "" || explicitStderr != "" {
+			t.Fatalf("stderr = %q / %q, want 0 bytes on both", omittedStderr, explicitStderr)
 		}
-		if newStderr != "" {
-			t.Fatalf("--all-windows wrote to stderr: %q", newStderr)
-		}
-		if compatibility.snapshot() != explicit.snapshot() {
-			t.Fatal("the two spellings produced different Registries")
+		if omitted.snapshot() != explicit.snapshot() {
+			t.Fatal("the two spellings of the primary selection produced different Registries")
 		}
 	})
 
-	t.Run("the warning names the future default and both escape hatches", func(t *testing.T) {
+	t.Run("the old fan-out is preserved verbatim under --all-windows", func(t *testing.T) {
 		t.Parallel()
-		for _, required := range []string{"primaryWindowRef", "--all-windows", "--primary-window"} {
-			if !strings.Contains(projectFanOutDeprecationWarning, required) {
-				t.Fatalf("the compatibility warning does not mention %q: %q", required, projectFanOutDeprecationWarning)
-			}
+		// This is the "silent target 확대/축소 0" assertion in observable form:
+		// the wide set is still exactly both Windows, the narrowed default is
+		// exactly the primary one, and the difference between them is the
+		// single Window the deprecation notice said would drop out.
+		wide := newFakeResourceStore(t)
+		wideCreate, _ := newTestResourceCreateCommand(t, wide, newFakeTmux())
+		wideBefore := paneUIDsByWindow(wide)
+		wideReceipt, wideStderr := createReceipt(t, wideCreate, "pane", "--project", "alpha", "--all-windows")
+		wideAdded := addedPaneUIDs(wideBefore, paneUIDsByWindow(wide))
+
+		narrow := newFakeResourceStore(t)
+		narrowCreate, _ := newTestResourceCreateCommand(t, narrow, newFakeTmux())
+		narrowBefore := paneUIDsByWindow(narrow)
+		narrowReceipt, narrowStderr := createReceipt(t, narrowCreate, "pane", "--project", "alpha")
+		narrowAdded := addedPaneUIDs(narrowBefore, paneUIDsByWindow(narrow))
+
+		if len(wideAdded["win-alpha-main"]) != 1 || len(wideAdded["win-alpha-review"]) != 1 {
+			t.Fatalf("--all-windows stopped being the whole-Project fan-out: %v", wideAdded)
+		}
+		if len(narrowAdded["win-alpha-main"]) != 1 || len(narrowAdded["win-alpha-review"]) != 0 {
+			t.Fatalf("--project alone targeted %v, want only the primary Window", narrowAdded)
+		}
+		if !slicesEqualStrings(wideReceipt.SelectedWindowUIDs, []string{"win-alpha-main", "win-alpha-review"}) {
+			t.Fatalf("--all-windows selected %v", wideReceipt.SelectedWindowUIDs)
+		}
+		if !slicesEqualStrings(narrowReceipt.SelectedWindowUIDs, []string{"win-alpha-main"}) {
+			t.Fatalf("--project alone selected %v", narrowReceipt.SelectedWindowUIDs)
+		}
+		if wideStderr != "" || narrowStderr != "" {
+			t.Fatalf("stderr = %q / %q, want 0 bytes on both", wideStderr, narrowStderr)
 		}
 	})
 
-	t.Run("an omitted scope inside tmux never warns", func(t *testing.T) {
+	t.Run("an omitted scope inside tmux still targets the active Window", func(t *testing.T) {
 		t.Parallel()
-		// The natural-omitted contract is untouched: it resolves the active
-		// Window rather than a fan-out, so it has nothing to deprecate.
+		// The natural-omitted contract is untouched by the cutover: with no
+		// --project at all the create resolves the Window the operator is
+		// looking at, which is neither the fan-out nor the primary selection.
 		store, tmux := aliveAlphaRuntime(t)
+		withDanglingPrimary(store, "prj-alpha", "win-alpha-review")
+		seedLiveWindow(t, tmux, tmux.session("alpha"), "win-alpha-review", "pan-alpha-review")
 		create, _ := newTestResourceCreateCommand(t, store, tmux)
 		withActiveTarget(create, insideTmux("pan-alpha-zsh", "win-alpha-main"))
 
@@ -505,11 +548,33 @@ func TestExistingProjectOnlyOmissionIsCompatible(t *testing.T) {
 			t.Fatalf("natural-omitted create error = %v", err)
 		}
 		if stderr != "" {
-			t.Fatalf("the natural-omitted create warned: %q", stderr)
+			t.Fatalf("the natural-omitted create wrote to stderr: %q", stderr)
 		}
 		added := addedPaneUIDs(before, paneUIDsByWindow(store))
 		if len(added["win-alpha-main"]) != 1 || len(added["win-alpha-review"]) != 0 {
 			t.Fatalf("the natural-omitted create changed shape: %v", added)
+		}
+	})
+
+	t.Run("a --project scope inside tmux takes the primary, not the active Window", func(t *testing.T) {
+		t.Parallel()
+		// The distinguishing fixture: the operator sits in win-alpha-main and
+		// the Project's primary is the other Window. Typing --project is what
+		// makes the whole scope explicit, so the create must follow the stored
+		// primary rather than blend with the runtime it was invoked from.
+		store, tmux := aliveAlphaRuntime(t)
+		withDanglingPrimary(store, "prj-alpha", "win-alpha-review")
+		seedLiveWindow(t, tmux, tmux.session("alpha"), "win-alpha-review", "pan-alpha-review")
+		create, _ := newTestResourceCreateCommand(t, store, tmux)
+		withActiveTarget(create, insideTmux("pan-alpha-zsh", "win-alpha-main"))
+
+		before := paneUIDsByWindow(store)
+		if _, stderr, err := runRoute(t, create, "pane", "--project", "alpha"); err != nil {
+			t.Fatalf("--project-only create error = %v (stderr %q)", err, stderr)
+		}
+		added := addedPaneUIDs(before, paneUIDsByWindow(store))
+		if len(added["win-alpha-review"]) != 1 || len(added["win-alpha-main"]) != 0 {
+			t.Fatalf("--project alone targeted %v, want only the primary Window", added)
 		}
 	})
 
@@ -618,14 +683,24 @@ var windowCardinalitySpellings = []string{
 	"--window", "-w ", "--pane ", "--selector", "--create-window", "--all-windows", "--primary-window",
 }
 
+// cardinalityDefaultFixtureMarker exempts one shell invocation from the audit
+// below.
+//
+// It exists for the fixtures whose subject *is* the implicit spelling: a smoke
+// that proves `--project P` alone resolves the primary Window has to type
+// `--project P` alone. The marker is per-line and has to be written out, so an
+// exemption is a visible decision rather than a silence.
+const cardinalityDefaultFixtureMarker = "projmux-cardinality-default-fixture"
+
 // TestRepositoryCallSitesSpellTheirChildCreateCardinality is the generated
 // config / script migration gate.
 //
 // Every executable call site the repository owns -- generated config, hooks,
 // smoke scripts, fixtures -- has to say which Windows it means, because those
-// are exactly the invocations nobody will be around to re-read when the default
-// changes. Prose that documents the compatibility spelling is deliberately out
-// of scope: docs/cli-guide.md has to be able to show it.
+// are exactly the invocations nobody will be around to re-read the next time
+// the default moves. Prose that documents the implicit spelling is deliberately
+// out of scope: docs/cli-guide.md has to be able to show it, and a fixture that
+// tests the default opts out with cardinalityDefaultFixtureMarker.
 func TestRepositoryCallSitesSpellTheirChildCreateCardinality(t *testing.T) {
 	t.Parallel()
 
@@ -673,6 +748,9 @@ func projectScopedInvocations(script string) map[string]string {
 			joined = strings.TrimSuffix(strings.TrimRight(joined, " \t"), `\`) + " " + lines[i]
 		}
 		if !projectScopedChildCreate.MatchString(joined) || !strings.Contains(joined, "--project") {
+			continue
+		}
+		if strings.Contains(joined, cardinalityDefaultFixtureMarker) {
 			continue
 		}
 		explicit := false

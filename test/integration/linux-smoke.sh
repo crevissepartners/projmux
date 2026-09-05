@@ -2791,6 +2791,123 @@ if [[ "$(wc -l <"$PROJMUX_SMOKE_WORKDIR/discovery-projects-after-mutation.uid")"
   exit 1
 fi
 
+# Child create target cardinality, end to end on the two-Window Project this
+# section just built.
+#
+# The Go table proves what the planner selects; this proves what the Registry
+# and the real server end up holding. The invoking Pane is deliberately the one
+# in the *non-primary* Window, so "--project P alone resolves the primary
+# Window" is separable from "the create split wherever the caller happened to
+# be": if the default silently widened back to a fan-out, or silently followed
+# the active Window, this block fails on the per-Window counts rather than on a
+# message.
+pmx_discovery_here() {
+  env -u TMUX -u TMUX_PANE -u XDG_CONFIG_HOME -u XDG_STATE_HOME -u PROJMUX_PROJDIR -u PROJMUX_MANAGED_ROOTS \
+    HOME="$discovery_home" TMUX="$discovery_tmux_env" TMUX_PANE="$discovery_created_pane" "$bin" "$@"
+}
+cardinality_panes_in() {
+  pmx_discovery get panes --project "uid:$discovery_project_uid" --window "uid:$1" -o uid | grep -c . || true
+}
+cardinality_assert_counts() {
+  local label="$1" want_primary="$2" want_other="$3"
+  local got_primary got_other
+  got_primary="$(cardinality_panes_in "$discovery_primary_window_uid")"
+  got_other="$(cardinality_panes_in "$discovery_created_window_uid")"
+  if [[ "$got_primary" != "$want_primary" || "$got_other" != "$want_other" ]]; then
+    echo "child create cardinality $label: panes primary=$got_primary other=$got_other, want primary=$want_primary other=$want_other" >&2
+    exit 1
+  fi
+}
+
+# Baseline: one Pane in each Window, and the caller is sitting in the
+# non-primary one.
+cardinality_assert_counts baseline 1 1
+
+# `--project P` alone is the exact-one primary Window. It writes nothing to
+# stderr: the deprecation notice the previous release printed for this spelling
+# is gone, because this is now the behavior that notice named.
+pmx_discovery_here create pane --project "uid:$discovery_project_uid" -o uid \
+  >"$PROJMUX_SMOKE_WORKDIR/cardinality-default.uid" 2>"$PROJMUX_SMOKE_WORKDIR/cardinality-default.err" # projmux-cardinality-default-fixture
+if [[ "$(grep -c . "$PROJMUX_SMOKE_WORKDIR/cardinality-default.uid")" != "1" ]]; then
+  echo "a --project-only child create did not produce exactly one Pane:" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/cardinality-default.uid" >&2
+  exit 1
+fi
+if [[ -s "$PROJMUX_SMOKE_WORKDIR/cardinality-default.err" ]]; then
+  echo "a --project-only child create wrote to stderr:" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/cardinality-default.err" >&2
+  exit 1
+fi
+cardinality_assert_counts default 2 1
+
+# The receipt says the same thing, and carries no compatibility warning.
+pmx_discovery_here create pane --project "uid:$discovery_project_uid" -o receipt \
+  >"$PROJMUX_SMOKE_WORKDIR/cardinality-default.receipt" # projmux-cardinality-default-fixture
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/cardinality-default.receipt" '"compatibilityWarnings": []'
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/cardinality-default.receipt" "\"$discovery_primary_window_uid\""
+if grep -Fq "\"$discovery_created_window_uid\"" "$PROJMUX_SMOKE_WORKDIR/cardinality-default.receipt"; then
+  echo "a --project-only child create selected the non-primary Window:" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/cardinality-default.receipt" >&2
+  exit 1
+fi
+cardinality_assert_counts default-receipt 3 1
+
+# `--primary-window` is the same set, spelled out.
+pmx_discovery_here create pane --project "uid:$discovery_project_uid" --primary-window -o uid \
+  >"$PROJMUX_SMOKE_WORKDIR/cardinality-primary.uid" 2>"$PROJMUX_SMOKE_WORKDIR/cardinality-primary.err"
+if [[ "$(grep -c . "$PROJMUX_SMOKE_WORKDIR/cardinality-primary.uid")" != "1" ]] ||
+  [[ -s "$PROJMUX_SMOKE_WORKDIR/cardinality-primary.err" ]]; then
+  echo "--primary-window did not produce exactly one quiet Pane" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/cardinality-primary.uid" "$PROJMUX_SMOKE_WORKDIR/cardinality-primary.err" >&2
+  exit 1
+fi
+cardinality_assert_counts primary-window 4 1
+
+# `--all-windows` is the whole-Project fan-out this Project's `--project`-only
+# spelling used to resolve. It is still exactly that set: one Pane per Window.
+pmx_discovery_here create pane --project "uid:$discovery_project_uid" --all-windows -o uid \
+  >"$PROJMUX_SMOKE_WORKDIR/cardinality-all.uid" 2>"$PROJMUX_SMOKE_WORKDIR/cardinality-all.err"
+if [[ "$(grep -c . "$PROJMUX_SMOKE_WORKDIR/cardinality-all.uid")" != "2" ]] ||
+  [[ -s "$PROJMUX_SMOKE_WORKDIR/cardinality-all.err" ]]; then
+  echo "--all-windows did not produce exactly one quiet Pane per Window" >&2
+  cat "$PROJMUX_SMOKE_WORKDIR/cardinality-all.uid" "$PROJMUX_SMOKE_WORKDIR/cardinality-all.err" >&2
+  exit 1
+fi
+cardinality_assert_counts all-windows 5 2
+
+# An explicit `--window` still names exactly the Window it names, and the two
+# cardinality flags still refuse to be combined -- inside the parser, so the
+# refusal costs no Pane at all.
+pmx_discovery_here create pane --project "uid:$discovery_project_uid" \
+  --window "uid:$discovery_created_window_uid" -o uid \
+  >"$PROJMUX_SMOKE_WORKDIR/cardinality-explicit-window.uid"
+if [[ "$(grep -c . "$PROJMUX_SMOKE_WORKDIR/cardinality-explicit-window.uid")" != "1" ]]; then
+  echo "an explicit --window did not produce exactly one Pane" >&2
+  exit 1
+fi
+cardinality_assert_counts explicit-window 5 3
+set +e
+pmx_discovery_here create pane --project "uid:$discovery_project_uid" --all-windows --primary-window \
+  >"$PROJMUX_SMOKE_WORKDIR/cardinality-conflict.out" 2>"$PROJMUX_SMOKE_WORKDIR/cardinality-conflict.err"
+cardinality_conflict_status=$?
+set -e
+if [[ "$cardinality_conflict_status" != "2" ]]; then
+  echo "combining --all-windows with --primary-window exited $cardinality_conflict_status, want 2" >&2
+  exit 1
+fi
+# The asserted substring deliberately starts past the leading `--`:
+# smoke_assert_file_contains passes its needle to grep positionally, and `-F`
+# makes a needle a fixed string without making it an argument, so a needle
+# beginning with a dash is read as an option. Fixing that helper would change
+# behavior for every caller of a shared file and is out of this change's scope;
+# `--primary-window` and the sentence both stay in the needle, so the message
+# is still identified rather than merely present.
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/cardinality-conflict.err" \
+  "and --primary-window select different target sets"
+cardinality_assert_counts conflict-refusal 5 3
+
+echo ">> child create cardinality project=$discovery_project_uid primary=$discovery_primary_window_uid other=$discovery_created_window_uid default=1 primary-window=1 all-windows=2 conflict=exit2"
+
 # An unregistered candidate is refused by name, with the bootstrap route named.
 set +e
 pmx_discovery create window --project scratch \
