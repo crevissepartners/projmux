@@ -2,9 +2,15 @@ package app
 
 import (
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -223,5 +229,71 @@ func TestAttributionHealthSeparatesAContractualRefusalFromAFailure(t *testing.T)
 		t.Fatalf("surface = %q (detail %q), want %q for a retired conversation", surface.Status, surface.Detail, codexSurfaceStatusOK)
 	} else if !strings.Contains(surface.Detail, "out of contract") {
 		t.Fatalf("detail = %q, want the refusal reported rather than hidden", surface.Detail)
+	}
+}
+
+// TestAttributionVocabularyCoversEveryDeclaredMatchReason keeps this reader
+// from going deaf as the matcher learns new answers.
+//
+// The reader classifies a record by comparing its reason against a list
+// restated here, and a token the list does not know is not counted as anything
+// — not a failure, not a refusal. So a new answer added to the matcher would
+// quietly shrink both numbers, and the surface would report improvement. That
+// is this track's recurring shape once more: a check that does not check its
+// own premise. The declarations are read out of the source, so the list cannot
+// fall behind them without this failing.
+func TestAttributionVocabularyCoversEveryDeclaredMatchReason(t *testing.T) {
+	root := repoRootForGate(t)
+	path := filepath.Join(root, "internal", "app", "ai_ingest.go")
+	payload, err := os.ReadFile(path) // #nosec G304 -- repository source under test.
+	if err != nil {
+		t.Fatalf("read matcher source: %v", err)
+	}
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, path, payload, 0)
+	if err != nil {
+		t.Fatalf("parse matcher source: %v", err)
+	}
+	declared := map[string]bool{}
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		spec, ok := node.(*ast.ValueSpec)
+		if !ok {
+			return true
+		}
+		for index, name := range spec.Names {
+			if !strings.HasPrefix(name.Name, "aiPaneMatchReason") || index >= len(spec.Values) {
+				continue
+			}
+			literal, ok := spec.Values[index].(*ast.BasicLit)
+			if !ok || literal.Kind != token.STRING {
+				continue
+			}
+			value, unquoteErr := strconv.Unquote(literal.Value)
+			if unquoteErr == nil {
+				declared[value] = true
+			}
+		}
+		return true
+	})
+	if len(declared) == 0 {
+		t.Fatal("no attribution reason declarations found; the scan is looking in the wrong place")
+	}
+	var missing []string
+	for value := range declared {
+		if !slices.Contains(aiPaneMatchReasons, value) {
+			missing = append(missing, value)
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Fatalf("%d declared attribution reason(s) this reader would silently ignore:\n  %q\n\n"+
+			"Add each to aiPaneMatchReasons, and decide whether it is a contractual refusal "+
+			"(the Pane it names is gone) or an attribution failure (the mechanism owed an answer).",
+			len(missing), missing)
+	}
+	for _, known := range aiPaneMatchReasons {
+		if !declared[known] {
+			t.Fatalf("aiPaneMatchReasons carries %q, which the matcher no longer declares", known)
+		}
 	}
 }

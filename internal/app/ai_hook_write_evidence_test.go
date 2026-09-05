@@ -93,9 +93,12 @@ func TestHookReflectionWritesNeverDiscardTheirErrorSilently(t *testing.T) {
 // discardedTmuxWrites finds every tmux invocation in one file whose error the
 // call site throws away.
 //
-// Both spellings count. An assignment to blank identifiers discards the error
-// explicitly; a bare call statement discards it without even naming it, which
-// is quieter still.
+// Both spellings count, and the second is prevention rather than discovery.
+// Every discarded write in the tree today is an assignment to blank
+// identifiers; a bare call statement, which discards the error without even
+// naming it, currently appears nowhere. It is covered so that the obvious way
+// to quiet this gate -- deleting the assignment rather than checking the error
+// -- does not work.
 func discardedTmuxWrites(fileSet *token.FileSet, file *ast.File) []token.Position {
 	var found []token.Position
 	ast.Inspect(file, func(node ast.Node) bool {

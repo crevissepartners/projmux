@@ -186,6 +186,16 @@ func TestOwnershipHealthCallsOnlyAPositivelyForeignPaneForeign(t *testing.T) {
 	if ownership.Unresolved != 1 {
 		t.Fatalf("unresolved = %d, want the attribution to a Pane the Registry lost", ownership.Unresolved)
 	}
+	// The verdict may not certify past what it can judge. A Pane the Registry
+	// holds without a provider resolves the old way, so an attribution landing
+	// there is neither proven right nor proven wrong, and a zero foreign count
+	// beside a hidden pile of these would read as a guarantee nobody gave.
+	if ownership.Unrecorded != 1 {
+		t.Fatalf("unrecorded = %d, want the attribution onto a Pane recording no provider counted apart", ownership.Unrecorded)
+	}
+	if surface := codexPaneOwnershipSurface(ownership); !strings.Contains(surface.Detail, "provider unrecorded 1") {
+		t.Fatalf("detail = %q, want the unjudgeable attribution visible beside the verdict", surface.Detail)
+	}
 	// The two directions have different causes and must stay separable: one is
 	// a hook landing on the Pane that launched its host, the other an event
 	// that arrived under the wrong source before attribution ran.

@@ -1219,10 +1219,13 @@ one today: two cosmetic (a pane title, a one-shot message on the operator's own
 screen) and one global cleanup marker whose failure simply causes a retry. None
 of the three can make a surface report a state a Pane does not hold.
 
-Two things about the scan itself. It covers the whole package rather than a
+Three things about the scan itself. It covers the whole package rather than a
 named list of files, so a discarded write appearing somewhere new is caught
-rather than skipped for being somewhere nobody thought to look. And it reads
-the syntax tree, not the text: a textual version counted the pattern inside the
+rather than skipped for being somewhere nobody thought to look. It counts a
+bare call statement as well as an assignment to blank identifiers — that second
+form appears nowhere in the tree today and is covered as prevention, so that
+deleting the assignment rather than checking the error does not quiet the gate.
+And it reads the syntax tree, not the text: a textual version counted the pattern inside the
 comment explaining why a checked helper replaced it, so the sentence describing
 the fix registered as the defect.
 `TestDiscardedWriteScanNeverCountsProseAboutCode` pins that, because a gate

@@ -60,6 +60,8 @@ var aiPaneMatchReasons = []string{
 	aiPaneMatchReasonExplicitStale,
 	aiPaneMatchReasonConversationUnknown,
 	aiPaneMatchReasonConversationShared,
+	aiPaneMatchReasonExplicitForeign,
+	aiPaneMatchReasonExplicitForeignOnly,
 }
 
 // aiPaneMatchRefusals are the answers that name something the attribution
@@ -84,6 +86,14 @@ var aiPaneMatchRefusals = []string{
 	aiPaneMatchReasonExplicitStale,
 	aiPaneMatchReasonConversationUnknown,
 }
+
+// The two foreign-identity answers stay failures rather than refusals.
+//
+// A refusal names a Pane that no longer exists. These name a Pane that exists
+// and is not this hook's, after which the event went looking and still found
+// nobody. The conversation behind it may well have a live Pane, so the event
+// was owed one; that is a failure to attribute, not a promise the contract
+// never made.
 
 // aiIngestAttributionReason is one closed attribution failure and its count.
 type aiIngestAttributionReason struct {

@@ -31,6 +31,18 @@ type aiIngestOwnershipHealth struct {
 	// Foreign counts attributions to a Pane the Registry records under another
 	// provider. This is the number the contract requires to be zero.
 	Foreign int `json:"foreign"`
+	// Unrecorded counts attributions to a Pane the Registry holds but records
+	// no provider for.
+	//
+	// These are the ones this verdict cannot judge, and the count exists so
+	// that a zero above it cannot be read as "nothing was misattributed". The
+	// ownership guarantee closed the case where a Pane positively records
+	// another provider; a Pane recording none resolves the old way, so an
+	// attribution landing there is neither proven right nor proven wrong.
+	// Rendering only the foreign count would let this diagnosis certify past
+	// the guarantee it is reporting on -- a check overstating what it checked,
+	// which is the failure this whole section was built to end.
+	Unrecorded int `json:"unrecorded"`
 	// Directions breaks Foreign down by which way the mismatch runs.
 	//
 	// The two directions have different causes and must not be read as one
@@ -94,8 +106,10 @@ func projectAIIngestOwnershipHealth(entries []aiIngestLogEntry, registry coremet
 			continue
 		}
 		if !paneRecordsAnyProvider(activation) {
-			// No provider recorded is not another provider. Leaving it
-			// unclassified keeps the foreign count meaning exactly one thing.
+			// No provider recorded is not another provider. Counting it apart
+			// keeps the foreign number meaning exactly one thing while still
+			// showing how much of the window that number does not cover.
+			health.Unrecorded++
 			continue
 		}
 		health.Classified++

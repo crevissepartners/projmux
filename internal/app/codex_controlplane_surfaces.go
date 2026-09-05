@@ -356,6 +356,13 @@ func codexHookDeliverySurface(delivery aiIngestDeliveryHealth) codexControlPlane
 // Pane it moved belongs to someone else. Nothing else in this diagnosis can
 // see it, which is why it is a surface of its own rather than a note on
 // attribution.
+//
+// An `ok` here is narrower than it looks, and the detail says so. The
+// guarantee behind it closed the case where a Pane positively records another
+// provider; a Pane the Registry holds without a provider, or one it no longer
+// holds at all, resolves the old way. Those are counted beside the verdict
+// rather than folded into it, so nobody reads a zero as "nothing was
+// misattributed" when what it means is "nothing provably was".
 func codexPaneOwnershipSurface(ownership aiIngestOwnershipHealth) codexControlPlaneSurface {
 	surface := codexControlPlaneSurface{Surface: codexSurfacePaneOwnership}
 	if !ownership.Observed {
@@ -367,8 +374,8 @@ func codexPaneOwnershipSurface(ownership aiIngestOwnershipHealth) codexControlPl
 		surface.Detail = fmt.Sprintf("no attribution could be judged; %d landed on a Pane the Registry no longer holds", ownership.Unresolved)
 		return surface
 	}
-	surface.Detail = fmt.Sprintf("attributions judged %d; foreign %d; unresolved %d",
-		ownership.Classified, ownership.Foreign, ownership.Unresolved)
+	surface.Detail = fmt.Sprintf("attributions judged %d; foreign %d; unresolved %d; provider unrecorded %d",
+		ownership.Classified, ownership.Foreign, ownership.Unresolved, ownership.Unrecorded)
 	if directions := codexReasonBreakdown(ownership.Directions); directions != "" {
 		// Which way the mismatch runs is the whole diagnosis. One direction is
 		// a hook landing on the Pane that launched its host; the other is an
