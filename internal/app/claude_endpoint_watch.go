@@ -12,19 +12,21 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 // claudeLeaseOwnerReceipt is crash-cleanup evidence, not a provider locator.
 // Its file contains only identities already safe for Registry persistence.
 type claudeLeaseOwnerReceipt struct {
-	AgentUID   string                          `json:"agentUID"`
-	PaneUID    string                          `json:"paneUID"`
-	Generation string                          `json:"generation"`
-	Authority  coremetadata.ClaudeAuthorityRef `json:"authority"`
+	AgentUID           string                          `json:"agentUID"`
+	PaneUID            string                          `json:"paneUID"`
+	Generation         string                          `json:"generation"`
+	Authority          coremetadata.ClaudeAuthorityRef `json:"authority"`
+	CoordinationSocket localipc.SocketIdentity         `json:"coordinationSocket,omitzero"`
 }
 
-func writeClaudeLeaseOwner(path string, bootstrap claudeEndpointBootstrap) error {
+func writeClaudeLeaseOwner(path string, bootstrap claudeEndpointBootstrap, coordination localipc.SocketIdentity) error {
 	// #nosec G304 -- the caller derives this receipt from hashed exact activation
 	// and registration identities under an owned 0700 lease directory. Exclusive
 	// creation refuses an existing path or symlink; no provider locator is used.
@@ -34,7 +36,7 @@ func writeClaudeLeaseOwner(path string, bootstrap claudeEndpointBootstrap) error
 	}
 	defer file.Close()
 	return json.NewEncoder(file).Encode(claudeLeaseOwnerReceipt{AgentUID: bootstrap.AgentUID, PaneUID: bootstrap.PaneUID,
-		Generation: bootstrap.Generation, Authority: bootstrap.Registration.Authority})
+		Generation: bootstrap.Generation, Authority: bootstrap.Registration.Authority, CoordinationSocket: coordination})
 }
 
 func readClaudeLeaseOwner(path string, spec superviseSpec) (claudeLeaseOwnerReceipt, bool) {
@@ -116,6 +118,11 @@ func reapDeadClaudeLeases(spec superviseSpec) {
 		}
 		if _, err := inspectClaudeSocket(socket); err == nil {
 			_ = os.Remove(socket)
+		}
+		target := claudeCoordinationTarget{AgentUID: receipt.AgentUID, PaneUID: receipt.PaneUID, Generation: receipt.Generation,
+			Provider: aiModeClaude, Authority: receipt.Authority}
+		if coordination := claudeCoordinationSocket(spec.RegistryPath, target); filepath.Dir(coordination) == dir {
+			_ = localipc.RemoveOwnedSocket(coordination, receipt.CoordinationSocket)
 		}
 		_ = os.Remove(path)
 	}

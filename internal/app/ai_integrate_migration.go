@@ -27,7 +27,7 @@ func (c *aiCommand) beginManagedIngestProducerFileMigration() (int, func() error
 	if err != nil {
 		return 0, nil, err
 	}
-	claudePlan, err := c.planClaudeHookIntegration(false)
+	claudePlan, err := c.planClaudeHookMigration()
 	if err != nil {
 		return 0, nil, err
 	}
@@ -57,7 +57,7 @@ func (c *aiCommand) beginManagedIngestProducerFileMigration() (int, func() error
 			write: func() error { return c.writeCodexConfig(codexPlan.path, []byte(codexPlan.next)) },
 		})
 	}
-	if strings.Contains(claudePlan.current, claudeHookManagedMarker) && claudePlan.changed {
+	if (strings.Contains(claudePlan.current, claudeHookManagedMarker) || strings.Contains(claudePlan.current, claudeCoordinationManagedMarker)) && claudePlan.changed {
 		mutations = append(mutations, managedIngestFileMutation{
 			path: claudePlan.path, current: claudePlan.current, next: claudePlan.next, mode: 0o644, label: "Claude settings",
 			write: func() error { return c.writeClaudeSettings(claudePlan.path, []byte(claudePlan.next)) },

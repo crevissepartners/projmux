@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
@@ -340,6 +341,14 @@ func (c *aiCommand) planCodexHooksIntegration(remove bool) (codexIntegrationPlan
 }
 
 func (c *aiCommand) planClaudeHookIntegration(remove bool) (claudeHookPlan, error) {
+	return c.planClaudeHookIntegrationMode(remove, !remove)
+}
+
+// planClaudeHookMigration converges only the managed hook families already
+// present in the file. Automatic config apply/install migration must not plant
+// a new async provider process into a user's live Claude settings; the explicit
+// integrate command is the sole installer for coordination hooks.
+func (c *aiCommand) planClaudeHookMigration() (claudeHookPlan, error) {
 	home, err := c.homeDir()
 	if err != nil {
 		return claudeHookPlan{}, fmt.Errorf("resolve home directory: %w", err)
@@ -349,7 +358,23 @@ func (c *aiCommand) planClaudeHookIntegration(remove bool) (claudeHookPlan, erro
 	if err != nil {
 		return claudeHookPlan{}, err
 	}
+	return c.planClaudeHookIntegrationFromCurrent(false, strings.Contains(current, claudeCoordinationManagedMarker), path, current)
+}
 
+func (c *aiCommand) planClaudeHookIntegrationMode(remove, includeCoordination bool) (claudeHookPlan, error) {
+	home, err := c.homeDir()
+	if err != nil {
+		return claudeHookPlan{}, fmt.Errorf("resolve home directory: %w", err)
+	}
+	path := filepath.Join(home, claudeSettingsRelativePath)
+	current, err := c.readClaudeSettings(path)
+	if err != nil {
+		return claudeHookPlan{}, err
+	}
+	return c.planClaudeHookIntegrationFromCurrent(remove, includeCoordination, path, current)
+}
+
+func (c *aiCommand) planClaudeHookIntegrationFromCurrent(remove, includeCoordination bool, path, current string) (claudeHookPlan, error) {
 	settings, err := parseClaudeSettings(current, path)
 	if err != nil {
 		return claudeHookPlan{}, err
@@ -415,6 +440,11 @@ func (c *aiCommand) planClaudeHookIntegration(remove bool) (claudeHookPlan, erro
 			})
 		}
 		hooks[event] = append(claudeHookEntrySlice(hooks[event]), entry)
+	}
+	if includeCoordination {
+		for _, event := range []string{"SessionStart", "Stop"} {
+			hooks[event] = append(claudeHookEntrySlice(hooks[event]), claudeCoordinationManagedEntry())
+		}
 	}
 	next, err := encodeClaudeSettings(settings)
 	if err != nil {
@@ -1044,11 +1074,11 @@ func claudeHookEntriesWithoutManaged(value any, event, path string) ([]any, bool
 				continue
 			}
 			command, _ := hook["command"].(string)
-			if hook["type"] == "command" && strings.Contains(command, claudeHookManagedMarker) {
+			if hook["type"] == "command" && (strings.Contains(command, claudeHookManagedMarker) || strings.Contains(command, claudeCoordinationManagedMarker)) {
 				removed = true
 				continue
 			}
-			if hook["type"] == "command" && (strings.Contains(command, legacyClaudeHookRoute) || strings.Contains(command, canonicalClaudeHookRoute)) && conflict == "" {
+			if hook["type"] == "command" && (strings.Contains(command, legacyClaudeHookRoute) || strings.Contains(command, canonicalClaudeHookRoute) || strings.Contains(command, "internal claude-message-wait")) && conflict == "" {
 				conflict = fmt.Sprintf("Claude Code hook %s already contains unmanaged projmux ingest command in %s: %s", event, path, command)
 			}
 			nextHooks = append(nextHooks, hookValue)
@@ -1079,6 +1109,19 @@ func claudeHookManagedEntry() map[string]any {
 			map[string]any{
 				"type":    "command",
 				"command": claudeHookCommand,
+			},
+		},
+	}
+}
+
+func claudeCoordinationManagedEntry() map[string]any {
+	return map[string]any{
+		"hooks": []any{
+			map[string]any{
+				"type":        "command",
+				"command":     claudeCoordinationHookCommand,
+				"timeout":     int(claudeCoordinationHookTimeout / time.Second),
+				"asyncRewake": true,
 			},
 		},
 	}

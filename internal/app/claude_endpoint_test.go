@@ -19,6 +19,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -55,7 +56,7 @@ func TestClaudeEndpointHookMigrationPreservesStatusAndUserHooks(t *testing.T) {
 	}
 	installed := readClaudeSettingsTestFile(t, path)
 	hooks := installed["hooks"].(map[string]any)["SessionStart"].([]any)
-	status, registration, user := 0, 0, 0
+	status, registration, coordination, user := 0, 0, 0, 0
 	for _, entry := range hooks {
 		for _, raw := range entry.(map[string]any)["hooks"].([]any) {
 			hook := raw.(map[string]any)
@@ -67,12 +68,14 @@ func TestClaudeEndpointHookMigrationPreservesStatusAndUserHooks(t *testing.T) {
 				if hook["timeout"] != float64(5) {
 					t.Fatal("registration bootstrap timeout is not bounded")
 				}
+			case claudeCoordinationHookCommand:
+				coordination++
 			case "echo user-session-start":
 				user++
 			}
 		}
 	}
-	if status != 1 || registration != 1 || user != 1 {
+	if status != 1 || registration != 1 || coordination != 1 || user != 1 {
 		t.Fatal("migration changed status/user hooks or duplicated registration")
 	}
 	first, _ := os.ReadFile(path)
@@ -86,7 +89,7 @@ func TestClaudeEndpointHookMigrationPreservesStatusAndUserHooks(t *testing.T) {
 		t.Fatal(err)
 	}
 	removed, _ := os.ReadFile(path)
-	if bytes.Contains(removed, []byte(claudeHookManagedMarker)) || !bytes.Contains(removed, []byte("echo user-session-start")) {
+	if bytes.Contains(removed, []byte(claudeHookManagedMarker)) || bytes.Contains(removed, []byte(claudeCoordinationManagedMarker)) || !bytes.Contains(removed, []byte("echo user-session-start")) {
 		t.Fatal("removal retained managed hook or removed user hook")
 	}
 }
@@ -308,12 +311,56 @@ func TestClaudeEndpointRenamePreservesAndSocketReplacementInvalidates(t *testing
 		t.Fatal("provider socket replacement remained eligible")
 	}
 	select {
-	case <-done:
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
 	case <-time.After(4 * time.Second):
 		t.Fatal("socket replacement did not stop helper")
 	}
 	if _, err := os.Lstat(f.bootstrap.Socket); err != nil {
 		t.Fatal("helper removed replacement provider socket")
+	}
+}
+
+func TestClaudeCoordinationSocketReplacementInvalidatesWithoutRemovingReplacement(t *testing.T) {
+	t.Parallel()
+	f := newClaudeEndpointTestFixture(t)
+	_, done := f.start(t)
+	route, reason := f.route(t)
+	if reason != "" || !probeClaudeRegistrationLease(f.bootstrap.RegistryPath, route) {
+		t.Fatal("exact registration not ready")
+	}
+	target, ok := claudeTargetForRoute(route)
+	if !ok {
+		t.Fatal("exact coordination target unavailable")
+	}
+	path := claudeCoordinationSocket(f.bootstrap.RegistryPath, target)
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.SetUnlinkOnClose(false)
+	defer replacement.Close()
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if probeClaudeRegistrationLease(f.bootstrap.RegistryPath, route) {
+		t.Fatal("replacement coordination socket remained eligible")
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("coordination socket replacement did not stop helper")
+	}
+	if _, err := os.Lstat(path); err != nil {
+		t.Fatal("helper removed replacement coordination socket")
 	}
 }
 
@@ -455,7 +502,33 @@ func TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives(t *testing.
 	if err := os.Chmod(lease, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := writeClaudeLeaseOwner(lease+".json", f.bootstrap); err != nil {
+	target := claudeCoordinationTarget{AgentUID: f.bootstrap.AgentUID, PaneUID: f.bootstrap.PaneUID,
+		Generation: f.bootstrap.Generation, Provider: aiModeClaude, Authority: f.bootstrap.Registration.Authority}
+	coordinationPath := claudeCoordinationSocket(f.bootstrap.RegistryPath, target)
+	coordination, err := localipc.Listen(coordinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinationIdentity := coordination.Identity()
+	if err := coordination.Unix.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(coordinationPath); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := net.ListenUnix("unix", &net.UnixAddr{Name: coordinationPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.SetUnlinkOnClose(false)
+	t.Cleanup(func() {
+		_ = replacement.Close()
+		_ = os.Remove(coordinationPath)
+	})
+	if err := os.Chmod(coordinationPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeClaudeLeaseOwner(lease+".json", f.bootstrap, coordinationIdentity); err != nil {
 		t.Fatal(err)
 	}
 	if err := helper.Process.Kill(); err != nil {
@@ -479,7 +552,9 @@ func TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives(t *testing.
 		t.Fatal("provider did not remain alive")
 	}
 	for {
-		if _, err := os.Lstat(filepath.Dir(lease)); os.IsNotExist(err) {
+		_, leaseErr := os.Lstat(lease)
+		_, receiptErr := os.Lstat(lease + ".json")
+		if os.IsNotExist(leaseErr) && os.IsNotExist(receiptErr) {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -487,7 +562,63 @@ func TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives(t *testing.
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	if _, err := localipc.InspectOwnedSocket(coordinationPath); err != nil {
+		t.Fatalf("dead-lease reaper removed replacement coordination socket: %v", err)
+	}
 	assertNoClaudeSecretResidue(t, f.root, []string{f.bootstrap.Token, f.bootstrap.Socket})
+}
+
+func TestCleanupClaudeActivationLeasesPreservesCoordinationReplacement(t *testing.T) {
+	t.Parallel()
+	f := newClaudeEndpointTestFixture(t)
+	dir := claudeActivationLeaseDir(f.bootstrap.RegistryPath, f.bootstrap.PaneUID, f.bootstrap.Generation)
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	lease := claudeLeaseSocket(f.bootstrap.RegistryPath, f.bootstrap.PaneUID, f.bootstrap.Generation,
+		f.bootstrap.Registration.Authority.RegistrationGeneration)
+	readiness, err := net.ListenUnix("unix", &net.UnixAddr{Name: lease, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	readiness.SetUnlinkOnClose(false)
+	defer readiness.Close()
+	if err := os.Chmod(lease, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	target := claudeCoordinationTarget{AgentUID: f.bootstrap.AgentUID, PaneUID: f.bootstrap.PaneUID,
+		Generation: f.bootstrap.Generation, Provider: aiModeClaude, Authority: f.bootstrap.Registration.Authority}
+	coordinationPath := claudeCoordinationSocket(f.bootstrap.RegistryPath, target)
+	coordination, err := localipc.Listen(coordinationPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	originalIdentity := coordination.Identity()
+	if err := coordination.Unix.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(coordinationPath); err != nil {
+		t.Fatal(err)
+	}
+	replacement, err := net.ListenUnix("unix", &net.UnixAddr{Name: coordinationPath, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replacement.SetUnlinkOnClose(false)
+	defer replacement.Close()
+	if err := os.Chmod(coordinationPath, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeClaudeLeaseOwner(lease+".json", f.bootstrap, originalIdentity); err != nil {
+		t.Fatal(err)
+	}
+	spec := superviseSpec{RegistryPath: f.bootstrap.RegistryPath, PaneUID: f.bootstrap.PaneUID,
+		AgentUID: f.bootstrap.AgentUID, Generation: f.bootstrap.Generation}
+	cleanupClaudeActivationLeases(spec)
+	if _, err := localipc.InspectOwnedSocket(coordinationPath); err != nil {
+		t.Fatalf("supervisor cleanup removed replacement coordination socket: %v", err)
+	}
 }
 
 func TestClaudeEndpointCreatorRegistryContextIsPrivateAndExact(t *testing.T) {

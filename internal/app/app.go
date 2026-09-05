@@ -644,7 +644,7 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 			return false
 		}
 	case "internal":
-		if len(args) >= 2 && (args[1] == "codex-generation-launch" || args[1] == "install-residue") {
+		if len(args) >= 2 && (args[1] == "codex-generation-launch" || args[1] == "install-residue" || args[1] == "claude-message-wait") {
 			return false
 		}
 	case "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",

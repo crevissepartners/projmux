@@ -1003,6 +1003,33 @@
   safe-mode delivery gate. Setup and limits are in
   [claude-coordination-endpoints.md](claude-coordination-endpoints.md).
 
+### Claude coordination ingress Phase 2 tests
+
+- `TestDeliveryTransitionTable` and its deterministic randomized sequence test
+  own the private provider-final-hop `queued`/`held`/`handoff` lifecycle and
+  terminal-once outcomes. This state sits below, and does not redefine, the
+  future public broker `accepted` projection. A handoff is `delivered` only
+  after one exact waiter fully writes the bounded frame and the same helper
+  commits its receipt; it never claims model processing, reply, or turn completion.
+- `TestClaudeCoordinationHub*` owns single-waiter CAS/supersede, no-waiter hold,
+  TTL, receipt timeout, duplicate/out-of-order refusal, helper replacement, and
+  zero automatic resend after an ambiguous provider-pipe outcome.
+- `TestOwnedSocketCleanupPreservesReplacementAndPathModeBounds`,
+  `TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives`, and
+  `TestCleanupClaudeActivationLeasesPreservesCoordinationReplacement` require
+  listener close, dead-helper reaping, and supervisor cleanup to unlink only
+  the exact receipt-bound socket inode while preserving a same-path replacement.
+- `TestClaudeCoordinationHookOwnedUDSAndProviderPipe` uses only a disposable
+  Projmux-owned Unix socket and pipe, with a waiter-ready barrier and structured
+  receipt, to cover exact `SessionStart` and `Stop` final-hop delivery. Its peer
+  record stays explicitly untrusted and slash commands remain plaintext; no
+  provider/model/vendor socket, MCP, connector, interrupt, approval, or tool is run.
+- `TestAIIntegrateClaude*` and
+  `TestClaudeAutomaticMigrationPreservesCoordinationPresenceAndSettingsBytes`
+  pin one managed asyncRewake hook for each of `SessionStart` and `Stop`, preserve
+  user and existing managed hooks, and keep automatic install-time migration
+  byte-identical unless the coordination family was explicitly present already.
+
 ### Provider hook pane identity tests
 
 - `TestProviderHookCommandsCarryTheirOwnPaneIdentity` and

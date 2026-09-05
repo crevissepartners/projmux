@@ -71,5 +71,47 @@ Inbound cross-session messaging is explicitly refused during the one-shot.
 This is a Phase 1 registration source gate without `--safe-mode`.
 It does not establish or relax the later mandatory safe-mode delivery gate.
 
+## Phase 2 owned coordination ingress
+
+The exact registration helper also owns a second private Unix socket for the
+same lease. Its address is derived from `AgentRouteRef` and
+`ClaudeAuthorityRef`; Agent and Pane names, tmux runtime IDs, provider titles,
+the vendor socket, and the vendor token do not enter the address or protocol.
+Readiness now requires this socket, its unchanged inode and 0600 ownership, the
+provider and helper process births, and the exact current Registry authority.
+The helper's non-secret crash receipt also records that socket identity, so
+normal close, dead-helper reaping, and supervisor cleanup unlink only the exact
+owned inode and preserve any replacement that has claimed the same path.
+
+Explicit `projmux agent integrate claude` convergence installs one managed
+`asyncRewake` command hook for each of `SessionStart` and `Stop`. The fixed
+command invokes only the hidden `internal claude-message-wait` route. Automatic
+config-apply migration preserves whether this coordination hook family is
+present, so installing a newly merged binary does not silently activate a new
+Claude hook process. User hooks and the existing status/registration hooks are
+retained, while explicit install and remove remain idempotent.
+
+Each hook child validates its SessionStart/Stop session ID, private activation
+envelope, direct provider parent, and exact helper peer. The helper admits only
+one waiter: a newer execution supersedes the prior one, which handles the
+documented per-execution non-dedup behavior. Hook and receipt timeouts are
+explicit state-machine inputs rather than evidence that delivery did not occur.
+
+The bounded versioned envelope labels peer content as an untrusted
+coordination-only record. A slash command is ordinary string data. Delivery is
+committed only after the exact hook child writes the complete JSON frame and
+newline to its stderr pipe and the same message/waiter/process tuple returns a
+helper receipt. `delivered` ends at that provider pipe boundary; it does not
+claim that the Claude model read, processed, or replied to the message, or that
+a turn completed. A partial/EPIPE or post-handoff timeout is an ambiguous
+terminal failure and is never retried automatically.
+
+The private Phase 2 lifecycle is `queued`, `held`, and `handoff`, followed by
+one of `delivered`, `refused`, `expired`, `stale`, or `failed`. It is an adapter
+layer beneath the future public broker acceptance state and does not add public
+message send/wait/status commands. The fake process integration exercises only
+Projmux-owned UDS and provider stderr pipes; it makes zero provider inbox, MCP,
+model, connector, interrupt, approval, configuration, or tool calls.
+
 Provider sources: [SessionStart hooks](https://code.claude.com/docs/en/hooks)
 and [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging).
