@@ -439,11 +439,13 @@ func (c *aiCommand) projectManagedAgentInteraction(paneID string, kind coremetad
 		{aiPaneBadgeKindOption, badge},
 		{attentionStateOption, attention},
 	} {
-		args := []string{"set-option", "-p", "-t", paneID, field.option, field.value}
+		var err error
 		if field.value == "" {
-			args = []string{"set-option", "-p", "-u", "-t", paneID, field.option}
+			err = c.clearAIPaneOption(paneID, field.option)
+		} else {
+			err = c.setAIPaneOption(paneID, field.option, field.value)
 		}
-		if err := c.run("tmux", args...); err != nil {
+		if err != nil {
 			return err
 		}
 	}
@@ -860,11 +862,13 @@ func (c *aiCommand) projectManagedAgentTopic(paneID, topic string) error {
 		{aiPaneTopicOption, strings.TrimSpace(topic)},
 		{aiPaneTopicManualOption, map[bool]string{true: "on"}[strings.TrimSpace(topic) != ""]},
 	} {
-		args := []string{"set-option", "-p", "-t", paneID, field.option, field.value}
+		var err error
 		if field.value == "" {
-			args = []string{"set-option", "-p", "-u", "-t", paneID, field.option}
+			err = c.clearAIPaneOption(paneID, field.option)
+		} else {
+			err = c.setAIPaneOption(paneID, field.option, field.value)
 		}
-		if err := c.run("tmux", args...); err != nil {
+		if err != nil {
 			return err
 		}
 	}

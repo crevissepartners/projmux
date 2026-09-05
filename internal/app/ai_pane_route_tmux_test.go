@@ -25,6 +25,11 @@ func TestSharedPaneRoutingRealTmux(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux is not installed")
 	}
+	// A test process may itself be a managed Agent; its activation belongs to
+	// the caller, never to either isolated fixture server. Seed stale values so
+	// removing the filter below is detected even in a clean CI environment.
+	t.Setenv(internalActivationPaneUIDEnv, "fixture-foreign-pane")
+	t.Setenv(internalActivationGenerationEnv, "fixture-foreign-generation")
 	binary := os.Getenv("PROJMUX_TEST_PANE_ROUTE_BINARY")
 	if binary != "" && !filepath.IsAbs(binary) {
 		t.Fatal("installed smoke binary must be absolute")
@@ -51,7 +56,7 @@ func TestSharedPaneRoutingRealTmux(t *testing.T) {
 	env := []string{}
 	for _, value := range os.Environ() {
 		key, _, _ := strings.Cut(value, "=")
-		if key == "HOME" || key == "TMUX" || key == "TMUX_PANE" || key == "TMUX_TMPDIR" || strings.HasPrefix(key, "XDG_") || strings.HasPrefix(key, "PROJMUX_") || strings.HasPrefix(key, "__PROJMUX_") {
+		if key == "HOME" || key == "TMUX" || key == "TMUX_PANE" || key == "TMUX_TMPDIR" || key == internalActivationPaneUIDEnv || key == internalActivationGenerationEnv || strings.HasPrefix(key, "XDG_") || strings.HasPrefix(key, "PROJMUX_") || strings.HasPrefix(key, "__PROJMUX_") {
 			continue
 		}
 		env = append(env, value)
@@ -224,7 +229,7 @@ func TestSharedPaneRoutingRealTmux(t *testing.T) {
 					}
 				}
 				if option(target, aiPaneHookActiveOption) != "1" || option(target, aiPaneResumeIDOption) != "fixture-session" || option(target, aiPaneResumeSourceOption) != "hook" {
-					t.Fatalf("%s hook marker/resume writes missed target", event)
+					t.Fatalf("%s hook marker/resume writes missed target: hook-active=%q resume-id=%q resume-source=%q", event, option(target, aiPaneHookActiveOption), option(target, aiPaneResumeIDOption), option(target, aiPaneResumeSourceOption))
 				}
 				data, err := os.ReadFile(filepath.Join(root, "state", "projmux", aiIngestLogName))
 				if err != nil {
