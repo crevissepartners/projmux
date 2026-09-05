@@ -3,8 +3,19 @@ package codexbroker
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+)
+
+const (
+	ownedLifecycleLimit   = 750 * time.Millisecond
+	ownedLifecycleCleanup = 250 * time.Millisecond
+	ownedLifecycleRetry   = time.Second
+	ownedLifecycleMax     = 2
+	// Retry entries are short-lived, but a stream of distinct refused thread
+	// ids must not make the one-second fence itself an unbounded allocation.
+	ownedLifecycleRetryEntries = 1_024
 )
 
 // bindingStage is where one binding sits relative to the current connection's
@@ -137,6 +148,149 @@ func (bd *Binding) Submit(ctx context.Context, fence Fence, mutation Mutation) (
 		return MutationIndeterminate, refuse(indeterminateReason(requestErr), requestErr)
 	default:
 		return MutationRefused, requestErr
+	}
+}
+
+// ReadLifecycleSnapshot opens one request-owned connection to the same
+// kernel-witnessed endpoint process as this binding's current shared
+// connection. Admission is queue-free (endpoint 2, thread 1), attempts are
+// never resent, and a result is returned only after the owned transport is
+// closed and the complete fence is current again.
+func (bd *Binding) ReadLifecycleSnapshot(ctx context.Context, fence Fence) (codexappserver.LifecycleSnapshot, error) {
+	b := bd.broker
+	b.mu.Lock()
+	conn, err := bd.authorityLocked(fence)
+	if err != nil {
+		b.mu.Unlock()
+		return codexappserver.LifecycleSnapshot{}, err
+	}
+	if b.lifecycle == nil || !conn.peer.Valid() {
+		b.mu.Unlock()
+		return codexappserver.LifecycleSnapshot{}, refuse(RefusalLifecycleUnsupported, codexappserver.ErrUnsupported)
+	}
+	now := b.clock.Now()
+	for thread, attempted := range b.lastOwned {
+		if now.Sub(attempted) >= ownedLifecycleRetry {
+			delete(b.lastOwned, thread)
+		}
+	}
+	if _, active := b.ownedThread[bd.threadID]; active || b.owned >= ownedLifecycleMax {
+		b.mu.Unlock()
+		return codexappserver.LifecycleSnapshot{}, refuse(RefusalLifecycleBusy, nil)
+	}
+	if attempted, recent := b.lastOwned[bd.threadID]; recent && now.Sub(attempted) < ownedLifecycleRetry {
+		b.mu.Unlock()
+		return codexappserver.LifecycleSnapshot{}, refuse(RefusalLifecycleRetry, nil)
+	}
+	if _, known := b.lastOwned[bd.threadID]; !known && len(b.lastOwned) >= ownedLifecycleRetryEntries {
+		b.mu.Unlock()
+		return codexappserver.LifecycleSnapshot{}, refuse(RefusalLifecycleBusy, nil)
+	}
+	b.owned++
+	b.ownedWG.Add(1)
+	b.ownedThread[bd.threadID] = struct{}{}
+	b.rememberOwnedAttemptLocked(bd.threadID, now)
+	operationCtx, cancel := boundedLifecycleContext(ctx)
+	b.ownedCancel[bd.threadID] = cancel
+	opener, peer := b.lifecycle, conn.peer
+	b.mu.Unlock()
+
+	defer func() {
+		cancel()
+		b.mu.Lock()
+		b.owned--
+		delete(b.ownedThread, bd.threadID)
+		delete(b.ownedCancel, bd.threadID)
+		b.mu.Unlock()
+		b.ownedWG.Done()
+	}()
+	stopBrokerCancel := context.AfterFunc(b.ctx, cancel)
+	defer stopBrokerCancel()
+	owned, openErr := opener(operationCtx, peer)
+	if openErr != nil {
+		return codexappserver.LifecycleSnapshot{}, lifecycleRefusal(openErr)
+	}
+	if owned == nil || !codexappserver.SamePeerIdentity(peer, owned.PeerIdentity()) {
+		if owned != nil {
+			_ = owned.Close()
+		}
+		return codexappserver.LifecycleSnapshot{}, refuse(RefusalLifecycleProtocol, codexappserver.ErrEndpointChanged)
+	}
+	snapshot, readErr := owned.ReadLifecycleSnapshot(operationCtx, bd.threadID)
+	closeErr := owned.Close()
+	if readErr != nil {
+		return codexappserver.LifecycleSnapshot{}, lifecycleRefusal(readErr)
+	}
+	if closeErr != nil {
+		return codexappserver.LifecycleSnapshot{}, lifecycleRefusal(closeErr)
+	}
+	if err := operationCtx.Err(); err != nil {
+		return codexappserver.LifecycleSnapshot{}, lifecycleRefusal(err)
+	}
+
+	// Publication fence: the shared endpoint, connection, binding, and caller
+	// cancellation must all still be current after the owned transport is reaped.
+	b.mu.Lock()
+	current, currentErr := bd.authorityLocked(fence)
+	stillCurrent := currentErr == nil && current == conn && b.conn == conn &&
+		codexappserver.SamePeerIdentity(peer, conn.peer)
+	b.mu.Unlock()
+	if !stillCurrent {
+		if currentErr != nil {
+			return codexappserver.LifecycleSnapshot{}, currentErr
+		}
+		return codexappserver.LifecycleSnapshot{}, refuse(RefusalStaleConnectionEpoch, nil)
+	}
+	if snapshot.ThreadID != bd.threadID {
+		return codexappserver.LifecycleSnapshot{}, refuse(RefusalLifecycleProtocol, codexappserver.ErrProtocol)
+	}
+	return snapshot, nil
+}
+
+// rememberOwnedAttemptLocked keeps the retry fence across disconnect/rebind,
+// then reclaims it without relying on a future request. The timer belongs to
+// the broker lifecycle, so an idle endpoint cannot accumulate thread ids.
+// Caller holds b.mu.
+func (b *Broker) rememberOwnedAttemptLocked(threadID string, attempted time.Time) {
+	b.lastOwned[threadID] = attempted
+	expired := b.clock.After(ownedLifecycleRetry)
+	go func() {
+		select {
+		case <-expired:
+			b.mu.Lock()
+			if current, ok := b.lastOwned[threadID]; ok && current.Equal(attempted) {
+				delete(b.lastOwned, threadID)
+			}
+			b.mu.Unlock()
+		case <-b.ctx.Done():
+		}
+	}()
+}
+
+func boundedLifecycleContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	deadline := time.Now().Add(ownedLifecycleLimit)
+	if caller, ok := ctx.Deadline(); ok && caller.Before(deadline) {
+		deadline = caller
+	}
+	return context.WithDeadline(ctx, deadline)
+}
+
+func lifecycleRefusal(err error) error {
+	switch {
+	case errors.Is(err, codexappserver.ErrUnsupported):
+		return refuse(RefusalLifecycleUnsupported, err)
+	case errors.Is(err, codexappserver.ErrThreadAbsent):
+		return refuse(RefusalThreadAbsent, err)
+	case errors.Is(err, codexappserver.ErrThreadNotDurable):
+		return refuse(RefusalThreadNotDurable, err)
+	case errors.Is(err, codexappserver.ErrPayloadTooLarge):
+		return refuse(RefusalPayloadTooLarge, err)
+	case errors.Is(err, codexappserver.ErrProtocol), errors.Is(err, codexappserver.ErrEndpointChanged):
+		return refuse(RefusalLifecycleProtocol, err)
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded), errors.Is(err, codexappserver.ErrDisconnected):
+		return refuse(RefusalDisconnectBoundary, err)
+	default:
+		return refuse(RefusalEndpointRefused, err)
 	}
 }
 

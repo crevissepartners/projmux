@@ -145,3 +145,8 @@ func defaultControlSocketPath() (string, bool) {
 	}
 	return filepath.Join(codexHome, "app-server-control", "app-server-control.sock"), true
 }
+
+// DefaultControlSocketPath resolves the official default control socket once
+// for a fixed broker route. The returned path is transport metadata only; it
+// is never an endpoint witness and cannot authorize attachment by itself.
+func DefaultControlSocketPath() (string, bool) { return defaultControlSocketPath() }

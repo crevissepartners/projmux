@@ -74,10 +74,12 @@ func negotiate(client, host ProtocolRange) (int, bool) {
 type requestKind string
 
 const (
-	requestBind   requestKind = "bind"
-	requestUnbind requestKind = "unbind"
-	requestSubmit requestKind = "submit"
-	requestAnswer requestKind = "answer"
+	requestBind      requestKind = "bind"
+	requestUnbind    requestKind = "unbind"
+	requestSubmit    requestKind = "submit"
+	requestAnswer    requestKind = "answer"
+	requestLifecycle requestKind = "lifecycle-snapshot"
+	requestCancel    requestKind = "cancel"
 	// requestStats reads the runtime's content-free telemetry. It binds
 	// nothing and mutates nothing, so it is answered while the runtime is
 	// draining and needs no protocol bump: a runtime that predates it answers
@@ -111,7 +113,10 @@ type hello struct {
 	Minimum    int         `json:"minProtocol"`
 	Endpoint   EndpointKey `json:"endpoint"`
 	Credential string      `json:"credential"`
+	Purpose    string      `json:"purpose,omitempty"`
 }
+
+const lifecycleSessionPurpose = "lifecycle-v1"
 
 func (h hello) protocol() ProtocolRange {
 	return ProtocolRange{Preferred: h.Preferred, Minimum: h.Minimum}
@@ -125,31 +130,38 @@ func (h hello) protocol() ProtocolRange {
 // it, a fence minted by a crashed runtime would numerically match a fresh
 // one's.
 type wireRequest struct {
-	ID           uint64          `json:"id"`
-	Kind         requestKind     `json:"kind"`
-	Runtime      string          `json:"runtime"`
-	Thread       string          `json:"thread,omitempty"`
-	CWD          string          `json:"cwd,omitempty"`
-	Roots        []string        `json:"roots,omitempty"`
-	Fence        Fence           `json:"fence,omitzero"`
-	Method       string          `json:"method,omitempty"`
-	Params       json.RawMessage `json:"params,omitempty"`
-	RawRequestID json.RawMessage `json:"rawRequestId,omitempty"`
+	ID            uint64          `json:"id"`
+	Kind          requestKind     `json:"kind"`
+	Runtime       string          `json:"runtime"`
+	Thread        string          `json:"thread,omitempty"`
+	CWD           string          `json:"cwd,omitempty"`
+	Roots         []string        `json:"roots,omitempty"`
+	Fence         Fence           `json:"fence,omitzero"`
+	Method        string          `json:"method,omitempty"`
+	Params        json.RawMessage `json:"params,omitempty"`
+	RawRequestID  json.RawMessage `json:"rawRequestId,omitempty"`
+	CancelID      uint64          `json:"cancelId,omitempty"`
+	TargetSession string          `json:"targetSession,omitempty"`
 }
 
 // wireReply is one host frame. A frame with an ID answers that request; a
 // frame without one is an unsolicited delivery for the thread it names.
 type wireReply struct {
-	ID       uint64          `json:"id,omitempty"`
-	Kind     replyKind       `json:"kind"`
-	Runtime  string          `json:"runtime,omitempty"`
-	Protocol int             `json:"protocol,omitempty"`
-	Refusal  Refusal         `json:"refusal,omitempty"`
-	Outcome  MutationOutcome `json:"outcome,omitempty"`
-	Thread   string          `json:"thread,omitempty"`
-	Result   json.RawMessage `json:"result,omitempty"`
-	Event    *wireEvent      `json:"event,omitempty"`
+	ID           uint64                            `json:"id,omitempty"`
+	Kind         replyKind                         `json:"kind"`
+	Runtime      string                            `json:"runtime,omitempty"`
+	Protocol     int                               `json:"protocol,omitempty"`
+	Refusal      Refusal                           `json:"refusal,omitempty"`
+	Outcome      MutationOutcome                   `json:"outcome,omitempty"`
+	Thread       string                            `json:"thread,omitempty"`
+	Result       json.RawMessage                   `json:"result,omitempty"`
+	Event        *wireEvent                        `json:"event,omitempty"`
+	Snapshot     *codexappserver.LifecycleSnapshot `json:"snapshot,omitempty"`
+	Capabilities []string                          `json:"capabilities,omitempty"`
+	Session      string                            `json:"session,omitempty"`
 }
+
+const lifecycleCapability = "lifecycle-snapshot-v1"
 
 // wireEvent is one delivered broker event.
 //

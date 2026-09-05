@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"net"
 	"os"
+	"slices"
 	"sync"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 const (
@@ -67,9 +70,12 @@ func (c EnsureConfig) startupTimeout() time.Duration {
 // identity, and every binding it hands out dies with the connection, so
 // authority granted by one runtime can never be presented to its replacement.
 type Conn struct {
-	conn    net.Conn
-	runtime string
-	version int
+	conn      net.Conn
+	discovery Discovery
+	runtime   string
+	version   int
+	lifecycle bool
+	session   string
 
 	writeMu sync.Mutex
 
@@ -89,6 +95,21 @@ type Conn struct {
 // owner-private objects of the expected kind, so a client never hands its
 // credential to a socket it cannot prove belongs to this user.
 func Dial(ctx context.Context, discovery Discovery, cfg DialConfig) (*Conn, error) {
+	return dial(ctx, discovery, cfg, "")
+}
+
+func dialLifecycleIPC(ctx context.Context, discovery Discovery, protocol ProtocolRange) (*Conn, error) {
+	timeout := ownedLifecycleLimit
+	if deadline, ok := ctx.Deadline(); ok {
+		timeout = time.Until(deadline)
+	}
+	if timeout <= 0 {
+		return nil, refuse(RefusalDisconnectBoundary, ctx.Err())
+	}
+	return dial(ctx, discovery, DialConfig{Protocol: protocol, Timeout: timeout}, lifecycleSessionPurpose)
+}
+
+func dial(ctx context.Context, discovery Discovery, cfg DialConfig, purpose string) (*Conn, error) {
 	if !platformSupported {
 		return nil, refuse(RefusalUnsupportedPlatform, nil)
 	}
@@ -114,24 +135,26 @@ func Dial(ctx context.Context, discovery Discovery, cfg DialConfig) (*Conn, erro
 		return nil, refuse(RefusalHostUnavailable, err)
 	}
 	protocol := cfg.Protocol.normalize()
-	conn, err := handshake(netConn, discovery, record, protocol, timeout)
+	conn, err := handshake(netConn, discovery, record, protocol, timeout, purpose)
 	if err != nil {
 		_ = netConn.Close()
 		return nil, err
 	}
+	conn.discovery = discovery
 	go conn.read()
 	return conn, nil
 }
 
 // handshake sends the greeting and consumes the runtime's answer.
 func handshake(netConn net.Conn, discovery Discovery, record discoveryRecord,
-	protocol ProtocolRange, timeout time.Duration) (*Conn, error) {
+	protocol ProtocolRange, timeout time.Duration, purpose string) (*Conn, error) {
 	_ = netConn.SetDeadline(time.Now().Add(timeout))
 	greeting := hello{
 		Preferred:  protocol.Preferred,
 		Minimum:    protocol.Minimum,
 		Endpoint:   discovery.endpoint,
 		Credential: record.Credential,
+		Purpose:    purpose,
 	}
 	if err := writeFrame(netConn, greeting); err != nil {
 		return nil, refuse(RefusalHostUnavailable, err)
@@ -155,13 +178,15 @@ func handshake(netConn net.Conn, discovery Discovery, record discoveryRecord,
 	}
 	_ = netConn.SetDeadline(time.Time{})
 	return &Conn{
-		conn:     netConn,
-		runtime:  reply.Runtime,
-		version:  reply.Protocol,
-		pending:  make(map[uint64]chan wireReply),
-		bindings: make(map[string]*RemoteBinding),
-		reason:   RefusalNone,
-		done:     make(chan struct{}),
+		conn:      netConn,
+		runtime:   reply.Runtime,
+		version:   reply.Protocol,
+		lifecycle: slices.Contains(reply.Capabilities, lifecycleCapability),
+		session:   reply.Session,
+		pending:   make(map[uint64]chan wireReply),
+		bindings:  make(map[string]*RemoteBinding),
+		reason:    RefusalNone,
+		done:      make(chan struct{}),
 	}, nil
 }
 
@@ -371,8 +396,95 @@ func (c *Conn) call(ctx context.Context, request wireRequest) (wireReply, error)
 		c.mu.Unlock()
 		return wireReply{}, refuse(RefusalDisconnectBoundary, ctx.Err())
 	case <-c.done:
-		return wireReply{}, refuse(c.Revocation(), nil)
+		reason := c.Revocation()
+		if reason == RefusalNone {
+			reason = RefusalHostUnavailable
+		}
+		return wireReply{}, refuse(reason, nil)
 	}
+}
+
+// callCancelable is the lifecycle-only request path. Its cancel frame is
+// correlated to the exact in-flight request id; normal submit/answer keeps its
+// existing indeterminate cancellation semantics.
+func (c *Conn) callCancelable(ctx context.Context, request wireRequest) (wireReply, error) {
+	inbox := make(chan wireReply, 1)
+	c.mu.Lock()
+	if c.reason != RefusalNone {
+		reason := c.reason
+		c.mu.Unlock()
+		return wireReply{}, refuse(reason, nil)
+	}
+	c.nextID++
+	request.ID = c.nextID
+	request.Runtime = c.runtime
+	c.pending[request.ID] = inbox
+	c.mu.Unlock()
+	if err := c.writeLifecycle(ctx, request); err != nil {
+		c.mu.Lock()
+		delete(c.pending, request.ID)
+		c.mu.Unlock()
+		return wireReply{}, err
+	}
+	select {
+	case reply := <-inbox:
+		return reply, nil
+	case <-ctx.Done():
+		c.mu.Lock()
+		delete(c.pending, request.ID)
+		c.nextID++
+		cancelRequest := wireRequest{ID: c.nextID, Runtime: c.runtime, Kind: requestCancel, CancelID: request.ID}
+		c.mu.Unlock()
+		c.writeCancel(cancelRequest)
+		// This connection is lifecycle-only. Closing it is the bounded fallback
+		// when the correlated cancel frame cannot get onto a blocked socket; it
+		// cannot revoke or delay any sibling binding on the shared session.
+		c.fail(RefusalBindingClosed)
+		return wireReply{}, refuse(RefusalDisconnectBoundary, ctx.Err())
+	case <-c.done:
+		reason := c.Revocation()
+		if reason == RefusalNone {
+			reason = RefusalHostUnavailable
+		}
+		return wireReply{}, refuse(reason, nil)
+	}
+}
+
+// writeLifecycle is the queue-free write boundary of a request-owned IPC
+// connection. Its deadline is the caller's operation deadline, and failure
+// affects only this disposable connection.
+func (c *Conn) writeLifecycle(ctx context.Context, request wireRequest) error {
+	if err := ctx.Err(); err != nil {
+		return refuse(RefusalDisconnectBoundary, err)
+	}
+	if !c.writeMu.TryLock() {
+		return refuse(RefusalLifecycleBusy, nil)
+	}
+	defer c.writeMu.Unlock()
+	deadline := time.Now().Add(ownedLifecycleLimit)
+	if caller, ok := ctx.Deadline(); ok && caller.Before(deadline) {
+		deadline = caller
+	}
+	_ = c.conn.SetWriteDeadline(deadline)
+	if err := writeFrame(c.conn, request); err != nil {
+		return refuse(RefusalHostUnavailable, err)
+	}
+	_ = c.conn.SetWriteDeadline(time.Time{})
+	return nil
+}
+
+// writeCancel is deliberately queue-free. A lifecycle caller whose deadline
+// has fired must not wait behind a blocked IPC write. Whether this write
+// succeeds or is skipped, callCancelable closes this disposable sidecar; that
+// departure cancels the host operation without touching the shared session.
+func (c *Conn) writeCancel(request wireRequest) {
+	if !c.writeMu.TryLock() {
+		return
+	}
+	defer c.writeMu.Unlock()
+	_ = c.conn.SetWriteDeadline(time.Now().Add(ownedLifecycleCleanup))
+	_ = writeFrame(c.conn, request)
+	_ = c.conn.SetWriteDeadline(time.Time{})
 }
 
 // write serializes one outbound frame.
@@ -579,6 +691,66 @@ func (b *RemoteBinding) Submit(ctx context.Context, fence Fence, mutation Mutati
 			reason = RefusalEndpointRefused
 		}
 		return MutationRefused, refuse(reason, nil)
+	}
+}
+
+// ReadLifecycleSnapshot uses the additive body-free IPC operation. A host
+// without the explicit capability is refused locally; the client never falls
+// back to submit/thread-read and therefore never carries turn bodies over IPC.
+func (b *RemoteBinding) ReadLifecycleSnapshot(ctx context.Context, fence Fence) (codexappserver.LifecycleSnapshot, error) {
+	if err := b.authority(fence); err != nil {
+		return codexappserver.LifecycleSnapshot{}, err
+	}
+	if !b.conn.lifecycle || b.conn.session == "" {
+		return codexappserver.LifecycleSnapshot{}, refuse(RefusalLifecycleUnsupported, codexappserver.ErrUnsupported)
+	}
+	operationCtx, cancel := boundedLifecycleContext(ctx)
+	defer cancel()
+	ownedIPC, err := dialLifecycleIPC(operationCtx, b.conn.discovery, ProtocolRange{
+		Preferred: b.conn.version, Minimum: b.conn.version,
+	})
+	if err != nil {
+		return codexappserver.LifecycleSnapshot{}, err
+	}
+	defer ownedIPC.Close()
+	if !ownedIPC.lifecycle || ownedIPC.session == "" || ownedIPC.runtime != b.conn.runtime {
+		return codexappserver.LifecycleSnapshot{}, refuse(RefusalLifecycleUnsupported, codexappserver.ErrUnsupported)
+	}
+	reply, err := ownedIPC.callCancelable(operationCtx, wireRequest{
+		Kind: requestLifecycle, TargetSession: b.conn.session, Thread: b.thread, Fence: fence,
+	})
+	if err != nil {
+		return codexappserver.LifecycleSnapshot{}, err
+	}
+	if reply.Kind == replyRefused || reply.Refusal != "" && reply.Refusal != RefusalNone {
+		reason := reply.Refusal
+		if reason == RefusalNone {
+			reason = RefusalLifecycleProtocol
+		}
+		return codexappserver.LifecycleSnapshot{}, refuse(reason, lifecycleCause(reason))
+	}
+	if reply.Snapshot == nil || reply.Snapshot.ThreadID != b.thread || len(reply.Result) != 0 {
+		return codexappserver.LifecycleSnapshot{}, refuse(RefusalFrameInvalid, codexappserver.ErrProtocol)
+	}
+	return *reply.Snapshot, nil
+}
+
+func lifecycleCause(reason Refusal) error {
+	switch reason {
+	case RefusalLifecycleUnsupported:
+		return codexappserver.ErrUnsupported
+	case RefusalThreadAbsent:
+		return codexappserver.ErrThreadAbsent
+	case RefusalThreadNotDurable:
+		return codexappserver.ErrThreadNotDurable
+	case RefusalPayloadTooLarge:
+		return codexappserver.ErrPayloadTooLarge
+	case RefusalLifecycleProtocol, RefusalFrameInvalid:
+		return codexappserver.ErrProtocol
+	case RefusalDisconnectBoundary:
+		return codexappserver.ErrDisconnected
+	default:
+		return nil
 	}
 }
 

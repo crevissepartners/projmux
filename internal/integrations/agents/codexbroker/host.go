@@ -32,6 +32,10 @@ const (
 	credentialBytes = 32
 	// runtimeIDBytes is the width of the per-process runtime identity.
 	runtimeIDBytes = 16
+	// sessionIDBytes is the unguessable routing token an authenticated,
+	// request-owned lifecycle IPC connection uses to name the shared session
+	// that owns its binding.
+	sessionIDBytes = 16
 )
 
 // HostStats is the content-free telemetry projection of one runtime host.
@@ -110,7 +114,8 @@ type Host struct {
 	// live is every accepted connection this runtime is still serving. A
 	// shutdown closes them explicitly: a session blocked on its socket would
 	// otherwise keep the runtime alive past the moment it decided to stop.
-	live map[*net.UnixConn]struct{}
+	live        map[*net.UnixConn]struct{}
+	sessionRefs map[string]*session
 }
 
 // StartHost publishes one runtime on the discovery contract and serves it.
@@ -151,6 +156,7 @@ func StartHost(cfg HostConfig) (*Host, error) {
 		credential:  credential,
 		listener:    listener,
 		live:        make(map[*net.UnixConn]struct{}),
+		sessionRefs: make(map[string]*session),
 		done:        make(chan struct{}),
 		acceptReady: make(chan struct{}),
 		acceptDone:  make(chan struct{}),
@@ -419,25 +425,25 @@ func randomToken(width int) (string, error) {
 // file sits in is what makes reading it proof of anything. Neither is a
 // substitute for the other, and a caller that fails either one is refused
 // before it can bind, submit, or answer.
-func (h *Host) authenticate(conn *net.UnixConn, reader *bufio.Reader) (int, bool) {
+func (h *Host) authenticate(conn *net.UnixConn, reader *bufio.Reader) (int, string, bool, bool) {
 	_ = conn.SetReadDeadline(time.Now().Add(handshakeTimeout))
 	frame, err := readFrame(reader)
 	if err != nil {
-		return 0, false
+		return 0, "", false, false
 	}
 	_ = conn.SetReadDeadline(time.Time{})
 	var greeting hello
 	if json.Unmarshal(frame, &greeting) != nil {
 		h.refuseSession(conn, RefusalFrameInvalid)
-		return 0, false
+		return 0, "", false, false
 	}
 	if subtle.ConstantTimeCompare([]byte(greeting.Credential), []byte(h.credential)) != 1 {
 		h.refuseSession(conn, RefusalCredentialRejected)
-		return 0, false
+		return 0, "", false, false
 	}
 	if greeting.Endpoint != h.discovery.endpoint {
 		h.refuseSession(conn, RefusalEndpointMismatch)
-		return 0, false
+		return 0, "", false, false
 	}
 	version, ok := negotiate(greeting.protocol(), h.protocol)
 	if !ok {
@@ -446,18 +452,51 @@ func (h *Host) authenticate(conn *net.UnixConn, reader *bufio.Reader) (int, bool
 		// tell the caller exactly that instead of failing anonymously.
 		h.drain()
 		h.refuseSession(conn, RefusalDrainRequired)
-		return 0, false
+		return 0, "", false, false
 	}
 	if reason := h.refusingWork(); reason != RefusalNone {
 		h.refuseSession(conn, reason)
-		return 0, false
+		return 0, "", false, false
+	}
+	if greeting.Purpose != "" && greeting.Purpose != lifecycleSessionPurpose {
+		h.refuseSession(conn, RefusalFrameInvalid)
+		return 0, "", false, false
+	}
+	sessionID, err := randomToken(sessionIDBytes)
+	if err != nil {
+		return 0, "", false, false
 	}
 	_ = conn.SetWriteDeadline(time.Now().Add(writeTimeout))
-	if writeFrame(conn, wireReply{Kind: replyWelcome, Runtime: h.runtimeID, Protocol: version}) != nil {
-		return 0, false
+	if writeFrame(conn, wireReply{Kind: replyWelcome, Runtime: h.runtimeID, Protocol: version,
+		Capabilities: []string{lifecycleCapability}, Session: sessionID}) != nil {
+		return 0, "", false, false
 	}
 	_ = conn.SetWriteDeadline(time.Time{})
-	return version, true
+	return version, sessionID, greeting.Purpose == lifecycleSessionPurpose, true
+}
+
+func (h *Host) registerSession(s *session) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closing || s == nil || s.id == "" {
+		return false
+	}
+	h.sessionRefs[s.id] = s
+	return true
+}
+
+func (h *Host) unregisterSession(s *session) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if s != nil && h.sessionRefs[s.id] == s {
+		delete(h.sessionRefs, s.id)
+	}
+}
+
+func (h *Host) lookupSession(id string) *session {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sessionRefs[id]
 }
 
 // refuseSession writes one typed refusal and counts it.

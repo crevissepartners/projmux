@@ -27,6 +27,7 @@ DeclaredGenerationPair	The declared version pair of the generation-pool qualific
 DecodeCapabilityLedger	Test-only installed qualification API retained for strict checked-in capability-ledger validation.
 DecodeQualificationResult	Phase 0 strict content-free generation qualification receipt decoder is retained for later upgrade gates.
 DecodeRecord	Phase 1 strict capability decoder is retained for cache fixed-point and future-schema refusal.
+DefaultOpener	The original default stdio-proxy broker opener remains a compatibility seam while bounded lifecycle routing uses direct witnessed Unix attachment.
 DirectEndpoint.Close	Test-only installed qualification API retained for bounded direct endpoint cleanup proof.
 DirectEndpoint.Health	Test-only installed qualification API retained for canonical direct readiness evidence.
 DirectEndpoint.forceCleanup	Test-only installed qualification helper retained for injected direct startup-failure cleanup proof.
@@ -127,6 +128,7 @@ QualificationResult.JSON	Phase 0 content-free generation qualification writer is
 QualificationResult.Validate	Phase 0 strict generation qualification consistency check is retained for installed receipts.
 Qualify	Phase 1 independent durable-resume and remote-new reducer is retained as the executable capability authority.
 QualifyPayloadFreeObservation	Test-only Phase 1 seam retained to hash opaque provider identities before immutable evidence publication.
+ReadLifecycleSnapshotOn	The shared requester lifecycle decoder remains a compatibility seam and the independent differential oracle for the owned bounded reader.
 ReadRuntimeHealth	The typed no-write runtime-health seam is retained for diagnostics tests and the planned doctor consumer.
 Refusal.String	Phase 0 closed bundle refusal token renderer is retained for content-free diagnostics.
 RefusalOf	Phase 0 bundle refusal classifier is retained for pre-commit drift and protocol gates.

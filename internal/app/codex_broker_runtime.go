@@ -62,16 +62,30 @@ func (route codexBrokerEndpointRoute) endpointKey() (codexbroker.EndpointKey, er
 	return key, nil
 }
 
-func (route codexBrokerEndpointRoute) opener() codexbroker.Opener {
+func (route codexBrokerEndpointRoute) openers() (codexbroker.Opener, codexbroker.LifecycleOpener, error) {
 	if route == (codexBrokerEndpointRoute{}) || route.Default {
-		return codexbroker.DefaultOpener(version.String(), codexappserver.AttachOptions{
-			Timeout: codexBrokerAttachTimeout, ExperimentalAPI: true,
-		})
+		socketPath, ok := codexappserver.DefaultControlSocketPath()
+		if !ok {
+			return nil, nil, errors.New("codex default control socket is unavailable")
+		}
+		options := codexappserver.AttachOptions{Timeout: codexBrokerAttachTimeout, ExperimentalAPI: true}
+		shared := func(ctx context.Context) (codexbroker.Endpoint, error) {
+			client, _, err := codexappserver.AttachDefaultUnixAt(ctx, socketPath, version.String(), options)
+			return client, err
+		}
+		owned := func(ctx context.Context, expected codexappserver.PeerIdentity) (codexappserver.LifecycleEndpoint, error) {
+			return codexappserver.OpenPrivateUnixLifecycle(ctx, socketPath, version.String(), true, expected)
+		}
+		return shared, owned, nil
 	}
 	socketPath := filepath.Clean(route.SocketPath)
-	return func(ctx context.Context) (codexbroker.Endpoint, error) {
+	shared := func(ctx context.Context) (codexbroker.Endpoint, error) {
 		return codexappserver.OpenPrivateUnix(ctx, socketPath, codexBrokerAttachTimeout, version.String(), true)
 	}
+	owned := func(ctx context.Context, expected codexappserver.PeerIdentity) (codexappserver.LifecycleEndpoint, error) {
+		return codexappserver.OpenPrivateUnixLifecycle(ctx, socketPath, version.String(), true, expected)
+	}
+	return shared, owned, nil
 }
 
 // codexBrokerCommand is the minimal executable seam for the Codex endpoint
@@ -146,9 +160,14 @@ func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
+	opener, lifecycle, err := route.openers()
+	if err != nil {
+		return err
+	}
 	broker, err := codexbroker.NewBroker(codexbroker.Config{
-		Endpoint: discovery.Endpoint(),
-		Opener:   route.opener(),
+		Endpoint:  discovery.Endpoint(),
+		Opener:    opener,
+		Lifecycle: lifecycle,
 	})
 	if err != nil {
 		return fmt.Errorf("start codex broker: %w", err)

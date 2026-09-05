@@ -194,6 +194,20 @@ const (
 	// other binding kept running, so this is deliberately not a disconnect:
 	// the result is indeterminate for this request alone.
 	RefusalPayloadTooLarge Refusal = "payload-too-large"
+	// RefusalLifecycleUnsupported marks an old host or an endpoint route that
+	// cannot prove an owned lifecycle transport. No raw-body fallback is used.
+	RefusalLifecycleUnsupported Refusal = "lifecycle-unsupported"
+	// RefusalLifecycleBusy is the queue-free endpoint/thread admission refusal.
+	RefusalLifecycleBusy Refusal = "lifecycle-busy"
+	// RefusalLifecycleRetry marks an attempt made inside the fixed one-second
+	// retry fence. It never suspends shared control authority.
+	RefusalLifecycleRetry Refusal = "lifecycle-retry"
+	// RefusalLifecycleProtocol marks a body-free projection or witness failure.
+	RefusalLifecycleProtocol Refusal = "lifecycle-protocol"
+	// RefusalThreadAbsent and RefusalThreadNotDurable preserve the upstream
+	// snapshot classifications across typed broker IPC.
+	RefusalThreadAbsent     Refusal = "thread-absent"
+	RefusalThreadNotDurable Refusal = "thread-not-durable"
 
 	// The codes below belong to the runtime host, its discovery, and its
 	// authenticated local IPC. They stay in this one closed set because a

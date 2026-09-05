@@ -375,6 +375,9 @@ func (s *codexBrokerObserverSession) publish(record codexBrokerEpochRecord) (*co
 	runtimeID = s.conn.Runtime()
 	epoch := &codexBrokerLifecycleEpoch{
 		session:       s,
+		identity:      s.identity,
+		endpoint:      s.endpoint,
+		connection:    s.conn,
 		fence:         record.fence,
 		brokerRuntime: runtimeID,
 		snapshot:      record.snapshot,
@@ -422,6 +425,9 @@ func (s *codexBrokerObserverSession) revocation(binding *codexbroker.RemoteBindi
 // writes are all zero without this layer tracking connection state itself.
 type codexBrokerLifecycleEpoch struct {
 	session       *codexBrokerObserverSession
+	identity      codexLifecycleIdentity
+	endpoint      coremetadata.CodexEndpointRef
+	connection    *codexbroker.Conn
 	binding       *codexbroker.RemoteBinding
 	fence         codexbroker.Fence
 	brokerRuntime string
@@ -487,7 +493,29 @@ func (e *codexBrokerLifecycleEpoch) LifecycleEventsAvailable() bool { return tru
 // fence rather than around it is what keeps a retired connection epoch from
 // converging state it no longer owns.
 func (e *codexBrokerLifecycleEpoch) ReadLifecycleSnapshot(ctx context.Context, threadID string) (codexappserver.LifecycleSnapshot, error) {
-	return codexappserver.ReadLifecycleSnapshotOn(ctx, e, threadID)
+	if e == nil || e.binding == nil || e.session == nil || threadID != e.session.identity.ThreadID {
+		return codexappserver.LifecycleSnapshot{}, errors.New("codex broker lifecycle snapshot identity is unavailable")
+	}
+	snapshot, err := e.binding.ReadLifecycleSnapshot(ctx, e.fence)
+	if err != nil {
+		return codexappserver.LifecycleSnapshot{}, err
+	}
+	if !e.lifecyclePublicationCurrent(ctx) {
+		return codexappserver.LifecycleSnapshot{}, errors.New("codex broker lifecycle snapshot authority changed")
+	}
+	return snapshot, nil
+}
+
+func (e *codexBrokerLifecycleEpoch) lifecyclePublicationCurrent(ctx context.Context) bool {
+	if e == nil || e.session == nil || ctx == nil || ctx.Err() != nil {
+		return false
+	}
+	e.session.mu.Lock()
+	defer e.session.mu.Unlock()
+	return !e.session.closed && e.session.current == e && e.session.binding == e.binding &&
+		e.session.identity == e.identity && e.session.endpoint == e.endpoint && e.session.conn == e.connection &&
+		e.session.conn != nil &&
+		e.brokerRuntime == e.session.conn.Runtime()
 }
 
 // Close ends this epoch without releasing the binding. The binding is the

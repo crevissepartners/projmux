@@ -152,6 +152,22 @@ func AttachDefaultEndpoint(ctx context.Context, projmuxVersion string, opts Atta
 	return policy.attach(ctx, opts)
 }
 
+// AttachDefaultUnixAt applies the existing default readiness/version/
+// ownership gate, then opens the already-resolved control socket directly so
+// the broker can retain a kernel peer-birth witness. The path is fixed by the
+// route factory and is not treated as identity.
+func AttachDefaultUnixAt(ctx context.Context, socketPath, projmuxVersion string, opts AttachOptions) (*Client, Health, error) {
+	policy := attachPolicy{
+		probe: func(probeCtx context.Context) Health {
+			return ProbeDefaultProxy(probeCtx, attachTimeout(opts.Timeout), projmuxVersion, true)
+		},
+		open: func(openCtx context.Context, experimental bool) (*Client, error) {
+			return OpenPrivateUnix(openCtx, socketPath, attachTimeout(opts.Timeout), projmuxVersion, experimental)
+		},
+	}
+	return policy.attach(ctx, opts)
+}
+
 type attachPolicy struct {
 	probe func(context.Context) Health
 	open  func(context.Context, bool) (*Client, error)

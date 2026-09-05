@@ -25,6 +25,17 @@ type Endpoint interface {
 	Close() error
 }
 
+// witnessedEndpoint is implemented only by direct Unix app-server clients.
+// Stdio proxy children intentionally cannot satisfy it: their process identity
+// is not the upstream peer identity the fixed route needs to prove.
+type witnessedEndpoint interface {
+	PeerIdentity() codexappserver.PeerIdentity
+}
+
+// LifecycleOpener opens one request-owned connection to the exact fixed route
+// and proves it reaches expected before any provider result is trusted.
+type LifecycleOpener func(context.Context, codexappserver.PeerIdentity) (codexappserver.LifecycleEndpoint, error)
+
 // Opener opens exactly one endpoint connection. It is injected so the broker
 // never names a transport, and so a test can fail, delay, or replace a
 // connection without an OS process.

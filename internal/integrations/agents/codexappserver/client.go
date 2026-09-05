@@ -98,6 +98,7 @@ type messageStream interface {
 // bounded notification reader.
 type Client struct {
 	stream readWriteCloser
+	peer   PeerIdentity
 
 	writeMu sync.Mutex
 	mu      sync.Mutex
@@ -120,6 +121,11 @@ type Client struct {
 	// oversized counts inbound messages dropped for exceeding the frame bound.
 	oversized int
 }
+
+// PeerIdentity returns the kernel process-birth witness captured before the
+// Unix transport was upgraded. Stdio proxy clients have no upstream peer
+// witness and therefore return the zero value.
+func (c *Client) PeerIdentity() PeerIdentity { return c.peer }
 
 // NewClient starts a bounded reader over stream. The caller must Initialize
 // before sending any other request.

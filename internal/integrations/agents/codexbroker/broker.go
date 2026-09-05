@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
@@ -22,6 +23,10 @@ type Config struct {
 	Endpoint EndpointKey
 	// Opener opens one connection. Required.
 	Opener Opener
+	// Lifecycle opens the request-owned, witnessed lifecycle projection path.
+	// Nil keeps existing bind/submit/answer hosts compatible and makes the
+	// additive operation explicitly unsupported.
+	Lifecycle LifecycleOpener
 	// Clock is the reconnect backoff time source. Zero means the system clock.
 	Clock Clock
 	// Jitter returns a value in [0,1) used to spread reconnect waits. Zero
@@ -38,6 +43,7 @@ type Config struct {
 type connection struct {
 	epoch    ConnectionEpoch
 	endpoint Endpoint
+	peer     codexappserver.PeerIdentity
 	// answered is the connection-scoped approval response-once ledger, keyed
 	// by the raw JSON-RPC request id bytes. Entries are never released: a
 	// second answer whose first delivery is unknown is worse than none.
@@ -54,11 +60,12 @@ type connection struct {
 // and epoch revocation are serialized by construction rather than by a lock
 // discipline every call site has to remember.
 type Broker struct {
-	endpoint EndpointKey
-	opener   Opener
-	clock    Clock
-	jitter   func() float64
-	backlog  int
+	endpoint  EndpointKey
+	opener    Opener
+	lifecycle LifecycleOpener
+	clock     Clock
+	jitter    func() float64
+	backlog   int
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -78,6 +85,11 @@ type Broker struct {
 	// caller receives is a value copy that cannot alias live broker state.
 	revocations map[Refusal]int
 	ledger      []WriteRecord
+	owned       int
+	ownedWG     sync.WaitGroup
+	ownedThread map[string]struct{}
+	ownedCancel map[string]context.CancelFunc
+	lastOwned   map[string]time.Time
 }
 
 // NewBroker starts one broker and its supervisor. The caller must Close it.
@@ -93,15 +105,19 @@ func NewBroker(cfg Config) (*Broker, error) {
 		return nil, refuse(RefusalEndpointUnknown, nil)
 	}
 	broker := &Broker{
-		endpoint: cfg.Endpoint,
-		opener:   cfg.Opener,
-		clock:    cfg.Clock,
-		jitter:   cfg.Jitter,
-		backlog:  cfg.Backlog,
-		wake:     make(chan struct{}, 1),
-		done:     make(chan struct{}),
-		exit:     make(chan struct{}),
-		bindings: make(map[string]*Binding),
+		endpoint:    cfg.Endpoint,
+		opener:      cfg.Opener,
+		lifecycle:   cfg.Lifecycle,
+		clock:       cfg.Clock,
+		jitter:      cfg.Jitter,
+		backlog:     cfg.Backlog,
+		wake:        make(chan struct{}, 1),
+		done:        make(chan struct{}),
+		exit:        make(chan struct{}),
+		bindings:    make(map[string]*Binding),
+		ownedThread: make(map[string]struct{}),
+		ownedCancel: make(map[string]context.CancelFunc),
+		lastOwned:   make(map[string]time.Time),
 	}
 	if broker.clock == nil {
 		broker.clock = systemClock{}
@@ -285,7 +301,11 @@ func (b *Broker) open(endpoint Endpoint) *connection {
 	defer b.mu.Unlock()
 	b.connEpoch++
 	b.diag.Connects++
-	conn := &connection{epoch: b.connEpoch, endpoint: endpoint, answered: make(map[string]struct{})}
+	peer := codexappserver.PeerIdentity{}
+	if witnessed, ok := endpoint.(witnessedEndpoint); ok {
+		peer = witnessed.PeerIdentity()
+	}
+	conn := &connection{epoch: b.connEpoch, endpoint: endpoint, peer: peer, answered: make(map[string]struct{})}
 	b.conn = conn
 	return conn
 }
@@ -377,6 +397,7 @@ func (b *Broker) revoke(conn *connection) {
 	b.conn = nil
 	b.diag.Disconnects++
 	for _, binding := range b.bindings {
+		b.cancelOwnedLocked(binding.threadID)
 		binding.suspendLocked()
 	}
 }
@@ -394,6 +415,10 @@ func (b *Broker) shutdown() {
 		_ = conn.endpoint.Close()
 		conn.barriers.Wait()
 	}
+	b.ownedWG.Wait()
+	b.mu.Lock()
+	b.lastOwned = make(map[string]time.Time)
+	b.mu.Unlock()
 }
 
 // revokeBindingLocked terminates one binding and removes it from routing.
@@ -403,6 +428,7 @@ func (b *Broker) revokeBindingLocked(binding *Binding, reason Refusal) {
 		return
 	}
 	binding.revokeLocked(reason)
+	b.cancelOwnedLocked(binding.threadID)
 	delete(b.bindings, binding.threadID)
 	// Wake the supervisor for the same reason Bind and Close do: what this
 	// connection has left to serve just changed. Binding.Close signalled and
@@ -422,6 +448,14 @@ func (b *Broker) revokeBindingLocked(binding *Binding, reason Refusal) {
 	default:
 		b.diag.RevokedBindings++
 		b.countRevocationLocked(reason)
+	}
+}
+
+// cancelOwnedLocked terminates the request-owned read for one binding without
+// touching the shared endpoint or any sibling binding. Caller holds b.mu.
+func (b *Broker) cancelOwnedLocked(threadID string) {
+	if cancel := b.ownedCancel[threadID]; cancel != nil {
+		cancel()
 	}
 }
 
