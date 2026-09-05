@@ -8,7 +8,9 @@ import (
 	"reflect"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 )
@@ -216,7 +218,8 @@ func TestBrokerDiagnosticsDialTheEndpointTheRuntimePublished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("endpoint key: %v", err)
 	}
-	host := startPublishedBrokerRuntimeForTest(t, domain, endpoint)
+	host, opens := startPublishedBrokerRuntimeForTest(t, domain, endpoint)
+	baseline := host.Stats()
 
 	// The default key must be provably unpublished, or the assertion below
 	// would pass for a reader that still dialed it.
@@ -266,9 +269,32 @@ func TestBrokerDiagnosticsDialTheEndpointTheRuntimePublished(t *testing.T) {
 		t.Fatal("the diagnostics read stopped the runtime it observed")
 	default:
 	}
-	if second := observeCodexBrokerRuntime(context.Background(), env, home); second.State != codexBrokerStateRunning ||
-		second.Runtime != host.RuntimeID() {
+	second := observeCodexBrokerRuntime(context.Background(), env, home)
+	if second.State != codexBrokerStateRunning || second.Runtime != host.RuntimeID() {
 		t.Fatalf("second read = %+v, want the same runtime still serving", second)
+	}
+
+	// The read reaches the runtime over a client connection, and that
+	// connection is the one thing a diagnostics read is allowed to cost. It
+	// may not become an upstream connection, may not move the connection
+	// epoch, may not create or revoke a binding, and may not be left open --
+	// C-1 promises the telemetry of a runtime, not a runtime that was changed
+	// by being asked about.
+	if got := opens.Load(); got != 0 {
+		t.Fatalf("upstream opens = %d, want zero: a diagnostics read may not open an endpoint connection", got)
+	}
+	if second.ConnectionEpoch != diagnostic.ConnectionEpoch {
+		t.Fatalf("connection epoch %d -> %d across two reads; observing may not reconnect the runtime",
+			diagnostic.ConnectionEpoch, second.ConnectionEpoch)
+	}
+	if diagnostic.Bindings != 0 || second.Bindings != 0 || diagnostic.Connections != 0 || second.Connections != 0 {
+		t.Fatalf("reads reported bindings/connections %d/%d and %d/%d, want none created by observing",
+			diagnostic.Bindings, diagnostic.Connections, second.Bindings, second.Connections)
+	}
+	settled := waitForBrokerLiveSessions(t, host, baseline.LiveSessions)
+	if settled.Bindings != baseline.Bindings || settled.Refused != baseline.Refused ||
+		settled.Draining != baseline.Draining || settled.Endpoint != baseline.Endpoint {
+		t.Fatalf("host stats %+v -> %+v; two diagnostics reads changed the runtime they observed", baseline, settled)
 	}
 }
 
@@ -339,10 +365,9 @@ func TestBrokerDiagnosticsSelectEveryPublishedEndpointDeterministically(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	hosts := map[codexbroker.EndpointKey]*codexbroker.Host{
-		first:  startPublishedBrokerRuntimeForTest(t, domain, first),
-		second: startPublishedBrokerRuntimeForTest(t, domain, second),
-	}
+	hosts := map[codexbroker.EndpointKey]*codexbroker.Host{}
+	hosts[first], _ = startPublishedBrokerRuntimeForTest(t, domain, first)
+	hosts[second], _ = startPublishedBrokerRuntimeForTest(t, domain, second)
 
 	published, refusal := codexBrokerPublishedRuntimes(domain)
 	if refusal != "" {
@@ -403,15 +428,19 @@ func brokerDiagnosticsStateDomainForTest(t *testing.T) (func(string) string, fun
 // exact endpoint key inside the given state domain. Its opener is never
 // reached, because the broker opens an upstream connection only once a binding
 // exists and a diagnostics read creates none.
-func startPublishedBrokerRuntimeForTest(t *testing.T, domain string, endpoint codexbroker.EndpointKey) *codexbroker.Host {
+func startPublishedBrokerRuntimeForTest(
+	t *testing.T, domain string, endpoint codexbroker.EndpointKey,
+) (*codexbroker.Host, *atomic.Int64) {
 	t.Helper()
 	discovery, err := codexbroker.NewDiscovery(domain, endpoint)
 	if err != nil {
 		t.Fatalf("discovery for %s: %v", endpoint, err)
 	}
+	var opens atomic.Int64
 	broker, err := codexbroker.NewBroker(codexbroker.Config{
 		Endpoint: endpoint,
 		Opener: func(context.Context) (codexbroker.Endpoint, error) {
+			opens.Add(1)
 			return nil, errors.New("a diagnostics read must never open an upstream connection")
 		},
 	})
@@ -427,5 +456,24 @@ func startPublishedBrokerRuntimeForTest(t *testing.T, domain string, endpoint co
 		_ = host.Close()
 		_ = broker.Close()
 	})
-	return host
+	return host, &opens
+}
+
+// waitForBrokerLiveSessions waits for one runtime's live client session count
+// to settle at want. A diagnostics client's disconnect is observed by the host
+// asynchronously, so the assertion is that the count returns rather than that
+// it never moved.
+func waitForBrokerLiveSessions(t *testing.T, host *codexbroker.Host, want int) codexbroker.HostStats {
+	t.Helper()
+	limit := time.Now().Add(2 * time.Second)
+	for {
+		stats := host.Stats()
+		if stats.LiveSessions == want {
+			return stats
+		}
+		if time.Now().After(limit) {
+			t.Fatalf("live sessions = %d, want %d once every diagnostics client has disconnected", stats.LiveSessions, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
