@@ -1207,13 +1207,26 @@ the log itself reports success and every diagnosis built on it inherits the lie.
 It is the strongest form of the failure this whole section exists to catch:
 `disconnected` and `no matching pane` were at least wrong out loud.
 
-The gate is zero and carries no baseline. Recording the current count as an
-allowance was considered and rejected: pinning today's state as the passing
-condition is the exact shape of the E2E assertion that made a silent control
-plane the condition for green, and building that trap inside the gate written
-to stop it is not a tradeoff worth making. The scan covers the whole package
-rather than a named list of files, so a discarded write appearing somewhere new
-is caught rather than skipped for being somewhere nobody thought to look.
+The gate is zero within the hook reflection path, and it carries no baseline.
+Recording the current count as an allowance was considered and rejected:
+pinning today's state as the passing condition is the exact shape of the E2E
+assertion that made a silent control plane the condition for green, and
+building that trap inside the gate written to stop it is not a tradeoff worth
+making. An exception is admitted by a stated `best-effort-write: <reason>`
+comment, never by a count — the difference being that a reason is a judgment a
+reviewer can dispute, while a number just defers on volume. Three writes carry
+one today: two cosmetic (a pane title, a one-shot message on the operator's own
+screen) and one global cleanup marker whose failure simply causes a retry. None
+of the three can make a surface report a state a Pane does not hold.
+
+Two things about the scan itself. It covers the whole package rather than a
+named list of files, so a discarded write appearing somewhere new is caught
+rather than skipped for being somewhere nobody thought to look. And it reads
+the syntax tree, not the text: a textual version counted the pattern inside the
+comment explaining why a checked helper replaced it, so the sentence describing
+the fix registered as the defect.
+`TestDiscardedWriteScanNeverCountsProseAboutCode` pins that, because a gate
+which cannot tell code from prose about code is one people route around.
 
 The `pane-ownership` foreign count is broken down by direction for a related
 reason. A hook landing on the Pane that launched its host is the identity leak

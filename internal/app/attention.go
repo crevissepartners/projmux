@@ -657,10 +657,16 @@ func (c *attentionCommand) unsetPaneOption(paneID, option string) {
 }
 
 func (c *attentionCommand) selectPaneTitle(paneID, title string) {
+	// best-effort-write: a pane title is decoration. Nothing reads it back and
+	// no record claims it was set, so a failure here cannot make a surface
+	// report a state the Pane does not hold.
 	_, _ = c.run("tmux", "select-pane", "-T", title, "-t", paneID)
 }
 
 func (c *attentionCommand) displayPaneMessage(paneID, message string) {
+	// best-effort-write: a one-shot message to the operator's own screen. Its
+	// failure mode is the operator not seeing a line they were already looking
+	// at, which is not a lie told to a later reader.
 	_, _ = c.run("tmux", "display-message", "-t", paneID, message)
 }
 

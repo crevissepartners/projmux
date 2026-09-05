@@ -24,6 +24,23 @@ const aiIngestAttributionWindow = 256 << 10
 // so a log of very short lines cannot turn this into an unbounded parse.
 const aiIngestAttributionRecords = 4096
 
+// The window must stay inside what a trim keeps.
+//
+// `trimAIIngestLogFile` discards the front of the log once it passes
+// aiIngestLogMaxSize, keeping the last aiIngestLogRetain bytes. As long as the
+// window is no larger than what is retained, every record the window covers is
+// a record that survived the trim, and a shrinking log costs history the window
+// never claimed to hold. Lower aiIngestLogRetain below aiIngestAttributionWindow
+// and that stops being true silently: the window would span a discarded prefix,
+// the counts would fall, and the diagnosis would read the deletion as an
+// improvement -- a check failing to check its own premise, which is the same
+// shape as every defect this file exists to detect.
+//
+// The subtraction is unsigned, so violating the invariant is a build failure
+// rather than a diagnosis that quietly starts lying. Both constant names appear
+// here on purpose: whoever next edits aiIngestLogRetain finds this by grep.
+const _ = uint(aiIngestLogRetain - aiIngestAttributionWindow)
+
 // aiIngestAttributionSources are the provider hook sources whose attribution
 // this projection answers for. tmux-bell is deliberately absent: it is not a
 // provider hook and carries its own pane through a different route, so folding
