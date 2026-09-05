@@ -236,3 +236,47 @@ func TestReleaseChannelRowStaysInAboutAndNotInLabs(t *testing.T) {
 		t.Fatalf("release channel nav kind = %q, want %q", got, want)
 	}
 }
+
+// TestReleaseChannelToggleDoesNotReportItselfAsAnUpdate keeps the toggle's
+// feedback distinguishable from the apply action it sits next to. The row
+// shares the `update:` action prefix with check and apply, so the generic
+// prefix label would announce "Update complete" one row below "Update now" —
+// wording a user is entitled to read as "the binary was just replaced".
+func TestReleaseChannelToggleDoesNotReportItselfAsAnUpdate(t *testing.T) {
+	t.Parallel()
+
+	label, mutation := settingsMutationLabel(settingsUpdateReleaseChannel)
+	if !mutation {
+		t.Fatalf("settingsMutationLabel(%q) reported no mutation", settingsUpdateReleaseChannel)
+	}
+	if got, want := label, "Release channel"; got != want {
+		t.Fatalf("release channel feedback label = %q, want %q", got, want)
+	}
+	for _, sibling := range []string{settingsUpdateCheck, settingsUpdateApply} {
+		if got, _ := settingsMutationLabel(sibling); got != "Update" {
+			t.Fatalf("settingsMutationLabel(%q) = %q, want the sibling actions to keep %q", sibling, got, "Update")
+		}
+	}
+
+	home := t.TempDir()
+	cmd := &settingsCommand{
+		homeDir:   func() (string, error) { return home, nil },
+		lookupEnv: func(string) string { return "" },
+	}
+	if err := cmd.executeWithFeedback(settingsUpdateReleaseChannel, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("executeWithFeedback() error = %v", err)
+	}
+	if cmd.feedback == nil {
+		t.Fatal("toggling the release channel produced no Settings feedback")
+	}
+	if got, want := cmd.feedback.Summary, "Release channel complete"; got != want {
+		t.Fatalf("feedback summary = %q, want %q", got, want)
+	}
+	channel, stored, err := cmd.currentReleaseChannelSetting()
+	if err != nil {
+		t.Fatalf("currentReleaseChannelSetting() error = %v", err)
+	}
+	if channel != updateReleaseChannelRC || !stored {
+		t.Fatalf("currentReleaseChannelSetting() = %q, %t; want %q, true", channel, stored, updateReleaseChannelRC)
+	}
+}
