@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/antigravity"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/claude"
@@ -75,6 +76,20 @@ type fakeResumedPane struct {
 type productionBindingResumeLauncher struct {
 	*fakeResumeLauncher
 	binder *aiCommand
+}
+
+type exactArgvResumeLauncher struct {
+	*fakeResumeLauncher
+	planner *aiCommand
+	argv    [][]string
+}
+
+func (l *exactArgvResumeLauncher) PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (string, []string, error) {
+	title, argv, err := l.planner.PlanAgentResume(provider, workspace, conversationID)
+	if err == nil {
+		l.argv = append(l.argv, slices.Clone(argv))
+	}
+	return title, argv, err
 }
 
 // pinnedResumeTestLauncher gives a test explicit native endpoint authority
@@ -989,6 +1004,10 @@ func TestProviderResumeArgvAddressesTheConversationAndCarriesNoTurnID(t *testing
 	} {
 		t.Run(test.provider, func(t *testing.T) {
 			t.Parallel()
+			_, cell, ok := aiprovider.LookupAgentCapability("resume", aiprovider.ID(test.provider))
+			if !ok || cell.Mode != aiprovider.SupportProviderResume {
+				t.Fatalf("resume capability for %s = %#v", test.provider, cell)
+			}
 			got, err := resumeArgsForAgent(test.provider, test.id)
 			if err != nil {
 				t.Fatalf("resumeArgsForAgent(%s) error = %v", test.provider, err)
@@ -1000,6 +1019,28 @@ func TestProviderResumeArgvAddressesTheConversationAndCarriesNoTurnID(t *testing
 			// would have to be a fourth, and there is nowhere to put it.
 			if len(got) != 3 {
 				t.Fatalf("resume argv has %d elements, want 3 with no turn slot: %v", len(got), got)
+			}
+
+			store := newFakeResourceStore(t)
+			agent, _ := store.registry.Agent("agt-beta-codex")
+			agent.Spec.Provider = test.provider
+			observation := coremetadata.AgentSessionObservation{Provider: test.provider}
+			if test.provider == aiModeCodex {
+				observation.ThreadID = test.id
+			} else {
+				observation.SessionID = test.id
+			}
+			ref, valid := coremetadata.NewAgentSessionRef(observation, resourceFixtureClock)
+			if !valid {
+				t.Fatalf("session fixture for %s was rejected", test.provider)
+			}
+			agent.Status.SessionRef = ref
+			plan, err := planAgentResume("agent resume", store.registry, agent)
+			if err != nil {
+				t.Fatalf("planAgentResume(%s): %v", test.provider, err)
+			}
+			if plan.agentUID != agent.Metadata.UID || plan.provider != test.provider || plan.conversationID != test.id || len(store.registry.Agents) != 2 {
+				t.Fatalf("resume plan changed identity or conversation: %#v", plan)
 			}
 		})
 	}
@@ -1029,6 +1070,81 @@ func TestProviderResumeArgvAddressesTheConversationAndCarriesNoTurnID(t *testing
 		if err == nil {
 			t.Fatal("a provider lost its invalid-resume-id sentinel")
 		}
+	}
+}
+
+func TestProviderResumeExecutionPreservesExactAgentAndLaunchesOneExactArgv(t *testing.T) {
+	const uuid = "7ceaf499-728a-482e-97cd-1c0420efc7e2"
+	for _, test := range []struct {
+		provider string
+		id       string
+	}{
+		{provider: aiModeCodex, id: resumeFixtureConversation},
+		{provider: aiModeClaude, id: uuid},
+		{provider: aiModeAntigravity, id: uuid},
+	} {
+		t.Run(test.provider, func(t *testing.T) {
+			store := newFakeResourceStore(t)
+			target, _ := store.registry.Agent("agt-beta-codex")
+			target.Spec.Provider = test.provider
+			observation := coremetadata.AgentSessionObservation{Provider: test.provider, SessionID: test.id}
+			if test.provider == aiModeCodex {
+				observation.SessionID = ""
+				observation.ThreadID = test.id
+			}
+			ref, ok := coremetadata.NewAgentSessionRef(observation, resourceFixtureClock)
+			if !ok {
+				t.Fatalf("session fixture for %s was rejected", test.provider)
+			}
+			target.Status.SessionRef = ref
+			beforeUID, beforeName := target.Metadata.UID, target.Metadata.Name
+			beforeAgentCount := len(store.registry.Agents)
+
+			tmux := newFakeTmux()
+			command, recorder, _, _ := newTestAgentResumeCommand(t, store, tmux)
+			var wantChild []string
+			if test.provider == aiModeCodex {
+				enablePinnedNativeResumeFixture(t, command, store, beforeUID, recorder)
+				route := nativeTestRoute("generation-resume-fixture", coremetadata.CodexGenerationCurrent)
+				wantChild = []string{route.TUIExecutable, "resume", "--remote", "unix://" + route.SocketPath, test.id}
+			} else {
+				launcher := &exactArgvResumeLauncher{fakeResumeLauncher: recorder, planner: agentLaunchArgvTestCommand(t)}
+				command.rebind.launcher = launcher
+			}
+
+			stdout, stderr, err := runRoute(t, command, "resume", "uid:"+beforeUID)
+			if err != nil {
+				t.Fatalf("resume %s: stdout=%q stderr=%q err=%v", test.provider, stdout, stderr, err)
+			}
+			calls := splitWindowCalls(tmux)
+			if len(calls) != 1 {
+				t.Fatalf("%s split-window calls = %v, want exactly one provider launch", test.provider, calls)
+			}
+			separator := -1
+			for index, arg := range calls[0] {
+				if arg == "--" {
+					separator = index
+				}
+			}
+			if separator < 0 {
+				t.Fatalf("%s supervised launch has no child argv separator: %v", test.provider, calls[0])
+			}
+			if test.provider != aiModeCodex {
+				planned := command.rebind.launcher.(*exactArgvResumeLauncher).argv
+				if len(planned) != 1 {
+					t.Fatalf("%s planned %d provider argv values, want 1", test.provider, len(planned))
+				}
+				wantChild = planned[0]
+			}
+			if got := calls[0][separator+1:]; !slices.Equal(got, wantChild) {
+				t.Fatalf("%s launched child argv = %q, want exact %q", test.provider, got, wantChild)
+			}
+			after, ok := store.registry.Agent(beforeUID)
+			if !ok || after.Metadata.UID != beforeUID || after.Metadata.Name != beforeName || len(store.registry.Agents) != beforeAgentCount {
+				t.Fatalf("%s resume changed Agent identity or created a fresh Agent: before=%s/%s count=%d after=%#v count=%d",
+					test.provider, beforeUID, beforeName, beforeAgentCount, after.Metadata, len(store.registry.Agents))
+			}
+		})
 	}
 }
 

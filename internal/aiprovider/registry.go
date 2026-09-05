@@ -59,7 +59,7 @@ var registry = []Metadata{
 		CreateShortcut:  true,
 		Integrate: SupportMetadata{
 			Supported: true,
-			Command:   "projmux agent integrate claude",
+			Command:   IntegrationCommand(string(Claude)),
 		},
 		HookDiagnostics: SupportMetadata{
 			Supported: true,
@@ -83,7 +83,7 @@ var registry = []Metadata{
 		CreateShortcut:  true,
 		Integrate: SupportMetadata{
 			Supported: true,
-			Command:   "projmux agent integrate codex",
+			Command:   IntegrationCommand(string(Codex)),
 		},
 		HookDiagnostics: SupportMetadata{
 			Supported: true,
@@ -107,7 +107,7 @@ var registry = []Metadata{
 		CreateShortcut:  true,
 		Integrate: SupportMetadata{
 			Supported: true,
-			Command:   "projmux agent integrate antigravity",
+			Command:   IntegrationCommand(string(Antigravity)),
 		},
 		HookDiagnostics: SupportMetadata{
 			Supported: true,

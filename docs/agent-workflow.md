@@ -713,6 +713,29 @@
   old/new-mutant migration receipt is in
   [codex-generation-pool.md](codex-generation-pool.md#mapping-and-authority-test-migration-ledger).
 
+### Provider capability matrix Phase 0 tests
+
+- `TestAgentCapabilityCatalogIsClosedCartesianMatrix`,
+  `TestAgentCapabilityCatalogPinsCurrentGroupsAndDeferredVocabulary`, and
+  `TestAgentCapabilityCatalogPinsCodexNativeAndSharedFamilies` own the single
+  action × provider catalog, including all eight app-server generation leaves,
+  the four unsupported future coordination cells, the four integration
+  targets, and the three usage providers.
+- `TestAgentCapabilitiesProviderProjectionIsStaticAndReadOnly` and
+  `TestAgentCapabilitiesExactProjectionSeparatesRuntimeEpochAndAvailability`
+  own the provider-only versus exact-Agent projection and prove that Registry
+  reads, live transport, and provider writes are not smuggled into static
+  support. `TestUnsupportedNativeAgentActionsRefuseBeforeRuntimeOrProviderEffects`
+  owns the pre-runtime non-Codex refusal for turn, approval, and review.
+- `TestProviderResumeExecutionPreservesExactAgentAndLaunchesOneExactArgv`
+  owns the three-provider resume execution matrix: one exact child argv, stable
+  Agent uid/name, and no fresh Agent creation.
+- `TestAgentCapabilityCatalogRoutesMatchExecutableHelpGraph` and
+  `TestAgentIntegrationAndGenerationLeafHelpMatchesCapabilityCatalog` own
+  catalog ↔ CLI/help parity. The generated CLI reference test owns the docs
+  projection; future `agent message` and `agent wait` parser placeholders and
+  provider-specific Agent namespaces remain absent.
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.

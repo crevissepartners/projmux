@@ -206,14 +206,6 @@ func TestAgentDomainNamespaceOwnsTheAgentWorkflowSpellings(t *testing.T) {
 	if route.Disposition != DispositionCanonical || route.Hidden {
 		t.Fatalf("agent route disposition=%q hidden=%v", route.Disposition, route.Hidden)
 	}
-	var children []string
-	for _, child := range route.Children {
-		children = append(children, child.Name)
-	}
-	if want := []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage", "app-server"}; !reflect.DeepEqual(children, want) {
-		t.Fatalf("agent children = %v, want %v", children, want)
-	}
-
 	// Provider account usage is an Agent-domain workflow, not a resource: it is
 	// reachable as `agent usage` and there is deliberately no `get usage`.
 	usage, ok := LookupCanonicalRoute("agent usage")

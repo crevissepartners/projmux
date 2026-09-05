@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/aiprovider"
 	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
 )
 
@@ -97,7 +98,16 @@ func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error 
 		printAIUsage(stderr)
 		return errors.New("ai integrate requires <agent-kind>")
 	}
-	switch args[0] {
+	target := strings.TrimSpace(args[0])
+	if target == "help" || target == "--help" || target == "-h" {
+		printAIUsage(stdout)
+		return nil
+	}
+	if aiprovider.IntegrationCommand(target) == "" {
+		printAIUsage(stderr)
+		return fmt.Errorf("unknown ai integrate agent-kind: %s", args[0])
+	}
+	switch target {
 	case "codex":
 		return c.runIntegrateCodex(args[1:], stdout, stderr)
 	case "claude":
@@ -106,12 +116,8 @@ func (c *aiCommand) runIntegrate(args []string, stdout, stderr io.Writer) error 
 		return c.runIntegrateAntigravity(args[1:], stdout, stderr)
 	case "tmux-bell":
 		return c.runIntegrateTmuxBell(args[1:], stdout, stderr)
-	case "help", "--help", "-h":
-		printAIUsage(stdout)
-		return nil
 	default:
-		printAIUsage(stderr)
-		return fmt.Errorf("unknown ai integrate agent-kind: %s", args[0])
+		return fmt.Errorf("integration target %q is catalogued but has no dispatcher", target)
 	}
 }
 

@@ -133,6 +133,12 @@ func (c *agentCommand) runReview(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
+	// Refuse non-Codex providers from the static catalog before consulting the
+	// live Pane or app-server. The native review namespace is exact control, not
+	// a provider-neutral coordination fallback.
+	if err := requireStaticNativeAgentCapability(spelling, agent); err != nil {
+		return err
+	}
 	if c.reviewBinding == nil || c.reviews == nil {
 		return errors.New("agent review unavailable: native Codex review is not configured")
 	}
