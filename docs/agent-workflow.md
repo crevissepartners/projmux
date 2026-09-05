@@ -1205,11 +1205,22 @@ log-derived verdicts can. A reflection path that runs a tmux write and throws
 the error away records `result:"state"` for an event whose Pane never moved, so
 the log itself reports success and every diagnosis built on it inherits the lie.
 It is the strongest form of the failure this whole section exists to catch:
-`disconnected` and `no matching pane` were at least wrong out loud. The test
-holds `aiHookDiscardedWriteInventory`, an exact per-file count of the discarded
-writes in the tree, as a ratchet — a new one fails the gate, and a fixed one
-must be recorded downward. The inventory is unfixed debt, not justification;
-repairing it belongs to the phase that owns those paths.
+`disconnected` and `no matching pane` were at least wrong out loud.
+
+The gate is zero and carries no baseline. Recording the current count as an
+allowance was considered and rejected: pinning today's state as the passing
+condition is the exact shape of the E2E assertion that made a silent control
+plane the condition for green, and building that trap inside the gate written
+to stop it is not a tradeoff worth making. The scan covers the whole package
+rather than a named list of files, so a discarded write appearing somewhere new
+is caught rather than skipped for being somewhere nobody thought to look.
+
+The `pane-ownership` foreign count is broken down by direction for a related
+reason. A hook landing on the Pane that launched its host is the identity leak
+the contract closes; a provider's events arriving under another provider's
+source were misrouted before attribution ever ran, which a stale hook config on
+the machine can produce and no code change here would fix. One number would let
+either be mistaken for the other.
 
 The section leads with a deployment-vintage line, and
 `TestControlPlaneVintage*` owns it. `make install` replaces the executable on
