@@ -121,6 +121,53 @@ func TestClaudeCoordinationHubTransitionsAreTerminalOnce(t *testing.T) {
 		now = now.Add(-2 * time.Minute)
 	})
 
+	t.Run("assigned waiter cannot begin handoff after ttl", func(t *testing.T) {
+		testNow := now
+		hub := newLiveCoordinationTestHub()
+		hub.now = func() time.Time { return testNow }
+		waiter, _ := hub.arm(process)
+		envelope := coordinationEnvelope("message-assigned-ttl", testNow.Add(time.Minute))
+		if got := hub.submit(envelope); got.State != agentdelivery.StateQueued {
+			t.Fatalf("assigned submit = %+v", got)
+		}
+		if response := <-waiter.result; response.Kind != "assignment" || response.WaiterRef != waiter.ref {
+			t.Fatalf("assigned waiter response = %+v", response)
+		}
+		testNow = envelope.Deadline
+		got := hub.status(envelope.MessageRef)
+		if got.State != agentdelivery.StateExpired || got.Ambiguous || got.WaiterRef != "" || got.Reason != "ttl" {
+			t.Fatalf("post-deadline status = %+v", got)
+		}
+		if handoff := hub.beginHandoff(envelope.MessageRef, waiter.ref, process); handoff != got {
+			t.Fatalf("late handoff changed terminal expiry: got %+v want %+v", handoff, got)
+		}
+		if receipt := hub.receipt(envelope.MessageRef, waiter.ref, process, true); receipt != got {
+			t.Fatalf("late receipt changed terminal expiry: got %+v want %+v", receipt, got)
+		}
+		second, _ := hub.arm(process)
+		select {
+		case response := <-second.result:
+			t.Fatalf("expired assignment was automatically resent: %+v", response)
+		default:
+		}
+		hub.cancelWaiter(second, "test-cleanup")
+	})
+
+	t.Run("handoff deadline fence does not depend on status or timer", func(t *testing.T) {
+		testNow := now
+		hub := newLiveCoordinationTestHub()
+		hub.now = func() time.Time { return testNow }
+		waiter, _ := hub.arm(process)
+		envelope := coordinationEnvelope("message-direct-handoff-ttl", testNow.Add(time.Minute))
+		hub.submit(envelope)
+		<-waiter.result
+		testNow = envelope.Deadline
+		got := hub.beginHandoff(envelope.MessageRef, waiter.ref, process)
+		if got.State != agentdelivery.StateExpired || got.Ambiguous || got.WaiterRef != "" || got.Reason != "ttl" {
+			t.Fatalf("post-deadline handoff = %+v", got)
+		}
+	})
+
 	t.Run("helper restart distinguishes held from handoff", func(t *testing.T) {
 		heldHub := newLiveCoordinationTestHub()
 		heldHub.now = func() time.Time { return now }

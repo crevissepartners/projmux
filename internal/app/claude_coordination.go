@@ -162,16 +162,15 @@ func (h *claudeCoordinationHub) submit(envelope claudeCoordinationEnvelope) agen
 		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventExpire, MessageRef: envelope.MessageRef, Reason: "ttl"})
 		return message.delivery
 	}
+	h.scheduleTTL(envelope.MessageRef, envelope.Deadline)
 	if h.waiter == nil {
 		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventHold, MessageRef: envelope.MessageRef, Reason: "no-waiter"})
 		h.pending = append(h.pending, envelope.MessageRef)
-		h.scheduleTTL(envelope.MessageRef, envelope.Deadline)
 		return message.delivery
 	}
 	if h.retireDeadWaiterLocked() {
 		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventHold, MessageRef: envelope.MessageRef, Reason: "no-live-waiter"})
 		h.pending = append(h.pending, envelope.MessageRef)
-		h.scheduleTTL(envelope.MessageRef, envelope.Deadline)
 		return message.delivery
 	}
 	h.assignLocked(message, h.waiter)
@@ -264,6 +263,9 @@ func (h *claudeCoordinationHub) beginHandoff(messageRef, waiterRef string, proce
 	if message.assignedWaiterRef != waiterRef || message.process != process || !h.processCurrent(process) {
 		return message.delivery
 	}
+	if h.expireDeadlineLocked(message) {
+		return message.delivery
+	}
 	message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventBeginHandoff,
 		MessageRef: messageRef, WaiterRef: waiterRef})
 	message.assignedWaiterRef = ""
@@ -341,6 +343,7 @@ func (h *claudeCoordinationHub) status(messageRef string) agentdelivery.Delivery
 	defer h.mu.Unlock()
 	h.expirePendingLocked()
 	if message := h.messages[messageRef]; message != nil {
+		h.expireDeadlineLocked(message)
 		return message.delivery
 	}
 	return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateStale, Reason: "unknown-message"}
@@ -373,19 +376,29 @@ func (h *claudeCoordinationHub) scheduleTTL(messageRef string, deadline time.Tim
 		defer h.mu.Unlock()
 		message := h.messages[messageRef]
 		if message != nil {
-			message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventExpire,
-				MessageRef: messageRef, Reason: "ttl"})
+			h.expireDeadlineLocked(message)
 		}
 	}()
 }
 
+func (h *claudeCoordinationHub) expireDeadlineLocked(message *claudeCoordinationMessage) bool {
+	if message.envelope.Deadline.After(h.now()) {
+		return false
+	}
+	next, changed := agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventExpire,
+		MessageRef: message.envelope.MessageRef, Reason: "ttl"})
+	if changed {
+		message.delivery = next
+		message.assignedWaiterRef = ""
+	}
+	return true
+}
+
 func (h *claudeCoordinationHub) expirePendingLocked() {
-	now := h.now()
 	for _, ref := range h.pending {
 		message := h.messages[ref]
-		if message != nil && !message.envelope.Deadline.After(now) {
-			message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventExpire,
-				MessageRef: ref, Reason: "ttl"})
+		if message != nil {
+			h.expireDeadlineLocked(message)
 		}
 	}
 }

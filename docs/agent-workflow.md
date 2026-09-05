@@ -993,8 +993,9 @@
   `TestClaudeEndpointProcessIntegration` through supervisor, activation gate,
   public SessionStart hook, and detached helper. It covers registration
   replacement, actual helper death while the provider remains alive, automatic
-  lease cleanup, nested/forged entrypoint refusal, provider exit, zero provider
-  connections, and zero token/locator residue in output and live lease files.
+  lease cleanup, nested/forged entrypoint refusal, provider exit with bounded
+  convergence of every captured helper birth, zero provider connections, and
+  zero token/locator residue in output and live lease files.
 - `TestClaudeEndpointInstalledSourceGate` is opt-in evidence from a disposable
   installed Claude one-shot. It checks public SessionStart identity, exact
   readiness, exit invalidation, empty tools/MCP/plugins, and zero tool-use.
@@ -1012,8 +1013,9 @@
   after one exact waiter fully writes the bounded frame and the same helper
   commits its receipt; it never claims model processing, reply, or turn completion.
 - `TestClaudeCoordinationHub*` owns single-waiter CAS/supersede, no-waiter hold,
-  TTL, receipt timeout, duplicate/out-of-order refusal, helper replacement, and
-  zero automatic resend after an ambiguous provider-pipe outcome.
+  TTL before and after waiter assignment, the final pre-handoff deadline fence,
+  receipt timeout, duplicate/out-of-order refusal, helper replacement, and zero
+  automatic resend after an ambiguous provider-pipe outcome.
 - `TestClaudeCoordinationDeadHookChildNeverBeginsHandoff` and
   `TestClaudeCoordinationDisconnectedHookResponseFailsBeforeHandoff` keep a dead
   child fenced as held with handoff zero and a failed helper response as a

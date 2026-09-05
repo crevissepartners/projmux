@@ -388,6 +388,10 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	case <-time.After(8 * time.Second):
 		t.Fatal("provider exit deadline")
 	}
+	helpers := make([]coremetadata.ProcessIdentity, 0, 3)
+	for _, route := range []coremetadata.AgentRouteRef{first, second, third} {
+		helpers = append(helpers, route.Authority().(coremetadata.ClaudeAuthorityRef).LeaseProcess)
+	}
 	deadline := time.Now().Add(5 * time.Second)
 	for {
 		reg, err := store.LoadDegradedReadOnly()
@@ -396,19 +400,23 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		}
 		_, reason := coremetadata.ResolveAgentRoute(reg, h.agentUID)
 		_, statErr := os.Lstat(claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration))
-		if reason != "" && os.IsNotExist(statErr) {
+		helperCurrent := false
+		for _, helper := range helpers {
+			if observed, _, err := claudeadapter.Process(helper.PID); err == nil && observed == helper {
+				helperCurrent = true
+				break
+			}
+		}
+		if reason != "" && os.IsNotExist(statErr) && !helperCurrent {
 			break
 		}
 		if time.Now().After(deadline) {
+			if helperCurrent {
+				t.Fatal("helper process survived activation")
+			}
 			t.Fatal("registration or helper files survived provider exit")
 		}
 		time.Sleep(20 * time.Millisecond)
-	}
-	for _, route := range []coremetadata.AgentRouteRef{first, second, third} {
-		helper := route.Authority().(coremetadata.ClaudeAuthorityRef).LeaseProcess
-		if observed, _, err := claudeadapter.Process(helper.PID); err == nil && observed == helper {
-			t.Fatal("helper process survived activation")
-		}
 	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatal("registration process wrote stdout or stderr")
