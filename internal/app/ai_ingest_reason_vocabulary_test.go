@@ -295,6 +295,10 @@ func sample(c *aiCommand, err error, reason string) {
 	c.appendAIIngestLog(aiIngestLogEntry{Reason: aiPaneMatchReasonNoMatch})
 	c.appendAIIngestLog(aiIngestLogEntry{Reason: string(codexObserverReasonReady)})
 	c.appendAIIngestLog(aiIngestLogEntry{Reason: "pane inventory unavailable"})
+	// A different struct that happens to spell the same field name. Its value
+	// never reaches the log, and counting it would make this gate refuse code
+	// it has no claim over.
+	_ = otherHealth{Reason: err.Error()}
 }
 `
 	fileSet := token.NewFileSet()
@@ -359,5 +363,50 @@ func sample(c *aiCommand, err error) {
 	}
 	if !strings.Contains(found[0].Shape, "via hookLogEntry()") {
 		t.Fatalf("shape = %q, want the sink named so the caller can be found", found[0].Shape)
+	}
+}
+
+// TestIngestReasonAuditIgnoresAForeignStructNamedReason pins the filter that
+// keeps this gate inside its own claim.
+//
+// `Reason` is an ordinary field name. Several structs in this package carry one
+// and never reach the ingest log -- a session-state health projection and a
+// pane blocker among them -- and each writes an error's text into it quite
+// legitimately. A scan that matched the field name alone would refuse code it
+// has no claim over, which is the same failure as counting a contractual
+// refusal among the breakages: a gate declaring something broken that is
+// working exactly as specified.
+//
+// The filter has to hold on both paths. The literal scan checks the composite
+// type directly; the sink scan reaches call sites, and only functions whose own
+// log-entry literal binds a parameter are ever promoted, so a foreign struct
+// cannot introduce one.
+func TestIngestReasonAuditIgnoresAForeignStructNamedReason(t *testing.T) {
+	const source = `package app
+
+type otherHealth struct{ Reason string }
+
+func otherEntry(reason string) otherHealth { return otherHealth{Reason: reason} }
+
+func sample(c *aiCommand, err error) {
+	_ = otherHealth{Reason: err.Error()}
+	_ = otherEntry(err.Error())
+	c.appendAIIngestLog(aiIngestLogEntry{Reason: err.Error()})
+}
+`
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "sample.go", source, 0)
+	if err != nil {
+		t.Fatalf("parse sample: %v", err)
+	}
+	if sinks := aiIngestReasonSinks(parsed); len(sinks) != 0 {
+		t.Fatalf("promoted %+v as a reason sink; only a log-entry literal may promote one", sinks)
+	}
+	found := aiIngestReasonWrites(fileSet, parsed)
+	if len(found) != 1 {
+		t.Fatalf("counted %d write(s), want only the log entry", len(found))
+	}
+	if found[0].Position.Line != 10 {
+		t.Fatalf("counted line %d, want the log entry on line 10", found[0].Position.Line)
 	}
 }
