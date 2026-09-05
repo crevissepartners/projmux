@@ -1048,6 +1048,28 @@ apart.
   downstream step's reason, so a record still says the hook was handed somebody
   else's Pane. Every token stays provider-neutral in wording.
 
+The fall-through has a second door of its own. Its inventory step matches on
+working directory alone, and where every provider Pane sits in the same
+repository that step would hand the event straight back to a Pane of the very
+provider just refused. Phase 8 is what routes a foreign-refused hook into that
+ladder at all, so the coherence check is applied once more to whatever the
+fall-through resolves — to the answer, never inside the shared ladder.
+
+- `TestForeignExplicitFallThroughDoesNotLandOnAnotherProvidersPane` owns that
+  door in both directions: a cwd-sharing Pane of the refused provider is not
+  taken, and the attempt ends with its own reason rather than with that Pane.
+- `TestForeignExplicitFallThroughStillTakesACoherentLadderAnswer` owns the
+  fail-open direction that keeps the Phase 2 contract intact: a ladder answer
+  running the hook's own provider, one the Registry records no provider for, and
+  one recording an unrecognized spelling are all still taken.
+- `TestForeignExplicitFallThroughDoesNotTakeAForeignConversationPane` owns the
+  same check on the Registry conversation record, and proves refusing it does
+  not consume the inventory ladder's turn behind it.
+- `TestNoExplicitPathStillTakesACwdMatchRegardlessOfProvider` is the proof that
+  the shared ladder is untouched: with no explicit value there is no refused
+  envelope and therefore no coherence question, and the cwd and thread steps
+  resolve exactly as before for every provider.
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.

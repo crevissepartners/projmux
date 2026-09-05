@@ -725,3 +725,195 @@ func TestForeignExplicitRefusalLeavesTheRegistryPathUnchanged(t *testing.T) {
 		t.Fatalf("matchAIPane() = %q, reason %q, want %%78", paneID, reason)
 	}
 }
+
+// The second door. The fall-through's inventory step matches on working
+// directory alone, and on a machine where every provider Pane sits in the same
+// repository that step hands the event straight back to a Pane of the very
+// provider just refused. Phase 8 is what routes a foreign-refused hook into that
+// ladder at all, so the ladder's answer is checked for coherence too.
+func TestForeignExplicitFallThroughDoesNotLandOnAnotherProvidersPane(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name       string
+		hook       string
+		handed     string
+		foreign    string
+		inventory  string
+		foreignRow string
+	}{
+		{
+			name: "codex hook, claude pane shares the cwd", hook: aiModeCodex,
+			handed: "pane-claude", foreign: aiModeClaude,
+			inventory: "pane-claude-sibling", foreignRow: "%54",
+		},
+		{
+			name: "claude hook, codex pane shares the cwd", hook: aiModeClaude,
+			handed: "pane-codex", foreign: aiModeCodex,
+			inventory: "pane-codex-sibling", foreignRow: "%79",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			handedAgent, handedPane := providerPaneResource(tc.handed, "%53", tc.foreign, nil)
+			rowAgent, rowPane := providerPaneResource(tc.inventory, tc.foreignRow, tc.foreign, nil)
+			registry := coremetadata.Registry{
+				Agents: []coremetadata.Agent{handedAgent, rowAgent},
+				Panes:  []coremetadata.Pane{handedPane, rowPane},
+			}
+			cmd := inheritedIdentityCommand(t, registry, "%53")
+			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
+					return []byte(tc.foreignRow + "\x1f/repo/projmux\x1f\x1f\n"), nil
+				}
+				return nil, os.ErrNotExist
+			}
+
+			paneID, reason := cmd.matchAIPane(aiPaneMatchInput{
+				ExplicitPane: tc.handed,
+				Provider:     tc.hook,
+				CWD:          "/repo/projmux",
+			})
+			if paneID == tc.foreignRow {
+				t.Fatalf("the cwd step handed the event to another provider's Pane %q", paneID)
+			}
+			if paneID != "" {
+				t.Fatalf("matchAIPane() attributed the event to %q", paneID)
+			}
+			if reason != aiPaneMatchReasonExplicitForeignOnly {
+				t.Fatalf("reason = %q, want %q", reason, aiPaneMatchReasonExplicitForeignOnly)
+			}
+		})
+	}
+}
+
+// Fail-open is what keeps the Phase 2 contract intact: only a recorded and
+// different provider refuses. A cwd-sharing Pane running the hook's own
+// provider, and one the Registry records no provider for, both still answer.
+func TestForeignExplicitFallThroughStillTakesACoherentLadderAnswer(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		rowPane string
+	}{
+		{name: "ladder row runs the hook's own provider", rowPane: aiModeCodex},
+		{name: "ladder row records no provider", rowPane: ""},
+		{name: "ladder row records an unrecognized provider", rowPane: "some-future-provider"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			handedAgent, handedPane := providerPaneResource("pane-claude", "%53", aiModeClaude, nil)
+			rowAgent, rowPane := providerPaneResource("pane-row", "%80", tc.rowPane, nil)
+			registry := coremetadata.Registry{
+				Agents: []coremetadata.Agent{handedAgent, rowAgent},
+				Panes:  []coremetadata.Pane{handedPane, rowPane},
+			}
+			cmd := inheritedIdentityCommand(t, registry, "%53")
+			cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+				if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
+					return []byte("%80\x1f/repo/projmux\x1f\x1f\n"), nil
+				}
+				return nil, os.ErrNotExist
+			}
+			paneID, reason := cmd.matchAIPane(aiPaneMatchInput{
+				ExplicitPane: "pane-claude",
+				Provider:     aiModeCodex,
+				CWD:          "/repo/projmux",
+			})
+			if paneID != "%80" || reason != "" {
+				t.Fatalf("matchAIPane() = %q, reason %q, want %%80", paneID, reason)
+			}
+		})
+	}
+}
+
+// The Registry conversation record is checked the same way. A conversation the
+// Registry places on a Pane of another provider is not taken either, and
+// refusing it does not consume the ladder's turn behind it.
+func TestForeignExplicitFallThroughDoesNotTakeAForeignConversationPane(t *testing.T) {
+	t.Parallel()
+
+	claudeAgent, claudePane := providerPaneResource("pane-claude", "%53", aiModeClaude, nil)
+	claudeAgent.Status.SessionRef = &coremetadata.AgentSessionRef{
+		Provider: aiModeClaude,
+		Claude:   &coremetadata.ClaudeSessionRef{SessionID: "conversation-shared"},
+	}
+	codexAgent, codexPane := providerPaneResource("pane-codex", "%80", aiModeCodex, nil)
+	registry := coremetadata.Registry{
+		Agents: []coremetadata.Agent{claudeAgent, codexAgent},
+		Panes:  []coremetadata.Pane{claudePane, codexPane},
+	}
+
+	// The record resolves, and it points at a Pane of the wrong provider.
+	if held := registeredConversationPanes(registry)["conversation-shared"]; held != "%53" {
+		t.Fatalf("fixture does not record the conversation on the foreign pane: %q", held)
+	}
+
+	t.Run("ladder answers behind the refused conversation", func(t *testing.T) {
+		t.Parallel()
+		cmd := inheritedIdentityCommand(t, registry, "%53")
+		cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
+				return []byte("%80\x1f/repo/projmux\x1f\x1f\n"), nil
+			}
+			return nil, os.ErrNotExist
+		}
+		paneID, reason := cmd.matchAIPane(aiPaneMatchInput{
+			ExplicitPane: "pane-claude",
+			Provider:     aiModeCodex,
+			CWD:          "/repo/projmux",
+			SessionID:    "conversation-shared",
+		})
+		if paneID != "%80" || reason != "" {
+			t.Fatalf("matchAIPane() = %q, reason %q, want %%80", paneID, reason)
+		}
+	})
+
+	t.Run("nothing else answers", func(t *testing.T) {
+		t.Parallel()
+		cmd := inheritedIdentityCommand(t, registry, "%53")
+		paneID, reason := cmd.matchAIPane(aiPaneMatchInput{
+			ExplicitPane: "pane-claude",
+			Provider:     aiModeCodex,
+			SessionID:    "conversation-shared",
+		})
+		if paneID != "" {
+			t.Fatalf("matchAIPane() attributed the event to %q", paneID)
+		}
+		if reason != aiPaneMatchReasonExplicitForeignOnly {
+			t.Fatalf("reason = %q, want %q", reason, aiPaneMatchReasonExplicitForeignOnly)
+		}
+	})
+}
+
+// The global ladder is unchanged. With no explicit value there is no refused
+// envelope and therefore no coherence question: a cwd match resolves exactly as
+// it did before, foreign provider or not. This is the assertion that proves the
+// second-door fix did not leak into `matchAIPaneFromInventory`.
+func TestNoExplicitPathStillTakesACwdMatchRegardlessOfProvider(t *testing.T) {
+	t.Parallel()
+
+	claudeAgent, claudePane := providerPaneResource("pane-claude", "%53", aiModeClaude, nil)
+	registry := coremetadata.Registry{
+		Agents: []coremetadata.Agent{claudeAgent},
+		Panes:  []coremetadata.Pane{claudePane},
+	}
+	inventory := func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if name == "tmux" && len(args) > 0 && args[0] == "list-panes" {
+			return []byte("%53\x1f/repo/projmux\x1fthread-1\x1fsession-1\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	for _, provider := range []string{aiModeCodex, aiModeClaude, aiModeAntigravity, ""} {
+		cmd := inheritedIdentityCommand(t, registry, "")
+		cmd.readCommand = inventory
+		if paneID, reason := cmd.matchAIPane(aiPaneMatchInput{Provider: provider, CWD: "/repo/projmux"}); paneID != "%53" || reason != "" {
+			t.Fatalf("no-explicit cwd step for provider %q = %q, reason %q, want %%53", provider, paneID, reason)
+		}
+		if paneID, reason := cmd.matchAIPane(aiPaneMatchInput{Provider: provider, ThreadID: "thread-1"}); paneID != "%53" || reason != "" {
+			t.Fatalf("no-explicit thread step for provider %q = %q, reason %q, want %%53", provider, paneID, reason)
+		}
+	}
+}

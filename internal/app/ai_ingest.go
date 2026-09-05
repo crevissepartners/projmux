@@ -673,19 +673,64 @@ func (c *aiCommand) matchAIPane(in aiPaneMatchInput) (string, string) {
 // very envelope whose Pane identity was just refused, so honouring it would
 // reintroduce the same misattribution through a second door.
 //
+// Provider coherence is applied once more here, to whatever these steps resolve.
+// This path exists only because the explicit value was foreign, and its second
+// step matches on working directory alone -- on a machine where every provider
+// Pane sits in the same repository that step would hand the event straight back
+// to a Pane of the very provider just refused. The check is applied to the
+// resolved answer rather than inside the ladder, so the ladder and the path that
+// was handed nothing keep their behavior exactly.
+//
+// A foreign answer ends the attempt rather than restarting the ladder looking
+// for a later row: refusing with a reason is the conservative end, and rescanning
+// would mean changing the shared ladder. Silence stays silence -- a Pane the
+// Registry records no provider for is not a contradiction and is still taken.
+//
 // A failure here keeps the refusal legible. The reason is its own token rather
 // than the downstream step's, so the record still says the hook was handed
 // somebody else's Pane instead of only saying the inventory was unreadable.
 func (c *aiCommand) matchAIPaneAfterForeignExplicit(in aiPaneMatchInput) (string, string) {
+	registry := coremetadata.Registry{}
+	if c.loadRegistry != nil {
+		if loaded, err := c.loadRegistry(); err == nil {
+			registry = loaded
+		}
+	}
+	own := func(paneID string) bool {
+		return !explicitAIPaneIsForeign(in.Provider, registeredPaneProvider(registry, paneID))
+	}
 	if strings.TrimSpace(in.ThreadID) != "" || strings.TrimSpace(in.SessionID) != "" {
-		if paneID, _ := c.resolveRegisteredConversationPane(in.ThreadID, in.SessionID); paneID != "" {
+		if paneID, _ := c.resolveRegisteredConversationPane(in.ThreadID, in.SessionID); paneID != "" && own(paneID) {
 			return paneID, ""
 		}
 	}
-	if paneID, _ := c.matchAIPaneFromInventory(in); paneID != "" {
+	if paneID, _ := c.matchAIPaneFromInventory(in); paneID != "" && own(paneID) {
 		return paneID, ""
 	}
 	return "", aiPaneMatchReasonExplicitForeignOnly
+}
+
+// registeredPaneProvider reports the provider the Registry records for a Pane,
+// addressed by either spelling a step can produce. It demands the same round
+// trip resolveExplicitAIPane does -- activation handle, owning Agent, and that
+// Agent pointing back at this Pane -- and reports nothing for anything short of
+// that. Nothing is silence, which the coherence predicate reads as agreement
+// rather than disagreement, so an unregistered or half-torn Pane never becomes a
+// refusal of its own.
+func registeredPaneProvider(registry coremetadata.Registry, ref string) string {
+	pane, ok := explicitAIPaneResource(registry, strings.TrimSpace(ref))
+	if !ok {
+		return ""
+	}
+	agentUID := strings.TrimSpace(pane.Status.Activation.AgentUID)
+	if agentUID == "" {
+		return ""
+	}
+	agent, ok := registry.Agent(agentUID)
+	if !ok || agent.Status.PaneRef != pane.Metadata.UID {
+		return ""
+	}
+	return agent.Spec.Provider
 }
 
 // matchAIPaneFromInventory is the established three-step ladder over the live
