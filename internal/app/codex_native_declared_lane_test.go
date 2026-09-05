@@ -146,7 +146,7 @@ func TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback(t *
 		"pane-payload-free": {Source: codexAuthorityHook, Reason: codexNativeUnexplainedReason, Declared: codexNativeDeclaredPayloadFreeFallback},
 		"pane-lost":         {Source: codexAuthorityHook, Reason: codexNativeUnexplainedReason},
 		"pane-pending":      {Source: codexAuthorityPending, Reason: "connecting", EpochStatus: "pending"},
-		"pane-invalidating": {Source: codexAuthorityInvalidating, Reason: "disconnected", EpochStatus: "active"},
+		"pane-invalidating": {Source: codexAuthorityInvalidating, Reason: "endpoint-suspended", EpochStatus: "active"},
 		"pane-unreadable":   {Source: "unavailable", Reason: "tmux observation failed", EpochStatus: "unknown"},
 	}
 	registry := coremetadata.Registry{}
@@ -183,7 +183,7 @@ func TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback(t *
 		DeclaredHook: 3, PayloadFreeFallback: 1, UnexplainedHook: 1, Unavailable: 1,
 		Reasons: []codexAuthorityReasonCount{
 			{Reason: "connecting", Count: 1},
-			{Reason: "disconnected", Count: 1},
+			{Reason: "endpoint-suspended", Count: 1},
 			{Reason: codexNativeUnexplainedReason, Count: 4},
 			{Reason: "ready", Count: 1},
 			{Reason: "tmux observation failed", Count: 1},

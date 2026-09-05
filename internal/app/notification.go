@@ -228,6 +228,10 @@ func (c *aiCommand) ensureWSLLegacyAppIDCleaned(_ aiNotification) {
 	if err := c.run(powerShell, "-NoProfile", "-NonInteractive", "-EncodedCommand", encodeUTF16LEBase64(script)); err != nil {
 		return
 	}
+	// best-effort-write: a one-shot global marker recording that the legacy
+	// toast cleanup ran. Leaving it unset is the safe direction -- the next
+	// Notify simply retries the cleanup -- so a dropped failure here costs a
+	// repeated no-op, not a false report.
 	_ = c.run("tmux", "set-option", "-g", legacyAppIDCleanedTmuxOption, "1")
 }
 

@@ -1112,6 +1112,169 @@ fall-through resolves — to the answer, never inside the shared ladder.
   the shared ladder is untouched: with no explicit value there is no refused
   envelope and therefore no coherence question, and the cwd and thread steps
   resolve exactly as before for every provider.
+### Codex control-plane regression-detection gate tests
+
+Three control-plane defects lived through a neighbouring eight-phase track
+closing green from end to end. Nothing reached those surfaces, and the one test
+that did — `test/e2e/codex-lifecycle.sh` — asserted the literal `disconnected`
+for a managed Codex Pane's authority reason. `disconnected` is the bucket that
+means no reason was captured, so capturing a real one would have turned the job
+red. Shipping the fixes without this gate would leave the same blind spot under
+new code.
+
+The gate has three parts.
+
+- `TestControlPlaneTestsNeverExpectAnUncapturedReason` sweeps every
+  `internal/**/*_test.go` and `test/e2e/*.sh` for values that mean "nothing was
+  recorded" — `unrecorded`, the pre-instrumentation `disconnected` literal, the
+  `bounded reason unavailable` read fallback, and the `target-unmatched`
+  operations bucket — and fails on any that is an expectation rather than an
+  input. A survivor is admitted only by an `uncaptured-default: <reason>`
+  comment on its line or in the comment block above it; every current survivor
+  is a different vocabulary that happens to spell a token the same way.
+- `TestControlPlaneContractCellsNameLiveTests` resolves every test named in
+  `codexControlPlaneContractEnforcement` against the declarations in the tree.
+  Squash merges erase the branch that tied a fix to the test holding it, so a
+  contract cell naming a renamed test reads as enforced while enforcing nothing.
+- `TestControlPlaneContractEnforcementCoversEverySurface` holds the two
+  directions of that map closed: every rendered surface names a contract, and
+  every contract in the map names a surface the diagnosis renders.
+
+`projmux doctor` gained the operator half under **Codex control-plane
+surfaces**. Seven verdicts, one per surface, each with the counters it was
+reached on:
+
+- `TestCodexBrokerDiagnosticsSurfaceNamesThePublishedButUnreachableRuntime`
+  separates a domain that published nothing — the ordinary resting state — from
+  one whose published endpoint answered nothing, which used to render as
+  `absent` and was read as "no broker is running".
+- `TestHookAttributionSurfaceSeparatesTotalFailureFromPartial` keeps "no hook
+  reached its Pane" apart from "a few did not". `TestAttributionHealth*` own the
+  bounded tail read of `ai-ingest.log` behind it, including that an unreadable
+  log is reported as unobserved rather than as zero failures.
+- `TestObserverReasonSurfaceRefusesToCallAnUncapturedReasonHealthy` is the
+  product-side half of the sweep: a reason distribution made entirely of
+  uncaptured tokens is never a healthy row.
+- `TestConnectionContinuitySurfaceReportsCumulativeReconnects` reports the count
+  as the total it is and derives no rate from a single sample.
+- `TestTurnAdmissionSurfaceReportsATornAuthoritySnapshotAsBroken`, with
+  `TestSettledAuthorityObservationNamesATornTripleOnlyUnderTheFence` and
+  `TestAuthorityFenceObservation*`, owns the C-5 read. Doctor samples each
+  Pane's authority triple under a **shared, non-creating** hold of the writer's
+  own fence, so a torn pairing is a producer fact rather than a transition
+  caught in flight. A Pane with no fence file is reported `unfenced`, separately
+  from torn: its writer predates the fence, which is a deployment answer.
+
+- `TestHookDeliverySurfaceTreatsAnOpaqueFailureAsBroken` owns the layer after
+  attribution. A hook that found its Pane has not yet changed it, and the write
+  that follows can fail on its own. A failure naming its cause is a fault an
+  operator acts on; one reporting only `exit status 1` says a process ended and
+  nothing else. `TestOpaqueDeliveryReasonsNeverReachTheDiagnosis` pins both
+  halves of that: the raw string is counted rather than repeated, and a reason
+  carrying a path is opaque for the second reason that it is a leak.
+- `TestPaneOwnershipSurfaceReportsAForeignAttributionAsBroken` owns the failure
+  that looks like success from every other angle — the event was attributed, the
+  write landed, and the Pane it moved belongs to another provider.
+  `TestOwnershipHealthCallsOnlyAPositivelyForeignPaneForeign` pins the predicate
+  as one-sided and provider-neutral: an attribution is foreign only when the
+  Registry positively records a *different* provider, so a Pane recording none
+  is not a finding, and the judgment is a table rather than a branch.
+
+Two things the attribution verdict counts, and one it does not.
+
+The section carries the record span its hook rows were counted over. Every
+hook-layer number is cumulative across the whole reading window, and a
+deployment inside that window leaves records from both binaries in the same
+counts — so a repair that lands mid-window moves nothing until its predecessors
+age out, and a reader without the span reads the delay as the repair having
+failed and the eventual drop as time having healed it. Splitting the counts at
+a deployment boundary would need something this reader does not have: the hook
+layer is a short-lived process re-resolved from PATH on every firing, so the
+binary vintage of a long-running process says nothing about which image wrote a
+given record. That is also why the vintage line above qualifies the broker and
+observer rows and not these three.
+
+It is reached **per source** rather than over the total. The defect it detects
+was one provider's, and a busy neighbour attributing everything would carry the
+aggregate and render the dead provider as a few stale panes — which is the
+reading that let it live for eight phases.
+
+It counts only events the contract owed a Pane. `aiPaneMatchRefusals` names the
+answers that decline something the contract never promised — a conversation or
+an explicit Pane that no longer exists — and those are reported beside the
+failure count, never inside it.
+`TestAttributionHealthSeparatesAContractualRefusalFromAFailure` pins the split.
+A retired conversation whose thread keeps firing hooks is the mechanism working;
+reporting it as breakage made `doctor` call a machine behaving to spec broken,
+and a gate that cries wolf gets switched off — which is how the defects this
+section exists to catch survived next door. What stays a failure is the
+mechanism not answering: an unreadable inventory or Registry, or the ladder
+running over readable data and finding nothing, which is the shape a re-broken
+hook identity would take.
+
+`TestEverySurfaceDeclaresWhatItsNumbersAreOver` and
+`TestEverySurfaceRendersTheScopeItDeclares` fold four separate corrections into
+one rule. Each of the four was the same mistake wearing a different face: a
+refusal the contract never promised counted among the failures it did; a judged
+count standing without its population; a lane that writes nothing sitting in a
+write rate's denominator; records from two binaries counted in one window. Every
+number was arithmetically right and none said what it ranged over, so a reader
+supplied the wrong range — and all four were found by a person, none by a test.
+A surface must now declare the phrase its rendering carries to answer "over
+what", and adding one without that answer fails the completeness check. The
+rule cannot judge whether a scope is *correct*; it makes stating one
+unavoidable, which is what none of the four had to do.
+
+`TestHookReflectionWritesNeverDiscardTheirErrorSilently` covers what none of the
+log-derived verdicts can. A reflection path that runs a tmux write and throws
+the error away records `result:"state"` for an event whose Pane never moved, so
+the log itself reports success and every diagnosis built on it inherits the lie.
+It is the strongest form of the failure this whole section exists to catch:
+`disconnected` and `no matching pane` were at least wrong out loud.
+
+The gate is zero within the hook reflection path, and it carries no baseline.
+Recording the current count as an allowance was considered and rejected:
+pinning today's state as the passing condition is the exact shape of the E2E
+assertion that made a silent control plane the condition for green, and
+building that trap inside the gate written to stop it is not a tradeoff worth
+making. An exception is admitted by a stated `best-effort-write: <reason>`
+comment, never by a count — the difference being that a reason is a judgment a
+reviewer can dispute, while a number just defers on volume. Three writes carry
+one today: two cosmetic (a pane title, a one-shot message on the operator's own
+screen) and one global cleanup marker whose failure simply causes a retry. None
+of the three can make a surface report a state a Pane does not hold.
+
+Three things about the scan itself. It covers the whole package rather than a
+named list of files, so a discarded write appearing somewhere new is caught
+rather than skipped for being somewhere nobody thought to look. It counts a
+bare call statement as well as an assignment to blank identifiers — that second
+form appears nowhere in the tree today and is covered as prevention, so that
+deleting the assignment rather than checking the error does not quiet the gate.
+And it reads the syntax tree, not the text: a textual version counted the pattern inside the
+comment explaining why a checked helper replaced it, so the sentence describing
+the fix registered as the defect.
+`TestDiscardedWriteScanNeverCountsProseAboutCode` pins that, because a gate
+which cannot tell code from prose about code is one people route around.
+
+The `pane-ownership` foreign count is broken down by direction for a related
+reason. A hook landing on the Pane that launched its host is the identity leak
+the contract closes; a provider's events arriving under another provider's
+source were misrouted before attribution ever ran, which a stale hook config on
+the machine can produce and no code change here would fix. One number would let
+either be mistaken for the other.
+
+The section leads with a deployment-vintage line, and
+`TestControlPlaneVintage*` owns it. `make install` replaces the executable on
+disk and never replaces the image of a running process, so a green surface read
+from a replaced-image process describes code that process never loaded. This
+track lost two acceptance criteria to that twice. On Linux the diagnosis
+resolves `/proc/<pid>/exe` for the broker runtime and the lifecycle observers
+and reports how many run a replaced image; on a platform with no such table it
+reports the answer as unknown rather than claiming currency.
+
+The gate does not change `projmux doctor`'s exit code. A broken surface is a
+readable verdict, not a failed command, and the CI half of the detection is the
+regression tests themselves.
 
 ### Attributed Codex hook delivery route tests
 

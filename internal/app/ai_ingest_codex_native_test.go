@@ -280,7 +280,7 @@ func TestNativeCodexHookAuthorityChangeAfterGuardCommitsZero(t *testing.T) {
 	sink := aiCodexLifecycleSink{command: sinkCommand, runner: sinkRunner}
 	sinkResult := make(chan error, 1)
 	go func() {
-		sinkResult <- sink.SetAuthority(identity, codexAuthorityInvalidating, "epoch-after", "disconnected")
+		sinkResult <- sink.SetAuthority(identity, codexAuthorityInvalidating, "epoch-after", "endpoint-suspended")
 	}()
 	select {
 	case <-sinkAtAuthorityRead:
@@ -366,7 +366,7 @@ func TestNativeCodexHookAuthorityChangeAfterGuardCommitsZero(t *testing.T) {
 	state, badge, attention := options[aiPaneStateOption], options[aiPaneBadgeKindOption], options[attentionStateOption]
 	optionsMu.Unlock()
 	agent, _ := store.registry.Agent(identity.AgentUID)
-	if authorityTuple != "invalidating|epoch-after|disconnected" || state != "" || badge != "" || attention != "" ||
+	if authorityTuple != "invalidating|epoch-after|endpoint-suspended" || state != "" || badge != "" || attention != "" ||
 		store.writes != 0 || !reflect.DeepEqual(agent.Status.Interaction, beforeAgent.Status.Interaction) ||
 		len(queue.pushed) != 0 || len(queue.ackedIDs) != 0 || desktopWrites != 0 {
 		t.Fatalf("forced invalidation write ledger authority=%s state=%q badge=%q attention=%q Registry=%d interaction=%#v queue=%#v ack=%#v desktop=%d hook-commands=%#v",
@@ -466,7 +466,7 @@ func TestNativeSemanticApplyAndInvalidationShareExactPaneFence(t *testing.T) {
 
 	invalidationResult := make(chan error, 1)
 	go func() {
-		if err := sink.SetAuthority(identity, codexAuthorityInvalidating, "epoch-after", "disconnected"); err != nil {
+		if err := sink.SetAuthority(identity, codexAuthorityInvalidating, "epoch-after", "endpoint-suspended"); err != nil {
 			invalidationResult <- err
 			return
 		}
@@ -496,7 +496,7 @@ func TestNativeSemanticApplyAndInvalidationShareExactPaneFence(t *testing.T) {
 	state, badge, attention := options[aiPaneStateOption], options[aiPaneBadgeKindOption], options[attentionStateOption]
 	optionsMu.Unlock()
 	agent, _ = store.registry.Agent(identity.AgentUID)
-	if authorityTuple != "invalidating|epoch-after|disconnected" || state != "" || badge != "" || attention != "" ||
+	if authorityTuple != "invalidating|epoch-after|endpoint-suspended" || state != "" || badge != "" || attention != "" ||
 		agent.Status.Interaction.Kind != coremetadata.InteractionUnknown {
 		t.Fatalf("invalidation was not final: authority=%s state=%q badge=%q attention=%q interaction=%#v",
 			authorityTuple, state, badge, attention, agent.Status.Interaction)
@@ -2659,7 +2659,7 @@ func TestCodexSemanticSettingsMatrixAndMixedAuthorityDiagnostics(t *testing.T) {
 		name, source, epoch, reason, want string
 	}{
 		{name: "native authority", source: codexAuthorityControlPlane, epoch: "epoch-native", reason: "ready", want: "inactive on 1 live Codex pane(s)"},
-		{name: "hook authority", source: codexAuthorityHook, reason: "disconnected", want: "active on 1 live Codex pane(s); inactive on 0"},
+		{name: "hook authority", source: codexAuthorityHook, reason: "endpoint-suspended", want: "active on 1 live Codex pane(s); inactive on 0"},
 	} {
 		t.Run(test.name+" raw override activity", func(t *testing.T) {
 			cmd.tmuxRunner = phase3StaticTmuxRunner{output: strings.Join([]string{"codex", test.source, test.epoch, test.reason}, "\x1f")}
@@ -2786,10 +2786,13 @@ func TestCodexLifecycleSettingsLocalizationParity(t *testing.T) {
 		wantHook    string
 	}{
 		{
-			locale:      i18n.FallbackLocale,
-			wantTitle:   "Agent event behavior - Codex - Approval required",
-			wantPrompt:  "Settings > Notifications > Agent event behavior > Codex > Approval required > ",
-			wantResult:  "Codex native semantic policy: Response complete = State only\n",
+			locale:     i18n.FallbackLocale,
+			wantTitle:  "Agent event behavior - Codex - Approval required",
+			wantPrompt: "Settings > Notifications > Agent event behavior > Codex > Approval required > ",
+			wantResult: "Codex native semantic policy: Response complete = State only\n",
+			// uncaptured-default: the bounded read renders this for a pane option
+			// outside the vocabulary, so it is the correct answer to a malformed
+			// value rather than a reason any transition produced.
 			wantSummary: []string{"mixed (provider-control-plane 1, provider-hook 1)", "bounded reason unavailable", "epochs active 1, pending 0, inactive 1"},
 			wantHook:    "active on 1 live Codex pane(s); inactive on 1",
 		},
@@ -2873,6 +2876,8 @@ func TestDescribeCodexAgentShowsContentFreeLifecycleAuthority(t *testing.T) {
 
 func TestCodexLifecycleAuthorityRejectsUnboundedRuntimeReason(t *testing.T) {
 	diagnostic := observeCodexLifecycleAuthority(context.Background(), phase3StaticTmuxRunner{output: "pan-alpha-codex\x1fprovider-control-plane\x1fepoch-1\x1fprompt=private"}, "pan-alpha-codex")
+	// uncaptured-default: the fixture publishes an out-of-vocabulary reason on
+	// purpose; the bounded fallback is what a truthful read of it must say.
 	if diagnostic.Source != codexAuthorityControlPlane || diagnostic.EpochStatus != "active" || diagnostic.Reason != "bounded reason unavailable" {
 		t.Fatalf("sanitized diagnostic = %#v", diagnostic)
 	}

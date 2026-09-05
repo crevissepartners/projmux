@@ -28,6 +28,48 @@
     "create_route": "plain-fallback",
     "reason": "exact-capability-unknown"
   },
+  "codex_control_plane": {
+    "vintage": {
+      "supported": false
+    },
+    "surfaces": [
+      {
+        "surface": "broker-diagnostics",
+        "status": "unobserved",
+        "detail": "no broker reading was taken"
+      },
+      {
+        "surface": "hook-attribution",
+        "status": "unobserved",
+        "detail": "no hook ingest log was readable"
+      },
+      {
+        "surface": "observer-reason",
+        "status": "unobserved",
+        "detail": "no managed Codex Agent to read"
+      },
+      {
+        "surface": "connection-continuity",
+        "status": "unobserved",
+        "detail": "no running runtime to read continuity from"
+      },
+      {
+        "surface": "turn-admission",
+        "status": "unobserved",
+        "detail": "no managed Codex Agent to read"
+      },
+      {
+        "surface": "hook-delivery",
+        "status": "unobserved",
+        "detail": "no hook ingest log was readable"
+      },
+      {
+        "surface": "pane-ownership",
+        "status": "unobserved",
+        "detail": "no hook ingest log and Registry pair was readable"
+      }
+    ]
+  },
   "session_state_prune": "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune snapshot` and delete only by explicit name.",
   "runtime": [
     {

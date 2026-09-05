@@ -157,6 +157,9 @@ lifecycle_topology_doctor external-ready "$lifecycle_topology_ready_shim" extern
   ready managed current managed disabled ready none none none
 lifecycle_topology_doctor managed-ready "$lifecycle_topology_ready_shim" managed-ready app-server available none none ready \
   ready managed current managed disabled ready none none none
+# uncaptured-default: this argument is the app-server `connection_state`, an
+# observed transport state, not the managed Codex authority reason whose
+# literal default this gate exists to keep out of assertions.
 lifecycle_topology_doctor endpoint-missing "$lifecycle_topology_missing_shim" external-cli-only unavailable unavailable hook-unavailable daemon-not-running disconnected \
   dead unknown unknown unknown unavailable ready none none none
 

@@ -15,7 +15,16 @@ import (
 type codexLifecycleAuthorityDiagnostic struct {
 	Source      string
 	Reason      string
+	Epoch       string
 	EpochStatus string
+	// Fence records how this observation was taken against the per-Pane
+	// authority fence the writer holds while it publishes the triple. It is
+	// what separates "the triple is genuinely inconsistent" from "the triple
+	// was read while its writer was mid-transition".
+	Fence string
+	// Torn reports that a settled observation returned a pairing no completed
+	// transition produces. It is only meaningful under a settled fence.
+	Torn bool
 	// Declared is the by-design reason this Agent has no native binding, from
 	// the closed declared vocabulary, or empty. A hook observation with no
 	// declared reason is an unexplained native fallback; one with a declared
@@ -59,6 +68,19 @@ type codexAuthorityCensus struct {
 	// first epoch, and one that stopped after flapping all land in the same
 	// invalidating bucket; what differs is the token that put them there.
 	Reasons []codexAuthorityReasonCount `json:"reasons,omitempty"`
+	// Settled, Contended and Unfenced classify how each Agent's authority
+	// triple was sampled, and Torn counts the settled samples whose authority
+	// and epoch could not both come from one completed transition.
+	//
+	// Torn is the number the turn-admission contract requires to be zero: it is
+	// the observable signature of the read that refused a live Pane its turn.
+	// Unfenced is a different fact and is kept apart from it — a Pane whose
+	// transitions were never published under a fence is one whose writer
+	// predates the fence, which is a deployment answer rather than a torn one.
+	Settled   int `json:"settled_snapshots"`
+	Contended int `json:"contended_snapshots"`
+	Unfenced  int `json:"unfenced_snapshots"`
+	Torn      int `json:"torn_snapshots"`
 }
 
 // codexAuthorityReasonCount is one bounded reason token and how many managed
@@ -88,6 +110,17 @@ func censusCodexLifecycleAuthority(
 		diagnostic := lookup(agent.Status.PaneRef)
 		if reason := strings.TrimSpace(diagnostic.Reason); reason != "" {
 			reasons[reason]++
+		}
+		switch diagnostic.Fence {
+		case codexAuthorityFenceSettled:
+			census.Settled++
+			if diagnostic.Torn {
+				census.Torn++
+			}
+		case codexAuthorityFenceContended:
+			census.Contended++
+		case codexAuthorityFenceUnfenced:
+			census.Unfenced++
 		}
 		switch diagnostic.Source {
 		case codexAuthorityControlPlane:
@@ -173,7 +206,12 @@ func observeCodexLifecycleAuthority(ctx context.Context, runner tmuxRunner, pane
 		} else if source == codexAuthorityPending {
 			epochStatus = "pending"
 		}
-		diagnostic := codexLifecycleAuthorityDiagnostic{Source: source, Reason: reason, EpochStatus: epochStatus}
+		diagnostic := codexLifecycleAuthorityDiagnostic{
+			Source:      source,
+			Reason:      reason,
+			Epoch:       strings.TrimSpace(parts[2]),
+			EpochStatus: epochStatus,
+		}
 		if len(parts) >= 7 {
 			diagnostic.Dropped = safeProgressCounter(parts[4])
 			diagnostic.Unknown = safeProgressCounter(parts[5])

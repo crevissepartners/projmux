@@ -119,14 +119,14 @@ func TestSettledCodexAuthorityAdmissionIgnoresTornAuthorityWrites(t *testing.T) 
 	}{
 		{
 			name:            "authority written epoch and reason still pending",
-			midWrite:        [3]string{codexAuthorityControlPlane, "", "disconnected"},
+			midWrite:        [3]string{codexAuthorityControlPlane, "", "endpoint-suspended"},
 			settled:         [3]string{codexAuthorityControlPlane, "752812-41", "ready"},
 			tornWouldRefuse: true,
 			wantEpoch:       "752812-41",
 		},
 		{
 			name:      "authority and epoch written reason still pending",
-			midWrite:  [3]string{codexAuthorityControlPlane, "752812-40", "disconnected"},
+			midWrite:  [3]string{codexAuthorityControlPlane, "752812-40", "endpoint-suspended"},
 			settled:   [3]string{codexAuthorityControlPlane, "752812-41", "ready"},
 			wantEpoch: "752812-41",
 		},
@@ -138,10 +138,10 @@ func TestSettledCodexAuthorityAdmissionIgnoresTornAuthorityWrites(t *testing.T) 
 		},
 		{
 			name:            "settled loss to the provider hook",
-			midWrite:        [3]string{codexAuthorityHook, "", "disconnected"},
-			settled:         [3]string{codexAuthorityHook, "", "disconnected"},
+			midWrite:        [3]string{codexAuthorityHook, "", "endpoint-suspended"},
+			settled:         [3]string{codexAuthorityHook, "", "endpoint-suspended"},
 			tornWouldRefuse: true,
-			wantRefusal:     "the native connection epoch is unavailable (disconnected)",
+			wantRefusal:     "the native connection epoch is unavailable (endpoint-suspended)",
 		},
 		{
 			name:            "settled pending connection",
@@ -312,7 +312,7 @@ func TestConcurrentCodexAuthorityTransitionsNeverExposeATornAdmissionSnapshot(t 
 	cmd, _, _ := exactControlCLICommand(t)
 	cmd.controlPaths = func() (config.Paths, error) { return paths, nil }
 	state := &codexAuthorityPaneState{}
-	state.set(codexAuthorityHook, "", "disconnected")
+	state.set(codexAuthorityHook, "", "endpoint-suspended")
 	lookup := &codexAuthorityPaneLookup{state: state}
 	cmd.controlBinding = lookup
 
@@ -332,7 +332,7 @@ func TestConcurrentCodexAuthorityTransitionsNeverExposeATornAdmissionSnapshot(t 
 			if err != nil {
 				return
 			}
-			state.publish(codexAuthorityHook, "", "disconnected")
+			state.publish(codexAuthorityHook, "", "endpoint-suspended")
 			release()
 			runtime.Gosched()
 		}
@@ -347,7 +347,7 @@ func TestConcurrentCodexAuthorityTransitionsNeverExposeATornAdmissionSnapshot(t 
 			}
 			for _, live := range lookup.observed {
 				settledLive := live.Authority == codexAuthorityControlPlane && live.Epoch != "" && live.Reason == "ready"
-				settledLost := live.Authority == codexAuthorityHook && live.Epoch == "" && live.Reason == "disconnected"
+				settledLost := live.Authority == codexAuthorityHook && live.Epoch == "" && live.Reason == "endpoint-suspended"
 				if !settledLive && !settledLost {
 					t.Fatalf("admission read a torn authority triple: %+v", live)
 				}
@@ -363,7 +363,7 @@ func TestConcurrentCodexAuthorityTransitionsNeverExposeATornAdmissionSnapshot(t 
 				t.Fatalf("admitted a turn with no control epoch: %+v", binding)
 			}
 			admitted++
-		case strings.Contains(err.Error(), "the native connection epoch is unavailable (disconnected)"):
+		case strings.Contains(err.Error(), "the native connection epoch is unavailable (endpoint-suspended)"):
 			refused++
 		default:
 			t.Fatalf("unexpected admission error: %v", err)
