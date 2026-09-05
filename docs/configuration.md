@@ -596,6 +596,44 @@ without an app-server read. Only a thread-only candidate is validated with
 starts the shared daemon. Failure retains the persisted id or uses the current
 rollout fallback, and a read response can never substitute a different id.
 
+## Release channel
+
+Which release line this install is offered updates from. The axis is orthogonal
+to the install path: every installer can be judged on either channel.
+
+Files:
+
+```text
+~/.config/projmux/config.toml      # global/user
+```
+
+Schema:
+
+```toml
+[update]
+release_channel = "rc"   # "stable" (default) or "rc"
+```
+
+Set it from Settings > About > Updates > Release channel. The default is
+`stable`, and it is the default in the strong sense: an install that has never
+touched the toggle, an empty value, and a channel this binary does not
+recognise all resolve to `stable`, so no configuration mistake can put an
+install on prereleases it never asked for.
+
+Resolution priority is:
+
+1. `[update] release_channel`, once the key exists
+2. `PROJMUX_RELEASE_CHANNEL`
+3. built-in default (`stable`)
+
+The stored setting takes the axis away from the environment only once it
+exists, which is why merely opening the Settings row does not write it. An
+install driven by `PROJMUX_RELEASE_CHANNEL` therefore keeps its opt-in until
+somebody actually uses the toggle — and after that, turning the toggle off puts
+the install back on the stable line even while the environment variable is
+still set. Turning it off does not downgrade a prerelease that is already
+installed; that install stays put until its stable line ships.
+
 ## Environment Variables
 
 | Variable | Purpose |
@@ -619,7 +657,7 @@ rollout fallback, and a read response can never substitute a different id.
 | `PROJMUX_SESSIONSTATE_DEBUG` | When non-empty, quiet autosave surfaces suppressed session-state errors to stderr. |
 | `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr. |
 | `PROJMUX_INSTALLER` | Installer source hint used by update flows. npm installs set this automatically; advanced release installs can set `github-release`. |
-| `PROJMUX_RELEASE_CHANNEL` | Release channel the update judgment is made against, orthogonal to `PROJMUX_INSTALLER`. Only an exact `rc` opts in; unset, empty, and unrecognised values all mean the default `stable` channel, which never sees a prerelease. An rc install is answered with whichever of the stable and rc lines is newer, so it returns to stable as soon as that line ships. |
+| `PROJMUX_RELEASE_CHANNEL` | Release channel the update judgment is made against, orthogonal to `PROJMUX_INSTALLER`. Only an exact `rc` opts in; unset, empty, and unrecognised values all mean the default `stable` channel, which never sees a prerelease. An rc install is answered with whichever of the stable and rc lines is newer, so it returns to stable as soon as that line ships. Read only until `[update] release_channel` exists; see [Release channel](#release-channel). |
 | `PROJMUX_SHELL_UPDATE_CHECK_TIMEOUT_MS` | Timeout in milliseconds for the best-effort release check attempted by `projmux shell` when the update cache is missing or stale. Invalid, zero, or negative values use the default. |
 
 ## Welcome State

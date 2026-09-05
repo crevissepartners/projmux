@@ -391,6 +391,7 @@ const (
 	settingsProjdirSetTyped                        = "projdir:set-typed"
 	settingsUpdateApply                            = "update:apply"
 	settingsUpdateCheck                            = "update:check"
+	settingsUpdateReleaseChannel                   = "update:release-channel"
 	settingsQuitOpen                               = "quit:open"
 	settingsWorkdirAdd                             = "workdir:add"
 	settingsWorkdirList                            = "workdir:list"

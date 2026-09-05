@@ -26,6 +26,7 @@ type ProjectConfig struct {
 	Theme      theme.ThemeConfig
 	UI         UIConfig
 	AI         AIConfig
+	Update     UpdateConfig
 }
 
 const LegacyKubeConfigDiagnostic = "legacy [kube] support was removed; manually move context to [env] KUBE_CONTEXT and namespace to [env] KUBE_NAMESPACE, then remove [kube]; original config was not changed"
@@ -33,6 +34,16 @@ const LegacyKubeConfigDiagnostic = "legacy [kube] support was removed; manually 
 type UIConfig struct {
 	Locale     string
 	NativeKeys *bool
+}
+
+// UpdateConfig holds the [update] section. ReleaseChannel is the persisted
+// release-channel opt-in: an empty value means the setting was never written,
+// which is what lets the environment stay a fallback for an install that has
+// never touched the toggle. The value is stored verbatim and interpreted
+// fail-closed by the reader, so a channel this binary does not recognise is
+// treated as the default rather than rejected at parse time.
+type UpdateConfig struct {
+	ReleaseChannel string
 }
 
 // AIConfig holds the [ai] section. It is intentionally extensible: Phase 1
@@ -232,7 +243,7 @@ func loadProjectConfig(path string) (ProjectConfig, error) {
 
 func isSupportedProjectConfigSection(section string) bool {
 	switch section {
-	case "startup", "env", "theme", "ui", "ai":
+	case "startup", "env", "theme", "ui", "ai", "update":
 		return true
 	}
 	if eventName, ok := strings.CutPrefix(section, "hooks."); ok {
@@ -286,6 +297,13 @@ func applyProjectConfigValue(cfg *ProjectConfig, section, key, value string, lin
 			cfg.AI.ResumeScanDepth = depth
 		default:
 			return fmt.Errorf("line %d: unsupported ai key %q", lineNo, key)
+		}
+	case "update":
+		switch key {
+		case "release_channel":
+			cfg.Update.ReleaseChannel = value
+		default:
+			return fmt.Errorf("line %d: unsupported update key %q", lineNo, key)
 		}
 	default:
 		eventName, ok := strings.CutPrefix(section, "hooks.")
@@ -454,6 +472,7 @@ func normalizeProjectConfig(cfg *ProjectConfig) {
 	cfg.UI.Locale = strings.TrimSpace(cfg.UI.Locale)
 	cfg.AI.ResumePickerLimit = ClampAIResumePickerLimit(cfg.AI.ResumePickerLimit)
 	cfg.AI.ResumeScanDepth = ClampAIResumeScanDepth(cfg.AI.ResumeScanDepth)
+	cfg.Update.ReleaseChannel = strings.TrimSpace(cfg.Update.ReleaseChannel)
 }
 
 func validateProjectConfig(cfg ProjectConfig) error {
@@ -677,6 +696,9 @@ func renderProjectConfig(cfg ProjectConfig) string {
 			fmt.Fprintf(&b, "resume_scan_depth = %d\n", cfg.AI.ResumeScanDepth)
 		}
 		sections = append(sections, b.String())
+	}
+	if strings.TrimSpace(cfg.Update.ReleaseChannel) != "" {
+		sections = append(sections, fmt.Sprintf("[update]\nrelease_channel = %s\n", strconv.Quote(strings.TrimSpace(cfg.Update.ReleaseChannel))))
 	}
 	if len(sections) == 0 {
 		return ""

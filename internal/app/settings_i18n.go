@@ -166,6 +166,7 @@ var uiTextKeys = map[string]i18n.Key{
 	"Quit Projmux":                         "settings.text.quit_projmux",
 	"Update now":                           "settings.text.update_now",
 	"Check for updates":                    "settings.text.check_for_updates",
+	"Release channel":                      "settings.text.release_channel",
 	"Launch & popups":                      "settings.text.keybinding_category_launch",
 	"Agent & Pane launch":                  "settings.text.keybinding_category_agent_pane",
 	"Pane & Window navigation":             "settings.text.keybinding_category_navigation",

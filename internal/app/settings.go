@@ -555,10 +555,16 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		}
 		return c.switcher.executeSettingsAction(action, stdout, stderr)
 	case strings.HasPrefix(value, settingsActionPrefixUpdate):
+		action := strings.TrimPrefix(value, settingsActionPrefixUpdate)
+		// The release-channel opt-in is settled before the runner check: it
+		// writes a stored setting the next judgment reads, so it stays usable
+		// even where no update runner is wired.
+		if action == "release-channel" {
+			return c.toggleReleaseChannelSetting(stdout, stderr)
+		}
 		if c.update == nil {
 			return errors.New("update settings are not configured")
 		}
-		action := strings.TrimPrefix(value, settingsActionPrefixUpdate)
 		switch action {
 		case "apply":
 			// Surface success/failure inline and keep Settings open rather

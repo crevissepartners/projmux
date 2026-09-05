@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/i18n"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 	"github.com/crevissepartners/projmux/internal/version"
 )
@@ -72,10 +73,11 @@ func (c *settingsCommand) aboutUpdateEntries() []intpickercompat.Entry {
 		Value: settingsNoopValue,
 	})
 	if statusErr != nil {
-		return append(entries, intpickercompat.Entry{
+		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfoLocale(locale, "Update", "status unavailable", statusErr.Error()),
 			Value: settingsNoopValue,
 		})
+		return append(entries, c.releaseChannelEntry(locale))
 	}
 	latest := status.LatestVersion
 	if latest == "" {
@@ -110,8 +112,41 @@ func (c *settingsCommand) aboutUpdateEntries() []intpickercompat.Entry {
 			Label: settingsNodeRowLabelLocale(locale, settingsNavAbout+".updates.apply", settingsGlyphAdd, settingsColorAdd, "run installer-specific update command"),
 			Value: settingsUpdateApply,
 		},
+		c.releaseChannelEntry(locale),
 	)
 	return entries
+}
+
+// releaseChannelEntry renders the release-channel opt-in. The row names where
+// the current answer came from, because the two sources behave differently:
+// once the toggle has been used the stored choice is authoritative and
+// PROJMUX_RELEASE_CHANNEL no longer applies, so an environment-driven install
+// deserves to be told that before it presses Enter.
+func (c *settingsCommand) releaseChannelEntry(locale i18n.Locale) intpickercompat.Entry {
+	channel, stored, err := c.currentReleaseChannelSetting()
+	if err != nil {
+		return intpickercompat.Entry{
+			Label:     settingsNodeRowLabelDimLocale(locale, settingsNavAbout+".updates.channel", "global config unreadable - "+err.Error()),
+			Value:     settingsNoopValue,
+			SearchKey: "release channel rc prerelease stable opt-in",
+		}
+	}
+	if channel == updateReleaseChannelRC {
+		note := "rc - prereleases included"
+		if !stored {
+			note = "rc - " + updateReleaseChannelEnv + " override"
+		}
+		return intpickercompat.Entry{
+			Label:     settingsNodeRowLabelLocale(locale, settingsNavAbout+".updates.channel", settingsGlyphToggle, settingsColorAdd, note),
+			Value:     settingsUpdateReleaseChannel,
+			SearchKey: "release channel rc prerelease stable opt-in on",
+		}
+	}
+	return intpickercompat.Entry{
+		Label:     settingsNodeRowLabelLocale(locale, settingsNavAbout+".updates.channel", settingsGlyphInactive, settingsColorDim, "stable - prereleases are never offered"),
+		Value:     settingsUpdateReleaseChannel,
+		SearchKey: "release channel rc prerelease stable opt-in off",
+	}
 }
 
 // runAboutSection drives the About container.
