@@ -803,6 +803,17 @@
   boundary on the shared `ai-ingest.log` sink: one record per
   (transition, reason) pair per window, with the suppressed count riding the
   next record so the flap rate stays readable.
+- `test/e2e/codex-lifecycle.sh` (C01) pins the exact disconnect token at its
+  disconnect projection barrier and at the reconnect-gap hook comparison. It
+  waited on the literal `disconnected` before, which was the bucket published
+  when the observer recorded no reason at all; killing the exact E1 proxy takes
+  the upstream connection away, so the projection now reads
+  `endpoint-suspended`. The barrier is still an exact string match, so a path
+  that stops capturing its reason lands on a different token and fails it. That
+  barrier also now gates on `@projmux_attention_state`: the projection writes
+  its three pane options as three separate `set-option` calls, so releasing on
+  the first two let the five-field assertion 46 lines later read a torn
+  projection under load. The assertion is unchanged and still owns the verdict.
 - `TestManagedCodexAuthorityDoctorSeparatesFlappingFrozenAndStopped` owns the
   operator surface. The census carries a count-only reason distribution and
   `doctor` renders it, which is what tells flapping, frozen, and stopped
