@@ -965,6 +965,46 @@ conversation the Registry already records.
   whole route rather than the matcher alone: a payload arriving with an empty
   `--pane` produces a record naming its own Pane, and an unclaimed conversation
   produces a record naming why it has none.
+### Settled Codex authority admission tests
+
+`aiCodexLifecycleSink.SetAuthority` publishes one native authority transition as
+three separate tmux writes — `@projmux_codex_authority`, then
+`@projmux_codex_authority_epoch`, then `@projmux_codex_authority_reason` — under
+a per-Pane kernel fence. That fence serializes writers against each other only.
+Turn and approval admission reads the same three options with one
+`display-message`, so a read that lands between two of those writes can see an
+authority that is already `provider-control-plane` paired with the epoch or
+reason of the transition being replaced, and refuse the turn for an unavailable
+epoch while the native connection is alive.
+
+Admission now takes that same fence for the live read, so the triple it judges
+is one completed transition:
+
+- `TestSettledCodexAuthorityAdmissionIgnoresTornAuthorityWrites` owns the
+  mid-write-to-verdict mapping. Each row injects the triple that exists while
+  the writer still holds the fence, records whether judging that triple directly
+  would have refused a live connection, and then asserts the verdict reached
+  from the settled triple. A control plane that is genuinely lost — the provider
+  hook, a pending connection, an invalidation with no epoch — still refuses, and
+  the refusal still names the observer's reason.
+- `TestCodexAuthorityAdmissionTakesTheExactWriterFence` owns the fence identity.
+  The reader derives the same lock file as the writer, waits while a transition
+  is in flight, holds it exclusively while it samples, and gives the wait up at
+  the control deadline rather than stalling `projmux agent turn` behind a wedged
+  transition.
+- `TestConcurrentCodexAuthorityTransitionsNeverExposeATornAdmissionSnapshot`
+  owns the race. A transition writer and the real admission path run
+  concurrently, and every snapshot admission read must be one of the complete
+  triples the writer published; a control-plane authority with no epoch is the
+  false refusal this closes.
+
+The fence covers the live read only, not the judgment that follows it. A
+transition that lands after admission returns is not prevented: the control
+epoch still owns provider-side fencing, and `revalidateControlConsumerFence`
+still re-checks the Registry half immediately before the transport call.
+Admission also does not reduce how often the native connection drops, and it
+says nothing about the `@projmux_ai_state` / `@projmux_ai_badge_kind` /
+`@projmux_attention_state` triple, which has no fence of its own.
 
 ## Review Checklist
 - The branch stays within its stated scope.

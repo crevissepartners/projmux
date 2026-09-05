@@ -10,6 +10,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/config"
@@ -19,6 +21,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/i18n"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
+	localstate "github.com/crevissepartners/projmux/internal/state"
 	intpicker "github.com/crevissepartners/projmux/internal/ui/picker"
 	intpickercompat "github.com/crevissepartners/projmux/internal/ui/pickercompat"
 )
@@ -127,6 +130,90 @@ func (l *tmuxAgentControlBindingLookup) Live(ctx context.Context, paneUID string
 		return agentControlLive{}, false, err
 	}
 	return live, true, nil
+}
+
+// codexAuthorityFenceReadPoll is the retry step used while an admission read
+// waits for an in-flight authority transition to complete. It only bounds how
+// often the wait re-tests the kernel lock; the wait itself ends at the caller's
+// control deadline.
+const codexAuthorityFenceReadPoll = 2 * time.Millisecond
+
+// codexAuthorityFenceAcquirer takes the exact per-Pane authority fence and
+// returns its release. It is the seam that lets admission tests drive one exact
+// writer/reader interleaving instead of racing for it.
+type codexAuthorityFenceAcquirer func(context.Context, string) (func(), error)
+
+// acquireCodexAuthorityReadFenceIn takes the same kernel fence that
+// aiCodexLifecycleSink.SetAuthority holds while it publishes
+// @projmux_codex_authority, @projmux_codex_authority_epoch and
+// @projmux_codex_authority_reason as three separate tmux set-option calls.
+// That fence serializes writers against each other only, so a reader that
+// skips it can sample the Pane between two of those three writes and see an
+// authority that is already provider-control-plane paired with the epoch or
+// reason of the transition being replaced.
+//
+// Unlike the writer, this acquisition is bounded by ctx. The writer owns the
+// transition and must be allowed to finish it, while an admission read that
+// cannot reach a settled snapshot inside the control budget refuses with a
+// reason instead of stalling `projmux agent turn` behind a wedged transition.
+func acquireCodexAuthorityReadFenceIn(ctx context.Context, stateDir, paneUID string) (func(), error) {
+	path, err := codexAuthorityFencePathIn(stateDir, paneUID)
+	if err != nil {
+		return nil, err
+	}
+	// #nosec G304 -- codexAuthorityFencePathIn returns the private state
+	// directory plus a digest of the Registry-authenticated Pane uid.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, localstate.PrivateFileMode)
+	if err != nil {
+		return nil, fmt.Errorf("open Codex authority fence: %w", err)
+	}
+	localstate.RepairPrivateFile(path)
+	for {
+		lockErr := syscall.Flock(int(file.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if lockErr == nil {
+			var once sync.Once
+			return func() {
+				once.Do(func() {
+					_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
+					_ = file.Close()
+				})
+			}, nil
+		}
+		if !errors.Is(lockErr, syscall.EWOULDBLOCK) && !errors.Is(lockErr, syscall.EAGAIN) {
+			_ = file.Close()
+			return nil, fmt.Errorf("lock Codex authority fence: %w", lockErr)
+		}
+		timer := time.NewTimer(codexAuthorityFenceReadPoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			_ = file.Close()
+			return nil, fmt.Errorf("wait for a settled Codex authority transition: %w", ctx.Err())
+		case <-timer.C:
+		}
+	}
+}
+
+// readSettledAgentControlBinding samples the live tmux binding under the
+// writer's per-Pane authority fence, so the (authority, epoch, reason) triple
+// handed to admission is one completed transition rather than a torn mid-write
+// snapshot. Without it a turn can be refused for an unavailable epoch while the
+// native connection is alive, purely because the read landed between the
+// authority write and the epoch write of the transition that established it.
+//
+// The fence deliberately covers the read only, not the admission judgment that
+// follows. Widening it would buy nothing this contract does not already
+// exclude: the Registry half of the judgment is snapshotted before this read,
+// and any change after the fence is released is TOCTOU, which C-5 explicitly
+// does not guarantee. Holding a cross-process kernel lock across Registry
+// projection would only stall the observer that owns the next transition.
+func readSettledAgentControlBinding(ctx context.Context, lookup agentControlBindingLookup, acquire codexAuthorityFenceAcquirer, paneUID string) (agentControlLive, bool, error) {
+	release, err := acquire(ctx, paneUID)
+	if err != nil {
+		return agentControlLive{}, false, err
+	}
+	defer release()
+	return lookup.Live(ctx, paneUID)
 }
 
 type exactAgentControlBinding struct {
@@ -242,13 +329,18 @@ func (c *agentCommand) resolveControlBinding(spelling, ref string) (exactAgentCo
 		routed := explicitTmuxRunner{runner: c.controlRunner, target: route.target}
 		lookup = &tmuxAgentControlBindingLookup{lookup: intmetadata.NewMirror(routed), runner: routed}
 	}
-	live, observed, err := lookup.Live(ctx, agent.Status.PaneRef)
-	if err != nil {
-		return exactAgentControlBinding{}, fmt.Errorf("exact Agent native control unavailable: read live binding: %w", err)
-	}
 	paths, err := c.controlPaths()
 	if err != nil {
 		return exactAgentControlBinding{}, fmt.Errorf("exact Agent native control unavailable: resolve private control path: %w", err)
+	}
+	// The private control path is resolved before the live read because the
+	// same state directory holds the authority fence the read must take.
+	acquire := func(ctx context.Context, paneUID string) (func(), error) {
+		return acquireCodexAuthorityReadFenceIn(ctx, paths.StateDir, paneUID)
+	}
+	live, observed, err := readSettledAgentControlBinding(ctx, lookup, acquire, agent.Status.PaneRef)
+	if err != nil {
+		return exactAgentControlBinding{}, fmt.Errorf("exact Agent native control unavailable: read live binding: %w", err)
 	}
 	binding, err := resolveExactAgentControlBinding(registry, agent, live, observed, paths.StateDir)
 	if err != nil {
