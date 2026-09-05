@@ -2,10 +2,11 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync/atomic"
+	"reflect"
 	"testing"
 	"time"
 
@@ -39,114 +40,167 @@ func writeClaudeScanFixture(t *testing.T, cwd string, count int) string {
 	return projectsDir
 }
 
-// TestClaudeEnvelopeExpiryDiscardsRowsTheScannerAlreadyFound pins the defect,
-// it does not justify it.
+// Phase 1 reverses Phase 0's C-1 discard assertion and pins criterion ⑥c:
+// envelope expiry publishes a confirmed partial with count, never search_failed
+// plus zero rows. The old harness held a completed discovery past settlement,
+// which models a non-cooperating provider rather than cancellation in the scan.
 //
-// Contract violated: C-1 ("an enabled provider with matching sessions does not
-// disappear from the list because of its own scan cost"). The Claude lane has
-// no cancellation path - interactive.go's claude arm calls discoverClaude
-// without a ctx - so when the provider envelope and the handoff window that
-// follows it both expire, the scanner is still running and settlement returns
-// an empty result flagged envelopeExpired. resumeProviderProjection then maps
-// count==0 plus envelopeExpired to search_failed, and populateOnce publishes
-// rows only for providers projected as count. Every row the scanner had
-// already found is thrown away, and the footer says "search failed" rather
-// than "0 found", so the user cannot tell a truncated scan from an empty one.
+// This controller boundary test obtains a real descending-mtime prefix using
+// partialLimit, then delivers it only after envelope expiry AND handoff entry.
+// partialLimit is below the invocation's limit, so this is not a completed
+// displayed page. This harness does not claim to cancel midway through parsing:
+// TestClaudeCanceledScanReturnsOnlyFullyParsedRows independently proves that
+// production scan cancellation returns only complete earlier rows and marks the
+// result incomplete. Together they cover the producer and settlement boundary.
 //
-// Phase 1 (`fix(resume): bound the claude resume scan to the displayed limit`)
-// inverts this: with the scan bounded to the displayed limit, this same
-// scenario must project count and publish the rows.
-//
-// Determinism: the scanner is held past settlement, so the handoff branch is
-// the only branch that can ever fire - the outcome does not depend on which
-// goroutine wins a race, on load, or on any wall-clock reading.
-func TestClaudeEnvelopeExpiryDiscardsRowsTheScannerAlreadyFound(t *testing.T) {
+// The injected envelope clock and handoff channel establish every ordering;
+// there is no sleep, real timer, budget increase, or wall-clock assertion.
+func TestClaudeEnvelopeExpiryPublishesParsedPartialRows(t *testing.T) {
 	const cwd = "/work"
-	const fixtureFiles = 24
+	const fixtureFiles, invocationLimit, partialLimit = 24, 20, 4
 	projectsDir := writeClaudeScanFixture(t, cwd, fixtureFiles)
 
 	clock := newVirtualResumeBudgetClock()
 	cmd := testAICommand(t.TempDir())
-	var scanned atomic.Int64
-	found := make(chan struct{})
-	release := make(chan struct{})
-	returned := make(chan struct{})
+	type scanResult struct {
+		discovery aisessions.ResumeSummaryDiscovery
+		err       error
+		ctx       context.Context
+		limit     int
+	}
+	found := make(chan scanResult, 1)
+	release := make(chan struct{}, 1)
+	t.Cleanup(func() { close(release) })
 	cmd.discoverResumeSummaryProvider = func(ctx context.Context, provider, scanCWD string, opts aisessions.ResumeSummaryOptions, limit int) (aisessions.ResumeSummaryDiscovery, error) {
 		if provider != aiModeClaude {
 			return aisessions.ResumeSummaryDiscovery{}, nil
 		}
-		// The real Claude lane, against a real directory: the rows below are
-		// found by production discovery, not fabricated by the test.
 		opts.DiscoverOptions.ClaudeProjectsDir = projectsDir
-		discovery, err := aisessions.DiscoverResumeSummariesContext(ctx, provider, scanCWD, opts, limit)
-		scanned.Store(int64(len(discovery.Summaries)))
-		close(found)
-		// Production keeps scanning here because nothing cancels it. Holding the
-		// return models exactly that: work completed, delivery too late.
+		discovery, err := aisessions.DiscoverResumeSummariesContext(ctx, provider, scanCWD, opts, partialLimit)
+		found <- scanResult{discovery: discovery, err: err, ctx: ctx, limit: limit}
+		<-ctx.Done()
+		// Only the test's witnessed handoff entry can release this result.
 		<-release
-		close(returned)
 		return discovery, err
 	}
 
-	controller := virtualBudgetController(cmd, clock, t.TempDir(), 0, 20)
-	// Only the Claude lane is under test; the sibling providers would otherwise
-	// settle on their own clocks and add nothing to the assertion.
+	controller := virtualBudgetController(cmd, clock, t.TempDir(), 0, invocationLimit)
 	controller.providerEnabled = map[string]bool{aiModeClaude: true}
-	// The handoff window is the one stage settleProviderResult measures with a
-	// real timer rather than the injected clock, so the declared 35ms bound is
-	// asserted here and driven by a compressed stand-in below. The stand-in
-	// cannot change the outcome: the scanner is held past any handoff window,
-	// so the timer branch always wins. This is not a budget increase - the
-	// declared constant is unchanged and pinned on the next line.
-	if got := defaultAIResumeBudgets().stage(aiResumeStageHandoff); got != 35*time.Millisecond {
-		t.Fatalf("declared handoff budget = %s want 35ms", got)
+	handoffEntered := make(chan time.Duration, 1)
+	handoffExpiry := make(chan time.Time)
+	handoffStopped := make(chan struct{})
+	controller.handoffTimer = func(budget time.Duration) (<-chan time.Time, func()) {
+		handoffEntered <- budget
+		return handoffExpiry, func() { close(handoffStopped) }
 	}
-	budgets := controller.budgets
-	budgets.handoff = time.Nanosecond
-	controller.budgets = budgets
 	defer controller.close()
 
 	entries := make(chan []intpickercompat.Entry, 1)
 	go func() { entries <- controller.initialEntries() }()
 
-	// The scanner has matching rows in hand before either window expires.
-	<-found
-	if got := scanned.Load(); got != fixtureFiles {
-		t.Fatalf("claude scan found %d rows, want %d before the envelope expired", got, fixtureFiles)
+	partial := <-found
+	if partial.err != nil {
+		t.Fatal(partial.err)
+	}
+	if partial.ctx.Err() != nil || partial.limit != invocationLimit {
+		t.Fatalf("scan start: error=%v invocation limit=%d", partial.ctx.Err(), partial.limit)
+	}
+	if len(partial.discovery.Summaries) != partialLimit || !partial.discovery.MoreNotLoaded {
+		t.Fatalf("scan prefix rows/more=%d/%t, want %d/true", len(partial.discovery.Summaries), partial.discovery.MoreNotLoaded, partialLimit)
+	}
+	for i, row := range partial.discovery.Summaries {
+		wantID := fmt.Sprintf("11111111-2222-4333-8444-%012d", i)
+		if row.ResumeID != wantID || row.Branch != "main" || row.Source != aisessions.SourceClaudeTranscript {
+			t.Fatalf("prefix row %d is incomplete or out of order: %#v", i, row)
+		}
 	}
 
-	// Both windows expire: the provider envelope on the injected clock, and the
-	// handoff that follows it on its own timer.
 	clock.advance(aiResumeSummaryPopulationBudget)
+	if budget := <-handoffEntered; budget != 35*time.Millisecond {
+		t.Fatalf("handoff budget=%s, want unchanged 35ms", budget)
+	}
+	if !errors.Is(context.Cause(partial.ctx), context.DeadlineExceeded) {
+		t.Fatalf("handoff entered without envelope expiry: %v", context.Cause(partial.ctx))
+	}
+	// The scanner result was unavailable during the envelope select. The
+	// handoff result branch is now the only branch that can become ready.
+	release <- struct{}{}
 	settled := <-entries
+	<-handoffStopped
 
-	// The picker's own "[+ New Session]" affordance is always present; a
-	// published session row is any other entry.
 	sessionRows := 0
 	for _, entry := range settled {
 		if entry.Value != aiResumeNewValue {
 			sessionRows++
 		}
 	}
-	if sessionRows != 0 {
-		t.Fatalf("published %d session rows, want 0: expiry discards every row the scan already found", sessionRows)
+	if sessionRows != partialLimit || sessionRows >= invocationLimit {
+		t.Fatalf("published %d session rows, want partial %d below invocation limit %d", sessionRows, partialLimit, invocationLimit)
 	}
 	claude := settledProviderState(controller, aiModeClaude)
-	if claude.state != aiResumeProviderSearchFailed || claude.count != 0 {
-		t.Fatalf("claude projection = %+v, want search_failed with no rows", claude)
+	if claude.state != aiResumeProviderCount || claude.count != partialLimit {
+		t.Fatalf("claude projection=%+v, want count/%d after envelope expiry", claude, partialLimit)
 	}
-
-	// The late result is discarded rather than appended: the frame settled and
-	// stays settled.
-	close(release)
-	<-returned
+	if got := controller.snapshotSummaries(); !reflect.DeepEqual(got, partial.discovery.Summaries) {
+		t.Fatalf("published partial changed: got %#v want %#v", got, partial.discovery.Summaries)
+	}
 	controller.mu.Lock()
-	published := len(controller.summaries)
+	more, elapsed, detailRefs := controller.moreNotLoaded, controller.providerElapsed[aiModeClaude], len(controller.detailRefs)
 	controller.mu.Unlock()
-	if published != 0 {
-		t.Fatalf("late claude result mutated the settled frame: %d rows", published)
+	if !more || elapsed != aiResumeSummaryPopulationBudget || detailRefs != partialLimit {
+		t.Fatalf("settled more/elapsed/detail refs=%t/%s/%d, want true/%s/%d", more, elapsed, detailRefs, aiResumeSummaryPopulationBudget, partialLimit)
 	}
-	if got := settledProviderState(controller, aiModeClaude); got.state != aiResumeProviderSearchFailed {
-		t.Fatalf("late claude result changed the projection: %+v", got)
+}
+
+// A provider that ignores cancellation and misses the handoff still cannot
+// mutate a settled frame. Preserve this negative case from Phase 0 separately
+// from the cooperative partial delivery required by C-1/⑥c above.
+func TestClaudeHandoffExpiryKeepsLateResultOutsideSettlement(t *testing.T) {
+	const cwd = "/work"
+	projectsDir := writeClaudeScanFixture(t, cwd, 4)
+	discovery, err := aisessions.DiscoverResumeSummariesContext(context.Background(), aiModeClaude, cwd,
+		aisessions.ResumeSummaryOptions{DiscoverOptions: aisessions.DiscoverOptions{ClaudeProjectsDir: projectsDir}}, 20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(discovery.Summaries) != 4 {
+		t.Fatalf("fixture returned %d rows, want 4", len(discovery.Summaries))
+	}
+	clock := newVirtualResumeBudgetClock()
+	controller := virtualBudgetController(testAICommand(t.TempDir()), clock, t.TempDir(), 0, 20)
+	defer controller.close()
+	handoffEntered := make(chan time.Duration, 1)
+	handoffExpiry := make(chan time.Time)
+	controller.handoffTimer = func(budget time.Duration) (<-chan time.Time, func()) {
+		handoffEntered <- budget
+		return handoffExpiry, func() {}
+	}
+	envelope, stop := clock.withTimeout(controller.ctx, aiResumeSummaryPopulationBudget)
+	defer stop()
+	startedAt := clock.instant()
+	returned := make(chan aiResumeProviderResult, 1)
+	settled := make(chan aiResumeProviderResult, 1)
+	go func() {
+		settled <- controller.settleProviderResult(aiModeClaude, envelope, startedAt, returned)
+	}()
+	clock.advance(aiResumeSummaryPopulationBudget)
+	if budget := <-handoffEntered; budget != 35*time.Millisecond {
+		t.Fatalf("handoff budget=%s, want unchanged 35ms", budget)
+	}
+	clock.advance(aiResumeHandoffBudget)
+	handoffExpiry <- clock.instant()
+	result := <-settled
+	if !result.envelopeExpired || len(result.discovery.Summaries) != 0 || result.elapsed != aiResumeSummaryPopulationBudget+aiResumeHandoffBudget {
+		t.Fatalf("expired handoff result=%+v", result)
+	}
+	// The completed settlement has no receiver left. A late provider can send
+	// into its buffer, but cannot replace the already selected terminal result.
+	returned <- aiResumeProviderResult{provider: aiModeClaude, discovery: discovery}
+	if len(returned) != 1 {
+		t.Fatal("late result was consumed after settlement")
+	}
+	projection := resumeProviderProjection(result, true)
+	if projection.state != aiResumeProviderSearchFailed || projection.count != 0 {
+		t.Fatalf("late result changed the settled projection: %+v", projection)
 	}
 }

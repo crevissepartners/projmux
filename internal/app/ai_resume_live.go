@@ -42,10 +42,13 @@ type aiResumeLiveController struct {
 	populationTimeout time.Duration
 	populationContext func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 	budgets           aiResumeBudgets
-	events            chan struct{}
-	startOnce         sync.Once
-	labelsOnce        sync.Once
-	labels            map[string]aiResumeExactAgentLabel
+	// handoffTimer is a private clock seam. Nil retains the declared real timer;
+	// tests can order envelope expiry and partial delivery without a timer race.
+	handoffTimer func(time.Duration) (<-chan time.Time, func())
+	events       chan struct{}
+	startOnce    sync.Once
+	labelsOnce   sync.Once
+	labels       map[string]aiResumeExactAgentLabel
 
 	mu              sync.Mutex
 	summaries       []aisessions.ResumeSummary
@@ -273,14 +276,21 @@ func (c *aiResumeLiveController) settleProviderResult(
 	// events. Reserve the declared handoff window after this provider's own
 	// envelope so a cancellation-settled partial is not replaced by
 	// available-empty solely because its send lost the select race.
-	handoff := time.NewTimer(c.budgets.stage(aiResumeStageHandoff))
-	defer handoff.Stop()
+	newTimer := c.handoffTimer
+	if newTimer == nil {
+		newTimer = func(budget time.Duration) (<-chan time.Time, func()) {
+			timer := time.NewTimer(budget)
+			return timer.C, func() { timer.Stop() }
+		}
+	}
+	handoff, stop := newTimer(c.budgets.stage(aiResumeStageHandoff))
+	defer stop()
 	select {
 	case result := <-returned:
 		result.envelopeExpired = errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)
 		result.elapsed = c.providerElapsedSince(startedAt)
 		return result
-	case <-handoff.C:
+	case <-handoff:
 		return aiResumeProviderResult{provider: provider, envelopeExpired: true, elapsed: c.providerElapsedSince(startedAt)}
 	}
 }
@@ -676,6 +686,9 @@ func resumeProviderProjection(result aiResumeProviderResult, enabled bool) aiRes
 	if !enabled {
 		return aiResumeProviderProjection{state: aiResumeProviderDisabled}
 	}
+	// A Claude count is this invocation's parsed, confirmed unique matching
+	// rows, including its terminal mtime tie group, before the global cap.
+	// An early stop means this is not the accumulated transcript total.
 	count := 0
 	for _, summary := range result.discovery.Summaries {
 		if normalizeAIMode(summary.Provider) == normalizeAIMode(result.provider) {

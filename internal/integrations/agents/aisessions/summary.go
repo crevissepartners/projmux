@@ -125,11 +125,13 @@ func DiscoverResumeSummariesContext(ctx context.Context, provider, cwd string, o
 	var moreNotLoaded bool
 	switch provider {
 	case AgentClaude:
-		discovery, err := DiscoverProviderContext(ctx, provider, cwd, discoverOpts, 0)
+		discoverOpts.retainClaudeMatches = true
+		discovery, err := DiscoverProviderContext(ctx, provider, cwd, discoverOpts, limit)
 		if err != nil {
 			return ResumeSummaryDiscovery{}, err
 		}
 		sessions = discovery.Sessions
+		moreNotLoaded = discovery.MoreNotLoaded
 	case AgentCodex:
 		codexOutcome = CodexCatalogOutcome{Source: CatalogSourceFallback, Confidence: CatalogConfidenceMedium}
 		// The rollout scan starts with the provider and owns its own bound. It is

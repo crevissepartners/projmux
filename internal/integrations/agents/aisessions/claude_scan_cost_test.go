@@ -82,85 +82,61 @@ func observeClaudeScannedFiles(t *testing.T) func() []string {
 	}
 }
 
-// TestClaudeDiscoveryOpensEveryTranscriptRegardlessOfLimit pins the defect, it
-// does not justify it.
-//
-// Contract violated: C-2 ("cost is proportional to what is displayed"). The
-// Claude lane opens every transcript in the project directory and only then
-// applies the cap, so its cost is O(total history) instead of O(limit). The
-// final sort key is LastModified, which comes from the dirent (entry.Info()),
-// so the rows that survive the cap are knowable before a single file is
-// opened - every file opened beyond the limit is work that is thrown away.
-//
-// Phase 1 (`fix(resume): bound the claude resume scan to the displayed limit`)
-// inverts these assertions: after mtime pre-sorting and a matching-bounded
-// scan, the opened count must be derived from the limit, not from M.
-func TestClaudeDiscoveryOpensEveryTranscriptRegardlessOfLimit(t *testing.T) {
-	const (
-		files = 120
-		limit = 10
-	)
-	fixture := buildClaudeFixture(t, claudeFixtureSpec{
-		matching: files,
-		cwd:      "/workspace/app",
-		otherCWD: "/workspace/app-other",
-	})
-	opts := DiscoverOptions{ClaudeProjectsDir: fixture.projectsDir, DeferTurns: true}
-
-	// The interactive provider lane receives the limit and still opens M files.
-	opened := observeClaudeScannedFiles(t)
-	discovery, err := DiscoverProviderContext(context.Background(), AgentClaude, fixture.cwd, opts, limit)
-	if err != nil {
-		t.Fatalf("DiscoverProviderContext error = %v", err)
-	}
-	if got := len(opened()); got != files {
-		t.Fatalf("claude discovery opened %d files, want %d (every transcript in the directory)", got, files)
-	}
-	if got := len(discovery.Sessions); got != limit {
-		t.Fatalf("claude discovery published %d rows, want %d", got, limit)
-	}
-
-	// The picker's own lane is worse: summary.go hands the claude arm a limit
-	// of 0, so the provider-local cap is off as well and all M rows travel to
-	// the controller before settleAIResumeSummaries caps them.
-	opened = observeClaudeScannedFiles(t)
-	summaries, err := DiscoverResumeSummariesContext(context.Background(), AgentClaude, fixture.cwd,
-		ResumeSummaryOptions{DiscoverOptions: opts}, limit)
-	if err != nil {
-		t.Fatalf("DiscoverResumeSummariesContext error = %v", err)
-	}
-	if got := len(opened()); got != files {
-		t.Fatalf("claude summary discovery opened %d files, want %d", got, files)
-	}
-	if got := len(summaries.Summaries); got != files {
-		t.Fatalf("claude summary discovery returned %d rows, want %d (the limit is not applied on this lane)", got, files)
+// Phase 1 reverses Phase 0's C-2 defect assertion: typical newest-match
+// scans open the limit plus the terminal tie group, independent of old history.
+// C-3 permits no fixed cap on ties, nonmatches, or duplicate identities.
+func TestClaudeDiscoveryScanCostTracksLimitAndTerminalTie(t *testing.T) {
+	const limit = 10
+	for _, files := range []int{120, 480} {
+		for _, tieExtra := range []int{0, 4} {
+			t.Run(fmt.Sprintf("files_%d_tie_extra_%d", files, tieExtra), func(t *testing.T) {
+				fixture := buildClaudeFixture(t, claudeFixtureSpec{matching: files, cwd: "/workspace/app"})
+				boundary := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC).Add(-(limit - 1) * time.Second)
+				for i := limit; i < limit+tieExtra; i++ {
+					setModTime(t, fixture.files[i], boundary)
+				}
+				opts := DiscoverOptions{ClaudeProjectsDir: fixture.projectsDir, DeferTurns: true}
+				opened := observeClaudeScannedFiles(t)
+				discovery, err := DiscoverProviderContext(context.Background(), AgentClaude, fixture.cwd, opts, limit)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := len(opened()); got != limit+tieExtra {
+					t.Fatalf("opened %d files, want limit + tie extra = %d", got, limit+tieExtra)
+				}
+				if len(discovery.Sessions) != limit || !discovery.MoreNotLoaded {
+					t.Fatalf("interactive rows=%d more=%t, want %d/true", len(discovery.Sessions), discovery.MoreNotLoaded, limit)
+				}
+				opened = observeClaudeScannedFiles(t)
+				summary, err := DiscoverResumeSummariesContext(context.Background(), AgentClaude, fixture.cwd, ResumeSummaryOptions{DiscoverOptions: opts}, limit)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := len(opened()); got != limit+tieExtra {
+					t.Fatalf("summary opened %d files, want %d", got, limit+tieExtra)
+				}
+				if len(summary.Summaries) != limit+tieExtra || !summary.MoreNotLoaded {
+					t.Fatalf("summary rows=%d more=%t, want %d/true", len(summary.Summaries), summary.MoreNotLoaded, limit+tieExtra)
+				}
+			})
+		}
 	}
 }
 
-// TestClaudeDiscoveryOpensNonMatchingTranscripts pins the second half of the
-// same C-2 violation: files whose recorded cwd can never match are opened and
-// parsed before they are discarded. A limit-bounded scan has to keep counting
-// matches rather than files, which is why this count is stated separately.
-//
-// Phase 1 inverts this too: the opened count must stay bounded even when
-// non-matching files sit at the top of the mtime order.
-func TestClaudeDiscoveryOpensNonMatchingTranscripts(t *testing.T) {
-	fixture := buildClaudeFixture(t, claudeFixtureSpec{
-		matching:    5,
-		nonMatching: 40,
-		cwd:         "/workspace/app",
-		otherCWD:    "/workspace/app-other",
-	})
+// Phase 1 reverses the second Phase 0 assertion: older nonmatching files need
+// not be opened once the newest unique matches and their tie group are known.
+func TestClaudeDiscoverySkipsOlderNonMatchingTranscripts(t *testing.T) {
+	fixture := buildClaudeFixture(t, claudeFixtureSpec{matching: 5, nonMatching: 40, cwd: "/workspace/app", otherCWD: "/workspace/app-other"})
 	opened := observeClaudeScannedFiles(t)
 	discovery, err := DiscoverProviderContext(context.Background(), AgentClaude, fixture.cwd,
 		DiscoverOptions{ClaudeProjectsDir: fixture.projectsDir, DeferTurns: true}, 5)
 	if err != nil {
-		t.Fatalf("DiscoverProviderContext error = %v", err)
+		t.Fatal(err)
 	}
-	if got, want := len(opened()), len(fixture.files); got != want {
-		t.Fatalf("claude discovery opened %d files, want %d (matching and non-matching alike)", got, want)
+	if got := len(opened()); got != 5 {
+		t.Fatalf("opened %d files, want 5 newest matching files", got)
 	}
-	if got := len(discovery.Sessions); got != len(fixture.matching) {
-		t.Fatalf("claude discovery published %d rows, want %d", got, len(fixture.matching))
+	if len(discovery.Sessions) != 5 || !discovery.MoreNotLoaded {
+		t.Fatalf("rows=%d more=%t, want 5/true", len(discovery.Sessions), discovery.MoreNotLoaded)
 	}
 }
