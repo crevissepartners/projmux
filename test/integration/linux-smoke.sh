@@ -1281,6 +1281,33 @@ if [[ "$("$bin" get windows --project "uid:$session_state_project_uid" -o uid | 
   echo "snapshot Registry projection did not remove the post-save Window" >&2
   exit 1
 fi
+# The restored one-Window target keeps its name/status/actions with KIND
+# omitted only from compact; wide and JSON remain available for recovery.
+for restored_mode in default wide json; do
+  restored_output_args=()
+  if [[ "$restored_mode" != default ]]; then
+    restored_output_args=(-o "$restored_mode")
+  fi
+  "$bin" get windows --project "uid:$session_state_project_uid" "${restored_output_args[@]}" \
+    >"$PROJMUX_SMOKE_WORKDIR/restored-window-$restored_mode.out"
+done
+python3 - "$PROJMUX_SMOKE_WORKDIR" <<'RESTORED_COLUMNS'
+import json
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1])
+read = lambda mode: (root / f"restored-window-{mode}.out").read_text()
+compact = [line.split() for line in read("default").splitlines()]
+wide = [line.split() for line in read("wide").splitlines()]
+items = json.loads(read("json"))["items"]
+assert len(compact) == len(wide) == 2 and len(items) == 1
+assert compact[0] == ["NAME", "STATUS", "ACTIONS"]
+assert wide[0][:4] == ["KIND", "NAME", "STATUS", "ACTIONS"]
+assert len(compact[1]) == 3 and compact[1] == wide[1][1:4]
+assert wide[1][0] == "window" and items[0]["kind"] == "Window"
+assert compact[1][0] == items[0]["metadata"]["name"]
+RESTORED_COLUMNS
 if [[ "$(env -u TMUX -u TMUX_PANE tmux -L "$PROJMUX_SMOKE_TMUX_SOCKET" display-message -p -c "$control_client" '#{session_name}')" != "$session_state_name" ]]; then
   echo "snapshot Registry projection did not switch the exact client last" >&2
   exit 1

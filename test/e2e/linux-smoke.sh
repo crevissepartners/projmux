@@ -1360,11 +1360,11 @@ if [[ "$legacy_window_name_before" == "$alpha_window_name" ]]; then
 fi
 pmx get windows --project alpha >"$create_root/alpha-windows-compact.out"
 if ! awk -v stable="$alpha_window_name" '
-  NR == 1 { header = NF == 4 && $1 == "KIND" && $2 == "NAME" && $3 == "STATUS" && $4 == "ACTIONS" }
-  NR == 2 { row = NF == 4 && $1 == "window" && $2 == stable }
+  NR == 1 { header = NF == 3 && $1 == "NAME" && $2 == "STATUS" && $3 == "ACTIONS" }
+  NR == 2 { row = NF == 3 && $1 == stable }
   END { exit !(header && row) }
 ' "$create_root/alpha-windows-compact.out"; then
-  echo "legacy Window compact projection lost its durable name or four-field shape" >&2
+  echo "legacy Window compact projection lost its durable name or three-field shape" >&2
   exit 1
 fi
 pmx get windows --project alpha -o wide >"$create_root/alpha-windows-table.out"
@@ -2470,6 +2470,44 @@ fi
 # pattern, so a leading `--` would be read as an option.
 smoke_assert_file_contains "$create_root/agent-outside.err" "not inside a tmux client"
 smoke_assert_file_contains "$create_root/agent-outside.err" "pass --project <ref>"
+
+# Compact resource routes omit their implied kind, but wide/JSON retain it.
+# Use the same existing four-kind Registry; these reads must not write it.
+cp "$create_registry" "$create_root/compact-kind.registry.before"
+for compact_kind in projects windows panes agents; do
+  for compact_mode in default wide json; do
+    compact_output_args=()
+    if [[ "$compact_mode" != default ]]; then
+      compact_output_args=(-o "$compact_mode")
+    fi
+    pmx_agent get "$compact_kind" -p alpha "${compact_output_args[@]}" \
+      >"$create_root/compact-kind-$compact_kind-$compact_mode.out"
+    pmx_agent get "$compact_kind" -p alpha --selector role=columnar-never-matches "${compact_output_args[@]}" \
+      >"$create_root/compact-kind-$compact_kind-$compact_mode-empty.out"
+  done
+  python3 - "$create_root" "$compact_kind" <<'COMPACT_KIND'
+import json
+import pathlib
+import sys
+
+root, route = pathlib.Path(sys.argv[1]), sys.argv[2]
+kind = route[:-1]
+read = lambda mode: (root / f"compact-kind-{route}-{mode}.out").read_text()
+compact = [line.split() for line in read("default").splitlines()]
+wide = [line.split() for line in read("wide").splitlines()]
+items = json.loads(read("json"))["items"]
+assert compact[0] == ["NAME", "STATUS", "ACTIONS"], compact[0]
+assert wide[0][:4] == ["KIND", "NAME", "STATUS", "ACTIONS"], wide[0]
+assert len(compact) == len(wide) == len(items) + 1 and items, route
+for row, recovered, item in zip(compact[1:], wide[1:], items):
+    assert len(row) == 3 and row == recovered[1:4], (route, row, recovered)
+    assert recovered[0] == kind and item["kind"].lower() == kind, item
+    assert row[0] == item["metadata"]["name"], (row, item)
+assert read("default-empty") == read("wide-empty") == "", route
+assert json.loads(read("json-empty"))["items"] == [], route
+COMPACT_KIND
+done
+cmp "$create_root/compact-kind.registry.before" "$create_registry"
 
 # 14. Phase 6 Agent authority runs on the inherited absolute socket only. The
 #     foreign socket deliberately carries matching title-like text and semantic

@@ -87,10 +87,14 @@ root bridges and reject missing, duplicate, conflicting, or unknown rows.
 
 ## Resource selectors and the active target
 
-Plural Registry reads default to `KIND NAME STATUS ACTIONS`. Use `-o wide`
-for context, source/observation, owner chain, session, termination and age
-columns; `-o json` retains the full resource and invocation context. Wide
-stdout preserves full values at every terminal width. See [Column profiles](column-profiles.md)
+Plural Registry reads (`get projects|windows|panes|agents`) default to
+`NAME STATUS ACTIONS`: the route already selects the kind. Removing the previous
+KIND column changes these tables from four columns to three and moves NAME,
+STATUS and ACTIONS one position left, so existing positional parsers can break.
+Use `-o wide` to retain KIND, context, source/observation, owner chain, session,
+termination and age; `-o json` retains each resource's `kind`, full resource and
+invocation context. Mixed Registry/Runtime pickers keep KIND in both profiles.
+Wide stdout preserves full values at every terminal width. See [Column profiles](column-profiles.md)
 for the exact per-kind matrix and migration from the previous default output.
 
 The resource routes (`get`, `describe`, `create`, `rename`, `rebind`, `delete`,

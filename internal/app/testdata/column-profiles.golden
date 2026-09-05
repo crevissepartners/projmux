@@ -1,8 +1,8 @@
 == registry projects default ==
-KIND     NAME   STATUS        ACTIONS
-project  alpha  live          open,delete
-project  beta   offline       start,delete
-project  gone   missing-root  rebind,delete
+NAME   STATUS        ACTIONS
+alpha  live          open,delete
+beta   offline       start,delete
+gone   missing-root  rebind,delete
 == registry projects wide ==
 KIND     NAME   STATUS        ACTIONS        CONTEXT  SOURCE                 OBSERVED  AGE
 project  alpha  live          open,delete    alpha    project-root-basename  false     2d
@@ -21,12 +21,12 @@ sha256 9ad689651abc9d18d782f74e4eb32575adc74862f86faff567a47ec22053bd35
 == registry projects none ==
 sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 == registry windows default ==
-KIND    NAME         STATUS        ACTIONS
-window  main         live          open,delete
-window  review       offline       start,delete
-window  main         offline       start,delete
-window  main         missing-root  rebind,delete
-window  home-window  live          -
+NAME         STATUS        ACTIONS
+main         live          open,delete
+review       offline       start,delete
+main         offline       start,delete
+main         missing-root  rebind,delete
+home-window  live          -
 == registry windows wide ==
 KIND    NAME         STATUS        ACTIONS        CONTEXT                                                                                                                               SOURCE              OBSERVED  PROJECT  AGE
 window  main         live          open,delete    live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창  live-window-name    true      alpha    2d
@@ -47,14 +47,14 @@ sha256 6a20f342ace19b9db085a5648529d424832b983223c2c4bf3335c5eb9ad43da8
 == registry windows none ==
 sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 == registry panes default ==
-KIND  NAME        STATUS        ACTIONS
-pane  zsh         live          open,delete
-pane  log         offline       start,delete
-pane  codex-pane  live          open,delete
-pane  review-zsh  offline       start,delete
-pane  zsh         offline       start,delete
-pane  zsh         missing-root  rebind,delete
-pane  home-shell  live          -
+NAME        STATUS        ACTIONS
+zsh         live          open,delete
+log         offline       start,delete
+codex-pane  live          open,delete
+review-zsh  offline       start,delete
+zsh         offline       start,delete
+zsh         missing-root  rebind,delete
+home-shell  live          -
 == registry panes wide ==
 KIND  NAME        STATUS        ACTIONS        CONTEXT                                                                                                                                                                  SOURCE              OBSERVED  PROJECT  WINDOW       AGENT  TERMINATION  AGE
 pane  zsh         live          open,delete    live shell full title full title full title full title full title full title full title full title full title full title full title full title                           live-pane-title     true      alpha    main                             2d
@@ -77,9 +77,9 @@ sha256 37c47ff2e83b4352dd8b01a1954466d115e0d8c7b2e37c9160c9b36b3cbeb066
 == registry panes none ==
 sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
 == registry agents default ==
-KIND   NAME   STATUS   ACTIONS
-agent  codex  live     open,delete
-agent  codex  offline  resume,delete
+NAME   STATUS   ACTIONS
+codex  live     open,delete
+codex  offline  resume,delete
 == registry agents wide ==
 KIND   NAME   STATUS   ACTIONS        CONTEXT                                                                                                                                                                  SOURCE       OBSERVED  INTERACTION  PROJECT  WINDOW  SESSION                                                                                                                                            TERMINATION  AGE
 agent  codex  live     open,delete    릴리스 검토 full context full context full context full context full context full context full context full context full context full context full context full context  agent-topic  false     unknown      alpha    main    codex:thread-long-value-long-value-long-value-long-value-long-value-long-value-long-value-long-value-long-value-long-value-long-value-long-value-               2d

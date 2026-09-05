@@ -32,10 +32,10 @@ func TestColumnCatalogCompletenessBijectionAndExactProfiles(t *testing.T) {
 		surface             columnSurface
 		kind, compact, wide string
 	}{
-		{columnResourceCLI, "Project", "KIND NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED AGE"},
-		{columnResourceCLI, "Window", "KIND NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT AGE"},
-		{columnResourceCLI, "Pane", "KIND NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT WINDOW AGENT TERMINATION AGE"},
-		{columnResourceCLI, "Agent", "KIND NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED INTERACTION PROJECT WINDOW SESSION TERMINATION AGE"},
+		{columnResourceCLI, "Project", "NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED AGE"},
+		{columnResourceCLI, "Window", "NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT AGE"},
+		{columnResourceCLI, "Pane", "NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT WINDOW AGENT TERMINATION AGE"},
+		{columnResourceCLI, "Agent", "NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED INTERACTION PROJECT WINDOW SESSION TERMINATION AGE"},
 		{columnRegistryPicker, "", "KIND NAME STATUS ACTIONS", "KIND NAME STATUS PROGRESS TERMINATION ACTIONS RUNTIME UID"},
 		{columnRuntimeCLI, "session", "SESSION NAME CLASS", "SESSION NAME CLASS UID RESOURCE REASON"},
 		{columnRuntimeCLI, "window", "WINDOW SESSION NAME CLASS", "WINDOW SESSION NAME CLASS UID RESOURCE REASON"},
@@ -271,8 +271,8 @@ func TestColumnProfilesExactOutputAndSnapshotParity(t *testing.T) {
 					if row["ACTIONS"] != want {
 						t.Fatalf("%s %s actions=%q want=%q", kind, ids[i], row["ACTIONS"], want)
 					}
-					if mode == "default" && len(strings.Fields(strings.Split(strings.TrimSpace(stdout), "\n")[i+1])) != 4 {
-						t.Fatal("compact row is not four shell fields")
+					if mode == "default" && len(strings.Fields(strings.Split(strings.TrimSpace(stdout), "\n")[i+1])) != 3 {
+						t.Fatal("compact row is not three shell fields")
 					}
 				}
 			} else {
@@ -363,7 +363,7 @@ func TestColumnProfilesDoNotSelectFromWidthAndWideIsUnbounded(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !slices.Equal(strings.Fields(strings.Split(stdout, "\n")[0]), []string{"KIND", "NAME", "STATUS", "ACTIONS"}) {
+		if !slices.Equal(strings.Fields(strings.Split(stdout, "\n")[0]), []string{"NAME", "STATUS", "ACTIONS"}) {
 			t.Fatalf("width %s selected a different default", width)
 		}
 	}
@@ -398,5 +398,122 @@ func TestColumnActionsReuseUnavailableSnapshotAndEmptyListsStayEmpty(t *testing.
 			t.Fatalf("empty %s: stdout=%q stderr=%q err=%v", mode, stdout, stderr, err)
 		}
 		assertColumnReadCounters(t, store, primary, sibling, before)
+	}
+}
+
+// The route decides kind, while scope and selectors still decide the same
+// ordered UID set. Check emitted cells against wide and JSON recovery on fresh
+// invocations so a changed column cannot hide a second observation or write.
+func TestCompactResourceKindOmissionPreservesScopedRowsAndRecovery(t *testing.T) {
+	for _, test := range []struct {
+		name, kind string
+		args       []string
+		uids       string
+	}{
+		{"projects/unscoped", "Project", []string{"projects"}, "prj-alpha prj-beta prj-gone"},
+		{"projects/scoped", "Project", []string{"projects", "-p", "uid:prj-alpha"}, "prj-alpha"},
+		{"windows/unscoped", "Window", []string{"windows"}, "win-alpha-main win-alpha-review win-beta-main win-gone-main win-home"},
+		{"windows/all", "Window", []string{"windows", "-A"}, "win-alpha-main win-alpha-review win-beta-main win-gone-main win-home"},
+		{"windows/project", "Window", []string{"windows", "-p", "uid:prj-alpha"}, "win-alpha-main win-alpha-review"},
+		{"windows/exact", "Window", []string{"windows", "-p", "uid:prj-alpha", "-w", "uid:win-alpha-main"}, "win-alpha-main"},
+		{"panes/unscoped", "Pane", []string{"panes"}, "pan-alpha-zsh pan-alpha-log pan-alpha-codex pan-alpha-review pan-beta-zsh pan-gone-zsh pan-home"},
+		{"panes/all", "Pane", []string{"panes", "-A"}, "pan-alpha-zsh pan-alpha-log pan-alpha-codex pan-alpha-review pan-beta-zsh pan-gone-zsh pan-home"},
+		{"panes/project", "Pane", []string{"panes", "-p", "uid:prj-alpha"}, "pan-alpha-zsh pan-alpha-log pan-alpha-codex pan-alpha-review"},
+		{"panes/window", "Pane", []string{"panes", "-p", "uid:prj-alpha", "-w", "uid:win-alpha-main"}, "pan-alpha-zsh pan-alpha-log pan-alpha-codex"},
+		{"panes/exact", "Pane", []string{"panes", "-p", "uid:prj-alpha", "--pane", "uid:pan-alpha-codex"}, "pan-alpha-codex"},
+		{"agents/unscoped", "Agent", []string{"agents"}, "agt-alpha-codex agt-beta-codex"},
+		{"agents/all", "Agent", []string{"agents", "-A"}, "agt-alpha-codex agt-beta-codex"},
+		{"agents/project", "Agent", []string{"agents", "-p", "uid:prj-alpha"}, "agt-alpha-codex"},
+		{"agents/window", "Agent", []string{"agents", "-p", "uid:prj-alpha", "-w", "uid:win-alpha-main"}, "agt-alpha-codex"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			for _, empty := range []bool{false, true} {
+				outputs := map[string]string{}
+				for _, mode := range []string{"default", "wide", "json", "uid"} {
+					command, store, primary, sibling, _ := columnFixture(t)
+					before, _ := json.Marshal(store.registry)
+					args := slices.Clone(test.args)
+					if empty {
+						args = append(args, "--selector", "role=never-matches")
+					}
+					if mode != "default" {
+						args = append(args, "-o", mode)
+					}
+					stdout, stderr, err := runRoute(t, command, args...)
+					if err != nil || stderr != "" {
+						t.Fatalf("%v: %v stderr=%q", args, err, stderr)
+					}
+					assertColumnReadCounters(t, store, primary, sibling, before)
+					outputs[mode] = stdout
+				}
+				var document struct {
+					Items []struct {
+						Kind     string                  `json:"kind"`
+						Metadata coremetadata.ObjectMeta `json:"metadata"`
+					} `json:"items"`
+				}
+				if err := json.Unmarshal([]byte(outputs["json"]), &document); err != nil {
+					t.Fatal(err)
+				}
+				if empty {
+					if outputs["default"] != "" || outputs["wide"] != "" || outputs["uid"] != "" || document.Items == nil || len(document.Items) != 0 {
+						t.Fatalf("empty selector emitted rows/header or lost JSON empty list: %v", outputs)
+					}
+					continue
+				}
+				ids := strings.Fields(outputs["uid"])
+				if !slices.Equal(ids, strings.Fields(test.uids)) {
+					t.Fatalf("selector/order = %v, want %s", ids, test.uids)
+				}
+				if got := strings.Fields(strings.Split(outputs["default"], "\n")[0]); !slices.Equal(got, []string{"NAME", "STATUS", "ACTIONS"}) {
+					t.Fatalf("compact header = %v, want NAME STATUS ACTIONS", got)
+				}
+				compact, wide := columnarRows(t, outputs["default"]), columnarRows(t, outputs["wide"])
+				if len(compact) != len(ids) || len(wide) != len(ids) || len(document.Items) != len(ids) {
+					t.Fatal("profile changed row cardinality")
+				}
+				for i, row := range compact {
+					if len(row) != 3 || wide[i]["KIND"] != strings.ToLower(test.kind) || document.Items[i].Kind != test.kind {
+						t.Fatalf("compact kind leaked or recovery lost kind: compact=%v wide=%v json=%+v", row, wide[i], document.Items[i])
+					}
+					for _, field := range []string{"NAME", "STATUS", "ACTIONS"} {
+						if row[field] != wide[i][field] {
+							t.Fatalf("row %d %s lost full value: compact=%q wide=%q", i, field, row[field], wide[i][field])
+						}
+					}
+					if document.Items[i].Metadata.UID != ids[i] || document.Items[i].Metadata.Name != row["NAME"] {
+						t.Fatalf("row %d lost durable name/order: %+v, %v", i, document.Items[i], row)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestMixedPickerProfilesRetainKindCells(t *testing.T) {
+	_, _, _, _, graph := columnFixture(t)
+	registryRows := registryview.Build(registryview.Input{Graph: graph}).Rows
+	runtimeRows := runtimediag.Rows(graph)
+	for _, profile := range []columnProfile{columnCompact, columnWide} {
+		if registryNavigationColumns(profile)[0] != "KIND" || runtimeViewColumns(profile)[0] != "KIND" {
+			t.Fatalf("%s mixed picker lost KIND header", profile)
+		}
+		registryKinds, runtimeKinds := map[string]bool{}, map[string]bool{}
+		for _, row := range registryRows {
+			cells := registryNavigationRowAt(row, i18n.FallbackLocale, resourceFixtureReadClock, profile)
+			if want := runtimeCell(registryNavigationIndent(row) + string(row.Kind)); cells[0] != want {
+				t.Fatalf("%s Registry %s kind cell = %q, want %q", profile, row.UID, cells[0], want)
+			}
+			registryKinds[string(row.Kind)] = true
+		}
+		for _, row := range runtimeRows {
+			if cells := runtimeViewRow(row, profile); cells[0] != row.Kind {
+				t.Fatalf("%s Runtime %s kind cell = %q, want %q", profile, row.ID, cells[0], row.Kind)
+			}
+			runtimeKinds[row.Kind] = true
+		}
+		if len(registryKinds) < 4 || len(runtimeKinds) != 3 {
+			t.Fatalf("fixture is not mixed: Registry=%v Runtime=%v", registryKinds, runtimeKinds)
+		}
 	}
 }

@@ -64,10 +64,11 @@ type columnSpec struct {
 // and profile order. Presence declares capability on that surface and kind;
 // wide follows slice order and compact is its ordered subset. Width and data
 // never select a profile. Pickers start compact and explicitly opt into wide
-// for one open lifetime.
+// for one open lifetime. Resource CLI routes already select one kind, so only
+// their compact profiles omit KIND; wide and mixed pickers retain it.
 var columnCatalog = map[columnSurfaceKey][]columnSpec{
 	{columnResourceCLI, string(coremetadata.KindProject)}: {
-		{columnKind, "KIND", true},
+		{columnKind, "KIND", false},
 		{columnName, "NAME", true},
 		{columnStatus, "STATUS", true},
 		{columnActions, "ACTIONS", true},
@@ -77,7 +78,7 @@ var columnCatalog = map[columnSurfaceKey][]columnSpec{
 		{columnAge, "AGE", false},
 	},
 	{columnResourceCLI, string(coremetadata.KindWindow)}: {
-		{columnKind, "KIND", true},
+		{columnKind, "KIND", false},
 		{columnName, "NAME", true},
 		{columnStatus, "STATUS", true},
 		{columnActions, "ACTIONS", true},
@@ -88,7 +89,7 @@ var columnCatalog = map[columnSurfaceKey][]columnSpec{
 		{columnAge, "AGE", false},
 	},
 	{columnResourceCLI, string(coremetadata.KindPane)}: {
-		{columnKind, "KIND", true},
+		{columnKind, "KIND", false},
 		{columnName, "NAME", true},
 		{columnStatus, "STATUS", true},
 		{columnActions, "ACTIONS", true},
@@ -102,7 +103,7 @@ var columnCatalog = map[columnSurfaceKey][]columnSpec{
 		{columnAge, "AGE", false},
 	},
 	{columnResourceCLI, string(coremetadata.KindAgent)}: {
-		{columnKind, "KIND", true},
+		{columnKind, "KIND", false},
 		{columnName, "NAME", true},
 		{columnStatus, "STATUS", true},
 		{columnActions, "ACTIONS", true},
