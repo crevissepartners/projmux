@@ -104,13 +104,14 @@ func phase1GenerationAuthorityFixture(t *testing.T) (*fakeResourceStore, codexLi
 func phase0RSemanticPaneWrites(commands []recordedAICommand) map[string][]string {
 	writes := map[string][]string{}
 	for _, command := range commands {
-		if command.name != "tmux" || len(command.args) < 5 || command.args[0] != "set-option" {
+		args := stripRecordedTmuxRoute(command.args)
+		if command.name != "tmux" || len(args) < 5 || args[0] != "set-option" {
 			continue
 		}
-		option := command.args[len(command.args)-2]
-		value := command.args[len(command.args)-1]
-		if slices.Contains(command.args, "-u") {
-			option, value = command.args[len(command.args)-1], ""
+		option := args[len(args)-2]
+		value := args[len(args)-1]
+		if slices.Contains(args, "-u") {
+			option, value = args[len(args)-1], ""
 		}
 		if slices.Contains([]string{aiPaneStateOption, aiPaneBadgeKindOption, attentionStateOption}, option) {
 			writes[option] = append(writes[option], value)
@@ -2530,16 +2531,16 @@ func TestCodexHookFallbackSemanticDeliverySurfacesAndExactAck(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				badgeArgs := []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, event.badge}
+				badgeArgs := routedAppSocketArgs("set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, event.badge)
 				if !policy.wantBadge {
-					badgeArgs = []string{"set-option", "-p", "-u", "-t", "%7", aiPaneBadgeKindOption}
+					badgeArgs = routedAppSocketArgs("set-option", "-p", "-u", "-t", "%7", aiPaneBadgeKindOption)
 				}
 				if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: badgeArgs}) {
 					t.Fatalf("commands = %#v, want badge projection %#v", cmdRecorder(cmd).commands, badgeArgs)
 				}
-				attentionArgs := []string{"set-option", "-p", "-u", "-t", "%7", attentionStateOption}
+				attentionArgs := routedAppSocketArgs("set-option", "-p", "-u", "-t", "%7", attentionStateOption)
 				if policy.wantAttention {
-					attentionArgs = []string{"set-option", "-p", "-t", "%7", attentionStateOption, attentionStateReply}
+					attentionArgs = routedAppSocketArgs("set-option", "-p", "-t", "%7", attentionStateOption, attentionStateReply)
 				}
 				if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: attentionArgs}) {
 					t.Fatalf("commands = %#v, want attention projection %#v", cmdRecorder(cmd).commands, attentionArgs)
@@ -2622,8 +2623,10 @@ func TestCodexHookFallbackQuietHidesManagedRegistryAggregate(t *testing.T) {
 	if !reflect.DeepEqual(notifyStore.ackedIDs, []string{"stale-hook-notice"}) {
 		t.Fatalf("quiet fallback acked ids = %#v", notifyStore.ackedIDs)
 	}
+	// The hook inherits no tmux environment here, so every reflection write
+	// must carry the app-owned route the delivery proved before writing.
 	for _, option := range []string{aiPaneBadgeKindOption, attentionStateOption} {
-		if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", identity.RuntimeID, option}}) {
+		if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"-L", defaultAppSocket, "set-option", "-p", "-u", "-t", identity.RuntimeID, option}}) {
 			t.Fatalf("quiet fallback commands = %#v, want unset %s", cmdRecorder(cmd).commands, option)
 		}
 	}

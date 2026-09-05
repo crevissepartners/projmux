@@ -1071,6 +1071,56 @@ fall-through resolves — to the answer, never inside the shared ladder.
   envelope and therefore no coherence question, and the cwd and thread steps
   resolve exactly as before for every provider.
 
+### Attributed Codex hook delivery route tests
+
+Attribution and reflection are different layers. A Codex hook attributed to its
+Pane still has to write that Pane's options, and the hook the shared app-server
+launches inherits no tmux environment at all: its `tmux set-option` carried no
+socket argument, probed the operator's `default` server, found none, and handed
+back `exit status 1`. `ai-ingest.log` recorded that exit status where a cause
+belongs.
+
+`applyCodexHookSemanticDelivery` now resolves one exact server before it writes
+anything, and refuses by name when it cannot.
+
+- `TestCodexHookDeliveryWritesItsPaneWithoutAnyTmuxEnvironment` owns the case
+  the failure came from: with no `TMUX` at all the delivery still resolves a
+  route, and the argv it produces is pinned to the app-owned socket rather than
+  left unprefixed.
+- `TestCodexHookDeliveryPrefersTheInheritedReceiptOverTheAppRoute` owns the
+  precedence. A pane client's own `$TMUX` receipt names its server without a
+  search, is taken as an explicit socket path, and needs no containment probe.
+- `TestCodexHookDeliveryRefusesARouteItCannotProve` owns the proof. The
+  app-owned route is never trusted on its name: an unreachable runtime, an empty
+  answer, a server that is not app-owned, a runtime holding a different pane,
+  and a pane that is not a projmux Pane each produce their own reason and write
+  nothing.
+- `TestCodexHookDeliveryFailureReasonsAreConcreteAndClosed` owns the vocabulary.
+  Every token a refusal can render — the three reasons, the two route kinds, the
+  four tmux causes — is non-empty and carries no socket path, no routing flag,
+  and no process exit status.
+- `TestCodexHookDeliveryLeavesNoTransportDetailInTheIngestLog` owns the record
+  rather than the error value. It injects a transport failure whose tmux output
+  names its socket, drives the real ingest route, and reads the whole log file
+  back: a reason that leaks is caught there even when every assertion above
+  still passes.
+- `TestCodexHookDeliveryExplainsARejectedWriteByRereadingItsRoute` owns the
+  residual failure. A `set-option` that fails after the route was proven is
+  explained by re-reading the route — a pure read that repeats no write — so the
+  record says whether the pane vanished or the runtime rejected the option.
+
+tmux explains a refusal on stderr and that text carries the socket path it
+tried, so `codexHookDeliveryCause` is the only reader of tmux's own words here:
+it classifies them into a closed set and returns none of them. A reason names
+which lane answered — inherited or app-owned — and never which file backs it,
+because this track's change boundary keeps paths out of durable records.
+
+The route decides where a reflection is written, not which Pane it belongs to;
+attribution stays with the matcher and the Registry step above. Two other hook
+writers on the same shared-host path, `applyAIStatusInternalWithActivationPolicy`
+and `markAIHookPane`, still issue unrouted tmux calls and discard their errors,
+so their failures are invisible rather than fixed.
+
 ## Review Checklist
 - The branch stays within its stated scope.
 - The change preserves boundaries between portable `projmux` behavior and local machine policy.

@@ -288,8 +288,8 @@ func TestIngestCodexHookPermissionPushesCriticalQueueEntryAndMetadata(t *testing
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeIDOption, "codex-session"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeSourceOption, "hook"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneResumeUpdatedAtOption, "1970-01-01T00:00:00Z"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting"}},
-		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindApprovalRequired}},
+		{name: "tmux", args: routedAppSocketArgs("set-option", "-p", "-t", "%7", aiPaneStateOption, "waiting")},
+		{name: "tmux", args: routedAppSocketArgs("set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindApprovalRequired)},
 	} {
 		if !hasRecordedAICommand(cmdRecorder(cmd).commands, want) {
 			t.Fatalf("commands = %#v, missing %#v", cmdRecorder(cmd).commands, want)
@@ -337,7 +337,7 @@ func TestIngestCodexHookStopPushesInfoQueueEntry(t *testing.T) {
 	if got.ID != "ai:codex:stop:codex-session:turn-456" || got.Text != "Ready" || got.Severity != notify.SeverityInfo || got.Metadata["category"] != "response_complete" {
 		t.Fatalf("pushed = %#v", got)
 	}
-	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindResponseComplete}}) {
+	if !hasRecordedAICommand(cmdRecorder(cmd).commands, recordedAICommand{name: "tmux", args: routedAppSocketArgs("set-option", "-p", "-t", "%7", aiPaneBadgeKindOption, aiBadgeKindResponseComplete)}) {
 		t.Fatalf("commands = %#v, want response_complete semantic badge", cmdRecorder(cmd).commands)
 	}
 }
@@ -2570,6 +2570,11 @@ func codexHookIngestReadCommand(paneID string) func(context.Context, string, ...
 			return []byte(paneID + "\n"), nil
 		case reflect.DeepEqual(args, []string{"display-message", "-p", "-t", paneID, "#{socket_path}"}):
 			return []byte("/tmp/tmux-1000/projmux\n"), nil
+		// The hook ingest fixture stands in for a hook the shared app-server
+		// launched: it inherits no tmux environment, so the reflection proves
+		// projmux's own app-owned route holds this Pane before writing to it.
+		case reflect.DeepEqual(args, []string{"-L", defaultAppSocket, "display-message", "-p", "-t", paneID, "-F", codexHookDeliveryRouteFormat}):
+			return codexHookDeliveryRouteRow(paneID, "pan-"+strings.TrimPrefix(paneID, "%")), nil
 		}
 		return nil, os.ErrNotExist
 	}
@@ -2609,7 +2614,8 @@ func hasRecordedAICommand(commands []recordedAICommand, want recordedAICommand) 
 
 func hasRecordedAISetOption(commands []recordedAICommand, option string) bool {
 	for _, got := range commands {
-		if got.name == "tmux" && len(got.args) >= 6 && got.args[0] == "set-option" && got.args[4] == option {
+		args := stripRecordedTmuxRoute(got.args)
+		if got.name == "tmux" && len(args) >= 6 && args[0] == "set-option" && args[4] == option {
 			return true
 		}
 	}
