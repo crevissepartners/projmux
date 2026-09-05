@@ -9310,10 +9310,11 @@ exitrec_settle_registry() {
   echo "the Registry never settled after the pane-exit hooks fired" >&2
   exit 1
 }
+# TERMINATION is a diagnostic column: explicitly retain the wide read surface.
 exitrec_settle_registry
 exitrec_read_before="$(sha256sum "$exitrec_registry" | cut -d' ' -f1)"
-exitrec_pmx get agents --project "uid:$exitrec_project_uid" >"$exitrec_root/get-agents.txt"
-exitrec_pmx get panes --project "uid:$exitrec_project_uid" >"$exitrec_root/get-panes.txt"
+exitrec_pmx get agents --project "uid:$exitrec_project_uid" -o wide >"$exitrec_root/get-agents.txt"
+exitrec_pmx get panes --project "uid:$exitrec_project_uid" -o wide >"$exitrec_root/get-panes.txt"
 exitrec_pmx describe agent "uid:$exitrec_failed_agent" >"$exitrec_root/describe-agent.txt"
 smoke_assert_file_contains "$exitrec_root/get-agents.txt" "TERMINATION"
 smoke_assert_file_contains "$exitrec_root/get-agents.txt" "abnormal/supervisor exit=42"
