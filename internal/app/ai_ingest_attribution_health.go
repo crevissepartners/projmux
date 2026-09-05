@@ -143,6 +143,36 @@ func (h aiIngestAttributionHealth) Unattributed() int {
 	return total
 }
 
+// aiIngestWindowSpan reports the first and last record timestamps in a window.
+//
+// Every hook-layer count in this diagnosis is cumulative over the whole window,
+// and the window spans whatever happened during it -- including a deployment.
+// A repair therefore cannot move these numbers until the records that predate
+// it age out, and a reader who does not know the span reads the delay as the
+// repair having failed, then reads the eventual drop as time having healed it.
+//
+// Naming the span is the cheap half of the fix. Splitting the counts at a
+// deployment boundary would be the expensive half, and it needs something this
+// reader does not have: the hook layer is a short-lived process re-resolved on
+// every firing, so the binary vintage of a long-running process says nothing
+// about which image wrote a given record.
+func aiIngestWindowSpan(entries []aiIngestLogEntry) (string, string) {
+	first, last := "", ""
+	for _, entry := range entries {
+		at := strings.TrimSpace(entry.At)
+		if at == "" {
+			continue
+		}
+		if first == "" || at < first {
+			first = at
+		}
+		if last == "" || at > last {
+			last = at
+		}
+	}
+	return first, last
+}
+
 // readAIIngestLogTail reads the last window of a JSON-lines log.
 //
 // The first line of the window is dropped whenever the window did not start at

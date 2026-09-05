@@ -48,8 +48,10 @@ type codexControlPlaneSurface struct {
 // codexControlPlaneReport is the whole projection: what the five surfaces say,
 // and how current the processes they were read from are.
 type codexControlPlaneReport struct {
-	Vintage  codexControlPlaneVintage   `json:"vintage"`
-	Surfaces []codexControlPlaneSurface `json:"surfaces"`
+	Vintage codexControlPlaneVintage `json:"vintage"`
+	// HookWindow is the record span the three hook surfaces were counted over.
+	HookWindow string                     `json:"hook_window,omitempty"`
+	Surfaces   []codexControlPlaneSurface `json:"surfaces"`
 }
 
 // projectCodexControlPlaneSurfaces reaches one verdict per surface from the
@@ -64,7 +66,7 @@ func projectCodexControlPlaneSurfaces(
 	hooks codexHookHealth,
 	vintage codexControlPlaneVintage,
 ) codexControlPlaneReport {
-	report := codexControlPlaneReport{Vintage: vintage}
+	report := codexControlPlaneReport{Vintage: vintage, HookWindow: codexHookWindowText(hooks)}
 	report.Surfaces = []codexControlPlaneSurface{
 		codexBrokerDiagnosticsSurface(broker),
 		codexHookAttributionSurface(hooks.Attribution),
@@ -88,6 +90,20 @@ type codexHookHealth struct {
 	Attribution aiIngestAttributionHealth
 	Delivery    aiIngestDeliveryHealth
 	Ownership   aiIngestOwnershipHealth
+	// From and To bound the records all three were counted over.
+	From string
+	To   string
+}
+
+// codexHookWindowText names the span the hook counts are cumulative over.
+//
+// Without it, a repair that lands mid-window looks like it did nothing until
+// the records that predate it scroll out, and then looks like time fixed it.
+func codexHookWindowText(hooks codexHookHealth) string {
+	if strings.TrimSpace(hooks.From) == "" || strings.TrimSpace(hooks.To) == "" {
+		return ""
+	}
+	return hooks.From + " to " + hooks.To
 }
 
 // codexBrokerDiagnosticsSurface judges whether the broker diagnosis is looking

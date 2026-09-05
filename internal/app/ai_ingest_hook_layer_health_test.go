@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -376,5 +377,49 @@ func TestReflectionRefusalVocabularyIsNeverOpaque(t *testing.T) {
 	// stopped distinguishing the two.
 	if !aiIngestReasonIsOpaque(aiIngestReasonToken("exit status 1")) {
 		t.Fatal("a raw process exit no longer reads as opaque")
+	}
+}
+
+// TestHookWindowSpanIsCarriedOntoTheSection pins that the hook counts say what
+// span they are over.
+//
+// Every hook-layer number here is cumulative across the whole reading window,
+// and a deployment inside that window leaves records from both images in the
+// same counts. A repair that lands mid-window therefore moves nothing until its
+// predecessors age out — and a reader without the span reads the delay as the
+// repair having failed, then reads the eventual drop as time having healed it.
+// That misreading already happened once on this track, in both directions,
+// within ten minutes.
+func TestHookWindowSpanIsCarriedOntoTheSection(t *testing.T) {
+	entries := []aiIngestLogEntry{
+		{At: "2026-09-05T09:48:09Z", Source: "codex-hook", Result: "notify", Pane: "%1"},
+		{At: "2026-09-05T08:44:30Z", Source: "codex-hook", Result: "error", Reason: "exit status 1", Pane: "%1"},
+		{At: "2026-09-05T09:12:00Z", Source: "claude-hook", Result: "state", Pane: "%2"},
+		// A record with no timestamp must not become the boundary.
+		{Source: "claude-hook", Result: "quiet", Pane: "%2"},
+	}
+	from, to := aiIngestWindowSpan(entries)
+	if from != "2026-09-05T08:44:30Z" || to != "2026-09-05T09:48:09Z" {
+		t.Fatalf("span = %q..%q, want the earliest and latest timestamped records", from, to)
+	}
+	report := projectCodexControlPlaneSurfaces(nil, nil, codexHookHealth{
+		Attribution: projectAIIngestAttributionHealth(entries),
+		Delivery:    projectAIIngestDeliveryHealth(entries),
+		From:        from,
+		To:          to,
+	}, codexControlPlaneVintage{})
+	if report.HookWindow != from+" to "+to {
+		t.Fatalf("hook window = %q, want the span carried onto the section", report.HookWindow)
+	}
+	var buf bytes.Buffer
+	writeDoctorCodexControlPlaneText(&buf, &report)
+	if !strings.Contains(buf.String(), "Hook reading window: "+from+" to "+to) {
+		t.Fatalf("rendered:\n%s\nwant the span above the rows it qualifies", buf.String())
+	}
+	// An unreadable log has no span, and an empty range must not be rendered as
+	// one.
+	empty := projectCodexControlPlaneSurfaces(nil, nil, codexHookHealth{}, codexControlPlaneVintage{})
+	if empty.HookWindow != "" {
+		t.Fatalf("hook window = %q with nothing read, want none", empty.HookWindow)
 	}
 }

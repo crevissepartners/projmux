@@ -1182,6 +1182,18 @@ reached on:
 
 Two things the attribution verdict counts, and one it does not.
 
+The section carries the record span its hook rows were counted over. Every
+hook-layer number is cumulative across the whole reading window, and a
+deployment inside that window leaves records from both binaries in the same
+counts — so a repair that lands mid-window moves nothing until its predecessors
+age out, and a reader without the span reads the delay as the repair having
+failed and the eventual drop as time having healed it. Splitting the counts at
+a deployment boundary would need something this reader does not have: the hook
+layer is a short-lived process re-resolved from PATH on every firing, so the
+binary vintage of a long-running process says nothing about which image wrote a
+given record. That is also why the vintage line above qualifies the broker and
+observer rows and not these three.
+
 It is reached **per source** rather than over the total. The defect it detects
 was one provider's, and a busy neighbour attributing everything would carry the
 aggregate and render the dead provider as a few stale panes — which is the

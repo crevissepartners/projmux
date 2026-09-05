@@ -1075,9 +1075,12 @@ func (c *doctorCommand) readCodexHookHealth() codexHookHealth {
 	if !ok {
 		return codexHookHealth{}
 	}
+	from, to := aiIngestWindowSpan(entries)
 	health := codexHookHealth{
 		Attribution: projectAIIngestAttributionHealth(entries),
 		Delivery:    projectAIIngestDeliveryHealth(entries),
+		From:        from,
+		To:          to,
 	}
 	registry, registryOK := coremetadata.Registry{}, false
 	if c.readRegistry != nil {
@@ -1110,6 +1113,11 @@ func writeDoctorCodexControlPlaneText(buf *bytes.Buffer, report *codexControlPla
 	}
 	buf.WriteString("\nCodex control-plane surfaces\n")
 	fmt.Fprintf(buf, "  Diagnosis vintage: %s\n", codexControlPlaneVintageText(report.Vintage))
+	if report.HookWindow != "" {
+		// The hook rows below are cumulative over this span, and a deployment
+		// inside it leaves records from both images in the same counts.
+		fmt.Fprintf(buf, "  Hook reading window: %s\n", report.HookWindow)
+	}
 	for _, surface := range report.Surfaces {
 		fmt.Fprintf(buf, "  [%-10s] %-22s %s\n", surface.Status, surface.Surface, surface.Detail)
 	}
