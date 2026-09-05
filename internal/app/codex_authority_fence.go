@@ -51,15 +51,27 @@ func (c *aiCommand) acquireCodexAuthorityFence(paneUID string) (func(), error) {
 }
 
 func (c *aiCommand) codexAuthorityFencePath(paneUID string) (string, error) {
-	paneUID = strings.TrimSpace(paneUID)
-	if paneUID == "" {
+	if strings.TrimSpace(paneUID) == "" {
 		return "", fmt.Errorf("codex authority fence requires pane uid")
 	}
 	paths, err := configPaths(c.homeDir, c.lookupEnv)
 	if err != nil {
 		return "", fmt.Errorf("resolve Codex authority fence: %w", err)
 	}
-	dir := filepath.Join(paths.StateDir, codexAuthorityFenceDir)
+	return codexAuthorityFencePathIn(paths.StateDir, paneUID)
+}
+
+// codexAuthorityFencePathIn derives the exact fence file for one Pane inside a
+// private state directory. The derivation lives here once because the writer
+// and every reader that must observe a settled authority transition have to
+// contend on the same kernel lock; restating the digest or the directory on
+// either side would silently split them into two independent fences.
+func codexAuthorityFencePathIn(stateDir, paneUID string) (string, error) {
+	paneUID = strings.TrimSpace(paneUID)
+	if paneUID == "" {
+		return "", fmt.Errorf("codex authority fence requires pane uid")
+	}
+	dir := filepath.Join(stateDir, codexAuthorityFenceDir)
 	if err := localstate.EnsurePrivateDir(dir); err != nil {
 		return "", fmt.Errorf("create Codex authority fence directory: %w", err)
 	}
