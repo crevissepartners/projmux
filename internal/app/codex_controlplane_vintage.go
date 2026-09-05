@@ -45,16 +45,16 @@ const procDeletedSuffix = " (deleted)"
 // codexProcessImage is one entry of the local process table, reduced to the two
 // facts this projection reads. Nothing here is provider content: the executable
 // link and the argv of this application's own children.
+//
+// The reader that produces these reports whether the platform exposes such a
+// table at all. A platform that does not is reported as unknown rather than as
+// current, because a diagnosis that cannot establish vintage must say so rather
+// than imply currency.
 type codexProcessImage struct {
 	PID     int
 	Exe     string
 	Cmdline []string
 }
-
-// codexProcessImageLister reads the local process table. It reports false when
-// the platform exposes no such table, which is not a failure: a diagnosis that
-// cannot establish vintage must say so rather than imply currency.
-type codexProcessImageLister func() ([]codexProcessImage, bool)
 
 // codexControlPlaneRoleVintage is the vintage census of one control-plane role.
 type codexControlPlaneRoleVintage struct {
