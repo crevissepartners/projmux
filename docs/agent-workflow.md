@@ -965,6 +965,7 @@ conversation the Registry already records.
   whole route rather than the matcher alone: a payload arriving with an empty
   `--pane` produces a record naming its own Pane, and an unclaimed conversation
   produces a record naming why it has none.
+
 ### Settled Codex authority admission tests
 
 `aiCodexLifecycleSink.SetAuthority` publishes one native authority transition as
