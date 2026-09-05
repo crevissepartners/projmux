@@ -560,7 +560,7 @@ func (c *settingsCommand) execute(value string, stdout, stderr io.Writer) error 
 		// writes a stored setting the next judgment reads, so it stays usable
 		// even where no update runner is wired.
 		if action == "release-channel" {
-			return c.toggleReleaseChannelSetting(stdout, stderr)
+			return c.toggleReleaseChannelSetting()
 		}
 		if c.update == nil {
 			return errors.New("update settings are not configured")
@@ -631,6 +631,13 @@ func (c *settingsCommand) executeWithFeedback(value string, stdout, stderr io.Wr
 func settingsMutationLabel(value string) (string, bool) {
 	if value == settingsActionPrefixSessionState+"project-preview" {
 		return "", false
+	}
+	// The release channel toggle shares the `update:` prefix with check and
+	// apply, but it installs nothing. Reporting it as "Update complete" one
+	// row below "Update now" reads as if the binary had just been replaced,
+	// so it names itself before the prefix scan can generalize it.
+	if value == settingsUpdateReleaseChannel {
+		return "Release channel", true
 	}
 	for _, candidate := range []struct {
 		prefix string

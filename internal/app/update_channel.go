@@ -1,8 +1,6 @@
 package app
 
 import (
-	"io"
-
 	"github.com/crevissepartners/projmux/internal/integrations/hooks"
 )
 
@@ -87,18 +85,18 @@ func (c *settingsCommand) setReleaseChannelSetting(channel string) error {
 	return err
 }
 
-// toggleReleaseChannelSetting flips the opt-in between stable and rc.
-func (c *settingsCommand) toggleReleaseChannelSetting(stdout, stderr io.Writer) error {
+// toggleReleaseChannelSetting flips the opt-in between stable and rc. It
+// reports failures by returning them rather than by setting feedback itself:
+// the caller already runs it inside the shared Settings mutation boundary, and
+// a second boundary nested inside that one only has its message overwritten.
+func (c *settingsCommand) toggleReleaseChannelSetting() error {
 	channel, _, err := c.currentReleaseChannelSetting()
 	if err != nil {
-		c.setSettingsFeedback("Release channel failed", err.Error())
-		return nil
+		return err
 	}
 	next := updateReleaseChannelRC
 	if channel == updateReleaseChannelRC {
 		next = updateReleaseChannelStable
 	}
-	return c.runSettingsMutation("Release channel", stdout, stderr, func(io.Writer, io.Writer) error {
-		return c.setReleaseChannelSetting(next)
-	})
+	return c.setReleaseChannelSetting(next)
 }
