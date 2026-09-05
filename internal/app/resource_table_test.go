@@ -117,34 +117,34 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 	}{
 		{
 			kind: "projects",
-			want: "KIND     NAME   STATUS        ACTIONS\n" +
-				"project  alpha  live          -\n" +
-				"project  beta   offline       -\n" +
-				"project  gone   missing-root  -\n",
+			want: "NAME   STATUS        ACTIONS\n" +
+				"alpha  live          -\n" +
+				"beta   offline       -\n" +
+				"gone   missing-root  -\n",
 		},
 		{
 			kind: "windows",
-			want: "KIND    NAME    STATUS        ACTIONS\n" +
-				"window  main    live          -\n" +
-				"window  review  live          -\n" +
-				"window  main    offline       -\n" +
-				"window  main    missing-root  -\n",
+			want: "NAME    STATUS        ACTIONS\n" +
+				"main    live          -\n" +
+				"review  live          -\n" +
+				"main    offline       -\n" +
+				"main    missing-root  -\n",
 		},
 		{
 			kind: "panes",
-			want: "KIND  NAME        STATUS        ACTIONS\n" +
-				"pane  zsh         live          -\n" +
-				"pane  log         live          -\n" +
-				"pane  codex-pane  live          -\n" +
-				"pane  review-zsh  live          -\n" +
-				"pane  zsh         offline       -\n" +
-				"pane  zsh         missing-root  -\n",
+			want: "NAME        STATUS        ACTIONS\n" +
+				"zsh         live          -\n" +
+				"log         live          -\n" +
+				"codex-pane  live          -\n" +
+				"review-zsh  live          -\n" +
+				"zsh         offline       -\n" +
+				"zsh         missing-root  -\n",
 		},
 		{
 			kind: "agents",
-			want: "KIND   NAME   STATUS   ACTIONS\n" +
-				"agent  codex  live     -\n" +
-				"agent  codex  offline  -\n",
+			want: "NAME   STATUS   ACTIONS\n" +
+				"codex  live     -\n" +
+				"codex  offline  -\n",
 		},
 	} {
 		t.Run(test.kind, func(t *testing.T) {
@@ -273,10 +273,10 @@ func TestResourceTableColumnsAreTheCanonicalContract(t *testing.T) {
 		kind coremetadata.Kind
 		want []string
 	}{
-		{coremetadata.KindProject, []string{"KIND", "NAME", "STATUS", "ACTIONS"}},
-		{coremetadata.KindWindow, []string{"KIND", "NAME", "STATUS", "ACTIONS"}},
-		{coremetadata.KindPane, []string{"KIND", "NAME", "STATUS", "ACTIONS"}},
-		{coremetadata.KindAgent, []string{"KIND", "NAME", "STATUS", "ACTIONS"}},
+		{coremetadata.KindProject, []string{"NAME", "STATUS", "ACTIONS"}},
+		{coremetadata.KindWindow, []string{"NAME", "STATUS", "ACTIONS"}},
+		{coremetadata.KindPane, []string{"NAME", "STATUS", "ACTIONS"}},
+		{coremetadata.KindAgent, []string{"NAME", "STATUS", "ACTIONS"}},
 	} {
 		got := columnHeaders(resourceTableColumns(test.kind, columnCompact))
 		if strings.Join(got, ",") != strings.Join(test.want, ",") {

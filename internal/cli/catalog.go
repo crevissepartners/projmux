@@ -1347,10 +1347,10 @@ var routes = []Route{
 			"get runtime sessions", "get runtime windows", "get runtime panes",
 			"get notifications", "get snapshots", "get pane"},
 		Children: []Route{
-			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "projects", Invocation: InvocationFanOut, Summary: "List Project resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context", CanonicalSummary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: listProjectionCatalog, AcceptedOutputs: acceptedListOutputModes},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "projects", Invocation: InvocationFanOut, Summary: "List Project resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context", CanonicalSummary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: listProjectionCatalog, AcceptedOutputs: acceptedListOutputModes},
 			{
 				Effects: unchangedEffects(CardinalityZeroOrMore),
-				Name:    "windows", Summary: "List Window resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
+				Name:    "windows", Summary: "List Window resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Invocation:       InvocationNatural,
 				CanonicalSummary: "List Window resources",
 				Aliases:          []string{"window"}, Usage: []string{"projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
@@ -1358,7 +1358,7 @@ var routes = []Route{
 			},
 			{
 				Effects: unchangedEffects(CardinalityZeroOrMore),
-				Name:    "panes", Summary: "List Pane resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
+				Name:    "panes", Summary: "List Pane resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Invocation:       InvocationNatural,
 				CanonicalSummary: "List Pane resources",
 				Usage:            []string{"projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
@@ -1366,7 +1366,7 @@ var routes = []Route{
 			},
 			{
 				Effects: unchangedEffects(CardinalityZeroOrMore),
-				Name:    "agents", Summary: "List Agent resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
+				Name:    "agents", Summary: "List Agent resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Invocation:       InvocationNatural,
 				CanonicalSummary: "List Agent resources",
 				Aliases:          []string{"agent"}, Usage: []string{"projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},

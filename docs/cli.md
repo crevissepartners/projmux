@@ -1851,10 +1851,10 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux get projects`](#projmux-get-projects) | List Project resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context |
-| [`projmux get windows`](#projmux-get-windows) | List Window resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
-| [`projmux get panes`](#projmux-get-panes) | List Pane resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
-| [`projmux get agents`](#projmux-get-agents) | List Agent resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
+| [`projmux get projects`](#projmux-get-projects) | List Project resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context |
+| [`projmux get windows`](#projmux-get-windows) | List Window resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
+| [`projmux get panes`](#projmux-get-panes) | List Pane resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
+| [`projmux get agents`](#projmux-get-agents) | List Agent resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
 | [`projmux get runtime`](#projmux-get-runtime) | List every tmux Session, Window, and Pane on one exact server with its attribution |
 | [`projmux get notifications`](#projmux-get-notifications) | List pending notification rows |
 | [`projmux get snapshots`](#projmux-get-snapshots) | List saved session snapshots |
@@ -1864,7 +1864,7 @@ Canonical spelling: `projmux get projects`, `projmux get windows`, `projmux get 
 
 ### `projmux get projects`
 
-List Project resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context
+List Project resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context
 
 Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
@@ -1889,7 +1889,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`, `wide`
 
 ### `projmux get windows`
 
-List Window resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
+List Window resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -1914,7 +1914,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`, `wide`
 
 ### `projmux get panes`
 
-List Pane resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
+List Pane resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -1937,7 +1937,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`, `wide`
 
 ### `projmux get agents`
 
-List Agent resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
+List Agent resources as NAME STATUS ACTIONS; route-implied KIND is omitted, shifting stdout positions; -o wide retains KIND and diagnostics, and -o json retains kind and invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
