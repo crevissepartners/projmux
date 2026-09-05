@@ -274,9 +274,18 @@ func TestTurnAdmissionSurfaceReportsATornAuthoritySnapshotAsBroken(t *testing.T)
 			wantStatus: codexSurfaceStatusOK,
 		},
 		{
+			name:       "a pane whose writer never fenced still needs one settled read to judge",
+			census:     &codexAuthorityCensus{Agents: 2, Unfenced: 2},
+			wantStatus: codexSurfaceStatusUnobserved,
+		},
+		{
+			// The name of this case was right and its expectation was not. Only
+			// a settled snapshot may be judged for coherence, so a window where
+			// none settled has judged nothing -- and `torn 0` there is the
+			// absence of a reading, not the absence of a fault.
 			name:       "a transition caught in flight says nothing either way",
 			census:     &codexAuthorityCensus{Agents: 1, Contended: 1},
-			wantStatus: codexSurfaceStatusOK,
+			wantStatus: codexSurfaceStatusUnobserved,
 		},
 		{
 			name:       "no classified snapshot answers nothing",
@@ -433,4 +442,30 @@ func codexControlPlaneSurfacesComplete(report codexControlPlaneReport) bool {
 		}
 	}
 	return true
+}
+
+// TestObserverReasonSurfaceRefusesToJudgeAnEmptyReasonSet closes the other
+// vacuity the sweep found.
+//
+// Managed Agents can exist while not one of them has published an authority
+// reason, and the captured-versus-uncaptured split then reads 0 and 0. Calling
+// that healthy is a verdict reached over an empty set rendered exactly like a
+// verdict reached over a clean one — the shape this section has now corrected
+// in three separate places, each found on its own.
+func TestObserverReasonSurfaceRefusesToJudgeAnEmptyReasonSet(t *testing.T) {
+	surface := codexObserverReasonSurface(&codexAuthorityCensus{Agents: 6})
+	if surface.Status != codexSurfaceStatusUnobserved {
+		t.Fatalf("status = %q (detail %q), want %q when no Agent published a reason",
+			surface.Status, surface.Detail, codexSurfaceStatusUnobserved)
+	}
+	if !strings.Contains(surface.Detail, "6 managed Agent(s)") {
+		t.Fatalf("detail = %q, want the population it could not read from", surface.Detail)
+	}
+	// One captured reason is enough to have something to judge.
+	judged := codexObserverReasonSurface(&codexAuthorityCensus{Agents: 6, Reasons: []codexAuthorityReasonCount{
+		{Reason: string(codexObserverReasonReady), Count: 1},
+	}})
+	if judged.Status != codexSurfaceStatusOK {
+		t.Fatalf("status = %q, want %q once a reason was published", judged.Status, codexSurfaceStatusOK)
+	}
 }

@@ -232,6 +232,15 @@ func codexObserverReasonSurface(census *codexAuthorityCensus) codexControlPlaneS
 		}
 		captured += reason.Count
 	}
+	if captured == 0 && uncaptured == 0 {
+		// Agents exist and not one of them published a reason, so there is
+		// nothing here to be healthy about. Reporting ok would be the vacuous
+		// pass this section keeps finding elsewhere: a verdict reached over an
+		// empty set reads exactly like a verdict reached over a clean one.
+		surface.Status = codexSurfaceStatusUnobserved
+		surface.Detail = fmt.Sprintf("%d managed Agent(s) and no authority reason published by any of them", census.Agents)
+		return surface
+	}
 	surface.Detail = fmt.Sprintf("captured reasons %d; uncaptured %d", captured, uncaptured)
 	if uncaptured > 0 {
 		surface.Detail += " (" + strings.Join(uncapturedTokens, ", ") + ")"
@@ -311,6 +320,14 @@ func codexTurnAdmissionSurface(census *codexAuthorityCensus) codexControlPlaneSu
 	}
 	surface.Detail = fmt.Sprintf("authority snapshots %d settled, %d contended, %d unfenced; torn %d",
 		census.Settled, census.Contended, census.Unfenced, census.Torn)
+	if census.Settled == 0 {
+		// Only a settled snapshot may be judged for coherence, so a window in
+		// which none settled has judged nothing. `torn 0` there is the absence
+		// of a reading rather than the absence of a fault, and the two must not
+		// render alike.
+		surface.Status = codexSurfaceStatusUnobserved
+		return surface
+	}
 	switch {
 	case census.Torn > 0:
 		surface.Status = codexSurfaceStatusBroken

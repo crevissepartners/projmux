@@ -86,6 +86,7 @@ var codexControlPlaneContractEnforcement = map[string][]string{
 		"TestCodexObserverJournalRecordFieldsAreWhitelisted",
 		"TestManagedCodexAuthorityDoctorSeparatesFlappingFrozenAndStopped",
 		"TestObserverReasonSurfaceRefusesToCallAnUncapturedReasonHealthy",
+		"TestObserverReasonSurfaceRefusesToJudgeAnEmptyReasonSet",
 	},
 	// C-3 continuity: the upstream connection survives a message past the
 	// frame bound instead of dying on it, which is what held the control plane
