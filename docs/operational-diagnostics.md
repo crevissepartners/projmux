@@ -353,3 +353,106 @@ JSON schema version 2 and the bounded operations decoder are reused rather than
 duplicated. AI ingest contributes count-only allowlisted source/result rows,
 never raw legacy lines. Existing output files survive collisions and partial
 temporary archives are removed.
+
+## Install residue ledger
+
+`make install` and `npm install` replace the executable on disk. Neither
+replaces the image of a process that is already running, so every long-lived
+projmux child — the Codex broker runtime, the lifecycle observers, the per-pane
+supervisors — keeps executing the code it started with until it exits on its
+own. The install reports success while most of the running fleet is still on
+the previous build.
+
+`projmux internal install-residue` is the census of exactly that. It is hidden
+internal plumbing invoked by the installer, not a command to type: `make
+install` runs it as its last step, and the npm bin wrapper runs it once on the
+first interactive run after an install. It reads the process table, appends one
+record, prints at most one notice, and always exits `0` — a diagnostic that can
+fail the install it reports on is worse than no diagnostic.
+
+The notice goes to **stderr** and is printed only when the census was taken and
+found residual processes:
+
+```
+>> 24 projmux processes are still running the image this install replaced
+     supervisor          20   oldest 3h02m   median 45m
+     lifecycle-observer   3   oldest 2h14m   median 41m
+     broker-runtime       1   oldest 2h14m   median 2h14m
+   They keep executing code from before this install until each one exits.
+   Recreating a pane moves that pane onto the installed build; the broker
+   follows when its last binding goes.
+   Recorded to ~/.local/state/projmux/install-residue.jsonl (17 installs, last 38m ago).
+```
+
+An install that reached the whole fleet prints nothing at all. A platform with
+no readable process table (macOS, which has no `/proc/<pid>/exe`) also prints
+nothing: the census cannot be taken there and the operator has no action
+available, so a line at every install would be permanent noise. Both cases
+still write a record.
+
+### Ledger format
+
+The path is `${XDG_STATE_HOME:-$HOME/.local/state}/projmux/install-residue.jsonl`,
+resolved through the same `internal/config` layout as every other state file.
+It is JSON Lines, appended one object per install, created `0600` in the
+private state directory, and trimmed to approximately the newest 1000 records.
+Every failure — an unresolvable state directory, an unwritable file — is
+silent.
+
+```json
+{
+  "at": "2026-09-06T04:12:33Z",
+  "installer": "make",
+  "supported": true,
+  "observed": 41,
+  "replaced": 37,
+  "sinceLastInstallSeconds": 3612,
+  "roles": [
+    {"role":"supervisor","processes":22,"current":2,"replaced":20,
+     "replacedAgeSeconds":[610,1200,4300,8800]}
+  ]
+}
+```
+
+| field | meaning |
+| --- | --- |
+| `at` | when the census was taken, RFC3339 UTC |
+| `installer` | the existing `PROJMUX_INSTALLER` value; `unknown` when unset |
+| `supported` | whether this platform exposes a process table the census can be taken from |
+| `observed` | projmux processes classified |
+| `replaced` | how many of them run the image this install replaced |
+| `sinceLastInstallSeconds` | gap to the previous record; absent on the first |
+| `roles[].role` | `broker-runtime`, `lifecycle-observer`, `supervisor`, or `other` |
+| `roles[].processes` / `current` / `replaced` | that role's census |
+| `roles[].replacedAgeSeconds` | ascending age distribution of that role's residual processes, whole seconds |
+| `roles[].replacedAgeCapped` | present when the 512-sample per-role bound was reached, so the distribution above is a prefix |
+
+The record carries **no pid, no executable path, and no argv**, on the terminal
+and in the file alike. Counts and durations are the whole of it; process
+identity is exactly what the census is built not to record. A residual process
+whose start time could not be read is still counted in `replaced` and
+contributes no entry to `replacedAgeSeconds`, so that array can be shorter than
+`replaced`.
+
+Ages come from the modification time of `/proc/<pid>`, which the kernel stamps
+at process creation and never moves. That is chosen over `/proc/<pid>/stat`
+field 22 plus `/proc/stat` `btime` because it needs no `USER_HZ` assumption, no
+boot-time read, and no parsing around the `comm` field, which is an executable
+name in parentheses and may itself contain `)` and spaces.
+
+### What the ledger is for
+
+The ledger is the deliverable; the notice is a courtesy. An automatic
+replacement of residual processes cannot be designed without a termination
+condition for the drain, and these three fields are what such a condition is
+derived from:
+
+| field | the question it answers |
+| --- | --- |
+| `roles[].replaced` (per role) | what to make a replacement target |
+| `roles[].replacedAgeSeconds` (the full sorted distribution, not a mean) | does a bounded drain finish in finite time, and what cutoff `T` covers which fraction |
+| `at` + `sinceLastInstallSeconds` across records | how often this happens per install, hence whether a forced cutoff is needed at all |
+
+A mean would destroy the second answer: twenty supervisors averaging forty
+minutes says nothing about the one that outlives every plausible bound. That is
+why the distribution is stored whole.

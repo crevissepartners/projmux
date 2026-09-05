@@ -54,6 +54,7 @@ install: build
 	}
 	@echo ">> reconciling notify queue..."
 	@$(INSTALL_BIN) notification reconcile || true
+	@PROJMUX_INSTALLER=make $(INSTALL_BIN) internal install-residue || true
 
 npm-pack:
 	scripts/package-npm.sh --pack

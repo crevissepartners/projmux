@@ -2,10 +2,12 @@ package app
 
 import (
 	"bytes"
+	"encoding/json"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestControlPlaneVintageSeparatesAReplacedImageFromTheInstalledBuild is the
@@ -433,5 +435,155 @@ func TestDoctorSeparatesTheCodexDiagnosisVintageFromTheFleetCensus(t *testing.T)
 	codexHeading := strings.Index(text, "\nCodex control-plane surfaces\n")
 	if fleetHeading < 0 || codexHeading < 0 || fleetHeading > codexHeading {
 		t.Fatalf("doctor text = %q, want the fleet census as its own block outside the Codex section", text)
+	}
+}
+
+// TestProjmuxProcessVintageMeasuresTheResidualAgeDistribution is the age half
+// of the install residue measurement.
+//
+// A bounded drain of the processes an install left behind can only be designed
+// against how long those processes have already been alive, and the shape of
+// that answer has to be the distribution: a mean over twenty supervisors says
+// nothing about the one that outlives every plausible bound. Ages are collected
+// only for the replaced processes -- a current-image process is not residue and
+// has nothing to drain.
+func TestProjmuxProcessVintageMeasuresTheResidualAgeDistribution(t *testing.T) {
+	const self = "/home/user/go/bin/projmux"
+	now := time.Date(2026, 9, 6, 4, 12, 33, 0, time.UTC)
+	images := []codexProcessImage{
+		{PID: 100, Exe: self, Cmdline: []string{self, "doctor"}, StartedAt: now.Add(-time.Second)},
+		{
+			PID: 200, Exe: self + procDeletedSuffix,
+			Cmdline:   []string{self, "internal", "codex-broker", "serve"},
+			StartedAt: now.Add(-2*time.Hour - 14*time.Minute),
+		},
+		{
+			PID: 400, Exe: self + procDeletedSuffix,
+			Cmdline:   []string{self, "internal", "supervise", "--pane-uid", "pane-a"},
+			StartedAt: now.Add(-3*time.Hour - 2*time.Minute),
+		},
+		{
+			PID: 401, Exe: self + procDeletedSuffix,
+			Cmdline:   []string{self, "internal", "supervise", "--pane-uid", "pane-b"},
+			StartedAt: now.Add(-41 * time.Second),
+		},
+		// A current-image supervisor. It is not residue, so it contributes no
+		// age even though its start time is perfectly readable.
+		{
+			PID: 402, Exe: self,
+			Cmdline:   []string{self, "internal", "supervise", "--pane-uid", "pane-c"},
+			StartedAt: now.Add(-9 * time.Hour),
+		},
+		// A clock that moved backwards between the two reads. Zero is the
+		// honest floor; a negative age would read as a process started after
+		// the census that observed it.
+		{
+			PID: 403, Exe: self + procDeletedSuffix,
+			Cmdline:   []string{self, "internal", "supervise", "--pane-uid", "pane-d"},
+			StartedAt: now.Add(5 * time.Second),
+		},
+	}
+	fleet := projectProjmuxProcessVintageAt(self, 100, images, true, now)
+	want := projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
+		{Role: codexControlPlaneRoleBroker, Processes: 1, Replaced: 1, ReplacedAgeSeconds: []int{8040}},
+		{
+			Role: projmuxProcessRoleSupervisor, Processes: 4, Current: 1, Replaced: 3,
+			ReplacedAgeSeconds: []int{0, 41, 10920},
+		},
+	}}
+	if !reflect.DeepEqual(fleet, want) {
+		t.Fatalf("fleet vintage = %+v, want %+v", fleet, want)
+	}
+}
+
+// TestProjmuxProcessVintageKeepsAnUnknownStartTimeOutOfTheDistribution pins
+// that a process whose start time could not be read still counts as residue and
+// still contributes no age.
+//
+// Both halves matter. Dropping the process would report the install as having
+// left less behind than it did; inventing an age for it would put a number into
+// the distribution a drain bound is read from that no observation supports.
+func TestProjmuxProcessVintageKeepsAnUnknownStartTimeOutOfTheDistribution(t *testing.T) {
+	const self = "/opt/projmux"
+	now := time.Date(2026, 9, 6, 4, 12, 33, 0, time.UTC)
+	fleet := projectProjmuxProcessVintageAt(self, 1, []codexProcessImage{
+		{PID: 2, Exe: self + procDeletedSuffix, Cmdline: []string{self, "internal", "supervise"}},
+		{
+			PID: 3, Exe: self + procDeletedSuffix,
+			Cmdline:   []string{self, "internal", "supervise"},
+			StartedAt: now.Add(-10 * time.Minute),
+		},
+	}, true, now)
+	want := []projmuxProcessRoleVintage{
+		{Role: projmuxProcessRoleSupervisor, Processes: 2, Replaced: 2, ReplacedAgeSeconds: []int{600}},
+	}
+	if !reflect.DeepEqual(fleet.Roles, want) {
+		t.Fatalf("roles = %+v, want %+v", fleet.Roles, want)
+	}
+	if fleet.Replaced() != 2 {
+		t.Fatalf("replaced = %d, want both residual processes counted", fleet.Replaced())
+	}
+}
+
+// TestProjmuxProcessVintageCapsOneRoleAgeDistribution keeps a pathological
+// process table from making one record unbounded, and makes the census say that
+// the distribution it carries is a prefix rather than the whole of it.
+func TestProjmuxProcessVintageCapsOneRoleAgeDistribution(t *testing.T) {
+	const self = "/opt/projmux"
+	now := time.Date(2026, 9, 6, 4, 12, 33, 0, time.UTC)
+	images := []codexProcessImage{{PID: 1, Exe: self, Cmdline: []string{self, "doctor"}}}
+	for index := range projmuxProcessRoleAgeSampleLimit + 7 {
+		images = append(images, codexProcessImage{
+			PID: 1000 + index, Exe: self + procDeletedSuffix,
+			Cmdline:   []string{self, "internal", "supervise"},
+			StartedAt: now.Add(-time.Duration(index+1) * time.Second),
+		})
+	}
+	fleet := projectProjmuxProcessVintageAt(self, 1, images, true, now)
+	if len(fleet.Roles) != 1 {
+		t.Fatalf("roles = %+v, want one supervisor role", fleet.Roles)
+	}
+	role := fleet.Roles[0]
+	if role.Replaced != projmuxProcessRoleAgeSampleLimit+7 {
+		t.Fatalf("replaced = %d, want every residual process still counted", role.Replaced)
+	}
+	if len(role.ReplacedAgeSeconds) != projmuxProcessRoleAgeSampleLimit {
+		t.Fatalf("ages = %d, want the sample bound of %d", len(role.ReplacedAgeSeconds), projmuxProcessRoleAgeSampleLimit)
+	}
+	if !role.ReplacedAgeCapped {
+		t.Fatal("the census hit its sample bound and did not say so, which reports a prefix as a whole distribution")
+	}
+}
+
+// TestDoctorProcessVintageProjectionCarriesNoAges pins that the diagnosis
+// projection is untouched by the residual measurement.
+//
+// `projmux doctor` renders counts and its record is read by other surfaces. The
+// age fields are populated only when a caller supplies a reference instant, so
+// the doctor projection stays exactly the record it was.
+func TestDoctorProcessVintageProjectionCarriesNoAges(t *testing.T) {
+	const self = "/opt/projmux"
+	now := time.Date(2026, 9, 6, 4, 12, 33, 0, time.UTC)
+	images := []codexProcessImage{
+		{PID: 1, Exe: self, Cmdline: []string{self, "doctor"}},
+		{
+			PID: 2, Exe: self + procDeletedSuffix,
+			Cmdline:   []string{self, "internal", "supervise"},
+			StartedAt: now.Add(-time.Hour),
+		},
+	}
+	fleet := projectProjmuxProcessVintage(self, 1, images, true)
+	want := []projmuxProcessRoleVintage{{Role: projmuxProcessRoleSupervisor, Processes: 1, Replaced: 1}}
+	if !reflect.DeepEqual(fleet.Roles, want) {
+		t.Fatalf("doctor roles = %+v, want %+v", fleet.Roles, want)
+	}
+	body, err := json.Marshal(fleet)
+	if err != nil {
+		t.Fatalf("marshal fleet vintage: %v", err)
+	}
+	for _, absent := range []string{"replacedAgeSeconds", "replacedAgeCapped"} {
+		if strings.Contains(string(body), absent) {
+			t.Fatalf("doctor vintage JSON = %s, want %q absent", body, absent)
+		}
 	}
 }

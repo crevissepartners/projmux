@@ -1931,6 +1931,12 @@ var routes = []Route{
 			// user reaches for, and the canonical graph is the surface a
 			// generated reference and a release boundary are built from.
 			"projmux internal codex-broker serve|probe [--state-domain <absolute>] ...",
+			// The install residue census, invoked by `make install` and by the
+			// npm wrapper's first interactive run after an install. Like the
+			// broker runtime it is deliberately absent from the canonical
+			// command projection: it is installer plumbing, not a command
+			// spelling a user reaches for.
+			"projmux internal install-residue",
 		},
 		Canonical: []string{
 			"internal tmux",
