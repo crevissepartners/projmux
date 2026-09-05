@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/crevissepartners/projmux/internal/cli"
+
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
 	"github.com/crevissepartners/projmux/internal/core/runtimediag"
@@ -138,38 +140,39 @@ var runtimeKindTokens = map[string]resourcegraph.ObjectKind{
 	"panes":    resourcegraph.ObjectPane,
 }
 
-// runtimeTableColumns pins the human projection of each kind.
-//
-// The columns differ per kind because the containment question differs: a
-// window is worth nothing without its session, a pane without its window. Every
-// kind carries CLASS and REASON, which is the whole point of the surface --
-// "what is this and why does projmux say so" -- and RESOURCE, which is what
-// makes a managed no-op row legible as managed rather than as an unexplained
-// extra line.
-var runtimeTableColumns = map[resourcegraph.ObjectKind][]string{
-	resourcegraph.ObjectSession: {"SESSION", "NAME", "CLASS", "UID", "RESOURCE", "REASON"},
-	resourcegraph.ObjectWindow:  {"WINDOW", "SESSION", "NAME", "CLASS", "UID", "RESOURCE", "REASON"},
-	resourcegraph.ObjectPane:    {"PANE", "WINDOW", "TITLE", "CLASS", "UID", "RESOURCE", "REASON"},
+// runtimeTableColumns consumes the catalog's compact CLI profile.
+func runtimeTableColumns(kind resourcegraph.ObjectKind, profile columnProfile) []columnSpec {
+	return columnsFor(columnRuntimeCLI, string(kind), profile)
 }
 
-func runtimeTableRow(kind resourcegraph.ObjectKind, row runtimediag.Row) []string {
-	switch kind {
-	case resourcegraph.ObjectSession:
-		return []string{
-			runtimeCell(row.ID), runtimeCell(row.Name), runtimeCell(row.Class),
-			runtimeCell(row.UID), runtimeResourceCell(row), runtimeCell(row.Reason),
+func runtimeTableRow(kind resourcegraph.ObjectKind, row runtimediag.Row, profile columnProfile) []string {
+	return columnValues(runtimeTableColumns(kind, profile), func(field columnField) string {
+		return runtimeColumnValue(field, row, false)
+	})
+}
+func runtimeColumnValue(field columnField, row runtimediag.Row, picker bool) string {
+	switch field {
+	case columnKind:
+		return runtimeCell(row.Kind)
+	case columnID:
+		return runtimeCell(row.ID)
+	case columnContainer:
+		if !picker && row.Kind == string(resourcegraph.ObjectWindow) {
+			return runtimeCell(row.SessionID)
 		}
-	case resourcegraph.ObjectWindow:
-		return []string{
-			runtimeCell(row.ID), runtimeCell(row.SessionID), runtimeCell(row.Name), runtimeCell(row.Class),
-			runtimeCell(row.UID), runtimeResourceCell(row), runtimeCell(row.Reason),
-		}
-	default:
-		return []string{
-			runtimeCell(row.ID), runtimeCell(row.ContainerID), runtimeCell(row.Name), runtimeCell(row.Class),
-			runtimeCell(row.UID), runtimeResourceCell(row), runtimeCell(row.Reason),
-		}
+		return runtimeCell(row.ContainerID)
+	case columnName:
+		return runtimeCell(row.Name)
+	case columnClass:
+		return runtimeCell(row.Class)
+	case columnUID:
+		return runtimeCell(row.UID)
+	case columnResource:
+		return runtimeResourceCell(row)
+	case columnReason:
+		return runtimeCell(row.Reason)
 	}
+	return ""
 }
 
 // runtimeCell renders one column value, using the same `-` placeholder the
@@ -209,8 +212,8 @@ func runtimeResourceCell(row runtimediag.Row) string {
 // runtime read with no rows is a claim about a machine, and "no sessions" is
 // only trustworthy next to which server was asked and whether the answer could
 // be taken at all.
-func writeRuntimeReport(stdout io.Writer, report runtimediag.Report, jsonOutput bool) error {
-	if jsonOutput {
+func writeRuntimeReport(stdout io.Writer, report runtimediag.Report, mode cli.OutputMode) error {
+	if mode == cli.OutputModeJSON {
 		return writeJSON(stdout, report)
 	}
 	if _, err := fmt.Fprintln(stdout, runtimeHeaderLine(report)); err != nil {
@@ -225,14 +228,18 @@ func writeRuntimeReport(stdout io.Writer, report runtimediag.Report, jsonOutput 
 		return nil
 	}
 	kind := runtimeObjectKindOfReport(report)
-	headers, ok := runtimeTableColumns[kind]
-	if !ok {
+	profile := columnCompact
+	if mode == cli.OutputModeWide {
+		profile = columnWide
+	}
+	headers := columnHeaders(runtimeTableColumns(kind, profile))
+	if len(headers) == 0 {
 		return fmt.Errorf("runtime diagnostics: no column contract is declared for report kind %q", report.Kind)
 	}
 	rows := make([][]string, 0, len(report.Items)+1)
 	rows = append(rows, headers)
 	for _, item := range report.Items {
-		rows = append(rows, runtimeTableRow(kind, item))
+		rows = append(rows, runtimeTableRow(kind, item, profile))
 	}
 	widths := make([]int, len(headers))
 	for _, row := range rows {

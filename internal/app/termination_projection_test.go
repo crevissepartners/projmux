@@ -163,7 +163,7 @@ func TestGetRendersTheTerminationColumn(t *testing.T) {
 		coremetadata.TerminationAbnormal, &code, "")
 	before := store.snapshot()
 
-	agents, stderr, err := runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "alpha")
+	agents, stderr, err := runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "alpha", "-o", "wide")
 	if err != nil {
 		t.Fatalf("get agents: %v (stderr=%s)", err, stderr)
 	}
@@ -181,7 +181,7 @@ func TestGetRendersTheTerminationColumn(t *testing.T) {
 
 	// A shell Pane that is still live leaves the cell empty without disturbing the
 	// columns around it.
-	panes, _, err := runRoute(t, newTestListGetCommand(t, store), "panes", "--project", "alpha")
+	panes, _, err := runRoute(t, newTestListGetCommand(t, store), "panes", "--project", "alpha", "-o", "wide")
 	if err != nil {
 		t.Fatalf("get panes: %v", err)
 	}

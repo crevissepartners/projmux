@@ -187,3 +187,24 @@ func TestGetRouteOwnsTheReadKindFamily(t *testing.T) {
 		t.Fatal("retired current root remains in the command manifest")
 	}
 }
+
+func TestWideOutputIsScopedToColumnarListReads(t *testing.T) {
+	t.Parallel()
+	owners := map[string]bool{
+		"get projects": true, "get windows": true, "get panes": true, "get agents": true,
+		"get runtime sessions": true, "get runtime windows": true, "get runtime panes": true,
+	}
+	for _, route := range CanonicalRoutes() {
+		mode, field, err := ResolveOutputToken(route.Spelling, "wide")
+		if owners[route.Spelling] {
+			if err != nil || mode != OutputModeWide || field != "" {
+				t.Errorf("%s rejects wide: mode=%q field=%q err=%v", route.Spelling, mode, field, err)
+			}
+		} else if err == nil {
+			t.Errorf("wide escaped onto %s", route.Spelling)
+		}
+	}
+	if IsSharedOutputMode(OutputModeWide) {
+		t.Fatal("wide leaked into the shared mutation/singular catalog")
+	}
+}

@@ -30,7 +30,7 @@ type registryNavigationView struct {
 // appearing or disappearing underneath it.
 func registryNavigationRowValue(row registryview.Row) string { return row.ID }
 
-var registryNavigationColumns = []string{"KIND", "NAME", "STATUS", "PROGRESS", "TERMINATION", "ACTIONS", "RUNTIME", "UID"}
+var registryNavigationColumns = columnHeaders(columnsFor(columnRegistryPicker, "", columnWide))
 
 // registryNavigationColumnBounds is the fixed-viewport display-width budget of
 // this view's free-text columns. See internal/app/picker_table_layout.go for
@@ -46,16 +46,28 @@ func registryNavigationColumnBounds() []pickerColumnBound {
 }
 
 func registryNavigationRowAt(row registryview.Row, locale i18n.Locale, now time.Time) []string {
-	return []string{
-		runtimeCell(registryNavigationIndent(row) + string(row.Kind)),
-		runtimeCell(registryNavigationName(row)),
-		runtimeCell(string(row.Status)),
-		runtimeCell(registryNavigationProgress(row, locale, now)),
-		runtimeCell(row.Termination.Summary()),
-		runtimeCell(registryNavigationActionList(row)),
-		runtimeCell(registryNavigationRuntimeCell(row)),
-		runtimeCell(row.UID),
-	}
+	return columnValues(columnsFor(columnRegistryPicker, "", columnWide), func(field columnField) string {
+		var value string
+		switch field {
+		case columnKind:
+			value = registryNavigationIndent(row) + string(row.Kind)
+		case columnName:
+			value = registryNavigationName(row)
+		case columnStatus:
+			value = string(row.Status)
+		case columnProgress:
+			value = registryNavigationProgress(row, locale, now)
+		case columnTermination:
+			value = row.Termination.Summary()
+		case columnActions:
+			value = registryNavigationActionList(row)
+		case columnRuntime:
+			value = registryNavigationRuntimeCell(row)
+		case columnUID:
+			value = row.UID
+		}
+		return runtimeCell(value)
+	})
 }
 
 func registryNavigationProgress(row registryview.Row, locale i18n.Locale, now time.Time) string {

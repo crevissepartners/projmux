@@ -82,10 +82,8 @@ func (c *getCommand) runRuntime(args []string, stdout, stderr io.Writer) error {
 	switch mode {
 	case cli.OutputModeNone:
 		return nil
-	case cli.OutputModeJSON:
-		return writeRuntimeReport(stdout, report, true)
-	case cli.OutputModeDefault:
-		return writeRuntimeReport(stdout, report, false)
+	case cli.OutputModeJSON, cli.OutputModeDefault, cli.OutputModeWide:
+		return writeRuntimeReport(stdout, report, mode)
 	default:
 		return fmt.Errorf("%s: unsupported output mode %q", spelling, mode)
 	}

@@ -61,19 +61,23 @@ type runtimeLookup func() coremetadata.RuntimeObservation
 type resourceReadSnapshot struct {
 	runtime  coremetadata.RuntimeObservation
 	contexts registryview.Projector
+	// navigation reuses the same resolved graph, including control subtree actions.
+	navigation map[string]registryview.Row
 }
 
 type resourceReadLookup func(coremetadata.Registry) resourceReadSnapshot
 
 func runtimeResourceReadLookup(reader *runtimeDiagnosticsReader) resourceReadLookup {
 	return func(registry coremetadata.Registry) resourceReadSnapshot {
-		fallback := resourceReadSnapshot{contexts: registryview.NewContextProjector(registry)}
+		fallback := func() resourceReadSnapshot {
+			return resourceReadSnapshot{contexts: registryview.NewContextProjector(registry), navigation: resourceNavigationRows(resourcegraph.Resolve(registry, resourcegraph.Inventory{}))}
+		}
 		if reader == nil || reader.observe == nil {
-			return fallback
+			return fallback()
 		}
 		transport, err := reader.transport(runtimeTransportRequest{})
 		if err != nil {
-			return fallback
+			return fallback()
 		}
 		inventory := reader.observe(context.Background(), transport)
 		graph := resourcegraph.Resolve(registry, inventory)
@@ -90,10 +94,23 @@ func runtimeResourceReadLookup(reader *runtimeDiagnosticsReader) resourceReadLoo
 			}
 		}
 		return resourceReadSnapshot{
-			runtime:  coremetadata.RuntimeObservation{Windows: windows, Panes: panes},
-			contexts: registryview.NewObservedContextProjector(graph),
+			runtime:    coremetadata.RuntimeObservation{Windows: windows, Panes: panes},
+			contexts:   registryview.NewObservedContextProjector(graph),
+			navigation: resourceNavigationRows(graph),
 		}
 	}
+}
+
+// resourceNavigationRows indexes the existing action projector without changing
+// its row set/order or re-deriving policy from selector status.
+func resourceNavigationRows(graph resourcegraph.Graph) map[string]registryview.Row {
+	rows := map[string]registryview.Row{}
+	for _, row := range registryview.Build(registryview.Input{Graph: graph}).Rows {
+		if row.UID != "" {
+			rows[row.UID] = row
+		}
+	}
+	return rows
 }
 
 // defaultRuntimeLookup is the production seam: the same tmux identity mirror

@@ -1,0 +1,308 @@
+== registry projects default ==
+KIND     NAME   STATUS        ACTIONS
+project  alpha  live          open,delete
+project  beta   offline       start,delete
+project  gone   missing-root  rebind,delete
+== registry projects wide ==
+KIND     NAME   STATUS        ACTIONS        CONTEXT  SOURCE                 OBSERVED  AGE
+project  alpha  live          open,delete    alpha    project-root-basename  false     2d
+project  beta   offline       start,delete   beta     project-root-basename  false     2d
+project  gone   missing-root  rebind,delete  gone     project-root-basename  false     2d
+== registry projects json ==
+sha256 b965ffbefc13e2c1cb2b2c0ce6bf19d31e281dc6b07908a9af9c635d72978640
+== registry projects metadata ==
+sha256 d70e581473ce7a7805f08d991a51978255806fac4b483340c33c1aa1cbbc0bb8
+== registry projects uid ==
+sha256 87a434715b1eda077e717177723fb01f0a6e84324ac43c4a1ac1857ccad2ed2c
+== registry projects name ==
+sha256 1c04c3273b7d8d2266eba752a43953e2057586b2a74d9c94bc5cc0c894a88a27
+== registry projects ref ==
+sha256 9ad689651abc9d18d782f74e4eb32575adc74862f86faff567a47ec22053bd35
+== registry projects none ==
+sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== registry windows default ==
+KIND    NAME         STATUS        ACTIONS
+window  main         live          open,delete
+window  review       offline       start,delete
+window  main         offline       start,delete
+window  main         missing-root  rebind,delete
+window  home-window  live          -
+== registry windows wide ==
+KIND    NAME         STATUS        ACTIONS        CONTEXT                                                                                                                               SOURCE              OBSERVED  PROJECT  AGE
+window  main         live          open,delete    live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창  live-window-name    true      alpha    2d
+window  review       offline       start,delete   zsh                                                                                                                                   command-executable  false     alpha    2d
+window  main         offline       start,delete   zsh                                                                                                                                   command-executable  false     beta     2d
+window  main         missing-root  rebind,delete  zsh                                                                                                                                   command-executable  false     gone     2d
+window  home-window  live          -              tmux                                                                                                                                  live-window-name    true               2d
+== registry windows json ==
+sha256 e0c60634fdfbd51469f8a9c35bf5aa38e07dd73d93dc031a7088543d5bfd431a
+== registry windows metadata ==
+sha256 02b2f362dbba98ffb358087f85df3d87a443bb7c62abb5e2a5b8423a98af3e4f
+== registry windows uid ==
+sha256 5618025d90d00a63d73856c77dfbe288c4f7977ad205cbe2afe083bcf53c7a21
+== registry windows name ==
+sha256 ed4d593456bc022a22b046f482934565a02265c64df0aff2de775939e22174f6
+== registry windows ref ==
+sha256 6a20f342ace19b9db085a5648529d424832b983223c2c4bf3335c5eb9ad43da8
+== registry windows none ==
+sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== registry panes default ==
+KIND  NAME        STATUS        ACTIONS
+pane  zsh         live          open,delete
+pane  log         offline       start,delete
+pane  codex-pane  live          open,delete
+pane  review-zsh  offline       start,delete
+pane  zsh         offline       start,delete
+pane  zsh         missing-root  rebind,delete
+pane  home-shell  live          -
+== registry panes wide ==
+KIND  NAME        STATUS        ACTIONS        CONTEXT                                                                                                                                                                  SOURCE              OBSERVED  PROJECT  WINDOW       AGENT  TERMINATION  AGE
+pane  zsh         live          open,delete    live shell full title full title full title full title full title full title full title full title full title full title full title full title                           live-pane-title     true      alpha    main                             2d
+pane  log         offline       start,delete   zsh                                                                                                                                                                      command-executable  false     alpha    main                             2d
+pane  codex-pane  live          open,delete    릴리스 검토 full context full context full context full context full context full context full context full context full context full context full context full context  agent-topic         false     alpha    main         codex               2d
+pane  review-zsh  offline       start,delete   zsh                                                                                                                                                                      command-executable  false     alpha    review                           2d
+pane  zsh         offline       start,delete   zsh                                                                                                                                                                      command-executable  false     beta     main                             2d
+pane  zsh         missing-root  rebind,delete  zsh                                                                                                                                                                      command-executable  false     gone     main                             2d
+pane  home-shell  live          -              zsh                                                                                                                                                                      command-executable  false              home-window                      2d
+== registry panes json ==
+sha256 9c59e5f0257e6619c54667735db4403499c5775e3030d5bbb08213702c4a39d3
+== registry panes metadata ==
+sha256 28bb45be70b009a2c540f1579a1362e6a6b0b74a85787dfea39d08b204910e5b
+== registry panes uid ==
+sha256 d8e8f9c2e05563c4687874232e8b5dd69b39c1eb7171b4f34d52294560fd54ac
+== registry panes name ==
+sha256 5a610bf1a77bc58fd9702b9450d5f4e0cd29c089a717366449af8f50a8eb2460
+== registry panes ref ==
+sha256 37c47ff2e83b4352dd8b01a1954466d115e0d8c7b2e37c9160c9b36b3cbeb066
+== registry panes none ==
+sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== registry agents default ==
+KIND   NAME   STATUS   ACTIONS
+agent  codex  live     open,delete
+agent  codex  offline  resume,delete
+== registry agents wide ==
+KIND   NAME   STATUS   ACTIONS        CONTEXT                                                                                                                                                                  SOURCE       OBSERVED  INTERACTION  PROJECT  WINDOW  SESSION                                                                                                                                            TERMINATION  AGE
+agent  codex  live     open,delete    릴리스 검토 full context full context full context full context full context full context full context full context full context full context full context full context  agent-topic  false     unknown      alpha    main    codex:thread-long-value-long-value-long-value-long-value-long-value-long-value-long-value-long-value-long-value-long-value-long-value-long-value-               2d
+agent  codex  offline  resume,delete  agent task                                                                                                                                                               agent-topic  false     unknown      beta     main                                                                                                                                                                    2d
+== registry agents json ==
+sha256 ea9aa7b2f13e6d815188a56dbab8ad4fb4f1c6c9313f587d0d8223932295f11d
+== registry agents metadata ==
+sha256 9cea4333d908f5c123911537f4070b7712836136ec1787af38c975368f78a5a4
+== registry agents uid ==
+sha256 2e413abaf761e5c6021bea78b7eaac7e0d0be8099243e831040929b604321b28
+== registry agents name ==
+sha256 84ae69fe71a91c784442bce2125960d0bac767105bbe68075d1a3e3c00033dc8
+== registry agents ref ==
+sha256 aa47181660d47f1c7349dd8a7db6c8a507ff49b81bfcf23796af86b7549777b5
+== registry agents none ==
+sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== runtime sessions default ==
+host app-owned  transport tmux -L primary  source explicit-socket-name
+SESSION  NAME   CLASS
+$1       alpha  managed
+$5       Home   managed
+== runtime sessions wide ==
+host app-owned  transport tmux -L primary  source explicit-socket-name
+SESSION  NAME   CLASS    UID        RESOURCE             REASON
+$1       alpha  managed  prj-alpha  Project/alpha        bound to Project/alpha by mirrored uid prj-alpha
+$5       Home   managed  -          ControlSession/home  bound to ControlSession/home by mirrored uid
+== runtime sessions json ==
+sha256 1970faee43bd136a4ad96f5e81ba5f3b2cc348d699e022bea4ba658db7d58cac
+== runtime sessions none ==
+sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== runtime windows default ==
+host app-owned  transport tmux -L primary  source explicit-socket-name
+WINDOW  SESSION  NAME                                                                                                                                  CLASS
+@2      $1       live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창  managed
+@6      $5       tmux                                                                                                                                  managed
+== runtime windows wide ==
+host app-owned  transport tmux -L primary  source explicit-socket-name
+WINDOW  SESSION  NAME                                                                                                                                  CLASS    UID             RESOURCE            REASON
+@2      $1       live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창  managed  win-alpha-main  Window/main         bound to Window/main by mirrored uid win-alpha-main
+@6      $5       tmux                                                                                                                                  managed  win-home        Window/home-window  bound to Window/home-window by mirrored uid win-home
+== runtime windows json ==
+sha256 d93846d0462ed030b39b75661c8ebe644af9c3a84c5cb4feb1777e524d6c3d31
+== runtime windows none ==
+sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== runtime panes default ==
+host app-owned  transport tmux -L primary  source explicit-socket-name
+PANE  WINDOW  TITLE                                                                                                                                           CLASS
+%3    @2      live shell full title full title full title full title full title full title full title full title full title full title full title full title  managed
+%4    @2      -                                                                                                                                               managed
+%7    @6      -                                                                                                                                               managed
+== runtime panes wide ==
+host app-owned  transport tmux -L primary  source explicit-socket-name
+PANE  WINDOW  TITLE                                                                                                                                           CLASS    UID              RESOURCE         REASON
+%3    @2      live shell full title full title full title full title full title full title full title full title full title full title full title full title  managed  pan-alpha-zsh    Pane/zsh         bound to Pane/zsh by mirrored uid pan-alpha-zsh
+%4    @2      -                                                                                                                                               managed  pan-alpha-codex  Pane/codex-pane  bound to Pane/codex-pane by mirrored uid pan-alpha-codex
+%7    @6      -                                                                                                                                               managed  pan-home         Pane/home-shell  bound to Pane/home-shell by mirrored uid pan-home
+== runtime panes json ==
+sha256 e1d714729ffb9bb06e2012d37b5bf133ae9cba44aa526f1cb72605d89ec46af7
+== runtime panes none ==
+sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
+== registry picker wide ==
+[
+  {
+    "Label": "↩  \u001b[38;2;164;176;182mBack                    \u001b[0m",
+    "Value": "__settings_back__",
+    "SearchKey": ""
+  },
+  {
+    "Label": "host app-owned  transport tmux -S /tmp/column-fixture/primary  source inherited-tmux-env",
+    "Value": "__settings_noop__",
+    "SearchKey": ""
+  },
+  {
+    "Label": "KIND             NAME                      STATUS        PROGRESS  TERMINATION  ACTIONS        RUNTIME  UID",
+    "Value": "__settings_noop__",
+    "SearchKey": ""
+  },
+  {
+    "Label": "project          alpha                     live          -         -            open,delete    alpha    prj-alpha",
+    "Value": "uid:prj-alpha",
+    "SearchKey": "project alpha alpha project-root-basename live prj-alpha /srv/alpha $1 alpha"
+  },
+  {
+    "Label": "└ window         live editor 창창창창창…   live          -         -            open,delete    alpha:0  win-alpha-main",
+    "Value": "uid:win-alpha-main",
+    "SearchKey": "window main live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창 live-window-name live win-alpha-main /srv/alpha @2 alpha:0"
+  },
+  {
+    "Label": "└ pane           live shell full title f…  live          -         -            open,delete    %3       pan-alpha-zsh",
+    "Value": "uid:pan-alpha-zsh",
+    "SearchKey": "pane zsh live shell full title full title full title full title full title full title full title full title full title full title full title full title live-pane-title live pan-alpha-zsh shell /srv/alpha %3 %3"
+  },
+  {
+    "Label": "└ pane           zsh (shell)               offline       -         -            start,delete   -        pan-alpha-log",
+    "Value": "uid:pan-alpha-log",
+    "SearchKey": "pane log zsh command-executable offline pan-alpha-log shell /srv/alpha"
+  },
+  {
+    "Label": "└ agent          릴리스 검토 full contex…  live          -         -            open,delete    %4       agt-alpha-codex",
+    "Value": "uid:agt-alpha-codex",
+    "SearchKey": "agent codex 릴리스 검토 full context full context full context full context full context full context full context full context full context full context full context full context agent-topic live agt-alpha-codex codex Running /srv/alpha %4 %4"
+  },
+  {
+    "Label": "└ pane           릴리스 검토 full contex…  live          -         -            open,delete    %4       pan-alpha-codex",
+    "Value": "uid:pan-alpha-codex",
+    "SearchKey": "pane codex-pane 릴리스 검토 full context full context full context full context full context full context full context full context full context full context full context full context agent-topic live pan-alpha-codex agent /srv/alpha %4 %4"
+  },
+  {
+    "Label": "└ window         zsh                       offline       -         -            start,delete   -        win-alpha-review",
+    "Value": "uid:win-alpha-review",
+    "SearchKey": "window review zsh command-executable offline win-alpha-review /srv/alpha"
+  },
+  {
+    "Label": "└ pane           zsh (shell)               offline       -         -            start,delete   -        pan-alpha-review",
+    "Value": "uid:pan-alpha-review",
+    "SearchKey": "pane review-zsh zsh command-executable offline pan-alpha-review shell /srv/alpha"
+  },
+  {
+    "Label": "project          beta                      offline       -         -            start,delete   -        prj-beta",
+    "Value": "uid:prj-beta",
+    "SearchKey": "project beta beta project-root-basename offline prj-beta /srv/beta"
+  },
+  {
+    "Label": "└ window         zsh                       offline       -         -            start,delete   -        win-beta-main",
+    "Value": "uid:win-beta-main",
+    "SearchKey": "window main zsh command-executable offline win-beta-main /srv/beta"
+  },
+  {
+    "Label": "└ pane           zsh (shell)               offline       -         -            start,delete   -        pan-beta-zsh",
+    "Value": "uid:pan-beta-zsh",
+    "SearchKey": "pane zsh zsh command-executable offline pan-beta-zsh shell /srv/beta"
+  },
+  {
+    "Label": "└ agent          agent task (codex Offli…  offline       -         -            resume,delete  -        agt-beta-codex",
+    "Value": "uid:agt-beta-codex",
+    "SearchKey": "agent codex agent task agent-topic offline agt-beta-codex codex Offline /srv/beta"
+  },
+  {
+    "Label": "project          gone                      missing-root  -         -            rebind,delete  -        prj-gone",
+    "Value": "uid:prj-gone",
+    "SearchKey": "project gone gone project-root-basename missing-root prj-gone /srv/gone"
+  },
+  {
+    "Label": "└ window         zsh                       missing-root  -         -            rebind,delete  -        win-gone-main",
+    "Value": "uid:win-gone-main",
+    "SearchKey": "window main zsh command-executable missing-root win-gone-main /srv/gone"
+  },
+  {
+    "Label": "└ pane           zsh (shell)               missing-root  -         -            rebind,delete  -        pan-gone-zsh",
+    "Value": "uid:pan-gone-zsh",
+    "SearchKey": "pane zsh zsh command-executable missing-root pan-gone-zsh shell /srv/gone"
+  },
+  {
+    "Label": "control-session  Home                      live          -         -            -              Home     ctl-home",
+    "Value": "uid:ctl-home",
+    "SearchKey": "control-session home Home control-session live ctl-home $5 Home"
+  },
+  {
+    "Label": "└ window         tmux                      live          -         -            -              Home:0   win-home",
+    "Value": "uid:win-home",
+    "SearchKey": "window home-window tmux live-window-name live win-home @6 Home:0"
+  },
+  {
+    "Label": "└ pane           zsh (shell)               live          -         -            -              %7       pan-home",
+    "Value": "uid:pan-home",
+    "SearchKey": "pane home-shell zsh command-executable live pan-home shell %7 %7"
+  },
+  {
+    "Label": "runtime-link     Runtime                   live          -         -            runtime        -        -",
+    "Value": "runtime:diagnostics",
+    "SearchKey": "runtime-link runtime Runtime runtime-link live"
+  }
+]
+== runtime picker wide ==
+[
+  {
+    "Label": "host app-owned  transport tmux -S /tmp/column-fixture/primary  source inherited-tmux-env",
+    "Value": "__settings_noop__",
+    "SearchKey": ""
+  },
+  {
+    "Label": "managed 7",
+    "Value": "__settings_noop__",
+    "SearchKey": ""
+  },
+  {
+    "Label": "KIND     ID  IN  NAME                      CLASS    RESOURCE             REASON",
+    "Value": "__settings_noop__",
+    "SearchKey": ""
+  },
+  {
+    "Label": "session  $1  -   alpha                     managed  Project/alpha        bound to Project/alpha by mirrored uid prj-alpha",
+    "Value": "runtime:session:$1",
+    "SearchKey": "session $1 alpha alpha managed prj-alpha $1 Project alpha prj-alpha"
+  },
+  {
+    "Label": "session  $5  -   Home                      managed  ControlSession/home  bound to ControlSession/home by mirrored uid",
+    "Value": "runtime:session:$5",
+    "SearchKey": "session $5 Home Home managed $5 ControlSession home ctl-home"
+  },
+  {
+    "Label": "window   @2  $1  live editor 창창창창창…   managed  Window/main          bound to Window/main by mirrored uid win-alpha-main",
+    "Value": "runtime:window:@2",
+    "SearchKey": "window @2 alpha:@2 live editor 창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창창 managed win-alpha-main $1 $1 Window main win-alpha-main"
+  },
+  {
+    "Label": "window   @6  $5  tmux                      managed  Window/home-window   bound to Window/home-window by mirrored uid win-home",
+    "Value": "runtime:window:@6",
+    "SearchKey": "window @6 Home:@6 tmux managed win-home $5 $5 Window home-window win-home"
+  },
+  {
+    "Label": "pane     %3  @2  live shell full title f…  managed  Pane/zsh             bound to Pane/zsh by mirrored uid pan-alpha-zsh",
+    "Value": "runtime:pane:%3",
+    "SearchKey": "pane %3 alpha:@2.%3 live shell full title full title full title full title full title full title full title full title full title full title full title full title managed pan-alpha-zsh $1 @2 Pane zsh pan-alpha-zsh"
+  },
+  {
+    "Label": "pane     %4  @2  -                         managed  Pane/codex-pane      bound to Pane/codex-pane by mirrored uid pan-alpha-codex",
+    "Value": "runtime:pane:%4",
+    "SearchKey": "pane %4 alpha:@2.%4 managed pan-alpha-codex $1 @2 Pane codex-pane pan-alpha-codex"
+  },
+  {
+    "Label": "pane     %7  @6  -                         managed  Pane/home-shell      bound to Pane/home-shell by mirrored uid pan-home",
+    "Value": "runtime:pane:%7",
+    "SearchKey": "pane %7 Home:@6.%7 managed pan-home $5 @6 Pane home-shell pan-home"
+  }
+]

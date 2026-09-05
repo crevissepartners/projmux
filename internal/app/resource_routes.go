@@ -682,29 +682,10 @@ func resourceSummary(match selector.Match, kind coremetadata.Kind, registry core
 	return summary + " interaction=" + string(interaction) + " session=" + agent.Status.SessionRef.Summary()
 }
 
-// resourceTableColumns is the canonical column contract of the columnar plural
-// read, keyed by kind and ordered exactly as the columns are printed.
-//
-// The header set is fixed per kind rather than derived from the rows, so a
-// column never disappears because every row happened to leave it empty.
-// CONTEXT is invocation-scoped presentation from registryview.Projector;
-// SOURCE and OBSERVED state why it won and whether it came from exact live UID
-// binding. NAME remains the durable stable address and is never copied into an
-// empty context cell.
-//
-// AGE is last on every kind, which is where `kubectl get` puts it and the only
-// position that costs the columns before it nothing: it is the one column whose
-// width changes as time passes, so growing it can never walk an owner-chain
-// column sideways. Every kind carries it because every kind stores the field it
-// is derived from -- `metadata.createdAt` lives on ObjectMeta, not on any one
-// kind's spec -- and a column present on three kinds out of four would make
-// "this kind has no age" look like a property of the resource rather than of
-// the table.
-var resourceTableColumns = map[coremetadata.Kind][]string{
-	coremetadata.KindProject: {"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "AGE"},
-	coremetadata.KindWindow:  {"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "PROJECT", "AGE"},
-	coremetadata.KindPane:    {"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "TERMINATION", "AGE"},
-	coremetadata.KindAgent:   {"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "TERMINATION", "AGE"},
+// resourceTableColumns consumes the compact CLI profile. Wide retains every
+// previous diagnostic value without a viewport bound.
+func resourceTableColumns(kind coremetadata.Kind, profile columnProfile) []columnSpec {
+	return columnsFor(columnResourceCLI, string(kind), profile)
 }
 
 // resourceTableGap is the minimum run of spaces between two columns. It is the
@@ -712,55 +693,52 @@ var resourceTableColumns = map[coremetadata.Kind][]string{
 // box characters, so every byte between two cells is a space.
 const resourceTableGap = 2
 
-// resourceTableRow projects one match onto its kind's columns.
-//
-// It carries exactly what the one-line summary carried, split apart: the status
-// of `status=`, and the owner chain of `owner=project/X window/Y` as one column
-// per leg. A Pane's chain has a third leg -- a managed Pane is owned by its
-// Agent, so the summary rendered `owner=project/X window/Y agent/Z` -- and the
-// AGENT column is that leg. A shell Pane owns no Agent and leaves the cell
-// empty, exactly as an Agent with no conversation leaves SESSION empty. The
-// registry is consulted for the one field no selector.Match holds, the Agent's
-// provider session ref, which is the same lookup and the same
-// `<provider>:<conversation-id>` rendering the summary appended as `session=`.
-//
-// The AGE cell is the one column that is not carried by the pre-columnar
-// one-liner. It is still not new data: it is `metadata.createdAt`, which the
-// registry has always stored and `-o json` has always emitted, measured against
-// the clock this invocation was handed.
-func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry coremetadata.Registry, now time.Time) []string {
-	row := []string{
-		match.Context.Value,
-		string(match.Context.Source),
-		strconv.FormatBool(match.Context.Observed),
-		match.Name,
-		string(match.Status),
-	}
-	age := resourceAgeCell(registry, kind, match.UID, now)
-	switch kind {
-	case coremetadata.KindWindow:
-		return append(row, match.Owner.Project, age)
-	case coremetadata.KindPane:
-		pane, _ := registry.Pane(match.UID)
-		var termination *coremetadata.TerminationEvidence
-		if pane != nil {
-			termination = pane.Status.LastTermination
+// resourceTableRow projects fields in catalog order using the invocation snapshot.
+func resourceTableRow(match selector.Match, kind coremetadata.Kind, registry coremetadata.Registry, now time.Time, profile columnProfile, navigation map[string]registryview.Row) []string {
+	return columnValues(resourceTableColumns(kind, profile), func(field columnField) string {
+		switch field {
+		case columnKind:
+			return strings.ToLower(string(kind))
+		case columnName:
+			return match.Name
+		case columnStatus:
+			return string(match.Status)
+		case columnActions:
+			return runtimeCell(registryNavigationActionList(navigation[match.UID]))
+		case columnContext:
+			return match.Context.Value
+		case columnSource:
+			return string(match.Context.Source)
+		case columnObserved:
+			return strconv.FormatBool(match.Context.Observed)
+		case columnProject:
+			return match.Owner.Project
+		case columnWindow:
+			return match.Owner.Window
+		case columnAgent:
+			return match.Owner.Agent
+		case columnAge:
+			return resourceAgeCell(registry, kind, match.UID, now)
+		case columnSession:
+			return resourceSessionCell(match, registry)
+		case columnInteraction:
+			if agent, ok := registry.Agent(match.UID); ok {
+				return string(agent.EffectiveInteraction(now).Kind)
+			}
+			return string(coremetadata.InteractionUnknown)
+		case columnTermination:
+			var termination *coremetadata.TerminationEvidence
+			if kind == coremetadata.KindAgent {
+				if agent, ok := registry.Agent(match.UID); ok {
+					termination = agent.Status.LastTermination
+				}
+			} else if pane, ok := registry.Pane(match.UID); ok {
+				termination = pane.Status.LastTermination
+			}
+			return resourceTerminationCell(termination, now)
 		}
-		return append(row, match.Owner.Project, match.Owner.Window, match.Owner.Agent,
-			resourceTerminationCell(termination, now), age)
-	case coremetadata.KindAgent:
-		agent, _ := registry.Agent(match.UID)
-		interaction := coremetadata.InteractionUnknown
-		var termination *coremetadata.TerminationEvidence
-		if agent != nil {
-			interaction = agent.EffectiveInteraction(now).Kind
-			termination = agent.Status.LastTermination
-		}
-		return append(row, string(interaction), match.Owner.Project, match.Owner.Window,
-			resourceSessionCell(match, registry), resourceTerminationCell(termination, now), age)
-	default:
-		return append(row, age)
-	}
+		return ""
+	})
 }
 
 // resourceAgeCell renders the AGE column of one row: how long ago the resource
@@ -866,9 +844,9 @@ func resourceCellWidth(cell string) int {
 //
 // now is the invocation's clock, and it is the only thing the AGE column is
 // measured against; see resourceAgeCell for what a zero value renders.
-func writeResourceTable(stdout io.Writer, spelling string, kind coremetadata.Kind, matches []selector.Match, registry coremetadata.Registry, now time.Time) error {
-	headers, ok := resourceTableColumns[kind]
-	if !ok {
+func writeResourceTable(stdout io.Writer, spelling string, kind coremetadata.Kind, matches []selector.Match, registry coremetadata.Registry, now time.Time, profile columnProfile, navigation map[string]registryview.Row) error {
+	headers := columnHeaders(resourceTableColumns(kind, profile))
+	if len(headers) == 0 {
 		return fmt.Errorf("%s: no column contract is declared for kind %q", spelling, kind)
 	}
 	if len(matches) == 0 {
@@ -878,7 +856,7 @@ func writeResourceTable(stdout io.Writer, spelling string, kind coremetadata.Kin
 	rows := make([][]string, 0, len(matches)+1)
 	rows = append(rows, headers)
 	for _, match := range matches {
-		rows = append(rows, resourceTableRow(match, kind, registry, now))
+		rows = append(rows, resourceTableRow(match, kind, registry, now, profile, navigation))
 	}
 
 	widths := make([]int, len(headers))
@@ -942,7 +920,7 @@ func writeResourceProjection(
 	list bool,
 	now time.Time,
 ) error {
-	return writeResourceProjectionMode(stdout, spelling, mode, kind, matches, registry, list, now, false)
+	return writeResourceProjectionMode(stdout, spelling, mode, kind, matches, registry, list, now, false, nil)
 }
 
 // writeContextResourceListProjection is the plural get route's additive JSON
@@ -958,8 +936,9 @@ func writeContextResourceListProjection(
 	matches []selector.Match,
 	registry coremetadata.Registry,
 	now time.Time,
+	navigation map[string]registryview.Row,
 ) error {
-	return writeResourceProjectionMode(stdout, spelling, mode, kind, matches, registry, true, now, true)
+	return writeResourceProjectionMode(stdout, spelling, mode, kind, matches, registry, true, now, true, navigation)
 }
 
 func writeResourceProjectionMode(
@@ -972,13 +951,21 @@ func writeResourceProjectionMode(
 	list bool,
 	now time.Time,
 	contextJSON bool,
+	navigation map[string]registryview.Row,
 ) error {
+	if mode == cli.OutputModeWide && !list {
+		return fmt.Errorf("%s: wide requires a plural read", spelling)
+	}
 	switch mode {
 	case cli.OutputModeNone:
 		return nil
-	case cli.OutputModeUID, cli.OutputModeName, cli.OutputModeRef, cli.OutputModeDefault:
-		if mode == cli.OutputModeDefault && list {
-			return writeResourceTable(stdout, spelling, kind, matches, registry, now)
+	case cli.OutputModeUID, cli.OutputModeName, cli.OutputModeRef, cli.OutputModeDefault, cli.OutputModeWide:
+		if (mode == cli.OutputModeDefault || mode == cli.OutputModeWide) && list {
+			profile := columnCompact
+			if mode == cli.OutputModeWide {
+				profile = columnWide
+			}
+			return writeResourceTable(stdout, spelling, kind, matches, registry, now, profile, navigation)
 		}
 		for _, match := range matches {
 			var line string

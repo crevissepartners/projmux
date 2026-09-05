@@ -34,6 +34,10 @@ const (
 	// OutputModeNone prints nothing; explicit quiet automation.
 	OutputModeNone OutputMode = "none"
 
+	// OutputModeWide prints the full column profile on plural resource and
+	// runtime reads. It is route-local, not part of the shared enum.
+	OutputModeWide OutputMode = "wide"
+
 	// OutputModeReceipt prints one versioned OperationReceipt JSON document.
 	//
 	// It is deliberately outside the shared catalog. The shared modes are

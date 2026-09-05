@@ -684,9 +684,13 @@ var readProjectionCatalog = []OutputMode{
 	OutputModeNone,
 }
 
+// listProjectionCatalog adds wide only to plural Registry read surfaces.
+var listProjectionCatalog = append(append([]OutputMode{}, readProjectionCatalog...), OutputModeWide)
+var acceptedListOutputModes = append(append([]OutputMode{}, sharedOutputModes...), OutputModeWide)
+
 // runtimeProjectionCatalog is the `-o` catalog of the runtime read route.
 //
-// It is deliberately two modes wide. `uid`, `name`, and `ref` are Registry
+// It offers wide, JSON, and quiet output. `uid`, `name`, and `ref` are Registry
 // projections of a Projmux resource, and most of what a runtime read returns is
 // not one: an operator's own pane has no uid to print, no `metadata.name`, and
 // no `kind/name` reference. Advertising those modes here would promise a
@@ -694,6 +698,7 @@ var readProjectionCatalog = []OutputMode{
 // offering it. The whole runtime object -- its exact handle, its attribution,
 // and the reason for it -- is in the JSON document.
 var runtimeProjectionCatalog = []OutputMode{
+	OutputModeWide,
 	OutputModeJSON,
 	OutputModeNone,
 }
@@ -1336,36 +1341,36 @@ var routes = []Route{
 			"projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]",
 			"projmux get pane --current -o cwd",
 			"projmux get pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]",
-			"projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o json|none]",
+			"projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]",
 		},
 		Canonical: []string{"get projects", "get windows", "get panes", "get agents",
 			"get runtime sessions", "get runtime windows", "get runtime panes",
 			"get notifications", "get snapshots", "get pane"},
 		Children: []Route{
-			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "projects", Invocation: InvocationFanOut, Summary: "List Project resources; -o json items include invocation context", CanonicalSummary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes},
+			{Effects: unchangedEffects(CardinalityZeroOrMore), Name: "projects", Invocation: InvocationFanOut, Summary: "List Project resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context", CanonicalSummary: "List Project resources", Aliases: []string{"project"}, Usage: []string{"projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o <mode>]"}, Canonical: []string{"get projects"}, Outputs: listProjectionCatalog, AcceptedOutputs: acceptedListOutputModes},
 			{
 				Effects: unchangedEffects(CardinalityZeroOrMore),
-				Name:    "windows", Summary: "List Window resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
+				Name:    "windows", Summary: "List Window resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Invocation:       InvocationNatural,
 				CanonicalSummary: "List Window resources",
 				Aliases:          []string{"window"}, Usage: []string{"projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
-				Canonical: []string{"get windows"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes,
+				Canonical: []string{"get windows"}, Outputs: listProjectionCatalog, AcceptedOutputs: acceptedListOutputModes,
 			},
 			{
 				Effects: unchangedEffects(CardinalityZeroOrMore),
-				Name:    "panes", Summary: "List Pane resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
+				Name:    "panes", Summary: "List Pane resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Invocation:       InvocationNatural,
 				CanonicalSummary: "List Pane resources",
 				Usage:            []string{"projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
-				Canonical:        []string{"get panes"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes,
+				Canonical:        []string{"get panes"}, Outputs: listProjectionCatalog, AcceptedOutputs: acceptedListOutputModes,
 			},
 			{
 				Effects: unchangedEffects(CardinalityZeroOrMore),
-				Name:    "agents", Summary: "List Agent resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
+				Name:    "agents", Summary: "List Agent resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry",
 				Invocation:       InvocationNatural,
 				CanonicalSummary: "List Agent resources",
 				Aliases:          []string{"agent"}, Usage: []string{"projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]"},
-				Canonical: []string{"get agents"}, Outputs: readProjectionCatalog, AcceptedOutputs: sharedOutputModes,
+				Canonical: []string{"get agents"}, Outputs: listProjectionCatalog, AcceptedOutputs: acceptedListOutputModes,
 			},
 			{
 				// The Runtime diagnostics escape hatch. It is a child of `get`
@@ -1387,28 +1392,28 @@ var routes = []Route{
 				Namespace:  true,
 				Summary:    "List every tmux Session, Window, and Pane on one exact server with its attribution",
 				Usage: []string{
-					"projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o json|none]",
-					"projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o json|none]",
-					"projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o json|none]",
+					"projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o wide|json|none]",
+					"projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o wide|json|none]",
+					"projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]",
 				},
 				Canonical: []string{"get runtime sessions", "get runtime windows", "get runtime panes"},
 				Children: []Route{
 					{
 						Effects: unchangedEffects(CardinalityZeroOrMore),
 						Name:    "sessions", Invocation: InvocationFanOut, Summary: "List every tmux session on one exact server with its attribution",
-						Usage:     []string{"projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o json|none]"},
+						Usage:     []string{"projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o wide|json|none]"},
 						Canonical: []string{"get runtime sessions"}, Outputs: runtimeProjectionCatalog,
 					},
 					{
 						Effects: unchangedEffects(CardinalityZeroOrMore),
 						Name:    "windows", Invocation: InvocationFanOut, Summary: "List every tmux window on one exact server with its attribution",
-						Usage:     []string{"projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o json|none]"},
+						Usage:     []string{"projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o wide|json|none]"},
 						Canonical: []string{"get runtime windows"}, Outputs: runtimeProjectionCatalog,
 					},
 					{
 						Effects: unchangedEffects(CardinalityZeroOrMore),
 						Name:    "panes", Invocation: InvocationFanOut, Summary: "List every tmux pane on one exact server with its attribution",
-						Usage:     []string{"projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o json|none]"},
+						Usage:     []string{"projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]"},
 						Canonical: []string{"get runtime panes"}, Outputs: runtimeProjectionCatalog,
 					},
 				},

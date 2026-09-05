@@ -2227,6 +2227,20 @@ PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt" "host app-owned  transport tmux -L $PROJMUX_RUNTIME_APP_SOCKET"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt" "SESSION"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt" "control"
+if ! awk 'NR == 2 { ok = NF == 3 && $1 == "SESSION" && $2 == "NAME" && $3 == "CLASS" } END { exit !ok }' "$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt"; then
+  echo "runtime Session compact header drifted" >&2
+  exit 1
+fi
+PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  "$bin" get runtime sessions --socket "$PROJMUX_RUNTIME_APP_SOCKET" -o wide \
+  >"$PROJMUX_SMOKE_WORKDIR/runtime-app-wide.txt"
+if ! awk 'NR == 2 { ok = NF == 6 && $1 == "SESSION" && $2 == "NAME" && $3 == "CLASS" && $4 == "UID" && $5 == "RESOURCE" && $6 == "REASON" } END { exit !ok }' "$PROJMUX_SMOKE_WORKDIR/runtime-app-wide.txt"; then
+  echo "runtime Session wide diagnostic header drifted" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-wide.txt" "$runtime_project_uid"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-wide.txt" "bound to Project/"
+
 
 # The standalone host is the same Registry and the same managed identity; only
 # the classification of what projmux did not mark differs.

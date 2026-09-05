@@ -37,7 +37,7 @@ func runtimeRowValue(row runtimediag.Row) string {
 // CLI, which projects one kind per invocation and can afford kind-specific
 // columns, the picker shows all three kinds in one list, so KIND is a column
 // and every row shares the rest.
-var runtimeViewColumns = []string{"KIND", "ID", "IN", "NAME", "CLASS", "RESOURCE", "REASON"}
+var runtimeViewColumns = columnHeaders(columnsFor(columnRuntimePicker, "", columnWide))
 
 // runtimeViewColumnBounds is this view's half of the same fixed-viewport
 // budget. RESOURCE is the cell schema v4 widened, because it renders
@@ -53,11 +53,9 @@ func runtimeViewColumnBounds() []pickerColumnBound {
 }
 
 func runtimeViewRow(row runtimediag.Row) []string {
-	return []string{
-		runtimeCell(row.Kind), runtimeCell(row.ID), runtimeCell(row.ContainerID),
-		runtimeCell(row.Name), runtimeCell(row.Class), runtimeResourceCell(row),
-		runtimeCell(row.Reason),
-	}
+	return columnValues(columnsFor(columnRuntimePicker, "", columnWide), func(field columnField) string {
+		return runtimeColumnValue(field, row, true)
+	})
 }
 
 // entries renders the picker list: one header info row, one row per

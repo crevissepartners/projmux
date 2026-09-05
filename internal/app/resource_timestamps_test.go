@@ -140,15 +140,15 @@ func TestGetListAgeColumnRendersEveryUnitInOneRead(t *testing.T) {
 	restampFixtureCreatedAt(t, store, "pan-alpha-codex", resourceFixtureReadClock.Add(-6*time.Hour))
 	restampFixtureCreatedAt(t, store, "pan-alpha-review", resourceFixtureReadClock.Add(-11*24*time.Hour))
 
-	stdout, stderr, err := runRoute(t, newTestListGetCommand(t, store), "panes", "--project", "alpha")
+	stdout, stderr, err := runRoute(t, newTestListGetCommand(t, store), "panes", "--project", "alpha", "-o", "wide")
 	if err != nil {
 		t.Fatalf("get panes error = %v (stderr %q)", err, stderr)
 	}
-	const want = "CONTEXT  SOURCE  OBSERVED  NAME        STATUS  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-		"                 false     zsh         live    alpha    main                        9s\n" +
-		"                 false     log         live    alpha    main                        47m\n" +
-		"                 false     codex-pane  live    alpha    main    codex               6h\n" +
-		"                 false     review-zsh  live    alpha    review                      11d\n"
+	const want = "KIND  NAME        STATUS  ACTIONS  CONTEXT  SOURCE  OBSERVED  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+		"pane  zsh         live    -                         false     alpha    main                        9s\n" +
+		"pane  log         live    -                         false     alpha    main                        47m\n" +
+		"pane  codex-pane  live    -                         false     alpha    main    codex               6h\n" +
+		"pane  review-zsh  live    -                         false     alpha    review                      11d\n"
 	if stdout != want {
 		t.Fatalf("get panes stdout =\n%q\nwant\n%q", stdout, want)
 	}
@@ -187,7 +187,7 @@ func TestGetListAgeAgreesWithTheStructuredCreatedAt(t *testing.T) {
 		t.Fatalf("get projects -o json is missing %s:\n%s", stamp, structured)
 	}
 
-	stdout, _, err := runRoute(t, newTestListGetCommand(t, store), "projects")
+	stdout, _, err := runRoute(t, newTestListGetCommand(t, store), "projects", "-o", "wide")
 	if err != nil {
 		t.Fatalf("get projects error = %v", err)
 	}
@@ -220,7 +220,7 @@ func TestGetListAgeIsPinnedByTheInjectedClock(t *testing.T) {
 			runtime:      liveAlphaRuntime(),
 			now:          func() time.Time { return now },
 		}
-		stdout, _, err := runRoute(t, cmd, "projects")
+		stdout, _, err := runRoute(t, cmd, "projects", "-o", "wide")
 		if err != nil {
 			t.Fatalf("get projects at %s error = %v", now, err)
 		}
@@ -499,7 +499,7 @@ func TestSingularProjectionsRenderNoAge(t *testing.T) {
 	}
 	row := resourceTableRow(
 		selector.Match{Kind: coremetadata.KindPane, UID: "pan-alpha-zsh", Name: "zsh", Status: selector.StatusLive},
-		coremetadata.KindPane, store.registry, time.Time{})
+		coremetadata.KindPane, store.registry, time.Time{}, columnWide, nil)
 	if row[len(row)-1] != "" {
 		t.Fatalf("the AGE cell rendered %q without a clock", row[len(row)-1])
 	}

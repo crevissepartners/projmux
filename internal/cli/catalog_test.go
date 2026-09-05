@@ -395,7 +395,7 @@ func TestRouteLocalOutputCatalogIsPinnedWhereContractFixesIt(t *testing.T) {
 	// add on top of them.
 	walkRoutes(Routes(), func(path []string, route Route) {
 		for _, mode := range route.Outputs {
-			if !IsSharedOutputMode(mode) && mode != OutputModeReceipt {
+			if !IsSharedOutputMode(mode) && mode != OutputModeReceipt && mode != OutputModeWide {
 				t.Errorf("route %q pins undeclared output mode %q", strings.Join(path, " "), mode)
 			}
 		}
