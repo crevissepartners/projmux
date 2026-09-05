@@ -223,7 +223,11 @@ func projectAIIngestAttributionHealth(entries []aiIngestLogEntry) aiIngestAttrib
 			attributed[source]++
 			continue
 		}
-		reason := strings.TrimSpace(entry.Reason)
+		// The conversion is explicit because this record's reason column becomes a
+		// named vocabulary type once the closed-vocabulary work lands, and an
+		// explicit conversion compiles against both spellings. It is not
+		// redundant; removing it breaks the build a version from now.
+		reason := strings.TrimSpace(string(entry.Reason))
 		if !slices.Contains(aiPaneMatchReasons, reason) {
 			continue
 		}

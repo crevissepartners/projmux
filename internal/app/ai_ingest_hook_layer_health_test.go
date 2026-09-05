@@ -322,3 +322,36 @@ func TestDeliveryHealthKeepsTheQuietLaneOutOfTheRate(t *testing.T) {
 		t.Fatalf("status = %q (detail %q), want %q when no write was attempted", got.Status, got.Detail, codexSurfaceStatusUnobserved)
 	}
 }
+
+// TestPaneOwnershipVerdictIgnoresForeignLifecycleChurn pins that neither
+// unjudgeable count can move the verdict on its own.
+//
+// Both counts change for reasons this track does not cause. A Pane recording
+// no provider is an ordinary Pane; a Pane the Registry no longer holds is one
+// somebody else retired — on this machine a neighbouring track reclaimed a
+// worker and a single Pane carrying 134 records in the window went absent
+// between two readings of unchanged code, taking the unresolved count from
+// zero to two hundred odd. A row that reddens and greens on a neighbour's
+// housekeeping is a signal nobody can act on, and this diagnosis has already
+// had to learn once what an unactionable red costs.
+func TestPaneOwnershipVerdictIgnoresForeignLifecycleChurn(t *testing.T) {
+	settled := aiIngestOwnershipHealth{Observed: true, Classified: 805}
+	churned := aiIngestOwnershipHealth{Observed: true, Classified: 559, Unresolved: 234, Unrecorded: 235}
+	if before, after := codexPaneOwnershipSurface(settled), codexPaneOwnershipSurface(churned); before.Status != after.Status {
+		t.Fatalf("verdict moved from %q to %q on churn alone (%q → %q)",
+			before.Status, after.Status, before.Detail, after.Detail)
+	}
+	// It must still be visible, or the verdict silently narrows.
+	detail := codexPaneOwnershipSurface(churned).Detail
+	for _, want := range []string{"judged 559 of 1028", "unresolved 234", "provider unrecorded 235"} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("detail = %q, want it to carry %q", detail, want)
+		}
+	}
+	// A foreign attribution is the one thing that does move it.
+	foreign := churned
+	foreign.Foreign = 1
+	if got := codexPaneOwnershipSurface(foreign); got.Status != codexSurfaceStatusBroken {
+		t.Fatalf("status = %q, want %q once an attribution is provably foreign", got.Status, codexSurfaceStatusBroken)
+	}
+}

@@ -374,6 +374,15 @@ func codexHookDeliverySurface(delivery aiIngestDeliveryHealth) codexControlPlane
 // rather than folded into it, so nobody reads a zero as "nothing was
 // misattributed" when what it means is "nothing provably was".
 //
+// The same holds, for a different reason, of attributions naming a Pane the
+// Registry no longer has. That count moves with events this track does not
+// cause and cannot see: when a neighbouring track retired one worker, a single
+// Pane carrying 134 records in the window went from live to absent, and the
+// unresolved count went from zero to two hundred odd between two readings of
+// unchanged code. A verdict driven by that would go red and green on its own,
+// which is the definition of a signal nobody can act on. It is reported and
+// never judged.
+//
 // Why the unjudgeable share does not make this row red, when it has been more
 // than a third of the window on a live machine:
 //

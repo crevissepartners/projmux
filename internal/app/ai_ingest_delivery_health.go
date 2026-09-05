@@ -104,7 +104,11 @@ func projectAIIngestDeliveryHealth(entries []aiIngestLogEntry) aiIngestDeliveryH
 		// The path check covers every attributed record, not only the failures.
 		// A path can ride a quiet event's reason as easily as a failure's, and
 		// on this machine that is where one live inflow sits.
-		if aiIngestDetailCarriesAPath(entry.Reason) {
+		// The conversion is explicit because this record's reason column becomes a
+		// named vocabulary type once the closed-vocabulary work lands, and an
+		// explicit conversion compiles against both spellings. It is not
+		// redundant; removing it breaks the build a version from now.
+		if aiIngestDetailCarriesAPath(string(entry.Reason)) {
 			pathBearing[source]++
 		}
 		result := strings.TrimSpace(entry.Result)
@@ -118,7 +122,7 @@ func projectAIIngestDeliveryHealth(entries []aiIngestLogEntry) aiIngestDeliveryH
 			continue
 		}
 		failed[source]++
-		reason := aiIngestReasonToken(entry.Reason)
+		reason := aiIngestReasonToken(string(entry.Reason))
 		if aiIngestReasonIsOpaque(reason) {
 			opaque[source]++
 			// An opaque reason is not recorded verbatim. It is the shape that
