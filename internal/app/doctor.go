@@ -53,6 +53,14 @@ type doctorCommand struct {
 	// the create planner. Doctor only projects it; it never runs qualification or
 	// mutates a provider lifecycle.
 	codexPayloadFreeCapability func() codexgeneration.Record
+	// hookAttribution reads whether provider hook events reached the Pane that
+	// owns them. It is a bounded tail read of the ingest log and creates
+	// nothing, so asking the question on a machine that never ran a hook stays
+	// an unobserved answer rather than a new file.
+	hookAttribution func() aiIngestAttributionHealth
+	// controlPlaneVintage reads the binary vintage of the live control-plane
+	// processes this diagnosis is taken from.
+	controlPlaneVintage func() codexControlPlaneVintage
 }
 
 func newDoctorCommand() *doctorCommand {
@@ -73,7 +81,31 @@ func newDoctorCommand() *doctorCommand {
 		return health
 	}
 	c.brokerDiagnostic = defaultCodexBrokerDiagnosticLookup()
-	c.codexAuthority = defaultCodexLifecycleAuthorityLookup()
+	// The authority read is fenced here and unfenced elsewhere on purpose. A
+	// single-resource describe reports one Pane as it is right now; this
+	// section reaches a verdict about whether a completed transition is
+	// readable at all, and an unfenced sample cannot tell a torn triple from a
+	// transition caught in flight.
+	c.codexAuthority = defaultSettledCodexLifecycleAuthorityLookup(doctorStateDir(c.getenv))
+	c.hookAttribution = func() aiIngestAttributionHealth {
+		path, err := newAICommand().aiIngestLogPath()
+		if err != nil {
+			return aiIngestAttributionHealth{}
+		}
+		return readAIIngestAttributionHealth(path)
+	}
+	c.controlPlaneVintage = func() codexControlPlaneVintage {
+		executable, err := os.Executable()
+		if err != nil {
+			return codexControlPlaneVintage{}
+		}
+		resolved, err := filepath.EvalSymlinks(executable)
+		if err != nil {
+			resolved = executable
+		}
+		images, supported := defaultCodexProcessImages()
+		return projectCodexControlPlaneVintage(resolved, os.Getpid(), images, supported)
+	}
 	c.readRuntimeHealth = diagnostics.ReadRuntimeHealth
 	c.resolveOperationsPath = func() (string, error) { return diagnostics.DefaultPath(c.getenv, os.UserHomeDir) }
 	c.runtimeProbe = defaultDoctorRuntimeProbe
@@ -158,6 +190,7 @@ type doctorReport struct {
 	CodexAuthority       *codexAuthorityCensus                `json:"codex_authority,omitempty"`
 	CodexGenerationPool  *doctorCodexGenerationPool           `json:"codex_generation_pool,omitempty"`
 	CodexPayloadFree     *codexgeneration.Projection          `json:"codex_payload_free_capability,omitempty"`
+	CodexControlPlane    *codexControlPlaneReport             `json:"codex_control_plane,omitempty"`
 	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    string                               `json:"session_state_prune"`
 	Runtime              []doctorFinding                      `json:"runtime"`
@@ -310,6 +343,13 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 				report.CodexGenerationPool = c.codexGeneration(registry)
 			}
 		}
+		controlPlane := projectCodexControlPlaneSurfaces(
+			report.CodexBroker,
+			report.CodexAuthority,
+			doctorHookAttribution(c.hookAttribution),
+			doctorControlPlaneVintage(c.controlPlaneVintage),
+		)
+		report.CodexControlPlane = &controlPlane
 	}
 	if section == doctorSectionAll || section == doctorSectionSessionState {
 		report.SessionStateResume = c.evaluateSessionStateResume()
@@ -436,6 +476,7 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 		writeDoctorCodexAuthorityText(&buf, report.CodexAuthority)
 		writeDoctorCodexGenerationText(&buf, report.CodexGenerationPool)
 		writeDoctorCodexPayloadFreeText(&buf, report.CodexPayloadFree)
+		writeDoctorCodexControlPlaneText(&buf, report.CodexControlPlane)
 	}
 	if section == doctorSectionAll || section == doctorSectionSessionState {
 		writeDoctorSessionStateText(&buf, report, verbose)
@@ -835,6 +876,7 @@ type doctorJSONReport struct {
 	CodexAuthority       *codexAuthorityCensus                 `json:"codex_authority,omitempty"`
 	CodexGenerationPool  *doctorCodexGenerationPool            `json:"codex_generation_pool,omitempty"`
 	CodexPayloadFree     *codexgeneration.Projection           `json:"codex_payload_free_capability,omitempty"`
+	CodexControlPlane    *codexControlPlaneReport              `json:"codex_control_plane,omitempty"`
 	SessionStateResume   *[]doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    *string                               `json:"session_state_prune,omitempty"`
 	Runtime              *[]doctorFinding                      `json:"runtime,omitempty"`
@@ -855,6 +897,7 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 		out.CodexAuthority = report.CodexAuthority
 		out.CodexGenerationPool = report.CodexGenerationPool
 		out.CodexPayloadFree = report.CodexPayloadFree
+		out.CodexControlPlane = report.CodexControlPlane
 	}
 	if (section == doctorSectionAll && len(report.SessionStateResume) > 0) || section == doctorSectionSessionState {
 		out.SessionStateResume = &report.SessionStateResume
@@ -1002,4 +1045,48 @@ func defaultCommandVersion(name string) string {
 	}
 	first := strings.TrimSpace(strings.SplitN(string(out), "\n", 2)[0])
 	return first
+}
+
+// doctorStateDir resolves the private state directory the authority fences live
+// in. An unresolvable path yields the empty string, which the fence observer
+// reports as unavailable rather than as an unfenced Pane.
+func doctorStateDir(lookupEnv func(string) string) string {
+	paths, err := configPaths(os.UserHomeDir, lookupEnv)
+	if err != nil {
+		return ""
+	}
+	return paths.StateDir
+}
+
+func doctorHookAttribution(read func() aiIngestAttributionHealth) aiIngestAttributionHealth {
+	if read == nil {
+		return aiIngestAttributionHealth{}
+	}
+	return read()
+}
+
+func doctorControlPlaneVintage(read func() codexControlPlaneVintage) codexControlPlaneVintage {
+	if read == nil {
+		return codexControlPlaneVintage{}
+	}
+	return read()
+}
+
+// writeDoctorCodexControlPlaneText renders the five named control-plane
+// surfaces and the vintage of the processes they were read from.
+//
+// The vintage line comes first because it qualifies every verdict under it:
+// `make install` never replaces the image of a running process, so a green
+// surface read from a replaced-image process is a statement about code that
+// process never loaded. Reading the surfaces without it is how "installed"
+// gets mistaken for "deployed".
+func writeDoctorCodexControlPlaneText(buf *bytes.Buffer, report *codexControlPlaneReport) {
+	if report == nil {
+		return
+	}
+	buf.WriteString("\nCodex control-plane surfaces\n")
+	fmt.Fprintf(buf, "  Diagnosis vintage: %s\n", codexControlPlaneVintageText(report.Vintage))
+	for _, surface := range report.Surfaces {
+		fmt.Fprintf(buf, "  [%-10s] %-22s %s\n", surface.Status, surface.Surface, surface.Detail)
+	}
 }

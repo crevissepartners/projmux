@@ -40,6 +40,8 @@ func TestAgentProgressClosedInventoryAndLifecycleClear(t *testing.T) {
 	if _, _, err := mutator.SetAgentProgress(&reg, "agent-1", "turn-other", progress); err == nil {
 		t.Fatal("independent turn authority was accepted")
 	}
+	// uncaptured-default: this is an Agent phase transition reason, a free-text
+	// field of a different subsystem that happens to spell the same word.
 	if _, err := mutator.TransitionAgent(&reg, "agent-1", PhaseOffline, "disconnected"); err != nil {
 		t.Fatal(err)
 	}
@@ -87,6 +89,7 @@ func TestAgentProgressClearsOnFailedRebindAndPaneRelease(t *testing.T) {
 	}
 
 	released := fixture()
+	// uncaptured-default: same Agent phase vocabulary as above.
 	if _, err := mutator.ReleaseAgentPane(&released, "agent-1", AgentExitUnknown, "disconnected"); err != nil {
 		t.Fatal(err)
 	}

@@ -113,9 +113,12 @@ func TestDoctorCodexAppServerJSONSchemaV2IsAdditive(t *testing.T) {
 		"probe_reason":       "daemon-not-running",
 		"install_capability": "external-cli-only",
 		"endpoint_kind":      "stdio-proxy",
-		"connection_state":   "disconnected",
-		"lifecycle_outcome":  "not-attempted",
-		"lifecycle_reason":   "read-only",
+		// uncaptured-default: `connection_state` is the app-server transport
+		// vocabulary, where disconnected is an observed state rather than a
+		// missing observation.
+		"connection_state":  "disconnected",
+		"lifecycle_outcome": "not-attempted",
+		"lifecycle_reason":  "read-only",
 	}
 	for field, value := range want {
 		if fields[field] != value {

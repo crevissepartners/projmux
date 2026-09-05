@@ -16,6 +16,14 @@ Codex payload-free capability
   Cache key: ; durable-zero-turn-resume: unknown; remote-new-session: unknown
   Create route: plain-fallback; reason: exact-capability-unknown
 
+Codex control-plane surfaces
+  Diagnosis vintage: unknown on this platform; a process running a replaced image cannot be told apart from one running the installed build
+  [unobserved] broker-diagnostics     no broker reading was taken
+  [unobserved] hook-attribution       no hook ingest log was readable
+  [unobserved] observer-reason        no managed Codex Agent to read
+  [unobserved] connection-continuity  no running runtime to read continuity from
+  [unobserved] turn-admission         no managed Codex Agent to read
+
 Session State resume metadata
   Summary: 0 available, 0 stale, 0 unavailable.
 

@@ -218,6 +218,9 @@ func TestAIIngestActualClaudeNormalUnknownAndUnmatched(t *testing.T) {
 			t.Fatal(err)
 		}
 		events := readAIOperationalEvents(t, store)
+		// uncaptured-default: `target-unmatched` here is the operations journal's
+		// own AI failure vocabulary, not a Codex authority reason; this pins the
+		// legacy projection that maps an ignored hook onto it.
 		if len(events) != 1 || events[0].Provider != "claude" || events[0].AIKind != "stop" || events[0].Failure != "target-unmatched" {
 			t.Fatalf("unmatched Claude events = %#v", events)
 		}
@@ -319,6 +322,8 @@ func TestAIIngestActualBellValidInvalidUnmatchedAndRouteFailure(t *testing.T) {
 		if err := cmd.Run([]string{"ingest", "bell", "--pane", "%404"}, io.Discard, io.Discard); err != nil {
 			t.Fatal(err)
 		}
+		// uncaptured-default: same operations journal vocabulary as above; a bell
+		// event with no matching target really is target-unmatched.
 		assertSingleAIBellOutcome(t, store, "ignored", "target-unmatched")
 		if !lifecycle.RecordedOutcome() {
 			t.Fatal("pane-not-found bell did not claim terminal ownership")

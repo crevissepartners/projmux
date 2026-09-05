@@ -268,6 +268,8 @@ func TestCodexObserverReasonVocabularyIsClosed(t *testing.T) {
 		if got := codexObserverReasonFor(foreign); got != "" {
 			t.Fatalf("codexObserverReasonFor(%q) admitted %q", foreign, got)
 		}
+		// uncaptured-default: the input is a foreign string, and rendering it as
+		// the bounded fallback rather than as itself is the property under test.
 		if got := safeCodexAuthorityReason(foreign); got != "bounded reason unavailable" {
 			t.Fatalf("safeCodexAuthorityReason(%q) = %q", foreign, got)
 		}

@@ -67,14 +67,28 @@ func (c *aiCommand) codexAuthorityFencePath(paneUID string) (string, error) {
 // contend on the same kernel lock; restating the digest or the directory on
 // either side would silently split them into two independent fences.
 func codexAuthorityFencePathIn(stateDir, paneUID string) (string, error) {
+	path, err := codexAuthorityFenceFileIn(stateDir, paneUID)
+	if err != nil {
+		return "", err
+	}
+	if err := localstate.EnsurePrivateDir(filepath.Dir(path)); err != nil {
+		return "", fmt.Errorf("create Codex authority fence directory: %w", err)
+	}
+	return path, nil
+}
+
+// codexAuthorityFenceFileIn derives the fence file without creating anything.
+//
+// It is split out for the one caller that must not create: a diagnostics read
+// establishes whether a Pane's transitions are published under a fence at all,
+// and a reader that created the directory on the way to asking would answer its
+// own question. Every other caller goes through codexAuthorityFencePathIn, so
+// the digest and the directory name are still stated once.
+func codexAuthorityFenceFileIn(stateDir, paneUID string) (string, error) {
 	paneUID = strings.TrimSpace(paneUID)
 	if paneUID == "" {
 		return "", fmt.Errorf("codex authority fence requires pane uid")
 	}
-	dir := filepath.Join(stateDir, codexAuthorityFenceDir)
-	if err := localstate.EnsurePrivateDir(dir); err != nil {
-		return "", fmt.Errorf("create Codex authority fence directory: %w", err)
-	}
 	digest := sha256.Sum256([]byte(paneUID))
-	return filepath.Join(dir, fmt.Sprintf("%x.lock", digest)), nil
+	return filepath.Join(stateDir, codexAuthorityFenceDir, fmt.Sprintf("%x.lock", digest)), nil
 }

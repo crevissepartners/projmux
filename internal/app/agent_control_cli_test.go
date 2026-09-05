@@ -342,10 +342,10 @@ func TestAgentControlCLIReconnectGapAndIdentityDriftRefuseEveryPublicWrite(t *te
 		wantTransport int
 	}{
 		{name: "disconnect invalidating", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) {
-			binding.live.Authority, binding.live.Epoch, binding.live.Reason = codexAuthorityInvalidating, "epoch-1", "disconnected"
+			binding.live.Authority, binding.live.Epoch, binding.live.Reason = codexAuthorityInvalidating, "epoch-1", "endpoint-suspended"
 		}},
 		{name: "reconnect hook gap", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) {
-			binding.live.Authority, binding.live.Epoch, binding.live.Reason = codexAuthorityHook, "", "disconnected"
+			binding.live.Authority, binding.live.Epoch, binding.live.Reason = codexAuthorityHook, "", "endpoint-suspended"
 		}},
 		{name: "broker unavailable", mutate: func(_ *fakeResourceStore, binding *staticAgentControlBinding) {
 			binding.live.Authority, binding.live.Epoch, binding.live.Reason = codexAuthorityHook, "", "unsupported-platform"

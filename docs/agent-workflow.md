@@ -1112,6 +1112,71 @@ fall-through resolves — to the answer, never inside the shared ladder.
   the shared ladder is untouched: with no explicit value there is no refused
   envelope and therefore no coherence question, and the cwd and thread steps
   resolve exactly as before for every provider.
+### Codex control-plane regression-detection gate tests
+
+Three control-plane defects lived through a neighbouring eight-phase track
+closing green from end to end. Nothing reached those surfaces, and the one test
+that did — `test/e2e/codex-lifecycle.sh` — asserted the literal `disconnected`
+for a managed Codex Pane's authority reason. `disconnected` is the bucket that
+means no reason was captured, so capturing a real one would have turned the job
+red. Shipping the fixes without this gate would leave the same blind spot under
+new code.
+
+The gate has three parts.
+
+- `TestControlPlaneTestsNeverExpectAnUncapturedReason` sweeps every
+  `internal/**/*_test.go` and `test/e2e/*.sh` for values that mean "nothing was
+  recorded" — `unrecorded`, the pre-instrumentation `disconnected` literal, the
+  `bounded reason unavailable` read fallback, and the `target-unmatched`
+  operations bucket — and fails on any that is an expectation rather than an
+  input. A survivor is admitted only by an `uncaptured-default: <reason>`
+  comment on its line or in the comment block above it; every current survivor
+  is a different vocabulary that happens to spell a token the same way.
+- `TestControlPlaneContractCellsNameLiveTests` resolves every test named in
+  `codexControlPlaneContractEnforcement` against the declarations in the tree.
+  Squash merges erase the branch that tied a fix to the test holding it, so a
+  contract cell naming a renamed test reads as enforced while enforcing nothing.
+- `TestControlPlaneContractEnforcementCoversEverySurface` holds the two
+  directions of that map closed: every rendered surface names a contract, and
+  every contract in the map names a surface the diagnosis renders.
+
+`projmux doctor` gained the operator half under **Codex control-plane
+surfaces**. Five verdicts, one per surface, each with the counters it was
+reached on:
+
+- `TestCodexBrokerDiagnosticsSurfaceNamesThePublishedButUnreachableRuntime`
+  separates a domain that published nothing — the ordinary resting state — from
+  one whose published endpoint answered nothing, which used to render as
+  `absent` and was read as "no broker is running".
+- `TestHookAttributionSurfaceSeparatesTotalFailureFromPartial` keeps "no hook
+  reached its Pane" apart from "a few did not". `TestAttributionHealth*` own the
+  bounded tail read of `ai-ingest.log` behind it, including that an unreadable
+  log is reported as unobserved rather than as zero failures.
+- `TestObserverReasonSurfaceRefusesToCallAnUncapturedReasonHealthy` is the
+  product-side half of the sweep: a reason distribution made entirely of
+  uncaptured tokens is never a healthy row.
+- `TestConnectionContinuitySurfaceReportsCumulativeReconnects` reports the count
+  as the total it is and derives no rate from a single sample.
+- `TestTurnAdmissionSurfaceReportsATornAuthoritySnapshotAsBroken`, with
+  `TestSettledAuthorityObservationNamesATornTripleOnlyUnderTheFence` and
+  `TestAuthorityFenceObservation*`, owns the C-5 read. Doctor samples each
+  Pane's authority triple under a **shared, non-creating** hold of the writer's
+  own fence, so a torn pairing is a producer fact rather than a transition
+  caught in flight. A Pane with no fence file is reported `unfenced`, separately
+  from torn: its writer predates the fence, which is a deployment answer.
+
+The section leads with a deployment-vintage line, and
+`TestControlPlaneVintage*` owns it. `make install` replaces the executable on
+disk and never replaces the image of a running process, so a green surface read
+from a replaced-image process describes code that process never loaded. This
+track lost two acceptance criteria to that twice. On Linux the diagnosis
+resolves `/proc/<pid>/exe` for the broker runtime and the lifecycle observers
+and reports how many run a replaced image; on a platform with no such table it
+reports the answer as unknown rather than claiming currency.
+
+The gate does not change `projmux doctor`'s exit code. A broken surface is a
+readable verdict, not a failed command, and the CI half of the detection is the
+regression tests themselves.
 
 ### Attributed Codex hook delivery route tests
 
