@@ -52,6 +52,23 @@ const codexUncapturedGateFile = "codex_controlplane_gate_test.go"
 // The rule is deliberately about expectations rather than mentions. A test may
 // drive an uncaptured token as input all it likes; what it may not do is
 // require one to come back.
+//
+// One neighbouring category is deliberately out of reach, and saying so here
+// keeps it from being re-litigated. Tests were also found asserting that the
+// log carries a provider's own text -- a tool error spliced verbatim into a
+// reason -- which is the same failure in a purer form: a leak fixed as the
+// passing condition. It is not mechanically detectable from here. Matching the
+// shapes that leak (an absolute path, a subprocess phrase) over the test corpus
+// finds dozens of legitimate uses -- socket fixtures, executable paths,
+// transport tables -- and would make this gate the thing people switch off.
+// Matching narrowly on the reason field misses the actual instances, because
+// what made them leaks was the value's provenance rather than its spelling:
+// `unknown termination reason: FUTURE_SAFE_REASON` looks bounded and is not.
+//
+// Provenance is a runtime fact, so the enforceable half is a runtime check --
+// drive a failure and assert the log does not contain the input -- and it
+// belongs with whoever owns the vocabulary, where it now lives. A static sweep
+// that claimed this category would be claiming more than it can see.
 func TestControlPlaneTestsNeverExpectAnUncapturedReason(t *testing.T) {
 	root := repoRootForGate(t)
 	goToken := regexp.MustCompile(`"(` + strings.Join(codexUncapturedReasonTokens, "|") + `)"`)
