@@ -321,24 +321,28 @@ func codexHookDeliverySurface(delivery aiIngestDeliveryHealth) codexControlPlane
 		return surface
 	}
 	if delivery.Records == 0 {
-		surface.Status, surface.Detail = codexSurfaceStatusUnobserved, "no attributed hook event in the reading window"
+		surface.Status, surface.Detail = codexSurfaceStatusUnobserved, "no reflection write was attempted in the reading window"
 		return surface
 	}
 	parts := make([]string, 0, len(delivery.Sources))
 	for _, source := range delivery.Sources {
 		part := fmt.Sprintf("%s %d delivered, %d failed", source.Source, source.Delivered, source.Failed)
+		if reasons := codexReasonBreakdown(source.Reasons); reasons != "" {
+			// The breakdown stays next to the count it explains. Anything
+			// pushed between them reads as explaining the wrong number.
+			part += " (" + reasons + ")"
+		}
+		if source.Quiet > 0 {
+			// Beside the two counts, never inside them. A lane that writes
+			// nothing cannot fail to write, and folding it in dilutes the rate
+			// the verdict is about.
+			part += fmt.Sprintf("; %d made no write", source.Quiet)
+		}
 		if source.PathBearing > 0 {
 			// Counted, never folded into the verdict. A reason can name its
 			// cause precisely and still carry a path in the explanation behind
 			// it; those are two properties about two halves of one string.
-			part += fmt.Sprintf(", %d carrying a path", source.PathBearing)
-		}
-		if len(source.Reasons) > 0 {
-			reasons := make([]string, 0, len(source.Reasons))
-			for _, reason := range source.Reasons {
-				reasons = append(reasons, fmt.Sprintf("%s=%d", reason.Reason, reason.Count))
-			}
-			part += " (" + strings.Join(reasons, ", ") + ")"
+			part += fmt.Sprintf("; %d carrying a path", source.PathBearing)
 		}
 		parts = append(parts, part)
 	}

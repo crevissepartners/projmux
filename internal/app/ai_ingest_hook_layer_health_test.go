@@ -27,6 +27,9 @@ func TestDeliveryHealthCountsOnlyAttributedEvents(t *testing.T) {
 	if delivery.Records != 3 {
 		t.Fatalf("records = %d, want the 3 attributed hook events", delivery.Records)
 	}
+	if delivery.Sources[0].Quiet != 0 {
+		t.Fatalf("quiet = %d, want none in this fixture", delivery.Sources[0].Quiet)
+	}
 	if delivery.Failed() != 2 || delivery.Opaque() != 1 {
 		t.Fatalf("failed = %d, opaque = %d, want 2 and 1", delivery.Failed(), delivery.Opaque())
 	}
@@ -275,4 +278,47 @@ func (h aiIngestDeliveryHealth) PathBearing() int {
 		total += source.PathBearing
 	}
 	return total
+}
+
+// TestDeliveryHealthKeepsTheQuietLaneOutOfTheRate is the denominator gate.
+//
+// A quiet event reached its Pane and deliberately wrote nothing, so it can
+// neither succeed nor fail at delivery. On a live machine that lane was 989 of
+// 1028 attributed records, and counting it as delivered turned one failure out
+// of three real write attempts into one out of twenty-nine — a path that fails
+// a third of the time reading as a healthy path with an incident. Widening a
+// denominator until the rate disappears is a shape this diagnosis has met more
+// than once, and the fix each time was to name what the number is over.
+func TestDeliveryHealthKeepsTheQuietLaneOutOfTheRate(t *testing.T) {
+	entries := []aiIngestLogEntry{
+		{Source: "codex-hook", Event: "Stop", Result: "error", Reason: "exit status 1", Pane: "%1"},
+		{Source: "codex-hook", Event: "SessionStart", Result: "state", Pane: "%1"},
+		{Source: "codex-hook", Event: "PreCompact", Result: "notify", Pane: "%1"},
+	}
+	for range 82 {
+		entries = append(entries, aiIngestLogEntry{Source: "codex-hook", Event: "PreToolUse", Result: "quiet", Pane: "%1"})
+	}
+	delivery := projectAIIngestDeliveryHealth(entries)
+	source := delivery.Sources[0]
+	if source.Delivered != 2 || source.Failed != 1 || source.Quiet != 82 {
+		t.Fatalf("delivered=%d failed=%d quiet=%d, want 2/1/82", source.Delivered, source.Failed, source.Quiet)
+	}
+	if delivery.Records != 3 {
+		t.Fatalf("records = %d, want only the write attempts", delivery.Records)
+	}
+	surface := codexHookDeliverySurface(delivery)
+	if !strings.Contains(surface.Detail, "82 made no write") {
+		t.Fatalf("detail = %q, want the quiet lane reported beside the rate", surface.Detail)
+	}
+	if strings.Contains(surface.Detail, "84 delivered") {
+		t.Fatalf("detail = %q, want the quiet lane out of the delivered count", surface.Detail)
+	}
+	// A window in which nothing attempted a write answers nothing about
+	// delivery, and must not answer well.
+	onlyQuiet := projectAIIngestDeliveryHealth([]aiIngestLogEntry{
+		{Source: "codex-hook", Result: "quiet", Pane: "%1"},
+	})
+	if got := codexHookDeliverySurface(onlyQuiet); got.Status != codexSurfaceStatusUnobserved {
+		t.Fatalf("status = %q (detail %q), want %q when no write was attempted", got.Status, got.Detail, codexSurfaceStatusUnobserved)
+	}
 }

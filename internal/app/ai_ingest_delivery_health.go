@@ -25,13 +25,29 @@ var aiIngestOpaqueReasonShapes = []*regexp.Regexp{
 	regexp.MustCompile(`^signal: `),
 }
 
+// aiIngestDeliveryResults are the outcomes that mean a reflection write was
+// attempted.
+//
+// The quiet lane is deliberately not among them. A quiet event reached its Pane
+// and deliberately wrote nothing, so it can neither succeed nor fail at
+// delivery, and it is by far the most common outcome: on a live machine it was
+// 989 of 1028 attributed records. Counting it as delivered turned one failure
+// out of three real write attempts into one out of twenty-nine, which reads as
+// a healthy path with an incident rather than a path that fails a third of the
+// time. Diluting a rate by widening its denominator is a shape this diagnosis
+// has met before.
+var aiIngestDeliveryResults = []string{"state", "notify"}
+
 // aiIngestDeliverySource is one provider hook source's delivery outcome.
 type aiIngestDeliverySource struct {
 	Source string `json:"source"`
-	// Delivered counts events that reached their Pane and changed it.
+	// Delivered counts events that attempted a write and changed their Pane.
 	Delivered int `json:"delivered"`
-	// Failed counts events that reached their Pane and could not change it.
+	// Failed counts events that attempted a write and could not.
 	Failed int `json:"failed"`
+	// Quiet counts events that reached their Pane and attempted no write. They
+	// are reported beside the two counts above and never inside them.
+	Quiet int `json:"quiet"`
 	// Opaque is the subset of Failed whose reason answers nothing.
 	Opaque int `json:"opaque"`
 	// PathBearing is the subset whose explanatory detail carries a filesystem
@@ -78,23 +94,31 @@ func (h aiIngestDeliveryHealth) Opaque() int {
 func projectAIIngestDeliveryHealth(entries []aiIngestLogEntry) aiIngestDeliveryHealth {
 	health := aiIngestDeliveryHealth{Observed: true}
 	delivered, failed, opaque := map[string]int{}, map[string]int{}, map[string]int{}
-	pathBearing := map[string]int{}
+	quiet, pathBearing := map[string]int{}, map[string]int{}
 	reasons := map[string]map[string]int{}
 	for _, entry := range entries {
 		source := strings.TrimSpace(entry.Source)
 		if !isAIIngestHookSource(source) || strings.TrimSpace(entry.Pane) == "" {
 			continue
 		}
+		// The path check covers every attributed record, not only the failures.
+		// A path can ride a quiet event's reason as easily as a failure's, and
+		// on this machine that is where one live inflow sits.
+		if aiIngestDetailCarriesAPath(entry.Reason) {
+			pathBearing[source]++
+		}
+		result := strings.TrimSpace(entry.Result)
+		if !slices.Contains(aiIngestDeliveryResults, result) && result != "error" {
+			quiet[source]++
+			continue
+		}
 		health.Records++
-		if strings.TrimSpace(entry.Result) != "error" {
+		if result != "error" {
 			delivered[source]++
 			continue
 		}
 		failed[source]++
 		reason := aiIngestReasonToken(entry.Reason)
-		if aiIngestDetailCarriesAPath(entry.Reason) {
-			pathBearing[source]++
-		}
 		if aiIngestReasonIsOpaque(reason) {
 			opaque[source]++
 			// An opaque reason is not recorded verbatim. It is the shape that
@@ -108,13 +132,14 @@ func projectAIIngestDeliveryHealth(entries []aiIngestLogEntry) aiIngestDeliveryH
 		reasons[source][reason]++
 	}
 	for _, source := range aiIngestAttributionSources {
-		if delivered[source] == 0 && failed[source] == 0 {
+		if delivered[source] == 0 && failed[source] == 0 && quiet[source] == 0 {
 			continue
 		}
 		health.Sources = append(health.Sources, aiIngestDeliverySource{
 			Source:      source,
 			Delivered:   delivered[source],
 			Failed:      failed[source],
+			Quiet:       quiet[source],
 			Opaque:      opaque[source],
 			PathBearing: pathBearing[source],
 			Reasons:     aiIngestDeliveryReasons(reasons[source]),
