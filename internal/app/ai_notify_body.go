@@ -160,11 +160,18 @@ func antigravityTerminationClassification(p antigravityHookPayload) string {
 	return "unknown"
 }
 
-func antigravityStopDiagnosticReason(p antigravityHookPayload) string {
+// antigravityStopDiagnosticReason names an unclassifiable termination without
+// quoting the provider's own wording for it.
+//
+// The wording used to be spliced in after this token. It is provider output, so
+// it carried whatever the provider chose to print -- an absolute path among it --
+// into a durable log. The classification is what a reader can count; the prose
+// was never aggregatable.
+func antigravityStopDiagnosticReason(p antigravityHookPayload) aiIngestReason {
 	if antigravityTerminationClassification(p) != "unknown" {
 		return ""
 	}
-	return "unknown termination reason: " + truncateRunes(strings.TrimSpace(p.TerminationReason), 80)
+	return aiIngestReasonTerminationUnknown
 }
 
 func joinAINotifyText(agent, category string, values ...string) string {

@@ -1987,10 +1987,16 @@ func TestIngestAntigravityPostToolUseRetainsErrorDiagnosticAndStaysQuiet(t *test
 	if err := cmd.Run([]string{"ingest", "log", "--json"}, &log, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"event":"PostToolUse"`, `"result":"quiet"`, `tool error: sanitized tool failure`} {
+	for _, want := range []string{`"event":"PostToolUse"`, `"result":"quiet"`, `"reason":"tool reported an error"`} {
 		if !strings.Contains(log.String(), want) {
 			t.Fatalf("log = %q, want %q", log.String(), want)
 		}
+	}
+	// The tool's own message stays out of the durable log. It is provider
+	// output, so it carries whatever the tool printed -- a path among it -- and
+	// the reason column holds one bounded token instead.
+	if strings.Contains(log.String(), "sanitized tool failure") {
+		t.Fatalf("log = %q, want the provider tool message withheld", log.String())
 	}
 }
 
@@ -2054,8 +2060,12 @@ func TestIngestAntigravityStopUnknownReasonStaysInfoWithDiagnostic(t *testing.T)
 	if err := cmd.Run([]string{"ingest", "log", "--json"}, &log, &bytes.Buffer{}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(log.String(), `"result":"notify"`) || !strings.Contains(log.String(), `"reason":"unknown termination reason: FUTURE_SAFE_REASON"`) {
+	if !strings.Contains(log.String(), `"result":"notify"`) || !strings.Contains(log.String(), `"reason":"unknown termination reason"`) {
 		t.Fatalf("log = %q, want noncritical unknown-reason diagnostic", log.String())
+	}
+	// The classification is kept; the provider's own wording for it is not.
+	if strings.Contains(log.String(), "FUTURE_SAFE_REASON") {
+		t.Fatalf("log = %q, want the provider termination wording withheld", log.String())
 	}
 }
 

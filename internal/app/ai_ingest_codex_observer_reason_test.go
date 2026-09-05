@@ -195,7 +195,7 @@ func journalReasons(entries []aiIngestLogEntry, kinds ...codexObserverTransition
 	for _, entry := range entries {
 		for _, kind := range kinds {
 			if entry.Event == string(kind) {
-				reasons = append(reasons, entry.Reason)
+				reasons = append(reasons, string(entry.Reason))
 			}
 		}
 	}
@@ -415,7 +415,7 @@ func TestCodexObserverJournalRecordsConnectDisconnectReconnectInOrder(t *testing
 	}
 	for index, want := range wantOrder {
 		entry := entries[index]
-		if entry.Event != string(want.event) || entry.Result != want.result || entry.Reason != string(want.reason) {
+		if entry.Event != string(want.event) || entry.Result != want.result || string(entry.Reason) != string(want.reason) {
 			t.Fatalf("record %d = %+v, want %s/%s/%s", index, entry, want.event, want.result, want.reason)
 		}
 		if entry.Source != aiIngestCodexObserverSource || entry.Pane != identity.RuntimeID ||
@@ -473,7 +473,7 @@ func TestCodexObserverJournalRecordFieldsAreWhitelisted(t *testing.T) {
 	// carried through into the log.
 	writer.RecordObserverTransition(identity, codexObserverTransitionConnected, "4242-7", codexObserverReason("PRIVATE-CAUSE"))
 	entries = journal.snapshot()
-	if last := entries[len(entries)-1]; last.Reason != string(codexObserverReasonUnrecorded) {
+	if last := entries[len(entries)-1]; string(last.Reason) != string(codexObserverReasonUnrecorded) {
 		t.Fatalf("out-of-vocabulary reason reached the log as %q", last.Reason)
 	}
 	// An unnamed transition is refused outright.

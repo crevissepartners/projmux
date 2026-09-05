@@ -95,16 +95,16 @@ type aiPaneMatchRow struct {
 }
 
 type aiIngestLogEntry struct {
-	At        string `json:"at"`
-	Source    string `json:"source"`
-	Event     string `json:"event,omitempty"`
-	Result    string `json:"result"`
-	Reason    string `json:"reason,omitempty"`
-	Pane      string `json:"pane,omitempty"`
-	CWD       string `json:"cwd,omitempty"`
-	ThreadID  string `json:"thread_id,omitempty"`
-	SessionID string `json:"session_id,omitempty"`
-	TurnID    string `json:"turn_id,omitempty"`
+	At        string         `json:"at"`
+	Source    string         `json:"source"`
+	Event     string         `json:"event,omitempty"`
+	Result    string         `json:"result"`
+	Reason    aiIngestReason `json:"reason,omitempty"`
+	Pane      string         `json:"pane,omitempty"`
+	CWD       string         `json:"cwd,omitempty"`
+	ThreadID  string         `json:"thread_id,omitempty"`
+	SessionID string         `json:"session_id,omitempty"`
+	TurnID    string         `json:"turn_id,omitempty"`
 	// Epoch is the observer epoch label a lifecycle transition belongs to. It
 	// is what makes two adjacent records comparable: the same label twice is
 	// one epoch reporting twice, a new label is a new connection.
@@ -332,12 +332,12 @@ type bellPaneInfo struct {
 func (c *aiCommand) ingestBell(paneID string) error {
 	paneID = strings.TrimSpace(paneID)
 	if paneID == "" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "ignored", Reason: "blank pane"})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "ignored", Reason: aiIngestReasonBlankPane})
 		return nil
 	}
 	info, ok := c.readBellPaneInfo(paneID)
 	if !ok {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "ignored", Reason: "pane not found", Pane: paneID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "ignored", Reason: aiIngestReasonPaneNotFound, Pane: paneID})
 		return nil
 	}
 	if c.duplicateBellRecent(info.Pane) {
@@ -346,7 +346,7 @@ func (c *aiCommand) ingestBell(paneID string) error {
 	}
 	store, err := c.aiNotifyStore()
 	if err != nil {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "error", Reason: err.Error(), Pane: info.Pane})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "error", Reason: aiIngestFailureReason(aiIngestReasonNotifyStoreFailed, err), Pane: info.Pane})
 		return err
 	}
 	text := composeBellNotifyText(info)
@@ -388,7 +388,7 @@ func (c *aiCommand) ingestBell(paneID string) error {
 			Pane:    info.Pane,
 		},
 	}); err != nil {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "error", Reason: err.Error(), Pane: info.Pane})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "tmux-bell", Event: "bell", Result: "error", Reason: aiIngestFailureReason(aiIngestReasonNotifyPushFailed, err), Pane: info.Pane})
 		return err
 	}
 	c.publishNotifyQueueRefreshBestEffort()
@@ -562,7 +562,7 @@ func formatAIIngestLogEntry(entry aiIngestLogEntry) string {
 		{"thread", entry.ThreadID},
 		{"session", entry.SessionID},
 		{"turn", entry.TurnID},
-		{"reason", entry.Reason},
+		{"reason", string(entry.Reason)},
 	} {
 		if strings.TrimSpace(field.value) != "" {
 			parts = append(parts, field.key+"="+field.value)

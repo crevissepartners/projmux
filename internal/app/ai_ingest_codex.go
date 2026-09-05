@@ -30,13 +30,13 @@ type codexHookPayload struct {
 func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 	payload, err := parseCodexHookPayload(data)
 	if err != nil {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Result: "error", Reason: err.Error()})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Result: "error", Reason: aiIngestFailureReason(aiIngestReasonHookPayloadInvalid, err)})
 		return err
 	}
 
 	paneID, nativeRouted, nativeAllowed, nativeReason := c.routeNativeCodexHook(payload.matchThreadID())
 	if nativeRouted && !nativeAllowed {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: nativeReason, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestRecordReason(nativeReason), ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
 		return nil
 	}
 	matchReason := ""
@@ -50,26 +50,26 @@ func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 		})
 	}
 	if paneID == "" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: matchReason, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestRecordReason(matchReason), CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	}
 	authority, authorityErr := c.muxRunner().ShowPaneOption(context.Background(), paneID, aiPaneCodexAuthorityOption)
 	if nativeRouted && (authorityErr != nil || authority != codexAuthorityHook) {
-		reason := "native authority unavailable"
+		reason := aiIngestReasonNativeAuthorityFailed
 		if authorityErr == nil {
-			reason = "provider-control-plane authority: " + authority
+			reason = aiIngestAuthorityReason(authority)
 		}
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: reason, Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
 		return nil
 	}
 	if !nativeRouted && codexAuthoritySuppressesHooks(authority) {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: "provider-control-plane authority: " + authority, Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestAuthorityReason(authority), Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
 		return nil
 	}
 	if nativeRouted {
 		release, err := c.acquireCodexAuthorityFence(c.env(internalActivationPaneUIDEnv))
 		if err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonAuthorityFenceFailed, err), Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
 			return err
 		}
 		defer release()
@@ -78,16 +78,16 @@ func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 		// Registry, tmux, queue, or desktop write after that invalidation.
 		authority, err = c.muxRunner().ShowPaneOption(context.Background(), paneID, aiPaneCodexAuthorityOption)
 		if err != nil || authority != codexAuthorityHook {
-			reason := "native authority unavailable"
+			reason := aiIngestReasonNativeAuthorityFailed
 			if err == nil {
-				reason = "provider-control-plane authority: " + authority
+				reason = aiIngestAuthorityReason(authority)
 			}
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: reason, Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
 			return nil
 		}
 	}
 	if allowed, reason := c.nativeCodexHookAllowed(paneID, payload.matchThreadID()); !allowed {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: reason, Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestRecordReason(reason), Pane: paneID, ThreadID: payload.matchThreadID(), TurnID: payload.TurnID})
 		return nil
 	}
 	c.stageCodexBinding(paneID, payload.matchThreadID(), payload.TurnID)
@@ -98,7 +98,7 @@ func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 	switch payload.EventName {
 	case "UserPromptSubmit":
 		if action.Action == aiHookActionQuiet {
-			c.quietCodexHook(paneID, payload, aiHookQuietReason(action))
+			c.quietCodexHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 			return nil
 		}
 		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
@@ -106,7 +106,7 @@ func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 			Metadata:  metadata,
 			BadgeKind: aiBadgeKindInProgress,
 		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 			return err
 		}
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "state", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
@@ -123,11 +123,11 @@ func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 			Force:     true,
 			BadgeKind: aiBadgeKindResponseComplete,
 		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonSemanticDeliverFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 			return err
 		}
 		result, reason := codexHookSemanticLogResult(policy, rawOverride)
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: result, Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: result, Reason: aiIngestRecordReason(reason), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	case "PermissionRequest":
 		c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
@@ -141,40 +141,40 @@ func (c *aiCommand) ingestCodexHook(data []byte, explicitPane string) error {
 			Force:     true,
 			BadgeKind: aiBadgeKindApprovalRequired,
 		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonSemanticDeliverFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 			return err
 		}
 		result, reason := codexHookSemanticLogResult(policy, rawOverride)
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: result, Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: result, Reason: aiIngestRecordReason(reason), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 		return nil
 	case "SessionStart":
 		if _, _, err := c.persistManagedAgentStartupReadiness(paneID, aiModeCodex); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonReadinessWriteFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 			return err
 		}
 		if c.shouldPushGenericCodexHookNotify(action) {
 			if err := c.pushGenericCodexHookNotifyWithoutActivation(paneID, payload); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonNotifyPushFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 				return err
 			}
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 			return nil
 		}
-		c.quietCodexHook(paneID, payload, aiHookNoHandlerReason(action))
+		c.quietCodexHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
 	case "PreToolUse", "PostToolUse", "PreCompact", "PostCompact":
 		if c.shouldPushGenericCodexHookNotify(action) {
 			if err := c.pushGenericCodexHookNotify(paneID, payload); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
+				c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonNotifyPushFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 				return err
 			}
 			c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "notify", Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 			return nil
 		}
-		c.quietCodexHook(paneID, payload, aiHookNoHandlerReason(action))
+		c.quietCodexHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
 	default:
-		c.quietCodexHook(paneID, payload, aiHookNoHandlerReason(action))
+		c.quietCodexHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
 	}
 }
@@ -463,7 +463,7 @@ func (c *aiCommand) applyCodexHookSemanticDelivery(paneID string, interaction co
 	return nil
 }
 
-func (c *aiCommand) quietCodexHook(paneID string, payload codexHookPayload, reason string) {
+func (c *aiCommand) quietCodexHook(paneID string, payload codexHookPayload, reason aiIngestReason) {
 	c.markAIHookPane(paneID, aiModeCodex, payload.CWD, payload.matchThreadID(), payload.SessionID, "")
 	c.appendAIIngestLog(aiIngestLogEntry{Source: "codex-hook", Event: payload.EventName, Result: "quiet", Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.matchThreadID(), SessionID: payload.SessionID, TurnID: payload.TurnID})
 }
