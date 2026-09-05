@@ -437,7 +437,7 @@ func (c *aiCommand) duplicateBellRecent(paneID string) bool {
 }
 
 func (c *aiCommand) recordBellNotification(paneID string) {
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiBellDedupeOption, fmt.Sprintf("%d", c.now().Unix()))
+	c.recordAIPaneOption(paneID, aiBellDedupeOption, fmt.Sprintf("%d", c.now().Unix()))
 }
 
 func composeBellNotifyText(info bellPaneInfo) string {
@@ -471,6 +471,10 @@ func (c *aiCommand) aiIngestLogPath() (string, error) {
 }
 
 func (c *aiCommand) appendAIIngestLog(entry aiIngestLogEntry) {
+	// Both sinks below read the same record, so the reflection outcome is
+	// folded in first: a hook whose Pane writes did not land must not reach
+	// either of them still calling itself a delivery.
+	entry = c.honestAIIngestResult(entry)
 	// The legacy file remains the compatibility surface. Phase 5 projects only
 	// anomalous, closed classifications into the common journal independently
 	// of whether this best-effort legacy append succeeds.
@@ -568,7 +572,7 @@ func formatAIIngestLogEntry(entry aiIngestLogEntry) string {
 }
 
 func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, transcriptPath string) {
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneHookActiveOption, "1")
+	c.recordAIPaneOption(paneID, aiPaneHookActiveOption, "1")
 	// A hook is observation, not launch authorship. Only an exact current
 	// Agent->Pane Registry binding may receive the managed/provider projection;
 	// an unbound Window shell remains a transient hook observation and can never
@@ -576,23 +580,23 @@ func (c *aiCommand) markAIHookPane(paneID, agent, cwd, threadID, sessionID, tran
 	binding, owned, bindingErr := c.managedAgentBindingForPane(paneID)
 	exactOwnedProvider := bindingErr == nil && owned && coremetadata.NormalizeProvider(agent) == binding.agent.Spec.Provider
 	if exactOwnedProvider {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneManagedOption, "1")
+		c.recordAIPaneOption(paneID, aiPaneManagedOption, "1")
 		if agent != "" {
-			_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneAgentOption, agent)
+			c.recordAIPaneOption(paneID, aiPaneAgentOption, agent)
 		}
 	}
 	if cwd != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneContextOption, cwd)
+		c.recordAIPaneOption(paneID, aiPaneContextOption, cwd)
 	}
 	if threadID != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneThreadIDOption, threadID)
+		c.recordAIPaneOption(paneID, aiPaneThreadIDOption, threadID)
 	}
 	if sessionID != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneSessionIDOption, sessionID)
+		c.recordAIPaneOption(paneID, aiPaneSessionIDOption, sessionID)
 		c.writeAIHookResumeMetadata(paneID, sessionID)
 	}
 	if transcriptPath = strings.TrimSpace(transcriptPath); transcriptPath != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTranscriptPathOption, transcriptPath)
+		c.recordAIPaneOption(paneID, aiPaneTranscriptPathOption, transcriptPath)
 	}
 	// The pane options above are the live routing index and stay exactly as
 	// they were. This is the second, additive home: the durable conversation
@@ -613,9 +617,9 @@ func (c *aiCommand) writeAIHookResumeMetadata(paneID, resumeID string) {
 	if resumeID == "" {
 		return
 	}
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneResumeIDOption, resumeID)
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneResumeSourceOption, "hook")
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneResumeUpdatedAtOption, c.now().UTC().Format(time.RFC3339))
+	c.recordAIPaneOption(paneID, aiPaneResumeIDOption, resumeID)
+	c.recordAIPaneOption(paneID, aiPaneResumeSourceOption, "hook")
+	c.recordAIPaneOption(paneID, aiPaneResumeUpdatedAtOption, c.now().UTC().Format(time.RFC3339))
 }
 
 // matchAIPane resolves the Pane a hook event belongs to and, when it cannot,

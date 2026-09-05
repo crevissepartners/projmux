@@ -139,6 +139,12 @@ type aiCommand struct {
 	agentObservationMu      sync.Mutex
 	pendingAgentSessionRefs map[string]coremetadata.AgentSessionObservation
 	pendingCodexBindings    map[string]coremetadata.CodexActivationObservation
+	// A reflection write that did not land is remembered here for as long as
+	// this invocation lasts, because the caller that fails is often a void
+	// helper while the surface an operator reads is the ingest record written
+	// later. See honestAIIngestResult.
+	paneWriteMu      sync.Mutex
+	paneWriteFailure string
 }
 
 func newAICommand() *aiCommand {
@@ -366,32 +372,38 @@ func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID stri
 			}
 		}
 	}
+	// The reflection writes below stay best-effort: every one of them is still
+	// attempted in the same order even after one fails, so a Pane that accepts
+	// some options ends up exactly as it did before. What changed is the
+	// ending -- the first failure is carried out of here instead of dropped, so
+	// the ingest record cannot call this a delivery.
+	var writes aiPaneWriteOutcome
 	switch state {
 	case "thinking":
 		if !managed {
-			_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "thinking")
-			c.setAIPaneBadgeKind(paneID, badgeKind)
-			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateBusy)
+			writes.record(c.setAIPaneOption(paneID, aiPaneStateOption, "thinking"))
+			writes.record(c.setAIPaneBadgeKind(paneID, badgeKind))
+			writes.record(c.setAIPaneOption(paneID, attentionStateOption, attentionStateBusy))
 		}
-		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
-		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
+		writes.record(c.clearAIPaneOption(paneID, attentionAckOption))
+		writes.record(c.clearAIPaneOption(paneID, attentionFocusArmedOption))
 		c.notifyProducer().AckReplyReady(notifyIn)
 	case "waiting":
 		if !managed {
-			_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "waiting")
-			c.setAIPaneBadgeKind(paneID, badgeKind)
+			writes.record(c.setAIPaneOption(paneID, aiPaneStateOption, "waiting"))
+			writes.record(c.setAIPaneBadgeKind(paneID, badgeKind))
 		}
-		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionAckOption)
+		writes.record(c.clearAIPaneOption(paneID, attentionAckOption))
 		visible := c.paneVisibleToClient(paneID)
 		if visible {
 			// Badge follows visibility only: pane is already in front of the
 			// user, so auto-ack the reply badge regardless of Force.
-			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
-			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionAckOption, "1")
-			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
+			writes.record(c.clearAIPaneOption(paneID, attentionStateOption))
+			writes.record(c.setAIPaneOption(paneID, attentionAckOption, "1"))
+			writes.record(c.clearAIPaneOption(paneID, attentionFocusArmedOption))
 		} else {
-			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionStateOption, attentionStateReply)
-			_ = c.run("tmux", "set-option", "-p", "-t", paneID, attentionFocusArmedOption, "1")
+			writes.record(c.setAIPaneOption(paneID, attentionStateOption, attentionStateReply))
+			writes.record(c.setAIPaneOption(paneID, attentionFocusArmedOption, "1"))
 		}
 		// Force controls notification delivery, not the badge.
 		if dispatchQueue && (notifyIn.Force || !visible) {
@@ -408,16 +420,16 @@ func (c *aiCommand) applyAIStatusInternalWithActivationPolicy(state, paneID stri
 		}
 	case "idle", "":
 		if !managed {
-			_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "idle")
-			c.setAIPaneBadgeKind(paneID, badgeKind)
-			_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionStateOption)
+			writes.record(c.setAIPaneOption(paneID, aiPaneStateOption, "idle"))
+			writes.record(c.setAIPaneBadgeKind(paneID, badgeKind))
+			writes.record(c.clearAIPaneOption(paneID, attentionStateOption))
 		}
-		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, attentionFocusArmedOption)
+		writes.record(c.clearAIPaneOption(paneID, attentionFocusArmedOption))
 		c.notifyProducer().AckReplyReady(notifyIn)
 	default:
 		return fmt.Errorf("unknown ai status state: %s", state)
 	}
-	return nil
+	return writes.failure()
 }
 
 func (c *aiCommand) projectManagedAgentInteraction(paneID string, kind coremetadata.AgentInteractionKind) error {
@@ -459,13 +471,12 @@ func semanticInteractionForAIStatus(state, badge string) coremetadata.AgentInter
 	}
 }
 
-func (c *aiCommand) setAIPaneBadgeKind(paneID, kind string) {
+func (c *aiCommand) setAIPaneBadgeKind(paneID, kind string) error {
 	kind = normalizeAIBadgeKind(kind)
 	if kind == "" {
-		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, aiPaneBadgeKindOption)
-		return
+		return c.clearAIPaneOption(paneID, aiPaneBadgeKindOption)
 	}
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneBadgeKindOption, kind)
+	return c.setAIPaneOption(paneID, aiPaneBadgeKindOption, kind)
 }
 
 func (c *aiCommand) runNotify(args []string, stderr io.Writer) error {
@@ -508,10 +519,11 @@ func (c *aiCommand) resetAINotification(paneID string) error {
 	if strings.TrimSpace(paneID) == "" {
 		return nil
 	}
-	_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, "@projmux_desktop_notified")
-	_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, "@projmux_desktop_notification_key")
-	_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, "@projmux_desktop_notification_at")
-	return nil
+	var writes aiPaneWriteOutcome
+	writes.record(c.clearAIPaneOption(paneID, "@projmux_desktop_notified"))
+	writes.record(c.clearAIPaneOption(paneID, "@projmux_desktop_notification_key"))
+	writes.record(c.clearAIPaneOption(paneID, "@projmux_desktop_notification_at"))
+	return writes.failure()
 }
 
 func (c *aiCommand) notifyAI(paneID string) error {
@@ -779,9 +791,10 @@ func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 			}
 			return nil
 		}
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, text)
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicManualOption, "on")
-		return nil
+		var writes aiPaneWriteOutcome
+		writes.record(c.setAIPaneOption(paneID, aiPaneTopicOption, text))
+		writes.record(c.setAIPaneOption(paneID, aiPaneTopicManualOption, "on"))
+		return writes.failure()
 	case "clear":
 		rest, paneID, err := parseAITopicArgs(args[1:])
 		if err != nil {
@@ -806,9 +819,10 @@ func (c *aiCommand) runTopic(args []string, stdout, stderr io.Writer) error {
 			}
 			return nil
 		}
-		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, aiPaneTopicOption)
-		_ = c.run("tmux", "set-option", "-p", "-u", "-t", paneID, aiPaneTopicManualOption)
-		return nil
+		var writes aiPaneWriteOutcome
+		writes.record(c.clearAIPaneOption(paneID, aiPaneTopicOption))
+		writes.record(c.clearAIPaneOption(paneID, aiPaneTopicManualOption))
+		return writes.failure()
 	case "get":
 		rest, paneID, err := parseAITopicArgs(args[1:])
 		if err != nil {
@@ -2514,7 +2528,7 @@ func (c *aiCommand) BindNativeCodexPane(paneID, contextDir, title, threadID stri
 	c.configureAIPane(paneID, aiModeCodex, contextDir, title, aiPaneResumeMetadata{
 		sessionID: threadID, resumeID: threadID, source: "app-server", updatedAt: c.nowTime().UTC(),
 	})
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneThreadIDOption, threadID)
+	c.recordAIPaneOption(paneID, aiPaneThreadIDOption, threadID)
 }
 
 func (c *aiCommand) BindNativeCodexPaneOnRoute(
@@ -2776,12 +2790,12 @@ func (c *aiCommand) configureAIPane(paneID, mode, contextDir, title string, resu
 	if paneID == "" {
 		return
 	}
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneManagedOption, "1")
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneAgentOption, normalizeAIMode(mode))
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneLaunchAuthorshipOption, "1")
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneContextOption, strings.TrimSpace(contextDir))
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, displayAITopic(title))
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneStateOption, "idle")
+	c.recordAIPaneOption(paneID, aiPaneManagedOption, "1")
+	c.recordAIPaneOption(paneID, aiPaneAgentOption, normalizeAIMode(mode))
+	c.recordAIPaneOption(paneID, aiPaneLaunchAuthorshipOption, "1")
+	c.recordAIPaneOption(paneID, aiPaneContextOption, strings.TrimSpace(contextDir))
+	c.recordAIPaneOption(paneID, aiPaneTopicOption, displayAITopic(title))
+	c.recordAIPaneOption(paneID, aiPaneStateOption, "idle")
 	c.configureAIPaneResumeMetadata(paneID, resume)
 }
 
@@ -3011,7 +3025,7 @@ func writeAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, 
 
 func (c *aiCommand) configureAIPaneResumeMetadata(paneID string, resume aiPaneResumeMetadata) {
 	for _, option := range aiPaneResumeOptions(resume) {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, option[0], option[1])
+		c.recordAIPaneOption(paneID, option[0], option[1])
 	}
 }
 
@@ -3415,17 +3429,17 @@ func (c *aiCommand) bootstrapAIWatchMetadata(paneID string, info aiPaneInfo) aiP
 		return info
 	}
 	if strings.TrimSpace(info.agent) == "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneManagedOption, "1")
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneAgentOption, agent)
+		c.recordAIPaneOption(paneID, aiPaneManagedOption, "1")
+		c.recordAIPaneOption(paneID, aiPaneAgentOption, agent)
 		info.agent = agent
 	}
 	if strings.TrimSpace(info.context) == "" && strings.TrimSpace(info.path) != "" {
-		_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneContextOption, strings.TrimSpace(info.path))
+		c.recordAIPaneOption(paneID, aiPaneContextOption, strings.TrimSpace(info.path))
 		info.context = strings.TrimSpace(info.path)
 	}
 	if strings.TrimSpace(info.topic) == "" && !isTruthyTmuxOption(info.topicManual) {
 		if topic := bestAITopic(info.title, info.capture); topic != "" {
-			_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic)
+			c.recordAIPaneOption(paneID, aiPaneTopicOption, topic)
 			info.topic = topic
 		}
 	}
@@ -3499,7 +3513,7 @@ func (c *aiCommand) recordAITopic(paneID, topic, manual string) {
 	if paneID == "" || topic == "" || isTruthyTmuxOption(manual) {
 		return
 	}
-	_ = c.run("tmux", "set-option", "-p", "-t", paneID, aiPaneTopicOption, topic)
+	c.recordAIPaneOption(paneID, aiPaneTopicOption, topic)
 }
 
 func isTruthyTmuxOption(value string) bool {

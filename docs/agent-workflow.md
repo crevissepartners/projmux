@@ -967,6 +967,48 @@ conversation the Registry already records.
   `--pane` produces a record naming its own Pane, and an unclaimed conversation
   produces a record naming why it has none.
 
+### Hook reflection write tests
+
+Attribution and reflection are two layers. A hook that found its Pane still has
+to write the event onto it, and every one of those tmux writes used to discard
+its error — 47 of them across `internal/app/ai.go` and
+`internal/app/ai_ingest.go`. A hook whose route to tmux was broken therefore
+produced a `result:"state"` record: the log reported a delivery that never
+happened, which is a stronger failure than an unattributed hook, because an
+unattributed hook at least says so.
+
+These tests own the reporting, not the repair. Retry, recovery, and the route
+decision itself are separate concerns.
+
+- `TestHookRecordRefusesToReportADeliveryThePaneWritesMissed` owns the record in
+  the three shapes an operator meets: nothing lands, only markers were ever
+  written, and — the live one — the reflection lands through a working route
+  while the markers written without it do not. All three end as `error` with the
+  bounded reason that names which kind of write failed, and the Pane they were
+  attributed to stays in the record.
+- `TestHookRecordIsUnchangedWhenThePaneWritesLand` owns the normal path. Same
+  result word, same empty reason, and the same number of attempted writes as the
+  broken route — the writes stay best-effort and the sequence of attempts did
+  not change.
+- `TestPaneWriteFailureReasonIsAClosedTokenCarryingNoOpaqueValue` owns the
+  vocabulary. There are two tokens and the split is structural — the reflection
+  of the event, whose failure its caller reports, and the markers laid down
+  alongside it, whose callers have no error channel — because those two really
+  do fail apart. tmux answers a rejected write with an exit status and a socket
+  path; the classification keeps both out of either token, and the log file is
+  checked for the fragments directly.
+- `TestObserverRecordsAreNotColouredByAReflectionWriteFailure` owns the
+  boundary. The observer journal writes into the same file from a process that
+  lives for hours, and its records never inherit a failure this process saw on
+  another path.
+- `TestHookIngestSourcesNeverDiscardAReflectionWriteError` is the machine check
+  that keeps the fix. It parses `ai.go`, `ai_ingest.go`, and `ai_pane_write.go`
+  and fails on any tmux write whose error is dropped, because that defect is
+  invisible by construction: the record it produces claims the hook succeeded.
+  Its scan list is those three sources and its name says so; the package-wide
+  equivalent belongs to the recurrence gate, so green here is not a claim about
+  any other file.
+
 ### Settled Codex authority admission tests
 
 `aiCodexLifecycleSink.SetAuthority` publishes one native authority transition as
