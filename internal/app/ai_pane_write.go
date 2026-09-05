@@ -127,7 +127,11 @@ func (c *aiCommand) honestAIIngestResult(entry aiIngestLogEntry) aiIngestLogEntr
 		return entry
 	}
 	entry.Result = "error"
-	entry.Reason = reason
+	// The write path names its own bounded token, and it still passes through
+	// admission: this is the one boundary where a reason arrives as a plain
+	// string, and letting it through unchecked would make the helper a way
+	// around the vocabulary rather than a member of it.
+	entry.Reason = aiIngestRecordReason(reason)
 	return entry
 }
 

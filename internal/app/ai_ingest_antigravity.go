@@ -59,7 +59,7 @@ type antigravityHookPayload struct {
 func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent, explicitPane string) error {
 	payload, err := parseAntigravityHookPayload(data, explicitEvent)
 	if err != nil {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Result: "error", Reason: err.Error()})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Result: "error", Reason: aiIngestFailureReason(aiIngestReasonHookPayloadInvalid, err)})
 		return err
 	}
 
@@ -70,7 +70,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent, explicitPa
 		ThreadID:     payload.ConversationID,
 	})
 	if paneID == "" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "ignored", Reason: matchReason, CWD: payload.CWD, ThreadID: payload.ConversationID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestRecordReason(matchReason), CWD: payload.CWD, ThreadID: payload.ConversationID})
 		return nil
 	}
 	defer c.flushPendingAgentSessionRef(paneID)
@@ -90,7 +90,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent, explicitPa
 	switch payload.EventName {
 	case "Stop":
 		if action.Action == aiHookActionQuiet {
-			c.quietAntigravityHook(paneID, payload, aiHookQuietReason(action))
+			c.quietAntigravityHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 			return nil
 		}
 		body := formatAntigravityStopNotifyBody(payload)
@@ -103,10 +103,10 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent, explicitPa
 				Force:     true,
 				BadgeKind: aiBadgeKindForNotifyCategory(body.Category),
 			}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 				return err
 			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: aiIngestRecordReason(aiHookStateReason(action)), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 			return nil
 		}
 		if err := c.applyAIStatusWithNotify("waiting", paneID, attentionNotifyInput{
@@ -117,7 +117,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent, explicitPa
 			Force:     true,
 			BadgeKind: aiBadgeKindForNotifyCategory(body.Category),
 		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 			return err
 		}
 		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "notify", Reason: antigravityStopDiagnosticReason(payload), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
@@ -125,7 +125,7 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent, explicitPa
 	case "Statusline":
 		if payload.ToolConfirmationPending {
 			if action.Action == aiHookActionQuiet {
-				c.quietAntigravityHook(paneID, payload, aiHookQuietReason(action))
+				c.quietAntigravityHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 				return nil
 			}
 			body := formatAntigravityApprovalNotifyBody(payload)
@@ -138,16 +138,16 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent, explicitPa
 			}
 			if action.Action == aiHookActionState {
 				if err := c.applyAIStatusStateOnly("waiting", paneID, input); err != nil {
-					c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+					c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 					return err
 				}
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: aiHookStateReason(action), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: aiIngestRecordReason(aiHookStateReason(action)), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 				return nil
 			}
 			// Stable queue ID replaces repeated approval snapshots, while the
 			// desktop path uses its normal time-window dedupe (Force=false).
 			if err := c.applyAIStatusStateOnly("waiting", paneID, input); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 				return err
 			}
 			_ = c.notifyAIWithInput(paneID, input)
@@ -160,50 +160,54 @@ func (c *aiCommand) ingestAntigravityHook(data []byte, explicitEvent, explicitPa
 		switch strings.ToLower(strings.TrimSpace(payload.AgentState)) {
 		case "thinking", "working", "tool_use":
 			if c.preserveAntigravityTerminalState(paneID) {
-				c.quietAntigravityHook(paneID, payload, "late busy statusline; preserving existing completion or approval state")
+				c.quietAntigravityHook(paneID, payload, aiIngestReasonStatuslineLate)
 				return nil
 			}
 			if err := c.applyAIStatusStateOnly("thinking", paneID, attentionNotifyInput{Metadata: metadata, BadgeKind: aiBadgeKindInProgress}); err != nil {
-				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+				c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 				return err
 			}
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: "statusline agent_state is busy", Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: aiIngestReasonStatuslineBusy, Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 			return nil
 		case "idle":
 			// Idle is observational only. Stop/completion or approval attention
 			// must not be cleared by a later quiet statusline refresh.
-			c.quietAntigravityHook(paneID, payload, "statusline agent_state is idle; preserving existing completion or attention state")
+			c.quietAntigravityHook(paneID, payload, aiIngestReasonStatuslineIdle)
 			return nil
 		default:
-			c.quietAntigravityHook(paneID, payload, aiHookQuietReason(action))
+			c.quietAntigravityHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 			return nil
 		}
 	case "PreInvocation":
 		if action.Action == aiHookActionQuiet {
-			c.quietAntigravityHook(paneID, payload, aiHookQuietReason(action))
+			c.quietAntigravityHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 			return nil
 		}
 		if err := c.applyAIStatusStateOnly("thinking", paneID, attentionNotifyInput{
 			Metadata:  metadata,
 			BadgeKind: aiBadgeKindInProgress,
 		}); err != nil {
-			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: err.Error(), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+			c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "error", Reason: aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err), Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 			return err
 		}
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: "invocation started", Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "state", Reason: aiIngestReasonInvocationStart, Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 		return nil
 	case "PostInvocation":
-		c.quietAntigravityHook(paneID, payload, aiHookNoHandlerReason(action))
+		c.quietAntigravityHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
 	case "PostToolUse":
-		reason := aiHookNoHandlerReason(action)
+		// A tool failure is the more specific cause, so it replaces the
+		// no-handler token rather than being prefixed to it. The provider's own
+		// error text is dropped: it is the shape that carried an absolute path
+		// into this log, and the reason column holds one bounded token.
+		reason := aiIngestRecordReason(aiHookNoHandlerReason(action))
 		if payload.Error != "" {
-			reason = "tool error: " + truncateRunes(payload.Error, 160) + "; " + reason
+			reason = aiIngestReasonToolError
 		}
 		c.quietAntigravityHook(paneID, payload, reason)
 		return nil
 	default:
-		c.quietAntigravityHook(paneID, payload, aiHookNoHandlerReason(action))
+		c.quietAntigravityHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
 	}
 }
@@ -281,7 +285,7 @@ func (c *aiCommand) usageStateDir() (string, error) {
 	return filepath.Join(paths.StateDir, "usage"), nil
 }
 
-func (c *aiCommand) quietAntigravityHook(paneID string, payload antigravityHookPayload, reason string) {
+func (c *aiCommand) quietAntigravityHook(paneID string, payload antigravityHookPayload, reason aiIngestReason) {
 	c.markAIHookPane(paneID, aiModeAntigravity, payload.CWD, payload.ConversationID, payload.ConversationID, payload.TranscriptPath)
 	c.appendAIIngestLog(aiIngestLogEntry{Source: "antigravity-hook", Event: payload.EventName, Result: "quiet", Reason: reason, Pane: paneID, CWD: payload.CWD, ThreadID: payload.ConversationID})
 }

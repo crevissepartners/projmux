@@ -36,7 +36,7 @@ type claudeHookPayload struct {
 func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	payload, err := parseClaudeHookPayload(data)
 	if err != nil {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Result: "error", Reason: err.Error()})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Result: "error", Reason: aiIngestFailureReason(aiIngestReasonHookPayloadInvalid, err)})
 		return err
 	}
 
@@ -47,7 +47,7 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 		SessionID:    payload.SessionID,
 	})
 	if paneID == "" {
-		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "ignored", Reason: matchReason, CWD: payload.CWD, SessionID: payload.SessionID})
+		c.appendAIIngestLog(aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: "ignored", Reason: aiIngestRecordReason(matchReason), CWD: payload.CWD, SessionID: payload.SessionID})
 		return nil
 	}
 	defer c.flushPendingAgentSessionRef(paneID)
@@ -59,10 +59,10 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	switch payload.EventName {
 	case "SessionStart":
 		if _, _, err := c.persistManagedAgentStartupReadiness(paneID, aiModeClaude); err != nil {
-			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", err.Error()))
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonReadinessWriteFailed, err)))
 			return err
 		}
-		c.quietClaudeHook(paneID, payload, aiHookNoHandlerReason(action))
+		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
 	case "UserPromptSubmit":
 		return c.ingestClaudeUserPromptSubmit(paneID, payload, metadata, action)
@@ -77,26 +77,26 @@ func (c *aiCommand) ingestClaudeHook(data []byte, explicitPane string) error {
 	case "SubagentStop":
 		return c.ingestClaudeSubagentStop(paneID, payload, metadata, action)
 	case "PreToolUse", "PostToolUse", "PostToolUseFailure", "PostToolBatch", "PermissionDenied", "UserPromptExpansion", "SubagentStart", "PreCompact", "PostCompact", "SessionEnd", "Setup", "TaskCreated", "TaskCompleted", "Elicitation", "ElicitationResult", "ConfigChange", "InstructionsLoaded", "WorktreeCreate", "WorktreeRemove", "CwdChanged", "FileChanged":
-		c.quietClaudeHook(paneID, payload, aiHookNoHandlerReason(action))
+		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
 	case "TeammateIdle":
 		return c.ingestClaudeTeammateIdle(paneID, payload, metadata, action)
 	default:
-		c.quietClaudeHook(paneID, payload, aiHookNoHandlerReason(action))
+		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookNoHandlerReason(action)))
 		return nil
 	}
 }
 
 func (c *aiCommand) ingestClaudeUserPromptSubmit(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution) error {
 	if action.Action == aiHookActionQuiet {
-		c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
+		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 		return nil
 	}
 	if err := c.applyAIStatusWithNotify("thinking", paneID, attentionNotifyInput{
 		Metadata:  metadata,
 		BadgeKind: aiBadgeKindInProgress,
 	}); err != nil {
-		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", err.Error()))
+		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err)))
 		return err
 	}
 	c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "state", ""))
@@ -105,7 +105,7 @@ func (c *aiCommand) ingestClaudeUserPromptSubmit(paneID string, payload claudeHo
 
 func (c *aiCommand) ingestClaudeNotification(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution) error {
 	if action.Action == aiHookActionQuiet {
-		c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
+		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 		return nil
 	}
 	body := formatClaudeNotificationNotifyBody(payload)
@@ -121,7 +121,7 @@ func (c *aiCommand) ingestClaudeNotification(paneID string, payload claudeHookPa
 
 func (c *aiCommand) ingestClaudePermissionRequest(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution) error {
 	if action.Action == aiHookActionQuiet {
-		c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
+		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 		return nil
 	}
 	body := formatClaudePermissionNotifyBody(payload)
@@ -137,7 +137,7 @@ func (c *aiCommand) ingestClaudePermissionRequest(paneID string, payload claudeH
 
 func (c *aiCommand) ingestClaudeStop(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution) error {
 	if action.Action == aiHookActionQuiet {
-		c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
+		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 		return nil
 	}
 	message := readClaudeTranscriptLastAssistantText(payload.TranscriptPath)
@@ -154,7 +154,7 @@ func (c *aiCommand) ingestClaudeStop(paneID string, payload claudeHookPayload, m
 
 func (c *aiCommand) ingestClaudeStopFailure(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution) error {
 	if action.Action == aiHookActionQuiet {
-		c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
+		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 		return nil
 	}
 	body := formatClaudeStopFailureNotifyBody(payload)
@@ -177,7 +177,7 @@ func (c *aiCommand) ingestClaudeSubagentStop(paneID string, payload claudeHookPa
 			Metadata: mergeAINotifyBodyMetadata(metadata, body),
 			Force:    true,
 		}); err != nil {
-			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", err.Error()))
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err)))
 			return err
 		}
 		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "notify", ""))
@@ -191,19 +191,19 @@ func (c *aiCommand) ingestClaudeSubagentStop(paneID string, payload claudeHookPa
 			Metadata: mergeAINotifyBodyMetadata(metadata, formatClaudeSubagentStopNotifyBody(payload)),
 			Force:    true,
 		}); err != nil {
-			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", err.Error()))
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err)))
 			return err
 		}
-		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "state", aiHookStateReason(action)))
+		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "state", aiIngestRecordReason(aiHookStateReason(action))))
 		return nil
 	}
-	c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", "high-volume event"))
+	c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", aiIngestReasonHighVolumeEvent))
 	return nil
 }
 
 func (c *aiCommand) ingestClaudeTeammateIdle(paneID string, payload claudeHookPayload, metadata map[string]string, action aiHookActionResolution) error {
 	if action.Action == aiHookActionQuiet {
-		c.quietClaudeHook(paneID, payload, aiHookQuietReason(action))
+		c.quietClaudeHook(paneID, payload, aiIngestRecordReason(aiHookQuietReason(action)))
 		return nil
 	}
 	body := formatClaudeTeammateIdleNotifyBody(payload)
@@ -222,25 +222,25 @@ func (c *aiCommand) ingestClaudeTeammateIdle(paneID string, payload claudeHookPa
 func (c *aiCommand) emitClaudeHookStatus(paneID string, payload claudeHookPayload, action aiHookActionResolution, input attentionNotifyInput) error {
 	if action.Action == aiHookActionState {
 		if err := c.applyAIStatusStateOnly("waiting", paneID, input); err != nil {
-			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", err.Error()))
+			c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err)))
 			return err
 		}
-		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "state", aiHookStateReason(action)))
+		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "state", aiIngestRecordReason(aiHookStateReason(action))))
 		return nil
 	}
 	if err := c.applyAIStatusWithNotify("waiting", paneID, input); err != nil {
-		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", err.Error()))
+		c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "error", aiIngestFailureReason(aiIngestReasonStatusApplyFailed, err)))
 		return err
 	}
 	c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "notify", ""))
 	return nil
 }
 
-func claudeHookLogEntry(paneID string, payload claudeHookPayload, result, reason string) aiIngestLogEntry {
+func claudeHookLogEntry(paneID string, payload claudeHookPayload, result string, reason aiIngestReason) aiIngestLogEntry {
 	return aiIngestLogEntry{Source: "claude-hook", Event: payload.EventName, Result: result, Reason: reason, Pane: paneID, CWD: payload.CWD, SessionID: payload.SessionID}
 }
 
-func (c *aiCommand) quietClaudeHook(paneID string, payload claudeHookPayload, reason string) {
+func (c *aiCommand) quietClaudeHook(paneID string, payload claudeHookPayload, reason aiIngestReason) {
 	c.markAIHookPane(paneID, aiModeClaude, payload.CWD, "", payload.SessionID, payload.TranscriptPath)
 	c.appendAIIngestLog(claudeHookLogEntry(paneID, payload, "quiet", reason))
 }

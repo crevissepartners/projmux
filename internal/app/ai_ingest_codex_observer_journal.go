@@ -99,7 +99,7 @@ func (j *codexObserverLogJournal) RecordObserverTransition(
 		Source:   aiIngestCodexObserverSource,
 		Event:    string(kind),
 		Result:   codexObserverTransitionResult(kind),
-		Reason:   string(reason),
+		Reason:   aiIngestRecordReason(string(reason)),
 		Pane:     identity.RuntimeID,
 		ThreadID: identity.ThreadID,
 		Epoch:    epochLabel,

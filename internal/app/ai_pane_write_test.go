@@ -145,7 +145,7 @@ func TestHookRecordRefusesToReportADeliveryThePaneWritesMissed(t *testing.T) {
 			if last.Result != "error" {
 				t.Fatalf("Result = %q, want error; a write never landed", last.Result)
 			}
-			if last.Reason != tc.reason {
+			if string(last.Reason) != tc.reason {
 				t.Fatalf("Reason = %q, want %q", last.Reason, tc.reason)
 			}
 			if last.Pane != "%7" {
