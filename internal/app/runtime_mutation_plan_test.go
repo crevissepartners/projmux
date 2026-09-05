@@ -2936,8 +2936,6 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		"ai_pane_write.go:writeAIPaneOption:variable-argv":                "agent.presentation",
 		"ai.go:BindAgentPaneOnRoute:variable-argv":                        "agent.presentation",
 		"ai.go:writeAgentPaneOptionOnRoute:variable-argv":                 "codex.native-lifecycle-authority",
-		"ai.go:projectManagedAgentInteraction:variable-argv":              "agent.presentation",
-		"ai.go:projectManagedAgentTopic:variable-argv":                    "agent.presentation",
 		"../integrations/metadata/tmuxmirror.go:RenameProject:set-option": "resource.rename-project",
 		"../integrations/metadata/tmuxmirror.go:RebindProject:set-option": "resource.rebind-project",
 		"../integrations/metadata/tmuxmirror.go:writePaneName:set-option": "resource.rename-pane",

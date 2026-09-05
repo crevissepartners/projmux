@@ -1423,8 +1423,27 @@ bell hook consumers, including state and resume markers.
 canonical detached materialization through its supplied exact runner before any
 managed marker or Pane UID exists. Existing topic/status semantic fixtures retain
 their option expectations while their mock server supplies explicit containment.
-Managed interaction/topic projection outside the shared helpers remains a
-separate transport boundary.
+`TestManagedProjectionRoutingCallers` enters managed interaction through Claude
+`UserPromptSubmit` hook ingest and managed topic through the internal
+`aiCommand.Run` compatibility set/clear path. Its internal status-idle companion
+covers badge/attention unset; hooks do not emit idle. Caller result, committed
+Registry state, exact route argv, target values and actual unset are asserted
+together. `TestManagedProjectionRoutingFailureKeepsCommit` refuses disappeared,
+denied and foreign routes after commit, with no fallback writes, and retains the
+existing committed-mirror error and first-write-failure behavior.
+
+`TestManagedProjectionRoutingRealTmux` repeats these managed caller cases on two
+isolated real servers with identical pane IDs and opposite-server sentinels.
+Detached attribution reads use the fixture's exact route; projection writes run
+unaltered. Baseline detached raw projections and a shared-prefix-removal mutant
+both fail the target assertions. Inherited raw baseline writes can already work
+through the tmux environment; the argv fixture additionally pins explicit routing.
+An optional `PROJMUX_TEST_MANAGED_ROUTE_BINARY=<absolute binary>` executes
+the reachable hook case and a separate canonical public status/topic parity
+subtest through that binary. Internal topic and idle cases always
+compile this source; there is no installed target-topic CLI. Canonical public
+`agent status/topic` uses its separate already-routed mirror and is parity evidence,
+not proof of these compatibility projections.
 
 `TestSharedPaneRoutingRealTmux` uses two real isolated servers with the same pane
 ID and checks set, clear, marker and full hook state against target readback and
@@ -1434,7 +1453,9 @@ inside a dedicated tmux root; only a verified private alias exposes the fixed ap
 locator. Cleanup rechecks the observed exact socket before `-S` shutdown. The test
 runs with `make test` where tmux is available; an explicit installed smoke runs the
 same hook assertions against `PROJMUX_TEST_PANE_ROUTE_BINARY=<absolute binary>`.
-This is a test-only selector, not a product environment contract.
+This is a test-only selector, not a product environment contract. The fixture
+seeds and strips the caller's internal activation Pane/generation envelope so a
+managed test process cannot suppress the isolated hook as a stale activation.
 
 ### Attributed Codex hook delivery route tests
 
