@@ -2113,7 +2113,7 @@ func TestCodexSettlementLeavesSiblingProviderStatusAndCountUnchanged(t *testing.
 			name:       "codex never returns inside its own envelope",
 			routes:     []codexNativeEndpointRoute{route},
 			blockCodex: true,
-			wantCodex:  aiResumeProviderProjection{state: aiResumeProviderSearchFailed},
+			wantCodex:  aiResumeProviderProjection{state: aiResumeProviderScanUnfinished},
 		},
 	}
 	var wantSiblingHash [32]byte
@@ -2222,7 +2222,7 @@ func TestCodexSettlementLeavesSiblingProviderStatusAndCountUnchanged(t *testing.
 			antigravity := settledProviderState(controller, aiModeAntigravity)
 			close(blocked)
 			controller.close()
-			if claude.state != aiResumeProviderSearchFailed {
+			if claude.state != aiResumeProviderScanUnfinished {
 				t.Fatalf("codex enabled=%t moved the claude terminal: %+v", codexEnabled, claude)
 			}
 			if antigravity.state != aiResumeProviderCount || antigravity.count != antigravitySettlementRows {
@@ -2507,10 +2507,10 @@ func TestProviderSettlementKeepsFooterVocabularyLocalesAndGeometry(t *testing.T)
 			t.Fatalf("%s footer geometry = %#v", locale, lines)
 		}
 	}
-	// The only three provider states are the existing ones; settlement added no
-	// fourth name and no elapsed or capability token.
+	// Provider terminal text adds only the unfinished scan distinction, with
+	// no elapsed or capability token.
 	stateText := map[aiResumeProviderState]string{
-		aiResumeProviderCount: "7 found", aiResumeProviderSearchFailed: "search failed", aiResumeProviderDisabled: "disabled",
+		aiResumeProviderCount: "7 found", aiResumeProviderSearchFailed: "search failed", aiResumeProviderScanUnfinished: "scan unfinished", aiResumeProviderDisabled: "disabled",
 	}
 	for state, want := range stateText {
 		if got := resumeProviderStateText(i18n.FallbackLocale, aiResumeProviderProjection{state: state, count: 7}); got != want {
@@ -2548,8 +2548,8 @@ func TestLateProviderSendAndCloseNeverMutateSettledItemsOrFooter(t *testing.T) {
 	footer, moreNotLoaded := controller.footer()
 	frameHash := pickerEntryHash(entries)
 
-	if got := settledProviderState(controller, aiModeCodex); got.state != aiResumeProviderSearchFailed {
-		t.Fatalf("codex past its own envelope = %+v want search failed", got)
+	if got := settledProviderState(controller, aiModeCodex); got.state != aiResumeProviderScanUnfinished {
+		t.Fatalf("codex past its own envelope = %+v want scan unfinished", got)
 	}
 	if got := resumeSummaryProviderStatus(footer, aiModeClaude); got != "143 found" {
 		t.Fatalf("claude footer = %q", got)

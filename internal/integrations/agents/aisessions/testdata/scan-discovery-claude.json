@@ -1,0 +1,86 @@
+[
+  {
+    "Agent": "claude",
+    "ResumeID": "019f0000-0000-7000-8000-000000000001",
+    "Title": "Nested Claude",
+    "TitleProvenance": "explicit-provider-title",
+    "LastModified": "2027-01-15T17:00:30+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project/child",
+      "Branch": "nested"
+    },
+    "Source": "claude-transcript",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  },
+  {
+    "Agent": "claude",
+    "ResumeID": "019f0000-0000-7000-8000-000000000002",
+    "Title": "Canonical Claude",
+    "TitleProvenance": "explicit-provider-title",
+    "LastModified": "2027-01-15T17:00:30+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project",
+      "Branch": "feat/one"
+    },
+    "Source": "claude-transcript",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  },
+  {
+    "Agent": "claude",
+    "ResumeID": "019f0000-0000-7000-8000-000000000003",
+    "Title": "Fallback prompt",
+    "TitleProvenance": "",
+    "LastModified": "2027-01-15T17:00:20+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project",
+      "Branch": "fallback"
+    },
+    "Source": "claude-transcript",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  },
+  {
+    "Agent": "claude",
+    "ResumeID": "019f0000-0000-7000-8000-000000000004",
+    "Title": "019f0000-000",
+    "TitleProvenance": "",
+    "LastModified": "2027-01-15T17:00:10+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project",
+      "Branch": "noise"
+    },
+    "Source": "claude-transcript",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  }
+]

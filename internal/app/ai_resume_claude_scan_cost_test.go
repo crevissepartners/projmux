@@ -200,7 +200,7 @@ func TestClaudeHandoffExpiryKeepsLateResultOutsideSettlement(t *testing.T) {
 		t.Fatal("late result was consumed after settlement")
 	}
 	projection := resumeProviderProjection(result, true)
-	if projection.state != aiResumeProviderSearchFailed || projection.count != 0 {
+	if projection.state != aiResumeProviderScanUnfinished || projection.count != 0 {
 		t.Fatalf("late result changed the settled projection: %+v", projection)
 	}
 }
