@@ -1826,10 +1826,10 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux get projects`](#projmux-get-projects) | List Project resources |
-| [`projmux get windows`](#projmux-get-windows) | List Window resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
-| [`projmux get panes`](#projmux-get-panes) | List Pane resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
-| [`projmux get agents`](#projmux-get-agents) | List Agent resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
+| [`projmux get projects`](#projmux-get-projects) | List Project resources; -o json items include invocation context |
+| [`projmux get windows`](#projmux-get-windows) | List Window resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
+| [`projmux get panes`](#projmux-get-panes) | List Pane resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
+| [`projmux get agents`](#projmux-get-agents) | List Agent resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
 | [`projmux get runtime`](#projmux-get-runtime) | List every tmux Session, Window, and Pane on one exact server with its attribution |
 | [`projmux get notifications`](#projmux-get-notifications) | List pending notification rows |
 | [`projmux get snapshots`](#projmux-get-snapshots) | List saved session snapshots |
@@ -1839,7 +1839,7 @@ Canonical spelling: `projmux get projects`, `projmux get windows`, `projmux get 
 
 ### `projmux get projects`
 
-List Project resources
+List Project resources; -o json items include invocation context
 
 Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
@@ -1864,7 +1864,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux get windows`
 
-List Window resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
+List Window resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -1889,7 +1889,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux get panes`
 
-List Pane resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
+List Pane resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -1912,7 +1912,7 @@ Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
 
 ### `projmux get agents`
 
-List Agent resources; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
+List Agent resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 

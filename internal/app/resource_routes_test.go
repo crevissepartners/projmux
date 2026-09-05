@@ -464,8 +464,8 @@ func TestGetListStructuredOutputUsesAListEnvelope(t *testing.T) {
 			t.Fatalf("get windows -o json is missing %q:\n%s", want, stdout)
 		}
 	}
-	if strings.Contains(stdout, `"context"`) {
-		t.Fatalf("get windows -o json leaked ephemeral context:\n%s", stdout)
+	if !strings.Contains(stdout, `"context"`) {
+		t.Fatalf("get windows -o json omitted invocation context:\n%s", stdout)
 	}
 
 	stdout, _, err = runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "alpha", "-o", "metadata")

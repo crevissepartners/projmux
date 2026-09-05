@@ -385,10 +385,10 @@ func TestDescribeOmitsTimestampRowsARegistryDoesNotCarry(t *testing.T) {
 // criterion 4.
 //
 // The machine-consumer projections are frozen against the exact bytes they
-// emitted before AGE and the describe rows existed. `-o json` is the one that
-// could plausibly have moved -- it is rendered from the same ObjectMeta the AGE
-// cell reads -- so it is asserted as a whole document rather than by substring:
-// a new key anywhere in it reddens this.
+// emitted after AGE and the describe rows arrived. The plural JSON document
+// includes the later additive invocation-context sibling, so this test pins
+// that whole current document and still reddens any timestamp-driven key or
+// value change anywhere in it.
 func TestMachineOutputModesAreUnchangedByTheTimestampColumns(t *testing.T) {
 	t.Parallel()
 
@@ -439,6 +439,11 @@ func TestMachineOutputModesAreUnchangedByTheTimestampColumns(t *testing.T) {
       },
       "spec": {
         "anchorPaneRef": "pan-beta-zsh"
+      },
+      "context": {
+        "value": "window",
+        "source": "window-fallback",
+        "observed": false
       }
     }
   ]

@@ -1079,6 +1079,24 @@ if [[ ! "$create_server_pid" =~ ^[1-9][0-9]*$ ]]; then
   exit 1
 fi
 echo ">> create e2e socket=$create_socket path=$create_socket_path pid=$create_server_pid"
+
+# The ordinary pmx helper deliberately strips inherited tmux identity and
+# therefore exercises the no-transport resource projector. This companion
+# binds one invocation to the exact guarded server and Pane so the same
+# Registry rows can exercise the live context overlay without a default-socket
+# probe.
+pmx_live() {
+  env \
+    TMUX="$create_socket_path,$create_server_pid,0" \
+    TMUX_PANE="$legacy_pane" \
+    PATH="$create_shim:$PATH" \
+    TMUX_TMPDIR="$create_root/tt" \
+    XDG_STATE_HOME="$create_root/state" \
+    XDG_CONFIG_HOME="$create_root/config" \
+    PROJMUX_MANAGED_ROOTS="$create_root/legacy:$create_root/work" \
+    SHELL=/bin/sh \
+    "$bin" "$@"
+}
 create_foreign_socket_path="$(cfx display-message -p -t foreign-agent '#{socket_path}')"
 case "$create_foreign_socket_path" in
   "$create_root"/*) ;;
@@ -1360,6 +1378,66 @@ if ! awk -v stable="$alpha_window_name" '
 fi
 if grep -Fq "$legacy_window_name_before" "$create_root/alpha-windows-table.out"; then
   echo "legacy Window table leaked stored displayName" >&2
+  exit 1
+fi
+
+# Plural resource JSON carries context from the same invocation snapshot. The
+# outside-tmux reads remain unobserved; the exact inherited socket admits only
+# the UID-bound Window and Pane live display values. The read projection must
+# not touch Registry bytes.
+alpha_window_uid="$(ctx display-message -p -t "$legacy_window_id" '#{@projmux_window_uid}')"
+alpha_pane_uid="$(ctx display-message -p -t "$legacy_pane" '#{@projmux_pane_uid}')"
+smoke_require_uid "context JSON Window" window "$alpha_window_uid"
+smoke_require_uid "context JSON Pane" pane "$alpha_pane_uid"
+cp "$create_registry" "$create_root/context-json.registry.before"
+pmx get windows --project alpha --window "uid:$alpha_window_uid" -o json >"$create_root/context-window-offline.json"
+pmx get panes --project alpha --window "uid:$alpha_window_uid" --pane "uid:$alpha_pane_uid" -o json >"$create_root/context-pane-offline.json"
+pmx_live get windows --project alpha --window "uid:$alpha_window_uid" -o json >"$create_root/context-window-live.json"
+pmx_live get panes --project alpha --window "uid:$alpha_window_uid" --pane "uid:$alpha_pane_uid" -o json >"$create_root/context-pane-live.json"
+python3 - \
+  "$create_root/context-window-offline.json" \
+  "$create_root/context-pane-offline.json" \
+  "$create_root/context-window-live.json" \
+  "$create_root/context-pane-live.json" \
+  "$alpha_window_uid" "$alpha_pane_uid" "$legacy_window_name_before" <<'PY'
+import json
+import sys
+
+window_offline_path, pane_offline_path, window_live_path, pane_live_path = sys.argv[1:5]
+window_uid, pane_uid, live_window_name = sys.argv[5:8]
+
+
+def one(path, uid):
+    with open(path, encoding="utf-8") as stream:
+        payload = json.load(stream)
+    assert len(payload["items"]) == 1, (path, payload)
+    item = payload["items"][0]
+    assert item["metadata"]["uid"] == uid, (path, item)
+    context = item["context"]
+    assert set(context) == {"value", "source", "observed"}, (path, context)
+    return context
+
+
+window_offline = one(window_offline_path, window_uid)
+pane_offline = one(pane_offline_path, pane_uid)
+window_live = one(window_live_path, window_uid)
+pane_live = one(pane_live_path, pane_uid)
+
+assert window_offline["observed"] is False, window_offline
+assert pane_offline["observed"] is False, pane_offline
+assert window_live == {
+    "value": live_window_name,
+    "source": "live-window-name",
+    "observed": True,
+}, window_live
+assert pane_live == {
+    "value": "raw title must not win",
+    "source": "live-pane-title",
+    "observed": True,
+}, pane_live
+PY
+if ! cmp "$create_root/context-json.registry.before" "$create_registry"; then
+  echo "context resource JSON mutated the Registry" >&2
   exit 1
 fi
 pmx describe window "$alpha_window_name" -p alpha >"$create_root/alpha-window.describe"
