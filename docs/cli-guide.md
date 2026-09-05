@@ -1020,7 +1020,12 @@ versions, paths, confidence/source metadata, and displayed remediation.
 dependencies, `integrations` selects AI notify integrations, and
 `session-state` selects resume metadata plus retention guidance. `runtime`
 selects the fixed `tmux` backend, an actual one-second read-only probe of the
-app socket, and generated-versus-live config digest state. `logs` selects the
+app socket, generated-versus-live config digest state, and a
+`projmux_process_vintage` census of this executable's live children by role and
+image age. That census is provider-neutral and counts every child, naming
+per-pane supervisors and keeping an `other` remainder so a route it has no name
+for cannot shrink the total; on a platform with no process table it reports
+`unknown` rather than claiming currency. `logs` selects the
 state/log/journal presence, private permissions and metadata-only writability
 checks plus a bounded aggregate of recent safe operational error codes. These
 sections expose only closed status codes and counts: no path, socket name,

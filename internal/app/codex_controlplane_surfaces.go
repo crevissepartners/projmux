@@ -528,21 +528,56 @@ func codexSurfaceReasonOrNone(reason string) string {
 // replaced-image process describes code that process never loaded.
 func codexControlPlaneVintageText(vintage codexControlPlaneVintage) string {
 	if !vintage.Supported {
-		return "unknown on this platform; a process running a replaced image cannot be told apart from one running the installed build"
+		return codexProcessVintageUnknownText
 	}
 	if len(vintage.Roles) == 0 {
 		return "no control-plane process observed"
 	}
-	parts := make([]string, 0, len(vintage.Roles))
-	for _, role := range vintage.Roles {
+	text := projmuxProcessRolesText(vintage.Roles)
+	if vintage.Replaced() > 0 {
+		text += "; a replaced image did not load the installed build, so every verdict below it describes older code"
+	}
+	return text
+}
+
+// projmuxProcessVintageText renders the whole-fleet vintage line.
+//
+// It answers a different question from the line above it and therefore prints
+// somewhere else: that one qualifies the Codex verdicts printed under it, this
+// one says how much of the running fleet the last install did not reach. Naming
+// a provider-neutral supervisor on the Codex line would have merged the two
+// questions into an answer to neither.
+func projmuxProcessVintageText(vintage projmuxProcessVintage) string {
+	if !vintage.Supported {
+		return codexProcessVintageUnknownText
+	}
+	if len(vintage.Roles) == 0 {
+		return "no projmux process observed"
+	}
+	text := projmuxProcessRolesText(vintage.Roles)
+	if replaced := vintage.Replaced(); replaced > 0 {
+		text += fmt.Sprintf("; %d of %d run an image the installed build replaced, so they are executing code from before that install",
+			replaced, vintage.Observed())
+	}
+	return text
+}
+
+// codexProcessVintageUnknownText is the answer on a platform with no process
+// table. It is shared so that neither line can drift into implying currency on
+// the one platform where currency cannot be established.
+const codexProcessVintageUnknownText = "unknown on this platform; a process running a replaced image cannot be told apart from one running the installed build"
+
+// projmuxProcessRolesText renders one census as counts per role.
+//
+// Every number here is a count. No pid, path, or argv reaches this string,
+// which is what keeps a process census printable on a diagnostics surface.
+func projmuxProcessRolesText(roles []projmuxProcessRoleVintage) string {
+	parts := make([]string, 0, len(roles))
+	for _, role := range roles {
 		parts = append(parts, fmt.Sprintf("%s %d (%s %d, %s %d)",
 			role.Role, role.Processes,
 			codexProcessVintageCurrent, role.Current,
 			codexProcessVintageReplaced, role.Replaced))
 	}
-	text := strings.Join(parts, "; ")
-	if vintage.Replaced() > 0 {
-		text += "; a replaced image did not load the installed build, so every verdict below it describes older code"
-	}
-	return text
+	return strings.Join(parts, "; ")
 }

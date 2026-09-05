@@ -357,7 +357,7 @@ func TestControlPlaneProjectionAnswersForEverySurface(t *testing.T) {
 func TestDoctorRendersEveryControlPlaneSurfaceAndItsVintage(t *testing.T) {
 	var buf bytes.Buffer
 	writeDoctorCodexControlPlaneText(&buf, &codexControlPlaneReport{
-		Vintage: codexControlPlaneVintage{Supported: true, Roles: []codexControlPlaneRoleVintage{
+		Vintage: codexControlPlaneVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
 			{Role: codexControlPlaneRoleBroker, Processes: 1, Replaced: 1},
 			{Role: codexControlPlaneRoleObserver, Processes: 8, Current: 1, Replaced: 7},
 		}},
