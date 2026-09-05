@@ -47,6 +47,9 @@ var codexControlPlaneContractEnforcement = map[string][]string{
 		"TestHookReflectionWritesNeverDiscardTheirErrorSilently",
 		"TestIngestReasonColumnCarriesOnlyBoundedValues",
 		"TestNoTestExpectsALeakedReason",
+		"TestHookProjectionBucketsPartitionTheirPopulation",
+		"TestAuthorityCensusBucketsPartitionTheirPopulation",
+		"TestReasonVocabularyIsDeliberatelyNotADoctorSurface",
 	},
 	// C-1: the broker diagnosis dials the endpoint the runtime published,
 	// rather than a key it assumed. Assuming it reported a live broker as
