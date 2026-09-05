@@ -74,6 +74,8 @@ const (
 	aiPaneMatchReasonExplicitUnknown     = "explicit pane is not registered"
 	aiPaneMatchReasonExplicitNoRuntime   = "explicit pane has no live runtime"
 	aiPaneMatchReasonExplicitStale       = "explicit pane binding is stale"
+	aiPaneMatchReasonConversationUnknown = "conversation is not registered to a pane"
+	aiPaneMatchReasonConversationShared  = "conversation is registered to several panes"
 )
 
 type aiPaneMatchRow struct {
@@ -614,6 +616,15 @@ func (c *aiCommand) writeAIHookResumeMetadata(paneID, resumeID string) {
 // event to whichever other live Pane happens to share a working directory. The
 // established three-step ladder is unchanged and remains the answer whenever no
 // explicit identity arrived.
+//
+// Behind that ladder sits one further step for the hook nobody can hand an
+// identity to. A provider host shared by several Panes inherits neither the
+// activation envelope nor a tmux environment, so the explicit argument arrives
+// empty and the ladder cannot even read a Pane inventory. What that hook does
+// carry is the conversation its event belongs to, and the Registry already
+// records which Pane owns which conversation. Reading that record is a lookup,
+// not a binding: nothing here decides what a conversation is bound to, and a
+// conversation no Pane claims fails by name rather than landing on a neighbour.
 func (c *aiCommand) matchAIPane(in aiPaneMatchInput) (string, string) {
 	if explicit := strings.TrimSpace(in.ExplicitPane); explicit != "" {
 		return c.resolveExplicitAIPane(explicit)
@@ -621,6 +632,21 @@ func (c *aiCommand) matchAIPane(in aiPaneMatchInput) (string, string) {
 	if envPane := strings.TrimSpace(c.env("TMUX_PANE")); envPane != "" {
 		return envPane, ""
 	}
+	paneID, reason := c.matchAIPaneFromInventory(in)
+	if paneID != "" {
+		return paneID, reason
+	}
+	if strings.TrimSpace(in.ThreadID) == "" && strings.TrimSpace(in.SessionID) == "" {
+		return "", reason
+	}
+	return c.resolveRegisteredConversationPane(in.ThreadID, in.SessionID)
+}
+
+// matchAIPaneFromInventory is the established three-step ladder over the live
+// tmux Pane inventory: working directory first, then the conversation options
+// the panes themselves carry. It is unchanged; it only reports its own failure
+// to a caller that now has one more step to try.
+func (c *aiCommand) matchAIPaneFromInventory(in aiPaneMatchInput) (string, string) {
 	rows, listed := c.listAIPaneMatchRows()
 	if !listed {
 		return "", aiPaneMatchReasonNoInventory
@@ -646,6 +672,79 @@ func (c *aiCommand) matchAIPane(in aiPaneMatchInput) (string, string) {
 		}
 	}
 	return "", aiPaneMatchReasonNoMatch
+}
+
+// resolveRegisteredConversationPane answers from the Registry alone, so it works
+// for a hook whose process reaches no tmux server at all. It refuses rather than
+// guesses: an identifier no Pane records, and an identifier two Panes record,
+// both end as a named failure, because a hook that lands on the wrong Pane is
+// worse than one that lands nowhere.
+func (c *aiCommand) resolveRegisteredConversationPane(threadID, sessionID string) (string, string) {
+	if c.loadRegistry == nil {
+		return "", aiPaneMatchReasonRegistryUnavailable
+	}
+	registry, err := c.loadRegistry()
+	if err != nil {
+		return "", aiPaneMatchReasonRegistryUnavailable
+	}
+	panes := registeredConversationPanes(registry)
+	for _, id := range []string{threadID, sessionID} {
+		runtimeID, ok := panes[strings.TrimSpace(id)]
+		if !ok || strings.TrimSpace(id) == "" {
+			continue
+		}
+		if runtimeID == "" {
+			return "", aiPaneMatchReasonConversationShared
+		}
+		return runtimeID, ""
+	}
+	return "", aiPaneMatchReasonConversationUnknown
+}
+
+// registeredConversationPanes indexes every conversation identifier the Registry
+// currently records against the live runtime handle of the Pane that holds it.
+//
+// The index is built from the resource model, never from a provider name: a
+// Pane contributes the conversation its current activation refinement recorded
+// and the one its Agent's durable session pointer names, and a provider that
+// records neither simply contributes nothing. The same round trip
+// resolveExplicitAIPane demands is required here — activation handle, owning
+// Agent, and that Agent pointing back at this Pane — so a half-torn binding
+// never becomes an attribution target.
+//
+// A conversation claimed by two Panes maps to the empty handle. That is the
+// ambiguity marker, not an absent entry: the caller has to be able to tell "no
+// Pane holds this" from "more than one does", and neither may resolve.
+func registeredConversationPanes(registry coremetadata.Registry) map[string]string {
+	panes := make(map[string]string, len(registry.Panes))
+	claim := func(conversationID, runtimeID string) {
+		conversationID = strings.TrimSpace(conversationID)
+		if conversationID == "" {
+			return
+		}
+		if held, ok := panes[conversationID]; ok && held != runtimeID {
+			panes[conversationID] = ""
+			return
+		}
+		panes[conversationID] = runtimeID
+	}
+	for i := range registry.Panes {
+		pane := &registry.Panes[i]
+		runtimeID := strings.TrimSpace(pane.Status.Activation.RuntimeID)
+		agentUID := strings.TrimSpace(pane.Status.Activation.AgentUID)
+		if runtimeID == "" || agentUID == "" {
+			continue
+		}
+		agent, ok := registry.Agent(agentUID)
+		if !ok || agent.Status.PaneRef != pane.Metadata.UID {
+			continue
+		}
+		if codex := pane.Status.Activation.Codex; codex != nil {
+			claim(codex.ThreadID, runtimeID)
+		}
+		claim(agent.Status.SessionRef.ConversationID(), runtimeID)
+	}
+	return panes
 }
 
 // resolveExplicitAIPane turns the identity a hook was handed into the exact

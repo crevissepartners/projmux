@@ -923,11 +923,47 @@
   live Pane.
 - `TestAttributionFailureReasonsAreDistinctAndClosed` owns the failure
   vocabulary: an unreachable Pane inventory, a genuine no-match, an unreachable
-  Registry, and an unregistered Pane each name themselves, and every token stays
-  a bounded phrase.
+  Registry, an unregistered Pane, a conversation no Pane holds, and a
+  conversation two Panes hold each name themselves, and every token stays a
+  bounded phrase.
 - `TestHookIngestRoutesAcceptTheExplicitPaneArgument` owns the route contract:
   `--pane` is optional, an empty value is a valid answer, and a positional
   payload argument is still refused.
+
+### Shared-host hook attribution tests
+
+A provider host shared by several Panes has no Pane to hand over and no tmux
+environment to inherit, so both the explicit argument and the three-step ladder
+above come up empty for it. These tests own the one further step that reads the
+conversation the Registry already records.
+
+- `TestMatchAIPaneAttributesASharedHostHookThroughTheRegistry` owns the normal
+  path: with nothing handed over and no readable Pane inventory, the thread or
+  session the payload carries resolves to the live runtime handle of the Pane
+  that holds that conversation.
+- `TestMatchAIPaneRefusesAConversationNoPaneHolds` and
+  `TestMatchAIPaneRefusesAConversationTwoPanesHold` own the refusals: an
+  unclaimed conversation and an ambiguous one both fail by name rather than
+  landing on a neighbouring Pane that merely shares a working directory.
+- `TestRegistryAttributionRequiresAnIntactBinding` owns the round trip. A Pane
+  that is no longer materialized, one whose Agent no longer points back at it,
+  and one whose Agent is gone are all torn state, never attribution targets.
+- `TestRegistryAttributionIsProviderNeutral` owns the shape of the lookup: it
+  reads the resource model, so every provider whose conversation the Registry
+  records resolves through the same code and none is named in it.
+- `TestMatchAIPaneKeepsTheRegistryStepBehindTheEstablishedLadder` and
+  `TestMatchAIPaneLeavesTheLadderReasonWhenThereIsNoConversation` own the order.
+  A handed identity, inherited `TMUX_PANE`, and the Pane inventory each still
+  answer first, and a payload carrying no conversation keeps the ladder's own
+  failure reason instead of being relabelled.
+- `TestRegistryAttributionReportsAnUnreachableRegistry` and
+  `TestRegistryAttributionDefinesNoBinding` own the boundary: the step reads the
+  Registry exactly once, writes nothing, defines no binding, and reports an
+  unreachable Registry as its own failure.
+- `TestCodexHookIngestAttributesASharedHostEventThroughTheRegistry` owns the
+  whole route rather than the matcher alone: a payload arriving with an empty
+  `--pane` produces a record naming its own Pane, and an unclaimed conversation
+  produces a record naming why it has none.
 
 ## Review Checklist
 - The branch stays within its stated scope.

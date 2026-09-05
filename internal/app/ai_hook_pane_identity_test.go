@@ -353,6 +353,20 @@ func TestAttributionFailureReasonsAreDistinctAndClosed(t *testing.T) {
 	_, reason = gone.matchAIPane(aiPaneMatchInput{ExplicitPane: "pane-handed"})
 	record(t, "unregistered pane", reason)
 
+	// Nothing handed over, no inventory, and a conversation the Registry does
+	// not place. This is the shared provider host, and it is a different
+	// failure from every one above it.
+	unclaimed := sharedHostCommand(t, coremetadata.Registry{})
+	_, reason = unclaimed.matchAIPane(aiPaneMatchInput{ThreadID: "thread-nobody-holds"})
+	record(t, "unclaimed conversation", reason)
+
+	twoPanes := conversationRegistry("pane-one", "%1", &coremetadata.CodexActivationBinding{ThreadID: "thread-shared"}, nil)
+	alsoClaimed := conversationRegistry("pane-two", "%2", &coremetadata.CodexActivationBinding{ThreadID: "thread-shared"}, nil)
+	twoPanes.Agents = append(twoPanes.Agents, alsoClaimed.Agents...)
+	twoPanes.Panes = append(twoPanes.Panes, alsoClaimed.Panes...)
+	_, reason = sharedHostCommand(t, twoPanes).matchAIPane(aiPaneMatchInput{ThreadID: "thread-shared"})
+	record(t, "conversation held by two panes", reason)
+
 	// Every token stays a bounded phrase: no path, payload, or provider text.
 	for token := range seen {
 		if strings.ContainsAny(token, "/\\\"") || len(token) > 64 {
