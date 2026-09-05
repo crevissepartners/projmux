@@ -93,8 +93,32 @@ var codexControlPlaneContractEnforcement = map[string][]string{
 		"TestOpaqueDeliveryReasonsNeverReachTheDiagnosis",
 	},
 	// C-2 ownership: an attributed hook event landed on a Pane of its own
-	// provider. Awaiting the Phase 8 vocabulary; the property gate below is
-	// provider-neutral and holds without naming its tokens.
+	// provider.
+	//
+	// The two entries here are the runtime half, and they are provider-neutral:
+	// they judge attributions the log actually recorded, against the provider
+	// the Registry records for the Pane each one landed on. That half needs no
+	// vocabulary, which is why it exists already.
+	//
+	// The resolver half is still owed, and it cannot be written here yet: it
+	// names symbols the ownership fix introduces, and restating them as string
+	// literals would let a rename walk past this gate silently. Five properties
+	// are waiting on that rebase, and the fifth is the one most easily missed:
+	//
+	//  1. the composite "no other match" refusal is not swallowed by a
+	//     downstream general token;
+	//  2. a rejected explicit identity flows on to the Registry step and the
+	//     established ladder rather than being dropped;
+	//  3. the fall-through skips the inherited-environment step, which carries
+	//     the same envelope that was just rejected and would readmit the leak;
+	//  4. the three older explicit refusals keep their existing behaviour and
+	//     do not fall through, so this gate cannot mistake Phase 2's contract
+	//     for a regression;
+	//  5. the Pane the fall-through finally resolves is not foreign either.
+	//     The ladder's working-directory step matches on path alone, and on a
+	//     machine where two providers share a repository that step can hand
+	//     back the very Pane the explicit check refused. Closing the front door
+	//     and leaving that one open would pass every other property here.
 	"C-2-ownership": {
 		"TestPaneOwnershipSurfaceReportsAForeignAttributionAsBroken",
 		"TestOwnershipHealthCallsOnlyAPositivelyForeignPaneForeign",
