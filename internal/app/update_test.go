@@ -2493,3 +2493,308 @@ func refreshedUpdateStatus(t *testing.T, cmd *updateCommand) updateStatus {
 	}
 	return st
 }
+
+// TestRCChannelAppliesTheDistTagItsJudgmentRead is ledger 1 and acceptance 1 for
+// the npm install path.
+//
+// Apply used to install `projmux@latest` unconditionally, so an opted-in install
+// was told an rc was available and then handed the stable line anyway. The fix
+// is not "install @rc on the rc channel" either: once a line's stable release
+// lands it supersedes that line's rc, the judgment offers the stable version,
+// and apply has to follow it back off the prerelease.
+func TestRCChannelAppliesTheDistTagItsJudgmentRead(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		distTags map[string]string
+		want     string
+	}{
+		{
+			name:     "the rc pointer is ahead of the stable line",
+			distTags: map[string]string{"latest": "0.14.2", "rc": "0.15.0-rc.1"},
+			want:     "npm install -g projmux@rc",
+		},
+		{
+			name:     "the line's own stable release supersedes its rc",
+			distTags: map[string]string{"latest": "0.15.0", "rc": "0.15.0-rc.1"},
+			want:     "npm install -g projmux@latest",
+		},
+		{
+			name:     "a registry with no rc pointer stays on the stable line",
+			distTags: map[string]string{"latest": "0.14.2"},
+			want:     "npm install -g projmux@latest",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _, ran := updateApplyVerificationCommand(t, "npm")
+			cmd.releaseChannelSource = func() string { return updateReleaseChannelRC }
+			cmd.client = updateChannelResponder(t, cmd, "", tc.distTags, nil)
+
+			var stdout bytes.Buffer
+			if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v\nstdout:\n%s", err, stdout.String())
+			}
+			if !slices.Contains(*ran, tc.want) {
+				t.Fatalf("ran = %#v, want it to contain %q", *ran, tc.want)
+			}
+		})
+	}
+}
+
+// TestDefaultChannelNpmApplyIsUnchangedAndAsksNoRegistry is acceptance 3 for the
+// npm path. dist-tags.latest is the default channel's authority by definition,
+// so its published sequence must be byte-identical and it must resolve its
+// target without a single request: any request at all fails this test.
+func TestDefaultChannelNpmApplyIsUnchangedAndAsksNoRegistry(t *testing.T) {
+	t.Parallel()
+
+	cmd, _, ran := updateApplyVerificationCommand(t, "npm")
+	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		t.Fatalf("default-channel apply unexpectedly requested %s", req.URL.String())
+		return nil, nil
+	})}
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v\nstdout:\n%s", err, stdout.String())
+	}
+	want := []string{
+		"/home/me/bin/projmux config apply --bin /npm/bin/projmux --socket projmux",
+		"npm install -g projmux@latest",
+		"projmux config apply",
+	}
+	if !equalStrings(*ran, want) {
+		t.Fatalf("ran = %#v, want %#v", *ran, want)
+	}
+}
+
+// TestRCChannelGitHubReleaseApplyDownloadsThePrerelease is ledger 2 and
+// acceptance 1 for the github-release install path.
+//
+// releases/latest is defined to skip prereleases, so it cannot answer for the
+// channel at all -- asking it is the failure this fixture pins, the same way the
+// Phase 1 judgment fixture pins it.
+func TestRCChannelGitHubReleaseApplyDownloadsThePrerelease(t *testing.T) {
+	t.Parallel()
+
+	cmd, _ := updateCommandForChannel(t, time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC), "github-release", updateReleaseChannelRC)
+	target := filepath.Join(t.TempDir(), "projmux")
+	if err := os.WriteFile(target, []byte("old\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cmd.executable = func() (string, error) { return target, nil }
+	cmd.probeVersion = stubUpdateVersionProbe("0.14.2", "0.15.0-rc.1")
+	archive := testReleaseArchive(t, "rc\n")
+	assetURL := "https://github.com/crevissepartners/projmux/releases/download/v0.15.0-rc.1/projmux_0.15.0-rc.1_linux_amd64.tar.gz"
+	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case cmd.releaseAPIURL():
+			t.Fatalf("rc apply asked releases/latest, which by definition never carries a prerelease")
+			return nil, nil
+		case cmd.releaseListAPIURL():
+			body := `[{"tag_name":"v0.14.2","prerelease":false,"draft":false,"assets":[]},` +
+				`{"tag_name":"v0.15.0-rc.1","prerelease":true,"draft":false,"assets":[{"name":"projmux_0.15.0-rc.1_linux_amd64.tar.gz","browser_download_url":"` + assetURL + `","digest":"` + testReleaseDigest(archive) + `"}]}]`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		case assetURL:
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(archive)),
+				Header:     make(http.Header),
+			}, nil
+		default:
+			t.Fatalf("unexpected request URL %q", req.URL.String())
+			return nil, nil
+		}
+	})}
+	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error { return nil }
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v\nstdout:\n%s", err, stdout.String())
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(got) != "rc\n" {
+		t.Fatalf("target content = %q, want the prerelease binary", got)
+	}
+	if !strings.Contains(stdout.String(), "projmux_0.15.0-rc.1_linux_amd64.tar.gz") {
+		t.Fatalf("stdout = %q, want the prerelease asset named", stdout.String())
+	}
+}
+
+// TestDefaultChannelGitHubReleaseApplyNeverAsksTheReleaseList is acceptance 3
+// for the github-release path: the default channel keeps downloading whatever
+// releases/latest resolves, and reading the prerelease-carrying list is the
+// failure.
+func TestDefaultChannelGitHubReleaseApplyNeverAsksTheReleaseList(t *testing.T) {
+	t.Parallel()
+
+	cmd, _ := updateCommandForChannel(t, time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC), "github-release", updateReleaseChannelStable)
+	target := filepath.Join(t.TempDir(), "projmux")
+	if err := os.WriteFile(target, []byte("old\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	cmd.executable = func() (string, error) { return target, nil }
+	archive := testReleaseArchive(t, "stable\n")
+	assetURL := "https://github.com/crevissepartners/projmux/releases/download/v0.14.2/projmux_0.14.2_linux_amd64.tar.gz"
+	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		switch req.URL.String() {
+		case cmd.releaseListAPIURL():
+			t.Fatalf("default-channel apply asked the release list, which carries prereleases")
+			return nil, nil
+		case cmd.releaseAPIURL():
+			body := `{"tag_name":"v0.14.2","assets":[{"name":"projmux_0.14.2_linux_amd64.tar.gz","browser_download_url":"` + assetURL + `","digest":"` + testReleaseDigest(archive) + `"}]}`
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+			}, nil
+		case assetURL:
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(bytes.NewReader(archive)),
+				Header:     make(http.Header),
+			}, nil
+		default:
+			t.Fatalf("unexpected request URL %q", req.URL.String())
+			return nil, nil
+		}
+	})}
+	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error { return nil }
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v\nstdout:\n%s", err, stdout.String())
+	}
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(got) != "stable\n" {
+		t.Fatalf("target content = %q, want the stable binary", got)
+	}
+}
+
+// TestUpdateApplyDryRunNamesTheAuthorityItsChannelWillRead keeps `--dry-run`
+// honest across the axis: it may not promise releases/latest to an install that
+// will read the list, nor `projmux@latest` to one that will install the rc
+// pointer.
+func TestUpdateApplyDryRunNamesTheAuthorityItsChannelWillRead(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+
+	t.Run("github-release rc names the release list", func(t *testing.T) {
+		t.Parallel()
+
+		cmd, _ := updateCommandForChannel(t, now, "github-release", updateReleaseChannelRC)
+		cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			t.Fatalf("dry-run unexpectedly requested %s", req.URL.String())
+			return nil, nil
+		})}
+
+		var stdout bytes.Buffer
+		if err := cmd.Run([]string{"apply", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		if want := "would fetch: " + cmd.releaseListAPIURL(); !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	})
+
+	t.Run("npm rc names the dist-tag it resolved", func(t *testing.T) {
+		t.Parallel()
+
+		cmd, _ := updateCommandForChannel(t, now, "npm", updateReleaseChannelRC)
+		cmd.client = updateChannelResponder(t, cmd, "", map[string]string{
+			"latest": "0.14.2",
+			"rc":     "0.15.0-rc.1",
+		}, nil)
+
+		var stdout bytes.Buffer
+		if err := cmd.Run([]string{"apply", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		if want := "would run: npm install -g projmux@rc"; !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+		}
+	})
+}
+
+// TestUpdateApplyVerifiesPrereleaseUpgradesByPrecedence is ledger 3 and
+// acceptance 2.
+//
+// The post-apply check compared only the numeric core, which reads 0.15.0-rc.1
+// and 0.15.0 as the same version: a successful move off a prerelease -- the
+// exact move the rc channel exists to allow -- was reported as
+// "installed version did not change". The stall and backwards verdicts stay
+// exactly as they were; only prerelease precedence is new.
+func TestUpdateApplyVerifiesPrereleaseUpgradesByPrecedence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		before   string
+		after    string
+		expected string
+		wantErr  string
+	}{
+		{name: "an rc reaches its own line's stable release", before: "0.15.0-rc.1", after: "0.15.0", expected: "v0.15.0"},
+		{name: "an rc advances within its line", before: "0.15.0-rc.1", after: "0.15.0-rc.2", expected: "v0.15.0-rc.2"},
+		{name: "rc numbering is numeric, not lexical", before: "0.15.0-rc.9", after: "0.15.0-rc.10", expected: "v0.15.0-rc.10"},
+		{
+			name: "reinstalling the same rc is still a stall", before: "0.15.0-rc.1", after: "0.15.0-rc.1", expected: "v0.15.0-rc.1",
+			wantErr: "installed version did not change",
+		},
+		{
+			name: "a stable install replaced by its own rc still went backwards", before: "0.15.0", after: "0.15.0-rc.1", expected: "v0.15.0-rc.1",
+			wantErr: "installed version went backwards",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, cacheDir, _ := updateApplyVerificationCommand(t, "npm")
+			writeUpdateCacheFixture(t, cacheDir, updateCache{
+				Version:   1,
+				CheckedAt: time.Date(2026, 8, 29, 11, 0, 0, 0, time.UTC),
+				Source:    updateSourceNPMRegistry,
+				TagName:   tc.expected,
+			})
+			cmd.probeVersion = stubUpdateVersionProbe(tc.before, tc.after)
+
+			var stdout bytes.Buffer
+			err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{})
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Run() error = %v\nstdout:\n%s", err, stdout.String())
+				}
+				want := ">> verified: projmux " + tc.after + " is now the active executable at /npm/bin/projmux (was " + tc.before + ")"
+				if !strings.Contains(stdout.String(), want) {
+					t.Fatalf("stdout = %q, want %q", stdout.String(), want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("Run() error = nil, want %q\nstdout:\n%s", tc.wantErr, stdout.String())
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("Run() error = %v, want substring %q", err, tc.wantErr)
+			}
+			if strings.Contains(stdout.String(), ">> verified:") {
+				t.Fatalf("stdout = %q, want no verified line", stdout.String())
+			}
+		})
+	}
+}

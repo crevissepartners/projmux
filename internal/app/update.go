@@ -82,6 +82,14 @@ const (
 // on updateCommand is what a stored setting will drive later.
 const updateReleaseChannelEnv = "PROJMUX_RELEASE_CHANNEL"
 
+// The npm targets apply can install. They are dist-tags rather than pinned
+// versions on purpose: the registry, not this binary, decides which version a
+// pointer holds, which is the same authority the judgment read.
+const (
+	npmInstallSpecStable = "projmux@latest"
+	npmInstallSpecRC     = "projmux@rc"
+)
+
 var errUpdateTarTooLarge = errors.New("release archive exceeded extracted byte limit")
 
 type updateHTTPClient interface {
@@ -391,7 +399,16 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 		// stuck on an old version. `npm install -g projmux@latest` always
 		// pulls the newest published release and re-resolves the per-platform
 		// optionalDependency, which is what "update" must actually do.
-		commands := []updateApplyCommand{{Stage: updateApplyPublication, Name: "npm", Args: []string{"install", "-g", "projmux@latest"}}}
+		//
+		// Which dist-tag that is belongs to the release channel, not to this
+		// switch: the default channel installs the stable pointer exactly as
+		// before, and an opted-in install resolves the pointer its judgment
+		// read.
+		spec, err := c.npmInstallSpec(context.Background())
+		if err != nil {
+			return nil, err
+		}
+		commands := []updateApplyCommand{{Stage: updateApplyPublication, Name: "npm", Args: []string{"install", "-g", spec}}}
 		if !noApply {
 			current, err := c.currentExecutable()
 			if err != nil {
@@ -441,6 +458,40 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 	}
 }
 
+// npmInstallSpec picks the dist-tag apply installs from.
+//
+// The judgment already chose a version on one channel's authority, so apply has
+// to read the same authority. Without that, an opted-in install is told an rc is
+// available and then handed the stable line anyway.
+//
+// The stable channel never asks. dist-tags.latest is its authority by
+// definition, so its command, its request budget, and its failure modes are
+// exactly what they were.
+//
+// The rc channel does ask, because "the rc pointer" is not always its answer.
+// Once a line's stable release lands, dist-tags.latest outranks the rc it
+// supersedes and the judgment offers that stable version; installing @rc there
+// would hand back the prerelease the user is trying to leave.
+func (c *updateCommand) npmInstallSpec(ctx context.Context) (string, error) {
+	if c.releaseChannel() != updateReleaseChannelRC {
+		return npmInstallSpecStable, nil
+	}
+	tags, err := c.fetchNPMDistTags(ctx)
+	if err != nil {
+		return "", err
+	}
+	rc, ok := parseUpdateSemver(strings.TrimSpace(tags["rc"]))
+	if !ok {
+		// A registry that publishes no rc pointer leaves the opted-in install
+		// on the stable line rather than failing an apply it can still perform.
+		return npmInstallSpecStable, nil
+	}
+	if latest, ok := parseUpdateSemver(strings.TrimSpace(tags["latest"])); ok && compareUpdateSemver(rc, latest) <= 0 {
+		return npmInstallSpecStable, nil
+	}
+	return npmInstallSpecRC, nil
+}
+
 func (c *updateCommand) npmPublishedTarget() (string, error) {
 	if c.lookPath == nil {
 		return "", errors.New("update apply: npm published-target resolver is not configured")
@@ -469,7 +520,7 @@ func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writ
 	}
 	goos, goarch := c.targetPlatform()
 	archive := releaseArchiveName("latest", goos, goarch)
-	if _, err := fmt.Fprintf(stdout, "would fetch: %s\n", c.releaseAPIURL()); err != nil {
+	if _, err := fmt.Fprintf(stdout, "would fetch: %s\n", c.releaseAPIURLForChannel()); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(stdout, "would download: %s\n", archive); err != nil {
@@ -509,7 +560,10 @@ func (c *updateCommand) runGitHubReleaseApply(noApply bool, stdout, stderr io.Wr
 		return err
 	}
 	before := c.probeActiveVersion()
-	rel, err := c.fetchLatestRelease(context.Background())
+	// The same authority split the judgment uses. releases/latest is defined to
+	// skip prereleases, so an opted-in install that downloaded from it would be
+	// offered an rc and then handed the stable release instead.
+	rel, err := c.fetchReleaseForChannel(context.Background(), c.releaseChannel())
 	if err != nil {
 		return err
 	}
@@ -796,6 +850,16 @@ func (c *updateCommand) releaseListAPIURL() string {
 		return c.releasesURL
 	}
 	return updateReleaseListURL
+}
+
+// releaseAPIURLForChannel names the endpoint this channel's apply will read, so
+// a dry run does not promise releases/latest to an install that will read the
+// prerelease-carrying list instead.
+func (c *updateCommand) releaseAPIURLForChannel() string {
+	if c.releaseChannel() == updateReleaseChannelRC {
+		return c.releaseListAPIURL()
+	}
+	return c.releaseAPIURL()
 }
 
 // normalizeUpdateReleaseChannel maps any raw value onto the axis.
@@ -1728,9 +1792,13 @@ func (c *updateCommand) verifyPublishedVersion(stdout io.Writer, channel, expect
 			expectedText, channel, cause)
 	}
 
-	beforeParts, _ := parseUpdateVersion(before.version)
-	afterParts, _ := parseUpdateVersion(after.version)
-	switch compareVersionParts(beforeParts, afterParts) {
+	// Precedence, not the numeric core. Comparing cores alone reads
+	// 0.15.0-rc.1 and 0.15.0 as the same version, so a real upgrade off a
+	// prerelease -- the exact move the rc channel exists to allow -- would end
+	// as "the installed version did not change" after succeeding.
+	beforeVersion, _ := parseUpdateSemver(before.version)
+	afterVersion, _ := parseUpdateSemver(after.version)
+	switch compareUpdateSemver(beforeVersion, afterVersion) {
 	case -1:
 		_, err := fmt.Fprintf(stdout, ">> verified: projmux %s is now the active executable at %s (was %s)\n",
 			after.version, after.exe, before.version)
