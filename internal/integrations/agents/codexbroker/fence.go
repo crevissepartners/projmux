@@ -189,6 +189,11 @@ const (
 	// RefusalDisconnectBoundary marks a mutation that terminated at a
 	// disconnect. Its result is indeterminate and it is never resent.
 	RefusalDisconnectBoundary Refusal = "disconnect-boundary"
+	// RefusalPayloadTooLarge marks a mutation whose answer exceeded the
+	// endpoint frame bound and was dropped. The connection stayed up and every
+	// other binding kept running, so this is deliberately not a disconnect:
+	// the result is indeterminate for this request alone.
+	RefusalPayloadTooLarge Refusal = "payload-too-large"
 
 	// The codes below belong to the runtime host, its discovery, and its
 	// authenticated local IPC. They stay in this one closed set because a

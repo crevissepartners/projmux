@@ -16,14 +16,20 @@ import (
 
 const (
 	maxFrameBytes       = 1 << 20
+	frameReaderBytes    = 4096
 	notificationBacklog = 64
 	writeCancelSettle   = 5 * time.Millisecond
 )
 
 var (
-	ErrUnsupported  = errors.New("codex app-server method unsupported")
-	ErrProtocol     = errors.New("codex app-server protocol error")
-	ErrDisconnected = errors.New("codex app-server disconnected")
+	ErrUnsupported = errors.New("codex app-server method unsupported")
+	ErrProtocol    = errors.New("codex app-server protocol error")
+	// ErrPayloadTooLarge marks one answer this process could not hold. It is
+	// deliberately not ErrProtocol: the peer spoke correctly and the
+	// connection is still framed, so exactly the requests that were waiting
+	// end and everything else on the connection keeps running.
+	ErrPayloadTooLarge = errors.New("codex app-server payload too large")
+	ErrDisconnected    = errors.New("codex app-server disconnected")
 	// ErrThreadNotDurable is the content-free classification of a stored
 	// thread/resume refusal whose exact thread has no durable rollout yet.
 	ErrThreadNotDurable = errors.New("codex app-server thread is not durably resumable")
@@ -79,6 +85,14 @@ type streamAborter interface {
 	abort() error
 }
 
+// messageStream is a transport that already delimits whole messages. A stream
+// that provides it is read message by message instead of scanned for
+// newlines, which is what lets one over-long message be dropped without the
+// reader losing its place in the byte stream.
+type messageStream interface {
+	readBoundedText(limit int) ([]byte, bool, error)
+}
+
 // Client is a minimal concurrent JSONL client for one initialized app-server
 // connection. It owns request IDs, cancellation, response routing, and the
 // bounded notification reader.
@@ -103,6 +117,8 @@ type Client struct {
 	// experimental records whether this connection's initialize negotiated the
 	// upstream experimental API capability.
 	experimental bool
+	// oversized counts inbound messages dropped for exceeding the frame bound.
+	oversized int
 }
 
 // NewClient starts a bounded reader over stream. The caller must Initialize
@@ -291,20 +307,104 @@ func (c *Client) writeJSON(message any) error {
 	return nil
 }
 
+// readLoop consumes inbound frames until the connection ends.
+//
+// An answer larger than the frame bound ends that answer, not the connection.
+// The broker multiplexes one upstream connection across every bound thread, so
+// failing the connection here suspends every binding and forces a reconnect
+// that re-issues the same oversized read; that is a cycle, not a recovery.
 func (c *Client) readLoop() {
-	scanner := bufio.NewScanner(c.stream)
-	scanner.Buffer(make([]byte, 4096), maxFrameBytes)
-	for scanner.Scan() {
-		if err := c.routeFrame(scanner.Bytes()); err != nil {
+	stream, framed := c.stream.(messageStream)
+	reader := bufio.NewReaderSize(c.stream, frameReaderBytes)
+	for {
+		var (
+			frame    []byte
+			oversize bool
+			err      error
+		)
+		if framed {
+			frame, oversize, err = stream.readBoundedText(maxFrameBytes)
+		} else {
+			frame, oversize, err = readBoundedLine(reader, maxFrameBytes)
+		}
+		switch {
+		case errors.Is(err, io.EOF):
+			c.fail(ErrDisconnected)
+			return
+		case err != nil:
+			c.fail(fmt.Errorf("%w: read frame", ErrProtocol))
+			return
+		case oversize:
+			c.dropOversizedAnswer()
+			continue
+		}
+		if err := c.routeFrame(frame); err != nil {
 			c.fail(err)
 			return
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		c.fail(fmt.Errorf("%w: read frame", ErrProtocol))
+}
+
+// readBoundedLine reads one newline-delimited frame, dropping a frame that
+// exceeds limit instead of ending the stream. The trailing newline is always
+// consumed, so a dropped frame leaves the reader on the next frame.
+func readBoundedLine(reader *bufio.Reader, limit int) ([]byte, bool, error) {
+	var frame []byte
+	oversize := false
+	for {
+		chunk, err := reader.ReadSlice('\n')
+		if !oversize && len(frame)+len(chunk) > limit {
+			oversize = true
+			frame = nil
+		}
+		if !oversize {
+			frame = append(frame, chunk...)
+		}
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) && (oversize || len(frame) > 0) {
+				return nil, false, io.EOF
+			}
+			return nil, false, err
+		}
+		if oversize {
+			return nil, true, nil
+		}
+		return frame[:len(frame)-1], false, nil
+	}
+}
+
+// dropOversizedAnswer ends every request that was waiting when an inbound
+// message was dropped.
+//
+// The message was discarded before it could be parsed, so which request it
+// answered is unknowable; every waiting request is therefore indeterminate.
+// That is a bounded, request-scoped outcome, and the connection every other
+// bound thread shares stays open.
+func (c *Client) dropOversizedAnswer() {
+	c.mu.Lock()
+	if c.err != nil {
+		c.mu.Unlock()
 		return
 	}
-	c.fail(ErrDisconnected)
+	c.oversized++
+	pending := c.pending
+	c.pending = make(map[int64]chan response)
+	c.mu.Unlock()
+	for _, wait := range pending {
+		wait <- response{err: ErrPayloadTooLarge}
+	}
+}
+
+// OversizedAnswers counts the inbound messages this connection dropped for
+// exceeding the frame bound. It stays zero on a healthy connection and is the
+// content-free witness that a drop happened without a disconnect.
+func (c *Client) OversizedAnswers() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.oversized
 }
 
 func (c *Client) routeFrame(frame []byte) error {

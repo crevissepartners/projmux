@@ -565,7 +565,14 @@ func (b *RemoteBinding) Submit(ctx context.Context, fence Fence, mutation Mutati
 	case MutationApplied:
 		return MutationApplied, nil
 	case MutationIndeterminate:
-		return MutationIndeterminate, refuse(RefusalDisconnectBoundary, nil)
+		// The runtime already named why the answer was lost. Collapsing every
+		// indeterminate outcome onto one reason here would throw that away at
+		// the process boundary.
+		reason := reply.Refusal
+		if reason == RefusalNone {
+			reason = RefusalDisconnectBoundary
+		}
+		return MutationIndeterminate, refuse(reason, nil)
 	default:
 		reason := reply.Refusal
 		if reason == RefusalNone {
