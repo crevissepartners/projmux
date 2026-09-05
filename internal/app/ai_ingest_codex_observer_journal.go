@@ -16,7 +16,7 @@ import (
 const aiIngestCodexObserverSource = "codex-observer"
 
 // codexObserverTransition names one observable step in an observer's life. The
-// four together are what separates a flapping observer (repeated connected and
+// five together are what separates a flapping observer (repeated connected and
 // disconnected pairs) from a frozen one (a single connected record and nothing
 // after it) from a stopped one (a disconnect with no reconnect behind it).
 type codexObserverTransition string
@@ -26,6 +26,18 @@ const (
 	codexObserverTransitionDisconnected codexObserverTransition = "observer.disconnected"
 	codexObserverTransitionReconnecting codexObserverTransition = "observer.reconnecting"
 	codexObserverTransitionFallback     codexObserverTransition = "observer.fallback"
+	// codexObserverTransitionStopped is the terminal record of the recovery
+	// scheduler. It exists because a reconnecting record alone cannot say
+	// whether recovery is still running: a Pane left at
+	// `invalidating|<epoch>|<reason>` reads identically whether its observer is
+	// still reopening on the broker's backoff or gave up for good, and the
+	// pane option cannot be corrected once the exact binding stops being
+	// current, because SetAuthority refuses that write by design. This record
+	// is therefore the only surface on which an unrecoverable stuck Pane is
+	// distinguishable from a recovering one. Its reason column still carries
+	// the token that ended the epoch, so `backlog-overflow` and
+	// `endpoint-suspended` remain the discriminator of who closed the stream.
+	codexObserverTransitionStopped codexObserverTransition = "observer.stopped"
 )
 
 // codexObserverTransitions is the closed set. A record writer validates
@@ -35,6 +47,7 @@ var codexObserverTransitions = []codexObserverTransition{
 	codexObserverTransitionDisconnected,
 	codexObserverTransitionReconnecting,
 	codexObserverTransitionFallback,
+	codexObserverTransitionStopped,
 }
 
 // codexObserverJournalWindow bounds how often one (transition, reason) pair
@@ -150,7 +163,16 @@ func codexObserverTransitionResult(kind codexObserverTransition) string {
 		return codexAuthorityInvalidating
 	case codexObserverTransitionFallback:
 		return codexAuthorityHook
+	case codexObserverTransitionStopped:
+		// Whatever authority the Pane held when recovery gave up is the
+		// authority it keeps. Naming that outcome `stuck` rather than echoing
+		// the source is the point: no later transition will move it.
+		return codexObserverTransitionStuckResult
 	default:
 		return "retry"
 	}
 }
+
+// codexObserverTransitionStuckResult is the result column of a terminal
+// recovery record.
+const codexObserverTransitionStuckResult = "stuck"
