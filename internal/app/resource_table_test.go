@@ -117,34 +117,34 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 	}{
 		{
 			kind: "projects",
-			want: "CONTEXT  SOURCE                 OBSERVED  NAME   STATUS        AGE\n" +
-				"alpha    project-root-basename  false     alpha  live          2d\n" +
-				"beta     project-root-basename  false     beta   offline       2d\n" +
-				"gone     project-root-basename  false     gone   missing-root  2d\n",
+			want: "KIND     NAME   STATUS        ACTIONS\n" +
+				"project  alpha  live          -\n" +
+				"project  beta   offline       -\n" +
+				"project  gone   missing-root  -\n",
 		},
 		{
 			kind: "windows",
-			want: "CONTEXT  SOURCE              OBSERVED  NAME    STATUS        PROJECT  AGE\n" +
-				"zsh      command-executable  false     main    live          alpha    2d\n" +
-				"zsh      command-executable  false     review  live          alpha    2d\n" +
-				"zsh      command-executable  false     main    offline       beta     2d\n" +
-				"zsh      command-executable  false     main    missing-root  gone     2d\n",
+			want: "KIND    NAME    STATUS        ACTIONS\n" +
+				"window  main    live          -\n" +
+				"window  review  live          -\n" +
+				"window  main    offline       -\n" +
+				"window  main    missing-root  -\n",
 		},
 		{
 			kind: "panes",
-			want: "CONTEXT     SOURCE              OBSERVED  NAME        STATUS        PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-				"zsh         command-executable  false     zsh         live          alpha    main                        2d\n" +
-				"zsh         command-executable  false     log         live          alpha    main                        2d\n" +
-				"agent task  agent-topic         false     codex-pane  live          alpha    main    codex               2d\n" +
-				"zsh         command-executable  false     review-zsh  live          alpha    review                      2d\n" +
-				"zsh         command-executable  false     zsh         offline       beta     main                        2d\n" +
-				"zsh         command-executable  false     zsh         missing-root  gone     main                        2d\n",
+			want: "KIND  NAME        STATUS        ACTIONS\n" +
+				"pane  zsh         live          -\n" +
+				"pane  log         live          -\n" +
+				"pane  codex-pane  live          -\n" +
+				"pane  review-zsh  live          -\n" +
+				"pane  zsh         offline       -\n" +
+				"pane  zsh         missing-root  -\n",
 		},
 		{
 			kind: "agents",
-			want: "CONTEXT     SOURCE       OBSERVED  NAME   STATUS   INTERACTION  PROJECT  WINDOW  SESSION               TERMINATION  AGE\n" +
-				"agent task  agent-topic  false     codex  live     unknown      alpha    main    codex:codex-thread-1               2d\n" +
-				"agent task  agent-topic  false     codex  offline  unknown      beta     main                                       2d\n",
+			want: "KIND   NAME   STATUS   ACTIONS\n" +
+				"agent  codex  live     -\n" +
+				"agent  codex  offline  -\n",
 		},
 	} {
 		t.Run(test.kind, func(t *testing.T) {
@@ -192,7 +192,7 @@ func TestGetHumanContextNoTransportKeepsStoredPresentationOutAndNameStable(t *te
 	store := newFakeResourceStore(t)
 	command := newTestListGetCommand(t, store)
 	command.runtime = nil
-	stdout, stderr, err := runRoute(t, command, "projects", "--project", "alpha")
+	stdout, stderr, err := runRoute(t, command, "projects", "--project", "alpha", "-o", "wide")
 	if err != nil {
 		t.Fatalf("get projects without transport: %v (stderr=%q)", err, stderr)
 	}
@@ -224,7 +224,7 @@ func TestGetAndDescribeHumanContextEnglishKoreanGolden(t *testing.T) {
 		}
 		agent.Metadata.Annotations = map[string]string{coremetadata.AnnotationAgentTopic: test.topic}
 
-		table, stderr, err := runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "alpha")
+		table, stderr, err := runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "alpha", "-o", "wide")
 		if err != nil {
 			t.Fatalf("%s get agents: %v (stderr=%q)", test.locale, err, stderr)
 		}
@@ -273,18 +273,18 @@ func TestResourceTableColumnsAreTheCanonicalContract(t *testing.T) {
 		kind coremetadata.Kind
 		want []string
 	}{
-		{coremetadata.KindProject, []string{"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "AGE"}},
-		{coremetadata.KindWindow, []string{"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "PROJECT", "AGE"}},
-		{coremetadata.KindPane, []string{"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "PROJECT", "WINDOW", "AGENT", "TERMINATION", "AGE"}},
-		{coremetadata.KindAgent, []string{"CONTEXT", "SOURCE", "OBSERVED", "NAME", "STATUS", "INTERACTION", "PROJECT", "WINDOW", "SESSION", "TERMINATION", "AGE"}},
+		{coremetadata.KindProject, []string{"KIND", "NAME", "STATUS", "ACTIONS"}},
+		{coremetadata.KindWindow, []string{"KIND", "NAME", "STATUS", "ACTIONS"}},
+		{coremetadata.KindPane, []string{"KIND", "NAME", "STATUS", "ACTIONS"}},
+		{coremetadata.KindAgent, []string{"KIND", "NAME", "STATUS", "ACTIONS"}},
 	} {
-		got := resourceTableColumns[test.kind]
+		got := columnHeaders(resourceTableColumns(test.kind, columnCompact))
 		if strings.Join(got, ",") != strings.Join(test.want, ",") {
 			t.Fatalf("%s columns = %v, want %v", test.kind, got, test.want)
 		}
 	}
-	if len(resourceTableColumns) != 4 {
-		t.Fatalf("the column contract covers %d kinds, want exactly the 4 list kinds", len(resourceTableColumns))
+	if len(resourceListKindTokens) != 4 {
+		t.Fatalf("the column contract covers %d kinds, want exactly the 4 list kinds", len(resourceListKindTokens))
 	}
 }
 
@@ -296,14 +296,14 @@ func TestResourceTableKeepsDurableNameSeparateFromEphemeralContext(t *testing.T)
 		Context: registryview.Context{Value: "operator hint", Source: registryview.ContextSourceAgentTopic, Observed: true},
 		Status:  selector.StatusOffline,
 	}
-	row := resourceTableRow(match, coremetadata.KindProject, coremetadata.NewRegistry(), time.Time{})
-	if got, want := row[:5], []string{"operator hint", "agent-topic", "true", "stable", "offline"}; !slices.Equal(got, want) {
+	row := resourceTableRow(match, coremetadata.KindProject, coremetadata.NewRegistry(), time.Time{}, columnWide, nil)
+	if got, want := row[:7], []string{"project", "stable", "offline", "-", "operator hint", "agent-topic", "true"}; !slices.Equal(got, want) {
 		t.Fatalf("context/name cells = %q, want %q", got, want)
 	}
 
 	match.Context = registryview.Context{}
-	row = resourceTableRow(match, coremetadata.KindProject, coremetadata.NewRegistry(), time.Time{})
-	if got, want := row[:5], []string{"", "", "false", "stable", "offline"}; !slices.Equal(got, want) {
+	row = resourceTableRow(match, coremetadata.KindProject, coremetadata.NewRegistry(), time.Time{}, columnWide, nil)
+	if got, want := row[:7], []string{"project", "stable", "offline", "-", "", "", "false"}; !slices.Equal(got, want) {
 		t.Fatalf("empty-context/name cells = %q, want %q", got, want)
 	}
 }
@@ -336,10 +336,10 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p3", Name: "빌드로그", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "알파", Window: "review"}},
 			},
-			want: "CONTEXT  SOURCE  OBSERVED  NAME      STATUS   PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-				"                 false     쉘        live     알파     메인\n" +
-				"                 false     log       offline  alpha    main\n" +
-				"                 false     빌드로그  live     알파     review\n",
+			want: "KIND  NAME      STATUS   ACTIONS  CONTEXT  SOURCE  OBSERVED  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+				"pane  쉘        live     -                         false     알파     메인\n" +
+				"pane  log       offline  -                         false     alpha    main\n" +
+				"pane  빌드로그  live     -                         false     알파     review\n",
 		},
 		{
 			name: "a long value widens its own column only",
@@ -350,9 +350,9 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindWindow, UID: "w2", Name: "m", Status: selector.StatusMissingRoot,
 					Owner: selector.OwnerContext{Project: "beta"}},
 			},
-			want: "CONTEXT  SOURCE  OBSERVED  NAME                            STATUS        PROJECT  AGE\n" +
-				"                 false     a-very-long-window-name-indeed  live          alpha\n" +
-				"                 false     m                               missing-root  beta\n",
+			want: "KIND    NAME                            STATUS        ACTIONS  CONTEXT  SOURCE  OBSERVED  PROJECT  AGE\n" +
+				"window  a-very-long-window-name-indeed  live          -                         false     alpha\n" +
+				"window  m                               missing-root  -                         false     beta\n",
 		},
 		{
 			name: "an empty interior cell still holds its column",
@@ -362,9 +362,9 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p2", Name: "zsh", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "CONTEXT  SOURCE  OBSERVED  NAME    STATUS   PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-				"                 false     orphan  offline\n" +
-				"                 false     zsh     live     alpha    main\n",
+			want: "KIND  NAME    STATUS   ACTIONS  CONTEXT  SOURCE  OBSERVED  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+				"pane  orphan  offline  -                         false\n" +
+				"pane  zsh     live     -                         false     alpha    main\n",
 		},
 		{
 			// The AGENT column is the third leg of a Pane's owner chain, which
@@ -379,9 +379,9 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindPane, UID: "p2", Name: "zsh", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "CONTEXT  SOURCE  OBSERVED  NAME        STATUS  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-				"                 false     codex-pane  live    alpha    main    codex\n" +
-				"                 false     zsh         live    alpha    main\n",
+			want: "KIND  NAME        STATUS  ACTIONS  CONTEXT  SOURCE  OBSERVED  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+				"pane  codex-pane  live    -                         false     alpha    main    codex\n" +
+				"pane  zsh         live    -                         false     alpha    main\n",
 		},
 		{
 			name: "an empty trailing cell ends the line rather than padding it",
@@ -390,8 +390,8 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 				{Kind: coremetadata.KindAgent, UID: "a1", Name: "codex", Status: selector.StatusLive,
 					Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 			},
-			want: "CONTEXT  SOURCE  OBSERVED  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE\n" +
-				"                 false     codex  live    unknown      alpha    main\n",
+			want: "KIND   NAME   STATUS  ACTIONS  CONTEXT  SOURCE  OBSERVED  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE\n" +
+				"agent  codex  live    -                         false     unknown      alpha    main\n",
 		},
 		{
 			name:    "zero matches emit zero bytes",
@@ -403,7 +403,7 @@ func TestResourceTableWidthsUseDisplayCells(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			if err := writeResourceTable(&out, "get "+strings.ToLower(string(test.kind))+"s", test.kind, test.matches, registry, resourceFixtureReadClock); err != nil {
+			if err := writeResourceTable(&out, "get "+strings.ToLower(string(test.kind))+"s", test.kind, test.matches, registry, resourceFixtureReadClock, columnWide, nil); err != nil {
 				t.Fatalf("writeResourceTable error = %v", err)
 			}
 			if out.String() != test.want {
@@ -443,7 +443,7 @@ func TestResourceTableHangulAlignmentIsNotRuneCount(t *testing.T) {
 			Owner: selector.OwnerContext{Project: "alpha", Window: "main"}},
 	}
 	var out bytes.Buffer
-	if err := writeResourceTable(&out, "get panes", coremetadata.KindPane, matches, coremetadata.NewRegistry(), resourceFixtureReadClock); err != nil {
+	if err := writeResourceTable(&out, "get panes", coremetadata.KindPane, matches, coremetadata.NewRegistry(), resourceFixtureReadClock, columnWide, nil); err != nil {
 		t.Fatalf("writeResourceTable error = %v", err)
 	}
 
@@ -480,10 +480,10 @@ func TestResourceTableHangulAlignmentIsNotRuneCount(t *testing.T) {
 // runeCountTable renders the same table with utf8.RuneCountInString widths --
 // the arithmetic text/tabwriter uses -- so a test can prove the two differ.
 func runeCountTable(kind coremetadata.Kind, matches []selector.Match) string {
-	headers := resourceTableColumns[kind]
+	headers := columnHeaders(resourceTableColumns(kind, columnWide))
 	rows := [][]string{headers}
 	for _, match := range matches {
-		rows = append(rows, resourceTableRow(match, kind, coremetadata.NewRegistry(), resourceFixtureReadClock))
+		rows = append(rows, resourceTableRow(match, kind, coremetadata.NewRegistry(), resourceFixtureReadClock, columnWide, nil))
 	}
 	widths := make([]int, len(headers))
 	for _, row := range rows {
@@ -525,15 +525,15 @@ func TestGetListWithHangulNamesStaysAligned(t *testing.T) {
 		t.Fatal("fixture pane pan-alpha-log is missing")
 	}
 
-	stdout, stderr, err := runRoute(t, newTestListGetCommand(t, store), "panes", "--project", "알파")
+	stdout, stderr, err := runRoute(t, newTestListGetCommand(t, store), "panes", "--project", "알파", "-o", "wide")
 	if err != nil {
 		t.Fatalf("get panes error = %v (stderr %q)", err, stderr)
 	}
-	const want = "CONTEXT  SOURCE  OBSERVED  NAME        STATUS  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
-		"                 false     쉘          live    알파     메인                        2d\n" +
-		"                 false     log         live    알파     메인                        2d\n" +
-		"                 false     codex-pane  live    알파     메인    codex               2d\n" +
-		"                 false     review-zsh  live    알파     review                      2d\n"
+	const want = "KIND  NAME        STATUS  ACTIONS  CONTEXT  SOURCE  OBSERVED  PROJECT  WINDOW  AGENT  TERMINATION  AGE\n" +
+		"pane  쉘          live    -                         false     알파     메인                        2d\n" +
+		"pane  log         live    -                         false     알파     메인                        2d\n" +
+		"pane  codex-pane  live    -                         false     알파     메인    codex               2d\n" +
+		"pane  review-zsh  live    -                         false     알파     review                      2d\n"
 	if stdout != want {
 		t.Fatalf("get panes stdout =\n%q\nwant\n%q", stdout, want)
 	}

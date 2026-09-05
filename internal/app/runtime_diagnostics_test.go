@@ -409,7 +409,7 @@ func TestGetRuntimeHumanProjectionIsAStableTable(t *testing.T) {
 	t.Parallel()
 
 	command, _, _, _ := runtimeFixture(t, "1")
-	stdout, stderr, err := runGetRuntime(t, command, "sessions", "--socket", "primary")
+	stdout, stderr, err := runGetRuntime(t, command, "sessions", "--socket", "primary", "-o", "wide")
 	if err != nil || stderr != "" {
 		t.Fatalf("get runtime sessions: err=%v stderr=%q", err, stderr)
 	}
@@ -464,8 +464,8 @@ func TestGetRuntimeRefusesMalformedInvocations(t *testing.T) {
 		{name: "unknown kind", args: []string{"agents"}, want: "get runtime agents is not available"},
 		{name: "singular", args: []string{"session"}, want: "get runtime session is not available"},
 		{name: "positional", args: []string{"panes", "extra"}, want: "does not accept positional arguments"},
-		{name: "registry projection", args: []string{"panes", "-o", "uid"}, want: "accepted values: json, none"},
-		{name: "route-local projection", args: []string{"panes", "-o", "cwd"}, want: "accepted values: json, none"},
+		{name: "registry projection", args: []string{"panes", "-o", "uid"}, want: "accepted values: wide, json, none"},
+		{name: "route-local projection", args: []string{"panes", "-o", "cwd"}, want: "accepted values: wide, json, none"},
 		{name: "both sockets", args: []string{"panes", "--socket", "a", "--socket-path", "/tmp/b"}, want: "mutually exclusive"},
 		{name: "relative socket path", args: []string{"panes", "--socket-path", "relative"}, want: "must be absolute"},
 	} {

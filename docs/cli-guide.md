@@ -87,6 +87,12 @@ root bridges and reject missing, duplicate, conflicting, or unknown rows.
 
 ## Resource selectors and the active target
 
+Plural Registry reads default to `KIND NAME STATUS ACTIONS`. Use `-o wide`
+for context, source/observation, owner chain, session, termination and age
+columns; `-o json` retains the full resource and invocation context. Wide
+stdout preserves full values at every terminal width. See [Column profiles](column-profiles.md)
+for the exact per-kind matrix and migration from the previous default output.
+
 The resource routes (`get`, `describe`, `create`, `rename`, `rebind`, `delete`,
 `agent resume`) address stored resources through one shared selector grammar.
 
@@ -723,7 +729,7 @@ it, rather than because it crashed.
 ## get runtime
 
 ```text
-projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o json|none]
+projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]
 ```
 
 `get runtime` is the read-only escape hatch onto one exact tmux server. The
@@ -753,7 +759,10 @@ one difference at the end:
   reason, and zero tmux calls. There is no default-socket guess, and a sibling
   socket is never read.
 
-The default projection is a table preceded by a header line naming the host mode
+The default table contains identity, containment and classification columns;
+`-o wide` adds UID, RESOURCE and REASON with full, unbounded values. The
+[exact profiles](column-profiles.md) do not change with terminal width. Each
+human projection is preceded by a header line naming the host mode
 and the exact transport, plus one line per scope that could not be observed. The
 header is always printed, even when the table is empty: "no sessions" is only
 trustworthy next to which server was asked and whether the answer could be taken

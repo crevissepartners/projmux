@@ -1358,7 +1358,16 @@ if [[ "$legacy_window_name_before" == "$alpha_window_name" ]]; then
   echo "legacy Window display fixture did not differ from its stable name" >&2
   exit 1
 fi
-pmx get windows --project alpha >"$create_root/alpha-windows-table.out"
+pmx get windows --project alpha >"$create_root/alpha-windows-compact.out"
+if ! awk -v stable="$alpha_window_name" '
+  NR == 1 { header = NF == 4 && $1 == "KIND" && $2 == "NAME" && $3 == "STATUS" && $4 == "ACTIONS" }
+  NR == 2 { row = NF == 4 && $1 == "window" && $2 == stable }
+  END { exit !(header && row) }
+' "$create_root/alpha-windows-compact.out"; then
+  echo "legacy Window compact projection lost its durable name or four-field shape" >&2
+  exit 1
+fi
+pmx get windows --project alpha -o wide >"$create_root/alpha-windows-table.out"
 # The inherited tmux identity is stripped, so this is deliberately the
 # no-transport projector: this imported legacy Window has no anchor Pane, so
 # the literal Window fallback is context and stable NAME remains the durable
@@ -1368,7 +1377,7 @@ smoke_assert_file_contains "$create_root/alpha-windows-table.out" "SOURCE"
 smoke_assert_file_contains "$create_root/alpha-windows-table.out" "OBSERVED"
 if ! awk -v stable="$alpha_window_name" '
   NR == 2 {
-    found = $1 == "window" && $2 == "window-fallback" && $3 == "false" && $4 == stable
+    found = $1 == "window" && $2 == stable && $5 == "window" && $6 == "window-fallback" && $7 == "false"
   }
   END { exit !found }
 ' "$create_root/alpha-windows-table.out"; then
@@ -9301,10 +9310,11 @@ exitrec_settle_registry() {
   echo "the Registry never settled after the pane-exit hooks fired" >&2
   exit 1
 }
+# TERMINATION is a diagnostic column: explicitly retain the wide read surface.
 exitrec_settle_registry
 exitrec_read_before="$(sha256sum "$exitrec_registry" | cut -d' ' -f1)"
-exitrec_pmx get agents --project "uid:$exitrec_project_uid" >"$exitrec_root/get-agents.txt"
-exitrec_pmx get panes --project "uid:$exitrec_project_uid" >"$exitrec_root/get-panes.txt"
+exitrec_pmx get agents --project "uid:$exitrec_project_uid" -o wide >"$exitrec_root/get-agents.txt"
+exitrec_pmx get panes --project "uid:$exitrec_project_uid" -o wide >"$exitrec_root/get-panes.txt"
 exitrec_pmx describe agent "uid:$exitrec_failed_agent" >"$exitrec_root/describe-agent.txt"
 smoke_assert_file_contains "$exitrec_root/get-agents.txt" "TERMINATION"
 smoke_assert_file_contains "$exitrec_root/get-agents.txt" "abnormal/supervisor exit=42"

@@ -690,13 +690,13 @@ func TestGetAgentsSurfacesTheConversationPointer(t *testing.T) {
 		Codex:      &coremetadata.CodexSessionRef{ThreadID: "codex-thread-1", SessionID: "codex-session-1"},
 	})
 
-	stdout, stderr, err := runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "alpha")
+	stdout, stderr, err := runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "alpha", "-o", "wide")
 	if err != nil {
 		t.Fatalf("get agents: %v (stderr=%s)", err, stderr)
 	}
 	// The conversation pointer is the SESSION column of the columnar read.
-	const want = "CONTEXT  SOURCE          OBSERVED  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION               TERMINATION  AGE\n" +
-		"codex    agent-provider  false     codex  live    unknown      alpha    main    codex:codex-thread-1               2d\n"
+	const want = "KIND   NAME   STATUS  ACTIONS  CONTEXT  SOURCE          OBSERVED  INTERACTION  PROJECT  WINDOW  SESSION               TERMINATION  AGE\n" +
+		"agent  codex  live    -        codex    agent-provider  false     unknown      alpha    main    codex:codex-thread-1               2d\n"
 	if stdout != want {
 		t.Fatalf("get agents = %q, want %q", stdout, want)
 	}
@@ -705,20 +705,22 @@ func TestGetAgentsSurfacesTheConversationPointer(t *testing.T) {
 	// disturbing the columns around it -- SESSION is an interior column now that
 	// AGE follows it, so an empty cell has to hold its width rather than end the
 	// line.
-	beta, _, err := runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "beta")
+	beta, _, err := runRoute(t, newTestListGetCommand(t, store), "agents", "--project", "beta", "-o", "wide")
 	if err != nil {
 		t.Fatalf("get agents --project beta: %v", err)
 	}
-	if beta != "CONTEXT  SOURCE          OBSERVED  NAME   STATUS   INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE\ncodex    agent-provider  false     codex  offline  unknown      beta     main                          2d\n" {
+	if beta != "KIND   NAME   STATUS   ACTIONS  CONTEXT  SOURCE          OBSERVED  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE\n"+
+		"agent  codex  offline  -        codex    agent-provider  false     unknown      beta     main                          2d\n" {
 		t.Fatalf("an Agent with no session ref rendered %q", beta)
 	}
 
 	// Other kinds carry no SESSION column at all.
-	windows, _, err := runRoute(t, newTestListGetCommand(t, store), "windows", "--project", "beta")
+	windows, _, err := runRoute(t, newTestListGetCommand(t, store), "windows", "--project", "beta", "-o", "wide")
 	if err != nil {
 		t.Fatalf("get windows: %v", err)
 	}
-	if windows != "CONTEXT  SOURCE           OBSERVED  NAME  STATUS   PROJECT  AGE\nwindow   window-fallback  false     main  offline  beta     2d\n" {
+	if windows != "KIND    NAME  STATUS   ACTIONS  CONTEXT  SOURCE           OBSERVED  PROJECT  AGE\n"+
+		"window  main  offline  -        window   window-fallback  false     beta     2d\n" {
 		t.Fatalf("get windows = %q, want the Window column contract", windows)
 	}
 

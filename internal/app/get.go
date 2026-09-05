@@ -202,7 +202,7 @@ func (c *getCommand) runList(token string, args []string, stdout, stderr io.Writ
 	if err != nil {
 		return MapMetadataError(err)
 	}
-	return writeContextResourceListProjection(stdout, spelling, mode, kind, resolution.Matches, registry, c.clock())
+	return writeContextResourceListProjection(stdout, spelling, mode, kind, resolution.Matches, registry, c.clock(), snapshot.navigation)
 }
 
 // repeatedFlag collects every occurrence of a repeatable singular selector

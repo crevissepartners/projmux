@@ -355,8 +355,8 @@ func TestGetListJSONContextDoesNotChangeMetadataOrRegistry(t *testing.T) {
 		{
 			name: "default table",
 			args: []string{"windows", "--project", "alpha", "--window", "main"},
-			want: "CONTEXT  SOURCE           OBSERVED  NAME  STATUS  PROJECT  AGE\n" +
-				"window   window-fallback  false     main  live    alpha    2d\n",
+			want: "KIND    NAME  STATUS  ACTIONS\n" +
+				"window  main  live    -\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -456,7 +456,7 @@ func TestGetListJSONEmptyAndReadFailureAreAtomic(t *testing.T) {
 	var partial bytes.Buffer
 	err = writeContextResourceListProjection(&partial, "get projects", "json", coremetadata.KindProject,
 		[]selector.Match{{Kind: coremetadata.KindProject, UID: "missing", Name: "missing"}},
-		store.registry, resourceFixtureReadClock)
+		store.registry, resourceFixtureReadClock, nil)
 	if err == nil || partial.Len() != 0 {
 		t.Fatalf("stale resolved uid = stdout %q err %v, want zero stdout and error", partial.String(), err)
 	}

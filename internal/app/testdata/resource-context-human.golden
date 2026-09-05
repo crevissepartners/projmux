@@ -1,6 +1,6 @@
 == en-US table ==
-CONTEXT         SOURCE       OBSERVED  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE
-Release review  agent-topic  false     codex  live    unknown      alpha    main                          2d
+KIND   NAME   STATUS  ACTIONS  CONTEXT         SOURCE       OBSERVED  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE
+agent  codex  live    -        Release review  agent-topic  false     unknown      alpha    main                          2d
 == en-US describe ==
 Kind:            Agent
 Name:            codex
@@ -21,8 +21,8 @@ PaneRef:         pan-alpha-codex
 Labels:          provider=codex
 Annotations:     projmux.io/agent-topic=Release review
 == ko-KR table ==
-CONTEXT      SOURCE       OBSERVED  NAME   STATUS  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE
-릴리스 검토  agent-topic  false     codex  live    unknown      alpha    main                          2d
+KIND   NAME   STATUS  ACTIONS  CONTEXT      SOURCE       OBSERVED  INTERACTION  PROJECT  WINDOW  SESSION  TERMINATION  AGE
+agent  codex  live    -        릴리스 검토  agent-topic  false     unknown      alpha    main                          2d
 == ko-KR describe ==
 Kind:            Agent
 Name:            codex

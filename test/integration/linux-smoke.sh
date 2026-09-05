@@ -2227,6 +2227,20 @@ PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt" "host app-owned  transport tmux -L $PROJMUX_RUNTIME_APP_SOCKET"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt" "SESSION"
 smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt" "control"
+if ! awk 'NR == 2 { ok = NF == 3 && $1 == "SESSION" && $2 == "NAME" && $3 == "CLASS" } END { exit !ok }' "$PROJMUX_SMOKE_WORKDIR/runtime-app-human.txt"; then
+  echo "runtime Session compact header drifted" >&2
+  exit 1
+fi
+PROJMUX_PROJDIR="$runtime_root" XDG_STATE_HOME="$runtime_state" \
+  "$bin" get runtime sessions --socket "$PROJMUX_RUNTIME_APP_SOCKET" -o wide \
+  >"$PROJMUX_SMOKE_WORKDIR/runtime-app-wide.txt"
+if ! awk 'NR == 2 { ok = NF == 6 && $1 == "SESSION" && $2 == "NAME" && $3 == "CLASS" && $4 == "UID" && $5 == "RESOURCE" && $6 == "REASON" } END { exit !ok }' "$PROJMUX_SMOKE_WORKDIR/runtime-app-wide.txt"; then
+  echo "runtime Session wide diagnostic header drifted" >&2
+  exit 1
+fi
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-wide.txt" "$runtime_project_uid"
+smoke_assert_file_contains "$PROJMUX_SMOKE_WORKDIR/runtime-app-wide.txt" "bound to Project/"
+
 
 # The standalone host is the same Registry and the same managed identity; only
 # the classification of what projmux did not mark differs.
@@ -4612,11 +4626,11 @@ if [[ "$(exitrec_sibling_tmux show-options -gqv @projmux_exitrec_sentinel)" != "
 fi
 echo ">> exit reconciliation immediate provider exit42 agent=$exitrec_early_agent pane=$exitrec_early_pane generation=$exitrec_early_generation operation=$exitrec_early_operation rollback-blank=0 sibling=byte-identical repeat=fixed-point"
 
-# The read surfaces project the stored evidence and write nothing. A read that
-# advanced a lifecycle would make asking about the state change it.
+# The wide read surfaces project the stored termination evidence and write
+# nothing. A read that advanced a lifecycle would make asking change the state.
 exitrec_read_before="$(cksum "$exitrec_root/state/projmux/metadata/registry.json" | awk '{print $1, $2}')"
-exitrec_pmx get panes --project evidence >"$exitrec_root/get-panes.txt"
-exitrec_pmx get agents --project evidence >"$exitrec_root/get-agents.txt"
+exitrec_pmx get panes --project evidence -o wide >"$exitrec_root/get-panes.txt"
+exitrec_pmx get agents --project evidence -o wide >"$exitrec_root/get-agents.txt"
 exitrec_pmx describe agent "uid:$exitrec_sigkill_agent" >"$exitrec_root/describe-agent.txt"
 smoke_assert_file_contains "$exitrec_root/get-panes.txt" "TERMINATION"
 smoke_assert_file_contains "$exitrec_root/get-agents.txt" "TERMINATION"

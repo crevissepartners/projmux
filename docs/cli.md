@@ -1844,17 +1844,17 @@ projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [-
 projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
 projmux get pane --current -o cwd
 projmux get pane [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [-o <mode>]
-projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o json|none]
+projmux get runtime sessions|windows|panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]
 ```
 
 Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux get projects`](#projmux-get-projects) | List Project resources; -o json items include invocation context |
-| [`projmux get windows`](#projmux-get-windows) | List Window resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
-| [`projmux get panes`](#projmux-get-panes) | List Pane resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
-| [`projmux get agents`](#projmux-get-agents) | List Agent resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
+| [`projmux get projects`](#projmux-get-projects) | List Project resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context |
+| [`projmux get windows`](#projmux-get-windows) | List Window resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
+| [`projmux get panes`](#projmux-get-panes) | List Pane resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
+| [`projmux get agents`](#projmux-get-agents) | List Agent resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry |
 | [`projmux get runtime`](#projmux-get-runtime) | List every tmux Session, Window, and Pane on one exact server with its attribution |
 | [`projmux get notifications`](#projmux-get-notifications) | List pending notification rows |
 | [`projmux get snapshots`](#projmux-get-snapshots) | List saved session snapshots |
@@ -1864,7 +1864,7 @@ Canonical spelling: `projmux get projects`, `projmux get windows`, `projmux get 
 
 ### `projmux get projects`
 
-List Project resources; -o json items include invocation context
+List Project resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context
 
 Selectorless authority: `explicit-fan-out` — the route spelling is an intentional global or whole-set opt-in.
 
@@ -1885,11 +1885,11 @@ projmux get projects [--project <ref> | -p <ref>] [--selector key=value]... [-o 
 
 Aliases: `project`
 
-Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`, `wide`
 
 ### `projmux get windows`
 
-List Window resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
+List Window resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -1910,11 +1910,11 @@ projmux get windows [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... 
 
 Aliases: `window`
 
-Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`, `wide`
 
 ### `projmux get panes`
 
-List Pane resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
+List Pane resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -1933,11 +1933,11 @@ Allowed effects:
 projmux get panes [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [--pane <ref>]... [--selector key=value]... [--all-projects | -A] [-o <mode>]
 ```
 
-Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`, `wide`
 
 ### `projmux get agents`
 
-List Agent resources with invocation context in -o json; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
+List Agent resources as KIND NAME STATUS ACTIONS; -o wide includes diagnostics and -o json includes invocation context; inside tmux defaults to the active managed root, and --all-projects lists the whole Registry
 
 Selectorless authority: `natural-omitted` — omission resolves one predictable current resource or documented contextual read/scope; any selector replaces it.
 
@@ -1958,7 +1958,7 @@ projmux get agents [--project <ref> | -p <ref>] [--window <ref> | -w <ref>]... [
 
 Aliases: `agent`
 
-Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`
+Output modes (`-o`): `uid`, `name`, `ref`, `metadata`, `json`, `none`, `wide`
 
 ### `projmux get runtime`
 
@@ -1978,9 +1978,9 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o json|none]
-projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o json|none]
-projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o json|none]
+projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o wide|json|none]
+projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o wide|json|none]
+projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]
 ```
 
 Subcommands:
@@ -2011,10 +2011,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o json|none]
+projmux get runtime sessions [--socket <name> | --socket-path <absolute>] [-o wide|json|none]
 ```
 
-Output modes (`-o`): `json`, `none`
+Output modes (`-o`): `wide`, `json`, `none`
 
 #### `projmux get runtime windows`
 
@@ -2034,10 +2034,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o json|none]
+projmux get runtime windows [--socket <name> | --socket-path <absolute>] [-o wide|json|none]
 ```
 
-Output modes (`-o`): `json`, `none`
+Output modes (`-o`): `wide`, `json`, `none`
 
 #### `projmux get runtime panes`
 
@@ -2057,10 +2057,10 @@ Allowed effects:
 - `domain-effect=null`
 
 ```
-projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o json|none]
+projmux get runtime panes [--socket <name> | --socket-path <absolute>] [-o wide|json|none]
 ```
 
-Output modes (`-o`): `json`, `none`
+Output modes (`-o`): `wide`, `json`, `none`
 
 ### `projmux get notifications`
 
