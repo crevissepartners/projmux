@@ -1492,7 +1492,10 @@ func TestCodexNativeObserverEndpointReplacementRevokesE1BeforeGapAndPublishesExa
 	authorities := sink.authorityEpochSnapshot()
 	firstReady := codexAuthorityControlPlane + ":" + e1.Epoch + ":ready"
 	secondReady := codexAuthorityControlPlane + ":" + e2.Epoch + ":ready"
-	wantOrder := []string{firstReady, codexAuthorityInvalidating + ":" + e1.Epoch + ":disconnected", secondReady}
+	// The gap token is stream-closed, not disconnected: these fake connections
+	// close their stream without recording a cause, and that state is now
+	// named apart from an endpoint that actually went away.
+	wantOrder := []string{firstReady, codexAuthorityInvalidating + ":" + e1.Epoch + ":" + string(codexObserverReasonStreamClosed), secondReady}
 	position := 0
 	secondReadyPosition := -1
 	for index, authority := range authorities {
@@ -1632,7 +1635,7 @@ func TestCodexNativeTwoAgentDisconnectRecoversSameAgentControlAndStableProjectio
 	}
 	if got := gapAuthority; !reflect.DeepEqual(got, []string{
 		codexAuthorityControlPlane + ":" + e1.Epoch + ":ready",
-		codexAuthorityInvalidating + ":" + e1.Epoch + ":disconnected",
+		codexAuthorityInvalidating + ":" + e1.Epoch + ":" + string(codexObserverReasonStreamClosed),
 	}) {
 		t.Fatalf("target gap authority = %q", got)
 	}
@@ -1809,7 +1812,7 @@ func TestRetiredObserverRecoveryBackoffIsCappedAndNeverExhausts(t *testing.T) {
 			t.Fatalf("the retired exhaustion fallback was published: %q", authorities)
 		}
 	}
-	if !slices.Contains(authorities, codexAuthorityInvalidating+":"+e1.Epoch+":disconnected") {
+	if !slices.Contains(authorities, codexAuthorityInvalidating+":"+e1.Epoch+":"+string(codexObserverReasonStreamClosed)) {
 		t.Fatalf("E1 was not invalidated before recovery: %q", authorities)
 	}
 	if connection.closeCount() != 1 {

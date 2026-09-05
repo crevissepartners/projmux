@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -50,6 +51,22 @@ type codexAuthorityCensus struct {
 	// zero for Agents that were created with a payload.
 	UnexplainedHook int `json:"unexplained_hook"`
 	Unavailable     int `json:"unavailable"`
+	// Reasons is the distribution of bounded authority reasons across the
+	// same Agents, ordered by token.
+	//
+	// The source counts above cannot separate the three states an operator
+	// actually needs to tell apart. A flapping observer, one frozen at its
+	// first epoch, and one that stopped after flapping all land in the same
+	// invalidating bucket; what differs is the token that put them there.
+	Reasons []codexAuthorityReasonCount `json:"reasons,omitempty"`
+}
+
+// codexAuthorityReasonCount is one bounded reason token and how many managed
+// Codex Agents currently carry it. It names no Agent, so it stays safe on
+// every diagnostics surface for the same reason the counts above do.
+type codexAuthorityReasonCount struct {
+	Reason string `json:"reason"`
+	Count  int    `json:"count"`
 }
 
 // censusCodexLifecycleAuthority classifies every managed Codex Agent in one
@@ -62,12 +79,16 @@ func censusCodexLifecycleAuthority(
 	if lookup == nil {
 		return census
 	}
+	reasons := map[string]int{}
 	for _, agent := range registry.Agents {
 		if agent.Spec.Provider != aiModeCodex || agent.Status.PaneRef == "" {
 			continue
 		}
 		census.Agents++
 		diagnostic := lookup(agent.Status.PaneRef)
+		if reason := strings.TrimSpace(diagnostic.Reason); reason != "" {
+			reasons[reason]++
+		}
 		switch diagnostic.Source {
 		case codexAuthorityControlPlane:
 			census.ControlPlane++
@@ -88,7 +109,24 @@ func censusCodexLifecycleAuthority(
 			census.Unavailable++
 		}
 	}
+	census.Reasons = codexAuthorityReasonCounts(reasons)
 	return census
+}
+
+// codexAuthorityReasonCounts orders the distribution by token so two doctor
+// runs over the same state render identically.
+func codexAuthorityReasonCounts(counts map[string]int) []codexAuthorityReasonCount {
+	if len(counts) == 0 {
+		return nil
+	}
+	ordered := make([]codexAuthorityReasonCount, 0, len(counts))
+	for reason, count := range counts {
+		ordered = append(ordered, codexAuthorityReasonCount{Reason: reason, Count: count})
+	}
+	slices.SortFunc(ordered, func(a, b codexAuthorityReasonCount) int {
+		return strings.Compare(a.Reason, b.Reason)
+	})
+	return ordered
 }
 
 type codexLifecycleAuthorityLookup func(string) codexLifecycleAuthorityDiagnostic

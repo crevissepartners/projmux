@@ -540,6 +540,13 @@ func writeDoctorCodexAuthorityText(buf *bytes.Buffer, census *codexAuthorityCens
 		census.Agents, census.ControlPlane, census.Pending, census.Invalidating)
 	fmt.Fprintf(buf, "  Declared hook fallback: %d; unexplained native fallback: %d; unavailable: %d\n",
 		census.DeclaredHook, census.UnexplainedHook, census.Unavailable)
+	if len(census.Reasons) > 0 {
+		reasons := make([]string, 0, len(census.Reasons))
+		for _, reason := range census.Reasons {
+			reasons = append(reasons, fmt.Sprintf("%s=%d", reason.Reason, reason.Count))
+		}
+		fmt.Fprintf(buf, "  Reasons: %s\n", strings.Join(reasons, ", "))
+	}
 	if census.PayloadFreeFallback > 0 {
 		fmt.Fprintf(buf, "  Payload-free plain fallback (native control unavailable): %d\n", census.PayloadFreeFallback)
 	}

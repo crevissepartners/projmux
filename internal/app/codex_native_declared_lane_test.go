@@ -181,6 +181,13 @@ func TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback(t *
 	want := codexAuthorityCensus{
 		Agents: 8, ControlPlane: 1, Pending: 1, Invalidating: 1,
 		DeclaredHook: 3, PayloadFreeFallback: 1, UnexplainedHook: 1, Unavailable: 1,
+		Reasons: []codexAuthorityReasonCount{
+			{Reason: "connecting", Count: 1},
+			{Reason: "disconnected", Count: 1},
+			{Reason: codexNativeUnexplainedReason, Count: 4},
+			{Reason: "ready", Count: 1},
+			{Reason: "tmux observation failed", Count: 1},
+		},
 	}
 	if !reflect.DeepEqual(census, want) {
 		t.Fatalf("census = %+v, want %+v", census, want)

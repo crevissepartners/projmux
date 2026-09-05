@@ -35,9 +35,10 @@ const (
 // control epoch mutates through, and the typed requester those wire shapes are
 // defined on.
 var (
-	_ codexLifecycleConnection = (*codexBrokerLifecycleEpoch)(nil)
-	_ agentControlWire         = (*codexBrokerLifecycleEpoch)(nil)
-	_ codexappserver.Requester = (*codexBrokerLifecycleEpoch)(nil)
+	_ codexLifecycleConnection  = (*codexBrokerLifecycleEpoch)(nil)
+	_ codexLifecycleStreamCause = (*codexBrokerLifecycleEpoch)(nil)
+	_ agentControlWire          = (*codexBrokerLifecycleEpoch)(nil)
+	_ codexappserver.Requester  = (*codexBrokerLifecycleEpoch)(nil)
 )
 
 // codexBrokerEpochRecord is one closed snapshot barrier waiting to be consumed
@@ -175,7 +176,7 @@ func (s *codexBrokerObserverSession) Close() error {
 	s.pumped = nil
 	s.mu.Unlock()
 	if current != nil {
-		current.end()
+		current.end(codexObserverReasonEpochClosed)
 	}
 	if binding != nil {
 		_ = binding.Close()
@@ -283,6 +284,14 @@ func (s *codexBrokerObserverSession) pump(binding *codexbroker.RemoteBinding, re
 			s.retire(ready)
 		}
 	}
+	s.endAfterStreamRevoked(binding)
+}
+
+// endAfterStreamRevoked ends the live epoch after one binding's ordered stream
+// closed, which is the runtime having revoked that binding. It is a named
+// method rather than a tail block so the cause it records is reachable from a
+// test without a live broker.
+func (s *codexBrokerObserverSession) endAfterStreamRevoked(binding *codexbroker.RemoteBinding) {
 	s.mu.Lock()
 	var current *codexBrokerLifecycleEpoch
 	if s.binding == binding {
@@ -292,7 +301,7 @@ func (s *codexBrokerObserverSession) pump(binding *codexbroker.RemoteBinding, re
 	}
 	s.mu.Unlock()
 	if current != nil {
-		current.end()
+		current.end(codexObserverReasonBindingRevoked)
 	}
 }
 
@@ -328,7 +337,7 @@ func (s *codexBrokerObserverSession) retire(ready chan codexBrokerEpochRecord) {
 	default:
 	}
 	if current != nil {
-		current.end()
+		current.end(codexObserverReasonEndpointSuspended)
 	}
 }
 
@@ -340,7 +349,7 @@ func (s *codexBrokerObserverSession) rotate(record codexBrokerEpochRecord, ready
 	s.pending, s.hasPending = record, true
 	s.mu.Unlock()
 	if current != nil {
-		current.end()
+		current.end(codexObserverReasonEpochRotated)
 	}
 	// The channel holds one record: only the newest barrier can be opened, and
 	// an older one that was never consumed describes a connection epoch the
@@ -422,6 +431,13 @@ type codexBrokerLifecycleEpoch struct {
 	mu     sync.Mutex
 	ended  bool
 	leases map[string]codexbroker.ApprovalLease
+	// cause is why this epoch's notification stream closed, recorded by
+	// whichever call ended it. The observer above cannot derive this: a closed
+	// channel looks identical whether the upstream connection went away, the
+	// broker rotated in a replacement barrier, the binding was revoked, or the
+	// observer closed the connection itself. Without it the loop can only
+	// report that the stream ended.
+	cause codexObserverReason
 }
 
 // GenerationAuthority returns the complete live authority granted by the
@@ -479,7 +495,7 @@ func (e *codexBrokerLifecycleEpoch) ReadLifecycleSnapshot(ctx context.Context, t
 // the observer closing one connection never retires it.
 func (e *codexBrokerLifecycleEpoch) Close() error {
 	e.session.clear(e)
-	e.end()
+	e.end(codexObserverReasonEpochClosed)
 	return nil
 }
 
@@ -567,22 +583,36 @@ func (e *codexBrokerLifecycleEpoch) deliver(event codexbroker.Event) {
 		// the next observer epoch through a fresh broker snapshot barrier while
 		// leaving every sibling binding and the shared upstream connection live;
 		// silently dropping would leave a hole nothing downstream could detect.
-		e.end()
+		e.end(codexObserverReasonBacklogOverflow)
 		e.session.resync(e)
 	}
 }
 
-// end closes this epoch exactly once and retires every lease it minted.
-func (e *codexBrokerLifecycleEpoch) end() {
+// end closes this epoch exactly once and retires every lease it minted. The
+// first caller to close it also names why; later calls cannot overwrite that.
+func (e *codexBrokerLifecycleEpoch) end(cause codexObserverReason) {
 	e.mu.Lock()
 	if e.ended {
 		e.mu.Unlock()
 		return
 	}
 	e.ended = true
+	e.cause = cause
 	e.leases = map[string]codexbroker.ApprovalLease{}
 	close(e.notifications)
 	e.mu.Unlock()
+}
+
+// NotificationsClosedCause reports why this epoch's stream closed, or the
+// empty reason while it is still open. It is the observer's only truthful
+// answer to who ended the epoch.
+func (e *codexBrokerLifecycleEpoch) NotificationsClosedCause() codexObserverReason {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.ended {
+		return ""
+	}
+	return e.cause
 }
 
 // clear drops one epoch from the session when it is still the live one.

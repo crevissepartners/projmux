@@ -75,6 +75,14 @@ type aiIngestLogEntry struct {
 	ThreadID  string `json:"thread_id,omitempty"`
 	SessionID string `json:"session_id,omitempty"`
 	TurnID    string `json:"turn_id,omitempty"`
+	// Epoch is the observer epoch label a lifecycle transition belongs to. It
+	// is what makes two adjacent records comparable: the same label twice is
+	// one epoch reporting twice, a new label is a new connection.
+	Epoch string `json:"epoch,omitempty"`
+	// Repeat counts identical transitions coalesced into this record by the
+	// observer journal's rate window. Zero, and therefore omitted, means this
+	// record stands for exactly one transition.
+	Repeat int `json:"repeat,omitempty"`
 }
 
 func (c *aiCommand) runIngest(args []string, stdout, stderr io.Writer) error {
