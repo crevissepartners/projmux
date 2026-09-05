@@ -17,18 +17,24 @@ import (
 // session's writer blocks on a full outbound queue, which back-pressures into
 // the binding's queue, which revokes that binding alone.
 type session struct {
-	host    *Host
-	conn    *net.UnixConn
-	version int
+	host          *Host
+	conn          *net.UnixConn
+	version       int
+	id            string
+	lifecycleOnly bool
 
-	out    chan wireReply
-	closed chan struct{}
-	once   sync.Once
+	out        chan wireReply
+	closed     chan struct{}
+	departed   chan struct{}
+	once       sync.Once
+	departOnce sync.Once
 
-	mu       sync.Mutex
-	bindings map[string]*Binding
-	pumps    sync.WaitGroup
-	handlers sync.WaitGroup
+	mu           sync.Mutex
+	bindings     map[string]*Binding
+	cancels      map[uint64]context.CancelFunc
+	preCancelled map[uint64]struct{}
+	pumps        sync.WaitGroup
+	handlers     sync.WaitGroup
 }
 
 // serveSession runs one connection from handshake to close.
@@ -39,30 +45,41 @@ func (h *Host) serveSession(conn *net.UnixConn) {
 	}
 	defer h.untrack(conn)
 	reader := bufio.NewReaderSize(conn, frameBufferBytes)
-	version, ok := h.authenticate(conn, reader)
+	version, sessionID, lifecycleOnly, ok := h.authenticate(conn, reader)
 	if !ok {
 		return
 	}
 	h.countSession(1)
 	defer h.countSession(-1)
 	s := &session{
-		host:     h,
-		conn:     conn,
-		version:  version,
-		out:      make(chan wireReply, sessionBacklog),
-		closed:   make(chan struct{}),
-		bindings: make(map[string]*Binding),
+		host:          h,
+		conn:          conn,
+		version:       version,
+		id:            sessionID,
+		lifecycleOnly: lifecycleOnly,
+		out:           make(chan wireReply, sessionBacklog),
+		closed:        make(chan struct{}),
+		departed:      make(chan struct{}),
+		bindings:      make(map[string]*Binding),
+		cancels:       make(map[uint64]context.CancelFunc),
+		preCancelled:  make(map[uint64]struct{}),
 	}
+	if !h.registerSession(s) {
+		return
+	}
+	defer h.unregisterSession(s)
 	writerDone := make(chan struct{})
 	go func() {
 		defer close(writerDone)
 		s.write()
 	}()
 	s.read(reader)
+	s.departOnce.Do(func() { close(s.departed) })
 	// The client is gone or the runtime is stopping. Release every binding this
 	// session held before waiting on anything: a binding whose owner has
 	// disconnected has no consumer, and leaving it bound would keep the runtime
 	// alive for a client that no longer exists.
+	s.cancelAll()
 	s.releaseAll()
 	s.handlers.Wait()
 	s.pumps.Wait()
@@ -146,6 +163,14 @@ func (s *session) refuse(id uint64, reason Refusal) {
 
 // handle dispatches one client request.
 func (s *session) handle(request wireRequest) {
+	if s.lifecycleOnly && request.Kind != requestLifecycle && request.Kind != requestCancel {
+		s.refuse(request.ID, RefusalRequestUnknown)
+		return
+	}
+	if !s.lifecycleOnly && (request.Kind == requestLifecycle || request.Kind == requestCancel) {
+		s.refuse(request.ID, RefusalRequestUnknown)
+		return
+	}
 	switch request.Kind {
 	case requestBind:
 		s.handleBind(request)
@@ -157,8 +182,116 @@ func (s *session) handle(request wireRequest) {
 		s.handleAnswer(request)
 	case requestStats:
 		s.handleStats(request)
+	case requestLifecycle:
+		s.handleLifecycle(request)
+	case requestCancel:
+		s.handleCancel(request)
 	default:
 		s.refuse(request.ID, RefusalRequestUnknown)
+	}
+}
+
+func (s *session) handleLifecycle(request wireRequest) {
+	target := s.host.lookupSession(request.TargetSession)
+	if target == nil || target.lifecycleOnly {
+		s.refuse(request.ID, RefusalBindingClosed)
+		return
+	}
+	binding := target.lookup(request.Thread)
+	if binding == nil {
+		s.refuse(request.ID, RefusalBindingClosed)
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	if !s.registerCancel(request.ID, cancel) {
+		cancel()
+		s.refuse(request.ID, RefusalDisconnectBoundary)
+		return
+	}
+	defer func() {
+		cancel()
+		s.releaseCancel(request.ID)
+	}()
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		select {
+		case <-target.departed:
+			cancel()
+		case <-s.departed:
+			cancel()
+		case <-s.host.done:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	snapshot, err := binding.ReadLifecycleSnapshot(ctx, request.Fence)
+	cancel()
+	<-watchDone
+	if err != nil {
+		reason := RefusalOf(err)
+		if reason == RefusalNone {
+			reason = RefusalEndpointRefused
+		}
+		s.refuse(request.ID, reason)
+		return
+	}
+	s.reply(request.ID, wireReply{Kind: replyResult, Thread: request.Thread, Snapshot: &snapshot})
+}
+
+func (s *session) handleCancel(request wireRequest) {
+	if request.CancelID == 0 || request.CancelID >= request.ID {
+		s.refuse(request.ID, RefusalFrameInvalid)
+		return
+	}
+	s.mu.Lock()
+	cancel := s.cancels[request.CancelID]
+	if cancel == nil && len(s.preCancelled) < sessionBacklog {
+		s.preCancelled[request.CancelID] = struct{}{}
+	}
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	s.reply(request.ID, wireReply{Kind: replyResult})
+}
+
+func (s *session) registerCancel(id uint64, cancel context.CancelFunc) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, cancelled := s.preCancelled[id]; cancelled {
+		delete(s.preCancelled, id)
+		return false
+	}
+	select {
+	case <-s.closed:
+		return false
+	case <-s.host.done:
+		return false
+	default:
+	}
+	s.cancels[id] = cancel
+	return true
+}
+
+func (s *session) releaseCancel(id uint64) {
+	s.mu.Lock()
+	delete(s.cancels, id)
+	delete(s.preCancelled, id)
+	s.mu.Unlock()
+}
+
+func (s *session) cancelAll() {
+	s.mu.Lock()
+	cancels := make([]context.CancelFunc, 0, len(s.cancels))
+	for _, cancel := range s.cancels {
+		cancels = append(cancels, cancel)
+	}
+	s.cancels = make(map[uint64]context.CancelFunc)
+	s.preCancelled = make(map[uint64]struct{})
+	s.mu.Unlock()
+	for _, cancel := range cancels {
+		cancel()
 	}
 }
 

@@ -26,12 +26,18 @@ func OpenPrivateUnix(ctx context.Context, socketPath string, timeout time.Durati
 	if err != nil {
 		return nil, classifyProxyOpenError(setupCtx, err)
 	}
+	peer, err := peerIdentity(connection)
+	if err != nil {
+		_ = connection.Close()
+		return nil, ErrEndpointChanged
+	}
 	websocket, err := upgradeProxyWebSocket(setupCtx, connection)
 	if err != nil {
 		_ = connection.Close()
 		return nil, classifyProxyOpenError(setupCtx, err)
 	}
 	client := NewClient(websocket)
+	client.peer = peer
 	if _, err := client.initialize(setupCtx, projmuxVersion, experimental); err != nil {
 		_ = client.Close()
 		return nil, classifyProxyOpenError(setupCtx, err)

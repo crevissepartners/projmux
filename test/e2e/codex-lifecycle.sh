@@ -24,6 +24,8 @@ lifecycle_notify_log="$lifecycle_root/desktop-notify-count"
 lifecycle_notify_hook="$lifecycle_root/desktop-notify-hook"
 lifecycle_real_tmux="$(command -v tmux)"
 lifecycle_started=0
+lifecycle_control_pid=""
+lifecycle_control_socket="$lifecycle_codex_home/app-server-control/app-server-control.sock"
 lifecycle_agent_uid=""
 lifecycle_sibling_agent_uid=""
 lifecycle_pane_uid=""
@@ -208,23 +210,83 @@ lifecycle_background_routes() {
     '
 }
 
-lifecycle_proxy_pids() {
+lifecycle_control_pids() {
   ps -eo pid=,args= | \
-    PROJMUX_PROXY_BIN="$lifecycle_shim/codex" \
+    PROJMUX_CONTROL_BIN="$lifecycle_shim/codex" \
     awk '
       {
         pid = $1
         argv = $0
         sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "", argv)
-        if (pid ~ /^[1-9][0-9]*$/ && argv == ENVIRON["PROJMUX_PROXY_BIN"] " app-server proxy") {
+        if (pid ~ /^[1-9][0-9]*$/ && argv == ENVIRON["PROJMUX_CONTROL_BIN"] " app-server fixture-control") {
           print pid
         }
       }
     '
 }
 
-lifecycle_cleanup() {
+start_lifecycle_control_server() {
   local actual=""
+  if [[ -n "$lifecycle_control_pid" ]] && kill -0 "$lifecycle_control_pid" 2>/dev/null; then
+    echo "refusing to start a second Codex lifecycle control peer: pid=$lifecycle_control_pid" >&2
+    return 1
+  fi
+  env -u TMUX -u TMUX_PANE \
+    CODEX_HOME="$lifecycle_codex_home" \
+    PROJMUX_FAKE_CODEX_STATE="$lifecycle_fixture_state" \
+    PROJMUX_SMOKE_WORKDIR="$PROJMUX_SMOKE_WORKDIR" \
+    "$lifecycle_shim/codex" app-server fixture-control \
+    >>"$lifecycle_root/control.out" 2>>"$lifecycle_root/control.err" &
+  lifecycle_control_pid=$!
+  for _ in $(seq 1 400); do
+    if ! kill -0 "$lifecycle_control_pid" 2>/dev/null; then
+      wait "$lifecycle_control_pid" 2>/dev/null || true
+      echo "Codex lifecycle control peer exited before publishing its socket" >&2
+      cat "$lifecycle_root/control.err" >&2 2>/dev/null || true
+      lifecycle_control_pid=""
+      return 1
+    fi
+    actual="$(lifecycle_control_pids)"
+    if [[ -S "$lifecycle_control_socket" && "$actual" == "$lifecycle_control_pid" ]]; then
+      return 0
+    fi
+    sleep 0.025
+  done
+  echo "Codex lifecycle control peer did not publish one exact isolated socket: pid=$lifecycle_control_pid actual=$actual socket=$lifecycle_control_socket" >&2
+  return 1
+}
+
+stop_lifecycle_control_server() {
+  local pid="$lifecycle_control_pid" actual="" expected="$lifecycle_shim/codex app-server fixture-control"
+  if [[ -z "$pid" ]]; then
+    return 0
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    actual="$(ps -p "$pid" -o args= 2>/dev/null || true)"
+    if [[ "$actual" != "$expected" ]]; then
+      echo "refusing to terminate a drifted Codex lifecycle control peer: pid=$pid argv=$actual" >&2
+      return 1
+    fi
+    kill -TERM "$pid"
+  fi
+  for _ in $(seq 1 400); do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      wait "$pid" 2>/dev/null || true
+      lifecycle_control_pid=""
+      if [[ -S "$lifecycle_control_socket" ]]; then
+        echo "Codex lifecycle control socket survived its exact peer: $lifecycle_control_socket" >&2
+        return 1
+      fi
+      return 0
+    fi
+    sleep 0.025
+  done
+  echo "Codex lifecycle control peer survived TERM: pid=$pid" >&2
+  return 1
+}
+
+lifecycle_cleanup() {
+  local actual="" cleanup_status=0 routes_stopped=0
   if [[ "$lifecycle_started" == "1" ]]; then
     actual="$(lifecycle_tmux display-message -p -t "$lifecycle_session" '#{socket_path}' 2>/dev/null || true)"
     if [[ -n "$actual" ]]; then
@@ -234,7 +296,7 @@ lifecycle_cleanup() {
           ;;
         *)
           echo "refusing Codex lifecycle cleanup outside smoke root: $actual" >&2
-          return 1
+          cleanup_status=1
           ;;
       esac
     fi
@@ -242,16 +304,24 @@ lifecycle_cleanup() {
   fi
   for _ in $(seq 1 200); do
     if [[ -z "$(lifecycle_background_routes)" ]]; then
-      return 0
+      routes_stopped=1
+      break
     fi
     sleep 0.025
   done
-  echo "Codex lifecycle watcher survived exact server cleanup:" >&2
-  lifecycle_background_routes >&2
-  return 1
+  if [[ "$routes_stopped" != "1" ]]; then
+    echo "Codex lifecycle watcher survived exact server cleanup:" >&2
+    lifecycle_background_routes >&2
+    cleanup_status=1
+  fi
+  if ! stop_lifecycle_control_server; then
+    cleanup_status=1
+  fi
+  return "$cleanup_status"
 }
 trap 'lifecycle_cleanup; smoke_cleanup_env' EXIT
 
+start_lifecycle_control_server
 lifecycle_started=1
 lifecycle_anchor_pane="$(lifecycle_tmux new-session -d -P -F '#{pane_id}' -s "$lifecycle_session" -c "$lifecycle_project" sleep 600)"
 if [[ ! "$lifecycle_anchor_pane" =~ ^%[0-9]+$ ]]; then
@@ -554,11 +624,12 @@ wait_lifecycle_pane_option "$lifecycle_sibling_pane" @projmux_codex_authority pr
 wait_lifecycle_pane_option "$lifecycle_sibling_pane" @projmux_ai_state thinking "sibling active snapshot"
 epoch_one="$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" @projmux_codex_authority_epoch)"
 sibling_epoch_one="$(lifecycle_tmux show-options -pqv -t "$lifecycle_sibling_pane" @projmux_codex_authority_epoch)"
-lifecycle_proxy_epoch_one_pid="$(lifecycle_proxy_pids)"
+lifecycle_control_epoch_one_pid="$(lifecycle_control_pids)"
 if [[ -z "$epoch_one" || -z "$sibling_epoch_one" ]] ||
-  [[ ! "$lifecycle_proxy_epoch_one_pid" =~ ^[1-9][0-9]*$ ]]; then
+  [[ ! "$lifecycle_control_epoch_one_pid" =~ ^[1-9][0-9]*$ ]] ||
+  [[ "$lifecycle_control_epoch_one_pid" != "$lifecycle_control_pid" ]]; then
   echo "native lifecycle target or sibling authority epoch was empty: target=$epoch_one sibling=$sibling_epoch_one" >&2
-  echo "native lifecycle shared proxy PID was not exact: pid=$lifecycle_proxy_epoch_one_pid" >&2
+  echo "native lifecycle direct control peer PID was not exact: tracked=$lifecycle_control_pid actual=$lifecycle_control_epoch_one_pid" >&2
   exit 1
 fi
 assert_lifecycle_sibling_semantics "initial snapshot"
@@ -629,19 +700,19 @@ if [[ "$(lifecycle_queue_count)" != "1" || "$(lifecycle_desktop_count)" != "2" ]
   exit 1
 fi
 
-# endpoint-suspended, not a generic disconnect: killing the exact E1 proxy takes
-# the upstream connection this epoch was minted on away, and the broker epoch
-# records which call closed its stream. Pinning that exact token is what keeps a
-# reason the observer failed to capture from passing as a real disconnect.
+# endpoint-suspended, not a generic disconnect: killing the exact E1 direct peer
+# takes both same-process shared and owned connections away, and the broker epoch
+# records which call closed its stream. Pinning that exact process identity keeps
+# a reason the observer failed to capture from passing as a real disconnect.
 lifecycle_arm_projection_barrier "$lifecycle_pane" invalidating endpoint-suspended "" "" "disconnect"
-# The exact-proxy EOF is the only disconnect trigger. The old fixture burst can
+# The exact-peer EOF is the only disconnect trigger. The old fixture burst can
 # revoke only the target binding before TERM and let E1 authority briefly return,
 # so it is deliberately not armed here. Re-observe the complete unique absolute
 # argv immediately before TERM and fail closed on any PID drift.
-lifecycle_proxy_before_term="$(lifecycle_proxy_pids)"
-if [[ "$lifecycle_proxy_before_term" != "$lifecycle_proxy_epoch_one_pid" ]] ||
-  ! kill -TERM "$lifecycle_proxy_epoch_one_pid"; then
-  echo "refusing to terminate a drifted Codex lifecycle E1 proxy: pid=$lifecycle_proxy_epoch_one_pid" >&2
+lifecycle_control_before_term="$(lifecycle_control_pids)"
+if [[ "$lifecycle_control_before_term" != "$lifecycle_control_epoch_one_pid" ]] ||
+  ! stop_lifecycle_control_server; then
+  echo "refusing to terminate a drifted Codex lifecycle E1 control peer: pid=$lifecycle_control_epoch_one_pid actual=$lifecycle_control_before_term" >&2
   exit 1
 fi
 lifecycle_wait_projection_barrier
@@ -689,11 +760,17 @@ if [[ "$lifecycle_gap_before_hook" != "invalidating|endpoint-suspended|||" ]] ||
 fi
 
 lifecycle_arm_replacement_projection_barrier "$lifecycle_pane" "$epoch_one" provider-control-plane ready idle "" "replacement snapshot/control"
+start_lifecycle_control_server
 touch "$lifecycle_fixture_state/allow-reconnect"
 lifecycle_wait_projection_barrier
 epoch_two="$(lifecycle_tmux show-options -pqv -t "$lifecycle_pane" @projmux_codex_authority_epoch)"
-if [[ -z "$epoch_two" || "$epoch_two" == "$epoch_one" ]]; then
+lifecycle_control_epoch_two_pid="$(lifecycle_control_pids)"
+if [[ -z "$epoch_two" || "$epoch_two" == "$epoch_one" ]] ||
+  [[ ! "$lifecycle_control_epoch_two_pid" =~ ^[1-9][0-9]*$ ]] ||
+  [[ "$lifecycle_control_epoch_two_pid" != "$lifecycle_control_pid" ]] ||
+  [[ "$lifecycle_control_epoch_two_pid" == "$lifecycle_control_epoch_one_pid" ]]; then
   echo "reconnect did not replace lifecycle epoch: first=$epoch_one second=$epoch_two" >&2
+  echo "reconnect did not replace the exact direct control peer: first=$lifecycle_control_epoch_one_pid tracked=$lifecycle_control_pid second=$lifecycle_control_epoch_two_pid" >&2
   exit 1
 fi
 

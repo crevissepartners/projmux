@@ -28,32 +28,63 @@ import (
 // an assumption.
 type brokerTestEndpoint struct {
 	events chan codexappserver.Notification
+	peer   codexappserver.PeerIdentity
 
-	mu        sync.Mutex
-	requests  []string
-	answers   []string
-	responses map[string]string
-	closed    bool
+	mu               sync.Mutex
+	requests         []string
+	answers          []string
+	responses        map[string]string
+	closed           bool
+	lifecycleStarted chan struct{}
+	lifecycleRelease chan struct{}
+	lifecycleOnce    sync.Once
 }
 
 func newBrokerTestEndpoint() *brokerTestEndpoint {
 	return &brokerTestEndpoint{
 		events:    make(chan codexappserver.Notification, 64),
+		peer:      codexappserver.PeerIdentity{PID: 101, OwnerUID: 1000, Start: "test:broker-peer"},
 		responses: map[string]string{},
 	}
 }
 
 func (e *brokerTestEndpoint) Notifications() <-chan codexappserver.Notification { return e.events }
 
-func (e *brokerTestEndpoint) Request(_ context.Context, method string, _, result any) error {
+func (e *brokerTestEndpoint) PeerIdentity() codexappserver.PeerIdentity { return e.peer }
+
+func (e *brokerTestEndpoint) Request(ctx context.Context, method string, _, result any) error {
 	e.mu.Lock()
 	e.requests = append(e.requests, method)
 	payload := e.responses[method]
+	started, release := e.lifecycleStarted, e.lifecycleRelease
 	e.mu.Unlock()
+	if method == "thread/read" && release != nil {
+		e.lifecycleOnce.Do(func() { close(started) })
+		select {
+		case <-release:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	if payload == "" || result == nil {
 		return nil
 	}
 	return json.Unmarshal([]byte(payload), result)
+}
+
+func (e *brokerTestEndpoint) holdLifecycleRead() (<-chan struct{}, func()) {
+	e.mu.Lock()
+	e.lifecycleStarted = make(chan struct{})
+	e.lifecycleRelease = make(chan struct{})
+	started, release := e.lifecycleStarted, e.lifecycleRelease
+	e.mu.Unlock()
+	return started, func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	}
 }
 
 func (e *brokerTestEndpoint) RespondServerRequest(_ context.Context, rawID json.RawMessage, _ any) error {
@@ -143,6 +174,26 @@ func (e *brokerTestEndpoint) answerLedger() []string {
 	return append([]string(nil), e.answers...)
 }
 
+// brokerTestLifecycleEndpoint is one request-owned transport over the fixture's
+// independent lifecycle request seam. It intentionally exposes no event or
+// approval surface.
+type brokerTestLifecycleEndpoint struct {
+	shared *brokerTestEndpoint
+	peer   codexappserver.PeerIdentity
+	closed atomic.Bool
+}
+
+func (e *brokerTestLifecycleEndpoint) ReadLifecycleSnapshot(ctx context.Context, threadID string) (codexappserver.LifecycleSnapshot, error) {
+	return codexappserver.ReadLifecycleSnapshotOn(ctx, e.shared, threadID)
+}
+
+func (e *brokerTestLifecycleEndpoint) PeerIdentity() codexappserver.PeerIdentity { return e.peer }
+
+func (e *brokerTestLifecycleEndpoint) Close() error {
+	e.closed.Store(true)
+	return nil
+}
+
 // startBrokerRuntimeForTest publishes one real runtime host over an in-memory
 // endpoint sequence and returns the discovery contract clients reach it by.
 func startBrokerRuntimeForTest(t *testing.T, endpoints ...*brokerTestEndpoint) (codexbroker.Discovery, *int) {
@@ -170,6 +221,7 @@ func startBrokerRuntimeWithHost(t *testing.T, endpoints ...*brokerTestEndpoint) 
 	}
 	opens := 0
 	var mu sync.Mutex
+	var current *brokerTestEndpoint
 	broker, err := codexbroker.NewBroker(codexbroker.Config{
 		Opener: func(context.Context) (codexbroker.Endpoint, error) {
 			mu.Lock()
@@ -179,7 +231,16 @@ func startBrokerRuntimeWithHost(t *testing.T, endpoints ...*brokerTestEndpoint) 
 			}
 			endpoint := endpoints[opens]
 			opens++
+			current = endpoint
 			return endpoint, nil
+		},
+		Lifecycle: func(_ context.Context, expected codexappserver.PeerIdentity) (codexappserver.LifecycleEndpoint, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if current == nil || !codexappserver.SamePeerIdentity(expected, current.peer) {
+				return nil, codexappserver.ErrEndpointChanged
+			}
+			return &brokerTestLifecycleEndpoint{shared: current, peer: current.peer}, nil
 		},
 	})
 	if err != nil {
@@ -554,7 +615,9 @@ func TestBrokerEpochReadsTheExactLifecycleSnapshotThroughItsOwnFence(t *testing.
 
 	snapshot, err := epoch.ReadLifecycleSnapshot(context.Background(), "thread-read")
 	if err != nil {
-		t.Fatalf("read lifecycle snapshot: %v", err)
+		var brokerErr *codexbroker.BrokerError
+		_ = errors.As(err, &brokerErr)
+		t.Fatalf("read lifecycle snapshot: %v (%s, %#v)", err, codexbroker.RefusalOf(err), brokerErr)
 	}
 	if snapshot.ThreadID != "thread-read" || snapshot.TurnID != "turn-7" ||
 		snapshot.TurnState != codexappserver.TurnStateInProgress || snapshot.ThreadState != codexappserver.ThreadStateActive {
@@ -562,6 +625,287 @@ func TestBrokerEpochReadsTheExactLifecycleSnapshotThroughItsOwnFence(t *testing.
 	}
 	if !epoch.LifecycleEventsAvailable() {
 		t.Fatal("a bound epoch reported lifecycle events unavailable")
+	}
+}
+
+// TestOwnedLifecycleReadPreservesSharedHistoryAndApprovalAuthority is the B2
+// differential preflight. The owned response is deliberately older than the
+// shared events buffered around it; applying the same literal history to the
+// reducer must produce the baseline single-read order, while approval and
+// ordinary request authority remain on the shared connection throughout.
+func TestOwnedLifecycleReadPreservesSharedHistoryAndApprovalAuthority(t *testing.T) {
+	const threadID = "thread-history"
+	history := []codexappserver.Notification{
+		{Method: "turn/started", Params: json.RawMessage(`{"threadId":"thread-history","turn":{"id":"turn-1","status":"inProgress"}}`)},
+		{Method: "item/commandExecution/requestApproval", RequestID: "77", RawRequestID: json.RawMessage(`77`), Params: json.RawMessage(`{"threadId":"thread-history","turnId":"turn-1","itemId":"item-1"}`)},
+		{Method: "thread/status/changed", Params: json.RawMessage(`{"threadId":"thread-history","status":{"type":"active","activeFlags":["waitingOnApproval"]}}`)},
+		{Method: "turn/completed", Params: json.RawMessage(`{"threadId":"thread-history","turn":{"id":"turn-1","status":"completed"}}`)},
+	}
+	response := `{"thread":{"id":"thread-history","status":{"type":"active"},"turns":[{"id":"turn-0","status":"completed","startedAt":0}]}}`
+
+	// Execute the prior shared requester lane itself on an independent endpoint
+	// under the exact same schedule. This is not a reducer-only model: the
+	// existing ReadLifecycleSnapshotOn request/decoder is what produces the
+	// baseline snapshot while its shared notification stream buffers history.
+	baselineEndpoint := newBrokerTestEndpoint()
+	baselineEndpoint.respondWith("thread/read", response)
+	baselineStarted, releaseBaseline := baselineEndpoint.holdLifecycleRead()
+	baselineEndpoint.emit(history[0])
+	type readResult struct {
+		snapshot codexappserver.LifecycleSnapshot
+		err      error
+	}
+	baselineDone := make(chan readResult, 1)
+	go func() {
+		snapshot, err := codexappserver.ReadLifecycleSnapshotOn(context.Background(), baselineEndpoint, threadID)
+		baselineDone <- readResult{snapshot: snapshot, err: err}
+	}()
+	select {
+	case <-baselineStarted:
+	case <-time.After(time.Second):
+		t.Fatal("shared baseline read did not start")
+	}
+	baselineEndpoint.emit(history[1])
+	baselineEndpoint.emit(history[2])
+	baselineObserved := []codexappserver.Notification{<-baselineEndpoint.Notifications(), <-baselineEndpoint.Notifications(), <-baselineEndpoint.Notifications()}
+	if err := baselineEndpoint.RespondServerRequest(context.Background(), json.RawMessage(`77`), struct{}{}); err != nil {
+		t.Fatalf("shared baseline approval: %v", err)
+	}
+	releaseBaseline()
+	baselineResult := <-baselineDone
+	if baselineResult.err != nil {
+		t.Fatalf("shared baseline read: %v", baselineResult.err)
+	}
+	baselineEndpoint.emit(history[3])
+	baselineObserved = append(baselineObserved, <-baselineEndpoint.Notifications())
+
+	endpoint := newBrokerTestEndpoint()
+	endpoint.respondWith("thread/read", response)
+	started, release := endpoint.holdLifecycleRead()
+	discovery, _ := startBrokerRuntimeForTest(t, endpoint)
+
+	identity := brokerTestIdentity(threadID)
+	session := newCodexBrokerObserverSessionOn(identity, "", nil, discovery, nil)
+	defer session.Close()
+	epoch := openBrokerEpoch(t, session)
+
+	// Immediately before the read: the event is already buffered on the
+	// authoritative shared stream.
+	endpoint.emit(history[0])
+	readDone := make(chan readResult, 1)
+	go func() {
+		snapshot, err := epoch.ReadLifecycleSnapshot(context.Background(), threadID)
+		readDone <- readResult{snapshot: snapshot, err: err}
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("owned lifecycle read did not reach its independent transport")
+	}
+
+	// During the read: only the shared stream delivers and owns these events.
+	endpoint.emit(history[1])
+	endpoint.emit(history[2])
+	observed := []codexappserver.Notification{
+		waitForBrokerNotification(t, epoch),
+		waitForBrokerNotification(t, epoch),
+		waitForBrokerNotification(t, epoch),
+	}
+	if err := epoch.Request(context.Background(), "history/ping", struct{}{}, nil); err != nil {
+		t.Fatalf("shared request during owned read: %v", err)
+	}
+	if err := epoch.RespondServerRequest(context.Background(), json.RawMessage(`77`), struct{}{}); err != nil {
+		t.Fatalf("shared approval during owned read: %v", err)
+	}
+
+	release()
+	var result readResult
+	select {
+	case result = <-readDone:
+	case <-time.After(time.Second):
+		t.Fatal("owned lifecycle read did not complete")
+	}
+	if result.err != nil {
+		t.Fatalf("owned lifecycle read: %v", result.err)
+	}
+	if result.snapshot != baselineResult.snapshot {
+		t.Fatalf("owned snapshot = %+v, shared baseline = %+v", result.snapshot, baselineResult.snapshot)
+	}
+	if result.snapshot.ThreadID != threadID || result.snapshot.TurnCount != 1 || result.snapshot.TurnID != "turn-0" ||
+		result.snapshot.TurnState != codexappserver.TurnStateCompleted || !result.snapshot.StartedAt.Equal(time.Unix(0, 0).UTC()) {
+		t.Fatalf("literal owned snapshot = %+v", result.snapshot)
+	}
+
+	// Immediately after the response: delivery stays behind the same shared
+	// history and the same connection/binding authority.
+	endpoint.emit(history[3])
+	observed = append(observed, waitForBrokerNotification(t, epoch))
+	if got := endpoint.requestCount("history/ping"); got != 1 {
+		t.Fatalf("shared request count = %d, want 1", got)
+	}
+	if got := endpoint.answerLedger(); !slices.Equal(got, []string{"77"}) {
+		t.Fatalf("shared approval ledger = %v", got)
+	}
+
+	// Independent literal oracle: baseline and B both begin from the response
+	// then apply the shared history in order. No queue state is used as a cut.
+	reduce := func(events []codexappserver.Notification) []coremetadata.AgentInteractionKind {
+		var reducer codexLifecycleReducer
+		projection := reducer.begin(1, identity, result.snapshot)
+		interactions := []coremetadata.AgentInteractionKind{projection.Interaction}
+		for _, notification := range events {
+			event, recognized, err := codexappserver.DecodeLifecycleEvent(notification)
+			if err != nil || !recognized {
+				t.Fatalf("decode history event %q: recognized=%t err=%v", notification.Method, recognized, err)
+			}
+			projection = reducer.apply(1, event)
+			if !projection.Accepted {
+				t.Fatalf("history event %q was rejected", notification.Method)
+			}
+			interactions = append(interactions, projection.Interaction)
+		}
+		return interactions
+	}
+	want := []coremetadata.AgentInteractionKind{
+		coremetadata.InteractionResponseComplete,
+		coremetadata.InteractionInProgress,
+		coremetadata.InteractionInProgress,
+		coremetadata.InteractionApprovalRequired,
+		coremetadata.InteractionResponseComplete,
+	}
+	if got := reduce(baselineObserved); !slices.Equal(got, want) {
+		t.Fatalf("baseline interactions = %v, want %v", got, want)
+	}
+	if got := reduce(observed); !slices.Equal(got, want) {
+		t.Fatalf("owned interactions = %v, want %v", got, want)
+	}
+}
+
+func TestLifecyclePublicationFenceRejectsEveryRouteAndActivationAxis(t *testing.T) {
+	newEpoch := func() (*codexBrokerLifecycleEpoch, context.Context) {
+		identity := brokerTestIdentity("thread-fence")
+		endpoint := coremetadata.CodexEndpointRef{StateDomainID: "domain-a", EndpointGenerationID: "endpoint-generation-a"}
+		binding := &codexbroker.RemoteBinding{}
+		connection := &codexbroker.Conn{}
+		session := &codexBrokerObserverSession{
+			identity: identity, endpoint: endpoint, binding: binding, conn: connection,
+		}
+		epoch := &codexBrokerLifecycleEpoch{
+			session: session, identity: identity, endpoint: endpoint, connection: connection,
+			binding: binding, brokerRuntime: connection.Runtime(),
+		}
+		session.current = epoch
+		return epoch, context.Background()
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*codexBrokerLifecycleEpoch) context.Context
+	}{
+		{name: "state domain", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.session.endpoint.StateDomainID = "domain-b"
+			return context.Background()
+		}},
+		{name: "endpoint generation", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.session.endpoint.EndpointGenerationID = "endpoint-generation-b"
+			return context.Background()
+		}},
+		{name: "broker runtime", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.brokerRuntime = "runtime-b"
+			return context.Background()
+		}},
+		{name: "connection", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.session.conn = &codexbroker.Conn{}
+			return context.Background()
+		}},
+		{name: "binding", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.session.binding = &codexbroker.RemoteBinding{}
+			return context.Background()
+		}},
+		{name: "agent", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.session.identity.AgentUID = "agent-b"
+			return context.Background()
+		}},
+		{name: "pane", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.session.identity.PaneUID = "pane-b"
+			return context.Background()
+		}},
+		{name: "activation runtime", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.session.identity.RuntimeID = "%99"
+			return context.Background()
+		}},
+		{name: "activation generation", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.session.identity.Generation = "generation-b"
+			return context.Background()
+		}},
+		{name: "thread", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.session.identity.ThreadID = "thread-b"
+			return context.Background()
+		}},
+		{name: "current epoch", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.session.current = nil
+			return context.Background()
+		}},
+		{name: "session close", mutate: func(e *codexBrokerLifecycleEpoch) context.Context {
+			e.session.closed = true
+			return context.Background()
+		}},
+		{name: "caller cancel", mutate: func(_ *codexBrokerLifecycleEpoch) context.Context {
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			return ctx
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			epoch, ctx := newEpoch()
+			if !epoch.lifecyclePublicationCurrent(ctx) {
+				t.Fatal("unmodified publication fence is not current")
+			}
+			ctx = test.mutate(epoch)
+			if epoch.lifecyclePublicationCurrent(ctx) {
+				t.Fatal("changed authority axis admitted publication")
+			}
+		})
+	}
+}
+
+func TestOwnedLifecycleResultIsZeroAcrossConnectionEpochReplacement(t *testing.T) {
+	first := newBrokerTestEndpoint()
+	first.respondWith("thread/read", `{"thread":{"id":"thread-stale-read","status":{"type":"idle"},"turns":[]}}`)
+	started, release := first.holdLifecycleRead()
+	second := newBrokerTestEndpoint()
+	discovery, _ := startBrokerRuntimeForTest(t, first, second)
+	session := newCodexBrokerObserverSessionOn(brokerTestIdentity("thread-stale-read"), "", nil, discovery, nil)
+	defer session.Close()
+	stale := openBrokerEpoch(t, session)
+
+	type result struct {
+		snapshot codexappserver.LifecycleSnapshot
+		err      error
+	}
+	done := make(chan result, 1)
+	go func() {
+		snapshot, err := stale.ReadLifecycleSnapshot(context.Background(), "thread-stale-read")
+		done <- result{snapshot: snapshot, err: err}
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("owned stale read did not start")
+	}
+	_ = first.Close()
+	select {
+	case got := <-done:
+		if got.err == nil || got.snapshot != (codexappserver.LifecycleSnapshot{}) {
+			t.Fatalf("stale result = %+v err=%v, want result0", got.snapshot, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("connection replacement did not cancel owned read")
+	}
+	release()
+	waitForBrokerStreamEnd(t, stale)
+	fresh := openBrokerEpoch(t, session)
+	if fresh.fence.Connection == stale.fence.Connection || fresh.fence.Binding != stale.fence.Binding {
+		t.Fatalf("replacement fences stale=%+v fresh=%+v", stale.fence, fresh.fence)
 	}
 }
 
@@ -1027,6 +1371,7 @@ func startCodexOverflowRuntime(
 	}
 	first := newEndpoint()
 	var mu sync.Mutex
+	var current *brokerTestEndpoint
 	opens, refused := 0, 0
 	broker, err := codexbroker.NewBroker(codexbroker.Config{
 		Opener: func(context.Context) (codexbroker.Endpoint, error) {
@@ -1034,13 +1379,23 @@ func startCodexOverflowRuntime(
 			defer mu.Unlock()
 			opens++
 			if opens == 1 {
+				current = first
 				return first, nil
 			}
 			if refused < topology.reopenFailures {
 				refused++
 				return nil, errors.New("fixture upstream is away")
 			}
-			return newEndpoint(), nil
+			current = newEndpoint()
+			return current, nil
+		},
+		Lifecycle: func(_ context.Context, expected codexappserver.PeerIdentity) (codexappserver.LifecycleEndpoint, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if current == nil || !codexappserver.SamePeerIdentity(expected, current.peer) {
+				return nil, codexappserver.ErrEndpointChanged
+			}
+			return &brokerTestLifecycleEndpoint{shared: current, peer: current.peer}, nil
 		},
 	})
 	if err != nil {
@@ -1244,9 +1599,17 @@ func TestObserverRecoversIntoANewEpochAfterConsumerBacklogOverflow(t *testing.T)
 	// overflow is not an endpoint suspension and must never be reported as one.
 	overflowRecords := []string{}
 	for _, entry := range run.journal.snapshot() {
-		if entry.Epoch == run.firstEpoch {
-			overflowRecords = append(overflowRecords, entry.Event+":"+string(entry.Reason))
+		if entry.Epoch != run.firstEpoch {
+			continue
 		}
+		// A bounded lifecycle retry can add replacement-open observations under
+		// the lost epoch. They belong to recovery, not to the overflow's own
+		// connected/disconnected/reconnecting transition triple.
+		if entry.Event == string(codexObserverTransitionReconnecting) &&
+			string(entry.Reason) != string(codexObserverReasonBacklogOverflow) {
+			continue
+		}
+		overflowRecords = append(overflowRecords, entry.Event+":"+string(entry.Reason))
 	}
 	wantRecords := []string{
 		string(codexObserverTransitionConnected) + ":" + string(codexObserverReasonReady),

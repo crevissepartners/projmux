@@ -2136,16 +2136,47 @@ runtime_snapshot() {
   runtime_tmux "$socket" list-panes -a -F '#{pane_id}\037#{window_id}\037#{@projmux_pane_uid}'
 }
 
+runtime_wait_for_command_title() {
+  local socket="$1" receipt=""
+  # tmux starts the command before its automatic rename timer necessarily
+  # publishes the matching Window title. This fixture names the Window at
+  # creation because it tests read-only projection, not that unrelated timer;
+  # still require the exact command/title/explicit-name state before snapshot.
+  for _ in $(seq 1 200); do
+    receipt="$(runtime_tmux "$socket" display-message -p -t "=$PROJMUX_RUNTIME_SESSION:0.0" \
+      '#{window_name}|#{pane_current_command}|#{automatic-rename}')"
+    if [[ "$receipt" == "sleep|sleep|0" ]]; then
+      return 0
+    fi
+    sleep 0.025
+  done
+  echo "runtime diagnostics command title did not settle: socket=$socket receipt=$receipt" >&2
+  return 1
+}
+
+runtime_uid="$(id -u)"
+PROJMUX_RUNTIME_APP_ACTUAL="$TMUX_TMPDIR/tmux-$runtime_uid/$PROJMUX_RUNTIME_APP_SOCKET"
+PROJMUX_RUNTIME_GUEST_ACTUAL="$TMUX_TMPDIR/tmux-$runtime_uid/$PROJMUX_RUNTIME_GUEST_SOCKET"
+PROJMUX_RUNTIME_SIBLING_ACTUAL="$TMUX_TMPDIR/tmux-$runtime_uid/$PROJMUX_RUNTIME_SIBLING_SOCKET"
 for runtime_socket in "$PROJMUX_RUNTIME_APP_SOCKET" "$PROJMUX_RUNTIME_GUEST_SOCKET" "$PROJMUX_RUNTIME_SIBLING_SOCKET"; do
-  runtime_tmux "$runtime_socket" new-session -d -s "$PROJMUX_RUNTIME_SESSION" -c "$runtime_root" sleep 300
+  runtime_tmux "$runtime_socket" new-session -d -s "$PROJMUX_RUNTIME_SESSION" -n sleep -c "$runtime_root" sleep 300
+  case "$runtime_socket" in
+    "$PROJMUX_RUNTIME_APP_SOCKET") PROJMUX_RUNTIME_APP_STARTED=1 ;;
+    "$PROJMUX_RUNTIME_GUEST_SOCKET") PROJMUX_RUNTIME_GUEST_STARTED=1 ;;
+    "$PROJMUX_RUNTIME_SIBLING_SOCKET") PROJMUX_RUNTIME_SIBLING_STARTED=1 ;;
+  esac
   runtime_tmux "$runtime_socket" set-option -t "$PROJMUX_RUNTIME_SESSION" -q @projmux_project_path "$runtime_root"
+  runtime_wait_for_command_title "$runtime_socket"
 done
-PROJMUX_RUNTIME_APP_STARTED=1
-PROJMUX_RUNTIME_GUEST_STARTED=1
-PROJMUX_RUNTIME_SIBLING_STARTED=1
-PROJMUX_RUNTIME_APP_ACTUAL="$(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" display-message -p -t "=$PROJMUX_RUNTIME_SESSION" '#{socket_path}')"
-PROJMUX_RUNTIME_GUEST_ACTUAL="$(runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" display-message -p -t "=$PROJMUX_RUNTIME_SESSION" '#{socket_path}')"
-PROJMUX_RUNTIME_SIBLING_ACTUAL="$(runtime_tmux "$PROJMUX_RUNTIME_SIBLING_SOCKET" display-message -p -t "=$PROJMUX_RUNTIME_SESSION" '#{socket_path}')"
+runtime_app_reported="$(runtime_tmux "$PROJMUX_RUNTIME_APP_SOCKET" display-message -p -t "=$PROJMUX_RUNTIME_SESSION" '#{socket_path}')"
+runtime_guest_reported="$(runtime_tmux "$PROJMUX_RUNTIME_GUEST_SOCKET" display-message -p -t "=$PROJMUX_RUNTIME_SESSION" '#{socket_path}')"
+runtime_sibling_reported="$(runtime_tmux "$PROJMUX_RUNTIME_SIBLING_SOCKET" display-message -p -t "=$PROJMUX_RUNTIME_SESSION" '#{socket_path}')"
+if [[ "$runtime_app_reported" != "$PROJMUX_RUNTIME_APP_ACTUAL" ]] ||
+  [[ "$runtime_guest_reported" != "$PROJMUX_RUNTIME_GUEST_ACTUAL" ]] ||
+  [[ "$runtime_sibling_reported" != "$PROJMUX_RUNTIME_SIBLING_ACTUAL" ]]; then
+  echo "runtime diagnostics socket receipt drifted: app=$runtime_app_reported guest=$runtime_guest_reported sibling=$runtime_sibling_reported" >&2
+  exit 1
+fi
 export PROJMUX_RUNTIME_APP_ACTUAL PROJMUX_RUNTIME_GUEST_ACTUAL PROJMUX_RUNTIME_SIBLING_ACTUAL
 # The socket every later cleanup targets is the one tmux itself reports, and it
 # has to be under this run's TMUX_TMPDIR before anything kills it.

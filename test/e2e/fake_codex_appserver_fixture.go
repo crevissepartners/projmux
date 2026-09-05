@@ -12,8 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -31,14 +33,13 @@ const (
 	fixtureDisconnectBurst = 96
 )
 
-var fixtureWriteMu sync.Mutex
-
 type fixtureCommand uint8
 
 const (
 	fixtureCommandUnknown fixtureCommand = iota
 	fixtureCommandProxy
 	fixtureCommandDaemonVersion
+	fixtureCommandControlServer
 )
 
 func main() {
@@ -48,6 +49,8 @@ func main() {
 		err = serveProxy()
 	case fixtureCommandDaemonVersion:
 		err = writeDaemonVersion(os.Stdout)
+	case fixtureCommandControlServer:
+		err = serveControlSocket()
 	default:
 		fmt.Fprintln(os.Stderr, "unsupported fake Codex command")
 		os.Exit(2)
@@ -65,6 +68,9 @@ func classifyFixtureCommand(args []string) fixtureCommand {
 	if len(args) == 3 && args[0] == "app-server" && args[1] == "daemon" && args[2] == "version" {
 		return fixtureCommandDaemonVersion
 	}
+	if len(args) == 2 && args[0] == "app-server" && args[1] == "fixture-control" {
+		return fixtureCommandControlServer
+	}
 	return fixtureCommandUnknown
 }
 
@@ -80,7 +86,123 @@ func writeDaemonVersion(writer io.Writer) error {
 	})
 }
 
+type fixturePeer struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+type fixtureControlHub struct {
+	mu     sync.Mutex
+	shared *fixturePeer
+	conns  map[net.Conn]struct{}
+}
+
+func (h *fixtureControlHub) setShared(peer *fixturePeer) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.shared = peer
+	h.mu.Unlock()
+}
+
+func (h *fixtureControlHub) eventPeer(fallback *fixturePeer) *fixturePeer {
+	if h == nil {
+		return fallback
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.shared
+}
+
+func (h *fixtureControlHub) track(conn net.Conn) {
+	h.mu.Lock()
+	h.conns[conn] = struct{}{}
+	h.mu.Unlock()
+}
+
+func (h *fixtureControlHub) untrack(conn net.Conn) {
+	h.mu.Lock()
+	delete(h.conns, conn)
+	h.mu.Unlock()
+}
+
+func (h *fixtureControlHub) closeAll() {
+	h.mu.Lock()
+	conns := make([]net.Conn, 0, len(h.conns))
+	for conn := range h.conns {
+		conns = append(conns, conn)
+	}
+	h.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+}
+
+func fixtureControlSocketPath() (string, error) {
+	if _, err := fixtureStateDir(); err != nil {
+		return "", err
+	}
+	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
+	smokeRoot := strings.TrimSpace(os.Getenv("PROJMUX_SMOKE_WORKDIR"))
+	expected := filepath.Join(filepath.Clean(smokeRoot), "codex-lifecycle", "codex-home")
+	if !filepath.IsAbs(codexHome) || filepath.Clean(codexHome) != expected {
+		return "", errors.New("CODEX_HOME must be the fixed Codex lifecycle child of PROJMUX_SMOKE_WORKDIR")
+	}
+	dir := filepath.Join(expected, "app-server-control")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "app-server-control.sock"), nil
+}
+
+func serveControlSocket() error {
+	path, err := fixtureControlSocketPath()
+	if err != nil {
+		return err
+	}
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		return err
+	}
+	listener.SetUnlinkOnClose(true)
+	hub := &fixtureControlHub{conns: make(map[net.Conn]struct{})}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(signals)
+	go func() {
+		<-signals
+		_ = listener.Close()
+		hub.closeAll()
+	}()
+	var handlers sync.WaitGroup
+	for {
+		conn, acceptErr := listener.AcceptUnix()
+		if acceptErr != nil {
+			_ = listener.Close()
+			hub.closeAll()
+			handlers.Wait()
+			if errors.Is(acceptErr, net.ErrClosed) {
+				return nil
+			}
+			return acceptErr
+		}
+		hub.track(conn)
+		handlers.Go(func() {
+			defer hub.untrack(conn)
+			defer conn.Close()
+			if serveErr := serveFixtureConnection(conn, conn, hub); serveErr != nil && !errors.Is(serveErr, io.EOF) && !errors.Is(serveErr, net.ErrClosed) {
+				_ = recordFixtureFailure(serveErr)
+			}
+		})
+	}
+}
+
 func serveProxy() error {
+	return serveFixtureConnection(os.Stdin, os.Stdout, nil)
+}
+
+func serveFixtureConnection(input io.Reader, output io.Writer, hub *fixtureControlHub) error {
 	observerProxy := false
 	activeThread := ""
 	defer func() {
@@ -88,14 +210,15 @@ func serveProxy() error {
 			_ = markGate("proxy-exited")
 		}
 	}()
-	reader := bufio.NewReader(os.Stdin)
+	reader := bufio.NewReader(input)
 	request, err := http.ReadRequest(reader)
 	if err != nil {
 		return err
 	}
 	key := request.Header.Get("Sec-WebSocket-Key")
 	accept := sha1.Sum([]byte(key + websocketGUID)) // #nosec G401 -- RFC 6455 handshake checksum.
-	if _, err := fmt.Fprintf(os.Stdout, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", base64.StdEncoding.EncodeToString(accept[:])); err != nil {
+	peer := &fixturePeer{writer: output}
+	if _, err := fmt.Fprintf(output, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: %s\r\n\r\n", base64.StdEncoding.EncodeToString(accept[:])); err != nil {
 		return err
 	}
 	for {
@@ -135,12 +258,12 @@ func serveProxy() error {
 		}
 		switch message.Method {
 		case "initialize":
-			if err := writeResult(message.ID, map[string]any{"userAgent": "codex-cli/0.149.0", "platformFamily": "linux", "platformOs": "linux"}); err != nil {
+			if err := peer.writeResult(message.ID, map[string]any{"userAgent": "codex-cli/0.149.0", "platformFamily": "linux", "platformOs": "linux"}); err != nil {
 				return err
 			}
 		case "initialized":
 		case "remoteControl/status/read":
-			if err := writeResult(message.ID, map[string]any{"status": "disabled"}); err != nil {
+			if err := peer.writeResult(message.ID, map[string]any{"status": "disabled"}); err != nil {
 				return err
 			}
 		case "thread/start":
@@ -149,7 +272,7 @@ func serveProxy() error {
 				return err
 			}
 			activeThread = threadID
-			if err := writeResult(message.ID, map[string]any{"thread": map[string]any{"id": threadID}}); err != nil {
+			if err := peer.writeResult(message.ID, map[string]any{"thread": map[string]any{"id": threadID}}); err != nil {
 				return err
 			}
 		case "turn/start":
@@ -160,14 +283,14 @@ func serveProxy() error {
 			if err := validateFixtureThread(threadID); err != nil {
 				return err
 			}
-			if err := writeResult(message.ID, map[string]any{"turn": map[string]any{"id": fixtureTurnID(threadID), "status": "inProgress"}}); err != nil {
+			if err := peer.writeResult(message.ID, map[string]any{"turn": map[string]any{"id": fixtureTurnID(threadID), "status": "inProgress"}}); err != nil {
 				return err
 			}
 		case "turn/steer":
 			if err := validateFixtureThread(params.ThreadID); err != nil {
 				return err
 			}
-			if err := writeResult(message.ID, map[string]any{"turn": map[string]any{"id": fixtureTurnID(params.ThreadID), "status": "inProgress"}}); err != nil {
+			if err := peer.writeResult(message.ID, map[string]any{"turn": map[string]any{"id": fixtureTurnID(params.ThreadID), "status": "inProgress"}}); err != nil {
 				return err
 			}
 		case "thread/resume":
@@ -177,7 +300,8 @@ func serveProxy() error {
 				return err
 			}
 			activeThread = params.ThreadID
-			if err := writeResult(message.ID, map[string]any{"thread": map[string]any{"id": params.ThreadID}}); err != nil {
+			hub.setShared(peer)
+			if err := peer.writeResult(message.ID, map[string]any{"thread": map[string]any{"id": params.ThreadID}}); err != nil {
 				return err
 			}
 		case "thread/read":
@@ -185,9 +309,10 @@ func serveProxy() error {
 				return err
 			}
 			if !params.IncludeTurns {
+				hub.setShared(peer)
 				// The broker's pre-turn bootstrap snapshot. It carries no turn,
 				// so it is not the lifecycle epoch the scripted scenario steps.
-				if err := writeResult(message.ID, map[string]any{"thread": map[string]any{
+				if err := peer.writeResult(message.ID, map[string]any{"thread": map[string]any{
 					"id": params.ThreadID, "cwd": "/discarded", "createdAt": 1, "updatedAt": 2,
 					"status": map[string]any{"type": "active", "activeFlags": []string{}},
 				}}); err != nil {
@@ -207,7 +332,7 @@ func serveProxy() error {
 						_ = recordFixtureFailure(err)
 						return
 					}
-					if err := writeResult(requestID, map[string]any{"thread": map[string]any{
+					if err := peer.writeResult(requestID, map[string]any{"thread": map[string]any{
 						"id": "thread-phase3", "status": map[string]any{"type": "idle", "activeFlags": []string{}}, "turns": []map[string]any{},
 					}}); err != nil {
 						_ = recordFixtureFailure(err)
@@ -224,19 +349,23 @@ func serveProxy() error {
 				status = map[string]any{"type": "active", "activeFlags": []string{}}
 				turns = []map[string]any{{"id": "turn-sibling", "status": "inProgress"}}
 			}
-			if err := writeResult(message.ID, map[string]any{"thread": map[string]any{"id": params.ThreadID, "status": status, "turns": turns}}); err != nil {
+			if err := peer.writeResult(message.ID, map[string]any{"thread": map[string]any{"id": params.ThreadID, "status": status, "turns": turns}}); err != nil {
 				return err
 			}
 			if params.ThreadID == "thread-phase3" && epoch == 1 {
+				eventPeer := hub.eventPeer(peer)
+				if eventPeer == nil {
+					return errors.New("owned lifecycle read has no shared event authority")
+				}
 				go func() {
 					if err := func() error {
 						if err := waitForGate("emit-auto-approved"); err != nil {
 							return err
 						}
-						if err := writeMessage(map[string]any{"id": "request-auto", "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": "thread-phase3", "turnId": "turn-phase3", "itemId": "item-auto"}}); err != nil {
+						if err := eventPeer.writeMessage(map[string]any{"id": "request-auto", "method": "item/commandExecution/requestApproval", "params": map[string]any{"threadId": "thread-phase3", "turnId": "turn-phase3", "itemId": "item-auto"}}); err != nil {
 							return err
 						}
-						if err := writeMessage(map[string]any{"method": "serverRequest/resolved", "params": map[string]any{"threadId": "thread-phase3", "requestId": "request-auto"}}); err != nil {
+						if err := eventPeer.writeMessage(map[string]any{"method": "serverRequest/resolved", "params": map[string]any{"threadId": "thread-phase3", "requestId": "request-auto"}}); err != nil {
 							return err
 						}
 						if err := markGate("auto-approved-emitted"); err != nil {
@@ -245,16 +374,16 @@ func serveProxy() error {
 						if err := waitForGate("emit-actionable"); err != nil {
 							return err
 						}
-						if err := writeMessage(map[string]any{"id": "request-actionable", "method": "item/permissions/requestApproval", "params": map[string]any{"threadId": "thread-phase3", "turnId": "turn-phase3", "itemId": "item-actionable"}}); err != nil {
+						if err := eventPeer.writeMessage(map[string]any{"id": "request-actionable", "method": "item/permissions/requestApproval", "params": map[string]any{"threadId": "thread-phase3", "turnId": "turn-phase3", "itemId": "item-actionable"}}); err != nil {
 							return err
 						}
-						if err := writeMessage(map[string]any{"method": "thread/status/changed", "params": map[string]any{"threadId": "thread-phase3", "status": map[string]any{"type": "active", "activeFlags": []string{"waitingOnApproval"}}}}); err != nil {
+						if err := eventPeer.writeMessage(map[string]any{"method": "thread/status/changed", "params": map[string]any{"threadId": "thread-phase3", "status": map[string]any{"type": "active", "activeFlags": []string{"waitingOnApproval"}}}}); err != nil {
 							return err
 						}
 						if err := waitForGate("resolve-actionable"); err != nil {
 							return err
 						}
-						if err := writeMessage(map[string]any{"method": "serverRequest/resolved", "params": map[string]any{"threadId": "thread-phase3", "requestId": "request-actionable"}}); err != nil {
+						if err := eventPeer.writeMessage(map[string]any{"method": "serverRequest/resolved", "params": map[string]any{"threadId": "thread-phase3", "requestId": "request-actionable"}}); err != nil {
 							return err
 						}
 						if err := markGate("resolved-sent"); err != nil {
@@ -269,14 +398,14 @@ func serveProxy() error {
 						if err := markGate("completion-gate-seen"); err != nil {
 							return err
 						}
-						if err := writeMessage(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "thread-phase3", "turn": map[string]any{"id": "turn-phase3", "status": "completed"}}}); err != nil {
+						if err := eventPeer.writeMessage(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "thread-phase3", "turn": map[string]any{"id": "turn-phase3", "status": "completed"}}}); err != nil {
 							return err
 						}
 						if err := markGate("first-completion-sent"); err != nil {
 							return err
 						}
 						// Duplicate delivery must not enqueue or dispatch a second completion.
-						if err := writeMessage(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "thread-phase3", "turn": map[string]any{"id": "turn-phase3", "status": "completed"}}}); err != nil {
+						if err := eventPeer.writeMessage(map[string]any{"method": "turn/completed", "params": map[string]any{"threadId": "thread-phase3", "turn": map[string]any{"id": "turn-phase3", "status": "completed"}}}); err != nil {
 							return err
 						}
 						if err := markGate("duplicate-completion-sent"); err != nil {
@@ -286,7 +415,7 @@ func serveProxy() error {
 							return err
 						}
 						for range fixtureDisconnectBurst {
-							if err := writeMessage(map[string]any{"method": "thread/status/changed", "params": map[string]any{
+							if err := eventPeer.writeMessage(map[string]any{"method": "thread/status/changed", "params": map[string]any{
 								"threadId": "thread-phase3", "status": map[string]any{"type": "active", "activeFlags": []string{}},
 							}}); err != nil {
 								return err
@@ -459,11 +588,14 @@ func recordFixtureFailure(failure error) error {
 	return os.WriteFile(filepath.Join(dir, "fixture-error"), []byte(failure.Error()+"\n"), 0o600)
 }
 
-func writeResult(id json.RawMessage, result any) error {
-	return writeMessage(map[string]any{"id": json.RawMessage(id), "result": result})
+func (p *fixturePeer) writeResult(id json.RawMessage, result any) error {
+	return p.writeMessage(map[string]any{"id": json.RawMessage(id), "result": result})
 }
 
-func writeMessage(message any) error {
+func (p *fixturePeer) writeMessage(message any) error {
+	if p == nil || p.writer == nil {
+		return errors.New("fixture peer is unavailable")
+	}
 	payload, err := json.Marshal(message)
 	if err != nil {
 		return err
@@ -472,9 +604,9 @@ func writeMessage(message any) error {
 	if err != nil {
 		return err
 	}
-	fixtureWriteMu.Lock()
-	defer fixtureWriteMu.Unlock()
-	_, err = os.Stdout.Write(append(header, payload...))
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	_, err = p.writer.Write(append(header, payload...))
 	return err
 }
 

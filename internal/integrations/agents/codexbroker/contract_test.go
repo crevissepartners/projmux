@@ -30,7 +30,7 @@ func TestBrokerRetainsNoProviderContent(t *testing.T) {
 		{value: WriteRecord{}, fields: []string{"Fence", "Method", "Outcome", "Attempts"}},
 		{value: Mutation{}, fields: []string{"Method", "Params", "Result"}},
 		{value: Event{}, fields: []string{"Fence", "Origin", "Sequence", "Method", "Params", "Snapshot", "Lease"}},
-		{value: Config{}, fields: []string{"Endpoint", "Opener", "Clock", "Jitter", "Backlog"}},
+		{value: Config{}, fields: []string{"Endpoint", "Opener", "Lifecycle", "Clock", "Jitter", "Backlog"}},
 		{value: EndpointIdentity{}, fields: []string{"StateDomainID", "EndpointGenerationID"}},
 		{value: GenerationRoute{}, fields: []string{"Endpoint", "ThreadID"}},
 		{value: PoolAuthority{}, fields: []string{"Endpoint", "Runtime", "Fence"}},
@@ -96,7 +96,9 @@ func TestBrokerRetainsNoProviderContent(t *testing.T) {
 		RefusalRuntimeExists, RefusalRuntimeReplaced, RefusalHostClosed,
 		RefusalCredentialRejected, RefusalEndpointMismatch, RefusalProtocolIncompatible,
 		RefusalDrainRequired, RefusalFrameInvalid, RefusalRequestUnknown,
-		RefusalEndpointRefused,
+		RefusalEndpointRefused, RefusalLifecycleUnsupported, RefusalLifecycleBusy,
+		RefusalLifecycleRetry, RefusalLifecycleProtocol, RefusalThreadAbsent,
+		RefusalThreadNotDurable,
 	} {
 		codes = append(codes, string(code))
 	}
