@@ -44,9 +44,13 @@ func DiscoverProviderContext(ctx context.Context, provider, cwd string, opts Dis
 	depth := max(opts.Depth, 0)
 	var sessions []SessionMeta
 	var codexOutcome CodexCatalogOutcome
+	var moreNotLoaded bool
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case AgentClaude:
-		sessions = discoverClaude(cwd, opts.ClaudeProjectsDir, depth)
+		sessions, moreNotLoaded = discoverClaude(ctx, cwd, opts.ClaudeProjectsDir, depth, limit)
+		if opts.retainClaudeMatches {
+			return ProviderDiscovery{Sessions: finalizeProviderSessions(sessions, 0, opts.DeferTurns), MoreNotLoaded: moreNotLoaded}, nil
+		}
 	case AgentCodex:
 		codexOutcome = CodexCatalogOutcome{Source: CatalogSourceFallback, Confidence: CatalogConfidenceMedium}
 		if opts.OpenCodexCatalog == nil {
@@ -82,7 +86,7 @@ func DiscoverProviderContext(ctx context.Context, provider, cwd string, opts Dis
 		return ProviderDiscovery{}, fmt.Errorf("unsupported session provider %q", provider)
 	}
 	sessions = finalizeProviderSessions(sessions, limit, opts.DeferTurns)
-	return ProviderDiscovery{Sessions: sessions, Codex: codexOutcome}, nil
+	return ProviderDiscovery{Sessions: sessions, Codex: codexOutcome, MoreNotLoaded: moreNotLoaded}, nil
 }
 
 func finalizeProviderSessions(sessions []SessionMeta, limit int, deferTurns bool) []SessionMeta {

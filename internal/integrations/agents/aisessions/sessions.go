@@ -150,6 +150,12 @@ type DiscoverOptions struct {
 	// default (false) counts turns inline for every session, preserving
 	// the historical fully-counted result for callers that block on Discover.
 	DeferTurns bool
+
+	// retainClaudeMatches lets summary discovery keep every confirmed unique
+	// match from the terminal tie group for its pre-global-cap provider count.
+	// Interactive callers retain their historical visible cap; this is never
+	// a CLI/config setting and does not change the Claude scan's limit.
+	retainClaudeMatches bool
 }
 
 // enrichTurns re-scans each session's whole log for user turns and records the
@@ -256,82 +262,73 @@ func (opts DiscoverOptions) withDefaults() DiscoverOptions {
 	return opts
 }
 
-func discoverClaude(cwd, projectsDir string, depth int) []SessionMeta {
+// discoverClaude reads candidates in descending mtime order until it has limit
+// unique matches and has drained that match's entire mtime tie group. Identity
+// and cwd come from transcript contents, so a fixed file cap cannot preserve
+// the full scan's rows: duplicates, nonmatches, and ties may require all files.
+// C-3 output equivalence is absolute when the scan completes. On envelope
+// expiry, cancellation returns only fully parsed rows from the descending-mtime
+// prefix: strictly better than discarding every row, but not equivalent to the
+// completed scan. Provider budget-allocation asymmetry remains outside this
+// scan's scope.
+func discoverClaude(ctx context.Context, cwd, projectsDir string, depth, limit int) ([]SessionMeta, bool) {
 	projectsDir = strings.TrimSpace(projectsDir)
 	if projectsDir == "" {
-		return nil
+		return nil, false
 	}
+	var candidates []sessionFileCandidate
 	if depth <= 0 {
-		// Exact-cwd: the historical single-directory path (no behaviour change).
-		return discoverClaudeDir(filepath.Join(projectsDir, EncodeClaudeProjectPath(cwd)), cwd, 0)
-	}
-
-	// depth>0: enumerate candidate project dirs by encoded-cwd prefix. The
-	// encoding is lossy ('/' and '-' both become '-'), so this prefix only
-	// narrows the on-disk scan; the authoritative child test is withinTree on
-	// the cwd recorded inside each file (see discoverClaudeDir), which rejects
-	// false-positive siblings such as "repo-other".
-	entries, err := os.ReadDir(projectsDir)
-	if err != nil {
-		return nil
-	}
-	encoded := EncodeClaudeProjectPath(cwd)
-	guard := newPathGuard()
-	var sessions []SessionMeta
-	for _, entry := range entries {
-		// entryIsDir follows symlinks so a symlinked project dir still counts.
-		if entry == nil || !entryIsDir(projectsDir, entry) {
-			continue
-		}
-		name := entry.Name()
-		if name != encoded && !strings.HasPrefix(name, encoded+"-") {
-			continue
-		}
-		dir := filepath.Join(projectsDir, name)
-		// Two project-dir names can symlink to the same real directory; scan the
-		// underlying sessions only once so a session is not discovered twice.
-		if !guard.visit(dir) {
-			continue
-		}
-		sessions = append(sessions, discoverClaudeDir(dir, cwd, depth)...)
-	}
-	return sessions
-}
-
-// discoverClaudeDir scans one Claude project directory. depth<=0 keeps the
-// exact-cwd contract (cwd is the search target and the recorded value); depth>0
-// accepts any session whose recorded cwd is within depth levels of cwd and
-// records that recorded cwd so the picker can render the relative column.
-func discoverClaudeDir(dir, cwd string, depth int) []SessionMeta {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return nil
-	}
-	treeFilter := depth > 0
-
-	sessions := make([]SessionMeta, 0, len(entries))
-	for _, entry := range entries {
-		if entry == nil || entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
-			continue
-		}
-		path := filepath.Join(dir, entry.Name())
-		info, err := entry.Info()
+		candidates = discoverClaudeDir(ctx, filepath.Join(projectsDir, EncodeClaudeProjectPath(cwd)))
+	} else {
+		// The encoding is lossy; this only narrows directories. The recorded
+		// cwd remains authoritative, including for false-positive siblings.
+		entries, err := os.ReadDir(projectsDir)
 		if err != nil {
-			continue
+			return nil, ctx.Err() != nil
+		}
+		encoded := EncodeClaudeProjectPath(cwd)
+		guard := newPathGuard()
+		for _, entry := range entries {
+			if ctx.Err() != nil {
+				break
+			}
+			if entry == nil || !entryIsDir(projectsDir, entry) {
+				continue
+			}
+			name := entry.Name()
+			if name != encoded && !strings.HasPrefix(name, encoded+"-") {
+				continue
+			}
+			dir := filepath.Join(projectsDir, name)
+			if guard.visit(dir) {
+				candidates = append(candidates, discoverClaudeDir(ctx, dir)...)
+			}
+		}
+	}
+	// Stable ties preserve the former directory/file traversal winner when
+	// equal-mtime transcripts carry the same ID but different row content.
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return candidates[i].modTime.After(candidates[j].modTime)
+	})
+
+	var sessions []SessionMeta
+	seen := make(map[string]bool)
+	var cutoff time.Time
+	for _, candidate := range candidates {
+		if ctx.Err() != nil || (limit > 0 && len(sessions) >= limit && candidate.modTime.Before(cutoff)) {
+			return sessions, true
 		}
 		scanOpts := sessionScanOptions{targetCWD: cwd, provider: AgentClaude}
-		if treeFilter {
-			// No targetCWD short-circuit: we keep non-exact matches and judge
-			// them by withinTree below. requireCWD ensures we captured one.
+		if depth > 0 {
 			scanOpts = sessionScanOptions{requireCWD: true, provider: AgentClaude}
 		}
-		observeClaudeScan(path)
-		details, ok := scanSessionJSONL(path, scanOpts)
+		observeClaudeScan(candidate.path)
+		details, ok := scanSessionJSONLContext(ctx, candidate.path, scanOpts)
 		if !ok {
 			continue
 		}
 		recordedCWD := cwd
-		if treeFilter {
+		if depth > 0 {
 			if !withinTree(details.cwd, cwd, depth) {
 				continue
 			}
@@ -341,12 +338,14 @@ func discoverClaudeDir(dir, cwd string, depth int) []SessionMeta {
 		}
 		id := details.id
 		if id == "" {
-			id = strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
+			name := filepath.Base(candidate.path)
+			id = strings.TrimSuffix(name, filepath.Ext(name))
 		}
-		id, err = claude.NormalizeResumeID(id)
-		if err != nil {
+		id, err := claude.NormalizeResumeID(id)
+		if err != nil || seen[id] {
 			continue
 		}
+		seen[id] = true
 		title := details.title
 		if title == "" {
 			title = shortResumeID(id)
@@ -356,18 +355,47 @@ func discoverClaudeDir(dir, cwd string, depth int) []SessionMeta {
 			ResumeID:        id,
 			Title:           title,
 			TitleProvenance: details.titleProvenance,
-			LastModified:    info.ModTime(),
+			LastModified:    candidate.modTime,
 			Context: SessionContext{
 				CWD:    recordedCWD,
 				Branch: details.branch,
 			},
 			Source: SourceClaudeTranscript,
-			// Turns is left at 0 here; the candidate scan does not count turns.
-			// enrichTurns re-scans sourcePath to fill it for displayed rows.
-			sourcePath: path,
+			// Turns remains deferred to enrichment of the displayed rows.
+			sourcePath: candidate.path,
 		})
+		if limit > 0 && len(sessions) == limit {
+			cutoff = candidate.modTime
+		}
 	}
-	return sessions
+	return sessions, ctx.Err() != nil
+}
+
+// discoverClaudeDir obtains ordering metadata without opening transcripts.
+// Candidate collection precedes parsing across every selected project directory
+// so a newer child session cannot be hidden by an earlier directory's limit.
+func discoverClaudeDir(ctx context.Context, dir string) []sessionFileCandidate {
+	if ctx.Err() != nil {
+		return nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var candidates []sessionFileCandidate
+	for _, entry := range entries {
+		if ctx.Err() != nil {
+			break
+		}
+		if entry == nil || entry.IsDir() || filepath.Ext(entry.Name()) != ".jsonl" {
+			continue
+		}
+		info, err := entry.Info()
+		if err == nil {
+			candidates = append(candidates, sessionFileCandidate{path: filepath.Join(dir, entry.Name()), modTime: info.ModTime()})
+		}
+	}
+	return candidates
 }
 
 // discoverCodexContext is the cancellation-aware rollout discovery path used
@@ -945,10 +973,6 @@ func (details sessionDetails) ready(requireCWD bool, targetCWD string) bool {
 		return false
 	}
 	return !requireCWD || details.cwd != ""
-}
-
-func scanSessionJSONL(path string, opts sessionScanOptions) (sessionDetails, bool) {
-	return scanSessionJSONLContext(context.Background(), path, opts)
 }
 
 func scanSessionJSONLContext(ctx context.Context, path string, opts sessionScanOptions) (sessionDetails, bool) {
