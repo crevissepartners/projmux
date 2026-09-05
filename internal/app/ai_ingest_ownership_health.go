@@ -31,6 +31,17 @@ type aiIngestOwnershipHealth struct {
 	// Foreign counts attributions to a Pane the Registry records under another
 	// provider. This is the number the contract requires to be zero.
 	Foreign int `json:"foreign"`
+	// Directions breaks Foreign down by which way the mismatch runs.
+	//
+	// The two directions have different causes and must not be read as one
+	// number. A hook attributing onto the Pane that launched its host is the
+	// identity leak the contract closes. The opposite direction — a provider's
+	// events arriving under another provider's source — means the event was
+	// misrouted before attribution ever ran, which a stale hook config on the
+	// machine can produce and no code change here would fix. Reporting a single
+	// count would let one be mistaken for the other, and this machine has
+	// carried both.
+	Directions []aiIngestAttributionReason `json:"directions,omitempty"`
 }
 
 // codexHookProviderBinding answers, for one hook source, whether a Pane records
@@ -56,6 +67,7 @@ func projectAIIngestOwnershipHealth(entries []aiIngestLogEntry, registry coremet
 	if !observed {
 		return health
 	}
+	directions := map[string]int{}
 	byRuntime := make(map[string]coremetadata.PaneActivation, len(registry.Panes))
 	for _, pane := range registry.Panes {
 		if runtime := strings.TrimSpace(pane.Status.Activation.RuntimeID); runtime != "" {
@@ -88,8 +100,19 @@ func projectAIIngestOwnershipHealth(entries []aiIngestLogEntry, registry coremet
 		}
 		health.Classified++
 		health.Foreign++
+		directions[source+" onto "+paneRecordedProvider(activation)]++
 	}
+	health.Directions = aiIngestAttributionReasons(directions)
 	return health
+}
+
+// paneRecordedProvider names the provider the Registry records for one Pane.
+// It is only ever called for a Pane that records one.
+func paneRecordedProvider(activation coremetadata.PaneActivation) string {
+	if activation.Codex != nil {
+		return "codex"
+	}
+	return "claude"
 }
 
 // paneRecordsAnyProvider reports whether the Registry positively records a

@@ -176,6 +176,16 @@ func TestOwnershipHealthCallsOnlyAPositivelyForeignPaneForeign(t *testing.T) {
 	if ownership.Unresolved != 1 {
 		t.Fatalf("unresolved = %d, want the attribution to a Pane the Registry lost", ownership.Unresolved)
 	}
+	// The two directions have different causes and must stay separable: one is
+	// a hook landing on the Pane that launched its host, the other an event
+	// that arrived under the wrong source before attribution ran.
+	directions := map[string]int{}
+	for _, direction := range ownership.Directions {
+		directions[direction.Reason] = direction.Count
+	}
+	if directions["codex-hook onto claude"] != 1 || directions["claude-hook onto codex"] != 1 {
+		t.Fatalf("directions = %+v, want each mismatch reported by which way it runs", ownership.Directions)
+	}
 	unread := projectAIIngestOwnershipHealth(nil, coremetadata.Registry{}, false)
 	if unread.Observed {
 		t.Fatal("an unreadable log and Registry pair reported itself as observed")

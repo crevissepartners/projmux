@@ -128,6 +128,13 @@ func codexBrokerDiagnosticsSurface(broker *codexBrokerDiagnostic) codexControlPl
 
 // codexHookAttributionSurface judges whether provider hook events are reaching
 // the Pane that owns them.
+//
+// The verdict counts only the events the contract owed a Pane. An event whose
+// conversation no live Pane owns is outside that scope, and reporting the
+// refusal as breakage would make this row fire on a machine whose hooks are
+// behaving exactly as specified. A gate that cries wolf gets ignored, and being
+// ignored is how the defects this section exists to catch survived in the first
+// place.
 func codexHookAttributionSurface(attribution aiIngestAttributionHealth) codexControlPlaneSurface {
 	surface := codexControlPlaneSurface{Surface: codexSurfaceHookAttribution}
 	if !attribution.Observed {
@@ -141,12 +148,18 @@ func codexHookAttributionSurface(attribution aiIngestAttributionHealth) codexCon
 	parts := make([]string, 0, len(attribution.Sources))
 	for _, source := range attribution.Sources {
 		part := fmt.Sprintf("%s %d attributed, %d unattributed", source.Source, source.Attributed, source.Unattributed)
-		if len(source.Reasons) > 0 {
-			reasons := make([]string, 0, len(source.Reasons))
-			for _, reason := range source.Reasons {
-				reasons = append(reasons, fmt.Sprintf("%s=%d", reason.Reason, reason.Count))
+		if reasons := codexReasonBreakdown(source.Reasons); reasons != "" {
+			part += " (" + reasons + ")"
+		}
+		if source.Refused > 0 {
+			// Reported, never folded in. A retired conversation still firing
+			// hooks is the contract declining what it never promised, and an
+			// operator who cannot see that number would read the zero above it
+			// as nothing having happened.
+			part += fmt.Sprintf("; %d out of contract", source.Refused)
+			if reasons := codexReasonBreakdown(source.RefusalReasons); reasons != "" {
+				part += " (" + reasons + ")"
 			}
-			part += " (" + strings.Join(reasons, ", ") + ")"
 		}
 		parts = append(parts, part)
 	}
@@ -356,12 +369,30 @@ func codexPaneOwnershipSurface(ownership aiIngestOwnershipHealth) codexControlPl
 	}
 	surface.Detail = fmt.Sprintf("attributions judged %d; foreign %d; unresolved %d",
 		ownership.Classified, ownership.Foreign, ownership.Unresolved)
+	if directions := codexReasonBreakdown(ownership.Directions); directions != "" {
+		// Which way the mismatch runs is the whole diagnosis. One direction is
+		// a hook landing on the Pane that launched its host; the other is an
+		// event that arrived under the wrong source before attribution ran.
+		surface.Detail += " (" + directions + ")"
+	}
 	if ownership.Foreign > 0 {
 		surface.Status = codexSurfaceStatusBroken
 		return surface
 	}
 	surface.Status = codexSurfaceStatusOK
 	return surface
+}
+
+// codexReasonBreakdown renders one closed-token distribution.
+func codexReasonBreakdown(reasons []aiIngestAttributionReason) string {
+	if len(reasons) == 0 {
+		return ""
+	}
+	rendered := make([]string, 0, len(reasons))
+	for _, reason := range reasons {
+		rendered = append(rendered, fmt.Sprintf("%s=%d", reason.Reason, reason.Count))
+	}
+	return strings.Join(rendered, ", ")
 }
 
 func codexEndpointPresence(endpoint string) string {

@@ -43,8 +43,8 @@ func TestAttributionHealthCountsOnlyAttributionOutcomes(t *testing.T) {
 		{Source: "codex-hook", Event: "Stop", Result: "state", Pane: "%1"},
 		{Source: "codex-hook", Event: "Stop", Result: "ignored", Reason: aiPaneMatchReasonNoInventory},
 		{Source: "claude-hook", Event: "Stop", Result: "state", Pane: "%2"},
-		{Source: "claude-hook", Event: "Stop", Result: "ignored", Reason: aiPaneMatchReasonExplicitStale},
-		{Source: "claude-hook", Event: "Stop", Result: "ignored", Reason: aiPaneMatchReasonExplicitStale},
+		{Source: "claude-hook", Event: "Stop", Result: "ignored", Reason: aiPaneMatchReasonNoMatch},
+		{Source: "claude-hook", Event: "Stop", Result: "ignored", Reason: aiPaneMatchReasonNoMatch},
 		// Neither of these is an attribution outcome.
 		{Source: "codex-hook", Result: "error", Reason: "payload decode failed"},
 		{Source: "codex-observer", Event: "observer.disconnected", Result: "invalidating", Reason: "endpoint-suspended", Pane: "%1"},
@@ -59,7 +59,7 @@ func TestAttributionHealthCountsOnlyAttributionOutcomes(t *testing.T) {
 				{Reason: aiPaneMatchReasonNoInventory, Count: 1},
 			}},
 			{Source: "claude-hook", Attributed: 1, Unattributed: 2, Reasons: []aiIngestAttributionReason{
-				{Reason: aiPaneMatchReasonExplicitStale, Count: 2},
+				{Reason: aiPaneMatchReasonNoMatch, Count: 2},
 			}},
 		},
 	}
@@ -141,6 +141,17 @@ func TestAttributionHealthIgnoresAReasonOutsideTheClosedMatchVocabulary(t *testi
 	}
 }
 
+// Refused is how many hook events were declined for naming a Pane that no
+// longer exists. Like Attributed, the verdict works per source and this
+// aggregate is only ever a test's summary of a fixture.
+func (h aiIngestAttributionHealth) Refused() int {
+	total := 0
+	for _, source := range h.Sources {
+		total += source.Refused
+	}
+	return total
+}
+
 // Attributed is how many hook events over the window reached a Pane. The
 // verdict is reached per source rather than over this total, so the aggregate
 // is only ever a test's summary of a fixture.
@@ -165,4 +176,52 @@ func readAIIngestAttributionHealth(path string) aiIngestAttributionHealth {
 		return aiIngestAttributionHealth{}
 	}
 	return projectAIIngestAttributionHealth(entries)
+}
+
+// TestAttributionHealthSeparatesAContractualRefusalFromAFailure is the
+// correction that keeps this gate honest.
+//
+// The contract's scope excludes a Pane that is already gone, and a hook still
+// firing from a retired conversation is exactly that: its Agent and Pane were
+// cleaned up and the thread kept talking. Refusing it is the mechanism working.
+// Counting it as a failure made `doctor` report a machine behaving to spec as
+// broken, and a gate that cries wolf gets switched off — which is how the
+// defects this whole section exists to catch survived eight phases next door.
+//
+// What stays a failure is the mechanism itself not answering: an inventory or
+// Registry it could not read, or the ladder running over readable data and
+// finding nothing, which is the shape a re-broken hook identity would take.
+func TestAttributionHealthSeparatesAContractualRefusalFromAFailure(t *testing.T) {
+	health := projectAIIngestAttributionHealth([]aiIngestLogEntry{
+		// Out of contract: the Pane these name is gone.
+		{Source: "codex-hook", Result: "ignored", Reason: aiPaneMatchReasonConversationUnknown},
+		{Source: "codex-hook", Result: "ignored", Reason: aiPaneMatchReasonExplicitUnknown},
+		{Source: "codex-hook", Result: "ignored", Reason: aiPaneMatchReasonExplicitNoRuntime},
+		{Source: "codex-hook", Result: "ignored", Reason: aiPaneMatchReasonExplicitStale},
+		// Failures: the mechanism owed an answer and had none.
+		{Source: "claude-hook", Result: "ignored", Reason: aiPaneMatchReasonNoInventory},
+		{Source: "claude-hook", Result: "ignored", Reason: aiPaneMatchReasonRegistryUnavailable},
+		{Source: "claude-hook", Result: "ignored", Reason: aiPaneMatchReasonNoMatch},
+		{Source: "claude-hook", Result: "ignored", Reason: aiPaneMatchReasonConversationShared},
+	})
+	if health.Refused() != 4 || health.Unattributed() != 4 {
+		t.Fatalf("refused = %d, unattributed = %d, want 4 and 4", health.Refused(), health.Unattributed())
+	}
+	for _, source := range health.Sources {
+		if source.Source == "codex-hook" && source.Unattributed != 0 {
+			t.Fatalf("a contractual refusal was counted as a failure: %+v", source)
+		}
+		if source.Source == "claude-hook" && source.Refused != 0 {
+			t.Fatalf("a mechanism failure was excused as a refusal: %+v", source)
+		}
+	}
+	// A source that only ever refused is not a source that failed.
+	refusedOnly := projectAIIngestAttributionHealth([]aiIngestLogEntry{
+		{Source: "codex-hook", Result: "ignored", Reason: aiPaneMatchReasonConversationUnknown},
+	})
+	if surface := codexHookAttributionSurface(refusedOnly); surface.Status != codexSurfaceStatusOK {
+		t.Fatalf("surface = %q (detail %q), want %q for a retired conversation", surface.Status, surface.Detail, codexSurfaceStatusOK)
+	} else if !strings.Contains(surface.Detail, "out of contract") {
+		t.Fatalf("detail = %q, want the refusal reported rather than hidden", surface.Detail)
+	}
 }

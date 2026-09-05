@@ -97,15 +97,24 @@ func TestHookAttributionSurfaceSeparatesTotalFailureFromPartial(t *testing.T) {
 		{
 			name: "one provider losing every event is broken even beside a healthy neighbour",
 			health: aiIngestAttributionHealth{Observed: true, Records: 926, Sources: []aiIngestAttributionSource{
-				{Source: "codex-hook", Unattributed: 28, Reasons: []aiIngestAttributionReason{{Reason: aiPaneMatchReasonConversationUnknown, Count: 28}}},
-				{Source: "claude-hook", Attributed: 870, Unattributed: 28, Reasons: []aiIngestAttributionReason{{Reason: aiPaneMatchReasonConversationUnknown, Count: 28}}},
+				{Source: "codex-hook", Unattributed: 28, Reasons: []aiIngestAttributionReason{{Reason: aiPaneMatchReasonNoInventory, Count: 28}}},
+				{Source: "claude-hook", Attributed: 870, Unattributed: 28, Reasons: []aiIngestAttributionReason{{Reason: aiPaneMatchReasonNoInventory, Count: 28}}},
 			}},
 			wantStatus: codexSurfaceStatusBroken,
 		},
 		{
+			name: "a retired conversation still firing hooks is the contract working",
+			health: aiIngestAttributionHealth{Observed: true, Records: 34, Sources: []aiIngestAttributionSource{
+				{Source: "codex-hook", Refused: 34, RefusalReasons: []aiIngestAttributionReason{
+					{Reason: aiPaneMatchReasonConversationUnknown, Count: 34},
+				}},
+			}},
+			wantStatus: codexSurfaceStatusOK,
+		},
+		{
 			name: "some events losing their pane is a degradation",
 			health: aiIngestAttributionHealth{Observed: true, Records: 100, Sources: []aiIngestAttributionSource{
-				{Source: "claude-hook", Attributed: 95, Unattributed: 5, Reasons: []aiIngestAttributionReason{{Reason: aiPaneMatchReasonExplicitStale, Count: 5}}},
+				{Source: "claude-hook", Attributed: 95, Unattributed: 5, Reasons: []aiIngestAttributionReason{{Reason: aiPaneMatchReasonNoMatch, Count: 5}}},
 			}},
 			wantStatus: codexSurfaceStatusDegraded,
 		},

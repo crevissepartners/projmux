@@ -1180,10 +1180,36 @@ reached on:
   Registry positively records a *different* provider, so a Pane recording none
   is not a finding, and the judgment is a table rather than a branch.
 
-The attribution verdict is reached per source rather than over the total. The
-defect it detects was one provider's, and a busy neighbour attributing
-everything would carry the aggregate and render the dead provider as a few stale
-panes — which is the reading that let it live for eight phases.
+Two things the attribution verdict counts, and one it does not.
+
+It is reached **per source** rather than over the total. The defect it detects
+was one provider's, and a busy neighbour attributing everything would carry the
+aggregate and render the dead provider as a few stale panes — which is the
+reading that let it live for eight phases.
+
+It counts only events the contract owed a Pane. `aiPaneMatchRefusals` names the
+answers that decline something the contract never promised — a conversation or
+an explicit Pane that no longer exists — and those are reported beside the
+failure count, never inside it.
+`TestAttributionHealthSeparatesAContractualRefusalFromAFailure` pins the split.
+A retired conversation whose thread keeps firing hooks is the mechanism working;
+reporting it as breakage made `doctor` call a machine behaving to spec broken,
+and a gate that cries wolf gets switched off — which is how the defects this
+section exists to catch survived next door. What stays a failure is the
+mechanism not answering: an unreadable inventory or Registry, or the ladder
+running over readable data and finding nothing, which is the shape a re-broken
+hook identity would take.
+
+`TestHookReflectionWritesNeverDiscardTheirErrorSilently` covers what none of the
+log-derived verdicts can. A reflection path that runs a tmux write and throws
+the error away records `result:"state"` for an event whose Pane never moved, so
+the log itself reports success and every diagnosis built on it inherits the lie.
+It is the strongest form of the failure this whole section exists to catch:
+`disconnected` and `no matching pane` were at least wrong out loud. The test
+holds `aiHookDiscardedWriteInventory`, an exact per-file count of the discarded
+writes in the tree, as a ratchet — a new one fails the gate, and a fixed one
+must be recorded downward. The inventory is unfixed debt, not justification;
+repairing it belongs to the phase that owns those paths.
 
 The section leads with a deployment-vintage line, and
 `TestControlPlaneVintage*` owns it. `make install` replaces the executable on

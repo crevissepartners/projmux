@@ -45,6 +45,29 @@ var aiPaneMatchReasons = []string{
 	aiPaneMatchReasonConversationShared,
 }
 
+// aiPaneMatchRefusals are the answers that name something the attribution
+// contract never promised, rather than a promise it failed to keep.
+//
+// The contract's scope excludes a Pane that is already gone, and an event whose
+// conversation no Pane owns is exactly that case: a hook still firing from a
+// thread whose Agent and Pane were retired. Refusing it is the mechanism
+// working, and the specific token exists so the refusal can be told apart from
+// a failure.
+//
+// Keeping them out of the failure count is not a courtesy. A gate that reports
+// contractual refusals as breakage cries wolf, and an ignored signal is exactly
+// how the defects this whole track chased survived a neighbouring track's eight
+// phases. The tokens that stay failures are the ones where the mechanism itself
+// could not answer -- an unreadable inventory or Registry -- plus the ladder
+// exhausting with readable data, which is the shape a re-broken hook identity
+// would take.
+var aiPaneMatchRefusals = []string{
+	aiPaneMatchReasonExplicitUnknown,
+	aiPaneMatchReasonExplicitNoRuntime,
+	aiPaneMatchReasonExplicitStale,
+	aiPaneMatchReasonConversationUnknown,
+}
+
 // aiIngestAttributionReason is one closed attribution failure and its count.
 type aiIngestAttributionReason struct {
 	Reason string `json:"reason"`
@@ -54,10 +77,19 @@ type aiIngestAttributionReason struct {
 // aiIngestAttributionSource is one provider hook source's attribution outcome
 // over the window.
 type aiIngestAttributionSource struct {
-	Source       string                      `json:"source"`
-	Attributed   int                         `json:"attributed"`
-	Unattributed int                         `json:"unattributed"`
-	Reasons      []aiIngestAttributionReason `json:"reasons,omitempty"`
+	Source     string `json:"source"`
+	Attributed int    `json:"attributed"`
+	// Unattributed counts events the mechanism owed a Pane and did not deliver
+	// one for. This is the number the contract requires to stay at zero.
+	Unattributed int `json:"unattributed"`
+	// Refused counts events the contract never promised to attribute, because
+	// the Pane they name is gone. It is reported beside the failure count and
+	// never inside it.
+	Refused int                         `json:"refused"`
+	Reasons []aiIngestAttributionReason `json:"reasons,omitempty"`
+	// RefusalReasons breaks Refused down, so a reader can see that a large
+	// number is a retired conversation rather than a hidden fault.
+	RefusalReasons []aiIngestAttributionReason `json:"refusal_reasons,omitempty"`
 }
 
 // aiIngestAttributionHealth is the content-free projection of whether provider
@@ -74,7 +106,8 @@ type aiIngestAttributionHealth struct {
 	Sources  []aiIngestAttributionSource `json:"sources,omitempty"`
 }
 
-// Unattributed is how many hook events over the window never reached a Pane.
+// Unattributed is how many hook events over the window were owed a Pane and
+// did not get one.
 func (h aiIngestAttributionHealth) Unattributed() int {
 	total := 0
 	for _, source := range h.Sources {
@@ -145,8 +178,14 @@ func readAIIngestLogTail(path string, window int64, limit int) ([]aiIngestLogEnt
 func projectAIIngestAttributionHealth(entries []aiIngestLogEntry) aiIngestAttributionHealth {
 	health := aiIngestAttributionHealth{Observed: true}
 	attributed := map[string]int{}
-	unattributed := map[string]int{}
-	reasons := map[string]map[string]int{}
+	unattributed, refused := map[string]int{}, map[string]int{}
+	reasons, refusalReasons := map[string]map[string]int{}, map[string]map[string]int{}
+	tally := func(into map[string]map[string]int, source, reason string) {
+		if into[source] == nil {
+			into[source] = map[string]int{}
+		}
+		into[source][reason]++
+	}
 	for _, entry := range entries {
 		source := strings.TrimSpace(entry.Source)
 		if !slices.Contains(aiIngestAttributionSources, source) {
@@ -162,21 +201,25 @@ func projectAIIngestAttributionHealth(entries []aiIngestLogEntry) aiIngestAttrib
 			continue
 		}
 		health.Records++
-		unattributed[source]++
-		if reasons[source] == nil {
-			reasons[source] = map[string]int{}
+		if slices.Contains(aiPaneMatchRefusals, reason) {
+			refused[source]++
+			tally(refusalReasons, source, reason)
+			continue
 		}
-		reasons[source][reason]++
+		unattributed[source]++
+		tally(reasons, source, reason)
 	}
 	for _, source := range aiIngestAttributionSources {
-		if attributed[source] == 0 && unattributed[source] == 0 {
+		if attributed[source] == 0 && unattributed[source] == 0 && refused[source] == 0 {
 			continue
 		}
 		health.Sources = append(health.Sources, aiIngestAttributionSource{
-			Source:       source,
-			Attributed:   attributed[source],
-			Unattributed: unattributed[source],
-			Reasons:      aiIngestAttributionReasons(reasons[source]),
+			Source:         source,
+			Attributed:     attributed[source],
+			Unattributed:   unattributed[source],
+			Refused:        refused[source],
+			Reasons:        aiIngestAttributionReasons(reasons[source]),
+			RefusalReasons: aiIngestAttributionReasons(refusalReasons[source]),
 		})
 	}
 	return health
