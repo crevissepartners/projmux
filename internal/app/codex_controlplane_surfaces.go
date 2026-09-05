@@ -327,6 +327,12 @@ func codexHookDeliverySurface(delivery aiIngestDeliveryHealth) codexControlPlane
 	parts := make([]string, 0, len(delivery.Sources))
 	for _, source := range delivery.Sources {
 		part := fmt.Sprintf("%s %d delivered, %d failed", source.Source, source.Delivered, source.Failed)
+		if source.PathBearing > 0 {
+			// Counted, never folded into the verdict. A reason can name its
+			// cause precisely and still carry a path in the explanation behind
+			// it; those are two properties about two halves of one string.
+			part += fmt.Sprintf(", %d carrying a path", source.PathBearing)
+		}
 		if len(source.Reasons) > 0 {
 			reasons := make([]string, 0, len(source.Reasons))
 			for _, reason := range source.Reasons {
@@ -363,6 +369,23 @@ func codexHookDeliverySurface(delivery aiIngestDeliveryHealth) codexControlPlane
 // holds at all, resolves the old way. Those are counted beside the verdict
 // rather than folded into it, so nobody reads a zero as "nothing was
 // misattributed" when what it means is "nothing provably was".
+//
+// Why the unjudgeable share does not make this row red, when it has been more
+// than a third of the window on a live machine:
+//
+// It is not a fault. A Pane that records no provider is silence, and the
+// ownership rule deliberately treats silence as permission -- refusing there
+// would break attribution for every ordinary Pane. Colouring a designed,
+// permanent condition red would ask an operator to act on behaviour that is
+// specified, and a row that is always red is a row that gets skipped. This
+// diagnosis has already had to unlearn that once, when a contractual refusal
+// was being counted as breakage.
+//
+// What must not happen is the number being invisible, and it is not: the
+// denominator leads the detail, so `foreign 0` cannot be read without also
+// reading how much of the window it covers. If that share ever needs a verdict
+// of its own, it needs a contract of its own first -- a claim about how many
+// Panes ought to record a provider, which nothing here makes today.
 func codexPaneOwnershipSurface(ownership aiIngestOwnershipHealth) codexControlPlaneSurface {
 	surface := codexControlPlaneSurface{Surface: codexSurfacePaneOwnership}
 	if !ownership.Observed {
@@ -374,8 +397,13 @@ func codexPaneOwnershipSurface(ownership aiIngestOwnershipHealth) codexControlPl
 		surface.Detail = fmt.Sprintf("no attribution could be judged; %d landed on a Pane the Registry no longer holds", ownership.Unresolved)
 		return surface
 	}
-	surface.Detail = fmt.Sprintf("attributions judged %d; foreign %d; unresolved %d; provider unrecorded %d",
-		ownership.Classified, ownership.Foreign, ownership.Unresolved, ownership.Unrecorded)
+	// The denominator leads, because the verdict is only about the numerator.
+	// "judged 718" beside a separate "unrecorded 267" invites reading the first
+	// number as the whole population; "judged 718 of 989" cannot be read that
+	// way.
+	surface.Detail = fmt.Sprintf("judged %d of %d attributions; foreign %d; unresolved %d; provider unrecorded %d",
+		ownership.Classified, ownership.Classified+ownership.Unresolved+ownership.Unrecorded,
+		ownership.Foreign, ownership.Unresolved, ownership.Unrecorded)
 	if directions := codexReasonBreakdown(ownership.Directions); directions != "" {
 		// Which way the mismatch runs is the whole diagnosis. One direction is
 		// a hook landing on the Pane that launched its host; the other is an

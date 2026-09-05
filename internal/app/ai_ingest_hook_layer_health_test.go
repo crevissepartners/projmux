@@ -193,8 +193,15 @@ func TestOwnershipHealthCallsOnlyAPositivelyForeignPaneForeign(t *testing.T) {
 	if ownership.Unrecorded != 1 {
 		t.Fatalf("unrecorded = %d, want the attribution onto a Pane recording no provider counted apart", ownership.Unrecorded)
 	}
-	if surface := codexPaneOwnershipSurface(ownership); !strings.Contains(surface.Detail, "provider unrecorded 1") {
+	surface := codexPaneOwnershipSurface(ownership)
+	if !strings.Contains(surface.Detail, "provider unrecorded 1") {
 		t.Fatalf("detail = %q, want the unjudgeable attribution visible beside the verdict", surface.Detail)
+	}
+	// The denominator has to lead. A judged count standing alone reads as the
+	// whole population, and on a live machine more than a third of the window
+	// has fallen outside it.
+	if !strings.Contains(surface.Detail, "judged 4 of 6 attributions") {
+		t.Fatalf("detail = %q, want the judged count carried against the whole window", surface.Detail)
 	}
 	// The two directions have different causes and must stay separable: one is
 	// a hook landing on the Pane that launched its host, the other an event
@@ -257,4 +264,15 @@ func TestPaneOwnershipSurfaceReportsAForeignAttributionAsBroken(t *testing.T) {
 			}
 		})
 	}
+}
+
+// PathBearing is how many delivery failures carry a filesystem path in their
+// explanation. The surface renders the count per source, so this aggregate is
+// only ever a test's summary of a fixture.
+func (h aiIngestDeliveryHealth) PathBearing() int {
+	total := 0
+	for _, source := range h.Sources {
+		total += source.PathBearing
+	}
+	return total
 }

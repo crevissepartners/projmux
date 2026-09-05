@@ -33,8 +33,15 @@ type aiIngestDeliverySource struct {
 	// Failed counts events that reached their Pane and could not change it.
 	Failed int `json:"failed"`
 	// Opaque is the subset of Failed whose reason answers nothing.
-	Opaque  int                         `json:"opaque"`
-	Reasons []aiIngestAttributionReason `json:"reasons,omitempty"`
+	Opaque int `json:"opaque"`
+	// PathBearing is the subset whose explanatory detail carries a filesystem
+	// path. It is counted and reported, and it deliberately does not move the
+	// verdict: a reason can name its cause precisely and still carry a path,
+	// and those are two different properties about two different halves of the
+	// string. Folding them into one number is the mistake that made a
+	// contractual refusal read as an attribution failure.
+	PathBearing int                         `json:"path_bearing"`
+	Reasons     []aiIngestAttributionReason `json:"reasons,omitempty"`
 }
 
 // aiIngestDeliveryHealth is the content-free projection of whether attributed
@@ -71,6 +78,7 @@ func (h aiIngestDeliveryHealth) Opaque() int {
 func projectAIIngestDeliveryHealth(entries []aiIngestLogEntry) aiIngestDeliveryHealth {
 	health := aiIngestDeliveryHealth{Observed: true}
 	delivered, failed, opaque := map[string]int{}, map[string]int{}, map[string]int{}
+	pathBearing := map[string]int{}
 	reasons := map[string]map[string]int{}
 	for _, entry := range entries {
 		source := strings.TrimSpace(entry.Source)
@@ -83,12 +91,15 @@ func projectAIIngestDeliveryHealth(entries []aiIngestLogEntry) aiIngestDeliveryH
 			continue
 		}
 		failed[source]++
-		reason := strings.TrimSpace(entry.Reason)
+		reason := aiIngestReasonToken(entry.Reason)
+		if aiIngestDetailCarriesAPath(entry.Reason) {
+			pathBearing[source]++
+		}
 		if aiIngestReasonIsOpaque(reason) {
 			opaque[source]++
 			// An opaque reason is not recorded verbatim. It is the shape that
-			// carries a path or a raw process detail onto a diagnostics
-			// surface, and the count is the whole answer an operator needs.
+			// carries a raw process detail onto a diagnostics surface, and the
+			// count is the whole answer an operator needs.
 			reason = aiIngestOpaqueDeliveryReason
 		}
 		if reasons[source] == nil {
@@ -101,11 +112,12 @@ func projectAIIngestDeliveryHealth(entries []aiIngestLogEntry) aiIngestDeliveryH
 			continue
 		}
 		health.Sources = append(health.Sources, aiIngestDeliverySource{
-			Source:    source,
-			Delivered: delivered[source],
-			Failed:    failed[source],
-			Opaque:    opaque[source],
-			Reasons:   aiIngestDeliveryReasons(reasons[source]),
+			Source:      source,
+			Delivered:   delivered[source],
+			Failed:      failed[source],
+			Opaque:      opaque[source],
+			PathBearing: pathBearing[source],
+			Reasons:     aiIngestDeliveryReasons(reasons[source]),
 		})
 	}
 	return health
@@ -116,27 +128,55 @@ func projectAIIngestDeliveryHealth(entries []aiIngestLogEntry) aiIngestDeliveryH
 // process detail, which is exactly what a diagnostics surface must not repeat.
 const aiIngestOpaqueDeliveryReason = "opaque delivery failure"
 
-// aiIngestReasonIsOpaque reports whether a delivery failure reason answers
+// aiIngestReasonToken takes the naming half of a delivery failure reason.
+//
+// A reflection refusal is written as a bounded token, optionally followed by
+// ": " and an explanation. The token is the part that has to answer the
+// question; the explanation exists to help an operator and may say anything a
+// tmux message says. Judging opacity on the whole string would call a reason
+// that names its cause precisely opaque the moment the explanation behind it
+// mentioned a socket, which is the opposite of what this verdict measures.
+func aiIngestReasonToken(reason string) string {
+	token, _, found := strings.Cut(strings.TrimSpace(reason), ": ")
+	if !found {
+		return strings.TrimSpace(reason)
+	}
+	return strings.TrimSpace(token)
+}
+
+// aiIngestReasonIsOpaque reports whether a delivery failure token answers
 // nothing.
 //
-// An empty reason is the plainest case. A raw process-exit or signal string is
-// the shape observed in the field. A reason carrying a path is opaque for a
-// second reason as well: this track's change boundary keeps paths out of the
-// records entirely, so one appearing here is a leak as much as a non-answer.
-func aiIngestReasonIsOpaque(reason string) bool {
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
+// An empty token is the plainest case. A raw process-exit or signal string is
+// the shape observed in the field. A path where a token belongs is a third:
+// a bounded vocabulary token never contains one, so a path in that position
+// means no token was written at all.
+func aiIngestReasonIsOpaque(token string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" {
 		return true
 	}
-	if strings.Contains(reason, "/") {
+	if strings.Contains(token, "/") {
 		return true
 	}
 	for _, shape := range aiIngestOpaqueReasonShapes {
-		if shape.MatchString(reason) {
+		if shape.MatchString(token) {
 			return true
 		}
 	}
 	return false
+}
+
+// aiIngestDetailCarriesAPath reports whether the explanation behind a bounded
+// token names a filesystem path.
+//
+// It is a separate observation from opacity and never moves the verdict. This
+// track's change boundary keeps paths out of the records, so the count belongs
+// on the surface where an operator and an owner can see it; deciding whether a
+// given path may be there is not a reading this diagnosis gets to make.
+func aiIngestDetailCarriesAPath(reason string) bool {
+	_, detail, found := strings.Cut(strings.TrimSpace(reason), ": ")
+	return found && strings.Contains(detail, "/")
 }
 
 func isAIIngestHookSource(source string) bool {
