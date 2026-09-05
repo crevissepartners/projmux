@@ -281,13 +281,22 @@ jobs:
 
       - name: Publish npm packages
         run: |
+          set -euo pipefail
+          # npm moves `dist-tags.latest` onto whatever it publishes unless
+          # `--tag` says otherwise -- a semver prerelease version is not
+          # enough on its own. A prerelease tag therefore has to name its own
+          # channel, or every `npm install projmux` would land on the rc.
+          npm_tag=()
+          if [[ "${GITHUB_REF_NAME#v}" == *-* ]]; then
+            npm_tag=(--tag rc)
+          fi
           for dir in \
             dist/npm/@projmux/linux-x64 \
             dist/npm/@projmux/linux-arm64 \
             dist/npm/@projmux/darwin-x64 \
             dist/npm/@projmux/darwin-arm64 \
             dist/npm/projmux; do
-            npm publish "$dir" --access public
+            npm publish "$dir" --access public "${npm_tag[@]}"
           done
 
   publish-release:
@@ -307,4 +316,13 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-        run: gh release edit "${GITHUB_REF_NAME}" --draft=false
+        run: |
+          set -euo pipefail
+          # Undrafting must not clear the prerelease flag: `releases/latest`
+          # excludes prereleases by definition, and that exclusion is what
+          # hides an rc from the default channel.
+          release_edit=(--draft=false)
+          if [[ "${GITHUB_REF_NAME#v}" == *-* ]]; then
+            release_edit+=(--prerelease)
+          fi
+          gh release edit "${GITHUB_REF_NAME}" "${release_edit[@]}"

@@ -333,7 +333,7 @@ jobs:
             git diff --name-only "$PUSH_BEFORE" "$PUSH_SHA" > changed-files.txt
           fi
 
-          if [[ "$needed" != "1" ]] && grep -Eq '^(package(-lock)?\.json|npm/|scripts/package-npm\.sh|README(\.md|-ko\.md)?|LICENSE|docs/|\.github/workflows/release(-please)?\.yml)' changed-files.txt; then
+          if [[ "$needed" != "1" ]] && grep -Eq '^(package(-lock)?\.json|npm/|scripts/package-npm\.sh|README(\.md|-ko\.md)?|LICENSE|docs/|\.github/workflows/release(-please|-rc)?\.yml)' changed-files.txt; then
             needed=1
             reason="package-related files changed"
           fi
