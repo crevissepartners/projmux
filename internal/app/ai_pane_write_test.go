@@ -196,14 +196,20 @@ func TestObserverRecordsAreNotColouredByAReflectionWriteFailure(t *testing.T) {
 	}
 }
 
-// Acceptance 3: the reflection path holds no write whose error is discarded.
+// Acceptance 3: the three sources below hold no write whose error is discarded.
 // This is the check that has to keep working after the fix, because the failure
 // it guards against is invisible by construction: a discarded error produces a
 // record that says the hook succeeded.
 //
 // Baseline at the time this test was written: 47 discarded writes, `ai.go` 36
 // and `ai_ingest.go` 11.
-func TestReflectionWritesNeverDiscardTheirError(t *testing.T) {
+//
+// The scan list is exactly the three sources this change owns, and the name says
+// so. It is deliberately not the package: the package-wide equivalent reads every
+// non-test file and belongs to the recurrence gate, which owns that list. Green
+// here is a statement about these three files and nothing wider -- a test whose
+// name outruns what it reads is the same false surface this change removes.
+func TestHookIngestSourcesNeverDiscardAReflectionWriteError(t *testing.T) {
 	_, thisFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("resolve test source path")

@@ -996,10 +996,13 @@ decision itself are separate concerns.
   boundary. The observer journal writes into the same file from a process that
   lives for hours, and its records never inherit a failure this process saw on
   another path.
-- `TestReflectionWritesNeverDiscardTheirError` is the machine check that keeps
-  the fix. It parses the reflection sources and fails on any tmux write whose
-  error is dropped, because that defect is invisible by construction: the record
-  it produces claims the hook succeeded.
+- `TestHookIngestSourcesNeverDiscardAReflectionWriteError` is the machine check
+  that keeps the fix. It parses `ai.go`, `ai_ingest.go`, and `ai_pane_write.go`
+  and fails on any tmux write whose error is dropped, because that defect is
+  invisible by construction: the record it produces claims the hook succeeded.
+  Its scan list is those three sources and its name says so; the package-wide
+  equivalent belongs to the recurrence gate, so green here is not a claim about
+  any other file.
 
 ### Settled Codex authority admission tests
 
