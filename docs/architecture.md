@@ -325,6 +325,24 @@ Identity and naming:
   or numeric suffix allocator. An explicit `--name` keeps its original spelling
   after validation; explicit create and rename collisions fail with exit code 2
   and zero Registry, tmux, or provider writes.
+- `create agent` supplies an **explicit** name for the Pane its Agent owns:
+  `<agent-name>-pane`, derived from the Agent's own name. That used to be a
+  documented follow-up `rename pane` a launcher had to remember, so a caller
+  that did not know the convention left the managed Pane addressed by a raw
+  UID. It is not a new automatic-name rule -- it goes through the same explicit
+  name path an operator's `--name` does, so a Pane with no Agent still gets its
+  exact full UID. Length is the only fallback: an Agent name may be the full 128
+  bytes, and `<agent-name>-pane` would then be 133 and invalid, so the Pane
+  falls back to automatic naming rather than refusing a create that works today.
+  A *collision* on the derived name never falls back; it is the same typed exit
+  2 with zero writes an explicit `--name` collision produces, because the whole
+  metadata phase runs before the first tmux or provider call.
+- The derivation runs once, at create, and is deliberately not an invariant.
+  `rename agent` does not follow the Pane and `rename pane` is neither forbidden
+  nor restricted, so the Pane name keeps exactly one owner and `rename agent`
+  keeps its `cardinality=exact-one` effect tuple. A launcher that still issues
+  the old follow-up `rename pane <agent-name>-pane` gets a successful no-op,
+  because a reservation slot the same uid already holds is not a conflict.
 - Schema v4 stores no `metadata.displayName`, `status.displayTitle`, or renamed
   presentation replacement. Human context is projected for one invocation from
   the Project root, topic/provider/command, and exact live tmux title. That
