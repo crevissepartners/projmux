@@ -496,6 +496,9 @@ func assertSingleAIBellOutcome(t *testing.T, store *diagnostics.Store, result, f
 
 func wireAIDiagnosticsBellPane(cmd *aiCommand, paneID string) {
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}

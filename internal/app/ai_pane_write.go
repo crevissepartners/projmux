@@ -40,12 +40,22 @@ var errAIPaneWriteUnavailable = errors.New(aiPaneWriteReasonUnavailable)
 
 // setAIPaneOption writes one Pane option and says whether it landed.
 func (c *aiCommand) setAIPaneOption(paneID, option, value string) error {
-	return classifyAIPaneWrite(c.run("tmux", "set-option", "-p", "-t", paneID, option, value))
+	return c.writeAIPaneOption(paneID, "set-option", "-p", "-t", paneID, option, value)
 }
 
 // clearAIPaneOption unsets one Pane option and says whether it landed.
 func (c *aiCommand) clearAIPaneOption(paneID, option string) error {
-	return classifyAIPaneWrite(c.run("tmux", "set-option", "-p", "-u", "-t", paneID, option))
+	return c.writeAIPaneOption(paneID, "set-option", "-p", "-u", "-t", paneID, option)
+}
+
+// writeAIPaneOption resolves each attempt without retaining a route after its
+// server or Pane disappears. A refusal cannot fall back to tmux's default.
+func (c *aiCommand) writeAIPaneOption(paneID string, args ...string) error {
+	route, refusal := c.aiPaneOptionRoute(paneID)
+	if refusal != nil {
+		return errAIPaneWriteUnavailable
+	}
+	return classifyAIPaneWrite(c.run("tmux", route.args(args...)...))
 }
 
 // recordAIPaneOption is setAIPaneOption for a caller with no error channel of

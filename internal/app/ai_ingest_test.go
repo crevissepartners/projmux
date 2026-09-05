@@ -48,6 +48,9 @@ func TestMarkAIHookPaneSeparatesTransientShellObservationFromOwnedAgentStatus(t 
 		return registry.Clone(), nil
 	}
 	owned.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "tmux" && len(args) >= 5 && args[0] == "display-message" && args[4] == "#{"+tmuxopts.PaneUID+"}" {
 			return []byte("pan-alpha-codex\n"), nil
 		}
@@ -694,12 +697,15 @@ func TestIngestBellPushesQueueEntryAndDedupesPane(t *testing.T) {
 	recorder := cmdRecorder(cmd)
 	cmd.runCommand = func(_ context.Context, name string, args ...string) error {
 		recorder.commands = append(recorder.commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
-		if name == "tmux" && reflect.DeepEqual(args, []string{"set-option", "-p", "-t", "%7", aiBellDedupeOption, "100"}) {
+		if name == "tmux" && reflect.DeepEqual(args, routedAppSocketArgs("set-option", "-p", "-t", "%7", aiBellDedupeOption, "100")) {
 			lastBellAt = "100"
 		}
 		return nil
 	}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
@@ -1943,6 +1949,9 @@ func TestIngestAntigravityRawV1112FixtureRoutesExplicitPreInvocationByWorkspace(
 	}
 	cmd.stdin = bytes.NewReader(data)
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "tmux" && reflect.DeepEqual(args, []string{"list-panes", "-a", "-F", aiIngestListPanesFormat}) {
 			return []byte("%workspace\x1f/workspace/sanitized-project\x1f\x1f\n"), nil
 		}
@@ -2399,6 +2408,8 @@ func TestIngestAntigravityStopThenLateBusyAndIdlePreservesCompletion(t *testing.
 	}
 	baseRun := cmd.runCommand
 	cmd.runCommand = func(ctx context.Context, name string, args ...string) error {
+		recordedArgs := args
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && len(args) == 6 && reflect.DeepEqual(args[:4], []string{"set-option", "-p", "-t", "%7"}) {
 			switch args[4] {
 			case aiPaneStateOption:
@@ -2413,7 +2424,7 @@ func TestIngestAntigravityStopThenLateBusyAndIdlePreservesCompletion(t *testing.
 		if name == "tmux" && len(args) == 6 && reflect.DeepEqual(args[:5], []string{"set-option", "-p", "-u", "-t", "%7"}) && args[5] == attentionStateOption {
 			attentionState = ""
 		}
-		return baseRun(ctx, name, args...)
+		return baseRun(ctx, name, recordedArgs...)
 	}
 
 	run := func(event, payload string) {
@@ -2541,6 +2552,9 @@ func TestAIWatchTitleSkipsHookActivePane(t *testing.T) {
 
 func claudeIngestReadCommand(paneID string) func(context.Context, string, ...string) ([]byte, error) {
 	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
@@ -2592,6 +2606,9 @@ func codexHookIngestReadCommand(paneID string) func(context.Context, string, ...
 
 func antigravityIngestReadCommand(paneID string) func(context.Context, string, ...string) ([]byte, error) {
 	return func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
@@ -2615,7 +2632,7 @@ func antigravityIngestReadCommand(paneID string) func(context.Context, string, .
 
 func hasRecordedAICommand(commands []recordedAICommand, want recordedAICommand) bool {
 	for _, got := range commands {
-		if got.name == want.name && reflect.DeepEqual(got.args, want.args) {
+		if got.name == want.name && sameRecordedAICommandArgs(got.name, got.args, want.args) {
 			return true
 		}
 	}

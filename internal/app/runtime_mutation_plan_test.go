@@ -2933,8 +2933,7 @@ func TestPlanOnlyMutationNegativeAuditHasZeroBypass(t *testing.T) {
 		// Every AI reflection write now passes through these two helpers, so
 		// the twelve exempt call sites that used to spell `set-option` inline
 		// collapsed into one chokepoint pair that also classifies the failure.
-		"ai_pane_write.go:setAIPaneOption:set-option":                     "agent.presentation",
-		"ai_pane_write.go:clearAIPaneOption:set-option":                   "agent.presentation",
+		"ai_pane_write.go:writeAIPaneOption:variable-argv":                "agent.presentation",
 		"ai.go:BindAgentPaneOnRoute:variable-argv":                        "agent.presentation",
 		"ai.go:writeAgentPaneOptionOnRoute:variable-argv":                 "codex.native-lifecycle-authority",
 		"ai.go:projectManagedAgentInteraction:variable-argv":              "agent.presentation",
