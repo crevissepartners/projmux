@@ -2,6 +2,7 @@ package app
 
 import (
 	"bufio"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -557,6 +558,63 @@ type resourceList struct {
 	Items      []any  `json:"items"`
 }
 
+// resourceJSONContext is the structured form of invocation-scoped context.
+//
+// Unlike registryview.Context's human-facing uses, every key is required in a
+// resource JSON item. In particular, an unavailable context is represented as
+// value/source empty strings plus observed=false rather than by missing keys.
+type resourceJSONContext struct {
+	Value    string                     `json:"value"`
+	Source   registryview.ContextSource `json:"source"`
+	Observed bool                       `json:"observed"`
+}
+
+// resourceJSONProjection adds ephemeral context without changing the stored
+// resource or its schema. MarshalJSON deliberately keeps the resource's
+// apiVersion/kind/metadata/spec/status object intact and appends context as one
+// top-level sibling in the read projection only.
+type resourceJSONProjection struct {
+	resource any
+	context  resourceJSONContext
+}
+
+func newResourceJSONProjection(resource any, context registryview.Context) resourceJSONProjection {
+	return resourceJSONProjection{
+		resource: resource,
+		context: resourceJSONContext{
+			Value:    context.Value,
+			Source:   context.Source,
+			Observed: context.Observed,
+		},
+	}
+}
+
+// MarshalJSON implements the additive projection while preserving the exact
+// field order and representation produced by the stored resource type.
+func (p resourceJSONProjection) MarshalJSON() ([]byte, error) {
+	resourceBytes, err := json.Marshal(p.resource)
+	if err != nil {
+		return nil, err
+	}
+	if len(resourceBytes) < 2 || resourceBytes[0] != '{' || resourceBytes[len(resourceBytes)-1] != '}' {
+		return nil, errors.New("resource JSON projection requires an object")
+	}
+	contextBytes, err := json.Marshal(p.context)
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]byte, 0, len(resourceBytes)+len(contextBytes)+11)
+	out = append(out, resourceBytes[:len(resourceBytes)-1]...)
+	if len(resourceBytes) > 2 {
+		out = append(out, ',')
+	}
+	out = append(out, `"context":`...)
+	out = append(out, contextBytes...)
+	out = append(out, '}')
+	return out, nil
+}
+
 // resourceFor returns the stored resource and its metadata block for one uid.
 func resourceFor(registry coremetadata.Registry, kind coremetadata.Kind, uid string) (any, coremetadata.ObjectMeta, bool) {
 	switch kind {
@@ -884,6 +942,37 @@ func writeResourceProjection(
 	list bool,
 	now time.Time,
 ) error {
+	return writeResourceProjectionMode(stdout, spelling, mode, kind, matches, registry, list, now, false)
+}
+
+// writeContextResourceListProjection is the plural get route's additive JSON
+// view. It consumes the Context already carried by each selector Match, which
+// came from getCommand.readSnapshot; it performs no observation or Registry
+// write of its own. Other projections and every singular/fan-out caller stay on
+// writeResourceProjection and therefore keep their previous bytes.
+func writeContextResourceListProjection(
+	stdout io.Writer,
+	spelling string,
+	mode cli.OutputMode,
+	kind coremetadata.Kind,
+	matches []selector.Match,
+	registry coremetadata.Registry,
+	now time.Time,
+) error {
+	return writeResourceProjectionMode(stdout, spelling, mode, kind, matches, registry, true, now, true)
+}
+
+func writeResourceProjectionMode(
+	stdout io.Writer,
+	spelling string,
+	mode cli.OutputMode,
+	kind coremetadata.Kind,
+	matches []selector.Match,
+	registry coremetadata.Registry,
+	list bool,
+	now time.Time,
+	contextJSON bool,
+) error {
 	switch mode {
 	case cli.OutputModeNone:
 		return nil
@@ -918,6 +1007,8 @@ func writeResourceProjection(
 			}
 			if metadataOnly {
 				items = append(items, meta)
+			} else if contextJSON {
+				items = append(items, newResourceJSONProjection(resource, match.Context))
 			} else {
 				items = append(items, resource)
 			}

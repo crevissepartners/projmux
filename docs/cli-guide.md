@@ -182,6 +182,18 @@ their existing meaning and include ControlSession descendants. Outside tmux, an
 omitted root keeps the historical whole-Registry inventory without probing a
 default server.
 
+For the four Registry-backed plural reads, `get
+projects|windows|panes|agents -o json` adds a top-level `context` object to
+every resource item. Its `value`, `source`, and `observed` keys are always
+present, including as empty strings and `false` when no context is available.
+The values come from the same invocation snapshot used to resolve and render
+the item: only an exact UID-bound live Window name or Pane title sets
+`observed: true`; Project and Agent context, Registry fallbacks, and unmatched
+runtime objects remain unobserved. This is a read projection, not stored
+resource state or selector authority. It does not change `-o metadata`, the
+Registry or snapshot schema, singular `describe ... -o json`, or `get pane -o
+json`; an empty plural result remains one List document with `"items": []`.
+
 ### Reference scope: the active Project namespace
 
 A descendant `metadata.name` is unique across its Project or ControlSession root
