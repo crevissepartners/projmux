@@ -45,8 +45,11 @@ func TestPhase0ModelImportsNoMutationAdapter(t *testing.T) {
 	// It centralizes endpoint/fence actionability previously restated by the
 	// notification/sidebar/statusbar/reply consumers, while this import census
 	// still kills any mutation-capable dependency added to that owner.
-	if inspected != 9 {
-		t.Fatalf("inspected %d pure model files, want 9", inspected)
+	// vacancy.go is the tenth: the retirement-vacancy verdict is a pure count
+	// census, so the Registry projection and the state-domain read that feed it
+	// stay outside this package.
+	if inspected != 10 {
+		t.Fatalf("inspected %d pure model files, want 10", inspected)
 	}
 }
 

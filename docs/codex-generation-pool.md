@@ -536,6 +536,45 @@ absence before successor work. No fixed sleep is used; host guard release,
 app-server lifecycle snapshots, Registry CAS, tmux identity mirrors, and Pane
 relaunch markers are the bounded semantic barriers.
 
+### Retirement vacancy
+
+The version-pair receipt proves that a thread survives a cross-version resume.
+A draining generation that holds no thread has no subject for that proof, so
+requiring the receipt there is a gate with nothing behind it. That case is real
+and ordinary: `ActivateManagedCurrent` starts a rolling activation on its own
+whenever the running Codex version differs from the managed one, and deleting
+the Agents pinned to the old generation afterwards leaves a generation nobody
+can retire -- the only production caller of the rolling handover request is
+`agent resume` on a live pinned Agent.
+
+`codexgeneration.EvaluateRetirementVacancy` names that one case and nothing
+wider. Its evidence is a content-free census of the exact retiring endpoint,
+and every field must be zero *and* both censuses must have actually run:
+
+- freshly projected non-closed obligations, taken from a Registry snapshot read
+  for this decision. The durable journal ledger is never the input: an
+  obligation whose Agent has since been deleted is frozen at its last
+  projection, carries no ThreadID, and can neither be recomputed nor traced;
+- Agents whose session ref still names the endpoint, including ones carrying no
+  ThreadID. An obligation requires a ThreadID, so this covers that hole on the
+  Registry side;
+- Pane activations whose native authority names the endpoint. A Pane outlives
+  its Agent record, so the obligation census cannot see this axis at all;
+- threads the shared state domain actually holds that a Registry record still
+  binds to the endpoint. The census reads rollout *file names* under
+  `<state domain>/sessions`; no rollout body is opened, and a state domain that
+  cannot be read yields no verdict of vacancy.
+
+A vacant plan reports `request-handover`: `Apply` fires the exact rolling
+handover request itself, through a declared requester seam, then re-plans and
+authorizes the destructive operation from that second census. Everything else
+is unchanged. The `multiple-draining` cap and the two-slot arithmetic are
+untouched -- the freed slot comes from a retirement receipt, not a changed
+topology rule -- retirement still only rewrites route state and obligation
+rows, and no thread file is ever removed. One live obligation, one endpoint-
+bound Registry record, or one unreadable state domain keeps both original
+refusals exactly as they were.
+
 ### Phase 5 enforcement and deletion ledger
 
 No canonical test symbol is deleted or renamed, and the Phase-4 rolling

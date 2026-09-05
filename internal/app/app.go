@@ -288,7 +288,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 		registry := intmetadata.NewDefaultStore(paths)
 		rollingCoordinator = &codexupgrade.Coordinator{Journal: journal, Registry: registry, Mutator: intmetadata.DefaultMutator}
 		handoverCoordinator = &codexhandover.Coordinator{
-			Journal: journal, Registry: registry,
+			Journal: journal, Registry: registry, Requester: rollingCoordinator,
 			Effects: &codexHandoverEffects{registry: registry, mutator: intmetadata.DefaultMutator(),
 				runner: createCmd.runtime.runner, materialize: createCmd.runtime, launcher: ai},
 		}

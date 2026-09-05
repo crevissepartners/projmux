@@ -26,6 +26,11 @@ const (
 	DecisionBlocked               Decision = "blocked"
 	DecisionAwaitingOwnerStop     Decision = "awaiting-owner-stop"
 	DecisionRecoverSameGeneration Decision = "recover-same-generation"
+	// DecisionRequestHandover is the vacant-generation entry. The rolling
+	// handover request is normally fired by `agent resume` on a pinned Agent;
+	// a generation whose Agents are all gone has no such caller left, so Apply
+	// fires it under the same journal authority before proceeding.
+	DecisionRequestHandover Decision = "request-handover"
 )
 
 type Request struct {
@@ -48,6 +53,12 @@ type Plan struct {
 	Blockers              []string                               `json:"blockers,omitempty"`
 	Mutations             codexgeneration.HandoverMutations      `json:"mutations"`
 	ColdRecovery          *codexgeneration.ColdRecoveryOperation `json:"coldRecovery,omitempty"`
+	// Vacancy and VacancyEvidence are populated only when the plan had to ask
+	// whether this generation still holds anything -- that is, when the
+	// version-pair receipt or the rolling handover request is missing. They are
+	// the operator-visible reason a retirement did or did not open.
+	Vacancy         codexgeneration.RetirementVacancy          `json:"vacancy,omitempty"`
+	VacancyEvidence *codexgeneration.RetirementVacancyEvidence `json:"vacancyEvidence,omitempty"`
 }
 
 type RegistryStore interface {
@@ -73,13 +84,33 @@ type Effects interface {
 	EnsureOldAuthorityRestored(context.Context, string, metadata.CodexEndpointRef, []codexgeneration.HandoverTarget) error
 }
 
+// Requester fires the exact rolling handover request for one Draining
+// endpoint. `agent resume` is the only other production caller and it
+// structurally requires a live pinned Agent, so a generation whose Agents were
+// all deleted can never reach the request without this seam.
+type Requester interface {
+	RequestHandover(context.Context, metadata.CodexEndpointRef) (string, bool, error)
+}
+
 type Coordinator struct {
 	Journal    *codexupgrade.Store
 	Registry   RegistryStore
 	Effects    Effects
+	Requester  Requester
 	Observe    func(context.Context, codexupgrade.GenerationRoute) error
 	CanRecover func(codexupgrade.GenerationRoute) error
 	Failpoint  func(string) error
+	// EnumerateThreads reads the shared state domain's thread store. It
+	// defaults to the real filesystem census; tests replace it. A nil result
+	// error means the domain could not be read, which is never vacancy.
+	EnumerateThreads func(stateDomainPath string) ([]string, error)
+}
+
+func (coordinator *Coordinator) enumerateThreads() func(string) ([]string, error) {
+	if coordinator.EnumerateThreads != nil {
+		return coordinator.EnumerateThreads
+	}
+	return enumerateStateDomainThreads
 }
 
 const (
@@ -133,8 +164,15 @@ func (coordinator *Coordinator) Plan(ctx context.Context, request Request) Plan 
 	}
 	op := journal.Operation
 	plan.StateDomainID, plan.OldGenerationID, plan.SuccessorGenerationID = journal.StateDomainID, op.OldGenerationID, op.TargetGenerationID
-	if op.OperationRef != plan.RollingOperationRef || !op.HandoverRequested || !op.DrainPublished || op.Aborted {
+	// A missing handover request is the one part of this fence a vacant
+	// generation may clear: the request itself is what re-projects obligations,
+	// and only a live pinned Agent can fire it. Every other mismatch here stays
+	// an unconditional refusal.
+	handoverRequestPending := false
+	if op.OperationRef != plan.RollingOperationRef || !op.DrainPublished || op.Aborted {
 		plan.Blockers = append(plan.Blockers, "exact-rolling-handover-not-requested")
+	} else if !op.HandoverRequested {
+		handoverRequestPending = true
 	}
 	oldEndpoint := metadata.CodexEndpointRef{StateDomainID: journal.StateDomainID, EndpointGenerationID: op.OldGenerationID}
 	successorEndpoint := metadata.CodexEndpointRef{StateDomainID: journal.StateDomainID, EndpointGenerationID: op.TargetGenerationID}
@@ -148,6 +186,12 @@ func (coordinator *Coordinator) Plan(ctx context.Context, request Request) Plan 
 		}
 		if pinned.Aborted {
 			plan.Blockers = append(plan.Blockers, "handover-already-aborted")
+		}
+		if handoverRequestPending {
+			// A prewritten handover always follows its request. If the rolling
+			// operation says otherwise the journal disagrees with itself, and a
+			// vacancy census is not the authority to resolve that.
+			plan.Blockers = append(plan.Blockers, "exact-rolling-handover-not-requested")
 		}
 		if request.OwnerStopReceipt != nil {
 			if pinned.ExternalStopReceipt != nil {
@@ -176,9 +220,12 @@ func (coordinator *Coordinator) Plan(ctx context.Context, request Request) Plan 
 	if !successorOK || successor.Generation.State != codexgeneration.StateCurrent || !successor.Ready || successor.Proof == nil {
 		plan.Blockers = append(plan.Blockers, "exact-successor-route-not-ready")
 	}
-	if journal.Qualification == nil || journal.Qualification.Validate() != nil || !codexgeneration.GateQualification(*journal.Qualification).Phase2Ready {
-		plan.Blockers = append(plan.Blockers, "version-pair-not-qualified")
-	}
+	// The version-pair receipt proves a thread survives a cross-version resume.
+	// Whether this generation has any such thread is a Registry-and-store
+	// question, so the refusal is decided after the fresh census below rather
+	// than here.
+	qualificationMissing := journal.Qualification == nil || journal.Qualification.Validate() != nil ||
+		!codexgeneration.GateQualification(*journal.Qualification).Phase2Ready
 	if oldOK && oldRoute.Generation.Owner == codexgeneration.OwnerProjmuxPrivate {
 		if !oldRoute.Ready || oldRoute.Proof == nil || strings.TrimSpace(oldRoute.LaunchOperationRef) == "" {
 			plan.Blockers = append(plan.Blockers, "exact-old-managed-lifecycle-authority-incomplete")
@@ -220,8 +267,28 @@ func (coordinator *Coordinator) Plan(ctx context.Context, request Request) Plan 
 	}
 	registry, err := coordinator.Registry.LoadSnapshot()
 	if err != nil {
+		// No snapshot means no census, so both deferred refusals stand.
+		if qualificationMissing {
+			plan.Blockers = append(plan.Blockers, "version-pair-not-qualified")
+		}
+		if handoverRequestPending {
+			plan.Blockers = append(plan.Blockers, "exact-rolling-handover-not-requested")
+		}
 		plan.Blockers = append(plan.Blockers, "registry-snapshot-unavailable")
 		return blocked(plan)
+	}
+	if qualificationMissing || handoverRequestPending {
+		evidence, vacancy := gatherRetirementVacancy(registry, oldEndpoint,
+			stateDomainPath(journal, successorEndpoint), coordinator.enumerateThreads())
+		plan.Vacancy, plan.VacancyEvidence = vacancy, &evidence
+		if !vacancy.Vacant() {
+			if qualificationMissing {
+				plan.Blockers = append(plan.Blockers, "version-pair-not-qualified")
+			}
+			if handoverRequestPending {
+				plan.Blockers = append(plan.Blockers, "exact-rolling-handover-not-requested")
+			}
+		}
 	}
 	choices := slices.Clone(request.Choices)
 	slices.SortFunc(choices, func(a, b codexgeneration.NoTurnChoice) int { return strings.Compare(a.AgentUID, b.AgentUID) })
@@ -284,6 +351,12 @@ func (coordinator *Coordinator) Plan(ctx context.Context, request Request) Plan 
 	}
 	if len(plan.Blockers) != 0 {
 		return blocked(plan)
+	}
+	if handoverRequestPending && plan.Decision == DecisionReady {
+		// Vacant, and nothing else stands in the way. Apply fires the request;
+		// Plan stays read-only and reports what Apply would do.
+		plan.Decision = DecisionRequestHandover
+		return plan
 	}
 	if oldOK && oldRoute.Generation.Owner != codexgeneration.OwnerProjmuxPrivate && request.OwnerStopReceipt == nil {
 		plan.Decision = DecisionAwaitingOwnerStop
@@ -402,8 +475,24 @@ func (coordinator *Coordinator) Apply(ctx context.Context, request Request) (cod
 			return codexupgrade.Journal{}, err
 		}
 		plan = coordinator.Plan(ctx, request)
-		if plan.Decision != DecisionReady && plan.Decision != DecisionAwaitingOwnerStop {
+		if plan.Decision != DecisionReady && plan.Decision != DecisionAwaitingOwnerStop && plan.Decision != DecisionRequestHandover {
 			return codexupgrade.Journal{}, fmt.Errorf("codex same-generation recovery did not restore exact old readiness: %s", strings.Join(plan.Blockers, ","))
+		}
+	}
+	if plan.Decision == DecisionRequestHandover {
+		if coordinator.Requester == nil {
+			return codexupgrade.Journal{}, errors.New("codex generation handover requester is not configured")
+		}
+		old := metadata.CodexEndpointRef{StateDomainID: plan.StateDomainID, EndpointGenerationID: plan.OldGenerationID}
+		if _, _, err := coordinator.Requester.RequestHandover(ctx, old); err != nil {
+			return codexupgrade.Journal{}, err
+		}
+		// Re-plan against the requested journal. The request re-projects the
+		// obligation ledger, so this second census is the one that authorizes
+		// the destructive operation.
+		plan = coordinator.Plan(ctx, request)
+		if plan.Decision != DecisionReady && plan.Decision != DecisionAwaitingOwnerStop {
+			return codexupgrade.Journal{}, fmt.Errorf("codex vacant generation handover request did not open the exact retirement path: %s", strings.Join(plan.Blockers, ","))
 		}
 	}
 	if err := coordinator.fail(FailBeforePrewrite); err != nil {
