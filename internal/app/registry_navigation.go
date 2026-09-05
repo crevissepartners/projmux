@@ -175,6 +175,7 @@ func (c *registryNavigationCommand) runProject(ctx context.Context, ui, projectU
 		return errors.New("native picker is not configured")
 	}
 	locale := appLocale(c.homeDir, c.lookupEnv)
+	var columns columnPickerState
 	for {
 		view, err := c.reader.view(ctx, nil)
 		if err != nil {
@@ -185,15 +186,17 @@ func (c *registryNavigationCommand) runProject(ctx context.Context, ui, projectU
 			return fmt.Errorf("registry navigation: no Registry Project carries uid %q", projectUID)
 		}
 		nav := registryNavigationView{locale: locale, view: view, rows: rows, now: time.Now().UTC()}
-		result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.native, intpickercompat.Options{
+		result, err := columns.run(c.homeDir, c.lookupEnv, c.native, registryColumnProfileAction, intpickercompat.Options{
 			UI:            ui,
-			Entries:       nav.entries(),
 			Title:         "Projects > Resources",
 			Prompt:        "Projects > Resources > ",
 			Footer:        registryNavigationFooter(locale),
 			ExpectKeys:    []string{"enter"},
 			Bindings:      pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, registryNavigationPopupMode, "esc"),
 			DisableSearch: false,
+		}, func(profile columnProfile) []intpickercompat.Entry {
+			nav.profile = profile
+			return nav.entries()
 		})
 		if err != nil {
 			return fmt.Errorf("run registry navigation picker: %w", err)

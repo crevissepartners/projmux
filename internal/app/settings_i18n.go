@@ -16,6 +16,12 @@ import (
 // in internal/i18n/default_catalog.go for both en-US (FallbackLocale) and
 // ko-KR. The coverage tests enforce both halves.
 var uiTextKeys = map[string]i18n.Key{
+	"wide columns":                  "picker.columns.wide",
+	"compact columns":               "picker.columns.compact",
+	"Toggle compact / wide columns": "settings.text.toggle_column_profile",
+	"Toggle compact and wide columns for this open picker; reopen starts compact": "settings.desc.toggle_column_profile",
+	"Registry Inspector":                "settings.text.registry_inspector",
+	"Runtime Diagnostics":               "settings.text.runtime_diagnostics_picker",
 	"Open Resource Inspector":           "settings.text.open_resource_inspector",
 	"segment and host sampling stopped": "settings.text.resources_off_state",
 	"live CPU and memory":               "settings.text.resources_on_state",

@@ -261,15 +261,15 @@ func TestTheRegistryFirstViewCarriesTerminationEvidence(t *testing.T) {
 		t.Fatal("the row aliases the Registry's own receipt")
 	}
 
-	cells := registryNavigationRowAt(*paneRow, i18n.FallbackLocale, time.Time{})
+	cells := registryNavigationRowAt(*paneRow, i18n.FallbackLocale, time.Time{}, columnWide)
 	index := -1
-	for i, column := range registryNavigationColumns {
+	for i, column := range registryNavigationColumns(columnWide) {
 		if column == "TERMINATION" {
 			index = i
 		}
 	}
 	if index < 0 {
-		t.Fatalf("the navigation columns have no TERMINATION column: %v", registryNavigationColumns)
+		t.Fatalf("the navigation columns have no TERMINATION column: %v", registryNavigationColumns(columnWide))
 	}
 	if cells[index] != "abnormal/supervisor exit=7" {
 		t.Fatalf("navigation TERMINATION cell = %q", cells[index])

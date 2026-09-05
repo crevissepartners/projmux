@@ -132,16 +132,19 @@ func (c *runtimeDiagnosticsCommand) run(args []string, stdout, stderr io.Writer,
 		unavailable: runtimediag.Unavailable(graph),
 		rows:        rows,
 	}
+	var columns columnPickerState
 	for {
-		result, err := runNativePickerOption(c.homeDir, c.lookupEnv, c.native, intpickercompat.Options{
+		result, err := columns.run(c.homeDir, c.lookupEnv, c.native, runtimeColumnProfileAction, intpickercompat.Options{
 			UI:            *ui,
-			Entries:       view.entries(),
 			Title:         "Runtime diagnostics",
 			Prompt:        "Runtime > ",
 			Footer:        runtimeDiagnosticsFooter(locale),
 			ExpectKeys:    []string{"enter"},
 			Bindings:      pickerCloseBindingsForPopupToggleMode(c.homeDir, c.lookupEnv, runtimeDiagnosticsPopupMode, "esc"),
 			DisableSearch: false,
+		}, func(profile columnProfile) []intpickercompat.Entry {
+			view.profile = profile
+			return view.entries()
 		})
 		if err != nil {
 			return fmt.Errorf("run runtime diagnostics picker: %w", err)

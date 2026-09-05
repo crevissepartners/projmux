@@ -124,12 +124,12 @@ func pickerLabels(options intpicker.Options) []string {
 func TestRuntimePickerListsEveryClassIncludingTheRefusedOnes(t *testing.T) {
 	t.Parallel()
 
-	command, picker, _, _, _ := runtimePickerFixture(t, "1", nil)
+	command, picker, _, _, _ := runtimePickerFixture(t, "1", []intpicker.Result{{Key: "alt-w"}})
 	if _, _, err := runRuntimePicker(t, command, "--socket", "primary"); err != nil {
 		t.Fatalf("runtime diagnostics: %v", err)
 	}
-	if len(picker.rendered) != 1 {
-		t.Fatalf("rendered %d pickers, want 1", len(picker.rendered))
+	if len(picker.rendered) != 2 {
+		t.Fatalf("rendered %d pickers, want compact and wide", len(picker.rendered))
 	}
 	options := picker.rendered[0]
 
@@ -159,8 +159,9 @@ func TestRuntimePickerListsEveryClassIncludingTheRefusedOnes(t *testing.T) {
 	if !strings.Contains(labels, "host app-owned  transport tmux -L primary") {
 		t.Fatalf("picker omits the exact-host header:\n%s", labels)
 	}
-	if !strings.Contains(labels, "Project/alpha") {
-		t.Fatalf("picker omits the managed binding:\n%s", labels)
+	wideLabels := strings.Join(pickerLabels(picker.rendered[1]), "\n")
+	if strings.Contains(labels, "Project/alpha") || !strings.Contains(wideLabels, "Project/alpha") {
+		t.Fatalf("managed binding must be explicit wide: compact=%s\nwide=%s", labels, wideLabels)
 	}
 	// The tally names only the classes present, in the closed declaration order.
 	if !strings.Contains(labels, "managed 3  recoverable 1  control 1  ephemeral 1  unattributed 7") {
@@ -446,6 +447,7 @@ func TestRuntimePickerLocalizesChromeButNeverTheEvidence(t *testing.T) {
 	t.Parallel()
 
 	command, picker, _, _, _ := runtimePickerFixture(t, "1", []intpicker.Result{
+		{Key: "alt-w"},
 		{Value: "runtime:session:$8"},
 		{Closed: true},
 	})
@@ -459,7 +461,7 @@ func TestRuntimePickerLocalizesChromeButNeverTheEvidence(t *testing.T) {
 		t.Fatalf("runtime diagnostics: %v", err)
 	}
 
-	list := picker.rendered[0]
+	list := picker.rendered[1]
 	if list.Title == "Runtime diagnostics" || list.Footer == "Enter: actions | Esc: close" {
 		t.Fatalf("list chrome stayed English under ko-KR: title=%q footer=%q", list.Title, list.Footer)
 	}

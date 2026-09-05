@@ -303,8 +303,8 @@ func TestColumnProfilesExactOutputAndSnapshotParity(t *testing.T) {
 	}
 	_, _, _, _, graph := columnFixture(t)
 	view := registryview.Build(registryview.Input{Graph: graph})
-	registryPicker := registryNavigationView{locale: i18n.FallbackLocale, view: view, rows: view.Rows, now: resourceFixtureReadClock}
-	runtimePicker := runtimeDiagnosticsView{locale: i18n.FallbackLocale, hostMode: string(graph.HostMode), transport: graph.Transport, rows: runtimediag.Rows(graph)}
+	registryPicker := registryNavigationView{locale: i18n.FallbackLocale, view: view, rows: view.Rows, now: resourceFixtureReadClock, profile: columnWide}
+	runtimePicker := runtimeDiagnosticsView{locale: i18n.FallbackLocale, hostMode: string(graph.HostMode), transport: graph.Transport, rows: runtimediag.Rows(graph), profile: columnWide}
 	for _, entry := range []struct {
 		name  string
 		value any

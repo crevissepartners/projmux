@@ -16,10 +16,11 @@ import (
 // It is a value with no runner, no clock, and no environment, so the rows a
 // test asserts are the rows the picker renders.
 type registryNavigationView struct {
-	locale i18n.Locale
-	view   registryview.View
-	rows   []registryview.Row
-	now    time.Time
+	locale  i18n.Locale
+	view    registryview.View
+	rows    []registryview.Row
+	profile columnProfile
+	now     time.Time
 }
 
 // registryNavigationRowValue is the selection token of one navigation row.
@@ -30,29 +31,21 @@ type registryNavigationView struct {
 // appearing or disappearing underneath it.
 func registryNavigationRowValue(row registryview.Row) string { return row.ID }
 
-var registryNavigationColumns = columnHeaders(columnsFor(columnRegistryPicker, "", columnWide))
-
-// registryNavigationColumnBounds is the fixed-viewport display-width budget of
-// this view's free-text columns. See internal/app/picker_table_layout.go for
-// why a fixed-viewport table needs one and how the numbers were measured. The
-// short fixed-vocabulary columns are deliberately absent: they are already
-// bounded by their own vocabulary, and UID is absent because identity stays
-// exact and greppable in the rendered row.
-func registryNavigationColumnBounds() []pickerColumnBound {
-	return pickerColumnBoundsFor(registryNavigationColumns, map[string]int{
-		"NAME":    registryNavigationNameCells,
-		"RUNTIME": registryNavigationRuntimeCells,
-	})
+func registryNavigationColumns(profile columnProfile) []string {
+	return columnHeaders(columnsFor(columnRegistryPicker, "", profile))
 }
 
-func registryNavigationRowAt(row registryview.Row, locale i18n.Locale, now time.Time) []string {
-	return columnValues(columnsFor(columnRegistryPicker, "", columnWide), func(field columnField) string {
+func registryNavigationRowAt(row registryview.Row, locale i18n.Locale, now time.Time, profile columnProfile) []string {
+	return columnValues(columnsFor(columnRegistryPicker, "", profile), func(field columnField) string {
 		var value string
 		switch field {
 		case columnKind:
 			value = registryNavigationIndent(row) + string(row.Kind)
 		case columnName:
-			value = registryNavigationName(row)
+			value = registryNavigationBaseName(row)
+			if profile == columnWide {
+				value = registryNavigationName(row)
+			}
 		case columnStatus:
 			value = string(row.Status)
 		case columnProgress:
@@ -113,11 +106,18 @@ func registryNavigationIndent(row registryview.Row) string {
 	return strings.Repeat("  ", row.Depth) + "└ "
 }
 
-func registryNavigationName(row registryview.Row) string {
+func registryNavigationBaseName(row registryview.Row) string {
 	name := strings.TrimSpace(row.Context.Value)
 	if name == "" {
 		name = strings.TrimSpace(row.Name)
 	}
+	return name
+}
+
+// Compact keeps the complete context/name; wide also shows provider/phase and
+// role adornments. The source row and searchable values stay unchanged.
+func registryNavigationName(row registryview.Row) string {
+	name := registryNavigationBaseName(row)
 	switch {
 	case row.Kind == registryview.RowKindAgent && strings.TrimSpace(row.Provider) != "":
 		return name + " (" + strings.TrimSpace(row.Provider) + " " + strings.TrimSpace(row.Phase) + ")"
@@ -171,18 +171,19 @@ func (v registryNavigationView) entries() []intpickercompat.Entry {
 	}
 
 	table := make([][]string, 0, len(v.rows)+1)
-	table = append(table, registryNavigationColumns)
+	profile := pickerColumnProfile(v.profile)
+	table = append(table, registryNavigationColumns(profile))
 	for _, row := range v.rows {
-		table = append(table, registryNavigationRowAt(row, v.locale, v.now))
+		table = append(table, registryNavigationRowAt(row, v.locale, v.now, profile))
 	}
-	widths := boundPickerTableWidths(table, registryNavigationColumnBounds())
+	widths := pickerTableWidths(table)
 	entries = append(entries, intpickercompat.Entry{
-		Label: resourceTableLine(table[0], widths),
+		Label: pickerTableLine(table[0], widths, profile),
 		Value: settingsNoopValue,
 	})
 	for i, row := range v.rows {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     resourceTableLine(table[i+1], widths),
+			Label:     pickerTableLine(table[i+1], widths, profile),
 			Value:     registryNavigationRowValue(row),
 			SearchKey: registryNavigationSearchKey(row),
 		})
@@ -229,6 +230,8 @@ func (v registryNavigationView) actionEntries(row registryview.Row, socket strin
 		Label: settingsLabelInfoLocale(v.locale, "Resource", registryNavigationSummary(row), row.Reason),
 		Value: settingsNoopValue,
 	})
+
+	entries = append(entries, pickerColumnDetailEntries(registryNavigationColumns(columnWide), registryNavigationRowAt(row, v.locale, v.now, columnWide))...)
 
 	for _, action := range row.Actions {
 		entries = append(entries, v.actionEntry(row, action, socket, insideTmux))

@@ -63,8 +63,8 @@ type columnSpec struct {
 // columnCatalog is the only authority for field capabilities, header aliases,
 // and profile order. Presence declares capability on that surface and kind;
 // wide follows slice order and compact is its ordered subset. Width and data
-// never select a profile. Picker consumers explicitly retain wide until their
-// separate default/control cutover.
+// never select a profile. Pickers start compact and explicitly opt into wide
+// for one open lifetime.
 var columnCatalog = map[columnSurfaceKey][]columnSpec{
 	{columnResourceCLI, string(coremetadata.KindProject)}: {
 		{columnKind, "KIND", true},

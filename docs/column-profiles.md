@@ -5,8 +5,7 @@ Plural Registry reads (`get projects|windows|panes|agents`) now default to
 and classification columns. Use `-o wide` (or `--output wide`) to print the full
 column profile. Terminal width and data length never select a profile.
 
-This is a breaking default stdout change. Scripts that need diagnostic columns
-must request `-o wide` or a structured projection explicitly. Registry JSON items
+Scripts that need diagnostic columns must request `-o wide` or a structured projection explicitly. Registry JSON items
 retain `context.value`, `context.source`, and `context.observed`; `describe` keeps
 resource and termination detail. Existing JSON, metadata, uid, name, ref and none
 projections retain their contracts, as do singular reads and selector cardinality.
@@ -38,14 +37,42 @@ ControlSession-owned rows retain their existing empty action set (`-` in the
 CLI). NAME remains the durable Registry address; CONTEXT remains presentation.
 
 The Registry and Runtime diagnostics pickers consume the same typed catalog in
-`internal/app/column_profiles.go`. This cutover preserves their existing wide
-first frame, width bounds, controls, row identity, ordering and search keys:
+`internal/app/column_profiles.go` and open with compact columns:
 
-| Picker | Compact catalog profile (reserved) | Current wide default |
+| Picker | Compact default | Explicit wide |
 | --- | --- | --- |
 | Registry mixed | KIND NAME STATUS ACTIONS | KIND NAME STATUS PROGRESS TERMINATION ACTIONS RUNTIME UID |
 | Runtime mixed | KIND ID IN NAME CLASS | KIND ID IN NAME CLASS RESOURCE REASON |
 
-Picker compact defaults, local toggles, viewport clipping and removal of the
-existing NAME/RESOURCE bounds belong to the subsequent picker phase. No Settings,
-footer or provider elapsed behavior changes here.
+Press **Alt-W** to toggle wide columns and press it again to return to compact.
+The footer shows the effective key and the next projection. The query, selected
+row, row order, full search values and current observation survive each toggle.
+The choice lasts for this open picker, including visits to a row's action menu;
+closing and reopening starts compact. Toggling writes no Registry or config.
+
+Settings > Keybindings > Sidebar & picker actions exposes **Registry Inspector**
+and **Runtime Diagnostics**, each with **Toggle compact / wide columns**. Their
+canonical IDs are `resource-inspector.columns.toggle` and
+`runtime-diagnostics.columns.toggle`. Existing single-key overrides are supported;
+there is no saved/global column profile or picker-local key sequence.
+
+Compact Registry NAME keeps the full invocation context (or the full durable name
+when context is empty), and omits the repeated provider/phase and role adornments
+that wide NAME retains. A full-UID/Hangul hierarchy with the existing action lists
+fits the 75-cell content budget at 80 columns without cutting NAME. Compact uses
+one separating cell per column; a previously clipped 76-cell regression row now
+uses 73 cells with all values intact. Wide retains two separating cells. The picker
+adds no NAME, RESOURCE, RUNTIME or REASON truncation bounds. Wide keeps the catalog
+field order and full projected values, including the existing PROGRESS producer's
+own policy.
+
+Wide rows can be clipped by the fixed viewport. The representative 142-cell
+Registry row clips at 80/120/180-column clients and fits from a 184-column client
+with the production 80%-width borderless popup. The native frame, scrollbar gutter
+and pointer reserve five cells: a 180-column client gives 139 label cells, and a
+184-column client gives 142. Actual action lists, runtime targets and free text can make rows wider,
+so no fixed client width guarantees all wide values. Enter opens the existing
+row action menu with each wide field on a separate detail row. JSON/`describe`
+and CLI `-o wide` provide recovery for values that still do not fit. There is no
+horizontal navigation or pagination; footer overflow and provider behavior are
+unchanged.

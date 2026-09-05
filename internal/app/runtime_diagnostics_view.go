@@ -21,6 +21,7 @@ type runtimeDiagnosticsView struct {
 	transport   resourcegraph.Transport
 	unavailable []runtimediag.Unavailability
 	rows        []runtimediag.Row
+	profile     columnProfile
 }
 
 // runtimeRowValue is the selection token of one runtime object.
@@ -33,27 +34,12 @@ func runtimeRowValue(row runtimediag.Row) string {
 	return "runtime:" + row.Kind + ":" + row.ID
 }
 
-// runtimeViewColumns is the one column contract of the picker list. Unlike the
-// CLI, which projects one kind per invocation and can afford kind-specific
-// columns, the picker shows all three kinds in one list, so KIND is a column
-// and every row shares the rest.
-var runtimeViewColumns = columnHeaders(columnsFor(columnRuntimePicker, "", columnWide))
-
-// runtimeViewColumnBounds is this view's half of the same fixed-viewport
-// budget. RESOURCE is the cell schema v4 widened, because it renders
-// `<kind>/<Registry name>`; NAME and REASON are bounded as ceilings over free
-// text rather than as v4 repairs. The exact tmux handles -- ID and IN -- are
-// never clipped: they are the coordinates an operator retypes.
-func runtimeViewColumnBounds() []pickerColumnBound {
-	return pickerColumnBoundsFor(runtimeViewColumns, map[string]int{
-		"NAME":     runtimeDiagnosticsNameCells,
-		"RESOURCE": runtimeDiagnosticsResourceCells,
-		"REASON":   runtimeDiagnosticsReasonCells,
-	})
+func runtimeViewColumns(profile columnProfile) []string {
+	return columnHeaders(columnsFor(columnRuntimePicker, "", profile))
 }
 
-func runtimeViewRow(row runtimediag.Row) []string {
-	return columnValues(columnsFor(columnRuntimePicker, "", columnWide), func(field columnField) string {
+func runtimeViewRow(row runtimediag.Row, profile columnProfile) []string {
+	return columnValues(columnsFor(columnRuntimePicker, "", profile), func(field columnField) string {
 		return runtimeColumnValue(field, row, true)
 	})
 }
@@ -93,18 +79,19 @@ func (v runtimeDiagnosticsView) entries() []intpickercompat.Entry {
 	}
 
 	table := make([][]string, 0, len(v.rows)+1)
-	table = append(table, runtimeViewColumns)
+	profile := pickerColumnProfile(v.profile)
+	table = append(table, runtimeViewColumns(profile))
 	for _, row := range v.rows {
-		table = append(table, runtimeViewRow(row))
+		table = append(table, runtimeViewRow(row, profile))
 	}
-	widths := boundPickerTableWidths(table, runtimeViewColumnBounds())
+	widths := pickerTableWidths(table)
 	entries = append(entries, intpickercompat.Entry{
-		Label: resourceTableLine(table[0], widths),
+		Label: pickerTableLine(table[0], widths, profile),
 		Value: settingsNoopValue,
 	})
 	for i, row := range v.rows {
 		entries = append(entries, intpickercompat.Entry{
-			Label:     resourceTableLine(table[i+1], widths),
+			Label:     pickerTableLine(table[i+1], widths, profile),
 			Value:     runtimeRowValue(row),
 			SearchKey: runtimeRowSearchKey(row),
 		})
@@ -151,6 +138,8 @@ func (v runtimeDiagnosticsView) actionEntries(row runtimediag.Row, socket string
 		Label: settingsLabelInfoLocale(v.locale, "Runtime object", runtimeObjectSummary(row), row.Reason),
 		Value: settingsNoopValue,
 	})
+	entries = append(entries, pickerColumnDetailEntries(runtimeViewColumns(columnWide), runtimeViewRow(row, columnWide))...)
+
 	for _, conflict := range row.Conflicts {
 		entries = append(entries, intpickercompat.Entry{
 			Label: settingsLabelInfoLocale(v.locale, "Conflict", conflict.Reason, conflict.Detail),

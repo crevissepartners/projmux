@@ -7475,6 +7475,19 @@ for rtd_id in $(rtd_tmux list-sessions -F '#{session_id}') $(rtd_tmux list-windo
   rtd_wait_for "runtime diagnostics row $rtd_id" rtd_screen_has "$rtd_id"
 done
 
+# Column toggles reopen the same native selection on the existing snapshot.
+# Fresh log boundaries prove both directions, while the action menu below
+# proves that the selected Pane survived the round trip.
+rtd_columns_offset="$(stat -c %s "$rtd_client_log")"
+rtd_columns_has() {
+  tail -c +$((rtd_columns_offset + 1)) "$rtd_client_log" | grep -aFq "$1"
+}
+printf '\033w' >&7
+rtd_wait_for "runtime wide column profile" rtd_columns_has "compact columns"
+rtd_columns_offset="$(stat -c %s "$rtd_client_log")"
+printf '\033w' >&7
+rtd_wait_for "runtime compact column profile" rtd_columns_has "wide columns"
+
 # The action menu of the last row -- a Pane -- offers exactly the existing safe
 # routes, and states why the ones that do not apply do not.
 rtd_menu_offset="$(stat -c %s "$rtd_client_log")"
@@ -7787,6 +7800,15 @@ nav_wait_for "hierarchy project row" nav_hier_has "project"
 nav_wait_for "hierarchy window row" nav_hier_has "window"
 nav_wait_for "hierarchy pane row" nav_hier_has "pane"
 nav_wait_for "hierarchy live status" nav_hier_has "live"
+nav_columns_offset="$(stat -c %s "$nav_client_log")"
+nav_columns_has() {
+  tail -c +$((nav_columns_offset + 1)) "$nav_client_log" | grep -aFq "$1"
+}
+printf '\033w' >&8
+nav_wait_for "Registry wide column profile" nav_columns_has "compact columns"
+nav_columns_offset="$(stat -c %s "$nav_client_log")"
+printf '\033w' >&8
+nav_wait_for "Registry compact column profile" nav_columns_has "wide columns"
 for nav_absent in nav-home nav-scratch handmade phantom; do
   if nav_hier_has "$nav_absent"; then
     echo "the Registry hierarchy named the runtime-only object $nav_absent" >&2
