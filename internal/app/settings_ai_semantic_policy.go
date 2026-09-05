@@ -240,11 +240,11 @@ func safeCodexAuthorityValue(value string) string {
 	}
 }
 
+// safeCodexAuthorityReason renders one stored authority reason. The vocabulary
+// is owned by the observer that produces it; this is only the bounded read.
 func safeCodexAuthorityReason(value string) string {
-	switch strings.TrimSpace(value) {
-	case "ready", "connecting", "unsupported", "protocol-error", "timeout", "unavailable", "disconnected", "thread-unloaded", "sink-error", "observer-unavailable", "observer-start-failed", "observer-exited", "observer-timeout", "control-unavailable", "no active native epoch":
-		return strings.TrimSpace(value)
-	default:
-		return "bounded reason unavailable"
+	if reason := codexObserverReasonFor(value); reason != "" {
+		return string(reason)
 	}
+	return "bounded reason unavailable"
 }

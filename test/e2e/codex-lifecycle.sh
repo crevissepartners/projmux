@@ -419,10 +419,17 @@ lifecycle_arm_projection_condition() {
     "wait-for -S $lifecycle_projection_barrier_channel"
 }
 
+# The attention field is part of the condition because the projection writes
+# its three pane options as three separate set-option calls, and attention is
+# the last of them. Gating on only the first two let the barrier release inside
+# that window, so a caller that then asserts the complete five-field tuple read
+# a torn projection. The barrier makes the timing deterministic; the assertions
+# behind it still own the verdict, so a real attention defect surfaces there
+# rather than being absorbed here.
 lifecycle_arm_projection_barrier() {
-  local pane="$1" source="$2" reason="$3" state="$4" badge="$5" label="$6"
-  local expected="$source|$reason|$state|$badge" condition=""
-  condition='#{==:#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind},'"$expected"'}'
+  local pane="$1" source="$2" reason="$3" state="$4" badge="$5" label="$6" attention="${7-}"
+  local expected="$source|$reason|$state|$badge|$attention" condition=""
+  condition='#{==:#{@projmux_codex_authority}|#{@projmux_codex_authority_reason}|#{@projmux_ai_state}|#{@projmux_ai_badge_kind}|#{@projmux_attention_state},'"$expected"'}'
   lifecycle_arm_projection_condition "$pane" "$condition" "$label"
 }
 
@@ -619,7 +626,11 @@ if [[ "$(lifecycle_queue_count)" != "1" || "$(lifecycle_desktop_count)" != "2" ]
   exit 1
 fi
 
-lifecycle_arm_projection_barrier "$lifecycle_pane" invalidating disconnected "" "" "disconnect"
+# endpoint-suspended, not a generic disconnect: killing the exact E1 proxy takes
+# the upstream connection this epoch was minted on away, and the broker epoch
+# records which call closed its stream. Pinning that exact token is what keeps a
+# reason the observer failed to capture from passing as a real disconnect.
+lifecycle_arm_projection_barrier "$lifecycle_pane" invalidating endpoint-suspended "" "" "disconnect"
 # The exact-proxy EOF is the only disconnect trigger. The old fixture burst can
 # revoke only the target binding before TERM and let E1 authority briefly return,
 # so it is deliberately not armed here. Re-observe the complete unique absolute
@@ -665,7 +676,7 @@ lifecycle_gap_registry_after_hook="$(lifecycle_pmx describe agent "uid:$lifecycl
   awk '$1 == "Interaction:" || $1 == "InteractionSource:" { values = values sep $2; sep = "|" } END { print values }')"
 lifecycle_gap_queue_after_hook="$(lifecycle_queue_count)"
 lifecycle_gap_desktop_after_hook="$(lifecycle_desktop_count)"
-if [[ "$lifecycle_gap_before_hook" != "invalidating|disconnected|||" ]] ||
+if [[ "$lifecycle_gap_before_hook" != "invalidating|endpoint-suspended|||" ]] ||
   [[ "$lifecycle_gap_after_hook" != "$lifecycle_gap_before_hook" ]] ||
   [[ "$lifecycle_gap_registry_after_hook" != "$lifecycle_gap_registry_before_hook" ]] ||
   [[ "$lifecycle_gap_queue_before_hook" != "1" || "$lifecycle_gap_queue_after_hook" != "$lifecycle_gap_queue_before_hook" ]] ||

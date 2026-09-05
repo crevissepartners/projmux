@@ -771,6 +771,54 @@
   historical names are not persisted or reconstructed after cascade. Existing
   title suppression/precedence, provider settlement/status, exact routing,
   and first-frame bound suites remain the authority for those unchanged paths.
+### Codex observer disconnect-reason Phase 0 tests
+
+- `TestCodexObserverEventLoopExitsCarryTheirOwnReasonToken` owns the exit-path
+  table: every way out of the observer event loop publishes the vocabulary
+  token for that path, and the authority writes it pins prove the recovery
+  strategy did not move when the tokens became precise. A cancelled observer,
+  a closed notification stream, and a real endpoint disconnect no longer share
+  a word.
+- `TestCodexObserverExitPathsAreOneToOneWithTokens` owns the converse
+  property: the exit tokens are distinct, neither the `unrecorded` nor the
+  retired `disconnected` bucket is reachable from an exit, and `hold` is a
+  stored decision rather than a comparison against the published reason.
+- `TestCodexObserverReasonVocabularyIsClosed` owns the single vocabulary.
+  `codexNativeReason`'s four open-failure tokens are members of it, every
+  token round-trips through `safeCodexAuthorityReason`, and anything outside
+  it renders as `bounded reason unavailable`.
+- `TestCodexBrokerEpochRecordsWhyItsStreamClosed` owns the close cause at the
+  layer that knows it. All five calls that end a broker epoch record a
+  different token, which is what separates an upstream connection that went
+  away from a rotated barrier, a revoked binding, a backlog overflow, and an
+  observer that closed its own connection.
+- `TestCodexObserverJournalRecordsConnectDisconnectReconnectInOrder` owns the
+  durable history the pane option cannot hold: connect, disconnect, and
+  reconnect records in time order, each carrying the epoch label, and no
+  fallback record behind a held disconnect.
+- `TestCodexObserverJournalRecordFieldsAreWhitelisted` is the negative audit.
+  It names every column an observer record may carry and refuses an
+  out-of-vocabulary reason and an unnamed transition.
+- `TestCodexObserverJournalCoalescesRepeatedTransitions` owns the write-rate
+  boundary on the shared `ai-ingest.log` sink: one record per
+  (transition, reason) pair per window, with the suppressed count riding the
+  next record so the flap rate stays readable.
+- `test/e2e/codex-lifecycle.sh` (C01) pins the exact disconnect token at its
+  disconnect projection barrier and at the reconnect-gap hook comparison. It
+  waited on the literal `disconnected` before, which was the bucket published
+  when the observer recorded no reason at all; killing the exact E1 proxy takes
+  the upstream connection away, so the projection now reads
+  `endpoint-suspended`. The barrier is still an exact string match, so a path
+  that stops capturing its reason lands on a different token and fails it. That
+  barrier also now gates on `@projmux_attention_state`: the projection writes
+  its three pane options as three separate `set-option` calls, so releasing on
+  the first two let the five-field assertion 46 lines later read a torn
+  projection under load. The assertion is unchanged and still owns the verdict.
+- `TestManagedCodexAuthorityDoctorSeparatesFlappingFrozenAndStopped` owns the
+  operator surface. The census carries a count-only reason distribution and
+  `doctor` renders it, which is what tells flapping, frozen, and stopped
+  apart; `TestManagedCodexAuthorityCensusSeparatesDeclaredFromUnexplainedFallback`
+  keeps that distribution pinned alongside the source counts.
 
 ## Review Checklist
 - The branch stays within its stated scope.
