@@ -1,0 +1,86 @@
+[
+  {
+    "Agent": "antigravity",
+    "ResumeID": "019f0000-0000-7000-8000-000000000021",
+    "Title": "Metadata title",
+    "TitleProvenance": "",
+    "LastModified": "2027-01-15T17:00:30+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project/child",
+      "Branch": ""
+    },
+    "Source": "antigravity-conversation-metadata",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  },
+  {
+    "Agent": "antigravity",
+    "ResumeID": "019f0000-0000-7000-8000-000000000022",
+    "Title": "019f0000-000",
+    "TitleProvenance": "",
+    "LastModified": "2027-01-15T17:00:30+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project",
+      "Branch": ""
+    },
+    "Source": "antigravity-last-conversation",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  },
+  {
+    "Agent": "antigravity",
+    "ResumeID": "019f0000-0000-7000-8000-000000000023",
+    "Title": "History title",
+    "TitleProvenance": "",
+    "LastModified": "2027-01-15T17:00:20+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project",
+      "Branch": ""
+    },
+    "Source": "antigravity-history",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  },
+  {
+    "Agent": "antigravity",
+    "ResumeID": "019f0000-0000-7000-8000-000000000024",
+    "Title": "019f0000-000",
+    "TitleProvenance": "",
+    "LastModified": "2027-01-15T17:00:10+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project",
+      "Branch": ""
+    },
+    "Source": "antigravity-history",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  }
+]

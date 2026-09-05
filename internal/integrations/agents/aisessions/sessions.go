@@ -1009,24 +1009,24 @@ func scanSessionJSONLReaderContext(ctx context.Context, r io.Reader, opts sessio
 			}
 			continue
 		}
-		var fields map[string]any
-		if err := json.Unmarshal([]byte(line), &fields); err != nil {
+		record, err := decodeSessionScanRecord([]byte(line), details, opts.provider)
+		if err != nil {
 			if lineNo >= sessionScanLineLimit {
 				break
 			}
 			continue
 		}
 		if details.id == "" {
-			details.id = firstNestedString(fields, "sessionId", "session_id", "id")
+			details.id = record.id
 		}
 		if details.cwd == "" {
-			details.cwd = firstNestedString(fields, "cwd", "current_dir", "currentDir", "project_dir", "projectDir", "project_path", "projectPath", "working_directory", "workingDirectory")
+			details.cwd = record.cwd
 			if targetCWD != "" && details.cwd != "" && cleanCWD(details.cwd) != targetCWD {
 				return sessionDetails{}, false
 			}
 		}
 		if details.branch == "" {
-			details.branch = firstNestedString(fields, "gitBranch", "git_branch", "branch")
+			details.branch = record.branch
 		}
 		// An ID learned after an earlier candidate can still disqualify it.
 		if titleIsResumeID(details.title, details.id) {
@@ -1037,8 +1037,8 @@ func scanSessionJSONLReaderContext(ctx context.Context, r io.Reader, opts sessio
 		seekCanonical := (opts.provider == AgentClaude && details.titleProvenance != TitleExplicitProvider) ||
 			(opts.provider == AgentCodex && details.titleProvenance != TitleDerivedUserPrompt)
 		if (details.title == "" || seekCanonical) && lineNo <= sessionTitleLineLimit {
-			title := titleFromRecord(fields)
-			provenance := titleProvenanceFromRecord(fields)
+			title := record.title
+			provenance := record.titleProvenance
 			if opts.provider == AgentClaude && provenance != TitleExplicitProvider {
 				provenance = TitleProvenanceNone
 			}
@@ -1046,7 +1046,7 @@ func scanSessionJSONLReaderContext(ctx context.Context, r io.Reader, opts sessio
 				title = ""
 			}
 			if provenance == TitleExplicitProvider {
-				if id := stringJSONField(fields, "sessionId"); id != "" && !strings.EqualFold(id, details.id) {
+				if id := record.explicitSessionID; id != "" && !strings.EqualFold(id, details.id) {
 					title = ""
 				}
 			}

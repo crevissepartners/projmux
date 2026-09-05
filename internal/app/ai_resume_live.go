@@ -127,9 +127,10 @@ type aiResumeProviderResult struct {
 type aiResumeProviderState string
 
 const (
-	aiResumeProviderCount        aiResumeProviderState = "count"
-	aiResumeProviderSearchFailed aiResumeProviderState = "search_failed"
-	aiResumeProviderDisabled     aiResumeProviderState = "disabled"
+	aiResumeProviderCount          aiResumeProviderState = "count"
+	aiResumeProviderSearchFailed   aiResumeProviderState = "search_failed"
+	aiResumeProviderScanUnfinished aiResumeProviderState = "scan_unfinished"
+	aiResumeProviderDisabled       aiResumeProviderState = "disabled"
 )
 
 type aiResumeProviderProjection struct {
@@ -697,10 +698,13 @@ func resumeProviderProjection(result aiResumeProviderResult, enabled bool) aiRes
 	}
 	// A result that carries rows is a found result, whatever the transport had
 	// to fall back through to produce them: rollout rows this invocation
-	// already holds are not a search failure. search_failed stays reserved for
-	// a provider that reached its terminal with nothing to show.
-	if count == 0 && (result.err != nil || result.envelopeExpired) {
+	// already holds are not a search failure. Empty results distinguish a real
+	// provider error from an envelope that expired before any row was confirmed.
+	if count == 0 && result.err != nil {
 		return aiResumeProviderProjection{state: aiResumeProviderSearchFailed}
+	}
+	if count == 0 && result.envelopeExpired {
+		return aiResumeProviderProjection{state: aiResumeProviderScanUnfinished}
 	}
 	return aiResumeProviderProjection{state: aiResumeProviderCount, count: count}
 }

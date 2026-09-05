@@ -1,0 +1,86 @@
+[
+  {
+    "Agent": "codex",
+    "ResumeID": "019f0000-0000-7000-8000-000000000011",
+    "Title": "Response prompt blocks",
+    "TitleProvenance": "derived-user-prompt",
+    "LastModified": "2027-01-15T17:00:30+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project/child",
+      "Branch": "codex-response"
+    },
+    "Source": "codex-rollout",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  },
+  {
+    "Agent": "codex",
+    "ResumeID": "019f0000-0000-7000-8000-000000000012",
+    "Title": "First Codex prompt",
+    "TitleProvenance": "derived-user-prompt",
+    "LastModified": "2027-01-15T17:00:30+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project",
+      "Branch": "codex-event"
+    },
+    "Source": "codex-rollout",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  },
+  {
+    "Agent": "codex",
+    "ResumeID": "019f0000-0000-7000-8000-000000000013",
+    "Title": "Nested message",
+    "TitleProvenance": "derived-user-prompt",
+    "LastModified": "2027-01-15T17:00:20+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project",
+      "Branch": "nested"
+    },
+    "Source": "codex-rollout",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  },
+  {
+    "Agent": "codex",
+    "ResumeID": "019f0000-0000-7000-8000-000000000014",
+    "Title": "Legacy fallback",
+    "TitleProvenance": "",
+    "LastModified": "2027-01-15T17:00:10+09:00",
+    "UpdatedAt": "0001-01-01T00:00:00Z",
+    "Context": {
+      "CWD": "/fixture/project",
+      "Branch": "fallback"
+    },
+    "Source": "codex-rollout",
+    "Confidence": "",
+    "Reason": "",
+    "Archived": false,
+    "RuntimeStatus": "",
+    "StateDomainID": "",
+    "EndpointGenerationID": "",
+    "GenerationState": "",
+    "Turns": 0
+  }
+]
