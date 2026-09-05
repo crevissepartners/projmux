@@ -2,6 +2,7 @@ package codexbroker
 
 import (
 	"context"
+	"errors"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
@@ -133,10 +134,21 @@ func (bd *Binding) Submit(ctx context.Context, fence Fence, mutation Mutation) (
 	case MutationApplied:
 		return MutationApplied, nil
 	case MutationIndeterminate:
-		return MutationIndeterminate, refuse(RefusalDisconnectBoundary, requestErr)
+		return MutationIndeterminate, refuse(indeterminateReason(requestErr), requestErr)
 	default:
 		return MutationRefused, requestErr
 	}
+}
+
+// indeterminateReason names why one terminated mutation left no readable
+// answer. A dropped oversized answer is told apart from a disconnect because
+// the connection survived it, and an operator reading the two the same way
+// would look for a broker fault that is not there.
+func indeterminateReason(err error) Refusal {
+	if errors.Is(err, codexappserver.ErrPayloadTooLarge) {
+		return RefusalPayloadTooLarge
+	}
+	return RefusalDisconnectBoundary
 }
 
 // Answer responds to exactly one inbound server request.

@@ -444,6 +444,7 @@ func (b *Broker) classify(conn *connection, err error) MutationOutcome {
 		return MutationApplied
 	}
 	if errors.Is(err, codexappserver.ErrDisconnected) ||
+		errors.Is(err, codexappserver.ErrPayloadTooLarge) ||
 		errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return MutationIndeterminate
 	}
