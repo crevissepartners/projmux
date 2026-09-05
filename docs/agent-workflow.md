@@ -967,6 +967,40 @@ conversation the Registry already records.
   `--pane` produces a record naming its own Pane, and an unclaimed conversation
   produces a record naming why it has none.
 
+### Hook reflection write tests
+
+Attribution and reflection are two layers. A hook that found its Pane still has
+to write the event onto it, and every one of those tmux writes used to discard
+its error — 47 of them across `internal/app/ai.go` and
+`internal/app/ai_ingest.go`. A hook whose route to tmux was broken therefore
+produced a `result:"state"` record: the log reported a delivery that never
+happened, which is a stronger failure than an unattributed hook, because an
+unattributed hook at least says so.
+
+These tests own the reporting, not the repair. Retry, recovery, and the route
+decision itself are separate concerns.
+
+- `TestHookRecordRefusesToReportADeliveryThePaneWritesMissed` owns the record: a
+  state event whose status writes failed and a quiet event whose only writes are
+  the routing index both end as `error` with a bounded reason, while the Pane
+  they were attributed to stays in the record.
+- `TestHookRecordIsUnchangedWhenThePaneWritesLand` owns the normal path. Same
+  result word, same empty reason, and the same number of attempted writes as the
+  broken route — the writes stay best-effort and the sequence of attempts did
+  not change.
+- `TestPaneWriteFailureReasonIsAClosedTokenCarryingNoOpaqueValue` owns the
+  vocabulary. tmux answers a rejected write with an exit status and a socket
+  path; the classification keeps both out of the record, and the log file is
+  checked for the fragments directly.
+- `TestObserverRecordsAreNotColouredByAReflectionWriteFailure` owns the
+  boundary. The observer journal writes into the same file from a process that
+  lives for hours, and its records never inherit a failure this process saw on
+  another path.
+- `TestReflectionWritesNeverDiscardTheirError` is the machine check that keeps
+  the fix. It parses the reflection sources and fails on any tmux write whose
+  error is dropped, because that defect is invisible by construction: the record
+  it produces claims the hook succeeded.
+
 ### Settled Codex authority admission tests
 
 `aiCodexLifecycleSink.SetAuthority` publishes one native authority transition as
