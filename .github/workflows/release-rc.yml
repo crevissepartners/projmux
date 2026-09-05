@@ -1,0 +1,82 @@
+name: Release RC
+
+# Manual-only: cutting an rc publishes to npm, and npm publishes are not
+# recallable. Nothing here runs on push, schedule, or PR.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Prerelease version to cut from main HEAD, e.g. 0.15.0-rc.1"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  cut-rc:
+    name: Cut RC Prerelease
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+      - name: Resolve the rc tag
+        id: rc
+        env:
+          RC_INPUT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version="${RC_INPUT#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
+            echo "rc version must look like X.Y.Z-rc.N, got: ${RC_INPUT}" >&2
+            exit 1
+          fi
+          tag="v${version}"
+          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
+            echo "tag already exists: ${tag}" >&2
+            exit 1
+          fi
+          {
+            echo "tag=${tag}"
+            echo "sha=$(git rev-parse HEAD)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Draft the prerelease GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ steps.rc.outputs.tag }}
+          TARGET_SHA: ${{ steps.rc.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # Mirrors the stable path: the release exists as a draft before the
+          # tag lands, so release.yml has something to upload tarballs to.
+          # `--prerelease` is what keeps `releases/latest` on the stable line,
+          # which is the whole reason rc never reaches the default channel.
+          gh release create "$TAG" \
+            --draft \
+            --prerelease \
+            --target "$TARGET_SHA" \
+            --title "$TAG" \
+            --generate-notes
+
+      - name: Push the rc tag
+        env:
+          TAG: ${{ steps.rc.outputs.tag }}
+          TARGET_SHA: ${{ steps.rc.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # The PAT from the checkout step is what makes this push dispatch
+          # release.yml; a GITHUB_TOKEN push would not trigger any workflow.
+          # A tag ref is the only thing this workflow ever writes: no commit,
+          # no branch push, and nothing release-please owns.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "$TAG" "$TARGET_SHA"
+          git push origin "refs/tags/${TAG}"
