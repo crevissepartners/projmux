@@ -913,6 +913,51 @@
   that merely failed, and the recovery scheduler took its only non-cancel exit
   on a single such sample. It now makes the same bounded wait the loop head has
   always made, so a transient read failure no longer retires a live activation.
+- `TestObserverRecoversWhenTheOverflowedBindingWasTheBrokersLast` and
+  `TestLastBindingOverflowRecordsEveryFailedReplacementOpen` own the same
+  overflow under the opposite premise: no sibling binding, so the resync takes
+  the runtime to zero bindings. `Broker.wanted()` is `len(b.bindings) > 0` and
+  therefore broker-global, so `serve` folds the shared upstream connection and
+  no replacement barrier can exist until it is reopened. That premise is not
+  exotic - it holds permanently for a user who runs one Codex pane - and the
+  fold itself is a race, because a rebind that lands before `serve` processes
+  the unbind wake leaves the connection up. The fixture gates every replacement
+  Open on the fold so the premise is a fact rather than a hope. The first pins
+  that the fold self-heals whenever upstream is reachable. The second owns the
+  defect: while upstream is away every replacement Open blocks to its own open
+  timeout - 15s in production - and the scheduler computed the failure's
+  vocabulary token and discarded it, so a Pane sat on
+  `invalidating|<epoch>|backlog-overflow` with no record of any attempt, which
+  is byte-identical to the stuck Pane `observer.stopped` exists to name except
+  that recovery really was running and so no terminal record arrived either.
+  The failure is now recorded on the retry transition, keyed apart from the
+  epoch-loss token so the journal's coalescing window folds a long outage into
+  one line plus a repeat count, and the disconnect's reason column is untouched.
+- `TestLastBindingRevokedByOverflowFoldsTheUpstreamConnection`
+  (`internal/integrations/agents/codexbroker`) owns the invariant `wanted()`
+  exists for, against the involuntary revocation paths. `Bind` and
+  `Binding.Close` both signal the supervisor because both change what the
+  connection has left to serve; the involuntary paths - a bounded delivery queue
+  that overflowed, a thread-scoped snapshot refusal - deleted the binding from
+  routing with no wake, so a runtime could reach zero bindings with nothing
+  pending on the wake channel and `serve` would stay in its select holding an
+  upstream connection nothing is bound to until the host idle timer recycled the
+  whole runtime. A one-deep queue makes the overflow exact rather than a volume
+  guess, and the test binds exactly one thread and never replaces it, because a
+  rebind carries its own signal and would hide the gap.
+- `TestLiveEpochSurvivesATransientBindingReadFailure` and
+  `TestLiveEpochBindingLossLeavesATerminalRecord` own the live epoch's
+  `bindingTicker` exit, which carried the same single-sample defect the recovery
+  scheduler had. One false from `BindingCurrent` ended the observer, and that
+  exit wrote no authority - correctly, because `SetAuthority` refuses once the
+  predicate is false - and no record, so the Pane kept
+  `provider-control-plane|ready` with no producer behind it. That is the inverse
+  of a stuck Pane: nothing looks wrong at all. The path now makes the same
+  bounded wait as the loop head, and a binding that is provably gone leaves an
+  `observer.stopped` record with result `stuck` and reason `binding-replaced`.
+  That token is deliberately not `binding-revoked`: the four close-cause tokens
+  answer "who closed the stream" and come from the broker epoch, and here the
+  stream was never closed at all.
 - `test/e2e/codex-lifecycle.sh` (C01) pins the exact disconnect token at its
   disconnect projection barrier and at the reconnect-gap hook comparison. It
   waited on the literal `disconnected` before, which was the bucket published

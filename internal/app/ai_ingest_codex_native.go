@@ -137,6 +137,18 @@ const (
 	codexObserverReasonBacklogOverflow   codexObserverReason = "backlog-overflow"
 	codexObserverReasonEpochClosed       codexObserverReason = "epoch-closed"
 
+	// codexObserverReasonBindingReplaced is the exact binding this observer
+	// serves no longer being current, observed from the sink predicate rather
+	// than from the broker epoch.
+	//
+	// It is deliberately not one of the four tokens above. Those answer "who
+	// closed the stream" and come from the epoch itself; here the stream was
+	// never closed at all - the activation under it was replaced while its
+	// epoch was still live and ready. Spelling that with binding-revoked would
+	// make a broker-epoch cause appear from a producer that is not the broker
+	// epoch, which is the one property of this vocabulary that has to hold.
+	codexObserverReasonBindingReplaced codexObserverReason = "binding-replaced"
+
 	// Supervisor-side tokens. The parent process writes these when the child
 	// observer never reached its own authority write.
 	codexObserverReasonObserverTimeout     codexObserverReason = "observer-timeout"
@@ -179,6 +191,7 @@ var codexObserverReasons = []codexObserverReason{
 	codexObserverReasonBindingRevoked,
 	codexObserverReasonBacklogOverflow,
 	codexObserverReasonEpochClosed,
+	codexObserverReasonBindingReplaced,
 	codexObserverReasonObserverTimeout,
 	codexObserverReasonObserverStartFailed,
 	codexObserverReasonObserverExited,
@@ -397,7 +410,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			reason := codexNativeReason(err)
 			if recovering {
 				recoveryAttempts++
-				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts, reason); recoveryErr != nil {
 					return recoveryErr
 				} else if !retry {
 					return nil
@@ -414,7 +427,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			_ = client.Close()
 			if recovering {
 				recoveryAttempts++
-				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts, codexObserverReasonUnsupported); recoveryErr != nil {
 					return recoveryErr
 				} else if !retry {
 					return nil
@@ -441,7 +454,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			}
 			if recovering {
 				recoveryAttempts++
-				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts, codexNativeReason(snapshotErr)); recoveryErr != nil {
 					return recoveryErr
 				} else if !retry {
 					return nil
@@ -461,7 +474,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			_ = client.Close()
 			if recovering {
 				recoveryAttempts++
-				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts, codexObserverReasonProtocolError); recoveryErr != nil {
 					return recoveryErr
 				} else if !retry {
 					return nil
@@ -480,7 +493,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				o.discardRecoveryEpoch(epoch)
 				_ = client.Close()
 				recoveryAttempts++
-				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts, codexObserverReasonThreadUnloaded); recoveryErr != nil {
 					return recoveryErr
 				} else if !retry {
 					return nil
@@ -535,7 +548,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				o.discardRecoveryEpoch(epoch)
 				_ = client.Close()
 				recoveryAttempts++
-				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts, codexObserverReasonControlUnavailable); recoveryErr != nil {
 					return recoveryErr
 				} else if !retry {
 					return nil
@@ -549,7 +562,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 			}
 			if recovering {
 				recoveryAttempts++
-				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+				if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts, codexObserverReasonControlUnavailable); recoveryErr != nil {
 					return recoveryErr
 				} else if !retry {
 					return nil
@@ -610,14 +623,37 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				exit = codexObserverExitCancelled
 				break eventLoop
 			case <-bindingTicker.C:
-				if !o.sink.BindingCurrent(o.identity) {
-					bindingTicker.Stop()
-					if control != nil {
-						_ = control.Close()
-					}
-					_ = client.Close()
-					return nil
+				if o.sink.BindingCurrent(o.identity) {
+					continue
 				}
+				// BindingCurrent answers one false for two different questions:
+				// this activation was replaced, and the binding could not be
+				// read right now - a Registry load that failed, or a tmux
+				// invocation that did. Ending the live epoch on a single sample
+				// retired a healthy producer on one failed read. The loop head
+				// and the recovery scheduler both wait that window out, so this
+				// path makes the same bounded wait.
+				if waitForCodexLifecycleBinding(ctx, o.sink, o.identity, bindingTimeout) {
+					continue
+				}
+				// The exact binding is provably gone, so ending here is right:
+				// a replaced activation has its own observer. What was wrong is
+				// that this exit was invisible. It publishes no authority - and
+				// must not, because SetAuthority refuses that write once the
+				// predicate is false - so the Pane keeps the ready projection
+				// this epoch committed with no producer left behind it. That is
+				// the inverse of a stuck Pane: nothing looks wrong at all. The
+				// terminal record is the only surface the two differ on, and it
+				// is the same record the recovery scheduler writes.
+				o.journal(codexObserverTransitionStopped, epochLabel, codexObserverReasonBindingReplaced)
+				o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
+				bindingTicker.Stop()
+				progressTicker.Stop()
+				if control != nil {
+					_ = control.Close()
+				}
+				_ = client.Close()
+				return nil
 			case <-progressTicker.C:
 				if err := o.flushProgress(); err != nil {
 					if control != nil {
@@ -767,7 +803,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		recoveryAttempts = 0
 		o.recovery = codexObserverRecovery{epochLabel: epochLabel, reason: exit.reason}
 		o.journal(codexObserverTransitionReconnecting, epochLabel, exit.reason)
-		if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
+		if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts, exit.reason); recoveryErr != nil {
 			return recoveryErr
 		} else if !retry {
 			return nil
@@ -816,7 +852,8 @@ func (o *codexNativeObserver) generationLifecycle() (coremetadata.CodexGeneratio
 // invalidation projection is published before this method is called. Every
 // caller increments the attempt count only after one failed replacement open,
 // snapshot, or control proof, so the count paces the backoff; it never
-// terminates the recovery.
+// terminates the recovery. A non-zero count therefore means one attempt failed,
+// and the token that names that failure is recorded before the next wait.
 //
 // The only exits are a binding that is no longer current and a cancelled
 // context. A live activation whose endpoint is merely away remains
@@ -832,7 +869,21 @@ func (o *codexNativeObserver) generationLifecycle() (coremetadata.CodexGeneratio
 // terminal exit on one sample here meant a transient read failure retired a
 // live activation permanently, leaving its Pane on the invalidating projection
 // this method was called after with no producer left to move it.
-func (o *codexNativeObserver) continueRecovery(ctx context.Context, attempts int) (bool, error) {
+func (o *codexNativeObserver) continueRecovery(ctx context.Context, attempts int, failed codexObserverReason) (bool, error) {
+	if attempts > 0 {
+		// One replacement attempt just failed. Every caller already computed
+		// the vocabulary token for its own failure and this scheduler used to
+		// discard it, so a recovery that could not make progress produced no
+		// record at all: the Pane held the one invalidating projection and an
+		// operator could not tell a retrying observer from a stuck one in
+		// either direction. Naming the failure on the retry transition is the
+		// whole difference, and the journal's coalescing window keeps a long
+		// outage to one line plus a repeat count.
+		//
+		// The reason column of the disconnect that opened recovery is
+		// untouched, so which side closed the stream is still read there.
+		o.journal(codexObserverTransitionReconnecting, o.recovery.epochLabel, failed)
+	}
 	bindingTimeout := o.bindingTimeout
 	if bindingTimeout <= 0 {
 		bindingTimeout = codexObserverBindingTimeout
