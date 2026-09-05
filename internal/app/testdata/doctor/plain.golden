@@ -23,6 +23,8 @@ Codex control-plane surfaces
   [unobserved] observer-reason        no managed Codex Agent to read
   [unobserved] connection-continuity  no running runtime to read continuity from
   [unobserved] turn-admission         no managed Codex Agent to read
+  [unobserved] hook-delivery          no hook ingest log was readable
+  [unobserved] pane-ownership         no hook ingest log and Registry pair was readable
 
 Session State resume metadata
   Summary: 0 available, 0 stale, 0 unavailable.

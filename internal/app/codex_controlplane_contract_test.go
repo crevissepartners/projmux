@@ -20,6 +20,8 @@ var codexControlPlaneSurfaceContract = map[string]string{
 	codexSurfaceObserverReason:       "C-3",
 	codexSurfaceConnectionContinuity: "C-3-continuity",
 	codexSurfaceTurnAdmission:        "C-5",
+	codexSurfaceHookDelivery:         "C-2-delivery",
+	codexSurfacePaneOwnership:        "C-2-ownership",
 }
 
 // codexControlPlaneContractEnforcement is each contract's Enforcement cell,
@@ -80,6 +82,22 @@ var codexControlPlaneContractEnforcement = map[string][]string{
 		"TestOversizedAnswerEndsOneMutationAndNotTheConnectionEpoch",
 		"TestOversizedAnswerIsToldApartFromADisconnectBoundary",
 		"TestConnectionContinuitySurfaceReportsCumulativeReconnects",
+	},
+	// C-2 delivery: an attributed hook event changes the Pane it reached, and a
+	// write that cannot happen leaves a bounded reason rather than a raw
+	// process-exit string. Awaiting the Phase 7 vocabulary; the property gate
+	// below holds without naming its tokens.
+	"C-2-delivery": {
+		"TestHookDeliverySurfaceTreatsAnOpaqueFailureAsBroken",
+		"TestDeliveryHealthCountsOnlyAttributedEvents",
+		"TestOpaqueDeliveryReasonsNeverReachTheDiagnosis",
+	},
+	// C-2 ownership: an attributed hook event landed on a Pane of its own
+	// provider. Awaiting the Phase 8 vocabulary; the property gate below is
+	// provider-neutral and holds without naming its tokens.
+	"C-2-ownership": {
+		"TestPaneOwnershipSurfaceReportsAForeignAttributionAsBroken",
+		"TestOwnershipHealthCallsOnlyAPositivelyForeignPaneForeign",
 	},
 	// C-5: a turn admission judges a completed authority transition, never a
 	// triple sampled between two of its three writes.

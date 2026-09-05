@@ -1141,7 +1141,7 @@ The gate has three parts.
   every contract in the map names a surface the diagnosis renders.
 
 `projmux doctor` gained the operator half under **Codex control-plane
-surfaces**. Five verdicts, one per surface, each with the counters it was
+surfaces**. Seven verdicts, one per surface, each with the counters it was
 reached on:
 
 - `TestCodexBrokerDiagnosticsSurfaceNamesThePublishedButUnreachableRuntime`
@@ -1164,6 +1164,26 @@ reached on:
   own fence, so a torn pairing is a producer fact rather than a transition
   caught in flight. A Pane with no fence file is reported `unfenced`, separately
   from torn: its writer predates the fence, which is a deployment answer.
+
+- `TestHookDeliverySurfaceTreatsAnOpaqueFailureAsBroken` owns the layer after
+  attribution. A hook that found its Pane has not yet changed it, and the write
+  that follows can fail on its own. A failure naming its cause is a fault an
+  operator acts on; one reporting only `exit status 1` says a process ended and
+  nothing else. `TestOpaqueDeliveryReasonsNeverReachTheDiagnosis` pins both
+  halves of that: the raw string is counted rather than repeated, and a reason
+  carrying a path is opaque for the second reason that it is a leak.
+- `TestPaneOwnershipSurfaceReportsAForeignAttributionAsBroken` owns the failure
+  that looks like success from every other angle — the event was attributed, the
+  write landed, and the Pane it moved belongs to another provider.
+  `TestOwnershipHealthCallsOnlyAPositivelyForeignPaneForeign` pins the predicate
+  as one-sided and provider-neutral: an attribution is foreign only when the
+  Registry positively records a *different* provider, so a Pane recording none
+  is not a finding, and the judgment is a table rather than a branch.
+
+The attribution verdict is reached per source rather than over the total. The
+defect it detects was one provider's, and a busy neighbour attributing
+everything would carry the aggregate and render the dead provider as a few stale
+panes — which is the reading that let it live for eight phases.
 
 The section leads with a deployment-vintage line, and
 `TestControlPlaneVintage*` owns it. `make install` replaces the executable on

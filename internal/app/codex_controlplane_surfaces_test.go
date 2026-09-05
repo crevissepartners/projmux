@@ -95,6 +95,14 @@ func TestHookAttributionSurfaceSeparatesTotalFailureFromPartial(t *testing.T) {
 			wantStatus: codexSurfaceStatusBroken,
 		},
 		{
+			name: "one provider losing every event is broken even beside a healthy neighbour",
+			health: aiIngestAttributionHealth{Observed: true, Records: 926, Sources: []aiIngestAttributionSource{
+				{Source: "codex-hook", Unattributed: 28, Reasons: []aiIngestAttributionReason{{Reason: aiPaneMatchReasonConversationUnknown, Count: 28}}},
+				{Source: "claude-hook", Attributed: 870, Unattributed: 28, Reasons: []aiIngestAttributionReason{{Reason: aiPaneMatchReasonConversationUnknown, Count: 28}}},
+			}},
+			wantStatus: codexSurfaceStatusBroken,
+		},
+		{
 			name: "some events losing their pane is a degradation",
 			health: aiIngestAttributionHealth{Observed: true, Records: 100, Sources: []aiIngestAttributionSource{
 				{Source: "claude-hook", Attributed: 95, Unattributed: 5, Reasons: []aiIngestAttributionReason{{Reason: aiPaneMatchReasonExplicitStale, Count: 5}}},
@@ -286,7 +294,7 @@ func TestTurnAdmissionSurfaceReportsATornAuthoritySnapshotAsBroken(t *testing.T)
 // section replaced: the row is gone, nothing is red, and the guarantee it
 // carried is unobserved.
 func TestControlPlaneProjectionAnswersForEverySurface(t *testing.T) {
-	empty := projectCodexControlPlaneSurfaces(nil, nil, aiIngestAttributionHealth{}, codexControlPlaneVintage{})
+	empty := projectCodexControlPlaneSurfaces(nil, nil, codexHookHealth{}, codexControlPlaneVintage{})
 	if !codexControlPlaneSurfacesComplete(empty) {
 		t.Fatalf("projection over empty readings = %+v, want one verdict per named surface", empty.Surfaces)
 	}
@@ -298,7 +306,11 @@ func TestControlPlaneProjectionAnswersForEverySurface(t *testing.T) {
 	populated := projectCodexControlPlaneSurfaces(
 		&codexBrokerDiagnostic{State: codexBrokerStateRunning, Published: 1, Endpoint: "codex-app-server:g1:key"},
 		&codexAuthorityCensus{Agents: 1, Settled: 1, Reasons: []codexAuthorityReasonCount{{Reason: string(codexObserverReasonReady), Count: 1}}},
-		aiIngestAttributionHealth{Observed: true, Records: 1, Sources: []aiIngestAttributionSource{{Source: "codex-hook", Attributed: 1}}},
+		codexHookHealth{
+			Attribution: aiIngestAttributionHealth{Observed: true, Records: 1, Sources: []aiIngestAttributionSource{{Source: "codex-hook", Attributed: 1}}},
+			Delivery:    aiIngestDeliveryHealth{Observed: true, Records: 1, Sources: []aiIngestDeliverySource{{Source: "codex-hook", Delivered: 1}}},
+			Ownership:   aiIngestOwnershipHealth{Observed: true, Classified: 1},
+		},
 		codexControlPlaneVintage{Supported: true},
 	)
 	if !codexControlPlaneSurfacesComplete(populated) {
@@ -337,6 +349,8 @@ func TestDoctorRendersEveryControlPlaneSurfaceAndItsVintage(t *testing.T) {
 			{Surface: codexSurfaceObserverReason, Status: codexSurfaceStatusBroken, Detail: "captured reasons 0; uncaptured 6"},
 			{Surface: codexSurfaceConnectionContinuity, Status: codexSurfaceStatusDegraded, Detail: "reconnects 26499"},
 			{Surface: codexSurfaceTurnAdmission, Status: codexSurfaceStatusBroken, Detail: "torn 1"},
+			{Surface: codexSurfaceHookDelivery, Status: codexSurfaceStatusBroken, Detail: "codex-hook 0 delivered, 8 failed"},
+			{Surface: codexSurfacePaneOwnership, Status: codexSurfaceStatusBroken, Detail: "attributions judged 23; foreign 0; unresolved 0"},
 		},
 	})
 	rendered := buf.String()
@@ -374,6 +388,8 @@ var codexControlPlaneSurfaceOrder = []string{
 	codexSurfaceObserverReason,
 	codexSurfaceConnectionContinuity,
 	codexSurfaceTurnAdmission,
+	codexSurfaceHookDelivery,
+	codexSurfacePaneOwnership,
 }
 
 // codexControlPlaneSurfaceOf returns one surface by token. It exists so the

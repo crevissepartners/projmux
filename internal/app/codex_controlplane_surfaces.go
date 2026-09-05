@@ -5,7 +5,7 @@ import (
 	"strings"
 )
 
-// The five control-plane surfaces whose broken states this application had no
+// The seven control-plane surfaces whose broken states this application had no
 // detection for.
 //
 // They are named here, in one closed list, for a reason this track paid for:
@@ -20,6 +20,8 @@ const (
 	codexSurfaceObserverReason       = "observer-reason"
 	codexSurfaceConnectionContinuity = "connection-continuity"
 	codexSurfaceTurnAdmission        = "turn-admission"
+	codexSurfaceHookDelivery         = "hook-delivery"
+	codexSurfacePaneOwnership        = "pane-ownership"
 )
 
 // The verdict one surface carries.
@@ -59,18 +61,33 @@ type codexControlPlaneReport struct {
 func projectCodexControlPlaneSurfaces(
 	broker *codexBrokerDiagnostic,
 	census *codexAuthorityCensus,
-	attribution aiIngestAttributionHealth,
+	hooks codexHookHealth,
 	vintage codexControlPlaneVintage,
 ) codexControlPlaneReport {
 	report := codexControlPlaneReport{Vintage: vintage}
 	report.Surfaces = []codexControlPlaneSurface{
 		codexBrokerDiagnosticsSurface(broker),
-		codexHookAttributionSurface(attribution),
+		codexHookAttributionSurface(hooks.Attribution),
 		codexObserverReasonSurface(census),
 		codexConnectionContinuitySurface(broker),
 		codexTurnAdmissionSurface(census),
+		codexHookDeliverySurface(hooks.Delivery),
+		codexPaneOwnershipSurface(hooks.Ownership),
 	}
 	return report
+}
+
+// codexHookHealth is the three questions one read of the hook ingest log
+// answers: whether an event found its Pane, whether it changed it, and whether
+// that Pane was its own.
+//
+// They travel together because they are layers of one path and only make sense
+// read against each other. An event that never found a Pane cannot have failed
+// to change one, and an event that changed the wrong Pane is not a success.
+type codexHookHealth struct {
+	Attribution aiIngestAttributionHealth
+	Delivery    aiIngestDeliveryHealth
+	Ownership   aiIngestOwnershipHealth
 }
 
 // codexBrokerDiagnosticsSurface judges whether the broker diagnosis is looking
@@ -137,15 +154,31 @@ func codexHookAttributionSurface(attribution aiIngestAttributionHealth) codexCon
 	switch {
 	case attribution.Unattributed() == 0:
 		surface.Status = codexSurfaceStatusOK
-	case attribution.Attributed() == 0:
-		// Every event and no Pane is the state defect B held for the entire
-		// life of the neighbouring track, and it is not a degradation of
-		// attribution: it is attribution not happening.
+	case attributionSourceLostEveryEvent(attribution):
+		// Every event of one provider and no Pane is the state defect B held
+		// for the entire life of the neighbouring track, and it is not a
+		// degradation of attribution: it is attribution not happening.
+		//
+		// The test is per source rather than over the total, because that
+		// defect was one provider's. A busy neighbour attributing everything
+		// would carry the aggregate and render the dead provider as a few
+		// stale panes, which is the reading that let it live for eight phases.
 		surface.Status = codexSurfaceStatusBroken
 	default:
 		surface.Status = codexSurfaceStatusDegraded
 	}
 	return surface
+}
+
+// attributionSourceLostEveryEvent reports whether some provider hook source
+// failed to attribute every event it produced in the window.
+func attributionSourceLostEveryEvent(attribution aiIngestAttributionHealth) bool {
+	for _, source := range attribution.Sources {
+		if source.Attributed == 0 && source.Unattributed > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // codexObserverReasonSurface judges whether authority transitions carry a
@@ -257,6 +290,77 @@ func codexTurnAdmissionSurface(census *codexAuthorityCensus) codexControlPlaneSu
 	default:
 		surface.Status = codexSurfaceStatusOK
 	}
+	return surface
+}
+
+// codexHookDeliverySurface judges whether an attributed hook event actually
+// changed the Pane it reached.
+//
+// The verdict turns on whether a failure said anything. A delivery that fails
+// with a bounded reason is a fault an operator can act on; one that fails with
+// a raw process-exit string reports that something ended and nothing else, and
+// a path in that position is a leak besides. The two are separated because the
+// second is the state this surface was opened on.
+func codexHookDeliverySurface(delivery aiIngestDeliveryHealth) codexControlPlaneSurface {
+	surface := codexControlPlaneSurface{Surface: codexSurfaceHookDelivery}
+	if !delivery.Observed {
+		surface.Status, surface.Detail = codexSurfaceStatusUnobserved, "no hook ingest log was readable"
+		return surface
+	}
+	if delivery.Records == 0 {
+		surface.Status, surface.Detail = codexSurfaceStatusUnobserved, "no attributed hook event in the reading window"
+		return surface
+	}
+	parts := make([]string, 0, len(delivery.Sources))
+	for _, source := range delivery.Sources {
+		part := fmt.Sprintf("%s %d delivered, %d failed", source.Source, source.Delivered, source.Failed)
+		if len(source.Reasons) > 0 {
+			reasons := make([]string, 0, len(source.Reasons))
+			for _, reason := range source.Reasons {
+				reasons = append(reasons, fmt.Sprintf("%s=%d", reason.Reason, reason.Count))
+			}
+			part += " (" + strings.Join(reasons, ", ") + ")"
+		}
+		parts = append(parts, part)
+	}
+	surface.Detail = strings.Join(parts, "; ")
+	switch {
+	case delivery.Opaque() > 0:
+		surface.Status = codexSurfaceStatusBroken
+	case delivery.Failed() > 0:
+		surface.Status = codexSurfaceStatusDegraded
+	default:
+		surface.Status = codexSurfaceStatusOK
+	}
+	return surface
+}
+
+// codexPaneOwnershipSurface judges whether attributed hook events landed on a
+// Pane of their own provider.
+//
+// A foreign attribution is the one failure mode that looks like success from
+// every other angle: the event was attributed, the write succeeded, and the
+// Pane it moved belongs to someone else. Nothing else in this diagnosis can
+// see it, which is why it is a surface of its own rather than a note on
+// attribution.
+func codexPaneOwnershipSurface(ownership aiIngestOwnershipHealth) codexControlPlaneSurface {
+	surface := codexControlPlaneSurface{Surface: codexSurfacePaneOwnership}
+	if !ownership.Observed {
+		surface.Status, surface.Detail = codexSurfaceStatusUnobserved, "no hook ingest log and Registry pair was readable"
+		return surface
+	}
+	if ownership.Classified == 0 {
+		surface.Status = codexSurfaceStatusUnobserved
+		surface.Detail = fmt.Sprintf("no attribution could be judged; %d landed on a Pane the Registry no longer holds", ownership.Unresolved)
+		return surface
+	}
+	surface.Detail = fmt.Sprintf("attributions judged %d; foreign %d; unresolved %d",
+		ownership.Classified, ownership.Foreign, ownership.Unresolved)
+	if ownership.Foreign > 0 {
+		surface.Status = codexSurfaceStatusBroken
+		return surface
+	}
+	surface.Status = codexSurfaceStatusOK
 	return surface
 }
 

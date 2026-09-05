@@ -53,11 +53,13 @@ type doctorCommand struct {
 	// the create planner. Doctor only projects it; it never runs qualification or
 	// mutates a provider lifecycle.
 	codexPayloadFreeCapability func() codexgeneration.Record
-	// hookAttribution reads whether provider hook events reached the Pane that
-	// owns them. It is a bounded tail read of the ingest log and creates
-	// nothing, so asking the question on a machine that never ran a hook stays
-	// an unobserved answer rather than a new file.
-	hookAttribution func() aiIngestAttributionHealth
+	// hookRecords reads the tail of the provider hook ingest log. It is one
+	// bounded read that three projections share, because attribution, delivery
+	// and ownership are layers of one path and reading them separately would
+	// let a report pair counts taken at different moments. It creates nothing,
+	// so asking on a machine that never ran a hook stays an unobserved answer
+	// rather than a new file.
+	hookRecords func() ([]aiIngestLogEntry, bool)
 	// controlPlaneVintage reads the binary vintage of the live control-plane
 	// processes this diagnosis is taken from.
 	controlPlaneVintage func() codexControlPlaneVintage
@@ -87,12 +89,12 @@ func newDoctorCommand() *doctorCommand {
 	// readable at all, and an unfenced sample cannot tell a torn triple from a
 	// transition caught in flight.
 	c.codexAuthority = defaultSettledCodexLifecycleAuthorityLookup(doctorStateDir(c.getenv))
-	c.hookAttribution = func() aiIngestAttributionHealth {
+	c.hookRecords = func() ([]aiIngestLogEntry, bool) {
 		path, err := newAICommand().aiIngestLogPath()
 		if err != nil {
-			return aiIngestAttributionHealth{}
+			return nil, false
 		}
-		return readAIIngestAttributionHealth(path)
+		return readAIIngestLogTail(path, aiIngestAttributionWindow, aiIngestAttributionRecords)
 	}
 	c.controlPlaneVintage = func() codexControlPlaneVintage {
 		executable, err := os.Executable()
@@ -346,7 +348,7 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 		controlPlane := projectCodexControlPlaneSurfaces(
 			report.CodexBroker,
 			report.CodexAuthority,
-			doctorHookAttribution(c.hookAttribution),
+			c.readCodexHookHealth(),
 			doctorControlPlaneVintage(c.controlPlaneVintage),
 		)
 		report.CodexControlPlane = &controlPlane
@@ -1058,11 +1060,33 @@ func doctorStateDir(lookupEnv func(string) string) string {
 	return paths.StateDir
 }
 
-func doctorHookAttribution(read func() aiIngestAttributionHealth) aiIngestAttributionHealth {
-	if read == nil {
-		return aiIngestAttributionHealth{}
+// readCodexHookHealth takes one bounded tail of the hook ingest log and derives
+// all three hook verdicts from it.
+//
+// The ownership verdict needs the Registry as well, and it is reported as
+// unobserved when either half is missing: a log with no Registry cannot say
+// whose Pane an event landed on, and answering nothing must not read as
+// answering well.
+func (c *doctorCommand) readCodexHookHealth() codexHookHealth {
+	if c == nil || c.hookRecords == nil {
+		return codexHookHealth{}
 	}
-	return read()
+	entries, ok := c.hookRecords()
+	if !ok {
+		return codexHookHealth{}
+	}
+	health := codexHookHealth{
+		Attribution: projectAIIngestAttributionHealth(entries),
+		Delivery:    projectAIIngestDeliveryHealth(entries),
+	}
+	registry, registryOK := coremetadata.Registry{}, false
+	if c.readRegistry != nil {
+		if read, err := c.readRegistry(); err == nil {
+			registry, registryOK = read, true
+		}
+	}
+	health.Ownership = projectAIIngestOwnershipHealth(entries, registry, registryOK)
+	return health
 }
 
 func doctorControlPlaneVintage(read func() codexControlPlaneVintage) codexControlPlaneVintage {
