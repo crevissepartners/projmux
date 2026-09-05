@@ -122,6 +122,107 @@ type reasonWrite struct {
 	Shape    string
 }
 
+// reasonSink is a function that builds a log entry whose reason comes from one
+// of its own parameters.
+//
+// A sink is a second doorway into the column, and it is invisible to a scan
+// that only reads entry literals: the literal inside the sink names an
+// identifier, which is bounded as far as that file can tell, while every caller
+// hands it whatever it likes. This is not hypothetical. One provider's path
+// routes six raw errors through a sink today, and reading only the literals
+// counted that provider as one violation instead of seven.
+type reasonSink struct {
+	Name  string
+	Param int
+}
+
+// aiIngestReasonSinks finds the functions that pass a parameter into the reason
+// column.
+//
+// One level of indirection is followed, not an arbitrary chain. A sink calling
+// another sink would escape this, and closing that needs the value's type
+// rather than its syntax -- which is the other half of this guarantee and
+// belongs with whoever owns the vocabulary. What this closes is the doorway
+// that is standing open.
+func aiIngestReasonSinks(file *ast.File) []reasonSink {
+	var sinks []reasonSink
+	for _, declaration := range file.Decls {
+		function, ok := declaration.(*ast.FuncDecl)
+		if !ok || function.Type.Params == nil {
+			continue
+		}
+		params := map[string]int{}
+		index := 0
+		for _, field := range function.Type.Params.List {
+			for _, name := range field.Names {
+				params[name.Name] = index
+				index++
+			}
+		}
+		ast.Inspect(function, func(node ast.Node) bool {
+			literal, ok := node.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			name, ok := literal.Type.(*ast.Ident)
+			if !ok || name.Name != "aiIngestLogEntry" {
+				return true
+			}
+			for _, element := range literal.Elts {
+				field, ok := element.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				key, ok := field.Key.(*ast.Ident)
+				if !ok || key.Name != "Reason" {
+					continue
+				}
+				value, ok := field.Value.(*ast.Ident)
+				if !ok {
+					continue
+				}
+				if position, bound := params[value.Name]; bound {
+					sinks = append(sinks, reasonSink{Name: function.Name.Name, Param: position})
+				}
+			}
+			return true
+		})
+	}
+	return sinks
+}
+
+// aiIngestReasonSinkCalls classifies the argument each call hands to a sink.
+func aiIngestReasonSinkCalls(fileSet *token.FileSet, file *ast.File, sinks map[string]int) []reasonWrite {
+	var found []reasonWrite
+	ast.Inspect(file, func(node ast.Node) bool {
+		call, ok := node.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		var name string
+		switch fun := call.Fun.(type) {
+		case *ast.Ident:
+			name = fun.Name
+		case *ast.SelectorExpr:
+			name = fun.Sel.Name
+		default:
+			return true
+		}
+		param, known := sinks[name]
+		if !known || param >= len(call.Args) {
+			return true
+		}
+		if raw := aiIngestReasonRawValue(call.Args[param]); raw != "" {
+			found = append(found, reasonWrite{
+				Position: fileSet.Position(call.Args[param].Pos()),
+				Shape:    raw + " via " + name + "()",
+			})
+		}
+		return true
+	})
+	return found
+}
+
 // TestIngestReasonColumnCarriesOnlyBoundedValues is the static half.
 func TestIngestReasonColumnCarriesOnlyBoundedValues(t *testing.T) {
 	dir, err := os.Getwd()
@@ -132,7 +233,13 @@ func TestIngestReasonColumnCarriesOnlyBoundedValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read package directory: %v", err)
 	}
-	var raw []string
+	type parsedFile struct {
+		name    string
+		fileSet *token.FileSet
+		file    *ast.File
+	}
+	var sources []parsedFile
+	sinks := map[string]int{}
 	for _, entry := range entries {
 		name := entry.Name()
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -148,8 +255,17 @@ func TestIngestReasonColumnCarriesOnlyBoundedValues(t *testing.T) {
 		if parseErr != nil {
 			t.Fatalf("parse %s: %v", name, parseErr)
 		}
-		for _, write := range aiIngestReasonWrites(fileSet, parsed) {
-			raw = append(raw, name+":"+strconv.Itoa(write.Position.Line)+": "+write.Shape)
+		sources = append(sources, parsedFile{name: name, fileSet: fileSet, file: parsed})
+		for _, sink := range aiIngestReasonSinks(parsed) {
+			sinks[sink.Name] = sink.Param
+		}
+	}
+	var raw []string
+	for _, source := range sources {
+		writes := aiIngestReasonWrites(source.fileSet, source.file)
+		writes = append(writes, aiIngestReasonSinkCalls(source.fileSet, source.file, sinks)...)
+		for _, write := range writes {
+			raw = append(raw, source.name+":"+strconv.Itoa(write.Position.Line)+": "+write.Shape)
 		}
 	}
 	sort.Strings(raw)
@@ -199,5 +315,49 @@ func sample(c *aiCommand, err error, reason string) {
 		if write.Position.Line < 4 || write.Position.Line > 7 {
 			t.Fatalf("line %d was classified raw; the bounded writes start at line 8", write.Position.Line)
 		}
+	}
+}
+
+// TestIngestReasonAuditFollowsAReasonThroughItsSink is the second half of the
+// gate checking itself.
+//
+// A scan that reads only entry literals sees a sink's inner literal name an
+// identifier and calls it bounded, while every caller hands that identifier
+// whatever it likes. One provider routes six raw errors that way today, and
+// reading only the literals counted that provider as one violation instead of
+// seven -- so the gate under-reported the very number it was asked to be the
+// judgment of record for.
+func TestIngestReasonAuditFollowsAReasonThroughItsSink(t *testing.T) {
+	const source = `package app
+
+func hookLogEntry(paneID string, result, reason string) aiIngestLogEntry {
+	return aiIngestLogEntry{Pane: paneID, Result: result, Reason: reason}
+}
+
+func sample(c *aiCommand, err error) {
+	c.appendAIIngestLog(hookLogEntry("%1", "error", err.Error()))
+	c.appendAIIngestLog(hookLogEntry("%1", "ignored", aiPaneMatchReasonNoMatch))
+}
+`
+	fileSet := token.NewFileSet()
+	parsed, err := parser.ParseFile(fileSet, "sample.go", source, 0)
+	if err != nil {
+		t.Fatalf("parse sample: %v", err)
+	}
+	sinks := aiIngestReasonSinks(parsed)
+	if len(sinks) != 1 || sinks[0].Name != "hookLogEntry" || sinks[0].Param != 2 {
+		t.Fatalf("sinks = %+v, want the reason parameter of hookLogEntry at index 2", sinks)
+	}
+	// The literal inside the sink names a parameter, so the literal scan alone
+	// must find nothing. That is exactly why the sink scan has to exist.
+	if direct := aiIngestReasonWrites(fileSet, parsed); len(direct) != 0 {
+		t.Fatalf("literal scan found %+v, want the sink to be invisible to it", direct)
+	}
+	found := aiIngestReasonSinkCalls(fileSet, parsed, map[string]int{"hookLogEntry": 2})
+	if len(found) != 1 {
+		t.Fatalf("sink scan found %d call(s), want only the one handing over a raw error", len(found))
+	}
+	if !strings.Contains(found[0].Shape, "via hookLogEntry()") {
+		t.Fatalf("shape = %q, want the sink named so the caller can be found", found[0].Shape)
 	}
 }
