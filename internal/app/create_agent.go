@@ -28,6 +28,43 @@ const (
 	agentActivationAcknowledgementDeadline = 5 * time.Second
 )
 
+// agentPaneNameSuffix is the launcher convention for the name of the Pane an
+// Agent owns. It used to live only in the launcher documentation as a
+// mandatory follow-up `rename pane`, which meant a caller that had not read
+// that page left the managed Pane addressed by a raw UID.
+const agentPaneNameSuffix = "-pane"
+
+// derivedAgentPaneName is the explicit Pane name `create agent` supplies for
+// the Pane an Agent owns, or "" for automatic naming.
+//
+// This is deliberately an *explicit* name handed to the existing explicit-name
+// machinery (`BootstrapPane.Name` -> `addPaneTx` -> `mintAndReserveName`), not
+// a new automatic-name rule. The automatic allocator is untouched, so a Pane
+// with no Agent -- a shell Pane, `create pane`, bootstrap topology -- still
+// gets its exact full minted UID as its name.
+//
+// The derivation runs once, at create. It is not an invariant: `rename agent`
+// does not follow the Pane, and `rename pane` stays free to move the Pane name
+// anywhere. Because `reserveExplicitName` skips a slot the same uid already
+// holds, a launcher that still issues the documented `rename pane
+// <agent-name>-pane` afterwards gets a successful no-op rather than a
+// conflict.
+//
+// Length is the one fallback. An Agent name may be the full 128 bytes
+// `ValidateName` allows, so the derived name can be 133 and invalid. Refusing
+// there would break `create agent --name <long>` calls that succeed today, so
+// the derivation yields "" and the Pane falls back to automatic naming.
+// Nothing else falls back: a *collision* on the derived name is a typed
+// zero-write refusal from the metadata phase, which runs entirely before the
+// first tmux or provider call.
+func derivedAgentPaneName(agentName string) string {
+	derived := agentName + agentPaneNameSuffix
+	if coremetadata.ValidateName(derived) != nil {
+		return ""
+	}
+	return derived
+}
+
 // agentWork is one allocated Agent plus its managed Pane, waiting for the
 // runtime phase to give the Pane a live tmux binding.
 type agentWork struct {
@@ -233,7 +270,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			}
 			agent, err := mutator.CreateAgent(working, target.windowUID, coremetadata.CreateAgentOptions{
 				// The explicit --name names only the Agent. The managed Pane
-				// independently uses its own exact minted UID as its name.
+				// takes its name from the Agent's, one derivation later.
 				Name:        flags.name,
 				Provider:    provider,
 				Labels:      labels,
@@ -245,6 +282,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 				return MapMetadataError(err)
 			}
 			pane, err := mutator.AttachAgentPane(working, agent.Metadata.UID, coremetadata.BootstrapPane{
+				Name:   derivedAgentPaneName(agent.Metadata.Name),
 				CWD:    workspace.CWD,
 				Labels: labels,
 			}, operationID)

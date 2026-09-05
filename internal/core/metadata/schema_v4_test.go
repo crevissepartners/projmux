@@ -240,3 +240,115 @@ func TestRootWideSameKindCollisionAndOriginalExplicitSpelling(t *testing.T) {
 		t.Fatalf("Registry invalid: %v", err)
 	}
 }
+
+// TestAnAgentlessPaneKeepsItsExactUIDAutomaticName is the C-5 `Sequence-free
+// automatic naming` regression guard for the Phase that gave Agent-owned Panes
+// a derived explicit name.
+//
+// That Phase supplies `<agent-name>-pane` as an *explicit* `BootstrapPane.Name`
+// from `internal/app`; it adds no rule here. So every Pane with no Agent --
+// bootstrap topology, `create pane`, an ensured default shell -- still gets its
+// exact full minted UID, and an explicit name on a sibling never makes the next
+// automatic name react to it.
+//
+// `AttachAgentPane` with no declared name is included on purpose: it proves the
+// derivation belongs to the caller rather than to the allocator.
+func TestAnAgentlessPaneKeepsItsExactUIDAutomaticName(t *testing.T) {
+	t.Parallel()
+
+	m := testMutator(dirSet{"/src/root": true})
+	reg := NewRegistry()
+	registered, err := m.RegisterProject(&reg, RegisterProjectOptions{
+		Root: "/src/root", DefaultShell: "/bin/zsh",
+		Topology: []BootstrapWindow{{Panes: []BootstrapPane{{}, {Command: "htop"}}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	windowUID := registered.Windows[0].Metadata.UID
+
+	// namedExplicitly holds the uids whose name an operator chose. Everything
+	// else must still be its own exact full uid.
+	namedExplicitly := map[string]bool{}
+	agentless := func(t *testing.T, stage string) int {
+		t.Helper()
+		seen := 0
+		for _, pane := range reg.Panes {
+			if pane.Metadata.OwnerRef != nil && pane.Metadata.OwnerRef.Kind == KindAgent {
+				continue
+			}
+			if namedExplicitly[pane.Metadata.UID] {
+				continue
+			}
+			seen++
+			if pane.Metadata.Name != pane.Metadata.UID {
+				t.Fatalf("%s: agentless pane %q is named %q, want its exact full uid",
+					stage, pane.Metadata.UID, pane.Metadata.Name)
+			}
+		}
+		return seen
+	}
+	if got := agentless(t, "bootstrap topology"); got < 2 {
+		t.Fatalf("bootstrap topology produced %d agentless panes, want at least 2", got)
+	}
+
+	// `create pane` with no --name.
+	if _, err := m.AddPane(&reg, windowUID, BootstrapPane{}, "/bin/zsh", "automatic"); err != nil {
+		t.Fatal(err)
+	}
+	agentless(t, "AddPane with no declared name")
+
+	// An explicit sibling must not move the next automatic name: no suffix, no
+	// sequence, no reaction of any kind.
+	explicit, err := m.AddPane(&reg, windowUID, BootstrapPane{Name: "build"}, "/bin/zsh", "explicit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, err := m.AddPane(&reg, windowUID, BootstrapPane{}, "/bin/zsh", "automatic-after-explicit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Metadata.Name != next.Metadata.UID {
+		t.Fatalf("automatic name after an explicit sibling = %q, want the exact full uid %q",
+			next.Metadata.Name, next.Metadata.UID)
+	}
+	if explicit.Metadata.Name != "build" {
+		t.Fatalf("explicit pane name = %q, want build", explicit.Metadata.Name)
+	}
+	namedExplicitly[explicit.Metadata.UID] = true
+	agentless(t, "AddPane after an explicit sibling")
+
+	// An Agent-owned Pane with no declared name is still automatic here. The
+	// `<agent-name>-pane` derivation is the app-layer caller's, and it arrives
+	// as an ordinary explicit name.
+	agent, err := m.CreateAgent(&reg, windowUID, CreateAgentOptions{Provider: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	managed, err := m.AttachAgentPane(&reg, agent.Metadata.UID, BootstrapPane{}, "attach-automatic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if managed.Metadata.Name != managed.Metadata.UID {
+		t.Fatalf("AttachAgentPane with no declared name = %q, want the exact full uid %q",
+			managed.Metadata.Name, managed.Metadata.UID)
+	}
+
+	derivedOwner, err := m.CreateAgent(&reg, windowUID, CreateAgentOptions{Provider: "codex", Name: "reviewer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	derived, err := m.AttachAgentPane(&reg, derivedOwner.Metadata.UID, BootstrapPane{Name: "reviewer-pane"}, "attach-derived")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if derived.Metadata.Name != "reviewer-pane" {
+		t.Fatalf("declared managed pane name = %q, want reviewer-pane", derived.Metadata.Name)
+	}
+	// And the whole agentless population is still exactly-UID afterwards.
+	agentless(t, "after the derived managed Pane")
+
+	if err := reg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

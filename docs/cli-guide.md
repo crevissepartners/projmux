@@ -378,7 +378,10 @@ then updates only its exact UID-bound live transport field:
 
 `rename agent` changes only the Agent's stable root-scoped `metadata.name`.
 It does not change the Agent topic, provider, lifecycle state, or managed Pane
-name/title. `rebind project` preserves uid and session name, moves no files,
+name/title. `create agent` derives the managed Pane's name from the Agent's
+once, at create; nothing keeps the two in sync afterwards, so `rename pane`
+stays free to move the Pane name anywhere and `rename agent` still touches
+exactly one resource. `rebind project` preserves uid and session name, moves no files,
 and updates only `spec.root` plus the exact session's
 `@projmux_project_path` anchor.
 
@@ -1491,7 +1494,25 @@ default. Concrete provider invocations create a new Agent and a new managed
 Pane every time; existing managed AI panes in the same project/session are
 not selected or reused, and rebinding an existing conversation is `agent
 resume`, a different verb. The scope of the new resources follows
-[Create scope](#create-scope). The provider picker remains available through
+[Create scope](#create-scope).
+
+The managed Pane is named `<agent-name>-pane`. With an explicit `--name
+reviewer` that is `reviewer-pane`; with no `--name` the Agent's own name is its
+exact full UID, so the Pane is `<agent-uid>-pane` -- readable as *that Agent's
+pane*, and still never the Pane's own UID. A launcher no longer has to issue a
+follow-up `rename pane` to get that spelling, and one that still does gets a
+successful no-op. Two consequences are worth knowing:
+
+- If `<agent-name>-pane` is already used by another Pane anywhere in the same
+  Project or ControlSession, the create refuses with exit code 2 and zero
+  Registry, tmux, and provider writes. No suffix is invented.
+- An Agent name may be the full 128 bytes a name allows, which would make the
+  derived Pane name 133 bytes and invalid. That single case falls back to the
+  ordinary automatic Pane name -- the Pane's exact full UID -- rather than
+  refusing a create that works today.
+
+`rename pane` remains unrestricted on a managed Pane, and renaming the Agent
+afterwards does not move the Pane name. The provider picker remains available through
 `internal agent-pane picker`. Arguments after `--` are extra arguments appended to
 the resolved `claude`, `codex`, or `agy` executable inside the managed wrapper;
 projmux still sets the context directory, tmux title, AI pane metadata, and

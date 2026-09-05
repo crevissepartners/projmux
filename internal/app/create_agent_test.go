@@ -924,8 +924,9 @@ func TestCreateAgentNeverReusesAnExistingAgent(t *testing.T) {
 		if !ok {
 			t.Fatalf("created agent %q has no managed Pane", uid)
 		}
-		if pane.Metadata.Name != pane.Metadata.UID {
-			t.Fatalf("managed pane name = %q, want exact uid %q", pane.Metadata.Name, pane.Metadata.UID)
+		// The managed Pane is named after its Agent, not after its own uid.
+		if want := agent.Metadata.Name + "-pane"; pane.Metadata.Name != want {
+			t.Fatalf("managed pane name = %q, want %q", pane.Metadata.Name, want)
 		}
 		if pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent {
 			t.Fatalf("managed pane owner = %+v, want the Agent", pane.Metadata.OwnerRef)
@@ -1100,8 +1101,10 @@ func TestTopicAndPromptNeverSeedAnAgentOrPaneName(t *testing.T) {
 	if bare != loaded {
 		t.Fatalf("payload changed the naming: %q, want %q", loaded, bare)
 	}
-	if bare != "agent=agent-test-1 pane=pane-test-2" {
-		t.Fatalf("naming = %q, want exact full UID automatic names", bare)
+	// The Agent's automatic name is its exact full UID; the managed Pane's
+	// name is derived from that Agent name, never from the payload.
+	if bare != "agent=agent-test-1 pane=agent-test-1-pane" {
+		t.Fatalf("naming = %q, want the UID Agent name and its derived Pane name", bare)
 	}
 	// The payload did reach the launch, so the negative above is about naming
 	// rather than about the payload being dropped.
