@@ -140,3 +140,29 @@ func TestAttributionHealthIgnoresAReasonOutsideTheClosedMatchVocabulary(t *testi
 		}
 	}
 }
+
+// Attributed is how many hook events over the window reached a Pane. The
+// verdict is reached per source rather than over this total, so the aggregate
+// is only ever a test's summary of a fixture.
+func (h aiIngestAttributionHealth) Attributed() int {
+	total := 0
+	for _, source := range h.Sources {
+		total += source.Attributed
+	}
+	return total
+}
+
+// readAIIngestAttributionHealth reads the tail of ai-ingest.log and projects
+// attribution health from it in one call.
+//
+// Doctor takes the tail once and derives all three hook projections from it, so
+// this single-projection path exists for the tests that drive the reader end to
+// end against a real file: an absent log must report itself unobserved rather
+// than as an empty healthy result.
+func readAIIngestAttributionHealth(path string) aiIngestAttributionHealth {
+	entries, ok := readAIIngestLogTail(path, aiIngestAttributionWindow, aiIngestAttributionRecords)
+	if !ok {
+		return aiIngestAttributionHealth{}
+	}
+	return projectAIIngestAttributionHealth(entries)
+}

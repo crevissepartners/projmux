@@ -2,6 +2,7 @@ package app
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -139,12 +140,7 @@ func aiIngestReasonIsOpaque(reason string) bool {
 }
 
 func isAIIngestHookSource(source string) bool {
-	for _, known := range aiIngestAttributionSources {
-		if known == source {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(aiIngestAttributionSources, source)
 }
 
 func aiIngestDeliveryReasons(counts map[string]int) []aiIngestAttributionReason {

@@ -83,30 +83,6 @@ func (h aiIngestAttributionHealth) Unattributed() int {
 	return total
 }
 
-// Attributed is how many hook events over the window reached one.
-func (h aiIngestAttributionHealth) Attributed() int {
-	total := 0
-	for _, source := range h.Sources {
-		total += source.Attributed
-	}
-	return total
-}
-
-// readAIIngestAttributionHealth reads the tail of ai-ingest.log and projects
-// attribution health from it.
-//
-// It opens the log read-only and creates nothing. An absent log is reported as
-// unobserved rather than as an empty healthy result: a machine that has never
-// run a hook and one whose log this reader cannot open give the same counts,
-// and only the first is good news.
-func readAIIngestAttributionHealth(path string) aiIngestAttributionHealth {
-	entries, ok := readAIIngestLogTail(path, aiIngestAttributionWindow, aiIngestAttributionRecords)
-	if !ok {
-		return aiIngestAttributionHealth{}
-	}
-	return projectAIIngestAttributionHealth(entries)
-}
-
 // readAIIngestLogTail reads the last window of a JSON-lines log.
 //
 // The first line of the window is dropped whenever the window did not start at
