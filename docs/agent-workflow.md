@@ -1280,6 +1280,36 @@ The gate does not change `projmux doctor`'s exit code. A broken surface is a
 readable verdict, not a failed command, and the CI half of the detection is the
 regression tests themselves.
 
+### Shared AI pane option routing tests
+
+`TestSharedPaneRoutingCodexIngest` drives the marker (`PreToolUse`) and ordinary
+state (`UserPromptSubmit`) caller paths through full Codex ingest. Both require
+writes on the verified app route and honest records; removing the shared argv
+prefix makes both fail. `TestSharedPaneRoutingSetClearRecord` pins exact inherited
+`-S` and detached app `-L` argv. `TestSharedPaneRoutingDenialIsBoundedAndWritesNothing`
+rejects unreachable servers, missing panes, foreign servers and absent resource
+identity without writes or success records. Existing Codex delivery authority,
+semantic, refusal-vocabulary and diagnostics gates remain in force.
+
+`TestSharedPaneRoutingProviderConsumers` covers Codex, Claude, Antigravity and
+bell hook consumers, including state and resume markers.
+`TestSharedPaneRoutingLaunchBeforeFirstMarker` checks inherited configure and
+canonical detached materialization through its supplied exact runner before any
+managed marker or Pane UID exists. Existing topic/status semantic fixtures retain
+their option expectations while their mock server supplies explicit containment.
+Managed interaction/topic projection outside the shared helpers remains a
+separate transport boundary.
+
+`TestSharedPaneRoutingRealTmux` uses two real isolated servers with the same pane
+ID and checks set, clear, marker and full hook state against target readback and
+opposite-server sentinels for detached and inherited routes. It refuses a missing
+inherited route without fallback. Every server starts with a unique socket name
+inside a dedicated tmux root; only a verified private alias exposes the fixed app
+locator. Cleanup rechecks the observed exact socket before `-S` shutdown. The test
+runs with `make test` where tmux is available; an explicit installed smoke runs the
+same hook assertions against `PROJMUX_TEST_PANE_ROUTE_BINARY=<absolute binary>`.
+This is a test-only selector, not a product environment contract.
+
 ### Attributed Codex hook delivery route tests
 
 Attribution and reflection are different layers. A Codex hook attributed to its

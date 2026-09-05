@@ -1053,6 +1053,9 @@ func TestAIStatusSetThinkingMarksPaneBusy(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "tmux" && reflect.DeepEqual(args, []string{"display-message", "-p", "-t", "%1", "#{pane_title}"}) {
 			return []byte("codex: repo\n"), nil
 		}
@@ -1070,7 +1073,7 @@ func TestAIStatusSetThinkingMarksPaneBusy(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%1", "@projmux_attention_ack"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%1", "@projmux_attention_focus_armed"}},
 	}
-	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+	if !sameRecordedAICommands(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
 	}
 }
@@ -1084,6 +1087,9 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 	cmd := testAICommand(home)
 	cmd.now = func() time.Time { return time.Unix(1000, 0) }
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "command" && len(args) == 2 && args[0] == "-v" {
 			switch args[1] {
 			case "notify-send":
@@ -1133,7 +1139,7 @@ func TestAIStatusSetWaitingMarksPaneReplyAndNotifies(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_attention_state", "reply"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%2", "@projmux_attention_focus_armed", "1"}},
 	}
-	if len(commands) < len(wantPrefix) || !reflect.DeepEqual(commands[:len(wantPrefix)], wantPrefix) {
+	if len(commands) < len(wantPrefix) || !sameRecordedAICommands(commands[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("command prefix = %#v, want %#v", commands, wantPrefix)
 	}
 	if !containsAICommand(commands, "notify-send") {
@@ -1174,6 +1180,9 @@ func TestAIStatusSetWaitingUsesNotificationHook(t *testing.T) {
 		}
 	}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
 			t.Fatalf("notify-send lookup should not run when PROJMUX_NOTIFY_HOOK is set")
 		}
@@ -1253,6 +1262,9 @@ func TestAIStatusSetWaitingInWSLRegistersToastAppIDAndDispatchesToast(t *testing
 		}
 	}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "command" && len(args) == 2 && args[0] == "-v" {
 			switch args[1] {
 			case "powershell.exe":
@@ -1408,6 +1420,9 @@ func TestAIStatusSetWaitingAcksVisiblePane(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "tmux" && reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}) {
 			return []byte("%15\n"), nil
 		}
@@ -1427,7 +1442,7 @@ func TestAIStatusSetWaitingAcksVisiblePane(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_attention_ack", "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%15", "@projmux_attention_focus_armed"}},
 	}
-	if len(commands) < len(wantPrefix) || !reflect.DeepEqual(commands[:len(wantPrefix)], wantPrefix) {
+	if len(commands) < len(wantPrefix) || !sameRecordedAICommands(commands[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("command prefix = %#v, want %#v", commands, wantPrefix)
 	}
 	if containsAICommand(commands, "notify-send") {
@@ -1442,6 +1457,9 @@ func TestAIStatusSetWaitingDoesNotAckWhenNoClientViewingPane(t *testing.T) {
 	home := t.TempDir()
 	cmd := testAICommand(home)
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "tmux" && reflect.DeepEqual(args, []string{"list-clients", "-F", "#{client_active_pane}"}) {
 			return []byte("%99\n"), nil
 		}
@@ -1460,7 +1478,7 @@ func TestAIStatusSetWaitingDoesNotAckWhenNoClientViewingPane(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_attention_state", "reply"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%15", "@projmux_attention_focus_armed", "1"}},
 	}
-	if len(commands) < len(wantPrefix) || !reflect.DeepEqual(commands[:len(wantPrefix)], wantPrefix) {
+	if len(commands) < len(wantPrefix) || !sameRecordedAICommands(commands[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("command prefix = %#v, want %#v", commands, wantPrefix)
 	}
 }
@@ -1477,6 +1495,9 @@ func TestAIStatusSetWaitingForceDoesNotSetBadgeWhenVisible(t *testing.T) {
 	cmd := testAICommand(home)
 	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: 10 * time.Minute}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "command" && len(args) == 2 && args[0] == "-v" && args[1] == "notify-send" {
 			return []byte("/usr/bin/notify-send\n"), nil
 		}
@@ -1529,7 +1550,7 @@ func TestAIStatusSetWaitingForceDoesNotSetBadgeWhenVisible(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", "@projmux_attention_ack", "1"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%21", "@projmux_attention_focus_armed"}},
 	}
-	if len(commands) < len(wantPrefix) || !reflect.DeepEqual(commands[:len(wantPrefix)], wantPrefix) {
+	if len(commands) < len(wantPrefix) || !sameRecordedAICommands(commands[:len(wantPrefix)], wantPrefix) {
 		t.Fatalf("command prefix = %#v, want %#v", commands, wantPrefix)
 	}
 	// attention_state must never be set to "reply" on the visible path,
@@ -1716,6 +1737,9 @@ func TestAIWatchTitlePromotesBusyPaneToThinking(t *testing.T) {
 	cmd := testAICommand(home)
 	checks := 0
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
@@ -1769,6 +1793,9 @@ func TestAIWatchTitleUsesCapturePaneAsReplySignal(t *testing.T) {
 	cmd := testAICommand(home)
 	checks := 0
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
 			return []byte("/usr/bin/notify-send\n"), nil
 		}
@@ -1811,6 +1838,9 @@ func TestAIWatchTitleMapsPermissionTitleToApprovalRequired(t *testing.T) {
 	cmd := testAICommand(home)
 	checks := 0
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
 			return []byte("/usr/bin/notify-send\n"), nil
 		}
@@ -1850,6 +1880,9 @@ func TestAIWatchTitlePreservesManualAITopic(t *testing.T) {
 	cmd := testAICommand(home)
 	checks := 0
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
 			return []byte("/usr/bin/notify-send\n"), nil
 		}
@@ -1889,6 +1922,9 @@ func TestAIWatchTitleBootstrapsMetadataForExistingCodexPane(t *testing.T) {
 	cmd := testAICommand(home)
 	checks := 0
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
@@ -1935,7 +1971,7 @@ func TestConfigureAIPaneWritesCanonicalLaunchReceipt(t *testing.T) {
 	want := recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", aiPaneLaunchAuthorshipOption, "1"}}
 	count := 0
 	for _, command := range commands {
-		if reflect.DeepEqual(command, want) {
+		if command.name == want.name && sameRecordedAICommandArgs(command.name, command.args, want.args) {
 			count++
 		}
 	}
@@ -2003,6 +2039,9 @@ func TestAIWatchTitleSettledBusyBecomesWaitingReply(t *testing.T) {
 		"repo__PROJMUX_TMUX_AI_SEP__busy__PROJMUX_TMUX_AI_SEP__",
 	}
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name == "command" && reflect.DeepEqual(args, []string{"-v", "notify-send"}) {
 			return []byte("/usr/bin/notify-send\n"), nil
 		}
@@ -2048,6 +2087,9 @@ func TestAIWatchTitleIgnoresStaleBusyCaptureHistory(t *testing.T) {
 	cmd := testAICommand(home)
 	checks := 0
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
@@ -2094,6 +2136,9 @@ func TestAIWatchTitleSettlesUnchangedSpinnerTitle(t *testing.T) {
 	}
 	checks := 0
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, os.ErrNotExist
 		}
@@ -2243,7 +2288,10 @@ func testAICommand(home string) *aiCommand {
 			recorder.commands = append(recorder.commands, recordedAICommand{name: name, args: append([]string(nil), args...)})
 			return nil
 		},
-		readCommand: func(context.Context, string, ...string) ([]byte, error) {
+		readCommand: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if row, ok := testAIPaneRouteProbe(name, args); ok {
+				return row, nil
+			}
 			return nil, os.ErrNotExist
 		},
 	}
@@ -2305,6 +2353,9 @@ func containsAICommand(commands []recordedAICommand, name string) bool {
 
 func containsAICommandArgs(commands []recordedAICommand, name string, prefix []string) bool {
 	for _, command := range commands {
+		if name == "tmux" && len(prefix) > 0 && prefix[0] != "-L" && prefix[0] != "-S" {
+			command.args = stripRecordedTmuxRoute(command.args)
+		}
 		if command.name != name || len(command.args) < len(prefix) {
 			continue
 		}
@@ -2317,7 +2368,7 @@ func containsAICommandArgs(commands []recordedAICommand, name string, prefix []s
 
 func containsRecordedAICommand(commands []recordedAICommand, want recordedAICommand) bool {
 	for _, command := range commands {
-		if command.name == want.name && reflect.DeepEqual(command.args, want.args) {
+		if command.name == want.name && sameRecordedAICommandArgs(command.name, command.args, want.args) {
 			return true
 		}
 	}
@@ -2395,7 +2446,7 @@ func TestAITopicSetWritesPaneOptionAndManualFlag(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%3", "@projmux_ai_topic", "fix login bug"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%3", "@projmux_ai_topic_manual", "on"}},
 	}
-	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+	if !sameRecordedAICommands(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
 	}
 }
@@ -2422,7 +2473,7 @@ func TestAITopicSetUsesEnvPaneWhenFlagOmitted(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", "@projmux_ai_topic", "review PR"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-t", "%7", "@projmux_ai_topic_manual", "on"}},
 	}
-	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+	if !sameRecordedAICommands(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
 	}
 }
@@ -2439,7 +2490,7 @@ func TestAITopicClearUnsetsBothPaneOptions(t *testing.T) {
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%4", "@projmux_ai_topic"}},
 		{name: "tmux", args: []string{"set-option", "-p", "-u", "-t", "%4", "@projmux_ai_topic_manual"}},
 	}
-	if !reflect.DeepEqual(cmdRecorder(cmd).commands, want) {
+	if !sameRecordedAICommands(cmdRecorder(cmd).commands, want) {
 		t.Fatalf("commands = %#v, want %#v", cmdRecorder(cmd).commands, want)
 	}
 }

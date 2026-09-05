@@ -108,6 +108,9 @@ func newSessionRefHarness(t *testing.T, provider string) *sessionRefHarness {
 			return nil
 		},
 		readCommand: func(_ context.Context, name string, args ...string) ([]byte, error) {
+			if row, ok := testAIPaneRouteProbe(name, args); ok {
+				return row, nil
+			}
 			h.tmuxCalls = append(h.tmuxCalls, name+" "+strings.Join(args, " "))
 			if len(args) >= 5 && args[0] == "display-message" && args[4] == "#{"+tmuxopts.PaneUID+"}" {
 				return []byte(h.paneUID + "\n"), nil
@@ -423,10 +426,10 @@ func TestIngestStillWritesThePaneSessionOptionUnchanged(t *testing.T) {
 		`{"hook_event_name":"UserPromptSubmit","thread_id":"codex-thread-1","session_id":"codex-session-1","cwd":"/src/app"}`)
 
 	wantOptions := []string{
-		"tmux set-option -p -t %7 " + aiPaneSessionIDOption + " codex-session-1",
-		"tmux set-option -p -t %7 " + aiPaneThreadIDOption + " codex-thread-1",
-		"tmux set-option -p -t %7 " + aiPaneAgentOption + " codex",
-		"tmux set-option -p -t %7 " + aiPaneResumeIDOption + " codex-session-1",
+		"tmux -L projmux set-option -p -t %7 " + aiPaneSessionIDOption + " codex-session-1",
+		"tmux -L projmux set-option -p -t %7 " + aiPaneThreadIDOption + " codex-thread-1",
+		"tmux -L projmux set-option -p -t %7 " + aiPaneAgentOption + " codex",
+		"tmux -L projmux set-option -p -t %7 " + aiPaneResumeIDOption + " codex-session-1",
 	}
 	for _, want := range wantOptions {
 		if !slices.Contains(h.tmuxCalls, want) {

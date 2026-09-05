@@ -54,6 +54,8 @@ func newPaneWriteHarness(t *testing.T, fails func(option string) bool) *paneWrit
 			return home
 		case "XDG_STATE_HOME":
 			return stateHome
+		case "TMUX":
+			return "/tmp/test-pane-writes/socket,1,0"
 		case "TMUX_PANE":
 			return "%7"
 		default:
@@ -61,6 +63,7 @@ func newPaneWriteHarness(t *testing.T, fails func(option string) bool) *paneWrit
 		}
 	}
 	cmd.runCommand = func(_ context.Context, name string, args ...string) error {
+		args = stripRecordedTmuxRoute(args)
 		if name == "tmux" && len(args) > 0 && args[0] == "set-option" {
 			h.attempts++
 			option := args[len(args)-1]

@@ -461,6 +461,9 @@ func TestAIStatusSetWaitingPushesQueueWhenInactive(t *testing.T) {
 	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: 10 * time.Minute}
 
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, nil
 		}
@@ -527,6 +530,9 @@ func TestAIStatusSetThinkingKeepsQueue(t *testing.T) {
 	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: 10 * time.Minute}
 
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, nil
 		}
@@ -561,6 +567,9 @@ func TestAIStatusSetIdleKeepsQueue(t *testing.T) {
 	cmd.producer = &storeAttentionNotifyProducer{store: store, ttl: 10 * time.Minute}
 
 	cmd.readCommand = func(_ context.Context, name string, args ...string) ([]byte, error) {
+		if row, ok := testAIPaneRouteProbe(name, args); ok {
+			return row, nil
+		}
 		if name != "tmux" {
 			return nil, nil
 		}

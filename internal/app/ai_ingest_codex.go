@@ -10,9 +10,6 @@ import (
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/notify"
-	"github.com/crevissepartners/projmux/internal/core/resourcegraph"
-	intmux "github.com/crevissepartners/projmux/internal/integrations/mux"
-	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 )
 
 type codexHookPayload struct {
@@ -312,11 +309,7 @@ func codexHookDeliveryCause(output []byte, err error) string {
 
 // codexHookDeliveryRouteFormat reads the three facts that decide whether a
 // candidate runtime may receive this Pane's reflection, in one call.
-var codexHookDeliveryRouteFormat = tmuxRowFormat(
-	intmux.TmuxFormat(tmuxopts.AppGlobal),
-	"#{pane_id}",
-	intmux.TmuxFormat(tmuxopts.PaneUID),
-)
+var codexHookDeliveryRouteFormat = aiPaneOptionRouteFormat
 
 // codexHookDeliveryTarget is the one tmux server a reflection may write to.
 // Every write carries its routing argv, so no reflection call is ever the
@@ -355,55 +348,32 @@ func (t codexHookDeliveryTarget) contained(paneID string) (bool, string) {
 	return true, "runtime still holds this pane and rejected the option write"
 }
 
-// codexHookDeliveryRoute pins every reflection write to one exact tmux server.
-//
-// An inherited receipt is taken as-is: an absolute socket path is the only
-// shape tmux writes, and it names the client's own server without a search.
-// Without one, the route is projmux's own app-owned runtime -- the same route
-// every detached projmux invocation already takes -- and it is never trusted on
-// its name alone. The Pane the hook was already attributed to is the
-// discriminator: that server must be app-owned and must actually hold the
-// attributed pane as a projmux Pane. A candidate that cannot prove the
-// containment receives no write at all, because answering one server's question
-// with another server's objects is worse than refusing.
+// codexHookDeliveryRoute retains the Codex delivery vocabulary and policy;
+// provider-neutral resolution owns only transport and containment facts.
 func (c *aiCommand) codexHookDeliveryRoute(paneID string) (codexHookDeliveryTarget, error) {
-	inherited, err := resourcegraph.ResolveTransport(resourcegraph.TransportRequest{InheritedTMUX: c.env("TMUX")})
-	if err == nil && inherited.Present() {
-		return codexHookDeliveryTarget{command: c, transport: inherited, kind: codexHookInheritedRoute}, nil
+	route, refusal := c.aiPaneOptionRoute(paneID)
+	kind := codexHookAppOwnedRoute
+	if route.transport.Source == tmuxInheritedSource {
+		kind = codexHookInheritedRoute
 	}
-	target := codexHookDeliveryTarget{command: c, transport: defaultRuntimeMutationRoute().target, kind: codexHookAppOwnedRoute}
-	runner := explicitTmuxRunner{
-		runner: aiCommandMuxBackend{runCommand: c.runCommand, readCommand: c.readCommand},
-		target: target.transport,
+	target := codexHookDeliveryTarget{command: c, transport: route.transport, kind: kind}
+	if refusal == nil {
+		return target, nil
 	}
-	output, runErr := runner.Run(context.Background(), "tmux",
-		"display-message", "-p", "-t", paneID, "-F", codexHookDeliveryRouteFormat)
-	if runErr != nil {
-		return codexHookDeliveryTarget{}, &codexHookDeliveryError{
-			Reason: codexHookRouteUnavailableReason,
-			Detail: target.kind + ": " + codexHookDeliveryCause(output, runErr),
-		}
+	reason := codexHookRouteUnavailableReason
+	detail := ""
+	switch refusal.kind {
+	case aiPaneRouteProbeFailed:
+		detail = codexHookDeliveryCause(refusal.output, refusal.err)
+	case aiPaneRouteNoRow:
+		detail = "containment probe returned no single row"
+	case aiPaneRouteNotOwned:
+		detail = "server is not app-owned"
+	case aiPaneRouteForeign:
+		reason = codexHookRouteForeignPaneReason
+		detail = paneID
 	}
-	rows := splitTmuxRows(string(output), 3)
-	if len(rows) != 1 {
-		return codexHookDeliveryTarget{}, &codexHookDeliveryError{
-			Reason: codexHookRouteUnavailableReason,
-			Detail: target.kind + ": containment probe returned no single row",
-		}
-	}
-	if resourcegraph.HostModeFromAppMarker(rows[0][0]) != resourcegraph.HostModeAppOwned {
-		return codexHookDeliveryTarget{}, &codexHookDeliveryError{
-			Reason: codexHookRouteUnavailableReason,
-			Detail: target.kind + ": server is not app-owned",
-		}
-	}
-	if rows[0][1] != paneID || strings.TrimSpace(rows[0][2]) == "" {
-		return codexHookDeliveryTarget{}, &codexHookDeliveryError{
-			Reason: codexHookRouteForeignPaneReason,
-			Detail: target.kind + ": " + paneID,
-		}
-	}
-	return target, nil
+	return codexHookDeliveryTarget{}, &codexHookDeliveryError{Reason: reason, Detail: kind + ": " + detail}
 }
 
 // applyCodexHookSemanticDelivery mirrors the native lifecycle delivery intent
