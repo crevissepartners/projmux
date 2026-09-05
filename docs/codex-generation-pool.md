@@ -139,8 +139,27 @@ does not affect a valid lease.
 ## Validation workflow
 
 The deterministic suite is part of `make test`. The real-Codex test is opt-in
-and requires exact 0.152.0 and 0.152.1 standalone executables plus a source
-Codex home containing `auth.json` and `config.toml`:
+and qualifies whichever version pair the operator declares. It needs the two
+standalone executables of that pair plus a source Codex home containing
+`auth.json` and `config.toml`. `scripts/test-generation-pool-qualification.sh`
+owns the isolated roots and always leaves one terminal typed record behind:
+
+```sh
+PROJMUX_CODEX_GENERATION_OLD="/absolute/path/to/old/bin/codex" \
+PROJMUX_CODEX_GENERATION_NEW="/absolute/path/to/new/bin/codex" \
+PROJMUX_CODEX_GENERATION_SOURCE_HOME="/absolute/path/to/source-codex-home" \
+  scripts/test-generation-pool-qualification.sh <old-version> <new-version> artifacts/pair
+```
+
+The runner writes `artifacts/pair/outcome.json` on every exit — `pass`, `fail`,
+`unsupported` when a declared binary or the credentialed state is unavailable,
+or `infra-error` — and `artifacts/pair/receipt.json` whenever the harness
+reached a verdict. Set `PROJMUX_CODEX_GENERATION_BUNDLE_TMPDIR` to place the
+~700 MiB bundle root somewhere other than the temporary directory; the smoke
+root itself must stay there so the private sockets fit `sun_path`.
+
+The test can also be driven directly. Each declared version must match what its
+binary reports, and the receipt path must be absolute:
 
 ```sh
 smoke_root="$(mktemp -d /tmp/projmux-codex-generation-XXXXXX)"
@@ -148,9 +167,12 @@ bundle_root="$(mktemp -d /path/with/at-least-700MiB/projmux-codex-bundles-XXXXXX
 env -u TMUX -u TMUX_PANE \
   PROJMUX_CODEX_GENERATION_SMOKE_ROOT="$smoke_root" \
   PROJMUX_CODEX_GENERATION_BUNDLE_SMOKE_ROOT="$bundle_root" \
-  PROJMUX_CODEX_GENERATION_OLD="/absolute/path/to/0.152.0/bin/codex" \
-  PROJMUX_CODEX_GENERATION_NEW="/absolute/path/to/0.152.1/bin/codex" \
+  PROJMUX_CODEX_GENERATION_OLD="/absolute/path/to/old/bin/codex" \
+  PROJMUX_CODEX_GENERATION_NEW="/absolute/path/to/new/bin/codex" \
+  PROJMUX_CODEX_GENERATION_OLD_VERSION="<old-version>" \
+  PROJMUX_CODEX_GENERATION_NEW_VERSION="<new-version>" \
   PROJMUX_CODEX_GENERATION_SOURCE_HOME="/absolute/path/to/source-codex-home" \
+  PROJMUX_CODEX_GENERATION_RECEIPT="/absolute/path/to/receipt.json" \
   go test ./internal/testutil/codexinstalled \
     -run '^TestInstalledIsolatedGenerationPoolQualification$' -count=1 -v
 ```
@@ -159,6 +181,24 @@ The root must be an empty child of the system temporary directory. The test
 uses two root-contained sockets, performs semantic readiness/completion/exit
 barriers rather than fixed sleeps, removes the leased source directories, and
 deletes only the exact owned root after both children and sockets are gone.
+
+The declared pair is the only operator input. Every evidence boolean and
+counter in the receipt stays measured by the harness, and `Validate` recomputes
+the verdict from that evidence, so editing either a counter or the verdict in
+the file makes it stop decoding rather than pass a stronger claim.
+
+The emitted `receipt.json` is exactly what goes into the `qualification` field
+of an `agent app-server upgrade plan|apply --request <absolute>.json`
+document. The upgrade request requires that receipt's version pair to match the
+exact current and target generation versions, so a receipt qualifies the one
+pair it names and no other.
+
+The `Generation Pool Qualification` workflow is the scheduled-lane counterpart.
+It is `workflow_dispatch`-only and takes the pair as inputs: the qualification
+needs a credentialed Codex state domain, which a GitHub-hosted runner does not
+have, so a nightly run could only ever report `unsupported`. The lane installs
+both declared versions, runs the same script, uploads the typed record, and is
+green only on a measured `pass`.
 
 Payload-free fresh create now has a stronger product boundary than the
 generation model: canonical CLI, shortcut, and default AI intent choose the

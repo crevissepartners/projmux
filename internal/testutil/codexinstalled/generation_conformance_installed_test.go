@@ -22,18 +22,27 @@ import (
 )
 
 const (
-	generationSmokeRootEnv  = "PROJMUX_CODEX_GENERATION_SMOKE_ROOT"
-	generationOldEnv        = "PROJMUX_CODEX_GENERATION_OLD"
-	generationNewEnv        = "PROJMUX_CODEX_GENERATION_NEW"
-	generationStateEnv      = "PROJMUX_CODEX_GENERATION_SOURCE_HOME"
-	generationBundleRootEnv = "PROJMUX_CODEX_GENERATION_BUNDLE_SMOKE_ROOT"
+	generationSmokeRootEnv   = "PROJMUX_CODEX_GENERATION_SMOKE_ROOT"
+	generationOldEnv         = "PROJMUX_CODEX_GENERATION_OLD"
+	generationNewEnv         = "PROJMUX_CODEX_GENERATION_NEW"
+	generationOldVersionEnv  = "PROJMUX_CODEX_GENERATION_OLD_VERSION"
+	generationNewVersionEnv  = "PROJMUX_CODEX_GENERATION_NEW_VERSION"
+	generationStateEnv       = "PROJMUX_CODEX_GENERATION_SOURCE_HOME"
+	generationBundleRootEnv  = "PROJMUX_CODEX_GENERATION_BUNDLE_SMOKE_ROOT"
+	generationReceiptPathEnv = "PROJMUX_CODEX_GENERATION_RECEIPT"
 )
 
-// TestInstalledIsolatedGenerationPoolQualification is the fixed 0.152.0 /
-// 0.152.1 Phase 0 conformance gate. It is opt-in because it uses the installed
-// Codex service and performs two bounded, minimal canary turns. The fixture
-// owns only its explicit /tmp root, private sockets, child processes, and copied
-// state. It neither discovers nor mutates the ambient/default daemon or tmux.
+// TestInstalledIsolatedGenerationPoolQualification is the declared-pair Phase 0
+// conformance gate. The pair under test is declared through
+// PROJMUX_CODEX_GENERATION_OLD_VERSION / _NEW_VERSION and its two absolute
+// executables through PROJMUX_CODEX_GENERATION_OLD / _NEW; each binary must
+// report the version declared for it before anything is measured, and the
+// canonical receipt is written to PROJMUX_CODEX_GENERATION_RECEIPT. The pair is
+// the only declared input: every evidence boolean and counter below stays
+// measured by this fixture. It is opt-in because it uses the installed Codex
+// service and performs two bounded, minimal canary turns. The fixture owns only
+// its explicit /tmp root, private sockets, child processes, and copied state. It
+// neither discovers nor mutates the ambient/default daemon or tmux.
 func TestInstalledIsolatedGenerationPoolQualification(t *testing.T) {
 	root, enabled, err := SmokeRoot(generationSmokeRootEnv)
 	if err != nil {
@@ -45,8 +54,16 @@ func TestInstalledIsolatedGenerationPoolQualification(t *testing.T) {
 	if err := validateInheritedEnvironment(); err != nil {
 		t.Fatal(err)
 	}
-	oldBinary := exactGenerationBinary(t, generationOldEnv, "0.152.0")
-	newBinary := exactGenerationBinary(t, generationNewEnv, "0.152.1")
+	pair, err := DeclaredGenerationPair(os.Getenv(generationOldVersionEnv), os.Getenv(generationNewVersionEnv))
+	if err != nil {
+		t.Fatal(err)
+	}
+	receiptPath := filepath.Clean(strings.TrimSpace(os.Getenv(generationReceiptPathEnv)))
+	if !filepath.IsAbs(receiptPath) {
+		t.Fatalf("%s must be absolute", generationReceiptPathEnv)
+	}
+	oldBinary := exactGenerationBinary(t, generationOldEnv, pair.Old)
+	newBinary := exactGenerationBinary(t, generationNewEnv, pair.New)
 	stateSource := filepath.Clean(strings.TrimSpace(os.Getenv(generationStateEnv)))
 	if !filepath.IsAbs(stateSource) {
 		t.Fatalf("%s must be absolute", generationStateEnv)
@@ -97,8 +114,8 @@ func TestInstalledIsolatedGenerationPoolQualification(t *testing.T) {
 	ledger.recordFilesystem(pathWithin(root, stateDomain), "shared-auth-config")
 
 	protocol := codexbundle.ProtocolRange{Min: 2, Max: 2}
-	oldLease := leaseInstalledBundle(t, filepath.Join(bundleRoot, "bundle-store"), oldBinary, "0.152.0", protocol)
-	newLease := leaseInstalledBundle(t, filepath.Join(bundleRoot, "bundle-store"), newBinary, "0.152.1", protocol)
+	oldLease := leaseInstalledBundle(t, filepath.Join(bundleRoot, "bundle-store"), oldBinary, pair.Old, protocol)
+	newLease := leaseInstalledBundle(t, filepath.Join(bundleRoot, "bundle-store"), newBinary, pair.New, protocol)
 	ledger.recordFilesystem(pathWithin(bundleRoot, oldLease.Root) && pathWithin(bundleRoot, newLease.Root), "bundle-leases")
 	bundleDriftRefused, protocolMismatchRefused := true, true
 	for _, lease := range []codexbundle.Lease{oldLease, newLease} {
@@ -168,8 +185,8 @@ func TestInstalledIsolatedGenerationPoolQualification(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	oldRef := metadata.CodexEndpointRef{StateDomainID: "state-domain-qualification", EndpointGenerationID: "g-0.152.0"}
-	newRef := metadata.CodexEndpointRef{StateDomainID: "state-domain-qualification", EndpointGenerationID: "g-0.152.1"}
+	oldRef := metadata.CodexEndpointRef{StateDomainID: "state-domain-qualification", EndpointGenerationID: "g-" + pair.Old}
+	newRef := metadata.CodexEndpointRef{StateDomainID: "state-domain-qualification", EndpointGenerationID: "g-" + pair.New}
 	if decision := codexgeneration.ApplySuccessorResume(oldRef, newRef, false, true, func() {
 		_, _ = newClient.ResumeThread(ctx, oldThread.ThreadID, workspace, nil)
 	}); decision != codexgeneration.ResumeOwnerStillLive {
@@ -215,14 +232,14 @@ func TestInstalledIsolatedGenerationPoolQualification(t *testing.T) {
 		CrossThreadWrites: crossThreadWrites, StoreCorruptions: storeCorruptions, LiveOwnerResumeWrites: liveOwnerResumeWrites,
 		OldStoppedBeforeResume: true, PersistedResumeSnapshot: true,
 		SharedAuthConfigPrivate:   sharedConfigPrivate(t, stateDomain),
-		BundleSourceRemovalLaunch: bundleLaunches && bundleVersionTuple == "0.152.0/0.152.1",
+		BundleSourceRemovalLaunch: bundleLaunches && bundleVersionTuple == pair.Old+"/"+pair.New,
 		BundleDriftRefused:        bundleDriftRefused, ProtocolMismatchRefused: protocolMismatchRefused, AmbientMutations: ambientMutations,
 	}
-	result := codexgeneration.EvaluateQualification(codexgeneration.VersionPair{Old: "0.152.0", New: "0.152.1"}, evidence)
-	if result.Verdict != codexgeneration.VerdictYes {
-		t.Fatalf("generation qualification: %+v", result)
-	}
-	raw, err := result.JSON()
+	result := codexgeneration.EvaluateQualification(pair, evidence)
+	// The receipt is emitted before the verdict is asserted: a refusal is
+	// exactly the outcome a consumer needs on disk, and the emitted bytes are
+	// the same ones an upgrade request embeds verbatim.
+	raw, err := EmitGenerationQualificationReceipt(receiptPath, result)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,7 +247,10 @@ func TestInstalledIsolatedGenerationPoolQualification(t *testing.T) {
 	if err != nil || reopened != result {
 		t.Fatalf("content-free receipt reopen=%+v err=%v", reopened, err)
 	}
-	t.Logf("generation-qualification=%s", raw)
+	t.Logf("generation-qualification=%s receipt=%s", raw, receiptPath)
+	if result.Verdict != codexgeneration.VerdictYes {
+		t.Fatalf("generation qualification: %+v", result)
+	}
 
 	if err := os.RemoveAll(root); err != nil {
 		t.Fatal(err)
