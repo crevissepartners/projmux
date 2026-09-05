@@ -619,6 +619,7 @@ rollout fallback, and a read response can never substitute a different id.
 | `PROJMUX_SESSIONSTATE_DEBUG` | When non-empty, quiet autosave surfaces suppressed session-state errors to stderr. |
 | `PROJMUX_FOCUS_DEBUG` | When non-empty, `projmux focus` prints one telemetry line to stderr. |
 | `PROJMUX_INSTALLER` | Installer source hint used by update flows. npm installs set this automatically; advanced release installs can set `github-release`. |
+| `PROJMUX_RELEASE_CHANNEL` | Release channel the update judgment is made against, orthogonal to `PROJMUX_INSTALLER`. Only an exact `rc` opts in; unset, empty, and unrecognised values all mean the default `stable` channel, which never sees a prerelease. An rc install is answered with whichever of the stable and rc lines is newer, so it returns to stable as soon as that line ships. |
 | `PROJMUX_SHELL_UPDATE_CHECK_TIMEOUT_MS` | Timeout in milliseconds for the best-effort release check attempted by `projmux shell` when the update cache is missing or stale. Invalid, zero, or negative values use the default. |
 
 ## Welcome State

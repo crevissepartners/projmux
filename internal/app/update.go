@@ -42,6 +42,11 @@ const (
 	// channels: what is the newest version a user of this channel can install
 	// right now.
 	updateNPMRegistryURL = "https://registry.npmjs.org/projmux"
+	// updateReleaseListURL is the rc channel's GitHub authority. releases/latest
+	// is defined to skip prereleases, so it can never answer for a channel that
+	// must see them; the list carries the stable line as well, which is what
+	// lets one request answer "newest of stable and rc".
+	updateReleaseListURL = "https://api.github.com/repos/crevissepartners/projmux/releases?per_page=30"
 
 	updateMaxCompressedBytes   int64 = 64 << 20
 	updateMaxTarBytes          int64 = 256 << 20
@@ -59,6 +64,23 @@ const (
 	updateSourceGitHubRelease = "github-release"
 	updateSourceNPMRegistry   = "npm-registry"
 )
+
+// The release channels an update judgment can be made against.
+//
+// This axis is orthogonal to the install path above: every install path can be
+// judged on either channel, and the two are combined rather than merged. The
+// default is stable, and it is the default in the strong sense — an unset, an
+// empty, and an unrecognised value all mean stable, so no configuration error
+// can silently opt an install into prereleases.
+const (
+	updateReleaseChannelStable = "stable"
+	updateReleaseChannelRC     = "rc"
+)
+
+// updateReleaseChannelEnv is the opt-in switch for the rc channel. It mirrors
+// PROJMUX_INSTALLER: an explicit value selects the axis, and the resolver seam
+// on updateCommand is what a stored setting will drive later.
+const updateReleaseChannelEnv = "PROJMUX_RELEASE_CHANNEL"
 
 var errUpdateTarTooLarge = errors.New("release archive exceeded extracted byte limit")
 
@@ -81,9 +103,16 @@ type updateCommand struct {
 	client      updateHTTPClient
 	apiURL      string
 	npmURL      string
-	executable  func() (string, error)
-	lookPath    func(string) (string, error)
-	runExternal func(name string, args []string, stdout, stderr io.Writer) error
+	releasesURL string
+	// releaseChannelSource resolves the opted-in release channel. It is a seam
+	// rather than a plain field so the stored Settings toggle can own the value
+	// without the judgment having to know where it was persisted; when it is
+	// unset the environment answers, and when that is unset the answer is
+	// stable.
+	releaseChannelSource func() string
+	executable           func() (string, error)
+	lookPath             func(string) (string, error)
+	runExternal          func(name string, args []string, stdout, stderr io.Writer) error
 	// probeVersion reads the raw `projmux version` output of one exact
 	// executable. It is deliberately a separate seam from runExternal: the
 	// probe is a reading, not one of the staged apply commands, so it must
@@ -108,7 +137,12 @@ type updateCache struct {
 	// Source names the availability authority this answer came from. It is
 	// additive: a cache written before channel-aware judgment existed carries
 	// no source, and every such cache was necessarily a GitHub release answer.
-	Source      string    `json:"source,omitempty"`
+	Source string `json:"source,omitempty"`
+	// Channel names the release channel this answer was judged on. It is
+	// additive in the same way Source is: the field is omitted for the default
+	// channel, so every cache written before the axis existed — and every cache
+	// a default install writes now — reads back as stable.
+	Channel     string    `json:"release_channel,omitempty"`
 	TagName     string    `json:"tag_name"`
 	Name        string    `json:"name,omitempty"`
 	HTMLURL     string    `json:"html_url,omitempty"`
@@ -122,6 +156,7 @@ type updateStatus struct {
 	CheckedAt      *time.Time      `json:"checked_at,omitempty"`
 	CacheState     string          `json:"cache_state"`
 	SourceName     string          `json:"availability_source"`
+	ReleaseChannel string          `json:"release_channel"`
 	UpdateState    string          `json:"update_state"`
 	Installer      updateInstaller `json:"installer"`
 	CachePath      string          `json:"cache_path"`
@@ -137,6 +172,8 @@ type githubRelease struct {
 	Name        string               `json:"name"`
 	HTMLURL     string               `json:"html_url"`
 	PublishedAt time.Time            `json:"published_at"`
+	Draft       bool                 `json:"draft"`
+	Prerelease  bool                 `json:"prerelease"`
 	Assets      []githubReleaseAsset `json:"assets"`
 }
 
@@ -154,6 +191,7 @@ func newUpdateCommand() *updateCommand {
 		client:       &http.Client{Timeout: updateHTTPTimeout},
 		apiURL:       updateReleaseURL,
 		npmURL:       updateNPMRegistryURL,
+		releasesURL:  updateReleaseListURL,
 		executable:   resolveExecutablePath,
 		lookPath:     exec.LookPath,
 		runExternal:  runUpdateExternal,
@@ -753,6 +791,36 @@ func (c *updateCommand) npmRegistryAPIURL() string {
 	return updateNPMRegistryURL
 }
 
+func (c *updateCommand) releaseListAPIURL() string {
+	if c.releasesURL != "" {
+		return c.releasesURL
+	}
+	return updateReleaseListURL
+}
+
+// normalizeUpdateReleaseChannel maps any raw value onto the axis.
+//
+// Only an exact opt-in reaches the rc channel. Everything else — unset, empty,
+// misspelled, or a channel a future version knows and this one does not — is
+// stable, because the failure this ordering prevents is an install being shown
+// prereleases it never asked for.
+func normalizeUpdateReleaseChannel(raw string) string {
+	if strings.EqualFold(strings.TrimSpace(raw), updateReleaseChannelRC) {
+		return updateReleaseChannelRC
+	}
+	return updateReleaseChannelStable
+}
+
+func (c *updateCommand) releaseChannel() string {
+	if c.releaseChannelSource != nil {
+		return normalizeUpdateReleaseChannel(c.releaseChannelSource())
+	}
+	if c.getenv != nil {
+		return normalizeUpdateReleaseChannel(c.getenv(updateReleaseChannelEnv))
+	}
+	return updateReleaseChannelStable
+}
+
 // availabilitySourceForInstaller maps an install channel to the authority that
 // can answer "is there a newer version I can install".
 //
@@ -801,8 +869,29 @@ func (cache updateCache) availabilitySource() string {
 	return updateSourceGitHubRelease
 }
 
-// loadUsableCache returns the cached answer only when it came from the source
-// this install must be judged against.
+// releaseChannel reports which channel this cached answer was judged on.
+//
+// An omitted field is the default channel, not an unknown one: that is what a
+// cache written before the axis existed carries, and what a default install
+// writes today, so reading it as stable keeps the unchanged channel from being
+// forced through a needless refetch.
+func (cache updateCache) releaseChannel() string {
+	return normalizeUpdateReleaseChannel(cache.Channel)
+}
+
+// updateCacheChannelField is the value stored for a channel.
+//
+// The default channel stores nothing, which keeps the on-disk shape of a
+// default install byte-identical to the one written before this axis existed.
+func updateCacheChannelField(channel string) string {
+	if normalizeUpdateReleaseChannel(channel) == updateReleaseChannelRC {
+		return updateReleaseChannelRC
+	}
+	return ""
+}
+
+// loadUsableCache returns the cached answer only when it came from the
+// (install path, release channel) pair this install must be judged against.
 //
 // A cache from another channel is not stale; it answers a different question.
 // Ageing it out would leave a GitHub answer driving an npm install for up to
@@ -814,6 +903,12 @@ func (c *updateCommand) loadUsableCache() (updateCache, bool, error) {
 		return updateCache{}, false, err
 	}
 	if cache.availabilitySource() != c.availabilitySource() {
+		return updateCache{}, false, nil
+	}
+	// The cache key is the pair, not either half. A fresh rc answer is not a
+	// stale stable answer, it is an answer to a different question, so a
+	// mismatch on this axis is discarded exactly as a source mismatch is.
+	if cache.releaseChannel() != c.releaseChannel() {
 		return updateCache{}, false, nil
 	}
 	return cache, true, nil
@@ -880,6 +975,7 @@ func (c *updateCommand) status() (updateStatus, error) {
 			CurrentVersion: version.String(),
 			CacheState:     "unknown",
 			SourceName:     c.availabilitySource(),
+			ReleaseChannel: c.releaseChannel(),
 			UpdateState:    "unknown",
 			Installer:      c.detectInstaller(),
 			CachePath:      path,
@@ -905,7 +1001,7 @@ func (c *updateCommand) refreshCacheIfNeeded(ctx context.Context) error {
 
 func (c *updateCommand) fetchAndSaveLatestAvailability(ctx context.Context) (updateCache, error) {
 	source := c.availabilitySource()
-	cache, err := c.fetchLatestAvailability(ctx, source)
+	cache, err := c.fetchLatestAvailability(ctx, source, c.releaseChannel())
 	if err != nil {
 		return updateCache{}, err
 	}
@@ -923,9 +1019,9 @@ func (c *updateCommand) fetchAndSaveLatestAvailability(ctx context.Context) (upd
 // Both branches go through the same c.client, so the request timeout and the
 // redirect ceiling the shell gate already budgets for apply unchanged to the
 // npm channel.
-func (c *updateCommand) fetchLatestAvailability(ctx context.Context, source string) (updateCache, error) {
+func (c *updateCommand) fetchLatestAvailability(ctx context.Context, source, channel string) (updateCache, error) {
 	if source == updateSourceNPMRegistry {
-		latest, err := c.fetchLatestNPMVersion(ctx)
+		latest, err := c.fetchLatestNPMVersion(ctx, channel)
 		if err != nil {
 			return updateCache{}, err
 		}
@@ -933,13 +1029,14 @@ func (c *updateCommand) fetchLatestAvailability(ctx context.Context, source stri
 			Version:   1,
 			CheckedAt: c.clock().UTC(),
 			Source:    updateSourceNPMRegistry,
+			Channel:   updateCacheChannelField(channel),
 			TagName:   updateTagFromNPMVersion(latest),
 			// The registry publishes no release notes, and the GitHub release
 			// for this version is still drafted while npm is ahead of it, so
 			// there is no notes URL to offer rather than a link that 404s.
 		}, nil
 	}
-	rel, err := c.fetchLatestRelease(ctx)
+	rel, err := c.fetchReleaseForChannel(ctx, channel)
 	if err != nil {
 		return updateCache{}, err
 	}
@@ -947,11 +1044,25 @@ func (c *updateCommand) fetchLatestAvailability(ctx context.Context, source stri
 		Version:     1,
 		CheckedAt:   c.clock().UTC(),
 		Source:      updateSourceGitHubRelease,
+		Channel:     updateCacheChannelField(channel),
 		TagName:     strings.TrimSpace(rel.TagName),
 		Name:        strings.TrimSpace(rel.Name),
 		HTMLURL:     strings.TrimSpace(rel.HTMLURL),
 		PublishedAt: rel.PublishedAt.UTC(),
 	}, nil
+}
+
+// fetchReleaseForChannel picks the GitHub authority the channel is entitled to.
+//
+// The stable channel keeps releases/latest untouched: GitHub excludes drafts
+// and prereleases from it by definition, which is why a default install cannot
+// see an rc even in principle. The rc channel cannot use that endpoint at all
+// for the same reason, so it reads the release list instead.
+func (c *updateCommand) fetchReleaseForChannel(ctx context.Context, channel string) (githubRelease, error) {
+	if normalizeUpdateReleaseChannel(channel) == updateReleaseChannelRC {
+		return c.fetchNewestReleaseIncludingPrereleases(ctx)
+	}
+	return c.fetchLatestRelease(ctx)
 }
 
 // updateTagFromNPMVersion restores the leading "v" the registry drops, so one
@@ -982,6 +1093,7 @@ func (c *updateCommand) statusFromCache(cache updateCache) (updateStatus, error)
 		CheckedAt:      &checked,
 		CacheState:     cacheState,
 		SourceName:     cache.availabilitySource(),
+		ReleaseChannel: cache.releaseChannel(),
 		UpdateState:    compareUpdateState(version.String(), cache.TagName),
 		Installer:      c.detectInstaller(),
 		CachePath:      path,
@@ -1015,20 +1127,108 @@ func (c *updateCommand) fetchLatestRelease(ctx context.Context) (githubRelease, 
 	return rel, nil
 }
 
+// fetchNewestReleaseIncludingPrereleases answers the rc channel from the
+// release list.
+//
+// "Newest" is decided by semver precedence rather than by the list order,
+// because the list is ordered by creation and a patch on an older line can be
+// published after an rc. That is also what makes one request enough for the
+// contract "newest of stable and rc": both lines are in this list, so the
+// moment the stable release of a line lands it outranks that line's rc and an
+// opted-in install is offered the stable version.
+//
+// Drafts are skipped. A drafted release has no downloadable asset yet, so
+// offering it would be offering an update that cannot be applied.
+func (c *updateCommand) fetchNewestReleaseIncludingPrereleases(ctx context.Context) (githubRelease, error) {
+	if c.client == nil {
+		return githubRelease{}, errors.New("update check: HTTP client is not configured")
+	}
+	url := c.releaseListAPIURL()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return githubRelease{}, fmt.Errorf("update check: build release list request: %w", err)
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "projmux/"+version.String())
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return githubRelease{}, fmt.Errorf("update check: fetch release list: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return githubRelease{}, fmt.Errorf("update check: GitHub release list request returned status %d", resp.StatusCode)
+	}
+	var releases []githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&releases); err != nil {
+		return githubRelease{}, fmt.Errorf("update check: parse release list: %w", err)
+	}
+	var (
+		newest    githubRelease
+		newestVer updateSemver
+		found     bool
+	)
+	for _, rel := range releases {
+		if rel.Draft {
+			continue
+		}
+		candidate, ok := parseUpdateSemver(rel.TagName)
+		if !ok {
+			continue
+		}
+		if !found || compareUpdateSemver(newestVer, candidate) < 0 {
+			newest, newestVer, found = rel, candidate, true
+		}
+	}
+	if !found {
+		return githubRelease{}, errors.New("update check: GitHub release list did not include a published release")
+	}
+	return newest, nil
+}
+
 // npmPackageDocument is the slice of the registry packument this judgment
-// needs. dist-tags.latest is what `npm install -g projmux@latest` resolves, so
-// it is the only answer that matches what the apply command will actually do.
+// needs. dist-tags.latest is what `npm install -g projmux@latest` resolves, and
+// dist-tags.rc is the pointer the rc channel publishes, so the whole map is
+// kept rather than one entry: both channels are answered from one response.
 type npmPackageDocument struct {
 	DistTags map[string]string `json:"dist-tags"`
 }
 
-func (c *updateCommand) fetchLatestNPMVersion(ctx context.Context) (string, error) {
+// fetchLatestNPMVersion answers one channel from the dist-tags the registry
+// publishes.
+//
+// The rc channel costs no extra request: the abbreviated packument the stable
+// judgment already fetches carries every dist-tag, so reading dist-tags.rc
+// alongside dist-tags.latest keeps the shell gate's request budget unchanged.
+func (c *updateCommand) fetchLatestNPMVersion(ctx context.Context, channel string) (string, error) {
+	tags, err := c.fetchNPMDistTags(ctx)
+	if err != nil {
+		return "", err
+	}
+	latest := strings.TrimSpace(tags["latest"])
+	if normalizeUpdateReleaseChannel(channel) == updateReleaseChannelRC {
+		// Newest of the two pointers, so an rc install rejoins the stable line
+		// as soon as that line's release lands rather than being stranded on a
+		// prerelease that nothing supersedes.
+		newest := newerUpdateVersion(latest, strings.TrimSpace(tags["rc"]))
+		if newest == "" {
+			return "", errors.New("update check: npm registry response did not include dist-tags.latest or dist-tags.rc")
+		}
+		return newest, nil
+	}
+	if latest == "" {
+		return "", errors.New("update check: npm registry response did not include dist-tags.latest")
+	}
+	return latest, nil
+}
+
+func (c *updateCommand) fetchNPMDistTags(ctx context.Context) (map[string]string, error) {
 	if c.client == nil {
-		return "", errors.New("update check: HTTP client is not configured")
+		return nil, errors.New("update check: HTTP client is not configured")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.npmRegistryAPIURL(), nil)
 	if err != nil {
-		return "", fmt.Errorf("update check: build npm registry request: %w", err)
+		return nil, fmt.Errorf("update check: build npm registry request: %w", err)
 	}
 	// The abbreviated packument carries dist-tags without the full version
 	// history, which keeps the response small enough for the shell gate budget
@@ -1038,21 +1238,17 @@ func (c *updateCommand) fetchLatestNPMVersion(ctx context.Context) (string, erro
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("update check: fetch npm dist-tags: %w", err)
+		return nil, fmt.Errorf("update check: fetch npm dist-tags: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("update check: npm registry request returned status %d", resp.StatusCode)
+		return nil, fmt.Errorf("update check: npm registry request returned status %d", resp.StatusCode)
 	}
 	var doc npmPackageDocument
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
-		return "", fmt.Errorf("update check: parse npm registry response: %w", err)
+		return nil, fmt.Errorf("update check: parse npm registry response: %w", err)
 	}
-	latest := strings.TrimSpace(doc.DistTags["latest"])
-	if latest == "" {
-		return "", errors.New("update check: npm registry response did not include dist-tags.latest")
-	}
-	return latest, nil
+	return doc.DistTags, nil
 }
 
 func findReleaseAsset(rel githubRelease, goos, goarch string) (githubReleaseAsset, error) {
@@ -1630,6 +1826,14 @@ func writeUpdateStatusText(w io.Writer, st updateStatus) error {
 	if _, err := fmt.Fprintf(w, "  source:    %s\n", updateAvailabilitySourceLabel(st.SourceName)); err != nil {
 		return err
 	}
+	// The default channel prints no channel row. Naming it would be new text in
+	// a report that every existing install reads, and the axis is only worth a
+	// line once it has been moved off its default.
+	if normalizeUpdateReleaseChannel(st.ReleaseChannel) == updateReleaseChannelRC {
+		if _, err := fmt.Fprintf(w, "  channel:   %s\n", updateReleaseChannelRC); err != nil {
+			return err
+		}
+	}
 	if _, err := fmt.Fprintf(w, "  installer: %s - %s\n", st.Installer.Source, st.Installer.Note); err != nil {
 		return err
 	}
@@ -1670,10 +1874,10 @@ func compareUpdateState(current, latest string) string {
 	if strings.TrimSpace(latest) == "" {
 		return "unknown"
 	}
-	c, cok := parseUpdateVersion(current)
-	l, lok := parseUpdateVersion(latest)
+	c, cok := parseUpdateSemver(current)
+	l, lok := parseUpdateSemver(latest)
 	if cok && lok {
-		switch compareVersionParts(c, l) {
+		switch compareUpdateSemver(c, l) {
 		case -1:
 			return "update_available"
 		case 0:
@@ -1688,10 +1892,23 @@ func compareUpdateState(current, latest string) string {
 	return "unknown"
 }
 
-var updateVersionPattern = regexp.MustCompile(`^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?`)
+// updateVersionPattern captures the numeric core and, when present, the
+// prerelease identifiers that follow it.
+//
+// The suffix used to be discarded, which read v0.15.0-rc.1 and v0.15.0 as the
+// same version. That is the whole defect the rc channel trips over: an rc
+// install saw its own line's stable release as "current" and could never leave
+// the prerelease line, and rc.1 saw rc.2 the same way.
+var updateVersionPattern = regexp.MustCompile(`^v?(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-([0-9A-Za-z.-]+))?`)
 
-func parseUpdateVersion(raw string) ([3]int, bool) {
-	var out [3]int
+// updateSemver is a version ordered by semver precedence.
+type updateSemver struct {
+	core       [3]int
+	prerelease []string
+}
+
+func parseUpdateSemver(raw string) (updateSemver, bool) {
+	var out updateSemver
 	match := updateVersionPattern.FindStringSubmatch(strings.TrimSpace(raw))
 	if match == nil {
 		return out, false
@@ -1704,9 +1921,100 @@ func parseUpdateVersion(raw string) ([3]int, bool) {
 		if err != nil {
 			return out, false
 		}
-		out[i-1] = n
+		out.core[i-1] = n
+	}
+	if suffix := match[4]; suffix != "" {
+		out.prerelease = strings.Split(suffix, ".")
 	}
 	return out, true
+}
+
+// parseUpdateVersion reads just the numeric core.
+//
+// It is kept as its own reading because the callers that build a tag from a
+// version, or only ask whether a line of output is a version at all, have no
+// use for prerelease precedence.
+func parseUpdateVersion(raw string) ([3]int, bool) {
+	parsed, ok := parseUpdateSemver(raw)
+	return parsed.core, ok
+}
+
+// compareUpdateSemver orders two versions by semver precedence.
+//
+// Beyond the numeric core the rule is the one the old comparison lacked: a
+// version carrying prerelease identifiers ranks below the same core without
+// them, so 0.15.0 supersedes 0.15.0-rc.2, and two prereleases of one core are
+// compared identifier by identifier.
+func compareUpdateSemver(a, b updateSemver) int {
+	if core := compareVersionParts(a.core, b.core); core != 0 {
+		return core
+	}
+	switch {
+	case len(a.prerelease) == 0 && len(b.prerelease) == 0:
+		return 0
+	case len(a.prerelease) == 0:
+		return 1
+	case len(b.prerelease) == 0:
+		return -1
+	}
+	for i := 0; i < len(a.prerelease) && i < len(b.prerelease); i++ {
+		if cmp := compareUpdatePrereleaseIdentifier(a.prerelease[i], b.prerelease[i]); cmp != 0 {
+			return cmp
+		}
+	}
+	switch {
+	case len(a.prerelease) < len(b.prerelease):
+		return -1
+	case len(a.prerelease) > len(b.prerelease):
+		return 1
+	default:
+		return 0
+	}
+}
+
+// compareUpdatePrereleaseIdentifier orders one dot-separated identifier pair:
+// numeric identifiers compare numerically so rc.10 outranks rc.9, and a numeric
+// identifier ranks below an alphanumeric one.
+func compareUpdatePrereleaseIdentifier(a, b string) int {
+	an, aNumeric := strconv.Atoi(a)
+	bn, bNumeric := strconv.Atoi(b)
+	switch {
+	case aNumeric == nil && bNumeric == nil:
+		switch {
+		case an < bn:
+			return -1
+		case an > bn:
+			return 1
+		default:
+			return 0
+		}
+	case aNumeric == nil:
+		return -1
+	case bNumeric == nil:
+		return 1
+	default:
+		return strings.Compare(a, b)
+	}
+}
+
+// newerUpdateVersion returns whichever version string is newer by semver
+// precedence. An empty or unparsable candidate never wins, so a registry that
+// publishes only one of the two pointers still yields that one.
+func newerUpdateVersion(a, b string) string {
+	av, aok := parseUpdateSemver(a)
+	bv, bok := parseUpdateSemver(b)
+	switch {
+	case !aok && !bok:
+		return ""
+	case !bok:
+		return strings.TrimSpace(a)
+	case !aok:
+		return strings.TrimSpace(b)
+	case compareUpdateSemver(av, bv) < 0:
+		return strings.TrimSpace(b)
+	default:
+		return strings.TrimSpace(a)
+	}
 }
 
 func compareVersionParts(a, b [3]int) int {

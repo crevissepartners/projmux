@@ -1975,3 +1975,521 @@ func TestShellGateStaysSilentWhenTheAvailabilitySourceFails(t *testing.T) {
 		})
 	}
 }
+
+// updateCommandForChannel builds a command on one exact (install path, release
+// channel) pair. The channel is set through the resolver seam rather than the
+// environment so the fixture states the axis it is testing.
+func updateCommandForChannel(t *testing.T, now time.Time, installer, channel string) (*updateCommand, string) {
+	t.Helper()
+	cmd, cacheDir := updateCommandForInstaller(t, now, installer)
+	cmd.releasesURL = "https://example.invalid/releases"
+	cmd.releaseChannelSource = func() string { return channel }
+	return cmd, cacheDir
+}
+
+// updateChannelResponder serves the three authorities a channel can ask.
+//
+// Every endpoint left empty is a trap rather than an empty answer: a channel
+// that asks an authority it is not entitled to fails the test at the request,
+// which is what pins "the default channel never even looks at a prerelease".
+func updateChannelResponder(t *testing.T, cmd *updateCommand, latestTag string, distTags map[string]string, releases []string) *http.Client {
+	t.Helper()
+	return &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		body := ""
+		switch req.URL.String() {
+		case cmd.releaseAPIURL():
+			if latestTag == "" {
+				t.Fatalf("unexpected releases/latest request for a channel that must not ask it")
+			}
+			body = fmt.Sprintf(`{"tag_name":%q,"name":%q,"html_url":"https://github.com/crevissepartners/projmux/releases/tag/%s","published_at":"2026-09-05T10:00:00Z"}`, latestTag, latestTag, latestTag)
+		case cmd.releaseListAPIURL():
+			if len(releases) == 0 {
+				t.Fatalf("unexpected release list request for a channel that must not ask it")
+			}
+			body = "[" + strings.Join(releases, ",") + "]"
+		case cmd.npmRegistryAPIURL():
+			if len(distTags) == 0 {
+				t.Fatalf("unexpected npm registry request for a channel that must not ask it")
+			}
+			encoded, err := json.Marshal(distTags)
+			if err != nil {
+				t.Fatalf("json.Marshal() error = %v", err)
+			}
+			body = fmt.Sprintf(`{"dist-tags":%s}`, encoded)
+		default:
+			t.Fatalf("unexpected availability request to %s", req.URL.String())
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+}
+
+func updateReleaseListEntry(tag string, prerelease, draft bool) string {
+	return fmt.Sprintf(`{"tag_name":%q,"name":%q,"html_url":"https://github.com/crevissepartners/projmux/releases/tag/%s","published_at":"2026-09-05T10:00:00Z","prerelease":%t,"draft":%t}`,
+		tag, tag, tag, prerelease, draft)
+}
+
+// TestDefaultReleaseChannelNeverSeesAPrerelease is acceptance 1 of the release
+// channel axis, for both install paths at once: an rc exists on npm as
+// dist-tags.rc and on GitHub as a prerelease Release, and a default install
+// neither reports it nor offers `u`.
+//
+// The negative half is structural rather than numeric. The npm judgment is
+// handed the rc pointer and must ignore it, and the GitHub judgment fails the
+// test outright if it so much as requests the endpoint that lists prereleases.
+func TestDefaultReleaseChannelNeverSeesAPrerelease(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	stable := testCurrentVersionTag(t)
+	rc := "v0.99.0-rc.1"
+
+	t.Run("npm", func(t *testing.T) {
+		t.Parallel()
+
+		cmd, _ := updateCommandForChannel(t, now, "npm", updateReleaseChannelStable)
+		cmd.client = updateChannelResponder(t, cmd, "", map[string]string{
+			"latest": strings.TrimPrefix(stable, "v"),
+			"rc":     strings.TrimPrefix(rc, "v"),
+		}, nil)
+
+		st := refreshedUpdateStatus(t, cmd)
+		if st.ReleaseChannel != updateReleaseChannelStable {
+			t.Fatalf("ReleaseChannel = %q, want %q", st.ReleaseChannel, updateReleaseChannelStable)
+		}
+		if st.LatestVersion != stable {
+			t.Fatalf("LatestVersion = %q, want the stable dist-tag %q", st.LatestVersion, stable)
+		}
+		if strings.Contains(st.LatestVersion, "-") {
+			t.Fatalf("LatestVersion = %q, want no prerelease on the default channel", st.LatestVersion)
+		}
+		if shouldPromptShellUpdate(st) {
+			t.Fatalf("shouldPromptShellUpdate() = true, want no offer while only an rc is newer")
+		}
+	})
+
+	t.Run("github-release", func(t *testing.T) {
+		t.Parallel()
+
+		cmd, _ := updateCommandForChannel(t, now, "github-release", updateReleaseChannelStable)
+		// releases is left empty on purpose: asking it is the failure.
+		cmd.client = updateChannelResponder(t, cmd, stable, nil, nil)
+
+		st := refreshedUpdateStatus(t, cmd)
+		if st.LatestVersion != stable {
+			t.Fatalf("LatestVersion = %q, want %q", st.LatestVersion, stable)
+		}
+		if strings.Contains(st.LatestVersion, "-") {
+			t.Fatalf("LatestVersion = %q, want no prerelease on the default channel", st.LatestVersion)
+		}
+		if shouldPromptShellUpdate(st) {
+			t.Fatalf("shouldPromptShellUpdate() = true, want no offer on the default channel")
+		}
+	})
+}
+
+// TestPrereleaseVersionsCompareByPrecedence is acceptance 2 and 3 at the exact
+// place they were broken: the judgment used to drop the prerelease suffix, so
+// an rc install read its own line's stable release and its own line's next rc
+// as "current" and could never move.
+func TestPrereleaseVersionsCompareByPrecedence(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		current string
+		latest  string
+		want    string
+	}{
+		{name: "rc advances to the next rc", current: "0.15.0-rc.1", latest: "v0.15.0-rc.2", want: "update_available"},
+		{name: "rc numbering is numeric, not lexical", current: "0.15.0-rc.9", latest: "v0.15.0-rc.10", want: "update_available"},
+		{name: "rc returns to its own line's stable", current: "0.15.0-rc.2", latest: "v0.15.0", want: "update_available"},
+		{name: "stable is never superseded by its own rc", current: "0.15.0", latest: "v0.15.0-rc.2", want: "ahead"},
+		{name: "the same rc is current", current: "0.15.0-rc.2", latest: "v0.15.0-rc.2", want: "current"},
+		{name: "stable advances to a newer line's rc", current: "0.14.2", latest: "v0.15.0-rc.1", want: "update_available"},
+		{name: "an rc of a newer line outranks an older stable", current: "0.15.0-rc.1", latest: "v0.14.2", want: "ahead"},
+		{name: "stable to stable is unchanged", current: "0.14.2", latest: "v0.15.0", want: "update_available"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			if got := compareUpdateState(tc.current, tc.latest); got != tc.want {
+				t.Fatalf("compareUpdateState(%q, %q) = %q, want %q", tc.current, tc.latest, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestRCChannelAnswersWithTheNewerOfStableAndRC is the other half of acceptance
+// 3: opting in must not strand the install on the prerelease line. Both
+// authorities carry the two lines together, so the moment the stable release
+// lands it is the answer an opted-in install gets.
+func TestRCChannelAnswersWithTheNewerOfStableAndRC(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	tests := []struct {
+		name     string
+		distTags map[string]string
+		releases []string
+		want     string
+	}{
+		{
+			name:     "the rc is ahead of the published stable",
+			distTags: map[string]string{"latest": "0.14.2", "rc": "0.99.0-rc.2"},
+			releases: []string{
+				updateReleaseListEntry("v0.99.0-rc.2", true, false),
+				updateReleaseListEntry("v0.14.2", false, false),
+			},
+			want: "v0.99.0-rc.2",
+		},
+		{
+			name:     "the stable of the same line has landed",
+			distTags: map[string]string{"latest": "0.99.0", "rc": "0.99.0-rc.2"},
+			releases: []string{
+				updateReleaseListEntry("v0.99.0", false, false),
+				updateReleaseListEntry("v0.99.0-rc.2", true, false),
+			},
+			want: "v0.99.0",
+		},
+		{
+			name:     "a drafted rc is not installable and is skipped",
+			distTags: map[string]string{"latest": "0.99.0-rc.1", "rc": "0.99.0-rc.1"},
+			releases: []string{
+				updateReleaseListEntry("v0.99.0-rc.3", true, true),
+				updateReleaseListEntry("v0.99.0-rc.1", true, false),
+			},
+			want: "v0.99.0-rc.1",
+		},
+		{
+			name:     "the newest is not the most recently created",
+			distTags: map[string]string{"latest": "0.99.0", "rc": "0.15.0-rc.1"},
+			releases: []string{
+				updateReleaseListEntry("v0.15.0-rc.1", true, false),
+				updateReleaseListEntry("v0.99.0", false, false),
+			},
+			want: "v0.99.0",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			for _, installer := range []string{"npm", "github-release"} {
+				t.Run(installer, func(t *testing.T) {
+					t.Parallel()
+
+					cmd, _ := updateCommandForChannel(t, now, installer, updateReleaseChannelRC)
+					distTags, releases := tc.distTags, tc.releases
+					if installer == "npm" {
+						releases = nil
+					} else {
+						distTags = nil
+					}
+					cmd.client = updateChannelResponder(t, cmd, "", distTags, releases)
+
+					st := refreshedUpdateStatus(t, cmd)
+					if st.ReleaseChannel != updateReleaseChannelRC {
+						t.Fatalf("ReleaseChannel = %q, want %q", st.ReleaseChannel, updateReleaseChannelRC)
+					}
+					if st.LatestVersion != tc.want {
+						t.Fatalf("LatestVersion = %q, want %q", st.LatestVersion, tc.want)
+					}
+					if st.UpdateState != "update_available" || !shouldPromptShellUpdate(st) {
+						t.Fatalf("state = %q, prompt = %v, want an offer on the rc channel", st.UpdateState, shouldPromptShellUpdate(st))
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestRCChannelReadsBothNPMDistTagsInOneRequest holds the budget the shell gate
+// depends on. The abbreviated packument already carries every dist-tag, so
+// opting in must read the rc pointer out of the response the stable judgment
+// was already making, not add a second call.
+func TestRCChannelReadsBothNPMDistTagsInOneRequest(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	cmd, _ := updateCommandForChannel(t, now, "npm", updateReleaseChannelRC)
+	requests := 0
+	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if req.URL.String() != cmd.npmRegistryAPIURL() {
+			t.Fatalf("unexpected availability request to %s", req.URL.String())
+		}
+		if got := req.Header.Get("Accept"); got != "application/vnd.npm.install-v1+json" {
+			t.Fatalf("Accept = %q, want the abbreviated packument", got)
+		}
+		requests++
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"dist-tags":{"latest":"0.14.2","rc":"0.99.0-rc.1"}}`)),
+			Header:     make(http.Header),
+		}, nil
+	})}
+
+	st := refreshedUpdateStatus(t, cmd)
+	if requests != 1 {
+		t.Fatalf("npm registry requests = %d, want exactly 1", requests)
+	}
+	if st.LatestVersion != "v0.99.0-rc.1" {
+		t.Fatalf("LatestVersion = %q, want v0.99.0-rc.1", st.LatestVersion)
+	}
+}
+
+// TestUpdateCacheIsKeyedByInstallPathAndReleaseChannel is acceptance 4. A cache
+// from the other channel is not stale, it answers a different question, so
+// freshness must not let it drive the gate.
+func TestUpdateCacheIsKeyedByInstallPathAndReleaseChannel(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+
+	t.Run("an rc install does not reuse a fresh stable answer", func(t *testing.T) {
+		t.Parallel()
+
+		cmd, cacheDir := updateCommandForChannel(t, now, "npm", updateReleaseChannelRC)
+		writeUpdateCacheFixture(t, cacheDir, updateCache{
+			Version:   1,
+			CheckedAt: now.Add(-time.Minute),
+			Source:    updateSourceNPMRegistry,
+			TagName:   "v0.14.2",
+		})
+		cmd.client = updateChannelResponder(t, cmd, "", map[string]string{
+			"latest": "0.14.2",
+			"rc":     "0.99.0-rc.1",
+		}, nil)
+
+		st := refreshedUpdateStatus(t, cmd)
+		if st.LatestVersion != "v0.99.0-rc.1" {
+			t.Fatalf("LatestVersion = %q, want the refetched rc answer", st.LatestVersion)
+		}
+		cache := readUpdateCacheFixture(t, cacheDir)
+		if cache.Channel != updateReleaseChannelRC {
+			t.Fatalf("cache Channel = %q, want %q", cache.Channel, updateReleaseChannelRC)
+		}
+	})
+
+	t.Run("a default install does not reuse a fresh rc answer", func(t *testing.T) {
+		t.Parallel()
+
+		cmd, cacheDir := updateCommandForChannel(t, now, "npm", updateReleaseChannelStable)
+		writeUpdateCacheFixture(t, cacheDir, updateCache{
+			Version:   1,
+			CheckedAt: now.Add(-time.Minute),
+			Source:    updateSourceNPMRegistry,
+			Channel:   updateReleaseChannelRC,
+			TagName:   "v0.99.0-rc.1",
+		})
+		cmd.client = updateChannelResponder(t, cmd, "", map[string]string{
+			"latest": "0.14.2",
+			"rc":     "0.99.0-rc.1",
+		}, nil)
+
+		st := refreshedUpdateStatus(t, cmd)
+		if st.LatestVersion != "v0.14.2" {
+			t.Fatalf("LatestVersion = %q, want the refetched stable answer", st.LatestVersion)
+		}
+		if shouldPromptShellUpdate(st) {
+			t.Fatalf("shouldPromptShellUpdate() = true, want the rc answer discarded outright")
+		}
+	})
+
+	t.Run("a default install writes no channel field", func(t *testing.T) {
+		t.Parallel()
+
+		cmd, cacheDir := updateCommandForChannel(t, now, "npm", updateReleaseChannelStable)
+		cmd.client = updateChannelResponder(t, cmd, "", map[string]string{"latest": "0.14.2"}, nil)
+
+		if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+			t.Fatalf("refreshCacheIfNeeded() error = %v", err)
+		}
+		raw, err := os.ReadFile(filepath.Join(cacheDir, updateCacheFileName))
+		if err != nil {
+			t.Fatalf("ReadFile() error = %v", err)
+		}
+		if strings.Contains(string(raw), "release_channel") {
+			t.Fatalf("cache file = %s, want the default channel to keep the pre-axis shape", raw)
+		}
+	})
+
+	t.Run("a cache written before the axis existed reads as the default channel", func(t *testing.T) {
+		t.Parallel()
+
+		cmd, cacheDir := updateCommandForChannel(t, now, "npm", updateReleaseChannelStable)
+		cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+			t.Fatalf("a fresh pre-axis cache must not trigger a refetch, got %s", req.URL.String())
+			return nil, nil
+		})}
+		writeUpdateCacheFixture(t, cacheDir, updateCache{
+			Version:   1,
+			CheckedAt: now.Add(-time.Minute),
+			Source:    updateSourceNPMRegistry,
+			TagName:   "v0.14.2",
+		})
+
+		if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+			t.Fatalf("refreshCacheIfNeeded() error = %v", err)
+		}
+		st, err := cmd.status()
+		if err != nil {
+			t.Fatalf("status() error = %v", err)
+		}
+		if st.ReleaseChannel != updateReleaseChannelStable || st.CacheState != "fresh" {
+			t.Fatalf("channel/cache = %q/%q, want stable/fresh", st.ReleaseChannel, st.CacheState)
+		}
+	})
+}
+
+// TestUpdateStatusJSONRevealsTheReleaseChannel is the observable surface the
+// axis is judged from, and the default half of it is the smoke check: a default
+// install's latest_version can never carry a prerelease suffix.
+func TestUpdateStatusJSONRevealsTheReleaseChannel(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		channel     string
+		distTags    map[string]string
+		wantLatest  string
+		wantChannel string
+	}{
+		{
+			channel:     updateReleaseChannelStable,
+			distTags:    map[string]string{"latest": "0.14.2", "rc": "0.99.0-rc.1"},
+			wantLatest:  "v0.14.2",
+			wantChannel: updateReleaseChannelStable,
+		},
+		{
+			channel:     updateReleaseChannelRC,
+			distTags:    map[string]string{"latest": "0.14.2", "rc": "0.99.0-rc.1"},
+			wantLatest:  "v0.99.0-rc.1",
+			wantChannel: updateReleaseChannelRC,
+		},
+	} {
+		t.Run(tc.channel, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _ := updateCommandForChannel(t, now, "npm", tc.channel)
+			cmd.client = updateChannelResponder(t, cmd, "", tc.distTags, nil)
+			if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+				t.Fatalf("refreshCacheIfNeeded() error = %v", err)
+			}
+
+			var stdout bytes.Buffer
+			if err := cmd.Run([]string{"status", "--json"}, &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v", err)
+			}
+			var st updateStatus
+			if err := json.Unmarshal(stdout.Bytes(), &st); err != nil {
+				t.Fatalf("json.Unmarshal error = %v\noutput=%s", err, stdout.String())
+			}
+			if st.ReleaseChannel != tc.wantChannel {
+				t.Fatalf("release_channel = %q, want %q", st.ReleaseChannel, tc.wantChannel)
+			}
+			if st.LatestVersion != tc.wantLatest {
+				t.Fatalf("latest_version = %q, want %q", st.LatestVersion, tc.wantLatest)
+			}
+			if tc.wantChannel == updateReleaseChannelStable && strings.Contains(st.LatestVersion, "-") {
+				t.Fatalf("latest_version = %q, want no prerelease on the default channel", st.LatestVersion)
+			}
+		})
+	}
+}
+
+// TestReleaseChannelDefaultsToStableForEveryUnrecognisedValue pins the strong
+// reading of the default: no misconfiguration opts an install into prereleases.
+func TestReleaseChannelDefaultsToStableForEveryUnrecognisedValue(t *testing.T) {
+	t.Parallel()
+
+	for _, raw := range []string{"", "   ", "stable", "STABLE", "beta", "rc.1", "true", "1"} {
+		if got := normalizeUpdateReleaseChannel(raw); got != updateReleaseChannelStable {
+			t.Fatalf("normalizeUpdateReleaseChannel(%q) = %q, want %q", raw, got, updateReleaseChannelStable)
+		}
+	}
+	for _, raw := range []string{"rc", "RC", "  rc  "} {
+		if got := normalizeUpdateReleaseChannel(raw); got != updateReleaseChannelRC {
+			t.Fatalf("normalizeUpdateReleaseChannel(%q) = %q, want %q", raw, got, updateReleaseChannelRC)
+		}
+	}
+}
+
+// TestReleaseChannelEnvOptsIn covers the resolution order: the seam a stored
+// setting will drive wins, and the environment answers until it exists.
+func TestReleaseChannelEnvOptsIn(t *testing.T) {
+	t.Parallel()
+
+	cmd, _ := testUpdateCommand(t, time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC))
+	if got := cmd.releaseChannel(); got != updateReleaseChannelStable {
+		t.Fatalf("releaseChannel() = %q, want %q with nothing set", got, updateReleaseChannelStable)
+	}
+	cmd.getenv = func(name string) string {
+		if name == updateReleaseChannelEnv {
+			return "rc"
+		}
+		return ""
+	}
+	if got := cmd.releaseChannel(); got != updateReleaseChannelRC {
+		t.Fatalf("releaseChannel() = %q, want %q from %s", got, updateReleaseChannelRC, updateReleaseChannelEnv)
+	}
+	cmd.releaseChannelSource = func() string { return updateReleaseChannelStable }
+	if got := cmd.releaseChannel(); got != updateReleaseChannelStable {
+		t.Fatalf("releaseChannel() = %q, want the resolver to win over the environment", got)
+	}
+}
+
+// TestUpdateStatusTextNamesOnlyANonDefaultChannel keeps the default channel's
+// report byte-for-byte what it was: the axis is worth a line only once it has
+// been moved off its default.
+func TestUpdateStatusTextNamesOnlyANonDefaultChannel(t *testing.T) {
+	t.Parallel()
+
+	base := updateStatus{
+		CurrentVersion: "0.14.2",
+		LatestVersion:  "v0.14.2",
+		CacheState:     "fresh",
+		SourceName:     updateSourceNPMRegistry,
+		UpdateState:    "current",
+		Installer:      updateInstaller{Source: "npm", Note: "npm shim"},
+		CachePath:      "/cache/update.json",
+	}
+
+	var stable bytes.Buffer
+	stableStatus := base
+	stableStatus.ReleaseChannel = updateReleaseChannelStable
+	if err := writeUpdateStatusText(&stable, stableStatus); err != nil {
+		t.Fatalf("writeUpdateStatusText() error = %v", err)
+	}
+	if strings.Contains(stable.String(), "channel:") {
+		t.Fatalf("default channel report = %q, want no channel row", stable.String())
+	}
+
+	var rc bytes.Buffer
+	rcStatus := base
+	rcStatus.ReleaseChannel = updateReleaseChannelRC
+	if err := writeUpdateStatusText(&rc, rcStatus); err != nil {
+		t.Fatalf("writeUpdateStatusText() error = %v", err)
+	}
+	if !strings.Contains(rc.String(), "channel:   rc") {
+		t.Fatalf("rc channel report = %q, want a channel row", rc.String())
+	}
+}
+
+// refreshedUpdateStatus runs the check the shell gate runs and returns the
+// judgment it produced.
+func refreshedUpdateStatus(t *testing.T, cmd *updateCommand) updateStatus {
+	t.Helper()
+	if err := cmd.refreshCacheIfNeeded(context.Background()); err != nil {
+		t.Fatalf("refreshCacheIfNeeded() error = %v", err)
+	}
+	st, err := cmd.status()
+	if err != nil {
+		t.Fatalf("status() error = %v", err)
+	}
+	return st
+}
