@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -806,5 +807,411 @@ func TestBrokerDisconnectEndsTheEpochBeforeAnyReplacementBarrier(t *testing.T) {
 	defer cancel()
 	if _, err := session.Open(ctx); err == nil {
 		t.Fatal("a session re-served the barrier of a connection that is gone")
+	}
+}
+
+// codexOverflowFixture is the deterministic consumer-side backlog overflow
+// harness for C-2.
+//
+// The overflow it produces is the real one: a real broker runtime, a real
+// binding session, a real epoch whose bounded stream fills while the observer
+// above it is held inside one sink write, and therefore the real
+// `end(backlog-overflow)` + `resync` pair. Nothing about the storm that
+// produced the field sample is simulated except its size, and no live process
+// is involved.
+//
+// It also owns the two knobs the recovery seam turns on: whether the exact
+// binding stops being readable, and whether that is permanent.
+type codexOverflowFixture struct {
+	*recordingCodexLifecycleSink
+
+	stallMu sync.Mutex
+	stall   bool
+	stalled chan struct{}
+	resume  chan struct{}
+
+	bindingMu   sync.Mutex
+	armOn       string
+	armed       bool
+	falseLeft   int
+	falseAlways bool
+}
+
+func newCodexOverflowFixture() *codexOverflowFixture {
+	return &codexOverflowFixture{
+		recordingCodexLifecycleSink: newRecordingCodexLifecycleSink(),
+		stalled:                     make(chan struct{}),
+		resume:                      make(chan struct{}),
+	}
+}
+
+// stallNextApply holds the observer inside its next semantic sink write. That
+// is the whole stalled consumer: the event loop is a single goroutine, so
+// while it is parked here it reads nothing from the epoch's bounded stream.
+func (f *codexOverflowFixture) stallNextApply() {
+	f.stallMu.Lock()
+	f.stall = true
+	f.stallMu.Unlock()
+}
+
+func (f *codexOverflowFixture) releaseApply() { close(f.resume) }
+
+// loseBindingOn arms the binding-read failure at the exact authority write it
+// names, so the seam is entered at a fixed point in the loop rather than at a
+// wall-clock moment.
+func (f *codexOverflowFixture) loseBindingOn(authority string, samples int, always bool) {
+	f.bindingMu.Lock()
+	f.armOn, f.falseLeft, f.falseAlways = authority, samples, always
+	f.bindingMu.Unlock()
+}
+
+func (f *codexOverflowFixture) Apply(identity codexLifecycleIdentity, projection codexLifecycleProjection) error {
+	f.stallMu.Lock()
+	stall := f.stall
+	f.stall = false
+	f.stallMu.Unlock()
+	if stall {
+		close(f.stalled)
+		<-f.resume
+	}
+	return f.recordingCodexLifecycleSink.Apply(identity, projection)
+}
+
+func (f *codexOverflowFixture) SetAuthority(identity codexLifecycleIdentity, source, epoch, reason string) error {
+	err := f.recordingCodexLifecycleSink.SetAuthority(identity, source, epoch, reason)
+	f.bindingMu.Lock()
+	if f.armOn != "" && f.armOn == source+":"+reason {
+		f.armOn, f.armed = "", true
+	}
+	f.bindingMu.Unlock()
+	return err
+}
+
+func (f *codexOverflowFixture) BindingCurrent(identity codexLifecycleIdentity) bool {
+	f.bindingMu.Lock()
+	if f.armed {
+		if f.falseAlways {
+			f.bindingMu.Unlock()
+			return false
+		}
+		if f.falseLeft > 0 {
+			f.falseLeft--
+			f.bindingMu.Unlock()
+			return false
+		}
+	}
+	f.bindingMu.Unlock()
+	return f.recordingCodexLifecycleSink.BindingCurrent(identity)
+}
+
+// codexOverflowRun is one live observer under one live broker session.
+type codexOverflowRun struct {
+	endpoint   *brokerTestEndpoint
+	session    *codexBrokerObserverSession
+	journal    *recordingCodexObserverJournal
+	startups   chan codexObserverStartupResult
+	done       chan error
+	cancel     context.CancelFunc
+	opens      *atomic.Int64
+	openErr    *atomic.Pointer[string]
+	firstEpoch string
+}
+
+// lastOpenError renders the most recent replacement-open failure, so a run
+// that never reaches a new epoch names why instead of only saying it did not.
+func (r codexOverflowRun) lastOpenError() string {
+	if rendered := r.openErr.Load(); rendered != nil {
+		return *rendered
+	}
+	return "<none>"
+}
+
+// startCodexOverflowObserver wires the real broker session under the real
+// observer loop and returns once the first epoch is ready.
+func startCodexOverflowObserver(t *testing.T, threadID string, sink *codexOverflowFixture) codexOverflowRun {
+	t.Helper()
+	endpoint := newBrokerTestEndpoint()
+	endpoint.respondWith("thread/read", `{"thread":{"id":"`+threadID+`","status":{"type":"active"}}}`)
+	discovery, _ := startBrokerRuntimeForTest(t, endpoint)
+
+	// One sibling Agent holds its own binding on the same shared connection for
+	// the whole run. It is what the fleet always looks like, and it keeps this
+	// fixture measuring the thing it is named for: without it the overflowing
+	// binding is the broker's last one, so the resync also retires the upstream
+	// connection, and the replacement Open would be waiting on a full endpoint
+	// reconnect rather than on this Phase's recovery path.
+	sibling := newCodexBrokerObserverSessionOn(brokerTestIdentity(threadID+"-sibling"), "", nil, discovery, nil)
+	t.Cleanup(func() { _ = sibling.Close() })
+	openBrokerEpoch(t, sibling)
+
+	identity := brokerTestIdentity(threadID)
+	session := newCodexBrokerObserverSessionOn(identity, "", nil, discovery, nil)
+	t.Cleanup(func() { _ = session.Close() })
+
+	journal := &recordingCodexObserverJournal{}
+	startups := make(chan codexObserverStartupResult, 8)
+	opens := &atomic.Int64{}
+	openErr := &atomic.Pointer[string]{}
+	observer := codexNativeObserver{
+		identity: identity, sink: sink,
+		delay: time.Millisecond, maxDelay: 2 * time.Millisecond, bindingTimeout: 100 * time.Millisecond,
+		open: func(ctx context.Context) (codexLifecycleConnection, error) {
+			opens.Add(1)
+			connection, err := session.Open(ctx)
+			if err != nil {
+				rendered := err.Error()
+				openErr.Store(&rendered)
+			}
+			return connection, err
+		},
+		transitions:   newCodexObserverLogJournal(journal.append, func() time.Time { return time.Unix(0, 0).UTC() }),
+		reportStartup: func(result codexObserverStartupResult) { startups <- result },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	done := make(chan error, 1)
+	go func() { done <- observer.Run(ctx) }()
+
+	first := ""
+	select {
+	case result := <-startups:
+		if result.Status != codexObserverStartupReady || result.Epoch == "" {
+			t.Fatalf("first startup result = %+v, want a ready epoch", result)
+		}
+		first = result.Epoch
+	case <-time.After(20 * time.Second):
+		t.Fatal("the observer never reached its first ready epoch")
+	}
+	return codexOverflowRun{
+		endpoint: endpoint, session: session, journal: journal, startups: startups,
+		done: done, cancel: cancel, opens: opens, openErr: openErr, firstEpoch: first,
+	}
+}
+
+// overflowTheConsumerBacklog parks the observer inside one sink write, then
+// overruns the epoch's bounded stream and waits until the session has actually
+// retired that binding. The wait is on the resync itself, not on a duration,
+// so the overflow is a fact of the fixture rather than a race with it.
+func overflowTheConsumerBacklog(t *testing.T, run codexOverflowRun, sink *codexOverflowFixture, threadID string) {
+	t.Helper()
+	sink.stallNextApply()
+	emit := func(seq int) {
+		run.endpoint.emit(codexappserver.Notification{
+			Method: "thread/status/changed",
+			Params: json.RawMessage(fmt.Sprintf(`{"threadId":%q,"status":{"type":"active"},"seq":%d}`, threadID, seq)),
+		})
+	}
+	emit(-1)
+	select {
+	case <-sink.stalled:
+	case <-time.After(20 * time.Second):
+		t.Fatal("the observer never stalled inside a sink write")
+	}
+	// Just past the app-side bound. Overrunning by more would put pressure on
+	// the broker queue and the remote binding channel too, and the cause under
+	// test is specifically the consumer-side one.
+	for index := range codexBrokerObserverBacklog + 8 {
+		emit(index)
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		run.session.mu.Lock()
+		retired := run.session.binding == nil && run.session.current == nil
+		run.session.mu.Unlock()
+		if retired {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the bounded stream never overflowed into a resync")
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	sink.releaseApply()
+}
+
+// TestObserverRecoversIntoANewEpochAfterConsumerBacklogOverflow is the C-2
+// Guarantee, pinned end to end instead of assumed.
+//
+// It excludes two of the three candidate seams by observation rather than by
+// argument. Seam 3 - "resync clears state and nobody calls Open again" - is
+// excluded because the open counter advances past the overflow. Seam 2 - "the
+// replacement Open keeps failing" - is excluded because that second Open
+// returns a barrier whose epoch label and ready authority are both published.
+// What remains, and what the next test owns, is the binding predicate.
+func TestObserverRecoversIntoANewEpochAfterConsumerBacklogOverflow(t *testing.T) {
+	const threadID = "thread-overflow-recovers"
+	sink := newCodexOverflowFixture()
+	run := startCodexOverflowObserver(t, threadID, sink)
+	openedBefore := run.opens.Load()
+
+	overflowTheConsumerBacklog(t, run, sink, threadID)
+
+	deadline := time.After(20 * time.Second)
+	var recovered codexObserverStartupResult
+	for recovered.Status != codexObserverStartupReady {
+		select {
+		case result := <-run.startups:
+			recovered = result
+		case err := <-run.done:
+			t.Fatalf("the observer stopped instead of recovering: err=%v authorities=%v records=%v",
+				err, sink.authoritySnapshot(), run.journal.snapshot())
+		case <-deadline:
+			t.Fatalf("no replacement epoch: authorities=%v lastOpen=%s records=%v",
+				sink.authoritySnapshot(), run.lastOpenError(), run.journal.snapshot())
+		}
+	}
+	if recovered.Epoch == run.firstEpoch {
+		t.Fatalf("the replacement epoch reused the overflowed label %q", run.firstEpoch)
+	}
+	run.cancel()
+	<-run.done
+
+	if run.opens.Load() <= openedBefore {
+		t.Fatalf("Open was not called again after the resync: %d then %d", openedBefore, run.opens.Load())
+	}
+	authorities := sink.authoritySnapshot()
+	want := []string{
+		codexAuthorityControlPlane + ":" + string(codexObserverReasonReady),
+		codexAuthorityInvalidating + ":" + string(codexObserverReasonBacklogOverflow),
+		codexAuthorityControlPlane + ":" + string(codexObserverReasonReady),
+	}
+	if len(authorities) < len(want) {
+		t.Fatalf("authority writes = %v, want at least %v", authorities, want)
+	}
+	for index, expected := range want {
+		if authorities[index] != expected {
+			t.Fatalf("authority write %d = %q, want %q (all: %v)", index, authorities[index], expected, authorities)
+		}
+	}
+	// The overflowed epoch's own transition triple names the consumer side. An
+	// overflow is not an endpoint suspension and must never be reported as one.
+	overflowRecords := []string{}
+	for _, entry := range run.journal.snapshot() {
+		if entry.Epoch == run.firstEpoch {
+			overflowRecords = append(overflowRecords, entry.Event+":"+string(entry.Reason))
+		}
+	}
+	wantRecords := []string{
+		string(codexObserverTransitionConnected) + ":" + string(codexObserverReasonReady),
+		string(codexObserverTransitionDisconnected) + ":" + string(codexObserverReasonBacklogOverflow),
+		string(codexObserverTransitionReconnecting) + ":" + string(codexObserverReasonBacklogOverflow),
+	}
+	if !slices.Equal(overflowRecords, wantRecords) {
+		t.Fatalf("the overflowed epoch's records = %v, want %v", overflowRecords, wantRecords)
+	}
+	// A recovering observer leaves no terminal record. That absence is half of
+	// the distinction the next test owns.
+	if reasons := journalReasons(run.journal.snapshot(), codexObserverTransitionStopped); len(reasons) != 0 {
+		t.Fatalf("a recovered observer recorded a terminal stop: %v", reasons)
+	}
+}
+
+// TestBacklogOverflowStopIsDistinguishableFromARecoveringInvalidating is the
+// C-2 Failure.Detection surface.
+//
+// When the exact binding stops being current at the overflow exit, the
+// recovery scheduler is right to stop: a replaced activation has its own
+// observer. What was wrong is that it stopped invisibly. The Pane keeps the
+// `invalidating|<epoch>|backlog-overflow` projection published just before,
+// SetAuthority refuses every later correction by design, and the pane-option
+// diagnostic renders that Pane with an `active` epoch status - byte-identical
+// to the pane in the test above that did recover. The terminal journal record
+// is the only place the two can be told apart, and this test owns it.
+func TestBacklogOverflowStopIsDistinguishableFromARecoveringInvalidating(t *testing.T) {
+	const threadID = "thread-overflow-stuck"
+	sink := newCodexOverflowFixture()
+	sink.loseBindingOn(codexAuthorityInvalidating+":"+string(codexObserverReasonBacklogOverflow), 0, true)
+	run := startCodexOverflowObserver(t, threadID, sink)
+
+	overflowTheConsumerBacklog(t, run, sink, threadID)
+
+	select {
+	case err := <-run.done:
+		if err != nil {
+			t.Fatalf("the terminal stop reported an error: %v", err)
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatalf("the observer neither recovered nor stopped: %v", run.journal.snapshot())
+	}
+
+	authorities := sink.authoritySnapshot()
+	last := authorities[len(authorities)-1]
+	if last != codexAuthorityInvalidating+":"+string(codexObserverReasonBacklogOverflow) {
+		t.Fatalf("the stuck Pane's last authority = %q, want the held overflow projection (all: %v)", last, authorities)
+	}
+	if slices.Contains(authorities, codexAuthorityHook+":"+string(codexObserverReasonBacklogOverflow)) {
+		t.Fatalf("a held overflow published provider-hook fallback: %v", authorities)
+	}
+
+	entries := run.journal.snapshot()
+	var stopped *aiIngestLogEntry
+	for index := range entries {
+		if entries[index].Event == string(codexObserverTransitionStopped) {
+			stopped = &entries[index]
+		}
+	}
+	if stopped == nil {
+		t.Fatalf("the terminal stop left no record, so it is indistinguishable from a recovering observer: %+v", entries)
+	}
+	if string(stopped.Reason) != string(codexObserverReasonBacklogOverflow) {
+		t.Fatalf("the terminal record renamed the cause: %+v", *stopped)
+	}
+	if stopped.Result != codexObserverTransitionStuckResult {
+		t.Fatalf("the terminal record result = %q, want %q", stopped.Result, codexObserverTransitionStuckResult)
+	}
+	if stopped.Epoch == "" || stopped.Pane == "" || stopped.ThreadID != threadID {
+		t.Fatalf("the terminal record lost its routing identity: %+v", *stopped)
+	}
+	// The record is the last word: a stopped observer never reconnects behind
+	// its own terminal record.
+	if entries[len(entries)-1].Event != string(codexObserverTransitionStopped) {
+		t.Fatalf("a transition followed the terminal stop: %+v", entries)
+	}
+}
+
+// TestBacklogOverflowRecoverySurvivesATransientBindingReadFailure is the
+// production defect this Phase found at candidate seam 1.
+//
+// BindingCurrent answers one false for two different questions: the binding
+// was replaced, and the binding could not be read right now. Its production
+// implementation returns false when loadRegistry fails and when the
+// `tmux show-options` invocation fails, neither of which is evidence that this
+// activation is gone. continueRecovery took its only non-cancel exit on a
+// single such sample, so one failed read during the reconnect window retired a
+// live activation for good and left its Pane on the invalidating projection
+// with no producer left to move it - the exact frozen shape the field sample
+// showed. The loop head has always waited out that window; the recovery
+// scheduler now makes the same bounded wait.
+func TestBacklogOverflowRecoverySurvivesATransientBindingReadFailure(t *testing.T) {
+	const threadID = "thread-overflow-blip"
+	sink := newCodexOverflowFixture()
+	// Three unreadable samples, then the same live binding reads normally.
+	sink.loseBindingOn(codexAuthorityInvalidating+":"+string(codexObserverReasonBacklogOverflow), 3, false)
+	run := startCodexOverflowObserver(t, threadID, sink)
+
+	overflowTheConsumerBacklog(t, run, sink, threadID)
+
+	deadline := time.After(20 * time.Second)
+	for {
+		select {
+		case result := <-run.startups:
+			if result.Status == codexObserverStartupReady {
+				run.cancel()
+				<-run.done
+				if reasons := journalReasons(run.journal.snapshot(), codexObserverTransitionStopped); len(reasons) != 0 {
+					t.Fatalf("a transient read failure recorded a terminal stop: %v", reasons)
+				}
+				return
+			}
+			if result.Status == codexObserverStartupStale {
+				t.Fatalf("a transient binding read failure retired a live activation: %v", run.journal.snapshot())
+			}
+		case err := <-run.done:
+			t.Fatalf("the observer stopped on a transient binding read failure: err=%v authorities=%v records=%v",
+				err, sink.authoritySnapshot(), run.journal.snapshot())
+		case <-deadline:
+			t.Fatalf("no replacement epoch after the blip: lastOpen=%s records=%v",
+				run.lastOpenError(), run.journal.snapshot())
+		}
 	}
 }

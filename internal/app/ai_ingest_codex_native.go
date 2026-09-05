@@ -333,6 +333,19 @@ type codexNativeObserver struct {
 	// current value, so without this an observer's connect/disconnect
 	// sequence is unobservable between two samples.
 	transitions codexObserverJournal
+	// recovery is the identity of the epoch loss the scheduler is currently
+	// recovering from. It is carried so a terminal recovery record can name
+	// the epoch and the cause that started it, which is the whole content of
+	// the distinction between a Pane that is still reconnecting and one that
+	// is stuck.
+	recovery codexObserverRecovery
+}
+
+// codexObserverRecovery names the lost epoch one recovery pass is working
+// back from.
+type codexObserverRecovery struct {
+	epochLabel string
+	reason     codexObserverReason
 }
 
 // journal appends one lifecycle transition to the durable sink, if one is
@@ -752,6 +765,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 		}
 		recovering = true
 		recoveryAttempts = 0
+		o.recovery = codexObserverRecovery{epochLabel: epochLabel, reason: exit.reason}
 		o.journal(codexObserverTransitionReconnecting, epochLabel, exit.reason)
 		if retry, recoveryErr := o.continueRecovery(ctx, recoveryAttempts); recoveryErr != nil {
 			return recoveryErr
@@ -809,8 +823,28 @@ func (o *codexNativeObserver) generationLifecycle() (coremetadata.CodexGeneratio
 // invalidating instead of being exposed to hook fallback, because the broker
 // beneath this loop is still reconnecting on its own capped backoff for as long
 // as the binding exists.
+//
+// The binding check is the same bounded wait the loop head makes, not a single
+// instantaneous sample. BindingCurrent folds two different answers into one
+// false: the binding was genuinely replaced, and the binding could not be read
+// right now - a Registry load that failed, or a tmux invocation that did. The
+// loop head has always tolerated the second for bindingTimeout; taking the
+// terminal exit on one sample here meant a transient read failure retired a
+// live activation permanently, leaving its Pane on the invalidating projection
+// this method was called after with no producer left to move it.
 func (o *codexNativeObserver) continueRecovery(ctx context.Context, attempts int) (bool, error) {
-	if !o.sink.BindingCurrent(o.identity) {
+	bindingTimeout := o.bindingTimeout
+	if bindingTimeout <= 0 {
+		bindingTimeout = codexObserverBindingTimeout
+	}
+	if !waitForCodexLifecycleBinding(ctx, o.sink, o.identity, bindingTimeout) {
+		if ctx.Err() == nil {
+			// The exact binding is provably gone, so no later transition can
+			// move this Pane and SetAuthority would refuse the write anyway.
+			// Recording the stop is what separates it from a Pane still
+			// reconnecting on the same invalidating projection.
+			o.journal(codexObserverTransitionStopped, o.recovery.epochLabel, o.recovery.reason)
+		}
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
 		return false, nil
 	}

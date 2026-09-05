@@ -888,6 +888,30 @@
   boundary on the shared `ai-ingest.log` sink: one record per
   (transition, reason) pair per window, with the suppressed count riding the
   next record so the flap rate stays readable.
+- `TestObserverRecoversIntoANewEpochAfterConsumerBacklogOverflow`,
+  `TestBacklogOverflowStopIsDistinguishableFromARecoveringInvalidating`, and
+  `TestBacklogOverflowRecoverySurvivesATransientBindingReadFailure` own
+  recovery after a consumer-side backlog overflow. All three drive the real
+  broker runtime, the real binding session, and the real observer loop: the
+  observer is held inside one sink write until its epoch's bounded stream
+  overruns, which is the actual `end(backlog-overflow)` plus `resync` pair
+  rather than an injected close cause. A sibling Agent holds its own binding on
+  the same shared connection throughout, because the overflowing binding being
+  the broker's last one retires the upstream connection and would make these
+  measure an endpoint reconnect instead. The first pins the guarantee - Open is
+  called again after the resync, the replacement barrier publishes a new epoch
+  label, and the overflowed epoch's records are exactly connected/ready,
+  disconnected/backlog-overflow, reconnecting/backlog-overflow. The second owns
+  the operator distinction: when the exact binding stops being current the
+  scheduler is right to stop, but the Pane keeps the
+  `invalidating|<epoch>|backlog-overflow` projection and `SetAuthority` refuses
+  every later correction, so `observer.stopped` with result `stuck` is the only
+  surface on which a stuck Pane differs from one still reconnecting on the same
+  projection. The third owns the defect behind that shape: `BindingCurrent`
+  returns false both for a replaced binding and for a Registry or `tmux` read
+  that merely failed, and the recovery scheduler took its only non-cancel exit
+  on a single such sample. It now makes the same bounded wait the loop head has
+  always made, so a transient read failure no longer retires a live activation.
 - `test/e2e/codex-lifecycle.sh` (C01) pins the exact disconnect token at its
   disconnect projection barrier and at the reconnect-gap hook comparison. It
   waited on the literal `disconnected` before, which was the bucket published
