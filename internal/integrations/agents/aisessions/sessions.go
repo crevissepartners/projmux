@@ -325,6 +325,7 @@ func discoverClaudeDir(dir, cwd string, depth int) []SessionMeta {
 			// them by withinTree below. requireCWD ensures we captured one.
 			scanOpts = sessionScanOptions{requireCWD: true, provider: AgentClaude}
 		}
+		observeClaudeScan(path)
 		details, ok := scanSessionJSONL(path, scanOpts)
 		if !ok {
 			continue
