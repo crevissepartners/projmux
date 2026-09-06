@@ -592,8 +592,9 @@ func TestLifecycleTransportAccountsForSimultaneouslyRetainedProjectorState(t *te
 	// All supported targets are 64-bit. This oracle deliberately uses literal
 	// ABI sizes rather than the production accounting constants: each live
 	// object owns one 24-byte slice header, 64 16-byte string slots, and four
-	// 16-byte interface slots. The fixed 96 KiB reserve independently covers
-	// the input/scalar/flags/summary state retained beside these object tables.
+	// 16-byte interface slots. The fixed 108 KiB reserve independently covers
+	// input/escaped-scalar/metadata/flags/management/summary state beside these
+	// object tables.
 	const (
 		liveObjects            = 32
 		objectKeySlots         = 64
@@ -604,18 +605,22 @@ func TestLifecycleTransportAccountsForSimultaneouslyRetainedProjectorState(t *te
 		objectManagedBytes     = sliceHeaderBytes + objectKeySlots*stringHeaderBytes + objectFieldSlots*interfaceHeaderBytes
 		allObjectManagedBytes  = liveObjects * objectManagedBytes
 		oldKeyOnlyBoundary     = (2 << 20) - (96 << 10)
-		fullStateKeyBoundary   = oldKeyOnlyBoundary - allObjectManagedBytes
+		currentAdmission       = (2 << 20) - (108 << 10)
+		fullStateKeyBoundary   = currentAdmission - allObjectManagedBytes
 		ownerLiteralLowerBound = oldKeyOnlyBoundary +
 			liveObjects*objectKeySlots*stringHeaderBytes + objectKeySlots*1_024 + objectKeySlots*stringHeaderBytes
 	)
 	if oldKeyOnlyBoundary != 1_998_848 || objectManagedBytes != 1_112 ||
-		allObjectManagedBytes != 35_584 || fullStateKeyBoundary != 1_963_264 ||
+		allObjectManagedBytes != 35_584 || currentAdmission != 1_986_560 || fullStateKeyBoundary != 1_950_976 ||
 		ownerLiteralLowerBound != 2_098_176 || ownerLiteralLowerBound-(2<<20) != 1_024 {
 		t.Fatal("independent retained-state oracle constants drifted")
 	}
-	if lifecycleRetainedInputReserveBytes != 8_192 || lifecycleRetainedScalarReserveBytes != 7_170 ||
-		lifecycleRetainedFlagsReserveBytes != 66_584 || lifecycleRetainedMetadataReserveBytes != 6_144 ||
-		lifecycleRetainedSummaryReserveBytes != 2_048 || lifecycleRetainedResidualReserveBytes != 8_166 {
+	if lifecycleRetainedInputReserveBytes != 8_192 || lifecycleRetainedEncodedStringBytes != 6_146 ||
+		lifecycleRetainedUnquoteBytes != 6_152 || lifecycleRetainedDecodedStringBytes != 6_143 ||
+		lifecycleRetainedScalarReserveBytes != 18_441 ||
+		lifecycleRetainedFlagsReserveBytes != 66_584 || lifecycleRetainedMetadataReserveBytes != 9_216 ||
+		lifecycleRetainedManagementBytes != 4_096 || lifecycleRetainedSummaryReserveBytes != 2_048 ||
+		lifecycleRetainedResidualReserveBytes != 2_015 || lifecycleRetainedReserve != 108<<10 {
 		t.Fatal("fixed retained-state reserve breakdown drifted")
 	}
 
@@ -658,8 +663,8 @@ func TestLifecycleTransportAccountsForSimultaneouslyRetainedProjectorState(t *te
 			// This strengthens the archived owner's key/flag layout with the
 			// scalar fields needed for a complete summary. Its key bodies are
 			// exactly the former admission boundary, so key-byte-only accounting
-			// admits it. The whole-state oracle is already 35,584 bytes over the
-			// fixed-reserve boundary before allocator/stack/RSS costs.
+			// admits it. The whole-state oracle exceeds the corrected admission
+			// boundary without relying on allocator, stack, whole-heap, or RSS costs.
 			ownerBoundaryVariant := []byte(lifecycleSimultaneousRetainedResponse(want.ThreadID, oldKeyOnlyBoundary))
 			if _, err := transport.project(ownerBoundaryVariant); !errors.Is(err, ErrProtocol) || !strings.Contains(err.Error(), "retained-state limit") {
 				t.Fatalf("old key-only boundary was not refused: %v", err)
@@ -671,7 +676,7 @@ func TestLifecycleTransportAccountsForSimultaneouslyRetainedProjectorState(t *te
 	// invalid fixture appear admissible. This mutation table ensures the
 	// boundary above depends on every term, rather than copying the product
 	// accounting helper into the expectation.
-	onePastOracle := fullStateKeyBoundary + 1 + allObjectManagedBytes + (96 << 10)
+	onePastOracle := fullStateKeyBoundary + 1 + allObjectManagedBytes + (108 << 10)
 	if onePastOracle != 2<<20+1 {
 		t.Fatalf("one-past oracle=%d", onePastOracle)
 	}
@@ -681,16 +686,240 @@ func TestLifecycleTransportAccountsForSimultaneouslyRetainedProjectorState(t *te
 		"object slice headers":   liveObjects * sliceHeaderBytes,
 		"projection field slots": liveObjects * objectFieldSlots * interfaceHeaderBytes,
 		"input buffers":          8_192,
-		"scalar work buffer":     7_170,
+		"scalar work buffer":     18_441,
 		"flag bodies and slice":  66_584,
-		"metadata scalar bodies": 6_144,
+		"metadata scalar bodies": 9_216,
+		"management state":       4_096,
 		"summary":                2_048,
-		"residual state":         8_166,
+		"residual state":         2_015,
 	} {
 		if mutated := onePastOracle - omitted; mutated > 2<<20 {
 			t.Fatalf("%s omission mutation stayed over cap: %d", name, mutated)
 		}
 	}
+}
+
+func TestLifecycleTransportReservesEscapedScalarBeforeValidation(t *testing.T) {
+	// This oracle is intentionally independent of the production reserve terms.
+	// At the boundary, 33 object containers (depths 0 through 32) and all prior
+	// decoded key bodies exactly fill admission. The next key has a 6,144-byte
+	// encoded interior with one escape: encoding/json therefore holds its 6,152-
+	// byte unquote buffer and 6,143-byte decoded body beside the 6,146-byte
+	// projector scratch before the 1 KiB decoded limit can refuse it.
+	const (
+		retainedCap             = 2 << 20
+		fixedReserve            = 108 << 10
+		liveObjects             = 33
+		objectManagedBytes      = 24 + 64*16 + 4*16
+		admittedKeyBodyBoundary = retainedCap - fixedReserve - liveObjects*objectManagedBytes
+		inputBuffers            = 8_192
+		projectorEncodedScratch = 6_146
+		jsonUnquoteTemporary    = 6_152
+		decodedBeforeValidation = 6_143
+		unescapedDecodedString  = 6_144
+		// Go 1.26.6 grows the unquoted token backing to 1,408 bytes before
+		// converting its maximum 1,024-byte token to a string; the anchored
+		// number regexp's one-pass machine contributes another 96 bytes.
+		unquotedTokenBacking = 1_408
+		unquotedTokenString  = 1_024
+		unquotedRegexpState  = 96
+		flagBodiesAndSlice   = 66_584
+		priorMetadataBodies  = 9_216
+		managementState      = 4_096
+		laterSummary         = 2_048
+		reserveResidual      = 2_015
+
+		// Exact or rounded-up 64-bit product descriptors. Object key-slice
+		// headers, their 64 string slots, and their four projection slots are
+		// charged separately through objectManagedBytes above.
+		projectorHeaderAndCounters = 112 // 6,256-byte projector minus its 6,146-byte scalar buffer, rounded to alignment
+		ownedClientDescriptor      = 112
+		websocketStreamDescriptor  = 56
+		bufioReaderDescriptor      = 88
+		websocketInputDescriptor   = 40  // 4,136-byte input minus its separately reserved 4,096-byte chunk
+		projectedValueWrappers     = 104 // RPC error 32 + latest turn 56 + turn-list result 16
+		metadataStringHeaders      = 9 * 16
+		currentDecodedStringHeader = 16
+		expectedThreadIdentity     = 256
+		peerStartIdentity          = 160
+		bufferedReadResultSlot     = 112
+
+		// These are deliberately rounded envelopes for bounded implementation
+		// machinery rather than allocator, stack, whole-heap, or RSS claims.
+		resultChannelAndClosureAllowance = 256
+		jsonDecoderAllowance             = 512
+		controlAndPongAllowance          = 512
+		cancellationTimerAllowance       = 512
+	)
+	if admittedKeyBodyBoundary != 1_949_864 {
+		t.Fatalf("escaped-scalar admitted key boundary=%d", admittedKeyBodyBoundary)
+	}
+	unquotedScalarUpper := projectorEncodedScratch + unquotedTokenBacking + unquotedTokenString + unquotedRegexpState
+	unescapedStringUpper := projectorEncodedScratch + unescapedDecodedString
+	escapedScalarUpper := projectorEncodedScratch + jsonUnquoteTemporary + decodedBeforeValidation
+	// One valid two-byte escape maximizes decoded length while forcing unquote.
+	// Malformed-UTF-8 decoder growth is unreachable because the projector rejects
+	// invalid UTF-8 before calling encoding/json.
+	if unquotedScalarUpper != 8_674 || unescapedStringUpper != 12_290 || escapedScalarUpper != 18_441 ||
+		unquotedScalarUpper >= escapedScalarUpper || unescapedStringUpper >= escapedScalarUpper {
+		t.Fatalf("scalar branch oracle unquoted=%d unescaped=%d escaped=%d",
+			unquotedScalarUpper, unescapedStringUpper, escapedScalarUpper)
+	}
+	managementProved := projectorHeaderAndCounters + ownedClientDescriptor + websocketStreamDescriptor +
+		bufioReaderDescriptor + websocketInputDescriptor + projectedValueWrappers +
+		metadataStringHeaders + currentDecodedStringHeader +
+		expectedThreadIdentity + peerStartIdentity + bufferedReadResultSlot +
+		resultChannelAndClosureAllowance + jsonDecoderAllowance + controlAndPongAllowance +
+		cancellationTimerAllowance
+	if managementProved != 2_992 || managementProved > managementState || managementState-managementProved != 1_104 {
+		t.Fatalf("management oracle proved=%d envelope=%d", managementProved, managementState)
+	}
+	workingUpper := inputBuffers + projectorEncodedScratch + jsonUnquoteTemporary +
+		decodedBeforeValidation + flagBodiesAndSlice + priorMetadataBodies + managementState
+	if workingUpper != 106_529 || workingUpper+laterSummary != 108_577 ||
+		fixedReserve-(workingUpper+laterSummary) != reserveResidual {
+		t.Fatalf("escaped-scalar reserve oracle working=%d conservative=%d", workingUpper, workingUpper+laterSummary)
+	}
+	onePastOracle := admittedKeyBodyBoundary + 1 + liveObjects*objectManagedBytes +
+		workingUpper + laterSummary + reserveResidual
+	if onePastOracle != retainedCap+1 {
+		t.Fatalf("escaped-scalar one-past oracle=%d", onePastOracle)
+	}
+	for name, omitted := range map[string]int{
+		"unquote temporary":                      jsonUnquoteTemporary,
+		"extra three metadata bodies":            3 * 1_024,
+		"active-object headers/projection slots": liveObjects * (24 + 4*16),
+		"management envelope":                    managementState,
+	} {
+		if mutated := onePastOracle - omitted; mutated > retainedCap {
+			t.Fatalf("%s omission mutation stayed over cap: %d", name, mutated)
+		}
+	}
+
+	for _, transport := range []struct {
+		name    string
+		project func([]byte) error
+	}{
+		{
+			name: "jsonl",
+			project: func(raw []byte) error {
+				_, _, err := projectLifecycleJSONL(t.Context(), raw, 1, "thread-escaped-reserve")
+				return err
+			},
+		},
+		{
+			name: "websocket",
+			project: func(raw []byte) error {
+				_, _, err := projectLifecycleWebSocket(t.Context(), serverWebSocketFrame(true, 0x1, raw), 1, "thread-escaped-reserve")
+				return err
+			},
+		},
+	} {
+		t.Run(transport.name, func(t *testing.T) {
+			boundary := []byte(lifecycleEscapedScalarReserveResponse(admittedKeyBodyBoundary))
+			if err := transport.project(boundary); !errors.Is(err, ErrProtocol) || !strings.Contains(err.Error(), "malformed lifecycle string") {
+				t.Fatalf("escaped-scalar boundary error=%v", err)
+			}
+
+			onePast := []byte(lifecycleEscapedScalarReserveResponse(admittedKeyBodyBoundary + 1))
+			if err := transport.project(onePast); !errors.Is(err, ErrProtocol) || !strings.Contains(err.Error(), "retained-state limit") {
+				t.Fatalf("escaped-scalar one-past error=%v", err)
+			}
+		})
+	}
+}
+
+func lifecycleEscapedScalarReserveResponse(targetKeyBytes int) string {
+	const (
+		ignoredObjects = lifecycleDepth - 3
+		fillerKeys     = (lifecycleObjectFields - 4) +
+			(lifecycleObjectFields - 1) +
+			(lifecycleObjectFields - 3) +
+			(lifecycleObjectFields - 3) +
+			(ignoredObjects-1)*(lifecycleObjectFields-1)
+		fixedKeyBytes = len("id") + len("jsonrpc") + len("error") + len("result") +
+			len("thread") + len("id") + len("turns") + len("status") +
+			len("type") + len("activeFlags") + len("n") + (ignoredObjects-1)*len("n")
+	)
+	fillerBytes := targetKeyBytes - fixedKeyBytes
+	baseLength, extra := fillerBytes/fillerKeys, fillerBytes%fillerKeys
+	if baseLength < len("k0000-") || baseLength+1 > lifecycleScalarBytes {
+		panic("escaped scalar reserve fixture cannot represent target")
+	}
+	nextKey := 0
+	longKey := func() string {
+		prefix := "k" + strconv.Itoa(nextKey) + "-"
+		length := baseLength
+		if nextKey < extra {
+			length++
+		}
+		nextKey++
+		return prefix + strings.Repeat("x", length-len(prefix))
+	}
+	fillerFields := func(count int) string {
+		var value strings.Builder
+		for index := range count {
+			if index > 0 {
+				value.WriteByte(',')
+			}
+			value.WriteString(strconv.Quote(longKey()))
+			value.WriteString(":0")
+		}
+		return value.String()
+	}
+	appendFields := func(prefix string, fillerCount int, suffix string) string {
+		var value strings.Builder
+		value.WriteByte('{')
+		if prefix != "" {
+			value.WriteString(prefix)
+		}
+		if fillerCount > 0 {
+			if prefix != "" {
+				value.WriteByte(',')
+			}
+			value.WriteString(fillerFields(fillerCount))
+		}
+		if suffix != "" {
+			if prefix != "" || fillerCount > 0 {
+				value.WriteByte(',')
+			}
+			value.WriteString(suffix)
+		}
+		value.WriteByte('}')
+		return value.String()
+	}
+
+	// One two-byte escape forces encoding/json's unquote allocation while the
+	// remaining literal bytes maximize the decoded body before validation.
+	escapedKey := `"\/` + strings.Repeat("x", lifecycleScalarBytes*6-2) + `"`
+	child := "{" + escapedKey + ":0}"
+	for range ignoredObjects - 1 {
+		child = appendFields("", lifecycleObjectFields-1, `"n":`+child)
+	}
+	flags := make([]string, lifecycleObjectFields)
+	for index := range flags {
+		prefix := fmt.Sprintf("%02d", index)
+		flags[index] = prefix + strings.Repeat("f", lifecycleScalarBytes-len(prefix))
+	}
+	flagJSON, err := json.Marshal(flags)
+	if err != nil {
+		panic(err)
+	}
+	metadata := func(prefix byte) string { return strings.Repeat(string(prefix), lifecycleScalarBytes) }
+	errorObject := `{"code":` + strconv.Quote(metadata('c')) + `,"message":` + strconv.Quote(metadata('m')) + `}`
+	turns := `[{"id":` + strconv.Quote(metadata('u')) + `,"status":` + strconv.Quote(metadata('v')) +
+		`,"startedAt":` + strconv.Quote(metadata('a')) + `}]`
+	status := appendFields(`"type":`+strconv.Quote(metadata('s'))+`,"activeFlags":`+string(flagJSON),
+		lifecycleObjectFields-3, `"n":`+child)
+	thread := appendFields(`"id":`+strconv.Quote(metadata('t'))+`,"turns":`+turns,
+		lifecycleObjectFields-3, `"status":`+status)
+	result := appendFields("", lifecycleObjectFields-1, `"thread":`+thread)
+	response := appendFields(`"id":`+strconv.Quote(metadata('i'))+`,"jsonrpc":`+strconv.Quote(metadata('j'))+
+		`,"error":`+errorObject, lifecycleObjectFields-4, `"result":`+result)
+	if nextKey != fillerKeys {
+		panic("escaped scalar reserve fixture key count drifted")
+	}
+	return response
 }
 
 func lifecycleSimultaneousRetainedResponse(threadID string, targetKeyBytes int) string {
