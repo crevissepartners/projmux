@@ -37,6 +37,43 @@ class DialogueCollectorTest(unittest.TestCase):
                               input="".join(json.dumps(row) + "\n" for row in rows),
                               text=True, capture_output=True, timeout=5, check=False)
 
+    def test_tool_usage_and_nested_secret_shapes_fail_before_disk(self):
+        assistant = dict(type="assistant", uuid="owned-assistant", session_id="owned-session",
+                         message=dict(role="assistant", content=[dict(type="text", text="READY.")]))
+        result = dict(type="result", subtype="success", is_error=False, session_id="owned-session", result="READY.")
+        for bad_usage in ({"server_tool_use": {"web_fetch_requests": 1, "web_search_requests": 0}},
+                          {"iterations": [{}]}, {"CLAUDE_CODE_MESSAGING_TOKEN": "DO_NOT_RETAIN"},
+                          {"input_tokens": "DO_NOT_RETAIN"}):
+            for event in (dict(result, usage=bad_usage), dict(assistant, message=dict(assistant["message"], usage=bad_usage))):
+                output = self.collect(self.rows + [event])
+                self.assertNotEqual(output.returncode, 0)
+                self.assertNotIn("DO_NOT_RETAIN", output.stdout + output.stderr)
+        self.assertNotEqual(self.collect(self.rows + [dict(result, structured_output={"token": "DO_NOT_RETAIN"})]).returncode, 0)
+        good = dict(input_tokens=1, output_tokens=1, iterations=[], server_tool_use=dict(web_fetch_requests=0, web_search_requests=0))
+        output = self.collect(self.rows + [dict(result, usage=good)])
+        self.assertEqual(output.returncode, 0, output.stderr)
+        self.assertEqual(json.loads(output.stdout.splitlines()[-1])["usage"], {})
+
+    def test_success_result_and_rate_metadata_are_validated_then_minimized(self):
+        rate = dict(type="rate_limit_event", uuid="owned-rate", session_id="owned-session", rate_limit_info=dict(
+            isUsingOverage=False, overageResetsAt=1, overageStatus="rejected", rateLimitType="five_hour", resetsAt=2,
+            status="allowed", unifiedWindows={"five_hour": dict(resetsAt=2, utilization=0.1), "seven_day": dict(resetsAt=3, utilization=0.2)}))
+        result = dict(type="result", subtype="success", is_error=False, session_id="owned-session", result="READY.",
+                      permission_denials=[], terminal_reason="completed", stop_reason="end_turn", api_error_status=None,
+                      queued_turn_count=0, duration_ms=1, first_content_frame_ms=1, fast_mode_state="off",
+                      fast_mode_disabled_reason="sdk_opt_in_required")
+        output = self.collect(self.rows + [rate, result])
+        self.assertEqual(output.returncode, 0, output.stderr)
+        clean = list(map(json.loads, output.stdout.splitlines()))
+        self.assertEqual(clean[-2], dict(type="rate_limit_event", uuid="owned-rate", session_id="owned-session", metadataValidated=True))
+        self.assertTrue(clean[-1]["metadataValidated"])
+        self.assertNotIn("terminal_reason", clean[-1])
+        for change in ({"is_error": True}, {"api_error_status": 403}, {"queued_turn_count": 1},
+                       {"permission_denials": [{}]}, {"subagent_stats": {"spawned": 1}}, {"terminal_reason": "api_error"}):
+            self.assertNotEqual(self.collect(self.rows + [dict(result, **change)]).returncode, 0)
+        rate["rate_limit_info"]["unifiedWindows"]["five_hour"]["utilization"] = "invalid"
+        self.assertNotEqual(self.collect(self.rows + [rate]).returncode, 0)
+
     def test_paired_owned_startup_strips_empty_output(self):
         result = self.collect(self.rows)
         self.assertEqual(result.returncode, 0, result.stderr)

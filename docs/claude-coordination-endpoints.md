@@ -225,3 +225,16 @@ nothing and sends no provider request. An older broker that does not support
 this observation refuses coordination; it is never restarted implicitly.
 Helper store lock contention fails immediately. Concurrent official hooks
 invalidate reply correlation without waiting for another hook to finish.
+
+The live harness begins with the benign `Reply READY.` control. The later broker
+payload contains its own exact acknowledgement request; the initial user turn
+does not authorize hypothetical future messages. Qualification keeps the same
+frozen user frame and its existing one-shot marker. Observed rate/result metadata
+is validated by closed shape and reduced before persistence. A refusal, API
+error, queued user turn, permission denial, or nonzero subagent activity closes
+the pre-inbound gate. Neither rate status nor timing/cost metadata is authority.
+
+Usage is validated and discarded before persistence. Server tool counters must
+be zero and tool/subagent iterations empty. After the semantic reply, the harness
+requires three successful results in the same session, the public assistant
+reply marker, and empty provider/collector stderr through owned cleanup.

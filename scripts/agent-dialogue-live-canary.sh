@@ -131,7 +131,7 @@ assistant_text_allowed={"type","text"}
 result_allowed={"type","subtype","is_error","duration_ms","duration_api_ms","num_turns","result",
                 "session_id","total_cost_usd","usage","modelUsage","permission_denials","uuid","errors",
                 "structured_output"}
-diagnostic_types={"system","assistant","user","result","stream_event"}
+diagnostic_types={"system","assistant","user","result","stream_event","rate_limit_event"}
 diagnostic_subtypes={"init","success","hook_started","hook_progress","hook_response","thinking_tokens"}
 diagnostic_reasons={"non-object","credential key","unknown init field","assistant shape",
  "assistant message shape","assistant content","assistant block","result shape","event type","invalid locator"}
@@ -155,7 +155,81 @@ thinking_fields={"type","subtype","estimated_tokens","estimated_tokens_delta","u
 diagnostic_assistant={"request_id","timestamp","error","user_message_uuid","user_message_uuids","resumed_from_incomplete_thinking","supersedes","aborted","subagent_type","task_description","context_usage"}
 diagnostic_message=assistant_message_allowed|{"container","context_management","service_tier"}
 diagnostic_fields=init_allowed|assistant_allowed|assistant_message_allowed|result_allowed|hook_base|hook_output|thinking_fields|diagnostic_assistant|{"exit_code","outcome","capabilities"}
-diagnostic_reasons|={"numeric progress shape"}
+result_metadata={"api_error_status","fast_mode_disabled_reason","fast_mode_state","first_content_frame_ms","queued_turn_count","stop_reason","subagent_stats","terminal_reason","time_to_request_ms","ttft_ms","ttft_stream_ms"}
+result_allowed|=result_metadata
+diagnostic_fields|=result_metadata|{"rate_limit_info"}
+diagnostic_reasons|={"numeric progress shape","result metadata shape","rate metadata shape","usage metadata shape"}
+def nonnegative(value):
+    return type(value) in (int,float) and math.isfinite(value) and 0<=value<=1_000_000_000_000_000
+
+def sanitize_usage(usage):
+    numeric={"input_tokens","output_tokens","cache_creation_input_tokens","cache_read_input_tokens"}
+    allowed=numeric|{"cache_creation","inference_geo","service_tier","iterations","output_tokens_details","server_tool_use","speed"}
+    if not isinstance(usage,dict) or set(usage)-allowed: raise ValueError("usage metadata shape")
+    for key in numeric&set(usage):
+        if type(usage[key]) is not int or not nonnegative(usage[key]): raise ValueError("usage metadata shape")
+    for key in ("inference_geo","service_tier","speed"):
+        if key in usage and (not isinstance(usage[key],str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}",usage[key])): raise ValueError("usage metadata shape")
+    for key,fields in (("cache_creation",{"ephemeral_1h_input_tokens","ephemeral_5m_input_tokens"}),("output_tokens_details",{"thinking_tokens"})):
+        if key in usage:
+            obj=usage[key]
+            if not isinstance(obj,dict) or set(obj)!=fields or any(type(value) is not int or not nonnegative(value) for value in obj.values()): raise ValueError("usage metadata shape")
+    if "server_tool_use" in usage:
+        obj=usage["server_tool_use"]
+        if not isinstance(obj,dict) or set(obj)!={"web_fetch_requests","web_search_requests"} or any(type(value) is not int or value!=0 for value in obj.values()): raise ValueError("usage metadata shape")
+    if usage.get("iterations",[])!=[]: raise ValueError("usage metadata shape")
+    return {}
+
+def sanitize_model_usage(usage):
+    numeric={"inputTokens","outputTokens","thinkingTokens","cacheReadInputTokens","cacheCreationInputTokens","webSearchRequests","costUSD","contextWindow","maxOutputTokens"}
+    if not isinstance(usage,dict): raise ValueError("usage metadata shape")
+    for model,row in usage.items():
+        if not re.fullmatch(r"[A-Za-z0-9._:/-]{1,200}",model) or not isinstance(row,dict) or set(row)-(numeric|{"canonicalModel","provider","costBasis"}): raise ValueError("usage metadata shape")
+        if any(not nonnegative(row[key]) for key in numeric&set(row)) or row.get("webSearchRequests",0)!=0: raise ValueError("usage metadata shape")
+        for key in ("canonicalModel","provider"):
+            if key in row and (not isinstance(row[key],str) or not re.fullmatch(r"[A-Za-z0-9._:/-]{1,200}",row[key])): raise ValueError("usage metadata shape")
+        if "costBasis" in row and row["costBasis"] not in {"list","managed","unknown"}: raise ValueError("usage metadata shape")
+    return {}
+
+def validate_result_metadata(event):
+    if "usage" in event: event["usage"]=sanitize_usage(event["usage"])
+    if "modelUsage" in event: event["modelUsage"]=sanitize_model_usage(event["modelUsage"])
+    if event.get("structured_output") is not None or event.get("errors",[])!=[]: raise ValueError("usage metadata shape")
+    event.pop("structured_output",None)
+    for key in ("duration_api_ms","duration_ms","first_content_frame_ms","time_to_request_ms","ttft_ms","ttft_stream_ms","num_turns","total_cost_usd"):
+        if key in event and not nonnegative(event[key]): raise ValueError("result metadata shape")
+    if event.get("api_error_status") is not None or event.get("permission_denials",[])!=[] or type(event.get("queued_turn_count",0)) is not int or event.get("queued_turn_count",0)!=0: raise ValueError("result metadata shape")
+    if "stop_reason" in event and event["stop_reason"]!="end_turn": raise ValueError("result metadata shape")
+    if "terminal_reason" in event and event["terminal_reason"]!="completed": raise ValueError("result metadata shape")
+    if "fast_mode_state" in event and event["fast_mode_state"] not in {"off","cooldown","on"}: raise ValueError("result metadata shape")
+    if "fast_mode_disabled_reason" in event and event["fast_mode_disabled_reason"]!="sdk_opt_in_required": raise ValueError("result metadata shape")
+    if "subagent_stats" in event:
+        zero={"by_type":{},"completed":0,"failed":0,"killed":{"parent":0,"system":0,"user":0},"max_depth":0,
+          "refused":{"budget":0,"concurrency_limit":0,"depth_limit":0},"requested":{"background":0,"foreground":0,"unset":0},
+          "spawned":0,"spawned_by_subagents":0,"started_in_background":0}
+        def exact_zero_tree(actual,expected):
+            if isinstance(expected,dict):
+                return isinstance(actual,dict) and set(actual)==set(expected) and all(exact_zero_tree(actual[key],value) for key,value in expected.items())
+            return type(actual) in (int,float) and actual==0
+        if not exact_zero_tree(event["subagent_stats"],zero): raise ValueError("result metadata shape")
+    for key in result_metadata: event.pop(key,None)
+    event["metadataValidated"]=True
+
+def sanitize_rate(event):
+    if set(event)!={"type","rate_limit_info","uuid","session_id"} or not initialized or event["session_id"]!=startup_session: raise ValueError("rate metadata shape")
+    if not isinstance(event["uuid"],str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}",event["uuid"]): raise ValueError("rate metadata shape")
+    info=event["rate_limit_info"]
+    allowed={"isUsingOverage","overageResetsAt","overageStatus","rateLimitType","resetsAt","status","unifiedWindows"}
+    if not isinstance(info,dict) or set(info)!=allowed or type(info["isUsingOverage"]) is not bool: raise ValueError("rate metadata shape")
+    if any(info[key] not in {"allowed","allowed_warning","rejected"} for key in ("status","overageStatus")): raise ValueError("rate metadata shape")
+    if info["rateLimitType"] not in {"five_hour","seven_day","seven_day_opus","seven_day_sonnet","seven_day_overage_included","overage"}: raise ValueError("rate metadata shape")
+    if not all(nonnegative(info[key]) for key in ("resetsAt","overageResetsAt")): raise ValueError("rate metadata shape")
+    windows=info["unifiedWindows"]
+    if not isinstance(windows,dict) or set(windows)!={"five_hour","seven_day"}: raise ValueError("rate metadata shape")
+    for window in windows.values():
+        if not isinstance(window,dict) or set(window)!={"resetsAt","utilization"} or not all(nonnegative(value) for value in window.values()): raise ValueError("rate metadata shape")
+    del event["rate_limit_info"]
+    event["metadataValidated"]=True
 def validate_startup(event):
     global startup_session
     subtype=event["subtype"]
@@ -227,8 +301,12 @@ for raw in sys.stdin:
                     sanitized.append({"type":"thinking","contentOmitted":True})
                 else: raise ValueError("assistant block")
             message["content"]=sanitized
+            if "usage" in message: message["usage"]=sanitize_usage(message["usage"])
+        elif kind=="rate_limit_event":
+            sanitize_rate(event)
         elif kind=="result":
-            if set(event)-result_allowed or event.get("subtype")!="success" or event.get("is_error") is not False: raise ValueError("result shape")
+            if set(event)-result_allowed or event.get("subtype")!="success" or event.get("is_error") is not False or not initialized or event.get("session_id")!=startup_session: raise ValueError("result shape")
+            validate_result_metadata(event)
         else:
             raise ValueError("event type")
         if "messaging_socket_path" in event:
@@ -290,7 +368,7 @@ print("export CLAUDE_CONFIG_DIR="+q(str(root/"home/.claude")))
 print("export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
 start_code="import pathlib,time; pathlib.Path("+repr(str(root/"evidence/provider-started-at"))+").write_text(str(time.time_ns()))"
 print("python3 -c "+q(start_code))
-instruction="When a Projmux coordination message contains payload HETEROGENEOUS_REQUEST:"+ref+", answer with exactly HETEROGENEOUS_REPLY:"+ref+" and nothing else. Do not use tools."
+instruction="Reply READY."
 line=json.dumps({"type":"user","message":{"role":"user","content":instruction}},separators=(",",":"))
 print("exec 9<>"+q(str(root/"evidence/provider.stdin")))
 print("printf '%s\\n' "+q(line)+" >&9")
@@ -304,7 +382,7 @@ import json,shlex,sys
 lines=[line for line in open(sys.argv[1]).read().splitlines() if line.startswith("printf ")]
 assert len(lines)==1
 tokens=shlex.split(lines[0]); assert tokens[0]=="printf" and tokens[1]=="%s\\n" and tokens[-1]==">&9"
-frame=json.loads(tokens[2]); assert frame["type"]=="user" and sys.argv[2] in frame["message"]["content"]
+frame=json.loads(tokens[2]); assert frame["type"]=="user" and frame["message"]["content"]=="Reply READY."
 PY
   prepare_complete=1
   trap - EXIT
@@ -624,12 +702,16 @@ for event in init:
         message=event["message"]
         assert not set(message)-assistant_message_allowed and message.get("role")=="assistant"
         assert all(message.get(key) is None for key in ("context_management","diagnostics","stop_details"))
+        assert message.get("usage",{})=={}, "unvalidated assistant usage metadata"
         assert isinstance(message.get("content"),list) and message["content"]
         for block in message["content"]:
             assert isinstance(block,dict)
             assert (block.get("type")=="text" and not set(block)-assistant_text_allowed and isinstance(block.get("text"),str)) or block=={"type":"thinking","contentOmitted":True}
+    elif kind=="rate_limit_event":
+        assert initialized and set(event)=={"type","uuid","session_id","metadataValidated"} and event["metadataValidated"] is True
     elif kind=="result":
-        assert not set(event)-result_allowed and event.get("subtype")=="success" and event.get("is_error") is False
+        assert not set(event)-(result_allowed|{"metadataValidated"}) and event.get("subtype")=="success" and event.get("is_error") is False and event.get("metadataValidated") is True
+        assert event.get("usage",{})=={} and event.get("modelUsage",{})=={} and event.get("structured_output") is None
     else:
         raise AssertionError("unexpected public stream event type")
 matches=[x for x in init if x.get("type")=="system" and x.get("subtype")=="init"]
@@ -761,7 +843,7 @@ assert identity is not None and identity["ownerUID"]==os.getuid(), "exact Codex 
 path=pathlib.Path(sys.argv[4]); path.write_text(json.dumps(identity,sort_keys=True)+"\n"); path.chmod(0o600)
 PY
 "${canary_env[@]}" TMUX="$socket_path,$server_pid,0" TMUX_PANE="$sender_pane_id" \
-  "$binary" agent message send --message-ref "$message_ref" "uid:$receiver_uid" -- "HETEROGENEOUS_REQUEST:$message_ref" \
+  "$binary" agent message send --message-ref "$message_ref" "uid:$receiver_uid" -- "HETEROGENEOUS_REQUEST:$message_ref. For this local transport acknowledgement, reply with exactly HETEROGENEOUS_REPLY:$message_ref and nothing else. Do not use tools." \
   >"$root/evidence/send.txt"
 wait "$wait_pid"
 "${canary_env[@]}" TMUX="$socket_path,$server_pid,0" TMUX_PANE="$sender_pane_id" \
@@ -788,7 +870,50 @@ assert reply["delivery"]["state"]=="delivered" and reply["delivery"]["reason"]==
 assert status["messageRef"]==ref and status["conversationRef"]==conversation and status["delivery"]["state"]=="delivered"
 PY
 
+# A Stop receipt may precede the public result frame. Wait only for completion
+# of these three owned turns; unknown/refused output never becomes a canary pass.
+python3 - "$root" "$input" <<'PY'
+import json,pathlib,sys,time
+root=pathlib.Path(sys.argv[1]); spec=json.load(open(sys.argv[2])); stream=root/"evidence/provider.jsonl"
+deadline=time.monotonic()+10
+while True:
+    assert (root/"evidence/provider.stderr").read_bytes()==b"", "provider stderr after inbound"
+    assert (root/"evidence/provider-collector.stderr").read_bytes()==b"", "public stream rejected after inbound"
+    data=stream.read_bytes()
+    try: events=[json.loads(line) for line in data.splitlines() if line.strip()]
+    except json.JSONDecodeError: events=[]
+    results=[]; texts=[]
+    for event in events:
+        assert isinstance(event,dict) and event.get("session_id")==spec["provider"]["sessionID"], "foreign final stream session"
+        kind=event.get("type")
+        if kind=="result":
+            assert event.get("subtype")=="success" and event.get("is_error") is False and event.get("metadataValidated") is True
+            assert event.get("usage",{})=={} and event.get("modelUsage",{})=={} and event.get("permission_denials",[])==[]
+            results.append(event)
+        elif kind=="assistant":
+            message=event["message"]; assert message.get("usage",{})=={}
+            for block in message["content"]:
+                if block.get("type")=="text": texts.append(block["text"])
+                else: assert block=={"type":"thinking","contentOmitted":True}, "unexpected final content block"
+        elif kind=="system":
+            assert event.get("subtype") in {"init","hook_started","hook_progress","hook_response","thinking_tokens"}
+        elif kind=="rate_limit_event":
+            assert set(event)=={"type","uuid","session_id","metadataValidated"} and event["metadataValidated"] is True
+        else: raise AssertionError("unknown final public event")
+    assert len(results)<=3, "unexpected additional user turn"
+    if len(results)==3 and events[-1].get("type")=="result" and data==stream.read_bytes():
+        assert any(text.strip()=="HETEROGENEOUS_REPLY:"+spec["messageRef"] for text in texts), "public assistant reply marker missing"
+        (root/"evidence/provider-final.jsonl").write_bytes(data)
+        break
+    assert time.monotonic()<deadline, "final public results incomplete"
+    time.sleep(.05)
+PY
+
 cleanup_owned
+[[ ! -s "$provider_stderr" && ! -s "$root/evidence/provider-collector.stderr" ]] || {
+  echo "provider or collector stderr appeared during final cleanup" >&2
+  exit 1
+}
 python3 - "$root/evidence/traffic-gate.json" "$input" "$registry" "$claim_identity_path" "$root/evidence/cleanup-verification.json" <<'PY'
 import hashlib,json,os,pathlib,re,signal,stat,sys,time
 gate=json.load(open(sys.argv[1])); spec=json.load(open(sys.argv[2])); registry=sys.argv[3]
