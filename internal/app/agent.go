@@ -67,6 +67,13 @@ type agentCommand struct {
 	controlPaths   agentControlPathResolver
 	controlPicker  agentControlPicker
 	controlTimeout time.Duration
+	messageStore   agentMessageStore
+	messagePaths   agentMessagePaths
+	messageNow     func() time.Time
+	messageSleep   func(context.Context, time.Duration) error
+	messageNewRef  func(string) string
+	messageClaude  agentMessageClaudeAdapter
+	messageRoute   agentMessageRouteResolver
 	focus          rawArgvCommand
 	codexUpgrade   rawArgvCommand
 	codexHandover  rawArgvCommand
@@ -78,7 +85,7 @@ type codexDrainingHandoverRequester interface {
 }
 
 func newAgentCommand() *agentCommand {
-	return &agentCommand{
+	command := &agentCommand{
 		loadRegistry:     loadResourceRegistry,
 		store:            newResourceStore(),
 		activeTarget:     defaultActiveTargetLookup(),
@@ -96,7 +103,17 @@ func newAgentCommand() *agentCommand {
 		controlPaths:   config.DefaultPathsFromEnv,
 		controlPicker:  intpicker.NativeRunner{In: os.Stdin, Out: os.Stdout},
 		controlTimeout: 10 * time.Second,
+		messageNow:     time.Now,
+		messageSleep:   waitAgentMessagePoll,
+		messageNewRef:  newCoordinationRef,
+		messageClaude:  liveAgentMessageClaudeAdapter{},
 	}
+	if paths, err := config.DefaultPathsFromEnv(); err == nil {
+		command.messagePaths = defaultAgentMessagePaths(paths)
+		command.messageStore = newAgentMessageStore(paths.StateDir)
+		command.messageRoute = liveAgentMessageRouteResolver{registryPath: command.messagePaths.registryPath}
+	}
+	return command
 }
 
 func (c *agentCommand) clock() time.Time {
@@ -146,6 +163,10 @@ func (c *agentCommand) Run(args []string, stdout, stderr io.Writer) error {
 		}
 	case "capabilities":
 		return c.runCapabilities(rest, stdout, stderr)
+	case "message":
+		return c.runMessage(rest, stdout, stderr)
+	case "wait":
+		return c.runWait(rest, stdout, stderr)
 	default:
 		return usageError(fmt.Sprintf("agent %s is not available; this release implements: %s",
 			args[0], strings.Join(agentSubcommands, ", ")))

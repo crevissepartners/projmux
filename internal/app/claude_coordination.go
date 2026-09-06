@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -68,18 +69,30 @@ type claudeCoordinationSource struct {
 }
 
 type claudeCoordinationEnvelope struct {
-	Version    int                      `json:"version"`
-	MessageRef string                   `json:"messageRef"`
-	Target     claudeCoordinationTarget `json:"target"`
-	Source     claudeCoordinationSource `json:"source"`
-	Payload    string                   `json:"payload"`
-	Deadline   time.Time                `json:"deadline"`
+	Version        int                      `json:"version"`
+	MessageRef     string                   `json:"messageRef"`
+	Target         claudeCoordinationTarget `json:"target"`
+	Source         claudeCoordinationSource `json:"source"`
+	Payload        string                   `json:"payload,omitempty"`
+	Deadline       time.Time                `json:"deadline"`
+	BrokerEnvelope *coremessage.Envelope    `json:"brokerEnvelope,omitempty"`
 }
 
 func (e claudeCoordinationEnvelope) valid(now time.Time, route coremetadata.AgentRouteRef) bool {
 	if e.Version != claudeCoordinationVersion || !validCoordinationRef(e.MessageRef) || !e.Target.matches(route) ||
 		e.Source.Kind != "peer" || e.Source.Trust != "untrusted" || e.Source.Authority != "coordination-only" ||
-		e.Payload == "" || e.Deadline.IsZero() {
+		e.Deadline.IsZero() {
+		return false
+	}
+	if e.BrokerEnvelope != nil {
+		broker := *e.BrokerEnvelope
+		if broker.Validate() != nil || e.Payload != "" || broker.MessageRef != e.MessageRef ||
+			!broker.Deadline.Equal(e.Deadline) || broker.Target.AgentUID != e.Target.AgentUID ||
+			broker.Target.PaneUID != e.Target.PaneUID || broker.Target.ActivationGeneration != e.Target.Generation ||
+			broker.Target.Provider != e.Target.Provider || broker.Authority != coremessage.PeerAuthority() {
+			return false
+		}
+	} else if e.Payload == "" {
 		return false
 	}
 	payload, err := json.Marshal(e)

@@ -1088,6 +1088,48 @@
   `config apply --no-reload` byte-identical for both absent and present
   coordination families.
 
+### Provider-neutral message broker Phase 3 tests
+
+- `TestAgentCapabilityCatalogPinsCurrentGroupsAndDeferredVocabulary`,
+  `TestAgentCapabilitiesClaudeMessageCellsReflectMissingRegistrationLease`, and
+  `TestAgentCapabilityCatalogRoutesMatchExecutableHelpGraph` supersede the Phase
+  0 placeholder boundary: `agent message send|wait|status` and `agent wait` are
+  callable through one provider-neutral catalog, while Antigravity and Claude
+  inbox claim remain explicit unsupported cells and exact Claude availability
+  follows its current registration lease.
+- `TestAuthorityMatrixIsExhaustiveAndPeerNeverEscalates`,
+  `TestEnvelopeRetryAndReplyCorrelationRandomizedProperties`, and
+  `TestPublicReducerMatchesReferenceModelForRandomSequences` own the exhaustive
+  authority table, immutable v1 envelope, exact reversed reply route and
+  conversation, idempotent message reference, and terminal-once public reducer.
+  Peer input remains untrusted coordination and cannot become a user turn,
+  approval, configuration, tool, connector, or model-history write.
+- The `TestStore*` suite owns the private 0700/0600 store, advisory locking,
+  atomic replace, bounded payload/file/record count, terminal retention,
+  unknown-field refusal, concurrent claim, restart, timeout, and post-handoff
+  `failed` plus unknown-outcome contract. Codex claim touches only the exact
+  activation-scoped inbox and leaves unrelated Claude records unchanged.
+- `TestAgentMessageSendGatesBothStaticCellsAndRoutesBeforeStoreOrAdapter`,
+  `TestAgentMessageUnsupportedProviderStopsBeforeRouteAndStore`,
+  `TestAgentMessageSendSameReferenceRetryKeepsBrokerCorrelationAndDoesNotResend`,
+  `TestAgentMessageConcurrentSameReferenceUsesOneConversation`, and
+  `TestAgentMessageReplyReturnsOnlyToOriginalSourceConversation` pin exact
+  current-Pane source authority, exact target eligibility before effects,
+  same-envelope retry without resend, and broker-owned reply correlation.
+- `TestClaudePrivateProjectionPreservesPublicBoundaryAndAmbiguity`,
+  `TestLiveClaudeAdapterMapsTerminalResponseKindsWithoutDelivery`,
+  `TestLiveClaudeAdapterRefusesPublicValidEnvelopeThatExceedsPrivateFrame`, and
+  `TestAgentMessageBrokerHasNoCodexOrUserTurnWritePath` own the Phase 2 Claude
+  projection, transport-bound refusal, foreign receipt no-op, and zero Codex
+  app-server, user-turn, raw-terminal, or model-history write path.
+- `TestAgentMessageWaitClaimsOnlyCurrentExactActivation`,
+  `TestAgentMessageClaimDefaultOutputEscapesTerminalControlsAndKeepsEnvelope`,
+  `TestAgentMessageWaitDetectsGenerationChangeBeforeClaim`, and
+  `TestAgentWaitRegistryIdleReadyTimeoutAndStale` pin full-envelope self-claim,
+  terminal-safe output, activation fencing, and deterministic Registry-only
+  idle, timeout, and stale waits. Codex `delivered` ends at target self-claim;
+  it does not assert model processing or reply.
+
 ### Provider hook pane identity tests
 
 - `TestProviderHookCommandsCarryTheirOwnPaneIdentity` and

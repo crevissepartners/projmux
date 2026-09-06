@@ -146,6 +146,12 @@ func unchangedEffects(cardinality CardinalityEffect) *AllowedEffects {
 	)
 }
 
+func agentDeliveryEffects(cardinality CardinalityEffect) *AllowedEffects {
+	effects := unchangedEffects(cardinality)
+	effects.DomainEffect = &DomainEffect{Kind: DomainEffectAgentDelivery}
+	return effects
+}
+
 func createProjectEffects() *AllowedEffects {
 	return allowedEffects(
 		[]IdentityEffect{IdentityCreated, IdentityReused},
@@ -737,7 +743,7 @@ var routes = []Route{
 		Name:           "agent",
 		Invocation:     InvocationRefusal,
 		CanonicalOrder: 17,
-		Summary:        "Manage Agent state, topic, capabilities, integrations, and account usage",
+		Summary:        "Manage Agent state, messages, waits, capabilities, integrations, and account usage",
 		Disposition:    DispositionCanonical,
 		Usage: []string{
 			"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]",
@@ -755,8 +761,12 @@ var routes = []Route{
 			"projmux agent app-server handover plan|apply --request <absolute-json>",
 			"projmux agent app-server handover resume|abort --operation <ref>",
 			"projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]",
+			"projmux agent message send <agent-ref> [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>",
+			"projmux agent message wait [<self-agent-ref>] [--timeout <duration>] [-o json]",
+			"projmux agent message status <message-ref> [-o json]",
+			"projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]",
 		},
-		Canonical: []string{"agent status", "agent topic", "agent resume", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent app-server upgrade plan", "agent app-server upgrade apply", "agent app-server upgrade resume", "agent app-server upgrade abort", "agent app-server handover plan", "agent app-server handover apply", "agent app-server handover resume", "agent app-server handover abort", "agent capabilities"},
+		Canonical: []string{"agent status", "agent topic", "agent resume", "agent turn start", "agent turn steer", "agent turn interrupt", "agent approval review", "agent review", "agent integrate", "agent usage", "agent app-server upgrade plan", "agent app-server upgrade apply", "agent app-server upgrade resume", "agent app-server upgrade abort", "agent app-server handover plan", "agent app-server handover apply", "agent app-server handover resume", "agent app-server handover abort", "agent capabilities", "agent message send", "agent message wait", "agent message status", "agent wait"},
 		Children: []Route{
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "status", Invocation: InvocationNatural, Summary: "Read or set semantic Agent interaction independently of lifecycle", CanonicalSummary: "Read or set Agent status state", Usage: []string{"projmux agent status [get [<agent-ref>] | set <unknown|idle|in_progress|approval_required|input_required|response_complete> [<agent-ref>]] [--agent <ref>]"}, Canonical: []string{"agent status"}},
 			{Effects: unchangedEffects(CardinalityExactOne), Name: "topic", Invocation: InvocationNatural, Summary: "Read, set, or clear one exact Agent topic annotation", CanonicalSummary: "Read, set, or clear the Agent topic annotation", Usage: []string{"projmux agent topic get|clear [<agent-ref>] [--agent <ref>]", "projmux agent topic set <text> [<agent-ref>] [--agent <ref>]"}, Canonical: []string{"agent topic"}},
@@ -848,6 +858,22 @@ var routes = []Route{
 				Canonical:  []string{"agent capabilities"},
 				Outputs:    []OutputMode{OutputModeJSON},
 			},
+			{
+				Effects: agentDeliveryEffects(CardinalityExactOne), Name: "message", Invocation: InvocationRefusal,
+				Summary: "Exchange bounded untrusted coordination messages through exact Agent activations",
+				Usage: []string{
+					"projmux agent message send <agent-ref> [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>",
+					"projmux agent message wait [<self-agent-ref>] [--timeout <duration>] [-o json]",
+					"projmux agent message status <message-ref> [-o json]",
+				},
+				Canonical: []string{"agent message send", "agent message wait", "agent message status"},
+				Children: []Route{
+					{Effects: agentDeliveryEffects(CardinalityExactOne), Name: "send", Invocation: InvocationExplicit, Summary: "Submit a bounded coordination message from the current exact Agent", Usage: []string{"projmux agent message send <agent-ref> [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>"}, Canonical: []string{"agent message send"}},
+					{Effects: agentDeliveryEffects(CardinalityExactOne), Name: "wait", Invocation: InvocationNatural, Summary: "Claim the oldest compatible message for the current exact Codex Agent", Usage: []string{"projmux agent message wait [<self-agent-ref>] [--timeout <duration>] [-o json]"}, Canonical: []string{"agent message wait"}, Outputs: []OutputMode{OutputModeJSON}},
+					{Effects: agentDeliveryEffects(CardinalityUnchanged), Name: "status", Invocation: InvocationExplicit, Summary: "Read a payload-free broker delivery receipt", Usage: []string{"projmux agent message status <message-ref> [-o json]"}, Canonical: []string{"agent message status"}, Outputs: []OutputMode{OutputModeJSON}},
+				},
+			},
+			{Effects: unchangedEffects(CardinalityExactOne), Name: "wait", Invocation: InvocationExplicit, Summary: "Wait read-only for one exact Agent's Registry-backed idle observation", Usage: []string{"projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]"}, Canonical: []string{"agent wait"}, Outputs: []OutputMode{OutputModeJSON}},
 		},
 	},
 	{
