@@ -109,10 +109,6 @@ func (l *pinnedResumeTestLauncher) PlanAgentResume(provider string, workspace co
 	return l.base.PlanAgentResume(provider, workspace, conversationID)
 }
 
-func (l *pinnedResumeTestLauncher) BindResumedAgentPane(paneID, provider, contextDir, title, conversationID string) {
-	l.base.BindResumedAgentPane(paneID, provider, contextDir, title, conversationID)
-}
-
 func (l *pinnedResumeTestLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
 	if binding.NativeCodex {
 		if err := l.panes.BindAgentPaneOnRoute(ctx, runner, binding); err != nil {
@@ -138,10 +134,6 @@ func (l *pinnedResumeTestLauncher) PlanNativeCodexResume(route codexNativeEndpoi
 	return "codex:resume", argv, err
 }
 
-func (l *pinnedResumeTestLauncher) BindNativeCodexPane(paneID, contextDir, title, threadID string) {
-	l.panes.BindNativeCodexPane(paneID, contextDir, title, threadID)
-}
-
 func (l *pinnedResumeTestLauncher) startNativeCodexLifecycleObserver(target codexLifecycleObserverTarget) codexObserverStartupResult {
 	return l.panes.startNativeCodexLifecycleObserver(target)
 }
@@ -163,14 +155,6 @@ func enablePinnedNativeResumeFixture(t *testing.T, command *agentCommand, store 
 	command.rebind.create.codexNative = controller
 	command.rebind.launcher = &pinnedResumeTestLauncher{base: command.rebind.launcher, record: recorder, panes: panes}
 	return controller, panes
-}
-
-func (l *productionBindingResumeLauncher) BindResumedAgentPaneOnRoute(
-	ctx context.Context,
-	runner tmuxCommandRunner,
-	paneID, provider, contextDir, title, conversationID string,
-) error {
-	return l.binder.BindResumedAgentPaneOnRoute(ctx, runner, paneID, provider, contextDir, title, conversationID)
 }
 
 func (l *productionBindingResumeLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
@@ -210,14 +194,6 @@ func (f *fakeResumeLauncher) PlanAgentResume(provider string, workspace coremeta
 	return provider + ":resume", []string{"sh", "-lc", "exec " + provider + " resume " + conversationID}, nil
 }
 
-func (f *fakeResumeLauncher) BindResumedAgentPane(paneID, provider, _, title, conversationID string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.bound = append(f.bound, fakeResumedPane{
-		paneID: paneID, provider: provider, title: title, conversationID: conversationID,
-	})
-}
-
 func (f *fakeResumeLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
 	if binding.Topic != "" {
 		if _, err := runner.Run(ctx, "tmux", "set-option", "-p", "-t", binding.PaneID, aiPaneTopicOption, binding.Topic); err != nil {
@@ -233,7 +209,11 @@ func (f *fakeResumeLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tm
 			}
 		}
 	}
-	f.BindResumedAgentPane(binding.PaneID, binding.Provider, binding.ContextDir, binding.Title, binding.ConversationID)
+	f.mu.Lock()
+	f.bound = append(f.bound, fakeResumedPane{
+		paneID: binding.PaneID, provider: binding.Provider, title: binding.Title, conversationID: binding.ConversationID,
+	})
+	f.mu.Unlock()
 	return nil
 }
 
@@ -532,6 +512,37 @@ func TestAgentResumeRoutesProductionAIPresentationWritesThroughExactRuntime(t *t
 		if !found {
 			t.Fatalf("production resume option %s was not written through exact route: %#v", option, tmux.calls)
 		}
+	}
+	assertEveryTmuxCallHasExactRoute(t, tmux.calls)
+}
+
+func TestAgentResumeProductionBinderWriteFailureIsVisibleAndRollsBack(t *testing.T) {
+	t.Parallel()
+	store := newFakeResourceStore(t)
+	setFixtureSessionRef(t, store, "agt-beta-codex", resumeFixtureRef(resourceFixtureClock))
+	tmux := newFakeTmux()
+	agent, planner, _, _ := newTestAgentResumeCommand(t, store, tmux)
+	binder := testAICommand(t.TempDir())
+	agent.rebind.launcher = &productionBindingResumeLauncher{fakeResumeLauncher: planner, binder: binder}
+	enablePinnedNativeResumeFixture(t, agent, store, "agt-beta-codex", planner)
+	bindTestCreateRuntimeRoute(agent.rebind.create, tmux, func(string) string { return "" })
+	registryBefore, runtimeBefore, writesBefore := store.snapshot(), tmux.state(), store.writes
+	tmux.fail = []string{"set-option", aiPaneAgentOption}
+	tmux.failMessage = "permission denied writing resumed Pane metadata"
+
+	stdout, stderr, err := runRoute(t, agent, "resume", "codex", "--project", "uid:prj-beta")
+	if err == nil || stdout != "" || stderr != "" || !strings.Contains(err.Error(), "permission denied writing resumed Pane metadata") {
+		t.Fatalf("binder failure = stdout=%q stderr=%q err=%v", stdout, stderr, err)
+	}
+	if store.snapshot() != registryBefore || store.writes != writesBefore || tmux.state() != runtimeBefore {
+		t.Fatalf("binder failure did not roll back: writes=%d->%d registry before=%s after=%s runtime before=%s after=%s",
+			writesBefore, store.writes, registryBefore, store.snapshot(), runtimeBefore, tmux.state())
+	}
+	if !tmux.argvContains("split-window") || !tmux.argvContains("kill-pane") {
+		t.Fatalf("binder failure did not create and roll back the resumed Pane: %#v", tmux.calls)
+	}
+	if commands := cmdRecorder(binder).commands; len(commands) != 0 {
+		t.Fatalf("failed production resume binder used ambient subprocess runner: %#v", commands)
 	}
 	assertEveryTmuxCallHasExactRoute(t, tmux.calls)
 }

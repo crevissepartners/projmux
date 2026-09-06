@@ -25,10 +25,6 @@ func (s stubAgentLauncher) PlanAgentLaunch(string, coremetadata.AgentWorkspace, 
 	return "", nil, nil
 }
 
-func (s stubAgentLauncher) BindManagedAgentPane(string, string, string, string) {
-	s.t.Fatal("the argv tables must never bind a managed pane")
-}
-
 func (s stubAgentLauncher) BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error {
 	s.t.Fatal("the argv tables must never bind a managed pane")
 	return nil

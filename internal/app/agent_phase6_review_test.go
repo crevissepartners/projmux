@@ -17,15 +17,20 @@ import (
 
 func TestResourceAgentBindingNeverStartsLegacyTitleWatcher(t *testing.T) {
 	t.Parallel()
+	tmux := newFakeTmux()
+	paneID := tmux.addSession("agent-bind").windows[0].panes[0].id
+	runner := explicitTmuxRunner{runner: tmux, target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}}
 	cmd := testAICommand(t.TempDir())
-	var calls []string
-	cmd.runCommand = func(_ context.Context, name string, args ...string) error {
-		calls = append(calls, name+" "+strings.Join(args, " "))
-		return nil
+	for _, binding := range []agentPaneBinding{
+		{PaneID: paneID, Provider: aiModeCodex, ContextDir: "/work", Title: "codex:work"},
+		{PaneID: paneID, Provider: aiModeCodex, ContextDir: "/work", Title: "codex:resume", ConversationID: "thread-1"},
+	} {
+		if err := cmd.BindAgentPaneOnRoute(context.Background(), runner, binding); err != nil {
+			t.Fatal(err)
+		}
 	}
-	cmd.BindManagedAgentPane("%7", aiModeCodex, "/work", "codex:work")
-	cmd.BindResumedAgentPane("%8", aiModeCodex, "/work", "codex:work", "thread-1")
-	for _, call := range calls {
+	for _, argv := range tmux.calls {
+		call := strings.Join(argv, " ")
 		if strings.Contains(call, "run-shell") || strings.Contains(call, "watch-title") {
 			t.Fatalf("resource binding started legacy watcher: %q", call)
 		}

@@ -695,8 +695,6 @@ func (r *recordingAgentLauncher) PlanAgentLaunch(string, coremetadata.AgentWorks
 	return "", nil, errors.New("fresh launch is not expected on the resume intent")
 }
 
-func (r *recordingAgentLauncher) BindManagedAgentPane(string, string, string, string) {}
-
 func (r *recordingAgentLauncher) BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error {
 	return nil
 }
@@ -708,5 +706,3 @@ func (r *recordingAgentLauncher) AwaitAgentActivation(context.Context, tmuxComma
 func (r *recordingAgentLauncher) PlanAgentResume(string, coremetadata.AgentWorkspace, string) (string, []string, error) {
 	return "", nil, errors.New("resume launch reached")
 }
-
-func (r *recordingAgentLauncher) BindResumedAgentPane(string, string, string, string, string) {}

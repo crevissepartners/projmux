@@ -46,9 +46,6 @@ type agentLauncher interface {
 	// PlanAgentLaunch builds the launch argv and the pane title for one
 	// provider. It creates nothing, so a failure here costs zero mutations.
 	PlanAgentLaunch(provider string, workspace coremetadata.AgentWorkspace, payload []string) (title string, argv []string, err error)
-	// BindManagedAgentPane applies the managed-agent pane options without the
-	// legacy title/content watcher.
-	BindManagedAgentPane(paneID, provider, contextDir, title string)
 	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 	// AwaitAgentActivation observes bounded provider/hook metadata only. Startup
 	// readiness and initial-task acknowledgement have independent bounds; it

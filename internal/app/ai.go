@@ -2254,18 +2254,6 @@ func (c *aiCommand) openResumePickerToggle(direction string) error {
 	return err
 }
 
-// aiPaneResumeMetadata is the live routing index a resumed managed Pane carries
-// from the moment it exists: the provider conversation id hook ingest scans to
-// decide which live pane an incoming event belongs to, plus the discovery
-// provenance the picker recorded. The durable pointer on the Agent is a separate
-// value and is not written from here.
-type aiPaneResumeMetadata struct {
-	sessionID string
-	resumeID  string
-	source    string
-	updatedAt time.Time
-}
-
 type agentLaunchPlan struct {
 	// title is the agent pane title, also the seed of the pane's topic option.
 	title string
@@ -2478,17 +2466,6 @@ func (c *aiCommand) RequireAgentEnabled(provider string) error {
 	return c.requireAIAgentEnabled(provider, aiSplitLaunchCanonical)
 }
 
-// BindManagedAgentPane applies managed-agent pane options without starting the
-// legacy title/content watcher. Resource Agents are driven only by explicit
-// provider-hook metadata and canonical/manual status mutations.
-//
-// This is what makes a resource-backed Agent pane indistinguishable from a
-// legacy one to the statusbar, the attention tracker, and the notification
-// pipeline. None of these calls moves a client.
-func (c *aiCommand) BindManagedAgentPane(paneID, provider, contextDir, title string) {
-	c.configureAIPane(paneID, provider, contextDir, title, aiPaneResumeMetadata{})
-}
-
 func (c *aiCommand) BindManagedAgentPaneOnRoute(
 	ctx context.Context,
 	runner tmuxCommandRunner,
@@ -2523,16 +2500,6 @@ func (c *aiCommand) PlanNativeCodexResume(route codexNativeEndpointRoute, worksp
 		return "", nil, err
 	}
 	return plan.title, plan.commandArgs, nil
-}
-
-// BindNativeCodexPane seeds the live hook routing index with the exact native
-// thread before any late hook is allowed to refine the binding.
-func (c *aiCommand) BindNativeCodexPane(paneID, contextDir, title, threadID string) {
-	threadID = strings.TrimSpace(threadID)
-	c.configureAIPane(paneID, aiModeCodex, contextDir, title, aiPaneResumeMetadata{
-		sessionID: threadID, resumeID: threadID, source: "app-server", updatedAt: c.nowTime().UTC(),
-	})
-	c.recordAIPaneOption(paneID, aiPaneThreadIDOption, threadID)
 }
 
 func (c *aiCommand) BindNativeCodexPaneOnRoute(
@@ -2789,20 +2756,6 @@ func (c *aiCommand) agentLaunchCommandForArgv(mode, pathPrepend, contextDir, tit
 	return strings.Join(parts, " && ")
 }
 
-func (c *aiCommand) configureAIPane(paneID, mode, contextDir, title string, resume aiPaneResumeMetadata) {
-	paneID = strings.TrimSpace(paneID)
-	if paneID == "" {
-		return
-	}
-	c.recordAIPaneOption(paneID, aiPaneManagedOption, "1")
-	c.recordAIPaneOption(paneID, aiPaneAgentOption, normalizeAIMode(mode))
-	c.recordAIPaneOption(paneID, aiPaneLaunchAuthorshipOption, "1")
-	c.recordAIPaneOption(paneID, aiPaneContextOption, strings.TrimSpace(contextDir))
-	c.recordAIPaneOption(paneID, aiPaneTopicOption, displayAITopic(title))
-	c.recordAIPaneOption(paneID, aiPaneStateOption, "idle")
-	c.configureAIPaneResumeMetadata(paneID, resume)
-}
-
 // agentPaneBinding is the one typed materialization contract shared by create,
 // resume, topology replay, and native Codex binding. The supplied runner has
 // already been bound to one explicit logical tmux route; this value contains
@@ -3025,29 +2978,6 @@ func writeAgentPaneOptionOnRoute(ctx context.Context, runner tmuxCommandRunner, 
 		return fmt.Errorf("write Pane option %s: %w", write.option, err)
 	}
 	return nil
-}
-
-func (c *aiCommand) configureAIPaneResumeMetadata(paneID string, resume aiPaneResumeMetadata) {
-	for _, option := range aiPaneResumeOptions(resume) {
-		c.recordAIPaneOption(paneID, option[0], option[1])
-	}
-}
-
-func aiPaneResumeOptions(resume aiPaneResumeMetadata) [][2]string {
-	options := make([][2]string, 0, 4)
-	for _, option := range [][2]string{
-		{aiPaneSessionIDOption, strings.TrimSpace(resume.sessionID)},
-		{aiPaneResumeIDOption, strings.TrimSpace(resume.resumeID)},
-		{aiPaneResumeSourceOption, strings.TrimSpace(resume.source)},
-	} {
-		if option[1] != "" {
-			options = append(options, option)
-		}
-	}
-	if !resume.updatedAt.IsZero() {
-		options = append(options, [2]string{aiPaneResumeUpdatedAtOption, resume.updatedAt.UTC().Format(time.RFC3339)})
-	}
-	return options
 }
 
 func (c *aiCommand) popupAxisSize(axis string, percent, minimum int) string {
