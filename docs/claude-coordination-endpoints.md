@@ -238,3 +238,7 @@ Usage is validated and discarded before persistence. Server tool counters must
 be zero and tool/subagent iterations empty. After the semantic reply, the harness
 requires three successful results in the same session, the public assistant
 reply marker, and empty provider/collector stderr through owned cleanup.
+
+Public model IDs and usage labels are bounded strings, including provider aliases
+and context suffixes. They are discarded without imposing identifier syntax or
+using pricing metadata as a permission or correlation source.

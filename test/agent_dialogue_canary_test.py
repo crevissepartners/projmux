@@ -54,6 +54,22 @@ class DialogueCollectorTest(unittest.TestCase):
         self.assertEqual(output.returncode, 0, output.stderr)
         self.assertEqual(json.loads(output.stdout.splitlines()[-1])["usage"], {})
 
+    def test_usage_provider_strings_follow_public_schema_and_are_discarded(self):
+        row = dict(inputTokens=1, outputTokens=1, webSearchRequests=0, costUSD=0,
+                   canonicalModel="fixture model[context]", provider="DO_NOT_RETAIN", costBasis="list")
+        result = dict(type="result", subtype="success", is_error=False, session_id="owned-session",
+                      result="READY.", modelUsage={"fixture-model[context]": row},
+                      usage=dict(inference_geo="", service_tier="fixture tier", speed="DO_NOT_RETAIN"))
+        output = self.collect(self.rows + [result])
+        self.assertEqual(output.returncode, 0, output.stderr)
+        clean = json.loads(output.stdout.splitlines()[-1])
+        self.assertEqual(clean["modelUsage"], {})
+        self.assertEqual(clean["usage"], {})
+        self.assertNotIn("DO_NOT_RETAIN", output.stdout + output.stderr)
+        for change in ({"provider": []}, {"webSearchRequests": 1}, {"unknown": 0}, {"canonicalModel": "x" * 4097}):
+            invalid = dict(result, modelUsage={"fixture-model[context]": dict(row, **change)})
+            self.assertNotEqual(self.collect(self.rows + [invalid]).returncode, 0)
+
     def test_success_result_and_rate_metadata_are_validated_then_minimized(self):
         rate = dict(type="rate_limit_event", uuid="owned-rate", session_id="owned-session", rate_limit_info=dict(
             isUsingOverage=False, overageResetsAt=1, overageStatus="rejected", rateLimitType="five_hour", resetsAt=2,
@@ -73,6 +89,20 @@ class DialogueCollectorTest(unittest.TestCase):
             self.assertNotEqual(self.collect(self.rows + [dict(result, **change)]).returncode, 0)
         rate["rate_limit_info"]["unifiedWindows"]["five_hour"]["utilization"] = "invalid"
         self.assertNotEqual(self.collect(self.rows + [rate]).returncode, 0)
+
+    def test_closed_hook_and_refusal_diagnostics_do_not_admit_events(self):
+        events = [dict(self.rows[0], hook_event=kind) for kind in ("UserPromptSubmit", "Stop")]
+        events += [dict(type="system", subtype=kind, content="DO_NOT_RETAIN")
+                   for kind in ("model_refusal_fallback", "model_refusal_no_fallback")]
+        for event in events:
+            output = self.collect(self.rows + [event])
+            self.assertNotEqual(output.returncode, 0)
+            self.assertNotIn("DO_NOT_RETAIN", output.stdout + output.stderr)
+            diagnostic = json.loads(output.stderr.split(": ", 1)[1])
+            if "hook_event" in event:
+                self.assertEqual(diagnostic["hookEventMatch"], event["hook_event"])
+            else:
+                self.assertEqual(diagnostic["subtype"], event["subtype"])
 
     def test_paired_owned_startup_strips_empty_output(self):
         result = self.collect(self.rows)

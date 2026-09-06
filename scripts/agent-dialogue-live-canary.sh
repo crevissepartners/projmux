@@ -132,7 +132,8 @@ result_allowed={"type","subtype","is_error","duration_ms","duration_api_ms","num
                 "session_id","total_cost_usd","usage","modelUsage","permission_denials","uuid","errors",
                 "structured_output"}
 diagnostic_types={"system","assistant","user","result","stream_event","rate_limit_event"}
-diagnostic_subtypes={"init","success","hook_started","hook_progress","hook_response","thinking_tokens"}
+diagnostic_subtypes={"init","success","hook_started","hook_progress","hook_response","thinking_tokens",
+                     "model_refusal_fallback","model_refusal_no_fallback"}
 diagnostic_reasons={"non-object","credential key","unknown init field","assistant shape",
  "assistant message shape","assistant content","assistant block","result shape","event type","invalid locator"}
 hook_base={"type","subtype","hook_id","hook_name","hook_event","uuid","session_id"}
@@ -162,6 +163,9 @@ diagnostic_reasons|={"numeric progress shape","result metadata shape","rate meta
 def nonnegative(value):
     return type(value) in (int,float) and math.isfinite(value) and 0<=value<=1_000_000_000_000_000
 
+def bounded_metadata_string(value):
+    return isinstance(value,str) and len(value)<=4096
+
 def sanitize_usage(usage):
     numeric={"input_tokens","output_tokens","cache_creation_input_tokens","cache_read_input_tokens"}
     allowed=numeric|{"cache_creation","inference_geo","service_tier","iterations","output_tokens_details","server_tool_use","speed"}
@@ -169,7 +173,7 @@ def sanitize_usage(usage):
     for key in numeric&set(usage):
         if type(usage[key]) is not int or not nonnegative(usage[key]): raise ValueError("usage metadata shape")
     for key in ("inference_geo","service_tier","speed"):
-        if key in usage and (not isinstance(usage[key],str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_-]{0,63}",usage[key])): raise ValueError("usage metadata shape")
+        if key in usage and not bounded_metadata_string(usage[key]): raise ValueError("usage metadata shape")
     for key,fields in (("cache_creation",{"ephemeral_1h_input_tokens","ephemeral_5m_input_tokens"}),("output_tokens_details",{"thinking_tokens"})):
         if key in usage:
             obj=usage[key]
@@ -184,10 +188,10 @@ def sanitize_model_usage(usage):
     numeric={"inputTokens","outputTokens","thinkingTokens","cacheReadInputTokens","cacheCreationInputTokens","webSearchRequests","costUSD","contextWindow","maxOutputTokens"}
     if not isinstance(usage,dict): raise ValueError("usage metadata shape")
     for model,row in usage.items():
-        if not re.fullmatch(r"[A-Za-z0-9._:/-]{1,200}",model) or not isinstance(row,dict) or set(row)-(numeric|{"canonicalModel","provider","costBasis"}): raise ValueError("usage metadata shape")
+        if not bounded_metadata_string(model) or not isinstance(row,dict) or set(row)-(numeric|{"canonicalModel","provider","costBasis"}): raise ValueError("usage metadata shape")
         if any(not nonnegative(row[key]) for key in numeric&set(row)) or row.get("webSearchRequests",0)!=0: raise ValueError("usage metadata shape")
         for key in ("canonicalModel","provider"):
-            if key in row and (not isinstance(row[key],str) or not re.fullmatch(r"[A-Za-z0-9._:/-]{1,200}",row[key])): raise ValueError("usage metadata shape")
+            if key in row and not bounded_metadata_string(row[key]): raise ValueError("usage metadata shape")
         if "costBasis" in row and row["costBasis"] not in {"list","managed","unknown"}: raise ValueError("usage metadata shape")
     return {}
 
@@ -319,7 +323,7 @@ for raw in sys.stdin:
         shape=event if isinstance(event,dict) else {}
         reason=str(failure) if str(failure) in diagnostic_reasons else "invalid JSON or shape"
         kind=shape.get("type"); subtype=shape.get("subtype")
-        name=shape.get("hook_name")
+        name=shape.get("hook_name"); hook_event=shape.get("hook_event")
         name_label=name if isinstance(name,str) and name in {"SessionStart:startup","SessionStart"} else ("configured-command" if isinstance(name,str) and name in owned_commands else "unknown")
         nested=shape.get("message") if isinstance(shape.get("message"),dict) else {}
         unknown_message=set(nested)-diagnostic_message
@@ -342,7 +346,7 @@ for raw in sys.stdin:
           "blockShapes":block_shapes,"blockCount":len(blocks),
           "contextManagementShape":"absent" if "context_management" not in nested else ("null" if management is None else ("object" if isinstance(management,dict) else "unknown")),
           "contextManagementFields":sorted(management_fields&{"applied_edits"}),"unknownContextManagementFieldCount":len(management_fields-{"applied_edits"}),
-          "hookNameMatch":name_label,"hookEventMatch":"SessionStart" if shape.get("hook_event")=="SessionStart" else "unknown"}
+          "hookNameMatch":name_label,"hookEventMatch":hook_event if isinstance(hook_event,str) and hook_event in {"SessionStart","UserPromptSubmit","Stop"} else "unknown"}
         sys.stderr.write("public provider stream rejected: "+json.dumps(diagnostic,sort_keys=True)+"\n")
         raise SystemExit(1)
 ''')
