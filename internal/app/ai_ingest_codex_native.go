@@ -1869,6 +1869,10 @@ func withoutInheritedTmuxEnvironment(env []string) []string {
 }
 
 func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserverTarget) error {
+	crashSink := startDetachedCrashSink(detachedCrashRoleCodexBrokerWatch, func() (string, error) {
+		return resolveDetachedCrashStateDir(c.lookupEnv, c.homeDir)
+	})
+	defer crashSink.Close()
 	if !target.valid() {
 		return errors.New("codex native lifecycle observer requires exact identity and tmux route")
 	}
