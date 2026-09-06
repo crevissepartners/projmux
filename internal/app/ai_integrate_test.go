@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAIIntegrateAntigravityInstallsNamedEntryWithAbsoluteExplicitEvents(t *testing.T) {
@@ -803,6 +804,20 @@ func TestAIIntegrateClaudeInstallsManagedHooks(t *testing.T) {
 			t.Fatalf("settings missing managed command for %s:\n%s", event, readCodexTestFile(t, path))
 		}
 	}
+	for _, event := range []string{"SessionStart", "Stop"} {
+		coordination := claudeSettingsCommands(t, settings, event, claudeCoordinationHookCommand)
+		if len(coordination) != 1 {
+			t.Fatalf("%s coordination hooks = %d, want exactly one", event, len(coordination))
+		}
+		if coordination[0]["asyncRewake"] != true || coordination[0]["timeout"] != float64(claudeCoordinationHookTimeout/time.Second) {
+			t.Fatalf("%s coordination hook contract = %#v", event, coordination[0])
+		}
+		for _, undocumented := range []string{"async", "rewakeMessage"} {
+			if _, ok := coordination[0][undocumented]; ok {
+				t.Fatalf("%s coordination hook depends on undocumented %s", event, undocumented)
+			}
+		}
+	}
 	if !strings.Contains(readCodexTestFile(t, path), `"PostToolUse"`) || !strings.Contains(readCodexTestFile(t, path), "echo keep") {
 		t.Fatalf("settings did not preserve user hook:\n%s", readCodexTestFile(t, path))
 	}
@@ -832,6 +847,59 @@ func TestAIIntegrateClaudeInstallIsIdempotent(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "no changes") {
 		t.Fatalf("stdout = %q, want no changes", stdout.String())
+	}
+}
+
+func TestClaudeAutomaticMigrationPreservesCoordinationPresenceAndSettingsBytes(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, claudeSettingsRelativePath)
+
+	legacyOnly, err := cmd.planClaudeHookIntegrationMode(false, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCodexTestFile(t, path, legacyOnly.next)
+	before := readCodexTestFile(t, path)
+	automatic, err := cmd.planClaudeHookMigration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if automatic.changed || automatic.next != before || strings.Contains(automatic.next, claudeCoordinationManagedMarker) {
+		t.Fatalf("automatic migration planted a new coordination hook:\n%s", automatic.next)
+	}
+
+	explicit, err := cmd.planClaudeHookIntegration(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !explicit.changed || !strings.Contains(explicit.next, claudeCoordinationManagedMarker) {
+		t.Fatal("explicit integration did not plan coordination hooks")
+	}
+	writeCodexTestFile(t, path, explicit.next)
+	installed := readCodexTestFile(t, path)
+	automatic, err = cmd.planClaudeHookMigration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if automatic.changed || automatic.next != installed {
+		t.Fatalf("automatic migration changed explicitly installed settings:\nbefore:\n%s\nafter:\n%s", installed, automatic.next)
+	}
+}
+
+func TestAIIntegrateClaudeRefusesUnmanagedCoordinationHook(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, claudeSettingsRelativePath)
+	writeCodexTestFile(t, path, `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"exec projmux internal claude-message-wait"}]}]}}`+"\n")
+	before := readCodexTestFile(t, path)
+	if err := cmd.Run([]string{"integrate", "claude"}, &bytes.Buffer{}, &bytes.Buffer{}); err == nil || !strings.Contains(err.Error(), "unmanaged projmux ingest command") {
+		t.Fatalf("unmanaged coordination conflict error = %v", err)
+	}
+	if got := readCodexTestFile(t, path); got != before {
+		t.Fatal("unmanaged coordination conflict changed settings")
 	}
 }
 
@@ -927,7 +995,7 @@ func TestAIIntegrateClaudeRemoveOnlyManagedHooks(t *testing.T) {
 		t.Fatalf("Run integrate claude --remove error = %v", err)
 	}
 	got := readCodexTestFile(t, path)
-	if strings.Contains(got, claudeHookManagedMarker) || !strings.Contains(got, "echo user-notify") {
+	if strings.Contains(got, claudeHookManagedMarker) || strings.Contains(got, claudeCoordinationManagedMarker) || !strings.Contains(got, "echo user-notify") {
 		t.Fatalf("settings after remove =\n%s", got)
 	}
 	claudeHookEvents := defaultAIHookInstallEvents(aiHookProviderClaude)
@@ -941,6 +1009,46 @@ func TestAIIntegrateClaudeRemoveOnlyManagedHooks(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "removed projmux-managed") {
 		t.Fatalf("stdout = %q, want removed message", stdout.String())
+	}
+}
+
+func TestAIIntegrateClaudeRemoveTwiceIsByteAndWriteCountIdempotent(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, claudeSettingsRelativePath)
+	if err := cmd.Run([]string{"integrate", "claude"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	settings := readClaudeSettingsTestFile(t, path)
+	hooks := settings["hooks"].(map[string]any)
+	hooks["Stop"] = append(hooks["Stop"].([]any), map[string]any{"hooks": []any{
+		map[string]any{"type": "command", "command": "echo preserve-user-stop"},
+	}})
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeCodexTestFile(t, path, string(data)+"\n")
+	writes := 0
+	cmd.writeFile = func(path string, data []byte, mode os.FileMode) error {
+		writes++
+		return os.WriteFile(path, data, mode)
+	}
+	if err := cmd.Run([]string{"integrate", "claude", "--remove"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	first := readCodexTestFile(t, path)
+	if writes != 1 || !strings.Contains(first, "echo preserve-user-stop") || strings.Contains(first, claudeCoordinationManagedMarker) {
+		t.Fatalf("first remove writes=%d settings=%s", writes, first)
+	}
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"integrate", "claude", "--remove"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	second := readCodexTestFile(t, path)
+	if writes != 1 || second != first || !strings.Contains(stdout.String(), "no changes") {
+		t.Fatalf("repeat remove writes=%d bytesEqual=%t stdout=%q", writes, second == first, stdout.String())
 	}
 }
 
@@ -1190,7 +1298,9 @@ func TestManagedIngestProducerMigrationUpgradesV0101AndRepeatsWithoutWrites(t *t
 	writeCodexTestFile(t, codexPath, strings.ReplaceAll(codexHooksBlock(true), codexHookCommand, legacyCodexHookCommand))
 	claudePath := filepath.Join(home, claudeSettingsRelativePath)
 	legacyClaude := strings.ReplaceAll(claudeHookCommand, canonicalClaudeHookRoute, legacyClaudeHookRoute)
-	writeCodexTestFile(t, claudePath, "{\n  \"hooks\": {\n    \"Notification\": [{\"hooks\": [{\"type\": \"command\", \"command\": "+string(mustJSONMarshal(legacyClaude))+"}]}]\n  }\n}\n")
+	writeCodexTestFile(t, claudePath, "{\n  \"hooks\": {\n    \"Notification\": ["+
+		"{\"hooks\": [{\"type\": \"command\", \"command\": "+string(mustJSONMarshal(legacyClaude))+"}]},"+
+		"{\"hooks\": [{\"type\": \"command\", \"command\": \"echo preserve-user-migration\"}]}]\n  }\n}\n")
 	hooksPath := filepath.Join(home, antigravityHooksRelativePath)
 	hooks, err := encodeAntigravityManagedHook("/opt/projmux/bin/projmux")
 	if err != nil {
@@ -1221,6 +1331,9 @@ func TestManagedIngestProducerMigrationUpgradesV0101AndRepeatsWithoutWrites(t *t
 		if strings.Contains(got, " ai ingest ") || !strings.Contains(got, "internal agent-hook ingest") {
 			t.Fatalf("%s did not converge to canonical ingest:\n%s", path, got)
 		}
+	}
+	if got := readCodexTestFile(t, claudePath); !strings.Contains(got, "echo preserve-user-migration") || strings.Contains(got, claudeCoordinationManagedMarker) {
+		t.Fatalf("automatic Claude migration changed user hook or planted coordination:\n%s", got)
 	}
 	count, _, err = cmd.beginManagedIngestProducerFileMigration()
 	if err != nil {
@@ -1559,6 +1672,33 @@ func claudeSettingsHasManagedCommand(t *testing.T, settings map[string]any, even
 		}
 	}
 	return false
+}
+
+func claudeSettingsCommands(t *testing.T, settings map[string]any, event, command string) []map[string]any {
+	t.Helper()
+	hooks, ok := settings["hooks"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	entries, ok := hooks[event].([]any)
+	if !ok {
+		return nil
+	}
+	var matches []map[string]any
+	for _, entryValue := range entries {
+		entry, ok := entryValue.(map[string]any)
+		if !ok {
+			continue
+		}
+		hookValues, _ := entry["hooks"].([]any)
+		for _, hookValue := range hookValues {
+			hook, ok := hookValue.(map[string]any)
+			if ok && hook["type"] == "command" && hook["command"] == command {
+				matches = append(matches, hook)
+			}
+		}
+	}
+	return matches
 }
 
 func assertCodexHookNestedHandler(t *testing.T, config, event string) {

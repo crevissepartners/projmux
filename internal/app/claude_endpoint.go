@@ -19,6 +19,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -330,6 +331,11 @@ func cleanupClaudeActivationLeases(spec superviseSpec) {
 		if strings.HasSuffix(name, ".sock.json") {
 			path := filepath.Join(dir, name)
 			if receipt, ok := readClaudeLeaseOwner(path, spec); ok && path == claudeLeaseSocket(spec.RegistryPath, spec.PaneUID, spec.Generation, receipt.Authority.RegistrationGeneration)+".json" {
+				target := claudeCoordinationTarget{AgentUID: receipt.AgentUID, PaneUID: receipt.PaneUID, Generation: receipt.Generation,
+					Provider: aiModeClaude, Authority: receipt.Authority}
+				if coordination := claudeCoordinationSocket(spec.RegistryPath, target); filepath.Dir(coordination) == dir {
+					_ = localipc.RemoveOwnedSocket(coordination, receipt.CoordinationSocket)
+				}
 				_ = os.Remove(path)
 			}
 			continue
@@ -337,7 +343,8 @@ func cleanupClaudeActivationLeases(spec superviseSpec) {
 		if len(name) != 37 || !strings.HasSuffix(name, ".sock") {
 			continue
 		}
-		if _, err := hex.DecodeString(strings.TrimSuffix(name, ".sock")); err != nil {
+		digest := strings.TrimSuffix(name, ".sock")
+		if _, err := hex.DecodeString(digest); err != nil {
 			continue
 		}
 		path := filepath.Join(dir, name)
@@ -391,7 +398,20 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 	if err != nil {
 		return errors.New("claude helper lease unavailable")
 	}
-	if writeClaudeLeaseOwner(leasePath+".json", bootstrap) != nil {
+	coordinationTarget := claudeCoordinationTarget{AgentUID: bootstrap.AgentUID, PaneUID: bootstrap.PaneUID,
+		Generation: bootstrap.Generation, Provider: aiModeClaude, Authority: bootstrap.Registration.Authority}
+	coordinationListener, err := localipc.Listen(claudeCoordinationSocket(bootstrap.RegistryPath, coordinationTarget))
+	if err != nil {
+		return errors.New("claude coordination listener is unavailable")
+	}
+	coordinationListenerOwned := true
+	defer func() {
+		if coordinationListenerOwned {
+			_ = coordinationListener.Close()
+		}
+	}()
+	coordinationIdentity := coordinationListener.Identity()
+	if writeClaudeLeaseOwner(leasePath+".json", bootstrap, coordinationIdentity) != nil {
 		return errors.New("claude helper ownership unavailable")
 	}
 	defer os.Remove(leasePath + ".json")
@@ -417,11 +437,14 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 		return errors.New("claude registration is unavailable")
 	}
 	expectedRoute, reason := coremetadata.ResolveAgentRoute(initial, bootstrap.AgentUID)
-	if reason != "" {
+	if reason != "" || !coordinationTarget.matches(expectedRoute) {
 		return errors.New("claude registration is unavailable")
 	}
 	current := func() bool {
 		if observed, err := inspectClaudeSocket(leasePath); err != nil || observed != leaseIdentity {
+			return false
+		}
+		if observed, err := localipc.InspectOwnedSocket(coordinationListener.Path); err != nil || observed != coordinationIdentity {
 			return false
 		}
 		actual, _, err := claudeadapter.Process(bootstrap.Registration.Authority.Process.PID)
@@ -440,6 +463,9 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 		authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
 		return reason == "" && ok && route.Same(expectedRoute) && route.PaneUID == bootstrap.PaneUID && route.Generation == bootstrap.Generation && authority == bootstrap.Registration.Authority
 	}
+	coordination := startClaudeCoordinationServer(coordinationListener, expectedRoute, current)
+	coordinationListenerOwned = false
+	defer coordination.Close()
 	if !current() {
 		return errors.New("claude registration is stale")
 	}
@@ -499,5 +525,17 @@ func probeClaudeRegistrationLease(registryPath string, route coremetadata.AgentR
 	_ = connection.SetDeadline(time.Now().Add(200 * time.Millisecond))
 	var ready [1]byte
 	_, err = io.ReadFull(connection, ready[:])
-	return err == nil && ready[0] == 1
+	if err != nil || ready[0] != 1 {
+		return false
+	}
+	target, ok := claudeTargetForRoute(route)
+	if !ok {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	response, err := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{
+		Version: claudeCoordinationVersion, Operation: "probe", Target: target,
+	})
+	return err == nil && response.Kind == "ready"
 }

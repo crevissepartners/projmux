@@ -12,24 +12,24 @@ import (
 	"net"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 )
 
 const (
 	agentControlDirName      = "agent-control"
-	agentControlMaxFrame     = 64 << 10
-	agentControlDeadline     = 5 * time.Second
-	agentControlDialTimeout  = 500 * time.Millisecond
-	agentControlMaxSocketLen = 100
+	agentControlMaxFrame     = localipc.MaxFrameBytes
+	agentControlDeadline     = localipc.Deadline
+	agentControlDialTimeout  = localipc.DialTimeout
+	agentControlMaxSocketLen = localipc.MaxSocketPath
 )
 
 type codexControlServer struct {
 	listener *net.UnixListener
 	path     string
-	info     os.FileInfo
+	info     localipc.SocketIdentity
 	epoch    *codexControlEpoch
 	done     chan struct{}
 }
@@ -49,13 +49,14 @@ func startCodexControlServer(stateDir string, endpoint coremetadata.CodexEndpoin
 	if err != nil {
 		return nil, fmt.Errorf("listen exact Agent control socket: %w", err)
 	}
+	listener.SetUnlinkOnClose(false)
 	if err := os.Chmod(path, 0o600); err != nil {
 		_ = listener.Close()
 		_ = os.Remove(path)
 		return nil, fmt.Errorf("secure exact Agent control socket: %w", err)
 	}
-	info, err := os.Lstat(path)
-	if err != nil || info.Mode()&os.ModeSocket == 0 {
+	info, err := localipc.InspectOwnedSocket(path)
+	if err != nil {
 		_ = listener.Close()
 		_ = os.Remove(path)
 		return nil, errors.New("exact Agent control listener is not a socket")
@@ -79,15 +80,13 @@ func (s *codexControlServer) serve() {
 func (s *codexControlServer) handle(conn *net.UnixConn) {
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(agentControlDeadline))
-	payload, err := io.ReadAll(io.LimitReader(conn, agentControlMaxFrame+1))
-	if err != nil || len(payload) > agentControlMaxFrame {
-		s.writeResponse(conn, refusedControl("invalid-frame", "exact Agent control request exceeded the bounded frame"))
-		return
-	}
 	var request agentControlRequest
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	if err := decoder.Decode(&request); err != nil || hasTrailingJSON(decoder) {
-		s.writeResponse(conn, refusedControl("invalid-frame", "exact Agent control request was malformed"))
+	if err := localipc.ReadJSON(conn, &request); err != nil {
+		detail := "exact Agent control request was malformed"
+		if errors.Is(err, localipc.ErrFrameTooLarge) {
+			detail = "exact Agent control request exceeded the bounded frame"
+		}
+		s.writeResponse(conn, refusedControl("invalid-frame", detail))
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), agentControlDeadline)
@@ -96,12 +95,11 @@ func (s *codexControlServer) handle(conn *net.UnixConn) {
 }
 
 func (s *codexControlServer) writeResponse(conn *net.UnixConn, response agentControlResponse) {
-	var payload bytes.Buffer
-	if err := json.NewEncoder(&payload).Encode(response); err != nil || payload.Len() > agentControlMaxFrame {
-		payload.Reset()
-		_ = json.NewEncoder(&payload).Encode(refusedControl("response-too-large", "exact Agent control detail is too large to display safely"))
+	payload, err := localipc.MarshalJSON(response)
+	if err != nil {
+		payload, _ = localipc.MarshalJSON(refusedControl("response-too-large", "exact Agent control detail is too large to display safely"))
 	}
-	_, _ = conn.Write(payload.Bytes())
+	_, _ = conn.Write(payload)
 }
 
 func (s *codexControlServer) Close() error {
@@ -118,7 +116,7 @@ func (s *codexControlServer) Close() error {
 	}
 	err := s.listener.Close()
 	<-s.done
-	if current, statErr := os.Lstat(s.path); statErr == nil && os.SameFile(s.info, current) && current.Mode()&os.ModeSocket != 0 {
+	if current, statErr := localipc.InspectOwnedSocket(s.path); statErr == nil && current == s.info {
 		_ = os.Remove(s.path)
 	}
 	return err
@@ -192,44 +190,5 @@ func agentControlSocketPath(stateDir string, endpoint coremetadata.CodexEndpoint
 }
 
 func prepareAgentControlSocket(path string) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create exact Agent control directory: %w", err)
-	}
-	info, err := os.Lstat(dir)
-	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || !ownedByCurrentUser(info) {
-		return errors.New("exact Agent control directory is not a private owned directory")
-	}
-	// #nosec G302 -- 0700 is the intentional private mode for the owner-traversable control socket directory.
-	if err := os.Chmod(dir, 0o700); err != nil {
-		return fmt.Errorf("secure exact Agent control directory: %w", err)
-	}
-	info, err = os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("inspect exact Agent control socket: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || info.Mode()&os.ModeSocket == 0 || !ownedByCurrentUser(info) {
-		return errors.New("exact Agent control endpoint collision is not an owned socket")
-	}
-	conn, dialErr := net.DialTimeout("unix", path, agentControlDialTimeout)
-	if dialErr == nil {
-		_ = conn.Close()
-		return errors.New("exact Agent control endpoint is already active")
-	}
-	latest, latestErr := os.Lstat(path)
-	if latestErr != nil || !os.SameFile(info, latest) || latest.Mode()&os.ModeSocket == 0 || !ownedByCurrentUser(latest) {
-		return errors.New("exact Agent control stale endpoint changed during ownership check")
-	}
-	if err := os.Remove(path); err != nil {
-		return fmt.Errorf("remove stale exact Agent control socket: %w", err)
-	}
-	return nil
-}
-
-func ownedByCurrentUser(info os.FileInfo) bool {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && int(stat.Uid) == os.Getuid()
+	return localipc.PrepareSocket(path)
 }

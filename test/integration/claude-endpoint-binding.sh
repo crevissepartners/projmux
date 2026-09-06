@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Disposable own-child SessionStart registration. No tmux, provider account,
-# model, external tools, MCP, or provider transport is used by this fixture.
+# Disposable own-child SessionStart registration plus Projmux-owned UDS/pipe
+# handoff. No tmux, provider account, model, external tools, MCP, vendor socket,
+# connector, or provider transport is used by this fixture.
 unset TMUX TMUX_PANE
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 build_root="$(mktemp -d "${TMPDIR:-/tmp}/projmux-claude-endpoint-build.XXXXXX")"

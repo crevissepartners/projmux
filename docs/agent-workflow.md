@@ -993,8 +993,9 @@
   `TestClaudeEndpointProcessIntegration` through supervisor, activation gate,
   public SessionStart hook, and detached helper. It covers registration
   replacement, actual helper death while the provider remains alive, automatic
-  lease cleanup, nested/forged entrypoint refusal, provider exit, zero provider
-  connections, and zero token/locator residue in output and live lease files.
+  lease cleanup, nested/forged entrypoint refusal, provider exit with bounded
+  convergence of every captured helper birth, zero provider connections, and
+  zero token/locator residue in output and live lease files.
 - `TestClaudeEndpointInstalledSourceGate` is opt-in evidence from a disposable
   installed Claude one-shot. It checks public SessionStart identity, exact
   readiness, exit invalidation, empty tools/MCP/plugins, and zero tool-use.
@@ -1002,6 +1003,47 @@
   gate without safe mode; it does not satisfy or relax the later mandatory
   safe-mode delivery gate. Setup and limits are in
   [claude-coordination-endpoints.md](claude-coordination-endpoints.md).
+
+### Claude coordination ingress Phase 2 tests
+
+- `TestDeliveryTransitionTable` and its deterministic randomized sequence test
+  own the private provider-final-hop `queued`/`held`/`handoff` lifecycle and
+  terminal-once outcomes. This state sits below, and does not redefine, the
+  future public broker `accepted` projection. A handoff is `delivered` only
+  after one exact waiter fully writes the bounded frame and the same helper
+  commits its receipt; it never claims model processing, reply, or turn completion.
+- `TestClaudeCoordinationHub*` owns single-waiter CAS/supersede, no-waiter hold,
+  TTL before and after waiter assignment, the final pre-handoff deadline fence,
+  receipt timeout, duplicate/out-of-order refusal, helper replacement, and zero
+  automatic resend after an ambiguous provider-pipe outcome.
+- `TestClaudeCoordinationDeadHookChildNeverBeginsHandoff` and
+  `TestClaudeCoordinationDisconnectedHookResponseFailsBeforeHandoff` keep a dead
+  child fenced as held with handoff zero and a failed helper response as a
+  non-ambiguous terminal result. `TestClaudeCoordinationAssignmentTimeoutFailsBeforeHandoff`
+  pins the same non-ambiguous terminal boundary after a complete assignment but
+  before the child acknowledges `begin-handoff`. The process integration also
+  refuses a same-provider direct child when fd 2 is a regular file rather than
+  the provider-owned pipe.
+- `TestOwnedSocketCleanupPreservesReplacementAndPathModeBounds`,
+  `TestSocketIncarnationIdentityRejectsLegacyAxisReuse`,
+  `TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives`, and
+  `TestCleanupClaudeActivationLeasesPreservesCoordinationReplacement` require
+  listener close, dead-helper reaping, and supervisor cleanup to unlink only
+  the exact receipt-bound socket incarnation, including change time when a
+  filesystem reuses device and inode, while preserving a same-path replacement.
+- `TestClaudeCoordinationHookOwnedUDSAndProviderPipe` uses only a disposable
+  Projmux-owned Unix socket and pipe, with a waiter-ready barrier and structured
+  receipt, to cover exact `SessionStart` and `Stop` final-hop delivery. Its peer
+  record stays explicitly untrusted and slash commands remain plaintext; no
+  provider/model/vendor socket, MCP, connector, interrupt, approval, or tool is run.
+- `TestAIIntegrateClaude*` and
+  `TestClaudeAutomaticMigrationPreservesCoordinationPresenceAndSettingsBytes`,
+  plus `TestConfigApplyNoReloadPreservesClaudeSettingsBytesWithCoordinationAbsentOrPresent`,
+  pin one managed asyncRewake hook for each of `SessionStart` and `Stop`, preserve
+  user and existing managed hooks, make repeated remove byte/write-count
+  idempotent, and keep automatic install-time migration and
+  `config apply --no-reload` byte-identical for both absent and present
+  coordination families.
 
 ### Provider hook pane identity tests
 
