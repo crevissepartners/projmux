@@ -446,9 +446,14 @@ must be selected from the exact Agent's provider and capability.
 `agent approval review` use the live Codex app-server connection only when the
 selected Agent, its owned Pane, activation generation, thread, current turn,
 and connection epoch still match exactly. `start` sends only the exact thread
-id and one text input; `steer` supplies the current expected turn id; and
-`interrupt` supplies that exact turn id. These commands never install sticky
-model, effort, cwd, sandbox, permission, or collaboration overrides.
+id and one text input. Immediately before that write it reads one bounded,
+content-free lifecycle snapshot: fresh active/in-progress returns
+`turn-in-progress`, fresh idle/terminal repairs stale cached state and starts
+once, and an unavailable or inconsistent snapshot returns
+`turn-state-unavailable` with no turn mutation. `steer` supplies the current
+expected turn id; and `interrupt` supplies that exact turn id. These commands
+never install sticky model, effort, cwd, sandbox, permission, or collaboration
+overrides.
 
 Approval review shows only the safe one-shot intersection supplied by the
 exact pending request. Command, file, and network requests are limited to

@@ -23,6 +23,7 @@ const (
 )
 
 type agentControlWire interface {
+	ReadLifecycleSnapshot(context.Context, string) (codexappserver.LifecycleSnapshot, error)
 	StartExactTurn(context.Context, string, string) (codexappserver.ControlResult, error)
 	SteerExactTurn(context.Context, string, string, string) (codexappserver.ControlResult, error)
 	InterruptExactTurn(context.Context, string, string) (codexappserver.ControlResult, error)
@@ -184,8 +185,23 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 	case agentControlOpApprovals:
 		return agentControlResponse{OK: true, Availability: e.availability(), Approvals: e.approvals()}
 	case agentControlOpStart:
-		if strings.TrimSpace(request.Text) == "" || !e.canStart() {
+		if strings.TrimSpace(request.Text) == "" {
 			return refusedControl("stale-turn", "thread is not idle; new turn write refused")
+		}
+		snapshot, err := e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
+		if err != nil || snapshot.ThreadID != e.identity.ThreadID || !validFreshStartSnapshot(snapshot) {
+			return refusedControl("turn-state-unavailable", "fresh exact turn state is unavailable; new turn write refused")
+		}
+		// The snapshot request travels through the same connection/control epoch,
+		// but the Registry binding can still be replaced while that read is in
+		// flight. Re-check the existing binding fence before accepting either its
+		// state or a provider mutation.
+		if !e.current(e.identity) {
+			return refusedControl("stale-binding", "exact Agent binding or activation generation changed")
+		}
+		e.reconcileTurn(snapshot)
+		if !e.canStart() {
+			return refusedControl("turn-in-progress", "exact thread already has a turn in progress")
 		}
 		result, err := e.wire.StartExactTurn(ctx, e.identity.ThreadID, request.Text)
 		if err != nil {
@@ -195,6 +211,8 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 			return refusedControl("protocol-error", "turn/start returned a different or incomplete identity")
 		}
 		e.turnID, e.turnState, e.threadState = result.TurnID, codexappserver.TurnStateInProgress, codexappserver.ThreadStateActive
+		e.pending = map[string]codexappserver.ApprovalEnvelope{}
+		e.ambiguous = map[string]struct{}{}
 		return agentControlResponse{OK: true, ThreadID: result.ThreadID, TurnID: result.TurnID}
 	case agentControlOpSteer:
 		if strings.TrimSpace(request.Text) == "" || !e.canMutateCurrentTurn() {
@@ -290,6 +308,32 @@ func (e *codexControlEpoch) HasActionableRequest(requestID string) bool {
 
 func (e *codexControlEpoch) canStart() bool {
 	return e.threadState == codexappserver.ThreadStateIdle && (e.turnID == "" || e.turnState == codexappserver.TurnStateCompleted || e.turnState == codexappserver.TurnStateFailed || e.turnState == codexappserver.TurnStateInterrupted)
+}
+
+func validFreshStartSnapshot(snapshot codexappserver.LifecycleSnapshot) bool {
+	turnID := strings.TrimSpace(snapshot.TurnID)
+	switch snapshot.ThreadState {
+	case codexappserver.ThreadStateActive, codexappserver.ThreadStateWaitingOnApproval, codexappserver.ThreadStateWaitingOnUserInput:
+		return turnID != "" && snapshot.TurnState == codexappserver.TurnStateInProgress
+	case codexappserver.ThreadStateIdle:
+		if turnID == "" {
+			return snapshot.TurnState == "" || snapshot.TurnState == codexappserver.TurnStateUnknown
+		}
+		return snapshot.TurnState == codexappserver.TurnStateCompleted || snapshot.TurnState == codexappserver.TurnStateFailed || snapshot.TurnState == codexappserver.TurnStateInterrupted
+	default:
+		return false
+	}
+}
+
+func (e *codexControlEpoch) reconcileTurn(snapshot codexappserver.LifecycleSnapshot) {
+	turnChanged := e.turnID != strings.TrimSpace(snapshot.TurnID)
+	e.threadState = snapshot.ThreadState
+	e.turnID = strings.TrimSpace(snapshot.TurnID)
+	e.turnState = snapshot.TurnState
+	if turnChanged || snapshot.TurnState != codexappserver.TurnStateInProgress {
+		e.pending = map[string]codexappserver.ApprovalEnvelope{}
+		e.ambiguous = map[string]struct{}{}
+	}
 }
 
 func (e *codexControlEpoch) canMutateCurrentTurn() bool {
