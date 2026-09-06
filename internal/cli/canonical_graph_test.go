@@ -15,7 +15,9 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline moved once here, when the Project lifecycle verbs were added:
+// The baseline last moved when steer's public summary began distinguishing
+// provider acceptance from unconfirmed delivery. The prior move added the
+// Project lifecycle verbs:
 // `start|open|stop project` and the canonical `unregister project` are new
 // rows, `delete` became a source edge of the last of those instead of a
 // canonical owner, `switch` became a source of `create project` and
@@ -30,7 +32,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "07c4f3a5a49806e6a9567de1a9165a3a8137feeeb05b8304d5207a88ce078a5b"
+	const want = "5abd90fbd6dd851124fead66ec4aca92e5f442991b7963ba0f78c50e8e302b76"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

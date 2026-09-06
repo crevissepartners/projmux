@@ -164,7 +164,11 @@ func TestAgentControlCLIExactTurnDispatchAndTextFidelity(t *testing.T) {
 					t.Fatalf("transport binding state=%q endpoint=%+v identity=%+v", stateDir, endpoint, identity)
 				}
 				calls = append(calls, request)
-				return agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1"}, nil
+				response := agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1"}
+				if request.Operation == agentControlOpSteer {
+					response.Acceptance, response.Delivery = agentControlAcceptanceProvider, agentControlDeliveryUnconfirmed
+				}
+				return response, nil
 			}
 			if _, _, err := runRoute(t, cmd, test.args...); err != nil {
 				t.Fatal(err)
@@ -209,7 +213,11 @@ func TestAgentControlCLIPublicTurnsDispatchFromBothSupportedTmuxFrames(t *testin
 						t.Fatalf("dispatch state=%q endpoint=%+v identity=%+v request=%+v", stateDir, endpoint, identity, request)
 					}
 					calls = append(calls, request)
-					return agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1"}, nil
+					response := agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1"}
+					if request.Operation == agentControlOpSteer {
+						response.Acceptance, response.Delivery = agentControlAcceptanceProvider, agentControlDeliveryUnconfirmed
+					}
+					return response, nil
 				}
 				if _, _, err := runRoute(t, cmd, turn.args...); err != nil {
 					t.Fatal(err)
@@ -219,6 +227,81 @@ func TestAgentControlCLIPublicTurnsDispatchFromBothSupportedTmuxFrames(t *testin
 				}
 			})
 		}
+	}
+}
+
+func TestAgentControlCLISteerExactAcceptanceRefusalOutputAndExit(t *testing.T) {
+	active := codexappserver.LifecycleSnapshot{
+		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive,
+		TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+	}
+	for _, test := range []struct {
+		name       string
+		fresh      codexappserver.LifecycleSnapshot
+		freshErr   error
+		wantCode   string
+		wantExit   int
+		wantSteers int
+		wantOutput string
+		wantOrder  []string
+	}{
+		{
+			name: "provider accepted but delivery unconfirmed", fresh: active, wantSteers: 1,
+			wantOutput: "Steer current turn thread=\"thread-1\" turn=\"turn-1\" acceptance=provider delivery=unconfirmed\n",
+			wantOrder:  []string{"lifecycle-read:thread-1", "turn-steer:thread-1:turn-1"},
+		},
+		{name: "fresh terminal refusal", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted}, wantCode: "no-active-turn", wantExit: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh different turn refusal", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-2", TurnState: codexappserver.TurnStateInProgress}, wantCode: "no-active-turn", wantExit: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh unavailable refusal", freshErr: errors.New("private provider detail"), wantCode: "turn-state-unavailable", wantExit: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cmd, _, _ := exactControlCLICommand(t)
+			wire := &fakeExactControlWire{snapshot: test.fresh, snapshotErr: test.freshErr}
+			epoch := newCodexControlEpoch(wire, phase6CLIIdentity(), "epoch-1", active, func(codexLifecycleIdentity) bool { return true })
+			cmd.controlCall = func(_ context.Context, _ string, _ coremetadata.CodexEndpointRef, _ codexLifecycleIdentity, request agentControlRequest) (agentControlResponse, error) {
+				return epoch.Handle(context.Background(), request), nil
+			}
+			stdout, _, err := runRoute(t, cmd, "turn", "steer", "uid:agt-alpha-codex", "--", "private steer payload")
+			exit := 0
+			if err != nil {
+				exit = 1
+				if IsUsageError(err) {
+					exit = 2
+				}
+			}
+			if exit != test.wantExit || stdout != test.wantOutput || wire.reads != 1 || wire.steer != test.wantSteers || !slices.Equal(wire.operations, test.wantOrder) {
+				t.Fatalf("exit=%d stdout=%q err=%v reads=%d steer=%d order=%q", exit, stdout, err, wire.reads, wire.steer, wire.operations)
+			}
+			if test.wantCode != "" && (err == nil || !strings.Contains(err.Error(), "("+test.wantCode+")")) {
+				t.Fatalf("refusal error=%v, want code %s", err, test.wantCode)
+			}
+			if strings.Contains(stdout, "private") || (err != nil && strings.Contains(err.Error(), "private provider")) {
+				t.Fatalf("private detail escaped stdout=%q err=%v", stdout, err)
+			}
+		})
+	}
+}
+
+func TestAgentControlCLISteerRejectsMissingOrConfirmedDeliveryReceipt(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		acceptance string
+		delivery   string
+	}{
+		{name: "missing", acceptance: "", delivery: ""},
+		{name: "fabricated confirmation", acceptance: agentControlAcceptanceProvider, delivery: "confirmed"},
+		{name: "wrong acceptance", acceptance: "tui", delivery: agentControlDeliveryUnconfirmed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cmd, _, _ := exactControlCLICommand(t)
+			cmd.controlCall = func(context.Context, string, coremetadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+				return agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1", Acceptance: test.acceptance, Delivery: test.delivery}, nil
+			}
+			stdout, _, err := runRoute(t, cmd, "turn", "steer", "uid:agt-alpha-codex", "--", "steer")
+			if err == nil || IsUsageError(err) || stdout != "" || !strings.Contains(err.Error(), "provider-acceptance receipt") {
+				t.Fatalf("stdout=%q err=%v", stdout, err)
+			}
+		})
 	}
 }
 

@@ -788,8 +788,38 @@ if [[ "$lifecycle_sibling_writes_before" != "0" ]]; then
   echo "sibling steer ledger was not empty before its exact reconnect receipt: writes=$lifecycle_sibling_writes_before" >&2
   exit 1
 fi
-if ! lifecycle_pmx_at_anchor agent turn steer "uid:$lifecycle_sibling_agent_uid" -- "sibling replacement steer" >"$lifecycle_root/sibling-replacement-steer.out" 2>"$lifecycle_root/sibling-replacement-steer.err"; then
-  echo "healthy sibling native steer failed after its replacement barrier" >&2
+# The replacement barrier proves semantic projection and the new control epoch,
+# but the broker's bounded same-thread lifecycle read may still be completing.
+# Retry only that exact content-free read refusal. Every refused attempt must
+# keep both stdout and the exact sibling steer ledger empty; elapsed time paces
+# retries and never supplies turn authority.
+lifecycle_sibling_steer_deadline="$((SECONDS + 10))"
+lifecycle_sibling_steer_attempts=0
+while true; do
+  lifecycle_sibling_steer_attempts="$((lifecycle_sibling_steer_attempts + 1))"
+  if lifecycle_pmx_at_anchor agent turn steer "uid:$lifecycle_sibling_agent_uid" -- "sibling replacement steer" >"$lifecycle_root/sibling-replacement-steer.out" 2>"$lifecycle_root/sibling-replacement-steer.err"; then
+    break
+  fi
+  lifecycle_sibling_writes_during_retry="$(grep -Fxc 'thread-sibling|turn/steer' "$lifecycle_fixture_state/provider-writes" || true)"
+  if [[ "$lifecycle_sibling_writes_during_retry" != "$lifecycle_sibling_writes_before" ]] ||
+    [[ -s "$lifecycle_root/sibling-replacement-steer.out" ]] ||
+    ! grep -Fq '(turn-state-unavailable)' "$lifecycle_root/sibling-replacement-steer.err" ||
+    grep -Eo '\([a-z][a-z0-9-]*\)' "$lifecycle_root/sibling-replacement-steer.err" | grep -Fvx '(turn-state-unavailable)' >/dev/null; then
+    echo "healthy sibling native steer failed outside bounded fresh-state retry" >&2
+    cat "$lifecycle_root/sibling-replacement-steer.err" >&2
+    exit 1
+  fi
+  if ((SECONDS >= lifecycle_sibling_steer_deadline)); then
+    echo "healthy sibling native steer remained turn-state-unavailable after its replacement barrier" >&2
+    cat "$lifecycle_root/sibling-replacement-steer.err" >&2
+    exit 1
+  fi
+  sleep 0.025
+done
+if [[ -s "$lifecycle_root/sibling-replacement-steer.err" ]] ||
+  ! grep -Fqx 'Steer current turn thread="thread-sibling" turn="turn-sibling" acceptance=provider delivery=unconfirmed' "$lifecycle_root/sibling-replacement-steer.out"; then
+  echo "sibling replacement steer success did not expose exact provider acceptance and unconfirmed delivery" >&2
+  cat "$lifecycle_root/sibling-replacement-steer.out" >&2
   cat "$lifecycle_root/sibling-replacement-steer.err" >&2
   exit 1
 fi
@@ -846,5 +876,5 @@ fi
 
 lifecycle_cleanup
 trap smoke_cleanup_env EXIT
-echo ">> Codex native lifecycle E2E passed: socket=$lifecycle_socket path=$lifecycle_socket_path target-epochs=$epoch_one,$epoch_two sibling-epochs=$sibling_epoch_one,$sibling_epoch_two sibling-steer-writes=0,1 target-start-attempts=$lifecycle_target_start_attempts"
+echo ">> Codex native lifecycle E2E passed: socket=$lifecycle_socket path=$lifecycle_socket_path target-epochs=$epoch_one,$epoch_two sibling-epochs=$sibling_epoch_one,$sibling_epoch_two sibling-steer-writes=0,1 sibling-steer-attempts=$lifecycle_sibling_steer_attempts target-start-attempts=$lifecycle_target_start_attempts"
 smoke_contract_pass

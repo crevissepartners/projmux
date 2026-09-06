@@ -905,7 +905,7 @@ func TestCodexNativeObserverReadyHandshakeSteersAndShutdownRemovesControlSocket(
 		<-done
 		t.Skip("Unix sockets are unavailable in this sandbox")
 	}
-	if err != nil || !response.OK || wire.writes() != 1 {
+	if err != nil || !response.OK || response.Acceptance != agentControlAcceptanceProvider || response.Delivery != agentControlDeliveryUnconfirmed || wire.writes() != 1 {
 		cancel()
 		<-done
 		t.Fatalf("exact steer response=%+v err=%v writes=%d", response, err, wire.writes())

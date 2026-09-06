@@ -108,7 +108,7 @@ func TestExactAgentControlActionGenerationEpochAndTurnTable(t *testing.T) {
 		wantWrites int
 	}{
 		{name: "idle exact new turn", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-old", TurnState: codexappserver.TurnStateCompleted}, request: agentControlRequest{Operation: agentControlOpStart, Text: "new"}, current: true, wantOK: true, wantReads: 1, wantWrites: 1},
-		{name: "active exact steer", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress}, request: agentControlRequest{Operation: agentControlOpSteer, Text: "steer"}, current: true, wantOK: true, wantWrites: 1},
+		{name: "active exact steer", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress}, request: agentControlRequest{Operation: agentControlOpSteer, Text: "steer"}, current: true, wantOK: true, wantReads: 1, wantWrites: 1},
 		{name: "idle steer refused", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted}, request: agentControlRequest{Operation: agentControlOpSteer, Text: "steer"}, current: true},
 		{name: "old epoch", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle}, request: agentControlRequest{Operation: agentControlOpStart, Epoch: "old", Text: "new"}, current: true},
 		{name: "old generation", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle}, request: agentControlRequest{Operation: agentControlOpStart, Text: "new", Identity: codexLifecycleIdentity{AgentUID: "agent-1", PaneUID: "pane-1", RuntimeID: "%7", Generation: "old", ThreadID: "thread-1"}}, current: true},
@@ -118,7 +118,7 @@ func TestExactAgentControlActionGenerationEpochAndTurnTable(t *testing.T) {
 		{name: "binding replaced", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle}, request: agentControlRequest{Operation: agentControlOpStart, Text: "new"}, current: false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			wire := &fakeExactControlWire{}
+			wire := &fakeExactControlWire{snapshot: test.snapshot}
 			epoch := newCodexControlEpoch(wire, identity, "epoch-1", test.snapshot, func(codexLifecycleIdentity) bool { return test.current })
 			request := test.request
 			if request.Identity == (codexLifecycleIdentity{}) {
@@ -142,6 +142,131 @@ func TestExactAgentControlActionGenerationEpochAndTurnTable(t *testing.T) {
 	}
 	if second := epoch.Handle(context.Background(), request); second.OK || wire.interrupt != 1 {
 		t.Fatalf("second interrupt = %+v writes=%d", second, wire.interrupt)
+	}
+}
+
+func TestExactAgentControlSteerFreshLifecycleAcceptanceTable(t *testing.T) {
+	identity := phase6Identity()
+	active := codexappserver.LifecycleSnapshot{
+		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive,
+		TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+	}
+	for _, test := range []struct {
+		name      string
+		fresh     codexappserver.LifecycleSnapshot
+		freshErr  error
+		wantOK    bool
+		wantCode  string
+		wantSteer int
+		wantOrder []string
+	}{
+		{name: "same exact active", fresh: active, wantOK: true, wantSteer: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-steer:thread-1:turn-1"}},
+		{name: "same exact waiting approval", fresh: activeWithThreadState(codexappserver.ThreadStateWaitingOnApproval), wantOK: true, wantSteer: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-steer:thread-1:turn-1"}},
+		{name: "same exact waiting input", fresh: activeWithThreadState(codexappserver.ThreadStateWaitingOnUserInput), wantOK: true, wantSteer: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-steer:thread-1:turn-1"}},
+		{name: "fresh same terminal", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted}, wantCode: "no-active-turn", wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh different active turn", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-2", TurnState: codexappserver.TurnStateInProgress}, wantCode: "no-active-turn", wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh different terminal turn", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-2", TurnState: codexappserver.TurnStateInterrupted}, wantCode: "no-active-turn", wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh idle before any turn", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle}, wantCode: "no-active-turn", wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh read error", freshErr: errors.New("private upstream detail"), wantCode: "turn-state-unavailable", wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh wrong thread", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-other", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress}, wantCode: "turn-state-unavailable", wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh malformed state", fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress}, wantCode: "turn-state-unavailable", wantOrder: []string{"lifecycle-read:thread-1"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			wire := &fakeExactControlWire{snapshot: test.fresh, snapshotErr: test.freshErr}
+			epoch := newCodexControlEpoch(wire, identity, "epoch-1", active, func(codexLifecycleIdentity) bool { return true })
+			response := epoch.Handle(context.Background(), agentControlRequest{
+				Operation: agentControlOpSteer, Identity: identity, Epoch: "epoch-1", Text: "private steer payload",
+			})
+			if response.OK != test.wantOK || response.Code != test.wantCode || wire.reads != 1 || wire.steer != test.wantSteer || !slices.Equal(wire.operations, test.wantOrder) {
+				t.Fatalf("response=%+v reads=%d steer=%d order=%q", response, wire.reads, wire.steer, wire.operations)
+			}
+			if wire.start != 0 || wire.interrupt != 0 || len(wire.responses) != 0 || strings.Contains(response.Message, "private") || strings.Contains(strings.Join(wire.operations, " "), "private") {
+				t.Fatalf("unexpected mutation or private detail: response=%+v wire=%+v", response, wire)
+			}
+			if response.OK && (response.Acceptance != agentControlAcceptanceProvider || response.Delivery != agentControlDeliveryUnconfirmed) {
+				t.Fatalf("success receipt=%+v", response)
+			}
+			if !response.OK && (response.Acceptance != "" || response.Delivery != "") {
+				t.Fatalf("refusal fabricated receipt=%+v", response)
+			}
+		})
+	}
+}
+
+func TestExactAgentControlSteerDifferentTurnReconcilesWithoutRetargetingCurrentRequest(t *testing.T) {
+	identity := phase6Identity()
+	cached := activeWithThreadState(codexappserver.ThreadStateActive)
+	fresh := codexappserver.LifecycleSnapshot{
+		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive,
+		TurnID: "turn-2", TurnState: codexappserver.TurnStateInProgress,
+	}
+	wire := &fakeExactControlWire{snapshot: fresh, turnID: "turn-2"}
+	epoch := newCodexControlEpoch(wire, identity, "epoch-1", cached, func(codexLifecycleIdentity) bool { return true })
+	request := agentControlRequest{Operation: agentControlOpSteer, Identity: identity, Epoch: "epoch-1", Text: "steer"}
+	first := epoch.Handle(context.Background(), request)
+	if first.OK || first.Code != "no-active-turn" || wire.steer != 0 || !slices.Equal(wire.operations, []string{"lifecycle-read:thread-1"}) {
+		t.Fatalf("different-turn request retargeted: response=%+v operations=%q", first, wire.operations)
+	}
+	second := epoch.Handle(context.Background(), request)
+	if !second.OK || wire.steer != 1 || !slices.Equal(wire.operations, []string{"lifecycle-read:thread-1", "lifecycle-read:thread-1", "turn-steer:thread-1:turn-2"}) {
+		t.Fatalf("explicit retry did not use reconciled exact turn: response=%+v operations=%q", second, wire.operations)
+	}
+}
+
+func TestExactAgentControlSteerPostReadFenceMismatchIsTurnStateUnavailable(t *testing.T) {
+	identity := phase6Identity()
+	currentCalls := 0
+	active := activeWithThreadState(codexappserver.ThreadStateActive)
+	wire := &fakeExactControlWire{snapshot: active}
+	epoch := newCodexControlEpoch(wire, identity, "epoch-1", active, func(codexLifecycleIdentity) bool {
+		currentCalls++
+		return currentCalls == 1
+	})
+	response := epoch.Handle(context.Background(), agentControlRequest{Operation: agentControlOpSteer, Identity: identity, Epoch: "epoch-1", Text: "steer"})
+	if response.OK || response.Code != "turn-state-unavailable" || currentCalls != 2 || wire.reads != 1 || wire.writes() != 0 || !slices.Equal(wire.operations, []string{"lifecycle-read:thread-1"}) {
+		t.Fatalf("response=%+v current-calls=%d reads=%d writes=%d order=%q", response, currentCalls, wire.reads, wire.writes(), wire.operations)
+	}
+}
+
+func TestExactAgentControlSteerOldOrCrossEpochReadsAndWritesZero(t *testing.T) {
+	identity := phase6Identity()
+	active := activeWithThreadState(codexappserver.ThreadStateActive)
+	for _, test := range []struct {
+		name    string
+		request agentControlRequest
+	}{
+		{name: "old control epoch", request: agentControlRequest{Operation: agentControlOpSteer, Identity: identity, Epoch: "epoch-old", Text: "steer"}},
+		{name: "cross Agent", request: agentControlRequest{Operation: agentControlOpSteer, Identity: codexLifecycleIdentity{AgentUID: "agent-other", PaneUID: identity.PaneUID, RuntimeID: identity.RuntimeID, Generation: identity.Generation, ThreadID: identity.ThreadID}, Epoch: "epoch-1", Text: "steer"}},
+		{name: "cross Pane", request: agentControlRequest{Operation: agentControlOpSteer, Identity: codexLifecycleIdentity{AgentUID: identity.AgentUID, PaneUID: "pane-other", RuntimeID: identity.RuntimeID, Generation: identity.Generation, ThreadID: identity.ThreadID}, Epoch: "epoch-1", Text: "steer"}},
+		{name: "cross runtime", request: agentControlRequest{Operation: agentControlOpSteer, Identity: codexLifecycleIdentity{AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, RuntimeID: "%8", Generation: identity.Generation, ThreadID: identity.ThreadID}, Epoch: "epoch-1", Text: "steer"}},
+		{name: "cross generation", request: agentControlRequest{Operation: agentControlOpSteer, Identity: codexLifecycleIdentity{AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, RuntimeID: identity.RuntimeID, Generation: "generation-other", ThreadID: identity.ThreadID}, Epoch: "epoch-1", Text: "steer"}},
+		{name: "cross thread", request: agentControlRequest{Operation: agentControlOpSteer, Identity: codexLifecycleIdentity{AgentUID: identity.AgentUID, PaneUID: identity.PaneUID, RuntimeID: identity.RuntimeID, Generation: identity.Generation, ThreadID: "thread-other"}, Epoch: "epoch-1", Text: "steer"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			wire := &fakeExactControlWire{snapshot: active}
+			epoch := newCodexControlEpoch(wire, identity, "epoch-1", active, func(codexLifecycleIdentity) bool { return true })
+			response := epoch.Handle(context.Background(), test.request)
+			if response.OK || response.Code != "stale-epoch" || wire.reads != 0 || wire.writes() != 0 || len(wire.operations) != 0 {
+				t.Fatalf("response=%+v reads=%d writes=%d operations=%q", response, wire.reads, wire.writes(), wire.operations)
+			}
+		})
+	}
+}
+
+func TestBodyFreeSteerSuccessIsProviderAcceptanceWithDeliveryUnconfirmed(t *testing.T) {
+	identity := phase6Identity()
+	active := activeWithThreadState(codexappserver.ThreadStateActive)
+	// fakeExactControlWire returns only ControlResult identity after a nil
+	// turn/steer error, matching the provider's body-free success response.
+	wire := &fakeExactControlWire{snapshot: active}
+	epoch := newCodexControlEpoch(wire, identity, "epoch-1", active, func(codexLifecycleIdentity) bool { return true })
+	response := epoch.Handle(context.Background(), agentControlRequest{Operation: agentControlOpSteer, Identity: identity, Epoch: "epoch-1", Text: "steer"})
+	if !response.OK || response.Acceptance != "provider" || response.Delivery != "unconfirmed" || wire.steer != 1 {
+		t.Fatalf("body-free success receipt=%+v steer-writes=%d", response, wire.steer)
+	}
+	payload, err := json.Marshal(response)
+	if err != nil || !strings.Contains(string(payload), `"acceptance":"provider"`) || !strings.Contains(string(payload), `"delivery":"unconfirmed"`) || strings.Contains(string(payload), `"delivery":"confirmed"`) {
+		t.Fatalf("structured body-free receipt=%s err=%v", payload, err)
 	}
 }
 

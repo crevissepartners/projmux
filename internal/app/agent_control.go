@@ -382,10 +382,17 @@ func (c *agentCommand) runTurn(args []string, stdout, stderr io.Writer) error {
 		if err := response.Error(); err != nil {
 			return addOpenCodexBindingRecovery(err, binding)
 		}
+		if op == agentControlOpSteer && (response.Acceptance != agentControlAcceptanceProvider || response.Delivery != agentControlDeliveryUnconfirmed) {
+			return addOpenCodexBindingRecovery(&exactAgentControlBindingError{Reason: "turn/steer response did not carry the exact provider-acceptance receipt"}, binding)
+		}
 		if op == agentControlOpStart {
 			if err := c.recordStartedCodexTurn(binding, response); err != nil {
 				return err
 			}
+		}
+		if op == agentControlOpSteer {
+			_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s acceptance=%s delivery=%s\n", c.agentActionText(label), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID), response.Acceptance, response.Delivery)
+			return err
 		}
 		_, err = fmt.Fprintf(stdout, "%s thread=%s turn=%s\n", c.agentActionText(label), safeApprovalDetail(response.ThreadID), safeApprovalDetail(response.TurnID))
 		return err
