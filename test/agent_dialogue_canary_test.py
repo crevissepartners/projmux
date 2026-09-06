@@ -66,6 +66,45 @@ class DialogueCollectorTest(unittest.TestCase):
                 self.assertNotIn("DO_NOT_RETAIN", result.stdout + result.stderr)
                 self.assertNotIn("unobserved-field", result.stderr)
 
+    def test_public_thinking_content_and_signature_are_removed_before_output(self):
+        assistant = dict(type="assistant", uuid="owned-assistant", session_id="owned-session",
+                         parent_tool_use_id=None, message=dict(role="assistant", context_management=None,
+                         diagnostics=None, stop_details=None, content=[dict(type="thinking",
+                         thinking="PRIVATE_THOUGHT", signature="PRIVATE_SIGNATURE"), dict(type="text", text="fixture reply")]))
+        result = self.collect(self.rows + [assistant])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("PRIVATE_THOUGHT", result.stdout + result.stderr)
+        self.assertNotIn("PRIVATE_SIGNATURE", result.stdout + result.stderr)
+        content = json.loads(result.stdout.splitlines()[-1])["message"]["content"]
+        self.assertEqual(content, [dict(type="thinking", contentOmitted=True), dict(type="text", text="fixture reply")])
+        assistant["message"]["diagnostics"] = {}
+        self.assertNotEqual(self.collect(self.rows + [assistant]).returncode, 0)
+        assistant["message"]["diagnostics"] = None
+        assistant["message"]["content"][0]["type"] = "tool_use"
+        self.assertNotEqual(self.collect(self.rows + [assistant]).returncode, 0)
+
+    def test_assistant_wrapper_metadata_does_not_bypass_content_gate(self):
+        assistant = dict(type="assistant", uuid="owned-assistant", session_id="owned-session",
+                         parent_tool_use_id=None, request_id="req_fixture", timestamp="2026-09-06T00:00:00Z",
+                         message=dict(role="assistant", content=[dict(type="text", text="fixture reply")]))
+        self.assertEqual(self.collect(self.rows + [assistant]).returncode, 0)
+        assistant["message"]["unobserved_field"] = "DO_NOT_RETAIN"
+        result = self.collect(self.rows + [assistant])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unobserved_field", result.stderr)
+        self.assertNotIn("DO_NOT_RETAIN", result.stdout + result.stderr)
+
+    def test_numeric_progress_is_same_session_post_init_metadata_only(self):
+        progress = dict(type="system", subtype="thinking_tokens", estimated_tokens=12,
+                        estimated_tokens_delta=2, uuid="owned-progress", session_id="owned-session")
+        self.assertEqual(self.collect(self.rows + [progress]).returncode, 0)
+        for change in ({"session_id": "foreign"}, {"estimated_tokens": True},
+                       {"estimated_tokens_delta": "DO_NOT_RETAIN"}, {"text": "DO_NOT_RETAIN"}):
+            result = self.collect(self.rows + [dict(progress, **change)])
+            self.assertNotEqual(result.returncode, 0)
+            self.assertNotIn("DO_NOT_RETAIN", result.stdout + result.stderr)
+        self.assertNotEqual(self.collect([progress] + self.rows).returncode, 0)
+
     def test_observed_init_metadata_has_no_permission_authority(self):
         rows = [dict(row) for row in self.rows]
         rows[-1].update(capabilities=["interrupt_receipt_v1"],

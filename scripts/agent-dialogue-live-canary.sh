@@ -119,19 +119,20 @@ path.write_text(json.dumps(settings,sort_keys=True)+"\n")
 PY
   python3 - >"$root/bin/collect-claude-public-jsonl" <<'PY'
 print(r'''#!/usr/bin/env python3
-import json,pathlib,re,sys
+import datetime,json,math,pathlib,re,sys
 init_allowed={"type","subtype","cwd","session_id","tools","mcp_servers","model","permissionMode",
               "slash_commands","apiKeySource","claude_code_version","output_style","agents","skills",
               "plugins","uuid","fast_mode_state","prompt_suggestion_enabled","messaging_socket_path",
               "capabilities","fast_mode_disabled_reason","analytics_disabled","product_feedback_disabled"}
-assistant_allowed={"type","message","parent_tool_use_id","session_id","uuid"}
-assistant_message_allowed={"id","type","role","model","content","stop_reason","stop_sequence","usage"}
+assistant_allowed={"type","message","parent_tool_use_id","session_id","uuid","request_id","timestamp"}
+assistant_message_allowed={"id","type","role","model","content","stop_reason","stop_sequence","usage",
+                           "context_management","diagnostics","stop_details"}
 assistant_text_allowed={"type","text"}
 result_allowed={"type","subtype","is_error","duration_ms","duration_api_ms","num_turns","result",
                 "session_id","total_cost_usd","usage","modelUsage","permission_denials","uuid","errors",
                 "structured_output"}
 diagnostic_types={"system","assistant","user","result","stream_event"}
-diagnostic_subtypes={"init","success","hook_started","hook_progress","hook_response"}
+diagnostic_subtypes={"init","success","hook_started","hook_progress","hook_response","thinking_tokens"}
 diagnostic_reasons={"non-object","credential key","unknown init field","assistant shape",
  "assistant message shape","assistant content","assistant block","result shape","event type","invalid locator"}
 hook_base={"type","subtype","hook_id","hook_name","hook_event","uuid","session_id"}
@@ -150,7 +151,11 @@ startup_pending={}; startup_done=set(); startup_session=None; initialized=False
 # current-version preflight. Settings still prove the exact two callbacks.
 startup_names=owned_commands|{"SessionStart:startup"}
 diagnostic_reasons|={"startup hook shape","startup hook identity","startup hook name","startup hook order","startup hook output","startup hook incomplete","init metadata type"}
-diagnostic_fields=init_allowed|assistant_allowed|assistant_message_allowed|result_allowed|hook_base|hook_output|{"exit_code","outcome","capabilities"}
+thinking_fields={"type","subtype","estimated_tokens","estimated_tokens_delta","uuid","session_id"}
+diagnostic_assistant={"request_id","timestamp","error","user_message_uuid","user_message_uuids","resumed_from_incomplete_thinking","supersedes","aborted","subagent_type","task_description","context_usage"}
+diagnostic_message=assistant_message_allowed|{"container","context_management","service_tier"}
+diagnostic_fields=init_allowed|assistant_allowed|assistant_message_allowed|result_allowed|hook_base|hook_output|thinking_fields|diagnostic_assistant|{"exit_code","outcome","capabilities"}
+diagnostic_reasons|={"numeric progress shape"}
 def validate_startup(event):
     global startup_session
     subtype=event["subtype"]
@@ -196,13 +201,32 @@ for raw in sys.stdin:
             initialized=True
         elif kind=="system" and event.get("subtype") in {"hook_started","hook_progress","hook_response"}:
             validate_startup(event)
+        elif kind=="system" and event.get("subtype")=="thinking_tokens":
+            if set(event)!=thinking_fields or not initialized or event.get("session_id")!=startup_session: raise ValueError("numeric progress shape")
+            for key in ("estimated_tokens","estimated_tokens_delta"):
+                if type(event[key]) not in (int,float) or not math.isfinite(event[key]) or not 0<=event[key]<=1_000_000_000: raise ValueError("numeric progress shape")
+            if not isinstance(event["uuid"],str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}",event["uuid"]): raise ValueError("numeric progress shape")
         elif kind=="assistant":
             if set(event)-assistant_allowed or not isinstance(event.get("message"),dict): raise ValueError("assistant shape")
+            if "request_id" in event and (not isinstance(event["request_id"],str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}",event["request_id"])): raise ValueError("assistant shape")
+            if "timestamp" in event:
+                if not isinstance(event["timestamp"],str) or not re.fullmatch(r"[0-9TZ:+.-]{20,40}",event["timestamp"]): raise ValueError("assistant shape")
+                if datetime.datetime.fromisoformat(event["timestamp"].replace("Z","+00:00")).tzinfo is None: raise ValueError("assistant shape")
             message=event["message"]
             if set(message)-assistant_message_allowed or message.get("role")!="assistant": raise ValueError("assistant message shape")
+            if any(message.get(key) is not None for key in ("context_management","diagnostics","stop_details")): raise ValueError("assistant message shape")
             if not isinstance(message.get("content"),list) or not message["content"]: raise ValueError("assistant content")
+            sanitized=[]
             for block in message["content"]:
-                if not isinstance(block,dict) or set(block)-assistant_text_allowed or block.get("type")!="text": raise ValueError("assistant block")
+                if not isinstance(block,dict): raise ValueError("assistant block")
+                if block.get("type")=="text" and set(block)<=assistant_text_allowed and isinstance(block.get("text"),str):
+                    sanitized.append(block)
+                elif block.get("type")=="thinking" and set(block)=={"type","thinking","signature"} and isinstance(block["thinking"],str) and isinstance(block["signature"],str):
+                    # No reasoning content or signature ever crosses the disk
+                    # boundary, and this marker is never sent to the provider.
+                    sanitized.append({"type":"thinking","contentOmitted":True})
+                else: raise ValueError("assistant block")
+            message["content"]=sanitized
         elif kind=="result":
             if set(event)-result_allowed or event.get("subtype")!="success" or event.get("is_error") is not False: raise ValueError("result shape")
         else:
@@ -219,9 +243,27 @@ for raw in sys.stdin:
         kind=shape.get("type"); subtype=shape.get("subtype")
         name=shape.get("hook_name")
         name_label=name if isinstance(name,str) and name in {"SessionStart:startup","SessionStart"} else ("configured-command" if isinstance(name,str) and name in owned_commands else "unknown")
+        nested=shape.get("message") if isinstance(shape.get("message"),dict) else {}
+        unknown_message=set(nested)-diagnostic_message
+        blocks=nested.get("content") if isinstance(nested.get("content"),list) else []
+        block_types={"text","thinking","redacted_thinking","tool_use","server_tool_use","tool_result"}
+        block_fields={"type","text","id","name","input","thinking","signature","data","content","tool_use_id","is_error"}
+        block_shapes=[]
+        for block in blocks[:64]:
+            block=block if isinstance(block,dict) else {}
+            block_type=block.get("type")
+            block_shapes.append({"type":block_type if isinstance(block_type,str) and block_type in block_types else "unknown",
+                "fields":sorted(set(block)&block_fields),"unknownFieldCount":len(set(block)-block_fields)})
+        management=nested.get("context_management")
+        management_fields=set(management) if isinstance(management,dict) else set()
         diagnostic={"reason":reason,"type":kind if isinstance(kind,str) and kind in diagnostic_types else "unknown",
           "subtype":subtype if isinstance(subtype,str) and subtype in diagnostic_subtypes else "unknown",
           "fields":sorted(set(shape)&diagnostic_fields),"unknownFieldCount":len(set(shape)-diagnostic_fields),
+          "messageFields":sorted(set(nested)&diagnostic_message),"unknownMessageFieldCount":len(unknown_message),
+          "unknownMessageFields":sorted(k for k in unknown_message if re.fullmatch(r"[a-z][a-z0-9_]{0,63}",k))[:16],
+          "blockShapes":block_shapes,"blockCount":len(blocks),
+          "contextManagementShape":"absent" if "context_management" not in nested else ("null" if management is None else ("object" if isinstance(management,dict) else "unknown")),
+          "contextManagementFields":sorted(management_fields&{"applied_edits"}),"unknownContextManagementFieldCount":len(management_fields-{"applied_edits"}),
           "hookNameMatch":name_label,"hookEventMatch":"SessionStart" if shape.get("hook_event")=="SessionStart" else "unknown"}
         sys.stderr.write("public provider stream rejected: "+json.dumps(diagnostic,sort_keys=True)+"\n")
         raise SystemExit(1)
@@ -461,7 +503,7 @@ observed_server_pid="$(env -u TMUX -u TMUX_PANE tmux -S "$socket_path" display-m
 # zero tool/MCP/plugin/stderr/external effects. No message command precedes it.
 python3 - "$root/cleanup-plan.json" "$input" "$registry" "$live_jsonl" "$provider_stderr" "$effects_json" "$owned_settings" "$provider_started_at" "$binary" \
   "$root/evidence/capability-before.json" "$init_jsonl" "$events_jsonl" <<'PY'
-import hashlib, json, os, pathlib, re, stat, sys
+import hashlib, json, math, os, pathlib, re, stat, sys
 plan=json.load(open(sys.argv[1])); spec=json.load(open(sys.argv[2])); reg=json.load(open(sys.argv[3]))
 assert plan["preparedAtEpochNs"] < spec["provider"]["startedAtEpochNs"], "cleanup was not registered before provider launch"
 assert plan["messageRef"] == spec["messageRef"], "prepared semantic message reference changed"
@@ -530,8 +572,9 @@ init_allowed={"type","subtype","cwd","session_id","tools","mcp_servers","model",
               "slash_commands","apiKeySource","claude_code_version","output_style","agents","skills",
               "plugins","uuid","fast_mode_state","prompt_suggestion_enabled","messaging_socket_present",
               "capabilities","fast_mode_disabled_reason","analytics_disabled","product_feedback_disabled"}
-assistant_allowed={"type","message","parent_tool_use_id","session_id","uuid"}
-assistant_message_allowed={"id","type","role","model","content","stop_reason","stop_sequence","usage"}
+assistant_allowed={"type","message","parent_tool_use_id","session_id","uuid","request_id","timestamp"}
+assistant_message_allowed={"id","type","role","model","content","stop_reason","stop_sequence","usage",
+                           "context_management","diagnostics","stop_details"}
 assistant_text_allowed={"type","text"}
 result_allowed={"type","subtype","is_error","duration_ms","duration_api_ms","num_turns","result",
                 "session_id","total_cost_usd","usage","modelUsage","permission_denials","uuid","errors",
@@ -568,14 +611,23 @@ for event in init:
             if subtype=="hook_response":
                 assert event.get("outcome")=="success" and event.get("exit_code",0)==0
                 del startup_pending[hook_id]; startup_done.add(hook_id)
+    elif kind=="system" and event.get("subtype")=="thinking_tokens":
+        assert initialized and set(event)=={"type","subtype","estimated_tokens","estimated_tokens_delta","uuid","session_id"}
+        assert all(type(event[key]) in (int,float) and math.isfinite(event[key]) and 0<=event[key]<=1_000_000_000 for key in ("estimated_tokens","estimated_tokens_delta"))
     elif kind=="assistant":
         assert initialized
         assert not set(event)-assistant_allowed and isinstance(event.get("message"),dict), "unknown assistant event shape"
+        assert "request_id" not in event or (isinstance(event["request_id"],str) and re.fullmatch(r"[A-Za-z0-9_-]{1,256}",event["request_id"]))
+        if "timestamp" in event:
+            assert isinstance(event["timestamp"],str) and re.fullmatch(r"[0-9TZ:+.-]{20,40}",event["timestamp"])
+            assert __import__("datetime").datetime.fromisoformat(event["timestamp"].replace("Z","+00:00")).tzinfo is not None
         message=event["message"]
         assert not set(message)-assistant_message_allowed and message.get("role")=="assistant"
+        assert all(message.get(key) is None for key in ("context_management","diagnostics","stop_details"))
         assert isinstance(message.get("content"),list) and message["content"]
         for block in message["content"]:
-            assert isinstance(block,dict) and not set(block)-assistant_text_allowed and block.get("type")=="text"
+            assert isinstance(block,dict)
+            assert (block.get("type")=="text" and not set(block)-assistant_text_allowed and isinstance(block.get("text"),str)) or block=={"type":"thinking","contentOmitted":True}
     elif kind=="result":
         assert not set(event)-result_allowed and event.get("subtype")=="success" and event.get("is_error") is False
     else:

@@ -87,6 +87,18 @@ validated by type and known shape; none grants tool, plugin, or messaging
 authority. The owned wrapper sets the documented
 [`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`](https://code.claude.com/docs/en/data-usage)
 opt-out. A feedback metadata boolean is not a record of external traffic.
+The observed `system/thinking_tokens` event carries only numeric progress
+estimates. The collector accepts its exact public shape after init for the same
+session, validates finite nonnegative numbers, and gives it no reply or tool
+authority. It does not carry or collect thinking text.
+Public assistant `request_id` and timestamp are validated metadata, never reply
+selectors. The observed `context_management`, `diagnostics`, and `stop_details`
+fields are accepted only as null. A public Messages API thinking block is
+validated in memory, then replaced by an omitted-content marker before disk;
+neither reasoning text nor signature is retained or sent to the provider. Only
+text blocks can provide semantic reply evidence; tool and unknown blocks fail
+closed. See the public [Messages schema](https://platform.claude.com/docs/en/api/http/beta/messages/create)
+and [ThinkingBlock schema](https://platform.claude.com/docs/en/api/typescript/messages).
 
 ## Phase 4 push ingress and heterogeneous dialogue
 
