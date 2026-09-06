@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -17,33 +18,50 @@ import (
 )
 
 type fakeExactControlWire struct {
-	mu        sync.Mutex
-	threadID  string
-	turnID    string
-	start     int
-	steer     int
-	interrupt int
-	responses []json.RawMessage
-	results   []any
-	err       error
+	mu          sync.Mutex
+	threadID    string
+	turnID      string
+	snapshot    codexappserver.LifecycleSnapshot
+	snapshotErr error
+	reads       int
+	start       int
+	steer       int
+	interrupt   int
+	responses   []json.RawMessage
+	results     []any
+	operations  []string
+	err         error
 }
 
-func (w *fakeExactControlWire) StartExactTurn(context.Context, string, string) (codexappserver.ControlResult, error) {
+func (w *fakeExactControlWire) ReadLifecycleSnapshot(_ context.Context, threadID string) (codexappserver.LifecycleSnapshot, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.reads++
+	w.operations = append(w.operations, "lifecycle-read:"+threadID)
+	if w.snapshot != (codexappserver.LifecycleSnapshot{}) {
+		return w.snapshot, w.snapshotErr
+	}
+	return codexappserver.LifecycleSnapshot{ThreadID: w.resultThreadID(), ThreadState: codexappserver.ThreadStateIdle}, w.snapshotErr
+}
+func (w *fakeExactControlWire) StartExactTurn(_ context.Context, threadID, _ string) (codexappserver.ControlResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.start++
+	w.operations = append(w.operations, "turn-start:"+threadID)
 	return codexappserver.ControlResult{ThreadID: w.resultThreadID(), TurnID: "turn-new"}, w.err
 }
-func (w *fakeExactControlWire) SteerExactTurn(context.Context, string, string, string) (codexappserver.ControlResult, error) {
+func (w *fakeExactControlWire) SteerExactTurn(_ context.Context, threadID, turnID, _ string) (codexappserver.ControlResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.steer++
+	w.operations = append(w.operations, "turn-steer:"+threadID+":"+turnID)
 	return codexappserver.ControlResult{ThreadID: w.resultThreadID(), TurnID: w.resultTurnID()}, w.err
 }
-func (w *fakeExactControlWire) InterruptExactTurn(context.Context, string, string) (codexappserver.ControlResult, error) {
+func (w *fakeExactControlWire) InterruptExactTurn(_ context.Context, threadID, turnID string) (codexappserver.ControlResult, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.interrupt++
+	w.operations = append(w.operations, "turn-interrupt:"+threadID+":"+turnID)
 	return codexappserver.ControlResult{ThreadID: w.resultThreadID(), TurnID: w.resultTurnID()}, w.err
 }
 func (w *fakeExactControlWire) RespondServerRequest(_ context.Context, id json.RawMessage, result any) error {
@@ -51,6 +69,7 @@ func (w *fakeExactControlWire) RespondServerRequest(_ context.Context, id json.R
 	defer w.mu.Unlock()
 	w.responses = append(w.responses, append(json.RawMessage(nil), id...))
 	w.results = append(w.results, result)
+	w.operations = append(w.operations, "approval-response")
 	return w.err
 }
 func (w *fakeExactControlWire) writes() int {
@@ -85,9 +104,10 @@ func TestExactAgentControlActionGenerationEpochAndTurnTable(t *testing.T) {
 		request    agentControlRequest
 		current    bool
 		wantOK     bool
+		wantReads  int
 		wantWrites int
 	}{
-		{name: "idle exact new turn", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-old", TurnState: codexappserver.TurnStateCompleted}, request: agentControlRequest{Operation: agentControlOpStart, Text: "new"}, current: true, wantOK: true, wantWrites: 1},
+		{name: "idle exact new turn", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-old", TurnState: codexappserver.TurnStateCompleted}, request: agentControlRequest{Operation: agentControlOpStart, Text: "new"}, current: true, wantOK: true, wantReads: 1, wantWrites: 1},
 		{name: "active exact steer", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress}, request: agentControlRequest{Operation: agentControlOpSteer, Text: "steer"}, current: true, wantOK: true, wantWrites: 1},
 		{name: "idle steer refused", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted}, request: agentControlRequest{Operation: agentControlOpSteer, Text: "steer"}, current: true},
 		{name: "old epoch", snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle}, request: agentControlRequest{Operation: agentControlOpStart, Epoch: "old", Text: "new"}, current: true},
@@ -108,8 +128,8 @@ func TestExactAgentControlActionGenerationEpochAndTurnTable(t *testing.T) {
 				request.Epoch = "epoch-1"
 			}
 			response := epoch.Handle(context.Background(), request)
-			if response.OK != test.wantOK || wire.writes() != test.wantWrites {
-				t.Fatalf("response=%+v writes=%d", response, wire.writes())
+			if response.OK != test.wantOK || wire.reads != test.wantReads || wire.writes() != test.wantWrites {
+				t.Fatalf("response=%+v reads=%d writes=%d", response, wire.reads, wire.writes())
 			}
 		})
 	}
@@ -122,6 +142,103 @@ func TestExactAgentControlActionGenerationEpochAndTurnTable(t *testing.T) {
 	}
 	if second := epoch.Handle(context.Background(), request); second.OK || wire.interrupt != 1 {
 		t.Fatalf("second interrupt = %+v writes=%d", second, wire.interrupt)
+	}
+}
+
+func TestExactAgentControlStartFreshLifecycleAdmissionTable(t *testing.T) {
+	identity := phase6Identity()
+	active := codexappserver.LifecycleSnapshot{
+		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive,
+		TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+	}
+	idle := codexappserver.LifecycleSnapshot{
+		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle,
+		TurnID: "turn-old", TurnState: codexappserver.TurnStateCompleted,
+	}
+	for _, test := range []struct {
+		name       string
+		cached     codexappserver.LifecycleSnapshot
+		fresh      codexappserver.LifecycleSnapshot
+		freshErr   error
+		wantOK     bool
+		wantCode   string
+		wantReads  int
+		wantStarts int
+		wantOrder  []string
+	}{
+		{name: "cached active fresh same active", cached: active, fresh: active, wantCode: "turn-in-progress", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "cached active fresh later active", cached: active, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-later", TurnState: codexappserver.TurnStateInProgress}, wantCode: "turn-in-progress", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "cached idle fresh later active", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateWaitingOnApproval, TurnID: "turn-later", TurnState: codexappserver.TurnStateInProgress}, wantCode: "turn-in-progress", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "cached idle fresh waiting on input", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateWaitingOnUserInput, TurnID: "turn-later", TurnState: codexappserver.TurnStateInProgress}, wantCode: "turn-in-progress", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "cached active fresh same terminal", cached: active, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted}, wantOK: true, wantReads: 1, wantStarts: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-start:thread-1"}},
+		{name: "cached active fresh later terminal", cached: active, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-later", TurnState: codexappserver.TurnStateInterrupted}, wantOK: true, wantReads: 1, wantStarts: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-start:thread-1"}},
+		{name: "cached idle fresh failed terminal", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-later", TurnState: codexappserver.TurnStateFailed}, wantOK: true, wantReads: 1, wantStarts: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-start:thread-1"}},
+		{name: "cached active fresh never started", cached: active, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle}, wantOK: true, wantReads: 1, wantStarts: 1, wantOrder: []string{"lifecycle-read:thread-1", "turn-start:thread-1"}},
+		{name: "fresh read error", cached: idle, freshErr: errors.New("private provider detail"), wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh read timeout", cached: idle, freshErr: context.DeadlineExceeded, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh wrong thread", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-other", ThreadState: codexappserver.ThreadStateIdle}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh active without turn", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnState: codexappserver.TurnStateInProgress}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh idle with active turn", cached: idle, fresh: activeWithThreadState(codexappserver.ThreadStateIdle), wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh active with terminal turn", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh terminal without turn", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnState: codexappserver.TurnStateCompleted}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+		{name: "fresh system error", cached: idle, fresh: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateSystemError}, wantCode: "turn-state-unavailable", wantReads: 1, wantOrder: []string{"lifecycle-read:thread-1"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			wire := &fakeExactControlWire{snapshot: test.fresh, snapshotErr: test.freshErr}
+			epoch := newCodexControlEpoch(wire, identity, "epoch-1", test.cached, func(codexLifecycleIdentity) bool { return true })
+			response := epoch.Handle(context.Background(), agentControlRequest{Operation: agentControlOpStart, Identity: identity, Epoch: "epoch-1", Text: "private prompt"})
+			if response.OK != test.wantOK || response.Code != test.wantCode || wire.reads != test.wantReads || wire.start != test.wantStarts || !slices.Equal(wire.operations, test.wantOrder) {
+				t.Fatalf("response=%+v reads=%d starts=%d order=%q", response, wire.reads, wire.start, wire.operations)
+			}
+			if wire.steer != 0 || wire.interrupt != 0 || len(wire.responses) != 0 || strings.Contains(response.Message, "private") || strings.Contains(strings.Join(wire.operations, " "), "private") {
+				t.Fatalf("unexpected mutation or private detail: response=%+v wire=%+v", response, wire)
+			}
+		})
+	}
+}
+
+func activeWithThreadState(state codexappserver.ThreadState) codexappserver.LifecycleSnapshot {
+	return codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: state, TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress}
+}
+
+func TestExactAgentControlStartRechecksBindingAfterFreshLifecycleRead(t *testing.T) {
+	identity := phase6Identity()
+	currentCalls := 0
+	wire := &fakeExactControlWire{snapshot: codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle, TurnID: "turn-old", TurnState: codexappserver.TurnStateCompleted}}
+	epoch := newCodexControlEpoch(wire, identity, "epoch-1", codexappserver.LifecycleSnapshot{ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateActive, TurnID: "turn-old", TurnState: codexappserver.TurnStateInProgress}, func(codexLifecycleIdentity) bool {
+		currentCalls++
+		return currentCalls == 1
+	})
+	response := epoch.Handle(context.Background(), agentControlRequest{Operation: agentControlOpStart, Identity: identity, Epoch: "epoch-1", Text: "new"})
+	if response.OK || response.Code != "stale-binding" || wire.reads != 1 || wire.writes() != 0 || !slices.Equal(wire.operations, []string{"lifecycle-read:thread-1"}) {
+		t.Fatalf("response=%+v current-calls=%d reads=%d writes=%d order=%q", response, currentCalls, wire.reads, wire.writes(), wire.operations)
+	}
+}
+
+func TestExactAgentControlFreshTerminalReconcileClearsCachedApproval(t *testing.T) {
+	identity := phase6Identity()
+	wire := &fakeExactControlWire{snapshot: codexappserver.LifecycleSnapshot{
+		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateIdle,
+		TurnID: "turn-1", TurnState: codexappserver.TurnStateCompleted,
+	}}
+	epoch := newCodexControlEpoch(wire, identity, "epoch-1", codexappserver.LifecycleSnapshot{
+		ThreadID: "thread-1", ThreadState: codexappserver.ThreadStateWaitingOnApproval,
+		TurnID: "turn-1", TurnState: codexappserver.TurnStateInProgress,
+	}, func(codexLifecycleIdentity) bool { return true })
+	approval := codexappserver.Notification{
+		Method: "item/commandExecution/requestApproval", RequestID: "7", RawRequestID: json.RawMessage(`7`),
+		Params: json.RawMessage(`{"threadId":"thread-1","turnId":"turn-1","itemId":"item-1","startedAtMs":1,"command":"old","cwd":"/work","availableDecisions":["accept"]}`),
+	}
+	if err := epoch.ApplyNotification(approval); err != nil || !epoch.HasActionableRequest("7") {
+		t.Fatalf("seed cached approval: actionable=%v err=%v", epoch.HasActionableRequest("7"), err)
+	}
+	start := epoch.Handle(context.Background(), agentControlRequest{Operation: agentControlOpStart, Identity: identity, Epoch: "epoch-1", Text: "new"})
+	if !start.OK || wire.reads != 1 || wire.writes() != 1 || epoch.HasActionableRequest("7") {
+		t.Fatalf("start=%+v reads=%d writes=%d cached-approval=%v", start, wire.reads, wire.writes(), epoch.HasActionableRequest("7"))
+	}
+	review := epoch.Handle(context.Background(), agentControlRequest{Operation: agentControlOpReview, Identity: identity, Epoch: "epoch-1", RequestKey: "7", Decision: "accept"})
+	if review.OK || wire.writes() != 1 {
+		t.Fatalf("stale approval survived reconcile: response=%+v writes=%d", review, wire.writes())
 	}
 }
 

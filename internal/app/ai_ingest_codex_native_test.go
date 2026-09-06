@@ -845,6 +845,10 @@ type fakeControllableCodexLifecycleConnection struct {
 	*fakeExactControlWire
 }
 
+func (c *fakeControllableCodexLifecycleConnection) ReadLifecycleSnapshot(ctx context.Context, threadID string) (codexappserver.LifecycleSnapshot, error) {
+	return c.fakeCodexLifecycleConnection.ReadLifecycleSnapshot(ctx, threadID)
+}
+
 func TestCodexNativeObserverReadyHandshakeSteersAndShutdownRemovesControlSocket(t *testing.T) {
 	root, err := os.MkdirTemp("/tmp", "observer-control-")
 	if err != nil {

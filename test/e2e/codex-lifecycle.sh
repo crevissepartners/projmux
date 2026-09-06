@@ -803,13 +803,35 @@ assert_lifecycle_sibling_semantics "sibling replacement steer"
 # Same-Agent native control is recovered directly through the exact Agent UID;
 # no focus, reopen, send-keys, or fresh-Agent lane participates. Wait until both
 # replacement snapshot barriers have closed before adding this target RPC to
-# the shared connection, then require exactly one target-qualified write.
+# the shared connection, then require exactly one target-qualified write. The
+# replacement observer's owned snapshot may still hold the broker's bounded
+# same-thread lifecycle retry fence. Fresh start admission exposes that exact
+# read refusal as turn-state-unavailable with zero mutation, so retry the same
+# request on that typed result only; the polling interval is pacing, never turn
+# state authority.
 lifecycle_target_starts_before="$(grep -Fxc 'thread-phase3|turn/start' "$lifecycle_fixture_state/provider-writes" || true)"
-if ! lifecycle_pmx_at_anchor agent turn start "uid:$lifecycle_agent_uid" -- "target replacement exact start" >"$lifecycle_root/target-e2-start.out" 2>"$lifecycle_root/target-e2-start.err"; then
-  echo "target same-Agent exact native start failed after replacement epoch" >&2
-  cat "$lifecycle_root/target-e2-start.err" >&2
-  exit 1
-fi
+lifecycle_target_start_deadline="$((SECONDS + 10))"
+lifecycle_target_start_attempts=0
+while true; do
+  lifecycle_target_start_attempts="$((lifecycle_target_start_attempts + 1))"
+  if lifecycle_pmx_at_anchor agent turn start "uid:$lifecycle_agent_uid" -- "target replacement exact start" >"$lifecycle_root/target-e2-start.out" 2>"$lifecycle_root/target-e2-start.err"; then
+    break
+  fi
+  lifecycle_target_starts_during_retry="$(grep -Fxc 'thread-phase3|turn/start' "$lifecycle_fixture_state/provider-writes" || true)"
+  if [[ "$lifecycle_target_starts_during_retry" != "$lifecycle_target_starts_before" ]] ||
+    [[ -s "$lifecycle_root/target-e2-start.out" ]] ||
+    ! grep -Fq '(turn-state-unavailable)' "$lifecycle_root/target-e2-start.err"; then
+    echo "target same-Agent exact native start failed outside bounded fresh-state retry" >&2
+    cat "$lifecycle_root/target-e2-start.err" >&2
+    exit 1
+  fi
+  if ((SECONDS >= lifecycle_target_start_deadline)); then
+    echo "target same-Agent exact native start remained turn-state-unavailable after replacement epoch" >&2
+    cat "$lifecycle_root/target-e2-start.err" >&2
+    exit 1
+  fi
+  sleep 0.025
+done
 lifecycle_target_starts_after="$(grep -Fxc 'thread-phase3|turn/start' "$lifecycle_fixture_state/provider-writes" || true)"
 if [[ "$lifecycle_target_starts_after" != "$((lifecycle_target_starts_before + 1))" ]]; then
   echo "target E2 start did not produce one target-qualified provider write: before=$lifecycle_target_starts_before after=$lifecycle_target_starts_after" >&2
@@ -824,5 +846,5 @@ fi
 
 lifecycle_cleanup
 trap smoke_cleanup_env EXIT
-echo ">> Codex native lifecycle E2E passed: socket=$lifecycle_socket path=$lifecycle_socket_path target-epochs=$epoch_one,$epoch_two sibling-epochs=$sibling_epoch_one,$sibling_epoch_two sibling-steer-writes=0,1"
+echo ">> Codex native lifecycle E2E passed: socket=$lifecycle_socket path=$lifecycle_socket_path target-epochs=$epoch_one,$epoch_two sibling-epochs=$sibling_epoch_one,$sibling_epoch_two sibling-steer-writes=0,1 target-start-attempts=$lifecycle_target_start_attempts"
 smoke_contract_pass

@@ -342,6 +342,21 @@
   command, path, permission, and request content out of Registry, tmux, notify,
   diagnostics, support, and Archive sinks.
 
+- `make test`: Exact Codex turn-start admission reads one fresh, content-free
+  lifecycle snapshot through the bound control epoch immediately before the
+  provider mutation. `TestExactAgentControlStartFreshLifecycleAdmissionTable`
+  pins the cached/fresh matrix, exact `turn-in-progress` and
+  `turn-state-unavailable` tokens, read-before-start ordering, cross-thread and
+  structurally inconsistent snapshot refusal, private-detail exclusion, and
+  zero mutation on every refusal.
+  `TestExactAgentControlStartRechecksBindingAfterFreshLifecycleRead` keeps the
+  Agent/Pane/runtime/generation/thread binding current across the fresh read,
+  while `TestExactAgentControlFreshTerminalReconcileClearsCachedApproval`
+  proves that an idle/terminal snapshot repairs stale turn and approval state
+  before the same request starts exactly one new turn. Existing steer,
+  interrupt, approval, old-epoch, and canonical generation-consumer fences are
+  unchanged.
+
 - `make test` / `make test-integration`: Codex public turn control live-binding
   compatibility uses one strict six-field tmux frame. Unit tests accept only
   literal `\037` and raw unit-separator spellings without generic escape
