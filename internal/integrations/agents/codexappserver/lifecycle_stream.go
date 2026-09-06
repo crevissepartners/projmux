@@ -12,36 +12,69 @@ import (
 	"math"
 	"net"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
+	"unsafe"
 )
 
 const (
-	lifecycleJSONBytes     = 16 << 20
-	lifecycleWireBytes     = 17 << 20
-	lifecycleChunkBytes    = 4 << 10
-	lifecycleDepth         = 32
-	lifecycleValues        = 100_000
-	lifecycleObjectFields  = 64
-	lifecycleTurns         = 4_096
-	lifecycleScalarBytes   = 1_024
-	lifecycleIdentityBytes = 256
-	lifecycleSummaryBytes  = 2 << 10
-	lifecycleFrames        = 4_096
-	lifecycleControlBytes  = 64 << 10
-	lifecycleRetainedBytes = 2 << 20
-	// lifecycleRetainedReserve conservatively accounts for the 4 KiB input
-	// chunk, one maximally escaped captured scalar, all 64 captured flag
-	// payloads, the final 2 KiB summary, and the remaining known scalar values.
-	// Active provider-derived key bytes are counted separately. Go map/slice
-	// bucket and pointer allocator overhead is implementation bookkeeping, not
-	// provider-derived retained data, and is deliberately outside this metric.
-	lifecycleRetainedReserve = 96 << 10
+	lifecycleJSONBytes       = 16 << 20
+	lifecycleWireBytes       = 17 << 20
+	lifecycleChunkBytes      = 4 << 10
+	lifecycleDepth           = 32
+	lifecycleValues          = 100_000
+	lifecycleObjectFields    = 64
+	lifecycleTurns           = 4_096
+	lifecycleScalarBytes     = 1_024
+	lifecycleIdentityBytes   = 256
+	lifecycleSummaryBytes    = 2 << 10
+	lifecycleFrames          = 4_096
+	lifecycleControlBytes    = 64 << 10
+	lifecycleRetainedBytes   = 2 << 20
 	lifecycleOperationLimit  = 750 * time.Millisecond
 	lifecycleCleanupLimit    = 250 * time.Millisecond
 	lifecycleInitializeLimit = 64 << 10
+
+	lifecycleProjectionSlots          = 4
+	lifecycleStringHeaderBytes        = int(unsafe.Sizeof(""))
+	lifecycleStringSliceHeaderBytes   = int(unsafe.Sizeof([]string(nil)))
+	lifecycleProjectionSlotBytes      = int(unsafe.Sizeof(any(nil)))
+	lifecycleObjectKeyCapacityBytes   = lifecycleObjectFields * lifecycleStringHeaderBytes
+	lifecycleObjectProjectionBytes    = lifecycleProjectionSlots * lifecycleProjectionSlotBytes
+	lifecycleObjectRetainedStateBytes = lifecycleStringSliceHeaderBytes +
+		lifecycleObjectKeyCapacityBytes + lifecycleObjectProjectionBytes
+
+	// Fixed-reserve upper bound on all non-object state that can coexist:
+	//
+	//   input buffers (bufio + websocket chunk)       8,192 B
+	//   encoded + decoded scalar under construction   7,170 B
+	//   64 flag bodies + slice header/capacity        66,584 B
+	//   six captured metadata scalar bodies            6,144 B
+	//   final body-free summary                         2,048 B
+	//   remaining projector/header/control state        8,166 B
+	//                                                  --------
+	//                                                   98,304 B
+	lifecycleRetainedInputReserveBytes    = 2 * lifecycleChunkBytes
+	lifecycleRetainedScalarReserveBytes   = lifecycleScalarBytes*7 + 2
+	lifecycleRetainedFlagsReserveBytes    = lifecycleObjectFields*(lifecycleScalarBytes+lifecycleStringHeaderBytes) + lifecycleStringSliceHeaderBytes
+	lifecycleRetainedMetadataReserveBytes = 6 * lifecycleScalarBytes
+	lifecycleRetainedSummaryReserveBytes  = lifecycleSummaryBytes
+	lifecycleRetainedResidualReserveBytes = lifecycleRetainedReserve - lifecycleRetainedInputReserveBytes -
+		lifecycleRetainedScalarReserveBytes - lifecycleRetainedFlagsReserveBytes -
+		lifecycleRetainedMetadataReserveBytes - lifecycleRetainedSummaryReserveBytes
+	// lifecycleRetainedReserve conservatively accounts for the bounded input,
+	// one encoded/decoded scalar under construction, all captured flag payloads
+	// and their slice, the final summary, and residual projector state. Each
+	// live object's duplicate-key slice (header and full backing capacity),
+	// fixed projection slots, and decoded key bodies are admitted separately.
+	// unsafe.Sizeof follows the 64-bit ABI of every supported linux/darwin
+	// amd64/arm64 target; allocator span slack, total allocations over the scan,
+	// goroutine stack capacity, heap peaks, and RSS are distinct from retained
+	// projector state and are not claims made by this cap.
+	lifecycleRetainedReserve = 96 << 10
 )
 
 // LifecycleEndpoint is one owned, initialized transport whose only provider
@@ -137,8 +170,7 @@ func OpenPrivateUnixLifecycle(
 		return nil, classifyProxyOpenError(ctx, err)
 	}
 	client := &LifecycleClient{
-		stream: websocket, peer: peer,
-		reader: bufio.NewReaderSize(websocket, lifecycleChunkBytes), nextID: 1,
+		stream: websocket, peer: peer, nextID: 1,
 	}
 	if err := client.initialize(ctx, projmuxVersion, experimental); err != nil {
 		_ = client.Close()
@@ -520,6 +552,7 @@ type lifecycleProjector struct {
 	threadID  string
 	ctx       context.Context
 	buffer    []byte
+	scalarBuf [lifecycleScalarBytes*6 + 2]byte
 	pos       int
 	values    int
 	retained  int
@@ -538,6 +571,7 @@ type projectedRPCError struct {
 }
 
 type projectedResult struct{ thread any }
+type lifecycleProjectionFields [lifecycleProjectionSlots]any
 
 var lifecycleNumber = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
 
@@ -574,6 +608,14 @@ func (p *lifecycleProjector) check() error {
 	if p.retained > lifecycleRetainedBytes-lifecycleRetainedReserve {
 		return fmt.Errorf("%w: lifecycle retained-state limit", ErrProtocol)
 	}
+	return nil
+}
+
+func (p *lifecycleProjector) retain(count int) error {
+	if count < 0 || p.retained > lifecycleRetainedBytes-lifecycleRetainedReserve-count {
+		return fmt.Errorf("%w: lifecycle retained-state limit", ErrProtocol)
+	}
+	p.retained += count
 	return nil
 }
 
@@ -680,9 +722,13 @@ func (p *lifecycleProjector) object(mode lifecycleMode, depth int) (any, error) 
 	if err := p.space(); err != nil {
 		return nil, err
 	}
-	keys := make(map[string]struct{})
-	keyBytes := 0
-	fields := make(map[string]any)
+	if err := p.retain(lifecycleObjectRetainedStateBytes); err != nil {
+		return nil, err
+	}
+	retained := lifecycleObjectRetainedStateBytes
+	defer func() { p.retained -= retained }()
+	keys := make([]string, 0, lifecycleObjectFields)
+	var fields lifecycleProjectionFields
 	first, err := p.peek()
 	if err != nil {
 		return nil, err
@@ -696,18 +742,17 @@ func (p *lifecycleProjector) object(mode lifecycleMode, depth int) (any, error) 
 			if err != nil {
 				return nil, err
 			}
-			if _, duplicate := keys[key]; duplicate {
+			if hasLifecycleKey(keys, key) {
 				return nil, fmt.Errorf("%w: duplicate lifecycle JSON key", ErrProtocol)
 			}
-			keys[key] = struct{}{}
-			keyBytes += len(key)
-			p.retained += len(key)
-			if len(keys) > lifecycleObjectFields {
+			if len(keys) >= lifecycleObjectFields {
 				return nil, fmt.Errorf("%w: lifecycle object limit", ErrProtocol)
 			}
-			if err := p.check(); err != nil {
+			if err := p.retain(len(key)); err != nil {
 				return nil, err
 			}
+			keys = append(keys, key)
+			retained += len(key)
 			if err := p.space(); err != nil {
 				return nil, err
 			}
@@ -720,7 +765,11 @@ func (p *lifecycleProjector) object(mode lifecycleMode, depth int) (any, error) 
 				return nil, err
 			}
 			if wanted != modeIgnored {
-				fields[key] = value
+				index := lifecycleProjectionFieldIndex(mode, key)
+				if index < 0 {
+					return nil, fmt.Errorf("%w: lifecycle projection field", ErrProtocol)
+				}
+				fields[index] = value
 			}
 			if err := p.space(); err != nil {
 				return nil, err
@@ -738,8 +787,64 @@ func (p *lifecycleProjector) object(mode lifecycleMode, depth int) (any, error) 
 	if err := p.expect('}'); err != nil {
 		return nil, err
 	}
-	p.retained -= keyBytes
 	return p.projectObject(mode, keys, fields)
+}
+
+func hasLifecycleKey(keys []string, want string) bool {
+	return slices.Contains(keys, want)
+}
+
+func lifecycleProjectionFieldIndex(mode lifecycleMode, key string) int {
+	switch mode {
+	case modeRoot:
+		switch key {
+		case "id":
+			return 0
+		case "jsonrpc":
+			return 1
+		case "result":
+			return 2
+		case "error":
+			return 3
+		}
+	case modeResult:
+		if key == "thread" {
+			return 0
+		}
+	case modeThread:
+		switch key {
+		case "id":
+			return 0
+		case "status":
+			return 1
+		case "turns":
+			return 2
+		}
+	case modeStatus:
+		if key == "type" {
+			return 0
+		}
+		if key == "activeFlags" {
+			return 1
+		}
+	case modeTurn:
+		switch key {
+		case "id":
+			return 0
+		case "status":
+			return 1
+		case "startedAt":
+			return 2
+		}
+	case modeError:
+		if key == "code" {
+			return 0
+		}
+		if key == "message" {
+			return 1
+		}
+	}
+	return -1
 }
 
 func wantedLifecycleMode(mode lifecycleMode, key string) lifecycleMode {
@@ -785,24 +890,24 @@ func wantedLifecycleMode(mode lifecycleMode, key string) lifecycleMode {
 	return modeIgnored
 }
 
-func (p *lifecycleProjector) projectObject(mode lifecycleMode, keys map[string]struct{}, fields map[string]any) (any, error) {
+func (p *lifecycleProjector) projectObject(mode lifecycleMode, keys []string, fields lifecycleProjectionFields) (any, error) {
 	switch mode {
 	case modeRoot:
-		if _, present := keys["method"]; present {
+		if hasLifecycleKey(keys, "method") {
 			return nil, fmt.Errorf("%w: owned lifecycle notification refused", ErrProtocol)
 		}
-		if _, present := keys["params"]; present {
+		if hasLifecycleKey(keys, "params") {
 			return nil, fmt.Errorf("%w: owned lifecycle server request refused", ErrProtocol)
 		}
-		id, ok := fields["id"].(float64)
+		id, ok := fields[0].(float64)
 		if !ok || math.Trunc(id) != id || id != float64(p.requestID) {
 			return nil, fmt.Errorf("%w: lifecycle response identity", ErrProtocol)
 		}
-		if jsonrpc, present := fields["jsonrpc"]; present && jsonrpc != "2.0" {
+		if jsonrpc := fields[1]; hasLifecycleKey(keys, "jsonrpc") && jsonrpc != "2.0" {
 			return nil, fmt.Errorf("%w: lifecycle response version", ErrProtocol)
 		}
-		result, hasResult := fields["result"]
-		rpcErr, hasError := fields["error"]
+		result, hasResult := fields[2], hasLifecycleKey(keys, "result")
+		rpcErr, hasError := fields[3], hasLifecycleKey(keys, "error")
 		if hasResult == hasError {
 			return nil, fmt.Errorf("%w: lifecycle response shape", ErrProtocol)
 		}
@@ -817,21 +922,21 @@ func (p *lifecycleProjector) projectObject(mode lifecycleMode, keys map[string]s
 		}
 		return thread, nil
 	case modeResult:
-		thread, ok := fields["thread"]
-		if !ok {
+		thread := fields[0]
+		if !hasLifecycleKey(keys, "thread") {
 			return nil, fmt.Errorf("%w: lifecycle result thread", ErrProtocol)
 		}
 		return projectedResult{thread: thread}, nil
 	case modeThread:
-		id, ok := fields["id"].(string)
+		id, ok := fields[0].(string)
 		if !ok || !validLifecycleIdentity(id) || id != p.threadID {
 			return nil, fmt.Errorf("%w: lifecycle thread identity", ErrProtocol)
 		}
-		state, ok := fields["status"].(ThreadState)
+		state, ok := fields[1].(ThreadState)
 		if !ok || state == ThreadStateUnknown {
 			return nil, fmt.Errorf("%w: lifecycle thread status", ErrProtocol)
 		}
-		turns, ok := fields["turns"].(struct {
+		turns, ok := fields[2].(struct {
 			count  int
 			latest *projectedTurn
 		})
@@ -863,20 +968,19 @@ func (p *lifecycleProjector) projectObject(mode lifecycleMode, keys map[string]s
 		}
 		return snapshot, nil
 	case modeStatus:
-		kind, ok := fields["type"].(string)
+		kind, ok := fields[0].(string)
 		if !ok {
 			return ThreadStateUnknown, nil
 		}
 		status := lifecycleThreadStatus{Type: kind}
-		if flags, ok := fields["activeFlags"].([]string); ok {
+		if flags, ok := fields[1].([]string); ok {
 			status.ActiveFlags = flags
 		}
 		return normalizeThreadState(status), nil
 	case modeTurn:
-		_, startedAtPresent := keys["startedAt"]
-		return projectedTurn{id: fields["id"], status: fields["status"], startedAt: fields["startedAt"], present: startedAtPresent}, nil
+		return projectedTurn{id: fields[0], status: fields[1], startedAt: fields[2], present: hasLifecycleKey(keys, "startedAt")}, nil
 	case modeError:
-		return projectedRPCError{code: fields["code"], message: fields["message"]}, nil
+		return projectedRPCError{code: fields[0], message: fields[1]}, nil
 	}
 	return nil, nil
 }
@@ -913,6 +1017,10 @@ func (p *lifecycleProjector) array(mode lifecycleMode, depth int) (any, error) {
 	count := 0
 	var latest *projectedTurn
 	var flags []string
+	if mode == modeFlags {
+		// The full backing capacity is covered by lifecycleRetainedReserve.
+		flags = make([]string, 0, lifecycleObjectFields)
+	}
 	first, err := p.peek()
 	if err != nil {
 		return nil, err
@@ -1040,7 +1148,19 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 	}
 	var raw []byte
 	if capture {
-		raw = append(raw, '"')
+		// Reuse one projector-owned buffer so short keys do not allocate a 6 KiB
+		// temporary each. json.Unmarshal copies the decoded string before this
+		// scratch space is reused. Its exact capacity and that decoded copy are
+		// both covered by the fixed scalar reserve.
+		raw = p.scalarBuf[:1]
+		raw[0] = '"'
+	}
+	appendRaw := func(value byte) error {
+		if len(raw) >= cap(raw) {
+			return fmt.Errorf("%w: lifecycle scalar limit", ErrProtocol)
+		}
+		raw = append(raw, value)
+		return nil
 	}
 	for {
 		value, err := p.take()
@@ -1052,7 +1172,9 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 			if !capture {
 				return "", nil
 			}
-			raw = append(raw, '"')
+			if err := appendRaw('"'); err != nil {
+				return "", err
+			}
 			var decoded string
 			if json.Unmarshal(raw, &decoded) != nil || len(decoded) > lifecycleScalarBytes {
 				return "", fmt.Errorf("%w: malformed lifecycle string", ErrProtocol)
@@ -1064,7 +1186,12 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 				return "", fmt.Errorf("%w: malformed lifecycle escape", ErrProtocol)
 			}
 			if capture {
-				raw = append(raw, value, escape)
+				if err := appendRaw(value); err != nil {
+					return "", err
+				}
+				if err := appendRaw(escape); err != nil {
+					return "", err
+				}
 			}
 			if escape == 'u' {
 				for range 4 {
@@ -1073,7 +1200,9 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 						return "", fmt.Errorf("%w: malformed lifecycle unicode escape", ErrProtocol)
 					}
 					if capture {
-						raw = append(raw, digit)
+						if err := appendRaw(digit); err != nil {
+							return "", err
+						}
 					}
 				}
 			}
@@ -1081,7 +1210,9 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 			return "", fmt.Errorf("%w: malformed lifecycle string", ErrProtocol)
 		case value < utf8.RuneSelf:
 			if capture {
-				raw = append(raw, value)
+				if err := appendRaw(value); err != nil {
+					return "", err
+				}
 			}
 		default:
 			width := utf8SequenceWidth(value)
@@ -1100,7 +1231,11 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 				return "", fmt.Errorf("%w: malformed lifecycle UTF-8", ErrProtocol)
 			}
 			if capture {
-				raw = append(raw, sequence[:width]...)
+				for _, part := range sequence[:width] {
+					if err := appendRaw(part); err != nil {
+						return "", err
+					}
+				}
 			}
 		}
 		// A JSON escape can use six wire bytes for one retained byte. Bound the
