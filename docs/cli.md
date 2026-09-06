@@ -239,7 +239,7 @@ Subcommands:
 | Route | Summary |
 | --- | --- |
 | [`projmux agent turn start`](#projmux-agent-turn-start) | Send a new turn to one exact idle Codex thread |
-| [`projmux agent turn steer`](#projmux-agent-turn-steer) | Steer one exact current Codex turn |
+| [`projmux agent turn steer`](#projmux-agent-turn-steer) | Request provider acceptance for one exact current Codex turn; delivery remains unconfirmed |
 | [`projmux agent turn interrupt`](#projmux-agent-turn-interrupt) | Interrupt one exact current Codex turn |
 
 Canonical spelling: `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`
@@ -267,7 +267,7 @@ projmux agent turn start <agent-ref> -- <text>
 
 #### `projmux agent turn steer`
 
-Steer one exact current Codex turn
+Request provider acceptance for one exact current Codex turn; delivery remains unconfirmed
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 

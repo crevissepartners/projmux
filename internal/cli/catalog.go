@@ -784,7 +784,7 @@ var routes = []Route{
 				Canonical:  []string{"agent turn start", "agent turn steer", "agent turn interrupt"},
 				Children: []Route{
 					{Effects: unchangedEffects(CardinalityExactOne), Name: "start", Invocation: InvocationExplicit, Summary: "Send a new turn to one exact idle Codex thread", Usage: []string{"projmux agent turn start <agent-ref> -- <text>"}, Canonical: []string{"agent turn start"}},
-					{Effects: unchangedEffects(CardinalityExactOne), Name: "steer", Invocation: InvocationExplicit, Summary: "Steer one exact current Codex turn", Usage: []string{"projmux agent turn steer <agent-ref> -- <text>"}, Canonical: []string{"agent turn steer"}},
+					{Effects: unchangedEffects(CardinalityExactOne), Name: "steer", Invocation: InvocationExplicit, Summary: "Request provider acceptance for one exact current Codex turn; delivery remains unconfirmed", Usage: []string{"projmux agent turn steer <agent-ref> -- <text>"}, Canonical: []string{"agent turn steer"}},
 					{Effects: unchangedEffects(CardinalityExactOne), Name: "interrupt", Invocation: InvocationExplicit, Summary: "Interrupt one exact current Codex turn", Usage: []string{"projmux agent turn interrupt <agent-ref>"}, Canonical: []string{"agent turn interrupt"}},
 				},
 			},

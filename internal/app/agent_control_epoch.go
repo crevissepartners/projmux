@@ -20,6 +20,9 @@ const (
 	agentControlOpInterrupt = "turn-interrupt"
 	agentControlOpApprovals = "approval-list"
 	agentControlOpReview    = "approval-review"
+
+	agentControlAcceptanceProvider  = "provider"
+	agentControlDeliveryUnconfirmed = "unconfirmed"
 )
 
 type agentControlWire interface {
@@ -43,6 +46,8 @@ type agentControlResponse struct {
 	OK           bool                     `json:"ok"`
 	Code         string                   `json:"code,omitempty"`
 	Message      string                   `json:"message,omitempty"`
+	Acceptance   string                   `json:"acceptance,omitempty"`
+	Delivery     string                   `json:"delivery,omitempty"`
 	Availability agentControlAvailability `json:"availability"`
 	Approvals    []agentPendingApproval   `json:"approvals,omitempty"`
 	ThreadID     string                   `json:"threadId,omitempty"`
@@ -215,17 +220,43 @@ func (e *codexControlEpoch) Handle(ctx context.Context, request agentControlRequ
 		e.ambiguous = map[string]struct{}{}
 		return agentControlResponse{OK: true, ThreadID: result.ThreadID, TurnID: result.TurnID}
 	case agentControlOpSteer:
-		if strings.TrimSpace(request.Text) == "" || !e.canMutateCurrentTurn() {
+		if strings.TrimSpace(request.Text) == "" {
 			return refusedControl("stale-turn", "no exact active turn is available to steer")
 		}
-		result, err := e.wire.SteerExactTurn(ctx, e.identity.ThreadID, e.turnID, request.Text)
+		if !e.canMutateCurrentTurn() {
+			return refusedControl("no-active-turn", "no exact active turn is available to steer")
+		}
+		expectedTurnID := e.turnID
+		snapshot, err := e.wire.ReadLifecycleSnapshot(ctx, e.identity.ThreadID)
+		if err != nil || snapshot.ThreadID != e.identity.ThreadID || !validFreshStartSnapshot(snapshot) {
+			return refusedControl("turn-state-unavailable", "fresh exact turn state is unavailable; steer write refused")
+		}
+		// The lifecycle read is content-free and travels through the same exact
+		// connection epoch. Re-check the Agent/Pane/runtime/generation/thread
+		// binding after it returns; this mutex keeps the control epoch fixed.
+		// Reconcile even a terminal or different turn, but never retarget this
+		// request from the cached exact turn to the newly observed one.
+		if !e.current(e.identity) {
+			return refusedControl("turn-state-unavailable", "fresh exact turn state is unavailable; steer write refused")
+		}
+		e.reconcileTurn(snapshot)
+		if e.turnID != expectedTurnID || !e.canMutateCurrentTurn() {
+			return refusedControl("no-active-turn", "no exact active turn is available to steer")
+		}
+		result, err := e.wire.SteerExactTurn(ctx, e.identity.ThreadID, expectedTurnID, request.Text)
 		if err != nil {
 			return controlWireFailure("stale-turn", err)
 		}
-		if result.ThreadID != e.identity.ThreadID || result.TurnID != e.turnID {
+		if result.ThreadID != e.identity.ThreadID || result.TurnID != expectedTurnID {
 			return refusedControl("protocol-error", "turn/steer returned a different identity")
 		}
-		return agentControlResponse{OK: true, ThreadID: result.ThreadID, TurnID: result.TurnID}
+		// A body-free turn/steer response proves only that the provider accepted
+		// the request. It carries no acknowledgement of TUI display, model
+		// consumption, or goal continuation.
+		return agentControlResponse{
+			OK: true, ThreadID: result.ThreadID, TurnID: result.TurnID,
+			Acceptance: agentControlAcceptanceProvider, Delivery: agentControlDeliveryUnconfirmed,
+		}
 	case agentControlOpInterrupt:
 		if !e.canMutateCurrentTurn() {
 			return refusedControl("stale-turn", "no exact active turn is available to interrupt")

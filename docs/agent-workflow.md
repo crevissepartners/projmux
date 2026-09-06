@@ -355,9 +355,35 @@
   Agent/Pane/runtime/generation/thread binding current across the fresh read,
   while `TestExactAgentControlFreshTerminalReconcileClearsCachedApproval`
   proves that an idle/terminal snapshot repairs stale turn and approval state
-  before the same request starts exactly one new turn. Existing steer,
+  before the same request starts exactly one new turn. Start-specific behavior,
   interrupt, approval, old-epoch, and canonical generation-consumer fences are
-  unchanged.
+  unchanged by the steer admission slice below.
+
+- `make test`: Exact Codex steer admission reuses the content-free lifecycle
+  read and accepts only the cached turn that a fresh snapshot still proves is
+  the same exact active turn. `TestExactAgentControlSteerFreshLifecycleAcceptanceTable`
+  pins the active/idle/terminal/different-turn/unavailable matrix plus exact
+  lifecycle-read-before-steer order and one-or-zero steer wire count;
+  `TestExactAgentControlSteerDifferentTurnReconcilesWithoutRetargetingCurrentRequest`
+  proves reconciliation cannot retarget the current request and only an
+  explicit retry may address the newly observed turn.
+  `TestExactAgentControlSteerPostReadFenceMismatchIsTurnStateUnavailable` and
+  `TestExactAgentControlSteerOldOrCrossEpochReadsAndWritesZero` keep the
+  Agent/Pane/runtime/generation/thread/control-epoch fences closed before the
+  provider write. `TestBodyFreeSteerSuccessIsProviderAcceptanceWithDeliveryUnconfirmed`
+  kills a body-free-success-to-delivery-confirmed mutant by requiring the
+  structured `acceptance=provider`, `delivery=unconfirmed` receipt, while
+  `TestAgentControlCLISteerExactAcceptanceRefusalOutputAndExit` fixes the exact
+  CLI receipt, refusal tokens, and exit 0/1 mapping.
+  `TestAgentControlCLISteerRejectsMissingOrConfirmedDeliveryReceipt` prevents a
+  missing or fabricated delivery acknowledgement from reaching successful CLI
+  output. `make test-e2e E2E_SCENARIO=C01` runs the maintained
+  `test/e2e/codex-lifecycle.sh` replacement-sibling steer: it boundedly retries
+  only `turn-state-unavailable` with stdout and the exact sibling steer ledger
+  held at zero, then requires one qualified provider write and the exact
+  acceptance/unconfirmed-delivery receipt. Retry time is pacing only, never
+  lifecycle authority. Start, interrupt, approval, payload privacy, TUI
+  input/resume, and upstream delivery acknowledgement remain unchanged.
 
 - `make test` / `make test-integration`: Codex public turn control live-binding
   compatibility uses one strict six-field tmux frame. Unit tests accept only
