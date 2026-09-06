@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	Version         = 1
+	Version         = 2
 	MaxRefBytes     = 160
 	MaxPayloadBytes = 4 << 10
 	MaxTTL          = 24 * time.Hour
@@ -42,10 +42,15 @@ type Route struct {
 	PaneUID              string `json:"paneUID"`
 	ActivationGeneration string `json:"activationGeneration"`
 	Provider             string `json:"provider"`
+	// Incarnation is an opaque digest of the provider-typed authority. It is
+	// neither a provider locator nor a credential. An endpoint upgrade changes
+	// this fence even when the Pane activation generation remains stable.
+	Incarnation string `json:"incarnation"`
 }
 
 func (r Route) Valid() bool {
-	return validRef(r.AgentUID) && validRef(r.PaneUID) && validRef(r.ActivationGeneration) && validProvider(r.Provider)
+	return validRef(r.AgentUID) && validRef(r.PaneUID) && validRef(r.ActivationGeneration) &&
+		validProvider(r.Provider) && validRef(r.Incarnation)
 }
 
 func (r Route) Same(other Route) bool {

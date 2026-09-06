@@ -12,7 +12,7 @@ import sys
 from typing import Any
 
 
-EXPECTED_IDS = [*[f"L{index:02d}" for index in range(1, 20)], "C01", "N01"]
+EXPECTED_IDS = [*[f"L{index:02d}" for index in range(1, 21)], "C01", "N01"]
 SOURCE_BY_SUITE = {
     "linux": "test/e2e/linux-smoke.sh",
     "codex": "test/e2e/codex-lifecycle.sh",
@@ -230,7 +230,7 @@ def shard_inventory(root: pathlib.Path) -> dict[str, str]:
             if scenario_id in result:
                 fail(f"duplicate shard assignment: {scenario_id}")
             result[scenario_id] = shard
-    expected = EXPECTED_IDS[:19]
+    expected = EXPECTED_IDS[:20]
     if sorted(result) != sorted(expected):
         fail(f"Linux shard inventory differs: actual={sorted(result)} expected={expected}")
     if len(set(result.values())) != 4:
@@ -241,7 +241,7 @@ def shard_inventory(root: pathlib.Path) -> dict[str, str]:
 def validate(root: pathlib.Path, manifest: dict[str, Any]) -> dict[str, Any]:
     stable = manifest.get("stable_inventory")
     if stable != EXPECTED_IDS:
-        fail("stable_inventory must be exact ordered L01-L19,C01,N01")
+        fail("stable_inventory must be exact ordered L01-L20,C01,N01")
     scenarios = manifest.get("scenarios")
     if not isinstance(scenarios, list):
         fail("scenarios must be an array")

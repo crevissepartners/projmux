@@ -32,6 +32,7 @@ func TestDeliveryTransitionTable(t *testing.T) {
 		{name: "pre-handoff replacement is stale", current: held, event: Event{Kind: EventStale, MessageRef: "message-1", Reason: "helper-restart"}, want: StateStale, changed: true, wantReason: "helper-restart"},
 		{name: "post-handoff replacement is ambiguous failure", current: handoff, event: Event{Kind: EventStale, MessageRef: "message-1"}, want: StateFailed, changed: true, ambiguous: true, wantReason: "delivery-outcome-unknown"},
 		{name: "pre-handoff failure is terminal", current: queue, event: Event{Kind: EventFail, MessageRef: "message-1", Reason: "transport-failed"}, want: StateFailed, changed: true, wantReason: "transport-failed"},
+		{name: "verified zero-byte handoff failure is not ambiguous", current: handoff, event: Event{Kind: EventFail, MessageRef: "message-1", Reason: "provider-write-zero", OutcomeKnown: true}, want: StateFailed, changed: true, wantReason: "provider-write-zero"},
 		{name: "out of order delivery is ignored", current: queue, event: Event{Kind: EventDeliver, MessageRef: "message-1", WaiterRef: "waiter-1", FullFrameWritten: true, HelperReceipt: true}, want: StateQueued},
 		{name: "foreign message is ignored", current: held, event: Event{Kind: EventExpire, MessageRef: "message-2"}, want: StateHeld},
 		{name: "duplicate queue is ignored", current: queue, event: Event{Kind: EventQueue, MessageRef: "message-1"}, want: StateQueued},

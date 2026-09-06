@@ -49,15 +49,44 @@ type agentMessageRouteResolver interface {
 	Resolve(coremetadata.Registry, coremetadata.Agent) (coremetadata.AgentRouteRef, error)
 }
 
-type liveAgentMessageRouteResolver struct{ registryPath string }
+type liveAgentMessageRouteResolver struct {
+	registryPath     string
+	leaseProbe       func(string, coremetadata.AgentRouteRef) bool
+	eligibilityProbe func(string, coremetadata.AgentRouteRef) bool
+}
+
+func (r liveAgentMessageRouteResolver) registrationReady(route coremetadata.AgentRouteRef) bool {
+	if r.leaseProbe != nil {
+		return r.leaseProbe(r.registryPath, route)
+	}
+	return probeClaudeRegistrationLease(r.registryPath, route)
+}
+
+func (r liveAgentMessageRouteResolver) coordinationEligible(route coremetadata.AgentRouteRef) bool {
+	if r.eligibilityProbe != nil {
+		return r.eligibilityProbe(r.registryPath, route)
+	}
+	return probeClaudeCoordinationEligibility(r.registryPath, route)
+}
 
 func (r liveAgentMessageRouteResolver) Resolve(registry coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
 	route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID)
 	if reason != "" {
 		return coremetadata.AgentRouteRef{}, errors.New(reason)
 	}
-	if route.Authority().Provider() == string(aiprovider.Claude) && !probeClaudeRegistrationLease(r.registryPath, route) {
+	if route.Authority().Provider() == string(aiprovider.Claude) && !r.registrationReady(route) {
 		return coremetadata.AgentRouteRef{}, errors.New("claude registration lease is stale or unavailable")
+	}
+	return route, nil
+}
+
+func (r liveAgentMessageRouteResolver) ResolveTarget(registry coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
+	route, err := r.Resolve(registry, agent)
+	if err != nil {
+		return coremetadata.AgentRouteRef{}, err
+	}
+	if route.Authority().Provider() == string(aiprovider.Claude) && !r.coordinationEligible(route) {
+		return coremetadata.AgentRouteRef{}, errors.New("Claude coordination requires exact-version isolated qualification; use agent message qualify")
 	}
 	return route, nil
 }
@@ -91,7 +120,18 @@ func (liveAgentMessageClaudeAdapter) Submit(ctx context.Context, registryPath st
 	response, err := callClaudeCoordination(callCtx, registryPath, route, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "submit", Target: target, Envelope: &private,
 	})
-	return claudeResponseDelivery(envelope.MessageRef, response), err
+	if err != nil {
+		if !claudeCoordinationCallPossiblyDispatched(err) {
+			return agentdelivery.Delivery{MessageRef: envelope.MessageRef, State: agentdelivery.StateFailed,
+				Reason: "provider-write-zero"}, nil
+		}
+		return ambiguousClaudeDelivery(envelope.MessageRef), nil
+	}
+	delivery, valid := claudeResponseDelivery(envelope.MessageRef, response)
+	if !valid {
+		return ambiguousClaudeDelivery(envelope.MessageRef), nil
+	}
+	return delivery, nil
 }
 
 func (liveAgentMessageClaudeAdapter) Status(ctx context.Context, registryPath string, route coremetadata.AgentRouteRef, messageRef string) (agentdelivery.Delivery, error) {
@@ -104,21 +144,76 @@ func (liveAgentMessageClaudeAdapter) Status(ctx context.Context, registryPath st
 	response, err := callClaudeCoordination(callCtx, registryPath, route, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "status", Target: target, MessageRef: messageRef,
 	})
-	return claudeResponseDelivery(messageRef, response), err
+	if err != nil {
+		return agentdelivery.Delivery{}, err
+	}
+	delivery, valid := claudeResponseDelivery(messageRef, response)
+	if !valid {
+		return agentdelivery.Delivery{}, errors.New("Claude coordination response is invalid")
+	}
+	return delivery, nil
 }
 
-func claudeResponseDelivery(messageRef string, response claudeCoordinationResponse) agentdelivery.Delivery {
-	if response.Delivery.MessageRef != "" || response.Delivery.State != "" {
-		return response.Delivery
+func claudeResponseDelivery(messageRef string, response claudeCoordinationResponse) (agentdelivery.Delivery, bool) {
+	if response.Version != claudeCoordinationVersion || response.AutoResend || response.Reason != "" ||
+		response.ReplyRef != "" || response.QualificationRef != "" ||
+		response.ProviderVersion != "" || response.Ambiguous {
+		return agentdelivery.Delivery{}, false
 	}
 	switch response.Kind {
 	case "refused":
-		return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateRefused, Reason: "provider-refused"}
+		if response.Delivery.MessageRef == "" && response.Delivery.State == "" {
+			return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateRefused, Reason: "provider-refused"}, true
+		}
 	case "stale":
-		return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateStale, Reason: "target-activation-stale"}
-	default:
-		return agentdelivery.Delivery{}
+		if response.Delivery.MessageRef == "" && response.Delivery.State == "" {
+			return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateStale, Reason: "target-activation-stale"}, true
+		}
 	}
+	delivery := response.Delivery
+	if delivery.MessageRef != messageRef || !delivery.State.Terminal() || response.Kind != string(delivery.State) {
+		return agentdelivery.Delivery{}, false
+	}
+	switch delivery.State {
+	case agentdelivery.StateDelivered:
+		if delivery.Ambiguous || delivery.WaiterRef == "" || delivery.Reason != "provider-pipe-full-frame" {
+			return agentdelivery.Delivery{}, false
+		}
+	case agentdelivery.StateRefused, agentdelivery.StateExpired, agentdelivery.StateStale:
+		if delivery.Ambiguous || delivery.WaiterRef != "" || delivery.Reason == "" {
+			return agentdelivery.Delivery{}, false
+		}
+		validReason := (delivery.State == agentdelivery.StateRefused &&
+			(delivery.Reason == "exact-provider-version-unqualified" || delivery.Reason == "provider-frame-unsupported")) ||
+			(delivery.State == agentdelivery.StateExpired &&
+				(delivery.Reason == "ttl" || delivery.Reason == "ttl-after-durable-handoff")) ||
+			(delivery.State == agentdelivery.StateStale &&
+				(delivery.Reason == "helper-stale" || delivery.Reason == "unknown-message"))
+		if !validReason {
+			return agentdelivery.Delivery{}, false
+		}
+	case agentdelivery.StateFailed:
+		switch {
+		case delivery.WaiterRef == "":
+			if delivery.Ambiguous || delivery.Reason != "broker-handoff-persist-failed" {
+				return agentdelivery.Delivery{}, false
+			}
+		case delivery.Ambiguous:
+			if delivery.Reason != "provider-handoff-outcome-unknown" &&
+				delivery.Reason != "broker-delivery-persist-failed" &&
+				delivery.Reason != "observation-timeout" && delivery.Reason != "delivery-outcome-unknown" {
+				return agentdelivery.Delivery{}, false
+			}
+		case delivery.Reason != "provider-write-zero":
+			return agentdelivery.Delivery{}, false
+		}
+	}
+	return delivery, true
+}
+
+func ambiguousClaudeDelivery(messageRef string) agentdelivery.Delivery {
+	return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateFailed,
+		Reason: "provider-handoff-outcome-unknown", Ambiguous: true}
 }
 
 type agentMessageReceipt struct {
@@ -141,7 +236,7 @@ func receiptFor(record messagestore.Record) agentMessageReceipt {
 
 func (c *agentCommand) runMessage(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return usageError("agent message requires send, wait, or status")
+		return usageError("agent message requires send, wait, status, or qualify")
 	}
 	switch args[0] {
 	case "send":
@@ -150,8 +245,10 @@ func (c *agentCommand) runMessage(args []string, stdout, stderr io.Writer) error
 		return c.runMessageClaim(args[1:], stdout, stderr)
 	case "status":
 		return c.runMessageStatus(args[1:], stdout, stderr)
+	case "qualify":
+		return c.runMessageQualify(args[1:], stdout, stderr)
 	default:
-		return usageError("agent message requires send, wait, or status")
+		return usageError("agent message requires send, wait, status, or qualify")
 	}
 }
 
@@ -215,7 +312,7 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return fmt.Errorf("%s: source Agent is not eligible: %w", spelling, err)
 	}
-	targetRoute, err := c.resolveMessageRoute(registry, target)
+	targetRoute, err := c.resolveMessageTargetRoute(registry, target)
 	if err != nil {
 		return fmt.Errorf("%s: target Agent is not eligible: %w", spelling, err)
 	}
@@ -260,6 +357,15 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 		}
 	}
 	return writeAgentMessageReceipt(stdout, receiptFor(record), false)
+}
+
+func (c *agentCommand) resolveMessageTargetRoute(registry coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
+	if resolver, ok := c.messageRoute.(interface {
+		ResolveTarget(coremetadata.Registry, coremetadata.Agent) (coremetadata.AgentRouteRef, error)
+	}); ok {
+		return resolver.ResolveTarget(registry, agent)
+	}
+	return c.resolveMessageRoute(registry, agent)
 }
 
 func conversationRefFor(messageRef string) string {
@@ -525,7 +631,7 @@ func publicMessageRoute(route coremetadata.AgentRouteRef) coremessage.Route {
 		provider = route.Authority().Provider()
 	}
 	return coremessage.Route{AgentUID: route.AgentUID, PaneUID: route.PaneUID,
-		ActivationGeneration: route.Generation, Provider: provider}
+		ActivationGeneration: route.Generation, Provider: provider, Incarnation: route.Incarnation()}
 }
 
 func (c *agentCommand) publicMessageEvent(record messagestore.Record, kind coremessage.EventKind, reason string, unknown bool) coremessage.Event {
@@ -555,21 +661,21 @@ func (c *agentCommand) projectClaudeDelivery(record messagestore.Record, private
 		case agentdelivery.StateRefused:
 			kind = coremessage.EventRefuse
 		case agentdelivery.StateExpired:
-			if record.HandoffObserved {
+			if private.Ambiguous {
 				kind, reason, unknown = coremessage.EventFail, "provider-handoff-outcome-unknown", true
 			} else {
 				kind = coremessage.EventExpire
 			}
 		case agentdelivery.StateStale:
-			if record.HandoffObserved {
+			if private.Ambiguous {
 				kind, reason, unknown = coremessage.EventFail, "provider-handoff-outcome-unknown", true
 			} else {
 				kind = coremessage.EventStale
 			}
 		case agentdelivery.StateFailed:
-			kind = coremessage.EventFail
-			if record.HandoffObserved {
-				reason, unknown = "provider-handoff-outcome-unknown", true
+			kind, unknown = coremessage.EventFail, private.Ambiguous
+			if private.Ambiguous {
+				reason = "provider-handoff-outcome-unknown"
 			}
 		}
 	}

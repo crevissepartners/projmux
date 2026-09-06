@@ -68,61 +68,118 @@ state. Upstream may store its own public locator; the test observes only a
 boolean and removes the entire owned provider config before reporting cleanup.
 Projmux Registry, helper files, diagnostics, and evidence contain neither value.
 Inbound cross-session messaging is explicitly refused during the one-shot.
-This is a Phase 1 registration source gate without `--safe-mode`.
-It does not establish or relax the later mandatory safe-mode delivery gate.
+This is historical Phase 1 registration-source evidence only. It does not
+establish or relax Phase 4 qualification: safe mode disables hooks and cannot
+substitute for the separately owned, long-lived, hook-enabled current-version
+public-init and marker gate.
 
-## Phase 2 owned coordination ingress
+## Phase 4 push ingress and heterogeneous dialogue
 
-The exact registration helper also owns a second private Unix socket for the
-same lease. Its address is derived from `AgentRouteRef` and
-`ClaudeAuthorityRef`; Agent and Pane names, tmux runtime IDs, provider titles,
-the vendor socket, and the vendor token do not enter the address or protocol.
-Readiness now requires this socket, its unchanged inode and 0600 ownership, the
-provider and helper process births, and the exact current Registry authority.
-The helper's non-secret crash receipt also records that socket identity, so
-normal close, dead-helper reaping, and supervisor cleanup unlink only the exact
-owned inode and preserve any replacement that has claimed the same path.
+The registration helper owns the existing private `coord-*` Unix socket for
+the same lease. Its address is derived from the exact `AgentRouteRef`; names,
+tmux `%N`, the provider socket, and the provider token do not enter that address
+or its protocol. Every operation revalidates Agent UID, Pane UID, activation
+generation, provider/helper process births, registration generation, and route
+incarnation. Normal exit and cleanup unlink only the exact owned coord socket
+inode. Projmux never creates a replacement provider listener or relay.
 
-Explicit `projmux agent integrate claude` convergence installs one managed
-`asyncRewake` command hook for each of `SessionStart` and `Stop`. The fixed
-command invokes only the hidden `internal claude-message-wait` route. Automatic
-config-apply migration preserves whether this coordination hook family is
-present, so installing a newly merged binary does not silently activate a new
-Claude hook process. User hooks and the existing status/registration hooks are
-retained, while explicit install and remove remain idempotent.
+Claude ingress is immediate push. There is no receiver waiter, pending ingress
+queue, `asyncRewake`, `begin-handoff`, or `no-waiter` state. The helper retains
+the opaque `CLAUDE_CODE_MESSAGING_SOCKET` and token only from the original
+anonymous bootstrap pipe, removes both keys from its environment, validates the
+unchanged 0600 provider socket and exact provider peer process, then performs
+one write containing the documented auth line followed by the single frozen
+current-version user frame:
 
-Each hook child validates its SessionStart/Stop session ID, private activation
-envelope, direct provider parent, exact helper peer, and fd 2 as an owned pipe.
-A same-provider child whose stderr is a regular file fails closed before it can
-arm a waiter. The helper admits only one waiter: a newer execution supersedes
-the prior one, which handles the documented per-execution non-dedup behavior.
-Hook and receipt timeouts are explicit state-machine inputs rather than evidence
-that delivery did not occur.
+```json
+{"type":"user","message":{"role":"user","content":"..."}}
+```
 
-Assignment is not handoff. The helper keeps the message in `queued` or `held`
-until it has written the complete assignment response and the still-current hook
-child acknowledges `begin-handoff` immediately before writing fd 2. A dead child
-is dropped before assignment and leaves the message held with provider-pipe
-writes equal to zero. A disconnected response pipe or assignment timeout ends
-before handoff as a non-ambiguous failure with the same zero-write guarantee.
-Once the begin acknowledgement succeeds, partial/EPIPE, child exit, and receipt
-timeout remain ambiguous failures and are never automatically resent.
+No control, status, reply, or inferred vendor frame is implemented. A known
+failure before any byte is a non-ambiguous `provider-write-zero`; partial bytes,
+a write error after bytes, or a lost helper response is ambiguous and has
+`autoResend=false`. A complete write plus helper return is only a transport
+handoff, not proof that Claude parsed, displayed, processed, or answered it.
 
-The bounded versioned envelope labels peer content as an untrusted
-coordination-only record. A slash command is ordinary string data. Delivery is
-committed only after the exact hook child writes the complete JSON frame and
-newline to its stderr pipe and the same message/waiter/process tuple returns a
-helper receipt. `delivered` ends at that provider pipe boundary; it does not
-claim that the Claude model read, processed, or replied to the message, or that
-a turn completed. A partial/EPIPE or post-handoff timeout is an ambiguous
-terminal failure and is never retried automatically.
+The frozen frame is closed to Claude Code `2.1.263`. A different provider
+version, helper replacement, provider restart, registration replacement, or
+activation restart inherits no qualification. An ordinary send cannot qualify
+the endpoint. The dedicated opt-in command requires a private 0600 sanitized
+collector record bound to the same public init session/process/Pane/generation
+and helper route, exact version, empty tools/MCP/plugins, zero pre-marker tool
+use/stderr, frozen stream, and inbound policy `accept`:
 
-The private Phase 2 lifecycle is `queued`, `held`, and `handoff`, followed by
-one of `delivered`, `refused`, `expired`, `stale`, or `failed`. It is an adapter
-layer beneath the future public broker acceptance state and does not add public
-message send/wait/status commands. The fake process integration exercises only
-Projmux-owned UDS and provider stderr pipes; it makes zero provider inbox, MCP,
-model, connector, interrupt, approval, configuration, or tool calls.
+```sh
+projmux agent message qualify uid:<claude-agent> \
+  --evidence /absolute/owned/private-init.json \
+  --confirm-isolated-provider-push -o json
+```
 
-Provider sources: [SessionStart hooks](https://code.claude.com/docs/en/hooks)
+The helper pushes a unique non-secret qualification marker. Only the exact
+ordinary official `Stop.last_assistant_message` at the unchanged safe-boundary
+epoch opens helper-memory eligibility. A missing/mismatched/recursive Stop,
+`UserPromptSubmit`, timeout, target exit, or post-write uncertainty closes the
+attempt as ambiguous/no-auto-resend. Late Stop cannot reopen it; retry requires
+a new explicit command. A version string supplied by the caller is never proof.
+
+After qualification, `agent message send` persists the exact immutable broker
+handoff before any provider byte. A missing, mismatched, or unwritable durable
+record therefore writes zero. The pushed content is a structured
+`projmux-coordination` object with `untrusted-coordination-only` authority and
+the exact source/target routes, `messageRef`, `conversationRef`, `replyTo`, and
+payload. It cannot start or steer a user turn, answer an approval, interrupt a
+turn, execute a tool, call a connector, or write Codex app-server/model history.
+
+Reply egress uses only documented official `Stop.last_assistant_message` plus
+one delivered Projmux-owned pending record at the same boundary. Push ingress
+correlates only an ordinary Stop (`stop_hook_active=false`); recursive Stop,
+`UserPromptSubmit`, multiple candidates, or authority drift fails closed.
+Assistant wording is never a selector. The reply reverses the routes, preserves
+`conversationRef`, sets `replyTo`, and completes only when the original exact
+Codex Agent self-claims it.
+
+| Receiver state or transition | Product result |
+| --- | --- |
+| Before readiness or qualification | Refused/failed terminal, held count zero, provider writes zero |
+| Ready and idle | Immediate one-frame push; model visibility is separate evidence |
+| Active tool/turn | Push never interrupts; next official human boundary makes reply correlation ambiguous |
+| Provider exit or activation restart | Old generation writes and claims zero |
+| Same-generation registration/helper replacement | Old incarnation writes zero; fresh exact-version qualification required |
+| Provider version replacement | Old qualification is cleared; unqualified writes zero |
+| Codex endpoint replacement | Old incarnation self-claim zero; exact new incarnation may claim |
+
+Message state is receipt-only. It performs no Registry Agent-interaction or
+tmux badge write, so it cannot overwrite `in_progress`, approval-required, or
+their badges. Public terminal states remain terminal-once.
+
+Explicit integration installs the SessionStart registration hook, one short
+synchronous Stop reply hook, and one short synchronous UserPromptSubmit boundary
+hook. It installs no long-lived ingress waiter and does not use `asyncRewake`.
+Capability reads never modify settings. Preview, enable, and remove only the
+owned hook entries:
+
+```sh
+projmux agent integrate claude --dry-run
+projmux agent integrate claude
+projmux agent integrate claude --remove
+```
+
+For a pre-install Running Claude whose activation has no registration, install
+the hooks, let that process exit normally, then run
+`projmux agent resume uid:<same-agent-uid>`. Resume preserves the same Agent UID
+and creates no replacement Agent. Delivery remains zero until the resumed
+process has a current registration and fresh exact-version qualification.
+`agent capabilities uid:<agent> -o json` reports source registration readiness
+separately from target `runtimeEligibility.coordination` and includes the exact
+recovery action and non-secret route incarnation.
+
+The only selectorless required E2E is offline scenario `L20`. It uses one
+synthetic auth+frozen-frame fixture, official-hook-shaped Stop input, semantic
+barriers, exact structured receipts, and no model or installed provider. The
+real-provider observation is opt-in through
+[`heterogeneous-dialogue-canary.md`](heterogeneous-dialogue-canary.md) and
+`scripts/agent-dialogue-live-canary.sh`; each version-stress row must qualify
+independently.
+
+Provider sources: [SessionStart and Stop hooks](https://code.claude.com/docs/en/hooks)
 and [cross-session messaging](https://code.claude.com/docs/en/cross-session-messaging).
