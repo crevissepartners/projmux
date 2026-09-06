@@ -332,6 +332,28 @@ support archives remain count-only for that file. The common journal is the
 safe correlated source for watcher lifecycle and anomalous ingest
 classification, while the bounded file retains detailed normal-state rows.
 
+## Detached process SIGQUIT artifacts
+
+The detached Codex lifecycle watcher and endpoint broker keep provider hooks
+quiet and non-blocking: hook stdout and stderr are still discarded and hook
+failure still cannot block the provider. For process-local deadlock diagnosis,
+sending `SIGQUIT` to the exact projmux-owned `codex-broker-watch` or
+`codex-broker serve` PID writes one artifact before retaining SIGQUIT's fatal,
+non-zero exit behavior:
+
+```text
+${XDG_STATE_HOME:-$HOME/.local/state}/projmux/crash/codex-broker-watch-<pid>.sigquit.txt
+${XDG_STATE_HOME:-$HOME/.local/state}/projmux/crash/codex-broker-serve-<pid>.sigquit.txt
+```
+
+The `crash` directory is mode `0700`, each file is mode `0600`, and publication
+is bounded to 1 MiB and atomic. A dump that reaches the bound ends with an
+explicit truncation marker. Normal startup creates no crash artifact or
+append-style crash log. These files are local-only and are deliberately not
+included in `diagnostics report`: goroutine stacks can contain absolute source
+paths and other sensitive local data. Inspect and share them only as carefully
+as any other local crash dump.
+
 `PROJMUX_FOCUS_DEBUG` remains available with its existing one-line byte
 contract. Focus diagnostics share its request classification seam, but do not
 copy the debug line's raw target, session/window/pane, socket, client, source,
