@@ -436,11 +436,43 @@ projection.
 The closed static modes are `generic-registry`, `provider-resume`,
 `native-exact-control`, `provider-hook`, `read-only-adapter`, and
 `unsupported`. `message.send`, `message.wait`, `message.status`, and
-`wait.idle` are reserved provider-neutral vocabulary and currently appear only
-as unsupported matrix rows: this release has no `agent message` or `agent wait`
-command placeholder. There is likewise no provider-specific `agent codex`,
-`agent claude`, or `agent antigravity` namespace. A future coordination adapter
-must be selected from the exact Agent's provider and capability.
+`wait.idle` are provider-neutral commands whose availability is decided from
+the exact Agent's provider and current activation capability. There is no
+provider-specific `agent codex`, `agent claude`, or `agent antigravity`
+namespace.
+
+```sh
+projmux agent message send [--message-ref <ref>] [--ttl 10m] uid:<target-agent> -- "coordination text"
+projmux agent message wait [uid:<self-agent>] [--timeout 30s] [-o json]
+projmux agent message status <message-ref> [-o json]
+projmux agent message qualify uid:<claude-agent> --evidence /absolute/owned/private-init.json --confirm-isolated-provider-push -o json
+projmux agent wait uid:<agent> [--timeout 30s] [-o json]
+```
+
+Message send requires an exact current managed source and target and never
+creates an Agent. The envelope is untrusted coordination data, not a user turn,
+tool request, approval, interrupt, or model-history write. A Claude target must
+first have a current exact registration and helper-memory qualification for the
+frozen frame on Claude Code 2.1.263. Qualification is a dedicated opt-in push
+using same-process sanitized public-init evidence and an exact Stop marker; a
+version string alone is never proof. Claude delivery ends at one full-frame
+auth+user-frame provider handoff plus helper receipt, not model processing. A
+correlated model reply is a separate envelope with the original
+`conversationRef` and `replyTo`. Codex delivery ends when the exact target Agent
+self-claims that envelope. Message lifecycle updates neither Agent interaction
+state nor tmux badges.
+
+Claude messaging is opt-in through `projmux agent integrate claude`. The
+integration installs no receiver waiter or `asyncRewake`; ingress is immediate
+through the exact registered provider socket. Capability JSON keeps Claude
+source send/status availability tied to its registration lease and reports
+target ingress qualification separately under
+`runtimeEligibility.coordination`. If an existing pre-install session has no
+lease, preview and enable integration, let that process exit normally, then run
+`projmux agent resume uid:<same-agent-uid>`; the UID is preserved and no Agent
+is recreated. Delivery remains zero until registration and a fresh qualification
+are ready. Use `projmux agent integrate claude --remove` to remove only managed
+hooks.
 
 `agent turn start`, `agent turn steer`, `agent turn interrupt`, and
 `agent approval review` use the live Codex app-server connection only when the

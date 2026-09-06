@@ -1,19 +1,17 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
@@ -23,344 +21,58 @@ func coordinationEnvelope(ref string, deadline time.Time) claudeCoordinationEnve
 	return claudeCoordinationEnvelope{
 		Version: claudeCoordinationVersion, MessageRef: ref,
 		Source:  claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"},
-		Payload: "/status --plain-text", Deadline: deadline,
+		Payload: "semantic marker", Deadline: deadline,
 	}
 }
 
-func newLiveCoordinationTestHub() *claudeCoordinationHub {
-	hub := newClaudeCoordinationHub()
-	hub.processCurrent = func(coremetadata.ProcessIdentity) bool { return true }
-	hub.assignmentWindow = time.Hour
-	hub.receiptWindow = time.Hour
-	return hub
+func dialogueEnvelope(ref string, deadline time.Time) claudeCoordinationEnvelope {
+	public := coremessage.Envelope{Version: coremessage.Version, MessageRef: ref, ConversationRef: "conversation-" + ref,
+		Source: coremessage.Route{AgentUID: "codex-agent", PaneUID: "codex-pane", ActivationGeneration: "codex-generation",
+			Provider: "codex", Incarnation: "codex-incarnation"},
+		Target: coremessage.Route{AgentUID: "claude-agent", PaneUID: "claude-pane", ActivationGeneration: "claude-generation",
+			Provider: "claude", Incarnation: "claude-incarnation"},
+		Authority: coremessage.PeerAuthority(), Payload: "semantic marker", AcceptedAt: deadline.Add(-time.Minute), Deadline: deadline}
+	private := coordinationEnvelope(ref, deadline)
+	private.Payload = ""
+	private.BrokerEnvelope = &public
+	return private
 }
 
-func TestClaudeCoordinationHubTransitionsAreTerminalOnce(t *testing.T) {
-	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
-	process := coremetadata.ProcessIdentity{PID: 101, OwnerUID: 1000, Start: "test:hook-1"}
-
-	t.Run("held handoff exact receipt and no automatic resend", func(t *testing.T) {
-		hub := newLiveCoordinationTestHub()
-		hub.now = func() time.Time { return now }
-		envelope := coordinationEnvelope("message-delivered", now.Add(time.Hour))
-		if got := hub.submit(envelope); got.State != agentdelivery.StateHeld {
-			t.Fatalf("submit state = %s, want held", got.State)
-		}
-		waiter, _ := hub.arm(process)
-		response := <-waiter.result
-		if response.Kind != "assignment" || response.Envelope == nil || response.Envelope.MessageRef != envelope.MessageRef {
-			t.Fatalf("handoff response = %+v", response)
-		}
-		if got := hub.beginHandoff(envelope.MessageRef, waiter.ref, process); got.State != agentdelivery.StateHandoff {
-			t.Fatalf("begin handoff = %+v", got)
-		}
-		if got := hub.receipt(envelope.MessageRef, "foreign-waiter", process, true); got.State != agentdelivery.StateHandoff {
-			t.Fatalf("foreign receipt state = %s, want handoff", got.State)
-		}
-		if got := hub.receipt(envelope.MessageRef, waiter.ref, process, true); got.State != agentdelivery.StateDelivered || got.Ambiguous {
-			t.Fatalf("delivery = %+v", got)
-		}
-		if got := hub.submit(envelope); got.State != agentdelivery.StateDelivered {
-			t.Fatalf("duplicate submit changed terminal delivery: %+v", got)
-		}
-		second, _ := hub.arm(process)
-		select {
-		case got := <-second.result:
-			t.Fatalf("terminal message was automatically resent: %+v", got)
-		default:
-		}
-		hub.cancelWaiter(second, "test-cleanup")
-	})
-
-	t.Run("partial pipe receipt is ambiguous failure", func(t *testing.T) {
-		hub := newLiveCoordinationTestHub()
-		hub.now = func() time.Time { return now }
-		waiter, _ := hub.arm(process)
-		envelope := coordinationEnvelope("message-partial", now.Add(time.Hour))
-		hub.submit(envelope)
-		<-waiter.result
-		hub.beginHandoff(envelope.MessageRef, waiter.ref, process)
-		got := hub.receipt(envelope.MessageRef, waiter.ref, process, false)
-		if got.State != agentdelivery.StateFailed || !got.Ambiguous || got.Reason != "provider-pipe-write-failed" {
-			t.Fatalf("partial receipt = %+v", got)
-		}
-		second, _ := hub.arm(process)
-		select {
-		case response := <-second.result:
-			t.Fatalf("ambiguous post-handoff failure was automatically resent: %+v", response)
-		default:
-		}
-		hub.cancelWaiter(second, "test-cleanup")
-	})
-
-	t.Run("receipt timeout is terminal ambiguous failure", func(t *testing.T) {
-		hub := newLiveCoordinationTestHub()
-		hub.now = func() time.Time { return now }
-		waiter, _ := hub.arm(process)
-		envelope := coordinationEnvelope("message-timeout", now.Add(time.Hour))
-		hub.submit(envelope)
-		<-waiter.result
-		hub.beginHandoff(envelope.MessageRef, waiter.ref, process)
-		hub.expireHandoff(envelope.MessageRef, waiter.ref)
-		got := hub.status(envelope.MessageRef)
-		if got.State != agentdelivery.StateFailed || !got.Ambiguous || got.Reason != "observation-timeout" {
-			t.Fatalf("receipt timeout = %+v", got)
-		}
-	})
-
-	t.Run("ttl before handoff expires without ambiguity", func(t *testing.T) {
-		hub := newLiveCoordinationTestHub()
-		hub.now = func() time.Time { return now }
-		envelope := coordinationEnvelope("message-ttl", now.Add(time.Minute))
-		hub.submit(envelope)
-		now = now.Add(2 * time.Minute)
-		got := hub.status(envelope.MessageRef)
-		if got.State != agentdelivery.StateExpired || got.Ambiguous {
-			t.Fatalf("ttl result = %+v", got)
-		}
-		now = now.Add(-2 * time.Minute)
-	})
-
-	t.Run("assigned waiter cannot begin handoff after ttl", func(t *testing.T) {
-		testNow := now
-		hub := newLiveCoordinationTestHub()
-		hub.now = func() time.Time { return testNow }
-		waiter, _ := hub.arm(process)
-		envelope := coordinationEnvelope("message-assigned-ttl", testNow.Add(time.Minute))
-		if got := hub.submit(envelope); got.State != agentdelivery.StateQueued {
-			t.Fatalf("assigned submit = %+v", got)
-		}
-		if response := <-waiter.result; response.Kind != "assignment" || response.WaiterRef != waiter.ref {
-			t.Fatalf("assigned waiter response = %+v", response)
-		}
-		testNow = envelope.Deadline
-		got := hub.status(envelope.MessageRef)
-		if got.State != agentdelivery.StateExpired || got.Ambiguous || got.WaiterRef != "" || got.Reason != "ttl" {
-			t.Fatalf("post-deadline status = %+v", got)
-		}
-		if handoff := hub.beginHandoff(envelope.MessageRef, waiter.ref, process); handoff != got {
-			t.Fatalf("late handoff changed terminal expiry: got %+v want %+v", handoff, got)
-		}
-		if receipt := hub.receipt(envelope.MessageRef, waiter.ref, process, true); receipt != got {
-			t.Fatalf("late receipt changed terminal expiry: got %+v want %+v", receipt, got)
-		}
-		second, _ := hub.arm(process)
-		select {
-		case response := <-second.result:
-			t.Fatalf("expired assignment was automatically resent: %+v", response)
-		default:
-		}
-		hub.cancelWaiter(second, "test-cleanup")
-	})
-
-	t.Run("handoff deadline fence does not depend on status or timer", func(t *testing.T) {
-		testNow := now
-		hub := newLiveCoordinationTestHub()
-		hub.now = func() time.Time { return testNow }
-		waiter, _ := hub.arm(process)
-		envelope := coordinationEnvelope("message-direct-handoff-ttl", testNow.Add(time.Minute))
-		hub.submit(envelope)
-		<-waiter.result
-		testNow = envelope.Deadline
-		got := hub.beginHandoff(envelope.MessageRef, waiter.ref, process)
-		if got.State != agentdelivery.StateExpired || got.Ambiguous || got.WaiterRef != "" || got.Reason != "ttl" {
-			t.Fatalf("post-deadline handoff = %+v", got)
-		}
-	})
-
-	t.Run("helper restart distinguishes held from handoff", func(t *testing.T) {
-		heldHub := newLiveCoordinationTestHub()
-		heldHub.now = func() time.Time { return now }
-		heldHub.submit(coordinationEnvelope("message-held-restart", now.Add(time.Hour)))
-		heldHub.close()
-		if got := heldHub.status("message-held-restart"); got.State != agentdelivery.StateStale || got.Ambiguous {
-			t.Fatalf("held restart = %+v", got)
-		}
-
-		handoffHub := newLiveCoordinationTestHub()
-		handoffHub.now = func() time.Time { return now }
-		waiter, _ := handoffHub.arm(process)
-		handoffHub.submit(coordinationEnvelope("message-handoff-restart", now.Add(time.Hour)))
-		<-waiter.result
-		handoffHub.beginHandoff("message-handoff-restart", waiter.ref, process)
-		handoffHub.close()
-		if got := handoffHub.status("message-handoff-restart"); got.State != agentdelivery.StateFailed || !got.Ambiguous {
-			t.Fatalf("handoff restart = %+v", got)
-		}
-	})
+type failingClaudeDialogueBroker struct {
+	handoffErr   error
+	deliveredErr error
+	replyErr     error
+	afterHandoff func()
+	current      func() bool
+	handoffs     int
+	deliveries   int
+	replies      int
 }
 
-func TestClaudeCoordinationSingleWaiterCASAndSupersede(t *testing.T) {
-	hub := newLiveCoordinationTestHub()
-	first, _ := hub.arm(coremetadata.ProcessIdentity{PID: 101, OwnerUID: 1000, Start: "test:first"})
-	second, superseded := hub.arm(coremetadata.ProcessIdentity{PID: 102, OwnerUID: 1000, Start: "test:second"})
-	if superseded != first {
-		t.Fatal("second waiter did not CAS-supersede first")
-	}
-	if got := <-first.result; got.Kind != "superseded" || got.WaiterRef != first.ref {
-		t.Fatalf("first waiter result = %+v", got)
-	}
-	envelope := coordinationEnvelope("message-single-waiter", time.Now().Add(time.Hour))
-	if got := hub.submit(envelope); got.State != agentdelivery.StateQueued || got.WaiterRef != "" {
-		t.Fatalf("submit chose wrong waiter: %+v", got)
-	}
-	if got := <-second.result; got.Kind != "assignment" || got.WaiterRef != second.ref {
-		t.Fatalf("second waiter result = %+v", got)
-	}
-	if got := hub.beginHandoff(envelope.MessageRef, second.ref, second.process); got.State != agentdelivery.StateHandoff || got.WaiterRef != second.ref {
-		t.Fatalf("second waiter did not begin handoff: %+v", got)
-	}
+func (b *failingClaudeDialogueBroker) Current(coremessage.Envelope) bool {
+	return b.current == nil || b.current()
 }
 
-func TestClaudeCoordinationOverlappingHookChildrenLeaveOneActiveWaiter(t *testing.T) {
-	hub := newLiveCoordinationTestHub()
-	const count = 32
-	waiters := make(chan *claudeCoordinationWaiter, count)
-	var group sync.WaitGroup
-	for index := range count {
-		group.Add(1)
-		go func(index int) {
-			defer group.Done()
-			waiter, _ := hub.arm(coremetadata.ProcessIdentity{PID: index + 1, OwnerUID: 1000, Start: "test:overlap"})
-			waiters <- waiter
-		}(index)
+func (b *failingClaudeDialogueBroker) MarkHandoff(coremessage.Envelope) error {
+	b.handoffs++
+	if b.afterHandoff != nil {
+		b.afterHandoff()
 	}
-	group.Wait()
-	close(waiters)
-	hub.mu.Lock()
-	active := hub.waiter
-	hub.mu.Unlock()
-	if active == nil {
-		t.Fatal("overlapping hook children left no active waiter")
-	}
-	superseded := 0
-	for waiter := range waiters {
-		if waiter == active {
-			continue
-		}
-		select {
-		case result := <-waiter.result:
-			if result.Kind != "superseded" || result.WaiterRef != waiter.ref {
-				t.Fatalf("superseded result = %+v", result)
-			}
-			superseded++
-		default:
-			t.Fatalf("inactive waiter %s did not receive supersede", waiter.ref)
-		}
-	}
-	if superseded != count-1 {
-		t.Fatalf("superseded = %d, want %d", superseded, count-1)
-	}
-	hub.cancelWaiter(active, "test-cleanup")
+	return b.handoffErr
 }
 
-func TestClaudeCoordinationDeadHookChildNeverBeginsHandoff(t *testing.T) {
-	hub := newLiveCoordinationTestHub()
-	hub.processCurrent = func(coremetadata.ProcessIdentity) bool { return false }
-	process := coremetadata.ProcessIdentity{PID: 404, OwnerUID: 1000, Start: "test:dead-hook"}
-	waiter, _ := hub.arm(process)
-	delivery := hub.submit(coordinationEnvelope("message-dead-hook", time.Now().Add(time.Hour)))
-	if delivery.State != agentdelivery.StateHeld || delivery.WaiterRef != "" || delivery.Ambiguous {
-		t.Fatalf("dead hook delivery = %+v, want held before handoff", delivery)
-	}
-	if result := <-waiter.result; result.Kind != "stale" || result.WaiterRef != waiter.ref {
-		t.Fatalf("dead hook waiter result = %+v", result)
-	}
-	if hub.hasWaiter() {
-		t.Fatal("dead hook remained the active waiter")
-	}
-	hub.close()
+func (b *failingClaudeDialogueBroker) MarkDelivered(coremessage.Envelope, time.Time) error {
+	b.deliveries++
+	return b.deliveredErr
 }
 
-func TestClaudeCoordinationDisconnectedHookResponseFailsBeforeHandoff(t *testing.T) {
-	hub := newLiveCoordinationTestHub()
-	process := coremetadata.ProcessIdentity{PID: 101, OwnerUID: 1000, Start: "test:disconnected-hook"}
-	waiter, _ := hub.arm(process)
-	envelope := coordinationEnvelope("message-disconnected-hook", time.Now().Add(time.Hour))
-	if delivery := hub.submit(envelope); delivery.State != agentdelivery.StateQueued || delivery.WaiterRef != "" {
-		t.Fatalf("disconnected assignment leaked handoff: %+v", delivery)
+func (b *failingClaudeDialogueBroker) Reply(original coremessage.Envelope, _ coremetadata.AgentRouteRef, payload string, _ time.Time) (string, error) {
+	b.replies++
+	if b.replyErr != nil {
+		return "", b.replyErr
 	}
-	response := <-waiter.result
-	server := &claudeCoordinationServer{hub: hub}
-	if err := server.writeWaiterResponse(errorWriter{err: io.ErrClosedPipe}, response, process); !errors.Is(err, io.ErrClosedPipe) {
-		t.Fatalf("forced response-write error = %v", err)
-	}
-	status := hub.status(envelope.MessageRef)
-	if status.State != agentdelivery.StateFailed || status.Ambiguous || status.WaiterRef != "" || status.Reason != "helper-response-write-failed" {
-		t.Fatalf("disconnected hook terminal = %+v", status)
-	}
+	return "reply-" + original.MessageRef + "-" + strings.ReplaceAll(payload, " ", "-"), nil
 }
-
-func TestClaudeCoordinationAssignmentTimeoutFailsBeforeHandoff(t *testing.T) {
-	hub := newLiveCoordinationTestHub()
-	process := coremetadata.ProcessIdentity{PID: 102, OwnerUID: 1000, Start: "test:assignment-timeout"}
-	waiter, _ := hub.arm(process)
-	envelope := coordinationEnvelope("message-assignment-timeout", time.Now().Add(time.Hour))
-	if delivery := hub.submit(envelope); delivery.State != agentdelivery.StateQueued || delivery.WaiterRef != "" {
-		t.Fatalf("assignment leaked handoff: %+v", delivery)
-	}
-	response := <-waiter.result
-	if response.Kind != "assignment" || response.WaiterRef != waiter.ref {
-		t.Fatalf("assignment response = %+v", response)
-	}
-	hub.expireAssignment(envelope.MessageRef, waiter.ref)
-	status := hub.status(envelope.MessageRef)
-	if status.State != agentdelivery.StateFailed || status.Ambiguous || status.WaiterRef != "" || status.Reason != "waiter-disconnected" {
-		t.Fatalf("assignment timeout terminal = %+v", status)
-	}
-}
-
-type errorWriter struct{ err error }
-
-func (w errorWriter) Write([]byte) (int, error) { return 0, w.err }
-
-type partialPipeWriter struct {
-	written int
-	err     error
-}
-
-func (w *partialPipeWriter) Write(payload []byte) (int, error) {
-	if w.written != 0 {
-		return 0, w.err
-	}
-	n := len(payload) / 2
-	if n == 0 {
-		n = 1
-	}
-	w.written = n
-	return n, w.err
-}
-
-func TestWriteFullProviderFrameHandlesPartialAndEPIPE(t *testing.T) {
-	payload := []byte("bounded provider frame\n")
-	var chunked bytes.Buffer
-	if err := writeFullProviderFrame(writerLimitedTo{writer: &chunked, limit: 3}, payload); err != nil || !bytes.Equal(chunked.Bytes(), payload) {
-		t.Fatalf("chunked full write bytes=%q err=%v", chunked.Bytes(), err)
-	}
-	partial := &partialPipeWriter{err: io.ErrClosedPipe}
-	if err := writeFullProviderFrame(partial, payload); !errors.Is(err, io.ErrClosedPipe) || partial.written == len(payload) {
-		t.Fatalf("partial EPIPE written=%d err=%v", partial.written, err)
-	}
-	if err := writeFullProviderFrame(zeroWriter{}, payload); !errors.Is(err, io.ErrShortWrite) {
-		t.Fatalf("zero write err=%v, want short write", err)
-	}
-}
-
-type writerLimitedTo struct {
-	writer io.Writer
-	limit  int
-}
-
-func (w writerLimitedTo) Write(payload []byte) (int, error) {
-	if len(payload) > w.limit {
-		payload = payload[:w.limit]
-	}
-	return w.writer.Write(payload)
-}
-
-type zeroWriter struct{}
-
-func (zeroWriter) Write([]byte) (int, error) { return 0, nil }
 
 type claudeCoordinationTestFixture struct {
 	registryPath string
@@ -418,7 +130,7 @@ func newClaudeCoordinationTestFixture(t *testing.T) *claudeCoordinationTestFixtu
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := startClaudeCoordinationServer(listener, route, func() bool { return true })
+	server := startClaudeCoordinationServerWithPoster(listener, route, func() bool { return true }, nil, nil)
 	t.Cleanup(func() {
 		server.Close()
 		_ = os.RemoveAll(claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration))
@@ -438,141 +150,213 @@ func (f *claudeCoordinationTestFixture) call(t *testing.T, request claudeCoordin
 	return response
 }
 
-func TestClaudeCoordinationHookOwnedUDSAndProviderPipe(t *testing.T) {
-	for _, event := range []string{"SessionStart", "Stop"} {
-		t.Run(event, func(t *testing.T) {
-			fixture := newClaudeCoordinationTestFixture(t)
-			getenv := func(key string) string {
-				switch key {
-				case internalClaudeRegistryPathEnv:
-					return fixture.registryPath
-				case internalActivationPaneUIDEnv:
-					return fixture.paneUID
-				case internalActivationGenerationEnv:
-					return fixture.generation
-				default:
-					return ""
-				}
-			}
-			input, _ := json.Marshal(map[string]string{"hook_event_name": event, "session_id": fixture.sessionID})
-			readPipe, writePipe, err := os.Pipe()
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer readPipe.Close()
-			output := make(chan []byte, 1)
-			go func() {
-				data, _ := io.ReadAll(readPipe)
-				output <- data
-			}()
-			hookDone := make(chan error, 1)
-			go func() {
-				hookDone <- runClaudeMessageWaitInput(nil, bytes.NewReader(input), writePipe, getenv)
-				_ = writePipe.Close()
-			}()
-			select {
-			case <-fixture.server.hub.waiterReady:
-			case <-time.After(3 * time.Second):
-				t.Fatal("hook waiter-ready barrier timed out")
-			}
-			envelope := coordinationEnvelope("message-"+strings.ToLower(event), time.Now().Add(time.Minute))
-			envelope.Target = fixture.target
-			response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "submit",
-				Target: fixture.target, Envelope: &envelope})
-			if response.Delivery.State != agentdelivery.StateQueued {
-				t.Fatalf("submit response = %+v", response)
-			}
-			var hookErr error
-			select {
-			case hookErr = <-hookDone:
-			case <-time.After(3 * time.Second):
-				t.Fatal("hook handoff timed out")
-			}
-			var exitCode interface{ ExitCode() int }
-			if !errors.As(hookErr, &exitCode) || exitCode.ExitCode() != 2 {
-				t.Fatalf("hook error = %v, want typed exit 2", hookErr)
-			}
-			providerFrame := <-output
-			if len(providerFrame) == 0 || providerFrame[len(providerFrame)-1] != '\n' {
-				t.Fatalf("provider frame = %q", providerFrame)
-			}
-			var got claudeCoordinationEnvelope
-			if err := json.Unmarshal(providerFrame, &got); err != nil || got.MessageRef != envelope.MessageRef || got.Payload != "/status --plain-text" || got.Source.Trust != "untrusted" {
-				t.Fatalf("provider frame = %+v err=%v", got, err)
-			}
-			status := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "status",
-				Target: fixture.target, MessageRef: envelope.MessageRef})
-			if status.Delivery.State != agentdelivery.StateDelivered || status.Delivery.Reason != "provider-pipe-full-frame" {
-				t.Fatalf("structured receipt = %+v", status.Delivery)
-			}
-		})
+func TestClaudeCoordinationPrivateBridgeRequiresExactV3Route(t *testing.T) {
+	fixture := newClaudeCoordinationTestFixture(t)
+	now := time.Now().UTC()
+	envelope := dialogueEnvelope("message-private-route", now.Add(time.Minute))
+	envelope.Target = fixture.target
+	envelope.BrokerEnvelope.Target = publicMessageRoute(fixture.route)
+	if !envelope.valid(now, fixture.route) {
+		t.Fatal("exact v3 route refused")
+	}
+	envelope.Version = 2
+	if envelope.valid(now, fixture.route) {
+		t.Fatal("old private protocol crossed v3 helper")
+	}
+	envelope.Version = claudeCoordinationVersion
+	envelope.BrokerEnvelope.Target.Incarnation = "route-replaced"
+	if envelope.valid(now, fixture.route) {
+		t.Fatal("replaced endpoint incarnation crossed private bridge")
 	}
 }
 
-func TestClaudeCoordinationRefusesHookIdentityMismatches(t *testing.T) {
+func TestClaudeCoordinationServerHasNoWaiterIngressOperations(t *testing.T) {
 	fixture := newClaudeCoordinationTestFixture(t)
-	for _, test := range []struct {
-		name    string
-		event   string
-		session string
-	}{
-		{name: "foreign event", event: "Notification", session: fixture.sessionID},
-		{name: "foreign session", event: "Stop", session: "other-session"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "wait",
-				Target: fixture.target, HookEvent: test.event, SessionID: test.session, WaitUntil: time.Now()})
-			if response.Kind != "refused" {
-				t.Fatalf("mismatched hook response = %+v", response)
-			}
-		})
-	}
-	staleTarget := fixture.target
-	staleTarget.Generation += "-replacement"
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if _, err := callClaudeCoordination(ctx, fixture.registryPath, fixture.route, claudeCoordinationRequest{
-		Version: claudeCoordinationVersion, Operation: "probe", Target: staleTarget}); err == nil {
-		t.Fatal("stale activation target accepted")
+	for _, operation := range []string{"wait", "waiter-ready", "begin-handoff", "receipt"} {
+		response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+			Operation: operation, Target: fixture.target, SessionID: fixture.sessionID})
+		if response.Kind != "refused" {
+			t.Fatalf("%s response=%+v, want refused", operation, response)
+		}
 	}
 }
 
-func TestClaudeCoordinationEnvelopeBoundsAndPlainTextAuthority(t *testing.T) {
+func TestClaudePushReplyCorrelationIsExactAndConcurrentUserTurnFailsClosed(t *testing.T) {
+	now := time.Unix(80_000, 0).UTC()
+	newDelivered := func(ref string) (*claudeCoordinationHub, *failingClaudeDialogueBroker) {
+		hub := qualifiedPushHub(now)
+		broker := &failingClaudeDialogueBroker{}
+		poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+		if got := hub.submitPush(dialogueEnvelope(ref, now.Add(time.Minute)), broker, poster); got.State != agentdelivery.StateDelivered {
+			t.Fatalf("delivery=%+v", got)
+		}
+		return hub, broker
+	}
+	t.Run("ordinary push Stop", func(t *testing.T) {
+		hub, _ := newDelivered("message-reply")
+		original, reason := hub.reserveReply(false)
+		if original == nil || reason != "" || original.MessageRef != "message-reply" {
+			t.Fatalf("original=%+v reason=%q", original, reason)
+		}
+		hub.finishReply(original.MessageRef, "reply-one", true)
+		if duplicate, _ := hub.reserveReply(false); duplicate != nil {
+			t.Fatal("reply terminal completed twice")
+		}
+	})
+	t.Run("recursive Stop", func(t *testing.T) {
+		hub, _ := newDelivered("message-recursive")
+		if original, reason := hub.reserveReply(true); original != nil || reason != "stop-origin-mismatch" {
+			t.Fatalf("original=%+v reason=%q", original, reason)
+		}
+	})
+	t.Run("human prompt after push", func(t *testing.T) {
+		hub, _ := newDelivered("message-human")
+		hub.userPrompt()
+		if original, reason := hub.reserveReply(false); original != nil || reason != "concurrent-user-turn-ambiguous" {
+			t.Fatalf("original=%+v reason=%q", original, reason)
+		}
+	})
+}
+
+func TestClaudeCoordinationQualificationRequiresExplicitOptIn(t *testing.T) {
 	fixture := newClaudeCoordinationTestFixture(t)
-	envelope := coordinationEnvelope("message-bounds", time.Now().Add(time.Minute))
-	envelope.Target = fixture.target
-	if !envelope.valid(time.Now(), fixture.route) {
-		t.Fatal("bounded exact envelope refused")
+	fixture.server.poster = &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+	now := time.Now().UTC()
+	fixture.server.hub.now = func() time.Time { return now }
+	evidence := exactQualificationEvidence(fixture.route, now)
+	response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		Operation: "qualify", Target: fixture.target, Qualification: &evidence})
+	if response.Kind != "qualification-refused" {
+		t.Fatalf("unconfirmed qualification=%+v", response)
 	}
-	envelope.Payload = strings.Repeat("x", claudeProviderFrameMaxBytes)
-	if envelope.valid(time.Now(), fixture.route) {
-		t.Fatal("oversized provider frame accepted")
+	response = fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		Operation: "qualify", Target: fixture.target, Qualification: &evidence, ExplicitOptIn: true})
+	if response.Kind != "qualification-pending" || response.QualificationRef == "" {
+		t.Fatalf("confirmed qualification=%+v", response)
 	}
-	envelope = coordinationEnvelope("message-command", time.Now().Add(time.Minute))
+}
+
+func TestClaudeCoordinationEnvelopeJSONContainsNoProviderSecretFields(t *testing.T) {
+	fixture := newClaudeCoordinationTestFixture(t)
+	envelope := dialogueEnvelope("message-secret-shape", time.Now().Add(time.Minute))
 	envelope.Target = fixture.target
-	envelope.Payload = "/dangerous-looking-command --still-plain-text"
+	envelope.BrokerEnvelope.Target = publicMessageRoute(fixture.route)
 	data, err := json.Marshal(envelope)
-	if err != nil || !bytes.Contains(data, []byte(`/dangerous-looking-command`)) || envelope.Source.Authority != "coordination-only" {
-		t.Fatalf("slash command was not preserved as untrusted plaintext: %s", data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"CLAUDE_CODE_MESSAGING", "provider.sock", "\"token\"", "opaque-token"} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatalf("private envelope contains %q: %s", forbidden, data)
+		}
 	}
 }
 
-func TestClaudeCoordinationHookRouteIsHiddenQuietAndShellSafe(t *testing.T) {
-	if shouldRunLegacyHookMigrations([]string{"internal", "claude-message-wait"}) {
-		t.Fatal("private hook route would write migration diagnostics to the provider pipe")
+func TestClaudeDialogueBrokerFailureDoesNotCreateReply(t *testing.T) {
+	broker := &failingClaudeDialogueBroker{replyErr: errors.New("durable failure")}
+	if ref, err := broker.Reply(coremessage.Envelope{MessageRef: "message"}, coremetadata.AgentRouteRef{}, "reply", time.Now()); err == nil || ref != "" || broker.replies != 1 {
+		t.Fatalf("ref=%q err=%v replies=%d", ref, err, broker.replies)
 	}
-	for _, command := range internalSubcommands {
-		if command == "claude-message-wait" {
-			t.Fatal("private hook route was exposed in the public internal catalog")
+}
+
+func TestClaudeDialogueReplyCorrelationExpiresWithoutChangingDelivery(t *testing.T) {
+	fixture := newClaudeCoordinationTestFixture(t)
+	now := time.Now().UTC()
+	broker := &failingClaudeDialogueBroker{}
+	fixture.server.broker = broker
+	fixture.server.poster = &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+	fixture.server.hub.qualifiedVersion = claudeFrozenFrameProviderVersion
+	fixture.server.hub.now = func() time.Time { return now }
+	envelope := dialogueForRoute("message-expired-correlation", fixture.route, now)
+	response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		Operation: "submit", Target: fixture.target, Envelope: &envelope})
+	if response.Delivery.State != agentdelivery.StateDelivered {
+		t.Fatalf("push delivery=%+v", response.Delivery)
+	}
+	now = envelope.Deadline.Add(time.Nanosecond)
+	response = fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		Operation: "stop-reply", Target: fixture.target, SessionID: fixture.sessionID,
+		AssistantMessage: "unrelated later assistant text", StopHookActive: false})
+	if response.Kind != "reply-refused" || response.Reason != "reply-correlation-expired" || broker.replies != 0 {
+		t.Fatalf("expired response=%+v broker replies=%d", response, broker.replies)
+	}
+	if delivery := fixture.server.hub.status(envelope.MessageRef); delivery.State != agentdelivery.StateDelivered {
+		t.Fatalf("delivery terminal changed after reply TTL: %+v", delivery)
+	}
+}
+
+func TestClaudeDialogueBrokerReplyFailureNeverRetriesOnLaterStop(t *testing.T) {
+	fixture := newClaudeCoordinationTestFixture(t)
+	now := time.Now().UTC()
+	broker := &failingClaudeDialogueBroker{replyErr: errors.New("durable reply outcome unknown")}
+	fixture.server.broker = broker
+	fixture.server.poster = &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+	fixture.server.hub.qualifiedVersion = claudeFrozenFrameProviderVersion
+	fixture.server.hub.now = func() time.Time { return now }
+	envelope := dialogueForRoute("message-reply-persist-failure", fixture.route, now)
+	if response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		Operation: "submit", Target: fixture.target, Envelope: &envelope}); response.Delivery.State != agentdelivery.StateDelivered {
+		t.Fatalf("push delivery=%+v", response.Delivery)
+	}
+	first := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		Operation: "stop-reply", Target: fixture.target, SessionID: fixture.sessionID,
+		AssistantMessage: "first assistant text", StopHookActive: false})
+	if first.Kind != "reply-refused" || first.Reason != "broker-reply-refused" || broker.replies != 1 {
+		t.Fatalf("first response=%+v broker replies=%d", first, broker.replies)
+	}
+	second := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		Operation: "stop-reply", Target: fixture.target, SessionID: fixture.sessionID,
+		AssistantMessage: "unrelated second assistant text", StopHookActive: false})
+	if second.Kind != "reply-refused" || second.Reason != "broker-reply-outcome-unknown" || broker.replies != 1 {
+		t.Fatalf("second response=%+v broker replies=%d", second, broker.replies)
+	}
+}
+
+func TestClaudeReplyHookRequiresExplicitStopHookActiveField(t *testing.T) {
+	for _, input := range []string{
+		`{"hook_event_name":"Stop","session_id":"session","last_assistant_message":"answer"}`,
+		`{"hook_event_name":"Stop","session_id":"session","stop_hook_active":null,"last_assistant_message":"answer"}`,
+		`{"hook_event_name":"Stop","session_id":"session","stop_hook_active":"false","last_assistant_message":"answer"}`,
+	} {
+		lookups := 0
+		if err := runClaudeMessageReplyInput(nil, strings.NewReader(input), func(string) string { lookups++; return "" }); err != nil {
+			t.Fatal(err)
+		}
+		if lookups != 0 {
+			t.Fatalf("malformed Stop reached coordination route: input=%s lookups=%d", input, lookups)
 		}
 	}
-	if claudeCoordinationHookCommand != "exec projmux internal claude-message-wait # "+claudeCoordinationManagedMarker {
-		t.Fatalf("hook command is not the fixed shell-safe exec route: %q", claudeCoordinationHookCommand)
+
+	fixture := newClaudeCoordinationTestFixture(t)
+	now := time.Now().UTC()
+	broker := &failingClaudeDialogueBroker{}
+	fixture.server.broker = broker
+	fixture.server.poster = &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+	fixture.server.hub.qualifiedVersion = claudeFrozenFrameProviderVersion
+	fixture.server.hub.now = func() time.Time { return now }
+	envelope := dialogueForRoute("message-stop-field", fixture.route, now)
+	if response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		Operation: "submit", Target: fixture.target, Envelope: &envelope}); response.Delivery.State != agentdelivery.StateDelivered {
+		t.Fatalf("push delivery=%+v", response.Delivery)
 	}
-	for _, input := range []string{"{", `{"hook_event_name":"Notification","session_id":"foreign"}`} {
-		var providerPipe bytes.Buffer
-		if err := runClaudeMessageWaitInput(nil, strings.NewReader(input), &providerPipe, func(string) string { return "" }); err != nil || providerPipe.Len() != 0 {
-			t.Fatalf("invalid hook input err=%v output=%q, want quiet refusal", err, providerPipe.String())
+	getenv := func(key string) string {
+		switch key {
+		case internalClaudeRegistryPathEnv:
+			return fixture.registryPath
+		case internalActivationPaneUIDEnv:
+			return fixture.paneUID
+		case internalActivationGenerationEnv:
+			return fixture.generation
+		default:
+			return ""
 		}
+	}
+	input := `{"hook_event_name":"Stop","session_id":"` + fixture.sessionID +
+		`","stop_hook_active":false,"last_assistant_message":"answer","permission_mode":"default"}`
+	if err := runClaudeMessageReplyInput(nil, strings.NewReader(input), getenv); err != nil {
+		t.Fatal(err)
+	}
+	if broker.replies != 1 {
+		t.Fatalf("documented Stop with extra fields broker replies=%d, want 1", broker.replies)
 	}
 }

@@ -1,5 +1,5 @@
 // Package agentmessage persists the local provider-neutral coordination inbox.
-// The store is private to the same-user host and contains only the public v1
+// The store is private to the same-user host and contains only the public v2
 // envelope: provider locators, credentials, thread IDs, and session secrets are
 // never part of its model.
 package agentmessage
@@ -23,12 +23,13 @@ import (
 )
 
 const (
-	storeVersion      = 1
-	storeDirName      = "agent-messages"
-	storeFileName     = "messages.json"
-	maxRecords        = 256
-	maxStoreBytes     = 2 << 20
-	terminalRetention = 24 * time.Hour
+	storeVersion       = 2
+	legacyStoreVersion = 1
+	storeDirName       = "agent-messages"
+	storeFileName      = "messages.json"
+	maxRecords         = 256
+	maxStoreBytes      = 2 << 20
+	terminalRetention  = 24 * time.Hour
 )
 
 var (
@@ -145,6 +146,75 @@ func (s *Store) PutAccepted(envelope coremessage.Envelope, adapter string) (Reco
 		return nil
 	})
 	return out, created, err
+}
+
+// PutReply atomically creates the single broker reply authorized by one
+// delivered Claude coordination message. The caller must present the current
+// exact reversed routes; native reply addresses and assistant wording are not
+// correlation authority. Replays return the same immutable record, while a
+// second or mismatched reply fails closed.
+func (s *Store) PutReply(originalRef, messageRef, payload string, source, target coremessage.Route, acceptedAt, deadline time.Time) (Record, bool, error) {
+	var out Record
+	var created bool
+	err := s.withLock(func() error {
+		state, err := s.loadLocked()
+		if err != nil {
+			return err
+		}
+		originalIndex := -1
+		for i := range state.Records {
+			if state.Records[i].Envelope.MessageRef == originalRef {
+				originalIndex = i
+			}
+		}
+		if originalIndex < 0 {
+			return ErrNotFound
+		}
+		candidate := replyEnvelope(state.Records[originalIndex].Envelope, messageRef, payload, source, target, acceptedAt, deadline)
+		for i := range state.Records {
+			record := state.Records[i]
+			if record.Envelope.ReplyTo != originalRef {
+				continue
+			}
+			if record.Adapter != "codex-inbox" || !record.Envelope.SameRetry(candidate) {
+				return coremessage.ErrRetryMismatch
+			}
+			out = record
+			return nil
+		}
+		original := state.Records[originalIndex]
+		if original.Adapter != "claude-coordination" || original.Delivery.State != coremessage.StateDelivered ||
+			!source.Same(original.Envelope.Target) || !target.Same(original.Envelope.Source) {
+			return coremessage.ErrInvalidEnvelope
+		}
+		envelope := replyEnvelope(original.Envelope, messageRef, payload, source, target, acceptedAt, deadline)
+		if err := coremessage.ValidateReply(original.Envelope, envelope); err != nil {
+			return err
+		}
+		state.Records = pruneRecords(state.Records, s.clock())
+		if len(state.Records) >= maxRecords {
+			return ErrCapacity
+		}
+		delivery, changed := coremessage.Reduce(coremessage.Delivery{}, envelope, coremessage.Event{Kind: coremessage.EventAccept,
+			MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, ObservedAt: envelope.AcceptedAt})
+		if !changed {
+			return coremessage.ErrInvalidEnvelope
+		}
+		out = Record{Envelope: envelope, Delivery: delivery, Adapter: "codex-inbox"}
+		state.Records = append(state.Records, out)
+		if err := s.writeLocked(state); err != nil {
+			return err
+		}
+		created = true
+		return nil
+	})
+	return out, created, err
+}
+
+func replyEnvelope(original coremessage.Envelope, messageRef, payload string, source, target coremessage.Route, acceptedAt, deadline time.Time) coremessage.Envelope {
+	return coremessage.Envelope{Version: coremessage.Version, MessageRef: messageRef,
+		ConversationRef: original.ConversationRef, ReplyTo: original.MessageRef, Source: source, Target: target,
+		Authority: coremessage.PeerAuthority(), Payload: payload, AcceptedAt: acceptedAt.UTC(), Deadline: deadline.UTC()}
 }
 
 func (s *Store) Apply(messageRef string, event coremessage.Event) (Record, bool, error) {
@@ -330,12 +400,23 @@ func (s *Store) loadLocked() (diskState, error) {
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	var state diskState
-	if decoder.Decode(&state) != nil || state.Version != storeVersion || len(state.Records) > maxRecords {
+	if decoder.Decode(&state) != nil || (state.Version != storeVersion && state.Version != legacyStoreVersion) || len(state.Records) > maxRecords {
 		return diskState{}, ErrMalformedStore
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return diskState{}, ErrMalformedStore
+	}
+	if state.Version == legacyStoreVersion {
+		for i := range state.Records {
+			if state.Records[i].Envelope.Version != 1 {
+				return diskState{}, ErrMalformedStore
+			}
+			state.Records[i].Envelope.Version = coremessage.Version
+			state.Records[i].Envelope.Source.Incarnation = "legacy-unqualified-" + state.Records[i].Envelope.Source.Provider
+			state.Records[i].Envelope.Target.Incarnation = "legacy-unqualified-" + state.Records[i].Envelope.Target.Provider
+		}
+		state.Version = storeVersion
 	}
 	seen := make(map[string]bool, len(state.Records))
 	for _, record := range state.Records {

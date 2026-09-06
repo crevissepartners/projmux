@@ -178,11 +178,7 @@ func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	// The official secret is transferred only in the private pipe, never in
 	// helper argv or its inherited environment.
-	for _, value := range os.Environ() {
-		if !strings.HasPrefix(value, "CLAUDE_CODE_MESSAGING_SOCKET=") && !strings.HasPrefix(value, "CLAUDE_CODE_MESSAGING_TOKEN=") {
-			cmd.Env = append(cmd.Env, value)
-		}
-	}
+	cmd.Env = claudeHelperEnvironment(os.Environ())
 	if err := cmd.Start(); err != nil {
 		_ = writeAck.Close()
 		return errors.New("claude helper start failed")
@@ -199,8 +195,28 @@ func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
 	return cmd.Process.Release()
 }
 
+func claudeHelperEnvironment(environment []string) []string {
+	filtered := make([]string, 0, len(environment))
+	for _, value := range environment {
+		key, _, _ := strings.Cut(value, "=")
+		if key != "CLAUDE_CODE_MESSAGING_SOCKET" && key != "CLAUDE_CODE_MESSAGING_TOKEN" {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
+}
+
+func claudeHelperCredentialEnvironmentPresent(lookup func(string) (string, bool)) bool {
+	for _, key := range []string{"CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN"} {
+		if _, present := lookup(key); present {
+			return true
+		}
+	}
+	return false
+}
+
 func runClaudeEndpointHelper(args []string) error {
-	if len(args) != 0 {
+	if len(args) != 0 || claudeHelperCredentialEnvironmentPresent(os.LookupEnv) {
 		return nil
 	}
 	ack := os.NewFile(3, "claude-endpoint-ack")
@@ -463,7 +479,13 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 		authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
 		return reason == "" && ok && route.Same(expectedRoute) && route.PaneUID == bootstrap.PaneUID && route.Generation == bootstrap.Generation && authority == bootstrap.Registration.Authority
 	}
-	coordination := startClaudeCoordinationServer(coordinationListener, expectedRoute, current)
+	dialogueBroker, err := newLiveClaudeDialogueBroker(bootstrap.RegistryPath)
+	if err != nil {
+		return err
+	}
+	providerPoster := &liveClaudeProviderPoster{socket: bootstrap.Socket, token: bootstrap.Token,
+		socketIdentity: socketIdentity, process: bootstrap.Registration.Authority.Process, current: current}
+	coordination := startClaudeCoordinationServerWithPoster(coordinationListener, expectedRoute, current, dialogueBroker, providerPoster)
 	coordinationListenerOwned = false
 	defer coordination.Close()
 	if !current() {
@@ -538,4 +560,20 @@ func probeClaudeRegistrationLease(registryPath string, route coremetadata.AgentR
 		Version: claudeCoordinationVersion, Operation: "probe", Target: target,
 	})
 	return err == nil && response.Kind == "ready"
+}
+
+func probeClaudeCoordinationEligibility(registryPath string, route coremetadata.AgentRouteRef) bool {
+	if !probeClaudeRegistrationLease(registryPath, route) {
+		return false
+	}
+	target, ok := claudeTargetForRoute(route)
+	if !ok {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	response, err := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{
+		Version: claudeCoordinationVersion, Operation: "eligibility", Target: target,
+	})
+	return err == nil && response.Kind == "qualified" && response.ProviderVersion == claudeFrozenFrameProviderVersion
 }

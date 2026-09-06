@@ -1,6 +1,10 @@
 package metadata
 
-import "strings"
+import (
+	"crypto/sha256"
+	"fmt"
+	"strings"
+)
 
 // ProviderAuthorityRef is a sealed union. Each adapter owns its authority
 // namespace; no common epoch or nullable bag of provider fields exists.
@@ -21,6 +25,38 @@ type AgentRouteRef struct {
 }
 
 func (r AgentRouteRef) Authority() ProviderAuthorityRef { return r.authority }
+
+// Incarnation is a non-secret, provider-neutral fence for the complete typed
+// authority. It lets durable coordination records reject an endpoint upgrade
+// even when the stable Agent and Pane activation generation did not change.
+// Consumers compare the opaque digest only; provider-specific fields retain
+// their meaning inside the adapter which constructed the route.
+func (r AgentRouteRef) Incarnation() string {
+	if r.authority == nil {
+		return ""
+	}
+	var material string
+	switch authority := r.authority.(type) {
+	case CodexRouteAuthority:
+		if authority.ThreadID == "" || !authority.Authority.Valid() {
+			return ""
+		}
+		material = fmt.Sprintf("codex\x00%s\x00%s\x00%s\x00%s\x00%d\x00%d", authority.ThreadID,
+			authority.Authority.StateDomainID, authority.Authority.EndpointGenerationID,
+			authority.Authority.BrokerRuntimeID, authority.Authority.ConnectionEpoch, authority.Authority.BindingEpoch)
+	case ClaudeAuthorityRef:
+		if !authority.Valid() {
+			return ""
+		}
+		material = fmt.Sprintf("claude\x00%s\x00%d\x00%d\x00%s\x00%s\x00%d\x00%d\x00%s", authority.SessionID,
+			authority.Process.PID, authority.Process.OwnerUID, authority.Process.Start, authority.RegistrationGeneration,
+			authority.LeaseProcess.PID, authority.LeaseProcess.OwnerUID, authority.LeaseProcess.Start)
+	default:
+		return ""
+	}
+	digest := sha256.Sum256([]byte(material))
+	return fmt.Sprintf("route-%x", digest[:18])
+}
 
 func (r AgentRouteRef) Same(other AgentRouteRef) bool {
 	return r.AgentUID != "" && r.PaneUID != "" && r.Generation != "" && r.authority != nil &&

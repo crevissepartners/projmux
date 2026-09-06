@@ -2,8 +2,9 @@
 set -euo pipefail
 
 # Disposable own-child SessionStart registration plus Projmux-owned UDS/pipe
-# handoff. No tmux, provider account, model, external tools, MCP, vendor socket,
-# connector, or provider transport is used by this fixture.
+# handoff. The synthetic provider accepts only the frozen auth+user test frame;
+# no tmux, provider binary/account, model, external tools, MCP, connector, or
+# network service is used by this fixture.
 unset TMUX TMUX_PANE
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 build_root="$(mktemp -d "${TMPDIR:-/tmp}/projmux-claude-endpoint-build.XXXXXX")"

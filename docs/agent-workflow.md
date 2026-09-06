@@ -819,8 +819,8 @@
 - `TestAgentCapabilityCatalogRoutesMatchExecutableHelpGraph` and
   `TestAgentIntegrationAndGenerationLeafHelpMatchesCapabilityCatalog` own
   catalog ↔ CLI/help parity. The generated CLI reference test owns the docs
-  projection; future `agent message` and `agent wait` parser placeholders and
-  provider-specific Agent namespaces remain absent.
+  projection; provider-neutral `agent message` and `agent wait` are the only
+  coordination routes, and provider-specific Agent namespaces remain absent.
 
 ### Resume Picker exact projmux binding Phase 0 tests
 
@@ -1035,58 +1035,36 @@
   `make test-integration`, builds the product and runs
   `TestClaudeEndpointProcessIntegration` through supervisor, activation gate,
   public SessionStart hook, and detached helper. It covers registration
-  replacement, actual helper death while the provider remains alive, automatic
-  lease cleanup, nested/forged entrypoint refusal, provider exit with bounded
-  convergence of every captured helper birth, zero provider connections, and
-  zero token/locator residue in output and live lease files.
+  replacement, exact-version qualification without inheritance, two exact
+  auth+frozen-user-frame pushes, provider exit cleanup, and zero token/locator
+  residue in output and live lease files. The synthetic socket runs no model,
+  account, connector, tool, MCP server, or external service.
 - `TestClaudeEndpointInstalledSourceGate` is opt-in evidence from a disposable
   installed Claude one-shot. It checks public SessionStart identity, exact
   readiness, exit invalidation, empty tools/MCP/plugins, and zero tool-use.
   Raw provider streams remain in memory. This is the Phase 1 registration source
-  gate without safe mode; it does not satisfy or relax the later mandatory
-  safe-mode delivery gate. Setup and limits are in
+  gate; it does not satisfy or relax Phase 4's separate exact-version,
+  hook-enabled, long-lived provider qualification. A safe-mode one-shot cannot
+  substitute because safe mode disables the hooks under test. Setup and limits are in
   [claude-coordination-endpoints.md](claude-coordination-endpoints.md).
 
-### Claude coordination ingress Phase 2 tests
+### Claude coordination endpoint lifecycle tests
 
-- `TestDeliveryTransitionTable` and its deterministic randomized sequence test
-  own the private provider-final-hop `queued`/`held`/`handoff` lifecycle and
-  terminal-once outcomes. This state sits below, and does not redefine, the
-  future public broker `accepted` projection. A handoff is `delivered` only
-  after one exact waiter fully writes the bounded frame and the same helper
-  commits its receipt; it never claims model processing, reply, or turn completion.
-- `TestClaudeCoordinationHub*` owns single-waiter CAS/supersede, no-waiter hold,
-  TTL before and after waiter assignment, the final pre-handoff deadline fence,
-  receipt timeout, duplicate/out-of-order refusal, helper replacement, and zero
-  automatic resend after an ambiguous provider-pipe outcome.
-- `TestClaudeCoordinationDeadHookChildNeverBeginsHandoff` and
-  `TestClaudeCoordinationDisconnectedHookResponseFailsBeforeHandoff` keep a dead
-  child fenced as held with handoff zero and a failed helper response as a
-  non-ambiguous terminal result. `TestClaudeCoordinationAssignmentTimeoutFailsBeforeHandoff`
-  pins the same non-ambiguous terminal boundary after a complete assignment but
-  before the child acknowledges `begin-handoff`. The process integration also
-  refuses a same-provider direct child when fd 2 is a regular file rather than
-  the provider-owned pipe.
-- `TestOwnedSocketCleanupPreservesReplacementAndPathModeBounds`,
-  `TestSocketIncarnationIdentityRejectsLegacyAxisReuse`,
-  `TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives`, and
-  `TestCleanupClaudeActivationLeasesPreservesCoordinationReplacement` require
-  listener close, dead-helper reaping, and supervisor cleanup to unlink only
-  the exact receipt-bound socket incarnation, including change time when a
-  filesystem reuses device and inode, while preserving a same-path replacement.
-- `TestClaudeCoordinationHookOwnedUDSAndProviderPipe` uses only a disposable
-  Projmux-owned Unix socket and pipe, with a waiter-ready barrier and structured
-  receipt, to cover exact `SessionStart` and `Stop` final-hop delivery. Its peer
-  record stays explicitly untrusted and slash commands remain plaintext; no
-  provider/model/vendor socket, MCP, connector, interrupt, approval, or tool is run.
-- `TestAIIntegrateClaude*` and
-  `TestClaudeAutomaticMigrationPreservesCoordinationPresenceAndSettingsBytes`,
-  plus `TestConfigApplyNoReloadPreservesClaudeSettingsBytesWithCoordinationAbsentOrPresent`,
-  pin one managed asyncRewake hook for each of `SessionStart` and `Stop`, preserve
-  user and existing managed hooks, make repeated remove byte/write-count
-  idempotent, and keep automatic install-time migration and
-  `config apply --no-reload` byte-identical for both absent and present
-  coordination families.
+- `TestClaudeEndpoint*`, `TestClaudeCoordinationSocketReplacementInvalidatesWithoutRemovingReplacement`,
+  and `TestCleanupClaudeActivationLeasesPreservesCoordinationReplacement` retain
+  exact SessionStart registration, process/Pane/generation authority, private
+  lease and coord-socket inode cleanup, helper-death invalidation, and
+  same-path replacement preservation.
+- `TestClaudeEndpointProcessIntegration` uses a synthetic provider process and
+  the real supervisor/helper entrypoints. It accepts exactly the auth line and
+  one frozen user frame, completes exact Stop-marker qualification, pushes a
+  durable broker record, replaces the registration without inheriting
+  qualification, freshly qualifies again, and proves secret/output/file
+  residue zero. It runs no model or network provider.
+- `TestClaudeCoordinationServerHasNoWaiterIngressOperations` refuses historical
+  `wait`, `waiter-ready`, `begin-handoff`, and `receipt` operations. Integration
+  tests require SessionStart registration plus short synchronous Stop reply and
+  UserPromptSubmit boundary hooks, with zero `asyncRewake` ingress commands.
 
 ### Provider-neutral message broker Phase 3 tests
 
@@ -1100,7 +1078,7 @@
 - `TestAuthorityMatrixIsExhaustiveAndPeerNeverEscalates`,
   `TestEnvelopeRetryAndReplyCorrelationRandomizedProperties`, and
   `TestPublicReducerMatchesReferenceModelForRandomSequences` own the exhaustive
-  authority table, immutable v1 envelope, exact reversed reply route and
+  authority table, immutable versioned envelope, exact reversed reply route and
   conversation, idempotent message reference, and terminal-once public reducer.
   Peer input remains untrusted coordination and cannot become a user turn,
   approval, configuration, tool, connector, or model-history write.
@@ -1129,6 +1107,100 @@
   terminal-safe output, activation fencing, and deterministic Registry-only
   idle, timeout, and stale waits. Codex `delivered` ends at target self-claim;
   it does not assert model processing or reply.
+
+### Heterogeneous Agent dialogue Phase 4 tests
+
+- `TestClaudeCoordinationPrivateBridgeRequiresExactV3Route`,
+  `TestClaudeCoordinationV1AndV2HelpersCannotReceiveV3Traffic`, and
+  `TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix` pin public/private v3
+  route equality, old generation, same-generation old incarnation, stale
+  provider process, foreign socket, helper exit, Codex endpoint replacement,
+  and fresh current-version requalification. Old routes write/claim zero; a new
+  endpoint writes zero before qualification and exactly one after it.
+- `TestHeterogeneousDialogueIdleActiveSafeBoundaryMatrix`,
+  `TestClaudePushDuringOpenHumanTurnNeverCorrelatesThatTurnsStop`,
+  `TestClaudeDialogueStopCorrelationUsesPushOriginAndBoundary`, and
+  `TestClaudeDialogueOversizedUserPromptClosesExactBoundary` pin quiet
+  immediate push without a waiter, in-flight non-interruption, a human turn
+  already open before push, ordinary push-origin `stop_hook_active=false`,
+  recursive-Stop refusal, oversized human prompt closure, all-candidate
+  ambiguity, and refusal of late Stops for every later candidate in that helper incarnation. Assistant text is never
+  correlation authority.
+- `TestClaudeDialogueReplyCorrelationExpiresWithoutChangingDelivery`,
+  `TestClaudeDialogueBrokerReplyFailureNeverRetriesOnLaterStop`, and
+  `TestClaudeReplyHookRequiresExplicitStopHookActiveField` keep pending reply
+  authority bounded independently of the delivered terminal, permanently close
+  correlation after a durable reply outcome error, and reject missing, null, or
+  changed official Stop fields before any coordination call. Neither a late
+  Stop nor a later unrelated assistant message can retry an uncertain reply.
+- `TestClaudeQualificationRequiresExactPublicInitAndStopMarker`,
+  `TestClaudeQualificationForgedMissingOldAndStaleEvidenceWritesZero`,
+  `TestClaudeQualificationResponseRequiresExactStableClosedShape`,
+  `TestClaudeQualificationDuplicateTimeoutAndHelperExitAreBounded`,
+  `TestClaudeQualificationInFlightIsSingleWriteAndBoundaryRaceIsAmbiguous`, and
+  `TestClaudeQualificationLateOldWriteCannotMutateFreshRetry` pin exact
+  `2.1.263` public-init evidence, explicit opt-in, unique marker/Stop proof,
+  in-flight CAS, timeout/exit cleanup, late-result isolation, ambiguous
+  post-write receipts, and no automatic resend.
+- `TestStoreMigratesV1EnvelopeToUnqualifiedStaleFence` uses literal v1 JSON
+  without incarnation fields. `TestStoreReplyIsAtomicCorrelatedAndReplayIdempotent`
+  pins reversed routes, original conversation/replyTo, crash-before-rename
+  recovery, restart replay, and exactly one committed reply.
+- `TestClaudeBrokerStoreLayoutAndImmutableEnvelopeMismatchAreExact` and the mismatched
+  same-reference case require the helper and public CLI to share one canonical
+  message store and reject an immutable-envelope mismatch without mutation.
+  `TestClaudePushNeverHoldsAndQualificationBrokerFencePrecedesProviderWrite`,
+  `TestClaudePushWriteOutcomeAndDurableReceiptAreTerminalOnce`,
+  `TestClaudePushRechecksDeadlineAfterDurableHandoffBeforeProviderWrite`,
+  `TestClaudeProviderPushFinalRouteCheckPrecedesSoleWrite`,
+  `TestLiveClaudeAdapterClosesMalformedSubmitResponsesAsAmbiguousTerminal`, and
+  `TestClaudeCoordinationBrokerPersistenceFencesProviderWriteAndIsTerminalOnce`
+  compose the persistence proof: durable handoff failure leaves provider bytes
+  zero, durable delivered failure after a full write remains ambiguous and
+  reply-ineligible, and a successful durable terminal repeats without another
+  provider write.
+  `TestAgentMessageLifecycleLeavesInteractionAndBadgeAuthorityUntouched`
+  carries both in-progress and approval-required Registry projections through
+  send/handoff/delivered/reply/claim, proves terminal-once, and proves Registry
+  and badge writes remain zero.
+- `TestAIIntegrateClaude*` now pins short synchronous Stop reply and
+  `UserPromptSubmit` commands, zero SessionStart/Stop ingress waiter and zero
+  `asyncRewake`, v1/v2-to-v3 marker convergence, user-hook preservation,
+  remove, and idempotence.
+  `TestClaudeAutomaticMigrationPreservesEveryCoordinationVersionUntilExplicitIntegration`
+  and `TestObsoleteAndCurrentClaudeCoordinationHooksNeverRunAutomaticMigration`
+  keep config apply/install and already-running historical hook children from
+  rewriting global settings; only explicit integration converges v1/v2 to v3.
+- `TestAgentCapabilitiesClaudeMessageCellsReflectMissingRegistrationLease`,
+  `TestProviderResumeExecutionPreservesExactAgentAndLaunchesOneExactArgv`, and
+  the pre-revalidation rows of
+  `TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix` compose the rollout
+  recovery proof: a missing lease exposes the exact integrate/normal-exit/resume
+  action and permits delivery zero; Claude resume rematerializes one exact child
+  while preserving Agent UID/name/count; and delivery remains zero until the
+  new Ready lease and route incarnation are revalidated.
+- Required selectorless E2E scenario `L20` is the only deterministic full
+  heterogeneous round trip. It uses isolated XDG/tmux roots, a payload-free
+  long-lived fake Codex child plus typed `StageCodexEndpoint` /
+  `BindCodexActivation` setup for one pre-existing synthetic route, and official
+  Claude hook boundaries. A public capability barrier proves the exact Codex
+  composite authority before send; semantic barriers replace sleeps. The
+  scenario requires exact UID/Pane/generation/message/conversation/reply
+  receipts, Agent count two, Codex provider writes zero, and pre-removal
+  Registry/tmux/helper/socket/process residual checks. It does not require a
+  provider binary, model, network, or version matrix.
+- The real-provider path is opt-in only through
+  `scripts/agent-dialogue-live-canary.sh` and the isolation procedure in
+  `docs/heterogeneous-dialogue-canary.md`. Its gate precedes broker traffic and
+  requires the same long-lived hook-enabled Claude process to publish exact
+  empty tools, MCP servers, and plugins, with pre-inbound tool use and stderr
+  both zero. Its in-memory collector rejects unknown 2.1.263 public event/field
+  shapes and persists only a sanitized messaging-endpoint presence bit. The
+  same gate captures exact provider, helper, tmux, and Codex self-claim process
+  births, proves both messaging credential keys absent from the helper
+  environment, and requires those births plus the derived activation lease to
+  be absent before publishing zero residuals. `scripts/agent-dialogue-version-stress.sh` is a second opt-in layer;
+  provider/version stress is never part of required selectorless E2E.
 
 ### Provider hook pane identity tests
 
@@ -1709,3 +1781,10 @@ separate decision this measurement exists to inform.
 - The required `make` targets were run in order.
 - Test inventory updates are included when behavior changed.
 - Known parity gaps are explicit.
+
+- `TestClaudePushSourceReplacementAfterDurableHandoffWritesZero` and
+  `TestClaudeProviderPushFinalRouteCheckPrecedesSoleWrite` cover source/target
+  authority loss across durable work and the final provider pre-write fence.
+- `TestClaudePushHumanTurnAmbiguitySurvivesLaterIdleStop` and
+  `TestClaudeDialogueMultiplePendingCannotCorrelateLaterCandidate` prevent a
+  late response from acquiring a newer message's correlation.

@@ -130,11 +130,17 @@ func TestAgentCapabilitiesClaudeMessageCellsReflectMissingRegistrationLease(t *t
 	if projection.Runtime == nil || projection.Runtime.Coordination == nil || projection.Runtime.Coordination.Eligible {
 		t.Fatalf("coordination eligibility = %#v", projection.Runtime)
 	}
+	recovery := projection.Runtime.Coordination.Recovery
+	if !strings.Contains(recovery, "agent integrate claude --dry-run") || !strings.Contains(recovery, "agent integrate claude;") ||
+		!strings.Contains(recovery, "agent resume uid:"+h.agentUID) {
+		t.Fatalf("coordination recovery is not actionable for the same Agent: %q", recovery)
+	}
 	for _, entry := range projection.Capabilities {
 		if entry.Action != "message.send" && entry.Action != "message.status" {
 			continue
 		}
-		if entry.Available == nil || *entry.Available || entry.Reason != projection.Runtime.Coordination.Reason {
+		if entry.Available == nil || *entry.Available || entry.Evidence != "local-registration-lease" ||
+			entry.Reason != "exact Claude source registration lease is stale or unavailable" {
 			t.Fatalf("%s did not reflect lease failure: %#v coordination=%#v", entry.Action, entry, projection.Runtime.Coordination)
 		}
 	}
