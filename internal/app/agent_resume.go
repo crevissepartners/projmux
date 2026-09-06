@@ -33,10 +33,6 @@ type agentResumeLauncher interface {
 	// a malformed conversation id, an unknown provider, a missing provider
 	// binary -- costs zero mutations and zero tmux objects.
 	PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (title string, argv []string, err error)
-	// BindResumedAgentPane applies the managed-agent pane options to a pane the
-	// caller already created and seeds the live routing index with the resumed
-	// conversation id.
-	BindResumedAgentPane(paneID, provider, contextDir, title, conversationID string)
 	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 }
 
@@ -87,28 +83,6 @@ func (c *aiCommand) PlanAgentResume(provider string, workspace coremetadata.Agen
 		return "", nil, err
 	}
 	return plan.title, plan.commandArgs, nil
-}
-
-// BindResumedAgentPane applies the managed-agent pane options to a resumed
-// Agent's new pane.
-//
-// It differs from BindManagedAgentPane in one respect: the resume metadata is
-// populated, so `@projmux_ai_session_id` -- the *live routing index* hook ingest
-// scans to decide which live pane an incoming event belongs to -- carries the
-// resumed conversation id from the moment the pane exists instead of only after
-// the provider's first hook fires. The durable pointer on the Agent is a
-// separate value and is not written here.
-func (c *aiCommand) BindResumedAgentPane(paneID, provider, contextDir, title, conversationID string) {
-	c.BindResumedAgentPaneWithSource(paneID, provider, contextDir, title, conversationID, "")
-}
-
-func (c *aiCommand) BindResumedAgentPaneWithSource(paneID, provider, contextDir, title, conversationID, source string) {
-	c.configureAIPane(paneID, provider, contextDir, title, aiPaneResumeMetadata{
-		sessionID: conversationID,
-		resumeID:  conversationID,
-		source:    strings.TrimSpace(source),
-		updatedAt: c.nowTime().UTC(),
-	})
 }
 
 func (c *aiCommand) BindResumedAgentPaneOnRoute(

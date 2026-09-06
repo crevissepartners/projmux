@@ -25,6 +25,15 @@ type fakeTopologyAgentLauncher struct {
 	launches  []string
 }
 
+type productionBindingTopologyAgentLauncher struct {
+	*fakeTopologyAgentLauncher
+	binder *aiCommand
+}
+
+func (l *productionBindingTopologyAgentLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
+	return l.binder.BindAgentPaneOnRoute(ctx, runner, binding)
+}
+
 func newFakeTopologyAgentLauncher() *fakeTopologyAgentLauncher {
 	return &fakeTopologyAgentLauncher{
 		disabled:  map[string]bool{},
@@ -59,19 +68,11 @@ func (f *fakeTopologyAgentLauncher) PlanAgentResume(provider string, workspace c
 	return provider, []string{"/opt/" + provider, "--cwd", workspace.CWD, "--resume", conversationID}, nil
 }
 
-func (f *fakeTopologyAgentLauncher) BindManagedAgentPane(paneID, provider, contextDir, title string) {
-	f.binds = append(f.binds, fmt.Sprintf("managed %s %s %s", paneID, provider, contextDir))
-}
-
-func (f *fakeTopologyAgentLauncher) BindResumedAgentPane(paneID, provider, contextDir, title, conversationID string) {
-	f.binds = append(f.binds, fmt.Sprintf("resumed %s %s %s %s", paneID, provider, contextDir, conversationID))
-}
-
 func (f *fakeTopologyAgentLauncher) BindAgentPaneOnRoute(_ context.Context, _ tmuxCommandRunner, binding agentPaneBinding) error {
 	if binding.ConversationID != "" {
-		f.BindResumedAgentPane(binding.PaneID, binding.Provider, binding.ContextDir, binding.Title, binding.ConversationID)
+		f.binds = append(f.binds, fmt.Sprintf("resumed %s %s %s %s", binding.PaneID, binding.Provider, binding.ContextDir, binding.ConversationID))
 	} else {
-		f.BindManagedAgentPane(binding.PaneID, binding.Provider, binding.ContextDir, binding.Title)
+		f.binds = append(f.binds, fmt.Sprintf("managed %s %s %s", binding.PaneID, binding.Provider, binding.ContextDir))
 	}
 	return nil
 }
@@ -443,6 +444,49 @@ func TestRegistryTopologyMaterializationReplaysStoredAgents(t *testing.T) {
 		if len(call) > 0 && call[0] == "split-window" {
 			t.Fatalf("repeat split a second Agent pane: %v", call)
 		}
+	}
+}
+
+func TestRegistryTopologyBinderWriteFailureIsVisibleAndRollsBack(t *testing.T) {
+	t.Parallel()
+	command, store, server, routed, root, _ := newTopologyMaterializeFixture(t)
+	planner := command.agents.(*fakeTopologyAgentLauncher)
+	binder := testAICommand(t.TempDir())
+	command.agents = &productionBindingTopologyAgentLauncher{fakeTopologyAgentLauncher: planner, binder: binder}
+	agent := addTopologyFixtureAgent(t, store, topologyFixtureAgent{
+		name: "claude", provider: "claude", cwd: root, ref: claudeConversationRef("conv-bind-failure"), topic: "roadmap",
+	})
+	markTopologyAgentInterrupted(t, store, agent.Metadata.UID, "")
+	registryBefore, runtimeBefore, writesBefore := store.snapshot(), server.state(), store.writes
+	server.fail = []string{"set-option", aiPaneAgentOption}
+	server.failMessage = "permission denied writing replayed Pane metadata"
+
+	out, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
+	if err == nil || stderr != "" || !strings.Contains(err.Error(), "permission denied writing replayed Pane metadata") {
+		t.Fatalf("binder failure = stderr=%q err=%v\n%s", stderr, err, out)
+	}
+	if store.snapshot() != registryBefore || store.writes != writesBefore || server.state() != runtimeBefore {
+		t.Fatalf("binder failure did not roll back: writes=%d->%d registry before=%s after=%s runtime before=%s after=%s",
+			writesBefore, store.writes, registryBefore, store.snapshot(), runtimeBefore, server.state())
+	}
+	if !server.argvContains("split-window") || (!server.argvContains("kill-pane") && !server.argvContains("kill-session")) {
+		t.Fatalf("binder failure did not materialize and roll back the replayed Pane: %#v", server.calls)
+	}
+	if commands := cmdRecorder(binder).commands; len(commands) != 0 {
+		t.Fatalf("failed topology binder used ambient subprocess runner: %#v", commands)
+	}
+	foundBindingWrite := false
+	for _, call := range routed.calls {
+		if !slices.Contains(call.args, aiPaneAgentOption) {
+			continue
+		}
+		foundBindingWrite = true
+		if call.flag != "-L" || call.value != "topology" {
+			t.Fatalf("topology binder write escaped exact route: %#v", call)
+		}
+	}
+	if !foundBindingWrite {
+		t.Fatalf("topology binder failure was not injected through the exact route: %#v", routed.calls)
 	}
 }
 

@@ -455,7 +455,6 @@ func (defaultCodexNativeThreadController) CanFallback(err error) bool {
 
 type codexNativeAgentLauncher interface {
 	PlanNativeCodexResume(codexNativeEndpointRoute, coremetadata.AgentWorkspace, string) (title string, argv []string, err error)
-	BindNativeCodexPane(paneID, contextDir, title, threadID string)
 	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 }
 

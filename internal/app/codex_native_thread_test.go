@@ -381,10 +381,6 @@ func (f *fakeNativePaneLauncher) PlanNativeCodexResume(route codexNativeEndpoint
 	return "codex:native", []string{route.TUIExecutable, "resume", "--remote", "unix://" + route.SocketPath, threadID}, nil
 }
 
-func (f *fakeNativePaneLauncher) BindNativeCodexPane(paneID, contextDir, title, threadID string) {
-	f.bound = append(f.bound, fakeNativePaneBinding{paneID: paneID, contextDir: contextDir, title: title, threadID: threadID})
-}
-
 func (f *fakeNativePaneLauncher) startNativeCodexLifecycleObserver(target codexLifecycleObserverTarget) codexObserverStartupResult {
 	f.lifecycle = append(f.lifecycle, target)
 	identity := target.Identity
@@ -403,7 +399,9 @@ func (f *fakeNativePaneLauncher) BindAgentPaneOnRoute(ctx context.Context, runne
 			return err
 		}
 	}
-	f.BindNativeCodexPane(binding.PaneID, binding.ContextDir, binding.Title, binding.ConversationID)
+	f.bound = append(f.bound, fakeNativePaneBinding{
+		paneID: binding.PaneID, contextDir: binding.ContextDir, title: binding.Title, threadID: binding.ConversationID,
+	})
 	return nil
 }
 
@@ -427,11 +425,6 @@ func (f *fakeNativeResumeLauncher) BindAgentPaneOnRoute(ctx context.Context, run
 		f.sources = append(f.sources, binding.ResumeSource)
 	}
 	return nil
-}
-
-func (f *fakeNativeResumeLauncher) BindResumedAgentPaneWithSource(paneID, provider, contextDir, title, conversationID, source string) {
-	f.fakeResumeLauncher.BindResumedAgentPane(paneID, provider, contextDir, title, conversationID)
-	f.sources = append(f.sources, source)
 }
 
 func TestNativeCodexCreateBindsExactThreadAndSubmitsPromptOnce(t *testing.T) {

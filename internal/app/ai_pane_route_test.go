@@ -186,26 +186,6 @@ func TestSharedPaneRoutingLaunchBeforeFirstMarker(t *testing.T) {
 	for _, provider := range []string{aiModeCodex, aiModeClaude, aiModeAntigravity} {
 		t.Run(provider, func(t *testing.T) {
 			cmd := testAICommand(t.TempDir())
-			base := cmd.lookupEnv
-			cmd.lookupEnv = func(name string) string {
-				if name == "TMUX" {
-					return "/tmp/launch/socket,1,0"
-				}
-				return base(name)
-			}
-			cmd.readCommand = func(context.Context, string, ...string) ([]byte, error) {
-				t.Fatal("legacy inherited configure probed for an unwritten marker")
-				return nil, os.ErrNotExist
-			}
-			cmd.configureAIPane("%7", provider, "/repo", "topic", aiPaneResumeMetadata{sessionID: "session", resumeID: "session"})
-			if cmd.recordedAIPaneWriteFailure() != "" {
-				t.Fatal("configure failed before first marker")
-			}
-			for _, call := range cmdRecorder(cmd).commands {
-				if !slices.Equal(call.args[:2], []string{"-S", "/tmp/launch/socket"}) {
-					t.Fatalf("unrouted configure: %q", call.args)
-				}
-			}
 			// Canonical detached materialization already owns an exact runner.
 			// Both resource UID and managed marker are absent before binding.
 			options := map[string]string{}

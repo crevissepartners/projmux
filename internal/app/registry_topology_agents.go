@@ -28,11 +28,6 @@ type topologyAgentLauncher interface {
 	// PlanAgentResume builds the provider resume argv for one stored
 	// conversation id.
 	PlanAgentResume(provider string, workspace coremetadata.AgentWorkspace, conversationID string) (title string, argv []string, err error)
-	// BindManagedAgentPane applies the managed-agent pane options.
-	BindManagedAgentPane(paneID, provider, contextDir, title string)
-	// BindResumedAgentPane applies them and seeds the live routing index with
-	// the resumed conversation id.
-	BindResumedAgentPane(paneID, provider, contextDir, title, conversationID string)
 	BindAgentPaneOnRoute(context.Context, tmuxCommandRunner, agentPaneBinding) error
 }
 

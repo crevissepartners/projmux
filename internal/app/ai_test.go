@@ -1962,21 +1962,27 @@ func TestAIWatchTitleBootstrapsMetadataForExistingCodexPane(t *testing.T) {
 	}
 }
 
-func TestConfigureAIPaneWritesCanonicalLaunchReceipt(t *testing.T) {
+func TestBindAgentPaneOnRouteWritesCanonicalLaunchReceipt(t *testing.T) {
 	t.Parallel()
 
+	tmux := newFakeTmux()
+	paneID := tmux.addSession("launch-receipt").windows[0].panes[0].id
+	runner := explicitTmuxRunner{runner: tmux, target: tmuxTransport{Kind: tmuxSocketPath, Value: tmux.socketPath, Source: tmuxSocketPathSource}}
 	cmd := testAICommand(t.TempDir())
-	cmd.configureAIPane("%21", aiModeCodex, "/repo", "phase one", aiPaneResumeMetadata{})
-	commands := cmdRecorder(cmd).commands
-	want := recordedAICommand{name: "tmux", args: []string{"set-option", "-p", "-t", "%21", aiPaneLaunchAuthorshipOption, "1"}}
+	if err := cmd.BindAgentPaneOnRoute(context.Background(), runner, agentPaneBinding{
+		PaneID: paneID, Provider: aiModeCodex, ContextDir: "/repo", Title: "phase one",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	count := 0
-	for _, command := range commands {
-		if command.name == want.name && sameRecordedAICommandArgs(command.name, command.args, want.args) {
+	for _, command := range tmux.calls {
+		if slices.Contains(command, "set-option") && slices.Contains(command, aiPaneLaunchAuthorshipOption) &&
+			flagValue(tmuxCommandArgv(command), "-t") == paneID {
 			count++
 		}
 	}
 	if count != 1 {
-		t.Fatalf("launch receipt writes = %d, want one canonical configureAIPane write; commands=%#v", count, commands)
+		t.Fatalf("launch receipt writes = %d, want one canonical routed binder write; commands=%#v", count, tmux.calls)
 	}
 }
 

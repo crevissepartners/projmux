@@ -150,14 +150,6 @@ type productionBindingAgentLauncher struct {
 	binder *aiCommand
 }
 
-func (l *productionBindingAgentLauncher) BindManagedAgentPaneOnRoute(
-	ctx context.Context,
-	runner tmuxCommandRunner,
-	paneID, provider, contextDir, title string,
-) error {
-	return l.binder.BindManagedAgentPaneOnRoute(ctx, runner, paneID, provider, contextDir, title)
-}
-
 func (l *productionBindingAgentLauncher) BindAgentPaneOnRoute(ctx context.Context, runner tmuxCommandRunner, binding agentPaneBinding) error {
 	return l.binder.BindAgentPaneOnRoute(ctx, runner, binding)
 }
@@ -216,14 +208,14 @@ func (f *fakeAgentLauncher) AwaitAgentActivation(_ context.Context, _ tmuxComman
 	return acknowledged, "fake-provider-hook", err
 }
 
-func (f *fakeAgentLauncher) BindManagedAgentPane(paneID, provider, _, title string) {
+func (f *fakeAgentLauncher) recordBoundPane(paneID, provider, title string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.bound = append(f.bound, fakeBoundPane{paneID: paneID, provider: provider, title: title})
 }
 
 func (f *fakeAgentLauncher) BindAgentPaneOnRoute(_ context.Context, _ tmuxCommandRunner, binding agentPaneBinding) error {
-	f.BindManagedAgentPane(binding.PaneID, binding.Provider, binding.ContextDir, binding.Title)
+	f.recordBoundPane(binding.PaneID, binding.Provider, binding.Title)
 	return nil
 }
 
