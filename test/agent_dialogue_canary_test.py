@@ -66,6 +66,20 @@ class DialogueCollectorTest(unittest.TestCase):
                 self.assertNotIn("DO_NOT_RETAIN", result.stdout + result.stderr)
                 self.assertNotIn("unobserved-field", result.stderr)
 
+    def test_observed_init_metadata_has_no_permission_authority(self):
+        rows = [dict(row) for row in self.rows]
+        rows[-1].update(capabilities=["interrupt_receipt_v1"],
+                        fast_mode_disabled_reason="sdk_opt_in_required",
+                        analytics_disabled=True, product_feedback_disabled=False)
+        self.assertEqual(self.collect(rows).returncode, 0)
+        for key, invalid in (("capabilities", ["unknown value with spaces"]),
+                             ("fast_mode_disabled_reason", "unobserved-reason"),
+                             ("analytics_disabled", 1), ("product_feedback_disabled", "false")):
+            with self.subTest(key=key):
+                changed = [dict(row) for row in rows]
+                changed[-1][key] = invalid
+                self.assertNotEqual(self.collect(changed).returncode, 0)
+
     def test_observed_startup_display_alias_keeps_two_distinct_hook_pairs(self):
         rows = [dict(row) for row in self.rows]
         for row in rows[:-1]:

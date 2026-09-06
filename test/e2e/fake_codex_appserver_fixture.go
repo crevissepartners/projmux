@@ -5,6 +5,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha1" // #nosec G505 -- RFC 6455 requires SHA-1 for the handshake.
 	"encoding/base64"
 	"encoding/binary"
@@ -23,6 +24,8 @@ import (
 	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -118,9 +121,42 @@ func bindDialogueAgentRoute(args []string) error {
 		strings.TrimSpace(agentUID) == "" || strings.TrimSpace(paneUID) == "" || strings.TrimSpace(generation) == "" {
 		return errors.New("dialogue binding escaped its exact owned route")
 	}
+	endpoint := coremetadata.CodexEndpointRef{StateDomainID: "dialogue-state-domain", EndpointGenerationID: "dialogue-endpoint-generation"}
+	key, err := codexbroker.NewEndpointKey(endpoint.StateDomainID, endpoint.EndpointGenerationID)
+	if err != nil {
+		return err
+	}
+	discovery, err := codexbroker.NewDiscovery(filepath.Dir(filepath.Dir(registryPath)), key)
+	if err != nil {
+		return err
+	}
+	upstream := &dialogueReadOnlyEndpoint{notifications: make(chan codexappserver.Notification)}
+	broker, err := codexbroker.NewBroker(codexbroker.Config{Endpoint: key, Opener: func(context.Context) (codexbroker.Endpoint, error) { return upstream, nil }})
+	if err != nil {
+		return err
+	}
+	defer broker.Close()
+	host, err := codexbroker.StartHost(codexbroker.HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: -1})
+	if err != nil {
+		return err
+	}
+	defer host.Close()
+	binding, err := broker.Bind("dialogue-preexisting-thread", "", nil)
+	if err != nil {
+		return err
+	}
+	defer binding.Close()
+	var observed codexbroker.Event
+	select {
+	case observed = <-binding.Events():
+		if observed.Origin != codexbroker.EventOriginSnapshot {
+			return errors.New("dialogue source snapshot missing")
+		}
+	case <-time.After(10 * time.Second):
+		return errors.New("dialogue source snapshot timed out")
+	}
 	store := intmetadata.NewStore(registryPath)
-	_, _, err := store.UpdateConvergent(func(registry *coremetadata.Registry) error {
-		endpoint := coremetadata.CodexEndpointRef{StateDomainID: "dialogue-state-domain", EndpointGenerationID: "dialogue-endpoint-generation"}
+	_, _, err = store.UpdateConvergent(func(registry *coremetadata.Registry) error {
 		mutator := intmetadata.DefaultMutator()
 		if err := mutator.StageCodexEndpoint(registry, agentUID, endpoint); err != nil {
 			return err
@@ -137,11 +173,47 @@ func bindDialogueAgentRoute(args []string) error {
 		}
 		pane.Status.Activation.Codex.Authority = &coremetadata.CodexAuthorityRef{
 			StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID,
-			BrokerRuntimeID: "dialogue-broker-runtime", ConnectionEpoch: 1, BindingEpoch: 1,
+			BrokerRuntimeID: host.RuntimeID(), ConnectionEpoch: uint64(observed.Fence.Connection), BindingEpoch: uint64(observed.Fence.Binding),
 		}
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return waitForDialogueAgentExit()
+}
+
+// The offline conversation has no turns or model. The real broker still owns
+// a live snapshot/binding/connection lease and authenticates its IPC consumers.
+type dialogueReadOnlyEndpoint struct {
+	notifications chan codexappserver.Notification
+	closeOnce     sync.Once
+}
+
+func (e *dialogueReadOnlyEndpoint) Notifications() <-chan codexappserver.Notification {
+	return e.notifications
+}
+func (e *dialogueReadOnlyEndpoint) Close() error {
+	e.closeOnce.Do(func() { close(e.notifications) })
+	return nil
+}
+func (e *dialogueReadOnlyEndpoint) Request(_ context.Context, method string, _, _ any) error {
+	if err := recordProviderWrite("dialogue-preexisting-thread", method); err != nil {
+		return err
+	}
+	return errors.New("dialogue source refuses provider requests")
+}
+func (e *dialogueReadOnlyEndpoint) RespondServerRequest(context.Context, json.RawMessage, any) error {
+	if err := recordProviderWrite("dialogue-preexisting-thread", "server-response"); err != nil {
+		return err
+	}
+	return errors.New("dialogue source refuses provider answers")
+}
+func (e *dialogueReadOnlyEndpoint) BootstrapThread(_ context.Context, threadID, cwd string, _ []string) (codexappserver.ThreadSnapshot, error) {
+	if threadID != "dialogue-preexisting-thread" {
+		return codexappserver.ThreadSnapshot{}, errors.New("foreign dialogue thread")
+	}
+	return codexappserver.ThreadSnapshot{ThreadID: threadID, CWD: cwd, RuntimeStatus: "idle"}, nil
 }
 
 func writeDaemonVersion(writer io.Writer) error {

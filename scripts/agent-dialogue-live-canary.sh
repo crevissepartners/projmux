@@ -122,7 +122,8 @@ print(r'''#!/usr/bin/env python3
 import json,pathlib,re,sys
 init_allowed={"type","subtype","cwd","session_id","tools","mcp_servers","model","permissionMode",
               "slash_commands","apiKeySource","claude_code_version","output_style","agents","skills",
-              "plugins","uuid","fast_mode_state","prompt_suggestion_enabled","messaging_socket_path"}
+              "plugins","uuid","fast_mode_state","prompt_suggestion_enabled","messaging_socket_path",
+              "capabilities","fast_mode_disabled_reason","analytics_disabled","product_feedback_disabled"}
 assistant_allowed={"type","message","parent_tool_use_id","session_id","uuid"}
 assistant_message_allowed={"id","type","role","model","content","stop_reason","stop_sequence","usage"}
 assistant_text_allowed={"type","text"}
@@ -148,7 +149,7 @@ startup_pending={}; startup_done=set(); startup_session=None; initialized=False
 # The public display alias was observed by closed equality in the isolated
 # current-version preflight. Settings still prove the exact two callbacks.
 startup_names=owned_commands|{"SessionStart:startup"}
-diagnostic_reasons|={"startup hook shape","startup hook identity","startup hook name","startup hook order","startup hook output","startup hook incomplete"}
+diagnostic_reasons|={"startup hook shape","startup hook identity","startup hook name","startup hook order","startup hook output","startup hook incomplete","init metadata type"}
 diagnostic_fields=init_allowed|assistant_allowed|assistant_message_allowed|result_allowed|hook_base|hook_output|{"exit_code","outcome","capabilities"}
 def validate_startup(event):
     global startup_session
@@ -186,6 +187,11 @@ for raw in sys.stdin:
         kind=event.get("type")
         if kind=="system" and event.get("subtype")=="init":
             if set(event)-init_allowed: raise ValueError("unknown init field")
+            for key in ("analytics_disabled","product_feedback_disabled"):
+                if key in event and type(event[key]) is not bool: raise ValueError("init metadata type")
+            if "capabilities" in event and (not isinstance(event["capabilities"],list) or
+                any(not isinstance(x,str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,79}",x) for x in event["capabilities"])): raise ValueError("init metadata type")
+            if "fast_mode_disabled_reason" in event and event["fast_mode_disabled_reason"]!="sdk_opt_in_required": raise ValueError("init metadata type")
             if initialized or startup_pending or len(startup_done)!=2 or event.get("session_id")!=startup_session: raise ValueError("startup hook incomplete")
             initialized=True
         elif kind=="system" and event.get("subtype") in {"hook_started","hook_progress","hook_response"}:
@@ -239,6 +245,7 @@ print("#!/bin/bash")
 print("set -eu")
 print("export HOME="+q(str(root/"home")))
 print("export CLAUDE_CONFIG_DIR="+q(str(root/"home/.claude")))
+print("export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
 start_code="import pathlib,time; pathlib.Path("+repr(str(root/"evidence/provider-started-at"))+").write_text(str(time.time_ns()))"
 print("python3 -c "+q(start_code))
 instruction="When a Projmux coordination message contains payload HETEROGENEOUS_REQUEST:"+ref+", answer with exactly HETEROGENEOUS_REPLY:"+ref+" and nothing else. Do not use tools."
@@ -454,7 +461,7 @@ observed_server_pid="$(env -u TMUX -u TMUX_PANE tmux -S "$socket_path" display-m
 # zero tool/MCP/plugin/stderr/external effects. No message command precedes it.
 python3 - "$root/cleanup-plan.json" "$input" "$registry" "$live_jsonl" "$provider_stderr" "$effects_json" "$owned_settings" "$provider_started_at" "$binary" \
   "$root/evidence/capability-before.json" "$init_jsonl" "$events_jsonl" <<'PY'
-import hashlib, json, os, pathlib, stat, sys
+import hashlib, json, os, pathlib, re, stat, sys
 plan=json.load(open(sys.argv[1])); spec=json.load(open(sys.argv[2])); reg=json.load(open(sys.argv[3]))
 assert plan["preparedAtEpochNs"] < spec["provider"]["startedAtEpochNs"], "cleanup was not registered before provider launch"
 assert plan["messageRef"] == spec["messageRef"], "prepared semantic message reference changed"
@@ -521,7 +528,8 @@ init=jsonl_bytes(live_bytes)
 assert init and all(isinstance(x,dict) for x in init), "public stream contains a non-object event"
 init_allowed={"type","subtype","cwd","session_id","tools","mcp_servers","model","permissionMode",
               "slash_commands","apiKeySource","claude_code_version","output_style","agents","skills",
-              "plugins","uuid","fast_mode_state","prompt_suggestion_enabled","messaging_socket_present"}
+              "plugins","uuid","fast_mode_state","prompt_suggestion_enabled","messaging_socket_present",
+              "capabilities","fast_mode_disabled_reason","analytics_disabled","product_feedback_disabled"}
 assistant_allowed={"type","message","parent_tool_use_id","session_id","uuid"}
 assistant_message_allowed={"id","type","role","model","content","stop_reason","stop_sequence","usage"}
 assistant_text_allowed={"type","text"}
@@ -538,6 +546,11 @@ for event in init:
     kind=event.get("type")
     if kind=="system" and event.get("subtype")=="init":
         assert not set(event)-init_allowed, "unknown current-version init field"
+        for key in ("analytics_disabled","product_feedback_disabled"):
+            assert key not in event or type(event[key]) is bool, "invalid telemetry metadata type"
+        assert "capabilities" not in event or (isinstance(event["capabilities"],list) and
+            all(isinstance(x,str) and re.fullmatch(r"[a-z][a-z0-9_]{0,79}",x) for x in event["capabilities"])), "invalid protocol feature metadata"
+        assert "fast_mode_disabled_reason" not in event or event["fast_mode_disabled_reason"]=="sdk_opt_in_required"
         assert not initialized and not startup_pending and len(startup_done)==2, "incomplete owned startup hooks"
         initialized=True
     elif kind=="system" and event.get("subtype") in {"hook_started","hook_progress","hook_response"}:

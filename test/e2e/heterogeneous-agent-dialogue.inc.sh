@@ -36,6 +36,7 @@ dialogue_env=(
 dialogue_tmux() { "${dialogue_env[@]}" "$dialogue_real_tmux" -L "$dialogue_socket" "$@"; }
 dialogue_pmx() { "${dialogue_env[@]}" "$bin" "$@"; }
 dialogue_control_pid=""
+dialogue_binding_pid=""
 dialogue_wait_pid=""
 dialogue_socket_path=""
 dialogue_cleanup_done=0
@@ -80,6 +81,11 @@ dialogue_cleanup() {
   if [[ -n "$dialogue_control_pid" ]] && kill -0 "$dialogue_control_pid" 2>/dev/null; then
     kill -TERM "$dialogue_control_pid"
     wait "$dialogue_control_pid" 2>/dev/null || true
+  fi
+  if [[ -n "$dialogue_binding_pid" ]]; then
+    if jobs -pr | grep -Fxq "$dialogue_binding_pid"; then kill -TERM "$dialogue_binding_pid"; fi
+    wait "$dialogue_binding_pid" || true
+    dialogue_binding_pid=""
   fi
   dialogue_stop_owned_broker >/dev/null
 }
@@ -140,7 +146,8 @@ if [[ -z "$dialogue_codex_uid" || -z "$dialogue_claude_uid" || -z "$dialogue_cod
 fi
 "${dialogue_env[@]}" "$dialogue_shim/codex" dialogue-bind \
   "$dialogue_root/state/projmux/metadata/registry.json" "$dialogue_codex_uid" \
-  "$dialogue_codex_pane_uid" "$dialogue_codex_generation"
+  "$dialogue_codex_pane_uid" "$dialogue_codex_generation" >"$dialogue_root/binding.out" 2>"$dialogue_root/binding.err" &
+dialogue_binding_pid=$!
 dialogue_codex_capabilities="$dialogue_root/capabilities-codex.json"
 dialogue_codex_route_ready() {
   local candidate="$dialogue_codex_capabilities.tmp"
@@ -148,13 +155,13 @@ dialogue_codex_route_ready() {
     return 1
   fi
   if ! python3 - "$candidate" <<'PY'
-import json,sys
+import json,re,sys
 value=json.load(open(sys.argv[1])); runtime=value["runtimeEligibility"]
 actions={row["action"]:row for row in value["capabilities"]}
 assert runtime["registryReady"] is True and runtime["routeIncarnation"].startswith("route-")
 assert runtime["stateDomainID"]=="dialogue-state-domain"
 assert runtime["endpointGenerationID"]=="dialogue-endpoint-generation"
-assert runtime["brokerRuntimeID"]=="dialogue-broker-runtime"
+assert re.fullmatch(r"[0-9a-f]{32}",runtime["brokerRuntimeID"])
 assert runtime["connectionEpoch"]==1 and runtime["bindingEpoch"]==1
 assert actions["message.send"]["available"] is True and actions["message.wait"]["available"] is True
 PY

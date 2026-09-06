@@ -80,6 +80,13 @@ Unobserved hook names, Setup, plugin installation, unknown fields/events,
 nonzero output, and incomplete pairs fail closed before any peer push. This
 startup ordering follows the [public stream contract](https://code.claude.com/docs/en/headless#read-session-metadata)
 and [hook lifecycle schemas](https://code.claude.com/docs/en/agent-sdk/typescript#sdkhookstartedmessage).
+The observed 2.1.263 public init also carries `capabilities` (protocol feature
+identifiers), `fast_mode_disabled_reason` (`sdk_opt_in_required`), and boolean
+`analytics_disabled` / `product_feedback_disabled` metadata. These fields are
+validated by type and known shape; none grants tool, plugin, or messaging
+authority. The owned wrapper sets the documented
+[`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`](https://code.claude.com/docs/en/data-usage)
+opt-out. A feedback metadata boolean is not a record of external traffic.
 
 ## Phase 4 push ingress and heterogeneous dialogue
 

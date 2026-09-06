@@ -1800,3 +1800,8 @@ separate decision this measurement exists to inform.
   may precede init; foreign session/name/event, missing completion, unknown fields,
   plugin install, and nonempty hook output fail before provider traffic without
   retaining raw output. Runs with `make test` through `ci-contract`.
+
+- L20 owns a real authenticated Codex broker host and keeps its observed snapshot
+  binding alive for the round trip; Registry-only synthetic authority is refused.
+  The offline endpoint records and rejects every provider request/answer.
+  First-failure diagnostics accept L20 and keep its replay attribution.
