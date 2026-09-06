@@ -29,10 +29,12 @@ and humans run the same entrypoints.
   replays one scenario, `PROJMUX_E2E_LINUX_SHARD=<shard>` runs exactly one
   Linux fixture with the terminal inventory its `linux-shards.tsv` row owns,
   and `PROJMUX_E2E_SUITE=codex-lifecycle|npm-staging` runs one non-Linux suite.
-  Setting none keeps the default: four Linux shards in parallel plus both
-  suites. CI uses the shard/suite selectors to give every suite its own runner,
-  so container isolation and schedule isolation are the same unit there; local
-  `make test-e2e` still runs the whole matrix on one machine.
+  Setting none keeps the local acceptance profile: all four Linux shards run
+  serially in canonical `fixture-1` through `fixture-4` order on the one host,
+  followed by both suites. CI uses the shard/suite selectors to give every
+  suite its own runner, so each runner likewise has capacity for one shard.
+  `PROJMUX_E2E_LINUX_MODE=parallel make test-e2e` is the explicit same-host
+  stress profile; `serial` and `parallel` are the only accepted mode values.
 - Every scenario wait states a budget in seconds rather than a loop count, and
   `E2E_WAIT_SCALE=<factor>` multiplies all of them at once. Raise it when a
   runner is slow or loaded; a wait that expires still fails with the description
@@ -42,9 +44,12 @@ and humans run the same entrypoints.
   `make test-e2e-shards` validate typed attempt evidence, bounded semantic
   waits/owned cleanup, and exhaustive four-shard isolation without rerunning
   the full product matrix. The shard target also pins the CI job list to the
-  manifest: one non-fail-fast job per shard and per suite, each with its own
-  runner, its own timeout and its own uniquely named evidence artifacts, all of
-  them required children of the aggregate `Test` gate. It also pins the thin
+  manifest. A deterministic fake-runner start/release barrier proves local
+  default overlap is one and explicit parallel overlap is four while both use
+  one immutable binary, the exact 21-scenario inventory, and the same result
+  hash. The target also pins one non-fail-fast CI job per shard and per suite,
+  each with its own runner, timeout, and uniquely named evidence artifacts, all
+  of them required children of the aggregate `Test` gate. It also pins the thin
   `E2E Tests` job, which exists because the branch ruleset requires a status
   check under that exact name; a required context that is never reported stays
   pending rather than failing, so dropping that job would deadlock merges. The
