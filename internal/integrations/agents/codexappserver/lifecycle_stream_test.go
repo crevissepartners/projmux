@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"strconv"
@@ -556,10 +557,9 @@ func writeLifecycleControlBytes(wire *bytes.Buffer, count int) {
 
 func TestLifecycleTransportEnforcesRetainedAndProvesWireSummaryDominance(t *testing.T) {
 	// The enforced retained metric includes a conservative fixed reserve for
-	// the input/scalar/flags/summary state described beside the production
-	// constant, plus every active decoded key byte. Map/slice allocator headers
-	// and buckets contain no provider bytes and are excluded explicitly.
-	keyBudget := lifecycleRetainedBytes - lifecycleRetainedReserve
+	// input/scalar/flags/summary state, plus every active decoded key byte and
+	// the bounded duplicate/projection storage for all 32 live objects.
+	keyBudget := lifecycleRetainedBytes - lifecycleRetainedReserve - lifecycleDepth*lifecycleObjectRetainedStateBytes
 	boundary := lifecycleRetainedResponse("thread-retained", keyBudget)
 	snapshot, budget, err := projectLifecycleJSONL(t.Context(), []byte(boundary), 1, "thread-retained")
 	if err != nil || snapshot.ThreadID != "thread-retained" {
@@ -586,6 +586,196 @@ func TestLifecycleTransportEnforcesRetainedAndProvesWireSummaryDominance(t *test
 	if err != nil || len(maxSummary) >= lifecycleSummaryBytes {
 		t.Fatalf("summary dominance proof bytes=%d err=%v", len(maxSummary), err)
 	}
+}
+
+func TestLifecycleTransportAccountsForSimultaneouslyRetainedProjectorState(t *testing.T) {
+	// All supported targets are 64-bit. This oracle deliberately uses literal
+	// ABI sizes rather than the production accounting constants: each live
+	// object owns one 24-byte slice header, 64 16-byte string slots, and four
+	// 16-byte interface slots. The fixed 96 KiB reserve independently covers
+	// the input/scalar/flags/summary state retained beside these object tables.
+	const (
+		liveObjects            = 32
+		objectKeySlots         = 64
+		stringHeaderBytes      = 16
+		sliceHeaderBytes       = 24
+		interfaceHeaderBytes   = 16
+		objectFieldSlots       = 4
+		objectManagedBytes     = sliceHeaderBytes + objectKeySlots*stringHeaderBytes + objectFieldSlots*interfaceHeaderBytes
+		allObjectManagedBytes  = liveObjects * objectManagedBytes
+		oldKeyOnlyBoundary     = (2 << 20) - (96 << 10)
+		fullStateKeyBoundary   = oldKeyOnlyBoundary - allObjectManagedBytes
+		ownerLiteralLowerBound = oldKeyOnlyBoundary +
+			liveObjects*objectKeySlots*stringHeaderBytes + objectKeySlots*1_024 + objectKeySlots*stringHeaderBytes
+	)
+	if oldKeyOnlyBoundary != 1_998_848 || objectManagedBytes != 1_112 ||
+		allObjectManagedBytes != 35_584 || fullStateKeyBoundary != 1_963_264 ||
+		ownerLiteralLowerBound != 2_098_176 || ownerLiteralLowerBound-(2<<20) != 1_024 {
+		t.Fatal("independent retained-state oracle constants drifted")
+	}
+	if lifecycleRetainedInputReserveBytes != 8_192 || lifecycleRetainedScalarReserveBytes != 7_170 ||
+		lifecycleRetainedFlagsReserveBytes != 66_584 || lifecycleRetainedMetadataReserveBytes != 6_144 ||
+		lifecycleRetainedSummaryReserveBytes != 2_048 || lifecycleRetainedResidualReserveBytes != 8_166 {
+		t.Fatal("fixed retained-state reserve breakdown drifted")
+	}
+
+	want := LifecycleSnapshot{
+		ThreadID: "thread-retained", ThreadState: ThreadStateActive, TurnCount: 1,
+		TurnID: "turn-last", TurnState: TurnStateCompleted,
+		StartedAt: time.Unix(1_700_000_000, 0).UTC(),
+	}
+	for _, transport := range []struct {
+		name    string
+		project func([]byte) (LifecycleSnapshot, error)
+	}{
+		{
+			name: "jsonl",
+			project: func(raw []byte) (LifecycleSnapshot, error) {
+				snapshot, _, err := projectLifecycleJSONL(t.Context(), raw, 1, want.ThreadID)
+				return snapshot, err
+			},
+		},
+		{
+			name: "websocket",
+			project: func(raw []byte) (LifecycleSnapshot, error) {
+				snapshot, _, err := projectLifecycleWebSocket(t.Context(), serverWebSocketFrame(true, 0x1, raw), 1, want.ThreadID)
+				return snapshot, err
+			},
+		},
+	} {
+		t.Run(transport.name, func(t *testing.T) {
+			boundary := []byte(lifecycleSimultaneousRetainedResponse(want.ThreadID, fullStateKeyBoundary))
+			snapshot, err := transport.project(boundary)
+			if err != nil || snapshot != want {
+				t.Fatalf("full-state boundary snapshot=%+v want=%+v err=%v", snapshot, want, err)
+			}
+
+			onePast := []byte(lifecycleSimultaneousRetainedResponse(want.ThreadID, fullStateKeyBoundary+1))
+			if _, err := transport.project(onePast); !errors.Is(err, ErrProtocol) || !strings.Contains(err.Error(), "retained-state limit") {
+				t.Fatalf("full-state one-past refusal=%v", err)
+			}
+
+			// This strengthens the archived owner's key/flag layout with the
+			// scalar fields needed for a complete summary. Its key bodies are
+			// exactly the former admission boundary, so key-byte-only accounting
+			// admits it. The whole-state oracle is already 35,584 bytes over the
+			// fixed-reserve boundary before allocator/stack/RSS costs.
+			ownerBoundaryVariant := []byte(lifecycleSimultaneousRetainedResponse(want.ThreadID, oldKeyOnlyBoundary))
+			if _, err := transport.project(ownerBoundaryVariant); !errors.Is(err, ErrProtocol) || !strings.Contains(err.Error(), "retained-state limit") {
+				t.Fatalf("old key-only boundary was not refused: %v", err)
+			}
+		})
+	}
+
+	// Removing any managed-storage term from the one-past oracle makes the
+	// invalid fixture appear admissible. This mutation table ensures the
+	// boundary above depends on every term, rather than copying the product
+	// accounting helper into the expectation.
+	onePastOracle := fullStateKeyBoundary + 1 + allObjectManagedBytes + (96 << 10)
+	if onePastOracle != 2<<20+1 {
+		t.Fatalf("one-past oracle=%d", onePastOracle)
+	}
+	for name, omitted := range map[string]int{
+		"decoded key body":       1,
+		"key string slots":       liveObjects * objectKeySlots * stringHeaderBytes,
+		"object slice headers":   liveObjects * sliceHeaderBytes,
+		"projection field slots": liveObjects * objectFieldSlots * interfaceHeaderBytes,
+		"input buffers":          8_192,
+		"scalar work buffer":     7_170,
+		"flag bodies and slice":  66_584,
+		"metadata scalar bodies": 6_144,
+		"summary":                2_048,
+		"residual state":         8_166,
+	} {
+		if mutated := onePastOracle - omitted; mutated > 2<<20 {
+			t.Fatalf("%s omission mutation stayed over cap: %d", name, mutated)
+		}
+	}
+}
+
+func lifecycleSimultaneousRetainedResponse(threadID string, targetKeyBytes int) string {
+	const (
+		ignoredObjects = lifecycleDepth - 4
+		fillerKeys     = (lifecycleObjectFields - 2) +
+			(lifecycleObjectFields - 1) +
+			(lifecycleObjectFields - 3) +
+			(lifecycleObjectFields - 3) +
+			(ignoredObjects-1)*(lifecycleObjectFields-1) + lifecycleObjectFields
+		fixedKeyBytes = len("id") + len("result") + len("thread") +
+			len("id") + len("turns") + len("status") +
+			len("type") + len("activeFlags") + len("n") +
+			(ignoredObjects-1)*len("n")
+	)
+	fillerBytes := targetKeyBytes - fixedKeyBytes
+	baseLength, extra := fillerBytes/fillerKeys, fillerBytes%fillerKeys
+	if baseLength < len("k0000-") || baseLength+1 > lifecycleScalarBytes {
+		panic("simultaneous retained fixture cannot represent target")
+	}
+	nextKey := 0
+	longKey := func() string {
+		prefix := "k" + strconv.Itoa(nextKey) + "-"
+		length := baseLength
+		if nextKey < extra {
+			length++
+		}
+		nextKey++
+		return prefix + strings.Repeat("x", length-len(prefix))
+	}
+	fillerFields := func(count int) string {
+		var value strings.Builder
+		for index := range count {
+			if index > 0 {
+				value.WriteByte(',')
+			}
+			value.WriteString(strconv.Quote(longKey()))
+			value.WriteString(":0")
+		}
+		return value.String()
+	}
+	appendFields := func(prefix string, fillerCount int, suffix string) string {
+		var value strings.Builder
+		value.WriteByte('{')
+		if prefix != "" {
+			value.WriteString(prefix)
+		}
+		if fillerCount > 0 {
+			if prefix != "" {
+				value.WriteByte(',')
+			}
+			value.WriteString(fillerFields(fillerCount))
+		}
+		if suffix != "" {
+			if prefix != "" || fillerCount > 0 {
+				value.WriteByte(',')
+			}
+			value.WriteString(suffix)
+		}
+		value.WriteByte('}')
+		return value.String()
+	}
+
+	child := appendFields("", lifecycleObjectFields, "")
+	for range ignoredObjects - 1 {
+		child = appendFields("", lifecycleObjectFields-1, `"n":`+child)
+	}
+	flags := make([]string, lifecycleObjectFields)
+	for index := range flags {
+		prefix := fmt.Sprintf("%02d", index)
+		flags[index] = prefix + strings.Repeat("f", lifecycleScalarBytes-len(prefix))
+	}
+	flagJSON, err := json.Marshal(flags)
+	if err != nil {
+		panic(err)
+	}
+	status := appendFields(`"type":"active","activeFlags":`+string(flagJSON), lifecycleObjectFields-3, `"n":`+child)
+	turns := `[{"id":"turn-last","status":"completed","startedAt":1700000000}]`
+	thread := appendFields(`"id":`+strconv.Quote(threadID)+`,"turns":`+turns, lifecycleObjectFields-3, `"status":`+status)
+	result := appendFields("", lifecycleObjectFields-1, `"thread":`+thread)
+	response := appendFields(`"id":1`, lifecycleObjectFields-2, `"result":`+result)
+	if nextKey != fillerKeys {
+		panic("simultaneous retained fixture key count drifted")
+	}
+	return response
 }
 
 func lifecycleRetainedResponse(threadID string, targetKeyBytes int) string {
