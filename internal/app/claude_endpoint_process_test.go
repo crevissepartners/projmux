@@ -218,7 +218,9 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		}
 		now := time.Now().UTC()
 		public := coremessage.Envelope{Version: coremessage.Version, MessageRef: ref, ConversationRef: "conversation-" + ref,
-			Source: coremessage.Route{AgentUID: "uid:codex-source", PaneUID: "uid:codex-pane", ActivationGeneration: "codex-generation", Provider: aiModeCodex, Incarnation: "codex-incarnation"},
+			// This process-shape test owns one live route; heterogeneous source
+			// authority is exercised by the separate canonical two-Agent E2E.
+			Source: publicMessageRoute(route),
 			Target: publicMessageRoute(route), Authority: coremessage.PeerAuthority(), Payload: "HETEROGENEOUS_MARKER:" + ref,
 			AcceptedAt: now, Deadline: now.Add(time.Minute)}
 		if _, _, err := messageStore.PutAccepted(public, "claude-coordination"); err != nil {

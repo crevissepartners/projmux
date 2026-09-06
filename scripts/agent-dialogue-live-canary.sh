@@ -107,9 +107,19 @@ PY
     TMUX_TMPDIR="$root/tmux" PROJMUX_MANAGED_ROOTS="$root")
   "${prepare_env[@]}" "$binary" agent integrate claude --dry-run >"$root/evidence/integrate-dry-run.txt"
   "${prepare_env[@]}" "$binary" agent integrate claude >"$root/evidence/integrate.txt"
+  # Integration installs all managed status events. This isolated canary needs
+  # only SessionStart startup callbacks; do not enable optional Setup execution.
+  python3 - "$root/home/.claude/settings.json" <<'PY'
+import json,pathlib,sys
+path=pathlib.Path(sys.argv[1]); settings=json.loads(path.read_text())
+expected=[{"hooks":[{"type":"command","command":"projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"}]}]
+assert settings.get("hooks",{}).get("Setup")==expected, "unexpected owned Setup configuration"
+del settings["hooks"]["Setup"]
+path.write_text(json.dumps(settings,sort_keys=True)+"\n")
+PY
   python3 - >"$root/bin/collect-claude-public-jsonl" <<'PY'
 print(r'''#!/usr/bin/env python3
-import json,sys
+import json,pathlib,re,sys
 init_allowed={"type","subtype","cwd","session_id","tools","mcp_servers","model","permissionMode",
               "slash_commands","apiKeySource","claude_code_version","output_style","agents","skills",
               "plugins","uuid","fast_mode_state","prompt_suggestion_enabled","messaging_socket_path"}
@@ -119,7 +129,55 @@ assistant_text_allowed={"type","text"}
 result_allowed={"type","subtype","is_error","duration_ms","duration_api_ms","num_turns","result",
                 "session_id","total_cost_usd","usage","modelUsage","permission_denials","uuid","errors",
                 "structured_output"}
+diagnostic_types={"system","assistant","user","result","stream_event"}
+diagnostic_subtypes={"init","success","hook_started","hook_progress","hook_response"}
+diagnostic_reasons={"non-object","credential key","unknown init field","assistant shape",
+ "assistant message shape","assistant content","assistant block","result shape","event type","invalid locator"}
+hook_base={"type","subtype","hook_id","hook_name","hook_event","uuid","session_id"}
+hook_output={"stdout","stderr","output"}
+owned_commands={
+ "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1",
+ "exec projmux internal claude-endpoint-register >/dev/null 2>&1 # projmux-managed:claude-hook:v1"}
+settings=json.loads((pathlib.Path(__file__).resolve().parent.parent/"home/.claude/settings.json").read_text())
+startup=settings.get("hooks",{}).get("SessionStart",[])
+if (settings.get("hooks",{}).get("Setup") or len(startup)!=1 or set(startup[0])!={"hooks"} or
+    len(startup[0]["hooks"])!=2 or {h.get("command") for h in startup[0]["hooks"]}!=owned_commands or
+    any(h.get("type")!="command" or set(h)-{"type","command","timeout"} for h in startup[0]["hooks"])):
+    raise SystemExit("public provider stream rejected: owned startup settings")
+startup_pending={}; startup_done=set(); startup_session=None; initialized=False
+# The public display alias was observed by closed equality in the isolated
+# current-version preflight. Settings still prove the exact two callbacks.
+startup_names=owned_commands|{"SessionStart:startup"}
+diagnostic_reasons|={"startup hook shape","startup hook identity","startup hook name","startup hook order","startup hook output","startup hook incomplete"}
+diagnostic_fields=init_allowed|assistant_allowed|assistant_message_allowed|result_allowed|hook_base|hook_output|{"exit_code","outcome","capabilities"}
+def validate_startup(event):
+    global startup_session
+    subtype=event["subtype"]
+    allowed=hook_base|(hook_output if subtype!="hook_started" else set())|({"exit_code","outcome"} if subtype=="hook_response" else set())
+    required=allowed-{"exit_code"}
+    if set(event)-allowed or not required<=set(event): raise ValueError("startup hook shape")
+    if initialized or event.get("hook_event")!="SessionStart": raise ValueError("startup hook order")
+    if event.get("hook_name") not in startup_names: raise ValueError("startup hook name")
+    for key in ("hook_id","uuid","session_id"):
+        if not isinstance(event[key],str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}",event[key]): raise ValueError("startup hook identity")
+    if startup_session is None: startup_session=event["session_id"]
+    if startup_session!=event["session_id"]: raise ValueError("startup hook identity")
+    hook_id=event["hook_id"]; identity=(event["hook_name"],event["hook_event"],event["session_id"])
+    if subtype=="hook_started":
+        if hook_id in startup_pending or hook_id in startup_done or len(startup_pending)+len(startup_done)>=2: raise ValueError("startup hook order")
+        startup_pending[hook_id]=identity
+    else:
+        if startup_pending.get(hook_id)!=identity: raise ValueError("startup hook identity")
+        if any(event.get(key)!="" for key in hook_output): raise ValueError("startup hook output")
+        if subtype=="hook_response":
+            if event.get("outcome")!="success" or ("exit_code" in event and (type(event["exit_code"]) is not int or event["exit_code"]!=0)): raise ValueError("startup hook output")
+            del startup_pending[hook_id]; startup_done.add(hook_id)
+    # Empty outputs only; never retain even a raw output-shaped field.
+    for key in hook_output: event.pop(key,None)
+    event["outputBytes"]=0
+
 for raw in sys.stdin:
+    event=None
     try:
         event=json.loads(raw)
         if not isinstance(event,dict): raise ValueError("non-object")
@@ -128,6 +186,10 @@ for raw in sys.stdin:
         kind=event.get("type")
         if kind=="system" and event.get("subtype")=="init":
             if set(event)-init_allowed: raise ValueError("unknown init field")
+            if initialized or startup_pending or len(startup_done)!=2 or event.get("session_id")!=startup_session: raise ValueError("startup hook incomplete")
+            initialized=True
+        elif kind=="system" and event.get("subtype") in {"hook_started","hook_progress","hook_response"}:
+            validate_startup(event)
         elif kind=="assistant":
             if set(event)-assistant_allowed or not isinstance(event.get("message"),dict): raise ValueError("assistant shape")
             message=event["message"]
@@ -145,8 +207,17 @@ for raw in sys.stdin:
             event["messaging_socket_present"]=True
         sys.stdout.write(json.dumps(event,separators=(",",":"),ensure_ascii=True)+"\n")
         sys.stdout.flush()
-    except Exception:
-        sys.stderr.write("public provider stream rejected by the frozen sanitizer\n")
+    except Exception as failure:
+        shape=event if isinstance(event,dict) else {}
+        reason=str(failure) if str(failure) in diagnostic_reasons else "invalid JSON or shape"
+        kind=shape.get("type"); subtype=shape.get("subtype")
+        name=shape.get("hook_name")
+        name_label=name if isinstance(name,str) and name in {"SessionStart:startup","SessionStart"} else ("configured-command" if isinstance(name,str) and name in owned_commands else "unknown")
+        diagnostic={"reason":reason,"type":kind if isinstance(kind,str) and kind in diagnostic_types else "unknown",
+          "subtype":subtype if isinstance(subtype,str) and subtype in diagnostic_subtypes else "unknown",
+          "fields":sorted(set(shape)&diagnostic_fields),"unknownFieldCount":len(set(shape)-diagnostic_fields),
+          "hookNameMatch":name_label,"hookEventMatch":"SessionStart" if shape.get("hook_event")=="SessionStart" else "unknown"}
+        sys.stderr.write("public provider stream rejected: "+json.dumps(diagnostic,sort_keys=True)+"\n")
         raise SystemExit(1)
 ''')
 PY
@@ -457,11 +528,35 @@ assistant_text_allowed={"type","text"}
 result_allowed={"type","subtype","is_error","duration_ms","duration_api_ms","num_turns","result",
                 "session_id","total_cost_usd","usage","modelUsage","permission_denials","uuid","errors",
                 "structured_output"}
+startup_pending={}; startup_done=set(); initialized=False
+startup_names={
+ "SessionStart:startup",
+ "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1",
+ "exec projmux internal claude-endpoint-register >/dev/null 2>&1 # projmux-managed:claude-hook:v1"}
 for event in init:
+    assert event.get("session_id")==process["sessionID"], "foreign public stream session"
     kind=event.get("type")
     if kind=="system" and event.get("subtype")=="init":
         assert not set(event)-init_allowed, "unknown current-version init field"
+        assert not initialized and not startup_pending and len(startup_done)==2, "incomplete owned startup hooks"
+        initialized=True
+    elif kind=="system" and event.get("subtype") in {"hook_started","hook_progress","hook_response"}:
+        subtype=event["subtype"]
+        allowed={"type","subtype","hook_id","hook_name","hook_event","uuid","session_id","outputBytes"}
+        if subtype=="hook_response": allowed|={"exit_code","outcome"}
+        assert not set(event)-allowed and event.get("outputBytes")==0
+        assert not initialized and event.get("hook_event")=="SessionStart" and event.get("hook_name") in startup_names
+        hook_id=event["hook_id"]; identity=(event["hook_name"],event["hook_event"],event["session_id"])
+        if subtype=="hook_started":
+            assert hook_id not in startup_pending and hook_id not in startup_done and len(startup_pending)+len(startup_done)<2
+            startup_pending[hook_id]=identity
+        else:
+            assert startup_pending.get(hook_id)==identity
+            if subtype=="hook_response":
+                assert event.get("outcome")=="success" and event.get("exit_code",0)==0
+                del startup_pending[hook_id]; startup_done.add(hook_id)
     elif kind=="assistant":
+        assert initialized
         assert not set(event)-assistant_allowed and isinstance(event.get("message"),dict), "unknown assistant event shape"
         message=event["message"]
         assert not set(message)-assistant_message_allowed and message.get("role")=="assistant"
@@ -474,7 +569,8 @@ for event in init:
         raise AssertionError("unexpected public stream event type")
 matches=[x for x in init if x.get("type")=="system" and x.get("subtype")=="init"]
 assert len(matches)==1 and matches[0].get("session_id")==process["sessionID"]
-assert init[0] is matches[0] and sum(x.get("type")=="result" for x in init)==1 and init[-1].get("type")=="result"
+assert initialized and not startup_pending and len(startup_done)==2
+assert sum(x.get("type")=="result" for x in init)==1 and init[-1].get("type")=="result"
 provider_version=matches[0].get("claude_code_version",matches[0].get("version",""))
 assert provider_version=="2.1.263", "frozen frame is not qualified for the observed Claude version"
 assert matches[0].get("tools")==[] and matches[0].get("mcp_servers")==[] and matches[0].get("plugins")==[]

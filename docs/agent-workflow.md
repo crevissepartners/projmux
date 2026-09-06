@@ -1788,3 +1788,15 @@ separate decision this measurement exists to inform.
 - `TestClaudePushHumanTurnAmbiguitySurvivesLaterIdleStop` and
   `TestClaudeDialogueMultiplePendingCannotCorrelateLaterCandidate` prevent a
   late response from acquiring a newer message's correlation.
+
+- `TestAuthorityCheckUsesExistingExactLeaseWithoutProviderTraffic` proves the
+  dialogue source's exact live Codex broker runtime, connection and binding
+  fence with no new binding or provider request.
+- `TestNonblockingHookStoreRefusesContentionWithoutLateWrite` and
+  `TestClaudeOfficialHookContentionInvalidatesReplyWithoutWaiting` keep a busy
+  Stop/helper from committing delayed replies after its hook deadline.
+
+- `test/agent_dialogue_canary_test.py`: paired owned SessionStart lifecycle events
+  may precede init; foreign session/name/event, missing completion, unknown fields,
+  plugin install, and nonempty hook output fail before provider traffic without
+  retaining raw output. Runs with `make test` through `ci-contract`.

@@ -360,3 +360,9 @@ func TestClaudeReplyHookRequiresExplicitStopHookActiveField(t *testing.T) {
 		t.Fatalf("documented Stop with extra fields broker replies=%d, want 1", broker.replies)
 	}
 }
+
+// userPrompt applies a complete boundary in tests; the live hook announces it
+// before attempting its bounded serialization lock.
+func (h *claudeCoordinationHub) userPrompt() {
+	h.userPromptAt(h.boundaryAnnouncements.Add(1))
+}

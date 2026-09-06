@@ -66,15 +66,15 @@ func fixturePaths() (*os.Root, string, error) {
 	if !filepath.IsAbs(statePath) || filepath.Clean(statePath) != statePath || !filepath.IsAbs(binary) || filepath.Clean(binary) != binary {
 		return nil, "", errors.New("fake Claude requires absolute owned state and product binary")
 	}
-	info, err := os.Lstat(statePath)
+	info, err := os.Lstat(statePath) // #nosec G703 -- read-only validation before os.OpenRoot confinement.
 	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
 		return nil, "", errors.New("fake Claude state is not a private directory")
 	}
 	owner, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || uint64(owner.Uid) != uint64(os.Getuid()) {
+	if !ok || int64(owner.Uid) != int64(os.Getuid()) {
 		return nil, "", errors.New("fake Claude state owner differs")
 	}
-	info, err = os.Lstat(binary)
+	info, err = os.Lstat(binary) // #nosec G703 -- read-only validation of the harness-selected executable.
 	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 || info.Mode().Perm()&0o022 != 0 {
 		return nil, "", errors.New("fake Claude product binary is not a fixed executable")
 	}

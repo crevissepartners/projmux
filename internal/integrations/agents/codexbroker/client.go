@@ -347,6 +347,26 @@ func (c *Conn) Bind(ctx context.Context, threadID, cwd string, roots []string) (
 	return binding, nil
 }
 
+// CheckAuthority proves a previously granted runtime/connection/binding
+// fence without binding, resuming, or reading a provider thread. A host that
+// predates this operation returns request-unknown; callers must refuse writes.
+func (c *Conn) CheckAuthority(ctx context.Context, runtime, thread string, fence Fence) error {
+	if runtime == "" || runtime != c.runtime {
+		return refuse(RefusalRuntimeReplaced, nil)
+	}
+	reply, err := c.call(ctx, wireRequest{Kind: requestAuthority, Thread: thread, Fence: fence})
+	if err != nil {
+		return err
+	}
+	if reply.Kind == replyRefused {
+		return refuse(reply.Refusal, nil)
+	}
+	if reply.Kind != replyResult || reply.Thread != thread {
+		return refuse(RefusalFrameInvalid, nil)
+	}
+	return nil
+}
+
 // Stats reads the runtime's content-free telemetry over this connection.
 //
 // A runtime that predates the stats frame answers `request-unknown`, which is

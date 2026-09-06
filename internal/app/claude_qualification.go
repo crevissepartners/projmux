@@ -74,7 +74,7 @@ func (h *claudeCoordinationHub) beginQualification(evidence claudeQualificationE
 ) claudeCoordinationResponse {
 	h.mu.Lock()
 	now := h.now()
-	if h.closed || h.humanTurnOpen || !evidence.valid(now, route) || poster == nil {
+	if h.closed || h.humanTurnOpen || h.replyBoundaryLost.Load() || h.boundaryAnnouncements.Load() != h.boundary || !evidence.valid(now, route) || poster == nil {
 		h.mu.Unlock()
 		return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "qualification-refused", Reason: "invalid-public-init-evidence"}
 	}
@@ -164,7 +164,7 @@ func (h *claudeCoordinationHub) consumeQualificationStop(message string, stopHoo
 		state.reason = "qualification-write-not-complete"
 	case stopHookActive:
 		state.reason = "qualification-stop-recursion"
-	case state.boundary != h.boundary:
+	case state.boundary != h.boundaryAnnouncements.Load() || h.replyBoundaryLost.Load():
 		state.reason = "qualification-concurrent-user-turn"
 	case message != state.marker:
 		state.reason = "qualification-marker-mismatch"

@@ -51,7 +51,7 @@ func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, 
 		Kind: agentdelivery.EventQueue, MessageRef: envelope.MessageRef,
 	})
 	message := &claudeCoordinationMessage{envelope: envelope, delivery: delivery, boundary: h.boundary,
-		dialogueAmbiguous: h.humanTurnOpen}
+		dialogueAmbiguous: h.humanTurnOpen || h.replyBoundaryLost.Load() || h.boundaryAnnouncements.Load() != h.boundary}
 	if message.dialogueAmbiguous {
 		message.dialogueReason = "concurrent-user-turn-ambiguous"
 	}
@@ -129,7 +129,7 @@ func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, 
 		Kind: agentdelivery.EventDeliver, MessageRef: envelope.MessageRef, WaiterRef: handoffRef,
 		FullFrameWritten: true, HelperReceipt: true,
 	})
-	if !message.dialogueAmbiguous && message.boundary == h.boundary {
+	if !message.dialogueAmbiguous && message.boundary == h.boundaryAnnouncements.Load() && !h.replyBoundaryLost.Load() {
 		message.dialogueReady = true
 	} else {
 		message.dialogueAmbiguous = true

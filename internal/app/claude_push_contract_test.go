@@ -386,3 +386,17 @@ func TestClaudeQualificationReceiptJSONNeverClaimsAutoResend(t *testing.T) {
 		t.Fatalf("receipt=%s", data)
 	}
 }
+
+func TestClaudeOfficialHookContentionInvalidatesReplyWithoutWaiting(t *testing.T) {
+	fixture := newClaudeCoordinationTestFixture(t)
+	fixture.server.hookMu.Lock()
+	response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		Operation: "user-prompt", Target: fixture.target, SessionID: fixture.sessionID})
+	fixture.server.hookMu.Unlock()
+	if response.Kind != "boundary-closed" || !fixture.server.hub.replyBoundaryLost.Load() {
+		t.Fatalf("contended human hook did not invalidate immediately: %+v", response)
+	}
+	if original, reason := fixture.server.hub.reserveReply(false); original != nil || reason != "concurrent-user-turn-ambiguous" {
+		t.Fatalf("contended hook restored reply authority: original=%+v reason=%q", original, reason)
+	}
+}

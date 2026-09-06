@@ -36,6 +36,7 @@ var (
 	ErrCapacity       = errors.New("agent message store is at capacity")
 	ErrMalformedStore = errors.New("malformed Agent message store")
 	ErrNotFound       = errors.New("agent message not found")
+	ErrBusy           = errors.New("agent message store is busy")
 )
 
 type Record struct {
@@ -55,13 +56,23 @@ type storeHooks struct {
 }
 
 type Store struct {
-	path  string
-	now   func() time.Time
-	hooks storeHooks
+	path        string
+	now         func() time.Time
+	hooks       storeHooks
+	nonblocking bool
 }
 
 func NewStore(stateDir string) *Store {
 	return NewStoreAt(filepath.Join(stateDir, storeDirName, storeFileName))
+}
+
+// NewNonblockingStore is the bounded helper/Stop-hook view of the same
+// durable inbox. Lock contention refuses immediately; no delayed writer may
+// outlive its hook and later commit a reply with obsolete correlation.
+func NewNonblockingStore(stateDir string) *Store {
+	store := NewStore(stateDir)
+	store.nonblocking = true
+	return store
 }
 
 func NewStoreAt(path string) *Store {
@@ -379,7 +390,14 @@ func (s *Store) withLock(fn func() error) error {
 		return err
 	}
 	defer lock.Close()
-	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+	operation := unix.LOCK_EX
+	if s.nonblocking {
+		operation |= unix.LOCK_NB
+	}
+	if err := unix.Flock(int(lock.Fd()), operation); err != nil {
+		if errors.Is(err, unix.EWOULDBLOCK) || errors.Is(err, unix.EAGAIN) {
+			return ErrBusy
+		}
 		return err
 	}
 	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN) //nolint:errcheck -- releasing an owned advisory lock.

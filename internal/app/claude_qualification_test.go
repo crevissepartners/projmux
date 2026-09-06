@@ -279,3 +279,30 @@ func TestClaudeQualificationLateOldWriteCannotMutateFreshRetry(t *testing.T) {
 		t.Fatalf("old=%+v fresh=%+v eligible=%t", old, fresh, hub.coordinationEligible())
 	}
 }
+
+func TestClaudeQualificationRejectsAnnouncedUnappliedHumanBoundary(t *testing.T) {
+	fixture := newClaudeCoordinationTestFixture(t)
+	now := time.Unix(190_000, 0).UTC()
+	for _, stage := range []string{"before-push", "before-stop"} {
+		t.Run(stage, func(t *testing.T) {
+			hub := newClaudeCoordinationHub()
+			hub.now = func() time.Time { return now }
+			poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+			if stage == "before-push" {
+				hub.boundaryAnnouncements.Add(1)
+			}
+			response := hub.beginQualification(exactQualificationEvidence(fixture.route, now), fixture.route, poster)
+			if stage == "before-push" {
+				if response.Kind != "qualification-refused" || hub.qualification != nil {
+					t.Fatalf("unapplied boundary admitted qualification: %+v", response)
+				}
+				return
+			}
+			hub.boundaryAnnouncements.Add(1)
+			response, handled := hub.consumeQualificationStop(claudeQualificationMarkerPrefix+response.QualificationRef, false)
+			if !handled || response.Kind != "qualification-failed" || response.Reason != "qualification-concurrent-user-turn" || hub.coordinationEligible() {
+				t.Fatalf("unapplied boundary qualified: %+v handled=%t", response, handled)
+			}
+		})
+	}
+}

@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -20,6 +21,7 @@ import (
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
@@ -152,6 +154,8 @@ type claudeCoordinationHub struct {
 	qualification          *claudeQualificationState
 	qualifiedVersion       string
 	replyCorrelationReason string
+	boundaryAnnouncements  atomic.Uint64
+	replyBoundaryLost      atomic.Bool
 }
 
 func newClaudeCoordinationHub() *claudeCoordinationHub {
@@ -162,10 +166,10 @@ func newClaudeCoordinationHub() *claudeCoordinationHub {
 // human-authored turn. It also makes all delivered-but-unreplied peer messages
 // ineligible for Stop correlation: the following assistant text could belong
 // to that user turn, and text matching is never authority.
-func (h *claudeCoordinationHub) userPrompt() {
+func (h *claudeCoordinationHub) userPromptAt(announced uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.boundary++
+	h.boundary = max(h.boundary, announced)
 	h.humanTurnOpen = true
 	h.closeQualificationForUserPromptLocked()
 	for _, message := range h.messages {
@@ -183,6 +187,9 @@ func (h *claudeCoordinationHub) userPrompt() {
 func (h *claudeCoordinationHub) reserveReply(stopHookActive bool) (*coremessage.Envelope, string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.replyBoundaryLost.Load() || h.boundaryAnnouncements.Load() != h.boundary {
+		h.replyCorrelationReason = "concurrent-user-turn-ambiguous"
+	}
 	if h.replyCorrelationReason != "" {
 		return nil, h.replyCorrelationReason
 	}
@@ -302,8 +309,8 @@ func validCoordinationRef(value string) bool {
 }
 
 type claudeCoordinationServer struct {
-	// Serialize official human boundaries with the complete reply commit.
-	// UserPromptSubmit cannot return while an earlier Stop is committing.
+	// Serialize reply commits without making official hooks wait for each other.
+	// A concurrent boundary announces invalidation before trying this mutex.
 	hookMu   sync.Mutex
 	listener *localipc.Listener
 	hub      *claudeCoordinationHub
@@ -343,7 +350,7 @@ func newLiveClaudeDialogueBroker(registryPath string) (*liveClaudeDialogueBroker
 	if registryPath == "" || intmetadata.PathFor(stateDir) != clean {
 		return nil, errors.New("agent message registry path is not canonical")
 	}
-	return &liveClaudeDialogueBroker{registryPath: clean, store: messagestore.NewStore(stateDir)}, nil
+	return &liveClaudeDialogueBroker{registryPath: clean, store: messagestore.NewNonblockingStore(stateDir)}, nil
 }
 
 // Current proves both ends again at the helper boundary. Target socket and
@@ -363,6 +370,11 @@ func (b *liveClaudeDialogueBroker) Current(envelope coremessage.Envelope) bool {
 		if reason != "" || publicMessageRoute(route) != expected {
 			return false
 		}
+		if authority, ok := route.Authority().(coremetadata.CodexRouteAuthority); ok {
+			if !probeCodexMessageAuthority(filepath.Dir(filepath.Dir(b.registryPath)), authority) {
+				return false
+			}
+		}
 		if authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef); ok {
 			for _, process := range []coremetadata.ProcessIdentity{authority.Process, authority.LeaseProcess} {
 				actual, _, err := localipc.Process(process.PID)
@@ -378,6 +390,27 @@ func (b *liveClaudeDialogueBroker) Current(envelope coremessage.Envelope) bool {
 		}
 	}
 	return true
+}
+
+func probeCodexMessageAuthority(stateDir string, authority coremetadata.CodexRouteAuthority) bool {
+	key, err := codexbroker.NewEndpointKey(authority.Authority.StateDomainID, authority.Authority.EndpointGenerationID)
+	if err != nil {
+		return false
+	}
+	discovery, err := codexbroker.NewDiscovery(stateDir, key)
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	connection, err := codexbroker.Dial(ctx, discovery, codexbroker.DialConfig{Timeout: 200 * time.Millisecond})
+	if err != nil {
+		return false
+	}
+	defer connection.Close()
+	return connection.CheckAuthority(ctx, authority.Authority.BrokerRuntimeID, authority.ThreadID,
+		codexbroker.Fence{Connection: codexbroker.ConnectionEpoch(authority.Authority.ConnectionEpoch),
+			Binding: codexbroker.BindingEpoch(authority.Authority.BindingEpoch)}) == nil
 }
 
 func (b *liveClaudeDialogueBroker) MarkHandoff(envelope coremessage.Envelope) error {
@@ -509,22 +542,32 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 		delivery := s.hub.submitPush(*request.Envelope, s.broker, s.poster)
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: string(delivery.State), Delivery: delivery})
 	case "user-prompt":
-		s.hookMu.Lock()
-		defer s.hookMu.Unlock()
 		if parent != authority.Process.PID || request.SessionID != authority.SessionID {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused"})
 			return
 		}
-		s.hub.userPrompt()
+		// Announce before any mutex: even a timed-out hook closes reply
+		// correlation before the corresponding human turn may begin.
+		announced := s.hub.boundaryAnnouncements.Add(1)
+		if s.hookMu.TryLock() {
+			s.hub.userPromptAt(announced)
+			s.hookMu.Unlock()
+		} else {
+			s.hub.replyBoundaryLost.Store(true)
+		}
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "boundary-closed"})
 	case "stop-reply":
-		s.hookMu.Lock()
-		defer s.hookMu.Unlock()
 		if parent != authority.Process.PID || request.SessionID != authority.SessionID ||
 			!validClaudeAssistantReply(request.AssistantMessage) {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: "invalid-stop-correlation"})
 			return
 		}
+		if !s.hookMu.TryLock() {
+			s.hub.replyBoundaryLost.Store(true)
+			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: "hook-busy"})
+			return
+		}
+		defer s.hookMu.Unlock()
 		if response, handled := s.hub.consumeQualificationStop(request.AssistantMessage, request.StopHookActive); handled {
 			_ = localipc.WriteJSON(conn, response)
 			return

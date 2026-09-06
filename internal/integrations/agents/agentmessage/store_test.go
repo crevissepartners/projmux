@@ -477,3 +477,23 @@ func TestStoreReplyIsAtomicCorrelatedAndReplayIdempotent(t *testing.T) {
 		t.Fatalf("reply recovery = created %t err %v", created, err)
 	}
 }
+
+func TestNonblockingHookStoreRefusesContentionWithoutLateWrite(t *testing.T) {
+	stateDir := t.TempDir()
+	owner := NewStore(stateDir)
+	helper := NewNonblockingStore(stateDir)
+	locked, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() { done <- owner.withLock(func() error { close(locked); <-release; return nil }) }()
+	<-locked
+	_, _, err := helper.PutAccepted(storeEnvelope(1), "codex-inbox")
+	close(release)
+	if lockErr := <-done; lockErr != nil {
+		t.Fatal(lockErr)
+	}
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("contended hook store err=%v", err)
+	}
+	if _, found, err := owner.Get(storeEnvelope(1).MessageRef); err != nil || found {
+		t.Fatalf("refused hook wrote later: found=%t err=%v", found, err)
+	}
+}

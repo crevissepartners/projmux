@@ -73,6 +73,14 @@ establish or relax Phase 4 qualification: safe mode disables hooks and cannot
 substitute for the separately owned, long-lived, hook-enabled current-version
 public-init and marker gate.
 
+The live canary accepts only paired, zero-output lifecycle events for its two
+owned SessionStart callbacks before init, correlated by exact session, hook ID,
+name, and event. It strips the empty output fields before storing evidence.
+Unobserved hook names, Setup, plugin installation, unknown fields/events,
+nonzero output, and incomplete pairs fail closed before any peer push. This
+startup ordering follows the [public stream contract](https://code.claude.com/docs/en/headless#read-session-metadata)
+and [hook lifecycle schemas](https://code.claude.com/docs/en/agent-sdk/typescript#sdkhookstartedmessage).
+
 ## Phase 4 push ingress and heterogeneous dialogue
 
 The registration helper owns the existing private `coord-*` Unix socket for
@@ -191,3 +199,10 @@ push ingress available but refuses automatic replies for that incarnation.
 Use the documented public recovery on the same Agent UID and qualify its new
 activation before resuming automatic dialogue. Source and target routes are
 revalidated after durable handoff and immediately before the provider write.
+
+The final source check also asks the existing Codex broker to verify the exact
+runtime, connection and binding lease. This read-only IPC observation binds
+nothing and sends no provider request. An older broker that does not support
+this observation refuses coordination; it is never restarted implicitly.
+Helper store lock contention fails immediately. Concurrent official hooks
+invalidate reply correlation without waiting for another hook to finish.
