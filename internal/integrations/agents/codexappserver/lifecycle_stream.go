@@ -47,34 +47,57 @@ const (
 	lifecycleObjectRetainedStateBytes = lifecycleStringSliceHeaderBytes +
 		lifecycleObjectKeyCapacityBytes + lifecycleObjectProjectionBytes
 
-	// Fixed-reserve upper bound on all non-object state that can coexist:
+	// Fixed-reserve upper bound on all non-object state that can coexist. The
+	// captured-string allowance includes the projector's maximum encoded body,
+	// encoding/json's unquote buffer, and the decoded body that exists before
+	// the 1 KiB post-decode check can refuse it. Nine prior metadata bodies can
+	// still be live at that point: root id/jsonrpc, error code/message, thread
+	// id, latest-turn id/status/startedAt, and status.type.
 	//
-	//   input buffers (bufio + websocket chunk)       8,192 B
-	//   encoded + decoded scalar under construction   7,170 B
-	//   64 flag bodies + slice header/capacity        66,584 B
-	//   six captured metadata scalar bodies            6,144 B
-	//   final body-free summary                         2,048 B
-	//   remaining projector/header/control state        8,166 B
-	//                                                  --------
-	//                                                   98,304 B
-	lifecycleRetainedInputReserveBytes    = 2 * lifecycleChunkBytes
-	lifecycleRetainedScalarReserveBytes   = lifecycleScalarBytes*7 + 2
+	//   input buffers (bufio + websocket chunk)        8,192 B
+	//   captured string before validation              18,441 B
+	//   64 flag bodies + slice header/capacity         66,584 B
+	//   nine captured metadata scalar bodies            9,216 B
+	//   projector/header/frame/control management       4,096 B
+	//   final body-free summary (later, non-overlap)     2,048 B
+	//   residual                                         2,015 B
+	//                                                   ---------
+	//                                                   110,592 B
+	//
+	// The summary is created only after the root object and all nested state have
+	// unwound, but reserving it throughout keeps admission conservative. The
+	// management allowance covers scalar/container headers and the bounded
+	// parser, transport, control-frame, channel, and cancellation state. Runtime
+	// allocation-class slack, cumulative allocations, goroutine stack capacity,
+	// whole-heap peaks, and RSS remain different measurements.
+	lifecycleRetainedInputReserveBytes  = 2 * lifecycleChunkBytes
+	lifecycleRetainedEncodedStringBytes = lifecycleScalarBytes*6 + 2
+	// encoding/json strips the quotes, then allocates the encoded interior plus
+	// two maximum-width UTF-8 runes while unquoting. A single two-byte escape is
+	// the shortest input that takes this path, leaving at most 6,143 decoded
+	// bytes alive until the post-decode limit check.
+	lifecycleRetainedUnquoteBytes         = lifecycleScalarBytes*6 + 2*utf8.UTFMax
+	lifecycleRetainedDecodedStringBytes   = lifecycleScalarBytes*6 - 1
+	lifecycleRetainedScalarReserveBytes   = lifecycleRetainedEncodedStringBytes + lifecycleRetainedUnquoteBytes + lifecycleRetainedDecodedStringBytes
 	lifecycleRetainedFlagsReserveBytes    = lifecycleObjectFields*(lifecycleScalarBytes+lifecycleStringHeaderBytes) + lifecycleStringSliceHeaderBytes
-	lifecycleRetainedMetadataReserveBytes = 6 * lifecycleScalarBytes
+	lifecycleRetainedMetadataReserveBytes = 9 * lifecycleScalarBytes
+	lifecycleRetainedManagementBytes      = 4 << 10
 	lifecycleRetainedSummaryReserveBytes  = lifecycleSummaryBytes
 	lifecycleRetainedResidualReserveBytes = lifecycleRetainedReserve - lifecycleRetainedInputReserveBytes -
 		lifecycleRetainedScalarReserveBytes - lifecycleRetainedFlagsReserveBytes -
-		lifecycleRetainedMetadataReserveBytes - lifecycleRetainedSummaryReserveBytes
+		lifecycleRetainedMetadataReserveBytes - lifecycleRetainedManagementBytes -
+		lifecycleRetainedSummaryReserveBytes
 	// lifecycleRetainedReserve conservatively accounts for the bounded input,
-	// one encoded/decoded scalar under construction, all captured flag payloads
-	// and their slice, the final summary, and residual projector state. Each
-	// live object's duplicate-key slice (header and full backing capacity),
-	// fixed projection slots, and decoded key bodies are admitted separately.
+	// the worst escaped-string working state before validation, nine captured
+	// metadata bodies, all flag payloads and their slice, management state, the
+	// later non-overlapping summary, and residual projector state. Each live
+	// object's duplicate-key slice (header and full backing capacity), fixed
+	// projection slots, and decoded key bodies are admitted separately.
 	// unsafe.Sizeof follows the 64-bit ABI of every supported linux/darwin
 	// amd64/arm64 target; allocator span slack, total allocations over the scan,
 	// goroutine stack capacity, heap peaks, and RSS are distinct from retained
 	// projector state and are not claims made by this cap.
-	lifecycleRetainedReserve = 96 << 10
+	lifecycleRetainedReserve = 108 << 10
 )
 
 // LifecycleEndpoint is one owned, initialized transport whose only provider
