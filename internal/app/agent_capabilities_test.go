@@ -105,11 +105,38 @@ func TestAgentCapabilitiesExactProjectionSeparatesRuntimeEpochAndAvailability(t 
 	for _, entry := range projection.Capabilities {
 		entries[entry.Action] = entry
 	}
-	if entries["turn.start"].Available == nil || !*entries["turn.start"].Available || entries["message.send"].Available == nil || *entries["message.send"].Available {
-		t.Fatalf("native/future availability = start:%#v send:%#v", entries["turn.start"], entries["message.send"])
+	if entries["turn.start"].Available == nil || !*entries["turn.start"].Available || entries["message.send"].Available == nil || !*entries["message.send"].Available {
+		t.Fatalf("native/coordination availability = start:%#v send:%#v", entries["turn.start"], entries["message.send"])
 	}
 	if entries["turn.start"].Evidence != "registry" || entries["message.send"].Evidence != "registry" {
 		t.Fatalf("per-action evidence = start:%#v send:%#v", entries["turn.start"], entries["message.send"])
+	}
+}
+
+func TestAgentCapabilitiesClaudeMessageCellsReflectMissingRegistrationLease(t *testing.T) {
+	h := newSessionRefHarness(t, aiModeClaude)
+	active := insideTmux(h.paneUID, "")
+	cmd := &agentCommand{activeTarget: active.lookup, loadRegistry: func() (coremetadata.Registry, error) {
+		return h.registry.Clone(), nil
+	}}
+	var stdout, stderr bytes.Buffer
+	if err := cmd.Run([]string{"capabilities", "uid:" + h.agentUID, "-o", "json"}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	var projection agentCapabilityProjection
+	if err := json.Unmarshal(stdout.Bytes(), &projection); err != nil {
+		t.Fatal(err)
+	}
+	if projection.Runtime == nil || projection.Runtime.Coordination == nil || projection.Runtime.Coordination.Eligible {
+		t.Fatalf("coordination eligibility = %#v", projection.Runtime)
+	}
+	for _, entry := range projection.Capabilities {
+		if entry.Action != "message.send" && entry.Action != "message.status" {
+			continue
+		}
+		if entry.Available == nil || *entry.Available || entry.Reason != projection.Runtime.Coordination.Reason {
+			t.Fatalf("%s did not reflect lease failure: %#v coordination=%#v", entry.Action, entry, projection.Runtime.Coordination)
+		}
 	}
 }
 

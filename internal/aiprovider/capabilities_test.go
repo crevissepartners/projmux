@@ -53,17 +53,22 @@ func TestAgentCapabilityCatalogIsClosedCartesianMatrix(t *testing.T) {
 func TestAgentCapabilityCatalogPinsCurrentGroupsAndDeferredVocabulary(t *testing.T) {
 	t.Parallel()
 
-	wantGroups := []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage", "app-server"}
+	wantGroups := []string{"status", "topic", "resume", "turn", "approval", "review", "integrate", "usage", "app-server", "message", "wait"}
 	if got := AgentGroups(); !reflect.DeepEqual(got, wantGroups) {
 		t.Fatalf("groups = %v, want %v", got, wantGroups)
 	}
 	for _, id := range []string{"message.send", "message.wait", "message.status", "wait.idle"} {
 		for _, provider := range AgentProviders() {
-			action, cell, ok := LookupAgentCapability(id, provider)
-			if !ok || action.Callable || action.Route != "" || cell.Mode != SupportUnsupported || cell.CompletionPrecision != CompletionNone {
-				t.Errorf("%s/%s = action %#v cell %#v", id, provider, action, cell)
+			action, _, ok := LookupAgentCapability(id, provider)
+			if !ok || !action.Callable || action.Route == "" {
+				t.Errorf("%s/%s = action %#v", id, provider, action)
 			}
 		}
+	}
+	_, antigravitySend, _ := LookupAgentCapability("message.send", Antigravity)
+	_, claudeWait, _ := LookupAgentCapability("message.wait", Claude)
+	if antigravitySend.Mode != SupportUnsupported || claudeWait.Mode != SupportUnsupported {
+		t.Fatalf("unsupported coordination directions changed: antigravity send=%#v claude wait=%#v", antigravitySend, claudeWait)
 	}
 }
 

@@ -41,9 +41,9 @@ func TestAgentCapabilityCatalogRoutesMatchExecutableHelpGraph(t *testing.T) {
 			t.Errorf("provider-specific public agent namespace %q exists", provider)
 		}
 	}
-	for _, future := range []string{"message", "wait"} {
-		if slices.ContainsFunc(agent.Children, func(child Route) bool { return child.Name == future }) {
-			t.Errorf("future placeholder agent %s is callable", future)
+	for _, group := range []string{"message", "wait"} {
+		if !slices.ContainsFunc(agent.Children, func(child Route) bool { return child.Name == group }) {
+			t.Errorf("coordination agent %s is absent", group)
 		}
 	}
 }

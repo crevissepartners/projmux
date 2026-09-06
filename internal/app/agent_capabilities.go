@@ -112,6 +112,14 @@ func (c *agentCommand) runCapabilities(args []string, stdout, stderr io.Writer) 
 		projection = projectExactAgentCapabilities(registry, agent, metadata.ID)
 		if metadata.ID == aiprovider.Claude {
 			projection.Runtime.Coordination = projectClaudeCoordinationEligibility(registry, agent)
+			for i := range projection.Capabilities {
+				if projection.Capabilities[i].Action != "message.send" && projection.Capabilities[i].Action != "message.status" {
+					continue
+				}
+				projection.Capabilities[i].Available = &projection.Runtime.Coordination.Eligible
+				projection.Capabilities[i].Evidence = projection.Runtime.Coordination.Evidence
+				projection.Capabilities[i].Reason = projection.Runtime.Coordination.Reason
+			}
 		}
 	}
 	return writeAgentCapabilityProjection(stdout, projection, jsonOutput)
@@ -130,7 +138,7 @@ func projectClaudeCoordinationEligibility(registry coremetadata.Registry, agent 
 		return projection
 	}
 	projection.Eligible = true
-	projection.Reason = "exact local registration lease is ready; message delivery is unavailable"
+	projection.Reason = "exact local registration lease is ready for coordination delivery"
 	return projection
 }
 
@@ -216,6 +224,14 @@ func exactAgentActionEligibility(registry coremetadata.Registry, agent coremetad
 		if reason := exactCodexReviewRegistryReason(registry, agent); reason != "" {
 			return false, reason
 		}
+	case "message.send", "message.wait", "message.status":
+		if _, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID); reason != "" {
+			return false, reason
+		}
+	case "wait.idle":
+		if reason := exactAgentActivationReason(registry, agent); reason != "" {
+			return false, reason
+		}
 	default:
 		if mode == aiprovider.SupportNativeExact {
 			if reason := exactCodexControlRegistryReason(registry, agent); reason != "" {
@@ -224,6 +240,19 @@ func exactAgentActionEligibility(registry coremetadata.Registry, agent coremetad
 		}
 	}
 	return true, "eligible from current Registry evidence"
+}
+
+func exactAgentActivationReason(registry coremetadata.Registry, agent coremetadata.Agent) string {
+	if agent.Status.Phase != coremetadata.PhaseRunning || agent.Status.PaneRef == "" {
+		return "requires a Running Agent with a current managed Pane"
+	}
+	pane, ok := registry.Pane(agent.Status.PaneRef)
+	if !ok || pane.Spec.Role != coremetadata.PaneRoleAgent || pane.Metadata.OwnerRef == nil ||
+		pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent || pane.Metadata.OwnerRef.UID != agent.Metadata.UID ||
+		pane.Status.Activation.AgentUID != agent.Metadata.UID || pane.Status.Activation.Generation == "" || pane.Status.Activation.RuntimeID == "" {
+		return "managed Agent activation identity is incomplete"
+	}
+	return ""
 }
 
 func slicesContainsAgentPhase(phases []coremetadata.AgentPhase, phase coremetadata.AgentPhase) bool {

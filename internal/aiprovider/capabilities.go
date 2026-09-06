@@ -16,6 +16,7 @@ const (
 	SupportNativeExact     AgentSupportMode = "native-exact-control"
 	SupportProviderHook    AgentSupportMode = "provider-hook"
 	SupportReadOnlyAdapter AgentSupportMode = "read-only-adapter"
+	SupportCoordination    AgentSupportMode = "coordination-broker"
 	SupportUnsupported     AgentSupportMode = "unsupported"
 )
 
@@ -36,6 +37,10 @@ const (
 	CompletionPlanPreview       CompletionPrecision = "plan-preview"
 	CompletionLocalConfigCommit CompletionPrecision = "local-config-commit"
 	CompletionProviderSnapshot  CompletionPrecision = "provider-snapshot"
+	CompletionBrokerAccepted    CompletionPrecision = "broker-accepted"
+	CompletionTargetClaim       CompletionPrecision = "target-self-claim"
+	CompletionDeliveryReceipt   CompletionPrecision = "delivery-receipt"
+	CompletionInteractionIdle   CompletionPrecision = "interaction-idle"
 )
 
 // AgentCapabilityCell is one and only one provider cell for an action.
@@ -79,10 +84,23 @@ func codexOnly(precision CompletionPrecision) []AgentCapabilityCell {
 	return out
 }
 
+func coordination(precision CompletionPrecision, providers ...ID) []AgentCapabilityCell {
+	out := make([]AgentCapabilityCell, 0, len(providerOrder))
+	for _, provider := range AgentProviders() {
+		cell := AgentCapabilityCell{Provider: provider, Mode: SupportUnsupported, CompletionPrecision: CompletionNone}
+		if slices.Contains(providers, provider) {
+			cell.Mode = SupportCoordination
+			cell.CompletionPrecision = precision
+		}
+		out = append(out, cell)
+	}
+	return out
+}
+
 // agentActions is the authoritative action x provider matrix. The first nine
 // groups are the current public `projmux agent` groups. message and wait are
-// reserved provider-neutral vocabulary only; Phase 0 intentionally gives them
-// no route and no parser surface.
+// provider-neutral coordination actions; unsupported provider directions stay
+// explicit cells rather than falling through to another transport.
 var agentActions = []AgentAction{
 	{ID: "status.get", Group: "status", Route: "agent status", Callable: true, Cells: cells(SupportGenericRegistry, CompletionRegistryRead)},
 	{ID: "status.set", Group: "status", Route: "agent status", Callable: true, Cells: cells(SupportGenericRegistry, CompletionRegistryCommit)},
@@ -107,10 +125,10 @@ var agentActions = []AgentAction{
 	{ID: "app-server.handover.apply", Group: "app-server", Route: "agent app-server handover apply", Callable: true, Cells: codexOnly(CompletionExactOperation)},
 	{ID: "app-server.handover.resume", Group: "app-server", Route: "agent app-server handover resume", Callable: true, Cells: codexOnly(CompletionExactOperation)},
 	{ID: "app-server.handover.abort", Group: "app-server", Route: "agent app-server handover abort", Callable: true, Cells: codexOnly(CompletionExactOperation)},
-	{ID: "message.send", Group: "message", Callable: false, Cells: cells(SupportUnsupported, CompletionNone)},
-	{ID: "message.wait", Group: "message", Callable: false, Cells: cells(SupportUnsupported, CompletionNone)},
-	{ID: "message.status", Group: "message", Callable: false, Cells: cells(SupportUnsupported, CompletionNone)},
-	{ID: "wait.idle", Group: "wait", Callable: false, Cells: cells(SupportUnsupported, CompletionNone)},
+	{ID: "message.send", Group: "message", Route: "agent message send", Callable: true, Cells: coordination(CompletionBrokerAccepted, Codex, Claude)},
+	{ID: "message.wait", Group: "message", Route: "agent message wait", Callable: true, Cells: coordination(CompletionTargetClaim, Codex)},
+	{ID: "message.status", Group: "message", Route: "agent message status", Callable: true, Cells: coordination(CompletionDeliveryReceipt, Codex, Claude)},
+	{ID: "wait.idle", Group: "wait", Route: "agent wait", Callable: true, Cells: cells(SupportGenericRegistry, CompletionInteractionIdle)},
 }
 
 // IntegrationTarget is a target accepted by `agent integrate`. tmux-bell is a
