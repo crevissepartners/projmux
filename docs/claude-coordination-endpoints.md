@@ -242,3 +242,13 @@ reply marker, and empty provider/collector stderr through owned cleanup.
 Public model IDs and usage labels are bounded strings, including provider aliases
 and context suffixes. They are discarded without imposing identifier syntax or
 using pricing metadata as a permission or correlation source.
+
+Failed live-canary cleanup captures exact Linux process births before unregister
+and tmux teardown, including pane supervisors, their descendants, and the
+detached registration helper. Supervisors write termination/operation receipts
+after their provider exits. Both success and failure cleanup wait for captured
+pidfds to report exit before removing the owned root. An unproven or stubborn
+writer leaves the root for diagnosis and fails cleanup; no quiet-file interval
+or process-name kill substitutes for exit proof. The owned credential copy is
+removed even when cleanup cannot complete. The actual reply-origin qualification
+blocker is unchanged by this cleanup guarantee.

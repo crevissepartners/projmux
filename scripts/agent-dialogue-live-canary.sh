@@ -482,43 +482,204 @@ wait_pid=""
 claim_identity_path="$root/evidence/claim-wait-process.json"
 cleanup_owned() {
   [[ "$cleanup_done" == 0 ]] || return 0
+  local claim_pid=""
+  if [[ -n "$wait_pid" ]] && jobs -p | grep -Fxq "$wait_pid"; then claim_pid="$wait_pid"; fi
+  # Capture every owned writer before teardown, including pane supervisors
+  # which append termination/operation receipts after their provider exits.
+  python3 - "$root" "$binary" "$registry" "$socket_path" "$socket_identity" "$project_uid" "$socket_name" "$claim_pid" <<'WRITERS_PY' || return 1
+import json,os,pathlib,selectors,signal,stat,subprocess,sys,time
+
+class OwnedWriterBarrier:
+    """Wait for exact captured Linux births; never signal a discovered process."""
+    def __init__(self,root):
+        if not hasattr(os,"pidfd_open"):
+            raise RuntimeError("owned writer exit proof requires Linux pidfd")
+        self.root=str(root); self.writers={}; self.excluded={os.getpid()}
+        parent=os.getppid()
+        while parent>1 and parent not in self.excluded:
+            self.excluded.add(parent)
+            item=self.observe(parent)
+            if item is None: break
+            parent=item[1]
+
+    @staticmethod
+    def observe(pid):
+        try:
+            path=pathlib.Path("/proc",str(pid)); info=path.stat()
+            if info.st_uid!=os.getuid(): return None
+            raw=(path/"stat").read_text(); end=raw.rfind(")"); fields=raw[end+1:].split()
+            if end<0 or len(fields)<20 or fields[0] in ("Z","X"): return None
+            boot=pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+            return {"pid":pid,"ownerUID":info.st_uid,"start":"linux:"+boot+":"+fields[19]},int(fields[1])
+        except (FileNotFoundError,ProcessLookupError,PermissionError):
+            return None
+
+    def track(self,identity):
+        pid=identity["pid"]
+        if pid<=1 or pid in self.excluded: return
+        if pid in self.writers:
+            if self.writers[pid][0]!=identity:
+                raise RuntimeError("owned writer PID replaced; root retained")
+            return
+        current=self.observe(pid)
+        if current is None or current[0]!=identity: return
+        try: fd=os.pidfd_open(pid,0)
+        except ProcessLookupError: return
+        current=self.observe(pid)
+        if current is None or current[0]!=identity:
+            os.close(fd); return
+        self.writers[pid]=(identity,fd)
+
+    def capture(self,seeds=()):
+        for identity in seeds: self.track(identity)
+        snapshot={}
+        for path in pathlib.Path("/proc").iterdir():
+            if not path.name.isdigit(): continue
+            pid=int(path.name)
+            if pid in self.excluded: continue
+            observed=self.observe(pid)
+            if observed is None: continue
+            snapshot[pid]=observed
+            try: args=(path/"cmdline").read_bytes().split(b"\0")
+            except (FileNotFoundError,ProcessLookupError,PermissionError): continue
+            # Exact path arguments, including --registry=<path>, rather than
+            # substring process names. Values are never retained or printed.
+            for raw in args:
+                value=os.fsdecode(raw)
+                if "=" in value: value=value.split("=",1)[1]
+                if value==self.root or value.startswith(self.root+os.sep):
+                    self.track(observed[0]); break
+        # Retain births even when a captured supervisor later reparents. Its
+        # already-running descendants are part of the same owned teardown.
+        changed=True
+        while changed:
+            changed=False
+            for pid,(identity,parent) in snapshot.items():
+                if pid not in self.writers and parent in self.writers:
+                    self.track(identity); changed=pid in self.writers or changed
+
+    def wait(self,timeout,on_wait=lambda:None):
+        deadline=time.monotonic()+timeout
+        self.capture()
+        on_wait()
+        exited=set()
+        while True:
+            pending=[fd for _,fd in self.writers.values() if fd not in exited]
+            if not pending:
+                before=len(self.writers); self.capture()
+                if len(self.writers)==before: return
+                continue
+            remaining=deadline-time.monotonic()
+            if remaining<=0: raise RuntimeError("owned writer exit deadline; root retained")
+            with selectors.DefaultSelector() as poller:
+                for fd in pending: poller.register(fd,selectors.EVENT_READ)
+                ready=poller.select(remaining)
+                if not ready: raise RuntimeError("owned writer exit deadline; root retained")
+                exited.update(key.fd for key,_ in ready)
+            self.capture()
+
+    def close(self):
+        for _,fd in self.writers.values(): os.close(fd)
+
+
+def close_owned_writers(root,teardown,seeds=(),timeout=20,on_wait=lambda:None):
+    barrier=OwnedWriterBarrier(root)
+    try:
+        barrier.capture(seeds)  # Before delete intent or tmux teardown.
+        teardown(barrier)
+        barrier.wait(timeout,on_wait)
+        return {"version":1,"allCapturedWriterBirthsAbsent":True,
+                "writers":[identity for identity,_ in barrier.writers.values()]}
+    finally:
+        barrier.close()
+
+
+def main():
+    root=pathlib.Path(sys.argv[1]); binary,registry,socket_path,socket_identity,project_uid=sys.argv[2:7]
+    def socket_state():
+        path=pathlib.Path(socket_path)
+        try: info=path.lstat()
+        except FileNotFoundError: return "absent"
+        return f"{info.st_dev}:{info.st_ino}" if stat.S_ISSOCK(info.st_mode) and not path.is_symlink() else "invalid"
+    clean_env=["env","-u","TMUX","-u","TMUX_PANE"]
+    def control(args):
+        return subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=10,check=False)
+    seeds=[]
+    current_socket=socket_state()
+    if current_socket not in (socket_identity,"absent"):
+        raise RuntimeError("owned tmux socket replaced; root retained")
+    if current_socket==socket_identity:
+        server=control(clean_env+["tmux","-S",socket_path,"display-message","-p","#{pid}"])
+        panes=control(clean_env+["tmux","-S",socket_path,"list-panes","-a","-F","#{pane_pid}"])
+        if server.returncode or panes.returncode:
+            raise RuntimeError("owned tmux writer snapshot unavailable; root retained")
+        for value in (server.stdout+panes.stdout).splitlines():
+            if not value.isdigit(): raise RuntimeError("invalid owned pane process")
+            observed=OwnedWriterBarrier.observe(int(value))
+            if observed is not None: seeds.append(observed[0])
+    # The registration helper is detached from its SessionStart parent. Its
+    # exact birth is captured before unregister removes this Registry record.
+    metadata=json.loads(pathlib.Path(registry).read_text())
+    for pane in metadata.get("panes",[]):
+        activation=pane.get("status",{}).get("activation") or {}
+        authority=((activation.get("claude") or {}).get("registration") or {}).get("authority") or {}
+        identity=authority.get("leaseProcess")
+        if not isinstance(identity,dict): continue
+        observed=OwnedWriterBarrier.observe(identity.get("pid",0))
+        if observed is None or observed[0]!=identity: continue
+        proc=pathlib.Path("/proc",str(identity["pid"]))
+        if (proc/"exe").resolve()!=pathlib.Path(binary).resolve():
+            raise RuntimeError("registered helper binary changed; root retained")
+        if (proc/"cmdline").read_bytes().split(b"\0")[1:3]!=[b"internal",b"claude-endpoint-helper"]:
+            raise RuntimeError("registered helper route changed; root retained")
+        seeds.append(identity)
+    claim=None
+    if sys.argv[8]:
+        pid=int(sys.argv[8]); observed=OwnedWriterBarrier.observe(pid)
+        if observed is not None:
+            if observed[1]!=os.getppid() or pathlib.Path("/proc",str(pid),"exe").resolve()!=pathlib.Path(binary).resolve():
+                raise RuntimeError("claim waiter ownership changed; root retained")
+            claim=observed[0]; seeds.append(claim)
+    def teardown(barrier):
+        if claim is not None:
+            tracked=barrier.writers.get(claim["pid"])
+            if tracked is not None and tracked[0]==claim:
+                try: signal.pidfd_send_signal(tracked[1],signal.SIGTERM)
+                except ProcessLookupError: pass
+        env=clean_env+["HOME="+str(root/"home"),"CODEX_HOME="+str(root/"codex-home"),
+            "PATH="+str(root/"bin")+":"+os.environ.get("PATH",""),
+            "XDG_CONFIG_HOME="+str(root/"xdg-config"),"XDG_STATE_HOME="+str(root/"xdg-state"),
+            "XDG_RUNTIME_DIR="+str(root/"xdg-runtime"),"XDG_CACHE_HOME="+str(root/"xdg-cache"),
+            "TMUX_TMPDIR="+str(root/"tmux"),"PROJMUX_MANAGED_ROOTS="+str(root)]
+        control(env+[binary,"delete","project","uid:"+project_uid,"--socket",sys.argv[7],"--yes"])
+        current=socket_state()
+        if current==socket_identity:
+            control(clean_env+["tmux","-S",socket_path,"kill-server"])
+        elif current!="absent":
+            raise RuntimeError("owned tmux socket replaced; root retained")
+    try:
+        proof=close_owned_writers(root,teardown,seeds)
+        (root/"evidence/cleanup-writers.json").write_text(json.dumps(proof,sort_keys=True)+"\n")
+    finally:
+        (root/"home/.claude/.credentials.json").unlink(missing_ok=True)
+
+if __name__=="__main__":
+    try: main()
+    except Exception:
+        # Never print argv, environment, or raw exception values.
+        print("owned writer cleanup failed; root retained",file=sys.stderr)
+        raise SystemExit(1)
+WRITERS_PY
+  if [[ -n "$wait_pid" ]]; then wait "$wait_pid" 2>/dev/null || true; fi
   cleanup_done=1
-  if [[ -n "$wait_pid" ]]; then
-    if [[ -f "$claim_identity_path" ]]; then
-      python3 - "$claim_identity_path" <<'PY'
-import json,os,pathlib,signal,sys
-identity=json.load(open(sys.argv[1])); pid=identity["pid"]
-try:
-    proc=pathlib.Path("/proc",str(pid)); raw=(proc/"stat").read_text(); end=raw.rfind(")"); fields=raw[end+1:].split()
-    boot=pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-    actual={"pid":pid,"ownerUID":(proc/"stat").stat().st_uid,"start":"linux:"+boot+":"+fields[19]}
-    if end>0 and len(fields)>=20 and fields[0] not in ("Z","X") and actual==identity:
-        os.kill(pid,signal.SIGTERM)
-except (FileNotFoundError,ProcessLookupError): pass
-PY
-    elif jobs -pr | grep -Fxq "$wait_pid"; then
-      kill "$wait_pid" 2>/dev/null || true
-    fi
-    wait "$wait_pid" 2>/dev/null || true
-  fi
-  if [[ "$binary" == /* && -x "$binary" && "$project_uid" =~ ^[A-Za-z0-9._:-]{1,160}$ ]]; then
-    "${canary_env[@]}" "$binary" delete project "uid:$project_uid" --socket "$socket_name" --yes >/dev/null 2>&1 || true
-  fi
-  current_socket_identity="$(python3 - "$socket_path" <<'PY'
-import pathlib,platform,stat,sys
-path=pathlib.Path(sys.argv[1])
-try: info=path.lstat()
-except FileNotFoundError: print("absent")
-else: print(f"{info.st_dev}:{info.st_ino}" if stat.S_ISSOCK(info.st_mode) and not path.is_symlink() else "invalid")
-PY
-)"
-  if [[ "$current_socket_identity" == "$socket_identity" ]]; then
-    tmux -S "$socket_path" kill-server >/dev/null 2>&1 || true
-  fi
-  rm -f -- "$root/home/.claude/.credentials.json"
 }
 finish_cleanup() {
-  cleanup_owned
+  local status=$?
+  if ! cleanup_owned; then
+    rm -f -- "$root/home/.claude/.credentials.json"
+    echo "canary cleanup could not prove owned writer exit; root retained" >&2
+    return 1
+  fi
   current_root_identity="$(python3 - "$root" "$root/cleanup-plan.json" "$root/.projmux-dialogue-canary-owned" <<'PY'
 import json,pathlib,stat,sys
 root=pathlib.Path(sys.argv[1])
@@ -530,7 +691,12 @@ else:
     print(f"{info.st_dev}:{info.st_ino}" if valid else "invalid")
 PY
 )"
-  if [[ "$current_root_identity" == "$root_identity" ]]; then rm -rf -- "$root"; fi
+  if [[ "$current_root_identity" != "$root_identity" ]]; then
+    echo "canary cleanup root identity changed; root retained" >&2
+    return 1
+  fi
+  rm -rf -- "$root"
+  return "$status"
 }
 trap finish_cleanup EXIT
 
@@ -938,14 +1104,6 @@ def current(identity):
         return False
 
 identities=(provider,helper,tmux_process,claim)
-deadline=time.monotonic()+10
-while any(current(identity) for identity in identities) and time.monotonic()<deadline:
-    time.sleep(.05)
-for identity in identities:
-    if current(identity): os.kill(identity["pid"],signal.SIGTERM)
-deadline=time.monotonic()+10
-while any(current(identity) for identity in identities) and time.monotonic()<deadline:
-    time.sleep(.05)
 assert not any(current(identity) for identity in identities), "exact owned provider/helper process survived cleanup"
 
 digest=hashlib.sha256((registry+"\0"+spec["receiver"]["paneUID"]+"\0"+spec["receiver"]["generation"]).encode()).hexdigest()[:32]
@@ -966,17 +1124,6 @@ pathlib.Path(sys.argv[5]).write_text(json.dumps({"version":1,"exactProviderBirth
   "exactHelperBirthAbsent":True,"exactTmuxBirthAbsent":True,"activationLeaseDirAbsent":True,
   "exactClaimBirthAbsent":True,"credentialEnvPresent":False},sort_keys=True)+"\n")
 PY
-for _ in $(seq 1 200); do
-  # shellcheck disable=SC2009 # Match the literal owned root, not a regex.
-  if ! ps -eo args= | grep -F "$root" | grep -v grep >/dev/null &&
-    ! find "$root" -type s -print -quit | grep -q .; then break; fi
-  sleep 0.1
-done
-# shellcheck disable=SC2009 # Match the literal owned root, not a regex.
-if ps -eo args= | grep -F "$root" | grep -v grep >/dev/null; then
-  echo "owned process residue remains after cleanup" >&2
-  exit 1
-fi
 if find "$root" -type s -print -quit | grep -q .; then
   echo "owned tmux/helper socket residue remains after cleanup" >&2
   exit 1

@@ -1805,3 +1805,9 @@ separate decision this measurement exists to inform.
   binding alive for the round trip; Registry-only synthetic authority is refused.
   The offline endpoint records and rejects every provider request/answer.
   First-failure diagnostics accept L20 and keep its replay attribution.
+
+- `test/agent_dialogue_canary_test.py` also exercises Linux-only failed-canary
+  cleanup with explicit delayed-writer barriers: the actual EXIT trap retains
+  its root until the captured writer exits, preserves the original failure,
+  tracks reparented descendants, and refuses stubborn or replaced births.
+  These regressions use no live provider and skip when Linux pidfd is absent.
