@@ -39,7 +39,7 @@ Root parser bridges outside the route graph are censused from their parser token
 
 Every route declares one allowed-effect record over seven independent resource axes. A pipe separates conditional success outcomes; preflight refusal remains zero-effect. `domain-effect=null` means the route has no typed extension beyond this resource tuple.
 
-The machine-readable manifest contains 189 route-effect records, including hidden plumbing that the public route sections omit.
+The machine-readable manifest contains 190 route-effect records, including hidden plumbing that the public route sections omit.
 
 | Axis | Closed vocabulary |
 | --- | --- |
@@ -132,6 +132,7 @@ projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>]
 projmux agent message send <agent-ref> [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
 projmux agent message wait [<self-agent-ref>] [--timeout <duration>] [-o json]
 projmux agent message status <message-ref> [-o json]
+projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json
 projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]
 ```
 
@@ -152,7 +153,7 @@ Subcommands:
 | [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages through exact Agent activations |
 | [`projmux agent wait`](#projmux-agent-wait) | Wait read-only for one exact Agent's Registry-backed idle observation |
 
-Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`, `projmux agent app-server handover plan`, `projmux agent app-server handover apply`, `projmux agent app-server handover resume`, `projmux agent app-server handover abort`, `projmux agent capabilities`, `projmux agent message send`, `projmux agent message wait`, `projmux agent message status`, `projmux agent wait`
+Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`, `projmux agent app-server handover plan`, `projmux agent app-server handover apply`, `projmux agent app-server handover resume`, `projmux agent app-server handover abort`, `projmux agent capabilities`, `projmux agent message send`, `projmux agent message wait`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`
 
 ### `projmux agent status`
 
@@ -732,6 +733,7 @@ Allowed effects:
 projmux agent message send <agent-ref> [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
 projmux agent message wait [<self-agent-ref>] [--timeout <duration>] [-o json]
 projmux agent message status <message-ref> [-o json]
+projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json
 ```
 
 Subcommands:
@@ -741,8 +743,9 @@ Subcommands:
 | [`projmux agent message send`](#projmux-agent-message-send) | Submit a bounded coordination message from the current exact Agent |
 | [`projmux agent message wait`](#projmux-agent-message-wait) | Claim the oldest compatible message for the current exact Codex Agent |
 | [`projmux agent message status`](#projmux-agent-message-status) | Read a payload-free broker delivery receipt |
+| [`projmux agent message qualify`](#projmux-agent-message-qualify) | Explicitly qualify one exact Claude target using owned current-version isolation evidence and one marker push |
 
-Canonical spelling: `projmux agent message send`, `projmux agent message wait`, `projmux agent message status`
+Canonical spelling: `projmux agent message send`, `projmux agent message wait`, `projmux agent message status`, `projmux agent message qualify`
 
 #### `projmux agent message send`
 
@@ -807,6 +810,29 @@ Allowed effects:
 
 ```
 projmux agent message status <message-ref> [-o json]
+```
+
+Output modes (`-o`): `json`
+
+#### `projmux agent message qualify`
+
+Explicitly qualify one exact Claude target using owned current-version isolation evidence and one marker push
+
+Selectorless authority: `explicit-target` — the route or caller must name the exact target.
+
+Allowed effects:
+
+- `identity=unchanged`
+- `address=unchanged`
+- `topology=unchanged`
+- `desired-state=unchanged`
+- `runtime=unchanged`
+- `focus=unchanged`
+- `cardinality=exact-one`
+- `domain-effect=agent-delivery`
+
+```
+projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json
 ```
 
 Output modes (`-o`): `json`

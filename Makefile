@@ -123,6 +123,7 @@ release-contract:
 
 ci-contract:
 	python3 -m unittest discover -s test -p 'ci_workflow_contract_test.py'
+	python3 -m unittest discover -s test -p 'agent_dialogue_canary_test.py'
 
 test-integration:
 	scripts/test-integration-docker.sh

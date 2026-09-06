@@ -37,6 +37,7 @@ type agentCapabilityRuntime struct {
 	PaneUID              string                       `json:"paneUID,omitempty"`
 	PaneRuntimeID        string                       `json:"paneRuntimeID,omitempty"`
 	ActivationGeneration string                       `json:"activationGeneration,omitempty"`
+	RouteIncarnation     string                       `json:"routeIncarnation,omitempty"`
 	StateDomainID        string                       `json:"stateDomainID,omitempty"`
 	EndpointGenerationID string                       `json:"endpointGenerationID,omitempty"`
 	BrokerRuntimeID      string                       `json:"brokerRuntimeID,omitempty"`
@@ -49,6 +50,7 @@ type agentCapabilityCoordination struct {
 	Eligible bool   `json:"eligible"`
 	Evidence string `json:"evidence"`
 	Reason   string `json:"reason"`
+	Recovery string `json:"recovery,omitempty"`
 }
 
 type agentCapabilityProjectionEntry struct {
@@ -112,13 +114,23 @@ func (c *agentCommand) runCapabilities(args []string, stdout, stderr io.Writer) 
 		projection = projectExactAgentCapabilities(registry, agent, metadata.ID)
 		if metadata.ID == aiprovider.Claude {
 			projection.Runtime.Coordination = projectClaudeCoordinationEligibility(registry, agent)
+			sourceReady := false
+			if route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID); reason == "" {
+				if paths, pathErr := config.DefaultPathsFromEnv(); pathErr == nil {
+					sourceReady = probeClaudeRegistrationLease(intmetadata.PathFor(paths.StateDir), route)
+				}
+			}
 			for i := range projection.Capabilities {
 				if projection.Capabilities[i].Action != "message.send" && projection.Capabilities[i].Action != "message.status" {
 					continue
 				}
-				projection.Capabilities[i].Available = &projection.Runtime.Coordination.Eligible
-				projection.Capabilities[i].Evidence = projection.Runtime.Coordination.Evidence
-				projection.Capabilities[i].Reason = projection.Runtime.Coordination.Reason
+				projection.Capabilities[i].Available = &sourceReady
+				projection.Capabilities[i].Evidence = "local-registration-lease"
+				if sourceReady {
+					projection.Capabilities[i].Reason = "exact Claude source registration lease is ready"
+				} else {
+					projection.Capabilities[i].Reason = "exact Claude source registration lease is stale or unavailable"
+				}
 			}
 		}
 	}
@@ -127,18 +139,27 @@ func (c *agentCommand) runCapabilities(args []string, stdout, stderr io.Writer) 
 
 func projectClaudeCoordinationEligibility(registry coremetadata.Registry, agent coremetadata.Agent) *agentCapabilityCoordination {
 	projection := &agentCapabilityCoordination{Evidence: "local-registration-lease"}
+	recovery := "projmux agent integrate claude --dry-run; projmux agent integrate claude; let the existing Claude session exit normally, then projmux agent resume uid:" + agent.Metadata.UID + " (same Agent UID; no Agent recreation)"
 	route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID)
 	if reason != "" {
 		projection.Reason = reason
+		projection.Recovery = recovery
 		return projection
 	}
 	paths, err := config.DefaultPathsFromEnv()
 	if err != nil || !probeClaudeRegistrationLease(intmetadata.PathFor(paths.StateDir), route) {
 		projection.Reason = "Claude registration lease is stale or unavailable"
+		projection.Recovery = recovery
+		return projection
+	}
+	if !probeClaudeCoordinationEligibility(intmetadata.PathFor(paths.StateDir), route) {
+		projection.Reason = "Claude coordination is unqualified for the exact running provider version"
+		projection.Recovery = "run the owned isolation collector, then projmux agent message qualify uid:" + agent.Metadata.UID + " --evidence <private-json> --confirm-isolated-provider-push -o json; if public init is unavailable, let Claude exit normally and projmux agent resume uid:" + agent.Metadata.UID + " (same UID)"
 		return projection
 	}
 	projection.Eligible = true
-	projection.Reason = "exact local registration lease is ready for coordination delivery"
+	projection.Evidence = "helper-memory-exact-version-qualification"
+	projection.Reason = "exact local registration and current-version qualification are ready for coordination delivery"
 	return projection
 }
 
@@ -190,6 +211,9 @@ func projectAgentRuntimeEligibility(registry coremetadata.Registry, agent coreme
 	}
 	runtime.Ready = true
 	runtime.Reason = "current Registry activation is ready; mutating commands revalidate live provider authority"
+	if route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID); reason == "" {
+		runtime.RouteIncarnation = route.Incarnation()
+	}
 	if pane.Status.Activation.Codex != nil && pane.Status.Activation.Codex.Authority != nil {
 		authority := pane.Status.Activation.Codex.Authority
 		runtime.StateDomainID = authority.StateDomainID
@@ -316,7 +340,7 @@ func writeAgentCapabilityProjection(stdout io.Writer, projection agentCapability
 		return err
 	}
 	if coordination := projection.Runtime.Coordination; coordination != nil {
-		if _, err := fmt.Fprintf(stdout, "coordination eligible=%t evidence=%s reason=%s\n", coordination.Eligible, coordination.Evidence, coordination.Reason); err != nil {
+		if _, err := fmt.Fprintf(stdout, "coordination eligible=%t evidence=%s reason=%s recovery=%s\n", coordination.Eligible, coordination.Evidence, coordination.Reason, coordination.Recovery); err != nil {
 			return err
 		}
 	}

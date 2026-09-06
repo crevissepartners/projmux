@@ -10,25 +10,31 @@ import (
 	"io"
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 const (
-	claudeCoordinationVersion       = 1
-	claudeProviderFrameMaxBytes     = 8 << 10
-	claudeCoordinationHookTimeout   = 24 * time.Hour
-	claudeCoordinationWaitTimeout   = claudeCoordinationHookTimeout - 10*time.Second
-	claudeCoordinationReceiptWindow = 5 * time.Second
-	claudeCoordinationManagedMarker = "projmux-managed:claude-coordination:v1"
-	claudeCoordinationHookCommand   = "exec projmux internal claude-message-wait # " + claudeCoordinationManagedMarker
+	claudeCoordinationVersion            = 3
+	claudeProviderFrameMaxBytes          = 8 << 10
+	claudeCoordinationHookTimeout        = 5 * time.Second
+	priorClaudeCoordinationManagedMarker = "projmux-managed:claude-coordination:v1"
+	priorClaudeCoordinationV2Marker      = "projmux-managed:claude-coordination:v2"
+	claudeCoordinationManagedMarker      = "projmux-managed:claude-coordination:v3"
+	claudeCoordinationHookCommand        = "exec projmux internal claude-message-reply >/dev/null 2>&1 # " + claudeCoordinationManagedMarker
+	claudeCoordinationBoundaryCommand    = "exec projmux internal claude-message-boundary >/dev/null 2>&1 # " + claudeCoordinationManagedMarker
 )
 
 type claudeCoordinationTarget struct {
@@ -89,7 +95,8 @@ func (e claudeCoordinationEnvelope) valid(now time.Time, route coremetadata.Agen
 		if broker.Validate() != nil || e.Payload != "" || broker.MessageRef != e.MessageRef ||
 			!broker.Deadline.Equal(e.Deadline) || broker.Target.AgentUID != e.Target.AgentUID ||
 			broker.Target.PaneUID != e.Target.PaneUID || broker.Target.ActivationGeneration != e.Target.Generation ||
-			broker.Target.Provider != e.Target.Provider || broker.Authority != coremessage.PeerAuthority() {
+			broker.Target.Provider != e.Target.Provider || broker.Target.Incarnation != route.Incarnation() ||
+			broker.Authority != coremessage.PeerAuthority() {
 			return false
 		}
 	} else if e.Payload == "" {
@@ -97,266 +104,177 @@ func (e claudeCoordinationEnvelope) valid(now time.Time, route coremetadata.Agen
 	}
 	payload, err := json.Marshal(e)
 	return err == nil && len(payload)+1 <= claudeProviderFrameMaxBytes && e.Deadline.After(now) &&
-		!e.Deadline.After(now.Add(claudeCoordinationHookTimeout))
+		!e.Deadline.After(now.Add(coremessage.MaxTTL))
 }
 
 type claudeCoordinationRequest struct {
-	Version          int                         `json:"version"`
-	Operation        string                      `json:"operation"`
-	Target           claudeCoordinationTarget    `json:"target"`
-	HookEvent        string                      `json:"hookEvent,omitempty"`
-	SessionID        string                      `json:"sessionId,omitempty"`
-	WaitUntil        time.Time                   `json:"waitUntil,omitzero"`
-	Envelope         *claudeCoordinationEnvelope `json:"envelope,omitempty"`
-	MessageRef       string                      `json:"messageRef,omitempty"`
-	WaiterRef        string                      `json:"waiterRef,omitempty"`
-	FullFrameWritten bool                        `json:"fullFrameWritten,omitempty"`
+	Version          int                          `json:"version"`
+	Operation        string                       `json:"operation"`
+	Target           claudeCoordinationTarget     `json:"target"`
+	SessionID        string                       `json:"sessionId,omitempty"`
+	Envelope         *claudeCoordinationEnvelope  `json:"envelope,omitempty"`
+	MessageRef       string                       `json:"messageRef,omitempty"`
+	AssistantMessage string                       `json:"assistantMessage,omitempty"`
+	StopHookActive   bool                         `json:"stopHookActive,omitempty"`
+	Qualification    *claudeQualificationEvidence `json:"qualification,omitempty"`
+	QualificationRef string                       `json:"qualificationRef,omitempty"`
+	ExplicitOptIn    bool                         `json:"explicitOptIn,omitempty"`
 }
 
 type claudeCoordinationResponse struct {
-	Version   int                         `json:"version"`
-	Kind      string                      `json:"kind"`
-	WaiterRef string                      `json:"waiterRef,omitempty"`
-	Envelope  *claudeCoordinationEnvelope `json:"envelope,omitempty"`
-	Delivery  agentdelivery.Delivery      `json:"delivery,omitzero"`
-}
-
-type claudeCoordinationWaiter struct {
-	ref     string
-	process coremetadata.ProcessIdentity
-	result  chan claudeCoordinationResponse
+	Version          int                    `json:"version"`
+	Kind             string                 `json:"kind"`
+	Delivery         agentdelivery.Delivery `json:"delivery,omitzero"`
+	ReplyRef         string                 `json:"replyRef,omitempty"`
+	Reason           string                 `json:"reason,omitempty"`
+	QualificationRef string                 `json:"qualificationRef,omitempty"`
+	ProviderVersion  string                 `json:"providerVersion,omitempty"`
+	Ambiguous        bool                   `json:"ambiguous,omitempty"`
+	AutoResend       bool                   `json:"autoResend"`
 }
 
 type claudeCoordinationMessage struct {
 	envelope          claudeCoordinationEnvelope
 	delivery          agentdelivery.Delivery
-	assignedWaiterRef string
-	process           coremetadata.ProcessIdentity
+	boundary          uint64
+	dialogueReady     bool
+	dialogueAmbiguous bool
+	dialogueReason    string
+	replyReserved     bool
+	replyRef          string
 }
 
 type claudeCoordinationHub struct {
-	mu               sync.Mutex
-	now              func() time.Time
-	processCurrent   func(coremetadata.ProcessIdentity) bool
-	assignmentWindow time.Duration
-	receiptWindow    time.Duration
-	waiter           *claudeCoordinationWaiter
-	messages         map[string]*claudeCoordinationMessage
-	pending          []string
-	waiterReady      chan string
-	closed           bool
+	mu                     sync.Mutex
+	now                    func() time.Time
+	messages               map[string]*claudeCoordinationMessage
+	boundary               uint64
+	humanTurnOpen          bool
+	closed                 bool
+	qualification          *claudeQualificationState
+	qualifiedVersion       string
+	replyCorrelationReason string
+	boundaryAnnouncements  atomic.Uint64
+	replyBoundaryLost      atomic.Bool
 }
 
 func newClaudeCoordinationHub() *claudeCoordinationHub {
-	return &claudeCoordinationHub{now: time.Now, processCurrent: exactCoordinationProcessCurrent,
-		assignmentWindow: localipc.Deadline, receiptWindow: claudeCoordinationReceiptWindow,
-		messages: make(map[string]*claudeCoordinationMessage), waiterReady: make(chan string, 1)}
+	return &claudeCoordinationHub{now: time.Now, messages: make(map[string]*claudeCoordinationMessage)}
 }
 
-func exactCoordinationProcessCurrent(expected coremetadata.ProcessIdentity) bool {
-	actual, _, err := localipc.Process(expected.PID)
-	return err == nil && actual == expected
-}
-
-func (h *claudeCoordinationHub) submit(envelope claudeCoordinationEnvelope) agentdelivery.Delivery {
+// userPrompt closes every previously open safe boundary before Claude starts a
+// human-authored turn. It also makes all delivered-but-unreplied peer messages
+// ineligible for Stop correlation: the following assistant text could belong
+// to that user turn, and text matching is never authority.
+func (h *claudeCoordinationHub) userPromptAt(announced uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if existing := h.messages[envelope.MessageRef]; existing != nil {
-		return existing.delivery
+	h.boundary = max(h.boundary, announced)
+	h.humanTurnOpen = true
+	h.closeQualificationForUserPromptLocked()
+	for _, message := range h.messages {
+		if message.dialogueReady && message.replyRef == "" {
+			h.replyCorrelationReason = "concurrent-user-turn-ambiguous"
+			message.dialogueAmbiguous = true
+			message.dialogueReason = "concurrent-user-turn-ambiguous"
+		}
 	}
-	delivery, _ := agentdelivery.Reduce(agentdelivery.Delivery{}, agentdelivery.Event{Kind: agentdelivery.EventQueue, MessageRef: envelope.MessageRef})
-	message := &claudeCoordinationMessage{envelope: envelope, delivery: delivery}
-	h.messages[envelope.MessageRef] = message
-	if h.closed {
-		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventStale, MessageRef: envelope.MessageRef, Reason: "helper-stale"})
-		return message.delivery
-	}
-	if !envelope.Deadline.After(h.now()) {
-		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventExpire, MessageRef: envelope.MessageRef, Reason: "ttl"})
-		return message.delivery
-	}
-	h.scheduleTTL(envelope.MessageRef, envelope.Deadline)
-	if h.waiter == nil {
-		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventHold, MessageRef: envelope.MessageRef, Reason: "no-waiter"})
-		h.pending = append(h.pending, envelope.MessageRef)
-		return message.delivery
-	}
-	if h.retireDeadWaiterLocked() {
-		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventHold, MessageRef: envelope.MessageRef, Reason: "no-live-waiter"})
-		h.pending = append(h.pending, envelope.MessageRef)
-		return message.delivery
-	}
-	h.assignLocked(message, h.waiter)
-	return message.delivery
 }
 
-func (h *claudeCoordinationHub) arm(process coremetadata.ProcessIdentity) (*claudeCoordinationWaiter, *claudeCoordinationWaiter) {
+// reserveReply returns exactly one pending correlation. Zero, multiple,
+// already-replied, or user-turn-ambiguous candidates fail closed without using
+// assistant text as a selector.
+func (h *claudeCoordinationHub) reserveReply(stopHookActive bool) (*coremessage.Envelope, string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.closed {
-		return nil, nil
+	if h.replyBoundaryLost.Load() || h.boundaryAnnouncements.Load() != h.boundary {
+		h.replyCorrelationReason = "concurrent-user-turn-ambiguous"
 	}
-	waiter := &claudeCoordinationWaiter{ref: newCoordinationRef("waiter"), process: process, result: make(chan claudeCoordinationResponse, 1)}
-	superseded := h.waiter
-	h.waiter = waiter
-	if superseded != nil {
-		superseded.result <- claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "superseded", WaiterRef: superseded.ref}
+	if h.replyCorrelationReason != "" {
+		return nil, h.replyCorrelationReason
 	}
-	select {
-	case h.waiterReady <- waiter.ref:
-	default:
-	}
-	h.expirePendingLocked()
-	for len(h.pending) > 0 {
-		ref := h.pending[0]
-		h.pending = h.pending[1:]
-		message := h.messages[ref]
-		if message == nil || message.delivery.State.Terminal() || message.delivery.State == agentdelivery.StateHandoff {
+	now := h.now()
+	var candidates []*claudeCoordinationMessage
+	ambiguousReason := ""
+	for _, message := range h.messages {
+		if message.replyRef != "" || message.replyReserved || message.envelope.BrokerEnvelope == nil {
 			continue
 		}
-		h.assignLocked(message, waiter)
-		break
+		if !message.envelope.Deadline.After(now) {
+			message.dialogueReady = false
+			message.dialogueAmbiguous = true
+			message.dialogueReason = "reply-correlation-expired"
+			if message.delivery.State == agentdelivery.StateDelivered {
+				h.replyCorrelationReason = message.dialogueReason
+			}
+		}
+		if message.dialogueAmbiguous {
+			if ambiguousReason == "" {
+				ambiguousReason = message.dialogueReason
+				if ambiguousReason == "" {
+					ambiguousReason = "concurrent-user-turn-ambiguous"
+				}
+			}
+			continue
+		}
+		if !message.dialogueReady {
+			continue
+		}
+		candidates = append(candidates, message)
 	}
-	return waiter, superseded
+	if h.replyCorrelationReason != "" {
+		return nil, h.replyCorrelationReason
+	}
+	if len(candidates) > 1 {
+		h.replyCorrelationReason = "multiple-pending-correlations"
+		for _, message := range candidates {
+			message.dialogueAmbiguous = true
+			message.dialogueReason = "multiple-pending-correlations"
+		}
+		return nil, "multiple-pending-correlations"
+	}
+	if len(candidates) == 0 {
+		if ambiguousReason != "" {
+			return nil, ambiguousReason
+		}
+		return nil, "no-pending-correlation"
+	}
+	candidate := candidates[0]
+	// Push ingress is not a Stop asyncRewake. A recursive Stop cannot prove the
+	// current assistant text belongs to this pending coordination message.
+	if stopHookActive {
+		candidate.dialogueAmbiguous = true
+		candidate.dialogueReason = "stop-origin-mismatch"
+		h.replyCorrelationReason = candidate.dialogueReason
+		return nil, "stop-origin-mismatch"
+	}
+	candidate.replyReserved = true
+	envelope := *candidate.envelope.BrokerEnvelope
+	return &envelope, ""
 }
 
-func (h *claudeCoordinationHub) cancelWaiter(waiter *claudeCoordinationWaiter, kind string) {
-	if waiter == nil {
-		return
-	}
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.waiter != waiter {
-		return
-	}
-	h.waiter = nil
-	waiter.result <- claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind, WaiterRef: waiter.ref}
-}
-
-func (h *claudeCoordinationHub) hasWaiter() bool {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return !h.closed && h.waiter != nil && !h.retireDeadWaiterLocked()
-}
-
-func (h *claudeCoordinationHub) retireDeadWaiterLocked() bool {
-	if h.waiter == nil || h.processCurrent(h.waiter.process) {
-		return false
-	}
-	stale := h.waiter
-	h.waiter = nil
-	stale.result <- claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "stale", WaiterRef: stale.ref}
-	return true
-}
-
-func (h *claudeCoordinationHub) assignLocked(message *claudeCoordinationMessage, waiter *claudeCoordinationWaiter) {
-	message.assignedWaiterRef = waiter.ref
-	message.process = waiter.process
-	if h.waiter == waiter {
-		h.waiter = nil
-	}
-	waiter.result <- claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "assignment", WaiterRef: waiter.ref,
-		Envelope: &message.envelope, Delivery: message.delivery}
-	window := h.assignmentWindow
-	go func(messageRef, waiterRef string) {
-		timer := time.NewTimer(window)
-		defer timer.Stop()
-		<-timer.C
-		h.expireAssignment(messageRef, waiterRef)
-	}(message.envelope.MessageRef, waiter.ref)
-}
-
-func (h *claudeCoordinationHub) beginHandoff(messageRef, waiterRef string, process coremetadata.ProcessIdentity) agentdelivery.Delivery {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	message := h.messages[messageRef]
-	if message == nil {
-		return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateStale, Reason: "unknown-message"}
-	}
-	if message.assignedWaiterRef != waiterRef || message.process != process || !h.processCurrent(process) {
-		return message.delivery
-	}
-	if h.expireDeadlineLocked(message) {
-		return message.delivery
-	}
-	message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventBeginHandoff,
-		MessageRef: messageRef, WaiterRef: waiterRef})
-	message.assignedWaiterRef = ""
-	window := h.receiptWindow
-	go func(messageRef, waiterRef string) {
-		timer := time.NewTimer(window)
-		defer timer.Stop()
-		<-timer.C
-		h.expireHandoff(messageRef, waiterRef)
-	}(message.envelope.MessageRef, waiterRef)
-	return message.delivery
-}
-
-func (h *claudeCoordinationHub) failAssignment(messageRef, waiterRef string, process coremetadata.ProcessIdentity, reason string) agentdelivery.Delivery {
+func (h *claudeCoordinationHub) finishReply(messageRef, replyRef string, committed bool) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	message := h.messages[messageRef]
-	if message == nil {
-		return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateStale, Reason: "unknown-message"}
-	}
-	if message.assignedWaiterRef != waiterRef || message.process != process {
-		return message.delivery
-	}
-	message.assignedWaiterRef = ""
-	message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventFail,
-		MessageRef: messageRef, WaiterRef: waiterRef, Reason: reason})
-	return message.delivery
-}
-
-func (h *claudeCoordinationHub) expireAssignment(messageRef, waiterRef string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	message := h.messages[messageRef]
-	if message == nil || message.assignedWaiterRef != waiterRef {
+	if message == nil || !message.replyReserved {
 		return
 	}
-	message.assignedWaiterRef = ""
-	message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventFail,
-		MessageRef: messageRef, WaiterRef: waiterRef, Reason: "waiter-disconnected"})
-}
-
-func (h *claudeCoordinationHub) expireHandoff(messageRef, waiterRef string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	tracked := h.messages[messageRef]
-	if tracked == nil || tracked.delivery.WaiterRef != waiterRef {
+	message.replyReserved = false
+	if committed {
+		message.replyRef = replyRef
 		return
 	}
-	tracked.delivery, _ = agentdelivery.Reduce(tracked.delivery, agentdelivery.Event{Kind: agentdelivery.EventExpire,
-		MessageRef: messageRef, WaiterRef: waiterRef})
-}
-
-func (h *claudeCoordinationHub) receipt(messageRef, waiterRef string, process coremetadata.ProcessIdentity, full bool) agentdelivery.Delivery {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	message := h.messages[messageRef]
-	if message == nil {
-		return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateStale, Reason: "unknown-message"}
-	}
-	if message.delivery.State != agentdelivery.StateHandoff || message.delivery.WaiterRef != waiterRef || message.process != process {
-		return message.delivery
-	}
-	if !full {
-		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventFail,
-			MessageRef: messageRef, WaiterRef: waiterRef, Reason: "provider-pipe-write-failed"})
-		return message.delivery
-	}
-	message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventDeliver,
-		MessageRef: messageRef, WaiterRef: waiterRef, FullFrameWritten: true, HelperReceipt: true})
-	return message.delivery
+	message.dialogueReady = false
+	message.dialogueAmbiguous = true
+	message.dialogueReason = "broker-reply-outcome-unknown"
+	h.replyCorrelationReason = message.dialogueReason
 }
 
 func (h *claudeCoordinationHub) status(messageRef string) agentdelivery.Delivery {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.expirePendingLocked()
 	if message := h.messages[messageRef]; message != nil {
-		h.expireDeadlineLocked(message)
 		return message.delivery
 	}
 	return agentdelivery.Delivery{MessageRef: messageRef, State: agentdelivery.StateStale, Reason: "unknown-message"}
@@ -369,50 +287,10 @@ func (h *claudeCoordinationHub) close() {
 		return
 	}
 	h.closed = true
-	if h.waiter != nil {
-		h.waiter.result <- claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "stale", WaiterRef: h.waiter.ref}
-		h.waiter = nil
-	}
+	h.closeQualificationLocked()
 	for _, message := range h.messages {
 		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventStale,
 			MessageRef: message.envelope.MessageRef, Reason: "helper-restart"})
-	}
-}
-
-func (h *claudeCoordinationHub) scheduleTTL(messageRef string, deadline time.Time) {
-	delay := max(deadline.Sub(h.now()), 0)
-	go func() {
-		timer := time.NewTimer(delay)
-		defer timer.Stop()
-		<-timer.C
-		h.mu.Lock()
-		defer h.mu.Unlock()
-		message := h.messages[messageRef]
-		if message != nil {
-			h.expireDeadlineLocked(message)
-		}
-	}()
-}
-
-func (h *claudeCoordinationHub) expireDeadlineLocked(message *claudeCoordinationMessage) bool {
-	if message.envelope.Deadline.After(h.now()) {
-		return false
-	}
-	next, changed := agentdelivery.Reduce(message.delivery, agentdelivery.Event{Kind: agentdelivery.EventExpire,
-		MessageRef: message.envelope.MessageRef, Reason: "ttl"})
-	if changed {
-		message.delivery = next
-		message.assignedWaiterRef = ""
-	}
-	return true
-}
-
-func (h *claudeCoordinationHub) expirePendingLocked() {
-	for _, ref := range h.pending {
-		message := h.messages[ref]
-		if message != nil {
-			h.expireDeadlineLocked(message)
-		}
 	}
 }
 
@@ -431,15 +309,182 @@ func validCoordinationRef(value string) bool {
 }
 
 type claudeCoordinationServer struct {
+	// Serialize reply commits without making official hooks wait for each other.
+	// A concurrent boundary announces invalidation before trying this mutex.
+	hookMu   sync.Mutex
 	listener *localipc.Listener
 	hub      *claudeCoordinationHub
 	route    coremetadata.AgentRouteRef
 	current  func() bool
+	broker   claudeDialogueBroker
+	poster   claudeProviderPoster
 	done     chan struct{}
 }
 
-func startClaudeCoordinationServer(listener *localipc.Listener, route coremetadata.AgentRouteRef, current func() bool) *claudeCoordinationServer {
-	server := &claudeCoordinationServer{listener: listener, hub: newClaudeCoordinationHub(), route: route, current: current, done: make(chan struct{})}
+type claudeCoordinationCallError struct {
+	possiblyDispatched bool
+}
+
+func (claudeCoordinationCallError) Error() string { return "claude coordination call failed" }
+
+func claudeCoordinationCallPossiblyDispatched(err error) bool {
+	var callErr claudeCoordinationCallError
+	return errors.As(err, &callErr) && callErr.possiblyDispatched
+}
+
+type claudeDialogueBroker interface {
+	Current(coremessage.Envelope) bool
+	MarkHandoff(coremessage.Envelope) error
+	MarkDelivered(coremessage.Envelope, time.Time) error
+	Reply(coremessage.Envelope, coremetadata.AgentRouteRef, string, time.Time) (string, error)
+}
+
+type liveClaudeDialogueBroker struct {
+	registryPath string
+	store        *messagestore.Store
+}
+
+func newLiveClaudeDialogueBroker(registryPath string) (*liveClaudeDialogueBroker, error) {
+	clean := filepath.Clean(registryPath)
+	stateDir := filepath.Dir(filepath.Dir(clean))
+	if registryPath == "" || intmetadata.PathFor(stateDir) != clean {
+		return nil, errors.New("agent message registry path is not canonical")
+	}
+	return &liveClaudeDialogueBroker{registryPath: clean, store: messagestore.NewNonblockingStore(stateDir)}, nil
+}
+
+// Current proves both ends again at the helper boundary. Target socket and
+// process incarnation are additionally checked by the provider poster. Claude
+// sources must still own their live registration lease; Codex consumes its
+// existing composite Registry authority without an app-server write.
+func (b *liveClaudeDialogueBroker) Current(envelope coremessage.Envelope) bool {
+	if b == nil || envelope.Validate() != nil {
+		return false
+	}
+	registry, err := intmetadata.NewStore(b.registryPath).LoadDegradedReadOnly()
+	if err != nil {
+		return false
+	}
+	for _, expected := range []coremessage.Route{envelope.Source, envelope.Target} {
+		route, reason := coremetadata.ResolveAgentRoute(registry, expected.AgentUID)
+		if reason != "" || publicMessageRoute(route) != expected {
+			return false
+		}
+		if authority, ok := route.Authority().(coremetadata.CodexRouteAuthority); ok {
+			if !probeCodexMessageAuthority(filepath.Dir(filepath.Dir(b.registryPath)), authority) {
+				return false
+			}
+		}
+		if authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef); ok {
+			for _, process := range []coremetadata.ProcessIdentity{authority.Process, authority.LeaseProcess} {
+				actual, _, err := localipc.Process(process.PID)
+				if err != nil || actual != process {
+					return false
+				}
+			}
+			// Avoid probing this helper recursively. Its poster owns the target
+			// lease/socket check, including the source==target case.
+			if expected == envelope.Source && expected != envelope.Target && !probeClaudeRegistrationLease(b.registryPath, route) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func probeCodexMessageAuthority(stateDir string, authority coremetadata.CodexRouteAuthority) bool {
+	key, err := codexbroker.NewEndpointKey(authority.Authority.StateDomainID, authority.Authority.EndpointGenerationID)
+	if err != nil {
+		return false
+	}
+	discovery, err := codexbroker.NewDiscovery(stateDir, key)
+	if err != nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	connection, err := codexbroker.Dial(ctx, discovery, codexbroker.DialConfig{Timeout: 200 * time.Millisecond})
+	if err != nil {
+		return false
+	}
+	defer connection.Close()
+	return connection.CheckAuthority(ctx, authority.Authority.BrokerRuntimeID, authority.ThreadID,
+		codexbroker.Fence{Connection: codexbroker.ConnectionEpoch(authority.Authority.ConnectionEpoch),
+			Binding: codexbroker.BindingEpoch(authority.Authority.BindingEpoch)}) == nil
+}
+
+func (b *liveClaudeDialogueBroker) MarkHandoff(envelope coremessage.Envelope) error {
+	if !b.Current(envelope) {
+		return coremessage.ErrInvalidEnvelope
+	}
+	record, found, err := b.store.Get(envelope.MessageRef)
+	if err != nil || !found || !record.Envelope.SameRetry(envelope) || record.Adapter != "claude-coordination" {
+		if err != nil {
+			return err
+		}
+		return coremessage.ErrInvalidEnvelope
+	}
+	_, _, err = b.store.MarkHandoff(envelope.MessageRef)
+	return err
+}
+
+func (b *liveClaudeDialogueBroker) MarkDelivered(envelope coremessage.Envelope, observedAt time.Time) error {
+	if envelope.Validate() != nil {
+		return coremessage.ErrInvalidEnvelope
+	}
+	stored, found, err := b.store.Get(envelope.MessageRef)
+	if err != nil {
+		return err
+	}
+	if !found || stored.Adapter != "claude-coordination" || !stored.Envelope.SameRetry(envelope) {
+		return coremessage.ErrInvalidEnvelope
+	}
+	record, _, err := b.store.Apply(envelope.MessageRef, coremessage.Event{Kind: coremessage.EventDeliver,
+		MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, ObservedAt: observedAt.UTC()})
+	if err != nil {
+		return err
+	}
+	if record.Delivery.State != coremessage.StateDelivered {
+		return coremessage.ErrInvalidEnvelope
+	}
+	return nil
+}
+
+func (b *liveClaudeDialogueBroker) Reply(original coremessage.Envelope, source coremetadata.AgentRouteRef, payload string, now time.Time) (string, error) {
+	if b == nil || b.store == nil || original.Validate() != nil || !validClaudeAssistantReply(payload) {
+		return "", coremessage.ErrInvalidEnvelope
+	}
+	registry, err := intmetadata.NewStore(b.registryPath).LoadDegradedReadOnly()
+	if err != nil {
+		return "", err
+	}
+	currentSource, reason := coremetadata.ResolveAgentRoute(registry, source.AgentUID)
+	if reason != "" || !currentSource.Same(source) || publicMessageRoute(currentSource) != original.Target {
+		return "", coremessage.ErrInvalidEnvelope
+	}
+	currentTarget, reason := coremetadata.ResolveAgentRoute(registry, original.Source.AgentUID)
+	if reason != "" || publicMessageRoute(currentTarget) != original.Source {
+		return "", coremessage.ErrInvalidEnvelope
+	}
+	digest := sha256.Sum256([]byte("claude-stop-reply-v1\x00" + original.MessageRef))
+	replyRef := "reply-" + hex.EncodeToString(digest[:18])
+	_, _, err = b.store.PutReply(original.MessageRef, replyRef, payload, publicMessageRoute(currentSource),
+		publicMessageRoute(currentTarget), now.UTC(), now.UTC().Add(10*time.Minute))
+	if err != nil {
+		return "", err
+	}
+	return replyRef, nil
+}
+
+func validClaudeAssistantReply(value string) bool {
+	return value != "" && len(value) <= coremessage.MaxPayloadBytes && utf8.ValidString(value) && !strings.ContainsRune(value, '\x00')
+}
+
+func startClaudeCoordinationServerWithPoster(listener *localipc.Listener, route coremetadata.AgentRouteRef, current func() bool,
+	broker claudeDialogueBroker, poster claudeProviderPoster,
+) *claudeCoordinationServer {
+	server := &claudeCoordinationServer{listener: listener, hub: newClaudeCoordinationHub(), route: route, current: current,
+		broker: broker, poster: poster, done: make(chan struct{})}
 	go server.serve()
 	return server
 }
@@ -473,76 +518,82 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 	switch request.Operation {
 	case "probe":
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "ready"})
-	case "waiter-ready":
-		kind := "no-waiter"
-		if s.hub.hasWaiter() {
-			kind = "waiter-ready"
+	case "eligibility":
+		kind, reason := "unqualified", "exact-version-isolated-qualification-required"
+		if s.hub.coordinationEligible() {
+			kind, reason = "qualified", "exact-public-init-and-stop-marker"
 		}
-		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind})
-	case "wait":
-		if (request.HookEvent != "SessionStart" && request.HookEvent != "Stop") || request.SessionID != authority.SessionID || parent != authority.Process.PID {
-			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused"})
+		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind,
+			ProviderVersion: claudeFrozenFrameProviderVersion, Reason: reason})
+	case "qualify":
+		if request.Qualification == nil || !request.ExplicitOptIn {
+			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion,
+				Kind: "qualification-refused", Reason: "missing-public-init-evidence"})
 			return
 		}
-		actual, _, processErr := localipc.Process(parent)
-		if processErr != nil || actual != authority.Process {
-			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused"})
-			return
-		}
-		waiter, _ := s.hub.arm(peer)
-		if waiter == nil {
-			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "stale"})
-			return
-		}
-		waitUntil := request.WaitUntil
-		if waitUntil.IsZero() || waitUntil.After(time.Now().Add(claudeCoordinationHookTimeout)) {
-			waitUntil = time.Now().Add(claudeCoordinationHookTimeout)
-		}
-		timer := time.NewTimer(time.Until(waitUntil))
-		defer timer.Stop()
-		select {
-		case response := <-waiter.result:
-			_ = conn.SetWriteDeadline(time.Now().Add(localipc.Deadline))
-			_ = s.writeWaiterResponse(conn, response, peer)
-		case <-timer.C:
-			s.hub.cancelWaiter(waiter, "timeout")
-			_ = localipc.WriteJSON(conn, <-waiter.result)
-		}
-	case "begin-handoff":
-		if parent != authority.Process.PID || request.SessionID != authority.SessionID {
-			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused"})
-			return
-		}
-		delivery := s.hub.beginHandoff(request.MessageRef, request.WaiterRef, peer)
-		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: string(delivery.State), Delivery: delivery})
+		_ = localipc.WriteJSON(conn, s.hub.beginQualification(*request.Qualification, s.route, s.poster))
+	case "qualification-status":
+		_ = localipc.WriteJSON(conn, s.hub.qualificationResponse(request.QualificationRef))
 	case "submit":
 		if request.Envelope == nil || !request.Envelope.valid(time.Now(), s.route) {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused"})
 			return
 		}
-		delivery := s.hub.submit(*request.Envelope)
+		delivery := s.hub.submitPush(*request.Envelope, s.broker, s.poster)
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: string(delivery.State), Delivery: delivery})
-	case "receipt":
+	case "user-prompt":
 		if parent != authority.Process.PID || request.SessionID != authority.SessionID {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused"})
 			return
 		}
-		delivery := s.hub.receipt(request.MessageRef, request.WaiterRef, peer, request.FullFrameWritten)
-		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: string(delivery.State), Delivery: delivery})
+		// Announce before any mutex: even a timed-out hook closes reply
+		// correlation before the corresponding human turn may begin.
+		announced := s.hub.boundaryAnnouncements.Add(1)
+		if s.hookMu.TryLock() {
+			s.hub.userPromptAt(announced)
+			s.hookMu.Unlock()
+		} else {
+			s.hub.replyBoundaryLost.Store(true)
+		}
+		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "boundary-closed"})
+	case "stop-reply":
+		if parent != authority.Process.PID || request.SessionID != authority.SessionID ||
+			!validClaudeAssistantReply(request.AssistantMessage) {
+			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: "invalid-stop-correlation"})
+			return
+		}
+		if !s.hookMu.TryLock() {
+			s.hub.replyBoundaryLost.Store(true)
+			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: "hook-busy"})
+			return
+		}
+		defer s.hookMu.Unlock()
+		if response, handled := s.hub.consumeQualificationStop(request.AssistantMessage, request.StopHookActive); handled {
+			_ = localipc.WriteJSON(conn, response)
+			return
+		}
+		if s.broker == nil {
+			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: "invalid-stop-correlation"})
+			return
+		}
+		original, reason := s.hub.reserveReply(request.StopHookActive)
+		if original == nil {
+			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: reason})
+			return
+		}
+		replyRef, err := s.broker.Reply(*original, s.route, request.AssistantMessage, time.Now())
+		s.hub.finishReply(original.MessageRef, replyRef, err == nil)
+		if err != nil {
+			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: "broker-reply-refused"})
+			return
+		}
+		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-accepted", ReplyRef: replyRef})
 	case "status":
 		delivery := s.hub.status(request.MessageRef)
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: string(delivery.State), Delivery: delivery})
 	default:
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused"})
 	}
-}
-
-func (s *claudeCoordinationServer) writeWaiterResponse(writer io.Writer, response claudeCoordinationResponse, process coremetadata.ProcessIdentity) error {
-	err := localipc.WriteJSON(writer, response)
-	if err != nil && response.Kind == "assignment" && response.Envelope != nil {
-		s.hub.failAssignment(response.Envelope.MessageRef, response.WaiterRef, process, "helper-response-write-failed")
-	}
-	return err
 }
 
 func (s *claudeCoordinationServer) Close() {
@@ -563,32 +614,41 @@ func callClaudeCoordination(ctx context.Context, registryPath string, route core
 	dialer := net.Dialer{Timeout: localipc.DialTimeout}
 	connection, err := dialer.DialContext(ctx, "unix", path)
 	if err != nil {
-		return claudeCoordinationResponse{}, errors.New("claude coordination helper is unavailable")
+		return claudeCoordinationResponse{}, claudeCoordinationCallError{}
 	}
 	defer connection.Close()
 	unixConnection, ok := connection.(*net.UnixConn)
 	if !ok {
-		return claudeCoordinationResponse{}, errors.New("claude coordination helper is unavailable")
+		return claudeCoordinationResponse{}, claudeCoordinationCallError{}
 	}
 	peer, _, err := localipc.PeerProcess(unixConnection)
 	if err != nil || peer != target.Authority.LeaseProcess {
-		return claudeCoordinationResponse{}, errors.New("claude coordination helper peer is stale")
+		return claudeCoordinationResponse{}, claudeCoordinationCallError{}
 	}
 	if deadline, ok := ctx.Deadline(); ok {
 		_ = connection.SetDeadline(deadline)
 	}
 	if err := localipc.WriteJSON(connection, request); err != nil {
-		return claudeCoordinationResponse{}, errors.New("claude coordination request failed")
+		return claudeCoordinationResponse{}, claudeCoordinationCallError{possiblyDispatched: true}
 	}
 	_ = unixConnection.CloseWrite()
 	var response claudeCoordinationResponse
 	if err := localipc.ReadJSON(connection, &response); err != nil || response.Version != claudeCoordinationVersion {
-		return claudeCoordinationResponse{}, errors.New("claude coordination response failed")
+		return claudeCoordinationResponse{}, claudeCoordinationCallError{possiblyDispatched: true}
 	}
 	return response, nil
 }
 
 func resolveCurrentClaudeCoordinationRoute(registryPath, paneUID, generation, sessionID string) (coremetadata.AgentRouteRef, bool) {
+	route, current := resolveCurrentClaudeCoordinationActivation(registryPath, paneUID, generation)
+	if !current {
+		return coremetadata.AgentRouteRef{}, false
+	}
+	authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
+	return route, ok && authority.SessionID == sessionID
+}
+
+func resolveCurrentClaudeCoordinationActivation(registryPath, paneUID, generation string) (coremetadata.AgentRouteRef, bool) {
 	if exactActivationRegistryPath(registryPath) != nil {
 		return coremetadata.AgentRouteRef{}, false
 	}
@@ -601,118 +661,38 @@ func resolveCurrentClaudeCoordinationRoute(registryPath, paneUID, generation, se
 		return coremetadata.AgentRouteRef{}, false
 	}
 	route, reason := coremetadata.ResolveAgentRoute(reg, pane.Status.Activation.AgentUID)
-	authority, authorityOK := route.Authority().(coremetadata.ClaudeAuthorityRef)
-	return route, reason == "" && authorityOK && route.PaneUID == paneUID && route.Generation == generation && authority.SessionID == sessionID
+	_, authorityOK := route.Authority().(coremetadata.ClaudeAuthorityRef)
+	return route, reason == "" && authorityOK && route.PaneUID == paneUID && route.Generation == generation
 }
 
-type claudeHookWakeError struct{}
-
-func (claudeHookWakeError) Error() string { return "Claude coordination handoff complete" }
-func (claudeHookWakeError) ExitCode() int { return 2 }
-
-// runClaudeMessageWait is invoked only by the managed asyncRewake hook. It
-// writes no diagnostics or migration output to the provider pipe. The payload
-// remains an explicitly untrusted coordination record; a slash command has no
-// special authority and is transferred as ordinary JSON string data.
-func runClaudeMessageWait(args []string, stderr io.Writer) error {
-	if !providerOwnedStderrPipe(stderr) {
-		return nil
-	}
-	return runClaudeMessageWaitInput(args, os.Stdin, stderr, os.Getenv)
+// runClaudeMessageBoundary is the short UserPromptSubmit guard. Its authority
+// is the exact official-hook parent plus the private activation envelope, not
+// user-controlled hook JSON. It deliberately does not parse or buffer stdin,
+// so an oversized or malformed human prompt still closes correlation before
+// the provider starts that turn.
+func runClaudeMessageBoundary(args []string) error {
+	return runClaudeMessageBoundaryInput(args, os.Stdin, os.Getenv)
 }
 
-func providerOwnedStderrPipe(stderr io.Writer) bool {
-	file, ok := stderr.(*os.File)
-	if !ok || file.Fd() != os.Stderr.Fd() {
-		return false
-	}
-	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeNamedPipe != 0 && localipc.OwnedByCurrentUser(info)
-}
-
-func runClaudeMessageWaitInput(args []string, stdin io.Reader, stderr io.Writer, getenv func(string) string) error {
+func runClaudeMessageBoundaryInput(args []string, _ io.Reader, getenv func(string) string) error {
 	if len(args) != 0 {
-		return nil
-	}
-	data, err := io.ReadAll(io.LimitReader(stdin, localipc.MaxFrameBytes+1))
-	if err != nil || len(data) > localipc.MaxFrameBytes {
-		return nil
-	}
-	var hook struct {
-		Event     string `json:"hook_event_name"`
-		SessionID string `json:"session_id"`
-	}
-	if json.Unmarshal(data, &hook) != nil || (hook.Event != "SessionStart" && hook.Event != "Stop") || !validCoordinationRef(hook.SessionID) {
 		return nil
 	}
 	registryPath := getenv(internalClaudeRegistryPathEnv)
 	paneUID := getenv(internalActivationPaneUIDEnv)
 	generation := getenv(internalActivationGenerationEnv)
-	deadline := time.Now().Add(5 * time.Second)
-	var route coremetadata.AgentRouteRef
-	for {
-		var current bool
-		if route, current = resolveCurrentClaudeCoordinationRoute(registryPath, paneUID, generation, hook.SessionID); current {
-			break
-		}
-		if time.Now().After(deadline) {
-			return nil
-		}
-		time.Sleep(claudeEndpointPollInterval)
-	}
-	target, ok := claudeTargetForRoute(route)
-	if !ok {
+	route, current := resolveCurrentClaudeCoordinationActivation(registryPath, paneUID, generation)
+	if !current {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), claudeCoordinationWaitTimeout)
+	authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
+	target, targetOK := claudeTargetForRoute(route)
+	if !ok || !targetOK {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), localipc.Deadline)
 	defer cancel()
-	response, err := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
-		Operation: "wait", Target: target, HookEvent: hook.Event, SessionID: hook.SessionID, WaitUntil: time.Now().Add(claudeCoordinationWaitTimeout)})
-	if err != nil || response.Kind != "assignment" || response.Envelope == nil || response.WaiterRef == "" ||
-		!response.Envelope.valid(time.Now(), route) || response.Envelope.MessageRef != response.Delivery.MessageRef {
-		return nil
-	}
-	beginCtx, beginCancel := context.WithTimeout(context.Background(), localipc.Deadline)
-	begin, err := callClaudeCoordination(beginCtx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
-		Operation: "begin-handoff", Target: target, SessionID: hook.SessionID, MessageRef: response.Envelope.MessageRef,
-		WaiterRef: response.WaiterRef})
-	beginCancel()
-	if err != nil || begin.Delivery.MessageRef != response.Envelope.MessageRef || begin.Delivery.WaiterRef != response.WaiterRef ||
-		begin.Delivery.State != agentdelivery.StateHandoff {
-		return nil
-	}
-	payload, err := json.Marshal(response.Envelope)
-	if err != nil || len(payload)+1 > claudeProviderFrameMaxBytes {
-		return nil
-	}
-	payload = append(payload, '\n')
-	fullWrite := writeFullProviderFrame(stderr, payload) == nil
-	receiptCtx, receiptCancel := context.WithTimeout(context.Background(), localipc.Deadline)
-	defer receiptCancel()
-	receipt, err := callClaudeCoordination(receiptCtx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
-		Operation: "receipt", Target: target, SessionID: hook.SessionID, MessageRef: response.Envelope.MessageRef,
-		WaiterRef: response.WaiterRef, FullFrameWritten: fullWrite})
-	if err != nil || !fullWrite || receipt.Delivery.MessageRef != response.Envelope.MessageRef || receipt.Delivery.State != agentdelivery.StateDelivered {
-		return nil
-	}
-	if receipt.Delivery.WaiterRef != response.WaiterRef {
-		return nil
-	}
-	return claudeHookWakeError{}
-}
-
-func writeFullProviderFrame(writer io.Writer, payload []byte) error {
-	for len(payload) > 0 {
-		n, err := writer.Write(payload)
-		if n > 0 {
-			payload = payload[n:]
-		}
-		if err != nil {
-			return err
-		}
-		if n == 0 {
-			return io.ErrShortWrite
-		}
-	}
+	_, _ = callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		Operation: "user-prompt", Target: target, SessionID: authority.SessionID})
 	return nil
 }

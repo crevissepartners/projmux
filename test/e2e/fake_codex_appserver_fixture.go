@@ -5,6 +5,7 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"crypto/sha1" // #nosec G505 -- RFC 6455 requires SHA-1 for the handshake.
 	"encoding/base64"
 	"encoding/binary"
@@ -21,6 +22,11 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
+	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
 const (
@@ -40,6 +46,8 @@ const (
 	fixtureCommandProxy
 	fixtureCommandDaemonVersion
 	fixtureCommandControlServer
+	fixtureCommandDialogueBind
+	fixtureCommandDialogueAgent
 )
 
 func main() {
@@ -51,6 +59,10 @@ func main() {
 		err = writeDaemonVersion(os.Stdout)
 	case fixtureCommandControlServer:
 		err = serveControlSocket()
+	case fixtureCommandDialogueBind:
+		err = bindDialogueAgentRoute(os.Args[2:])
+	case fixtureCommandDialogueAgent:
+		err = waitForDialogueAgentExit()
 	default:
 		fmt.Fprintln(os.Stderr, "unsupported fake Codex command")
 		os.Exit(2)
@@ -71,7 +83,137 @@ func classifyFixtureCommand(args []string) fixtureCommand {
 	if len(args) == 2 && args[0] == "app-server" && args[1] == "fixture-control" {
 		return fixtureCommandControlServer
 	}
+	if dialogueFixtureProfile() {
+		if len(args) == 5 && args[0] == "dialogue-bind" {
+			return fixtureCommandDialogueBind
+		}
+		return fixtureCommandDialogueAgent
+	}
 	return fixtureCommandUnknown
+}
+
+func dialogueFixtureProfile() bool {
+	dir, _, err := fixtureProfilePaths()
+	return err == nil && dir == filepath.Join(filepath.Clean(os.Getenv("PROJMUX_SMOKE_WORKDIR")), "heterogeneous-dialogue", "codex-state")
+}
+
+// waitForDialogueAgentExit is the payload-free Codex Pane fixture. It starts
+// no app-server thread or turn and writes no provider ledger entry.
+func waitForDialogueAgentExit() error {
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(signals)
+	<-signals
+	return nil
+}
+
+// bindDialogueAgentRoute creates the content-free, exact composite authority
+// of a pre-existing synthetic Codex conversation. This test-only setup uses
+// the same Registry mutators as native binding but performs no provider call,
+// user turn, or model-history write.
+func bindDialogueAgentRoute(args []string) error {
+	if len(args) != 4 || !dialogueFixtureProfile() {
+		return errors.New("dialogue binding requires one exact owned route")
+	}
+	registryPath, agentUID, paneUID, generation := args[0], args[1], args[2], args[3]
+	wantRegistry := filepath.Join(filepath.Clean(os.Getenv("PROJMUX_SMOKE_WORKDIR")), "heterogeneous-dialogue", "state", "projmux", "metadata", "registry.json")
+	if !filepath.IsAbs(registryPath) || filepath.Clean(registryPath) != wantRegistry ||
+		strings.TrimSpace(agentUID) == "" || strings.TrimSpace(paneUID) == "" || strings.TrimSpace(generation) == "" {
+		return errors.New("dialogue binding escaped its exact owned route")
+	}
+	endpoint := coremetadata.CodexEndpointRef{StateDomainID: "dialogue-state-domain", EndpointGenerationID: "dialogue-endpoint-generation"}
+	key, err := codexbroker.NewEndpointKey(endpoint.StateDomainID, endpoint.EndpointGenerationID)
+	if err != nil {
+		return err
+	}
+	discovery, err := codexbroker.NewDiscovery(filepath.Dir(filepath.Dir(registryPath)), key)
+	if err != nil {
+		return err
+	}
+	upstream := &dialogueReadOnlyEndpoint{notifications: make(chan codexappserver.Notification)}
+	broker, err := codexbroker.NewBroker(codexbroker.Config{Endpoint: key, Opener: func(context.Context) (codexbroker.Endpoint, error) { return upstream, nil }})
+	if err != nil {
+		return err
+	}
+	defer broker.Close()
+	host, err := codexbroker.StartHost(codexbroker.HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: -1})
+	if err != nil {
+		return err
+	}
+	defer host.Close()
+	binding, err := broker.Bind("dialogue-preexisting-thread", "", nil)
+	if err != nil {
+		return err
+	}
+	defer binding.Close()
+	var observed codexbroker.Event
+	select {
+	case observed = <-binding.Events():
+		if observed.Origin != codexbroker.EventOriginSnapshot {
+			return errors.New("dialogue source snapshot missing")
+		}
+	case <-time.After(10 * time.Second):
+		return errors.New("dialogue source snapshot timed out")
+	}
+	store := intmetadata.NewStore(registryPath)
+	_, _, err = store.UpdateConvergent(func(registry *coremetadata.Registry) error {
+		mutator := intmetadata.DefaultMutator()
+		if err := mutator.StageCodexEndpoint(registry, agentUID, endpoint); err != nil {
+			return err
+		}
+		if _, err := mutator.BindCodexActivation(registry, coremetadata.CodexActivationObservation{
+			AgentUID: agentUID, PaneUID: paneUID, Generation: generation,
+			ThreadID: "dialogue-preexisting-thread", Endpoint: endpoint,
+		}); err != nil {
+			return err
+		}
+		pane, ok := registry.Pane(paneUID)
+		if !ok || pane.Status.Activation.Codex == nil {
+			return errors.New("dialogue Codex activation disappeared")
+		}
+		pane.Status.Activation.Codex.Authority = &coremetadata.CodexAuthorityRef{
+			StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID,
+			BrokerRuntimeID: host.RuntimeID(), ConnectionEpoch: uint64(observed.Fence.Connection), BindingEpoch: uint64(observed.Fence.Binding),
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return waitForDialogueAgentExit()
+}
+
+// The offline conversation has no turns or model. The real broker still owns
+// a live snapshot/binding/connection lease and authenticates its IPC consumers.
+type dialogueReadOnlyEndpoint struct {
+	notifications chan codexappserver.Notification
+	closeOnce     sync.Once
+}
+
+func (e *dialogueReadOnlyEndpoint) Notifications() <-chan codexappserver.Notification {
+	return e.notifications
+}
+func (e *dialogueReadOnlyEndpoint) Close() error {
+	e.closeOnce.Do(func() { close(e.notifications) })
+	return nil
+}
+func (e *dialogueReadOnlyEndpoint) Request(_ context.Context, method string, _, _ any) error {
+	if err := recordProviderWrite("dialogue-preexisting-thread", method); err != nil {
+		return err
+	}
+	return errors.New("dialogue source refuses provider requests")
+}
+func (e *dialogueReadOnlyEndpoint) RespondServerRequest(context.Context, json.RawMessage, any) error {
+	if err := recordProviderWrite("dialogue-preexisting-thread", "server-response"); err != nil {
+		return err
+	}
+	return errors.New("dialogue source refuses provider answers")
+}
+func (e *dialogueReadOnlyEndpoint) BootstrapThread(_ context.Context, threadID, cwd string, _ []string) (codexappserver.ThreadSnapshot, error) {
+	if threadID != "dialogue-preexisting-thread" {
+		return codexappserver.ThreadSnapshot{}, errors.New("foreign dialogue thread")
+	}
+	return codexappserver.ThreadSnapshot{ThreadID: threadID, CWD: cwd, RuntimeStatus: "idle"}, nil
 }
 
 func writeDaemonVersion(writer io.Writer) error {
@@ -140,14 +282,13 @@ func (h *fixtureControlHub) closeAll() {
 }
 
 func fixtureControlSocketPath() (string, error) {
-	if _, err := fixtureStateDir(); err != nil {
+	_, expected, err := fixtureProfilePaths()
+	if err != nil {
 		return "", err
 	}
 	codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME"))
-	smokeRoot := strings.TrimSpace(os.Getenv("PROJMUX_SMOKE_WORKDIR"))
-	expected := filepath.Join(filepath.Clean(smokeRoot), "codex-lifecycle", "codex-home")
 	if !filepath.IsAbs(codexHome) || filepath.Clean(codexHome) != expected {
-		return "", errors.New("CODEX_HOME must be the fixed Codex lifecycle child of PROJMUX_SMOKE_WORKDIR")
+		return "", errors.New("CODEX_HOME must match the selected fixed Codex fixture profile")
 	}
 	dir := filepath.Join(expected, "app-server-control")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -432,21 +573,35 @@ func serveFixtureConnection(input io.Reader, output io.Writer, hub *fixtureContr
 }
 
 func fixtureStateDir() (string, error) {
+	dir, _, err := fixtureProfilePaths()
+	if err != nil {
+		return "", err
+	}
+	// #nosec G703 -- fixtureProfilePaths accepts only one of two fixed fixture
+	// children under the isolated smoke root.
+	return dir, os.MkdirAll(dir, 0o700)
+}
+
+func fixtureProfilePaths() (string, string, error) {
 	dir := strings.TrimSpace(os.Getenv("PROJMUX_FAKE_CODEX_STATE"))
 	if dir == "" || !filepath.IsAbs(dir) {
-		return "", errors.New("PROJMUX_FAKE_CODEX_STATE must be absolute")
+		return "", "", errors.New("PROJMUX_FAKE_CODEX_STATE must be absolute")
 	}
 	smokeRoot := strings.TrimSpace(os.Getenv("PROJMUX_SMOKE_WORKDIR"))
 	if smokeRoot == "" || !filepath.IsAbs(smokeRoot) {
-		return "", errors.New("PROJMUX_SMOKE_WORKDIR must be absolute")
+		return "", "", errors.New("PROJMUX_SMOKE_WORKDIR must be absolute")
 	}
-	expected := filepath.Join(filepath.Clean(smokeRoot), "codex-lifecycle", "fake-codex-state")
-	if filepath.Clean(dir) != expected {
-		return "", errors.New("PROJMUX_FAKE_CODEX_STATE must be the fixed Codex lifecycle child of PROJMUX_SMOKE_WORKDIR")
+	root := filepath.Clean(smokeRoot)
+	profiles := [][2]string{
+		{filepath.Join(root, "codex-lifecycle", "fake-codex-state"), filepath.Join(root, "codex-lifecycle", "codex-home")},
+		{filepath.Join(root, "heterogeneous-dialogue", "codex-state"), filepath.Join(root, "heterogeneous-dialogue", "codex-home")},
 	}
-	dir = expected
-	// #nosec G703 -- dir is accepted only when it equals the fixed lifecycle fixture child under the isolated smoke root above.
-	return dir, os.MkdirAll(dir, 0o700)
+	for _, profile := range profiles {
+		if filepath.Clean(dir) == profile[0] {
+			return profile[0], profile[1], nil
+		}
+	}
+	return "", "", errors.New("PROJMUX_FAKE_CODEX_STATE must select a fixed Codex fixture profile under PROJMUX_SMOKE_WORKDIR")
 }
 
 func nextObserverEpoch(threadID string) (int, error) {

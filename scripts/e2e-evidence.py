@@ -12,7 +12,7 @@ import tempfile
 from pathlib import Path
 
 
-SCENARIO_RE = re.compile(r"^(?:L(?:0[1-9]|1[0-9])|C01|N01)$")
+SCENARIO_RE = re.compile(r"^(?:L(?:0[1-9]|1[0-9]|20)|C01|N01)$")
 PHASE_RE = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 OWNER_RE = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 CLASS_NAMES = {

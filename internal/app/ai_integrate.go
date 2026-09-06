@@ -344,10 +344,9 @@ func (c *aiCommand) planClaudeHookIntegration(remove bool) (claudeHookPlan, erro
 	return c.planClaudeHookIntegrationMode(remove, !remove)
 }
 
-// planClaudeHookMigration converges only the managed hook families already
-// present in the file. Automatic config apply/install migration must not plant
-// a new async provider process into a user's live Claude settings; the explicit
-// integrate command is the sole installer for coordination hooks.
+// planClaudeHookMigration is deliberately byte-preserving. Claude hook changes
+// are opt-in provider integration, including upgrades of a marker-owned older
+// coordination family; config apply/install may not rewrite live settings.
 func (c *aiCommand) planClaudeHookMigration() (claudeHookPlan, error) {
 	home, err := c.homeDir()
 	if err != nil {
@@ -358,7 +357,8 @@ func (c *aiCommand) planClaudeHookMigration() (claudeHookPlan, error) {
 	if err != nil {
 		return claudeHookPlan{}, err
 	}
-	return c.planClaudeHookIntegrationFromCurrent(false, strings.Contains(current, claudeCoordinationManagedMarker), path, current)
+	return claudeHookPlan{path: path, current: current, next: current,
+		action: "no changes: Claude hook integration is explicit"}, nil
 }
 
 func (c *aiCommand) planClaudeHookIntegrationMode(remove, includeCoordination bool) (claudeHookPlan, error) {
@@ -442,9 +442,11 @@ func (c *aiCommand) planClaudeHookIntegrationFromCurrent(remove, includeCoordina
 		hooks[event] = append(claudeHookEntrySlice(hooks[event]), entry)
 	}
 	if includeCoordination {
-		for _, event := range []string{"SessionStart", "Stop"} {
-			hooks[event] = append(claudeHookEntrySlice(hooks[event]), claudeCoordinationManagedEntry())
-		}
+		// Ingress is an immediate helper push. Stop exists only for official
+		// last_assistant_message reply correlation, and UserPromptSubmit closes
+		// any concurrent human-turn ambiguity. Both commands are short.
+		hooks["Stop"] = append(claudeHookEntrySlice(hooks["Stop"]), claudeCoordinationManagedEntry())
+		hooks["UserPromptSubmit"] = append(claudeHookEntrySlice(hooks["UserPromptSubmit"]), claudeCoordinationBoundaryManagedEntry())
 	}
 	next, err := encodeClaudeSettings(settings)
 	if err != nil {
@@ -1074,11 +1076,13 @@ func claudeHookEntriesWithoutManaged(value any, event, path string) ([]any, bool
 				continue
 			}
 			command, _ := hook["command"].(string)
-			if hook["type"] == "command" && (strings.Contains(command, claudeHookManagedMarker) || strings.Contains(command, claudeCoordinationManagedMarker)) {
+			if hook["type"] == "command" && (strings.Contains(command, claudeHookManagedMarker) ||
+				strings.Contains(command, claudeCoordinationManagedMarker) || strings.Contains(command, priorClaudeCoordinationV2Marker) || strings.Contains(command, priorClaudeCoordinationManagedMarker)) {
 				removed = true
 				continue
 			}
-			if hook["type"] == "command" && (strings.Contains(command, legacyClaudeHookRoute) || strings.Contains(command, canonicalClaudeHookRoute) || strings.Contains(command, "internal claude-message-wait")) && conflict == "" {
+			if hook["type"] == "command" && (strings.Contains(command, legacyClaudeHookRoute) || strings.Contains(command, canonicalClaudeHookRoute) ||
+				strings.Contains(command, "internal claude-message-wait") || strings.Contains(command, "internal claude-message-reply") || strings.Contains(command, "internal claude-message-boundary")) && conflict == "" {
 				conflict = fmt.Sprintf("Claude Code hook %s already contains unmanaged projmux ingest command in %s: %s", event, path, command)
 			}
 			nextHooks = append(nextHooks, hookValue)
@@ -1118,10 +1122,21 @@ func claudeCoordinationManagedEntry() map[string]any {
 	return map[string]any{
 		"hooks": []any{
 			map[string]any{
-				"type":        "command",
-				"command":     claudeCoordinationHookCommand,
-				"timeout":     int(claudeCoordinationHookTimeout / time.Second),
-				"asyncRewake": true,
+				"type":    "command",
+				"command": claudeCoordinationHookCommand,
+				"timeout": int(claudeCoordinationHookTimeout / time.Second),
+			},
+		},
+	}
+}
+
+func claudeCoordinationBoundaryManagedEntry() map[string]any {
+	return map[string]any{
+		"hooks": []any{
+			map[string]any{
+				"type":    "command",
+				"command": claudeCoordinationBoundaryCommand,
+				"timeout": 5,
 			},
 		},
 	}

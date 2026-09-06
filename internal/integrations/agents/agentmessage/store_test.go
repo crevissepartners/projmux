@@ -19,8 +19,10 @@ var storeTestNow = time.Date(2026, 9, 6, 2, 3, 4, 0, time.UTC)
 func storeEnvelope(index int) coremessage.Envelope {
 	return coremessage.Envelope{
 		Version: coremessage.Version, MessageRef: fmt.Sprintf("message-%03d", index), ConversationRef: fmt.Sprintf("conversation-%03d", index),
-		Source:    coremessage.Route{AgentUID: "agent-source", PaneUID: "pane-source", ActivationGeneration: "generation-source", Provider: "claude"},
-		Target:    coremessage.Route{AgentUID: "agent-target", PaneUID: "pane-target", ActivationGeneration: "generation-target", Provider: "codex"},
+		Source: coremessage.Route{AgentUID: "agent-source", PaneUID: "pane-source", ActivationGeneration: "generation-source",
+			Provider: "claude", Incarnation: "route-source"},
+		Target: coremessage.Route{AgentUID: "agent-target", PaneUID: "pane-target", ActivationGeneration: "generation-target",
+			Provider: "codex", Incarnation: "route-target"},
 		Authority: coremessage.PeerAuthority(), Payload: fmt.Sprintf("payload-%03d", index),
 		AcceptedAt: storeTestNow.Add(time.Duration(index) * time.Nanosecond), Deadline: storeTestNow.Add(time.Hour + time.Duration(index)*time.Nanosecond),
 	}
@@ -364,5 +366,134 @@ func TestMarkHandoffRefusesCodexRecordWithoutChangingDisk(t *testing.T) {
 	}
 	if _, found, err := NewStoreAt(store.Path()).Get(envelope.MessageRef); err != nil || !found {
 		t.Fatalf("restart after refusal = found %t err %v", found, err)
+	}
+}
+
+func TestStoreMigratesV1EnvelopeToUnqualifiedStaleFence(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "agent-messages", "messages.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	envelope := storeEnvelope(201)
+	legacy := fmt.Sprintf(`{"version":1,"records":[{"envelope":{"version":1,"messageRef":%q,"conversationRef":%q,"source":{"agentUID":"agent-source","paneUID":"pane-source","activationGeneration":"generation-source","provider":"claude"},"target":{"agentUID":"agent-target","paneUID":"pane-target","activationGeneration":"generation-target","provider":"codex"},"authority":{"kind":"peer","trust":"untrusted","permission":"coordination-only"},"payload":%q,"acceptedAt":%q,"deadline":%q},"delivery":{"messageRef":%q,"conversationRef":%q,"state":"accepted","acceptedAt":%q},"adapter":"codex-inbox"}]}`,
+		envelope.MessageRef, envelope.ConversationRef, envelope.Payload, envelope.AcceptedAt.Format(time.RFC3339Nano), envelope.Deadline.Format(time.RFC3339Nano),
+		envelope.MessageRef, envelope.ConversationRef, envelope.AcceptedAt.Format(time.RFC3339Nano))
+	if strings.Contains(legacy, "incarnation") {
+		t.Fatal("previous-version fixture accidentally contains current schema")
+	}
+	if err := os.WriteFile(path, append([]byte(legacy), '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewStoreAt(path)
+	record, found, err := store.Get(envelope.MessageRef)
+	if err != nil || !found || record.Envelope.Version != coremessage.Version ||
+		record.Envelope.Source.Incarnation != "legacy-unqualified-claude" ||
+		record.Envelope.Target.Incarnation != "legacy-unqualified-codex" {
+		t.Fatalf("legacy load = (%#v, %t, %v)", record, found, err)
+	}
+	if _, claimed, err := store.Claim(storeEnvelope(201).Target, storeTestNow.Add(time.Minute)); err != nil || claimed {
+		t.Fatalf("legacy record crossed current incarnation = claimed %t err %v", claimed, err)
+	}
+	if _, _, err := store.PutAccepted(storeEnvelope(202), "codex-inbox"); err != nil {
+		t.Fatal(err)
+	}
+	wire, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(wire, []byte(`"version":2`)) || !bytes.Contains(wire, []byte(`"incarnation":"legacy-unqualified-codex"`)) {
+		t.Fatalf("migrated v2 wire does not preserve stale fence: %s", wire)
+	}
+}
+
+func TestStoreReplyIsAtomicCorrelatedAndReplayIdempotent(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "messages.json")
+	store := NewStoreAt(path)
+	original := storeEnvelope(211)
+	original.Source.Provider, original.Source.Incarnation = "codex", "codex-incarnation"
+	original.Target.Provider, original.Target.Incarnation = "claude", "claude-incarnation"
+	if _, _, err := store.PutAccepted(original, "claude-coordination"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.MarkHandoff(original.MessageRef); err != nil {
+		t.Fatal(err)
+	}
+	if _, changed, err := store.Apply(original.MessageRef, coremessage.Event{Kind: coremessage.EventDeliver,
+		MessageRef: original.MessageRef, ConversationRef: original.ConversationRef, Target: original.Target,
+		Reason: "full-frame-handoff-receipt", ObservedAt: original.AcceptedAt.Add(time.Second)}); err != nil || !changed {
+		t.Fatalf("deliver original = changed %t err %v", changed, err)
+	}
+
+	accepted := original.AcceptedAt.Add(2 * time.Second)
+	reply, created, err := store.PutReply(original.MessageRef, "reply-211", "assistant response", original.Target, original.Source,
+		accepted, accepted.Add(time.Minute))
+	if err != nil || !created || reply.Adapter != "codex-inbox" || reply.Delivery.State != coremessage.StateAccepted ||
+		reply.Envelope.ReplyTo != original.MessageRef || reply.Envelope.ConversationRef != original.ConversationRef {
+		t.Fatalf("reply = (%#v, %t, %v)", reply, created, err)
+	}
+	replayed, created, err := NewStoreAt(path).PutReply(original.MessageRef, "reply-211", "assistant response",
+		original.Target, original.Source, accepted.Add(time.Hour), accepted.Add(time.Hour+time.Minute))
+	if err != nil || created || replayed != reply {
+		t.Fatalf("replayed reply = (%#v, %t, %v)", replayed, created, err)
+	}
+	if _, _, err := store.PutReply(original.MessageRef, "reply-second", "assistant response", original.Target, original.Source,
+		accepted, accepted.Add(time.Minute)); !errors.Is(err, coremessage.ErrRetryMismatch) {
+		t.Fatalf("second reply error = %v", err)
+	}
+
+	second := storeEnvelope(212)
+	second.Source.Provider, second.Source.Incarnation = "codex", "codex-incarnation"
+	second.Target.Provider, second.Target.Incarnation = "claude", "claude-incarnation"
+	if _, _, err := store.PutAccepted(second, "claude-coordination"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.MarkHandoff(second.MessageRef); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.Apply(second.MessageRef, coremessage.Event{Kind: coremessage.EventDeliver,
+		MessageRef: second.MessageRef, ConversationRef: second.ConversationRef, Target: second.Target,
+		ObservedAt: second.AcceptedAt.Add(time.Second)}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.hooks.beforeRename = func() error { return errors.New("injected reply crash") }
+	if _, _, err := store.PutReply(second.MessageRef, "reply-212", "assistant response", second.Target, second.Source,
+		accepted, accepted.Add(time.Minute)); err == nil {
+		t.Fatal("injected reply crash succeeded")
+	}
+	after, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(before, after) {
+		t.Fatalf("failed reply commit changed store: %v", err)
+	}
+	store.hooks = storeHooks{}
+	if _, created, err := store.PutReply(second.MessageRef, "reply-212", "assistant response", second.Target, second.Source,
+		accepted, accepted.Add(time.Minute)); err != nil || !created {
+		t.Fatalf("reply recovery = created %t err %v", created, err)
+	}
+}
+
+func TestNonblockingHookStoreRefusesContentionWithoutLateWrite(t *testing.T) {
+	stateDir := t.TempDir()
+	owner := NewStore(stateDir)
+	helper := NewNonblockingStore(stateDir)
+	locked, release, done := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() { done <- owner.withLock(func() error { close(locked); <-release; return nil }) }()
+	<-locked
+	_, _, err := helper.PutAccepted(storeEnvelope(1), "codex-inbox")
+	close(release)
+	if lockErr := <-done; lockErr != nil {
+		t.Fatal(lockErr)
+	}
+	if !errors.Is(err, ErrBusy) {
+		t.Fatalf("contended hook store err=%v", err)
+	}
+	if _, found, err := owner.Get(storeEnvelope(1).MessageRef); err != nil || found {
+		t.Fatalf("refused hook wrote later: found=%t err=%v", found, err)
 	}
 }

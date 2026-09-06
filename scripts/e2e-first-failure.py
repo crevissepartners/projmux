@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCENARIO_RE = re.compile(r"^(?:L(?:0[1-9]|1[0-9])|C01|N01)$")
+SCENARIO_RE = re.compile(r"^(?:L(?:0[1-9]|1[0-9]|20)|C01|N01)$")
 NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
 SHARD_RE = re.compile(r"^(?:fixture-[1-4]|codex-lifecycle|npm-staging|contract|all)$")
 SOURCE_RE = re.compile(r"^(?:test/e2e|test/lib)/[a-z0-9][a-z0-9._/-]*\.sh$")

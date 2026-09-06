@@ -15,8 +15,10 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when provider-neutral Agent message and wait routes
-// were added on top of steer's explicit provider-acceptance summary. The prior
+// The baseline last moved when explicit exact-version Claude target
+// qualification joined the provider-neutral Agent message routes. The prior
+// move added message and wait on top of steer's explicit provider-acceptance
+// summary. The earlier
 // move added the Project lifecycle verbs:
 // `start|open|stop project` and the canonical `unregister project` are new
 // rows, `delete` became a source edge of the last of those instead of a
@@ -32,7 +34,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "1424e7ffdda6a28545c5a37c4297dc115789356f8e7ecaf97140f337ae670e7a"
+	const want = "b35590817513b33bc0c9804880d8dade9797e7ab18f885c5e06532571e4579d2"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}
