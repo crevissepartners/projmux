@@ -56,7 +56,10 @@ func (a liveAgentMessageClaudeAdapter) ExplicitReply(ctx context.Context, regist
 }
 
 func (b *liveClaudeDialogueBroker) CommitReply(original, reply coremessage.Envelope) error {
-	if b == nil || b.store == nil || reply.Target.Provider != "codex" || coremessage.ValidateReply(original, reply) != nil ||
+	// The reply target is no longer pinned to Codex. Plain homogeneous sends
+	// already succeed through the broker, so refusing only their replies left a
+	// lane that half worked and reported no reason for the half that did not.
+	if b == nil || b.store == nil || coremessage.ValidateReply(original, reply) != nil ||
 		!original.Deadline.After(time.Now()) || !b.Current(reply) {
 		return coremessage.ErrInvalidEnvelope
 	}
@@ -80,7 +83,7 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 	message := h.messages[reply.ReplyTo]
 	if h.closed || broker == nil || message == nil || message.envelope.BrokerEnvelope == nil ||
 		message.delivery.State != agentdelivery.StateDelivered || !message.envelope.Deadline.After(h.now()) ||
-		reply.Target.Provider != "codex" || reply.Source != publicMessageRoute(source) || coremessage.ValidateReply(*message.envelope.BrokerEnvelope, reply) != nil {
+		reply.Source != publicMessageRoute(source) || coremessage.ValidateReply(*message.envelope.BrokerEnvelope, reply) != nil {
 		return refuse("invalid-explicit-reply-correlation")
 	}
 	// A reply is a qualification answer only when it answers the pending

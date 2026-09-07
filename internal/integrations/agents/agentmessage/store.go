@@ -164,6 +164,16 @@ func (s *Store) PutAccepted(envelope coremessage.Envelope, adapter string) (Reco
 // exact reversed routes; native reply addresses and assistant wording are not
 // correlation authority. Replays return the same immutable record, while a
 // second or mismatched reply fails closed.
+// adapterForTarget keeps the stored adapter in step with the target provider.
+// A reply used to be pinned to the Codex inbox because that was the only
+// direction explicit replies could take.
+func adapterForTarget(target coremessage.Route) string {
+	if target.Provider == "codex" {
+		return "codex-inbox"
+	}
+	return "claude-coordination"
+}
+
 func (s *Store) PutReply(originalRef, messageRef, payload string, source, target coremessage.Route, acceptedAt, deadline time.Time) (Record, bool, error) {
 	var out Record
 	var created bool
@@ -187,14 +197,14 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 			if record.Envelope.ReplyTo != originalRef {
 				continue
 			}
-			if record.Adapter != "codex-inbox" || !record.Envelope.SameRetry(candidate) {
+			if record.Adapter != adapterForTarget(candidate.Target) || !record.Envelope.SameRetry(candidate) {
 				return coremessage.ErrRetryMismatch
 			}
 			out = record
 			return nil
 		}
 		original := state.Records[originalIndex]
-		if original.Adapter != "claude-coordination" || original.Delivery.State != coremessage.StateDelivered ||
+		if original.Delivery.State != coremessage.StateDelivered ||
 			!source.Same(original.Envelope.Target) || !target.Same(original.Envelope.Source) {
 			return coremessage.ErrInvalidEnvelope
 		}
@@ -211,7 +221,7 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 		if !changed {
 			return coremessage.ErrInvalidEnvelope
 		}
-		out = Record{Envelope: envelope, Delivery: delivery, Adapter: "codex-inbox"}
+		out = Record{Envelope: envelope, Delivery: delivery, Adapter: adapterForTarget(envelope.Target)}
 		state.Records = append(state.Records, out)
 		if err := s.writeLocked(state); err != nil {
 			return err

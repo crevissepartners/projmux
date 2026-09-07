@@ -353,6 +353,10 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			if getErr != nil || !found || !record.Envelope.SameRetry(envelope) {
 				return fmt.Errorf("%s: explicit reply receipt unavailable", spelling)
 			}
+			// A reply is delivered the same way any other message is. Without
+			// this it only reached the store, and with the self-claim inbox gone
+			// nothing would ever hand it to the target.
+			record = c.pushCoordination(record, target, targetRoute, envelope)
 			return writeAgentMessageReceipt(stdout, receiptFor(record), false)
 		}
 		return fmt.Errorf("%s: exact explicit reply adapter is unavailable", spelling)
@@ -365,15 +369,8 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return fmt.Errorf("%s: %w", spelling, err)
 	}
-	if created && adapter == "codex-inbox" {
-		record = c.pushCodexCoordination(record, target, envelope)
-	}
-	if created && adapter == "claude-coordination" {
-		private, submitErr := c.messageClaude.Submit(context.Background(), c.messagePaths.registryPath, targetRoute, envelope)
-		record, err = c.projectClaudeDelivery(record, private, submitErr)
-		if err != nil {
-			return fmt.Errorf("%s: persist provider projection: %w", spelling, err)
-		}
+	if created {
+		record = c.pushCoordination(record, target, targetRoute, envelope)
 	}
 	return writeAgentMessageReceipt(stdout, receiptFor(record), false)
 }
@@ -393,6 +390,23 @@ func (c *agentCommand) resolveMessageTargetRoute(registry coremetadata.Registry,
 // pushed as one turn. steer is the fallback when a turn is already running.
 // Unlike Claude Code, Codex adds no peer framing of its own, so the untrusted
 // framing travels inside the text.
+// pushCoordination hands one accepted envelope to the target by the push the
+// target's provider supports. Claude takes the provider messaging socket and
+// Codex takes exact native turn control.
+func (c *agentCommand) pushCoordination(record messagestore.Record, target coremetadata.Agent,
+	targetRoute coremetadata.AgentRouteRef, envelope coremessage.Envelope,
+) messagestore.Record {
+	if target.Spec.Provider == string(aiprovider.Claude) {
+		private, submitErr := c.messageClaude.Submit(context.Background(), c.messagePaths.registryPath, targetRoute, envelope)
+		updated, err := c.projectClaudeDelivery(record, private, submitErr)
+		if err != nil {
+			return record
+		}
+		return updated
+	}
+	return c.pushCodexCoordination(record, target, envelope)
+}
+
 func (c *agentCommand) pushCodexCoordination(record messagestore.Record, target coremetadata.Agent,
 	envelope coremessage.Envelope,
 ) messagestore.Record {
