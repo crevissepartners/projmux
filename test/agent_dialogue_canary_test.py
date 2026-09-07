@@ -13,6 +13,7 @@ import threading
 import pathlib
 import subprocess
 import tempfile
+import socket
 import unittest
 from unittest import mock
 
@@ -48,23 +49,30 @@ class DialogueCleanupTest(unittest.TestCase):
         else:
             child.communicate(timeout=5)
 
-    def test_failure_cleanup_waits_for_delayed_writer_before_removing_root(self):
+    def test_run_failure_cleanup_waits_and_preserves_external_audit_after_removal(self):
         child = self.writer()
-        (self.root / "cleanup-plan.json").write_text(json.dumps({"version": 3, "ownedRoot": str(self.root)}))
+        setup_path=pathlib.Path(__file__).resolve().parents[1]/'scripts/agent-dialogue-canary-setup.py'
+        setup=runpy.run_path(str(setup_path))
+        receipt=pathlib.Path(self.temp.name)/'receipt'
+        audit=setup['Audit'].create(self.root,receipt)
+        (self.root/'evidence').mkdir()
+        (self.root / "cleanup-plan.json").write_text(json.dumps({"version": 3, "ownedRoot": str(self.root),"receiptPath":str(receipt),"audit":audit.descriptor()}))
         (self.root / ".projmux-dialogue-canary-owned").write_text("projmux-dialogue-canary-owned-v3\n")
         identity = self.root.stat()
         finish = "finish_cleanup() {" + self.source.split("finish_cleanup() {", 1)[1].split("\ntrap finish_cleanup EXIT", 1)[0]
         library = pathlib.Path(self.temp.name, "cleanup.py")
         library.write_text(self.source.split("<<'WRITERS_PY' || return 1\n", 1)[1].split("\nWRITERS_PY\n", 1)[0])
         client = pathlib.Path(self.temp.name, "finish.py")
-        client.write_text("import os,pathlib,runpy,sys; n=runpy.run_path(sys.argv[1]); "
-                          "n['close_owned_writers'](pathlib.Path(sys.argv[2]),lambda _:None, "
-                          "on_wait=lambda:os.write(int(sys.argv[3]),b'w'))")
+        client.write_text("import os,pathlib,runpy,sys,json; n=runpy.run_path(sys.argv[1]); "
+                          "proof=n['close_owned_writers'](pathlib.Path(sys.argv[2]),lambda _:None, "
+                          "on_wait=lambda:os.write(int(sys.argv[3]),b'w')); "
+                          "(pathlib.Path(sys.argv[2])/'evidence/cleanup-writers.json').write_text(json.dumps(proof))")
         read_fd, write_fd = os.pipe()
         command = " ".join(map(shlex.quote, [sys.executable, str(client), str(library), str(self.root), str(write_fd)]))
         shell = ("set -euo pipefail\nroot=" + shlex.quote(str(self.root)) +
                  f"\nroot_identity={identity.st_dev}:{identity.st_ino}\n" +
-                 "cleanup_owned() { " + command + "; }\n" + finish + "\ntrap finish_cleanup EXIT\nfalse\n")
+                 "audit_event() { python3 " + shlex.quote(str(setup_path)) + ' audit "$root" "$@"; }\n' +
+                 "cleanup_owned() { " + command + "; }\n" + finish + "\ntrap finish_cleanup EXIT\ncanary_stage=qualification\nfalse\n")
         cleanup = subprocess.Popen(["bash", "-c", shell], pass_fds=(write_fd,),
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         os.close(write_fd)
@@ -83,6 +91,12 @@ class DialogueCleanupTest(unittest.TestCase):
         self.assertEqual(cleanup.returncode, 1, (stdout, stderr))  # Preserve the original canary failure.
         self.assertFalse(self.root.exists())
         self.assertEqual(child.returncode, 0)
+        records=[json.loads(line) for line in audit.path.read_text().splitlines()]
+        self.assertEqual(records[0],dict(version=1,event='stage',stage='qualification',exitCode=1))
+        proof=next(row for row in records if row.get('outcome')=='writers-exited')
+        self.assertIn(child.pid,[row['pid'] for row in proof['proof']['writers']])
+        self.assertFalse(proof['rootAbsent'])
+        self.assertEqual(records[-1]['stage'],'root-removal')
 
     def test_partial_setup_failure_waits_for_writer_and_removes_credential(self):
         root=self.root
@@ -167,7 +181,7 @@ class DialogueCleanupTest(unittest.TestCase):
         credentials.parent.mkdir(parents=True)
         credentials.write_text("fixture only")
         finish = "finish_cleanup() {" + self.source.split("finish_cleanup() {", 1)[1].split("\ntrap finish_cleanup EXIT", 1)[0]
-        shell = "set -euo pipefail\nroot=" + shlex.quote(str(root)) + "\ncleanup_owned() { return 1; }\n" + finish + "\ntrap finish_cleanup EXIT\nfalse\n"
+        shell = "set -euo pipefail\nroot=" + shlex.quote(str(root)) + "\naudit_event() { return 1; }\ncleanup_owned() { return 1; }\n" + finish + "\ntrap finish_cleanup EXIT\nfalse\n"
         result = subprocess.run(["bash", "-c", shell], text=True, capture_output=True, timeout=5)
         self.assertNotEqual(result.returncode, 0)
         self.assertTrue(root.exists())
@@ -343,7 +357,7 @@ class DialogueEvidenceTest(unittest.TestCase):
     def test_prepare_pins_candidate_without_launching_or_private_collector(self):
         with tempfile.TemporaryDirectory(prefix='pmx-canary-prepare-') as temporary:
             parent = pathlib.Path(temporary); root = parent/'owned'; credential=parent/'auth'; credential.write_text('fixture authentication only')
-            binary=parent/'candidate'; binary.write_text('#!/bin/sh\nexit 97\n'); binary.chmod(0o700)
+            binary=parent/'candidate'; binary.write_text('#!/bin/sh\nexit 97\n'); binary.chmod(0o755)
             env=dict(os.environ,PMX_DIALOGUE_CANARY_ROOT=str(root),PMX_DIALOGUE_CANARY_RECEIPT=str(parent/'receipt'),PMX_DIALOGUE_PROJMUX_BIN=str(binary),PMX_DIALOGUE_REAL_CLAUDE_BIN=str(binary),PMX_DIALOGUE_REAL_CODEX_BIN=str(binary),PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE=str(credential),PMX_DIALOGUE_CANDIDATE_HEAD='a'*40)
             result=subprocess.run(['bash',str(self.repo/'scripts/agent-dialogue-live-canary.sh'),'prepare'],env=env,capture_output=True,text=True,timeout=5)
             self.assertEqual(result.returncode,0,result.stderr)
@@ -357,6 +371,129 @@ class DialogueEvidenceTest(unittest.TestCase):
             self.assertEqual((root/'home/.claude/.credentials.json').read_bytes(),credential.read_bytes())
             # Candidate exits97 if called: prepare must not launch any provider.
             self.assertEqual((root/'bin/claude').resolve(),binary)
+
+
+class DialogueAuditTest(unittest.TestCase):
+    def setUp(self):
+        self.repo=pathlib.Path(__file__).resolve().parents[1]
+        self.code=runpy.run_path(str(self.repo/'scripts/agent-dialogue-canary-setup.py'))
+        self.temp=tempfile.TemporaryDirectory(prefix='pmx-audit-fixture-')
+        self.addCleanup(self.temp.cleanup)
+        self.parent=pathlib.Path(self.temp.name); self.root=self.parent/'owned'
+        self.root.mkdir()
+        for part in ('work','evidence','tmux','home/.claude'):
+            (self.root/part).mkdir(parents=True,exist_ok=True)
+        self.audit=self.code['Audit'].create(self.root,self.parent/'receipt')
+
+    def records(self):
+        return [json.loads(line) for line in self.audit.path.read_text().splitlines()]
+
+    def test_each_public_setup_command_preserves_closed_stage_exit_and_byte_counts(self):
+        stages=('claude-version','codex-version','tmux-create','tmux-socket','tmux-server',
+                'tmux-project','project-create','reconcile','windows-get','sender-create','receiver-create')
+        for stage in stages:
+            with self.subTest(stage=stage), mock.patch.object(subprocess,'run',return_value=subprocess.CompletedProcess([],37,b'private output',b'private diagnostic')):
+                with self.assertRaises(ValueError):
+                    self.code['invoke_setup'](self.root,{},self.audit,stage,['never-executed'])
+            self.assertEqual(self.records()[-1],dict(version=1,event='stage',stage=stage,exitCode=37,stdoutBytes=14,stderrBytes=18))
+        text=self.audit.path.read_text()
+        self.assertNotIn('private',text); self.assertNotIn('never-executed',text)
+        self.assertEqual(self.audit.path.stat().st_mode&0o777,0o600)
+
+    def test_window_parse_failure_is_identified_before_either_actor(self):
+        path=self.root/'tmux/socket'
+        with socket.socket(socket.AF_UNIX) as sock:
+            sock.bind(str(path))
+            calls=[]
+            def invoke(stage,argv,**kwargs):
+                self.audit.stage(stage); calls.append(stage)
+                return {'tmux-create':'%0','tmux-socket':str(path),'tmux-server':'2','project-create':'project','windows-get':'malformed'}.get(stage,'')
+            with self.assertRaises(ValueError):
+                self.code['setup'](self.root,'/fixture-candidate','fixture',invoke,self.audit.stage)
+        self.assertEqual(self.records()[-1]['stage'],'window-validation')
+        self.assertNotIn('sender-create',calls); self.assertNotIn('receiver-create',calls)
+
+    def test_audit_rejects_occupied_symlink_replacement_and_bounds(self):
+        with self.assertRaises(FileExistsError): self.code['Audit'].create(self.root,self.parent/'receipt')
+        with self.assertRaises(ValueError): self.audit.stage('raw command text')
+        self.audit.path.chmod(0o666)
+        with self.assertRaises(ValueError): self.audit.stage('prepare')
+        self.audit.path.chmod(0o600)
+        for _ in range(128): self.audit.stage('prepare')
+        with self.assertRaises(ValueError): self.audit.stage('prepare')
+        self.audit.path.unlink(); self.audit.path.symlink_to(self.parent/'foreign')
+        with self.assertRaises(OSError): self.audit.stage('prepare')
+        self.assertFalse((self.parent/'foreign').exists())
+
+    def test_early_prepare_failure_survives_without_root_or_raw_exception(self):
+        shutil.rmtree(self.root)
+        self.audit.path.unlink()
+        env=dict(PMX_DIALOGUE_LIVE_CANARY='1',PMX_DIALOGUE_CANARY_ROOT=str(self.root),PMX_DIALOGUE_CANARY_RECEIPT=str(self.parent/'receipt'),PMX_DIALOGUE_PROJMUX_BIN='/bin/false')
+        with mock.patch.dict(os.environ,env),mock.patch.object(subprocess,'run',side_effect=subprocess.CalledProcessError(73,['raw-secret-command'])):
+            with self.assertRaises(ValueError): self.code['main']()
+        rows=self.records()
+        self.assertEqual(rows[1]['exitCode'],73)
+        self.assertEqual(rows[-1]['event'],'failure')
+        self.assertTrue(rows[-1]['rootAbsent']); self.assertNotIn('raw-secret',self.audit.path.read_text())
+
+    def test_candidate_mode_is_rejected_before_credential_copy_or_actor(self):
+        shutil.rmtree(self.root)
+        credential=self.parent/'auth'; credential.write_text('fixture authentication only')
+        candidate=self.parent/'candidate'; candidate.write_text('#!/bin/sh\nexit 97\n'); candidate.chmod(0o775)
+        env=dict(os.environ,PMX_DIALOGUE_CANARY_ROOT=str(self.root),PMX_DIALOGUE_CANARY_RECEIPT=str(self.parent/'receipt'),PMX_DIALOGUE_PROJMUX_BIN=str(candidate),PMX_DIALOGUE_REAL_CLAUDE_BIN=str(candidate),PMX_DIALOGUE_REAL_CODEX_BIN=str(candidate),PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE=str(credential),PMX_DIALOGUE_CANDIDATE_HEAD='a'*40)
+        self.audit.path.unlink()
+        env['PMX_DIALOGUE_LIVE_CANARY']='1'
+        result=subprocess.run([sys.executable,str(self.repo/'scripts/agent-dialogue-canary-setup.py')],env=env,capture_output=True,text=True,timeout=5)
+        self.assertNotEqual(result.returncode,0); self.assertFalse(self.root.exists())
+        self.assertIn('without group/world write',result.stderr)
+        self.assertEqual(credential.read_text(),'fixture authentication only')
+        self.assertEqual(self.records()[0]['stage'],'prepare')
+        self.assertNotEqual(self.records()[1]['exitCode'],0)
+        self.assertTrue(self.records()[-1]['rootAbsent'])
+
+    def test_run_audit_or_proof_failure_retains_root_without_success_receipt(self):
+        source=(self.repo/'scripts/agent-dialogue-live-canary.sh').read_text()
+        finish="finish_cleanup() {"+source.split("finish_cleanup() {",1)[1].split("\ntrap finish_cleanup EXIT",1)[0]
+        identity=self.root.stat(); receipt=self.parent/'receipt'
+        (self.root/'.projmux-dialogue-canary-owned').write_text('projmux-dialogue-canary-owned-v3\n')
+        (self.root/'cleanup-plan.json').write_text(json.dumps(dict(version=3,ownedRoot=str(self.root),receiptPath=str(receipt),audit=self.audit.descriptor())))
+        for unavailable in ('audit','proof'):
+            with self.subTest(unavailable=unavailable):
+                credential=self.root/'home/.claude/.credentials.json'; credential.write_text('fixture only')
+                audit_command='return 1' if unavailable=='audit' else 'python3 '+shlex.quote(str(self.repo/'scripts/agent-dialogue-canary-setup.py'))+' audit "$root" "$@"'
+                shell='set -euo pipefail\nroot='+shlex.quote(str(self.root))+'\nroot_identity='+str(identity.st_dev)+':'+str(identity.st_ino)+'\nreceipt_path='+shlex.quote(str(receipt))+'\ncanary_receipt_json="{}"\n'
+                shell+='cleanup_owned() { rm -f -- "$root/home/.claude/.credentials.json"; }\naudit_event() { '+audit_command+'; }\n'+finish+'\ntrap finish_cleanup EXIT\ntrue\n'
+                result=subprocess.run(['bash','-c',shell],capture_output=True,text=True,timeout=5)
+                self.assertNotEqual(result.returncode,0)
+                self.assertTrue(self.root.exists()); self.assertFalse(receipt.exists()); self.assertFalse(credential.exists())
+
+    @unittest.skipUnless(hasattr(os,'pidfd_open'),'Linux exact writer proof')
+    def test_uncertain_writer_retains_root_and_external_birth_proof(self):
+        credential=self.root/'home/.claude/.credentials.json'; credential.write_text('fixture only')
+        child=subprocess.Popen([sys.executable,'-c',"import sys;print('ready',flush=True);sys.stdin.readline()",str(self.root)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
+        self.addCleanup(DialogueCleanupTest.release,child)
+        self.assertEqual(child.stdout.readline().strip(),'ready')
+        info=self.root.stat()
+        with self.assertRaises(RuntimeError):
+            self.code['finish_setup_failure'](self.root,'/bin/false','fixture',(info.st_dev,info.st_ino),self.audit,timeout=.05)
+        self.assertTrue(self.root.exists()); self.assertIsNone(child.poll()); self.assertFalse(credential.exists())
+        record=self.records()[-1]
+        self.assertEqual(record['outcome'],'failed'); self.assertFalse(record['proof']['allCapturedWriterBirthsAbsent'])
+        self.assertIn(child.pid,[row['pid'] for row in record['proof']['writers']])
+
+    def test_early_cleanup_error_and_removal_error_retain_without_retry(self):
+        credential=self.root/'home/.claude/.credentials.json'; credential.write_text('fixture only')
+        info=self.root.stat()
+        namespace=self.code['finish_setup_failure'].__globals__
+        with mock.patch.dict(namespace,cleanup_partial=mock.Mock(side_effect=ValueError('private error'))):
+            with self.assertRaises(ValueError): self.code['finish_setup_failure'](self.root,'/bin/false','fixture',(info.st_dev,info.st_ino),self.audit)
+        self.assertTrue(self.root.exists()); self.assertFalse(credential.exists()); self.assertFalse(self.records()[-1]['proofAvailable'])
+        (self.root/'evidence/cleanup-writers.json').write_text(json.dumps(dict(version=1,allCapturedWriterBirthsAbsent=True,writers=[])))
+        with mock.patch.dict(namespace,cleanup_partial=mock.Mock()),mock.patch.object(shutil,'rmtree',side_effect=OSError('private remove error')) as remove:
+            with self.assertRaises(OSError): self.code['finish_setup_failure'](self.root,'/bin/false','fixture',(info.st_dev,info.st_ino),self.audit)
+            self.assertEqual(remove.call_count,1)
+        self.assertTrue(self.root.exists()); self.assertEqual(self.records()[-1]['stage'],'root-removal')
+
 
 if __name__ == "__main__":
     unittest.main()

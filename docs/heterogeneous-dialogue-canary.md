@@ -79,7 +79,11 @@ is unchanged.
 
 Before owner R1 approval, freeze the pushed commit, independently built candidate
 and SHA-256, these three scripts, resolved real provider executables/versions,
-a fresh root and an external receipt path. The candidate image and scripts must
+a fresh root, an external receipt path and its separate `<receipt>.audit.jsonl` path.
+Both external paths must be fresh; the audit is exclusive 0600 and never a success
+receipt. Pin candidate ownership/mode as well: it must be an owned regular
+executable with no group/world write bits (for example 0755, never 0775). The
+preflight checks this before credential copying or actor creation. The candidate image and scripts must
 come from that reviewed head. No old root, running Agent, qualification or copied
 provider evidence is reusable. Runtime-generated UIDs/PIDs/births are discovered
 inside the private setup after approval and frozen before the first inbound.
@@ -165,7 +169,16 @@ response fields fail closed or are omitted by the explicit projection.
 ## Automatic cleanup and remaining cases
 
 The setup wrapper owns failures before the first/second actor or input file is
-ready. The run trap owns every later outcome. Both use the same exact-root pidfd
+ready. Its bounded external audit records closed stage identifiers, numeric
+command exit codes and output byte counts; it records no raw argv, output,
+model content or credential material. Stage evidence reports only which boundary
+was entered/completed, never infers qualification from elapsed time. The audit
+retains the exact captured PID/birth writer proof before root removal, including
+an explicitly incomplete proof when writer exit fails. It is limited to 128
+records, 128 KiB per record and 1 MiB total; replacement, unsafe permissions or
+missing proof fail closed and retain the root. A terminal record distinguishes
+root absence from semantic success. Earlier failures whose root-local evidence
+was deleted cannot be retroactively assigned a stage or cleanup proof. The run trap owns every later outcome. Both use the same exact-root pidfd
 writer barrier, capturing owned process births before public deletion and exact
 socket teardown. Cwd/ancestry preserve ownership across delayed and reparented
 writers. No discovered process receives a broad signal; an unproven writer keeps

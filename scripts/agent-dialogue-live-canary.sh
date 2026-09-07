@@ -73,6 +73,12 @@ if [[ "$mode" == "prepare" ]]; then
     echo "prepare requires absolute executable PMX_DIALOGUE_PROJMUX_BIN/PMX_DIALOGUE_REAL_CLAUDE_BIN, PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE, and a bounded PMX_DIALOGUE_MESSAGE_REF" >&2
     exit 2
   }
+  python3 - "$binary" <<'CANDIDATE_PY'
+import os,pathlib,stat,sys
+path=pathlib.Path(sys.argv[1]).resolve(strict=True); info=path.lstat()
+if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or not info.st_mode&0o111 or info.st_mode&0o022:
+    raise SystemExit("candidate must be an owned regular executable without group/world write")
+CANDIDATE_PY
   [[ ! -e "$root" ]] || { echo "canary root already exists" >&2; exit 2; }
   mkdir -p "$root"/{xdg-config,xdg-state,xdg-runtime,xdg-cache,tmux,home/.claude,codex-home,evidence,bin,work}
   chmod 0700 "$root" "$root"/{xdg-config,xdg-state,xdg-runtime,xdg-cache,tmux,home,home/.claude,codex-home,evidence,bin,work}
@@ -304,14 +310,20 @@ class OwnedWriterBarrier:
         for _,fd in self.writers.values(): os.close(fd)
 
 
-def close_owned_writers(root,teardown,seeds=(),timeout=20,on_wait=lambda:None):
+def close_owned_writers(root,teardown,seeds=(),timeout=20,on_wait=lambda:None,proof_callback=lambda _:None):
     barrier=OwnedWriterBarrier(root)
     try:
         barrier.capture(seeds)  # Before delete intent or tmux teardown.
         teardown(barrier)
         barrier.wait(timeout,on_wait)
-        return {"version":1,"allCapturedWriterBirthsAbsent":True,
-                "writers":[identity for identity,_ in barrier.writers.values()]}
+        proof={"version":1,"allCapturedWriterBirthsAbsent":True,
+               "writers":[identity for identity,_ in barrier.writers.values()]}
+        proof_callback(proof)
+        return proof
+    except Exception:
+        proof_callback({"version":1,"allCapturedWriterBirthsAbsent":False,
+                        "writers":[identity for identity,_ in barrier.writers.values()]})
+        raise
     finally:
         barrier.close()
 
@@ -397,9 +409,10 @@ def main():
             control(clean_env+["tmux","-S",socket_path,"kill-server"])
         elif current!="absent":
             raise RuntimeError("owned tmux socket replaced; root retained")
-    try:
-        proof=close_owned_writers(root,teardown,seeds)
+    def preserve(proof):
         (root/"evidence/cleanup-writers.json").write_text(json.dumps(proof,sort_keys=True)+"\n")
+    try:
+        close_owned_writers(root,teardown,seeds,proof_callback=preserve)
     finally:
         (root/"home/.claude/.credentials.json").unlink(missing_ok=True)
 
@@ -413,10 +426,15 @@ WRITERS_PY
   if [[ -n "$wait_pid" ]]; then wait "$wait_pid" 2>/dev/null || true; fi
   cleanup_done=1
 }
+audit_event() {
+  python3 "$(dirname -- "${BASH_SOURCE[0]}")/agent-dialogue-canary-setup.py" audit "$root" "$@"
+}
 finish_cleanup() {
-  local status=$?
+  local status=$? audit_failed=0
+  audit_event stage "$canary_stage" "$status" || audit_failed=1
   if ! cleanup_owned; then
     rm -f -- "$root/home/.claude/.credentials.json"
+    audit_event cleanup failed || true
     echo "canary cleanup could not prove owned writer exit; root retained" >&2
     return 1
   fi
@@ -435,6 +453,9 @@ PY
     echo "canary cleanup root identity changed; root retained" >&2
     return 1
   fi
+  [[ "$audit_failed" == 0 ]] || return 1
+  audit_event cleanup writers-exited || return 1
+  audit_event stage root-removal || return 1
   rm -rf -- "$root" || return 1
   if [[ "$status" == 0 && -n "${canary_receipt_json:-}" ]]; then
     python3 - "$receipt_path" "$root" "$canary_receipt_json" <<'RECEIPT_PY'
@@ -451,6 +472,7 @@ RECEIPT_PY
   fi
   return "$status"
 }
+canary_stage=run-validation
 trap finish_cleanup EXIT
 
 # The exact cleanup trap is now live. Every path/evidence/gate validation below
@@ -488,6 +510,8 @@ import hashlib,json,pathlib,sys
 plan=json.load(open(sys.argv[1])); folder=pathlib.Path(sys.argv[2]).parent
 assert all(hashlib.sha256((folder/name).read_bytes()).hexdigest()==digest for name,digest in plan['runnerFiles'].items())
 PYPIN
+canary_stage=initial-evidence
+audit_event stage "$canary_stage"
 evidence initial
 codex_state_snapshot() {
   python3 - "$root/codex-home" <<'PYCODEX'
@@ -513,10 +537,14 @@ assert_empty_claim() {
   fi
   [[ ! -s "$output" ]] && grep -Fxq 'agent message wait: timed out with no compatible message' "$diagnostic"
 }
+canary_stage=source-claim
+audit_event stage "$canary_stage"
 assert_empty_claim
 
 # Qualification is the first and only pre-admission push. Its actual model
 # action must call the public reply leaf; no Stop, prompt or tool-output shortcut.
+canary_stage=qualification
+audit_event stage "$canary_stage"
 inside agent message qualify "uid:$receiver_uid" --confirm-isolated-provider-push -o json >"$root/evidence/qualification-receipt.json"
 qualification_ref="$(python3 - "$root/evidence/qualification-receipt.json" <<'PY'
 import json,re,sys
@@ -525,6 +553,8 @@ assert value.get('state')=='qualification-qualified' and re.fullmatch(r'[A-Za-z0
 print(ref)
 PY
 )"
+canary_stage=qualification-claim
+audit_event stage "$canary_stage"
 inside agent message wait "uid:$sender_uid" --timeout 5s -o json >"$root/evidence/qualification-reply.json"
 inside agent message status "$qualification_ref" -o json >"$root/evidence/qualification-status.json"
 collect_reply_proof() {
@@ -539,18 +569,28 @@ collect_reply_proof() {
   echo "model tool/result/commit evidence is incomplete; no resend" >&2
   return 1
 }
+canary_stage=qualification-proof
+audit_event stage "$canary_stage"
 collect_reply_proof qualification
 assert_empty_claim
 
 # General traffic starts only after the independent qualification proof/claim.
 # The model receives one harmless self-contained request and selects the ref.
+canary_stage=idle-send
+audit_event stage "$canary_stage"
 inside agent message send --message-ref "$message_ref" --ttl 2m "uid:$receiver_uid" -- \
   "For this local transport acknowledgement, execute the permitted public reply command for this request with text HETEROGENEOUS_REPLY:$message_ref." >"$root/evidence/idle-send.txt"
+canary_stage=idle-claim
+audit_event stage "$canary_stage"
 inside agent message wait "uid:$sender_uid" --timeout 120s -o json >"$root/evidence/idle-reply.json"
 inside agent message status "$message_ref" -o json >"$root/evidence/idle-status.json"
+canary_stage=idle-proof
+audit_event stage "$canary_stage"
 collect_reply_proof idle
 assert_empty_claim
 evidence current
+canary_stage=final-evidence
+audit_event stage "$canary_stage"
 codex_state_after="$(codex_state_snapshot)"
 [[ "$codex_state_before" == "$codex_state_after" ]] || { echo "Codex provider state changed during coordination" >&2; exit 1; }
 
