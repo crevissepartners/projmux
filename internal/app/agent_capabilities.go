@@ -256,7 +256,7 @@ func exactAgentActionEligibility(registry coremetadata.Registry, agent coremetad
 		if reason := exactCodexReviewRegistryReason(registry, agent); reason != "" {
 			return false, reason
 		}
-	case "message.send", "message.wait", "message.status":
+	case "message.send", "message.status":
 		if _, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID); reason != "" {
 			return false, reason
 		}

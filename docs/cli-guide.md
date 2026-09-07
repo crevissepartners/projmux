@@ -435,15 +435,13 @@ projection.
 
 The closed static modes are `generic-registry`, `provider-resume`,
 `native-exact-control`, `provider-hook`, `read-only-adapter`, and
-`unsupported`. `message.send`, `message.wait`, `message.status`, and
-`wait.idle` are provider-neutral commands whose availability is decided from
+`unsupported`. `message.send`, `message.status`, and `wait.idle` are provider-neutral commands whose availability is decided from
 the exact Agent's provider and current activation capability. There is no
 provider-specific `agent codex`, `agent claude`, or `agent antigravity`
 namespace.
 
 ```sh
 projmux agent message send [--message-ref <ref>] [--ttl 10m] uid:<target-agent> -- "coordination text"
-projmux agent message wait [uid:<self-agent>] [--timeout 30s] [-o json]
 projmux agent message status <message-ref> [-o json]
 projmux agent message qualify uid:<claude-agent> --evidence /absolute/owned/private-init.json --confirm-isolated-provider-push -o json
 projmux agent wait uid:<agent> [--timeout 30s] [-o json]

@@ -236,19 +236,17 @@ func receiptFor(record messagestore.Record) agentMessageReceipt {
 
 func (c *agentCommand) runMessage(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return usageError("agent message requires send, wait, status, or qualify")
+		return usageError("agent message requires send, status, or qualify")
 	}
 	switch args[0] {
 	case "send":
 		return c.runMessageSend(args[1:], stdout, stderr)
-	case "wait":
-		return c.runMessageClaim(args[1:], stdout, stderr)
 	case "status":
 		return c.runMessageStatus(args[1:], stdout, stderr)
 	case "qualify":
 		return c.runMessageQualify(args[1:], stdout, stderr)
 	default:
-		return usageError("agent message requires send, wait, status, or qualify")
+		return usageError("agent message requires send, status, or qualify")
 	}
 }
 
@@ -449,86 +447,6 @@ func codexCoordinationContent(envelope coremessage.Envelope) (string, error) {
 func conversationRefFor(messageRef string) string {
 	digest := sha256.Sum256([]byte(messageRef))
 	return fmt.Sprintf("conversation-%x", digest[:18])
-}
-
-func (c *agentCommand) runMessageClaim(args []string, stdout, stderr io.Writer) error {
-	const spelling = "agent message wait"
-	fs := flag.NewFlagSet(spelling, flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	var timeout time.Duration
-	var output string
-	fs.DurationVar(&timeout, "timeout", defaultAgentMessageTimeout, "maximum wait duration")
-	fs.StringVar(&output, "o", "", "output mode: json")
-	refs, err := parseWithPositionals(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(refs) > 1 || (output != "" && output != "json") || timeout < 0 || timeout > coremessage.MaxTTL {
-		return usageError(spelling + " accepts [<self-agent-ref>] [--timeout <duration>] [-o json]")
-	}
-	if !coremessage.Authorize(coremessage.PrincipalPeer, coremessage.ActionCoordinationRead) {
-		return fmt.Errorf("%s: peer authority does not permit inbox reads", spelling)
-	}
-	registry, err := c.readMessageRegistry()
-	if err != nil {
-		return MapMetadataError(err)
-	}
-	anchor := ""
-	if len(refs) == 1 {
-		anchor = refs[0]
-	}
-	self, err := c.anchoredMessageAgent(registry, anchor, spelling)
-	if err != nil {
-		return err
-	}
-	if len(refs) == 1 {
-		explicit, resolveErr := c.resolveMessageAgent(registry, refs[0], spelling)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		if explicit.Metadata.UID != self.Metadata.UID {
-			return fmt.Errorf("%s: explicit Agent is not the current managed Pane owner", spelling)
-		}
-	}
-	if err := requireAgentMessageCapability("message.wait", self); err != nil {
-		return err
-	}
-	route, err := c.resolveMessageRoute(registry, self)
-	if err != nil {
-		return fmt.Errorf("%s: current Agent is not eligible: %w", spelling, err)
-	}
-	deadline := c.messageClock().Add(timeout)
-	expectedRoute := publicMessageRoute(route)
-	for {
-		record, claimed, claimErr := c.messageStore.Claim(expectedRoute, c.messageClock())
-		if claimErr != nil {
-			return claimErr
-		}
-		if claimed {
-			return writeAgentMessageClaim(stdout, record, output == "json")
-		}
-		if !c.messageClock().Before(deadline) {
-			return fmt.Errorf("%s: timed out with no compatible message", spelling)
-		}
-		if err := c.sleepMessage(context.Background(), 50*time.Millisecond); err != nil {
-			return err
-		}
-		latest, loadErr := c.readMessageRegistry()
-		if loadErr != nil {
-			return MapMetadataError(loadErr)
-		}
-		current, ok := latest.Agent(self.Metadata.UID)
-		if !ok {
-			return fmt.Errorf("%s: current Agent activation is stale", spelling)
-		}
-		if err := requireAgentMessageCapability("message.wait", *current); err != nil {
-			return err
-		}
-		currentRoute, routeErr := c.resolveMessageRoute(latest, *current)
-		if routeErr != nil || publicMessageRoute(currentRoute) != expectedRoute {
-			return fmt.Errorf("%s: current Agent activation is stale", spelling)
-		}
-	}
 }
 
 func (c *agentCommand) runMessageStatus(args []string, stdout, stderr io.Writer) error {
