@@ -67,7 +67,7 @@ class Audit:
                     'config-read-params','config-read-write','config-read-read','config-read-decode','config-read-envelope',
                     'config-read-result','socket-after','config-after') or record['rejectionKind'] not in (
                     'unknown','deadline','io','eof','closed','bound','utf8','frame','http-status','http-header','http-accept',
-                    'http-extension','envelope-shape','envelope-id','envelope-error','envelope-notification','identity'):
+                    'http-extension','envelope-shape','envelope-id','envelope-error','envelope-notification','envelope-request','identity'):
                 raise ValueError('audit policy failure boundary')
         data=(json.dumps(record,sort_keys=True,separators=(',',':'))+'\n').encode()
         if len(data)>128*1024: raise ValueError('audit record bound')

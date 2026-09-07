@@ -25,6 +25,10 @@ MAX_DEPTH = 32
 ID = re.compile(r"[A-Za-z0-9._:-]{1,160}\Z")
 SOURCES = frozenset(("agent", "userShell", "unifiedExecStartup", "unifiedExecInteraction"))
 SCHEMA_HASHES = {
+    "JSONRPCRequest.json": "31bd6f360b2dd8a7ceaf682708105d40d38cb0b9d0821357a04da67028438f73",
+    "JSONRPCResponse.json": "4796738c04c74288213a08fb8d820c7b4df19e0977cdcd35b65ffcb43cfc93ab",
+    "JSONRPCNotification.json": "c2b43f26880db331393fe09f34bdd76dfeb4dc30d8418d1c26e18db166d6c8c8",
+    "JSONRPCError.json": "d7ea353d4875ae204625da5a00a1ecb5afc69101d5778b9acc253a49f8932992",
     "InitializeParams.json": "6f0094be9a65242ec779a40794cbd4fdfa32fca1e45084a16adfb50501d33ea2",
     "InitializeResponse.json": "62ad689c2cb6379913c1d72749cfd8de5089d35760214123518eb92eef11acc9",
     "ThreadReadParams.json": "dfe040c6ac71d30795b8be3f3ff232e66f362a37f883b491e5d1ea367f470db4",
@@ -86,12 +90,27 @@ def decode(raw):
 
 
 def response_rejection_kind(value, request_id):
-    """Closed shape classification only; error/notification never succeeds."""
+    """Pinned public envelope forms; only the exact success reply succeeds.
+
+    Error text/data, request methods/params/trace and all unknown keys are never
+    returned. The expected-ID fence precedes classification of server requests.
+    """
     if not isinstance(value,dict):return 'envelope-shape'
     if 'id' in value and (type(value['id']) is not int or value['id']!=request_id):return 'envelope-id'
     if set(value)=={'id','result'}:return None
-    if set(value)=={'id','error'}:return 'envelope-error'
-    if set(value) in ({'method'},{'method','params'}):return 'envelope-notification'
+    if set(value)=={'id','error'}:
+        error=value['error']
+        if isinstance(error,dict) and {'code','message'}<=set(error)<={'code','message','data'} and \
+                type(error['code']) is int and -(2**63)<=error['code']<2**63 and isinstance(error['message'],str):
+            return 'envelope-error'
+        return 'envelope-shape'
+    if isinstance(value.get('method'),str) and value['method']:
+        if set(value) in ({'method'},{'method','params'}):return 'envelope-notification'
+        if {'id','method'}<=set(value)<={'id','method','params','trace'}:
+            trace=value.get('trace')
+            if trace is None or isinstance(trace,dict) and set(trace)<={'traceparent','tracestate'} and \
+                    all(v is None or isinstance(v,str) for v in trace.values()):
+                return 'envelope-request'
     return 'envelope-shape'
 
 

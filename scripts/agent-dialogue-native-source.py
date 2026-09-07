@@ -233,7 +233,7 @@ POLICY_SUBSTAGES=frozenset(('unknown','reader-load','config-before','schema','co
     'config-read-params','config-read-write','config-read-read','config-read-decode','config-read-envelope',
     'config-read-result','socket-after','config-after'))
 POLICY_REJECTION_KINDS=frozenset(('unknown','deadline','io','eof','closed','bound','utf8','frame','http-status',
-    'http-header','http-accept','http-extension','envelope-shape','envelope-id','envelope-error','envelope-notification','identity'))
+    'http-header','http-accept','http-extension','envelope-shape','envelope-id','envelope-error','envelope-notification','envelope-request','identity'))
 
 
 def closed_kind(failure,fallback='unknown'):

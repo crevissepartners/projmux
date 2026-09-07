@@ -107,6 +107,7 @@ class NativePolicyTests(unittest.TestCase):
                 (dict(id=1,error=dict(code=-32601,message='PRIVATE_RPC',data='PRIVATE_DATA')),'config-read-envelope','envelope-error'),
                 (dict(id=0,result=self.value),'config-read-envelope','envelope-id'),
                 (dict(method='PRIVATE_METHOD',params={}), 'config-read-envelope','envelope-notification'),
+                (dict(id=1,method='PRIVATE_METHOD',params={'secret':'PRIVATE_DATA'},trace=None),'config-read-envelope','envelope-request'),
                 (dict(id=1,result=self.value,private='PRIVATE_BODY'),'config-read-envelope','envelope-shape'),
                 (dict(id=1,result={'private':'PRIVATE_BODY'}),'config-read-result','unknown')]:
             with self.subTest(kind=kind),self.assertRaises(self.module['Refused']) as failure:

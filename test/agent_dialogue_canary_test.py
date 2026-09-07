@@ -565,7 +565,7 @@ class DialogueAuditTest(unittest.TestCase):
         self.audit.append(valid)
         self.assertEqual(self.records(),[valid])
 
-    def policy_main_failure(self,code,*,uncertain=False,audit_write_failure=False,transient_audit_failure=False,transport_failure=False):
+    def policy_main_failure(self,code,*,uncertain=False,audit_write_failure=False,transient_audit_failure=False,transport_failure=False,rpc_request_failure=False):
         # Run real main/finally and root removal with injected inert launch/read.
         # Existing synchronized writer tests exercise the underlying barrier.
         self.audit.path.unlink()
@@ -575,8 +575,17 @@ class DialogueAuditTest(unittest.TestCase):
         runpy_original=runpy.run_path
         native=runpy_original(str(self.repo/'scripts/agent-dialogue-native-source.py'))
         child=mock.Mock()
+        if rpc_request_failure:
+            from agent_dialogue_native_policy_test import NativePolicyTests
+            fixture=NativePolicyTests();fixture.setUp()
         def fail(*_):
             if audit_write_failure:self.audit.path.chmod(0o400)
+            if rpc_request_failure:
+                connection=fixture.connection(json.dumps(dict(id=1,method='PRIVATE_METHOD',params='PRIVATE_PARAMS',trace=None)).encode())
+                with self.assertRaises(fixture.module['Refused']) as failure:fixture.reader.read(connection)
+                self.assertEqual((failure.exception.substage,failure.exception.kind),('config-read-envelope','envelope-request'))
+                self.assertEqual(len(connection.sent),1)
+                raise native['PolicyFailure'](failure.exception.code,failure.exception.substage,failure.exception.kind)
             if transport_failure:
                 from agent_dialogue_websocket_test import FakeServer
                 observation=runpy_original(str(self.repo/'scripts/agent-dialogue-codex-observation.py'))
@@ -600,7 +609,8 @@ class DialogueAuditTest(unittest.TestCase):
             if not (audit_write_failure or transient_audit_failure):
                 row=next(row for row in rows if row['event']=='policy-failure')
                 self.assertEqual(row['code'],code)
-                self.assertEqual((row['substage'],row['rejectionKind']),('upgrade','http-status') if transport_failure else ('unknown','unknown'))
+                expected=('config-read-envelope','envelope-request') if rpc_request_failure else ('upgrade','http-status') if transport_failure else ('unknown','unknown')
+                self.assertEqual((row['substage'],row['rejectionKind']),expected)
             self.assertTrue(self.root.exists())
             (self.root/'evidence/cleanup-writers.json').write_text(json.dumps(dict(version=1,allCapturedWriterBirthsAbsent=not uncertain,writers=[])))
             if uncertain:raise ValueError('PRIVATE_UNCERTAIN_WRITER')
@@ -644,6 +654,9 @@ class DialogueAuditTest(unittest.TestCase):
 
     def test_transient_policy_audit_failure_remains_retained_after_sink_recovers(self):
         self.policy_main_failure('policy-request',transient_audit_failure=True)
+
+    def test_server_request_is_not_answered_and_parent_cleanup_preserves_closed_form_only(self):
+        self.policy_main_failure('policy-request',rpc_request_failure=True)
 
 
 if __name__ == "__main__":

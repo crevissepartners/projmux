@@ -270,14 +270,22 @@ separate connect/current/socket/peer checks, WebSocket upgrade, initialize
 schema/write/read/decode/envelope/result, initialized notification write,
 config/read params/write/read/decode/envelope/result, and post-read socket/config
 checks. Rejection kinds distinguish deadline, I/O, EOF/close, size bounds, UTF-8,
-frame or HTTP validation, identity, and envelope shape/ID/error/notification.
+frame or HTTP validation, identity, and envelope shape/ID/error/notification/request.
 Unclassified failures remain `unknown`; no native error code, message, method,
-response field names or exception text is exported. Error/notification envelopes
+response field names or exception text is exported. Error/notification/request envelopes
 still stop the transaction. No notification is skipped to search for a success.
 The existing product and pinned public JSON-RPC contracts agree on
 initialize → matching response → initialized → config/read, with `id`/`result`
 success envelopes and no required `jsonrpc` member. This comparison found no
-additional contract mismatch to relax or repair after v3.
+transport or admission mismatch after v3. The classifier now distinguishes a
+public server request (including optional bounded trace context) from a generic
+shape refusal; malformed error or method types remain generic refusals. Pinned
+public `JSONRPCRequest`, `JSONRPCResponse`, `JSONRPCNotification` and `JSONRPCError`
+schemas anchor the offline fixtures. These are closed known-field subsets:
+unknown fields and mixed forms still refuse, and the expected-ID fence runs
+first. A request is neither answered nor skipped. Its method, params, trace and
+error data never become evidence. The consumed v4 `config-read-envelope /
+envelope-shape` result does not establish which public or unknown form arrived.
 Audit write failure still runs the one owned writer cleanup and both credential
 finally paths, retains the root, and cannot produce a successful receipt.
 
