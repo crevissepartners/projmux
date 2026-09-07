@@ -3,6 +3,7 @@ import concurrent.futures
 import json
 import os
 import selectors
+import runpy
 import shlex
 import shutil
 import sys
@@ -327,6 +328,113 @@ class DialogueCleanupTest(unittest.TestCase):
         self.assertTrue(root.exists())
         self.assertFalse(credentials.exists())
         self.assertIn("root retained", result.stderr)
+
+
+@unittest.skipUnless(hasattr(os, "pidfd_open"), "offline dialogue cleanup requires Linux pidfd")
+class OfflineDialogueCleanupTest(unittest.TestCase):
+    def setUp(self):
+        self.repo = pathlib.Path(__file__).resolve().parents[1]
+        self.library = runpy.run_path(str(self.repo / "test/e2e/dialogue-cleanup.py"))
+        self.temp = tempfile.TemporaryDirectory(prefix="pmx-offline-writer-")
+        self.addCleanup(self.temp.cleanup)
+        self.root = pathlib.Path(self.temp.name, "owned")
+        self.root.mkdir()
+        self.source = (self.repo / "test/e2e/heterogeneous-agent-dialogue.inc.sh").read_text()
+
+    def writer(self, root=None):
+        root = root or self.root
+        root.mkdir(exist_ok=True)
+        program = ("import pathlib,sys;p=pathlib.Path.cwd();print('ready',flush=True);"
+                   "sys.stdin.readline();p.mkdir(parents=True,exist_ok=True);"
+                   "(p/'termination-receipts.jsonl').write_text('late receipt')")
+        child = subprocess.Popen([sys.executable, "-c", program], cwd=root,
+                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.assertEqual(child.stdout.readline().strip(), "ready")
+        self.assertNotIn(str(root).encode(), pathlib.Path("/proc", str(child.pid), "cmdline").read_bytes())
+        self.addCleanup(DialogueCleanupTest.release, child)
+        return child
+
+    def test_real_offline_exit_waits_for_cwd_writer_and_preserves_original_failure(self):
+        child = self.writer()
+        fifo = pathlib.Path(self.temp.name, "delete-intent")
+        os.mkfifo(fifo)
+        read_fd = os.open(fifo, os.O_RDWR | os.O_NONBLOCK)
+        self.addCleanup(os.close, read_fd)
+        binary = pathlib.Path(self.temp.name, "delete-fixture")
+        binary.write_text("#!" + sys.executable + "\nimport pathlib\npathlib.Path(" + repr(str(fifo)) + ").write_text('d')\n")
+        binary.chmod(0o700)
+        functions = "dialogue_cleanup() {" + self.source.split("dialogue_cleanup() {", 1)[1].split("\ntrap dialogue_finish_cleanup EXIT", 1)[0]
+        values = dict(dialogue_root=str(self.root), bin=str(binary), dialogue_real_tmux="/bin/false",
+                      dialogue_socket_path="", dialogue_socket_identity="", dialogue_socket="owned",
+                      dialogue_project_uid="fixture", dialogue_control_pid="", dialogue_binding_pid="", dialogue_wait_pid="")
+        shell = "set -euo pipefail\ndialogue_env=(env -u TMUX -u TMUX_PANE)\ndialogue_cleanup_done=0\ndialogue_cleanup_attempted=0\ndialogue_removal_attempted=0\ndialogue_root_removed=0\n"
+        shell += "\n".join(name + "=" + shlex.quote(value) for name, value in values.items()) + "\n"
+        shell += 'smoke_cleanup_env() { rm -rf -- "$dialogue_root"; }\n' + functions + "\ntrap dialogue_finish_cleanup EXIT\nexit 7\n"
+        cleanup = subprocess.Popen(["bash", "-c", shell], cwd=self.repo,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            with selectors.DefaultSelector() as poller:
+                poller.register(read_fd, selectors.EVENT_READ)
+                self.assertTrue(poller.select(5), "delete intent did not follow writer capture")
+            self.assertEqual(os.read(read_fd, 1), b"d")
+            self.assertTrue(self.root.exists())
+            self.assertIsNone(child.poll())
+            self.assertIsNone(cleanup.poll())
+        finally:
+            DialogueCleanupTest.release(child)
+        stdout, stderr = cleanup.communicate(timeout=5)
+        self.assertEqual(cleanup.returncode, 7, (stdout, stderr))
+        self.assertFalse(self.root.exists())
+
+    def test_offline_failure_trap_does_not_call_outer_root_removal(self):
+        finish = "dialogue_finish_cleanup() {" + self.source.split("dialogue_finish_cleanup() {", 1)[1].split("\ntrap dialogue_finish_cleanup EXIT", 1)[0]
+        shell = ("set -euo pipefail\ndialogue_cleanup() { return 1; }\n"
+                 "smoke_cleanup_env() { rm -rf -- " + shlex.quote(str(self.root)) + "; }\n" + finish +
+                 "\ntrap dialogue_finish_cleanup EXIT\nexit 7\n")
+        result = subprocess.run(["bash", "-c", shell], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 1)
+        self.assertTrue(self.root.exists())
+        self.assertIn("root retained", result.stderr)
+
+    def test_failed_root_removal_is_not_retried_by_outer_exit(self):
+        finish = "dialogue_finish_cleanup() {" + self.source.split("dialogue_finish_cleanup() {", 1)[1].split("\ntrap dialogue_finish_cleanup EXIT", 1)[0]
+        removal = "dialogue_remove_root() {" + self.source.split("dialogue_remove_root() {", 1)[1].split("\nif ! dialogue_remove_root", 1)[0]
+        attempts = pathlib.Path(self.temp.name, "attempts")
+        shell = ("set -euo pipefail\ndialogue_removal_attempted=0\ndialogue_root_removed=0\n"
+                 "dialogue_root=" + shlex.quote(str(self.root)) + "\nPROJMUX_SMOKE_WORKDIR=" + shlex.quote(self.temp.name) +
+                 "\ndialogue_cleanup() { return 0; }\nrm() { echo attempt >> " + shlex.quote(str(attempts)) + "; return 1; }\n"
+                 'smoke_cleanup_env() { rm -rf -- "$dialogue_root"; }\n' + finish + "\n" + removal +
+                 "\ntrap dialogue_finish_cleanup EXIT\nif ! dialogue_remove_root; then exit 9; fi\n")
+        result = subprocess.run(["bash", "-c", shell], capture_output=True, text=True, timeout=5)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(attempts.read_text(), "attempt\n")
+        self.assertTrue(self.root.exists())
+        self.assertIn("without retry", result.stderr)
+
+    def test_stubborn_cwd_writer_times_out_without_signal_or_root_removal(self):
+        child = self.writer()
+        with self.assertRaisesRegex(RuntimeError, "root retained"):
+            self.library["close_owned_writers"](self.root, lambda _: None, timeout=0.05)
+        self.assertTrue(self.root.exists())
+        self.assertIsNone(child.poll())
+
+    def test_foreign_and_replaced_birth_cannot_receive_owned_role_signal(self):
+        child = self.writer(pathlib.Path(self.temp.name, "foreign"))
+        barrier = self.library["FixtureWriterBarrier"](self.root)
+        try:
+            identity = barrier.observe(child.pid)[0]
+            with self.assertRaisesRegex(RuntimeError, "birth changed"):
+                self.library["signal_owned"](barrier, identity)
+            barrier.track(identity)
+            for changed in (dict(identity, start=identity["start"] + "-replacement"),
+                            dict(identity, ownerUID=identity["ownerUID"] + 1)):
+                with self.assertRaisesRegex(RuntimeError, "birth changed"):
+                    self.library["signal_owned"](barrier, changed)
+            self.assertIsNone(child.poll())
+            self.assertTrue(self.root.exists())
+        finally:
+            barrier.close()
+
 
 if __name__ == "__main__":
     unittest.main()

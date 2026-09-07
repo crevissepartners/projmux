@@ -1843,3 +1843,16 @@ separate decision this measurement exists to inform.
   `TestLifecycleDiscardedASCIIChecksCancellationWithinBoundedBufferedRun`
   requires cancellation within one 4 KiB buffered run and preserves the
   retained-state refusal before scanning.
+
+- Offline L20 cleanup (`test/e2e/dialogue-cleanup.py`) reuses the failed-canary
+  pidfd barrier and also captures exact owned cwd paths before canonical delete.
+  It waits for captured pane/supervisor/helper births after reparenting; only
+  role-validated fixture jobs and its exact broker receive pidfd TERM. The outer
+  EXIT trap retains the root on missing exit proof. `OfflineDialogueCleanupTest`
+  synchronizes a cwd-only late receipt writer with actual delete intent, checks
+  original failure exit preservation, and rejects stubborn/foreign/replaced
+  births without broad signals. Historical L20 late-writer attribution remains
+  unknown; process exit proof does not depend on that attribution.
+- `TestStoreReplyIsAtomicCorrelatedAndReplayIdempotent` pins both store instances
+  to the fixture clock so the replay test remains independent of wall-clock
+  terminal retention while retaining the explicit one-hour replay timestamp.

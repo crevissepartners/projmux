@@ -39,57 +39,42 @@ dialogue_control_pid=""
 dialogue_binding_pid=""
 dialogue_wait_pid=""
 dialogue_socket_path=""
+dialogue_socket_identity=""
+dialogue_project_uid=""
 dialogue_cleanup_done=0
-dialogue_stop_owned_broker() {
-  python3 - "$bin" "$dialogue_root/state/projmux" <<'PY'
-import os, pathlib, signal, sys
-binary=pathlib.Path(sys.argv[1]).resolve(strict=True); domain=str(pathlib.Path(sys.argv[2]).resolve())
-matches=[]
-for proc in pathlib.Path("/proc").iterdir():
-    if not proc.name.isdigit(): continue
-    try:
-        argv=proc.joinpath("cmdline").read_bytes().split(b"\0")
-        argv=[x.decode() for x in argv if x]
-        exe=proc.joinpath("exe").resolve(strict=True)
-    except (FileNotFoundError,PermissionError,ProcessLookupError,UnicodeDecodeError):
-        continue
-    if exe != binary or len(argv)<6 or argv[1:5] != ["internal","codex-broker","serve","--state-domain"] or argv[5] != domain:
-        continue
-    matches.append(int(proc.name))
-if len(matches)>1: raise SystemExit("more than one exact owned Codex broker matched")
-if matches:
-    os.kill(matches[0],signal.SIGTERM)
-    print(matches[0])
-PY
-}
+dialogue_cleanup_attempted=0
+dialogue_removal_attempted=0
+dialogue_root_removed=0
 dialogue_cleanup() {
-  if [[ "$dialogue_cleanup_done" == "1" ]]; then return; fi
+  if [[ "$dialogue_cleanup_done" == "1" ]]; then return 0; fi
+  if [[ "$dialogue_cleanup_attempted" == "1" ]]; then return 1; fi
+  dialogue_cleanup_attempted=1
+  if ! "${dialogue_env[@]}" python3 test/e2e/dialogue-cleanup.py \
+    "$dialogue_root" "$bin" "$dialogue_real_tmux" "$dialogue_socket_path" "$dialogue_socket_identity" \
+    "$dialogue_socket" "$dialogue_project_uid" "$dialogue_control_pid" "$dialogue_binding_pid" "$dialogue_wait_pid"; then
+    return 1
+  fi
+  # pidfd proof precedes shell reaping; wait cannot block on a live writer.
+  local pid
+  for pid in "$dialogue_control_pid" "$dialogue_binding_pid" "$dialogue_wait_pid"; do
+    if [[ -n "$pid" ]]; then wait "$pid" 2>/dev/null || true; fi
+  done
   dialogue_cleanup_done=1
-  if [[ -n "$dialogue_wait_pid" ]]; then
-    if jobs -pr | grep -Fxq "$dialogue_wait_pid"; then
-      kill -TERM "$dialogue_wait_pid" 2>/dev/null || true
-    fi
-    wait "$dialogue_wait_pid" 2>/dev/null || true
-    dialogue_wait_pid=""
-  fi
-  if [[ -n "$dialogue_socket_path" ]]; then
-    case "$dialogue_socket_path" in
-      "$dialogue_root"/tmux/*) "${dialogue_env[@]}" "$dialogue_real_tmux" -S "$dialogue_socket_path" kill-server >/dev/null 2>&1 || true ;;
-      *) echo "refusing dialogue cleanup outside smoke root: $dialogue_socket_path" >&2; return 1 ;;
-    esac
-  fi
-  if [[ -n "$dialogue_control_pid" ]] && kill -0 "$dialogue_control_pid" 2>/dev/null; then
-    kill -TERM "$dialogue_control_pid"
-    wait "$dialogue_control_pid" 2>/dev/null || true
-  fi
-  if [[ -n "$dialogue_binding_pid" ]]; then
-    if jobs -pr | grep -Fxq "$dialogue_binding_pid"; then kill -TERM "$dialogue_binding_pid"; fi
-    wait "$dialogue_binding_pid" || true
-    dialogue_binding_pid=""
-  fi
-  dialogue_stop_owned_broker >/dev/null
 }
-trap 'dialogue_cleanup; smoke_cleanup_env' EXIT
+dialogue_finish_cleanup() {
+  local status=$?
+  if ! dialogue_cleanup; then
+    echo "dialogue owned writer cleanup failed; smoke root retained" >&2
+    return 1
+  fi
+  if [[ "$dialogue_removal_attempted" == "1" && "$dialogue_root_removed" != "1" ]]; then
+    echo "dialogue root removal failed; smoke root retained without retry" >&2
+    return 1
+  fi
+  smoke_cleanup_env
+  return "$status"
+}
+trap dialogue_finish_cleanup EXIT
 
 "${dialogue_env[@]}" "$dialogue_shim/codex" app-server fixture-control >"$dialogue_root/control.out" 2>"$dialogue_root/control.err" &
 dialogue_control_pid=$!
@@ -100,6 +85,13 @@ smoke_wait_for "dialogue Codex control endpoint" dialogue_control_ready
 
 dialogue_anchor="$(dialogue_tmux new-session -d -P -F '#{pane_id}' -s "$dialogue_session" -c "$dialogue_project" sleep 600)"
 dialogue_socket_path="$(dialogue_tmux display-message -p -t "$dialogue_anchor" '#{socket_path}')"
+dialogue_socket_identity="$(python3 - "$dialogue_socket_path" <<'PY_SOCKET'
+import os, stat, sys
+info=os.lstat(sys.argv[1])
+assert stat.S_ISSOCK(info.st_mode)
+print(f"{info.st_dev}:{info.st_ino}")
+PY_SOCKET
+)"
 dialogue_server_pid="$(dialogue_tmux display-message -p -t "$dialogue_anchor" '#{pid}')"
 dialogue_tmux set-option -t "$dialogue_session" -q @projmux_project_path "$dialogue_project"
 dialogue_project_uid="$(dialogue_pmx create project --root "$dialogue_project" --name heterogeneous-dialogue -o uid)"
@@ -280,56 +272,23 @@ if [[ "$dialogue_provider_writes_before" != "0" || "$dialogue_provider_writes_af
   exit 1
 fi
 
-dialogue_pmx delete project "uid:$dialogue_project_uid" --socket "$dialogue_socket" --yes >"$dialogue_root/delete.out"
-if [[ -n "$(dialogue_pmx get projects -o uid)" || -n "$(dialogue_pmx get agents --all-projects -o uid)" ]]; then
-  echo "dialogue canonical cleanup left owned Registry resources" >&2
-  exit 1
-fi
-python3 - "$dialogue_root/state/projmux/metadata/registry.json" <<'PY'
-import json, pathlib, sys
-p=pathlib.Path(sys.argv[1])
-if p.exists():
-    registry=json.loads(p.read_text())
-    for collection in ("projects","controlSessions","windows","panes","agents","nameReservations"):
-        assert not registry.get(collection), "owned Registry residue in "+collection
-PY
-dialogue_cleanup
-dialogue_processes_gone() {
-  # shellcheck disable=SC2009 # Match the literal owned root, not a regex.
-  ! ps -eo args= | grep -F "$dialogue_root" | grep -v grep >/dev/null
+# The barrier captures pane/supervisor/helper births before canonical delete.
+# A failed proof deliberately retains the root, including on the outer EXIT.
+if ! dialogue_cleanup; then exit 1; fi
+dialogue_remove_root() {
+  if [[ "$dialogue_removal_attempted" == "1" ]]; then [[ "$dialogue_root_removed" == "1" ]]; return; fi
+  dialogue_removal_attempted=1
+  case "$dialogue_root" in
+    "$PROJMUX_SMOKE_WORKDIR"/*)
+      if ! rm -rf -- "$dialogue_root"; then return 1; fi ;;
+    *) echo "refusing to remove dialogue root outside smoke workdir" >&2; return 1 ;;
+  esac
+  if [[ -e "$dialogue_root" ]]; then
+    echo "dialogue exact owned root survived cleanup" >&2
+    return 1
+  fi
+  dialogue_root_removed=1
 }
-if ! smoke_wait_for "dialogue owned process cleanup" dialogue_processes_gone; then
-  echo "dialogue exact owned process residue:" >&2
-  # shellcheck disable=SC2009 # Diagnostic preserves PID/state for this literal root.
-  ps -eo pid=,ppid=,state=,args= | grep -F "$dialogue_root" | grep -v grep >&2 || true
-  exit 1
-fi
-case "$dialogue_socket_path" in
-  "$dialogue_root"/tmux/*)
-    if [[ -e "$dialogue_socket_path" && ! -S "$dialogue_socket_path" ]]; then
-      echo "dialogue tmux socket path was replaced by a non-socket" >&2
-      exit 1
-    fi
-    if [[ -S "$dialogue_socket_path" ]]; then rm -f -- "$dialogue_socket_path"; fi
-    ;;
-  *) echo "refusing stale dialogue tmux socket cleanup outside owned root: $dialogue_socket_path" >&2; exit 1 ;;
-esac
-if dialogue_tmux list-sessions >/dev/null 2>&1; then
-  echo "dialogue cleanup left an owned tmux server/session" >&2
-  exit 1
-fi
-if find "$dialogue_root" -type s -print -quit 2>/dev/null | grep -q .; then
-  echo "dialogue cleanup left an owned socket" >&2
-  find "$dialogue_root" -type s -print >&2 || true
-  exit 1
-fi
-case "$dialogue_root" in
-  "$PROJMUX_SMOKE_WORKDIR"/*) rm -rf -- "$dialogue_root" ;;
-  *) echo "refusing to remove dialogue root outside smoke workdir: $dialogue_root" >&2; exit 1 ;;
-esac
-if [[ -e "$dialogue_root" ]]; then
-  echo "dialogue exact owned root survived cleanup" >&2
-  exit 1
-fi
+if ! dialogue_remove_root; then exit 1; fi
 trap smoke_cleanup_env EXIT
 echo ">> heterogeneous dialogue e2e passed: $dialogue_send_receipt agents=2 new-agents=0 waiters=0 codex-provider-writes=0 helper/socket/process-residual=0"

@@ -412,6 +412,7 @@ func TestStoreReplyIsAtomicCorrelatedAndReplayIdempotent(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "messages.json")
 	store := NewStoreAt(path)
+	store.now = func() time.Time { return storeTestNow }
 	original := storeEnvelope(211)
 	original.Source.Provider, original.Source.Incarnation = "codex", "codex-incarnation"
 	original.Target.Provider, original.Target.Incarnation = "claude", "claude-incarnation"
@@ -434,7 +435,9 @@ func TestStoreReplyIsAtomicCorrelatedAndReplayIdempotent(t *testing.T) {
 		reply.Envelope.ReplyTo != original.MessageRef || reply.Envelope.ConversationRef != original.ConversationRef {
 		t.Fatalf("reply = (%#v, %t, %v)", reply, created, err)
 	}
-	replayed, created, err := NewStoreAt(path).PutReply(original.MessageRef, "reply-211", "assistant response",
+	replayStore := NewStoreAt(path)
+	replayStore.now = func() time.Time { return storeTestNow }
+	replayed, created, err := replayStore.PutReply(original.MessageRef, "reply-211", "assistant response",
 		original.Target, original.Source, accepted.Add(time.Hour), accepted.Add(time.Hour+time.Minute))
 	if err != nil || created || replayed != reply {
 		t.Fatalf("replayed reply = (%#v, %t, %v)", replayed, created, err)
