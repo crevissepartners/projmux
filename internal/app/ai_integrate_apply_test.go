@@ -46,6 +46,8 @@ func TestV0101NormalUpdaterHandoffConvergesThroughCandidateApply(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("PROJMUX_CWD", "")
 	paths := writeV0101ManagedFileFixture(t, home)
+	claudePath := filepath.Join(home, claudeSettingsRelativePath)
+	claudeBefore := readCodexTestFile(t, claudePath)
 	socket := "projmux"
 	physical := "/tmp/tmux-1000/" + socket
 	runner := &recordingTmuxRunner{outputs: map[string]string{
@@ -73,11 +75,17 @@ func TestV0101NormalUpdaterHandoffConvergesThroughCandidateApply(t *testing.T) {
 	}
 	for _, path := range paths {
 		got := readCodexTestFile(t, path)
+		if path == claudePath {
+			if got != claudeBefore {
+				t.Fatalf("normal handoff changed explicit-only Claude settings bytes: %s", got)
+			}
+			continue
+		}
 		if strings.Contains(got, " ai ingest ") || !strings.Contains(got, "internal agent-hook ingest") {
 			t.Fatalf("normal handoff did not canonicalize %s:\n%s", path, got)
 		}
 	}
-	if !strings.Contains(stdout.String(), "migrated 4 managed agent hook files to canonical ingest") ||
+	if !strings.Contains(stdout.String(), "migrated 3 managed agent hook files to canonical ingest") ||
 		!strings.Contains(stdout.String(), "migrated managed tmux bell hook on -L projmux") ||
 		!strings.Contains(stdout.String(), "reloaded tmux server -L projmux: 1 sessions") {
 		t.Fatalf("normal handoff stdout=%q, want file, bell, and reload convergence", stdout.String())
@@ -140,11 +148,17 @@ func TestV0101NoApplyIsReplaceOnlyThenExplicitCandidateNoReloadConverges(t *test
 	}
 	for _, path := range paths {
 		got := readCodexTestFile(t, path)
+		if path == filepath.Join(home, claudeSettingsRelativePath) {
+			if got != original[path] {
+				t.Fatalf("explicit candidate changed explicit-only Claude settings bytes: %s", got)
+			}
+			continue
+		}
 		if strings.Contains(got, " ai ingest ") || !strings.Contains(got, "internal agent-hook ingest") {
 			t.Fatalf("explicit candidate --no-reload did not canonicalize %s:\n%s", path, got)
 		}
 	}
-	if !strings.Contains(stdout.String(), "migrated 4 managed agent hook files to canonical ingest") ||
+	if !strings.Contains(stdout.String(), "migrated 3 managed agent hook files to canonical ingest") ||
 		!strings.Contains(stdout.String(), "skipped reload: --no-reload") || stderr.Len() != 0 {
 		t.Fatalf("explicit candidate no-reload streams=(%q,%q), want deterministic migration/skip output", stdout.String(), stderr.String())
 	}

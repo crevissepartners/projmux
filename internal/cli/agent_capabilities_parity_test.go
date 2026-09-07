@@ -48,6 +48,24 @@ func TestAgentCapabilityCatalogRoutesMatchExecutableHelpGraph(t *testing.T) {
 	}
 }
 
+func TestClaudeQualificationRouteIsExplicitJSONAgentDelivery(t *testing.T) {
+	t.Parallel()
+
+	_, route, ok := Resolve([]string{"agent", "message", "qualify"})
+	if !ok || route.Name != "qualify" || route.Invocation != InvocationExplicit ||
+		route.Effects == nil || route.Effects.DomainEffect == nil ||
+		route.Effects.DomainEffect.Kind != DomainEffectAgentDelivery ||
+		!slices.Contains(route.Outputs, OutputModeJSON) {
+		t.Fatalf("qualification route = %#v, found=%t", route, ok)
+	}
+	help := strings.Join(route.Usage, "\n")
+	for _, required := range []string{"--evidence", "--confirm-isolated-provider-push", "-o json"} {
+		if !strings.Contains(help, required) {
+			t.Fatalf("qualification help omits %q: %s", required, help)
+		}
+	}
+}
+
 func TestAgentIntegrationAndGenerationLeafHelpMatchesCapabilityCatalog(t *testing.T) {
 	t.Parallel()
 

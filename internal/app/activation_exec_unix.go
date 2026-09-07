@@ -31,6 +31,7 @@ func execCommittedActivation(argv []string, argv0 string, spec superviseSpec) er
 }
 
 func committedActivationEnvironment(inherited []string, spec superviseSpec) []string {
+	inherited = withoutClaudeDialoguePolicy(inherited)
 	if !spec.ClaudeRegistration {
 		return append(inherited, activationEnvironment(spec)...)
 	}

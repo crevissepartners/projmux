@@ -16,7 +16,7 @@ python3 scripts/e2e-coverage.py --manifest "$manifest" --output "$tmpdir/first.j
 python3 scripts/e2e-coverage.py --manifest "$manifest" --output "$tmpdir/repeat.json" >"$tmpdir/repeat.stdout"
 cmp "$tmpdir/first.json" "$tmpdir/repeat.json"
 grep -Fq '"orphan_count":0' "$tmpdir/first.json"
-grep -Fq '"scenario_count":21' "$tmpdir/first.json"
+grep -Fq '"scenario_count":22' "$tmpdir/first.json"
 grep -Fq '"moved_former_cells":60' "$tmpdir/first.json"
 grep -Fq '"moved_e2e_sentinel_cells":5' "$tmpdir/first.json"
 grep -Fq '"merged_evidence_count":6' "$tmpdir/first.json"
@@ -110,4 +110,4 @@ if grep -Eq '/home/|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY|github_pat_|ghp_' "$manif
 	exit 1
 fi
 
-echo ">> E2E coverage contract: 21 scenarios, four shards, moved matrix and merged L11/L17/L18/L19 parity, orphan 0"
+echo ">> E2E coverage contract: 22 scenarios, four shards, moved matrix and merged L11/L17/L18/L19 parity, orphan 0"

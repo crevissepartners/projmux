@@ -63,6 +63,11 @@ if [[ "$(cat "$tmp/terminal-record.err")" != "$terminal_golden" ]]; then
   diff -u <(printf '%s\n' "$terminal_golden") "$tmp/terminal-record.err" >&2 || true
   exit 1
 fi
+python3 "$root/scripts/e2e-first-failure.py" terminal \
+  --scenario L20 --phase heterogeneous-dialogue --owner provider-neutral-broker --shard fixture-4 \
+  --status 1 --source test/e2e/heterogeneous-agent-dialogue.inc.sh --line 1 \
+  --command "make test-e2e E2E_SCENARIO=L20" 2>"$tmp/terminal-dialogue.err"
+grep -Fq '"scenario":"L20"' "$tmp/terminal-dialogue.err"
 if python3 "$root/scripts/e2e-first-failure.py" terminal \
   --scenario L01 --phase bootstrap --owner harness --shard fixture-1 \
   --status 17 --source test/e2e/linux-smoke.sh --line 123 \

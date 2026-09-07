@@ -63,6 +63,13 @@ func runSupervisedChildWithActivation(argv []string, argv0 string, spec supervis
 	outcome, runErr := runSupervisedActivationGate(activationExecArgv(binary, spec, argv0, 3, argv))
 	cancelWatch()
 	cleanupClaudeActivationLeases(spec)
+	if cleanupErr := cleanupClaudeDialogueProfile(spec); cleanupErr != nil {
+		if runErr == nil {
+			runErr = errClaudeDialogueCleanup
+		} else {
+			runErr = errors.Join(runErr, cleanupErr)
+		}
+	}
 	return outcome, runErr
 }
 

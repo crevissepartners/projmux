@@ -46,7 +46,7 @@ export PROJMUX_TEST_SKIP_PREFETCH=1
 # default; explicit parallel mode remains available as the stress profile.
 manifest="$root/test/e2e/linux-shards.tsv"
 default_order="fixture-1 fixture-2 fixture-3 fixture-4"
-expected="L01,L02,L03,L04,L05,L06,L07,L08,L09,L10,L11,L12,L13,L14,L15,L16,L17,L18,L19,C01,N01"
+expected="L01,L02,L03,L04,L05,L06,L07,L08,L09,L10,L11,L12,L13,L14,L15,L16,L17,L18,L19,L20,C01,N01"
 codex_expected="C01"
 npm_expected="N01"
 run_codex=1

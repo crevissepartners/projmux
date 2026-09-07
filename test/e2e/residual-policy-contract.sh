@@ -47,9 +47,9 @@ for line in manifest.read_text(encoding="utf-8").splitlines():
     linux_ids.extend(ids.split())
 
 required = linux_ids + ["C01", "N01"]
-expected = [f"L{number:02d}" for number in range(1, 20)] + ["C01", "N01"]
+expected = [f"L{number:02d}" for number in range(1, 21)] + ["C01", "N01"]
 if sorted(required) != sorted(expected) or len(required) != len(set(required)):
-    raise SystemExit("required E2E scenario mapping is not exact L01-L19/C01/N01")
+    raise SystemExit("required E2E scenario mapping is not exact L01-L20/C01/N01")
 
 rows = []
 for number, line in enumerate(quarantine.read_text(encoding="utf-8").splitlines(), 1):
@@ -98,7 +98,7 @@ for number, line in enumerate(observations.read_text(encoding="utf-8").splitline
     observed[scenario] = (attempts, flakes)
 
 if set(observed) != set(expected):
-    raise SystemExit("residual observations do not cover exact L01-L19/C01/N01")
+    raise SystemExit("residual observations do not cover exact L01-L20/C01/N01")
 eligible = sorted(scenario for scenario, (_, flakes) in observed.items() if flakes >= 3)
 if sorted(rows) != eligible:
     raise SystemExit(
@@ -116,7 +116,7 @@ print(
 )
 print(
     ">> Negative N/A: quarantine is empty, so no quarantined execution route exists; "
-    "required mapping remains exact L01-L19/C01/N01"
+    "required mapping remains exact L01-L20/C01/N01"
 )
 PY
 

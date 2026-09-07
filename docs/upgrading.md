@@ -52,6 +52,36 @@ still requires an explicit `PROJMUX_INSTALLER=github-release`.
 
 ## Behavior Changes
 
+### Claude dialogue endpoint revalidation
+
+The heterogeneous dialogue release moves the public message envelope and
+durable message store to v2 and the private Claude coordination protocol and
+managed hook marker to v3. Existing v1 store records are retained with an
+explicit unqualified legacy incarnation, so they remain inspectable but can
+never be delivered or claimed by a current endpoint. A current helper refuses
+private v1/v2 traffic. No push is attempted until the exact v3 helper lease is
+ready and that same process/Pane/generation has completed isolated qualification
+for the exact running provider version.
+
+Claude hook integration remains explicit. Preview and converge it with:
+
+```sh
+projmux agent integrate claude --dry-run
+projmux agent integrate claude
+```
+
+Config apply and installation do not migrate Claude settings automatically,
+even when they contain a marker-owned v1, v2, or v3 coordination family. The
+explicit integration command alone converges the short Stop/UserPrompt hooks;
+there is no SessionStart ingress waiter.
+
+If an Agent's already-running Claude session predates that convergence, let the
+session exit normally and then run `projmux agent resume uid:<same-agent-uid>`.
+The existing Agent UID is rematerialized; no new Agent is created. Remove only
+the managed hook family with `projmux agent integrate claude --remove`. Global
+Claude settings are not changed by capability reads or ordinary message calls.
+See [Claude coordination endpoints](claude-coordination-endpoints.md#phase-4-push-ingress-and-heterogeneous-dialogue).
+
 ### Prompted Codex create requires native authority
 
 A prompted managed Codex create — provider `codex` with exactly one non-empty

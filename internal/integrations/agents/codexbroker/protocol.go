@@ -86,6 +86,8 @@ const (
 	// the closed `request-unknown` refusal, which a diagnostics reader renders
 	// as an unsupported runtime rather than as a fault.
 	requestStats requestKind = "stats"
+	// Read-only same-host lease proof; older runtimes fail closed as unknown.
+	requestAuthority requestKind = "authority-check"
 )
 
 // replyKind is the closed set of host-to-client frames.

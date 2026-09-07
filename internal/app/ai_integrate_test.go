@@ -804,19 +804,24 @@ func TestAIIntegrateClaudeInstallsManagedHooks(t *testing.T) {
 			t.Fatalf("settings missing managed command for %s:\n%s", event, readCodexTestFile(t, path))
 		}
 	}
-	for _, event := range []string{"SessionStart", "Stop"} {
-		coordination := claudeSettingsCommands(t, settings, event, claudeCoordinationHookCommand)
-		if len(coordination) != 1 {
-			t.Fatalf("%s coordination hooks = %d, want exactly one", event, len(coordination))
+	if coordination := claudeSettingsCommands(t, settings, "SessionStart", claudeCoordinationHookCommand); len(coordination) != 0 {
+		t.Fatalf("SessionStart installed obsolete ingress waiter: %#v", coordination)
+	}
+	coordination := claudeSettingsCommands(t, settings, "Stop", claudeCoordinationHookCommand)
+	if len(coordination) != 1 || coordination[0]["timeout"] != float64(claudeCoordinationHookTimeout/time.Second) {
+		t.Fatalf("Stop reply hook contract = %#v", coordination)
+	}
+	for _, forbidden := range []string{"async", "asyncRewake", "rewakeMessage"} {
+		if _, ok := coordination[0][forbidden]; ok {
+			t.Fatalf("Stop reply hook depends on forbidden %s", forbidden)
 		}
-		if coordination[0]["asyncRewake"] != true || coordination[0]["timeout"] != float64(claudeCoordinationHookTimeout/time.Second) {
-			t.Fatalf("%s coordination hook contract = %#v", event, coordination[0])
-		}
-		for _, undocumented := range []string{"async", "rewakeMessage"} {
-			if _, ok := coordination[0][undocumented]; ok {
-				t.Fatalf("%s coordination hook depends on undocumented %s", event, undocumented)
-			}
-		}
+	}
+	boundary := claudeSettingsCommands(t, settings, "UserPromptSubmit", claudeCoordinationBoundaryCommand)
+	if len(boundary) != 1 || boundary[0]["timeout"] != float64(5) {
+		t.Fatalf("UserPromptSubmit coordination boundary hook = %#v", boundary)
+	}
+	if _, ok := boundary[0]["asyncRewake"]; ok {
+		t.Fatalf("UserPromptSubmit boundary must not asyncRewake: %#v", boundary[0])
 	}
 	if !strings.Contains(readCodexTestFile(t, path), `"PostToolUse"`) || !strings.Contains(readCodexTestFile(t, path), "echo keep") {
 		t.Fatalf("settings did not preserve user hook:\n%s", readCodexTestFile(t, path))
@@ -885,6 +890,49 @@ func TestClaudeAutomaticMigrationPreservesCoordinationPresenceAndSettingsBytes(t
 	}
 	if automatic.changed || automatic.next != installed {
 		t.Fatalf("automatic migration changed explicitly installed settings:\nbefore:\n%s\nafter:\n%s", installed, automatic.next)
+	}
+}
+
+func TestClaudeAutomaticMigrationPreservesEveryCoordinationVersionUntilExplicitIntegration(t *testing.T) {
+	home := t.TempDir()
+	cmd := testAICommand(home)
+	cmd.readFile = os.ReadFile
+	path := filepath.Join(home, claudeSettingsRelativePath)
+	current, err := cmd.planClaudeHookIntegration(false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		marker string
+	}{
+		{name: "v1", marker: priorClaudeCoordinationManagedMarker},
+		{name: "v2", marker: priorClaudeCoordinationV2Marker},
+		{name: "v3", marker: claudeCoordinationManagedMarker},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			before := strings.ReplaceAll(current.next, claudeCoordinationManagedMarker, test.marker)
+			writeCodexTestFile(t, path, before)
+			automatic, planErr := cmd.planClaudeHookMigration()
+			if planErr != nil {
+				t.Fatal(planErr)
+			}
+			if automatic.changed || automatic.next != before || automatic.current != before {
+				t.Fatalf("automatic migration changed %s settings:\nbefore:\n%s\nafter:\n%s", test.name, before, automatic.next)
+			}
+			explicit, planErr := cmd.planClaudeHookIntegration(false)
+			if planErr != nil {
+				t.Fatal(planErr)
+			}
+			if !strings.Contains(explicit.next, claudeCoordinationManagedMarker) ||
+				strings.Contains(explicit.next, priorClaudeCoordinationManagedMarker) ||
+				strings.Contains(explicit.next, priorClaudeCoordinationV2Marker) {
+				t.Fatalf("explicit integration did not converge %s to v3:\n%s", test.name, explicit.next)
+			}
+			if test.name == "v3" && explicit.changed {
+				t.Fatal("already-current explicit integration was not idempotent")
+			}
+		})
 	}
 }
 
@@ -1298,9 +1346,10 @@ func TestManagedIngestProducerMigrationUpgradesV0101AndRepeatsWithoutWrites(t *t
 	writeCodexTestFile(t, codexPath, strings.ReplaceAll(codexHooksBlock(true), codexHookCommand, legacyCodexHookCommand))
 	claudePath := filepath.Join(home, claudeSettingsRelativePath)
 	legacyClaude := strings.ReplaceAll(claudeHookCommand, canonicalClaudeHookRoute, legacyClaudeHookRoute)
-	writeCodexTestFile(t, claudePath, "{\n  \"hooks\": {\n    \"Notification\": ["+
-		"{\"hooks\": [{\"type\": \"command\", \"command\": "+string(mustJSONMarshal(legacyClaude))+"}]},"+
-		"{\"hooks\": [{\"type\": \"command\", \"command\": \"echo preserve-user-migration\"}]}]\n  }\n}\n")
+	legacyClaudeSettings := "{\n  \"hooks\": {\n    \"Notification\": [" +
+		"{\"hooks\": [{\"type\": \"command\", \"command\": " + string(mustJSONMarshal(legacyClaude)) + "}]}," +
+		"{\"hooks\": [{\"type\": \"command\", \"command\": \"echo preserve-user-migration\"}]}]\n  }\n}\n"
+	writeCodexTestFile(t, claudePath, legacyClaudeSettings)
 	hooksPath := filepath.Join(home, antigravityHooksRelativePath)
 	hooks, err := encodeAntigravityManagedHook("/opt/projmux/bin/projmux")
 	if err != nil {
@@ -1323,24 +1372,24 @@ func TestManagedIngestProducerMigrationUpgradesV0101AndRepeatsWithoutWrites(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 4 || writes != 4 {
-		t.Fatalf("first migration count=%d writes=%d, want 4/4", count, writes)
+	if count != 3 || writes != 3 {
+		t.Fatalf("first migration count=%d writes=%d, want 3/3", count, writes)
 	}
-	for _, path := range []string{codexPath, claudePath, hooksPath, statusPath} {
+	for _, path := range []string{codexPath, hooksPath, statusPath} {
 		got := readCodexTestFile(t, path)
 		if strings.Contains(got, " ai ingest ") || !strings.Contains(got, "internal agent-hook ingest") {
 			t.Fatalf("%s did not converge to canonical ingest:\n%s", path, got)
 		}
 	}
-	if got := readCodexTestFile(t, claudePath); !strings.Contains(got, "echo preserve-user-migration") || strings.Contains(got, claudeCoordinationManagedMarker) {
-		t.Fatalf("automatic Claude migration changed user hook or planted coordination:\n%s", got)
+	if got := readCodexTestFile(t, claudePath); got != legacyClaudeSettings {
+		t.Fatalf("automatic Claude migration changed settings bytes:\n%s", got)
 	}
 	count, _, err = cmd.beginManagedIngestProducerFileMigration()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 || writes != 4 {
-		t.Fatalf("repeat migration count=%d total writes=%d, want 0/4", count, writes)
+	if count != 0 || writes != 3 {
+		t.Fatalf("repeat migration count=%d total writes=%d, want 0/3", count, writes)
 	}
 }
 
@@ -1375,13 +1424,13 @@ func TestManagedIngestProducerMigrationPlansAllConflictsBeforeWrites(t *testing.
 	codexPath := filepath.Join(home, codexConfigRelativePath)
 	original := strings.ReplaceAll(codexHooksBlock(true), codexHookCommand, legacyCodexHookCommand)
 	writeCodexTestFile(t, codexPath, original)
-	writeCodexTestFile(t, filepath.Join(home, claudeSettingsRelativePath), `{"hooks":{"Notification":[{"hooks":[{"type":"command","command":"projmux ai ingest claude-hook --custom"}]}]}}`)
+	writeCodexTestFile(t, filepath.Join(home, antigravityHooksRelativePath), `{"projmux":{"Stop":[{"command":"echo user"}]}}`)
 	writes := 0
 	cmd.writeFile = func(path string, data []byte, mode os.FileMode) error {
 		writes++
 		return os.WriteFile(path, data, mode)
 	}
-	if _, _, err := cmd.beginManagedIngestProducerFileMigration(); err == nil || !strings.Contains(err.Error(), "unmanaged projmux ingest command") {
+	if _, _, err := cmd.beginManagedIngestProducerFileMigration(); err == nil || !strings.Contains(err.Error(), "unmanaged named entry") {
 		t.Fatalf("migration error = %v, want later-provider conflict", err)
 	}
 	if writes != 0 {

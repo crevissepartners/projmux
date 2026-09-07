@@ -204,6 +204,7 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	fs.SetOutput(stderr)
 	flags := resourceQueryFlags{kind: coremetadata.KindAgent}
 	flags.register(fs)
+	dialogueReplyOnly := fs.Bool(claudeDialogueReplyOnlyFlag, false, "claude only: resume this UID into one isolated reply-only activation; qualification required")
 	refs, err := parseWithPositionals(fs, args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -233,6 +234,9 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 		return fmt.Errorf("%s: resolved uid %q is no longer in the registry", spelling, match.UID)
 	}
 	if err := requireResumablePhase(spelling, agent); err != nil {
+		return err
+	}
+	if err := requireClaudeDialogueMode(agent.Spec.Provider, *dialogueReplyOnly, nil); err != nil {
 		return err
 	}
 	if operationRef, endpoint, draining := drainingCodexResumeRequest(agent); draining {
@@ -271,6 +275,7 @@ func (c *agentCommand) runResume(args []string, stdout, stderr io.Writer) error 
 	if err != nil {
 		return err
 	}
+	plan.dialogueReplyOnly = *dialogueReplyOnly
 	return c.rebind.rebind(spelling, plan, stdout, stderr)
 }
 

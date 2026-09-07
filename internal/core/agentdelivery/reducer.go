@@ -59,6 +59,9 @@ type Event struct {
 	Reason           string
 	FullFrameWritten bool
 	HelperReceipt    bool
+	// OutcomeKnown is valid only for EventFail. It distinguishes a verified
+	// zero-byte pre-write failure from a failure after bytes may have crossed.
+	OutcomeKnown bool
 }
 
 // Reduce is terminal-once and fail-closed. Duplicate, foreign, stale, and
@@ -129,7 +132,7 @@ func Reduce(current Delivery, event Event) (Delivery, bool) {
 		}
 		next.State = StateFailed
 		next.Reason = boundedReason(event.Reason)
-		next.Ambiguous = current.State == StateHandoff
+		next.Ambiguous = current.State == StateHandoff && !event.OutcomeKnown
 	default:
 		return current, false
 	}

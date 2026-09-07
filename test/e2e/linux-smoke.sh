@@ -958,6 +958,14 @@ PROJMUX_REAL_TMUX_TEST=1 go test ./internal/integrations/tmux \
 smoke_contract_pass
 fi
 fi
+if smoke_linux_scenario_enabled L20; then
+smoke_contract_begin L20 heterogeneous-dialogue provider-neutral-broker
+
+# shellcheck source=test/e2e/heterogeneous-agent-dialogue.inc.sh
+source "$smoke_root/test/e2e/heterogeneous-agent-dialogue.inc.sh"
+
+smoke_contract_pass
+fi
 
 if smoke_linux_shard_enabled mutation-convergence; then
 if smoke_linux_scenario_enabled L06; then

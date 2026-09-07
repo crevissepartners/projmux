@@ -5,79 +5,264 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
-// The disposable synthetic provider owns its own actual socket and credential,
-// then emits the public SessionStart input. A private capture socket carries
-// receipts to test memory, never stdout/stderr or a test artifact. This is required
-// by make test-integration; it does not require a model, account, or network.
+// The synthetic provider owns a disposable socket and token, emits only the
+// public SessionStart input, and accepts exactly the documented auth line plus
+// the one owner-frozen user frame. It never runs a model or uses a vendor
+// reply/control frame. Its private capture socket is test memory, not a product
+// receipt, log, or artifact.
 const claudeEndpointSyntheticProvider = `
-import json, os, secrets, socket, subprocess, sys
+import json, os, secrets, shlex, socket, subprocess, sys
 path = os.path.join(os.environ['PMX_TEST_ROOT'], 'provider-' + secrets.token_hex(8) + '.sock')
 os.umask(0o077)
 inbox = socket.socket(socket.AF_UNIX)
 inbox.bind(path)
-os.chmod(path,0o600)
+os.chmod(path, 0o600)
 inbox.listen()
-inbox.settimeout(0.01)
 token = secrets.token_hex(24)
 os.environ['CLAUDE_CODE_MESSAGING_SOCKET'] = path
 os.environ['CLAUDE_CODE_MESSAGING_TOKEN'] = token
 capture = socket.socket(socket.AF_UNIX)
 capture.connect(os.environ['PMX_TEST_CAPTURE'])
 receipt = capture.makefile('w', buffering=1)
-receipt.write(json.dumps({'socket': path, 'token': token, 'pid':os.getpid(), 'pane_env':os.environ.get('PMX_INTERNAL_ACTIVATION_PANE_UID'), 'generation_env':os.environ.get('PMX_INTERNAL_ACTIVATION_GENERATION'), 'registry_env':os.environ.get('PMX_INTERNAL_CLAUDE_REGISTRY_PATH')}) + '\n'); receipt.flush()
+receipt.write(json.dumps({'socket':path,'token':token,'pid':os.getpid(),'pane_env':os.environ.get('PMX_INTERNAL_ACTIVATION_PANE_UID'),'generation_env':os.environ.get('PMX_INTERNAL_ACTIVATION_GENERATION'),'registry_env':os.environ.get('PMX_INTERNAL_CLAUDE_REGISTRY_PATH')}) + '\n'); receipt.flush()
 def hook(session):
-    result = subprocess.run([os.environ['PMX_TEST_BIN'], 'internal', 'claude-endpoint-register'], input=json.dumps({'hook_event_name':'SessionStart','session_id':session}).encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # The supervisor must scrub inherited activation policy. This private
+    # fixture opts its owned registration child in explicitly, after launch.
+    hook_env = dict(os.environ)
+    hook_env['PMX_INTERNAL_CLAUDE_REPLY_GUARD'] = '1'
+    result = subprocess.run([os.environ['PMX_TEST_BIN'],'internal','claude-endpoint-register'], input=json.dumps({'hook_event_name':'SessionStart','session_id':session}).encode(), env=hook_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert result.returncode == 0 and not result.stdout and not result.stderr
-hook('synthetic-session-1')
-receipt.write('hook-returned\n'); receipt.flush()
-for line in sys.stdin:
-    if line.strip() == 'wake':
-        child = subprocess.Popen([os.environ['PMX_TEST_BIN'], 'internal', 'claude-message-wait'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        receipt.write(json.dumps({'wait_started': child.pid}) + '\n'); receipt.flush()
-        out, err = child.communicate(input=json.dumps({'hook_event_name':'Stop','session_id':'synthetic-session-1'}).encode(), timeout=8)
-        receipt.write(json.dumps({'wait_rc': child.returncode, 'stdout_len': len(out), 'stderr': err.decode()}) + '\n'); receipt.flush()
-    elif line.strip() == 'wake-file':
-        sink_path = os.path.join(os.environ['PMX_TEST_ROOT'], 'non-provider-pipe.stderr')
-        with open(sink_path, 'wb') as sink:
-            child = subprocess.Popen([os.environ['PMX_TEST_BIN'], 'internal', 'claude-message-wait'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=sink)
-            out, _ = child.communicate(input=json.dumps({'hook_event_name':'Stop','session_id':'synthetic-session-1'}).encode(), timeout=8)
-        receipt.write(json.dumps({'file_wait_rc': child.returncode, 'stdout_len': len(out), 'stderr_len': os.path.getsize(sink_path)}) + '\n'); receipt.flush()
-    elif line.strip() == 'repeat':
-        hook('synthetic-session-2')
-        receipt.write('hook-returned\n'); receipt.flush()
-    elif line.strip() == 'nested':
-        child = "import json,os,subprocess; subprocess.run([os.environ['PMX_TEST_BIN'],'internal','claude-endpoint-register'],input=json.dumps({'hook_event_name':'SessionStart','session_id':'nested-foreign-session'}).encode(),check=True)"
-        result = subprocess.run([sys.executable,'-c',child],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
-        assert result.returncode == 0 and not result.stdout and not result.stderr
-        receipt.write('nested-returned\n'); receipt.flush()
-    elif line.strip() == 'exit':
-        break
-try:
+    receipt.write('hook-returned\n'); receipt.flush()
+def receive(kind, session):
     connection, _ = inbox.accept()
+    stream = connection.makefile('rb')
+    auth = json.loads(stream.readline())
+    frame = json.loads(stream.readline())
+    assert auth == {'type':'auth','token':token}
+    assert frame.get('type') == 'user'
+    assert frame.get('message',{}).get('role') == 'user'
+    assert stream.readline() == b''
+    content = frame['message']['content']
     connection.close()
-    raise AssertionError('provider transport was opened')
-except socket.timeout:
-    pass
+    receipt.write(json.dumps({'received':kind,'content':content}) + '\n'); receipt.flush()
+    if kind == 'qualification':
+        envelope = json.loads(content)
+        argv = [os.environ['PMX_TEST_BIN'], 'agent', 'message', 'send', 'uid:'+envelope['source']['agentUID'], '--reply-to', envelope['messageRef'], '--', 'HETEROGENEOUS_QUALIFIED:'+envelope['messageRef']]
+        tool_input = {'hook_event_name':'PreToolUse', 'session_id':session, 'cwd':os.getcwd(), 'tool_name':'Bash', 'tool_use_id':'tool-'+envelope['messageRef'], 'tool_input':{'command':' '.join(shlex.quote(x) for x in argv)}}
+        child_env={k:v for k,v in os.environ.items() if k not in {'CLAUDE_CODE_MESSAGING_TOKEN','CLAUDE_CODE_MESSAGING_SOCKET'}}
+        prepare = subprocess.run([argv[0], 'internal', 'claude-reply-tool', 'prepare'], input=json.dumps(tool_input).encode(), env=child_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert prepare.returncode == 0 and not prepare.stderr
+        decision = json.loads(prepare.stdout)['hookSpecificOutput']
+        assert decision['permissionDecision'] == 'allow'
+        result = subprocess.run([argv[0], 'internal', 'claude-reply-tool', 'execute', "fixture opaque carrier '"+decision['updatedInput']['command']+"'"], env=child_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert result.returncode == 0 and result.stdout and not result.stderr
+        receipt.write('qualification-explicit-returned\n'); receipt.flush()
+hook('synthetic-session-1')
+for line in sys.stdin:
+    command = line.strip()
+    if command == 'qualify-1': receive('qualification', 'synthetic-session-1')
+    elif command == 'message-1': receive('message', 'synthetic-session-1')
+    elif command == 'repeat': hook('synthetic-session-2')
+    elif command == 'qualify-2': receive('qualification', 'synthetic-session-2')
+    elif command == 'message-2': receive('message', 'synthetic-session-2')
+    elif command == 'exit': break
 inbox.close()
 os.unlink(path)
-receipt.write('provider-connections=0\n'); receipt.flush()
+receipt.write('provider-connections=4\n'); receipt.flush()
 `
+
+// This fixture uses the same real broker authority surface as L20. Registry
+// provider labels alone are never enough to pass the final source fence.
+func processFixtureReplyTmux(t *testing.T, root, paneUID string) ([]string, string, func() bool) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("guarded process fixture requires Linux pinned fd execution")
+	}
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	temporary := filepath.Join(root, "tmux")
+	if err := os.Mkdir(temporary, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var environment []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if key != "TMUX" && key != "TMUX_PANE" && key != "TMUX_TMPDIR" {
+			environment = append(environment, entry)
+		}
+	}
+	environment = append(environment, "TMUX_TMPDIR="+temporary)
+	run := func(args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, binary, args...)
+		command.Env = environment
+		return command.CombinedOutput()
+	}
+	name := "pce-" + filepath.Base(root)
+	output, err := run("-L", name, "-f", "/dev/null", "new-session", "-d", "-s", "reply-fixture", "-P", "-F", "#{pane_id}|#{socket_path}", "sleep", "3600")
+	if err != nil {
+		t.Fatalf("owned tmux startup: %v", err)
+	}
+	paneID, socket, ok := strings.Cut(strings.TrimSpace(string(output)), "|")
+	if !ok || !strings.HasPrefix(paneID, "%") || !strings.HasPrefix(socket, temporary+string(filepath.Separator)) || filepath.Clean(socket) != socket {
+		t.Fatal("owned tmux identity was not returned")
+	}
+	var identities []coremetadata.ProcessIdentity
+	cleanup := func() bool {
+		// Exact captured socket under the isolated root; inherited tmux context
+		// was removed from every command, including this cleanup invocation.
+		_, _ = run("-S", socket, "kill-server")
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			pending := false
+			for _, identity := range identities {
+				actual, _, err := localipc.Process(identity.PID)
+				if err == nil && actual == identity {
+					pending = true
+				}
+			}
+			if !pending {
+				return true
+			}
+			if time.Now().After(deadline) {
+				t.Error("owned tmux process remained; root retained")
+				return false
+			}
+			time.Sleep(10 * time.Millisecond) // Observe captured births; never a quiet-file interval.
+		}
+	}
+	actual, err := run("-S", socket, "display-message", "-p", "-t", paneID, "#{socket_path}")
+	if err != nil || strings.TrimSpace(string(actual)) != socket {
+		cleanup()
+		t.Fatal("owned tmux socket query differed")
+	}
+	if _, err := run("-S", socket, "set-option", "-p", "-t", paneID, "@projmux_pane_uid", paneUID); err != nil {
+		cleanup()
+		t.Fatal(err)
+	}
+	processes, err := run("-S", socket, "display-message", "-p", "-t", paneID, "#{pid}|#{pane_pid}")
+	if err != nil {
+		cleanup()
+		t.Fatal("owned tmux process identities unavailable")
+	}
+	for value := range strings.SplitSeq(strings.TrimSpace(string(processes)), "|") {
+		pid, err := strconv.Atoi(value)
+		if err != nil {
+			cleanup()
+			t.Fatal("owned tmux process identity malformed")
+		}
+		identity, _, err := localipc.Process(pid)
+		if err != nil {
+			cleanup()
+			t.Fatal("owned tmux process disappeared")
+		}
+		identities = append(identities, identity)
+	}
+	if len(identities) != 2 {
+		cleanup()
+		t.Fatal("owned tmux process identity count")
+	}
+	return []string{"TMUX=" + fmt.Sprintf("%s,%d,0", socket, identities[0].PID), "TMUX_PANE=" + paneID, "TMUX_TMPDIR=" + temporary}, paneID, cleanup
+}
+
+func processFixtureCodexSource(t *testing.T, registry *coremetadata.Registry, claudeUID, stateDir string) (coremetadata.AgentRouteRef, func()) {
+	t.Helper()
+	claude, _ := registry.Agent(claudeUID)
+	mutator := intmetadata.DefaultMutator()
+	agent, err := mutator.CreateAgent(registry, claude.Metadata.OwnerUID(), coremetadata.CreateAgentOptions{Provider: "codex", OperationID: "op-source-create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, err := mutator.AttachAgentPane(registry, agent.Metadata.UID, coremetadata.BootstrapPane{Command: "codex", CWD: stateDir}, "op-source-attach")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := "gen-process-codex"
+	if _, err := mutator.RecordPaneActivation(registry, pane.Metadata.UID, coremetadata.PaneActivationOptions{Generation: generation, AgentUID: agent.Metadata.UID, OperationID: "op-source-attach"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mutator.ObservePaneActivationRuntime(registry, pane.Metadata.UID, generation, "%8"); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := coremetadata.CodexEndpointRef{StateDomainID: "process-dialogue-domain", EndpointGenerationID: "process-dialogue-endpoint"}
+	key, err := codexbroker.NewEndpointKey(endpoint.StateDomainID, endpoint.EndpointGenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := codexbroker.NewDiscovery(stateDir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := newBrokerTestEndpoint()
+	broker, err := codexbroker.NewBroker(codexbroker.Config{Endpoint: key, Opener: func(context.Context) (codexbroker.Endpoint, error) { return upstream, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := codexbroker.StartHost(codexbroker.HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: -1})
+	if err != nil {
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	binding, err := broker.Bind("process-source-thread", "", nil)
+	if err != nil {
+		_ = host.Close()
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	cleanup := func() { _ = binding.Close(); _ = host.Close(); _ = broker.Close() }
+	var observed codexbroker.Event
+	select {
+	case observed = <-binding.Events():
+	case <-time.After(5 * time.Second):
+		cleanup()
+		t.Fatal("source broker snapshot timed out")
+	}
+	if observed.Origin != codexbroker.EventOriginSnapshot {
+		cleanup()
+		t.Fatal("source broker snapshot missing")
+	}
+	if err := mutator.StageCodexEndpoint(registry, agent.Metadata.UID, endpoint); err != nil {
+		cleanup()
+		t.Fatal(err)
+	}
+	if _, err := mutator.BindCodexActivation(registry, coremetadata.CodexActivationObservation{AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, Generation: generation, ThreadID: "process-source-thread", Endpoint: endpoint}); err != nil {
+		cleanup()
+		t.Fatal(err)
+	}
+	currentPane, _ := registry.Pane(pane.Metadata.UID)
+	currentPane.Status.Activation.Codex.Authority = &coremetadata.CodexAuthorityRef{StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID, BrokerRuntimeID: host.RuntimeID(), ConnectionEpoch: uint64(observed.Fence.Connection), BindingEpoch: uint64(observed.Fence.Binding)}
+	route, reason := coremetadata.ResolveAgentRoute(*registry, agent.Metadata.UID)
+	if reason != "" {
+		cleanup()
+		t.Fatal(reason)
+	}
+	return route, cleanup
+}
 
 func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	binary := os.Getenv("PMX_TEST_CLAUDE_ENDPOINT_BIN")
@@ -95,11 +280,27 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(root)
-	h := newSessionRefHarness(t, "claude")
+	retainRoot := false
+	defer func() {
+		if !retainRoot {
+			_ = os.RemoveAll(root)
+		}
+	}()
+	h := newSessionRefHarness(t, aiModeClaude)
+	muxEnvironment, paneID, closeMux := processFixtureReplyTmux(t, root, h.paneUID)
+	defer func() {
+		if !closeMux() {
+			retainRoot = true
+		}
+	}()
+	if _, err := intmetadata.DefaultMutator().ObservePaneActivationRuntime(h.registry, h.paneUID, h.envGeneration, paneID); err != nil {
+		t.Fatal(err)
+	}
 	registryPath := intmetadata.PathFor(filepath.Join(root, "state", "projmux"))
-	store := intmetadata.NewStore(registryPath)
-	if _, err := store.Update(func(reg *coremetadata.Registry) error { *reg = h.registry.Clone(); return nil }); err != nil {
+	sourceRoute, closeSource := processFixtureCodexSource(t, h.registry, h.agentUID, filepath.Dir(filepath.Dir(registryPath)))
+	defer closeSource()
+	metadataStore := intmetadata.NewStore(registryPath)
+	if _, err := metadataStore.Update(func(reg *coremetadata.Registry) error { *reg = h.registry.Clone(); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	capturePath := filepath.Join(root, "capture.sock")
@@ -119,7 +320,8 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Env = claudeEndpointProcessEnv(root, binary)
+	cmd.Dir = root
+	cmd.Env = append(claudeEndpointProcessEnv(root, binary), muxEnvironment...)
 	cmd.Env = append(cmd.Env, "PMX_TEST_CAPTURE="+capturePath)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -136,7 +338,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 			_ = cmd.Process.Kill()
 			t.Error("provider process did not stop")
 		}
-		cleanupClaudeEndpointTestActivation(store, superviseSpec{RegistryPath: registryPath, PaneUID: h.paneUID, AgentUID: h.agentUID, Generation: h.envGeneration})
+		cleanupClaudeEndpointTestActivation(metadataStore, superviseSpec{RegistryPath: registryPath, PaneUID: h.paneUID, AgentUID: h.agentUID, Generation: h.envGeneration})
 	}()
 	_ = capture.SetDeadline(time.Now().Add(8 * time.Second))
 	readReceipt, err := capture.AcceptUnix()
@@ -151,235 +353,140 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		t.Fatal("provider did not produce private registration receipt")
 	}
 	var private struct {
-		Socket        string
-		Token         string
-		PID           int
-		PaneEnv       string `json:"pane_env"`
-		GenerationEnv string `json:"generation_env"`
-		RegistryEnv   string `json:"registry_env"`
+		Socket, Token, PaneEnv, GenerationEnv, RegistryEnv string
+		PID                                                int
 	}
-	if json.Unmarshal(line, &private) != nil || private.Token == "" || private.Socket == "" {
+	var raw map[string]json.RawMessage
+	if json.Unmarshal(line, &raw) != nil || json.Unmarshal(raw["socket"], &private.Socket) != nil ||
+		json.Unmarshal(raw["token"], &private.Token) != nil || json.Unmarshal(raw["pid"], &private.PID) != nil ||
+		json.Unmarshal(raw["pane_env"], &private.PaneEnv) != nil || json.Unmarshal(raw["generation_env"], &private.GenerationEnv) != nil ||
+		json.Unmarshal(raw["registry_env"], &private.RegistryEnv) != nil || private.Socket == "" || private.Token == "" {
 		t.Fatal("private registration receipt invalid")
 	}
 	if private.PaneEnv != h.paneUID || private.GenerationEnv != h.envGeneration || private.RegistryEnv != registryPath {
-		t.Fatalf("private activation context mismatch: pane=%t generation=%t registry=%t", private.PaneEnv == h.paneUID, private.GenerationEnv == h.envGeneration, private.RegistryEnv == registryPath)
+		t.Fatal("private activation context mismatch")
 	}
-	waitHook := func() {
-		t.Helper()
-		line, err := reader.ReadString('\n')
-		if err != nil || line != "hook-returned\n" {
-			t.Fatal("SessionStart helper bootstrap failed")
-		}
-	}
-	waitHook()
+	waitLine(t, reader, "hook-returned\n")
+
 	getRoute := func() coremetadata.AgentRouteRef {
 		t.Helper()
-		reg, err := store.LoadDegradedReadOnly()
+		reg, err := metadataStore.LoadDegradedReadOnly()
 		if err != nil {
 			t.Fatal(err)
 		}
 		route, reason := coremetadata.ResolveAgentRoute(reg, h.agentUID)
 		if reason != "" || !probeClaudeRegistrationLease(registryPath, route) {
-			pane, _ := reg.Pane(h.paneUID)
-			if pane != nil && pane.Status.Activation.Claude != nil {
-				binding := pane.Status.Activation.Claude
-				t.Logf("process_bound=%t claim_present=%t registration_present=%t registry_reason=%s", binding.Process.Valid(), binding.RegistrationGeneration != "", binding.Registration != nil, reason)
-				actual, _, processErr := claudeadapter.Process(private.PID)
-				_, socketErr := inspectClaudeSocket(private.Socket)
-				t.Logf("exact_provider_birth=%t socket_admitted=%t", processErr == nil && actual == binding.Process, socketErr == nil)
-			}
-			t.Fatal("exact process registration was not ready")
+			t.Fatalf("exact process registration unavailable: %s", reason)
 		}
 		return route
 	}
 	first := getRoute()
 	assertNoClaudeSecretResidue(t, claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration), []string{private.Token, private.Socket})
-	target, ok := claudeTargetForRoute(first)
-	if !ok {
-		t.Fatal("exact coordination target unavailable")
-	}
-	// A same-provider direct child with fd 2 redirected to a regular file must
-	// fail closed before it can arm a waiter or emit any provider-pipe bytes.
-	_, _ = io.WriteString(writeControl, "wake-file\n")
-	line, err = reader.ReadBytes('\n')
-	var fileWake struct {
-		RC        int `json:"file_wait_rc"`
-		StdoutLen int `json:"stdout_len"`
-		StderrLen int `json:"stderr_len"`
-	}
-	if err != nil || json.Unmarshal(line, &fileWake) != nil || fileWake.RC != 0 || fileWake.StdoutLen != 0 || fileWake.StderrLen != 0 {
-		t.Fatalf("non-pipe hook result = %+v err=%v", fileWake, err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	fileWaiter, callErr := callClaudeCoordination(ctx, registryPath, first, claudeCoordinationRequest{
-		Version: claudeCoordinationVersion, Operation: "waiter-ready", Target: target,
-	})
-	cancel()
-	if callErr != nil || fileWaiter.Kind != "no-waiter" {
-		t.Fatalf("non-pipe hook armed a waiter: %+v err=%v", fileWaiter, callErr)
-	}
-	// The disposable provider starts its direct Stop hook child, reports a
-	// barrier without sleeping, and then blocks on the provider stderr pipe.
-	// The test submits only a Projmux-owned coordination frame and waits for the
-	// child's exact helper receipt; no provider/model/vendor transport is used.
-	_, _ = io.WriteString(writeControl, "wake\n")
-	line, err = reader.ReadBytes('\n')
-	var waitStarted struct {
-		PID int `json:"wait_started"`
-	}
-	if err != nil || json.Unmarshal(line, &waitStarted) != nil || waitStarted.PID <= 0 {
-		t.Fatal("coordination waiter start barrier failed")
-	}
-	waiterDeadline := time.Now().Add(3 * time.Second)
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-		barrier, barrierErr := callClaudeCoordination(ctx, registryPath, first, claudeCoordinationRequest{
-			Version: claudeCoordinationVersion, Operation: "waiter-ready", Target: target,
-		})
-		cancel()
-		if barrierErr == nil && barrier.Kind == "waiter-ready" {
-			break
-		}
-		if time.Now().After(waiterDeadline) {
-			t.Fatalf("coordination waiter-ready barrier = %+v err=%v", barrier, barrierErr)
-		}
-	}
-	envelope := coordinationEnvelope("process-message-1", time.Now().Add(time.Minute))
-	envelope.Target = target
-	ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
-	response, callErr := callClaudeCoordination(ctx, registryPath, first, claudeCoordinationRequest{
-		Version: claudeCoordinationVersion, Operation: "submit", Target: target, Envelope: &envelope,
-	})
-	cancel()
-	if callErr != nil || response.Delivery.State != agentdelivery.StateQueued {
-		t.Fatalf("coordination submit = %+v err=%v", response, callErr)
-	}
-	line, err = reader.ReadBytes('\n')
-	var wake struct {
-		RC        int    `json:"wait_rc"`
-		StdoutLen int    `json:"stdout_len"`
-		Stderr    string `json:"stderr"`
-	}
-	if err != nil || json.Unmarshal(line, &wake) != nil || wake.RC != 2 || wake.StdoutLen != 0 {
-		t.Fatalf("coordination hook result rc=%d stdout=%d err=%v", wake.RC, wake.StdoutLen, err)
-	}
-	var providerFrame claudeCoordinationEnvelope
-	if json.Unmarshal([]byte(wake.Stderr), &providerFrame) != nil || providerFrame.MessageRef != envelope.MessageRef || providerFrame.Payload != envelope.Payload {
-		t.Fatal("provider stderr did not receive the exact bounded coordination frame")
-	}
-	ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
-	status, callErr := callClaudeCoordination(ctx, registryPath, first, claudeCoordinationRequest{
-		Version: claudeCoordinationVersion, Operation: "status", Target: target, MessageRef: envelope.MessageRef,
-	})
-	cancel()
-	if callErr != nil || status.Delivery.State != agentdelivery.StateDelivered || status.Delivery.WaiterRef == "" {
-		t.Fatalf("coordination delivery receipt = %+v err=%v", status.Delivery, callErr)
-	}
-	foreignHook := exec.Command(binary, "internal", "claude-message-wait")
-	foreignHook.Stdin = strings.NewReader(`{"hook_event_name":"Stop","session_id":"synthetic-session-1"}`)
-	foreignHook.Env = append(claudeEndpointProcessEnv(root, binary), internalClaudeRegistryPathEnv+"="+registryPath,
-		internalActivationPaneUIDEnv+"="+h.paneUID, internalActivationGenerationEnv+"="+h.envGeneration)
-	if output, runErr := foreignHook.CombinedOutput(); runErr != nil || len(output) != 0 {
-		t.Fatalf("foreign hook process was not quietly refused: err=%v output=%q", runErr, output)
-	}
-	ctx, cancel = context.WithTimeout(context.Background(), 3*time.Second)
-	waiterStatus, callErr := callClaudeCoordination(ctx, registryPath, first, claudeCoordinationRequest{
-		Version: claudeCoordinationVersion, Operation: "waiter-ready", Target: target,
-	})
-	cancel()
-	if callErr != nil || waiterStatus.Kind != "no-waiter" {
-		t.Fatalf("foreign hook armed a waiter: %+v err=%v", waiterStatus, callErr)
-	}
-	// Exercise actual entrypoints with malformed, oversized, and foreign
-	// bootstrap input. The output/diagnostic scanner must never echo stdin.
-	beforeNegative, _ := os.ReadFile(registryPath)
-	hookIdentity, _, err := claudeadapter.Process(os.Getpid())
-	if err != nil {
-		t.Fatal(err)
-	}
-	forged, _ := json.Marshal(claudeEndpointBootstrap{RegistryPath: registryPath, PaneUID: h.paneUID, AgentUID: h.agentUID, Generation: h.envGeneration,
-		Registration: coremetadata.ClaudeRegistration{Authority: first.Authority().(coremetadata.ClaudeAuthorityRef)}, HookProcess: hookIdentity, Socket: private.Socket, Token: private.Token})
-	for _, input := range [][]byte{[]byte("{" + private.Token), []byte(strings.Repeat(private.Token, 2000)), forged} {
-		for _, route := range []string{"claude-endpoint-register", "claude-endpoint-helper"} {
-			readAck, writeAck, err := os.Pipe()
-			if err != nil {
-				t.Fatal(err)
-			}
-			negative := exec.Command(binary, "internal", route)
-			negative.Stdin = bytes.NewReader(input)
-			negative.ExtraFiles = []*os.File{writeAck}
-			negative.Env = append(claudeEndpointProcessEnv(root, binary), internalClaudeRegistryPathEnv+"="+registryPath, internalActivationPaneUIDEnv+"="+h.paneUID, internalActivationGenerationEnv+"="+h.envGeneration)
-			output, runErr := negative.CombinedOutput()
-			_ = readAck.Close()
-			_ = writeAck.Close()
-			if runErr != nil || len(output) != 0 {
-				t.Fatal("private invalid entrypoint emitted output or failed noisily")
-			}
-			assertNoClaudeSecretResidue(t, root, []string{private.Token, private.Socket}, output)
-		}
-	}
-	afterNegative, _ := os.ReadFile(registryPath)
-	if !bytes.Equal(beforeNegative, afterNegative) || !first.Same(getRoute()) {
-		t.Fatal("invalid private entrypoint changed current registration")
-	}
 	providerIdentity := first.Authority().(coremetadata.ClaudeAuthorityRef).Process
-	if _, parent, err := claudeadapter.Process(providerIdentity.PID); err != nil || parent != cmd.Process.Pid {
+	if actual, parent, err := claudeadapter.Process(private.PID); err != nil || actual != providerIdentity || parent != cmd.Process.Pid {
 		t.Fatal("provider did not match supervisor's exact child")
 	}
-	_, _ = io.WriteString(writeControl, "nested\n")
-	line, err = reader.ReadBytes('\n')
-	if err != nil || string(line) != "nested-returned\n" {
-		t.Fatal("nested isolation fixture failed")
-	}
-	if !first.Same(getRoute()) {
-		t.Fatal("nested unmanaged process replaced managed activation")
-	}
-	_, _ = io.WriteString(writeControl, "repeat\n")
-	waitHook()
-	second := getRoute()
-	if first.Same(second) || probeClaudeRegistrationLease(registryPath, first) {
-		t.Fatal("repeated SessionStart reused old lease")
-	}
-	// Kill the actual helper while its provider remains alive. The production
-	// supervisor watcher must revoke and clean it without a capability write.
-	helperPID := second.Authority().(coremetadata.ClaudeAuthorityRef).LeaseProcess.PID
-	if current, _, err := claudeadapter.Process(helperPID); err != nil || current != second.Authority().(coremetadata.ClaudeAuthorityRef).LeaseProcess {
-		t.Fatal("helper birth changed before controlled kill")
-	}
-	helperProcess, err := os.FindProcess(helperPID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := helperProcess.Kill(); err != nil {
-		t.Fatal(err)
-	}
-	crashDeadline := time.Now().Add(5 * time.Second)
-	for {
-		reg, err := store.LoadDegradedReadOnly()
-		if err != nil {
+
+	messageStore := messagestore.NewStore(filepath.Dir(filepath.Dir(registryPath)))
+	qualify := func(route coremetadata.AgentRouteRef, command string) {
+		t.Helper()
+		target, ok := claudeTargetForRoute(route)
+		if !ok {
+			t.Fatal("exact target unavailable")
+		}
+		now := time.Now().UTC()
+		ref := "qualification-" + command
+		original := coremessage.Envelope{Version: coremessage.Version, MessageRef: ref, ConversationRef: conversationRefFor(ref),
+			Source: publicMessageRoute(sourceRoute), Target: publicMessageRoute(route), Authority: coremessage.PeerAuthority(),
+			Payload: claudeQualificationMarkerPrefix + ref, AcceptedAt: now, Deadline: now.Add(time.Minute)}
+		if _, _, err := messageStore.PutAccepted(original, "claude-coordination"); err != nil {
 			t.Fatal(err)
 		}
-		_, reason := coremetadata.ResolveAgentRoute(reg, h.agentUID)
-		_, statErr := os.Lstat(claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration))
-		if reason != "" && os.IsNotExist(statErr) {
-			break
+		originalBytes, _ := json.Marshal(original)
+		if err := os.WriteFile(filepath.Join(root, "qualification-original.json"), originalBytes, 0o600); err != nil {
+			t.Fatal(err)
 		}
-		if time.Now().After(crashDeadline) {
-			t.Fatal("supervisor did not invalidate and clean killed helper")
+		challenge := claudeCoordinationEnvelope{Version: claudeCoordinationVersion, MessageRef: ref, Target: target,
+			Source: claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"}, Deadline: original.Deadline, BrokerEnvelope: &original}
+		_, _ = writeControl.WriteString(command + "\n")
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		response, callErr := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+			Operation: "qualify", Target: target, Envelope: &challenge, Qualification: ptrQualification(exactQualificationEvidence(route, time.Now().UTC())), ExplicitOptIn: true})
+		cancel()
+		if callErr != nil || response.Kind != "qualification-pending" {
+			t.Fatalf("qualification start=%+v err=%v", response, callErr)
 		}
-		time.Sleep(20 * time.Millisecond)
+		assertProviderReceipt(t, reader, "qualification", claudeQualificationMarkerPrefix)
+		waitLine(t, reader, "qualification-explicit-returned\n")
+		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+		status, callErr := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+			Operation: "qualification-status", Target: target, QualificationRef: response.QualificationRef})
+		cancel()
+		if callErr != nil || status.Kind != "qualification-qualified" {
+			t.Fatalf("qualification status=%+v err=%v", status, callErr)
+		}
 	}
-	if actual, _, err := claudeadapter.Process(providerIdentity.PID); err != nil || actual != providerIdentity {
-		t.Fatal("provider stopped when helper was killed")
+	qualify(first, "qualify-1")
+
+	send := func(route coremetadata.AgentRouteRef, ref, command string) {
+		t.Helper()
+		target, ok := claudeTargetForRoute(route)
+		if !ok {
+			t.Fatal("exact target unavailable")
+		}
+		now := time.Now().UTC()
+		public := coremessage.Envelope{Version: coremessage.Version, MessageRef: ref, ConversationRef: "conversation-" + ref,
+			// The source owns a real isolated broker binding for this entire test.
+			Source: publicMessageRoute(sourceRoute),
+			Target: publicMessageRoute(route), Authority: coremessage.PeerAuthority(), Payload: "HETEROGENEOUS_MARKER:" + ref,
+			AcceptedAt: now, Deadline: now.Add(time.Minute)}
+		if _, _, err := messageStore.PutAccepted(public, "claude-coordination"); err != nil {
+			t.Fatal(err)
+		}
+		privateEnvelope := claudeCoordinationEnvelope{Version: claudeCoordinationVersion, MessageRef: ref, Target: target,
+			Source: claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"}, Deadline: public.Deadline, BrokerEnvelope: &public}
+		_, _ = writeControl.WriteString(command + "\n")
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		response, callErr := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+			Operation: "submit", Target: target, Envelope: &privateEnvelope})
+		cancel()
+		if callErr != nil || response.Delivery.State != agentdelivery.StateDelivered {
+			t.Fatalf("push response=%+v err=%v", response, callErr)
+		}
+		assertProviderReceipt(t, reader, "message", `"messageRef":"`+ref+`"`)
+		record, found, err := messageStore.Get(ref)
+		if err != nil || !found || !record.HandoffObserved || record.Delivery.State != coremessage.StateDelivered {
+			t.Fatalf("durable record=%+v found=%t err=%v", record, found, err)
+		}
 	}
-	_, _ = io.WriteString(writeControl, "repeat\n")
-	waitHook()
-	third := getRoute()
-	_, _ = io.WriteString(writeControl, "exit\n")
-	line, err = reader.ReadBytes('\n')
-	if err != nil || string(line) != "provider-connections=0\n" {
-		t.Fatal("provider transport isolation failed")
+	send(first, "process-message-1", "message-1")
+
+	_, _ = writeControl.WriteString("repeat\n")
+	waitLine(t, reader, "hook-returned\n")
+	second := getRoute()
+	// Reachability is expected on the replacement; what must not carry over is
+	// the old registration. The qualification itself is checked below, where a
+	// pre-qualification submit still has to be accepted on its own terms.
+	if first.Same(second) || probeClaudeRegistrationLease(registryPath, first) {
+		t.Fatal("replacement inherited the old registration")
 	}
+	target, _ := claudeTargetForRoute(second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	unqualified, callErr := callClaudeCoordination(ctx, registryPath, second, claudeCoordinationRequest{Version: claudeCoordinationVersion,
+		Operation: "submit", Target: target, Envelope: ptrCoordination(dialogueForRoute("pre-ready", second, time.Now().UTC()))})
+	cancel()
+	// Delivery no longer waits for the replacement to qualify, so this reaches
+	// the durable fence instead of being refused ahead of it. The envelope was
+	// never accepted into the broker store, so the handoff is what stops it.
+	if callErr != nil || unqualified.Delivery.State != agentdelivery.StateFailed ||
+		unqualified.Delivery.Reason != "broker-handoff-persist-failed" {
+		t.Fatalf("replacement pre-qualification delivery=%+v err=%v", unqualified, callErr)
+	}
+	qualify(second, "qualify-2")
+	send(second, "process-message-2", "message-2")
+
+	_, _ = writeControl.WriteString("exit\n")
+	waitLine(t, reader, "provider-connections=4\n")
 	select {
 	case err := <-done:
 		if err != nil {
@@ -388,41 +495,40 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	case <-time.After(8 * time.Second):
 		t.Fatal("provider exit deadline")
 	}
-	helpers := make([]coremetadata.ProcessIdentity, 0, 3)
-	for _, route := range []coremetadata.AgentRouteRef{first, second, third} {
-		helpers = append(helpers, route.Authority().(coremetadata.ClaudeAuthorityRef).LeaseProcess)
-	}
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		reg, err := store.LoadDegradedReadOnly()
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, reason := coremetadata.ResolveAgentRoute(reg, h.agentUID)
-		_, statErr := os.Lstat(claudeActivationLeaseDir(registryPath, h.paneUID, h.envGeneration))
-		helperCurrent := false
-		for _, helper := range helpers {
-			if observed, _, err := claudeadapter.Process(helper.PID); err == nil && observed == helper {
-				helperCurrent = true
-				break
-			}
-		}
-		if reason != "" && os.IsNotExist(statErr) && !helperCurrent {
-			break
-		}
-		if time.Now().After(deadline) {
-			if helperCurrent {
-				t.Fatal("helper process survived activation")
-			}
-			t.Fatal("registration or helper files survived provider exit")
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatal("registration process wrote stdout or stderr")
 	}
 	assertNoClaudeSecretResidue(t, root, []string{private.Token, private.Socket}, stdout.Bytes(), stderr.Bytes())
-	t.Log("SessionStart→ready→replacement→exit→invalidated; nested registration refused; provider connections=0; secret residue=0; helper/process/socket cleanup=0")
+}
+
+func ptrQualification(value claudeQualificationEvidence) *claudeQualificationEvidence { return &value }
+func ptrCoordination(value claudeCoordinationEnvelope) *claudeCoordinationEnvelope    { return &value }
+
+func dialogueForRoute(ref string, route coremetadata.AgentRouteRef, now time.Time) claudeCoordinationEnvelope {
+	envelope := dialogueEnvelope(ref, now.Add(time.Minute))
+	envelope.Target, _ = claudeTargetForRoute(route)
+	envelope.BrokerEnvelope.Target = publicMessageRoute(route)
+	return envelope
+}
+
+func waitLine(t *testing.T, reader *bufio.Reader, want string) {
+	t.Helper()
+	line, err := reader.ReadString('\n')
+	if err != nil || line != want {
+		t.Fatalf("provider barrier=%q err=%v, want %q", line, err, want)
+	}
+}
+
+func assertProviderReceipt(t *testing.T, reader *bufio.Reader, kind, contains string) {
+	t.Helper()
+	line, err := reader.ReadBytes('\n')
+	var receipt struct {
+		Received string `json:"received"`
+		Content  string `json:"content"`
+	}
+	if err != nil || json.Unmarshal(line, &receipt) != nil || receipt.Received != kind || !strings.Contains(receipt.Content, contains) {
+		t.Fatalf("provider receipt kind=%q content=%q err=%v", receipt.Received, receipt.Content, err)
+	}
 }
 
 func cleanupClaudeEndpointTestActivation(store *intmetadata.Store, spec superviseSpec) {
@@ -454,5 +560,5 @@ func claudeEndpointProcessEnv(root, binary string) []string {
 			env = append(env, value)
 		}
 	}
-	return append(env, "TMUX_PANE=%7", "XDG_CONFIG_HOME="+filepath.Join(root, "config"), "XDG_STATE_HOME="+filepath.Join(root, "state"), "XDG_RUNTIME_DIR="+filepath.Join(root, "runtime"), "TMPDIR="+root, "PMX_TEST_ROOT="+root, "PMX_TEST_BIN="+binary)
+	return append(env, "XDG_CONFIG_HOME="+filepath.Join(root, "config"), "XDG_STATE_HOME="+filepath.Join(root, "state"), "XDG_RUNTIME_DIR="+filepath.Join(root, "runtime"), "TMPDIR="+root, "PMX_TEST_ROOT="+root, "PMX_TEST_BIN="+binary)
 }

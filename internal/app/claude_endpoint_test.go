@@ -75,8 +75,11 @@ func TestClaudeEndpointHookMigrationPreservesStatusAndUserHooks(t *testing.T) {
 			}
 		}
 	}
-	if status != 1 || registration != 1 || coordination != 1 || user != 1 {
+	if status != 1 || registration != 1 || coordination != 0 || user != 1 {
 		t.Fatal("migration changed status/user hooks or duplicated registration")
+	}
+	if reply := claudeSettingsCommands(t, installed, "Stop", claudeCoordinationHookCommand); len(reply) != 1 {
+		t.Fatalf("Stop reply hook = %#v, want exactly one", reply)
 	}
 	first, _ := os.ReadFile(path)
 	if err := command.Run([]string{"integrate", "claude"}, io.Discard, io.Discard); err != nil {
@@ -668,5 +671,33 @@ func TestClaudeEndpointOwnerReceiptFIFORefusesPromptly(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("FIFO blocked ownership reader")
+	}
+}
+
+func TestClaudeHelperEnvironmentScrubsMessagingSecrets(t *testing.T) {
+	got := claudeHelperEnvironment([]string{
+		"PATH=/owned/bin",
+		"CLAUDE_CODE_MESSAGING_SOCKET=/private/provider.sock",
+		"KEEP=value",
+		"CLAUDE_CODE_MESSAGING_TOKEN=opaque-secret",
+		"CLAUDE_CODE_MESSAGING_TOKEN_EXTRA=not-the-secret-key",
+	})
+	want := []string{"PATH=/owned/bin", "KEEP=value", "CLAUDE_CODE_MESSAGING_TOKEN_EXTRA=not-the-secret-key"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("helper environment = %#v, want %#v", got, want)
+	}
+	for _, environment := range []map[string]string{
+		{"PATH": "/owned/bin", "KEEP": "value"},
+		{"CLAUDE_CODE_MESSAGING_SOCKET": ""},
+		{"CLAUDE_CODE_MESSAGING_TOKEN": "opaque-secret"},
+	} {
+		present := claudeHelperCredentialEnvironmentPresent(func(key string) (string, bool) {
+			value, ok := environment[key]
+			return value, ok
+		})
+		wantPresent := len(environment) == 1
+		if present != wantPresent {
+			t.Fatalf("credential key present = %v, want %v for keys %#v", present, wantPresent, maps.Keys(environment))
+		}
 	}
 }

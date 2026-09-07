@@ -45,8 +45,8 @@ func TestAgentCapabilityCatalogIsClosedCartesianMatrix(t *testing.T) {
 			}
 		}
 	}
-	if len(seen) != 27 {
-		t.Fatalf("action count = %d, want 27", len(seen))
+	if len(seen) != 26 {
+		t.Fatalf("action count = %d, want 26", len(seen))
 	}
 }
 
@@ -57,7 +57,7 @@ func TestAgentCapabilityCatalogPinsCurrentGroupsAndDeferredVocabulary(t *testing
 	if got := AgentGroups(); !reflect.DeepEqual(got, wantGroups) {
 		t.Fatalf("groups = %v, want %v", got, wantGroups)
 	}
-	for _, id := range []string{"message.send", "message.wait", "message.status", "wait.idle"} {
+	for _, id := range []string{"message.send", "message.status", "wait.idle"} {
 		for _, provider := range AgentProviders() {
 			action, _, ok := LookupAgentCapability(id, provider)
 			if !ok || !action.Callable || action.Route == "" {
@@ -66,9 +66,8 @@ func TestAgentCapabilityCatalogPinsCurrentGroupsAndDeferredVocabulary(t *testing
 		}
 	}
 	_, antigravitySend, _ := LookupAgentCapability("message.send", Antigravity)
-	_, claudeWait, _ := LookupAgentCapability("message.wait", Claude)
-	if antigravitySend.Mode != SupportUnsupported || claudeWait.Mode != SupportUnsupported {
-		t.Fatalf("unsupported coordination directions changed: antigravity send=%#v claude wait=%#v", antigravitySend, claudeWait)
+	if antigravitySend.Mode != SupportUnsupported {
+		t.Fatalf("unsupported coordination directions changed: antigravity send=%#v", antigravitySend)
 	}
 }
 

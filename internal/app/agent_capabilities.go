@@ -37,6 +37,7 @@ type agentCapabilityRuntime struct {
 	PaneUID              string                       `json:"paneUID,omitempty"`
 	PaneRuntimeID        string                       `json:"paneRuntimeID,omitempty"`
 	ActivationGeneration string                       `json:"activationGeneration,omitempty"`
+	RouteIncarnation     string                       `json:"routeIncarnation,omitempty"`
 	StateDomainID        string                       `json:"stateDomainID,omitempty"`
 	EndpointGenerationID string                       `json:"endpointGenerationID,omitempty"`
 	BrokerRuntimeID      string                       `json:"brokerRuntimeID,omitempty"`
@@ -49,6 +50,7 @@ type agentCapabilityCoordination struct {
 	Eligible bool   `json:"eligible"`
 	Evidence string `json:"evidence"`
 	Reason   string `json:"reason"`
+	Recovery string `json:"recovery,omitempty"`
 }
 
 type agentCapabilityProjectionEntry struct {
@@ -112,13 +114,23 @@ func (c *agentCommand) runCapabilities(args []string, stdout, stderr io.Writer) 
 		projection = projectExactAgentCapabilities(registry, agent, metadata.ID)
 		if metadata.ID == aiprovider.Claude {
 			projection.Runtime.Coordination = projectClaudeCoordinationEligibility(registry, agent)
+			sourceReady := false
+			if route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID); reason == "" {
+				if paths, pathErr := config.DefaultPathsFromEnv(); pathErr == nil {
+					sourceReady = probeClaudeRegistrationLease(intmetadata.PathFor(paths.StateDir), route)
+				}
+			}
 			for i := range projection.Capabilities {
 				if projection.Capabilities[i].Action != "message.send" && projection.Capabilities[i].Action != "message.status" {
 					continue
 				}
-				projection.Capabilities[i].Available = &projection.Runtime.Coordination.Eligible
-				projection.Capabilities[i].Evidence = projection.Runtime.Coordination.Evidence
-				projection.Capabilities[i].Reason = projection.Runtime.Coordination.Reason
+				projection.Capabilities[i].Available = &sourceReady
+				projection.Capabilities[i].Evidence = "local-registration-lease"
+				if sourceReady {
+					projection.Capabilities[i].Reason = "exact Claude source registration lease is ready"
+				} else {
+					projection.Capabilities[i].Reason = "exact Claude source registration lease is stale or unavailable"
+				}
 			}
 		}
 	}
@@ -126,19 +138,36 @@ func (c *agentCommand) runCapabilities(args []string, stdout, stderr io.Writer) 
 }
 
 func projectClaudeCoordinationEligibility(registry coremetadata.Registry, agent coremetadata.Agent) *agentCapabilityCoordination {
+	paths, err := config.DefaultPathsFromEnv()
+	registryPath := ""
+	if err == nil {
+		registryPath = intmetadata.PathFor(paths.StateDir)
+	}
+	return projectClaudeCoordinationEligibilityAt(registry, agent, registryPath)
+}
+
+func projectClaudeCoordinationEligibilityAt(registry coremetadata.Registry, agent coremetadata.Agent, registryPath string) *agentCapabilityCoordination {
 	projection := &agentCapabilityCoordination{Evidence: "local-registration-lease"}
+	recovery := "let the existing Claude session exit normally without interrupting its active tool, then projmux agent resume uid:" + agent.Metadata.UID + " --dialogue-reply-only (same Agent UID and conversation; explicit next-activation tool policy); from the exact current Codex source, projmux agent message qualify uid:" + agent.Metadata.UID + " --confirm-isolated-provider-push -o json (fresh current observer; no Agent recreation)"
 	route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID)
 	if reason != "" {
 		projection.Reason = reason
+		projection.Recovery = recovery
 		return projection
 	}
-	paths, err := config.DefaultPathsFromEnv()
-	if err != nil || !probeClaudeRegistrationLease(intmetadata.PathFor(paths.StateDir), route) {
+	if registryPath == "" || !probeClaudeRegistrationLease(registryPath, route) {
 		projection.Reason = "Claude registration lease is stale or unavailable"
+		projection.Recovery = recovery
+		return projection
+	}
+	if !probeClaudeCoordinationEligibility(registryPath, route) {
+		projection.Reason = "Claude coordination is unqualified for the exact running provider version"
+		projection.Recovery = "if this activation has the reply-only profile ready, from the exact current Codex source run projmux agent message qualify uid:" + agent.Metadata.UID + " --confirm-isolated-provider-push -o json; otherwise " + recovery
 		return projection
 	}
 	projection.Eligible = true
-	projection.Reason = "exact local registration lease is ready for coordination delivery"
+	projection.Evidence = "helper-memory-exact-version-qualification"
+	projection.Reason = "exact local registration and current-version qualification are ready for coordination delivery"
 	return projection
 }
 
@@ -190,6 +219,9 @@ func projectAgentRuntimeEligibility(registry coremetadata.Registry, agent coreme
 	}
 	runtime.Ready = true
 	runtime.Reason = "current Registry activation is ready; mutating commands revalidate live provider authority"
+	if route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID); reason == "" {
+		runtime.RouteIncarnation = route.Incarnation()
+	}
 	if pane.Status.Activation.Codex != nil && pane.Status.Activation.Codex.Authority != nil {
 		authority := pane.Status.Activation.Codex.Authority
 		runtime.StateDomainID = authority.StateDomainID
@@ -224,7 +256,7 @@ func exactAgentActionEligibility(registry coremetadata.Registry, agent coremetad
 		if reason := exactCodexReviewRegistryReason(registry, agent); reason != "" {
 			return false, reason
 		}
-	case "message.send", "message.wait", "message.status":
+	case "message.send", "message.status":
 		if _, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID); reason != "" {
 			return false, reason
 		}
@@ -316,7 +348,7 @@ func writeAgentCapabilityProjection(stdout io.Writer, projection agentCapability
 		return err
 	}
 	if coordination := projection.Runtime.Coordination; coordination != nil {
-		if _, err := fmt.Fprintf(stdout, "coordination eligible=%t evidence=%s reason=%s\n", coordination.Eligible, coordination.Evidence, coordination.Reason); err != nil {
+		if _, err := fmt.Fprintf(stdout, "coordination eligible=%t evidence=%s reason=%s recovery=%s\n", coordination.Eligible, coordination.Evidence, coordination.Reason, coordination.Recovery); err != nil {
 			return err
 		}
 	}

@@ -98,6 +98,37 @@ func TestAgentRouteClaudeIdentityTransitions(t *testing.T) {
 	}
 }
 
+func TestAgentRouteIncarnationFencesProviderUpgrade(t *testing.T) {
+	t.Parallel()
+	reg, m, agentUID, paneUID, registration := claudeRouteFixture(t)
+	before, reason := ResolveAgentRoute(reg, agentUID)
+	if reason != "" || before.Incarnation() == "" {
+		t.Fatalf("initial route = %#v reason=%q", before, reason)
+	}
+	registration.Authority.RegistrationGeneration = "registration-2"
+	registration.Authority.LeaseProcess.Start = "test:replacement-helper"
+	if err := m.BeginClaudeRegistration(&reg, paneUID, agentUID, "activation-1", registration.Authority); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.RecordClaudeRegistration(&reg, paneUID, agentUID, "activation-1", registration); err != nil {
+		t.Fatal(err)
+	}
+	after, reason := ResolveAgentRoute(reg, agentUID)
+	if reason != "" || before.Generation != after.Generation || before.Incarnation() == after.Incarnation() {
+		t.Fatalf("upgrade fence before=%q after=%q generation=%q reason=%q", before.Incarnation(), after.Incarnation(), after.Generation, reason)
+	}
+
+	codexBefore := AgentRouteRef{AgentUID: "agent-codex", PaneUID: "pane-codex", Generation: "activation-codex",
+		authority: CodexRouteAuthority{ThreadID: "thread", Authority: CodexAuthorityRef{StateDomainID: "domain", EndpointGenerationID: "endpoint-1",
+			BrokerRuntimeID: "broker", ConnectionEpoch: 1, BindingEpoch: 1}}}
+	codexAfter := codexBefore
+	codexAfter.authority = CodexRouteAuthority{ThreadID: "thread", Authority: CodexAuthorityRef{StateDomainID: "domain", EndpointGenerationID: "endpoint-2",
+		BrokerRuntimeID: "broker", ConnectionEpoch: 1, BindingEpoch: 1}}
+	if codexBefore.Incarnation() == "" || codexBefore.Incarnation() == codexAfter.Incarnation() {
+		t.Fatal("Codex endpoint generation did not change route incarnation")
+	}
+}
+
 func TestClaudeRegistrationAdmissionAndCleanupCAS(t *testing.T) {
 	t.Parallel()
 	reg, m, a, p, old := claudeRouteFixture(t)

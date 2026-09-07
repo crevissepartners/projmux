@@ -30,6 +30,9 @@ func superviseArgv(binary string, spec superviseSpec, argv0 string, child []stri
 	if spec.RegistryPath != "" {
 		argv = append(argv, "--registry-path", spec.RegistryPath)
 	}
+	if spec.DialogueReplyOnly {
+		argv = append(argv, "--"+claudeDialogueReplyOnlyFlag)
+	}
 	if argv0 != "" {
 		argv = append(argv, "--argv0", argv0)
 	}

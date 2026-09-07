@@ -126,7 +126,6 @@ var agentActions = []AgentAction{
 	{ID: "app-server.handover.resume", Group: "app-server", Route: "agent app-server handover resume", Callable: true, Cells: codexOnly(CompletionExactOperation)},
 	{ID: "app-server.handover.abort", Group: "app-server", Route: "agent app-server handover abort", Callable: true, Cells: codexOnly(CompletionExactOperation)},
 	{ID: "message.send", Group: "message", Route: "agent message send", Callable: true, Cells: coordination(CompletionBrokerAccepted, Codex, Claude)},
-	{ID: "message.wait", Group: "message", Route: "agent message wait", Callable: true, Cells: coordination(CompletionTargetClaim, Codex)},
 	{ID: "message.status", Group: "message", Route: "agent message status", Callable: true, Cells: coordination(CompletionDeliveryReceipt, Codex, Claude)},
 	{ID: "wait.idle", Group: "wait", Route: "agent wait", Callable: true, Cells: cells(SupportGenericRegistry, CompletionInteractionIdle)},
 }

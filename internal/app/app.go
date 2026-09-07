@@ -584,6 +584,10 @@ func (a *App) Run(args []string, stdout, stderr io.Writer) error {
 
 // execute dispatches the configured application commands through the Cobra root.
 func (a *App) execute(args []string, stdout, stderr io.Writer) (err error) {
+	if routed, ok := claudeDialoguePrefixArgs(os.Args[0], os.Getenv(internalClaudeDialogueProfileEnv), args); ok {
+		args = routed
+	}
+
 	if a.lifecycle != nil {
 		finish := a.lifecycle.BeginCommand()
 		defer func() { finish(err) }()
@@ -640,11 +644,20 @@ func shouldRunLegacyHookMigrations(args []string) bool {
 	case "ai":
 		return false
 	case "agent":
-		if len(args) >= 2 && args[1] == "capabilities" {
+		if len(args) >= 2 && (args[1] == "capabilities" || args[1] == "message" || (args[1] == "resume" && hasClaudeDialogueModeFlag(args[2:]))) {
+			return false
+		}
+	case "create":
+		if len(args) >= 2 && hasClaudeDialogueModeFlag(args[2:]) {
 			return false
 		}
 	case "internal":
-		if len(args) >= 2 && (args[1] == "codex-generation-launch" || args[1] == "install-residue" || args[1] == "claude-message-wait") {
+		// These authentication/lifecycle callbacks are not configuration writers.
+		// The per-activation reply-only profile invokes them with the ordinary HOME.
+		if len(args) >= 2 && (args[1] == "claude-endpoint-register" || args[1] == "claude-endpoint-helper" || (len(args) >= 4 && args[1] == "agent-hook" && args[2] == "ingest" && args[3] == "claude-hook")) {
+			return false
+		}
+		if len(args) >= 2 && (args[1] == "codex-generation-launch" || args[1] == "install-residue" || args[1] == "claude-message-wait" || args[1] == "claude-message-reply" || args[1] == "claude-message-boundary" || args[1] == "claude-reply-tool" || args[1] == "claude-dialogue-exec" || args[1] == "claude-dialogue-observe") {
 			return false
 		}
 	case "current", "kill", "notify", "sessions", "session-state", "tag", "upgrade", "usage",

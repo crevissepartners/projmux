@@ -122,6 +122,14 @@ func (c *createCommand) runResourceAgent(shortcutProvider string, args []string,
 	if err := requireInteractiveOnlyProvider(spelling, provider, flags); err != nil {
 		return err
 	}
+	if err := requireClaudeDialogueMode(provider, flags.dialogueReplyOnly, flags.payload); err != nil {
+		return err
+	}
+	if flags.dialogueReplyOnly {
+		if _, ok := c.agents.(claudeDialogueLauncher); !ok {
+			return errors.New("claude reply-only launcher is unavailable")
+		}
+	}
 	return c.createAgent(spelling, provider, flags, shape, stdout, stderr)
 }
 
@@ -293,6 +301,7 @@ func (c *createCommand) createAgent(spelling, provider string, flags resourceCre
 			if err != nil {
 				return err
 			}
+			activation.DialogueReplyOnly = flags.dialogueReplyOnly
 			agents = append(agents, agentWork{
 				target:     target,
 				windowName: window.Metadata.Name,
@@ -545,6 +554,13 @@ func (c *createCommand) resolveCreateProvider(spelling, shortcutProvider string,
 // the row for.
 func (c *createCommand) planAgentPaneLaunch(provider string, workspace coremetadata.AgentWorkspace, flags resourceCreateFlags) (string, []string, error) {
 	conversation := strings.TrimSpace(flags.resumeConversation)
+	if flags.dialogueReplyOnly {
+		launcher, ok := c.agents.(claudeDialogueLauncher)
+		if !ok {
+			return "", nil, errors.New("claude reply-only launcher is unavailable")
+		}
+		return launcher.PlanClaudeDialogueLaunch(workspace, conversation)
+	}
 	if conversation == "" {
 		if flags.codexCapability != nil {
 			launcher, ok := c.agents.(codexCapabilityAgentLauncher)

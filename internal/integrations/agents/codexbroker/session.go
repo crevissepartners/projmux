@@ -182,6 +182,8 @@ func (s *session) handle(request wireRequest) {
 		s.handleAnswer(request)
 	case requestStats:
 		s.handleStats(request)
+	case requestAuthority:
+		s.handleAuthority(request)
 	case requestLifecycle:
 		s.handleLifecycle(request)
 	case requestCancel:
@@ -320,6 +322,26 @@ func (s *session) handleBind(request wireRequest) {
 		s.pump(binding)
 	})
 	s.reply(request.ID, wireReply{Kind: replyResult, Thread: binding.ThreadID()})
+}
+
+// handleAuthority observes a pre-existing exact binding owned by another
+// authenticated session. It creates no binding and issues no provider request.
+func (s *session) handleAuthority(request wireRequest) {
+	broker := s.host.broker
+	broker.mu.Lock()
+	binding := broker.bindings[request.Thread]
+	var err error
+	if binding == nil {
+		err = refuse(RefusalBindingClosed, nil)
+	} else {
+		_, err = binding.authorityLocked(request.Fence)
+	}
+	broker.mu.Unlock()
+	if err != nil {
+		s.refuse(request.ID, RefusalOf(err))
+		return
+	}
+	s.reply(request.ID, wireReply{Kind: replyResult, Thread: request.Thread})
 }
 
 // handleStats answers this runtime's content-free telemetry.

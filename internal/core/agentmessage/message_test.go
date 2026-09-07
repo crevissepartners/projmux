@@ -13,8 +13,10 @@ var messageTestNow = time.Date(2026, 9, 6, 1, 2, 3, 0, time.UTC)
 func messageEnvelopeFixture() Envelope {
 	return Envelope{
 		Version: Version, MessageRef: "message-one", ConversationRef: "conversation-one",
-		Source:    Route{AgentUID: "agent-source", PaneUID: "pane-source", ActivationGeneration: "generation-source", Provider: "codex"},
-		Target:    Route{AgentUID: "agent-target", PaneUID: "pane-target", ActivationGeneration: "generation-target", Provider: "claude"},
+		Source: Route{AgentUID: "agent-source", PaneUID: "pane-source", ActivationGeneration: "generation-source",
+			Provider: "codex", Incarnation: "route-source"},
+		Target: Route{AgentUID: "agent-target", PaneUID: "pane-target", ActivationGeneration: "generation-target",
+			Provider: "claude", Incarnation: "route-target"},
 		Authority: PeerAuthority(), Payload: "untrusted coordination text", AcceptedAt: messageTestNow,
 		Deadline: messageTestNow.Add(time.Minute),
 	}

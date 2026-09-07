@@ -819,8 +819,8 @@
 - `TestAgentCapabilityCatalogRoutesMatchExecutableHelpGraph` and
   `TestAgentIntegrationAndGenerationLeafHelpMatchesCapabilityCatalog` own
   catalog ↔ CLI/help parity. The generated CLI reference test owns the docs
-  projection; future `agent message` and `agent wait` parser placeholders and
-  provider-specific Agent namespaces remain absent.
+  projection; provider-neutral `agent message` and `agent wait` are the only
+  coordination routes, and provider-specific Agent namespaces remain absent.
 
 ### Resume Picker exact projmux binding Phase 0 tests
 
@@ -1035,58 +1035,36 @@
   `make test-integration`, builds the product and runs
   `TestClaudeEndpointProcessIntegration` through supervisor, activation gate,
   public SessionStart hook, and detached helper. It covers registration
-  replacement, actual helper death while the provider remains alive, automatic
-  lease cleanup, nested/forged entrypoint refusal, provider exit with bounded
-  convergence of every captured helper birth, zero provider connections, and
-  zero token/locator residue in output and live lease files.
+  replacement, exact-version qualification without inheritance, two exact
+  auth+frozen-user-frame pushes, provider exit cleanup, and zero token/locator
+  residue in output and live lease files. The synthetic socket runs no model,
+  account, connector, tool, MCP server, or external service.
 - `TestClaudeEndpointInstalledSourceGate` is opt-in evidence from a disposable
   installed Claude one-shot. It checks public SessionStart identity, exact
   readiness, exit invalidation, empty tools/MCP/plugins, and zero tool-use.
   Raw provider streams remain in memory. This is the Phase 1 registration source
-  gate without safe mode; it does not satisfy or relax the later mandatory
-  safe-mode delivery gate. Setup and limits are in
+  gate; it does not satisfy or relax Phase 4's separate exact-version,
+  hook-enabled, long-lived provider qualification. A safe-mode one-shot cannot
+  substitute because safe mode disables the hooks under test. Setup and limits are in
   [claude-coordination-endpoints.md](claude-coordination-endpoints.md).
 
-### Claude coordination ingress Phase 2 tests
+### Claude coordination endpoint lifecycle tests
 
-- `TestDeliveryTransitionTable` and its deterministic randomized sequence test
-  own the private provider-final-hop `queued`/`held`/`handoff` lifecycle and
-  terminal-once outcomes. This state sits below, and does not redefine, the
-  future public broker `accepted` projection. A handoff is `delivered` only
-  after one exact waiter fully writes the bounded frame and the same helper
-  commits its receipt; it never claims model processing, reply, or turn completion.
-- `TestClaudeCoordinationHub*` owns single-waiter CAS/supersede, no-waiter hold,
-  TTL before and after waiter assignment, the final pre-handoff deadline fence,
-  receipt timeout, duplicate/out-of-order refusal, helper replacement, and zero
-  automatic resend after an ambiguous provider-pipe outcome.
-- `TestClaudeCoordinationDeadHookChildNeverBeginsHandoff` and
-  `TestClaudeCoordinationDisconnectedHookResponseFailsBeforeHandoff` keep a dead
-  child fenced as held with handoff zero and a failed helper response as a
-  non-ambiguous terminal result. `TestClaudeCoordinationAssignmentTimeoutFailsBeforeHandoff`
-  pins the same non-ambiguous terminal boundary after a complete assignment but
-  before the child acknowledges `begin-handoff`. The process integration also
-  refuses a same-provider direct child when fd 2 is a regular file rather than
-  the provider-owned pipe.
-- `TestOwnedSocketCleanupPreservesReplacementAndPathModeBounds`,
-  `TestSocketIncarnationIdentityRejectsLegacyAxisReuse`,
-  `TestClaudeEndpointDeadLeaseWatcherInvalidatesWhileProviderLives`, and
-  `TestCleanupClaudeActivationLeasesPreservesCoordinationReplacement` require
-  listener close, dead-helper reaping, and supervisor cleanup to unlink only
-  the exact receipt-bound socket incarnation, including change time when a
-  filesystem reuses device and inode, while preserving a same-path replacement.
-- `TestClaudeCoordinationHookOwnedUDSAndProviderPipe` uses only a disposable
-  Projmux-owned Unix socket and pipe, with a waiter-ready barrier and structured
-  receipt, to cover exact `SessionStart` and `Stop` final-hop delivery. Its peer
-  record stays explicitly untrusted and slash commands remain plaintext; no
-  provider/model/vendor socket, MCP, connector, interrupt, approval, or tool is run.
-- `TestAIIntegrateClaude*` and
-  `TestClaudeAutomaticMigrationPreservesCoordinationPresenceAndSettingsBytes`,
-  plus `TestConfigApplyNoReloadPreservesClaudeSettingsBytesWithCoordinationAbsentOrPresent`,
-  pin one managed asyncRewake hook for each of `SessionStart` and `Stop`, preserve
-  user and existing managed hooks, make repeated remove byte/write-count
-  idempotent, and keep automatic install-time migration and
-  `config apply --no-reload` byte-identical for both absent and present
-  coordination families.
+- `TestClaudeEndpoint*`, `TestClaudeCoordinationSocketReplacementInvalidatesWithoutRemovingReplacement`,
+  and `TestCleanupClaudeActivationLeasesPreservesCoordinationReplacement` retain
+  exact SessionStart registration, process/Pane/generation authority, private
+  lease and coord-socket inode cleanup, helper-death invalidation, and
+  same-path replacement preservation.
+- `TestClaudeEndpointProcessIntegration` uses a synthetic provider process and
+  the real supervisor/helper entrypoints. It accepts exactly the auth line and
+  one frozen user frame, completes exact Stop-marker qualification, pushes a
+  durable broker record, replaces the registration without inheriting
+  qualification, freshly qualifies again, and proves secret/output/file
+  residue zero. It runs no model or network provider.
+- `TestClaudeCoordinationServerHasNoWaiterIngressOperations` refuses historical
+  `wait`, `waiter-ready`, `begin-handoff`, and `receipt` operations. Integration
+  tests require SessionStart registration plus short synchronous Stop reply and
+  UserPromptSubmit boundary hooks, with zero `asyncRewake` ingress commands.
 
 ### Provider-neutral message broker Phase 3 tests
 
@@ -1100,7 +1078,7 @@
 - `TestAuthorityMatrixIsExhaustiveAndPeerNeverEscalates`,
   `TestEnvelopeRetryAndReplyCorrelationRandomizedProperties`, and
   `TestPublicReducerMatchesReferenceModelForRandomSequences` own the exhaustive
-  authority table, immutable v1 envelope, exact reversed reply route and
+  authority table, immutable versioned envelope, exact reversed reply route and
   conversation, idempotent message reference, and terminal-once public reducer.
   Peer input remains untrusted coordination and cannot become a user turn,
   approval, configuration, tool, connector, or model-history write.
@@ -1129,6 +1107,97 @@
   terminal-safe output, activation fencing, and deterministic Registry-only
   idle, timeout, and stale waits. Codex `delivered` ends at target self-claim;
   it does not assert model processing or reply.
+
+### Heterogeneous Agent dialogue Phase 4 tests
+
+- `TestClaudeCoordinationPrivateBridgeRequiresExactV5Route`,
+  `TestClaudeCoordinationV1ThroughV4HelpersCannotReceiveV5Traffic`, and
+  `TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix` pin public/private v5
+  route equality, old generation, same-generation old incarnation, stale
+  provider process, foreign socket, helper exit, Codex endpoint replacement,
+  and fresh current-version requalification. Old routes write/claim zero; a new
+  endpoint writes zero before qualification and exactly one after it. The v4
+  fence applies only to the existing coordination UDS protocol: v3 Stop-qualified
+  helpers cannot pass current lease/eligibility checks. The frozen vendor
+  auth-plus-user frame is unchanged; recovery retains the public same-UID path.
+- `TestHeterogeneousDialogueIdleActiveSafeBoundaryMatrix` and
+  `TestClaudePushDuringOpenHumanTurnNeverCorrelatesThatTurnsStop` preserve
+  immediate idle/active push without a waiter or interruption. Every ordinary,
+  recursive, late, or unrelated Stop publishes zero replies.
+- `TestClaudeQualificationRequiresBrokerChallengeAndExplicitReply` requires a
+  stored original challenge, exact current source and target, a full frozen
+  frame, and a broker-committed explicit reply before opening general ingress.
+  A text echo or Stop alone cannot qualify the endpoint.
+- `TestClaudeExplicitReplyRejectsForeignStaleAndAlteredCorrelationBeforeCommit`
+  covers foreign refs, altered conversations, stale generations/incarnations,
+  reversed-route mismatch, and a wrong qualification response with commit zero.
+- `TestClaudeExplicitMultipleRequestsAndHumanOverlapSelectOnlyNamedOriginal`
+  permits an explicit reply to B then A across human activity, rejects a second
+  reply to either request, and never chooses correlation by arrival order.
+- `TestClaudeQualificationPublishesOriginalBeforeConcurrentExplicitReply`
+  synchronizes an immediate provider response with durable challenge publication;
+  reply timing cannot expose a missing original.
+- `TestClaudeExplicitQualificationMissingToolProofOrOriginalWritesZero`,
+  `TestClaudeExplicitQualificationPartialAndTimeoutNeverResend`, and
+  `TestClaudeQualificationResponseRequiresExactStableClosedShape` pin exact
+  version/process/lease evidence, the single Bash execution-gate assertion,
+  missing original request, partial write, timeout, and no automatic resend.
+- `TestStoreMigratesV1EnvelopeToUnqualifiedStaleFence` uses literal v1 JSON
+  without incarnation fields. `TestStoreReplyIsAtomicCorrelatedAndReplayIdempotent`
+  pins reversed routes, original conversation/replyTo, crash-before-rename
+  recovery, restart replay, and exactly one committed reply.
+- `TestClaudeBrokerStoreLayoutAndImmutableEnvelopeMismatchAreExact` and the mismatched
+  same-reference case require the helper and public CLI to share one canonical
+  message store and reject an immutable-envelope mismatch without mutation.
+  `TestClaudePushNeverHoldsAndQualificationBrokerFencePrecedesProviderWrite`,
+  `TestClaudePushWriteOutcomeAndDurableReceiptAreTerminalOnce`,
+  `TestClaudePushRechecksDeadlineAfterDurableHandoffBeforeProviderWrite`,
+  `TestClaudeProviderPushFinalRouteCheckPrecedesSoleWrite`,
+  `TestLiveClaudeAdapterClosesMalformedSubmitResponsesAsAmbiguousTerminal`, and
+  `TestClaudeCoordinationBrokerPersistenceFencesProviderWriteAndIsTerminalOnce`
+  compose the persistence proof: durable handoff failure leaves provider bytes
+  zero, durable delivered failure after a full write remains ambiguous and
+  reply-ineligible, and a successful durable terminal repeats without another
+  provider write.
+  `TestAgentMessageLifecycleLeavesInteractionAndBadgeAuthorityUntouched`
+  carries both in-progress and approval-required Registry projections through
+  send/handoff/delivered/reply/claim, proves terminal-once, and proves Registry
+  and badge writes remain zero.
+- `TestAIIntegrateClaude*` pins short compatibility Stop and
+  `UserPromptSubmit` commands, zero SessionStart/Stop ingress waiter and zero
+  `asyncRewake`, v1/v2-to-v3 marker convergence, user-hook preservation,
+  remove, and idempotence.
+  `TestClaudeAutomaticMigrationPreservesEveryCoordinationVersionUntilExplicitIntegration`
+  and `TestObsoleteAndCurrentClaudeCoordinationHooksNeverRunAutomaticMigration`
+  keep config apply/install and already-running historical hook children from
+  rewriting global settings; only explicit integration converges v1/v2 to v3.
+- `TestAgentCapabilitiesClaudeMessageCellsReflectMissingRegistrationLease`,
+  `TestProviderResumeExecutionPreservesExactAgentAndLaunchesOneExactArgv`, and
+  the pre-revalidation rows of
+  `TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix` compose the rollout
+  recovery proof: a missing lease exposes the exact integrate/normal-exit/resume
+  action and permits delivery zero; Claude resume rematerializes one exact child
+  while preserving Agent UID/name/count; and delivery remains zero until the
+  new Ready lease and route incarnation are revalidated.
+- Required selectorless E2E scenario `L20` is the only deterministic full
+  heterogeneous round trip. It uses isolated XDG/tmux roots, a payload-free
+  long-lived fake Codex child plus typed `StageCodexEndpoint` /
+  `BindCodexActivation` setup for one pre-existing synthetic route, and official
+  Claude registration plus explicit public reply commands. A public capability barrier proves the exact Codex
+  composite authority before send; semantic barriers replace sleeps. The
+  scenario requires exact UID/Pane/generation/message/conversation/reply
+  receipts, Agent count two, Codex provider writes zero, and pre-removal
+  Registry/tmux/helper/socket/process residual checks. It does not require a
+  provider binary, model, network, or version matrix.
+- The real-provider path is opt-in through `scripts/agent-dialogue-canary-setup.py`
+  and `docs/heterogeneous-dialogue-canary.md`. It uses public reply-only activation,
+  product observer/helper-memory evidence and separate qualification/idle claims.
+  Actual model action is compared with the pinned guard and successful broker
+  commit; delivered alone is insufficient. Partial setup and run failures share
+  the owned pidfd writer barrier. Candidate and runner digests are pinned before
+  launch, and success is published only after root removal. Active/human/recovery
+  and installed cases remain distinct observations. Provider/version stress is
+  separately opt-in and never joins required selectorless E2E.
 
 ### Provider hook pane identity tests
 
@@ -1709,3 +1778,160 @@ separate decision this measurement exists to inform.
 - The required `make` targets were run in order.
 - Test inventory updates are included when behavior changed.
 - Known parity gaps are explicit.
+
+- `TestClaudePushSourceReplacementAfterDurableHandoffWritesZero` and
+  `TestClaudeProviderPushFinalRouteCheckPrecedesSoleWrite` cover source/target
+  authority loss across durable work and the final provider pre-write fence.
+- `TestClaudeExplicitMultipleRequestsAndHumanOverlapSelectOnlyNamedOriginal`
+  requires an explicit choice of the original request; Stop text has no reply
+  authority regardless of human activity or pending request count.
+- `TestClaudeReplyToolLiteralCommandAndOpaqueCarrier` and
+  `TestClaudeReplyToolRejectsMalformedAndOtherOfficialTools` reject shell
+  expansion, extra commands, nonallowlisted tools and malformed hook input.
+  A shell-prefix carrier supplies only one canonical memory ticket; its other
+  bytes are never executed or retained.
+- `TestClaudeReplyToolTicketsChooseExactActionAndConsumeOnce` and
+  `TestClaudeReplyToolForeignStaleExpiredAndReplacedExecutableExecuteZero`
+  bind parallel actions to separate tickets and one exact process birth,
+  executable inode, current route and argv. Replays, expired tickets, foreign
+  callers, replaced executables and missing hooks obtain no execution witness.
+- `TestClaudeReplyToolRequestedCaptureFailureRefusesAndSecretsAreAbsent` keeps
+  requested guard capture failures closed and messaging credentials out of the
+  fixed public-command environment.
+- `TestClaudeExplicitReplyUnsupportedTargetCannotCorruptStore` rejects a
+  non-Codex reply target before a durable write. The process integration fixture
+  now owns a real Codex broker binding for its original source.
+
+- `TestAuthorityCheckUsesExistingExactLeaseWithoutProviderTraffic` proves the
+  dialogue source's exact live Codex broker runtime, connection and binding
+  fence with no new binding or provider request.
+- `TestNonblockingHookStoreRefusesContentionWithoutLateWrite` and
+  `TestClaudeOfficialHookContentionInvalidatesReplyWithoutWaiting` keep compatibility hooks bounded. Explicit reply commits use broker original
+  request validation independently of hook timing.
+
+- `test/agent_dialogue_canary_test.py` covers exact public claim/schema mutations,
+  runtime-first owner/generation negatives, prepare-without-provider-launch,
+  environment isolation, and automatic partial-setup delayed-writer/early-error
+  cleanup, plus registered Project session projection/foreign-scope refusals
+  before runtime creation and automatic cleanup of a registered Project when
+  setup fails before tmux creation. Audit tests preserve closed stage/exit and exact writer birth evidence
+  outside the disposable root, reject unsafe candidate permissions before
+  credential copying, and retain roots after uncertain cleanup without retry. Product `TestClaudeDialogueStream*` tests own public output parsing;
+  the obsolete separate canary collector is removed.
+- `TestClaudeDialogueCanaryAcceptsProductionStoreAndPublicClaimReceipts` validates
+  production Store.PutReply/Claim and public CLI JSON with the Python companion,
+  including the actual `target-self-claim` reason and version-2 envelope.
+
+- L20 owns a real authenticated Codex broker host and keeps its observed snapshot
+  binding alive for the round trip; Registry-only synthetic authority is refused.
+  The offline endpoint records and rejects every provider request/answer.
+  First-failure diagnostics accept L20 and keep its replay attribution.
+
+- `test/agent_dialogue_canary_test.py` also exercises Linux-only failed-canary
+  cleanup with explicit delayed-writer barriers: the actual EXIT trap retains
+  its root until the captured writer exits, preserves the original failure,
+  tracks reparented descendants, and refuses stubborn or replaced births.
+  These regressions use no live provider and skip when Linux pidfd is absent.
+
+- `TestClaudeQualificationRequiresCurrentPinnedMemoryGuard` rejects asserted
+  evidence with a missing, replaced or writable guard image before any push.
+  Private coord v5 fences earlier unguarded qualification; the frozen provider
+  auth/user frame is unchanged. L20 and the process fixture now execute the
+  guarded public CLI, with real isolated tmux identity and Codex broker binding.
+
+- `TestLifecycleDiscardedASCIIKeepsStringBoundariesAndValidation` covers the
+  body-free projector's buffered ASCII scan across chunk, quote, escape,
+  control-character and UTF-8 boundaries. The optimized path retains no body
+  and leaves byte/depth/scalar limits and the 750 ms operation limit unchanged.
+  `TestLifecycleDiscardedASCIIChecksCancellationWithinBoundedBufferedRun`
+  requires cancellation within one 4 KiB buffered run and preserves the
+  retained-state refusal before scanning.
+
+- Offline L20 cleanup (`test/e2e/dialogue-cleanup.py`) reuses the failed-canary
+  pidfd barrier and also captures exact owned cwd paths before canonical delete.
+  It waits for captured pane/supervisor/helper births after reparenting; only
+  role-validated fixture jobs and its exact broker receive pidfd TERM. The outer
+  EXIT trap retains the root on missing exit proof. `OfflineDialogueCleanupTest`
+  synchronizes a cwd-only late receipt writer with actual delete intent, checks
+  original failure exit preservation, and rejects stubborn/foreign/replaced
+  births without broad signals. Historical L20 late-writer attribution remains
+  unknown; process exit proof does not depend on that attribution.
+- `TestStoreReplyIsAtomicCorrelatedAndReplayIdempotent` pins both store instances
+  to the fixture clock so the replay test remains independent of wall-clock
+  terminal retention while retaining the explicit one-hour replay timestamp.
+
+- `TestClaudeDialogueCreateOptInRefusesUnsupportedOrUnconfiguredLaunchBeforeWrites`,
+  `TestClaudeDialogueResumeOptInKeepsRunningAndNonClaudeRefusalsReadOnly`, and
+  `TestClaudeDialogueOptInIsAnExplicitSupervisorEnvelopeNotAnInheritedDefault`
+  cover the next-activation `--dialogue-reply-only` preflight and supervisor/gate
+  envelope. No AgentSpec or default tool policy persists this opt-in. The
+  production launcher creates a private generation profile and an owned
+  stdout/stderr observer. Missing launcher adapters still fail before allocation.
+- `TestAgentMessageAndReplyOnlyPreflightDoNotMigrateGlobalOrProjectHooks` checks
+  that public message authentication and explicit reply-only preflight never
+  migrate unrelated global/project legacy hooks. Existing normal create/resume
+  pre-dispatch behavior remains unchanged.
+
+- `TestClaudeDialogueProfilePinsFilesAliasAndInvocationMode` and
+  `TestClaudeDialogueOrdinaryEnvironmentKeepsOfficialPrefixWithoutInheritingOptIn`
+  cover immutable profile inputs, pinned candidate alias, FIFO refusal, and
+  ordinary environment compatibility. `TestAgentMessageAndReplyOnlyPreflightDoNotMigrateGlobalOrProjectHooks`
+  also covers the profile's exact lifecycle/register/helper callbacks.
+- `TestClaudeDialogueCurrentHelperEvidenceAndObserverLossPrecludeEffects` uses
+  the current helper UDS to obtain qualification evidence and complete a valid
+  guarded reply baseline. Replacing only the observer descriptor then refuses
+  otherwise-valid prepare, consume, commit and push requests without effects.
+- `TestClaudeDialogueStreamDiscardsTextThinkingAndPairsOnlyExactReplyTool` and
+  `TestClaudeDialogueStreamRejectsUnknownEffectsAndBoundsState` cover transient
+  public JSON validation, action/result pairing, zero pre-inbound tool effects,
+  unknown metadata refusal and finite hook/tool state.
+- `TestClaudeDialoguePipeEOFClosesInputButWaitsCurrentTurn`,
+  `TestClaudeDialoguePipeDiagnosticLossFailsClosedWithoutBusyLoop`,
+  `TestClaudeDialogueCleanupWaitsExactWriterAndHandlesZombieWithoutSignals`, and
+  `TestClaudeDialoguePartialSetupAndUnknownFilesRetainExactRoot` cover Linux
+  terminal EOF, current-turn completion, stderr loss, exact-birth pidfd exit
+  proof and retained evidence on uncertain cleanup. No provider runs in these tests.
+
+- L20 now launches the synthetic Claude through public `--dialogue-reply-only`,
+  exercises the real profile executor, observer and pinned prefix dispatch, and
+  qualifies from current helper-memory evidence. It creates no hand-authored
+  public-init evidence file. Qualification and ordinary replies are separately
+  claimed by the original Codex route. This is deterministic integration
+  evidence, not actual model execution. Wrapped pane output is joined for the
+  readiness marker; cancellation closes the fixture's own first-frame listener.
+- `TestClaudeEndpointProcessIntegration` intentionally remains the private
+  registration/bootstrap/process fixture. Its owned registration child opts in
+  after activation; it does not depend on a supervisor-inherited guard flag,
+  which production correctly scrubs. It does not substitute for public launch
+  or actual provider qualification evidence.
+
+- `TestClaudeDialogueToolEvidenceIsReadOnlyAndIndependentOfArrivalOrder` and
+  `TestClaudeDialogueObservedToolCannotGrantOrForgeCommitEvidence` distinguish
+  observed model tool ID/original selection and paired result from the pinned
+  execution witness and successful broker commit. A failed commit, wrong result
+  ref or forged observation cannot become correlated execution evidence; reading
+  that bounded snapshot performs no delivery or reply action.
+- `TestAgentCapabilitiesClaudeMessageCellsReflectMissingRegistrationLease` and
+  `TestAgentCapabilitiesClaudeUnqualifiedRecoveryUsesCurrentPublicProfile` keep
+  recovery read-only and actionable: normal exit, same-UID explicit reply-only
+  resume, then current Codex qualification from helper-memory evidence.
+
+- `test/agent_dialogue_codex_observation_test.py` checks the frozen public Codex
+  0.153.2 schema, explicit observed source, one thread/turn/item, paired command
+  completion and closed result correlation, unknown/body privacy negatives, and
+  bounded read-only connection EOF/deadline/peer replacement. It supplies no
+  actual provider or model-action evidence.
+- `test/agent_dialogue_source_action_test.py` checks exact public qualification,
+  original-source inbox claims and one idle send against production-shaped
+  reply fixtures; changed composite routes fail before dispatch and unknown
+  send outcomes are never retried. The source action returns closed facts and
+  performs no fleet/root cleanup. Parent orchestrator wiring remains pending.
+
+- `test/agent_dialogue_native_source_test.py`: private native launch argv/image/environment, public genuine initial task, bounded initialization, source release before effects and closed tool return before parent cleanup; fake endpoints/launches and owned inert child processes only.
+
+- `test/agent_dialogue_native_policy_test.py`: pinned public config/read projection, missing/mismatched policy, foreign or unknown origins, private-value exclusion, raw-layer/extra-execution-input refusal, bounds/EOF; native source tests also refuse an otherwise-valid action when policy changes before release.
+
+- Policy diagnostics: `test/agent_dialogue_native_policy_test.py` checks closed schema/request/value/origin codes and exception redaction; native source tests preserve a valid baseline while independently failing config/socket/request/schema boundaries. `test/agent_dialogue_canary_test.py` exercises real setup finally after a policy code, audit privacy, uncertain-writer retention and audit-write failure cleanup without a success receipt. All use offline fixtures.
+
+- `test/agent_dialogue_rpc_envelope_test.py`: pinned public JSON-RPC forms classify server requests, errors and notifications without admitting them. Exact success shape and expected ID remain mandatory; wrong/foreign IDs, unknown fields, mixed forms and malformed method/error/trace types refuse. All 64 known-field combinations and nested type branches verify the independent fixed `envelopeFacts` projection, simultaneous defect visibility and dynamic-name/value exclusion. Policy/native initialization tests propagate only those facts; audit tests reject malformed projections before writing. Real parent setup/finally tests preserve external facts before once cleanup, retain uncertain roots or failed audit writes, and produce no source effect or success receipt.
+- `test/agent_dialogue_websocket_test.py`: memory-only RFC6455 upgrade/masked writes/message framing, Unicode fragmentation with interleaved control frames, cumulative bounds/EOF/deadline and malformed transport privacy; pinned full initialization with exact owned codexHome precedes framed config/read and thread/read. Canary audit tests connect upgrade refusal/socket close to once parent cleanup and external code retention. Closed substage/rejection-kind regressions distinguish connect/peer, upgrade, initialize/initialized, config/read, EOF/deadline/frame and error/ID/notification envelope rejection; unknown labels remain unknown, raw exception/RPC content is excluded, and audit failure still retains the root.

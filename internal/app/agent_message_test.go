@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -80,6 +81,14 @@ func (a *traceClaudeMessageAdapter) Status(context.Context, string, coremetadata
 }
 
 func replaceClaudeServerWithResponse(t *testing.T, fixture *claudeCoordinationTestFixture, kind string) <-chan error {
+	return replaceClaudeServerWithCoordinationResponse(t, fixture, claudeCoordinationResponse{
+		Version: claudeCoordinationVersion, Kind: kind,
+	})
+}
+
+func replaceClaudeServerWithCoordinationResponse(t *testing.T, fixture *claudeCoordinationTestFixture,
+	response claudeCoordinationResponse,
+) <-chan error {
 	t.Helper()
 	fixture.server.Close()
 	listener, err := localipc.Listen(claudeCoordinationSocket(fixture.registryPath, fixture.target))
@@ -100,7 +109,7 @@ func replaceClaudeServerWithResponse(t *testing.T, fixture *claudeCoordinationTe
 			done <- readErr
 			return
 		}
-		done <- localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind})
+		done <- localipc.WriteJSON(conn, response)
 	}()
 	return done
 }
@@ -410,8 +419,10 @@ func TestClaudePrivateProjectionPreservesPublicBoundaryAndAmbiguity(t *testing.T
 	cmd := &agentCommand{messageStore: store, messageNow: func() time.Time { return now }}
 	newRecord := func(ref string) messagestore.Record {
 		envelope := coremessage.Envelope{Version: coremessage.Version, MessageRef: ref, ConversationRef: "conversation-" + ref,
-			Source:    coremessage.Route{AgentUID: "source", PaneUID: "source-pane", ActivationGeneration: "source-generation", Provider: "codex"},
-			Target:    coremessage.Route{AgentUID: "target", PaneUID: "target-pane", ActivationGeneration: "target-generation", Provider: "claude"},
+			Source: coremessage.Route{AgentUID: "source", PaneUID: "source-pane", ActivationGeneration: "source-generation",
+				Provider: "codex", Incarnation: "route-source"},
+			Target: coremessage.Route{AgentUID: "target", PaneUID: "target-pane", ActivationGeneration: "target-generation",
+				Provider: "claude", Incarnation: "route-target"},
 			Authority: coremessage.PeerAuthority(), Payload: "coordination", AcceptedAt: now, Deadline: now.Add(time.Minute)}
 		record, _, err := store.PutAccepted(envelope, "claude-coordination")
 		if err != nil {
@@ -437,9 +448,9 @@ func TestClaudePrivateProjectionPreservesPublicBoundaryAndAmbiguity(t *testing.T
 	}
 	failed, err := cmd.projectClaudeDelivery(handoff, agentdelivery.Delivery{MessageRef: handoff.Envelope.MessageRef,
 		State: agentdelivery.StateFailed, Reason: "malformed-known-failure", Ambiguous: false}, nil)
-	if err != nil || failed.Delivery.State != coremessage.StateFailed || !failed.Delivery.OutcomeUnknown ||
-		failed.Delivery.Reason != "provider-handoff-outcome-unknown" {
-		t.Fatalf("ambiguous projection = %#v err=%v", failed, err)
+	if err != nil || failed.Delivery.State != coremessage.StateFailed || failed.Delivery.OutcomeUnknown ||
+		failed.Delivery.Reason != "malformed-known-failure" {
+		t.Fatalf("known zero-byte projection = %#v err=%v", failed, err)
 	}
 	postHandoffStale := newRecord("message-private-stale-after-handoff")
 	postHandoffStale, _, err = store.MarkHandoff(postHandoffStale.Envelope.MessageRef)
@@ -447,7 +458,7 @@ func TestClaudePrivateProjectionPreservesPublicBoundaryAndAmbiguity(t *testing.T
 		t.Fatal(err)
 	}
 	postHandoffStale, err = cmd.projectClaudeDelivery(postHandoffStale, agentdelivery.Delivery{
-		MessageRef: postHandoffStale.Envelope.MessageRef, State: agentdelivery.StateStale, Reason: "helper-replaced",
+		MessageRef: postHandoffStale.Envelope.MessageRef, State: agentdelivery.StateStale, Reason: "helper-replaced", Ambiguous: true,
 	}, nil)
 	if err != nil || postHandoffStale.Delivery.State != coremessage.StateFailed || !postHandoffStale.Delivery.OutcomeUnknown {
 		t.Fatalf("post-handoff stale projection = %#v err=%v", postHandoffStale, err)
@@ -519,89 +530,109 @@ func TestLiveClaudeAdapterRefusesPublicValidEnvelopeThatExceedsPrivateFrame(t *t
 	}
 }
 
-func TestAgentMessageWaitClaimsOnlyCurrentExactActivation(t *testing.T) {
-	cmd, registryStore, _ := exactControlCLICommand(t)
-	registry := registryStore.registry.Clone()
-	route := mustMessageRoute(t, registry, "agt-alpha-codex")
-	now := resourceFixtureClock.Add(time.Hour)
-	private := messagestore.NewStore(t.TempDir())
-	envelope := coremessage.Envelope{Version: coremessage.Version, MessageRef: "message-claim", ConversationRef: "conversation-claim",
-		Source: publicMessageRoute(route), Target: publicMessageRoute(route), Authority: coremessage.PeerAuthority(),
-		Payload: "full envelope for target", AcceptedAt: now, Deadline: now.Add(time.Minute)}
-	if _, _, err := private.PutAccepted(envelope, "codex-inbox"); err != nil {
-		t.Fatal(err)
+func TestLiveClaudeAdapterDistinguishesPreDispatchWriteZeroFromMissingHelperResponse(t *testing.T) {
+	fixture := newClaudeCoordinationTestFixture(t)
+	now := time.Now().UTC()
+	envelope := coremessage.Envelope{Version: coremessage.Version, MessageRef: "message-dispatch-boundary",
+		ConversationRef: "conversation-dispatch-boundary", Source: publicMessageRoute(fixture.route),
+		Target: publicMessageRoute(fixture.route), Authority: coremessage.PeerAuthority(), Payload: "peer text",
+		AcceptedAt: now, Deadline: now.Add(time.Minute)}
+	adapter := liveAgentMessageClaudeAdapter{}
+	known, err := adapter.Submit(context.Background(), fixture.registryPath+"-missing", fixture.route, envelope)
+	if err != nil || known.State != agentdelivery.StateFailed || known.Ambiguous || known.Reason != "provider-write-zero" {
+		t.Fatalf("pre-dispatch result=%+v err=%v", known, err)
 	}
-	active := insideTmux("pan-alpha-codex", "win-alpha-main")
-	cmd.activeTarget = active.lookup
-	cmd.messagePaths = agentMessagePaths{loadRegistry: func() (coremetadata.Registry, error) { return registry.Clone(), nil }}
-	cmd.messageStore = private
-	cmd.messageRoute = &traceMessageRouteResolver{route: route}
-	cmd.messageNow = func() time.Time { return now }
-	stdout, _, err := runRoute(t, cmd, "message", "wait", "uid:agt-alpha-codex", "--timeout", "0", "-o", "json")
+
+	fixture.server.Close()
+	listener, err := localipc.Listen(claudeCoordinationSocket(fixture.registryPath, fixture.target))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(stdout, envelope.Payload) || !strings.Contains(stdout, `"state":"delivered"`) ||
-		!strings.Contains(stdout, `"reason":"target-self-claim"`) {
-		t.Fatalf("claim output = %s", stdout)
-	}
-	if !strings.Contains(stdout, `"kind":"peer"`) || !strings.Contains(stdout, `"trust":"untrusted"`) ||
-		!strings.Contains(stdout, `"permission":"coordination-only"`) {
-		t.Fatalf("claim lost peer provenance: %s", stdout)
-	}
-}
-
-func TestAgentMessageClaimDefaultOutputEscapesTerminalControlsAndKeepsEnvelope(t *testing.T) {
-	now := resourceFixtureClock.Add(time.Hour)
-	payload := "peer text\x1b]52;c;Zm9v\a\nnext line"
-	envelope := coremessage.Envelope{Version: coremessage.Version, MessageRef: "message-control", ConversationRef: "conversation-control",
-		Source:    coremessage.Route{AgentUID: "source", PaneUID: "source-pane", ActivationGeneration: "source-generation", Provider: "claude"},
-		Target:    coremessage.Route{AgentUID: "target", PaneUID: "target-pane", ActivationGeneration: "target-generation", Provider: "codex"},
-		Authority: coremessage.PeerAuthority(), Payload: payload, AcceptedAt: now, Deadline: now.Add(time.Minute)}
-	delivery, _ := coremessage.Reduce(coremessage.Delivery{}, envelope, coremessage.Event{Kind: coremessage.EventAccept,
-		MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, ObservedAt: now})
-	delivery, _ = coremessage.Reduce(delivery, envelope, coremessage.Event{Kind: coremessage.EventDeliver,
-		MessageRef: envelope.MessageRef, ConversationRef: envelope.ConversationRef, Target: envelope.Target, ObservedAt: now})
-	var stdout bytes.Buffer
-	if err := writeAgentMessageClaim(&stdout, messagestore.Record{Envelope: envelope, Delivery: delivery, Adapter: "codex-inbox"}, false); err != nil {
-		t.Fatal(err)
-	}
-	for _, value := range stdout.Bytes() {
-		if value < 0x20 || value == 0x7f {
-			t.Fatalf("claim emitted raw terminal control byte %#x: %q", value, stdout.Bytes())
+	t.Cleanup(func() { _ = listener.Close() })
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		conn, acceptErr := listener.Unix.AcceptUnix()
+		if acceptErr != nil {
+			return
 		}
-	}
-	var got struct {
-		Envelope coremessage.Envelope `json:"envelope"`
-		Delivery coremessage.Delivery `json:"delivery"`
-	}
-	if err := json.Unmarshal(stdout.Bytes(), &got); err != nil {
-		t.Fatal(err)
-	}
-	if got.Envelope.Payload != payload || got.Envelope.Authority != coremessage.PeerAuthority() || got.Delivery.State != coremessage.StateDelivered {
-		t.Fatalf("safe claim lost envelope: %#v", got)
+		defer conn.Close()
+		var request claudeCoordinationRequest
+		_ = localipc.ReadJSON(conn, &request)
+	}()
+	unknown, err := adapter.Submit(context.Background(), fixture.registryPath, fixture.route, envelope)
+	<-done
+	if err != nil || unknown.MessageRef != envelope.MessageRef || unknown.State != agentdelivery.StateFailed ||
+		!unknown.Ambiguous || unknown.Reason != "provider-handoff-outcome-unknown" {
+		t.Fatalf("missing response result=%+v err=%v", unknown, err)
 	}
 }
 
-func TestAgentMessageWaitDetectsGenerationChangeBeforeClaim(t *testing.T) {
-	cmd, registryStore, _ := exactControlCLICommand(t)
-	registry := registryStore.registry.Clone()
-	now := resourceFixtureClock.Add(time.Hour)
-	active := insideTmux("pan-alpha-codex", "win-alpha-main")
-	cmd.activeTarget = active.lookup
-	cmd.messagePaths = agentMessagePaths{loadRegistry: func() (coremetadata.Registry, error) { return registry.Clone(), nil }}
-	cmd.messageStore = messagestore.NewStore(t.TempDir())
-	cmd.messageRoute = liveAgentMessageRouteResolver{}
-	cmd.messageNow = func() time.Time { return now }
-	cmd.messageSleep = func(context.Context, time.Duration) error {
-		pane, _ := registry.Pane("pan-alpha-codex")
-		pane.Status.Activation.Generation = "generation-replaced"
-		now = now.Add(50 * time.Millisecond)
-		return nil
-	}
-	_, _, err := runRoute(t, cmd, "message", "wait", "--timeout", "1s")
-	if err == nil || !strings.Contains(err.Error(), "activation is stale") {
-		t.Fatalf("generation change error = %v", err)
+func TestLiveClaudeAdapterClosesMalformedSubmitResponsesAsAmbiguousTerminal(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		response func(string) claudeCoordinationResponse
+	}{
+		{name: "missing delivery", response: func(string) claudeCoordinationResponse {
+			return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "delivered"}
+		}},
+		{name: "unknown kind", response: func(string) claudeCoordinationResponse {
+			return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "future-state"}
+		}},
+		{name: "held", response: func(ref string) claudeCoordinationResponse {
+			return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "held",
+				Delivery: agentdelivery.Delivery{MessageRef: ref, State: agentdelivery.StateHeld}}
+		}},
+		{name: "queued", response: func(ref string) claudeCoordinationResponse {
+			return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "queued",
+				Delivery: agentdelivery.Delivery{MessageRef: ref, State: agentdelivery.StateQueued}}
+		}},
+		{name: "handoff", response: func(ref string) claudeCoordinationResponse {
+			return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "handoff",
+				Delivery: agentdelivery.Delivery{MessageRef: ref, State: agentdelivery.StateHandoff, WaiterRef: "push-ref"}}
+		}},
+		{name: "mismatched ref", response: func(string) claudeCoordinationResponse {
+			return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "failed",
+				Delivery: agentdelivery.Delivery{MessageRef: "message-foreign", State: agentdelivery.StateFailed}}
+		}},
+		{name: "delivered without full-frame receipt", response: func(ref string) claudeCoordinationResponse {
+			return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "delivered",
+				Delivery: agentdelivery.Delivery{MessageRef: ref, State: agentdelivery.StateDelivered}}
+		}},
+		{name: "refused with handoff fields", response: func(ref string) claudeCoordinationResponse {
+			return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused",
+				Delivery: agentdelivery.Delivery{MessageRef: ref, State: agentdelivery.StateRefused,
+					WaiterRef: "push-ref", Reason: "provider-refused"}}
+		}},
+		{name: "expired ambiguous", response: func(ref string) claudeCoordinationResponse {
+			return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "expired",
+				Delivery: agentdelivery.Delivery{MessageRef: ref, State: agentdelivery.StateExpired,
+					Reason: "ttl", Ambiguous: true}}
+		}},
+		{name: "failed post-handoff marked known", response: func(ref string) claudeCoordinationResponse {
+			return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "failed",
+				Delivery: agentdelivery.Delivery{MessageRef: ref, State: agentdelivery.StateFailed,
+					WaiterRef: "push-ref", Reason: "provider-handoff-outcome-unknown"}}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newClaudeCoordinationTestFixture(t)
+			now := time.Now().UTC()
+			ref := "message-malformed-" + strings.ReplaceAll(test.name, " ", "-")
+			envelope := coremessage.Envelope{Version: coremessage.Version, MessageRef: ref,
+				ConversationRef: "conversation-" + ref, Source: publicMessageRoute(fixture.route),
+				Target: publicMessageRoute(fixture.route), Authority: coremessage.PeerAuthority(), Payload: "peer text",
+				AcceptedAt: now, Deadline: now.Add(time.Minute)}
+			done := replaceClaudeServerWithCoordinationResponse(t, fixture, test.response(ref))
+			delivery, err := (liveAgentMessageClaudeAdapter{}).Submit(context.Background(), fixture.registryPath, fixture.route, envelope)
+			if err != nil || delivery.MessageRef != ref || delivery.State != agentdelivery.StateFailed ||
+				!delivery.Ambiguous || delivery.Reason != "provider-handoff-outcome-unknown" {
+				t.Fatalf("delivery=%+v err=%v", delivery, err)
+			}
+			if serverErr := <-done; serverErr != nil {
+				t.Fatal(serverErr)
+			}
+		})
 	}
 }
 
@@ -621,14 +652,63 @@ func TestClaudeBrokerEnvelopeAtPublicPayloadBoundFitsPrivateFrame(t *testing.T) 
 }
 
 func TestAgentMessageBrokerHasNoCodexOrUserTurnWritePath(t *testing.T) {
-	source, err := os.ReadFile("agent_message.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, forbidden := range []string{"turn/start", "turn/steer", "thread/inject_items", "send-keys", "sendkeys"} {
-		if bytes.Contains(source, []byte(forbidden)) {
-			t.Errorf("broker source contains forbidden write path %q", forbidden)
+	for _, path := range []string{"agent_message.go", "claude_coordination.go"} {
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
 		}
+		for _, forbidden := range []string{"turn/start", "turn/steer", "thread/inject_items", "send-keys", "sendkeys",
+			"aiPaneBadgeKindOption", "applyAIStatus", "InteractionApprovalRequired", "InteractionInProgress"} {
+			if bytes.Contains(source, []byte(forbidden)) {
+				t.Errorf("message lifecycle source %s contains forbidden write path %q", path, forbidden)
+			}
+		}
+	}
+}
+
+func TestAgentMessageLifecycleLeavesInteractionAndBadgeAuthorityUntouched(t *testing.T) {
+	for _, interaction := range []coremetadata.AgentInteractionKind{coremetadata.InteractionInProgress, coremetadata.InteractionApprovalRequired} {
+		t.Run(string(interaction), func(t *testing.T) {
+			h := newSessionRefHarness(t, aiModeCodex)
+			agent, _ := h.registry.Agent(h.agentUID)
+			agent.Status.Interaction = coremetadata.AgentInteraction{Kind: interaction, Source: string(coremetadata.InteractionSourceProviderControl), ObservedAt: resourceFixtureClock}
+			before := h.registry.Clone()
+			store := messagestore.NewStore(t.TempDir())
+			now := resourceFixtureClock.Add(time.Minute)
+			original := coremessage.Envelope{Version: coremessage.Version, MessageRef: "message-badge-" + string(interaction),
+				ConversationRef: "conversation-badge-" + string(interaction),
+				Source: coremessage.Route{AgentUID: h.agentUID, PaneUID: h.paneUID, ActivationGeneration: h.envGeneration,
+					Provider: "codex", Incarnation: "codex-incarnation"},
+				Target: coremessage.Route{AgentUID: "claude-agent", PaneUID: "claude-pane", ActivationGeneration: "claude-generation",
+					Provider: "claude", Incarnation: "claude-incarnation"},
+				Authority: coremessage.PeerAuthority(), Payload: "coordinate", AcceptedAt: now, Deadline: now.Add(time.Minute)}
+			if _, _, err := store.PutAccepted(original, "claude-coordination"); err != nil {
+				t.Fatal(err)
+			}
+			if _, _, err := store.MarkHandoff(original.MessageRef); err != nil {
+				t.Fatal(err)
+			}
+			deliver := coremessage.Event{Kind: coremessage.EventDeliver, MessageRef: original.MessageRef,
+				ConversationRef: original.ConversationRef, Target: original.Target, ObservedAt: now.Add(time.Second)}
+			if _, changed, err := store.Apply(original.MessageRef, deliver); err != nil || !changed {
+				t.Fatalf("first terminal = changed %t err %v", changed, err)
+			}
+			if _, changed, err := store.Apply(original.MessageRef, deliver); err != nil || changed {
+				t.Fatalf("duplicate terminal = changed %t err %v", changed, err)
+			}
+			replyAt := now.Add(2 * time.Second)
+			if _, _, err := store.PutReply(original.MessageRef, "reply-badge-"+string(interaction), "answer",
+				original.Target, original.Source, replyAt, replyAt.Add(time.Minute)); err != nil {
+				t.Fatal(err)
+			}
+			if reply, claimed, err := store.Claim(original.Source, replyAt.Add(time.Second)); err != nil || !claimed ||
+				reply.Envelope.ReplyTo != original.MessageRef || reply.Delivery.State != coremessage.StateDelivered {
+				t.Fatalf("reply claim = (%#v, %t, %v)", reply, claimed, err)
+			}
+			if !reflect.DeepEqual(before, *h.registry) || agent.Status.Interaction.Kind != interaction {
+				t.Fatalf("message lifecycle changed Registry interaction: before=%#v after=%#v", before, *h.registry)
+			}
+		})
 	}
 }
 
