@@ -202,6 +202,25 @@ def initialize(connection, observation):
     connection.sendall(b'{"method":"initialized","params":{}}\n')
 
 
+def read_native_policy(root,plan,endpoint):
+    observation=runpy.run_path(str(root/'bin/agent-dialogue-codex-observation.py'))
+    policy=runpy.run_path(str(root/'bin/agent-dialogue-native-policy.py'))
+    config=root/'codex-home/config.toml'
+    info=config.lstat()
+    require(stat.S_ISREG(info.st_mode) and info.st_uid==os.getuid() and stat.S_IMODE(info.st_mode)==0o600 and
+            config.read_text()==private_config(root),'policy-owned-config-changed')
+    reader=policy['PolicyReader'](root,pathlib.Path(plan['codexBinary']).parent.parent,root/'bin/agent-dialogue-config-schema',observation)
+    connection,_=connect(endpoint)
+    with connection:
+        initialize(connection,observation)
+        facts=reader.read(connection)
+        current(endpoint)
+        socket_info=pathlib.Path(endpoint['socketPath']).lstat()
+        require([socket_info.st_dev,socket_info.st_ino]==endpoint['socketIdentity'] and
+                config.lstat().st_ino==info.st_ino and config.read_text()==private_config(root),'policy-read-fence-changed')
+    return facts
+
+
 def ancestry(identity, daemon):
     seen = set()
     while len(seen) < 32:
@@ -258,6 +277,11 @@ def observe_action(root, spec, initial, stage=lambda _: None, preserve=lambda _:
             return observation['OwnedReadConnection'](connection, peer, reader).read(freeze=freeze)
 
     facts = read(True)
+    stage('policy-before-release')
+    policy=read_native_policy(root,plan,endpoint)
+    require(policy==load(root/'evidence/native-policy-before-source.json'),'policy-release-changed')
+    exclusive(root/'evidence/native-policy-before-release.json',policy)
+    preserve(dict(version=1,event='policy',phase='before-release',facts=policy))
     # Revalidate otherwise-current source/target immediately before first push.
     now = evidence['snapshot'](root, spec, initial=True, env=action['own_environment'](root, spec))
     require(now == initial, 'source-release-route-changed')

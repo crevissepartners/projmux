@@ -151,11 +151,12 @@ class NativeSourceTests(unittest.TestCase):
         self.assertEqual(argv,['/candidate','create','agent','--provider','codex','--project','uid:project','--window','uid:window','-o','pane-id','--',prompt])
         self.assertEqual(context,dict(pane='%1',server=123,socket_path=str(path),timeout=120))
 
-    def test_release_checks_complete_before_action_and_return_before_cleanup(self):
+    def release_case(self, changed_policy=False):
         spec=dict(sender=dict(agentUID='source',paneUID='source-pane',generation='generation',paneID='%1'),receiver=dict(agentUID='target'))
         initial=dict(routes={'fixture':'routes'})
         self.write('cleanup-plan.json',dict(sourceAllowedOrigins=['agent']))
         self.write('evidence/native-endpoint.json',dict(process=self.identity))
+        self.write('evidence/native-policy-before-source.json',dict(policy='fixture'))
         self.write('evidence/source-action-ready.json',dict(process=self.identity))
         facts=dict(threadId='thread',turnId='turn',itemId='item',source='agent',status='inProgress',commandMatched=True,cwdMatched=True,sourceDefaultApplied=False)
         result=dict(version=1,sourceAgentUID='source',targetAgentUID='target')
@@ -186,14 +187,28 @@ class NativeSourceTests(unittest.TestCase):
         modules={'agent-dialogue-source-action.py':{'own_environment':lambda *_:{}},
                  'agent-dialogue-codex-observation.py':observation,'agent-dialogue-canary-evidence.py':{'snapshot':lambda *_a,**_k:copy.deepcopy(initial)}}
         with mock.patch.dict(self.globals,freeze_thread=lambda *_:('thread','turn'),ancestry=lambda *_:None,
-                             connect=lambda *_:(connection,[]),initialize=lambda *_:None), \
+                             connect=lambda *_:(connection,[]),initialize=lambda *_:None,read_native_policy=lambda *_:dict(policy='changed' if changed_policy else 'fixture')), \
              mock.patch.object(runpy,'run_path',side_effect=lambda path:modules[pathlib.Path(path).name]), \
              mock.patch.object(pathlib.Path,'read_bytes',read_bytes):
+            if changed_policy:
+                with self.assertRaisesRegex(ValueError,'policy-release-changed'):
+                    self.ns['observe_action'](self.root,spec,initial,stage)
+                self.assertFalse((self.root/'source-release.json').exists())
+                self.assertFalse((self.root/'evidence/source-action-result.json').exists())
+                self.assertNotIn('source-release',sequence)
+                reader.set_expected_result.assert_not_called()
+                return
             self.ns['observe_action'](self.root,spec,initial,stage)
         self.assertLess(sequence.index('read-started'),sequence.index('source-release'))
         self.assertLess(sequence.index('source-result'),sequence.index('read-completed'))
         self.assertTrue(self.root.exists())
         self.assertTrue((self.root/'evidence/source-observation.json').exists())
+
+    def test_release_checks_complete_before_action_and_return_before_cleanup(self):
+        self.release_case()
+
+    def test_otherwise_valid_action_changed_policy_refuses_before_release(self):
+        self.release_case(changed_policy=True)
 
 
 if __name__=='__main__':unittest.main()

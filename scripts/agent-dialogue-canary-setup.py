@@ -15,7 +15,7 @@ import uuid
 
 
 STAGES = frozenset((
-    'prepare', 'pins', 'claude-version', 'codex-version', 'native-launch', 'native-ready', 'source-freeze', 'source-release', 'source-result', 'tmux-create',
+    'prepare', 'pins', 'claude-version', 'codex-version', 'native-launch', 'native-ready', 'policy-before-source', 'policy-before-release', 'source-freeze', 'source-release', 'source-result', 'tmux-create',
     'tmux-socket', 'socket-validation', 'tmux-server', 'tmux-project',
     'project-create', 'project-get', 'project-validation', 'reconcile', 'windows-get', 'window-validation',
     'sender-create', 'receiver-create', 'runtime-chain', 'input-write',
@@ -54,6 +54,7 @@ class Audit:
             'binding':{'version','event','candidateHead','candidateSHA256','rootIdentity'},
             'terminal':{'version','event','exitCode','rootAbsent','receiptExists'},
             'source':{'version','event','phase','process','item','routes'},
+            'policy':{'version','event','phase','facts'},
         }
         if record.get('event') not in fields or set(record)-fields[record['event']]: raise ValueError('audit event fields')
         data=(json.dumps(record,sort_keys=True,separators=(',',':'))+'\n').encode()
@@ -261,7 +262,11 @@ def main():
         audit.stage('native-launch')
         native_child,launch=native['launch'](root,plan,env)
         audit.stage('native-ready')
-        native['ready'](root,launch,native_child)
+        endpoint=native['ready'](root,launch,native_child)
+        audit.stage('policy-before-source')
+        policy=native['read_native_policy'](root,plan,endpoint)
+        native['exclusive'](root/'evidence/native-policy-before-source.json',policy)
+        audit.append(dict(version=1,event='policy',phase='before-source',facts=policy))
         spec=setup(root,binary,socket_name,invoke,audit.stage,source_prompt=plan['sourcePrompt'])
         spec['messageRef']=plan['messageRef']
         audit.stage('input-write')

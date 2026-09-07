@@ -108,8 +108,9 @@ native=runpy.run_path(str(folder/'agent-dialogue-native-source.py'))
 root=pathlib.Path(sys.argv[1]).resolve()
 native['endpoint_path'](root) # Before credentials or actors, bound the actual public constructor.
 names=['agent-dialogue-live-canary.sh','agent-dialogue-canary-setup.py','agent-dialogue-canary-evidence.py',
-       'agent-dialogue-source-action.py','agent-dialogue-codex-observation.py','agent-dialogue-native-source.py']
-names += ['agent-dialogue-codex-schema/'+p.name for p in sorted((folder/'agent-dialogue-codex-schema').glob('*.json'))]
+       'agent-dialogue-source-action.py','agent-dialogue-codex-observation.py','agent-dialogue-native-source.py','agent-dialogue-native-policy.py']
+for subfolder in ('agent-dialogue-codex-schema','agent-dialogue-config-schema'):
+    names += [subfolder+'/'+p.name for p in sorted((folder/subfolder).glob('*.json'))]
 files={name:hashlib.sha256((folder/name).read_bytes()).hexdigest() for name in names}
 for name in names:
     target=root/'bin'/name; target.parent.mkdir(mode=0o700,exist_ok=True)

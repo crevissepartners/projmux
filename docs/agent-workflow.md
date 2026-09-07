@@ -1928,3 +1928,5 @@ separate decision this measurement exists to inform.
   performs no fleet/root cleanup. Parent orchestrator wiring remains pending.
 
 - `test/agent_dialogue_native_source_test.py`: private native launch argv/image/environment, public genuine initial task, bounded initialization, source release before effects and closed tool return before parent cleanup; fake endpoints/launches and owned inert child processes only.
+
+- `test/agent_dialogue_native_policy_test.py`: pinned public config/read projection, missing/mismatched policy, foreign or unknown origins, private-value exclusion, raw-layer/extra-execution-input refusal, bounds/EOF; native source tests also refuse an otherwise-valid action when policy changes before release.

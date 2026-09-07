@@ -80,10 +80,11 @@ is unchanged.
 The maintained setup, source action, bounded observation reader and parent
 cleanup are connected and have offline regression coverage. The prior
 payload-free source recipe is superseded. **Actual execution is not approved.**
-The current runner has not demonstrated effective Codex policy/system-layer
-isolation or the current provider's observation shapes. Generating a private
-config does not prove effective policy; command-item observation cannot prove
-that no startup plugin/config effect occurred. These are open R1 review items,
+The current runner now checks public config/read values/origins before source
+creation and release, with offline fixtures. Actual current-version policy
+responses and observation shapes remain unverified. Neither config generation
+nor command-item observation proves that no earlier endpoint-startup effect
+occurred. Those actual boundaries remain open R1 review items,
 not completed acceptance evidence or permission to run the command below.
 Historical failed attempts and their receipts remain unchanged.
 
@@ -217,13 +218,33 @@ Fresh HOME/CODEX_HOME/CODEX_SQLITE_HOME/XDG paths are passed to the direct child
 ambient config/history and keyring policy are not copied. Both auth inputs are
 copied only during the approved transaction to private mode-0600 files.
 
-The existing reader proves observed task/item selection and result correlation;
-it does not independently read or prove effective managed/system configuration.
-Private HOME alone does not establish absence of system policy or startup
-side effects. The R1 packet must identify this remaining boundary and its
-reviewed evidence plan before actual release is approved. Offline fake fixtures
-prove the maintained ordering and rejection behavior, not actual source policy,
-current field availability or successful provider execution.
+`agent-dialogue-native-policy.py` uses the two original public 0.153.2
+ConfigRead schemas under `scripts/agent-dialogue-config-schema/`. On the same
+owned endpoint it requests only `config/read` with the exact work cwd and
+`includeLayers=false`. It requires the prepared approval, sandbox/network,
+writable-root, web-search, file-auth and update values. Each selected dotted
+leaf must have an explicit origin in the owned user config; a missing origin
+is not inferred from its parent or default. Other reported origins must be
+that same user file or packaged defaults under the pinned distribution.
+Managed, project, session, unknown or mismatched origins fail closed. Nonempty
+MCP/plugin/hook/instruction inputs and returned raw layers are refused.
+
+Only those closed values, origin classes/counts and boolean assertions are
+retained, including in the external audit. Arbitrary additional config fields,
+origin revision strings, instructions and secrets are discarded. The response
+has a one-MiB/five-second bound. The parent checks policy before public source
+creation, then rereads it on the exact current peer immediately before release
+and requires identical facts and an unchanged owned config/socket/process.
+An otherwise-valid source action receives no release when policy changes.
+
+This is resolved config evidence, not a ThreadStartResponse observation. The
+existing public create sends cwd and runtime workspace roots; this reader adds
+no dummy thread/start, resume, policy mutation or relay to obtain more evidence.
+The original thread's actual policy/override boundary and the current public
+origin representation remain explicit review/actual-verification limits.
+Endpoint-startup effects preceding the read are not retroactively certified.
+Offline fixtures prove rejection/ordering and data minimization, not actual
+provider execution or a waiver of that remaining boundary.
 
 ## Parent cleanup and remaining acceptance evidence
 
