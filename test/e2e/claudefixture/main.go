@@ -1,7 +1,7 @@
 // Command claudefixture is an offline Claude process-shape fixture used only by
 // the deterministic heterogeneous-dialogue E2E. It owns a private Unix socket,
 // accepts the documented auth line plus exactly one frozen user frame per
-// connection, and invokes official-hook-shaped Stop children. It has no model,
+// connection, and executes explicit public reply commands. It has no model,
 // tool, plugin, MCP, connector, credential, or other vendor frame.
 package main
 
@@ -38,14 +38,15 @@ type providerFrame struct {
 }
 
 type coordinationContent struct {
-	Kind            string `json:"kind"`
-	Authority       string `json:"authority"`
-	MessageRef      string `json:"messageRef"`
-	ConversationRef string `json:"conversationRef"`
-	ReplyTo         string `json:"replyTo,omitempty"`
-	Source          any    `json:"source"`
-	Target          any    `json:"target"`
-	Payload         string `json:"payload"`
+	Kind            string            `json:"kind"`
+	Authority       string            `json:"authority"`
+	MessageRef      string            `json:"messageRef"`
+	ConversationRef string            `json:"conversationRef"`
+	ReplyTo         string            `json:"replyTo,omitempty"`
+	Source          map[string]string `json:"source"`
+	Target          any               `json:"target"`
+	Payload         string            `json:"payload"`
+	ReplyAction     string            `json:"replyAction"`
 }
 
 func main() {
@@ -123,17 +124,15 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("qualification push: %w", err)
 	}
-	marker := qualification.Message.Content[strings.LastIndex(qualification.Message.Content, " ")+1:]
-	if !strings.HasPrefix(marker, qualificationMarkerPrefix) {
-		return errors.New("qualification marker missing")
+	var challenge coordinationContent
+	if decodeExact([]byte(qualification.Message.Content), &challenge) != nil || !strings.HasPrefix(challenge.MessageRef, "qualification-") {
+		return errors.New("qualification broker challenge missing")
 	}
 	if err := atomicWrite(root, "qualification.json", []byte(`{"state":"frame-received"}`+"\n")); err != nil {
 		return err
 	}
-	if err := runHook(ctx, binary, environment, "claude-message-reply", map[string]any{
-		"hook_event_name": "Stop", "session_id": sessionID, "stop_hook_active": false, "last_assistant_message": marker,
-	}); err != nil {
-		return fmt.Errorf("qualification Stop: %w", err)
+	if err := runExplicitReply(ctx, binary, environment, challenge, "HETEROGENEOUS_QUALIFIED:"+challenge.MessageRef); err != nil {
+		return fmt.Errorf("qualification explicit reply: %w", err)
 	}
 
 	message, err := receiveFrame(listener, token)
@@ -149,12 +148,10 @@ func run() error {
 	if err := atomicWrite(root, "frame.json", append(frameBytes, '\n')); err != nil {
 		return err
 	}
-	if err := runHook(ctx, binary, environment, "claude-message-reply", map[string]any{
-		"hook_event_name": "Stop", "session_id": sessionID, "stop_hook_active": false,
-		"last_assistant_message": "HETEROGENEOUS_REPLY:" + content.MessageRef,
-	}); err != nil {
-		return fmt.Errorf("reply Stop: %w", err)
+	if err := runExplicitReply(ctx, binary, environment, content, "HETEROGENEOUS_REPLY:"+content.MessageRef); err != nil {
+		return fmt.Errorf("explicit reply: %w", err)
 	}
+
 	if err := atomicWrite(root, "round-trip-complete", []byte("ready\n")); err != nil {
 		return err
 	}
@@ -214,6 +211,21 @@ func runHook(ctx context.Context, binary string, environment []string, route str
 	// fixed internal command and allowlisted hook route, with no shell.
 	command := exec.CommandContext(ctx, binary, "internal", route)
 	command.Env, command.Stdin, command.Stdout, command.Stderr = environment, strings.NewReader(string(input)), io.Discard, io.Discard
+	return command.Run()
+}
+
+func runExplicitReply(ctx context.Context, binary string, environment []string, content coordinationContent, payload string) error {
+	if content.Source["agentUID"] == "" || content.MessageRef == "" {
+		return errors.New("fixture reply context missing")
+	}
+	// #nosec G204 G702 -- harness-owned executable and fixed public argv; route/ref/text are individual data arguments, never shell input.
+	command := exec.CommandContext(ctx, binary, "agent", "message", "send", "uid:"+content.Source["agentUID"], "--reply-to", content.MessageRef, "--", payload)
+	for _, value := range environment {
+		if !strings.HasPrefix(value, "CLAUDE_CODE_MESSAGING_SOCKET=") && !strings.HasPrefix(value, "CLAUDE_CODE_MESSAGING_TOKEN=") {
+			command.Env = append(command.Env, value)
+		}
+	}
+	command.Stdout, command.Stderr = io.Discard, io.Discard
 	return command.Run()
 }
 

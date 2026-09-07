@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	claudeCoordinationVersion            = 3
+	claudeCoordinationVersion            = 4
 	claudeProviderFrameMaxBytes          = 8 << 10
 	claudeCoordinationHookTimeout        = 5 * time.Second
 	priorClaudeCoordinationManagedMarker = "projmux-managed:claude-coordination:v1"
@@ -115,6 +115,7 @@ type claudeCoordinationRequest struct {
 	Envelope         *claudeCoordinationEnvelope  `json:"envelope,omitempty"`
 	MessageRef       string                       `json:"messageRef,omitempty"`
 	AssistantMessage string                       `json:"assistantMessage,omitempty"`
+	ReplyEnvelope    *coremessage.Envelope        `json:"replyEnvelope,omitempty"`
 	StopHookActive   bool                         `json:"stopHookActive,omitempty"`
 	Qualification    *claudeQualificationEvidence `json:"qualification,omitempty"`
 	QualificationRef string                       `json:"qualificationRef,omitempty"`
@@ -134,141 +135,34 @@ type claudeCoordinationResponse struct {
 }
 
 type claudeCoordinationMessage struct {
-	envelope          claudeCoordinationEnvelope
-	delivery          agentdelivery.Delivery
-	boundary          uint64
-	dialogueReady     bool
-	dialogueAmbiguous bool
-	dialogueReason    string
-	replyReserved     bool
-	replyRef          string
+	envelope      claudeCoordinationEnvelope
+	delivery      agentdelivery.Delivery
+	replyReserved bool
+	replyRef      string
 }
 
 type claudeCoordinationHub struct {
-	mu                     sync.Mutex
-	now                    func() time.Time
-	messages               map[string]*claudeCoordinationMessage
-	boundary               uint64
-	humanTurnOpen          bool
-	closed                 bool
-	qualification          *claudeQualificationState
-	qualifiedVersion       string
-	replyCorrelationReason string
-	boundaryAnnouncements  atomic.Uint64
-	replyBoundaryLost      atomic.Bool
+	mu                    sync.Mutex
+	now                   func() time.Time
+	messages              map[string]*claudeCoordinationMessage
+	boundary              uint64
+	closed                bool
+	qualification         *claudeQualificationState
+	qualifiedVersion      string
+	boundaryAnnouncements atomic.Uint64
+	replyBoundaryLost     atomic.Bool
 }
 
 func newClaudeCoordinationHub() *claudeCoordinationHub {
 	return &claudeCoordinationHub{now: time.Now, messages: make(map[string]*claudeCoordinationMessage)}
 }
 
-// userPrompt closes every previously open safe boundary before Claude starts a
-// human-authored turn. It also makes all delivered-but-unreplied peer messages
-// ineligible for Stop correlation: the following assistant text could belong
-// to that user turn, and text matching is never authority.
+// UserPromptSubmit remains a bounded compatibility observation. It neither
+// selects a reply nor revokes a valid explicit reply to a broker request.
 func (h *claudeCoordinationHub) userPromptAt(announced uint64) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.boundary = max(h.boundary, announced)
-	h.humanTurnOpen = true
-	h.closeQualificationForUserPromptLocked()
-	for _, message := range h.messages {
-		if message.dialogueReady && message.replyRef == "" {
-			h.replyCorrelationReason = "concurrent-user-turn-ambiguous"
-			message.dialogueAmbiguous = true
-			message.dialogueReason = "concurrent-user-turn-ambiguous"
-		}
-	}
-}
-
-// reserveReply returns exactly one pending correlation. Zero, multiple,
-// already-replied, or user-turn-ambiguous candidates fail closed without using
-// assistant text as a selector.
-func (h *claudeCoordinationHub) reserveReply(stopHookActive bool) (*coremessage.Envelope, string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.replyBoundaryLost.Load() || h.boundaryAnnouncements.Load() != h.boundary {
-		h.replyCorrelationReason = "concurrent-user-turn-ambiguous"
-	}
-	if h.replyCorrelationReason != "" {
-		return nil, h.replyCorrelationReason
-	}
-	now := h.now()
-	var candidates []*claudeCoordinationMessage
-	ambiguousReason := ""
-	for _, message := range h.messages {
-		if message.replyRef != "" || message.replyReserved || message.envelope.BrokerEnvelope == nil {
-			continue
-		}
-		if !message.envelope.Deadline.After(now) {
-			message.dialogueReady = false
-			message.dialogueAmbiguous = true
-			message.dialogueReason = "reply-correlation-expired"
-			if message.delivery.State == agentdelivery.StateDelivered {
-				h.replyCorrelationReason = message.dialogueReason
-			}
-		}
-		if message.dialogueAmbiguous {
-			if ambiguousReason == "" {
-				ambiguousReason = message.dialogueReason
-				if ambiguousReason == "" {
-					ambiguousReason = "concurrent-user-turn-ambiguous"
-				}
-			}
-			continue
-		}
-		if !message.dialogueReady {
-			continue
-		}
-		candidates = append(candidates, message)
-	}
-	if h.replyCorrelationReason != "" {
-		return nil, h.replyCorrelationReason
-	}
-	if len(candidates) > 1 {
-		h.replyCorrelationReason = "multiple-pending-correlations"
-		for _, message := range candidates {
-			message.dialogueAmbiguous = true
-			message.dialogueReason = "multiple-pending-correlations"
-		}
-		return nil, "multiple-pending-correlations"
-	}
-	if len(candidates) == 0 {
-		if ambiguousReason != "" {
-			return nil, ambiguousReason
-		}
-		return nil, "no-pending-correlation"
-	}
-	candidate := candidates[0]
-	// Push ingress is not a Stop asyncRewake. A recursive Stop cannot prove the
-	// current assistant text belongs to this pending coordination message.
-	if stopHookActive {
-		candidate.dialogueAmbiguous = true
-		candidate.dialogueReason = "stop-origin-mismatch"
-		h.replyCorrelationReason = candidate.dialogueReason
-		return nil, "stop-origin-mismatch"
-	}
-	candidate.replyReserved = true
-	envelope := *candidate.envelope.BrokerEnvelope
-	return &envelope, ""
-}
-
-func (h *claudeCoordinationHub) finishReply(messageRef, replyRef string, committed bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	message := h.messages[messageRef]
-	if message == nil || !message.replyReserved {
-		return
-	}
-	message.replyReserved = false
-	if committed {
-		message.replyRef = replyRef
-		return
-	}
-	message.dialogueReady = false
-	message.dialogueAmbiguous = true
-	message.dialogueReason = "broker-reply-outcome-unknown"
-	h.replyCorrelationReason = message.dialogueReason
 }
 
 func (h *claudeCoordinationHub) status(messageRef string) agentdelivery.Delivery {
@@ -336,7 +230,7 @@ type claudeDialogueBroker interface {
 	Current(coremessage.Envelope) bool
 	MarkHandoff(coremessage.Envelope) error
 	MarkDelivered(coremessage.Envelope, time.Time) error
-	Reply(coremessage.Envelope, coremetadata.AgentRouteRef, string, time.Time) (string, error)
+	CommitReply(coremessage.Envelope, coremessage.Envelope) error
 }
 
 type liveClaudeDialogueBroker struct {
@@ -450,32 +344,6 @@ func (b *liveClaudeDialogueBroker) MarkDelivered(envelope coremessage.Envelope, 
 	return nil
 }
 
-func (b *liveClaudeDialogueBroker) Reply(original coremessage.Envelope, source coremetadata.AgentRouteRef, payload string, now time.Time) (string, error) {
-	if b == nil || b.store == nil || original.Validate() != nil || !validClaudeAssistantReply(payload) {
-		return "", coremessage.ErrInvalidEnvelope
-	}
-	registry, err := intmetadata.NewStore(b.registryPath).LoadDegradedReadOnly()
-	if err != nil {
-		return "", err
-	}
-	currentSource, reason := coremetadata.ResolveAgentRoute(registry, source.AgentUID)
-	if reason != "" || !currentSource.Same(source) || publicMessageRoute(currentSource) != original.Target {
-		return "", coremessage.ErrInvalidEnvelope
-	}
-	currentTarget, reason := coremetadata.ResolveAgentRoute(registry, original.Source.AgentUID)
-	if reason != "" || publicMessageRoute(currentTarget) != original.Source {
-		return "", coremessage.ErrInvalidEnvelope
-	}
-	digest := sha256.Sum256([]byte("claude-stop-reply-v1\x00" + original.MessageRef))
-	replyRef := "reply-" + hex.EncodeToString(digest[:18])
-	_, _, err = b.store.PutReply(original.MessageRef, replyRef, payload, publicMessageRoute(currentSource),
-		publicMessageRoute(currentTarget), now.UTC(), now.UTC().Add(10*time.Minute))
-	if err != nil {
-		return "", err
-	}
-	return replyRef, nil
-}
-
 func validClaudeAssistantReply(value string) bool {
 	return value != "" && len(value) <= coremessage.MaxPayloadBytes && utf8.ValidString(value) && !strings.ContainsRune(value, '\x00')
 }
@@ -521,7 +389,7 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 	case "eligibility":
 		kind, reason := "unqualified", "exact-version-isolated-qualification-required"
 		if s.hub.coordinationEligible() {
-			kind, reason = "qualified", "exact-public-init-and-stop-marker"
+			kind, reason = "qualified", "exact-public-init-and-explicit-reply"
 		}
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind,
 			ProviderVersion: claudeFrozenFrameProviderVersion, Reason: reason})
@@ -531,7 +399,7 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 				Kind: "qualification-refused", Reason: "missing-public-init-evidence"})
 			return
 		}
-		_ = localipc.WriteJSON(conn, s.hub.beginQualification(*request.Qualification, s.route, s.poster))
+		_ = localipc.WriteJSON(conn, s.hub.beginExplicitQualification(*request.Qualification, s.route, request.Envelope, s.broker, s.poster))
 	case "qualification-status":
 		_ = localipc.WriteJSON(conn, s.hub.qualificationResponse(request.QualificationRef))
 	case "submit":
@@ -546,8 +414,8 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused"})
 			return
 		}
-		// Announce before any mutex: even a timed-out hook closes reply
-		// correlation before the corresponding human turn may begin.
+		// Preserve the bounded compatibility observation. Explicit reply
+		// authorization is independent of this human-turn counter.
 		announced := s.hub.boundaryAnnouncements.Add(1)
 		if s.hookMu.TryLock() {
 			s.hub.userPromptAt(announced)
@@ -557,37 +425,18 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 		}
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "boundary-closed"})
 	case "stop-reply":
-		if parent != authority.Process.PID || request.SessionID != authority.SessionID ||
-			!validClaudeAssistantReply(request.AssistantMessage) {
-			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: "invalid-stop-correlation"})
+		// Stop text has no reply authority. Kept as a quiet compatibility sink
+		// for an older installed hook; it cannot qualify or publish a message.
+		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion,
+			Kind: "reply-refused", Reason: "explicit-reply-required"})
+	case "explicit-reply":
+		if request.ReplyEnvelope == nil || request.SessionID != authority.SessionID ||
+			!claudeProviderDescendant(peer, authority.Process) {
+			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion,
+				Kind: "reply-refused", Reason: "exact-provider-caller-required"})
 			return
 		}
-		if !s.hookMu.TryLock() {
-			s.hub.replyBoundaryLost.Store(true)
-			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: "hook-busy"})
-			return
-		}
-		defer s.hookMu.Unlock()
-		if response, handled := s.hub.consumeQualificationStop(request.AssistantMessage, request.StopHookActive); handled {
-			_ = localipc.WriteJSON(conn, response)
-			return
-		}
-		if s.broker == nil {
-			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: "invalid-stop-correlation"})
-			return
-		}
-		original, reason := s.hub.reserveReply(request.StopHookActive)
-		if original == nil {
-			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: reason})
-			return
-		}
-		replyRef, err := s.broker.Reply(*original, s.route, request.AssistantMessage, time.Now())
-		s.hub.finishReply(original.MessageRef, replyRef, err == nil)
-		if err != nil {
-			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: "broker-reply-refused"})
-			return
-		}
-		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-accepted", ReplyRef: replyRef})
+		_ = localipc.WriteJSON(conn, s.hub.commitExplicitReply(*request.ReplyEnvelope, s.route, s.broker))
 	case "status":
 		delivery := s.hub.status(request.MessageRef)
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: string(delivery.State), Delivery: delivery})
@@ -637,15 +486,6 @@ func callClaudeCoordination(ctx context.Context, registryPath string, route core
 		return claudeCoordinationResponse{}, claudeCoordinationCallError{possiblyDispatched: true}
 	}
 	return response, nil
-}
-
-func resolveCurrentClaudeCoordinationRoute(registryPath, paneUID, generation, sessionID string) (coremetadata.AgentRouteRef, bool) {
-	route, current := resolveCurrentClaudeCoordinationActivation(registryPath, paneUID, generation)
-	if !current {
-		return coremetadata.AgentRouteRef{}, false
-	}
-	authority, ok := route.Authority().(coremetadata.ClaudeAuthorityRef)
-	return route, ok && authority.SessionID == sessionID
 }
 
 func resolveCurrentClaudeCoordinationActivation(registryPath, paneUID, generation string) (coremetadata.AgentRouteRef, bool) {

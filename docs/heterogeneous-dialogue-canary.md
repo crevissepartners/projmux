@@ -1,5 +1,14 @@
 # Heterogeneous Dialogue Canary
 
+The explicit reply implementation is being qualified. The existing live runner
+still carries the former tools-empty setup and is not a valid execution plan
+for this contract. Qualification now requires a broker-owned challenge and an
+actual model-executed public `agent message send ... --reply-to ... -- text`.
+A reviewed single-tool executable/argv gate and revised execution evidence are
+required before running the live path. Stop text never publishes a reply.
+The deterministic L20 fixture uses explicit public replies; it is not evidence
+of actual provider model execution.
+
 The required release test is the selectorless offline `L20` E2E. This runbook
 is an additional opt-in observation against real provider binaries. It is not a
 provider-version guarantee and must never run against an existing fleet,

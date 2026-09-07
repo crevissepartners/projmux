@@ -1110,38 +1110,38 @@
 
 ### Heterogeneous Agent dialogue Phase 4 tests
 
-- `TestClaudeCoordinationPrivateBridgeRequiresExactV3Route`,
-  `TestClaudeCoordinationV1AndV2HelpersCannotReceiveV3Traffic`, and
-  `TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix` pin public/private v3
+- `TestClaudeCoordinationPrivateBridgeRequiresExactV4Route`,
+  `TestClaudeCoordinationV1V2AndV3HelpersCannotReceiveV4Traffic`, and
+  `TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix` pin public/private v4
   route equality, old generation, same-generation old incarnation, stale
   provider process, foreign socket, helper exit, Codex endpoint replacement,
   and fresh current-version requalification. Old routes write/claim zero; a new
-  endpoint writes zero before qualification and exactly one after it.
-- `TestHeterogeneousDialogueIdleActiveSafeBoundaryMatrix`,
-  `TestClaudePushDuringOpenHumanTurnNeverCorrelatesThatTurnsStop`,
-  `TestClaudeDialogueStopCorrelationUsesPushOriginAndBoundary`, and
-  `TestClaudeDialogueOversizedUserPromptClosesExactBoundary` pin quiet
-  immediate push without a waiter, in-flight non-interruption, a human turn
-  already open before push, ordinary push-origin `stop_hook_active=false`,
-  recursive-Stop refusal, oversized human prompt closure, all-candidate
-  ambiguity, and refusal of late Stops for every later candidate in that helper incarnation. Assistant text is never
-  correlation authority.
-- `TestClaudeDialogueReplyCorrelationExpiresWithoutChangingDelivery`,
-  `TestClaudeDialogueBrokerReplyFailureNeverRetriesOnLaterStop`, and
-  `TestClaudeReplyHookRequiresExplicitStopHookActiveField` keep pending reply
-  authority bounded independently of the delivered terminal, permanently close
-  correlation after a durable reply outcome error, and reject missing, null, or
-  changed official Stop fields before any coordination call. Neither a late
-  Stop nor a later unrelated assistant message can retry an uncertain reply.
-- `TestClaudeQualificationRequiresExactPublicInitAndStopMarker`,
-  `TestClaudeQualificationForgedMissingOldAndStaleEvidenceWritesZero`,
-  `TestClaudeQualificationResponseRequiresExactStableClosedShape`,
-  `TestClaudeQualificationDuplicateTimeoutAndHelperExitAreBounded`,
-  `TestClaudeQualificationInFlightIsSingleWriteAndBoundaryRaceIsAmbiguous`, and
-  `TestClaudeQualificationLateOldWriteCannotMutateFreshRetry` pin exact
-  `2.1.263` public-init evidence, explicit opt-in, unique marker/Stop proof,
-  in-flight CAS, timeout/exit cleanup, late-result isolation, ambiguous
-  post-write receipts, and no automatic resend.
+  endpoint writes zero before qualification and exactly one after it. The v4
+  fence applies only to the existing coordination UDS protocol: v3 Stop-qualified
+  helpers cannot pass current lease/eligibility checks. The frozen vendor
+  auth-plus-user frame is unchanged; recovery retains the public same-UID path.
+- `TestHeterogeneousDialogueIdleActiveSafeBoundaryMatrix` and
+  `TestClaudePushDuringOpenHumanTurnNeverCorrelatesThatTurnsStop` preserve
+  immediate idle/active push without a waiter or interruption. Every ordinary,
+  recursive, late, or unrelated Stop publishes zero replies.
+- `TestClaudeQualificationRequiresBrokerChallengeAndExplicitReply` requires a
+  stored original challenge, exact current source and target, a full frozen
+  frame, and a broker-committed explicit reply before opening general ingress.
+  A text echo or Stop alone cannot qualify the endpoint.
+- `TestClaudeExplicitReplyRejectsForeignStaleAndAlteredCorrelationBeforeCommit`
+  covers foreign refs, altered conversations, stale generations/incarnations,
+  reversed-route mismatch, and a wrong qualification response with commit zero.
+- `TestClaudeExplicitMultipleRequestsAndHumanOverlapSelectOnlyNamedOriginal`
+  permits an explicit reply to B then A across human activity, rejects a second
+  reply to either request, and never chooses correlation by arrival order.
+- `TestClaudeQualificationPublishesOriginalBeforeConcurrentExplicitReply`
+  synchronizes an immediate provider response with durable challenge publication;
+  reply timing cannot expose a missing original.
+- `TestClaudeExplicitQualificationMissingToolProofOrOriginalWritesZero`,
+  `TestClaudeExplicitQualificationPartialAndTimeoutNeverResend`, and
+  `TestClaudeQualificationResponseRequiresExactStableClosedShape` pin exact
+  version/process/lease evidence, the single Bash execution-gate assertion,
+  missing original request, partial write, timeout, and no automatic resend.
 - `TestStoreMigratesV1EnvelopeToUnqualifiedStaleFence` uses literal v1 JSON
   without incarnation fields. `TestStoreReplyIsAtomicCorrelatedAndReplayIdempotent`
   pins reversed routes, original conversation/replyTo, crash-before-rename
@@ -1163,7 +1163,7 @@
   carries both in-progress and approval-required Registry projections through
   send/handoff/delivered/reply/claim, proves terminal-once, and proves Registry
   and badge writes remain zero.
-- `TestAIIntegrateClaude*` now pins short synchronous Stop reply and
+- `TestAIIntegrateClaude*` pins short compatibility Stop and
   `UserPromptSubmit` commands, zero SessionStart/Stop ingress waiter and zero
   `asyncRewake`, v1/v2-to-v3 marker convergence, user-hook preservation,
   remove, and idempotence.
@@ -1183,7 +1183,7 @@
   heterogeneous round trip. It uses isolated XDG/tmux roots, a payload-free
   long-lived fake Codex child plus typed `StageCodexEndpoint` /
   `BindCodexActivation` setup for one pre-existing synthetic route, and official
-  Claude hook boundaries. A public capability barrier proves the exact Codex
+  Claude registration plus explicit public reply commands. A public capability barrier proves the exact Codex
   composite authority before send; semantic barriers replace sleeps. The
   scenario requires exact UID/Pane/generation/message/conversation/reply
   receipts, Agent count two, Codex provider writes zero, and pre-removal
@@ -1192,9 +1192,11 @@
 - The real-provider path is opt-in only through
   `scripts/agent-dialogue-live-canary.sh` and the isolation procedure in
   `docs/heterogeneous-dialogue-canary.md`. Its gate precedes broker traffic and
-  requires the same long-lived hook-enabled Claude process to publish exact
-  empty tools, MCP servers, and plugins, with pre-inbound tool use and stderr
-  both zero. Its in-memory collector rejects unknown 2.1.263 public event/field
+  requires the same long-lived hook-enabled Claude process to publish the
+  reviewed single reply tool, empty MCP servers and plugins, and zero other
+  tool effects. The prior tools-empty runner is not evidence for this explicit
+  reply contract; executable/argv enforcement and actual model execution must
+  be reviewed before enabling the revised live path. Its in-memory collector rejects unknown 2.1.263 public event/field
   shapes and persists only a sanitized messaging-endpoint presence bit. The
   same gate captures exact provider, helper, tmux, and Codex self-claim process
   births, proves both messaging credential keys absent from the helper
@@ -1785,16 +1787,16 @@ separate decision this measurement exists to inform.
 - `TestClaudePushSourceReplacementAfterDurableHandoffWritesZero` and
   `TestClaudeProviderPushFinalRouteCheckPrecedesSoleWrite` cover source/target
   authority loss across durable work and the final provider pre-write fence.
-- `TestClaudePushHumanTurnAmbiguitySurvivesLaterIdleStop` and
-  `TestClaudeDialogueMultiplePendingCannotCorrelateLaterCandidate` prevent a
-  late response from acquiring a newer message's correlation.
+- `TestClaudeExplicitMultipleRequestsAndHumanOverlapSelectOnlyNamedOriginal`
+  requires an explicit choice of the original request; Stop text has no reply
+  authority regardless of human activity or pending request count.
 
 - `TestAuthorityCheckUsesExistingExactLeaseWithoutProviderTraffic` proves the
   dialogue source's exact live Codex broker runtime, connection and binding
   fence with no new binding or provider request.
 - `TestNonblockingHookStoreRefusesContentionWithoutLateWrite` and
-  `TestClaudeOfficialHookContentionInvalidatesReplyWithoutWaiting` keep a busy
-  Stop/helper from committing delayed replies after its hook deadline.
+  `TestClaudeOfficialHookContentionInvalidatesReplyWithoutWaiting` keep compatibility hooks bounded. Explicit reply commits use broker original
+  request validation independently of hook timing.
 
 - `test/agent_dialogue_canary_test.py`: paired owned SessionStart lifecycle events
   may precede init; foreign session/name/event, missing completion, unknown fields,

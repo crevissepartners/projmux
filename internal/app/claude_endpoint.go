@@ -575,5 +575,6 @@ func probeClaudeCoordinationEligibility(registryPath string, route coremetadata.
 	response, err := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "eligibility", Target: target,
 	})
-	return err == nil && response.Kind == "qualified" && response.ProviderVersion == claudeFrozenFrameProviderVersion
+	return err == nil && response.Kind == "qualified" && response.ProviderVersion == claudeFrozenFrameProviderVersion &&
+		response.Reason == "exact-public-init-and-explicit-reply" && !response.AutoResend && !response.Ambiguous
 }

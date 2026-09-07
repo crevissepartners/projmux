@@ -18,7 +18,7 @@ func TestClaudeQualificationResponseRequiresExactStableClosedShape(t *testing.T)
 	}
 	qualified := claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "qualification-qualified",
 		QualificationRef: ref, ProviderVersion: claudeFrozenFrameProviderVersion,
-		Reason: "exact-public-init-and-stop-marker", AutoResend: false}
+		Reason: "exact-public-init-and-explicit-reply", AutoResend: false}
 	if _, ok := validateClaudeQualificationResponse(qualified, ref, "qualification-pending"); !ok {
 		t.Fatal("exact pending-to-qualified response refused")
 	}

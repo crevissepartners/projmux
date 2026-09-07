@@ -184,7 +184,7 @@ PY
 
 # L20's deterministic collector synthesizes the exact sanitized public-init
 # facts for the offline fixture only. The product still validates every exact
-# route/process/helper field and requires the unique Stop marker before opening
+# route/process/helper field and requires a broker-correlated explicit public reply before opening
 # helper-memory eligibility. No provider socket/token is persisted here.
 dialogue_qualification_evidence="$dialogue_root/qualification-evidence.json"
 python3 - "$dialogue_root/state/projmux/metadata/registry.json" "$dialogue_capabilities_before" \
@@ -197,7 +197,7 @@ evidence={"version":1,"claude_code_version":"2.1.263","sessionId":authority["ses
  "agentUID":agent_uid,"paneUID":pane_uid,"activationGeneration":generation,
  "routeIncarnation":capability["runtimeEligibility"]["routeIncarnation"],
  "providerProcess":authority["process"],"registrationGeneration":authority["registrationGeneration"],
- "helperProcess":authority["leaseProcess"],"tools":[],"mcp_servers":[],"plugins":[],
+ "helperProcess":authority["leaseProcess"],"tools":["Bash"],"replyExecutionGate":True,"mcp_servers":[],"plugins":[],
  "pluginInitCount":0,"preMarkerToolUse":0,"preMarkerStderr":0,"inboundPolicy":"accept",
  "publicInitObserved":True,"streamFrozen":True,
  "observedAt":datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z")}
@@ -205,14 +205,21 @@ temporary=out+".tmp"
 with open(temporary,"x") as f: json.dump(evidence,f,separators=(",",":")); f.write("\n")
 os.chmod(temporary,0o600); os.replace(temporary,out)
 PY
-dialogue_pmx agent message qualify "uid:$dialogue_claude_uid" --evidence "$dialogue_qualification_evidence" \
+dialogue_inside "$dialogue_codex_pane" agent message qualify "uid:$dialogue_claude_uid" --evidence "$dialogue_qualification_evidence" \
   --confirm-isolated-provider-push -o json >"$dialogue_root/qualification-receipt.json"
+dialogue_inside "$dialogue_codex_pane" agent message wait --timeout 5s -o json >"$dialogue_root/qualification-reply.json"
+python3 - "$dialogue_root/qualification-receipt.json" "$dialogue_root/qualification-reply.json" <<'PYQUAL'
+import json,sys
+qualification=json.load(open(sys.argv[1])); reply=json.load(open(sys.argv[2]))["envelope"]
+assert reply["replyTo"]==qualification["qualificationRef"]
+assert reply["payload"]=="HETEROGENEOUS_QUALIFIED:"+qualification["qualificationRef"]
+PYQUAL
 dialogue_pmx agent capabilities "uid:$dialogue_claude_uid" -o json >"$dialogue_root/capabilities-qualified.json"
 python3 - "$dialogue_root/qualification-receipt.json" "$dialogue_root/capabilities-qualified.json" <<'PY'
 import json,sys
 receipt=json.load(open(sys.argv[1])); capability=json.load(open(sys.argv[2]))
 assert receipt["state"]=="qualification-qualified" and receipt["providerVersion"]=="2.1.263"
-assert receipt["evidence"]=="owned-public-init-plus-exact-stop-marker"
+assert receipt["evidence"]=="owned-public-init-plus-broker-explicit-reply"
 assert receipt["ambiguous"] is False and receipt["autoResend"] is False
 assert capability["runtimeEligibility"]["coordination"]["eligible"] is True
 PY

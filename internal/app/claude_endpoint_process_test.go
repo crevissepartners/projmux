@@ -28,7 +28,7 @@ import (
 // reply/control frame. Its private capture socket is test memory, not a product
 // receipt, log, or artifact.
 const claudeEndpointSyntheticProvider = `
-import json, os, secrets, socket, subprocess, sys
+import glob, hashlib, json, os, secrets, socket, subprocess, sys
 path = os.path.join(os.environ['PMX_TEST_ROOT'], 'provider-' + secrets.token_hex(8) + '.sock')
 os.umask(0o077)
 inbox = socket.socket(socket.AF_UNIX)
@@ -59,11 +59,25 @@ def receive(kind, session):
     connection.close()
     receipt.write(json.dumps({'received':kind,'content':content}) + '\n'); receipt.flush()
     if kind == 'qualification':
-        marker = content.rsplit(' ', 1)[-1]
-        assert marker.startswith('HETEROGENEOUS_QUALIFIED:qualification-')
-        result = subprocess.run([os.environ['PMX_TEST_BIN'],'internal','claude-message-reply'], input=json.dumps({'hook_event_name':'Stop','session_id':session,'stop_hook_active':False,'last_assistant_message':marker}).encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        envelope = json.loads(content)
+        registry_path = os.environ['PMX_INTERNAL_CLAUDE_REGISTRY_PATH']
+        pane_uid = os.environ['PMX_INTERNAL_ACTIVATION_PANE_UID']
+        generation = os.environ['PMX_INTERNAL_ACTIVATION_GENERATION']
+        registry = json.load(open(registry_path))
+        pane = next(x for x in registry['panes'] if x['metadata']['uid'] == pane_uid)
+        authority = pane['status']['activation']['claude']['registration']['authority']
+        target = {'agentUID': envelope['target']['agentUID'], 'paneUID': pane_uid, 'generation': generation, 'provider': 'claude', 'authority': authority}
+        lease_dir = '/tmp/pmx-ce-' + hashlib.sha256((registry_path+'\x00'+pane_uid+'\x00'+generation).encode()).hexdigest()[:32]
+        paths = glob.glob(lease_dir+'/coord-*.sock')
+        assert len(paths) == 1
+        original = json.load(open(os.path.join(os.environ['PMX_TEST_ROOT'], 'qualification-original.json')))
+        reply = dict(original, messageRef='reply-'+original['messageRef'], replyTo=original['messageRef'], source=original['target'], target=original['source'], payload='HETEROGENEOUS_QUALIFIED:'+original['messageRef'])
+        request = {'version':4, 'operation':'explicit-reply', 'target':target, 'sessionId':session, 'replyEnvelope':reply}
+        child = "import json,socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(sys.stdin.buffer.read()+b'\\n'); s.shutdown(socket.SHUT_WR); r=json.loads(s.makefile('rb').readline()); assert r['kind']=='reply-accepted'; s.close()"
+        child_env={k:v for k,v in os.environ.items() if k not in {'CLAUDE_CODE_MESSAGING_TOKEN','CLAUDE_CODE_MESSAGING_SOCKET'}}
+        result = subprocess.run([sys.executable, '-c', child, paths[0]], input=json.dumps(request).encode(), env=child_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         assert result.returncode == 0 and not result.stdout and not result.stderr
-        receipt.write('qualification-stop-returned\n'); receipt.flush()
+        receipt.write('qualification-explicit-returned\n'); receipt.flush()
 hook('synthetic-session-1')
 for line in sys.stdin:
     command = line.strip()
@@ -183,22 +197,37 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		t.Fatal("provider did not match supervisor's exact child")
 	}
 
+	messageStore := messagestore.NewStore(filepath.Dir(filepath.Dir(registryPath)))
 	qualify := func(route coremetadata.AgentRouteRef, command string) {
 		t.Helper()
 		target, ok := claudeTargetForRoute(route)
 		if !ok {
 			t.Fatal("exact target unavailable")
 		}
+		now := time.Now().UTC()
+		ref := "qualification-" + command
+		original := coremessage.Envelope{Version: coremessage.Version, MessageRef: ref, ConversationRef: conversationRefFor(ref),
+			Source: publicMessageRoute(route), Target: publicMessageRoute(route), Authority: coremessage.PeerAuthority(),
+			Payload: claudeQualificationMarkerPrefix + ref, AcceptedAt: now, Deadline: now.Add(time.Minute)}
+		if _, _, err := messageStore.PutAccepted(original, "claude-coordination"); err != nil {
+			t.Fatal(err)
+		}
+		originalBytes, _ := json.Marshal(original)
+		if err := os.WriteFile(filepath.Join(root, "qualification-original.json"), originalBytes, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		challenge := claudeCoordinationEnvelope{Version: claudeCoordinationVersion, MessageRef: ref, Target: target,
+			Source: claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"}, Deadline: original.Deadline, BrokerEnvelope: &original}
 		_, _ = writeControl.WriteString(command + "\n")
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		response, callErr := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
-			Operation: "qualify", Target: target, Qualification: ptrQualification(exactQualificationEvidence(route, time.Now().UTC())), ExplicitOptIn: true})
+			Operation: "qualify", Target: target, Envelope: &challenge, Qualification: ptrQualification(exactQualificationEvidence(route, time.Now().UTC())), ExplicitOptIn: true})
 		cancel()
 		if callErr != nil || response.Kind != "qualification-pending" {
 			t.Fatalf("qualification start=%+v err=%v", response, callErr)
 		}
 		assertProviderReceipt(t, reader, "qualification", claudeQualificationMarkerPrefix)
-		waitLine(t, reader, "qualification-stop-returned\n")
+		waitLine(t, reader, "qualification-explicit-returned\n")
 		ctx, cancel = context.WithTimeout(context.Background(), time.Second)
 		status, callErr := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 			Operation: "qualification-status", Target: target, QualificationRef: response.QualificationRef})
@@ -209,7 +238,6 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	}
 	qualify(first, "qualify-1")
 
-	messageStore := messagestore.NewStore(filepath.Dir(filepath.Dir(registryPath)))
 	send := func(route coremetadata.AgentRouteRef, ref, command string) {
 		t.Helper()
 		target, ok := claudeTargetForRoute(route)

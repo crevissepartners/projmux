@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -66,12 +65,9 @@ func (b *failingClaudeDialogueBroker) MarkDelivered(coremessage.Envelope, time.T
 	return b.deliveredErr
 }
 
-func (b *failingClaudeDialogueBroker) Reply(original coremessage.Envelope, _ coremetadata.AgentRouteRef, payload string, _ time.Time) (string, error) {
+func (b *failingClaudeDialogueBroker) CommitReply(_, _ coremessage.Envelope) error {
 	b.replies++
-	if b.replyErr != nil {
-		return "", b.replyErr
-	}
-	return "reply-" + original.MessageRef + "-" + strings.ReplaceAll(payload, " ", "-"), nil
+	return b.replyErr
 }
 
 type claudeCoordinationTestFixture struct {
@@ -150,18 +146,18 @@ func (f *claudeCoordinationTestFixture) call(t *testing.T, request claudeCoordin
 	return response
 }
 
-func TestClaudeCoordinationPrivateBridgeRequiresExactV3Route(t *testing.T) {
+func TestClaudeCoordinationPrivateBridgeRequiresExactV4Route(t *testing.T) {
 	fixture := newClaudeCoordinationTestFixture(t)
 	now := time.Now().UTC()
 	envelope := dialogueEnvelope("message-private-route", now.Add(time.Minute))
 	envelope.Target = fixture.target
 	envelope.BrokerEnvelope.Target = publicMessageRoute(fixture.route)
 	if !envelope.valid(now, fixture.route) {
-		t.Fatal("exact v3 route refused")
+		t.Fatal("exact v4 route refused")
 	}
 	envelope.Version = 2
 	if envelope.valid(now, fixture.route) {
-		t.Fatal("old private protocol crossed v3 helper")
+		t.Fatal("old private protocol crossed v4 helper")
 	}
 	envelope.Version = claudeCoordinationVersion
 	envelope.BrokerEnvelope.Target.Incarnation = "route-replaced"
@@ -181,56 +177,21 @@ func TestClaudeCoordinationServerHasNoWaiterIngressOperations(t *testing.T) {
 	}
 }
 
-func TestClaudePushReplyCorrelationIsExactAndConcurrentUserTurnFailsClosed(t *testing.T) {
-	now := time.Unix(80_000, 0).UTC()
-	newDelivered := func(ref string) (*claudeCoordinationHub, *failingClaudeDialogueBroker) {
-		hub := qualifiedPushHub(now)
-		broker := &failingClaudeDialogueBroker{}
-		poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
-		if got := hub.submitPush(dialogueEnvelope(ref, now.Add(time.Minute)), broker, poster); got.State != agentdelivery.StateDelivered {
-			t.Fatalf("delivery=%+v", got)
-		}
-		return hub, broker
-	}
-	t.Run("ordinary push Stop", func(t *testing.T) {
-		hub, _ := newDelivered("message-reply")
-		original, reason := hub.reserveReply(false)
-		if original == nil || reason != "" || original.MessageRef != "message-reply" {
-			t.Fatalf("original=%+v reason=%q", original, reason)
-		}
-		hub.finishReply(original.MessageRef, "reply-one", true)
-		if duplicate, _ := hub.reserveReply(false); duplicate != nil {
-			t.Fatal("reply terminal completed twice")
-		}
-	})
-	t.Run("recursive Stop", func(t *testing.T) {
-		hub, _ := newDelivered("message-recursive")
-		if original, reason := hub.reserveReply(true); original != nil || reason != "stop-origin-mismatch" {
-			t.Fatalf("original=%+v reason=%q", original, reason)
-		}
-	})
-	t.Run("human prompt after push", func(t *testing.T) {
-		hub, _ := newDelivered("message-human")
-		hub.userPrompt()
-		if original, reason := hub.reserveReply(false); original != nil || reason != "concurrent-user-turn-ambiguous" {
-			t.Fatalf("original=%+v reason=%q", original, reason)
-		}
-	})
-}
-
 func TestClaudeCoordinationQualificationRequiresExplicitOptIn(t *testing.T) {
 	fixture := newClaudeCoordinationTestFixture(t)
 	fixture.server.poster = &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
 	now := time.Now().UTC()
 	fixture.server.hub.now = func() time.Time { return now }
 	evidence := exactQualificationEvidence(fixture.route, now)
+	challenge := qualificationTestEnvelope(fixture.route, now)
+	fixture.server.broker = &failingClaudeDialogueBroker{}
 	response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 		Operation: "qualify", Target: fixture.target, Qualification: &evidence})
 	if response.Kind != "qualification-refused" {
 		t.Fatalf("unconfirmed qualification=%+v", response)
 	}
 	response = fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
-		Operation: "qualify", Target: fixture.target, Qualification: &evidence, ExplicitOptIn: true})
+		Operation: "qualify", Target: fixture.target, Qualification: &evidence, Envelope: &challenge, ExplicitOptIn: true})
 	if response.Kind != "qualification-pending" || response.QualificationRef == "" {
 		t.Fatalf("confirmed qualification=%+v", response)
 	}
@@ -252,13 +213,6 @@ func TestClaudeCoordinationEnvelopeJSONContainsNoProviderSecretFields(t *testing
 	}
 }
 
-func TestClaudeDialogueBrokerFailureDoesNotCreateReply(t *testing.T) {
-	broker := &failingClaudeDialogueBroker{replyErr: errors.New("durable failure")}
-	if ref, err := broker.Reply(coremessage.Envelope{MessageRef: "message"}, coremetadata.AgentRouteRef{}, "reply", time.Now()); err == nil || ref != "" || broker.replies != 1 {
-		t.Fatalf("ref=%q err=%v replies=%d", ref, err, broker.replies)
-	}
-}
-
 func TestClaudeDialogueReplyCorrelationExpiresWithoutChangingDelivery(t *testing.T) {
 	fixture := newClaudeCoordinationTestFixture(t)
 	now := time.Now().UTC()
@@ -277,38 +231,11 @@ func TestClaudeDialogueReplyCorrelationExpiresWithoutChangingDelivery(t *testing
 	response = fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 		Operation: "stop-reply", Target: fixture.target, SessionID: fixture.sessionID,
 		AssistantMessage: "unrelated later assistant text", StopHookActive: false})
-	if response.Kind != "reply-refused" || response.Reason != "reply-correlation-expired" || broker.replies != 0 {
+	if response.Kind != "reply-refused" || response.Reason != "explicit-reply-required" || broker.replies != 0 {
 		t.Fatalf("expired response=%+v broker replies=%d", response, broker.replies)
 	}
 	if delivery := fixture.server.hub.status(envelope.MessageRef); delivery.State != agentdelivery.StateDelivered {
 		t.Fatalf("delivery terminal changed after reply TTL: %+v", delivery)
-	}
-}
-
-func TestClaudeDialogueBrokerReplyFailureNeverRetriesOnLaterStop(t *testing.T) {
-	fixture := newClaudeCoordinationTestFixture(t)
-	now := time.Now().UTC()
-	broker := &failingClaudeDialogueBroker{replyErr: errors.New("durable reply outcome unknown")}
-	fixture.server.broker = broker
-	fixture.server.poster = &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
-	fixture.server.hub.qualifiedVersion = claudeFrozenFrameProviderVersion
-	fixture.server.hub.now = func() time.Time { return now }
-	envelope := dialogueForRoute("message-reply-persist-failure", fixture.route, now)
-	if response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
-		Operation: "submit", Target: fixture.target, Envelope: &envelope}); response.Delivery.State != agentdelivery.StateDelivered {
-		t.Fatalf("push delivery=%+v", response.Delivery)
-	}
-	first := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
-		Operation: "stop-reply", Target: fixture.target, SessionID: fixture.sessionID,
-		AssistantMessage: "first assistant text", StopHookActive: false})
-	if first.Kind != "reply-refused" || first.Reason != "broker-reply-refused" || broker.replies != 1 {
-		t.Fatalf("first response=%+v broker replies=%d", first, broker.replies)
-	}
-	second := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
-		Operation: "stop-reply", Target: fixture.target, SessionID: fixture.sessionID,
-		AssistantMessage: "unrelated second assistant text", StopHookActive: false})
-	if second.Kind != "reply-refused" || second.Reason != "broker-reply-outcome-unknown" || broker.replies != 1 {
-		t.Fatalf("second response=%+v broker replies=%d", second, broker.replies)
 	}
 }
 
@@ -356,8 +283,8 @@ func TestClaudeReplyHookRequiresExplicitStopHookActiveField(t *testing.T) {
 	if err := runClaudeMessageReplyInput(nil, strings.NewReader(input), getenv); err != nil {
 		t.Fatal(err)
 	}
-	if broker.replies != 1 {
-		t.Fatalf("documented Stop with extra fields broker replies=%d, want 1", broker.replies)
+	if broker.replies != 0 {
+		t.Fatalf("documented Stop with extra fields broker replies=%d, want 0", broker.replies)
 	}
 }
 

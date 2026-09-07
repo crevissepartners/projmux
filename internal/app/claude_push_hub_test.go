@@ -125,20 +125,3 @@ func TestClaudePushSourceReplacementAfterDurableHandoffWritesZero(t *testing.T) 
 		t.Fatalf("source replacement delivery=%+v writes=%d", delivery, poster.calls)
 	}
 }
-
-func TestClaudePushHumanTurnAmbiguitySurvivesLaterIdleStop(t *testing.T) {
-	now := time.Now().UTC()
-	hub := qualifiedPushHub(now)
-	poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
-	broker := &failingClaudeDialogueBroker{}
-	hub.userPrompt()
-	hub.submitPush(dialogueEnvelope("message-during-human", now.Add(time.Minute)), broker, poster)
-	_, _ = hub.consumeQualificationStop("human reply", false)
-	hub.submitPush(dialogueEnvelope("message-later-idle", now.Add(time.Minute)), broker, poster)
-	if original, reason := hub.reserveReply(false); original != nil || reason != "concurrent-user-turn-ambiguous" {
-		t.Fatalf("late Stop selected later message: original=%+v reason=%q", original, reason)
-	}
-	if poster.calls != 2 {
-		t.Fatalf("push was disabled with replies: writes=%d", poster.calls)
-	}
-}

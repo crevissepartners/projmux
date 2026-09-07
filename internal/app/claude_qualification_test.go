@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 )
 
@@ -55,254 +57,221 @@ func exactQualificationEvidence(route coremetadata.AgentRouteRef, now time.Time)
 		SessionID: authority.SessionID, AgentUID: route.AgentUID, PaneUID: route.PaneUID,
 		ActivationGeneration: route.Generation, RouteIncarnation: route.Incarnation(), ProviderProcess: authority.Process,
 		RegistrationGeneration: authority.RegistrationGeneration, HelperProcess: authority.LeaseProcess,
-		Tools: []string{}, MCPServers: []string{}, Plugins: []string{}, InboundPolicy: "accept",
+		Tools: []string{"Bash"}, ReplyExecutionGate: true, MCPServers: []string{}, Plugins: []string{}, InboundPolicy: "accept",
 		PublicInitObserved: true, StreamFrozen: true, ObservedAt: now,
 	}
 }
 
-func TestClaudeQualificationRequiresExactPublicInitAndStopMarker(t *testing.T) {
-	fixture := newClaudeCoordinationTestFixture(t)
-	now := time.Unix(10_000, 0).UTC()
-	hub := newClaudeCoordinationHub()
-	hub.now = func() time.Time { return now }
-	poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+func qualificationTestEnvelope(route coremetadata.AgentRouteRef, now time.Time) claudeCoordinationEnvelope {
+	envelope := dialogueForRoute("qualification-owned", route, now)
+	envelope.BrokerEnvelope.Payload = "Explicit reply challenge"
+	return envelope
+}
 
-	started := hub.beginQualification(exactQualificationEvidence(fixture.route, now), fixture.route, poster)
-	if started.Kind != "qualification-pending" || started.QualificationRef == "" || poster.calls != 1 || hub.coordinationEligible() {
-		t.Fatalf("started=%+v calls=%d eligible=%t", started, poster.calls, hub.coordinationEligible())
+func explicitTestReply(original coremessage.Envelope, text string) coremessage.Envelope {
+	return coremessage.Envelope{Version: coremessage.Version, MessageRef: "reply-" + original.MessageRef,
+		ConversationRef: original.ConversationRef, ReplyTo: original.MessageRef, Source: original.Target, Target: original.Source,
+		Authority: coremessage.PeerAuthority(), Payload: text, AcceptedAt: original.AcceptedAt, Deadline: original.Deadline}
+}
+
+func TestClaudeQualificationRequiresBrokerChallengeAndExplicitReply(t *testing.T) {
+	fixture := newClaudeCoordinationTestFixture(t)
+	now := time.Now().UTC()
+	hub := fixture.server.hub
+	hub.now = func() time.Time { return now }
+	broker := &failingClaudeDialogueBroker{}
+	poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+	fixture.server.broker, fixture.server.poster = broker, poster
+	challenge := qualificationTestEnvelope(fixture.route, now)
+	evidence := exactQualificationEvidence(fixture.route, now)
+	hub.userPrompt()
+	started := hub.beginExplicitQualification(evidence, fixture.route, &challenge, broker, poster)
+	if started.Kind != "qualification-pending" || hub.coordinationEligible() || poster.calls != 1 || broker.handoffs != 1 || broker.deliveries != 1 {
+		t.Fatalf("started=%+v", started)
 	}
-	wantMarker := claudeQualificationMarkerPrefix + started.QualificationRef
-	if poster.content != claudeQualificationPrompt(wantMarker) {
-		t.Fatalf("qualification content = %q", poster.content)
+	stop := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "stop-reply", Target: fixture.target,
+		SessionID: fixture.sessionID, AssistantMessage: claudeQualificationMarkerPrefix + challenge.MessageRef})
+	if stop.Kind != "reply-refused" || hub.coordinationEligible() || broker.replies != 0 {
+		t.Fatalf("Stop gained authority: %+v", stop)
 	}
-	completed, handled := hub.consumeQualificationStop(wantMarker, false)
-	if !handled || completed.Kind != "qualification-qualified" || completed.Ambiguous || completed.AutoResend || !hub.coordinationEligible() {
-		t.Fatalf("handled=%t completed=%+v eligible=%t", handled, completed, hub.coordinationEligible())
+	general := dialogueForRoute("message-general-before-qualified", fixture.route, now)
+	if got := hub.submitPush(general, broker, poster); got.State != agentdelivery.StateRefused || poster.calls != 1 {
+		t.Fatalf("general admission opened: %+v", got)
+	}
+	hub.userPrompt() // Human presence has no authority to revoke an explicit action.
+	reply := explicitTestReply(*challenge.BrokerEnvelope, claudeQualificationMarkerPrefix+challenge.MessageRef)
+	completed := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "explicit-reply", Target: fixture.target, SessionID: fixture.sessionID, ReplyEnvelope: &reply})
+	if completed.Kind != "reply-accepted" || broker.replies != 1 || !hub.coordinationEligible() {
+		t.Fatalf("explicit=%+v", completed)
+	}
+	if got := hub.qualificationResponse(challenge.MessageRef); got.Kind != "qualification-qualified" || got.Reason != "exact-public-init-and-explicit-reply" {
+		t.Fatalf("qualification=%+v", got)
 	}
 	hub.close()
 	if hub.coordinationEligible() {
-		t.Fatal("helper close inherited qualification")
+		t.Fatal("qualification survived helper close")
 	}
 }
 
-func TestClaudeQualificationForgedMissingOldAndStaleEvidenceWritesZero(t *testing.T) {
+func TestClaudeExplicitReplyRejectsForeignStaleAndAlteredCorrelationBeforeCommit(t *testing.T) {
 	fixture := newClaudeCoordinationTestFixture(t)
-	now := time.Unix(20_000, 0).UTC()
+	now := time.Now().UTC()
+	challenge := qualificationTestEnvelope(fixture.route, now)
+	for _, tc := range []struct {
+		name   string
+		mutate func(*coremessage.Envelope)
+	}{
+		{"foreign ref", func(e *coremessage.Envelope) { e.ReplyTo = "message-foreign" }},
+		{"foreign original source", func(e *coremessage.Envelope) { e.Target.AgentUID = "agent-other" }},
+		{"stale source generation", func(e *coremessage.Envelope) { e.Source.ActivationGeneration = "old" }},
+		{"stale target incarnation", func(e *coremessage.Envelope) { e.Target.Incarnation = "old" }},
+		{"altered conversation", func(e *coremessage.Envelope) { e.ConversationRef = "conversation-foreign" }},
+		{"challenge text mismatch", func(e *coremessage.Envelope) { e.Payload = "echo without correct challenge" }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hub := newClaudeCoordinationHub()
+			hub.now = func() time.Time { return now }
+			broker := &failingClaudeDialogueBroker{}
+			poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+			hub.beginExplicitQualification(exactQualificationEvidence(fixture.route, now), fixture.route, &challenge, broker, poster)
+			reply := explicitTestReply(*challenge.BrokerEnvelope, claudeQualificationMarkerPrefix+challenge.MessageRef)
+			tc.mutate(&reply)
+			if got := hub.commitExplicitReply(reply, fixture.route, broker); got.Kind != "reply-refused" || broker.replies != 0 || hub.coordinationEligible() {
+				t.Fatalf("reply=%+v commits=%d", got, broker.replies)
+			}
+		})
+	}
+}
+
+func TestClaudeExplicitQualificationMissingToolProofOrOriginalWritesZero(t *testing.T) {
+	fixture := newClaudeCoordinationTestFixture(t)
+	now := time.Now().UTC()
 	base := exactQualificationEvidence(fixture.route, now)
-	for _, test := range []struct {
+	for _, tc := range []struct {
 		name   string
 		mutate func(*claudeQualificationEvidence)
 	}{
-		{name: "old version", mutate: func(e *claudeQualificationEvidence) { e.ClaudeCodeVersion = "2.1.261" }},
-		{name: "missing public init", mutate: func(e *claudeQualificationEvidence) { e.PublicInitObserved = false }},
-		{name: "missing tools", mutate: func(e *claudeQualificationEvidence) { e.Tools = nil }},
-		{name: "tool enabled", mutate: func(e *claudeQualificationEvidence) { e.Tools = []string{"SendMessage"} }},
-		{name: "foreign session", mutate: func(e *claudeQualificationEvidence) { e.SessionID = "foreign" }},
-		{name: "foreign process", mutate: func(e *claudeQualificationEvidence) { e.ProviderProcess.PID++ }},
-		{name: "foreign pane", mutate: func(e *claudeQualificationEvidence) { e.PaneUID = "uid:pane-foreign" }},
-		{name: "stale generation", mutate: func(e *claudeQualificationEvidence) { e.ActivationGeneration = "generation-old" }},
-		{name: "stale helper", mutate: func(e *claudeQualificationEvidence) { e.HelperProcess.PID++ }},
-		{name: "stale observation", mutate: func(e *claudeQualificationEvidence) { e.ObservedAt = now.Add(-claudeQualificationEvidenceMaxAge) }},
+		{"old version", func(e *claudeQualificationEvidence) { e.ClaudeCodeVersion = "2.1.261" }},
+		{"no tool", func(e *claudeQualificationEvidence) { e.Tools = []string{} }},
+		{"other tool", func(e *claudeQualificationEvidence) { e.Tools = []string{"Bash", "Read"} }},
+		{"no gate", func(e *claudeQualificationEvidence) { e.ReplyExecutionGate = false }},
+		{"stale process", func(e *claudeQualificationEvidence) { e.ProviderProcess.Start += "old" }},
+		{"stale helper", func(e *claudeQualificationEvidence) { e.HelperProcess.Start += "old" }},
+		{"stale evidence", func(e *claudeQualificationEvidence) { e.ObservedAt = now.Add(-claudeQualificationEvidenceMaxAge) }},
 	} {
-		t.Run(test.name, func(t *testing.T) {
-			evidence := base
-			test.mutate(&evidence)
+		t.Run(tc.name, func(t *testing.T) {
 			hub := newClaudeCoordinationHub()
 			hub.now = func() time.Time { return now }
+			e := base
+			tc.mutate(&e)
+			broker := &failingClaudeDialogueBroker{}
 			poster := &qualificationPosterRecorder{}
-			response := hub.beginQualification(evidence, fixture.route, poster)
-			if response.Kind != "qualification-refused" || poster.calls != 0 || hub.coordinationEligible() {
-				t.Fatalf("response=%+v calls=%d eligible=%t", response, poster.calls, hub.coordinationEligible())
+			challenge := qualificationTestEnvelope(fixture.route, now)
+			if got := hub.beginExplicitQualification(e, fixture.route, &challenge, broker, poster); got.Kind != "qualification-refused" || poster.calls != 0 || broker.handoffs != 0 {
+				t.Fatalf("got=%+v", got)
 			}
 		})
 	}
-	t.Run("human turn open", func(t *testing.T) {
-		hub := newClaudeCoordinationHub()
-		hub.now = func() time.Time { return now }
-		hub.userPrompt()
-		poster := &qualificationPosterRecorder{}
-		response := hub.beginQualification(base, fixture.route, poster)
-		if response.Kind != "qualification-refused" || poster.calls != 0 || hub.coordinationEligible() {
-			t.Fatalf("response=%+v calls=%d eligible=%t", response, poster.calls, hub.coordinationEligible())
-		}
-	})
-}
-
-func TestClaudeQualificationMismatchConcurrentPromptAndPartialWriteNeverOpen(t *testing.T) {
-	fixture := newClaudeCoordinationTestFixture(t)
-	now := time.Unix(30_000, 0).UTC()
-	for _, test := range []struct {
-		name    string
-		outcome claudeProviderPostOutcome
-		err     error
-		after   func(*claudeCoordinationHub, claudeCoordinationResponse)
-	}{
-		{name: "partial write", outcome: claudeProviderPostOutcome{WroteAny: true}, err: errors.New("short")},
-		{name: "marker mismatch", outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}, after: func(h *claudeCoordinationHub, _ claudeCoordinationResponse) {
-			h.consumeQualificationStop("wrong", false)
-		}},
-		{name: "recursive stop", outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}, after: func(h *claudeCoordinationHub, started claudeCoordinationResponse) {
-			h.consumeQualificationStop(claudeQualificationMarkerPrefix+started.QualificationRef, true)
-		}},
-		{name: "concurrent prompt", outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}, after: func(h *claudeCoordinationHub, started claudeCoordinationResponse) {
-			h.userPrompt()
-			h.consumeQualificationStop(claudeQualificationMarkerPrefix+started.QualificationRef, false)
-		}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			hub := newClaudeCoordinationHub()
-			hub.now = func() time.Time { return now }
-			poster := &qualificationPosterRecorder{outcome: test.outcome, err: test.err}
-			started := hub.beginQualification(exactQualificationEvidence(fixture.route, now), fixture.route, poster)
-			if test.after != nil {
-				test.after(hub, started)
-			}
-			if hub.coordinationEligible() {
-				t.Fatalf("started=%+v unexpectedly opened eligibility", started)
-			}
-		})
-	}
-}
-
-func TestClaudeQualificationDuplicateTimeoutAndHelperExitAreBounded(t *testing.T) {
-	fixture := newClaudeCoordinationTestFixture(t)
-	now := time.Unix(70_000, 0).UTC()
-	clock := now
 	hub := newClaudeCoordinationHub()
-	hub.now = func() time.Time { return clock }
-	poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
-	evidence := exactQualificationEvidence(fixture.route, now)
-	first := hub.beginQualification(evidence, fixture.route, poster)
-	duplicate := hub.beginQualification(evidence, fixture.route, poster)
-	if first.QualificationRef == "" || duplicate.QualificationRef != first.QualificationRef || poster.calls != 1 {
-		t.Fatalf("first=%+v duplicate=%+v writes=%d", first, duplicate, poster.calls)
-	}
-	clock = now.Add(claudeQualificationStopWindow + time.Second)
-	expired := hub.qualificationResponse(first.QualificationRef)
-	if expired.Kind != "qualification-failed" || expired.Reason != "qualification-stop-timeout" || !expired.Ambiguous || expired.AutoResend || hub.coordinationEligible() {
-		t.Fatalf("expired=%+v eligible=%t", expired, hub.coordinationEligible())
-	}
-	if response, handled := hub.consumeQualificationStop(claudeQualificationMarkerPrefix+first.QualificationRef, false); handled || response.Kind != "" || hub.coordinationEligible() {
-		t.Fatalf("late Stop changed expired qualification: handled=%t response=%+v", handled, response)
-	}
-	evidence.ObservedAt = clock
-	retry := hub.beginQualification(evidence, fixture.route, poster)
-	if retry.Kind != "qualification-pending" || retry.QualificationRef == first.QualificationRef || poster.calls != 2 {
-		t.Fatalf("retry=%+v writes=%d", retry, poster.calls)
-	}
-	hub.close()
-	closed := hub.qualificationResponse(retry.QualificationRef)
-	if closed.Kind != "qualification-failed" || closed.Reason != "helper-restart" || hub.coordinationEligible() {
-		t.Fatalf("closed=%+v eligible=%t", closed, hub.coordinationEligible())
+	poster := &qualificationPosterRecorder{}
+	broker := &failingClaudeDialogueBroker{}
+	if got := hub.beginExplicitQualification(base, fixture.route, nil, broker, poster); got.Kind != "qualification-refused" || poster.calls != 0 {
+		t.Fatalf("missing original=%+v", got)
 	}
 }
 
-func TestClaudeQualificationInFlightIsSingleWriteAndBoundaryRaceIsAmbiguous(t *testing.T) {
+func TestClaudeExplicitQualificationPartialAndTimeoutNeverResend(t *testing.T) {
 	fixture := newClaudeCoordinationTestFixture(t)
-	now := time.Unix(75_000, 0).UTC()
-	evidence := exactQualificationEvidence(fixture.route, now)
-
-	t.Run("duplicate while writing", func(t *testing.T) {
-		hub := newClaudeCoordinationHub()
-		hub.now = func() time.Time { return now }
-		poster := &qualificationBarrierPoster{started: make(chan struct{}), release: make(chan struct{}),
-			outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
-		firstDone := make(chan claudeCoordinationResponse, 1)
-		go func() { firstDone <- hub.beginQualification(evidence, fixture.route, poster) }()
-		<-poster.started
-		duplicate := hub.beginQualification(evidence, fixture.route, poster)
-		if duplicate.Kind != "qualification-writing" || duplicate.QualificationRef == "" || poster.callCount() != 1 {
-			t.Fatalf("duplicate=%+v writes=%d", duplicate, poster.callCount())
-		}
-		close(poster.release)
-		first := <-firstDone
-		if first.Kind != "qualification-pending" || first.QualificationRef != duplicate.QualificationRef || poster.callCount() != 1 {
-			t.Fatalf("first=%+v duplicate=%+v writes=%d", first, duplicate, poster.callCount())
-		}
-	})
-
-	for _, test := range []struct {
-		name    string
-		outcome claudeProviderPostOutcome
-		close   func(*claudeCoordinationHub)
-	}{
-		{name: "human boundary during full write", outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}, close: func(h *claudeCoordinationHub) { h.userPrompt() }},
-		{name: "helper exit during full write", outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}, close: func(h *claudeCoordinationHub) { h.close() }},
-		{name: "helper exit during partial write", outcome: claudeProviderPostOutcome{WroteAny: true}, close: func(h *claudeCoordinationHub) { h.close() }},
-	} {
-		t.Run(test.name, func(t *testing.T) {
+	now := time.Now().UTC()
+	for _, partial := range []bool{false, true} {
+		t.Run(map[bool]string{false: "timeout", true: "partial"}[partial], func(t *testing.T) {
 			hub := newClaudeCoordinationHub()
-			hub.now = func() time.Time { return now }
-			poster := &qualificationBarrierPoster{started: make(chan struct{}), release: make(chan struct{}),
-				outcome: test.outcome}
-			done := make(chan claudeCoordinationResponse, 1)
-			go func() { done <- hub.beginQualification(evidence, fixture.route, poster) }()
-			<-poster.started
-			test.close(hub)
-			close(poster.release)
-			response := <-done
-			if response.Kind != "qualification-failed" || !response.Ambiguous || response.AutoResend || hub.coordinationEligible() {
-				t.Fatalf("response=%+v eligible=%t", response, hub.coordinationEligible())
+			clock := now
+			hub.now = func() time.Time { return clock }
+			challenge := qualificationTestEnvelope(fixture.route, now)
+			broker := &failingClaudeDialogueBroker{}
+			poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{WroteAny: true, FullFrameWritten: !partial}}
+			hub.beginExplicitQualification(exactQualificationEvidence(fixture.route, now), fixture.route, &challenge, broker, poster)
+			clock = challenge.Deadline.Add(time.Second)
+			expired := hub.qualificationResponse(challenge.MessageRef)
+			if expired.Kind != "qualification-failed" || !expired.Ambiguous || expired.AutoResend {
+				t.Fatalf("expired=%+v", expired)
+			}
+			hub.beginExplicitQualification(exactQualificationEvidence(fixture.route, clock), fixture.route, &challenge, broker, poster)
+			if poster.calls != 1 || hub.coordinationEligible() {
+				t.Fatal("failed qualification resent or opened")
 			}
 		})
 	}
 }
 
-func TestClaudeQualificationLateOldWriteCannotMutateFreshRetry(t *testing.T) {
+func TestClaudeExplicitMultipleRequestsAndHumanOverlapSelectOnlyNamedOriginal(t *testing.T) {
 	fixture := newClaudeCoordinationTestFixture(t)
-	now := time.Unix(76_000, 0).UTC()
+	now := time.Now().UTC()
+	hub := qualifiedPushHub(now)
+	broker := &failingClaudeDialogueBroker{}
+	poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+	a := dialogueForRoute("message-a", fixture.route, now)
+	b := dialogueForRoute("message-b", fixture.route, now)
+	hub.submitPush(a, broker, poster)
+	hub.userPrompt()
+	hub.submitPush(b, broker, poster)
+	hub.userPrompt()
+	for _, original := range []coremessage.Envelope{*b.BrokerEnvelope, *a.BrokerEnvelope} {
+		reply := explicitTestReply(original, "chosen reply")
+		if got := hub.commitExplicitReply(reply, fixture.route, broker); got.Kind != "reply-accepted" {
+			t.Fatalf("reply=%+v", got)
+		}
+		reply.MessageRef += "-second"
+		if got := hub.commitExplicitReply(reply, fixture.route, broker); got.Kind != "reply-refused" {
+			t.Fatalf("duplicate=%+v", got)
+		}
+	}
+	if broker.replies != 2 {
+		t.Fatalf("commits=%d", broker.replies)
+	}
+}
+
+func TestClaudeQualificationPublishesOriginalBeforeConcurrentExplicitReply(t *testing.T) {
+	fixture := newClaudeCoordinationTestFixture(t)
+	now := time.Now().UTC()
 	hub := newClaudeCoordinationHub()
 	hub.now = func() time.Time { return now }
-	evidence := exactQualificationEvidence(fixture.route, now)
-	oldPoster := &qualificationBarrierPoster{started: make(chan struct{}), release: make(chan struct{}),
-		outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
-	oldDone := make(chan claudeCoordinationResponse, 1)
-	go func() { oldDone <- hub.beginQualification(evidence, fixture.route, oldPoster) }()
-	<-oldPoster.started
-	hub.userPrompt()
-	// The ordinary Stop for that human turn closes the open human boundary;
-	// it cannot revive the already-failed qualification.
-	_, _ = hub.consumeQualificationStop("human-turn-response", false)
-	freshPoster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
-	fresh := hub.beginQualification(evidence, fixture.route, freshPoster)
-	if fresh.Kind != "qualification-pending" || fresh.QualificationRef == "" {
-		t.Fatalf("fresh=%+v", fresh)
+	challenge := qualificationTestEnvelope(fixture.route, now)
+	broker := &failingClaudeDialogueBroker{}
+	poster := &qualificationBarrierPoster{started: make(chan struct{}), release: make(chan struct{}), outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+	qualificationDone := make(chan claudeCoordinationResponse, 1)
+	go func() {
+		qualificationDone <- hub.beginExplicitQualification(exactQualificationEvidence(fixture.route, now), fixture.route, &challenge, broker, poster)
+	}()
+	<-poster.started
+	// A reply observing the full frame may arrive before Post returns. The
+	// publication boundary must still be held until the durable record exists.
+	if hub.mu.TryLock() {
+		hub.mu.Unlock()
+		close(poster.release)
+		<-qualificationDone
+		t.Fatal("reply could observe unpublished challenge after provider write")
 	}
-	completed, handled := hub.consumeQualificationStop(claudeQualificationMarkerPrefix+fresh.QualificationRef, false)
-	if !handled || completed.Kind != "qualification-qualified" {
-		t.Fatalf("completed=%+v handled=%t", completed, handled)
+	attempted := make(chan struct{})
+	replyDone := make(chan claudeCoordinationResponse, 1)
+	go func() {
+		close(attempted)
+		replyDone <- hub.commitExplicitReply(explicitTestReply(*challenge.BrokerEnvelope, claudeQualificationMarkerPrefix+challenge.MessageRef), fixture.route, broker)
+	}()
+	<-attempted
+	select {
+	case result := <-replyDone:
+		close(poster.release)
+		<-qualificationDone
+		t.Fatalf("reply completed before publication: %+v", result)
+	default:
 	}
-	close(oldPoster.release)
-	old := <-oldDone
-	if old.Kind != "qualification-failed" || old.QualificationRef == fresh.QualificationRef || !old.Ambiguous ||
-		!hub.coordinationEligible() {
-		t.Fatalf("old=%+v fresh=%+v eligible=%t", old, fresh, hub.coordinationEligible())
+	close(poster.release)
+	if got := <-qualificationDone; got.Kind != "qualification-pending" {
+		t.Fatalf("qualification=%+v", got)
 	}
-}
-
-func TestClaudeQualificationRejectsAnnouncedUnappliedHumanBoundary(t *testing.T) {
-	fixture := newClaudeCoordinationTestFixture(t)
-	now := time.Unix(190_000, 0).UTC()
-	for _, stage := range []string{"before-push", "before-stop"} {
-		t.Run(stage, func(t *testing.T) {
-			hub := newClaudeCoordinationHub()
-			hub.now = func() time.Time { return now }
-			poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
-			if stage == "before-push" {
-				hub.boundaryAnnouncements.Add(1)
-			}
-			response := hub.beginQualification(exactQualificationEvidence(fixture.route, now), fixture.route, poster)
-			if stage == "before-push" {
-				if response.Kind != "qualification-refused" || hub.qualification != nil {
-					t.Fatalf("unapplied boundary admitted qualification: %+v", response)
-				}
-				return
-			}
-			hub.boundaryAnnouncements.Add(1)
-			response, handled := hub.consumeQualificationStop(claudeQualificationMarkerPrefix+response.QualificationRef, false)
-			if !handled || response.Kind != "qualification-failed" || response.Reason != "qualification-concurrent-user-turn" || hub.coordinationEligible() {
-				t.Fatalf("unapplied boundary qualified: %+v handled=%t", response, handled)
-			}
-		})
+	if got := <-replyDone; got.Kind != "reply-accepted" || broker.replies != 1 || !hub.coordinationEligible() {
+		t.Fatalf("reply=%+v commits=%d", got, broker.replies)
 	}
 }

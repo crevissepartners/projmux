@@ -61,9 +61,6 @@ func TestHeterogeneousDialogueIdleActiveSafeBoundaryMatrix(t *testing.T) {
 		if got.State != agentdelivery.StateDelivered || poster.calls != 1 {
 			t.Fatalf("delivery=%+v writes=%d", got, poster.calls)
 		}
-		if original, reason := hub.reserveReply(false); original != nil || reason != "concurrent-user-turn-ambiguous" {
-			t.Fatalf("post-push human turn correlation original=%+v reason=%q", original, reason)
-		}
 	})
 }
 
@@ -95,7 +92,7 @@ func TestClaudePushDuringOpenHumanTurnNeverCorrelatesThatTurnsStop(t *testing.T)
 		stop := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 			Operation: "stop-reply", Target: fixture.target, SessionID: fixture.sessionID,
 			AssistantMessage: "human turn response"})
-		if stop.Kind != "reply-refused" || stop.Reason != "concurrent-user-turn-ambiguous" || broker.replies != 0 {
+		if stop.Kind != "reply-refused" || stop.Reason != "explicit-reply-required" || broker.replies != 0 {
 			t.Fatalf("stop=%+v broker replies=%d", stop, broker.replies)
 		}
 	})
@@ -110,7 +107,7 @@ func TestClaudePushDuringOpenHumanTurnNeverCorrelatesThatTurnsStop(t *testing.T)
 		stop := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 			Operation: "stop-reply", Target: fixture.target, SessionID: fixture.sessionID,
 			AssistantMessage: "coordination response"})
-		if stop.Kind != "reply-accepted" || broker.replies != 1 {
+		if stop.Kind != "reply-refused" || stop.Reason != "explicit-reply-required" || broker.replies != 0 {
 			t.Fatalf("stop=%+v broker replies=%d", stop, broker.replies)
 		}
 	})
@@ -178,12 +175,14 @@ func TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix(t *testing.T) {
 		}
 	})
 
-	qualification := fixture.server.hub.beginQualification(exactQualificationEvidence(fixture.route, now), fixture.route, poster)
+	challenge := qualificationTestEnvelope(fixture.route, now)
+	qualification := fixture.server.hub.beginExplicitQualification(exactQualificationEvidence(fixture.route, now), fixture.route, &challenge, fixture.server.broker, poster)
 	if qualification.Kind != "qualification-pending" || poster.calls != 1 {
 		t.Fatalf("qualification=%+v writes=%d", qualification, poster.calls)
 	}
-	completed, handled := fixture.server.hub.consumeQualificationStop(claudeQualificationMarkerPrefix+qualification.QualificationRef, false)
-	if !handled || completed.Kind != "qualification-qualified" {
+	completed := fixture.server.hub.commitExplicitReply(explicitTestReply(*challenge.BrokerEnvelope, claudeQualificationMarkerPrefix+qualification.QualificationRef), fixture.route, fixture.server.broker)
+	handled := completed.Kind == "reply-accepted"
+	if !handled || completed.Kind != "reply-accepted" {
 		t.Fatalf("qualification completion=%+v handled=%t", completed, handled)
 	}
 	poster.calls = 0
@@ -218,29 +217,6 @@ func TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix(t *testing.T) {
 			t.Fatalf("current incarnation claimed=%t err=%v", claimed, err)
 		}
 	})
-}
-
-func TestClaudeDialogueStopCorrelationUsesPushOriginAndBoundary(t *testing.T) {
-	now := time.Unix(110_000, 0).UTC()
-	newHub := func(ref string) *claudeCoordinationHub {
-		hub := qualifiedPushHub(now)
-		poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
-		if got := hub.submitPush(dialogueEnvelope(ref, now.Add(time.Minute)), &failingClaudeDialogueBroker{}, poster); got.State != agentdelivery.StateDelivered {
-			t.Fatalf("delivery=%+v", got)
-		}
-		return hub
-	}
-	if original, reason := newHub("message-stop").reserveReply(false); original == nil || reason != "" {
-		t.Fatalf("ordinary Stop original=%+v reason=%q", original, reason)
-	}
-	if original, reason := newHub("message-recursive").reserveReply(true); original != nil || reason != "stop-origin-mismatch" {
-		t.Fatalf("recursive Stop original=%+v reason=%q", original, reason)
-	}
-	human := newHub("message-human-boundary")
-	human.userPrompt()
-	if original, reason := human.reserveReply(false); original != nil || reason != "concurrent-user-turn-ambiguous" {
-		t.Fatalf("human boundary original=%+v reason=%q", original, reason)
-	}
 }
 
 func TestClaudeDialogueOversizedUserPromptClosesExactBoundary(t *testing.T) {
@@ -333,36 +309,9 @@ func TestClaudeBrokerStoreLayoutAndImmutableEnvelopeMismatchAreExact(t *testing.
 	}
 }
 
-func TestClaudeDialogueMultiplePendingCannotCorrelateLaterCandidate(t *testing.T) {
-	now := time.Unix(120_000, 0).UTC()
-	hub := qualifiedPushHub(now)
-	poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
-	broker := &failingClaudeDialogueBroker{}
-	for _, ref := range []string{"message-first", "message-second"} {
-		if got := hub.submitPush(dialogueEnvelope(ref, now.Add(time.Minute)), broker, poster); got.State != agentdelivery.StateDelivered {
-			t.Fatalf("%s delivery=%+v", ref, got)
-		}
-	}
-	if original, reason := hub.reserveReply(false); original != nil || reason != "multiple-pending-correlations" {
-		t.Fatalf("multiple original=%+v reason=%q", original, reason)
-	}
-	if got := hub.submitPush(dialogueEnvelope("message-later", now.Add(time.Minute)), broker, poster); got.State != agentdelivery.StateDelivered {
-		t.Fatalf("later delivery=%+v", got)
-	}
-	// The next Stop may still belong to message-second. A new pending
-	// message cannot restore reply authority for this helper incarnation.
-	original, reason := hub.reserveReply(false)
-	if original != nil || reason != "multiple-pending-correlations" {
-		t.Fatalf("late Stop miscorrelated to later original=%+v reason=%q", original, reason)
-	}
-	if duplicate, reason := hub.reserveReply(false); duplicate != nil || reason != "multiple-pending-correlations" {
-		t.Fatalf("abandoned candidates became eligible: duplicate=%+v reason=%q", duplicate, reason)
-	}
-}
-
-func TestClaudeCoordinationV1AndV2HelpersCannotReceiveV3Traffic(t *testing.T) {
+func TestClaudeCoordinationV1V2AndV3HelpersCannotReceiveV4Traffic(t *testing.T) {
 	fixture := newClaudeCoordinationTestFixture(t)
-	for _, version := range []int{1, 2} {
+	for _, version := range []int{1, 2, 3} {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		response, err := callClaudeCoordination(ctx, fixture.registryPath, fixture.route, claudeCoordinationRequest{
 			Version: version, Operation: "submit", Target: fixture.target,
@@ -395,8 +344,5 @@ func TestClaudeOfficialHookContentionInvalidatesReplyWithoutWaiting(t *testing.T
 	fixture.server.hookMu.Unlock()
 	if response.Kind != "boundary-closed" || !fixture.server.hub.replyBoundaryLost.Load() {
 		t.Fatalf("contended human hook did not invalidate immediately: %+v", response)
-	}
-	if original, reason := fixture.server.hub.reserveReply(false); original != nil || reason != "concurrent-user-turn-ambiguous" {
-		t.Fatalf("contended hook restored reply authority: original=%+v reason=%q", original, reason)
 	}
 }

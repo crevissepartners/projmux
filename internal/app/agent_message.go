@@ -341,6 +341,22 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			return fmt.Errorf("%s: %w", spelling, err)
 		}
 	}
+	if source.Spec.Provider == string(aiprovider.Claude) && replyTo != "" {
+		if adapter, ok := c.messageClaude.(interface {
+			ExplicitReply(context.Context, string, coremetadata.AgentRouteRef, coremessage.Envelope) (string, error)
+		}); ok {
+			ref, replyErr := adapter.ExplicitReply(context.Background(), c.messagePaths.registryPath, sourceRoute, envelope)
+			if replyErr != nil {
+				return fmt.Errorf("%s: explicit reply refused: %w", spelling, replyErr)
+			}
+			record, found, getErr := c.messageStore.Get(ref)
+			if getErr != nil || !found || !record.Envelope.SameRetry(envelope) {
+				return fmt.Errorf("%s: explicit reply receipt unavailable", spelling)
+			}
+			return writeAgentMessageReceipt(stdout, receiptFor(record), false)
+		}
+		return fmt.Errorf("%s: exact explicit reply adapter is unavailable", spelling)
+	}
 	adapter := "codex-inbox"
 	if target.Spec.Provider == string(aiprovider.Claude) {
 		adapter = "claude-coordination"

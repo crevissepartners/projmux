@@ -13,11 +13,12 @@ import (
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 )
 
-const claudeQualificationCommandTimeout = claudeQualificationStopWindow + 5*time.Second
+const claudeQualificationCommandTimeout = claudeQualificationReplyWindow + 5*time.Second
 
 type agentMessageQualificationReceipt struct {
 	Version          int       `json:"version"`
@@ -79,7 +80,7 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 	var confirmed bool
 	fs.StringVar(&evidencePath, "evidence", "", "owned sanitized public-init evidence JSON")
 	fs.StringVar(&output, "o", "", "output mode: json")
-	fs.DurationVar(&timeout, "timeout", claudeQualificationCommandTimeout, "maximum Stop marker wait")
+	fs.DurationVar(&timeout, "timeout", claudeQualificationCommandTimeout, "maximum explicit challenge reply wait")
 	fs.BoolVar(&confirmed, "confirm-isolated-provider-push", false, "confirm this opt-in command sends one qualification frame")
 	refs, err := parseWithPositionals(fs, args)
 	if err != nil {
@@ -107,17 +108,37 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 		return fmt.Errorf("%s: exact Claude registration lease is unavailable", spelling)
 	}
 	evidence, err := readClaudeQualificationEvidence(evidencePath)
-	if err != nil || !evidence.valid(c.messageClock(), route) {
+	if err != nil || !evidence.validExplicit(c.messageClock(), route) {
 		return fmt.Errorf("%s: public-init evidence is invalid for the exact current activation", spelling)
 	}
 	coordinationTarget, ok := claudeTargetForRoute(route)
 	if !ok {
 		return fmt.Errorf("%s: exact Claude route is unavailable", spelling)
 	}
+	source, err := c.currentMessageAgent(registry, spelling)
+	if err != nil || source.Spec.Provider != string(aiprovider.Codex) {
+		return fmt.Errorf("%s: qualification requires the exact current Codex source", spelling)
+	}
+	sourceRoute, err := c.resolveMessageRoute(registry, source)
+	if err != nil {
+		return fmt.Errorf("%s: qualification source is not current", spelling)
+	}
+	now := c.messageClock()
+	challengeRef := c.newMessageRef("qualification")
+	challenge := coremessage.Envelope{Version: coremessage.Version, MessageRef: challengeRef,
+		ConversationRef: conversationRefFor(challengeRef), Source: publicMessageRoute(sourceRoute), Target: publicMessageRoute(route),
+		Authority: coremessage.PeerAuthority(), Payload: "Transport qualification: execute the explicit reply command with text " + claudeQualificationMarkerPrefix + challengeRef,
+		AcceptedAt: now, Deadline: now.Add(claudeQualificationReplyWindow)}
+	if _, _, err := c.messageStore.PutAccepted(challenge, "claude-coordination"); err != nil {
+		return fmt.Errorf("%s: qualification challenge was not accepted: %w", spelling, err)
+	}
+	privateChallenge := claudeCoordinationEnvelope{Version: claudeCoordinationVersion, MessageRef: challengeRef,
+		Target: coordinationTarget, Source: claudeCoordinationSource{Kind: "peer", Trust: "untrusted", Authority: "coordination-only"},
+		BrokerEnvelope: &challenge, Deadline: challenge.Deadline}
 	writeReceipt := func(response claudeCoordinationResponse) error {
 		evidenceKind := "owned-public-init-only"
 		if response.Kind == "qualification-qualified" {
-			evidenceKind = "owned-public-init-plus-exact-stop-marker"
+			evidenceKind = "owned-public-init-plus-broker-explicit-reply"
 		}
 		receipt := agentMessageQualificationReceipt{Version: claudeQualificationEvidenceVersion,
 			State: response.Kind, QualificationRef: response.QualificationRef, ProviderVersion: response.ProviderVersion,
@@ -130,7 +151,7 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 	callCtx, cancel := context.WithTimeout(context.Background(), localipc.Deadline)
 	response, callErr := callClaudeCoordination(callCtx, c.messagePaths.registryPath, route, claudeCoordinationRequest{
 		Version: claudeCoordinationVersion, Operation: "qualify", Target: coordinationTarget,
-		Qualification: &evidence, ExplicitOptIn: true,
+		Qualification: &evidence, Envelope: &privateChallenge, ExplicitOptIn: true,
 	})
 	cancel()
 	if valid := callErr == nil; valid {
@@ -217,7 +238,7 @@ func validateClaudeQualificationResponse(response claudeCoordinationResponse, ex
 			return claudeCoordinationResponse{}, false
 		}
 	case "qualification-qualified":
-		if response.Reason != "exact-public-init-and-stop-marker" || response.Ambiguous {
+		if response.Reason != "exact-public-init-and-explicit-reply" || response.Ambiguous {
 			return claudeCoordinationResponse{}, false
 		}
 	case "qualification-failed":
@@ -227,7 +248,7 @@ func validateClaudeQualificationResponse(response claudeCoordinationResponse, ex
 				return claudeCoordinationResponse{}, false
 			}
 		case "qualification-provider-outcome-unknown", "qualification-stop-recursion",
-			"qualification-concurrent-user-turn", "qualification-marker-mismatch", "qualification-stop-timeout":
+			"qualification-concurrent-user-turn", "qualification-marker-mismatch", "qualification-explicit-reply-timeout":
 			if !response.Ambiguous {
 				return claudeCoordinationResponse{}, false
 			}
