@@ -167,11 +167,14 @@ dialogue_registration_ready() { [[ -f "$dialogue_claude_state/registration-ready
 smoke_wait_for "dialogue exact Claude registration" dialogue_registration_ready
 dialogue_capabilities_before="$dialogue_root/capabilities-before.json"
 dialogue_pmx agent capabilities "uid:$dialogue_claude_uid" -o json >"$dialogue_capabilities_before"
+# Coordination eligibility now answers whether this activation can receive a
+# push, not whether it has completed a qualification, so a current registration
+# is already eligible here.
 python3 - "$dialogue_capabilities_before" <<'PY'
 import json, sys
 value=json.load(open(sys.argv[1])); runtime=value["runtimeEligibility"]
 assert runtime["registryReady"] is True and runtime["routeIncarnation"].startswith("route-")
-assert runtime["coordination"]["eligible"] is False
+assert runtime["coordination"]["eligible"] is True
 PY
 
 # Exercise the production observer on synthetic public events. No hand-authored
