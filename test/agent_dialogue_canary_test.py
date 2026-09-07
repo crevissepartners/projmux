@@ -356,9 +356,9 @@ class DialogueEvidenceTest(unittest.TestCase):
 
     def test_prepare_pins_candidate_without_launching_or_private_collector(self):
         with tempfile.TemporaryDirectory(prefix='pmx-canary-prepare-') as temporary:
-            parent = pathlib.Path(temporary); root = parent/'owned'; credential=parent/'auth'; credential.write_text('fixture authentication only')
+            parent = pathlib.Path(temporary); root = parent/'owned'; credential=parent/'auth'; credential.write_text('fixture authentication only'); credential.chmod(0o600)
             binary=parent/'candidate'; binary.write_text('#!/bin/sh\nexit 97\n'); binary.chmod(0o755)
-            env=dict(os.environ,PMX_DIALOGUE_CANARY_ROOT=str(root),PMX_DIALOGUE_CANARY_RECEIPT=str(parent/'receipt'),PMX_DIALOGUE_PROJMUX_BIN=str(binary),PMX_DIALOGUE_REAL_CLAUDE_BIN=str(binary),PMX_DIALOGUE_REAL_CODEX_BIN=str(binary),PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE=str(credential),PMX_DIALOGUE_CANDIDATE_HEAD='a'*40)
+            env=dict(os.environ,PMX_DIALOGUE_CANARY_ROOT=str(root),PMX_DIALOGUE_CANARY_RECEIPT=str(parent/'receipt'),PMX_DIALOGUE_PROJMUX_BIN=str(binary),PMX_DIALOGUE_REAL_CLAUDE_BIN=str(binary),PMX_DIALOGUE_REAL_CODEX_BIN=str(binary),PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE=str(credential),PMX_DIALOGUE_CODEX_AUTH_FILE=str(credential),PMX_DIALOGUE_CANDIDATE_HEAD='a'*40)
             result=subprocess.run(['bash',str(self.repo/'scripts/agent-dialogue-live-canary.sh'),'prepare'],env=env,capture_output=True,text=True,timeout=5)
             self.assertEqual(result.returncode,0,result.stderr)
             plan=json.loads((root/'cleanup-plan.json').read_text())
@@ -500,9 +500,9 @@ class DialogueAuditTest(unittest.TestCase):
 
     def test_candidate_mode_is_rejected_before_credential_copy_or_actor(self):
         shutil.rmtree(self.root)
-        credential=self.parent/'auth'; credential.write_text('fixture authentication only')
+        credential=self.parent/'auth'; credential.write_text('fixture authentication only'); credential.chmod(0o600)
         candidate=self.parent/'candidate'; candidate.write_text('#!/bin/sh\nexit 97\n'); candidate.chmod(0o775)
-        env=dict(os.environ,PMX_DIALOGUE_CANARY_ROOT=str(self.root),PMX_DIALOGUE_CANARY_RECEIPT=str(self.parent/'receipt'),PMX_DIALOGUE_PROJMUX_BIN=str(candidate),PMX_DIALOGUE_REAL_CLAUDE_BIN=str(candidate),PMX_DIALOGUE_REAL_CODEX_BIN=str(candidate),PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE=str(credential),PMX_DIALOGUE_CANDIDATE_HEAD='a'*40)
+        env=dict(os.environ,PMX_DIALOGUE_CANARY_ROOT=str(self.root),PMX_DIALOGUE_CANARY_RECEIPT=str(self.parent/'receipt'),PMX_DIALOGUE_PROJMUX_BIN=str(candidate),PMX_DIALOGUE_REAL_CLAUDE_BIN=str(candidate),PMX_DIALOGUE_REAL_CODEX_BIN=str(candidate),PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE=str(credential),PMX_DIALOGUE_CODEX_AUTH_FILE=str(credential),PMX_DIALOGUE_CANDIDATE_HEAD='a'*40)
         self.audit.path.unlink()
         env['PMX_DIALOGUE_LIVE_CANARY']='1'
         result=subprocess.run([sys.executable,str(self.repo/'scripts/agent-dialogue-canary-setup.py')],env=env,capture_output=True,text=True,timeout=5)

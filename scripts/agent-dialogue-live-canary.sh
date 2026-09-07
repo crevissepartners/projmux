@@ -65,6 +65,7 @@ if [[ "$mode" == "prepare" ]]; then
   real_claude="${PMX_DIALOGUE_REAL_CLAUDE_BIN:-}"
   real_codex="${PMX_DIALOGUE_REAL_CODEX_BIN:-}"
   credential_file="${PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE:-}"
+  codex_auth_file="${PMX_DIALOGUE_CODEX_AUTH_FILE:-}"
   candidate_head="${PMX_DIALOGUE_CANDIDATE_HEAD:-}"
   [[ "$candidate_head" =~ ^[0-9a-f]{40}$ ]] || { echo "prepare requires PMX_DIALOGUE_CANDIDATE_HEAD" >&2; exit 2; }
   prepared_message_ref="${PMX_DIALOGUE_MESSAGE_REF:-message-heterogeneous-live-canary}"
@@ -73,11 +74,15 @@ if [[ "$mode" == "prepare" ]]; then
     echo "prepare requires absolute executable PMX_DIALOGUE_PROJMUX_BIN/PMX_DIALOGUE_REAL_CLAUDE_BIN, PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE, and a bounded PMX_DIALOGUE_MESSAGE_REF" >&2
     exit 2
   }
-  python3 - "$binary" <<'CANDIDATE_PY'
+  python3 - "$binary" "$credential_file" "$codex_auth_file" <<'CANDIDATE_PY'
 import os,pathlib,stat,sys
 path=pathlib.Path(sys.argv[1]).resolve(strict=True); info=path.lstat()
 if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or not info.st_mode&0o111 or info.st_mode&0o022:
     raise SystemExit("candidate must be an owned regular executable without group/world write")
+for value in sys.argv[2:]:
+    auth=pathlib.Path(value); info=auth.lstat()
+    if not auth.is_absolute() or not stat.S_ISREG(info.st_mode) or info.st_uid!=os.getuid() or stat.S_IMODE(info.st_mode)!=0o600:
+        raise SystemExit("authentication input must be an explicit owned regular 0600 file")
 CANDIDATE_PY
   [[ ! -e "$root" ]] || { echo "canary root already exists" >&2; exit 2; }
   mkdir -p "$root"/{xdg-config,xdg-state,xdg-runtime,xdg-cache,tmux,home/.claude,codex-home,evidence,bin,work}
@@ -96,20 +101,35 @@ import json,pathlib,stat,sys
 p=pathlib.Path(sys.argv[1]); s=p.stat()
 print(json.dumps({"size":s.st_size,"mode":format(stat.S_IMODE(s.st_mode),"04o"),"mtimeNs":s.st_mtime_ns},sort_keys=True))
 PY
-  python3 - "$root" "$credential_file" "$binary" "$receipt_path" "$prepared_message_ref" "$candidate_head" "$real_claude" "$real_codex" "${BASH_SOURCE[0]}" >"$root/cleanup-plan.json" <<'PY'
-import hashlib,json,pathlib,sys,time
-print(json.dumps({"version":3,"ownedRoot":str(pathlib.Path(sys.argv[1]).resolve()),
-                  "credentialSource":str(pathlib.Path(sys.argv[2]).resolve()),
+  python3 - "$root" "$credential_file" "$binary" "$receipt_path" "$prepared_message_ref" "$candidate_head" "$real_claude" "$real_codex" "${BASH_SOURCE[0]}" "$codex_auth_file" >"$root/cleanup-plan.json" <<'PY'
+import hashlib,json,pathlib,runpy,sys,time
+folder=pathlib.Path(sys.argv[9]).resolve().parent
+native=runpy.run_path(str(folder/'agent-dialogue-native-source.py'))
+root=pathlib.Path(sys.argv[1]).resolve()
+native['endpoint_path'](root) # Before credentials or actors, bound the actual public constructor.
+names=['agent-dialogue-live-canary.sh','agent-dialogue-canary-setup.py','agent-dialogue-canary-evidence.py',
+       'agent-dialogue-source-action.py','agent-dialogue-codex-observation.py','agent-dialogue-native-source.py']
+names += ['agent-dialogue-codex-schema/'+p.name for p in sorted((folder/'agent-dialogue-codex-schema').glob('*.json'))]
+files={name:hashlib.sha256((folder/name).read_bytes()).hexdigest() for name in names}
+for name in names:
+    target=root/'bin'/name; target.parent.mkdir(mode=0o700,exist_ok=True)
+    target.write_bytes((folder/name).read_bytes()); target.chmod(0o600)
+(root/'codex-home/config.toml').write_text(native['private_config'](root)); (root/'codex-home/config.toml').chmod(0o600)
+print(json.dumps({"version":3,"ownedRoot":str(root),"sourceMode":"genuine-native-task",
+                  "credentialSource":str(pathlib.Path(sys.argv[2]).resolve()),"codexAuthSource":str(pathlib.Path(sys.argv[10]).resolve()),
                   "candidateBinary":str(pathlib.Path(sys.argv[3]).resolve()),
                   "claudeBinary":str(pathlib.Path(sys.argv[7]).resolve()),"codexBinary":str(pathlib.Path(sys.argv[8]).resolve()),
-                  "claudeVersion":"2.1.263","codexVersion":"0.153.2",
-                  "runnerFiles":{name:hashlib.sha256(pathlib.Path(sys.argv[9]).resolve().with_name(name).read_bytes()).hexdigest() for name in ("agent-dialogue-live-canary.sh","agent-dialogue-canary-setup.py","agent-dialogue-canary-evidence.py")},
+                  "codexImage":native['image'](pathlib.Path(sys.argv[8]).resolve()),
+                  "sourceAllowedOrigins":["agent","unifiedExecStartup","unifiedExecInteraction"],
+                  "sourceCommand":native['source_command'](root),"sourcePrompt":native['source_prompt'](root),
+                  "claudeVersion":"2.1.263","codexVersion":"0.153.2","runnerFiles":files,
                   "candidateHead":sys.argv[6],"candidateSHA256":hashlib.sha256(pathlib.Path(sys.argv[3]).read_bytes()).hexdigest(),
                   "receiptPath":str(pathlib.Path(sys.argv[4]).resolve()),"messageRef":sys.argv[5],
-                  "preparedAtEpochNs":time.time_ns(),"cleanup":"delete exact Project; kill exact root-contained tmux server; remove owned credential; verify then remove owned root"},sort_keys=True))
+                  "preparedAtEpochNs":time.time_ns(),"cleanup":"exact owned writer capture; public Project/tmux teardown; pidfd graceful owned source/daemon/broker close; both auth copies absent; one root removal"},sort_keys=True))
 PY
   chmod 0600 "$root/cleanup-plan.json"
   install -m 0600 "$credential_file" "$root/home/.claude/.credentials.json"
+  install -m 0600 "$codex_auth_file" "$root/codex-home/auth.json"
   ln -s "$binary" "$root/bin/projmux"
   ln -s "$real_claude" "$root/bin/claude"
   ln -s "$real_codex" "$root/bin/codex"
@@ -197,7 +217,7 @@ info=sock.lstat(); print(f"{info.st_dev}:{info.st_ino}")
 PY
 )"
 
-canary_env=(env -i LANG=C.UTF-8 TERM=xterm-256color SHELL=/bin/bash HOME="$root/home" CODEX_HOME="$root/codex-home" PATH="$root/bin:$PATH"
+canary_env=(env -i LANG=C.UTF-8 TERM=xterm-256color SHELL=/bin/bash HOME="$root/home" CODEX_HOME="$root/codex-home" CODEX_SQLITE_HOME="$root/codex-home" PATH="$root/bin:$PATH"
   XDG_CONFIG_HOME="$root/xdg-config" XDG_STATE_HOME="$root/xdg-state"
   XDG_RUNTIME_DIR="$root/xdg-runtime" XDG_CACHE_HOME="$root/xdg-cache"
   TMUX_TMPDIR="$root/tmux" PROJMUX_MANAGED_ROOTS="$root")
@@ -211,7 +231,7 @@ cleanup_owned() {
   # Capture every owned writer before teardown, including pane supervisors
   # which append termination/operation receipts after their provider exits.
   python3 - "$root" "$binary" "$registry" "$socket_path" "$socket_identity" "$project_uid" "$socket_name" "$claim_pid" <<'WRITERS_PY' || return 1
-import json,os,pathlib,selectors,signal,stat,subprocess,sys,time
+import json,os,pathlib,runpy,selectors,signal,stat,subprocess,sys,time
 
 class OwnedWriterBarrier:
     """Wait for exact captured Linux births; never signal a discovered process."""
@@ -393,6 +413,14 @@ def main():
                 raise RuntimeError("claim waiter ownership changed; root retained")
             claim=observed[0]; seeds.append(claim)
     def teardown(barrier):
+        native=None; roles=[]
+        plan_path=root/'cleanup-plan.json'
+        if plan_path.exists():
+            plan=json.loads(plan_path.read_text())
+            if plan.get('sourceMode')=='genuine-native-task':
+                native=runpy.run_path(str(root/'bin/agent-dialogue-native-source.py'))
+                roles=native['cleanup_roles'](root,plan,barrier)
+                barrier.capture() # Capture descendants before any owned role exits.
         if claim is not None:
             tracked=barrier.writers.get(claim["pid"])
             if tracked is not None and tracked[0]==claim:
@@ -409,12 +437,14 @@ def main():
             control(clean_env+["tmux","-S",socket_path,"kill-server"])
         elif current!="absent":
             raise RuntimeError("owned tmux socket replaced; root retained")
+        if native is not None: native["terminate_roles"](roles,barrier)
     def preserve(proof):
         (root/"evidence/cleanup-writers.json").write_text(json.dumps(proof,sort_keys=True)+"\n")
     try:
         close_owned_writers(root,teardown,seeds,proof_callback=preserve)
     finally:
         (root/"home/.claude/.credentials.json").unlink(missing_ok=True)
+        (root/"codex-home/auth.json").unlink(missing_ok=True)
 
 if __name__=="__main__":
     try: main()
@@ -433,7 +463,7 @@ finish_cleanup() {
   local status=$? audit_failed=0
   audit_event stage "$canary_stage" "$status" || audit_failed=1
   if ! cleanup_owned; then
-    rm -f -- "$root/home/.claude/.credentials.json"
+    rm -f -- "$root/home/.claude/.credentials.json" "$root/codex-home/auth.json"
     audit_event cleanup failed || true
     echo "canary cleanup could not prove owned writer exit; root retained" >&2
     return 1
@@ -492,107 +522,13 @@ plan=json.load(open(sys.argv[3]))
 if resolved!=pathlib.Path(plan.get("receiptPath","")): raise SystemExit("canary receipt differs from the prepared cleanup plan")
 PY
 
-server_pid="$(field tmuxServerPID)"
-sender_uid="$(field sender.agentUID)"
-sender_pane_id="$(field sender.paneID)"
-receiver_uid="$(field receiver.agentUID)"
-message_ref="$(field messageRef)"
-evidence_helper="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/agent-dialogue-canary-evidence.py"
-inside() {
-  "${canary_env[@]}" TMUX="$socket_path,$server_pid,0" TMUX_PANE="$sender_pane_id" "$binary" "$@"
-}
-evidence() { "${canary_env[@]}" python3 "$evidence_helper" "$1" "$root" "$input" "${@:2}"; }
-
-# This is read-only until the one qualification command below. The current
-# observer verifies public init, exact memory guard, tools=Bash and MCP/plugins0.
-python3 - "$root/cleanup-plan.json" "$evidence_helper" <<'PYPIN'
-import hashlib,json,pathlib,sys
-plan=json.load(open(sys.argv[1])); folder=pathlib.Path(sys.argv[2]).parent
-assert all(hashlib.sha256((folder/name).read_bytes()).hexdigest()==digest for name,digest in plan['runnerFiles'].items())
-PYPIN
-canary_stage=initial-evidence
+# The model's genuine source action owns all public coordination commands.
+# Parent performs only read-only observation, the release barrier and cleanup.
+canary_stage=source-freeze
 audit_event stage "$canary_stage"
-evidence initial
-codex_state_snapshot() {
-  python3 - "$root/codex-home" <<'PYCODEX'
-import hashlib,json,pathlib,sys
-root=pathlib.Path(sys.argv[1]); rows=[]
-for path in sorted(root.rglob('*')):
-    # Authentication values/hashes are never coordination evidence.
-    if path.name in ('auth.json','.credentials.json'): continue
-    if path.is_symlink(): raise SystemExit('unexpected Codex state symlink')
-    if path.is_file():
-        info=path.stat(); rows.append([str(path.relative_to(root)),info.st_size,info.st_mtime_ns,hashlib.sha256(path.read_bytes()).hexdigest()])
-print(hashlib.sha256(json.dumps(rows,separators=(',',':')).encode()).hexdigest())
-PYCODEX
-}
-codex_state_before="$(codex_state_snapshot)"
-# An empty claim proves current source admission through the public runtime and
-# live Codex composite authority checks. An unexpected inbox item aborts this run.
-assert_empty_claim() {
-  local output="$root/evidence/empty-claim.json" diagnostic="$root/evidence/empty-claim.stderr"
-  if inside agent message wait "uid:$sender_uid" --timeout 1ms -o json >"$output" 2>"$diagnostic"; then
-    echo "unexpected Codex inbox item" >&2
-    return 1
-  fi
-  [[ ! -s "$output" ]] && grep -Fxq 'agent message wait: timed out with no compatible message' "$diagnostic"
-}
-canary_stage=source-claim
-audit_event stage "$canary_stage"
-assert_empty_claim
-
-# Qualification is the first and only pre-admission push. Its actual model
-# action must call the public reply leaf; no Stop, prompt or tool-output shortcut.
-canary_stage=qualification
-audit_event stage "$canary_stage"
-inside agent message qualify "uid:$receiver_uid" --confirm-isolated-provider-push -o json >"$root/evidence/qualification-receipt.json"
-qualification_ref="$(python3 - "$root/evidence/qualification-receipt.json" <<'PY'
-import json,re,sys
-value=json.load(open(sys.argv[1])); ref=value.get('qualificationRef','')
-assert value.get('state')=='qualification-qualified' and re.fullmatch(r'[A-Za-z0-9._:-]{1,160}',ref)
-print(ref)
-PY
-)"
-canary_stage=qualification-claim
-audit_event stage "$canary_stage"
-inside agent message wait "uid:$sender_uid" --timeout 5s -o json >"$root/evidence/qualification-reply.json"
-inside agent message status "$qualification_ref" -o json >"$root/evidence/qualification-status.json"
-collect_reply_proof() {
-  local kind="$1" i
-  # Only read-only snapshots are retried. A lost/invalid observer aborts at once;
-  # late paired tool results have a bounded observation window, never a resend.
-  for ((i=0; i<100; i++)); do
-    evidence current || return 1
-    if evidence reply "$kind" 2>"$root/evidence/reply-proof.stderr"; then return 0; fi
-    sleep 0.05
-  done
-  echo "model tool/result/commit evidence is incomplete; no resend" >&2
-  return 1
-}
-canary_stage=qualification-proof
-audit_event stage "$canary_stage"
-collect_reply_proof qualification
-assert_empty_claim
-
-# General traffic starts only after the independent qualification proof/claim.
-# The model receives one harmless self-contained request and selects the ref.
-canary_stage=idle-send
-audit_event stage "$canary_stage"
-inside agent message send --message-ref "$message_ref" --ttl 2m "uid:$receiver_uid" -- \
-  "For this local transport acknowledgement, execute the permitted public reply command for this request with text HETEROGENEOUS_REPLY:$message_ref." >"$root/evidence/idle-send.txt"
-canary_stage=idle-claim
-audit_event stage "$canary_stage"
-inside agent message wait "uid:$sender_uid" --timeout 120s -o json >"$root/evidence/idle-reply.json"
-inside agent message status "$message_ref" -o json >"$root/evidence/idle-status.json"
-canary_stage=idle-proof
-audit_event stage "$canary_stage"
-collect_reply_proof idle
-assert_empty_claim
-evidence current
+"${canary_env[@]}" python3 "$(dirname -- "${BASH_SOURCE[0]}")/agent-dialogue-native-source.py" run "$root" "$input"
 canary_stage=final-evidence
 audit_event stage "$canary_stage"
-codex_state_after="$(codex_state_snapshot)"
-[[ "$codex_state_before" == "$codex_state_after" ]] || { echo "Codex provider state changed during coordination" >&2; exit 1; }
 
 # Compare credential source/copy bytes only in this process. Neither values nor
 # credential hashes are written to evidence. Snapshot metadata contains no secret.
@@ -602,6 +538,7 @@ root=pathlib.Path(sys.argv[1]); plan=json.load(open(root/'cleanup-plan.json'))
 source=pathlib.Path(plan['credentialSource']); info=source.stat()
 assert source.read_bytes()==(root/'home/.claude/.credentials.json').read_bytes()
 assert json.load(open(root/'evidence/auth-source-before.json'))==dict(size=info.st_size,mode=format(stat.S_IMODE(info.st_mode),'04o'),mtimeNs=info.st_mtime_ns)
+assert pathlib.Path(plan['codexAuthSource']).read_bytes()==(root/'codex-home/auth.json').read_bytes()
 (root/'evidence/auth-unchanged.json').write_text('{"unchanged":true}\n')
 PY
 cleanup_owned
@@ -619,7 +556,7 @@ registry=pathlib.Path(spec['registryPath'])
 if registry.exists():
     reg=json.load(open(registry))
     assert all(not reg.get(key) for key in ('projects','windows','panes','agents','controlSessions','nameReservations'))
-assert not (root/'home/.claude/.credentials.json').exists()
+assert not (root/'home/.claude/.credentials.json').exists() and not (root/'codex-home/auth.json').exists()
 assert not any(stat.S_ISSOCK(path.lstat().st_mode) for path in root.rglob('*'))
 initial=json.load(open(root/'evidence/initial.json')); final=json.load(open(root/'evidence/current.json'))
 lease=pathlib.Path(initial['activationLeaseDir'])
@@ -627,9 +564,17 @@ assert not lease.exists(), 'activation lease remains after automatic cleanup'
 profile=root/'xdg-state/projmux/claude-dialogue'
 assert not profile.exists() or not any(profile.iterdir()), 'profile remains after automatic cleanup'
 needles=(b'CLAUDE_CODE_MESSAGING_TOKEN',b'CLAUDE_CODE_MESSAGING_SOCKET',b'sk-ant-')
-for path in root.rglob('*'):
+plan=json.load(open(root/'cleanup-plan.json'))
+for name,digest in plan['runnerFiles'].items():
+    import hashlib
+    assert hashlib.sha256((root/'bin'/name).read_bytes()).hexdigest()==digest
+# Raw native history stays private and is removed only after its writers exit.
+# Runtime credential absence is separate from literals in pinned source files.
+for path in (root/'evidence').rglob('*'):
     if path.is_file() and not path.is_symlink():
         assert not any(needle in path.read_bytes() for needle in needles), 'credential residue'
+source=json.load(open(root/'evidence/source-observation.json'))
+assert all(source['sourceItem'][key] for key in ('toolCompleted','closedResultMatched','turnCompleted'))
 qualification=json.load(open(root/'evidence/qualification-proof.json')); idle=json.load(open(root/'evidence/idle-proof.json'))
 assert qualification['originalRef']!=idle['originalRef'] and qualification['toolUseID']!=idle['toolUseID']
 assert len(final['toolEvidence'])==2
@@ -639,7 +584,7 @@ receipt=dict(version=2,result='qualification-and-idle-pass',candidateHead=initia
     helperProcess=initial['authority']['leaseProcess'],tmuxProcess=initial['tmuxProcess'],
     effectiveTools=['Bash'],mcpServers=[],plugins=[],preInboundToolUse=0,
     qualification=qualification,idle=idle,codexClaimAuthority='public-runtime-owner-and-live-composite-route',
-    claimOnce=True,readOnlyEvidence=True,codexProviderStateUnchanged=True,automaticCleanup=writers,credentialResidue=0,
+    claimOnce=True,readOnlyEvidence=True,expectedOriginalThreadWrites=True,sourceObservation=source,automaticCleanup=writers,credentialResidue=0,
     globalSettingsUnchanged=True,credentialSourceUnchanged=True,ownedCredentialAbsent=True,
     activationLeaseAbsent=True,ownedProfileAbsent=True,ownedSocketAbsent=True,
     unverified=['active-tool-overlap','model-visible-human-overlap','multiple-ordinary-requests','same-UID-recovery','installed-smoke'])

@@ -15,7 +15,7 @@ import uuid
 
 
 STAGES = frozenset((
-    'prepare', 'pins', 'claude-version', 'codex-version', 'tmux-create',
+    'prepare', 'pins', 'claude-version', 'codex-version', 'native-launch', 'native-ready', 'source-freeze', 'source-release', 'source-result', 'tmux-create',
     'tmux-socket', 'socket-validation', 'tmux-server', 'tmux-project',
     'project-create', 'project-get', 'project-validation', 'reconcile', 'windows-get', 'window-validation',
     'sender-create', 'receiver-create', 'runtime-chain', 'input-write',
@@ -53,6 +53,7 @@ class Audit:
             'failure':{'version','event','reason','rootAbsent'},
             'binding':{'version','event','candidateHead','candidateSHA256','rootIdentity'},
             'terminal':{'version','event','exitCode','rootAbsent','receiptExists'},
+            'source':{'version','event','phase','process','item','routes'},
         }
         if record.get('event') not in fields or set(record)-fields[record['event']]: raise ValueError('audit event fields')
         data=(json.dumps(record,sort_keys=True,separators=(',',':'))+'\n').encode()
@@ -112,7 +113,7 @@ def audit_for_root(root):
 def isolated_environment(root):
     # No inherited provider config, messaging credentials or routing policy.
     return dict(PATH=str(root/'bin')+os.pathsep+os.environ.get('PATH','/usr/bin:/bin'),
-                HOME=str(root/'home'),CODEX_HOME=str(root/'codex-home'),
+                HOME=str(root/'home'),CODEX_HOME=str(root/'codex-home'),CODEX_SQLITE_HOME=str(root/'codex-home'),
                 XDG_CONFIG_HOME=str(root/'xdg-config'),XDG_STATE_HOME=str(root/'xdg-state'),
                 XDG_RUNTIME_DIR=str(root/'xdg-runtime'),XDG_CACHE_HOME=str(root/'xdg-cache'),
                 TMUX_TMPDIR=str(root/'tmux'),PROJMUX_MANAGED_ROOTS=str(root),
@@ -150,12 +151,14 @@ def finish_setup_failure(root, binary, socket_name, identity, audit=None, **test
         directory=root/'home/.claude'
         if directory.is_symlink() or (root/'home').is_symlink(): raise ValueError('credential parent changed')
         (directory/'.credentials.json').unlink(missing_ok=True)
+        if (root/'codex-home').is_symlink(): raise ValueError('Codex credential parent changed')
+        (root/'codex-home/auth.json').unlink(missing_ok=True)
     if audit is not None: audit.stage('root-removal')
     shutil.rmtree(root)
     if audit is not None: audit.cleanup(root,'root-removed')
 
 
-def setup(root, binary, socket_name, invoke, stage=lambda _: None):
+def setup(root, binary, socket_name, invoke, stage=lambda _: None, *, source_prompt=None):
     """Only public tmux/project/create routes; no fabricated Codex binding."""
     project=invoke('project-create',[binary,'create','project','--root',str(root/'work'),'--name','dialogue-canary','-o','uid']).strip()
     project_json=invoke('project-get',[binary,'get','projects','--project','uid:'+project,'-o','json'])
@@ -190,6 +193,8 @@ def setup(root, binary, socket_name, invoke, stage=lambda _: None):
         argv=[binary,'create','agent','--provider',provider]
         if provider=='claude': argv.append('--dialogue-reply-only')
         argv+=['--project','uid:'+project,'--window','uid:'+window,'-o','pane-id']
+        if provider=='codex' and source_prompt is not None:
+            argv+=['--',source_prompt]
         native[role]=invoke(role+'-create',argv,pane=anchor,server=server,socket_path=socket_path,timeout=120).strip()
     stage('runtime-chain')
     registry=root/'xdg-state/projmux/metadata/registry.json'
@@ -227,6 +232,7 @@ def main():
     transferred=False
     identity=None
     original_error=None
+    native_child=None
     audit=Audit.create(root,pathlib.Path(os.environ['PMX_DIALOGUE_CANARY_RECEIPT']))
     try:
         audit.stage('prepare')
@@ -243,13 +249,20 @@ def main():
         audit.append(dict(version=1,event='binding',candidateHead=plan['candidateHead'],candidateSHA256=plan['candidateSHA256'],rootIdentity=list(identity)))
         if plan['candidateBinary']!=binary: raise ValueError('candidate changed')
         for name,digest in plan['runnerFiles'].items():
-            if hashlib.sha256(script.with_name(name).read_bytes()).hexdigest()!=digest: raise ValueError('runner changed')
+            if hashlib.sha256((script.parent/name).read_bytes()).hexdigest()!=digest: raise ValueError('runner changed')
         def invoke(stage, argv, **options):
             return invoke_setup(root,env,audit,stage,argv,**options)
         for provider,expected in [('claude',plan['claudeVersion']),('codex',plan['codexVersion'])]:
             observed=re.findall(r'\b\d+\.\d+\.\d+\b',invoke(provider+'-version',[str(root/'bin'/provider),'--version']))
             if observed!=[expected]: raise ValueError('provider version changed')
-        spec=setup(root,binary,socket_name,invoke,audit.stage)
+        native=runpy.run_path(str(script.with_name('agent-dialogue-native-source.py')))
+        if plan.get('sourceMode')!='genuine-native-task' or plan['sourcePrompt']!=native['source_prompt'](root):
+            raise ValueError('genuine source plan')
+        audit.stage('native-launch')
+        native_child,launch=native['launch'](root,plan,env)
+        audit.stage('native-ready')
+        native['ready'](root,launch,native_child)
+        spec=setup(root,binary,socket_name,invoke,audit.stage,source_prompt=plan['sourcePrompt'])
         spec['messageRef']=plan['messageRef']
         audit.stage('input-write')
         input_path=root/'canary-input.json'
@@ -262,7 +275,9 @@ def main():
             try:
                 evidence['snapshot'](root,spec,initial=True,env=env)
                 break
-            except Exception:
+            except evidence['Refused'] as failure:
+                if str(failure) not in ('capability route','Codex composite authority','registration not ready'):
+                    raise ValueError('readiness validation failed') from None
                 if time.monotonic()>=deadline: raise ValueError('public profile/source readiness deadline') from None
                 time.sleep(.1)
         run_env={key:os.environ[key] for key in ('PATH','HOME','PMX_DIALOGUE_LIVE_CANARY','PMX_DIALOGUE_CANARY_ROOT','PMX_DIALOGUE_CANARY_RECEIPT') if key in os.environ}
@@ -287,6 +302,12 @@ def main():
             except Exception:
                 audit.cleanup(root,'root-retained')
                 raise ValueError('setup cleanup could not prove writer exit; root retained') from None
+        if native_child is not None:
+            # Once-cleanup has already proved exit (or retained failure). Reap
+            # only this launch handle; never wait unbounded or retry teardown.
+            try: native_child.wait(timeout=.1)
+            except subprocess.TimeoutExpired:
+                raise ValueError('native launch handle still running; root retained') from None
     audit.append(dict(version=1,event='terminal',exitCode=1 if original_error is not None else 0,rootAbsent=not root.exists(),receiptExists=pathlib.Path(os.environ['PMX_DIALOGUE_CANARY_RECEIPT']).exists()))
     if original_error is not None:
         audit.append(dict(version=1,event='failure',reason='timeout' if isinstance(original_error,subprocess.TimeoutExpired) else 'validation-or-command',rootAbsent=not root.exists()))

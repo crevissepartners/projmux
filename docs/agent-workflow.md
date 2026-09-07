@@ -1926,3 +1926,5 @@ separate decision this measurement exists to inform.
   reply fixtures; changed composite routes fail before dispatch and unknown
   send outcomes are never retried. The source action returns closed facts and
   performs no fleet/root cleanup. Parent orchestrator wiring remains pending.
+
+- `test/agent_dialogue_native_source_test.py`: private native launch argv/image/environment, public genuine initial task, bounded initialization, source release before effects and closed tool return before parent cleanup; fake endpoints/launches and owned inert child processes only.

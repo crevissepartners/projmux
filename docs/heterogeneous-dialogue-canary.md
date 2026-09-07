@@ -155,3 +155,22 @@ tool/human overlap, multiple ordinary requests, same-UID recovery and installed
 smoke remain separate acceptance evidence. The next reviewed slice completes
 the parent orchestrator and replaces this preparation section with its pinned
 single-transaction invocation; the source action alone is not that transaction.
+
+The maintained setup now prepares the direct private default control endpoint,
+then passes the genuine task through the existing public Codex create command.
+`agent-dialogue-native-source.py` owns initialization, read-only item observation,
+the source release and completed tool/turn result proof. `agent-dialogue-source-action.py`
+executes the public qualification/claim/idle/claim commands and never cleans up.
+The parent uses the existing pidfd writer barrier, with exact owned daemon and
+private broker peer roles, and removes both private authentication copies.
+
+Preparation additionally requires `PMX_DIALOGUE_CODEX_AUTH_FILE`, an explicitly
+selected owned regular 0600 input. No ambient Codex config/history is copied.
+The generated [public configuration](https://developers.openai.com/codex/config-reference)
+selects file authentication, never approvals, workspace-write with only the
+owned root writable, sandbox network disabled, and web search disabled. Fresh
+HOME/CODEX_HOME/CODEX_SQLITE_HOME/XDG paths are passed to the direct child.
+This configuration describes requested policy; effective current-version policy,
+managed system layers, public item availability, and actual source execution
+still require reviewed pins and explicit actual-run approval. No old attempt is
+rerun by these offline tests. The first actual candidate remains unapproved.
