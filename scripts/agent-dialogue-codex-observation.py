@@ -25,6 +25,8 @@ MAX_DEPTH = 32
 ID = re.compile(r"[A-Za-z0-9._:-]{1,160}\Z")
 SOURCES = frozenset(("agent", "userShell", "unifiedExecStartup", "unifiedExecInteraction"))
 SCHEMA_HASHES = {
+    "InitializeParams.json": "6f0094be9a65242ec779a40794cbd4fdfa32fca1e45084a16adfb50501d33ea2",
+    "InitializeResponse.json": "62ad689c2cb6379913c1d72749cfd8de5089d35760214123518eb92eef11acc9",
     "ThreadReadParams.json": "dfe040c6ac71d30795b8be3f3ff232e66f362a37f883b491e5d1ea367f470db4",
     "ThreadReadResponse.json": "a76583d07f6096fee33045da2dc9caed84d858f8f2d39b37bb38528dbaf32511",
     "ItemStartedNotification.json": "c4c34f47db6326cd4841bae428f23d08eb285077ffad35be9772b928c65bb912",
@@ -355,7 +357,6 @@ class OwnedReadConnection:
         require(set(peer) == {"pid", "uid", "startTicks"}, "peer-shape")
         self.socket, self.peer, self.reader = connection, dict(peer), reader
         self.clock, self.deadline = clock, clock() + deadline_seconds
-        self.buffer = b""
         self.next_id = 1
         self._peer()
 
@@ -364,20 +365,11 @@ class OwnedReadConnection:
         require(pid == self.peer["pid"] and uid == self.peer["uid"] == os.getuid() and
                 process_birth(pid) == self.peer, "peer-changed")
 
-    def _line(self):
-        while b"\n" not in self.buffer:
-            remaining = self.deadline - self.clock()
-            require(remaining > 0, "observation-timeout")
-            self.socket.settimeout(remaining)
-            try:
-                chunk = self.socket.recv(min(65536, MAX_FRAME + 1 - len(self.buffer)))
-            except (OSError, TimeoutError):
-                raise Refused("observation-io") from None
-            require(chunk, "observation-eof")
-            self.buffer += chunk
-            require(len(self.buffer) <= MAX_FRAME, "frame-bound")
-        line, self.buffer = self.buffer.split(b"\n", 1)
-        return line
+    def _message(self):
+        remaining=self.deadline-self.clock()
+        require(remaining>0,'observation-timeout')
+        self.socket.settimeout(remaining)
+        return self.socket.read_message(MAX_FRAME)
 
     def read(self, *, freeze=False):
         try:
@@ -389,13 +381,13 @@ class OwnedReadConnection:
             self.socket.settimeout(self.deadline - self.clock())
             self.socket.sendall(json.dumps(request, separators=(",", ":")).encode() + b"\n")
             while True:
-                raw = self._line()
+                raw = self._message()
                 frame = decode(raw)
                 facts = self.reader.accept(raw, request_id=request_id, freeze=freeze and self.reader.frozen is None)
                 if "id" in frame:
                     self._peer()
                     return facts
-        except (Refused, OSError):
+        except (ValueError, OSError):
             self.reader.invalid = True
             raise Refused("observation-refused") from None
 

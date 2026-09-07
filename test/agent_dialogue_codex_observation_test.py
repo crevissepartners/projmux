@@ -228,8 +228,9 @@ class FakeConnection:
     def sendall(self, value):
         self.writes.append(value)
 
-    def recv(self, limit):
-        chunk, self.payload = self.payload[:limit], self.payload[limit:]
+    def read_message(self, limit):
+        if not self.payload or len(self.payload)>limit:raise OSError('fixture message unavailable')
+        chunk,self.payload=self.payload,b''
         return chunk
 
 

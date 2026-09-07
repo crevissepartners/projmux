@@ -92,7 +92,9 @@ class NativePolicyTests(unittest.TestCase):
             def __init__(self):self.data=raw;self.sent=[]
             def settimeout(self,value):assert 0<value<=5
             def sendall(self,value):self.sent.append(json.loads(value))
-            def recv(self,size):value,self.data=self.data[:size],self.data[size:];return value
+            def read_message(self,size):
+                if not self.data or len(self.data)>size:raise OSError('fixture message unavailable')
+                value,self.data=self.data,b'';return value
         return Connection()
 
     def test_only_config_read_exact_cwd_no_raw_layers_or_thread_start(self):
@@ -127,7 +129,7 @@ class NativePolicyTests(unittest.TestCase):
 
     def test_request_io_exception_is_replaced_by_closed_code(self):
         connection=self.connection(b'')
-        connection.recv=mock.Mock(side_effect=OSError('PRIVATE_SOCKET_AND_SECRET'))
+        connection.read_message=mock.Mock(side_effect=OSError('PRIVATE_SOCKET_AND_SECRET'))
         with self.assertRaises(self.module['Refused']) as failure:self.reader.read(connection)
         self.assertEqual(failure.exception.code,'policy-request')
         self.assertEqual(str(failure.exception),'policy-refused')

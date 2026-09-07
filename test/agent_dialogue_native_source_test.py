@@ -116,22 +116,6 @@ class NativeSourceTests(unittest.TestCase):
             self.ns['terminate_roles']([role],barrier)
             send.assert_called_once_with(123,signal.SIGTERM)
 
-    def test_initialization_is_bounded_and_unknown_content_is_not_exposed(self):
-        class Connection:
-            def __init__(self,value):self.raw=bytearray(value);self.sent=[]
-            def sendall(self,value):self.sent.append(json.loads(value))
-            def settimeout(self,_):pass
-            def recv(self,_):
-                if not self.raw:return b''
-                return bytes([self.raw.pop(0)])
-        observation=runpy.run_path(str(REPO/'scripts/agent-dialogue-codex-observation.py'))
-        connection=Connection(b'{"id":0,"result":{"userAgent":"fixture"}}\n')
-        self.ns['initialize'](connection,observation)
-        self.assertEqual([row['method'] for row in connection.sent],['initialize','initialized'])
-        for raw in (b'',b'x'*16385,b'{"id":0,"result":{"private":"DO_NOT_PERSIST"}}\n'):
-            with self.assertRaises(ValueError) as failure:self.ns['initialize'](Connection(raw),observation)
-            self.assertNotIn('DO_NOT_PERSIST',str(failure.exception))
-
     def test_genuine_payload_uses_existing_public_create_after_own_context(self):
         setup=runpy.run_path(str(REPO/'scripts/agent-dialogue-canary-setup.py'))
         path=self.root/'socket'
@@ -187,7 +171,7 @@ class NativeSourceTests(unittest.TestCase):
         modules={'agent-dialogue-source-action.py':{'own_environment':lambda *_:{}},
                  'agent-dialogue-codex-observation.py':observation,'agent-dialogue-canary-evidence.py':{'snapshot':lambda *_a,**_k:copy.deepcopy(initial)}}
         with mock.patch.dict(self.globals,freeze_thread=lambda *_:('thread','turn'),ancestry=lambda *_:None,
-                             connect=lambda *_:(connection,[]),initialize=lambda *_:None,read_native_policy=lambda *_:dict(policy='changed' if changed_policy else 'fixture')), \
+                             connect=lambda *_:(connection,[]),initialize=lambda *_:connection,read_native_policy=lambda *_:dict(policy='changed' if changed_policy else 'fixture')), \
              mock.patch.object(runpy,'run_path',side_effect=lambda path:modules[pathlib.Path(path).name]), \
              mock.patch.object(pathlib.Path,'read_bytes',read_bytes):
             if changed_policy:

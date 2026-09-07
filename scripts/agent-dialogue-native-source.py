@@ -181,25 +181,26 @@ def ready(root, record, child, timeout=10):
     return record
 
 
-def initialize(connection, observation):
-    # Match the existing public non-experimental initialization. Any additional
-    # unsolicited frame is a failure, not guessed or silently discarded.
-    request = dict(id=0, method='initialize', params=dict(clientInfo=dict(
-        name='projmux-dialogue-observer', title='Owned dialogue observer', version='1')))
-    connection.sendall(json.dumps(request, separators=(',', ':')).encode() + b'\n')
-    raw = bytearray()
-    deadline = time.monotonic() + 5
-    while not raw.endswith(b'\n'):
-        require(len(raw) < 16384 and time.monotonic() < deadline, 'initialize-bound')
-        connection.settimeout(max(.001, deadline - time.monotonic()))
-        chunk = connection.recv(1)
-        require(chunk, 'initialize-eof')
-        raw.extend(chunk)
-    value = observation['decode'](bytes(raw))
-    require(set(value) == {'id', 'result'} and type(value['id']) is int and value['id'] == 0 and
-            isinstance(value['result'], dict) and not set(value['result']) - {'userAgent', 'platformFamily', 'platformOs'} and
-            all(isinstance(v, str) and len(v) <= 1024 for v in value['result'].values()), 'initialize-shape')
+def initialize(raw, observation, root):
+    # The public Unix endpoint uses WebSocket messages, not raw JSONL.
+    try:
+        schemas=observation['Schemas'](root/'bin/agent-dialogue-codex-schema')
+        transport=runpy.run_path(str(root/'bin/agent-dialogue-websocket.py'))
+        params=dict(clientInfo=dict(name='projmux-dialogue-observer',title='Owned dialogue observer',version='1'))
+        schemas.validate('InitializeParams.json',params)
+    except Exception:
+        raise PolicyFailure('policy-schema') from None
+    connection=transport['MessageConnection'](raw).upgrade()
+    connection.settimeout(5)
+    connection.sendall(json.dumps(dict(id=0,method='initialize',params=params),separators=(',',':')).encode()+b'\n')
+    value=observation['decode'](connection.read_message(16384))
+    require(isinstance(value,dict) and set(value)=={'id','result'} and type(value['id']) is int and value['id']==0,'initialize-envelope')
+    try: schemas.validate('InitializeResponse.json',value['result'])
+    except Exception: raise PolicyFailure('policy-schema') from None
+    require(all(isinstance(v,str) and len(v)<=1024 for v in value['result'].values()),'initialize-bound')
+    require(value['result']['codexHome']==str(root/'codex-home'),'initialize-owned-home')
     connection.sendall(b'{"method":"initialized","params":{}}\n')
+    return connection
 
 
 POLICY_FAILURE_CODES=frozenset(('policy-schema','policy-request','policy-value','policy-origin','policy-config','policy-socket'))
@@ -229,7 +230,7 @@ def read_native_policy(root,plan,endpoint):
         connection,_=connect(endpoint)
         with connection:
             code='policy-request'
-            initialize(connection,observation)
+            connection=initialize(connection,observation,root)
             facts=reader.read(connection)
             code='policy-socket'
             current(endpoint)
@@ -238,6 +239,8 @@ def read_native_policy(root,plan,endpoint):
             code='policy-config'
             require(config.lstat().st_ino==info.st_ino and config.read_text()==private_config(root),'policy-read-config-changed')
         return facts
+    except PolicyFailure:
+        raise
     except Exception as failure:
         if policy is not None and isinstance(failure,policy['Refused']):
             code=failure.code
@@ -295,7 +298,7 @@ def observe_action(root, spec, initial, stage=lambda _: None, preserve=lambda _:
     def read(freeze=False):
         connection, _ = connect(endpoint)
         with connection:
-            initialize(connection, observation)
+            connection=initialize(connection, observation, root)
             peer = dict(pid=endpoint['process']['pid'], uid=os.getuid(), startTicks=endpoint['process']['start'].rsplit(':', 1)[1])
             return observation['OwnedReadConnection'](connection, peer, reader).read(freeze=freeze)
 

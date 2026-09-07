@@ -8,7 +8,6 @@ import functools
 import hashlib
 import json
 import pathlib
-import time
 
 
 HASHES={
@@ -118,15 +117,6 @@ class PolicyReader:
         self.validate('ConfigReadParams.json',params)
         connection.settimeout(5)
         connection.sendall(json.dumps(dict(id=1,method='config/read',params=params),separators=(',',':')).encode()+b'\n')
-        raw=bytearray();deadline=time.monotonic()+5
-        while b'\n' not in raw:
-            require(len(raw)<1024*1024 and time.monotonic()<deadline,'policy-frame-bound','policy-request')
-            connection.settimeout(max(.001,deadline-time.monotonic()))
-            chunk=connection.recv(min(65536,1024*1024-len(raw)))
-            require(chunk,'policy-eof','policy-request')
-            raw.extend(chunk)
-        line,remainder=bytes(raw).split(b'\n',1)
-        require(not remainder,'policy-extra-frame','policy-request')
-        value=self.decode(line)
+        value=self.decode(connection.read_message(1024*1024))
         require(isinstance(value,dict) and set(value)=={'id','result'} and type(value['id']) is int and value['id']==1,'policy-response-envelope','policy-request')
         return self.project(value['result'])

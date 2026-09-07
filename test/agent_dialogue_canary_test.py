@@ -564,17 +564,28 @@ class DialogueAuditTest(unittest.TestCase):
         self.audit.append(valid)
         self.assertEqual(self.records(),[valid])
 
-    def policy_main_failure(self,code,*,uncertain=False,audit_write_failure=False,transient_audit_failure=False):
+    def policy_main_failure(self,code,*,uncertain=False,audit_write_failure=False,transient_audit_failure=False,transport_failure=False):
         # Run real main/finally and root removal with injected inert launch/read.
         # Existing synchronized writer tests exercise the underlying barrier.
         self.audit.path.unlink()
         (self.root/'codex-home').mkdir(exist_ok=True)
         for name in ('home/.claude/.credentials.json','codex-home/auth.json'):
             (self.root/name).write_text('PRIVATE_AUTH_FIXTURE')
-        native=runpy.run_path(str(self.repo/'scripts/agent-dialogue-native-source.py'))
+        runpy_original=runpy.run_path
+        native=runpy_original(str(self.repo/'scripts/agent-dialogue-native-source.py'))
         child=mock.Mock()
         def fail(*_):
             if audit_write_failure:self.audit.path.chmod(0o400)
+            if transport_failure:
+                from agent_dialogue_websocket_test import FakeServer
+                observation=runpy_original(str(self.repo/'scripts/agent-dialogue-codex-observation.py'))
+                transport=runpy_original(str(self.repo/'scripts/agent-dialogue-websocket.py'))
+                schema=observation['Schemas'](self.repo/'scripts/agent-dialogue-codex-schema')
+                observation=dict(observation,Schemas=lambda _:schema)
+                raw=FakeServer(header_mutator=lambda _:b'PRIVATE_MALFORMED_HTTP\r\n\r\n')
+                with mock.patch.object(runpy,'run_path',return_value=transport),raw:
+                    with self.assertRaises(ValueError):native['initialize'](raw,observation,self.root)
+                self.assertTrue(raw.closed);self.assertEqual(raw.frames,[])
             raise native['PolicyFailure'](code)
         native=dict(native,launch=mock.Mock(return_value=(child,{})),ready=mock.Mock(return_value={}),read_native_policy=fail,source_prompt=lambda _:'genuine-fixture')
         plan=dict(candidateHead='a'*40,candidateSHA256='b'*64,candidateBinary='/candidate',runnerFiles={},claudeVersion='1.0.0',codexVersion='1.0.0',sourceMode='genuine-native-task',sourcePrompt='genuine-fixture')
@@ -622,6 +633,9 @@ class DialogueAuditTest(unittest.TestCase):
 
     def test_policy_code_audit_write_failure_cannot_create_success_or_remove_root(self):
         self.policy_main_failure('policy-value',audit_write_failure=True)
+
+    def test_websocket_upgrade_failure_closes_connection_then_parent_cleans_once(self):
+        self.policy_main_failure('policy-request',transport_failure=True)
 
     def test_transient_policy_audit_failure_remains_retained_after_sink_recovers(self):
         self.policy_main_failure('policy-request',transient_audit_failure=True)

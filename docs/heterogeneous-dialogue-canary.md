@@ -201,7 +201,7 @@ the reader sends only `thread/read`. Neither component starts/resumes a thread,
 subscribes a relay, sends a user turn, or copies native history to evidence.
 
 Observation is bounded to 1 MiB per frame, 8 MiB/128 frames per reader and 32 items
-in the sole expected turn. Initialization is bounded to 16 KiB/five seconds;
+in the sole expected turn. HTTP upgrade and initialization are each bounded to 16 KiB/five seconds;
 read connections have a ten-second deadline. The source release wait, action
 result wait and completed-result observation are separately bounded. Unknown
 fields/effects, incomplete views, absent source, changed items/routes, wrong
@@ -217,6 +217,23 @@ sandbox network disabled, web search disabled and no startup update check.
 Fresh HOME/CODEX_HOME/CODEX_SQLITE_HOME/XDG paths are passed to the direct child;
 ambient config/history and keyring policy are not copied. Both auth inputs are
 copied only during the approved transaction to private mode-0600 files.
+
+The private Unix listener carries RFC6455 WebSocket messages. The maintained
+`agent-dialogue-websocket.py` first validates HTTP 101/accept, masks every client
+frame and reads bounded server text messages. It does not send raw JSONL onto
+the socket. Fragmented text and interleaved ping/pong retain their message
+boundary; invalid masks/opcodes/UTF-8, extensions, EOF or limits fail closed.
+Each connection permits at most 128 total frames and 8 MiB total wire bytes,
+including control traffic; each text message is at most 1 MiB. The adapter
+opens no socket or listener and retains the existing kernel peer checks.
+
+The pinned public v1 InitializeParams/InitializeResponse schemas require
+`codexHome`, `platformFamily`, `platformOs` and `userAgent` in the response.
+The harness compares `codexHome` to the exact owned CODEX_HOME in memory before
+sending `initialized` or config/read. Raw initialization values are discarded.
+Schema-invalid responses and a foreign home are refused. The same framed
+transport serves read-only config/read and thread/read; method permissions,
+source release, policy, route and cleanup fences remain in force.
 
 `agent-dialogue-native-policy.py` uses the two original public 0.153.2
 ConfigRead schemas under `scripts/agent-dialogue-config-schema/`. On the same
@@ -245,7 +262,7 @@ mismatches, `policy-origin` for origin constraints, `policy-config` for the owne
 config file fence, and `policy-socket` for the endpoint/process/image fence.
 These fixed codes contain no field names, raw values, layers, exception strings,
 paths, instructions or secrets. They identify a validation boundary, not the
-provider's underlying cause. Earlier failures without a code remain unknown.
+provider's underlying cause. Earlier failures without a code remain unknown. The recorded v2 `policy-request` failure also retains an unknown finer predicate; the later offline transport/schema findings do not establish its exact cause.
 Audit write failure still runs the one owned writer cleanup and both credential
 finally paths, retains the root, and cannot produce a successful receipt.
 
