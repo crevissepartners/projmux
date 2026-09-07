@@ -75,102 +75,176 @@ changed tickets/images fail before execution. An observed tool action grants no
 permission. Private coord v5 fences earlier helpers; the frozen provider frame
 is unchanged.
 
-## Genuine source runner preparation
+## Genuine source transaction
 
-The maintained source-action and bounded Codex observation reader are now
-available, with offline fixtures. **The setup/orchestrator wiring is incomplete;
-this revision is not an actual-run candidate.** The prior payload-free Codex
-setup does not establish a fresh native composite authority and must not be
-used as the genuine-source method. Owner review and fresh execution pins remain
-required before any actual provider run. No historical failed run is promoted.
+The maintained setup, source action, bounded observation reader and parent
+cleanup are connected and have offline regression coverage. The prior
+payload-free source recipe is superseded. **Actual execution is not approved.**
+The current runner has not demonstrated effective Codex policy/system-layer
+isolation or the current provider's observation shapes. Generating a private
+config does not prove effective policy; command-item observation cannot prove
+that no startup plugin/config effect occurred. These are open R1 review items,
+not completed acceptance evidence or permission to run the command below.
+Historical failed attempts and their receipts remain unchanged.
 
-The intended public source creation includes the actual user-authorized task:
+`scripts/agent-dialogue-canary-setup.py` is the single transaction entrypoint.
+It invokes prepare, starts the exact owned direct app-server endpoint, creates
+the two public Agents, transfers observation to the parent runner and owns
+partial-setup cleanup. Do not run prepare and then create actors manually, run
+the source action from an operator shell, or invoke the run stage separately.
+Those sequences do not establish genuine model-tool origin or the full cleanup
+boundary.
 
-```text
-projmux create agent --provider codex --project uid:<P> --window uid:<W> -o pane-id -- '<genuine qualification/send/self-claim task>'
+Before owner approval, pin the reviewed clean commit and a separately built
+0755 candidate, both provider executables, every runner/schema file, the exact
+generated prompt/config, a fresh short root, external receipt and external audit.
+Use the public current versions Claude 2.1.263 and Codex 0.153.2. The candidate
+and direct Codex image must be regular, owned executable files without group or
+world write. Authentication inputs must be explicitly selected regular files,
+owned by the current UID with mode 0600. Pin their paths and metadata only;
+never record their contents or hashes. Runtime UIDs, process births and native
+thread/turn/item IDs are obtained after approved creation and frozen before the
+first Claude push; they are not fabricated in the pre-run packet.
+
+After that separate approval, the reviewed invocation has this form. Each
+uppercase input below is a concrete value from the approved packet; the root,
+receipt and audit must all be absent before invocation:
+
+```sh
+env -i PATH=/usr/local/bin:/usr/bin:/bin HOME="$HOME" \
+  PMX_DIALOGUE_LIVE_CANARY=1 \
+  PMX_DIALOGUE_CANDIDATE_HEAD="$REVIEWED_HEAD" \
+  PMX_DIALOGUE_PROJMUX_BIN="$CANDIDATE_BINARY" \
+  PMX_DIALOGUE_REAL_CLAUDE_BIN="$CLAUDE_BINARY" \
+  PMX_DIALOGUE_REAL_CODEX_BIN="$CODEX_BINARY" \
+  PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE="$CLAUDE_CREDENTIAL_FILE" \
+  PMX_DIALOGUE_CODEX_AUTH_FILE="$CODEX_AUTH_FILE" \
+  PMX_DIALOGUE_CANARY_ROOT="$FRESH_ROOT" \
+  PMX_DIALOGUE_CANARY_RECEIPT="$EXTERNAL_RECEIPT" \
+  PMX_DIALOGUE_MESSAGE_REF="$IDLE_MESSAGE_REF" \
+  python3 "$REVIEWED_CHECKOUT/scripts/agent-dialogue-canary-setup.py"
 ```
 
-The task invokes the pinned `agent-dialogue-source-action.py` once. It waits
-for the parent to resolve both runtime-first Agent/Pane chains and freeze the
-native thread/turn/started command item plus independent process birth and
-ancestry. The parent must first prepare an exact owned endpoint and a private
-config/auth/state domain; ordinary native creation only attaches to a ready
-endpoint. No fixture binding, dummy task or peer-to-user-turn relay is involved.
+The audit path is exactly `${EXTERNAL_RECEIPT}.audit.jsonl`, exclusive mode
+0600 outside the disposable root. It records bounded stage/exit/byte counts,
+closed source freeze/completion facts and captured writer exit proof before
+root removal. It contains no raw provider output, command, reasoning or auth
+values. An absent success receipt is a failed/incomplete transaction even if
+cleanup removed the root. No failure or unknown write outcome permits resend
+or another transaction under the old approval.
 
-The source action uses only existing public `agent message` commands: qualify
-the exact receiver with `--confirm-isolated-provider-push`, claim that original
-reply from the original Codex inbox, send one independent idle request, then
-claim its correlated reply. It rechecks frozen live routes before dispatch and
-uses the existing Claude helper's observed tool/result/guarded-commit evidence.
-Empty follow-up claims check claim-once behavior. Ambiguous command outcomes
-stop the action without resend. The action never tears down an Agent, Project,
-provider or broker. Only bounded correlation facts go back to the source model;
-raw CLI bodies and stderr are not written or returned.
+## Source action and first-push proof
+
+The parent uses the fixed public default socket constructor
+`<root>/codex-home/app-server-control/app-server-control.sock`; its encoded path
+must be shorter than 100 bytes. It directly launches the pinned Codex executable
+with `app-server --listen unix://<socket>`, retains that child handle and checks
+its UID, PID/birth, executable, argv and socket/kernel peer. It does not start
+or stop an ambient daemon service. The existing public Project projection
+selects the tmux session name. A separate TMUX_TMPDIR, unique `-L`, observed
+socket_path and exact socket identity scope both actor creation and cleanup.
+
+The existing public source create receives the genuine approved task:
+
+```text
+<candidate> create agent --provider codex --project uid:<P> --window uid:<W> -o pane-id -- <one genuine source prompt argument>
+```
+
+The prompt is generated by `source_prompt(root)` and contains exactly the one
+`source_command(root)` invocation:
+
+```text
+python3 <root>/bin/agent-dialogue-source-action.py <root>
+```
+
+The source model is asked to execute that command once from `<root>/work`,
+wait for its result, then reply DONE. It is explicitly told not to execute other
+commands, inspect authentication/config/history, create subagents, resend or
+clean up. This is a genuine initial Codex user task, with normal private original
+thread/tool-result writes expected. Claude's reply-only activation separately
+starts the fixed `Reply READY.` turn. Neither startup turn is peer-to-user-turn
+relay; the runner performs no direct peer history/input API writes.
+
+The source action writes its independently observed process identity and waits.
+Before release the parent verifies both runtime-first Agent/Pane chains, exact
+current routes/composite source authority and the guarded Claude public init.
+It freezes the actual native thread/turn/in-progress command item and separately
+matches the action PID/birth, exact script argv and ancestry to the owned native
+child. Inherited tmux context or a provider `processId` alone is not origin proof.
+The source action builds its public CLI environment from the frozen own Pane,
+server and socket; it does not use an inherited create-anchor context.
+
+Only after release does the source action use existing public `agent message`
+commands: qualify the exact receiver with `--confirm-isolated-provider-push`,
+claim that reply from the original Codex inbox, send one independent idle request,
+then claim its correlated reply. Empty follow-up claims check claim-once. Frozen
+live routes are rechecked before dispatch. Claude tool/result/guarded-commit
+proof is separate from full-frame delivered status. Missing or ambiguous proof
+fails without resend. The parent never executes these coordination commands.
+
+Only bounded correlation facts are returned to the original source model. The
+parent then compares the completed command's closed result with the independent
+qualification/idle proofs and separately observes original-turn completion.
+Started-item freeze precedes the first push; completed-item proof follows the
+result. The action never cleans up its own provider or parent, and parent cleanup
+cannot stand in for a successfully returned source tool result.
+
+## Observation and requested private policy
 
 `agent-dialogue-codex-observation.py` validates the frozen public 0.153.2
 `thread/read(includeTurns=true)` and `item/started`/`item/completed` schemas.
-The four public exports under `scripts/agent-dialogue-codex-schema/` retain their
-original hashes. The reader uses only the Python standard library. Schema names
-are closed; names explicitly listed as required remain known even when an
-export omits their property declaration. Unknown fields/effects, incomplete
-history views, missing source, changed routes/items, output mismatch, EOF and
-bounds violations fail closed. The schema's optional source default is never
-applied, and `processId` is never interpreted as an OS PID.
+The four exports in `scripts/agent-dialogue-codex-schema/` retain their original
+hashes, also checked by the reader. `agent-dialogue-native-source.py` connects to
+the pinned owned endpoint and performs bounded non-experimental initialization;
+the reader sends only `thread/read`. Neither component starts/resumes a thread,
+subscribes a relay, sends a user turn, or copies native history to evidence.
 
-Observation is limited to 1 MiB per JSONL frame, 8 MiB/128 frames per reader,
-32 items in the sole expected turn, and a bounded connection deadline. The
-existing initialized UDS peer must match the independently pinned PID/UID/birth
-before and after reads. The reader sends only `thread/read`; initialization and
-owned endpoint/socket binding are still parent-orchestrator integration work.
-No raw command, output, user text or reasoning enters the returned facts.
+Observation is bounded to 1 MiB per frame, 8 MiB/128 frames per reader and 32 items
+in the sole expected turn. Initialization is bounded to 16 KiB/five seconds;
+read connections have a ten-second deadline. The source release wait, action
+result wait and completed-result observation are separately bounded. Unknown
+fields/effects, incomplete views, absent source, changed items/routes, wrong
+results, EOF or bounds violations fail closed. Explicitly observed non-userShell
+source enums are checked against the prepared allowlist; no schema default is
+applied. `processId` is never treated as an OS PID. Raw text/command/output,
+reasoning and auth data stay out of the returned facts and external audit.
 
-A started item may be frozen before the first push. Completion is checked only
-after the action returns its closed qualification/idle result. A completed tool
-record and completed original turn are distinct facts; they do not evaluate
-model answer quality. Ordinary Codex task/tool-result history writes in the
-private original thread are expected, while peer history/user-turn API writes
-remain excluded. Actual field availability, model action selection, source
-policy isolation and this ordering are not proven by offline fixtures.
-
-The remaining maintained wiring must pin an owned direct app-server launch
-handle/executable/default private socket, private HOME/CODEX_HOME/XDG/SQLite and
-file-based auth policy, copied script/schema digests, and the exact action
-command. It must preserve public Project session projection, isolated tmux
-socket validation, and runtime-generated IDs before release. System config and
-requirements cannot be assumed absent merely because HOME is private.
-
-The parent must own one cleanup transaction on every partial failure and after
-the source tool result returns. Capture reader/daemon/broker and all owned writer
-births before teardown. Only proven owned processes may receive the existing
-graceful termination request; the broker's default 30-second idle lifetime is
-not covered by assuming the current 20-second writer deadline will suffice.
-Retain exact-root pidfd exit proof before one root removal, remove both owned
-auth copies even on retained-root failure, and preserve a bounded external
-0600 audit before removal. Unknown writer exit or audit/removal failure retains
-failure evidence; no fixed sleep, broad signal, retry removal or manual-cleanup
-PASS is permitted. No protected/shared runtime is an owned seed.
-
-The selectorless E2E remains the single deterministic L20 case. Actual active
-tool/human overlap, multiple ordinary requests, same-UID recovery and installed
-smoke remain separate acceptance evidence. The next reviewed slice completes
-the parent orchestrator and replaces this preparation section with its pinned
-single-transaction invocation; the source action alone is not that transaction.
-
-The maintained setup now prepares the direct private default control endpoint,
-then passes the genuine task through the existing public Codex create command.
-`agent-dialogue-native-source.py` owns initialization, read-only item observation,
-the source release and completed tool/turn result proof. `agent-dialogue-source-action.py`
-executes the public qualification/claim/idle/claim commands and never cleans up.
-The parent uses the existing pidfd writer barrier, with exact owned daemon and
-private broker peer roles, and removes both private authentication copies.
-
-Preparation additionally requires `PMX_DIALOGUE_CODEX_AUTH_FILE`, an explicitly
-selected owned regular 0600 input. No ambient Codex config/history is copied.
 The generated [public configuration](https://developers.openai.com/codex/config-reference)
-selects file authentication, never approvals, workspace-write with only the
-owned root writable, sandbox network disabled, and web search disabled. Fresh
-HOME/CODEX_HOME/CODEX_SQLITE_HOME/XDG paths are passed to the direct child.
-This configuration describes requested policy; effective current-version policy,
-managed system layers, public item availability, and actual source execution
-still require reviewed pins and explicit actual-run approval. No old attempt is
-rerun by these offline tests. The first actual candidate remains unapproved.
+requests file authentication, never approvals, workspace-write with the owned
+root as an additional writable root, `/tmp` and TMPDIR expansion excluded,
+sandbox network disabled, web search disabled and no startup update check.
+Fresh HOME/CODEX_HOME/CODEX_SQLITE_HOME/XDG paths are passed to the direct child;
+ambient config/history and keyring policy are not copied. Both auth inputs are
+copied only during the approved transaction to private mode-0600 files.
+
+The existing reader proves observed task/item selection and result correlation;
+it does not independently read or prove effective managed/system configuration.
+Private HOME alone does not establish absence of system policy or startup
+side effects. The R1 packet must identify this remaining boundary and its
+reviewed evidence plan before actual release is approved. Offline fake fixtures
+prove the maintained ordering and rejection behavior, not actual source policy,
+current field availability or successful provider execution.
+
+## Parent cleanup and remaining acceptance evidence
+
+The parent owns one cleanup transaction on every partial failure and after the
+source tool result returns. It captures owned writer births before teardown,
+including the direct daemon, source action and exact kernel peers of the private
+broker discovery directory. Broker credential records are not read. Signals use
+pidfds for only validated captured roles, alongside exact public Project/tmux
+teardown. The broker's 30-second idle default is not treated as proof of exit
+within the existing 20-second writer deadline.
+
+Both owned auth copies are removed on success and retained-root failure paths.
+The exact-root writer exit proof is preserved in the external audit before one
+root removal. Unknown writer exit, audit failure or removal failure remains
+failure and preserves evidence; there is no fixed-sleep proof, broad signal,
+retry removal or manual-cleanup PASS. No protected/shared process is an owned
+seed. Auth source files are not modified. A successful external receipt requires
+closed model/tool/claim proofs and automatic cleanup; it does not certify other
+acceptance cases.
+
+The selectorless E2E remains the single deterministic L20 scenario. Actual
+active-tool/human overlap, multiple ordinary requests, same-UID recovery and
+installed smoke remain separate unverified evidence. They are not run by this
+qualification-plus-one-idle transaction and are not inferred from its result.
