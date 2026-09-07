@@ -7,6 +7,7 @@ import runpy
 import shlex
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -193,6 +194,37 @@ class NativeSourceTests(unittest.TestCase):
 
     def test_otherwise_valid_action_changed_policy_refuses_before_release(self):
         self.release_case(changed_policy=True)
+
+    def test_connect_peer_and_timeout_substages_preserve_owned_socket_checks(self):
+        path=self.root/'diagnostic-socket'
+        with socket.socket(socket.AF_UNIX) as server:
+            server.bind(str(path));info=path.stat()
+            record=dict(socketPath=str(path),socketIdentity=[info.st_dev,info.st_ino],process=self.identity)
+            connection=mock.Mock()
+            connection.getsockopt.return_value=struct.pack('3i',self.identity['pid'],os.getuid(),os.getgid())
+            with mock.patch.dict(self.globals,current=mock.Mock()),mock.patch.object(socket,'socket',return_value=connection):
+                returned,identity=self.ns['connect'](record)
+                self.assertIs(returned,connection);self.assertEqual(identity,record['socketIdentity'])
+                connection.close.assert_not_called()
+                connection.getsockopt.return_value=struct.pack('3i',self.identity['pid']+1,os.getuid(),os.getgid())
+                with self.assertRaises(self.ns['PolicyFailure']) as failure:self.ns['connect'](record)
+                self.assertEqual((failure.exception.substage,failure.exception.kind),('peer','identity'))
+                connection.close.assert_called_once();connection.close.reset_mock()
+                connection.connect.side_effect=TimeoutError('PRIVATE_SOCKET')
+                with self.assertRaises(self.ns['PolicyFailure']) as failure:self.ns['connect'](record)
+                self.assertEqual((failure.exception.substage,failure.exception.kind),('connect-open','deadline'))
+                connection.close.assert_called_once()
+            with mock.patch.dict(self.globals,current=mock.Mock()),mock.patch.object(socket,'socket') as factory:
+                with self.assertRaises(self.ns['PolicyFailure']) as failure:
+                    self.ns['connect'](record|dict(socketIdentity=[0,0]))
+                self.assertEqual((failure.exception.substage,failure.exception.kind),('connect-socket','identity'))
+                factory.assert_not_called()
+
+    def test_unknown_exception_kind_cannot_be_persisted_as_a_diagnostic(self):
+        failure=ValueError('PRIVATE_EXCEPTION');failure.kind='PRIVATE_KIND'
+        self.assertEqual(self.ns['closed_kind'](failure),'unknown')
+        for key in ('substage','kind'):
+            with self.assertRaises(ValueError):self.ns['PolicyFailure']('policy-request',**{key:'PRIVATE_VALUE'})
 
     def test_policy_boundary_codes_preserve_valid_baseline_and_close_on_each_failure(self):
         config=self.root/'codex-home/config.toml'

@@ -85,6 +85,16 @@ def decode(raw):
     return value
 
 
+def response_rejection_kind(value, request_id):
+    """Closed shape classification only; error/notification never succeeds."""
+    if not isinstance(value,dict):return 'envelope-shape'
+    if 'id' in value and (type(value['id']) is not int or value['id']!=request_id):return 'envelope-id'
+    if set(value)=={'id','result'}:return None
+    if set(value)=={'id','error'}:return 'envelope-error'
+    if set(value) in ({'method'},{'method','params'}):return 'envelope-notification'
+    return 'envelope-shape'
+
+
 def close_schema(value):
     if isinstance(value, dict):
         if "properties" in value and "additionalProperties" not in value:

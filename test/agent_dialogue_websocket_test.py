@@ -167,3 +167,43 @@ class InitializedTransportTests(unittest.TestCase):
         raw=FakeServer()
         with self.assertRaises(ValueError):self.native['initialize'](raw,self.observation,self.root)
         self.assertFalse(raw.upgraded)
+
+    def test_initialize_closed_substages_keep_errors_notifications_and_wrong_ids_rejected(self):
+        cases=[(dict(id=0,error=dict(code=-32600,message='PRIVATE_RPC',data='PRIVATE_DATA')),'envelope-error'),
+               (dict(id=1,result=self.initial()),'envelope-id'),
+               (dict(id=False,result=self.initial()),'envelope-id'),
+               (dict(method='PRIVATE_METHOD',params={'secret':'PRIVATE_BODY'}),'envelope-notification'),
+               (dict(id=0,result=self.initial(),unknown='PRIVATE_FIELD'),'envelope-shape')]
+        for response,kind in cases:
+            raw=FakeServer(lambda _:response)
+            with self.subTest(kind=kind),raw,self.assertRaises(self.native['PolicyFailure']) as failure:
+                self.native['initialize'](raw,self.observation,self.root)
+            self.assertEqual((failure.exception.substage,failure.exception.kind),('initialize-envelope',kind))
+            self.assertEqual(str(failure.exception),'policy-request');self.assertTrue(raw.closed)
+            self.assertEqual(len(raw.frames),1)
+            self.assertNotIn('PRIVATE_',json.dumps(vars(failure.exception)))
+
+    def test_initialize_transport_decode_and_notification_write_boundaries(self):
+        for case,stage,kind in [('http','upgrade','http-status'),('eof','initialize-read','eof'),
+                ('timeout','initialize-read','deadline'),('frame','initialize-read','frame'),
+                ('decode','initialize-decode','unknown'),('write','initialize-write','io'),
+                ('initialized','initialized-write','io')]:
+            def respond(request):
+                if request['method']=='initialized':
+                    if case=='initialized':raise OSError('PRIVATE_IO')
+                    return None
+                if case=='write':raise OSError('PRIVATE_IO')
+                if case=='eof':return None
+                if case=='decode':raw.incoming.extend(frame(b'PRIVATE_JSON'));return None
+                if case=='frame':raw.incoming.extend(frame(b'PRIVATE_BINARY',opcode=2));return None
+                return dict(id=0,result=self.initial())
+            raw=FakeServer(respond,header_mutator=(lambda h:h.replace(b'101',b'403',1)) if case=='http' else lambda h:h)
+            receive=raw.recv
+            def recv(size):
+                if case=='timeout' and raw.frames:raise TimeoutError('PRIVATE_TIMEOUT')
+                return receive(size)
+            raw.recv=recv
+            with self.subTest(case=case),raw,self.assertRaises(self.native['PolicyFailure']) as failure:
+                self.native['initialize'](raw,self.observation,self.root)
+            self.assertEqual((failure.exception.substage,failure.exception.kind),(stage,kind))
+            self.assertNotIn('PRIVATE_',json.dumps(vars(failure.exception)));self.assertTrue(raw.closed)

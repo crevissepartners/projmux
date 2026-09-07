@@ -16,11 +16,28 @@ GUID=b'258EAFA5-E914-47DA-95CA-C5AB0DC85B11'
 
 
 class Refused(ValueError):
-    pass
+    def __init__(self,code,kind='unknown'):
+        super().__init__(code)
+        self.kind=kind
+
+
+def rejection_kind(failure):
+    if isinstance(failure,Refused):return failure.kind
+    if isinstance(failure,TimeoutError):return 'deadline'
+    if isinstance(failure,OSError):return 'io'
+    if isinstance(failure,UnicodeError):return 'utf8'
+    return 'unknown'
 
 
 def require(value,code):
-    if not value:raise Refused(code)
+    if not value:
+        kind={'ws-deadline':'deadline','ws-eof':'eof','ws-wire-bound':'bound','ws-frame-bound':'bound',
+              'ws-upgrade-bound':'bound','ws-message-bound':'bound','ws-message-limit':'bound',
+              'ws-upgrade-status':'http-status','ws-upgrade-header':'http-header',
+              'ws-upgrade-duplicate':'http-header','ws-upgrade-accept':'http-accept',
+              'ws-upgrade-extension':'http-extension','ws-frame-flags':'frame',
+              'ws-length':'frame','ws-control':'frame','ws-opcode':'frame'}.get(code,'unknown')
+        raise Refused(code,kind)
 
 
 class MessageConnection:
@@ -87,17 +104,17 @@ class MessageConnection:
             require(fields.get(b'upgrade',b'').lower()==b'websocket' and b'upgrade' in [x.strip().lower() for x in fields.get(b'connection',b'').split(b',')] and fields.get(b'sec-websocket-accept')==accept,'ws-upgrade-accept')
             require(not any(key in fields for key in (b'sec-websocket-extensions',b'sec-websocket-protocol',b'transfer-encoding')) and fields.get(b'content-length',b'0')==b'0','ws-upgrade-extension')
             return self
-        except Exception:
+        except Exception as failure:
             self.invalid=True
-            raise Refused('ws-upgrade-refused') from None
+            raise Refused('ws-upgrade-refused',rejection_kind(failure)) from None
 
     def sendall(self,value):
         try:
             require(isinstance(value,bytes) and value.endswith(b'\n'),'ws-json-message')
             self._frame(1,value[:-1])
-        except Exception:
+        except Exception as failure:
             self.invalid=True
-            raise Refused('ws-write-refused') from None
+            raise Refused('ws-write-refused',rejection_kind(failure)) from None
 
     def read_message(self,limit=MAX_MESSAGE):
         try:
@@ -115,7 +132,7 @@ class MessageConnection:
                 if opcode in (8,9,10):
                     require(fin and size<=125,'ws-control')
                     payload=self._exact(size)
-                    if opcode==8:raise Refused('ws-closed')
+                    if opcode==8:raise Refused('ws-closed','closed')
                     if opcode==9:self._frame(10,payload)
                     continue
                 require(opcode in (0,1) and ((opcode==1 and not started) or (opcode==0 and started)),'ws-opcode')
@@ -124,6 +141,6 @@ class MessageConnection:
                 if fin:
                     complete.decode('utf-8')
                     return bytes(complete)
-        except Exception:
+        except Exception as failure:
             self.invalid=True
-            raise Refused('ws-read-refused') from None
+            raise Refused('ws-read-refused',rejection_kind(failure)) from None

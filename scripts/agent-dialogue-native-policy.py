@@ -20,10 +20,12 @@ FAILURE_CODES=frozenset(('policy-schema','policy-request','policy-value','policy
 
 
 class Refused(ValueError):
-    def __init__(self,reason,code='policy-schema'):
+    def __init__(self,reason,code='policy-schema',*,substage='unknown',kind='unknown'):
         if code not in FAILURE_CODES: raise ValueError('policy failure code')
         super().__init__(reason)
         self.code=code
+        self.substage=substage
+        self.kind=kind
 
 
 def classified(code):
@@ -113,10 +115,25 @@ class PolicyReader:
 
     @classified('policy-request')
     def read(self,connection):
-        params=dict(cwd=str(self.root/'work'),includeLayers=False)
-        self.validate('ConfigReadParams.json',params)
-        connection.settimeout(5)
-        connection.sendall(json.dumps(dict(id=1,method='config/read',params=params),separators=(',',':')).encode()+b'\n')
-        value=self.decode(connection.read_message(1024*1024))
-        require(isinstance(value,dict) and set(value)=={'id','result'} and type(value['id']) is int and value['id']==1,'policy-response-envelope','policy-request')
-        return self.project(value['result'])
+        substage='config-read-params'
+        try:
+            params=dict(cwd=str(self.root/'work'),includeLayers=False)
+            self.validate('ConfigReadParams.json',params)
+            substage='config-read-write'
+            connection.settimeout(5)
+            connection.sendall(json.dumps(dict(id=1,method='config/read',params=params),separators=(',',':')).encode()+b'\n')
+            substage='config-read-read'
+            raw=connection.read_message(1024*1024)
+            substage='config-read-decode'
+            value=self.decode(raw)
+            substage='config-read-envelope'
+            kind=self.observation['response_rejection_kind'](value,1)
+            if kind is not None:raise Refused('policy-response-envelope','policy-request',kind=kind)
+            substage='config-read-result'
+            return self.project(value['result'])
+        except Exception as failure:
+            code=failure.code if isinstance(failure,Refused) else 'policy-request'
+            kind=getattr(failure,'kind','unknown')
+            if isinstance(failure,TimeoutError):kind='deadline'
+            elif isinstance(failure,OSError):kind='io'
+            raise Refused('policy-refused',code,substage=substage,kind=kind) from None

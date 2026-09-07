@@ -102,6 +102,23 @@ class NativePolicyTests(unittest.TestCase):
         self.reader.read(connection)
         self.assertEqual(connection.sent,[dict(id=1,method='config/read',params=dict(cwd='/owned/root/work',includeLayers=False))])
 
+    def test_config_read_rejection_substage_and_kind_are_content_free(self):
+        for response,stage,kind in [
+                (dict(id=1,error=dict(code=-32601,message='PRIVATE_RPC',data='PRIVATE_DATA')),'config-read-envelope','envelope-error'),
+                (dict(id=0,result=self.value),'config-read-envelope','envelope-id'),
+                (dict(method='PRIVATE_METHOD',params={}), 'config-read-envelope','envelope-notification'),
+                (dict(id=1,result=self.value,private='PRIVATE_BODY'),'config-read-envelope','envelope-shape'),
+                (dict(id=1,result={'private':'PRIVATE_BODY'}),'config-read-result','unknown')]:
+            with self.subTest(kind=kind),self.assertRaises(self.module['Refused']) as failure:
+                self.reader.read(self.connection(json.dumps(response).encode()))
+            self.assertEqual((failure.exception.substage,failure.exception.kind),(stage,kind))
+            self.assertNotIn('PRIVATE_',json.dumps(vars(failure.exception)))
+        for method,stage in [('sendall','config-read-write'),('read_message','config-read-read')]:
+            connection=self.connection(b'{}')
+            with mock.patch.object(connection,method,side_effect=TimeoutError('PRIVATE_TIMEOUT')),self.assertRaises(self.module['Refused']) as failure:
+                self.reader.read(connection)
+            self.assertEqual((failure.exception.substage,failure.exception.kind),(stage,'deadline'))
+
     def test_eof_unknown_notification_extra_frame_and_oversize_refused(self):
         for raw in (b'',b'x'*(1024*1024),b'{"method":"unknown","params":{}}\n',
                     json.dumps(dict(id=1,result=self.value)).encode()+b'\n{}\n'):

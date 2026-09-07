@@ -557,8 +557,9 @@ class DialogueAuditTest(unittest.TestCase):
         self.assertTrue(self.root.exists()); self.assertEqual(self.records()[-1]['stage'],'root-removal')
 
     def test_policy_failure_audit_rejects_unknown_code_fields_and_phase(self):
-        valid=dict(version=1,event='policy-failure',phase='before-source',code='policy-origin')
-        for change in (dict(code='PRIVATE_BODY'),dict(detail='PRIVATE_BODY'),dict(phase='PRIVATE_BODY')):
+        valid=dict(version=1,event='policy-failure',phase='before-source',code='policy-origin',substage='config-read-result',rejectionKind='unknown')
+        for change in (dict(code='PRIVATE_BODY'),dict(detail='PRIVATE_BODY'),dict(phase='PRIVATE_BODY'),
+                       dict(substage='PRIVATE_BODY'),dict(rejectionKind='PRIVATE_BODY')):
             with self.assertRaises(ValueError):self.audit.append(valid|change)
         self.assertEqual(self.audit.path.stat().st_size,0)
         self.audit.append(valid)
@@ -584,8 +585,10 @@ class DialogueAuditTest(unittest.TestCase):
                 observation=dict(observation,Schemas=lambda _:schema)
                 raw=FakeServer(header_mutator=lambda _:b'PRIVATE_MALFORMED_HTTP\r\n\r\n')
                 with mock.patch.object(runpy,'run_path',return_value=transport),raw:
-                    with self.assertRaises(ValueError):native['initialize'](raw,observation,self.root)
+                    with self.assertRaises(native['PolicyFailure']) as failure:native['initialize'](raw,observation,self.root)
                 self.assertTrue(raw.closed);self.assertEqual(raw.frames,[])
+                self.assertEqual((failure.exception.substage,failure.exception.kind),('upgrade','http-status'))
+                raise failure.exception
             raise native['PolicyFailure'](code)
         native=dict(native,launch=mock.Mock(return_value=(child,{})),ready=mock.Mock(return_value={}),read_native_policy=fail,source_prompt=lambda _:'genuine-fixture')
         plan=dict(candidateHead='a'*40,candidateSHA256='b'*64,candidateBinary='/candidate',runnerFiles={},claudeVersion='1.0.0',codexVersion='1.0.0',sourceMode='genuine-native-task',sourcePrompt='genuine-fixture')
@@ -595,7 +598,9 @@ class DialogueAuditTest(unittest.TestCase):
             cleanup_calls.append(True)
             rows=self.records()
             if not (audit_write_failure or transient_audit_failure):
-                self.assertEqual(next(row for row in rows if row['event']=='policy-failure')['code'],code)
+                row=next(row for row in rows if row['event']=='policy-failure')
+                self.assertEqual(row['code'],code)
+                self.assertEqual((row['substage'],row['rejectionKind']),('upgrade','http-status') if transport_failure else ('unknown','unknown'))
             self.assertTrue(self.root.exists())
             (self.root/'evidence/cleanup-writers.json').write_text(json.dumps(dict(version=1,allCapturedWriterBirthsAbsent=not uncertain,writers=[])))
             if uncertain:raise ValueError('PRIVATE_UNCERTAIN_WRITER')

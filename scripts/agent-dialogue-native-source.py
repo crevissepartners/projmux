@@ -146,26 +146,33 @@ def current(record):
 
 
 def connect(record):
-    current(record)
-    path = pathlib.Path(record['socketPath'])
-    info = path.lstat()
-    require(stat.S_ISSOCK(info.st_mode) and info.st_uid == os.getuid(), 'native-socket-owner')
-    identity = [info.st_dev, info.st_ino]
-    if 'socketIdentity' in record:
-        require(record['socketIdentity'] == identity, 'native-socket-replaced')
-    connection = socket.socket(socket.AF_UNIX)
+    connection=None
+    substage='connect-current'
     try:
+        current(record)
+        substage='connect-socket'
+        path = pathlib.Path(record['socketPath'])
+        info = path.lstat()
+        require(stat.S_ISSOCK(info.st_mode) and info.st_uid == os.getuid(), 'native-socket-owner')
+        identity = [info.st_dev, info.st_ino]
+        if 'socketIdentity' in record:
+            require(record['socketIdentity'] == identity, 'native-socket-replaced')
+        substage='connect-open'
+        connection = socket.socket(socket.AF_UNIX)
         connection.settimeout(5)
         connection.connect(str(path))
+        substage='peer'
         pid, uid, _ = struct.unpack('3i', connection.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
         require(pid == record['process']['pid'] and uid == os.getuid(), 'native-peer')
+        substage='connect-current-after'
         current(record)
+        substage='connect-socket-after'
         after = path.lstat()
         require([after.st_dev, after.st_ino] == identity, 'native-socket-raced')
         return connection, identity
-    except Exception:
-        connection.close()
-        raise
+    except Exception as failure:
+        if connection is not None:connection.close()
+        raise PolicyFailure('policy-socket',substage,closed_kind(failure,'identity' if isinstance(failure,Refused) else 'unknown')) from None
 
 
 def ready(root, record, child, timeout=10):
@@ -182,69 +189,101 @@ def ready(root, record, child, timeout=10):
 
 
 def initialize(raw, observation, root):
-    # The public Unix endpoint uses WebSocket messages, not raw JSONL.
+    # Keep the public handshake ordering; diagnostics never admit a new frame.
+    substage='initialize-schema'
+    code='policy-schema'
     try:
         schemas=observation['Schemas'](root/'bin/agent-dialogue-codex-schema')
         transport=runpy.run_path(str(root/'bin/agent-dialogue-websocket.py'))
         params=dict(clientInfo=dict(name='projmux-dialogue-observer',title='Owned dialogue observer',version='1'))
         schemas.validate('InitializeParams.json',params)
-    except Exception:
-        raise PolicyFailure('policy-schema') from None
-    connection=transport['MessageConnection'](raw).upgrade()
-    connection.settimeout(5)
-    connection.sendall(json.dumps(dict(id=0,method='initialize',params=params),separators=(',',':')).encode()+b'\n')
-    value=observation['decode'](connection.read_message(16384))
-    require(isinstance(value,dict) and set(value)=={'id','result'} and type(value['id']) is int and value['id']==0,'initialize-envelope')
-    try: schemas.validate('InitializeResponse.json',value['result'])
-    except Exception: raise PolicyFailure('policy-schema') from None
-    require(all(isinstance(v,str) and len(v)<=1024 for v in value['result'].values()),'initialize-bound')
-    require(value['result']['codexHome']==str(root/'codex-home'),'initialize-owned-home')
-    connection.sendall(b'{"method":"initialized","params":{}}\n')
-    return connection
+        code='policy-request'
+        substage='upgrade'
+        connection=transport['MessageConnection'](raw).upgrade()
+        substage='initialize-write'
+        connection.settimeout(5)
+        connection.sendall(json.dumps(dict(id=0,method='initialize',params=params),separators=(',',':')).encode()+b'\n')
+        substage='initialize-read'
+        raw_message=connection.read_message(16384)
+        substage='initialize-decode'
+        value=observation['decode'](raw_message)
+        substage='initialize-envelope'
+        kind=observation['response_rejection_kind'](value,0)
+        if kind is not None:raise PolicyFailure(code,substage,kind)
+        substage='initialize-result'
+        code='policy-schema'
+        schemas.validate('InitializeResponse.json',value['result'])
+        code='policy-request'
+        if not all(isinstance(v,str) and len(v)<=1024 for v in value['result'].values()):
+            raise PolicyFailure(code,substage,'bound')
+        if value['result']['codexHome']!=str(root/'codex-home'):
+            raise PolicyFailure(code,substage,'identity')
+        substage='initialized-write'
+        connection.sendall(b'{"method":"initialized","params":{}}\n')
+        return connection
+    except PolicyFailure:raise
+    except Exception as failure:
+        raise PolicyFailure(code,substage,closed_kind(failure)) from None
 
 
 POLICY_FAILURE_CODES=frozenset(('policy-schema','policy-request','policy-value','policy-origin','policy-config','policy-socket'))
+POLICY_SUBSTAGES=frozenset(('unknown','reader-load','config-before','schema','connect','connect-current','connect-socket',
+    'connect-open','peer','connect-current-after','connect-socket-after','initialize-schema','upgrade','initialize-write',
+    'initialize-read','initialize-decode','initialize-envelope','initialize-result','initialized-write','config-read',
+    'config-read-params','config-read-write','config-read-read','config-read-decode','config-read-envelope',
+    'config-read-result','socket-after','config-after'))
+POLICY_REJECTION_KINDS=frozenset(('unknown','deadline','io','eof','closed','bound','utf8','frame','http-status',
+    'http-header','http-accept','http-extension','envelope-shape','envelope-id','envelope-error','envelope-notification','identity'))
+
+
+def closed_kind(failure,fallback='unknown'):
+    if isinstance(failure,TimeoutError):return 'deadline'
+    if isinstance(failure,OSError):return 'io'
+    kind=getattr(failure,'kind',fallback)
+    return kind if isinstance(kind,str) and kind in POLICY_REJECTION_KINDS else 'unknown'
 
 
 class PolicyFailure(Refused):
-    def __init__(self,code):
-        require(code in POLICY_FAILURE_CODES,'policy-failure-code')
+    def __init__(self,code,substage='unknown',kind='unknown'):
+        require(code in POLICY_FAILURE_CODES and substage in POLICY_SUBSTAGES and kind in POLICY_REJECTION_KINDS,'policy-failure-code')
         super().__init__(code)
-        self.code=code
+        self.code,self.substage,self.kind=code,substage,kind
 
 
 def read_native_policy(root,plan,endpoint):
     code='policy-schema'
+    substage='reader-load'
     policy=None
     try:
         observation=runpy.run_path(str(root/'bin/agent-dialogue-codex-observation.py'))
         policy=runpy.run_path(str(root/'bin/agent-dialogue-native-policy.py'))
-        code='policy-config'
+        code='policy-config';substage='config-before'
         config=root/'codex-home/config.toml'
         info=config.lstat()
         require(stat.S_ISREG(info.st_mode) and info.st_uid==os.getuid() and stat.S_IMODE(info.st_mode)==0o600 and
                 config.read_text()==private_config(root),'policy-owned-config-changed')
-        code='policy-schema'
+        code='policy-schema';substage='schema'
         reader=policy['PolicyReader'](root,pathlib.Path(plan['codexBinary']).parent.parent,root/'bin/agent-dialogue-config-schema',observation)
-        code='policy-socket'
+        code='policy-socket';substage='connect'
         connection,_=connect(endpoint)
         with connection:
-            code='policy-request'
+            code='policy-request';substage='initialize-schema'
             connection=initialize(connection,observation,root)
+            substage='config-read'
             facts=reader.read(connection)
-            code='policy-socket'
+            code='policy-socket';substage='socket-after'
             current(endpoint)
             socket_info=pathlib.Path(endpoint['socketPath']).lstat()
             require([socket_info.st_dev,socket_info.st_ino]==endpoint['socketIdentity'],'policy-read-socket-changed')
-            code='policy-config'
+            code='policy-config';substage='config-after'
             require(config.lstat().st_ino==info.st_ino and config.read_text()==private_config(root),'policy-read-config-changed')
         return facts
-    except PolicyFailure:
-        raise
+    except PolicyFailure:raise
     except Exception as failure:
         if policy is not None and isinstance(failure,policy['Refused']):
             code=failure.code
-        raise PolicyFailure(code) from None
+            if failure.substage in POLICY_SUBSTAGES and failure.substage!='unknown':substage=failure.substage
+        raise PolicyFailure(code,substage,closed_kind(failure)) from None
 
 
 def ancestry(identity, daemon):

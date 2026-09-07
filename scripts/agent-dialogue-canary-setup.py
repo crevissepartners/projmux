@@ -55,12 +55,20 @@ class Audit:
             'terminal':{'version','event','exitCode','rootAbsent','receiptExists'},
             'source':{'version','event','phase','process','item','routes'},
             'policy':{'version','event','phase','facts'},
-            'policy-failure':{'version','event','phase','code'},
+            'policy-failure':{'version','event','phase','code','substage','rejectionKind'},
         }
         if record.get('event') not in fields or set(record)-fields[record['event']]: raise ValueError('audit event fields')
         if record['event']=='policy-failure':
             if set(record)!=fields['policy-failure'] or record['version']!=1 or record['phase']!='before-source' or record['code'] not in ('policy-schema','policy-request','policy-value','policy-origin','policy-config','policy-socket'):
                 raise ValueError('audit policy failure')
+            if record['substage'] not in ('unknown','reader-load','config-before','schema','connect','connect-current','connect-socket',
+                    'connect-open','peer','connect-current-after','connect-socket-after','initialize-schema','upgrade','initialize-write',
+                    'initialize-read','initialize-decode','initialize-envelope','initialize-result','initialized-write','config-read',
+                    'config-read-params','config-read-write','config-read-read','config-read-decode','config-read-envelope',
+                    'config-read-result','socket-after','config-after') or record['rejectionKind'] not in (
+                    'unknown','deadline','io','eof','closed','bound','utf8','frame','http-status','http-header','http-accept',
+                    'http-extension','envelope-shape','envelope-id','envelope-error','envelope-notification','identity'):
+                raise ValueError('audit policy failure boundary')
         data=(json.dumps(record,sort_keys=True,separators=(',',':'))+'\n').encode()
         if len(data)>128*1024: raise ValueError('audit record bound')
         fd=os.open(self.path,os.O_RDWR|os.O_APPEND|os.O_NOFOLLOW)
@@ -273,7 +281,8 @@ def main():
         try:
             policy=native['read_native_policy'](root,plan,endpoint)
         except native['PolicyFailure'] as failure:
-            try: audit.append(dict(version=1,event='policy-failure',phase='before-source',code=failure.code))
+            try: audit.append(dict(version=1,event='policy-failure',phase='before-source',code=failure.code,
+                                   substage=failure.substage,rejectionKind=failure.kind))
             except Exception:
                 cleanup_removal_allowed=False
                 raise

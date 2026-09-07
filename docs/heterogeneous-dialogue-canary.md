@@ -262,7 +262,22 @@ mismatches, `policy-origin` for origin constraints, `policy-config` for the owne
 config file fence, and `policy-socket` for the endpoint/process/image fence.
 These fixed codes contain no field names, raw values, layers, exception strings,
 paths, instructions or secrets. They identify a validation boundary, not the
-provider's underlying cause. Earlier failures without a code remain unknown. The recorded v2 `policy-request` failure also retains an unknown finer predicate; the later offline transport/schema findings do not establish its exact cause.
+provider's underlying cause. Earlier failures without a code remain unknown.
+Both consumed v2 and v3 `policy-request` failures retain unknown finer predicates;
+later offline findings do not establish the cause of either actual failure.
+The event now also records closed `substage` and `rejectionKind` labels. Substages
+separate connect/current/socket/peer checks, WebSocket upgrade, initialize
+schema/write/read/decode/envelope/result, initialized notification write,
+config/read params/write/read/decode/envelope/result, and post-read socket/config
+checks. Rejection kinds distinguish deadline, I/O, EOF/close, size bounds, UTF-8,
+frame or HTTP validation, identity, and envelope shape/ID/error/notification.
+Unclassified failures remain `unknown`; no native error code, message, method,
+response field names or exception text is exported. Error/notification envelopes
+still stop the transaction. No notification is skipped to search for a success.
+The existing product and pinned public JSON-RPC contracts agree on
+initialize → matching response → initialized → config/read, with `id`/`result`
+success envelopes and no required `jsonrpc` member. This comparison found no
+additional contract mismatch to relax or repair after v3.
 Audit write failure still runs the one owned writer cleanup and both credential
 finally paths, retains the root, and cannot produce a successful receipt.
 
