@@ -86,7 +86,8 @@ type resourceCreateFlags struct {
 	// thread binding, which is what keeps "no native authority" a thing the
 	// operator asked for rather than a silent consequence of an unreachable
 	// endpoint.
-	interactiveOnly bool
+	interactiveOnly   bool
+	dialogueReplyOnly bool
 	// resumeConversation is set by the Projmux split UI's resume selection and by
 	// nothing else. It is deliberately not a parsed flag: no public spelling of
 	// `create` accepts it, so an operator cannot reach a resume through the create
@@ -371,6 +372,7 @@ func parseResourceCreateFlags(spelling string, args []string, stderr io.Writer, 
 	fs.Var(&out.projects, "project", "at-most-one Project scope: <name> or uid:<uid>; defaults to the active tmux runtime's managed Project")
 	fs.Var(&out.projects, "p", "at-most-one Project scope: <name> or uid:<uid> (alias of --project)")
 	if shape.provider {
+		fs.BoolVar(&out.dialogueReplyOnly, claudeDialogueReplyOnlyFlag, false, "claude only: one headless activation with an isolated explicit reply tool; qualification required")
 		fs.StringVar(&out.provider, "provider", "", "Agent provider: "+strings.Join(cli.AgentProviders(), "|"))
 		fs.StringVar(&out.cwd, "cwd", "", "effective Agent working directory (defaults to Project root)")
 		fs.Var(&out.addDirs, "add-dir", "repeatable additional writable root")

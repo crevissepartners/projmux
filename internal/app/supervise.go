@@ -50,6 +50,7 @@ type superviseSpec struct {
 	// Claude child. Its registration hook inherits the creator-selected path
 	// through private PMX_INTERNAL context, never the public PROJMUX hook API.
 	ClaudeRegistration bool
+	DialogueReplyOnly  bool
 }
 
 // valid reports whether the spec can identify a receipt at all.
@@ -146,6 +147,7 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 	generation := fs.String("generation", "", "activation generation this launch was issued")
 	operationID := fs.String("operation-id", "", "create/resume operation that issued the generation")
 	registryPath := fs.String("registry-path", "", "private creator-resolved Registry authority for an Agent launch")
+	dialogueReplyOnly := fs.Bool(claudeDialogueReplyOnlyFlag, false, "private next-activation reply profile")
 	argv0 := fs.String("argv0", "", "argv[0] the child is exec'd with; a leading '-' requests a login shell")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -158,11 +160,12 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return usageError("internal supervise requires a command after --")
 	}
 	spec := superviseSpec{
-		PaneUID:      strings.TrimSpace(*paneUID),
-		AgentUID:     strings.TrimSpace(*agentUID),
-		Generation:   strings.TrimSpace(*generation),
-		OperationID:  strings.TrimSpace(*operationID),
-		RegistryPath: *registryPath,
+		PaneUID:           strings.TrimSpace(*paneUID),
+		AgentUID:          strings.TrimSpace(*agentUID),
+		Generation:        strings.TrimSpace(*generation),
+		OperationID:       strings.TrimSpace(*operationID),
+		RegistryPath:      *registryPath,
+		DialogueReplyOnly: *dialogueReplyOnly,
 	}
 	if !spec.valid() {
 		return usageError("internal supervise requires --pane-uid and --generation")

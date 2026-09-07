@@ -36,6 +36,7 @@ func (c *activationExecCommand) Run(args []string, stdout, stderr io.Writer) (ru
 	generation := fs.String("generation", "", "activation generation this launch was issued")
 	operationID := fs.String("operation-id", "", "create/resume operation that issued the generation")
 	registryPath := fs.String("registry-path", "", "private creator-resolved Registry authority")
+	dialogueReplyOnly := fs.Bool(claudeDialogueReplyOnlyFlag, false, "private next-activation reply profile")
 	argv0 := fs.String("argv0", "", "argv[0] the provider is exec'd with")
 	failureFD := fs.Int("failure-fd", -1, "private supervisor admission failure descriptor")
 	if err := fs.Parse(args); err != nil {
@@ -70,7 +71,8 @@ func (c *activationExecCommand) Run(args []string, stdout, stderr io.Writer) (ru
 	spec := superviseSpec{
 		PaneUID: strings.TrimSpace(*paneUID), AgentUID: strings.TrimSpace(*agentUID),
 		Generation: strings.TrimSpace(*generation), OperationID: strings.TrimSpace(*operationID),
-		RegistryPath: *registryPath,
+		RegistryPath:      *registryPath,
+		DialogueReplyOnly: *dialogueReplyOnly,
 	}
 	if !spec.valid() || spec.AgentUID == "" || spec.OperationID == "" {
 		return usageError("internal activation-exec requires --pane-uid, --agent-uid, --generation, and --operation-id")
@@ -165,6 +167,9 @@ func activationExecArgv(binary string, spec superviseSpec, argv0 string, failure
 		"--generation", spec.Generation,
 		"--operation-id", spec.OperationID,
 		"--registry-path", spec.RegistryPath,
+	}
+	if spec.DialogueReplyOnly {
+		argv = append(argv, "--"+claudeDialogueReplyOnlyFlag)
 	}
 	if failureFD >= 3 {
 		argv = append(argv, "--failure-fd", fmt.Sprintf("%d", failureFD))

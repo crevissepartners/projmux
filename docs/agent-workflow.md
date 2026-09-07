@@ -1856,3 +1856,15 @@ separate decision this measurement exists to inform.
 - `TestStoreReplyIsAtomicCorrelatedAndReplayIdempotent` pins both store instances
   to the fixture clock so the replay test remains independent of wall-clock
   terminal retention while retaining the explicit one-hour replay timestamp.
+
+- `TestClaudeDialogueCreateOptInRefusesUnsupportedOrUnconfiguredLaunchBeforeWrites`,
+  `TestClaudeDialogueResumeOptInKeepsRunningAndNonClaudeRefusalsReadOnly`, and
+  `TestClaudeDialogueOptInIsAnExplicitSupervisorEnvelopeNotAnInheritedDefault`
+  cover the next-activation `--dialogue-reply-only` preflight and supervisor/gate
+  envelope. No AgentSpec or default tool policy persists this opt-in. The
+  production profile/observer launcher is still pending in this draft; the
+  public flag currently refuses an unavailable launcher before allocation.
+- `TestAgentMessageAndReplyOnlyPreflightDoNotMigrateGlobalOrProjectHooks` checks
+  that public message authentication and explicit reply-only preflight never
+  migrate unrelated global/project legacy hooks. Existing normal create/resume
+  pre-dispatch behavior remains unchanged.

@@ -107,8 +107,9 @@ func (c *aiCommand) BindResumedAgentPaneWithSourceOnRoute(
 // agentResumePlan is one preflighted rebind: everything `agent resume` fixed
 // from the read-only registry before it opened the store.
 type agentResumePlan struct {
-	agentUID  string
-	agentName string
+	dialogueReplyOnly bool
+	agentUID          string
+	agentName         string
 	// provider is the union discriminator of the stored ref, which is the
 	// provider whose resume argv will be built.
 	provider string
@@ -358,7 +359,15 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		}
 		title, launchArgv, err = nativeLauncher.PlanNativeCodexResume(nativeRoute, workspace, plan.conversationID)
 	} else {
-		title, launchArgv, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID)
+		if plan.dialogueReplyOnly {
+			launcher, ok := r.launcher.(claudeDialogueLauncher)
+			if !ok {
+				return errors.New("claude reply-only resume launcher is unavailable")
+			}
+			title, launchArgv, err = launcher.PlanClaudeDialogueLaunch(workspace, plan.conversationID)
+		} else {
+			title, launchArgv, err = r.launcher.PlanAgentResume(plan.provider, workspace, plan.conversationID)
+		}
 	}
 	if err != nil {
 		return fmt.Errorf("%s: agent/%s cannot resume %s conversation %s: %w",
@@ -450,6 +459,7 @@ func (r *agentRebinder) rebind(spelling string, plan agentResumePlan, stdout, st
 		if err != nil {
 			return err
 		}
+		activation.DialogueReplyOnly = plan.dialogueReplyOnly
 		workTitle := title
 		workLaunchArgv := launchArgv
 		usedNative := false
