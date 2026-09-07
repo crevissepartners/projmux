@@ -1915,3 +1915,14 @@ separate decision this measurement exists to inform.
   `TestAgentCapabilitiesClaudeUnqualifiedRecoveryUsesCurrentPublicProfile` keep
   recovery read-only and actionable: normal exit, same-UID explicit reply-only
   resume, then current Codex qualification from helper-memory evidence.
+
+- `test/agent_dialogue_codex_observation_test.py` checks the frozen public Codex
+  0.153.2 schema, explicit observed source, one thread/turn/item, paired command
+  completion and closed result correlation, unknown/body privacy negatives, and
+  bounded read-only connection EOF/deadline/peer replacement. It supplies no
+  actual provider or model-action evidence.
+- `test/agent_dialogue_source_action_test.py` checks exact public qualification,
+  original-source inbox claims and one idle send against production-shaped
+  reply fixtures; changed composite routes fail before dispatch and unknown
+  send outcomes are never retried. The source action returns closed facts and
+  performs no fleet/root cleanup. Parent orchestrator wiring remains pending.

@@ -75,133 +75,83 @@ changed tickets/images fail before execution. An observed tool action grants no
 permission. Private coord v5 fences earlier helpers; the frozen provider frame
 is unchanged.
 
-## Review and launch
+## Genuine source runner preparation
 
-Before owner R1 approval, freeze the pushed commit, independently built candidate
-and SHA-256, these three scripts, resolved real provider executables/versions,
-a fresh root, an external receipt path and its separate `<receipt>.audit.jsonl` path.
-Both external paths must be fresh; the audit is exclusive 0600 and never a success
-receipt. Pin candidate ownership/mode as well: it must be an owned regular
-executable with no group/world write bits (for example 0755, never 0775). The
-preflight checks this before credential copying or actor creation. The candidate image and scripts must
-come from that reviewed head. No old root, running Agent, qualification or copied
-provider evidence is reusable. Runtime-generated UIDs/PIDs/births are discovered
-inside the private setup after approval and frozen before the first inbound.
+The maintained source-action and bounded Codex observation reader are now
+available, with offline fixtures. **The setup/orchestrator wiring is incomplete;
+this revision is not an actual-run candidate.** The prior payload-free Codex
+setup does not establish a fresh native composite authority and must not be
+used as the genuine-source method. Owner review and fresh execution pins remain
+required before any actual provider run. No historical failed run is promoted.
 
-The canonical entrypoint below runs prepare and setup as one cleanup transaction.
-Do not manually create actors between `prepare` and `run`. Substitute the exact
-reviewed values; this example is a plan, not approval to launch:
-
-```sh
-PMX_DIALOGUE_LIVE_CANARY=1 \
-PMX_DIALOGUE_CANDIDATE_HEAD=<reviewed-40-character-commit> \
-PMX_DIALOGUE_PROJMUX_BIN=/absolute/reviewed/projmux \
-PMX_DIALOGUE_REAL_CLAUDE_BIN=/absolute/current/claude \
-PMX_DIALOGUE_REAL_CODEX_BIN=/absolute/current/codex \
-PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE=/absolute/authorized/.credentials.json \
-PMX_DIALOGUE_CANARY_ROOT=/tmp/projmux-dialogue-<fresh-reviewed-run> \
-PMX_DIALOGUE_CANARY_RECEIPT=/tmp/projmux-dialogue-<fresh-reviewed-run>.receipt.json \
-PMX_DIALOGUE_MESSAGE_REF=message-heterogeneous-live-canary \
-python3 scripts/agent-dialogue-canary-setup.py
-```
-
-Prepare pins the candidate digest/head, runner file digests and provider paths,
-copies only the explicitly selected authentication source into an owned 0600
-file, and records its metadata. Credential values/hashes are not receipts. The
-source/copy bytes are compared only in memory before success. Ambient global
-Claude settings are observed and must remain unchanged.
-
-Setup constructs a fresh environment: private HOME/CODEX_HOME/XDG/TMUX_TMPDIR,
-owned provider aliases, and no inherited TMUX, TMUX_PANE, CLAUDE_CONFIG_DIR,
-messaging credentials or ambient Projmux routing. It uses a unique tmux `-L`
-name. It first registers the Project and reads that exact public Project
-projection with `get projects --project uid:<P> -o json`, checking the sole
-item’s UID/root and using its canonical `status.session.name`
-for the private tmux session. It immediately verifies the actual socket is below
-the owned root, reconciles resources, then uses these actor command shapes in the
-owned anchor context. A hardcoded alternative session name would conflict with
-the registered Project root and must not bypass the create ownership guard:
+The intended public source creation includes the actual user-authorized task:
 
 ```text
-projmux create agent --provider codex --project uid:<P> --window uid:<W> -o pane-id
-projmux create agent --provider claude --dialogue-reply-only --project uid:<P> --window uid:<W> -o pane-id
+projmux create agent --provider codex --project uid:<P> --window uid:<W> -o pane-id -- '<genuine qualification/send/self-claim task>'
 ```
 
-Codex receives no initial payload. The shipped launcher/broker supplies its
-current composite authority; setup fabricates no binding. Claude uses the product's
-public observer, with no external collector, FIFO or body relay. Setup writes
-private `canary-input.json` version 2 after both runtime-first Agent↔Pane chains
-resolve uniquely in the owned Project/Window. It waits boundedly for the observed
-profile and current source route, then hands off to the same-root run trap.
+The task invokes the pinned `agent-dialogue-source-action.py` once. It waits
+for the parent to resolve both runtime-first Agent/Pane chains and freeze the
+native thread/turn/started command item plus independent process birth and
+ancestry. The parent must first prepare an exact owned endpoint and a private
+config/auth/state domain; ordinary native creation only attaches to a ready
+endpoint. No fixture binding, dummy task or peer-to-user-turn relay is involved.
 
-## Qualification and idle evidence
+The source action uses only existing public `agent message` commands: qualify
+the exact receiver with `--confirm-isolated-provider-push`, claim that original
+reply from the original Codex inbox, send one independent idle request, then
+claim its correlated reply. It rechecks frozen live routes before dispatch and
+uses the existing Claude helper's observed tool/result/guarded-commit evidence.
+Empty follow-up claims check claim-once behavior. Ambiguous command outcomes
+stop the action without resend. The action never tears down an Agent, Project,
+provider or broker. Only bounded correlation facts go back to the source model;
+raw CLI bodies and stderr are not written or returned.
 
-Before traffic, the companion checks candidate/route/process/socket incarnations,
-exact helper SO_PEERCRED, credential-key absence and current helper-memory public
-init. Bash alone, empty MCP/plugins, no prior tool/stderr effects and unqualified
-general admission are required. Profile evidence is read through the existing
-coordination UDS; the companion never opens the vendor inbox.
+`agent-dialogue-codex-observation.py` validates the frozen public 0.153.2
+`thread/read(includeTurns=true)` and `item/started`/`item/completed` schemas.
+The four public exports under `scripts/agent-dialogue-codex-schema/` retain their
+original hashes. The reader uses only the Python standard library. Schema names
+are closed; names explicitly listed as required remain known even when an
+export omits their property declaration. Unknown fields/effects, incomplete
+history views, missing source, changed routes/items, output mismatch, EOF and
+bounds violations fail closed. The schema's optional source default is never
+applied, and `processId` is never interpreted as an OS PID.
 
-The original Codex context performs these public operations:
+Observation is limited to 1 MiB per JSONL frame, 8 MiB/128 frames per reader,
+32 items in the sole expected turn, and a bounded connection deadline. The
+existing initialized UDS peer must match the independently pinned PID/UID/birth
+before and after reads. The reader sends only `thread/read`; initialization and
+owned endpoint/socket binding are still parent-orchestrator integration work.
+No raw command, output, user text or reasoning enters the returned facts.
 
-```text
-agent message wait uid:<source> --timeout 1ms -o json
-agent message qualify uid:<Claude> --confirm-isolated-provider-push -o json
-agent message wait uid:<source> --timeout 5s -o json
-agent message status <qualification-ref> -o json
-agent message send --message-ref <ordinary-ref> --ttl 2m uid:<Claude> -- <harmless explicit acknowledgement request>
-agent message wait uid:<source> --timeout 120s -o json
-agent message status <ordinary-ref> -o json
-```
+A started item may be frozen before the first push. Completion is checked only
+after the action returns its closed qualification/idle result. A completed tool
+record and completed original turn are distinct facts; they do not evaluate
+model answer quality. Ordinary Codex task/tool-result history writes in the
+private original thread are expected, while peer history/user-turn API writes
+remain excluded. Actual field availability, model action selection, source
+policy isolation and this ordering are not proven by offline fixtures.
 
-The initial/after-claim empty waits must fail with only the documented no-compatible-message
-diagnostic. Every wait reuses public runtime-owner and live composite-route
-admission; a harness PID alone is not self-claim proof. Qualification and idle
-have distinct original refs, tool IDs, broker commits and claims. Each requires
-public envelope version 2, exact reversed routes, peer coordination authority,
-matching conversation/replyTo/payload, `target-self-claim`, unknown-outcome false,
-and the independently observed tool/result matched to the successful guarded
-broker commit. Full-frame `delivered` alone does not meet this proof. Codex state
-files must remain unchanged; authentication files are excluded from hashing.
+The remaining maintained wiring must pin an owned direct app-server launch
+handle/executable/default private socket, private HOME/CODEX_HOME/XDG/SQLite and
+file-based auth policy, copied script/schema digests, and the exact action
+command. It must preserve public Project session projection, isolated tmux
+socket validation, and runtime-generated IDs before release. System config and
+requirements cannot be assumed absent merely because HOME is private.
 
-Only read-only observation may retry for a late tool result. Missing/invalid
-observer, ambiguous/partial write, unmatched action or timeout ends the run;
-there is no qualification or request resend. Raw stdout/model text, thinking,
-signatures and commands are not copied into the external receipt. Unknown helper
-response fields fail closed or are omitted by the explicit projection.
+The parent must own one cleanup transaction on every partial failure and after
+the source tool result returns. Capture reader/daemon/broker and all owned writer
+births before teardown. Only proven owned processes may receive the existing
+graceful termination request; the broker's default 30-second idle lifetime is
+not covered by assuming the current 20-second writer deadline will suffice.
+Retain exact-root pidfd exit proof before one root removal, remove both owned
+auth copies even on retained-root failure, and preserve a bounded external
+0600 audit before removal. Unknown writer exit or audit/removal failure retains
+failure evidence; no fixed sleep, broad signal, retry removal or manual-cleanup
+PASS is permitted. No protected/shared runtime is an owned seed.
 
-## Automatic cleanup and remaining cases
-
-The setup wrapper owns failures before the first/second actor or input file is
-ready. Its bounded external audit records closed stage identifiers, numeric
-command exit codes and output byte counts; it records no raw argv, output,
-model content or credential material. Stage evidence reports only which boundary
-was entered/completed, never infers qualification from elapsed time. The audit
-retains the exact captured PID/birth writer proof before root removal, including
-an explicitly incomplete proof when writer exit fails. It is limited to 128
-records, 128 KiB per record and 1 MiB total; replacement, unsafe permissions or
-missing proof fail closed and retain the root. A terminal record distinguishes
-root absence from semantic success. Earlier failures whose root-local evidence
-was deleted cannot be retroactively assigned a stage or cleanup proof. The run trap owns every later outcome. Both use the same exact-root pidfd
-writer barrier, capturing owned process births before public deletion and exact
-socket teardown. Cwd/ancestry preserve ownership across delayed and reparented
-writers. No discovered process receives a broad signal; an unproven writer keeps
-the root and reports failure. The owned authentication copy is removed even on
-a retained-root cleanup error when its original root identity remains valid.
-A run cleanup attempt is never retried by the setup wrapper.
-
-Success is published to the fresh external receipt only after automatic writer
-exit, empty owned Registry/profile/lease/socket checks and exact root removal.
-Cleanup failure is not PASS. The receipt explicitly lists these unverified R2
-cases: allowed-tool active overlap, model-visible human overlap, multiple ordinary
-A/B requests, same-UID normal-exit recovery and installed smoke. Later reviewed
-runs must retain separate evidence for each; idle success cannot expand to them.
-Typed terminal text is discarded and cannot prove a model-visible human prompt.
-
-`test/agent_dialogue_canary_test.py` exercises offline receipt/route mutations,
-prepare-without-launch, fresh environment and delayed/early-failing setup cleanup.
-`TestClaudeDialogueCanaryAcceptsProductionStoreAndPublicClaimReceipts` sends actual
-production store/CLI JSON through the companion. Product Go stream tests cover
-public output isolation and privacy. Provider/version stress remains separately
-opt-in through `scripts/agent-dialogue-version-stress.sh` and never joins required
-selectorless E2E.
+The selectorless E2E remains the single deterministic L20 case. Actual active
+tool/human overlap, multiple ordinary requests, same-UID recovery and installed
+smoke remain separate acceptance evidence. The next reviewed slice completes
+the parent orchestrator and replaces this preparation section with its pinned
+single-transaction invocation; the source action alone is not that transaction.
