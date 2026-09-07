@@ -9,6 +9,52 @@ required before running the live path. Stop text never publishes a reply.
 The deterministic L20 fixture uses explicit public replies; it is not evidence
 of actual provider model execution.
 
+
+## Public reply-only activation
+
+On Linux, explicitly opt one next activation into the restricted transport profile:
+
+```sh
+projmux create agent --provider claude --dialogue-reply-only --project <project> --window <window>
+# After normal exit, resume the same Agent UID and provider conversation:
+projmux agent resume uid:<same-agent> --dialogue-reply-only
+# From the exact current Codex source activation:
+projmux agent message qualify uid:<claude-agent> --confirm-isolated-provider-push -o json
+```
+
+The flag changes only that activation. It does not persist an Agent default,
+change a running Agent, or enable ordinary Claude sessions implicitly. Each new
+activation requires a fresh opt-in and exact-version qualification. Without
+this profile or another explicitly validated execution guard, inbound eligibility
+remains unqualified; an ordinary `integrate`/resume alone does not create the guard.
+
+This headless profile starts one fixed `Reply READY.` turn, enables only Bash,
+and enforces its exact public reply command through the pinned execution gate.
+It uses restricted mode, no Chrome or slash commands/prompt suggestions, empty
+settings sources, strict empty MCP configuration and owned exec-form hooks.
+The public init must confirm Bash alone, no MCP/plugins and the current version.
+Normal SessionStart, UserPromptSubmit and Stop state callbacks retain badge
+ownership; Stop never publishes a peer reply. Provider session persistence stays
+on so a normal same-UID resume can retain its conversation.
+
+The pane is an activation status/EOF surface. Typed terminal text is discarded;
+it is **not** model-visible human input. Ctrl-D closes provider stdin and lets the
+current turn finish before normal exit. The owned observer validates public
+stdout/stderr in memory and forwards only bounded shape/effect assertions to
+the existing coordination helper. Raw text, reasoning, signatures and messaging
+credentials are never evidence files. EOF, stderr, unknown output or observer
+replacement invalidates inbound and issued reply actions. The supervisor requires
+exact observer birth and pidfd exit readiness before removing its private profile;
+uncertain exit retains the profile and reports cleanup failure.
+
+The public qualifier obtains fresh observed init evidence from that exact helper
+when `--evidence` is omitted. A supplied evidence file cannot override a live
+profile's missing/invalid observer. Qualification still requires the current
+Codex source, confirmation and a broker-owned explicit reply challenge; observed
+init alone does not admit general inbound traffic. Actual model execution,
+human overlap, active-tool ordering and installed same-UID recovery remain
+separate R1/R2 evidence requirements; these deterministic tests do not prove them.
+
 The in-progress execution guard uses an owned exec-form `PreToolUse` hook to
 validate the exact candidate path and public reply argv. Its updated Bash input
 is a one-use ticket in the existing helper's memory. The official

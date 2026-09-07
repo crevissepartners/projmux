@@ -1862,9 +1862,29 @@ separate decision this measurement exists to inform.
   `TestClaudeDialogueOptInIsAnExplicitSupervisorEnvelopeNotAnInheritedDefault`
   cover the next-activation `--dialogue-reply-only` preflight and supervisor/gate
   envelope. No AgentSpec or default tool policy persists this opt-in. The
-  production profile/observer launcher is still pending in this draft; the
-  public flag currently refuses an unavailable launcher before allocation.
+  production launcher creates a private generation profile and an owned
+  stdout/stderr observer. Missing launcher adapters still fail before allocation.
 - `TestAgentMessageAndReplyOnlyPreflightDoNotMigrateGlobalOrProjectHooks` checks
   that public message authentication and explicit reply-only preflight never
   migrate unrelated global/project legacy hooks. Existing normal create/resume
   pre-dispatch behavior remains unchanged.
+
+- `TestClaudeDialogueProfilePinsFilesAliasAndInvocationMode` and
+  `TestClaudeDialogueOrdinaryEnvironmentKeepsOfficialPrefixWithoutInheritingOptIn`
+  cover immutable profile inputs, pinned candidate alias, FIFO refusal, and
+  ordinary environment compatibility. `TestAgentMessageAndReplyOnlyPreflightDoNotMigrateGlobalOrProjectHooks`
+  also covers the profile's exact lifecycle/register/helper callbacks.
+- `TestClaudeDialogueCurrentHelperEvidenceAndObserverLossPrecludeEffects` uses
+  the current helper UDS to obtain qualification evidence and complete a valid
+  guarded reply baseline. Replacing only the observer descriptor then refuses
+  otherwise-valid prepare, consume, commit and push requests without effects.
+- `TestClaudeDialogueStreamDiscardsTextThinkingAndPairsOnlyExactReplyTool` and
+  `TestClaudeDialogueStreamRejectsUnknownEffectsAndBoundsState` cover transient
+  public JSON validation, action/result pairing, zero pre-inbound tool effects,
+  unknown metadata refusal and finite hook/tool state.
+- `TestClaudeDialoguePipeEOFClosesInputButWaitsCurrentTurn`,
+  `TestClaudeDialoguePipeDiagnosticLossFailsClosedWithoutBusyLoop`,
+  `TestClaudeDialogueCleanupWaitsExactWriterAndHandlesZombieWithoutSignals`, and
+  `TestClaudeDialoguePartialSetupAndUnknownFilesRetainExactRoot` cover Linux
+  terminal EOF, current-turn completion, stderr loss, exact-birth pidfd exit
+  proof and retained evidence on uncertain cleanup. No provider runs in these tests.

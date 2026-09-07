@@ -30,6 +30,7 @@ type claudeReplyToolPolicy struct {
 	Executable  string   `json:"executable"`
 	Directory   string   `json:"directory"`
 	Environment []string `json:"environment"`
+	ProfileDir  string   `json:"profileDir,omitempty"`
 }
 
 type claudeReplyToolInput struct {
@@ -53,15 +54,17 @@ type claudeReplyToolPermit struct {
 }
 
 type claudeReplyToolGate struct {
-	mu             sync.Mutex
-	policy         claudeReplyToolPolicy
-	executable     *os.File
-	executableInfo os.FileInfo
-	directoryInfo  os.FileInfo
-	digest         string
-	permits        map[string]claudeReplyToolPermit
-	issued         map[string]bool
-	executing      map[coremetadata.ProcessIdentity]claudeReplyToolPermit
+	profileObserver coremetadata.ProcessIdentity
+	profile         *claudeDialogueProfile
+	mu              sync.Mutex
+	policy          claudeReplyToolPolicy
+	executable      *os.File
+	executableInfo  os.FileInfo
+	directoryInfo   os.FileInfo
+	digest          string
+	permits         map[string]claudeReplyToolPermit
+	issued          map[string]bool
+	executing       map[coremetadata.ProcessIdentity]claudeReplyToolPermit
 }
 
 var errClaudeReplyTool = errors.New("isolated explicit reply execution refused")
@@ -84,7 +87,7 @@ func captureClaudeReplyToolPolicyFrom(getenv func(string) string, executablePath
 	if err != nil {
 		return nil, errClaudeReplyTool
 	}
-	policy := &claudeReplyToolPolicy{Executable: executable, Directory: directory}
+	policy := &claudeReplyToolPolicy{Executable: executable, Directory: directory, ProfileDir: getenv(internalClaudeDialogueProfileEnv)}
 	// Never copy a provider credential, config helper, or user command's env.
 	for _, key := range []string{"HOME", "PATH", "TMUX", "TMUX_PANE", "TMUX_TMPDIR", "XDG_CONFIG_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR", "XDG_CACHE_HOME", internalClaudeRegistryPathEnv, internalActivationPaneUIDEnv, internalActivationGenerationEnv} {
 		if value := getenv(key); value != "" {
@@ -142,7 +145,22 @@ func newClaudeReplyToolGate(policy claudeReplyToolPolicy) (*claudeReplyToolGate,
 		_ = file.Close()
 		return nil, errClaudeReplyTool
 	}
-	return &claudeReplyToolGate{policy: policy, executable: file, executableInfo: after, directoryInfo: directory, digest: hex.EncodeToString(digest.Sum(nil)),
+	var profile *claudeDialogueProfile
+	var profileObserver coremetadata.ProcessIdentity
+	if policy.ProfileDir != "" {
+		value, err := readClaudeDialogueProfile(policy.ProfileDir, policy.Executable)
+		if err != nil {
+			_ = file.Close()
+			return nil, errClaudeReplyTool
+		}
+		profile = &value
+		profileObserver, err = readClaudeDialogueObserver(policy.ProfileDir)
+		if err != nil {
+			_ = file.Close()
+			return nil, errClaudeReplyTool
+		}
+	}
+	return &claudeReplyToolGate{profileObserver: profileObserver, profile: profile, policy: policy, executable: file, executableInfo: after, directoryInfo: directory, digest: hex.EncodeToString(digest.Sum(nil)),
 		permits: make(map[string]claudeReplyToolPermit), issued: make(map[string]bool), executing: make(map[coremetadata.ProcessIdentity]claudeReplyToolPermit)}, nil
 }
 
@@ -157,6 +175,16 @@ func (g *claudeReplyToolGate) close() {
 func (g *claudeReplyToolGate) currentExecutable(peer coremetadata.ProcessIdentity) bool {
 	if g == nil {
 		return false
+	}
+	if g.profile != nil {
+		current, err := readClaudeDialogueProfile(g.policy.ProfileDir, g.policy.Executable)
+		if err != nil || current != *g.profile {
+			return false
+		}
+		observer, err := readClaudeDialogueObserver(g.policy.ProfileDir)
+		if err != nil || observer != g.profileObserver {
+			return false
+		}
 	}
 	actual, _, err := localipc.Process(peer.PID)
 	if err != nil || actual != peer {

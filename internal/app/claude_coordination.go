@@ -108,6 +108,7 @@ func (e claudeCoordinationEnvelope) valid(now time.Time, route coremetadata.Agen
 }
 
 type claudeCoordinationRequest struct {
+	Observation      *claudeDialogueObservation   `json:"observation,omitempty"`
 	Version          int                          `json:"version"`
 	Operation        string                       `json:"operation"`
 	Target           claudeCoordinationTarget     `json:"target"`
@@ -125,16 +126,17 @@ type claudeCoordinationRequest struct {
 }
 
 type claudeCoordinationResponse struct {
-	Version          int                    `json:"version"`
-	Kind             string                 `json:"kind"`
-	Delivery         agentdelivery.Delivery `json:"delivery,omitzero"`
-	ReplyRef         string                 `json:"replyRef,omitempty"`
-	Reason           string                 `json:"reason,omitempty"`
-	QualificationRef string                 `json:"qualificationRef,omitempty"`
-	ProviderVersion  string                 `json:"providerVersion,omitempty"`
-	Ambiguous        bool                   `json:"ambiguous,omitempty"`
-	ToolResult       *claudeReplyToolResult `json:"toolResult,omitempty"`
-	AutoResend       bool                   `json:"autoResend"`
+	ProfileEvidence  *claudeQualificationEvidence `json:"profileEvidence,omitempty"`
+	Version          int                          `json:"version"`
+	Kind             string                       `json:"kind"`
+	Delivery         agentdelivery.Delivery       `json:"delivery,omitzero"`
+	ReplyRef         string                       `json:"replyRef,omitempty"`
+	Reason           string                       `json:"reason,omitempty"`
+	QualificationRef string                       `json:"qualificationRef,omitempty"`
+	ProviderVersion  string                       `json:"providerVersion,omitempty"`
+	Ambiguous        bool                         `json:"ambiguous,omitempty"`
+	ToolResult       *claudeReplyToolResult       `json:"toolResult,omitempty"`
+	AutoResend       bool                         `json:"autoResend"`
 }
 
 type claudeCoordinationMessage struct {
@@ -207,7 +209,8 @@ func validCoordinationRef(value string) bool {
 }
 
 type claudeCoordinationServer struct {
-	tool *claudeReplyToolGate
+	profile *claudeDialogueObservedState
+	tool    *claudeReplyToolGate
 	// Serialize reply commits without making official hooks wait for each other.
 	// A concurrent boundary announces invalidation before trying this mutex.
 	hookMu   sync.Mutex
@@ -361,6 +364,9 @@ func startClaudeCoordinationServerWithPoster(listener *localipc.Listener, route 
 	if len(tool) == 1 && tool[0] != nil {
 		server.tool = tool[0]
 		server.hub.replyExecutable = tool[0].policy.Executable
+		if tool[0].profile != nil {
+			server.profile = &claudeDialogueObservedState{peer: tool[0].profileObserver}
+		}
 	}
 	go server.serve()
 	return server
@@ -395,15 +401,30 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 	switch request.Operation {
 	case "probe":
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "ready"})
+	case "profile-observe":
+		accepted := s.recordDialogueObservation(peer, parent, request.Observation)
+		kind := "profile-refused"
+		if accepted {
+			kind = "profile-observed"
+		}
+		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind})
+	case "profile-evidence":
+		evidence, available := s.dialogueProfileEvidence()
+		response := claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "profile-unavailable"}
+		if available {
+			response.Kind = "profile-evidence"
+			response.ProfileEvidence = &evidence
+		}
+		_ = localipc.WriteJSON(conn, response)
 	case "eligibility":
 		kind, reason := "unqualified", "exact-version-isolated-qualification-required"
-		if s.tool.ready() && s.hub.coordinationEligible() {
+		if s.dialogueProfileCurrent() && s.tool.ready() && s.hub.coordinationEligible() {
 			kind, reason = "qualified", "exact-public-init-and-explicit-reply"
 		}
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind,
 			ProviderVersion: claudeFrozenFrameProviderVersion, Reason: reason})
 	case "qualify":
-		if !s.tool.ready() {
+		if !s.dialogueProfileCurrent() || !s.tool.ready() {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion,
 				Kind: "qualification-refused", Reason: "pinned-reply-execution-required"})
 			return
@@ -413,11 +434,23 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 				Kind: "qualification-refused", Reason: "missing-public-init-evidence"})
 			return
 		}
-		_ = localipc.WriteJSON(conn, s.hub.beginExplicitQualification(*request.Qualification, s.route, request.Envelope, s.broker, s.poster))
+		evidence := *request.Qualification
+		if s.profile != nil {
+			current, ok := s.dialogueProfileEvidence()
+			if !ok {
+				return
+			}
+			evidence = current
+		}
+		_ = localipc.WriteJSON(conn, s.hub.beginExplicitQualification(evidence, s.route, request.Envelope, s.broker, s.poster))
 	case "qualification-status":
+		if !s.dialogueProfileCurrent() {
+			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "qualification-failed", QualificationRef: request.QualificationRef, ProviderVersion: claudeFrozenFrameProviderVersion, Reason: "reply-observer-not-current"})
+			return
+		}
 		_ = localipc.WriteJSON(conn, s.hub.qualificationResponse(request.QualificationRef))
 	case "submit":
-		if (s.tool != nil && !s.tool.ready()) || request.Envelope == nil || !request.Envelope.valid(time.Now(), s.route) {
+		if !s.dialogueProfileCurrent() || (s.tool != nil && !s.tool.ready()) || request.Envelope == nil || !request.Envelope.valid(time.Now(), s.route) {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused"})
 			return
 		}
@@ -446,7 +479,7 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 	case "tool-prepare", "tool-consume":
 		var result *claudeReplyToolResult
 		toolErr := errClaudeReplyTool
-		if s.tool != nil && request.SessionID == authority.SessionID {
+		if s.tool != nil && s.dialogueProfileCurrent() && request.SessionID == authority.SessionID {
 			if request.Operation == "tool-prepare" && request.ToolInput != nil {
 				result, toolErr = s.tool.prepare(*request.ToolInput, peer, s.route, s.hub, s.broker)
 			} else if request.Operation == "tool-consume" && request.ToolInput == nil {
@@ -459,7 +492,7 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 		}
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind, ToolResult: result})
 	case "explicit-reply":
-		if request.ReplyEnvelope == nil || request.SessionID != authority.SessionID ||
+		if !s.dialogueProfileCurrent() || request.ReplyEnvelope == nil || request.SessionID != authority.SessionID ||
 			!claudeProviderDescendant(peer, authority.Process) || (s.tool != nil && !s.tool.authorizeCommit(peer, *request.ReplyEnvelope)) {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion,
 				Kind: "reply-refused", Reason: "exact-provider-caller-required"})

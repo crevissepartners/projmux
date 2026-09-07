@@ -112,6 +112,10 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return runClaudeEndpointRegistration(rest)
 	case "claude-endpoint-helper":
 		return runClaudeEndpointHelper(rest)
+	case "claude-dialogue-exec":
+		return runClaudeDialogueExec(rest)
+	case "claude-dialogue-observe":
+		return runClaudeDialogueObserver(rest, stdout)
 	case "claude-reply-tool":
 		return runClaudeReplyTool(rest, stdout)
 	case "claude-message-reply":

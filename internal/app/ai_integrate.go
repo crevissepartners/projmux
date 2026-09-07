@@ -442,9 +442,9 @@ func (c *aiCommand) planClaudeHookIntegrationFromCurrent(remove, includeCoordina
 		hooks[event] = append(claudeHookEntrySlice(hooks[event]), entry)
 	}
 	if includeCoordination {
-		// Ingress is an immediate helper push. Stop exists only for official
-		// last_assistant_message reply correlation, and UserPromptSubmit closes
-		// any concurrent human-turn ambiguity. Both commands are short.
+		// Ingress is an immediate helper push. These short compatibility
+		// callbacks observe turn boundaries; Stop text has no reply authority.
+		// Only an authenticated explicit public reply can commit a peer response.
 		hooks["Stop"] = append(claudeHookEntrySlice(hooks["Stop"]), claudeCoordinationManagedEntry())
 		hooks["UserPromptSubmit"] = append(claudeHookEntrySlice(hooks["UserPromptSubmit"]), claudeCoordinationBoundaryManagedEntry())
 	}

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -97,15 +98,20 @@ func TestAgentMessageAndReplyOnlyPreflightDoNotMigrateGlobalOrProjectHooks(t *te
 		}
 	}
 	for _, argv := range [][]string{
+		{"internal", "agent-hook", "ingest", "claude-hook", "--unknown-before-auth"},
+		{"internal", "claude-endpoint-register", "--unknown-before-auth"},
+		{"internal", "claude-endpoint-helper", "--unknown-before-auth"},
 		{"agent", "message", "send", "--unknown-before-auth"},
 		{"agent", "message", "qualify", "--unknown-before-auth"},
 		{"create", "agent", "--dialogue-reply-only=invalid"},
+		{"create", "agent", "-dialogue-reply-only=invalid"},
+		{"agent", "resume", "uid:missing", "-dialogue-reply-only=invalid"},
 		{"agent", "resume", "uid:missing", "--dialogue-reply-only=invalid"},
 	} {
 		if shouldRunLegacyHookMigrations(argv) {
 			t.Fatalf("unrelated migration admitted before auth: %v", argv)
 		}
-		if err := New().Run(argv, io.Discard, io.Discard); err == nil {
+		if err := New().Run(argv, io.Discard, io.Discard); err == nil && argv[0] != "internal" {
 			t.Fatal("malformed preflight succeeded")
 		}
 		for _, path := range scripts {
@@ -122,5 +128,19 @@ func TestAgentMessageAndReplyOnlyPreflightDoNotMigrateGlobalOrProjectHooks(t *te
 	}
 	if !shouldRunLegacyHookMigrations([]string{"create", "agent", "--", "--dialogue-reply-only"}) {
 		t.Fatal("payload was treated as activation opt-in")
+	}
+}
+
+func TestClaudeDialogueCleanupFailureStillRecordsActualProviderOutcome(t *testing.T) {
+	store := newFakeResourceStore(t)
+	activatePaneFixture(t, store, "pan-alpha-log", "", "gen-exact")
+	command, _ := newTestSuperviseCommand(t, store, processOutcome{ExitCode: 17}, errClaudeDialogueCleanup)
+	err := command.Run([]string{"--pane-uid", "pan-alpha-log", "--generation", "gen-exact", "--dialogue-reply-only", "--", "owned-provider"}, io.Discard, io.Discard)
+	if !errors.Is(err, errClaudeDialogueCleanup) {
+		t.Fatal("cleanup failure was hidden", err)
+	}
+	receipts := readTestTerminationJournal(t, command)
+	if len(receipts) != 1 || receipts[0].ExitCode == nil || *receipts[0].ExitCode != 17 {
+		t.Fatal("actual outcome was replaced by launch failure")
 	}
 }

@@ -183,6 +183,10 @@ func (c *superviseCommand) Run(args []string, stdout, stderr io.Writer) error {
 	} else {
 		outcome, err = c.run(child, strings.TrimSpace(*argv0))
 	}
+	if errors.Is(err, errClaudeDialogueCleanup) {
+		c.recordOutcome(spec, outcome, stderr)
+		return err
+	}
 	if err != nil {
 		// The child never started. That is a launch failure, not a
 		// termination: no process of this generation ever ran, so there is no

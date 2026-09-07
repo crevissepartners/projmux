@@ -191,6 +191,11 @@ func activationEnvironment(spec superviseSpec) []string {
 	}
 	if spec.ClaudeRegistration {
 		environment = append(environment, internalClaudeRegistryPathEnv+"="+spec.RegistryPath)
+		if spec.DialogueReplyOnly {
+			if profile, err := claudeDialogueProfilePath(spec); err == nil {
+				environment = append(environment, internalClaudeReplyGuardEnv+"=1", internalClaudeDialogueProfileEnv+"="+profile)
+			}
+		}
 	}
 	return environment
 }

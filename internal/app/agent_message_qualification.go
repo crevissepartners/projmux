@@ -78,7 +78,7 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 	var evidencePath, output string
 	var timeout time.Duration
 	var confirmed bool
-	fs.StringVar(&evidencePath, "evidence", "", "owned sanitized public-init evidence JSON")
+	fs.StringVar(&evidencePath, "evidence", "", "owned sanitized public-init evidence JSON (default: current reply-only observer)")
 	fs.StringVar(&output, "o", "", "output mode: json")
 	fs.DurationVar(&timeout, "timeout", claudeQualificationCommandTimeout, "maximum explicit challenge reply wait")
 	fs.BoolVar(&confirmed, "confirm-isolated-provider-push", false, "confirm this opt-in command sends one qualification frame")
@@ -86,8 +86,8 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 	if err != nil {
 		return err
 	}
-	if len(refs) != 1 || evidencePath == "" || output != "json" || timeout <= 0 || timeout > 5*time.Minute || !confirmed {
-		return usageError(spelling + " requires <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json [--timeout <duration>]")
+	if len(refs) != 1 || output != "json" || timeout <= 0 || timeout > 5*time.Minute || !confirmed {
+		return usageError(spelling + " requires <claude-agent-ref> [--evidence <absolute-private-json>] --confirm-isolated-provider-push -o json [--timeout <duration>]")
 	}
 	registry, err := c.readMessageRegistry()
 	if err != nil {
@@ -107,13 +107,18 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 	if reason != "" || !probeClaudeRegistrationLease(c.messagePaths.registryPath, route) {
 		return fmt.Errorf("%s: exact Claude registration lease is unavailable", spelling)
 	}
-	evidence, err := readClaudeQualificationEvidence(evidencePath)
-	if err != nil || !evidence.validExplicit(c.messageClock(), route) {
-		return fmt.Errorf("%s: public-init evidence is invalid for the exact current activation", spelling)
-	}
 	coordinationTarget, ok := claudeTargetForRoute(route)
 	if !ok {
 		return fmt.Errorf("%s: exact Claude route is unavailable", spelling)
+	}
+	var evidence claudeQualificationEvidence
+	if evidencePath != "" {
+		evidence, err = readClaudeQualificationEvidence(evidencePath)
+	} else {
+		evidence, err = readCurrentClaudeDialogueEvidence(context.Background(), c.messagePaths.registryPath, route)
+	}
+	if err != nil || !evidence.validExplicit(c.messageClock(), route) {
+		return fmt.Errorf("%s: public-init evidence is invalid for the exact current activation", spelling)
 	}
 	source, err := c.currentMessageAgent(registry, spelling)
 	if err != nil || source.Spec.Provider != string(aiprovider.Codex) {
@@ -261,4 +266,18 @@ func validateClaudeQualificationResponse(response claudeCoordinationResponse, ex
 		return claudeCoordinationResponse{}, false
 	}
 	return response, true
+}
+
+func readCurrentClaudeDialogueEvidence(ctx context.Context, registryPath string, route coremetadata.AgentRouteRef) (claudeQualificationEvidence, error) {
+	target, ok := claudeTargetForRoute(route)
+	if !ok {
+		return claudeQualificationEvidence{}, errors.New("exact Claude route is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(ctx, localipc.Deadline)
+	defer cancel()
+	response, err := callClaudeCoordination(ctx, registryPath, route, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "profile-evidence", Target: target})
+	if err != nil || response.Version != claudeCoordinationVersion || response.Kind != "profile-evidence" || response.ProfileEvidence == nil {
+		return claudeQualificationEvidence{}, errors.New("current reply-only observer evidence is unavailable")
+	}
+	return *response.ProfileEvidence, nil
 }
