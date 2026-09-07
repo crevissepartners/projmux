@@ -25,6 +25,25 @@ STAGES = frozenset((
     'cleanup', 'root-removal', 'complete'))
 
 
+def validate_envelope_facts(facts):
+    """Validate the entire fixed projection before any external audit write."""
+    enums={
+        'topLevel':('null','boolean','integer','number','string','array','object','unknown'),
+        'id':('absent','other-type','expected-integer','other-integer'),
+        'error':('absent','object','other-type'),
+        'errorCode':('absent','other-type','int64','integer-out-of-range'),
+        'errorMessage':('absent','string','other-type'),
+        'method':('absent','other-type','nonempty-string','empty-string'),
+        'trace':('absent','null','object','other-type'),
+    }
+    booleans={'unknownFields','resultPresent','errorUnknownFields','paramsPresent','traceUnknownFields','traceValuesValid'}
+    if not isinstance(facts,dict) or set(facts)!=set(enums)|booleans:
+        raise ValueError('audit envelope facts fields')
+    if any(type(facts[key]) is not str or facts[key] not in allowed for key,allowed in enums.items()) or \
+            any(type(facts[key]) is not bool for key in booleans):
+        raise ValueError('audit envelope facts value')
+
+
 class Audit:
     """Bounded metadata only, outside the disposable root; never a PASS receipt."""
     def __init__(self, path, identity):
@@ -55,11 +74,11 @@ class Audit:
             'terminal':{'version','event','exitCode','rootAbsent','receiptExists'},
             'source':{'version','event','phase','process','item','routes'},
             'policy':{'version','event','phase','facts'},
-            'policy-failure':{'version','event','phase','code','substage','rejectionKind'},
+            'policy-failure':{'version','event','phase','code','substage','rejectionKind','envelopeFacts'},
         }
         if record.get('event') not in fields or set(record)-fields[record['event']]: raise ValueError('audit event fields')
         if record['event']=='policy-failure':
-            if set(record)!=fields['policy-failure'] or record['version']!=1 or record['phase']!='before-source' or record['code'] not in ('policy-schema','policy-request','policy-value','policy-origin','policy-config','policy-socket'):
+            if set(record)-{'envelopeFacts'}!=fields['policy-failure']-{'envelopeFacts'} or record['version']!=1 or record['phase']!='before-source' or record['code'] not in ('policy-schema','policy-request','policy-value','policy-origin','policy-config','policy-socket'):
                 raise ValueError('audit policy failure')
             if record['substage'] not in ('unknown','reader-load','config-before','schema','connect','connect-current','connect-socket',
                     'connect-open','peer','connect-current-after','connect-socket-after','initialize-schema','upgrade','initialize-write',
@@ -69,6 +88,10 @@ class Audit:
                     'unknown','deadline','io','eof','closed','bound','utf8','frame','http-status','http-header','http-accept',
                     'http-extension','envelope-shape','envelope-id','envelope-error','envelope-notification','envelope-request','identity'):
                 raise ValueError('audit policy failure boundary')
+            if 'envelopeFacts' in record:
+                if record['substage'] not in ('initialize-envelope','config-read-envelope') or not record['rejectionKind'].startswith('envelope-'):
+                    raise ValueError('audit envelope facts boundary')
+                validate_envelope_facts(record['envelopeFacts'])
         data=(json.dumps(record,sort_keys=True,separators=(',',':'))+'\n').encode()
         if len(data)>128*1024: raise ValueError('audit record bound')
         fd=os.open(self.path,os.O_RDWR|os.O_APPEND|os.O_NOFOLLOW)
@@ -281,8 +304,11 @@ def main():
         try:
             policy=native['read_native_policy'](root,plan,endpoint)
         except native['PolicyFailure'] as failure:
-            try: audit.append(dict(version=1,event='policy-failure',phase='before-source',code=failure.code,
-                                   substage=failure.substage,rejectionKind=failure.kind))
+            try:
+                row=dict(version=1,event='policy-failure',phase='before-source',code=failure.code,
+                         substage=failure.substage,rejectionKind=failure.kind)
+                if failure.envelope_facts is not None:row['envelopeFacts']=failure.envelope_facts
+                audit.append(row)
             except Exception:
                 cleanup_removal_allowed=False
                 raise

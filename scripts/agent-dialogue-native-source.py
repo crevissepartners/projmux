@@ -209,7 +209,8 @@ def initialize(raw, observation, root):
         value=observation['decode'](raw_message)
         substage='initialize-envelope'
         kind=observation['response_rejection_kind'](value,0)
-        if kind is not None:raise PolicyFailure(code,substage,kind)
+        if kind is not None:
+            raise PolicyFailure(code,substage,kind,observation['response_envelope_facts'](value,0))
         substage='initialize-result'
         code='policy-schema'
         schemas.validate('InitializeResponse.json',value['result'])
@@ -244,10 +245,11 @@ def closed_kind(failure,fallback='unknown'):
 
 
 class PolicyFailure(Refused):
-    def __init__(self,code,substage='unknown',kind='unknown'):
+    def __init__(self,code,substage='unknown',kind='unknown',envelope_facts=None):
         require(code in POLICY_FAILURE_CODES and substage in POLICY_SUBSTAGES and kind in POLICY_REJECTION_KINDS,'policy-failure-code')
         super().__init__(code)
         self.code,self.substage,self.kind=code,substage,kind
+        self.envelope_facts=envelope_facts
 
 
 def read_native_policy(root,plan,endpoint):
@@ -280,10 +282,12 @@ def read_native_policy(root,plan,endpoint):
         return facts
     except PolicyFailure:raise
     except Exception as failure:
+        envelope_facts=None
         if policy is not None and isinstance(failure,policy['Refused']):
             code=failure.code
             if failure.substage in POLICY_SUBSTAGES and failure.substage!='unknown':substage=failure.substage
-        raise PolicyFailure(code,substage,closed_kind(failure)) from None
+            envelope_facts=failure.envelope_facts
+        raise PolicyFailure(code,substage,closed_kind(failure),envelope_facts) from None
 
 
 def ancestry(identity, daemon):

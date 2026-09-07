@@ -114,6 +114,45 @@ def response_rejection_kind(value, request_id):
     return 'envelope-shape'
 
 
+def response_envelope_facts(value, request_id):
+    """Fixed structural predicates only; never authority or upstream values.
+
+    Observe every remaining shape branch together, including simultaneous
+    defects. Unknown member names and arbitrary result/params/error data are
+    not copied. The admission classifier above remains independent.
+    """
+    top = ('null' if value is None else 'boolean' if type(value) is bool else
+           'integer' if type(value) is int else 'number' if type(value) is float else
+           'string' if isinstance(value, str) else 'array' if isinstance(value, list) else
+           'object' if isinstance(value, dict) else 'unknown')
+    obj = value if isinstance(value, dict) else {}
+    error = obj.get('error')
+    error_obj = error if isinstance(error, dict) else {}
+    trace = obj.get('trace')
+    trace_obj = trace if isinstance(trace, dict) else {}
+    code = error_obj.get('code')
+    return {
+        'topLevel': top,
+        'id': ('absent' if 'id' not in obj else 'other-type' if type(obj['id']) is not int else
+               'expected-integer' if obj['id'] == request_id else 'other-integer'),
+        'unknownFields': bool(set(obj) - {'id', 'result', 'error', 'method', 'params', 'trace'}),
+        'resultPresent': 'result' in obj,
+        'error': 'absent' if 'error' not in obj else 'object' if isinstance(error, dict) else 'other-type',
+        'errorUnknownFields': bool(set(error_obj) - {'code', 'message', 'data'}),
+        'errorCode': ('absent' if 'code' not in error_obj else 'other-type' if type(code) is not int else
+                      'int64' if -(2**63) <= code < 2**63 else 'integer-out-of-range'),
+        'errorMessage': ('absent' if 'message' not in error_obj else
+                         'string' if isinstance(error_obj['message'], str) else 'other-type'),
+        'method': ('absent' if 'method' not in obj else 'other-type' if not isinstance(obj['method'], str) else
+                   'nonempty-string' if obj['method'] else 'empty-string'),
+        'paramsPresent': 'params' in obj,
+        'trace': ('absent' if 'trace' not in obj else 'null' if trace is None else
+                  'object' if isinstance(trace, dict) else 'other-type'),
+        'traceUnknownFields': bool(set(trace_obj) - {'traceparent', 'tracestate'}),
+        'traceValuesValid': isinstance(trace, dict) and all(v is None or isinstance(v, str) for v in trace.values()),
+    }
+
+
 def close_schema(value):
     if isinstance(value, dict):
         if "properties" in value and "additionalProperties" not in value:

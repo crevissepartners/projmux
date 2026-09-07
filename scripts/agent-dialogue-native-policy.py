@@ -20,12 +20,13 @@ FAILURE_CODES=frozenset(('policy-schema','policy-request','policy-value','policy
 
 
 class Refused(ValueError):
-    def __init__(self,reason,code='policy-schema',*,substage='unknown',kind='unknown'):
+    def __init__(self,reason,code='policy-schema',*,substage='unknown',kind='unknown',envelope_facts=None):
         if code not in FAILURE_CODES: raise ValueError('policy failure code')
         super().__init__(reason)
         self.code=code
         self.substage=substage
         self.kind=kind
+        self.envelope_facts=envelope_facts
 
 
 def classified(code):
@@ -128,7 +129,9 @@ class PolicyReader:
             value=self.decode(raw)
             substage='config-read-envelope'
             kind=self.observation['response_rejection_kind'](value,1)
-            if kind is not None:raise Refused('policy-response-envelope','policy-request',kind=kind)
+            if kind is not None:
+                raise Refused('policy-response-envelope','policy-request',kind=kind,
+                              envelope_facts=self.observation['response_envelope_facts'](value,1))
             substage='config-read-result'
             return self.project(value['result'])
         except Exception as failure:
@@ -136,4 +139,5 @@ class PolicyReader:
             kind=getattr(failure,'kind','unknown')
             if isinstance(failure,TimeoutError):kind='deadline'
             elif isinstance(failure,OSError):kind='io'
-            raise Refused('policy-refused',code,substage=substage,kind=kind) from None
+            facts=failure.envelope_facts if isinstance(failure,Refused) else None
+            raise Refused('policy-refused',code,substage=substage,kind=kind,envelope_facts=facts) from None

@@ -272,7 +272,7 @@ config/read params/write/read/decode/envelope/result, and post-read socket/confi
 checks. Rejection kinds distinguish deadline, I/O, EOF/close, size bounds, UTF-8,
 frame or HTTP validation, identity, and envelope shape/ID/error/notification/request.
 Unclassified failures remain `unknown`; no native error code, message, method,
-response field names or exception text is exported. Error/notification/request envelopes
+dynamic response field names or exception text is exported. Error/notification/request envelopes
 still stop the transaction. No notification is skipped to search for a success.
 The existing product and pinned public JSON-RPC contracts agree on
 initialize → matching response → initialized → config/read, with `id`/`result`
@@ -284,8 +284,24 @@ public `JSONRPCRequest`, `JSONRPCResponse`, `JSONRPCNotification` and `JSONRPCEr
 schemas anchor the offline fixtures. These are closed known-field subsets:
 unknown fields and mixed forms still refuse, and the expected-ID fence runs
 first. A request is neither answered nor skipped. Its method, params, trace and
-error data never become evidence. The consumed v4 `config-read-envelope /
-envelope-shape` result does not establish which public or unknown form arrived.
+error data never become evidence. The consumed v4 and v5 `config-read-envelope /
+envelope-shape` results do not establish which public or unknown form arrived.
+No new admission or transport mismatch was established by the bounded v5 review.
+
+At an initialize/config-read envelope rejection, an optional `envelopeFacts`
+projection records all remaining structural predicates together. Its thirteen
+fixed fields describe the top-level JSON type, ID presence/type/equality,
+result/params presence, method type/emptiness, error object/code/message types,
+trace object/member-value types, and booleans for unknown top-level/error/trace
+members. Simultaneous defects remain visible without copying any unknown names,
+IDs, numeric error codes, method strings, trace values or nested payloads. The
+audit sink rejects missing/extra projection fields, non-boolean flags, unknown
+enum values, and projections outside the two envelope rejection boundaries
+before writing. The existing exact `{id,result}` success allowlist and expected
+integer ID fence remain independent of these diagnostic facts. Offline fixtures
+cover every combination of known top-level fields, malformed nested types,
+otherwise-valid replies with unknown fields, privacy, and once cleanup after
+the external facts are written; they establish no actual v5 response contents.
 Audit write failure still runs the one owned writer cleanup and both credential
 finally paths, retains the root, and cannot produce a successful receipt.
 

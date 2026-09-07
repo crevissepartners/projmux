@@ -179,6 +179,7 @@ class InitializedTransportTests(unittest.TestCase):
             with self.subTest(kind=kind),raw,self.assertRaises(self.native['PolicyFailure']) as failure:
                 self.native['initialize'](raw,self.observation,self.root)
             self.assertEqual((failure.exception.substage,failure.exception.kind),('initialize-envelope',kind))
+            self.assertEqual(failure.exception.envelope_facts,self.observation['response_envelope_facts'](response,0))
             self.assertEqual(str(failure.exception),'policy-request');self.assertTrue(raw.closed)
             self.assertEqual(len(raw.frames),1)
             self.assertNotIn('PRIVATE_',json.dumps(vars(failure.exception)))

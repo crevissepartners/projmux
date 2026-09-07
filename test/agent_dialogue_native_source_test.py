@@ -242,6 +242,14 @@ class NativeSourceTests(unittest.TestCase):
         with mock.patch.dict(self.globals,connect=connect,initialize=initialize,current=current), \
              mock.patch.object(runpy,'run_path',side_effect=lambda path:modules[pathlib.Path(path).name]):
             self.assertEqual(self.ns['read_native_policy'](self.root,dict(codexBinary=str(self.executable)),endpoint),facts)
+            envelope_facts=observation['response_envelope_facts'](dict(id=1,result={},PRIVATE_KEY='PRIVATE_BODY'),1)
+            reader.read.side_effect=policy['Refused']('policy-refused','policy-request',substage='config-read-envelope',
+                                                     kind='envelope-shape',envelope_facts=envelope_facts)
+            with self.assertRaises(self.ns['PolicyFailure']) as failure:
+                self.ns['read_native_policy'](self.root,dict(codexBinary=str(self.executable)),endpoint)
+            self.assertEqual(failure.exception.envelope_facts,envelope_facts)
+            connect.return_value[0].__exit__.assert_called()
+            reader.read.side_effect=None
             for code,target in [('policy-schema',constructor),('policy-request',initialize),('policy-socket',connect),('policy-socket',current),
                                 ('policy-value',reader.read),('policy-origin',reader.read)]:
                 target.side_effect=policy['Refused']('PRIVATE_BODY',code) if code in ('policy-value','policy-origin') else OSError('PRIVATE_BODY')

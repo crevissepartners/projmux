@@ -113,6 +113,8 @@ class NativePolicyTests(unittest.TestCase):
             with self.subTest(kind=kind),self.assertRaises(self.module['Refused']) as failure:
                 self.reader.read(self.connection(json.dumps(response).encode()))
             self.assertEqual((failure.exception.substage,failure.exception.kind),(stage,kind))
+            expected=self.observation['response_envelope_facts'](response,1) if stage=='config-read-envelope' else None
+            self.assertEqual(failure.exception.envelope_facts,expected)
             self.assertNotIn('PRIVATE_',json.dumps(vars(failure.exception)))
         for method,stage in [('sendall','config-read-write'),('read_message','config-read-read')]:
             connection=self.connection(b'{}')
