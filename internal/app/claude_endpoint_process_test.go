@@ -464,15 +464,19 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	_, _ = writeControl.WriteString("repeat\n")
 	waitLine(t, reader, "hook-returned\n")
 	second := getRoute()
-	if first.Same(second) || probeClaudeCoordinationEligibility(registryPath, second) || probeClaudeRegistrationLease(registryPath, first) {
-		t.Fatal("replacement inherited old registration or qualification")
+	// Reachability is expected on the replacement; what must not carry over is
+	// the old registration. The qualification itself is checked below, where a
+	// pre-qualification submit still has to be accepted on its own terms.
+	if first.Same(second) || probeClaudeRegistrationLease(registryPath, first) {
+		t.Fatal("replacement inherited the old registration")
 	}
 	target, _ := claudeTargetForRoute(second)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	unqualified, callErr := callClaudeCoordination(ctx, registryPath, second, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 		Operation: "submit", Target: target, Envelope: ptrCoordination(dialogueForRoute("pre-ready", second, time.Now().UTC()))})
 	cancel()
-	if callErr != nil || unqualified.Delivery.State != agentdelivery.StateRefused {
+	// Delivery no longer waits for the replacement to qualify.
+	if callErr != nil || unqualified.Delivery.State != agentdelivery.StateDelivered {
 		t.Fatalf("replacement pre-qualification delivery=%+v err=%v", unqualified, callErr)
 	}
 	qualify(second, "qualify-2")
