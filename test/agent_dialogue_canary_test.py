@@ -556,6 +556,76 @@ class DialogueAuditTest(unittest.TestCase):
             self.assertEqual(remove.call_count,1)
         self.assertTrue(self.root.exists()); self.assertEqual(self.records()[-1]['stage'],'root-removal')
 
+    def test_policy_failure_audit_rejects_unknown_code_fields_and_phase(self):
+        valid=dict(version=1,event='policy-failure',phase='before-source',code='policy-origin')
+        for change in (dict(code='PRIVATE_BODY'),dict(detail='PRIVATE_BODY'),dict(phase='PRIVATE_BODY')):
+            with self.assertRaises(ValueError):self.audit.append(valid|change)
+        self.assertEqual(self.audit.path.stat().st_size,0)
+        self.audit.append(valid)
+        self.assertEqual(self.records(),[valid])
+
+    def policy_main_failure(self,code,*,uncertain=False,audit_write_failure=False,transient_audit_failure=False):
+        # Run real main/finally and root removal with injected inert launch/read.
+        # Existing synchronized writer tests exercise the underlying barrier.
+        self.audit.path.unlink()
+        (self.root/'codex-home').mkdir(exist_ok=True)
+        for name in ('home/.claude/.credentials.json','codex-home/auth.json'):
+            (self.root/name).write_text('PRIVATE_AUTH_FIXTURE')
+        native=runpy.run_path(str(self.repo/'scripts/agent-dialogue-native-source.py'))
+        child=mock.Mock()
+        def fail(*_):
+            if audit_write_failure:self.audit.path.chmod(0o400)
+            raise native['PolicyFailure'](code)
+        native=dict(native,launch=mock.Mock(return_value=(child,{})),ready=mock.Mock(return_value={}),read_native_policy=fail,source_prompt=lambda _:'genuine-fixture')
+        plan=dict(candidateHead='a'*40,candidateSHA256='b'*64,candidateBinary='/candidate',runnerFiles={},claudeVersion='1.0.0',codexVersion='1.0.0',sourceMode='genuine-native-task',sourcePrompt='genuine-fixture')
+        (self.root/'cleanup-plan.json').write_text(json.dumps(plan))
+        cleanup_calls=[]
+        def cleanup(*_args,**_kwargs):
+            cleanup_calls.append(True)
+            rows=self.records()
+            if not (audit_write_failure or transient_audit_failure):
+                self.assertEqual(next(row for row in rows if row['event']=='policy-failure')['code'],code)
+            self.assertTrue(self.root.exists())
+            (self.root/'evidence/cleanup-writers.json').write_text(json.dumps(dict(version=1,allCapturedWriterBirthsAbsent=not uncertain,writers=[])))
+            if uncertain:raise ValueError('PRIVATE_UNCERTAIN_WRITER')
+        setup=mock.Mock(side_effect=AssertionError('must not create actors'))
+        env=dict(PMX_DIALOGUE_LIVE_CANARY='1',PMX_DIALOGUE_CANARY_ROOT=str(self.root),PMX_DIALOGUE_CANARY_RECEIPT=str(self.parent/'receipt'),PMX_DIALOGUE_PROJMUX_BIN='/candidate')
+        namespace=self.code['main'].__globals__
+        original_append=self.code['Audit'].append
+        def append(audit,row):
+            if transient_audit_failure and row['event']=='policy-failure':raise OSError('PRIVATE_TRANSIENT_AUDIT')
+            return original_append(audit,row)
+        with mock.patch.object(self.code['Audit'],'append',append), \
+             mock.patch.dict(namespace,invoke_setup=lambda *_args,**_kwargs:'1.0.0',setup=setup,cleanup_partial=cleanup), \
+             mock.patch.dict(os.environ,env),mock.patch.object(runpy,'run_path',return_value=native), \
+             mock.patch.object(subprocess,'run',return_value=subprocess.CompletedProcess([],0)):
+            with self.assertRaises(ValueError):self.code['main']()
+        setup.assert_not_called();self.assertEqual(cleanup_calls,[True])
+        self.assertFalse((self.parent/'receipt').exists())
+        self.assertEqual(self.root.exists(),uncertain or audit_write_failure or transient_audit_failure)
+        for name in ('home/.claude/.credentials.json','codex-home/auth.json'):
+            self.assertFalse((self.root/name).exists())
+        text=self.audit.path.read_text();self.assertNotIn('PRIVATE_',text)
+        if not (uncertain or audit_write_failure or transient_audit_failure):
+            child.wait.assert_called_once_with(timeout=.1)
+            rows=self.records();self.assertEqual(rows[-2]['event'],'terminal');self.assertEqual(rows[-2]['exitCode'],1)
+            code_index=next(i for i,row in enumerate(rows) if row['event']=='policy-failure')
+            proof_index=next(i for i,row in enumerate(rows) if row.get('outcome')=='writers-exited')
+            removal_index=next(i for i,row in enumerate(rows) if row.get('outcome')=='root-removed')
+            self.assertLess(code_index,proof_index);self.assertLess(proof_index,removal_index)
+
+    def test_policy_failure_code_survives_real_setup_finally_and_removal(self):
+        self.policy_main_failure('policy-origin')
+
+    def test_policy_failure_with_uncertain_writer_retains_root_and_code(self):
+        self.policy_main_failure('policy-socket',uncertain=True)
+
+    def test_policy_code_audit_write_failure_cannot_create_success_or_remove_root(self):
+        self.policy_main_failure('policy-value',audit_write_failure=True)
+
+    def test_transient_policy_audit_failure_remains_retained_after_sink_recovers(self):
+        self.policy_main_failure('policy-request',transient_audit_failure=True)
+
 
 if __name__ == "__main__":
     unittest.main()

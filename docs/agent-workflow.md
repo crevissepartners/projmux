@@ -1930,3 +1930,5 @@ separate decision this measurement exists to inform.
 - `test/agent_dialogue_native_source_test.py`: private native launch argv/image/environment, public genuine initial task, bounded initialization, source release before effects and closed tool return before parent cleanup; fake endpoints/launches and owned inert child processes only.
 
 - `test/agent_dialogue_native_policy_test.py`: pinned public config/read projection, missing/mismatched policy, foreign or unknown origins, private-value exclusion, raw-layer/extra-execution-input refusal, bounds/EOF; native source tests also refuse an otherwise-valid action when policy changes before release.
+
+- Policy diagnostics: `test/agent_dialogue_native_policy_test.py` checks closed schema/request/value/origin codes and exception redaction; native source tests preserve a valid baseline while independently failing config/socket/request/schema boundaries. `test/agent_dialogue_canary_test.py` exercises real setup finally after a policy code, audit privacy, uncertain-writer retention and audit-write failure cleanup without a success receipt. All use offline fixtures.

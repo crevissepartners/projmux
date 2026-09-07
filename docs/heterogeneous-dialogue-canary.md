@@ -237,6 +237,18 @@ creation, then rereads it on the exact current peer immediately before release
 and requires identical facts and an unchanged owned config/socket/process.
 An otherwise-valid source action receives no release when policy changes.
 
+A failed pre-source read preserves one `policy-failure` audit event before
+cleanup. Its code identifies the rejecting boundary: `policy-schema` for
+pinned schemas/JSON/public schema validation, `policy-request` for initialization
+or config/read framing/transport, `policy-value` for schema-valid policy or layer
+mismatches, `policy-origin` for origin constraints, `policy-config` for the owned
+config file fence, and `policy-socket` for the endpoint/process/image fence.
+These fixed codes contain no field names, raw values, layers, exception strings,
+paths, instructions or secrets. They identify a validation boundary, not the
+provider's underlying cause. Earlier failures without a code remain unknown.
+Audit write failure still runs the one owned writer cleanup and both credential
+finally paths, retains the root, and cannot produce a successful receipt.
+
 This is resolved config evidence, not a ThreadStartResponse observation. The
 existing public create sends cwd and runtime workspace roots; this reader adds
 no dummy thread/start, resume, policy mutation or relay to obtain more evidence.

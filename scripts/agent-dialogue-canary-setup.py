@@ -55,8 +55,12 @@ class Audit:
             'terminal':{'version','event','exitCode','rootAbsent','receiptExists'},
             'source':{'version','event','phase','process','item','routes'},
             'policy':{'version','event','phase','facts'},
+            'policy-failure':{'version','event','phase','code'},
         }
         if record.get('event') not in fields or set(record)-fields[record['event']]: raise ValueError('audit event fields')
+        if record['event']=='policy-failure':
+            if set(record)!=fields['policy-failure'] or record['version']!=1 or record['phase']!='before-source' or record['code'] not in ('policy-schema','policy-request','policy-value','policy-origin','policy-config','policy-socket'):
+                raise ValueError('audit policy failure')
         data=(json.dumps(record,sort_keys=True,separators=(',',':'))+'\n').encode()
         if len(data)>128*1024: raise ValueError('audit record bound')
         fd=os.open(self.path,os.O_RDWR|os.O_APPEND|os.O_NOFOLLOW)
@@ -137,7 +141,7 @@ def cleanup_partial(root, binary, socket_name, socket_path='', socket_identity='
         sys.argv=arguments
 
 
-def finish_setup_failure(root, binary, socket_name, identity, audit=None, **test_options):
+def finish_setup_failure(root, binary, socket_name, identity, audit=None, *, allow_removal=True, **test_options):
     before=root.lstat()
     if (before.st_dev,before.st_ino)!=identity or root.is_symlink(): raise ValueError('root changed')
     try:
@@ -154,6 +158,7 @@ def finish_setup_failure(root, binary, socket_name, identity, audit=None, **test
         (directory/'.credentials.json').unlink(missing_ok=True)
         if (root/'codex-home').is_symlink(): raise ValueError('Codex credential parent changed')
         (root/'codex-home/auth.json').unlink(missing_ok=True)
+    if not allow_removal: raise ValueError('setup cleanup audit failed; root retained')
     if audit is not None: audit.stage('root-removal')
     shutil.rmtree(root)
     if audit is not None: audit.cleanup(root,'root-removed')
@@ -234,6 +239,7 @@ def main():
     identity=None
     original_error=None
     native_child=None
+    cleanup_removal_allowed=True
     audit=Audit.create(root,pathlib.Path(os.environ['PMX_DIALOGUE_CANARY_RECEIPT']))
     try:
         audit.stage('prepare')
@@ -264,7 +270,14 @@ def main():
         audit.stage('native-ready')
         endpoint=native['ready'](root,launch,native_child)
         audit.stage('policy-before-source')
-        policy=native['read_native_policy'](root,plan,endpoint)
+        try:
+            policy=native['read_native_policy'](root,plan,endpoint)
+        except native['PolicyFailure'] as failure:
+            try: audit.append(dict(version=1,event='policy-failure',phase='before-source',code=failure.code))
+            except Exception:
+                cleanup_removal_allowed=False
+                raise
+            raise
         native['exclusive'](root/'evidence/native-policy-before-source.json',policy)
         audit.append(dict(version=1,event='policy',phase='before-source',facts=policy))
         spec=setup(root,binary,socket_name,invoke,audit.stage,source_prompt=plan['sourcePrompt'])
@@ -302,10 +315,15 @@ def main():
         if prepared and root.exists() and not (transferred and (root/'evidence/cleanup-attempted').exists()):
             try:
                 if identity is None: raise ValueError('root identity missing')
-                audit.stage('cleanup')
-                finish_setup_failure(root,binary,socket_name,identity,audit)
+                allow_removal=cleanup_removal_allowed
+                try: audit.stage('cleanup')
+                except Exception: allow_removal=False
+                # A failed diagnostic sink must not skip exact writer teardown
+                # or either credential finally, and cannot authorize deletion.
+                finish_setup_failure(root,binary,socket_name,identity,audit,allow_removal=allow_removal)
             except Exception:
-                audit.cleanup(root,'root-retained')
+                try: audit.cleanup(root,'root-retained')
+                except Exception: pass
                 raise ValueError('setup cleanup could not prove writer exit; root retained') from None
         if native_child is not None:
             # Once-cleanup has already proved exit (or retained failure). Reap

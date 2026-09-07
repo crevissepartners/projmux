@@ -202,23 +202,46 @@ def initialize(connection, observation):
     connection.sendall(b'{"method":"initialized","params":{}}\n')
 
 
+POLICY_FAILURE_CODES=frozenset(('policy-schema','policy-request','policy-value','policy-origin','policy-config','policy-socket'))
+
+
+class PolicyFailure(Refused):
+    def __init__(self,code):
+        require(code in POLICY_FAILURE_CODES,'policy-failure-code')
+        super().__init__(code)
+        self.code=code
+
+
 def read_native_policy(root,plan,endpoint):
-    observation=runpy.run_path(str(root/'bin/agent-dialogue-codex-observation.py'))
-    policy=runpy.run_path(str(root/'bin/agent-dialogue-native-policy.py'))
-    config=root/'codex-home/config.toml'
-    info=config.lstat()
-    require(stat.S_ISREG(info.st_mode) and info.st_uid==os.getuid() and stat.S_IMODE(info.st_mode)==0o600 and
-            config.read_text()==private_config(root),'policy-owned-config-changed')
-    reader=policy['PolicyReader'](root,pathlib.Path(plan['codexBinary']).parent.parent,root/'bin/agent-dialogue-config-schema',observation)
-    connection,_=connect(endpoint)
-    with connection:
-        initialize(connection,observation)
-        facts=reader.read(connection)
-        current(endpoint)
-        socket_info=pathlib.Path(endpoint['socketPath']).lstat()
-        require([socket_info.st_dev,socket_info.st_ino]==endpoint['socketIdentity'] and
-                config.lstat().st_ino==info.st_ino and config.read_text()==private_config(root),'policy-read-fence-changed')
-    return facts
+    code='policy-schema'
+    policy=None
+    try:
+        observation=runpy.run_path(str(root/'bin/agent-dialogue-codex-observation.py'))
+        policy=runpy.run_path(str(root/'bin/agent-dialogue-native-policy.py'))
+        code='policy-config'
+        config=root/'codex-home/config.toml'
+        info=config.lstat()
+        require(stat.S_ISREG(info.st_mode) and info.st_uid==os.getuid() and stat.S_IMODE(info.st_mode)==0o600 and
+                config.read_text()==private_config(root),'policy-owned-config-changed')
+        code='policy-schema'
+        reader=policy['PolicyReader'](root,pathlib.Path(plan['codexBinary']).parent.parent,root/'bin/agent-dialogue-config-schema',observation)
+        code='policy-socket'
+        connection,_=connect(endpoint)
+        with connection:
+            code='policy-request'
+            initialize(connection,observation)
+            facts=reader.read(connection)
+            code='policy-socket'
+            current(endpoint)
+            socket_info=pathlib.Path(endpoint['socketPath']).lstat()
+            require([socket_info.st_dev,socket_info.st_ino]==endpoint['socketIdentity'],'policy-read-socket-changed')
+            code='policy-config'
+            require(config.lstat().st_ino==info.st_ino and config.read_text()==private_config(root),'policy-read-config-changed')
+        return facts
+    except Exception as failure:
+        if policy is not None and isinstance(failure,policy['Refused']):
+            code=failure.code
+        raise PolicyFailure(code) from None
 
 
 def ancestry(identity, daemon):

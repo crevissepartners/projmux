@@ -112,5 +112,25 @@ class NativePolicyTests(unittest.TestCase):
         self.value['origins']={'approval_policy':dict(origin,private='DO_NOT_PERSIST')}
         with self.assertRaises(ValueError):self.reader.project(self.value)
 
+    def test_failure_codes_are_closed_and_do_not_contain_rejected_values(self):
+        cases=[]
+        bad=copy.deepcopy(self.value);bad['unexpected']='PRIVATE_BODY';cases.append(('policy-schema',lambda:self.reader.project(bad)))
+        mismatch=copy.deepcopy(self.value);mismatch['config']['approval_policy']='on-request';cases.append(('policy-value',lambda:self.reader.project(mismatch)))
+        origin=copy.deepcopy(self.value);origin['origins']['approval_policy']['name']['file']='/PRIVATE_BODY';cases.append(('policy-origin',lambda:self.reader.project(origin)))
+        cases.append(('policy-request',lambda:self.reader.read(self.connection(b''))))
+        cases.append(('policy-schema',lambda:self.reader.read(self.connection(b'PRIVATE_BODY\n'))))
+        for code,action in cases:
+            with self.subTest(code=code),self.assertRaises(self.module['Refused']) as failure:action()
+            self.assertEqual(failure.exception.code,code)
+            self.assertNotIn('PRIVATE_BODY',str(failure.exception))
+        with self.assertRaises(ValueError):self.module['Refused']('ignored',code='PRIVATE_BODY')
+
+    def test_request_io_exception_is_replaced_by_closed_code(self):
+        connection=self.connection(b'')
+        connection.recv=mock.Mock(side_effect=OSError('PRIVATE_SOCKET_AND_SECRET'))
+        with self.assertRaises(self.module['Refused']) as failure:self.reader.read(connection)
+        self.assertEqual(failure.exception.code,'policy-request')
+        self.assertEqual(str(failure.exception),'policy-refused')
+
 
 if __name__=='__main__':unittest.main()

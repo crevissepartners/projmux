@@ -210,5 +210,36 @@ class NativeSourceTests(unittest.TestCase):
     def test_otherwise_valid_action_changed_policy_refuses_before_release(self):
         self.release_case(changed_policy=True)
 
+    def test_policy_boundary_codes_preserve_valid_baseline_and_close_on_each_failure(self):
+        config=self.root/'codex-home/config.toml'
+        config.write_text(self.ns['private_config'](self.root));config.chmod(0o600)
+        path=self.root/'socket';path.touch();info=path.stat()
+        endpoint=dict(socketPath=str(path),socketIdentity=[info.st_dev,info.st_ino])
+        policy=runpy.run_path(str(REPO/'scripts/agent-dialogue-native-policy.py'))
+        observation=runpy.run_path(str(REPO/'scripts/agent-dialogue-codex-observation.py'))
+        facts=dict(version=1,threadPolicyObserved=False)
+        reader=mock.Mock();reader.read.return_value=facts
+        constructor=mock.Mock(return_value=reader)
+        modules={'agent-dialogue-codex-observation.py':observation,'agent-dialogue-native-policy.py':dict(policy,PolicyReader=constructor)}
+        connect=mock.Mock(return_value=(mock.MagicMock(),endpoint['socketIdentity']))
+        initialize=mock.Mock();current=mock.Mock()
+        with mock.patch.dict(self.globals,connect=connect,initialize=initialize,current=current), \
+             mock.patch.object(runpy,'run_path',side_effect=lambda path:modules[pathlib.Path(path).name]):
+            self.assertEqual(self.ns['read_native_policy'](self.root,dict(codexBinary=str(self.executable)),endpoint),facts)
+            for code,target in [('policy-schema',constructor),('policy-request',initialize),('policy-socket',connect),('policy-socket',current),
+                                ('policy-value',reader.read),('policy-origin',reader.read)]:
+                target.side_effect=policy['Refused']('PRIVATE_BODY',code) if code in ('policy-value','policy-origin') else OSError('PRIVATE_BODY')
+                with self.subTest(code=code),self.assertRaises(self.ns['PolicyFailure']) as failure:
+                    self.ns['read_native_policy'](self.root,dict(codexBinary=str(self.executable)),endpoint)
+                self.assertEqual(str(failure.exception),code);self.assertEqual(failure.exception.code,code)
+                target.side_effect=None
+            config.write_text('PRIVATE_BODY')
+            with self.assertRaises(self.ns['PolicyFailure']) as failure:self.ns['read_native_policy'](self.root,dict(codexBinary=str(self.executable)),endpoint)
+            self.assertEqual(failure.exception.code,'policy-config')
+            config.write_text(self.ns['private_config'](self.root))
+            current.side_effect=lambda *_:config.write_text('PRIVATE_AFTER_READ')
+            with self.assertRaises(self.ns['PolicyFailure']) as failure:self.ns['read_native_policy'](self.root,dict(codexBinary=str(self.executable)),endpoint)
+            self.assertEqual(failure.exception.code,'policy-config')
+
 
 if __name__=='__main__':unittest.main()
