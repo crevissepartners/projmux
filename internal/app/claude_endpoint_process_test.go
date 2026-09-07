@@ -475,8 +475,11 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	unqualified, callErr := callClaudeCoordination(ctx, registryPath, second, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 		Operation: "submit", Target: target, Envelope: ptrCoordination(dialogueForRoute("pre-ready", second, time.Now().UTC()))})
 	cancel()
-	// Delivery no longer waits for the replacement to qualify.
-	if callErr != nil || unqualified.Delivery.State != agentdelivery.StateDelivered {
+	// Delivery no longer waits for the replacement to qualify, so this reaches
+	// the durable fence instead of being refused ahead of it. The envelope was
+	// never accepted into the broker store, so the handoff is what stops it.
+	if callErr != nil || unqualified.Delivery.State != agentdelivery.StateFailed ||
+		unqualified.Delivery.Reason != "broker-handoff-persist-failed" {
 		t.Fatalf("replacement pre-qualification delivery=%+v err=%v", unqualified, callErr)
 	}
 	qualify(second, "qualify-2")
