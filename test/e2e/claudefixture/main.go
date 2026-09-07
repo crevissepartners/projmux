@@ -110,7 +110,7 @@ func run() error {
 		return errors.New("fixture token unavailable")
 	}
 	token := hex.EncodeToString(tokenBytes)
-	environment := append(os.Environ(), "CLAUDE_CODE_MESSAGING_SOCKET="+socketPath, "CLAUDE_CODE_MESSAGING_TOKEN="+token)
+	environment := append(os.Environ(), "CLAUDE_CODE_MESSAGING_SOCKET="+socketPath, "CLAUDE_CODE_MESSAGING_TOKEN="+token, "PMX_INTERNAL_CLAUDE_REPLY_GUARD=1")
 	if err := runHook(ctx, binary, environment, "claude-endpoint-register", map[string]any{
 		"hook_event_name": "SessionStart", "session_id": sessionID,
 	}); err != nil {
@@ -218,15 +218,46 @@ func runExplicitReply(ctx context.Context, binary string, environment []string, 
 	if content.Source["agentUID"] == "" || content.MessageRef == "" {
 		return errors.New("fixture reply context missing")
 	}
-	// #nosec G204 G702 -- harness-owned executable and fixed public argv; route/ref/text are individual data arguments, never shell input.
-	command := exec.CommandContext(ctx, binary, "agent", "message", "send", "uid:"+content.Source["agentUID"], "--reply-to", content.MessageRef, "--", payload)
+	var cleanEnvironment []string
 	for _, value := range environment {
 		if !strings.HasPrefix(value, "CLAUDE_CODE_MESSAGING_SOCKET=") && !strings.HasPrefix(value, "CLAUDE_CODE_MESSAGING_TOKEN=") {
-			command.Env = append(command.Env, value)
+			cleanEnvironment = append(cleanEnvironment, value)
 		}
 	}
-	command.Stdout, command.Stderr = io.Discard, io.Discard
-	return command.Run()
+	directory, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'" }
+	text := quote(binary) + " agent message send " + quote("uid:"+content.Source["agentUID"]) + " --reply-to " + quote(content.MessageRef) + " -- " + quote(payload)
+	input, err := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "session_id": sessionID, "cwd": directory, "tool_name": "Bash", "tool_use_id": "tool-" + content.MessageRef, "tool_input": map[string]any{"command": text}})
+	if err != nil {
+		return err
+	}
+	// #nosec G204 G702 -- harness-pinned product binary, fixed internal route;
+	// the synthetic official tool input is data on stdin, never evaluated here.
+	prepare := exec.CommandContext(ctx, binary, "internal", "claude-reply-tool", "prepare")
+	prepare.Env, prepare.Stdin, prepare.Stderr = cleanEnvironment, bytes.NewReader(input), io.Discard
+	output, err := prepare.Output()
+	if err != nil {
+		return errors.New("fixture tool preparation failed")
+	}
+	var decision struct {
+		Output struct {
+			Decision string `json:"permissionDecision"`
+			Input    struct {
+				Command string `json:"command"`
+			} `json:"updatedInput"`
+		} `json:"hookSpecificOutput"`
+	}
+	if json.Unmarshal(output, &decision) != nil || decision.Output.Decision != "allow" || decision.Output.Input.Command == "" {
+		return errors.New("fixture explicit tool was refused")
+	}
+	// #nosec G204 G702 -- exact pinned command consumes an opaque memory ticket
+	// and directly execs the approved public argv; this fixture executes no shell.
+	consume := exec.CommandContext(ctx, binary, "internal", "claude-reply-tool", "execute", "fixture opaque carrier '"+decision.Output.Input.Command+"'")
+	consume.Env, consume.Stdout, consume.Stderr = cleanEnvironment, io.Discard, io.Discard
+	return consume.Run()
 }
 
 func atomicWrite(root *os.Root, name string, data []byte) error {

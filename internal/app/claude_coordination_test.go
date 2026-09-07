@@ -146,18 +146,18 @@ func (f *claudeCoordinationTestFixture) call(t *testing.T, request claudeCoordin
 	return response
 }
 
-func TestClaudeCoordinationPrivateBridgeRequiresExactV4Route(t *testing.T) {
+func TestClaudeCoordinationPrivateBridgeRequiresExactV5Route(t *testing.T) {
 	fixture := newClaudeCoordinationTestFixture(t)
 	now := time.Now().UTC()
 	envelope := dialogueEnvelope("message-private-route", now.Add(time.Minute))
 	envelope.Target = fixture.target
 	envelope.BrokerEnvelope.Target = publicMessageRoute(fixture.route)
 	if !envelope.valid(now, fixture.route) {
-		t.Fatal("exact v4 route refused")
+		t.Fatal("exact v5 route refused")
 	}
 	envelope.Version = 2
 	if envelope.valid(now, fixture.route) {
-		t.Fatal("old private protocol crossed v4 helper")
+		t.Fatal("old private protocol crossed v5 helper")
 	}
 	envelope.Version = claudeCoordinationVersion
 	envelope.BrokerEnvelope.Target.Incarnation = "route-replaced"
@@ -178,7 +178,10 @@ func TestClaudeCoordinationServerHasNoWaiterIngressOperations(t *testing.T) {
 }
 
 func TestClaudeCoordinationQualificationRequiresExplicitOptIn(t *testing.T) {
+	gate, _ := newClaudeReplyToolTestGate(t)
 	fixture := newClaudeCoordinationTestFixture(t)
+	fixture.server.tool = gate
+	fixture.server.hub.replyExecutable = gate.policy.Executable
 	fixture.server.poster = &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
 	now := time.Now().UTC()
 	fixture.server.hub.now = func() time.Time { return now }

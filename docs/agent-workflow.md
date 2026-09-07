@@ -1110,9 +1110,9 @@
 
 ### Heterogeneous Agent dialogue Phase 4 tests
 
-- `TestClaudeCoordinationPrivateBridgeRequiresExactV4Route`,
+- `TestClaudeCoordinationPrivateBridgeRequiresExactV5Route`,
   `TestClaudeCoordinationV1V2AndV3HelpersCannotReceiveV4Traffic`, and
-  `TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix` pin public/private v4
+  `TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix` pin public/private v5
   route equality, old generation, same-generation old incarnation, stale
   provider process, foreign socket, helper exit, Codex endpoint replacement,
   and fresh current-version requalification. Old routes write/claim zero; a new
@@ -1829,3 +1829,9 @@ separate decision this measurement exists to inform.
   its root until the captured writer exits, preserves the original failure,
   tracks reparented descendants, and refuses stubborn or replaced births.
   These regressions use no live provider and skip when Linux pidfd is absent.
+
+- `TestClaudeQualificationRequiresCurrentPinnedMemoryGuard` rejects asserted
+  evidence with a missing, replaced or writable guard image before any push.
+  Private coord v5 fences earlier unguarded qualification; the frozen provider
+  auth/user frame is unchanged. L20 and the process fixture now execute the
+  guarded public CLI, with real isolated tmux identity and Codex broker binding.

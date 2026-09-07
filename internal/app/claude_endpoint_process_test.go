@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -20,6 +23,7 @@ import (
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -29,7 +33,7 @@ import (
 // reply/control frame. Its private capture socket is test memory, not a product
 // receipt, log, or artifact.
 const claudeEndpointSyntheticProvider = `
-import glob, hashlib, json, os, secrets, socket, subprocess, sys
+import json, os, secrets, shlex, socket, subprocess, sys
 path = os.path.join(os.environ['PMX_TEST_ROOT'], 'provider-' + secrets.token_hex(8) + '.sock')
 os.umask(0o077)
 inbox = socket.socket(socket.AF_UNIX)
@@ -61,23 +65,15 @@ def receive(kind, session):
     receipt.write(json.dumps({'received':kind,'content':content}) + '\n'); receipt.flush()
     if kind == 'qualification':
         envelope = json.loads(content)
-        registry_path = os.environ['PMX_INTERNAL_CLAUDE_REGISTRY_PATH']
-        pane_uid = os.environ['PMX_INTERNAL_ACTIVATION_PANE_UID']
-        generation = os.environ['PMX_INTERNAL_ACTIVATION_GENERATION']
-        registry = json.load(open(registry_path))
-        pane = next(x for x in registry['panes'] if x['metadata']['uid'] == pane_uid)
-        authority = pane['status']['activation']['claude']['registration']['authority']
-        target = {'agentUID': envelope['target']['agentUID'], 'paneUID': pane_uid, 'generation': generation, 'provider': 'claude', 'authority': authority}
-        lease_dir = '/tmp/pmx-ce-' + hashlib.sha256((registry_path+'\x00'+pane_uid+'\x00'+generation).encode()).hexdigest()[:32]
-        paths = glob.glob(lease_dir+'/coord-*.sock')
-        assert len(paths) == 1
-        original = json.load(open(os.path.join(os.environ['PMX_TEST_ROOT'], 'qualification-original.json')))
-        reply = dict(original, messageRef='reply-'+original['messageRef'], replyTo=original['messageRef'], source=original['target'], target=original['source'], payload='HETEROGENEOUS_QUALIFIED:'+original['messageRef'])
-        request = {'version':4, 'operation':'explicit-reply', 'target':target, 'sessionId':session, 'replyEnvelope':reply}
-        child = "import json,socket,sys; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(sys.stdin.buffer.read()+b'\\n'); s.shutdown(socket.SHUT_WR); r=json.loads(s.makefile('rb').readline()); assert r['kind']=='reply-accepted'; s.close()"
+        argv = [os.environ['PMX_TEST_BIN'], 'agent', 'message', 'send', 'uid:'+envelope['source']['agentUID'], '--reply-to', envelope['messageRef'], '--', 'HETEROGENEOUS_QUALIFIED:'+envelope['messageRef']]
+        tool_input = {'hook_event_name':'PreToolUse', 'session_id':session, 'cwd':os.getcwd(), 'tool_name':'Bash', 'tool_use_id':'tool-'+envelope['messageRef'], 'tool_input':{'command':' '.join(shlex.quote(x) for x in argv)}}
         child_env={k:v for k,v in os.environ.items() if k not in {'CLAUDE_CODE_MESSAGING_TOKEN','CLAUDE_CODE_MESSAGING_SOCKET'}}
-        result = subprocess.run([sys.executable, '-c', child, paths[0]], input=json.dumps(request).encode(), env=child_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        assert result.returncode == 0 and not result.stdout and not result.stderr
+        prepare = subprocess.run([argv[0], 'internal', 'claude-reply-tool', 'prepare'], input=json.dumps(tool_input).encode(), env=child_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert prepare.returncode == 0 and not prepare.stderr
+        decision = json.loads(prepare.stdout)['hookSpecificOutput']
+        assert decision['permissionDecision'] == 'allow'
+        result = subprocess.run([argv[0], 'internal', 'claude-reply-tool', 'execute', "fixture opaque carrier '"+decision['updatedInput']['command']+"'"], env=child_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert result.returncode == 0 and result.stdout and not result.stderr
         receipt.write('qualification-explicit-returned\n'); receipt.flush()
 hook('synthetic-session-1')
 for line in sys.stdin:
@@ -95,6 +91,101 @@ receipt.write('provider-connections=4\n'); receipt.flush()
 
 // This fixture uses the same real broker authority surface as L20. Registry
 // provider labels alone are never enough to pass the final source fence.
+func processFixtureReplyTmux(t *testing.T, root, paneUID string) ([]string, string, func() bool) {
+	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("guarded process fixture requires Linux pinned fd execution")
+	}
+	binary, err := exec.LookPath("tmux")
+	if err != nil {
+		t.Fatal(err)
+	}
+	temporary := filepath.Join(root, "tmux")
+	if err := os.Mkdir(temporary, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	var environment []string
+	for _, entry := range os.Environ() {
+		key, _, _ := strings.Cut(entry, "=")
+		if key != "TMUX" && key != "TMUX_PANE" && key != "TMUX_TMPDIR" {
+			environment = append(environment, entry)
+		}
+	}
+	environment = append(environment, "TMUX_TMPDIR="+temporary)
+	run := func(args ...string) ([]byte, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		command := exec.CommandContext(ctx, binary, args...)
+		command.Env = environment
+		return command.CombinedOutput()
+	}
+	name := "pce-" + filepath.Base(root)
+	output, err := run("-L", name, "-f", "/dev/null", "new-session", "-d", "-s", "reply-fixture", "-P", "-F", "#{pane_id}|#{socket_path}", "sleep", "3600")
+	if err != nil {
+		t.Fatalf("owned tmux startup: %v", err)
+	}
+	paneID, socket, ok := strings.Cut(strings.TrimSpace(string(output)), "|")
+	if !ok || !strings.HasPrefix(paneID, "%") || !strings.HasPrefix(socket, temporary+string(filepath.Separator)) || filepath.Clean(socket) != socket {
+		t.Fatal("owned tmux identity was not returned")
+	}
+	var identities []coremetadata.ProcessIdentity
+	cleanup := func() bool {
+		// Exact captured socket under the isolated root; inherited tmux context
+		// was removed from every command, including this cleanup invocation.
+		_, _ = run("-S", socket, "kill-server")
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			pending := false
+			for _, identity := range identities {
+				actual, _, err := localipc.Process(identity.PID)
+				if err == nil && actual == identity {
+					pending = true
+				}
+			}
+			if !pending {
+				return true
+			}
+			if time.Now().After(deadline) {
+				t.Error("owned tmux process remained; root retained")
+				return false
+			}
+			time.Sleep(10 * time.Millisecond) // Observe captured births; never a quiet-file interval.
+		}
+	}
+	actual, err := run("-S", socket, "display-message", "-p", "-t", paneID, "#{socket_path}")
+	if err != nil || strings.TrimSpace(string(actual)) != socket {
+		cleanup()
+		t.Fatal("owned tmux socket query differed")
+	}
+	if _, err := run("-S", socket, "set-option", "-p", "-t", paneID, "@projmux_pane_uid", paneUID); err != nil {
+		cleanup()
+		t.Fatal(err)
+	}
+	processes, err := run("-S", socket, "display-message", "-p", "-t", paneID, "#{pid}|#{pane_pid}")
+	if err != nil {
+		cleanup()
+		t.Fatal("owned tmux process identities unavailable")
+	}
+	for value := range strings.SplitSeq(strings.TrimSpace(string(processes)), "|") {
+		pid, err := strconv.Atoi(value)
+		if err != nil {
+			cleanup()
+			t.Fatal("owned tmux process identity malformed")
+		}
+		identity, _, err := localipc.Process(pid)
+		if err != nil {
+			cleanup()
+			t.Fatal("owned tmux process disappeared")
+		}
+		identities = append(identities, identity)
+	}
+	if len(identities) != 2 {
+		cleanup()
+		t.Fatal("owned tmux process identity count")
+	}
+	return []string{"TMUX=" + fmt.Sprintf("%s,%d,0", socket, identities[0].PID), "TMUX_PANE=" + paneID, "TMUX_TMPDIR=" + temporary}, paneID, cleanup
+}
+
 func processFixtureCodexSource(t *testing.T, registry *coremetadata.Registry, claudeUID, stateDir string) (coremetadata.AgentRouteRef, func()) {
 	t.Helper()
 	claude, _ := registry.Agent(claudeUID)
@@ -185,8 +276,22 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer os.RemoveAll(root)
+	retainRoot := false
+	defer func() {
+		if !retainRoot {
+			_ = os.RemoveAll(root)
+		}
+	}()
 	h := newSessionRefHarness(t, aiModeClaude)
+	muxEnvironment, paneID, closeMux := processFixtureReplyTmux(t, root, h.paneUID)
+	defer func() {
+		if !closeMux() {
+			retainRoot = true
+		}
+	}()
+	if _, err := intmetadata.DefaultMutator().ObservePaneActivationRuntime(h.registry, h.paneUID, h.envGeneration, paneID); err != nil {
+		t.Fatal(err)
+	}
 	registryPath := intmetadata.PathFor(filepath.Join(root, "state", "projmux"))
 	sourceRoute, closeSource := processFixtureCodexSource(t, h.registry, h.agentUID, filepath.Dir(filepath.Dir(registryPath)))
 	defer closeSource()
@@ -211,7 +316,9 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	cmd.Env = append(claudeEndpointProcessEnv(root, binary), "PMX_TEST_CAPTURE="+capturePath)
+	cmd.Dir = root
+	cmd.Env = append(claudeEndpointProcessEnv(root, binary), muxEnvironment...)
+	cmd.Env = append(cmd.Env, "PMX_TEST_CAPTURE="+capturePath, internalClaudeReplyGuardEnv+"=1")
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -442,5 +549,5 @@ func claudeEndpointProcessEnv(root, binary string) []string {
 			env = append(env, value)
 		}
 	}
-	return append(env, "TMUX_PANE=%7", "XDG_CONFIG_HOME="+filepath.Join(root, "config"), "XDG_STATE_HOME="+filepath.Join(root, "state"), "XDG_RUNTIME_DIR="+filepath.Join(root, "runtime"), "TMPDIR="+root, "PMX_TEST_ROOT="+root, "PMX_TEST_BIN="+binary)
+	return append(env, "XDG_CONFIG_HOME="+filepath.Join(root, "config"), "XDG_STATE_HOME="+filepath.Join(root, "state"), "XDG_RUNTIME_DIR="+filepath.Join(root, "runtime"), "TMPDIR="+root, "PMX_TEST_ROOT="+root, "PMX_TEST_BIN="+binary)
 }

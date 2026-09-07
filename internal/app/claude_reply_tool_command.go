@@ -125,5 +125,8 @@ func runClaudeReplyTool(args []string, stdout io.Writer) error {
 	// Exec the already-open reviewed image. Replacing the pathname cannot load
 	// a different executable between the last fence and execve.
 	executable := filepath.Join("/proc/self/fd", strconv.FormatUint(uint64(gate.executable.Fd()), 10))
+	// #nosec G204 -- pinned owned image fd/hash and current caller proved above;
+	// argv comes only from the helper's exact one-use broker reply permit, with
+	// a fixed environment. No carrier text is executed or passed to a shell.
 	return syscall.Exec(executable, result.Argv, gate.policy.Environment)
 }

@@ -129,17 +129,17 @@ func newClaudeReplyToolGate(policy claudeReplyToolPolicy) (*claudeReplyToolGate,
 	}
 	after, err := file.Stat()
 	if err != nil || !os.SameFile(before, after) {
-		file.Close()
+		_ = file.Close()
 		return nil, errClaudeReplyTool
 	}
 	directory, err := os.Lstat(policy.Directory)
 	if err != nil || !directory.IsDir() || !localipc.OwnedByCurrentUser(directory) {
-		file.Close()
+		_ = file.Close()
 		return nil, errClaudeReplyTool
 	}
 	digest := sha256.New()
 	if _, err := io.Copy(digest, file); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, errClaudeReplyTool
 	}
 	return &claudeReplyToolGate{policy: policy, executable: file, executableInfo: after, directoryInfo: directory, digest: hex.EncodeToString(digest.Sum(nil)),
@@ -163,7 +163,7 @@ func (g *claudeReplyToolGate) currentExecutable(peer coremetadata.ProcessIdentit
 		return false
 	}
 	current, err := os.Lstat(g.policy.Executable)
-	if err != nil || !os.SameFile(current, g.executableInfo) {
+	if err != nil || !os.SameFile(current, g.executableInfo) || current.Mode().Perm()&0o022 != 0 {
 		return false
 	}
 	image, err := os.Stat(filepath.Join("/proc", strconvPID(peer.PID), "exe"))
@@ -172,6 +172,11 @@ func (g *claudeReplyToolGate) currentExecutable(peer coremetadata.ProcessIdentit
 	}
 	dir, err := os.Lstat(g.policy.Directory)
 	return err == nil && os.SameFile(dir, g.directoryInfo)
+}
+
+func (g *claudeReplyToolGate) ready() bool {
+	process, _, err := localipc.Process(os.Getpid())
+	return err == nil && g.currentExecutable(process)
 }
 
 func strconvPID(pid int) string {
@@ -293,7 +298,8 @@ func (g *claudeReplyToolGate) consume(marker string, peer coremetadata.ProcessId
 		return nil, errClaudeReplyTool
 	}
 	delete(g.permits, marker) // Failed consumption is terminal; never a queued permit.
-	if !permit.expires.After(time.Now()) || !h.permitsExplicitTool(permit.argv, route, broker) {
+	id := sha256.Sum256([]byte(permit.toolUseID))
+	if !strings.HasPrefix(marker, "pmx-reply-ticket-"+hex.EncodeToString(id[:8])+"-") || !permit.expires.After(time.Now()) || !h.permitsExplicitTool(permit.argv, route, broker) {
 		return nil, errClaudeReplyTool
 	}
 	if _, exists := g.executing[peer]; exists {
@@ -316,5 +322,5 @@ func (g *claudeReplyToolGate) authorizeCommit(peer coremetadata.ProcessIdentity,
 		return false
 	}
 	delete(g.executing, peer)
-	return permit.expires.After(time.Now()) && permit.argv[4] == "uid:"+reply.Target.AgentUID && permit.argv[6] == reply.ReplyTo && permit.argv[8] == reply.Payload
+	return permit.peer == peer && permit.expires.After(time.Now()) && permit.argv[4] == "uid:"+reply.Target.AgentUID && permit.argv[6] == reply.ReplyTo && permit.argv[8] == reply.Payload
 }

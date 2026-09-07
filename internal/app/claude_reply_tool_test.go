@@ -274,3 +274,41 @@ func TestClaudeExplicitReplyUnsupportedTargetCannotCorruptStore(t *testing.T) {
 		t.Fatal("store became malformed")
 	}
 }
+
+func TestClaudeQualificationRequiresCurrentPinnedMemoryGuard(t *testing.T) {
+	for _, kind := range []string{"missing guard", "replaced image", "writable image"} {
+		t.Run(kind, func(t *testing.T) {
+			fixture := newClaudeCoordinationTestFixture(t)
+			if kind != "missing guard" {
+				gate, _ := newClaudeReplyToolTestGate(t)
+				fixture.server.tool = gate
+				if kind == "replaced image" {
+					if err := os.Rename(gate.policy.Executable, gate.policy.Executable+".old"); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(gate.policy.Executable, []byte("replacement"), 0o700); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := os.Chmod(gate.policy.Executable, 0o777); err != nil {
+					t.Fatal(err)
+				}
+			}
+			now := time.Now().UTC()
+			broker := &failingClaudeDialogueBroker{}
+			poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
+			fixture.server.broker, fixture.server.poster = broker, poster
+			evidence := exactQualificationEvidence(fixture.route, now) // Asserted boolean is deliberately true.
+			challenge := qualificationTestEnvelope(fixture.route, now)
+			response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "qualify", Target: fixture.target,
+				Qualification: &evidence, Envelope: &challenge, ExplicitOptIn: true})
+			if response.Kind != "qualification-refused" || response.Reason != "pinned-reply-execution-required" || poster.calls != 0 || broker.handoffs != 0 {
+				t.Fatal("asserted evidence gained authority without a current pinned guard")
+			}
+			fixture.server.hub.qualifiedVersion = claudeFrozenFrameProviderVersion // Simulate an obsolete local qualification.
+			eligibility := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "eligibility", Target: fixture.target})
+			if eligibility.Kind != "unqualified" {
+				t.Fatal("old unguarded qualification was inherited")
+			}
+		})
+	}
+}

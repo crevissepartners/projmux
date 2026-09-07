@@ -311,7 +311,7 @@ func TestClaudeBrokerStoreLayoutAndImmutableEnvelopeMismatchAreExact(t *testing.
 
 func TestClaudeCoordinationV1V2AndV3HelpersCannotReceiveV4Traffic(t *testing.T) {
 	fixture := newClaudeCoordinationTestFixture(t)
-	for _, version := range []int{1, 2, 3} {
+	for _, version := range []int{1, 2, 3, 4} {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		response, err := callClaudeCoordination(ctx, fixture.registryPath, fixture.route, claudeCoordinationRequest{
 			Version: version, Operation: "submit", Target: fixture.target,

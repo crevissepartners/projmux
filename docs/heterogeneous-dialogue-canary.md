@@ -22,9 +22,11 @@ surface. Provider messaging credentials are absent from the executed reply's
 fixed environment. No model-authored command becomes a shell program.
 
 This intermediate implementation has deterministic guard tests but is **not ready
-for a live run**: qualification must require the actual pinned memory guard,
-offline process fixtures must exercise that guarded public command, and the live
-runner still needs its single-tool launch and model-action/claim evidence update.
+for a live run**: the live runner still needs its single-tool launch and model-action/claim
+evidence update. Qualification requires the current pinned memory guard, and
+the offline process/L20 fixtures execute its guarded public command. Private
+coord v5 refuses earlier helpers without that proof; the frozen vendor auth/user
+frame is unchanged.
 An asserted `replyExecutionGate` boolean does not prove those remaining gates.
 
 The required release test is the selectorless offline `L20` E2E. This runbook

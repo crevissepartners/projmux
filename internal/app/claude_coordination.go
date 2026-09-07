@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	claudeCoordinationVersion            = 4
+	claudeCoordinationVersion            = 5
 	claudeProviderFrameMaxBytes          = 8 << 10
 	claudeCoordinationHookTimeout        = 5 * time.Second
 	priorClaudeCoordinationManagedMarker = "projmux-managed:claude-coordination:v1"
@@ -397,12 +397,17 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "ready"})
 	case "eligibility":
 		kind, reason := "unqualified", "exact-version-isolated-qualification-required"
-		if s.hub.coordinationEligible() {
+		if s.tool.ready() && s.hub.coordinationEligible() {
 			kind, reason = "qualified", "exact-public-init-and-explicit-reply"
 		}
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind,
 			ProviderVersion: claudeFrozenFrameProviderVersion, Reason: reason})
 	case "qualify":
+		if !s.tool.ready() {
+			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion,
+				Kind: "qualification-refused", Reason: "pinned-reply-execution-required"})
+			return
+		}
 		if request.Qualification == nil || !request.ExplicitOptIn {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion,
 				Kind: "qualification-refused", Reason: "missing-public-init-evidence"})
@@ -412,7 +417,7 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 	case "qualification-status":
 		_ = localipc.WriteJSON(conn, s.hub.qualificationResponse(request.QualificationRef))
 	case "submit":
-		if request.Envelope == nil || !request.Envelope.valid(time.Now(), s.route) {
+		if (s.tool != nil && !s.tool.ready()) || request.Envelope == nil || !request.Envelope.valid(time.Now(), s.route) {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused"})
 			return
 		}
