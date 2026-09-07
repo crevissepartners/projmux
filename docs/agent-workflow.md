@@ -1812,7 +1812,9 @@ separate decision this measurement exists to inform.
 - `test/agent_dialogue_canary_test.py` covers exact public claim/schema mutations,
   runtime-first owner/generation negatives, prepare-without-provider-launch,
   environment isolation, and automatic partial-setup delayed-writer/early-error
-  cleanup. Audit tests preserve closed stage/exit and exact writer birth evidence
+  cleanup, plus registered Project session projection/foreign-scope refusals
+  before runtime creation and automatic cleanup of a registered Project when
+  setup fails before tmux creation. Audit tests preserve closed stage/exit and exact writer birth evidence
   outside the disposable root, reject unsafe candidate permissions before
   credential copying, and retain roots after uncertain cleanup without retry. Product `TestClaudeDialogueStream*` tests own public output parsing;
   the obsolete separate canary collector is removed.

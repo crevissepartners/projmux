@@ -390,7 +390,7 @@ class DialogueAuditTest(unittest.TestCase):
 
     def test_each_public_setup_command_preserves_closed_stage_exit_and_byte_counts(self):
         stages=('claude-version','codex-version','tmux-create','tmux-socket','tmux-server',
-                'tmux-project','project-create','reconcile','windows-get','sender-create','receiver-create')
+                'tmux-project','project-create','project-get','reconcile','windows-get','sender-create','receiver-create')
         for stage in stages:
             with self.subTest(stage=stage), mock.patch.object(subprocess,'run',return_value=subprocess.CompletedProcess([],37,b'private output',b'private diagnostic')):
                 with self.assertRaises(ValueError):
@@ -407,11 +407,73 @@ class DialogueAuditTest(unittest.TestCase):
             calls=[]
             def invoke(stage,argv,**kwargs):
                 self.audit.stage(stage); calls.append(stage)
-                return {'tmux-create':'%0','tmux-socket':str(path),'tmux-server':'2','project-create':'project','windows-get':'malformed'}.get(stage,'')
+                return {'tmux-create':'%0','tmux-socket':str(path),'tmux-server':'2','project-create':'project','project-get':json.dumps(dict(items=[dict(kind='Project',metadata=dict(uid='project'),spec=dict(root=str(self.root/'work')),status=dict(session=dict(name='registered-session')))])),'windows-get':'malformed'}.get(stage,'')
             with self.assertRaises(ValueError):
                 self.code['setup'](self.root,'/fixture-candidate','fixture',invoke,self.audit.stage)
         self.assertEqual(self.records()[-1]['stage'],'window-validation')
         self.assertNotIn('sender-create',calls); self.assertNotIn('receiver-create',calls)
+
+    def test_registered_project_session_projection_precedes_runtime_and_refuses_foreign(self):
+        valid=dict(kind='Project',metadata=dict(uid='project'),spec=dict(root=str(self.root/'work')),status=dict(session=dict(name='canonical-owned-work')))
+        class StopBeforeRuntime(Exception): pass
+        calls=[]
+        def invoke(stage,argv,**kwargs):
+            calls.append((stage,argv))
+            if stage=='project-create':return 'project\n'
+            if stage=='project-get':
+                self.assertEqual(argv,['/candidate','get','projects','--project','uid:project','-o','json'])
+                return json.dumps(dict(items=[valid]))
+            if stage=='tmux-create':raise StopBeforeRuntime()
+            self.fail('unexpected stage')
+        with self.assertRaises(StopBeforeRuntime):self.code['setup'](self.root,'/candidate','fixture',invoke,self.audit.stage)
+        self.assertEqual([stage for stage,_ in calls],['project-create','project-get','tmux-create'])
+        argv=calls[-1][1];self.assertEqual(argv[argv.index('-s')+1],'canonical-owned-work')
+        for key,value in [('kind','Pane'),('metadata',dict(uid='foreign')),('spec',dict(root='/foreign')),('status',dict(session=dict(name=''))),('status',dict(session=dict(name='../foreign')))]:
+            original=valid[key];valid[key]=value;calls.clear()
+            with self.assertRaises(ValueError):self.code['setup'](self.root,'/candidate','fixture',invoke,self.audit.stage)
+            self.assertNotIn('tmux-create',[stage for stage,_ in calls]);valid[key]=original
+
+    @unittest.skipUnless(hasattr(os,'pidfd_open'),'Linux exact writer proof')
+    def test_registered_project_failure_before_tmux_cleans_exact_uid_and_preserves_audit(self):
+        for failure_stage in ('project-get','project-validation','tmux-create'):
+            with self.subTest(stage=failure_stage):
+                root=self.parent/failure_stage; root.mkdir()
+                for part in ('work','evidence','tmux','home/.claude','xdg-state/projmux/metadata'):
+                    (root/part).mkdir(parents=True,exist_ok=True)
+                credential=root/'home/.claude/.credentials.json'; credential.write_text('fixture only')
+                audit=self.code['Audit'].create(root,self.parent/(failure_stage+'-receipt'))
+                item=dict(kind='Project',metadata=dict(uid='exact-project'),spec=dict(root=str(root/'work')),status=dict(session=dict(name='canonical-session')))
+                calls=[]
+                def invoke(stage,argv,**kwargs):
+                    audit.stage(stage); calls.append(stage)
+                    if stage==failure_stage: raise ValueError('injected setup failure')
+                    if stage=='project-create':
+                        (root/'xdg-state/projmux/metadata/registry.json').write_text(json.dumps(dict(projects=[item])))
+                        return 'exact-project'
+                    if stage=='project-get':
+                        projected=copy.deepcopy(item)
+                        if failure_stage=='project-validation': projected['metadata']['uid']='foreign'
+                        return json.dumps(dict(items=[projected]))
+                    self.fail('unexpected setup stage')
+                with self.assertRaises(ValueError): self.code['setup'](root,'/candidate','fixture-owned',invoke,audit.stage)
+                self.assertNotIn('sender-create',calls)
+                self.assertFalse(any(root.joinpath('tmux').rglob('*')))
+                identity=root.stat(); controls=[]
+                def control(argv,**kwargs):
+                    controls.append(argv)
+                    if argv[-2:]==['-p','#{socket_path}']: return subprocess.CompletedProcess(argv,1,b'')
+                    self.assertEqual(argv[-7:],['/candidate','delete','project','uid:exact-project','--socket','fixture-owned','--yes'])
+                    self.assertIn('XDG_STATE_HOME='+str(root/'xdg-state'),argv)
+                    return subprocess.CompletedProcess(argv,0,b'')
+                with mock.patch.object(subprocess,'run',side_effect=control):
+                    self.code['finish_setup_failure'](root,'/candidate','fixture-owned',(identity.st_dev,identity.st_ino),audit)
+                self.assertEqual(len(controls),2)
+                self.assertFalse(root.exists()); self.assertFalse(credential.exists())
+                rows=[json.loads(line) for line in audit.path.read_text().splitlines()]
+                proof=next(row for row in rows if row.get('outcome')=='writers-exited')
+                self.assertTrue(proof['proof']['allCapturedWriterBirthsAbsent'])
+                self.assertFalse(proof['rootAbsent'])
+                self.assertEqual(rows[-1]['outcome'],'root-removed')
 
     def test_audit_rejects_occupied_symlink_replacement_and_bounds(self):
         with self.assertRaises(FileExistsError): self.code['Audit'].create(self.root,self.parent/'receipt')

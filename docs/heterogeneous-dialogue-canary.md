@@ -114,9 +114,13 @@ Claude settings are observed and must remain unchanged.
 Setup constructs a fresh environment: private HOME/CODEX_HOME/XDG/TMUX_TMPDIR,
 owned provider aliases, and no inherited TMUX, TMUX_PANE, CLAUDE_CONFIG_DIR,
 messaging credentials or ambient Projmux routing. It uses a unique tmux `-L`
-name, immediately verifies the actual socket is below the owned root, then uses
-public project creation/reconcile and these exact actor command shapes in the
-owned anchor context:
+name. It first registers the Project and reads that exact public Project
+projection with `get projects --project uid:<P> -o json`, checking the sole
+item’s UID/root and using its canonical `status.session.name`
+for the private tmux session. It immediately verifies the actual socket is below
+the owned root, reconciles resources, then uses these actor command shapes in the
+owned anchor context. A hardcoded alternative session name would conflict with
+the registered Project root and must not bypass the create ownership guard:
 
 ```text
 projmux create agent --provider codex --project uid:<P> --window uid:<W> -o pane-id

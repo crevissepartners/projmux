@@ -17,7 +17,7 @@ import uuid
 STAGES = frozenset((
     'prepare', 'pins', 'claude-version', 'codex-version', 'tmux-create',
     'tmux-socket', 'socket-validation', 'tmux-server', 'tmux-project',
-    'project-create', 'reconcile', 'windows-get', 'window-validation',
+    'project-create', 'project-get', 'project-validation', 'reconcile', 'windows-get', 'window-validation',
     'sender-create', 'receiver-create', 'runtime-chain', 'input-write',
     'readiness', 'run', 'run-validation', 'initial-evidence', 'source-claim',
     'qualification', 'qualification-claim', 'qualification-proof',
@@ -157,7 +157,20 @@ def finish_setup_failure(root, binary, socket_name, identity, audit=None, **test
 
 def setup(root, binary, socket_name, invoke, stage=lambda _: None):
     """Only public tmux/project/create routes; no fabricated Codex binding."""
-    anchor=invoke('tmux-create',['tmux','-L',socket_name,'new-session','-d','-P','-F','#{pane_id}','-s','dialogue-canary','-c',str(root/'work'),'sleep','3600']).strip()
+    project=invoke('project-create',[binary,'create','project','--root',str(root/'work'),'--name','dialogue-canary','-o','uid']).strip()
+    project_json=invoke('project-get',[binary,'get','projects','--project','uid:'+project,'-o','json'])
+    stage('project-validation')
+    projects=json.loads(project_json)['items']
+    if len(projects)!=1: raise ValueError('unique owned Project')
+    item=projects[0]
+    if item.get('kind')!='Project' or item['metadata']['uid']!=project or item['spec']['root']!=str(root/'work'):
+        raise ValueError('owned Project projection')
+    session_name=item['status']['session']['name']
+    if not isinstance(session_name,str) or not session_name.strip() or len(session_name.encode())>256 or session_name in ('.','..') or '/' in session_name or '\\' in session_name or any(ord(char)<32 for char in session_name):
+        raise ValueError('Project session projection')
+    # Registration already selected this physical projection. Creating a
+    # differently named session would create a conflicting Project root claim.
+    anchor=invoke('tmux-create',['tmux','-L',socket_name,'new-session','-d','-P','-F','#{pane_id}','-s',session_name,'-c',str(root/'work'),'sleep','3600']).strip()
     socket_path=invoke('tmux-socket',['tmux','-L',socket_name,'display-message','-p','-t',anchor,'#{socket_path}']).strip()
     stage('socket-validation')
     path=pathlib.Path(socket_path)
@@ -165,8 +178,7 @@ def setup(root, binary, socket_name, invoke, stage=lambda _: None):
     if root not in path.parents or path.is_symlink() or not stat.S_ISSOCK(info.st_mode) or info.st_uid!=os.getuid():
         raise ValueError('owned socket')
     server=int(invoke('tmux-server',['tmux','-S',socket_path,'display-message','-p','-t',anchor,'#{pid}']).strip())
-    invoke('tmux-project',['tmux','-S',socket_path,'set-option','-t','dialogue-canary','-q','@projmux_project_path',str(root/'work')])
-    project=invoke('project-create',[binary,'create','project','--root',str(root/'work'),'--name','dialogue-canary','-o','uid']).strip()
+    invoke('tmux-project',['tmux','-S',socket_path,'set-option','-t',session_name,'-q','@projmux_project_path',str(root/'work')])
     invoke('reconcile',[binary,'reconcile','resources','--socket-path',socket_path])
     window_json=invoke('windows-get',[binary,'get','windows','--project','uid:'+project,'-o','json'])
     stage('window-validation')
