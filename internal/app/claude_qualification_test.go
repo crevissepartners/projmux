@@ -271,7 +271,7 @@ func TestClaudeQualificationPublishesOriginalBeforeConcurrentExplicitReply(t *te
 	if got := <-qualificationDone; got.Kind != "qualification-pending" {
 		t.Fatalf("qualification=%+v", got)
 	}
-	if got := <-replyDone; got.Kind != "reply-accepted" || broker.replies != 1 || !hub.coordinationEligible() {
+	if got := <-replyDone; got.Kind != "reply-accepted" || broker.replies != 1 || poster.callCount() != 1 || !hub.coordinationEligible() {
 		t.Fatalf("reply=%+v commits=%d", got, broker.replies)
 	}
 }

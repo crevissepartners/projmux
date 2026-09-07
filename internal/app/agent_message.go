@@ -157,7 +157,7 @@ func (liveAgentMessageClaudeAdapter) Status(ctx context.Context, registryPath st
 func claudeResponseDelivery(messageRef string, response claudeCoordinationResponse) (agentdelivery.Delivery, bool) {
 	if response.Version != claudeCoordinationVersion || response.AutoResend || response.Reason != "" ||
 		response.ReplyRef != "" || response.QualificationRef != "" ||
-		response.ProviderVersion != "" || response.Ambiguous {
+		response.ProviderVersion != "" || response.Ambiguous || response.ToolResult != nil {
 		return agentdelivery.Delivery{}, false
 	}
 	switch response.Kind {

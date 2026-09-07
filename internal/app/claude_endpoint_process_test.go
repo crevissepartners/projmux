@@ -19,6 +19,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	claudeadapter "github.com/crevissepartners/projmux/internal/integrations/agents/claude"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
 
@@ -92,6 +93,82 @@ os.unlink(path)
 receipt.write('provider-connections=4\n'); receipt.flush()
 `
 
+// This fixture uses the same real broker authority surface as L20. Registry
+// provider labels alone are never enough to pass the final source fence.
+func processFixtureCodexSource(t *testing.T, registry *coremetadata.Registry, claudeUID, stateDir string) (coremetadata.AgentRouteRef, func()) {
+	t.Helper()
+	claude, _ := registry.Agent(claudeUID)
+	mutator := intmetadata.DefaultMutator()
+	agent, err := mutator.CreateAgent(registry, claude.Metadata.OwnerUID(), coremetadata.CreateAgentOptions{Provider: "codex", OperationID: "op-source-create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pane, err := mutator.AttachAgentPane(registry, agent.Metadata.UID, coremetadata.BootstrapPane{Command: "codex", CWD: stateDir}, "op-source-attach")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generation := "gen-process-codex"
+	if _, err := mutator.RecordPaneActivation(registry, pane.Metadata.UID, coremetadata.PaneActivationOptions{Generation: generation, AgentUID: agent.Metadata.UID, OperationID: "op-source-attach"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mutator.ObservePaneActivationRuntime(registry, pane.Metadata.UID, generation, "%8"); err != nil {
+		t.Fatal(err)
+	}
+	endpoint := coremetadata.CodexEndpointRef{StateDomainID: "process-dialogue-domain", EndpointGenerationID: "process-dialogue-endpoint"}
+	key, err := codexbroker.NewEndpointKey(endpoint.StateDomainID, endpoint.EndpointGenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	discovery, err := codexbroker.NewDiscovery(stateDir, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	upstream := newBrokerTestEndpoint()
+	broker, err := codexbroker.NewBroker(codexbroker.Config{Endpoint: key, Opener: func(context.Context) (codexbroker.Endpoint, error) { return upstream, nil }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	host, err := codexbroker.StartHost(codexbroker.HostConfig{Discovery: discovery, Broker: broker, IdleTimeout: -1})
+	if err != nil {
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	binding, err := broker.Bind("process-source-thread", "", nil)
+	if err != nil {
+		_ = host.Close()
+		_ = broker.Close()
+		t.Fatal(err)
+	}
+	cleanup := func() { _ = binding.Close(); _ = host.Close(); _ = broker.Close() }
+	var observed codexbroker.Event
+	select {
+	case observed = <-binding.Events():
+	case <-time.After(5 * time.Second):
+		cleanup()
+		t.Fatal("source broker snapshot timed out")
+	}
+	if observed.Origin != codexbroker.EventOriginSnapshot {
+		cleanup()
+		t.Fatal("source broker snapshot missing")
+	}
+	if err := mutator.StageCodexEndpoint(registry, agent.Metadata.UID, endpoint); err != nil {
+		cleanup()
+		t.Fatal(err)
+	}
+	if _, err := mutator.BindCodexActivation(registry, coremetadata.CodexActivationObservation{AgentUID: agent.Metadata.UID, PaneUID: pane.Metadata.UID, Generation: generation, ThreadID: "process-source-thread", Endpoint: endpoint}); err != nil {
+		cleanup()
+		t.Fatal(err)
+	}
+	currentPane, _ := registry.Pane(pane.Metadata.UID)
+	currentPane.Status.Activation.Codex.Authority = &coremetadata.CodexAuthorityRef{StateDomainID: endpoint.StateDomainID, EndpointGenerationID: endpoint.EndpointGenerationID, BrokerRuntimeID: host.RuntimeID(), ConnectionEpoch: uint64(observed.Fence.Connection), BindingEpoch: uint64(observed.Fence.Binding)}
+	route, reason := coremetadata.ResolveAgentRoute(*registry, agent.Metadata.UID)
+	if reason != "" {
+		cleanup()
+		t.Fatal(reason)
+	}
+	return route, cleanup
+}
+
 func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	binary := os.Getenv("PMX_TEST_CLAUDE_ENDPOINT_BIN")
 	if binary == "" {
@@ -111,6 +188,8 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	defer os.RemoveAll(root)
 	h := newSessionRefHarness(t, aiModeClaude)
 	registryPath := intmetadata.PathFor(filepath.Join(root, "state", "projmux"))
+	sourceRoute, closeSource := processFixtureCodexSource(t, h.registry, h.agentUID, filepath.Dir(filepath.Dir(registryPath)))
+	defer closeSource()
 	metadataStore := intmetadata.NewStore(registryPath)
 	if _, err := metadataStore.Update(func(reg *coremetadata.Registry) error { *reg = h.registry.Clone(); return nil }); err != nil {
 		t.Fatal(err)
@@ -207,7 +286,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		now := time.Now().UTC()
 		ref := "qualification-" + command
 		original := coremessage.Envelope{Version: coremessage.Version, MessageRef: ref, ConversationRef: conversationRefFor(ref),
-			Source: publicMessageRoute(route), Target: publicMessageRoute(route), Authority: coremessage.PeerAuthority(),
+			Source: publicMessageRoute(sourceRoute), Target: publicMessageRoute(route), Authority: coremessage.PeerAuthority(),
 			Payload: claudeQualificationMarkerPrefix + ref, AcceptedAt: now, Deadline: now.Add(time.Minute)}
 		if _, _, err := messageStore.PutAccepted(original, "claude-coordination"); err != nil {
 			t.Fatal(err)
@@ -246,9 +325,8 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		}
 		now := time.Now().UTC()
 		public := coremessage.Envelope{Version: coremessage.Version, MessageRef: ref, ConversationRef: "conversation-" + ref,
-			// This process-shape test owns one live route; heterogeneous source
-			// authority is exercised by the separate canonical two-Agent E2E.
-			Source: publicMessageRoute(route),
+			// The source owns a real isolated broker binding for this entire test.
+			Source: publicMessageRoute(sourceRoute),
 			Target: publicMessageRoute(route), Authority: coremessage.PeerAuthority(), Payload: "HETEROGENEOUS_MARKER:" + ref,
 			AcceptedAt: now, Deadline: now.Add(time.Minute)}
 		if _, _, err := messageStore.PutAccepted(public, "claude-coordination"); err != nil {

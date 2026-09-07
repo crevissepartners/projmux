@@ -42,6 +42,7 @@ type claudeEndpointBootstrap struct {
 	HookProcess  coremetadata.ProcessIdentity
 	Socket       string
 	Token        string
+	ReplyTool    *claudeReplyToolPolicy
 }
 
 func (claudeEndpointBootstrap) String() string   { return "[private Claude registration]" }
@@ -149,10 +150,14 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 	if err != nil {
 		return claudeEndpointBootstrap{}, false
 	}
+	replyTool, err := captureClaudeReplyToolPolicy(env)
+	if err != nil {
+		return claudeEndpointBootstrap{}, false
+	}
 	return claudeEndpointBootstrap{RegistryPath: registryPath, AgentUID: agent.Metadata.UID, PaneUID: paneUID, Generation: generation,
 		Registration: coremetadata.ClaudeRegistration{Authority: authority},
 		HookProcess:  hookProcess,
-		Socket:       socket, Token: token}, true
+		Socket:       socket, Token: token, ReplyTool: replyTool}, true
 }
 
 func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
@@ -485,7 +490,14 @@ func serveClaudeEndpoint(ctx context.Context, bootstrap claudeEndpointBootstrap,
 	}
 	providerPoster := &liveClaudeProviderPoster{socket: bootstrap.Socket, token: bootstrap.Token,
 		socketIdentity: socketIdentity, process: bootstrap.Registration.Authority.Process, current: current}
-	coordination := startClaudeCoordinationServerWithPoster(coordinationListener, expectedRoute, current, dialogueBroker, providerPoster)
+	var replyTool *claudeReplyToolGate
+	if bootstrap.ReplyTool != nil {
+		replyTool, err = newClaudeReplyToolGate(*bootstrap.ReplyTool)
+		if err != nil {
+			return errClaudeReplyTool
+		}
+	}
+	coordination := startClaudeCoordinationServerWithPoster(coordinationListener, expectedRoute, current, dialogueBroker, providerPoster, replyTool)
 	coordinationListenerOwned = false
 	defer coordination.Close()
 	if !current() {

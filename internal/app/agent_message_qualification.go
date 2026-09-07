@@ -222,7 +222,7 @@ func (c *agentCommand) runMessageQualify(args []string, stdout, stderr io.Writer
 
 func validateClaudeQualificationResponse(response claudeCoordinationResponse, expectedRef, previousKind string) (claudeCoordinationResponse, bool) {
 	if response.Version != claudeCoordinationVersion || response.ProviderVersion != claudeFrozenFrameProviderVersion ||
-		response.AutoResend || response.ReplyRef != "" || response.Delivery.MessageRef != "" || response.Delivery.State != "" ||
+		response.AutoResend || response.ToolResult != nil || response.ReplyRef != "" || response.Delivery.MessageRef != "" || response.Delivery.State != "" ||
 		!validCoordinationRef(response.QualificationRef) || (expectedRef != "" && response.QualificationRef != expectedRef) {
 		return claudeCoordinationResponse{}, false
 	}

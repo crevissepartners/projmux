@@ -119,6 +119,8 @@ type claudeCoordinationRequest struct {
 	StopHookActive   bool                         `json:"stopHookActive,omitempty"`
 	Qualification    *claudeQualificationEvidence `json:"qualification,omitempty"`
 	QualificationRef string                       `json:"qualificationRef,omitempty"`
+	ToolInput        *claudeReplyToolInput        `json:"toolInput,omitempty"`
+	ToolMarker       string                       `json:"toolMarker,omitempty"`
 	ExplicitOptIn    bool                         `json:"explicitOptIn,omitempty"`
 }
 
@@ -131,6 +133,7 @@ type claudeCoordinationResponse struct {
 	QualificationRef string                 `json:"qualificationRef,omitempty"`
 	ProviderVersion  string                 `json:"providerVersion,omitempty"`
 	Ambiguous        bool                   `json:"ambiguous,omitempty"`
+	ToolResult       *claudeReplyToolResult `json:"toolResult,omitempty"`
 	AutoResend       bool                   `json:"autoResend"`
 }
 
@@ -142,6 +145,7 @@ type claudeCoordinationMessage struct {
 }
 
 type claudeCoordinationHub struct {
+	replyExecutable       string
 	mu                    sync.Mutex
 	now                   func() time.Time
 	messages              map[string]*claudeCoordinationMessage
@@ -203,6 +207,7 @@ func validCoordinationRef(value string) bool {
 }
 
 type claudeCoordinationServer struct {
+	tool *claudeReplyToolGate
 	// Serialize reply commits without making official hooks wait for each other.
 	// A concurrent boundary announces invalidation before trying this mutex.
 	hookMu   sync.Mutex
@@ -349,10 +354,14 @@ func validClaudeAssistantReply(value string) bool {
 }
 
 func startClaudeCoordinationServerWithPoster(listener *localipc.Listener, route coremetadata.AgentRouteRef, current func() bool,
-	broker claudeDialogueBroker, poster claudeProviderPoster,
+	broker claudeDialogueBroker, poster claudeProviderPoster, tool ...*claudeReplyToolGate,
 ) *claudeCoordinationServer {
 	server := &claudeCoordinationServer{listener: listener, hub: newClaudeCoordinationHub(), route: route, current: current,
 		broker: broker, poster: poster, done: make(chan struct{})}
+	if len(tool) == 1 && tool[0] != nil {
+		server.tool = tool[0]
+		server.hub.replyExecutable = tool[0].policy.Executable
+	}
 	go server.serve()
 	return server
 }
@@ -429,9 +438,24 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 		// for an older installed hook; it cannot qualify or publish a message.
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion,
 			Kind: "reply-refused", Reason: "explicit-reply-required"})
+	case "tool-prepare", "tool-consume":
+		var result *claudeReplyToolResult
+		toolErr := errClaudeReplyTool
+		if s.tool != nil && request.SessionID == authority.SessionID {
+			if request.Operation == "tool-prepare" && request.ToolInput != nil {
+				result, toolErr = s.tool.prepare(*request.ToolInput, peer, s.route, s.hub, s.broker)
+			} else if request.Operation == "tool-consume" && request.ToolInput == nil {
+				result, toolErr = s.tool.consume(request.ToolMarker, peer, s.route, s.hub, s.broker)
+			}
+		}
+		kind := "tool-refused"
+		if toolErr == nil {
+			kind = "tool-permitted"
+		}
+		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind, ToolResult: result})
 	case "explicit-reply":
 		if request.ReplyEnvelope == nil || request.SessionID != authority.SessionID ||
-			!claudeProviderDescendant(peer, authority.Process) {
+			!claudeProviderDescendant(peer, authority.Process) || (s.tool != nil && !s.tool.authorizeCommit(peer, *request.ReplyEnvelope)) {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion,
 				Kind: "reply-refused", Reason: "exact-provider-caller-required"})
 			return
@@ -452,6 +476,9 @@ func (s *claudeCoordinationServer) Close() {
 	s.hub.close()
 	_ = s.listener.Close()
 	<-s.done
+	if s.tool != nil {
+		s.tool.close()
+	}
 }
 
 func callClaudeCoordination(ctx context.Context, registryPath string, route coremetadata.AgentRouteRef, request claudeCoordinationRequest) (claudeCoordinationResponse, error) {

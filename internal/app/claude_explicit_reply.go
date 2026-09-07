@@ -56,7 +56,7 @@ func (a liveAgentMessageClaudeAdapter) ExplicitReply(ctx context.Context, regist
 }
 
 func (b *liveClaudeDialogueBroker) CommitReply(original, reply coremessage.Envelope) error {
-	if b == nil || b.store == nil || coremessage.ValidateReply(original, reply) != nil ||
+	if b == nil || b.store == nil || reply.Target.Provider != "codex" || coremessage.ValidateReply(original, reply) != nil ||
 		!original.Deadline.After(time.Now()) || !b.Current(reply) {
 		return coremessage.ErrInvalidEnvelope
 	}
@@ -80,7 +80,7 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 	message := h.messages[reply.ReplyTo]
 	if h.closed || broker == nil || message == nil || message.envelope.BrokerEnvelope == nil ||
 		message.delivery.State != agentdelivery.StateDelivered || !message.envelope.Deadline.After(h.now()) ||
-		reply.Source != publicMessageRoute(source) || coremessage.ValidateReply(*message.envelope.BrokerEnvelope, reply) != nil {
+		reply.Target.Provider != "codex" || reply.Source != publicMessageRoute(source) || coremessage.ValidateReply(*message.envelope.BrokerEnvelope, reply) != nil {
 		return refuse("invalid-explicit-reply-correlation")
 	}
 	qualification := h.qualifiedVersion != claudeFrozenFrameProviderVersion
@@ -136,7 +136,7 @@ func (h *claudeCoordinationHub) beginExplicitQualification(evidence claudeQualif
 	refuse := claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "qualification-refused",
 		Reason: "invalid-public-init-or-broker-challenge"}
 	if h.closed || !evidence.validExplicit(now, route) || envelope == nil || !envelope.valid(now, route) ||
-		envelope.BrokerEnvelope == nil || envelope.BrokerEnvelope.ReplyTo != "" ||
+		envelope.BrokerEnvelope == nil || envelope.BrokerEnvelope.Source.Provider != "codex" || envelope.BrokerEnvelope.ReplyTo != "" ||
 		!strings.HasPrefix(envelope.MessageRef, "qualification-") || broker == nil || poster == nil {
 		h.mu.Unlock()
 		return refuse
@@ -152,7 +152,7 @@ func (h *claudeCoordinationHub) beginExplicitQualification(evidence claudeQualif
 	state := &claudeQualificationState{ref: envelope.MessageRef, marker: claudeQualificationMarkerPrefix + envelope.MessageRef,
 		state: "writing", expiresAt: envelope.Deadline}
 	h.qualification = state
-	content, err := providerCoordinationContent(*envelope)
+	content, err := providerCoordinationContent(*envelope, h.replyExecutable)
 	if err != nil || broker.MarkHandoff(*envelope.BrokerEnvelope) != nil {
 		state.state, state.reason = "failed", "qualification-provider-write-zero"
 		response := h.qualificationResponseLocked()

@@ -9,6 +9,24 @@ required before running the live path. Stop text never publishes a reply.
 The deterministic L20 fixture uses explicit public replies; it is not evidence
 of actual provider model execution.
 
+The in-progress execution guard uses an owned exec-form `PreToolUse` hook to
+validate the exact candidate path and public reply argv. Its updated Bash input
+is a one-use ticket in the existing helper's memory. The official
+[`CLAUDE_CODE_SHELL_PREFIX`](https://code.claude.com/docs/en/env-vars) wrapper
+receives a complete shell invocation as one opaque argument. The guard extracts
+exactly one canonical ticket and ignores the remaining bytes; it never evaluates
+that shell invocation. The exact provider descendant, process birth, candidate
+image, current broker request and fixed argv remain required at consumption and
+commit. Exec-form hooks bypass the prefix as documented by the same public
+surface. Provider messaging credentials are absent from the executed reply's
+fixed environment. No model-authored command becomes a shell program.
+
+This intermediate implementation has deterministic guard tests but is **not ready
+for a live run**: qualification must require the actual pinned memory guard,
+offline process fixtures must exercise that guarded public command, and the live
+runner still needs its single-tool launch and model-action/claim evidence update.
+An asserted `replyExecutionGate` boolean does not prove those remaining gates.
+
 The required release test is the selectorless offline `L20` E2E. This runbook
 is an additional opt-in observation against real provider binaries. It is not a
 provider-version guarantee and must never run against an existing fleet,

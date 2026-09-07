@@ -1790,6 +1790,22 @@ separate decision this measurement exists to inform.
 - `TestClaudeExplicitMultipleRequestsAndHumanOverlapSelectOnlyNamedOriginal`
   requires an explicit choice of the original request; Stop text has no reply
   authority regardless of human activity or pending request count.
+- `TestClaudeReplyToolLiteralCommandAndOpaqueCarrier` and
+  `TestClaudeReplyToolRejectsMalformedAndOtherOfficialTools` reject shell
+  expansion, extra commands, nonallowlisted tools and malformed hook input.
+  A shell-prefix carrier supplies only one canonical memory ticket; its other
+  bytes are never executed or retained.
+- `TestClaudeReplyToolTicketsChooseExactActionAndConsumeOnce` and
+  `TestClaudeReplyToolForeignStaleExpiredAndReplacedExecutableExecuteZero`
+  bind parallel actions to separate tickets and one exact process birth,
+  executable inode, current route and argv. Replays, expired tickets, foreign
+  callers, replaced executables and missing hooks obtain no execution witness.
+- `TestClaudeReplyToolRequestedCaptureFailureRefusesAndSecretsAreAbsent` keeps
+  requested guard capture failures closed and messaging credentials out of the
+  fixed public-command environment.
+- `TestClaudeExplicitReplyUnsupportedTargetCannotCorruptStore` rejects a
+  non-Codex reply target before a durable write. The process integration fixture
+  now owns a real Codex broker binding for its original source.
 
 - `TestAuthorityCheckUsesExistingExactLeaseWithoutProviderTraffic` proves the
   dialogue source's exact live Codex broker runtime, connection and binding
