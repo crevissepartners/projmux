@@ -1189,20 +1189,15 @@
   receipts, Agent count two, Codex provider writes zero, and pre-removal
   Registry/tmux/helper/socket/process residual checks. It does not require a
   provider binary, model, network, or version matrix.
-- The real-provider path is opt-in only through
-  `scripts/agent-dialogue-live-canary.sh` and the isolation procedure in
-  `docs/heterogeneous-dialogue-canary.md`. Its gate precedes broker traffic and
-  requires the same long-lived hook-enabled Claude process to publish the
-  reviewed single reply tool, empty MCP servers and plugins, and zero other
-  tool effects. The prior tools-empty runner is not evidence for this explicit
-  reply contract; executable/argv enforcement and actual model execution must
-  be reviewed before enabling the revised live path. Its in-memory collector rejects unknown 2.1.263 public event/field
-  shapes and persists only a sanitized messaging-endpoint presence bit. The
-  same gate captures exact provider, helper, tmux, and Codex self-claim process
-  births, proves both messaging credential keys absent from the helper
-  environment, and requires those births plus the derived activation lease to
-  be absent before publishing zero residuals. `scripts/agent-dialogue-version-stress.sh` is a second opt-in layer;
-  provider/version stress is never part of required selectorless E2E.
+- The real-provider path is opt-in through `scripts/agent-dialogue-canary-setup.py`
+  and `docs/heterogeneous-dialogue-canary.md`. It uses public reply-only activation,
+  product observer/helper-memory evidence and separate qualification/idle claims.
+  Actual model action is compared with the pinned guard and successful broker
+  commit; delivered alone is insufficient. Partial setup and run failures share
+  the owned pidfd writer barrier. Candidate and runner digests are pinned before
+  launch, and success is published only after root removal. Active/human/recovery
+  and installed cases remain distinct observations. Provider/version stress is
+  separately opt-in and never joins required selectorless E2E.
 
 ### Provider hook pane identity tests
 
@@ -1814,10 +1809,14 @@ separate decision this measurement exists to inform.
   `TestClaudeOfficialHookContentionInvalidatesReplyWithoutWaiting` keep compatibility hooks bounded. Explicit reply commits use broker original
   request validation independently of hook timing.
 
-- `test/agent_dialogue_canary_test.py`: paired owned SessionStart lifecycle events
-  may precede init; foreign session/name/event, missing completion, unknown fields,
-  plugin install, and nonempty hook output fail before provider traffic without
-  retaining raw output. Runs with `make test` through `ci-contract`.
+- `test/agent_dialogue_canary_test.py` covers exact public claim/schema mutations,
+  runtime-first owner/generation negatives, prepare-without-provider-launch,
+  environment isolation, and automatic partial-setup delayed-writer/early-error
+  cleanup. Product `TestClaudeDialogueStream*` tests own public output parsing;
+  the obsolete separate canary collector is removed.
+- `TestClaudeDialogueCanaryAcceptsProductionStoreAndPublicClaimReceipts` validates
+  production Store.PutReply/Claim and public CLI JSON with the Python companion,
+  including the actual `target-self-claim` reason and version-2 envelope.
 
 - L20 owns a real authenticated Codex broker host and keeps its observed snapshot
   binding alive for the round trip; Registry-only synthetic authority is refused.

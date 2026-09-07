@@ -1,4 +1,6 @@
-"""No provider traffic: exercise the live canary's public-stream sanitizer."""
+"""Offline canary evidence/cleanup checks; public-stream parsing is tested in Go."""
+import copy
+import hashlib
 import concurrent.futures
 import json
 import os
@@ -12,196 +14,7 @@ import pathlib
 import subprocess
 import tempfile
 import unittest
-
-
-class DialogueCollectorTest(unittest.TestCase):
-    def setUp(self):
-        source = (pathlib.Path(__file__).resolve().parents[1] /
-                  "scripts/agent-dialogue-live-canary.sh").read_text()
-        code = source.split("print(r'''#!/usr/bin/env python3\n", 1)[1].split("''')\nPY", 1)[0]
-        self.root = tempfile.TemporaryDirectory(prefix="pmx-dialogue-collector-")
-        self.addCleanup(self.root.cleanup)
-        root = pathlib.Path(self.root.name)
-        (root / "bin").mkdir()
-        (root / "home/.claude").mkdir(parents=True)
-        self.collector = root / "bin/collector"
-        self.collector.write_text(code)
-        commands = [
-            "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1",
-            "exec projmux internal claude-endpoint-register >/dev/null 2>&1 # projmux-managed:claude-hook:v1",
-        ]
-        (root / "home/.claude/settings.json").write_text(json.dumps({"hooks": {
-            "SessionStart": [{"hooks": [{"type": "command", "command": c} for c in commands]}]}}))
-        self.rows = []
-        for index, command in enumerate(commands):
-            base = dict(type="system", hook_id=f"hook-{index}", hook_name=command,
-                        hook_event="SessionStart", session_id="owned-session", uuid=f"event-{index}")
-            self.rows.extend([dict(base, subtype="hook_started"), dict(base, subtype="hook_response",
-                              output="", stdout="", stderr="", exit_code=0, outcome="success")])
-        self.rows.append(dict(type="system", subtype="init", session_id="owned-session"))
-
-    def collect(self, rows):
-        return subprocess.run(["python3", str(self.collector)],
-                              input="".join(json.dumps(row) + "\n" for row in rows),
-                              text=True, capture_output=True, timeout=5, check=False)
-
-    def test_tool_usage_and_nested_secret_shapes_fail_before_disk(self):
-        assistant = dict(type="assistant", uuid="owned-assistant", session_id="owned-session",
-                         message=dict(role="assistant", content=[dict(type="text", text="READY.")]))
-        result = dict(type="result", subtype="success", is_error=False, session_id="owned-session", result="READY.")
-        for bad_usage in ({"server_tool_use": {"web_fetch_requests": 1, "web_search_requests": 0}},
-                          {"iterations": [{}]}, {"CLAUDE_CODE_MESSAGING_TOKEN": "DO_NOT_RETAIN"},
-                          {"input_tokens": "DO_NOT_RETAIN"}):
-            for event in (dict(result, usage=bad_usage), dict(assistant, message=dict(assistant["message"], usage=bad_usage))):
-                output = self.collect(self.rows + [event])
-                self.assertNotEqual(output.returncode, 0)
-                self.assertNotIn("DO_NOT_RETAIN", output.stdout + output.stderr)
-        self.assertNotEqual(self.collect(self.rows + [dict(result, structured_output={"token": "DO_NOT_RETAIN"})]).returncode, 0)
-        good = dict(input_tokens=1, output_tokens=1, iterations=[], server_tool_use=dict(web_fetch_requests=0, web_search_requests=0))
-        output = self.collect(self.rows + [dict(result, usage=good)])
-        self.assertEqual(output.returncode, 0, output.stderr)
-        self.assertEqual(json.loads(output.stdout.splitlines()[-1])["usage"], {})
-
-    def test_usage_provider_strings_follow_public_schema_and_are_discarded(self):
-        row = dict(inputTokens=1, outputTokens=1, webSearchRequests=0, costUSD=0,
-                   canonicalModel="fixture model[context]", provider="DO_NOT_RETAIN", costBasis="list")
-        result = dict(type="result", subtype="success", is_error=False, session_id="owned-session",
-                      result="READY.", modelUsage={"fixture-model[context]": row},
-                      usage=dict(inference_geo="", service_tier="fixture tier", speed="DO_NOT_RETAIN"))
-        output = self.collect(self.rows + [result])
-        self.assertEqual(output.returncode, 0, output.stderr)
-        clean = json.loads(output.stdout.splitlines()[-1])
-        self.assertEqual(clean["modelUsage"], {})
-        self.assertEqual(clean["usage"], {})
-        self.assertNotIn("DO_NOT_RETAIN", output.stdout + output.stderr)
-        for change in ({"provider": []}, {"webSearchRequests": 1}, {"unknown": 0}, {"canonicalModel": "x" * 4097}):
-            invalid = dict(result, modelUsage={"fixture-model[context]": dict(row, **change)})
-            self.assertNotEqual(self.collect(self.rows + [invalid]).returncode, 0)
-
-    def test_success_result_and_rate_metadata_are_validated_then_minimized(self):
-        rate = dict(type="rate_limit_event", uuid="owned-rate", session_id="owned-session", rate_limit_info=dict(
-            isUsingOverage=False, overageResetsAt=1, overageStatus="rejected", rateLimitType="five_hour", resetsAt=2,
-            status="allowed", unifiedWindows={"five_hour": dict(resetsAt=2, utilization=0.1), "seven_day": dict(resetsAt=3, utilization=0.2)}))
-        result = dict(type="result", subtype="success", is_error=False, session_id="owned-session", result="READY.",
-                      permission_denials=[], terminal_reason="completed", stop_reason="end_turn", api_error_status=None,
-                      queued_turn_count=0, duration_ms=1, first_content_frame_ms=1, fast_mode_state="off",
-                      fast_mode_disabled_reason="sdk_opt_in_required")
-        output = self.collect(self.rows + [rate, result])
-        self.assertEqual(output.returncode, 0, output.stderr)
-        clean = list(map(json.loads, output.stdout.splitlines()))
-        self.assertEqual(clean[-2], dict(type="rate_limit_event", uuid="owned-rate", session_id="owned-session", metadataValidated=True))
-        self.assertTrue(clean[-1]["metadataValidated"])
-        self.assertNotIn("terminal_reason", clean[-1])
-        for change in ({"is_error": True}, {"api_error_status": 403}, {"queued_turn_count": 1},
-                       {"permission_denials": [{}]}, {"subagent_stats": {"spawned": 1}}, {"terminal_reason": "api_error"}):
-            self.assertNotEqual(self.collect(self.rows + [dict(result, **change)]).returncode, 0)
-        rate["rate_limit_info"]["unifiedWindows"]["five_hour"]["utilization"] = "invalid"
-        self.assertNotEqual(self.collect(self.rows + [rate]).returncode, 0)
-
-    def test_closed_hook_and_refusal_diagnostics_do_not_admit_events(self):
-        events = [dict(self.rows[0], hook_event=kind) for kind in ("UserPromptSubmit", "Stop")]
-        events += [dict(type="system", subtype=kind, content="DO_NOT_RETAIN")
-                   for kind in ("model_refusal_fallback", "model_refusal_no_fallback")]
-        for event in events:
-            output = self.collect(self.rows + [event])
-            self.assertNotEqual(output.returncode, 0)
-            self.assertNotIn("DO_NOT_RETAIN", output.stdout + output.stderr)
-            diagnostic = json.loads(output.stderr.split(": ", 1)[1])
-            if "hook_event" in event:
-                self.assertEqual(diagnostic["hookEventMatch"], event["hook_event"])
-            else:
-                self.assertEqual(diagnostic["subtype"], event["subtype"])
-
-    def test_paired_owned_startup_strips_empty_output(self):
-        result = self.collect(self.rows)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        for event in map(json.loads, result.stdout.splitlines()):
-            self.assertFalse({"output", "stdout", "stderr"} & set(event))
-
-    def test_foreign_or_incomplete_startup_fails_without_retaining_output(self):
-        for mutation in ("alias", "output", "session", "pending", "plugin", "unknown", "setup"):
-            with self.subTest(mutation=mutation):
-                rows = [dict(row) for row in self.rows]
-                if mutation == "alias":
-                    rows[0]["hook_name"] = "unobserved-name"
-                elif mutation == "output":
-                    rows[1]["output"] = "DO_NOT_RETAIN"
-                elif mutation == "session":
-                    rows[1]["session_id"] = "foreign"
-                elif mutation == "pending":
-                    rows.pop(1)
-                elif mutation == "plugin":
-                    rows[0]["subtype"] = "plugin_install"
-                elif mutation == "unknown":
-                    rows[0]["unobserved-field"] = "DO_NOT_RETAIN"
-                elif mutation == "setup":
-                    rows[0]["hook_event"] = "Setup"
-                result = self.collect(rows)
-                self.assertNotEqual(result.returncode, 0)
-                self.assertNotIn("DO_NOT_RETAIN", result.stdout + result.stderr)
-                self.assertNotIn("unobserved-field", result.stderr)
-
-    def test_public_thinking_content_and_signature_are_removed_before_output(self):
-        assistant = dict(type="assistant", uuid="owned-assistant", session_id="owned-session",
-                         parent_tool_use_id=None, message=dict(role="assistant", context_management=None,
-                         diagnostics=None, stop_details=None, content=[dict(type="thinking",
-                         thinking="PRIVATE_THOUGHT", signature="PRIVATE_SIGNATURE"), dict(type="text", text="fixture reply")]))
-        result = self.collect(self.rows + [assistant])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("PRIVATE_THOUGHT", result.stdout + result.stderr)
-        self.assertNotIn("PRIVATE_SIGNATURE", result.stdout + result.stderr)
-        content = json.loads(result.stdout.splitlines()[-1])["message"]["content"]
-        self.assertEqual(content, [dict(type="thinking", contentOmitted=True), dict(type="text", text="fixture reply")])
-        assistant["message"]["diagnostics"] = {}
-        self.assertNotEqual(self.collect(self.rows + [assistant]).returncode, 0)
-        assistant["message"]["diagnostics"] = None
-        assistant["message"]["content"][0]["type"] = "tool_use"
-        self.assertNotEqual(self.collect(self.rows + [assistant]).returncode, 0)
-
-    def test_assistant_wrapper_metadata_does_not_bypass_content_gate(self):
-        assistant = dict(type="assistant", uuid="owned-assistant", session_id="owned-session",
-                         parent_tool_use_id=None, request_id="req_fixture", timestamp="2026-09-06T00:00:00Z",
-                         message=dict(role="assistant", content=[dict(type="text", text="fixture reply")]))
-        self.assertEqual(self.collect(self.rows + [assistant]).returncode, 0)
-        assistant["message"]["unobserved_field"] = "DO_NOT_RETAIN"
-        result = self.collect(self.rows + [assistant])
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("unobserved_field", result.stderr)
-        self.assertNotIn("DO_NOT_RETAIN", result.stdout + result.stderr)
-
-    def test_numeric_progress_is_same_session_post_init_metadata_only(self):
-        progress = dict(type="system", subtype="thinking_tokens", estimated_tokens=12,
-                        estimated_tokens_delta=2, uuid="owned-progress", session_id="owned-session")
-        self.assertEqual(self.collect(self.rows + [progress]).returncode, 0)
-        for change in ({"session_id": "foreign"}, {"estimated_tokens": True},
-                       {"estimated_tokens_delta": "DO_NOT_RETAIN"}, {"text": "DO_NOT_RETAIN"}):
-            result = self.collect(self.rows + [dict(progress, **change)])
-            self.assertNotEqual(result.returncode, 0)
-            self.assertNotIn("DO_NOT_RETAIN", result.stdout + result.stderr)
-        self.assertNotEqual(self.collect([progress] + self.rows).returncode, 0)
-
-    def test_observed_init_metadata_has_no_permission_authority(self):
-        rows = [dict(row) for row in self.rows]
-        rows[-1].update(capabilities=["interrupt_receipt_v1"],
-                        fast_mode_disabled_reason="sdk_opt_in_required",
-                        analytics_disabled=True, product_feedback_disabled=False)
-        self.assertEqual(self.collect(rows).returncode, 0)
-        for key, invalid in (("capabilities", ["unknown value with spaces"]),
-                             ("fast_mode_disabled_reason", "unobserved-reason"),
-                             ("analytics_disabled", 1), ("product_feedback_disabled", "false")):
-            with self.subTest(key=key):
-                changed = [dict(row) for row in rows]
-                changed[-1][key] = invalid
-                self.assertNotEqual(self.collect(changed).returncode, 0)
-
-    def test_observed_startup_display_alias_keeps_two_distinct_hook_pairs(self):
-        rows = [dict(row) for row in self.rows]
-        for row in rows[:-1]:
-            row["hook_name"] = "SessionStart:startup"
-        result = self.collect(rows)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        rows[2]["hook_id"] = rows[0]["hook_id"]
-        self.assertNotEqual(self.collect(rows).returncode, 0)
+from unittest import mock
 
 
 @unittest.skipUnless(hasattr(os, "pidfd_open"), "live canary cleanup requires Linux pidfd")
@@ -270,6 +83,38 @@ class DialogueCleanupTest(unittest.TestCase):
         self.assertEqual(cleanup.returncode, 1, (stdout, stderr))  # Preserve the original canary failure.
         self.assertFalse(self.root.exists())
         self.assertEqual(child.returncode, 0)
+
+    def test_partial_setup_failure_waits_for_writer_and_removes_credential(self):
+        root=self.root
+        for relative in ('tmux','evidence','home/.claude'):
+            (root/relative).mkdir(parents=True,exist_ok=True)
+        (root/'home/.claude/.credentials.json').write_text('fixture only')
+        child=self.writer()
+        before=root.stat(); waiting=threading.Event()
+        setup=runpy.run_path(str(pathlib.Path(__file__).resolve().parents[1]/'scripts/agent-dialogue-canary-setup.py'))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future=executor.submit(setup['finish_setup_failure'],root,sys.executable,'pmx-partial-fixture-'+str(os.getpid()),(before.st_dev,before.st_ino),on_wait=waiting.set,timeout=5)
+            try:
+                self.assertTrue(waiting.wait(5))
+                self.assertTrue(root.exists())
+                self.assertFalse(future.done())
+                self.assertIsNone(child.poll())
+            finally: self.release(child)
+            future.result(timeout=5)
+        self.assertFalse(root.exists())
+        self.assertEqual(child.returncode,0)
+
+    def test_partial_setup_early_cleanup_error_retains_root_but_removes_credential(self):
+        root=self.root
+        (root/'home/.claude').mkdir(parents=True)
+        credential=root/'home/.claude/.credentials.json'; credential.write_text('fixture only')
+        before=root.stat()
+        setup=runpy.run_path(str(pathlib.Path(__file__).resolve().parents[1]/'scripts/agent-dialogue-canary-setup.py'))
+        finish=setup['finish_setup_failure']
+        with mock.patch.dict(finish.__globals__,cleanup_partial=mock.Mock(side_effect=ValueError('early inventory failure'))):
+            with self.assertRaises(ValueError): finish(root,sys.executable,'pmx-unstarted',(before.st_dev,before.st_ino))
+        self.assertTrue(root.exists())
+        self.assertFalse(credential.exists())
 
     def test_captured_writer_stays_owned_after_parent_exit(self):
         read_fd, write_fd = os.pipe()
@@ -435,6 +280,83 @@ class OfflineDialogueCleanupTest(unittest.TestCase):
         finally:
             barrier.close()
 
+
+
+
+class DialogueEvidenceTest(unittest.TestCase):
+    def setUp(self):
+        self.repo = pathlib.Path(__file__).resolve().parents[1]
+        self.code = runpy.run_path(str(self.repo / 'scripts/agent-dialogue-canary-evidence.py'))
+        source = dict(agentUID='codex-agent', paneUID='codex-pane', activationGeneration='codex-generation', provider='codex', incarnation='route-codex')
+        target = dict(agentUID='claude-agent', paneUID='claude-pane', activationGeneration='claude-generation', provider='claude', incarnation='route-claude')
+        self.routes = dict(sender=source, receiver=target)
+        conversation = 'conversation-' + hashlib.sha256(b'message-original').hexdigest()[:36]
+        self.original = dict(version=2,messageRef='message-original', conversationRef=conversation, source=source, target=target, delivery=dict(state='delivered'))
+        self.reply = dict(envelope=dict(version=2,messageRef='message-reply', conversationRef=conversation, replyTo='message-original', source=target, target=source,
+                         authority=dict(kind='peer',trust='untrusted',permission='coordination-only'),payload='EXPECTED'), delivery=dict(state='delivered',reason='target-self-claim'))
+        self.evidence = [dict(toolUseID='tool-owned',messageRef='message-original',targetAgentUID='codex-agent',replyRef='message-reply',resultObserved=True,guardSelectionMatched=True,guardedCommitMatched=True)]
+
+    def validate(self, original=None, reply=None, evidence=None):
+        return self.code['validate_reply'](original or self.original, reply or self.reply, self.evidence if evidence is None else evidence, self.routes, 'EXPECTED')
+
+    def test_delivered_needs_separate_model_action_commit_and_exact_self_claim(self):
+        proof = self.validate()
+        self.assertTrue(proof['delivered'] and proof['exactCodexSelfClaim'])
+        self.assertNotIn('payload', json.dumps(proof))
+        for key, value in [('replyRef','wrong-reply'),('targetAgentUID','wrong-source'),('resultObserved',False),('guardSelectionMatched',False),('guardedCommitMatched',False)]:
+            changed = copy.deepcopy(self.evidence); changed[0][key] = value
+            with self.assertRaises(ValueError): self.validate(evidence=changed)
+        for changed in ([],self.evidence+self.evidence):
+            with self.assertRaises(ValueError): self.validate(evidence=changed)
+        for key, value in [('version',1),('messageRef','message-original'),('authority',{}),('replyTo','wrong-original'),('conversationRef','wrong-conversation'),('payload','wrong-body'),('target',self.routes['receiver'])]:
+            changed = copy.deepcopy(self.reply); changed['envelope'][key] = value
+            with self.assertRaises(ValueError): self.validate(reply=changed)
+        changed = copy.deepcopy(self.original); changed['delivery']['outcomeUnknown'] = True
+        with self.assertRaises(ValueError): self.validate(original=changed)
+        changed = copy.deepcopy(self.reply); changed['delivery']['reason'] = 'accepted'
+        with self.assertRaises(ValueError): self.validate(reply=changed)
+
+    def test_runtime_first_chain_rejects_ambiguous_replaced_or_wrong_owner(self):
+        spec = dict(projectUID='project',windowUID='window',sender=dict(agentUID='codex-agent',paneUID='codex-pane',generation='codex-generation',paneID='%1'),receiver=dict(agentUID='claude-agent',paneUID='claude-pane',generation='claude-generation',paneID='%2'))
+        registry = dict(projects=[dict(metadata=dict(uid='project'))],windows=[dict(metadata=dict(uid='window',ownerRef=dict(kind='Project',uid='project')))],agents=[],panes=[])
+        runtime = {}
+        for role, provider in [('sender','codex'),('receiver','claude')]:
+            actor = spec[role]
+            registry['agents'].append(dict(metadata=dict(uid=actor['agentUID'],ownerRef=dict(kind='Window',uid='window')),spec=dict(provider=provider),status=dict(phase='Running',paneRef=actor['paneUID'])))
+            registry['panes'].append(dict(metadata=dict(uid=actor['paneUID'],ownerRef=dict(kind='Agent',uid=actor['agentUID'])),status=dict(activation=dict(agentUID=actor['agentUID'],generation=actor['generation'],runtimeID=actor['paneID']))))
+            runtime[actor['paneID']] = actor['paneUID']
+        self.code['runtime_chain'](spec,registry,runtime)
+        changes = []
+        duplicate = copy.deepcopy(registry); duplicate['panes'].append(duplicate['panes'][0]); changes.append(duplicate)
+        replaced = copy.deepcopy(registry); replaced['panes'][0]['status']['activation']['generation'] = 'replaced'; changes.append(replaced)
+        wrong = copy.deepcopy(registry); wrong['agents'][0]['status']['paneRef'] = 'claude-pane'; changes.append(wrong)
+        for invalid in changes:
+            with self.assertRaises(ValueError): self.code['runtime_chain'](spec,invalid,runtime)
+
+    def test_owned_environment_discards_ambient_provider_and_routing_policy(self):
+        setup=runpy.run_path(str(self.repo/'scripts/agent-dialogue-canary-setup.py'))
+        env=setup['isolated_environment'](pathlib.Path('/owned/root'))
+        self.assertTrue(all(key not in env for key in ('TMUX','TMUX_PANE','CLAUDE_CONFIG_DIR','CLAUDE_CODE_MESSAGING_TOKEN','CLAUDE_CODE_MESSAGING_SOCKET','PROJMUX_PROJDIR')))
+        self.assertEqual(env['HOME'],'/owned/root/home')
+        self.assertEqual(env['TMUX_TMPDIR'],'/owned/root/tmux')
+
+    def test_prepare_pins_candidate_without_launching_or_private_collector(self):
+        with tempfile.TemporaryDirectory(prefix='pmx-canary-prepare-') as temporary:
+            parent = pathlib.Path(temporary); root = parent/'owned'; credential=parent/'auth'; credential.write_text('fixture authentication only')
+            binary=parent/'candidate'; binary.write_text('#!/bin/sh\nexit 97\n'); binary.chmod(0o700)
+            env=dict(os.environ,PMX_DIALOGUE_CANARY_ROOT=str(root),PMX_DIALOGUE_CANARY_RECEIPT=str(parent/'receipt'),PMX_DIALOGUE_PROJMUX_BIN=str(binary),PMX_DIALOGUE_REAL_CLAUDE_BIN=str(binary),PMX_DIALOGUE_REAL_CODEX_BIN=str(binary),PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE=str(credential),PMX_DIALOGUE_CANDIDATE_HEAD='a'*40)
+            result=subprocess.run(['bash',str(self.repo/'scripts/agent-dialogue-live-canary.sh'),'prepare'],env=env,capture_output=True,text=True,timeout=5)
+            self.assertEqual(result.returncode,0,result.stderr)
+            plan=json.loads((root/'cleanup-plan.json').read_text())
+            self.assertEqual(plan['candidateSHA256'],hashlib.sha256(binary.read_bytes()).hexdigest())
+            self.assertEqual(plan['candidateHead'],'a'*40)
+            self.assertFalse((root/'evidence/provider.stdin').exists())
+            self.assertFalse((root/'bin/collect-claude-public-jsonl').exists())
+            self.assertFalse((root/'home/.claude/settings.json').exists())
+            self.assertNotIn('sha256', (root/'evidence/auth-source-before.json').read_text())
+            self.assertEqual((root/'home/.claude/.credentials.json').read_bytes(),credential.read_bytes())
+            # Candidate exits97 if called: prepare must not launch any provider.
+            self.assertEqual((root/'bin/claude').resolve(),binary)
 
 if __name__ == "__main__":
     unittest.main()

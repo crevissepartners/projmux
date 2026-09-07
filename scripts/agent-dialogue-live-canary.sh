@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 usage() {
   echo "usage: PMX_DIALOGUE_CANARY_ROOT=/absolute/disposable/root $0 prepare|run" >&2
@@ -62,9 +63,12 @@ PY
 if [[ "$mode" == "prepare" ]]; then
   binary="${PMX_DIALOGUE_PROJMUX_BIN:-}"
   real_claude="${PMX_DIALOGUE_REAL_CLAUDE_BIN:-}"
+  real_codex="${PMX_DIALOGUE_REAL_CODEX_BIN:-}"
   credential_file="${PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE:-}"
+  candidate_head="${PMX_DIALOGUE_CANDIDATE_HEAD:-}"
+  [[ "$candidate_head" =~ ^[0-9a-f]{40}$ ]] || { echo "prepare requires PMX_DIALOGUE_CANDIDATE_HEAD" >&2; exit 2; }
   prepared_message_ref="${PMX_DIALOGUE_MESSAGE_REF:-message-heterogeneous-live-canary}"
-  [[ "$binary" == /* && -x "$binary" && "$real_claude" == /* && -x "$real_claude" &&
+  [[ "$binary" == /* && -x "$binary" && "$real_claude" == /* && -x "$real_claude" && "$real_codex" == /* && -x "$real_codex" &&
     "$credential_file" == /* && -f "$credential_file" && "$prepared_message_ref" =~ ^[A-Za-z0-9._:-]{1,160}$ ]] || {
     echo "prepare requires absolute executable PMX_DIALOGUE_PROJMUX_BIN/PMX_DIALOGUE_REAL_CLAUDE_BIN, PMX_DIALOGUE_CLAUDE_CREDENTIAL_FILE, and a bounded PMX_DIALOGUE_MESSAGE_REF" >&2
     exit 2
@@ -82,317 +86,31 @@ if [[ "$mode" == "prepare" ]]; then
   trap prepare_cleanup EXIT
   settings_snapshot >"$root/evidence/global-settings-before.json"
   python3 - "$credential_file" >"$root/evidence/auth-source-before.json" <<'PY'
-import hashlib,json,pathlib,stat,sys
-p=pathlib.Path(sys.argv[1]); b=p.read_bytes(); s=p.stat()
-print(json.dumps({"sha256":hashlib.sha256(b).hexdigest(),"size":len(b),"mode":format(stat.S_IMODE(s.st_mode),"04o"),"mtimeNs":s.st_mtime_ns},sort_keys=True))
+import json,pathlib,stat,sys
+p=pathlib.Path(sys.argv[1]); s=p.stat()
+print(json.dumps({"size":s.st_size,"mode":format(stat.S_IMODE(s.st_mode),"04o"),"mtimeNs":s.st_mtime_ns},sort_keys=True))
 PY
-  python3 - "$root" "$credential_file" "$binary" "$receipt_path" "$prepared_message_ref" >"$root/cleanup-plan.json" <<'PY'
-import json, pathlib, sys, time
+  python3 - "$root" "$credential_file" "$binary" "$receipt_path" "$prepared_message_ref" "$candidate_head" "$real_claude" "$real_codex" "${BASH_SOURCE[0]}" >"$root/cleanup-plan.json" <<'PY'
+import hashlib,json,pathlib,sys,time
 print(json.dumps({"version":3,"ownedRoot":str(pathlib.Path(sys.argv[1]).resolve()),
                   "credentialSource":str(pathlib.Path(sys.argv[2]).resolve()),
                   "candidateBinary":str(pathlib.Path(sys.argv[3]).resolve()),
+                  "claudeBinary":str(pathlib.Path(sys.argv[7]).resolve()),"codexBinary":str(pathlib.Path(sys.argv[8]).resolve()),
+                  "claudeVersion":"2.1.263","codexVersion":"0.153.2",
+                  "runnerFiles":{name:hashlib.sha256(pathlib.Path(sys.argv[9]).resolve().with_name(name).read_bytes()).hexdigest() for name in ("agent-dialogue-live-canary.sh","agent-dialogue-canary-setup.py","agent-dialogue-canary-evidence.py")},
+                  "candidateHead":sys.argv[6],"candidateSHA256":hashlib.sha256(pathlib.Path(sys.argv[3]).read_bytes()).hexdigest(),
                   "receiptPath":str(pathlib.Path(sys.argv[4]).resolve()),"messageRef":sys.argv[5],
                   "preparedAtEpochNs":time.time_ns(),"cleanup":"delete exact Project; kill exact root-contained tmux server; remove owned credential; verify then remove owned root"},sort_keys=True))
 PY
   chmod 0600 "$root/cleanup-plan.json"
   install -m 0600 "$credential_file" "$root/home/.claude/.credentials.json"
   ln -s "$binary" "$root/bin/projmux"
-  printf '%s\n' '{"mcpServers":{}}' >"$root/evidence/empty-mcp.json"
-  printf '%s\n' '{"connectorWrites":0,"externalWrites":0,"preInboundToolUse":0}' >"$root/evidence/external-effects.json"
-  mkfifo "$root/evidence/provider.stdin"
-  chmod 0600 "$root/evidence/provider.stdin"
-  prepare_env=(env -u TMUX -u TMUX_PANE HOME="$root/home" CODEX_HOME="$root/codex-home" PATH="$root/bin:$PATH"
-    XDG_CONFIG_HOME="$root/xdg-config" XDG_STATE_HOME="$root/xdg-state"
-    XDG_RUNTIME_DIR="$root/xdg-runtime" XDG_CACHE_HOME="$root/xdg-cache"
-    TMUX_TMPDIR="$root/tmux" PROJMUX_MANAGED_ROOTS="$root")
-  "${prepare_env[@]}" "$binary" agent integrate claude --dry-run >"$root/evidence/integrate-dry-run.txt"
-  "${prepare_env[@]}" "$binary" agent integrate claude >"$root/evidence/integrate.txt"
-  # Integration installs all managed status events. This isolated canary needs
-  # only SessionStart startup callbacks; do not enable optional Setup execution.
-  python3 - "$root/home/.claude/settings.json" <<'PY'
-import json,pathlib,sys
-path=pathlib.Path(sys.argv[1]); settings=json.loads(path.read_text())
-expected=[{"hooks":[{"type":"command","command":"projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1"}]}]
-assert settings.get("hooks",{}).get("Setup")==expected, "unexpected owned Setup configuration"
-del settings["hooks"]["Setup"]
-path.write_text(json.dumps(settings,sort_keys=True)+"\n")
-PY
-  python3 - >"$root/bin/collect-claude-public-jsonl" <<'PY'
-print(r'''#!/usr/bin/env python3
-import datetime,json,math,pathlib,re,sys
-init_allowed={"type","subtype","cwd","session_id","tools","mcp_servers","model","permissionMode",
-              "slash_commands","apiKeySource","claude_code_version","output_style","agents","skills",
-              "plugins","uuid","fast_mode_state","prompt_suggestion_enabled","messaging_socket_path",
-              "capabilities","fast_mode_disabled_reason","analytics_disabled","product_feedback_disabled"}
-assistant_allowed={"type","message","parent_tool_use_id","session_id","uuid","request_id","timestamp"}
-assistant_message_allowed={"id","type","role","model","content","stop_reason","stop_sequence","usage",
-                           "context_management","diagnostics","stop_details"}
-assistant_text_allowed={"type","text"}
-result_allowed={"type","subtype","is_error","duration_ms","duration_api_ms","num_turns","result",
-                "session_id","total_cost_usd","usage","modelUsage","permission_denials","uuid","errors",
-                "structured_output"}
-diagnostic_types={"system","assistant","user","result","stream_event","rate_limit_event"}
-diagnostic_subtypes={"init","success","hook_started","hook_progress","hook_response","thinking_tokens",
-                     "model_refusal_fallback","model_refusal_no_fallback"}
-diagnostic_reasons={"non-object","credential key","unknown init field","assistant shape",
- "assistant message shape","assistant content","assistant block","result shape","event type","invalid locator"}
-hook_base={"type","subtype","hook_id","hook_name","hook_event","uuid","session_id"}
-hook_output={"stdout","stderr","output"}
-owned_commands={
- "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1",
- "exec projmux internal claude-endpoint-register >/dev/null 2>&1 # projmux-managed:claude-hook:v1"}
-settings=json.loads((pathlib.Path(__file__).resolve().parent.parent/"home/.claude/settings.json").read_text())
-startup=settings.get("hooks",{}).get("SessionStart",[])
-if (settings.get("hooks",{}).get("Setup") or len(startup)!=1 or set(startup[0])!={"hooks"} or
-    len(startup[0]["hooks"])!=2 or {h.get("command") for h in startup[0]["hooks"]}!=owned_commands or
-    any(h.get("type")!="command" or set(h)-{"type","command","timeout"} for h in startup[0]["hooks"])):
-    raise SystemExit("public provider stream rejected: owned startup settings")
-startup_pending={}; startup_done=set(); startup_session=None; initialized=False
-# The public display alias was observed by closed equality in the isolated
-# current-version preflight. Settings still prove the exact two callbacks.
-startup_names=owned_commands|{"SessionStart:startup"}
-diagnostic_reasons|={"startup hook shape","startup hook identity","startup hook name","startup hook order","startup hook output","startup hook incomplete","init metadata type"}
-thinking_fields={"type","subtype","estimated_tokens","estimated_tokens_delta","uuid","session_id"}
-diagnostic_assistant={"request_id","timestamp","error","user_message_uuid","user_message_uuids","resumed_from_incomplete_thinking","supersedes","aborted","subagent_type","task_description","context_usage"}
-diagnostic_message=assistant_message_allowed|{"container","context_management","service_tier"}
-diagnostic_fields=init_allowed|assistant_allowed|assistant_message_allowed|result_allowed|hook_base|hook_output|thinking_fields|diagnostic_assistant|{"exit_code","outcome","capabilities"}
-result_metadata={"api_error_status","fast_mode_disabled_reason","fast_mode_state","first_content_frame_ms","queued_turn_count","stop_reason","subagent_stats","terminal_reason","time_to_request_ms","ttft_ms","ttft_stream_ms"}
-result_allowed|=result_metadata
-diagnostic_fields|=result_metadata|{"rate_limit_info"}
-diagnostic_reasons|={"numeric progress shape","result metadata shape","rate metadata shape","usage metadata shape"}
-def nonnegative(value):
-    return type(value) in (int,float) and math.isfinite(value) and 0<=value<=1_000_000_000_000_000
-
-def bounded_metadata_string(value):
-    return isinstance(value,str) and len(value)<=4096
-
-def sanitize_usage(usage):
-    numeric={"input_tokens","output_tokens","cache_creation_input_tokens","cache_read_input_tokens"}
-    allowed=numeric|{"cache_creation","inference_geo","service_tier","iterations","output_tokens_details","server_tool_use","speed"}
-    if not isinstance(usage,dict) or set(usage)-allowed: raise ValueError("usage metadata shape")
-    for key in numeric&set(usage):
-        if type(usage[key]) is not int or not nonnegative(usage[key]): raise ValueError("usage metadata shape")
-    for key in ("inference_geo","service_tier","speed"):
-        if key in usage and not bounded_metadata_string(usage[key]): raise ValueError("usage metadata shape")
-    for key,fields in (("cache_creation",{"ephemeral_1h_input_tokens","ephemeral_5m_input_tokens"}),("output_tokens_details",{"thinking_tokens"})):
-        if key in usage:
-            obj=usage[key]
-            if not isinstance(obj,dict) or set(obj)!=fields or any(type(value) is not int or not nonnegative(value) for value in obj.values()): raise ValueError("usage metadata shape")
-    if "server_tool_use" in usage:
-        obj=usage["server_tool_use"]
-        if not isinstance(obj,dict) or set(obj)!={"web_fetch_requests","web_search_requests"} or any(type(value) is not int or value!=0 for value in obj.values()): raise ValueError("usage metadata shape")
-    if usage.get("iterations",[])!=[]: raise ValueError("usage metadata shape")
-    return {}
-
-def sanitize_model_usage(usage):
-    numeric={"inputTokens","outputTokens","thinkingTokens","cacheReadInputTokens","cacheCreationInputTokens","webSearchRequests","costUSD","contextWindow","maxOutputTokens"}
-    if not isinstance(usage,dict): raise ValueError("usage metadata shape")
-    for model,row in usage.items():
-        if not bounded_metadata_string(model) or not isinstance(row,dict) or set(row)-(numeric|{"canonicalModel","provider","costBasis"}): raise ValueError("usage metadata shape")
-        if any(not nonnegative(row[key]) for key in numeric&set(row)) or row.get("webSearchRequests",0)!=0: raise ValueError("usage metadata shape")
-        for key in ("canonicalModel","provider"):
-            if key in row and not bounded_metadata_string(row[key]): raise ValueError("usage metadata shape")
-        if "costBasis" in row and row["costBasis"] not in {"list","managed","unknown"}: raise ValueError("usage metadata shape")
-    return {}
-
-def validate_result_metadata(event):
-    if "usage" in event: event["usage"]=sanitize_usage(event["usage"])
-    if "modelUsage" in event: event["modelUsage"]=sanitize_model_usage(event["modelUsage"])
-    if event.get("structured_output") is not None or event.get("errors",[])!=[]: raise ValueError("usage metadata shape")
-    event.pop("structured_output",None)
-    for key in ("duration_api_ms","duration_ms","first_content_frame_ms","time_to_request_ms","ttft_ms","ttft_stream_ms","num_turns","total_cost_usd"):
-        if key in event and not nonnegative(event[key]): raise ValueError("result metadata shape")
-    if event.get("api_error_status") is not None or event.get("permission_denials",[])!=[] or type(event.get("queued_turn_count",0)) is not int or event.get("queued_turn_count",0)!=0: raise ValueError("result metadata shape")
-    if "stop_reason" in event and event["stop_reason"]!="end_turn": raise ValueError("result metadata shape")
-    if "terminal_reason" in event and event["terminal_reason"]!="completed": raise ValueError("result metadata shape")
-    if "fast_mode_state" in event and event["fast_mode_state"] not in {"off","cooldown","on"}: raise ValueError("result metadata shape")
-    if "fast_mode_disabled_reason" in event and event["fast_mode_disabled_reason"]!="sdk_opt_in_required": raise ValueError("result metadata shape")
-    if "subagent_stats" in event:
-        zero={"by_type":{},"completed":0,"failed":0,"killed":{"parent":0,"system":0,"user":0},"max_depth":0,
-          "refused":{"budget":0,"concurrency_limit":0,"depth_limit":0},"requested":{"background":0,"foreground":0,"unset":0},
-          "spawned":0,"spawned_by_subagents":0,"started_in_background":0}
-        def exact_zero_tree(actual,expected):
-            if isinstance(expected,dict):
-                return isinstance(actual,dict) and set(actual)==set(expected) and all(exact_zero_tree(actual[key],value) for key,value in expected.items())
-            return type(actual) in (int,float) and actual==0
-        if not exact_zero_tree(event["subagent_stats"],zero): raise ValueError("result metadata shape")
-    for key in result_metadata: event.pop(key,None)
-    event["metadataValidated"]=True
-
-def sanitize_rate(event):
-    if set(event)!={"type","rate_limit_info","uuid","session_id"} or not initialized or event["session_id"]!=startup_session: raise ValueError("rate metadata shape")
-    if not isinstance(event["uuid"],str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}",event["uuid"]): raise ValueError("rate metadata shape")
-    info=event["rate_limit_info"]
-    allowed={"isUsingOverage","overageResetsAt","overageStatus","rateLimitType","resetsAt","status","unifiedWindows"}
-    if not isinstance(info,dict) or set(info)!=allowed or type(info["isUsingOverage"]) is not bool: raise ValueError("rate metadata shape")
-    if any(info[key] not in {"allowed","allowed_warning","rejected"} for key in ("status","overageStatus")): raise ValueError("rate metadata shape")
-    if info["rateLimitType"] not in {"five_hour","seven_day","seven_day_opus","seven_day_sonnet","seven_day_overage_included","overage"}: raise ValueError("rate metadata shape")
-    if not all(nonnegative(info[key]) for key in ("resetsAt","overageResetsAt")): raise ValueError("rate metadata shape")
-    windows=info["unifiedWindows"]
-    if not isinstance(windows,dict) or set(windows)!={"five_hour","seven_day"}: raise ValueError("rate metadata shape")
-    for window in windows.values():
-        if not isinstance(window,dict) or set(window)!={"resetsAt","utilization"} or not all(nonnegative(value) for value in window.values()): raise ValueError("rate metadata shape")
-    del event["rate_limit_info"]
-    event["metadataValidated"]=True
-def validate_startup(event):
-    global startup_session
-    subtype=event["subtype"]
-    allowed=hook_base|(hook_output if subtype!="hook_started" else set())|({"exit_code","outcome"} if subtype=="hook_response" else set())
-    required=allowed-{"exit_code"}
-    if set(event)-allowed or not required<=set(event): raise ValueError("startup hook shape")
-    if initialized or event.get("hook_event")!="SessionStart": raise ValueError("startup hook order")
-    if event.get("hook_name") not in startup_names: raise ValueError("startup hook name")
-    for key in ("hook_id","uuid","session_id"):
-        if not isinstance(event[key],str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}",event[key]): raise ValueError("startup hook identity")
-    if startup_session is None: startup_session=event["session_id"]
-    if startup_session!=event["session_id"]: raise ValueError("startup hook identity")
-    hook_id=event["hook_id"]; identity=(event["hook_name"],event["hook_event"],event["session_id"])
-    if subtype=="hook_started":
-        if hook_id in startup_pending or hook_id in startup_done or len(startup_pending)+len(startup_done)>=2: raise ValueError("startup hook order")
-        startup_pending[hook_id]=identity
-    else:
-        if startup_pending.get(hook_id)!=identity: raise ValueError("startup hook identity")
-        if any(event.get(key)!="" for key in hook_output): raise ValueError("startup hook output")
-        if subtype=="hook_response":
-            if event.get("outcome")!="success" or ("exit_code" in event and (type(event["exit_code"]) is not int or event["exit_code"]!=0)): raise ValueError("startup hook output")
-            del startup_pending[hook_id]; startup_done.add(hook_id)
-    # Empty outputs only; never retain even a raw output-shaped field.
-    for key in hook_output: event.pop(key,None)
-    event["outputBytes"]=0
-
-for raw in sys.stdin:
-    event=None
-    try:
-        event=json.loads(raw)
-        if not isinstance(event,dict): raise ValueError("non-object")
-        if "CLAUDE_CODE_MESSAGING_TOKEN" in event or "CLAUDE_CODE_MESSAGING_SOCKET" in event:
-            raise ValueError("credential key")
-        kind=event.get("type")
-        if kind=="system" and event.get("subtype")=="init":
-            if set(event)-init_allowed: raise ValueError("unknown init field")
-            for key in ("analytics_disabled","product_feedback_disabled"):
-                if key in event and type(event[key]) is not bool: raise ValueError("init metadata type")
-            if "capabilities" in event and (not isinstance(event["capabilities"],list) or
-                any(not isinstance(x,str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,79}",x) for x in event["capabilities"])): raise ValueError("init metadata type")
-            if "fast_mode_disabled_reason" in event and event["fast_mode_disabled_reason"]!="sdk_opt_in_required": raise ValueError("init metadata type")
-            if initialized or startup_pending or len(startup_done)!=2 or event.get("session_id")!=startup_session: raise ValueError("startup hook incomplete")
-            initialized=True
-        elif kind=="system" and event.get("subtype") in {"hook_started","hook_progress","hook_response"}:
-            validate_startup(event)
-        elif kind=="system" and event.get("subtype")=="thinking_tokens":
-            if set(event)!=thinking_fields or not initialized or event.get("session_id")!=startup_session: raise ValueError("numeric progress shape")
-            for key in ("estimated_tokens","estimated_tokens_delta"):
-                if type(event[key]) not in (int,float) or not math.isfinite(event[key]) or not 0<=event[key]<=1_000_000_000: raise ValueError("numeric progress shape")
-            if not isinstance(event["uuid"],str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,160}",event["uuid"]): raise ValueError("numeric progress shape")
-        elif kind=="assistant":
-            if set(event)-assistant_allowed or not isinstance(event.get("message"),dict): raise ValueError("assistant shape")
-            if "request_id" in event and (not isinstance(event["request_id"],str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,256}",event["request_id"])): raise ValueError("assistant shape")
-            if "timestamp" in event:
-                if not isinstance(event["timestamp"],str) or not re.fullmatch(r"[0-9TZ:+.-]{20,40}",event["timestamp"]): raise ValueError("assistant shape")
-                if datetime.datetime.fromisoformat(event["timestamp"].replace("Z","+00:00")).tzinfo is None: raise ValueError("assistant shape")
-            message=event["message"]
-            if set(message)-assistant_message_allowed or message.get("role")!="assistant": raise ValueError("assistant message shape")
-            if any(message.get(key) is not None for key in ("context_management","diagnostics","stop_details")): raise ValueError("assistant message shape")
-            if not isinstance(message.get("content"),list) or not message["content"]: raise ValueError("assistant content")
-            sanitized=[]
-            for block in message["content"]:
-                if not isinstance(block,dict): raise ValueError("assistant block")
-                if block.get("type")=="text" and set(block)<=assistant_text_allowed and isinstance(block.get("text"),str):
-                    sanitized.append(block)
-                elif block.get("type")=="thinking" and set(block)=={"type","thinking","signature"} and isinstance(block["thinking"],str) and isinstance(block["signature"],str):
-                    # No reasoning content or signature ever crosses the disk
-                    # boundary, and this marker is never sent to the provider.
-                    sanitized.append({"type":"thinking","contentOmitted":True})
-                else: raise ValueError("assistant block")
-            message["content"]=sanitized
-            if "usage" in message: message["usage"]=sanitize_usage(message["usage"])
-        elif kind=="rate_limit_event":
-            sanitize_rate(event)
-        elif kind=="result":
-            if set(event)-result_allowed or event.get("subtype")!="success" or event.get("is_error") is not False or not initialized or event.get("session_id")!=startup_session: raise ValueError("result shape")
-            validate_result_metadata(event)
-        else:
-            raise ValueError("event type")
-        if "messaging_socket_path" in event:
-            locator=event.pop("messaging_socket_path")
-            if not isinstance(locator,str) or not locator: raise ValueError("invalid locator")
-            event["messaging_socket_present"]=True
-        sys.stdout.write(json.dumps(event,separators=(",",":"),ensure_ascii=True)+"\n")
-        sys.stdout.flush()
-    except Exception as failure:
-        shape=event if isinstance(event,dict) else {}
-        reason=str(failure) if str(failure) in diagnostic_reasons else "invalid JSON or shape"
-        kind=shape.get("type"); subtype=shape.get("subtype")
-        name=shape.get("hook_name"); hook_event=shape.get("hook_event")
-        name_label=name if isinstance(name,str) and name in {"SessionStart:startup","SessionStart"} else ("configured-command" if isinstance(name,str) and name in owned_commands else "unknown")
-        nested=shape.get("message") if isinstance(shape.get("message"),dict) else {}
-        unknown_message=set(nested)-diagnostic_message
-        blocks=nested.get("content") if isinstance(nested.get("content"),list) else []
-        block_types={"text","thinking","redacted_thinking","tool_use","server_tool_use","tool_result"}
-        block_fields={"type","text","id","name","input","thinking","signature","data","content","tool_use_id","is_error"}
-        block_shapes=[]
-        for block in blocks[:64]:
-            block=block if isinstance(block,dict) else {}
-            block_type=block.get("type")
-            block_shapes.append({"type":block_type if isinstance(block_type,str) and block_type in block_types else "unknown",
-                "fields":sorted(set(block)&block_fields),"unknownFieldCount":len(set(block)-block_fields)})
-        management=nested.get("context_management")
-        management_fields=set(management) if isinstance(management,dict) else set()
-        diagnostic={"reason":reason,"type":kind if isinstance(kind,str) and kind in diagnostic_types else "unknown",
-          "subtype":subtype if isinstance(subtype,str) and subtype in diagnostic_subtypes else "unknown",
-          "fields":sorted(set(shape)&diagnostic_fields),"unknownFieldCount":len(set(shape)-diagnostic_fields),
-          "messageFields":sorted(set(nested)&diagnostic_message),"unknownMessageFieldCount":len(unknown_message),
-          "unknownMessageFields":sorted(k for k in unknown_message if re.fullmatch(r"[a-z][a-z0-9_]{0,63}",k))[:16],
-          "blockShapes":block_shapes,"blockCount":len(blocks),
-          "contextManagementShape":"absent" if "context_management" not in nested else ("null" if management is None else ("object" if isinstance(management,dict) else "unknown")),
-          "contextManagementFields":sorted(management_fields&{"applied_edits"}),"unknownContextManagementFieldCount":len(management_fields-{"applied_edits"}),
-          "hookNameMatch":name_label,"hookEventMatch":hook_event if isinstance(hook_event,str) and hook_event in {"SessionStart","UserPromptSubmit","Stop"} else "unknown"}
-        sys.stderr.write("public provider stream rejected: "+json.dumps(diagnostic,sort_keys=True)+"\n")
-        raise SystemExit(1)
-''')
-PY
-  chmod 0700 "$root/bin/collect-claude-public-jsonl"
-  python3 - "$root" <<'PYCODE'
-import hashlib,json,pathlib,sys
-root=pathlib.Path(sys.argv[1]); source=root/"bin/collect-claude-public-jsonl"
-(root/"evidence/collector-source-integrity.json").write_text(json.dumps({"sha256":hashlib.sha256(source.read_bytes()).hexdigest()})+"\n")
-PYCODE
-  python3 - "$root" "$real_claude" "$prepared_message_ref" >"$root/bin/claude" <<'PY'
-import json, pathlib, shlex, sys
-root=pathlib.Path(sys.argv[1]); claude=shlex.quote(sys.argv[2]); ref=sys.argv[3]; q=shlex.quote
-args=["--print","--verbose","--input-format","stream-json","--output-format","stream-json",
-      "--restricted","--strict-mcp-config","--mcp-config",str(root/"evidence/empty-mcp.json"),
-      "--setting-sources","","--tools","","--no-session-persistence","--permission-mode","dontAsk",
-      "--no-chrome","--disable-slash-commands","--prompt-suggestions","false",
-      "--settings",str(root/"home/.claude/settings.json")]
-print("#!/bin/bash")
-print("set -eu")
-print("export HOME="+q(str(root/"home")))
-print("export CLAUDE_CONFIG_DIR="+q(str(root/"home/.claude")))
-print("export CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1")
-start_code="import pathlib,time; pathlib.Path("+repr(str(root/"evidence/provider-started-at"))+").write_text(str(time.time_ns()))"
-print("python3 -c "+q(start_code))
-instruction="Reply READY."
-line=json.dumps({"type":"user","message":{"role":"user","content":instruction}},separators=(",",":"))
-print("exec 9<>"+q(str(root/"evidence/provider.stdin")))
-print("printf '%s\\n' "+q(line)+" >&9")
-collector=q(str(root/"bin/collect-claude-public-jsonl"))
-print("exec "+claude+" "+" ".join(q(x) for x in args)+" <&9 > >("+collector+" >>"+q(str(root/"evidence/provider.jsonl"))+" 2>"+q(str(root/"evidence/provider-collector.stderr"))+") 2>"+q(str(root/"evidence/provider.stderr")))
-PY
-  chmod 0700 "$root/bin/claude"
-  bash -n "$root/bin/claude"
-  python3 - "$root/bin/claude" "$prepared_message_ref" <<'PY'
-import json,shlex,sys
-lines=[line for line in open(sys.argv[1]).read().splitlines() if line.startswith("printf ")]
-assert len(lines)==1
-tokens=shlex.split(lines[0]); assert tokens[0]=="printf" and tokens[1]=="%s\\n" and tokens[-1]==">&9"
-frame=json.loads(tokens[2]); assert frame["type"]=="user" and frame["message"]["content"]=="Reply READY."
-PY
+  ln -s "$real_claude" "$root/bin/claude"
+  ln -s "$real_codex" "$root/bin/codex"
   prepare_complete=1
   trap - EXIT
   echo "prepared=$root cleanup-plan=$root/cleanup-plan.json receipt=$receipt_path"
-  echo "owned-settings=$root/home/.claude/settings.json claude-wrapper=$root/bin/claude" >&2
-  echo "Create the disposable Project and exact existing Codex/Claude Agents only now; the FIFO wrapper enqueues the fixed initial instruction. Freeze public evidence, then run the gated command." >&2
+  echo "Prepared for the canonical setup transaction; use agent-dialogue-canary-setup.py to cover actor creation failures with automatic cleanup." >&2
   exit 0
 fi
 
@@ -473,15 +191,15 @@ info=sock.lstat(); print(f"{info.st_dev}:{info.st_ino}")
 PY
 )"
 
-canary_env=(env -u TMUX -u TMUX_PANE HOME="$root/home" CODEX_HOME="$root/codex-home" PATH="$root/bin:$PATH"
+canary_env=(env -i LANG=C.UTF-8 TERM=xterm-256color SHELL=/bin/bash HOME="$root/home" CODEX_HOME="$root/codex-home" PATH="$root/bin:$PATH"
   XDG_CONFIG_HOME="$root/xdg-config" XDG_STATE_HOME="$root/xdg-state"
   XDG_RUNTIME_DIR="$root/xdg-runtime" XDG_CACHE_HOME="$root/xdg-cache"
   TMUX_TMPDIR="$root/tmux" PROJMUX_MANAGED_ROOTS="$root")
 cleanup_done=0
 wait_pid=""
-claim_identity_path="$root/evidence/claim-wait-process.json"
 cleanup_owned() {
   [[ "$cleanup_done" == 0 ]] || return 0
+  printf '%s\n' 'attempted' >"$root/evidence/cleanup-attempted"
   local claim_pid=""
   if [[ -n "$wait_pid" ]] && jobs -p | grep -Fxq "$wait_pid"; then claim_pid="$wait_pid"; fi
   # Capture every owned writer before teardown, including pane supervisors
@@ -540,6 +258,10 @@ class OwnedWriterBarrier:
             observed=self.observe(pid)
             if observed is None: continue
             snapshot[pid]=observed
+            try:
+                cwd=os.readlink(path/"cwd")
+                if cwd==self.root or cwd.startswith(self.root+os.sep): self.track(observed[0])
+            except (FileNotFoundError,ProcessLookupError,PermissionError): pass
             try: args=(path/"cmdline").read_bytes().split(b"\0")
             except (FileNotFoundError,ProcessLookupError,PermissionError): continue
             # Exact path arguments, including --registry=<path>, rather than
@@ -596,14 +318,24 @@ def close_owned_writers(root,teardown,seeds=(),timeout=20,on_wait=lambda:None):
 
 def main():
     root=pathlib.Path(sys.argv[1]); binary,registry,socket_path,socket_identity,project_uid=sys.argv[2:7]
+    clean_env=["env","-u","TMUX","-u","TMUX_PANE"]
+    def control(args):
+        return subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=10,check=False)
+    if not socket_path:
+        discovered=control(clean_env+["TMUX_TMPDIR="+str(root/"tmux"),"tmux","-L",sys.argv[7],"display-message","-p","#{socket_path}"])
+        if discovered.returncode==0:
+            path=pathlib.Path(discovered.stdout.decode().strip()); info=path.lstat()
+            if root not in path.parents or path.is_symlink() or not stat.S_ISSOCK(info.st_mode) or info.st_uid!=os.getuid():
+                raise RuntimeError("partial setup socket ownership; root retained")
+            socket_path=str(path); socket_identity=f"{info.st_dev}:{info.st_ino}"
+        elif any(stat.S_ISSOCK(path.lstat().st_mode) for path in (root/"tmux").rglob("*")):
+            raise RuntimeError("partial setup socket cannot be identified; root retained")
     def socket_state():
+        if not socket_path: return "absent"
         path=pathlib.Path(socket_path)
         try: info=path.lstat()
         except FileNotFoundError: return "absent"
         return f"{info.st_dev}:{info.st_ino}" if stat.S_ISSOCK(info.st_mode) and not path.is_symlink() else "invalid"
-    clean_env=["env","-u","TMUX","-u","TMUX_PANE"]
-    def control(args):
-        return subprocess.run(args,stdout=subprocess.PIPE,stderr=subprocess.DEVNULL,timeout=10,check=False)
     seeds=[]
     current_socket=socket_state()
     if current_socket not in (socket_identity,"absent"):
@@ -619,7 +351,15 @@ def main():
             if observed is not None: seeds.append(observed[0])
     # The registration helper is detached from its SessionStart parent. Its
     # exact birth is captured before unregister removes this Registry record.
-    metadata=json.loads(pathlib.Path(registry).read_text())
+    metadata=json.loads(pathlib.Path(registry).read_text()) if pathlib.Path(registry).exists() else {}
+    if not project_uid:
+        projects=metadata.get("projects",[])
+        if len(projects)>1: raise RuntimeError("partial setup project inventory; root retained")
+        if projects:
+            item=projects[0]
+            if pathlib.Path(item["spec"]["root"]).resolve()!=root/"work":
+                raise RuntimeError("partial setup project root; root retained")
+            project_uid=item["metadata"]["uid"]
     for pane in metadata.get("panes",[]):
         activation=pane.get("status",{}).get("activation") or {}
         authority=((activation.get("claude") or {}).get("registration") or {}).get("authority") or {}
@@ -646,12 +386,12 @@ def main():
             if tracked is not None and tracked[0]==claim:
                 try: signal.pidfd_send_signal(tracked[1],signal.SIGTERM)
                 except ProcessLookupError: pass
-        env=clean_env+["HOME="+str(root/"home"),"CODEX_HOME="+str(root/"codex-home"),
+        env=["env","-i","LANG=C.UTF-8","TERM=xterm-256color","SHELL=/bin/bash","HOME="+str(root/"home"),"CODEX_HOME="+str(root/"codex-home"),
             "PATH="+str(root/"bin")+":"+os.environ.get("PATH",""),
             "XDG_CONFIG_HOME="+str(root/"xdg-config"),"XDG_STATE_HOME="+str(root/"xdg-state"),
             "XDG_RUNTIME_DIR="+str(root/"xdg-runtime"),"XDG_CACHE_HOME="+str(root/"xdg-cache"),
             "TMUX_TMPDIR="+str(root/"tmux"),"PROJMUX_MANAGED_ROOTS="+str(root)]
-        control(env+[binary,"delete","project","uid:"+project_uid,"--socket",sys.argv[7],"--yes"])
+        if project_uid: control(env+[binary,"delete","project","uid:"+project_uid,"--socket",sys.argv[7],"--yes"])
         current=socket_state()
         if current==socket_identity:
             control(clean_env+["tmux","-S",socket_path,"kill-server"])
@@ -695,7 +435,20 @@ PY
     echo "canary cleanup root identity changed; root retained" >&2
     return 1
   fi
-  rm -rf -- "$root"
+  rm -rf -- "$root" || return 1
+  if [[ "$status" == 0 && -n "${canary_receipt_json:-}" ]]; then
+    python3 - "$receipt_path" "$root" "$canary_receipt_json" <<'RECEIPT_PY'
+import json,os,pathlib,sys
+path=pathlib.Path(sys.argv[1]); root=pathlib.Path(sys.argv[2])
+assert not root.exists() and not root.is_symlink()
+assert path.is_absolute() and root not in path.parents and not path.exists() and not path.is_symlink()
+for parent in path.parents: assert not parent.is_symlink()
+receipt=json.loads(sys.argv[3]); receipt['ownedRootAbsent']=True
+fd=os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+with os.fdopen(fd,'w') as stream: stream.write(json.dumps(receipt,sort_keys=True)+'\n')
+print(json.dumps(receipt,sort_keys=True))
+RECEIPT_PY
+  fi
   return "$status"
 }
 trap finish_cleanup EXIT
@@ -722,491 +475,136 @@ sender_uid="$(field sender.agentUID)"
 sender_pane_id="$(field sender.paneID)"
 receiver_uid="$(field receiver.agentUID)"
 message_ref="$(field messageRef)"
-live_jsonl="$(field evidence.providerLiveJSONL)"
-init_jsonl="$root/evidence/init.jsonl"
-events_jsonl="$root/evidence/pre-inbound.jsonl"
-provider_stderr="$(field evidence.providerStderr)"
-effects_json="$(field evidence.externalEffectsJSON)"
-owned_settings="$(field evidence.ownedSettingsJSON)"
-provider_started_at="$(field evidence.providerStartedAt)"
+evidence_helper="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/agent-dialogue-canary-evidence.py"
+inside() {
+  "${canary_env[@]}" TMUX="$socket_path,$server_pid,0" TMUX_PANE="$sender_pane_id" "$binary" "$@"
+}
+evidence() { "${canary_env[@]}" python3 "$evidence_helper" "$1" "$root" "$input" "${@:2}"; }
 
-python3 - "$root" "$binary" "$registry" "$socket_path" "$live_jsonl" "$provider_stderr" "$effects_json" "$owned_settings" "$provider_started_at" <<'PY'
-import os, pathlib, sys
-root=pathlib.Path(sys.argv[1]).resolve()
-for raw in sys.argv[2:]:
-    p=pathlib.Path(raw)
-    if not p.is_absolute(): raise SystemExit("all binary/evidence paths must be absolute")
-    resolved=p.resolve(strict=True)
-    if raw != sys.argv[2] and root not in resolved.parents:
-        raise SystemExit("evidence/Registry/tmux/settings path escaped owned root: "+raw)
-if not os.access(sys.argv[2],os.X_OK): raise SystemExit("binary is not executable")
-PY
-
-"${canary_env[@]}" "$binary" agent capabilities "uid:$receiver_uid" -o json >"$root/evidence/capability-before.json"
-observed_server_pid="$(env -u TMUX -u TMUX_PANE tmux -S "$socket_path" display-message -p '#{pid}')"
-[[ "$observed_server_pid" == "$server_pid" ]] || { echo "exact tmux server PID changed before traffic" >&2; exit 1; }
-
-# This is the traffic gate. It validates the exact Registry route, the cleanup
-# plan predating provider launch, the same long-lived public init session, and
-# zero tool/MCP/plugin/stderr/external effects. No message command precedes it.
-python3 - "$root/cleanup-plan.json" "$input" "$registry" "$live_jsonl" "$provider_stderr" "$effects_json" "$owned_settings" "$provider_started_at" "$binary" \
-  "$root/evidence/capability-before.json" "$init_jsonl" "$events_jsonl" <<'PY'
-import hashlib, json, math, os, pathlib, re, stat, sys
-plan=json.load(open(sys.argv[1])); spec=json.load(open(sys.argv[2])); reg=json.load(open(sys.argv[3]))
-assert plan["preparedAtEpochNs"] < spec["provider"]["startedAtEpochNs"], "cleanup was not registered before provider launch"
-assert plan["messageRef"] == spec["messageRef"], "prepared semantic message reference changed"
-projects={x["metadata"]["uid"]:x for x in reg.get("projects",[])}; windows={x["metadata"]["uid"]:x for x in reg.get("windows",[])}
-agents={x["metadata"]["uid"]:x for x in reg.get("agents",[])}; panes={x["metadata"]["uid"]:x for x in reg.get("panes",[])}
-assert len(projects)==1 and spec["projectUID"] in projects, "canary must own exactly one Project"
-assert spec["windowUID"] in windows and windows[spec["windowUID"]]["metadata"]["ownerRef"]=={"kind":"Project","uid":spec["projectUID"]}
-assert len(agents)==2, "canary must use exactly two already-created Agents"
-for key, provider in (("sender","codex"),("receiver","claude")):
-    item=spec[key]; a=agents[item["agentUID"]]; p=panes[item["paneUID"]]
-    assert a["spec"]["provider"]==provider and a["status"]["phase"]=="Running"
-    assert a["metadata"]["ownerRef"]=={"kind":"Window","uid":spec["windowUID"]}
-    assert a["status"]["paneRef"]==item["paneUID"] and p["metadata"]["ownerRef"]=={"kind":"Agent","uid":item["agentUID"]}
-    assert p["status"]["activation"]["generation"]==item["generation"]
-    assert p["status"]["activation"]["runtimeID"]==item["paneID"]
-cp=panes[spec["receiver"]["paneUID"]]["status"]["activation"]["claude"]
-auth=cp["registration"]["authority"]; process=spec["provider"]
-assert cp["registration"]["ready"] is True
-assert auth["sessionId"]==process["sessionID"]
-assert auth["process"]=={"pid":process["pid"],"ownerUID":process["ownerUID"],"start":process["start"]}
-
-def exact_linux_process(expected):
-    assert set(expected)=={"pid","ownerUID","start"} and expected["pid"]>1
-    assert expected["start"].startswith("linux:"), "live canary process proof currently requires Linux procfs"
-    proc=pathlib.Path("/proc",str(expected["pid"])); raw=(proc/"stat").read_text()
-    end=raw.rfind(")"); fields=raw[end+1:].split()
-    assert end>0 and len(fields)>=20 and fields[0] not in ("Z","X")
-    boot=pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-    actual={"pid":expected["pid"],"ownerUID":(proc/"stat").stat().st_uid,"start":"linux:"+boot+":"+fields[19]}
-    assert actual==expected, "process birth identity changed"
-    return proc
-
-def observe_linux_process(pid):
-    proc=pathlib.Path("/proc",str(pid)); raw=(proc/"stat").read_text()
-    end=raw.rfind(")"); fields=raw[end+1:].split()
-    assert pid>1 and end>0 and len(fields)>=20 and fields[0] not in ("Z","X")
-    boot=pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-    return {"pid":pid,"ownerUID":(proc/"stat").stat().st_uid,"start":"linux:"+boot+":"+fields[19]}
-
-provider_proc=exact_linux_process(auth["process"])
-helper_proc=exact_linux_process(auth["leaseProcess"])
-tmux_process=observe_linux_process(spec["tmuxServerPID"])
-assert tmux_process["ownerUID"]==os.getuid(), "tmux server is not exact-owned"
-candidate=pathlib.Path(sys.argv[9])
-assert pathlib.Path(os.readlink(helper_proc/"exe")).resolve(strict=True)==candidate.resolve(strict=True), "helper binary differs from candidate"
-argv=[part.decode() for part in (helper_proc/"cmdline").read_bytes().split(b"\0") if part]
-assert len(argv)==3 and argv[1:]==["internal","claude-endpoint-helper"], "helper argv is not the fixed hidden route"
-helper_env_keys=set()
-for entry in (helper_proc/"environ").read_bytes().split(b"\0"):
-    if entry:
-        helper_env_keys.add(entry.partition(b"=")[0].decode("utf-8","strict"))
-assert not {"CLAUDE_CODE_MESSAGING_SOCKET","CLAUDE_CODE_MESSAGING_TOKEN"}&helper_env_keys, "messaging credential key survived helper scrub"
-lease_digest=hashlib.sha256((sys.argv[3]+"\0"+spec["receiver"]["paneUID"]+"\0"+spec["receiver"]["generation"]).encode()).hexdigest()[:32]
-lease_dir=pathlib.Path("/tmp","pmx-ce-"+lease_digest); lease_info=lease_dir.lstat()
-assert stat.S_ISDIR(lease_info.st_mode) and stat.S_IMODE(lease_info.st_mode)==0o700 and lease_info.st_uid==os.getuid()
-lease_entries=list(lease_dir.iterdir())
-assert lease_entries and all(not p.is_symlink() for p in lease_entries), "activation lease is empty or contains a symlink"
-assert all(stat.S_ISSOCK(p.lstat().st_mode) or (p.is_file() and p.name.endswith(".sock.json")) for p in lease_entries)
-
-live_path=pathlib.Path(sys.argv[4]); live_bytes=live_path.read_bytes()
-def jsonl_bytes(data):
-    return [json.loads(line) for line in data.decode().splitlines() if line.strip()]
-init=jsonl_bytes(live_bytes)
-assert init and all(isinstance(x,dict) for x in init), "public stream contains a non-object event"
-init_allowed={"type","subtype","cwd","session_id","tools","mcp_servers","model","permissionMode",
-              "slash_commands","apiKeySource","claude_code_version","output_style","agents","skills",
-              "plugins","uuid","fast_mode_state","prompt_suggestion_enabled","messaging_socket_present",
-              "capabilities","fast_mode_disabled_reason","analytics_disabled","product_feedback_disabled"}
-assistant_allowed={"type","message","parent_tool_use_id","session_id","uuid","request_id","timestamp"}
-assistant_message_allowed={"id","type","role","model","content","stop_reason","stop_sequence","usage",
-                           "context_management","diagnostics","stop_details"}
-assistant_text_allowed={"type","text"}
-result_allowed={"type","subtype","is_error","duration_ms","duration_api_ms","num_turns","result",
-                "session_id","total_cost_usd","usage","modelUsage","permission_denials","uuid","errors",
-                "structured_output"}
-startup_pending={}; startup_done=set(); initialized=False
-startup_names={
- "SessionStart:startup",
- "projmux internal agent-hook ingest claude-hook --pane=${PMX_INTERNAL_ACTIVATION_PANE_UID:-} >/dev/null 2>&1 || true # projmux-managed:claude-hook:v1",
- "exec projmux internal claude-endpoint-register >/dev/null 2>&1 # projmux-managed:claude-hook:v1"}
-for event in init:
-    assert event.get("session_id")==process["sessionID"], "foreign public stream session"
-    kind=event.get("type")
-    if kind=="system" and event.get("subtype")=="init":
-        assert not set(event)-init_allowed, "unknown current-version init field"
-        for key in ("analytics_disabled","product_feedback_disabled"):
-            assert key not in event or type(event[key]) is bool, "invalid telemetry metadata type"
-        assert "capabilities" not in event or (isinstance(event["capabilities"],list) and
-            all(isinstance(x,str) and re.fullmatch(r"[a-z][a-z0-9_]{0,79}",x) for x in event["capabilities"])), "invalid protocol feature metadata"
-        assert "fast_mode_disabled_reason" not in event or event["fast_mode_disabled_reason"]=="sdk_opt_in_required"
-        assert not initialized and not startup_pending and len(startup_done)==2, "incomplete owned startup hooks"
-        initialized=True
-    elif kind=="system" and event.get("subtype") in {"hook_started","hook_progress","hook_response"}:
-        subtype=event["subtype"]
-        allowed={"type","subtype","hook_id","hook_name","hook_event","uuid","session_id","outputBytes"}
-        if subtype=="hook_response": allowed|={"exit_code","outcome"}
-        assert not set(event)-allowed and event.get("outputBytes")==0
-        assert not initialized and event.get("hook_event")=="SessionStart" and event.get("hook_name") in startup_names
-        hook_id=event["hook_id"]; identity=(event["hook_name"],event["hook_event"],event["session_id"])
-        if subtype=="hook_started":
-            assert hook_id not in startup_pending and hook_id not in startup_done and len(startup_pending)+len(startup_done)<2
-            startup_pending[hook_id]=identity
-        else:
-            assert startup_pending.get(hook_id)==identity
-            if subtype=="hook_response":
-                assert event.get("outcome")=="success" and event.get("exit_code",0)==0
-                del startup_pending[hook_id]; startup_done.add(hook_id)
-    elif kind=="system" and event.get("subtype")=="thinking_tokens":
-        assert initialized and set(event)=={"type","subtype","estimated_tokens","estimated_tokens_delta","uuid","session_id"}
-        assert all(type(event[key]) in (int,float) and math.isfinite(event[key]) and 0<=event[key]<=1_000_000_000 for key in ("estimated_tokens","estimated_tokens_delta"))
-    elif kind=="assistant":
-        assert initialized
-        assert not set(event)-assistant_allowed and isinstance(event.get("message"),dict), "unknown assistant event shape"
-        assert "request_id" not in event or (isinstance(event["request_id"],str) and re.fullmatch(r"[A-Za-z0-9_-]{1,256}",event["request_id"]))
-        if "timestamp" in event:
-            assert isinstance(event["timestamp"],str) and re.fullmatch(r"[0-9TZ:+.-]{20,40}",event["timestamp"])
-            assert __import__("datetime").datetime.fromisoformat(event["timestamp"].replace("Z","+00:00")).tzinfo is not None
-        message=event["message"]
-        assert not set(message)-assistant_message_allowed and message.get("role")=="assistant"
-        assert all(message.get(key) is None for key in ("context_management","diagnostics","stop_details"))
-        assert message.get("usage",{})=={}, "unvalidated assistant usage metadata"
-        assert isinstance(message.get("content"),list) and message["content"]
-        for block in message["content"]:
-            assert isinstance(block,dict)
-            assert (block.get("type")=="text" and not set(block)-assistant_text_allowed and isinstance(block.get("text"),str)) or block=={"type":"thinking","contentOmitted":True}
-    elif kind=="rate_limit_event":
-        assert initialized and set(event)=={"type","uuid","session_id","metadataValidated"} and event["metadataValidated"] is True
-    elif kind=="result":
-        assert not set(event)-(result_allowed|{"metadataValidated"}) and event.get("subtype")=="success" and event.get("is_error") is False and event.get("metadataValidated") is True
-        assert event.get("usage",{})=={} and event.get("modelUsage",{})=={} and event.get("structured_output") is None
-    else:
-        raise AssertionError("unexpected public stream event type")
-matches=[x for x in init if x.get("type")=="system" and x.get("subtype")=="init"]
-assert len(matches)==1 and matches[0].get("session_id")==process["sessionID"]
-assert initialized and not startup_pending and len(startup_done)==2
-assert sum(x.get("type")=="result" for x in init)==1 and init[-1].get("type")=="result"
-provider_version=matches[0].get("claude_code_version",matches[0].get("version",""))
-assert provider_version=="2.1.263", "frozen frame is not qualified for the observed Claude version"
-assert matches[0].get("tools")==[] and matches[0].get("mcp_servers")==[] and matches[0].get("plugins")==[]
-assert matches[0].get("messaging_socket_present") is True, "sanitized messaging endpoint presence is missing"
-events=init
-def contains_tool(value):
-    if isinstance(value,dict): return value.get("type")=="tool_use" or any(contains_tool(v) for v in value.values())
-    if isinstance(value,list): return any(contains_tool(v) for v in value)
-    return False
-assert not any(contains_tool(x) for x in init+events), "pre-inbound tool use is nonzero"
-assert pathlib.Path(sys.argv[5]).read_bytes()==b"", "unexpected provider stderr"
-assert pathlib.Path(plan["ownedRoot"],"evidence/provider-collector.stderr").read_bytes()==b"", "public stream sanitizer rejected provider output"
-effects=json.load(open(sys.argv[6])); assert effects=={"connectorWrites":0,"externalWrites":0,"preInboundToolUse":0}
-settings=json.load(open(sys.argv[7])); hooks=settings.get("hooks",{})
-assert int(pathlib.Path(sys.argv[8]).read_text()) == spec["provider"]["startedAtEpochNs"], "provider launch receipt mismatch"
-owned_binary=pathlib.Path(plan["ownedRoot"],"bin/projmux")
-assert owned_binary.is_symlink() and owned_binary.resolve(strict=True)==candidate.resolve(strict=True)
-candidate_hash=hashlib.sha256(candidate.read_bytes()).hexdigest()
-capability=json.load(open(sys.argv[10])); runtime=capability["runtimeEligibility"]; coordination=runtime["coordination"]
-assert capability["provider"]=="claude" and capability["agent"]["uid"]==spec["receiver"]["agentUID"]
-assert runtime["registryReady"] is True and runtime["paneUID"]==spec["receiver"]["paneUID"]
-assert runtime["activationGeneration"]==spec["receiver"]["generation"]
-assert runtime["routeIncarnation"].startswith("route-")
-assert coordination["eligible"] is False and coordination["reason"]=="Claude coordination is unqualified for the exact running provider version"
-commands=[]
-for event, entries in hooks.items():
-    for matcher in entries:
-        for hook in matcher.get("hooks",[]): commands.append((event,hook))
-reply="exec projmux internal claude-message-reply >/dev/null 2>&1 # projmux-managed:claude-coordination:v3"
-boundary="exec projmux internal claude-message-boundary >/dev/null 2>&1 # projmux-managed:claude-coordination:v3"
-rows=[h for e,h in commands if e=="Stop" and h.get("command")==reply]
-assert len(rows)==1 and rows[0].get("type")=="command" and rows[0].get("timeout")==5
-assert not rows[0].get("async",False) and not rows[0].get("asyncRewake",False)
-rows=[h for e,h in commands if e=="UserPromptSubmit" and h.get("command")==boundary]
-assert len(rows)==1 and rows[0].get("type")=="command" and rows[0].get("timeout")==5
-assert not rows[0].get("async",False) and not rows[0].get("asyncRewake",False)
-assert not any("claude-message-wait" in h.get("command","") or h.get("asyncRewake",False) for _,h in commands), "obsolete ingress waiter remains"
-assert live_path.read_bytes()==live_bytes, "public provider stream changed while the traffic gate was evaluated"
-pathlib.Path(sys.argv[11]).write_bytes(live_bytes)
-pathlib.Path(sys.argv[12]).write_bytes(live_bytes)
-live_hash=hashlib.sha256(live_bytes).hexdigest()
-evidence={"version":1,"claude_code_version":provider_version,"sessionId":auth["sessionId"],
- "agentUID":spec["receiver"]["agentUID"],"paneUID":spec["receiver"]["paneUID"],
- "activationGeneration":spec["receiver"]["generation"],"routeIncarnation":runtime["routeIncarnation"],
- "providerProcess":auth["process"],"registrationGeneration":auth["registrationGeneration"],
- "helperProcess":auth["leaseProcess"],"tools":[],"mcp_servers":[],"plugins":[],"pluginInitCount":0,
- "preMarkerToolUse":0,"preMarkerStderr":0,"inboundPolicy":"accept","publicInitObserved":True,
- "streamFrozen":True,"observedAt":__import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat().replace("+00:00","Z")}
-evidence_path=pathlib.Path(plan["ownedRoot"],"evidence","qualification-evidence.json")
-temporary=evidence_path.with_suffix(".tmp")
-with open(temporary,"x") as f: json.dump(evidence,f,separators=(",",":")); f.write("\n")
-temporary.chmod(0o600); temporary.replace(evidence_path)
-pathlib.Path(plan["ownedRoot"],"evidence","traffic-gate.json").write_text(json.dumps({
-  "version":1,"result":"pass","sessionID":process["sessionID"],"providerPID":process["pid"],
-  "providerOwnerUID":process["ownerUID"],"providerStart":process["start"],
-  "providerVersion":provider_version,"initCount":1,
-  "tools":[],"mcpServers":[],"plugins":[],"preInboundToolUse":0,"stderrBytes":0,
-  "preInboundEventCount":len(events),"connectorWrites":0,"externalWrites":0,
-  "candidateSHA256":candidate_hash,"sanitizedProviderStreamSHA256":live_hash,"waiters":0,
-  "helperProcess":auth["leaseProcess"],"helperArgv":"projmux internal claude-endpoint-helper",
-  "tmuxProcess":tmux_process,
-  "activationLeaseDir":str(lease_dir),"credentialEnvPresent":False,
-  "capabilityBeforeQualification":{"eligible":False,"evidence":coordination["evidence"],"reason":coordination["reason"]}},sort_keys=True)+"\n")
-PY
-[[ -f "$root/evidence/traffic-gate.json" ]] || { echo "traffic gate did not publish its receipt" >&2; exit 1; }
-python3 - "$live_jsonl" "$root/evidence/traffic-gate.json" <<'PY'
+# This is read-only until the one qualification command below. The current
+# observer verifies public init, exact memory guard, tools=Bash and MCP/plugins0.
+python3 - "$root/cleanup-plan.json" "$evidence_helper" <<'PYPIN'
 import hashlib,json,pathlib,sys
-assert hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest()==json.load(open(sys.argv[2]))["sanitizedProviderStreamSHA256"], "provider stream changed before broker traffic"
-PY
-
-# This is the first provider push. It is a dedicated opt-in qualification, not
-# an ordinary send and not a caller-supplied version assertion. The helper opens
-# eligibility only after the exact marker returns through the official Stop
-# hook. If the injected message triggers UserPromptSubmit, the boundary closes
-# the attempt and this command fails rather than creating an exception.
-"${canary_env[@]}" "$binary" agent message qualify "uid:$receiver_uid" \
-  --evidence "$root/evidence/qualification-evidence.json" \
-  --confirm-isolated-provider-push -o json >"$root/evidence/qualification-receipt.json"
-"${canary_env[@]}" "$binary" agent capabilities "uid:$receiver_uid" -o json >"$root/evidence/capability-qualified.json"
-python3 - "$root/evidence/qualification-receipt.json" "$root/evidence/capability-qualified.json" <<'PY'
-import json,sys
-receipt=json.load(open(sys.argv[1])); capability=json.load(open(sys.argv[2]))
-assert receipt["state"]=="qualification-qualified" and receipt["providerVersion"]=="2.1.263"
-assert receipt["evidence"]=="owned-public-init-plus-exact-stop-marker"
-assert receipt["ambiguous"] is False and receipt["autoResend"] is False
-coordination=capability["runtimeEligibility"]["coordination"]
-assert coordination["eligible"] is True and coordination["evidence"]=="helper-memory-exact-version-qualification"
-PY
-
-tree_snapshot() {
-  python3 - "$root/codex-home" <<'PY'
-import hashlib,json,pathlib,stat,sys
+plan=json.load(open(sys.argv[1])); folder=pathlib.Path(sys.argv[2]).parent
+assert all(hashlib.sha256((folder/name).read_bytes()).hexdigest()==digest for name,digest in plan['runnerFiles'].items())
+PYPIN
+evidence initial
+codex_state_snapshot() {
+  python3 - "$root/codex-home" <<'PYCODEX'
+import hashlib,json,pathlib,sys
 root=pathlib.Path(sys.argv[1]); rows=[]
-for p in sorted(root.rglob("*")):
-    if p.is_symlink(): rows.append([str(p.relative_to(root)),"symlink",str(p.readlink())]); continue
-    if p.is_file():
-        b=p.read_bytes(); s=p.stat()
-        rows.append([str(p.relative_to(root)),"file",format(stat.S_IMODE(s.st_mode),"04o"),len(b),s.st_mtime_ns,hashlib.sha256(b).hexdigest()])
-print(hashlib.sha256(json.dumps(rows,separators=(",",":"),ensure_ascii=True).encode()).hexdigest())
-PY
+for path in sorted(root.rglob('*')):
+    # Authentication values/hashes are never coordination evidence.
+    if path.name in ('auth.json','.credentials.json'): continue
+    if path.is_symlink(): raise SystemExit('unexpected Codex state symlink')
+    if path.is_file():
+        info=path.stat(); rows.append([str(path.relative_to(root)),info.st_size,info.st_mtime_ns,hashlib.sha256(path.read_bytes()).hexdigest()])
+print(hashlib.sha256(json.dumps(rows,separators=(',',':')).encode()).hexdigest())
+PYCODEX
 }
-agent_count_before="$("${canary_env[@]}" "$binary" get agents --project "uid:$project_uid" -o uid | wc -l)"
-codex_state_before="$(tree_snapshot)"
-"${canary_env[@]}" TMUX="$socket_path,$server_pid,0" TMUX_PANE="$sender_pane_id" \
-  "$binary" agent message wait "uid:$sender_uid" --timeout 120s -o json >"$root/evidence/reply.json" &
-wait_pid=$!
-python3 - "$wait_pid" "$binary" "$sender_uid" "$claim_identity_path" <<'PY'
-import json,os,pathlib,sys,time
-pid=int(sys.argv[1]); candidate=pathlib.Path(sys.argv[2]).resolve(strict=True); expected_ref="uid:"+sys.argv[3]
-deadline=time.monotonic()+2; identity=None
-while time.monotonic()<deadline:
-    try:
-        proc=pathlib.Path("/proc",str(pid)); raw=(proc/"stat").read_text(); end=raw.rfind(")"); fields=raw[end+1:].split()
-        boot=pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-        argv=[part.decode() for part in (proc/"cmdline").read_bytes().split(b"\0") if part]
-        executable=pathlib.Path(os.readlink(proc/"exe")).resolve(strict=True)
-        if end>0 and len(fields)>=20 and fields[0] not in ("Z","X") and executable==candidate and argv[1:]==["agent","message","wait",expected_ref,"--timeout","120s","-o","json"]:
-            identity={"pid":pid,"ownerUID":(proc/"stat").stat().st_uid,"start":"linux:"+boot+":"+fields[19]}
-            break
-    except (FileNotFoundError,ProcessLookupError): pass
-    time.sleep(.02)
-assert identity is not None and identity["ownerUID"]==os.getuid(), "exact Codex self-claim child was not observed"
-path=pathlib.Path(sys.argv[4]); path.write_text(json.dumps(identity,sort_keys=True)+"\n"); path.chmod(0o600)
-PY
-"${canary_env[@]}" TMUX="$socket_path,$server_pid,0" TMUX_PANE="$sender_pane_id" \
-  "$binary" agent message send --message-ref "$message_ref" "uid:$receiver_uid" -- "HETEROGENEOUS_REQUEST:$message_ref. For this local transport acknowledgement, reply with exactly HETEROGENEOUS_REPLY:$message_ref and nothing else. Do not use tools." \
-  >"$root/evidence/send.txt"
-wait "$wait_pid"
-"${canary_env[@]}" TMUX="$socket_path,$server_pid,0" TMUX_PANE="$sender_pane_id" \
-  "$binary" agent message status "$message_ref" -o json >"$root/evidence/status.json"
-agent_count_after="$("${canary_env[@]}" "$binary" get agents --project "uid:$project_uid" -o uid | wc -l)"
-codex_state_after="$(tree_snapshot)"
-[[ "$codex_state_before" == "$codex_state_after" ]] || {
-  echo "Codex provider state changed during coordination traffic" >&2
-  exit 1
+codex_state_before="$(codex_state_snapshot)"
+# An empty claim proves current source admission through the public runtime and
+# live Codex composite authority checks. An unexpected inbox item aborts this run.
+assert_empty_claim() {
+  local output="$root/evidence/empty-claim.json" diagnostic="$root/evidence/empty-claim.stderr"
+  if inside agent message wait "uid:$sender_uid" --timeout 1ms -o json >"$output" 2>"$diagnostic"; then
+    echo "unexpected Codex inbox item" >&2
+    return 1
+  fi
+  [[ ! -s "$output" ]] && grep -Fxq 'agent message wait: timed out with no compatible message' "$diagnostic"
 }
+assert_empty_claim
 
-python3 - "$input" "$root/evidence/reply.json" "$root/evidence/status.json" "$agent_count_before" "$agent_count_after" <<'PY'
-import hashlib, json, sys
-s=json.load(open(sys.argv[1])); reply=json.load(open(sys.argv[2])); status=json.load(open(sys.argv[3])); ref=s["messageRef"]
-conversation="conversation-"+hashlib.sha256(ref.encode()).hexdigest()[:36]; env=reply["envelope"]
-assert sys.argv[4]==sys.argv[5]=="2", "message traffic created or removed an Agent"
-assert env["messageRef"] != ref and env["replyTo"]==ref and env["conversationRef"]==conversation
-assert env["source"]["agentUID"]==s["receiver"]["agentUID"] and env["source"]["paneUID"]==s["receiver"]["paneUID"]
-assert env["source"]["activationGeneration"]==s["receiver"]["generation"]
-assert env["target"]["agentUID"]==s["sender"]["agentUID"] and env["target"]["paneUID"]==s["sender"]["paneUID"]
-assert env["target"]["activationGeneration"]==s["sender"]["generation"]
-assert env["payload"]=="HETEROGENEOUS_REPLY:"+ref, "model-visible semantic reply marker mismatch"
-assert reply["delivery"]["state"]=="delivered" and reply["delivery"]["reason"]=="target-self-claim"
-assert status["messageRef"]==ref and status["conversationRef"]==conversation and status["delivery"]["state"]=="delivered"
+# Qualification is the first and only pre-admission push. Its actual model
+# action must call the public reply leaf; no Stop, prompt or tool-output shortcut.
+inside agent message qualify "uid:$receiver_uid" --confirm-isolated-provider-push -o json >"$root/evidence/qualification-receipt.json"
+qualification_ref="$(python3 - "$root/evidence/qualification-receipt.json" <<'PY'
+import json,re,sys
+value=json.load(open(sys.argv[1])); ref=value.get('qualificationRef','')
+assert value.get('state')=='qualification-qualified' and re.fullmatch(r'[A-Za-z0-9._:-]{1,160}',ref)
+print(ref)
 PY
+)"
+inside agent message wait "uid:$sender_uid" --timeout 5s -o json >"$root/evidence/qualification-reply.json"
+inside agent message status "$qualification_ref" -o json >"$root/evidence/qualification-status.json"
+collect_reply_proof() {
+  local kind="$1" i
+  # Only read-only snapshots are retried. A lost/invalid observer aborts at once;
+  # late paired tool results have a bounded observation window, never a resend.
+  for ((i=0; i<100; i++)); do
+    evidence current || return 1
+    if evidence reply "$kind" 2>"$root/evidence/reply-proof.stderr"; then return 0; fi
+    sleep 0.05
+  done
+  echo "model tool/result/commit evidence is incomplete; no resend" >&2
+  return 1
+}
+collect_reply_proof qualification
+assert_empty_claim
 
-# A Stop receipt may precede the public result frame. Wait only for completion
-# of these three owned turns; unknown/refused output never becomes a canary pass.
-python3 - "$root" "$input" <<'PY'
-import json,pathlib,sys,time
-root=pathlib.Path(sys.argv[1]); spec=json.load(open(sys.argv[2])); stream=root/"evidence/provider.jsonl"
-deadline=time.monotonic()+10
-while True:
-    assert (root/"evidence/provider.stderr").read_bytes()==b"", "provider stderr after inbound"
-    assert (root/"evidence/provider-collector.stderr").read_bytes()==b"", "public stream rejected after inbound"
-    data=stream.read_bytes()
-    try: events=[json.loads(line) for line in data.splitlines() if line.strip()]
-    except json.JSONDecodeError: events=[]
-    results=[]; texts=[]
-    for event in events:
-        assert isinstance(event,dict) and event.get("session_id")==spec["provider"]["sessionID"], "foreign final stream session"
-        kind=event.get("type")
-        if kind=="result":
-            assert event.get("subtype")=="success" and event.get("is_error") is False and event.get("metadataValidated") is True
-            assert event.get("usage",{})=={} and event.get("modelUsage",{})=={} and event.get("permission_denials",[])==[]
-            results.append(event)
-        elif kind=="assistant":
-            message=event["message"]; assert message.get("usage",{})=={}
-            for block in message["content"]:
-                if block.get("type")=="text": texts.append(block["text"])
-                else: assert block=={"type":"thinking","contentOmitted":True}, "unexpected final content block"
-        elif kind=="system":
-            assert event.get("subtype") in {"init","hook_started","hook_progress","hook_response","thinking_tokens"}
-        elif kind=="rate_limit_event":
-            assert set(event)=={"type","uuid","session_id","metadataValidated"} and event["metadataValidated"] is True
-        else: raise AssertionError("unknown final public event")
-    assert len(results)<=3, "unexpected additional user turn"
-    if len(results)==3 and events[-1].get("type")=="result" and data==stream.read_bytes():
-        assert any(text.strip()=="HETEROGENEOUS_REPLY:"+spec["messageRef"] for text in texts), "public assistant reply marker missing"
-        (root/"evidence/provider-final.jsonl").write_bytes(data)
-        break
-    assert time.monotonic()<deadline, "final public results incomplete"
-    time.sleep(.05)
+# General traffic starts only after the independent qualification proof/claim.
+# The model receives one harmless self-contained request and selects the ref.
+inside agent message send --message-ref "$message_ref" --ttl 2m "uid:$receiver_uid" -- \
+  "For this local transport acknowledgement, execute the permitted public reply command for this request with text HETEROGENEOUS_REPLY:$message_ref." >"$root/evidence/idle-send.txt"
+inside agent message wait "uid:$sender_uid" --timeout 120s -o json >"$root/evidence/idle-reply.json"
+inside agent message status "$message_ref" -o json >"$root/evidence/idle-status.json"
+collect_reply_proof idle
+assert_empty_claim
+evidence current
+codex_state_after="$(codex_state_snapshot)"
+[[ "$codex_state_before" == "$codex_state_after" ]] || { echo "Codex provider state changed during coordination" >&2; exit 1; }
+
+# Compare credential source/copy bytes only in this process. Neither values nor
+# credential hashes are written to evidence. Snapshot metadata contains no secret.
+python3 - "$root" <<'PY'
+import json,pathlib,stat,sys
+root=pathlib.Path(sys.argv[1]); plan=json.load(open(root/'cleanup-plan.json'))
+source=pathlib.Path(plan['credentialSource']); info=source.stat()
+assert source.read_bytes()==(root/'home/.claude/.credentials.json').read_bytes()
+assert json.load(open(root/'evidence/auth-source-before.json'))==dict(size=info.st_size,mode=format(stat.S_IMODE(info.st_mode),'04o'),mtimeNs=info.st_mtime_ns)
+(root/'evidence/auth-unchanged.json').write_text('{"unchanged":true}\n')
 PY
-
 cleanup_owned
-[[ ! -s "$provider_stderr" && ! -s "$root/evidence/provider-collector.stderr" ]] || {
-  echo "provider or collector stderr appeared during final cleanup" >&2
-  exit 1
-}
-python3 - "$root/evidence/traffic-gate.json" "$input" "$registry" "$claim_identity_path" "$root/evidence/cleanup-verification.json" <<'PY'
-import hashlib,json,os,pathlib,re,signal,stat,sys,time
-gate=json.load(open(sys.argv[1])); spec=json.load(open(sys.argv[2])); registry=sys.argv[3]
-provider={"pid":gate["providerPID"],"ownerUID":gate["providerOwnerUID"],"start":gate["providerStart"]}
-helper=gate["helperProcess"]
-tmux_process=gate["tmuxProcess"]
-claim=json.load(open(sys.argv[4]))
 
-def current(identity):
-    try:
-        proc=pathlib.Path("/proc",str(identity["pid"])); raw=(proc/"stat").read_text()
-        end=raw.rfind(")"); fields=raw[end+1:].split()
-        if end<=0 or len(fields)<20 or fields[0] in ("Z","X"): return False
-        boot=pathlib.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
-        actual={"pid":identity["pid"],"ownerUID":(proc/"stat").stat().st_uid,"start":"linux:"+boot+":"+fields[19]}
-        return actual==identity
-    except (FileNotFoundError,ProcessLookupError):
-        return False
-
-identities=(provider,helper,tmux_process,claim)
-assert not any(current(identity) for identity in identities), "exact owned provider/helper process survived cleanup"
-
-digest=hashlib.sha256((registry+"\0"+spec["receiver"]["paneUID"]+"\0"+spec["receiver"]["generation"]).encode()).hexdigest()[:32]
-lease_dir=pathlib.Path("/tmp","pmx-ce-"+digest)
-assert gate["activationLeaseDir"]==str(lease_dir), "activation lease derivation changed"
-if lease_dir.exists():
-    info=lease_dir.lstat()
-    assert stat.S_ISDIR(info.st_mode) and stat.S_IMODE(info.st_mode)==0o700 and info.st_uid==os.getuid() and not lease_dir.is_symlink()
-    for path in lease_dir.iterdir():
-        item=path.lstat(); name=path.name
-        valid_socket=(stat.S_ISSOCK(item.st_mode) and (re.fullmatch(r"[0-9a-f]{32}\.sock",name) or re.fullmatch(r"coord-[0-9a-f]{24}\.sock",name)))
-        valid_receipt=stat.S_ISREG(item.st_mode) and re.fullmatch(r"[0-9a-f]{32}\.sock\.json",name)
-        assert item.st_uid==os.getuid() and not path.is_symlink() and (valid_socket or valid_receipt), "unexpected activation lease residue"
-        path.unlink()
-    lease_dir.rmdir()
-assert not lease_dir.exists(), "activation lease directory survived cleanup"
-pathlib.Path(sys.argv[5]).write_text(json.dumps({"version":1,"exactProviderBirthAbsent":True,
-  "exactHelperBirthAbsent":True,"exactTmuxBirthAbsent":True,"activationLeaseDirAbsent":True,
-  "exactClaimBirthAbsent":True,"credentialEnvPresent":False},sort_keys=True)+"\n")
-PY
-if find "$root" -type s -print -quit | grep -q .; then
-  echo "owned tmux/helper socket residue remains after cleanup" >&2
-  exit 1
-fi
-if env -u TMUX -u TMUX_PANE tmux -S "$socket_path" list-sessions >/dev/null 2>&1; then
-  echo "owned tmux server remained reachable after cleanup" >&2
-  exit 1
-fi
-python3 - "$registry" "$effects_json" "$root/evidence/global-settings-before.json" "$(settings_snapshot)" "$root" "$receipt_path" \
-  "$input" "$root/evidence/traffic-gate.json" "$root/evidence/reply.json" "$root/evidence/status.json" \
-  "$root/cleanup-plan.json" "$root/evidence/auth-source-before.json" "$codex_state_before" "$codex_state_after" \
-  "$root/evidence/qualification-receipt.json" "$root/evidence/cleanup-verification.json" "$claim_identity_path" <<'PY'
-import hashlib,json,os,pathlib,platform,stat,sys
-registry,effects,before_path,current,root,out,input_path,gate_path,reply_path,status_path,plan_path,auth_before_path,codex_before,codex_after,qualification_path,cleanup_path,claim_path=sys.argv[1:]
-if pathlib.Path(registry).exists():
+# The same cleanup path runs on every failure. Success needs automatic writer
+# exit proof, empty owned Registry/sockets/profile, and unchanged ambient settings.
+canary_receipt_json="$(python3 - "$root" "$input" "$(settings_snapshot)" <<'PY'
+import json,os,pathlib,stat,sys
+root=pathlib.Path(sys.argv[1]); spec=json.load(open(sys.argv[2])); current=json.loads(sys.argv[3])
+assert current==json.load(open(root/'evidence/global-settings-before.json'))
+assert json.load(open(root/'evidence/auth-unchanged.json'))=={'unchanged':True}
+writers=json.load(open(root/'evidence/cleanup-writers.json'))
+assert writers['allCapturedWriterBirthsAbsent'] is True
+registry=pathlib.Path(spec['registryPath'])
+if registry.exists():
     reg=json.load(open(registry))
-    for collection in ("projects","controlSessions","windows","panes","agents","nameReservations"):
-        assert not reg.get(collection), "Registry residue in "+collection
-assert json.load(open(effects))=={"connectorWrites":0,"externalWrites":0,"preInboundToolUse":0}
-before=json.load(open(before_path)); after=json.loads(current)
-assert before==after, "global Claude settings changed"
-assert not any(pathlib.Path(root).rglob("*.sock")), "owned socket residue"
-assert not pathlib.Path(root,"home/.claude/.credentials.json").exists(), "owned credential copy survived cleanup"
-plan=json.load(open(plan_path)); source=pathlib.Path(plan["credentialSource"]); b=source.read_bytes(); s=source.stat()
-auth_before=json.load(open(auth_before_path)); auth_after={"sha256":hashlib.sha256(b).hexdigest(),"size":len(b),
- "mode":format(stat.S_IMODE(s.st_mode),"04o"),"mtimeNs":s.st_mtime_ns}
-assert auth_before==auth_after, "credential source changed"
-needles=(b"CLAUDE_CODE_MESSAGING_TOKEN",b"CLAUDE_CODE_MESSAGING_SOCKET",b"sk-ant-")
-collector=pathlib.Path(root,"bin/collect-claude-public-jsonl")
-source_integrity=json.load(open(pathlib.Path(root,"evidence/collector-source-integrity.json")))
-assert not collector.is_symlink() and collector.is_file(), "collector source changed"
-assert hashlib.sha256(collector.read_bytes()).hexdigest()==source_integrity["sha256"], "collector source changed"
-for p in pathlib.Path(root).rglob("*"):
-    # Only this exact unchanged generated source contains the denylist itself.
-    # Runtime evidence, state, and every other regular file remain scanned.
-    if p==collector: continue
-    if p.is_file() and not p.is_symlink() and any(n in p.read_bytes() for n in needles): raise SystemExit("credential residue: "+str(p))
-spec=json.load(open(input_path)); gate=json.load(open(gate_path)); reply=json.load(open(reply_path)); status=json.load(open(status_path)); qualification=json.load(open(qualification_path)); cleanup=json.load(open(cleanup_path))
-claim=json.load(open(claim_path))
-assert cleanup=={"version":1,"exactProviderBirthAbsent":True,"exactHelperBirthAbsent":True,"exactTmuxBirthAbsent":True,"activationLeaseDirAbsent":True,"exactClaimBirthAbsent":True,"credentialEnvPresent":False}
-assert gate["credentialEnvPresent"] is False and gate["helperArgv"]=="projmux internal claude-endpoint-helper"
-ref=spec["messageRef"]; env=reply["envelope"]
-receipt={"version":1,"result":"pass","messageRef":ref,"replyMessageRef":env["messageRef"],
- "projectUID":spec["projectUID"],"windowUID":spec["windowUID"],
- "conversationRef":env["conversationRef"],"replyTo":env["replyTo"],"replyPayloadMarker":env["payload"],
- "sender":{"agentUID":spec["sender"]["agentUID"],"paneUID":spec["sender"]["paneUID"],"paneID":spec["sender"]["paneID"],
-           "generation":spec["sender"]["generation"],"incarnation":status["source"]["incarnation"]},
- "receiver":{"agentUID":spec["receiver"]["agentUID"],"paneUID":spec["receiver"]["paneUID"],"paneID":spec["receiver"]["paneID"],
-             "generation":spec["receiver"]["generation"],"incarnation":status["target"]["incarnation"]},
- "provider":{"pid":gate["providerPID"],"ownerUID":gate["providerOwnerUID"],"start":gate["providerStart"],
-             "sessionID":gate["sessionID"],"version":gate["providerVersion"],"initCount":gate["initCount"],
-             "tools":gate["tools"],"mcpServers":gate["mcpServers"],"plugins":gate["plugins"],
-             "preInboundEventCount":gate["preInboundEventCount"],"preInboundToolUse":gate["preInboundToolUse"],
-             "stderrBytes":gate["stderrBytes"],"sanitizedPreInboundStreamSHA256":gate["sanitizedProviderStreamSHA256"],
-             "inboundPolicy":"accept"},
- "helper":{"pid":gate["helperProcess"]["pid"],"ownerUID":gate["helperProcess"]["ownerUID"],
-           "start":gate["helperProcess"]["start"],"argv":gate["helperArgv"],"credentialEnvPresent":False},
- "codexSelfClaimProcess":{"pid":claim["pid"],"ownerUID":claim["ownerUID"],"start":claim["start"],"absentAfterCleanup":True},
- "capabilityBeforeQualification":gate["capabilityBeforeQualification"],
- "qualification":{"state":qualification["state"],"qualificationRef":qualification["qualificationRef"],
-                  "providerVersion":qualification["providerVersion"],"evidence":qualification["evidence"],
-                  "ambiguous":qualification["ambiguous"],"autoResend":qualification["autoResend"]},
- "candidateSHA256":gate["candidateSHA256"],
- "codexProviderState":{"beforeSHA256":codex_before,"afterSHA256":codex_after,"writes":0},
- "delivery":{"original":status["delivery"]["state"],"reply":reply["delivery"]["state"],"replyReason":reply["delivery"]["reason"]},
- "globalSettings":{"before":before,"after":after,"unchanged":True},
- "credentialSource":{"present":True,"size":auth_after["size"],"mode":auth_after["mode"],
-                     "mtimeNs":auth_after["mtimeNs"],"unchanged":True},"ownedCredentialPresent":False,
- "agentsBefore":2,"agentsAfter":2,"providerToolUse":0,"connectorWrites":0,"externalWrites":0,"waiterProcesses":0,
- "exactProviderBirthAbsent":True,"exactHelperBirthAbsent":True,"exactTmuxBirthAbsent":True,
- "exactClaimBirthAbsent":True,"activationLeaseDirAbsent":True,
- "credentialResidue":0,"processResidue":0,"socketResidue":0,"registryResidue":0,"tmuxResidue":0,
- "globalSettingsUnchanged":True}
-out_path=pathlib.Path(out); parent=out_path.parent
-for component in (parent,*parent.parents):
-    if stat.S_ISLNK(component.lstat().st_mode):
-        trusted=platform.system()=="Darwin" and str(component) in ("/tmp","/var") and component.resolve(strict=True)==pathlib.Path("/private"+str(component))
-        assert trusted, "canary receipt parent chain changed"
-resolved=parent.resolve(strict=True)/out_path.name
-assert resolved==pathlib.Path(plan["receiptPath"]) and not out_path.exists() and not out_path.is_symlink()
-flags=os.O_WRONLY|os.O_CREAT|os.O_EXCL
-if hasattr(os,"O_NOFOLLOW"): flags|=os.O_NOFOLLOW
-fd=os.open(out_path,flags,0o600)
-with os.fdopen(fd,"w") as stream: stream.write(json.dumps(receipt,sort_keys=True)+"\n")
+    assert all(not reg.get(key) for key in ('projects','windows','panes','agents','controlSessions','nameReservations'))
+assert not (root/'home/.claude/.credentials.json').exists()
+assert not any(stat.S_ISSOCK(path.lstat().st_mode) for path in root.rglob('*'))
+initial=json.load(open(root/'evidence/initial.json')); final=json.load(open(root/'evidence/current.json'))
+lease=pathlib.Path(initial['activationLeaseDir'])
+assert not lease.exists(), 'activation lease remains after automatic cleanup'
+profile=root/'xdg-state/projmux/claude-dialogue'
+assert not profile.exists() or not any(profile.iterdir()), 'profile remains after automatic cleanup'
+needles=(b'CLAUDE_CODE_MESSAGING_TOKEN',b'CLAUDE_CODE_MESSAGING_SOCKET',b'sk-ant-')
+for path in root.rglob('*'):
+    if path.is_file() and not path.is_symlink():
+        assert not any(needle in path.read_bytes() for needle in needles), 'credential residue'
+qualification=json.load(open(root/'evidence/qualification-proof.json')); idle=json.load(open(root/'evidence/idle-proof.json'))
+assert qualification['originalRef']!=idle['originalRef'] and qualification['toolUseID']!=idle['toolUseID']
+assert len(final['toolEvidence'])==2
+receipt=dict(version=2,result='qualification-and-idle-pass',candidateHead=initial['candidateHead'],candidateSHA256=initial['candidateSHA256'],
+    projectUID=spec['projectUID'],windowUID=spec['windowUID'],routes=initial['routes'],
+    provider=dict(version=initial['profile']['claude_code_version'],sessionId=initial['authority']['sessionId'],process=initial['authority']['process']),
+    helperProcess=initial['authority']['leaseProcess'],tmuxProcess=initial['tmuxProcess'],
+    effectiveTools=['Bash'],mcpServers=[],plugins=[],preInboundToolUse=0,
+    qualification=qualification,idle=idle,codexClaimAuthority='public-runtime-owner-and-live-composite-route',
+    claimOnce=True,readOnlyEvidence=True,codexProviderStateUnchanged=True,automaticCleanup=writers,credentialResidue=0,
+    globalSettingsUnchanged=True,credentialSourceUnchanged=True,ownedCredentialAbsent=True,
+    activationLeaseAbsent=True,ownedProfileAbsent=True,ownedSocketAbsent=True,
+    unverified=['active-tool-overlap','model-visible-human-overlap','multiple-ordinary-requests','same-UID-recovery','installed-smoke'])
 print(json.dumps(receipt,sort_keys=True))
 PY
+)"
+# EXIT verifies the original root incarnation, removes it once after writer
+# closure, then publishes the external receipt. A removal failure is not PASS.
