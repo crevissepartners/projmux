@@ -83,13 +83,13 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 		reply.Target.Provider != "codex" || reply.Source != publicMessageRoute(source) || coremessage.ValidateReply(*message.envelope.BrokerEnvelope, reply) != nil {
 		return refuse("invalid-explicit-reply-correlation")
 	}
-	qualification := h.qualifiedVersion != claudeFrozenFrameProviderVersion
-	if qualification {
-		state := h.qualification
-		if state == nil || state.state != "pending" || !state.frameComplete || state.ref != reply.ReplyTo ||
-			reply.Payload != state.marker {
-			return refuse("qualification-challenge-only")
-		}
+	// A reply is a qualification answer only when it answers the pending
+	// challenge. Ordinary replies no longer have to wait for qualification;
+	// the challenge itself still has to match its marker exactly.
+	state := h.qualification
+	qualification := state != nil && state.state == "pending" && state.ref == reply.ReplyTo
+	if qualification && (!state.frameComplete || reply.Payload != state.marker) {
+		return refuse("qualification-challenge-only")
 	}
 	if message.replyReserved {
 		return refuse("broker-reply-outcome-unknown")

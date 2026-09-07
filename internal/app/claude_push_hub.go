@@ -70,7 +70,10 @@ func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, 
 		})
 		return message.delivery
 	}
-	if h.qualifiedVersion != claudeFrozenFrameProviderVersion || poster == nil {
+	// Delivery no longer waits for an explicit-reply qualification. A live
+	// poster is the whole precondition; qualification now governs only the
+	// reply path.
+	if poster == nil {
 		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{
 			Kind: agentdelivery.EventRefuse, MessageRef: envelope.MessageRef, Reason: "exact-provider-version-unqualified",
 		})

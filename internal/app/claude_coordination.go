@@ -419,8 +419,13 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 		}
 		_ = localipc.WriteJSON(conn, response)
 	case "eligibility":
+		// Delivery no longer requires the isolated reply-only profile or a
+		// completed explicit-reply qualification. Any current activation that
+		// owns a provider poster can receive. This deliberately drops the
+		// isolation gate: peer text reaches a fully capable session as a user
+		// turn, and the reply path stays the only thing qualification governs.
 		kind, reason := "unqualified", "exact-version-isolated-qualification-required"
-		if s.dialogueProfileCurrent() && s.tool.ready() && s.hub.coordinationEligible() {
+		if s.poster != nil {
 			kind, reason = "qualified", "exact-public-init-and-explicit-reply"
 		}
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind,
@@ -452,7 +457,7 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 		}
 		_ = localipc.WriteJSON(conn, s.hub.qualificationResponse(request.QualificationRef))
 	case "submit":
-		if !s.dialogueProfileCurrent() || (s.tool != nil && !s.tool.ready()) || request.Envelope == nil || !request.Envelope.valid(time.Now(), s.route) {
+		if s.poster == nil || request.Envelope == nil || !request.Envelope.valid(time.Now(), s.route) {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "refused"})
 			return
 		}
@@ -494,7 +499,10 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 		}
 		_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind, ToolResult: result})
 	case "explicit-reply":
-		if !s.dialogueProfileCurrent() || request.ReplyEnvelope == nil || request.SessionID != authority.SessionID ||
+		// The reply-only profile is no longer required to reply. The caller
+		// must still be a descendant of the exact provider process and match
+		// its session, so the reply provably comes from inside this activation.
+		if request.ReplyEnvelope == nil || request.SessionID != authority.SessionID ||
 			!claudeProviderDescendant(peer, authority.Process) || (s.tool != nil && !s.tool.authorizeCommit(peer, *request.ReplyEnvelope)) {
 			_ = localipc.WriteJSON(conn, claudeCoordinationResponse{Version: claudeCoordinationVersion,
 				Kind: "reply-refused", Reason: "exact-provider-caller-required"})

@@ -266,10 +266,18 @@ func (c *LifecycleClient) ReadLifecycleSnapshot(ctx context.Context, threadID st
 	}
 	done := make(chan result, 1)
 	go func() {
-		input := c.nextInput()
-		projector := lifecycleProjector{input: input, requestID: id, threadID: threadID}
-		snapshot, err := projector.run(ctx)
-		done <- result{snapshot: snapshot, err: err}
+		for skipped := 0; ; skipped++ {
+			// Each input is one frame by construction, so a skipped
+			// notification needs a fresh input rather than a rewind.
+			input := c.nextInput()
+			projector := lifecycleProjector{input: input, requestID: id, threadID: threadID}
+			snapshot, err := projector.run(ctx)
+			if err != nil && errors.Is(err, errLifecycleNotificationSkip) && skipped < lifecycleNotificationSkipLimit {
+				continue
+			}
+			done <- result{snapshot: snapshot, err: err}
+			return
+		}
 	}()
 	select {
 	case got := <-done:
@@ -598,6 +606,15 @@ type lifecycleProjectionFields [lifecycleProjectionSlots]any
 
 var lifecycleNumber = regexp.MustCompile(`^-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?$`)
 
+// errLifecycleNotificationSkip marks a top-level frame that carries method and
+// no id. Such a frame is a notification by definition, so it cannot be the
+// response this owned read is waiting for and discarding it does not let a
+// foreign response escape the owned authority boundary. Server requests
+// (method with id) and late responses stay refused.
+var errLifecycleNotificationSkip = errors.New("lifecycle notification skipped")
+
+const lifecycleNotificationSkipLimit = 8
+
 func (p *lifecycleProjector) run(ctx context.Context) (LifecycleSnapshot, error) {
 	p.ctx = ctx
 	value, err := p.value(modeRoot, 0)
@@ -917,6 +934,9 @@ func (p *lifecycleProjector) projectObject(mode lifecycleMode, keys []string, fi
 	switch mode {
 	case modeRoot:
 		if hasLifecycleKey(keys, "method") {
+			if !hasLifecycleKey(keys, "id") {
+				return nil, fmt.Errorf("%w: owned lifecycle notification skipped", errLifecycleNotificationSkip)
+			}
 			return nil, fmt.Errorf("%w: owned lifecycle notification refused", ErrProtocol)
 		}
 		if hasLifecycleKey(keys, "params") {

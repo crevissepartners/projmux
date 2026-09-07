@@ -186,6 +186,16 @@ func (s *claudeDialogueStream) inspect(line []byte) (*claudeDialogueObservation,
 				return refuse()
 			}
 			return nil, nil
+		case "model_refusal_no_fallback":
+			// The provider refused one user message. It is an outcome, not a
+			// capability: no tool, no content the activation acted on, and the
+			// turn simply produced no reply. Dropping it keeps the refusal
+			// observable as a qualification that never completes instead of
+			// collapsing the activation, which would hide why it failed.
+			if _, ok := dialogueObject(event, "type subtype uuid session_id request_id content original_model refused_user_message_uuid api_refusal_category api_refusal_explanation"); !ok || !s.initialized {
+				return refuse()
+			}
+			return nil, nil
 		case "thinking_tokens":
 			if _, ok := dialogueObject(event, "type subtype estimated_tokens estimated_tokens_delta uuid session_id"); !ok || !s.initialized || !dialogueNumber(event["estimated_tokens"]) || !dialogueNumber(event["estimated_tokens_delta"]) {
 				return refuse()
@@ -377,11 +387,26 @@ func (s *claudeDialogueStream) inspect(line []byte) (*claudeDialogueObservation,
 			return observation("ready"), nil
 		}
 		return nil, nil
+	case "command_lifecycle":
+		// Command state telemetry. The pinned reply tool emits it while it runs.
+		// It carries no content, no tool definition, and no capability: an actual
+		// invocation still has to appear as a strictly validated assistant
+		// tool_use block, so this event is shape-checked and dropped.
+		if _, ok := dialogueObject(event, "type command_uuid state session_id uuid"); !ok || !s.initialized {
+			return refuse()
+		}
+		if !dialogueText(event["command_uuid"]) || !dialogueText(event["state"]) {
+			return refuse()
+		}
+		return nil, nil
 	case "rate_limit_event":
 		if _, ok := dialogueObject(event, "type uuid session_id rate_limit_info"); !ok || !s.initialized {
 			return refuse()
 		}
-		row, ok := dialogueObject(event["rate_limit_info"], "isUsingOverage overageResetsAt overageStatus rateLimitType resetsAt status unifiedWindows")
+		// overageResetsAt and overageDisabledReason are the two observed spellings
+		// of the same optional overage slot. Exactly one is present, so the row
+		// stays exactly seven fields wide and the closed shape keeps its meaning.
+		row, ok := dialogueObject(event["rate_limit_info"], "isUsingOverage overageResetsAt overageDisabledReason overageStatus rateLimitType resetsAt status unifiedWindows")
 		if !ok || len(row) != 7 {
 			return refuse()
 		}
@@ -393,6 +418,10 @@ func (s *claudeDialogueStream) inspect(line []byte) (*claudeDialogueObservation,
 				}
 			case "overageResetsAt", "resetsAt":
 				if !dialogueNumber(value) {
+					return refuse()
+				}
+			case "overageDisabledReason":
+				if value != nil && !dialogueText(value) {
 					return refuse()
 				}
 			case "unifiedWindows":
