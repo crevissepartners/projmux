@@ -101,6 +101,9 @@ func run() error {
 		return err
 	}
 	listener.SetUnlinkOnClose(false)
+	// Cancellation must unblock an accept before any qualification arrives.
+	// The fixture owns this listener; no shared process or socket is signaled.
+	go func() { <-ctx.Done(); _ = listener.Close() }()
 	defer func() { _ = listener.Close(); _ = root.Remove("provider.sock") }()
 	if err := root.Chmod("provider.sock", 0o600); err != nil {
 		return err
@@ -111,10 +114,17 @@ func run() error {
 	}
 	token := hex.EncodeToString(tokenBytes)
 	environment := append(os.Environ(), "CLAUDE_CODE_MESSAGING_SOCKET="+socketPath, "CLAUDE_CODE_MESSAGING_TOKEN="+token, "PMX_INTERNAL_CLAUDE_REPLY_GUARD=1")
-	if err := runHook(ctx, binary, environment, "claude-endpoint-register", map[string]any{
-		"hook_event_name": "SessionStart", "session_id": sessionID,
-	}); err != nil {
-		return fmt.Errorf("registration hook: %w", err)
+	publicProfile := os.Getenv("PMX_INTERNAL_CLAUDE_DIALOGUE_PROFILE") != ""
+	if publicProfile {
+		if err := publicProfileStartup(ctx, binary, environment); err != nil {
+			return err
+		}
+	} else {
+		if err := runHook(ctx, binary, environment, "claude-endpoint-register", map[string]any{
+			"hook_event_name": "SessionStart", "session_id": sessionID,
+		}); err != nil {
+			return fmt.Errorf("registration hook: %w", err)
+		}
 	}
 	if err := atomicWrite(root, "registration-ready", []byte("ready\n")); err != nil {
 		return err
@@ -234,6 +244,16 @@ func runExplicitReply(ctx context.Context, binary string, environment []string, 
 	if err != nil {
 		return err
 	}
+	publicProfile := os.Getenv("PMX_INTERNAL_CLAUDE_DIALOGUE_PROFILE") != ""
+	toolID := "tool-" + content.MessageRef
+	if publicProfile {
+		if err := publicEvent(map[string]any{"type": "assistant", "message": map[string]any{"role": "assistant", "content": []any{map[string]any{"type": "tool_use", "id": toolID, "name": "Bash", "input": map[string]any{"command": text}}}}}); err != nil {
+			return err
+		}
+		if err := publicHookEvent("hook_started", "PreToolUse", toolID, ""); err != nil {
+			return err
+		}
+	}
 	// #nosec G204 G702 -- harness-pinned product binary, fixed internal route;
 	// the synthetic official tool input is data on stdin, never evaluated here.
 	prepare := exec.CommandContext(ctx, binary, "internal", "claude-reply-tool", "prepare")
@@ -253,11 +273,32 @@ func runExplicitReply(ctx context.Context, binary string, environment []string, 
 	if json.Unmarshal(output, &decision) != nil || decision.Output.Decision != "allow" || decision.Output.Input.Command == "" {
 		return errors.New("fixture explicit tool was refused")
 	}
-	// #nosec G204 G702 -- exact pinned command consumes an opaque memory ticket
-	// and directly execs the approved public argv; this fixture executes no shell.
-	consume := exec.CommandContext(ctx, binary, "internal", "claude-reply-tool", "execute", "fixture opaque carrier '"+decision.Output.Input.Command+"'")
-	consume.Env, consume.Stdout, consume.Stderr = cleanEnvironment, io.Discard, io.Discard
-	return consume.Run()
+	carrier := "fixture opaque carrier '" + decision.Output.Input.Command + "'"
+	// #nosec G204 G702 -- exact harness-pinned executable and fixed internal route; opaque ticket is data, never a shell program.
+	consume := exec.CommandContext(ctx, binary, "internal", "claude-reply-tool", "execute", carrier)
+	if publicProfile {
+		if err := publicHookEvent("hook_response", "PreToolUse", toolID, string(output)); err != nil {
+			return err
+		}
+		alias := os.Getenv("CLAUDE_CODE_SHELL_PREFIX")
+		if alias != filepath.Join(os.Getenv("PMX_INTERNAL_CLAUDE_DIALOGUE_PROFILE"), "projmux-claude-reply-prefix") {
+			return errors.New("fixture public prefix differs from owned profile")
+		}
+		// #nosec G204 G702 -- exact profile alias points at the harness candidate; exercises public argv0 dispatch with one opaque argument, no eval.
+		consume = exec.CommandContext(ctx, alias, carrier)
+	}
+	consume.Env, consume.Stderr = cleanEnvironment, io.Discard
+	receipt, err := consume.Output()
+	if err != nil {
+		return err
+	}
+	if publicProfile {
+		if err := publicEvent(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": toolID, "content": string(receipt), "is_error": false}}}, "tool_use_result": map[string]any{"stdout": string(receipt), "stderr": "", "interrupted": false}}); err != nil {
+			return err
+		}
+		return publicEvent(map[string]any{"type": "result", "subtype": "success", "is_error": false})
+	}
+	return nil
 }
 
 func atomicWrite(root *os.Root, name string, data []byte) error {
@@ -271,4 +312,70 @@ func atomicWrite(root *os.Root, name string, data []byte) error {
 		return err
 	}
 	return root.Rename(temporary, name)
+}
+
+// These are synthetic public CLI events, not model-execution evidence. They
+// exercise the same production observer and ordinary public activation path.
+func publicEvent(event map[string]any) error {
+	event["session_id"] = sessionID
+	return json.NewEncoder(os.Stdout).Encode(event)
+}
+func publicHookEvent(subtype, event, id, output string) error {
+	name := event
+	if event == "SessionStart" {
+		name = "SessionStart:startup"
+	}
+	value := map[string]any{"type": "system", "subtype": subtype, "hook_id": id, "hook_event": event, "hook_name": name}
+	if subtype == "hook_response" {
+		value["exit_code"] = 0
+		value["outcome"] = "success"
+		value["stdout"] = output
+		value["stderr"] = ""
+		value["output"] = ""
+	}
+	return publicEvent(value)
+}
+func publicProfileStartup(ctx context.Context, binary string, environment []string) error {
+	// The wrapper must have kept same-session persistence while restricting the
+	// actual provider argv. The fixture never reads arbitrary terminal bytes.
+	for key, want := range map[string]string{"--tools": "Bash", "--permission-mode": "dontAsk", "--setting-sources": "", "--input-format": "stream-json", "--output-format": "stream-json"} {
+		found := false
+		for i, arg := range os.Args {
+			if arg == key && i+1 < len(os.Args) && os.Args[i+1] == want {
+				found = true
+			}
+		}
+		if !found {
+			return errors.New("fixture public isolation argv missing")
+		}
+	}
+	var initial providerFrame
+	line, err := bufio.NewReader(io.LimitReader(os.Stdin, 4096)).ReadBytes('\n')
+	if err != nil || decodeExact(line, &initial) != nil || initial.Type != "user" || initial.Message.Role != "user" || initial.Message.Content != "Reply READY." {
+		return errors.New("fixture public readiness input differs")
+	}
+	for i := range 2 {
+		id := fmt.Sprintf("fixture-startup-%d", i)
+		if err := publicHookEvent("hook_started", "SessionStart", id, ""); err != nil {
+			return err
+		}
+		if i == 0 {
+			payload, _ := json.Marshal(map[string]any{"hook_event_name": "SessionStart", "session_id": sessionID})
+			// #nosec G204 G702 -- fixed existing lifecycle callback on harness-owned candidate, no shell or model argv.
+			state := exec.CommandContext(ctx, binary, "internal", "agent-hook", "ingest", "claude-hook", "--pane="+os.Getenv("PMX_INTERNAL_ACTIVATION_PANE_UID"))
+			state.Env, state.Stdin, state.Stdout, state.Stderr = environment, bytes.NewReader(payload), io.Discard, io.Discard
+			if err := state.Run(); err != nil {
+				return errors.New("fixture public lifecycle callback failed")
+			}
+		} else if err := runHook(ctx, binary, environment, "claude-endpoint-register", map[string]any{"hook_event_name": "SessionStart", "session_id": sessionID}); err != nil {
+			return errors.New("fixture public endpoint callback failed")
+		}
+		if err := publicHookEvent("hook_response", "SessionStart", id, ""); err != nil {
+			return err
+		}
+	}
+	if err := publicEvent(map[string]any{"type": "system", "subtype": "init", "tools": []string{"Bash"}, "mcp_servers": []any{}, "plugins": []any{}, "permissionMode": "dontAsk", "claude_code_version": "2.1.263"}); err != nil {
+		return err
+	}
+	return publicEvent(map[string]any{"type": "result", "subtype": "success", "is_error": false})
 }

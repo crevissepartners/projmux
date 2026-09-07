@@ -1888,3 +1888,16 @@ separate decision this measurement exists to inform.
   `TestClaudeDialoguePartialSetupAndUnknownFilesRetainExactRoot` cover Linux
   terminal EOF, current-turn completion, stderr loss, exact-birth pidfd exit
   proof and retained evidence on uncertain cleanup. No provider runs in these tests.
+
+- L20 now launches the synthetic Claude through public `--dialogue-reply-only`,
+  exercises the real profile executor, observer and pinned prefix dispatch, and
+  qualifies from current helper-memory evidence. It creates no hand-authored
+  public-init evidence file. Qualification and ordinary replies are separately
+  claimed by the original Codex route. This is deterministic integration
+  evidence, not actual model execution. Wrapped pane output is joined for the
+  readiness marker; cancellation closes the fixture's own first-frame listener.
+- `TestClaudeEndpointProcessIntegration` intentionally remains the private
+  registration/bootstrap/process fixture. Its owned registration child opts in
+  after activation; it does not depend on a supervisor-inherited guard flag,
+  which production correctly scrubs. It does not substitute for public launch
+  or actual provider qualification evidence.

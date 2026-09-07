@@ -48,7 +48,11 @@ capture.connect(os.environ['PMX_TEST_CAPTURE'])
 receipt = capture.makefile('w', buffering=1)
 receipt.write(json.dumps({'socket':path,'token':token,'pid':os.getpid(),'pane_env':os.environ.get('PMX_INTERNAL_ACTIVATION_PANE_UID'),'generation_env':os.environ.get('PMX_INTERNAL_ACTIVATION_GENERATION'),'registry_env':os.environ.get('PMX_INTERNAL_CLAUDE_REGISTRY_PATH')}) + '\n'); receipt.flush()
 def hook(session):
-    result = subprocess.run([os.environ['PMX_TEST_BIN'],'internal','claude-endpoint-register'], input=json.dumps({'hook_event_name':'SessionStart','session_id':session}).encode(), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # The supervisor must scrub inherited activation policy. This private
+    # fixture opts its owned registration child in explicitly, after launch.
+    hook_env = dict(os.environ)
+    hook_env['PMX_INTERNAL_CLAUDE_REPLY_GUARD'] = '1'
+    result = subprocess.run([os.environ['PMX_TEST_BIN'],'internal','claude-endpoint-register'], input=json.dumps({'hook_event_name':'SessionStart','session_id':session}).encode(), env=hook_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert result.returncode == 0 and not result.stdout and not result.stderr
     receipt.write('hook-returned\n'); receipt.flush()
 def receive(kind, session):
@@ -318,7 +322,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	cmd.Stderr = &stderr
 	cmd.Dir = root
 	cmd.Env = append(claudeEndpointProcessEnv(root, binary), muxEnvironment...)
-	cmd.Env = append(cmd.Env, "PMX_TEST_CAPTURE="+capturePath, internalClaudeReplyGuardEnv+"=1")
+	cmd.Env = append(cmd.Env, "PMX_TEST_CAPTURE="+capturePath)
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}

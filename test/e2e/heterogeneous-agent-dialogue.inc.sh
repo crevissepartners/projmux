@@ -104,7 +104,7 @@ dialogue_inside() {
   "${dialogue_env[@]}" TMUX="$dialogue_socket_path,$dialogue_server_pid,0" TMUX_PANE="$pane" "$bin" "$@"
 }
 dialogue_codex_pane="$(dialogue_inside "$dialogue_anchor" create agent --provider codex --project "uid:$dialogue_project_uid" --window "uid:$dialogue_window_uid" -o pane-id)"
-dialogue_claude_pane="$(dialogue_inside "$dialogue_anchor" create agent --provider claude --project "uid:$dialogue_project_uid" --window "uid:$dialogue_window_uid" -o pane-id)"
+dialogue_claude_pane="$(dialogue_inside "$dialogue_anchor" create agent --provider claude --dialogue-reply-only --project "uid:$dialogue_project_uid" --window "uid:$dialogue_window_uid" -o pane-id)"
 dialogue_codex_pane_uid="$(dialogue_tmux show-options -pqv -t "$dialogue_codex_pane" @projmux_pane_uid)"
 dialogue_claude_pane_uid="$(dialogue_tmux show-options -pqv -t "$dialogue_claude_pane" @projmux_pane_uid)"
 dialogue_agents_json="$(dialogue_pmx get agents --project "uid:$dialogue_project_uid" -o json)"
@@ -174,30 +174,17 @@ assert runtime["registryReady"] is True and runtime["routeIncarnation"].startswi
 assert runtime["coordination"]["eligible"] is False
 PY
 
-# L20's deterministic collector synthesizes the exact sanitized public-init
-# facts for the offline fixture only. The product still validates every exact
-# route/process/helper field and requires a broker-correlated explicit public reply before opening
-# helper-memory eligibility. No provider socket/token is persisted here.
-dialogue_qualification_evidence="$dialogue_root/qualification-evidence.json"
-python3 - "$dialogue_root/state/projmux/metadata/registry.json" "$dialogue_capabilities_before" \
-  "$dialogue_claude_uid" "$dialogue_claude_pane_uid" "$dialogue_claude_generation" "$dialogue_qualification_evidence" <<'PY'
-import datetime,json,os,pathlib,sys
-registry=json.load(open(sys.argv[1])); capability=json.load(open(sys.argv[2])); agent_uid,pane_uid,generation,out=sys.argv[3:]
-pane=next(x for x in registry["panes"] if x["metadata"]["uid"]==pane_uid)
-authority=pane["status"]["activation"]["claude"]["registration"]["authority"]
-evidence={"version":1,"claude_code_version":"2.1.263","sessionId":authority["sessionId"],
- "agentUID":agent_uid,"paneUID":pane_uid,"activationGeneration":generation,
- "routeIncarnation":capability["runtimeEligibility"]["routeIncarnation"],
- "providerProcess":authority["process"],"registrationGeneration":authority["registrationGeneration"],
- "helperProcess":authority["leaseProcess"],"tools":["Bash"],"replyExecutionGate":True,"mcp_servers":[],"plugins":[],
- "pluginInitCount":0,"preMarkerToolUse":0,"preMarkerStderr":0,"inboundPolicy":"accept",
- "publicInitObserved":True,"streamFrozen":True,
- "observedAt":datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00","Z")}
-temporary=out+".tmp"
-with open(temporary,"x") as f: json.dump(evidence,f,separators=(",",":")); f.write("\n")
-os.chmod(temporary,0o600); os.replace(temporary,out)
-PY
-dialogue_inside "$dialogue_codex_pane" agent message qualify "uid:$dialogue_claude_uid" --evidence "$dialogue_qualification_evidence" \
+# Exercise the production observer on synthetic public events. No hand-authored
+# qualification evidence file is accepted as public activation evidence here.
+dialogue_observer_ready() {
+  dialogue_tmux capture-pane -p -J -t "$dialogue_claude_pane" | grep -Fq 'Claude reply-only activation is ready for explicit qualification.'
+}
+if ! smoke_wait_for "dialogue public observer ready" dialogue_observer_ready; then
+  dialogue_tmux capture-pane -p -J -t "$dialogue_claude_pane" >&2 || true
+  if [[ -f "$dialogue_claude_state/fixture-error" ]]; then cat "$dialogue_claude_state/fixture-error" >&2; fi
+  exit 1
+fi
+dialogue_inside "$dialogue_codex_pane" agent message qualify "uid:$dialogue_claude_uid" \
   --confirm-isolated-provider-push -o json >"$dialogue_root/qualification-receipt.json"
 dialogue_inside "$dialogue_codex_pane" agent message wait --timeout 5s -o json >"$dialogue_root/qualification-reply.json"
 python3 - "$dialogue_root/qualification-receipt.json" "$dialogue_root/qualification-reply.json" <<'PYQUAL'
