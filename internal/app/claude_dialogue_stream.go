@@ -19,7 +19,7 @@ type claudeDialogueStream struct {
 	ready       bool
 	hookPending map[string]string
 	startupDone int
-	tools       map[string]bool
+	tools       map[string]claudeDialogueObservedTool
 }
 
 func dialogueObject(value any, fields string) (map[string]any, bool) {
@@ -214,7 +214,7 @@ func (s *claudeDialogueStream) inspect(line []byte) (*claudeDialogueObservation,
 		if !ok || len(blocks) == 0 || len(blocks) > 256 {
 			return refuse()
 		}
-		toolSeen := false
+		actions := []claudeDialogueObservedTool{}
 		for _, raw := range blocks {
 			block, ok := raw.(map[string]any)
 			if !ok {
@@ -238,7 +238,7 @@ func (s *claudeDialogueStream) inspect(line []byte) (*claudeDialogueObservation,
 					return refuse()
 				}
 				if s.tools == nil {
-					s.tools = map[string]bool{}
+					s.tools = map[string]claudeDialogueObservedTool{}
 				}
 				if _, exists := s.tools[id]; exists {
 					return refuse()
@@ -251,7 +251,8 @@ func (s *claudeDialogueStream) inspect(line []byte) (*claudeDialogueObservation,
 				if !ok {
 					return refuse()
 				}
-				if _, err := parseClaudeReplyCommand(command, s.candidate); err != nil {
+				argv, err := parseClaudeReplyCommand(command, s.candidate)
+				if err != nil {
 					return refuse()
 				}
 				for _, key := range []string{"run_in_background", "dangerouslyDisableSandbox"} {
@@ -265,14 +266,17 @@ func (s *claudeDialogueStream) inspect(line []byte) (*claudeDialogueObservation,
 				if len(s.tools) >= 32 {
 					return refuse()
 				}
-				s.tools[id] = false
-				toolSeen = true
+				action := claudeDialogueObservedTool{ToolUseID: id, MessageRef: argv[6], TargetAgentUID: strings.TrimPrefix(argv[4], "uid:")}
+				s.tools[id] = action
+				actions = append(actions, action)
 			default:
 				return refuse()
 			}
 		}
-		if toolSeen {
-			return observation("tool"), nil
+		if len(actions) > 0 {
+			out := observation("tool")
+			out.ToolActions = actions
+			return out, nil
 		}
 		return nil, nil
 	case "user":
@@ -295,8 +299,8 @@ func (s *claudeDialogueStream) inspect(line []byte) (*claudeDialogueObservation,
 		if !ok {
 			return refuse()
 		}
-		done, exists := s.tools[id]
-		if !exists || done {
+		action, exists := s.tools[id]
+		if !exists || action.ResultObserved {
 			return refuse()
 		}
 		if value, exists := block["is_error"]; exists && value != false {
@@ -305,14 +309,23 @@ func (s *claudeDialogueStream) inspect(line []byte) (*claudeDialogueObservation,
 		if !dialogueText(block["content"]) {
 			return refuse()
 		}
+		receipt := block["content"].(string)
 		if value, exists := event["tool_use_result"]; exists {
 			output, ok := dialogueObject(value, "stdout stderr interrupted")
 			if !ok || !dialogueText(output["stdout"]) || output["stderr"] != "" || output["interrupted"] != false {
 				return refuse()
 			}
+			receipt = output["stdout"].(string)
 		}
-		s.tools[id] = true
-		return nil, nil
+		action.ResultObserved = true
+		parts := strings.Split(strings.TrimSuffix(receipt, "\n"), "\t")
+		if len(parts) == 2 && validCoordinationRef(parts[0]) && (parts[1] == "accepted" || parts[1] == "delivered") {
+			action.ReplyRef = parts[0]
+		}
+		s.tools[id] = action
+		out := observation("tool-result")
+		out.ToolActions = []claudeDialogueObservedTool{action}
+		return out, nil
 	case "result":
 		if _, ok := dialogueObject(event, "type subtype is_error duration_ms duration_api_ms num_turns result session_id total_cost_usd usage modelUsage permission_denials uuid errors structured_output api_error_status fast_mode_disabled_reason fast_mode_state first_content_frame_ms queued_turn_count stop_reason subagent_stats terminal_reason time_to_request_ms ttft_ms ttft_stream_ms"); !ok || !s.initialized || event["subtype"] != "success" || event["is_error"] != false {
 			return refuse()
@@ -354,8 +367,8 @@ func (s *claudeDialogueStream) inspect(line []byte) (*claudeDialogueObservation,
 		if value, exists := event["fast_mode_disabled_reason"]; exists && value != "sdk_opt_in_required" {
 			return refuse()
 		}
-		for _, done := range s.tools {
-			if !done {
+		for _, action := range s.tools {
+			if !action.ResultObserved {
 				return refuse()
 			}
 		}

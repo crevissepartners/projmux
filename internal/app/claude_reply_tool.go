@@ -55,6 +55,7 @@ type claudeReplyToolPermit struct {
 
 type claudeReplyToolGate struct {
 	profileObserver coremetadata.ProcessIdentity
+	evidence        map[string]claudeDialogueGuardEvidence
 	profile         *claudeDialogueProfile
 	mu              sync.Mutex
 	policy          claudeReplyToolPolicy
@@ -161,7 +162,7 @@ func newClaudeReplyToolGate(policy claudeReplyToolPolicy) (*claudeReplyToolGate,
 		}
 	}
 	return &claudeReplyToolGate{profileObserver: profileObserver, profile: profile, policy: policy, executable: file, executableInfo: after, directoryInfo: directory, digest: hex.EncodeToString(digest.Sum(nil)),
-		permits: make(map[string]claudeReplyToolPermit), issued: make(map[string]bool), executing: make(map[coremetadata.ProcessIdentity]claudeReplyToolPermit)}, nil
+		evidence: make(map[string]claudeDialogueGuardEvidence), permits: make(map[string]claudeReplyToolPermit), issued: make(map[string]bool), executing: make(map[coremetadata.ProcessIdentity]claudeReplyToolPermit)}, nil
 }
 
 func (g *claudeReplyToolGate) close() {
@@ -308,6 +309,7 @@ func (g *claudeReplyToolGate) prepare(input claudeReplyToolInput, peer coremetad
 	id := sha256.Sum256([]byte(input.ToolUseID))
 	marker := "pmx-reply-ticket-" + hex.EncodeToString(id[:8]) + "-" + hex.EncodeToString(nonce)
 	g.issued[input.ToolUseID] = true
+	g.evidence[input.ToolUseID] = claudeDialogueGuardEvidence{MessageRef: argv[6], TargetAgentUID: strings.TrimPrefix(argv[4], "uid:")}
 	g.permits[marker] = claudeReplyToolPermit{toolUseID: input.ToolUseID, argv: argv, expires: time.Now().Add(claudeReplyToolTicketLifetime)}
 	return &claudeReplyToolResult{Marker: marker}, nil
 }
@@ -335,6 +337,9 @@ func (g *claudeReplyToolGate) consume(marker string, peer coremetadata.ProcessId
 	}
 	permit.peer = peer
 	g.executing[peer] = permit
+	evidence := g.evidence[permit.toolUseID]
+	evidence.ExecutionProcess = peer
+	g.evidence[permit.toolUseID] = evidence
 	policy := g.policy
 	return &claudeReplyToolResult{Policy: &policy, Argv: append([]string(nil), permit.argv...), ExecutableSHA256: g.digest}, nil
 }
@@ -350,5 +355,11 @@ func (g *claudeReplyToolGate) authorizeCommit(peer coremetadata.ProcessIdentity,
 		return false
 	}
 	delete(g.executing, peer)
-	return permit.peer == peer && permit.expires.After(time.Now()) && permit.argv[4] == "uid:"+reply.Target.AgentUID && permit.argv[6] == reply.ReplyTo && permit.argv[8] == reply.Payload
+	allowed := permit.peer == peer && permit.expires.After(time.Now()) && permit.argv[4] == "uid:"+reply.Target.AgentUID && permit.argv[6] == reply.ReplyTo && permit.argv[8] == reply.Payload
+	if allowed {
+		evidence := g.evidence[permit.toolUseID]
+		evidence.AuthorizedReplyRef = reply.MessageRef
+		g.evidence[permit.toolUseID] = evidence
+	}
+	return allowed
 }

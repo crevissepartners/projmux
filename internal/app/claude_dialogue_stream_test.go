@@ -61,8 +61,9 @@ func TestClaudeDialogueStreamDiscardsTextThinkingAndPairsOnlyExactReplyTool(t *t
 		t.Fatal("command/body forwarded")
 	}
 	event := map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": "tool-owned", "content": "message-reply\taccepted\n", "is_error": false}}}, "tool_use_result": map[string]any{"stdout": "message-reply\taccepted\n", "stderr": "", "interrupted": false}}
-	if _, err := dialogueStreamEvent(t, s, event); err != nil {
-		t.Fatal(err)
+	result, err := dialogueStreamEvent(t, s, event)
+	if err != nil || result == nil || len(result.ToolActions) != 1 || result.ToolActions[0].ToolUseID != "tool-owned" || result.ToolActions[0].MessageRef != "message-owned" || result.ToolActions[0].TargetAgentUID != "source" || result.ToolActions[0].ReplyRef != "message-reply" || !result.ToolActions[0].ResultObserved {
+		t.Fatal("paired public CLI receipt was not retained as bounded descriptive evidence", err)
 	}
 	if _, err := dialogueStreamEvent(t, s, event); err == nil {
 		t.Fatal("replayed tool result admitted")

@@ -138,23 +138,31 @@ func (c *agentCommand) runCapabilities(args []string, stdout, stderr io.Writer) 
 }
 
 func projectClaudeCoordinationEligibility(registry coremetadata.Registry, agent coremetadata.Agent) *agentCapabilityCoordination {
+	paths, err := config.DefaultPathsFromEnv()
+	registryPath := ""
+	if err == nil {
+		registryPath = intmetadata.PathFor(paths.StateDir)
+	}
+	return projectClaudeCoordinationEligibilityAt(registry, agent, registryPath)
+}
+
+func projectClaudeCoordinationEligibilityAt(registry coremetadata.Registry, agent coremetadata.Agent, registryPath string) *agentCapabilityCoordination {
 	projection := &agentCapabilityCoordination{Evidence: "local-registration-lease"}
-	recovery := "projmux agent integrate claude --dry-run; projmux agent integrate claude; let the existing Claude session exit normally, then projmux agent resume uid:" + agent.Metadata.UID + " (same Agent UID; no Agent recreation)"
+	recovery := "let the existing Claude session exit normally without interrupting its active tool, then projmux agent resume uid:" + agent.Metadata.UID + " --dialogue-reply-only (same Agent UID and conversation; explicit next-activation tool policy); from the exact current Codex source, projmux agent message qualify uid:" + agent.Metadata.UID + " --confirm-isolated-provider-push -o json (fresh current observer; no Agent recreation)"
 	route, reason := coremetadata.ResolveAgentRoute(registry, agent.Metadata.UID)
 	if reason != "" {
 		projection.Reason = reason
 		projection.Recovery = recovery
 		return projection
 	}
-	paths, err := config.DefaultPathsFromEnv()
-	if err != nil || !probeClaudeRegistrationLease(intmetadata.PathFor(paths.StateDir), route) {
+	if registryPath == "" || !probeClaudeRegistrationLease(registryPath, route) {
 		projection.Reason = "Claude registration lease is stale or unavailable"
 		projection.Recovery = recovery
 		return projection
 	}
-	if !probeClaudeCoordinationEligibility(intmetadata.PathFor(paths.StateDir), route) {
+	if !probeClaudeCoordinationEligibility(registryPath, route) {
 		projection.Reason = "Claude coordination is unqualified for the exact running provider version"
-		projection.Recovery = "run the owned isolation collector, then projmux agent message qualify uid:" + agent.Metadata.UID + " --evidence <private-json> --confirm-isolated-provider-push -o json; if public init is unavailable, let Claude exit normally and projmux agent resume uid:" + agent.Metadata.UID + " (same UID)"
+		projection.Recovery = "if this activation has the reply-only profile ready, from the exact current Codex source run projmux agent message qualify uid:" + agent.Metadata.UID + " --confirm-isolated-provider-push -o json; otherwise " + recovery
 		return projection
 	}
 	projection.Eligible = true

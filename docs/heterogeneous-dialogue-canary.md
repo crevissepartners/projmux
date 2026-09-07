@@ -55,6 +55,16 @@ init alone does not admit general inbound traffic. Actual model execution,
 human overlap, active-tool ordering and installed same-UID recovery remain
 separate R1/R2 evidence requirements; these deterministic tests do not prove them.
 
+The existing helper's read-only profile evidence also reports bounded observed
+model tool IDs, their parsed original request/target, paired result and public
+reply ref. It separately compares the guard's exact selection and the successful
+broker commit. An issued/consumed permit or a model result alone does not prove
+that commit. Missing, mismatched or late observations cannot grant execution;
+raw commands, bodies, reasoning, signatures and tickets are omitted. A currently
+alive execution PID is only a point-in-time observation, not proof that a second
+push overlapped an active tool. Actual model action and exact Codex claim still
+require the revised owned runner and owner gate.
+
 The in-progress execution guard uses an owned exec-form `PreToolUse` hook to
 validate the exact candidate path and public reply argv. Its updated Bash input
 is a one-use ticket in the existing helper's memory. The official

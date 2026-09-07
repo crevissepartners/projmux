@@ -11,12 +11,13 @@ import (
 // Only shape/effect assertions cross the existing coordination UDS. No public
 // stdout body, thinking, tool command, credential or model input is forwarded.
 type claudeDialogueObservation struct {
-	Kind            string   `json:"kind"`
-	SessionID       string   `json:"sessionId"`
-	ProviderVersion string   `json:"providerVersion,omitempty"`
-	Tools           []string `json:"tools"`
-	MCPServers      []string `json:"mcpServers"`
-	Plugins         []string `json:"plugins"`
+	Kind            string                       `json:"kind"`
+	ToolActions     []claudeDialogueObservedTool `json:"toolActions,omitempty"`
+	SessionID       string                       `json:"sessionId"`
+	ProviderVersion string                       `json:"providerVersion,omitempty"`
+	Tools           []string                     `json:"tools"`
+	MCPServers      []string                     `json:"mcpServers"`
+	Plugins         []string                     `json:"plugins"`
 }
 
 type claudeDialogueObservedState struct {
@@ -26,6 +27,7 @@ type claudeDialogueObservedState struct {
 	initialized bool
 	ready       bool
 	invalid     bool
+	tools       map[string]claudeDialogueObservedTool
 }
 
 func (s *claudeCoordinationServer) recordDialogueObservation(peer coremetadata.ProcessIdentity, parent int, observation *claudeDialogueObservation) bool {
@@ -78,13 +80,37 @@ func (s *claudeCoordinationServer) recordDialogueObservation(peer coremetadata.P
 		}
 		state.ready = true
 		return true
-	case "tool":
+	case "tool", "tool-result":
 		s.hub.mu.Lock()
 		admitted := s.hub.qualifiedVersion == claudeFrozenFrameProviderVersion || (s.hub.qualification != nil && s.hub.qualification.state == "pending" && s.hub.qualification.frameComplete)
 		s.hub.mu.Unlock()
 		if !admitted {
 			state.invalid = true
 			return false
+		}
+		if len(observation.ToolActions) == 0 || len(observation.ToolActions) > 32 {
+			state.invalid = true
+			return false
+		}
+		if state.tools == nil {
+			state.tools = make(map[string]claudeDialogueObservedTool)
+		}
+		for _, action := range observation.ToolActions {
+			if !action.valid() {
+				state.invalid = true
+				return false
+			}
+			previous, exists := state.tools[action.ToolUseID]
+			if observation.Kind == "tool" {
+				if exists || action.ResultObserved || action.ReplyRef != "" || len(state.tools) >= 32 {
+					state.invalid = true
+					return false
+				}
+			} else if !exists || previous.ResultObserved || !action.ResultObserved || previous.MessageRef != action.MessageRef || previous.TargetAgentUID != action.TargetAgentUID {
+				state.invalid = true
+				return false
+			}
+			state.tools[action.ToolUseID] = action
 		}
 		return true
 	default:

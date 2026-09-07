@@ -1901,3 +1901,14 @@ separate decision this measurement exists to inform.
   after activation; it does not depend on a supervisor-inherited guard flag,
   which production correctly scrubs. It does not substitute for public launch
   or actual provider qualification evidence.
+
+- `TestClaudeDialogueToolEvidenceIsReadOnlyAndIndependentOfArrivalOrder` and
+  `TestClaudeDialogueObservedToolCannotGrantOrForgeCommitEvidence` distinguish
+  observed model tool ID/original selection and paired result from the pinned
+  execution witness and successful broker commit. A failed commit, wrong result
+  ref or forged observation cannot become correlated execution evidence; reading
+  that bounded snapshot performs no delivery or reply action.
+- `TestAgentCapabilitiesClaudeMessageCellsReflectMissingRegistrationLease` and
+  `TestAgentCapabilitiesClaudeUnqualifiedRecoveryUsesCurrentPublicProfile` keep
+  recovery read-only and actionable: normal exit, same-UID explicit reply-only
+  resume, then current Codex qualification from helper-memory evidence.

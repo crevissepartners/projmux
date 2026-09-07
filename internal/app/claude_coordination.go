@@ -126,6 +126,7 @@ type claudeCoordinationRequest struct {
 }
 
 type claudeCoordinationResponse struct {
+	ToolEvidence     []claudeDialogueToolEvidence `json:"toolEvidence,omitempty"`
 	ProfileEvidence  *claudeQualificationEvidence `json:"profileEvidence,omitempty"`
 	Version          int                          `json:"version"`
 	Kind             string                       `json:"kind"`
@@ -414,6 +415,7 @@ func (s *claudeCoordinationServer) handle(conn *net.UnixConn) {
 		if available {
 			response.Kind = "profile-evidence"
 			response.ProfileEvidence = &evidence
+			response.ToolEvidence = s.dialogueToolEvidence()
 		}
 		_ = localipc.WriteJSON(conn, response)
 	case "eligibility":
