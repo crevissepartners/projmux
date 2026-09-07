@@ -1111,7 +1111,7 @@
 ### Heterogeneous Agent dialogue Phase 4 tests
 
 - `TestClaudeCoordinationPrivateBridgeRequiresExactV5Route`,
-  `TestClaudeCoordinationV1V2AndV3HelpersCannotReceiveV4Traffic`, and
+  `TestClaudeCoordinationV1ThroughV4HelpersCannotReceiveV5Traffic`, and
   `TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix` pin public/private v5
   route equality, old generation, same-generation old incarnation, stale
   provider process, foreign socket, helper exit, Codex endpoint replacement,
@@ -1835,3 +1835,11 @@ separate decision this measurement exists to inform.
   Private coord v5 fences earlier unguarded qualification; the frozen provider
   auth/user frame is unchanged. L20 and the process fixture now execute the
   guarded public CLI, with real isolated tmux identity and Codex broker binding.
+
+- `TestLifecycleDiscardedASCIIKeepsStringBoundariesAndValidation` covers the
+  body-free projector's buffered ASCII scan across chunk, quote, escape,
+  control-character and UTF-8 boundaries. The optimized path retains no body
+  and leaves byte/depth/scalar limits and the 750 ms operation limit unchanged.
+  `TestLifecycleDiscardedASCIIChecksCancellationWithinBoundedBufferedRun`
+  requires cancellation within one 4 KiB buffered run and preserves the
+  retained-state refusal before scanning.

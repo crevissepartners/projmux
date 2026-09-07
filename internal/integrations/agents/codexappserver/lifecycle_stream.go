@@ -1186,6 +1186,28 @@ func (p *lifecycleProjector) string(capture bool) (string, error) {
 		return nil
 	}
 	for {
+		if !capture {
+			// Discard only already-buffered ordinary ASCII. Input still owns
+			// every wire/JSON budget check; quotes, escapes, controls and UTF-8
+			// return to the byte parser below. Cap each run even for an input
+			// that supplies larger chunks, retaining a cancellation check at
+			// least every lifecycleChunkBytes without allocating a body copy.
+			if err := p.check(); err != nil {
+				return "", err
+			}
+			buffer := p.buffer[p.pos:min(len(p.buffer), p.pos+lifecycleChunkBytes)]
+			count := 0
+			for _, value := range buffer {
+				if value < 0x20 || value >= utf8.RuneSelf || value == '"' || value == '\\' {
+					break
+				}
+				count++
+			}
+			if count > 0 {
+				p.pos += count
+				continue
+			}
+		}
 		value, err := p.take()
 		if err != nil {
 			return "", fmt.Errorf("%w: malformed lifecycle string", ErrProtocol)
