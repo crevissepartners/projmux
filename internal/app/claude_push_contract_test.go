@@ -122,13 +122,15 @@ func TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix(t *testing.T) {
 	fixture.server.hub.now = func() time.Time { return now }
 	exactEnvelope := dialogueForRoute("message-lifecycle", fixture.route, now)
 
-	// Before the exact current endpoint completes its own current-version
-	// qualification, the helper accepts no delivery and writes no provider byte.
+	// Delivery no longer waits for the endpoint's own current-version
+	// qualification. The exact current target accepts and one provider write
+	// happens; the fences below still have to hold against that baseline.
 	response := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion,
 		Operation: "submit", Target: fixture.target, Envelope: &exactEnvelope})
-	if response.Delivery.State != agentdelivery.StateRefused || poster.calls != 0 {
-		t.Fatalf("pre-qualification response=%+v writes=%d", response, poster.calls)
+	if response.Delivery.State != agentdelivery.StateDelivered || poster.calls != 1 {
+		t.Fatalf("exact current response=%+v writes=%d", response, poster.calls)
 	}
+	baselineWrites := poster.calls
 
 	for _, test := range []struct {
 		name   string
@@ -146,7 +148,7 @@ func TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix(t *testing.T) {
 				Version: claudeCoordinationVersion, Operation: "submit", Target: target, Envelope: &exactEnvelope,
 			})
 			cancel()
-			if err == nil || poster.calls != 0 {
+			if err == nil || poster.calls != baselineWrites {
 				t.Fatalf("stale target err=%v provider writes=%d", err, poster.calls)
 			}
 		})
@@ -177,7 +179,7 @@ func TestHeterogeneousDialogueLifecycleUpgradeFenceMatrix(t *testing.T) {
 
 	challenge := qualificationTestEnvelope(fixture.route, now)
 	qualification := fixture.server.hub.beginExplicitQualification(exactQualificationEvidence(fixture.route, now), fixture.route, &challenge, fixture.server.broker, poster)
-	if qualification.Kind != "qualification-pending" || poster.calls != 1 {
+	if qualification.Kind != "qualification-pending" || poster.calls != baselineWrites+1 {
 		t.Fatalf("qualification=%+v writes=%d", qualification, poster.calls)
 	}
 	completed := fixture.server.hub.commitExplicitReply(explicitTestReply(*challenge.BrokerEnvelope, claudeQualificationMarkerPrefix+qualification.QualificationRef), fixture.route, fixture.server.broker)

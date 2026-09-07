@@ -94,9 +94,15 @@ func TestClaudeQualificationRequiresBrokerChallengeAndExplicitReply(t *testing.T
 	if stop.Kind != "reply-refused" || hub.coordinationEligible() || broker.replies != 0 {
 		t.Fatalf("Stop gained authority: %+v", stop)
 	}
+	// General admission no longer waits for qualification. Delivery and the
+	// challenge are independent: an ordinary message is pushed on its own while
+	// the challenge stays pending.
 	general := dialogueForRoute("message-general-before-qualified", fixture.route, now)
-	if got := hub.submitPush(general, broker, poster); got.State != agentdelivery.StateRefused || poster.calls != 1 {
-		t.Fatalf("general admission opened: %+v", got)
+	if got := hub.submitPush(general, broker, poster); got.State != agentdelivery.StateDelivered || poster.calls != 2 {
+		t.Fatalf("general admission changed: %+v calls=%d", got, poster.calls)
+	}
+	if hub.coordinationEligible() {
+		t.Fatalf("general delivery must not qualify the activation")
 	}
 	hub.userPrompt() // Human presence has no authority to revoke an explicit action.
 	reply := explicitTestReply(*challenge.BrokerEnvelope, claudeQualificationMarkerPrefix+challenge.MessageRef)

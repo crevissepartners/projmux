@@ -315,7 +315,11 @@ func currentDialogueProfileFixture(t *testing.T) (*claudeCoordinationTestFixture
 }
 
 func TestClaudeDialogueCurrentHelperEvidenceAndObserverLossPrecludeEffects(t *testing.T) {
-	for _, stage := range []string{"tool-prepare", "tool-consume", "explicit-reply", "submit"} {
+	// submit and explicit-reply are deliberately absent. Delivery and reply no
+	// longer consult the reply-only dialogue profile, so losing its observer
+	// cannot preclude them. The pinned reply tool still does, and that is what
+	// this matrix now covers.
+	for _, stage := range []string{"tool-prepare", "tool-consume"} {
 		t.Run(stage, func(t *testing.T) {
 			fixture, gate, root := currentDialogueProfileFixture(t)
 			now := time.Now()

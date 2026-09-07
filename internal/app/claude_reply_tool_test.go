@@ -304,10 +304,15 @@ func TestClaudeQualificationRequiresCurrentPinnedMemoryGuard(t *testing.T) {
 			if response.Kind != "qualification-refused" || response.Reason != "pinned-reply-execution-required" || poster.calls != 0 || broker.handoffs != 0 {
 				t.Fatal("asserted evidence gained authority without a current pinned guard")
 			}
+			// Delivery admission no longer reads the qualification, so an
+			// obsolete local value cannot be inherited into it. What the guard
+			// still owns is the qualification itself: the pinned reply
+			// execution stays required no matter what that value says.
 			fixture.server.hub.qualifiedVersion = claudeFrozenFrameProviderVersion // Simulate an obsolete local qualification.
-			eligibility := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "eligibility", Target: fixture.target})
-			if eligibility.Kind != "unqualified" {
-				t.Fatal("old unguarded qualification was inherited")
+			repeat := fixture.call(t, claudeCoordinationRequest{Version: claudeCoordinationVersion, Operation: "qualify", Target: fixture.target,
+				Qualification: &evidence, Envelope: &challenge, ExplicitOptIn: true})
+			if repeat.Kind != "qualification-refused" || repeat.Reason != "pinned-reply-execution-required" || poster.calls != 0 || broker.handoffs != 0 {
+				t.Fatalf("obsolete qualification granted authority: %+v", repeat)
 			}
 		})
 	}

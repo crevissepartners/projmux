@@ -16,7 +16,7 @@ func qualifiedPushHub(now time.Time) *claudeCoordinationHub {
 	return hub
 }
 
-func TestClaudePushNeverHoldsAndQualificationBrokerFencePrecedesProviderWrite(t *testing.T) {
+func TestClaudePushNeverHoldsAndBrokerFencePrecedesProviderWrite(t *testing.T) {
 	now := time.Unix(40_000, 0).UTC()
 	envelope := dialogueEnvelope("message-push-fences", now.Add(time.Minute))
 	for _, test := range []struct {
@@ -28,7 +28,7 @@ func TestClaudePushNeverHoldsAndQualificationBrokerFencePrecedesProviderWrite(t 
 		wantHandoffs  int
 		wantAmbiguous bool
 	}{
-		{name: "unqualified", wantState: agentdelivery.StateRefused},
+		{name: "no qualification", wantState: agentdelivery.StateDelivered, wantWrites: 1, wantHandoffs: 1},
 		{name: "durable handoff failure", qualified: true, handoffErr: errors.New("store failed"), wantState: agentdelivery.StateFailed, wantHandoffs: 1},
 		{name: "qualified full frame", qualified: true, wantState: agentdelivery.StateDelivered, wantWrites: 1, wantHandoffs: 1},
 	} {
