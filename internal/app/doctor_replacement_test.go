@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,6 +35,8 @@ func replacementQualified() *codexgeneration.QualificationResult {
 func replacementResidualVintage() projmuxProcessVintage {
 	return projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
 		{Role: projmuxProcessRoleSupervisor, Processes: 5, Replaced: 5, ReplacedAgeSeconds: []int{6984, 9049, 232277, 583716, 583761}},
+		{Role: projmuxProcessRoleSessionClient, Processes: 1, Replaced: 1, ReplacedAgeSeconds: []int{606482}},
+		{Role: projmuxProcessRoleAgentEndpoint, Processes: 3, Current: 1, Replaced: 2, ReplacedAgeSeconds: []int{237, 2019}},
 		{Role: projmuxProcessRoleOther, Processes: 4, Replaced: 4, ReplacedAgeSeconds: []int{2588, 6979, 323774, 583799}},
 	}}
 }
@@ -560,6 +563,7 @@ func TestDoctorReplacementReasonTokensMatchTheContractDocument(t *testing.T) {
 var (
 	replacementDocRow       = regexp.MustCompile("^\\| `(L[123])` \\| `([a-z0-9-]+)` \\|")
 	replacementDocSignalRow = regexp.MustCompile("^\\| `([a-z0-9.-]+)` \\| `L")
+	replacementDocRoleRow   = regexp.MustCompile("^\\| `([a-z-]+)` \\| ")
 )
 
 // TestDoctorReplacementSignalKeysMatchTheContractDocument holds the published
@@ -648,7 +652,11 @@ func TestDoctorRendersReplacementTableInDefaultRunAndSectionFilter(t *testing.T)
 			"replacement=not-replaced",
 			"reason=" + doctorReplacementReasonResidualProcesses,
 			"underlying: platform.observable=true",
-			"residual.oldest-seconds=583799",
+			"residual.oldest-seconds=606482",
+			// The named roles reach the rendered row, not only the record.
+			"residual.role." + projmuxProcessRoleSessionClient + "=1",
+			"residual.role." + projmuxProcessRoleAgentEndpoint + "=2",
+			"residual.role." + projmuxProcessRoleOther + "=4",
 		} {
 			if !strings.Contains(text, want) {
 				t.Fatalf("Run(%v) output missing %q:\n%s", args, want, text)
@@ -715,5 +723,106 @@ func TestDoctorReplacementSectionCreatesNothing(t *testing.T) {
 			names = append(names, entry.Name())
 		}
 		t.Fatalf("evaluating the replacement section created %v", names)
+	}
+}
+
+// TestDoctorReplacementProcessRowNamesTheResidualRoles closes the gap between
+// a count and a target.
+//
+// `processes.residual=12` tells an operator that an install left work behind
+// and nothing about what to do next. The named roles are the difference: a
+// residual `session-client` is the operator's own attached session, a residual
+// `supervisor` is a pane to recreate, and a residual `other` is mostly
+// short-lived calls that need nothing. The row must carry them, must keep the
+// census order so two runs can be diffed, and must omit a role with nothing
+// residual rather than print a zero.
+func TestDoctorReplacementProcessRowNamesTheResidualRoles(t *testing.T) {
+	t.Parallel()
+
+	row := replacementRow(t, projectDoctorReplacement(doctorReplacementInputs{Processes: replacementResidualVintage()}),
+		doctorReplacementLayerProcesses)
+
+	got := map[string]string{}
+	var order []string
+	for _, signal := range row.Signals {
+		if !strings.HasPrefix(signal.Key, doctorReplacementSignalRoleResidualPrefix) {
+			continue
+		}
+		got[strings.TrimPrefix(signal.Key, doctorReplacementSignalRoleResidualPrefix)] = signal.Value
+		order = append(order, strings.TrimPrefix(signal.Key, doctorReplacementSignalRoleResidualPrefix))
+	}
+	want := map[string]string{
+		projmuxProcessRoleSupervisor:    "5",
+		projmuxProcessRoleSessionClient: "1",
+		projmuxProcessRoleAgentEndpoint: "2",
+		projmuxProcessRoleOther:         "4",
+	}
+	if !maps.Equal(got, want) {
+		t.Fatalf("residual role signals = %v, want %v", got, want)
+	}
+
+	// Census order, so a row can be read down a column against another run.
+	wantOrder := []string{}
+	for _, role := range projmuxProcessRoleOrder {
+		if _, ok := want[role]; ok {
+			wantOrder = append(wantOrder, role)
+		}
+	}
+	if !slices.Equal(order, wantOrder) {
+		t.Fatalf("residual role order = %v, want the census order %v", order, wantOrder)
+	}
+
+	// A fleet with no residue names no role, rather than naming every role
+	// with a zero.
+	clean := replacementRow(t, projectDoctorReplacement(doctorReplacementInputs{
+		Processes: projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
+			{Role: projmuxProcessRoleSupervisor, Processes: 2, Current: 2},
+		}},
+	}), doctorReplacementLayerProcesses)
+	for _, signal := range clean.Signals {
+		if strings.HasPrefix(signal.Key, doctorReplacementSignalRoleResidualPrefix) {
+			t.Fatalf("clean fleet emitted %s=%s, want no residual role on a row with no residue", signal.Key, signal.Value)
+		}
+	}
+}
+
+// TestReplacementProcessRolesMatchTheContractDocument is the role half of the
+// vocabulary drift guard.
+//
+// The reason tokens and signal keys already have one. Roles need the same one
+// for a stronger reason: this vocabulary is published on two surfaces at once
+// -- the `doctor` L2 row and every `install-residue.jsonl` record -- and the
+// contract document is what states which long-lived processes an operator is
+// entitled to see named and what is left in the remainder. A role added to the
+// code without that sentence is a name with no contract behind it, and a
+// sentence with no role is a promise the census does not keep.
+func TestReplacementProcessRolesMatchTheContractDocument(t *testing.T) {
+	t.Parallel()
+
+	body := readRepoText(t, "docs/replacement-contract.md")
+	_, after, ok := strings.Cut(body, "## Process role vocabulary")
+	if !ok {
+		t.Fatal("docs/replacement-contract.md has no `## Process role vocabulary` section")
+	}
+	if before, _, cut := strings.Cut(after, "\n## "); cut {
+		after = before
+	}
+	documented := []string{}
+	for line := range strings.SplitSeq(after, "\n") {
+		if match := replacementDocRoleRow.FindStringSubmatch(strings.TrimSpace(line)); match != nil {
+			documented = append(documented, match[1])
+		}
+	}
+	code := append([]string(nil), projmuxProcessRoleOrder...)
+	sorted := append([]string(nil), documented...)
+	sort.Strings(sorted)
+	sortedCode := append([]string(nil), code...)
+	sort.Strings(sortedCode)
+	if !slices.Equal(sorted, sortedCode) {
+		t.Fatalf("process roles: docs/replacement-contract.md has %v, code has %v", sorted, sortedCode)
+	}
+	// The remainder is documented last for the same reason it renders last.
+	if documented[len(documented)-1] != projmuxProcessRoleOther {
+		t.Fatalf("documented roles end with %q, want the remainder %q", documented[len(documented)-1], projmuxProcessRoleOther)
 	}
 }

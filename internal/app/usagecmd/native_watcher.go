@@ -16,8 +16,16 @@ import (
 	localstate "github.com/crevissepartners/projmux/internal/state"
 )
 
+// NativeWatcherInternalFlag is the argv word that separates the long-lived
+// rate-limit watcher from every other `internal status usage` invocation.
+//
+// It is exported because the whole-fleet process census names roles by route
+// words, and that census must read this flag from the package that owns it
+// rather than repeat the literal: a rename here would otherwise move the
+// watcher silently back into the census's unnamed remainder.
+const NativeWatcherInternalFlag = "--watch-codex-rate-limits"
+
 const (
-	nativeWatcherInternalFlag  = "--watch-codex-rate-limits"
 	nativeWatcherLeaseName     = ".codex-native-rate-limit-watcher.lock"
 	nativeWatcherDemandName    = ".codex-native-rate-limit-watcher.demand"
 	nativeWatcherHeartbeatName = ".codex-native-rate-limit-watcher.heartbeat"
@@ -92,7 +100,7 @@ func startNativeWatcherProcess(executable string) error {
 	if err := validateNativeWatcherExecutable(executable); err != nil {
 		return err
 	}
-	cmd := exec.Command(executable, "internal", "status", "usage", nativeWatcherInternalFlag)
+	cmd := exec.Command(executable, "internal", "status", "usage", NativeWatcherInternalFlag)
 	if err := cmd.Start(); err != nil {
 		return err
 	}

@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 )
 
 // TestControlPlaneVintageSeparatesAReplacedImageFromTheInstalledBuild is the
@@ -170,9 +172,9 @@ func TestProjmuxProcessVintageCountsEveryChildOfThisExecutable(t *testing.T) {
 		{PID: 400, Exe: self + procDeletedSuffix, Cmdline: []string{self, "internal", "supervise", "--pane-uid", "pane-a"}},
 		{PID: 401, Exe: self + procDeletedSuffix, Cmdline: []string{self, "internal", "supervise", "--pane-uid", "pane-b"}},
 		{PID: 402, Exe: self, Cmdline: []string{self, "internal", "supervise", "--pane-uid", "pane-c"}},
+		{PID: 500, Exe: self + procDeletedSuffix, Cmdline: []string{self, "internal", claudeEndpointHelperRoute}},
 		// Routes this census has no name for. They are still projmux processes
 		// running a projmux image, so they stay counted.
-		{PID: 500, Exe: self + procDeletedSuffix, Cmdline: []string{self, "internal", "claude-endpoint-helper"}},
 		{PID: 501, Exe: self, Cmdline: []string{self, "attach"}},
 		// An argv this reader could not read at all.
 		{PID: 502, Exe: self, Cmdline: nil},
@@ -184,7 +186,8 @@ func TestProjmuxProcessVintageCountsEveryChildOfThisExecutable(t *testing.T) {
 		{Role: codexControlPlaneRoleBroker, Processes: 1, Replaced: 1},
 		{Role: codexControlPlaneRoleObserver, Processes: 2, Current: 1, Replaced: 1},
 		{Role: projmuxProcessRoleSupervisor, Processes: 3, Current: 1, Replaced: 2},
-		{Role: projmuxProcessRoleOther, Processes: 3, Current: 2, Replaced: 1},
+		{Role: projmuxProcessRoleAgentEndpoint, Processes: 1, Replaced: 1},
+		{Role: projmuxProcessRoleOther, Processes: 2, Current: 2},
 	}}
 	if !reflect.DeepEqual(fleet, want) {
 		t.Fatalf("fleet vintage = %+v, want %+v", fleet, want)
@@ -275,13 +278,42 @@ func TestProjmuxProcessRoleNamesEveryChildIncludingTheOnesItCannotName(t *testin
 			want:    projmuxProcessRoleSupervisor,
 		},
 		{
-			name:    "a route this census has no name for",
-			cmdline: []string{"projmux", "internal", "claude-endpoint-helper"},
+			name:    "agent messaging endpoint",
+			cmdline: []string{"projmux", "internal", claudeEndpointHelperRoute},
+			want:    projmuxProcessRoleAgentEndpoint,
+		},
+		{
+			name:    "rate-limit watcher",
+			cmdline: []string{"projmux", "internal", "status", "usage", usagecmd.NativeWatcherInternalFlag},
+			want:    projmuxProcessRoleUsageWatcher,
+		},
+		{
+			name:    "a status render that is not the watcher",
+			cmdline: []string{"projmux", "internal", "status", "usage"},
+			want:    projmuxProcessRoleOther,
+		},
+		{
+			name:    "attached session client",
+			cmdline: []string{"projmux", "shell"},
+			want:    projmuxProcessRoleSessionClient,
+		},
+		{
+			name: "a pane role value that merely spells the session route",
+			// `shell` is a legal pane-role *value* in this application's own
+			// vocabulary. Matching the word anywhere in argv would count this
+			// two-second call as an attached session, so the session route is
+			// the one matched by position.
+			cmdline: []string{"projmux", "create", "pane", "--role", "shell"},
 			want:    projmuxProcessRoleOther,
 		},
 		{
 			name:    "a sibling hook ingest route",
 			cmdline: []string{"projmux", "internal", "agent-hook", "ingest", "claude"},
+			want:    projmuxProcessRoleOther,
+		},
+		{
+			name:    "a short-lived render this census still counts",
+			cmdline: []string{"projmux", "internal", "statusbar", "render"},
 			want:    projmuxProcessRoleOther,
 		},
 		{name: "an argv this reader could not read", cmdline: nil, want: projmuxProcessRoleOther},
@@ -485,10 +517,19 @@ func TestProjmuxProcessVintageMeasuresTheResidualAgeDistribution(t *testing.T) {
 	}
 	fleet := projectProjmuxProcessVintageAt(self, 100, images, true, now)
 	want := projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
-		{Role: codexControlPlaneRoleBroker, Processes: 1, Replaced: 1, ReplacedAgeSeconds: []int{8040}},
+		{
+			Role: codexControlPlaneRoleBroker, Processes: 1, Replaced: 1,
+			ReplacedAgeSeconds:    []int{8040},
+			ReplacedStartedAtUnix: []int64{now.Add(-2*time.Hour - 14*time.Minute).Unix()},
+		},
 		{
 			Role: projmuxProcessRoleSupervisor, Processes: 4, Current: 1, Replaced: 3,
 			ReplacedAgeSeconds: []int{0, 41, 10920},
+			ReplacedStartedAtUnix: []int64{
+				now.Add(-3*time.Hour - 2*time.Minute).Unix(),
+				now.Add(-41 * time.Second).Unix(),
+				now.Add(5 * time.Second).Unix(),
+			},
 		},
 	}}
 	if !reflect.DeepEqual(fleet, want) {
@@ -515,7 +556,11 @@ func TestProjmuxProcessVintageKeepsAnUnknownStartTimeOutOfTheDistribution(t *tes
 		},
 	}, true, now)
 	want := []projmuxProcessRoleVintage{
-		{Role: projmuxProcessRoleSupervisor, Processes: 2, Replaced: 2, ReplacedAgeSeconds: []int{600}},
+		{
+			Role: projmuxProcessRoleSupervisor, Processes: 2, Replaced: 2,
+			ReplacedAgeSeconds:    []int{600},
+			ReplacedStartedAtUnix: []int64{now.Add(-10 * time.Minute).Unix()},
+		},
 	}
 	if !reflect.DeepEqual(fleet.Roles, want) {
 		t.Fatalf("roles = %+v, want %+v", fleet.Roles, want)
@@ -585,5 +630,99 @@ func TestDoctorProcessVintageProjectionCarriesNoAges(t *testing.T) {
 		if strings.Contains(string(body), absent) {
 			t.Fatalf("doctor vintage JSON = %s, want %q absent", body, absent)
 		}
+	}
+}
+
+// TestProjmuxProcessRoleOrderKeepsTheUnnamedRemainderLast holds the shape of
+// the census, not just its contents.
+//
+// The render order is the reading order: named roles are the ones an operator
+// can decide about, and the remainder is a guard on the total. A role appended
+// after `other` would put an actionable count behind a bucket whose whole
+// purpose is to be read last, and nothing else in the code would notice.
+func TestProjmuxProcessRoleOrderKeepsTheUnnamedRemainderLast(t *testing.T) {
+	t.Parallel()
+
+	if len(projmuxProcessRoleOrder) == 0 {
+		t.Fatal("the fleet census carries no roles")
+	}
+	last := projmuxProcessRoleOrder[len(projmuxProcessRoleOrder)-1]
+	if last != projmuxProcessRoleOther {
+		t.Fatalf("last census role = %q, want the unnamed remainder %q", last, projmuxProcessRoleOther)
+	}
+	if index := slices.Index(projmuxProcessRoleOrder[:len(projmuxProcessRoleOrder)-1], projmuxProcessRoleOther); index >= 0 {
+		t.Fatalf("the remainder bucket also appears at index %d, want exactly one occurrence", index)
+	}
+	seen := map[string]bool{}
+	for _, role := range projmuxProcessRoleOrder {
+		if seen[role] {
+			t.Fatalf("census role %q is listed twice", role)
+		}
+		seen[role] = true
+	}
+	// Every named role must be reachable from some argv, or it is a token no
+	// census can ever emit.
+	reachable := map[string]bool{}
+	for _, cmdline := range [][]string{
+		{"projmux", "internal", "codex-broker", "serve"},
+		{"projmux", "internal", "agent-hook", "ingest", codexNativeLifecycleIngestRoute},
+		{"projmux", "internal", "supervise", "--pane-uid", "pane-a"},
+		{"projmux", "shell"},
+		{"projmux", "internal", claudeEndpointHelperRoute},
+		{"projmux", "internal", "status", "usage", usagecmd.NativeWatcherInternalFlag},
+		{"projmux", "internal", "statusbar", "render"},
+	} {
+		reachable[projmuxProcessRole(cmdline)] = true
+	}
+	for _, role := range projmuxProcessRoleOrder {
+		if !reachable[role] {
+			t.Fatalf("census role %q is unreachable from any argv", role)
+		}
+	}
+}
+
+// TestProjmuxProcessVintageRecordsTheStartInstantIdentityIsKeyedOn pins the
+// fact that separates a process from an observation of one.
+//
+// Installs land minutes apart, so the same long-lived process is recorded again
+// in census after census. Deduplicating those records needs a key, the ledger
+// has no pid or path to use as one, and an age reconstructed against a
+// whole-second record instant is ambiguous by exactly one second. The start
+// instant is the key, and like every other field here it names no process.
+func TestProjmuxProcessVintageRecordsTheStartInstantIdentityIsKeyedOn(t *testing.T) {
+	t.Parallel()
+
+	const self = "/home/user/go/bin/projmux"
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	images := []codexProcessImage{
+		{PID: 11, Exe: self + procDeletedSuffix, Cmdline: []string{self, "internal", "supervise"}, StartedAt: now.Add(-90 * time.Minute)},
+		{PID: 12, Exe: self + procDeletedSuffix, Cmdline: []string{self, "internal", "supervise"}, StartedAt: now.Add(-30 * time.Minute)},
+	}
+	roles := projectProjmuxProcessVintageAt(self, 1, images, true, now).Roles
+	if len(roles) != 1 {
+		t.Fatalf("roles = %+v, want exactly the supervisor row", roles)
+	}
+	want := []int64{now.Add(-90 * time.Minute).Unix(), now.Add(-30 * time.Minute).Unix()}
+	if !reflect.DeepEqual(roles[0].ReplacedStartedAtUnix, want) {
+		t.Fatalf("start instants = %v, want %v ascending", roles[0].ReplacedStartedAtUnix, want)
+	}
+	if got := len(roles[0].ReplacedAgeSeconds); got != 2 {
+		t.Fatalf("age samples = %d, want the rendered distribution kept beside the identity key", got)
+	}
+	// A count-only projection stays byte-identical to what it was before the
+	// identity key existed: `projmux doctor` renders counts and its record must
+	// not grow a field it never reads.
+	counts := projectProjmuxProcessVintage(self, 1, images, true)
+	for _, role := range counts.Roles {
+		if len(role.ReplacedStartedAtUnix) != 0 {
+			t.Fatalf("count-only projection carried start instants %v, want none", role.ReplacedStartedAtUnix)
+		}
+	}
+	encoded, err := json.Marshal(counts)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(encoded), "replacedStartedAtUnix") {
+		t.Fatalf("count-only projection = %s, want no start-instant field", encoded)
 	}
 }
