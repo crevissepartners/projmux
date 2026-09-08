@@ -625,9 +625,24 @@ projmux update apply --dry-run   # print the steps only
 ```
 
 `projmux update apply` first converges the live route with the current binary
-and exact eventual executable path, reinstalls via `go install`, then reapplies
-with the published binary so a running `-L projmux` server picks up new bindings
-without a restart.
+and exact eventual executable path, publishes the new build with `go install`,
+atomically replaces the exact executable this process is running from, then
+reapplies with the published binary so a running `-L projmux` server picks up
+new bindings without a restart.
+
+The publication does not write into your `GOBIN`. `go install` picks its own
+output directory — `$GOBIN`, else `$GOPATH/bin`, else `~/go/bin` — and that is
+not always the binary you run: with a custom `GOBIN`, or with an explicit
+`PROJMUX_INSTALLER=go` on a binary you placed yourself, `go install` would
+publish *beside* the active executable and leave it in place. So apply points
+`GOBIN` at a scratch directory staged next to the active executable, checks the
+build it produced is a regular executable file, and renames it over that exact
+path. The directory is a sibling of the target because a rename is only atomic
+within one filesystem.
+
+If the build is missing, is a directory or a symlink, or is not executable,
+apply refuses and names the path it found — the active executable is left
+untouched. The scratch directory is removed on success and on every failure.
 
 The command reads `PROJMUX_PROJDIR` from the calling shell and memoizes the
 primary path to `~/.config/projmux/projdir`, so the new binary keeps the same

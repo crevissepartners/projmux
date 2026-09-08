@@ -90,6 +90,15 @@ const (
 	npmInstallSpecRC     = "projmux@rc"
 )
 
+// The go backend's publication target and the file name `go install` writes for
+// it. The name is the command directory's base name, which is what `go install`
+// uses for the output file, and it is the only artifact the scratch GOBIN is
+// expected to hold.
+const (
+	goInstallSpec         = "github.com/crevissepartners/projmux/cmd/projmux@latest"
+	goPublishedBinaryName = "projmux"
+)
+
 var errUpdateTarTooLarge = errors.New("release archive exceeded extracted byte limit")
 
 type updateHTTPClient interface {
@@ -121,6 +130,14 @@ type updateCommand struct {
 	executable           func() (string, error)
 	lookPath             func(string) (string, error)
 	runExternal          func(name string, args []string, stdout, stderr io.Writer) error
+	// runExternalEnv runs one command with extra environment entries layered
+	// over the caller's environment. `go install` chooses its output directory
+	// from GOBIN and offers no flag for it, so that one publication has to
+	// carry an environment override; every other command keeps the plain
+	// runner. The override is additive on purpose — PROJMUX_PROJDIR and the
+	// rest of the calling shell still reach the child, so the memoized primary
+	// project root survives the update that publishes the new binary.
+	runExternalEnv func(name string, args []string, env []string, stdout, stderr io.Writer) error
 	// probeVersion reads the raw `projmux version` output of one exact
 	// executable. It is deliberately a separate seam from runExternal: the
 	// probe is a reading, not one of the staged apply commands, so it must
@@ -193,28 +210,29 @@ type githubReleaseAsset struct {
 
 func newUpdateCommand() *updateCommand {
 	cmd := &updateCommand{
-		now:          time.Now,
-		getenv:       os.Getenv,
-		cacheDir:     defaultUpdateCacheDir,
-		client:       &http.Client{Timeout: updateHTTPTimeout},
-		apiURL:       updateReleaseURL,
-		npmURL:       updateNPMRegistryURL,
-		releasesURL:  updateReleaseListURL,
-		executable:   resolveExecutablePath,
-		lookPath:     exec.LookPath,
-		runExternal:  runUpdateExternal,
-		probeVersion: probeInstalledProjmuxVersion,
-		goos:         runtime.GOOS,
-		goarch:       runtime.GOARCH,
-		mkdirTemp:    os.MkdirTemp,
-		removeAll:    os.RemoveAll,
-		rename:       os.Rename,
-		chmod:        os.Chmod,
-		remove:       os.Remove,
-		copyFile:     copyRegularFile,
-		buildInfo:    debug.ReadBuildInfo,
-		userHomeDir:  os.UserHomeDir,
-		limits:       defaultUpdateArchiveLimits(),
+		now:            time.Now,
+		getenv:         os.Getenv,
+		cacheDir:       defaultUpdateCacheDir,
+		client:         &http.Client{Timeout: updateHTTPTimeout},
+		apiURL:         updateReleaseURL,
+		npmURL:         updateNPMRegistryURL,
+		releasesURL:    updateReleaseListURL,
+		executable:     resolveExecutablePath,
+		lookPath:       exec.LookPath,
+		runExternal:    runUpdateExternal,
+		runExternalEnv: runUpdateExternalWithEnv,
+		probeVersion:   probeInstalledProjmuxVersion,
+		goos:           runtime.GOOS,
+		goarch:         runtime.GOARCH,
+		mkdirTemp:      os.MkdirTemp,
+		removeAll:      os.RemoveAll,
+		rename:         os.Rename,
+		chmod:          os.Chmod,
+		remove:         os.Remove,
+		copyFile:       copyRegularFile,
+		buildInfo:      debug.ReadBuildInfo,
+		userHomeDir:    os.UserHomeDir,
+		limits:         defaultUpdateArchiveLimits(),
 	}
 	// Bind the release-channel seam to the stored Settings opt-in. The
 	// resolver keeps PROJMUX_RELEASE_CHANNEL as the fallback for an install
@@ -261,6 +279,16 @@ func (c *updateCommand) runApply(args []string, stdout, stderr io.Writer) error 
 			return c.runGitHubReleaseApplyDryRun(*noApply, stdout)
 		}
 		return c.runGitHubReleaseApply(*noApply, stdout, stderr)
+	}
+	// The go backend replaces a file rather than handing the work to a package
+	// manager, so it runs its own sequence for the same reason github-release
+	// does: the publication and the replacement are two steps, and only the
+	// second one knows which file the user actually runs.
+	if installer.Source == "go" {
+		if *dryRun {
+			return c.runGoApplyDryRun(*noApply, stdout)
+		}
+		return c.runGoApply(*noApply, stdout, stderr)
 	}
 
 	commands, err := c.applyCommands(installer.Source, *noApply)
@@ -437,24 +465,7 @@ func (c *updateCommand) applyCommands(source string, noApply bool) ([]updateAppl
 		commands = append(commands, updateApplyCommand{Stage: postStage, Name: "projmux", Args: postUpdateApplyArgs(noApply)})
 		return commands, nil
 	case "go":
-		exe, err := c.currentExecutable()
-		if err != nil {
-			return nil, err
-		}
-		commands := []updateApplyCommand{{Stage: updateApplyPublication, Name: "go", Args: []string{"install", "github.com/crevissepartners/projmux/cmd/projmux@latest"}}}
-		if !noApply {
-			commands = append([]updateApplyCommand{{
-				Stage: updateApplyPrePublication,
-				Name:  exe,
-				Args:  preUpdateApplyArgs(exe, defaultAppSocket),
-			}}, commands...)
-		}
-		postStage := updateApplyVerification
-		if noApply {
-			postStage = updateApplyConfigOnly
-		}
-		commands = append(commands, updateApplyCommand{Stage: postStage, Name: exe, Args: postUpdateApplyArgs(noApply)})
-		return commands, nil
+		return nil, errors.New("update apply for go installs is handled by scratch-GOBIN publication and direct binary replacement")
 	case "github-release":
 		return nil, errors.New("update apply for github-release installs is handled by direct release binary replacement")
 	case "source":
@@ -517,6 +528,200 @@ func (c *updateCommand) npmPublishedTarget() (string, error) {
 		}
 	}
 	return filepath.Clean(target), nil
+}
+
+// goPublicationCommand is the one command that fetches and builds the update on
+// the go backend. It is shared by the dry run and the apply so the preview can
+// never drift from what actually runs.
+func goPublicationCommand() updateApplyCommand {
+	return updateApplyCommand{Stage: updateApplyPublication, Name: "go", Args: []string{"install", goInstallSpec}}
+}
+
+func (c *updateCommand) runGoApplyDryRun(noApply bool, stdout io.Writer) error {
+	target, err := c.currentExecutable()
+	if err != nil {
+		return err
+	}
+	if !noApply {
+		if _, err := fmt.Fprintf(stdout, "would run before replacement: %s %s\n",
+			target, strings.Join(preUpdateApplyArgs(target, defaultAppSocket), " ")); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(stdout, "would publish: %s (into a scratch GOBIN beside %s)\n",
+		goPublicationCommand().String(), target); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "would replace: %s (atomic via temp file)\n", target); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "would run: %s %s\n",
+		target, strings.Join(postUpdateApplyArgs(noApply), " ")); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(stdout, keymapMigrationStagePreviewLine(target)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(stdout, managedIngestMigrationStagePreviewLine(target)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(stdout, updateApplyVerificationPreviewLine()); err != nil {
+		return err
+	}
+	if noApply {
+		return writeUpdateExplicitApplyRequired(stdout, defaultAppSocket)
+	}
+	return nil
+}
+
+// runGoApply publishes a `go install` update and replaces the exact executable
+// this process is running from.
+//
+// `go install` picks its own output directory — $GOBIN, else $GOPATH/bin, else
+// ~/go/bin — and that is not always the binary the user runs. A custom GOBIN,
+// or a hand-placed binary updated under an explicit PROJMUX_INSTALLER=go,
+// publishes *beside* the active executable instead of onto it. Running the
+// installer and then converging with the path resolved before it ran therefore
+// reports success while the old image stays in place and does the applying.
+//
+// Publishing into a scratch GOBIN and atomically replacing the resolved target
+// removes the guess: the exact active file is what gets updated, through the
+// same replacement plumbing the release backend uses, and the convergence that
+// follows runs the binary that was just written.
+func (c *updateCommand) runGoApply(noApply bool, stdout, stderr io.Writer) error {
+	target, err := c.currentExecutable()
+	if err != nil {
+		return err
+	}
+	before := c.probeActiveVersion()
+	expected := c.cachedLatestVersion()
+
+	scratch, err := c.createGoScratchDir(target)
+	if err != nil {
+		return err
+	}
+	cleanup := true
+	defer func() {
+		if cleanup && c.removeAll != nil {
+			_ = c.removeAll(scratch)
+		}
+	}()
+
+	if !noApply {
+		preApply := updateApplyCommand{
+			Stage: updateApplyPrePublication,
+			Name:  target,
+			Args:  preUpdateApplyArgs(target, defaultAppSocket),
+		}
+		if _, err := fmt.Fprintf(stdout, ">> running: %s\n", preApply.String()); err != nil {
+			return err
+		}
+		if err := c.externalRunner()(preApply.Name, preApply.Args, stdout, stderr); err != nil {
+			return updateApplyStageError(preApply, err)
+		}
+	}
+
+	publication := goPublicationCommand()
+	if _, err := fmt.Fprintf(stdout, ">> running: %s (GOBIN=%s)\n", publication.String(), scratch); err != nil {
+		return err
+	}
+	if err := c.envRunner()(publication.Name, publication.Args, []string{"GOBIN=" + scratch}, stdout, stderr); err != nil {
+		return updateApplyStageError(publication, err)
+	}
+
+	published := filepath.Join(scratch, goPublishedBinaryName)
+	if err := verifyGoPublishedBinary(published); err != nil {
+		return updateApplyStageError(publication, err)
+	}
+
+	if err := c.atomicReplaceRelease(published, target); err != nil {
+		return fmt.Errorf("update binary publication failed; update not successful; recovery: run `%s`: %w",
+			updateApplyRecoveryCommand(defaultAppSocket), err)
+	}
+	if _, err := fmt.Fprintf(stdout, ">> atomically replaced %s\n", target); err != nil {
+		return err
+	}
+
+	if c.removeAll != nil {
+		_ = c.removeAll(scratch)
+	}
+	cleanup = false
+
+	applyArgs := postUpdateApplyArgs(noApply)
+	if noApply {
+		if _, err := fmt.Fprintln(stdout, ">> migrating config without reloading the live server..."); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintln(stdout, ">> applying live config..."); err != nil {
+		return err
+	}
+	if err := c.externalRunner()(target, applyArgs, stdout, stderr); err != nil {
+		stage := updateApplyVerification
+		if noApply {
+			stage = updateApplyConfigOnly
+		}
+		return updateApplyStageError(updateApplyCommand{Stage: stage, Name: target, Args: applyArgs}, err)
+	}
+	if noApply {
+		if err := writeUpdateExplicitApplyRequired(stdout, defaultAppSocket); err != nil {
+			return err
+		}
+	}
+	return c.verifyPublishedVersion(stdout, "go", expected, before)
+}
+
+// createGoScratchDir stages the go publication next to the binary it will
+// replace. The directory choice is the replacement's precondition, not a
+// preference: the atomic swap is a rename, and a rename only stays atomic
+// within one filesystem.
+func (c *updateCommand) createGoScratchDir(target string) (string, error) {
+	if c.mkdirTemp == nil {
+		return "", errors.New("configure update mkdirTemp: temp directory factory is not configured")
+	}
+	tmpDir, err := c.mkdirTemp(filepath.Dir(target), ".projmux-go-*")
+	if err != nil {
+		return "", fmt.Errorf("create go update scratch directory: %w", err)
+	}
+	// `go install` rejects a relative GOBIN outright, so the scratch path is
+	// made absolute here rather than failing inside the publication.
+	abs, err := filepath.Abs(tmpDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve go update scratch directory %s: %w", tmpDir, err)
+	}
+	return abs, nil
+}
+
+// verifyGoPublishedBinary is the gate between "the installer exited 0" and "a
+// file is about to be renamed over the binary the user runs".
+//
+// `go install` can exit 0 without leaving the artifact this update expects —
+// a GOBIN honoured differently, a build cached elsewhere, a name that is not
+// the command's. Replacing the active executable with whatever happens to sit
+// at that path would publish a directory, a symlink, or a non-executable file
+// over a working binary. Each rejection names the path and the mode it found,
+// so the failure is recoverable from the message alone.
+func verifyGoPublishedBinary(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("go install published no binary at %s", path)
+		}
+		return fmt.Errorf("read the go install artifact %s: %w", path, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("the go install artifact %s is not a regular file (mode %s)", path, info.Mode())
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("the go install artifact %s is not executable (mode %s)", path, info.Mode())
+	}
+	return nil
+}
+
+func (c *updateCommand) envRunner() func(string, []string, []string, io.Writer, io.Writer) error {
+	if c.runExternalEnv != nil {
+		return c.runExternalEnv
+	}
+	return runUpdateExternalWithEnv
 }
 
 func (c *updateCommand) runGitHubReleaseApplyDryRun(noApply bool, stdout io.Writer) error {
@@ -1851,6 +2056,18 @@ func updateApplyVerificationPreviewLine() string {
 
 func runUpdateExternal(name string, args []string, stdout, stderr io.Writer) error {
 	cmd := exec.Command(name, args...)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
+	return cmd.Run()
+}
+
+// runUpdateExternalWithEnv layers extra environment entries over the calling
+// process environment rather than replacing it. The child still sees
+// PROJMUX_PROJDIR and everything else the user's shell exported, so the
+// override decides only where `go install` writes.
+func runUpdateExternalWithEnv(name string, args []string, env []string, stdout, stderr io.Writer) error {
+	cmd := exec.Command(name, args...)
+	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()
