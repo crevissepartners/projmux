@@ -320,7 +320,7 @@ func TestDoctorSectionRejectsUnknownValue(t *testing.T) {
 
 	cmd := newStubDoctorCommand("linux", map[string]bool{})
 	err := cmd.Run([]string{"--section", "future"}, io.Discard, io.Discard)
-	if err == nil || !IsUsageError(err) || err.Error() != "doctor --section must be one of deps, runtime, integrations, session-state, logs, or registry" {
+	if err == nil || !IsUsageError(err) || err.Error() != "doctor --section must be one of deps, runtime, integrations, session-state, logs, registry, or replacement" {
 		t.Fatalf("Run() error = %#v, want exact section UsageError", err)
 	}
 }

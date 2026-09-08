@@ -69,6 +69,22 @@ type doctorCommand struct {
 	// answers a fleet question rather than qualifying a Codex verdict, and the
 	// two render in different sections.
 	projmuxProcessVintage func() projmuxProcessVintage
+	// installedImage reads whether the image this diagnosis runs is still the
+	// one the installed path publishes. It is the L1 evidence of the
+	// replacement table and comes from the same single process-table read as
+	// the two vintage seams above, so an unfiltered report cannot pair three
+	// readings taken at three different moments.
+	installedImage func() doctorInstalledImage
+	// installResidue reads the most recent install-residue ledger record and
+	// how many records the ledger holds. It is the L2 evidence that survives a
+	// diagnosis taken from a build which is not the installed one: such a
+	// reader observes no children of itself, and the ledger is still the record
+	// of what the last install left behind.
+	installResidue func() (installResidueRecord, int, bool)
+	// processAlive answers whether one recorded provider process handle still
+	// names a live process. It is injected so the Running-versus-live-session
+	// census is exercised without a process table.
+	processAlive func(coremetadata.ProcessIdentity) bool
 }
 
 func newDoctorCommand() *doctorCommand {
@@ -88,7 +104,10 @@ func newDoctorCommand() *doctorCommand {
 		health, _ := codexappserver.EnsureDefaultProxyReady(context.Background(), trigger, version.String(), hookAvailable)
 		return health
 	}
-	c.brokerDiagnostic = defaultCodexBrokerDiagnosticLookup()
+	// One dial per report. The integrations section and the replacement table
+	// both read the broker, and two dials would let one report pair two
+	// readings of a runtime that restarted between them.
+	c.brokerDiagnostic = codexBrokerDiagnosticLookup(sync.OnceValue(defaultCodexBrokerDiagnosticLookup()))
 	// The authority read is fenced here and unfenced elsewhere on purpose. A
 	// single-resource describe reports one Pane as it is right now; this
 	// section reaches a verdict about whether a completed transition is
@@ -104,12 +123,29 @@ func newDoctorCommand() *doctorCommand {
 	}
 	readVintage := defaultProcessVintageReader()
 	c.controlPlaneVintage = func() codexControlPlaneVintage {
-		controlPlane, _ := readVintage()
+		controlPlane, _, _ := readVintage()
 		return controlPlane
 	}
 	c.projmuxProcessVintage = func() projmuxProcessVintage {
-		_, fleet := readVintage()
+		_, fleet, _ := readVintage()
 		return fleet
+	}
+	c.installedImage = func() doctorInstalledImage {
+		_, _, image := readVintage()
+		return image
+	}
+	c.installResidue = func() (installResidueRecord, int, bool) {
+		paths, err := configPaths(os.UserHomeDir, c.getenv)
+		if err != nil {
+			return installResidueRecord{}, 0, false
+		}
+		return latestInstallResidueRecord(filepath.Join(paths.StateDir, installResidueLedgerFile))
+	}
+	// A pid alone is not the recorded handle; the identity carries the owner
+	// and the birth instant, and the seam takes the whole record so a future
+	// birth-aware check does not have to change every call site.
+	c.processAlive = func(process coremetadata.ProcessIdentity) bool {
+		return process.Valid() && notifyQueueEventProcessAlive(process.PID)
 	}
 	c.readRuntimeHealth = diagnostics.ReadRuntimeHealth
 	c.resolveOperationsPath = func() (string, error) { return diagnostics.DefaultPath(c.getenv, os.UserHomeDir) }
@@ -197,6 +233,7 @@ type doctorReport struct {
 	CodexPayloadFree     *codexgeneration.Projection          `json:"codex_payload_free_capability,omitempty"`
 	CodexControlPlane    *codexControlPlaneReport             `json:"codex_control_plane,omitempty"`
 	ProcessVintage       *projmuxProcessVintage               `json:"projmux_process_vintage,omitempty"`
+	Replacement          *doctorReplacementReport             `json:"replacement,omitempty"`
 	SessionStateResume   []doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    string                               `json:"session_state_prune"`
 	Runtime              []doctorFinding                      `json:"runtime"`
@@ -219,6 +256,7 @@ const (
 	doctorSectionSessionState doctorSection = "session-state"
 	doctorSectionLogs         doctorSection = "logs"
 	doctorSectionRegistry     doctorSection = "registry"
+	doctorSectionReplacement  doctorSection = "replacement"
 )
 
 var doctorSections = []doctorSection{
@@ -228,6 +266,7 @@ var doctorSections = []doctorSection{
 	doctorSectionSessionState,
 	doctorSectionLogs,
 	doctorSectionRegistry,
+	doctorSectionReplacement,
 }
 
 func doctorDeps() []doctorDep {
@@ -247,7 +286,7 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	jsonOut := fs.Bool("json", false, "emit machine-readable JSON instead of the text report")
-	sectionName := fs.String("section", "", "filter diagnostics: deps|runtime|integrations|session-state|logs|registry")
+	sectionName := fs.String("section", "", "filter diagnostics: deps|runtime|integrations|session-state|logs|registry|replacement")
 	verbose := fs.Bool("verbose", false, "include successful checks and full detail in the text report")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -260,7 +299,7 @@ func (c *doctorCommand) Run(args []string, stdout, stderr io.Writer) error {
 	}
 	section, ok := parseDoctorSection(*sectionName)
 	if !ok {
-		return usageError("doctor --section must be one of deps, runtime, integrations, session-state, logs, or registry")
+		return usageError("doctor --section must be one of deps, runtime, integrations, session-state, logs, registry, or replacement")
 	}
 
 	report := c.evaluateReport(section)
@@ -375,7 +414,51 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 		report.RegistryInvariants = c.evaluateRegistryInvariants()
 		report.RegistryDivergences = c.evaluateRegistryDivergences()
 	}
+	if section == doctorSectionAll || section == doctorSectionReplacement {
+		// The pool and broker readings the integrations section already took
+		// are handed over rather than retaken. Retaking them would put two
+		// samples of the same runtime into one report and let its two sections
+		// disagree about the generation a verdict was reached on.
+		replacement := c.evaluateReplacement(report.CodexGenerationPool, report.CodexBroker)
+		report.Replacement = &replacement
+	}
 	return report
+}
+
+// evaluateReplacement projects the three-layer replacement and restoration
+// table.
+//
+// Every input is a value another section already produces, and the Registry
+// read is the zero-write snapshot read, so asking this question on a machine
+// that never created a Project still creates nothing.
+func (c *doctorCommand) evaluateReplacement(pool *doctorCodexGenerationPool, broker *codexBrokerDiagnostic) doctorReplacementReport {
+	in := doctorReplacementInputs{Pool: pool}
+	if c.installedImage != nil {
+		in.Image = c.installedImage()
+	}
+	if c.projmuxProcessVintage != nil {
+		in.Processes = c.projmuxProcessVintage()
+	}
+	if c.installResidue != nil {
+		in.Residue, in.ResidueRecords, in.ResidueOK = c.installResidue()
+	}
+	if broker == nil && c.brokerDiagnostic != nil {
+		read := c.brokerDiagnostic()
+		broker = &read
+	}
+	if c.readRegistry != nil {
+		if registry, err := c.readRegistry(); err == nil {
+			if in.Pool == nil && c.codexGeneration != nil {
+				in.Pool = c.codexGeneration(registry)
+			}
+			probe := doctorProviderSessionProbe{ProcessAlive: c.processAlive}
+			if broker != nil && broker.State == codexBrokerStateRunning {
+				probe.BrokerRuntimeID = broker.Runtime
+			}
+			in.Sessions = censusDoctorProviderSessions(registry, probe)
+		}
+	}
+	return projectDoctorReplacement(in)
 }
 
 func doctorGeneratedConfigPath(lookupEnv func(string) string, homeDir func() (string, error)) (string, error) {
@@ -475,6 +558,9 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 	buf.WriteString("read-only diagnostics; displayed remediation is never executed\n")
 	if section == doctorSectionAll || section == doctorSectionDeps {
 		writeDoctorDependenciesText(&buf, report.Dependencies, verbose)
+	}
+	if section == doctorSectionAll || section == doctorSectionReplacement {
+		writeDoctorReplacementText(&buf, report.Replacement)
 	}
 	if section == doctorSectionAll || section == doctorSectionRuntime {
 		writeDoctorFindingsText(&buf, "Runtime", report.Runtime, verbose)
@@ -889,6 +975,7 @@ type doctorJSONReport struct {
 	CodexPayloadFree     *codexgeneration.Projection           `json:"codex_payload_free_capability,omitempty"`
 	CodexControlPlane    *codexControlPlaneReport              `json:"codex_control_plane,omitempty"`
 	ProcessVintage       *projmuxProcessVintage                `json:"projmux_process_vintage,omitempty"`
+	Replacement          *doctorReplacementReport              `json:"replacement,omitempty"`
 	SessionStateResume   *[]doctorSessionStateResumeDiagnostic `json:"session_state_resume,omitempty"`
 	SessionStatePrune    *string                               `json:"session_state_prune,omitempty"`
 	Runtime              *[]doctorFinding                      `json:"runtime,omitempty"`
@@ -927,6 +1014,9 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 	if section == doctorSectionAll || section == doctorSectionRegistry {
 		out.RegistryInvariants = &report.RegistryInvariants
 		out.RegistryDivergences = &report.RegistryDivergences
+	}
+	if section == doctorSectionAll || section == doctorSectionReplacement {
+		out.Replacement = report.Replacement
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
@@ -1110,19 +1200,27 @@ func doctorControlPlaneVintage(read func() codexControlPlaneVintage) codexContro
 	return read()
 }
 
-// defaultProcessVintageReader takes one process-table read and projects it two
-// ways.
+// defaultProcessVintageReader takes one process-table read and projects it
+// three ways.
 //
-// One read rather than two, because the projections are counted over the same
+// One read rather than three, because the projections are counted over the same
 // processes and a report whose Codex line and fleet line were sampled moments
 // apart could print two numbers that disagree about the same broker. Memoizing
 // also keeps an unfiltered `projmux doctor` to a single walk of the table.
-func defaultProcessVintageReader() func() (codexControlPlaneVintage, projmuxProcessVintage) {
+//
+// The third projection is this reader's own image. It is taken here rather than
+// from a separate readlink because the replacement table prints it beside the
+// fleet census, and an image read after the census could name a publication the
+// census never saw.
+func defaultProcessVintageReader() func() (codexControlPlaneVintage, projmuxProcessVintage, doctorInstalledImage) {
 	var once sync.Once
 	var controlPlane codexControlPlaneVintage
 	var fleet projmuxProcessVintage
-	return func() (codexControlPlaneVintage, projmuxProcessVintage) {
+	var image doctorInstalledImage
+	return func() (codexControlPlaneVintage, projmuxProcessVintage, doctorInstalledImage) {
 		once.Do(func() {
+			images, supported := defaultCodexProcessImages()
+			image.Supported = supported
 			executable, err := os.Executable()
 			if err != nil {
 				return
@@ -1131,12 +1229,70 @@ func defaultProcessVintageReader() func() (codexControlPlaneVintage, projmuxProc
 			if err != nil {
 				resolved = executable
 			}
-			images, supported := defaultCodexProcessImages()
 			controlPlane = projectCodexControlPlaneVintage(resolved, os.Getpid(), images, supported)
 			fleet = projectProjmuxProcessVintage(resolved, os.Getpid(), images, supported)
+			image = projectDoctorInstalledImage(resolved, os.Getpid(), images, supported)
 		})
-		return controlPlane, fleet
+		return controlPlane, fleet, image
 	}
+}
+
+// projectDoctorInstalledImage reads this process's own entry out of the same
+// process table the two vintage censuses are counted from.
+//
+// The census skips the reader's own image on purpose -- it is current by
+// construction for the fleet question. It is the whole answer to the L1
+// question, which is a different question: whether the file the installed path
+// publishes is still the file this diagnosis is running.
+func projectDoctorInstalledImage(self string, selfPID int, images []codexProcessImage, supported bool) doctorInstalledImage {
+	image := doctorInstalledImage{Supported: supported}
+	if !supported || strings.TrimSpace(self) == "" {
+		return image
+	}
+	for _, candidate := range images {
+		if candidate.PID != selfPID {
+			continue
+		}
+		path, unlinked := codexProcessImagePath(candidate.Exe)
+		if path == "" || path != self {
+			return image
+		}
+		image.Resolved, image.Unlinked = true, unlinked
+		return image
+	}
+	return image
+}
+
+// latestInstallResidueRecord reads the newest informative record of the install
+// residue ledger and how many records it holds.
+//
+// Informative means the record's own census observed something. A record with
+// `supported=false` or `observed=0` is a census that could not see the fleet --
+// an unsupported platform, or a build with no children of its own -- and it
+// says nothing about what an install left behind. Reading such a record as a
+// clean fleet is the same error as reading an empty live census that way, so it
+// is skipped and the search continues into older records. The length is
+// returned either way, which keeps "no ledger" distinguishable from "a ledger
+// of silent records".
+//
+// It creates nothing: a missing, unreadable, or malformed ledger reads as no
+// history, which is the same answer the writer's own reader gives.
+func latestInstallResidueRecord(path string) (installResidueRecord, int, bool) {
+	lines, ok := readInstallResidueLedgerLines(path)
+	if !ok {
+		return installResidueRecord{}, 0, false
+	}
+	for index := len(lines) - 1; index >= 0; index-- {
+		var record installResidueRecord
+		if err := json.Unmarshal(lines[index], &record); err != nil {
+			continue
+		}
+		if !record.Supported || record.Observed <= 0 {
+			continue
+		}
+		return record, len(lines), true
+	}
+	return installResidueRecord{}, len(lines), false
 }
 
 // writeDoctorProcessVintageText renders how much of the running fleet the last
