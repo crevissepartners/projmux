@@ -245,7 +245,7 @@ func (c *Command) MaybeCollect(ctx context.Context) (bool, error) {
 // cache to render the HUD segment. Adapter failures during this hot path
 // are swallowed unless PROJMUX_USAGE_DEBUG is set.
 func (c *Command) RunStatus(args []string, stdout, stderr io.Writer) error {
-	if len(args) == 1 && args[0] == nativeWatcherInternalFlag {
+	if len(args) == 1 && args[0] == NativeWatcherInternalFlag {
 		return c.runNativeWatcher()
 	}
 	fs := flag.NewFlagSet("status usage", flag.ContinueOnError)

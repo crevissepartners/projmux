@@ -144,8 +144,11 @@ list of `key=value` pairs beside its reason token. The keys come from a closed
 inventory and the values are either counters this surface formats or tokens
 drawn from another closed vocabulary. `residual-processes-present` and
 `install-residue-recorded` both say an install left work behind; only
-`processes.residual`, `residual.oldest-seconds`, and `ledger.latest.residual`
-say how much, how old, and whether the reading was live or from the ledger.
+`processes.residual`, `residual.role.*`, `residual.oldest-seconds`, and
+`ledger.latest.residual` say how much, of what, how old, and whether the
+reading was live or from the ledger. A `residual.role.*` key is emitted only
+for a role that has at least one residual process, so the row states what an
+install did not replace and never carries a zero.
 
 **Where the discriminant is published, and why.** The signals are serialized in
 `--json`, unlike `doctorFinding.Details`, which is `json:"-"` in every format.
@@ -227,6 +230,91 @@ token: `replaced` once a generation is draining, handover-pending, or retired �
 because such a generation accepts no new admission, which is exactly the
 sentence C-1's Assumption makes — and `not-replaced` otherwise.
 
+## Process role vocabulary
+
+`L2` counts every running child of the installed executable, and it names them
+by **route** — the internal command words of the argv, with `argv[0]` and
+everything behind a bare `--` discarded. That is the whole classifier. No pid,
+no path, and no argv word reaches a diagnostics surface from it; the role name
+is a token from the closed list below, and the value beside it is a count.
+
+The same vocabulary is used by `projmux doctor`'s `L2` row and by every
+`install-residue.jsonl` record, so the two surfaces name the same processes with
+the same words.
+
+| Role | Route | Cardinality | What ending it costs |
+| --- | --- | --- | --- |
+| `broker-runtime` | `internal codex-broker serve` | one per machine | nothing directly: a new broker starts on the installed image when a binding needs one |
+| `lifecycle-observer` | `internal agent-hook ingest codex-broker-watch` | one per Codex pane | that pane's lifecycle ingestion until it is relaunched |
+| `supervisor` | `internal supervise` | one per pane | the pane it supervises |
+| `session-client` | `shell` | one per attached client | **the operator's whole attached session.** This role is the reason a drain cannot be uniform: every other role is background work, and this one is the person at the terminal |
+| `agent-endpoint` | `internal claude-endpoint-helper` | one per registered agent activation | that agent's messaging endpoint until its pane is recreated |
+| `usage-watcher` | `internal status usage --watch-codex-rate-limits` | one per machine, lease-held | rate-limit sampling until the lease is taken again |
+| `other` | every route not named above | unbounded | — |
+
+**`other` is a total guard, not a count of replacement targets.** It exists so
+that a route this census has no name for cannot make the fleet look smaller than
+it is, and naming more roles shrinks it without ever removing it. What remains
+in it is the **short-lived invocation**: a status or statusbar render, a preview,
+a picker, a hook callback, a `config apply`, the residue census itself. Those
+processes are observed by whichever census happens to overlap them and are gone
+seconds later. They are counted because the total has to be whole, and they are
+not drain candidates because nothing has to end them.
+
+That distinction is what the named roles buy. Before them, `other` was the
+second-largest bucket on this repository's own ledger — 271 of 866 residual
+observations — and it mixed the two kinds, so no reader could tell a long-lived
+process an install failed to replace from a two-second render that happened to
+be running. A residual `other` count is now read as measurement noise unless it
+is large or persistent, in which case it names a long-lived route this list is
+missing.
+
+**Adding a role is not a change to the reason-token vocabulary.** The reason
+tokens above are the closed list of *verdicts*; roles are the subjects those
+verdicts are counted over. A role added here reaches the signal key inventory
+automatically, because that inventory expands the census role order, and
+`TestReplacementProcessRolesMatchTheContractDocument` holds this table and the
+code's role order to each other in both directions.
+
+## Reading residual survival: observations are not processes
+
+The ledger records one census per install, and installs on a development
+machine land minutes apart. A long-lived process is therefore recorded again in
+record after record, once per install it survived. **Counting ledger samples
+weights each process by its own longevity, which is the very quantity being
+measured.**
+
+`projmux internal install-residue --survival` reads the accumulated ledger and
+answers each cutoff `T` twice: over samples, and over distinct processes. On
+this repository's ledger at 2026-09-08 (54 records with a non-empty census, 866
+residual samples, 128 distinct processes) the two bases disagree by several
+times:
+
+| Cutoff | By observation | By process identity |
+| --- | --: | --: |
+| 1h | 72.2% | 60.9% |
+| 4h | 53.3% | 25.8% |
+| 12h | 49.0% | 13.3% |
+| 24h | 40.9% | 8.6% |
+| 72h | 24.6% | 3.9% |
+| 168h | 0.3% | **2.3%** |
+
+The disagreement runs in both directions and neither one is a correction of the
+other. Below 72h the sample basis is inflated, because the processes that
+survive many installs contribute many samples each. At 168h it is *deflated*,
+because the handful of week-old processes are diluted across a sample count they
+did not generate. **A drain cutoff chosen from the sample basis would be wrong
+in both directions at once.**
+
+Identity is the pair `(role, start instant)`. The ledger has no pid, path, or
+argv to key on, and does not acquire one for this: a start instant is when
+something began, not which process it was. Records written from this change on
+carry the start instants directly. Older records carry only ages, from which a
+start is reconstructed by subtraction; both the instant and the age are whole
+truncated seconds, so a reconstructed start lands on the true second or the one
+after it, and the report says how many of its identities rest on that
+reconstruction.
+
 ## Signal key inventory
 
 | Key | Layer | Value |
@@ -236,6 +324,13 @@ sentence C-1's Assumption makes — and `not-replaced` otherwise.
 | `retained.previous-image` | `L1` | `none` |
 | `processes.observed` | `L2` | counter |
 | `processes.residual` | `L2` | counter |
+| `residual.role.broker-runtime` | `L2` | counter |
+| `residual.role.lifecycle-observer` | `L2` | counter |
+| `residual.role.supervisor` | `L2` | counter |
+| `residual.role.session-client` | `L2` | counter |
+| `residual.role.agent-endpoint` | `L2` | counter |
+| `residual.role.usage-watcher` | `L2` | counter |
+| `residual.role.other` | `L2` | counter |
 | `residual.oldest-seconds` | `L2` | counter |
 | `ledger.records` | `L2` | counter |
 | `ledger.latest.installer` | `L2` | install path token, or `unclassified` |
@@ -258,6 +353,8 @@ sentence C-1's Assumption makes — and `not-replaced` otherwise.
 
 It does not replace anything, restore anything, end a process, start a process,
 or repair a Registry. It reports, and a reported mismatch is left exactly as it
-was found. The three implementation tracks that change actual replacement
+was found. `TestReplacementMeasurementPathEndsNoProcess` holds that as a
+property of the source: the census, the residue ledger, the survival report, and
+this table are checked to carry no process termination, signalling, or restart. The three implementation tracks that change actual replacement
 behavior — `L2` replacement, `L1` atomicity, and the `L3` qualification gate —
 are separate work, and no change on this path may alter their behavior.

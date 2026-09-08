@@ -109,12 +109,20 @@ func newInstallResidueCommand() *installResidueCommand {
 
 // runInstallResidueReport is the route entrypoint.
 //
-// It always returns nil. This runs as the last step of an install that has
-// already succeeded, and a diagnostic that can fail the thing it reports on is
-// worse than no diagnostic: an unwritable state directory must not turn a
-// completed install into a failed one.
-func runInstallResidueReport(_ []string, _ io.Writer, stderr io.Writer) error {
-	newInstallResidueCommand().Run(stderr)
+// The census path always returns nil. It runs as the last step of an install
+// that has already succeeded, and a diagnostic that can fail the thing it
+// reports on is worse than no diagnostic: an unwritable state directory must
+// not turn a completed install into a failed one.
+//
+// The `--survival` path is the opposite case and returns its errors. No install
+// invokes it; it is a reader asking the accumulated ledger a question, and
+// answering that with silence would be worse than answering with the reason.
+func runInstallResidueReport(args []string, stdout io.Writer, stderr io.Writer) error {
+	command := newInstallResidueCommand()
+	if installResidueRouteWantsSurvival(args) {
+		return command.Survival(stdout)
+	}
+	command.Run(stderr)
 	return nil
 }
 

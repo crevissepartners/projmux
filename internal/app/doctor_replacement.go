@@ -166,7 +166,39 @@ const (
 	doctorReplacementSignalSessionsUnobs     = "sessions.unobservable"
 )
 
-var doctorReplacementSignalInventory = []string{
+// doctorReplacementSignalRoleResidualPrefix names one process role's residual
+// count on the L2 row.
+//
+// The row's totals say how much an install left behind; they do not say what.
+// A named role is the difference between a number an operator reads and a
+// target they can act on, and the role vocabulary is the same closed list the
+// install ledger records, so the two surfaces name the same processes with the
+// same words. The keys stay a closed list for the same reason every other key
+// here does: the role order below is the whole of it.
+const doctorReplacementSignalRoleResidualPrefix = "residual.role."
+
+// doctorReplacementSignalRoleResidual is one role's key on the L2 row.
+func doctorReplacementSignalRoleResidual(role string) string {
+	return doctorReplacementSignalRoleResidualPrefix + role
+}
+
+// doctorReplacementSignalInventory is every key this section can emit.
+//
+// The per-role L2 keys are expanded from the census role order rather than
+// written out, so a role added to that vocabulary reaches this inventory --
+// and, through the drift test, the contract document -- without a second edit
+// that could be forgotten.
+var doctorReplacementSignalInventory = buildDoctorReplacementSignalInventory()
+
+func buildDoctorReplacementSignalInventory() []string {
+	keys := append([]string(nil), doctorReplacementFixedSignalInventory...)
+	for _, role := range projmuxProcessRoleOrder {
+		keys = append(keys, doctorReplacementSignalRoleResidual(role))
+	}
+	return keys
+}
+
+var doctorReplacementFixedSignalInventory = []string{
 	doctorReplacementSignalPlatform,
 	doctorReplacementSignalImageLink,
 	doctorReplacementSignalRetainedImage,
@@ -494,6 +526,18 @@ func projectDoctorReplacementProcessRow(vintage projmuxProcessVintage, residue i
 		doctorReplacementSignalPlatform, "true",
 		doctorReplacementSignalProcessesObserved, strconv.Itoa(observed),
 		doctorReplacementSignalProcessesResidual, strconv.Itoa(replaced),
+	}
+	// Roles keep the census order rather than the notice's biggest-first
+	// order: this row is read down a column against other runs, and a row
+	// whose keys reorder with the fleet cannot be diffed against yesterday's.
+	// A role with no residual process is omitted rather than printed as a
+	// zero, exactly as the install notice omits it -- the row states what an
+	// install did not replace, and a zero is not one of those.
+	for _, role := range vintage.Roles {
+		if role.Replaced <= 0 {
+			continue
+		}
+		signals = append(signals, doctorReplacementSignalRoleResidual(role.Role), strconv.Itoa(role.Replaced))
 	}
 	if oldest, ok := projmuxProcessRolesOldestResidualAge(vintage.Roles); ok {
 		signals = append(signals, doctorReplacementSignalResidualOldest, strconv.Itoa(oldest))

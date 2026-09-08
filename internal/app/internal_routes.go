@@ -110,7 +110,7 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.activationExec, "internal activation-exec", "activation-exec", nil, rest, stdout, stderr)
 	case "claude-endpoint-register":
 		return runClaudeEndpointRegistration(rest)
-	case "claude-endpoint-helper":
+	case claudeEndpointHelperRoute:
 		return runClaudeEndpointHelper(rest)
 	case "claude-dialogue-exec":
 		return runClaudeDialogueExec(rest)

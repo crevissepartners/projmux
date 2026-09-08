@@ -160,6 +160,16 @@ func claudeRegistrationBootstrap(reg coremetadata.Registry, registryPath string,
 		Socket:       socket, Token: token, ReplyTool: replyTool}, true
 }
 
+// claudeEndpointHelperRoute is the internal route word of the per-agent
+// messaging endpoint helper.
+//
+// It is a constant rather than three literals because two of its readers are
+// not the dispatcher: this file spawns the helper by that word, and the
+// whole-fleet process census names the helper's role from it. A rename that
+// reached only the dispatcher would leave a live long-lived process
+// unclassified without failing anything.
+const claudeEndpointHelperRoute = "claude-endpoint-helper"
+
 func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
 	binary, err := os.Executable()
 	if err != nil {
@@ -176,7 +186,7 @@ func startClaudeEndpointHelper(bootstrap claudeEndpointBootstrap) error {
 	defer readAck.Close()
 	// #nosec G204 -- os.Executable above identifies this running Projmux binary;
 	// the hidden route and argv are fixed, and bootstrap secrets use only stdin.
-	cmd := exec.Command(binary, "internal", "claude-endpoint-helper")
+	cmd := exec.Command(binary, "internal", claudeEndpointHelperRoute)
 	cmd.Stdin = strings.NewReader(string(input))
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	cmd.ExtraFiles = []*os.File{writeAck}

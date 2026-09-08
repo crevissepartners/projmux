@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/app/usagecmd"
 )
 
 // The binary vintage of one live projmux process, as a diagnostics reader can
@@ -41,19 +43,51 @@ var codexControlPlaneRoleOrder = []string{codexControlPlaneRoleBroker, codexCont
 // The remaining long-lived children of this executable, named without reference
 // to a provider.
 //
-// `internal supervise` is one per pane and is provider-neutral: it supervises a
-// Claude pane exactly as it supervises a Codex one. Naming it as a Codex
-// control-plane role would answer the wrong question, so the roles below are
-// counted in their own census and never appear on the Codex section's line.
+// These are counted in their own census and never appear on the Codex section's
+// line, because that line qualifies the Codex verdicts printed under it and
+// none of these roles is one of the two those verdicts are read from. The
+// separation is about what a role answers, not about which provider started
+// it: `internal supervise` supervises a Claude pane exactly as it supervises a
+// Codex one, and the messaging endpoint helper below serves one agent whatever
+// its provider.
+//
+// Naming a role here is what makes it a replacement target an operator can
+// decide about. Every name below was added from a live process table rather
+// than from the route list, so this vocabulary states which long-lived
+// processes were actually observed to survive an install, not which ones could
+// in principle exist.
 const (
 	// projmuxProcessRoleSupervisor is the per-pane supervisor.
 	projmuxProcessRoleSupervisor = "supervisor"
+	// projmuxProcessRoleSessionClient is one attached `projmux shell`.
+	//
+	// It is the longest-lived role of all and the one a replacement design has
+	// to treat differently: it holds the operator's tmux attachment, so ending
+	// it is not a background drain but the end of that session.
+	projmuxProcessRoleSessionClient = "session-client"
+	// projmuxProcessRoleAgentEndpoint is one per-agent messaging endpoint
+	// helper.
+	//
+	// One is started per registered agent activation and it outlives every
+	// individual turn, which is exactly the shape that survives an install.
+	projmuxProcessRoleAgentEndpoint = "agent-endpoint"
+	// projmuxProcessRoleUsageWatcher is the leased rate-limit watcher.
+	//
+	// One holds the lease for the whole machine, so it is a single process
+	// that no pane recreation reaches.
+	projmuxProcessRoleUsageWatcher = "usage-watcher"
 	// projmuxProcessRoleOther is every remaining child of this executable.
 	//
 	// It exists so that a route this census does not know cannot make the
 	// fleet look smaller than it is. Before this bucket, a child that matched
 	// no named route was dropped on the floor, and the section reported six of
 	// thirty-two live children as if that were the whole fleet.
+	//
+	// Naming more roles shrinks this bucket; it never removes it. What stays
+	// here is the short-lived invocation -- a status render, a hook callback,
+	// a picker -- which is why the bucket's count is a total guard and not a
+	// count of replacement targets. A named role is a process an operator can
+	// decide about; this one is the promise that the total is still whole.
 	projmuxProcessRoleOther = "other"
 )
 
@@ -64,6 +98,9 @@ var projmuxProcessRoleOrder = []string{
 	codexControlPlaneRoleBroker,
 	codexControlPlaneRoleObserver,
 	projmuxProcessRoleSupervisor,
+	projmuxProcessRoleSessionClient,
+	projmuxProcessRoleAgentEndpoint,
+	projmuxProcessRoleUsageWatcher,
 	projmuxProcessRoleOther,
 }
 
@@ -123,6 +160,34 @@ type projmuxProcessRoleVintage struct {
 	// ReplacedAgeCapped reports that the sample bound was reached and the
 	// distribution above is therefore a prefix, not the whole of it.
 	ReplacedAgeCapped bool `json:"replacedAgeCapped,omitempty"`
+	// ReplacedStartedAtUnix is the ascending start instant of this role's
+	// replaced-image processes, in whole Unix seconds.
+	//
+	// This is the identity key, and it is recorded rather than derived. A
+	// census is taken at every install, installs come minutes apart, and the
+	// same long-lived process is therefore counted again in record after
+	// record: a survival rate read across records without deduplication is a
+	// rate over observations, not over processes, and the two differ by
+	// several times on real data.
+	//
+	// Subtracting an age from the record's own instant almost recovers this
+	// and not quite. Both the instant and the age are whole seconds, so the
+	// difference lands on the true start second or the one after it depending
+	// on where the two truncations fell, and a role whose processes start in
+	// bursts cannot be deduplicated through that one second of slack without
+	// merging distinct processes. Recording the instant removes the ambiguity
+	// for every record written from here on; ReplacedAgeSeconds stays because
+	// it is the distribution this census renders and the only thing the
+	// records already on disk carry.
+	//
+	// Like every other field here it is not process identity in the sense the
+	// privacy rule means: it carries no pid, no path, and no argv, and it says
+	// only when something began.
+	//
+	// This slice and ReplacedAgeSeconds are each sorted ascending and are not
+	// index-aligned -- ages ascend exactly as starts descend -- because each is
+	// read as a distribution and nothing reads them as pairs.
+	ReplacedStartedAtUnix []int64 `json:"replacedStartedAtUnix,omitempty"`
 }
 
 // codexControlPlaneVintage is the whole answer to "is the diagnosis I am about
@@ -293,6 +358,7 @@ func censusProjmuxProcessImages(
 		// that observed it.
 		age := max(int(now.Sub(image.StartedAt)/time.Second), 0)
 		census.ReplacedAgeSeconds = append(census.ReplacedAgeSeconds, age)
+		census.ReplacedStartedAtUnix = append(census.ReplacedStartedAtUnix, image.StartedAt.Unix())
 	}
 	var rows []projmuxProcessRoleVintage
 	for _, role := range order {
@@ -301,6 +367,7 @@ func censusProjmuxProcessImages(
 			continue
 		}
 		sort.Ints(census.ReplacedAgeSeconds)
+		slices.Sort(census.ReplacedStartedAtUnix)
 		rows = append(rows, *census)
 	}
 	return rows
@@ -356,6 +423,18 @@ func projmuxProcessRole(cmdline []string) string {
 		return codexControlPlaneRoleObserver
 	case slices.Contains(words, "supervise"):
 		return projmuxProcessRoleSupervisor
+	case slices.Contains(words, claudeEndpointHelperRoute):
+		return projmuxProcessRoleAgentEndpoint
+	case slices.Contains(words, "usage") && slices.Contains(words, usagecmd.NativeWatcherInternalFlag):
+		return projmuxProcessRoleUsageWatcher
+	case len(words) > 0 && words[0] == "shell":
+		// The one route matched by position rather than by presence. `shell`
+		// is a top-level command word, so it is always the first route word
+		// and no flag can precede it -- while `shell` is also a legal *value*
+		// elsewhere in this application's own vocabulary (a pane role), and
+		// matching it anywhere in argv would count a short-lived
+		// `--role shell` invocation as an attached session.
+		return projmuxProcessRoleSessionClient
 	default:
 		return projmuxProcessRoleOther
 	}
