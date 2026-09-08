@@ -456,59 +456,361 @@ func TestUpdateApplyNoApplySkipsLiveConvergenceAndRequiresExplicitApply(t *testi
 func TestUpdateApplyRunsGoUpgradeNoApply(t *testing.T) {
 	t.Parallel()
 
-	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-	cmd.getenv = func(name string) string {
-		if name == "PROJMUX_INSTALLER" {
-			return "go"
-		}
-		return ""
-	}
-	cmd.executable = func() (string, error) { return "/home/me/bin/projmux", nil }
-	var ran []string
-	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
-		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
-		return nil
-	}
+	cmd, _, ran := updateApplyVerificationCommand(t, "go")
+	target := mustExecutable(t, cmd)
 
 	if err := cmd.Run([]string{"apply", "--no-apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []string{
 		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
-		"/home/me/bin/projmux config apply --no-reload",
+		target + " config apply --no-reload",
 	}
-	if !equalStrings(ran, want) {
-		t.Fatalf("ran = %#v, want %#v", ran, want)
+	if !equalStrings(*ran, want) {
+		t.Fatalf("ran = %#v, want %#v", *ran, want)
 	}
 }
 
 func TestUpdateApplyRunsGoUpgradeInPublicationOrder(t *testing.T) {
 	t.Parallel()
 
-	cmd, _ := testUpdateCommand(t, time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC))
-	cmd.getenv = func(name string) string {
-		if name == "PROJMUX_INSTALLER" {
-			return "go"
-		}
-		return ""
-	}
-	cmd.executable = func() (string, error) { return "/home/me/bin/projmux", nil }
-	var ran []string
-	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
-		ran = append(ran, strings.Join(append([]string{name}, args...), " "))
-		return nil
-	}
+	cmd, _, ran := updateApplyVerificationCommand(t, "go")
+	target := mustExecutable(t, cmd)
 
 	if err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
 	want := []string{
-		"/home/me/bin/projmux config apply --bin /home/me/bin/projmux --socket projmux",
+		target + " config apply --bin " + target + " --socket projmux",
 		"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
-		"/home/me/bin/projmux config apply",
+		target + " config apply",
 	}
-	if !equalStrings(ran, want) {
-		t.Fatalf("ran = %#v, want exact pre-converge/publication/post-verify order %#v", ran, want)
+	if !equalStrings(*ran, want) {
+		t.Fatalf("ran = %#v, want exact pre-converge/publication/post-verify order %#v", *ran, want)
+	}
+}
+
+// TestUpdateApplyGoReplacesTheExactActiveExecutable is the whole point of the
+// go backend's replacement path: `go install` publishes wherever GOBIN says,
+// and the file the user runs is the file that has to change.
+func TestUpdateApplyGoReplacesTheExactActiveExecutable(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name              string
+		args              []string
+		wantExplicitApply bool
+	}{
+		{name: "normal pre-converges and post-verifies", args: []string{"apply"}},
+		{
+			name:              "no-apply performs no live preapply and requires explicit apply",
+			args:              []string{"apply", "--no-apply"},
+			wantExplicitApply: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _, _ := updateApplyVerificationCommand(t, "go")
+			target := mustExecutable(t, cmd)
+
+			var stdout bytes.Buffer
+			if err := cmd.Run(tc.args, &stdout, &bytes.Buffer{}); err != nil {
+				t.Fatalf("Run() error = %v\nstdout:\n%s", err, stdout.String())
+			}
+			got, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			if string(got) != "new\n" {
+				t.Fatalf("target content = %q, want the published binary", got)
+			}
+			assertNoUpdateScratchLeft(t, target)
+			if !strings.Contains(stdout.String(), ">> atomically replaced "+target) {
+				t.Fatalf("stdout = %q, want the exact replaced target named", stdout.String())
+			}
+			gotExplicitApply := strings.Contains(stdout.String(),
+				"live tmux unchanged; explicit apply required: run `projmux config apply --socket projmux`")
+			if gotExplicitApply != tc.wantExplicitApply {
+				t.Fatalf("explicit apply state = %v, want %v; stdout=%q", gotExplicitApply, tc.wantExplicitApply, stdout.String())
+			}
+		})
+	}
+}
+
+// TestUpdateApplyGoPublishesIntoAScratchGobinBesideTheTarget pins the two
+// properties the scratch directory exists for: the publication never writes
+// into the user's real GOBIN, and it lands on the target's own filesystem so
+// the replacement stays a rename.
+func TestUpdateApplyGoPublishesIntoAScratchGobinBesideTheTarget(t *testing.T) {
+	t.Parallel()
+
+	cmd, _, ran := updateApplyVerificationCommand(t, "go")
+	target := mustExecutable(t, cmd)
+	var gotEnv []string
+	base := cmd.runExternalEnv
+	cmd.runExternalEnv = func(name string, args []string, env []string, stdout, stderr io.Writer) error {
+		gotEnv = env
+		return base(name, args, env, stdout, stderr)
+	}
+
+	if err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if len(gotEnv) != 1 {
+		t.Fatalf("publication env = %#v, want exactly the GOBIN override so the caller's environment still reaches the child", gotEnv)
+	}
+	gobin := envEntryValue(gotEnv, "GOBIN")
+	if gobin == "" {
+		t.Fatalf("publication env = %#v, want a GOBIN override", gotEnv)
+	}
+	if !filepath.IsAbs(gobin) {
+		t.Fatalf("GOBIN = %q, want an absolute path; `go install` refuses a relative one", gobin)
+	}
+	if filepath.Dir(gobin) != filepath.Dir(target) {
+		t.Fatalf("GOBIN = %q, want a scratch directory beside %q", gobin, target)
+	}
+	if !slices.Contains(*ran, "go install github.com/crevissepartners/projmux/cmd/projmux@latest") {
+		t.Fatalf("ran = %#v, want the go publication", *ran)
+	}
+}
+
+// TestUpdateApplyGoRefusesArtifactsThatAreNotRegularExecutables keeps a
+// publication that exited 0 without leaving a usable binary from being renamed
+// over a working one. Each refusal has to name the path, and none of them may
+// touch the target or run the post-publication convergence.
+func TestUpdateApplyGoRefusesArtifactsThatAreNotRegularExecutables(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		publish func(t *testing.T, gobin string) error
+		want    string
+	}{
+		{
+			name:    "no artifact at all",
+			publish: func(*testing.T, string) error { return nil },
+			want:    "published no binary at",
+		},
+		{
+			name: "a directory where the binary belongs",
+			publish: func(t *testing.T, gobin string) error {
+				return os.Mkdir(filepath.Join(gobin, "projmux"), 0o755)
+			},
+			want: "is not a regular file",
+		},
+		{
+			name: "a symlink instead of the binary",
+			publish: func(t *testing.T, gobin string) error {
+				return os.Symlink("/bin/sh", filepath.Join(gobin, "projmux"))
+			},
+			want: "is not a regular file",
+		},
+		{
+			name: "a regular file that cannot be executed",
+			publish: func(t *testing.T, gobin string) error {
+				return os.WriteFile(filepath.Join(gobin, "projmux"), []byte("new\n"), 0o644)
+			},
+			want: "is not executable",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _, ran := updateApplyVerificationCommand(t, "go")
+			target := mustExecutable(t, cmd)
+			cmd.runExternalEnv = func(name string, args []string, env []string, stdout, stderr io.Writer) error {
+				*ran = append(*ran, strings.Join(append([]string{name}, args...), " "))
+				return tc.publish(t, envEntryValue(env, "GOBIN"))
+			}
+
+			err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil {
+				t.Fatalf("Run() error = nil, want a refusal; ran = %#v", *ran)
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q missing %q", err.Error(), tc.want)
+			}
+			if !strings.Contains(err.Error(), "update binary publication failed") {
+				t.Fatalf("error %q missing the publication stage", err.Error())
+			}
+			assertUpdateTargetUntouched(t, target)
+			assertNoUpdateScratchLeft(t, target)
+			for _, command := range *ran {
+				if strings.HasSuffix(command, " config apply") {
+					t.Fatalf("ran = %#v, want no post-publication convergence after a refused artifact", *ran)
+				}
+			}
+		})
+	}
+}
+
+// TestUpdateApplyGoCleansScratchAndLeavesAUsableBinaryOnEveryFailure walks the
+// stages that can fail after the scratch directory exists. The invariant is the
+// same at every one of them: no scratch survives, and the file the user runs is
+// either the old binary or the new one, never a partial write.
+func TestUpdateApplyGoCleansScratchAndLeavesAUsableBinaryOnEveryFailure(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		arrange     func(cmd *updateCommand)
+		want        string
+		wantContent string
+	}{
+		{
+			name: "go toolchain is missing",
+			arrange: func(cmd *updateCommand) {
+				cmd.runExternalEnv = func(string, []string, []string, io.Writer, io.Writer) error {
+					return errors.New(`exec: "go": executable file not found in $PATH`)
+				}
+			},
+			want:        "update binary publication failed",
+			wantContent: "old\n",
+		},
+		{
+			name: "go install fails",
+			arrange: func(cmd *updateCommand) {
+				cmd.runExternalEnv = func(string, []string, []string, io.Writer, io.Writer) error {
+					return errors.New("exit status 1")
+				}
+			},
+			want:        "update binary publication failed",
+			wantContent: "old\n",
+		},
+		{
+			name: "the replacement itself fails",
+			arrange: func(cmd *updateCommand) {
+				cmd.rename = func(string, string) error { return errors.New("read-only file system") }
+				cmd.copyFile = func(string, string) error { return errors.New("read-only file system") }
+			},
+			want:        "update binary publication failed",
+			wantContent: "old\n",
+		},
+		{
+			name: "the post-publication convergence fails",
+			arrange: func(cmd *updateCommand) {
+				runner := cmd.runExternal
+				cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
+					if err := runner(name, args, stdout, stderr); err != nil {
+						return err
+					}
+					if slices.Equal(args, []string{"config", "apply"}) {
+						return errors.New("exit status 2")
+					}
+					return nil
+				}
+			},
+			want:        "update post-publication convergence failed",
+			wantContent: "new\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cmd, _, _ := updateApplyVerificationCommand(t, "go")
+			target := mustExecutable(t, cmd)
+			tc.arrange(cmd)
+
+			err := cmd.Run([]string{"apply"}, &bytes.Buffer{}, &bytes.Buffer{})
+			if err == nil {
+				t.Fatal("Run() error = nil, want the stage failure to surface")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error %q missing %q", err.Error(), tc.want)
+			}
+			if !strings.Contains(err.Error(), "projmux config apply --socket projmux") {
+				t.Fatalf("error %q missing the recovery command", err.Error())
+			}
+			got, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			if string(got) != tc.wantContent {
+				t.Fatalf("target content = %q, want %q", got, tc.wantContent)
+			}
+			assertNoUpdateScratchLeft(t, target)
+		})
+	}
+}
+
+// TestUpdateApplyGoDryRunReplacesNothing keeps `--dry-run` a preview: it names
+// the publication, the exact target it would replace, and the convergence, and
+// it writes nothing at all.
+func TestUpdateApplyGoDryRunReplacesNothing(t *testing.T) {
+	t.Parallel()
+
+	cmd, _, ran := updateApplyVerificationCommand(t, "go")
+	target := mustExecutable(t, cmd)
+
+	var stdout bytes.Buffer
+	if err := cmd.Run([]string{"apply", "--dry-run"}, &stdout, &bytes.Buffer{}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	out := stdout.String()
+	for _, want := range []string{
+		"would run before replacement: " + target + " config apply --bin " + target + " --socket projmux",
+		"would publish: go install github.com/crevissepartners/projmux/cmd/projmux@latest (into a scratch GOBIN beside " + target + ")",
+		"would replace: " + target + " (atomic via temp file)",
+		"would run: " + target + " config apply",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q\nfull output:\n%s", want, out)
+		}
+	}
+	if len(*ran) != 0 {
+		t.Fatalf("ran = %#v, want nothing executed by a dry run", *ran)
+	}
+	assertUpdateTargetUntouched(t, target)
+	assertNoUpdateScratchLeft(t, target)
+}
+
+// TestRunUpdateExternalWithEnvLayersOverTheCallerEnvironment is the memoization
+// guarantee at the process boundary: the publication adds GOBIN and takes
+// nothing away, so PROJMUX_PROJDIR still reaches the child and the primary
+// project root the new binary memoizes is the one the caller had.
+func TestRunUpdateExternalWithEnvLayersOverTheCallerEnvironment(t *testing.T) {
+	t.Setenv("PROJMUX_PROJDIR", "/main/repos:/secondary/repos")
+
+	var stdout bytes.Buffer
+	err := runUpdateExternalWithEnv("sh", []string{"-c", `printf '%s\n%s\n' "$PROJMUX_PROJDIR" "$GOBIN"`},
+		[]string{"GOBIN=/scratch/gobin"}, &stdout, &bytes.Buffer{})
+	if err != nil {
+		t.Fatalf("runUpdateExternalWithEnv() error = %v", err)
+	}
+	want := "/main/repos:/secondary/repos\n/scratch/gobin\n"
+	if stdout.String() != want {
+		t.Fatalf("child environment = %q, want %q", stdout.String(), want)
+	}
+}
+
+func assertUpdateTargetUntouched(t *testing.T, target string) {
+	t.Helper()
+	got, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	if string(got) != "old\n" {
+		t.Fatalf("target content = %q, want the untouched binary", got)
+	}
+}
+
+// assertNoUpdateScratchLeft is the cleanup half of the contract. The scratch
+// directory is staged beside the target on purpose, so a leaked one would
+// accumulate in the user's bin directory on every failed update.
+func assertNoUpdateScratchLeft(t *testing.T, target string) {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Dir(target))
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".projmux-") {
+			t.Fatalf("scratch %q survived in %s", entry.Name(), filepath.Dir(target))
+		}
 	}
 }
 
@@ -1201,13 +1503,61 @@ func updateApplyVerificationCommand(t *testing.T, installer string) (*updateComm
 		}
 		return ""
 	}
-	cmd.executable = func() (string, error) { return "/home/me/bin/projmux", nil }
+	// The active executable is a real file so the go backend, which replaces
+	// that exact path, can run against the same fixture the other installers
+	// use. Its directory is where the scratch GOBIN is staged.
+	cmd.executable = executableFixture(t)
 	ran := &[]string{}
 	cmd.runExternal = func(name string, args []string, stdout, stderr io.Writer) error {
 		*ran = append(*ran, strings.Join(append([]string{name}, args...), " "))
 		return nil
 	}
+	cmd.runExternalEnv = goInstallFixture(t, "new\n", ran)
 	return cmd, cacheDir, ran
+}
+
+// executableFixture writes an "old" binary at an exact path and resolves to it,
+// which is what the go backend claims to replace.
+func executableFixture(t *testing.T) func() (string, error) {
+	t.Helper()
+	target := filepath.Join(t.TempDir(), "projmux")
+	if err := os.WriteFile(target, []byte("old\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	return func() (string, error) { return target, nil }
+}
+
+// goInstallFixture stands in for `go install`: it records the command and
+// writes its output where GOBIN says, which is the whole reason the publication
+// carries an environment override.
+func goInstallFixture(t *testing.T, content string, ran *[]string) func(string, []string, []string, io.Writer, io.Writer) error {
+	t.Helper()
+	return func(name string, args []string, env []string, stdout, stderr io.Writer) error {
+		*ran = append(*ran, strings.Join(append([]string{name}, args...), " "))
+		gobin := envEntryValue(env, "GOBIN")
+		if gobin == "" {
+			return errors.New("go install ran without a GOBIN override")
+		}
+		return os.WriteFile(filepath.Join(gobin, "projmux"), []byte(content), 0o755)
+	}
+}
+
+func envEntryValue(env []string, key string) string {
+	for _, entry := range env {
+		if value, ok := strings.CutPrefix(entry, key+"="); ok {
+			return value
+		}
+	}
+	return ""
+}
+
+func mustExecutable(t *testing.T, cmd *updateCommand) string {
+	t.Helper()
+	exe, err := cmd.executable()
+	if err != nil {
+		t.Fatalf("executable() error = %v", err)
+	}
+	return exe
 }
 
 // TestUpdateApplyFailsWhenTheInstalledVersionDidNotChange pins C-2 Guarantee:
@@ -1467,6 +1817,7 @@ func TestUpdateApplyFallsBackToTheRunningExecutableWhenPathHasNoProjmux(t *testi
 	t.Parallel()
 
 	cmd, _, _ := updateApplyVerificationCommand(t, "go")
+	target := mustExecutable(t, cmd)
 	cmd.lookPath = func(string) (string, error) { return "", errors.New("executable file not found in $PATH") }
 	var probed []string
 	cmd.probeVersion = func(exe string) (string, error) {
@@ -1481,11 +1832,11 @@ func TestUpdateApplyFallsBackToTheRunningExecutableWhenPathHasNoProjmux(t *testi
 	if err := cmd.Run([]string{"apply"}, &stdout, &bytes.Buffer{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	want := []string{"/home/me/bin/projmux", "/home/me/bin/projmux"}
+	want := []string{target, target}
 	if !equalStrings(probed, want) {
 		t.Fatalf("probed = %#v, want the running executable %#v", probed, want)
 	}
-	if !strings.Contains(stdout.String(), ">> verified: projmux 0.13.2 is now the active executable at /home/me/bin/projmux") {
+	if !strings.Contains(stdout.String(), ">> verified: projmux 0.13.2 is now the active executable at "+target) {
 		t.Fatalf("stdout = %q, want the fallback executable verified", stdout.String())
 	}
 }
@@ -1501,44 +1852,52 @@ func TestUpdateApplyStageOrderIsUnchangedByVersionVerification(t *testing.T) {
 		name      string
 		installer string
 		args      []string
-		want      []string
+		want      func(target string) []string
 	}{
 		{
 			name:      "npm",
 			installer: "npm",
 			args:      []string{"apply"},
-			want: []string{
-				"/home/me/bin/projmux config apply --bin /npm/bin/projmux --socket projmux",
-				"npm install -g projmux@latest",
-				"projmux config apply",
+			want: func(target string) []string {
+				return []string{
+					target + " config apply --bin /npm/bin/projmux --socket projmux",
+					"npm install -g projmux@latest",
+					"projmux config apply",
+				}
 			},
 		},
 		{
 			name:      "npm no-apply",
 			installer: "npm",
 			args:      []string{"apply", "--no-apply"},
-			want: []string{
-				"npm install -g projmux@latest",
-				"projmux config apply --no-reload",
+			want: func(string) []string {
+				return []string{
+					"npm install -g projmux@latest",
+					"projmux config apply --no-reload",
+				}
 			},
 		},
 		{
 			name:      "go",
 			installer: "go",
 			args:      []string{"apply"},
-			want: []string{
-				"/home/me/bin/projmux config apply --bin /home/me/bin/projmux --socket projmux",
-				"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
-				"/home/me/bin/projmux config apply",
+			want: func(target string) []string {
+				return []string{
+					target + " config apply --bin " + target + " --socket projmux",
+					"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
+					target + " config apply",
+				}
 			},
 		},
 		{
 			name:      "go no-apply",
 			installer: "go",
 			args:      []string{"apply", "--no-apply"},
-			want: []string{
-				"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
-				"/home/me/bin/projmux config apply --no-reload",
+			want: func(target string) []string {
+				return []string{
+					"go install github.com/crevissepartners/projmux/cmd/projmux@latest",
+					target + " config apply --no-reload",
+				}
 			},
 		},
 	}
@@ -1547,13 +1906,15 @@ func TestUpdateApplyStageOrderIsUnchangedByVersionVerification(t *testing.T) {
 			t.Parallel()
 
 			cmd, _, ran := updateApplyVerificationCommand(t, tc.installer)
+			target := mustExecutable(t, cmd)
 			cmd.probeVersion = stubUpdateVersionProbe("0.13.1", "0.13.2")
 
 			if err := cmd.Run(tc.args, &bytes.Buffer{}, &bytes.Buffer{}); err != nil {
 				t.Fatalf("Run() error = %v", err)
 			}
-			if !equalStrings(*ran, tc.want) {
-				t.Fatalf("ran = %#v, want the unchanged stage order %#v", *ran, tc.want)
+			want := tc.want(target)
+			if !equalStrings(*ran, want) {
+				t.Fatalf("ran = %#v, want the unchanged stage order %#v", *ran, want)
 			}
 		})
 	}
@@ -2553,6 +2914,7 @@ func TestDefaultChannelNpmApplyIsUnchangedAndAsksNoRegistry(t *testing.T) {
 	t.Parallel()
 
 	cmd, _, ran := updateApplyVerificationCommand(t, "npm")
+	target := mustExecutable(t, cmd)
 	cmd.client = &http.Client{Transport: updateRoundTripFunc(func(req *http.Request) (*http.Response, error) {
 		t.Fatalf("default-channel apply unexpectedly requested %s", req.URL.String())
 		return nil, nil
@@ -2563,7 +2925,7 @@ func TestDefaultChannelNpmApplyIsUnchangedAndAsksNoRegistry(t *testing.T) {
 		t.Fatalf("Run() error = %v\nstdout:\n%s", err, stdout.String())
 	}
 	want := []string{
-		"/home/me/bin/projmux config apply --bin /npm/bin/projmux --socket projmux",
+		target + " config apply --bin /npm/bin/projmux --socket projmux",
 		"npm install -g projmux@latest",
 		"projmux config apply",
 	}
