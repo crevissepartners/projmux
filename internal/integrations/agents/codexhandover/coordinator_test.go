@@ -129,7 +129,7 @@ func testCoordinator(t *testing.T, owner codexgeneration.OwnerClass, states ...c
 	ledger, _ := codexgeneration.ProjectDrainLedger(oldID, obligations)
 	rolling, _, _ = rolling.RecordAction(codexgeneration.RollingActionPublishDrain, ledger)
 	rolling, _, _ = rolling.RequestGenerationHandover()
-	qualification := codexgeneration.EvaluateQualification(codexgeneration.VersionPair{Old: "0.152.0", New: "0.152.1"}, codexgeneration.QualificationEvidence{SharedStateDomain: true, DistinctPrivateEndpoints: true, DistinctThreadCreateTurn: true, DistinctThreadReadList: true, CrashRestart: true, OldStoppedBeforeResume: true, PersistedResumeSnapshot: true, SharedAuthConfigPrivate: true, BundleSourceRemovalLaunch: true, BundleDriftRefused: true, ProtocolMismatchRefused: true})
+	qualification := codexgeneration.EvaluateQualification(codexgeneration.VersionPair{Old: "0.152.0", New: "0.152.1"}, codexgeneration.QualificationEvidence{SharedStateDomain: true, DistinctPrivateEndpoints: true, DistinctThreadCreateTurn: true, DistinctThreadReadList: true, CrashRestart: true, OldStoppedBeforeResume: true, PersistedResumeSnapshot: true, SharedAuthConfigPrivate: true, BundleSourceRemovalLaunch: true, BundleDriftRefused: true, ProtocolMismatchRefused: true, ObservedThreadTurns: 2, ObservedThreadReads: 8, ObservedCrashRestarts: 2, ObservedBundleLaunches: 8})
 	route := func(endpoint metadata.CodexEndpointRef, state codexgeneration.GenerationState, owner codexgeneration.OwnerClass, suffix string) codexupgrade.GenerationRoute {
 		if owner != codexgeneration.OwnerProjmuxPrivate {
 			return codexupgrade.GenerationRoute{Generation: codexgeneration.Generation{Endpoint: endpoint, State: state, Owner: owner, BundleID: "bundle-" + suffix}}

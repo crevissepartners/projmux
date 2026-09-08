@@ -44,9 +44,22 @@ image accepts no new work on any of the three layers*.
   replace it and is left alone — see *The L2 replacement policy* below. A
   replacement that has not finished within the drain cutoff is reported as
   `replacement-cutoff-reached` and is still not ended.
-- `L3` can enter `draining` without a qualified version pair. Once there, the
-  handover that would move its live obligations has no verdict to run under, and
-  the pool has no route back.
+- `L3` cannot enter `draining` without a qualified version pair. Both doors into
+  a generation switch require a measured receipt for exactly the pair they are
+  about: managed activation refuses before it writes the journal, and a handover
+  resume refuses before it drives any effect — the one exception being a
+  generation nothing is bound to, which the planner has always been allowed to
+  retire because a receipt proves a thread survives a cross-version resume and
+  such a generation has no thread to carry. Each refusal names the action that
+  clears it, and that action is now runnable: `scripts/test-generation-pool-qualification.sh`
+  measures a declared pair in isolation and
+  `projmux agent app-server upgrade qualify --receipt <absolute-json>` installs
+  the receipt it writes where both doors read it. **What is not guaranteed is
+  the measurement's honesty.** The gate checks that the receipt's coverage
+  counters can have come from a run — an acceptance claim with no observation
+  behind it is refused as forged — but a determined forger who writes a coverage
+  count of one is not contradicted by anything else in the receipt. The gate
+  makes the receipt state its coverage; it does not attest to it.
 
 **Non-Guarantee.** Explicitly outside this contract:
 
@@ -72,7 +85,7 @@ installation that no longer exists.
 | --- | --- | --- |
 | `L1` | this reader's own executable link carries the kernel's `(deleted)` suffix | none for the binary. No copy of the replaced image is retained, and the recovery text the install prints on failure is config convergence, never a rollback. Restorability is `not-restorable` on every supported path. |
 | `L2` | the whole-fleet vintage census, the newest `install-residue.jsonl` record whose own census observed anything, and the last `install-replacement.json` pass | end and relaunch the residual process through the routes this application already ships. The drain cutoff bounds the wait, and reaching it changes the row rather than the fleet, so a failed replacement leaves every process exactly where a successful one would have found it. |
-| `L3` | generation-pool status, its qualification result, and the Running-versus-live-session census | **none once `draining` is entered without a qualification result** (measured 2026-09-07). Every other pool state has a handover route. |
+| `L3` | generation-pool status, its qualification result, and the Running-versus-live-session census | produce a receipt for the pair with `scripts/test-generation-pool-qualification.sh <old> <new> <output-dir>` and install it with `projmux agent app-server upgrade qualify --receipt <absolute-json>`. **The producer is the recovery route**: a pool that can be qualified can be entered, and one that cannot is refused before it enters. The 2026-09-07 measurement — no route back once `draining` was entered without a verdict — held because nothing read a produced receipt; the entry paths now refuse rather than reach that state. |
 
 **Enforcement.** `TestDoctorReplacementLayerVerdictsAreFixedByInputCombination`
 fixes every input combination to its two verdicts and its token.
@@ -81,7 +94,14 @@ to name the evidence that was missing.
 `TestDoctorReplacementDarwinReportsUnsupportedPlatformForImageAndProcessLayers`
 holds the platform branch.
 `TestDoctorReplacementQualificationMissingMakesGenerationPoolNotRestorable`
-holds the `L3` mapping. For the `L2` guarantee above,
+holds the `L3` mapping and
+`TestDoctorReplacementL3RestorationMovesWhenTheQualificationLaneOpens` holds the
+transition across it. For the `L3` guarantee above,
+`TestActivateManagedCurrentRefusesEveryUnqualifiedRequestBeforeDraining` and
+`TestResumeRefusesAnUnqualifiedPairBeforeAnyHandoverEffect` hold the two doors,
+`TestResumeStillRetiresAVacantGenerationWithoutAReceipt` holds the vacancy
+exception, and `TestQualificationGateRefusesEvidenceCountersNoObservationBacks`
+holds the forgery refusal. For the `L2` guarantee above,
 `TestBrokerRuntimeDrainsWhenItsOwnImageWasReplaced` holds the vintage entry
 condition and that a runtime on the installed image is not drained by it,
 `TestReplacementRolePoliciesMatchTheContractDocument` and
@@ -230,7 +250,7 @@ the token constants in the code equal, in both directions.
 | `L2` | `no-observed-processes` | `unknown` | `unknown` | neither the live census nor any ledger record observed anything. Every reading is silent; none says the fleet is clean |
 | `L3` | `generation-pool-unobserved` | `unknown` | `unknown` | no pool diagnosis was read |
 | `L3` | `registry-running-provider-session-dead` | pool-derived | `not-restorable` | provider evidence contradicts a Registry `Running` Agent |
-| `L3` | `qualification-missing` | pool-derived | `not-restorable` | the pool is installed and carries no qualification result |
+| `L3` | `qualification-missing` | pool-derived | `not-restorable` | the pool is installed and carries no qualification result. A pool in this state predates the entry gates or had its receipt removed; the row's `pool.action` names the producer that clears it |
 | `L3` | `generation-pool-blocked` | pool-derived | `not-restorable` | the pool diagnosis is blocked |
 | `L3` | `generation-handover-required` | pool-derived | `restorable` | the pool has a pending operation with a handover route |
 | `L3` | `registry-running-session-unobserved` | pool-derived | `unknown` | Running Agents rest on the Registry alone, with no provider handle to check |
@@ -531,5 +551,5 @@ acts through a strictly narrower door. `TestReplacementPathEndsNoProcess` holds
 the same guard over the policy table and the install pass: they carry no
 termination, no signalling, and no restart either. **The whole of the action is
 a socket handshake, and the runtime decides.** `L1` atomicity and the `L3`
-qualification gate remain separate work, and no change on this path may alter
-their behavior.
+qualification gate are separate work on separate doors, and no change on this
+path may alter their behavior.

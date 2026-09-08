@@ -226,6 +226,7 @@ func TestInstalledIsolatedGenerationPoolQualification(t *testing.T) {
 		}, oldThread.ThreadID, oldTurn, newThread.ThreadID, newTurn)
 	ambientMutations := ledger.ambientMutations()
 	bundleVersionTuple, bundleLaunches := bundleVersions(t, ctx, ledger, oldLease, newLease)
+	observedTurns, observedReads, observedRestarts, observedLaunches := ledger.coverage()
 	evidence := codexgeneration.QualificationEvidence{
 		SharedStateDomain: true, DistinctPrivateEndpoints: oldSocket != newSocket,
 		DistinctThreadCreateTurn: true, DistinctThreadReadList: true, CrashRestart: true,
@@ -234,6 +235,8 @@ func TestInstalledIsolatedGenerationPoolQualification(t *testing.T) {
 		SharedAuthConfigPrivate:   sharedConfigPrivate(t, stateDomain),
 		BundleSourceRemovalLaunch: bundleLaunches && bundleVersionTuple == pair.Old+"/"+pair.New,
 		BundleDriftRefused:        bundleDriftRefused, ProtocolMismatchRefused: protocolMismatchRefused, AmbientMutations: ambientMutations,
+		ObservedThreadTurns: observedTurns, ObservedThreadReads: observedReads,
+		ObservedCrashRestarts: observedRestarts, ObservedBundleLaunches: observedLaunches,
 	}
 	result := codexgeneration.EvaluateQualification(pair, evidence)
 	// The receipt is emitted before the verdict is asserted: a refusal is
@@ -286,6 +289,45 @@ type generationConformanceLedger struct {
 	process    []generationProcessRecord
 	provider   []generationProviderRecord
 	oldStopped bool
+	reads      int
+}
+
+// observeThreadRead counts one shared-catalog read.
+//
+// Reads are the one probe family with no record of its own. They deliberately
+// stay out of the provider ledger: crossThreadWrites reduces that ledger
+// against an exact expected key set, so a read recorded there would be counted
+// as an unexpected write and turn a passing measurement into a violation.
+func (ledger *generationConformanceLedger) observeThreadRead() {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	ledger.reads++
+}
+
+// coverage is the measured half of the receipt's counter integrity.
+//
+// Every number here is a tally of records this fixture wrote while doing the
+// work, not a constant chosen to satisfy the gate. Three are reduced from
+// ledgers that already existed for other reductions, which is what makes them
+// hard to inflate by accident: the same records decide the violation counters,
+// so a run that fakes coverage upward has to fake those too.
+func (ledger *generationConformanceLedger) coverage() (turns, reads, restarts, launches int) {
+	ledger.mu.Lock()
+	defer ledger.mu.Unlock()
+	for _, record := range ledger.provider {
+		if record.Operation == "turn-start" {
+			turns++
+		}
+	}
+	for _, record := range ledger.process {
+		switch record.Operation {
+		case "endpoint-crash":
+			restarts++
+		case "leased-tui-version", "leased-helper-launch":
+			launches++
+		}
+	}
+	return turns, ledger.reads, restarts, launches
 }
 
 func (ledger *generationConformanceLedger) recordProcess(isolated bool, operation, generation string) {
@@ -642,10 +684,12 @@ func waitForGenerationTurn(t *testing.T, ctx context.Context, client *codexappse
 func assertGenerationReadList(t *testing.T, ctx context.Context, client *observedGenerationClient, ownThread, siblingThread string) {
 	t.Helper()
 	thread, err := client.ReadCatalogThread(ctx, ownThread)
+	client.ledger.observeThreadRead()
 	if err != nil || thread.ID != ownThread {
 		t.Fatalf("read own thread=%q err=%v", thread.ID, err)
 	}
 	page, err := client.ListCatalogThreads(ctx, codexappserver.CatalogQuery{})
+	client.ledger.observeThreadRead()
 	if err != nil {
 		t.Fatalf("list shared state catalog: %v", err)
 	}

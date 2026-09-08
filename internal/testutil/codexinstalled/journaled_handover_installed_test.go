@@ -239,7 +239,8 @@ func TestInstalledPrivateJournaledGenerationHandover(t *testing.T) {
 	qualification := codexgeneration.EvaluateQualification(codexgeneration.VersionPair{Old: "0.152.0", New: "0.152.1"}, codexgeneration.QualificationEvidence{
 		SharedStateDomain: true, DistinctPrivateEndpoints: true, DistinctThreadCreateTurn: true, DistinctThreadReadList: true,
 		CrashRestart: true, OldStoppedBeforeResume: true, PersistedResumeSnapshot: true, SharedAuthConfigPrivate: true,
-		BundleSourceRemovalLaunch: true, BundleDriftRefused: true, ProtocolMismatchRefused: true})
+		BundleSourceRemovalLaunch: true, BundleDriftRefused: true, ProtocolMismatchRefused: true,
+		ObservedThreadTurns: 2, ObservedThreadReads: 8, ObservedCrashRestarts: 2, ObservedBundleLaunches: 8})
 	upgrade := codexupgrade.Request{OperationRef: "installed-phase5-upgrade", Current: codexupgrade.GenerationRoute{
 		Generation: codexgeneration.Generation{Endpoint: oldEndpoint, State: codexgeneration.StateCurrent, Owner: codexgeneration.OwnerProjmuxPrivate, BundleID: oldLease.ID},
 		Config: codexupgrade.GenerationConfig{Endpoint: oldEndpoint, StateDomainPath: stateDomain, PrivateRoot: oldRoot, SocketPath: oldConfig.SocketPath,

@@ -56,6 +56,7 @@ type productionCodexManagedCurrentActivator struct {
 	homeDir     func() (string, error)
 	lease       func(string, string, string, codexbundle.ProtocolRange) (codexbundle.Lease, error)
 	activate    func(context.Context, codexupgrade.ManagedCurrentActivation) (codexupgrade.Journal, error)
+	qualified   func(codexgeneration.VersionPair) (codexgeneration.QualificationResult, bool, error)
 }
 
 func newProductionCodexManagedCurrentActivator(stateDir string, coordinator *codexupgrade.Coordinator) *productionCodexManagedCurrentActivator {
@@ -145,11 +146,17 @@ func (activator *productionCodexManagedCurrentActivator) Ensure(ctx context.Cont
 	if health.ManagerOwnership == codexappserver.ManagerManaged {
 		owner = codexgeneration.OwnerOfficialManaged
 	}
+	pair := codexgeneration.VersionPair{Old: health.RunningVersion, New: health.ManagedVersion}
+	qualification, err := activator.qualificationFor(pair)
+	if err != nil {
+		return err
+	}
 	request := codexupgrade.ManagedCurrentActivation{
 		OperationRef: managedCodexActivationOperationRef(stateDomainID, health.RunningVersion, health.ManagedVersion),
 		OldEndpoint:  oldEndpoint, OldOwner: owner, OldVersion: health.RunningVersion,
 		Target: target, TargetBundleID: lease.ID,
 		TargetTUIPath: filepath.Join(lease.Root, "bin", "codex"), TargetVersion: health.ManagedVersion,
+		Qualification: qualification,
 	}
 	activate := activator.activate
 	if activate == nil {
@@ -159,6 +166,48 @@ func (activator *productionCodexManagedCurrentActivator) Ensure(ctx context.Cont
 		return managedActivationRefusal("managed-current-not-activated", managedCodexActivationFailureAction(err, target), err)
 	}
 	return nil
+}
+
+// qualificationFor reads the stored receipt for the pair this activation is
+// about to switch between.
+//
+// This is the consumer half of the qualification lane, and until it existed the
+// lane was closed by construction rather than by any verdict: the producer
+// could measure a pair and write a canonical receipt, but nothing on this path
+// read one, so the gate below could never be passed. The refusal names the two
+// steps that open it -- produce the receipt, then install it -- because a gate
+// whose refusal does not name its own key is the shape this Phase set out to
+// remove.
+func (activator *productionCodexManagedCurrentActivator) qualificationFor(
+	pair codexgeneration.VersionPair,
+) (codexgeneration.QualificationResult, error) {
+	load := activator.qualified
+	if load == nil {
+		load = codexupgrade.NewQualificationStateStore(activator.stateDir).Load
+	}
+	action := fmt.Sprintf(
+		"qualify the %s/%s pair with `scripts/test-generation-pool-qualification.sh %s %s <output-dir>` and install the receipt it writes with `projmux agent app-server upgrade qualify --receipt <absolute-json>`",
+		pair.Old, pair.New, pair.Old, pair.New)
+	result, found, err := load(pair)
+	if err != nil {
+		// A receipt that exists and does not read is not the same fact as no
+		// receipt, so it does not get the same action. Re-running the
+		// qualification would overwrite the evidence of whatever damaged it.
+		return codexgeneration.QualificationResult{}, managedActivationRefusal("managed-generation-qualification-unreadable",
+			"inspect the stored Codex qualification receipt for this version pair; it exists and does not decode", err)
+	}
+	if !found {
+		return codexgeneration.QualificationResult{}, managedActivationRefusal("managed-generation-not-qualified", action, nil)
+	}
+	if gate := codexgeneration.GateQualification(result); !gate.Phase2Ready {
+		reason := "managed-generation-version-pair-not-qualified"
+		if gate.EvidenceForged {
+			reason = "managed-generation-qualification-evidence-forged"
+		}
+		return codexgeneration.QualificationResult{}, managedActivationRefusal(reason, action,
+			errors.New(strings.TrimSpace(gate.Blocker+" "+gate.Discriminant)))
+	}
+	return result, nil
 }
 
 func managedActivationRefusal(reason, action string, err error) error {

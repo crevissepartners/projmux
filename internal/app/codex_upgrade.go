@@ -20,23 +20,99 @@ import (
 const codexUpgradeCommandTimeout = 45 * time.Second
 
 type codexUpgradeCommand struct {
-	coordinator *codexupgrade.Coordinator
-	readFile    func(string) ([]byte, error)
-	timeout     time.Duration
+	coordinator   *codexupgrade.Coordinator
+	readFile      func(string) ([]byte, error)
+	timeout       time.Duration
+	qualification *codexupgrade.QualificationStore
 }
 
 func (command *codexUpgradeCommand) Run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return usageError("agent app-server upgrade requires plan, apply, resume, or abort")
+		return usageError("agent app-server upgrade requires qualify, plan, apply, resume, or abort")
 	}
 	switch args[0] {
+	case "qualify":
+		return command.runQualify(args[1:], stdout, stderr)
 	case "plan", "apply":
 		return command.runRequest(args[0], args[1:], stdout, stderr)
 	case "resume", "abort":
 		return command.runOperation(args[0], args[1:], stdout, stderr)
 	default:
-		return usageError("agent app-server upgrade requires plan, apply, resume, or abort")
+		return usageError("agent app-server upgrade requires qualify, plan, apply, resume, or abort")
 	}
+}
+
+// codexQualifyReceipt is the content-free account of what was installed.
+//
+// It restates the receipt's own identity and verdict and adds nothing: the
+// caller already holds the file, and what it needs back is confirmation that
+// the gate accepted these exact bytes for this exact pair.
+type codexQualifyReceipt struct {
+	SchemaVersion int                                  `json:"schemaVersion"`
+	Versions      codexgeneration.VersionPair          `json:"versions"`
+	Verdict       codexgeneration.QualificationVerdict `json:"verdict"`
+	Reason        codexgeneration.QualificationReason  `json:"reason"`
+	Stored        bool                                 `json:"stored"`
+}
+
+// runQualify installs a produced receipt where the entry paths read it.
+//
+// This is the operator-facing half of `run-isolated-version-pair-qualification`,
+// the action the L3 diagnosis has named since Phase 0. The other half already
+// shipped: `scripts/test-generation-pool-qualification.sh` measures a declared
+// pair in isolation and writes the canonical receipt. What was missing was
+// anywhere to put the answer -- the receipt could only be pasted into a
+// hand-written upgrade request, and managed activation builds its request in
+// process, so the qualification could never reach that door.
+//
+// Nothing here decides anything about the pair. It re-reads the producer's file
+// through the same decoder the gate uses, refuses it on exactly the gate's
+// terms, and stores it under the pair it names. A refused receipt is not
+// stored: a stored file is a claim the gate honors, and a store that also held
+// refusals would make presence meaningless.
+func (command *codexUpgradeCommand) runQualify(args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("agent app-server upgrade qualify", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var receiptPath string
+	fs.StringVar(&receiptPath, "receipt", "", "absolute path to a measured version-pair qualification receipt")
+	if err := fs.Parse(args); err != nil {
+		return usageError(err.Error())
+	}
+	if fs.NArg() != 0 || !filepath.IsAbs(receiptPath) || filepath.Clean(receiptPath) != receiptPath {
+		return usageError("agent app-server upgrade qualify requires exactly --receipt <absolute-json>")
+	}
+	if command.qualification == nil {
+		return errors.New("codex qualification receipt store is not configured")
+	}
+	read := command.readFile
+	if read == nil {
+		read = os.ReadFile
+	}
+	body, err := read(receiptPath)
+	if err != nil {
+		return fmt.Errorf("read Codex qualification receipt: %w", err)
+	}
+	if len(body) > 1024*1024 {
+		return errors.New("codex qualification receipt exceeds 1 MiB")
+	}
+	result, err := codexgeneration.DecodeQualificationResult(body)
+	if err != nil {
+		return fmt.Errorf("decode Codex qualification receipt: %w", err)
+	}
+	gate := codexgeneration.GateQualification(result)
+	if !gate.Phase2Ready {
+		if gate.EvidenceForged {
+			return fmt.Errorf("codex qualification receipt evidence is unbacked (%s): %s", gate.Discriminant, gate.Blocker)
+		}
+		return fmt.Errorf("codex qualification receipt does not qualify the pair it names: %s", gate.Blocker)
+	}
+	if err := command.qualification.Save(result); err != nil {
+		return fmt.Errorf("store Codex qualification receipt: %w", err)
+	}
+	return writeCodexUpgradeJSON(stdout, codexQualifyReceipt{
+		SchemaVersion: result.SchemaVersion, Versions: result.Versions,
+		Verdict: result.Verdict, Reason: result.Reason, Stored: true,
+	})
 }
 
 func (command *codexUpgradeCommand) runRequest(action string, args []string, stdout, stderr io.Writer) error {

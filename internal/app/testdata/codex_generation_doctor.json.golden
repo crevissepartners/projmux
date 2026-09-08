@@ -6,7 +6,7 @@
   "expected_multi_generation": true,
   "doctor_mutations": 0,
   "qualification": {
-    "schemaVersion": 1,
+    "schemaVersion": 2,
     "versions": {
       "old": "0.152.0",
       "new": "0.152.1"
@@ -28,7 +28,11 @@
       "bundleSourceRemovalLaunch": true,
       "bundleDriftRefused": true,
       "protocolMismatchRefused": true,
-      "ambientMutations": 0
+      "ambientMutations": 0,
+      "observedThreadTurns": 2,
+      "observedThreadReads": 8,
+      "observedCrashRestarts": 2,
+      "observedBundleLaunches": 8
     }
   },
   "generations": [

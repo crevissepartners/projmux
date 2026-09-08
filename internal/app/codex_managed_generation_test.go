@@ -81,6 +81,7 @@ func TestProductionManagedActivationBuildsExactDefaultUpgradeRequest(t *testing.
 			got = request
 			return codexupgrade.Journal{}, nil
 		},
+		qualified: storedManagedActivationQualification("0.152.1", "0.153.0"),
 	}
 	if err := activator.Ensure(context.Background()); err != nil {
 		t.Fatal(err)
@@ -382,5 +383,33 @@ func TestOrdinaryCodexCreateActivationGateReturnsExactActionWithZeroMutation(t *
 	}
 	if _, statErr := os.Stat(stateDir); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("activation gate created journal state: %v", statErr)
+	}
+}
+
+// managedActivationQualification is a measured-shaped receipt for one pair.
+//
+// The coverage counters are positive because the gate reads them: a receipt
+// that claims every property with nothing observed is the forgery the gate
+// exists to refuse, so a fixture that left them at zero would be exercising
+// that refusal instead of the path it names.
+func managedActivationQualification(oldVersion, newVersion string) codexgeneration.QualificationResult {
+	return codexgeneration.EvaluateQualification(
+		codexgeneration.VersionPair{Old: oldVersion, New: newVersion},
+		codexgeneration.QualificationEvidence{
+			SharedStateDomain: true, DistinctPrivateEndpoints: true, DistinctThreadCreateTurn: true,
+			DistinctThreadReadList: true, CrashRestart: true, OldStoppedBeforeResume: true,
+			PersistedResumeSnapshot: true, SharedAuthConfigPrivate: true, BundleSourceRemovalLaunch: true,
+			BundleDriftRefused: true, ProtocolMismatchRefused: true,
+			ObservedThreadTurns: 2, ObservedThreadReads: 8, ObservedCrashRestarts: 2, ObservedBundleLaunches: 8,
+		})
+}
+
+func storedManagedActivationQualification(oldVersion, newVersion string) func(codexgeneration.VersionPair) (codexgeneration.QualificationResult, bool, error) {
+	stored := managedActivationQualification(oldVersion, newVersion)
+	return func(pair codexgeneration.VersionPair) (codexgeneration.QualificationResult, bool, error) {
+		if pair != stored.Versions {
+			return codexgeneration.QualificationResult{}, false, nil
+		}
+		return stored, true, nil
 	}
 }
