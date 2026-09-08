@@ -40,6 +40,7 @@ func doctorQualifiedVersions() *codexgeneration.QualificationResult {
 		DistinctThreadReadList: true, CrashRestart: true, OldStoppedBeforeResume: true,
 		PersistedResumeSnapshot: true, SharedAuthConfigPrivate: true, BundleSourceRemovalLaunch: true,
 		BundleDriftRefused: true, ProtocolMismatchRefused: true,
+		ObservedThreadTurns: 2, ObservedThreadReads: 8, ObservedCrashRestarts: 2, ObservedBundleLaunches: 8,
 	})
 	return &result
 }

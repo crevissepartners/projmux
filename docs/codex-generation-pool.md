@@ -187,11 +187,40 @@ counter in the receipt stays measured by the harness, and `Validate` recomputes
 the verdict from that evidence, so editing either a counter or the verdict in
 the file makes it stop decoding rather than pass a stronger claim.
 
-The emitted `receipt.json` is exactly what goes into the `qualification` field
-of an `agent app-server upgrade plan|apply --request <absolute>.json`
-document. The upgrade request requires that receipt's version pair to match the
-exact current and target generation versions, so a receipt qualifies the one
-pair it names and no other.
+Recomputing the verdict is not, by itself, a check on the evidence. A YES
+verdict is fully determined by the acceptance booleans and the violation
+counters — every boolean true, every violation zero — so a receipt written by
+hand to say YES is self-consistent and decodes cleanly. The **coverage
+counters** are what separates it from a measured one: `observedThreadTurns`,
+`observedThreadReads`, `observedCrashRestarts`, and `observedBundleLaunches`
+tally what the harness actually did, and an acceptance claim with none of them
+behind it is refused at the gate as unbacked. This does not make forgery
+impossible; it makes the receipt state its coverage, so the evidence set that
+costs nothing to write no longer passes. Receipts predating the coverage
+counters carry `schemaVersion` 1 and are refused as incomplete rather than read
+forward — there is no coverage in them to check.
+
+### Installing a receipt
+
+The emitted `receipt.json` reaches the generation entry paths through one route:
+
+```sh
+projmux agent app-server upgrade qualify --receipt /absolute/path/to/receipt.json
+```
+
+`qualify` re-reads the file through the same decoder and the same gate the entry
+paths use, refuses it on exactly their terms, and stores it under the version
+pair it names. Only an accepted receipt is stored, so the presence of a stored
+receipt is itself the claim the gate honors. Both doors into a generation switch
+read that store: managed activation refuses before it writes the journal, and a
+handover resume refuses before it drives any effect. A receipt qualifies the one
+pair it names and no other, and the refusal for a pair with no stored receipt
+names the two commands that produce and install one.
+
+The same `receipt.json` also goes verbatim into the `qualification` field of an
+`agent app-server upgrade plan|apply --request <absolute>.json` document. The
+upgrade request requires that receipt's version pair to match the exact current
+and target generation versions.
 
 The `Generation Pool Qualification` workflow is the scheduled-lane counterpart.
 It is `workflow_dispatch`-only and takes the pair as inputs: the qualification

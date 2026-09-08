@@ -14,6 +14,7 @@ route=agent integrate identity=unchanged address=unchanged topology=unchanged de
 route=agent usage identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=agent app-server identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=agent app-server upgrade identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
+route=agent app-server upgrade qualify identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=agent app-server upgrade plan identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=agent app-server upgrade apply identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null
 route=agent app-server upgrade resume identity=unchanged address=unchanged topology=unchanged desired-state=unchanged runtime=unchanged focus=unchanged cardinality=unchanged domain-effect=null

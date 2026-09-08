@@ -282,9 +282,11 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	createCmd.resumes = ai
 	var rollingCoordinator *codexupgrade.Coordinator
 	var handoverCoordinator *codexhandover.Coordinator
+	var qualificationStore *codexupgrade.QualificationStore
 	createCmd.codexNative = defaultCodexNativeThreadController{}
 	if paths, pathsErr := config.DefaultPathsFromEnv(); pathsErr == nil {
 		journal := codexupgrade.NewStateStore(paths.StateDir)
+		qualificationStore = codexupgrade.NewQualificationStateStore(paths.StateDir)
 		registry := intmetadata.NewDefaultStore(paths)
 		rollingCoordinator = &codexupgrade.Coordinator{Journal: journal, Registry: registry, Mutator: intmetadata.DefaultMutator}
 		handoverCoordinator = &codexhandover.Coordinator{
@@ -316,7 +318,7 @@ func NewWithLifecycleDiagnostics(recorder *diagnostics.LifecycleRecorder) *App {
 	agentCmd.rebind = newAgentRebinder(createCmd, ai)
 	agentCmd.focus = focusCmd
 	if rollingCoordinator != nil {
-		agentCmd.codexUpgrade = &codexUpgradeCommand{coordinator: rollingCoordinator}
+		agentCmd.codexUpgrade = &codexUpgradeCommand{coordinator: rollingCoordinator, qualification: qualificationStore}
 		agentCmd.handover = rollingCoordinator
 	}
 	if handoverCoordinator != nil {

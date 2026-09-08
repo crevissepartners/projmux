@@ -21,6 +21,7 @@ func qualifiedEvidence() codexgeneration.QualificationEvidence {
 		OldStoppedBeforeResume: true, PersistedResumeSnapshot: true,
 		SharedAuthConfigPrivate: true, BundleSourceRemovalLaunch: true,
 		BundleDriftRefused: true, ProtocolMismatchRefused: true, AmbientMutations: 0,
+		ObservedThreadTurns: 2, ObservedThreadReads: 8, ObservedCrashRestarts: 2, ObservedBundleLaunches: 8,
 	}
 }
 

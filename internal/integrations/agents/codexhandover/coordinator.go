@@ -604,10 +604,62 @@ func (coordinator *Coordinator) recoverSameGeneration(ctx context.Context, reque
 	return coordinator.fail(FailAfterReceipt)
 }
 
+// resumeQualificationAuthority is the L3 gate on the second entry path.
+//
+// Resume is reachable without Plan. Apply calls it after the plan authorized
+// the operation, but `agent app-server handover resume --operation <ref>` calls
+// it directly against whatever the journal says now, and the pinned handover
+// re-entry in Plan does not recheck the version pair. So the authorization was
+// established once, at pin time, and every later resume ran on the strength of
+// a decision it never saw -- including one made against a journal that has
+// since changed.
+//
+// This recomputes it from the journal in hand rather than trusting a flag the
+// pin left behind. That also keeps the one lane Plan deliberately leaves open:
+// an unqualified pair may still retire a *vacant* generation, because the
+// receipt proves a thread survives a cross-version resume and a generation with
+// no thread to carry has nothing for it to prove. The census is taken once
+// before the action loop; inside the loop the operation is already committed
+// and a mid-flight refusal would strand it.
+func (coordinator *Coordinator) resumeQualificationAuthority(journal codexupgrade.Journal) error {
+	qualification := journal.Qualification
+	if qualification != nil {
+		gate := codexgeneration.GateQualification(*qualification)
+		if gate.EvidenceForged {
+			return fmt.Errorf("handover-resume-qualification-evidence-forged: %s", gate.Discriminant)
+		}
+		if gate.Phase2Ready {
+			return nil
+		}
+	}
+	if coordinator.Registry == nil || journal.Handover == nil {
+		return errors.New("handover-resume-version-pair-not-qualified")
+	}
+	registry, err := coordinator.Registry.LoadSnapshot()
+	if err != nil {
+		// No snapshot means no census, and the deferred refusal stands. This is
+		// the same fail-closed choice Plan makes for the same reason.
+		return errors.New("handover-resume-version-pair-not-qualified")
+	}
+	oldEndpoint := metadata.CodexEndpointRef{
+		StateDomainID: journal.Handover.StateDomainID, EndpointGenerationID: journal.Handover.OldGenerationID,
+	}
+	successorEndpoint := metadata.CodexEndpointRef{
+		StateDomainID: journal.Handover.StateDomainID, EndpointGenerationID: journal.Handover.SuccessorGenerationID,
+	}
+	_, vacancy := gatherRetirementVacancy(registry, oldEndpoint,
+		stateDomainPath(journal, successorEndpoint), coordinator.enumerateThreads())
+	if !vacancy.Vacant() {
+		return errors.New("handover-resume-version-pair-not-qualified")
+	}
+	return nil
+}
+
 func (coordinator *Coordinator) Resume(ctx context.Context, operationRef string) (codexupgrade.Journal, error) {
 	if coordinator.Journal == nil || coordinator.Effects == nil {
 		return codexupgrade.Journal{}, errors.New("handover coordinator is not configured")
 	}
+	authorized := false
 	for {
 		journal, exists, err := coordinator.Journal.Load()
 		if err != nil || !exists || journal.Handover == nil || journal.Handover.OperationRef != operationRef {
@@ -616,6 +668,16 @@ func (coordinator *Coordinator) Resume(ctx context.Context, operationRef string)
 		action, index := journal.Handover.NextAction()
 		if action == codexgeneration.HandoverActionNone || action == codexgeneration.HandoverActionAwaitOwnerStop {
 			return journal, nil
+		}
+		// The gate sits after the next-action read so a resume with nothing
+		// left to drive stays a read. A finished operation is not a request to
+		// enter a handover, and refusing it would make an already-retired
+		// generation report an authorization failure it never needed.
+		if !authorized {
+			if err := coordinator.resumeQualificationAuthority(journal); err != nil {
+				return codexupgrade.Journal{}, err
+			}
+			authorized = true
 		}
 		if _, err := coordinator.Journal.Update(ctx, func(current *codexupgrade.Journal, exists bool) error {
 			if !exists || current.Handover == nil || current.Handover.OperationRef != operationRef {

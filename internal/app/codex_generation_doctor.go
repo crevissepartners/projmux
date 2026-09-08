@@ -102,10 +102,20 @@ func diagnoseCodexGenerationPool(journal codexupgrade.Journal, registry coremeta
 		}
 	}
 	report.ExpectedMultiGeneration = liveGenerations == 2
+	// The pool is judged by the same gate the entry paths use, not by the
+	// receipt's verdict alone. A verdict-only read would report a pool as ready
+	// while both doors refuse it, and a report that contradicts the gate is
+	// worse than no report: the operator is told the lane is open and then
+	// finds it closed with no reason on this surface.
 	if journal.Qualification == nil {
 		block("qualification-missing")
 		report.Action = "run-isolated-version-pair-qualification"
-	} else if journal.Qualification.Verdict != codexgeneration.VerdictYes {
+	} else if gate := codexgeneration.GateQualification(*journal.Qualification); gate.EvidenceForged {
+		// Unbacked coverage is a producer problem, so it gets the producer's
+		// action rather than the fallback lane a measured NO gets.
+		block("version-pair-evidence-unbacked")
+		report.Action = "run-isolated-version-pair-qualification"
+	} else if !gate.Phase2Ready {
 		block("version-pair-no")
 		report.Action = "use-single-endpoint-journaled-handover"
 	}

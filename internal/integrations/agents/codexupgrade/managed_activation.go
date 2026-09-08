@@ -28,6 +28,42 @@ type ManagedCurrentActivation struct {
 	TargetBundleID string
 	TargetTUIPath  string
 	TargetVersion  string
+	// Qualification is the measured receipt for exactly this version pair.
+	//
+	// It is a value, not a pointer: this route has no "unqualified" spelling.
+	// A caller that has no receipt cannot express the absence here, it can only
+	// hand over a zero value, which fails the gate with the same token as a
+	// refused one. That is the point -- the earlier defect was that the request
+	// had no place to carry a verdict at all, so the entry path could not have
+	// consulted one even if the operator had produced it.
+	Qualification codexgeneration.QualificationResult
+}
+
+// qualify is the L3 gate on this entry path.
+//
+// Every token is specific to managed-current activation. The handover route
+// carries its own set, because the two paths are entered by different
+// operators for different reasons and a shared token would tell a reader which
+// property failed while hiding which door it failed at.
+func (request ManagedCurrentActivation) qualify() error {
+	if err := request.Qualification.Validate(); err != nil {
+		return errors.New("managed-current-activation-qualification-invalid")
+	}
+	// The pair binding is checked before the verdict so a receipt for another
+	// pair is never reported as a refused qualification of this one. They are
+	// different operator mistakes with different fixes.
+	if request.Qualification.Versions.Old != request.OldVersion ||
+		request.Qualification.Versions.New != request.TargetVersion {
+		return errors.New("managed-current-activation-qualification-version-pair-mismatch")
+	}
+	gate := codexgeneration.GateQualification(request.Qualification)
+	if gate.EvidenceForged {
+		return fmt.Errorf("managed-current-activation-qualification-evidence-forged: %s", gate.Discriminant)
+	}
+	if !gate.Phase2Ready {
+		return errors.New("managed-current-activation-version-pair-not-qualified")
+	}
+	return nil
 }
 
 func (request ManagedCurrentActivation) validate() error {
@@ -73,6 +109,14 @@ func (coordinator *Coordinator) ActivateManagedCurrent(ctx context.Context, requ
 	if err := request.validate(); err != nil {
 		return Journal{}, err
 	}
+	// The gate sits ahead of the prewrite, which is the only ordering that
+	// satisfies the guarantee. The prewrite is what puts the target route in
+	// the pool, and the Resume below is what publishes the drain; a gate placed
+	// after either one would refuse a generation the journal already committed
+	// to, and this route has no way back out of that.
+	if err := request.qualify(); err != nil {
+		return Journal{}, err
+	}
 	op, err := codexgeneration.NewRollingUpgradeOperation(request.OperationRef, request.OldEndpoint.StateDomainID,
 		request.OldEndpoint.EndpointGenerationID, request.Target.Endpoint.EndpointGenerationID)
 	if err != nil {
@@ -80,6 +124,13 @@ func (coordinator *Coordinator) ActivateManagedCurrent(ctx context.Context, requ
 	}
 	_, err = coordinator.Journal.Update(ctx, func(journal *Journal, exists bool) error {
 		if exists {
+			// A pool written before this gate shipped carries no receipt. Its
+			// re-entry is refused rather than adopted: the journal is the only
+			// record of what authorized that pool, and an absent receipt there
+			// means nothing authorized it.
+			if journal.Qualification == nil || !codexgeneration.GateQualification(*journal.Qualification).Phase2Ready {
+				return errors.New("managed-current-activation-existing-pool-not-qualified")
+			}
 			current, currentOK := journal.CurrentRoute()
 			if currentOK && managedActivationCurrentMatches(current, request) {
 				return nil
@@ -94,9 +145,15 @@ func (coordinator *Coordinator) ActivateManagedCurrent(ctx context.Context, requ
 			}
 			return nil
 		}
+		// The receipt is written with the routes it authorized, in the same
+		// update. That is what makes the L3 diagnosis readable afterwards: the
+		// pool row reports the qualification it is standing on rather than a
+		// verdict that lived only in the caller's memory.
+		qualification := request.Qualification
 		*journal = Journal{
 			Version: JournalVersion, StateDomainID: request.OldEndpoint.StateDomainID,
 			CurrentGenerationID: request.OldEndpoint.EndpointGenerationID,
+			Qualification:       &qualification,
 			Routes: []GenerationRoute{
 				{
 					Generation: codexgeneration.Generation{

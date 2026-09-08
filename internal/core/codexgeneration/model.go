@@ -16,7 +16,11 @@ const (
 	// ModelVersion identifies the first bounded-pool decision model.
 	ModelVersion = 1
 	// QualificationSchemaVersion is the strict, content-free receipt schema.
-	QualificationSchemaVersion = 1
+	//
+	// Version 2 adds the coverage counters. A version 1 receipt carried no
+	// record of how many observations produced its booleans, so it cannot be
+	// read forward: it is refused as incomplete rather than upgraded in place.
+	QualificationSchemaVersion = 2
 )
 
 type GenerationState = metadata.CodexGenerationState

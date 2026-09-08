@@ -183,6 +183,7 @@ func TestManagedCurrentActivationAfterDefaultUpgradePreservesOldAgentAndForeignL
 		TargetBundleID: request.TargetBundleID,
 		TargetTUIPath:  request.TargetTUIPath,
 		TargetVersion:  "0.153.0",
+		Qualification:  testActivationQualification("0.151.0", "0.153.0"),
 	}
 	journal, err := coordinator.ActivateManagedCurrent(context.Background(), activation)
 	if err != nil {
@@ -302,6 +303,7 @@ func TestManagedCurrentActivationRejectsNonCanonicalGenerationIdentityBeforeMuta
 				OperationRef: "managed-activation-canonical-identity", OldEndpoint: request.Current.Generation.Endpoint,
 				OldOwner: codexgeneration.OwnerUnmanaged, OldVersion: "0.151.0", Target: request.Target,
 				TargetBundleID: request.TargetBundleID, TargetTUIPath: request.TargetTUIPath, TargetVersion: "0.152.1",
+				Qualification: testActivationQualification("0.151.0", "0.152.1"),
 			}
 			test.mutate(&activation)
 			if _, err := coordinator.ActivateManagedCurrent(context.Background(), activation); err == nil || !strings.Contains(err.Error(), "request-invalid") {
@@ -364,6 +366,7 @@ func TestManagedCurrentActivationRefusesMismatchedExistingCurrentWithoutFurtherM
 				OperationRef: "managed-activation-existing-current", OldEndpoint: request.Current.Generation.Endpoint,
 				OldOwner: codexgeneration.OwnerUnmanaged, OldVersion: "0.151.0", Target: request.Target,
 				TargetBundleID: request.TargetBundleID, TargetTUIPath: request.TargetTUIPath, TargetVersion: "0.152.1",
+				Qualification: testActivationQualification("0.151.0", "0.152.1"),
 			}
 			if _, err := coordinator.ActivateManagedCurrent(context.Background(), activation); err != nil {
 				t.Fatalf("seed completed activation: %v", err)
@@ -423,6 +426,7 @@ func TestManagedCurrentActivationReopenAfterAdmissionConvergesDrainBeforeCreate(
 	activation := ManagedCurrentActivation{
 		OperationRef: "managed-activation-reopen", OldEndpoint: oldEndpoint, OldOwner: codexgeneration.OwnerUnmanaged, OldVersion: "0.151.0",
 		Target: request.Target, TargetBundleID: request.TargetBundleID, TargetTUIPath: request.TargetTUIPath, TargetVersion: "0.153.0",
+		Qualification: testActivationQualification("0.151.0", "0.153.0"),
 	}
 	coordinator.Failpoint = func(point string) error {
 		if point == FailAfterAdmission {
@@ -777,6 +781,7 @@ func testRollingRequest(t *testing.T) Request {
 		DistinctThreadReadList: true, CrashRestart: true, OldStoppedBeforeResume: true,
 		PersistedResumeSnapshot: true, SharedAuthConfigPrivate: true, BundleSourceRemovalLaunch: true,
 		BundleDriftRefused: true, ProtocolMismatchRefused: true,
+		ObservedThreadTurns: 2, ObservedThreadReads: 8, ObservedCrashRestarts: 2, ObservedBundleLaunches: 8,
 	})
 	return Request{
 		OperationRef: "upgrade-one",
@@ -1102,4 +1107,22 @@ func TestRollingJournalAtomicWriteCrashHooksRestartWithoutDuplicateEffects(t *te
 			assertPhase5Zero(t, journal.Operation.Mutations)
 		})
 	}
+}
+
+// testActivationQualification is the measured receipt an activation carries.
+//
+// Every fixture below hands one over, because the route has no unqualified
+// spelling: the gate refuses a zero value with the same token as a refused
+// receipt, so a test that omitted this would be testing the gate rather than
+// whatever it names.
+func testActivationQualification(oldVersion, newVersion string) codexgeneration.QualificationResult {
+	return codexgeneration.EvaluateQualification(
+		codexgeneration.VersionPair{Old: oldVersion, New: newVersion},
+		codexgeneration.QualificationEvidence{
+			SharedStateDomain: true, DistinctPrivateEndpoints: true, DistinctThreadCreateTurn: true,
+			DistinctThreadReadList: true, CrashRestart: true, OldStoppedBeforeResume: true,
+			PersistedResumeSnapshot: true, SharedAuthConfigPrivate: true, BundleSourceRemovalLaunch: true,
+			BundleDriftRefused: true, ProtocolMismatchRefused: true,
+			ObservedThreadTurns: 2, ObservedThreadReads: 8, ObservedCrashRestarts: 2, ObservedBundleLaunches: 8,
+		})
 }

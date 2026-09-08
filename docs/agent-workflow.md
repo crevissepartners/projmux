@@ -730,8 +730,30 @@
   refusal is on disk too. It strips inherited tmux identity, uses one unique
   private state root and two private sockets, records no provider content or
   secrets, requires distinct-thread overlap plus the old-stop same-thread
-  barrier, and performs exact cleanup. See
+  barrier, tallies the receipt's coverage counters from the ledgers it already
+  writes, and performs exact cleanup. See
   [codex-generation-pool.md](codex-generation-pool.md).
+- `TestQualificationGateRefusesEvidenceCountersNoObservationBacks`,
+  `TestQualificationEvidenceIntegrityIsFixedByCounterAndClaim`, and
+  `TestQualificationSchemaVersionRefusesTheCoverageFreeReceipt` own the
+  evidence-counter integrity the gate checks and `Validate` cannot: a
+  self-consistent YES whose coverage counters back nothing is refused as forged,
+  and a coverage-free version-1 receipt does not decode.
+- `TestActivateManagedCurrentRefusesEveryUnqualifiedRequestBeforeDraining`,
+  `TestActivateManagedCurrentPublishesTheQualificationItRanUnder`,
+  `TestActivateManagedCurrentRefusesAnExistingPoolWithNoReceipt`,
+  `TestResumeRefusesAnUnqualifiedPairBeforeAnyHandoverEffect`, and
+  `TestResumeStillRetiresAVacantGenerationWithoutAReceipt` own the two entry
+  gates: each refuses before its own irreversible step with a path-specific
+  token, the accepted receipt is published into the journal, and the vacancy
+  lane the planner leaves open stays open.
+- `TestQualificationStoreAnswersOnlyForThePairAReceiptNames`,
+  `TestQualificationStoreRefusesAFileThatIsNotItsOwnReceipt`,
+  `TestQualificationStorePathStaysInsideItsOwnDirectory`,
+  `TestUpgradeQualifyCarriesAProducedReceiptToTheEntryPathStore`,
+  `TestUpgradeQualifyStoresNothingItWouldNotHonor`, and
+  `TestUpgradeQualifyRequiresExactlyOneAbsoluteReceipt` own the route from a
+  produced receipt to the store the entry paths read.
 - `TestDeclaredGenerationPairAcceptsAnyDistinctReceiptVersionPair`,
   `TestDeclaredGenerationPairRefusesEmptyEqualAndNonVersionTokens`,
   `TestEmittedReceiptFileRoundTripsToTheIdenticalResult`,
