@@ -81,6 +81,19 @@ type doctorCommand struct {
 	// reader observes no children of itself, and the ledger is still the record
 	// of what the last install left behind.
 	installResidue func() (installResidueRecord, int, bool)
+	// projmuxProcessVintageTimed is the same fleet census with the residual
+	// age distribution measured against the moment of the read.
+	//
+	// It is a separate seam from the count-only one above rather than a
+	// replacement for it, and both come from the same single process-table
+	// read. The runtime section renders counts and its JSON has never carried
+	// per-process start instants; the replacement table needs the ages,
+	// because a cutoff is a statement about them. Splitting the projection
+	// keeps the rendered section byte-identical while giving the L2 row the
+	// evidence its verdict rests on.
+	projmuxProcessVintageTimed func() projmuxProcessVintage
+	// installReplacement reads the last install replacement pass's outcome.
+	installReplacement func() (installReplacementOutcome, bool)
 	// processAlive answers whether one recorded provider process handle still
 	// names a live process. It is injected so the Running-versus-live-session
 	// census is exercised without a process table.
@@ -123,16 +136,27 @@ func newDoctorCommand() *doctorCommand {
 	}
 	readVintage := defaultProcessVintageReader()
 	c.controlPlaneVintage = func() codexControlPlaneVintage {
-		controlPlane, _, _ := readVintage()
+		controlPlane, _, _, _ := readVintage()
 		return controlPlane
 	}
 	c.projmuxProcessVintage = func() projmuxProcessVintage {
-		_, fleet, _ := readVintage()
+		_, fleet, _, _ := readVintage()
 		return fleet
 	}
 	c.installedImage = func() doctorInstalledImage {
-		_, _, image := readVintage()
+		_, _, image, _ := readVintage()
 		return image
+	}
+	c.projmuxProcessVintageTimed = func() projmuxProcessVintage {
+		_, _, _, timed := readVintage()
+		return timed
+	}
+	c.installReplacement = func() (installReplacementOutcome, bool) {
+		paths, err := configPaths(os.UserHomeDir, c.getenv)
+		if err != nil {
+			return installReplacementOutcome{}, false
+		}
+		return readInstallReplacementOutcome(filepath.Join(paths.StateDir, installReplacementFile))
 	}
 	c.installResidue = func() (installResidueRecord, int, bool) {
 		paths, err := configPaths(os.UserHomeDir, c.getenv)
@@ -432,15 +456,24 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 // read is the zero-write snapshot read, so asking this question on a machine
 // that never created a Project still creates nothing.
 func (c *doctorCommand) evaluateReplacement(pool *doctorCodexGenerationPool, broker *codexBrokerDiagnostic) doctorReplacementReport {
-	in := doctorReplacementInputs{Pool: pool}
+	in := doctorReplacementInputs{Pool: pool, Cutoff: resolveReplacementCutoff(c.getenv)}
 	if c.installedImage != nil {
 		in.Image = c.installedImage()
 	}
-	if c.projmuxProcessVintage != nil {
+	// The timed census when one is available, the count-only census otherwise.
+	// The counts are identical; only the age distribution the cutoff verdict
+	// is read from differs, and a caller that injected only the count-only
+	// seam gets the verdict it always got.
+	if c.projmuxProcessVintageTimed != nil {
+		in.Processes = c.projmuxProcessVintageTimed()
+	} else if c.projmuxProcessVintage != nil {
 		in.Processes = c.projmuxProcessVintage()
 	}
 	if c.installResidue != nil {
 		in.Residue, in.ResidueRecords, in.ResidueOK = c.installResidue()
+	}
+	if c.installReplacement != nil {
+		in.Replacement, in.ReplacementOK = c.installReplacement()
 	}
 	if broker == nil && c.brokerDiagnostic != nil {
 		read := c.brokerDiagnostic()
@@ -1212,12 +1245,13 @@ func doctorControlPlaneVintage(read func() codexControlPlaneVintage) codexContro
 // from a separate readlink because the replacement table prints it beside the
 // fleet census, and an image read after the census could name a publication the
 // census never saw.
-func defaultProcessVintageReader() func() (codexControlPlaneVintage, projmuxProcessVintage, doctorInstalledImage) {
+func defaultProcessVintageReader() func() (codexControlPlaneVintage, projmuxProcessVintage, doctorInstalledImage, projmuxProcessVintage) {
 	var once sync.Once
 	var controlPlane codexControlPlaneVintage
 	var fleet projmuxProcessVintage
 	var image doctorInstalledImage
-	return func() (codexControlPlaneVintage, projmuxProcessVintage, doctorInstalledImage) {
+	var timed projmuxProcessVintage
+	return func() (codexControlPlaneVintage, projmuxProcessVintage, doctorInstalledImage, projmuxProcessVintage) {
 		once.Do(func() {
 			images, supported := defaultCodexProcessImages()
 			image.Supported = supported
@@ -1232,8 +1266,13 @@ func defaultProcessVintageReader() func() (codexControlPlaneVintage, projmuxProc
 			controlPlane = projectCodexControlPlaneVintage(resolved, os.Getpid(), images, supported)
 			fleet = projectProjmuxProcessVintage(resolved, os.Getpid(), images, supported)
 			image = projectDoctorInstalledImage(resolved, os.Getpid(), images, supported)
+			// The fourth projection, taken from the same images and the same
+			// instant as the other three. A second process-table read would
+			// let one report pair a census with a cutoff verdict taken a
+			// process start apart.
+			timed = projectProjmuxProcessVintageAt(resolved, os.Getpid(), images, supported, time.Now())
 		})
-		return controlPlane, fleet, image
+		return controlPlane, fleet, image, timed
 	}
 }
 

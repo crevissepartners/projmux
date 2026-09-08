@@ -26,6 +26,7 @@ var internalSubcommands = []string{
 	"codex-broker",
 	"codex-generation-launch",
 	"install-residue",
+	"install-replace",
 }
 
 // internalAgentHookSubcommands lists the provider hook plumbing routes.
@@ -126,6 +127,13 @@ func (c *internalCommand) Run(args []string, stdout, stderr io.Writer) error {
 		return forwardRawArgv(c.codexBroker, "internal codex-broker", "codex-broker", nil, rest, stdout, stderr)
 	case "codex-generation-launch":
 		return codexgenerationhost.RunDurableLaunchSupervisor(rest)
+	case "install-replace":
+		// The install-side replacement pass. Like the census below it is
+		// machine-invoked plumbing -- a step of `make install` -- rather than a
+		// command a user types. It asks the drainable roles to stand down
+		// through the path this application already ships, waits a bounded
+		// moment, records the outcome, and never fails an install.
+		return runInstallReplacement(rest, stderr)
 	case "install-residue":
 		// The install residue census. It is machine-invoked plumbing -- the
 		// last step of `make install` and of the npm wrapper's first

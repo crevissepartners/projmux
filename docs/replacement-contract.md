@@ -35,10 +35,15 @@ image accepts no new work on any of the three layers*.
   failure between the two leaves a published binary whose live config was never
   converged. There is no atomic install; there is one atomic step inside a
   non-atomic install.
-- `L2` is not replaced at all. Replacing a file does not replace the image of a
-  process already running it, so every long-lived child keeps executing the code
-  it started with until it exits on its own. No install path ends a running
-  child, and the operator is not told.
+- `L2` is replaced for one role and reported for the rest. Replacing a file does
+  not replace the image of a process already running it, so an install has to
+  ask. `broker-runtime` is asked, through the drain this application already
+  ships: a runtime whose own image has been unlinked drains at the next session
+  that reaches it, refuses new work with `drain-required`, and closes when its
+  last binding goes. Every other role is reported with the route that does
+  replace it and is left alone — see *The L2 replacement policy* below. A
+  replacement that has not finished within the drain cutoff is reported as
+  `replacement-cutoff-reached` and is still not ended.
 - `L3` can enter `draining` without a qualified version pair. Once there, the
   handover that would move its live obligations has no verdict to run under, and
   the pool has no route back.
@@ -66,7 +71,7 @@ installation that no longer exists.
 | Layer | Detection signal | Recovery route |
 | --- | --- | --- |
 | `L1` | this reader's own executable link carries the kernel's `(deleted)` suffix | none for the binary. No copy of the replaced image is retained, and the recovery text the install prints on failure is config convergence, never a rollback. Restorability is `not-restorable` on every supported path. |
-| `L2` | the whole-fleet vintage census, and the newest `install-residue.jsonl` record whose own census observed anything | end and relaunch the residual process through the routes this application already ships. The residual age distribution bounds the drain, so the route is finite. |
+| `L2` | the whole-fleet vintage census, the newest `install-residue.jsonl` record whose own census observed anything, and the last `install-replacement.json` pass | end and relaunch the residual process through the routes this application already ships. The drain cutoff bounds the wait, and reaching it changes the row rather than the fleet, so a failed replacement leaves every process exactly where a successful one would have found it. |
 | `L3` | generation-pool status, its qualification result, and the Running-versus-live-session census | **none once `draining` is entered without a qualification result** (measured 2026-09-07). Every other pool state has a handover route. |
 
 **Enforcement.** `TestDoctorReplacementLayerVerdictsAreFixedByInputCombination`
@@ -76,7 +81,13 @@ to name the evidence that was missing.
 `TestDoctorReplacementDarwinReportsUnsupportedPlatformForImageAndProcessLayers`
 holds the platform branch.
 `TestDoctorReplacementQualificationMissingMakesGenerationPoolNotRestorable`
-holds the `L3` mapping.
+holds the `L3` mapping. For the `L2` guarantee above,
+`TestBrokerRuntimeDrainsWhenItsOwnImageWasReplaced` holds the vintage entry
+condition and that a runtime on the installed image is not drained by it,
+`TestReplacementRolePoliciesMatchTheContractDocument` and
+`TestReplacementSessionClientIsNeverADrainTarget` hold the policy table, and
+`TestInstallReplacementPassOutcomesAreFixedByFleetAndRequest` fixes every
+outcome of the install pass.
 
 ## C-2 The unit of replacement is an invariant, not a file
 
@@ -211,7 +222,8 @@ the token constants in the code equal, in both directions.
 | `L1` | `image-unlinked` | `not-replaced` | `not-restorable` | this reader's image was unlinked out from under it, so the diagnosis is taken from a superseded build |
 | `L1` | `image-current` | `replaced` | `not-restorable` | the installed path still publishes the image this diagnosis runs |
 | `L2` | `unsupported-platform` | `unknown` | `unknown` | the platform exposes no process table |
-| `L2` | `residual-processes-present` | `not-replaced` | `restorable` | a live child is still running the image from before the last install |
+| `L2` | `replacement-cutoff-reached` | `not-replaced` | `restorable` | a residual process has outlived the drain cutoff, so this replacement is not going to complete on its own |
+| `L2` | `residual-processes-present` | `not-replaced` | `restorable` | a live child is still running the image from before the last install, and none of them is past the cutoff |
 | `L2` | `no-residual-processes` | `replaced` | `restorable` | live children were observed and every one runs the installed image |
 | `L2` | `install-residue-recorded` | `not-replaced` | `restorable` | no live child was observable, and the newest ledger record whose own census observed anything says that install left residue |
 | `L2` | `install-residue-clean` | `replaced` | `restorable` | no live child was observable, and the newest ledger record whose own census observed anything says that install left none |
@@ -276,6 +288,156 @@ automatically, because that inventory expands the census role order, and
 `TestReplacementProcessRolesMatchTheContractDocument` holds this table and the
 code's role order to each other in both directions.
 
+## The L2 replacement policy
+
+An install may end a long-lived process only where this application already
+ships a way to ask one to stand down, and only where ending it costs nothing an
+operator did not choose. Both halves of that sentence are decisions taken from
+measurement, and they are fixed here rather than at a call site.
+
+### Per-role disposition
+
+`drain` means the install asks through a shipped path and the process decides
+when it actually goes. `report-only` means no install touches it; the route that
+does replace it is named instead, so a reader of the row knows what would.
+
+`TestReplacementRolePoliciesMatchTheContractDocument` holds this table and the
+code's policy map equal, in both directions.
+
+| Role | Disposition | Replacement route |
+| --- | --- | --- |
+| `broker-runtime` | `drain` | `broker-drain` |
+| `lifecycle-observer` | `report-only` | `pane-relaunch` |
+| `supervisor` | `report-only` | `pane-relaunch` |
+| `session-client` | `report-only` | `operator-reattach` |
+| `agent-endpoint` | `report-only` | `pane-relaunch` |
+| `usage-watcher` | `report-only` | `lease-expiry` |
+| `other` | `report-only` | `process-exit` |
+
+**Exactly one role drains, and that is a fact about what exists rather than a
+first instalment.** A drain is a protocol: the runtime has to be able to hear
+the request, refuse new work without failing anonymously, and carry the work it
+already accepted to its end. `broker-runtime` is the only role that ships one.
+Every other role is replaced by an event that already happens — a pane
+recreated, an activation restarted, a lease taken again — and an install that
+signalled them would sever live work to save an operator an action they can take
+themselves.
+
+**`session-client` is the entry that is a decision.** It is the operator's own
+attached tmux session, the longest-lived role on this repository's ledger at
+169h29m, and a uniform cutoff applied to it ends the terminal the install was
+typed into. It is report-only and no cutoff reaches it.
+`TestReplacementSessionClientIsNeverADrainTarget` holds that as a property of
+the table rather than of any call site.
+
+**No disposition severs work.** The one hard kill this repository has measured —
+2026-09-05, four panes — brought three of the four back automatically and left
+the fourth wedged on `backlog-overflow`. A recovery asymmetry that large is what
+a default has to be chosen against, so `drain` asks and waits, and the cutoff
+below reports rather than escalates.
+
+### The vintage trigger
+
+The drain already had one entry condition: a client arrives speaking a protocol
+version this runtime cannot negotiate. That condition misses the case an install
+produces. A new binary usually speaks the same protocol, so a compatible
+handshake proves nothing about which image is behind it.
+
+The second entry condition is the runtime's own image. A runtime reads
+`/proc/self/exe` once per arriving session until the answer is yes; the kernel's
+`(deleted)` suffix says the file it is running was unlinked, which is exactly
+what a publication leaves behind. The runtime then enters **the same drain by
+the same door** — the same `drain-required` refusal, the same wire frames, the
+same "live work is carried to its end". No new protocol, no new refusal token,
+and nothing added to the wire.
+
+Two consequences follow from putting the trigger there rather than in the
+installer. Any client of the newly installed binary drains a superseded runtime,
+so the npm install path is covered without a second implementation. And a
+platform with no executable link to read declines to drain rather than draining
+on a guess: `defaultProjmuxImageReplaced` answers false on darwin, and the
+absence is stated by this table's `unsupported-platform` row.
+
+### The install pass
+
+`projmux internal install-replace` runs as a step of `make install`, immediately
+before the residue census so the census measures the fleet the pass left. It
+takes the census, splits the residual processes by disposition, dials the
+published broker runtime for this state domain, waits a bounded moment, and
+writes `install-replacement.json`.
+
+It **starts nothing** — a replacement pass that launched what it was sent to
+replace would leave more behind than it found, so it dials and never ensures.
+It **signals nothing**: the only request it makes is a socket handshake. And it
+never fails an install: it runs after the install has already succeeded, and
+everything it could not do is on the record it writes.
+
+Its outcome vocabulary is closed, and it reaches the `L2` row as
+`replacement.outcome`:
+
+| Outcome | Meaning |
+| --- | --- |
+| `replacement-unsupported-platform` | no process table to take a census from |
+| `replacement-no-target` | no residual process sits in a drainable role |
+| `replacement-complete` | the drain was asked for and finished inside the settle window |
+| `replacement-drain-pending` | the drain was accepted and is still carrying work |
+| `replacement-target-unreachable` | a residual target the shipped path could not reach; `replacement.refusal` says which door was closed |
+| `replacement-not-attempted` | written by no pass — what the row says when no record exists at all |
+
+### The drain cutoff
+
+A drain that carries live work to its end has no bound of its own: the runtime
+stays up while it still has bindings, and a binding that is never released keeps
+it up forever. **The install has to decide when to stop calling such a
+replacement "in progress" and start calling it unfinished.**
+
+`projmux internal install-residue --survival` answers that from measurement.
+On this repository's ledger at 2026-09-08 — 55 records, 884 residual
+observations, **137 distinct processes** — the fraction of residual processes
+still running at each cutoff is:
+
+| Cutoff | Residual processes still running | Truncation rate |
+| --- | --: | --: |
+| 1h | 84 of 137 | 61.3% |
+| 4h | 38 of 137 | 27.7% |
+| 12h | 19 of 137 | 13.9% |
+| **24h** | **13 of 137** | **9.5%** |
+| 72h | 7 of 137 | 5.1% |
+| 168h | 4 of 137 | 2.9% |
+
+These are the **process-identity** numbers, not the observation numbers. The
+section below says why the two bases disagree in both directions at once and why
+a cutoff chosen from the observation basis would be wrong at both ends.
+
+**Adopted: 24h. Truncation rate 9.5% — 13 of 137 by process identity.**
+
+The reasoning is the shape of the curve against the cost of being wrong in
+either direction. 1h and 4h report a majority and a large minority of ordinary
+drains as failures, which turns the token into noise rather than a discriminant.
+Past 24h the curve flattens: 24h to 72h buys 4.4 points and costs two more days
+before an operator learns a replacement is never going to complete. 24h is also
+the horizon the answer is read on — a residual process a day old is not a drain
+still finishing its work, it is a drain that is not going to.
+
+**The truncation rate is what gets reported, not what gets severed.** Reaching
+the cutoff ends the install's claim about the replacement and never the process:
+the `L2` row turns to `replacement-cutoff-reached`, `replacement.beyond-cutoff`
+counts how many are past it, and every one of them keeps running. That is the
+whole difference between this bound and a kill timer, and it is why 9.5% is a
+reporting rate rather than a severed-session rate.
+
+The cutoff is `PROJMUX_REPLACEMENT_CUTOFF`, a Go duration, and it exists so the
+branch is reachable in a bounded test and in an isolated-fleet smoke. An unset,
+unparsable, or non-positive value is the adopted 24h. **There is no value that
+disables it**: an unbounded drain is the state this bound rules out, and offering
+a spelling for it would put that state one environment variable away.
+
+**Re-evaluation.** The identity basis rests on 137 processes of which 128 carry a
+start reconstructed by subtraction, exact to one second. As records written with
+a recorded start instant accumulate, that proportion falls and the tail of this
+distribution sharpens. The cutoff is re-derived from the same command when it
+does.
+
 ## Reading residual survival: observations are not processes
 
 The ledger records one census per install, and installs on a development
@@ -336,6 +498,13 @@ reconstruction.
 | `ledger.latest.installer` | `L2` | install path token, or `unclassified` |
 | `ledger.latest.observed` | `L2` | counter |
 | `ledger.latest.residual` | `L2` | counter |
+| `replacement.cutoff-seconds` | `L2` | counter |
+| `replacement.beyond-cutoff` | `L2` | counter |
+| `replacement.outcome` | `L2` | install replacement pass outcome token |
+| `replacement.refusal` | `L2` | broker refusal token |
+| `replacement.attempted` | `L2` | counter |
+| `replacement.drained` | `L2` | counter |
+| `replacement.reported` | `L2` | counter |
 | `registry.observed` | `L3` | `true` / `false` |
 | `pool.status` | `L3` | pool status token, or `unobserved` when no pool diagnosis was read |
 | `pool.reason` | `L3` | pool reason token |
@@ -355,6 +524,12 @@ It does not replace anything, restore anything, end a process, start a process,
 or repair a Registry. It reports, and a reported mismatch is left exactly as it
 was found. `TestReplacementMeasurementPathEndsNoProcess` holds that as a
 property of the source: the census, the residue ledger, the survival report, and
-this table are checked to carry no process termination, signalling, or restart. The three implementation tracks that change actual replacement
-behavior — `L2` replacement, `L1` atomicity, and the `L3` qualification gate —
-are separate work, and no change on this path may alter their behavior.
+this table are checked to carry no process termination, signalling, or restart.
+
+The replacement policy above is the one thing on this page that acts, and it
+acts through a strictly narrower door. `TestReplacementPathEndsNoProcess` holds
+the same guard over the policy table and the install pass: they carry no
+termination, no signalling, and no restart either. **The whole of the action is
+a socket handshake, and the runtime decides.** `L1` atomicity and the `L3`
+qualification gate remain separate work, and no change on this path may alter
+their behavior.

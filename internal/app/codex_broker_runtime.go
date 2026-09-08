@@ -180,6 +180,11 @@ func (c *codexBrokerCommand) runServe(args []string, stdout, stderr io.Writer) e
 		Discovery:   discovery,
 		Broker:      broker,
 		IdleTimeout: *idle,
+		// The vintage entry condition of the runtime's own drain. Supplying it
+		// here rather than inside the broker keeps the platform question --
+		// whether this build can read its own executable link at all -- on the
+		// side of the process that already answers it for every other surface.
+		ImageReplaced: defaultProjmuxImageReplaced,
 	})
 	if err != nil {
 		_ = broker.Close()

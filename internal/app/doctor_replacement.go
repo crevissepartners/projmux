@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -81,6 +82,13 @@ const (
 	doctorReplacementReasonImageUnresolved = "image-unresolved"
 
 	// L2 tokens.
+	//
+	// doctorReplacementReasonCutoffReached is the bounded drain's own verdict.
+	// A residual process that has outlived the replacement cutoff is not a
+	// drain still finishing; it is a replacement this install is not going to
+	// complete, and saying so is the whole reason the cutoff exists. It never
+	// ends the process: the row changes, the fleet does not.
+	doctorReplacementReasonCutoffReached     = "replacement-cutoff-reached"
 	doctorReplacementReasonResidualProcesses = "residual-processes-present"
 	doctorReplacementReasonNoResidual        = "no-residual-processes"
 	doctorReplacementReasonLedgerResidue     = "install-residue-recorded"
@@ -110,6 +118,7 @@ var doctorReplacementLayerReasons = map[string][]string{
 	},
 	doctorReplacementLayerProcesses: {
 		doctorReplacementReasonUnsupportedPlatform,
+		doctorReplacementReasonCutoffReached,
 		doctorReplacementReasonResidualProcesses,
 		doctorReplacementReasonNoResidual,
 		doctorReplacementReasonLedgerResidue,
@@ -152,18 +161,31 @@ const (
 	doctorReplacementSignalLedgerInstaller   = "ledger.latest.installer"
 	doctorReplacementSignalLedgerObserved    = "ledger.latest.observed"
 	doctorReplacementSignalLedgerResidual    = "ledger.latest.residual"
-	doctorReplacementSignalRegistryObserved  = "registry.observed"
-	doctorReplacementSignalPoolStatus        = "pool.status"
-	doctorReplacementSignalPoolReason        = "pool.reason"
-	doctorReplacementSignalPoolAction        = "pool.action"
-	doctorReplacementSignalPoolLive          = "pool.generations.live"
-	doctorReplacementSignalPoolDraining      = "pool.generations.draining"
-	doctorReplacementSignalQualVerdict       = "qualification.verdict"
-	doctorReplacementSignalQualReason        = "qualification.reason"
-	doctorReplacementSignalSessionsRunning   = "sessions.running"
-	doctorReplacementSignalSessionsLive      = "sessions.live"
-	doctorReplacementSignalSessionsDead      = "sessions.dead"
-	doctorReplacementSignalSessionsUnobs     = "sessions.unobservable"
+	// The replacement-pass signals. The first two are read from the live
+	// census and the cutoff this process runs under, so they are on every
+	// supported L2 row whether or not an install ever ran a pass. The rest are
+	// the last pass's own account of what it did, and they are absent when no
+	// pass has run -- an absent account is a different fact from a pass that
+	// found nothing, and collapsing the two would hide which one happened.
+	doctorReplacementSignalCutoffSeconds    = "replacement.cutoff-seconds"
+	doctorReplacementSignalBeyondCutoff     = "replacement.beyond-cutoff"
+	doctorReplacementSignalPassOutcome      = "replacement.outcome"
+	doctorReplacementSignalPassRefusal      = "replacement.refusal"
+	doctorReplacementSignalPassAttempted    = "replacement.attempted"
+	doctorReplacementSignalPassDrained      = "replacement.drained"
+	doctorReplacementSignalPassReported     = "replacement.reported"
+	doctorReplacementSignalRegistryObserved = "registry.observed"
+	doctorReplacementSignalPoolStatus       = "pool.status"
+	doctorReplacementSignalPoolReason       = "pool.reason"
+	doctorReplacementSignalPoolAction       = "pool.action"
+	doctorReplacementSignalPoolLive         = "pool.generations.live"
+	doctorReplacementSignalPoolDraining     = "pool.generations.draining"
+	doctorReplacementSignalQualVerdict      = "qualification.verdict"
+	doctorReplacementSignalQualReason       = "qualification.reason"
+	doctorReplacementSignalSessionsRunning  = "sessions.running"
+	doctorReplacementSignalSessionsLive     = "sessions.live"
+	doctorReplacementSignalSessionsDead     = "sessions.dead"
+	doctorReplacementSignalSessionsUnobs    = "sessions.unobservable"
 )
 
 // doctorReplacementSignalRoleResidualPrefix names one process role's residual
@@ -209,6 +231,13 @@ var doctorReplacementFixedSignalInventory = []string{
 	doctorReplacementSignalLedgerInstaller,
 	doctorReplacementSignalLedgerObserved,
 	doctorReplacementSignalLedgerResidual,
+	doctorReplacementSignalCutoffSeconds,
+	doctorReplacementSignalBeyondCutoff,
+	doctorReplacementSignalPassOutcome,
+	doctorReplacementSignalPassRefusal,
+	doctorReplacementSignalPassAttempted,
+	doctorReplacementSignalPassDrained,
+	doctorReplacementSignalPassReported,
 	doctorReplacementSignalRegistryObserved,
 	doctorReplacementSignalPoolStatus,
 	doctorReplacementSignalPoolReason,
@@ -431,6 +460,18 @@ type doctorReplacementInputs struct {
 	Residue        installResidueRecord
 	ResidueRecords int
 	ResidueOK      bool
+	// Cutoff is the drain cutoff this reader runs under. It is what turns the
+	// residual age distribution into a verdict: below it a residual process is
+	// a drain still in progress, above it the replacement is one this install
+	// is not going to finish. Zero means the adopted default.
+	Cutoff time.Duration
+	// Replacement is the last install replacement pass's own account of what
+	// it did, and ReplacementOK whether one was readable at all. The row
+	// reaches its verdict from the live census either way; this is what lets a
+	// reader tell a fleet nobody tried to replace from one where the attempt
+	// was made and refused.
+	Replacement   installReplacementOutcome
+	ReplacementOK bool
 	// Pool is the generation-pool diagnosis, nil when it was not read.
 	Pool *doctorCodexGenerationPool
 	// Sessions is the Running-versus-live-provider-session census.
@@ -441,7 +482,7 @@ type doctorReplacementInputs struct {
 func projectDoctorReplacement(in doctorReplacementInputs) doctorReplacementReport {
 	return doctorReplacementReport{Rows: []doctorReplacementRow{
 		projectDoctorReplacementImageRow(in.Image),
-		projectDoctorReplacementProcessRow(in.Processes, in.Residue, in.ResidueRecords, in.ResidueOK),
+		projectDoctorReplacementProcessRow(in),
 		projectDoctorReplacementProviderRow(in.Pool, in.Sessions),
 	}}
 }
@@ -513,7 +554,12 @@ func projectDoctorReplacementImageRow(image doctorInstalledImage) doctorReplacem
 // replacement from evidence that says nothing about it. A ledger record whose
 // own census observed nothing is silent for the same reason and is skipped by
 // the reader, so a run of silent records cannot stand in for an install.
-func projectDoctorReplacementProcessRow(vintage projmuxProcessVintage, residue installResidueRecord, records int, residueOK bool) doctorReplacementRow {
+func projectDoctorReplacementProcessRow(in doctorReplacementInputs) doctorReplacementRow {
+	vintage, residue, records, residueOK := in.Processes, in.Residue, in.ResidueRecords, in.ResidueOK
+	cutoff := in.Cutoff
+	if cutoff <= 0 {
+		cutoff = replacementDrainCutoff
+	}
 	row := doctorReplacementRow{Layer: doctorReplacementLayerProcesses, Subject: doctorReplacementSubjectProcesses}
 	if !vintage.Supported {
 		row.Replacement, row.Restoration = doctorReplacementUnknown, doctorRestorationUnknown
@@ -522,10 +568,13 @@ func projectDoctorReplacementProcessRow(vintage projmuxProcessVintage, residue i
 		return row
 	}
 	observed, replaced := vintage.Observed(), vintage.Replaced()
+	beyond := replacementResidualBeyondCutoff(vintage.Roles, cutoff)
 	signals := []string{
 		doctorReplacementSignalPlatform, "true",
 		doctorReplacementSignalProcessesObserved, strconv.Itoa(observed),
 		doctorReplacementSignalProcessesResidual, strconv.Itoa(replaced),
+		doctorReplacementSignalCutoffSeconds, strconv.FormatInt(int64(cutoff/time.Second), 10),
+		doctorReplacementSignalBeyondCutoff, strconv.Itoa(beyond),
 	}
 	// Roles keep the census order rather than the notice's biggest-first
 	// order: this row is read down a column against other runs, and a row
@@ -552,8 +601,32 @@ func projectDoctorReplacementProcessRow(vintage projmuxProcessVintage, residue i
 			doctorReplacementSignalLedgerResidual, strconv.Itoa(residue.Replaced),
 		)
 	}
+	// The last pass's account, when there is one. `replacement-not-attempted`
+	// is written by no pass: it is what this reader says when the record is
+	// absent, so an install that never ran the pass and a pass that ran and
+	// found nothing stay two different answers.
+	outcome := installReplacementOutcomeNotAttempted
+	if in.ReplacementOK {
+		outcome = in.Replacement.Outcome
+		signals = append(signals,
+			doctorReplacementSignalPassAttempted, strconv.Itoa(in.Replacement.Attempted),
+			doctorReplacementSignalPassDrained, strconv.Itoa(in.Replacement.Drained),
+			doctorReplacementSignalPassReported, strconv.Itoa(in.Replacement.Reported),
+		)
+		if refusal := strings.TrimSpace(in.Replacement.Refusal); refusal != "" {
+			signals = append(signals, doctorReplacementSignalPassRefusal, refusal)
+		}
+	}
+	signals = append(signals, doctorReplacementSignalPassOutcome, outcome)
 	row.Signals = doctorReplacementSignals(signals...)
 	switch {
+	case replaced > 0 && beyond > 0:
+		// The bounded drain's terminal state. The residual processes are still
+		// running and are left running: this row is the report the cutoff
+		// produces instead of a kill, and `restorable` stays true because the
+		// route that ends and relaunches them is the same one it always was.
+		row.Replacement, row.Restoration = doctorReplacementNotReplaced, doctorRestorationRestorable
+		row.Reason = doctorReplacementReasonCutoffReached
 	case replaced > 0:
 		row.Replacement, row.Restoration = doctorReplacementNotReplaced, doctorRestorationRestorable
 		row.Reason = doctorReplacementReasonResidualProcesses

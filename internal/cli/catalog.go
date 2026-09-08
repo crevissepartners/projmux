@@ -1963,6 +1963,11 @@ var routes = []Route{
 			// command projection: it is installer plumbing, not a command
 			// spelling a user reaches for.
 			"projmux internal install-residue",
+			// The install-side replacement pass, invoked by `make install`
+			// immediately before the census above. It is absent from the
+			// canonical projection for the same reason: installer plumbing,
+			// not a command spelling.
+			"projmux internal install-replace",
 		},
 		Canonical: []string{
 			"internal tmux",
