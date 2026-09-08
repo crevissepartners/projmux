@@ -2055,19 +2055,22 @@ func updateApplyVerificationPreviewLine() string {
 }
 
 func runUpdateExternal(name string, args []string, stdout, stderr io.Writer) error {
-	cmd := exec.Command(name, args...)
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
-	return cmd.Run()
+	return runUpdateExternalWithEnv(name, args, nil, stdout, stderr)
 }
 
 // runUpdateExternalWithEnv layers extra environment entries over the calling
 // process environment rather than replacing it. The child still sees
 // PROJMUX_PROJDIR and everything else the user's shell exported, so the
 // override decides only where `go install` writes.
+//
+// With no overrides it is the plain runner: a nil Env inherits the parent
+// environment, which is exactly what every command but the go publication
+// wants, so both spellings share one process launch.
 func runUpdateExternalWithEnv(name string, args []string, env []string, stdout, stderr io.Writer) error {
 	cmd := exec.Command(name, args...)
-	cmd.Env = append(os.Environ(), env...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return cmd.Run()
