@@ -4,6 +4,14 @@ read-only diagnostics; displayed remediation is never executed
 Dependencies
   Summary: 3 ok, 0 missing, 0 stale, 0 skipped, 0 hint.
 
+Replacement and restoration
+  [L1] installed-executable-image         replacement=unknown      restoration=unknown        reason=unsupported-platform
+       underlying: platform.observable=false
+  [L2] long-lived-projmux-processes       replacement=unknown      restoration=unknown        reason=unsupported-platform
+       underlying: platform.observable=false
+  [L3] provider-sessions-and-generations  replacement=unknown      restoration=unknown        reason=generation-pool-unobserved
+       underlying: registry.observed=true; pool.status=unobserved; sessions.running=0; sessions.live=0; sessions.dead=0; sessions.unobservable=0
+
 Runtime
   Summary: 2 info, 2 warning, 0 error.
   [warning] runtime.socket.unreachable; remediation: start-projmux-runtime

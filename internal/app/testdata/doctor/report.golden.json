@@ -70,6 +70,69 @@
       }
     ]
   },
+  "replacement": {
+    "rows": [
+      {
+        "layer": "L1",
+        "subject": "installed-executable-image",
+        "replacement": "unknown",
+        "restoration": "unknown",
+        "reason": "unsupported-platform",
+        "signals": [
+          {
+            "key": "platform.observable",
+            "value": "false"
+          }
+        ]
+      },
+      {
+        "layer": "L2",
+        "subject": "long-lived-projmux-processes",
+        "replacement": "unknown",
+        "restoration": "unknown",
+        "reason": "unsupported-platform",
+        "signals": [
+          {
+            "key": "platform.observable",
+            "value": "false"
+          }
+        ]
+      },
+      {
+        "layer": "L3",
+        "subject": "provider-sessions-and-generations",
+        "replacement": "unknown",
+        "restoration": "unknown",
+        "reason": "generation-pool-unobserved",
+        "signals": [
+          {
+            "key": "registry.observed",
+            "value": "true"
+          },
+          {
+            "key": "pool.status",
+            "value": "unobserved"
+          },
+          {
+            "key": "sessions.running",
+            "value": "0"
+          },
+          {
+            "key": "sessions.live",
+            "value": "0"
+          },
+          {
+            "key": "sessions.dead",
+            "value": "0"
+          },
+          {
+            "key": "sessions.unobservable",
+            "value": "0"
+          }
+        ]
+      }
+    ]
+  },
   "session_state_prune": "Snapshots are never automatically pruned; inspect stale candidates with `projmux prune snapshot` and delete only by explicit name.",
   "runtime": [
     {
