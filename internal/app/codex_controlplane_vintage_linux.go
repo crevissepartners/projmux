@@ -105,3 +105,22 @@ func readProcStartedAt(pid string) time.Time {
 	}
 	return info.ModTime()
 }
+
+// defaultProjmuxImageReplaced reports whether the image this process is running
+// has been unlinked out from under it.
+//
+// It is the vintage trigger's whole evidence, and it is one readlink of this
+// process's own executable link. `make install` publishes the new binary with a
+// rename, so a process that started before it keeps a mapping to a file that no
+// longer has a name, and the kernel says so with the `(deleted)` suffix. A link
+// that cannot be read answers false: an unreadable link is not evidence that an
+// install happened, and draining a runtime on no evidence would replace a
+// process for no reason.
+func defaultProjmuxImageReplaced() bool {
+	exe, err := os.Readlink("/proc/self/exe")
+	if err != nil {
+		return false
+	}
+	_, replaced := codexProcessImagePath(exe)
+	return replaced
+}

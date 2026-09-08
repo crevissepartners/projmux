@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/codexgeneration"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -32,6 +33,21 @@ func replacementQualified() *codexgeneration.QualificationResult {
 	return &codexgeneration.QualificationResult{Verdict: codexgeneration.VerdictYes, Reason: codexgeneration.ReasonQualified}
 }
 
+// replacementFreshResidualVintage is a fleet an install has just left behind:
+// residual processes whose ages are all inside the drain cutoff, so the drain
+// is still in progress rather than over its bound.
+func replacementFreshResidualVintage() projmuxProcessVintage {
+	return projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
+		{Role: codexControlPlaneRoleBroker, Processes: 1, Replaced: 1, ReplacedAgeSeconds: []int{412}},
+		{Role: projmuxProcessRoleSupervisor, Processes: 3, Current: 1, Replaced: 2, ReplacedAgeSeconds: []int{237, 2019}},
+	}}
+}
+
+// replacementResidualVintage is this repository's own fleet as one census read
+// it: five residual supervisors, the operator's attached session, and an
+// unnamed remainder, with the oldest at 606482 seconds. Every age past 86400
+// is over the adopted cutoff, which is why this fixture selects the cutoff
+// token rather than the plain residual one.
 func replacementResidualVintage() projmuxProcessVintage {
 	return projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
 		{Role: projmuxProcessRoleSupervisor, Processes: 5, Replaced: 5, ReplacedAgeSeconds: []int{6984, 9049, 232277, 583716, 583761}},
@@ -85,10 +101,22 @@ func replacementCases() []replacementCase {
 		},
 		{
 			name:        "L2 install left live children on the old image",
-			inputs:      doctorReplacementInputs{Processes: replacementResidualVintage()},
+			inputs:      doctorReplacementInputs{Processes: replacementFreshResidualVintage()},
 			layer:       doctorReplacementLayerProcesses,
 			replacement: doctorReplacementNotReplaced, restoration: doctorRestorationRestorable,
 			reason: doctorReplacementReasonResidualProcesses,
+		},
+		{
+			// The same fleet after the drain cutoff has passed. The verdict
+			// does not soften and the processes are not ended: the row states
+			// that this replacement is not going to complete, and restoration
+			// stays `restorable` because the route that ends and relaunches
+			// them is the one it always was.
+			name:        "L2 a residual process outlived the drain cutoff",
+			inputs:      doctorReplacementInputs{Processes: replacementResidualVintage()},
+			layer:       doctorReplacementLayerProcesses,
+			replacement: doctorReplacementNotReplaced, restoration: doctorRestorationRestorable,
+			reason: doctorReplacementReasonCutoffReached,
 		},
 		{
 			name: "L2 every observed child runs the installed image",
@@ -650,7 +678,7 @@ func TestDoctorRendersReplacementTableInDefaultRunAndSectionFilter(t *testing.T)
 			"[L2] long-lived-projmux-processes",
 			"[L3] provider-sessions-and-generations",
 			"replacement=not-replaced",
-			"reason=" + doctorReplacementReasonResidualProcesses,
+			"reason=" + doctorReplacementReasonCutoffReached,
 			"underlying: platform.observable=true",
 			"residual.oldest-seconds=606482",
 			// The named roles reach the rendered row, not only the record.
@@ -824,5 +852,111 @@ func TestReplacementProcessRolesMatchTheContractDocument(t *testing.T) {
 	// The remainder is documented last for the same reason it renders last.
 	if documented[len(documented)-1] != projmuxProcessRoleOther {
 		t.Fatalf("documented roles end with %q, want the remainder %q", documented[len(documented)-1], projmuxProcessRoleOther)
+	}
+}
+
+// TestDoctorReplacementProcessRowCarriesTheCutoffAndThePassAccount is the L2
+// half of the replacement guarantee, seen from the row an operator reads.
+//
+// A bounded drain that reported nothing would be indistinguishable from no
+// drain at all, and a row that said `replaced` while a residual process sat
+// past the cutoff would be the exact falsehood C-1's Assumption names. So the
+// row has to carry three things at once: the bound it judged against, how many
+// processes are past it, and what the last install pass actually did about
+// them.
+func TestDoctorReplacementProcessRowCarriesTheCutoffAndThePassAccount(t *testing.T) {
+	t.Parallel()
+
+	signalsOf := func(row doctorReplacementRow) map[string]string {
+		got := map[string]string{}
+		for _, signal := range row.Signals {
+			got[signal.Key] = signal.Value
+		}
+		return got
+	}
+
+	// A fleet past the cutoff, with the pass that tried and could not finish.
+	row := replacementRow(t, projectDoctorReplacement(doctorReplacementInputs{
+		Processes: replacementResidualVintage(),
+		Replacement: installReplacementOutcome{
+			Outcome: installReplacementOutcomePending, Supported: true,
+			Attempted: 1, Reported: 11, Refusal: "drain-required",
+		},
+		ReplacementOK: true,
+	}), doctorReplacementLayerProcesses)
+
+	if row.Replacement != doctorReplacementNotReplaced || row.Reason != doctorReplacementReasonCutoffReached {
+		t.Fatalf("row = %s/%s, want not-replaced/%s", row.Replacement, row.Reason, doctorReplacementReasonCutoffReached)
+	}
+	signals := signalsOf(row)
+	for key, want := range map[string]string{
+		doctorReplacementSignalCutoffSeconds: "86400",
+		// Three of the five supervisors, the attached session, and two of the
+		// unnamed remainder are past a day; the rest are inside it.
+		doctorReplacementSignalBeyondCutoff:  "6",
+		doctorReplacementSignalPassOutcome:   installReplacementOutcomePending,
+		doctorReplacementSignalPassRefusal:   "drain-required",
+		doctorReplacementSignalPassAttempted: "1",
+		doctorReplacementSignalPassDrained:   "0",
+		doctorReplacementSignalPassReported:  "11",
+	} {
+		if got := signals[key]; got != want {
+			t.Fatalf("signal %s = %q, want %q (row: %+v)", key, got, want, row.Signals)
+		}
+	}
+
+	// The cutoff travels with the reader, so a short one turns an ordinary
+	// residual fleet into the reported case. This is the branch the isolated
+	// smoke reaches.
+	short := replacementRow(t, projectDoctorReplacement(doctorReplacementInputs{
+		Processes: replacementFreshResidualVintage(),
+		Cutoff:    time.Minute,
+	}), doctorReplacementLayerProcesses)
+	if short.Reason != doctorReplacementReasonCutoffReached {
+		t.Fatalf("row under a one-minute cutoff = %s, want %s", short.Reason, doctorReplacementReasonCutoffReached)
+	}
+	if got := signalsOf(short)[doctorReplacementSignalCutoffSeconds]; got != "60" {
+		t.Fatalf("cutoff signal under a one-minute cutoff = %q, want 60", got)
+	}
+
+	// With no pass record the row still reaches its verdict from the live
+	// census, and it says the pass never ran rather than inventing one.
+	absent := replacementRow(t, projectDoctorReplacement(doctorReplacementInputs{
+		Processes: replacementFreshResidualVintage(),
+	}), doctorReplacementLayerProcesses)
+	if absent.Reason != doctorReplacementReasonResidualProcesses {
+		t.Fatalf("row with no pass record = %s, want %s", absent.Reason, doctorReplacementReasonResidualProcesses)
+	}
+	signals = signalsOf(absent)
+	if got := signals[doctorReplacementSignalPassOutcome]; got != installReplacementOutcomeNotAttempted {
+		t.Fatalf("outcome with no pass record = %q, want %q", got, installReplacementOutcomeNotAttempted)
+	}
+	for _, key := range []string{
+		doctorReplacementSignalPassAttempted,
+		doctorReplacementSignalPassDrained,
+		doctorReplacementSignalPassReported,
+		doctorReplacementSignalPassRefusal,
+	} {
+		if _, ok := signals[key]; ok {
+			t.Fatalf("signal %s present with no pass record; an absent account is not a zero one", key)
+		}
+	}
+
+	// A clean fleet is `replaced` and carries the cutoff it was judged against,
+	// so two runs can be compared without one of them hiding its bound.
+	clean := replacementRow(t, projectDoctorReplacement(doctorReplacementInputs{
+		Processes: projmuxProcessVintage{Supported: true, Roles: []projmuxProcessRoleVintage{
+			{Role: codexControlPlaneRoleBroker, Processes: 1, Current: 1},
+		}},
+		Replacement:   installReplacementOutcome{Outcome: installReplacementOutcomeComplete, Supported: true, Attempted: 1, Drained: 1},
+		ReplacementOK: true,
+	}), doctorReplacementLayerProcesses)
+	if clean.Replacement != doctorReplacementReplaced || clean.Reason != doctorReplacementReasonNoResidual {
+		t.Fatalf("clean row = %s/%s, want replaced/%s", clean.Replacement, clean.Reason, doctorReplacementReasonNoResidual)
+	}
+	signals = signalsOf(clean)
+	if signals[doctorReplacementSignalBeyondCutoff] != "0" ||
+		signals[doctorReplacementSignalPassOutcome] != installReplacementOutcomeComplete {
+		t.Fatalf("clean row signals = %+v", clean.Signals)
 	}
 }

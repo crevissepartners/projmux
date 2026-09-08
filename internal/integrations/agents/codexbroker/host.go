@@ -78,6 +78,17 @@ type HostConfig struct {
 	// Protocol is the local IPC version window this host serves. Zero means
 	// the window this build speaks.
 	Protocol ProtocolRange
+	// ImageReplaced reports whether the executable image this runtime is
+	// running has been replaced on disk since it started.
+	//
+	// It is the second entry condition of the drain this host already has, and
+	// it is injected rather than read here for two reasons. The fact is
+	// platform-specific -- it is a kernel-reported property of this process's
+	// own executable link -- and this package owns singletons, credentials, and
+	// protocol negotiation, not the question of where an installed binary
+	// lives. A nil reader means the runtime never drains on vintage, which is
+	// exactly the behavior every build had before this seam existed.
+	ImageReplaced func() bool
 }
 
 // Host is one broker runtime: the process-local singleton that owns one
@@ -94,6 +105,12 @@ type Host struct {
 	protocol   ProtocolRange
 	runtimeID  string
 	credential string
+	// imageReplaced is the vintage reader described on HostConfig. It is
+	// consulted at most once: vintage is monotonic -- an image that has been
+	// unlinked is never relinked -- so a runtime that has read `true` once has
+	// its answer forever, and a runtime still on the installed image pays one
+	// link read per arriving session rather than one per frame.
+	imageReplaced func() bool
 
 	listener   *net.UnixListener
 	socketInfo os.FileInfo
@@ -108,6 +125,7 @@ type Host struct {
 	mu       sync.Mutex
 	closing  bool
 	draining bool
+	vintaged bool
 	bindings int
 	stats    HostStats
 	timer    *time.Timer
@@ -148,18 +166,19 @@ func StartHost(cfg HostConfig) (*Host, error) {
 		return nil, refuse(RefusalRuntimeExists, err)
 	}
 	host := &Host{
-		discovery:   cfg.Discovery,
-		broker:      cfg.Broker,
-		idle:        cfg.IdleTimeout,
-		protocol:    cfg.Protocol.normalize(),
-		runtimeID:   runtimeID,
-		credential:  credential,
-		listener:    listener,
-		live:        make(map[*net.UnixConn]struct{}),
-		sessionRefs: make(map[string]*session),
-		done:        make(chan struct{}),
-		acceptReady: make(chan struct{}),
-		acceptDone:  make(chan struct{}),
+		discovery:     cfg.Discovery,
+		broker:        cfg.Broker,
+		idle:          cfg.IdleTimeout,
+		protocol:      cfg.Protocol.normalize(),
+		imageReplaced: cfg.ImageReplaced,
+		runtimeID:     runtimeID,
+		credential:    credential,
+		listener:      listener,
+		live:          make(map[*net.UnixConn]struct{}),
+		sessionRefs:   make(map[string]*session),
+		done:          make(chan struct{}),
+		acceptReady:   make(chan struct{}),
+		acceptDone:    make(chan struct{}),
 	}
 	if host.idle == 0 {
 		host.idle = defaultIdleTimeout
@@ -377,6 +396,30 @@ func (h *Host) drain() {
 	}
 }
 
+// drainOnVintage enters the drain when this runtime's own image has been
+// replaced on disk, and reports whether the caller must be refused.
+//
+// It is the whole of the vintage trigger. A runtime with no vintage reader is
+// never drained by it, a runtime that has already answered `true` does not read
+// the link again, and a runtime still on the installed image answers false and
+// serves the session normally.
+func (h *Host) drainOnVintage() bool {
+	h.mu.Lock()
+	reader, known := h.imageReplaced, h.vintaged
+	h.mu.Unlock()
+	if known {
+		return true
+	}
+	if reader == nil || !reader() {
+		return false
+	}
+	h.mu.Lock()
+	h.vintaged = true
+	h.mu.Unlock()
+	h.drain()
+	return true
+}
+
 // refusingWork reports the closed reason the runtime is no longer accepting
 // new work, or RefusalNone while it still is. A drain and a shutdown are told
 // apart because they call for different things from the caller: one waits for
@@ -451,6 +494,17 @@ func (h *Host) authenticate(conn *net.UnixConn, reader *bufio.Reader) (int, stri
 		// the replacement can take over once the work in flight is done, and
 		// tell the caller exactly that instead of failing anonymously.
 		h.drain()
+		h.refuseSession(conn, RefusalDrainRequired)
+		return 0, "", false, false
+	}
+	// The second entry condition, and the one an install reaches. A client
+	// whose protocol this runtime speaks may still be a different binary: an
+	// install publishes a new executable and leaves this process running the
+	// image it started with, so a compatible handshake proves nothing about
+	// vintage. Reading this runtime's own image here answers it, and the answer
+	// enters the same drain by the same door -- no new refusal, no new frame,
+	// and live work is still carried to its end rather than severed.
+	if h.drainOnVintage() {
 		h.refuseSession(conn, RefusalDrainRequired)
 		return 0, "", false, false
 	}
