@@ -121,7 +121,7 @@ func TestClaudePushSourceReplacementAfterDurableHandoffWritesZero(t *testing.T) 
 	poster := &qualificationPosterRecorder{outcome: claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}}
 	envelope := dialogueEnvelope("message-source-replaced", now.Add(time.Minute))
 	delivery := hub.submitPush(envelope, broker, poster)
-	if delivery.State != agentdelivery.StateFailed || delivery.Ambiguous || delivery.Reason != "provider-write-zero" || poster.calls != 0 {
+	if delivery.State != agentdelivery.StateFailed || delivery.Ambiguous || delivery.Reason != "provider-prewrite-refused" || poster.calls != 0 {
 		t.Fatalf("source replacement delivery=%+v writes=%d", delivery, poster.calls)
 	}
 }

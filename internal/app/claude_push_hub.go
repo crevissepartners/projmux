@@ -109,13 +109,18 @@ func (h *claudeCoordinationHub) submitPush(envelope claudeCoordinationEnvelope, 
 		return envelope.Deadline.After(h.now()) && broker.Current(*envelope.BrokerEnvelope)
 	})
 	if postErr != nil || !outcome.FullFrameWritten {
-		reason := "provider-write-zero"
-		if outcome.WroteAny {
+		reason := outcome.Reason
+		if outcome.WroteAny || outcome.FullFrameWritten {
 			reason = "provider-handoff-outcome-unknown"
+			if outcome.Reason == "provider-write-partial" && !outcome.FullFrameWritten {
+				reason = outcome.Reason
+			}
+		} else if !knownClaudeProviderFailureReason(reason) {
+			reason = "provider-prewrite-refused"
 		}
 		message.delivery, _ = agentdelivery.Reduce(message.delivery, agentdelivery.Event{
 			Kind: agentdelivery.EventFail, MessageRef: envelope.MessageRef, WaiterRef: handoffRef,
-			Reason: reason, OutcomeKnown: !outcome.WroteAny,
+			Reason: reason, OutcomeKnown: !outcome.WroteAny && !outcome.FullFrameWritten,
 		})
 		return message.delivery
 	}

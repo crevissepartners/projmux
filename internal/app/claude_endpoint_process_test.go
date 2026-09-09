@@ -40,7 +40,9 @@ inbox = socket.socket(socket.AF_UNIX)
 inbox.bind(path)
 os.chmod(path, 0o600)
 inbox.listen()
-token = secrets.token_hex(24)
+# Exercise the existing valid auth boundary; short qualification/message
+# frames still fit, while the rejection fixture can reach the full byte cap.
+token = secrets.token_hex(2048)
 os.environ['CLAUDE_CODE_MESSAGING_SOCKET'] = path
 os.environ['CLAUDE_CODE_MESSAGING_TOKEN'] = token
 capture = socket.socket(socket.AF_UNIX)
@@ -427,6 +429,65 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		}
 	}
 	qualify(first, "qualify-1")
+	t.Run("provider-frame-rejection-receipt", func(t *testing.T) {
+		const ref = "process-frame-rejection"
+		now := time.Now().UTC()
+		envelope := dialogueForRoute(ref, first, now)
+		envelope.BrokerEnvelope.Source = publicMessageRoute(sourceRoute)
+		envelope.BrokerEnvelope.ConversationRef = conversationRefFor(ref)
+		var expectedReason string
+		// Select from actual serialized bytes, not payload length. Keep the
+		// content valid so this fixture observes the frame cap specifically.
+		for count := 1; count <= coremessage.MaxPayloadBytes; count++ {
+			envelope.BrokerEnvelope.Payload = strings.Repeat("<", count)
+			content, err := providerCoordinationContent(envelope, binary)
+			if err != nil || !validClaudeAssistantReply(content) {
+				continue
+			}
+			size := len(serializedClaudeTestFrame(t, private.Token, content))
+			if size > 8192 {
+				expectedReason = fmt.Sprintf("provider-frame-too-large: frameBytes=%d limitBytes=8192", size)
+				break
+			}
+		}
+		if expectedReason == "" {
+			t.Fatal("fixture could not reach full-frame size rejection with valid content")
+		}
+		callCLI := func(args ...string) []byte {
+			t.Helper()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, binary, args...)
+			command.Dir = root
+			command.Env = claudeEndpointProcessEnv(root, binary)
+			output, err := command.CombinedOutput()
+			if bytes.Contains(output, []byte(private.Token)) || bytes.Contains(output, []byte(envelope.BrokerEnvelope.Payload)) {
+				t.Fatal("sender output exposed auth or payload")
+			}
+			if err != nil {
+				t.Fatalf("isolated sender command failed: %v", err)
+			}
+			return output
+		}
+		output := callCLI("agent", "message", "send", "uid:"+first.AgentUID, "--source", "uid:"+sourceRoute.AgentUID,
+			"--message-ref", ref, "--", envelope.BrokerEnvelope.Payload)
+		if !bytes.Contains(output, []byte(expectedReason)) || !bytes.Contains(output, []byte("reduce payload")) {
+			t.Fatalf("sender did not preserve frame size/action: %s", output)
+		}
+		var receipt agentMessageReceipt
+		if json.Unmarshal(callCLI("agent", "message", "status", ref, "-o", "json"), &receipt) != nil ||
+			receipt.Delivery.State != coremessage.StateFailed || receipt.Delivery.Reason != expectedReason || receipt.Delivery.OutcomeUnknown {
+			t.Fatal("status did not preserve known frame size rejection")
+		}
+		record, found, err := messageStore.Get(ref)
+		if err != nil || !found || record.Delivery != receipt.Delivery {
+			t.Fatal("public terminal receipt did not survive store reload")
+		}
+		t.Logf("provider frame rejection: state=%s reason=%s outcomeUnknown=%t",
+			receipt.Delivery.State, receipt.Delivery.Reason, receipt.Delivery.OutcomeUnknown)
+		// The provider's next receive below must still be process-message-1.
+		// An auth-only or partial rejection connection would fail that check.
+	})
 
 	send := func(route coremetadata.AgentRouteRef, ref, command string) {
 		t.Helper()

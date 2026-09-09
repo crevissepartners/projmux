@@ -539,7 +539,7 @@ func TestLiveClaudeAdapterDistinguishesPreDispatchWriteZeroFromMissingHelperResp
 		AcceptedAt: now, Deadline: now.Add(time.Minute)}
 	adapter := liveAgentMessageClaudeAdapter{}
 	known, err := adapter.Submit(context.Background(), fixture.registryPath+"-missing", fixture.route, envelope)
-	if err != nil || known.State != agentdelivery.StateFailed || known.Ambiguous || known.Reason != "provider-write-zero" {
+	if err != nil || known.State != agentdelivery.StateFailed || known.Ambiguous || known.Reason != "provider-prewrite-refused" {
 		t.Fatalf("pre-dispatch result=%+v err=%v", known, err)
 	}
 
