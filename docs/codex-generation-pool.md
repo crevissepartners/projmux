@@ -217,6 +217,11 @@ handover resume refuses before it drives any effect. A receipt qualifies the one
 pair it names and no other, and the refusal for a pair with no stored receipt
 names the two commands that produce and install one.
 
+`projmux doctor --section integrations` reports the saved version pairs and
+their verdicts even without a generation journal. Text, JSON, and support
+`doctor.json` distinguish an empty store from damaged or misfiled receipts;
+see [Stored Codex version-pair qualification](codex-stored-qualification.md).
+
 The same `receipt.json` also goes verbatim into the `qualification` field of an
 `agent app-server upgrade plan|apply --request <absolute>.json` document. The
 upgrade request requires that receipt's version pair to match the exact current
