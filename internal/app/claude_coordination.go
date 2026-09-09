@@ -132,6 +132,8 @@ type claudeCoordinationResponse struct {
 	Kind             string                       `json:"kind"`
 	Delivery         agentdelivery.Delivery       `json:"delivery,omitzero"`
 	ReplyRef         string                       `json:"replyRef,omitempty"`
+	ReplyCreated     bool                         `json:"replyCreated,omitempty"`
+	ReplyDelivery    *coremessage.Delivery        `json:"replyDelivery,omitempty"`
 	Reason           string                       `json:"reason,omitempty"`
 	QualificationRef string                       `json:"qualificationRef,omitempty"`
 	ProviderVersion  string                       `json:"providerVersion,omitempty"`
@@ -239,7 +241,7 @@ type claudeDialogueBroker interface {
 	Current(coremessage.Envelope) bool
 	MarkHandoff(coremessage.Envelope) error
 	MarkDelivered(coremessage.Envelope, time.Time) error
-	CommitReply(coremessage.Envelope, coremessage.Envelope) error
+	CommitReply(coremessage.Envelope, coremessage.Envelope) (bool, error)
 }
 
 type liveClaudeDialogueBroker struct {

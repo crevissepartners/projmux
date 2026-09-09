@@ -14,6 +14,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	"golang.org/x/sys/unix"
@@ -44,6 +46,42 @@ type Record struct {
 	Delivery        coremessage.Delivery `json:"delivery"`
 	Adapter         string               `json:"adapter"`
 	HandoffObserved bool                 `json:"handoffObserved,omitempty"`
+}
+
+// ReplyConflictError preserves the prior immutable attempt when a second
+// attempt cannot be authorized. The caller can report its public delivery
+// cause without exposing payload or provider-private errors.
+type ReplyConflictError struct {
+	Previous Record
+	Reason   string
+}
+
+func (e *ReplyConflictError) Error() string { return e.Reason }
+func (e *ReplyConflictError) Unwrap() error { return coremessage.ErrRetryMismatch }
+
+// KnownZeroReply is deliberately a closed list of Claude pre-write outcomes.
+// A false unknown flag alone is not evidence that delivery did not happen.
+// Codex delivery outcomes are outside this recovery contract.
+func KnownZeroReply(record Record) bool {
+	if record.Envelope.ReplyTo == "" || record.Adapter != "claude-coordination" || record.Delivery.OutcomeUnknown {
+		return false
+	}
+	if record.Delivery.State == coremessage.StateRefused {
+		return record.Delivery.Reason == "provider-frame-unsupported" || record.Delivery.Reason == "claude-private-frame-unsupported"
+	}
+	if record.Delivery.State != coremessage.StateFailed {
+		return false
+	}
+	switch record.Delivery.Reason {
+	case "provider-frame-invalid-auth", "provider-frame-invalid-content", "provider-frame-build-failed",
+		"provider-prewrite-refused", "provider-write-zero", "broker-handoff-persist-failed":
+		return true
+	}
+	value, ok := strings.CutPrefix(record.Delivery.Reason, "provider-frame-too-large: frameBytes=")
+	sizeText, _, separated := strings.Cut(value, " ")
+	size, err := strconv.Atoi(sizeText)
+	return ok && separated && err == nil && size > 8192 &&
+		record.Delivery.Reason == fmt.Sprintf("provider-frame-too-large: frameBytes=%d limitBytes=8192", size)
 }
 
 type diskState struct {
@@ -159,11 +197,6 @@ func (s *Store) PutAccepted(envelope coremessage.Envelope, adapter string) (Reco
 	return out, created, err
 }
 
-// PutReply atomically creates the single broker reply authorized by one
-// delivered Claude coordination message. The caller must present the current
-// exact reversed routes; native reply addresses and assistant wording are not
-// correlation authority. Replays return the same immutable record, while a
-// second or mismatched reply fails closed.
 // adapterForTarget keeps the stored adapter in step with the target provider.
 // A reply used to be pinned to the Codex inbox because that was the only
 // direction explicit replies could take.
@@ -174,6 +207,33 @@ func adapterForTarget(target coremessage.Route) string {
 	return "claude-coordination"
 }
 
+// Reply returns the latest durable attempt, including a failed attempt. It is
+// diagnostic evidence only; PutReply decides retry admission under one lock.
+func (s *Store) Reply(originalRef string) (Record, bool, error) {
+	if originalRef == "" {
+		return Record{}, false, coremessage.ErrInvalidEnvelope
+	}
+	var out Record
+	var found bool
+	err := s.withLock(func() error {
+		state, err := s.loadLocked()
+		if err != nil {
+			return err
+		}
+		for _, record := range state.Records {
+			if record.Envelope.ReplyTo == originalRef {
+				out, found = record, true
+			}
+		}
+		return nil
+	})
+	return out, found, err
+}
+
+// PutReply atomically authorizes one attempt on an exact reversed route. A
+// same-ref replay only returns its immutable receipt. A fresh ref can follow
+// known-zero failures while the original correlation is still live; every
+// earlier attempt remains stored and any other outcome closes this lane.
 func (s *Store) PutReply(originalRef, messageRef, payload string, source, target coremessage.Route, acceptedAt, deadline time.Time) (Record, bool, error) {
 	var out Record
 	var created bool
@@ -191,28 +251,44 @@ func (s *Store) PutReply(originalRef, messageRef, payload string, source, target
 		if originalIndex < 0 {
 			return ErrNotFound
 		}
-		candidate := replyEnvelope(state.Records[originalIndex].Envelope, messageRef, payload, source, target, acceptedAt, deadline)
+		original := state.Records[originalIndex]
+		candidate := replyEnvelope(original.Envelope, messageRef, payload, source, target, acceptedAt, deadline)
+		var previous Record
 		for i := range state.Records {
 			record := state.Records[i]
-			if record.Envelope.ReplyTo != originalRef {
+			if record.Envelope.MessageRef != messageRef {
 				continue
 			}
 			if record.Adapter != adapterForTarget(candidate.Target) || !record.Envelope.SameRetry(candidate) {
-				return coremessage.ErrRetryMismatch
+				return &ReplyConflictError{Previous: record, Reason: "reply-ref-envelope-mismatch"}
 			}
 			out = record
 			return nil
 		}
-		original := state.Records[originalIndex]
+		for _, record := range state.Records {
+			if record.Envelope.ReplyTo != originalRef {
+				continue
+			}
+			previous = record
+			if !KnownZeroReply(record) {
+				return &ReplyConflictError{Previous: record, Reason: "reply-already-committed"}
+			}
+		}
 		if original.Delivery.State != coremessage.StateDelivered ||
 			!source.Same(original.Envelope.Target) || !target.Same(original.Envelope.Source) {
-			return coremessage.ErrInvalidEnvelope
+			return &ReplyConflictError{Previous: previous, Reason: "invalid-explicit-reply-correlation"}
 		}
-		envelope := replyEnvelope(original.Envelope, messageRef, payload, source, target, acceptedAt, deadline)
+		if !original.Envelope.Deadline.After(s.clock()) || !deadline.After(s.clock()) {
+			return &ReplyConflictError{Previous: previous, Reason: "explicit-reply-deadline-expired"}
+		}
+		envelope := candidate
+		if envelope.Deadline.After(original.Envelope.Deadline) {
+			return &ReplyConflictError{Previous: previous, Reason: "explicit-reply-deadline-extended"}
+		}
 		if err := coremessage.ValidateReply(original.Envelope, envelope); err != nil {
 			return err
 		}
-		state.Records = pruneRecords(state.Records, s.clock())
+		// Recovery never removes or resets an old attempt to make room.
 		if len(state.Records) >= maxRecords {
 			return ErrCapacity
 		}
@@ -536,10 +612,24 @@ func (s *Store) writeLocked(state diskState) error {
 }
 
 func pruneRecords(records []Record, now time.Time) []Record {
+	// A live original and its attempts form one durable idempotency boundary.
+	// Evicting a delivered/unknown reply while retaining the original would
+	// make a later fresh ref look like the first attempt after store reload.
+	protected := make(map[string]bool)
+	for _, record := range records {
+		if record.Envelope.Target.Provider == "claude" && record.Envelope.Deadline.After(now) && record.Delivery.State == coremessage.StateDelivered {
+			protected[record.Envelope.MessageRef] = true
+		}
+	}
+	for _, record := range records {
+		if protected[record.Envelope.ReplyTo] {
+			protected[record.Envelope.MessageRef] = true
+		}
+	}
 	cutoff := now.Add(-terminalRetention)
 	out := records[:0]
 	for _, record := range records {
-		if record.Delivery.State.Terminal() && !record.Delivery.TerminalAt.IsZero() && record.Delivery.TerminalAt.Before(cutoff) {
+		if !protected[record.Envelope.MessageRef] && record.Delivery.State.Terminal() && !record.Delivery.TerminalAt.IsZero() && record.Delivery.TerminalAt.Before(cutoff) {
 			continue
 		}
 		out = append(out, record)
@@ -553,7 +643,7 @@ func pruneRecords(records []Record, now time.Time) []Record {
 	for len(out) >= maxRecords {
 		index := -1
 		for i := range out {
-			if out[i].Delivery.State.Terminal() {
+			if out[i].Delivery.State.Terminal() && !protected[out[i].Envelope.MessageRef] {
 				index = i
 				break
 			}
