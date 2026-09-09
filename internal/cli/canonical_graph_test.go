@@ -15,8 +15,9 @@ import (
 // one digest, so any change to the public command contract has to be made on
 // purpose.
 //
-// The baseline last moved when explicit exact-version Claude target
-// qualification joined the provider-neutral Agent message routes. The prior
+// The baseline last moved when the send summary described --source as an
+// anchor rather than caller authentication. The prior move added exact-version
+// Claude target qualification to the provider-neutral Agent message routes. An earlier
 // move added message and wait on top of steer's explicit provider-acceptance
 // summary. The earlier
 // move added the Project lifecycle verbs:
@@ -34,7 +35,7 @@ func TestCanonicalCommandGraphProjectionMatchesBaseline(t *testing.T) {
 			route.Spelling, route.Summary, strings.Join(route.Sources, ","),
 			outputModesString(route.Outputs), fieldProjectionsString(route.Fields))
 	}
-	const want = "8b265f47d45824a904b3673b18d8745f04793df0e76e3a692566302f28fc7e8e"
+	const want = "3aab3a6da088ea0c8b2b2c268d2cd7d035339b4376a55c8f798d6c7ae0e536bd"
 	if got := fmt.Sprintf("%x", sha256.Sum256([]byte(baseline.String()))); got != want {
 		t.Fatalf("canonical command projection digest = %s, want %s\n%s", got, want, baseline.String())
 	}

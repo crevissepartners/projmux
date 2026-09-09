@@ -130,7 +130,7 @@ projmux agent app-server upgrade resume|abort --operation <ref>
 projmux agent app-server handover plan|apply --request <absolute-json>
 projmux agent app-server handover resume|abort --operation <ref>
 projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]
-projmux agent message send <agent-ref> [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
+projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
 projmux agent message status <message-ref> [-o json]
 projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json
 projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]
@@ -150,7 +150,7 @@ Subcommands:
 | [`projmux agent usage`](#projmux-agent-usage) | Read provider account usage quota snapshots |
 | [`projmux agent app-server`](#projmux-agent-app-server) | Manage explicitly requested private Codex app-server generation operations |
 | [`projmux agent capabilities`](#projmux-agent-capabilities) | Read static provider support or one exact Agent's Registry-backed runtime eligibility |
-| [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages through exact Agent activations |
+| [`projmux agent message`](#projmux-agent-message) | Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
 | [`projmux agent wait`](#projmux-agent-wait) | Wait read-only for one exact Agent's Registry-backed idle observation |
 
 Canonical spelling: `projmux agent status`, `projmux agent topic`, `projmux agent resume`, `projmux agent turn start`, `projmux agent turn steer`, `projmux agent turn interrupt`, `projmux agent approval review`, `projmux agent review`, `projmux agent integrate`, `projmux agent usage`, `projmux agent app-server upgrade qualify`, `projmux agent app-server upgrade plan`, `projmux agent app-server upgrade apply`, `projmux agent app-server upgrade resume`, `projmux agent app-server upgrade abort`, `projmux agent app-server handover plan`, `projmux agent app-server handover apply`, `projmux agent app-server handover resume`, `projmux agent app-server handover abort`, `projmux agent capabilities`, `projmux agent message send`, `projmux agent message status`, `projmux agent message qualify`, `projmux agent wait`
@@ -736,7 +736,7 @@ Output modes (`-o`): `json`
 
 ### `projmux agent message`
 
-Exchange bounded untrusted coordination messages through exact Agent activations
+Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane)
 
 Selectorless authority: `refusal` — there is no safe selectorless action; refuse before output or mutation.
 
@@ -752,7 +752,7 @@ Allowed effects:
 - `domain-effect=agent-delivery`
 
 ```
-projmux agent message send <agent-ref> [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
+projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
 projmux agent message status <message-ref> [-o json]
 projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json
 ```
@@ -761,7 +761,7 @@ Subcommands:
 
 | Route | Summary |
 | --- | --- |
-| [`projmux agent message send`](#projmux-agent-message-send) | Submit a bounded coordination message from the current exact Agent |
+| [`projmux agent message send`](#projmux-agent-message-send) | Submit bounded peer coordination; --source selects a source Agent anchor, not caller authentication (default: active Pane) |
 | [`projmux agent message status`](#projmux-agent-message-status) | Read a payload-free broker delivery receipt |
 | [`projmux agent message qualify`](#projmux-agent-message-qualify) | Explicitly qualify one exact Claude target using owned current-version isolation evidence and one marker push |
 
@@ -769,7 +769,7 @@ Canonical spelling: `projmux agent message send`, `projmux agent message status`
 
 #### `projmux agent message send`
 
-Submit a bounded coordination message from the current exact Agent
+Submit bounded peer coordination; --source selects a source Agent anchor, not caller authentication (default: active Pane)
 
 Selectorless authority: `explicit-target` — the route or caller must name the exact target.
 
@@ -785,7 +785,7 @@ Allowed effects:
 - `domain-effect=agent-delivery`
 
 ```
-projmux agent message send <agent-ref> [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
+projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>
 ```
 
 #### `projmux agent message status`

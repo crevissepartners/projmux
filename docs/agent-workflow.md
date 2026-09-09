@@ -1126,6 +1126,17 @@
   `TestAgentMessageReplyReturnsOnlyToOriginalSourceConversation` pin exact
   current-Pane source authority, exact target eligibility before effects,
   same-envelope retry without resend, and broker-owned reply correlation.
+- `TestCoordinationContentLabelsSourceClaimsForBothProviders` pins claimed,
+  unverified source Agent/provider notices, including wrong UID/provider
+  fixtures, while preserving exact routing metadata, untrusted payload, and
+  peer permission and reply boundaries in both provider contents.
+- `TestAgentMessageSendSourceAnchorAndOmittedFallbackPreserveRouteAndPeerAuthority`
+  pins explicit source anchors, omitted-source active Pane fallback, refusal
+  without an anchor, and unchanged exact routes and peer authority.
+- `TestAgentMessageSourceAnchorCatalogHelpAndGeneratedDocsParity` pins
+  `--source` usage and its anchor (not caller authentication) meaning across
+  agent/message/send catalog, help, and generated CLI reference sections;
+  `TestGeneratedReferenceMatchesTheCommandManifest` rejects stale docs.
 - `TestClaudePrivateProjectionPreservesPublicBoundaryAndAmbiguity`,
   `TestLiveClaudeAdapterMapsTerminalResponseKindsWithoutDelivery`,
   `TestLiveClaudeAdapterRefusesPublicValidEnvelopeThatExceedsPrivateFrame`, and
