@@ -111,6 +111,32 @@ The `Codex app-server` result keeps four readiness axes separate:
 remain separate supporting fields. A ready endpoint therefore does not hide an
 unmanaged process or version skew.
 
+When a current Codex activation records a different endpoint generation from
+the running default endpoint, `Codex endpoint generation comparison` lists each
+affected Agent by exact `uid:` selector. The comparison uses the activation's
+`endpointGenerationID` and the observed running version, independently of the
+installed CLI version. It reports an observed interruption risk during endpoint
+replacement (2026-09-09, n=1), with causality undetermined; interruption is not
+certain. This is a snapshot valid before the next replacement, and performs no
+recovery or process mutation.
+
+The census includes bound Codex activations across every Project and Window in
+the managed Registry, even if their Agent phase is stale. Offline conversation
+history without a current activation is excluded. A complete comparison with no
+mismatches emits no comparison block. An unreadable Registry or missing,
+inconsistent, orphaned, or unobservable activation produces an `unavailable` or
+`incomplete` enumeration signal; confirmed mismatches remain visible alongside
+those gaps. A foreign Codex state domain, opaque generation, or a present or
+unreadable generation pool is unobservable from the default daemon probe.
+Private pool generations can also have version-shaped IDs, so Doctor does not
+infer their running endpoint from that spelling or from admission-current.
+
+The additive `codex_endpoint_mismatch` JSON field carries the same mismatch set,
+enumeration gaps, and evidence strength without changing the schema version.
+Support report `doctor.json` preserves those counts and closed evidence fields;
+Agent and generation IDs retain the support report's normal deterministic
+hashes. Exact Agent selectors are available in ordinary Doctor text and JSON.
+
 `external-cli-only` states only two observed facts: the ordinary Codex CLI
 exists, and the managed standalone payload was not observed. It does not mean
 the ordinary CLI is unsupported, identify how that CLI was installed, or prove

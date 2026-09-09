@@ -51,6 +51,8 @@ type doctorCommand struct {
 	readRegistry       func() (coremetadata.Registry, error)
 	codexGeneration    func(coremetadata.Registry) *doctorCodexGenerationPool
 	codexQualification func() *doctorCodexQualification
+	// codexEndpointDomain resolves the existing canonical Codex state root without creating it.
+	codexEndpointDomain func() (string, error)
 	// codexPayloadFreeCapability is the same immutable record seam consumed by
 	// the create planner. Doctor only projects it; it never runs qualification or
 	// mutates a provider lifecycle.
@@ -179,6 +181,9 @@ func newDoctorCommand() *doctorCommand {
 	c.readGeneratedConfig = doctorReadRegularFileBounded
 	c.readRegistry = snapshotResourceRegistry
 	c.codexQualification = c.readCodexQualification
+	c.codexEndpointDomain = func() (string, error) {
+		return defaultCodexStateDomainID(c.getenv, os.UserHomeDir)
+	}
 	c.codexGeneration = func(registry coremetadata.Registry) *doctorCodexGenerationPool {
 		paths, err := configPaths(os.UserHomeDir, c.getenv)
 		if err != nil {
@@ -253,6 +258,7 @@ type doctorReport struct {
 	Dependencies         []doctorResult                       `json:"dependencies"`
 	AINotifyIntegrations []doctorAINotifyIntegration          `json:"ai_notify_integrations"`
 	CodexAppServer       *codexappserver.Health               `json:"codex_app_server,omitempty"`
+	CodexEndpointRisks   *doctorCodexEndpointMismatch         `json:"codex_endpoint_mismatch,omitempty"`
 	CodexBroker          *codexBrokerDiagnostic               `json:"codex_broker,omitempty"`
 	CodexAuthority       *codexAuthorityCensus                `json:"codex_authority,omitempty"`
 	CodexGenerationPool  *doctorCodexGenerationPool           `json:"codex_generation_pool,omitempty"`
@@ -402,21 +408,23 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 			broker := c.brokerDiagnostic()
 			report.CodexBroker = &broker
 		}
-		if c.codexAuthority != nil && c.readRegistry != nil {
-			// The snapshot read is the zero-write Registry read, so asking
-			// about managed Agents on a machine that never created a Project
-			// still creates nothing.
-			if registry, err := c.readRegistry(); err == nil {
-				census := censusCodexLifecycleAuthority(registry, c.codexAuthority)
-				report.CodexAuthority = &census
+		if c.readRegistry != nil && (c.codexAuthority != nil || c.codexGeneration != nil || c.codexEndpointDomain != nil) {
+			registry, err := c.readRegistry()
+			if err == nil {
+				if c.codexAuthority != nil {
+					census := censusCodexLifecycleAuthority(registry, c.codexAuthority)
+					report.CodexAuthority = &census
+				}
 				if c.codexGeneration != nil {
 					report.CodexGenerationPool = c.codexGeneration(registry)
 				}
 			}
-		} else if c.codexGeneration != nil && c.readRegistry != nil {
-			if registry, err := c.readRegistry(); err == nil {
-				report.CodexGenerationPool = c.codexGeneration(registry)
+			if c.codexEndpointDomain != nil {
+				domain, domainErr := c.codexEndpointDomain()
+				report.CodexEndpointRisks = diagnoseCodexEndpointMismatch(registry, err, domain, domainErr, report.CodexGenerationPool, report.CodexAppServer)
 			}
+		} else if c.codexEndpointDomain != nil {
+			report.CodexEndpointRisks = &doctorCodexEndpointMismatch{Status: "unavailable", Reason: "registry-unavailable"}
 		}
 		controlPlane := projectCodexControlPlaneSurfaces(
 			report.CodexBroker,
@@ -608,6 +616,7 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
 		writeDoctorIntegrationsText(&buf, report.AINotifyIntegrations, verbose)
 		writeDoctorAppServerText(&buf, report.CodexAppServer)
+		writeDoctorCodexEndpointMismatchText(&buf, report.CodexEndpointRisks)
 		writeDoctorCodexBrokerText(&buf, report.CodexBroker)
 		writeDoctorCodexAuthorityText(&buf, report.CodexAuthority)
 		writeDoctorCodexGenerationText(&buf, report.CodexGenerationPool)
@@ -1009,6 +1018,7 @@ type doctorJSONReport struct {
 	Dependencies         *[]doctorResult                       `json:"dependencies,omitempty"`
 	AINotifyIntegrations *[]doctorAINotifyIntegration          `json:"ai_notify_integrations,omitempty"`
 	CodexAppServer       *codexappserver.Health                `json:"codex_app_server,omitempty"`
+	CodexEndpointRisks   *doctorCodexEndpointMismatch          `json:"codex_endpoint_mismatch,omitempty"`
 	CodexBroker          *codexBrokerDiagnostic                `json:"codex_broker,omitempty"`
 	CodexAuthority       *codexAuthorityCensus                 `json:"codex_authority,omitempty"`
 	CodexGenerationPool  *doctorCodexGenerationPool            `json:"codex_generation_pool,omitempty"`
@@ -1033,6 +1043,7 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
 		out.AINotifyIntegrations = &report.AINotifyIntegrations
 		out.CodexAppServer = report.CodexAppServer
+		out.CodexEndpointRisks = report.CodexEndpointRisks
 		out.CodexBroker = report.CodexBroker
 		out.CodexAuthority = report.CodexAuthority
 		out.CodexGenerationPool = report.CodexGenerationPool

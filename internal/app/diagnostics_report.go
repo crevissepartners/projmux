@@ -271,7 +271,7 @@ func redactDoctorJSON(value any, key string) {
 				continue
 			}
 			if text, ok := child.(string); ok && text != "" {
-				if !doctorSafeStringValues[childKey][text] && !safeCodexDiagnosticVersion(key, childKey, text) && !safeCodexQualificationString(key, childKey, text) {
+				if !doctorSafeStringValues[childKey][text] && !safeCodexDiagnosticVersion(key, childKey, text) && !safeCodexQualificationString(key, childKey, text) && !safeDoctorCodexEndpointMismatchString(key, childKey, text) {
 					typed[childKey] = supportHash(childKey, text)
 				}
 			} else {
