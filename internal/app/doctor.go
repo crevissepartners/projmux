@@ -48,8 +48,9 @@ type doctorCommand struct {
 	// from. It is the snapshot read rather than the ordinary load so running
 	// diagnostics on a machine that never created a Project does not create the
 	// state directory as a side effect.
-	readRegistry    func() (coremetadata.Registry, error)
-	codexGeneration func(coremetadata.Registry) *doctorCodexGenerationPool
+	readRegistry       func() (coremetadata.Registry, error)
+	codexGeneration    func(coremetadata.Registry) *doctorCodexGenerationPool
+	codexQualification func() *doctorCodexQualification
 	// codexPayloadFreeCapability is the same immutable record seam consumed by
 	// the create planner. Doctor only projects it; it never runs qualification or
 	// mutates a provider lifecycle.
@@ -177,6 +178,7 @@ func newDoctorCommand() *doctorCommand {
 	c.resolveGeneratedConfig = func() (string, error) { return doctorGeneratedConfigPath(c.getenv, os.UserHomeDir) }
 	c.readGeneratedConfig = doctorReadRegularFileBounded
 	c.readRegistry = snapshotResourceRegistry
+	c.codexQualification = c.readCodexQualification
 	c.codexGeneration = func(registry coremetadata.Registry) *doctorCodexGenerationPool {
 		paths, err := configPaths(os.UserHomeDir, c.getenv)
 		if err != nil {
@@ -254,6 +256,7 @@ type doctorReport struct {
 	CodexBroker          *codexBrokerDiagnostic               `json:"codex_broker,omitempty"`
 	CodexAuthority       *codexAuthorityCensus                `json:"codex_authority,omitempty"`
 	CodexGenerationPool  *doctorCodexGenerationPool           `json:"codex_generation_pool,omitempty"`
+	CodexQualification   *doctorCodexQualification            `json:"codex_stored_qualification,omitempty"`
 	CodexPayloadFree     *codexgeneration.Projection          `json:"codex_payload_free_capability,omitempty"`
 	CodexControlPlane    *codexControlPlaneReport             `json:"codex_control_plane,omitempty"`
 	ProcessVintage       *projmuxProcessVintage               `json:"projmux_process_vintage,omitempty"`
@@ -385,6 +388,9 @@ func (c *doctorCommand) evaluateReportForTrigger(section doctorSection, trigger 
 		report.Dependencies = c.evaluate()
 	}
 	if section == doctorSectionAll || section == doctorSectionIntegrations {
+		if c.codexQualification != nil {
+			report.CodexQualification = c.codexQualification()
+		}
 		projection := projectCodexPayloadFree(c.codexPayloadFreeCapability)
 		report.CodexPayloadFree = &projection
 		report.AINotifyIntegrations = c.evaluateAINotifyIntegrations()
@@ -605,6 +611,7 @@ func writeDoctorText(w io.Writer, report doctorReport, section doctorSection, ve
 		writeDoctorCodexBrokerText(&buf, report.CodexBroker)
 		writeDoctorCodexAuthorityText(&buf, report.CodexAuthority)
 		writeDoctorCodexGenerationText(&buf, report.CodexGenerationPool)
+		writeDoctorCodexQualificationText(&buf, report.CodexQualification)
 		writeDoctorCodexPayloadFreeText(&buf, report.CodexPayloadFree)
 		writeDoctorCodexControlPlaneText(&buf, report.CodexControlPlane)
 	}
@@ -1005,6 +1012,7 @@ type doctorJSONReport struct {
 	CodexBroker          *codexBrokerDiagnostic                `json:"codex_broker,omitempty"`
 	CodexAuthority       *codexAuthorityCensus                 `json:"codex_authority,omitempty"`
 	CodexGenerationPool  *doctorCodexGenerationPool            `json:"codex_generation_pool,omitempty"`
+	CodexQualification   *doctorCodexQualification             `json:"codex_stored_qualification,omitempty"`
 	CodexPayloadFree     *codexgeneration.Projection           `json:"codex_payload_free_capability,omitempty"`
 	CodexControlPlane    *codexControlPlaneReport              `json:"codex_control_plane,omitempty"`
 	ProcessVintage       *projmuxProcessVintage                `json:"projmux_process_vintage,omitempty"`
@@ -1028,6 +1036,7 @@ func writeDoctorJSON(w io.Writer, report doctorReport, section doctorSection) er
 		out.CodexBroker = report.CodexBroker
 		out.CodexAuthority = report.CodexAuthority
 		out.CodexGenerationPool = report.CodexGenerationPool
+		out.CodexQualification = report.CodexQualification
 		out.CodexPayloadFree = report.CodexPayloadFree
 		out.CodexControlPlane = report.CodexControlPlane
 	}

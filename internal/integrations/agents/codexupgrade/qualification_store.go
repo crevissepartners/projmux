@@ -15,6 +15,8 @@ import (
 
 const qualificationDirName = "qualification"
 
+var ErrQualificationVersionPairMismatch = errors.New("stored Codex qualification receipt names another version pair")
+
 // QualificationStore is where a produced receipt waits for the gate.
 //
 // The producer already existed before this store did, and that was the whole
@@ -95,9 +97,59 @@ func (store *QualificationStore) Load(pair codexgeneration.VersionPair) (codexge
 		return codexgeneration.QualificationResult{}, false, fmt.Errorf("decode stored Codex qualification receipt: %w", err)
 	}
 	if result.Versions != pair {
-		return codexgeneration.QualificationResult{}, false, errors.New("stored Codex qualification receipt names another version pair")
+		return codexgeneration.QualificationResult{}, false, ErrQualificationVersionPairMismatch
 	}
 	return result, true, nil
+}
+
+type QualificationEntry struct {
+	Versions codexgeneration.VersionPair
+	Result   codexgeneration.QualificationResult
+	Err      error
+}
+
+// List reads every receipt independently of the generation journal. Entries
+// follow filename order and retain individual failures so a damaged receipt
+// cannot hide its siblings or be mistaken for an empty store. Temporary save
+// files are not receipts; malformed .json names are visible as failed entries
+// without passing their unvalidated names on to diagnostic consumers.
+func (store *QualificationStore) List() ([]QualificationEntry, error) {
+	if store == nil || !filepath.IsAbs(store.dir) {
+		return nil, errors.New("codex qualification store path is invalid")
+	}
+	files, err := os.ReadDir(store.dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var entries []QualificationEntry
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), ".json") {
+			continue
+		}
+		old, next, _ := strings.Cut(strings.TrimSuffix(file.Name(), ".json"), "_")
+		pair := codexgeneration.VersionPair{Old: old, New: next}
+		path, pathErr := store.Path(pair)
+		entry := QualificationEntry{}
+		switch {
+		case pathErr != nil || filepath.Base(path) != file.Name():
+			entry.Err = errors.New("stored Codex qualification receipt filename is invalid")
+		case !file.Type().IsRegular():
+			entry.Versions = pair
+			entry.Err = errors.New("stored Codex qualification receipt is not a regular file")
+		default:
+			entry.Versions = pair
+			var found bool
+			entry.Result, found, entry.Err = store.Load(pair)
+			if entry.Err == nil && !found {
+				entry.Err = errors.New("stored Codex qualification receipt disappeared during read")
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return entries, nil
 }
 
 // Save installs a produced receipt under the pair it names.
