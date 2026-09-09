@@ -355,8 +355,8 @@ func TestGetListJSONContextDoesNotChangeMetadataOrRegistry(t *testing.T) {
 		{
 			name: "default table",
 			args: []string{"windows", "--project", "alpha", "--window", "main"},
-			want: "NAME  STATUS  ACTIONS\n" +
-				"main  live    -\n",
+			want: "NAME  STATUS  ACTIONS  AGE\n" +
+				"main  live    -        2d\n",
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -75,7 +75,7 @@ var columnCatalog = map[columnSurfaceKey][]columnSpec{
 		{columnContext, "CONTEXT", false},
 		{columnSource, "SOURCE", false},
 		{columnObserved, "OBSERVED", false},
-		{columnAge, "AGE", false},
+		{columnAge, "AGE", true},
 	},
 	{columnResourceCLI, string(coremetadata.KindWindow)}: {
 		{columnKind, "KIND", false},
@@ -86,7 +86,7 @@ var columnCatalog = map[columnSurfaceKey][]columnSpec{
 		{columnSource, "SOURCE", false},
 		{columnObserved, "OBSERVED", false},
 		{columnProject, "PROJECT", false},
-		{columnAge, "AGE", false},
+		{columnAge, "AGE", true},
 	},
 	{columnResourceCLI, string(coremetadata.KindPane)}: {
 		{columnKind, "KIND", false},
@@ -100,7 +100,7 @@ var columnCatalog = map[columnSurfaceKey][]columnSpec{
 		{columnWindow, "WINDOW", false},
 		{columnAgent, "AGENT", false},
 		{columnTermination, "TERMINATION", false},
-		{columnAge, "AGE", false},
+		{columnAge, "AGE", true},
 	},
 	{columnResourceCLI, string(coremetadata.KindAgent)}: {
 		{columnKind, "KIND", false},
@@ -115,7 +115,7 @@ var columnCatalog = map[columnSurfaceKey][]columnSpec{
 		{columnWindow, "WINDOW", false},
 		{columnSession, "SESSION", false},
 		{columnTermination, "TERMINATION", false},
-		{columnAge, "AGE", false},
+		{columnAge, "AGE", true},
 	},
 	{columnRegistryPicker, ""}: {
 		{columnKind, "KIND", true},

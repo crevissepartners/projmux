@@ -1281,8 +1281,24 @@ if [[ "$("$bin" get windows --project "uid:$session_state_project_uid" -o uid | 
   echo "snapshot Registry projection did not remove the post-save Window" >&2
   exit 1
 fi
-# The restored one-Window target keeps its name/status/actions with KIND
+# The restored one-Window target keeps its name/status/actions/age with KIND
 # omitted only from compact; wide and JSON remain available for recovery.
+# Keep its AGE far from a day boundary during the separate CLI invocations.
+python3 - "$XDG_STATE_HOME/projmux/metadata/registry.json" "$session_state_project_uid" <<'RESTORED_AGE'
+import datetime
+import json
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+registry = json.loads(path.read_text())
+windows = [window for window in registry["windows"]
+           if window["metadata"]["ownerRef"]["uid"] == sys.argv[2]]
+assert len(windows) == 1, windows
+created = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=2, hours=12)
+windows[0]["metadata"]["createdAt"] = created.isoformat().replace("+00:00", "Z")
+path.write_text(json.dumps(registry) + "\n")
+RESTORED_AGE
 for restored_mode in default wide json; do
   restored_output_args=()
   if [[ "$restored_mode" != default ]]; then
@@ -1302,9 +1318,10 @@ compact = [line.split() for line in read("default").splitlines()]
 wide = [line.split() for line in read("wide").splitlines()]
 items = json.loads(read("json"))["items"]
 assert len(compact) == len(wide) == 2 and len(items) == 1
-assert compact[0] == ["NAME", "STATUS", "ACTIONS"]
+assert compact[0] == ["NAME", "STATUS", "ACTIONS", "AGE"]
 assert wide[0][:4] == ["KIND", "NAME", "STATUS", "ACTIONS"]
-assert len(compact[1]) == 3 and compact[1] == wide[1][1:4]
+assert len(compact[1]) == 4 and compact[1][:3] == wide[1][1:4]
+assert wide[0][-1] == "AGE" and compact[1][-1] == wide[1][-1] == "2d"
 assert wide[1][0] == "window" and items[0]["kind"] == "Window"
 assert compact[1][0] == items[0]["metadata"]["name"]
 RESTORED_COLUMNS
