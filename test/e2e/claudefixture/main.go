@@ -46,6 +46,7 @@ type coordinationContent struct {
 	Source          map[string]string `json:"source"`
 	Target          any               `json:"target"`
 	Payload         string            `json:"payload"`
+	SourceNotice    string            `json:"sourceNotice"`
 	ReplyAction     string            `json:"replyAction"`
 }
 

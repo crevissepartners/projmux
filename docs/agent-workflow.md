@@ -1230,8 +1230,10 @@
   composite authority before send; semantic barriers replace sleeps. The
   scenario requires exact UID/Pane/generation/message/conversation/reply
   receipts, Agent count two, Codex provider writes zero, and pre-removal
-  Registry/tmux/helper/socket/process residual checks. It does not require a
-  provider binary, model, network, or version matrix.
+  Registry/tmux/helper/socket/process residual checks. Its strict Claude content
+  fixture preserves `sourceNotice` and verifies claimed/unverified source,
+  caller-authentication limits, and untrusted payload semantics. It does not
+  require a provider binary, model, network, or version matrix.
 - The real-provider path is opt-in through `scripts/agent-dialogue-canary-setup.py`
   and `docs/heterogeneous-dialogue-canary.md`. It uses public reply-only activation,
   product observer/helper-memory evidence and separate qualification/idle claims.
