@@ -1814,6 +1814,22 @@ separate decision this measurement exists to inform.
 - `TestClaudePushSourceReplacementAfterDurableHandoffWritesZero` and
   `TestClaudeProviderPushFinalRouteCheckPrecedesSoleWrite` cover source/target
   authority loss across durable work and the final provider pre-write fence.
+- `TestClaudeProviderFrameSerializedByteBoundaryAndSafeRejection` fixes the
+  complete auth/user frame boundary at 8191/8192/8193 serialized bytes.
+  `TestClaudeProviderPostPreservesConstructionReasonBeforeAnyRouteOrWrite`
+  separates invalid auth/content from size rejection before route or write.
+  `TestClaudeProviderWriteReasonsRequireOneActualWrite` distinguishes actual
+  zero/partial writes and invalid-count/full-with-error unknown outcomes.
+  `TestClaudeProviderRejectionReasonsSurviveHubReceiptStatusAndStoreReload`
+  preserves reasons through helper and public receipts, terminal store reload,
+  sender recovery text, secret exclusion, and duplicate sends with zero retries.
+  `TestClaudeProviderRejectionResponseValidationIsClosedAndLegacyCompatible`
+  admits canonical numeric size details and legacy reasons while rejecting
+  inconsistent ambiguity and secret-bearing suffixes.
+  `TestClaudeEndpointProcessIntegration/provider-frame-rejection-receipt`
+  exercises the built binary's public send/status against the isolated provider:
+  size/action survive, credentials stay absent, and the rejected frame adds no
+  provider connection before the next expected message.
 - `TestClaudeExplicitMultipleRequestsAndHumanOverlapSelectOnlyNamedOriginal`
   requires an explicit choice of the original request; Stop text has no reply
   authority regardless of human activity or pending request count.

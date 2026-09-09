@@ -3,8 +3,10 @@ package app
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +22,7 @@ const claudeFrozenFrameProviderVersion = "2.1.263"
 type claudeProviderPostOutcome struct {
 	FullFrameWritten bool
 	WroteAny         bool
+	Reason           string
 }
 
 func (o claudeProviderPostOutcome) Ambiguous() bool {
@@ -48,17 +51,19 @@ type claudeProviderUserFrame struct {
 // buildClaudeProviderPushFrame owns the only permitted post-auth vendor frame.
 // Do not add a control, reply, status, or inferred frame to this boundary.
 func buildClaudeProviderPushFrame(token, content string) ([]byte, error) {
-	if token == "" || len(token) > 4096 || strings.ContainsAny(token, "\r\n\x00") ||
-		content == "" || !validClaudeAssistantReply(content) {
-		return nil, errors.New("claude provider push frame is unavailable")
+	if token == "" || len(token) > 4096 || strings.ContainsAny(token, "\r\n\x00") {
+		return nil, errors.New("provider-frame-invalid-auth")
+	}
+	if content == "" || !validClaudeAssistantReply(content) {
+		return nil, errors.New("provider-frame-invalid-content")
 	}
 	auth, err := json.Marshal(claudeProviderAuthFrame{Type: "auth", Token: token})
 	if err != nil {
-		return nil, errors.New("claude provider push frame is unavailable")
+		return nil, errors.New("provider-frame-build-failed")
 	}
 	message, err := json.Marshal(claudeProviderUserFrame{Type: "user", Message: claudeProviderUserMessage{Role: "user", Content: content}})
 	if err != nil {
-		return nil, errors.New("claude provider push frame is unavailable")
+		return nil, errors.New("provider-frame-build-failed")
 	}
 	frame := make([]byte, 0, len(auth)+len(message)+2)
 	frame = append(frame, auth...)
@@ -66,22 +71,55 @@ func buildClaudeProviderPushFrame(token, content string) ([]byte, error) {
 	frame = append(frame, message...)
 	frame = append(frame, '\n')
 	if len(frame) > claudeProviderFrameMaxBytes {
-		return nil, errors.New("claude provider push frame is unavailable")
+		return nil, errors.New(claudeProviderFrameSizeReason(len(frame)))
 	}
 	return frame, nil
+}
+
+// Reasons cross the helper/public boundary and are persisted in existing
+// receipts. Only closed tokens and canonical numeric frame sizes belong here;
+// never attach a marshal, socket, credential, content, or writer error.
+func claudeProviderFrameSizeReason(size int) string {
+	return fmt.Sprintf("provider-frame-too-large: frameBytes=%d limitBytes=%d", size, claudeProviderFrameMaxBytes)
+}
+
+func isClaudeProviderFrameSizeReason(reason string) bool {
+	value, ok := strings.CutPrefix(reason, "provider-frame-too-large: frameBytes=")
+	if !ok {
+		return false
+	}
+	sizeText, _, ok := strings.Cut(value, " ")
+	size, err := strconv.Atoi(sizeText)
+	return ok && err == nil && size > claudeProviderFrameMaxBytes && reason == claudeProviderFrameSizeReason(size)
+}
+
+func knownClaudeProviderFailureReason(reason string) bool {
+	switch reason {
+	case "provider-frame-invalid-auth", "provider-frame-invalid-content", "provider-frame-build-failed",
+		"provider-prewrite-refused", "provider-write-zero":
+		return true
+	default:
+		return isClaudeProviderFrameSizeReason(reason)
+	}
 }
 
 // writeClaudeProviderPushFrame makes exactly one write. Retrying a partial
 // provider write could duplicate a model-visible message and is forbidden.
 func writeClaudeProviderPushFrame(writer io.Writer, frame []byte) claudeProviderPostOutcome {
 	n, err := writer.Write(frame)
-	if n < 0 {
-		return claudeProviderPostOutcome{}
+	if n < 0 || n > len(frame) {
+		return claudeProviderPostOutcome{WroteAny: true, Reason: "provider-handoff-outcome-unknown"}
 	}
-	if n > len(frame) {
-		return claudeProviderPostOutcome{WroteAny: true}
+	if n == 0 {
+		return claudeProviderPostOutcome{Reason: "provider-write-zero"}
 	}
-	return claudeProviderPostOutcome{FullFrameWritten: err == nil && n == len(frame), WroteAny: n > 0}
+	if n < len(frame) {
+		return claudeProviderPostOutcome{WroteAny: true, Reason: "provider-write-partial"}
+	}
+	if err != nil {
+		return claudeProviderPostOutcome{WroteAny: true, Reason: "provider-handoff-outcome-unknown"}
+	}
+	return claudeProviderPostOutcome{FullFrameWritten: true, WroteAny: true}
 }
 
 type liveClaudeProviderPoster struct {
@@ -97,26 +135,29 @@ func (p *liveClaudeProviderPoster) Post(content string, fence func() bool) (clau
 		return p.current != nil && p.current() && (fence == nil || fence())
 	}
 	frame, err := buildClaudeProviderPushFrame(p.token, content)
-	if err != nil || !current() {
-		return claudeProviderPostOutcome{}, errors.New("claude provider push refused")
+	if err != nil {
+		return claudeProviderPostOutcome{Reason: err.Error()}, err
+	}
+	if !current() {
+		return claudeProviderPostOutcome{Reason: "provider-prewrite-refused"}, errors.New("claude provider push refused")
 	}
 	identity, err := inspectClaudeSocket(p.socket)
 	if err != nil || identity != p.socketIdentity {
-		return claudeProviderPostOutcome{}, errors.New("claude provider push refused")
+		return claudeProviderPostOutcome{Reason: "provider-prewrite-refused"}, errors.New("claude provider push refused")
 	}
 	connection, err := net.DialUnix("unix", nil, &net.UnixAddr{Name: p.socket, Net: "unix"})
 	if err != nil {
-		return claudeProviderPostOutcome{}, errors.New("claude provider push refused")
+		return claudeProviderPostOutcome{Reason: "provider-prewrite-refused"}, errors.New("claude provider push refused")
 	}
 	defer connection.Close()
 	_ = connection.SetDeadline(time.Now().Add(2 * time.Second))
 	peer, err := claudeadapter.PeerProcess(connection)
 	if err != nil || peer != p.process || !current() {
-		return claudeProviderPostOutcome{}, errors.New("claude provider push refused")
+		return claudeProviderPostOutcome{Reason: "provider-prewrite-refused"}, errors.New("claude provider push refused")
 	}
 	identity, err = inspectClaudeSocket(p.socket)
 	if err != nil || identity != p.socketIdentity || !current() {
-		return claudeProviderPostOutcome{}, errors.New("claude provider push refused")
+		return claudeProviderPostOutcome{Reason: "provider-prewrite-refused"}, errors.New("claude provider push refused")
 	}
 	outcome := writeClaudeProviderPushFrame(connection, frame)
 	if !outcome.FullFrameWritten {

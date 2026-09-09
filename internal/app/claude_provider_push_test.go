@@ -95,7 +95,7 @@ func TestClaudeProviderPushUsesOneWriteAndClassifiesUnknownOutcome(t *testing.T)
 		ambiguous bool
 	}{
 		{name: "zero byte known failure", n: 0, err: errors.New("closed")},
-		{name: "invalid negative count is known failure", n: -2, err: errors.New("invalid")},
+		{name: "invalid negative count is ambiguous", n: -2, err: errors.New("invalid"), wroteAny: true, ambiguous: true},
 		{name: "invalid oversized count is ambiguous", n: 6, err: errors.New("invalid"), wroteAny: true, ambiguous: true},
 		{name: "partial is ambiguous", n: 2, err: errors.New("short"), wroteAny: true, ambiguous: true},
 		{name: "full with error is ambiguous", n: -1, err: errors.New("post-write close"), wroteAny: true, ambiguous: true},

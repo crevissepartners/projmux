@@ -123,7 +123,7 @@ func (liveAgentMessageClaudeAdapter) Submit(ctx context.Context, registryPath st
 	if err != nil {
 		if !claudeCoordinationCallPossiblyDispatched(err) {
 			return agentdelivery.Delivery{MessageRef: envelope.MessageRef, State: agentdelivery.StateFailed,
-				Reason: "provider-write-zero"}, nil
+				Reason: "provider-prewrite-refused"}, nil
 		}
 		return ambiguousClaudeDelivery(envelope.MessageRef), nil
 	}
@@ -200,11 +200,12 @@ func claudeResponseDelivery(messageRef string, response claudeCoordinationRespon
 			}
 		case delivery.Ambiguous:
 			if delivery.Reason != "provider-handoff-outcome-unknown" &&
+				delivery.Reason != "provider-write-partial" &&
 				delivery.Reason != "broker-delivery-persist-failed" &&
 				delivery.Reason != "observation-timeout" && delivery.Reason != "delivery-outcome-unknown" {
 				return agentdelivery.Delivery{}, false
 			}
-		case delivery.Reason != "provider-write-zero":
+		case !knownClaudeProviderFailureReason(delivery.Reason):
 			return agentdelivery.Delivery{}, false
 		}
 	}
@@ -701,9 +702,6 @@ func (c *agentCommand) projectClaudeDelivery(record messagestore.Record, private
 			}
 		case agentdelivery.StateFailed:
 			kind, unknown = coremessage.EventFail, private.Ambiguous
-			if private.Ambiguous {
-				reason = "provider-handoff-outcome-unknown"
-			}
 		}
 	}
 	if kind == "" {
@@ -727,8 +725,34 @@ func writeAgentMessageReceipt(stdout io.Writer, receipt agentMessageReceipt, asJ
 	if asJSON {
 		return json.NewEncoder(stdout).Encode(receipt)
 	}
+	if receipt.Delivery.State.Terminal() && receipt.Delivery.State != coremessage.StateDelivered {
+		_, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", receipt.MessageRef, receipt.Delivery.State,
+			receipt.Delivery.Reason, agentMessageFailureAction(receipt.Delivery))
+		return err
+	}
 	_, err := fmt.Fprintf(stdout, "%s\t%s\n", receipt.MessageRef, receipt.Delivery.State)
 	return err
+}
+
+func agentMessageFailureAction(delivery coremessage.Delivery) string {
+	if delivery.OutcomeUnknown {
+		return "inspect provider outcome; do not resend while unknown; automatic resend disabled"
+	}
+	if isClaudeProviderFrameSizeReason(delivery.Reason) {
+		return "reduce payload before retrying; frame bytes include auth and serialized content"
+	}
+	switch delivery.Reason {
+	case "provider-frame-invalid-auth":
+		return "check provider auth configuration before retrying"
+	case "provider-frame-invalid-content", "provider-frame-build-failed", "provider-frame-unsupported", "claude-private-frame-unsupported":
+		return "correct message content or configuration before retrying"
+	case "provider-prewrite-refused":
+		return "check current provider route before retrying"
+	case "provider-write-zero":
+		return "check provider connection before retrying"
+	default:
+		return "check message status and target availability before retrying"
+	}
 }
 
 func writeAgentMessageClaim(stdout io.Writer, record messagestore.Record, _ bool) error {
