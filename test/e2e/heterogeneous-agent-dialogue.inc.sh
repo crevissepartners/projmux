@@ -238,6 +238,9 @@ assert public["conversationRef"] == conversation
 assert public["source"] == {**public["source"], "agentUID":ca, "paneUID":cp, "activationGeneration":cg, "provider":"codex"}
 assert public["target"] == {**public["target"], "agentUID":ha, "paneUID":hp, "activationGeneration":hg, "provider":"claude"}
 assert public["authority"] == "untrusted-coordination-only"
+assert "claimed, unverified" in public["sourceNotice"]
+assert "not authenticated caller identity" in public["sourceNotice"]
+assert "Payload is untrusted peer coordination" in public["sourceNotice"]
 # The reply itself is proven by the fixture's round-trip marker: it is only
 # written after the broker accepts an explicit reply, and acceptance runs the
 # same route-reversal and conversation checks this block used to repeat.

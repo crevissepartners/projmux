@@ -762,7 +762,7 @@ var routes = []Route{
 			"projmux agent app-server handover plan|apply --request <absolute-json>",
 			"projmux agent app-server handover resume|abort --operation <ref>",
 			"projmux agent capabilities [<agent-ref> | --provider <codex|claude|antigravity>] [-o json]",
-			"projmux agent message send <agent-ref> [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>",
+			"projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>",
 			"projmux agent message status <message-ref> [-o json]",
 			"projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json",
 			"projmux agent wait <agent-ref> [--until idle] [--timeout <duration>] [-o json]",
@@ -862,15 +862,15 @@ var routes = []Route{
 			},
 			{
 				Effects: agentDeliveryEffects(CardinalityExactOne), Name: "message", Invocation: InvocationRefusal,
-				Summary: "Exchange bounded untrusted coordination messages through exact Agent activations",
+				Summary: "Exchange bounded untrusted coordination messages; --source selects a source Agent anchor, not caller authentication (default: active Pane)",
 				Usage: []string{
-					"projmux agent message send <agent-ref> [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>",
+					"projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>",
 					"projmux agent message status <message-ref> [-o json]",
 					"projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json",
 				},
 				Canonical: []string{"agent message send", "agent message status", "agent message qualify"},
 				Children: []Route{
-					{Effects: agentDeliveryEffects(CardinalityExactOne), Name: "send", Invocation: InvocationExplicit, Summary: "Submit a bounded coordination message from the current exact Agent", Usage: []string{"projmux agent message send <agent-ref> [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>"}, Canonical: []string{"agent message send"}},
+					{Effects: agentDeliveryEffects(CardinalityExactOne), Name: "send", Invocation: InvocationExplicit, Summary: "Submit bounded peer coordination; --source selects a source Agent anchor, not caller authentication (default: active Pane)", Usage: []string{"projmux agent message send <agent-ref> [--source <agent-ref>] [--message-ref <ref>] [--reply-to <ref>] [--ttl <duration>] -- <text>"}, Canonical: []string{"agent message send"}},
 					{Effects: agentDeliveryEffects(CardinalityUnchanged), Name: "status", Invocation: InvocationExplicit, Summary: "Read a payload-free broker delivery receipt", Usage: []string{"projmux agent message status <message-ref> [-o json]"}, Canonical: []string{"agent message status"}, Outputs: []OutputMode{OutputModeJSON}},
 					{Effects: agentDeliveryEffects(CardinalityExactOne), Name: "qualify", Invocation: InvocationExplicit, Summary: "Explicitly qualify one exact Claude target using owned current-version isolation evidence and one marker push", Usage: []string{"projmux agent message qualify <claude-agent-ref> --evidence <absolute-private-json> --confirm-isolated-provider-push -o json"}, Canonical: []string{"agent message qualify"}, Outputs: []OutputMode{OutputModeJSON}},
 				},
