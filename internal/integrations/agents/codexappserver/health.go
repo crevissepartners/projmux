@@ -186,7 +186,7 @@ func (r OperatorRecovery) Guidance() string {
 	case OperatorRecoveryRestartManagedDaemon:
 		return "This interrupts every client sharing the app server. After confirming that interruption, run `codex app-server daemon restart`, then rerun diagnostics."
 	case OperatorRecoveryStopOwnerThenStart:
-		return "This app server is not daemon-managed. Close every sharing Codex client, stop the process through its owning operator, then run `codex app-server daemon start` and rerun diagnostics. Projmux will not kill or restart it."
+		return "This app server is not daemon-managed. Close every sharing Codex client, then run `codex app-server daemon bootstrap` and rerun diagnostics. The observed `pid` backend requires bootstrap again after reboot. Projmux will not kill or restart it."
 	case OperatorRecoveryInspectProcessOwnership:
 		return "Process ownership or running version is unknown. Identify the owning operator before changing the shared app server, then rerun diagnostics. Projmux will not kill or restart it."
 	default:

@@ -146,9 +146,12 @@ An explicit native action refuses a ready unmanaged or version-skewed endpoint.
 The refusal reports `shared-clients-disconnect`: replacing this shared process
 can interrupt every attached Codex client. For a managed skew, confirm the
 interruption and run `codex app-server daemon restart`. For an unmanaged
-endpoint, close every sharing client, stop the process through the operator
-that owns it, then run `codex app-server daemon start`. Projmux never performs
-those stop/restart steps or invents an ownership-specific kill command.
+endpoint, close every sharing Codex client, run
+`codex app-server daemon bootstrap`, then rerun diagnostics. The observed `pid`
+backend requires bootstrap again after reboot; this observation does not
+establish boot persistence for other backends. The unmanaged bootstrap
+prescription is absent for managed or unknown ownership. Projmux reports this
+operator-owned guidance without executing the recovery commands.
 
 A prompted managed Codex create also requires that endpoint. When it is not
 ready or not attachable, `projmux create codex -- "<prompt>"` refuses instead of
