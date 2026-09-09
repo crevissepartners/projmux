@@ -117,34 +117,34 @@ func TestGetListDefaultProjectionIsColumnar(t *testing.T) {
 	}{
 		{
 			kind: "projects",
-			want: "NAME   STATUS        ACTIONS\n" +
-				"alpha  live          -\n" +
-				"beta   offline       -\n" +
-				"gone   missing-root  -\n",
+			want: "NAME   STATUS        ACTIONS  AGE\n" +
+				"alpha  live          -        2d\n" +
+				"beta   offline       -        2d\n" +
+				"gone   missing-root  -        2d\n",
 		},
 		{
 			kind: "windows",
-			want: "NAME    STATUS        ACTIONS\n" +
-				"main    live          -\n" +
-				"review  live          -\n" +
-				"main    offline       -\n" +
-				"main    missing-root  -\n",
+			want: "NAME    STATUS        ACTIONS  AGE\n" +
+				"main    live          -        2d\n" +
+				"review  live          -        2d\n" +
+				"main    offline       -        2d\n" +
+				"main    missing-root  -        2d\n",
 		},
 		{
 			kind: "panes",
-			want: "NAME        STATUS        ACTIONS\n" +
-				"zsh         live          -\n" +
-				"log         live          -\n" +
-				"codex-pane  live          -\n" +
-				"review-zsh  live          -\n" +
-				"zsh         offline       -\n" +
-				"zsh         missing-root  -\n",
+			want: "NAME        STATUS        ACTIONS  AGE\n" +
+				"zsh         live          -        2d\n" +
+				"log         live          -        2d\n" +
+				"codex-pane  live          -        2d\n" +
+				"review-zsh  live          -        2d\n" +
+				"zsh         offline       -        2d\n" +
+				"zsh         missing-root  -        2d\n",
 		},
 		{
 			kind: "agents",
-			want: "NAME   STATUS   ACTIONS\n" +
-				"codex  live     -\n" +
-				"codex  offline  -\n",
+			want: "NAME   STATUS   ACTIONS  AGE\n" +
+				"codex  live     -        2d\n" +
+				"codex  offline  -        2d\n",
 		},
 	} {
 		t.Run(test.kind, func(t *testing.T) {
@@ -203,6 +203,110 @@ func TestGetHumanContextNoTransportKeepsStoredPresentationOutAndNameStable(t *te
 	if got := rows[0]; got["CONTEXT"] != "alpha" || got["SOURCE"] != "project-root-basename" ||
 		got["OBSERVED"] != "false" || got["NAME"] != "alpha" {
 		t.Fatalf("no-transport Project row = %v", got)
+	}
+}
+
+func TestGetListDefaultAgeMatchesWideAtFixedClock(t *testing.T) {
+	t.Parallel()
+	for _, route := range []struct {
+		uid  string
+		args []string
+	}{
+		{"prj-alpha", []string{"projects", "-p", "alpha"}},
+		{"win-alpha-main", []string{"windows", "-p", "alpha", "-w", "main"}},
+		{"pan-alpha-zsh", []string{"panes", "-p", "alpha", "--pane", "uid:pan-alpha-zsh"}},
+		{"agt-alpha-codex", []string{"agents", "-p", "alpha"}},
+	} {
+		t.Run(route.args[0], func(t *testing.T) {
+			t.Parallel()
+			for _, test := range []struct {
+				name    string
+				elapsed time.Duration
+				want    string
+			}{
+				{"now", 0, "0s"},
+				{"seconds", 9 * time.Second, "9s"},
+				{"before-minute", 59 * time.Second, "59s"},
+				{"minute", time.Minute, "1m"},
+				{"before-hour", time.Hour - time.Second, "59m"},
+				{"hour", time.Hour, "1h"},
+				{"before-day", 24*time.Hour - time.Second, "23h"},
+				{"day", 24 * time.Hour, "1d"},
+				{"long-age", 900 * 24 * time.Hour, "900d"},
+				{"future-created-at", -time.Hour, "0s"},
+				{"missing-created-at", 0, ""},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					store := newFakeResourceStore(t)
+					created := resourceFixtureReadClock
+					if test.name == "missing-created-at" {
+						created = time.Time{}
+					}
+					restampFixtureCreatedAt(t, store, route.uid, created)
+					command := newTestListGetCommand(t, store)
+					command.now = func() time.Time { return resourceFixtureReadClock.Add(test.elapsed) }
+					outputs := map[string]string{}
+					for _, mode := range []string{"default", "wide", "default-again"} {
+						args := slices.Clone(route.args)
+						if mode == "wide" {
+							args = append(args, "-o", mode)
+						}
+						stdout, stderr, err := runRoute(t, command, args...)
+						if err != nil || stderr != "" {
+							t.Fatalf("%v: %v stderr=%q", args, err, stderr)
+						}
+						outputs[mode] = stdout
+						rows := columnarRows(t, stdout)
+						if len(rows) != 1 || rows[0]["AGE"] != test.want {
+							t.Fatalf("%s AGE = %v, want one row with AGE %q", mode, rows, test.want)
+						}
+					}
+					if outputs["default"] != outputs["default-again"] {
+						t.Fatal("the same clock produced different default tables")
+					}
+					compact, wide := columnarRows(t, outputs["default"])[0], columnarRows(t, outputs["wide"])[0]
+					for _, field := range []string{"NAME", "STATUS", "ACTIONS", "AGE"} {
+						if compact[field] != wide[field] {
+							t.Fatalf("%s differs: default=%q wide=%q", field, compact[field], wide[field])
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestResourceTableDefaultAgeUnavailableIsEmpty(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		kind coremetadata.Kind
+		uid  string
+	}{
+		{coremetadata.KindProject, "prj-alpha"},
+		{coremetadata.KindWindow, "win-alpha-main"},
+		{coremetadata.KindPane, "pan-alpha-zsh"},
+		{coremetadata.KindAgent, "agt-alpha-codex"},
+	} {
+		for _, missing := range []string{"resource", "clock"} {
+			t.Run(string(test.kind)+"/missing-"+missing, func(t *testing.T) {
+				registry, now := resourceFixtureRegistry(t), resourceFixtureReadClock
+				if missing == "resource" {
+					registry = coremetadata.NewRegistry()
+				} else {
+					now = time.Time{}
+				}
+				match := selector.Match{Kind: test.kind, UID: test.uid, Name: "stable", Status: selector.StatusOffline}
+				for _, profile := range []columnProfile{columnCompact, columnWide} {
+					var out bytes.Buffer
+					if err := writeResourceTable(&out, "get", test.kind, []selector.Match{match}, registry, now, profile, nil); err != nil {
+						t.Fatal(err)
+					}
+					if row := columnarRows(t, out.String())[0]; row["AGE"] != "" || row["NAME"] != "stable" {
+						t.Fatalf("%s unavailable AGE did not stay empty: %v", profile, row)
+					}
+				}
+			})
+		}
 	}
 }
 
@@ -273,10 +377,10 @@ func TestResourceTableColumnsAreTheCanonicalContract(t *testing.T) {
 		kind coremetadata.Kind
 		want []string
 	}{
-		{coremetadata.KindProject, []string{"NAME", "STATUS", "ACTIONS"}},
-		{coremetadata.KindWindow, []string{"NAME", "STATUS", "ACTIONS"}},
-		{coremetadata.KindPane, []string{"NAME", "STATUS", "ACTIONS"}},
-		{coremetadata.KindAgent, []string{"NAME", "STATUS", "ACTIONS"}},
+		{coremetadata.KindProject, []string{"NAME", "STATUS", "ACTIONS", "AGE"}},
+		{coremetadata.KindWindow, []string{"NAME", "STATUS", "ACTIONS", "AGE"}},
+		{coremetadata.KindPane, []string{"NAME", "STATUS", "ACTIONS", "AGE"}},
+		{coremetadata.KindAgent, []string{"NAME", "STATUS", "ACTIONS", "AGE"}},
 	} {
 		got := columnHeaders(resourceTableColumns(test.kind, columnCompact))
 		if strings.Join(got, ",") != strings.Join(test.want, ",") {

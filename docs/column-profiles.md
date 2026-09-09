@@ -1,13 +1,18 @@
 # Column profiles
 
 Plural Registry reads (`get projects|windows|panes|agents`) now default to
-`NAME STATUS ACTIONS`. The route already selects the resource kind. Runtime
+`NAME STATUS ACTIONS AGE`. The route already selects the resource kind. Runtime
 reads default to their identity, containment, and classification columns. Use `-o wide` (or `--output wide`) to print the full
 column profile. Terminal width and data length never select a profile.
 
-Removing KIND changes these four default tables from four columns to three and
-moves NAME, STATUS and ACTIONS one position left. Existing positional parsers
-can break; request `-o wide` or recover each resource's `kind` from `-o json`.
+Adding AGE changes these four default tables from three columns to four, keeping
+NAME, STATUS and ACTIONS in their existing positions. AGE uses the same stored
+creation timestamp and formatter as wide; unavailable ages remain empty cells.
+The AGE header and a two-cell gap add five display cells when ages fit within
+three cells; longer ages widen the table further. Resource CLI output is not
+clipped at COLUMNS 40/80/112, so narrow terminals can wrap earlier.
+Positional parsers must account for the added field; each resource's `kind`
+remains available in `-o wide` and `-o json`.
 Mixed Registry/Runtime pickers keep KIND in both profiles.
 
 Scripts that need diagnostic columns must request `-o wide` or a structured projection explicitly. Registry JSON items
@@ -18,15 +23,15 @@ projections retain their contracts, as do singular reads and selector cardinalit
 
 | Surface / kind | Default | Wide |
 | --- | --- | --- |
-| Registry Project | NAME STATUS ACTIONS | KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED AGE |
-| Registry Window | NAME STATUS ACTIONS | KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT AGE |
-| Registry Pane | NAME STATUS ACTIONS | KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT WINDOW AGENT TERMINATION AGE |
-| Registry Agent | NAME STATUS ACTIONS | KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED INTERACTION PROJECT WINDOW SESSION TERMINATION AGE |
+| Registry Project | NAME STATUS ACTIONS AGE | KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED AGE |
+| Registry Window | NAME STATUS ACTIONS AGE | KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT AGE |
+| Registry Pane | NAME STATUS ACTIONS AGE | KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT WINDOW AGENT TERMINATION AGE |
+| Registry Agent | NAME STATUS ACTIONS AGE | KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED INTERACTION PROJECT WINDOW SESSION TERMINATION AGE |
 | Runtime Session | SESSION NAME CLASS | SESSION NAME CLASS UID RESOURCE REASON |
 | Runtime Window | WINDOW SESSION NAME CLASS | WINDOW SESSION NAME CLASS UID RESOURCE REASON |
 | Runtime Pane | PANE WINDOW TITLE CLASS | PANE WINDOW TITLE CLASS UID RESOURCE REASON |
 
-Registry defaults omit KIND, CONTEXT, SOURCE, OBSERVED, AGE and each kind's owner-chain,
+Registry defaults omit KIND, CONTEXT, SOURCE, OBSERVED and each kind's owner-chain,
 INTERACTION, SESSION and TERMINATION diagnostics shown in the wide column above.
 Runtime defaults omit UID, RESOURCE and REASON. Wide retains their full values;
 stdout is unbounded and copyable, including long names, context, provider session

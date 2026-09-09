@@ -1368,11 +1368,11 @@ if [[ "$legacy_window_name_before" == "$alpha_window_name" ]]; then
 fi
 pmx get windows --project alpha >"$create_root/alpha-windows-compact.out"
 if ! awk -v stable="$alpha_window_name" '
-  NR == 1 { header = NF == 3 && $1 == "NAME" && $2 == "STATUS" && $3 == "ACTIONS" }
-  NR == 2 { row = NF == 3 && $1 == stable }
+  NR == 1 { header = NF == 4 && $1 == "NAME" && $2 == "STATUS" && $3 == "ACTIONS" && $4 == "AGE" }
+  NR == 2 { row = NF == 4 && $1 == stable }
   END { exit !(header && row) }
 ' "$create_root/alpha-windows-compact.out"; then
-  echo "legacy Window compact projection lost its durable name or three-field shape" >&2
+  echo "legacy Window compact projection lost its durable name or four-field shape" >&2
   exit 1
 fi
 pmx get windows --project alpha -o wide >"$create_root/alpha-windows-table.out"
@@ -2504,11 +2504,12 @@ read = lambda mode: (root / f"compact-kind-{route}-{mode}.out").read_text()
 compact = [line.split() for line in read("default").splitlines()]
 wide = [line.split() for line in read("wide").splitlines()]
 items = json.loads(read("json"))["items"]
-assert compact[0] == ["NAME", "STATUS", "ACTIONS"], compact[0]
+assert compact[0] == ["NAME", "STATUS", "ACTIONS", "AGE"], compact[0]
 assert wide[0][:4] == ["KIND", "NAME", "STATUS", "ACTIONS"], wide[0]
 assert len(compact) == len(wide) == len(items) + 1 and items, route
 for row, recovered, item in zip(compact[1:], wide[1:], items):
-    assert len(row) == 3 and row == recovered[1:4], (route, row, recovered)
+    assert len(row) == 4 and row[:3] == recovered[1:4], (route, row, recovered)
+    assert wide[0][-1] == "AGE" and row[-1] and recovered[-1], (route, row, recovered)
     assert recovered[0] == kind and item["kind"].lower() == kind, item
     assert row[0] == item["metadata"]["name"], (row, item)
 assert read("default-empty") == read("wide-empty") == "", route

@@ -32,10 +32,10 @@ func TestColumnCatalogCompletenessBijectionAndExactProfiles(t *testing.T) {
 		surface             columnSurface
 		kind, compact, wide string
 	}{
-		{columnResourceCLI, "Project", "NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED AGE"},
-		{columnResourceCLI, "Window", "NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT AGE"},
-		{columnResourceCLI, "Pane", "NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT WINDOW AGENT TERMINATION AGE"},
-		{columnResourceCLI, "Agent", "NAME STATUS ACTIONS", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED INTERACTION PROJECT WINDOW SESSION TERMINATION AGE"},
+		{columnResourceCLI, "Project", "NAME STATUS ACTIONS AGE", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED AGE"},
+		{columnResourceCLI, "Window", "NAME STATUS ACTIONS AGE", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT AGE"},
+		{columnResourceCLI, "Pane", "NAME STATUS ACTIONS AGE", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED PROJECT WINDOW AGENT TERMINATION AGE"},
+		{columnResourceCLI, "Agent", "NAME STATUS ACTIONS AGE", "KIND NAME STATUS ACTIONS CONTEXT SOURCE OBSERVED INTERACTION PROJECT WINDOW SESSION TERMINATION AGE"},
 		{columnRegistryPicker, "", "KIND NAME STATUS ACTIONS", "KIND NAME STATUS PROGRESS TERMINATION ACTIONS RUNTIME UID"},
 		{columnRuntimeCLI, "session", "SESSION NAME CLASS", "SESSION NAME CLASS UID RESOURCE REASON"},
 		{columnRuntimeCLI, "window", "WINDOW SESSION NAME CLASS", "WINDOW SESSION NAME CLASS UID RESOURCE REASON"},
@@ -271,8 +271,8 @@ func TestColumnProfilesExactOutputAndSnapshotParity(t *testing.T) {
 					if row["ACTIONS"] != want {
 						t.Fatalf("%s %s actions=%q want=%q", kind, ids[i], row["ACTIONS"], want)
 					}
-					if mode == "default" && len(strings.Fields(strings.Split(strings.TrimSpace(stdout), "\n")[i+1])) != 3 {
-						t.Fatal("compact row is not three shell fields")
+					if mode == "default" && len(strings.Fields(strings.Split(strings.TrimSpace(stdout), "\n")[i+1])) != 4 {
+						t.Fatal("compact row is not four shell fields")
 					}
 				}
 			} else {
@@ -348,7 +348,8 @@ func assertColumnReadCounters(t *testing.T, store *fakeResourceStore, primary, s
 }
 
 func TestColumnProfilesDoNotSelectFromWidthAndWideIsUnbounded(t *testing.T) {
-	for _, width := range []string{"80", "120"} {
+	defaults := map[string]string{}
+	for _, width := range []string{"40", "80", "112", "120"} {
 		t.Setenv("COLUMNS", width)
 		command, _, _, _, _ := columnFixture(t)
 		stdout, _, err := runRoute(t, command, "agents", "-A", "--output", "wide")
@@ -358,13 +359,28 @@ func TestColumnProfilesDoNotSelectFromWidthAndWideIsUnbounded(t *testing.T) {
 		if !strings.Contains(stdout, "codex:thread-"+strings.Repeat("long-value-", 12)) || !strings.Contains(stdout, "릴리스 검토 "+strings.TrimSpace(strings.Repeat("full context ", 12))) {
 			t.Fatalf("width %s clipped wide values", width)
 		}
-		command, _, _, _, _ = columnFixture(t)
-		stdout, _, err = runRoute(t, command, "agents", "-A")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !slices.Equal(strings.Fields(strings.Split(stdout, "\n")[0]), []string{"NAME", "STATUS", "ACTIONS"}) {
-			t.Fatalf("width %s selected a different default", width)
+		for _, kind := range []string{"projects", "windows", "panes", "agents"} {
+			command, _, _, _, _ = columnFixture(t)
+			args := []string{kind}
+			if kind != "projects" {
+				args = append(args, "-A")
+			}
+			stdout, _, err = runRoute(t, command, args...)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(strings.Fields(strings.Split(stdout, "\n")[0]), []string{"NAME", "STATUS", "ACTIONS", "AGE"}) {
+				t.Fatalf("width %s %s selected a different default", width, kind)
+			}
+			for _, row := range columnarRows(t, stdout) {
+				if row["AGE"] != "2d" {
+					t.Fatalf("width %s %s lost AGE: %v", width, kind, row)
+				}
+			}
+			if first, ok := defaults[kind]; ok && stdout != first {
+				t.Fatalf("width %s changed %s default output", width, kind)
+			}
+			defaults[kind] = stdout
 		}
 	}
 }
@@ -465,18 +481,18 @@ func TestCompactResourceKindOmissionPreservesScopedRowsAndRecovery(t *testing.T)
 				if !slices.Equal(ids, strings.Fields(test.uids)) {
 					t.Fatalf("selector/order = %v, want %s", ids, test.uids)
 				}
-				if got := strings.Fields(strings.Split(outputs["default"], "\n")[0]); !slices.Equal(got, []string{"NAME", "STATUS", "ACTIONS"}) {
-					t.Fatalf("compact header = %v, want NAME STATUS ACTIONS", got)
+				if got := strings.Fields(strings.Split(outputs["default"], "\n")[0]); !slices.Equal(got, []string{"NAME", "STATUS", "ACTIONS", "AGE"}) {
+					t.Fatalf("compact header = %v, want NAME STATUS ACTIONS AGE", got)
 				}
 				compact, wide := columnarRows(t, outputs["default"]), columnarRows(t, outputs["wide"])
 				if len(compact) != len(ids) || len(wide) != len(ids) || len(document.Items) != len(ids) {
 					t.Fatal("profile changed row cardinality")
 				}
 				for i, row := range compact {
-					if len(row) != 3 || wide[i]["KIND"] != strings.ToLower(test.kind) || document.Items[i].Kind != test.kind {
+					if len(row) != 4 || wide[i]["KIND"] != strings.ToLower(test.kind) || document.Items[i].Kind != test.kind {
 						t.Fatalf("compact kind leaked or recovery lost kind: compact=%v wide=%v json=%+v", row, wide[i], document.Items[i])
 					}
-					for _, field := range []string{"NAME", "STATUS", "ACTIONS"} {
+					for _, field := range []string{"NAME", "STATUS", "ACTIONS", "AGE"} {
 						if row[field] != wide[i][field] {
 							t.Fatalf("row %d %s lost full value: compact=%q wide=%q", i, field, row[field], wide[i][field])
 						}
