@@ -1175,6 +1175,34 @@
 - `TestClaudeExplicitReplyRejectsForeignStaleAndAlteredCorrelationBeforeCommit`
   covers foreign refs, altered conversations, stale generations/incarnations,
   reversed-route mismatch, and a wrong qualification response with commit zero.
+- `TestClaudeExplicitReplyKnownZeroManualRetryPublicReceiptsAndReload` and
+  `TestStoreExplicitReplyKnownZeroManualRetrySurvivesReload` pin the documented
+  [manual reply recovery](agent-message-replies.md): a known-zero failure keeps
+  its immutable receipt, same-ref calls write zero, and a fresh corrected ref
+  delivers once with the original conversation, reversed routes, deadline and
+  peer authority. Public stderr and text/JSON status preserve cause and ref.
+- `TestClaudeExplicitReplyPartialUnknownExpiredAndStaleNeverDuplicate`,
+  `TestStoreExplicitReplyNonzeroUnknownAndExpiredNeverRetry`, and
+  `TestStoreExplicitReplyRetryKeepsDeadlineAndExactRoute` reject delivered,
+  partial/unknown, pending, expired and stale retries, including store reload,
+  false-unknown-flag and unrecognized-reason cases; Codex retry policy stays
+  unchanged. `TestStoreExplicitReplyConcurrentAttemptsAndCapacityPreserveReceipts`
+  permits only one concurrent new attempt and prevents capacity pruning from
+  reopening a live reply relationship.
+- `TestClaudeExplicitReplyGuardRetryRetainsQualificationAndRouteFences` keeps
+  known-zero recovery behind the existing exact qualification, provider caller,
+  route and bounded-command gates. `TestClaudeEndpointProcessIntegration/explicit-reply-known-zero-manual-retry`
+  runs the public CLI as the synthetic provider's real descendant: invalid
+  content fails with stderr/ref/action, a corrected manual reply reaches the
+  provider once, same/different-ref duplicates write zero, and independent
+  public status processes preserve both attempts. The provider checks for
+  unexpected queued connections before exit.
+- `TestClaudeExplicitReplyAcknowledgementRequiresFreshDispatchProof` refuses
+  legacy or malformed acknowledgements without granting a push; replay replies
+  use a distinct response kind that older callers also cannot dispatch.
+  `TestClaudeExplicitReplyStoreRefusalsKeepCauseAndUnknownReservation` preserves
+  bounded busy/capacity/missing/malformed store causes, frees only proven
+  pre-write refusals, and keeps an ambiguous persistence attempt reserved.
 - `TestClaudeExplicitMultipleRequestsAndHumanOverlapSelectOnlyNamedOriginal`
   permits an explicit reply to B then A across human activity, rejects a second
   reply to either request, and never chooses correlation by arrival order.

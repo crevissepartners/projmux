@@ -270,7 +270,10 @@ func (h *claudeCoordinationHub) permitsExplicitTool(argv []string, route coremet
 	defer h.mu.Unlock()
 	h.expireQualificationLocked(h.now())
 	message := h.messages[argv[6]]
-	if h.closed || broker == nil || message == nil || message.envelope.BrokerEnvelope == nil || message.delivery.State != agentdelivery.StateDelivered || message.replyReserved || message.replyRef != "" || !message.envelope.Deadline.After(h.now()) {
+	if h.closed || broker == nil || message == nil || message.envelope.BrokerEnvelope == nil || message.delivery.State != agentdelivery.StateDelivered || message.replyReserved || !message.envelope.Deadline.After(h.now()) {
+		return false
+	}
+	if message.replyRef != "" && !knownZeroExplicitReply(broker, message.envelope.MessageRef) {
 		return false
 	}
 	original := message.envelope.BrokerEnvelope

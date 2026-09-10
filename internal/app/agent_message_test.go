@@ -674,7 +674,7 @@ func TestAgentMessageLifecycleLeavesInteractionAndBadgeAuthorityUntouched(t *tes
 			agent.Status.Interaction = coremetadata.AgentInteraction{Kind: interaction, Source: string(coremetadata.InteractionSourceProviderControl), ObservedAt: resourceFixtureClock}
 			before := h.registry.Clone()
 			store := messagestore.NewStore(t.TempDir())
-			now := resourceFixtureClock.Add(time.Minute)
+			now := time.Now().UTC()
 			original := coremessage.Envelope{Version: coremessage.Version, MessageRef: "message-badge-" + string(interaction),
 				ConversationRef: "conversation-badge-" + string(interaction),
 				Source: coremessage.Route{AgentUID: h.agentUID, PaneUID: h.paneUID, ActivationGeneration: h.envGeneration,
@@ -698,7 +698,7 @@ func TestAgentMessageLifecycleLeavesInteractionAndBadgeAuthorityUntouched(t *tes
 			}
 			replyAt := now.Add(2 * time.Second)
 			if _, _, err := store.PutReply(original.MessageRef, "reply-badge-"+string(interaction), "answer",
-				original.Target, original.Source, replyAt, replyAt.Add(time.Minute)); err != nil {
+				original.Target, original.Source, replyAt, original.Deadline); err != nil {
 				t.Fatal(err)
 			}
 			if reply, claimed, err := store.Claim(original.Source, replyAt.Add(time.Second)); err != nil || !claimed ||

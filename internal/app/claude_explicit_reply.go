@@ -3,12 +3,14 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 )
 
@@ -38,10 +40,10 @@ func claudeProviderDescendant(peer, provider coremetadata.ProcessIdentity) bool 
 
 func (a liveAgentMessageClaudeAdapter) ExplicitReply(ctx context.Context, registryPath string,
 	source coremetadata.AgentRouteRef, reply coremessage.Envelope,
-) (string, error) {
+) (string, bool, error) {
 	target, ok := claudeTargetForRoute(source)
 	if !ok {
-		return "", coremessage.ErrInvalidEnvelope
+		return "", false, coremessage.ErrInvalidEnvelope
 	}
 	ctx, cancel := context.WithTimeout(ctx, localipc.Deadline)
 	defer cancel()
@@ -49,23 +51,55 @@ func (a liveAgentMessageClaudeAdapter) ExplicitReply(ctx context.Context, regist
 		Version: claudeCoordinationVersion, Operation: "explicit-reply", Target: target,
 		SessionID: target.Authority.SessionID, ReplyEnvelope: &reply,
 	})
-	if err != nil || response.Kind != "reply-accepted" || response.ReplyRef != reply.MessageRef || response.AutoResend {
-		return "", errors.New("exact explicit reply was not acknowledged; do not resend")
+	if err != nil || response.Version != claudeCoordinationVersion || response.AutoResend {
+		return "", false, fmt.Errorf("replyRef=%s: explicit-reply-outcome-unknown; inspect message status; do not resend", reply.MessageRef)
 	}
-	return response.ReplyRef, nil
+	if response.Kind == "reply-refused" {
+		return "", false, explicitReplyRefusal(response)
+	}
+	if response.ReplyRef != reply.MessageRef || response.Reason != "" || response.ReplyDelivery != nil ||
+		(response.Kind != "reply-accepted" || !response.ReplyCreated) && (response.Kind != "reply-replayed" || response.ReplyCreated) {
+		return "", false, fmt.Errorf("replyRef=%s: invalid-explicit-reply-receipt; inspect message status; do not resend", reply.MessageRef)
+	}
+	return response.ReplyRef, response.ReplyCreated, nil
 }
 
-func (b *liveClaudeDialogueBroker) CommitReply(original, reply coremessage.Envelope) error {
+func explicitReplyRefusal(response claudeCoordinationResponse) error {
+	action := "inspect original and previous reply status; do not resend"
+	if response.ReplyDelivery != nil {
+		return fmt.Errorf("%s; previousRef=%s state=%s reason=%s outcomeUnknown=%t; %s",
+			response.Reason, response.ReplyRef, response.ReplyDelivery.State, response.ReplyDelivery.Reason,
+			response.ReplyDelivery.OutcomeUnknown, action)
+	}
+	return fmt.Errorf("%s; previousRef=%s; %s", response.Reason, response.ReplyRef, action)
+}
+
+func (b *liveClaudeDialogueBroker) ReplyStatus(originalRef string) (messagestore.Record, bool, error) {
+	return b.store.Reply(originalRef)
+}
+
+func knownZeroExplicitReply(broker claudeDialogueBroker, originalRef string) bool {
+	lookup, ok := broker.(interface {
+		ReplyStatus(string) (messagestore.Record, bool, error)
+	})
+	if !ok {
+		return false
+	}
+	record, found, err := lookup.ReplyStatus(originalRef)
+	return err == nil && found && messagestore.KnownZeroReply(record)
+}
+
+func (b *liveClaudeDialogueBroker) CommitReply(original, reply coremessage.Envelope) (bool, error) {
 	// The reply target is no longer pinned to Codex. Plain homogeneous sends
 	// already succeed through the broker, so refusing only their replies left a
 	// lane that half worked and reported no reason for the half that did not.
 	if b == nil || b.store == nil || coremessage.ValidateReply(original, reply) != nil ||
 		!original.Deadline.After(time.Now()) || !b.Current(reply) {
-		return coremessage.ErrInvalidEnvelope
+		return false, coremessage.ErrInvalidEnvelope
 	}
-	_, _, err := b.store.PutReply(original.MessageRef, reply.MessageRef, reply.Payload, reply.Source,
+	_, created, err := b.store.PutReply(original.MessageRef, reply.MessageRef, reply.Payload, reply.Source,
 		reply.Target, reply.AcceptedAt, reply.Deadline)
-	return err
+	return created, err
 }
 
 // commitExplicitReply selects the broker's original request by ref, never by
@@ -77,14 +111,33 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	refuse := func(reason string) claudeCoordinationResponse {
-		return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: reason}
+		response := claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-refused", Reason: reason}
+		if lookup, ok := broker.(interface {
+			ReplyStatus(string) (messagestore.Record, bool, error)
+		}); ok {
+			if previous, found, err := lookup.ReplyStatus(reply.ReplyTo); err == nil && found {
+				response.ReplyRef, response.ReplyDelivery = previous.Envelope.MessageRef, &previous.Delivery
+			}
+		}
+		if response.ReplyRef == "" {
+			if message := h.messages[reply.ReplyTo]; message != nil {
+				response.ReplyRef = message.replyRef
+			}
+		}
+		return response
 	}
 	h.expireQualificationLocked(h.now())
 	message := h.messages[reply.ReplyTo]
 	if h.closed || broker == nil || message == nil || message.envelope.BrokerEnvelope == nil ||
-		message.delivery.State != agentdelivery.StateDelivered || !message.envelope.Deadline.After(h.now()) ||
+		message.delivery.State != agentdelivery.StateDelivered ||
 		reply.Source != publicMessageRoute(source) || coremessage.ValidateReply(*message.envelope.BrokerEnvelope, reply) != nil {
 		return refuse("invalid-explicit-reply-correlation")
+	}
+	if !message.envelope.Deadline.After(h.now()) || !reply.Deadline.After(h.now()) {
+		return refuse("explicit-reply-deadline-expired")
+	}
+	if reply.Deadline.After(message.envelope.Deadline) {
+		return refuse("explicit-reply-deadline-extended")
 	}
 	// A reply is a qualification answer only when it answers the pending
 	// challenge. Ordinary replies no longer have to wait for qualification;
@@ -97,16 +150,41 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 	if message.replyReserved {
 		return refuse("broker-reply-outcome-unknown")
 	}
-	if message.replyRef != "" && message.replyRef != reply.MessageRef {
-		return refuse("reply-already-committed")
-	}
 	if !broker.Current(reply) {
 		return refuse("explicit-reply-route-stale")
 	}
 	// Reserve before the durable call. A failed/ambiguous commit is never
 	// retried automatically, including by a later unrelated Stop.
 	message.replyReserved = true
-	if broker.CommitReply(*message.envelope.BrokerEnvelope, reply) != nil {
+	created, err := broker.CommitReply(*message.envelope.BrokerEnvelope, reply)
+	if err != nil {
+		var conflict *messagestore.ReplyConflictError
+		if errors.As(err, &conflict) {
+			message.replyReserved = false // A refusal made no durable change.
+			response := refuse(conflict.Reason)
+			if conflict.Previous.Envelope.MessageRef != "" {
+				response.ReplyRef, response.ReplyDelivery = conflict.Previous.Envelope.MessageRef, &conflict.Previous.Delivery
+			}
+			return response
+		}
+		// These store refusals precede any durable write. Preserve their
+		// cause without leaking a filesystem path or poisoning correlation.
+		for _, rejection := range []struct {
+			err    error
+			reason string
+		}{
+			{messagestore.ErrBusy, "broker-reply-store-busy"},
+			{messagestore.ErrCapacity, "broker-reply-store-capacity"},
+			{messagestore.ErrNotFound, "broker-reply-original-not-found"},
+			{messagestore.ErrMalformedStore, "broker-reply-store-malformed"},
+			{coremessage.ErrInvalidEnvelope, "invalid-explicit-reply-correlation"},
+		} {
+			if errors.Is(err, rejection.err) {
+				message.replyReserved = false
+				return refuse(rejection.reason)
+			}
+		}
+		message.replyRef = reply.MessageRef
 		return refuse("broker-reply-outcome-unknown")
 	}
 	message.replyReserved = false
@@ -117,7 +195,13 @@ func (h *claudeCoordinationHub) commitExplicitReply(reply coremessage.Envelope,
 		h.qualification.ambiguous = false
 		h.qualifiedVersion = claudeFrozenFrameProviderVersion
 	}
-	return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: "reply-accepted", ReplyRef: reply.MessageRef}
+	kind := "reply-accepted"
+	if !created {
+		// Older callers only dispatch reply-accepted. A replay must not give
+		// them their old unconditional push permission either.
+		kind = "reply-replayed"
+	}
+	return claudeCoordinationResponse{Version: claudeCoordinationVersion, Kind: kind, ReplyRef: reply.MessageRef, ReplyCreated: created}
 }
 
 func (e claudeQualificationEvidence) validExplicit(now time.Time, route coremetadata.AgentRouteRef) bool {

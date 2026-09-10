@@ -261,7 +261,7 @@ func TestClaudeExplicitReplyUnsupportedTargetCannotCorruptStore(t *testing.T) {
 		return err
 	})
 	broker := &liveClaudeDialogueBroker{store: store}
-	if broker.CommitReply(*original, explicitTestReply(*original, "reply")) == nil {
+	if _, err := broker.CommitReply(*original, explicitTestReply(*original, "reply")); err == nil {
 		t.Fatal("unsupported target accepted")
 	}
 	for path, before := range contents {

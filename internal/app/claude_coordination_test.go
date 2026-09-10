@@ -12,6 +12,7 @@ import (
 	"github.com/crevissepartners/projmux/internal/core/agentdelivery"
 	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	messagestore "github.com/crevissepartners/projmux/internal/integrations/agents/agentmessage"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/localipc"
 	intmetadata "github.com/crevissepartners/projmux/internal/integrations/metadata"
 )
@@ -46,6 +47,7 @@ type failingClaudeDialogueBroker struct {
 	handoffs     int
 	deliveries   int
 	replies      int
+	replyRefs    map[string]string
 }
 
 func (b *failingClaudeDialogueBroker) Current(coremessage.Envelope) bool {
@@ -65,9 +67,21 @@ func (b *failingClaudeDialogueBroker) MarkDelivered(coremessage.Envelope, time.T
 	return b.deliveredErr
 }
 
-func (b *failingClaudeDialogueBroker) CommitReply(_, _ coremessage.Envelope) error {
+func (b *failingClaudeDialogueBroker) CommitReply(original, reply coremessage.Envelope) (bool, error) {
+	if previous := b.replyRefs[original.MessageRef]; previous != "" {
+		if previous == reply.MessageRef {
+			return false, nil
+		}
+		return false, &messagestore.ReplyConflictError{Reason: "reply-already-committed"}
+	}
 	b.replies++
-	return b.replyErr
+	if b.replyErr == nil {
+		if b.replyRefs == nil {
+			b.replyRefs = make(map[string]string)
+		}
+		b.replyRefs[original.MessageRef] = reply.MessageRef
+	}
+	return b.replyErr == nil, b.replyErr
 }
 
 type claudeCoordinationTestFixture struct {

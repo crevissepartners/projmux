@@ -156,7 +156,7 @@ func (liveAgentMessageClaudeAdapter) Status(ctx context.Context, registryPath st
 
 func claudeResponseDelivery(messageRef string, response claudeCoordinationResponse) (agentdelivery.Delivery, bool) {
 	if response.Version != claudeCoordinationVersion || response.AutoResend || response.Reason != "" ||
-		response.ReplyRef != "" || response.QualificationRef != "" ||
+		response.ReplyRef != "" || response.ReplyCreated || response.ReplyDelivery != nil || response.QualificationRef != "" ||
 		response.ProviderVersion != "" || response.Ambiguous || response.ToolResult != nil {
 		return agentdelivery.Delivery{}, false
 	}
@@ -308,13 +308,21 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 		return err
 	}
 	// Both static cells and both exact activation authorities are proved before
-	// the broker store or provider adapter is touched.
+	// accepting or dispatching a message. Refusals may read earlier reply receipts.
 	sourceRoute, err := c.resolveMessageRoute(registry, source)
 	if err != nil {
+		if replyTo != "" {
+			return fmt.Errorf("%s: source Agent is not eligible: %w; %w", spelling, err,
+				c.replyCorrelationRefusal(replyTo, "explicit-reply-source-route-stale"))
+		}
 		return fmt.Errorf("%s: source Agent is not eligible: %w", spelling, err)
 	}
 	targetRoute, err := c.resolveMessageTargetRoute(registry, target)
 	if err != nil {
+		if replyTo != "" {
+			return fmt.Errorf("%s: target Agent is not eligible: %w; %w", spelling, err,
+				c.replyCorrelationRefusal(replyTo, "explicit-reply-target-route-stale"))
+		}
 		return fmt.Errorf("%s: target Agent is not eligible: %w", spelling, err)
 	}
 	if messageRef == "" {
@@ -338,15 +346,29 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			return fmt.Errorf("%s: reply correlation failed: %w", spelling, getErr)
 		}
 		envelope.ConversationRef = original.Envelope.ConversationRef
+		if envelope.Deadline.After(original.Envelope.Deadline) {
+			envelope.Deadline = original.Envelope.Deadline
+		}
+		// A same-ref call is a receipt replay, never a new dispatch. Keep the
+		// durable times so reducing the remaining original TTL cannot change
+		// its immutable-envelope comparison.
+		if existing, exists, err := c.messageStore.Get(messageRef); err != nil {
+			return fmt.Errorf("%s: reply receipt lookup failed: %w", spelling, err)
+		} else if exists && existing.Envelope.ReplyTo == replyTo {
+			envelope.AcceptedAt, envelope.Deadline = existing.Envelope.AcceptedAt, existing.Envelope.Deadline
+		}
+		if !original.Envelope.Deadline.After(now) {
+			return fmt.Errorf("%s: %w", spelling, c.replyCorrelationRefusal(replyTo, "explicit-reply-deadline-expired"))
+		}
 		if err := coremessage.ValidateReply(original.Envelope, envelope); err != nil {
-			return fmt.Errorf("%s: %w", spelling, err)
+			return fmt.Errorf("%s: %w; %w", spelling, err, c.replyCorrelationRefusal(replyTo, "invalid-explicit-reply-correlation"))
 		}
 	}
 	if source.Spec.Provider == string(aiprovider.Claude) && replyTo != "" {
 		if adapter, ok := c.messageClaude.(interface {
-			ExplicitReply(context.Context, string, coremetadata.AgentRouteRef, coremessage.Envelope) (string, error)
+			ExplicitReply(context.Context, string, coremetadata.AgentRouteRef, coremessage.Envelope) (string, bool, error)
 		}); ok {
-			ref, replyErr := adapter.ExplicitReply(context.Background(), c.messagePaths.registryPath, sourceRoute, envelope)
+			ref, created, replyErr := adapter.ExplicitReply(context.Background(), c.messagePaths.registryPath, sourceRoute, envelope)
 			if replyErr != nil {
 				return fmt.Errorf("%s: explicit reply refused: %w", spelling, replyErr)
 			}
@@ -357,8 +379,18 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			// A reply is delivered the same way any other message is. Without
 			// this it only reached the store, and with the self-claim inbox gone
 			// nothing would ever hand it to the target.
-			record = c.pushCoordination(record, target, targetRoute, envelope)
-			return writeAgentMessageReceipt(stdout, receiptFor(record), false)
+			if created {
+				record = c.pushCoordination(record, target, targetRoute, record.Envelope)
+			}
+			if err := writeAgentMessageReceipt(stdout, receiptFor(record), false); err != nil {
+				return err
+			}
+			if record.Delivery.State.Terminal() && record.Delivery.State != coremessage.StateDelivered {
+				return fmt.Errorf("%s: explicit reply not delivered: previousRef=%s state=%s reason=%s outcomeUnknown=%t; %s",
+					spelling, ref, record.Delivery.State, record.Delivery.Reason, record.Delivery.OutcomeUnknown,
+					agentMessageReplyFailureAction(record))
+			}
+			return nil
 		}
 		return fmt.Errorf("%s: exact explicit reply adapter is unavailable", spelling)
 	}
@@ -374,6 +406,18 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 		record = c.pushCoordination(record, target, targetRoute, envelope)
 	}
 	return writeAgentMessageReceipt(stdout, receiptFor(record), false)
+}
+
+func (c *agentCommand) replyCorrelationRefusal(originalRef, reason string) error {
+	response := claudeCoordinationResponse{Reason: reason}
+	if lookup, ok := c.messageStore.(interface {
+		Reply(string) (messagestore.Record, bool, error)
+	}); ok {
+		if previous, found, err := lookup.Reply(originalRef); err == nil && found {
+			response.ReplyRef, response.ReplyDelivery = previous.Envelope.MessageRef, &previous.Delivery
+		}
+	}
+	return fmt.Errorf("replyTo=%s: %w", originalRef, explicitReplyRefusal(response))
 }
 
 func (c *agentCommand) resolveMessageTargetRoute(registry coremetadata.Registry, agent coremetadata.Agent) (coremetadata.AgentRouteRef, error) {
@@ -727,12 +771,31 @@ func writeAgentMessageReceipt(stdout io.Writer, receipt agentMessageReceipt, asJ
 		return json.NewEncoder(stdout).Encode(receipt)
 	}
 	if receipt.Delivery.State.Terminal() && receipt.Delivery.State != coremessage.StateDelivered {
+		action := agentMessageFailureAction(receipt.Delivery)
+		if receipt.ReplyTo != "" {
+			action = agentMessageReplyFailureAction(messagestore.Record{Envelope: coremessage.Envelope{
+				ReplyTo: receipt.ReplyTo, Deadline: receipt.Deadline}, Adapter: adapterForReplyReceipt(receipt), Delivery: receipt.Delivery})
+		}
 		_, err := fmt.Fprintf(stdout, "%s\t%s\t%s\t%s\n", receipt.MessageRef, receipt.Delivery.State,
-			receipt.Delivery.Reason, agentMessageFailureAction(receipt.Delivery))
+			receipt.Delivery.Reason, action)
 		return err
 	}
 	_, err := fmt.Fprintf(stdout, "%s\t%s\n", receipt.MessageRef, receipt.Delivery.State)
 	return err
+}
+
+func adapterForReplyReceipt(receipt agentMessageReceipt) string {
+	if receipt.Target.Provider == "claude" {
+		return "claude-coordination"
+	}
+	return "codex-inbox"
+}
+
+func agentMessageReplyFailureAction(record messagestore.Record) string {
+	if messagestore.KnownZeroReply(record) {
+		return agentMessageFailureAction(record.Delivery) + "; retry manually with the same --reply-to and a new --message-ref (or omit --message-ref); original deadline and exact routes must remain valid"
+	}
+	return "inspect original and previous reply status and provider outcome; do not resend"
 }
 
 func agentMessageFailureAction(delivery coremessage.Delivery) string {

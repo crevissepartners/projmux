@@ -49,16 +49,19 @@ capture = socket.socket(socket.AF_UNIX)
 capture.connect(os.environ['PMX_TEST_CAPTURE'])
 receipt = capture.makefile('w', buffering=1)
 receipt.write(json.dumps({'socket':path,'token':token,'pid':os.getpid(),'pane_env':os.environ.get('PMX_INTERNAL_ACTIVATION_PANE_UID'),'generation_env':os.environ.get('PMX_INTERNAL_ACTIVATION_GENERATION'),'registry_env':os.environ.get('PMX_INTERNAL_CLAUDE_REGISTRY_PATH')}) + '\n'); receipt.flush()
-def hook(session):
+def hook(session, guarded=True):
     # The supervisor must scrub inherited activation policy. This private
     # fixture opts its owned registration child in explicitly, after launch.
     hook_env = dict(os.environ)
-    hook_env['PMX_INTERNAL_CLAUDE_REPLY_GUARD'] = '1'
+    if guarded: hook_env['PMX_INTERNAL_CLAUDE_REPLY_GUARD'] = '1'
     result = subprocess.run([os.environ['PMX_TEST_BIN'],'internal','claude-endpoint-register'], input=json.dumps({'hook_event_name':'SessionStart','session_id':session}).encode(), env=hook_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     assert result.returncode == 0 and not result.stdout and not result.stderr
     receipt.write('hook-returned\n'); receipt.flush()
+connections = 0
 def receive(kind, session):
+    global connections
     connection, _ = inbox.accept()
+    connections += 1
     stream = connection.makefile('rb')
     auth = json.loads(stream.readline())
     frame = json.loads(stream.readline())
@@ -89,10 +92,24 @@ for line in sys.stdin:
     elif command == 'repeat': hook('synthetic-session-2')
     elif command == 'qualify-2': receive('qualification', 'synthetic-session-2')
     elif command == 'message-2': receive('message', 'synthetic-session-2')
+    elif command == 'ordinary': hook('synthetic-session-3', guarded=False)
+    elif command == 'message-3': receive('message', 'synthetic-session-3')
+    elif command == 'message-4': receive('message', 'synthetic-session-3')
+    elif command.startswith('{'):
+        request = json.loads(command)
+        child_env={k:v for k,v in os.environ.items() if k not in {'CLAUDE_CODE_MESSAGING_TOKEN','CLAUDE_CODE_MESSAGING_SOCKET'}}
+        result = subprocess.run([os.environ['PMX_TEST_BIN']] + request['argv'], env=child_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        receipt.write(json.dumps({'replyExit':result.returncode,'stdout':result.stdout.decode(),'stderr':result.stderr.decode()}) + '\n'); receipt.flush()
     elif command == 'exit': break
+inbox.settimeout(0.15)
+try:
+    extra, _ = inbox.accept()
+    extra.close()
+    raise AssertionError('unexpected duplicate provider connection')
+except socket.timeout: pass
 inbox.close()
 os.unlink(path)
-receipt.write('provider-connections=4\n'); receipt.flush()
+receipt.write('provider-connections='+str(connections)+'\n'); receipt.flush()
 `
 
 // This fixture uses the same real broker authority surface as L20. Registry
@@ -489,7 +506,7 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 		// An auth-only or partial rejection connection would fail that check.
 	})
 
-	send := func(route coremetadata.AgentRouteRef, ref, command string) {
+	send := func(route coremetadata.AgentRouteRef, ref, command string, sourceOverride ...coremetadata.AgentRouteRef) {
 		t.Helper()
 		target, ok := claudeTargetForRoute(route)
 		if !ok {
@@ -501,6 +518,9 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 			Source: publicMessageRoute(sourceRoute),
 			Target: publicMessageRoute(route), Authority: coremessage.PeerAuthority(), Payload: "HETEROGENEOUS_MARKER:" + ref,
 			AcceptedAt: now, Deadline: now.Add(time.Minute)}
+		if len(sourceOverride) == 1 {
+			public.Source = publicMessageRoute(sourceOverride[0])
+		}
 		if _, _, err := messageStore.PutAccepted(public, "claude-coordination"); err != nil {
 			t.Fatal(err)
 		}
@@ -546,8 +566,108 @@ func TestClaudeEndpointProcessIntegration(t *testing.T) {
 	qualify(second, "qualify-2")
 	send(second, "process-message-2", "message-2")
 
+	t.Run("explicit-reply-known-zero-manual-retry", func(t *testing.T) {
+		// An ordinary registration exercises the public descendant CLI. The
+		// earlier guarded qualification fixtures and their parser stay intact.
+		_, _ = writeControl.WriteString("ordinary\n")
+		waitLine(t, reader, "hook-returned\n")
+		third := getRoute()
+		const originalRef = "process-explicit-original"
+		send(third, originalRef, "message-3", third)
+		original, found, err := messageStore.Get(originalRef)
+		if err != nil || !found {
+			t.Fatal("missing delivered original")
+		}
+		callReply := func(ref, payload string) (string, string, int) {
+			t.Helper()
+			request, err := json.Marshal(map[string]any{"argv": []string{"agent", "message", "send", "uid:" + third.AgentUID,
+				"--source", "uid:" + third.AgentUID, "--reply-to", originalRef, "--message-ref", ref, "--", payload}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := writeControl.Write(append(request, '\n')); err != nil {
+				t.Fatal(err)
+			}
+			line, err := reader.ReadBytes('\n')
+			if err != nil {
+				t.Fatal("provider reply process did not return")
+			}
+			var result struct {
+				Exit   int    `json:"replyExit"`
+				Stdout string `json:"stdout"`
+				Stderr string `json:"stderr"`
+			}
+			if json.Unmarshal(line, &result) != nil {
+				t.Fatal("invalid provider reply result")
+			}
+			if strings.Contains(result.Stdout+result.Stderr, private.Token) || strings.Contains(result.Stdout+result.Stderr, payload) {
+				t.Fatal("public reply output exposed auth or payload")
+			}
+			return result.Stdout, result.Stderr, result.Exit
+		}
+		status := func(ref string) agentMessageReceipt {
+			t.Helper()
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, binary, "agent", "message", "status", ref, "-o", "json")
+			command.Env, command.Dir = claudeEndpointProcessEnv(root, binary), root
+			output, err := command.Output()
+			var receipt agentMessageReceipt
+			if err != nil || json.Unmarshal(output, &receipt) != nil {
+				t.Fatal("public reply status unavailable")
+			}
+			return receipt
+		}
+		const failedRef, retryRef = "process-reply-failed", "process-reply-manual"
+		payload := strings.Repeat("x", coremessage.MaxPayloadBytes)
+		out, refusal, exit := callReply(failedRef, payload)
+		failed := status(failedRef)
+		if exit == 0 || failed.Delivery.State != coremessage.StateFailed || failed.Delivery.OutcomeUnknown ||
+			failed.Delivery.Reason != "provider-frame-invalid-content" || !strings.Contains(refusal, "previousRef="+failedRef) ||
+			!strings.Contains(refusal, failed.Delivery.Reason) || !strings.Contains(out+refusal, "new --message-ref") {
+			t.Fatalf("known-zero reply did not expose cause/ref/action: exit=%d out=%s stderr=%s", exit, out, refusal)
+		}
+		statusCommand := exec.Command(binary, "agent", "message", "status", failedRef)
+		statusCommand.Env, statusCommand.Dir = claudeEndpointProcessEnv(root, binary), root
+		statusText, statusErr := statusCommand.Output()
+		if statusErr != nil || !bytes.Contains(statusText, []byte(failed.Delivery.Reason)) || !bytes.Contains(statusText, []byte("new --message-ref")) {
+			t.Fatal("public text status omitted known-zero recovery action")
+		}
+		if _, _, exit := callReply(failedRef, payload); exit == 0 {
+			t.Fatal("same failed ref did not retain failure")
+		}
+		if _, refusal, exit := callReply(failedRef, "corrected answer"); exit == 0 || !strings.Contains(refusal, failed.Delivery.Reason) {
+			t.Fatal("changed same ref lost immutable failure cause")
+		}
+		if out, refusal, exit := callReply(retryRef, "corrected answer"); exit != 0 || refusal != "" || !strings.Contains(out, "delivered") {
+			t.Fatalf("manual retry failed: %d %s %s", exit, out, refusal)
+		}
+		_, _ = writeControl.WriteString("message-4\n")
+		assertProviderReceipt(t, reader, "message", `"messageRef":"`+retryRef+`"`)
+		if _, _, exit := callReply(retryRef, "corrected answer"); exit != 0 {
+			t.Fatal("same delivered ref not idempotent")
+		}
+		delivered := status(retryRef)
+		if _, refusal, exit := callReply("process-reply-duplicate", "corrected answer"); exit == 0 ||
+			!strings.Contains(refusal, "previousRef="+retryRef) || !strings.Contains(refusal, "state=delivered") ||
+			!strings.Contains(refusal, "reason="+delivered.Delivery.Reason) || !strings.Contains(refusal, "do not resend") {
+			t.Fatalf("delivered reply refusal lost cause/ref/action: %d %s", exit, refusal)
+		}
+		if delivered.Delivery.State != coremessage.StateDelivered || delivered.ReplyTo != originalRef || delivered.ConversationRef != original.Envelope.ConversationRef ||
+			delivered.Source != original.Envelope.Target || delivered.Target != original.Envelope.Source || delivered.Deadline.After(original.Envelope.Deadline) {
+			t.Fatal("manual retry changed original correlation")
+		}
+		if status(failedRef).Delivery != failed.Delivery {
+			t.Fatal("manual retry overwrote failed receipt")
+		}
+		if got, _, _ := messageStore.Get(originalRef); got != original {
+			t.Fatal("manual retry altered delivered original")
+		}
+		t.Logf("known-zero reply reason=%s; same-ref writes=0; manual retry delivered once; duplicate refused with previousRef=%s", failed.Delivery.Reason, retryRef)
+	})
+
 	_, _ = writeControl.WriteString("exit\n")
-	waitLine(t, reader, "provider-connections=4\n")
+	waitLine(t, reader, "provider-connections=6\n")
 	select {
 	case err := <-done:
 		if err != nil {
