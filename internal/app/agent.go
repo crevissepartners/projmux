@@ -13,6 +13,7 @@ import (
 
 	"github.com/crevissepartners/projmux/internal/aiprovider"
 	"github.com/crevissepartners/projmux/internal/config"
+	coremessage "github.com/crevissepartners/projmux/internal/core/agentmessage"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/core/selector"
 	inttmux "github.com/crevissepartners/projmux/internal/integrations/tmux"
@@ -74,10 +75,14 @@ type agentCommand struct {
 	messageNewRef  func(string) string
 	messageClaude  agentMessageClaudeAdapter
 	messageRoute   agentMessageRouteResolver
-	focus          rawArgvCommand
-	codexUpgrade   rawArgvCommand
-	codexHandover  rawArgvCommand
-	handover       codexDrainingHandoverRequester
+	// messageCodexContent is the unexported render seam for the Codex
+	// coordination turn body. It exists so the content-build failure branch of
+	// the native push is reachable in tests; it is not a public surface.
+	messageCodexContent func(coremessage.Envelope) (string, error)
+	focus               rawArgvCommand
+	codexUpgrade        rawArgvCommand
+	codexHandover       rawArgvCommand
+	handover            codexDrainingHandoverRequester
 }
 
 type codexDrainingHandoverRequester interface {

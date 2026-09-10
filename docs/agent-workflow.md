@@ -1152,6 +1152,33 @@
   terminal-safe output, activation fencing, and deterministic Registry-only
   idle, timeout, and stale waits. Codex `delivered` ends at target self-claim;
   it does not assert model processing or reply.
+- `TestCodexCoordinationPushClassifiesNativeOutcomesForSenders` and
+  `TestCodexCoordinationPushExpiresBeforeAnyProviderCall` own the native Codex
+  push outcome table: start success and the `turn-in-progress` steer fallback
+  deliver as `provider-turn-push`, every known zero-write refusal code fails as
+  `codex-turn-push-refused`, every ambiguous or unrecognised code fails closed
+  as `codex-turn-push-outcome-unknown`, an unconfigured seam, a failed content
+  render and an unavailable binding fail with their own causes, and a
+  pre-dispatch deadline expires as `deadline-expired` with zero binding
+  resolutions and zero control calls. The refusal code is the discriminator and
+  `stale-turn` keeps its per-operation split.
+- `TestCodexCoordinationPushFailuresExitNonzeroWithCauseAndStatusParity` pins
+  the sender contract: `agent message send` to a Codex target prints
+  `ref/state/reason/action` and then exits nonzero without a usage dump when the
+  native push did not deliver, and `agent message status` reports the same state
+  and reason. A failed terminal store write keeps the original cause token on
+  the receipt, and a delivered turn whose write failed projects
+  `broker-delivery-persist-failed` with an unknown outcome; those two cases
+  cannot reach status parity, because the store write is what failed.
+- `TestCodexCoordinationPushKeepsTerminalReceiptAndSkipsExtraSteer` pins no
+  steer after a successful start, no new event or delivery change from a second
+  push over a terminal record, and a delivered reason that names only the
+  provider turn push, never model consumption, acknowledgement, or completion.
+- The offline Claude dialogue fixtures reply to a Codex source, so they now
+  accept a terminal Codex push failure receipt from the qualification reply --
+  the four-field `ref/state/reason/action` line for a fresh reply ref, read
+  instead of the exit code -- because no Codex app-server exists in those
+  fixtures.
 
 ### Heterogeneous Agent dialogue Phase 4 tests
 

@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"syscall"
 )
@@ -289,15 +290,65 @@ func runExplicitReply(ctx context.Context, binary string, environment []string, 
 		consume = exec.CommandContext(ctx, alias, carrier)
 	}
 	consume.Env, consume.Stderr = cleanEnvironment, io.Discard
+	// Output() returns the collected stdout together with the *exec.ExitError,
+	// so the receipt is available on the failure path.
 	receipt, err := consume.Output()
 	if err != nil {
-		return err
+		var exitErr *exec.ExitError
+		if !errors.As(err, &exitErr) {
+			return err
+		}
+		// The reply's source is a Codex Agent, and a Codex coordination reply
+		// now reports its native turn push outcome. This offline fixture has no
+		// Codex app-server, so the push cannot land and the command exits
+		// nonzero after printing the terminal receipt. Read the receipt instead
+		// of the exit code; anything that is not a terminal Codex push failure
+		// for a freshly minted reply ref stays fatal here.
+		if err := checkCodexPushFailureReceipt(receipt, content.MessageRef); err != nil {
+			return err
+		}
 	}
 	if publicProfile {
 		if err := publicEvent(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": []any{map[string]any{"type": "tool_result", "tool_use_id": toolID, "content": string(receipt), "is_error": false}}}, "tool_use_result": map[string]any{"stdout": string(receipt), "stderr": "", "interrupted": false}}); err != nil {
 			return err
 		}
 		return publicEvent(map[string]any{"type": "result", "subtype": "success", "is_error": false})
+	}
+	return nil
+}
+
+// codexPushFailureReasons are the terminal reasons `agent message send` reports
+// when a Codex native turn push wrote no turn or its outcome cannot be known.
+var codexPushFailureReasons = map[string]bool{
+	"codex-native-control-unconfigured": true,
+	"codex-native-binding-unavailable":  true,
+	"codex-turn-push-refused":           true,
+	"codex-turn-push-outcome-unknown":   true,
+}
+
+// replyReceiptRef is the shape of the fresh coordination ref the broker mints
+// for an explicit reply. The fixture cannot pass --message-ref (the reply tool
+// permit pins an exact nine-token argv), so the ref is proved by shape and by
+// being distinct from the ref it replies to.
+var replyReceiptRef = regexp.MustCompile(`^message-[0-9a-f]{36}$`)
+
+// checkCodexPushFailureReceipt accepts a nonzero explicit reply only when its
+// stdout is exactly one four-field receipt line proving a terminal Codex push
+// failure. An empty receipt, a different ref, or a non-Codex reason is fatal.
+func checkCodexPushFailureReceipt(receipt []byte, originalRef string) error {
+	text := string(receipt)
+	if !strings.HasSuffix(text, "\n") || strings.Count(text, "\n") != 1 {
+		return fmt.Errorf("fixture reply receipt is not one terminated line: %q", text)
+	}
+	fields := strings.Split(strings.TrimSuffix(text, "\n"), "\t")
+	if len(fields) != 4 {
+		return fmt.Errorf("fixture reply receipt has %d fields, want 4: %q", len(fields), text)
+	}
+	if !replyReceiptRef.MatchString(fields[0]) || fields[0] == originalRef {
+		return fmt.Errorf("fixture reply receipt ref is not a fresh reply ref: %q", text)
+	}
+	if fields[1] != "failed" || !codexPushFailureReasons[fields[2]] {
+		return fmt.Errorf("fixture reply receipt is not a terminal Codex push failure: %q", text)
 	}
 	return nil
 }

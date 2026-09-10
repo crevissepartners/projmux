@@ -379,11 +379,15 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 			// A reply is delivered the same way any other message is. Without
 			// this it only reached the store, and with the self-claim inbox gone
 			// nothing would ever hand it to the target.
+			var pushErr error
 			if created {
-				record = c.pushCoordination(record, target, targetRoute, record.Envelope)
+				record, pushErr = c.pushCoordination(record, target, targetRoute, record.Envelope)
 			}
 			if err := writeAgentMessageReceipt(stdout, receiptFor(record), false); err != nil {
 				return err
+			}
+			if pushErr != nil {
+				return fmt.Errorf("%s: %w", spelling, pushErr)
 			}
 			if record.Delivery.State.Terminal() && record.Delivery.State != coremessage.StateDelivered {
 				return fmt.Errorf("%s: explicit reply not delivered: previousRef=%s state=%s reason=%s outcomeUnknown=%t; %s",
@@ -402,10 +406,19 @@ func (c *agentCommand) runMessageSend(args []string, stdout, stderr io.Writer) e
 	if err != nil {
 		return fmt.Errorf("%s: %w", spelling, err)
 	}
+	var pushErr error
 	if created {
-		record = c.pushCoordination(record, target, targetRoute, envelope)
+		record, pushErr = c.pushCoordination(record, target, targetRoute, envelope)
 	}
-	return writeAgentMessageReceipt(stdout, receiptFor(record), false)
+	// The receipt is written before the failure is returned, so the sender sees
+	// the terminal state, reason, and action on stdout and still exits nonzero.
+	if err := writeAgentMessageReceipt(stdout, receiptFor(record), false); err != nil {
+		return err
+	}
+	if pushErr != nil {
+		return fmt.Errorf("%s: %w", spelling, pushErr)
+	}
+	return nil
 }
 
 func (c *agentCommand) replyCorrelationRefusal(originalRef, reason string) error {
@@ -440,47 +453,172 @@ func (c *agentCommand) resolveMessageTargetRoute(registry coremetadata.Registry,
 // Codex takes exact native turn control.
 func (c *agentCommand) pushCoordination(record messagestore.Record, target coremetadata.Agent,
 	targetRoute coremetadata.AgentRouteRef, envelope coremessage.Envelope,
-) messagestore.Record {
+) (messagestore.Record, error) {
 	if target.Spec.Provider == string(aiprovider.Claude) {
 		private, submitErr := c.messageClaude.Submit(context.Background(), c.messagePaths.registryPath, targetRoute, envelope)
 		updated, err := c.projectClaudeDelivery(record, private, submitErr)
 		if err != nil {
-			return record
+			return record, nil
 		}
-		return updated
+		return updated, nil
 	}
 	return c.pushCodexCoordination(record, target, envelope)
 }
 
+const (
+	// codexPushRefusedReason marks a native push that provably wrote no turn.
+	codexPushRefusedReason = "codex-turn-push-refused"
+	// codexPushUnknownReason marks a native push whose provider-side outcome
+	// cannot be known. It is the fail-closed classification.
+	codexPushUnknownReason = "codex-turn-push-outcome-unknown"
+)
+
+// codexTurnPushOutcome is one native control attempt classified into the public
+// coordination vocabulary. steer is set only for the single start refusal that
+// a steer can complete.
+type codexTurnPushOutcome struct {
+	delivered bool
+	steer     bool
+	reason    string
+	unknown   bool
+	err       error
+}
+
+// classifyCodexTurnPush reads the refusal code, never the response text, and
+// classifies per operation. A Go error from callControl is split the same way:
+// the typed binding refusal is proved pre-transport, anything else may already
+// have reached the provider.
+func classifyCodexTurnPush(operation string, response agentControlResponse, callErr error) codexTurnPushOutcome {
+	if callErr != nil {
+		var bindingErr *exactAgentControlBindingError
+		if errors.As(callErr, &bindingErr) {
+			// The consumer fence revalidation refused before transport, so the
+			// request never left and no turn was written.
+			return codexTurnPushOutcome{reason: codexPushRefusedReason, err: callErr}
+		}
+		// Transport failed after the request may already have left.
+		return codexTurnPushOutcome{reason: codexPushUnknownReason, unknown: true, err: callErr}
+	}
+	if err := response.Error(); err != nil {
+		switch operation {
+		case agentControlOpStart:
+			switch response.Code {
+			case "turn-in-progress":
+				// The only start refusal a steer can complete. Nothing was
+				// written, and the thread is busy rather than unreachable.
+				return codexTurnPushOutcome{steer: true, reason: codexPushRefusedReason, err: err}
+			case "stale-epoch", "stale-binding", "unavailable", "stale-turn", "turn-state-unavailable", "invalid-operation":
+				// turn-start emits every one of these before StartExactTurn.
+				return codexTurnPushOutcome{reason: codexPushRefusedReason, err: err}
+			}
+		case agentControlOpSteer:
+			switch response.Code {
+			case "stale-epoch", "stale-binding", "unavailable", "no-active-turn", "turn-state-unavailable", "invalid-operation":
+				return codexTurnPushOutcome{reason: codexPushRefusedReason, err: err}
+			}
+			// `stale-turn` is per-operation, not one shared meaning: turn-start
+			// emits it as a pre-write refusal, while turn-steer emits it as
+			// controlWireFailure("stale-turn", err) after SteerExactTurn was
+			// already called. Do not re-flatten the collision.
+		}
+		// turn-start-failed, steer stale-turn, timeout, protocol-error, and every
+		// unrecognised code fail closed as ambiguous.
+		return codexTurnPushOutcome{reason: codexPushUnknownReason, unknown: true, err: err}
+	}
+	return codexTurnPushOutcome{delivered: true}
+}
+
 func (c *agentCommand) pushCodexCoordination(record messagestore.Record, target coremetadata.Agent,
 	envelope coremessage.Envelope,
-) messagestore.Record {
-	// The push reuses the native control seam, which is only wired on the real
-	// command. A caller without it keeps the stored-only behaviour.
-	if c.loadRegistry == nil || (c.controlBinding == nil && c.controlRoute == nil) {
-		return record
+) (messagestore.Record, error) {
+	// Pre-dispatch expiry is decided before the seam check, the render, and the
+	// binding resolution, so an expired envelope reaches no provider call at
+	// all. The token matches the store's own deadline event so `agent message
+	// status` reports the identical reason.
+	if !c.messageClock().Before(record.Envelope.Deadline) {
+		return c.terminalCoordination(record, coremessage.EventExpire, "deadline-expired", false,
+			errors.New("coordination deadline expired before the native turn push"))
 	}
-	text, err := codexCoordinationContent(envelope)
+	// The push reuses the native control seam, which is only wired on the real
+	// command. Without it nothing can be pushed, and the sender is told so.
+	if c.loadRegistry == nil || (c.controlBinding == nil && c.controlRoute == nil) {
+		return c.terminalCoordination(record, coremessage.EventFail, "codex-native-control-unconfigured", false,
+			errors.New("exact Agent native control is not configured"))
+	}
+	text, err := c.codexCoordinationText(envelope)
 	if err != nil {
-		return record
+		return c.terminalCoordination(record, coremessage.EventFail, "codex-turn-content-build-failed", false,
+			fmt.Errorf("build coordination turn content: %w", err))
 	}
 	binding, bindErr := c.resolveControlBinding("agent turn start", selector.UIDPrefix+target.Metadata.UID)
 	if bindErr != nil {
-		return record
+		return c.terminalCoordination(record, coremessage.EventFail, "codex-native-binding-unavailable", false, bindErr)
 	}
 	response, callErr := c.callControl(binding, agentControlRequest{Operation: agentControlOpStart, Text: text})
-	if callErr != nil || response.Error() != nil {
+	outcome := classifyCodexTurnPush(agentControlOpStart, response, callErr)
+	if outcome.steer {
+		// The one fallback in this path. There is no steer after a successful
+		// start and no automatic resend anywhere.
 		response, callErr = c.callControl(binding, agentControlRequest{Operation: agentControlOpSteer, Text: text})
+		outcome = classifyCodexTurnPush(agentControlOpSteer, response, callErr)
 	}
-	if callErr != nil || response.Error() != nil {
-		return record
+	if !outcome.delivered {
+		return c.terminalCoordination(record, coremessage.EventFail, outcome.reason, outcome.unknown, outcome.err)
 	}
 	updated, _, applyErr := c.messageStore.Apply(record.Envelope.MessageRef,
 		c.publicMessageEvent(record, coremessage.EventDeliver, "provider-turn-push", false))
 	if applyErr != nil {
-		return record
+		// The turn was pushed but the record could not be persisted. Resend
+		// stays discouraged, so the projection is the ambiguous persist token
+		// rather than the delivered receipt the store never accepted.
+		return c.projectTerminalDelivery(record, coremessage.StateFailed, "broker-delivery-persist-failed", true),
+			fmt.Errorf("persist delivered coordination turn: %w", applyErr)
 	}
-	return updated
+	return updated, nil
+}
+
+// terminalCoordination persists one terminal coordination outcome and always
+// returns a record the sender can act on. When the store write fails the
+// ORIGINAL cause token is kept as the receipt reason; the persistence failure
+// only widens the returned Go error.
+func (c *agentCommand) terminalCoordination(record messagestore.Record, kind coremessage.EventKind,
+	reason string, unknown bool, cause error,
+) (messagestore.Record, error) {
+	updated, _, applyErr := c.messageStore.Apply(record.Envelope.MessageRef,
+		c.publicMessageEvent(record, kind, reason, unknown))
+	if applyErr != nil {
+		state := coremessage.StateFailed
+		if kind == coremessage.EventExpire {
+			state = coremessage.StateExpired
+		}
+		return c.projectTerminalDelivery(record, state, reason, unknown),
+			fmt.Errorf("%w; persist coordination outcome: %w", cause, applyErr)
+	}
+	return updated, cause
+}
+
+// projectTerminalDelivery is the in-memory terminal view used when the store
+// could not record the outcome. The sender still sees the cause on its receipt;
+// `agent message status` may not match, because the store write is exactly what
+// failed.
+func (c *agentCommand) projectTerminalDelivery(record messagestore.Record, state coremessage.State,
+	reason string, unknown bool,
+) messagestore.Record {
+	projected := record
+	projected.Delivery.State = state
+	projected.Delivery.Reason = reason
+	projected.Delivery.OutcomeUnknown = unknown
+	projected.Delivery.TerminalAt = c.messageClock()
+	return projected
+}
+
+// codexCoordinationText renders the coordination turn body through the
+// unexported seam when one is wired, and otherwise through the real renderer.
+func (c *agentCommand) codexCoordinationText(envelope coremessage.Envelope) (string, error) {
+	if c == nil || c.messageCodexContent == nil {
+		return codexCoordinationContent(envelope)
+	}
+	return c.messageCodexContent(envelope)
 }
 
 func codexCoordinationContent(envelope coremessage.Envelope) (string, error) {
@@ -808,8 +946,13 @@ func agentMessageFailureAction(delivery coremessage.Delivery) string {
 	switch delivery.Reason {
 	case "provider-frame-invalid-auth":
 		return "check provider auth configuration before retrying"
-	case "provider-frame-invalid-content", "provider-frame-build-failed", "provider-frame-unsupported", "claude-private-frame-unsupported":
+	case "provider-frame-invalid-content", "provider-frame-build-failed", "provider-frame-unsupported",
+		"claude-private-frame-unsupported", "codex-turn-content-build-failed":
 		return "correct message content or configuration before retrying"
+	case "codex-native-control-unconfigured", "codex-native-binding-unavailable":
+		return "check exact Agent native control availability before retrying"
+	case codexPushRefusedReason:
+		return "no turn was written; retry manually once the target thread state allows it"
 	case "provider-prewrite-refused":
 		return "check current provider route before retrying"
 	case "provider-write-zero":

@@ -107,7 +107,11 @@ func TestAgentMessageSendSourceAnchorAndOmittedFallbackPreserveRouteAndPeerAutho
 			}
 			args = append(args, "--", "peer request")
 			_, _, err := runRoute(t, cmd, args...)
-			if (err != nil) != test.wantError {
+			// This fixture wires no native control seam, so an accepted Codex
+			// envelope now terminates as codex-native-control-unconfigured
+			// instead of silently reporting accepted. Source anchoring is what
+			// this test proves; the push classification has its own tests.
+			if err == nil || (!test.wantError && !strings.Contains(err.Error(), "exact Agent native control is not configured")) {
 				t.Fatalf("send error = %v, wantError = %t", err, test.wantError)
 			}
 			record, found, err := store.Get("message-source-anchor")
