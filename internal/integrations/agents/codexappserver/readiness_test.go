@@ -404,7 +404,7 @@ func TestProductSourceHasNoSharedDaemonStopRestartOrKillArgv(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, forbidden := range []string{`"app-server", "daemon", "stop"`, `"app-server", "daemon", "restart"`, `"app-server", "daemon", "kill"`, `"app-server", "daemon", "enable-remote-control"`, `"app-server", "daemon", "disable-remote-control"`} {
+		for _, forbidden := range []string{`"app-server", "daemon", "bootstrap"`, `"app-server", "daemon", "stop"`, `"app-server", "daemon", "restart"`, `"app-server", "daemon", "kill"`, `"app-server", "daemon", "enable-remote-control"`, `"app-server", "daemon", "disable-remote-control"`} {
 			if strings.Contains(string(data), forbidden) {
 				t.Fatalf("%s contains forbidden shared-daemon mutation argv %s", path, forbidden)
 			}
