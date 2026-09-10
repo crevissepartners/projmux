@@ -185,6 +185,13 @@ func TestAgentMessageUnsupportedProviderStopsBeforeRouteAndStore(t *testing.T) {
 	}
 }
 
+// messageFixtureNow is deliberately close to real time. The store prunes
+// terminal records whose TerminalAt is older than its own retention window
+// against its own real clock, and a Codex coordination send now reaches a
+// terminal state, so a stale fixture clock would evict the record the next
+// store write is about to correlate against.
+func messageFixtureNow() time.Time { return time.Now().UTC() }
+
 func TestAgentMessageSendSameReferenceRetryKeepsBrokerCorrelationAndDoesNotResend(t *testing.T) {
 	cmd, store, _ := exactControlCLICommand(t)
 	active := insideTmux("pan-alpha-codex", "win-alpha-main")
@@ -194,10 +201,15 @@ func TestAgentMessageSendSameReferenceRetryKeepsBrokerCorrelationAndDoesNotResen
 	cmd.messagePaths = agentMessagePaths{loadRegistry: func() (coremetadata.Registry, error) { return store.registry.Clone(), nil }}
 	cmd.messageStore = private
 	cmd.messageRoute = &traceMessageRouteResolver{trace: &trace, route: mustMessageRoute(t, store.registry, "agt-alpha-codex")}
-	cmd.messageNow = func() time.Time { return resourceFixtureClock.Add(time.Hour) }
+	cmd.messageNow = messageFixtureNow
 	cmd.messageNewRef = func(prefix string) string {
 		t.Fatalf("explicit message ref must not mint %s", prefix)
 		return "unused"
+	}
+	// The native push is part of the first send now that its outcome is
+	// reported, so the seam is wired to accept exactly one turn.
+	cmd.controlCall = func(context.Context, string, coremetadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+		return agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1"}, nil
 	}
 	args := []string{"message", "send", "uid:agt-alpha-codex", "--message-ref", "message-retry", "--ttl", "1m", "--", "same payload"}
 	first, _, err := runRoute(t, cmd, args...)
@@ -217,7 +229,7 @@ func TestAgentMessageSendSameReferenceRetryKeepsBrokerCorrelationAndDoesNotResen
 }
 
 func TestAgentMessageConcurrentSameReferenceUsesOneConversation(t *testing.T) {
-	_, registryStore, _ := exactControlCLICommand(t)
+	base, registryStore, binding := exactControlCLICommand(t)
 	registry := registryStore.registry.Clone()
 	route := mustMessageRoute(t, registry, "agt-alpha-codex")
 	private := messagestore.NewStore(t.TempDir())
@@ -226,10 +238,19 @@ func TestAgentMessageConcurrentSameReferenceUsesOneConversation(t *testing.T) {
 			activeTarget: func() (activeTargetObserver, bool) {
 				return activeTargetObserver{paneID: "%7", paneUID: func() string { return "pan-alpha-codex" }}, true
 			},
+			// Only the one creating send pushes, so the native seam is wired to
+			// keep the losers on the stored record rather than a push failure.
+			loadRegistry:   base.loadRegistry,
+			store:          base.store,
+			controlBinding: binding,
+			controlPaths:   base.controlPaths,
+			controlCall: func(context.Context, string, coremetadata.CodexEndpointRef, codexLifecycleIdentity, agentControlRequest) (agentControlResponse, error) {
+				return agentControlResponse{OK: true, ThreadID: "thread-1", TurnID: "turn-1"}, nil
+			},
 			messagePaths: agentMessagePaths{loadRegistry: func() (coremetadata.Registry, error) { return registry.Clone(), nil }},
 			messageStore: private,
 			messageRoute: &traceMessageRouteResolver{route: route},
-			messageNow:   func() time.Time { return resourceFixtureClock.Add(time.Hour) },
+			messageNow:   messageFixtureNow,
 			messageNewRef: func(prefix string) string {
 				t.Fatalf("explicit message ref must not mint %s", prefix)
 				return ""
@@ -239,9 +260,12 @@ func TestAgentMessageConcurrentSameReferenceUsesOneConversation(t *testing.T) {
 	const workers = 16
 	errs := make(chan error, workers)
 	outputs := make(chan string, workers)
+	commands := make([]*agentCommand, 0, workers)
 	for range workers {
+		commands = append(commands, newCommand())
+	}
+	for _, cmd := range commands {
 		go func() {
-			cmd := newCommand()
 			stdout, _, err := runRoute(t, cmd, "message", "send", "uid:agt-alpha-codex", "--message-ref", "message-race", "--ttl", "1m", "--", "same")
 			errs <- err
 			outputs <- stdout
@@ -251,12 +275,15 @@ func TestAgentMessageConcurrentSameReferenceUsesOneConversation(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Fatal(err)
 		}
-		if output := <-outputs; output != "message-race\taccepted\n" {
+		// The creator reports the pushed turn; every other worker reports the
+		// stored record it found. Neither is a second dispatch.
+		if output := <-outputs; output != "message-race\taccepted\n" && output != "message-race\tdelivered\n" {
 			t.Fatalf("output = %q", output)
 		}
 	}
 	record, found, err := private.Get("message-race")
-	if err != nil || !found || record.Envelope.ConversationRef != conversationRefFor("message-race") {
+	if err != nil || !found || record.Envelope.ConversationRef != conversationRefFor("message-race") ||
+		record.Delivery.State != coremessage.StateDelivered {
 		t.Fatalf("record=%#v found=%t err=%v", record, found, err)
 	}
 }
@@ -293,19 +320,25 @@ func TestAgentMessageReplyReturnsOnlyToOriginalSourceConversation(t *testing.T) 
 		messagePaths: agentMessagePaths{loadRegistry: func() (coremetadata.Registry, error) { return registry.Clone(), nil }},
 		messageStore: private,
 		messageRoute: liveAgentMessageRouteResolver{},
-		messageNow:   func() time.Time { return resourceFixtureClock.Add(time.Hour) },
+		messageNow:   messageFixtureNow,
 		messageNewRef: func(prefix string) string {
 			t.Fatalf("explicit references must not mint %s", prefix)
 			return ""
 		},
 	}
+	// This fixture wires no native control seam, so both accepted envelopes
+	// terminate as codex-native-control-unconfigured. Correlation is what this
+	// test proves, and it is decided before the push.
+	unconfigured := func(err error) bool {
+		return err != nil && strings.Contains(err.Error(), "exact Agent native control is not configured")
+	}
 	if _, _, err := runRoute(t, cmd, "message", "send", "uid:"+targetAgent.Metadata.UID,
-		"--message-ref", "message-original", "--", "request"); err != nil {
+		"--message-ref", "message-original", "--", "request"); !unconfigured(err) {
 		t.Fatal(err)
 	}
 	activePane = targetPane.Metadata.UID
 	if _, _, err := runRoute(t, cmd, "message", "send", "uid:"+sourceAgent.Metadata.UID,
-		"--message-ref", "message-reply", "--reply-to", "message-original", "--", "response"); err != nil {
+		"--message-ref", "message-reply", "--reply-to", "message-original", "--", "response"); !unconfigured(err) {
 		t.Fatal(err)
 	}
 	original, _, _ := private.Get("message-original")
