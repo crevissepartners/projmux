@@ -1174,6 +1174,11 @@
   steer after a successful start, no new event or delivery change from a second
   push over a terminal record, and a delivered reason that names only the
   provider turn push, never model consumption, acknowledgement, or completion.
+- The offline Claude dialogue fixtures reply to a Codex source, so they now
+  accept a terminal Codex push failure receipt from the qualification reply --
+  the four-field `ref/state/reason/action` line for a fresh reply ref, read
+  instead of the exit code -- because no Codex app-server exists in those
+  fixtures.
 
 ### Heterogeneous Agent dialogue Phase 4 tests
 

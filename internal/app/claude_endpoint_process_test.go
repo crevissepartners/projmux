@@ -33,7 +33,7 @@ import (
 // reply/control frame. Its private capture socket is test memory, not a product
 // receipt, log, or artifact.
 const claudeEndpointSyntheticProvider = `
-import json, os, secrets, shlex, socket, subprocess, sys
+import json, os, re, secrets, shlex, socket, subprocess, sys
 path = os.path.join(os.environ['PMX_TEST_ROOT'], 'provider-' + secrets.token_hex(8) + '.sock')
 os.umask(0o077)
 inbox = socket.socket(socket.AF_UNIX)
@@ -82,7 +82,25 @@ def receive(kind, session):
         decision = json.loads(prepare.stdout)['hookSpecificOutput']
         assert decision['permissionDecision'] == 'allow'
         result = subprocess.run([argv[0], 'internal', 'claude-reply-tool', 'execute', "fixture opaque carrier '"+decision['updatedInput']['command']+"'"], env=child_env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        assert result.returncode == 0 and result.stdout and not result.stderr
+        # The reply's source is a Codex Agent, and a Codex coordination reply
+        # now reports its native turn push outcome. This offline fixture has no
+        # Codex app-server, so the push cannot land and the command exits
+        # nonzero after printing the terminal receipt. Read the receipt, not the
+        # exit code: a nonzero exit is accepted only when stdout is exactly one
+        # four-field receipt line for a freshly minted reply ref whose reason is
+        # a Codex native push failure. The Go error text also reaches stderr on
+        # that path, so the empty-stderr condition stays asserted for the exit-0
+        # branch only. Anything else -- no receipt, the original ref, another
+        # reason -- still fails here loudly.
+        if result.returncode == 0:
+            assert result.stdout and not result.stderr
+        else:
+            line = result.stdout.decode()
+            assert line.endswith('\n') and line.count('\n') == 1, result.stdout
+            fields = line[:-1].split('\t')
+            assert len(fields) == 4, result.stdout
+            assert re.fullmatch(r'message-[0-9a-f]{36}', fields[0]) and fields[0] != envelope['messageRef'], result.stdout
+            assert fields[1] == 'failed' and fields[2] in {'codex-native-control-unconfigured','codex-native-binding-unavailable','codex-turn-push-refused','codex-turn-push-outcome-unknown'}, result.stdout
         receipt.write('qualification-explicit-returned\n'); receipt.flush()
 hook('synthetic-session-1')
 for line in sys.stdin:
