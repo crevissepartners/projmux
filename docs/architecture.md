@@ -486,6 +486,17 @@ Exit reconciliation and lifecycle projection:
   fallback -- a reconciliation that summed two servers could never report a death
   at all, and a sibling server carrying the same `%N` handles or the same
   mirrored uid receives zero calls.
+- Releasing the binding has exactly one exception: a managed Pane its own Window
+  anchors. `status.paneRef` is what makes an Agent-role `anchorPaneRef` valid, so
+  clearing it there would leave the Window anchored on a Pane no Agent claims and
+  the Registry would stop validating -- which, because validation runs on the
+  proposed state of every transaction, refuses the *next* write of any kind for a
+  reason that has nothing to do with it. The binding is kept, the phase alone
+  reports that nothing runs in it, and the result is the offline Agent-anchored
+  Window snapshot restore already projects and the materializer already replays.
+  The bound half of both the dirty check and the projection reads an Agent that
+  already carries the stored evidence as finished, so a repeat pass stays
+  write-free.
 - The retained-state transition is derived from the receipt the Pane already
   stores. `abnormal` lands the Agent in `Failed`; `killed` and an evidence-free
   disappearance land it in `Offline`. A `normal` receipt alone is still only
@@ -553,7 +564,8 @@ Agent provider session ref:
   `status.paneRef`.
 - The two status refs have deliberately different lifetimes. `status.paneRef` is
   the *current* managed-Pane binding and is cleared by `ReleaseAgentPane`,
-  `DeletePane`, and every non-`Running` transition. `status.sessionRef` is
+  `DeletePane`, and every non-`Running` transition except one over a Pane its
+  Window anchors. `status.sessionRef` is
   cleared by none of them: an `Offline` Agent that has lost its Pane still knows
   which conversation it is.
 - It is **not** a duplicate of the tmux pane option `@projmux_ai_session_id`,
@@ -1061,8 +1073,11 @@ Runtime observation and resource status:
   bound to. Its runtime object is **that managed Pane**, named by
   `status.paneRef`, and that is what is observed: an Agent is `live` only while
   a live tmux pane still mirrors the uid its `paneRef` points at. An empty
-  `paneRef` — the state of every released, pending, or failed Agent — is
-  `offline`, and `missing-root` still outranks both.
+  `paneRef` — the state of every pending Agent and of every released or failed
+  one that was not anchoring its Window — is `offline`, and `missing-root` still
+  outranks both. A released Agent that kept an anchor binding reads `offline` by
+  the same rule rather than by an empty ref: the Pane it still names is the one
+  whose runtime just disappeared.
 - Agent status is **not** inherited from the owning Window. It used to be, and
   that was the last surviving inheritance path: once one Window was adopted and
   went live, every Agent under it read `live` whether or not it had a pane, so
@@ -1072,8 +1087,9 @@ Runtime observation and resource status:
 - `status.phase` is **not** an input to status either. Phase is lifecycle (a
   stored value, owned by the Agent liveness rules) and Status is observation;
   folding a stored value back into the observation is what the contract forbids.
-  They cannot contradict anyway: every non-`Running` transition clears
-  `paneRef`, so a non-`Running` Agent has no runtime object to observe.
+  They cannot contradict anyway: a non-`Running` transition either clears
+  `paneRef` or keeps one that names a Pane whose runtime is gone, so a
+  non-`Running` Agent has no *live* runtime object to observe either way.
 - The observation is taken **at the command entrypoint, once per process
   invocation**, and costs exactly two reads: `list-panes -a` and
   `list-windows -a` (~3ms each). It is lazy, so a route that never renders

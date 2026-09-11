@@ -169,11 +169,18 @@ func (m Mutator) AttachAgentPane(reg *Registry, agentUID string, declared Bootst
 	txn.Commit()
 
 	agent = mustAgent(reg, agentUID)
+	previous := agent.Status.PaneRef
 	agent.Status.Phase = PhaseRunning
 	agent.Status.PaneRef = pane.Metadata.UID
 	agent.Status.Progress = AgentProgress{}
 	agent.Status.Reason = ""
 	agent.Status.LastTransitionAt = now
+	// A Window anchored on the Pane this Agent was bound to follows the Agent
+	// onto the new one. The anchor names this Agent's managed Pane, so leaving
+	// it on the previous row would point it at a Pane the Agent no longer
+	// claims; the row itself is retained, as termination evidence rather than
+	// as an anchor.
+	reg.reanchorWindows(previous, pane.Metadata.UID)
 	reg.UpdatedAt = now
 	return pane, nil
 }
@@ -269,9 +276,20 @@ func (m Mutator) TransitionAgent(reg *Registry, agentUID string, phase AgentPhas
 	agent.Status.Reason = strings.TrimSpace(reason)
 	agent.Status.LastTransitionAt = now
 	if phase != PhaseRunning {
-		pane, _ := reg.Pane(agent.Status.PaneRef)
+		paneUID := agent.Status.PaneRef
+		pane, _ := reg.Pane(paneUID)
 		clearClaudeRegistration(pane)
-		agent.Status.PaneRef = ""
+		// Leaving a phase releases the managed Pane binding, but not when the
+		// Pane the binding names is a Window anchor. The final-v2 anchor schema
+		// reads status.paneRef as authority over an Agent-role anchor, so
+		// clearing it here would leave the Window anchored on a Pane no Agent
+		// claims and the Registry would no longer validate. A retained anchor
+		// Pane keeps its binding and the phase alone carries the fact that
+		// nothing runs in it, which is the same shape snapshot restore projects
+		// for an offline Agent-anchored Window.
+		if !reg.windowAnchoredOnPane(paneUID) {
+			agent.Status.PaneRef = ""
+		}
 		agent.Status.Interaction = AgentInteraction{Kind: InteractionUnknown, ObservedAt: now, Source: "lifecycle"}
 		agent.Status.Progress = AgentProgress{}
 	}
@@ -302,6 +320,38 @@ func (r *Registry) firstWindowAnchorPaneUID(windowUID string) string {
 		}
 	}
 	return ""
+}
+
+// reanchorWindows moves every Window anchored on from onto to. Validation keeps
+// an anchor Window-local, so the only Window this can reach is the one that owns
+// both Panes.
+func (r *Registry) reanchorWindows(from, to string) {
+	if from == "" || to == "" || from == to {
+		return
+	}
+	for i := range r.Windows {
+		if r.Windows[i].Spec.AnchorPaneRef == from {
+			r.Windows[i].Spec.AnchorPaneRef = to
+		}
+	}
+}
+
+// windowAnchoredOnPane reports whether any Window names paneUID as its exact
+// anchorPaneRef. A Pane that is still in the registry and still an anchor may
+// not be unbound from its Agent.
+func (r *Registry) windowAnchoredOnPane(paneUID string) bool {
+	if paneUID == "" {
+		return false
+	}
+	if _, ok := r.Pane(paneUID); !ok {
+		return false
+	}
+	for _, window := range r.Windows {
+		if window.Spec.AnchorPaneRef == paneUID {
+			return true
+		}
+	}
+	return false
 }
 
 func mustAgent(reg *Registry, uid string) *Agent {

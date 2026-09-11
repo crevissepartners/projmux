@@ -872,3 +872,131 @@ func TestAStaleStoredIntentIsProjectedAsWhatTheRegistrySays(t *testing.T) {
 		t.Fatalf("agent status = %+v, want Offline for the intentional clause", agent.Status)
 	}
 }
+
+// TestAnAnchorBindingSurvivesTheProjectionAndStaysValid covers the one place
+// the projection's release rule and the final-v2 anchor schema meet.
+//
+// The projection unbinds a dead managed Pane by status alone and keeps the Pane
+// row. The anchor schema reads status.paneRef as the authority that makes an
+// Agent-role anchorPaneRef valid. Releasing the binding of a Pane its own Window
+// anchors therefore left a Registry that no longer validated, and because
+// validation runs on the proposed state of every transaction, the next write of
+// any kind was refused for a reason that had nothing to do with it.
+func TestAnAnchorBindingSurvivesTheProjectionAndStaysValid(t *testing.T) {
+	t.Parallel()
+
+	registry := lifecycleFixture(t)
+	window, ok := registry.Window("win-main")
+	if !ok {
+		t.Fatal("fixture window is missing")
+	}
+	window.Spec.AnchorPaneRef = lifecyclePaneUID
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("fixture: %v", err)
+	}
+
+	input := TerminationProjectionInput{PaneUID: lifecyclePaneUID, ObservedAt: lifecycleClock}
+	projection, err := lifecycleMutator().ProjectTermination(registry, input)
+	if err != nil {
+		t.Fatalf("ProjectTermination: %v", err)
+	}
+	if !projection.PaneRetained {
+		t.Fatalf("the anchor Pane row was not retained: %+v", projection)
+	}
+	agent, ok := registry.Agent(lifecycleAgentUID)
+	if !ok {
+		t.Fatal("the agent is missing")
+	}
+	if agent.Status.Phase != PhaseOffline {
+		t.Fatalf("phase = %s, want Offline", agent.Status.Phase)
+	}
+	if agent.Status.PaneRef != lifecyclePaneUID {
+		t.Fatalf("paneRef = %q, want the anchor binding kept", agent.Status.PaneRef)
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("the projection left a registry no transaction can commit: %v", err)
+	}
+
+	// A kept binding must not turn the projection into a perpetual writer: the
+	// bound half of the dirty check and of the projection both have to read an
+	// Agent that already carries this evidence as finished.
+	if NeedsTerminationProjection(*registry, lifecyclePaneUID) {
+		t.Fatal("the dirty check still selects a Pane that has been fully reconciled")
+	}
+	settled := registry.Clone().Normalize()
+	second, err := lifecycleMutator().ProjectTermination(registry, input)
+	if err != nil {
+		t.Fatalf("second ProjectTermination: %v", err)
+	}
+	if second.Changed {
+		t.Fatalf("a repeat projection reported a change: %+v", second)
+	}
+	if !reflect.DeepEqual(registry.Normalize(), settled) {
+		t.Fatal("a repeat projection rewrote the registry")
+	}
+}
+
+// TestANonAnchorBindingIsStillReleased pins the other side of that boundary.
+// The exception is scoped to an anchor Pane and nothing else, so an ordinary
+// managed Pane is released exactly as it was before.
+func TestANonAnchorBindingIsStillReleased(t *testing.T) {
+	t.Parallel()
+
+	registry := lifecycleFixture(t)
+	if _, err := lifecycleMutator().ProjectTermination(registry, TerminationProjectionInput{
+		PaneUID: lifecyclePaneUID, ObservedAt: lifecycleClock,
+	}); err != nil {
+		t.Fatalf("ProjectTermination: %v", err)
+	}
+	agent, ok := registry.Agent(lifecycleAgentUID)
+	if !ok {
+		t.Fatal("the agent is missing")
+	}
+	if agent.Status.PaneRef != "" {
+		t.Fatalf("paneRef = %q, want the current binding released", agent.Status.PaneRef)
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+}
+
+// TestResumingAnAnchorBoundAgentMovesTheAnchorWithIt covers the other half of a
+// kept anchor binding.
+//
+// A kept binding is only half an answer: the Agent eventually comes back, and
+// `agent resume` brings it back on a *new* managed Pane rather than the row it
+// left behind. The anchor names this Agent's managed Pane, so it has to follow
+// the Agent there. Leaving it on the previous row would trade the refusal this
+// fix removes from `create` for the same refusal on `resume`.
+func TestResumingAnAnchorBoundAgentMovesTheAnchorWithIt(t *testing.T) {
+	t.Parallel()
+
+	registry := lifecycleFixture(t)
+	window, ok := registry.Window("win-main")
+	if !ok {
+		t.Fatal("fixture window is missing")
+	}
+	window.Spec.AnchorPaneRef = lifecyclePaneUID
+	if _, err := lifecycleMutator().ProjectTermination(registry, TerminationProjectionInput{
+		PaneUID: lifecyclePaneUID, ObservedAt: lifecycleClock,
+	}); err != nil {
+		t.Fatalf("ProjectTermination: %v", err)
+	}
+
+	resumed, err := lifecycleMutator().AttachAgentPane(registry, lifecycleAgentUID,
+		BootstrapPane{CWD: "/srv/alpha"}, "op-resume")
+	if err != nil {
+		t.Fatalf("AttachAgentPane: %v", err)
+	}
+	window, _ = registry.Window("win-main")
+	if window.Spec.AnchorPaneRef != resumed.Metadata.UID {
+		t.Fatalf("anchorPaneRef = %q, want the Agent's new managed Pane %q",
+			window.Spec.AnchorPaneRef, resumed.Metadata.UID)
+	}
+	if _, ok := registry.Pane(lifecyclePaneUID); !ok {
+		t.Fatal("the previous managed Pane row was discarded instead of retained as evidence")
+	}
+	if err := registry.Validate(); err != nil {
+		t.Fatalf("the resume left a registry no transaction can commit: %v", err)
+	}
+}

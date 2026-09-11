@@ -129,6 +129,12 @@ type TerminationProjection struct {
 //     moves to the phase the evidence implies, drops status.paneRef, and keeps
 //     both status.sessionRef and the Pane row. Runtime observation is evidence
 //     of disappearance, not canonical delete authority.
+//   - the one exception is a managed Pane its Window anchors. status.paneRef is
+//     what makes an Agent-role anchorPaneRef valid, so dropping it there would
+//     leave the Window anchored on a Pane no Agent claims and the Registry would
+//     stop validating. The binding is kept, the phase alone reports that nothing
+//     runs in it, and the result is the offline Agent-anchored Window snapshot
+//     restore already projects and the materializer already knows how to replay.
 //   - an Agent-owned Pane the Agent no longer binds is evidence only. The Agent
 //     has since been relaunched onto another Pane, and touching it here would
 //     apply a dead process's exit to a live one.
@@ -223,6 +229,18 @@ func (m Mutator) ProjectTermination(reg *Registry, in TerminationProjectionInput
 		out.PaneRetained = true
 		out.Reason = "agent " + agent.Metadata.UID + " cannot move from " +
 			string(agent.Status.Phase) + " to " + string(phase)
+		if out.Changed {
+			reg.UpdatedAt = observedAt
+		}
+		return out, nil
+	}
+	if agent.Status.Phase == phase && agent.Status.Reason == disposition.Reason {
+		// The Agent already carries exactly this evidence and is still bound
+		// only because releasing the binding would have dangled its Window
+		// anchor. Repeating the transition would rewrite lastTransitionAt for
+		// no new evidence, so the retained binding stays idempotent here.
+		out.PaneRetained = true
+		out.Reason = "agent " + agent.Metadata.UID + " already carries this termination"
 		if out.Changed {
 			reg.UpdatedAt = observedAt
 		}
@@ -355,8 +373,10 @@ func NeedsTerminationProjection(reg Registry, paneUID string) bool {
 		return (released.Status.Phase != phase || released.Status.Reason != disposition.Reason) &&
 			CanTransitionAgent(released.Status.Phase, phase)
 	}
-	phase, _ := DispositionFor(stored.Classification).Exit.Phase()
-	return CanTransitionAgent(agent.Status.Phase, phase)
+	disposition := DispositionFor(stored.Classification)
+	phase, _ := disposition.Exit.Phase()
+	return (agent.Status.Phase != phase || agent.Status.Reason != disposition.Reason) &&
+		CanTransitionAgent(agent.Status.Phase, phase)
 }
 
 // hasCondition reports whether conditions already record conditionType.
