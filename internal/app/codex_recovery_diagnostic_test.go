@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
@@ -170,7 +171,7 @@ func TestAIIngestTextPreservesBoundedRecoveryDiagnosticsAndLegacyRecords(t *test
 		got := formatAIIngestLogEntry(entry)
 		recovery, _ := json.Marshal(entry.Recovery)
 		want := oldText + " failure=" + entry.Failure.String() + " recovery=" + string(recovery)
-		if got != want || len(got)-len(oldText) > 947 || len(got) > maxCodexObserverFailureRecordBytes || strings.ContainsAny(got, "\x00\n\x1b\xff") || strings.Contains(got, "secret") || strings.Contains(got, "12345") {
+		if got != want || len(got)-len(oldText) > 947 || len(got) > maxCodexObserverFailureRecordBytes || strings.ContainsAny(got, "\x00\n\x1b") || !utf8.ValidString(got) || strings.ContainsRune(got, utf8.RuneError) || strings.Contains(got, "secret") || strings.Contains(got, "12345") {
 			t.Errorf("public journal text lost bounded safe projection")
 		}
 	}

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/crevissepartners/projmux/internal/config"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -341,7 +342,8 @@ exec "$CODEX_DIAGNOSTIC_HELPER" -test.run=^TestCodexDiagnosticProxyProcess$ -- "
 				t.Error("public text lost doctor/journal recovery evidence")
 			}
 		}
-		if len(publicJSON[i]) > maxCodexObserverFailureRecordBytes || len(text) > maxCodexObserverFailureRecordBytes || strings.Contains(text+publicJSON[i], "secret") || strings.ContainsAny(text, "\x00\x1b\xff") {
+		publicOutput := text + publicJSON[i]
+		if len(publicJSON[i]) > maxCodexObserverFailureRecordBytes || len(text) > maxCodexObserverFailureRecordBytes || strings.Contains(publicOutput, "secret") || strings.ContainsAny(text, "\x00\x1b") || !utf8.ValidString(publicOutput) || strings.ContainsRune(publicOutput, utf8.RuneError) {
 			t.Fatal("public diagnostics exceeded bounds or disclosed raw provider payload")
 		}
 	}
