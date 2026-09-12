@@ -1,6 +1,9 @@
 package codexappserver
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"fmt"
+)
 
 const (
 	methodInitialize              = "initialize"
@@ -228,4 +231,17 @@ type turnInterruptParams struct {
 type response struct {
 	result json.RawMessage
 	err    error
+}
+
+// A missing/null/non-integer RPC code is a malformed envelope, never code zero.
+func (w *wireError) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Code    *int   `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil || raw.Code == nil {
+		return fmt.Errorf("%w: invalid RPC code", ErrProtocol)
+	}
+	w.Code, w.Message = *raw.Code, raw.Message
+	return nil
 }

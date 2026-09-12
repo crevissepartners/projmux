@@ -253,6 +253,16 @@ func installFakeCodex(t *testing.T, daemonVersion string) func(*testing.T) ([]st
 	t.Setenv("PROJMUX_CODEX_ATTACH_HELPER", helper)
 	t.Setenv("PROJMUX_CODEX_ATTACH_LEDGER", ledgerPath)
 	t.Setenv("PROJMUX_CODEX_DAEMON_VERSION", daemonVersion)
+	// These fixtures model version skew, not contradictory observations. The
+	// independent proxy reports the same running version as the synthetic manager.
+	var observed struct {
+		Version string `json:"appServerVersion"`
+	}
+	_ = json.Unmarshal([]byte(daemonVersion), &observed)
+	if observed.Version == "" {
+		observed.Version = "0.150.1"
+	}
+	t.Setenv("PROJMUX_CODEX_ATTACH_VERSION", observed.Version)
 	t.Setenv("GO_WANT_ATTACH_HELPER", "1")
 
 	return func(t *testing.T) ([]string, map[string]int) {
@@ -317,7 +327,7 @@ func TestAttachProxyHelperProcess(t *testing.T) {
 		appendEvent("method:" + message.Method)
 		switch message.Method {
 		case methodInitialize:
-			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"userAgent":"codex-cli/0.150.1","platformFamily":"unix","platformOs":"linux"}}`, message.ID))
+			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"userAgent":%q,"platformFamily":"unix","platformOs":"linux"}}`, message.ID, "codex-cli/"+os.Getenv("PROJMUX_CODEX_ATTACH_VERSION")))
 		case methodInitialized:
 		case methodRemoteControlStatusRead:
 			writeTestServerFrame(fmt.Sprintf(`{"id":%s,"result":{"status":"disabled"}}`, message.ID))

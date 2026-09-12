@@ -769,7 +769,11 @@ func (b *RemoteBinding) ReadLifecycleSnapshot(ctx context.Context, fence Fence) 
 		if reason == RefusalNone {
 			reason = RefusalLifecycleProtocol
 		}
-		return codexappserver.LifecycleSnapshot{}, refuse(reason, lifecycleCause(reason))
+		cause := refuse(reason, lifecycleCause(reason))
+		if reply.Failure != nil {
+			cause = codexappserver.WithDiagnostic(cause, *reply.Failure)
+		}
+		return codexappserver.LifecycleSnapshot{}, cause
 	}
 	if reply.Snapshot == nil || reply.Snapshot.ThreadID != b.thread || len(reply.Result) != 0 {
 		return codexappserver.LifecycleSnapshot{}, refuse(RefusalFrameInvalid, codexappserver.ErrProtocol)

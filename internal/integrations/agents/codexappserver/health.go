@@ -4,6 +4,8 @@
 package codexappserver
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -156,6 +158,7 @@ const (
 type NativeActionRefusal string
 
 const (
+	NativeActionRefusalEvidenceContradictory NativeActionRefusal = "evidence-contradictory"
 	NativeActionRefusalNone                  NativeActionRefusal = "none"
 	NativeActionRefusalUnmanaged             NativeActionRefusal = "unmanaged"
 	NativeActionRefusalVersionSkew           NativeActionRefusal = "version-skew"
@@ -188,7 +191,7 @@ func (r OperatorRecovery) Guidance() string {
 	case OperatorRecoveryStopOwnerThenStart:
 		return "This app server is not daemon-managed. Close every sharing Codex client, then run `codex app-server daemon bootstrap` and rerun diagnostics. The observed `pid` backend requires bootstrap again after reboot. Projmux will not kill or restart it."
 	case OperatorRecoveryInspectProcessOwnership:
-		return "Process ownership or running version is unknown. Identify the owning operator before changing the shared app server, then rerun diagnostics. Projmux will not kill or restart it."
+		return "Process ownership or running version is unknown, insufficient, or contradictory. Identify the owning operator before changing the shared app server, then rerun diagnostics. Projmux will not kill or restart it."
 	default:
 		return ""
 	}
@@ -205,7 +208,22 @@ func (h Health) NativeActionGuidance() string {
 }
 
 // Health is safe to render in Doctor, Settings, and support reports.
+// ManagerEvidence reports independent read-only daemon-version evidence. Every
+// token is closed and <= 32 bytes; Version is <= 32 bytes. JSON <= 256 bytes.
+// No manager path, PID, command output, or error message enters this type.
+const MaxManagerEvidenceBytes = 256
+
+type ManagerEvidence struct {
+	Status    string `json:"status"`
+	Backend   string `json:"backend"`
+	Result    string `json:"result"`
+	Agreement string `json:"agreement"`
+	Version   string `json:"version,omitempty"`
+}
+
 type Health struct {
+	Failure           *FailureDiagnostic      `json:"failure,omitempty"`
+	ManagerEvidence   *ManagerEvidence        `json:"manager_evidence,omitempty"`
 	Source            Source                  `json:"source"`
 	Availability      Availability            `json:"availability"`
 	Reason            Reason                  `json:"reason"`
@@ -288,15 +306,11 @@ func remoteControlForEndpoint(availability Availability) RemoteControlCapability
 }
 
 func safeVersion(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if IsSafeDiagnosticVersion(raw) {
-		return raw
-	}
-	// User-Agent strings commonly include platform text. Retain only the first
-	// semver-shaped token and discard every surrounding byte.
-	match := versionPattern.FindStringSubmatch(raw)
-	if len(match) == 2 && len(match[1]) <= 32 {
-		return match[1]
+	// Only the first bounded version token can be metadata. Never search prose
+	// or a filesystem path for a version-looking substring.
+	token, _, _ := strings.Cut(strings.TrimSpace(raw), " ")
+	if strictEvidenceVersion(token) != "" {
+		return token
 	}
 	return ""
 }
@@ -309,4 +323,111 @@ var diagnosticVersionPattern = regexp.MustCompile(`^(?:[A-Za-z][A-Za-z0-9._+-]{0
 // bounded product-name/version pair. It rejects paths, tokens, and prose.
 func IsSafeDiagnosticVersion(value string) bool {
 	return len(value) <= 64 && diagnosticVersionPattern.MatchString(value)
+}
+
+// strictEvidenceVersion admits only the known Codex product prefixes and a
+// bounded release number. Unlike an arbitrary substring search it cannot turn
+// a path, provider prose, or embedded token into lifecycle evidence.
+func strictEvidenceVersion(raw string) string {
+	for _, prefix := range []string{"codex-cli/", "codex_cli_rs/", "codex/"} {
+		if strings.HasPrefix(raw, prefix) {
+			raw = strings.TrimPrefix(raw, prefix)
+			break
+		}
+	}
+	if len(raw) <= 32 && evidenceVersionPattern.MatchString(raw) {
+		return raw
+	}
+	return ""
+}
+
+var evidenceVersionPattern = regexp.MustCompile(`^[0-9]{1,8}\.[0-9]{1,8}\.[0-9]{1,8}(?:-(?:alpha|beta|rc)\.[0-9]{1,6})?$`)
+
+// RecoveryDiagnostic is the same bounded decision Doctor displays, captured at
+// the failing read-only probe (not reused as authority). JSON is <= 768 bytes;
+// each decision token is <= 64 bytes and its evidence is <= 256 bytes.
+const MaxRecoveryDiagnosticBytes = 768
+
+type RecoveryDiagnostic struct {
+	Evidence  *ManagerEvidence    `json:"manager_evidence,omitempty"`
+	Ownership ManagerOwnership    `json:"manager_ownership"`
+	Refusal   NativeActionRefusal `json:"native_action_refusal"`
+	Operator  OperatorRecovery    `json:"operator_recovery"`
+}
+
+func (e ManagerEvidence) safe() ManagerEvidence {
+	switch e.Status {
+	case "running", "not-running":
+	default:
+		e.Status = "unknown"
+	}
+	switch e.Backend {
+	case "pid", "absent":
+	default:
+		e.Backend = "unknown"
+	}
+	switch e.Result {
+	case "observed", "malformed", "truncated", "timeout", "cancelled", "command-failed", "executable-missing", "status-unknown":
+	default:
+		e.Result = "unavailable"
+	}
+	switch e.Agreement {
+	case "consistent", "contradictory":
+	default:
+		e.Agreement = "insufficient"
+	}
+	e.Version = strictEvidenceVersion(e.Version)
+	return e
+}
+func (e ManagerEvidence) MarshalJSON() ([]byte, error) {
+	type plain ManagerEvidence
+	return json.Marshal(plain(e.safe()))
+}
+func (d RecoveryDiagnostic) MarshalJSON() ([]byte, error) {
+	type plain RecoveryDiagnostic
+	switch d.Ownership {
+	case ManagerManaged, ManagerUnmanaged:
+	default:
+		d.Ownership = ManagerUnknown
+	}
+	switch d.Refusal {
+	case NativeActionRefusalNone, NativeActionRefusalUnmanaged, NativeActionRefusalVersionSkew, NativeActionRefusalUnmanagedVersionSkew, NativeActionRefusalOwnershipUnknown, NativeActionRefusalRuntimeVersionUnknown, NativeActionRefusalEvidenceContradictory:
+	default:
+		d.Refusal = NativeActionRefusalOwnershipUnknown
+	}
+	switch d.Operator {
+	case OperatorRecoveryNone, OperatorRecoveryRestartManagedDaemon, OperatorRecoveryStopOwnerThenStart:
+	default:
+		d.Operator = OperatorRecoveryInspectProcessOwnership
+	}
+	return json.Marshal(plain(d))
+}
+
+type healthDiagnosticFailure struct {
+	err      error
+	recovery RecoveryDiagnostic
+}
+
+func (e *healthDiagnosticFailure) Error() string { return e.err.Error() }
+func (e *healthDiagnosticFailure) Unwrap() error { return e.err }
+
+// WithHealthDiagnostic preserves the original error's categories and adds only
+// the safe, read-only decision; observing it never grants a lifecycle action.
+func WithHealthDiagnostic(err error, health Health) error {
+	if err == nil {
+		return nil
+	}
+	if health.Failure != nil {
+		err = WithDiagnostic(err, *health.Failure)
+	}
+	return &healthDiagnosticFailure{err: err, recovery: RecoveryDiagnostic{Evidence: health.ManagerEvidence, Ownership: health.ManagerOwnership, Refusal: health.NativeRefusal, Operator: health.OperatorRecovery}}
+}
+
+func RecoveryDiagnosticOf(err error) *RecoveryDiagnostic {
+	var failure *healthDiagnosticFailure
+	if !errors.As(err, &failure) {
+		return nil
+	}
+	recovery := failure.recovery
+	return &recovery
 }

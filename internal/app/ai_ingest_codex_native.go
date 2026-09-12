@@ -417,7 +417,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				}
 				continue
 			}
-			o.setStartupFallback(reason)
+			o.setStartupFallback(reason, err)
 			if !waitCodexObserver(ctx, delay) {
 				return nil
 			}
@@ -462,7 +462,7 @@ func (o *codexNativeObserver) Run(ctx context.Context) error {
 				continue
 			}
 			if snapshotErr != nil {
-				o.setStartupFallback(codexNativeReason(snapshotErr))
+				o.setStartupFallback(codexNativeReason(snapshotErr), snapshotErr)
 			}
 			if !waitCodexObserver(ctx, delay) {
 				return nil
@@ -980,9 +980,15 @@ func (o *codexNativeObserver) reportStartupResult(result codexObserverStartupRes
 	}
 }
 
-func (o *codexNativeObserver) setStartupFallback(reason codexObserverReason) {
+func (o *codexNativeObserver) setStartupFallback(reason codexObserverReason, failures ...error) {
 	if err := o.sink.SetAuthority(o.identity, codexAuthorityHook, "", string(reason)); err == nil {
-		o.journal(codexObserverTransitionFallback, "", reason)
+		if journal, ok := o.transitions.(interface {
+			RecordObserverFailure(codexLifecycleIdentity, codexObserverReason, codexappserver.FailureDiagnostic, ...*codexappserver.RecoveryDiagnostic)
+		}); ok && len(failures) > 0 && failures[0] != nil {
+			journal.RecordObserverFailure(o.identity, reason, codexappserver.Diagnostic(failures[0]), codexappserver.RecoveryDiagnosticOf(failures[0]))
+		} else {
+			o.journal(codexObserverTransitionFallback, "", reason)
+		}
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupFallback, Reason: string(reason)})
 	} else if !o.sink.BindingCurrent(o.identity) {
 		o.reportStartupResult(codexObserverStartupResult{Status: codexObserverStartupStale})
@@ -1965,10 +1971,8 @@ func (c *aiCommand) runCodexNativeLifecycleObserver(target codexLifecycleObserve
 	sink := aiCodexLifecycleSink{command: c, runner: runner}
 	session, sessionErr := newCodexBrokerObserverSessionForRoute(target.Identity, "", nil, target.NativeRoute)
 	if sessionErr != nil {
-		result := convergeCodexObserverStartupFallback(sink, target.Identity, string(codexNativeReason(sessionErr)))
-		if report := codexObserverStartupReporter(); report != nil {
-			report(result)
-		}
+		observer := codexNativeObserver{identity: target.Identity, sink: sink, reportStartup: codexObserverStartupReporter(), transitions: newCodexObserverLogJournal(c.appendAIIngestLog, c.now)}
+		observer.setStartupFallback(codexNativeReason(sessionErr), sessionErr)
 		return nil
 	}
 	defer func() { _ = session.Close() }()

@@ -1,0 +1,26 @@
+{
+  "failure": {
+    "method": "thread/list",
+    "rpc_code": -32602,
+    "cause": "catalog-rejected"
+  },
+  "recovery": {
+    "manager_evidence": {
+      "status": "running",
+      "backend": "pid",
+      "result": "observed",
+      "agreement": "contradictory",
+      "version": "0.154.0"
+    },
+    "manager_ownership": "unknown",
+    "native_action_refusal": "evidence-contradictory",
+    "operator_recovery": "inspect-process-ownership"
+  },
+  "at": "",
+  "source": "codex-observer",
+  "event": "observer.fallback",
+  "result": "provider-hook",
+  "reason": "unsupported",
+  "pane": "%9",
+  "thread_id": "thread-1"
+}

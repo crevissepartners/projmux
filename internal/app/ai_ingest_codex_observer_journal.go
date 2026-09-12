@@ -1,9 +1,12 @@
 package app
 
 import (
+	"encoding/json"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 )
 
 // aiIngestCodexObserverSource is the ai-ingest.log source column for records
@@ -60,6 +63,9 @@ var codexObserverTransitions = []codexObserverTransition{
 // same pair, so the flap rate is still readable afterwards.
 const codexObserverJournalWindow = 5 * time.Second
 
+// Includes existing routing columns plus the new <=160-byte failure object.
+const maxCodexObserverFailureRecordBytes = 4096
+
 // codexObserverJournal is the observer's append-only history sink.
 type codexObserverJournal interface {
 	RecordObserverTransition(codexLifecycleIdentity, codexObserverTransition, string, codexObserverReason)
@@ -72,9 +78,10 @@ type codexObserverLogJournal struct {
 	now         func() time.Time
 	window      time.Duration
 
-	mu         sync.Mutex
-	lastAt     map[string]time.Time
-	suppressed map[string]int
+	mu             sync.Mutex
+	lastAt         map[string]time.Time
+	lastDiagnostic map[string]string
+	suppressed     map[string]int
 }
 
 func newCodexObserverLogJournal(appendEntry func(aiIngestLogEntry), now func() time.Time) *codexObserverLogJournal {
@@ -93,6 +100,18 @@ func (j *codexObserverLogJournal) RecordObserverTransition(
 	epochLabel string,
 	reason codexObserverReason,
 ) {
+	j.record(identity, kind, epochLabel, reason, nil, nil)
+}
+
+func (j *codexObserverLogJournal) RecordObserverFailure(identity codexLifecycleIdentity, reason codexObserverReason, failure codexappserver.FailureDiagnostic, recovery ...*codexappserver.RecoveryDiagnostic) {
+	var decision *codexappserver.RecoveryDiagnostic
+	if len(recovery) > 0 {
+		decision = recovery[0]
+	}
+	j.record(identity, codexObserverTransitionFallback, "", reason, &failure, decision)
+}
+
+func (j *codexObserverLogJournal) record(identity codexLifecycleIdentity, kind codexObserverTransition, epochLabel string, reason codexObserverReason, failure *codexappserver.FailureDiagnostic, recovery *codexappserver.RecoveryDiagnostic) {
 	if j == nil || j.appendEntry == nil {
 		return
 	}
@@ -104,11 +123,19 @@ func (j *codexObserverLogJournal) RecordObserverTransition(
 		// it unrecorded keeps the transition visible without inventing a cause.
 		reason = codexObserverReasonUnrecorded
 	}
-	repeat, emit := j.admit(kind, reason)
+	detail := ""
+	if failure != nil {
+		detail = failure.String()
+		if recovery != nil {
+			raw, _ := json.Marshal(recovery)
+			detail += string(raw)
+		}
+	}
+	repeat, emit := j.admit(kind, reason, detail)
 	if !emit {
 		return
 	}
-	j.appendEntry(aiIngestLogEntry{
+	entry := aiIngestLogEntry{
 		Source:   aiIngestCodexObserverSource,
 		Event:    string(kind),
 		Result:   codexObserverTransitionResult(kind),
@@ -117,12 +144,21 @@ func (j *codexObserverLogJournal) RecordObserverTransition(
 		ThreadID: identity.ThreadID,
 		Epoch:    epochLabel,
 		Repeat:   repeat,
-	})
+		Failure:  failure,
+		Recovery: recovery,
+	}
+	if failure != nil {
+		raw, err := json.Marshal(entry)
+		if err != nil || len(raw)+64 > maxCodexObserverFailureRecordBytes {
+			return
+		}
+	}
+	j.appendEntry(entry)
 }
 
 // admit applies the coalescing window per (transition, reason) pair and
 // returns how many identical transitions were folded into this one.
-func (j *codexObserverLogJournal) admit(kind codexObserverTransition, reason codexObserverReason) (int, bool) {
+func (j *codexObserverLogJournal) admit(kind codexObserverTransition, reason codexObserverReason, detail string) (int, bool) {
 	window := j.window
 	if window <= 0 {
 		window = codexObserverJournalWindow
@@ -136,15 +172,17 @@ func (j *codexObserverLogJournal) admit(kind codexObserverTransition, reason cod
 	defer j.mu.Unlock()
 	if j.lastAt == nil {
 		j.lastAt, j.suppressed = map[string]time.Time{}, map[string]int{}
+		j.lastDiagnostic = map[string]string{}
 	}
 	last, seen := j.lastAt[key]
-	if seen && now.Sub(last) < window {
+	if seen && j.lastDiagnostic[key] == detail && now.Sub(last) < window {
 		j.suppressed[key]++
 		return 0, false
 	}
 	repeat := j.suppressed[key]
 	delete(j.suppressed, key)
 	j.lastAt[key] = now
+	j.lastDiagnostic[key] = detail
 	return repeat, true
 }
 

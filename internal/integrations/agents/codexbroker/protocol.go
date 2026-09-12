@@ -149,6 +149,7 @@ type wireRequest struct {
 // wireReply is one host frame. A frame with an ID answers that request; a
 // frame without one is an unsolicited delivery for the thread it names.
 type wireReply struct {
+	Failure      *codexappserver.FailureDiagnostic `json:"failure,omitempty"`
 	ID           uint64                            `json:"id,omitempty"`
 	Kind         replyKind                         `json:"kind"`
 	Runtime      string                            `json:"runtime,omitempty"`

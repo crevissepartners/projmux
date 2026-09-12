@@ -277,7 +277,7 @@ func (controller defaultCodexNativeThreadController) Current(ctx context.Context
 	}
 	health := codexappserver.ProbeDefaultProxy(ctx, codexNativeThreadTimeout, version.String(), true)
 	if codexappserver.AuthorityFor(health).Attach != codexappserver.EndpointAttachAllowed {
-		return codexNativeEndpointRoute{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
+		return codexNativeEndpointRoute{}, codexappserver.WithHealthDiagnostic(&codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}, health)
 	}
 	runningVersion := strings.TrimSpace(health.RunningVersion)
 	if !codexappserver.IsSafeDiagnosticVersion(runningVersion) {

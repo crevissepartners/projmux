@@ -75,6 +75,10 @@ type EndpointAuthority struct {
 // this process may attach to, keeps DaemonLifecycleAuthorityNone.
 func AuthorityFor(health Health) EndpointAuthority {
 	authority := EndpointAuthority{Attach: EndpointAttachRefused, Lifecycle: DaemonLifecycleAuthorityNone}
+	if health.ManagerEvidence != nil && health.ManagerEvidence.Agreement == "contradictory" {
+		authority.Refusal = AttachRefusalOwnershipUnknown
+		return authority
+	}
 	switch health.EndpointReadiness {
 	case EndpointReady:
 	case EndpointDead:
@@ -180,7 +184,7 @@ func (p attachPolicy) attach(ctx context.Context, opts AttachOptions) (*Client, 
 	health := p.probe(ctx)
 	authority := AuthorityFor(health)
 	if authority.Attach != EndpointAttachAllowed {
-		return nil, health, &AttachError{Refusal: authority.Refusal, Authority: authority}
+		return nil, health, WithHealthDiagnostic(&AttachError{Refusal: authority.Refusal, Authority: authority}, health)
 	}
 	client, err := p.open(ctx, opts.ExperimentalAPI)
 	if err != nil {

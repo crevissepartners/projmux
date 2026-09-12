@@ -188,6 +188,33 @@ method, rerun Doctor. Do not copy binaries, create symlinks in the Codex home,
 or edit the control socket as a diagnostic workaround. Doctor, Settings, and
 support-report collection never start the daemon or modify the installation.
 
+The read-only manager observation is recorded separately as `manager_evidence`:
+`status`, `backend`, `result`, `agreement`, and the manager's reported `version`.
+`running_version` describes the independently initialized endpoint. A version or
+running/stopped contradiction yields `manager_ownership=unknown`,
+`native_action_refusal=evidence-contradictory`, and inspection guidance. A ready
+endpoint with insufficient manager evidence also refuses mutation. Running/PID
+or a managed-looking path alone does not prove ownership. The existing exact
+cold-start rule remains separate; a contradictory running-manager observation
+cannot authorize it.
+
+Observer `ai-ingest.log` fallback rows keep the existing `reason` and add a
+`failure` object: allowlisted request `method`, nullable original `rpc_code`, and
+closed `cause`. For example, an unsupported request and a catalog rejection can
+share `reason=unsupported` while retaining different original methods/codes.
+Transport and local protocol failures have `rpc_code=null`. Read-only preflight
+refusals also carry the same `recovery` evidence and operator decision Doctor
+reports. These fields are appended only after the exact authority write succeeds;
+the existing startup handshake and reason consumers are unchanged.
+
+Diagnostic bounds are 32 bytes per method/cause/evidence token or version,
+20 decimal bytes for an RPC integer, 64 bytes per recovery decision token,
+160 bytes for `failure` JSON, 256 for `manager_evidence`, and 768 for `recovery`.
+The Codex health JSON/text section and enriched observer row each fit within
+4096 bytes (the row reserves space for its timestamp). The existing journal file
+retention bound remains 1 MiB. Provider messages, payloads, prompts, auth, paths,
+and raw PIDs are excluded; unknown strings are replaced by closed unknown values.
+
 ## Incomplete npm install
 
 If the npm shim exits before Projmux starts with:
