@@ -1065,6 +1065,11 @@
   That token is deliberately not `binding-revoked`: the four close-cause tokens
   answer "who closed the stream" and come from the broker epoch, and here the
   stream was never closed at all.
+- `test/e2e/codex-lifecycle.sh` (C01) exercises its actual projection barrier on
+  an inert fixture pane with an already-ready or later-ready level and repeated
+  option hooks before waiting. An atomic claim shared by the level check and
+  hook emits exactly one signal; duplicate `wait-for -S` calls would otherwise
+  lose the pending wakeup. The existing barrier deadline is unchanged.
 - `test/e2e/codex-lifecycle.sh` (C01) pins the exact disconnect token at its
   disconnect projection barrier and at the reconnect-gap hook comparison. It
   waited on the literal `disconnected` before, which was the bucket published

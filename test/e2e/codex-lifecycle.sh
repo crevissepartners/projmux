@@ -478,18 +478,25 @@ lifecycle_projection_barrier_pane=""
 lifecycle_projection_barrier_channel=""
 lifecycle_projection_barrier_label=""
 lifecycle_arm_projection_condition() {
-  local pane="$1" condition="$2" label="$3"
+  local pane="$1" condition="$2" label="$3" signal_shell="" signal_command=""
   lifecycle_projection_barrier_serial="$((lifecycle_projection_barrier_serial + 1))"
   lifecycle_projection_barrier_pane="$pane"
   lifecycle_projection_barrier_channel="codex-lifecycle-$lifecycle_server_pid-$lifecycle_projection_barrier_serial"
   lifecycle_projection_barrier_label="$label"
+  # wait-for -S is not idempotent: a second signal before a waiter arrives
+  # consumes the first pending wakeup. The level check and every matching hook
+  # therefore share one atomic claim, retained for this barrier's lifetime.
+  printf -v signal_shell 'if mkdir -- %q 2>/dev/null; then env -u TMUX -u TMUX_PANE %q -L %q wait-for -S %q; fi' \
+    "$lifecycle_fixture_state/projection-barrier-$lifecycle_projection_barrier_serial" \
+    "$lifecycle_real_tmux" "$lifecycle_socket" "$lifecycle_projection_barrier_channel"
+  signal_command="run-shell \"$signal_shell\""
   lifecycle_tmux set-hook -p -t "$pane" after-set-option \
-    "if-shell -F '$condition' 'wait-for -S $lifecycle_projection_barrier_channel'"
+    "if-shell -F '$condition' '$signal_command'"
   # Close the lost-wakeup window without polling: if the exact level became
   # current before the hook was installed, signal the same one-shot channel
   # synchronously. Otherwise the hook owns the future edge.
   lifecycle_tmux if-shell -F -t "$pane" "$condition" \
-    "wait-for -S $lifecycle_projection_barrier_channel"
+    "$signal_command"
 }
 
 # The attention field is part of the condition because the projection writes
@@ -617,6 +624,28 @@ dump_lifecycle_diagnostics() {
   lifecycle_queue_json >&2 || true
   tail -n 8 "$XDG_STATE_HOME/projmux/ai-ingest.log" >&2 2>/dev/null || true
 }
+
+# Exercise the actual barrier on the fixture's inert anchor, without touching
+# either Agent's projection. Both an already-ready level and a later ready edge
+# must survive one or three further matching option hooks before the wait starts
+# (the old helper emitted two or four signals and lost the pending wakeup).
+for lifecycle_barrier_initial in ready pending; do
+  for lifecycle_barrier_updates in 1 3; do
+    lifecycle_tmux set-option -p -t "$lifecycle_anchor_pane" @c01_barrier_ready "$lifecycle_barrier_initial"
+    lifecycle_arm_projection_condition "$lifecycle_anchor_pane" '#{==:#{@c01_barrier_ready},ready}' \
+      "once-signal regression $lifecycle_barrier_initial/$lifecycle_barrier_updates"
+    if [[ "$lifecycle_barrier_initial" == pending ]]; then
+      lifecycle_tmux set-option -p -t "$lifecycle_anchor_pane" @c01_barrier_ready ready
+    fi
+    for ((lifecycle_barrier_update = 0; lifecycle_barrier_update < lifecycle_barrier_updates; lifecycle_barrier_update++)); do
+      lifecycle_tmux set-option -p -t "$lifecycle_anchor_pane" @c01_barrier_noise "$lifecycle_barrier_update"
+    done
+    lifecycle_wait_projection_barrier
+  done
+done
+lifecycle_tmux set-option -pu -t "$lifecycle_anchor_pane" @c01_barrier_ready
+lifecycle_tmux set-option -pu -t "$lifecycle_anchor_pane" @c01_barrier_noise
+echo ">> C01 projection barrier retained one signal across ready/pending levels and repeated option hooks"
 
 wait_lifecycle_option @projmux_codex_authority provider-control-plane "native authority"
 wait_lifecycle_option @projmux_ai_state thinking "native active snapshot"
