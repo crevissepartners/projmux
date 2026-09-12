@@ -154,6 +154,8 @@ func formatOperationalEvent(event diagnostics.Event) string {
 		{"agent_recipe_count", event.AgentRecipeCount},
 		{"startup_recipe_count", event.StartupRecipeCount},
 		{"item_count", event.ItemCount},
+		{"resumed_count", event.ResumedCount},
+		{"skipped_count", event.SkippedCount},
 	} {
 		if count.value != nil {
 			parts = append(parts, fmt.Sprintf("%s=%d", count.name, *count.value))

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
+	"github.com/crevissepartners/projmux/internal/diagnostics"
 )
 
 // topologyAgentLauncher is the provider-launch seam the closed-Project topology
@@ -80,32 +81,32 @@ const (
 // separately by the topology observer and owner guard, including under the lock.
 // A missing receipt is distinct from a malformed one; it still needs an exact
 // retained activation, never a phase or recycled runtime handle alone.
-func decideTopologyAgentContinueEligibility(registry coremetadata.Registry, agent coremetadata.Agent) (bool, string) {
+func decideTopologyAgentContinueEligibility(registry coremetadata.Registry, agent coremetadata.Agent) (bool, diagnostics.TopologyAgentReason, string) {
 	switch agent.Status.Phase {
 	case coremetadata.PhaseRunning:
 		if strings.TrimSpace(agent.Status.PaneRef) == "" {
-			return false, "the pre-projection Running Agent has no exact paneRef"
+			return false, diagnostics.TopologyAgentActivationUnproven, "the pre-projection Running Agent has no exact paneRef"
 		}
 	case coremetadata.PhaseOffline, coremetadata.PhaseFailed:
 		if agent.Status.PaneRef != "" {
-			return false, "the projected " + string(agent.Status.Phase) + " Agent still records a current paneRef"
+			return false, diagnostics.TopologyAgentActivationUnproven, "the projected " + string(agent.Status.Phase) + " Agent still records a current paneRef"
 		}
 	default:
-		return false, "phase " + string(agent.Status.Phase) + " is not a retained Running, Offline, or Failed activation"
+		return false, diagnostics.TopologyAgentPhaseIneligible, "phase " + string(agent.Status.Phase) + " is not a retained Running, Offline, or Failed activation"
 	}
 
 	receipt := agent.Status.LastTermination
 	paneUID := agent.Status.PaneRef
 	if receipt != nil {
-		if reason := topologyContinueTerminationReason(*receipt); reason != "" {
-			return false, reason
+		if code, reason := topologyContinueTerminationReason(*receipt); code != "" {
+			return false, code, reason
 		}
 		if receipt.AgentUID != agent.Metadata.UID || strings.TrimSpace(receipt.PaneUID) == "" ||
 			strings.TrimSpace(receipt.Generation) == "" || receipt.ObservedAt.IsZero() {
-			return false, "termination evidence lacks the exact Agent, Pane, generation, or observation"
+			return false, diagnostics.TopologyAgentActivationUnproven, "termination evidence lacks the exact Agent, Pane, generation, or observation"
 		}
 		if agent.Status.Phase == coremetadata.PhaseRunning && paneUID != receipt.PaneUID {
-			return false, "the pre-projection Running Agent no longer binds the termination evidence Pane"
+			return false, diagnostics.TopologyAgentActivationUnproven, "the pre-projection Running Agent no longer binds the termination evidence Pane"
 		}
 		paneUID = receipt.PaneUID
 	} else if paneUID == "" {
@@ -113,34 +114,34 @@ func decideTopologyAgentContinueEligibility(registry coremetadata.Registry, agen
 		// the newest timestamp or the first pane in Registry/runtime order.
 		panes := registry.PanesOf(agent.Metadata.UID)
 		if len(panes) != 1 {
-			return false, "no termination evidence and no unique retained managed Pane activation"
+			return false, diagnostics.TopologyAgentActivationUnproven, "no termination evidence and no unique retained managed Pane activation"
 		}
 		paneUID = panes[0].Metadata.UID
 	}
 	pane, ok := registry.Pane(paneUID)
 	if !ok {
-		return false, "retained Pane " + paneUID + " is not in the Registry"
+		return false, diagnostics.TopologyAgentActivationUnproven, "retained Pane " + paneUID + " is not in the Registry"
 	}
 	if pane.Metadata.OwnerRef == nil || pane.Metadata.OwnerRef.Kind != coremetadata.KindAgent ||
 		pane.Metadata.OwnerRef.UID != agent.Metadata.UID || pane.Spec.Role != coremetadata.PaneRoleAgent {
-		return false, "retained Pane is not the Agent's managed Pane"
+		return false, diagnostics.TopologyAgentActivationUnproven, "retained Pane is not the Agent's managed Pane"
 	}
 	activation := pane.Status.Activation
 	if strings.TrimSpace(activation.Generation) == "" || activation.AgentUID != agent.Metadata.UID ||
 		strings.TrimSpace(activation.OperationID) == "" || activation.StartedAt.IsZero() ||
 		(receipt != nil && activation.Generation != receipt.Generation) {
-		return false, "termination evidence is not for the retained Pane's current Agent activation generation"
+		return false, diagnostics.TopologyAgentActivationUnproven, "termination evidence is not for the retained Pane's current Agent activation generation"
 	}
 	if !sameTopologyTerminationEvidence(pane.Status.LastTermination, receipt) {
-		return false, "Agent and retained Pane do not carry the same exact termination evidence"
+		return false, diagnostics.TopologyAgentTerminationInvalid, "Agent and retained Pane do not carry the same exact termination evidence"
 	}
-	return true, ""
+	return true, "", ""
 }
 
 // topologyContinueTerminationReason validates the consumer's evidence boundary
 // without changing receipt production or sticky intent. Reconcile has no wait
 // status or operation receipt; supervisors carry either an exit or a signal.
-func topologyContinueTerminationReason(receipt coremetadata.TerminationEvidence) string {
+func topologyContinueTerminationReason(receipt coremetadata.TerminationEvidence) (diagnostics.TopologyAgentReason, string) {
 	pairing := false
 	switch receipt.Source {
 	case coremetadata.TerminationSourceControlAction:
@@ -151,10 +152,10 @@ func topologyContinueTerminationReason(receipt coremetadata.TerminationEvidence)
 		pairing = receipt.Classification == coremetadata.TerminationUnknown
 	}
 	if !pairing {
-		return fmt.Sprintf("termination evidence has unsupported source/classification %q/%q", receipt.Source, receipt.Classification)
+		return diagnostics.TopologyAgentTerminationInvalid, fmt.Sprintf("termination evidence has unsupported source/classification %q/%q", receipt.Source, receipt.Classification)
 	}
 	if receipt.Classification == coremetadata.TerminationIntentional || receipt.Classification == coremetadata.TerminationNormal {
-		return fmt.Sprintf("termination evidence %s/%s excludes automatic Continue replay", receipt.Source, receipt.Classification)
+		return diagnostics.TopologyAgentTerminationExcluded, fmt.Sprintf("termination evidence %s/%s excludes automatic Continue replay", receipt.Source, receipt.Classification)
 	}
 	validShape := receipt.ExitCode == nil && receipt.Signal == ""
 	switch receipt.Source {
@@ -171,9 +172,9 @@ func topologyContinueTerminationReason(receipt coremetadata.TerminationEvidence)
 		validShape = validShape && coremetadata.ClassifyProcessExit(code, signal) == receipt.Classification
 	}
 	if !validShape {
-		return fmt.Sprintf("termination evidence %s/%s has an invalid intent or wait-status shape", receipt.Source, receipt.Classification)
+		return diagnostics.TopologyAgentTerminationInvalid, fmt.Sprintf("termination evidence %s/%s has an invalid intent or wait-status shape", receipt.Source, receipt.Classification)
 	}
-	return ""
+	return "", ""
 }
 
 func sameTopologyTerminationEvidence(left, right *coremetadata.TerminationEvidence) bool {
@@ -205,6 +206,7 @@ type topologyAgentResumeDecision struct {
 	// reason is why this Agent is not resumed. It is empty exactly when
 	// conversationID is non-empty.
 	reason string
+	code   diagnostics.TopologyAgentReason
 }
 
 // decideTopologyAgentResume folds one Agent's stored session ref into a launch
@@ -220,6 +222,7 @@ func decideTopologyAgentResume(agent coremetadata.Agent) topologyAgentResumeDeci
 	if ref.Empty() {
 		return topologyAgentResumeDecision{
 			provider: declared,
+			code:     diagnostics.TopologyAgentSessionRefMissing,
 			reason:   "no provider session ref is recorded; projmux records one the first time that Agent's provider hook fires",
 		}
 	}
@@ -227,6 +230,7 @@ func decideTopologyAgentResume(agent coremetadata.Agent) topologyAgentResumeDeci
 	if provider == "" {
 		return topologyAgentResumeDecision{
 			provider: declared,
+			code:     diagnostics.TopologyAgentSessionRefInvalid,
 			reason:   "the recorded session ref carries no provider discriminator",
 		}
 	}
@@ -234,6 +238,7 @@ func decideTopologyAgentResume(agent coremetadata.Agent) topologyAgentResumeDeci
 	if conversation == "" {
 		return topologyAgentResumeDecision{
 			provider: declared,
+			code:     diagnostics.TopologyAgentSessionRefMissing,
 			reason:   "the recorded " + provider + " session ref carries no conversation id",
 		}
 	}
@@ -244,6 +249,7 @@ func decideTopologyAgentResume(agent coremetadata.Agent) topologyAgentResumeDeci
 	if declared != "" && declared != provider {
 		return topologyAgentResumeDecision{
 			provider: declared,
+			code:     diagnostics.TopologyAgentSessionRefMismatch,
 			reason: fmt.Sprintf("it is a %s Agent but its session ref is a %s conversation",
 				declared, provider),
 		}
@@ -294,13 +300,13 @@ func planTopologyWindowAgents(
 			continue
 		}
 		if authority != topologyAgentReplaySnapshot {
-			if eligible, reason := decideTopologyAgentContinueEligibility(registry, agent); !eligible {
-				plan.noteAgent(label, reason)
+			if eligible, code, reason := decideTopologyAgentContinueEligibility(registry, agent); !eligible {
+				plan.noteAgent(label, code, reason)
 				continue
 			}
 		}
 		if !coremetadata.CanTransitionAgent(agent.Status.Phase, coremetadata.PhaseRunning) {
-			plan.noteAgent(label, "phase "+string(agent.Status.Phase)+" cannot move to Running")
+			plan.noteAgent(label, diagnostics.TopologyAgentPhaseIneligible, "phase "+string(agent.Status.Phase)+" cannot move to Running")
 			continue
 		}
 		work, ok := planTopologyAgentReplay(plan, project, agent, label, launcher, authority)
@@ -332,13 +338,13 @@ func planTopologyAgentReplay(
 	authority topologyAgentReplayAuthority,
 ) (registryTopologyAgentPlan, bool) {
 	if launcher == nil {
-		plan.noteAgent(label, "the Agent provider launcher is not configured on this route")
+		plan.noteAgent(label, diagnostics.TopologyAgentProviderUnavailable, "the Agent provider launcher is not configured on this route")
 		return registryTopologyAgentPlan{}, false
 	}
 	decision := decideTopologyAgentResume(agent)
 	if authority != topologyAgentReplaySnapshot {
 		if decision.conversationID == "" {
-			plan.noteAgent(label, "no exact conversation can be resumed: "+decision.reason)
+			plan.noteAgent(label, decision.code, "no exact conversation can be resumed: "+decision.reason)
 			return registryTopologyAgentPlan{}, false
 		}
 		// ConversationID selects the populated union member, so check that the
@@ -354,16 +360,16 @@ func planTopologyAgentReplay(
 			validRef = ref.Antigravity != nil && ref.Claude == nil && ref.Codex == nil
 		}
 		if !validRef {
-			plan.noteAgent(label, "the recorded session ref has an unsupported provider or mismatched provider member")
+			plan.noteAgent(label, diagnostics.TopologyAgentSessionRefInvalid, "the recorded session ref has an unsupported provider or mismatched provider member")
 			return registryTopologyAgentPlan{}, false
 		}
 	}
 	if decision.provider == "" {
-		plan.noteAgent(label, "neither the Agent nor its session ref names a provider")
+		plan.noteAgent(label, diagnostics.TopologyAgentProviderUnavailable, "neither the Agent nor its session ref names a provider")
 		return registryTopologyAgentPlan{}, false
 	}
 	if err := launcher.RequireAgentEnabled(decision.provider); err != nil {
-		plan.noteAgent(label, err.Error())
+		plan.noteAgent(label, diagnostics.TopologyAgentProviderUnavailable, err.Error())
 		return registryTopologyAgentPlan{}, false
 	}
 	cwd := strings.TrimSpace(agent.Spec.Workspace.CWD)
@@ -371,7 +377,7 @@ func planTopologyAgentReplay(
 		cwd = project.Spec.Root
 	}
 	if reason := validateMaterializeDirectory(cwd, "Agent cwd"); reason != "" {
-		plan.noteAgent(label, reason)
+		plan.noteAgent(label, diagnostics.TopologyAgentWorkspaceUnavailable, reason)
 		return registryTopologyAgentPlan{}, false
 	}
 	workspace := agent.Spec.Workspace
@@ -385,7 +391,7 @@ func planTopologyAgentReplay(
 			return work, true
 		}
 		if authority != topologyAgentReplaySnapshot {
-			plan.noteAgent(label, fmt.Sprintf("the %s provider could not build the required exact resume launch for conversation %s: %v",
+			plan.noteAgent(label, diagnostics.TopologyAgentResumePrepareFailed, fmt.Sprintf("the %s provider could not build the required exact resume launch for conversation %s: %v",
 				decision.provider, decision.conversationID, err))
 			return registryTopologyAgentPlan{}, false
 		}
@@ -398,7 +404,7 @@ func planTopologyAgentReplay(
 	}
 	title, argv, err := launcher.PlanAgentLaunch(decision.provider, workspace, nil)
 	if err != nil {
-		plan.noteAgent(label, fmt.Sprintf("%s, and no fresh %s launch could be built either: %v",
+		plan.noteAgent(label, diagnostics.TopologyAgentResumePrepareFailed, fmt.Sprintf("%s, and no fresh %s launch could be built either: %v",
 			decision.reason, decision.provider, err))
 		return registryTopologyAgentPlan{}, false
 	}

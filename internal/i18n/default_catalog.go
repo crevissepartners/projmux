@@ -2,6 +2,8 @@ package i18n
 
 var defaultCatalogData = map[Locale]map[Key]Entry{
 	FallbackLocale: {
+		Key("startup.recovery.summary"):                                      textEntry("Continue: resumed %d, skipped %d; %s"),
+		Key("startup.recovery.failed"):                                       textEntry("Continue failed: resumed %d, skipped %d; %s"),
 		Key("agent.progress.working"):                                        textEntry("Working"),
 		Key("agent.progress.plan"):                                           textEntry("plan"),
 		Key("agent.progress.files"):                                          textEntry("files"),
@@ -1054,6 +1056,8 @@ var defaultCatalogData = map[Locale]map[Key]Entry{
 		Key("settings.keybinding.resources.description"):                     textEntry("Open the read-only Project, Window, and Pane resource inspector"),
 	},
 	Locale("ko-KR"): {
+		Key("startup.recovery.summary"):                                      textEntry("Continue: 복귀 %d, 건너뜀 %d; %s"),
+		Key("startup.recovery.failed"):                                       textEntry("Continue 실패: 복귀 %d, 건너뜀 %d; %s"),
 		Key("agent.progress.working"):                                        textEntry("작업 중"),
 		Key("agent.progress.plan"):                                           textEntry("계획"),
 		Key("agent.progress.files"):                                          textEntry("파일"),

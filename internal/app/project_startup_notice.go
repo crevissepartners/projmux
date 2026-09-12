@@ -3,10 +3,14 @@ package app
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"strings"
 	"sync"
+
+	"github.com/crevissepartners/projmux/internal/diagnostics"
+	"github.com/crevissepartners/projmux/internal/i18n"
 )
 
 // projectStartupNoticeMax bounds one `display-message` payload, in bytes.
@@ -137,7 +141,7 @@ func projectStartupNoticeMessage(text string) string {
 		return ""
 	}
 	if len(message) > projectStartupNoticeMax {
-		message = strings.TrimSpace(truncateUTF8Prefix(message, projectStartupNoticeMax)) + "..."
+		message = strings.TrimSpace(truncateUTF8Prefix(message, projectStartupNoticeMax-len("..."))) + "..."
 	}
 	return message
 }
@@ -176,4 +180,35 @@ func flushProjectStartupNotices(w io.Writer) {
 	if flusher, ok := w.(projectStartupNoticeFlusher); ok {
 		flusher.Flush()
 	}
+}
+
+// Recovery replaces the buffered per-Agent popup text with committed totals.
+// Write has already mirrored every detailed notice to stderr.
+func (s *projectStartupNoticeSink) Recovery(message string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.buf.Reset()
+	s.mu.Unlock()
+	s.Report(message)
+}
+
+func reportTopologyRecovery(w io.Writer, result diagnostics.LifecycleResult, counts diagnostics.TopologyCounts) {
+	message := topologyRecoverySummary(settingsLocale(), result, counts)
+	if sink, ok := w.(interface{ Recovery(string) }); ok {
+		sink.Recovery(message)
+		return
+	}
+	if w != nil {
+		_, _ = fmt.Fprintln(w, message)
+	}
+}
+
+func topologyRecoverySummary(locale i18n.Locale, result diagnostics.LifecycleResult, counts diagnostics.TopologyCounts) string {
+	text := "Continue: resumed %d, skipped %d; %s"
+	if result == diagnostics.LifecycleError {
+		text = "Continue failed: resumed %d, skipped %d; %s"
+	}
+	return projectStartupNoticeMessage(fmt.Sprintf(settingsCatalogTextLocale(locale, text), counts.Resumed, counts.Skipped, "projmux diagnostics log --component topology"))
 }

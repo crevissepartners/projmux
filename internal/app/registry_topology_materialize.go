@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/crevissepartners/projmux/internal/core/controller"
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
@@ -39,7 +40,8 @@ type registryTopologyPlan struct {
 	// conversation is converged work, and an Agent that cannot come back at all
 	// is not work this pass will do, so counting either as drift would make a
 	// stable topology report churn forever.
-	notices []string
+	notices    []string
+	agentSkips map[diagnostics.TopologyAgentReason]int
 }
 
 type registryTopologyWindowPlan struct {
@@ -418,7 +420,11 @@ func (p *registryTopologyPlan) refuse(divergence resourcegraph.Divergence, kind 
 }
 
 // noteAgent records that one stored Agent will not be brought back at all.
-func (p *registryTopologyPlan) noteAgent(label, reason string) {
+func (p *registryTopologyPlan) noteAgent(label string, code diagnostics.TopologyAgentReason, reason string) {
+	if p.agentSkips == nil {
+		p.agentSkips = make(map[diagnostics.TopologyAgentReason]int)
+	}
+	p.agentSkips[code]++
 	p.notices = append(p.notices, fmt.Sprintf("projmux: agent/%s was not restored: %s", label, reason))
 }
 
@@ -558,6 +564,7 @@ type topologyMaterializeOutcome struct {
 	completed       []string
 	failedStage     string
 	registryChanged bool
+	recovery        diagnostics.TopologyCounts
 }
 
 // defaultTopologyMaterializer builds the runtime for one exact target. The tmux
@@ -579,8 +586,21 @@ func defaultTopologyMaterializer(target tmuxTransport, recorder *diagnostics.Lif
 	}
 }
 
-func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceReconcilePlanner, warn io.Writer) (topologyMaterializeOutcome, error) {
-	var outcome topologyMaterializeOutcome
+func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceReconcilePlanner, warn io.Writer) (outcome topologyMaterializeOutcome, runErr error) {
+	started := time.Now()
+	recorder := r.diagnostics.Topology()
+	defer func() {
+		if planner.agentReplayAuthority == topologyAgentReplaySnapshot {
+			return
+		}
+		result := diagnostics.LifecycleSuccess
+		if runErr != nil {
+			result = diagnostics.LifecycleError
+			outcome.recovery = diagnostics.TopologyCounts{}
+		}
+		recorder.Record(started, result, outcome.recovery)
+		reportTopologyRecovery(r.notices, result, outcome.recovery)
+	}()
 	if r.resources == nil || r.resources.updateConvergent == nil {
 		return outcome, errors.New("resource topology materialization write store is not configured")
 	}
@@ -673,6 +693,19 @@ func (r topologyMaterializeRun) execute(ctx context.Context, planner resourceRec
 		return outcome, updateErr
 	}
 	runtime.clearCreateOperations(ctx, ledger)
+	if plan := outcome.plan.materialization; plan != nil {
+		outcome.recovery.Reasons = plan.agentSkips
+		for _, count := range plan.agentSkips {
+			outcome.recovery.Skipped += count
+		}
+		for _, window := range plan.windows {
+			for _, agent := range window.agents {
+				if agent.conversationID != "" {
+					outcome.recovery.Resumed++
+				}
+			}
+		}
+	}
 	return outcome, nil
 }
 
@@ -758,10 +791,15 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	}
 	route, err := bindExplicitMaterializeSocket(ctx, c.runner, target, c.lookupEnv)
 	if err != nil {
+		if planner.agentReplayAuthority != topologyAgentReplaySnapshot {
+			c.diagnostics.Topology().Record(time.Now(), diagnostics.LifecycleError, diagnostics.TopologyCounts{})
+			reportTopologyRecovery(stderr, diagnostics.LifecycleError, diagnostics.TopologyCounts{})
+		}
 		return err
 	}
 	run := topologyMaterializeRun{
 		resources:          c.resources,
+		diagnostics:        c.diagnostics,
 		runner:             c.runner,
 		target:             target,
 		expectedSocketPath: route.expectedSocketPath,
@@ -780,6 +818,9 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	if runErr != nil {
 		remaining, replanErr := c.replanAfterFailure(ctx, planner)
 		report := reportForFailure(outcome.plan, remaining, reportTarget, outcome.completed, outcome.failedStage, retry, runErr, replanErr)
+		if planner.agentReplayAuthority != topologyAgentReplaySnapshot {
+			report.Recovery = &outcome.recovery
+		}
 		if writeErr := writeResourceReconcileReport(stdout, opts.output, report); writeErr != nil {
 			return writeErr
 		}
@@ -791,6 +832,9 @@ func (c *resourceReconcileCommand) runMaterializeExecute(
 	}
 	completed := append(outcome.completed, stage)
 	report := reportForExecute(outcome.plan, reportTarget, completed, retry)
+	if planner.agentReplayAuthority != topologyAgentReplaySnapshot {
+		report.Recovery = &outcome.recovery
+	}
 	return writeResourceReconcileReport(stdout, opts.output, report)
 }
 

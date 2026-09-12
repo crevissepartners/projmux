@@ -227,7 +227,7 @@ func TestTopologyAgentContinueEligibilityMatrix(t *testing.T) {
 					agent.Status.PaneRef = pane.Metadata.UID
 				}
 				want := phase != coremetadata.PhasePending && classification != coremetadata.TerminationIntentional && classification != coremetadata.TerminationNormal
-				got, reason := decideTopologyAgentContinueEligibility(store.registry, agent.Clone())
+				got, _, reason := decideTopologyAgentContinueEligibility(store.registry, agent.Clone())
 				if got != want || (got && reason != "") || (!got && reason == "") {
 					t.Fatalf("eligible=%t reason=%q, want %t", got, reason, want)
 				}
@@ -363,7 +363,7 @@ func TestTopologyAgentContinueRejectsInvalidActivationEvidence(t *testing.T) {
 			agent, _ := reg.Agent(seed.Metadata.UID)
 			pane, _ := reg.Pane(retained.Metadata.UID)
 			test.mutate(&reg, agent, pane)
-			if ok, reason := decideTopologyAgentContinueEligibility(reg, agent.Clone()); ok || reason == "" {
+			if ok, _, reason := decideTopologyAgentContinueEligibility(reg, agent.Clone()); ok || reason == "" {
 				t.Fatalf("invalid activation admitted: eligible=%t reason=%q", ok, reason)
 			}
 		})
@@ -383,7 +383,7 @@ func TestTopologyAgentContinueTerminationPairingAndShape(t *testing.T) {
 					r.Signal = "HUP"
 				}
 				want := source == coremetadata.TerminationSourceControlAction && classification == coremetadata.TerminationInterrupted || source == coremetadata.TerminationSourceSupervisor && (classification == coremetadata.TerminationKilled || classification == coremetadata.TerminationAbnormal) || source == coremetadata.TerminationSourceReconcile && classification == coremetadata.TerminationUnknown
-				if reason := topologyContinueTerminationReason(r); (reason == "") != want {
+				if _, reason := topologyContinueTerminationReason(r); (reason == "") != want {
 					t.Fatalf("reason=%q want admitted=%t", reason, want)
 				}
 			})
@@ -406,7 +406,7 @@ func TestTopologyAgentContinueTerminationPairingAndShape(t *testing.T) {
 		{"abnormal dual status", coremetadata.TerminationAbnormal, exitCodePtr(143), "TERM", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			reason := topologyContinueTerminationReason(coremetadata.TerminationEvidence{Source: coremetadata.TerminationSourceSupervisor, Classification: test.classification, ExitCode: test.code, Signal: test.signal})
+			_, reason := topologyContinueTerminationReason(coremetadata.TerminationEvidence{Source: coremetadata.TerminationSourceSupervisor, Classification: test.classification, ExitCode: test.code, Signal: test.signal})
 			if (reason == "") != test.want {
 				t.Fatalf("reason=%q want admitted=%t", reason, test.want)
 			}
@@ -629,7 +629,7 @@ func TestRegistryTopologyBinderWriteFailureIsVisibleAndRollsBack(t *testing.T) {
 	server.failMessage = "permission denied writing replayed Pane metadata"
 
 	out, stderr, err := runReconcile(t, command, "resources", "--socket", "topology", "--materialize-project", "beta", "-o", "json")
-	if err == nil || stderr != "" || !strings.Contains(err.Error(), "permission denied writing replayed Pane metadata") {
+	if err == nil || !strings.Contains(stderr, "Continue failed: resumed 0, skipped 0;") || !strings.Contains(err.Error(), "permission denied writing replayed Pane metadata") {
 		t.Fatalf("binder failure = stderr=%q err=%v\n%s", stderr, err, out)
 	}
 	if store.snapshot() != registryBefore || store.writes != writesBefore || server.state() != runtimeBefore {

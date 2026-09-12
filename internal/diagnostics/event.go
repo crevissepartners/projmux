@@ -48,6 +48,8 @@ type Event struct {
 	ShellRecipeCount   *int   `json:"shell_recipe_count,omitempty"`
 	AgentRecipeCount   *int   `json:"agent_recipe_count,omitempty"`
 	StartupRecipeCount *int   `json:"startup_recipe_count,omitempty"`
+	ResumedCount       *int   `json:"resumed_count,omitempty"`
+	SkippedCount       *int   `json:"skipped_count,omitempty"`
 	ItemCount          *int   `json:"item_count,omitempty"`
 }
 
@@ -104,8 +106,8 @@ func SanitizeMessage(message, home string) string {
 
 var (
 	allowedLevels     = stringSet("info", "error")
-	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage")
-	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome")
+	allowedComponents = stringSet("cli", "runtime", "session-state", "notify", "focus", "ai", "resource", "usage", "topology")
+	allowedEvents     = stringSet("command.outcome", "lifecycle.start", "lifecycle.outcome", "session-state.outcome", "notify.transition", "focus.transition", "ai.watcher.transition", "ai.ingest.outcome", "resource.sampler.outcome", "usage.collect.outcome", "topology.outcome", "topology.agent.skipped")
 	allowedResults    = stringSet("started", "success", "error")
 	allowedKinds      = stringSet("usage", "exit", "runtime")
 	allowedBackends   = stringSet("tmux")
@@ -266,6 +268,12 @@ func sanitizeEvent(in Event, home string) (Event, error) {
 }
 
 func validateEventShape(event Event) error {
+	if event.Event == "topology.outcome" || event.Event == "topology.agent.skipped" {
+		return validateTopologyEvent(event)
+	}
+	if event.hasTopologyCounts() {
+		return fmt.Errorf("topology counts on unrelated event")
+	}
 	switch event.Event {
 	case "command.outcome":
 		if event.Result == "started" || event.Operation != "" || event.Code != "" || event.Source != "" || event.hasCounts() || event.hasNotifyFocusFields() || event.hasAIFields() || event.hasResourceFields() {
@@ -515,7 +523,12 @@ func (event Event) hasAllSnapshotCounts() bool {
 	return event.WindowCount != nil && event.PaneCount != nil && event.ShellRecipeCount != nil && event.AgentRecipeCount != nil && event.StartupRecipeCount != nil
 }
 
-func (event Event) hasCounts() bool { return event.hasSnapshotCounts() || event.ItemCount != nil }
+func (event Event) hasTopologyCounts() bool {
+	return event.ResumedCount != nil || event.SkippedCount != nil
+}
+func (event Event) hasCounts() bool {
+	return event.hasSnapshotCounts() || event.ItemCount != nil || event.hasTopologyCounts()
+}
 
 func (event Event) hasNotifyFocusFields() bool {
 	return event.Transition != "" || event.Disposition != "" || event.Provider != "" || event.Category != "" || event.Route != ""
@@ -528,7 +541,7 @@ func (event Event) hasAIFields() bool {
 func (event Event) hasResourceFields() bool { return event.ResourceResult != "" }
 
 func (event Event) nonNegativeCounts() bool {
-	for _, value := range []*int{event.WindowCount, event.PaneCount, event.ShellRecipeCount, event.AgentRecipeCount, event.StartupRecipeCount, event.ItemCount} {
+	for _, value := range []*int{event.WindowCount, event.PaneCount, event.ShellRecipeCount, event.AgentRecipeCount, event.StartupRecipeCount, event.ItemCount, event.ResumedCount, event.SkippedCount} {
 		if value != nil && *value < 0 {
 			return false
 		}
