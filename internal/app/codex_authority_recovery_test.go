@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 )
 
 // A broker barrier is authority only while that exact connection is current.
@@ -238,4 +241,123 @@ func TestRecoveredBrokerConcurrentOpenSharesOneCurrentView(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitForBrokerStreamEnd(t, first)
+}
+
+func TestRecoveredBrokerOpenWaiterHonorsCancellation(t *testing.T) {
+	session := newCodexBrokerObserverSessionOn(brokerTestIdentity("cancel-waiter"), "", nil, codexbroker.Discovery{}, nil)
+	entered, release := make(chan struct{}), make(chan struct{})
+	session.recoverRoute = func(ctx context.Context) (codexNativeEndpointRoute, error) {
+		select {
+		case <-entered:
+		default:
+			close(entered)
+		}
+		select {
+		case <-release:
+			return codexNativeEndpointRoute{}, context.Canceled
+		case <-ctx.Done():
+			return codexNativeEndpointRoute{}, ctx.Err()
+		}
+	}
+	firstDone := make(chan error, 1)
+	go func() { _, err := session.Open(context.Background()); firstDone <- err }()
+	<-entered
+	defer func() { close(release); <-firstDone; _ = session.Close() }()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	secondDone := make(chan error, 1)
+	go func() { _, err := session.Open(ctx); secondDone <- err }()
+	select {
+	case err := <-secondDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("waiter cancellation=%v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancelled Open remained behind a pending route")
+	}
+}
+
+func TestRecoveredBrokerCloseCancelsPendingRouteAndEnsure(t *testing.T) {
+	for _, stage := range []string{"route", "ensure"} {
+		t.Run(stage, func(t *testing.T) {
+			discovery, err := codexbroker.NewDiscovery(shortTempDomain(t), codexbroker.DefaultEndpointKey)
+			if err != nil {
+				t.Fatal(err)
+			}
+			entered := make(chan struct{})
+			pending := func(ctx context.Context) error { close(entered); <-ctx.Done(); return ctx.Err() }
+			session := newCodexBrokerObserverSessionOn(brokerTestIdentity("close-"+stage), "", nil, discovery, nil)
+			if stage == "route" {
+				session.recoverRoute = func(ctx context.Context) (codexNativeEndpointRoute, error) {
+					return codexNativeEndpointRoute{}, pending(ctx)
+				}
+			} else {
+				session.launch = pending
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { _, err := session.Open(ctx); done <- err }()
+			<-entered
+			if err := session.Close(); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatal("closed pending Open succeeded")
+				}
+			case <-time.After(time.Second):
+				cancel()
+				<-done
+				t.Fatal("Close left pending route/Ensure running")
+			}
+			session.mu.Lock()
+			closed, binding, conn := session.closed, session.binding, session.conn
+			session.mu.Unlock()
+			if !closed || binding != nil || conn != nil {
+				t.Fatal("closed session retained actor resources")
+			}
+		})
+	}
+}
+
+func TestRecoveredDefaultBrokerRefusesNewRollingJournalBeforeSameEndpointReopen(t *testing.T) {
+	endpoint := newBrokerTestEndpoint()
+	discovery, _ := startBrokerRuntimeForTest(t, endpoint)
+	session := newCodexBrokerObserverSessionOn(brokerTestIdentity("journal-reopen"), "", nil, discovery, nil)
+	defer session.Close()
+	route := codexNativeEndpointRoute{Endpoint: coremetadata.CodexEndpointRef{StateDomainID: "journal-domain", EndpointGenerationID: "codex-0.151.0"}, State: coremetadata.CodexGenerationCurrent, Default: true, TUIExecutable: "/fixture/codex"}
+	session.endpoint = route.Endpoint
+	session.recoveryGuard = func() error { return refuseDefaultRecoveryWithJournal(discovery.Domain()) }
+	probes := 0
+	session.recoverRoute = func(context.Context) (codexNativeEndpointRoute, error) { probes++; return route, nil }
+	first := openBrokerEpoch(t, session)
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	journal := codexupgrade.PathFor(discovery.Domain())
+	if err := os.MkdirAll(filepath.Dir(journal), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	original := []byte(`{"unreadable-by-default-recovery":"owner-private-operation"}`)
+	if err := os.WriteFile(journal, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before := endpoint.requestCount("bootstrap")
+	_, err := session.Open(context.Background())
+	var refusal *codexNativeRouteError
+	if !errors.As(err, &refusal) || refusal.Reason != codexNativeReasonGenerationUnavailable {
+		t.Fatalf("journal reopen refusal=%v", err)
+	}
+	if probes != 1 || endpoint.requestCount("bootstrap") != before || session.endpoint != route.Endpoint {
+		t.Fatal("new journal was bypassed or rerouted")
+	}
+	after, err := os.ReadFile(journal)
+	if err != nil || string(after) != string(original) {
+		t.Fatal("default recovery wrote the journal")
+	}
+	if _, err := os.Lstat(journal + ".flock"); !os.IsNotExist(err) {
+		t.Fatal("read-only guard acquired journal mutation artifacts")
+	}
 }

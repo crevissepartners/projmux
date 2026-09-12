@@ -33,17 +33,21 @@ type Fixture struct {
 	SocketPath string
 	Workspace  string
 
-	realCodex        string
-	shimPath         string
-	ledger           *Ledger
-	startResultPath  string
-	versions         VersionTuple
-	managed          bool
-	ownsState        bool
-	direct           *DirectEndpoint
-	directSocketInfo fs.FileInfo
-	managedPID       int
-	managedStarted   bool
+	realCodex               string
+	shimPath                string
+	ledger                  *Ledger
+	startResultPath         string
+	versions                VersionTuple
+	managed                 bool
+	ownsState               bool
+	direct                  *DirectEndpoint
+	directSocketInfo        fs.FileInfo
+	managedPID              int
+	managedStarted          bool
+	cleanRootInfo           fs.FileInfo
+	strictManaged           bool
+	strictManagedUnresolved bool
+	strictManagedStopped    bool
 }
 
 type daemonVersion struct {
@@ -146,6 +150,9 @@ func newFixture(root string, existing bool) (*Fixture, error) {
 				return nil, fmt.Errorf("create installed Codex owned root: %w", err)
 			}
 		}
+	}
+	if !existing {
+		fixture.cleanRootInfo, _ = os.Lstat(root)
 	}
 	fixture.discoverCLI()
 	return fixture, nil
@@ -614,6 +621,12 @@ func (fixture *Fixture) discoverCLI() {
 }
 
 func (fixture *Fixture) Cleanup() error {
+	// Recovery never inherits the legacy fixture's PID/stop fallbacks. The
+	// caller must complete the exact verified ManagedDaemon.Stop first;
+	// unknown start results remain for the namespace owner to retire.
+	if fixture.strictManaged && (fixture.strictManagedUnresolved || fixture.managedStarted || fixture.managedPID != 0) {
+		return errors.New("managed recovery cleanup refused: exact official stop is unproved")
+	}
 	var errs []error
 	if fixture.direct != nil {
 		errs = append(errs, fixture.direct.forceCleanup())
@@ -769,7 +782,7 @@ type ManagedDaemon struct {
 // SelectManagedRelease points only this fixture's current link at an explicit
 // read-only release mount. It refuses to switch while a fixture daemon is live.
 func (fixture *Fixture) SelectManagedRelease(release string) error {
-	if !fixture.ownsState || fixture.managedStarted {
+	if !fixture.ownsState || fixture.managedStarted || fixture.strictManagedUnresolved {
 		return errors.New("managed release switch requires an owned stopped fixture")
 	}
 	release, err := filepath.EvalSymlinks(release)
@@ -828,9 +841,16 @@ func (fixture *Fixture) SelectManagedRelease(release string) error {
 }
 
 // StartManagedRecovery uses only the official manager after private namespace
-// and stopped pid-backend proofs. Failures retain evidence; there is no signal
+// and exact absent-state or stopped pid-backend proofs. Failures retain evidence; there is no signal
 // fallback for an unknown or mismatched manager.
 func (fixture *Fixture) StartManagedRecovery(ctx context.Context, isolation ManagerIsolation) (*ManagedDaemon, error) {
+	fixture.strictManaged = true
+	if fixture.strictManagedUnresolved {
+		return nil, errors.New("managed recovery has unresolved ownership")
+	}
+	// Any failed strict preflight preserves state for its namespace owner;
+	// generic fixture cleanup must not adopt an unknown process or socket.
+	fixture.strictManagedUnresolved = true
 	namespaces, err := isolation.Verify()
 	if err != nil {
 		return nil, err
@@ -845,9 +865,11 @@ func (fixture *Fixture) StartManagedRecovery(ctx context.Context, isolation Mana
 		}
 	}
 	status, err := fixture.managedCommand(ctx, "version")
-	if err != nil || status.Backend != "pid" || status.Status != "stopped" {
-		return nil, errors.New("official manager is ambient, unknown, or already running")
+	if err := fixture.requireStoppedManagedState(status, err); err != nil {
+		return nil, err
 	}
+	fixture.strictManagedUnresolved = true
+	fixture.strictManagedStopped = false
 	started, err := fixture.managedCommand(ctx, "start")
 	if err != nil {
 		return nil, err
@@ -857,7 +879,6 @@ func (fixture *Fixture) StartManagedRecovery(ctx context.Context, isolation Mana
 	if started.Backend != "pid" || started.Status != "started" || started.PID <= 0 {
 		return nil, errors.New("official start did not prove a new pid manager")
 	}
-	fixture.managedStarted = true
 	status, err = fixture.managedCommand(ctx, "version")
 	if err != nil {
 		return nil, err
@@ -894,6 +915,7 @@ func (fixture *Fixture) StartManagedRecovery(ctx context.Context, isolation Mana
 		return nil, errors.New("managed private socket is unavailable")
 	}
 	fixture.managedPID = started.PID
+	fixture.managedStarted = true
 	return &ManagedDaemon{fixture: fixture, isolation: isolation, socketInfo: info, Proof: ManagedDaemonProof{Backend: "pid", Version: status.AppServerVersion, PID: started.PID, Birth: birth, Executable: executable, SHA256: digest, Socket: fixture.SocketPath, Namespaces: namespaces}}, nil
 }
 
@@ -913,14 +935,19 @@ func (daemon *ManagedDaemon) Stop(ctx context.Context) error {
 	if err != nil || pidErr != nil || birthErr != nil || socketErr != nil || digestErr != nil || status.Backend != "pid" || pid != daemon.Proof.PID || birth != daemon.Proof.Birth || digest != daemon.Proof.SHA256 || status.SocketPath != daemon.Proof.Socket || !os.SameFile(info, daemon.socketInfo) {
 		return errors.New("managed stop refused: process birth, artifact, or socket changed")
 	}
+	if status.Status != "running" || status.AppServerVersion != daemon.Proof.Version || status.ManagedCodexVersion != daemon.Proof.Version || status.CLIVersion != daemon.Proof.Version {
+		return errors.New("managed stop refused: version provenance changed")
+	}
 	stopped, err := fixture.managedCommand(ctx, "stop")
-	if err != nil || stopped.Backend != "pid" || stopped.Status != "stopped" {
+	if err != nil || stopped.Backend != "pid" || stopped.Status != "stopped" || stopped.SocketPath != daemon.Proof.Socket {
 		return errors.New("official managed stop failed")
 	}
 	if err := waitForRetirement(ctx, fixture.SocketPath, daemon.Proof.PID); err != nil {
 		return err
 	}
 	fixture.managedPID, fixture.managedStarted = 0, false
+	fixture.strictManagedUnresolved = false
+	fixture.strictManagedStopped = true
 	return nil
 }
 
@@ -929,11 +956,17 @@ func (fixture *Fixture) managedCommand(ctx context.Context, action string) (daem
 	defer cancel()
 	command := exec.CommandContext(commandCtx, fixture.realCodex, "app-server", "daemon", action) // #nosec G204 -- fixture-owned explicit release and fixed manager argv.
 	command.Env = isolatedEnvironment(os.Environ(), fixture.CodexHome)
-	var output boundedBuffer
+	var output, stderr boundedBuffer
 	command.Stdout = &output
-	command.Stderr = &boundedBuffer{}
+	command.Stderr = &stderr
 	if err := command.Run(); err != nil {
-		return daemonVersion{}, fmt.Errorf("official daemon %s failed: %w", action, err)
+		missing := false
+		var exit *exec.ExitError
+		expected := "Error: failed to connect to " + fixture.SocketPath + "\n\nCaused by:\n    No such file or directory (os error 2)\n"
+		if action == "version" && commandCtx.Err() == nil && errors.As(err, &exit) && exit.ExitCode() == 1 && len(output.Bytes()) == 0 && string(stderr.Bytes()) == expected {
+			missing = true
+		}
+		return daemonVersion{}, &managedCommandError{action: action, missingSocket: missing, err: err}
 	}
 	var status daemonVersion
 	if json.Unmarshal(output.Bytes(), &status) != nil {
@@ -1028,4 +1061,58 @@ func (fixture *Fixture) OwnedProcesses() ([]OwnedProcess, error) {
 		processes = append(processes, OwnedProcess{PID: pid, Birth: birth, Executable: executable})
 	}
 	return processes, nil
+}
+
+// Only the exact public version ENOENT result is a cold-start observation.
+// Arbitrary command failure never becomes a stopped-manager assertion.
+type managedCommandError struct {
+	action        string
+	missingSocket bool
+	err           error
+}
+
+func (err *managedCommandError) Error() string { return "official daemon " + err.action + " failed" }
+func (err *managedCommandError) Unwrap() error { return err.err }
+
+func (fixture *Fixture) requireStoppedManagedState(status daemonVersion, probeErr error) error {
+	refuse := func() error { return errors.New("official manager is ambient, unknown, or not proved stopped") }
+	var commandErr *managedCommandError
+	exactMissing := errors.As(probeErr, &commandErr) && commandErr.action == "version" && commandErr.missingSocket
+	knownStopped := probeErr == nil && status.Backend == "pid" && status.Status == "stopped" && status.SocketPath == fixture.SocketPath && fixture.strictManagedStopped
+	if !exactMissing && !knownStopped {
+		return refuse()
+	}
+	root, err := os.Lstat(fixture.Root)
+	if !fixture.ownsState || fixture.cleanRootInfo == nil || err != nil || !os.SameFile(root, fixture.cleanRootInfo) || !root.IsDir() || root.Mode().Perm()&0o077 != 0 {
+		return refuse()
+	}
+	codex, err := os.Lstat(fixture.CodexHome)
+	if err != nil || !codex.IsDir() || codex.Mode().Perm()&0o077 != 0 {
+		return refuse()
+	}
+	for _, path := range []string{fixture.SocketPath, filepath.Join(fixture.CodexHome, "app-server-daemon", "app-server.pid")} {
+		if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+			return refuse()
+		}
+	}
+	// Before the first start the lifecycle roots must be absent or empty.
+	// Later restarts rely on this fixture's earlier exact official stop proof,
+	// which permits the manager's own lock/log files but not a PID or socket.
+	for _, leaf := range []string{"app-server-daemon", "app-server-control"} {
+		path := filepath.Join(fixture.CodexHome, leaf)
+		info, err := os.Lstat(path)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil || !info.IsDir() {
+			return refuse()
+		}
+		if !fixture.strictManagedStopped {
+			entries, err := os.ReadDir(path)
+			if err != nil || len(entries) != 0 {
+				return refuse()
+			}
+		}
+	}
+	return nil
 }

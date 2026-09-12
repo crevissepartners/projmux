@@ -11,6 +11,7 @@ import (
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexbroker"
+	"github.com/crevissepartners/projmux/internal/integrations/agents/codexupgrade"
 )
 
 const (
@@ -68,25 +69,28 @@ type codexBrokerObserverSession struct {
 	discovery codexbroker.Discovery
 	launch    codexbroker.Launcher
 
-	openMu       sync.Mutex
-	recoverRoute func(context.Context) (codexNativeEndpointRoute, error)
-	routeRuntime func(codexNativeEndpointRoute) (codexbroker.Discovery, codexbroker.Launcher, error)
-	mu           sync.Mutex
-	closed       bool
-	conn         *codexbroker.Conn
-	binding      *codexbroker.RemoteBinding
-	current      *codexBrokerLifecycleEpoch
-	ready        chan codexBrokerEpochRecord
-	pumped       chan struct{}
-	pending      codexBrokerEpochRecord
-	hasPending   bool
+	openGate      chan struct{}
+	closeDone     chan struct{}
+	openCancel    context.CancelFunc
+	recoveryGuard func() error
+	recoverRoute  func(context.Context) (codexNativeEndpointRoute, error)
+	routeRuntime  func(codexNativeEndpointRoute) (codexbroker.Discovery, codexbroker.Launcher, error)
+	mu            sync.Mutex
+	closed        bool
+	conn          *codexbroker.Conn
+	binding       *codexbroker.RemoteBinding
+	current       *codexBrokerLifecycleEpoch
+	ready         chan codexBrokerEpochRecord
+	pumped        chan struct{}
+	pending       codexBrokerEpochRecord
+	hasPending    bool
 }
 
 // newCodexBrokerObserverSessionForRoute resolves one broker singleton from the
 // durable endpoint generation selected before provider creation. The broker
 // runtime is keyed by that exact endpoint and its launcher receives only the
-// corresponding attach transport; changing admission-current cannot retarget
-// a live session.
+// corresponding attach transport. Default socket recovery can refresh a live
+// activation only when no rolling journal owns admission.
 func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd string, roots []string, route codexNativeEndpointRoute) (*codexBrokerObserverSession, error) {
 	if !identity.valid() || !route.valid() {
 		return nil, errors.New("codex generation broker binding requires exact Agent, Pane, endpoint, runtime, generation, and thread identity")
@@ -107,7 +111,10 @@ func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd 
 		return nil, err
 	}
 	brokerRoute := route.brokerRoute()
-	launch := func(context.Context) error {
+	launch := func(ctx context.Context) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		path, err := os.Executable()
 		if err != nil {
 			return err
@@ -117,6 +124,7 @@ func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd 
 	session := newCodexBrokerObserverSessionOn(identity, cwd, roots, discovery, launch)
 	session.endpoint = route.Endpoint
 	if route.Default {
+		session.recoveryGuard = func() error { return refuseDefaultRecoveryWithJournal(domain) }
 		session.recoverRoute = (defaultCodexNativeThreadController{}).Current
 		session.routeRuntime = func(next codexNativeEndpointRoute) (codexbroker.Discovery, codexbroker.Launcher, error) {
 			key, err := next.brokerRoute().endpointKey()
@@ -127,7 +135,10 @@ func newCodexBrokerObserverSessionForRoute(identity codexLifecycleIdentity, cwd 
 			if err != nil {
 				return codexbroker.Discovery{}, nil, err
 			}
-			launch := func(context.Context) error {
+			launch := func(ctx context.Context) error {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
 				path, err := os.Executable()
 				if err != nil {
 					return err
@@ -159,8 +170,12 @@ func newCodexBrokerObserverSessionOn(
 // there, and binds exactly the thread this activation owns. It never guesses a
 // thread from the working directory, and it never creates one.
 func (s *codexBrokerObserverSession) Open(ctx context.Context) (codexLifecycleConnection, error) {
-	s.openMu.Lock()
-	defer s.openMu.Unlock()
+	openCtx, release, err := s.beginOpen(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+	ctx = openCtx
 	if err := s.refreshRoute(ctx); err != nil {
 		return nil, err
 	}
@@ -202,13 +217,22 @@ func (s *codexBrokerObserverSession) Open(ctx context.Context) (codexLifecycleCo
 // out once no binding is left, so releasing here is the whole shutdown.
 func (s *codexBrokerObserverSession) Close() error {
 	s.mu.Lock()
-	s.closed = true
+	if !s.closed {
+		s.closed = true
+		if s.closeDone != nil {
+			close(s.closeDone)
+		}
+	}
+	cancel := s.openCancel
 	binding, conn, current := s.binding, s.conn, s.current
 	s.binding, s.conn, s.current, s.ready = nil, nil, nil, nil
 	s.pending, s.hasPending = codexBrokerEpochRecord{}, false
 	pumped := s.pumped
 	s.pumped = nil
 	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
 	if current != nil {
 		current.end(codexObserverReasonEpochClosed)
 	}
@@ -257,6 +281,10 @@ func (s *codexBrokerObserverSession) ensure(ctx context.Context) (*codexbroker.R
 			return nil, nil, err
 		}
 		conn = opened
+	}
+	if err := ctx.Err(); err != nil {
+		_ = conn.Close()
+		return nil, nil, err
 	}
 	binding, err := conn.Bind(ctx, s.identity.ThreadID, s.cwd, s.roots)
 	if err != nil {
@@ -507,6 +535,11 @@ func (e *codexBrokerLifecycleEpoch) generationAuthorityLocked() (coremetadata.Co
 		return coremetadata.CodexAuthorityRef{}, &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable}
 	}
 	s := e.session
+	if s.recoveryGuard != nil {
+		if err := s.recoveryGuard(); err != nil {
+			return coremetadata.CodexAuthorityRef{}, err
+		}
+	}
 	if s.closed || s.current != e || s.binding != e.binding || s.conn != e.connection || !e.endpoint.Valid() || s.endpoint != e.endpoint || e.brokerRuntime == "" || s.conn.Runtime() != e.brokerRuntime {
 		return refuse()
 	}
@@ -749,12 +782,22 @@ func (s *codexBrokerObserverSession) resync(epoch *codexBrokerLifecycleEpoch) {
 // Stored resume resolution remains exact. Private generation routes never
 // acquire this capability and admission/rolling journals cannot be bypassed.
 func (s *codexBrokerObserverSession) refreshRoute(ctx context.Context) error {
+	if s.recoveryGuard != nil {
+		if err := s.recoveryGuard(); err != nil {
+			return err
+		}
+	}
 	if s.recoverRoute == nil {
 		return nil
 	}
 	next, err := s.recoverRoute(ctx)
 	if err != nil {
 		return err
+	}
+	if s.recoveryGuard != nil {
+		if err := s.recoveryGuard(); err != nil {
+			return err
+		}
 	}
 	s.mu.Lock()
 	previous := s.endpoint
@@ -799,4 +842,61 @@ func (s *codexBrokerObserverSession) refreshRoute(ctx context.Context) error {
 	}
 	s.endpoint, s.discovery, s.launch = next.Endpoint, discovery, launch
 	return nil
+}
+
+// beginOpen serializes binding creation while keeping queued callers and a
+// pending route/Ensure cancellable. Close cancels the active opener; any local
+// connection it has not published is then closed by ensure's failure path.
+func (s *codexBrokerObserverSession) beginOpen(ctx context.Context) (context.Context, func(), error) {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, nil, errors.New("codex broker binding session is closed")
+	}
+	if s.openGate == nil {
+		s.openGate = make(chan struct{}, 1)
+	}
+	if s.closeDone == nil {
+		s.closeDone = make(chan struct{})
+	}
+	gate, closed := s.openGate, s.closeDone
+	s.mu.Unlock()
+	select {
+	case <-ctx.Done():
+		return nil, nil, ctx.Err()
+	case <-closed:
+		return nil, nil, errors.New("codex broker binding session is closed")
+	case gate <- struct{}{}:
+	}
+	s.mu.Lock()
+	if s.closed || ctx.Err() != nil {
+		s.mu.Unlock()
+		<-gate
+		if err := ctx.Err(); err != nil {
+			return nil, nil, err
+		}
+		return nil, nil, errors.New("codex broker binding session is closed")
+	}
+	openCtx, cancel := context.WithCancel(ctx)
+	s.openCancel = cancel
+	s.mu.Unlock()
+	release := func() {
+		cancel()
+		s.mu.Lock()
+		s.openCancel = nil
+		s.mu.Unlock()
+		<-gate
+	}
+	return openCtx, release, nil
+}
+
+// A rolling journal owns admission even if it still names the same endpoint.
+// Default recovery reads its presence on every Open and never creates or
+// interprets a journal operation. Unknown/unreadable state also refuses.
+func refuseDefaultRecoveryWithJournal(stateDomain string) error {
+	path := codexupgrade.PathFor(stateDomain)
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return &codexNativeRouteError{Reason: codexNativeReasonGenerationUnavailable, OperatorAction: "use the existing Codex generation handover operation"}
 }

@@ -16,6 +16,7 @@ import (
 
 	coremetadata "github.com/crevissepartners/projmux/internal/core/metadata"
 	"github.com/crevissepartners/projmux/internal/integrations/agents/codexappserver"
+	"github.com/crevissepartners/projmux/internal/integrations/tmuxopts"
 	"github.com/crevissepartners/projmux/internal/testutil/codexinstalled"
 )
 
@@ -34,15 +35,16 @@ type installedRecoveryInput struct {
 }
 
 type installedRecoveryAgent struct {
-	Project    string                         `json:"project"`
-	Window     string                         `json:"window"`
-	Agent      string                         `json:"agent"`
-	Pane       string                         `json:"pane"`
-	Runtime    string                         `json:"runtime"`
-	Activation string                         `json:"activation"`
-	Thread     string                         `json:"thread"`
-	Session    string                         `json:"session"`
-	Authority  coremetadata.CodexAuthorityRef `json:"authority"`
+	Project      string                         `json:"project"`
+	Window       string                         `json:"window"`
+	Agent        string                         `json:"agent"`
+	Pane         string                         `json:"pane"`
+	Runtime      string                         `json:"runtime"`
+	Activation   string                         `json:"activation"`
+	Thread       string                         `json:"thread"`
+	Session      string                         `json:"session"`
+	Authority    coremetadata.CodexAuthorityRef `json:"authority"`
+	ControlEpoch string                         `json:"controlEpoch"`
 }
 
 type installedRecoveryTurn struct {
@@ -211,6 +213,9 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 		t.Fatal("tmux socket escaped fixture")
 	}
 	ledger.TmuxSocket = tmuxSocket
+	// This is the exact server this fixture just created and proved private.
+	// Publish its app ownership before config apply validates that contract.
+	run("tmux", "-S", tmuxSocket, "set-option", "-g", tmuxopts.AppGlobal, "1")
 	// Outside-tmux public create discovers -L projmux. This fixture-only alias
 	// reaches the unique real server; its socket_path and logical marker remain
 	// the unique route and all cleanup names that exact physical socket.
@@ -272,6 +277,7 @@ func TestInstalledManagedCodexAuthorityRecoveryMatrix(t *testing.T) {
 			if sample == 0 && rowIndex > 0 {
 				oldStable, newStable := survivor, observed
 				oldStable.Authority, newStable.Authority = coremetadata.CodexAuthorityRef{}, coremetadata.CodexAuthorityRef{}
+				oldStable.ControlEpoch, newStable.ControlEpoch = "", ""
 				if oldStable != newStable {
 					t.Fatal("survivor Agent/Pane/activation/session/thread changed")
 				}
@@ -367,7 +373,17 @@ func waitInstalledRecoveryAuthority(t *testing.T, ctx context.Context, agentUID,
 					if authority.Valid() && ref.Endpoint != nil && authority.Endpoint().Same(*ref.Endpoint) && authority.EndpointGenerationID == generation && (retired == nil || authority != *retired) {
 						window, exists := registry.Window(agent.Metadata.OwnerUID())
 						if exists {
-							return installedRecoveryAgent{Project: window.Metadata.OwnerUID(), Window: window.Metadata.UID, Agent: agent.Metadata.UID, Pane: pane.Metadata.UID, Runtime: pane.Status.Activation.RuntimeID, Activation: pane.Status.Activation.Generation, Thread: ref.ThreadID, Session: ref.SessionID, Authority: authority}
+							// Registry authority precedes listener and Pane
+							// publication. Prove the exact normal control
+							// consumer and read-only status response as well.
+							control := newAgentCommand()
+							binding, bindErr := control.resolveControlBinding("installed recovery readiness", "uid:"+agentUID)
+							if bindErr == nil && binding.Endpoint == authority.Endpoint() && binding.Identity.Generation == pane.Status.Activation.Generation && binding.Identity.ThreadID == ref.ThreadID {
+								response, callErr := control.callControl(binding, agentControlRequest{Operation: agentControlOpStatus})
+								if callErr == nil && response.OK && (retired == nil || response.Availability.Start) {
+									return installedRecoveryAgent{Project: window.Metadata.OwnerUID(), Window: window.Metadata.UID, Agent: agent.Metadata.UID, Pane: pane.Metadata.UID, Runtime: pane.Status.Activation.RuntimeID, Activation: pane.Status.Activation.Generation, Thread: ref.ThreadID, Session: ref.SessionID, Authority: authority, ControlEpoch: binding.Epoch}
+								}
+							}
 						}
 					}
 				}
